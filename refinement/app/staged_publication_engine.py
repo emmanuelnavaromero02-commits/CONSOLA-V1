@@ -6,12 +6,17 @@ from typing import Any
 try:
     from app.duckdb_engine import DuckDBEngine
     from app.publication_contract import PublicationIdentity, canonical_digest
-    from app.publication_evidence import PublicationEvidenceStore
+    from app.publication_evidence import (
+        PublicationCandidateStore,
+        PublicationEvidenceStore,
+        PublicationVerifierClient,
+    )
     from app.publication_finalize import PublicationFinalizeMixin
     from app.publication_inputs import resolve_input_state
     from app.publication_input_binding import PublicationInputBindingMixin
     from app.publication_objects import PublicationObjectMixin
     from app.publication_read_guard import PublicationReadGuardMixin
+    from app.publication_recovery import PublicationRecoveryMixin
     from app.publication_replay import PublicationReplayMixin
     from app.publication_store import PublicationStore
 except ModuleNotFoundError:
@@ -20,12 +25,17 @@ except ModuleNotFoundError:
         PublicationIdentity,
         canonical_digest,
     )
-    from refinement.app.publication_evidence import PublicationEvidenceStore
+    from refinement.app.publication_evidence import (
+        PublicationCandidateStore,
+        PublicationEvidenceStore,
+        PublicationVerifierClient,
+    )
     from refinement.app.publication_finalize import PublicationFinalizeMixin
     from refinement.app.publication_inputs import resolve_input_state
     from refinement.app.publication_input_binding import PublicationInputBindingMixin
     from refinement.app.publication_objects import PublicationObjectMixin
     from refinement.app.publication_read_guard import PublicationReadGuardMixin
+    from refinement.app.publication_recovery import PublicationRecoveryMixin
     from refinement.app.publication_replay import PublicationReplayMixin
     from refinement.app.publication_store import PublicationStore
 
@@ -36,6 +46,7 @@ class StagedPublicationEngine(
     PublicationReadGuardMixin,
     PublicationInputBindingMixin,
     PublicationObjectMixin,
+    PublicationRecoveryMixin,
     DuckDBEngine,
 ):
     """Routes every Silver/Gold materialization through one staged CAS."""
@@ -46,6 +57,8 @@ class StagedPublicationEngine(
         self._publication_replay_local = threading.local()
         self._publication_store_instance: PublicationStore | None = None
         self._evidence_store_instance: PublicationEvidenceStore | None = None
+        self._candidate_store_instance: PublicationCandidateStore | None = None
+        self._publication_verifier_instance: PublicationVerifierClient | None = None
 
     @property
     def _publication_store(self) -> PublicationStore:
@@ -58,6 +71,20 @@ class StagedPublicationEngine(
         if self._evidence_store_instance is None:
             self._evidence_store_instance = PublicationEvidenceStore()
         return self._evidence_store_instance
+
+    @property
+    def _candidate_store(self) -> PublicationCandidateStore:
+        if self._candidate_store_instance is None:
+            self._candidate_store_instance = PublicationCandidateStore(
+                self._publication_store
+            )
+        return self._candidate_store_instance
+
+    @property
+    def _publication_verifier(self) -> PublicationVerifierClient:
+        if self._publication_verifier_instance is None:
+            self._publication_verifier_instance = PublicationVerifierClient()
+        return self._publication_verifier_instance
 
     def _state(self) -> dict[str, Any] | None:
         return getattr(self._publication_local, "state", None)
@@ -115,14 +142,16 @@ class StagedPublicationEngine(
         if status == "prepared":
             try:
                 self._verify_prepared_object(current)
+                self._publication_store.publish(identity, expected_head)
             except Exception as exc:
-                self._publication_store.quarantine_prepared(
-                    identity, "prepared_object_unavailable"
-                )
-                raise RuntimeError(
-                    "prepared materialization is recoverable; retry with a new attempt"
-                ) from exc
-            self._publication_store.publish(identity, expected_head)
+                if getattr(exc, "pgcode", None) == "40001":
+                    self._publication_store.quarantine_prepared(
+                        identity, "publication_head_cas_lost"
+                    )
+                    raise RuntimeError(
+                        "publication head conflict; prepared run was quarantined"
+                    ) from exc
+                self._recover_prepared(identity, exc)
             current = self._publication_store.run(identity) or {}
             return {
                 "name": identity.scope.dataset,
@@ -139,6 +168,7 @@ class StagedPublicationEngine(
             "schema_fields": [],
             "object_uri": "",
             "object_checksum": "",
+            "object_version": "",
             "staging_table": None,
             "row_count": 0,
         }
@@ -233,6 +263,7 @@ class StagedPublicationEngine(
         if not state:
             return super()._write_lineage(**values)
         state["lineage"] = {
+            "cartridge_id": str(state["dataset"].get("cartridge") or ""),
             "source_entity": str(values.get("source_entity") or ""),
             "source_load_date": str(values.get("source_load_date") or ""),
             "source_batch_id": str(values.get("source_batch_id") or ""),

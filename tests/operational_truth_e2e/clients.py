@@ -7,6 +7,8 @@ from typing import Any
 
 import requests
 
+from .security import signed_pipeline_trigger_context
+
 
 AIRFLOW = os.environ["AIRFLOW_URL"].rstrip("/")
 AIRFLOW_AUTH = (
@@ -14,6 +16,7 @@ AIRFLOW_AUTH = (
     os.environ["AIRFLOW_ADMIN_PASSWORD"],
 )
 CONSOLE = os.environ["CONSOLE_URL"].rstrip("/")
+MCP_INFRA = os.environ["MCP_INFRA_URL"].rstrip("/")
 
 
 def _airflow(method: str, path: str, **kwargs) -> requests.Response:
@@ -23,6 +26,24 @@ def _airflow(method: str, path: str, **kwargs) -> requests.Response:
         auth=AIRFLOW_AUTH,
         timeout=15,
         **kwargs,
+    )
+
+
+def _trigger_via_mcp(
+    scope: dict[str, str], *, dag_id: str, run_id: str, conf: dict[str, Any]
+) -> requests.Response:
+    return requests.post(
+        f"{MCP_INFRA}/mcp/invoke",
+        json={
+            "tool": "airflow_trigger_dag",
+            "args": {"dag_id": dag_id, "dag_run_id": run_id, "conf": conf},
+            "security_context": signed_pipeline_trigger_context(scope),
+        },
+        headers={
+            "X-Internal-Service": "airflow",
+            "X-API-Key": os.environ["INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA"],
+        },
+        timeout=30,
     )
 
 
@@ -70,24 +91,20 @@ def wait_for_airflow_contract(timeout: int = 180) -> None:
 
 def trigger_file_ingest(scope: dict[str, str]) -> str:
     run_id = f"operational_truth_e2e__{scope['label']}__{uuid.uuid4().hex}"
-    response = _airflow(
-        "POST",
-        "/api/v1/dags/file_ingest/dagRuns",
-        json={
-            "dag_run_id": run_id,
-            "conf": {
-                "cartridge_id": "replicon",
-                "entity": "OperationalTruthProbe",
-                "file_pattern": "operational-truth.csv",
-                "format": "csv",
-                "parser": "default",
-                "tenant_id": scope["tenant_id"],
-                "workspace_id": scope["workspace_id"],
-            },
+    response = _trigger_via_mcp(
+        scope,
+        dag_id="file_ingest",
+        run_id=run_id,
+        conf={
+            "cartridge_id": "replicon",
+            "entity": "OperationalTruthProbe",
+            "file_pattern": "operational-truth.csv",
+            "format": "csv",
+            "parser": "default",
         },
     )
     assert response.status_code == 200, response.text[:500]
-    assert response.json()["dag_run_id"] == run_id
+    assert response.json()["result"]["dag_run_id"] == run_id
     return run_id
 
 
@@ -136,21 +153,17 @@ def trigger_dataset_chain(
     seed_dataset: str = "pnl_mensual",
 ) -> str:
     selected = run_id or f"operational_truth_canary__{uuid.uuid4().hex}"
-    response = _airflow(
-        "POST",
-        "/api/v1/dags/dataset_refresh_chain/dagRuns",
-        json={
-            "dag_run_id": selected,
-            "conf": {
-                "cartridge_id": "replicon",
-                "seed_dataset": seed_dataset,
-                "tenant_id": scope["tenant_id"],
-                "workspace_id": scope["workspace_id"],
-            },
+    response = _trigger_via_mcp(
+        scope,
+        dag_id="dataset_refresh_chain",
+        run_id=selected,
+        conf={
+            "cartridge_id": "replicon",
+            "seed_dataset": seed_dataset,
         },
     )
     assert response.status_code == 200, response.text[:500]
-    assert response.json()["dag_run_id"] == selected
+    assert response.json()["result"]["dag_run_id"] == selected
     return selected
 
 

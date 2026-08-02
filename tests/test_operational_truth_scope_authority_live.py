@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import uuid
 
 import asyncpg
@@ -9,6 +8,7 @@ import pytest
 from tests.test_control_room_live_postgres_operational_truth_pipeline import _seed_scope
 from tests.test_operational_rls_console_refinement import (
     OMEGA_CONSOLE_PASSWORD,
+    OMEGA_OUTCOME_BINDER_PASSWORD,
     OMEGA_REFINEMENT_PASSWORD,
     POSTGRES_PASSWORD,
     POSTGRES_USER,
@@ -114,8 +114,9 @@ async def test_operational_outcome_binding_requires_exact_scoped_registry_and_in
         intelligence_id = await admin.fetchval(
             """INSERT INTO intelligence_runs(
                    run_ref,tenant_id,workspace_id,source_system,run_mode,status,
-                   signals_generated
-               ) VALUES($1,$2,$3,'acceptance','gold_refresh','completed',1)
+                   signals_generated,request
+               ) VALUES($1,$2,$3,'acceptance','gold_refresh','running',0,
+                        jsonb_build_object('datasets',jsonb_build_array('employee_360')))
                RETURNING id""",
             expected_run_ref,
             scope_a["tenant_id"],
@@ -124,18 +125,15 @@ async def test_operational_outcome_binding_requires_exact_scoped_registry_and_in
     finally:
         await admin.close()
 
-    bindings = json.dumps(
-        [
-            {
-                "dataset": "employee_360",
-                "materialization_run_id": str(uuid.uuid4()),
-                "receipt_id": str(uuid.uuid4()),
-                "head_generation": 3,
-                "object_checksum": "a" * 64,
-                "evidence_digest": "b" * 64,
-            }
-        ],
-        sort_keys=True,
+    claims = (
+        "employee_360",
+        uuid.uuid4(),
+        uuid.uuid4(),
+        3,
+        "version-1",
+        "a" * 64,
+        "b" * 64,
+        "c" * 64,
     )
     console = await asyncpg.connect(
         _role_dsn(
@@ -152,21 +150,96 @@ async def test_operational_outcome_binding_requires_exact_scoped_registry_and_in
                 scope_a["tenant_id"],
                 scope_a["workspace_id"],
             )
-            digest = await console.fetchval(
-                "SELECT record_operational_outcome_binding($1,$2,$3,$4::jsonb)",
+            with pytest.raises(asyncpg.InsufficientPrivilegeError):
+                await console.fetchval(
+                    "SELECT stage_operational_outcome_binding("
+                    "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+                    expected_run_id,
+                    expected_run_ref,
+                    intelligence_id,
+                    *claims,
+                )
+    finally:
+        await console.close()
+
+    binder = await asyncpg.connect(
+        _role_dsn(
+            postgres_with_real_init_schema,
+            "omega_outcome_binder",
+            OMEGA_OUTCOME_BINDER_PASSWORD,
+        )
+    )
+    try:
+        async with binder.transaction():
+            await binder.execute(
+                "SELECT set_config('app.tenant_id',$1,true),"
+                "set_config('app.workspace_id',$2,true)",
+                scope_a["tenant_id"],
+                scope_a["workspace_id"],
+            )
+            authority = await binder.fetchval(
+                "SELECT stage_operational_outcome_binding("
+                "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
                 expected_run_id,
                 expected_run_ref,
                 intelligence_id,
-                bindings,
+                *claims,
+            )
+            assert len(authority) == 64
+        async with binder.transaction():
+            await binder.execute(
+                "SELECT set_config('app.tenant_id',$1,true),"
+                "set_config('app.workspace_id',$2,true)",
+                scope_b["tenant_id"],
+                scope_b["workspace_id"],
+            )
+            with pytest.raises(asyncpg.PostgresError):
+                await binder.fetchval(
+                    "SELECT stage_operational_outcome_binding("
+                    "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+                    expected_run_id,
+                    expected_run_ref,
+                    intelligence_id,
+                    *claims,
+                )
+    finally:
+        await binder.close()
+
+    admin = await asyncpg.connect(postgres_with_real_init_schema)
+    try:
+        await admin.execute(
+            "UPDATE intelligence_runs SET status='binding_pending',"
+            "signals_generated=1 WHERE id=$1",
+            intelligence_id,
+        )
+    finally:
+        await admin.close()
+    console = await asyncpg.connect(
+        _role_dsn(
+            postgres_with_real_init_schema, "omega_console", OMEGA_CONSOLE_PASSWORD
+        )
+    )
+    try:
+        async with console.transaction():
+            await console.execute(
+                "SELECT set_config('app.tenant_id',$1,true),"
+                "set_config('app.workspace_id',$2,true)",
+                scope_a["tenant_id"],
+                scope_a["workspace_id"],
+            )
+            digest = await console.fetchval(
+                "SELECT finalize_operational_outcome_binding($1,$2,$3)",
+                expected_run_id,
+                expected_run_ref,
+                intelligence_id,
             )
             replay = await console.fetchval(
-                "SELECT record_operational_outcome_binding($1,$2,$3,$4::jsonb)",
+                "SELECT finalize_operational_outcome_binding($1,$2,$3)",
                 expected_run_id,
                 expected_run_ref,
                 intelligence_id,
-                bindings,
             )
-            assert replay == digest
+            assert digest == replay and len(digest) == 64
             assert (
                 await console.fetchval(
                     "SELECT count(*) FROM operational_outcome_bindings"
@@ -186,13 +259,5 @@ async def test_operational_outcome_binding_requires_exact_scoped_registry_and_in
                 )
                 == 0
             )
-            with pytest.raises(asyncpg.PostgresError):
-                await console.fetchval(
-                    "SELECT record_operational_outcome_binding($1,$2,$3,$4::jsonb)",
-                    expected_run_id,
-                    expected_run_ref,
-                    intelligence_id,
-                    bindings,
-                )
     finally:
         await console.close()

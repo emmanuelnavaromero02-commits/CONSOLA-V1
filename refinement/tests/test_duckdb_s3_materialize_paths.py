@@ -33,10 +33,14 @@ def test_delete_s3_prefix_removes_existing_object_and_children(monkeypatch):
 
     engine = DuckDBEngine()
     engine.storage = SimpleNamespace(
-        delete_prefix=lambda prefix, *, require_trailing_slash: removed.append((prefix, require_trailing_slash))
+        delete_prefix=lambda prefix, *, require_trailing_slash: removed.append(
+            (prefix, require_trailing_slash)
+        )
     )
 
-    engine._delete_s3_prefix("s3://lakehouse/silver/hubspot/hubspot_deals_latest/data.parquet")
+    engine._delete_s3_prefix(
+        "s3://lakehouse/silver/hubspot/hubspot_deals_latest/data.parquet"
+    )
 
     assert removed == [("silver/hubspot/hubspot_deals_latest/data.parquet", False)]
 
@@ -65,9 +69,13 @@ def test_copy_to_parquet_writes_local_temp_and_uploads(monkeypatch):
         "_upload_local_parquet",
         lambda local, target: uploaded.append((local, target)) or target,
     )
-    monkeypatch.setattr("refinement.app.duckdb_engine.os.unlink", lambda path: unlinked.append(path))
+    monkeypatch.setattr(
+        "refinement.app.duckdb_engine.os.unlink", lambda path: unlinked.append(path)
+    )
 
-    engine._copy_to_parquet(con, "SELECT 1 AS ok", "s3://lakehouse/silver/x/data.parquet")
+    engine._copy_to_parquet(
+        con, "SELECT 1 AS ok", "s3://lakehouse/silver/x/data.parquet"
+    )
 
     assert uploaded == [
         ("/tmp/omega-materialize-test.parquet", "s3://lakehouse/silver/x/data.parquet")
@@ -125,7 +133,9 @@ def test_aws_s3_without_static_keys_uses_credential_chain(monkeypatch):
     monkeypatch.delenv("MINIO_ACCESS_KEY", raising=False)
     monkeypatch.delenv("MINIO_SECRET_KEY", raising=False)
     monkeypatch.setenv("AWS_REGION", "us-east-1")
-    monkeypatch.setattr("refinement.app.duckdb_engine.duckdb.connect", lambda: FakeConn())
+    monkeypatch.setattr(
+        "refinement.app.duckdb_engine.duckdb.connect", lambda: FakeConn()
+    )
 
     engine = DuckDBEngine()
     engine._conn()
@@ -149,13 +159,18 @@ def test_gcs_lakehouse_configures_duckdb_gcs_secret(monkeypatch):
     monkeypatch.setenv("GCS_BUCKET", "modecissions-gcs-lakehouse")
     monkeypatch.setenv("GCS_ACCESS_KEY_ID", "gcs-key")
     monkeypatch.setenv("GCS_SECRET_ACCESS_KEY", "gcs-secret")
-    monkeypatch.setattr("refinement.app.duckdb_engine.duckdb.connect", lambda: FakeConn())
+    monkeypatch.setattr(
+        "refinement.app.duckdb_engine.duckdb.connect", lambda: FakeConn()
+    )
 
     engine = DuckDBEngine()
     engine._conn()
 
     combined = "\n".join(statements)
-    assert engine._storage_uri("raw/x.parquet") == "gs://modecissions-gcs-lakehouse/raw/x.parquet"
+    assert (
+        engine._storage_uri("raw/x.parquet")
+        == "gs://modecissions-gcs-lakehouse/raw/x.parquet"
+    )
     assert "TYPE gcs" in combined
     assert "KEY_ID 'gcs-key'" in combined
     assert "SECRET " in combined
@@ -174,7 +189,9 @@ def test_gcs_lakehouse_sanitizes_duckdb_secret_setup_errors(monkeypatch):
     monkeypatch.setenv("GCS_BUCKET", "modecissions-gcs-lakehouse")
     monkeypatch.setenv("GCS_ACCESS_KEY_ID", "gcs-key")
     monkeypatch.setenv("GCS_SECRET_ACCESS_KEY", "gcs-secret")
-    monkeypatch.setattr("refinement.app.duckdb_engine.duckdb.connect", lambda: FakeConn())
+    monkeypatch.setattr(
+        "refinement.app.duckdb_engine.duckdb.connect", lambda: FakeConn()
+    )
 
     engine = DuckDBEngine()
 
@@ -199,11 +216,15 @@ def test_gcs_lakehouse_requires_hmac_for_duckdb_reads(monkeypatch):
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "aws-secret-must-not-be-used")
     monkeypatch.setenv("MINIO_ACCESS_KEY", "minio-key-must-not-be-used")
     monkeypatch.setenv("MINIO_SECRET_KEY", "minio-secret-must-not-be-used")
-    monkeypatch.setattr("refinement.app.duckdb_engine.duckdb.connect", lambda: FakeConn())
+    monkeypatch.setattr(
+        "refinement.app.duckdb_engine.duckdb.connect", lambda: FakeConn()
+    )
 
     engine = DuckDBEngine()
 
-    with pytest.raises(ValueError, match="GCS lakehouse refinement reads require HMAC credentials"):
+    with pytest.raises(
+        ValueError, match="GCS lakehouse refinement reads require HMAC credentials"
+    ):
         engine._conn()
 
 
@@ -218,7 +239,9 @@ def test_minio_uses_path_style(monkeypatch):
     monkeypatch.setenv("MINIO_ENDPOINT", "minio:9000")
     monkeypatch.setenv("MINIO_ACCESS_KEY", "minio")
     monkeypatch.setenv("MINIO_SECRET_KEY", "secret")
-    monkeypatch.setattr("refinement.app.duckdb_engine.duckdb.connect", lambda: FakeConn())
+    monkeypatch.setattr(
+        "refinement.app.duckdb_engine.duckdb.connect", lambda: FakeConn()
+    )
 
     engine = DuckDBEngine()
     engine._conn()
@@ -232,7 +255,9 @@ def test_missing_materialized_dependencies_reports_unready_silver_sources(monkey
     monkeypatch.setattr(
         engine,
         "_latest_materialized_uri",
-        lambda _layer, _cartridge, name, _ctx: "s3://lakehouse/ok.parquet" if name == "ready" else None,
+        lambda _layer, _cartridge, name, _ctx: "s3://lakehouse/ok.parquet"
+        if name == "ready"
+        else None,
     )
 
     missing = engine.missing_materialized_dependencies(
@@ -279,7 +304,10 @@ def test_aws_s3_upload_uses_boto3_credential_chain(monkeypatch):
             False,
         )
     ]
-    assert result == "s3://modecissions-lakehouse-test/silver/hubspot/hubspot_deals_latest/data.parquet"
+    assert (
+        result
+        == "s3://modecissions-lakehouse-test/silver/hubspot/hubspot_deals_latest/data.parquet"
+    )
 
 
 def test_aws_s3_delete_prefix_uses_boto3_credential_chain(monkeypatch):
@@ -297,7 +325,9 @@ def test_aws_s3_delete_prefix_uses_boto3_credential_chain(monkeypatch):
     engine = DuckDBEngine()
     engine.storage = FakeStorage()
 
-    engine._delete_s3_prefix("s3://modecissions-lakehouse-test/silver/hubspot/hubspot_deals_latest/data.parquet")
+    engine._delete_s3_prefix(
+        "s3://modecissions-lakehouse-test/silver/hubspot/hubspot_deals_latest/data.parquet"
+    )
 
     assert deleted == [("silver/hubspot/hubspot_deals_latest/data.parquet", False)]
 
@@ -323,7 +353,9 @@ def test_scope_storage_sql_rewrites_registered_silver_to_latest_snapshot(monkeyp
         "s3://lakehouse/silver/hubspot/hubspot_deals_latest/"
         "tenant_id=tenant-1/workspace_id=workspace-1/_snapshots/20260531.parquet"
     )
-    monkeypatch.setattr(engine, "_latest_materialized_uri", lambda *args, **kwargs: latest)
+    monkeypatch.setattr(
+        engine, "_latest_materialized_uri", lambda *args, **kwargs: latest
+    )
     sql = "SELECT * FROM read_parquet('s3://lakehouse/silver/hubspot/hubspot_deals_latest/data.parquet')"
 
     rewritten = engine._scope_storage_sql(
@@ -342,7 +374,9 @@ def test_managed_materialized_dataset_uses_latest_snapshot(monkeypatch):
         "s3://lakehouse/gold/banxico/banxico_market_context/"
         "tenant_id=tenant-1/workspace_id=workspace-1/_snapshots/20260713.parquet"
     )
-    monkeypatch.setattr(engine, "_latest_materialized_uri", lambda *args, **kwargs: latest)
+    monkeypatch.setattr(
+        engine, "_latest_materialized_uri", lambda *args, **kwargs: latest
+    )
 
     sql = engine._managed_materialized_sql(
         {
@@ -366,7 +400,9 @@ def test_query_dataset_uses_managed_materialized_snapshot(monkeypatch):
         "tenant_id=tenant-1/workspace_id=workspace-1/_snapshots/20260713.parquet"
     )
     captured = {}
-    monkeypatch.setattr(engine, "_latest_materialized_uri", lambda *args, **kwargs: latest)
+    monkeypatch.setattr(
+        engine, "_latest_materialized_uri", lambda *args, **kwargs: latest
+    )
 
     def fake_preview_sql(sql, *args, **kwargs):
         captured["sql"] = sql
@@ -391,13 +427,17 @@ def test_query_dataset_uses_managed_materialized_snapshot(monkeypatch):
 
 
 @pytest.mark.parametrize("glob", ["*.parquet", "**/*.parquet"])
-def test_scope_storage_sql_rewrites_registered_silver_globs_to_latest_snapshot(monkeypatch, glob):
+def test_scope_storage_sql_rewrites_registered_silver_globs_to_latest_snapshot(
+    monkeypatch, glob
+):
     engine = DuckDBEngine()
     latest = (
         "s3://lakehouse/silver/hubspot/hubspot_deals_latest/"
         "tenant_id=tenant-1/workspace_id=workspace-1/_snapshots/20260531.parquet"
     )
-    monkeypatch.setattr(engine, "_latest_materialized_uri", lambda *args, **kwargs: latest)
+    monkeypatch.setattr(
+        engine, "_latest_materialized_uri", lambda *args, **kwargs: latest
+    )
     sql = f"SELECT * FROM read_parquet('s3://lakehouse/silver/hubspot/hubspot_deals_latest/{glob}')"
 
     rewritten = engine._scope_storage_sql(
@@ -430,36 +470,52 @@ def test_validate_scoped_storage_sql_rejects_unapproved_bucket():
         )
 
 
-def test_latest_materialized_uri_uses_parameterized_s3_like(monkeypatch):
+def test_latest_materialized_uri_uses_pinned_publication_snapshot(monkeypatch):
+    import importlib
+
+    from refinement.app import publication_snapshot
+
     captured: dict[str, object] = {}
 
-    class FakeCursor:
-        def __enter__(self):
-            return self
+    class Resolver:
+        def __init__(self, storage):
+            captured["storage"] = storage
 
-        def __exit__(self, *args):
-            return None
+        def published_snapshot(self, dataset, context):
+            captured["dataset"] = dataset
+            captured["context"] = context
+            return SimpleNamespace(
+                head={
+                    "object_uri": (
+                        "s3://lakehouse/silver/hubspot/x/"
+                        "tenant_id=tenant-a/workspace_id=workspace-a/version.parquet"
+                    )
+                }
+            )
 
-        def execute(self, query, params):
-            captured["query"] = query
-            captured["params"] = params
-
-        def fetchone(self):
-            return ("s3://lakehouse/silver/hubspot/x/_snapshots/latest.parquet",)
-
-    class FakeConn:
-        def cursor(self):
-            return FakeCursor()
-
-        def close(self):
-            pass
-
+    monkeypatch.setattr(publication_snapshot, "PublicationSnapshotResolver", Resolver)
+    try:
+        app_snapshot = importlib.import_module("app.publication_snapshot")
+    except ModuleNotFoundError:
+        app_snapshot = None
+    if app_snapshot is not None:
+        monkeypatch.setattr(app_snapshot, "PublicationSnapshotResolver", Resolver)
     engine = DuckDBEngine()
-    monkeypatch.setattr(engine, "_pg_conn", lambda: FakeConn())
+    uri = engine._latest_materialized_uri(
+        "silver",
+        "hubspot",
+        "x",
+        {"tenant_id": "tenant-a", "workspace_id": "workspace-a"},
+    )
 
-    uri = engine._latest_materialized_uri("silver", "hubspot", "x")
-
-    assert uri == "s3://lakehouse/silver/hubspot/x/_snapshots/latest.parquet"
-    assert "storage_uri LIKE %s" in str(captured["query"])
-    assert "'s3://%'" not in str(captured["query"])
-    assert captured["params"] == ["x", "hubspot", "silver", "s3://%"]
+    assert uri.endswith("/version.parquet")
+    assert captured["dataset"] == {
+        "name": "x",
+        "layer": "silver",
+        "cartridge": "hubspot",
+    }
+    assert captured["context"] == {
+        "tenant_id": "tenant-a",
+        "workspace_id": "workspace-a",
+    }
+    assert engine._latest_materialized_uri("silver", "hubspot", "x") is None

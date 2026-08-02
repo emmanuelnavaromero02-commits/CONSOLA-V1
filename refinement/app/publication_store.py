@@ -117,12 +117,16 @@ class PublicationStore:
             self._scope(cur, scope)
             cur.execute(
                 """
-                SELECT h.materialization_run_id, h.generation, r.object_uri,
-                       r.object_checksum, r.row_count, r.status, h.published_at,
-                       r.input_digest, r.contract_digest, r.gold_table
+                SELECT h.materialization_run_id,h.generation,r.object_uri,
+                       r.object_version,r.object_checksum,r.row_count,r.status,
+                       h.published_at,
+                       r.input_digest, r.contract_digest, r.gold_table,
+                       rec.receipt_id, rec.evidence_digest
                   FROM omega_publication.dataset_publication_heads h
                   JOIN omega_publication.materialization_runs r
                     ON r.materialization_run_id=h.materialization_run_id
+                  LEFT JOIN omega_publication.materialization_receipts rec
+                    ON rec.materialization_run_id=h.materialization_run_id
                  WHERE h.tenant_id=%s AND h.workspace_id=%s
                    AND h.dataset=%s AND h.layer=%s
                 """,
@@ -135,20 +139,23 @@ class PublicationStore:
                 "materialization_run_id": str(row[0]),
                 "generation": int(row[1]),
                 "object_uri": row[2],
-                "object_checksum": row[3],
-                "row_count": row[4],
-                "status": row[5],
-                "published_at": row[6],
-                "input_digest": row[7],
-                "contract_digest": row[8],
-                "gold_table": row[9],
+                "object_version": row[3],
+                "object_checksum": row[4],
+                "row_count": row[5],
+                "status": row[6],
+                "published_at": row[7],
+                "input_digest": row[8],
+                "contract_digest": row[9],
+                "gold_table": row[10],
+                "receipt_id": str(row[11]) if row[11] else None,
+                "evidence_digest": row[12],
             }
 
     def run(self, identity: PublicationIdentity) -> dict[str, Any] | None:
         with psycopg2.connect(self._publisher_url()) as conn, conn.cursor() as cur:
             self._scope(cur, identity.scope)
             cur.execute(
-                """SELECT status, object_uri, object_checksum, row_count,
+                """SELECT status,object_uri,object_version,object_checksum,row_count,
                           expected_head_run_id
                      FROM omega_publication.materialization_runs
                     WHERE materialization_run_id=%s""",
@@ -159,9 +166,10 @@ class PublicationStore:
                 {
                     "status": row[0],
                     "object_uri": row[1],
-                    "object_checksum": row[2],
-                    "row_count": row[3],
-                    "expected_head_run_id": str(row[4]) if row[4] else None,
+                    "object_version": row[2],
+                    "object_checksum": row[3],
+                    "row_count": row[4],
+                    "expected_head_run_id": str(row[5]) if row[5] else None,
                 }
                 if row
                 else None
@@ -199,6 +207,7 @@ class PublicationStore:
         identity: PublicationIdentity,
         *,
         object_uri: str,
+        object_version: str,
         object_checksum: str,
         row_count: int,
         staging_table: str | None,
@@ -213,10 +222,11 @@ class PublicationStore:
         with psycopg2.connect(self._publisher_url()) as conn, conn.cursor() as cur:
             self._scope(cur, identity.scope)
             cur.execute(
-                "SELECT schema_digest,evidence_digest FROM omega_publication.mark_prepared(%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb)",
+                "SELECT schema_digest,evidence_digest FROM omega_publication.mark_prepared(%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb)",
                 (
                     str(identity.materialization_run_id),
                     object_uri,
+                    object_version,
                     object_checksum,
                     row_count,
                     gold_table,
@@ -261,3 +271,27 @@ class PublicationStore:
                 "SELECT omega_publication.quarantine_prepared(%s,%s)",
                 (str(identity.materialization_run_id), str(reason or "")[:240]),
             )
+
+    def reopen_prepared(
+        self, identity: PublicationIdentity, reason: str
+    ) -> dict[str, Any]:
+        with psycopg2.connect(self._publisher_url()) as conn, conn.cursor() as cur:
+            self._scope(cur, identity.scope)
+            cur.execute(
+                "SELECT * FROM omega_publication.reopen_prepared_materialization(%s,%s)",
+                (str(identity.materialization_run_id), str(reason or "")[:240]),
+            )
+            row = cur.fetchone()
+        if not row:
+            raise RuntimeError("prepared materialization was not reopened")
+        return {
+            "object_uri": row[0],
+            "object_version": row[1],
+            "object_checksum": row[2],
+            "row_count": int(row[3]),
+            "staging_table": row[4],
+            "gold_table": row[5],
+            "lineage": row[6],
+            "catalog": row[7],
+            "expected_head_run_id": str(row[8]) if row[8] else None,
+        }

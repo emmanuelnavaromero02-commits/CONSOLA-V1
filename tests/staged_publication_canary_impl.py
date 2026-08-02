@@ -72,8 +72,17 @@ def C3_lineage_failure(stack):
         stack.sql(
             stack.publisher_dsn,
             (TENANT_A, WORKSPACE_A),
-            "SELECT * FROM omega_publication.mark_prepared(%s,%s,%s,1,%s,%s,%s::jsonb,%s::jsonb)",
-            (str(new), uri, checksum, stage, stage, "{}", valid_catalog()),
+            "SELECT * FROM omega_publication.mark_prepared(%s,%s,%s,%s,1,%s,%s,%s::jsonb,%s::jsonb)",
+            (
+                str(new),
+                uri,
+                stack.object_version(uri),
+                checksum,
+                stage,
+                stage,
+                "{}",
+                valid_catalog(),
+            ),
         )
     _assert_old(stack, dataset, before)
 
@@ -87,10 +96,11 @@ def C4_catalog_failure(stack):
         stack.sql(
             stack.publisher_dsn,
             (TENANT_A, WORKSPACE_A),
-            "SELECT * FROM omega_publication.mark_prepared(%s,%s,%s,1,%s,%s,%s::jsonb,%s::jsonb)",
+            "SELECT * FROM omega_publication.mark_prepared(%s,%s,%s,%s,1,%s,%s,%s::jsonb,%s::jsonb)",
             (
                 str(new),
                 uri,
+                stack.object_version(uri),
                 checksum,
                 stage,
                 stage,

@@ -115,8 +115,15 @@ def test_silver_prepare_rejects_caller_owned_fake_evidence(
             stack.publisher_dsn,
             (TENANT_A, WORKSPACE_A),
             "SELECT * FROM omega_publication.mark_prepared("
-            "%s,%s,%s,999,NULL,NULL,%s::jsonb,%s::jsonb)",
-            (str(run), uri, checksum, valid_lineage(), forged_catalog),
+            "%s,%s,%s,%s,999,NULL,NULL,%s::jsonb,%s::jsonb)",
+            (
+                str(run),
+                uri,
+                stack.object_version(uri),
+                checksum,
+                valid_lineage(),
+                forged_catalog,
+            ),
         )
     assert stack.head("caller_evidence_probe") is None
 
@@ -131,13 +138,26 @@ def test_publisher_cannot_mint_server_attestation(
         stack, "attestation_privilege_probe", run, _parquet_bytes(3)
     )
     lineage = stack.bound_lineage(run, valid_lineage())
+    candidate_id = stack.sql(
+        stack.publisher_dsn,
+        (TENANT_A, WORKSPACE_A),
+        "SELECT omega_publication.submit_verification_candidate("
+        "%s,%s,%s,%s,1,%s::jsonb,%s::jsonb)",
+        (
+            str(run),
+            uri,
+            stack.object_version(uri),
+            checksum,
+            lineage,
+            valid_catalog(),
+        ),
+    )[0][0]
     with pytest.raises(psycopg2.Error) as denied:
         stack.sql(
             stack.publisher_dsn,
             (TENANT_A, WORKSPACE_A),
-            "SELECT omega_publication.record_attestation("
-            "%s,%s,%s,1,%s::jsonb,%s::jsonb)",
-            (str(run), uri, checksum, lineage, valid_catalog()),
+            "SELECT omega_publication.record_attestation(%s)",
+            (candidate_id,),
         )
     assert denied.value.pgcode == "42501"
     assert stack.head("attestation_privilege_probe") is None
@@ -241,13 +261,18 @@ def test_corrupt_prepared_run_becomes_recoverable_instead_of_stuck(
     engine._publication_store.mark_prepared(
         identity,
         object_uri=uri,
+        object_version=stack.object_version(uri),
         object_checksum=checksum,
         row_count=1,
         staging_table=None,
         lineage=lineage,
         catalog=catalog,
     )
-    stack.s3.delete_object(Bucket="lakehouse", Key=urlsplit(uri).path.lstrip("/"))
+    stack.s3.delete_object(
+        Bucket="lakehouse",
+        Key=urlsplit(uri).path.lstrip("/"),
+        VersionId=stack.object_version(uri),
+    )
 
     with pytest.raises(RuntimeError, match="recoverable"):
         engine.materialize(dataset, _scope())

@@ -7,14 +7,12 @@ from sqlglot import exp
 
 try:
     from app.publication_contract import canonical_digest
-    from app.publication_contract import PublicationScope
     from app.publication_inputs import resolve_input_state
-    from app.publication_reader import PublicationReader
+    from app.publication_snapshot import PublicationSnapshotResolver
 except ModuleNotFoundError:
     from refinement.app.publication_contract import canonical_digest
-    from refinement.app.publication_contract import PublicationScope
     from refinement.app.publication_inputs import resolve_input_state
-    from refinement.app.publication_reader import PublicationReader
+    from refinement.app.publication_snapshot import PublicationSnapshotResolver
 
 
 def _quote(value: str) -> str:
@@ -43,9 +41,11 @@ class PublicationInputBindingMixin:
         if item is not None:
             published = item.get("published")
             return str((published or {}).get("uri") or "") or None
-        return PublicationReader(self._publication_store).published_object(
-            layer, cartridge, name, user_context
+        context = user_context or {}
+        snapshot = PublicationSnapshotResolver(self.storage).published_snapshot(
+            {"name": name, "layer": layer, "cartridge": cartridge}, context
         )
+        return str((snapshot.head if snapshot else {}).get("object_uri") or "") or None
 
     def get_rls_filters(self, sql: str, user_context: dict) -> tuple[str, list]:
         context = user_context or {}
@@ -61,9 +61,11 @@ class PublicationInputBindingMixin:
                 if not name.startswith("gold_"):
                     continue
                 dataset = name.removeprefix("gold_")
-                head = self._publication_store.head(
-                    PublicationScope(tenant, workspace, dataset, "gold")
+                snapshot = PublicationSnapshotResolver(self.storage).published_snapshot(
+                    {"name": dataset, "layer": "gold", "cartridge": "registered"},
+                    {"tenant_id": tenant, "workspace_id": workspace},
                 )
+                head = snapshot.head if snapshot else None
                 if not head:
                     raise ValueError("Gold dataset is not published")
                 items[f"gold/registered/{dataset}"] = {"published": head}

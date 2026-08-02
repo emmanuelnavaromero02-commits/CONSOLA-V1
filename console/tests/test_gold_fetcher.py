@@ -34,6 +34,9 @@ class _FakeConn:
             "receipt_id": None,
             "object_checksum": None,
             "evidence_digest": None,
+            "object_uri": None,
+            "object_version": None,
+            "schema_digest": None,
         }
 
     async def execute(self, sql: str, *args: object):

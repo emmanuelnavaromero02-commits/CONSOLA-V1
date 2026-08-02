@@ -23,23 +23,37 @@ from runtime.dataset_refresh_outcome import (
 
 
 @contextmanager
-def unavailable_publication_table(table: str) -> Iterator[None]:
-    assert table in {"materialization_evidence", "materialization_receipts"}
-    unavailable = f"e2e_unavailable_{table}_{uuid.uuid4().hex[:8]}"
+def reject_receipt_inserts() -> Iterator[None]:
+    function = "e2e_reject_receipt_insert"
+    trigger = "e2e_reject_receipt_insert"
     dsn = os.environ["GOLD_POSTGRES_DSN"]
     with psycopg.connect(dsn, autocommit=True) as conn:
         conn.execute(
-            sql.SQL("ALTER TABLE omega_publication.{} RENAME TO {}").format(
-                sql.Identifier(table), sql.Identifier(unavailable)
-            )
+            sql.SQL(
+                "CREATE FUNCTION omega_publication.{}() RETURNS trigger "
+                "LANGUAGE plpgsql AS $$ BEGIN "
+                "RAISE EXCEPTION 'e2e receipt insert rejected'; END $$"
+            ).format(sql.Identifier(function))
+        )
+        conn.execute(
+            sql.SQL(
+                "CREATE TRIGGER {} BEFORE INSERT ON "
+                "omega_publication.materialization_receipts FOR EACH ROW "
+                "EXECUTE FUNCTION omega_publication.{}()"
+            ).format(sql.Identifier(trigger), sql.Identifier(function))
         )
     try:
         yield
     finally:
         with psycopg.connect(dsn, autocommit=True) as conn:
             conn.execute(
-                sql.SQL("ALTER TABLE omega_publication.{} RENAME TO {}").format(
-                    sql.Identifier(unavailable), sql.Identifier(table)
+                sql.SQL(
+                    "DROP TRIGGER {} ON " "omega_publication.materialization_receipts"
+                ).format(sql.Identifier(trigger))
+            )
+            conn.execute(
+                sql.SQL("DROP FUNCTION omega_publication.{}()").format(
+                    sql.Identifier(function)
                 )
             )
 

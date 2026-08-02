@@ -532,35 +532,22 @@ class DuckDBEngine:
             return None
         validate_safe_identifier(cartridge, "cartridge")
         validate_safe_identifier(name, "dataset")
-        clauses = [
-            "silver_name = %s",
-            "cartridge_id = %s",
-            "layer = %s",
-            "storage_uri IS NOT NULL",
-            "storage_uri <> ''",
-            "storage_uri LIKE %s",
-        ]
-        params: list[str] = [name, cartridge, layer, f"{self._storage_scheme()}://%"]
         tenant, workspace = self._scope_values(user_context)
-        if tenant and workspace:
-            clauses.append("storage_uri LIKE %s")
-            params.append(f"%/tenant_id={tenant}/workspace_id={workspace}/%")
+        if not tenant or not workspace:
+            return None
         try:
-            conn = self._pg_conn()
-            with conn.cursor() as cur:
-                cur.execute(
-                    f"""
-                    SELECT storage_uri
-                    FROM silver_lineage
-                    WHERE {' AND '.join(clauses)}
-                    ORDER BY created_at DESC, id DESC
-                    LIMIT 1
-                    """,
-                    params,
+            try:
+                from app.publication_snapshot import PublicationSnapshotResolver
+            except ModuleNotFoundError:
+                from refinement.app.publication_snapshot import (
+                    PublicationSnapshotResolver,
                 )
-                row = cur.fetchone()
-            conn.close()
-            return str(row[0]) if row and row[0] else None
+            snapshot = PublicationSnapshotResolver(self.storage).published_snapshot(
+                {"name": name, "layer": layer, "cartridge": cartridge},
+                {"tenant_id": tenant, "workspace_id": workspace},
+            )
+            uri = str((snapshot.head if snapshot else {}).get("object_uri") or "")
+            return uri or None
         except Exception:
             return None
 

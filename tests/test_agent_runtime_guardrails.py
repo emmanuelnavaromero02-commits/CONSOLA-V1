@@ -31,7 +31,11 @@ def agent_runtime(monkeypatch):
     async def noop_record_event(*_args, **_kwargs):
         return None
 
+    async def noop_scheduled_audit(*_args, **_kwargs):
+        return None
+
     monkeypatch.setattr(mod.audit_service, "record_event", noop_record_event)
+    monkeypatch.setattr(mod, "_record_scheduled_audit", noop_scheduled_audit)
     return mod
 
 
@@ -150,6 +154,11 @@ async def test_scheduled_monitor_can_raise_advisory_control_room_alert(
     monkeypatch.setenv("INTERNAL_API_KEY", "transport-key-" + "x" * 40)
     monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", "signing-key-" + "y" * 40)
 
+    async def capture_audit(_agent, _schedule_run_id, _fencing_token, **values):
+        captured["audit"] = values
+
+    monkeypatch.setattr(agent_runtime, "_record_scheduled_audit", capture_audit)
+
     class Response:
         status_code = 200
         text = "{}"
@@ -239,6 +248,8 @@ async def test_scheduled_monitor_can_raise_advisory_control_room_alert(
     assert "control_room.write" in ctx["permissions"]
     assert "control_room.execute" not in ctx["permissions"]
     assert "_signature" in ctx
+    assert "effect_authority" not in captured["audit"]["tool_args"]
+    assert "action_handle" not in captured["audit"]["tool_args"]
 
 
 @pytest.mark.asyncio

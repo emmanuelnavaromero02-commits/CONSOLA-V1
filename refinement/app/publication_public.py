@@ -7,12 +7,16 @@ from urllib.parse import urlsplit
 
 try:
     from app.publication_contract import PublicationScope
-    from app.publication_evidence import PublicationEvidenceStore
-    from app.publication_reader import PublicationReader
+    from app.publication_snapshot import (
+        PublicationSnapshot,
+        PublicationSnapshotResolver,
+    )
 except ModuleNotFoundError:
     from refinement.app.publication_contract import PublicationScope
-    from refinement.app.publication_evidence import PublicationEvidenceStore
-    from refinement.app.publication_reader import PublicationReader
+    from refinement.app.publication_snapshot import (
+        PublicationSnapshot,
+        PublicationSnapshotResolver,
+    )
 
 
 def _context(security_context: dict[str, Any] | None) -> dict[str, str]:
@@ -45,7 +49,10 @@ def _public_source_entity(value: object) -> str:
     path = parsed.path.lstrip("/") if parsed.scheme else raw.strip("/")
     parts = path.split("/")
     if len(parts) >= 3 and parts[0].lower() in {"raw", "silver", "gold"}:
-        candidate = parts[2]
+        values = parts[:3]
+        if not all(_PUBLIC_SOURCE.fullmatch(part) for part in values):
+            return ""
+        return "/".join(values)
     elif len(parts) == 1:
         candidate = parts[0]
     else:
@@ -93,21 +100,20 @@ def _public_relationship(value: object, *, from_dataset: str) -> dict[str, str] 
 
 
 def published_lineage(
-    ds: dict[str, Any], security_context: dict[str, Any] | None
+    ds: dict[str, Any],
+    security_context: dict[str, Any] | None,
+    resolver: PublicationSnapshotResolver | None = None,
 ) -> dict[str, Any]:
     context = _context(security_context)
     name = str(ds.get("name") or "")
     if not context["tenant_id"] or not context["workspace_id"]:
         return {"name": name, "lineage": []}
-    scope = _scope(ds, context)
-    head = PublicationReader().published_head(
-        scope.layer, str(ds.get("cartridge") or ""), name, context
+    snapshot = (resolver or PublicationSnapshotResolver()).published_snapshot(
+        ds, context
     )
-    if not head or head.get("status") == "legacy_unverified":
+    if not snapshot or snapshot.head.get("status") == "legacy_unverified":
         return {"name": name, "lineage": []}
-    evidence = PublicationEvidenceStore().read_exact(
-        str(head["materialization_run_id"]), scope
-    )
+    evidence = snapshot.evidence
     if not evidence:
         return {"name": name, "lineage": [], "degraded": True}
     source = dict(evidence["lineage"])
@@ -120,7 +126,7 @@ def published_lineage(
         {
             "silver_name": name,
             "cartridge_id": ds.get("cartridge") or "",
-            "layer": scope.layer,
+            "layer": snapshot.scope.layer,
             "row_count": evidence["row_count"],
             "created_at": evidence["created_at"].isoformat(),
         }
@@ -129,26 +135,26 @@ def published_lineage(
 
 
 def published_dataset_metadata(
-    ds: dict[str, Any], security_context: dict[str, Any] | None
+    ds: dict[str, Any],
+    security_context: dict[str, Any] | None,
+    resolver: PublicationSnapshotResolver | None = None,
 ) -> dict[str, Any] | None:
     context = _context(security_context)
     if not context["tenant_id"] or not context["workspace_id"]:
         return None
-    head = PublicationReader().published_head(
-        str(ds.get("layer") or "silver"),
-        str(ds.get("cartridge") or ""),
-        str(ds.get("name") or ""),
-        context,
+    snapshot = (resolver or PublicationSnapshotResolver()).published_snapshot(
+        ds, context
     )
-    if not head:
+    if not snapshot:
         return None
-    evidence = None
-    if head.get("status") != "legacy_unverified":
-        evidence = PublicationEvidenceStore().read_exact(
-            str(head["materialization_run_id"]), _scope(ds, context)
-        )
-        if not evidence:
-            return None
+    return public_dataset_projection(ds, snapshot)
+
+
+def public_dataset_projection(
+    ds: dict[str, Any], snapshot: PublicationSnapshot
+) -> dict[str, Any]:
+    """Project metadata and schema from one already-pinned publication epoch."""
+    head, evidence = snapshot.head, snapshot.evidence
     lineage = (evidence or {}).get("lineage") or {}
     public_metadata = lineage.get("public_metadata") or {}
     public_sources = [
@@ -156,6 +162,14 @@ def published_dataset_metadata(
         for value in lineage.get("public_sources") or []
         if (source := _public_source_entity(value))
     ]
+    fields = []
+    for value in (evidence or {}).get("catalog", []):
+        if not isinstance(value, dict):
+            continue
+        name = _public_text(value.get("name"))
+        data_type = _public_text(value.get("type"))
+        if name and data_type:
+            fields.append({"name": name, "type": data_type})
     return {
         "name": str(ds.get("name") or ""),
         "layer": str(ds.get("layer") or "silver"),
@@ -169,6 +183,7 @@ def published_dataset_metadata(
         else "published",
         "description": _public_text(public_metadata.get("description")),
         "sources": public_sources,
+        "fields": fields,
     }
 
 
@@ -180,14 +195,16 @@ def published_catalog(
     cartridge: str | None = None,
     tags: list[str] | None = None,
     datasets: list[str] | None = None,
+    resolver: PublicationSnapshotResolver | None = None,
 ) -> dict[str, Any]:
     context = _context(security_context)
     if not context["tenant_id"] or not context["workspace_id"]:
         return {"datasets": {}, "relationships": []}
-    reader = PublicationReader()
-    evidence_store = PublicationEvidenceStore()
+    resolver = resolver or PublicationSnapshotResolver()
+    metadata = list(datasets_meta)
     output: dict[str, Any] = {}
-    for ds in datasets_meta:
+    snapshot_by_dataset: dict[str, PublicationSnapshot] = {}
+    for ds in metadata:
         name = str(ds.get("name") or "")
         ds_layer = str(ds.get("layer") or "silver")
         ds_cartridge = str(ds.get("cartridge") or "")
@@ -199,17 +216,12 @@ def published_catalog(
             continue
         if datasets and name not in datasets:
             continue
-        scope = _scope(ds, context)
-        head = reader.published_head(ds_layer, ds_cartridge, name, context)
-        if not head:
+        snapshot = resolver.published_snapshot(ds, context)
+        if not snapshot:
             continue
-        evidence = None
-        if head.get("status") != "legacy_unverified":
-            evidence = evidence_store.read_exact(
-                str(head["materialization_run_id"]), scope
-            )
-            if not evidence:
-                continue
+        snapshot.validate_snapshot()
+        snapshot_by_dataset[name] = snapshot
+        head, evidence = snapshot.head, snapshot.evidence
         columns = []
         for field in (evidence or {}).get("catalog", []):
             field_tags = _public_tags(field.get("tags"))
@@ -242,17 +254,15 @@ def published_catalog(
             "columns": columns,
         }
     relationships = []
-    for ds in datasets_meta:
+    for ds in metadata:
         name = str(ds.get("name") or "")
         if name not in output:
             continue
-        scope = _scope(ds, context)
-        head = reader.published_head(
-            scope.layer, str(ds.get("cartridge") or ""), name, context
-        )
+        snapshot = snapshot_by_dataset.get(name)
+        head = snapshot.head if snapshot else None
         if not head or head.get("status") == "legacy_unverified":
             continue
-        evidence = evidence_store.read_exact(str(head["materialization_run_id"]), scope)
+        evidence = snapshot.evidence
         metadata = ((evidence or {}).get("lineage") or {}).get("public_metadata") or {}
         for value in metadata.get("relationships") or []:
             if relationship := _public_relationship(value, from_dataset=name):

@@ -3,9 +3,9 @@ from __future__ import annotations
 from typing import Any
 
 try:
-    from app.publication_reader import PublicationReader
+    from app.publication_snapshot import PublicationSnapshotResolver
 except ModuleNotFoundError:
-    from refinement.app.publication_reader import PublicationReader
+    from refinement.app.publication_snapshot import PublicationSnapshotResolver
 
 
 def _raw_prefix(engine: Any, source: str, context: dict[str, Any] | None) -> str:
@@ -39,16 +39,18 @@ def _published_state(
     engine: Any, source: str, context: dict[str, Any] | None
 ) -> dict[str, Any]:
     layer, cartridge, dataset = source.strip("/").split("/", 2)
-    head = PublicationReader(engine._publication_store).published_head(
-        layer, cartridge, dataset, context
+    snapshot = PublicationSnapshotResolver(engine.storage).published_snapshot(
+        {"name": dataset, "layer": layer, "cartridge": cartridge}, context or {}
     )
+    head = snapshot.head if snapshot else None
     if not head:
         return {"source": source, "published": None}
     uri = str(head.get("object_uri") or "")
     key = engine._s3_object_key(uri)
     if not key:
         raise RuntimeError("published dependency is outside managed storage")
-    actual_checksum = engine._object_checksum(key)
+    version = str(head.get("object_version") or "")
+    actual_checksum = engine._object_checksum(key, version)
     if actual_checksum != str(head.get("object_checksum") or ""):
         raise RuntimeError("published dependency checksum mismatch")
     return {
@@ -57,6 +59,7 @@ def _published_state(
             "run": head["materialization_run_id"],
             "generation": head["generation"],
             "checksum": actual_checksum,
+            "object_version": version,
             "uri": uri,
             "status": head.get("status"),
             "gold_table": head.get("gold_table"),

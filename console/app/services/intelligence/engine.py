@@ -31,6 +31,17 @@ from app.services.intelligence.persistence import (
     record_outcome,
     select_option,
 )
+from app.services.intelligence.outcome_binding import (
+    persist_gold_refresh_binding,
+    persist_gold_refresh_pending,
+    resume_failed_gold_refresh,
+    stage_gold_refresh_authority,
+)
+from app.services.intelligence.publication_trace import (
+    capture_publication_trace,
+    current_publication_trace,
+    publication_trace_active,
+)
 from app.services.intelligence.utils import (
     DEFAULT_LIMIT,
     DatasetFetcher,
@@ -78,7 +89,9 @@ def _requested_calibration_groups(
     groups: set[str] = set()
     for contract in contracts:
         source_system = str(contract.get("cartridge") or "")
-        metrics = contract.get("metrics") if isinstance(contract.get("metrics"), list) else []
+        metrics = (
+            contract.get("metrics") if isinstance(contract.get("metrics"), list) else []
+        )
         for metric in metrics:
             if not isinstance(metric, dict):
                 continue
@@ -119,12 +132,29 @@ async def run_intelligence(
     fetcher: DatasetFetcher | None = None,
     persist: bool = True,
 ) -> dict[str, Any]:
+    requested_mode = normalize_run_mode(
+        (body or {}).get("run_mode") or (body or {}).get("mode")
+    )
+    if persist and requested_mode == "gold_refresh" and not publication_trace_active():
+        with capture_publication_trace():
+            return await run_intelligence(
+                user,
+                body,
+                fetcher=fetcher,
+                persist=persist,
+            )
     started = time.perf_counter()
     tenant_id, workspace_id = workspace_scope(user)
     allowed = allowed_cartridges(user)
     requested_cartridge = str((body or {}).get("cartridge_id") or "").strip()
-    if requested_cartridge and allowed is not None and requested_cartridge not in allowed:
-        raise HTTPException(403, f"cartridge '{requested_cartridge}' is not active for this workspace")
+    if (
+        requested_cartridge
+        and allowed is not None
+        and requested_cartridge not in allowed
+    ):
+        raise HTTPException(
+            403, f"cartridge '{requested_cartridge}' is not active for this workspace"
+        )
     cartridge_filter = {requested_cartridge} if requested_cartridge else allowed
     contracts = load_contracts(cartridge_filter)
     dataset_filter = _requested_dataset_filter(body)
@@ -134,11 +164,15 @@ async def run_intelligence(
         for item in all_datasets_evaluated
         if not dataset_filter or str(item.get("dataset")) in dataset_filter
     ]
-    metric_filter = {
-        str(value).strip()
-        for value in (body or {}).get("metrics", [])
-        if str(value or "").strip()
-    } if isinstance((body or {}).get("metrics"), list) else set()
+    metric_filter = (
+        {
+            str(value).strip()
+            for value in (body or {}).get("metrics", [])
+            if str(value or "").strip()
+        }
+        if isinstance((body or {}).get("metrics"), list)
+        else set()
+    )
     include_external = bool((body or {}).get("include_external"))
     dry_run = bool((body or {}).get("dry_run"))
     run_mode = normalize_run_mode(
@@ -149,7 +183,9 @@ async def run_intelligence(
         requested_run_ref = ""
     horizons = _requested_horizons(body)
     fetch = fetcher or query_intelligence_dataset_rows
-    calibration_states = await _load_live_calibration_states(user, contracts, metric_filter)
+    calibration_states = await _load_live_calibration_states(
+        user, contracts, metric_filter
+    )
     artifacts: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
     contract_datasets = {
@@ -164,56 +200,92 @@ async def run_intelligence(
         if requested_run_ref:
             existing_run = await get_run_by_ref(user, requested_run_ref)
             if existing_run:
-                skipped_counts = Counter(
-                    str(item.get("status") or "unknown") for item in skipped
-                )
-                return {
-                    "signals": [],
-                    "artifacts": [],
-                    "skipped": skipped,
-                    "contracts": [
-                        {
-                            "cartridge": contract.get("cartridge"),
-                            "domain": contract.get("domain"),
-                            "metrics": [
-                                metric.get("id")
-                                for metric in contract.get("metrics", [])
-                                if isinstance(metric, dict)
-                            ],
-                        }
-                        for contract in contracts
-                    ],
-                    "workspace_id": workspace_id,
-                    "dry_run": dry_run,
-                    "run_mode": run_mode,
-                    "intelligence_run_id": existing_run.get("id"),
-                    "run_ref": existing_run.get("run_ref"),
-                    "idempotent": True,
-                    "status": existing_run.get("status"),
-                    "signals_generated": int(
-                        existing_run.get("signals_generated") or 0
-                    ),
-                    "dataset_unavailable_count": existing_run.get(
-                        "dataset_unavailable_count", 0
-                    ),
-                    "insufficient_history_count": existing_run.get(
-                        "insufficient_history_count", 0
-                    ),
-                    "skipped_counts": dict(skipped_counts),
-                    "generic_gold_signal_count": 0,
-                    "monte_carlo_counts": {},
-                    "math_ruleset_version": RULESET_VERSION,
-                }
-        run_record = await start_intelligence_run(
-            user,
-            request=body or {},
-            source_system=requested_cartridge or None,
-            run_mode=run_mode,
-            datasets_evaluated=datasets_evaluated,
-            run_ref=requested_run_ref or None,
-        )
+                if existing_run.get("status") == "running":
+                    if run_mode == "gold_refresh":
+                        raise RuntimeError("Gold refresh is already in progress")
+                    run_record = existing_run
+                elif existing_run.get("status") == "failed":
+                    run_record = await resume_failed_gold_refresh(
+                        user,
+                        run_id=int(existing_run["id"]),
+                        run_ref=requested_run_ref,
+                        request=body or {},
+                    )
+                else:
+                    if (
+                        run_mode == "gold_refresh"
+                        and existing_run.get("status") == "binding_pending"
+                    ):
+                        await persist_gold_refresh_binding(
+                            user,
+                            expected_run_id=str(
+                                ((body or {}).get("metadata") or {}).get(
+                                    "pipeline_run_id"
+                                )
+                                or ""
+                            ),
+                            expected_run_ref=requested_run_ref,
+                            intelligence_result={
+                                **existing_run,
+                                "intelligence_run_id": existing_run["id"],
+                            },
+                            publication_trace=current_publication_trace(),
+                            expected_datasets=sorted(dataset_filter),
+                        )
+                        existing_run = {**existing_run, "status": "completed"}
+                    skipped_counts = Counter(
+                        str(item.get("status") or "unknown") for item in skipped
+                    )
+                    return {
+                        "signals": [],
+                        "artifacts": [],
+                        "skipped": skipped,
+                        "contracts": [
+                            {
+                                "cartridge": contract.get("cartridge"),
+                                "domain": contract.get("domain"),
+                                "metrics": [
+                                    metric.get("id")
+                                    for metric in contract.get("metrics", [])
+                                    if isinstance(metric, dict)
+                                ],
+                            }
+                            for contract in contracts
+                        ],
+                        "workspace_id": workspace_id,
+                        "dry_run": dry_run,
+                        "run_mode": run_mode,
+                        "intelligence_run_id": existing_run.get("id"),
+                        "run_ref": existing_run.get("run_ref"),
+                        "idempotent": True,
+                        "status": existing_run.get("status"),
+                        "signals_generated": int(
+                            existing_run.get("signals_generated") or 0
+                        ),
+                        "dataset_unavailable_count": existing_run.get(
+                            "dataset_unavailable_count", 0
+                        ),
+                        "insufficient_history_count": existing_run.get(
+                            "insufficient_history_count", 0
+                        ),
+                        "skipped_counts": dict(skipped_counts),
+                        "generic_gold_signal_count": 0,
+                        "monte_carlo_counts": {},
+                        "math_ruleset_version": RULESET_VERSION,
+                    }
+        if run_record is None:
+            run_record = await start_intelligence_run(
+                user,
+                request=body or {},
+                source_system=requested_cartridge or None,
+                run_mode=run_mode,
+                datasets_evaluated=datasets_evaluated,
+                run_ref=requested_run_ref or None,
+            )
     for contract in contracts:
-        metrics = contract.get("metrics") if isinstance(contract.get("metrics"), list) else []
+        metrics = (
+            contract.get("metrics") if isinstance(contract.get("metrics"), list) else []
+        )
         for metric in metrics:
             if not isinstance(metric, dict):
                 continue
@@ -306,19 +378,73 @@ async def run_intelligence(
     generic_gold_signal_count = sum(
         1
         for artifact in artifacts
-        if (artifact.get("control_origin") or artifact.get("signal", {}).get("control_origin"))
+        if (
+            artifact.get("control_origin")
+            or artifact.get("signal", {}).get("control_origin")
+        )
         == "generic_gold_signal"
     )
+    gold_refresh_pending = bool(
+        should_persist and artifacts and run_mode == "gold_refresh" and run_record
+    )
+    if gold_refresh_pending:
+        try:
+            await stage_gold_refresh_authority(
+                user,
+                expected_run_id=str(
+                    ((body or {}).get("metadata") or {}).get("pipeline_run_id") or ""
+                ),
+                expected_run_ref=str(run_record["run_ref"]),
+                intelligence_run_id=int(run_record["id"]),
+                publication_trace=current_publication_trace(),
+                expected_datasets=sorted(dataset_filter),
+            )
+        except Exception as exc:
+            duration_ms = int((time.perf_counter() - started) * 1000)
+            await fail_intelligence_run(
+                user,
+                run_id=int(run_record["id"]),
+                error="Gold outcome authority unavailable",
+                duration_ms=duration_ms,
+            )
+            raise RuntimeError("Gold outcome authority unavailable") from exc
     if should_persist and artifacts:
         try:
-            await persist_artifacts(
-                tenant_id,
-                workspace_id,
-                user,
-                artifacts,
-                intelligence_run_id=int(run_record["id"]) if run_record else None,
-                run_ref=str(run_record["run_ref"]) if run_record else None,
-            )
+            if gold_refresh_pending:
+                duration_ms = int((time.perf_counter() - started) * 1000)
+                run_record = await persist_gold_refresh_pending(
+                    user,
+                    run_id=int(run_record["id"]),
+                    run_ref=str(run_record["run_ref"]),
+                    artifacts=artifacts,
+                    skipped=skipped,
+                    datasets_evaluated=datasets_evaluated,
+                    duration_ms=duration_ms,
+                )
+                await persist_gold_refresh_binding(
+                    user,
+                    expected_run_id=str(
+                        ((body or {}).get("metadata") or {}).get("pipeline_run_id")
+                        or ""
+                    ),
+                    expected_run_ref=str(run_record["run_ref"]),
+                    intelligence_result={
+                        **run_record,
+                        "intelligence_run_id": run_record["id"],
+                    },
+                    publication_trace=current_publication_trace(),
+                    expected_datasets=sorted(dataset_filter),
+                )
+                run_record = {**run_record, "status": "completed"}
+            else:
+                await persist_artifacts(
+                    tenant_id,
+                    workspace_id,
+                    user,
+                    artifacts,
+                    intelligence_run_id=int(run_record["id"]) if run_record else None,
+                    run_ref=str(run_record["run_ref"]) if run_record else None,
+                )
         except Exception as exc:
             if run_record:
                 duration_ms = int((time.perf_counter() - started) * 1000)
@@ -332,7 +458,9 @@ async def run_intelligence(
     if should_persist:
         duration_ms = int((time.perf_counter() - started) * 1000)
         run_status = "completed" if artifacts else "not_ready"
-        if run_record:
+        if gold_refresh_pending:
+            run_status = str(run_record.get("status") or "binding_pending")
+        elif run_record:
             run_record = await finish_intelligence_run(
                 user,
                 run_id=int(run_record["id"]),
@@ -359,8 +487,12 @@ async def run_intelligence(
                 "generic_gold_signal_count": generic_gold_signal_count,
                 "monte_carlo_counts": dict(monte_carlo_counts),
                 "math_ruleset_version": RULESET_VERSION,
-                "dataset_unavailable_count": skipped_counts.get("dataset_unavailable", 0),
-                "insufficient_history_count": skipped_counts.get("insufficient_history", 0),
+                "dataset_unavailable_count": skipped_counts.get(
+                    "dataset_unavailable", 0
+                ),
+                "insufficient_history_count": skipped_counts.get(
+                    "insufficient_history", 0
+                ),
                 "cartridge_id": requested_cartridge or None,
                 "include_external": include_external,
                 "horizon_days": horizons,
@@ -376,7 +508,11 @@ async def run_intelligence(
             {
                 "cartridge": contract.get("cartridge"),
                 "domain": contract.get("domain"),
-                "metrics": [metric.get("id") for metric in contract.get("metrics", []) if isinstance(metric, dict)],
+                "metrics": [
+                    metric.get("id")
+                    for metric in contract.get("metrics", [])
+                    if isinstance(metric, dict)
+                ],
             }
             for contract in contracts
         ],

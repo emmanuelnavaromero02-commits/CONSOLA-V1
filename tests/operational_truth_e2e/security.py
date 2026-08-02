@@ -100,6 +100,19 @@ def _sign_mcp_context(scope: dict[str, str]) -> dict[str, Any]:
     return context
 
 
+def signed_pipeline_trigger_context(scope: dict[str, str]) -> dict[str, Any]:
+    context = _sign_mcp_context(scope)
+    context["permissions"] = ["pipelines.run"]
+    context.pop("_signature", None)
+    canonical = json.dumps(context, sort_keys=True, separators=(",", ":")).encode()
+    context["_signature"] = hmac.new(
+        os.environ["SECURITY_CONTEXT_SIGNING_KEY"].encode(),
+        canonical,
+        hashlib.sha256,
+    ).hexdigest()
+    return context
+
+
 def assert_mcp_raw_cross_tenant_denied(
     allowed: dict[str, str], foreign: dict[str, str]
 ) -> None:

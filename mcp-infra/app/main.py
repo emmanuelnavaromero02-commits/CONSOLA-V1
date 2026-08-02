@@ -26,6 +26,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from app.pipeline_run_authority import validate_pipeline_run_authority
 from app.scheduled_effect_authority import validate_scheduled_effect_authority
+from app.dataset_refresh_admission import build_dataset_refresh_admission
 
 from app import registry
 from app.rag.embeddings import EmbeddingProviderError
@@ -998,6 +999,15 @@ def _validate_airflow_trigger_scope(ctx: dict[str, Any], args: dict[str, Any]) -
                 detail="shared DAG trigger requires cartridge_id outside admin context",
             )
         _require_cartridge_scope(ctx, cartridge_id)
+        if dag_id == "dataset_refresh_chain":
+            dag_run_id = str(args.get("dag_run_id") or "").strip()
+            if not dag_run_id:
+                dag_run_id = f"mcp__dataset_refresh_chain__{uuid.uuid4().hex}"
+                args["dag_run_id"] = dag_run_id
+            conf["security_context"] = build_dataset_refresh_admission(
+                ctx, conf, dag_run_id
+            )
+            args["conf"] = conf
         return
 
     if cartridge_id:

@@ -19,6 +19,8 @@ from refinement.app.staged_publication_engine import StagedPublicationEngine
 from tests.operational_truth_inputs import pnl_dataset, seed_pnl_input
 from tests.test_staged_publication_live import staged_publication_live_stack
 from tests.test_operational_rls_console_refinement import (
+    OMEGA_OUTCOME_BINDER_PASSWORD,
+    POSTGRES_PASSWORD,
     omega_console_live_dsn,
     postgres_with_real_init_schema,
 )
@@ -112,6 +114,18 @@ async def test_live_two_workspace_materialize_intelligence_projection_and_replay
     try:
         scope_a = await _seed_scope(setup, "a")
         scope_b = await _seed_scope(setup, "b")
+        pipeline_a = f"dataset_refresh_chain:operational-truth:{uuid.uuid4().hex}"
+        pipeline_b = f"dataset_refresh_chain:operational-truth:{uuid.uuid4().hex}"
+        await setup.executemany(
+            """INSERT INTO pipeline_runs(
+                   run_id,dag_id,cartridge_id,entity,status,tenant_id,workspace_id
+               ) VALUES($1,'dataset_refresh_chain','replicon',
+                        'DatasetRefreshChain','running',$2,$3)""",
+            [
+                (pipeline_a, scope_a["tenant_id"], scope_a["workspace_id"]),
+                (pipeline_b, scope_b["tenant_id"], scope_b["workspace_id"]),
+            ],
+        )
     finally:
         await setup.close()
 
@@ -134,6 +148,10 @@ async def test_live_two_workspace_materialize_intelligence_projection_and_replay
         "MINIO_SECRET_KEY": "minio-secret",
         "MINIO_BUCKET": "lakehouse",
         "MINIO_SECURE": "false",
+        "OUTCOME_BINDER_DATABASE_URL": postgres_with_real_init_schema.replace(
+            f"postgres:{POSTGRES_PASSWORD}",
+            f"omega_outcome_binder:{OMEGA_OUTCOME_BINDER_PASSWORD}",
+        ),
     }.items():
         monkeypatch.setenv(name, value)
     monkeypatch.setenv("OMEGA_GOLD_ROW_CACHE_TTL_SECONDS", "0")
@@ -174,8 +192,25 @@ async def test_live_two_workspace_materialize_intelligence_projection_and_replay
             "datasets": ["pnl_mensual"],
             "run_mode": "gold_refresh",
             "run_ref": f"operational-truth:{scope_a['workspace_id']}:refresh-1",
+            "metadata": {"pipeline_run_id": pipeline_a},
         }
         run_a = await run_intelligence(_user(scope_a), body_a, persist=True)
+        binding_check = await asyncpg.connect(postgres_with_real_init_schema)
+        try:
+            assert (
+                await binding_check.fetchval(
+                    "SELECT status FROM intelligence_runs WHERE id=$1",
+                    int(run_a["intelligence_run_id"]),
+                )
+                == "completed"
+            )
+            binding_digest = await binding_check.fetchval(
+                "SELECT min(outcome_digest) FROM operational_outcome_bindings "
+                "WHERE intelligence_run_id=$1",
+                int(run_a["intelligence_run_id"]),
+            )
+        finally:
+            await binding_check.close()
         replay_a = await run_intelligence(_user(scope_a), body_a, persist=True)
         run_b = await run_intelligence(
             _user(scope_b),
@@ -184,6 +219,7 @@ async def test_live_two_workspace_materialize_intelligence_projection_and_replay
                 "datasets": ["pnl_mensual"],
                 "run_mode": "gold_refresh",
                 "run_ref": f"operational-truth:{scope_b['workspace_id']}:refresh-1",
+                "metadata": {"pipeline_run_id": pipeline_b},
             },
             persist=True,
         )
@@ -199,6 +235,7 @@ async def test_live_two_workspace_materialize_intelligence_projection_and_replay
         await pool.close()
 
     assert run_a["signals"]
+    assert len(binding_digest) == 64
     assert replay_a["idempotent"] is True
     assert replay_a["signals"] == []
     assert any(

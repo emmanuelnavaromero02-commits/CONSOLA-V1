@@ -32,5 +32,5 @@ CREATE POLICY runtime_hmac_nonces_refinement_scope ON runtime_hmac_nonces
   WITH CHECK (omega_rls_workspace_matches(tenant_id, workspace_id));
 
 INSERT INTO schema_migrations(filename, applied_at)
-VALUES ('99zz_runtime_hmac_nonces.sql', NOW())
+VALUES ('99zzl_runtime_hmac_nonces.sql', NOW())
 ON CONFLICT (filename) DO NOTHING;

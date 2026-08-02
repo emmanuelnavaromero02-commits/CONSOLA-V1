@@ -172,8 +172,13 @@ def _build_plan(
     ]
 
 
-def resolve_chain(context: dict[str, Any], *, postgres_dsn: str) -> int:
-    conf = (context.get("dag_run").conf if context.get("dag_run") else {}) or {}
+def resolve_chain(
+    context: dict[str, Any],
+    *,
+    postgres_dsn: str,
+    admitted_conf: dict[str, Any] | None = None,
+) -> int:
+    conf = admitted_conf or {}
     tenant_id, workspace_id = _required_scope(conf)
     seed_raw = str(conf.get("seed_raw") or "").strip()
     seed_dataset = str(conf.get("seed_dataset") or "").strip()

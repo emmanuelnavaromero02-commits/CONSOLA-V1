@@ -32,7 +32,11 @@ class PublicationFinalizeMixin:
                 description,
                 user_context,
             )
-        if not state["object_uri"] or not state["object_checksum"]:
+        if (
+            not state["object_uri"]
+            or not state["object_checksum"]
+            or not state["object_version"]
+        ):
             raise RuntimeError("materialization object was not durably prepared")
         if layer == "gold" and state.get("gold_schema"):
             schema_fields = [
@@ -45,6 +49,7 @@ class PublicationFinalizeMixin:
         row_count, catalog = self._verify_parquet_evidence(
             object_uri=state["object_uri"],
             object_checksum=state["object_checksum"],
+            object_version=state["object_version"],
             row_count=state["row_count"],
             expected_columns=[str(field.get("name") or "") for field in schema_fields],
         )
@@ -65,14 +70,26 @@ class PublicationFinalizeMixin:
         lineage, catalog = self._evidence_store.prepare(
             state["identity"],
             object_uri=state["object_uri"],
+            object_version=state["object_version"],
             object_checksum=state["object_checksum"],
             row_count=row_count,
             schema_fields=catalog,
             lineage=state["lineage"],
         )
+        candidate_id = self._candidate_store.submit(
+            state["identity"],
+            object_uri=state["object_uri"],
+            object_version=state["object_version"],
+            object_checksum=state["object_checksum"],
+            row_count=row_count,
+            lineage=lineage,
+            catalog=catalog,
+        )
+        self._publication_verifier.verify(candidate_id)
         self._publication_store.mark_prepared(
             state["identity"],
             object_uri=state["object_uri"],
+            object_version=state["object_version"],
             object_checksum=state["object_checksum"],
             row_count=row_count,
             staging_table=state["staging_table"],
@@ -87,7 +104,8 @@ class PublicationFinalizeMixin:
         except Exception as exc:
             if getattr(exc, "pgcode", None) == "40001":
                 self._publication_store.abandon(state["identity"])
-            raise
+                raise
+            state["receipt"] = self._recover_prepared(state["identity"], exc)
         self._mark_publication_replayed(bool(state["receipt"].get("replayed")))
         state["published"] = True
 

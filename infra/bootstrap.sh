@@ -39,6 +39,8 @@ OMEGA_CONSOLE_PASSWORD="$(openssl rand -hex 16)"
 OMEGA_REFINEMENT_PASSWORD="$(openssl rand -hex 16)"
 OMEGA_REFINEMENT_GOLD_PASSWORD="$(openssl rand -hex 16)"
 OMEGA_GOLD_PUBLISHER_PASSWORD="$(openssl rand -hex 16)"
+OMEGA_GOLD_VERIFIER_PASSWORD="$(openssl rand -hex 16)"
+OMEGA_OUTCOME_BINDER_PASSWORD="$(openssl rand -hex 16)"
 OMEGA_VAULT_PASSWORD="$(openssl rand -hex 16)"
 OMEGA_WORKSPACE_PASSWORD="$(openssl rand -hex 16)"
 OMEGA_MCP_INFRA_PASSWORD="$(openssl rand -hex 16)"
@@ -133,6 +135,9 @@ OMEGA_CONSOLE_PASSWORD=${OMEGA_CONSOLE_PASSWORD}
 OMEGA_REFINEMENT_PASSWORD=${OMEGA_REFINEMENT_PASSWORD}
 OMEGA_REFINEMENT_GOLD_PASSWORD=${OMEGA_REFINEMENT_GOLD_PASSWORD}
 OMEGA_GOLD_PUBLISHER_PASSWORD=${OMEGA_GOLD_PUBLISHER_PASSWORD}
+OMEGA_GOLD_VERIFIER_PASSWORD=${OMEGA_GOLD_VERIFIER_PASSWORD}
+OMEGA_OUTCOME_BINDER_PASSWORD=${OMEGA_OUTCOME_BINDER_PASSWORD}
+GOLD_VERIFIER_DATABASE_URL_HOST_FILE=${SCRIPT_DIR}/.secrets/gold_verifier_database_url
 OMEGA_VAULT_PASSWORD=${OMEGA_VAULT_PASSWORD}
 OMEGA_WORKSPACE_PASSWORD=${OMEGA_WORKSPACE_PASSWORD}
 OMEGA_MCP_INFRA_PASSWORD=${OMEGA_MCP_INFRA_PASSWORD}
@@ -227,6 +232,7 @@ SUPERSET_PUBLIC_URL=http://localhost:8088
 
 # === Internal service URLs / DSNs ===
 DATABASE_URL=postgresql+psycopg2://omega_console:${OMEGA_CONSOLE_PASSWORD}@postgres:5432/modecissions
+OUTCOME_BINDER_DATABASE_URL=postgresql+psycopg2://omega_outcome_binder:${OMEGA_OUTCOME_BINDER_PASSWORD}@postgres:5432/modecissions
 GOLD_DATABASE_URL=postgresql+psycopg2://omega_refinement_gold:${OMEGA_REFINEMENT_GOLD_PASSWORD}@postgres_gold:5433/modecissions_gold
 GOLD_PUBLISHER_DATABASE_URL=postgresql+psycopg2://omega_gold_publisher:${OMEGA_GOLD_PUBLISHER_PASSWORD}@postgres_gold:5433/modecissions_gold
 REFINEMENT_URL=http://refinement:8500
@@ -333,5 +339,11 @@ CONTROL_ROOM_ENABLE_EXTERNAL_DELIVERY=false
 # BOOTSTRAP_ADMIN_PASSWORD=
 # BOOTSTRAP_ADMIN_FULL_NAME=System Administrator
 EOF
+
+install -d -m 0700 "${SCRIPT_DIR}/.secrets"
+printf 'postgresql://omega_gold_verifier:%s@postgres_gold:5433/modecissions_gold\n' \
+  "${OMEGA_GOLD_VERIFIER_PASSWORD}" \
+  >"${SCRIPT_DIR}/.secrets/gold_verifier_database_url"
+chmod 0600 "${SCRIPT_DIR}/.secrets/gold_verifier_database_url"
 
 echo "infra/.env generated. Next: make up"

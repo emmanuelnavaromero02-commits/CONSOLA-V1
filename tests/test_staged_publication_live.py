@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -14,6 +18,7 @@ from tests.staged_publication_live import (
     PASSWORD,
     PUBLISHER_PASSWORD,
     READER_PASSWORD,
+    VERIFIER_PASSWORD,
     TENANT_A,
     TENANT_B,
     WORKSPACE_A,
@@ -49,7 +54,9 @@ def staged_publication_live_stack() -> LiveStack:
         "-e",
         f"POSTGRES_PASSWORD={PASSWORD}",
         "-e",
-        f"PGOPTIONS=-c app.omega_refinement_gold_password={READER_PASSWORD} -c app.omega_gold_publisher_password={PUBLISHER_PASSWORD}",
+        f"PGOPTIONS=-c app.omega_refinement_gold_password={READER_PASSWORD} "
+        f"-c app.omega_gold_publisher_password={PUBLISHER_PASSWORD} "
+        f"-c app.omega_gold_verifier_password={VERIFIER_PASSWORD}",
         "-v",
         f"{ROOT / 'infra/init_gold'}:/docker-entrypoint-initdb.d:ro",
         "-P",
@@ -70,6 +77,8 @@ def staged_publication_live_stack() -> LiveStack:
         "server",
         "/data",
     )
+    verifier = None
+    original_socket = os.environ.get("PUBLICATION_VERIFIER_SOCKET")
     try:
         gold_port = _port(gold, "5432/tcp")
         minio_port = _port(minio, "9000/tcp")
@@ -92,21 +101,72 @@ def staged_publication_live_stack() -> LiveStack:
         while True:
             try:
                 s3.create_bucket(Bucket="lakehouse")
+                s3.put_bucket_versioning(
+                    Bucket="lakehouse", VersioningConfiguration={"Status": "Enabled"}
+                )
                 break
             except Exception:
                 if time.monotonic() >= deadline:
                     raise
                 time.sleep(0.25)
+        verifier_dir = tempfile.TemporaryDirectory(prefix="omega-verifier-")
+        verifier_socket = str(Path(verifier_dir.name) / "verifier.sock")
+        verifier_env = {
+            **os.environ,
+            "PYTHONPATH": str(ROOT),
+            "GOLD_VERIFIER_DATABASE_URL": (
+                f"postgresql://omega_gold_verifier:{VERIFIER_PASSWORD}"
+                f"@127.0.0.1:{gold_port}/modecissions_gold"
+            ),
+            "PUBLICATION_VERIFIER_SOCKET": verifier_socket,
+            "PUBLICATION_APP_UID": str(os.getuid()),
+            "MINIO_ENDPOINT": endpoint.removeprefix("http://"),
+            "MINIO_ACCESS_KEY": "minio",
+            "MINIO_SECRET_KEY": "minio-secret",
+            "MINIO_BUCKET": "lakehouse",
+            "MINIO_SECURE": "false",
+        }
+        verifier = subprocess.Popen(
+            [sys.executable, "refinement/app/publication_verifier_worker.py"],
+            cwd=ROOT,
+            env=verifier_env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        deadline = time.monotonic() + 20
+        while not Path(verifier_socket).exists():
+            if verifier.poll() is not None or time.monotonic() >= deadline:
+                if verifier.poll() is None:
+                    verifier.terminate()
+                    verifier.wait(timeout=5)
+                detail = verifier.stderr.read() if verifier.stderr else ""
+                raise RuntimeError(
+                    f"publication verifier did not become ready: {detail[-1000:]}"
+                )
+            time.sleep(0.05)
+        os.environ["PUBLICATION_VERIFIER_SOCKET"] = verifier_socket
         yield LiveStack(
             admin,
             f"postgresql://omega_refinement_gold:{READER_PASSWORD}@127.0.0.1:{gold_port}/modecissions_gold",
             f"postgresql://omega_gold_publisher:{PUBLISHER_PASSWORD}@127.0.0.1:{gold_port}/modecissions_gold",
+            f"postgresql://omega_gold_verifier:{VERIFIER_PASSWORD}@127.0.0.1:{gold_port}/modecissions_gold",
             s3,
             endpoint,
             gold,
             ROOT,
+            verifier_socket,
         )
     finally:
+        if verifier is not None:
+            verifier.terminate()
+            verifier.wait(timeout=10)
+        if original_socket is None:
+            os.environ.pop("PUBLICATION_VERIFIER_SOCKET", None)
+        else:
+            os.environ["PUBLICATION_VERIFIER_SOCKET"] = original_socket
+        if "verifier_dir" in locals():
+            verifier_dir.cleanup()
         _docker("rm", "-f", minio, check=False)
         _docker("rm", "-f", gold, check=False)
 
@@ -256,10 +316,11 @@ def test_gold_stage_scope_is_not_null_while_empty_dataset_remains_valid(
     stack.sql(
         stack.publisher_dsn,
         (TENANT_A, WORKSPACE_A),
-        "SELECT * FROM omega_publication.mark_prepared(%s,%s,%s,0,%s,%s,%s::jsonb,%s::jsonb)",
+        "SELECT * FROM omega_publication.mark_prepared(%s,%s,%s,%s,0,%s,%s,%s::jsonb,%s::jsonb)",
         (
             str(run),
             uri,
+            stack.object_version(uri),
             checksum,
             stage,
             stage,

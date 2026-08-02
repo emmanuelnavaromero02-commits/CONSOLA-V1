@@ -163,25 +163,21 @@ def _lock_scheduled_effect(cur: Any, scope: dict[str, Any], authority: object) -
         fencing_token = int(authority["fencing_token"])
     except (TypeError, ValueError) as exc:
         raise HTTPException(403, "scheduled effect authority is invalid") from exc
-    cur.execute(
-        "SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",
-        (f"agent_schedule_effect:{schedule_run_id}",),
-    )
-    cur.execute(
-        """SELECT 1 FROM agent_schedule_runs
-            WHERE id=%s AND fencing_token=%s AND status='running'
-              AND lease_expires_at > clock_timestamp()
-              AND tenant_id=%s::uuid AND workspace_id=%s::uuid
-              AND agent_id=%s::uuid
-            """,
-        (
-            schedule_run_id,
-            fencing_token,
-            scope["tenant_id"],
-            scope["workspace_id"],
-            scope["agent_id"],
-        ),
-    )
+    try:
+        cur.execute(
+            "SELECT assert_scheduled_effect_authority(%s,%s,%s::uuid,%s::uuid,%s::uuid)",
+            (
+                schedule_run_id,
+                fencing_token,
+                scope["tenant_id"],
+                scope["workspace_id"],
+                scope["agent_id"],
+            ),
+        )
+    except Exception as exc:
+        if getattr(exc, "pgcode", None) == "40001":
+            raise HTTPException(409, "scheduled effect authority is stale") from None
+        raise
     if cur.fetchone() is None:
         raise HTTPException(409, "scheduled effect authority is stale")
 
@@ -714,11 +710,13 @@ async def simulation__monte_carlo_run(
         "evidence_refs": evidence_refs or [],
         "options": options,
     }
-    result = await _call_console_under_fence(
-        scope,
-        effect_authority,
+    result = await _call_console(
         "/internal/intelligence/monte-carlo/run",
-        {"security_context": security_context, "payload": payload},
+        {
+            "security_context": security_context,
+            "payload": payload,
+            "effect_authority": effect_authority,
+        },
         timeout=90.0,
     )
     return {
@@ -793,13 +791,12 @@ async def decision__orchestrate(
         "constraints": constraints or {},
         "evidence_refs": evidence_refs or [],
     }
-    result = await _call_console_under_fence(
-        scope,
-        effect_authority,
+    result = await _call_console(
         "/internal/intelligence/orchestrate",
         {
             "security_context": security_context,
             "payload": payload,
+            "effect_authority": effect_authority,
             "execute_engines": bool(execute_engines),
             "engine_inputs": engine_inputs or {},
         },
@@ -922,6 +919,9 @@ def control_room__raise_alert(
     expected_outcome: str | None = None,
     effect_authority: dict[str, Any] | None = None,
     security_context: dict[str, Any] | None = None,
+    _server_metadata_patch: dict[str, Any] | None = None,
+    _server_event_kind: str | None = None,
+    _server_event_metadata: dict[str, Any] | None = None,
     **extra: Any,
 ) -> dict[str, Any]:
     unexpected = sorted(set(extra) | (set(extra) & _FORBIDDEN_ARGS))
@@ -976,6 +976,8 @@ def control_room__raise_alert(
         "execution_status": "not_started",
         "control_state": {"source": "agent", "advisory": True},
     }
+    if _server_metadata_patch:
+        metadata.update(_server_metadata_patch)
 
     with _conn() as conn, conn.cursor() as cur:
         _set_rls_scope(cur, scope["tenant_id"], scope["workspace_id"])
@@ -999,7 +1001,8 @@ def control_room__raise_alert(
         metadata["occurrence_count"] = occurrence_count
         deduped = existing is not None
         terminal = bool(existing and str(existing[0]) in _TERMINAL_STATUSES)
-        event_type = "agent_alert_deduped" if deduped else "agent_alert_created"
+        event_prefix = _server_event_kind or "agent_alert"
+        event_type = f"{event_prefix}_{'deduped' if deduped else 'created'}"
 
         if deduped:
             cur.execute(
@@ -1085,6 +1088,7 @@ def control_room__raise_alert(
                         "deduped": deduped,
                         "terminal_preserved": terminal,
                         "occurrence_count": occurrence_count,
+                        **(_server_event_metadata or {}),
                     }
                 ),
             ),
@@ -1204,7 +1208,6 @@ def control_room__raise_analysis_alert(
         raise HTTPException(
             400, f"unsupported analysis alert args: {', '.join(unexpected)}"
         )
-    scope = _trusted_agent_scope(security_context)
     analysis = _analysis_evidence(
         analysis_type=analysis_type,
         engine=engine,
@@ -1226,6 +1229,12 @@ def control_room__raise_analysis_alert(
             "engine_run_id": analysis["engine_run_id"],
         }
     )
+    metadata_patch = {
+        "origin": analysis["engine"],
+        "analysis_type": analysis["analysis_type"],
+        "analysis_evidence": analysis,
+        "engine_run_id": analysis["engine_run_id"],
+    }
     result = control_room__raise_alert(
         alert_type=alert_type,
         cartridge_id=cartridge_id,
@@ -1245,65 +1254,21 @@ def control_room__raise_analysis_alert(
         expected_outcome=expected_outcome,
         effect_authority=effect_authority,
         security_context=security_context,
+        _server_metadata_patch=metadata_patch,
+        _server_event_kind="agent_analysis_alert",
+        _server_event_metadata={
+            "engine": analysis["engine"],
+            "engine_run_id": analysis["engine_run_id"],
+        },
     )
-    item_id = str(result["item_id"])
-    event_type = (
-        "agent_analysis_alert_deduped"
-        if result.get("deduped")
-        else "agent_analysis_alert_created"
-    )
-    metadata_patch = {
-        "origin": analysis["engine"],
-        "analysis_type": analysis["analysis_type"],
-        "analysis_evidence": analysis,
-        "engine_run_id": analysis["engine_run_id"],
-    }
-
-    with _conn() as conn, conn.cursor() as cur:
-        _set_rls_scope(cur, scope["tenant_id"], scope["workspace_id"])
-        if effect_authority is not None:
-            _lock_scheduled_effect(cur, scope, effect_authority)
-        cur.execute(
-            """
-            UPDATE control_room_items
-               SET metadata = COALESCE(metadata, '{}'::jsonb) || %s::jsonb
-             WHERE workspace_id = %s::uuid
-               AND item_id = %s
-            """,
-            (Json(metadata_patch), scope["workspace_id"], item_id),
-        )
-        cur.execute(
-            """
-            INSERT INTO control_room_item_events (
-                tenant_id, workspace_id, item_id, event_type,
-                actor_id, actor_email, metadata
-            )
-            VALUES (%s::uuid, %s::uuid, %s, %s, NULL, %s, %s::jsonb)
-            """,
-            (
-                scope["tenant_id"],
-                scope["workspace_id"],
-                item_id,
-                event_type,
-                scope["email"],
-                Json(
-                    {
-                        "source": "agent",
-                        "advisory": True,
-                        "agent_id": scope["agent_id"],
-                        "agent_run_id": scope["agent_run_id"],
-                        "engine": analysis["engine"],
-                        "engine_run_id": analysis["engine_run_id"],
-                        "deduped": bool(result.get("deduped")),
-                    }
-                ),
-            ),
-        )
-        conn.commit()
 
     return {
         **result,
-        "event_type": event_type,
+        "event_type": (
+            "agent_analysis_alert_deduped"
+            if result.get("deduped")
+            else "agent_analysis_alert_created"
+        ),
         "engine": analysis["engine"],
         "engine_run_id": analysis["engine_run_id"],
         "analysis_evidence": analysis,

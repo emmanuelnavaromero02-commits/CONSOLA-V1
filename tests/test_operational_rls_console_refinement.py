@@ -17,7 +17,9 @@ POSTGRES_DB = "modecissions"
 POSTGRES_USER = "postgres"
 POSTGRES_PASSWORD = "test_postgres_password"
 OMEGA_CONSOLE_PASSWORD = "test_omega_console_password"
+OMEGA_OUTCOME_BINDER_PASSWORD = "test_omega_outcome_binder_password"
 OMEGA_REFINEMENT_PASSWORD = "test_omega_refinement_password"
+OMEGA_AIRFLOW_DAG_PASSWORD = "test_omega_airflow_dag_password"
 POSTGRES_PULL_ATTEMPTS = int(os.getenv("RLS_TEST_POSTGRES_PULL_ATTEMPTS", "3"))
 
 CRITICAL_POLICY_TABLES = (
@@ -87,6 +89,7 @@ def _ensure_postgres_image() -> None:
 def _init_pgoptions() -> str:
     passwords = {
         "app.omega_console_password": OMEGA_CONSOLE_PASSWORD,
+        "app.omega_outcome_binder_password": OMEGA_OUTCOME_BINDER_PASSWORD,
         "app.omega_refinement_password": OMEGA_REFINEMENT_PASSWORD,
         "app.omega_vault_password": "test_omega_vault_password",
         "app.omega_workspace_password": "test_omega_workspace_password",
@@ -94,7 +97,7 @@ def _init_pgoptions() -> str:
         "app.omega_cartridge_sap_hcm_password": "test_omega_cartridge_sap_hcm_password",
         "app.omega_cartridge_sap_s4_password": "test_omega_cartridge_sap_s4_password",
         "app.omega_cartridge_sap_sf_password": "test_omega_cartridge_sap_sf_password",
-        "app.omega_airflow_dag_password": "test_omega_airflow_dag_password",
+        "app.omega_airflow_dag_password": OMEGA_AIRFLOW_DAG_PASSWORD,
         "app.omega_airflow_meta_password": "test_omega_airflow_meta_password",
         "app.omega_superset_meta_password": "test_omega_superset_meta_password",
         "app.omega_cartridge_replicon_password": "test_omega_cartridge_replicon_password",

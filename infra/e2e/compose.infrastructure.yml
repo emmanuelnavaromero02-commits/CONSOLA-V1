@@ -33,6 +33,7 @@ services:
       PGOPTIONS: >-
         -c app.omega_refinement_gold_password=${OMEGA_REFINEMENT_GOLD_PASSWORD:?required}
         -c app.omega_gold_publisher_password=${OMEGA_GOLD_PUBLISHER_PASSWORD:?required}
+        -c app.omega_gold_verifier_password=${OMEGA_GOLD_VERIFIER_PASSWORD:?required}
     tmpfs:
       - /var/lib/postgresql/data:rw,nosuid,noexec,size=128m
     healthcheck:
@@ -76,6 +77,23 @@ services:
     mem_limit: 320m
     cpus: 0.75
     pids_limit: 128
+    restart: "no"
+
+  minio-init:
+    image: minio/mc:RELEASE.2024-11-21T17-21-54Z
+    depends_on:
+      minio: {condition: service_healthy}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mc alias set local http://minio:9000 "$${MINIO_ACCESS_KEY}" "$${MINIO_SECRET_KEY}" &&
+        mc mb --ignore-existing local/lakehouse &&
+        mc version enable local/lakehouse &&
+        version_info="$$(mc version info local/lakehouse)" &&
+        case "$$version_info" in *Enabled*|*enabled*) exit 0 ;; *) exit 1 ;; esac
+    environment:
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?required}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?required}
     restart: "no"
 
 volumes:

@@ -72,10 +72,10 @@ def test_rerunning_publication_migrations_after_publish_preserves_state(
     published = stack.published_state("migration_rerun_after_publish")
 
     for migration in (
-        "38_staged_publication_schema.sql",
-        "39_staged_publication_functions.sql",
-        "40_staged_publication_cas.sql",
-        "41_staged_publication_authority.sql",
+        "40_staged_publication_schema.sql",
+        "41_staged_publication_functions.sql",
+        "42_staged_publication_cas.sql",
+        "43_staged_publication_authority.sql",
     ):
         stack.rerun_gold_migration(migration)
 

@@ -37,12 +37,15 @@ class _DagRun:
 
 
 class _TaskInstance:
-    def __init__(self, invocation: object):
+    def __init__(self, invocation: object, admitted_conf: dict):
         self.invocation = invocation
+        self.admitted_conf = admitted_conf
 
     def xcom_pull(self, *, task_ids: str, key: str | None = None):
         if task_ids == "resolve_chain" and key == "cartridge_id":
             return "replicon"
+        if task_ids == "admit_dataset_refresh":
+            return self.admitted_conf
         if task_ids == "materialize_in_order":
             return self.invocation
         return None
@@ -74,9 +77,10 @@ def _record(
         "_trigger_gold_refresh_intelligence",
         trigger,
     )
+    dag_run = _DagRun(task_state, allow_partial=allow_partial)
     dataset_refresh_chain.record_run(
-        ti=_TaskInstance(invocation),
-        dag_run=_DagRun(task_state, allow_partial=allow_partial),
+        ti=_TaskInstance(invocation, dict(dag_run.conf)),
+        dag_run=dag_run,
         run_id="manual__fail_closed",
         logical_date=datetime(2026, 8, 1, tzinfo=timezone.utc),
     )

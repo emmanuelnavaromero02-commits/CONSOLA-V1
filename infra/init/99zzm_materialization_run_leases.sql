@@ -10,5 +10,5 @@ CREATE INDEX IF NOT EXISTS pipeline_runs_active_lease_idx
   WHERE status = 'running';
 
 INSERT INTO schema_migrations(filename, applied_at)
-VALUES ('99zza_materialization_run_leases.sql', NOW())
+VALUES ('99zzm_materialization_run_leases.sql', NOW())
 ON CONFLICT (filename) DO NOTHING;

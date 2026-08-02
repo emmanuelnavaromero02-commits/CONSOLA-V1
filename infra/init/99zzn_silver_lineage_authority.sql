@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS omega_quarantine.silver_lineage_legacy (
 REVOKE ALL ON omega_quarantine.silver_lineage_legacy FROM PUBLIC;
 
 LOCK TABLE silver_lineage IN ACCESS EXCLUSIVE MODE;
+CREATE UNIQUE INDEX IF NOT EXISTS workspaces_tenant_id_id_idx
+  ON workspaces(tenant_id,id);
 ALTER TABLE silver_lineage
   ADD COLUMN IF NOT EXISTS tenant_id uuid,
   ADD COLUMN IF NOT EXISTS workspace_id uuid,
@@ -123,6 +125,6 @@ ALTER ROLE omega_mcp_infra NOBYPASSRLS;
 ALTER ROLE omega_airflow_dag NOBYPASSRLS;
 
 INSERT INTO schema_migrations(filename,applied_at)
-VALUES ('99zzf_silver_lineage_authority.sql',NOW())
+VALUES ('99zzn_silver_lineage_authority.sql',NOW())
 ON CONFLICT (filename) DO NOTHING;
 COMMIT;

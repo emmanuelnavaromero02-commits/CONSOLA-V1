@@ -84,6 +84,9 @@ class _FakeConnection:
             "receipt_id": None,
             "object_checksum": None,
             "evidence_digest": None,
+            "object_uri": None,
+            "object_version": None,
+            "schema_digest": None,
         }
 
     def cursor(self, sql: str, *args: object, prefetch: int):

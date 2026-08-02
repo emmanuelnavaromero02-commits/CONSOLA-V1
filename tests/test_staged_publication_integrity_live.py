@@ -89,20 +89,23 @@ def test_published_object_tamper_is_detected_from_bytes(
             WHERE h.dataset=%s AND h.layer='silver'""",
         ("object_integrity_probe",),
     )[0][0]
-    checksum = stack.sql(
+    checksum, version = stack.sql(
         stack.reader_dsn,
         (TENANT_A, WORKSPACE_A),
-        "SELECT object_checksum FROM omega_publication.materialization_runs "
+        "SELECT object_checksum,object_version "
+        "FROM omega_publication.materialization_runs "
         "WHERE materialization_run_id=%s",
         (stack.head("object_integrity_probe")[0],),
-    )[0][0]
+    )[0]
     stack.s3.put_object(
         Bucket="lakehouse",
         Key=_object_key(uri),
         Body=b"tampered",
         Metadata={"omega-sha256": checksum},
     )
-    with pytest.raises(RuntimeError, match="checksum mismatch"):
+    assert engine.materialize(dataset, _scope())["row_count"] == 1
+    stack.s3.delete_object(Bucket="lakehouse", Key=_object_key(uri), VersionId=version)
+    with pytest.raises(RuntimeError, match="object is unavailable"):
         engine.materialize(dataset, _scope())
 
 

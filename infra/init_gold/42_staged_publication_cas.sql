@@ -37,7 +37,14 @@ DECLARE
 BEGIN
   SELECT * INTO run_row FROM omega_publication.materialization_runs
    WHERE materialization_run_id=p_run FOR UPDATE;
-  IF NOT FOUND THEN RAISE EXCEPTION 'unknown materialization run'; END IF;
+  IF FOUND THEN
+    PERFORM omega_publication.assert_current_scope(
+      run_row.tenant_id,run_row.workspace_id
+    );
+  END IF;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'materialization run unavailable' USING ERRCODE='42501';
+  END IF;
   SELECT * INTO receipt_row FROM omega_publication.materialization_receipts
    WHERE materialization_run_id=p_run;
   IF FOUND THEN
@@ -45,6 +52,7 @@ BEGIN
     RETURN;
   END IF;
   IF run_row.status <> 'prepared' OR run_row.object_uri IS NULL
+     OR run_row.object_version IS NULL
      OR run_row.object_checksum IS NULL OR run_row.schema_digest IS NULL
      OR run_row.evidence_digest IS NULL OR run_row.row_count IS NULL THEN
     RAISE EXCEPTION 'materialization is not publishable' USING ERRCODE='23514';
@@ -61,6 +69,7 @@ BEGIN
        AND e.tenant_id=run_row.tenant_id AND e.workspace_id=run_row.workspace_id
        AND e.dataset=run_row.dataset AND e.layer=run_row.layer
        AND e.object_uri=run_row.object_uri
+       AND e.object_version=run_row.object_version
        AND e.object_checksum=run_row.object_checksum
        AND e.row_count=run_row.row_count
        AND e.schema_digest=run_row.schema_digest
@@ -71,6 +80,7 @@ BEGIN
        AND a.dataset=run_row.dataset AND a.layer=run_row.layer
        AND a.attempt=run_row.attempt
        AND a.object_uri=e.object_uri
+       AND a.object_version=e.object_version
        AND a.object_checksum=e.object_checksum
        AND a.row_count=e.row_count
        AND a.schema_digest=e.schema_digest
@@ -78,6 +88,7 @@ BEGIN
        AND a.contract_digest=run_row.contract_digest
        AND a.lineage=e.lineage AND a.catalog=e.catalog
        AND a.verifier_identity='refinement.parquet-verifier/v1'
+       AND omega_publication.verify_attestation(a.attestation_id)
        AND a.consumed_at IS NOT NULL
        AND a.invalidated_at IS NULL
        AND a.expires_at > clock_timestamp()
@@ -216,11 +227,12 @@ BEGIN
   new_receipt := gen_random_uuid();
   INSERT INTO omega_publication.materialization_receipts (
     receipt_id, materialization_run_id, tenant_id, workspace_id, dataset,
-    layer, input_digest, contract_digest, object_checksum, schema_digest,
+    layer,input_digest,contract_digest,object_checksum,object_version,schema_digest,
     evidence_digest, row_count, generation
   ) VALUES (new_receipt, p_run, run_row.tenant_id, run_row.workspace_id,
             run_row.dataset, run_row.layer, run_row.input_digest,
-            run_row.contract_digest, run_row.object_checksum, run_row.schema_digest,
+            run_row.contract_digest,run_row.object_checksum,run_row.object_version,
+            run_row.schema_digest,
             run_row.evidence_digest, run_row.row_count, next_generation);
   INSERT INTO omega_publication.dataset_publication_heads (
     tenant_id, workspace_id, dataset, layer, materialization_run_id, generation
@@ -245,5 +257,31 @@ GRANT EXECUTE ON FUNCTION omega_publication.publish_materialization(uuid,uuid)
   TO omega_gold_publisher;
 GRANT EXECUTE ON FUNCTION omega_publication.gold_compatibility_relation(uuid,uuid,text)
   TO omega_gold_publisher;
-GRANT EXECUTE ON FUNCTION omega_publication.record_attestation(uuid,text,text,bigint,jsonb,jsonb)
-  TO omega_refinement_gold;
+
+CREATE OR REPLACE VIEW omega_publication.published_lineage
+WITH (security_invoker=true) AS
+SELECT h.tenant_id,h.workspace_id,h.dataset,h.layer,h.generation,
+       h.materialization_run_id,rec.receipt_id,e.object_uri,e.object_version,
+       e.object_checksum,
+       e.schema_digest,e.evidence_digest,e.row_count,e.lineage,e.created_at
+  FROM omega_publication.dataset_publication_heads h
+  JOIN omega_publication.materialization_receipts rec
+    ON rec.materialization_run_id=h.materialization_run_id
+   AND rec.tenant_id=h.tenant_id AND rec.workspace_id=h.workspace_id
+   AND rec.dataset=h.dataset AND rec.layer=h.layer
+   AND rec.generation=h.generation
+  JOIN omega_publication.materialization_evidence e
+    ON e.materialization_run_id=h.materialization_run_id
+   AND e.tenant_id=h.tenant_id AND e.workspace_id=h.workspace_id
+   AND e.dataset=h.dataset AND e.layer=h.layer
+   AND e.object_checksum=rec.object_checksum
+   AND e.object_version=rec.object_version
+   AND e.schema_digest=rec.schema_digest
+   AND e.evidence_digest=rec.evidence_digest
+   AND e.row_count=rec.row_count;
+ALTER VIEW omega_publication.published_lineage OWNER TO omega_gold_owner;
+GRANT SELECT ON omega_publication.published_lineage TO omega_refinement_gold;
+
+INSERT INTO schema_migrations(filename,applied_at)
+VALUES ('gold/42_staged_publication_cas.sql',NOW())
+ON CONFLICT (filename) DO NOTHING;

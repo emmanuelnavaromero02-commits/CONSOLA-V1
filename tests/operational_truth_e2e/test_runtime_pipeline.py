@@ -29,11 +29,11 @@ from .faults import (
     pipeline_status,
     prepared_runs,
     put_unpublished_object,
+    reject_receipt_inserts,
     rewrite_raw_parquet,
     seed_completed_run_without_signal,
     seed_expired_materialization_slot,
     unavailable_intelligence_runs,
-    unavailable_publication_table,
 )
 from .security import (
     assert_mcp_raw_cross_tenant_denied,
@@ -69,7 +69,7 @@ def _assert_initial_truth(scopes: list[dict[str, str]]) -> None:
 def _assert_prepared_retry(scope: dict[str, str]) -> None:
     before = publication_snapshot(scope)
     bump_dataset_contract(scope, "pnl_mensual")
-    with unavailable_publication_table("materialization_receipts"):
+    with reject_receipt_inserts():
         failed_run = _run(scope)
         wait_dag_run("dataset_refresh_chain", failed_run, expected_state="failed")
     assert publication_snapshot(scope) == before

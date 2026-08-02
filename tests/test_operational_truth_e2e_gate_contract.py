@@ -45,6 +45,18 @@ def test_e2e_runner_does_not_install_duckdb_extensions_at_runtime() -> None:
         assert "INSTALL postgres" not in path.read_text(encoding="utf-8")
 
 
+def test_minio_init_verifies_versioning_without_missing_image_utilities() -> None:
+    compose = (ROOT / "infra/e2e/compose.infrastructure.yml").read_text(
+        encoding="utf-8"
+    )
+    minio_init = compose.split("  minio-init:", 1)[1].split("\nvolumes:", 1)[0]
+
+    assert "mc version enable local/lakehouse" in minio_init
+    assert 'version_info="$$(mc version info local/lakehouse)"' in minio_init
+    assert 'case "$$version_info" in *Enabled*|*enabled*)' in minio_init
+    assert "grep" not in minio_init
+
+
 def test_e2e_linux_dag_bundle_is_readable_by_the_non_root_airflow_user() -> None:
     script = (ROOT / "scripts/run_operational_truth_e2e.sh").read_text(encoding="utf-8")
     compose = (ROOT / "infra/e2e/compose.airflow.yml").read_text(encoding="utf-8")
@@ -67,6 +79,16 @@ def test_e2e_linux_dag_bundle_is_readable_by_the_non_root_airflow_user() -> None
     assert 'exec -T airflow-scheduler python - "${dag_modules[@]}"' in script
     assert "os.geteuid() == 0" in script
     assert "not path.is_file() or not os.access(path, os.R_OK)" in script
+
+
+def test_e2e_verifier_secret_uses_a_mode_preserving_mount_and_is_removed() -> None:
+    script = (ROOT / "scripts/run_operational_truth_e2e.sh").read_text(encoding="utf-8")
+
+    assert (
+        'verifier_secret="$(mktemp "$task_root/.omega-ot-verifier.XXXXXX")"' in script
+    )
+    assert 'chmod 0600 "$verifier_secret"' in script
+    assert 'rm -f "$verifier_secret"' in script
 
 
 def test_e2e_orchestrator_explicitly_exercises_pre_xcom_failure() -> None:

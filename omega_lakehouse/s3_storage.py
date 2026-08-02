@@ -1,11 +1,10 @@
 from __future__ import annotations
-# fmt: off
 
+# fmt: off
 import io
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import BinaryIO, Any
-
 from .checksums import sha256_bytes, sha256_file
 from .config import LakehouseStorageConfig
 from .errors import (
@@ -19,21 +18,16 @@ from .errors import (
 from .keys import validate_key, validate_prefix
 from .s3_support import is_not_found, metadata_with_checksum, stat_from_head, stat_from_list_item
 from .types import ListPage, ObjectStat, PublishResult, PutResult
-
-
 class S3Storage:
     def __init__(self, config: LakehouseStorageConfig, *, client: Any | None = None) -> None:
         self.config = config
         self._client = client
-
     def uri_for(self, key: str) -> str:
         return f"s3://{self.config.bucket}/{validate_key(key)}"
-
     def _client_or_create(self):
         if self._client is None:
             import boto3
             from botocore.config import Config
-
             kwargs: dict[str, Any] = {
                 "region_name": self.config.region or "us-east-1",
                 "config": Config(
@@ -67,10 +61,12 @@ class S3Storage:
         except ObjectNotFound:
             return False
 
-    def stat(self, key: str) -> ObjectStat:
+    def stat(self, key: str, *, expected_version: str | None = None) -> ObjectStat:
         key = validate_key(key)
+        args = {"Bucket": self.config.bucket, "Key": key}
+        if expected_version: args["VersionId"] = expected_version
         try:
-            resp = self._client_or_create().head_object(Bucket=self.config.bucket, Key=key)
+            resp = self._client_or_create().head_object(**args)
         except Exception as exc:
             self._raise(exc, "object stat failed", key)
         return stat_from_head(self.uri_for, key, resp)
@@ -86,13 +82,13 @@ class S3Storage:
         if not overwrite and self.exists(key):
             raise ObjectAlreadyExists("object already exists", provider=self.config.provider, bucket=self.config.bucket, key=key)
 
-    def _put_object(self, key: str, body: Any, metadata: Mapping[str, str], *, overwrite: bool) -> None:
+    def _put_object(self, key: str, body: Any, metadata: Mapping[str, str], *, overwrite: bool) -> dict[str, Any]:
         kwargs = {"Bucket": self.config.bucket, "Key": key, "Body": body,
                   "Metadata": metadata, "ContentType": "application/octet-stream"}
         if not overwrite:
             kwargs["IfNoneMatch"] = "*"
         try:
-            self._client_or_create().put_object(**kwargs)
+            return self._client_or_create().put_object(**kwargs)
         except Exception as exc:
             code = str((getattr(exc, "response", {}) or {}).get("Error", {}).get("Code", ""))
             if code in {"409", "412", "ConditionalRequestConflict", "PreconditionFailed"}:
@@ -115,8 +111,8 @@ class S3Storage:
         if checksum != sha256_bytes(data):
             raise ChecksumMismatch("provided checksum does not match payload", provider=self.config.provider, bucket=self.config.bucket, key=key)
         self._check_write_allowed(key, overwrite, expected_version)
-        self._put_object(key, data, metadata_with_checksum(metadata, checksum), overwrite=overwrite)
-        return self._put_result(key, len(data), checksum, metadata)
+        response = self._put_object(key, data, metadata_with_checksum(metadata, checksum), overwrite=overwrite)
+        return self._put_result(key, len(data), checksum, metadata, response.get("VersionId"))
 
     def put_file(
         self,
@@ -135,21 +131,21 @@ class S3Storage:
             raise ChecksumMismatch("provided checksum does not match file", provider=self.config.provider, bucket=self.config.bucket, key=key)
         self._check_write_allowed(key, overwrite, expected_version)
         with path.open("rb") as fh:
-            self._put_object(key, fh, metadata_with_checksum(metadata, checksum), overwrite=overwrite)
-        return self._put_result(key, path.stat().st_size, checksum, metadata)
+            response = self._put_object(key, fh, metadata_with_checksum(metadata, checksum), overwrite=overwrite)
+        return self._put_result(key, path.stat().st_size, checksum, metadata, response.get("VersionId"))
 
-    def _put_result(self, key: str, size: int, checksum: str, metadata: Mapping[str, str] | None) -> PutResult:
-        version = None
-        try:
-            version = self.stat(key).version
-        except StorageError:
-            pass
+    def _put_result(self, key: str, size: int, checksum: str, metadata: Mapping[str, str] | None, version: str | None = None) -> PutResult:
+        if version is None:
+            try: version = self.stat(key).version
+            except StorageError: pass
         return PutResult(key=key, uri=self.uri_for(key), size=size, checksum_sha256=checksum, version=version, metadata=metadata or {})
 
-    def get_bytes(self, key: str) -> bytes:
+    def get_bytes(self, key: str, *, expected_version: str | None = None) -> bytes:
         key = validate_key(key)
+        args = {"Bucket": self.config.bucket, "Key": key}
+        if expected_version: args["VersionId"] = expected_version
         try:
-            body = self._client_or_create().get_object(Bucket=self.config.bucket, Key=key)["Body"]
+            body = self._client_or_create().get_object(**args)["Body"]
             try:
                 return body.read()
             finally:
@@ -159,15 +155,17 @@ class S3Storage:
         except Exception as exc:
             self._raise(exc, "object read failed", key)
 
-    def open_reader(self, key: str) -> BinaryIO:
+    def open_reader(self, key: str, *, expected_version: str | None = None) -> BinaryIO:
         key = validate_key(key)
+        args = {"Bucket": self.config.bucket, "Key": key}
+        if expected_version: args["VersionId"] = expected_version
         try:
-            return self._client_or_create().get_object(Bucket=self.config.bucket, Key=key)["Body"]
+            return self._client_or_create().get_object(**args)["Body"]
         except Exception as exc:
             self._raise(exc, "object open failed", key)
 
-    def iter_chunks(self, key: str, *, chunk_size: int = 1024 * 1024) -> Iterator[bytes]:
-        body = self.open_reader(key)
+    def iter_chunks(self, key: str, *, chunk_size: int = 1024 * 1024, expected_version: str | None = None) -> Iterator[bytes]:
+        body = self.open_reader(key, expected_version=expected_version)
         try:
             while True:
                 chunk = body.read(chunk_size)
@@ -201,10 +199,10 @@ class S3Storage:
             args["Metadata"] = metadata_with_checksum(metadata, source.checksum_sha256 or "")
             args["MetadataDirective"] = "REPLACE"
         try:
-            self._client_or_create().copy_object(**args)
+            response = self._client_or_create().copy_object(**args)
         except Exception as exc:
             self._raise(exc, "object copy failed", target_key)
-        return self._put_result(target_key, source.size, source.checksum_sha256 or "", metadata or source.metadata)
+        return self._put_result(target_key, source.size, source.checksum_sha256 or "", metadata or source.metadata, response.get("VersionId"))
 
     def publish(self, staging_key: str, final_key: str, **kwargs) -> PublishResult:
         staging_key = validate_key(staging_key)

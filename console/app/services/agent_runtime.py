@@ -1058,7 +1058,11 @@ async def _audit_agent_tool(
     risk_level: str,
     status: str,
     error: Any | None = None,
+    schedule_run_id: int | None = None,
+    fencing_token: int | None = None,
 ) -> None:
+    audit_args = dict(args)
+    audit_args.pop("effect_authority", None)
     metadata: dict[str, Any] = {
         "agent_id": agent.id,
         "agent_slug": agent.slug,
@@ -1069,7 +1073,7 @@ async def _audit_agent_tool(
     error_text = _safe_error_text(error)
     if error_text:
         metadata["error"] = error_text[:500]
-    await audit_service.record_event(
+    values = dict(
         user_id=user.get("id") if user else None,
         email=user.get("email") if user else "agent-runner@omega.local",
         action=f"agent.tool.{tool}",
@@ -1078,12 +1082,16 @@ async def _audit_agent_tool(
         status=status,
         metadata=metadata,
         tool_name=tool,
-        tool_args=tool_policy.clip_args(tool_policy.scrub_args(args)),
+        tool_args=tool_policy.clip_args(tool_policy.scrub_args(audit_args)),
         tool_result_status=status,
         risk_level=risk_level,
         conversation_id=None,
         critical=True,
     )
+    if schedule_run_id is not None and fencing_token is not None:
+        await _record_scheduled_audit(agent, schedule_run_id, fencing_token, **values)
+    else:
+        await audit_service.record_event(**values)
 
 
 def _make_invoke(
@@ -1129,6 +1137,8 @@ def _make_invoke(
                 risk_level=risk,
                 status=status,
                 error=message_text,
+                schedule_run_id=schedule_run_id,
+                fencing_token=fencing_token,
             )
             out = {
                 "error": status,
@@ -1229,6 +1239,8 @@ def _make_invoke(
                 args=args,
                 risk_level=risk,
                 status="pending_approval",
+                schedule_run_id=schedule_run_id,
+                fencing_token=fencing_token,
             )
             return {
                 "error": "approval_required",
@@ -1326,6 +1338,8 @@ def _make_invoke(
             error=str(result.get("error"))
             if isinstance(result, dict) and result.get("error")
             else None,
+            schedule_run_id=schedule_run_id,
+            fencing_token=fencing_token,
         )
         return result
 
@@ -1475,12 +1489,23 @@ async def _start_run(
     input_messages: list[dict],
     user: dict | None = None,
     agent: Agent | None = None,
+    schedule_run_id: int | None = None,
+    fencing_token: int | None = None,
 ) -> int:
     pool = await _get_pool()
     tenant_id, workspace_id = _scope_parts(user, agent)
     if await _agent_runs_have_scope_columns():
 
         async def _insert(conn):
+            if schedule_run_id is not None and fencing_token is not None and agent:
+                await conn.execute(
+                    "SELECT assert_scheduled_effect_authority($1,$2,$3::uuid,$4::uuid,$5::uuid)",
+                    schedule_run_id,
+                    fencing_token,
+                    tenant_id,
+                    workspace_id,
+                    agent.id,
+                )
             return await conn.fetchrow(
                 "INSERT INTO agent_runs (agent_id, user_id, input_messages, tenant_id, workspace_id) "
                 "VALUES ($1, $2, $3::jsonb, $4::uuid, $5::uuid) RETURNING id",
@@ -1493,6 +1518,8 @@ async def _start_run(
 
         row = await _fetch_with_optional_scope(pool, tenant_id, workspace_id, _insert)
     else:
+        if schedule_run_id is not None or fencing_token is not None:
+            raise RuntimeError("scheduled agent run scope storage is unavailable")
         row = await pool.fetchrow(
             "INSERT INTO agent_runs (agent_id, user_id, input_messages) "
             "VALUES ($1, $2, $3::jsonb) RETURNING id",
@@ -1512,11 +1539,22 @@ async def _finish_run(
     error_message: str | None = None,
     user: dict | None = None,
     agent: Agent | None = None,
+    schedule_run_id: int | None = None,
+    fencing_token: int | None = None,
 ):
     pool = await _get_pool()
     tenant_id, workspace_id = _scope_parts(user, agent)
 
     async def _update(conn):
+        if schedule_run_id is not None and fencing_token is not None and agent:
+            await conn.execute(
+                "SELECT assert_scheduled_effect_authority($1,$2,$3::uuid,$4::uuid,$5::uuid)",
+                schedule_run_id,
+                fencing_token,
+                tenant_id,
+                workspace_id,
+                agent.id,
+            )
         return await conn.execute(
             "UPDATE agent_runs SET finished_at=NOW(), status=$2, output_text=$3, "
             "tool_calls=$4::jsonb, error_message=$5 WHERE id=$1",
@@ -1528,6 +1566,33 @@ async def _finish_run(
         )
 
     await _fetch_with_optional_scope(pool, tenant_id, workspace_id, _update)
+
+
+async def _record_scheduled_audit(
+    agent: Agent,
+    schedule_run_id: int,
+    fencing_token: int,
+    **values: Any,
+) -> None:
+    tenant_id, workspace_id = _agent_scope(agent)
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT set_config('app.tenant_id',$1,true),"
+                "set_config('app.workspace_id',$2,true)",
+                tenant_id,
+                workspace_id,
+            )
+            await conn.execute(
+                "SELECT assert_scheduled_effect_authority($1,$2,$3::uuid,$4::uuid,$5::uuid)",
+                schedule_run_id,
+                fencing_token,
+                tenant_id,
+                workspace_id,
+                agent.id,
+            )
+            await audit_service.record_event(**values, connection=conn, critical=True)
 
 
 # ── Public entry ────────────────────────────────────────────────────────────
@@ -1707,10 +1772,27 @@ async def run_scheduled_monitor(
     if not contract:
         raise RuntimeError("scheduled monitor requires extra.monitor contract")
 
+    if schedule_run_id is None or fencing_token is None:
+        raise RuntimeError("scheduled effect authority is required")
+    effect_authority = {
+        "schedule_run_id": int(schedule_run_id),
+        "fencing_token": int(fencing_token),
+    }
     input_messages = [{"role": "user", "content": message}]
     tools, _server_map = await _discover_agent_tools(agent)
-    run_id = await _start_run(agent.id, None, input_messages, user=None, agent=agent)
-    await audit_service.record_event(
+    run_id = await _start_run(
+        agent.id,
+        None,
+        input_messages,
+        user=None,
+        agent=agent,
+        schedule_run_id=effect_authority["schedule_run_id"],
+        fencing_token=effect_authority["fencing_token"],
+    )
+    await _record_scheduled_audit(
+        agent,
+        effect_authority["schedule_run_id"],
+        effect_authority["fencing_token"],
         user_id=None,
         email="agent-runner@omega.local",
         action="agent.invoke",
@@ -1727,21 +1809,13 @@ async def run_scheduled_monitor(
         conversation_id=None,
     )
 
-    effect_authority = (
-        {
-            "schedule_run_id": int(schedule_run_id),
-            "fencing_token": int(fencing_token),
-        }
-        if schedule_run_id is not None and fencing_token is not None
-        else None
-    )
     invoke = _make_invoke(
         agent,
         user=None,
         tools=tools,
         run_id=run_id,
-        schedule_run_id=(effect_authority or {}).get("schedule_run_id"),
-        fencing_token=(effect_authority or {}).get("fencing_token"),
+        schedule_run_id=effect_authority["schedule_run_id"],
+        fencing_token=effect_authority["fencing_token"],
     )
     tool_calls_log: list[dict] = []
 
@@ -2129,8 +2203,13 @@ async def run_scheduled_monitor(
             tool_calls=tool_calls_log,
             user=None,
             agent=agent,
+            schedule_run_id=effect_authority["schedule_run_id"],
+            fencing_token=effect_authority["fencing_token"],
         )
-        await audit_service.record_event(
+        await _record_scheduled_audit(
+            agent,
+            effect_authority["schedule_run_id"],
+            effect_authority["fencing_token"],
             user_id=None,
             email="agent-runner@omega.local",
             action="agent.invoke",
@@ -2171,8 +2250,13 @@ async def run_scheduled_monitor(
             error_message="Cancelled",
             user=None,
             agent=agent,
+            schedule_run_id=effect_authority["schedule_run_id"],
+            fencing_token=effect_authority["fencing_token"],
         )
-        await audit_service.record_event(
+        await _record_scheduled_audit(
+            agent,
+            effect_authority["schedule_run_id"],
+            effect_authority["fencing_token"],
             user_id=None,
             email="agent-runner@omega.local",
             action="agent.invoke",
@@ -2191,8 +2275,13 @@ async def run_scheduled_monitor(
             error_message=f"{type(exc).__name__}: {exc}",
             user=None,
             agent=agent,
+            schedule_run_id=effect_authority["schedule_run_id"],
+            fencing_token=effect_authority["fencing_token"],
         )
-        await audit_service.record_event(
+        await _record_scheduled_audit(
+            agent,
+            effect_authority["schedule_run_id"],
+            effect_authority["fencing_token"],
             user_id=None,
             email="agent-runner@omega.local",
             action="agent.invoke",

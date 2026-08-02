@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-
 umask 077
 
 LOG_FILE="${MODECISSIONS_AWS_ENTRYPOINT_LOG:-/var/log/aws-entrypoint.log}"
@@ -69,6 +68,7 @@ required_secrets=(
   OMEGA_MCP_INFRA_PASSWORD
   OMEGA_REFINEMENT_GOLD_PASSWORD
   OMEGA_GOLD_PUBLISHER_PASSWORD
+  OMEGA_GOLD_VERIFIER_PASSWORD OMEGA_OUTCOME_BINDER_PASSWORD
   OMEGA_AIRFLOW_DAG_PASSWORD
   OMEGA_AIRFLOW_META_PASSWORD
   OMEGA_SUPERSET_META_PASSWORD
@@ -218,9 +218,10 @@ for config_name in \
 	  OLLAMA_URL BEDROCK_REGION EMBED_MODEL EMBED_DIM INVITE_TOKEN_TTL_HOURS RESET_TOKEN_TTL_HOURS; do
   write_env "$config_name" "${!config_name}"
 done
-
 write_env MODECISSIONS_CONTROL_ROOM_EVIDENCE_ENV_FILE "$EVIDENCE_ENV_FILE"
-
+GOLD_VERIFIER_DATABASE_URL_HOST_FILE="${GOLD_VERIFIER_DATABASE_URL_HOST_FILE:-${ENV_FILE}.gold-verifier-database-url}"
+write_env GOLD_VERIFIER_DATABASE_URL_HOST_FILE "$GOLD_VERIFIER_DATABASE_URL_HOST_FILE"
+gold_verifier_password=""
 for secret_name in "${required_secrets[@]}"; do
   arn_var="MODECISSIONS_SECRET_${secret_name}_ARN"
   arn="${!arn_var:-}"
@@ -232,9 +233,9 @@ for secret_name in "${required_secrets[@]}"; do
     echo "[aws-entrypoint] unable to fetch required secret: $secret_name"
     exit 1
   }
+  if [[ "$secret_name" == "OMEGA_GOLD_VERIFIER_PASSWORD" ]]; then gold_verifier_password="$secret_value"; fi
   write_env "$secret_name" "$secret_value"
 done
-
 for secret_name in "${required_evidence_secrets[@]}"; do
   arn_var="MODECISSIONS_SECRET_${secret_name}_ARN"
   arn="${!arn_var:-}"
@@ -288,10 +289,12 @@ while IFS='=' read -r env_name env_value; do
   esac
   write_env "$replay_name" "$env_value"
 done < <(env)
-
 if ! validate_evidence_keyring_pair "$SCRIPT_DIR/validate-evidence-keyring.py"; then
   echo "[aws-entrypoint] evidence signing keyring validation failed" >&2
   exit 1
 fi
+if [[ -z "$gold_verifier_password" ]]; then echo "[aws-entrypoint] publication verifier database authority unavailable" >&2; exit 1; fi
+gold_verifier_tmp="$(mktemp "${GOLD_VERIFIER_DATABASE_URL_HOST_FILE}.tmp.XXXXXX")"; printf 'postgresql://omega_gold_verifier:%s@postgres_gold:5433/modecissions_gold\n' "$gold_verifier_password" >"$gold_verifier_tmp"
+mv -f -- "$gold_verifier_tmp" "$GOLD_VERIFIER_DATABASE_URL_HOST_FILE"
 publish_env_pair
 echo "[aws-entrypoint] runtime env written successfully"

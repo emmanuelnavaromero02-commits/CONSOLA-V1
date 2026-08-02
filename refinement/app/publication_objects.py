@@ -9,23 +9,32 @@ from omega_lakehouse.checksums import sha256_file
 
 
 class PublicationObjectMixin:
-    def _object_checksum(self, key: str) -> str:
+    def _object_checksum(self, key: str, expected_version: str | None = None) -> str:
         digest = hashlib.sha256()
         chunks = getattr(self.storage, "iter_chunks", None)
         if chunks:
-            for chunk in chunks(key):
+            for chunk in chunks(key, expected_version=expected_version):
                 digest.update(chunk)
         else:
-            digest.update(self.storage.get_bytes(key))
+            digest.update(
+                self.storage.get_bytes(key, expected_version=expected_version)
+            )
         return digest.hexdigest()
 
     def _verify_prepared_object(self, values: dict[str, Any]) -> None:
         uri = str(values.get("object_uri") or "")
         expected = str(values.get("object_checksum") or "")
+        version = str(values.get("object_version") or "")
         key = self._s3_object_key(uri)
-        if not key or not expected:
+        if not key or not expected or not version:
             raise RuntimeError("prepared materialization object is incomplete")
-        if self._object_checksum(key) != expected:
+        try:
+            observed = self._object_checksum(key, version)
+        except Exception as exc:
+            raise RuntimeError(
+                "prepared materialization object is unavailable"
+            ) from exc
+        if observed != expected:
             raise RuntimeError("prepared materialization object checksum mismatch")
 
     def _verify_parquet_evidence(
@@ -33,6 +42,7 @@ class PublicationObjectMixin:
         *,
         object_uri: str,
         object_checksum: str,
+        object_version: str,
         row_count: int,
         expected_columns: list[str],
     ) -> tuple[int, list[dict[str, str]]]:
@@ -41,7 +51,7 @@ class PublicationObjectMixin:
         key = self._s3_object_key(object_uri)
         if not key:
             raise RuntimeError("prepared materialization object is outside storage")
-        raw = self.storage.get_bytes(key)
+        raw = self.storage.get_bytes(key, expected_version=object_version)
         if hashlib.sha256(raw).hexdigest() != object_checksum:
             raise RuntimeError("prepared materialization object checksum mismatch")
         parquet = pq.ParquetFile(io.BytesIO(raw))
@@ -73,8 +83,13 @@ class PublicationObjectMixin:
             key = self._s3_object_key(uri)
             if not key:
                 raise RuntimeError("materialized object is outside managed storage")
-            checksum = self._object_checksum(key)
-            state.update(object_uri=uri, object_checksum=checksum)
+            version = str(self.storage.stat(key).version or "")
+            if not version:
+                raise RuntimeError("materialized object version is unavailable")
+            checksum = self._object_checksum(key, version)
+            state.update(
+                object_uri=uri, object_checksum=checksum, object_version=version
+            )
         return uri
 
     def _upload_local_parquet(self, local_path: str, parquet_path: str) -> str:
@@ -87,13 +102,19 @@ class PublicationObjectMixin:
         digest = sha256_file(Path(local_path))
         key = f"{key.rsplit('/', 1)[0]}/{digest}.parquet"
         if self.storage.exists(key):
-            if self._object_checksum(key) != digest:
+            stat = self.storage.stat(key)
+            if not stat.version or self._object_checksum(key, stat.version) != digest:
                 raise RuntimeError("immutable materialization object checksum mismatch")
+            state["object_version"] = str(stat.version)
             return self.storage.uri_for(key)
-        return self.storage.put_file(
+        result = self.storage.put_file(
             key,
             Path(local_path),
             overwrite=False,
             checksum_sha256=digest,
             metadata={"publication-state": "pending"},
-        ).uri
+        )
+        if not result.version:
+            raise RuntimeError("materialized object version is unavailable")
+        state["object_version"] = str(result.version)
+        return result.uri

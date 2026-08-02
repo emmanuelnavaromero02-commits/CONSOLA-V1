@@ -186,9 +186,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS dataset_gold_relations_physical_name_key
 
 COMMIT;
 
-\ir 39_staged_publication_functions.sql
-\ir 40_staged_publication_cas.sql
+\ir 41_staged_publication_functions.sql
+\ir 42_staged_publication_cas.sql
 
 INSERT INTO schema_migrations(filename,applied_at)
-VALUES ('41_staged_publication_authority.sql',NOW())
+VALUES ('gold/43_staged_publication_authority.sql',NOW())
 ON CONFLICT (filename) DO NOTHING;

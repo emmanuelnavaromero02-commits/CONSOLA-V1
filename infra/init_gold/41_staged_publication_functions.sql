@@ -40,7 +40,7 @@ BEGIN
        WHERE retry_attestation.materialization_run_id=p_run;
       UPDATE omega_publication.materialization_runs AS retry_run
          SET status='reserved', prepared_at=NULL, staging_table=NULL,
-             object_uri=NULL, object_checksum=NULL, row_count=NULL,
+             object_uri=NULL, object_version=NULL, object_checksum=NULL, row_count=NULL,
              schema_digest=NULL, evidence_digest=NULL, gold_table=NULL,
              recovery_reason=NULL, attempt=retry_run.attempt+1
        WHERE retry_run.materialization_run_id=p_run;
@@ -68,62 +68,7 @@ BEGIN
   RETURN QUERY SELECT p_run, 'reserved'::text;
 END $$;
 
-CREATE OR REPLACE FUNCTION omega_publication.record_attestation(
-    p_run uuid, p_object_uri text, p_object_checksum text, p_row_count bigint,
-    p_lineage jsonb, p_catalog jsonb
-) RETURNS text
-LANGUAGE plpgsql SECURITY DEFINER
-SET search_path = pg_catalog, omega_publication
-AS $$
-DECLARE
-  run_row omega_publication.materialization_runs%ROWTYPE;
-  derived_digest text;
-  derived_schema_digest text;
-BEGIN
-  SELECT * INTO run_row FROM omega_publication.materialization_runs
-   WHERE materialization_run_id=p_run FOR UPDATE;
-  IF NOT FOUND OR run_row.status <> 'reserved' THEN
-    RAISE EXCEPTION 'materialization run is not attestable' USING ERRCODE='23514';
-  END IF;
-  IF p_object_uri !~ '^(s3|gs)://' OR p_object_checksum !~ '^[0-9a-f]{64}$'
-     OR p_row_count < 0 OR jsonb_typeof(p_lineage) <> 'object'
-     OR jsonb_typeof(p_catalog) <> 'array'
-     OR jsonb_array_length(p_catalog)=0
-     OR p_lineage->>'input_digest' IS DISTINCT FROM run_row.input_digest
-     OR p_lineage->>'contract_digest' IS DISTINCT FROM run_row.contract_digest
-     OR EXISTS (
-       SELECT 1 FROM jsonb_array_elements(p_catalog) item
-        WHERE jsonb_typeof(item) <> 'object'
-           OR COALESCE(item->>'name','') !~ '^[A-Za-z_][A-Za-z0-9_]{0,127}$'
-           OR COALESCE(item->>'type','') = ''
-     ) THEN
-    RAISE EXCEPTION 'materialization attestation is incomplete' USING ERRCODE='23514';
-  END IF;
-  derived_schema_digest := encode(
-    public.digest(convert_to(p_catalog::text,'UTF8'),'sha256'),'hex'
-  );
-  derived_digest := encode(public.digest(convert_to(jsonb_build_object(
-    'run',p_run,'tenant_id',run_row.tenant_id,'workspace_id',run_row.workspace_id,
-    'dataset',run_row.dataset,'layer',run_row.layer,'attempt',run_row.attempt,
-    'object_uri',p_object_uri,'object_checksum',p_object_checksum,
-    'row_count',p_row_count,'schema_digest',derived_schema_digest,
-    'input_digest',run_row.input_digest,'contract_digest',run_row.contract_digest,
-    'verifier_identity','refinement.parquet-verifier/v1',
-    'lineage',p_lineage,'catalog',p_catalog
-  )::text,'UTF8'),'sha256'),'hex');
-  INSERT INTO omega_publication.materialization_attestations (
-    materialization_run_id,tenant_id,workspace_id,dataset,layer,attempt,
-    object_uri,object_checksum,row_count,schema_digest,input_digest,
-    contract_digest,lineage,catalog,verifier_identity,attestation_digest,expires_at
-  ) VALUES (
-    p_run,run_row.tenant_id,run_row.workspace_id,run_row.dataset,run_row.layer,
-    run_row.attempt,p_object_uri,p_object_checksum,p_row_count,
-    derived_schema_digest,run_row.input_digest,run_row.contract_digest,
-    p_lineage,p_catalog,'refinement.parquet-verifier/v1',derived_digest,
-    clock_timestamp()+interval '15 minutes'
-  ) ON CONFLICT (materialization_run_id,attestation_digest) DO NOTHING;
-  RETURN derived_digest;
-END $$;
+\ir fragments/41_verification_authority.sql
 
 CREATE OR REPLACE FUNCTION omega_publication.create_gold_stage(
     p_run uuid, p_columns jsonb
@@ -141,7 +86,15 @@ DECLARE
 BEGIN
   SELECT * INTO run_row FROM omega_publication.materialization_runs
    WHERE materialization_run_id=p_run FOR UPDATE;
-  IF NOT FOUND OR run_row.layer <> 'gold' OR run_row.status <> 'reserved' THEN
+  IF FOUND THEN
+    PERFORM omega_publication.assert_current_scope(
+      run_row.tenant_id,run_row.workspace_id
+    );
+  END IF;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'materialization run unavailable' USING ERRCODE='42501';
+  END IF;
+  IF run_row.layer <> 'gold' OR run_row.status <> 'reserved' THEN
     RAISE EXCEPTION 'Gold run is not reserved';
   END IF;
   IF jsonb_typeof(p_columns) <> 'array' OR jsonb_array_length(p_columns) = 0 THEN
@@ -193,8 +146,12 @@ END $$;
 DROP FUNCTION IF EXISTS omega_publication.mark_prepared(
   uuid,text,text,bigint,text,text,text,text,jsonb,jsonb
 );
+DROP FUNCTION IF EXISTS omega_publication.mark_prepared(
+  uuid,text,text,bigint,text,text,jsonb,jsonb
+);
 CREATE OR REPLACE FUNCTION omega_publication.mark_prepared(
-    p_run uuid, p_object_uri text, p_object_checksum text, p_row_count bigint,
+    p_run uuid, p_object_uri text, p_object_version text,
+    p_object_checksum text, p_row_count bigint,
     p_gold_table text, p_staging_table text, p_lineage jsonb, p_catalog jsonb
 ) RETURNS TABLE(schema_digest text, evidence_digest text)
 LANGUAGE plpgsql SECURITY DEFINER
@@ -212,9 +169,17 @@ DECLARE
 BEGIN
   SELECT * INTO current_run FROM omega_publication.materialization_runs
    WHERE materialization_run_id = p_run FOR UPDATE;
-  IF NOT FOUND THEN RAISE EXCEPTION 'materialization run not reserved'; END IF;
+  IF FOUND THEN
+    PERFORM omega_publication.assert_current_scope(
+      current_run.tenant_id,current_run.workspace_id
+    );
+  END IF;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'materialization run unavailable' USING ERRCODE='42501';
+  END IF;
   IF current_run.status = 'published' THEN RETURN; END IF;
   IF p_object_uri IS NULL OR p_object_uri !~ '^(s3|gs)://'
+     OR COALESCE(p_object_version,'')=''
      OR p_object_checksum !~ '^[0-9a-f]{64}$' OR p_row_count < 0
      OR jsonb_typeof(p_lineage) <> 'object' OR jsonb_typeof(p_catalog) <> 'array'
      OR jsonb_array_length(p_catalog)=0
@@ -291,6 +256,7 @@ BEGIN
        AND a.dataset=current_run.dataset AND a.layer=current_run.layer
        AND a.attempt=current_run.attempt
        AND a.object_uri=p_object_uri
+       AND a.object_version=p_object_version
        AND a.object_checksum=p_object_checksum
        AND a.row_count=p_row_count
        AND a.schema_digest=derived_schema_digest
@@ -299,6 +265,7 @@ BEGIN
        AND a.lineage=p_lineage
        AND a.catalog=authoritative_catalog
        AND a.verifier_identity='refinement.parquet-verifier/v1'
+       AND omega_publication.verify_attestation(a.attestation_id)
        AND a.consumed_at IS NULL
        AND a.invalidated_at IS NULL
        AND a.expires_at > clock_timestamp()
@@ -314,18 +281,20 @@ BEGIN
     'run',p_run,'tenant_id',current_run.tenant_id,'workspace_id',current_run.workspace_id,
     'dataset',current_run.dataset,'layer',current_run.layer,
     'input_digest',current_run.input_digest,'contract_digest',current_run.contract_digest,
-    'object_uri',p_object_uri,'object_checksum',p_object_checksum,
+    'object_uri',p_object_uri,'object_version',p_object_version,
+    'object_checksum',p_object_checksum,
     'row_count',p_row_count,'schema_digest',derived_schema_digest,
     'lineage',p_lineage,'catalog',authoritative_catalog
   )::text,'UTF8'),'sha256'),'hex');
   INSERT INTO omega_publication.materialization_evidence (
     materialization_run_id, tenant_id, workspace_id, dataset, layer,
-    object_uri, object_checksum, row_count, schema_digest, evidence_digest,
+    object_uri,object_version,object_checksum,row_count,schema_digest,evidence_digest,
     attestation_id,
     lineage, catalog
   ) VALUES (
     p_run, current_run.tenant_id, current_run.workspace_id,
-    current_run.dataset, current_run.layer, p_object_uri, p_object_checksum,
+    current_run.dataset,current_run.layer,p_object_uri,
+    p_object_version,p_object_checksum,
     p_row_count, derived_schema_digest, derived_evidence_digest,
     attestation_row.attestation_id,
     p_lineage, authoritative_catalog
@@ -333,13 +302,14 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM omega_publication.materialization_evidence e
      WHERE e.materialization_run_id=p_run
-       AND (e.tenant_id, e.workspace_id, e.dataset, e.layer, e.object_uri,
+       AND (e.tenant_id,e.workspace_id,e.dataset,e.layer,e.object_uri,e.object_version,
             e.object_checksum, e.row_count, e.schema_digest, e.evidence_digest,
             e.attestation_id,
             e.lineage, e.catalog)
            IS NOT DISTINCT FROM
            (current_run.tenant_id, current_run.workspace_id, current_run.dataset,
-            current_run.layer, p_object_uri, p_object_checksum, p_row_count,
+            current_run.layer,p_object_uri,p_object_version,
+            p_object_checksum,p_row_count,
             derived_schema_digest, derived_evidence_digest,
             attestation_row.attestation_id,
             p_lineage, authoritative_catalog)
@@ -347,7 +317,8 @@ BEGIN
     RAISE EXCEPTION 'materialization evidence replay mismatch' USING ERRCODE='23505';
   END IF;
   UPDATE omega_publication.materialization_runs SET
-    object_uri=p_object_uri, object_checksum=p_object_checksum, row_count=p_row_count,
+    object_uri=p_object_uri,object_version=p_object_version,
+    object_checksum=p_object_checksum,row_count=p_row_count,
     schema_digest=derived_schema_digest, evidence_digest=derived_evidence_digest,
     gold_table=p_gold_table, staging_table=p_staging_table,
     status='prepared', prepared_at=clock_timestamp()
@@ -367,7 +338,15 @@ DECLARE
 BEGIN
   SELECT * INTO run_row FROM omega_publication.materialization_runs
    WHERE materialization_run_id=p_run FOR UPDATE;
-  IF NOT FOUND OR run_row.status <> 'prepared' THEN
+  IF FOUND THEN
+    PERFORM omega_publication.assert_current_scope(
+      run_row.tenant_id,run_row.workspace_id
+    );
+  END IF;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'materialization run unavailable' USING ERRCODE='42501';
+  END IF;
+  IF run_row.status <> 'prepared' THEN
     RAISE EXCEPTION 'prepared materialization is not recoverable';
   END IF;
   IF EXISTS (SELECT 1 FROM omega_publication.dataset_publication_heads
@@ -409,7 +388,15 @@ DECLARE
 BEGIN
   SELECT * INTO run_row FROM omega_publication.materialization_runs
    WHERE materialization_run_id=p_run FOR UPDATE;
-  IF NOT FOUND OR run_row.status IN ('published','legacy_unverified') THEN RETURN; END IF;
+  IF FOUND THEN
+    PERFORM omega_publication.assert_current_scope(
+      run_row.tenant_id,run_row.workspace_id
+    );
+  END IF;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'materialization run unavailable' USING ERRCODE='42501';
+  END IF;
+  IF run_row.status IN ('published','legacy_unverified') THEN RETURN; END IF;
   IF EXISTS (
     SELECT 1 FROM omega_publication.dataset_publication_heads
      WHERE materialization_run_id=p_run
@@ -421,20 +408,38 @@ BEGIN
      SET invalidated_at=COALESCE(invalidated_at,clock_timestamp())
    WHERE materialization_run_id=p_run;
   UPDATE omega_publication.materialization_runs
-     SET status='failed', staging_table=NULL
+     SET status=CASE
+           WHEN recovery_reason IS NOT NULL THEN 'recoverable_failed'
+           ELSE 'failed'
+         END,
+         staging_table=NULL
    WHERE materialization_run_id=p_run;
 END $$;
 
 ALTER FUNCTION omega_publication.reserve_materialization(uuid,uuid,uuid,text,text,text,text,uuid) OWNER TO omega_gold_owner;
+ALTER FUNCTION omega_publication.submit_verification_candidate(uuid,text,text,text,bigint,jsonb,jsonb) OWNER TO omega_gold_owner;
+ALTER FUNCTION omega_publication.load_verification_candidate(uuid) OWNER TO postgres;
 ALTER FUNCTION omega_publication.create_gold_stage(uuid,jsonb) OWNER TO omega_gold_owner;
-ALTER FUNCTION omega_publication.record_attestation(uuid,text,text,bigint,jsonb,jsonb) OWNER TO omega_gold_owner;
-ALTER FUNCTION omega_publication.mark_prepared(uuid,text,text,bigint,text,text,jsonb,jsonb) OWNER TO omega_gold_owner;
+ALTER FUNCTION omega_publication.record_attestation(uuid) OWNER TO postgres;
+ALTER FUNCTION omega_publication.verify_attestation(uuid) OWNER TO omega_gold_owner;
+ALTER FUNCTION omega_publication.mark_prepared(uuid,text,text,text,bigint,text,text,jsonb,jsonb) OWNER TO omega_gold_owner;
 ALTER FUNCTION omega_publication.abandon_materialization(uuid) OWNER TO omega_gold_owner;
 ALTER FUNCTION omega_publication.quarantine_prepared(uuid,text) OWNER TO omega_gold_owner;
-REVOKE ALL ON ALL FUNCTIONS IN SCHEMA omega_publication FROM PUBLIC, omega_refinement_gold;
+ALTER FUNCTION omega_publication.reopen_prepared_materialization(uuid,text)
+  OWNER TO omega_gold_owner;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA omega_publication
+  FROM PUBLIC,omega_refinement_gold,omega_gold_publisher,omega_gold_verifier;
 GRANT EXECUTE ON FUNCTION omega_publication.reserve_materialization(uuid,uuid,uuid,text,text,text,text,uuid) TO omega_gold_publisher;
+GRANT EXECUTE ON FUNCTION omega_publication.submit_verification_candidate(uuid,text,text,text,bigint,jsonb,jsonb) TO omega_gold_publisher;
 GRANT EXECUTE ON FUNCTION omega_publication.create_gold_stage(uuid,jsonb) TO omega_gold_publisher;
-GRANT EXECUTE ON FUNCTION omega_publication.record_attestation(uuid,text,text,bigint,jsonb,jsonb) TO omega_refinement_gold;
-GRANT EXECUTE ON FUNCTION omega_publication.mark_prepared(uuid,text,text,bigint,text,text,jsonb,jsonb) TO omega_gold_publisher;
+GRANT EXECUTE ON FUNCTION omega_publication.load_verification_candidate(uuid) TO omega_gold_verifier;
+GRANT EXECUTE ON FUNCTION omega_publication.record_attestation(uuid) TO omega_gold_verifier;
+GRANT EXECUTE ON FUNCTION omega_publication.mark_prepared(uuid,text,text,text,bigint,text,text,jsonb,jsonb) TO omega_gold_publisher;
 GRANT EXECUTE ON FUNCTION omega_publication.abandon_materialization(uuid) TO omega_gold_publisher;
 GRANT EXECUTE ON FUNCTION omega_publication.quarantine_prepared(uuid,text) TO omega_gold_publisher;
+GRANT EXECUTE ON FUNCTION omega_publication.reopen_prepared_materialization(uuid,text)
+  TO omega_gold_publisher;
+
+INSERT INTO schema_migrations(filename,applied_at)
+VALUES ('gold/41_staged_publication_functions.sql',NOW())
+ON CONFLICT (filename) DO NOTHING;

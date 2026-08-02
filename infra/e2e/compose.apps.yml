@@ -16,6 +16,7 @@ services:
       DATABASE_URL: postgresql+psycopg2://omega_refinement:${OMEGA_REFINEMENT_PASSWORD:?required}@postgres:5432/modecissions
       GOLD_DATABASE_URL: postgresql+psycopg2://omega_refinement_gold:${OMEGA_REFINEMENT_GOLD_PASSWORD:?required}@postgres_gold:5433/modecissions_gold
       GOLD_PUBLISHER_DATABASE_URL: postgresql+psycopg2://omega_gold_publisher:${OMEGA_GOLD_PUBLISHER_PASSWORD:?required}@postgres_gold:5433/modecissions_gold
+      GOLD_VERIFIER_DATABASE_URL_FILE: /run/secrets/gold_verifier_database_url
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?required}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?required}
@@ -24,12 +25,15 @@ services:
       DUCKDB_MEMORY_LIMIT: 256MB
       DUCKDB_THREADS: "2"
       MCP_INFRA_URL: http://mcp-infra:8010
+    volumes:
+      - ${GOLD_VERIFIER_DATABASE_URL_HOST_FILE:?required}:/run/secrets/gold_verifier_database_url:ro
     depends_on:
       postgres: {condition: service_healthy}
       postgres_gold: {condition: service_healthy}
       minio: {condition: service_healthy}
+      minio-init: {condition: service_completed_successfully}
     healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; assert urllib.request.urlopen('http://127.0.0.1:8500/healthz',timeout=3).status==200"]
+      test: ["CMD", "python3", "-c", "import urllib.request; assert urllib.request.urlopen('http://127.0.0.1:8500/readyz',timeout=3).status==200"]
       interval: 5s
       timeout: 5s
       retries: 24
@@ -105,6 +109,7 @@ services:
       CONTROL_ROOM_EVIDENCE_SIGNING_KEY: ${CONTROL_ROOM_EVIDENCE_SIGNING_KEY:?required}
       CONTROL_ROOM_EVIDENCE_SIGNING_PREVIOUS_KEYS: '{}'
       DATABASE_URL: postgresql+psycopg2://omega_console:${OMEGA_CONSOLE_PASSWORD:?required}@postgres:5432/modecissions
+      OUTCOME_BINDER_DATABASE_URL: postgresql+psycopg2://omega_outcome_binder:${OMEGA_OUTCOME_BINDER_PASSWORD:?required}@postgres:5432/modecissions
       GOLD_DATABASE_URL: postgresql+psycopg2://omega_refinement_gold:${OMEGA_REFINEMENT_GOLD_PASSWORD:?required}@postgres_gold:5433/modecissions_gold
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?required}

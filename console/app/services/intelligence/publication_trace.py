@@ -31,6 +31,9 @@ def record_publication_read(dataset: str, relation: Any) -> None:
         "head_generation": int(relation.generation),
         "object_checksum": str(relation.object_checksum or ""),
         "evidence_digest": str(relation.evidence_digest or ""),
+        "object_uri": str(relation.object_uri or ""),
+        "object_version": str(relation.object_version or ""),
+        "schema_digest": str(relation.schema_digest or ""),
     }
     if not all(binding.values()):
         raise RuntimeError("published Gold authority is incomplete")
@@ -38,6 +41,14 @@ def record_publication_read(dataset: str, relation: Any) -> None:
     if previous is not None and previous != binding:
         raise RuntimeError("published Gold head changed during Intelligence run")
     trace[str(dataset)] = binding
+
+
+def current_publication_trace() -> dict[str, dict[str, Any]]:
+    return dict(_TRACE.get() or {})
+
+
+def publication_trace_active() -> bool:
+    return _TRACE.get() is not None
 
 
 def exact_bindings(

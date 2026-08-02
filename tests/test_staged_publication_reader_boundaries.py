@@ -42,20 +42,15 @@ def test_object_listing_requires_exact_published_key_not_prefix() -> None:
 
 
 def test_unpublished_metadata_is_omitted() -> None:
-    original = publication_public.PublicationReader
-    publication_public.PublicationReader = lambda: SimpleNamespace(
-        published_head=lambda *_args: None
-    )
-    try:
-        assert (
-            publication_public.published_dataset_metadata(
-                {"name": "pending", "sql_def": "SELECT secret", "sources": ["raw/x/y"]},
-                SCOPE,
-            )
-            is None
+    resolver = SimpleNamespace(published_snapshot=lambda *_args: None)
+    assert (
+        publication_public.published_dataset_metadata(
+            {"name": "pending", "sql_def": "SELECT secret", "sources": ["raw/x/y"]},
+            SCOPE,
+            resolver,
         )
-    finally:
-        publication_public.PublicationReader = original
+        is None
+    )
 
 
 def test_published_metadata_and_catalog_are_explicit_projections(monkeypatch) -> None:
@@ -70,16 +65,10 @@ def test_published_metadata_and_catalog_are_explicit_projections(monkeypatch) ->
         "row_count": 1,
         "created_at": head["published_at"],
     }
-    monkeypatch.setattr(
-        publication_public,
-        "PublicationReader",
-        lambda: SimpleNamespace(published_head=lambda *_args: head),
+    snapshot = SimpleNamespace(
+        head=head, evidence=evidence, validate_snapshot=lambda: None
     )
-    monkeypatch.setattr(
-        publication_public,
-        "PublicationEvidenceStore",
-        lambda: SimpleNamespace(read_exact=lambda *_args: evidence),
-    )
+    resolver = SimpleNamespace(published_snapshot=lambda *_args: snapshot)
     dataset = {
         "name": "safe",
         "layer": "gold",
@@ -89,8 +78,8 @@ def test_published_metadata_and_catalog_are_explicit_projections(monkeypatch) ->
         "metadata": {"receipt": "private"},
         "description": "/internal/path",
     }
-    metadata = publication_public.published_dataset_metadata(dataset, SCOPE)
-    catalog = publication_public.published_catalog([dataset], SCOPE)
+    metadata = publication_public.published_dataset_metadata(dataset, SCOPE, resolver)
+    catalog = publication_public.published_catalog([dataset], SCOPE, resolver=resolver)
     serialized = json.dumps({"metadata": metadata, "catalog": catalog})
     assert "SELECT" not in serialized and "s3://" not in serialized
     assert "/internal/path" not in serialized and "receipt" not in serialized

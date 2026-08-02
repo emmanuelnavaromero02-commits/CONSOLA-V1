@@ -20,7 +20,16 @@ from datetime import timezone
 from pathlib import Path
 from typing import Any
 
-from aws_ssm import DEFAULT_REGION, REPO, redact, resolve_instance_id, send_ssm_script, utc_now, utc_stamp, write_json
+from aws_ssm import (
+    DEFAULT_REGION,
+    REPO,
+    redact,
+    resolve_instance_id,
+    send_ssm_script,
+    utc_now,
+    utc_stamp,
+    write_json,
+)
 
 
 PASS = "PASS"
@@ -49,7 +58,9 @@ def _short(text: str, limit: int = 700) -> str:
     return compact if len(compact) <= limit else compact[: limit - 3] + "..."
 
 
-def _http(url: str, *, timeout: int = 10, attempts: int = 3) -> tuple[int, str, Any | None]:
+def _http(
+    url: str, *, timeout: int = 10, attempts: int = 3
+) -> tuple[int, str, Any | None]:
     req = urllib.request.Request(url, headers={"Accept": "application/json"})
     last_error = "unknown"
     for attempt in range(1, attempts + 1):
@@ -84,7 +95,9 @@ def _public_checks(public_url: str, expected_version: str) -> list[Check]:
         status, body, payload = _http(f"{base}{endpoint}")
         ok = 200 <= status < 300
         if endpoint == "/healthz":
-            health_version = payload.get("version") if isinstance(payload, dict) else None
+            health_version = (
+                payload.get("version") if isinstance(payload, dict) else None
+            )
             ok = ok and (not expected_version or health_version == expected_version)
             evidence = f"status={status} version={health_version} expected={expected_version or '<not-set>'}"
         else:
@@ -101,7 +114,13 @@ def _public_checks(public_url: str, expected_version: str) -> list[Check]:
     return checks
 
 
-def _remote_script(*, expected_version: str, expected_deploy_ref: str, expected_image_tag: str, require_hubspot: bool) -> str:
+def _remote_script(
+    *,
+    expected_version: str,
+    expected_deploy_ref: str,
+    expected_image_tag: str,
+    require_hubspot: bool,
+) -> str:
     required_tables = " ".join(REQUIRED_REPLICON_GOLD_TABLES)
     return f"""#!/usr/bin/env bash
 set -euo pipefail
@@ -217,7 +236,7 @@ psql_gold() {{
   docker compose $(compose_files) exec -T postgres_gold psql -U postgres -p 5433 -d modecissions_gold -tAc "$1" 2>&1 | tr -d '\\r'
 }}
 
-lineage="$(psql_op "SELECT COALESCE(COUNT(*),0)::text || '|' || COALESCE(SUM(row_count),0)::text FROM silver_lineage WHERE cartridge_id='replicon' AND layer='gold' AND COALESCE(row_count,0) > 0;")"
+lineage="$(psql_gold "SELECT COALESCE(COUNT(*),0)::text || '|' || COALESCE(SUM(row_count),0)::text FROM omega_publication.published_lineage WHERE layer='gold' AND row_count > 0 AND lineage->>'cartridge_id'='replicon';")"
 lineage_entries="${{lineage%%|*}}"
 lineage_rows="${{lineage##*|}}"
 if [ "${{lineage_entries:-0}}" -gt 0 ] 2>/dev/null && [ "${{lineage_rows:-0}}" -gt 0 ] 2>/dev/null; then
@@ -236,7 +255,7 @@ for table in "${{REQUIRED_TABLES[@]}}"; do
 done
 
 if [ "$REQUIRE_HUBSPOT" = "1" ]; then
-  hubspot_lineage="$(psql_op "SELECT COALESCE(COUNT(*),0)::text || '|' || COALESCE(SUM(row_count),0)::text FROM silver_lineage WHERE cartridge_id='hubspot' AND layer='gold' AND COALESCE(row_count,0) > 0;")"
+  hubspot_lineage="$(psql_gold "SELECT COALESCE(COUNT(*),0)::text || '|' || COALESCE(SUM(row_count),0)::text FROM omega_publication.published_lineage WHERE layer='gold' AND row_count > 0 AND lineage->>'cartridge_id'='hubspot';")"
   hubspot_entries="${{hubspot_lineage%%|*}}"
   hubspot_rows="${{hubspot_lineage##*|}}"
   if [ "${{hubspot_entries:-0}}" -gt 0 ] 2>/dev/null && [ "${{hubspot_rows:-0}}" -gt 0 ] 2>/dev/null; then
@@ -297,7 +316,14 @@ def _parse_remote_checks(stdout: str) -> list[Check]:
         if not line.startswith("OMEGA_CHECK\t"):
             continue
         _prefix, name, status, evidence = (line.split("\t", 3) + [""])[:4]
-        checks.append(Check(layer="internal-ec2", name=name, status=status, evidence=_short(evidence)))
+        checks.append(
+            Check(
+                layer="internal-ec2",
+                name=name,
+                status=status,
+                evidence=_short(evidence),
+            )
+        )
     return checks
 
 
@@ -309,7 +335,13 @@ def _write_evidence(
     remote_stdout: str,
     remote_stderr: str,
 ) -> str:
-    status = FAIL if any(check.status == FAIL for check in checks) else BLOCKED if any(check.status == BLOCKED for check in checks) else PASS
+    status = (
+        FAIL
+        if any(check.status == FAIL for check in checks)
+        else BLOCKED
+        if any(check.status == BLOCKED for check in checks)
+        else PASS
+    )
     summary = {
         "status": status,
         "metadata": metadata,
@@ -320,8 +352,12 @@ def _write_evidence(
     }
     evidence_dir.mkdir(parents=True, exist_ok=True)
     write_json(evidence_dir / "summary.json", summary)
-    (evidence_dir / "remote_stdout_redacted.txt").write_text(redact(remote_stdout), encoding="utf-8")
-    (evidence_dir / "remote_stderr_redacted.txt").write_text(redact(remote_stderr), encoding="utf-8")
+    (evidence_dir / "remote_stdout_redacted.txt").write_text(
+        redact(remote_stdout), encoding="utf-8"
+    )
+    (evidence_dir / "remote_stderr_redacted.txt").write_text(
+        redact(remote_stderr), encoding="utf-8"
+    )
     lines = [
         "# AWS Beta Smoke Evidence",
         "",
@@ -349,14 +385,27 @@ def _write_evidence(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run read-only AWS beta smoke checks over SSM.")
+    parser = argparse.ArgumentParser(
+        description="Run read-only AWS beta smoke checks over SSM."
+    )
     parser.add_argument("--region", default=DEFAULT_REGION)
-    parser.add_argument("--instance-id", default=os.environ.get("AWS_APP_INSTANCE_ID") or "")
-    parser.add_argument("--public-url", default=os.environ.get("PUBLIC_CONSOLE_URL") or os.environ.get("CONSOLE_URL") or "")
+    parser.add_argument(
+        "--instance-id", default=os.environ.get("AWS_APP_INSTANCE_ID") or ""
+    )
+    parser.add_argument(
+        "--public-url",
+        default=os.environ.get("PUBLIC_CONSOLE_URL")
+        or os.environ.get("CONSOLE_URL")
+        or "",
+    )
     parser.add_argument("--deploy-ref", default=os.environ.get("DEPLOY_REF") or "")
     parser.add_argument("--image-tag", default=os.environ.get("IMAGE_TAG") or "")
     parser.add_argument("--evidence-dir", type=Path, default=None)
-    parser.add_argument("--timeout-seconds", type=int, default=int(os.environ.get("OMEGA_AWS_SMOKE_TIMEOUT_SECONDS", "900")))
+    parser.add_argument(
+        "--timeout-seconds",
+        type=int,
+        default=int(os.environ.get("OMEGA_AWS_SMOKE_TIMEOUT_SECONDS", "900")),
+    )
     args = parser.parse_args(argv)
 
     if not args.public_url:
@@ -366,7 +415,9 @@ def main(argv: list[str] | None = None) -> int:
     evidence_dir = args.evidence_dir or DEFAULT_EVIDENCE_ROOT / utc_stamp()
     instance_id = resolve_instance_id(args.region, args.instance_id or None)
     expected_version = _local_version()
-    rollback_target = os.environ.get("DEPLOY_REF_OLD") or os.environ.get("IMAGE_TAG_OLD") or ""
+    rollback_target = (
+        os.environ.get("DEPLOY_REF_OLD") or os.environ.get("IMAGE_TAG_OLD") or ""
+    )
     rollback_command = ""
     if rollback_target:
         rollback_command = (
@@ -382,7 +433,10 @@ def main(argv: list[str] | None = None) -> int:
         "public_url": args.public_url.rstrip("/"),
         "expected_version": expected_version,
         "golden_path": "replicon",
-        "hubspot_required": os.environ.get("OMEGA_BETA_REQUIRE_HUBSPOT", "").strip().lower() in {"1", "true", "yes", "on"},
+        "hubspot_required": os.environ.get("OMEGA_BETA_REQUIRE_HUBSPOT", "")
+        .strip()
+        .lower()
+        in {"1", "true", "yes", "on"},
         "rollback_command": rollback_command,
     }
 
@@ -432,7 +486,16 @@ def main(argv: list[str] | None = None) -> int:
         remote_stdout=remote.stdout,
         remote_stderr=remote.stderr,
     )
-    print(json.dumps({"status": status, "evidence_dir": str(evidence_dir), "ssm_command_id": remote.command_id}, indent=2))
+    print(
+        json.dumps(
+            {
+                "status": status,
+                "evidence_dir": str(evidence_dir),
+                "ssm_command_id": remote.command_id,
+            },
+            indent=2,
+        )
+    )
     return 0 if status == PASS else 1
 
 

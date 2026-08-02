@@ -41,6 +41,7 @@ from datetime import datetime, timezone
 from airflow.decorators import dag, task
 from airflow.models import Variable
 from runtime_security_context import build_pipeline_run_context
+from dataset_refresh_admission import build_dataset_refresh_trigger
 
 MCP_INFRA_URL = os.environ.get("MCP_INFRA_URL", "http://mcp-infra:8010")
 
@@ -252,11 +253,8 @@ def _require_saas_scope(conf: dict, cartridge_id: str) -> tuple[str, str]:
 
 
 def _trigger_refresh_chain(
-    cartridge_id: str,
-    entity: str,
     *,
-    tenant_id: str | None = None,
-    workspace_id: str | None = None,
+    admission: dict,
 ) -> None:
     """Dispara dataset_refresh_chain con seed_raw=raw/<cartridge>/<entity>
     para que los silver/gold dependientes se materialicen en cascada."""
@@ -274,20 +272,15 @@ def _trigger_refresh_chain(
         or _os.environ.get("AIRFLOW_ADMIN_PASSWORD")
         or "admin"
     )
-    conf = {
-        "seed_raw": f"raw/{cartridge_id}/{entity}",
-        "cartridge_id": cartridge_id,
-        "triggered_by": "file_ingest",
-    }
-    if tenant_id:
-        conf["tenant_id"] = tenant_id
-    if workspace_id:
-        conf["workspace_id"] = workspace_id
+    if not isinstance(admission, dict) or not isinstance(admission.get("conf"), dict):
+        raise RuntimeError("refresh chain admission authority is required")
+    dag_run_id = str(admission.get("dag_run_id") or "")
+    conf = dict(admission["conf"])
     try:
         r = _req.post(
             f"{url}/api/v1/dags/dataset_refresh_chain/dagRuns",
             auth=(user, pw),
-            json={"conf": conf},
+            json={"conf": conf, "dag_run_id": dag_run_id},
             timeout=15,
         )
         r.raise_for_status()
@@ -320,7 +313,34 @@ def _trigger_refresh_chain(
 )
 def file_ingest():
     @task
-    def list_matching_files(**ctx) -> list[dict]:
+    def authorize_refresh_chain(**ctx) -> dict:
+        dag_run = ctx.get("dag_run")
+        conf = (dag_run.conf if dag_run else {}) or {}
+        cartridge_id = str(conf.get("cartridge_id") or "replicon")
+        entity = str(conf.get("entity") or "").strip()
+        tenant_id, workspace_id = _require_saas_scope(conf, cartridge_id)
+        upstream = conf.get("security_context")
+        if not entity or not isinstance(upstream, dict):
+            raise RuntimeError("refresh chain admission authority is required")
+        refresh_conf = {
+            "seed_raw": f"raw/{cartridge_id}/{entity}",
+            "cartridge_id": cartridge_id,
+            "triggered_by": "file_ingest",
+            "max_depth": 10,
+            "tenant_id": tenant_id,
+            "workspace_id": workspace_id,
+        }
+        return build_dataset_refresh_trigger(
+            upstream_context=upstream,
+            conf=refresh_conf,
+            source_dag_run_id=str(getattr(dag_run, "run_id", "") or ""),
+            prefix="file_ingest",
+        )
+
+    @task
+    def list_matching_files(admission: dict, **ctx) -> list[dict]:
+        if not isinstance(admission, dict):
+            raise RuntimeError("refresh chain admission is unavailable")
         conf = (ctx.get("dag_run").conf if ctx.get("dag_run") else {}) or {}
         cartridge_id = conf.get("cartridge_id") or "replicon"
         tenant_id, workspace_id = _require_saas_scope(conf, cartridge_id)
@@ -353,7 +373,9 @@ def file_ingest():
         return matches
 
     @task
-    def ingest_and_archive(files: list[dict], **ctx) -> dict:
+    def ingest_and_archive(files: list[dict], admission: dict, **ctx) -> dict:
+        if not isinstance(admission, dict):
+            raise RuntimeError("refresh chain admission is unavailable")
         import pandas as pd
         import pyarrow as pa
         import pyarrow.parquet as pq
@@ -474,10 +496,7 @@ def file_ingest():
 
         # Propagar aguas abajo (silver→gold) según el grafo de dependencias
         _trigger_refresh_chain(
-            cartridge_id,
-            entity,
-            tenant_id=tenant_id,
-            workspace_id=workspace_id,
+            admission=admission,
         )
         return {
             "row_count": len(df),
@@ -487,7 +506,8 @@ def file_ingest():
             "batch_id": batch_id,
         }
 
-    ingest_and_archive(list_matching_files())
+    authority = authorize_refresh_chain()
+    ingest_and_archive(list_matching_files(authority), authority)
 
 
 dag = file_ingest()

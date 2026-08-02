@@ -255,6 +255,7 @@ async def _audit(
     action_id: str | None,
     status: str,
     metadata: dict[str, Any] | None = None,
+    connection: Any | None = None,
 ) -> None:
     await audit_service.record_event(
         user_id=_user_id(user),
@@ -265,6 +266,7 @@ async def _audit(
         status=status,
         metadata=redact_sensitive(metadata or {}),
         critical=True,
+        connection=connection,
     )
 
 
@@ -289,10 +291,14 @@ async def _idempotency_response(
     if not row:
         return None
     data = _row_dict(row)
-    existing_action_id = str(data["action_id"]) if data.get("action_id") is not None else None
+    existing_action_id = (
+        str(data["action_id"]) if data.get("action_id") is not None else None
+    )
     if existing_action_id == action_id and str(row["operation"]) == operation:
         return _json_object(data.get("response"))
-    raise HTTPException(409, "idempotency key is already used for another action or operation")
+    raise HTTPException(
+        409, "idempotency key is already used for another action or operation"
+    )
 
 
 async def _store_idempotency(
@@ -329,7 +335,9 @@ async def _store_idempotency(
     )
 
 
-async def _fetch_action_for_update(conn: Any, *, workspace_id: str, action_id: str) -> Any:
+async def _fetch_action_for_update(
+    conn: Any, *, workspace_id: str, action_id: str
+) -> Any:
     row = await conn.fetchrow(
         """
         SELECT *
@@ -430,7 +438,9 @@ def _sandbox_dry_run(action: dict[str, Any], payload: dict[str, Any]) -> dict[st
 
 def _sandbox_execute(action: dict[str, Any]) -> dict[str, Any]:
     payload = action.get("payload") or {}
-    outcome = str(payload.get("sandbox_outcome") or payload.get("simulate") or "success").lower()
+    outcome = str(
+        payload.get("sandbox_outcome") or payload.get("simulate") or "success"
+    ).lower()
     if outcome in {"failure", "fail", "error"}:
         return {
             "ok": False,
@@ -454,9 +464,13 @@ async def propose(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
     source_type = _bounded_text(body.get("source_type"), field="source_type")
     source_id = _bounded_text(body.get("source_id"), field="source_id", max_length=256)
     action_type = _bounded_text(body.get("action_type"), field="action_type")
-    adapter_name = _bounded_text(body.get("adapter_name") or SANDBOX_ADAPTER, field="adapter_name").lower()
+    adapter_name = _bounded_text(
+        body.get("adapter_name") or SANDBOX_ADAPTER, field="adapter_name"
+    ).lower()
     action_payload = validate_payload(body.get("payload") or {})
-    dry_run_payload = validate_payload(body.get("dry_run_payload") or {}, field="dry_run_payload")
+    dry_run_payload = validate_payload(
+        body.get("dry_run_payload") or {}, field="dry_run_payload"
+    )
     metadata = validate_payload(body.get("metadata") or {}, field="metadata")
     key = _idempotency_key(body.get("idempotency_key"))
     _ensure_adapter_allowed(adapter_name)
@@ -518,7 +532,13 @@ async def propose(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
             key=key,
             response=response,
         )
-    await _audit(user=user, action="external_action.propose", action_id=response["action"]["id"], status="success")
+        await _audit(
+            user=user,
+            action="external_action.propose",
+            action_id=response["action"]["id"],
+            status="success",
+            connection=conn,
+        )
     return response
 
 
@@ -564,7 +584,9 @@ async def get_action(user: dict, action_id: str) -> dict[str, Any]:
     action["events"] = [
         {
             **dict(event),
-            "created_at": str(event["created_at"]) if _row_get(event, "created_at") else None,
+            "created_at": str(event["created_at"])
+            if _row_get(event, "created_at")
+            else None,
             "metadata": _json_object(_row_get(event, "metadata")),
         }
         for event in events
@@ -572,9 +594,13 @@ async def get_action(user: dict, action_id: str) -> dict[str, Any]:
     return {"action": action}
 
 
-async def dry_run(user: dict, action_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+async def dry_run(
+    user: dict, action_id: str, payload: dict[str, Any]
+) -> dict[str, Any]:
     body = dict(payload or {})
-    dry_run_payload = validate_payload(body.get("dry_run_payload") or {}, field="dry_run_payload")
+    dry_run_payload = validate_payload(
+        body.get("dry_run_payload") or {}, field="dry_run_payload"
+    )
     key = _idempotency_key(body.get("idempotency_key"))
     pool = await auth.pool()
     async with scoped_db_for_user(pool, user) as (conn, tenant_id, workspace_id):
@@ -587,15 +613,24 @@ async def dry_run(user: dict, action_id: str, payload: dict[str, Any]) -> dict[s
         )
         if replay:
             return replay
-        row = await _fetch_action_for_update(conn, workspace_id=workspace_id, action_id=action_id)
+        row = await _fetch_action_for_update(
+            conn, workspace_id=workspace_id, action_id=action_id
+        )
         if _is_expired(row):
-            await _mark_expired(conn, row=row, tenant_id=tenant_id, workspace_id=workspace_id, user=user)
+            await _mark_expired(
+                conn, row=row, tenant_id=tenant_id, workspace_id=workspace_id, user=user
+            )
             raise HTTPException(409, "external action is expired")
         if row["status"] in TERMINAL_STATUSES:
             raise HTTPException(409, "terminal external action cannot dry-run")
         _ensure_adapter_allowed(str(row["adapter_name"]))
         action = _serialize_action(row)
-        effective_payload = dry_run_payload or action.get("dry_run_payload") or action.get("payload") or {}
+        effective_payload = (
+            dry_run_payload
+            or action.get("dry_run_payload")
+            or action.get("payload")
+            or {}
+        )
         result = _sandbox_dry_run(action, effective_payload)
         updated = await conn.fetchrow(
             """
@@ -633,11 +668,18 @@ async def dry_run(user: dict, action_id: str, payload: dict[str, Any]) -> dict[s
             key=key,
             response=response,
         )
-    await _audit(user=user, action="external_action.dry_run", action_id=action_id, status="success")
+    await _audit(
+        user=user,
+        action="external_action.dry_run",
+        action_id=action_id,
+        status="success",
+    )
     return response
 
 
-async def approve(user: dict, action_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+async def approve(
+    user: dict, action_id: str, payload: dict[str, Any]
+) -> dict[str, Any]:
     key = _idempotency_key((payload or {}).get("idempotency_key"))
     pool = await auth.pool()
     async with scoped_db_for_user(pool, user) as (conn, tenant_id, workspace_id):
@@ -650,15 +692,24 @@ async def approve(user: dict, action_id: str, payload: dict[str, Any]) -> dict[s
         )
         if replay:
             return replay
-        row = await _fetch_action_for_update(conn, workspace_id=workspace_id, action_id=action_id)
+        row = await _fetch_action_for_update(
+            conn, workspace_id=workspace_id, action_id=action_id
+        )
         if _is_expired(row):
-            await _mark_expired(conn, row=row, tenant_id=tenant_id, workspace_id=workspace_id, user=user)
+            await _mark_expired(
+                conn, row=row, tenant_id=tenant_id, workspace_id=workspace_id, user=user
+            )
             raise HTTPException(409, "external action is expired")
         if row["status"] in TERMINAL_STATUSES or row["status"] == "executing":
             raise HTTPException(409, "external action cannot be approved")
         actor_id = _user_id(user)
-        if _row_get(row, "created_by") == actor_id and user_role(user) not in ADMIN_SELF_APPROVAL_ROLES:
-            raise HTTPException(403, "maker/checker approval requires a different approver")
+        if (
+            _row_get(row, "created_by") == actor_id
+            and user_role(user) not in ADMIN_SELF_APPROVAL_ROLES
+        ):
+            raise HTTPException(
+                403, "maker/checker approval requires a different approver"
+            )
         updated = await conn.fetchrow(
             """
             UPDATE external_actions
@@ -694,7 +745,12 @@ async def approve(user: dict, action_id: str, payload: dict[str, Any]) -> dict[s
             key=key,
             response=response,
         )
-    await _audit(user=user, action="external_action.approve", action_id=action_id, status="success")
+    await _audit(
+        user=user,
+        action="external_action.approve",
+        action_id=action_id,
+        status="success",
+    )
     return response
 
 
@@ -747,7 +803,9 @@ async def _terminal_update(
         )
         if replay:
             return replay
-        row = await _fetch_action_for_update(conn, workspace_id=workspace_id, action_id=action_id)
+        row = await _fetch_action_for_update(
+            conn, workspace_id=workspace_id, action_id=action_id
+        )
         if row["status"] in {"succeeded", "failed", "cancelled", "expired"}:
             raise HTTPException(409, "terminal external action cannot change state")
         updated = await conn.fetchrow(
@@ -787,11 +845,18 @@ async def _terminal_update(
             key=key,
             response=response,
         )
-    await _audit(user=user, action=f"external_action.{operation}", action_id=action_id, status="success")
+    await _audit(
+        user=user,
+        action=f"external_action.{operation}",
+        action_id=action_id,
+        status="success",
+    )
     return response
 
 
-async def execute(user: dict, action_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+async def execute(
+    user: dict, action_id: str, payload: dict[str, Any]
+) -> dict[str, Any]:
     body = dict(payload or {})
     key = _idempotency_key(body.get("idempotency_key"))
     pool = await auth.pool()
@@ -805,7 +870,9 @@ async def execute(user: dict, action_id: str, payload: dict[str, Any]) -> dict[s
         )
         if replay:
             return replay
-        row = await _fetch_action_for_update(conn, workspace_id=workspace_id, action_id=action_id)
+        row = await _fetch_action_for_update(
+            conn, workspace_id=workspace_id, action_id=action_id
+        )
 
         # Last defensive line: revalidate inside this scoped transaction.
         if not has_permission(user, "control_room.execute"):
@@ -814,11 +881,19 @@ async def execute(user: dict, action_id: str, payload: dict[str, Any]) -> dict[s
             raise HTTPException(404, "external action not found")
         if row["status"] != "approved":
             if _is_expired(row):
-                await _mark_expired(conn, row=row, tenant_id=tenant_id, workspace_id=workspace_id, user=user)
+                await _mark_expired(
+                    conn,
+                    row=row,
+                    tenant_id=tenant_id,
+                    workspace_id=workspace_id,
+                    user=user,
+                )
                 raise HTTPException(409, "external action is expired")
             raise HTTPException(409, "external action must be approved before execute")
         if _is_expired(row):
-            await _mark_expired(conn, row=row, tenant_id=tenant_id, workspace_id=workspace_id, user=user)
+            await _mark_expired(
+                conn, row=row, tenant_id=tenant_id, workspace_id=workspace_id, user=user
+            )
             raise HTTPException(409, "external action is expired")
         _ensure_adapter_allowed(str(row["adapter_name"]), execute=True)
         action_payload = validate_payload(_json_object(_row_get(row, "payload")))
@@ -884,5 +959,7 @@ async def execute(user: dict, action_id: str, payload: dict[str, Any]) -> dict[s
             key=key,
             response=response,
         )
-    await _audit(user=user, action="external_action.execute", action_id=action_id, status=status)
+    await _audit(
+        user=user, action="external_action.execute", action_id=action_id, status=status
+    )
     return response

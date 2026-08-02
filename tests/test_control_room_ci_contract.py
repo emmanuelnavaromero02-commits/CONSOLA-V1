@@ -8,8 +8,8 @@ WORKFLOW = ROOT / ".github/workflows/control-room-postgres-rls.yml"
 PREPARE_SCRIPT = ROOT / "scripts/prepare_refinement_duckdb_ci.sh"
 MCP_REQUIREMENTS = ROOT / "mcp-infra/requirements.txt"
 MCP_DOCKERFILE = ROOT / "mcp-infra/Dockerfile"
-FOCAL_MINIMUM = 9090
-POSTGRES_MINIMUM = 253
+FOCAL_MINIMUM = 9104
+POSTGRES_MINIMUM = 268
 TENANT_EXECUTE_ISOLATION = ROOT / (
     "tests/test_control_room_live_postgres_tenant_execute_isolation.py"
 )
@@ -133,6 +133,8 @@ FOCAL_TESTS = (
 )
 
 LIVE_POSTGRES_TESTS = (
+    "tests/test_dataset_refresh_admission_live.py",
+    "tests/test_gold_refresh_binding_crash_matrix_live.py",
     "tests/test_operational_rls_console_refinement.py",
     "tests/test_operational_rls_policy_guard.py",
     "tests/test_control_room_live_postgres*.py",
@@ -144,6 +146,7 @@ LIVE_POSTGRES_TESTS = (
     "tests/test_staged_publication_acceptance.py",
     "tests/test_staged_publication_authority_live.py",
     "tests/test_staged_publication_reader_alignment_live.py",
+    "tests/test_staged_publication_recovery_matrix_live.py",
     "tests/test_staged_publication_semantics_live.py",
     "tests/test_staged_publication_final_red.py",
     "tests/test_staged_publication_integrity_live.py",
@@ -151,6 +154,7 @@ LIVE_POSTGRES_TESTS = (
     "tests/test_staged_publication_public_projection.py",
     "tests/test_staged_publication_reader_boundaries.py",
     "tests/test_staged_publication_red.py",
+    "tests/test_staged_publication_verifier_boundary_live.py",
 )
 
 

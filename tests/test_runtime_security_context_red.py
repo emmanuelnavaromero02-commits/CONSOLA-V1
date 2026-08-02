@@ -236,12 +236,14 @@ def test_allow_partial_never_absorbs_runtime_authority_failure(monkeypatch):
         "post",
         lambda *_args, **_kwargs: _Rejected(),
     )
+    context = _materialize_context(allow_partial=True)
     with pytest.raises(RuntimeError, match="failed closed"):
         dataset_refresh_materialize.materialize_in_order(
-            _materialize_context(allow_partial=True),
+            context,
             postgres_dsn="postgresql://unused",
             refinement_url="http://refinement",
             headers=lambda *_args: {},
+            admitted_conf=context["dag_run"].conf,
         )
     assert finished == [
         {
@@ -269,11 +271,13 @@ def test_successful_replay_reuses_durable_result_without_second_post(monkeypatch
         "post",
         lambda *_args, **_kwargs: pytest.fail("replay performed a second POST"),
     )
+    context = _materialize_context()
     result = dataset_refresh_materialize.materialize_in_order(
-        _materialize_context(),
+        context,
         postgres_dsn="postgresql://unused",
         refinement_url="http://refinement",
         headers=lambda *_args: {},
+        admitted_conf=context["dag_run"].conf,
     )
     assert result["materialized"] == 1
     assert result["results"] == [

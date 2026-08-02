@@ -27,15 +27,34 @@ class ScheduledMonitorOutcomeInvalid(ScheduledMonitorExecutionError):
     error_code = "scheduled_monitor_invalid_outcome"
 
 
-async def _cancel_task(task: asyncio.Task[Any] | None) -> None:
+def _consume_task_result(task: asyncio.Task[Any]) -> None:
+    if not task.cancelled():
+        try:
+            task.exception()
+        except Exception:
+            pass
+
+
+async def _cancel_task(
+    task: asyncio.Task[Any] | None, *, authority_retired: bool = False
+) -> None:
     if task is None:
         return
     if not task.done():
         task.cancel()
+    if authority_retired:
         await asyncio.sleep(0)
-    task.add_done_callback(
-        lambda completed: completed.exception() if not completed.cancelled() else None
-    )
+        if task.done():
+            _consume_task_result(task)
+        else:
+            task.add_done_callback(_consume_task_result)
+        return
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        pass
 
 
 def _valid_monitor_result(result: Any) -> bool:
@@ -109,6 +128,7 @@ async def execute_reserved_scheduled_monitor(
 
     finish_metadata = dict(metadata or {})
     finish_metadata["lease_guarded"] = True
+    authority_retired = False
 
     async def heartbeat_once() -> None:
         await heartbeat_scheduled_run(
@@ -129,17 +149,51 @@ async def execute_reserved_scheduled_monitor(
 
     async def finish(
         *, status: str, agent_run_id: int | None, error_code: str | None = None
-    ) -> None:
-        await finish_scheduled_run(
-            schedule_run_id=schedule_run_id,
-            agent_run_id=agent_run_id,
-            status=status,
-            tenant_id=tenant_id,
-            workspace_id=workspace_id,
-            fencing_token=fencing_token,
-            error_message=error_code,
-            metadata=finish_metadata,
+    ) -> bool:
+        nonlocal authority_retired
+        try:
+            closed_by_caller = await finish_scheduled_run(
+                schedule_run_id=schedule_run_id,
+                agent_run_id=agent_run_id,
+                status=status,
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+                fencing_token=fencing_token,
+                error_message=error_code,
+                metadata=finish_metadata,
+            )
+        except Exception as exc:
+            if getattr(exc, "authority_retired", False) is not True:
+                raise
+            closed_by_caller = False
+        authority_retired = True
+        return closed_by_caller is not False
+
+    async def retire_active_authority(*, status: str, error_code: str) -> bool:
+        retry_delay = min(max(float(heartbeat_interval_seconds), 0.01), 1.0)
+        while not authority_retired:
+            try:
+                return await finish(
+                    status=status,
+                    agent_run_id=None,
+                    error_code=error_code,
+                )
+            except Exception:
+                await asyncio.sleep(retry_delay)
+        return False
+
+    async def retire_after_external_cancel() -> None:
+        close_task = asyncio.create_task(
+            retire_active_authority(
+                status="cancelled", error_code="scheduled_monitor_cancelled"
+            )
         )
+        while not close_task.done():
+            try:
+                await asyncio.shield(close_task)
+            except asyncio.CancelledError:
+                continue
+        await close_task
 
     try:
         await heartbeat_once()
@@ -194,31 +248,16 @@ async def execute_reserved_scheduled_monitor(
                 "scheduled monitor returned an invalid outcome"
             )
     except asyncio.CancelledError:
-        await _cancel_task(monitor_task)
+        await retire_after_external_cancel()
+        await _cancel_task(monitor_task, authority_retired=authority_retired)
         await _cancel_task(heartbeat_task)
-        try:
-            await finish(
-                status="cancelled",
-                agent_run_id=None,
-                error_code="scheduled_monitor_cancelled",
-            )
-        except Exception:
-            pass
         raise
     except ScheduledMonitorExecutionError as exc:
-        await _cancel_task(monitor_task)
+        await retire_active_authority(status="error", error_code=exc.error_code)
+        await _cancel_task(monitor_task, authority_retired=authority_retired)
         await _cancel_task(heartbeat_task)
-        try:
-            await finish(status="error", agent_run_id=None, error_code=exc.error_code)
-        except Exception:
-            if not isinstance(exc, ScheduledMonitorLeaseLost):
-                raise ScheduledMonitorLeaseLost(
-                    "scheduled monitor lease was lost while closing"
-                ) from exc
         raise
     except Exception as exc:
-        await _cancel_task(monitor_task)
-        await _cancel_task(heartbeat_task)
         try:
             await finish(
                 status="error",
@@ -229,17 +268,24 @@ async def execute_reserved_scheduled_monitor(
             raise ScheduledMonitorLeaseLost(
                 "scheduled monitor lease was lost while closing"
             ) from finish_exc
+        await _cancel_task(monitor_task, authority_retired=authority_retired)
+        await _cancel_task(heartbeat_task)
         raise
     else:
         await _cancel_task(heartbeat_task)
         finish_metadata["deterministic_monitor"] = True
         try:
-            await finish(status="ok", agent_run_id=result["run_id"])
+            closed_by_caller = await finish(status="ok", agent_run_id=result["run_id"])
         except Exception as exc:
             raise ScheduledMonitorLeaseLost(
                 "scheduled monitor lease was lost before completion"
             ) from exc
+        if not closed_by_caller:
+            raise ScheduledMonitorLeaseLost(
+                "scheduled monitor lease was lost before completion"
+            )
         return result
     finally:
-        await _cancel_task(monitor_task)
+        if authority_retired or monitor_task.done():
+            await _cancel_task(monitor_task, authority_retired=authority_retired)
         await _cancel_task(heartbeat_task)

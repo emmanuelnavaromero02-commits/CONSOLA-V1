@@ -468,7 +468,32 @@ def _pipeline_run_save(
 @dag(schedule=None, catchup=False, default_args=default_args, max_active_runs=1)
 def sap_successfactors_extract_all():
     @task
-    def trigger_extract_all(**context):
+    def authorize_refresh_chain(**context) -> dict:
+        from dataset_refresh_admission import build_dataset_refresh_trigger
+
+        dag_run = context.get("dag_run")
+        conf = dag_run.conf if dag_run and isinstance(dag_run.conf, dict) else {}
+        upstream = conf.get("security_context")
+        if not isinstance(upstream, dict):
+            raise RuntimeError("refresh chain admission authority is required")
+        refresh_conf = {
+            "seed_dataset": "sap_successfactors_employee_360",
+            "cartridge_id": "sap_successfactors",
+            "triggered_by": "sap_successfactors_extract_all",
+            "tenant_id": conf.get("tenant_id") or upstream.get("tenant_id"),
+            "workspace_id": conf.get("workspace_id") or upstream.get("workspace_id"),
+        }
+        return build_dataset_refresh_trigger(
+            upstream_context=upstream,
+            conf=refresh_conf,
+            source_dag_run_id=str(getattr(dag_run, "run_id", "") or ""),
+            prefix="successfactors",
+        )
+
+    @task
+    def trigger_extract_all(admission: dict, **context):
+        if not isinstance(admission, dict):
+            raise RuntimeError("refresh chain admission is unavailable")
         conf = context.get("dag_run").conf or {}
         logical_date = context.get("logical_date")
         started_at = (
@@ -720,7 +745,7 @@ def sap_successfactors_extract_all():
             runtime.reset_security_context(token)
 
     @task
-    def trigger_refresh_chain(result: dict) -> dict:
+    def trigger_refresh_chain(result: dict, admission: dict) -> dict:
         """Puente Airflow -> inteligencia (P3).
 
         Tras la extraccion+gold del cartucho, dispara el meta-DAG
@@ -734,24 +759,14 @@ def sap_successfactors_extract_all():
         DAG, para respetar la separacion de responsabilidades del contrato de DAGs.
         """
         import logging
-        from airflow.operators.python import get_current_context
 
         log = logging.getLogger("airflow.task")
-        dag_run = get_current_context().get("dag_run")
-        run_conf = dag_run.conf if dag_run and isinstance(dag_run.conf, dict) else {}
-        refresh_conf: dict[str, Any] = {
-            # VERIFICAR con el stack arriba: confirmar que este seed alcanza toda
-            # la cascada de talento (employee_360 -> cpa_scores -> readiness ->
-            # 9box -> simulation_inputs). Si la cobertura resultara parcial,
-            # sembrar con la raiz de foundation o iterar por dataset materializado.
-            "seed_dataset": "sap_successfactors_employee_360",
-            "cartridge_id": "sap_successfactors",
-            "triggered_by": "sap_successfactors_extract_all",
-        }
-        # dataset_refresh_chain exige el scope SaaS cuando esta presente.
-        for key in ("tenant_id", "workspace_id", "security_context"):
-            if run_conf.get(key):
-                refresh_conf[key] = run_conf[key]
+        if not isinstance(admission, dict) or not isinstance(
+            admission.get("conf"), dict
+        ):
+            raise RuntimeError("refresh chain admission is unavailable")
+        dag_run_id = str(admission.get("dag_run_id") or "")
+        refresh_conf = dict(admission["conf"])
 
         airflow_url = os.environ.get("AIRFLOW_URL", "http://airflow:8080").rstrip("/")
         user = (
@@ -768,17 +783,17 @@ def sap_successfactors_extract_all():
             response = requests.post(
                 f"{airflow_url}/api/v1/dags/dataset_refresh_chain/dagRuns",
                 auth=(user, password),
-                json={"conf": refresh_conf},
+                json={"conf": refresh_conf, "dag_run_id": dag_run_id},
                 timeout=15,
             )
             response.raise_for_status()
             log.info("refresh_chain disparado: %s", response.status_code)
             return {"triggered": True, "status": response.status_code}
-        except Exception as exc:  # noqa: BLE001 - el puente no debe tumbar la extraccion
-            log.warning("refresh_chain trigger fallo: %s", exc)
-            return {"triggered": False, "error": str(exc)}
+        except Exception as exc:
+            raise RuntimeError("refresh_chain trigger failed closed") from exc
 
-    trigger_refresh_chain(trigger_extract_all())
+    authority = authorize_refresh_chain()
+    trigger_refresh_chain(trigger_extract_all(authority), authority)
 
 
 dag = sap_successfactors_extract_all()

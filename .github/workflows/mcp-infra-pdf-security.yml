@@ -33,7 +33,7 @@ jobs:
         env:
           PYTHONPATH: .
         run: |
-          python -m pytest -q \
+          python -m pytest -q --junitxml=/tmp/functional-pdf.xml \
             tests/test_mcp_infra_pdf_ingest.py \
             tests/test_mcp_infra_pdf_capacity.py \
             tests/test_mcp_infra_pdf_compose_capacity.py \
@@ -45,6 +45,38 @@ jobs:
             tests/test_control_room_ci_contract.py \
             tests/test_control_room_gate_contract.py \
             tests/test_control_room_path_policy.py
+
+      - name: Verify protected PDF report
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          def verify_junit(path: str, *, minimum: int, label: str) -> None:
+              report = Path(path)
+              if not report.is_file():
+                  raise SystemExit(f"{label} report missing; tests did not complete")
+              root = ET.parse(report).getroot()
+              suites = [root] if root.tag == "testsuite" else root.findall(".//testsuite")
+              counts = {
+                  name: sum(int(suite.attrib.get(name, 0)) for suite in suites)
+                  for name in ("tests", "skipped", "failures", "errors")
+              }
+              if counts["tests"] < minimum:
+                  raise SystemExit(
+                      f"{label} collected only {counts['tests']} tests; expected >= {minimum}"
+                  )
+              bad = {
+                  name: counts[name]
+                  for name in ("skipped", "failures", "errors")
+              }
+              if any(bad.values()):
+                  raise SystemExit(f"{label} JUnit is not clean: {bad}")
+
+          verify_junit(
+              "/tmp/functional-pdf.xml", minimum=332, label="Functional PDF"
+          )
+          PY
 
   pdf-gate:
     name: pdf-gate

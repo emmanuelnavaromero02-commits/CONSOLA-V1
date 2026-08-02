@@ -20,6 +20,9 @@ class PublishedGoldRelation:
     receipt_id: str | None
     object_checksum: str | None
     evidence_digest: str | None
+    object_uri: str | None = None
+    object_version: str | None = None
+    schema_digest: str | None = None
 
     @property
     def sql(self) -> str:
@@ -34,7 +37,8 @@ async def resolve_published_gold_relation(
     row = await conn.fetchrow(
         """SELECT h.materialization_run_id::text AS run_id, h.generation,
                   r.status, r.gold_table, rec.receipt_id::text,
-                  r.object_checksum, r.evidence_digest
+                  r.object_checksum, r.evidence_digest,r.object_uri,
+                  r.object_version,r.schema_digest
              FROM omega_publication.dataset_publication_heads h
              JOIN omega_publication.materialization_runs r
                ON r.materialization_run_id=h.materialization_run_id
@@ -64,6 +68,9 @@ async def resolve_published_gold_relation(
         receipt_id=str(row["receipt_id"]) if row["receipt_id"] else None,
         object_checksum=str(row["object_checksum"]) if row["object_checksum"] else None,
         evidence_digest=str(row["evidence_digest"]) if row["evidence_digest"] else None,
+        object_uri=str(row["object_uri"]) if row["object_uri"] else None,
+        object_version=str(row["object_version"]) if row["object_version"] else None,
+        schema_digest=str(row["schema_digest"]) if row["schema_digest"] else None,
     )
 
 

@@ -20,6 +20,7 @@ from dataset_refresh_outcome import (
     require_successful_registry_response,
 )
 from runtime_security_context import build_pipeline_run_context
+from dataset_refresh_admission import validate_dataset_refresh_admission
 
 
 CARTRIDGE_ID = "platform"
@@ -90,7 +91,9 @@ def _internal_headers(target: str, ctx: dict | None = None) -> dict[str, str]:
 
 
 def resolve_chain(**ctx):
-    return _resolve_chain(ctx, postgres_dsn=POSTGRES_DSN)
+    return _resolve_chain(
+        ctx, postgres_dsn=POSTGRES_DSN, admitted_conf=_admitted_conf(ctx)
+    )
 
 
 def materialize_in_order(**ctx):
@@ -99,6 +102,7 @@ def materialize_in_order(**ctx):
         postgres_dsn=POSTGRES_DSN,
         refinement_url=REFINEMENT_URL,
         headers=_internal_headers,
+        admitted_conf=_admitted_conf(ctx),
     )
 
 
@@ -115,6 +119,24 @@ def _successful_materialized_datasets(results: list[dict]) -> list[str]:
     )
 
 
+def admit_dataset_refresh(**ctx) -> dict[str, Any]:
+    conf = (ctx.get("dag_run").conf if ctx.get("dag_run") else {}) or {}
+    validate_dataset_refresh_admission(
+        conf.get("security_context"),
+        conf=conf,
+        run_id=str(ctx.get("run_id") or ""),
+        postgres_dsn=POSTGRES_DSN,
+    )
+    return {key: value for key, value in conf.items() if key != "security_context"}
+
+
+def _admitted_conf(ctx: dict[str, Any]) -> dict[str, Any]:
+    value = ctx["ti"].xcom_pull(task_ids="admit_dataset_refresh")
+    if not isinstance(value, dict):
+        raise RuntimeError("dataset refresh admission is unavailable")
+    return value
+
+
 def _skip_intelligence_for_cartridge(cartridge_id: str) -> bool:
     return cartridge_id in {"banxico", "inegi", "sec_edgar"}
 
@@ -129,8 +151,9 @@ def _trigger_gold_refresh_intelligence(
     status: str,
     datasets: list[str],
     finished_at: str,
+    admitted_conf: dict[str, Any],
 ) -> None:
-    conf = (ctx.get("dag_run").conf if ctx.get("dag_run") else {}) or {}
+    conf = admitted_conf
     if bool(conf.get("skip_intelligence")) or _skip_intelligence_for_cartridge(
         cartridge_id
     ):
@@ -170,7 +193,7 @@ def _materialization_result(ctx: dict[str, Any]) -> tuple[object, str]:
 
 
 def record_run(**ctx):
-    conf = (ctx.get("dag_run").conf if ctx.get("dag_run") else {}) or {}
+    conf = _admitted_conf(ctx)
     allow_partial = bool(conf.get("allow_partial"))
     raw_invocation, task_state = _materialization_result(ctx)
     status = materialization_status(raw_invocation, task_state=task_state)
@@ -224,6 +247,7 @@ def record_run(**ctx):
             status=status,
             datasets=_successful_materialized_datasets(results),
             finished_at=finished_at,
+            admitted_conf=conf,
         )
 
     finalize_pipeline_status(
@@ -238,6 +262,9 @@ def record_run(**ctx):
         raise RuntimeError("dataset_refresh_chain recorded a failed run")
 
 
+t_admit = PythonOperator(
+    task_id="admit_dataset_refresh", python_callable=admit_dataset_refresh, dag=dag
+)
 t_resolve = PythonOperator(
     task_id="resolve_chain", python_callable=resolve_chain, dag=dag
 )
@@ -251,4 +278,4 @@ t_rec = PythonOperator(
     dag=dag,
 )
 
-t_resolve >> t_mat >> t_rec
+t_admit >> t_resolve >> t_mat >> t_rec

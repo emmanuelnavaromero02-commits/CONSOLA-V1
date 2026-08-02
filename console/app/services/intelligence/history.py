@@ -47,6 +47,7 @@ PROBABILITY_BUCKETS = (
     (0.8, 1.0, "0.8-1.0"),
 )
 
+
 def _actor_id(value: Any) -> int | None:
     if isinstance(value, bool) or value is None:
         return None
@@ -233,7 +234,9 @@ async def finish_intelligence_run(
     tenant_id, workspace_id = workspace_scope(user)
     counts = _skip_counts(skipped)
     safe_status = (
-        status if status in {"completed", "failed", "not_ready"} else "completed"
+        status
+        if status in {"binding_pending", "completed", "failed", "not_ready"}
+        else "completed"
     )
     pool = await auth.pool()
     async with scoped_db(pool, tenant_id, workspace_id) as conn:

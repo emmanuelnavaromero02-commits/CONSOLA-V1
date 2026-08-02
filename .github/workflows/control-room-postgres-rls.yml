@@ -133,6 +133,8 @@ jobs:
             tests/test_operational_rls_console_refinement.py \
             tests/test_operational_rls_policy_guard.py \
             tests/test_control_room_live_postgres*.py \
+            tests/test_dataset_refresh_admission_live.py \
+            tests/test_gold_refresh_binding_crash_matrix_live.py \
             tests/test_operational_truth_runtime_leases_live.py \
             tests/test_operational_truth_scope_authority_live.py \
             tests/test_operational_truth_scope_upgrade_live.py \
@@ -147,7 +149,9 @@ jobs:
             tests/test_staged_publication_live.py \
             tests/test_staged_publication_public_projection.py \
             tests/test_staged_publication_reader_boundaries.py \
-            tests/test_staged_publication_red.py
+            tests/test_staged_publication_recovery_matrix_live.py \
+            tests/test_staged_publication_red.py \
+            tests/test_staged_publication_verifier_boundary_live.py
 
       - name: Verify hermetic DuckDB extension cache
         if: always()
@@ -190,8 +194,8 @@ jobs:
               if any(bad.values()):
                   raise SystemExit(f"{label} JUnit is not clean: {bad}")
 
-          verify_junit("/tmp/control-room-focal.xml", minimum=9090, label="Focal Control Room")
-          verify_junit("/tmp/control-room-postgres-rls.xml", minimum=253, label="Live PostgreSQL/RLS")
+          verify_junit("/tmp/control-room-focal.xml", minimum=9104, label="Focal Control Room")
+          verify_junit("/tmp/control-room-postgres-rls.xml", minimum=268, label="Live PostgreSQL/RLS")
           PY
 
   operational-truth-e2e:

@@ -34,6 +34,15 @@ def _user(tenant_id: str, workspace_id: str) -> dict[str, str]:
     }
 
 
+def _staged_schema_sql() -> str:
+    root = Path(__file__).parents[1] / "infra/init_gold"
+    source = (root / "40_staged_publication_schema.sql").read_text(encoding="utf-8")
+    fragment = (root / "fragments/40_verification_schema.sql").read_text(
+        encoding="utf-8"
+    )
+    return source.replace(r"\ir fragments/40_verification_schema.sql", fragment)
+
+
 @pytest.mark.asyncio
 async def test_real_gold_postgres_exact_headcount_isolates_tenant_and_workspace(
     postgres_gold_with_native_rls: str,
@@ -84,11 +93,7 @@ async def test_real_gold_postgres_exact_headcount_isolates_tenant_and_workspace(
                 "SELECT public.omega_apply_gold_rls_for_table"
                 "('gold_sap_successfactors_employee_360')"
             )
-            migration = (
-                Path(__file__).parents[1]
-                / "infra/init_gold/38_staged_publication_schema.sql"
-            )
-            cur.execute(migration.read_text(encoding="utf-8"))
+            cur.execute(_staged_schema_sql())
         conn.commit()
     finally:
         conn.close()

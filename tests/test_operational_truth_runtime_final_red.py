@@ -14,6 +14,11 @@ from console.app.services.scheduled_runtime import _fire_in_window
 
 
 KEY = "runtime-signing-key-that-is-long-and-isolated-123456"
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _read(path: str) -> str:
+    return (ROOT / path).read_text(encoding="utf-8")
 
 
 def test_hmac_v2_binds_run_body_and_fresh_256_bit_jti(monkeypatch) -> None:
@@ -117,7 +122,8 @@ def test_scheduled_agent_slot_has_durable_lease_and_fencing() -> None:
     assert "fencing_token" in finish.parameters
     assert hasattr(agent_scheduler, "heartbeat_scheduled_run")
     migration = (
-        Path(__file__).resolve().parents[1] / "infra/init/99u_agent_schedule_runs.sql"
+        Path(__file__).resolve().parents[1]
+        / "infra/init/99zzp_agent_schedule_effect_leases.sql"
     ).read_text(encoding="utf-8")
     for field in ("lease_expires_at", "heartbeat_at", "fencing_token"):
         assert field in migration
@@ -174,3 +180,77 @@ def test_intelligence_failure_cannot_leave_pipeline_green(monkeypatch) -> None:
             trigger_intelligence=fail_intelligence,
         )
     assert saved_statuses == ["running", "failed"]
+
+
+def test_f5_public_operations_resolve_one_immutable_snapshot() -> None:
+    source = _read("refinement/app/publication_public.py")
+    assert source.count("published_head(") == 0
+    assert "snapshot_by_dataset" in source
+    assert "validate_snapshot" in source
+    router = _read("refinement/app/main.py")
+    describe = router.split('if tool == "describe_silver"', 1)[1].split(
+        'if tool == "list_datasets_with_schemas"', 1
+    )[0]
+    assert "_publication_snapshot_resolver" in describe
+    assert "_silver_path" not in describe
+    mcp_heads = _read("mcp-infra/app/publication_heads.py")
+    assert "JOIN omega_publication.materialization_receipts" in mcp_heads
+    assert "LEFT JOIN omega_publication.materialization_evidence" not in mcp_heads
+
+
+def test_f6_gold_refresh_binding_is_server_owned_and_atomic() -> None:
+    migration = _read("infra/init/99zzr_operational_outcome_binding.sql")
+    engine = _read("console/app/services/intelligence/engine.py")
+    binding = _read("console/app/services/intelligence/outcome_binding.py")
+    assert "omega_outcome_binder" in migration
+    assert "stage_operational_outcome_binding" in migration
+    assert "finalize_operational_outcome_binding" in migration
+    assert "stage_gold_refresh_authority" in engine
+    assert "p_bindings jsonb" not in migration
+    assert "OUTCOME_BINDER_DATABASE_URL" in binding
+
+
+def test_f7_dag_rejects_raw_scope_without_upstream_admission_authority() -> None:
+    source = _read("airflow/dags/dataset_refresh_chain.py")
+    task = source.split("def admit_dataset_refresh", 1)[1]
+    assert task.index("validate_dataset_refresh_admission") >= 0
+    assert "t_admit >> t_resolve >> t_mat >> t_rec" in source
+    assert "_admitted_conf(ctx)" in source
+    bridges = {
+        "airflow/dags/file_ingest.py": ("def file_ingest", "ingest_and_archive"),
+        "cartridges/hubspot/dags/hubspot_extract.py": (
+            "def hubspot_extract",
+            "def extract",
+        ),
+        "cartridges/replicon/dags/replicon_extract.py": (
+            "def replicon_extract",
+            "def extract",
+        ),
+        "cartridges/sap_successfactors/dags/sap_successfactors_extract_all.py": (
+            "def sap_successfactors_extract_all",
+            "trigger_extract_all",
+        ),
+    }
+    for path, (anchor, first_effect) in bridges.items():
+        bridge = _read(path).split(anchor, 1)[1]
+        assert bridge.index("authorize_refresh_chain") < bridge.index(first_effect)
+
+
+def test_f8_pr555_migrations_are_collision_safe_and_old_names_are_gone() -> None:
+    expected = (
+        "infra/init/99zzl_runtime_hmac_nonces.sql",
+        "infra/init/99zzm_materialization_run_leases.sql",
+        "infra/init/99zzn_silver_lineage_authority.sql",
+        "infra/init/99zzo_runtime_hmac_authority.sql",
+        "infra/init/99zzp_agent_schedule_effect_leases.sql",
+        "infra/init/99zzq_scheduled_effect_fencing.sql",
+        "infra/init/99zzr_operational_outcome_binding.sql",
+        "infra/init_gold/39_staged_publication_roles.sql",
+        "infra/init_gold/40_staged_publication_schema.sql",
+        "infra/init_gold/41_staged_publication_functions.sql",
+        "infra/init_gold/42_staged_publication_cas.sql",
+        "infra/init_gold/43_staged_publication_authority.sql",
+    )
+    assert all((ROOT / path).is_file() for path in expected)
+    assert not (ROOT / "infra/init/99zz_runtime_hmac_nonces.sql").exists()
+    assert not (ROOT / "infra/init_gold/37_staged_publication_roles.sql").exists()

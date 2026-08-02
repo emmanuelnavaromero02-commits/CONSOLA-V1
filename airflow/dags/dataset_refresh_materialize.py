@@ -33,10 +33,11 @@ def materialize_in_order(
     postgres_dsn: str,
     refinement_url: str,
     headers: Callable[[str, dict[str, Any] | None], dict[str, str]],
+    admitted_conf: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     plan = context["ti"].xcom_pull(task_ids="resolve_chain", key="plan") or []
     cartridge = context["ti"].xcom_pull(task_ids="resolve_chain", key="cartridge_id")
-    conf = (context.get("dag_run").conf if context.get("dag_run") else {}) or {}
+    conf = admitted_conf or {}
     tenant_id, workspace_id = _required_scope(conf)
     cartridge_id = str(cartridge or conf.get("cartridge_id") or "").strip()
     if not cartridge_id:

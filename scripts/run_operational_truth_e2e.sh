@@ -5,6 +5,10 @@ task_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 run_token="${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-${RANDOM}"
 project="omega-ot-${run_token//[^a-zA-Z0-9_-]/-}"
 env_file="$(mktemp "${TMPDIR:-/tmp}/omega-ot-env.XXXXXX")"
+# Docker Desktop remaps /tmp bind mounts to permissive modes. Keep this
+# short-lived root-readable secret on the repository mount, whose 0600 mode is
+# preserved inside the container; the EXIT trap removes it for every outcome.
+verifier_secret="$(mktemp "$task_root/.omega-ot-verifier.XXXXXX")"
 artifacts="${E2E_ARTIFACTS_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/omega-ot-artifacts.XXXXXX")}"
 dag_dir="$(mktemp -d "$task_root/.omega-ot-dags.XXXXXX")"
 chmod 0755 "$dag_dir"
@@ -96,6 +100,7 @@ cleanup() {
   "${compose[@]}" images --format json >"$artifacts/images.jsonl" 2>&1
   "${compose[@]}" down --volumes --remove-orphans --timeout 20
   rm -f "$env_file"
+  rm -f "$verifier_secret"
   rm -rf -- "$dag_dir"
   exit "$result"
 }
@@ -121,6 +126,7 @@ printf '%s\n' \
 
 dag_modules=(
   file_ingest.py dataset_refresh_chain.py dataset_refresh_graph.py
+  dataset_refresh_admission.py
   dataset_refresh_finalization.py
   dataset_refresh_idempotency.py dataset_refresh_materialize.py
   dataset_refresh_outcome.py runtime_security_context.py
@@ -130,8 +136,10 @@ for module in "${dag_modules[@]}"; do
 done
 
 password_vars=(
-  OMEGA_CONSOLE_PASSWORD OMEGA_REFINEMENT_PASSWORD
+  OMEGA_CONSOLE_PASSWORD OMEGA_OUTCOME_BINDER_PASSWORD
+  OMEGA_REFINEMENT_PASSWORD
   OMEGA_REFINEMENT_GOLD_PASSWORD OMEGA_GOLD_PUBLISHER_PASSWORD
+  OMEGA_GOLD_VERIFIER_PASSWORD
   OMEGA_VAULT_PASSWORD
   OMEGA_WORKSPACE_PASSWORD OMEGA_MCP_INFRA_PASSWORD
   OMEGA_CARTRIDGE_SAP_HCM_PASSWORD OMEGA_CARTRIDGE_SAP_S4_PASSWORD
@@ -142,6 +150,11 @@ password_vars=(
   OMEGA_CARTRIDGE_INEGI_PASSWORD OMEGA_CARTRIDGE_SEC_EDGAR_PASSWORD
 )
 for name in "${password_vars[@]}"; do write_secret "$name"; done
+verifier_password="$(awk -F= '$1=="OMEGA_GOLD_VERIFIER_PASSWORD" {print $2}' "$env_file")"
+printf 'postgresql://omega_gold_verifier:%s@postgres_gold:5433/modecissions_gold\n' \
+  "$verifier_password" >"$verifier_secret"
+chmod 0600 "$verifier_secret"
+printf 'GOLD_VERIFIER_DATABASE_URL_HOST_FILE=%s\n' "$verifier_secret" >>"$env_file"
 
 pair_vars=(
   INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT

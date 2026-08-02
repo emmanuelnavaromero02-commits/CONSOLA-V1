@@ -57,7 +57,11 @@ def test_bootstrap_defaults_to_non_evidence_keys_without_collateral_loss(
     tmp_path: Path,
 ) -> None:
     source = BOOTSTRAP.read_text(encoding="utf-8")
-    declared = _array_keys(source, "KEYS") | _array_keys(source, "DB_KEYS")
+    declared = (
+        _array_keys(source, "KEYS")
+        | _array_keys(source, "DB_KEYS")
+        | _array_keys(source, "DERIVED_KEYS")
+    )
     expected = declared - {"CONTROL_ROOM_EVIDENCE_SIGNING_KEY"}
 
     output = _run_bootstrap(tmp_path)

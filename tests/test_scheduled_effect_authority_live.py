@@ -212,6 +212,47 @@ async def test_reclaimed_schedule_fence_rejects_old_effect_at_real_sink(
             )
             == 1
         )
+        analysis_tool = "control_room__raise_analysis_alert"
+        analysis_args = {
+            **args,
+            "analysis_type": "monte_carlo_monitor",
+            "engine": "monte_carlo",
+            "engine_run_id": "simulation-42",
+            "alert_type": "analysis_fence_probe",
+            "entity_key": "employee=43",
+            "title": "Atomic analysis fencing probe",
+        }
+        analysis_authority = _authority(
+            tool=analysis_tool,
+            args=analysis_args,
+            scope=scope,
+            agent_id=agent_id,
+            schedule_id=schedule_id,
+            fence=2,
+        )
+        verifier.validate_scheduled_effect_authority(
+            analysis_authority,
+            tool=analysis_tool,
+            args={**analysis_args, "effect_authority": analysis_authority},
+            context=context,
+        )
+        analysis = control_room.control_room__raise_analysis_alert(
+            **analysis_args,
+            effect_authority=analysis_authority,
+            security_context=context,
+        )
+        assert analysis["event_type"] == "agent_analysis_alert_created"
+        persisted = await admin.fetchrow(
+            """SELECT metadata->>'engine_run_id' engine_run_id,
+                      (SELECT count(*) FROM control_room_item_events e
+                        WHERE e.workspace_id=i.workspace_id
+                          AND e.item_id=i.item_id) event_count
+                 FROM control_room_items i
+                WHERE workspace_id=$1 AND item_id=$2""",
+            scope["workspace_id"],
+            analysis["item_id"],
+        )
+        assert dict(persisted) == {"engine_run_id": "simulation-42", "event_count": 1}
     finally:
         await admin.close()
         _purge_app()

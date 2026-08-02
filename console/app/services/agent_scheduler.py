@@ -7,6 +7,10 @@ from typing import Any
 from app.services import auth
 
 
+class ScheduledRunAuthorityRetired(RuntimeError):
+    authority_retired = True
+
+
 async def _table_exists(pool: Any) -> bool:
     return bool(await pool.fetchval("SELECT to_regclass('public.agent_schedule_runs')"))
 
@@ -159,9 +163,9 @@ async def finish_scheduled_run(
     fencing_token: int,
     error_message: str | None = None,
     metadata: dict[str, Any] | None = None,
-) -> None:
+) -> bool:
     if schedule_run_id is None:
-        return
+        return False
     pool = await auth.pool()
     if not await _table_exists(pool):
         raise RuntimeError("scheduled-run idempotency storage unavailable")
@@ -177,6 +181,10 @@ async def finish_scheduled_run(
                     tenant_id,
                     workspace_id,
                 )
+            await conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
+                f"agent_schedule_effect:{schedule_run_id}",
+            )
             outcome = await conn.execute(
                 """
                 UPDATE agent_schedule_runs
@@ -197,7 +205,24 @@ async def finish_scheduled_run(
                 fencing_token,
             )
             if outcome != "UPDATE 1":
+                state = await conn.fetchrow(
+                    """SELECT status,fencing_token,
+                              lease_expires_at > clock_timestamp() AS lease_live
+                         FROM agent_schedule_runs WHERE id=$1""",
+                    schedule_run_id,
+                )
+                if state is None:
+                    raise RuntimeError("scheduled-run reservation is unavailable")
+                if (
+                    state["status"] != "running"
+                    or int(state["fencing_token"]) != fencing_token
+                    or state["lease_live"] is not True
+                ):
+                    raise ScheduledRunAuthorityRetired(
+                        "scheduled-run reservation is not available"
+                    )
                 raise RuntimeError("scheduled-run reservation is not available")
+            return True
 
 
 async def heartbeat_scheduled_run(

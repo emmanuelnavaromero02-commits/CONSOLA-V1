@@ -21,6 +21,7 @@ from tests.staged_publication_canaries import (
 PASSWORD = "staged-publication-postgres"
 READER_PASSWORD = "staged-publication-reader"
 PUBLISHER_PASSWORD = "staged-publication-publisher"
+VERIFIER_PASSWORD = "staged-publication-verifier"
 
 
 def valid_lineage() -> str:
@@ -79,10 +80,12 @@ class LiveStack:
     admin_dsn: str
     reader_dsn: str
     publisher_dsn: str
+    verifier_dsn: str
     s3: object
     minio_endpoint: str
     gold_container: str
     repo_root: Path
+    verifier_socket: str = ""
 
     def sql(self, dsn: str, scope: tuple[str, str], query: str, params=(), fetch=True):
         with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
@@ -149,6 +152,14 @@ class LiveStack:
         )
         return f"s3://lakehouse/{key}", checksum
 
+    def object_version(self, uri: str) -> str:
+        return str(
+            self.s3.head_object(
+                Bucket="lakehouse", Key=uri.split("lakehouse/", 1)[1]
+            ).get("VersionId")
+            or ""
+        )
+
     def prepare(
         self, dataset: str, run: uuid.UUID, value: int, scope=(TENANT_A, WORKSPACE_A)
     ):
@@ -166,17 +177,18 @@ class LiveStack:
         self.sql(
             self.publisher_dsn,
             scope,
-            "SELECT * FROM omega_publication.mark_prepared(%s,%s,%s,1,%s,%s,%s::jsonb,%s::jsonb)",
+            "SELECT * FROM omega_publication.mark_prepared(%s,%s,%s,%s,1,%s,%s,%s::jsonb,%s::jsonb)",
             (
                 str(run),
                 uri,
+                self.object_version(uri),
                 checksum,
                 stage,
                 stage,
                 lineage,
                 valid_catalog(),
             ),
-        )
+        )[0][0]
         return uri
 
     def bound_lineage(
@@ -211,13 +223,22 @@ class LiveStack:
         catalog: str,
         scope=(TENANT_A, WORKSPACE_A),
     ) -> str:
+        version = self.object_version(uri)
+        if not version:
+            raise RuntimeError("test publication object version is unavailable")
+        candidate_id = self.sql(
+            self.publisher_dsn,
+            scope,
+            "SELECT omega_publication.submit_verification_candidate("
+            "%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb)",
+            (str(run), uri, version, checksum, row_count, lineage, catalog),
+        )[0][0]
         return str(
             self.sql(
-                self.reader_dsn,
+                self.verifier_dsn,
                 scope,
-                "SELECT omega_publication.record_attestation("
-                "%s,%s,%s,%s,%s::jsonb,%s::jsonb)",
-                (str(run), uri, checksum, row_count, lineage, catalog),
+                "SELECT omega_publication.record_attestation(%s)",
+                (candidate_id,),
             )[0][0]
         )
 
@@ -322,7 +343,9 @@ class LiveStack:
             "-e",
             f"PGPASSWORD={PASSWORD}",
             "-e",
-            f"PGOPTIONS=-c app.omega_refinement_gold_password={READER_PASSWORD} -c app.omega_gold_publisher_password={PUBLISHER_PASSWORD}",
+            f"PGOPTIONS=-c app.omega_refinement_gold_password={READER_PASSWORD} "
+            f"-c app.omega_gold_publisher_password={PUBLISHER_PASSWORD} "
+            f"-c app.omega_gold_verifier_password={VERIFIER_PASSWORD}",
             self.gold_container,
             "psql",
             "-v",

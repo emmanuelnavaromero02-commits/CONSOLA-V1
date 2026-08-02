@@ -54,12 +54,30 @@ def published_heads(context: dict[str, Any] | None) -> dict[tuple[str, str], dic
         cur.execute(
             """
             SELECT h.dataset,h.layer,h.materialization_run_id::text,h.generation,
-                   r.object_uri,r.object_checksum,r.row_count,e.catalog
+                   e.object_uri,e.object_checksum,e.row_count,e.catalog
               FROM omega_publication.dataset_publication_heads h
               JOIN omega_publication.materialization_runs r
                 ON r.materialization_run_id=h.materialization_run_id
-              LEFT JOIN omega_publication.materialization_evidence e
+               AND r.tenant_id=h.tenant_id AND r.workspace_id=h.workspace_id
+               AND r.dataset=h.dataset AND r.layer=h.layer
+              JOIN omega_publication.materialization_receipts rec
+                ON rec.materialization_run_id=h.materialization_run_id
+               AND rec.tenant_id=h.tenant_id AND rec.workspace_id=h.workspace_id
+               AND rec.dataset=h.dataset AND rec.layer=h.layer
+               AND rec.generation=h.generation
+              JOIN omega_publication.materialization_evidence e
                 ON e.materialization_run_id=h.materialization_run_id
+               AND e.tenant_id=h.tenant_id AND e.workspace_id=h.workspace_id
+               AND e.dataset=h.dataset AND e.layer=h.layer
+               AND e.object_uri=r.object_uri AND e.object_version=r.object_version
+               AND e.object_checksum=r.object_checksum AND e.row_count=r.row_count
+               AND e.schema_digest=r.schema_digest
+               AND e.evidence_digest=r.evidence_digest
+               AND rec.object_version=e.object_version
+               AND rec.object_checksum=e.object_checksum
+               AND rec.row_count=e.row_count
+               AND rec.schema_digest=e.schema_digest
+               AND rec.evidence_digest=e.evidence_digest
              WHERE h.tenant_id=%s AND h.workspace_id=%s
                AND r.status='published'
                AND r.object_uri IS NOT NULL

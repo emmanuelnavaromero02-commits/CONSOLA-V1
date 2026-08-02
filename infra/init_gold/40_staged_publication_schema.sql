@@ -8,10 +8,10 @@ CREATE SCHEMA IF NOT EXISTS omega_publication_legacy AUTHORIZATION omega_gold_ow
 
 REVOKE ALL ON SCHEMA omega_publication, omega_publication_stage,
   omega_publication_gold, omega_publication_views, omega_publication_legacy
-  FROM PUBLIC, omega_refinement_gold, omega_gold_publisher;
+  FROM PUBLIC,omega_refinement_gold,omega_gold_publisher,omega_gold_verifier;
 GRANT USAGE ON SCHEMA omega_publication, omega_publication_gold,
   omega_publication_views
-  TO omega_refinement_gold, omega_gold_publisher;
+  TO omega_refinement_gold,omega_gold_publisher,omega_gold_verifier;
 GRANT USAGE ON SCHEMA omega_publication_stage TO omega_gold_publisher;
 
 CREATE TABLE IF NOT EXISTS omega_publication.materialization_runs (
@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS omega_publication.materialization_runs (
       expected_head_generation IS NULL OR expected_head_generation > 0
     ),
     object_uri text,
+    object_version text,
     object_checksum text CHECK (object_checksum IS NULL OR object_checksum ~ '^[0-9a-f]{64}$'),
     row_count bigint CHECK (row_count IS NULL OR row_count >= 0),
     schema_digest text CHECK (schema_digest IS NULL OR schema_digest ~ '^[0-9a-f]{64}$'),
@@ -72,6 +73,7 @@ CREATE TABLE IF NOT EXISTS omega_publication.materialization_receipts (
     input_digest text NOT NULL,
     contract_digest text NOT NULL,
     object_checksum text NOT NULL,
+    object_version text NOT NULL,
     schema_digest text NOT NULL,
     evidence_digest text NOT NULL,
     row_count bigint NOT NULL CHECK (row_count >= 0),
@@ -87,6 +89,7 @@ CREATE TABLE IF NOT EXISTS omega_publication.materialization_evidence (
     dataset text NOT NULL,
     layer text NOT NULL CHECK (layer IN ('silver', 'gold')),
     object_uri text NOT NULL CHECK (object_uri ~ '^(s3|gs)://'),
+    object_version text NOT NULL,
     object_checksum text NOT NULL CHECK (object_checksum ~ '^[0-9a-f]{64}$'),
     row_count bigint NOT NULL CHECK (row_count >= 0),
     schema_digest text NOT NULL CHECK (schema_digest ~ '^[0-9a-f]{64}$'),
@@ -108,6 +111,7 @@ CREATE TABLE IF NOT EXISTS omega_publication.materialization_attestations (
     layer text NOT NULL CHECK (layer IN ('silver', 'gold')),
     attempt integer NOT NULL CHECK (attempt > 0),
     object_uri text NOT NULL CHECK (object_uri ~ '^(s3|gs)://'),
+    object_version text NOT NULL,
     object_checksum text NOT NULL CHECK (object_checksum ~ '^[0-9a-f]{64}$'),
     row_count bigint NOT NULL CHECK (row_count >= 0),
     schema_digest text NOT NULL CHECK (schema_digest ~ '^[0-9a-f]{64}$'),
@@ -119,12 +123,20 @@ CREATE TABLE IF NOT EXISTS omega_publication.materialization_attestations (
       verifier_identity = 'refinement.parquet-verifier/v1'
     ),
     attestation_digest text NOT NULL CHECK (attestation_digest ~ '^[0-9a-f]{64}$'),
+    candidate_id uuid NOT NULL,
+    signature_version text NOT NULL DEFAULT 'hmac-sha256-v1',
+    key_version text NOT NULL DEFAULT 'v1',
+    attestation_signature text NOT NULL CHECK (
+      attestation_signature ~ '^[0-9a-f]{64}$'
+    ),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     expires_at timestamptz NOT NULL,
     consumed_at timestamptz,
     invalidated_at timestamptz,
     UNIQUE (materialization_run_id, attestation_digest)
 );
+
+\ir fragments/40_verification_schema.sql
 
 ALTER TABLE omega_publication.materialization_evidence
   DROP CONSTRAINT IF EXISTS materialization_evidence_attestation_id_fkey;
@@ -166,6 +178,8 @@ ALTER TABLE omega_publication.materialization_evidence ENABLE ROW LEVEL SECURITY
 ALTER TABLE omega_publication.materialization_evidence FORCE ROW LEVEL SECURITY;
 ALTER TABLE omega_publication.materialization_attestations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE omega_publication.materialization_attestations FORCE ROW LEVEL SECURITY;
+ALTER TABLE omega_publication.materialization_verification_candidates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE omega_publication.materialization_verification_candidates FORCE ROW LEVEL SECURITY;
 ALTER TABLE omega_publication.materialization_recovery_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE omega_publication.materialization_recovery_events FORCE ROW LEVEL SECURITY;
 ALTER TABLE omega_publication.dataset_gold_relations ENABLE ROW LEVEL SECURITY;
@@ -178,11 +192,12 @@ BEGIN
   FOREACH table_name IN ARRAY ARRAY[
     'materialization_runs', 'dataset_publication_heads', 'materialization_receipts',
     'materialization_evidence', 'materialization_attestations',
+    'materialization_verification_candidates',
     'materialization_recovery_events', 'dataset_gold_relations'
   ] LOOP
     EXECUTE format('DROP POLICY IF EXISTS %I ON omega_publication.%I', table_name || '_scope', table_name);
     EXECUTE format(
-      'CREATE POLICY %I ON omega_publication.%I TO omega_gold_owner, omega_refinement_gold, omega_gold_publisher '
+      'CREATE POLICY %I ON omega_publication.%I TO omega_gold_owner,omega_refinement_gold,omega_gold_publisher,omega_gold_verifier '
       'USING (tenant_id::text = NULLIF(current_setting(''app.tenant_id'', true), '''') '
       'AND workspace_id::text = NULLIF(current_setting(''app.workspace_id'', true), '''')) '
       'WITH CHECK (tenant_id::text = NULLIF(current_setting(''app.tenant_id'', true), '''') '
@@ -249,12 +264,16 @@ ALTER TABLE omega_publication.dataset_publication_heads OWNER TO omega_gold_owne
 ALTER TABLE omega_publication.materialization_receipts OWNER TO omega_gold_owner;
 ALTER TABLE omega_publication.materialization_evidence OWNER TO omega_gold_owner;
 ALTER TABLE omega_publication.materialization_attestations OWNER TO omega_gold_owner;
+ALTER TABLE omega_publication.materialization_verification_candidates OWNER TO omega_gold_owner;
+ALTER TABLE omega_publication.attestation_signing_keys OWNER TO omega_gold_owner;
 ALTER TABLE omega_publication.materialization_recovery_events OWNER TO omega_gold_owner;
 ALTER TABLE omega_publication.dataset_gold_relations OWNER TO omega_gold_owner;
 GRANT SELECT ON ALL TABLES IN SCHEMA omega_publication
   TO omega_refinement_gold, omega_gold_publisher;
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA omega_publication
-  FROM omega_refinement_gold, omega_gold_publisher;
+  FROM omega_refinement_gold,omega_gold_publisher,omega_gold_verifier;
+GRANT SELECT ON omega_publication.materialization_verification_candidates
+  TO omega_gold_verifier;
 
 -- Unscoped legacy relations cannot be assigned to a workspace safely. Preserve
 -- them byte-for-byte in a schema inaccessible to runtime readers.
@@ -336,3 +355,7 @@ BEGIN
             dataset_name, dataset_name, relation.relname, dataset_name);
   END LOOP;
 END $$;
+
+INSERT INTO schema_migrations(filename,applied_at)
+VALUES ('gold/40_staged_publication_schema.sql',NOW())
+ON CONFLICT (filename) DO NOTHING;

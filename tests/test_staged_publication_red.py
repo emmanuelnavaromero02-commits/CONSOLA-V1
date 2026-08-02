@@ -12,28 +12,28 @@ def _text(path: str) -> str:
 
 
 def test_gold_evidence_migration_is_versioned_and_scoped() -> None:
-    sql = _text("infra/init_gold/38_staged_publication_schema.sql")
+    sql = _text("infra/init_gold/40_staged_publication_schema.sql")
     assert "materialization_run_id" in sql
     assert "ENABLE ROW LEVEL SECURITY" in sql
     assert "FORCE ROW LEVEL SECURITY" in sql
 
 
 def test_gold_roles_are_separated_before_publication() -> None:
-    sql = _text("infra/init_gold/37_staged_publication_roles.sql")
+    sql = _text("infra/init_gold/39_staged_publication_roles.sql")
     assert "omega_gold_owner" in sql and "NOLOGIN" in sql
     assert "omega_gold_publisher" in sql
     assert "REVOKE CREATE ON SCHEMA public" in sql
 
 
 def test_gold_store_has_one_scoped_head_and_receipt() -> None:
-    sql = _text("infra/init_gold/38_staged_publication_schema.sql")
+    sql = _text("infra/init_gold/40_staged_publication_schema.sql")
     assert "dataset_publication_heads" in sql
     assert "materialization_receipts" in sql
     assert "UNIQUE" in sql
 
 
 def test_gold_publish_is_a_closed_cas_function() -> None:
-    sql = _text("infra/init_gold/40_staged_publication_cas.sql")
+    sql = _text("infra/init_gold/42_staged_publication_cas.sql")
     assert "publish_materialization" in sql
     assert "expected_head" in sql
     assert "SECURITY DEFINER" in sql
@@ -110,7 +110,7 @@ def test_superset_result_cache_is_fail_closed() -> None:
 
 
 def test_reader_role_has_no_direct_public_dml() -> None:
-    roles = _text("infra/init_gold/37_staged_publication_roles.sql")
+    roles = _text("infra/init_gold/39_staged_publication_roles.sql")
     assert "REVOKE INSERT, UPDATE, DELETE, TRUNCATE" in roles
     assert "omega_refinement_gold" in roles
 

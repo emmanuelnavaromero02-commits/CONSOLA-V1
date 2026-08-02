@@ -3,12 +3,19 @@ DO $$
 DECLARE
   publisher_pw text := current_setting('app.omega_gold_publisher_password', true);
   reader_pw text := current_setting('app.omega_refinement_gold_password', true);
+  verifier_pw text := current_setting('app.omega_gold_verifier_password', true);
 BEGIN
   IF publisher_pw IS NULL OR publisher_pw = '' THEN
     RAISE EXCEPTION 'app.omega_gold_publisher_password not set';
   END IF;
   IF reader_pw IS NOT NULL AND publisher_pw = reader_pw THEN
     RAISE EXCEPTION 'Gold publisher and reader credentials must be distinct';
+  END IF;
+  IF verifier_pw IS NULL OR verifier_pw = '' THEN
+    RAISE EXCEPTION 'app.omega_gold_verifier_password not set';
+  END IF;
+  IF verifier_pw IN (publisher_pw,reader_pw) THEN
+    RAISE EXCEPTION 'Gold verifier credentials must be distinct';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'omega_gold_owner') THEN
     CREATE ROLE omega_gold_owner NOLOGIN NOINHERIT NOBYPASSRLS;
@@ -19,6 +26,12 @@ BEGIN
       publisher_pw
     );
   END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'omega_gold_verifier') THEN
+    EXECUTE format(
+      'CREATE ROLE omega_gold_verifier LOGIN NOINHERIT NOBYPASSRLS PASSWORD %L',
+      verifier_pw
+    );
+  END IF;
 END $$;
 
 ALTER ROLE omega_gold_owner NOLOGIN NOINHERIT NOBYPASSRLS NOSUPERUSER
@@ -27,11 +40,13 @@ ALTER ROLE omega_refinement_gold LOGIN NOINHERIT NOBYPASSRLS NOSUPERUSER
   NOCREATEDB NOCREATEROLE NOREPLICATION;
 ALTER ROLE omega_gold_publisher LOGIN NOINHERIT NOBYPASSRLS NOSUPERUSER
   NOCREATEDB NOCREATEROLE NOREPLICATION;
+ALTER ROLE omega_gold_verifier LOGIN NOINHERIT NOBYPASSRLS NOSUPERUSER
+  NOCREATEDB NOCREATEROLE NOREPLICATION;
 
-GRANT CONNECT ON DATABASE modecissions_gold TO omega_gold_publisher;
-GRANT USAGE ON SCHEMA public TO omega_refinement_gold, omega_gold_publisher;
+GRANT CONNECT ON DATABASE modecissions_gold TO omega_gold_publisher,omega_gold_verifier;
+GRANT USAGE ON SCHEMA public TO omega_refinement_gold,omega_gold_publisher,omega_gold_verifier;
 GRANT USAGE, CREATE ON SCHEMA public TO omega_gold_owner;
-REVOKE CREATE ON SCHEMA public FROM PUBLIC, omega_refinement_gold, omega_gold_publisher;
+REVOKE CREATE ON SCHEMA public FROM PUBLIC,omega_refinement_gold,omega_gold_publisher,omega_gold_verifier;
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA public
   FROM omega_refinement_gold;
 REVOKE SELECT ON ALL TABLES IN SCHEMA public FROM omega_refinement_gold;
@@ -72,3 +87,7 @@ BEGIN
     EXECUTE format('GRANT SELECT ON %s TO omega_refinement_gold', relation.relation_name);
   END LOOP;
 END $$;
+
+INSERT INTO schema_migrations(filename,applied_at)
+VALUES ('gold/39_staged_publication_roles.sql',NOW())
+ON CONFLICT (filename) DO NOTHING;

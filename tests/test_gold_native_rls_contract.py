@@ -17,6 +17,7 @@ POSTGRES_IMAGE = os.getenv("GOLD_RLS_TEST_POSTGRES_IMAGE", "postgres:15")
 POSTGRES_PASSWORD = "test_gold_postgres_password"
 GOLD_ROLE_PASSWORD = "test_omega_refinement_gold_password"
 GOLD_PUBLISHER_PASSWORD = "test_omega_gold_publisher_password"
+GOLD_VERIFIER_PASSWORD = "test_omega_gold_verifier_password"
 
 
 def _docker(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -38,7 +39,9 @@ def _docker(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
 def _require_docker() -> None:
     result = _docker("info", check=False)
     if result.returncode != 0:
-        pytest.skip(f"Docker is required for live Gold RLS isolation test: {result.stderr.strip()}")
+        pytest.skip(
+            f"Docker is required for live Gold RLS isolation test: {result.stderr.strip()}"
+        )
 
 
 def _mapped_postgres_port(container_id: str) -> int:
@@ -47,7 +50,9 @@ def _mapped_postgres_port(container_id: str) -> int:
         _, _, raw_port = line.rpartition(":")
         if raw_port.isdigit():
             return int(raw_port)
-    raise RuntimeError(f"postgres_gold test container has no mapped 5432/tcp port:\n{mapping}")
+    raise RuntimeError(
+        f"postgres_gold test container has no mapped 5432/tcp port:\n{mapping}"
+    )
 
 
 def _wait_for_gold_schema(dsn: str, container_id: str) -> None:
@@ -57,7 +62,9 @@ def _wait_for_gold_schema(dsn: str, container_id: str) -> None:
         state = _docker("inspect", "-f", "{{.State.Status}}", container_id, check=False)
         if state.stdout.strip() in {"exited", "dead"}:
             logs = _docker("logs", "--tail=200", container_id, check=False)
-            raise RuntimeError(f"postgres_gold init container exited early:\n{logs.stdout}\n{logs.stderr}")
+            raise RuntimeError(
+                f"postgres_gold init container exited early:\n{logs.stdout}\n{logs.stderr}"
+            )
         try:
             conn = psycopg2.connect(dsn)
             try:
@@ -105,7 +112,9 @@ def postgres_gold_with_native_rls() -> str:
         "-e",
         f"POSTGRES_PASSWORD={POSTGRES_PASSWORD}",
         "-e",
-        f"PGOPTIONS=-c app.omega_refinement_gold_password={GOLD_ROLE_PASSWORD} -c app.omega_gold_publisher_password={GOLD_PUBLISHER_PASSWORD}",
+        f"PGOPTIONS=-c app.omega_refinement_gold_password={GOLD_ROLE_PASSWORD} "
+        f"-c app.omega_gold_publisher_password={GOLD_PUBLISHER_PASSWORD} "
+        f"-c app.omega_gold_verifier_password={GOLD_VERIFIER_PASSWORD}",
         "-v",
         f"{init_dir}:/docker-entrypoint-initdb.d:ro",
         "-P",
@@ -122,7 +131,9 @@ def postgres_gold_with_native_rls() -> str:
 
 
 def test_gold_native_rls_migration_default_denies_legacy_unscoped_tables():
-    sql = (REPO_ROOT / "infra" / "init_gold" / "35_gold_native_rls.sql").read_text(encoding="utf-8")
+    sql = (REPO_ROOT / "infra" / "init_gold" / "35_gold_native_rls.sql").read_text(
+        encoding="utf-8"
+    )
 
     assert "ALTER ROLE omega_refinement_gold NOBYPASSRLS" in sql
     assert "omega_gold_workspace_matches" in sql
@@ -135,7 +146,10 @@ def test_gold_native_rls_migration_default_denies_legacy_unscoped_tables():
 
 
 def test_gold_dsn_includes_tenant_workspace_options_for_scoped_context(monkeypatch):
-    monkeypatch.setenv("GOLD_DATABASE_URL", "postgresql://u:p@postgres_gold:5433/modecissions_gold?sslmode=disable")
+    monkeypatch.setenv(
+        "GOLD_DATABASE_URL",
+        "postgresql://u:p@postgres_gold:5433/modecissions_gold?sslmode=disable",
+    )
     engine = DuckDBEngine()
 
     dsn = engine._pg_gold_dsn(
@@ -172,7 +186,9 @@ def test_gold_materialization_requires_tenant_workspace_scope(monkeypatch):
             user_context={},
         )
 
-    executed_sql = "\n".join(str(call.args[0]) for call in con.execute.call_args_list if call.args)
+    executed_sql = "\n".join(
+        str(call.args[0]) for call in con.execute.call_args_list if call.args
+    )
     assert "CREATE OR REPLACE TABLE pggold" not in executed_sql
 
 
@@ -191,7 +207,9 @@ def test_scoped_gold_table_creation_applies_native_rls(monkeypatch):
     engine._ensure_scoped_gold_table(con, "gold_orders", "SELECT 1 AS order_count")
 
     assert applied == ["gold_orders"]
-    executed_sql = "\n".join(str(call.args[0]) for call in con.execute.call_args_list if call.args)
+    executed_sql = "\n".join(
+        str(call.args[0]) for call in con.execute.call_args_list if call.args
+    )
     assert "CREATE TABLE pggold.gold_orders" in executed_sql
 
 
@@ -222,11 +240,15 @@ def test_scoped_gold_table_adds_columns_when_dataset_schema_evolves(monkeypatch)
     )
     monkeypatch.setattr(engine, "_apply_gold_rls", lambda table: applied.append(table))
 
-    engine._ensure_scoped_gold_table(con, "gold_sap_successfactors_talent_9box", "SELECT 1")
+    engine._ensure_scoped_gold_table(
+        con, "gold_sap_successfactors_talent_9box", "SELECT 1"
+    )
 
     assert added == [("gold_sap_successfactors_talent_9box", [("box_key", "TEXT")])]
     assert applied == ["gold_sap_successfactors_talent_9box"]
-    executed_sql = "\n".join(str(call.args[0]) for call in con.execute.call_args_list if call.args)
+    executed_sql = "\n".join(
+        str(call.args[0]) for call in con.execute.call_args_list if call.args
+    )
     assert "DROP TABLE" not in executed_sql
     assert "CREATE TABLE pggold.gold_sap_successfactors_talent_9box" not in executed_sql
 
@@ -240,7 +262,9 @@ def test_duckdb_type_mapping_for_gold_schema_evolution():
 
 
 def test_gold_write_path_avoids_duckdb_postgres_copy_with_rls():
-    src = (REPO_ROOT / "refinement" / "app" / "duckdb_engine.py").read_text(encoding="utf-8")
+    src = (REPO_ROOT / "refinement" / "app" / "duckdb_engine.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "def _replace_scoped_gold_rows" in src
     assert "set_config('app.tenant_id'" in src
@@ -274,7 +298,10 @@ def test_gold_snapshot_copy_refreshes_attachment_before_export(monkeypatch):
     )
 
     assert result.endswith("/new.parquet")
-    assert calls[0] == ("attach", {"tenant_id": "tenant-a", "workspace_id": "workspace-a"})
+    assert calls[0] == (
+        "attach",
+        {"tenant_id": "tenant-a", "workspace_id": "workspace-a"},
+    )
     assert calls[1][0] == "copy"
     assert "pggold.gold_sap_successfactors_talent_9box" in str(calls[1][1])
     assert "tenant_id = 'tenant-a'" in str(calls[1][1])
@@ -285,7 +312,9 @@ def test_live_gold_rls_role_is_not_allowed_to_bypass_rls(postgres_gold_with_nati
     conn = psycopg2.connect(postgres_gold_with_native_rls)
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT rolbypassrls FROM pg_roles WHERE rolname = 'omega_refinement_gold'")
+            cur.execute(
+                "SELECT rolbypassrls FROM pg_roles WHERE rolname = 'omega_refinement_gold'"
+            )
             row = cur.fetchone()
     finally:
         conn.close()
@@ -324,8 +353,12 @@ def test_live_gold_read_reattach_isolates_workspace_a_then_b_in_same_engine(
                 """,
                 (tenant_a, workspace_a, tenant_b, workspace_b),
             )
-            cur.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON public.gold_scope_probe TO omega_refinement_gold")
-            cur.execute("SELECT public.omega_apply_gold_rls_for_table('gold_scope_probe')")
+            cur.execute(
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON public.gold_scope_probe TO omega_refinement_gold"
+            )
+            cur.execute(
+                "SELECT public.omega_apply_gold_rls_for_table('gold_scope_probe')"
+            )
         conn.commit()
     finally:
         conn.close()
@@ -338,11 +371,19 @@ def test_live_gold_read_reattach_isolates_workspace_a_then_b_in_same_engine(
     engine = DuckDBEngine()
     try:
         con = engine._conn()
-        engine._pg_gold_attach(con, {"tenant_id": tenant_a, "workspace_id": workspace_a})
-        rows_a = con.execute("SELECT marker FROM pggold.gold_scope_probe ORDER BY marker").fetchall()
+        engine._pg_gold_attach(
+            con, {"tenant_id": tenant_a, "workspace_id": workspace_a}
+        )
+        rows_a = con.execute(
+            "SELECT marker FROM pggold.gold_scope_probe ORDER BY marker"
+        ).fetchall()
 
-        engine._pg_gold_attach(con, {"tenant_id": tenant_b, "workspace_id": workspace_b})
-        rows_b = con.execute("SELECT marker FROM pggold.gold_scope_probe ORDER BY marker").fetchall()
+        engine._pg_gold_attach(
+            con, {"tenant_id": tenant_b, "workspace_id": workspace_b}
+        )
+        rows_b = con.execute(
+            "SELECT marker FROM pggold.gold_scope_probe ORDER BY marker"
+        ).fetchall()
     finally:
         if engine._con is not None:
             engine._con.close()
