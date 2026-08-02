@@ -7,6 +7,7 @@ El DAG no llama al contenedor sap-successfactors. Carga la configuracion de la
 entidad, exige una conexion Vault explicita, ejecuta el cliente OData local del
 cartucho como libreria y publica Bronze/telemetria desde Airflow.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -25,6 +26,17 @@ from typing import Any
 import httpx
 from airflow.decorators import dag, task
 from airflow.exceptions import AirflowFailException
+
+try:
+    from runtime_security_context import build_pipeline_run_context
+except ModuleNotFoundError:
+    _runtime_dags = next(
+        parent / "airflow/dags"
+        for parent in Path(__file__).resolve().parents
+        if (parent / "airflow/dags/runtime_security_context.py").is_file()
+    )
+    sys.path.insert(0, str(_runtime_dags))
+    from runtime_security_context import build_pipeline_run_context
 
 
 MCP_INFRA_URL = os.environ.get("MCP_INFRA_URL", "http://mcp-infra:8010")
@@ -45,7 +57,10 @@ default_args = {
 
 
 def _is_production() -> bool:
-    return os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}
+    return os.environ.get("APP_ENV", "production").strip().lower() in {
+        "production",
+        "prod",
+    }
 
 
 def _mcp_key() -> str:
@@ -56,7 +71,9 @@ def _mcp_key() -> str:
         legacy = os.environ.get("INTERNAL_API_KEY", "")
         if legacy:
             return legacy
-    raise RuntimeError("INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA missing; legacy fallback disabled in production")
+    raise RuntimeError(
+        "INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA missing; legacy fallback disabled in production"
+    )
 
 
 def _mcp_headers() -> dict[str, str]:
@@ -69,7 +86,9 @@ def _mcp_headers() -> dict[str, str]:
 def _signing_key() -> str:
     key = (os.environ.get("SECURITY_CONTEXT_SIGNING_KEY") or "").strip()
     if len(key) < _MIN_SIGNING_KEY_LEN:
-        raise RuntimeError("SECURITY_CONTEXT_SIGNING_KEY is required to sign extraction scope")
+        raise RuntimeError(
+            "SECURITY_CONTEXT_SIGNING_KEY is required to sign extraction scope"
+        )
     for name, value in os.environ.items():
         if (
             (name == "INTERNAL_API_KEY" or name.startswith("INTERNAL_API_KEY_"))
@@ -77,13 +96,17 @@ def _signing_key() -> str:
             and value.strip()
             and hmac.compare_digest(key, value.strip())
         ):
-            raise RuntimeError(f"SECURITY_CONTEXT_SIGNING_KEY must be distinct from {name}")
+            raise RuntimeError(
+                f"SECURITY_CONTEXT_SIGNING_KEY must be distinct from {name}"
+            )
     return key
 
 
 def _canonical_context(ctx: dict) -> bytes:
     payload = {key: value for key, value in ctx.items() if key != _SIGNATURE_FIELD}
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
 
 
 def _sign_security_context(ctx: dict) -> dict:
@@ -111,22 +134,24 @@ def _security_context_from_conf(conf: dict) -> dict | None:
     workspace_id = str(conf.get("workspace_id") or "").strip()
     if not (tenant_id and workspace_id):
         return None
-    return _sign_security_context({
-        "trusted": True,
-        "source": "console",
-        "role": "admin",
-        "workspace_role": "service",
-        "tenant_id": tenant_id,
-        "workspace_id": workspace_id,
-        "permissions": ["cartridges.execute", "vault.secrets.reveal"],
-        "allowed_cartridges": ["sap_successfactors"],
-        "allowed_buckets": ["lakehouse"],
-        "allowed_prefixes": [
-            f"raw/sap_successfactors/tenant_id={tenant_id}/workspace_id={workspace_id}/",
-            f"silver/sap_successfactors/tenant_id={tenant_id}/workspace_id={workspace_id}/",
-            f"gold/sap_successfactors/tenant_id={tenant_id}/workspace_id={workspace_id}/",
-        ],
-    })
+    return _sign_security_context(
+        {
+            "trusted": True,
+            "source": "console",
+            "role": "admin",
+            "workspace_role": "service",
+            "tenant_id": tenant_id,
+            "workspace_id": workspace_id,
+            "permissions": ["cartridges.execute", "vault.secrets.reveal"],
+            "allowed_cartridges": ["sap_successfactors"],
+            "allowed_buckets": ["lakehouse"],
+            "allowed_prefixes": [
+                f"raw/sap_successfactors/tenant_id={tenant_id}/workspace_id={workspace_id}/",
+                f"silver/sap_successfactors/tenant_id={tenant_id}/workspace_id={workspace_id}/",
+                f"gold/sap_successfactors/tenant_id={tenant_id}/workspace_id={workspace_id}/",
+            ],
+        }
+    )
 
 
 def _cartridge_root() -> Path:
@@ -139,7 +164,9 @@ def _cartridge_root() -> Path:
     for root in candidates:
         if str(root) and (root / "app").is_dir():
             return root
-    raise RuntimeError("SAP SuccessFactors cartridge runtime not found; mount /registry/cartridges/sap_successfactors")
+    raise RuntimeError(
+        "SAP SuccessFactors cartridge runtime not found; mount /registry/cartridges/sap_successfactors"
+    )
 
 
 def _clear_conflicting_app_modules(root: Path) -> None:
@@ -168,17 +195,25 @@ def _load_runtime() -> SimpleNamespace:
     _clear_conflicting_app_modules(root)
     refinement_triggers = importlib.import_module("app.core.refinement_triggers")
     _RUNTIME = SimpleNamespace(
-        get_entity_config=importlib.import_module("app.services.catalog_service").get_entity_config,
+        get_entity_config=importlib.import_module(
+            "app.services.catalog_service"
+        ).get_entity_config,
         prepare_entity_config_for_metadata=importlib.import_module(
             "app.services.catalog_service"
         ).prepare_entity_config_for_metadata,
-        run_entity=importlib.import_module("app.services.extraction_service").run_entity,
+        run_entity=importlib.import_module(
+            "app.services.extraction_service"
+        ).run_entity,
         trigger_silver_refresh=refinement_triggers.trigger_silver_refresh,
         classify_extraction_exception=importlib.import_module(
             "app.core.extraction_status"
         ).classify_extraction_exception,
-        set_security_context=importlib.import_module("app.core.request_context").set_security_context,
-        reset_security_context=importlib.import_module("app.core.request_context").reset_security_context,
+        set_security_context=importlib.import_module(
+            "app.core.request_context"
+        ).set_security_context,
+        reset_security_context=importlib.import_module(
+            "app.core.request_context"
+        ).reset_security_context,
     )
     return _RUNTIME
 
@@ -206,11 +241,17 @@ def _run_async(coro):
 
 def _is_non_retryable_successfactors_error(exc: Exception) -> bool:
     text = str(exc).lower()
-    if "requires entity_config.connection_id" in text or "no default connection fallback" in text:
+    if (
+        "requires entity_config.connection_id" in text
+        or "no default connection fallback" in text
+    ):
         return True
     if not ("successfactors" in text or "/odata/v2/" in text or "oauth/token" in text):
         return False
-    if any(marker in text for marker in ("http 401", "http 403", "401 client error", "403 client error")):
+    if any(
+        marker in text
+        for marker in ("http 401", "http 403", "401 client error", "403 client error")
+    ):
         return True
     return any(
         marker in text
@@ -235,15 +276,21 @@ def _is_nonfatal_successfactors_block(classified: dict[str, Any]) -> bool:
     }
 
 
-def _try_silver_refresh(runtime: SimpleNamespace, entity: str, security_context: dict | None) -> dict[str, Any]:
+def _try_silver_refresh(
+    runtime: SimpleNamespace, entity: str, security_context: dict | None
+) -> dict[str, Any]:
     try:
         payload = _run_async(runtime.trigger_silver_refresh(entity, security_context))
         if isinstance(payload, dict):
-            return payload if payload.get("status") else {"status": "success", **payload}
+            return (
+                payload if payload.get("status") else {"status": "success", **payload}
+            )
         return {"status": "success"}
     except Exception as exc:  # noqa: BLE001 - Bronze extraction must remain the source of DAG success.
         message = f"{type(exc).__name__}: {exc}"
-        print(f"[sap_successfactors_extract] silver refresh failed for {entity}: {message}")
+        print(
+            f"[sap_successfactors_extract] silver refresh failed for {entity}: {message}"
+        )
         return {"status": "failed", "error": message}
 
 
@@ -267,7 +314,9 @@ def _pipeline_extra_from_payload(
     conn_id: str | None,
     job_id: str | None,
 ) -> dict[str, Any]:
-    record_count = _first_int(payload, "record_count", "rows_written", "records_written", "rows", "count")
+    record_count = _first_int(
+        payload, "record_count", "rows_written", "records_written", "rows", "count"
+    )
     extra: dict[str, Any] = {
         "conn_id": conn_id,
         "job_id": job_id,
@@ -335,10 +384,14 @@ def _pipeline_run_save(
 ) -> None:
     tenant_id, workspace_id = _scope_from_conf(conf)
     if not tenant_id or not workspace_id:
-        print("[sap_successfactors_extract] pipeline_run_save skipped: missing tenant/workspace scope")
+        print(
+            "[sap_successfactors_extract] pipeline_run_save skipped: missing tenant/workspace scope"
+        )
         return
     finished_at = datetime.now(timezone.utc).isoformat()
-    airflow_run_id = context.get("run_id") or f"sap_successfactors_extract:{finished_at}"
+    airflow_run_id = (
+        context.get("run_id") or f"sap_successfactors_extract:{finished_at}"
+    )
     args = {
         "dag_id": "sap_successfactors_extract",
         "cartridge_id": "sap_successfactors",
@@ -363,10 +416,11 @@ def _pipeline_run_save(
         args["storage_uri"] = storage_uri
     if error_message:
         args["error_message"] = error_message[:1000]
-    payload = {"tool": "pipeline_run_save", "args": args}
-    security_context = _security_context_from_conf(conf)
-    if security_context:
-        payload["security_context"] = security_context
+    payload = {
+        "tool": "pipeline_run_save",
+        "args": args,
+        "security_context": build_pipeline_run_context(args),
+    }
     try:
         with httpx.Client(timeout=15) as client:
             response = client.post(
@@ -374,7 +428,9 @@ def _pipeline_run_save(
                 headers=_mcp_headers(),
                 json=payload,
             )
-            print(f"[sap_successfactors_extract] pipeline_run_save -> {response.status_code}: {response.text[:200]}")
+            print(
+                f"[sap_successfactors_extract] pipeline_run_save -> {response.status_code}: {response.text[:200]}"
+            )
             response.raise_for_status()
     except Exception as exc:  # noqa: BLE001
         print(f"[sap_successfactors_extract] pipeline_run_save failed: {exc}")
@@ -473,7 +529,14 @@ def sap_successfactors_extract():
                 entity=str(entity),
                 status=_pipeline_status_for_success_payload(payload),
                 started_at=started_at,
-                record_count=_first_int(payload, "record_count", "rows_written", "records_written", "rows", "count"),
+                record_count=_first_int(
+                    payload,
+                    "record_count",
+                    "rows_written",
+                    "records_written",
+                    "rows",
+                    "count",
+                ),
                 storage_uri=_first_str(payload, "storage_uri", "path", "uri"),
                 extra=_pipeline_extra_from_payload(
                     payload,

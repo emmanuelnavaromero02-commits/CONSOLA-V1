@@ -1,4 +1,5 @@
 """Operational run recording for ``entity_scheduler``."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -6,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import requests
+from runtime_security_context import build_pipeline_run_context
 
 
 def record_scheduler_run(
@@ -39,16 +41,14 @@ def record_scheduler_run(
             "extra": dict(invocation),
         },
     }
+    payload["security_context"] = build_pipeline_run_context(payload["args"])
     response = http.post(
         f"{mcp_url}/mcp/invoke",
         headers=dict(headers),
         json=payload,
         timeout=15,
     )
-    print(
-        "[entity_scheduler] pipeline_run_save "
-        f"status={response.status_code}"
-    )
+    print("[entity_scheduler] pipeline_run_save " f"status={response.status_code}")
     response.raise_for_status()
     body = response.json()
     if body.get("error"):

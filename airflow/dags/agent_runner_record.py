@@ -8,6 +8,7 @@ from typing import Any, Callable
 import requests
 
 from agent_runner_outcome import require_registry_save
+from runtime_security_context import build_pipeline_run_context
 
 
 def _status(invocation: dict[str, Any]) -> str:
@@ -65,6 +66,7 @@ def record_agent_runner_run(
             "extra": safe_extra,
         },
     }
+    payload["security_context"] = build_pipeline_run_context(payload["args"])
     try:
         response = requests.post(
             f"{mcp_url}/mcp/invoke",

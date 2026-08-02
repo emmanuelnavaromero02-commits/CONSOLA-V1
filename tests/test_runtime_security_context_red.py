@@ -261,7 +261,7 @@ def test_successful_replay_reuses_durable_result_without_second_post(monkeypatch
         lambda *_args, **_kwargs: {
             "reserved": False,
             "completed": True,
-            "result": {"name": "employee_360", "row_count": 7},
+            "result": {"name": "employee_360", "layer": "gold", "row_count": 7},
         },
     )
     monkeypatch.setattr(
@@ -279,6 +279,7 @@ def test_successful_replay_reuses_durable_result_without_second_post(monkeypatch
     assert result["results"] == [
         {
             "name": "employee_360",
+            "layer": "gold",
             "ok": True,
             "reused": True,
             "row_count": 7,

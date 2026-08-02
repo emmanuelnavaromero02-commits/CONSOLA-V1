@@ -144,8 +144,8 @@ def test_valid_partial_is_the_only_failure_allow_partial_accepts(monkeypatch) ->
         "status": "completed",
         "materialized": 1,
         "results": [
-            {"name": "gold_a", "ok": True},
-            {"name": "gold_b", "ok": False},
+            {"name": "gold_a", "layer": "gold", "ok": True},
+            {"name": "gold_b", "layer": "gold", "ok": False},
         ],
     }
 
@@ -158,6 +158,23 @@ def test_valid_partial_is_the_only_failure_allow_partial_accepts(monkeypatch) ->
 
     assert saved == ["running", "partial"]
     assert intelligence == [["gold_a"]]
+
+
+def test_intelligence_receives_only_successful_gold_datasets(monkeypatch) -> None:
+    dataset_refresh_chain = load_dag(monkeypatch, "dataset_refresh_chain")
+    invocation = {
+        "status": "completed",
+        "materialized": 2,
+        "results": [
+            {"name": "silver_source", "layer": "silver", "ok": True},
+            {"name": "gold_metric", "layer": "gold", "ok": True},
+        ],
+    }
+
+    saved, intelligence = _record(monkeypatch, dataset_refresh_chain, invocation)
+
+    assert saved == ["running", "success"]
+    assert intelligence == [["gold_metric"]]
 
 
 def test_noop_requires_explicit_status_and_successful_task(monkeypatch) -> None:

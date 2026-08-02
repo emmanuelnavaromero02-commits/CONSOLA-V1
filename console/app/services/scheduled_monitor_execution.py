@@ -32,7 +32,10 @@ async def _cancel_task(task: asyncio.Task[Any] | None) -> None:
         return
     if not task.done():
         task.cancel()
-    await asyncio.gather(task, return_exceptions=True)
+        await asyncio.sleep(0)
+    task.add_done_callback(
+        lambda completed: completed.exception() if not completed.cancelled() else None
+    )
 
 
 def _valid_monitor_result(result: Any) -> bool:
@@ -164,6 +167,8 @@ async def execute_reserved_scheduled_monitor(
             message,
             scheduled_fire_at=scheduled_fire_at,
             lease_guard=assert_lease,
+            schedule_run_id=schedule_run_id,
+            fencing_token=fencing_token,
         )
     )
     heartbeat_task = asyncio.create_task(heartbeat_loop())

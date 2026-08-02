@@ -19,6 +19,7 @@ from dataset_refresh_outcome import (
     require_successful_intelligence_response,
     require_successful_registry_response,
 )
+from runtime_security_context import build_pipeline_run_context
 
 
 CARTRIDGE_ID = "platform"
@@ -106,7 +107,10 @@ def _successful_materialized_datasets(results: list[dict]) -> list[str]:
         {
             str(item.get("name") or "").strip()
             for item in results
-            if isinstance(item, dict) and item.get("ok") and item.get("name")
+            if isinstance(item, dict)
+            and item.get("ok") is True
+            and item.get("layer") == "gold"
+            and item.get("name")
         }
     )
 
@@ -183,26 +187,28 @@ def record_run(**ctx):
     pipeline_run_id = f"dataset_refresh_chain:{ctx['run_id']}"
 
     def save_status(selected_status: str) -> None:
+        args = {
+            "dag_id": "dataset_refresh_chain",
+            "cartridge_id": cartridge,
+            "entity": ENTITY,
+            "run_id": pipeline_run_id,
+            "airflow_dag_run_id": ctx["run_id"],
+            "mode": "refresh",
+            "status": selected_status,
+            "started_at": ctx["logical_date"].isoformat(),
+            "finished_at": finished_at,
+            "tenant_id": tenant_id,
+            "workspace_id": workspace_id,
+            "project_id": conf.get("project_id"),
+            "extra": invocation,
+        }
         response = requests.post(
             f"{MCP_INFRA_URL}/mcp/invoke",
             headers=_internal_headers("MCP_INFRA", ctx),
             json={
                 "tool": "pipeline_run_save",
-                "args": {
-                    "dag_id": "dataset_refresh_chain",
-                    "cartridge_id": cartridge,
-                    "entity": ENTITY,
-                    "run_id": pipeline_run_id,
-                    "airflow_dag_run_id": ctx["run_id"],
-                    "mode": "refresh",
-                    "status": selected_status,
-                    "started_at": ctx["logical_date"].isoformat(),
-                    "finished_at": finished_at,
-                    "tenant_id": tenant_id,
-                    "workspace_id": workspace_id,
-                    "project_id": conf.get("project_id"),
-                    "extra": invocation,
-                },
+                "args": args,
+                "security_context": build_pipeline_run_context(args),
             },
             timeout=15,
         )

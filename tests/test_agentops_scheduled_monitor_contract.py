@@ -88,10 +88,14 @@ def test_agent_runtime_keeps_wisdombit_as_decision_source_after_simulation():
     source = (ROOT / "console/app/services/agent_runtime.py").read_text(
         encoding="utf-8"
     )
-    section = source.split(
-        'if engine in {"decision_orchestrator", "decision__orchestrate", "orchestrator"}:',
-        1,
-    )[1].split('if engine in {"control_room_alert"', 1)[0]
+    tree = ast.parse(source)
+    decision_if = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.If)
+        and "decision_orchestrator" in (ast.get_source_segment(source, node.test) or "")
+    )
+    section = ast.get_source_segment(source, decision_if) or ""
 
     assert 'source_type = "monte_carlo_simulation"' not in section
     assert 'source_type = "wisdom_bit"' in section

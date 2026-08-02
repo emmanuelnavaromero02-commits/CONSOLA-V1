@@ -13,6 +13,7 @@ from typing import Any
 
 
 MATERIALIZE_PURPOSE = "refinement.mcp.materialize"
+PIPELINE_RUN_PURPOSE = "mcp.pipeline_run_save"
 SIGNATURE_VERSION = "hmac-sha256-v1"
 MATERIALIZE_SIGNATURE_VERSION = "hmac-sha256-v2"
 _MIN_KEY_LENGTH = 32
@@ -98,6 +99,46 @@ def build_materialize_context(
             f"uploads/{cartridge}/{scope}",
             f"cartridges/{cartridge}/",
         ],
+    }
+    return _sign_context(context, version=MATERIALIZE_SIGNATURE_VERSION, now=now)
+
+
+def build_pipeline_run_context(
+    args: Mapping[str, Any], *, now: int | None = None
+) -> dict[str, Any]:
+    """Bind one telemetry envelope to its exact body and operational scope."""
+    required = {"run_id", "dag_id", "cartridge_id", "entity", "status"}
+    if not required.issubset(args) or any(
+        not str(args[key] or "").strip() for key in required
+    ):
+        raise ValueError("pipeline telemetry identity is incomplete")
+    cartridge = _required(args["cartridge_id"], "cartridge_id")
+    tenant = str(args.get("tenant_id") or "").strip()
+    workspace = str(args.get("workspace_id") or "").strip()
+    if cartridge != "platform" and (not tenant or not workspace):
+        raise ValueError("pipeline telemetry scope is incomplete")
+    body = {"args": dict(args), "tool": "pipeline_run_save"}
+    context: dict[str, Any] = {
+        "trusted": True,
+        "source": "airflow",
+        "audience": "mcp-infra",
+        "purpose": PIPELINE_RUN_PURPOSE,
+        "tool": "pipeline_run_save",
+        "run_id": _required(args["run_id"], "run_id"),
+        "dag_id": _required(args["dag_id"], "dag_id"),
+        "jti": secrets.token_hex(32),
+        "body_digest": hashlib.sha256(
+            json.dumps(
+                body, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+            ).encode("utf-8")
+        ).hexdigest(),
+        "user_id": f"airflow:{args['dag_id']}",
+        "role": "service",
+        "workspace_role": "service",
+        "tenant_id": tenant,
+        "workspace_id": workspace,
+        "permissions": ["pipelines.write"],
+        "allowed_cartridges": [cartridge],
     }
     return _sign_context(context, version=MATERIALIZE_SIGNATURE_VERSION, now=now)
 

@@ -106,6 +106,10 @@ async def reserve_scheduled_run(
                 existing["lease_expires_at"] is None
                 or _to_utc(existing["lease_expires_at"]) <= datetime.now(timezone.utc)
             ):
+                await conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
+                    f"agent_schedule_effect:{existing['id']}",
+                )
                 reclaimed = await conn.fetchrow(
                     """UPDATE agent_schedule_runs
                           SET started_at=NOW(), finished_at=NULL, error_message=NULL,

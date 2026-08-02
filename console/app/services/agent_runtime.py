@@ -6,9 +6,11 @@ The Agent's own `instructions` + `personality` + `allowed_tools` + `rag_filter`
 + `model` are its specialization. The platform (this runtime + MCP servers)
 is its "body".
 """
+
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import os
 import re
@@ -24,7 +26,12 @@ import httpx
 from app.security import get_internal_api_key
 from app.middleware.request_id import request_id_var
 from app.services import audit_service, llm_client
-from app.services.security_context import build_security_context, rls_user_context, sign_security_context
+from app.services.security_context import (
+    build_security_context,
+    rls_user_context,
+    sign_runtime_envelope,
+    sign_security_context,
+)
 from app.services import tool_policy
 from app.services.db_scope import scoped_db
 from app.services.gold_publication_relation import (
@@ -35,20 +42,20 @@ from app.services.gold_publication_relation import (
 logger = logging.getLogger(__name__)
 
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
-MCP_INFRA_URL  = os.environ.get("MCP_INFRA_URL",  "http://mcp-infra:8010")
+MCP_INFRA_URL = os.environ.get("MCP_INFRA_URL", "http://mcp-infra:8010")
 
 SERVER_URLS = {
     "refinement": REFINEMENT_URL,
-    "mcp-infra":  MCP_INFRA_URL,
+    "mcp-infra": MCP_INFRA_URL,
     # Historical surfaces and DB rows may still store MCP Infra as "infra".
     # Keep the alias executable while treating "mcp-infra" as canonical.
-    "infra":      MCP_INFRA_URL,
+    "infra": MCP_INFRA_URL,
 }
 
 _SERVER_ENV_KEYS = {
     "refinement": "REFINEMENT",
-    "mcp-infra":  "MCP_INFRA",
-    "infra":      "MCP_INFRA",
+    "mcp-infra": "MCP_INFRA",
+    "infra": "MCP_INFRA",
 }
 
 _SERVER_CANONICAL_IDS = {
@@ -80,13 +87,17 @@ _SAFE_GOLD_DATASET_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 
 
 def _canonical_server_id(server_id: str) -> str:
-    return _SERVER_CANONICAL_IDS.get(str(server_id or "").strip(), str(server_id or "").strip())
+    return _SERVER_CANONICAL_IDS.get(
+        str(server_id or "").strip(), str(server_id or "").strip()
+    )
 
 
 def _server_aliases(server_id: str) -> set[str]:
     canonical = _canonical_server_id(server_id)
     aliases = {canonical}
-    aliases.update(alias for alias, target in _SERVER_CANONICAL_IDS.items() if target == canonical)
+    aliases.update(
+        alias for alias, target in _SERVER_CANONICAL_IDS.items() if target == canonical
+    )
     if server_id:
         aliases.add(str(server_id).strip())
     return {item for item in aliases if item}
@@ -102,8 +113,13 @@ def _full_tool_aliases(full_name: str) -> set[str]:
 def _headers_for(server_id: str) -> dict[str, str]:
     server_key = _SERVER_ENV_KEYS.get(server_id, server_id.replace("-", "_").upper())
     pair_key = os.environ.get(f"INTERNAL_API_KEY_CONSOLE_TO_{server_key}")
-    if os.environ.get("APP_ENV", "production").lower() in {"production", "prod"} and not pair_key:
-        raise RuntimeError(f"Missing INTERNAL_API_KEY_CONSOLE_TO_{server_key}; legacy fallback disabled in production")
+    if (
+        os.environ.get("APP_ENV", "production").lower() in {"production", "prod"}
+        and not pair_key
+    ):
+        raise RuntimeError(
+            f"Missing INTERNAL_API_KEY_CONSOLE_TO_{server_key}; legacy fallback disabled in production"
+        )
     headers = {
         "x-api-key": pair_key or get_internal_api_key(),
         "x-internal-service": "console",
@@ -116,24 +132,25 @@ def _headers_for(server_id: str) -> dict[str, str]:
 
 # ── Agent definition ─────────────────────────────────────────────────────────
 
+
 @dataclass
 class Agent:
-    id:            str
-    cartridge_id:  str
-    slug:          str
-    name:          str
-    description:   str
-    instructions:  str
-    personality:   str
-    allowed_tools: list[str]          # ["refinement__query_dataset", ...]
-    rag_filter:    dict               # {"cartridges":[...], "kinds":[...]}
-    model:         str
-    max_tokens:    int
-    temperature:   float
-    extra:         dict               # {"variables":{}, "schedule":{...}}
-    is_active:     bool = True
-    tenant_id:      str | None = None
-    workspace_id:   str | None = None
+    id: str
+    cartridge_id: str
+    slug: str
+    name: str
+    description: str
+    instructions: str
+    personality: str
+    allowed_tools: list[str]  # ["refinement__query_dataset", ...]
+    rag_filter: dict  # {"cartridges":[...], "kinds":[...]}
+    model: str
+    max_tokens: int
+    temperature: float
+    extra: dict  # {"variables":{}, "schedule":{...}}
+    is_active: bool = True
+    tenant_id: str | None = None
+    workspace_id: str | None = None
 
     @classmethod
     def from_row(cls, row: dict | asyncpg.Record) -> "Agent":
@@ -151,22 +168,26 @@ class Agent:
                 return default
 
         return cls(
-            id            = str(row["id"]),
-            cartridge_id  = row["cartridge_id"],
-            slug          = row["slug"],
-            name          = row["name"],
-            description   = row.get("description") or "",
-            instructions  = row.get("instructions") or "",
-            personality   = row.get("personality") or "",
-            allowed_tools = _as_obj(row.get("allowed_tools"), []),
-            rag_filter    = _as_obj(row.get("rag_filter"), {}),
-            model         = row.get("model") or "claude-sonnet-4-6",
-            max_tokens    = int(row.get("max_tokens") or 8192),
-            temperature   = float(row.get("temperature") if row.get("temperature") is not None else 0.4),
-            extra         = _as_obj(row.get("extra"), {}),
-            is_active     = bool(row.get("is_active", True)),
-            tenant_id      = str(row.get("tenant_id")) if row.get("tenant_id") else None,
-            workspace_id   = str(row.get("workspace_id")) if row.get("workspace_id") else None,
+            id=str(row["id"]),
+            cartridge_id=row["cartridge_id"],
+            slug=row["slug"],
+            name=row["name"],
+            description=row.get("description") or "",
+            instructions=row.get("instructions") or "",
+            personality=row.get("personality") or "",
+            allowed_tools=_as_obj(row.get("allowed_tools"), []),
+            rag_filter=_as_obj(row.get("rag_filter"), {}),
+            model=row.get("model") or "claude-sonnet-4-6",
+            max_tokens=int(row.get("max_tokens") or 8192),
+            temperature=float(
+                row.get("temperature") if row.get("temperature") is not None else 0.4
+            ),
+            extra=_as_obj(row.get("extra"), {}),
+            is_active=bool(row.get("is_active", True)),
+            tenant_id=str(row.get("tenant_id")) if row.get("tenant_id") else None,
+            workspace_id=str(row.get("workspace_id"))
+            if row.get("workspace_id")
+            else None,
         )
 
 
@@ -193,7 +214,10 @@ async def _get_pool() -> asyncpg.Pool:
                 "postgresql+psycopg2://", "postgresql://"
             )
             _pool = await asyncpg.create_pool(
-                dsn, min_size=2, max_size=10, command_timeout=30,
+                dsn,
+                min_size=2,
+                max_size=10,
+                command_timeout=30,
             )
     return _pool
 
@@ -209,7 +233,10 @@ async def _get_gold_pool() -> asyncpg.Pool:
                 or os.environ.get("DATABASE_URL", "")
             ).replace("postgresql+psycopg2://", "postgresql://")
             _gold_pool = await asyncpg.create_pool(
-                dsn, min_size=1, max_size=4, command_timeout=30,
+                dsn,
+                min_size=1,
+                max_size=4,
+                command_timeout=30,
             )
     return _gold_pool
 
@@ -227,6 +254,7 @@ async def close_pool() -> None:
 
 
 # ── Loaders ──────────────────────────────────────────────────────────────────
+
 
 async def _fetch_with_optional_scope(
     pool: asyncpg.Pool,
@@ -360,19 +388,23 @@ async def _discover_agent_tools(agent: Agent) -> tuple[list[dict], dict[str, str
                 continue
             full = f"{srv_id}__{t['name']}"
             meta = tool_policy.classify(t["name"])
-            tools.append({
-                "name":         full,
-                "description":  (
-                    f"[risk={meta['risk_level']}; "
-                    f"approval={'yes' if meta['requires_approval'] else 'no'}] "
-                    + (t.get("description", "") or "")
-                ),
-                "input_schema": t.get("input_schema", {"type": "object", "properties": {}}),
-                "_bare_name": t["name"],
-                "_server": srv_id,
-                "_risk_level": meta["risk_level"],
-                "_requires_approval": meta["requires_approval"],
-            })
+            tools.append(
+                {
+                    "name": full,
+                    "description": (
+                        f"[risk={meta['risk_level']}; "
+                        f"approval={'yes' if meta['requires_approval'] else 'no'}] "
+                        + (t.get("description", "") or "")
+                    ),
+                    "input_schema": t.get(
+                        "input_schema", {"type": "object", "properties": {}}
+                    ),
+                    "_bare_name": t["name"],
+                    "_server": srv_id,
+                    "_risk_level": meta["risk_level"],
+                    "_requires_approval": meta["requires_approval"],
+                }
+            )
             server_map[full] = srv_id
     return tools, server_map
 
@@ -386,6 +418,7 @@ def invalidate_catalog_cache(server_id: str | None = None):
 
 
 # ── Invocation (applies rag_filter automatically) ───────────────────────────
+
 
 def _rls_user_context(user: dict | None) -> dict:
     return rls_user_context(user)
@@ -417,21 +450,64 @@ def _agent_context_metadata(agent: Agent, run_id: int | None) -> dict[str, Any]:
 
 
 def _resign_context(ctx: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
-    payload = {key: value for key, value in dict(ctx).items() if key not in _SIGNED_CONTEXT_FIELDS}
+    payload = {
+        key: value
+        for key, value in dict(ctx).items()
+        if key not in _SIGNED_CONTEXT_FIELDS
+    }
     payload.update(extra)
     return sign_security_context(payload)
 
 
+def _scheduled_effect_authority(
+    *,
+    agent: Agent,
+    run_id: int | None,
+    tool: str,
+    args: dict[str, Any],
+    schedule_run_id: int,
+    fencing_token: int,
+) -> dict[str, Any]:
+    tenant_id, workspace_id = _agent_scope(agent)
+    body = {"tool": tool, "args": args}
+    return sign_runtime_envelope(
+        {
+            "source": "console",
+            "audience": "mcp-infra",
+            "purpose": "mcp.scheduled_effect",
+            "tool": tool,
+            "schedule_run_id": int(schedule_run_id),
+            "fencing_token": int(fencing_token),
+            "tenant_id": tenant_id,
+            "workspace_id": workspace_id,
+            "agent_id": agent.id,
+            "agent_run_id": run_id,
+            "jti": uuid.uuid4().hex + uuid.uuid4().hex,
+            "body_digest": hashlib.sha256(
+                json.dumps(
+                    body, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+                ).encode("utf-8")
+            ).hexdigest(),
+        }
+    )
+
+
 def _scheduled_permissions(agent: Agent) -> list[str]:
     permissions = {"datasets.read", "cartridges.read"}
-    if _is_monitor_agent(agent) and _SCHEDULED_MONITOR_WRITE_TOOLS & set(agent.allowed_tools or []):
+    if _is_monitor_agent(agent) and _SCHEDULED_MONITOR_WRITE_TOOLS & set(
+        agent.allowed_tools or []
+    ):
         permissions.add("control_room.write")
     return sorted(permissions)
 
 
-def _agent_security_context(agent: Agent, user: dict | None, *, run_id: int | None = None) -> dict:
+def _agent_security_context(
+    agent: Agent, user: dict | None, *, run_id: int | None = None
+) -> dict:
     if user is not None:
-        return _resign_context(build_security_context(user), _agent_context_metadata(agent, run_id))
+        return _resign_context(
+            build_security_context(user), _agent_context_metadata(agent, run_id)
+        )
     cartridge = (agent.cartridge_id or "").strip()
     tenant_id, workspace_id = _agent_scope(agent)
     if not tenant_id or not workspace_id:
@@ -446,27 +522,31 @@ def _agent_security_context(agent: Agent, user: dict | None, *, run_id: int | No
             f"uploads/{cartridge}/{scope}",
             f"cartridges/{cartridge}/",
         ]
-    return sign_security_context({
-        "trusted": True,
-        "source": "agent_runner",
-        "user_id": None,
-        "email": "agent-runner@omega.local",
-        "role": "agent",
-        "workspace_role": None,
-        "tenant_id": tenant_id,
-        "workspace_id": workspace_id,
-        "permissions": _scheduled_permissions(agent),
-        "allowed_cartridges": [cartridge] if cartridge else [],
-        "allowed_buckets": ["lakehouse"],
-        "allowed_prefixes": prefixes,
-        **_agent_context_metadata(agent, run_id),
-    })
+    return sign_security_context(
+        {
+            "trusted": True,
+            "source": "agent_runner",
+            "user_id": None,
+            "email": "agent-runner@omega.local",
+            "role": "agent",
+            "workspace_role": None,
+            "tenant_id": tenant_id,
+            "workspace_id": workspace_id,
+            "permissions": _scheduled_permissions(agent),
+            "allowed_cartridges": [cartridge] if cartridge else [],
+            "allowed_buckets": ["lakehouse"],
+            "allowed_prefixes": prefixes,
+            **_agent_context_metadata(agent, run_id),
+        }
+    )
 
 
 def _max_tool_calls(agent: Agent, *, scheduled: bool) -> int:
     limits = (agent.extra or {}).get("limits") or {}
     raw = limits.get("max_tool_calls_scheduled" if scheduled else "max_tool_calls")
-    default = _DEFAULT_SCHEDULED_MAX_TOOL_CALLS if scheduled else _DEFAULT_MAX_TOOL_CALLS
+    default = (
+        _DEFAULT_SCHEDULED_MAX_TOOL_CALLS if scheduled else _DEFAULT_MAX_TOOL_CALLS
+    )
     try:
         value = int(raw if raw is not None else default)
     except Exception:
@@ -595,8 +675,12 @@ async def _monitor_latest_gold_row(agent: Agent, dataset: str) -> dict[str, Any]
             if "updated_at" in columns
             else None
         )
-        order_sql = f"ORDER BY {_pg_ident(order_col)} DESC NULLS LAST" if order_col else ""
-        tenant_filter = "AND tenant_id::text = $2" if tenant_id and "tenant_id" in columns else ""
+        order_sql = (
+            f"ORDER BY {_pg_ident(order_col)} DESC NULLS LAST" if order_col else ""
+        )
+        tenant_filter = (
+            "AND tenant_id::text = $2" if tenant_id and "tenant_id" in columns else ""
+        )
         args: list[Any] = [workspace_id]
         if tenant_filter:
             args.append(tenant_id)
@@ -660,13 +744,21 @@ async def _monitor_resolve_dataset_inputs(
         return None, "missing_simulation_inputs", row
 
     assumptions = {
-        **(spec.get("assumptions") if isinstance(spec.get("assumptions"), dict) else {}),
-        **_monitor_json_obj(row.get(str(spec.get("assumptions_field") or "assumptions_json"))),
+        **(
+            spec.get("assumptions") if isinstance(spec.get("assumptions"), dict) else {}
+        ),
+        **_monitor_json_obj(
+            row.get(str(spec.get("assumptions_field") or "assumptions_json"))
+        ),
     }
     evidence_refs = []
     if isinstance(spec.get("evidence_refs"), list):
         evidence_refs.extend(spec["evidence_refs"])
-    evidence_refs.extend(_monitor_json_list(row.get(str(spec.get("evidence_refs_field") or "evidence_refs_json"))))
+    evidence_refs.extend(
+        _monitor_json_list(
+            row.get(str(spec.get("evidence_refs_field") or "evidence_refs_json"))
+        )
+    )
 
     resolved = dict(spec)
     resolved["input_variables"] = input_variables
@@ -685,25 +777,35 @@ def _monitor_monte_carlo_tool_args(
     if not isinstance(input_variables, dict) or not input_variables:
         return None
     seed = spec.get("seed")
-    return _monitor_clean_args({
-        "source_type": str(spec.get("source_type") or "signal"),
-        "source_id": str(spec.get("source_id") or payload.get("wisdom_bit_id") or wisdom_bit_id),
-        "horizon_days": int(spec.get("horizon_days") or 30),
-        "iterations": int(spec.get("iterations") or 1000),
-        "seed": int(seed) if seed is not None else None,
-        "model_version": spec.get("model_version"),
-        "input_variables": input_variables,
-        "assumptions": (
-            spec.get("assumptions") if isinstance(spec.get("assumptions"), dict) else {}
-        ),
-        "output_metric": str(spec.get("output_metric") or "net_value"),
-        "breach_threshold": spec.get("breach_threshold"),
-        "breach_direction": spec.get("breach_direction"),
-        "evidence_refs": (
-            spec.get("evidence_refs") if isinstance(spec.get("evidence_refs"), list) else []
-        ),
-        "options": spec.get("options") if isinstance(spec.get("options"), list) else None,
-    })
+    return _monitor_clean_args(
+        {
+            "source_type": str(spec.get("source_type") or "signal"),
+            "source_id": str(
+                spec.get("source_id") or payload.get("wisdom_bit_id") or wisdom_bit_id
+            ),
+            "horizon_days": int(spec.get("horizon_days") or 30),
+            "iterations": int(spec.get("iterations") or 1000),
+            "seed": int(seed) if seed is not None else None,
+            "model_version": spec.get("model_version"),
+            "input_variables": input_variables,
+            "assumptions": (
+                spec.get("assumptions")
+                if isinstance(spec.get("assumptions"), dict)
+                else {}
+            ),
+            "output_metric": str(spec.get("output_metric") or "net_value"),
+            "breach_threshold": spec.get("breach_threshold"),
+            "breach_direction": spec.get("breach_direction"),
+            "evidence_refs": (
+                spec.get("evidence_refs")
+                if isinstance(spec.get("evidence_refs"), list)
+                else []
+            ),
+            "options": spec.get("options")
+            if isinstance(spec.get("options"), list)
+            else None,
+        }
+    )
 
 
 async def _monitor_resolve_decision_engine_inputs(
@@ -718,7 +820,11 @@ async def _monitor_resolve_decision_engine_inputs(
 
     raw_monte_carlo = raw_engine_inputs.get("monte_carlo")
     if isinstance(raw_monte_carlo, dict):
-        resolved_spec, blocked_reason, input_row = await _monitor_resolve_dataset_inputs(
+        (
+            resolved_spec,
+            blocked_reason,
+            input_row,
+        ) = await _monitor_resolve_dataset_inputs(
             agent,
             raw_monte_carlo,
         )
@@ -729,7 +835,9 @@ async def _monitor_resolve_decision_engine_inputs(
                 "source_dataset": raw_monte_carlo.get("input_dataset"),
             }
             if isinstance(input_row, dict):
-                status_field = str(raw_monte_carlo.get("status_field") or "input_status")
+                status_field = str(
+                    raw_monte_carlo.get("status_field") or "input_status"
+                )
                 blocker["input_status"] = str(input_row.get(status_field) or "")
             blockers.append(blocker)
         else:
@@ -751,11 +859,13 @@ async def _monitor_resolve_decision_engine_inputs(
 
     raw_bayes = raw_engine_inputs.get("bayesian_calibration")
     if isinstance(raw_bayes, dict):
-        resolved_inputs["bayesian_calibration"] = _monitor_clean_args({
-            "calibration_group": raw_bayes.get("calibration_group"),
-            "model_version": raw_bayes.get("model_version"),
-            "limit": raw_bayes.get("limit"),
-        })
+        resolved_inputs["bayesian_calibration"] = _monitor_clean_args(
+            {
+                "calibration_group": raw_bayes.get("calibration_group"),
+                "model_version": raw_bayes.get("model_version"),
+                "limit": raw_bayes.get("limit"),
+            }
+        )
 
     return resolved_inputs, blockers
 
@@ -765,7 +875,9 @@ def _monitor_engine_ref(result: dict[str, Any]) -> dict[str, Any]:
     nested = _monitor_result_payload(payload)
     if nested and nested is not payload:
         payload = nested
-    simulation = payload.get("simulation") if isinstance(payload.get("simulation"), dict) else {}
+    simulation = (
+        payload.get("simulation") if isinstance(payload.get("simulation"), dict) else {}
+    )
     orchestration = (
         payload.get("orchestration")
         if isinstance(payload.get("orchestration"), dict)
@@ -773,13 +885,11 @@ def _monitor_engine_ref(result: dict[str, Any]) -> dict[str, Any]:
     )
     states = payload.get("states") if isinstance(payload.get("states"), list) else []
     calibration_state = states[0] if states and isinstance(states[0], dict) else {}
-    calibration_run_id = (
-        calibration_state.get("state_id")
-        or (
-            f"{calibration_state.get('calibration_group')}:{calibration_state.get('model_version')}"
-            if calibration_state.get("calibration_group") and calibration_state.get("model_version")
-            else None
-        )
+    calibration_run_id = calibration_state.get("state_id") or (
+        f"{calibration_state.get('calibration_group')}:{calibration_state.get('model_version')}"
+        if calibration_state.get("calibration_group")
+        and calibration_state.get("model_version")
+        else None
     )
     return {
         "kind": str(result.get("engine") or payload.get("engine") or "monitor_engine"),
@@ -846,14 +956,22 @@ def _monitor_alert_args(
     scheduled_fire_at: str | None = None,
     engine_results: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    wisdom_bit_id = str(contract.get("wisdom_bit_id") or payload.get("wisdom_bit_id") or "wisdom_bit")
+    wisdom_bit_id = str(
+        contract.get("wisdom_bit_id") or payload.get("wisdom_bit_id") or "wisdom_bit"
+    )
     blockers = _monitor_blockers(payload)
     signal_count = _monitor_signal_count(payload)
     status = str(payload.get("status") or "partial")
     source_dataset = str(contract.get("dataset") or "agent_monitor")
-    dedup_key = str(contract.get("dedup_key") or f"{agent.cartridge_id}:{agent.slug}:{wisdom_bit_id}")
+    dedup_key = str(
+        contract.get("dedup_key")
+        or f"{agent.cartridge_id}:{agent.slug}:{wisdom_bit_id}"
+    )
     severity = str(contract.get("severity") or "medium")
-    recommendation = str(contract.get("recommended_action") or "Revisar evidencia del monitor en Control Room.")
+    recommendation = str(
+        contract.get("recommended_action")
+        or "Revisar evidencia del monitor en Control Room."
+    )
     metrics = {
         "status": status,
         "signal_count": signal_count,
@@ -882,7 +1000,9 @@ def _monitor_alert_args(
         if item.get("status") in {"completed", "error", "blocked"}:
             evidence_refs.append(_monitor_engine_ref(item))
     return {
-        "analysis_type": str(contract.get("analysis_type") or f"{wisdom_bit_id.lower()}_monitor"),
+        "analysis_type": str(
+            contract.get("analysis_type") or f"{wisdom_bit_id.lower()}_monitor"
+        ),
         "engine": str(contract.get("engine") or "wisdom_bit"),
         "engine_run_id": f"agent:{agent.id}:run:{run_id}:wisdombit:{wisdom_bit_id}",
         "alert_type": str(contract.get("alert_type") or "wisdombit_monitor"),
@@ -891,7 +1011,9 @@ def _monitor_alert_args(
         "source_dataset": source_dataset,
         "entity_key": dedup_key,
         "entity_label": wisdom_bit_id,
-        "title": str(contract.get("title") or f"{agent.name}: {wisdom_bit_id} requiere atencion"),
+        "title": str(
+            contract.get("title") or f"{agent.name}: {wisdom_bit_id} requiere atencion"
+        ),
         "message": (
             f"Monitor {agent.slug} evaluo {wisdom_bit_id}: status={status}, "
             f"signals={signal_count}, blockers={len(blockers)}."
@@ -900,8 +1022,14 @@ def _monitor_alert_args(
         "confidence": float(contract.get("confidence") or 0.8),
         "recommendation": recommendation,
         "evidence_refs": evidence_refs,
-        "hypothesis": str(contract.get("hypothesis") or "El monitor detecto estado no listo o senales activas."),
-        "expected_outcome": str(contract.get("expected_outcome") or "Control Room mantiene recomendacion advisory con evidencia."),
+        "hypothesis": str(
+            contract.get("hypothesis")
+            or "El monitor detecto estado no listo o senales activas."
+        ),
+        "expected_outcome": str(
+            contract.get("expected_outcome")
+            or "Control Room mantiene recomendacion advisory con evidencia."
+        ),
         "metrics": metrics,
         "blockers": blockers,
     }
@@ -964,6 +1092,8 @@ def _make_invoke(
     *,
     tools: list[dict] | None = None,
     run_id: int | None = None,
+    schedule_run_id: int | None = None,
+    fencing_token: int | None = None,
 ):
     rf = agent.rag_filter or {}
     allowed_full = {
@@ -985,11 +1115,19 @@ def _make_invoke(
         risk = meta["risk_level"]
         scrubbed = tool_policy.clip_args(tool_policy.scrub_args(raw_args))
 
-        async def deny(status: str, message: Any, *, required_permission: str | None = None) -> dict:
+        async def deny(
+            status: str, message: Any, *, required_permission: str | None = None
+        ) -> dict:
             message_text = _safe_error_text(message) or status
             await _audit_agent_tool(
-                agent=agent, run_id=run_id, user=user, server_id=server_id,
-                tool=tool, args=raw_args, risk_level=risk, status=status,
+                agent=agent,
+                run_id=run_id,
+                user=user,
+                server_id=server_id,
+                tool=tool,
+                args=raw_args,
+                risk_level=risk,
+                status=status,
                 error=message_text,
             )
             out = {
@@ -1006,9 +1144,13 @@ def _make_invoke(
             return out
 
         if full_name not in allowed_full:
-            return await deny("denied", f"tool not allowlisted for this agent: {full_name}")
+            return await deny(
+                "denied", f"tool not allowlisted for this agent: {full_name}"
+            )
         if full_name not in catalog:
-            return await deny("denied", f"tool not available in live catalog: {full_name}")
+            return await deny(
+                "denied", f"tool not available in live catalog: {full_name}"
+            )
 
         if scheduled and not all(_agent_scope(agent)):
             return await deny(
@@ -1047,6 +1189,21 @@ def _make_invoke(
             and risk == "write"
             and _is_monitor_agent(agent)
         )
+        if scheduled_monitor_write:
+            if schedule_run_id is None or fencing_token is None:
+                return await deny(
+                    "scheduled_effect_authority_missing",
+                    "scheduled write requires a server-owned fence",
+                )
+            effect_authority = _scheduled_effect_authority(
+                agent=agent,
+                run_id=run_id,
+                tool=tool,
+                args=args,
+                schedule_run_id=int(schedule_run_id),
+                fencing_token=int(fencing_token),
+            )
+            args = {**args, "effect_authority": effect_authority}
 
         # Scheduled runs have no human in the loop. They may read and raise
         # advisory Control Room/AgentOps evidence; no external write/delete
@@ -1064,8 +1221,14 @@ def _make_invoke(
         # instead of executing it; UI/API can surface that state safely.
         if meta["requires_approval"] and not scheduled_monitor_write:
             await _audit_agent_tool(
-                agent=agent, run_id=run_id, user=user, server_id=server_id,
-                tool=tool, args=args, risk_level=risk, status="pending_approval",
+                agent=agent,
+                run_id=run_id,
+                user=user,
+                server_id=server_id,
+                tool=tool,
+                args=args,
+                risk_level=risk,
+                status="pending_approval",
             )
             return {
                 "error": "approval_required",
@@ -1077,10 +1240,16 @@ def _make_invoke(
                 "server": server_id,
                 "risk_level": risk,
                 "args": scrubbed,
-                "approval_key": str(uuid.uuid5(
-                    uuid.NAMESPACE_URL,
-                    json.dumps([agent.id, server_id, tool, scrubbed], sort_keys=True, default=str),
-                )),
+                "approval_key": str(
+                    uuid.uuid5(
+                        uuid.NAMESPACE_URL,
+                        json.dumps(
+                            [agent.id, server_id, tool, scrubbed],
+                            sort_keys=True,
+                            default=str,
+                        ),
+                    )
+                ),
                 "_agent_tool_status": "pending_approval",
             }
 
@@ -1090,7 +1259,11 @@ def _make_invoke(
         if tool in ("search_rag", "list_rag_sources"):
             if "kinds" in rf and "kinds" not in args:
                 args = {**args, "kinds": rf["kinds"]}
-        if server_id == "refinement" and tool in ("query_dataset", "preview_sql", "preview_transform"):
+        if server_id == "refinement" and tool in (
+            "query_dataset",
+            "preview_sql",
+            "preview_transform",
+        ):
             # Always overwrite model-supplied context with the authenticated
             # backend context. Agent prompts/tool args are untrusted input.
             args = {**args, "user_context": _rls_user_context(user)}
@@ -1098,13 +1271,24 @@ def _make_invoke(
         base = SERVER_URLS.get(server_id)
         if not base:
             return await deny("error", f"unknown server: {server_id}")
+        security_context = _agent_security_context(agent, user, run_id=run_id)
+        if scheduled_monitor_write:
+            security_context = _resign_context(
+                security_context,
+                {
+                    "schedule_run_id": int(schedule_run_id),
+                    "fencing_token": int(fencing_token),
+                },
+            )
         payload = {
             "tool": tool,
             "args": args,
-            "security_context": _agent_security_context(agent, user, run_id=run_id),
+            "security_context": security_context,
         }
         try:
-            async with httpx.AsyncClient(headers=_headers_for(server_id), timeout=120) as c:
+            async with httpx.AsyncClient(
+                headers=_headers_for(server_id), timeout=120
+            ) as c:
                 r = await c.post(f"{base}/mcp/invoke", json=payload)
         except Exception as exc:
             return await deny("error", f"{type(exc).__name__}: {exc}")
@@ -1114,16 +1298,34 @@ def _make_invoke(
             return await deny("error", f"non-JSON response: {r.text[:300]}")
         if r.status_code >= 400:
             if isinstance(response_payload, dict):
-                message = response_payload.get("detail") or response_payload.get("error") or f"HTTP {r.status_code}"
+                message = (
+                    response_payload.get("detail")
+                    or response_payload.get("error")
+                    or f"HTTP {r.status_code}"
+                )
             else:
                 message = f"HTTP {r.status_code}"
             return await deny("error", message)
-        result = response_payload.get("result", response_payload) if isinstance(response_payload, dict) else response_payload
-        status = "error" if isinstance(result, dict) and result.get("error") else "completed"
+        result = (
+            response_payload.get("result", response_payload)
+            if isinstance(response_payload, dict)
+            else response_payload
+        )
+        status = (
+            "error" if isinstance(result, dict) and result.get("error") else "completed"
+        )
         await _audit_agent_tool(
-            agent=agent, run_id=run_id, user=user, server_id=server_id,
-            tool=tool, args=args, risk_level=risk, status=status,
-            error=str(result.get("error")) if isinstance(result, dict) and result.get("error") else None,
+            agent=agent,
+            run_id=run_id,
+            user=user,
+            server_id=server_id,
+            tool=tool,
+            args=args,
+            risk_level=risk,
+            status=status,
+            error=str(result.get("error"))
+            if isinstance(result, dict) and result.get("error")
+            else None,
         )
         return result
 
@@ -1131,6 +1333,7 @@ def _make_invoke(
 
 
 # ── System prompt assembly ──────────────────────────────────────────────────
+
 
 def _interpolate_variables(text: str, variables: dict) -> str:
     if not variables:
@@ -1179,7 +1382,8 @@ def _sanitize_cartridge_hints(cartridge_id: str, hints: str) -> str:
         if pattern.search(sanitized):
             logger.warning(
                 "cartridge_hints: neutralized wrapper/template token %r in hints for cartridge %s",
-                token, cartridge_id,
+                token,
+                cartridge_id,
             )
             neutral = token.replace("<", "&lt;").replace(">", "&gt;")
             sanitized = pattern.sub(neutral, sanitized)
@@ -1191,7 +1395,9 @@ def _sanitize_cartridge_hints(cartridge_id: str, hints: str) -> str:
         )
         logger.warning(
             "cartridge_hints: truncated hints for cartridge %s (original_length=%d, truncated_to=%d)",
-            cartridge_id, original_length, MAX_HINTS_CHARS,
+            cartridge_id,
+            original_length,
+            MAX_HINTS_CHARS,
         )
     return sanitized
 
@@ -1219,7 +1425,7 @@ def _build_system_prompt(agent: Agent, cartridge_hints: str) -> str:
     if cartridge_hints.strip():
         parts += [
             "",
-            f"<hints_cartucho id=\"{agent.cartridge_id}\">",
+            f'<hints_cartucho id="{agent.cartridge_id}">',
             _sanitize_cartridge_hints(agent.cartridge_id, cartridge_hints.strip()),
             "</hints_cartucho>",
         ]
@@ -1230,10 +1436,12 @@ def _build_system_prompt(agent: Agent, cartridge_hints: str) -> str:
 
 # ── Run logging ─────────────────────────────────────────────────────────────
 
+
 async def _agent_runs_have_scope_columns() -> bool:
     pool = await _get_pool()
-    return bool(await pool.fetchval(
-        """
+    return bool(
+        await pool.fetchval(
+            """
         SELECT EXISTS (
             SELECT 1
               FROM information_schema.columns
@@ -1242,14 +1450,22 @@ async def _agent_runs_have_scope_columns() -> bool:
                AND column_name='workspace_id'
         )
         """
-    ))
+        )
+    )
 
 
-def _scope_parts(user: dict | None, agent: Agent | None = None) -> tuple[str | None, str | None]:
+def _scope_parts(
+    user: dict | None, agent: Agent | None = None
+) -> tuple[str | None, str | None]:
     if not user:
         return _agent_scope(agent) if agent is not None else (None, None)
-    tenant_id = str(user.get("active_tenant_id") or user.get("tenant_id") or "").strip() or None
-    workspace_id = str(user.get("active_workspace_id") or user.get("workspace_id") or "").strip() or None
+    tenant_id = (
+        str(user.get("active_tenant_id") or user.get("tenant_id") or "").strip() or None
+    )
+    workspace_id = (
+        str(user.get("active_workspace_id") or user.get("workspace_id") or "").strip()
+        or None
+    )
     return tenant_id, workspace_id
 
 
@@ -1263,6 +1479,7 @@ async def _start_run(
     pool = await _get_pool()
     tenant_id, workspace_id = _scope_parts(user, agent)
     if await _agent_runs_have_scope_columns():
+
         async def _insert(conn):
             return await conn.fetchrow(
                 "INSERT INTO agent_runs (agent_id, user_id, input_messages, tenant_id, workspace_id) "
@@ -1279,16 +1496,23 @@ async def _start_run(
         row = await pool.fetchrow(
             "INSERT INTO agent_runs (agent_id, user_id, input_messages) "
             "VALUES ($1, $2, $3::jsonb) RETURNING id",
-            agent_id, user_id, json.dumps(input_messages),
+            agent_id,
+            user_id,
+            json.dumps(input_messages),
         )
     return int(row["id"])
 
 
-async def _finish_run(run_id: int, *, status: str, output_text: str = "",
-                      tool_calls: list[dict] | None = None,
-                      error_message: str | None = None,
-                      user: dict | None = None,
-                      agent: Agent | None = None):
+async def _finish_run(
+    run_id: int,
+    *,
+    status: str,
+    output_text: str = "",
+    tool_calls: list[dict] | None = None,
+    error_message: str | None = None,
+    user: dict | None = None,
+    agent: Agent | None = None,
+):
     pool = await _get_pool()
     tenant_id, workspace_id = _scope_parts(user, agent)
 
@@ -1308,6 +1532,7 @@ async def _finish_run(run_id: int, *, status: str, output_text: str = "",
 
 # ── Public entry ────────────────────────────────────────────────────────────
 
+
 async def run(
     agent: Agent,
     message: str,
@@ -1320,18 +1545,23 @@ async def run(
     Returns {"reply", "viewer_urls", "messages", "agent_id", "run_id"}.
     """
     if not agent.is_active:
-        return {"reply": "(agent inactive)", "viewer_urls": [], "messages": [],
-                "agent_id": agent.id, "run_id": None}
+        return {
+            "reply": "(agent inactive)",
+            "viewer_urls": [],
+            "messages": [],
+            "agent_id": agent.id,
+            "run_id": None,
+        }
 
     history = history or []
     input_messages = list(history) + [{"role": "user", "content": message}]
 
-    hints   = await _cartridge_hints(agent.cartridge_id)
-    system  = _build_system_prompt(agent, hints)
+    hints = await _cartridge_hints(agent.cartridge_id)
+    system = _build_system_prompt(agent, hints)
     tools, server_map = await _discover_agent_tools(agent)
 
     user_id = user.get("id") if user else None
-    run_id  = await _start_run(agent.id, user_id, input_messages, user=user, agent=agent)
+    run_id = await _start_run(agent.id, user_id, input_messages, user=user, agent=agent)
     await audit_service.record_event(
         user_id=user_id,
         email=user.get("email") if user else "agent-runner@omega.local",
@@ -1339,24 +1569,35 @@ async def run(
         resource_type="agent",
         resource_id=agent.id,
         status="scheduled" if user is None else "started",
-        metadata={"agent_slug": agent.slug, "cartridge_id": agent.cartridge_id, "run_id": run_id},
+        metadata={
+            "agent_slug": agent.slug,
+            "cartridge_id": agent.cartridge_id,
+            "run_id": run_id,
+        },
         conversation_id=None,
     )
-    invoke  = _make_invoke(agent, user=user, tools=tools, run_id=run_id)
+    invoke = _make_invoke(agent, user=user, tools=tools, run_id=run_id)
 
     tool_calls_log: list[dict] = []
+
     async def _wrapped_on_event(ev):
         if ev.get("type") == "tool_use":
-            tool_calls_log.append({
-                "tool":   ev.get("tool"),
-                "server": ev.get("server"),
-                "args":   tool_policy.clip_args(tool_policy.scrub_args(ev.get("args") or {})),
-                "status": "started",
-            })
+            tool_calls_log.append(
+                {
+                    "tool": ev.get("tool"),
+                    "server": ev.get("server"),
+                    "args": tool_policy.clip_args(
+                        tool_policy.scrub_args(ev.get("args") or {})
+                    ),
+                    "status": "started",
+                }
+            )
         elif ev.get("type") == "tool_result" and tool_calls_log:
             tool_calls_log[-1]["summary"] = ev.get("summary")
             summary = str(ev.get("summary") or "")
-            tool_calls_log[-1]["status"] = "error" if summary.startswith("error:") else "completed"
+            tool_calls_log[-1]["status"] = (
+                "error" if summary.startswith("error:") else "completed"
+            )
         if on_event is not None:
             await on_event(ev)
 
@@ -1374,8 +1615,14 @@ async def run(
             user_context=user,
         )
     except _asyncio.CancelledError:
-        await _finish_run(run_id, status="cancelled", tool_calls=tool_calls_log,
-                          error_message="Cancelled", user=user, agent=agent)
+        await _finish_run(
+            run_id,
+            status="cancelled",
+            tool_calls=tool_calls_log,
+            error_message="Cancelled",
+            user=user,
+            agent=agent,
+        )
         await audit_service.record_event(
             user_id=user_id,
             email=user.get("email") if user else "agent-runner@omega.local",
@@ -1388,8 +1635,14 @@ async def run(
         )
         raise
     except Exception as exc:
-        await _finish_run(run_id, status="error", tool_calls=tool_calls_log,
-                          error_message=f"{type(exc).__name__}: {exc}", user=user, agent=agent)
+        await _finish_run(
+            run_id,
+            status="error",
+            tool_calls=tool_calls_log,
+            error_message=f"{type(exc).__name__}: {exc}",
+            user=user,
+            agent=agent,
+        )
         await audit_service.record_event(
             user_id=user_id,
             email=user.get("email") if user else "agent-runner@omega.local",
@@ -1422,11 +1675,11 @@ async def run(
     )
 
     return {
-        "reply":       reply,
+        "reply": reply,
         "viewer_urls": viewer_urls,
-        "messages":    full_msgs,
-        "agent_id":    agent.id,
-        "run_id":      run_id,
+        "messages": full_msgs,
+        "agent_id": agent.id,
+        "run_id": run_id,
     }
 
 
@@ -1436,6 +1689,8 @@ async def run_scheduled_monitor(
     *,
     scheduled_fire_at: str | None = None,
     lease_guard: Callable[[], Awaitable[None]] | None = None,
+    schedule_run_id: int | None = None,
+    fencing_token: int | None = None,
 ) -> dict:
     """Execute a scheduled monitor through a fixed AgentOps tool chain."""
     if not agent.is_active:
@@ -1472,7 +1727,22 @@ async def run_scheduled_monitor(
         conversation_id=None,
     )
 
-    invoke = _make_invoke(agent, user=None, tools=tools, run_id=run_id)
+    effect_authority = (
+        {
+            "schedule_run_id": int(schedule_run_id),
+            "fencing_token": int(fencing_token),
+        }
+        if schedule_run_id is not None and fencing_token is not None
+        else None
+    )
+    invoke = _make_invoke(
+        agent,
+        user=None,
+        tools=tools,
+        run_id=run_id,
+        schedule_run_id=(effect_authority or {}).get("schedule_run_id"),
+        fencing_token=(effect_authority or {}).get("fencing_token"),
+    )
     tool_calls_log: list[dict] = []
 
     async def _call(full_name: str, args: dict[str, Any]) -> Any:
@@ -1488,7 +1758,9 @@ async def run_scheduled_monitor(
         tool_calls_log.append(entry)
         result = await invoke(server_id, tool, args)
         is_error = isinstance(result, dict) and bool(result.get("error"))
-        entry["summary"] = str(result.get("message") or result.get("error") if is_error else "ok")[:500]
+        entry["summary"] = str(
+            result.get("message") or result.get("error") if is_error else "ok"
+        )[:500]
         entry["status"] = "error" if is_error else "completed"
         return result
 
@@ -1534,7 +1806,11 @@ async def run_scheduled_monitor(
                     {
                         "engine": engine,
                         "status": "skipped",
-                        "reason": str(spec.get("reason") or spec.get("blocked_reason") or "disabled"),
+                        "reason": str(
+                            spec.get("reason")
+                            or spec.get("blocked_reason")
+                            or "disabled"
+                        ),
                     }
                 )
                 continue
@@ -1545,7 +1821,11 @@ async def run_scheduled_monitor(
                 )
                 continue
             if engine in {"monte_carlo", "simulation__monte_carlo_run"}:
-                resolved_spec, blocked_reason, input_row = await _monitor_resolve_dataset_inputs(agent, spec)
+                (
+                    resolved_spec,
+                    blocked_reason,
+                    input_row,
+                ) = await _monitor_resolve_dataset_inputs(agent, spec)
                 if blocked_reason:
                     engine_results.append(
                         {
@@ -1556,7 +1836,13 @@ async def run_scheduled_monitor(
                             **(
                                 {
                                     "input_status": str(
-                                        input_row.get(str(spec.get("status_field") or "input_status")) or ""
+                                        input_row.get(
+                                            str(
+                                                spec.get("status_field")
+                                                or "input_status"
+                                            )
+                                        )
+                                        or ""
                                     )
                                 }
                                 if isinstance(input_row, dict)
@@ -1588,30 +1874,42 @@ async def run_scheduled_monitor(
                     continue
                 result = await _call(
                     "mcp-infra__simulation__monte_carlo_run",
-                    _monitor_clean_args({
-                        "source_type": str(spec.get("source_type") or "signal"),
-                        "source_id": str(
-                            spec.get("source_id")
-                            or payload.get("wisdom_bit_id")
-                            or wisdom_bit_id
-                        ),
-                        "horizon_days": int(spec.get("horizon_days") or 30),
-                        "iterations": int(spec.get("iterations") or 1000),
-                        "seed": int(spec.get("seed")),
-                        "model_version": spec.get("model_version"),
-                        "input_variables": input_variables,
-                        "assumptions": spec.get("assumptions") if isinstance(spec.get("assumptions"), dict) else {},
-                        "output_metric": str(spec.get("output_metric") or "net_value"),
-                        "breach_threshold": spec.get("breach_threshold"),
-                        "breach_direction": spec.get("breach_direction"),
-                        "evidence_refs": spec.get("evidence_refs") if isinstance(spec.get("evidence_refs"), list) else [],
-                        "options": spec.get("options") if isinstance(spec.get("options"), list) else None,
-                    }),
+                    _monitor_clean_args(
+                        {
+                            "source_type": str(spec.get("source_type") or "signal"),
+                            "source_id": str(
+                                spec.get("source_id")
+                                or payload.get("wisdom_bit_id")
+                                or wisdom_bit_id
+                            ),
+                            "horizon_days": int(spec.get("horizon_days") or 30),
+                            "iterations": int(spec.get("iterations") or 1000),
+                            "seed": int(spec.get("seed")),
+                            "model_version": spec.get("model_version"),
+                            "input_variables": input_variables,
+                            "assumptions": spec.get("assumptions")
+                            if isinstance(spec.get("assumptions"), dict)
+                            else {},
+                            "output_metric": str(
+                                spec.get("output_metric") or "net_value"
+                            ),
+                            "breach_threshold": spec.get("breach_threshold"),
+                            "breach_direction": spec.get("breach_direction"),
+                            "evidence_refs": spec.get("evidence_refs")
+                            if isinstance(spec.get("evidence_refs"), list)
+                            else [],
+                            "options": spec.get("options")
+                            if isinstance(spec.get("options"), list)
+                            else None,
+                        }
+                    ),
                 )
                 engine_results.append(
                     {
                         "engine": "monte_carlo",
-                        "status": "error" if isinstance(result, dict) and result.get("error") else "completed",
+                        "status": "error"
+                        if isinstance(result, dict) and result.get("error")
+                        else "completed",
                         "result": result,
                         **(
                             {
@@ -1625,7 +1923,11 @@ async def run_scheduled_monitor(
                     }
                 )
                 continue
-            if engine in {"bayesian_calibration", "calibration__bayesian_state", "bayes"}:
+            if engine in {
+                "bayesian_calibration",
+                "calibration__bayesian_state",
+                "bayes",
+            }:
                 calibration_group = str(spec.get("calibration_group") or "").strip()
                 if not calibration_group:
                     engine_results.append(
@@ -1638,11 +1940,13 @@ async def run_scheduled_monitor(
                     continue
                 result = await _call(
                     "mcp-infra__calibration__bayesian_state",
-                    _monitor_clean_args({
-                        "calibration_group": calibration_group,
-                        "model_version": spec.get("model_version"),
-                        "limit": int(spec.get("limit") or 10),
-                    }),
+                    _monitor_clean_args(
+                        {
+                            "calibration_group": calibration_group,
+                            "model_version": spec.get("model_version"),
+                            "limit": int(spec.get("limit") or 10),
+                        }
+                    ),
                 )
                 state_count = 0
                 if isinstance(result, dict):
@@ -1654,7 +1958,9 @@ async def run_scheduled_monitor(
                     if not state_count and isinstance(nested.get("states"), list):
                         state_count = len(nested["states"])
                 is_error = isinstance(result, dict) and bool(result.get("error"))
-                status = "error" if is_error else "completed" if state_count else "blocked"
+                status = (
+                    "error" if is_error else "completed" if state_count else "blocked"
+                )
                 engine_results.append(
                     {
                         "engine": "bayesian_calibration",
@@ -1677,7 +1983,11 @@ async def run_scheduled_monitor(
                     }
                 )
                 continue
-            if engine in {"decision_orchestrator", "decision__orchestrate", "orchestrator"}:
+            if engine in {
+                "decision_orchestrator",
+                "decision__orchestrate",
+                "orchestrator",
+            }:
                 source_type = str(spec.get("source_type") or "").strip()
                 source_id = str(spec.get("source_id") or "").strip()
                 monte_carlo_run_id = _monitor_completed_engine_run_id(
@@ -1700,7 +2010,10 @@ async def run_scheduled_monitor(
                     if isinstance(spec.get("engine_inputs"), dict)
                     else {}
                 )
-                decision_engine_inputs, decision_input_blockers = await _monitor_resolve_decision_engine_inputs(
+                (
+                    decision_engine_inputs,
+                    decision_input_blockers,
+                ) = await _monitor_resolve_decision_engine_inputs(
                     agent,
                     raw_engine_inputs,
                     payload=payload,
@@ -1725,24 +2038,34 @@ async def run_scheduled_monitor(
                     decision_metrics["engine_input_blockers"] = decision_input_blockers
                 result = await _call(
                     "mcp-infra__decision__orchestrate",
-                    _monitor_clean_args({
-                        "source_type": source_type,
-                        "source_id": source_id,
-                        "title": spec.get("title"),
-                        "description": spec.get("description"),
-                        "metrics": decision_metrics,
-                        "entities": spec.get("entities") if isinstance(spec.get("entities"), list) else [],
-                        "time_horizon": spec.get("time_horizon"),
-                        "constraints": spec.get("constraints") if isinstance(spec.get("constraints"), dict) else {},
-                        "evidence_refs": spec.get("evidence_refs") if isinstance(spec.get("evidence_refs"), list) else [],
-                        "execute_engines": bool(spec.get("execute_engines", True)),
-                        "engine_inputs": decision_engine_inputs,
-                    }),
+                    _monitor_clean_args(
+                        {
+                            "source_type": source_type,
+                            "source_id": source_id,
+                            "title": spec.get("title"),
+                            "description": spec.get("description"),
+                            "metrics": decision_metrics,
+                            "entities": spec.get("entities")
+                            if isinstance(spec.get("entities"), list)
+                            else [],
+                            "time_horizon": spec.get("time_horizon"),
+                            "constraints": spec.get("constraints")
+                            if isinstance(spec.get("constraints"), dict)
+                            else {},
+                            "evidence_refs": spec.get("evidence_refs")
+                            if isinstance(spec.get("evidence_refs"), list)
+                            else [],
+                            "execute_engines": bool(spec.get("execute_engines", True)),
+                            "engine_inputs": decision_engine_inputs,
+                        }
+                    ),
                 )
                 engine_results.append(
                     {
                         "engine": "decision_orchestrator",
-                        "status": "error" if isinstance(result, dict) and result.get("error") else "completed",
+                        "status": "error"
+                        if isinstance(result, dict) and result.get("error")
+                        else "completed",
                         "result": result,
                         **(
                             {
@@ -1785,7 +2108,9 @@ async def run_scheduled_monitor(
                 ),
             )
             if isinstance(alert_result, dict) and alert_result.get("error"):
-                raise RuntimeError(str(alert_result.get("message") or alert_result.get("error")))
+                raise RuntimeError(
+                    str(alert_result.get("message") or alert_result.get("error"))
+                )
 
         signal_count = _monitor_signal_count(payload_with_engines)
         blocker_count = len(_monitor_blockers(payload_with_engines))

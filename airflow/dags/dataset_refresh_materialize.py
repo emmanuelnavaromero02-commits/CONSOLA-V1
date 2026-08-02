@@ -20,6 +20,7 @@ def _safe_result(
 ) -> dict[str, Any]:
     return {
         "name": name,
+        "layer": str(payload.get("layer") or ""),
         "ok": True,
         "reused": reused,
         "row_count": int(payload.get("row_count") or 0),
