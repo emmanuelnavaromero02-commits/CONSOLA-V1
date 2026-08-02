@@ -8,8 +8,8 @@ WORKFLOW = ROOT / ".github/workflows/control-room-postgres-rls.yml"
 PREPARE_SCRIPT = ROOT / "scripts/prepare_refinement_duckdb_ci.sh"
 MCP_REQUIREMENTS = ROOT / "mcp-infra/requirements.txt"
 MCP_DOCKERFILE = ROOT / "mcp-infra/Dockerfile"
-FOCAL_MINIMUM = 9078
-POSTGRES_MINIMUM = 238
+FOCAL_MINIMUM = 9090
+POSTGRES_MINIMUM = 253
 TENANT_EXECUTE_ISOLATION = ROOT / (
     "tests/test_control_room_live_postgres_tenant_execute_isolation.py"
 )
@@ -48,6 +48,7 @@ P11_RELEVANT_PATHS = (
     "console/tests/test_audit_service_transactional.py",
     "console/tests/test_control_room*.py",
     "console/tests/test_gold_fetcher.py",
+    "console/tests/test_gold_refresh_intelligence.py",
     "console/tests/test_ops_summary_and_version.py",
     "console/tests/test_intelligence_control_room_canonical_persistence.py",
     "console/tests/test_intelligence_evidence_refs_attestation.py",
@@ -63,6 +64,9 @@ P11_RELEVANT_PATHS = (
     "tests/test_aws_secrets_manager_config.py",
     "tests/test_intelligence_engine_contract.py",
     "tests/test_mcp_control_room_read_permissions.py",
+    "tests/test_pipeline_run_save_authority.py",
+    "tests/test_scheduled_effect_fencing.py",
+    "tests/test_staged_publication_compatibility_projection.py",
     "tests/test_operational_rls_console_refinement.py",
     "tests/test_operational_rls_policy_guard.py",
     "tests/test_control_room_live_postgres*.py",
@@ -133,7 +137,14 @@ LIVE_POSTGRES_TESTS = (
     "tests/test_operational_rls_policy_guard.py",
     "tests/test_control_room_live_postgres*.py",
     "tests/test_operational_truth_runtime_leases_live.py",
+    "tests/test_operational_truth_scope_authority_live.py",
+    "tests/test_operational_truth_scope_upgrade_live.py",
+    "tests/test_pipeline_run_save_authority_live.py",
+    "tests/test_scheduled_effect_authority_live.py",
     "tests/test_staged_publication_acceptance.py",
+    "tests/test_staged_publication_authority_live.py",
+    "tests/test_staged_publication_reader_alignment_live.py",
+    "tests/test_staged_publication_semantics_live.py",
     "tests/test_staged_publication_final_red.py",
     "tests/test_staged_publication_integrity_live.py",
     "tests/test_staged_publication_live.py",

@@ -83,6 +83,7 @@ jobs:
             console/tests/test_scoped_surface_hardening.py \
             console/tests/test_decision*.py \
             console/tests/test_gold_fetcher.py \
+            console/tests/test_gold_refresh_intelligence.py \
             console/tests/test_intelligence_control_room_canonical_persistence.py \
             console/tests/test_intelligence_evidence_refs_attestation.py \
             console/tests/test_ops_summary_and_version.py \
@@ -115,6 +116,9 @@ jobs:
             tests/test_market_decision_validation_e2e.py \
             tests/test_mcp_infra_pdf_ci_contract.py \
             tests/test_mcp_control_room_read_permissions.py \
+            tests/test_pipeline_run_save_authority.py \
+            tests/test_scheduled_effect_fencing.py \
+            tests/test_staged_publication_compatibility_projection.py \
             tests/test_v1_router_mount.py
 
       - name: Run live PostgreSQL/RLS tests
@@ -130,7 +134,14 @@ jobs:
             tests/test_operational_rls_policy_guard.py \
             tests/test_control_room_live_postgres*.py \
             tests/test_operational_truth_runtime_leases_live.py \
+            tests/test_operational_truth_scope_authority_live.py \
+            tests/test_operational_truth_scope_upgrade_live.py \
+            tests/test_pipeline_run_save_authority_live.py \
+            tests/test_scheduled_effect_authority_live.py \
             tests/test_staged_publication_acceptance.py \
+            tests/test_staged_publication_authority_live.py \
+            tests/test_staged_publication_reader_alignment_live.py \
+            tests/test_staged_publication_semantics_live.py \
             tests/test_staged_publication_final_red.py \
             tests/test_staged_publication_integrity_live.py \
             tests/test_staged_publication_live.py \
@@ -179,8 +190,8 @@ jobs:
               if any(bad.values()):
                   raise SystemExit(f"{label} JUnit is not clean: {bad}")
 
-          verify_junit("/tmp/control-room-focal.xml", minimum=9078, label="Focal Control Room")
-          verify_junit("/tmp/control-room-postgres-rls.xml", minimum=238, label="Live PostgreSQL/RLS")
+          verify_junit("/tmp/control-room-focal.xml", minimum=9090, label="Focal Control Room")
+          verify_junit("/tmp/control-room-postgres-rls.xml", minimum=253, label="Live PostgreSQL/RLS")
           PY
 
   operational-truth-e2e:
