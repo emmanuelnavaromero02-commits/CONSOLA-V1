@@ -44,6 +44,8 @@ jobs:
           --health-retries 12
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -54,11 +56,22 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install \
             -r tests/requirements.txt \
-            -r console/requirements.txt
+            -r console/requirements.txt \
+            -r mcp-infra/requirements.txt
+          python -m pip check
+
+      - name: Prepare hermetic Refinement DuckDB artifact
+        shell: bash
+        env:
+          DUCKDB_TEST_HOME: /tmp/refinement-duckdb-home
+          REFINEMENT_IMAGE: refinement:offline-smoke
+        run: scripts/prepare_refinement_duckdb_ci.sh
 
       - name: Run focal Control Room tests
         continue-on-error: true
         env:
+          HOME: /tmp/refinement-duckdb-home
+          DOCKER_HOST: unix:///var/run/docker.sock
           PYTHONPATH: .:console
           PUBLIC_SQL_POSTGRES_DB: sql_oracle
           PUBLIC_SQL_POSTGRES_HOST: 127.0.0.1
@@ -72,13 +85,22 @@ jobs:
             console/tests/test_scoped_surface_hardening.py \
             console/tests/test_decision*.py \
             console/tests/test_gold_fetcher.py \
+            console/tests/test_gold_refresh_intelligence.py \
             console/tests/test_intelligence_control_room_canonical_persistence.py \
             console/tests/test_intelligence_evidence_refs_attestation.py \
             console/tests/test_ops_summary_and_version.py \
             console/tests/test_pipeline_extract.py \
             tests/test_decision*.py \
             tests/test_pipeline_control_room_refresh.py \
+            tests/test_scheduled_monitor_execution.py \
             tests/test_agentops_scheduled_monitor_contract.py \
+            tests/test_agent_runner_http_outcome.py \
+            tests/test_dataset_refresh_chain_fail_closed.py \
+            tests/test_operational_truth_e2e_gate_contract.py \
+            tests/test_operational_truth_runtime_final_red.py \
+            tests/test_operational_truth_runtime_red.py \
+            tests/test_runtime_security_context_red.py \
+            tests/test_security_context_verifiers.py \
             tests/test_aws_beta_operations.py \
             tests/test_aws_bootstrap_shared_env_boundary.py \
             tests/test_aws_evidence_compose_isolation.py \
@@ -96,18 +118,56 @@ jobs:
             tests/test_market_decision_validation_e2e.py \
             tests/test_mcp_infra_pdf_ci_contract.py \
             tests/test_mcp_control_room_read_permissions.py \
+            tests/test_pipeline_run_save_authority.py \
+            tests/test_scheduled_effect_fencing.py \
+            tests/test_staged_publication_compatibility_projection.py \
             tests/test_v1_router_mount.py
 
       - name: Run live PostgreSQL/RLS tests
         if: always()
         continue-on-error: true
         env:
+          HOME: /tmp/refinement-duckdb-home
+          DOCKER_HOST: unix:///var/run/docker.sock
           PYTHONPATH: .:console
         run: |
           pytest -ra --junitxml=/tmp/control-room-postgres-rls.xml \
             tests/test_operational_rls_console_refinement.py \
             tests/test_operational_rls_policy_guard.py \
-            tests/test_control_room_live_postgres*.py
+            tests/test_control_room_live_postgres*.py \
+            tests/test_dataset_refresh_admission_live.py \
+            tests/test_gold_refresh_binding_crash_matrix_live.py \
+            tests/test_operational_truth_runtime_leases_live.py \
+            tests/test_operational_truth_scope_authority_live.py \
+            tests/test_operational_truth_scope_upgrade_live.py \
+            tests/test_pipeline_run_save_authority_live.py \
+            tests/test_scheduled_effect_authority_live.py \
+            tests/test_staged_publication_acceptance.py \
+            tests/test_staged_publication_authority_live.py \
+            tests/test_staged_publication_reader_alignment_live.py \
+            tests/test_staged_publication_semantics_live.py \
+            tests/test_staged_publication_final_red.py \
+            tests/test_staged_publication_integrity_live.py \
+            tests/test_staged_publication_live.py \
+            tests/test_staged_publication_public_projection.py \
+            tests/test_staged_publication_reader_boundaries.py \
+            tests/test_staged_publication_recovery_matrix_live.py \
+            tests/test_staged_publication_red.py \
+            tests/test_staged_publication_verifier_boundary_live.py
+
+      - name: Verify hermetic DuckDB extension cache
+        if: always()
+        shell: bash
+        env:
+          DUCKDB_TEST_HOME: /tmp/refinement-duckdb-home
+        run: |
+          set -euo pipefail
+          test -s /tmp/refinement-duckdb-extensions.before
+          find "$DUCKDB_TEST_HOME/.duckdb" -type f -print0 \
+            | LC_ALL=C sort -z | xargs -0 sha256sum \
+            > /tmp/refinement-duckdb-extensions.after
+          cmp /tmp/refinement-duckdb-extensions.before \
+            /tmp/refinement-duckdb-extensions.after
 
       - name: Verify focal and live PostgreSQL/RLS reports
         if: always()
@@ -136,9 +196,41 @@ jobs:
               if any(bad.values()):
                   raise SystemExit(f"{label} JUnit is not clean: {bad}")
 
-          verify_junit("/tmp/control-room-focal.xml", minimum=8987, label="Focal Control Room")
-          verify_junit("/tmp/control-room-postgres-rls.xml", minimum=171, label="Live PostgreSQL/RLS")
+          verify_junit("/tmp/control-room-focal.xml", minimum=9104, label="Focal Control Room")
+          verify_junit("/tmp/control-room-postgres-rls.xml", minimum=268, label="Live PostgreSQL/RLS")
           PY
+
+  operational-truth-e2e:
+    needs: changes
+    if: needs.changes.outputs.control_room == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run real operational truth E2E
+        env:
+          E2E_ARTIFACTS_DIR: /tmp/operational-truth-e2e
+          E2E_WAIT_TIMEOUT_SECONDS: "600"
+        run: scripts/run_operational_truth_e2e.sh
+
+      - name: Package operational truth E2E evidence
+        if: always()
+        shell: bash
+        run: >-
+          scripts/package_operational_truth_evidence.sh
+          /tmp/operational-truth-e2e
+          /tmp/operational-truth-e2e-evidence.tar.gz
+
+      - name: Upload operational truth E2E evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: operational-truth-e2e
+          path: |
+            /tmp/operational-truth-e2e-evidence.tar.gz
+            /tmp/operational-truth-e2e-evidence.tar.gz.sha256
+          if-no-files-found: error
 
   no-control-room-needed:
     needs: changes
@@ -153,6 +245,7 @@ jobs:
     needs:
       - changes
       - control-room-postgres-rls
+      - operational-truth-e2e
       - no-control-room-needed
     if: ${{ always() }}
     runs-on: ubuntu-latest
@@ -164,6 +257,7 @@ jobs:
           CHANGES_RESULT: ${{ needs.changes.result }}
           CONTROL_ROOM: ${{ needs.changes.outputs.control_room }}
           CONTROL_ROOM_TESTS_RESULT: ${{ needs['control-room-postgres-rls'].result }}
+          OPERATIONAL_TRUTH_E2E_RESULT: ${{ needs['operational-truth-e2e'].result }}
           NO_CONTROL_ROOM_NEEDED_RESULT: ${{ needs['no-control-room-needed'].result }}
         run: |
           set -euo pipefail
@@ -171,6 +265,7 @@ jobs:
           changes="${CHANGES_RESULT-}"
           control_room="${CONTROL_ROOM-}"
           tests="${CONTROL_ROOM_TESTS_RESULT-}"
+          e2e="${OPERATIONAL_TRUTH_E2E_RESULT-}"
           noop="${NO_CONTROL_ROOM_NEEDED_RESULT-}"
 
           if [[ "$changes" != "success" ]]; then
@@ -180,14 +275,14 @@ jobs:
 
           case "$control_room" in
             true)
-              if [[ "$tests" != "success" || "$noop" != "skipped" ]]; then
-                echo "::error::relevant changes require tests=success and noop=skipped; got tests='${tests:-<missing>}' noop='${noop:-<missing>}'"
+              if [[ "$tests" != "success" || "$e2e" != "success" || "$noop" != "skipped" ]]; then
+                echo "::error::relevant changes require tests/e2e=success and noop=skipped; got tests='${tests:-<missing>}' e2e='${e2e:-<missing>}' noop='${noop:-<missing>}'"
                 exit 1
               fi
               ;;
             false)
-              if [[ "$tests" != "skipped" || "$noop" != "success" ]]; then
-                echo "::error::irrelevant changes require tests=skipped and noop=success; got tests='${tests:-<missing>}' noop='${noop:-<missing>}'"
+              if [[ "$tests" != "skipped" || "$e2e" != "skipped" || "$noop" != "success" ]]; then
+                echo "::error::irrelevant changes require tests/e2e=skipped and noop=success; got tests='${tests:-<missing>}' e2e='${e2e:-<missing>}' noop='${noop:-<missing>}'"
                 exit 1
               fi
               ;;

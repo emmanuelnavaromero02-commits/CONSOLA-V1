@@ -271,9 +271,9 @@ def materialize_foundation(
 def _load_live_dependencies():
     service_root = _repo_root()
     sys.path.insert(0, str(service_root))
-    from app.duckdb_engine import DuckDBEngine
+    from app.staged_publication_engine import StagedPublicationEngine
 
-    return DuckDBEngine()
+    return StagedPublicationEngine()
 
 
 def _write_evidence(evidence_dir: Path, summary: dict[str, object]) -> None:

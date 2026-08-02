@@ -24,11 +24,14 @@ set +a
 REQUIRED=(
   POSTGRES_PASSWORD
   OMEGA_CONSOLE_PASSWORD
+  OMEGA_OUTCOME_BINDER_PASSWORD
   OMEGA_REFINEMENT_PASSWORD
   OMEGA_VAULT_PASSWORD
   OMEGA_WORKSPACE_PASSWORD
   OMEGA_MCP_INFRA_PASSWORD
   OMEGA_REFINEMENT_GOLD_PASSWORD
+  OMEGA_GOLD_PUBLISHER_PASSWORD
+  OMEGA_GOLD_VERIFIER_PASSWORD
   OMEGA_CARTRIDGE_SAP_HCM_PASSWORD
   OMEGA_CARTRIDGE_SAP_S4_PASSWORD
   OMEGA_CARTRIDGE_SAP_SF_PASSWORD
@@ -56,8 +59,8 @@ if (( ${#missing[@]} > 0 )); then
   exit 2
 fi
 
-PGOPTIONS_VALUE="-c app.omega_console_password=${OMEGA_CONSOLE_PASSWORD} -c app.omega_refinement_password=${OMEGA_REFINEMENT_PASSWORD} -c app.omega_vault_password=${OMEGA_VAULT_PASSWORD} -c app.omega_workspace_password=${OMEGA_WORKSPACE_PASSWORD} -c app.omega_mcp_infra_password=${OMEGA_MCP_INFRA_PASSWORD} -c app.omega_cartridge_sap_hcm_password=${OMEGA_CARTRIDGE_SAP_HCM_PASSWORD} -c app.omega_cartridge_sap_s4_password=${OMEGA_CARTRIDGE_SAP_S4_PASSWORD} -c app.omega_cartridge_sap_sf_password=${OMEGA_CARTRIDGE_SAP_SF_PASSWORD} -c app.omega_airflow_dag_password=${OMEGA_AIRFLOW_DAG_PASSWORD} -c app.omega_airflow_meta_password=${OMEGA_AIRFLOW_META_PASSWORD} -c app.omega_superset_meta_password=${OMEGA_SUPERSET_META_PASSWORD} -c app.omega_cartridge_replicon_password=${OMEGA_CARTRIDGE_REPLICON_PASSWORD} -c app.omega_cartridge_salesforce_password=${OMEGA_CARTRIDGE_SALESFORCE_PASSWORD} -c app.omega_cartridge_hubspot_password=${OMEGA_CARTRIDGE_HUBSPOT_PASSWORD} -c app.omega_cartridge_banxico_password=${OMEGA_CARTRIDGE_BANXICO_PASSWORD} -c app.omega_cartridge_inegi_password=${OMEGA_CARTRIDGE_INEGI_PASSWORD} -c app.omega_cartridge_sec_edgar_password=${OMEGA_CARTRIDGE_SEC_EDGAR_PASSWORD}"
-GOLD_PGOPTIONS_VALUE="-c app.omega_refinement_gold_password=${OMEGA_REFINEMENT_GOLD_PASSWORD}"
+PGOPTIONS_VALUE="-c app.omega_console_password=${OMEGA_CONSOLE_PASSWORD} -c app.omega_outcome_binder_password=${OMEGA_OUTCOME_BINDER_PASSWORD} -c app.omega_refinement_password=${OMEGA_REFINEMENT_PASSWORD} -c app.omega_vault_password=${OMEGA_VAULT_PASSWORD} -c app.omega_workspace_password=${OMEGA_WORKSPACE_PASSWORD} -c app.omega_mcp_infra_password=${OMEGA_MCP_INFRA_PASSWORD} -c app.omega_cartridge_sap_hcm_password=${OMEGA_CARTRIDGE_SAP_HCM_PASSWORD} -c app.omega_cartridge_sap_s4_password=${OMEGA_CARTRIDGE_SAP_S4_PASSWORD} -c app.omega_cartridge_sap_sf_password=${OMEGA_CARTRIDGE_SAP_SF_PASSWORD} -c app.omega_airflow_dag_password=${OMEGA_AIRFLOW_DAG_PASSWORD} -c app.omega_airflow_meta_password=${OMEGA_AIRFLOW_META_PASSWORD} -c app.omega_superset_meta_password=${OMEGA_SUPERSET_META_PASSWORD} -c app.omega_cartridge_replicon_password=${OMEGA_CARTRIDGE_REPLICON_PASSWORD} -c app.omega_cartridge_salesforce_password=${OMEGA_CARTRIDGE_SALESFORCE_PASSWORD} -c app.omega_cartridge_hubspot_password=${OMEGA_CARTRIDGE_HUBSPOT_PASSWORD} -c app.omega_cartridge_banxico_password=${OMEGA_CARTRIDGE_BANXICO_PASSWORD} -c app.omega_cartridge_inegi_password=${OMEGA_CARTRIDGE_INEGI_PASSWORD} -c app.omega_cartridge_sec_edgar_password=${OMEGA_CARTRIDGE_SEC_EDGAR_PASSWORD}"
+GOLD_PGOPTIONS_VALUE="-c app.omega_refinement_gold_password=${OMEGA_REFINEMENT_GOLD_PASSWORD} -c app.omega_gold_publisher_password=${OMEGA_GOLD_PUBLISHER_PASSWORD} -c app.omega_gold_verifier_password=${OMEGA_GOLD_VERIFIER_PASSWORD}"
 POSTGRES_PGOPTIONS_VALUE="-c app.postgres_password=${POSTGRES_PASSWORD}"
 
 PSQL_ADMIN=(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T -e "PGOPTIONS=${POSTGRES_PGOPTIONS_VALUE}" postgres psql -v ON_ERROR_STOP=1 -U postgres -d postgres)
@@ -88,6 +91,7 @@ BEGIN
   FOR role_name, role_password IN
     SELECT * FROM (VALUES
       ('omega_console', current_setting('app.omega_console_password', true)),
+      ('omega_outcome_binder', current_setting('app.omega_outcome_binder_password', true)),
       ('omega_refinement', current_setting('app.omega_refinement_password', true)),
       ('omega_vault', current_setting('app.omega_vault_password', true)),
       ('omega_workspace', current_setting('app.omega_workspace_password', true)),
@@ -142,6 +146,34 @@ BEGIN
     RAISE EXCEPTION 'role omega_refinement_gold is missing; run make migrate first';
   END IF;
   EXECUTE format('ALTER ROLE %I LOGIN PASSWORD %L', 'omega_refinement_gold', role_password);
+END $$;
+SQL
+
+"${PSQL_GOLD[@]}" <<'SQL'
+DO $$
+DECLARE role_password text := current_setting('app.omega_gold_publisher_password', true);
+BEGIN
+  IF role_password IS NULL OR role_password = '' THEN
+    RAISE EXCEPTION 'password for role omega_gold_publisher is empty';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='omega_gold_publisher') THEN
+    RAISE EXCEPTION 'role omega_gold_publisher is missing; run make migrate first';
+  END IF;
+  EXECUTE format('ALTER ROLE %I LOGIN PASSWORD %L', 'omega_gold_publisher', role_password);
+END $$;
+SQL
+
+"${PSQL_GOLD[@]}" <<'SQL'
+DO $$
+DECLARE role_password text := current_setting('app.omega_gold_verifier_password', true);
+BEGIN
+  IF role_password IS NULL OR role_password = '' THEN
+    RAISE EXCEPTION 'password for role omega_gold_verifier is empty';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='omega_gold_verifier') THEN
+    RAISE EXCEPTION 'role omega_gold_verifier is missing; run make migrate first';
+  END IF;
+  EXECUTE format('ALTER ROLE %I LOGIN PASSWORD %L', 'omega_gold_verifier', role_password);
 END $$;
 SQL
 

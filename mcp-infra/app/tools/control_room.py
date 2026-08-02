@@ -1,4 +1,5 @@
 """Control Room advisory tools for monitor agents."""
+
 from __future__ import annotations
 
 import hashlib
@@ -53,7 +54,10 @@ _ANALYSIS_ENGINES = {
 
 
 def _is_production() -> bool:
-    return os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}
+    return os.environ.get("APP_ENV", "production").strip().lower() in {
+        "production",
+        "prod",
+    }
 
 
 def _console_headers() -> dict[str, str]:
@@ -70,9 +74,13 @@ def _console_headers() -> dict[str, str]:
     return {"x-api-key": key, "x-internal-service": "mcp-infra"}
 
 
-async def _call_console(path: str, payload: dict[str, Any], *, timeout: float = 60.0) -> dict[str, Any]:
+async def _call_console(
+    path: str, payload: dict[str, Any], *, timeout: float = 60.0
+) -> dict[str, Any]:
     try:
-        async with httpx.AsyncClient(timeout=timeout, headers=_console_headers()) as client:
+        async with httpx.AsyncClient(
+            timeout=timeout, headers=_console_headers()
+        ) as client:
             response = await client.post(f"{_CONSOLE_URL}{path}", json=payload)
     except httpx.HTTPError as exc:
         raise HTTPException(502, f"Console internal request failed: {exc}") from exc
@@ -89,7 +97,9 @@ async def _call_console(path: str, payload: dict[str, Any], *, timeout: float = 
     return data
 
 
-def _as_text(value: Any, label: str, *, max_len: int = _MAX_TEXT, required: bool = True) -> str | None:
+def _as_text(
+    value: Any, label: str, *, max_len: int = _MAX_TEXT, required: bool = True
+) -> str | None:
     if value is None:
         if required:
             raise HTTPException(400, f"{label} is required")
@@ -142,12 +152,63 @@ def _as_impact(value: Any) -> Decimal | None:
     return impact
 
 
+def _lock_scheduled_effect(cur: Any, scope: dict[str, Any], authority: object) -> None:
+    if not isinstance(authority, dict) or not {
+        "schedule_run_id",
+        "fencing_token",
+    }.issubset(authority):
+        raise HTTPException(403, "scheduled effect authority is required")
+    try:
+        schedule_run_id = int(authority["schedule_run_id"])
+        fencing_token = int(authority["fencing_token"])
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(403, "scheduled effect authority is invalid") from exc
+    try:
+        cur.execute(
+            "SELECT assert_scheduled_effect_authority(%s,%s,%s::uuid,%s::uuid,%s::uuid)",
+            (
+                schedule_run_id,
+                fencing_token,
+                scope["tenant_id"],
+                scope["workspace_id"],
+                scope["agent_id"],
+            ),
+        )
+    except Exception as exc:
+        if getattr(exc, "pgcode", None) == "40001":
+            raise HTTPException(409, "scheduled effect authority is stale") from None
+        raise
+    if cur.fetchone() is None:
+        raise HTTPException(409, "scheduled effect authority is stale")
+
+
+async def _call_console_under_fence(
+    scope: dict[str, Any],
+    authority: object,
+    path: str,
+    payload: dict[str, Any],
+    *,
+    timeout: float,
+) -> dict[str, Any]:
+    if authority is None:
+        return await _call_console(path, payload, timeout=timeout)
+    with _conn() as conn, conn.cursor() as cur:
+        _set_rls_scope(cur, scope["tenant_id"], scope["workspace_id"])
+        _lock_scheduled_effect(cur, scope, authority)
+        result = await _call_console(path, payload, timeout=timeout)
+        conn.commit()
+        return result
+
+
 def _redact_sensitive(value: Any) -> Any:
     if isinstance(value, dict):
         out: dict[str, Any] = {}
         for key, item in value.items():
             lowered = str(key).lower()
-            if any(token in lowered for token in ("password", "secret", "token", "api_key", "authorization")):
+            if any(
+                token in lowered
+                for token in ("password", "secret", "token", "api_key", "authorization")
+            ):
                 out[str(key)] = "***"
             else:
                 out[str(key)] = _redact_sensitive(item)
@@ -178,7 +239,9 @@ def _evidence_refs(value: Any) -> list[Any]:
     return refs
 
 
-def _bounded_payload(value: Any, label: str, *, max_bytes: int = _MAX_ANALYSIS_BYTES) -> Any:
+def _bounded_payload(
+    value: Any, label: str, *, max_bytes: int = _MAX_ANALYSIS_BYTES
+) -> Any:
     clean = _redact_sensitive(value if value is not None else {})
     raw = json.dumps(clean, sort_keys=True, default=str, ensure_ascii=False)
     if len(raw.encode("utf-8")) > max_bytes:
@@ -202,16 +265,23 @@ def _analysis_evidence(
 ) -> dict[str, Any]:
     engine = _as_safe_key(engine, "engine")
     if engine not in _ANALYSIS_ENGINES:
-        raise HTTPException(400, "engine must be one of monte_carlo, bayesian_calibration, wisdom_bit, decision_orchestrator")
+        raise HTTPException(
+            400,
+            "engine must be one of monte_carlo, bayesian_calibration, wisdom_bit, decision_orchestrator",
+        )
     evidence = {
         "analysis_type": _as_safe_key(analysis_type, "analysis_type"),
         "engine": engine,
         "engine_run_id": _as_text(engine_run_id, "engine_run_id", max_len=240),
         "confidence": _as_confidence(confidence),
         "quantiles": {"p10": p10, "p50": p50, "p90": p90},
-        "recommended_option": _bounded_payload(recommended_option, "recommended_option"),
+        "recommended_option": _bounded_payload(
+            recommended_option, "recommended_option"
+        ),
         "metrics": _bounded_payload(metrics, "metrics"),
-        "blockers": _bounded_payload(blockers if blockers is not None else [], "blockers"),
+        "blockers": _bounded_payload(
+            blockers if blockers is not None else [], "blockers"
+        ),
         "distribution": _bounded_payload(distribution, "distribution"),
     }
     return _bounded_payload(evidence, "analysis_evidence")
@@ -509,6 +579,7 @@ async def calibration__bayesian_state(
     calibration_group: str | None = None,
     model_version: str | None = None,
     limit: int = 10,
+    effect_authority: dict[str, Any] | None = None,
     security_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     scope = _trusted_agent_scope(security_context, permission="datasets.read")
@@ -534,7 +605,14 @@ async def calibration__bayesian_state(
     }
 
 
-def _dedup_item_id(*, agent_id: str, workspace_id: str, alert_type: str, entity_key: str, source_dataset: str) -> str:
+def _dedup_item_id(
+    *,
+    agent_id: str,
+    workspace_id: str,
+    alert_type: str,
+    entity_key: str,
+    source_dataset: str,
+) -> str:
     raw = json.dumps(
         {
             "agent_id": agent_id,
@@ -612,6 +690,7 @@ async def simulation__monte_carlo_run(
     breach_direction: str | None = None,
     evidence_refs: list[dict[str, Any]] | None = None,
     options: list[dict[str, Any]] | None = None,
+    effect_authority: dict[str, Any] | None = None,
     security_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     scope = _trusted_agent_scope(security_context)
@@ -633,7 +712,11 @@ async def simulation__monte_carlo_run(
     }
     result = await _call_console(
         "/internal/intelligence/monte-carlo/run",
-        {"security_context": security_context, "payload": payload},
+        {
+            "security_context": security_context,
+            "payload": payload,
+            "effect_authority": effect_authority,
+        },
         timeout=90.0,
     )
     return {
@@ -693,6 +776,7 @@ async def decision__orchestrate(
     evidence_refs: list[dict[str, Any]] | None = None,
     execute_engines: bool = True,
     engine_inputs: dict[str, Any] | None = None,
+    effect_authority: dict[str, Any] | None = None,
     security_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     scope = _trusted_agent_scope(security_context)
@@ -712,6 +796,7 @@ async def decision__orchestrate(
         {
             "security_context": security_context,
             "payload": payload,
+            "effect_authority": effect_authority,
             "execute_engines": bool(execute_engines),
             "engine_inputs": engine_inputs or {},
         },
@@ -747,10 +832,13 @@ async def wisdom_bits__run(
     wisdom_bit_id: str,
     cartridge_id: str = "sap_successfactors",
     payload: dict[str, Any] | None = None,
+    effect_authority: dict[str, Any] | None = None,
     security_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     scope = _trusted_agent_scope(security_context)
-    result = await _call_console(
+    result = await _call_console_under_fence(
+        scope,
+        effect_authority,
         "/internal/intelligence/wisdom-bits/run",
         {
             "security_context": security_context,
@@ -786,7 +874,10 @@ async def wisdom_bits__run(
             "entity_label": {"type": "string"},
             "title": {"type": "string"},
             "message": {"type": "string"},
-            "severity": {"type": "string", "enum": ["low", "medium", "high", "critical"]},
+            "severity": {
+                "type": "string",
+                "enum": ["low", "medium", "high", "critical"],
+            },
             "confidence": {"type": "number"},
             "recommendation": {"type": "string"},
             "impact_estimate": {"type": "number"},
@@ -826,7 +917,11 @@ def control_room__raise_alert(
     evidence_refs: list[Any] | None = None,
     hypothesis: str | None = None,
     expected_outcome: str | None = None,
+    effect_authority: dict[str, Any] | None = None,
     security_context: dict[str, Any] | None = None,
+    _server_metadata_patch: dict[str, Any] | None = None,
+    _server_event_kind: str | None = None,
+    _server_event_metadata: dict[str, Any] | None = None,
     **extra: Any,
 ) -> dict[str, Any]:
     unexpected = sorted(set(extra) | (set(extra) & _FORBIDDEN_ARGS))
@@ -839,14 +934,20 @@ def control_room__raise_alert(
     domain = _as_text(domain, "domain", max_len=_MAX_SHORT_TEXT)
     source_dataset = _as_safe_key(source_dataset, "source_dataset")
     entity_key = _as_safe_key(entity_key, "entity_key")
-    entity_label = _as_text(entity_label, "entity_label", max_len=_MAX_SHORT_TEXT, required=False)
+    entity_label = _as_text(
+        entity_label, "entity_label", max_len=_MAX_SHORT_TEXT, required=False
+    )
     title = _as_text(title, "title", max_len=_MAX_SHORT_TEXT)
     message = _as_text(message, "message", max_len=_MAX_TEXT)
     severity = _as_severity(severity)
     confidence = _as_confidence(confidence)
-    recommendation = _as_text(recommendation, "recommendation", max_len=_MAX_TEXT, required=False)
+    recommendation = _as_text(
+        recommendation, "recommendation", max_len=_MAX_TEXT, required=False
+    )
     hypothesis = _as_text(hypothesis, "hypothesis", max_len=_MAX_TEXT, required=False)
-    expected_outcome = _as_text(expected_outcome, "expected_outcome", max_len=_MAX_TEXT, required=False)
+    expected_outcome = _as_text(
+        expected_outcome, "expected_outcome", max_len=_MAX_TEXT, required=False
+    )
     impact = _as_impact(impact_estimate)
     impact_currency = _as_text(impact_currency or "USD", "impact_currency", max_len=8)
     evidence = _evidence_refs(evidence_refs)
@@ -867,16 +968,21 @@ def control_room__raise_alert(
         "agent_run_id": scope["agent_run_id"],
         "alert_type": alert_type,
         "description": message,
-        "recommendation": recommendation or "Revisar evidencia y decidir accion supervisada.",
+        "recommendation": recommendation
+        or "Revisar evidencia y decidir accion supervisada.",
         "hypothesis": hypothesis,
         "expected_outcome": expected_outcome,
         "evidence_refs": evidence,
         "execution_status": "not_started",
         "control_state": {"source": "agent", "advisory": True},
     }
+    if _server_metadata_patch:
+        metadata.update(_server_metadata_patch)
 
     with _conn() as conn, conn.cursor() as cur:
         _set_rls_scope(cur, scope["tenant_id"], scope["workspace_id"])
+        if effect_authority is not None:
+            _lock_scheduled_effect(cur, scope, effect_authority)
         cur.execute(
             """
             SELECT status, metadata
@@ -888,12 +994,15 @@ def control_room__raise_alert(
             (scope["workspace_id"], item_id),
         )
         existing = cur.fetchone()
-        previous_metadata = existing[1] if existing and isinstance(existing[1], dict) else {}
+        previous_metadata = (
+            existing[1] if existing and isinstance(existing[1], dict) else {}
+        )
         occurrence_count = int(previous_metadata.get("occurrence_count") or 0) + 1
         metadata["occurrence_count"] = occurrence_count
         deduped = existing is not None
         terminal = bool(existing and str(existing[0]) in _TERMINAL_STATUSES)
-        event_type = "agent_alert_deduped" if deduped else "agent_alert_created"
+        event_prefix = _server_event_kind or "agent_alert"
+        event_type = f"{event_prefix}_{'deduped' if deduped else 'created'}"
 
         if deduped:
             cur.execute(
@@ -970,15 +1079,18 @@ def control_room__raise_alert(
                 item_id,
                 event_type,
                 scope["email"],
-                Json({
-                    "source": "agent",
-                    "advisory": True,
-                    "agent_id": scope["agent_id"],
-                    "agent_run_id": scope["agent_run_id"],
-                    "deduped": deduped,
-                    "terminal_preserved": terminal,
-                    "occurrence_count": occurrence_count,
-                }),
+                Json(
+                    {
+                        "source": "agent",
+                        "advisory": True,
+                        "agent_id": scope["agent_id"],
+                        "agent_run_id": scope["agent_run_id"],
+                        "deduped": deduped,
+                        "terminal_preserved": terminal,
+                        "occurrence_count": occurrence_count,
+                        **(_server_event_metadata or {}),
+                    }
+                ),
             ),
         )
         conn.commit()
@@ -1024,7 +1136,10 @@ def control_room__raise_alert(
             "entity_label": {"type": "string"},
             "title": {"type": "string"},
             "message": {"type": "string"},
-            "severity": {"type": "string", "enum": ["low", "medium", "high", "critical"]},
+            "severity": {
+                "type": "string",
+                "enum": ["low", "medium", "high", "critical"],
+            },
             "confidence": {"type": "number"},
             "recommendation": {"type": "string"},
             "impact_estimate": {"type": "number"},
@@ -1084,13 +1199,15 @@ def control_room__raise_analysis_alert(
     metrics: dict[str, Any] | None = None,
     blockers: list[Any] | None = None,
     distribution: dict[str, Any] | None = None,
+    effect_authority: dict[str, Any] | None = None,
     security_context: dict[str, Any] | None = None,
     **extra: Any,
 ) -> dict[str, Any]:
     unexpected = sorted(set(extra) | (set(extra) & _FORBIDDEN_ARGS))
     if unexpected:
-        raise HTTPException(400, f"unsupported analysis alert args: {', '.join(unexpected)}")
-    scope = _trusted_agent_scope(security_context)
+        raise HTTPException(
+            400, f"unsupported analysis alert args: {', '.join(unexpected)}"
+        )
     analysis = _analysis_evidence(
         analysis_type=analysis_type,
         engine=engine,
@@ -1105,11 +1222,19 @@ def control_room__raise_analysis_alert(
         distribution=distribution,
     )
     augmented_refs = list(evidence_refs or [])
-    augmented_refs.append({
-        "kind": "analysis_evidence",
-        "engine": analysis["engine"],
+    augmented_refs.append(
+        {
+            "kind": "analysis_evidence",
+            "engine": analysis["engine"],
+            "engine_run_id": analysis["engine_run_id"],
+        }
+    )
+    metadata_patch = {
+        "origin": analysis["engine"],
+        "analysis_type": analysis["analysis_type"],
+        "analysis_evidence": analysis,
         "engine_run_id": analysis["engine_run_id"],
-    })
+    }
     result = control_room__raise_alert(
         alert_type=alert_type,
         cartridge_id=cartridge_id,
@@ -1127,58 +1252,23 @@ def control_room__raise_analysis_alert(
         evidence_refs=augmented_refs,
         hypothesis=hypothesis,
         expected_outcome=expected_outcome,
+        effect_authority=effect_authority,
         security_context=security_context,
+        _server_metadata_patch=metadata_patch,
+        _server_event_kind="agent_analysis_alert",
+        _server_event_metadata={
+            "engine": analysis["engine"],
+            "engine_run_id": analysis["engine_run_id"],
+        },
     )
-    item_id = str(result["item_id"])
-    event_type = "agent_analysis_alert_deduped" if result.get("deduped") else "agent_analysis_alert_created"
-    metadata_patch = {
-        "origin": analysis["engine"],
-        "analysis_type": analysis["analysis_type"],
-        "analysis_evidence": analysis,
-        "engine_run_id": analysis["engine_run_id"],
-    }
-
-    with _conn() as conn, conn.cursor() as cur:
-        _set_rls_scope(cur, scope["tenant_id"], scope["workspace_id"])
-        cur.execute(
-            """
-            UPDATE control_room_items
-               SET metadata = COALESCE(metadata, '{}'::jsonb) || %s::jsonb
-             WHERE workspace_id = %s::uuid
-               AND item_id = %s
-            """,
-            (Json(metadata_patch), scope["workspace_id"], item_id),
-        )
-        cur.execute(
-            """
-            INSERT INTO control_room_item_events (
-                tenant_id, workspace_id, item_id, event_type,
-                actor_id, actor_email, metadata
-            )
-            VALUES (%s::uuid, %s::uuid, %s, %s, NULL, %s, %s::jsonb)
-            """,
-            (
-                scope["tenant_id"],
-                scope["workspace_id"],
-                item_id,
-                event_type,
-                scope["email"],
-                Json({
-                    "source": "agent",
-                    "advisory": True,
-                    "agent_id": scope["agent_id"],
-                    "agent_run_id": scope["agent_run_id"],
-                    "engine": analysis["engine"],
-                    "engine_run_id": analysis["engine_run_id"],
-                    "deduped": bool(result.get("deduped")),
-                }),
-            ),
-        )
-        conn.commit()
 
     return {
         **result,
-        "event_type": event_type,
+        "event_type": (
+            "agent_analysis_alert_deduped"
+            if result.get("deduped")
+            else "agent_analysis_alert_created"
+        ),
         "engine": analysis["engine"],
         "engine_run_id": analysis["engine_run_id"],
         "analysis_evidence": analysis,

@@ -58,68 +58,80 @@ async def persist_artifacts(
     intelligence_run_id: int | None = None,
     run_ref: str | None = None,
 ) -> None:
-    owner_user_id = _owner_user_id(user)
     pool = await auth.pool()
     async with scoped_db(pool, tenant_id, workspace_id) as conn:
-        for artifact in artifacts:
-            signal = artifact["signal"]
-            baseline = artifact["baseline"]
-            evidence_pack = artifact["evidence_pack"]
-            hypotheses = artifact["hypotheses"]
-            options = artifact["options"]
-            baseline_id = await persist_baseline(
-                conn, tenant_id, workspace_id, signal, baseline
-            )
-            decision_intelligence = artifact.get("decision_intelligence")
-            if isinstance(decision_intelligence, dict):
-                signal["decision_intelligence"] = decision_intelligence
-            if intelligence_run_id is not None:
-                signal["intelligence_run_id"] = intelligence_run_id
-            if run_ref:
-                signal["run_ref"] = run_ref
-            signal["baseline_id"] = baseline_id
-            pack_id = await persist_evidence(
-                conn, tenant_id, workspace_id, signal, evidence_pack, owner_user_id
-            )
-            evidence_pack["id"] = pack_id
-            signal["evidence_pack_id"] = pack_id
-            for hypothesis in hypotheses:
-                hypothesis["evidence_pack_id"] = pack_id
-            await persist_signal(conn, tenant_id, workspace_id, signal, owner_user_id)
-            await persist_hypotheses(
-                conn, tenant_id, workspace_id, signal, hypotheses, owner_user_id
-            )
-            await persist_options(
-                conn, tenant_id, workspace_id, signal, options, owner_user_id
-            )
-            await publish_control_room_item(
-                conn,
-                tenant_id,
-                workspace_id,
-                user,
-                {
-                    **artifact,
-                    "signal": signal,
-                    "evidence_pack": evidence_pack,
-                    "hypotheses": hypotheses,
-                    "options": options,
-                },
-            )
-            await persist_decision_intelligence_snapshot(
-                conn,
-                tenant_id=tenant_id,
-                workspace_id=workspace_id,
-                user=user,
-                artifact={
-                    **artifact,
-                    "signal": signal,
-                    "evidence_pack": evidence_pack,
-                    "hypotheses": hypotheses,
-                    "options": options,
-                },
-                intelligence_run_id=intelligence_run_id,
-                run_ref=run_ref,
-            )
+        await persist_artifacts_on_connection(
+            conn,
+            tenant_id,
+            workspace_id,
+            user,
+            artifacts,
+            intelligence_run_id=intelligence_run_id,
+            run_ref=run_ref,
+        )
+
+
+async def persist_artifacts_on_connection(
+    conn: Any,
+    tenant_id: str | None,
+    workspace_id: str,
+    user: dict,
+    artifacts: list[dict[str, Any]],
+    *,
+    intelligence_run_id: int | None = None,
+    run_ref: str | None = None,
+) -> None:
+    owner_user_id = _owner_user_id(user)
+    for artifact in artifacts:
+        signal = artifact["signal"]
+        baseline = artifact["baseline"]
+        evidence_pack = artifact["evidence_pack"]
+        hypotheses = artifact["hypotheses"]
+        options = artifact["options"]
+        baseline_id = await persist_baseline(
+            conn, tenant_id, workspace_id, signal, baseline
+        )
+        decision_intelligence = artifact.get("decision_intelligence")
+        if isinstance(decision_intelligence, dict):
+            signal["decision_intelligence"] = decision_intelligence
+        if intelligence_run_id is not None:
+            signal["intelligence_run_id"] = intelligence_run_id
+        if run_ref:
+            signal["run_ref"] = run_ref
+        signal["baseline_id"] = baseline_id
+        pack_id = await persist_evidence(
+            conn, tenant_id, workspace_id, signal, evidence_pack, owner_user_id
+        )
+        evidence_pack["id"] = pack_id
+        signal["evidence_pack_id"] = pack_id
+        for hypothesis in hypotheses:
+            hypothesis["evidence_pack_id"] = pack_id
+        await persist_signal(conn, tenant_id, workspace_id, signal, owner_user_id)
+        await persist_hypotheses(
+            conn, tenant_id, workspace_id, signal, hypotheses, owner_user_id
+        )
+        await persist_options(
+            conn, tenant_id, workspace_id, signal, options, owner_user_id
+        )
+        durable_artifact = {
+            **artifact,
+            "signal": signal,
+            "evidence_pack": evidence_pack,
+            "hypotheses": hypotheses,
+            "options": options,
+        }
+        await publish_control_room_item(
+            conn, tenant_id, workspace_id, user, durable_artifact
+        )
+        await persist_decision_intelligence_snapshot(
+            conn,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            user=user,
+            artifact=durable_artifact,
+            intelligence_run_id=intelligence_run_id,
+            run_ref=run_ref,
+        )
 
 
 async def persist_baseline(

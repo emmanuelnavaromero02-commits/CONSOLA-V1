@@ -22,8 +22,22 @@ class _FakeConn:
         self.fetch_calls: list[tuple[str, tuple[object, ...]]] = []
         self.execute_calls: list[tuple[str, tuple[object, ...]]] = []
 
-    def transaction(self):
+    def transaction(self, **_kwargs):
         return _Tx()
+
+    async def fetchrow(self, _sql: str, *args: object):
+        return {
+            "run_id": "00000000-0000-0000-0000-000000000001",
+            "generation": 1,
+            "status": "legacy_unverified",
+            "gold_table": gold_fetcher._gold_table(str(args[2])),
+            "receipt_id": None,
+            "object_checksum": None,
+            "evidence_digest": None,
+            "object_uri": None,
+            "object_version": None,
+            "schema_digest": None,
+        }
 
     async def execute(self, sql: str, *args: object):
         self.execute_calls.append((sql, args))
@@ -35,9 +49,9 @@ class _FakeConn:
         self.fetch_calls.append((sql, args))
         if "information_schema.columns" in sql:
             return [
-                {"column_name": "tenant_id"},
-                {"column_name": "workspace_id"},
-                {"column_name": "headcount"},
+                {"column_name": "tenant_id", "data_type": "text"},
+                {"column_name": "workspace_id", "data_type": "text"},
+                {"column_name": "headcount", "data_type": "bigint"},
             ]
         return [{"tenant_id": args[1], "workspace_id": args[0], "headcount": 1288}]
 
@@ -116,7 +130,10 @@ async def test_gold_fetcher_rejects_table_without_tenant_scope(monkeypatch):
         async def fetch(self, sql: str, *args: object):
             self.fetch_calls.append((sql, args))
             if "information_schema.columns" in sql:
-                return [{"column_name": "workspace_id"}, {"column_name": "headcount"}]
+                return [
+                    {"column_name": "workspace_id", "data_type": "text"},
+                    {"column_name": "headcount", "data_type": "bigint"},
+                ]
             raise AssertionError("data rows must not be fetched without tenant scope")
 
     conn = WorkspaceOnlyConn()
@@ -169,46 +186,36 @@ async def test_gold_fetcher_cache_is_scoped_by_workspace(monkeypatch):
 
     assert first == second
     assert other != first
-    assert len(connects) == 2
+    assert len(connects) == 3
+    assert (
+        sum(
+            any("SELECT *" in sql for sql, _args in conn.fetch_calls)
+            for conn in connects
+        )
+        == 2
+    )
 
 
 def test_clear_gold_row_cache_removes_only_requested_scope():
-    gold_fetcher._GOLD_ROW_CACHE[("dataset_a", "tenant-1", "workspace-1", 20)] = (
+    key_1 = ("dataset_a", "tenant-1", "workspace-1", 20, "run-1", 1)
+    key_2 = ("dataset_a", "tenant-1", "workspace-2", 20, "run-2", 1)
+    gold_fetcher._GOLD_ROW_CACHE[key_1] = (
         999999999.0,
         [{"value": 1}],
     )
-    gold_fetcher._GOLD_ROW_CACHE[("dataset_a", "tenant-1", "workspace-2", 20)] = (
+    gold_fetcher._GOLD_ROW_CACHE[key_2] = (
         999999999.0,
         [{"value": 2}],
     )
-    gold_fetcher._GOLD_ROW_CACHE_LOCKS[("dataset_a", "tenant-1", "workspace-1", 20)] = (
-        asyncio.Lock()
-    )
-    gold_fetcher._GOLD_ROW_CACHE_LOCKS[("dataset_a", "tenant-1", "workspace-2", 20)] = (
-        asyncio.Lock()
-    )
+    gold_fetcher._GOLD_ROW_CACHE_LOCKS[key_1] = asyncio.Lock()
+    gold_fetcher._GOLD_ROW_CACHE_LOCKS[key_2] = asyncio.Lock()
 
     gold_fetcher.clear_gold_row_cache("tenant-1", "workspace-1")
 
-    assert (
-        "dataset_a",
-        "tenant-1",
-        "workspace-1",
-        20,
-    ) not in gold_fetcher._GOLD_ROW_CACHE
-    assert (
-        "dataset_a",
-        "tenant-1",
-        "workspace-1",
-        20,
-    ) not in gold_fetcher._GOLD_ROW_CACHE_LOCKS
-    assert ("dataset_a", "tenant-1", "workspace-2", 20) in gold_fetcher._GOLD_ROW_CACHE
-    assert (
-        "dataset_a",
-        "tenant-1",
-        "workspace-2",
-        20,
-    ) in gold_fetcher._GOLD_ROW_CACHE_LOCKS
+    assert key_1 not in gold_fetcher._GOLD_ROW_CACHE
+    assert key_1 not in gold_fetcher._GOLD_ROW_CACHE_LOCKS
+    assert key_2 in gold_fetcher._GOLD_ROW_CACHE
+    assert key_2 in gold_fetcher._GOLD_ROW_CACHE_LOCKS
 
 
 @pytest.mark.asyncio
@@ -239,4 +246,4 @@ async def test_gold_fetcher_singleflights_concurrent_cold_reads(monkeypatch):
     )
 
     assert results == [results[0]] * 8
-    assert len(connects) == 1
+    assert sum(bool(conn.fetch_calls) for conn in connects) == 1

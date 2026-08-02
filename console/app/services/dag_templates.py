@@ -5,6 +5,7 @@ for the operator who copies it and adapts it to a real API or DB.
 All templates follow the 4-task pattern:
   extract → [update_watermark ‖ save_stats] → trigger_silver
 """
+
 from __future__ import annotations
 
 import re
@@ -25,6 +26,7 @@ _CONN_BLOCK = '''\
 MCP_INFRA_URL  = "http://mcp-infra:8010"
 REFINEMENT_URL = "http://refinement:8500"
 import os
+from runtime_security_context import build_pipeline_run_context
 
 
 def _is_production() -> bool:
@@ -142,12 +144,14 @@ def _pipeline_run_save(dag_id: str, entity: str, cartridge_id: str = "{cartridge
                        **kwargs) -> None:
     import requests
     try:
-        security_context, scope_args = _current_run_scope()
+        _delegated_context, scope_args = _current_run_scope()
         args = {{"dag_id": dag_id, "cartridge_id": cartridge_id,
                  "entity": entity, **scope_args, **kwargs}}
-        payload = {{"tool": "pipeline_run_save", "args": args}}
-        if security_context:
-            payload["security_context"] = security_context
+        payload = {{
+            "tool": "pipeline_run_save",
+            "args": args,
+            "security_context": build_pipeline_run_context(args),
+        }}
         requests.post(f"{{MCP_INFRA_URL}}/mcp/invoke",
                       headers=_MCP_HDR,
                       json=payload,
@@ -228,10 +232,10 @@ _TRIGGER_SILVER_TASK = '''\
 TEMPLATES: list[dict] = [
     # ─────────────────────────────────────────────────────────────────────────
     {
-        "id":          "rest_full",
-        "name":        "REST API — Extracción Full",
+        "id": "rest_full",
+        "name": "REST API — Extracción Full",
         "description": "GET paginado con cursor/offset. Descarga todos los registros en cada ejecución.",
-        "tags":        ["rest", "full"],
+        "tags": ["rest", "full"],
         "code": '''\
 """
 DAG: {cartridge}_{entity}_full
@@ -259,7 +263,10 @@ ENTITY       = "{entity}"
 DAG_ID       = f"{{CARTRIDGE_ID}}_{{ENTITY}}_full"
 CONN_ID      = "default"   # short name; full Airflow conn_id = {cartridge}_default
 
-''' + _CONN_BLOCK + _MINIO_BLOCK + '''\
+'''
+        + _CONN_BLOCK
+        + _MINIO_BLOCK
+        + '''\
 default_args = {{"owner": "modecissions", "retries": 1, "retry_delay": timedelta(minutes=5)}}
 
 
@@ -337,7 +344,9 @@ def dag_func():
         )
         return result
 
-''' + _TRIGGER_SILVER_TASK + '''\
+'''
+        + _TRIGGER_SILVER_TASK
+        + """\
     # ── Grafo de dependencias ─────────────────────────────────────────────────
     result  = extract()
     st_done = save_stats(result)
@@ -345,14 +354,14 @@ def dag_func():
 
 
 dag_func()
-''',
+""",
     },
     # ─────────────────────────────────────────────────────────────────────────
     {
-        "id":          "rest_incremental",
-        "name":        "REST API — Incremental (watermark)",
+        "id": "rest_incremental",
+        "name": "REST API — Incremental (watermark)",
         "description": "Extrae solo registros nuevos/modificados desde el último watermark.",
-        "tags":        ["rest", "incremental"],
+        "tags": ["rest", "incremental"],
         "code": '''\
 """
 DAG: {cartridge}_{entity}_incremental
@@ -383,7 +392,10 @@ CONN_ID         = "default"        # short name; full Airflow conn_id = {cartrid
 WATERMARK_FIELD = "last_modified"  # EDIT_HERE: campo de fecha en la respuesta del API
 WATERMARK_PARAM = "modifiedSince"  # EDIT_HERE: query-param que acepta el API para filtrar
 
-''' + _CONN_BLOCK + _MINIO_BLOCK + '''\
+'''
+        + _CONN_BLOCK
+        + _MINIO_BLOCK
+        + '''\
 default_args = {{"owner": "modecissions", "retries": 1, "retry_delay": timedelta(minutes=5)}}
 
 
@@ -486,7 +498,9 @@ def dag_func():
         )
         return result
 
-''' + _TRIGGER_SILVER_TASK + '''\
+'''
+        + _TRIGGER_SILVER_TASK
+        + """\
     # ── Grafo de dependencias ─────────────────────────────────────────────────
     result  = extract()
     wm_done = update_watermark(result)
@@ -495,14 +509,14 @@ def dag_func():
 
 
 dag_func()
-''',
+""",
     },
     # ─────────────────────────────────────────────────────────────────────────
     {
-        "id":          "sql_extract",
-        "name":        "Base de datos — SQL Query",
+        "id": "sql_extract",
+        "name": "Base de datos — SQL Query",
         "description": "Extrae de PostgreSQL/MySQL/SQL Server vía SQLAlchemy. Conexión en Airflow.",
-        "tags":        ["sql", "database"],
+        "tags": ["sql", "database"],
         "code": '''\
 """
 DAG: {cartridge}_{entity}_sql
@@ -544,7 +558,10 @@ SQL_QUERY = """
     ORDER BY updated_at
 """
 
-''' + _CONN_BLOCK + _MINIO_BLOCK + '''\
+'''
+        + _CONN_BLOCK
+        + _MINIO_BLOCK
+        + '''\
 default_args = {{"owner": "modecissions", "retries": 1, "retry_delay": timedelta(minutes=5)}}
 
 
@@ -635,7 +652,9 @@ def dag_func():
         )
         return result
 
-''' + _TRIGGER_SILVER_TASK + '''\
+'''
+        + _TRIGGER_SILVER_TASK
+        + """\
     # ── Grafo de dependencias ─────────────────────────────────────────────────
     result  = extract()
     wm_done = update_watermark(result)
@@ -644,14 +663,14 @@ def dag_func():
 
 
 dag_func()
-''',
+""",
     },
     # ─────────────────────────────────────────────────────────────────────────
     {
-        "id":          "replicon_analytics",
-        "name":        "Replicon Analytics API",
+        "id": "replicon_analytics",
+        "name": "Replicon Analytics API",
         "description": "Extracción async para Replicon: POST /extracts → poll → download CSV. Patrón probado en producción.",
-        "tags":        ["replicon", "analytics", "async"],
+        "tags": ["replicon", "analytics", "async"],
         "code": '''\
 """
 DAG: replicon_{entity}
@@ -683,7 +702,10 @@ WATERMARK_FIELD = "last_modified"    # None si la entidad no tiene campo de fech
 POLL_INTERVAL   = 3.0                # segundos entre polls del extract async
 POLL_TIMEOUT    = 300                # segundos máximo esperando el extract
 
-''' + _CONN_BLOCK + _MINIO_BLOCK + '''\
+'''
+        + _CONN_BLOCK
+        + _MINIO_BLOCK
+        + '''\
 default_args = {{"owner": "modecissions", "retries": 1, "retry_delay": timedelta(minutes=5)}}
 
 
@@ -811,7 +833,9 @@ def dag_func():
         )
         return result
 
-''' + _TRIGGER_SILVER_TASK + '''\
+'''
+        + _TRIGGER_SILVER_TASK
+        + """\
     # ── Grafo de dependencias ─────────────────────────────────────────────────
     result  = extract()
     wm_done = update_watermark(result)
@@ -820,22 +844,33 @@ def dag_func():
 
 
 dag_func()
-''',
+""",
     },
 ]
 
 
 def get_all() -> list[dict]:
-    return [{"id": t["id"], "name": t["name"],
-             "description": t["description"], "tags": t["tags"]}
-            for t in TEMPLATES]
+    return [
+        {
+            "id": t["id"],
+            "name": t["name"],
+            "description": t["description"],
+            "tags": t["tags"],
+        }
+        for t in TEMPLATES
+    ]
 
 
-def get_code(template_id: str, cartridge: str = "my_cartridge",
-             entity: str = "MyEntity") -> str | None:
+def get_code(
+    template_id: str, cartridge: str = "my_cartridge", entity: str = "MyEntity"
+) -> str | None:
     tpl = next((t for t in TEMPLATES if t["id"] == template_id), None)
     if not tpl:
         return None
     safe_cartridge = _validate_template_identifier(cartridge, "cartridge")
     safe_entity = _validate_template_identifier(entity, "entity")
-    return tpl["code"].replace("{cartridge}", safe_cartridge).replace("{entity}", safe_entity)
+    return (
+        tpl["code"]
+        .replace("{cartridge}", safe_cartridge)
+        .replace("{entity}", safe_entity)
+    )

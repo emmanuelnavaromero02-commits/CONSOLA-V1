@@ -29,15 +29,28 @@ import email
 import io
 import os
 import re
+import sys
 import zipfile
 from datetime import datetime, timedelta, timezone
 from email.message import Message
+from pathlib import Path
 
 import boto3
 import requests
 from airflow import DAG
 from airflow.models import Variable
 from airflow.operators.python import PythonOperator
+
+try:
+    from runtime_security_context import build_pipeline_run_context
+except ModuleNotFoundError:
+    _runtime_dags = next(
+        parent / "airflow/dags"
+        for parent in Path(__file__).resolve().parents
+        if (parent / "airflow/dags/runtime_security_context.py").is_file()
+    )
+    sys.path.insert(0, str(_runtime_dags))
+    from runtime_security_context import build_pipeline_run_context
 
 
 # ── Config ───────────────────────────────────────────────────────────────────
@@ -266,20 +279,23 @@ def _pipeline_run_save(**kwargs) -> None:
             "x-api-key": _internal_key("INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA"),
             "x-internal-service": "airflow",
         }
-        requests.post(
+        args = {
+            "dag_id": "replicon_ses_inbox_import",
+            "cartridge_id": CARTRIDGE_ID,
+            "entity": ENTITY,
+            **kwargs,
+        }
+        response = requests.post(
             f"{MCP_INFRA_URL}/mcp/invoke",
             json={
                 "tool": "pipeline_run_save",
-                "args": {
-                    "dag_id": "replicon_ses_inbox_import",
-                    "cartridge_id": CARTRIDGE_ID,
-                    "entity": ENTITY,
-                    **kwargs,
-                },
+                "args": args,
+                "security_context": build_pipeline_run_context(args),
             },
             headers=headers,
             timeout=10,
         )
+        response.raise_for_status()
     except Exception:
         pass
 

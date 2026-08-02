@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.routers import control_room
+from app.services.control_room import authorization_cache
 
 
 USER = {
@@ -21,7 +22,12 @@ USER = {
 
 
 @pytest.fixture(autouse=True)
-def _clear_control_room_cache():
+def _clear_control_room_cache(monkeypatch):
+    monkeypatch.setattr(
+        authorization_cache,
+        "publication_epoch",
+        AsyncMock(return_value="publication-head-1"),
+    )
     control_room._CONTROL_ROOM_READ_CACHE.clear()
     control_room._CONTROL_ROOM_READ_CACHE_LOCKS.clear()
     yield

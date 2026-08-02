@@ -189,7 +189,7 @@ async def api_agents_invoke_scheduled(request: Request, agent_id: str, body: dic
         from datetime import datetime as _dt, timezone as _tz
 
         scheduled_fire_at = _dt.now(_tz.utc).replace(second=0, microsecond=0)
-    schedule_key = str(body.get("schedule_key") or schedule.get("key") or "default").strip() or "default"
+    schedule_key = str(schedule.get("key") or "default").strip() or "default"
     extra_role = str((extra or {}).get("role") or "").strip().lower()
     monitor_contract = extra.get("monitor") if isinstance(extra, dict) else None
     if extra_role != "monitor" or not isinstance(monitor_contract, dict) or not monitor_contract:
@@ -209,7 +209,16 @@ async def api_agents_invoke_scheduled(request: Request, agent_id: str, body: dic
         },
     )
     if reservation.get("duplicate"):
+        completed = reservation.get("status") == "ok" and isinstance(
+            reservation.get("agent_run_id"), int
+        )
         return {
+            "ok": completed,
+            "status": (
+                "completed"
+                if completed
+                else str(reservation.get("status") or "error")
+            ),
             "reply": "scheduled run already recorded",
             "viewer_urls": [],
             "messages": [],
@@ -219,38 +228,22 @@ async def api_agents_invoke_scheduled(request: Request, agent_id: str, body: dic
             "schedule_run": reservation,
         }
     message = (body.get("message") or "").strip() or "Ejecuta tu tarea programada."
-    try:
-        result = await _agent_runtime.run_scheduled_monitor(
-            agent,
-            message,
-            scheduled_fire_at=scheduled_fire_at.isoformat(),
-        )
-    except Exception as exc:
-        await _agent_scheduler.finish_scheduled_run(
-            schedule_run_id=reservation.get("id"),
-            agent_run_id=None,
-            status="error",
-            tenant_id=str(getattr(agent, "tenant_id", "")),
-            workspace_id=str(getattr(agent, "workspace_id", "")),
-            error_message=f"{type(exc).__name__}: {exc}",
-            metadata={"airflow_dag_run_id": airflow_dag_run_id},
-        )
-        raise
-    await _agent_scheduler.finish_scheduled_run(
-        schedule_run_id=reservation.get("id"),
-        agent_run_id=result.get("run_id") if isinstance(result, dict) else None,
-        status="ok",
-        tenant_id=str(getattr(agent, "tenant_id", "")),
-        workspace_id=str(getattr(agent, "workspace_id", "")),
+    result = await _scheduled_monitor_execution.execute_reserved_scheduled_monitor(
+        agent=agent,
+        message=message,
+        reservation=reservation,
+        scheduled_fire_at=scheduled_fire_at.isoformat(),
         metadata={
             "airflow_dag_run_id": airflow_dag_run_id,
-            "deterministic_monitor": bool(
-                isinstance(result, dict) and result.get("deterministic_monitor")
-            ),
         },
     )
-    if isinstance(result, dict):
-        result["schedule_run"] = reservation
+    result["ok"] = True
+    result["status"] = "completed"
+    result["schedule_run"] = {
+        **reservation,
+        "status": "ok",
+        "agent_run_id": result["run_id"],
+    }
     return result
 
 # /api/agents/{agent_id}/invoke/stream

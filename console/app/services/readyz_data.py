@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 from collections.abc import Mapping
 from typing import Any, Callable
 
 
 logger = logging.getLogger("app.main")
-SAFE_GOLD_TABLE_RE = re.compile(r"gold_[A-Za-z0-9_]+")
 
 
 def gold_readiness_dsn(environ: Mapping[str, str] = os.environ) -> str:
@@ -41,6 +39,8 @@ async def control_room_data_check(
     gold_tables = 0
     gold_rows = 0
     lineage_gold_rows = 0
+    tenant_id = ""
+    workspace_id = ""
     try:
         pool = await db_pool_factory()
         async with pool.acquire() as conn:
@@ -54,22 +54,13 @@ async def control_room_data_check(
                 )
                 or 0
             )
-            lineage_gold_rows = int(
-                await conn.fetchval(
-                    """
-                SELECT COALESCE(SUM(row_count), 0)::bigint
-                  FROM (
-                    SELECT DISTINCT ON (cartridge_id, silver_name)
-                           COALESCE(row_count, 0)::bigint AS row_count
-                      FROM silver_lineage
-                     WHERE layer = 'gold'
-                       AND COALESCE(row_count, 0) > 0
-                     ORDER BY cartridge_id, silver_name, created_at DESC
-                  ) latest_gold
-                """
-                )
-                or 0
+            scope = await conn.fetchrow(
+                "SELECT tenant_id::text,id::text AS workspace_id FROM workspaces "
+                "ORDER BY created_at ASC NULLS LAST,id ASC LIMIT 1"
             )
+            if scope:
+                tenant_id = str(scope["tenant_id"] or "")
+                workspace_id = str(scope["workspace_id"] or "")
     except Exception as exc:
         log.warning("readiness probe failed for control_room_data", exc_info=True)
         return {
@@ -86,26 +77,32 @@ async def control_room_data_check(
             gold_pool = await gold_pool_factory(gold_dsn)
             try:
                 async with gold_pool.acquire() as gold_conn:
-                    rows = await gold_conn.fetch(
-                        """
-                        SELECT tablename
-                          FROM pg_tables
-                         WHERE schemaname = 'public'
-                           AND tablename LIKE 'gold\\_%' ESCAPE '\\'
-                         ORDER BY tablename
-                        """
-                    )
-                    gold_tables = len(rows)
-                    for row in rows:
-                        table_name = str(row["tablename"])
-                        if not SAFE_GOLD_TABLE_RE.fullmatch(table_name):
-                            continue
-                        gold_rows += int(
-                            await gold_conn.fetchval(
-                                f'SELECT COUNT(*) FROM public."{table_name}"'
-                            )
-                            or 0
+                    async with gold_conn.transaction(
+                        isolation="repeatable_read", readonly=True
+                    ):
+                        await gold_conn.execute(
+                            "SELECT set_config('app.tenant_id',$1,true),"
+                            "set_config('app.workspace_id',$2,true)",
+                            tenant_id,
+                            workspace_id,
                         )
+                        row = await gold_conn.fetchrow(
+                            """
+                        SELECT count(*) FILTER (WHERE h.layer='gold') AS gold_tables,
+                               COALESCE(sum(r.row_count) FILTER (WHERE h.layer='gold'),0) AS gold_rows,
+                               COALESCE(sum(r.row_count) FILTER (WHERE h.layer='silver'),0) AS silver_rows
+                          FROM omega_publication.dataset_publication_heads h
+                          JOIN omega_publication.materialization_runs r
+                            ON r.materialization_run_id=h.materialization_run_id
+                         WHERE h.tenant_id::text=$1 AND h.workspace_id::text=$2
+                           AND r.status IN ('published','legacy_unverified')
+                        """,
+                            tenant_id,
+                            workspace_id,
+                        )
+                        gold_tables = int(row["gold_tables"] or 0) if row else 0
+                        gold_rows = int(row["gold_rows"] or 0) if row else 0
+                        lineage_gold_rows = int(row["silver_rows"] or 0) if row else 0
             finally:
                 await gold_pool.close()
         except Exception as exc:

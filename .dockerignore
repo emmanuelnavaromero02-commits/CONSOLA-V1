@@ -1,0 +1,13 @@
+.git
+.venv
+**/.mypy_cache
+**/.omega-ot-dags.*
+.omega-ot-dags.*
+**/.next
+**/.pytest_cache
+**/.ruff_cache
+**/__pycache__
+**/node_modules
+**/out
+artifacts
+tmp

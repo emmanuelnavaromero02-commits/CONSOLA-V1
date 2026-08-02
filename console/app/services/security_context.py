@@ -78,6 +78,23 @@ def sign_security_context(ctx: dict[str, Any]) -> dict[str, Any]:
     return signed
 
 
+def sign_runtime_envelope(payload: dict[str, Any]) -> dict[str, Any]:
+    """Sign a one-use purpose-bound runtime envelope with HMAC v2."""
+    signed = {
+        key: value
+        for key, value in payload.items()
+        if key not in {_SIGNATURE_FIELD, _SIGNED_AT_FIELD, _SIGNATURE_VERSION_FIELD}
+    }
+    signed[_SIGNED_AT_FIELD] = int(time.time())
+    signed[_SIGNATURE_VERSION_FIELD] = "hmac-sha256-v2"
+    signed[_SIGNATURE_FIELD] = hmac.new(
+        _signing_key().encode("utf-8"),
+        _canonical_context(signed),
+        hashlib.sha256,
+    ).hexdigest()
+    return signed
+
+
 def verify_signed_security_context(ctx: dict[str, Any]) -> dict[str, Any]:
     """Validate a trusted security_context signed by Console.
 

@@ -27,7 +27,9 @@ def _load_script():
     if refinement_path in sys.path:
         sys.path.remove(refinement_path)
     sys.path.insert(0, refinement_path)
-    spec = importlib.util.spec_from_file_location("materialize_successfactors_foundation", SCRIPT)
+    spec = importlib.util.spec_from_file_location(
+        "materialize_successfactors_foundation", SCRIPT
+    )
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -92,7 +94,9 @@ def test_successfactors_foundation_materializes_gold_in_dependency_order():
         datasets=module.SUCCESSFACTORS_GOLD_FOUNDATION_ORDER,
     )
 
-    assert [name for name, _ctx in engine.calls] == module.SUCCESSFACTORS_GOLD_FOUNDATION_ORDER
+    assert [
+        name for name, _ctx in engine.calls
+    ] == module.SUCCESSFACTORS_GOLD_FOUNDATION_ORDER
     assert store.refreshes == [
         (name, idx)
         for idx, name in enumerate(module.SUCCESSFACTORS_GOLD_FOUNDATION_ORDER, start=1)
@@ -117,7 +121,9 @@ def test_successfactors_foundation_can_materialize_talent_when_explicit():
         datasets=module.SUCCESSFACTORS_GOLD_TALENT_ORDER,
     )
 
-    assert [name for name, _ctx in engine.calls] == module.SUCCESSFACTORS_GOLD_TALENT_ORDER
+    assert [
+        name for name, _ctx in engine.calls
+    ] == module.SUCCESSFACTORS_GOLD_TALENT_ORDER
     assert result["status"] == "PASS"
     assert all(item["status"] == "PASS" for item in result["datasets"])
 
@@ -125,11 +131,21 @@ def test_successfactors_foundation_can_materialize_talent_when_explicit():
 def test_successfactors_foundation_phase_helpers_keep_talent_layers_ordered():
     module = _load_script()
 
-    assert module._datasets_for_phase("foundation", None) == module.SUCCESSFACTORS_GOLD_FOUNDATION_ORDER
-    assert module._datasets_for_phase("talent_contract", None) == module.SUCCESSFACTORS_GOLD_TALENT_CONTRACT_ORDER
-    assert module._datasets_for_phase("talent_operational", None) == module.SUCCESSFACTORS_GOLD_TALENT_OPERATIONAL_ORDER
+    assert (
+        module._datasets_for_phase("foundation", None)
+        == module.SUCCESSFACTORS_GOLD_FOUNDATION_ORDER
+    )
+    assert (
+        module._datasets_for_phase("talent_contract", None)
+        == module.SUCCESSFACTORS_GOLD_TALENT_CONTRACT_ORDER
+    )
+    assert (
+        module._datasets_for_phase("talent_operational", None)
+        == module.SUCCESSFACTORS_GOLD_TALENT_OPERATIONAL_ORDER
+    )
     assert module._datasets_for_phase("all", None) == (
-        module.SUCCESSFACTORS_GOLD_FOUNDATION_ORDER + module.SUCCESSFACTORS_GOLD_TALENT_ORDER
+        module.SUCCESSFACTORS_GOLD_FOUNDATION_ORDER
+        + module.SUCCESSFACTORS_GOLD_TALENT_ORDER
     )
     assert module.SUCCESSFACTORS_GOLD_TALENT_ORDER[-2:] == [
         "sap_successfactors_talent_operational_features",
@@ -137,7 +153,9 @@ def test_successfactors_foundation_phase_helpers_keep_talent_layers_ordered():
     ]
     assert module.SUCCESSFACTORS_GOLD_TALENT_ORDER.index(
         "sap_successfactors_talent_benchmark_internal"
-    ) < module.SUCCESSFACTORS_GOLD_TALENT_ORDER.index("sap_successfactors_talent_readiness")
+    ) < module.SUCCESSFACTORS_GOLD_TALENT_ORDER.index(
+        "sap_successfactors_talent_readiness"
+    )
     assert module.SUCCESSFACTORS_GOLD_TALENT_ORDER.index(
         "sap_successfactors_talent_learning_certification_status"
     ) < module.SUCCESSFACTORS_GOLD_TALENT_ORDER.index(
@@ -147,9 +165,9 @@ def test_successfactors_foundation_phase_helpers_keep_talent_layers_ordered():
         "sap_successfactors_talent_operational_features",
         "sap_successfactors_talent_simulation_inputs",
     ]
-    assert module._datasets_for_phase("foundation", "sap_successfactors_talent_readiness") == [
-        "sap_successfactors_talent_readiness"
-    ]
+    assert module._datasets_for_phase(
+        "foundation", "sap_successfactors_talent_readiness"
+    ) == ["sap_successfactors_talent_readiness"]
 
 
 def test_successfactors_foundation_uses_talent_operational_fallback_for_missing_source():
@@ -229,7 +247,9 @@ def test_successfactors_foundation_missing_scope_is_blocked_not_pass(tmp_path: P
     )
 
     assert result.returncode == 2
-    summary = json.loads((tmp_path / "evidence" / "summary.json").read_text(encoding="utf-8"))
+    summary = json.loads(
+        (tmp_path / "evidence" / "summary.json").read_text(encoding="utf-8")
+    )
     assert summary["status"] == "BLOCKED"
     assert "OMEGA_TENANT_ID" in summary["unblock_command"]
     assert "OMEGA_WORKSPACE_ID" in summary["unblock_command"]
@@ -238,4 +258,6 @@ def test_successfactors_foundation_missing_scope_is_blocked_not_pass(tmp_path: P
 def test_successfactors_foundation_runner_is_copied_into_refinement_image():
     dockerfile = REFINEMENT_DOCKERFILE.read_text(encoding="utf-8")
 
-    assert "COPY --chown=appuser:appuser refinement/scripts/ scripts/" in dockerfile
+    assert "COPY --chown=root:root refinement/scripts/ scripts/" in dockerfile
+    assert "USER root" in dockerfile
+    assert "refinement_supervisor.py" in dockerfile

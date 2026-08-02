@@ -1,5 +1,4 @@
 services:
-
   # ── Infrastructure ────────────────────────────────────────────────────────────
 
   postgres:
@@ -19,7 +18,7 @@ services:
       # Sprint v1.38 (audit B5+B6): added six more roles for SAP
       # cartridges, Airflow and Superset (see
       # infra/init/36_cartridge_and_meta_roles.sql).
-      PGOPTIONS: "-c app.omega_console_password=${OMEGA_CONSOLE_PASSWORD:-} -c app.omega_refinement_password=${OMEGA_REFINEMENT_PASSWORD:-} -c app.omega_vault_password=${OMEGA_VAULT_PASSWORD:-} -c app.omega_workspace_password=${OMEGA_WORKSPACE_PASSWORD:-} -c app.omega_mcp_infra_password=${OMEGA_MCP_INFRA_PASSWORD:-} -c app.omega_cartridge_sap_hcm_password=${OMEGA_CARTRIDGE_SAP_HCM_PASSWORD:-} -c app.omega_cartridge_sap_s4_password=${OMEGA_CARTRIDGE_SAP_S4_PASSWORD:-} -c app.omega_cartridge_sap_sf_password=${OMEGA_CARTRIDGE_SAP_SF_PASSWORD:-} -c app.omega_airflow_dag_password=${OMEGA_AIRFLOW_DAG_PASSWORD:-} -c app.omega_airflow_meta_password=${OMEGA_AIRFLOW_META_PASSWORD:-} -c app.omega_superset_meta_password=${OMEGA_SUPERSET_META_PASSWORD:-} -c app.omega_cartridge_replicon_password=${OMEGA_CARTRIDGE_REPLICON_PASSWORD:-} -c app.omega_cartridge_salesforce_password=${OMEGA_CARTRIDGE_SALESFORCE_PASSWORD:-} -c app.omega_cartridge_hubspot_password=${OMEGA_CARTRIDGE_HUBSPOT_PASSWORD:-} -c app.omega_cartridge_banxico_password=${OMEGA_CARTRIDGE_BANXICO_PASSWORD:-} -c app.omega_cartridge_inegi_password=${OMEGA_CARTRIDGE_INEGI_PASSWORD:-} -c app.omega_cartridge_sec_edgar_password=${OMEGA_CARTRIDGE_SEC_EDGAR_PASSWORD:-}"
+      PGOPTIONS: "-c app.omega_console_password=${OMEGA_CONSOLE_PASSWORD:-} -c app.omega_outcome_binder_password=${OMEGA_OUTCOME_BINDER_PASSWORD:-} -c app.omega_refinement_password=${OMEGA_REFINEMENT_PASSWORD:-} -c app.omega_vault_password=${OMEGA_VAULT_PASSWORD:-} -c app.omega_workspace_password=${OMEGA_WORKSPACE_PASSWORD:-} -c app.omega_mcp_infra_password=${OMEGA_MCP_INFRA_PASSWORD:-} -c app.omega_cartridge_sap_hcm_password=${OMEGA_CARTRIDGE_SAP_HCM_PASSWORD:-} -c app.omega_cartridge_sap_s4_password=${OMEGA_CARTRIDGE_SAP_S4_PASSWORD:-} -c app.omega_cartridge_sap_sf_password=${OMEGA_CARTRIDGE_SAP_SF_PASSWORD:-} -c app.omega_airflow_dag_password=${OMEGA_AIRFLOW_DAG_PASSWORD:-} -c app.omega_airflow_meta_password=${OMEGA_AIRFLOW_META_PASSWORD:-} -c app.omega_superset_meta_password=${OMEGA_SUPERSET_META_PASSWORD:-} -c app.omega_cartridge_replicon_password=${OMEGA_CARTRIDGE_REPLICON_PASSWORD:-} -c app.omega_cartridge_salesforce_password=${OMEGA_CARTRIDGE_SALESFORCE_PASSWORD:-} -c app.omega_cartridge_hubspot_password=${OMEGA_CARTRIDGE_HUBSPOT_PASSWORD:-} -c app.omega_cartridge_banxico_password=${OMEGA_CARTRIDGE_BANXICO_PASSWORD:-} -c app.omega_cartridge_inegi_password=${OMEGA_CARTRIDGE_INEGI_PASSWORD:-} -c app.omega_cartridge_sec_edgar_password=${OMEGA_CARTRIDGE_SEC_EDGAR_PASSWORD:-}"
     ports:
       - "15432:5432"
     volumes:
@@ -60,7 +59,7 @@ services:
       POSTGRES_DB: modecissions_gold
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      PGOPTIONS: "-c app.omega_refinement_gold_password=${OMEGA_REFINEMENT_GOLD_PASSWORD:-}"
+      PGOPTIONS: "-c app.omega_refinement_gold_password=${OMEGA_REFINEMENT_GOLD_PASSWORD:-} -c app.omega_gold_publisher_password=${OMEGA_GOLD_PUBLISHER_PASSWORD:-} -c app.omega_gold_verifier_password=${OMEGA_GOLD_VERIFIER_PASSWORD:-}"
     ports:
       - "15433:5433"
     command:
@@ -124,6 +123,22 @@ services:
       retries: 5
       start_period: 10s
 
+  minio-init:
+    image: minio/mc:RELEASE.2024-11-21T17-21-54Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mc alias set local http://minio:9000 minio "$${MINIO_SECRET_KEY}" &&
+        mc mb --ignore-existing local/lakehouse &&
+        mc version enable local/lakehouse &&
+        mc version info local/lakehouse | grep -q Enabled
+    environment:
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+    restart: "no"
+
   # ── Application services ──────────────────────────────────────────────────────
 
   console:
@@ -177,6 +192,7 @@ services:
       # The omega_console role can read/write every operational table
       # except vault_entries (locked to omega_vault).
       DATABASE_URL:      "postgresql+psycopg2://omega_console:${OMEGA_CONSOLE_PASSWORD:-}@postgres:5432/modecissions"
+      OUTCOME_BINDER_DATABASE_URL: "postgresql+psycopg2://omega_outcome_binder:${OMEGA_OUTCOME_BINDER_PASSWORD:?OMEGA_OUTCOME_BINDER_PASSWORD is required}@postgres:5432/modecissions"
       GOLD_DATABASE_URL: "postgresql+psycopg2://omega_refinement_gold:${OMEGA_REFINEMENT_GOLD_PASSWORD:-}@postgres_gold:5433/modecissions_gold"
       MINIO_ENDPOINT:    minio:9000
       MINIO_ACCESS_KEY:  minio
@@ -349,6 +365,8 @@ services:
       # and master_* tables but must not use the postgres superuser.
       DATABASE_URL:       "postgresql+psycopg2://omega_refinement:${OMEGA_REFINEMENT_PASSWORD:-}@postgres:5432/modecissions"
       GOLD_DATABASE_URL:  "postgresql+psycopg2://omega_refinement_gold:${OMEGA_REFINEMENT_GOLD_PASSWORD:-}@postgres_gold:5433/modecissions_gold"
+      GOLD_PUBLISHER_DATABASE_URL: "postgresql+psycopg2://omega_gold_publisher:${OMEGA_GOLD_PUBLISHER_PASSWORD:?OMEGA_GOLD_PUBLISHER_PASSWORD is required}@postgres_gold:5433/modecissions_gold"
+      GOLD_VERIFIER_DATABASE_URL_FILE: /run/secrets/gold_verifier_database_url
       MINIO_ENDPOINT:    minio:9000
       MINIO_ACCESS_KEY:  minio
       MINIO_SECRET_KEY:  ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
@@ -359,6 +377,11 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       SQL_LLM_MODEL:     ${SQL_LLM_MODEL:-claude-sonnet-4-6}
       MCP_INFRA_URL:     http://mcp-infra:8010
+    volumes:
+      - type: bind
+        source: ${GOLD_VERIFIER_DATABASE_URL_HOST_FILE:?GOLD_VERIFIER_DATABASE_URL_HOST_FILE is required}
+        target: /run/secrets/gold_verifier_database_url
+        read_only: true
     ports:
       - "8500:8500"
     depends_on:
@@ -370,11 +393,13 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     healthcheck:
       # Sprint v1.21 (F2): liveness probe so dependent services can
       # wait on `condition: service_healthy`. The image is
       # python:3.12-slim (no wget/curl), hence python3 -c.
-      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8500/healthz', timeout=3).status==200 else 1)"]
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8500/readyz', timeout=3).status==200 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 5

@@ -1,4 +1,5 @@
 """Dynamic Airflow DAG code generation for Studio."""
+
 from __future__ import annotations
 
 import ast
@@ -58,13 +59,28 @@ def _safe_identifier(value: str, label: str) -> str:
 
 
 def _schema_connector(schema: dict[str, Any]) -> dict[str, Any]:
-    payload = schema.get("connector_schema") if isinstance(schema.get("connector_schema"), dict) else schema
-    connector = payload.get("connector") if isinstance(payload.get("connector"), dict) else payload
+    payload = (
+        schema.get("connector_schema")
+        if isinstance(schema.get("connector_schema"), dict)
+        else schema
+    )
+    connector = (
+        payload.get("connector")
+        if isinstance(payload.get("connector"), dict)
+        else payload
+    )
     return connector if isinstance(connector, dict) else {}
 
 
 def _load_entity_configs(cartridge_id: str) -> list[dict[str, Any]]:
-    path = Path(__file__).resolve().parents[3] / "cartridges" / cartridge_id / "app" / "config" / "entities.yaml"
+    path = (
+        Path(__file__).resolve().parents[3]
+        / "cartridges"
+        / cartridge_id
+        / "app"
+        / "config"
+        / "entities.yaml"
+    )
     if not path.exists():
         return []
     parsed = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -80,21 +96,31 @@ def _find_entity_config(cartridge_id: str, entity_name: str) -> dict[str, Any]:
 
 
 def _schema_entities(schema: dict[str, Any]) -> list[dict[str, Any]]:
-    payload = schema.get("connector_schema") if isinstance(schema.get("connector_schema"), dict) else schema
+    payload = (
+        schema.get("connector_schema")
+        if isinstance(schema.get("connector_schema"), dict)
+        else schema
+    )
     candidates = []
     if isinstance(schema.get("entities"), list):
         candidates.extend(item for item in schema["entities"] if isinstance(item, dict))
     if isinstance(payload, dict) and isinstance(payload.get("entities"), list):
-        candidates.extend(item for item in payload["entities"] if isinstance(item, dict))
+        candidates.extend(
+            item for item in payload["entities"] if isinstance(item, dict)
+        )
     connector = _schema_connector(schema)
-    connector_entities = connector.get("entities") if isinstance(connector.get("entities"), list) else []
+    connector_entities = (
+        connector.get("entities") if isinstance(connector.get("entities"), list) else []
+    )
     candidates.extend(item for item in connector_entities if isinstance(item, dict))
     return candidates
 
 
 def _schema_entity_metadata(schema: dict[str, Any], entity_name: str) -> dict[str, Any]:
     for item in _schema_entities(schema):
-        name = str(item.get("entity") or item.get("name") or item.get("id") or "").strip()
+        name = str(
+            item.get("entity") or item.get("name") or item.get("id") or ""
+        ).strip()
         if name == entity_name:
             return item
     return {}
@@ -102,17 +128,33 @@ def _schema_entity_metadata(schema: dict[str, Any], entity_name: str) -> dict[st
 
 def _fields_from_metadata(metadata: dict[str, Any]) -> list[dict[str, Any]]:
     fields = metadata.get("fields")
-    return [field for field in fields if isinstance(field, dict) and field.get("name")] if isinstance(fields, list) else []
+    return (
+        [field for field in fields if isinstance(field, dict) and field.get("name")]
+        if isinstance(fields, list)
+        else []
+    )
 
 
-def _primary_keys_from_fields(fields: list[dict[str, Any]], metadata: dict[str, Any], entity_config: dict[str, Any]) -> list[str]:
+def _primary_keys_from_fields(
+    fields: list[dict[str, Any]],
+    metadata: dict[str, Any],
+    entity_config: dict[str, Any],
+) -> list[str]:
     keys: list[str] = []
-    for value in (entity_config.get("primary_key"), metadata.get("primary_key"), metadata.get("id_field")):
+    for value in (
+        entity_config.get("primary_key"),
+        metadata.get("primary_key"),
+        metadata.get("id_field"),
+    ):
         if isinstance(value, str) and value.strip():
             keys.append(value.strip())
         elif isinstance(value, list):
             keys.extend(str(item).strip() for item in value if str(item).strip())
-    keys.extend(str(field.get("name")).strip() for field in fields if field.get("primary_key") and field.get("name"))
+    keys.extend(
+        str(field.get("name")).strip()
+        for field in fields
+        if field.get("primary_key") and field.get("name")
+    )
     return list(dict.fromkeys(keys))
 
 
@@ -136,15 +178,24 @@ def _watermark_from_fields(fields: list[dict[str, Any]]) -> str:
         name = str(field.get("name") or "")
         canonical = str(field.get("type") or "").lower()
         source_type = str(field.get("source_type") or "").lower()
-        if canonical not in {"timestamp", "date"} and not any(t in source_type for t in ("date", "time")):
+        if canonical not in {"timestamp", "date"} and not any(
+            t in source_type for t in ("date", "time")
+        ):
             continue
         compact = name.replace("_", "").lower()
-        if any(fragment.replace("_", "") in compact for fragment in preferred_fragments):
+        if any(
+            fragment.replace("_", "") in compact for fragment in preferred_fragments
+        ):
             return name
     return ""
 
 
-def _connector_kind(connector: dict[str, Any], cartridge_id: str, entity_config: dict[str, Any], entity_meta: dict[str, Any] | None = None) -> str:
+def _connector_kind(
+    connector: dict[str, Any],
+    cartridge_id: str,
+    entity_config: dict[str, Any],
+    entity_meta: dict[str, Any] | None = None,
+) -> str:
     auth_type = str((connector.get("auth") or {}).get("type") or "").lower()
     description = str(connector.get("description") or "").lower()
     entity_meta = entity_meta or {}
@@ -170,7 +221,9 @@ def validate_dag_code(code: str) -> dict[str, Any]:
         }
 
     checks: list[str] = []
-    with tempfile.NamedTemporaryFile("w", suffix=".py", encoding="utf-8", delete=True) as tmp:
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".py", encoding="utf-8", delete=True
+    ) as tmp:
         tmp.write(code)
         tmp.flush()
         try:
@@ -213,8 +266,7 @@ def validate_dag_code(code: str) -> dict[str, Any]:
     missing = [
         module
         for module in sorted(imports)
-        if not _import_allowed(module)
-        and module not in sys.builtin_module_names
+        if not _import_allowed(module) and module not in sys.builtin_module_names
     ]
     if missing:
         return {
@@ -329,7 +381,9 @@ def generate_dag_code(
     entity_config = _find_entity_config(safe_cartridge, safe_entity)
     auth = connector.get("auth") if isinstance(connector.get("auth"), dict) else {}
     api = connector.get("api") if isinstance(connector.get("api"), dict) else {}
-    entities_meta = connector.get("entities") if isinstance(connector.get("entities"), dict) else {}
+    entities_meta = (
+        connector.get("entities") if isinstance(connector.get("entities"), dict) else {}
+    )
 
     kind = _connector_kind(connector, safe_cartridge, entity_config, entity_meta)
     mode = str(entity_config.get("mode") or "incremental").lower()
@@ -340,12 +394,22 @@ def generate_dag_code(
         or _watermark_from_fields(schema_fields)
         or ""
     )
-    page_size = int(entity_config.get("page_size") or api.get("page_size_default") or 500)
-    select_fields = entity_config.get("select_fields") if isinstance(entity_config.get("select_fields"), list) else []
+    page_size = int(
+        entity_config.get("page_size") or api.get("page_size_default") or 500
+    )
+    select_fields = (
+        entity_config.get("select_fields")
+        if isinstance(entity_config.get("select_fields"), list)
+        else []
+    )
     if not select_fields:
         select_fields = _select_fields_from_schema(schema_fields)
     primary_keys = _primary_keys_from_fields(schema_fields, entity_meta, entity_config)
-    odata_entity = str(entity_config.get("odata_entity") or entity_meta.get("odata_entity") or safe_entity)
+    odata_entity = str(
+        entity_config.get("odata_entity")
+        or entity_meta.get("odata_entity")
+        or safe_entity
+    )
     odata_filter = str(entity_config.get("odata_filter") or "")
     dag_id = f"{safe_cartridge}_{safe_entity}_dynamic_extract"
 
@@ -355,10 +419,18 @@ def generate_dag_code(
         "DAG_ID": dag_id,
         "CONNECTOR_KIND": kind,
         "AUTH_TYPE": str(auth.get("type") or "bearer_token"),
-        "BASE_URL_ENV": str(api.get("base_url_env") or f"{safe_cartridge.upper()}_BASE_URL"),
-        "TOKEN_ENV": str(auth.get("env_var") or auth.get("env_var_api_key") or f"{safe_cartridge.upper()}_API_TOKEN"),
+        "BASE_URL_ENV": str(
+            api.get("base_url_env") or f"{safe_cartridge.upper()}_BASE_URL"
+        ),
+        "TOKEN_ENV": str(
+            auth.get("env_var")
+            or auth.get("env_var_api_key")
+            or f"{safe_cartridge.upper()}_API_TOKEN"
+        ),
         "USER_ENV": str(auth.get("env_var_user") or f"{safe_cartridge.upper()}_USER"),
-        "PASSWORD_ENV": str(auth.get("env_var_pass") or f"{safe_cartridge.upper()}_PASS"),
+        "PASSWORD_ENV": str(
+            auth.get("env_var_pass") or f"{safe_cartridge.upper()}_PASS"
+        ),
         "TOKEN_URL_ENV": str(auth.get("token_url_env") or ""),
         "CLIENT_ID_ENV": str(auth.get("client_id_env") or ""),
         "CLIENT_SECRET_ENV": str(auth.get("client_secret_env") or ""),
@@ -428,6 +500,7 @@ def _render_code(constants: dict[str, Any]) -> str:
     from airflow.models import Variable
     from minio import Minio
     from requests.adapters import HTTPAdapter
+    from runtime_security_context import build_pipeline_run_context
     from urllib3.util.retry import Retry
 
 
@@ -555,21 +628,28 @@ def _render_code(constants: dict[str, Any]) -> str:
 
 
     def _pipeline_run_save(run_id: str, status: str, record_count: int, path: str | None, error: str | None = None) -> None:
+        from airflow.operators.python import get_current_context
+        runtime = get_current_context()
+        conf = getattr(runtime.get("dag_run"), "conf", None) or {{}}
+        args = {{
+            "dag_id": DAG_ID,
+            "cartridge_id": CARTRIDGE_ID,
+            "entity": ENTITY_NAME,
+            "run_id": run_id,
+            "status": status,
+            "record_count": record_count,
+            "storage_uri": path,
+            "error_message": error,
+            "tenant_id": str(conf.get("tenant_id") or ""),
+            "workspace_id": str(conf.get("workspace_id") or ""),
+        }}
         response = requests.post(
             f"{{MCP_INFRA_URL}}/mcp/invoke",
             headers=_mcp_headers(),
             json={{
                 "tool": "pipeline_run_save",
-                "args": {{
-                    "dag_id": DAG_ID,
-                    "cartridge_id": CARTRIDGE_ID,
-                    "entity": ENTITY_NAME,
-                    "run_id": run_id,
-                    "status": status,
-                    "record_count": record_count,
-                    "bronze_path": path,
-                    "error": error,
-                }},
+                "args": args,
+                "security_context": build_pipeline_run_context(args),
             }},
             timeout=15,
         )
@@ -737,4 +817,6 @@ def _render_code(constants: dict[str, Any]) -> str:
 
     dag = dynamic_extract_dag()
     ''')
-    return "\n".join(line[4:] if line.startswith("    ") else line for line in code.splitlines()).lstrip()
+    return "\n".join(
+        line[4:] if line.startswith("    ") else line for line in code.splitlines()
+    ).lstrip()

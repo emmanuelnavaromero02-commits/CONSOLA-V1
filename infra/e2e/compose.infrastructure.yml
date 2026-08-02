@@ -1,0 +1,100 @@
+services:
+  postgres:
+    build:
+      context: ../..
+      dockerfile: infra/e2e/postgres-console.Dockerfile
+    environment:
+      POSTGRES_DB: modecissions
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+      PGOPTIONS: ${E2E_PGOPTIONS:?required}
+    tmpfs:
+      - /var/lib/postgresql/data:rw,nosuid,noexec,size=256m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d modecissions"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+      start_period: ${E2E_POSTGRES_START_PERIOD:-300s}
+    mem_limit: 320m
+    cpus: 1.0
+    pids_limit: 160
+    restart: "no"
+
+  postgres_gold:
+    build:
+      context: ../..
+      dockerfile: infra/e2e/postgres-gold.Dockerfile
+    command: ["postgres", "-p", "5433", "-c", "max_connections=80"]
+    environment:
+      POSTGRES_DB: modecissions_gold
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+      PGOPTIONS: >-
+        -c app.omega_refinement_gold_password=${OMEGA_REFINEMENT_GOLD_PASSWORD:?required}
+        -c app.omega_gold_publisher_password=${OMEGA_GOLD_PUBLISHER_PASSWORD:?required}
+        -c app.omega_gold_verifier_password=${OMEGA_GOLD_VERIFIER_PASSWORD:?required}
+    tmpfs:
+      - /var/lib/postgresql/data:rw,nosuid,noexec,size=128m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5433 -U postgres -d modecissions_gold"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+    mem_limit: 192m
+    cpus: 0.75
+    pids_limit: 128
+    restart: "no"
+
+  redis:
+    image: redis:7.4.5-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    mem_limit: 64m
+    cpus: 0.25
+    pids_limit: 64
+    restart: "no"
+
+  minio:
+    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?required}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?required}
+      GOMEMLIMIT: 256MiB
+    tmpfs:
+      - /data:rw,nosuid,noexec,size=128m
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/minio/health/live"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+    mem_limit: 320m
+    cpus: 0.75
+    pids_limit: 128
+    restart: "no"
+
+  minio-init:
+    image: minio/mc:RELEASE.2024-11-21T17-21-54Z
+    depends_on:
+      minio: {condition: service_healthy}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mc alias set local http://minio:9000 "$${MINIO_ACCESS_KEY}" "$${MINIO_SECRET_KEY}" &&
+        mc mb --ignore-existing local/lakehouse &&
+        mc version enable local/lakehouse &&
+        version_info="$$(mc version info local/lakehouse)" &&
+        case "$$version_info" in *Enabled*|*enabled*) exit 0 ;; *) exit 1 ;; esac
+    environment:
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?required}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?required}
+    restart: "no"
+
+volumes:
+  airflow_logs:

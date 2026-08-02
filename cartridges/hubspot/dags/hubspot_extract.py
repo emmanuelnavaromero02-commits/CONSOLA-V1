@@ -14,6 +14,7 @@ conf del run:
   entity   — nombre de la entidad (requerido; e.g. deals, companies)
   mode     — "incremental" | "full"  (default: incremental)
 """
+
 from __future__ import annotations
 
 import os
@@ -25,7 +26,10 @@ from airflow.decorators import dag, task
 
 
 def _is_production() -> bool:
-    return os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}
+    return os.environ.get("APP_ENV", "production").strip().lower() in {
+        "production",
+        "prod",
+    }
 
 
 def _internal_key() -> str:
@@ -61,16 +65,48 @@ default_args = {
     default_args=default_args,
     tags=["hubspot", "bronze", "extract"],
     params={
-        "entity": {"type": "string", "default": "deals",
-                   "description": "Entidad a extraer (e.g. deals, companies, contacts)"},
-        "mode":   {"type": "string", "default": "incremental",
-                   "description": "incremental | full"},
+        "entity": {
+            "type": "string",
+            "default": "deals",
+            "description": "Entidad a extraer (e.g. deals, companies, contacts)",
+        },
+        "mode": {
+            "type": "string",
+            "default": "incremental",
+            "description": "incremental | full",
+        },
     },
 )
 def hubspot_extract():
+    @task
+    def authorize_refresh_chain(params: dict = None, **context) -> dict:
+        from dataset_refresh_admission import build_dataset_refresh_trigger
+
+        dag_run = context.get("dag_run")
+        run_conf = dag_run.conf if dag_run and isinstance(dag_run.conf, dict) else {}
+        conf = {**(params or {}), **run_conf}
+        entity = str(conf.get("entity") or "").strip()
+        upstream = conf.get("security_context")
+        if not entity or not isinstance(upstream, dict):
+            raise RuntimeError("refresh chain admission authority is required")
+        refresh_conf = {
+            "seed_raw": f"raw/hubspot/{entity}",
+            "cartridge_id": "hubspot",
+            "triggered_by": "hubspot_extract",
+            "tenant_id": conf.get("tenant_id") or upstream.get("tenant_id"),
+            "workspace_id": conf.get("workspace_id") or upstream.get("workspace_id"),
+        }
+        return build_dataset_refresh_trigger(
+            upstream_context=upstream,
+            conf=refresh_conf,
+            source_dag_run_id=str(getattr(dag_run, "run_id", "") or ""),
+            prefix="hubspot",
+        )
 
     @task
-    def extract(params: dict = None, **context) -> dict:
+    def extract(admission: dict, params: dict = None, **context) -> dict:
+        if not isinstance(admission, dict):
+            raise RuntimeError("refresh chain admission is unavailable")
         dag_run = context.get("dag_run")
         run_conf = dag_run.conf if dag_run and isinstance(dag_run.conf, dict) else {}
         conf = {**(params or {}), **run_conf}
@@ -99,50 +135,53 @@ def hubspot_extract():
             result = res.json()
         if isinstance(result, dict):
             result.setdefault("entity", entity)
-        return result if isinstance(result, dict) else {"entity": entity, "result": result}
+        return (
+            result if isinstance(result, dict) else {"entity": entity, "result": result}
+        )
 
     @task
-    def trigger_refresh_chain(result: dict) -> dict:
+    def trigger_refresh_chain(result: dict, admission: dict) -> dict:
         """Propaga silver/gold aguas abajo con el meta-DAG dataset_refresh_chain."""
         import logging
-        from airflow.operators.python import get_current_context
 
         log = logging.getLogger("airflow.task")
         if isinstance(result, dict) and result.get("record_count", 1) == 0:
             log.info("refresh_chain omitido (sin datos nuevos)")
             return {"triggered": False}
 
-        entity = (result or {}).get("entity", "deals")
-        dag_run = get_current_context().get("dag_run")
-        run_conf = dag_run.conf if dag_run and isinstance(dag_run.conf, dict) else {}
-        refresh_conf = {
-            "seed_raw": f"raw/hubspot/{entity}",
-            "cartridge_id": "hubspot",
-            "triggered_by": "hubspot_extract",
-        }
-        # Pass through SaaS scope when present (dataset_refresh_chain requires it).
-        for key in ("tenant_id", "workspace_id", "security_context"):
-            if run_conf.get(key):
-                refresh_conf[key] = run_conf[key]
+        if not isinstance(admission, dict) or not isinstance(
+            admission.get("conf"), dict
+        ):
+            raise RuntimeError("refresh chain admission is unavailable")
+        dag_run_id = str(admission.get("dag_run_id") or "")
+        refresh_conf = dict(admission["conf"])
 
         airflow_url = os.environ.get("AIRFLOW_URL", "http://airflow:8080").rstrip("/")
-        user = os.environ.get("AIRFLOW_USER") or os.environ.get("AIRFLOW_ADMIN_USER") or "admin"
-        password = os.environ.get("AIRFLOW_PASSWORD") or os.environ.get("AIRFLOW_ADMIN_PASSWORD") or "admin"
+        user = (
+            os.environ.get("AIRFLOW_USER")
+            or os.environ.get("AIRFLOW_ADMIN_USER")
+            or "admin"
+        )
+        password = (
+            os.environ.get("AIRFLOW_PASSWORD")
+            or os.environ.get("AIRFLOW_ADMIN_PASSWORD")
+            or "admin"
+        )
         try:
             response = requests.post(
                 f"{airflow_url}/api/v1/dags/dataset_refresh_chain/dagRuns",
                 auth=(user, password),
-                json={"conf": refresh_conf},
+                json={"conf": refresh_conf, "dag_run_id": dag_run_id},
                 timeout=15,
             )
             response.raise_for_status()
             log.info("refresh_chain disparado: %s", response.status_code)
             return {"triggered": True, "status": response.status_code}
         except Exception as exc:  # noqa: BLE001
-            log.warning("refresh_chain trigger fallo: %s", exc)
-            return {"triggered": False, "error": str(exc)}
+            raise RuntimeError("refresh_chain trigger failed closed") from exc
 
-    trigger_refresh_chain(extract())
+    authority = authorize_refresh_chain()
+    trigger_refresh_chain(extract(authority), authority)
 
 
 dag = hubspot_extract()

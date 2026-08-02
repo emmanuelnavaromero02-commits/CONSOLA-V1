@@ -54,7 +54,9 @@ class _FakeStore:
                 "tenant_id": "tenant-a",
                 "workspace_id": "workspace-a",
                 "sql_def": "SELECT * FROM read_parquet('s3://lakehouse/silver/sap_successfactors/sap_successfactors_empemployment_latest/**/*.parquet')",
-                "sources": ["silver/sap_successfactors/sap_successfactors_empemployment_latest"],
+                "sources": [
+                    "silver/sap_successfactors/sap_successfactors_empemployment_latest"
+                ],
             },
         }
         dataset = datasets.get(name)
@@ -103,7 +105,9 @@ def test_registered_dataset_path_still_rejects_foreign_scope(monkeypatch):
                 "s3://lakehouse/silver/sap_successfactors/sap_successfactors_empemployment_latest/"
                 "tenant_id=tenant-b/workspace_id=workspace-b/data.parquet"
             ),
-            sources=["silver/sap_successfactors/sap_successfactors_empemployment_latest"],
+            sources=[
+                "silver/sap_successfactors/sap_successfactors_empemployment_latest"
+            ],
             allow_registered_dataset_paths=True,
         )
 
@@ -125,7 +129,9 @@ def test_portable_raw_reader_is_scoped_before_storage_validation(monkeypatch):
 
     monkeypatch.setattr(refinement_main.engine, "_inject_bucket", lambda sql: sql)
     monkeypatch.setattr(refinement_main.engine, "_scope_storage_sql", fake_scope_sql)
-    monkeypatch.setattr(refinement_main, "_security_context", lambda _body: _security_context())
+    monkeypatch.setattr(
+        refinement_main, "_security_context", lambda _body: _security_context()
+    )
 
     refinement_main._require_sql_storage_scope(
         _body(),
@@ -155,7 +161,9 @@ def _signed_body(tool: str, args: dict) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_mcp_preview_transform_infers_sources_from_packaged_silver_sql(monkeypatch):
+async def test_mcp_preview_transform_infers_sources_from_packaged_silver_sql(
+    monkeypatch,
+):
     captured: dict = {}
 
     def fake_preview_sql(sql, limit=20, sources=None, user_context=None, params=None):
@@ -222,7 +230,9 @@ async def test_mcp_get_schema_passes_trusted_user_context(monkeypatch):
         return {"name": ds["name"], "fields": [{"name": "user_id", "type": "VARCHAR"}]}
 
     monkeypatch.setattr(refinement_main, "store", _FakeStore())
-    monkeypatch.setattr(refinement_main.engine, "get_dataset_schema", fake_get_dataset_schema)
+    monkeypatch.setattr(
+        refinement_main.engine, "get_dataset_schema", fake_get_dataset_schema
+    )
 
     result = await refinement_main.mcp_invoke(
         _signed_body("get_schema", {"name": "sap_successfactors_employee_360"}),
@@ -236,12 +246,9 @@ async def test_mcp_get_schema_passes_trusted_user_context(monkeypatch):
     assert captured["user_context"]["_server_trusted_context"] is True
 
 
-def test_get_dataset_schema_scopes_registered_silver_glob_to_snapshot(monkeypatch):
+def test_get_dataset_schema_resolves_exact_published_gold_relation(monkeypatch):
     engine = type(refinement_main.engine)()
-    latest = (
-        "s3://lakehouse/silver/sap_successfactors/sap_successfactors_empemployment_latest/"
-        "tenant_id=tenant-a/workspace_id=workspace-a/_snapshots/20260611.parquet"
-    )
+    run_table = "run_0123456789abcdef0123456789abcdef"
     captured: dict = {}
 
     class FakeConn:
@@ -253,7 +260,11 @@ def test_get_dataset_schema_scopes_registered_silver_glob_to_snapshot(monkeypatc
         def fetchall(self):
             return [("user_id", "VARCHAR")]
 
-    monkeypatch.setattr(engine, "_latest_materialized_uri", lambda *_args, **_kwargs: latest)
+    monkeypatch.setattr(
+        engine,
+        "_published_dataset_head",
+        lambda *_args, **_kwargs: {"status": "published", "gold_table": run_table},
+    )
     monkeypatch.setattr(engine, "get_rls_filters", lambda sql, _ctx: (sql, []))
     monkeypatch.setattr(engine, "_conn", lambda: FakeConn())
 
@@ -262,52 +273,25 @@ def test_get_dataset_schema_scopes_registered_silver_glob_to_snapshot(monkeypatc
         {"tenant_id": "tenant-a", "workspace_id": "workspace-a"},
     )
 
-    assert result == {"name": "sap_successfactors_employee_360", "fields": [{"name": "user_id", "type": "VARCHAR"}]}
-    assert latest in captured["sql"]
-    assert "sap_successfactors_empemployment_latest/**/*.parquet" not in captured["sql"]
-    assert "tenant_id=tenant-a/workspace_id=workspace-a" in captured["sql"]
+    assert result == {
+        "name": "sap_successfactors_employee_360",
+        "fields": [{"name": "user_id", "type": "VARCHAR"}],
+    }
+    assert f'pggold.omega_publication_gold."{run_table}"' in captured["sql"]
+    assert "read_parquet" not in captured["sql"]
 
 
-def test_get_dataset_schema_missing_materialization_returns_contextual_error(monkeypatch):
+def test_get_dataset_schema_missing_materialization_returns_contextual_error(
+    monkeypatch,
+):
     engine = type(refinement_main.engine)()
 
-    class FakeConn:
-        def execute(self, sql: str, params=None):
-            raise RuntimeError(f"No files found that match the pattern in {sql}")
+    def missing(*_args, **_kwargs):
+        raise RuntimeError("dataset is not published")
 
-    monkeypatch.setattr(engine, "_latest_materialized_uri", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(engine, "get_rls_filters", lambda sql, _ctx: (sql, []))
-    monkeypatch.setattr(engine, "_conn", lambda: FakeConn())
-
-    result = engine.get_dataset_schema(
-        _FakeStore().get_dataset("sap_successfactors_employee_360"),
-        {"tenant_id": "tenant-a", "workspace_id": "workspace-a"},
-    )
-
-    assert result["name"] == "sap_successfactors_employee_360"
-    assert "No files found" in result["error"]
-    assert "tenant_id=tenant-a/workspace_id=workspace-a" in result["error"]
-    assert "sap_successfactors_empemployment_latest/**/*.parquet" not in result["error"]
-    assert "fields" not in result
-    assert "row_count" not in result
-
-
-def test_materialization_error_normalizes_s3_listing_http_400(monkeypatch):
-    monkeypatch.setattr(
-        refinement_main,
-        "_log_internal_error",
-        lambda *_args, **_kwargs: "req-s3-400",
-    )
-
-    status, detail = refinement_main._friendly_duckdb_error(
-        RuntimeError(
-            "HTTP Error: HTTP GET error on "
-            "'/?encoding-type=url&list-type=2&prefix=raw%2Fsap_successfactors%2FCandidate%2F' "
-            "(HTTP 400) while reading s3://bucket/raw/sap_successfactors/Candidate/**/*.parquet"
-        ),
-        "sap_successfactors_candidate_latest",
-    )
-
-    assert status == 409
-    assert detail["code"] == "s3_storage_list_failed"
-    assert "no pudo listar Parquet en S3" in detail["message"]
+    monkeypatch.setattr(engine, "_published_dataset_head", missing)
+    with pytest.raises(RuntimeError, match="dataset is not published"):
+        engine.get_dataset_schema(
+            _FakeStore().get_dataset("sap_successfactors_employee_360"),
+            {"tenant_id": "tenant-a", "workspace_id": "workspace-a"},
+        )

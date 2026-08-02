@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 from fastapi import HTTPException
 
@@ -32,13 +34,17 @@ class _FakeDatasetClient:
 
 
 @pytest.mark.asyncio
-async def test_query_dataset_rows_treats_refinement_error_payload_as_unavailable(
+async def test_query_dataset_rows_treats_missing_publication_as_unavailable(
     monkeypatch,
 ):
-    monkeypatch.setattr(control_room_service.httpx, "AsyncClient", _FakeDatasetClient)
+    from app.services.intelligence import gold_fetcher
+
+    fetch = AsyncMock(side_effect=HTTPException(404, "dataset unavailable"))
+    monkeypatch.setattr(gold_fetcher, "query_gold_dataset_rows", fetch)
 
     with pytest.raises(HTTPException) as exc:
         await control_room_service.query_dataset_rows("pnl_mensual", USER)
 
-    assert exc.value.status_code == 503
-    assert "No hay archivos Parquet" in str(exc.value.detail)
+    assert exc.value.status_code == 404
+    assert str(exc.value.detail) == "dataset unavailable"
+    fetch.assert_awaited_once_with("pnl_mensual", USER, 1000)

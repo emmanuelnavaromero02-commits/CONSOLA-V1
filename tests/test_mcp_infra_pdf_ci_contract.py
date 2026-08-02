@@ -30,7 +30,12 @@ def test_pdf_security_workflow_runs_real_functional_tests_on_every_pr() -> None:
     assert events["push"] == {"branches": ["main"]}
     assert workflow["permissions"] == {"contents": "read"}
 
-    command = workflow["jobs"]["functional-pdf"]["steps"][-1]["run"]
+    steps = workflow["jobs"]["functional-pdf"]["steps"]
+    command = next(
+        step["run"]
+        for step in steps
+        if step.get("name") == "Run protected PDF ingestion regressions"
+    )
     for test_file in (
         "tests/test_mcp_infra_pdf_ingest.py",
         "tests/test_mcp_infra_pdf_capacity.py",
@@ -45,6 +50,25 @@ def test_pdf_security_workflow_runs_real_functional_tests_on_every_pr() -> None:
         "tests/test_control_room_path_policy.py",
     ):
         assert test_file in command
+
+
+def test_pdf_functional_report_has_exact_floor_and_clean_junit_contract() -> None:
+    workflow = load_workflow("mcp-infra-pdf-security.yml")
+    steps = workflow["jobs"]["functional-pdf"]["steps"]
+    run = next(
+        step["run"]
+        for step in steps
+        if step.get("name") == "Run protected PDF ingestion regressions"
+    )
+    verify = next(
+        step["run"]
+        for step in steps
+        if step.get("name") == "Verify protected PDF report"
+    )
+    assert "--junitxml=/tmp/functional-pdf.xml" in run
+    assert 'minimum=332, label="Functional PDF"' in " ".join(verify.split())
+    assert '("tests", "skipped", "failures", "errors")' in verify
+    assert 'for name in ("skipped", "failures", "errors")' in verify
 
 
 def test_pdf_gate_has_exact_fail_closed_contract() -> None:

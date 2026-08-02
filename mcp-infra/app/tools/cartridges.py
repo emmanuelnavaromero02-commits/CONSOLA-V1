@@ -25,7 +25,9 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 
 from app.config import settings
+from app.duckdb_runtime import connect_duckdb_runtime
 from app.middleware.request_id import request_id_var
+from app.publication_heads import published_dataset_names, scoped_semantic_source_name
 from app.registry import tool
 from app.tools._validators import validate_bounded_int, validate_identifier
 from app.tools.postgres import _conn
@@ -37,8 +39,7 @@ _SAFE_SCOPE_SEGMENT = re.compile(r"[A-Za-z0-9_.:-]+")
 
 
 def _duckdb() -> duckdb.DuckDBPyConnection:
-    conn = duckdb.connect()
-    conn.execute("LOAD httpfs;")
+    conn = connect_duckdb_runtime()
     conn.execute(f"SET s3_endpoint='{settings.minio_endpoint}';")
     conn.execute(f"SET s3_access_key_id='{settings.minio_access_key}';")
     conn.execute(f"SET s3_secret_access_key='{settings.minio_secret_key}';")
@@ -261,9 +262,7 @@ def _scoped_rag_source_name(
     workspace_id: str | None = None,
 ) -> str:
     tenant, workspace = _scope_values(security_context, tenant_id, workspace_id)
-    if not (tenant and workspace):
-        return base_name
-    return f"{base_name}:tenant:{tenant}:workspace:{workspace}"
+    return scoped_semantic_source_name(base_name,security_context,tenant,workspace)
 
 
 # ── Tool · get_semantic ───────────────────────────────────────────────────────
@@ -287,11 +286,7 @@ def cartridge_get_semantic(
     cartridge_id: str,
     security_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """
-    Returns business vocabulary from BOTH sources:
-      - semantic_terms     (manually curated business glossary)
-      - data_catalog       (per-column descriptions on Gold/Silver datasets owned by the cartridge)
-    """
+    allowed_datasets = published_dataset_names(security_context)
     with _conn() as c, c.cursor() as cur:
         tenant_id, workspace_id = _set_pg_scope(cur, security_context)
         scope_sql, scope_params = _catalog_scope_sql(tenant_id, workspace_id)
@@ -320,6 +315,7 @@ def cartridge_get_semantic(
                 "is_metric": r[5],
             }
             for r in cur.fetchall()
+            if str(r[0]) in allowed_datasets
         ]
     return {"semantic_terms": terms, "data_catalog": columns}
 
@@ -348,10 +344,10 @@ async def cartridge_sync_semantic_to_rag(
     security_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     docs: list[str] = []
+    allowed_datasets = published_dataset_names(security_context)
     with _conn() as c, c.cursor() as cur:
         tenant_id, workspace_id = _set_pg_scope(cur, security_context)
         scope_sql, scope_params = _catalog_scope_sql(tenant_id, workspace_id)
-        # 1. Glossary terms — one doc each (few)
         cur.execute(
             "SELECT term, definition, maps_to FROM semantic_terms "
             "WHERE cartridge_id=%s",
@@ -364,8 +360,6 @@ async def cartridge_sync_semantic_to_rag(
                 f"Maps to: {maps_to or '(no mapeado)'}"
             )
 
-        # 2. Data catalog grouped by dataset — one doc per dataset with all its
-        # documented columns. Keeps count low and preserves column-relation context.
         cur.execute(
             "SELECT dataset, column_name, data_type, description, tags "
             "FROM data_catalog "
@@ -376,7 +370,8 @@ async def cartridge_sync_semantic_to_rag(
         )
         rows_by_ds: dict[str, list[tuple]] = {}
         for ds, col, dtype, desc, tags in cur.fetchall():
-            rows_by_ds.setdefault(ds, []).append((col, dtype, desc, tags))
+            if str(ds) in allowed_datasets:
+                rows_by_ds.setdefault(ds, []).append((col, dtype, desc, tags))
 
         for ds, cols in rows_by_ds.items():
             lines = [f"[Cartucho: {cartridge_id} · Dataset: {ds}]"]
@@ -399,7 +394,6 @@ async def cartridge_sync_semantic_to_rag(
         security_context,
     )
 
-    # Delete the previous auto-synced source if present
     from app.rag.store import list_sources, delete_source
 
     for s in await list_sources():
@@ -407,7 +401,6 @@ async def cartridge_sync_semantic_to_rag(
             await delete_source(s["id"])
             break
 
-    # Ingest fresh content
     from app.tools.rag import _do_ingest
 
     result = await _do_ingest(
@@ -461,6 +454,7 @@ async def cartridge_search_term(
     p_under = f"%{query.replace(' ', '_')}%"
     p_dash = f"%{query.replace(' ', '-')}%"
     tag = query.lower().replace(" ", "_")
+    allowed_datasets = published_dataset_names(security_context)
     with _conn() as c, c.cursor() as cur:
         tenant_id, workspace_id = _set_pg_scope(cur, security_context)
         scope_sql, scope_params = _catalog_scope_sql(tenant_id, workspace_id)
@@ -488,6 +482,7 @@ async def cartridge_search_term(
         columns = [
             {"dataset": r[0], "column": r[1], "type": r[2], "description": r[3]}
             for r in cur.fetchall()
+            if str(r[0]) in allowed_datasets
         ]
 
     # Vector fallback against the auto-synced RAG source for this cartridge

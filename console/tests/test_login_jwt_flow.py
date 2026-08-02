@@ -48,13 +48,15 @@ def console_main(monkeypatch):
         "is_active": True,
         "must_change_password": False,
     }
-    auth_stub.workspace_rows = [{
-        "workspace_id": "11111111-1111-1111-1111-111111111111",
-        "workspace_name": "Main Workspace",
-        "tenant_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-        "tenant_name": "Default Tenant",
-        "workspace_role": "analyst",
-    }]
+    auth_stub.workspace_rows = [
+        {
+            "workspace_id": "11111111-1111-1111-1111-111111111111",
+            "workspace_name": "Main Workspace",
+            "tenant_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            "tenant_name": "Default Tenant",
+            "workspace_role": "analyst",
+        }
+    ]
 
     async def authenticate(email, password, ip=None):
         user = dict(auth_stub.user)
@@ -70,7 +72,10 @@ def console_main(monkeypatch):
         return token, datetime.now(timezone.utc) + timedelta(days=7)
 
     async def get_refresh_token_user(token):
-        if token in {"refresh-token-1", "valid-refresh-token"} and token not in auth_stub.revoked_refresh_tokens:
+        if (
+            token in {"refresh-token-1", "valid-refresh-token"}
+            and token not in auth_stub.revoked_refresh_tokens
+        ):
             return {
                 "id": 42,
                 "email": "analyst@example.com",
@@ -190,12 +195,22 @@ def console_main(monkeypatch):
     service_stubs = {
         "app.services.auth": auth_stub,
         "app.services.tokens": _module(close_pool=close_pool, create=create_token),
-        "app.services.email_service": _module(render_invitation=render_invitation, send_email=send_email),
-        "app.services.mcp_registry": _module(startup=_noop_async, health_check_all=_noop_async, close_pool=close_pool),
+        "app.services.email_service": _module(
+            render_invitation=render_invitation, send_email=send_email
+        ),
+        "app.services.mcp_registry": _module(
+            startup=_noop_async, health_check_all=_noop_async, close_pool=close_pool
+        ),
         "app.services.assistant": _module(chat=assistant_chat),
-        "app.services.studio_assistant": _module(register_local_tool=lambda *args, **kwargs: None),
-        "app.services.token_store": _module(summary=token_summary, close_pool=close_pool),
-        "app.services.job_service": _module(list_recent=list_recent_jobs, get=get_job, close_pool=close_pool),
+        "app.services.studio_assistant": _module(
+            register_local_tool=lambda *args, **kwargs: None
+        ),
+        "app.services.token_store": _module(
+            summary=token_summary, close_pool=close_pool
+        ),
+        "app.services.job_service": _module(
+            list_recent=list_recent_jobs, get=get_job, close_pool=close_pool
+        ),
         "app.services.cartridge_service": _module(close_pool=close_pool),
     }
     for name, mod in service_stubs.items():
@@ -204,6 +219,7 @@ def console_main(monkeypatch):
 
     # Also patch the package attributes so `from app.services import auth` gets the stub
     import app.services as _svc_pkg
+
     for attr, mod in [
         ("auth", service_stubs["app.services.auth"]),
         ("assistant", service_stubs["app.services.assistant"]),
@@ -223,6 +239,7 @@ def console_main(monkeypatch):
     # Force a fresh in-memory limiter for each test so rate-limit counters
     # from earlier tests don't bleed across cases.
     from app.services.rate_limiter import reset_rate_limiter
+
     reset_rate_limiter()
     yield main
     sys.modules.pop("app.routers.studio", None)
@@ -271,7 +288,9 @@ def test_login_issued_token_decodes(console_main):
 
 def test_me_jwt_accepts_valid_token(console_main):
     client = TestClient(console_main.app)
-    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "analyst"})
+    token = create_access_token(
+        {"sub": "42", "email": "analyst@example.com", "role": "analyst"}
+    )
 
     response = client.get("/auth/me-jwt", headers={"Authorization": f"Bearer {token}"})
 
@@ -284,24 +303,38 @@ def test_me_jwt_accepts_valid_token(console_main):
 def test_me_jwt_rejects_invalid_token(console_main):
     client = TestClient(console_main.app)
 
-    response = client.get("/auth/me-jwt", headers={"Authorization": "Bearer invalid-token"})
+    response = client.get(
+        "/auth/me-jwt", headers={"Authorization": "Bearer invalid-token"}
+    )
 
     assert response.status_code == 401
 
 
 def test_me_current_accepts_valid_jwt(console_main):
     client = TestClient(console_main.app)
-    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "analyst"})
+    token = create_access_token(
+        {"sub": "42", "email": "analyst@example.com", "role": "analyst"}
+    )
 
-    response = client.get("/auth/me-current", headers={"Authorization": f"Bearer {token}"})
+    response = client.get(
+        "/auth/me-current", headers={"Authorization": f"Bearer {token}"}
+    )
 
     assert response.status_code == 200
     assert response.json()["user"]["id"] == 42
     assert response.json()["user"]["email"] == "analyst@example.com"
-    assert response.json()["user"]["active_workspace_id"] == "11111111-1111-1111-1111-111111111111"
-    assert response.json()["user"]["active_tenant_id"] == "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    assert (
+        response.json()["user"]["active_workspace_id"]
+        == "11111111-1111-1111-1111-111111111111"
+    )
+    assert (
+        response.json()["user"]["active_tenant_id"]
+        == "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    )
     assert response.json()["user"]["workspace_role"] == "analyst"
-    assert response.json()["user"]["workspaces"][0]["workspace_name"] == "Main Workspace"
+    assert (
+        response.json()["user"]["workspaces"][0]["workspace_name"] == "Main Workspace"
+    )
 
 
 def test_protected_route_without_jwt_or_legacy_cookie_returns_401(console_main):
@@ -314,7 +347,9 @@ def test_protected_route_without_jwt_or_legacy_cookie_returns_401(console_main):
 
 def test_protected_route_with_valid_jwt_returns_200(console_main):
     client = TestClient(console_main.app)
-    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "analyst"})
+    token = create_access_token(
+        {"sub": "42", "email": "analyst@example.com", "role": "analyst"}
+    )
 
     response = client.get("/api/me", headers={"Authorization": f"Bearer {token}"})
 
@@ -338,9 +373,13 @@ def test_admin_route_rejects_viewer_workspace_role(console_main):
     client = TestClient(console_main.app)
     console_main._auth.user["role"] = "user"
     console_main._auth.workspace_rows[0]["workspace_role"] = "viewer"
-    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "user"})
+    token = create_access_token(
+        {"sub": "42", "email": "analyst@example.com", "role": "user"}
+    )
 
-    response = client.get("/api/admin/users", headers={"Authorization": f"Bearer {token}"})
+    response = client.get(
+        "/api/admin/users", headers={"Authorization": f"Bearer {token}"}
+    )
 
     assert response.status_code == 403
 
@@ -349,9 +388,13 @@ def test_admin_route_allows_admin_workspace_role(console_main):
     client = TestClient(console_main.app)
     console_main._auth.user["role"] = "user"
     console_main._auth.workspace_rows[0]["workspace_role"] = "admin"
-    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "user"})
+    token = create_access_token(
+        {"sub": "42", "email": "analyst@example.com", "role": "user"}
+    )
 
-    response = client.get("/api/admin/users", headers={"Authorization": f"Bearer {token}"})
+    response = client.get(
+        "/api/admin/users", headers={"Authorization": f"Bearer {token}"}
+    )
 
     assert response.status_code == 200
     assert response.json()["users"][0]["id"] == 42
@@ -368,7 +411,9 @@ def test_public_route_still_works_without_token(console_main):
 
 def test_protected_route_with_unassigned_workspace_returns_403(console_main):
     client = TestClient(console_main.app)
-    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "analyst"})
+    token = create_access_token(
+        {"sub": "42", "email": "analyst@example.com", "role": "analyst"}
+    )
 
     response = client.get(
         "/api/me",
@@ -383,7 +428,9 @@ def test_protected_route_with_unassigned_workspace_returns_403(console_main):
 
 def test_invalid_dataset_path_param_returns_400(console_main):
     client = TestClient(console_main.app)
-    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "analyst"})
+    token = create_access_token(
+        {"sub": "42", "email": "analyst@example.com", "role": "analyst"}
+    )
 
     response = client.get(
         "/api/data/bad-name/options?columns=cliente",
@@ -396,7 +443,9 @@ def test_invalid_dataset_path_param_returns_400(console_main):
 
 def test_api_data_options_invalid_column_returns_400(console_main):
     client = TestClient(console_main.app)
-    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "analyst"})
+    token = create_access_token(
+        {"sub": "42", "email": "analyst@example.com", "role": "analyst"}
+    )
 
     response = client.get(
         "/api/data/gold_sales/options?columns=bad%20col",
@@ -437,9 +486,13 @@ def test_api_data_with_valid_jwt_returns_200(console_main, monkeypatch):
 
     monkeypatch.setattr(console_main.httpx, "AsyncClient", FakeAsyncClient)
     client = TestClient(console_main.app)
-    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "analyst"})
+    token = create_access_token(
+        {"sub": "42", "email": "analyst@example.com", "role": "analyst"}
+    )
 
-    response = client.get("/api/data/gold_sales", headers={"Authorization": f"Bearer {token}"})
+    response = client.get(
+        "/api/data/gold_sales", headers={"Authorization": f"Bearer {token}"}
+    )
 
     assert response.status_code == 200
     assert response.json() == [{"customer_id": "cust-1"}]
@@ -455,23 +508,31 @@ def test_api_data_prefers_scoped_gold_table(console_main, monkeypatch):
         return [{"deal_id": "deal-401", "workspace_id": user["active_workspace_id"]}]
 
     gold_fetcher = _module(query_gold_dataset_rows=query_gold_dataset_rows)
-    monkeypatch.setitem(sys.modules, "app.services.intelligence.gold_fetcher", gold_fetcher)
+    monkeypatch.setitem(
+        sys.modules, "app.services.intelligence.gold_fetcher", gold_fetcher
+    )
 
     class RefinementShouldNotBeCalled:
         def __init__(self, *args, **kwargs):
             pass
 
         async def __aenter__(self):
-            raise AssertionError("Refinement should not be called when scoped Gold is available")
+            raise AssertionError(
+                "Refinement should not be called when scoped Gold is available"
+            )
 
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
     monkeypatch.setattr(console_main.httpx, "AsyncClient", RefinementShouldNotBeCalled)
     client = TestClient(console_main.app)
-    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "analyst"})
+    token = create_access_token(
+        {"sub": "42", "email": "analyst@example.com", "role": "analyst"}
+    )
 
-    response = client.get("/api/data/pipeline_salud?limit=3", headers={"Authorization": f"Bearer {token}"})
+    response = client.get(
+        "/api/data/pipeline_salud?limit=3", headers={"Authorization": f"Bearer {token}"}
+    )
 
     assert response.status_code == 200
     assert response.json() == [
@@ -484,25 +545,26 @@ def test_api_data_prefers_scoped_gold_table(console_main, monkeypatch):
     }
 
 
-def test_api_data_forwards_user_context_to_refinement(console_main, monkeypatch):
-    """Regression: /api/data/{dataset} previously called refinement with no
-    user_context, which caused tenant-keyed datasets to silently filter to
-    nothing AND let revenue_manager-keyed datasets leak 'N/D' rows across
-    tenants. The endpoint must now forward an authenticated user context."""
+def test_api_data_without_published_gold_fails_closed(console_main, monkeypatch):
+    """A missing scoped publication cannot fall back to mutable Refinement data."""
     captured = {}
 
     class FakeResponse:
         status_code = 200
+
         def json(self):
             return {"data": [{"row": 1}]}
 
     class FakeAsyncClient:
         def __init__(self, *args, **kwargs):
             pass
+
         async def __aenter__(self):
             return self
+
         async def __aexit__(self, exc_type, exc, tb):
             return False
+
         async def post(self, url, json=None, **kwargs):
             captured["url"] = url
             captured["body"] = json
@@ -510,19 +572,15 @@ def test_api_data_forwards_user_context_to_refinement(console_main, monkeypatch)
 
     monkeypatch.setattr(console_main.httpx, "AsyncClient", FakeAsyncClient)
     client = TestClient(console_main.app)
-    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "analyst"})
+    token = create_access_token(
+        {"sub": "42", "email": "analyst@example.com", "role": "analyst"}
+    )
 
-    response = client.get("/api/data/gold_sales", headers={"Authorization": f"Bearer {token}"})
-    assert response.status_code == 200
-
-    args = captured["body"]["args"]
-    assert "user_context" in args, \
-        "console must forward a user_context so refinement can apply RLS"
-    ctx = args["user_context"]
-    assert ctx.get("id") == 42
-    assert ctx.get("email") == "analyst@example.com"
-    # The old `_trusted_admin` magic flag must never cross service boundaries.
-    assert "_trusted_admin" not in ctx
+    response = client.get(
+        "/api/data/gold_sales", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 503
+    assert captured == {}
 
 
 def test_datasets_data_proxy_forwards_user_context(console_main, monkeypatch):
@@ -534,16 +592,20 @@ def test_datasets_data_proxy_forwards_user_context(console_main, monkeypatch):
 
     class FakeResponse:
         status_code = 200
+
         def json(self):
             return {"data": [{"row": 2}]}
 
     class FakeAsyncClient:
         def __init__(self, *args, **kwargs):
             pass
+
         async def __aenter__(self):
             return self
+
         async def __aexit__(self, exc_type, exc, tb):
             return False
+
         async def post(self, url, json=None, **kwargs):
             captured["url"] = url
             captured["body"] = json
@@ -551,13 +613,18 @@ def test_datasets_data_proxy_forwards_user_context(console_main, monkeypatch):
 
     monkeypatch.setattr(console_main.httpx, "AsyncClient", FakeAsyncClient)
     client = TestClient(console_main.app)
-    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "analyst"})
+    token = create_access_token(
+        {"sub": "42", "email": "analyst@example.com", "role": "analyst"}
+    )
 
-    response = client.get("/datasets/gold_sales/data", headers={"Authorization": f"Bearer {token}"})
+    response = client.get(
+        "/datasets/gold_sales/data", headers={"Authorization": f"Bearer {token}"}
+    )
     assert response.status_code == 200
 
-    assert captured["url"].endswith("/mcp/invoke"), \
-        "the legacy GET REST proxy must route through /mcp/invoke with context"
+    assert captured["url"].endswith(
+        "/mcp/invoke"
+    ), "the legacy GET REST proxy must route through /mcp/invoke with context"
     args = captured["body"]["args"]
     assert "user_context" in args
     assert args["user_context"].get("id") == 42
@@ -590,14 +657,16 @@ def test_assistant_chat_without_auth_is_rejected(console_main):
 
     response = client.post("/assistant/chat", json={"message": "hello", "history": []})
 
-    assert response.status_code in (401, 403), (
-        f"unauthenticated POST /assistant/chat must be rejected, got {response.status_code}"
-    )
+    assert (
+        response.status_code in (401, 403)
+    ), f"unauthenticated POST /assistant/chat must be rejected, got {response.status_code}"
 
 
 def test_assistant_chat_with_valid_jwt_returns_200(console_main):
     client = TestClient(console_main.app)
-    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "analyst"})
+    token = create_access_token(
+        {"sub": "42", "email": "analyst@example.com", "role": "analyst"}
+    )
 
     response = client.post(
         "/assistant/chat",
@@ -609,7 +678,9 @@ def test_assistant_chat_with_valid_jwt_returns_200(console_main):
     assert response.json()["reply"] == "echo:hello"
 
 
-def test_assistant_chat_missing_workspace_llm_key_is_actionable(console_main, monkeypatch):
+def test_assistant_chat_missing_workspace_llm_key_is_actionable(
+    console_main, monkeypatch
+):
     async def raise_missing_key(message, history, user=None):
         raise console_main.llm_client.LLMConfigurationError(
             "Anthropic API key is required for this workspace"
@@ -617,7 +688,9 @@ def test_assistant_chat_missing_workspace_llm_key_is_actionable(console_main, mo
 
     monkeypatch.setattr(console_main.assistant, "chat", raise_missing_key)
     client = TestClient(console_main.app)
-    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "analyst"})
+    token = create_access_token(
+        {"sub": "42", "email": "analyst@example.com", "role": "analyst"}
+    )
 
     response = client.post(
         "/assistant/chat",
@@ -641,7 +714,9 @@ def test_jobs_without_auth_returns_401(console_main):
 
 def test_jobs_with_valid_jwt_returns_200(console_main):
     client = TestClient(console_main.app)
-    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "analyst"})
+    token = create_access_token(
+        {"sub": "42", "email": "analyst@example.com", "role": "analyst"}
+    )
 
     response = client.get("/jobs", headers={"Authorization": f"Bearer {token}"})
 
@@ -653,9 +728,13 @@ def test_tokens_summary_allows_scoped_copilot_viewer(console_main):
     client = TestClient(console_main.app)
     console_main._auth.user["role"] = "user"
     console_main._auth.workspace_rows[0]["workspace_role"] = "viewer"
-    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "user"})
+    token = create_access_token(
+        {"sub": "42", "email": "analyst@example.com", "role": "user"}
+    )
 
-    response = client.get("/tokens/summary", headers={"Authorization": f"Bearer {token}"})
+    response = client.get(
+        "/tokens/summary", headers={"Authorization": f"Bearer {token}"}
+    )
 
     assert response.status_code == 200
     assert response.json()["workspace_id"] == "11111111-1111-1111-1111-111111111111"
@@ -665,9 +744,13 @@ def test_tokens_summary_allows_admin(console_main):
     client = TestClient(console_main.app)
     console_main._auth.user["role"] = "user"
     console_main._auth.workspace_rows[0]["workspace_role"] = "admin"
-    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "user"})
+    token = create_access_token(
+        {"sub": "42", "email": "analyst@example.com", "role": "user"}
+    )
 
-    response = client.get("/tokens/summary", headers={"Authorization": f"Bearer {token}"})
+    response = client.get(
+        "/tokens/summary", headers={"Authorization": f"Bearer {token}"}
+    )
 
     assert response.status_code == 200
     assert response.json()["total_tokens"] == 123
@@ -677,7 +760,9 @@ def test_api_users_rejects_viewer(console_main):
     client = TestClient(console_main.app)
     console_main._auth.user["role"] = "user"
     console_main._auth.workspace_rows[0]["workspace_role"] = "viewer"
-    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "user"})
+    token = create_access_token(
+        {"sub": "42", "email": "analyst@example.com", "role": "user"}
+    )
 
     response = client.get("/api/users", headers={"Authorization": f"Bearer {token}"})
 
@@ -688,7 +773,9 @@ def test_api_users_allows_admin(console_main):
     client = TestClient(console_main.app)
     console_main._auth.user["role"] = "user"
     console_main._auth.workspace_rows[0]["workspace_role"] = "admin"
-    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "user"})
+    token = create_access_token(
+        {"sub": "42", "email": "analyst@example.com", "role": "user"}
+    )
 
     response = client.get("/api/users", headers={"Authorization": f"Bearer {token}"})
 
@@ -700,7 +787,11 @@ def test_api_users_allows_admin(console_main):
     ("method", "path", "json_body"),
     [
         ("get", "/api/admin/users", None),
-        ("post", "/api/admin/users", {"email": "new@example.com", "password": "secret"}),
+        (
+            "post",
+            "/api/admin/users",
+            {"email": "new@example.com", "password": "secret"},
+        ),
         ("patch", "/api/admin/users/43", {"name": "Target"}),
         ("delete", "/api/admin/users/43", None),
         ("post", "/api/admin/users/invite", {"email": "invite@example.com"}),
@@ -712,7 +803,9 @@ def test_api_admin_users_routes_reject_non_admin(console_main, method, path, jso
     client = TestClient(console_main.app)
     console_main._auth.user["role"] = "user"
     console_main._auth.workspace_rows[0]["workspace_role"] = "viewer"
-    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "user"})
+    token = create_access_token(
+        {"sub": "42", "email": "analyst@example.com", "role": "user"}
+    )
 
     kwargs = {"headers": {"Authorization": f"Bearer {token}"}}
     if json_body is not None:
@@ -722,7 +815,9 @@ def test_api_admin_users_routes_reject_non_admin(console_main, method, path, jso
     assert response.status_code == 403
 
 
-def test_visible_user_ids_for_workspace_admin_hides_platform_admin(console_main, monkeypatch):
+def test_visible_user_ids_for_workspace_admin_hides_platform_admin(
+    console_main, monkeypatch
+):
     workspace_id = "11111111-1111-1111-1111-111111111111"
     other_workspace_id = "22222222-2222-2222-2222-222222222222"
     admin = {
@@ -734,7 +829,11 @@ def test_visible_user_ids_for_workspace_admin_hides_platform_admin(console_main,
         {"id": 1, "role": "admin", "workspaces": [{"workspace_id": workspace_id}]},
         {"id": 42, "role": "user", "workspaces": [{"workspace_id": workspace_id}]},
         {"id": 43, "role": "user", "workspaces": [{"workspace_id": workspace_id}]},
-        {"id": 44, "role": "user", "workspaces": [{"workspace_id": other_workspace_id}]},
+        {
+            "id": 44,
+            "role": "user",
+            "workspaces": [{"workspace_id": other_workspace_id}],
+        },
     ]
 
     async def unavailable_pool():
@@ -751,19 +850,27 @@ def test_api_admin_users_create_with_admin_still_works(console_main):
     client = TestClient(console_main.app)
     console_main._auth.user["role"] = "user"
     console_main._auth.workspace_rows[0]["workspace_role"] = "admin"
-    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "user"})
+    token = create_access_token(
+        {"sub": "42", "email": "analyst@example.com", "role": "user"}
+    )
 
     response = client.post(
         "/api/admin/users",
         headers={"Authorization": f"Bearer {token}"},
-        json={"email": "new@example.com", "password": "StrongSecret123", "name": "New User"},
+        json={
+            "email": "new@example.com",
+            "password": "StrongSecret123",
+            "name": "New User",
+        },
     )
 
     assert response.status_code == 200
     assert response.json()["email"] == "new@example.com"
 
 
-def test_set_workspace_role_replaces_existing_role_without_invalid_conflict(console_main, monkeypatch):
+def test_set_workspace_role_replaces_existing_role_without_invalid_conflict(
+    console_main, monkeypatch
+):
     class FakeTransaction:
         async def __aenter__(self):
             return self
@@ -811,23 +918,29 @@ def test_set_workspace_role_replaces_existing_role_without_invalid_conflict(cons
 
     monkeypatch.setattr(console_main, "_get_db_pool", fake_get_db_pool)
 
-    asyncio.run(console_main._set_workspace_role_for_user(
-        43,
-        "11111111-1111-1111-1111-111111111111",
-        "tenant_admin",
-    ))
+    asyncio.run(
+        console_main._set_workspace_role_for_user(
+            43,
+            "11111111-1111-1111-1111-111111111111",
+            "tenant_admin",
+        )
+    )
 
     statements = [query for query, _args in fake_pool.conn.statements]
     assert any("DELETE FROM user_workspace_roles" in query for query in statements)
     assert any("INSERT INTO user_workspace_roles" in query for query in statements)
-    assert not any("ON CONFLICT (user_id, workspace_id)" in query for query in statements)
+    assert not any(
+        "ON CONFLICT (user_id, workspace_id)" in query for query in statements
+    )
 
 
 def test_api_admin_users_create_rejects_short_password(console_main):
     client = TestClient(console_main.app)
     console_main._auth.user["role"] = "user"
     console_main._auth.workspace_rows[0]["workspace_role"] = "admin"
-    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "user"})
+    token = create_access_token(
+        {"sub": "42", "email": "analyst@example.com", "role": "user"}
+    )
 
     response = client.post(
         "/api/admin/users",
@@ -843,7 +956,9 @@ def test_api_admin_users_patch_with_admin_still_works(console_main):
     client = TestClient(console_main.app)
     console_main._auth.user["role"] = "user"
     console_main._auth.workspace_rows[0]["workspace_role"] = "admin"
-    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "user"})
+    token = create_access_token(
+        {"sub": "42", "email": "analyst@example.com", "role": "user"}
+    )
 
     response = client.patch(
         "/api/admin/users/43",
@@ -859,9 +974,13 @@ def test_api_admin_users_delete_with_admin_still_works(console_main):
     client = TestClient(console_main.app)
     console_main._auth.user["role"] = "user"
     console_main._auth.workspace_rows[0]["workspace_role"] = "admin"
-    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "user"})
+    token = create_access_token(
+        {"sub": "42", "email": "analyst@example.com", "role": "user"}
+    )
 
-    response = client.delete("/api/admin/users/43", headers={"Authorization": f"Bearer {token}"})
+    response = client.delete(
+        "/api/admin/users/43", headers={"Authorization": f"Bearer {token}"}
+    )
 
     assert response.status_code == 200
     assert response.json() == {"deleted": True, "id": 43}
@@ -872,12 +991,18 @@ def test_admin_reinvite_rejects_active_user(console_main):
     console_main._auth.user["role"] = "user"
     console_main._auth.user["is_active"] = True
     console_main._auth.workspace_rows[0]["workspace_role"] = "admin"
-    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "user"})
+    token = create_access_token(
+        {"sub": "42", "email": "analyst@example.com", "role": "user"}
+    )
 
-    response = client.post("/api/admin/users/42/reinvite", headers={"Authorization": f"Bearer {token}"})
+    response = client.post(
+        "/api/admin/users/42/reinvite", headers={"Authorization": f"Bearer {token}"}
+    )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "user already active; use password reset instead"
+    assert (
+        response.json()["detail"] == "user already active; use password reset instead"
+    )
 
 
 def test_viewer_pipeline_allows_same_origin_iframe_with_session(console_main):
@@ -906,7 +1031,9 @@ def test_viewer_redirect_uses_same_origin_iframe_headers(console_main):
     assert response.status_code == 307
     assert response.headers["location"] == "/login?next=/viewer/pipeline"
     assert response.headers.get("x-frame-options") is None
-    assert "frame-ancestors 'self'" in response.headers.get("content-security-policy", "")
+    assert "frame-ancestors 'self'" in response.headers.get(
+        "content-security-policy", ""
+    )
 
 
 def test_regular_pages_keep_anti_frame_headers(console_main):
@@ -917,7 +1044,9 @@ def test_regular_pages_keep_anti_frame_headers(console_main):
 
     assert response.status_code == 200
     assert response.headers.get("x-frame-options") == "DENY"
-    assert "frame-ancestors 'none'" in response.headers.get("content-security-policy", "")
+    assert "frame-ancestors 'none'" in response.headers.get(
+        "content-security-policy", ""
+    )
 
 
 def test_refresh_issues_new_access_token_and_rotates_refresh(console_main):

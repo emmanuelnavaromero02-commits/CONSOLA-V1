@@ -5,7 +5,13 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from fastapi import HTTPException
+
 from app.domains.apps.payloads import app_datasets_from_payload
+from app.services.gold_publication_relation import (
+    published_relation_columns,
+    resolve_published_gold_relation,
+)
 
 
 WorkspaceScopeResolver = Callable[[dict | None], Awaitable[tuple[str, str]]]
@@ -34,7 +40,7 @@ async def gold_ready_datasets_for_apps(
     if not dsn:
         return None, "gold_dsn_missing"
     tenant_id, workspace_id = await workspace_scope_resolver(user)
-    if not workspace_id:
+    if not tenant_id or not workspace_id:
         return set(), "workspace_scope_missing"
     try:
         conn = await connect_gold(dsn)
@@ -51,37 +57,25 @@ async def gold_ready_datasets_for_apps(
                 workspace_id,
             )
             for dataset in sorted(requested):
-                table = f"gold_{dataset}"
-                exists = bool(
-                    await conn.fetchval("SELECT to_regclass($1)", f"public.{table}")
-                )
-                if not exists:
-                    continue
-                columns = {
-                    str(row["column_name"])
-                    for row in await conn.fetch(
-                        """
-                        SELECT column_name
-                          FROM information_schema.columns
-                         WHERE table_schema = 'public'
-                           AND table_name = $1
-                        """,
-                        table,
+                try:
+                    relation = await resolve_published_gold_relation(
+                        conn, tenant_id, workspace_id, dataset
                     )
-                }
+                except HTTPException as exc:
+                    if exc.status_code == 404:
+                        continue
+                    raise
+                columns = await published_relation_columns(conn, relation)
                 if "workspace_id" not in columns:
                     continue
-                if "tenant_id" in columns and tenant_id:
-                    has_row = await conn.fetchval(
-                        f'SELECT 1 FROM public."{table}" WHERE workspace_id::text = $1 AND tenant_id::text = $2 LIMIT 1',
-                        workspace_id,
-                        tenant_id,
-                    )
-                else:
-                    has_row = await conn.fetchval(
-                        f'SELECT 1 FROM public."{table}" WHERE workspace_id::text = $1 LIMIT 1',
-                        workspace_id,
-                    )
+                if "tenant_id" not in columns:
+                    continue
+                has_row = await conn.fetchval(
+                    f"SELECT 1 FROM {relation.sql} WHERE workspace_id::text = $1 "
+                    "AND tenant_id::text = $2 LIMIT 1",
+                    workspace_id,
+                    tenant_id,
+                )
                 if has_row:
                     ready.add(dataset)
     except Exception:

@@ -12,6 +12,7 @@ Export = ZIP with:
 
 Import = run seed.sql + store supplementary files in MinIO.
 """
+
 from __future__ import annotations
 
 import io
@@ -34,8 +35,10 @@ _DATABASE_URL = (
 )
 _POOL: asyncpg.Pool | None = None
 
-_MINIO_BUCKET     = os.environ.get("MINIO_BUCKET",     "lakehouse")
-_MAX_IMPORT_ZIP_BYTES = int(os.environ.get("CARTRIDGE_IMPORT_MAX_BYTES", str(25 * 1024 * 1024)))
+_MINIO_BUCKET = os.environ.get("MINIO_BUCKET", "lakehouse")
+_MAX_IMPORT_ZIP_BYTES = int(
+    os.environ.get("CARTRIDGE_IMPORT_MAX_BYTES", str(25 * 1024 * 1024))
+)
 _MAX_IMPORT_UNCOMPRESSED_BYTES = int(
     os.environ.get("CARTRIDGE_IMPORT_MAX_UNCOMPRESSED_BYTES", str(50 * 1024 * 1024))
 )
@@ -93,8 +96,13 @@ def _validate_plain_filename(value: str) -> str:
 
 def _mcp_infra_headers() -> dict[str, str]:
     key = os.environ.get("INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA")
-    if not key and os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}:
-        raise RuntimeError("Missing INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA; legacy fallback disabled in production")
+    if not key and os.environ.get("APP_ENV", "production").strip().lower() in {
+        "production",
+        "prod",
+    }:
+        raise RuntimeError(
+            "Missing INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA; legacy fallback disabled in production"
+        )
     if not key:
         key = get_internal_api_key()
     return {
@@ -111,6 +119,7 @@ def _mcp_infra_payload(tool: str, args: dict, actor_user: dict | None = None) ->
 
 
 # ── DB connection ─────────────────────────────────────────────────────────────
+
 
 class _PooledConnection:
     def __init__(self, db_pool: asyncpg.Pool, conn):
@@ -130,7 +139,9 @@ class _PooledConnection:
 async def pool() -> asyncpg.Pool:
     global _POOL
     if _POOL is None:
-        _POOL = await asyncpg.create_pool(_DATABASE_URL, min_size=1, max_size=4, command_timeout=10)
+        _POOL = await asyncpg.create_pool(
+            _DATABASE_URL, min_size=1, max_size=4, command_timeout=10
+        )
     return _POOL
 
 
@@ -148,6 +159,7 @@ async def _pg():
 
 # ── MinIO ─────────────────────────────────────────────────────────────────────
 
+
 def _minio():
     return get_minio_client()
 
@@ -158,6 +170,7 @@ def _ensure_bucket(c) -> None:
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
+
 
 async def get_cartridge(cartridge_id: str) -> dict | None:
     """
@@ -209,13 +222,13 @@ async def get_cartridge(cartridge_id: str) -> dict | None:
         await conn.close()
 
     return {
-        "id":          row["id"],
-        "name":        row["name"],
-        "version":     row["version"],
+        "id": row["id"],
+        "name": row["name"],
+        "version": row["version"],
         "description": row["description"] or "",
-        "pattern":     row["pattern"],
-        "category":    row["category"],
-        "bronze_path":     row["bronze_path"] or "",
+        "pattern": row["pattern"],
+        "category": row["category"],
+        "bronze_path": row["bronze_path"] or "",
         "assistant_hints": row["assistant_hints"] or "",
         "connections": [dict(r) for r in connections],
         "dags": [
@@ -227,32 +240,36 @@ async def get_cartridge(cartridge_id: str) -> dict | None:
         ],
         "entities": [
             {
-                "entity":          r["entity"],
-                "name":            r["entity"],
-                "display_name":    r["display_name"] or "",
-                "mode":            r["mode"],
-                "primary_key":     r["primary_key"] or "",
+                "entity": r["entity"],
+                "name": r["entity"],
+                "display_name": r["display_name"] or "",
+                "mode": r["mode"],
+                "primary_key": r["primary_key"] or "",
                 "watermark_field": r["watermark_field"] or "",
-                "watermark":       r["watermark_field"] or "",
-                "page_size":       r["page_size"],
-                "select_fields":   r["select_fields"] or [],
-                "fields":          r["select_fields"] or [],
-                "columns":         r["select_fields"] or [],
-                "protection":      r["protection"] or {},
+                "watermark": r["watermark_field"] or "",
+                "page_size": r["page_size"],
+                "select_fields": r["select_fields"] or [],
+                "fields": r["select_fields"] or [],
+                "columns": r["select_fields"] or [],
+                "protection": r["protection"] or {},
                 "effective_dated": r["effective_dated"],
-                "date_field":      r["date_field"] or "",
-                "dag_id":          r["dag_id"] or "",
-                "trigger_type":    r["trigger_type"] or "manual",
+                "date_field": r["date_field"] or "",
+                "dag_id": r["dag_id"] or "",
+                "trigger_type": r["trigger_type"] or "manual",
                 "cron_expression": r["cron_expression"] or "",
-                "description":     r["description"] or "",
-                "enabled":         r["enabled"],
-                "dag_params":      _entity_dag_params(r["dag_params"]),
+                "description": r["description"] or "",
+                "enabled": r["enabled"],
+                "dag_params": _entity_dag_params(r["dag_params"]),
             }
             for r in entities
         ],
         "semantic_model": {
             "vocabulary": [
-                {"term": r["term"], "definition": r["definition"], "maps_to": r["maps_to"]}
+                {
+                    "term": r["term"],
+                    "definition": r["definition"],
+                    "maps_to": r["maps_to"],
+                }
                 for r in vocab
             ]
         },
@@ -276,13 +293,13 @@ async def list_cartridges() -> list[dict]:
 
     return [
         {
-            "id":          r["id"],
-            "name":        r["name"],
-            "version":     r["version"],
+            "id": r["id"],
+            "name": r["name"],
+            "version": r["version"],
             "description": (r["description"] or "").strip(),
-            "pattern":     r["pattern"],
-            "entities":    r["entity_count"],
-            "source":      "database",
+            "pattern": r["pattern"],
+            "entities": r["entity_count"],
+            "source": "database",
         }
         for r in rows
     ]
@@ -299,7 +316,9 @@ async def create_cartridge(cartridge_id: str, name: str, description: str = "") 
             raise ValueError(f"Cartridge '{cartridge_id}' already exists")
         await conn.execute(
             "INSERT INTO cartridges (id, name, description) VALUES ($1, $2, $3)",
-            cartridge_id, name, description,
+            cartridge_id,
+            name,
+            description,
         )
     finally:
         await conn.close()
@@ -322,7 +341,9 @@ def _require_unique(values: list[str], field: str) -> None:
             duplicates.add(value)
         seen.add(value)
     if duplicates:
-        raise ValueError(f"{field} contains duplicate values: {', '.join(sorted(duplicates))}")
+        raise ValueError(
+            f"{field} contains duplicate values: {', '.join(sorted(duplicates))}"
+        )
 
 
 def _validate_entity_identifier(value: str, field: str) -> str:
@@ -344,13 +365,17 @@ def _validate_kb_sql(sql: str | None, kb_id: str) -> None:
         return
     masked = _SINGLE_QUOTED_SQL_RE.sub("''", sql)
     if not _SAFE_READ_SQL_RE.search(masked) or _UNSAFE_READ_SQL_RE.search(masked):
-        raise ValueError(f"knowledge bit '{kb_id}' SQL must be a single read-only SELECT/WITH statement")
+        raise ValueError(
+            f"knowledge bit '{kb_id}' SQL must be a single read-only SELECT/WITH statement"
+        )
 
 
 def _normalize_full_cartridge_manifest(payload: dict) -> tuple[dict, str]:
     if not isinstance(payload, dict):
         raise ValueError("manifest must be an object")
-    cid = _validate_full_cartridge_id(str(payload.get("id") or payload.get("cartridge_id") or ""))
+    cid = _validate_full_cartridge_id(
+        str(payload.get("id") or payload.get("cartridge_id") or "")
+    )
     name = str(payload.get("name") or "").strip()
     if not name:
         raise ValueError("name is required")
@@ -363,20 +388,28 @@ def _normalize_full_cartridge_manifest(payload: dict) -> tuple[dict, str]:
         "pattern": str(payload.get("pattern") or "custom"),
         "category": str(payload.get("category") or "custom"),
         "bronze_path": str(payload.get("bronze_path") or f"raw/{cid}"),
-        "assistant_hints": str(payload.get("assistant_hints") or payload.get("hints") or ""),
+        "assistant_hints": str(
+            payload.get("assistant_hints") or payload.get("hints") or ""
+        ),
     }
 
     connections = []
     for item in _as_list(payload.get("connections"), "connections"):
         if not isinstance(item, dict):
             raise ValueError("connections entries must be objects")
-        conn_id = _validate_entity_identifier(str(item.get("conn_id") or item.get("id") or ""), "conn_id")
-        connections.append({
-            "conn_id": conn_id,
-            "description": str(item.get("description") or ""),
-            "auth_type": str(item.get("auth_type") or item.get("auth") or "bearer_token"),
-            "poll_strategy": item.get("poll_strategy"),
-        })
+        conn_id = _validate_entity_identifier(
+            str(item.get("conn_id") or item.get("id") or ""), "conn_id"
+        )
+        connections.append(
+            {
+                "conn_id": conn_id,
+                "description": str(item.get("description") or ""),
+                "auth_type": str(
+                    item.get("auth_type") or item.get("auth") or "bearer_token"
+                ),
+                "poll_strategy": item.get("poll_strategy"),
+            }
+        )
     _require_unique([c["conn_id"] for c in connections], "connections")
     manifest["connections"] = connections
 
@@ -384,15 +417,19 @@ def _normalize_full_cartridge_manifest(payload: dict) -> tuple[dict, str]:
     for item in _as_list(payload.get("dags"), "dags"):
         if not isinstance(item, dict):
             raise ValueError("dags entries must be objects")
-        dag_id = _validate_entity_identifier(str(item.get("dag_id") or item.get("id") or ""), "dag_id")
-        dags.append({
-            "dag_id": dag_id,
-            "file": str(item.get("file") or f"{dag_id}.py"),
-            "description": str(item.get("description") or ""),
-            "trigger": str(item.get("trigger") or "on-demand"),
-            "params": item.get("params") or "[]",
-            "dag_params_example": item.get("dag_params_example") or {},
-        })
+        dag_id = _validate_entity_identifier(
+            str(item.get("dag_id") or item.get("id") or ""), "dag_id"
+        )
+        dags.append(
+            {
+                "dag_id": dag_id,
+                "file": str(item.get("file") or f"{dag_id}.py"),
+                "description": str(item.get("description") or ""),
+                "trigger": str(item.get("trigger") or "on-demand"),
+                "params": item.get("params") or "[]",
+                "dag_params_example": item.get("dag_params_example") or {},
+            }
+        )
     _require_unique([d["dag_id"] for d in dags], "dags")
     dag_ids = {d["dag_id"] for d in dags}
     manifest["dags"] = dags
@@ -401,21 +438,27 @@ def _normalize_full_cartridge_manifest(payload: dict) -> tuple[dict, str]:
     for item in _as_list(payload.get("entities"), "entities"):
         if not isinstance(item, dict):
             raise ValueError("entities entries must be objects")
-        entity = _validate_entity_identifier(str(item.get("entity") or item.get("name") or ""), "entity")
+        entity = _validate_entity_identifier(
+            str(item.get("entity") or item.get("name") or ""), "entity"
+        )
         dag_id = str(item.get("dag_id") or "").strip()
         if dag_id and dag_ids and dag_id not in dag_ids:
             raise ValueError(f"entity '{entity}' references unknown dag_id '{dag_id}'")
-        entities.append({
-            "entity": entity,
-            "display_name": str(item.get("display_name") or item.get("title") or entity),
-            "mode": str(item.get("mode") or "full"),
-            "primary_key": item.get("primary_key") or "",
-            "dag_id": dag_id,
-            "trigger_type": str(item.get("trigger_type") or "manual"),
-            "cron_expression": item.get("cron_expression") or "",
-            "description": str(item.get("description") or ""),
-            "dag_params": item.get("dag_params") or {},
-        })
+        entities.append(
+            {
+                "entity": entity,
+                "display_name": str(
+                    item.get("display_name") or item.get("title") or entity
+                ),
+                "mode": str(item.get("mode") or "full"),
+                "primary_key": item.get("primary_key") or "",
+                "dag_id": dag_id,
+                "trigger_type": str(item.get("trigger_type") or "manual"),
+                "cron_expression": item.get("cron_expression") or "",
+                "description": str(item.get("description") or ""),
+                "dag_params": item.get("dag_params") or {},
+            }
+        )
     _require_unique([e["entity"] for e in entities], "entities")
     manifest["entities"] = entities
 
@@ -423,7 +466,9 @@ def _normalize_full_cartridge_manifest(payload: dict) -> tuple[dict, str]:
     for item in _as_list(payload.get("datasets"), "datasets"):
         if not isinstance(item, dict):
             raise ValueError("datasets entries must be objects")
-        dataset_name = _validate_entity_identifier(str(item.get("name") or ""), "dataset name")
+        dataset_name = _validate_entity_identifier(
+            str(item.get("name") or ""), "dataset name"
+        )
         layer = str(item.get("layer") or "").strip().lower()
         if layer not in {"silver", "gold"}:
             raise ValueError(f"dataset '{dataset_name}' layer must be silver or gold")
@@ -434,20 +479,28 @@ def _normalize_full_cartridge_manifest(payload: dict) -> tuple[dict, str]:
             raise ValueError(f"dataset '{dataset_name}' sources must be a list")
         column_mapping = item.get("column_mapping") or {}
         if not isinstance(column_mapping, dict):
-            raise ValueError(f"dataset '{dataset_name}' column_mapping must be an object")
-        datasets.append({
-            "name": dataset_name,
-            "layer": layer,
-            "sources": [str(source) for source in sources],
-            "sql_def": sql_def,
-            "description": str(item.get("description") or ""),
-            "column_mapping": column_mapping,
-            "schedule": item.get("schedule"),
-        })
+            raise ValueError(
+                f"dataset '{dataset_name}' column_mapping must be an object"
+            )
+        datasets.append(
+            {
+                "name": dataset_name,
+                "layer": layer,
+                "sources": [str(source) for source in sources],
+                "sql_def": sql_def,
+                "description": str(item.get("description") or ""),
+                "column_mapping": column_mapping,
+                "schedule": item.get("schedule"),
+            }
+        )
     _require_unique([d["name"] for d in datasets], "datasets")
     manifest["datasets"] = datasets
 
-    semantic_model = payload.get("semantic_model") if isinstance(payload.get("semantic_model"), dict) else {}
+    semantic_model = (
+        payload.get("semantic_model")
+        if isinstance(payload.get("semantic_model"), dict)
+        else {}
+    )
     vocabulary = semantic_model.get("vocabulary") or payload.get("vocabulary") or []
     normalized_vocab = []
     for item in _as_list(vocabulary, "semantic_model.vocabulary"):
@@ -456,28 +509,36 @@ def _normalize_full_cartridge_manifest(payload: dict) -> tuple[dict, str]:
         term = str(item.get("term") or "").strip()
         if not term:
             raise ValueError("semantic vocabulary term is required")
-        normalized_vocab.append({
-            "term": term,
-            "definition": str(item.get("definition") or ""),
-            "maps_to": str(item.get("maps_to") or ""),
-        })
+        normalized_vocab.append(
+            {
+                "term": term,
+                "definition": str(item.get("definition") or ""),
+                "maps_to": str(item.get("maps_to") or ""),
+            }
+        )
     _require_unique([v["term"] for v in normalized_vocab], "semantic_model.vocabulary")
     manifest["semantic_model"] = {"vocabulary": normalized_vocab}
 
     knowledge_bits = []
-    for item in _as_list(payload.get("knowledge_bits") or payload.get("kbs"), "knowledge_bits"):
+    for item in _as_list(
+        payload.get("knowledge_bits") or payload.get("kbs"), "knowledge_bits"
+    ):
         if not isinstance(item, dict):
             raise ValueError("knowledge_bits entries must be objects")
-        kb_id = _validate_entity_identifier(str(item.get("kb_id") or item.get("id") or ""), "kb_id")
+        kb_id = _validate_entity_identifier(
+            str(item.get("kb_id") or item.get("id") or ""), "kb_id"
+        )
         _validate_kb_sql(item.get("sql"), kb_id)
-        knowledge_bits.append({
-            "kb_id": kb_id,
-            "name": str(item.get("name") or kb_id),
-            "description": str(item.get("description") or ""),
-            "sql": str(item.get("sql") or ""),
-            "pg_table": item.get("pg_table"),
-            "output_path": item.get("output_path"),
-        })
+        knowledge_bits.append(
+            {
+                "kb_id": kb_id,
+                "name": str(item.get("name") or kb_id),
+                "description": str(item.get("description") or ""),
+                "sql": str(item.get("sql") or ""),
+                "pg_table": item.get("pg_table"),
+                "output_path": item.get("output_path"),
+            }
+        )
     _require_unique([k["kb_id"] for k in knowledge_bits], "knowledge_bits")
     manifest["knowledge_bits"] = knowledge_bits
 
@@ -485,19 +546,25 @@ def _normalize_full_cartridge_manifest(payload: dict) -> tuple[dict, str]:
     for item in _as_list(payload.get("custom_tools"), "custom_tools"):
         if not isinstance(item, dict):
             raise ValueError("custom_tools entries must be objects")
-        name = _validate_entity_identifier(str(item.get("name") or ""), "custom tool name")
+        name = _validate_entity_identifier(
+            str(item.get("name") or ""), "custom tool name"
+        )
         tool_type = str(item.get("tool_type") or "").strip()
         if not tool_type:
             raise ValueError(f"custom tool '{name}' requires tool_type")
         config = item.get("config") or {}
         if not isinstance(config, (dict, str)):
-            raise ValueError(f"custom tool '{name}' config must be an object or JSON string")
-        custom_tools.append({
-            "name": name,
-            "description": str(item.get("description") or ""),
-            "tool_type": tool_type,
-            "config": config,
-        })
+            raise ValueError(
+                f"custom tool '{name}' config must be an object or JSON string"
+            )
+        custom_tools.append(
+            {
+                "name": name,
+                "description": str(item.get("description") or ""),
+                "tool_type": tool_type,
+                "config": config,
+            }
+        )
     _require_unique([t["name"] for t in custom_tools], "custom_tools")
     manifest["custom_tools"] = custom_tools
 
@@ -505,16 +572,20 @@ def _normalize_full_cartridge_manifest(payload: dict) -> tuple[dict, str]:
     for item in _as_list(payload.get("analytic_apps"), "analytic_apps"):
         if not isinstance(item, dict):
             raise ValueError("analytic_apps entries must be objects")
-        name = _validate_entity_identifier(str(item.get("name") or ""), "analytic app name")
+        name = _validate_entity_identifier(
+            str(item.get("name") or ""), "analytic app name"
+        )
         html = str(item.get("html") or "")
         if not html:
             raise ValueError(f"analytic app '{name}' requires html")
-        analytic_apps.append({
-            "name": name,
-            "title": str(item.get("title") or name),
-            "html": html,
-            "description": str(item.get("description") or ""),
-        })
+        analytic_apps.append(
+            {
+                "name": name,
+                "title": str(item.get("title") or name),
+                "html": html,
+                "description": str(item.get("description") or ""),
+            }
+        )
     _require_unique([a["name"] for a in analytic_apps], "analytic_apps")
     manifest["analytic_apps"] = analytic_apps
 
@@ -522,7 +593,9 @@ def _normalize_full_cartridge_manifest(payload: dict) -> tuple[dict, str]:
     for item in _as_list(payload.get("agents"), "agents"):
         if not isinstance(item, dict):
             raise ValueError("agents entries must be objects")
-        slug = _validate_entity_identifier(str(item.get("slug") or item.get("id") or ""), "agent slug")
+        slug = _validate_entity_identifier(
+            str(item.get("slug") or item.get("id") or ""), "agent slug"
+        )
         agent_name = str(item.get("name") or "").strip()
         if not agent_name:
             raise ValueError(f"agent '{slug}' requires name")
@@ -533,20 +606,26 @@ def _normalize_full_cartridge_manifest(payload: dict) -> tuple[dict, str]:
             raise ValueError(f"agent '{slug}' allowed_tools must be a list")
         if not isinstance(rag_filter, dict) or not isinstance(extra, dict):
             raise ValueError(f"agent '{slug}' rag_filter and extra must be objects")
-        agents.append({
-            "slug": slug,
-            "name": agent_name,
-            "description": str(item.get("description") or ""),
-            "instructions": str(item.get("instructions") or ""),
-            "personality": str(item.get("personality") or ""),
-            "allowed_tools": allowed_tools,
-            "rag_filter": rag_filter,
-            "extra": extra,
-            "model": str(item.get("model") or "claude-sonnet-4-6"),
-            "max_tokens": int(item.get("max_tokens") or 8192),
-            "temperature": float(item.get("temperature") if item.get("temperature") is not None else 0.4),
-            "is_active": bool(item.get("is_active", True)),
-        })
+        agents.append(
+            {
+                "slug": slug,
+                "name": agent_name,
+                "description": str(item.get("description") or ""),
+                "instructions": str(item.get("instructions") or ""),
+                "personality": str(item.get("personality") or ""),
+                "allowed_tools": allowed_tools,
+                "rag_filter": rag_filter,
+                "extra": extra,
+                "model": str(item.get("model") or "claude-sonnet-4-6"),
+                "max_tokens": int(item.get("max_tokens") or 8192),
+                "temperature": float(
+                    item.get("temperature")
+                    if item.get("temperature") is not None
+                    else 0.4
+                ),
+                "is_active": bool(item.get("is_active", True)),
+            }
+        )
     _require_unique([a["slug"] for a in agents], "agents")
     manifest["agents"] = agents
 
@@ -560,7 +639,9 @@ async def create_full_cartridge(payload: dict, actor_user: dict | None = None) -
     manifest, seed_sql = _normalize_full_cartridge_manifest(payload)
     conn = await _pg()
     try:
-        existing = await conn.fetchrow("SELECT id FROM cartridges WHERE id=$1", manifest["id"])
+        existing = await conn.fetchrow(
+            "SELECT id FROM cartridges WHERE id=$1", manifest["id"]
+        )
         if existing:
             raise ValueError(f"Cartridge '{manifest['id']}' already exists")
         async with conn.transaction():
@@ -574,14 +655,16 @@ async def create_full_cartridge(payload: dict, actor_user: dict | None = None) -
         "created": True,
         "cartridge": created,
         "seed_sql_validated": True,
-            "counts": {
-                "connections": len(manifest.get("connections") or []),
-                "dags": len(manifest.get("dags") or []),
-                "entities": len(manifest.get("entities") or []),
-                "datasets": len(manifest.get("datasets") or []),
-                "knowledge_bits": len(manifest.get("knowledge_bits") or []),
-                "agents": len(manifest.get("agents") or []),
-                "semantic_terms": len((manifest.get("semantic_model") or {}).get("vocabulary") or []),
+        "counts": {
+            "connections": len(manifest.get("connections") or []),
+            "dags": len(manifest.get("dags") or []),
+            "entities": len(manifest.get("entities") or []),
+            "datasets": len(manifest.get("datasets") or []),
+            "knowledge_bits": len(manifest.get("knowledge_bits") or []),
+            "agents": len(manifest.get("agents") or []),
+            "semantic_terms": len(
+                (manifest.get("semantic_model") or {}).get("vocabulary") or []
+            ),
         },
     }
 
@@ -589,17 +672,18 @@ async def create_full_cartridge(payload: dict, actor_user: dict | None = None) -
 async def update_cartridge(cartridge_id: str, updates: dict) -> dict:
     """Update top-level cartridge fields."""
     allowed = {"name", "version", "description", "pattern", "category", "bronze_path"}
-    fields  = {k: v for k, v in updates.items() if k in allowed}
+    fields = {k: v for k, v in updates.items() if k in allowed}
     if not fields:
         return await get_cartridge(cartridge_id)
 
     conn = await _pg()
     try:
         set_clause = ", ".join(f"{k}=${i+2}" for i, k in enumerate(fields))
-        values     = list(fields.values())
+        values = list(fields.values())
         await conn.execute(
             f"UPDATE cartridges SET {set_clause}, updated_at=NOW() WHERE id=$1",
-            cartridge_id, *values,
+            cartridge_id,
+            *values,
         )
     finally:
         await conn.close()
@@ -616,10 +700,19 @@ async def upsert_entity(cartridge_id: str, entity: str, **kwargs) -> None:
     the DAG.
     """
     import json as _json
-    allowed = {"display_name", "mode", "primary_key", "dag_id",
-               "trigger_type", "cron_expression", "description", "enabled",
-               "dag_params"}
-    fields  = {k: v for k, v in kwargs.items() if k in allowed}
+
+    allowed = {
+        "display_name",
+        "mode",
+        "primary_key",
+        "dag_id",
+        "trigger_type",
+        "cron_expression",
+        "description",
+        "enabled",
+        "dag_params",
+    }
+    fields = {k: v for k, v in kwargs.items() if k in allowed}
     if not fields:
         return
 
@@ -631,11 +724,12 @@ async def upsert_entity(cartridge_id: str, entity: str, **kwargs) -> None:
     try:
         exists = await conn.fetchval(
             "SELECT 1 FROM entity_config WHERE cartridge_id=$1 AND entity=$2",
-            cartridge_id, entity,
+            cartridge_id,
+            entity,
         )
         if exists:
             set_parts = []
-            values    = []
+            values = []
             for i, (k, v) in enumerate(fields.items()):
                 cast = "::jsonb" if k == "dag_params" else ""
                 set_parts.append(f"{k}=${i+3}{cast}")
@@ -643,7 +737,9 @@ async def upsert_entity(cartridge_id: str, entity: str, **kwargs) -> None:
             await conn.execute(
                 f"UPDATE entity_config SET {', '.join(set_parts)} "
                 f"WHERE cartridge_id=$1 AND entity=$2",
-                cartridge_id, entity, *values,
+                cartridge_id,
+                entity,
+                *values,
             )
         else:
             await conn.execute(
@@ -654,7 +750,8 @@ async def upsert_entity(cartridge_id: str, entity: str, **kwargs) -> None:
                      dag_params)
                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)
                 """,
-                cartridge_id, entity,
+                cartridge_id,
+                entity,
                 fields.get("display_name"),
                 fields.get("mode", "full"),
                 fields.get("primary_key"),
@@ -672,7 +769,8 @@ async def upsert_entity(cartridge_id: str, entity: str, **kwargs) -> None:
 async def rename_entity(cartridge_id: str, old_name: str, new_name: str) -> None:
     """
     Rename an entity across all tables that reference it.
-    Runs as a single transaction: entity_config, entity_watermarks, pipeline_runs, silver_lineage.
+    Runs as a single transaction for mutable operational configuration/history.
+    Append-only Silver lineage is intentionally never renamed.
     """
     conn = await _pg()
     try:
@@ -681,26 +779,27 @@ async def rename_entity(cartridge_id: str, old_name: str, new_name: str) -> None
             await conn.execute(
                 "UPDATE entity_config SET entity=$3 "
                 "WHERE cartridge_id=$1 AND entity=$2",
-                cartridge_id, old_name, new_name,
+                cartridge_id,
+                old_name,
+                new_name,
             )
             # watermarks
             await conn.execute(
                 "UPDATE entity_watermarks SET entity_name=$3 "
                 "WHERE cartridge_id=$1 AND entity_name=$2",
-                cartridge_id, old_name, new_name,
+                cartridge_id,
+                old_name,
+                new_name,
             )
             # pipeline run history
             await conn.execute(
                 "UPDATE pipeline_runs SET entity=$3 "
                 "WHERE cartridge_id=$1 AND entity=$2",
-                cartridge_id, old_name, new_name,
+                cartridge_id,
+                old_name,
+                new_name,
             )
             # silver lineage
-            await conn.execute(
-                "UPDATE silver_lineage SET source_entity=$3 "
-                "WHERE cartridge_id=$1 AND source_entity=$2",
-                cartridge_id, old_name, new_name,
-            )
     finally:
         await conn.close()
 
@@ -715,11 +814,13 @@ async def delete_entity(cartridge_id: str, entity: str) -> None:
         async with conn.transaction():
             await conn.execute(
                 "DELETE FROM entity_config WHERE cartridge_id=$1 AND entity=$2",
-                cartridge_id, entity,
+                cartridge_id,
+                entity,
             )
             await conn.execute(
                 "DELETE FROM entity_watermarks WHERE cartridge_id=$1 AND entity_name=$2",
-                cartridge_id, entity,
+                cartridge_id,
+                entity,
             )
     finally:
         await conn.close()
@@ -727,30 +828,35 @@ async def delete_entity(cartridge_id: str, entity: str) -> None:
 
 # ── Supplementary files (MinIO) ────────────────────────────────────────────────
 
+
 def upload_spec(cartridge_id: str, filename: str, content: str) -> str:
     cartridge_id = _validate_cartridge_id(cartridge_id)
     filename = _validate_plain_filename(filename)
-    c   = _minio()
+    c = _minio()
     _ensure_bucket(c)
     key = f"cartridges/{cartridge_id}/specs/{filename}"
     raw = content.encode("utf-8")
     if len(raw) > _MAX_IMPORT_MEMBER_BYTES:
         raise ValueError("spec upload too large")
-    c.put_object(_MINIO_BUCKET, key, io.BytesIO(raw), len(raw), content_type="text/plain")
+    c.put_object(
+        _MINIO_BUCKET, key, io.BytesIO(raw), len(raw), content_type="text/plain"
+    )
     return key
 
 
 def upload_code(cartridge_id: str, filename: str, content: str) -> str:
-    c   = _minio()
+    c = _minio()
     _ensure_bucket(c)
     key = f"cartridges/{cartridge_id}/{filename}"
     raw = content.encode("utf-8")
-    c.put_object(_MINIO_BUCKET, key, io.BytesIO(raw), len(raw), content_type="text/plain")
+    c.put_object(
+        _MINIO_BUCKET, key, io.BytesIO(raw), len(raw), content_type="text/plain"
+    )
     return key
 
 
 def list_specs(cartridge_id: str) -> list[str]:
-    c      = _minio()
+    c = _minio()
     prefix = f"cartridges/{cartridge_id}/specs/"
     try:
         objs = c.list_objects(_MINIO_BUCKET, prefix=prefix, recursive=True)
@@ -760,6 +866,7 @@ def list_specs(cartridge_id: str) -> list[str]:
 
 
 # ── Export / Import ────────────────────────────────────────────────────────────
+
 
 async def export_cartridge(cartridge_id: str) -> bytes:
     """
@@ -813,11 +920,13 @@ async def export_cartridge(cartridge_id: str) -> bytes:
     finally:
         await conn.close()
 
-    manifest["knowledge_bits"]  = [dict(r) for r in kb_rows]
-    manifest["custom_tools"]    = [dict(r) for r in custom_rows]
-    manifest["analytic_apps"]   = [dict(r) for r in app_rows]
-    manifest["assistant_hints"] = (hints_row["assistant_hints"] if hints_row else None) or ""
-    manifest["agents"]          = [dict(r) for r in agent_rows]
+    manifest["knowledge_bits"] = [dict(r) for r in kb_rows]
+    manifest["custom_tools"] = [dict(r) for r in custom_rows]
+    manifest["analytic_apps"] = [dict(r) for r in app_rows]
+    manifest["assistant_hints"] = (
+        hints_row["assistant_hints"] if hints_row else None
+    ) or ""
+    manifest["agents"] = [dict(r) for r in agent_rows]
 
     files: dict[str, bytes] = {}
     files["config/seed.sql"] = _generate_seed_sql(manifest).encode("utf-8")
@@ -834,6 +943,7 @@ async def export_cartridge(cartridge_id: str) -> bytes:
 
     def _disk_dag_bytes(fname: str) -> bytes | None:
         import pathlib
+
         for candidate in (
             pathlib.Path(f"/registry/cartridges/{cartridge_id}/dags") / fname,
             pathlib.Path("/opt/airflow/dags") / cartridge_id / fname,
@@ -850,11 +960,14 @@ async def export_cartridge(cartridge_id: str) -> bytes:
     seen_dag_files: set[str] = set()
     for r in dag_rows:
         fname = r["file"] or f"{r['dag_id']}.py"
-        files[f"dags/{fname}"] = _disk_dag_bytes(fname) or r["source_code"].encode("utf-8")
+        files[f"dags/{fname}"] = _disk_dag_bytes(fname) or r["source_code"].encode(
+            "utf-8"
+        )
         seen_dag_files.add(fname)
 
     # ── Fallback: filesystem (any DAG not already captured from DB) ───────
     import pathlib
+
     for base in (
         pathlib.Path(f"/registry/cartridges/{cartridge_id}/dags"),
         pathlib.Path("/opt/airflow/dags"),
@@ -872,7 +985,7 @@ async def export_cartridge(cartridge_id: str) -> bytes:
 
     # ── Specs and other supplementary files from MinIO ────────────────────
     try:
-        c      = _minio()
+        c = _minio()
         prefix = f"cartridges/{cartridge_id}/"
         for obj in c.list_objects(_MINIO_BUCKET, prefix=prefix, recursive=True):
             name = obj.object_name.replace(prefix, "")
@@ -912,17 +1025,22 @@ async def import_cartridge(zip_bytes: bytes, actor_user: dict | None = None) -> 
         sql = z.read("config/seed.sql").decode("utf-8")
         _validate_seed_sql(sql)
 
-        m = re.search(r"INSERT INTO cartridges[^V]*VALUES\s*\(\s*'([^']+)'", sql, re.DOTALL)
+        m = re.search(
+            r"INSERT INTO cartridges[^V]*VALUES\s*\(\s*'([^']+)'", sql, re.DOTALL
+        )
         cartridge_id = m.group(1) if m else None
         if not cartridge_id:
             raise ValueError("Could not parse cartridge_id from seed.sql")
         cartridge_id = _validate_cartridge_id(cartridge_id)
 
-        allow_dag_import = (
-            os.environ.get("ALLOW_CARTRIDGE_DAG_IMPORT", "").strip().lower() in {"1", "true", "yes"}
-            or os.environ.get("APP_ENV", "production").strip().lower() not in {"production", "prod"}
-        )
-        dag_names = [name for name in names if name.startswith("dags/") and name.endswith(".py")]
+        allow_dag_import = os.environ.get(
+            "ALLOW_CARTRIDGE_DAG_IMPORT", ""
+        ).strip().lower() in {"1", "true", "yes"} or os.environ.get(
+            "APP_ENV", "production"
+        ).strip().lower() not in {"production", "prod"}
+        dag_names = [
+            name for name in names if name.startswith("dags/") and name.endswith(".py")
+        ]
         if dag_names and not allow_dag_import:
             raise ValueError("DAG import is disabled in production")
 
@@ -931,7 +1049,11 @@ async def import_cartridge(zip_bytes: bytes, actor_user: dict | None = None) -> 
         # failure cannot leave the cartridge seed half-applied in Postgres.
         dag_files_written: list[str] = []
         spec_files_written: list[str] = []
-        extra_names = [name for name in names if name != "config/seed.sql" and not name.startswith("dags/")]
+        extra_names = [
+            name
+            for name in names
+            if name != "config/seed.sql" and not name.startswith("dags/")
+        ]
         conn = await _pg()
         try:
             async with conn.transaction():
@@ -942,7 +1064,8 @@ async def import_cartridge(zip_bytes: bytes, actor_user: dict | None = None) -> 
                     hints = z.read("hints/assistant.md").decode("utf-8")
                     await conn.execute(
                         "UPDATE cartridges SET assistant_hints=$2 WHERE id=$1",
-                        cartridge_id, hints,
+                        cartridge_id,
+                        hints,
                     )
 
                 # 2 · Supplementary files (specs etc.) → MinIO under cartridges/{id}/
@@ -957,35 +1080,45 @@ async def import_cartridge(zip_bytes: bytes, actor_user: dict | None = None) -> 
 
                 # 3 · DAG files → Airflow dags directory (via mcp-infra, which has the mount)
                 import httpx
+
                 mcp_infra_url = os.environ.get("MCP_INFRA_URL", "http://mcp-infra:8010")
-                async with httpx.AsyncClient(headers=_mcp_infra_headers(), timeout=30) as client:
+                async with httpx.AsyncClient(
+                    headers=_mcp_infra_headers(), timeout=30
+                ) as client:
                     for name in dag_names:
-                        fname  = pathlib.Path(name).name
+                        fname = pathlib.Path(name).name
                         dag_id = fname[:-3]
-                        code   = z.read(name).decode("utf-8")
+                        code = z.read(name).decode("utf-8")
                         r = await client.post(
                             f"{mcp_infra_url}/mcp/invoke",
                             json=_mcp_infra_payload(
                                 "airflow_create_dag",
-                                {"dag_id": dag_id, "code": code, "cartridge_id": cartridge_id},
+                                {
+                                    "dag_id": dag_id,
+                                    "code": code,
+                                    "cartridge_id": cartridge_id,
+                                },
                                 actor_user,
                             ),
                         )
                         if r.status_code >= 400:
-                            raise ValueError(f"DAG import failed for {fname}: {r.text[:300]}")
+                            raise ValueError(
+                                f"DAG import failed for {fname}: {r.text[:300]}"
+                            )
                         dag_files_written.append(fname)
             # Transaction committed. The seed and/or hints/assistant.md may have
             # (re)written cartridges.assistant_hints, so drop the in-process
             # hints cache; otherwise the copilot serves stale hints for up to
             # the cache TTL after an import.
             from app.services import agent_runtime
+
             agent_runtime.invalidate_hint_cache(cartridge_id)
         finally:
             await conn.close()
 
     result = await get_cartridge(cartridge_id) or {"imported": True, "id": cartridge_id}
     result["import_summary"] = {
-        "dag_files":  dag_files_written,
+        "dag_files": dag_files_written,
         "spec_files": spec_files_written,
     }
     return result
@@ -1004,7 +1137,11 @@ def _validate_import_zip_members(members: list[object]) -> None:
         if normalized in seen:
             raise ValueError(f"duplicate ZIP member: {name}")
         seen.add(normalized)
-        if normalized.startswith("/") or "/../" in f"/{normalized}" or normalized in {"..", "."}:
+        if (
+            normalized.startswith("/")
+            or "/../" in f"/{normalized}"
+            or normalized in {"..", "."}
+        ):
             raise ValueError(f"unsafe ZIP path: {name}")
         if normalized.endswith("/"):
             continue
@@ -1016,7 +1153,8 @@ def _validate_import_zip_members(members: list[object]) -> None:
         allowed = (
             normalized == "config/seed.sql"
             or normalized == "hints/assistant.md"
-            or normalized.startswith("dags/") and normalized.endswith(".py")
+            or normalized.startswith("dags/")
+            and normalized.endswith(".py")
             or normalized.startswith("specs/")
             or normalized.startswith("agents/")
             or normalized.startswith("apps/")
@@ -1036,8 +1174,7 @@ def _validate_seed_sql(sql: str) -> None:
     if "/*" in comment_masked or "*/" in comment_masked:
         raise ValueError("seed.sql cannot contain block comments")
     cleaned = "\n".join(
-        line for line in (sql or "").splitlines()
-        if not line.lstrip().startswith("--")
+        line for line in (sql or "").splitlines() if not line.lstrip().startswith("--")
     )
     statements = _split_sql_statements(cleaned)
     for statement in statements:
@@ -1053,9 +1190,14 @@ def _validate_seed_sql(sql: str) -> None:
             continue
         if re.match(r"update\s+cartridges\s+set\s+assistant_hints\s*=", lower):
             if not re.search(r"\bwhere\s+id\s*=", lower):
-                raise ValueError("assistant_hints update must target a single cartridge id")
+                raise ValueError(
+                    "assistant_hints update must target a single cartridge id"
+                )
             continue
-        if re.match(r"alter\s+table\s+analytic_apps\s+add\s+column\s+if\s+not\s+exists\s+cartridge_id\s+text$", lower):
+        if re.match(
+            r"alter\s+table\s+analytic_apps\s+add\s+column\s+if\s+not\s+exists\s+cartridge_id\s+text$",
+            lower,
+        ):
             continue
         if lower.startswith("on conflict") or lower.startswith("values"):
             # These should be part of an INSERT statement; if our simple
@@ -1068,7 +1210,9 @@ def _split_sql_statements(sql: str) -> list[str]:
     statements: list[str] = []
     buf: list[str] = []
     in_single = False
-    dollar_tag: str | None = None  # active dollar-quote delimiter, e.g. "$$" or "$body$"
+    dollar_tag: str | None = (
+        None  # active dollar-quote delimiter, e.g. "$$" or "$body$"
+    )
     i = 0
     n = len(sql)
     while i < n:
@@ -1129,6 +1273,7 @@ def _entity_dag_params(v) -> dict:
     if isinstance(v, dict):
         return v
     import json as _json
+
     try:
         return _json.loads(v)
     except Exception:
@@ -1136,6 +1281,7 @@ def _entity_dag_params(v) -> dict:
 
 
 # ── Agent YAML emitter (human-readable companion to the SQL block) ───────────
+
 
 def _agent_to_yaml(a: dict) -> str:
     import json as _json
@@ -1155,7 +1301,7 @@ def _agent_to_yaml(a: dict) -> str:
 
     def _multiline(field: str, text: str) -> list[str]:
         if not text:
-            return [f"{field}: \"\""]
+            return [f'{field}: ""']
         out = [f"{field}: |"]
         for line in text.splitlines() or [""]:
             out.append(f"  {line}")
@@ -1172,7 +1318,7 @@ def _agent_to_yaml(a: dict) -> str:
         f"is_active: {'true' if a.get('is_active', True) else 'false'}",
     ]
     lines += _multiline("instructions", a.get("instructions") or "")
-    lines += _multiline("personality",  a.get("personality")  or "")
+    lines += _multiline("personality", a.get("personality") or "")
     at = a.get("allowed_tools") or []
     if isinstance(at, str):
         try:
@@ -1201,6 +1347,7 @@ def _agent_to_yaml(a: dict) -> str:
 
 # ── SQL generator ─────────────────────────────────────────────────────────────
 
+
 def _q(v) -> str:
     """Quote a Python value as a SQL literal."""
     if v is None:
@@ -1215,8 +1362,8 @@ def _q(v) -> str:
 def _generate_seed_sql(manifest: dict) -> str:
     import json as _json
 
-    cid  = manifest["id"]
-    now  = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    cid = manifest["id"]
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     lines = [
         f"-- MODecissions Cartridge: {manifest['name']} — seed configuration",
         f"-- Generated: {now}",
@@ -1273,7 +1420,9 @@ def _generate_seed_sql(manifest: dict) -> str:
         for i, d in enumerate(rows):
             sep = "," if i < len(rows) - 1 else ""
             params = str(d.get("params") or "[]")
-            dag_params_example = _json.dumps(d.get("dag_params_example") or {}, ensure_ascii=False)
+            dag_params_example = _json.dumps(
+                d.get("dag_params_example") or {}, ensure_ascii=False
+            )
             lines.append(
                 f"    ({_q(cid)}, {_q(d['dag_id'])}, {_q(d.get('file'))}, "
                 f"{_q(d.get('description'))}, {_q(d.get('trigger','on-demand'))}, "
@@ -1328,7 +1477,9 @@ def _generate_seed_sql(manifest: dict) -> str:
         for i, d in enumerate(rows):
             sep = "," if i < len(rows) - 1 else ""
             sources = _json.dumps(d.get("sources") or [], ensure_ascii=False)
-            column_mapping = _json.dumps(d.get("column_mapping") or {}, ensure_ascii=False)
+            column_mapping = _json.dumps(
+                d.get("column_mapping") or {}, ensure_ascii=False
+            )
             lines.append(
                 f"    ({_q(d['name'])}, {_q(d.get('layer'))}, {_q(cid)}, "
                 f"{_q(sources)}::jsonb, {_q(d.get('sql_def'))}, {_q(d.get('description'))}, "
@@ -1376,6 +1527,7 @@ def _generate_seed_sql(manifest: dict) -> str:
 
     if manifest.get("custom_tools"):
         import json as _json
+
         lines += [
             "-- ── Custom MCP tools ────────────────────────────────────────────────────────",
             "INSERT INTO mcp_custom_tools (cartridge_id, name, description, tool_type, config, enabled)",
@@ -1418,6 +1570,7 @@ def _generate_seed_sql(manifest: dict) -> str:
 
     if manifest.get("agents"):
         import json as _json
+
         lines += [
             "-- ── Agents (mind=cartridge, body=platform) ─────────────────────────────────",
             "INSERT INTO agents (cartridge_id, slug, name, description, instructions, personality,",
@@ -1429,8 +1582,8 @@ def _generate_seed_sql(manifest: dict) -> str:
         for i, a in enumerate(rows):
             sep = "," if i < len(rows) - 1 else ""
             at = a.get("allowed_tools") or []
-            rf = a.get("rag_filter")    or {}
-            ex = a.get("extra")         or {}
+            rf = a.get("rag_filter") or {}
+            ex = a.get("extra") or {}
             at_s = at if isinstance(at, str) else _json.dumps(at)
             rf_s = rf if isinstance(rf, str) else _json.dumps(rf)
             ex_s = ex if isinstance(ex, str) else _json.dumps(ex)

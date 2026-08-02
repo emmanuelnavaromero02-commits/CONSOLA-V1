@@ -6,6 +6,7 @@ Extrae entidades SAP SuccessFactors llamando directo a SuccessFactors OData.
 No llama al contenedor sap-successfactors. Cada entidad debe traer
 connection_id desde entity_config o recibir conn_id en dag_run.conf.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -24,6 +25,17 @@ from typing import Any
 import httpx
 import requests
 from airflow.decorators import dag, task
+
+try:
+    from runtime_security_context import build_pipeline_run_context
+except ModuleNotFoundError:
+    _runtime_dags = next(
+        parent / "airflow/dags"
+        for parent in Path(__file__).resolve().parents
+        if (parent / "airflow/dags/runtime_security_context.py").is_file()
+    )
+    sys.path.insert(0, str(_runtime_dags))
+    from runtime_security_context import build_pipeline_run_context
 
 
 MCP_INFRA_URL = os.environ.get("MCP_INFRA_URL", "http://mcp-infra:8010")
@@ -44,7 +56,10 @@ default_args = {
 
 
 def _is_production() -> bool:
-    return os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}
+    return os.environ.get("APP_ENV", "production").strip().lower() in {
+        "production",
+        "prod",
+    }
 
 
 def _mcp_key() -> str:
@@ -55,7 +70,9 @@ def _mcp_key() -> str:
         legacy = os.environ.get("INTERNAL_API_KEY", "")
         if legacy:
             return legacy
-    raise RuntimeError("INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA missing; legacy fallback disabled in production")
+    raise RuntimeError(
+        "INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA missing; legacy fallback disabled in production"
+    )
 
 
 def _mcp_headers() -> dict[str, str]:
@@ -68,7 +85,9 @@ def _mcp_headers() -> dict[str, str]:
 def _signing_key() -> str:
     key = (os.environ.get("SECURITY_CONTEXT_SIGNING_KEY") or "").strip()
     if len(key) < _MIN_SIGNING_KEY_LEN:
-        raise RuntimeError("SECURITY_CONTEXT_SIGNING_KEY is required to sign extraction scope")
+        raise RuntimeError(
+            "SECURITY_CONTEXT_SIGNING_KEY is required to sign extraction scope"
+        )
     for name, value in os.environ.items():
         if (
             (name == "INTERNAL_API_KEY" or name.startswith("INTERNAL_API_KEY_"))
@@ -76,13 +95,17 @@ def _signing_key() -> str:
             and value.strip()
             and hmac.compare_digest(key, value.strip())
         ):
-            raise RuntimeError(f"SECURITY_CONTEXT_SIGNING_KEY must be distinct from {name}")
+            raise RuntimeError(
+                f"SECURITY_CONTEXT_SIGNING_KEY must be distinct from {name}"
+            )
     return key
 
 
 def _canonical_context(ctx: dict) -> bytes:
     payload = {key: value for key, value in ctx.items() if key != _SIGNATURE_FIELD}
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
 
 
 def _sign_security_context(ctx: dict) -> dict:
@@ -110,22 +133,24 @@ def _security_context_from_conf(conf: dict) -> dict | None:
     workspace_id = str(conf.get("workspace_id") or "").strip()
     if not (tenant_id and workspace_id):
         return None
-    return _sign_security_context({
-        "trusted": True,
-        "source": "console",
-        "role": "admin",
-        "workspace_role": "service",
-        "tenant_id": tenant_id,
-        "workspace_id": workspace_id,
-        "permissions": ["cartridges.execute", "vault.secrets.reveal"],
-        "allowed_cartridges": ["sap_successfactors"],
-        "allowed_buckets": ["lakehouse"],
-        "allowed_prefixes": [
-            f"raw/sap_successfactors/tenant_id={tenant_id}/workspace_id={workspace_id}/",
-            f"silver/sap_successfactors/tenant_id={tenant_id}/workspace_id={workspace_id}/",
-            f"gold/sap_successfactors/tenant_id={tenant_id}/workspace_id={workspace_id}/",
-        ],
-    })
+    return _sign_security_context(
+        {
+            "trusted": True,
+            "source": "console",
+            "role": "admin",
+            "workspace_role": "service",
+            "tenant_id": tenant_id,
+            "workspace_id": workspace_id,
+            "permissions": ["cartridges.execute", "vault.secrets.reveal"],
+            "allowed_cartridges": ["sap_successfactors"],
+            "allowed_buckets": ["lakehouse"],
+            "allowed_prefixes": [
+                f"raw/sap_successfactors/tenant_id={tenant_id}/workspace_id={workspace_id}/",
+                f"silver/sap_successfactors/tenant_id={tenant_id}/workspace_id={workspace_id}/",
+                f"gold/sap_successfactors/tenant_id={tenant_id}/workspace_id={workspace_id}/",
+            ],
+        }
+    )
 
 
 def _cartridge_root() -> Path:
@@ -138,7 +163,9 @@ def _cartridge_root() -> Path:
     for root in candidates:
         if str(root) and (root / "app").is_dir():
             return root
-    raise RuntimeError("SAP SuccessFactors cartridge runtime not found; mount /registry/cartridges/sap_successfactors")
+    raise RuntimeError(
+        "SAP SuccessFactors cartridge runtime not found; mount /registry/cartridges/sap_successfactors"
+    )
 
 
 def _clear_conflicting_app_modules(root: Path) -> None:
@@ -168,15 +195,23 @@ def _load_runtime() -> SimpleNamespace:
     refinement_triggers = importlib.import_module("app.core.refinement_triggers")
     extraction_status = importlib.import_module("app.core.extraction_status")
     _RUNTIME = SimpleNamespace(
-        get_extract_all_plan=importlib.import_module("app.services.catalog_service").get_extract_all_plan,
-        run_entity=importlib.import_module("app.services.extraction_service").run_entity,
+        get_extract_all_plan=importlib.import_module(
+            "app.services.catalog_service"
+        ).get_extract_all_plan,
+        run_entity=importlib.import_module(
+            "app.services.extraction_service"
+        ).run_entity,
         trigger_silver_refresh=refinement_triggers.trigger_silver_refresh,
         trigger_successfactors_gold_refresh=refinement_triggers.trigger_successfactors_gold_refresh,
         classify_successful_extraction=extraction_status.classify_successful_extraction,
         classify_extraction_exception=extraction_status.classify_extraction_exception,
         summarize_extraction_results=extraction_status.summarize_extraction_results,
-        set_security_context=importlib.import_module("app.core.request_context").set_security_context,
-        reset_security_context=importlib.import_module("app.core.request_context").reset_security_context,
+        set_security_context=importlib.import_module(
+            "app.core.request_context"
+        ).set_security_context,
+        reset_security_context=importlib.import_module(
+            "app.core.request_context"
+        ).reset_security_context,
     )
     return _RUNTIME
 
@@ -218,15 +253,21 @@ def _run_async(coro):
     return asyncio.run(coro)
 
 
-def _try_silver_refresh(runtime: SimpleNamespace, entity: str, security_context: dict | None) -> dict[str, Any]:
+def _try_silver_refresh(
+    runtime: SimpleNamespace, entity: str, security_context: dict | None
+) -> dict[str, Any]:
     try:
         payload = _run_async(runtime.trigger_silver_refresh(entity, security_context))
         if isinstance(payload, dict):
-            return payload if payload.get("status") else {"status": "success", **payload}
+            return (
+                payload if payload.get("status") else {"status": "success", **payload}
+            )
         return {"status": "success"}
     except Exception as exc:  # noqa: BLE001 - one Silver refresh must not hide a successful Bronze extract.
         message = f"{type(exc).__name__}: {exc}"
-        print(f"[sap_successfactors_extract_all] silver refresh failed for {entity}: {message}")
+        print(
+            f"[sap_successfactors_extract_all] silver refresh failed for {entity}: {message}"
+        )
         return {"status": "failed", "error": message}
 
 
@@ -274,7 +315,9 @@ def _pipeline_extra_from_result(
         "retried_as_full_snapshot": result.get("retried_as_full_snapshot"),
         "metadata_status": result.get("metadata_status"),
         "metadata_pruned_fields": result.get("metadata_pruned_fields") or [],
-        "metadata_missing_watermark_field": result.get("metadata_missing_watermark_field"),
+        "metadata_missing_watermark_field": result.get(
+            "metadata_missing_watermark_field"
+        ),
         "metadata_missing_date_field": result.get("metadata_missing_date_field"),
     }
 
@@ -369,10 +412,14 @@ def _pipeline_run_save(
 ) -> None:
     tenant_id, workspace_id = _scope_from_conf(conf)
     if not tenant_id or not workspace_id:
-        print("[sap_successfactors_extract_all] pipeline_run_save skipped: missing tenant/workspace scope")
+        print(
+            "[sap_successfactors_extract_all] pipeline_run_save skipped: missing tenant/workspace scope"
+        )
         return
     finished_at = datetime.now(timezone.utc).isoformat()
-    airflow_run_id = context.get("run_id") or f"sap_successfactors_extract_all:{finished_at}"
+    airflow_run_id = (
+        context.get("run_id") or f"sap_successfactors_extract_all:{finished_at}"
+    )
     args = {
         "dag_id": "sap_successfactors_extract_all",
         "cartridge_id": "sap_successfactors",
@@ -398,10 +445,11 @@ def _pipeline_run_save(
         args["storage_uri"] = storage_uri
     if error_message:
         args["error_message"] = error_message[:1000]
-    payload = {"tool": "pipeline_run_save", "args": args}
-    security_context = _security_context_from_conf(conf)
-    if security_context:
-        payload["security_context"] = security_context
+    payload = {
+        "tool": "pipeline_run_save",
+        "args": args,
+        "security_context": build_pipeline_run_context(args),
+    }
     try:
         with httpx.Client(timeout=15) as client:
             response = client.post(
@@ -409,7 +457,9 @@ def _pipeline_run_save(
                 headers=_mcp_headers(),
                 json=payload,
             )
-            print(f"[sap_successfactors_extract_all] pipeline_run_save -> {response.status_code}: {response.text[:200]}")
+            print(
+                f"[sap_successfactors_extract_all] pipeline_run_save -> {response.status_code}: {response.text[:200]}"
+            )
             response.raise_for_status()
     except Exception as exc:  # noqa: BLE001
         print(f"[sap_successfactors_extract_all] pipeline_run_save failed: {exc}")
@@ -418,7 +468,32 @@ def _pipeline_run_save(
 @dag(schedule=None, catchup=False, default_args=default_args, max_active_runs=1)
 def sap_successfactors_extract_all():
     @task
-    def trigger_extract_all(**context):
+    def authorize_refresh_chain(**context) -> dict:
+        from dataset_refresh_admission import build_dataset_refresh_trigger
+
+        dag_run = context.get("dag_run")
+        conf = dag_run.conf if dag_run and isinstance(dag_run.conf, dict) else {}
+        upstream = conf.get("security_context")
+        if not isinstance(upstream, dict):
+            raise RuntimeError("refresh chain admission authority is required")
+        refresh_conf = {
+            "seed_dataset": "sap_successfactors_employee_360",
+            "cartridge_id": "sap_successfactors",
+            "triggered_by": "sap_successfactors_extract_all",
+            "tenant_id": conf.get("tenant_id") or upstream.get("tenant_id"),
+            "workspace_id": conf.get("workspace_id") or upstream.get("workspace_id"),
+        }
+        return build_dataset_refresh_trigger(
+            upstream_context=upstream,
+            conf=refresh_conf,
+            source_dag_run_id=str(getattr(dag_run, "run_id", "") or ""),
+            prefix="successfactors",
+        )
+
+    @task
+    def trigger_extract_all(admission: dict, **context):
+        if not isinstance(admission, dict):
+            raise RuntimeError("refresh chain admission is unavailable")
         conf = context.get("dag_run").conf or {}
         logical_date = context.get("logical_date")
         started_at = (
@@ -447,7 +522,9 @@ def sap_successfactors_extract_all():
             results: list[dict[str, Any]] = []
             total_records = 0
             downstream_partial = False
-            base_idempotency_key = str(conf.get("idempotency_key") or "").strip() or None
+            base_idempotency_key = (
+                str(conf.get("idempotency_key") or "").strip() or None
+            )
 
             for outcome in skipped:
                 outcome_entity = str(outcome.get("entity") or "").strip()
@@ -474,10 +551,16 @@ def sap_successfactors_extract_all():
 
             for config in entities:
                 entity = str(config.get("entity") or "").strip()
-                entity_idempotency_key = _entity_idempotency_key(base_idempotency_key, entity)
+                entity_idempotency_key = _entity_idempotency_key(
+                    base_idempotency_key, entity
+                )
                 try:
                     conn_id = _required_config_conn_id(conf, config)
-                    effective_mode = mode if mode == "full" or config.get("watermark_field") else "full"
+                    effective_mode = (
+                        mode
+                        if mode == "full" or config.get("watermark_field")
+                        else "full"
+                    )
                     run_config: dict[str, Any] = {
                         **config,
                         "mode": effective_mode,
@@ -489,13 +572,19 @@ def sap_successfactors_extract_all():
                     if security_context:
                         run_config["security_context"] = security_context
                     result = runtime.run_entity(run_config)
-                    silver_refresh = _try_silver_refresh(runtime, entity, security_context)
+                    silver_refresh = _try_silver_refresh(
+                        runtime, entity, security_context
+                    )
                     result = {**result, "silver_refresh": silver_refresh}
                     total_records += int(result.get("record_count") or 0)
                     classified = runtime.classify_successful_extraction(result)
                     results.append(classified)
-                    entity_pipeline_status = _pipeline_status_for_success_payload(result)
-                    downstream_partial = downstream_partial or entity_pipeline_status == "partial"
+                    entity_pipeline_status = _pipeline_status_for_success_payload(
+                        result
+                    )
+                    downstream_partial = (
+                        downstream_partial or entity_pipeline_status == "partial"
+                    )
                     _pipeline_run_save(
                         context=context,
                         conf=conf,
@@ -540,12 +629,22 @@ def sap_successfactors_extract_all():
 
             summary = runtime.summarize_extraction_results(results)
             gold_refresh = None
-            if any(isinstance(item, dict) and _should_count_as_extracted(item) for item in results):
+            if any(
+                isinstance(item, dict) and _should_count_as_extracted(item)
+                for item in results
+            ):
                 gold_refresh = _run_async(
-                    runtime.trigger_successfactors_gold_refresh(target, security_context)
+                    runtime.trigger_successfactors_gold_refresh(
+                        target, security_context
+                    )
                 )
-                gold_status = str((gold_refresh or {}).get("status") or "").strip().lower()
-                downstream_partial = downstream_partial or gold_status not in {"success", "ok"}
+                gold_status = (
+                    str((gold_refresh or {}).get("status") or "").strip().lower()
+                )
+                downstream_partial = downstream_partial or gold_status not in {
+                    "success",
+                    "ok",
+                }
             hard_failed = False
             blocked_or_failed = any(
                 summary[key]
@@ -565,9 +664,12 @@ def sap_successfactors_extract_all():
                 if not hard_failed
                 else "failed"
             )
-            status_text = "success" if aggregate_status == "success" else "completed_with_blocks"
+            status_text = (
+                "success" if aggregate_status == "success" else "completed_with_blocks"
+            )
             attempted = [
-                item for item in results
+                item
+                for item in results
                 if item.get("entity") and not str(item.get("entity")).startswith("__")
             ]
             payload = {
@@ -577,14 +679,18 @@ def sap_successfactors_extract_all():
                 "selected": len(entities),
                 "attempted": len(attempted),
                 "triggered": [
-                    item for item in results
-                    if str(item.get("status") or "") in {"extracted", "empty-valid", "partial"}
+                    item
+                    for item in results
+                    if str(item.get("status") or "")
+                    in {"extracted", "empty-valid", "partial"}
                 ],
                 "blocked": _status_bucket(results, "blocked"),
                 "partial": _status_bucket(results, "partial"),
                 "failed": [
-                    item for item in results
-                    if str(item.get("status") or "") in {"failed", "failed-open", "auth-blocked", "permission-blocked"}
+                    item
+                    for item in results
+                    if str(item.get("status") or "")
+                    in {"failed", "failed-open", "auth-blocked", "permission-blocked"}
                 ],
                 "skipped_explicit": _status_bucket(results, "skipped_explicit"),
                 "total_records": total_records,
@@ -628,7 +734,10 @@ def sap_successfactors_extract_all():
                     extra={
                         "target": target,
                         "mode": mode,
-                        "idempotency_key": str(conf.get("idempotency_key") or "").strip() or None,
+                        "idempotency_key": str(
+                            conf.get("idempotency_key") or ""
+                        ).strip()
+                        or None,
                     },
                 )
             raise
@@ -636,7 +745,7 @@ def sap_successfactors_extract_all():
             runtime.reset_security_context(token)
 
     @task
-    def trigger_refresh_chain(result: dict) -> dict:
+    def trigger_refresh_chain(result: dict, admission: dict) -> dict:
         """Puente Airflow -> inteligencia (P3).
 
         Tras la extraccion+gold del cartucho, dispara el meta-DAG
@@ -650,43 +759,41 @@ def sap_successfactors_extract_all():
         DAG, para respetar la separacion de responsabilidades del contrato de DAGs.
         """
         import logging
-        from airflow.operators.python import get_current_context
 
         log = logging.getLogger("airflow.task")
-        dag_run = get_current_context().get("dag_run")
-        run_conf = dag_run.conf if dag_run and isinstance(dag_run.conf, dict) else {}
-        refresh_conf: dict[str, Any] = {
-            # VERIFICAR con el stack arriba: confirmar que este seed alcanza toda
-            # la cascada de talento (employee_360 -> cpa_scores -> readiness ->
-            # 9box -> simulation_inputs). Si la cobertura resultara parcial,
-            # sembrar con la raiz de foundation o iterar por dataset materializado.
-            "seed_dataset": "sap_successfactors_employee_360",
-            "cartridge_id": "sap_successfactors",
-            "triggered_by": "sap_successfactors_extract_all",
-        }
-        # dataset_refresh_chain exige el scope SaaS cuando esta presente.
-        for key in ("tenant_id", "workspace_id", "security_context"):
-            if run_conf.get(key):
-                refresh_conf[key] = run_conf[key]
+        if not isinstance(admission, dict) or not isinstance(
+            admission.get("conf"), dict
+        ):
+            raise RuntimeError("refresh chain admission is unavailable")
+        dag_run_id = str(admission.get("dag_run_id") or "")
+        refresh_conf = dict(admission["conf"])
 
         airflow_url = os.environ.get("AIRFLOW_URL", "http://airflow:8080").rstrip("/")
-        user = os.environ.get("AIRFLOW_USER") or os.environ.get("AIRFLOW_ADMIN_USER") or "admin"
-        password = os.environ.get("AIRFLOW_PASSWORD") or os.environ.get("AIRFLOW_ADMIN_PASSWORD") or "admin"
+        user = (
+            os.environ.get("AIRFLOW_USER")
+            or os.environ.get("AIRFLOW_ADMIN_USER")
+            or "admin"
+        )
+        password = (
+            os.environ.get("AIRFLOW_PASSWORD")
+            or os.environ.get("AIRFLOW_ADMIN_PASSWORD")
+            or "admin"
+        )
         try:
             response = requests.post(
                 f"{airflow_url}/api/v1/dags/dataset_refresh_chain/dagRuns",
                 auth=(user, password),
-                json={"conf": refresh_conf},
+                json={"conf": refresh_conf, "dag_run_id": dag_run_id},
                 timeout=15,
             )
             response.raise_for_status()
             log.info("refresh_chain disparado: %s", response.status_code)
             return {"triggered": True, "status": response.status_code}
-        except Exception as exc:  # noqa: BLE001 - el puente no debe tumbar la extraccion
-            log.warning("refresh_chain trigger fallo: %s", exc)
-            return {"triggered": False, "error": str(exc)}
+        except Exception as exc:
+            raise RuntimeError("refresh_chain trigger failed closed") from exc
 
-    trigger_refresh_chain(trigger_extract_all())
+    authority = authorize_refresh_chain()
+    trigger_refresh_chain(trigger_extract_all(authority), authority)
 
 
 dag = sap_successfactors_extract_all()

@@ -124,7 +124,8 @@ def test_intelligence_router_is_registered_and_mutations_are_guarded():
     assert "app.include_router(intelligence_router.v1_router)" in main
     assert "app.include_router(intelligence_router.internal_router)" in main
     assert 'APIRouter(prefix="/api/v1/intelligence"' in router
-    assert 'APIRouter(prefix="/internal/intelligence"' in router
+    assert 'prefix="/internal/intelligence"' in router
+    assert 'tags=["Intelligence (internal)"]' in router
     assert "BaseModel" in router
     assert 'extra="forbid"' in router
     assert "cartridge_id" in router

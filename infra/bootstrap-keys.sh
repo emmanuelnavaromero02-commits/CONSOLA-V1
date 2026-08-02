@@ -68,6 +68,9 @@ KEYS=(
 
 DB_KEYS=(
   "OMEGA_REFINEMENT_GOLD_PASSWORD"
+  "OMEGA_GOLD_PUBLISHER_PASSWORD"
+  "OMEGA_GOLD_VERIFIER_PASSWORD"
+  "OMEGA_OUTCOME_BINDER_PASSWORD"
   "OMEGA_AIRFLOW_DAG_PASSWORD"
   "OMEGA_AIRFLOW_META_PASSWORD"
   "OMEGA_SUPERSET_META_PASSWORD"
@@ -80,6 +83,10 @@ DB_KEYS=(
   "OMEGA_CARTRIDGE_BANXICO_PASSWORD"
   "OMEGA_CARTRIDGE_INEGI_PASSWORD"
   "OMEGA_CARTRIDGE_SEC_EDGAR_PASSWORD"
+)
+
+DERIVED_KEYS=(
+  "GOLD_VERIFIER_DATABASE_URL_HOST_FILE"
 )
 
 if ! command -v openssl >/dev/null 2>&1; then
@@ -129,7 +136,19 @@ for key in "${DB_KEYS[@]}"; do
   fi
 done
 
-ensured=$((${#KEYS[@]} + ${#DB_KEYS[@]} + 2))
+env_dir="$(cd "$(dirname "${ENV_FILE}")" && pwd)"
+secret_dir="${env_dir}/.secrets"
+secret_path="${secret_dir}/gold_verifier_database_url"
+verifier_password="$(awk -F= '$1=="OMEGA_GOLD_VERIFIER_PASSWORD" {print $2}' "${ENV_FILE}")"
+install -d -m 0700 "${secret_dir}"
+printf 'postgresql://omega_gold_verifier:%s@postgres_gold:5433/modecissions_gold\n' \
+  "${verifier_password}" >"${secret_path}"
+chmod 0600 "${secret_path}"
+if ! grep -q '^GOLD_VERIFIER_DATABASE_URL_HOST_FILE=' "${ENV_FILE}"; then
+  printf 'GOLD_VERIFIER_DATABASE_URL_HOST_FILE=%s\n' "${secret_path}" >>"${ENV_FILE}"
+fi
+
+ensured=$((${#KEYS[@]} + ${#DB_KEYS[@]} + ${#DERIVED_KEYS[@]} + 2))
 if [[ "$BOOTSTRAP_CONTROL_ROOM_EVIDENCE" == "false" ]]; then
   ensured=$((ensured - 3))
 fi

@@ -31,8 +31,7 @@ async def test_run_sync_agentops_monitors_returns_blocked_without_candidates():
         list_agents=list_agents,
         load_agent=None,
         reserve_scheduled_run=None,
-        run_scheduled_monitor=None,
-        finish_scheduled_run=None,
+        execute_reserved_scheduled_monitor=None,
         sync_agentops_monitor_candidates=lambda agents: agents,
         sync_agentops=sync_agentops,
         logger_warning=None,
@@ -60,8 +59,7 @@ async def test_run_sync_agentops_monitors_executes_and_finishes_monitor():
         cartridge_id="sap_successfactors",
     )
     reserve_calls = []
-    run_calls = []
-    finish_calls = []
+    execute_calls = []
 
     async def ensure_monitor(_user):
         return None
@@ -76,14 +74,11 @@ async def test_run_sync_agentops_monitors_executes_and_finishes_monitor():
 
     async def reserve_scheduled_run(**kwargs):
         reserve_calls.append(kwargs)
-        return {"id": "reservation-1", "status": "reserved"}
+        return {"id": "reservation-1", "status": "reserved", "fencing_token": 1}
 
-    async def run_scheduled_monitor(agent_arg, message, **kwargs):
-        run_calls.append((agent_arg, message, kwargs))
+    async def execute_reserved_scheduled_monitor(**kwargs):
+        execute_calls.append(kwargs)
         return {"run_id": "agent-run-1", "deterministic_monitor": True}
-
-    async def finish_scheduled_run(**kwargs):
-        finish_calls.append(kwargs)
 
     payload = await run_sync_agentops_monitors(
         cartridge="sap_successfactors",
@@ -93,8 +88,7 @@ async def test_run_sync_agentops_monitors_executes_and_finishes_monitor():
         list_agents=list_agents,
         load_agent=load_agent,
         reserve_scheduled_run=reserve_scheduled_run,
-        run_scheduled_monitor=run_scheduled_monitor,
-        finish_scheduled_run=finish_scheduled_run,
+        execute_reserved_scheduled_monitor=execute_reserved_scheduled_monitor,
         sync_agentops_monitor_candidates=lambda agents: agents,
         sync_agentops=sync_agentops,
         logger_warning=lambda *_args, **_kwargs: None,
@@ -107,19 +101,22 @@ async def test_run_sync_agentops_monitors_executes_and_finishes_monitor():
     assert reserve_calls[0]["tenant_id"] == "tenant-1"
     assert reserve_calls[0]["workspace_id"] == "workspace-1"
     assert reserve_calls[0]["airflow_dag_run_id"] == "sync-now-1"
-    assert run_calls[0][0] is agent
-    assert "datos reales" in run_calls[0][1]
-    assert finish_calls == [
+    assert execute_calls == [
         {
-            "schedule_run_id": "reservation-1",
-            "agent_run_id": "agent-run-1",
-            "status": "ok",
-            "tenant_id": "tenant-1",
-            "workspace_id": "workspace-1",
+            "agent": agent,
+            "message": (
+                "Ejecuta el monitor operativo posterior a sincronizacion para "
+                "sap_successfactors. Usa datos reales recien extraidos; no simules."
+            ),
+            "reservation": {
+                "id": "reservation-1",
+                "status": "reserved",
+                "fencing_token": 1,
+            },
+            "scheduled_fire_at": payload["checked_at"],
             "metadata": {
                 "sync_run_id": "sync-now-1",
                 "checked_at": payload["checked_at"],
-                "deterministic_monitor": True,
             },
         }
     ]

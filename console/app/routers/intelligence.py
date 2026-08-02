@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
+import os
+import re
+import time
+from contextlib import asynccontextmanager
 from typing import Any, Literal
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -18,15 +25,23 @@ from app.services.intelligence import decision_orchestrator
 from app.services.intelligence import history as intelligence_history
 from app.services.intelligence import monte_carlo_service
 from app.services.intelligence import orchestrator_execution
+from app.services.intelligence.outcome_binding import (
+    assert_expected_pipeline_run,
+    persist_gold_refresh_binding,
+)
+from app.services.intelligence.publication_trace import capture_publication_trace
 from app.services.intelligence.readiness import intelligence_readiness
 from app.services.csrf import require_csrf
+from app.services.db_scope import scoped_db_for_user
 from app.services.permissions import require_permission
 from app.services.security_context import verify_signed_security_context
 
 
 router = APIRouter(prefix="/api/intelligence", tags=["Intelligence"])
 v1_router = APIRouter(prefix="/api/v1/intelligence", tags=["Intelligence"])
-internal_router = APIRouter(prefix="/internal/intelligence", tags=["Intelligence (internal)"])
+internal_router = APIRouter(
+    prefix="/internal/intelligence", tags=["Intelligence (internal)"]
+)
 DATASETS_READ_DEPENDENCY = [Depends(require_permission("datasets.read"))]
 
 
@@ -78,7 +93,7 @@ class GoldRefreshIntelligenceRequest(_StrictModel):
     workspace_id: str = Field(min_length=1, max_length=80)
     cartridge_id: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
     airflow_dag_run_id: str = Field(min_length=1, max_length=256)
-    pipeline_run_id: str | None = Field(default=None, max_length=512)
+    pipeline_run_id: str = Field(min_length=1, max_length=512)
     materialization_status: Literal["success", "partial"] = "success"
     datasets: list[str] = Field(default_factory=list, max_length=200)
     finished_at: str | None = Field(default=None, max_length=80)
@@ -96,6 +111,7 @@ class GoldRefreshIntelligenceRequest(_StrictModel):
 class InternalMcpRequest(_StrictModel):
     security_context: dict[str, Any]
     payload: dict[str, Any] = Field(default_factory=dict)
+    effect_authority: dict[str, Any] | None = None
 
     @field_validator("payload")
     @classmethod
@@ -422,7 +438,111 @@ def _internal_mcp_user(
         "agent_id": ctx.get("agent_id"),
         "agent_slug": ctx.get("agent_slug"),
         "agent_run_id": ctx.get("agent_run_id"),
+        "security_context_source": ctx.get("source"),
     }
+
+
+_SCHEDULED_EFFECT_FIELDS = {
+    "source",
+    "audience",
+    "purpose",
+    "tool",
+    "schedule_run_id",
+    "fencing_token",
+    "tenant_id",
+    "workspace_id",
+    "agent_id",
+    "agent_run_id",
+    "jti",
+    "body_digest",
+    "_signed_at",
+    "_signature_version",
+    "_signature",
+}
+_SCHEDULED_EFFECT_HEX = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _verified_effect_authority(
+    user: dict[str, Any], authority: object, expected_tool: str
+) -> dict[str, Any]:
+    if not isinstance(authority, dict) or set(authority) != _SCHEDULED_EFFECT_FIELDS:
+        raise HTTPException(403, "scheduled effect authority is invalid")
+    fixed = {
+        "source": "console",
+        "audience": "mcp-infra",
+        "purpose": "mcp.scheduled_effect",
+        "tool": expected_tool,
+        "tenant_id": user.get("tenant_id"),
+        "workspace_id": user.get("workspace_id"),
+        "agent_id": user.get("agent_id"),
+        "agent_run_id": user.get("agent_run_id"),
+        "_signature_version": "hmac-sha256-v2",
+    }
+    if any(authority.get(key) != value for key, value in fixed.items()):
+        raise HTTPException(403, "scheduled effect authority is invalid")
+    try:
+        schedule_run_id = int(authority["schedule_run_id"])
+        fencing_token = int(authority["fencing_token"])
+        signed_at = int(authority["_signed_at"])
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(403, "scheduled effect authority is invalid") from exc
+    if (
+        isinstance(authority["schedule_run_id"], bool)
+        or isinstance(authority["fencing_token"], bool)
+        or schedule_run_id <= 0
+        or fencing_token <= 0
+    ):
+        raise HTTPException(403, "scheduled effect authority is invalid")
+    if any(
+        not _SCHEDULED_EFFECT_HEX.fullmatch(str(authority.get(field) or ""))
+        for field in ("jti", "body_digest", "_signature")
+    ):
+        raise HTTPException(403, "scheduled effect authority is invalid")
+    now = int(time.time())
+    if signed_at > now + 30 or now - signed_at > 300:
+        raise HTTPException(403, "scheduled effect authority is expired")
+    key = str(os.environ.get("SECURITY_CONTEXT_SIGNING_KEY") or "").strip()
+    if len(key) < 32:
+        raise HTTPException(503, "scheduled effect authority is unavailable")
+    unsigned = {key: value for key, value in authority.items() if key != "_signature"}
+    canonical = json.dumps(
+        unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode()
+    expected = hmac.new(key.encode(), canonical, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(str(authority["_signature"]), expected):
+        raise HTTPException(403, "scheduled effect authority is invalid")
+    return {
+        "schedule_run_id": schedule_run_id,
+        "fencing_token": fencing_token,
+        "agent_id": str(user.get("agent_id") or ""),
+    }
+
+
+@asynccontextmanager
+async def _scheduled_effect_guard(
+    user: dict[str, Any], authority: object, expected_tool: str
+):
+    scheduled = user.get("security_context_source") == "agent_runner"
+    if not scheduled:
+        if authority is not None:
+            raise HTTPException(403, "scheduled effect authority is not permitted")
+        yield
+        return
+    if authority is None:
+        raise HTTPException(403, "scheduled effect authority is required")
+    user["_scheduled_effect_authority"] = _verified_effect_authority(
+        user, authority, expected_tool
+    )
+    try:
+        pool = await auth.pool()
+        async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+            user["_scheduled_effect_connection"] = conn
+            try:
+                yield
+            finally:
+                user.pop("_scheduled_effect_connection", None)
+    finally:
+        user.pop("_scheduled_effect_authority", None)
 
 
 @internal_router.post("/gold-refresh")
@@ -436,6 +556,16 @@ async def intelligence_gold_refresh_internal(
         )
     user = await _gold_refresh_user(body)
     run_ref = _gold_refresh_run_ref(body)
+    try:
+        await assert_expected_pipeline_run(
+            user,
+            expected_run_id=body.pipeline_run_id,
+            cartridge_id=body.cartridge_id,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503, detail="Gold intelligence outcome unavailable"
+        ) from exc
     payload = {
         "cartridge_id": body.cartridge_id,
         "datasets": body.datasets,
@@ -457,22 +587,48 @@ async def intelligence_gold_refresh_internal(
         },
     }
     try:
-        result = await intelligence_engine.run_intelligence(user, payload, persist=True)
+        with capture_publication_trace() as publication_trace:
+            result = await intelligence_engine.run_intelligence(
+                user, payload, persist=True
+            )
     except Exception as exc:
-        return {
-            "ok": False,
-            "run_ref": run_ref,
-            "error": str(getattr(exc, "detail", exc)),
-        }
+        raise HTTPException(
+            status_code=503, detail="Gold intelligence outcome unavailable"
+        ) from exc
+    status = result.get("status") or (
+        "completed" if result.get("signals") else "not_ready"
+    )
+    signal_count = (
+        int(result.get("signals_generated") or 0)
+        if result.get("idempotent")
+        else len(result.get("signals") or [])
+    )
+    if status not in {"binding_pending", "completed"} or signal_count <= 0:
+        raise HTTPException(
+            status_code=503, detail="Gold intelligence outcome unavailable"
+        )
+    try:
+        await persist_gold_refresh_binding(
+            user,
+            expected_run_id=body.pipeline_run_id,
+            expected_run_ref=run_ref,
+            intelligence_result={**result, "run_ref": result.get("run_ref") or run_ref},
+            publication_trace=publication_trace,
+            expected_datasets=body.datasets,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503, detail="Gold intelligence outcome unavailable"
+        ) from exc
+    status = "completed"
     _invalidate_control_room_cache(user)
     return {
         "ok": True,
         "run_ref": result.get("run_ref") or run_ref,
         "intelligence_run_id": result.get("intelligence_run_id"),
-        "status": result.get("status")
-        or ("completed" if result.get("signals") else "not_ready"),
+        "status": status,
         "idempotent": bool(result.get("idempotent")),
-        "signals": len(result.get("signals") or []),
+        "signals": signal_count,
         "skipped": len(result.get("skipped") or []),
         "dataset_unavailable_count": result.get("dataset_unavailable_count", 0),
         "insufficient_history_count": result.get("insufficient_history_count", 0),
@@ -487,7 +643,10 @@ async def intelligence_monte_carlo_run_internal(
 ):
     user = _internal_mcp_user(body, internal_service)
     request = MonteCarloRunRequest.model_validate(body.payload)
-    return await monte_carlo_service.run_simulation(user, _payload(request))
+    async with _scheduled_effect_guard(
+        user, body.effect_authority, "simulation__monte_carlo_run"
+    ):
+        return await monte_carlo_service.run_simulation(user, _payload(request))
 
 
 @internal_router.post("/orchestrate")
@@ -498,26 +657,33 @@ async def intelligence_orchestrate_internal(
     user = _internal_mcp_user(body, internal_service)
     request = OrchestrationRequest.model_validate(body.payload)
     try:
-        orchestration = await decision_orchestrator.orchestrate(user, _payload(request))
-        if not body.execute_engines:
-            return orchestration
-        orchestration_row = (
-            orchestration.get("orchestration")
-            if isinstance(orchestration, dict)
-            else {}
-        )
-        orchestration_id = str((orchestration_row or {}).get("orchestration_id") or "")
-        if not orchestration_id:
-            raise HTTPException(status_code=500, detail="orchestration_id missing")
-        execution_request = OrchestrationExecuteEnginesRequest.model_validate(
-            {"engine_inputs": body.engine_inputs}
-        )
-        execution = await orchestrator_execution.execute_engines(
-            user,
-            orchestration_id,
-            _payload(execution_request),
-        )
-        return {**orchestration, "engine_execution": execution}
+        async with _scheduled_effect_guard(
+            user, body.effect_authority, "decision__orchestrate"
+        ):
+            orchestration = await decision_orchestrator.orchestrate(
+                user, _payload(request)
+            )
+            if not body.execute_engines:
+                return orchestration
+            orchestration_row = (
+                orchestration.get("orchestration")
+                if isinstance(orchestration, dict)
+                else {}
+            )
+            orchestration_id = str(
+                (orchestration_row or {}).get("orchestration_id") or ""
+            )
+            if not orchestration_id:
+                raise HTTPException(status_code=500, detail="orchestration_id missing")
+            execution_request = OrchestrationExecuteEnginesRequest.model_validate(
+                {"engine_inputs": body.engine_inputs}
+            )
+            execution = await orchestrator_execution.execute_engines(
+                user,
+                orchestration_id,
+                _payload(execution_request),
+            )
+            return {**orchestration, "engine_execution": execution}
     except decision_orchestrator.DecisionOrchestratorError as exc:
         raise _orchestrator_error(exc) from exc
     except orchestrator_execution.OrchestratorExecutionError as exc:

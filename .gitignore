@@ -120,3 +120,4 @@ terraform.tfstate.backup
 **/.terraform/
 *.tfvars
 !*.tfvars.example
+.omega-ot-dags.*

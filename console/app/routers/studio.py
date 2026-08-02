@@ -2424,20 +2424,18 @@ async def superset_dataset(
         raise HTTPException(400, f"Table '{table_name}' is not a registered Gold dataset")
 
     try:
-        dbs = await client.list_databases()
-        if database_id:
-            if not any(str(db.get("id")) == str(database_id) for db in dbs):
-                raise HTTPException(400, "database_id is not registered in Superset")
-        else:
-            match = next((db for db in dbs if db.get("name") in {"modecissions_gold", "Postgres Gold"}), None)
-            match = match or (dbs[0] if dbs else None)
-            if not match:
-                gold_uri = os.environ.get("SUPERSET_GOLD_SQLALCHEMY_URI", "").strip()
-                if not gold_uri:
-                    raise HTTPException(503, "No Superset database connection registered")
-                match = await client.create_database("modecissions_gold", gold_uri)
-            database_id = match["id"]
-        result = await client.create_dataset(int(database_id), table_name, schema=schema)
+        from app.services.superset_gold_scope import (
+            resolve_scoped_database_id,
+            resolve_superset_gold_relation,
+        )
+
+        database_id = await resolve_scoped_database_id(client, user, database_id)
+        relation = await resolve_superset_gold_relation(
+            user, table_name.removeprefix("gold_")
+        )
+        result = await client.create_dataset(
+            int(database_id), relation.table, schema=relation.schema
+        )
     except superset_client.SupersetConfigError as exc:
         raise HTTPException(503, str(exc)) from exc
     except superset_client.SupersetRequestError as exc:
@@ -2461,7 +2459,9 @@ async def superset_dataset(
         status="success",
         metadata={"database_id": int(database_id), "existing": bool(result.get("existing"))},
     )
-    return {"created": not result.get("existing"), **result}
+    safe_result = {key: value for key, value in result.items() if key not in {"table", "schema"}}
+    return {"created": not result.get("existing"), **safe_result,
+            "table": table_name, "schema": schema}
 
 
 @router.get("/semantic", dependencies=[Depends(require_studio_read)])

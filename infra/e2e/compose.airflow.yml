@@ -1,0 +1,135 @@
+x-airflow-env: &airflow-env
+  APP_ENV: production
+  INTERNAL_API_KEY: ${INTERNAL_API_KEY:?required}
+  SECURITY_CONTEXT_SIGNING_KEY: ${SECURITY_CONTEXT_SIGNING_KEY:?required}
+  INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA: ${INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA:?required}
+  INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT: ${INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT:?required}
+  INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE: ${INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE:?required}
+  AIRFLOW__CORE__EXECUTOR: LocalExecutor
+  AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+  AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+  AIRFLOW__CORE__PARALLELISM: "4"
+  AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: "4"
+  DATASET_REFRESH_RETRIES: "0"
+  AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://omega_airflow_meta:${OMEGA_AIRFLOW_META_PASSWORD:?required}@postgres:5432/airflow
+  AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:?required}
+  AIRFLOW__WEBSERVER__WORKERS: "1"
+  AIRFLOW__WEBSERVER__WEB_SERVER_MASTER_TIMEOUT: "900"
+  AIRFLOW__WEBSERVER__WEB_SERVER_WORKER_TIMEOUT: "300"
+  AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
+  AIRFLOW_ADMIN_USER: ${AIRFLOW_ADMIN_USER:?required}
+  AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?required}
+  AIRFLOW_URL: http://airflow:8080
+  AIRFLOW_USER: ${AIRFLOW_ADMIN_USER:?required}
+  AIRFLOW_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?required}
+  AIRFLOW_VAR_POSTGRES_CONN: postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?required}@postgres:5432/modecissions
+  DATABASE_URL: postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?required}@postgres:5432/modecissions
+  AIRFLOW_VAR_MINIO_ENDPOINT: minio:9000
+  AIRFLOW_VAR_MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?required}
+  AIRFLOW_VAR_MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?required}
+  AIRFLOW_VAR_MINIO_BUCKET: lakehouse
+  AIRFLOW_VAR_MINIO_SECURE: "false"
+  MINIO_ENDPOINT: minio:9000
+  MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?required}
+  MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?required}
+  MINIO_BUCKET: lakehouse
+  MINIO_SECURE: "false"
+  REFINEMENT_URL: http://refinement:8500
+  MCP_INFRA_URL: http://mcp-infra:8010
+  CONSOLE_INTERNAL_URL: http://console:8000
+
+x-airflow-build: &airflow-build
+  context: ../airflow
+  dockerfile: Dockerfile
+
+x-airflow-volumes: &airflow-volumes
+  - ${OMEGA_E2E_DAGS_DIR:?required}:/opt/airflow/dags:ro
+  - airflow_logs:/opt/airflow/logs
+
+services:
+  airflow-init:
+    build: *airflow-build
+    entrypoint: /bin/bash
+    command:
+      - -ec
+      - |
+        python - <<'PY'
+        import os, psycopg2
+        conn = psycopg2.connect(host="postgres", dbname="modecissions", user="postgres", password=os.environ["POSTGRES_PASSWORD"])
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM pg_database WHERE datname='airflow'")
+        if cur.fetchone() is None:
+            cur.execute("CREATE DATABASE airflow")
+        cur.close(); conn.close()
+        PY
+        airflow db migrate
+        python - <<'PY'
+        import os, psycopg2
+        conn = psycopg2.connect(host="postgres", dbname="airflow", user="postgres", password=os.environ["POSTGRES_PASSWORD"])
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("GRANT ALL ON SCHEMA public TO omega_airflow_meta")
+        cur.execute("GRANT ALL ON ALL TABLES IN SCHEMA public TO omega_airflow_meta")
+        cur.execute("GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO omega_airflow_meta")
+        cur.execute("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO omega_airflow_meta")
+        cur.execute("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO omega_airflow_meta")
+        cur.close(); conn.close()
+        PY
+        airflow users create --username "$AIRFLOW_ADMIN_USER" --password "$AIRFLOW_ADMIN_PASSWORD" --firstname E2E --lastname Admin --role Admin --email e2e@invalid.local || true
+        airflow users reset-password --username "$AIRFLOW_ADMIN_USER" --password "$AIRFLOW_ADMIN_PASSWORD"
+    environment:
+      <<: *airflow-env
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:?required}@postgres:5432/airflow
+    depends_on:
+      postgres: {condition: service_healthy}
+    mem_limit: 512m
+    cpus: 1.5
+    pids_limit: 192
+    restart: "no"
+
+  airflow:
+    build: *airflow-build
+    command: webserver
+    environment: *airflow-env
+    volumes: *airflow-volumes
+    depends_on:
+      airflow-init: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/health | grep -q '\"status\": \"healthy\"'"]
+      interval: 10s
+      timeout: 8s
+      retries: 24
+      start_period: 600s
+    mem_limit: 1440m
+    cpus: 1.0
+    pids_limit: 192
+    restart: "no"
+
+  airflow-scheduler:
+    build: *airflow-build
+    command: scheduler
+    environment: *airflow-env
+    volumes: *airflow-volumes
+    depends_on:
+      airflow-init: {condition: service_completed_successfully}
+      refinement: {condition: service_healthy}
+      mcp-infra: {condition: service_healthy}
+      console: {condition: service_healthy}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c 'import json, urllib.request;
+          assert json.load(urllib.request.urlopen(
+          "http://airflow:8080/health", timeout=3
+          ))["scheduler"]["status"] == "healthy"'
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    mem_limit: 768m
+    cpus: 1.25
+    pids_limit: 256
+    restart: "no"

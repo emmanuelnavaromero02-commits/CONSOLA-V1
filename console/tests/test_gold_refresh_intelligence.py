@@ -2,8 +2,23 @@ from __future__ import annotations
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from app.routers import intelligence as intelligence_router
+
+
+@pytest.fixture(autouse=True)
+def _binding_boundary(monkeypatch):
+    async def assert_pipeline(*args, **kwargs):
+        return None
+
+    async def persist(*args, **kwargs):
+        return "a" * 64
+
+    monkeypatch.setattr(
+        intelligence_router, "assert_expected_pipeline_run", assert_pipeline
+    )
+    monkeypatch.setattr(intelligence_router, "persist_gold_refresh_binding", persist)
 
 
 def _request() -> intelligence_router.GoldRefreshIntelligenceRequest:
@@ -17,6 +32,43 @@ def _request() -> intelligence_router.GoldRefreshIntelligenceRequest:
         datasets=["forecast_mensual", "unused_dataset"],
         finished_at="2026-06-19T00:05:00+00:00",
     )
+
+
+def test_gold_refresh_requires_pipeline_run_identity() -> None:
+    payload = _request().model_dump()
+    payload.pop("pipeline_run_id")
+    with pytest.raises(ValidationError):
+        intelligence_router.GoldRefreshIntelligenceRequest(**payload)
+
+
+@pytest.mark.asyncio
+async def test_gold_refresh_rejects_registry_mismatch_before_intelligence(
+    monkeypatch,
+) -> None:
+    async def rejected(*args, **kwargs):
+        raise RuntimeError("mismatch")
+
+    async def must_not_run(*args, **kwargs):
+        raise AssertionError("Intelligence must not run without registry authority")
+
+    async def scope(body):
+        return {
+            "tenant_id": body.tenant_id,
+            "workspace_id": body.workspace_id,
+            "tenant_mismatch": False,
+            "requested_tenant_id": body.tenant_id,
+        }
+
+    monkeypatch.setattr(intelligence_router, "_resolve_gold_refresh_scope", scope)
+    monkeypatch.setattr(intelligence_router, "assert_expected_pipeline_run", rejected)
+    monkeypatch.setattr(
+        intelligence_router.intelligence_engine, "run_intelligence", must_not_run
+    )
+    with pytest.raises(HTTPException) as exc:
+        await intelligence_router.intelligence_gold_refresh_internal(
+            _request(), internal_service="airflow"
+        )
+    assert exc.value.status_code == 503
 
 
 @pytest.mark.asyncio
@@ -60,6 +112,8 @@ async def test_gold_refresh_internal_builds_scoped_idempotent_payload(monkeypatc
             "dataset_unavailable_count": 0,
             "insufficient_history_count": 0,
             "idempotent": idempotent,
+            "signals_generated": 1 if idempotent else 0,
+            "status": "completed",
         }
 
     def fake_invalidate(user: dict) -> None:
@@ -95,7 +149,7 @@ async def test_gold_refresh_internal_builds_scoped_idempotent_payload(monkeypatc
     assert response["skipped"] == 1
     assert response["idempotent"] is False
     assert retry_response["ok"] is True
-    assert retry_response["signals"] == 0
+    assert retry_response["signals"] == 1
     assert retry_response["skipped"] == 0
     assert retry_response["idempotent"] is True
     assert response["run_ref"] == (

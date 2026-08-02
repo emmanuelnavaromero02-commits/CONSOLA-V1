@@ -28,6 +28,11 @@ BASE_USER = {
 @pytest.fixture(autouse=True)
 def _ttl_cache(monkeypatch):
     monkeypatch.setenv("OMEGA_CONTROL_ROOM_CACHE_TTL_SECONDS", "60")
+    monkeypatch.setattr(
+        authorization_cache,
+        "publication_epoch",
+        AsyncMock(return_value="publication-head-1"),
+    )
     control_room._CONTROL_ROOM_READ_CACHE.clear()
     control_room._CONTROL_ROOM_READ_CACHE_LOCKS.clear()
     yield
@@ -126,6 +131,18 @@ async def test_access_revision_change_uses_a_distinct_cache_key(monkeypatch):
     second = await control_room.control_room_dashboard(_user(access_revision="42"))
 
     assert first == second
+    assert loader.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_publication_head_change_uses_a_distinct_cache_key(monkeypatch):
+    epoch = AsyncMock(side_effect=["publication-head-1", "publication-head-2"])
+    monkeypatch.setattr(authorization_cache, "publication_epoch", epoch)
+    loader = _dashboard_loader(monkeypatch)
+
+    await control_room.control_room_dashboard(_user())
+    await control_room.control_room_dashboard(_user())
+
     assert loader.await_count == 2
 
 

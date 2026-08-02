@@ -25,13 +25,20 @@ def test_agent_schedule_runs_migration_enforces_one_run_per_fire_time():
     )
 
 
-def test_airflow_agent_runner_sends_exact_schedule_fire_to_console():
+def test_airflow_agent_runner_uses_server_owned_scoped_discovery():
     source = (ROOT / "airflow/dags/agent_runner.py").read_text(encoding="utf-8")
-    assert "def _cron_fire_in_window(" in source
-    assert '"scheduled_fire_at": fire_at.isoformat()' in source
-    assert '"schedule_key":      str(sched.get("key") or "default")' in source
-    assert '"tenant_id":         str(tenant_id) if tenant_id else None' in source
-    assert '"workspace_id":      str(workspace_id) if workspace_id else None' in source
+    runtime = (ROOT / "console/app/services/scheduled_runtime.py").read_text(
+        encoding="utf-8"
+    )
+    assert "/api/operations/internal/agent-runner/due" in source
+    assert '"window_start": logical_date.isoformat()' in source
+    assert '"window_end": window_end.isoformat()' in source
+    assert "FROM agents WHERE is_active" not in source
+    assert "FROM workspaces w" in runtime
+    assert "JOIN tenants t" in runtime
+    assert "async with scoped_db(pool, tenant_id, workspace_id)" in runtime
+    assert "tenant_id = $1::uuid" in runtime
+    assert "workspace_id = $2::uuid" in runtime
     assert '"tenant_id": agent.get("tenant_id")' in source
     assert '"workspace_id": agent.get("workspace_id")' in source
     assert '"scheduled_fire_at": agent.get("scheduled_fire_at")' in source
@@ -81,10 +88,14 @@ def test_agent_runtime_keeps_wisdombit_as_decision_source_after_simulation():
     source = (ROOT / "console/app/services/agent_runtime.py").read_text(
         encoding="utf-8"
     )
-    section = source.split(
-        'if engine in {"decision_orchestrator", "decision__orchestrate", "orchestrator"}:',
-        1,
-    )[1].split('if engine in {"control_room_alert"', 1)[0]
+    tree = ast.parse(source)
+    decision_if = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.If)
+        and "decision_orchestrator" in (ast.get_source_segment(source, node.test) or "")
+    )
+    section = ast.get_source_segment(source, decision_if) or ""
 
     assert 'source_type = "monte_carlo_simulation"' not in section
     assert 'source_type = "wisdom_bit"' in section
@@ -141,7 +152,7 @@ def test_scheduled_agents_fail_closed_without_monitor_contract():
     assert "load_agent(agent_id, user_context=scheduled_user_context)" in section
     assert "_repair_loaded_successfactors_talent_monitor_if_needed" in section
     assert "scheduled agents require monitor role and monitor contract" in section
-    assert "run_scheduled_monitor" in section
+    assert "execute_reserved_scheduled_monitor" in section
     assert (
         "result = await _agent_runtime.run(agent, message, history=[], user=None)"
         not in section
@@ -160,7 +171,7 @@ def test_scheduled_agents_fail_closed_without_monitor_contract():
     assert "load_agent(agent_id, user_context=scheduled_user_context)" in v1_section
     assert "_repair_loaded_successfactors_talent_monitor_if_needed" in v1_section
     assert "scheduled agents require monitor role and monitor contract" in v1_section
-    assert "run_scheduled_monitor" in v1_section
+    assert "execute_reserved_scheduled_monitor" in v1_section
     assert (
         "result = await _agent_runtime.run(agent, message, history=[], user=None)"
         not in v1_section

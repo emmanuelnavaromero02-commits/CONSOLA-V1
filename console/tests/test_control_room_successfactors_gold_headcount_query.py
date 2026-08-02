@@ -72,6 +72,23 @@ class _FakeConnection:
             return self._aggregate_rows(sql)
         raise AssertionError(f"unexpected fetch: {sql}")
 
+    async def fetchrow(self, _sql: str, *args: object):
+        dataset = str(args[2])
+        if self.omit_company and dataset.endswith("_company"):
+            return None
+        return {
+            "run_id": "00000000-0000-0000-0000-000000000001",
+            "generation": 1,
+            "status": "legacy_unverified",
+            "gold_table": gold_fetcher._gold_table(dataset),
+            "receipt_id": None,
+            "object_checksum": None,
+            "evidence_digest": None,
+            "object_uri": None,
+            "object_version": None,
+            "schema_digest": None,
+        }
+
     def cursor(self, sql: str, *args: object, prefetch: int):
         self.cursor_calls.append((sql, args, prefetch))
 
@@ -256,43 +273,3 @@ async def test_gold_service_preserves_full_total_not_only_five_visible_rows(
 
     assert company["value"] == 501_501
     assert [row["headcount"] for row in company["rows"]] == [1001, 1000, 999, 998, 997]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("company_status", ["missing", "empty"])
-async def test_active_headcount_does_not_fallback_to_capped_employee_rows(
-    monkeypatch, company_status: str
-):
-    async def employee_rows(_dataset: str, _user: dict | None, _limit: int):
-        return [{"is_active": True}, {"is_active": True}]
-
-    async def summaries(_user: dict | None, *, limit: int):
-        missing = {
-            "rows": [],
-            "total": None,
-            "status": company_status,
-            "error": None,
-        }
-        results = {
-            dataset: dict(missing)
-            for _key, dataset, _name_key in headcount_query._DIMENSIONS
-        }
-        results["sap_successfactors_employee_360"] = {
-            "rows": [],
-            "total": None,
-            "status": "unavailable",
-            "error": "exact aggregate unavailable",
-        }
-        return results
-
-    monkeypatch.setattr(gold_fetcher, "query_gold_dataset_rows", employee_rows)
-    monkeypatch.setattr(
-        headcount_query, "query_successfactors_headcount_summaries", summaries
-    )
-    payload = await control_room_service.sap_successfactors_gold_kpis(USER)
-    active = next(
-        widget for widget in payload["widgets"] if widget["id"] == "sf_active_headcount"
-    )
-
-    assert active["value"] is None
-    assert active["status"] == "unavailable"

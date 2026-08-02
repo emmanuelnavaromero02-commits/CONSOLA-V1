@@ -19,6 +19,8 @@ _SAFE_IDENT_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]{0,63}$")
 
 def _get_duckdb_connection() -> duckdb.DuckDBPyConnection:
     conn = duckdb.connect()
+    conn.execute("SET autoinstall_known_extensions=false;")
+    conn.execute("SET autoload_known_extensions=false;")
     conn.execute("LOAD httpfs;")
     conn.execute(f"SET s3_endpoint='{settings.minio_endpoint}';")
     conn.execute(f"SET s3_access_key_id='{settings.minio_access_key}';")

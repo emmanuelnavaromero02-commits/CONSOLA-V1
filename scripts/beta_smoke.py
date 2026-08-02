@@ -60,7 +60,9 @@ def _short(text: str, limit: int = 800) -> str:
     return text if len(text) <= limit else text[: limit - 3] + "..."
 
 
-def _http(url: str, *, expect_json: bool = False, timeout: int = 8) -> tuple[int, str, Any | None]:
+def _http(
+    url: str, *, expect_json: bool = False, timeout: int = 8
+) -> tuple[int, str, Any | None]:
     req = urllib.request.Request(url, headers={"Accept": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as response:
@@ -87,20 +89,33 @@ class BetaSmoke:
         self.checks: list[Check] = []
 
     def add(self, name: str, status: str, evidence: str, unblock: str = "") -> None:
-        self.checks.append(Check(name=name, status=status, evidence=_short(evidence), unblock=unblock))
+        self.checks.append(
+            Check(name=name, status=status, evidence=_short(evidence), unblock=unblock)
+        )
         print(f"[beta-smoke {status}] {name}: {self.checks[-1].evidence}")
 
     def check_version(self) -> None:
         version_path = REPO / "VERSION"
-        version = version_path.read_text(encoding="utf-8").strip() if version_path.exists() else ""
+        version = (
+            version_path.read_text(encoding="utf-8").strip()
+            if version_path.exists()
+            else ""
+        )
         if version.endswith("-beta") and version != "1.0.0":
             self.add("VERSION remains beta", PASS, f"VERSION={version}")
         else:
-            self.add("VERSION remains beta", FAIL, f"VERSION={version or '<missing>'}", "Keep VERSION beta until v1.0 gates are green.")
+            self.add(
+                "VERSION remains beta",
+                FAIL,
+                f"VERSION={version or '<missing>'}",
+                "Keep VERSION beta until v1.0 gates are green.",
+            )
 
         # Release identity uses `git describe --tags --exact-match HEAD`
         # when the operator wants a tagged release-candidate gate.
-        result = _run(["git", "describe", "--tags", "--exact-match", "HEAD"], timeout=10)
+        result = _run(
+            ["git", "describe", "--tags", "--exact-match", "HEAD"], timeout=10
+        )
         if result.returncode == 0:
             tag = result.stdout.strip()
             normalized = tag[1:] if tag.startswith("v") else tag
@@ -119,12 +134,22 @@ class BetaSmoke:
                 "Run beta-smoke from the tagged release candidate, or unset OMEGA_BETA_SMOKE_REQUIRE_TAG.",
             )
         else:
-            self.add("git tag aligns with VERSION", PASS, "HEAD is not exactly tagged; local dev mode allows this.")
+            self.add(
+                "git tag aligns with VERSION",
+                PASS,
+                "HEAD is not exactly tagged; local dev mode allows this.",
+            )
 
         dirty_entries = self._release_dirty_entries()
-        allow_dirty = os.environ.get("OMEGA_BETA_SMOKE_ALLOW_DIRTY", "").strip().lower() in {"1", "true", "yes", "on"}
+        allow_dirty = os.environ.get(
+            "OMEGA_BETA_SMOKE_ALLOW_DIRTY", ""
+        ).strip().lower() in {"1", "true", "yes", "on"}
         if not dirty_entries:
-            self.add("release tree is clean", PASS, "no tracked or release-relevant untracked changes")
+            self.add(
+                "release tree is clean",
+                PASS,
+                "no tracked or release-relevant untracked changes",
+            )
         elif allow_dirty:
             self.add(
                 "release tree is clean",
@@ -143,7 +168,11 @@ class BetaSmoke:
         status, body, payload = _http("http://127.0.0.1:8000/healthz", expect_json=True)
         health_version = payload.get("version") if isinstance(payload, dict) else None
         if status == 200 and health_version == version:
-            self.add("console /healthz version aligns", PASS, f"/healthz version={health_version}")
+            self.add(
+                "console /healthz version aligns",
+                PASS,
+                f"/healthz version={health_version}",
+            )
         else:
             self.add(
                 "console /healthz version aligns",
@@ -169,16 +198,18 @@ class BetaSmoke:
         env_file = REPO / "infra" / ".env"
         if env_file.exists():
             cmd.extend(["--env-file", str(env_file)])
-        cmd.extend([
-            "-f",
-            "infra/docker-compose.yml",
-            "-f",
-            "infra/docker-compose.dev.yml",
-            "--profile",
-            "sap",
-            "config",
-            "--quiet",
-        ])
+        cmd.extend(
+            [
+                "-f",
+                "infra/docker-compose.yml",
+                "-f",
+                "infra/docker-compose.dev.yml",
+                "--profile",
+                "sap",
+                "config",
+                "--quiet",
+            ]
+        )
         result = _run(cmd, timeout=60)
         self.add(
             "docker compose full SAP config validates",
@@ -225,7 +256,9 @@ class BetaSmoke:
             "Run OMEGA_BETA_SMOKE_WARM_ACCEPTANCE=1 make beta-smoke, or manually materialize Gold and run Intelligence.",
         )
 
-    def _psql(self, container: str, database: str, sql: str, *, port: str | None = None) -> tuple[bool, str]:
+    def _psql(
+        self, container: str, database: str, sql: str, *, port: str | None = None
+    ) -> tuple[bool, str]:
         cmd = ["docker", "exec", container, "psql", "-U", "postgres"]
         if port:
             cmd.extend(["-p", port])
@@ -248,14 +281,14 @@ class BetaSmoke:
         )
 
         ok, out = self._psql(
-            "mode_postgres",
-            "modecissions",
+            "mode_postgres_gold",
+            "modecissions_gold",
             """
             SELECT COALESCE(COUNT(*),0)::text || '|' || COALESCE(SUM(row_count),0)::text
-              FROM silver_lineage
-             WHERE layer='gold'
-               AND COALESCE(row_count,0) > 0;
+              FROM omega_publication.published_lineage
+             WHERE layer='gold' AND row_count > 0;
             """,
+            port="5433",
         )
         parts = out.split("|") if ok else []
         lineage_count = int(parts[0]) if len(parts) == 2 and parts[0].isdigit() else 0
@@ -264,7 +297,7 @@ class BetaSmoke:
             "Gold lineage exists",
             PASS if lineage_count > 0 and lineage_rows > 0 else FAIL,
             f"gold_lineage_entries={lineage_count} lineage_rows={lineage_rows} raw={out}",
-            "Run make acceptance or another real refinement materialization that inserts layer='gold' rows into silver_lineage.",
+            "Run make acceptance or another staged Gold publication with authoritative lineage.",
         )
 
         ok, out = self._psql(
@@ -280,7 +313,11 @@ class BetaSmoke:
             "Run Intelligence after Gold is ready so control_room_items are published from persisted signals.",
         )
 
-        ok, out = self._psql("mode_postgres", "modecissions", "SELECT COUNT(*) FROM intelligence_signals;")
+        ok, out = self._psql(
+            "mode_postgres",
+            "modecissions",
+            "SELECT COUNT(*) FROM intelligence_signals;",
+        )
         signals = int(out) if ok and out.isdigit() else 0
         self.add(
             "Intelligence has persisted signals",
@@ -317,7 +354,15 @@ class BetaSmoke:
             """,
             port="5433",
         )
-        tables = [line.strip() for line in out.splitlines() if re.fullmatch(r"gold_[A-Za-z0-9_]+", line.strip())] if ok else []
+        tables = (
+            [
+                line.strip()
+                for line in out.splitlines()
+                if re.fullmatch(r"gold_[A-Za-z0-9_]+", line.strip())
+            ]
+            if ok
+            else []
+        )
         self.add(
             "Postgres Gold has materialized tables",
             PASS if tables else FAIL,
@@ -365,9 +410,20 @@ class BetaSmoke:
         )
 
     def check_external_writeback_blocked(self) -> None:
-        result = _run(["docker", "exec", "mode_console", "printenv", "CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK"], timeout=10)
+        result = _run(
+            [
+                "docker",
+                "exec",
+                "mode_console",
+                "printenv",
+                "CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK",
+            ],
+            timeout=10,
+        )
         value = result.stdout.strip().lower() if result.returncode == 0 else ""
-        allowed = os.environ.get("OMEGA_BETA_SMOKE_ALLOW_EXTERNAL_WRITEBACK", "").strip().lower() in {"1", "true", "yes", "on"}
+        allowed = os.environ.get(
+            "OMEGA_BETA_SMOKE_ALLOW_EXTERNAL_WRITEBACK", ""
+        ).strip().lower() in {"1", "true", "yes", "on"}
         blocked = value not in {"1", "true", "yes", "on"}
         self.add(
             "external write-back disabled by default",
@@ -386,7 +442,9 @@ class BetaSmoke:
             "fail": sum(1 for check in self.checks if check.status == FAIL),
             "blocked": sum(1 for check in self.checks if check.status == BLOCKED),
         }
-        (self.evidence_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+        (self.evidence_dir / "summary.json").write_text(
+            json.dumps(summary, indent=2) + "\n", encoding="utf-8"
+        )
         lines = [
             "# Beta Smoke Evidence",
             "",
@@ -400,7 +458,9 @@ class BetaSmoke:
             evidence = check.evidence.replace("|", "\\|")
             unblock = check.unblock.replace("|", "\\|")
             lines.append(f"| {check.name} | {check.status} | {evidence} | {unblock} |")
-        (self.evidence_dir / "REPORT.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        (self.evidence_dir / "REPORT.md").write_text(
+            "\n".join(lines) + "\n", encoding="utf-8"
+        )
 
     @property
     def status(self) -> str:
@@ -418,7 +478,12 @@ class BetaSmoke:
         self.check_gold_db()
         self.check_external_writeback_blocked()
         self.write_evidence()
-        print(json.dumps({"status": self.status, "evidence_dir": str(self.evidence_dir)}, indent=2))
+        print(
+            json.dumps(
+                {"status": self.status, "evidence_dir": str(self.evidence_dir)},
+                indent=2,
+            )
+        )
         if self.status == FAIL:
             return 1
         if self.status == BLOCKED:
@@ -427,16 +492,20 @@ class BetaSmoke:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run strict private-beta smoke checks against a running local OMEGA stack.")
+    parser = argparse.ArgumentParser(
+        description="Run strict private-beta smoke checks against a running local OMEGA stack."
+    )
     parser.add_argument(
         "--evidence-dir",
         type=Path,
-        default=DEFAULT_EVIDENCE_ROOT / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
+        default=DEFAULT_EVIDENCE_ROOT
+        / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
     )
     parser.add_argument(
         "--require-exact-tag",
         action="store_true",
-        default=os.environ.get("OMEGA_BETA_SMOKE_REQUIRE_TAG", "").strip().lower() in {"1", "true", "yes", "on"},
+        default=os.environ.get("OMEGA_BETA_SMOKE_REQUIRE_TAG", "").strip().lower()
+        in {"1", "true", "yes", "on"},
         help="Require HEAD to be exactly tagged and aligned with VERSION.",
     )
     args = parser.parse_args(argv)

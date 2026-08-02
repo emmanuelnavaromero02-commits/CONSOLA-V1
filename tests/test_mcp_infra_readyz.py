@@ -34,8 +34,7 @@ def _load_mcp_main(monkeypatch):
     _purge_app_modules()
     root = Path(__file__).resolve().parents[1]
     sys.path[:] = [
-        p for p in sys.path
-        if not any(marker in p for marker in SERVICE_PATH_MARKERS)
+        p for p in sys.path if not any(marker in p for marker in SERVICE_PATH_MARKERS)
     ]
     sys.path.insert(0, str(root / "mcp-infra"))
     env = {
@@ -87,8 +86,16 @@ def test_mcp_infra_healthz_is_liveness_only(monkeypatch):
     main = _load_mcp_main(monkeypatch)
     import psycopg2
 
-    monkeypatch.setattr(main.registry, "list_tools", lambda: (_ for _ in ()).throw(RuntimeError("registry down")))
-    monkeypatch.setattr(psycopg2, "connect", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("db down")))
+    monkeypatch.setattr(
+        main.registry,
+        "list_tools",
+        lambda: (_ for _ in ()).throw(RuntimeError("registry down")),
+    )
+    monkeypatch.setattr(
+        psycopg2,
+        "connect",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("db down")),
+    )
 
     assert main.healthz() == {"ok": True, "service": "mcp-infra"}
 
@@ -99,6 +106,7 @@ def test_mcp_infra_readyz_checks_registry_and_databases(monkeypatch):
 
     monkeypatch.setattr(main.registry, "list_tools", lambda: [{"name": "ok"}])
     monkeypatch.setattr(psycopg2, "connect", lambda **kwargs: FakeConn())
+    monkeypatch.setattr(main, "_duckdb_ready", lambda: True)
 
     resp = main.readyz()
     assert resp.status_code == 200
@@ -111,6 +119,7 @@ def test_mcp_infra_readyz_returns_503_when_registry_empty(monkeypatch):
 
     monkeypatch.setattr(main.registry, "list_tools", lambda: [])
     monkeypatch.setattr(psycopg2, "connect", lambda **kwargs: FakeConn())
+    monkeypatch.setattr(main, "_duckdb_ready", lambda: True)
 
     resp = main.readyz()
     assert resp.status_code == 503
@@ -122,7 +131,29 @@ def test_mcp_infra_readyz_returns_503_when_postgres_down(monkeypatch):
     import psycopg2
 
     monkeypatch.setattr(main.registry, "list_tools", lambda: [{"name": "ok"}])
-    monkeypatch.setattr(psycopg2, "connect", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("db down")))
+    monkeypatch.setattr(
+        psycopg2,
+        "connect",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("db down")),
+    )
+    monkeypatch.setattr(main, "_duckdb_ready", lambda: True)
+
+    resp = main.readyz()
+    assert resp.status_code == 503
+    assert _body(resp) == {"ok": False, "service": "mcp-infra"}
+
+
+def test_mcp_infra_readyz_returns_503_when_duckdb_extensions_are_missing(monkeypatch):
+    main = _load_mcp_main(monkeypatch)
+    import psycopg2
+
+    monkeypatch.setattr(main.registry, "list_tools", lambda: [{"name": "ok"}])
+    monkeypatch.setattr(psycopg2, "connect", lambda **kwargs: FakeConn())
+    monkeypatch.setattr(
+        main,
+        "_duckdb_ready",
+        lambda: (_ for _ in ()).throw(RuntimeError("missing")),
+    )
 
     resp = main.readyz()
     assert resp.status_code == 503

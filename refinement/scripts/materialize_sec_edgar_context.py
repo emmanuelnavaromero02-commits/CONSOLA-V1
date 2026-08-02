@@ -27,7 +27,9 @@ class SECMaterializationError(RuntimeError):
 
 
 def _dsn() -> str:
-    return os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "postgresql://")
+    return os.environ.get("DATABASE_URL", "").replace(
+        "postgresql+psycopg2://", "postgresql://"
+    )
 
 
 def _run_id() -> str:
@@ -35,7 +37,11 @@ def _run_id() -> str:
 
 
 def _default_evidence_dir() -> Path:
-    return Path(os.environ.get("OMEGA_EVIDENCE_DIR", "/tmp/omega-evidence")) / "sec-edgar-context" / _run_id()
+    return (
+        Path(os.environ.get("OMEGA_EVIDENCE_DIR", "/tmp/omega-evidence"))
+        / "sec-edgar-context"
+        / _run_id()
+    )
 
 
 def _scope_context(tenant_id: str, workspace_id: str) -> dict[str, object]:
@@ -61,7 +67,9 @@ class ScopedDatasetStore:
 
     def _set_scope(self, cur) -> None:
         cur.execute("SELECT set_config('app.tenant_id', %s, true)", (self.tenant_id,))
-        cur.execute("SELECT set_config('app.workspace_id', %s, true)", (self.workspace_id,))
+        cur.execute(
+            "SELECT set_config('app.workspace_id', %s, true)", (self.workspace_id,)
+        )
 
     def get_dataset(self, name: str) -> dict | None:
         with self._conn() as conn, conn.cursor() as cur:
@@ -81,7 +89,10 @@ class ScopedDatasetStore:
     def update_refresh(self, name: str, row_count: int) -> None:
         with self._conn() as conn, conn.cursor() as cur:
             self._set_scope(cur)
-            cur.execute("UPDATE datasets SET last_refresh = NOW(), row_count = %s, updated_at = NOW() WHERE name = %s", (row_count, name))
+            cur.execute(
+                "UPDATE datasets SET last_refresh = NOW(), row_count = %s, updated_at = NOW() WHERE name = %s",
+                (row_count, name),
+            )
             conn.commit()
 
 
@@ -102,14 +113,31 @@ def materialize_sec_edgar_context(
         ds = store.get_dataset(name)
         _validate_dataset(ds, name, expected_layer)
         if dry_run:
-            item = {"name": name, "layer": expected_layer, "status": "PASS", "dry_run": True}
+            item = {
+                "name": name,
+                "layer": expected_layer,
+                "status": "PASS",
+                "dry_run": True,
+            }
         else:
             result = engine.materialize(ds, context)
             row_count = int(result.get("row_count") or 0)
             store.update_refresh(name, row_count)
-            item = {"name": name, "layer": expected_layer, "status": "PASS", "dry_run": False, "row_count": row_count, "storage_uri": result.get("storage_uri")}
+            item = {
+                "name": name,
+                "layer": expected_layer,
+                "status": "PASS",
+                "dry_run": False,
+                "row_count": row_count,
+                "storage_uri": result.get("storage_uri"),
+            }
         results.append(item)
-    return {"status": "PASS", "tenant_id": tenant_id, "workspace_id": workspace_id, "datasets": results}
+    return {
+        "status": "PASS",
+        "tenant_id": tenant_id,
+        "workspace_id": workspace_id,
+        "datasets": results,
+    }
 
 
 def _validate_dataset(ds: dict | None, name: str, expected_layer: str) -> None:
@@ -125,13 +153,23 @@ def _validate_dataset(ds: dict | None, name: str, expected_layer: str) -> None:
 
 def _write_evidence(evidence_dir: Path, summary: dict[str, object]) -> None:
     evidence_dir.mkdir(parents=True, exist_ok=True)
-    (evidence_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    (evidence_dir / "summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Materialize governed SEC EDGAR context.")
-    parser.add_argument("--tenant-id", default=os.environ.get("OMEGA_TENANT_ID") or os.environ.get("TENANT_ID"))
-    parser.add_argument("--workspace-id", default=os.environ.get("OMEGA_WORKSPACE_ID") or os.environ.get("WORKSPACE_ID"))
+    parser = argparse.ArgumentParser(
+        description="Materialize governed SEC EDGAR context."
+    )
+    parser.add_argument(
+        "--tenant-id",
+        default=os.environ.get("OMEGA_TENANT_ID") or os.environ.get("TENANT_ID"),
+    )
+    parser.add_argument(
+        "--workspace-id",
+        default=os.environ.get("OMEGA_WORKSPACE_ID") or os.environ.get("WORKSPACE_ID"),
+    )
     parser.add_argument("--evidence-dir", type=Path, default=_default_evidence_dir())
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args(argv)
@@ -140,11 +178,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
-        from app.duckdb_engine import DuckDBEngine
+        from app.staged_publication_engine import StagedPublicationEngine
 
         summary = materialize_sec_edgar_context(
             store=ScopedDatasetStore(args.tenant_id, args.workspace_id),
-            engine=DuckDBEngine(),
+            engine=StagedPublicationEngine(),
             tenant_id=args.tenant_id,
             workspace_id=args.workspace_id,
             dry_run=args.dry_run,
@@ -154,7 +192,11 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(summary, indent=2, sort_keys=True))
         return 0
     except Exception as exc:
-        summary = {"status": "FAILED", "error": str(exc), "evidence_dir": str(args.evidence_dir)}
+        summary = {
+            "status": "FAILED",
+            "error": str(exc),
+            "evidence_dir": str(args.evidence_dir),
+        }
         _write_evidence(args.evidence_dir, summary)
         print(json.dumps(summary, indent=2, sort_keys=True))
         return 1

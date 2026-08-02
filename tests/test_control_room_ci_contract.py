@@ -5,8 +5,11 @@ from scripts.ci_control_room_paths import control_room_changed
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/control-room-postgres-rls.yml"
-FOCAL_MINIMUM = 8987
-POSTGRES_MINIMUM = 171
+PREPARE_SCRIPT = ROOT / "scripts/prepare_refinement_duckdb_ci.sh"
+MCP_REQUIREMENTS = ROOT / "mcp-infra/requirements.txt"
+MCP_DOCKERFILE = ROOT / "mcp-infra/Dockerfile"
+FOCAL_MINIMUM = 9104
+POSTGRES_MINIMUM = 268
 TENANT_EXECUTE_ISOLATION = ROOT / (
     "tests/test_control_room_live_postgres_tenant_execute_isolation.py"
 )
@@ -45,6 +48,7 @@ P11_RELEVANT_PATHS = (
     "console/tests/test_audit_service_transactional.py",
     "console/tests/test_control_room*.py",
     "console/tests/test_gold_fetcher.py",
+    "console/tests/test_gold_refresh_intelligence.py",
     "console/tests/test_ops_summary_and_version.py",
     "console/tests/test_intelligence_control_room_canonical_persistence.py",
     "console/tests/test_intelligence_evidence_refs_attestation.py",
@@ -60,6 +64,9 @@ P11_RELEVANT_PATHS = (
     "tests/test_aws_secrets_manager_config.py",
     "tests/test_intelligence_engine_contract.py",
     "tests/test_mcp_control_room_read_permissions.py",
+    "tests/test_pipeline_run_save_authority.py",
+    "tests/test_scheduled_effect_fencing.py",
+    "tests/test_staged_publication_compatibility_projection.py",
     "tests/test_operational_rls_console_refinement.py",
     "tests/test_operational_rls_policy_guard.py",
     "tests/test_control_room_live_postgres*.py",
@@ -90,7 +97,15 @@ REQUIRED_RELATED_TESTS = (
     "console/tests/test_pipeline_extract.py",
     "tests/test_decision*.py",
     "tests/test_pipeline_control_room_refresh.py",
+    "tests/test_scheduled_monitor_execution.py",
     "tests/test_agentops_scheduled_monitor_contract.py",
+    "tests/test_agent_runner_http_outcome.py",
+    "tests/test_dataset_refresh_chain_fail_closed.py",
+    "tests/test_operational_truth_e2e_gate_contract.py",
+    "tests/test_operational_truth_runtime_final_red.py",
+    "tests/test_operational_truth_runtime_red.py",
+    "tests/test_runtime_security_context_red.py",
+    "tests/test_security_context_verifiers.py",
     "tests/test_aws_beta_operations.py",
     "tests/test_aws_bootstrap_shared_env_boundary.py",
     "tests/test_aws_evidence_compose_isolation.py",
@@ -118,9 +133,28 @@ FOCAL_TESTS = (
 )
 
 LIVE_POSTGRES_TESTS = (
+    "tests/test_dataset_refresh_admission_live.py",
+    "tests/test_gold_refresh_binding_crash_matrix_live.py",
     "tests/test_operational_rls_console_refinement.py",
     "tests/test_operational_rls_policy_guard.py",
     "tests/test_control_room_live_postgres*.py",
+    "tests/test_operational_truth_runtime_leases_live.py",
+    "tests/test_operational_truth_scope_authority_live.py",
+    "tests/test_operational_truth_scope_upgrade_live.py",
+    "tests/test_pipeline_run_save_authority_live.py",
+    "tests/test_scheduled_effect_authority_live.py",
+    "tests/test_staged_publication_acceptance.py",
+    "tests/test_staged_publication_authority_live.py",
+    "tests/test_staged_publication_reader_alignment_live.py",
+    "tests/test_staged_publication_recovery_matrix_live.py",
+    "tests/test_staged_publication_semantics_live.py",
+    "tests/test_staged_publication_final_red.py",
+    "tests/test_staged_publication_integrity_live.py",
+    "tests/test_staged_publication_live.py",
+    "tests/test_staged_publication_public_projection.py",
+    "tests/test_staged_publication_reader_boundaries.py",
+    "tests/test_staged_publication_red.py",
+    "tests/test_staged_publication_verifier_boundary_live.py",
 )
 
 
@@ -178,8 +212,53 @@ def test_postgres_junit_guard_requires_current_minimum_and_zero_bad_results():
 
 def test_both_junit_reports_fail_closed_on_missing_or_bad_results():
     text = _workflow_text()
+    prepare_script = PREPARE_SCRIPT.read_text(encoding="utf-8")
     verifier = text.split("python - <<'PY'", 1)[1]
     for field in ("skipped", "failures", "errors"):
         assert field in verifier
     assert "report missing" in verifier.lower()
     assert "if any(bad.values())" in verifier
+    prepare = text.index("- name: Prepare hermetic Refinement DuckDB artifact")
+    focal = text.index("- name: Run focal Control Room tests")
+    live = text.index("- name: Run live PostgreSQL/RLS tests")
+    assert prepare < text.index("pytest", prepare) == text.index("pytest")
+    assert prepare < focal < live
+    assert "run: scripts/prepare_refinement_duckdb_ci.sh" in text[prepare:focal]
+    assert "docker build . -f refinement/Dockerfile" in prepare_script
+    assert "run_refinement_duckdb_offline_smoke.sh" in prepare_script
+    assert "docker cp" in prepare_script
+    assert "DUCKDB_TEST_HOME: /tmp/refinement-duckdb-home" in text
+    assert 'test ! -e "$duckdb_home"' in prepare_script
+    scoped_home_lines = [
+        line for line in text.splitlines() if line.strip().startswith("HOME:")
+    ]
+    assert scoped_home_lines == [
+        "          HOME: /tmp/refinement-duckdb-home",
+        "          HOME: /tmp/refinement-duckdb-home",
+    ]
+    assert text.count("DOCKER_HOST: unix:///var/run/docker.sock") == 2
+    assert "INSTALL httpfs" not in text
+    assert "INSTALL postgres" not in text
+    assert '"autoinstall_known_extensions": "false"' in prepare_script
+    assert '"autoload_known_extensions": "false"' in prepare_script
+    assert "refinement-duckdb-extensions.before" in text
+    assert "refinement-duckdb-extensions.after" in text
+    assert "cmp /tmp/refinement-duckdb-extensions.before" in text
+
+
+def test_focal_gate_installs_and_checks_the_real_mcp_dependencies_first():
+    text = _workflow_text()
+    install = text.split("- name: Install test dependencies", 1)[1].split(
+        "- name: Prepare hermetic Refinement DuckDB artifact", 1
+    )[0]
+    focal = text.index("- name: Run focal Control Room tests")
+
+    assert "-r mcp-infra/requirements.txt" in install
+    assert "python -m pip check" in install
+    assert text.index("python -m pip check") < focal
+    assert "pgvector==0.3.2" in MCP_REQUIREMENTS.read_text(encoding="utf-8")
+    dockerfile = MCP_DOCKERFILE.read_text(encoding="utf-8")
+    assert "COPY mcp-infra/requirements.txt ." in dockerfile
+    assert (
+        "pip install --prefix=/install --no-cache-dir -r requirements.txt" in dockerfile
+    )

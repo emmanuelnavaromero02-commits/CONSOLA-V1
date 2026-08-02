@@ -8,6 +8,7 @@ via the standard MCP contract:
   POST /mcp/invoke         → { tool, args } → { result } | { error }
   GET  /health             → { status }   (public; tool count intentionally redacted)
 """
+
 from __future__ import annotations
 import json
 import hmac
@@ -19,11 +20,13 @@ import secrets
 import time
 import uuid
 from typing import Any
-from urllib.parse import unquote
 
 from fastapi import FastAPI, Header, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from app.pipeline_run_authority import validate_pipeline_run_authority
+from app.scheduled_effect_authority import validate_scheduled_effect_authority
+from app.dataset_refresh_admission import build_dataset_refresh_admission
 
 from app import registry
 from app.rag.embeddings import EmbeddingProviderError
@@ -35,26 +38,26 @@ from app.rag.ingest import (
 )
 from app.security import get_internal_api_key
 from app.config import settings
-# Sprint v1.41.1 — structured JSON logs so request_id correlates here too.
 from app.logging_config import setup_logging  # noqa: E402
 from app.response_redaction import redact_response_value  # noqa: E402
+from app.storage_scope import canonical_storage_key, scoped_storage_key
 
 setup_logging(service_name="mcp-infra")
 logger = logging.getLogger(__name__)
 
 # ── Import tool modules so decorators register themselves ──────────────────────
-import app.tools.airflow     # noqa: F401
+import app.tools.airflow  # noqa: F401
 import app.tools.admin_request  # noqa: F401
-import app.tools.agents      # noqa: F401
+import app.tools.agents  # noqa: F401
 import app.tools.cartridges  # noqa: F401
 import app.tools.control_room  # noqa: F401
-import app.tools.minio       # noqa: F401
+import app.tools.minio  # noqa: F401
 import app.tools.market_context  # noqa: F401
-import app.tools.pipeline    # noqa: F401
-import app.tools.postgres    # noqa: F401
-import app.tools.rag         # noqa: F401
-import app.tools.superset    # noqa: F401
-import app.tools.vault       # noqa: F401
+import app.tools.pipeline  # noqa: F401
+import app.tools.postgres  # noqa: F401
+import app.tools.rag  # noqa: F401
+import app.tools.superset  # noqa: F401
+import app.tools.vault  # noqa: F401
 
 # ── App ────────────────────────────────────────────────────────────────────────
 from contextlib import asynccontextmanager
@@ -69,10 +72,16 @@ async def _lifespan(app: FastAPI):
         pass  # RAG is optional — server starts even if pgvector is not ready
     yield
 
+
 INTERNAL_API_KEY = get_internal_api_key()  # legacy fallback, still accepted
 _RAG_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
 _DAG_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,250}$")
-_SHARED_PLATFORM_DAGS = {"file_ingest", "entity_scheduler", "dataset_refresh_chain", "agent_runner"}
+_SHARED_PLATFORM_DAGS = {
+    "file_ingest",
+    "entity_scheduler",
+    "dataset_refresh_chain",
+    "agent_runner",
+}
 _SECURITY_CONTEXT_SIGNATURE_FIELD = "_signature"
 _SECURITY_CONTEXT_SIGNED_AT_FIELD = "_signed_at"
 _SECURITY_CONTEXT_SIGNATURE_VERSION_FIELD = "_signature_version"
@@ -83,7 +92,10 @@ _SECURITY_CONTEXT_MIN_SIGNING_KEY_LEN = 32
 
 
 def _is_production() -> bool:
-    return os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}
+    return os.environ.get("APP_ENV", "production").strip().lower() in {
+        "production",
+        "prod",
+    }
 
 
 def _security_context_signing_key() -> str:
@@ -91,17 +103,27 @@ def _security_context_signing_key() -> str:
     if len(key) < _SECURITY_CONTEXT_MIN_SIGNING_KEY_LEN:
         raise ValueError("SECURITY_CONTEXT_SIGNING_KEY is required")
     for env_name, value in os.environ.items():
-        if not (env_name == "INTERNAL_API_KEY" or env_name.startswith("INTERNAL_API_KEY_")):
+        if not (
+            env_name == "INTERNAL_API_KEY" or env_name.startswith("INTERNAL_API_KEY_")
+        ):
             continue
         transport_key = (value or "").strip()
         if transport_key and hmac.compare_digest(key, transport_key):
-            raise ValueError(f"SECURITY_CONTEXT_SIGNING_KEY must be distinct from {env_name}")
+            raise ValueError(
+                f"SECURITY_CONTEXT_SIGNING_KEY must be distinct from {env_name}"
+            )
     return key
 
 
 def _canonical_security_context(ctx: dict[str, Any]) -> bytes:
-    payload = {key: value for key, value in ctx.items() if key != _SECURITY_CONTEXT_SIGNATURE_FIELD}
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    payload = {
+        key: value
+        for key, value in ctx.items()
+        if key != _SECURITY_CONTEXT_SIGNATURE_FIELD
+    }
+    return json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
 
 
 def _security_context_signature_valid(ctx: dict[str, Any]) -> bool:
@@ -114,7 +136,10 @@ def _security_context_signature_valid(ctx: dict[str, Any]) -> bool:
     signature = str(ctx.get(_SECURITY_CONTEXT_SIGNATURE_FIELD) or "")
     if not signature:
         return False
-    if ctx.get(_SECURITY_CONTEXT_SIGNATURE_VERSION_FIELD) != _SECURITY_CONTEXT_SIGNATURE_VERSION:
+    if (
+        ctx.get(_SECURITY_CONTEXT_SIGNATURE_VERSION_FIELD)
+        != _SECURITY_CONTEXT_SIGNATURE_VERSION
+    ):
         return False
     try:
         signed_at = int(ctx.get(_SECURITY_CONTEXT_SIGNED_AT_FIELD))
@@ -125,23 +150,28 @@ def _security_context_signature_valid(ctx: dict[str, Any]) -> bool:
         return False
     if now - signed_at > _SECURITY_CONTEXT_SIGNATURE_TTL_SECONDS:
         return False
-    expected = hmac.new(key.encode("utf-8"), _canonical_security_context(ctx), hashlib.sha256).hexdigest()
+    expected = hmac.new(
+        key.encode("utf-8"), _canonical_security_context(ctx), hashlib.sha256
+    ).hexdigest()
     return hmac.compare_digest(signature, expected)
+
 
 # Sprint v1.12: mcp-infra is called by console, workspace and airflow. Each
 # pair has its own INTERNAL_API_KEY_*_TO_MCP_INFRA secret. The legacy shared
 # key keeps working during the migration window and is dropped in a follow-up.
 _ALLOWED_SERVICES_TO_KEY_ENV: dict[str, str | None] = {
-    "console":   "INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA",
+    "console": "INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA",
     "workspace": "INTERNAL_API_KEY_WORKSPACE_TO_MCP_INFRA",
-    "airflow":   "INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA",
+    "airflow": "INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA",
     "refinement": "INTERNAL_API_KEY_REFINEMENT_TO_MCP_INFRA",
     # The old whitelist allowed this; we keep it via legacy key only outside prod.
-    "mcp-infra":  None,
+    "mcp-infra": None,
 }
 
 
-def verify_api_key(x_api_key: str = Header(None), x_internal_service: str = Header(None)):
+def verify_api_key(
+    x_api_key: str = Header(None), x_internal_service: str = Header(None)
+):
     # v1.42.1 auditor fix: distinguish "no auth presented" (401) from
     # "auth presented but invalid" (403). Matches the cartridge pattern
     # in app/api/deps.py and the wider HTTP convention.
@@ -176,6 +206,7 @@ def _safe_rag_segment(value: str, label: str) -> str:
         raise HTTPException(400, f"invalid {label}")
     return value
 
+
 app = FastAPI(
     title="ΩMEGA by EPIUSE MCP Infra",
     description="MCP tools for Airflow, MinIO, PostgreSQL, Superset, RAG",
@@ -192,7 +223,9 @@ def _internal_error_request_id(request: Request | None = None) -> str:
         return str(uuid.uuid4())
 
 
-def _log_internal_error(exc: Exception, message: str, request: Request | None = None) -> str:
+def _log_internal_error(
+    exc: Exception, message: str, request: Request | None = None
+) -> str:
     request_id = _internal_error_request_id(request)
     logger.exception(
         "%s request_id=%s",
@@ -234,6 +267,7 @@ async def _http_exception_handler(request: Request, exc: HTTPException):
         headers=exc.headers,
     )
 
+
 # Sprint v1.41.1 — correlation IDs.
 from app.middleware.request_id import RequestIDMiddleware  # noqa: E402
 
@@ -242,8 +276,11 @@ app.add_middleware(RequestIDMiddleware)
 
 class InvokeRequest(BaseModel):
     tool: str
-    args: dict = {}
+    args: dict = Field(default_factory=dict)
     security_context: dict[str, Any] | None = None
+
+    class Config:
+        extra = "forbid"
 
 
 _DATA_READ_TOOLS = {
@@ -300,9 +337,19 @@ _CARTRIDGE_CONTEXT_TOOLS = {
     "cartridge_query_kb",
     *_CARTRIDGE_EXECUTE_TOOLS,
 }
-_AIRFLOW_READ_TOOLS = {"airflow_list_dags", "airflow_get_run_status", "airflow_get_task_logs", "airflow_list_task_instances", "airflow_list_dag_runs"}
+_AIRFLOW_READ_TOOLS = {
+    "airflow_list_dags",
+    "airflow_get_run_status",
+    "airflow_get_task_logs",
+    "airflow_list_task_instances",
+    "airflow_list_dag_runs",
+}
 _AIRFLOW_RUN_TOOLS = {"airflow_trigger_dag"}
-_AIRFLOW_WRITE_TOOLS = {"airflow_create_dag", "airflow_delete_dag", "airflow_set_variable"}
+_AIRFLOW_WRITE_TOOLS = {
+    "airflow_create_dag",
+    "airflow_delete_dag",
+    "airflow_set_variable",
+}
 _SUPERSET_TOOLS = {
     "superset_list_databases",
     "superset_list_datasets",
@@ -318,7 +365,11 @@ _SUPERSET_TOOLS = {
 _PIPELINE_READ_TOOLS = {"dag_get_source", "watermark_get"}
 _PIPELINE_WRITE_TOOLS = {"dag_save_source", "watermark_set"}
 _PIPELINE_TELEMETRY_TOOLS = {"pipeline_run_save"}
-_VAULT_READ_TOOLS = {"vault_list_connections", "vault_get_connection", "vault_list_secrets"}
+_VAULT_READ_TOOLS = {
+    "vault_list_connections",
+    "vault_get_connection",
+    "vault_list_secrets",
+}
 _VAULT_WRITE_TOOLS = {"vault_set_connection", "vault_set_secret"}
 _VAULT_DESTRUCTIVE_TOOLS = {"vault_delete_connection"}
 _AGENT_READ_TOOLS = {"agent_list", "agent_get"}
@@ -401,13 +452,17 @@ _SCOPED_READER_RE = re.compile(
     r"\b(read_parquet|read_csv)\s*\(\s*(['\"])(.*?)\2",
     re.IGNORECASE | re.DOTALL,
 )
-_SQL_STORAGE_LITERAL_RE = re.compile(r"(['\"])(s3://.*?)(?<!\\)\1", re.IGNORECASE | re.DOTALL)
+_SQL_STORAGE_LITERAL_RE = re.compile(
+    r"(['\"])(s3://.*?)(?<!\\)\1", re.IGNORECASE | re.DOTALL
+)
 _DIRECT_STORAGE_SCAN_RE = re.compile(
     r"\b(?:from|join|table)\s+(['\"])(.*?)\1",
     re.IGNORECASE | re.DOTALL,
 )
 _SINGLE_QUOTED_RE = re.compile(r"'(?:''|[^'])*'", re.DOTALL)
-_DUCKDB_SCHEMA_RE = re.compile(r'(?<![A-Za-z0-9_])"?(pgdb|pggold)"?\s*\.', re.IGNORECASE)
+_DUCKDB_SCHEMA_RE = re.compile(
+    r'(?<![A-Za-z0-9_])"?(pgdb|pggold)"?\s*\.', re.IGNORECASE
+)
 _POSTGRES_FROM_CLAUSE_RE = re.compile(
     r"\bfrom\b(?P<body>.*?)(?:\bwhere\b|\bgroup\b|\border\b|\blimit\b|\boffset\b|\breturning\b|$)",
     re.IGNORECASE | re.DOTALL,
@@ -427,14 +482,18 @@ def _ctx(req: InvokeRequest, internal_service: str | None = None) -> dict[str, A
             raise HTTPException(403, detail="Invalid signed security_context")
         return {}
     if ctx.get("trusted") and internal_service:
-        allowed_sources = _SECURITY_SOURCE_BY_SERVICE.get(internal_service, {internal_service})
+        allowed_sources = _SECURITY_SOURCE_BY_SERVICE.get(
+            internal_service, {internal_service}
+        )
         if str(ctx.get("source") or "") not in allowed_sources:
             return {}
     return ctx
 
 
 def _is_admin_context(ctx: dict[str, Any]) -> bool:
-    return bool(ctx.get("trusted")) and str(ctx.get("role") or "").lower() in _ADMIN_ROLES
+    return (
+        bool(ctx.get("trusted")) and str(ctx.get("role") or "").lower() in _ADMIN_ROLES
+    )
 
 
 def _is_unscoped_admin_context(ctx: dict[str, Any]) -> bool:
@@ -452,7 +511,9 @@ def _is_unscoped_admin_context(ctx: dict[str, Any]) -> bool:
 
 def _allowed_prefix_matches(ctx: dict[str, Any], value: str) -> bool:
     """Match explicit prefixes without letting root prefixes grant all data."""
-    prefixes = [str(p).lstrip("/").rstrip("/") for p in (ctx.get("allowed_prefixes") or [])]
+    prefixes = [
+        str(p).lstrip("/").rstrip("/") for p in (ctx.get("allowed_prefixes") or [])
+    ]
     for prefix in prefixes:
         if not prefix:
             continue
@@ -463,7 +524,9 @@ def _allowed_prefix_matches(ctx: dict[str, Any], value: str) -> bool:
     return False
 
 
-def _require_context_permission(req: InvokeRequest, permission: str, internal_service: str | None = None) -> dict[str, Any]:
+def _require_context_permission(
+    req: InvokeRequest, permission: str, internal_service: str | None = None
+) -> dict[str, Any]:
     ctx = _ctx(req, internal_service)
     if not ctx.get("trusted"):
         raise HTTPException(403, detail="trusted security_context required")
@@ -509,23 +572,25 @@ def _prefix_allowed(ctx: dict[str, Any], value: str) -> bool:
 
 
 def _canonical_storage_key(value: str) -> str:
-    raw = str(value or "").strip().lstrip("/").replace("\\", "/")
-    for _ in range(3):
-        decoded = unquote(raw).replace("\\", "/")
-        if decoded == raw:
-            break
-        raw = decoded
-    parts = [part for part in raw.split("/") if part and part != "."]
-    if any(part == ".." for part in parts):
-        raise HTTPException(403, detail="storage path traversal is not allowed")
-    return "/".join(parts)
+    try:
+        return canonical_storage_key(value)
+    except ValueError as exc:
+        raise HTTPException(403, detail="storage path is not allowed") from exc
 
 
 def _key_has_exact_scope(value: str, tenant_id: str, workspace_id: str) -> bool:
-    key = _canonical_storage_key(value)
-    parts = key.split("/")
-    scope_parts = [f"tenant_id={tenant_id}", f"workspace_id={workspace_id}"]
-    return any(parts[idx : idx + 2] == scope_parts for idx in range(len(parts)))
+    try:
+        scoped_storage_key(
+            value,
+            {
+                "tenant_id": tenant_id,
+                "workspace_id": workspace_id,
+                "allowed_cartridges": ["*"],
+            },
+        )
+        return True
+    except (PermissionError, ValueError):
+        return False
 
 
 def _storage_scope_markers(key: str) -> tuple[str | None, str | None]:
@@ -563,7 +628,10 @@ def _has_foreign_storage_scope(ctx: dict[str, Any], key: str) -> bool:
 
 
 def _has_tenant_workspace_scope(ctx: dict[str, Any]) -> bool:
-    return bool(str(ctx.get("tenant_id") or "").strip() and str(ctx.get("workspace_id") or "").strip())
+    return bool(
+        str(ctx.get("tenant_id") or "").strip()
+        and str(ctx.get("workspace_id") or "").strip()
+    )
 
 
 def _has_invalid_scoped_storage_path(ctx: dict[str, Any], key: str) -> bool:
@@ -577,12 +645,11 @@ def _has_invalid_scoped_storage_path(ctx: dict[str, Any], key: str) -> bool:
 
 def _require_scoped_object_path(ctx: dict[str, Any], value: str) -> None:
     """Prevent scoped callers from listing/downloading whole cartridge object trees."""
-    if _is_unscoped_admin_context(ctx) or not _has_tenant_workspace_scope(ctx):
-        return
-    value = str(value or "").strip().lstrip("/")
+    value = str(value or "").strip()
     if not value:
         return
-    parts = value.split("/")
+    key = _canonical_storage_key(value)
+    parts = key.split("/")
     if not parts:
         return
     root = parts[0]
@@ -590,10 +657,12 @@ def _require_scoped_object_path(ctx: dict[str, Any], value: str) -> None:
         return
     if root not in {"raw", "silver", "gold", "uploads"}:
         return
-    tenant_id = str(ctx.get("tenant_id") or "").strip()
-    workspace_id = str(ctx.get("workspace_id") or "").strip()
-    if not _key_has_exact_scope(value, tenant_id, workspace_id):
-        raise HTTPException(403, detail="tenant/workspace object scope required")
+    try:
+        scoped_storage_key(key, ctx)
+    except (PermissionError, ValueError) as exc:
+        raise HTTPException(
+            403, detail="tenant/workspace object scope required"
+        ) from exc
 
 
 def _require_cartridge_scope(ctx: dict[str, Any], cartridge_id: str) -> None:
@@ -628,13 +697,23 @@ def _cartridge_scope_allowed(ctx: dict[str, Any], cartridge_id: str) -> bool:
 
 def _market_context_provider_scope(ctx: dict[str, Any], args: dict[str, Any]) -> None:
     if not _has_tenant_workspace_scope(ctx):
-        raise HTTPException(403, detail="market context requires tenant/workspace scope")
+        raise HTTPException(
+            403, detail="market context requires tenant/workspace scope"
+        )
     supplied = sorted(
-        key for key in {"tenant_id", "workspace_id", "security_context", "allowed_providers"}
+        key
+        for key in {
+            "tenant_id",
+            "workspace_id",
+            "security_context",
+            "allowed_providers",
+        }
         if key in args
     )
     if supplied:
-        raise HTTPException(403, detail=f"backend-owned arg is not allowed: {', '.join(supplied)}")
+        raise HTTPException(
+            403, detail=f"backend-owned arg is not allowed: {', '.join(supplied)}"
+        )
     provider_to_cartridge = {
         "banxico": "banxico",
         "inegi": "inegi",
@@ -661,7 +740,9 @@ def _market_context_provider_scope(ctx: dict[str, Any], args: dict[str, Any]) ->
     args["security_context"] = ctx
 
 
-def _validate_pipeline_run_save_scope(ctx: dict[str, Any], args: dict[str, Any]) -> None:
+def _validate_pipeline_run_save_scope(
+    ctx: dict[str, Any], args: dict[str, Any]
+) -> None:
     cartridge_id = str(args.get("cartridge_id") or "").strip()
     if not cartridge_id:
         raise HTTPException(403, detail="pipeline run cartridge_id is required")
@@ -670,9 +751,13 @@ def _validate_pipeline_run_save_scope(ctx: dict[str, Any], args: dict[str, Any])
     tenant_id = str(args.get("tenant_id") or "").strip()
     workspace_id = str(args.get("workspace_id") or "").strip()
     if not tenant_id or not workspace_id:
-        raise HTTPException(403, detail="pipeline run tenant/workspace scope is required")
+        raise HTTPException(
+            403, detail="pipeline run tenant/workspace scope is required"
+        )
     if _has_tenant_workspace_scope(ctx):
-        if tenant_id != str(ctx.get("tenant_id") or "") or workspace_id != str(ctx.get("workspace_id") or ""):
+        if tenant_id != str(ctx.get("tenant_id") or "") or workspace_id != str(
+            ctx.get("workspace_id") or ""
+        ):
             raise HTTPException(403, detail="pipeline run scope mismatch")
         _require_cartridge_scope(ctx, cartridge_id)
 
@@ -718,7 +803,9 @@ def _require_dag_registered_for_cartridge(dag_id: str, cartridge_id: str) -> Non
             owned = cur.fetchone() is not None
         conn.close()
     except Exception as exc:
-        raise HTTPException(503, detail="could not verify DAG cartridge ownership") from exc
+        raise HTTPException(
+            503, detail="could not verify DAG cartridge ownership"
+        ) from exc
     if not owned:
         raise HTTPException(403, detail="DAG is not registered for cartridge")
 
@@ -809,7 +896,9 @@ def _require_pipeline_run_scope(ctx: dict[str, Any], run_id: str) -> None:
     ctx_tenant = str(ctx.get("tenant_id") or "").strip()
     ctx_workspace = str(ctx.get("workspace_id") or "").strip()
     if not ctx_tenant or not ctx_workspace:
-        raise HTTPException(403, detail="tenant/workspace scope required for run access")
+        raise HTTPException(
+            403, detail="tenant/workspace scope required for run access"
+        )
     import psycopg2
     from app.config import settings as s
 
@@ -885,12 +974,16 @@ def _pipeline_run_allowed(ctx: dict[str, Any], run_id: str) -> bool:
 def _validate_airflow_trigger_scope(ctx: dict[str, Any], args: dict[str, Any]) -> None:
     dag_id = str(args.get("dag_id") or "").strip()
     conf = args.get("conf") if isinstance(args.get("conf"), dict) else {}
-    cartridge_id = str(conf.get("cartridge_id") or args.get("cartridge_id") or "").strip()
+    cartridge_id = str(
+        conf.get("cartridge_id") or args.get("cartridge_id") or ""
+    ).strip()
     if not _is_unscoped_admin_context(ctx):
         tenant_id = str(ctx.get("tenant_id") or "").strip()
         workspace_id = str(ctx.get("workspace_id") or "").strip()
         if not tenant_id or not workspace_id:
-            raise HTTPException(403, detail="DAG trigger requires tenant/workspace scope")
+            raise HTTPException(
+                403, detail="DAG trigger requires tenant/workspace scope"
+            )
         for key, value in (("tenant_id", tenant_id), ("workspace_id", workspace_id)):
             supplied = str(conf.get(key) or "").strip()
             if supplied and supplied != value:
@@ -901,8 +994,20 @@ def _validate_airflow_trigger_scope(ctx: dict[str, Any], args: dict[str, Any]) -
 
     if dag_id in _SHARED_PLATFORM_DAGS and not _is_unscoped_admin_context(ctx):
         if not cartridge_id:
-            raise HTTPException(403, detail="shared DAG trigger requires cartridge_id outside admin context")
+            raise HTTPException(
+                403,
+                detail="shared DAG trigger requires cartridge_id outside admin context",
+            )
         _require_cartridge_scope(ctx, cartridge_id)
+        if dag_id == "dataset_refresh_chain":
+            dag_run_id = str(args.get("dag_run_id") or "").strip()
+            if not dag_run_id:
+                dag_run_id = f"mcp__dataset_refresh_chain__{uuid.uuid4().hex}"
+                args["dag_run_id"] = dag_run_id
+            conf["security_context"] = build_dataset_refresh_admission(
+                ctx, conf, dag_run_id
+            )
+            args["conf"] = conf
         return
 
     if cartridge_id:
@@ -912,10 +1017,14 @@ def _validate_airflow_trigger_scope(ctx: dict[str, Any], args: dict[str, Any]) -
         return
 
     if not _is_unscoped_admin_context(ctx):
-        raise HTTPException(403, detail="DAG trigger requires cartridge_id outside admin context")
+        raise HTTPException(
+            403, detail="DAG trigger requires cartridge_id outside admin context"
+        )
 
 
-def _inject_cartridge_execution_scope(ctx: dict[str, Any], args: dict[str, Any]) -> None:
+def _inject_cartridge_execution_scope(
+    ctx: dict[str, Any], args: dict[str, Any]
+) -> None:
     args["security_context"] = ctx
 
 
@@ -945,40 +1054,60 @@ def _reader_storage_key(path: str) -> str:
     path = (path or "").strip()
     if not path.startswith("s3://"):
         raise HTTPException(403, detail="cartridge SQL readers must use s3:// paths")
-    rest = _canonical_storage_key(path[5:])
+    try:
+        rest = canonical_storage_key(path[5:], allow_glob=True)
+    except ValueError as exc:
+        raise HTTPException(403, detail="cartridge SQL path is not allowed") from exc
     key = rest.split("/", 1)[1] if "/" in rest else ""
     if not key:
         raise HTTPException(403, detail="cartridge SQL path is not allowed")
     return key
 
 
-def _require_cartridge_sql_path(ctx: dict[str, Any], cartridge_id: str, path: str) -> None:
+def _require_cartridge_sql_path(
+    ctx: dict[str, Any], cartridge_id: str, path: str
+) -> None:
     key = _reader_storage_key(path)
     if not (
         key.startswith(f"raw/{cartridge_id}/")
         or key.startswith(f"silver/{cartridge_id}/")
         or key.startswith(f"gold/{cartridge_id}/")
     ):
-        raise HTTPException(403, detail="cartridge SQL must stay inside its cartridge prefix")
-    if not _prefix_allowed(ctx, key):
-        raise HTTPException(403, detail="cartridge SQL path not allowed")
-    _require_scoped_object_path(ctx, key)
+        raise HTTPException(
+            403, detail="cartridge SQL must stay inside its cartridge prefix"
+        )
+    try:
+        scoped_storage_key(key, ctx, allow_glob=True)
+    except (PermissionError, ValueError) as exc:
+        raise HTTPException(403, detail="cartridge SQL path not allowed") from exc
 
 
-def _validate_cartridge_query_sql(ctx: dict[str, Any], cartridge_id: str, sql: str) -> None:
+def _validate_cartridge_query_sql(
+    ctx: dict[str, Any], cartridge_id: str, sql: str
+) -> None:
     sql = sql or ""
     masked = _mask_single_quoted(sql)
     if not _SQL_START_RE.search(masked):
         raise HTTPException(403, detail="cartridge SQL must be read-only SELECT/WITH")
-    if ";" in masked or _SQL_COMMENT_RE.search(masked) or _SQL_FORBIDDEN_RE.search(masked):
-        raise HTTPException(403, detail="cartridge SQL contains unsafe statements or comments")
+    if (
+        ";" in masked
+        or _SQL_COMMENT_RE.search(masked)
+        or _SQL_FORBIDDEN_RE.search(masked)
+    ):
+        raise HTTPException(
+            403, detail="cartridge SQL contains unsafe statements or comments"
+        )
     if _DUCKDB_SCHEMA_RE.search(masked):
-        raise HTTPException(403, detail="cartridge SQL cannot read service database schemas")
+        raise HTTPException(
+            403, detail="cartridge SQL cannot read service database schemas"
+        )
 
     reader_calls = list(_SQL_READER_CALL_RE.finditer(sql))
     direct_readers = list(_SCOPED_READER_RE.finditer(sql))
     if not direct_readers or len(reader_calls) != len(direct_readers):
-        raise HTTPException(403, detail="cartridge SQL must read only direct s3:// file literals")
+        raise HTTPException(
+            403, detail="cartridge SQL must read only direct s3:// file literals"
+        )
     for match in direct_readers:
         _require_cartridge_sql_path(ctx, cartridge_id, match.group(3))
     for match in _SQL_STORAGE_LITERAL_RE.finditer(sql):
@@ -1008,6 +1137,7 @@ def _postgres_mentioned_tables(sql: str, table: str = "") -> set[str]:
 
 
 _RAG_SCOPE_SUFFIX_RE = re.compile(r":tenant:([^:]+):workspace:([^:]+)$")
+_RAG_HEAD_SUFFIX_RE = re.compile(r":head:([0-9a-f]{64})$")
 
 
 def _rag_scope_suffix(ctx: dict[str, Any]) -> str:
@@ -1021,13 +1151,15 @@ def _rag_scope_suffix(ctx: dict[str, Any]) -> str:
 def _rag_base_name_for_context(ctx: dict[str, Any], name: str) -> tuple[str, bool]:
     if _is_unscoped_admin_context(ctx) or not _has_tenant_workspace_scope(ctx):
         match = _RAG_SCOPE_SUFFIX_RE.search(name)
-        return (name[:match.start()] if match else name, True)
+        return (name[: match.start()] if match else name, True)
     match = _RAG_SCOPE_SUFFIX_RE.search(name)
     if not match:
         return name, False
     tenant_id = str(ctx.get("tenant_id") or "").strip()
     workspace_id = str(ctx.get("workspace_id") or "").strip()
-    return name[:match.start()], match.group(1) == tenant_id and match.group(2) == workspace_id
+    return name[: match.start()], match.group(1) == tenant_id and match.group(
+        2
+    ) == workspace_id
 
 
 def _rag_source_allowed(ctx: dict[str, Any], name: str) -> bool:
@@ -1037,6 +1169,15 @@ def _rag_source_allowed(ctx: dict[str, Any], name: str) -> bool:
     name, scope_ok = _rag_base_name_for_context(ctx, name)
     if not scope_ok:
         return False
+    head = _RAG_HEAD_SUFFIX_RE.search(name)
+    if name.startswith("_semantic_"):
+        if not head:
+            return False
+        from app.publication_heads import publication_epoch
+
+        if head.group(1) != publication_epoch(ctx):
+            return False
+        name = name[: head.start()]
     if name.startswith("raw:"):
         parts = name.split(":", 2)
         return len(parts) > 1 and _prefix_allowed(ctx, f"raw/{parts[1]}/")
@@ -1053,10 +1194,13 @@ def _rag_source_allowed(ctx: dict[str, Any], name: str) -> bool:
         # dataset filtering. Today _cartridge_of treats ctx as a reserved
         # arg; the cartridge scope is still enforced by _prefix_allowed.
         cartridge = _cartridge_of(dataset, ctx)
-        return bool(cartridge and (
-            _prefix_allowed(ctx, f"silver/{cartridge}/{dataset}/")
-            or _prefix_allowed(ctx, f"gold/{cartridge}/{dataset}/")
-        ))
+        return bool(
+            cartridge
+            and (
+                _prefix_allowed(ctx, f"silver/{cartridge}/{dataset}/")
+                or _prefix_allowed(ctx, f"gold/{cartridge}/{dataset}/")
+            )
+        )
     return False
 
 
@@ -1091,7 +1235,9 @@ def _rag_row_allowed(ctx: dict[str, Any], row: Any) -> bool:
             row_tenant == str(ctx.get("tenant_id") or "").strip()
             and row_workspace == str(ctx.get("workspace_id") or "").strip()
         )
-    return _rag_source_allowed(ctx, str(row.get("name") or row.get("source_name") or ""))
+    return _rag_source_allowed(
+        ctx, str(row.get("name") or row.get("source_name") or "")
+    )
 
 
 def _require_rag_context_scope(ctx: dict[str, Any]) -> None:
@@ -1114,7 +1260,9 @@ def _cartridge_for_run_id(run_id: str) -> str | None:
             password=s.pg_password,
         )
         with conn.cursor() as cur:
-            cur.execute("SELECT cartridge_id FROM pipeline_runs WHERE run_id = %s", (run_id,))
+            cur.execute(
+                "SELECT cartridge_id FROM pipeline_runs WHERE run_id = %s", (run_id,)
+            )
             row = cur.fetchone()
         conn.close()
         return row[0] if row else None
@@ -1159,7 +1307,8 @@ def _filter_airflow_payload(tool: str, payload: Any, ctx: dict[str, Any]) -> Any
     out = dict(payload)
     if tool == "airflow_list_dags" and isinstance(out.get("dags"), list):
         out["dags"] = [
-            dag for dag in out["dags"]
+            dag
+            for dag in out["dags"]
             if isinstance(dag, dict)
             and _dag_allowed_for_context(ctx, str(dag.get("dag_id") or ""))
         ]
@@ -1181,7 +1330,9 @@ def _redact_tool_result(payload: Any) -> Any:
     return redact_response_value(payload)
 
 
-def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None) -> dict[str, Any] | None:
+def _enforce_data_scope(
+    req: InvokeRequest, internal_service: str | None = None
+) -> dict[str, Any] | None:
     tool = req.tool
     args = req.args if isinstance(req.args, dict) else {}
     req.args = args
@@ -1212,23 +1363,33 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
     elif tool in _PIPELINE_WRITE_TOOLS:
         ctx = _require_context_permission(req, "pipelines.write", internal_service)
     elif tool in _PIPELINE_TELEMETRY_TOOLS:
-        ctx = _ctx(req, internal_service)
-        if not ctx.get("trusted"):
-            if internal_service != "airflow":
-                ctx = _require_context_permission(req, "pipelines.write", internal_service)
-            else:
-                ctx = {
-                    "trusted": True,
-                    "source": "airflow",
-                    "role": "admin",
-                    "permissions": ["pipelines.write"],
-                }
+        try:
+            ctx = validate_pipeline_run_authority(
+                req.security_context,
+                body={"tool": tool, "args": args},
+                internal_service=str(internal_service or ""),
+                consume=True,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                403, detail="pipeline telemetry authority required"
+            ) from exc
     elif tool in {"vault_list_connections", "vault_get_connection"}:
-        ctx = _require_context_permission(req, "vault.connections.read", internal_service)
+        ctx = _require_context_permission(
+            req, "vault.connections.read", internal_service
+        )
     elif tool == "vault_list_secrets":
-        ctx = _require_context_permission(req, "vault.secrets.read_masked", internal_service)
-    elif tool in {"vault_set_connection", "vault_delete_connection", "vault_set_secret"}:
-        ctx = _require_context_permission(req, "vault.connections.write", internal_service)
+        ctx = _require_context_permission(
+            req, "vault.secrets.read_masked", internal_service
+        )
+    elif tool in {
+        "vault_set_connection",
+        "vault_delete_connection",
+        "vault_set_secret",
+    }:
+        ctx = _require_context_permission(
+            req, "vault.connections.write", internal_service
+        )
     elif tool in _AGENT_READ_TOOLS:
         ctx = _require_context_permission(req, "studio.read", internal_service)
     elif tool in _AGENT_WRITE_TOOLS:
@@ -1249,8 +1410,12 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
         return None
 
     if tool in _SUPERSET_TOOLS:
-        if "studio.write" not in set(ctx.get("permissions") or []) or not _is_admin_context(ctx):
-            raise HTTPException(403, detail="superset tools require admin studio.write context")
+        if "studio.write" not in set(
+            ctx.get("permissions") or []
+        ) or not _is_admin_context(ctx):
+            raise HTTPException(
+                403, detail="superset tools require admin studio.write context"
+            )
 
     if tool in _RAG_READ_TOOLS | _RAG_WRITE_TOOLS:
         _require_rag_context_scope(ctx)
@@ -1260,14 +1425,18 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
                 raise HTTPException(400, detail="RAG source name is required")
             if _rag_is_reserved_source_name(source_name):
                 if not _rag_source_allowed(ctx, source_name):
-                    raise HTTPException(403, detail="RAG source is outside caller scope")
+                    raise HTTPException(
+                        403, detail="RAG source is outside caller scope"
+                    )
             else:
                 args["name"] = _scoped_rag_document_name(ctx, source_name)
         args["security_context"] = ctx
 
     if tool in _AIRFLOW_WRITE_TOOLS | _PIPELINE_WRITE_TOOLS:
         if not _is_admin_context(ctx):
-            raise HTTPException(403, detail="airflow and pipeline write tools require admin context")
+            raise HTTPException(
+                403, detail="airflow and pipeline write tools require admin context"
+            )
 
     if tool in _PIPELINE_TELEMETRY_TOOLS:
         _validate_pipeline_run_save_scope(ctx, args)
@@ -1275,9 +1444,14 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
     if tool in _PIPELINE_READ_TOOLS | _PIPELINE_WRITE_TOOLS:
         cartridge_id = str(args.get("cartridge_id") or "").strip()
         _require_cartridge_scope(ctx, cartridge_id)
-        if tool in {"watermark_get", "watermark_set"} and not _is_unscoped_admin_context(ctx):
+        if tool in {
+            "watermark_get",
+            "watermark_set",
+        } and not _is_unscoped_admin_context(ctx):
             if not _has_tenant_workspace_scope(ctx):
-                raise HTTPException(403, detail="pipeline tools require tenant/workspace scope")
+                raise HTTPException(
+                    403, detail="pipeline tools require tenant/workspace scope"
+                )
             args["tenant_id"] = str(ctx.get("tenant_id") or "")
             args["workspace_id"] = str(ctx.get("workspace_id") or "")
 
@@ -1291,17 +1465,25 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
         source = str(ctx.get("source") or "")
         if source == "agent_runner":
             raise HTTPException(403, detail="scheduled agents cannot manage agents")
-        if tool in _AGENT_WRITE_TOOLS | _AGENT_DESTRUCTIVE_TOOLS and not _is_admin_context(ctx):
+        if (
+            tool in _AGENT_WRITE_TOOLS | _AGENT_DESTRUCTIVE_TOOLS
+            and not _is_admin_context(ctx)
+        ):
             raise HTTPException(403, detail="agent management requires admin context")
         if tool in _AGENT_READ_TOOLS and not _is_unscoped_admin_context(ctx):
             cartridge_id = str(args.get("cartridge_id") or "").strip()
             if not cartridge_id:
-                raise HTTPException(403, detail="agent reads require cartridge_id outside admin context")
+                raise HTTPException(
+                    403, detail="agent reads require cartridge_id outside admin context"
+                )
             _require_cartridge_scope(ctx, cartridge_id)
         args["security_context"] = ctx
 
     if tool in _VAULT_READ_TOOLS | _VAULT_WRITE_TOOLS | _VAULT_DESTRUCTIVE_TOOLS:
-        if tool in _VAULT_WRITE_TOOLS | _VAULT_DESTRUCTIVE_TOOLS and not _is_admin_context(ctx):
+        if (
+            tool in _VAULT_WRITE_TOOLS | _VAULT_DESTRUCTIVE_TOOLS
+            and not _is_admin_context(ctx)
+        ):
             raise HTTPException(403, detail="vault writes require admin context")
         vault_scope = str(args.get("cartridge_id") or args.get("scope") or "").strip()
         if not _is_unscoped_admin_context(ctx):
@@ -1317,18 +1499,44 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
         if not _has_tenant_workspace_scope(ctx):
             detail = (
                 "control room analysis requires tenant/workspace scope"
-                if tool in _CONTROL_ROOM_READ_TOOLS | _CONTROL_ROOM_OPERATIONAL_READ_TOOLS
+                if tool
+                in _CONTROL_ROOM_READ_TOOLS | _CONTROL_ROOM_OPERATIONAL_READ_TOOLS
                 else "control room alerts require tenant/workspace scope"
             )
             raise HTTPException(403, detail=detail)
-        forbidden_scope_args = {"tenant_id", "workspace_id", "user_id", "security_context"}
+        forbidden_scope_args = {
+            "tenant_id",
+            "workspace_id",
+            "user_id",
+            "security_context",
+        }
         supplied = sorted(key for key in forbidden_scope_args if key in args)
         if supplied:
-            raise HTTPException(403, detail=f"backend-owned arg is not allowed: {', '.join(supplied)}")
+            raise HTTPException(
+                403, detail=f"backend-owned arg is not allowed: {', '.join(supplied)}"
+            )
+        effect_authority = args.get("effect_authority")
+        if (
+            str(ctx.get("source") or "") == "agent_runner"
+            and tool in (_CONTROL_ROOM_ALERT_TOOLS | _CONTROL_ROOM_ANALYSIS_TOOLS)
+            and effect_authority is None
+        ):
+            raise HTTPException(403, detail="scheduled effect authority is required")
+        if effect_authority is not None:
+            try:
+                validate_scheduled_effect_authority(
+                    effect_authority, tool=tool, args=args, context=ctx
+                )
+            except ValueError as exc:
+                raise HTTPException(
+                    403, detail="scheduled effect authority mismatch"
+                ) from exc
         if tool in _CONTROL_ROOM_ALERT_TOOLS or args.get("cartridge_id"):
             _require_cartridge_scope(ctx, str(args.get("cartridge_id") or ""))
         if tool == "wisdom_bits__run":
-            _require_cartridge_scope(ctx, str(args.get("cartridge_id") or "sap_successfactors"))
+            _require_cartridge_scope(
+                ctx, str(args.get("cartridge_id") or "sap_successfactors")
+            )
         args["security_context"] = ctx
 
     if tool in _MARKET_CONTEXT_READ_TOOLS:
@@ -1340,7 +1548,9 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
             str(args.get("table") or args.get("table_name") or args.get("name") or ""),
         )
         if mentioned_tables & _SENSITIVE_TABLES:
-            raise HTTPException(403, detail="sensitive internal tables are not readable through MCP")
+            raise HTTPException(
+                403, detail="sensitive internal tables are not readable through MCP"
+            )
         if not _is_unscoped_admin_context(ctx):
             raise HTTPException(
                 403,
@@ -1348,6 +1558,8 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
             )
 
     if tool.startswith("minio_"):
+        if tool in _DATA_READ_TOOLS:
+            args["security_context"] = ctx
         bucket = args.get("bucket")
         allowed_buckets = set(ctx.get("allowed_buckets") or [])
         if bucket and allowed_buckets and bucket not in allowed_buckets:
@@ -1356,10 +1568,20 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
         if tool in {"minio_upload_spec", "minio_read_spec"}:
             cartridge_id = str(args.get("cartridge_id") or "").strip()
             filename = str(args.get("filename") or "").strip()
-            if not cartridge_id or not filename or "/" in filename or "\\" in filename or ".." in filename:
+            if (
+                not cartridge_id
+                or not filename
+                or "/" in filename
+                or "\\" in filename
+                or ".." in filename
+            ):
                 raise HTTPException(403, detail="invalid cartridge spec path")
             path = f"cartridges/{cartridge_id}/specs/{filename}"
-        if tool == "minio_list_objects" and not path and not _is_unscoped_admin_context(ctx):
+        if (
+            tool == "minio_list_objects"
+            and not path
+            and not _is_unscoped_admin_context(ctx)
+        ):
             raise HTTPException(403, detail="object prefix is required")
         if not _prefix_allowed(ctx, str(path)):
             raise HTTPException(403, detail="object prefix not allowed")
@@ -1373,8 +1595,12 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
         cartridge_id = str(args.get("cartridge_id") or "").strip()
         _require_cartridge_scope(ctx, cartridge_id)
         if tool == "cartridge_preview":
-            if not _is_unscoped_admin_context(ctx) and not _has_tenant_workspace_scope(ctx):
-                raise HTTPException(403, detail="cartridge preview requires tenant/workspace scope")
+            if not _is_unscoped_admin_context(ctx) and not _has_tenant_workspace_scope(
+                ctx
+            ):
+                raise HTTPException(
+                    403, detail="cartridge preview requires tenant/workspace scope"
+                )
             _inject_cartridge_execution_scope(ctx, args)
         elif tool == "cartridge_query_kb":
             _validate_cartridge_query_sql(ctx, cartridge_id, str(args.get("sql") or ""))
@@ -1385,13 +1611,19 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
     elif tool in _CARTRIDGE_READ_TOOLS | _CARTRIDGE_EXECUTE_TOOLS:
         _reject_client_owned_scope_args(args)
         if tool != "list_cartridges":
-            _require_cartridge_scope(ctx, str(args.get("cartridge_id") or args.get("id") or ""))
+            _require_cartridge_scope(
+                ctx, str(args.get("cartridge_id") or args.get("id") or "")
+            )
         if tool in _CARTRIDGE_CONTEXT_TOOLS and not _is_unscoped_admin_context(ctx):
             if not _has_tenant_workspace_scope(ctx):
-                raise HTTPException(403, detail="cartridge tools require tenant/workspace scope")
+                raise HTTPException(
+                    403, detail="cartridge tools require tenant/workspace scope"
+                )
         if tool == "cartridge_list_entities" and not _is_unscoped_admin_context(ctx):
             if not _has_tenant_workspace_scope(ctx):
-                raise HTTPException(403, detail="cartridge entities require tenant/workspace scope")
+                raise HTTPException(
+                    403, detail="cartridge entities require tenant/workspace scope"
+                )
             args["security_context"] = ctx
         if tool in _CARTRIDGE_CONTEXT_TOOLS:
             args["security_context"] = ctx
@@ -1403,13 +1635,16 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
 
 # ── MCP endpoints ──────────────────────────────────────────────────────────────
 
+
 @app.get("/mcp/tools", dependencies=[Depends(verify_api_key)])
 def get_tools():
     return {"tools": registry.list_tools()}
 
 
 @app.post("/mcp/invoke")
-async def invoke_tool(req: InvokeRequest, internal_service: str = Depends(verify_api_key)):
+async def invoke_tool(
+    req: InvokeRequest, internal_service: str = Depends(verify_api_key)
+):
     ctx = _enforce_data_scope(req, internal_service)
     try:
         result = await registry.invoke(req.tool, req.args)
@@ -1417,21 +1652,39 @@ async def invoke_tool(req: InvokeRequest, internal_service: str = Depends(verify
             result = _filter_rag_payload(result, ctx)
         if req.tool in _AIRFLOW_READ_TOOLS and ctx is not None:
             result = _filter_airflow_payload(req.tool, result, ctx)
-        if req.tool == "list_cartridges" and ctx is not None and not _is_unscoped_admin_context(ctx):
-            allowed = set(str(item).strip() for item in (ctx.get("allowed_cartridges") or []) if str(item).strip())
+        if (
+            req.tool == "list_cartridges"
+            and ctx is not None
+            and not _is_unscoped_admin_context(ctx)
+        ):
+            allowed = set(
+                str(item).strip()
+                for item in (ctx.get("allowed_cartridges") or [])
+                if str(item).strip()
+            )
             if "*" not in allowed:
-                result = [row for row in (result or []) if str(row.get("id") or "") in allowed]
-        if req.tool == "cartridge_list_jobs" and ctx is not None and not _is_unscoped_admin_context(ctx):
+                result = [
+                    row for row in (result or []) if str(row.get("id") or "") in allowed
+                ]
+        if (
+            req.tool == "cartridge_list_jobs"
+            and ctx is not None
+            and not _is_unscoped_admin_context(ctx)
+        ):
             result = [
-                row for row in (result or [])
-                if isinstance(row, dict) and _pipeline_run_allowed(ctx, str(row.get("run_id") or ""))
+                row
+                for row in (result or [])
+                if isinstance(row, dict)
+                and _pipeline_run_allowed(ctx, str(row.get("run_id") or ""))
             ]
         result = _redact_tool_result(result)
         return {"result": result}
     except HTTPException:
         raise
     except EmbeddingProviderError as exc:
-        raise HTTPException(status_code=503, detail="Embedding provider unavailable") from exc
+        raise HTTPException(
+            status_code=503, detail="Embedding provider unavailable"
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="Resource not found") from exc
     except Exception as exc:
@@ -1439,6 +1692,7 @@ async def invoke_tool(req: InvokeRequest, internal_service: str = Depends(verify
 
 
 # ── Health ─────────────────────────────────────────────────────────────────────
+
 
 @app.get("/healthz")
 def healthz():
@@ -1463,6 +1717,14 @@ def _postgres_ready(host: str, port: int, db: str, user: str, password: str) -> 
         with conn.cursor() as cur:
             cur.execute("SELECT 1")
             cur.fetchone()
+    return True
+
+
+def _duckdb_ready() -> bool:
+    from app.duckdb_runtime import connect_duckdb_runtime
+
+    connection = connect_duckdb_runtime()
+    connection.close()
     return True
 
 
@@ -1504,6 +1766,12 @@ def _readiness_checks() -> dict[str, str]:
     else:
         checks["postgres_gold"] = "degraded"
 
+    try:
+        checks["duckdb"] = "up" if _duckdb_ready() else "down"
+    except Exception:
+        logger.exception("mcp-infra readyz duckdb check failed")
+        checks["duckdb"] = "down"
+
     return checks
 
 
@@ -1530,7 +1798,10 @@ def health():
 
 # ── RAG REST endpoints (used by Studio UI) ─────────────────────────────────────
 
-from app.rag.store import list_sources as _rag_list_sources, delete_source as _rag_delete_source
+from app.rag.store import (
+    list_sources as _rag_list_sources,
+    delete_source as _rag_delete_source,
+)
 from app.tools.rag import _do_ingest as _rag_do_ingest, _do_search as _rag_do_search
 
 
@@ -1547,7 +1818,12 @@ def _rest_security_context(
             sec = json.loads(header_value)
         except Exception:
             sec = {}
-    if allow_refinement_system and internal_service == "refinement" and isinstance(sec, dict) and sec:
+    if (
+        allow_refinement_system
+        and internal_service == "refinement"
+        and isinstance(sec, dict)
+        and sec
+    ):
         fake_req = InvokeRequest(tool="search_rag", args={}, security_context=sec)
         return _require_context_permission(fake_req, "datasets.read", internal_service)
     if allow_refinement_system and internal_service == "refinement":
@@ -1559,7 +1835,11 @@ def _rest_security_context(
             "allowed_buckets": [os.environ.get("MINIO_BUCKET", "lakehouse")],
             "allowed_prefixes": ["raw/", "silver/", "gold/", "cartridges/"],
         }
-    fake_req = InvokeRequest(tool="search_rag", args={}, security_context=sec if isinstance(sec, dict) else {})
+    fake_req = InvokeRequest(
+        tool="search_rag",
+        args={},
+        security_context=sec if isinstance(sec, dict) else {},
+    )
     return _require_context_permission(fake_req, "datasets.read", internal_service)
 
 
@@ -1585,7 +1865,9 @@ async def rag_rest_delete_source(
     fake_req = InvokeRequest(
         tool="ingest_document",
         args={},
-        security_context=json.loads(x_security_context or "{}") if x_security_context else {},
+        security_context=json.loads(x_security_context or "{}")
+        if x_security_context
+        else {},
     )
     ctx = _require_context_permission(fake_req, "datasets.write", internal_service)
     _require_rag_context_scope(ctx)
@@ -1606,31 +1888,41 @@ async def rag_rest_search(body: dict, internal_service: str = Depends(verify_api
     ctx = _rest_security_context(internal_service, body)
     _require_rag_context_scope(ctx)
     try:
-        result = {"results": await _rag_do_search(
-            query=body["query"],
-            top_k=body.get("top_k", 5),
-            source_ids=body.get("source_ids"),
-            kinds=body.get("kinds"),
-            security_context=ctx,
-        )}
+        result = {
+            "results": await _rag_do_search(
+                query=body["query"],
+                top_k=body.get("top_k", 5),
+                source_ids=body.get("source_ids"),
+                kinds=body.get("kinds"),
+                security_context=ctx,
+            )
+        }
     except EmbeddingProviderError as exc:
         raise HTTPException(503, detail="Embedding provider unavailable") from exc
     return _filter_rag_payload(result, ctx)
 
 
 @app.post("/rag/ingest")
-async def rag_rest_ingest(request: Request, internal_service: str = Depends(verify_api_key)):
+async def rag_rest_ingest(
+    request: Request, internal_service: str = Depends(verify_api_key)
+):
     try:
         body = await read_ingest_body(request)
     except RagIngestError as exc:
         raise HTTPException(exc.status_code, exc.detail, headers=exc.headers) from exc
-    fake_req = InvokeRequest(tool="ingest_document", args={}, security_context=body.get("security_context") or {})
+    fake_req = InvokeRequest(
+        tool="ingest_document",
+        args={},
+        security_context=body.get("security_context") or {},
+    )
     ctx = _require_context_permission(fake_req, "datasets.write", internal_service)
     _require_rag_context_scope(ctx)
     source_name = str(body.get("name") or "").strip()
     if not source_name:
         raise HTTPException(400, "RAG source name is required")
-    if _rag_is_reserved_source_name(source_name) and not _rag_source_allowed(ctx, source_name):
+    if _rag_is_reserved_source_name(source_name) and not _rag_source_allowed(
+        ctx, source_name
+    ):
         raise HTTPException(403, "RAG source is outside caller scope")
     if not _rag_is_reserved_source_name(source_name):
         source_name = _scoped_rag_document_name(ctx, source_name)
@@ -1639,7 +1931,9 @@ async def rag_rest_ingest(request: Request, internal_service: str = Depends(veri
         try:
             content = await extract_pdf_text_with_capacity(content)
         except RagIngestError as exc:
-            raise HTTPException(exc.status_code, exc.detail, headers=exc.headers) from exc
+            raise HTTPException(
+                exc.status_code, exc.detail, headers=exc.headers
+            ) from exc
     else:
         try:
             content = validate_text_content(content)
@@ -1659,6 +1953,7 @@ async def rag_rest_ingest(request: Request, internal_service: str = Depends(veri
 
 
 # ── Re-index a single raw entity or dataset into the RAG ────────────────────
+
 
 @app.post("/rag/reindex")
 async def rag_rest_reindex(body: dict, internal_service: str = Depends(verify_api_key)):
@@ -1686,7 +1981,11 @@ async def rag_rest_reindex(body: dict, internal_service: str = Depends(verify_ap
     else:
         cartridge_for_dataset = _cartridge_of(name, ctx)
         requested_cartridge = str(body.get("cartridge") or "").strip()
-        if requested_cartridge and cartridge_for_dataset and requested_cartridge != cartridge_for_dataset:
+        if (
+            requested_cartridge
+            and cartridge_for_dataset
+            and requested_cartridge != cartridge_for_dataset
+        ):
             raise HTTPException(
                 404,
                 f"dataset '{name}' not found for cartridge '{requested_cartridge}'",
@@ -1721,13 +2020,15 @@ async def rag_rest_reindex(body: dict, internal_service: str = Depends(verify_ap
             else _cartridge_of(name, ctx)
         )
     elif rebuild_semantic:
-        cartridge_for_semantic = _safe_rag_segment(body.get("cartridge") or "replicon", "cartridge")
+        cartridge_for_semantic = _safe_rag_segment(
+            body.get("cartridge") or "replicon", "cartridge"
+        )
     else:
         cartridge_for_semantic = None
     if rebuild_semantic and cartridge_for_semantic:
         try:
             semantic_result = await _rebuild_semantic_doc(cartridge_for_semantic, ctx)
-        except Exception as exc:                              # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             request_id = _log_internal_error(exc, "semantic reindex failed")
             semantic_result = {
                 "rebuilt": False,
@@ -1743,7 +2044,9 @@ async def rag_rest_reindex(body: dict, internal_service: str = Depends(verify_ap
 
 
 @app.post("/rag/rebuild-semantic")
-async def rag_rest_rebuild_semantic(body: dict, internal_service: str = Depends(verify_api_key)):
+async def rag_rest_rebuild_semantic(
+    body: dict, internal_service: str = Depends(verify_api_key)
+):
     cartridge = _safe_rag_segment(body.get("cartridge") or "replicon", "cartridge")
     ctx = _rest_security_context(internal_service, body, allow_refinement_system=True)
     _require_cartridge_scope(ctx, cartridge)
@@ -1754,6 +2057,7 @@ def _cartridge_of(dataset_name: str, ctx: dict[str, Any] | None = None) -> str |
     """Resolve cartridge_id for a dataset inside the caller scope."""
     import psycopg2
     from app.config import settings as s
+
     try:
         conn = psycopg2.connect(
             host=s.pg_host,
@@ -1763,14 +2067,25 @@ def _cartridge_of(dataset_name: str, ctx: dict[str, Any] | None = None) -> str |
             password=s.pg_password,
         )
         with conn.cursor() as cur:
-            if ctx and _has_tenant_workspace_scope(ctx) and not _is_unscoped_admin_context(ctx):
+            if (
+                ctx
+                and _has_tenant_workspace_scope(ctx)
+                and not _is_unscoped_admin_context(ctx)
+            ):
                 cur.execute(
                     "SELECT set_config('app.tenant_id', %s, true), set_config('app.workspace_id', %s, true)",
-                    (str(ctx.get("tenant_id") or ""), str(ctx.get("workspace_id") or "")),
+                    (
+                        str(ctx.get("tenant_id") or ""),
+                        str(ctx.get("workspace_id") or ""),
+                    ),
                 )
             sql = "SELECT cartridge FROM datasets WHERE name = %s"
             params: list[Any] = [dataset_name]
-            if ctx and _has_tenant_workspace_scope(ctx) and not _is_unscoped_admin_context(ctx):
+            if (
+                ctx
+                and _has_tenant_workspace_scope(ctx)
+                and not _is_unscoped_admin_context(ctx)
+            ):
                 sql += " AND workspace_id = %s::uuid"
                 params.append(ctx.get("workspace_id"))
             cur.execute(sql, tuple(params))
@@ -1785,18 +2100,20 @@ def _duckdb_s3_settings(con, endpoint: str, region: str) -> None:
     import os
 
     url_style = "vhost" if "amazonaws.com" in endpoint else "path"
-    secure = (os.environ.get("MINIO_SECURE", "false").lower() in {"1", "true", "yes", "on"})
-    try:
-        con.execute("LOAD httpfs;")
-    except Exception:  # noqa: BLE001
-        try:
-            con.execute("INSTALL httpfs; LOAD httpfs;")
-        except Exception as install_exc:  # noqa: BLE001
-            raise RuntimeError(
-                "DuckDB httpfs extension unavailable; install httpfs in the mcp-infra image"
-            ) from install_exc
-    access_key = os.environ.get("MINIO_ACCESS_KEY") or os.environ.get("AWS_ACCESS_KEY_ID") or ""
-    secret_key = os.environ.get("MINIO_SECRET_KEY") or os.environ.get("AWS_SECRET_ACCESS_KEY") or ""
+    secure = os.environ.get("MINIO_SECURE", "false").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    access_key = (
+        os.environ.get("MINIO_ACCESS_KEY") or os.environ.get("AWS_ACCESS_KEY_ID") or ""
+    )
+    secret_key = (
+        os.environ.get("MINIO_SECRET_KEY")
+        or os.environ.get("AWS_SECRET_ACCESS_KEY")
+        or ""
+    )
     session_token = os.environ.get("AWS_SESSION_TOKEN") or ""
     if access_key and secret_key:
         con.execute(f"""
@@ -1829,19 +2146,26 @@ def _duckdb_s3_settings(con, endpoint: str, region: str) -> None:
     """)
 
 
-async def _rebuild_semantic_doc(cartridge: str, ctx: dict[str, Any] | None = None) -> dict:
+async def _rebuild_semantic_doc(
+    cartridge: str, ctx: dict[str, Any] | None = None
+) -> dict:
     """Rebuild `_semantic_<cartridge>` from live schemas + data_catalog."""
     import os
     import duckdb
     import psycopg2
     from datetime import datetime, timezone
     from app.config import settings as s
+    from app.publication_heads import publication_epoch, published_heads
 
     bucket = os.environ.get("MINIO_BUCKET", "")
     cartridge = _safe_rag_segment(cartridge, "cartridge")
     endpoint = os.environ.get("MINIO_ENDPOINT", "")
     region = os.environ.get("AWS_REGION", "us-east-1")
     ctx = ctx or {}
+    try:
+        heads = published_heads(ctx)
+    except (PermissionError, RuntimeError) as exc:
+        raise HTTPException(503, "published catalog is unavailable") from exc
     scope_suffix = _rag_scope_suffix(ctx)
     scoped_raw_glob = ""
     scoped_raw_read = ""
@@ -1882,42 +2206,34 @@ async def _rebuild_semantic_doc(cartridge: str, ctx: dict[str, Any] | None = Non
             dataset_params.append(str(ctx.get("workspace_id") or ""))
         dataset_sql += " ORDER BY layer, name"
         cur.execute(dataset_sql, tuple(dataset_params))
-        datasets = cur.fetchall()
-        lineage_sql = """
-            SELECT DISTINCT ON (silver_name) silver_name, storage_uri
-              FROM silver_lineage
-             WHERE cartridge_id = %s
-               AND storage_uri IS NOT NULL
-               AND storage_uri <> ''
-        """
-        lineage_params: list[Any] = [cartridge]
-        if _has_tenant_workspace_scope(ctx) and not _is_unscoped_admin_context(ctx):
-            lineage_sql += " AND storage_uri LIKE %s"
-            lineage_params.append(
-                "%/"
-                f"tenant_id={str(ctx.get('tenant_id') or '')}/"
-                f"workspace_id={str(ctx.get('workspace_id') or '')}/%"
-            )
-        lineage_sql += " ORDER BY silver_name, created_at DESC"
-        cur.execute(lineage_sql, tuple(lineage_params))
+        datasets = [
+            row for row in cur.fetchall() if (str(row[0]), str(row[1])) in heads
+        ]
         lineage_by_name = {
-            str(row[0]): str(row[1])
-            for row in cur.fetchall()
-            if row[0] and row[1]
+            dataset: str(value.get("object_uri") or "")
+            for (dataset, layer), value in heads.items()
+            if layer == "silver" and value.get("object_uri")
         }
-        cur.execute("""
+        cur.execute(
+            """
             SELECT dataset, column_name, COALESCE(description,''), COALESCE(tags, '{}')
               FROM data_catalog
              WHERE cartridge = %s
-        """ + catalog_scope_sql, (cartridge, *catalog_params))
+        """
+            + catalog_scope_sql,
+            (cartridge, *catalog_params),
+        )
         desc_rows = cur.fetchall()
     conn.close()
     desc_by = {
         (r[0], r[1]): {"description": r[2], "tags": r[3] or []}
         for r in desc_rows
+        if any(dataset == str(r[0]) for dataset, _layer in heads)
     }
 
-    con = duckdb.connect()
+    from app.duckdb_runtime import connect_duckdb_runtime
+
+    con = connect_duckdb_runtime()
     _duckdb_s3_settings(con, endpoint, region)
     out: list[str] = [
         f"# Modelo Semántico — Cartucho `{cartridge}`\n",
@@ -1934,19 +2250,16 @@ async def _rebuild_semantic_doc(cartridge: str, ctx: dict[str, Any] | None = Non
 
     def catalog_fields(dataset: str) -> list[tuple[str, str]]:
         return [
-            (column, "catalog")
-            for (catalog_dataset, column), _meta in sorted(desc_by.items())
-            if catalog_dataset == dataset
+            (str(field.get("name") or ""), str(field.get("type") or ""))
+            for field in heads.get((dataset, "gold"), {}).get("catalog", [])
+            if isinstance(field, dict) and field.get("name") and field.get("type")
         ]
 
-    # IMPORTANT: when the caller is scoped, the glob() pattern must already
     # restrict file discovery to their tenant/workspace partition. Otherwise
     # the entity list would include entities that only exist in other tenants'
     # data — leaking their presence even if their rows aren't read.
     if scoped_raw_glob:
-        glob_pattern = (
-            f"s3://{bucket}/raw/{cartridge}/*/{scoped_raw_glob}**/*.parquet"
-        )
+        glob_pattern = f"s3://{bucket}/raw/{cartridge}/*/{scoped_raw_glob}**/*.parquet"
     else:
         glob_pattern = f"s3://{bucket}/raw/{cartridge}/*/**/*.parquet"
     try:
@@ -1968,7 +2281,7 @@ async def _rebuild_semantic_doc(cartridge: str, ctx: dict[str, Any] | None = Non
                     f"DESCRIBE SELECT * FROM read_parquet('s3://{bucket}/raw/{cartridge}/{ent}/{scoped_raw_read}**/*.parquet',"
                     f" hive_partitioning=true, union_by_name=true) LIMIT 0"
                 ).fetchall()
-            except Exception as exc:                          # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 _log_internal_error(exc, "semantic raw schema lookup failed")
                 fields = []
                 out.append("_(schema unavailable)_\n")
@@ -1990,7 +2303,9 @@ async def _rebuild_semantic_doc(cartridge: str, ctx: dict[str, Any] | None = Non
                 if layer == "gold":
                     fields = catalog_fields(name)
                     if not fields:
-                        out.append("_(schema unavailable; Gold schema must be queried through Refinement)_\n")
+                        out.append(
+                            "_(schema unavailable; Gold schema must be queried through Refinement)_\n"
+                        )
                 else:
                     parquet = lineage_by_name.get(name)
                     if not parquet and scoped_raw_read:
@@ -1999,9 +2314,13 @@ async def _rebuild_semantic_doc(cartridge: str, ctx: dict[str, Any] | None = Non
                             f"{scoped_raw_read}data.parquet"
                         )
                     elif not parquet:
-                        parquet = f"s3://{bucket}/silver/{cartridge}/{name}/data.parquet"
-                    fields = con.execute(f"DESCRIBE SELECT * FROM read_parquet('{parquet}') LIMIT 0").fetchall()
-            except Exception as exc:                          # noqa: BLE001
+                        parquet = (
+                            f"s3://{bucket}/silver/{cartridge}/{name}/data.parquet"
+                        )
+                    fields = con.execute(
+                        f"DESCRIBE SELECT * FROM read_parquet('{parquet}') LIMIT 0"
+                    ).fetchall()
+            except Exception as exc:  # noqa: BLE001
                 _log_internal_error(exc, "semantic dataset schema lookup failed")
                 fields = []
                 out.append("_(schema unavailable)_\n")
@@ -2010,7 +2329,7 @@ async def _rebuild_semantic_doc(cartridge: str, ctx: dict[str, Any] | None = Non
             out.append("\n")
 
     content = "".join(out)
-    source_name = f"_semantic_{cartridge}{scope_suffix}"
+    source_name = f"_semantic_{cartridge}:head:{publication_epoch(ctx)}{scope_suffix}"
     ingest = await _rag_do_ingest(
         name=source_name,
         content=content,
@@ -2029,9 +2348,10 @@ async def _rebuild_semantic_doc(cartridge: str, ctx: dict[str, Any] | None = Non
     }
 
 
-def _build_raw_doc(cartridge: str, entity: str, ctx: dict[str, Any] | None = None) -> str:
+def _build_raw_doc(
+    cartridge: str, entity: str, ctx: dict[str, Any] | None = None
+) -> str:
     import os
-    import duckdb
 
     bucket = os.environ.get("MINIO_BUCKET", "")
     cartridge = _safe_rag_segment(cartridge, "cartridge")
@@ -2044,21 +2364,25 @@ def _build_raw_doc(cartridge: str, entity: str, ctx: dict[str, Any] | None = Non
     # data from every tenant and leak it through semantic search.
     if _has_tenant_workspace_scope(ctx) and not _is_unscoped_admin_context(ctx):
         tenant_id = _safe_rag_segment(str(ctx.get("tenant_id") or ""), "tenant_id")
-        workspace_id = _safe_rag_segment(str(ctx.get("workspace_id") or ""), "workspace_id")
+        workspace_id = _safe_rag_segment(
+            str(ctx.get("workspace_id") or ""), "workspace_id"
+        )
         path = (
             f"s3://{bucket}/raw/{cartridge}/{entity}/"
             f"tenant_id={tenant_id}/workspace_id={workspace_id}/**/*.parquet"
         )
     else:
         path = f"s3://{bucket}/raw/{cartridge}/{entity}/**/*.parquet"
-    con = duckdb.connect()
+    from app.duckdb_runtime import connect_duckdb_runtime
+
+    con = connect_duckdb_runtime()
     _duckdb_s3_settings(con, endpoint, region)
     try:
         rows = con.execute(
             f"DESCRIBE SELECT * FROM read_parquet('{path}', hive_partitioning=true, union_by_name=true) LIMIT 0"
         ).fetchall()
         fields = "\n".join(f"- `{r[0]}` : {r[1]}" for r in rows)
-    except Exception as exc:                                  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         _log_internal_error(exc, "raw doc schema lookup failed")
         fields = "(schema unavailable)"
     return (
@@ -2085,7 +2409,10 @@ def _build_dataset_doc(name: str, ctx: dict[str, Any] | None = None) -> tuple[st
             if _has_tenant_workspace_scope(ctx) and not _is_unscoped_admin_context(ctx):
                 cur.execute(
                     "SELECT set_config('app.tenant_id', %s, true), set_config('app.workspace_id', %s, true)",
-                    (str(ctx.get("tenant_id") or ""), str(ctx.get("workspace_id") or "")),
+                    (
+                        str(ctx.get("tenant_id") or ""),
+                        str(ctx.get("workspace_id") or ""),
+                    ),
                 )
             sql = (
                 "SELECT layer, cartridge, COALESCE(sql_def,''), COALESCE(description,'') "
@@ -2110,7 +2437,9 @@ def _build_dataset_doc(name: str, ctx: dict[str, Any] | None = None) -> tuple[st
             if str(item).strip()
         }
         if allowed and "*" not in allowed and cartridge not in allowed:
-            raise HTTPException(403, f"dataset '{name}' is outside caller cartridge scope")
+            raise HTTPException(
+                403, f"dataset '{name}' is outside caller cartridge scope"
+            )
     scope_note = ""
     if _has_tenant_workspace_scope(ctx) and not _is_unscoped_admin_context(ctx):
         scope_note = (
