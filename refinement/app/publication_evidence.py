@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from typing import Any
 
@@ -37,12 +38,36 @@ class PublicationEvidenceStore:
         schema_fields: list[dict[str, Any]],
         lineage: dict[str, Any],
     ) -> tuple[dict[str, Any], list[dict[str, str]]]:
-        catalog = [
-            {"name": str(field.get("name") or ""), "type": str(field.get("type") or "")}
-            for field in schema_fields
-        ]
+        catalog = []
+        for field in schema_fields:
+            item: dict[str, Any] = {
+                "name": str(field.get("name") or ""),
+                "type": str(field.get("type") or ""),
+            }
+            for key in ("description", "tags", "is_key", "is_metric", "example_values"):
+                if key in field:
+                    item[key] = field[key]
+            catalog.append(item)
         if not catalog or any(not item["name"] or not item["type"] for item in catalog):
             raise ValueError("materialization catalog is incomplete")
+        with psycopg2.connect(self.database_url) as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT set_config('app.tenant_id',%s,true),"
+                "set_config('app.workspace_id',%s,true)",
+                (identity.scope.tenant_id, identity.scope.workspace_id),
+            )
+            cur.execute(
+                "SELECT omega_publication.record_attestation("
+                "%s,%s,%s,%s,%s::jsonb,%s::jsonb)",
+                (
+                    str(identity.materialization_run_id),
+                    object_uri,
+                    object_checksum,
+                    row_count,
+                    json.dumps(lineage, sort_keys=True, default=str),
+                    json.dumps(catalog, sort_keys=True, default=str),
+                ),
+            )
         return lineage, catalog
 
     def published(

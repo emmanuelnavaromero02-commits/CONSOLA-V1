@@ -15,6 +15,7 @@ from app.services.gold_publication_relation import (
     resolve_published_gold_relation,
 )
 from app.services.intelligence.utils import workspace_scope
+from app.services.intelligence.publication_trace import record_publication_read
 
 
 _SAFE_DATASET_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
@@ -137,6 +138,7 @@ async def query_gold_dataset_rows(
                 materialization_run_id,
                 head_generation,
             )
+            record_publication_read(dataset, relation)
             cached = _gold_cache_get(cache_key)
             if cached is not None:
                 return cached

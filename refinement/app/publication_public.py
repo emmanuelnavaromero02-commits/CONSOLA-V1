@@ -33,6 +33,8 @@ def _scope(ds: dict[str, Any], context: dict[str, str]) -> PublicationScope:
 
 
 _PUBLIC_SOURCE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
+_PUBLIC_TEXT = re.compile(r"^[^\x00-\x1f\x7f]{1,500}$")
+_PUBLIC_TAG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$")
 
 
 def _public_source_entity(value: object) -> str:
@@ -49,6 +51,45 @@ def _public_source_entity(value: object) -> str:
     else:
         return ""
     return candidate if _PUBLIC_SOURCE.fullmatch(candidate) else ""
+
+
+def _public_text(value: object) -> str:
+    text = str(value or "").strip()
+    return text if _PUBLIC_TEXT.fullmatch(text) else ""
+
+
+def _public_tags(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(tag) for tag in value[:16] if _PUBLIC_TAG.fullmatch(str(tag))]
+
+
+def _public_examples(value: object) -> list[object]:
+    if not isinstance(value, list):
+        return []
+    return [
+        item for item in value[:20] if item is None or type(item) in {bool, int, float}
+    ]
+
+
+def _public_relationship(value: object, *, from_dataset: str) -> dict[str, str] | None:
+    if not isinstance(value, dict):
+        return None
+    result = {
+        key: _public_text(value.get(key))
+        for key in (
+            "from_column",
+            "to_dataset",
+            "to_column",
+            "join_hint",
+            "description",
+        )
+    }
+    result["from_dataset"] = (
+        from_dataset if _PUBLIC_SOURCE.fullmatch(from_dataset) else ""
+    )
+    required = ("from_dataset", "from_column", "to_dataset", "to_column")
+    return result if all(result[key] for key in required) else None
 
 
 def published_lineage(
@@ -101,6 +142,20 @@ def published_dataset_metadata(
     )
     if not head:
         return None
+    evidence = None
+    if head.get("status") != "legacy_unverified":
+        evidence = PublicationEvidenceStore().read_exact(
+            str(head["materialization_run_id"]), _scope(ds, context)
+        )
+        if not evidence:
+            return None
+    lineage = (evidence or {}).get("lineage") or {}
+    public_metadata = lineage.get("public_metadata") or {}
+    public_sources = [
+        source
+        for value in lineage.get("public_sources") or []
+        if (source := _public_source_entity(value))
+    ]
     return {
         "name": str(ds.get("name") or ""),
         "layer": str(ds.get("layer") or "silver"),
@@ -112,6 +167,8 @@ def published_dataset_metadata(
         "status": "legacy_unverified"
         if head.get("status") == "legacy_unverified"
         else "published",
+        "description": _public_text(public_metadata.get("description")),
+        "sources": public_sources,
     }
 
 
@@ -155,9 +212,18 @@ def published_catalog(
                 continue
         columns = []
         for field in (evidence or {}).get("catalog", []):
-            column = {"name": field.get("name"), "type": field.get("type")}
-            if tags:
+            field_tags = _public_tags(field.get("tags"))
+            if tags and not set(tags).intersection(field_tags):
                 continue
+            column = {
+                "name": field.get("name"),
+                "type": field.get("type"),
+                "description": _public_text(field.get("description")),
+                "tags": field_tags,
+                "is_key": bool(field.get("is_key")),
+                "is_metric": bool(field.get("is_metric")),
+                "example_values": _public_examples(field.get("example_values")),
+            }
             columns.append(column)
         if tags and not columns:
             continue
@@ -168,6 +234,27 @@ def published_catalog(
             "last_refresh": head["published_at"].isoformat()
             if head.get("published_at")
             else None,
+            "description": _public_text(
+                (
+                    ((evidence or {}).get("lineage") or {}).get("public_metadata") or {}
+                ).get("description")
+            ),
             "columns": columns,
         }
-    return {"datasets": output, "relationships": []}
+    relationships = []
+    for ds in datasets_meta:
+        name = str(ds.get("name") or "")
+        if name not in output:
+            continue
+        scope = _scope(ds, context)
+        head = reader.published_head(
+            scope.layer, str(ds.get("cartridge") or ""), name, context
+        )
+        if not head or head.get("status") == "legacy_unverified":
+            continue
+        evidence = evidence_store.read_exact(str(head["materialization_run_id"]), scope)
+        metadata = ((evidence or {}).get("lineage") or {}).get("public_metadata") or {}
+        for value in metadata.get("relationships") or []:
+            if relationship := _public_relationship(value, from_dataset=name):
+                relationships.append(relationship)
+    return {"datasets": output, "relationships": relationships}

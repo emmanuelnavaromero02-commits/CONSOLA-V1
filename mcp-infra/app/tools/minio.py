@@ -5,12 +5,14 @@ MinIO MCP tools — browse the lakehouse, inspect Parquet schemas, upload specs.
 from __future__ import annotations
 
 import io
+import hashlib
 import os
 import re
 
 from app.config import settings
 from app.publication_heads import (
     published_object,
+    published_object_checksum,
     published_prefix,
 )
 from app.registry import tool
@@ -65,6 +67,18 @@ def _read_bounded_object(
     raw = storage.get_bytes(object_path)
     if len(raw) > max_bytes:
         raise ValueError(f"object too large for MCP preview (> {max_bytes} bytes)")
+    return raw
+
+
+def _read_verified_published_object(
+    storage, object_path: str, security_context: dict | None, bucket: str
+) -> bytes:
+    expected = published_object_checksum(object_path, security_context, bucket)
+    if not expected:
+        raise PermissionError("materialized object is not published")
+    raw = _read_bounded_object(storage, object_path)
+    if hashlib.sha256(raw).hexdigest() != expected:
+        raise PermissionError("published object integrity is unavailable")
     return raw
 
 
@@ -138,7 +152,9 @@ def minio_get_parquet_schema(
     bkt = bucket or settings.minio_bucket
     if not published_object(object_path, security_context, bkt):
         raise PermissionError("materialized object is not published")
-    raw = _read_bounded_object(_storage(bkt), object_path)
+    raw = _read_verified_published_object(
+        _storage(bkt), object_path, security_context, bkt
+    )
     pf = pq.ParquetFile(io.BytesIO(raw))
     schema = pf.schema_arrow
     return {
@@ -173,7 +189,9 @@ def minio_get_sample_rows(
     if not published_object(object_path, security_context, bkt):
         raise PermissionError("materialized object is not published")
     n = min(max(int(n or 10), 1), 100)
-    raw = _read_bounded_object(_storage(bkt), object_path)
+    raw = _read_verified_published_object(
+        _storage(bkt), object_path, security_context, bkt
+    )
     df = pq.read_table(io.BytesIO(raw)).to_pandas().head(n)
     return {
         "rows": df.to_dict(orient="records"),

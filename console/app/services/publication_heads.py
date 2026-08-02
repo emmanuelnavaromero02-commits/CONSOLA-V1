@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import asyncio
 import os
 from urllib.parse import urlsplit
 
@@ -25,10 +26,10 @@ def materialized_object_key(key: str) -> bool:
     return str(key or "").lstrip("/").split("/", 1)[0] in {"silver", "gold"}
 
 
-async def published_object_keys(user: dict | None, bucket: str) -> set[str]:
+async def published_object_references(user: dict | None, bucket: str) -> dict[str, str]:
     tenant_id, workspace_id = workspace_scope(user)
     if not tenant_id or not workspace_id or not _gold_dsn():
-        return set()
+        return {}
     conn = await asyncpg.connect(_gold_dsn(), timeout=5, command_timeout=10)
     try:
         async with conn.transaction(isolation="repeatable_read", readonly=True):
@@ -39,23 +40,33 @@ async def published_object_keys(user: dict | None, bucket: str) -> set[str]:
             )
             rows = await conn.fetch(
                 """
-                SELECT r.object_uri
+                SELECT r.object_uri,r.object_checksum
                   FROM omega_publication.dataset_publication_heads h
                   JOIN omega_publication.materialization_runs r
                     ON r.materialization_run_id=h.materialization_run_id
                  WHERE h.tenant_id=$1 AND h.workspace_id=$2
-                   AND r.status IN ('published','legacy_unverified')
+                   AND r.status='published'
                    AND r.object_uri IS NOT NULL
+                   AND r.object_checksum ~ '^[0-9a-f]{64}$'
                 """,
                 tenant_id,
                 workspace_id,
             )
-            refs = {_object_ref(row["object_uri"]) for row in rows}
+            refs = {
+                _object_ref(row["object_uri"]): str(row["object_checksum"])
+                for row in rows
+            }
             return {
-                key for object_bucket, key in refs if object_bucket == bucket and key
+                key: checksum
+                for (object_bucket, key), checksum in refs.items()
+                if object_bucket == bucket and key
             }
     finally:
         await conn.close()
+
+
+async def published_object_keys(user: dict | None, bucket: str) -> set[str]:
+    return set(await published_object_references(user, bucket))
 
 
 async def publication_epoch(user: dict | None) -> str | None:
@@ -95,6 +106,33 @@ async def published_object(key: str, user: dict | None, bucket: str) -> bool:
     if not materialized_object_key(clean):
         return True
     return clean in await published_object_keys(user, bucket)
+
+
+def _read_object_bytes(s3_client, bucket: str, key: str) -> bytes:
+    response = s3_client.get_object(Bucket=bucket, Key=key)
+    body = response["Body"]
+    try:
+        return body.read()
+    finally:
+        close = getattr(body, "close", None)
+        if close:
+            close()
+
+
+async def verified_published_object(
+    s3_client, key: str, user: dict | None, bucket: str
+) -> bytes | None:
+    clean = str(key or "").lstrip("/")
+    if not materialized_object_key(clean):
+        return None
+    expected = (await published_object_references(user, bucket)).get(clean)
+    if not expected:
+        return None
+    try:
+        raw = await asyncio.to_thread(_read_object_bytes, s3_client, bucket, clean)
+    except Exception:
+        return None
+    return raw if hashlib.sha256(raw).hexdigest() == expected else None
 
 
 def visible_materialized_prefix(prefix: str, published: set[str]) -> bool:

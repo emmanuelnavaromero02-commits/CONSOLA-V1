@@ -72,7 +72,10 @@ class PublicationStore:
             except Exception:
                 current = self.run(identity) or {}
                 status = str(current.get("status") or "")
-                if status == "prepared" or status == "published":
+                if status == "prepared" or status in {
+                    "published",
+                    "recoverable_failed",
+                }:
                     raise
                 self._abandon_unprepared(identity)
                 raise
@@ -249,4 +252,12 @@ class PublicationStore:
             cur.execute(
                 "SELECT omega_publication.abandon_materialization(%s)",
                 (str(identity.materialization_run_id),),
+            )
+
+    def quarantine_prepared(self, identity: PublicationIdentity, reason: str) -> None:
+        with psycopg2.connect(self._publisher_url()) as conn, conn.cursor() as cur:
+            self._scope(cur, identity.scope)
+            cur.execute(
+                "SELECT omega_publication.quarantine_prepared(%s,%s)",
+                (str(identity.materialization_run_id), str(reason or "")[:240]),
             )

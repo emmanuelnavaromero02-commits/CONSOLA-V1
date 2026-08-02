@@ -55,7 +55,7 @@ def test_unicode_dataset_name_fails_closed_before_physical_relation_mapping() ->
         )
 
 
-def test_rerunning_schema_migration_after_publish_creates_no_legacy_orphan(
+def test_rerunning_publication_migrations_after_publish_preserves_state(
     staged_publication_live_stack: LiveStack,
 ) -> None:
     stack = staged_publication_live_stack
@@ -63,14 +63,30 @@ def test_rerunning_schema_migration_after_publish_creates_no_legacy_orphan(
     before = stack.sql(
         stack.admin_dsn,
         (TENANT_A, WORKSPACE_A),
-        "SELECT count(*) FROM omega_publication.materialization_runs",
-    )[0][0]
+        "SELECT "
+        "(SELECT count(*) FROM omega_publication.materialization_runs),"
+        "(SELECT count(*) FROM omega_publication.materialization_receipts),"
+        "(SELECT count(*) FROM omega_publication.dataset_publication_heads),"
+        "(SELECT count(*) FROM omega_publication.dataset_gold_relations)",
+    )[0]
+    published = stack.published_state("migration_rerun_after_publish")
 
-    stack.rerun_gold_migration("38_staged_publication_schema.sql")
+    for migration in (
+        "38_staged_publication_schema.sql",
+        "39_staged_publication_functions.sql",
+        "40_staged_publication_cas.sql",
+        "41_staged_publication_authority.sql",
+    ):
+        stack.rerun_gold_migration(migration)
 
     after = stack.sql(
         stack.admin_dsn,
         (TENANT_A, WORKSPACE_A),
-        "SELECT count(*) FROM omega_publication.materialization_runs",
-    )[0][0]
+        "SELECT "
+        "(SELECT count(*) FROM omega_publication.materialization_runs),"
+        "(SELECT count(*) FROM omega_publication.materialization_receipts),"
+        "(SELECT count(*) FROM omega_publication.dataset_publication_heads),"
+        "(SELECT count(*) FROM omega_publication.dataset_gold_relations)",
+    )[0]
     assert after == before
+    assert stack.published_state("migration_rerun_after_publish") == published

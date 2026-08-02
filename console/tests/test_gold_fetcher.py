@@ -31,6 +31,9 @@ class _FakeConn:
             "generation": 1,
             "status": "legacy_unverified",
             "gold_table": gold_fetcher._gold_table(str(args[2])),
+            "receipt_id": None,
+            "object_checksum": None,
+            "evidence_digest": None,
         }
 
     async def execute(self, sql: str, *args: object):

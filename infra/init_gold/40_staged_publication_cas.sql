@@ -1,20 +1,19 @@
 CREATE OR REPLACE FUNCTION omega_publication.gold_compatibility_relation(
-    p_dataset text
+    p_tenant uuid, p_workspace uuid, p_dataset text
 ) RETURNS text
 LANGUAGE plpgsql IMMUTABLE STRICT
 SET search_path = pg_catalog
 AS $$
 DECLARE
-  candidate text := 'gold_' || p_dataset;
+  scope_digest text;
 BEGIN
   IF p_dataset !~ '^[A-Za-z_][A-Za-z0-9_]{0,127}$' THEN
     RAISE EXCEPTION 'invalid Gold dataset name' USING ERRCODE='22023';
   END IF;
-  IF octet_length(candidate) <= 63 THEN
-    RETURN candidate;
-  END IF;
-  RETURN 'gold_' || substr(p_dataset,1,40) || '_' ||
-         substr(encode(public.digest(convert_to(p_dataset,'UTF8'),'sha256'),'hex'),1,16);
+  scope_digest := encode(public.digest(convert_to(
+    p_tenant::text || ':' || p_workspace::text || ':' || p_dataset,
+    'UTF8'),'sha256'),'hex');
+  RETURN 'gold_' || substr(p_dataset,1,38) || '_' || substr(scope_digest,1,16);
 END $$;
 
 CREATE OR REPLACE FUNCTION omega_publication.publish_materialization(
@@ -54,7 +53,10 @@ BEGIN
     RAISE EXCEPTION 'publication expected head mismatch' USING ERRCODE='40001';
   END IF;
   IF NOT EXISTS (
-    SELECT 1 FROM omega_publication.materialization_evidence e
+    SELECT 1
+      FROM omega_publication.materialization_evidence e
+      JOIN omega_publication.materialization_attestations a
+        ON a.attestation_id=e.attestation_id
      WHERE e.materialization_run_id=run_row.materialization_run_id
        AND e.tenant_id=run_row.tenant_id AND e.workspace_id=run_row.workspace_id
        AND e.dataset=run_row.dataset AND e.layer=run_row.layer
@@ -63,8 +65,25 @@ BEGIN
        AND e.row_count=run_row.row_count
        AND e.schema_digest=run_row.schema_digest
        AND e.evidence_digest=run_row.evidence_digest
+       AND a.materialization_run_id=run_row.materialization_run_id
+       AND a.tenant_id=run_row.tenant_id
+       AND a.workspace_id=run_row.workspace_id
+       AND a.dataset=run_row.dataset AND a.layer=run_row.layer
+       AND a.attempt=run_row.attempt
+       AND a.object_uri=e.object_uri
+       AND a.object_checksum=e.object_checksum
+       AND a.row_count=e.row_count
+       AND a.schema_digest=e.schema_digest
+       AND a.input_digest=run_row.input_digest
+       AND a.contract_digest=run_row.contract_digest
+       AND a.lineage=e.lineage AND a.catalog=e.catalog
+       AND a.verifier_identity='refinement.parquet-verifier/v1'
+       AND a.consumed_at IS NOT NULL
+       AND a.invalidated_at IS NULL
+       AND a.expires_at > clock_timestamp()
   ) THEN
-    RAISE EXCEPTION 'materialization evidence is incomplete' USING ERRCODE='23514';
+    RAISE EXCEPTION 'materialization authority is incomplete or expired'
+      USING ERRCODE='23514';
   END IF;
   PERFORM pg_advisory_xact_lock(hashtextextended(
     run_row.tenant_id::text || ':' || run_row.workspace_id::text || ':' ||
@@ -87,8 +106,11 @@ BEGIN
       tenant_id, workspace_id, dataset, relation_name
     ) VALUES (
       run_row.tenant_id, run_row.workspace_id, run_row.dataset,
-      omega_publication.gold_compatibility_relation(run_row.dataset)
-    ) ON CONFLICT (tenant_id, workspace_id, dataset) DO NOTHING;
+      omega_publication.gold_compatibility_relation(
+        run_row.tenant_id,run_row.workspace_id,run_row.dataset
+      )
+    ) ON CONFLICT (tenant_id, workspace_id, dataset) DO UPDATE SET
+      relation_name=EXCLUDED.relation_name;
     SELECT relation_name INTO legacy_name
       FROM omega_publication.dataset_gold_relations
      WHERE tenant_id=run_row.tenant_id AND workspace_id=run_row.workspace_id
@@ -215,11 +237,13 @@ END $$;
 
 ALTER FUNCTION omega_publication.publish_materialization(uuid,uuid)
   OWNER TO omega_gold_owner;
-ALTER FUNCTION omega_publication.gold_compatibility_relation(text)
+ALTER FUNCTION omega_publication.gold_compatibility_relation(uuid,uuid,text)
   OWNER TO omega_gold_owner;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA omega_publication
   FROM PUBLIC, omega_refinement_gold;
 GRANT EXECUTE ON FUNCTION omega_publication.publish_materialization(uuid,uuid)
   TO omega_gold_publisher;
-GRANT EXECUTE ON FUNCTION omega_publication.gold_compatibility_relation(text)
+GRANT EXECUTE ON FUNCTION omega_publication.gold_compatibility_relation(uuid,uuid,text)
   TO omega_gold_publisher;
+GRANT EXECUTE ON FUNCTION omega_publication.record_attestation(uuid,text,text,bigint,jsonb,jsonb)
+  TO omega_refinement_gold;

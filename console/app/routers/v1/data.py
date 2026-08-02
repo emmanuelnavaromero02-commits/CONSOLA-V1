@@ -27,28 +27,49 @@ def _bind_to_main(fn):
     _console_main.__dict__[fn.__name__] = rebound
     return rebound
 
+
 @router.get("/datasets", dependencies=[Depends(require_permission("datasets.read"))])
 @_bind_to_main
 async def list_datasets(user: dict = Depends(require_permission("datasets.read"))):
     payload = await _refinement_invoke("list_datasets", {}, user=user)
     return _sanitize_datasets_payload_for_user(user, payload)
 
-@router.get("/datasets/{name}/schema", dependencies=[Depends(require_permission("datasets.read"))])
+
+@router.get(
+    "/datasets/{name}/schema",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
 @_bind_to_main
-async def dataset_schema(name: str, user: dict = Depends(require_permission("datasets.read"))):
+async def dataset_schema(
+    name: str, user: dict = Depends(require_permission("datasets.read"))
+):
     return await _refinement_invoke("get_schema", {"name": name}, user=user)
 
-@router.get("/api/datasets", dependencies=[Depends(require_permission("datasets.read"))])
+
+@router.get(
+    "/api/datasets", dependencies=[Depends(require_permission("datasets.read"))]
+)
 @_bind_to_main
-async def api_list_datasets_alias(user: dict = Depends(require_permission("datasets.read"))):
+async def api_list_datasets_alias(
+    user: dict = Depends(require_permission("datasets.read")),
+):
     return await list_datasets(user)
 
-@router.get("/api/datasets/{name}/schema", dependencies=[Depends(require_permission("datasets.read"))])
+
+@router.get(
+    "/api/datasets/{name}/schema",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
 @_bind_to_main
-async def api_dataset_schema_alias(name: str, user: dict = Depends(require_permission("datasets.read"))):
+async def api_dataset_schema_alias(
+    name: str, user: dict = Depends(require_permission("datasets.read"))
+):
     return await dataset_schema(name, user)
 
-@router.get("/datasets/{name}/data", dependencies=[Depends(require_permission("datasets.read"))])
+
+@router.get(
+    "/datasets/{name}/data", dependencies=[Depends(require_permission("datasets.read"))]
+)
 @_bind_to_main
 async def dataset_data(
     name: str,
@@ -67,14 +88,25 @@ async def dataset_data(
         user=user,
     )
 
-@router.post("/datasets/{name}/refresh", dependencies=[Depends(require_csrf), Depends(require_permission("datasets.write"))])
+
+@router.post(
+    "/datasets/{name}/refresh",
+    dependencies=[Depends(require_csrf), Depends(require_permission("datasets.write"))],
+)
 @_bind_to_main
-async def refresh_dataset(name: str, user: dict = Depends(require_permission("datasets.write"))):
-    return await _refinement_invoke("materialize", {"name": name}, timeout=120, user=user)
+async def refresh_dataset(
+    name: str, user: dict = Depends(require_permission("datasets.write"))
+):
+    return await _refinement_invoke(
+        "materialize", {"name": name}, timeout=120, user=user
+    )
+
 
 @router.get("/api/schema", dependencies=[Depends(require_permission("datasets.read"))])
 @_bind_to_main
-async def api_schema(source: str, user: dict = Depends(require_permission("datasets.read"))):
+async def api_schema(
+    source: str, user: dict = Depends(require_permission("datasets.read"))
+):
     _require_technical_source_access(user, source)
     if _gold_dataset_from_source(source):
         return await _gold_schema_payload(source, user)
@@ -92,6 +124,7 @@ async def api_schema(source: str, user: dict = Depends(require_permission("datas
     )
     return {"partitions": partitions, "preview": preview}
 
+
 # /api/sources
 @router.get("/api/sources", dependencies=[Depends(require_permission("datasets.read"))])
 @_bind_to_main
@@ -105,28 +138,47 @@ async def api_sources(user: dict = Depends(require_permission("datasets.read")))
         filter_technical_sources=_filter_technical_sources,
     )
 
+
 # /api/datasets/save
-@router.post("/api/datasets/save", dependencies=[Depends(require_csrf), Depends(require_permission("datasets.write"))])
+@router.post(
+    "/api/datasets/save",
+    dependencies=[Depends(require_csrf), Depends(require_permission("datasets.write"))],
+)
 @_bind_to_main
-async def api_dataset_save(body: dict, user: dict = Depends(require_permission("datasets.write"))):
+async def api_dataset_save(
+    body: dict, user: dict = Depends(require_permission("datasets.write"))
+):
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
-        r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json=_mcp_payload("save_dataset", body, user))
+        r = await c.post(
+            f"{REFINEMENT_URL}/mcp/invoke",
+            json=_mcp_payload("save_dataset", body, user),
+        )
         r.raise_for_status()
     return r.json()
 
+
 # /api/datasets/{name}/detail
-@router.get("/api/datasets/{name}/detail", dependencies=[Depends(require_permission("datasets.read"))])
+@router.get(
+    "/api/datasets/{name}/detail",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
 @_bind_to_main
-async def api_dataset_detail(name: str, user: dict = Depends(require_permission("datasets.read"))):
-    definition = await _refinement_invoke("get_dataset_definition", {"name": name}, user=user)
+async def api_dataset_detail(
+    name: str, user: dict = Depends(require_permission("datasets.read"))
+):
+    definition = await _refinement_invoke(
+        "get_dataset_definition", {"name": name}, user=user
+    )
     schema_payload = None
     schema_error = None
     try:
-        schema_payload = await _refinement_invoke("get_schema", {"name": name}, user=user)
+        schema_payload = await _refinement_invoke(
+            "get_schema", {"name": name}, user=user
+        )
     except HTTPException as exc:
         schema_error = str(exc.detail or "Dataset schema unavailable")
     return _normalize_dataset_detail(definition, schema_payload, schema_error, user)
+
 
 # /api/bronze/query
 @router.post(
@@ -134,11 +186,13 @@ async def api_dataset_detail(name: str, user: dict = Depends(require_permission(
     dependencies=[Depends(require_csrf), Depends(require_permission("datasets.write"))],
 )
 @_bind_to_main
-async def api_bronze_query(body: dict, user: dict = Depends(require_permission("datasets.write"))):
+async def api_bronze_query(
+    body: dict, user: dict = Depends(require_permission("datasets.write"))
+):
     # Restricted to datasets.write because this endpoint accepts arbitrary SQL.
     # Read-only roles (viewer) must use the dataset-scoped endpoints below,
     # which build SQL server-side instead of trusting client input.
-    sql   = body.get("sql", "").strip()
+    sql = body.get("sql", "").strip()
     limit = min(int(body.get("limit", 200)), 2000)
     if not sql:
         raise HTTPException(400, "sql is required")
@@ -159,36 +213,71 @@ async def api_bronze_query(body: dict, user: dict = Depends(require_permission("
             ),
         )
     if r.status_code >= 400:
-        raise HTTPException(r.status_code, _upstream_error_detail(r, "Refinement query failed"))
+        raise HTTPException(
+            r.status_code, _upstream_error_detail(r, "Refinement query failed")
+        )
     return r.json()
 
+
 # /api/datasets
-@router.delete("/api/datasets", dependencies=[Depends(require_csrf), Depends(require_permission("datasets.delete"))])
+@router.delete(
+    "/api/datasets",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("datasets.delete")),
+    ],
+)
 @_bind_to_main
-async def api_delete_dataset(name: str, user: dict = Depends(require_permission("datasets.delete"))):
+async def api_delete_dataset(
+    name: str, user: dict = Depends(require_permission("datasets.delete"))
+):
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
-        r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json=_mcp_payload("delete_dataset", {"name": name}, user))
+        r = await c.post(
+            f"{REFINEMENT_URL}/mcp/invoke",
+            json=_mcp_payload("delete_dataset", {"name": name}, user),
+        )
     if r.status_code == 404:
         raise HTTPException(404, f"Dataset '{name}' not found")
     return r.json()
 
+
 # /api/datasets/{name}/lineage
-@router.get("/api/datasets/{name}/lineage", dependencies=[Depends(require_permission("datasets.read"))])
+@router.get(
+    "/api/datasets/{name}/lineage",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
 @_bind_to_main
-async def api_dataset_lineage(name: str, user: dict = Depends(require_permission("datasets.read"))):
+async def api_dataset_lineage(
+    name: str, user: dict = Depends(require_permission("datasets.read"))
+):
     try:
         async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
-            r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                             json=_mcp_payload("get_lineage", {"name": name, "limit": 20}, user))
+            r = await c.post(
+                f"{REFINEMENT_URL}/mcp/invoke",
+                json=_mcp_payload("get_lineage", {"name": name, "limit": 20}, user),
+            )
     except httpx.TimeoutException:
-        return {"name": name, "lineage": [], "degraded": True, "error": "lineage_timeout"}
+        return {
+            "name": name,
+            "lineage": [],
+            "degraded": True,
+            "error": "lineage_timeout",
+        }
     if r.status_code >= 500:
-        return {"name": name, "lineage": [], "degraded": True, "error": "lineage_unavailable"}
+        return {
+            "name": name,
+            "lineage": [],
+            "degraded": True,
+            "error": "lineage_unavailable",
+        }
     return r.json()
 
+
 # /api/explorer/buckets
-@router.get("/api/explorer/buckets", dependencies=[Depends(require_permission("pipelines.read"))])
+@router.get(
+    "/api/explorer/buckets",
+    dependencies=[Depends(require_permission("pipelines.read"))],
+)
 @_bind_to_main
 async def api_explorer_buckets(user: dict = Depends(require_authenticated)):
     ctx = build_security_context(user)
@@ -197,14 +286,18 @@ async def api_explorer_buckets(user: dict = Depends(require_authenticated)):
         is_security_admin=_is_security_admin_context(ctx),
     )
     quicklinks = [
-        item for item in _EXPLORER_QUICKLINKS
+        item
+        for item in _EXPLORER_QUICKLINKS
         if _explorer_path_allowed(item.get("prefix", ""), user)
         and (_is_security_admin_context(ctx) or item.get("bucket") == "lakehouse")
     ]
     return {"buckets": buckets, "quicklinks": quicklinks}
 
+
 # /api/explorer/list
-@router.get("/api/explorer/list", dependencies=[Depends(require_permission("pipelines.read"))])
+@router.get(
+    "/api/explorer/list", dependencies=[Depends(require_permission("pipelines.read"))]
+)
 @_bind_to_main
 async def api_explorer_list(
     bucket: str,
@@ -249,8 +342,12 @@ async def api_explorer_list(
         response=resp,
     )
 
+
 # /api/explorer/download
-@router.get("/api/explorer/download", dependencies=[Depends(require_permission("pipelines.read"))])
+@router.get(
+    "/api/explorer/download",
+    dependencies=[Depends(require_permission("pipelines.read"))],
+)
 @_bind_to_main
 async def api_explorer_download(
     request: Request,
@@ -266,6 +363,15 @@ async def api_explorer_download(
     ) or not await _publication.published_object(key, user, bucket_name):
         raise HTTPException(403, "object not allowed")
     expires_in = min(max(int(expires), 60), 3600)
+    if _publication.materialized_object_key(key):
+        raw = await _publication.verified_published_object(s3, key, user, bucket_name)
+        if raw is None:
+            raise HTTPException(409, "published object integrity unavailable")
+        url = (
+            "/api/explorer/download-content?bucket="
+            f"{quote(bucket, safe='')}&key={quote(key, safe='')}"
+        )
+        return _explorer_download_response(url, expires_in=expires_in)
     try:
         url = await asyncio.to_thread(
             s3.generate_presigned_url,
@@ -287,10 +393,44 @@ async def api_explorer_download(
     )
     return _explorer_download_response(url, expires_in=expires_in)
 
+
+@router.get(
+    "/api/explorer/download-content",
+    dependencies=[Depends(require_permission("pipelines.read"))],
+)
+@_bind_to_main
+async def api_explorer_download_content(
+    bucket: str,
+    key: str,
+    user: dict = Depends(require_authenticated),
+):
+    if not _publication.materialized_object_key(key):
+        raise HTTPException(404, "published object not found")
+    bucket_name = _resolve_explorer_bucket(bucket, user)
+    if not _explorer_path_allowed(key, user, object_access=True):
+        raise HTTPException(403, "object not allowed")
+    raw = await _publication.verified_published_object(
+        _s3_client(), key, user, bucket_name
+    )
+    if raw is None:
+        raise HTTPException(409, "published object integrity unavailable")
+    return Response(
+        content=raw,
+        media_type="application/octet-stream",
+        headers={
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
 # /api/explorer/object
 @router.delete(
     "/api/explorer/object",
-    dependencies=[Depends(require_csrf), Depends(require_permission("pipelines.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("pipelines.write")),
+    ],
 )
 @_bind_to_main
 async def api_explorer_delete(
@@ -325,20 +465,25 @@ async def api_explorer_delete(
     )
     return _explorer_delete_response(bucket_name=bucket_name, key=key)
 
+
 # /api/lineage
 @router.get("/api/lineage", dependencies=[Depends(require_permission("datasets.read"))])
 @_bind_to_main
-async def api_lineage(cartridge: str | None = None, user: dict = Depends(require_permission("datasets.read"))):
+async def api_lineage(
+    cartridge: str | None = None,
+    user: dict = Depends(require_permission("datasets.read")),
+):
     """Global lineage graph across raw sources and silver/gold datasets."""
     if cartridge:
         _require_technical_cartridge_access(user, cartridge)
     payload = await _refinement_invoke("list_datasets", {}, timeout=15, user=user)
-    datasets = _sanitize_datasets_payload_for_user(user, payload or {}).get("datasets") or []
+    datasets = (
+        _sanitize_datasets_payload_for_user(user, payload or {}).get("datasets") or []
+    )
     allowed = _user_allowed_cartridges(user)
     if allowed is not None:
         datasets = [
-            d for d in datasets
-            if str(d.get("cartridge") or "").strip() in allowed
+            d for d in datasets if str(d.get("cartridge") or "").strip() in allowed
         ]
     if cartridge:
         datasets = [d for d in datasets if d.get("cartridge") == cartridge]
@@ -350,8 +495,11 @@ async def api_lineage(cartridge: str | None = None, user: dict = Depends(require
 
     return _lineage_graph_payload(datasets, source_visible=source_visible)
 
+
 # /api/data/{dataset}
-@router.get("/api/data/{dataset}", dependencies=[Depends(require_permission("datasets.read"))])
+@router.get(
+    "/api/data/{dataset}", dependencies=[Depends(require_permission("datasets.read"))]
+)
 @_bind_to_main
 async def api_data(
     dataset: str,
@@ -370,10 +518,18 @@ async def api_data(
 
     return await query_gold_dataset_rows(dataset, user, limit)
 
+
 # /api/data/{dataset}/options
-@router.get("/api/data/{dataset}/options", dependencies=[Depends(require_permission("datasets.read"))])
+@router.get(
+    "/api/data/{dataset}/options",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
 @_bind_to_main
-async def api_data_options(dataset: str, columns: str = "", user: dict = Depends(require_permission("datasets.read"))):
+async def api_data_options(
+    dataset: str,
+    columns: str = "",
+    user: dict = Depends(require_permission("datasets.read")),
+):
     """Return distinct values per column for building filter selectors."""
     # SQL produced by _data_api_options_sql targets pggold.gold_<dataset> via Refinement.
     # It invokes preview_transform with _rls_user_context(user) through the shared helper.
@@ -389,8 +545,12 @@ async def api_data_options(dataset: str, columns: str = "", user: dict = Depends
         upstream_error_detail=_upstream_error_detail,
     )
 
+
 # /api/data/{dataset}/query
-@router.post("/api/data/{dataset}/query", dependencies=[Depends(require_permission("datasets.read"))])
+@router.post(
+    "/api/data/{dataset}/query",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
 @_bind_to_main
 async def api_data_query_filtered(dataset: str, body: dict, request: Request):
     """
@@ -413,6 +573,7 @@ async def api_data_query_filtered(dataset: str, body: dict, request: Request):
         rls_user_context=_rls_user_context,
     )
 
+
 # /explorer
 @router.get("/explorer", dependencies=[Depends(require_permission("pipelines.read"))])
 @_bind_to_main
@@ -421,17 +582,26 @@ async def explorer_page(request: Request):
 
     return _console_next_response(request, "explorer/index.html")
 
+
 # /viewer/lineage
-@router.get("/viewer/lineage", dependencies=[Depends(require_permission("datasets.read"))])
+@router.get(
+    "/viewer/lineage", dependencies=[Depends(require_permission("datasets.read"))]
+)
 @_bind_to_main
 async def viewer_lineage(request: Request):
     return _viewer_redirect(request, "lineage")
 
+
 # /api/semantic
-@router.get("/api/semantic", dependencies=[Depends(require_permission("datasets.read"))])
+@router.get(
+    "/api/semantic", dependencies=[Depends(require_permission("datasets.read"))]
+)
 @_bind_to_main
-async def api_semantic(cartridge: str = "", user: dict = Depends(require_permission("datasets.read"))):
+async def api_semantic(
+    cartridge: str = "", user: dict = Depends(require_permission("datasets.read"))
+):
     from app.services import cartridge_service as _cs
+
     cartridge, _active = await _resolve_scoped_operation_cartridge(
         user,
         cartridge,
@@ -443,7 +613,9 @@ async def api_semantic(cartridge: str = "", user: dict = Depends(require_permiss
         return _semantic_manifest_response(
             cartridge=cartridge,
             manifest=manifest,
-            catalog_entities=await _gold_semantic_entities_from_catalog(cartridge, user),
+            catalog_entities=await _gold_semantic_entities_from_catalog(
+                cartridge, user
+            ),
         )
 
     # Fallback: Pattern A — invoke via MCP server
@@ -453,6 +625,7 @@ async def api_semantic(cartridge: str = "", user: dict = Depends(require_permiss
         raise HTTPException(404, f"Cartridge '{cartridge}' not registered")
     entities = await mcp_registry.invoke(cartridge, "list_entities", {}, user=user)
     return {"cartridge": cartridge, "server": srv, "entities": entities}
+
 
 # /api/catalog
 @router.get("/api/catalog", dependencies=[Depends(require_permission("datasets.read"))])
@@ -465,15 +638,20 @@ async def api_catalog_get(
     user: dict = Depends(require_permission("datasets.read")),
 ):
     args: dict = {}
-    if layer:    args["layer"]    = layer
+    if layer:
+        args["layer"] = layer
     cartridge = await _scope_catalog_cartridge_arg(user, cartridge)
     if not cartridge and _user_allowed_cartridges(user) is not None:
         return _empty_catalog_payload()
-    if cartridge: args["cartridge"] = cartridge
-    if tags:     args["tags"]     = [t.strip() for t in tags.split(",") if t.strip()]
-    if datasets: args["datasets"] = [d.strip() for d in datasets.split(",") if d.strip()]
+    if cartridge:
+        args["cartridge"] = cartridge
+    if tags:
+        args["tags"] = [t.strip() for t in tags.split(",") if t.strip()]
+    if datasets:
+        args["datasets"] = [d.strip() for d in datasets.split(",") if d.strip()]
     result = await _refinement_invoke("get_data_catalog", args, user=user)
     return result
+
 
 # /api/catalog/entries
 @router.post(
@@ -485,8 +663,11 @@ async def api_catalog_get(
     ],
 )
 @_bind_to_main
-async def api_catalog_upsert(body: dict, user: dict = Depends(require_permission("datasets.write"))):
+async def api_catalog_upsert(
+    body: dict, user: dict = Depends(require_permission("datasets.write"))
+):
     return await _refinement_invoke("upsert_catalog_entries", body, user=user)
+
 
 # /api/catalog/relationships
 @router.post(
@@ -498,5 +679,7 @@ async def api_catalog_upsert(body: dict, user: dict = Depends(require_permission
     ],
 )
 @_bind_to_main
-async def api_catalog_relationship(body: dict, user: dict = Depends(require_permission("datasets.write"))):
+async def api_catalog_relationship(
+    body: dict, user: dict = Depends(require_permission("datasets.write"))
+):
     return await _refinement_invoke("register_relationship", body, user=user)

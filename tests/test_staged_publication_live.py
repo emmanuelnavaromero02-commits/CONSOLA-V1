@@ -244,6 +244,15 @@ def test_gold_stage_scope_is_not_null_while_empty_dataset_remains_valid(
         )
 
     uri, checksum = stack.write_object("scope_not_null", run, 0)
+    lineage = stack.bound_lineage(run, valid_lineage())
+    stack.attest(
+        run,
+        uri=uri,
+        checksum=checksum,
+        row_count=0,
+        lineage=lineage,
+        catalog=valid_catalog(),
+    )
     stack.sql(
         stack.publisher_dsn,
         (TENANT_A, WORKSPACE_A),
@@ -254,7 +263,7 @@ def test_gold_stage_scope_is_not_null_while_empty_dataset_remains_valid(
             checksum,
             stage,
             stage,
-            valid_lineage(),
+            lineage,
             valid_catalog(),
         ),
     )

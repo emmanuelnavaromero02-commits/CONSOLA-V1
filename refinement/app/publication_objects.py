@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,34 @@ class PublicationObjectMixin:
             raise RuntimeError("prepared materialization object is incomplete")
         if self._object_checksum(key) != expected:
             raise RuntimeError("prepared materialization object checksum mismatch")
+
+    def _verify_parquet_evidence(
+        self,
+        *,
+        object_uri: str,
+        object_checksum: str,
+        row_count: int,
+        expected_columns: list[str],
+    ) -> tuple[int, list[dict[str, str]]]:
+        import pyarrow.parquet as pq
+
+        key = self._s3_object_key(object_uri)
+        if not key:
+            raise RuntimeError("prepared materialization object is outside storage")
+        raw = self.storage.get_bytes(key)
+        if hashlib.sha256(raw).hexdigest() != object_checksum:
+            raise RuntimeError("prepared materialization object checksum mismatch")
+        parquet = pq.ParquetFile(io.BytesIO(raw))
+        if int(parquet.metadata.num_rows) != int(row_count):
+            raise RuntimeError("prepared materialization row count mismatch")
+        actual_schema = parquet.schema_arrow
+        actual_names = list(actual_schema.names)
+        if actual_names != expected_columns:
+            raise RuntimeError("prepared materialization catalog mismatch")
+        catalog = [
+            {"name": field.name, "type": str(field.type)} for field in actual_schema
+        ]
+        return int(parquet.metadata.num_rows), catalog
 
     def _snapshot_path(
         self, layer: str, cartridge: str, name: str, user_context: dict | None = None

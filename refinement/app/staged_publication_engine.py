@@ -7,6 +7,7 @@ try:
     from app.duckdb_engine import DuckDBEngine
     from app.publication_contract import PublicationIdentity, canonical_digest
     from app.publication_evidence import PublicationEvidenceStore
+    from app.publication_finalize import PublicationFinalizeMixin
     from app.publication_inputs import resolve_input_state
     from app.publication_input_binding import PublicationInputBindingMixin
     from app.publication_objects import PublicationObjectMixin
@@ -20,6 +21,7 @@ except ModuleNotFoundError:
         canonical_digest,
     )
     from refinement.app.publication_evidence import PublicationEvidenceStore
+    from refinement.app.publication_finalize import PublicationFinalizeMixin
     from refinement.app.publication_inputs import resolve_input_state
     from refinement.app.publication_input_binding import PublicationInputBindingMixin
     from refinement.app.publication_objects import PublicationObjectMixin
@@ -29,6 +31,7 @@ except ModuleNotFoundError:
 
 
 class StagedPublicationEngine(
+    PublicationFinalizeMixin,
     PublicationReplayMixin,
     PublicationReadGuardMixin,
     PublicationInputBindingMixin,
@@ -110,7 +113,15 @@ class StagedPublicationEngine(
                 "row_count": int(current.get("row_count") or 0),
             }
         if status == "prepared":
-            self._verify_prepared_object(current)
+            try:
+                self._verify_prepared_object(current)
+            except Exception as exc:
+                self._publication_store.quarantine_prepared(
+                    identity, "prepared_object_unavailable"
+                )
+                raise RuntimeError(
+                    "prepared materialization is recoverable; retry with a new attempt"
+                ) from exc
             self._publication_store.publish(identity, expected_head)
             current = self._publication_store.run(identity) or {}
             return {
@@ -229,6 +240,13 @@ class StagedPublicationEngine(
             "column_mapping_digest": canonical_digest(
                 values.get("column_mapping") or {}
             ),
+            "input_digest": state["identity"].input_digest,
+            "contract_digest": state["identity"].contract_digest,
+            "public_sources": list(state["dataset"].get("sources") or []),
+            "public_metadata": {
+                "description": str(state["dataset"].get("description") or ""),
+                "relationships": list(state["dataset"].get("relationships") or []),
+            },
         }
         state["row_count"] = int(values.get("row_count") or 0)
 
@@ -236,63 +254,3 @@ class StagedPublicationEngine(
         if not self._state():
             return super()._prune_snapshots(*args, **kwargs)
         return None
-
-    def _update_catalog(
-        self,
-        name: str,
-        layer: str,
-        cartridge: str,
-        schema_fields: list[dict],
-        column_mapping: dict,
-        description: str = "",
-        user_context: dict | None = None,
-    ) -> None:
-        state = self._state()
-        if not state:
-            return super()._update_catalog(
-                name,
-                layer,
-                cartridge,
-                schema_fields,
-                column_mapping,
-                description,
-                user_context,
-            )
-        if not state["object_uri"] or not state["object_checksum"]:
-            raise RuntimeError("materialization object was not durably prepared")
-        if layer == "gold" and state.get("gold_schema"):
-            schema_fields = [
-                {"name": item[0], "type": item[1]}
-                for item in state["gold_schema"].values()
-            ]
-        if not schema_fields or not state["lineage"]:
-            raise RuntimeError("materialization schema and lineage are required")
-        self._assert_inputs_unchanged(state["dataset"], state["user_context"])
-        lineage, catalog = self._evidence_store.prepare(
-            state["identity"],
-            object_uri=state["object_uri"],
-            object_checksum=state["object_checksum"],
-            row_count=state["row_count"],
-            schema_fields=schema_fields,
-            lineage=state["lineage"],
-        )
-        self._publication_store.mark_prepared(
-            state["identity"],
-            object_uri=state["object_uri"],
-            object_checksum=state["object_checksum"],
-            row_count=state["row_count"],
-            staging_table=state["staging_table"],
-            lineage=lineage,
-            catalog=catalog,
-        )
-        self._verify_prepared_object(state)
-        try:
-            state["receipt"] = self._publication_store.publish(
-                state["identity"], state["expected_head"]
-            )
-        except Exception as exc:
-            if getattr(exc, "pgcode", None) == "40001":
-                self._publication_store.abandon(state["identity"])
-            raise
-        self._mark_publication_replayed(bool(state["receipt"].get("replayed")))
-        state["published"] = True

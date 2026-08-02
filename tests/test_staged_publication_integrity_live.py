@@ -152,18 +152,10 @@ def test_legacy_superset_relation_and_head_advance_in_one_snapshot(
     }
     engine.materialize({**base, "sql_def": "SELECT 1::INTEGER AS value"}, _scope())
     first_head = stack.head("superset_compat_probe")[0]
-    assert stack.sql(
-        stack.reader_dsn,
-        (TENANT_A, WORKSPACE_A),
-        "SELECT value FROM public.gold_superset_compat_probe",
-    ) == [(1,)]
+    assert stack.compatibility_rows("superset_compat_probe") == [(1,)]
     engine.materialize({**base, "sql_def": "SELECT 2::INTEGER AS value"}, _scope())
     assert stack.rows("superset_compat_probe") == [(2,)]
-    assert stack.sql(
-        stack.reader_dsn,
-        (TENANT_A, WORKSPACE_A),
-        "SELECT value FROM public.gold_superset_compat_probe",
-    ) == [(2,)]
+    assert stack.compatibility_rows("superset_compat_probe") == [(2,)]
     assert stack.head("superset_compat_probe")[0] != first_head
 
 

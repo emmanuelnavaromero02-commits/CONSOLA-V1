@@ -36,7 +36,10 @@ CREATE TABLE IF NOT EXISTS omega_publication.materialization_runs (
     ),
     staging_table text CHECK (staging_table IS NULL OR staging_table ~ '^run_[0-9a-f]{32}$'),
     status text NOT NULL DEFAULT 'reserved'
-      CHECK (status IN ('reserved', 'prepared', 'published', 'failed', 'legacy_unverified')),
+      CHECK (status IN ('reserved', 'prepared', 'published', 'failed',
+                        'recoverable_failed', 'legacy_unverified')),
+    attempt integer NOT NULL DEFAULT 1 CHECK (attempt > 0),
+    recovery_reason text,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     prepared_at timestamptz,
     published_at timestamptz
@@ -88,10 +91,57 @@ CREATE TABLE IF NOT EXISTS omega_publication.materialization_evidence (
     row_count bigint NOT NULL CHECK (row_count >= 0),
     schema_digest text NOT NULL CHECK (schema_digest ~ '^[0-9a-f]{64}$'),
     evidence_digest text NOT NULL CHECK (evidence_digest ~ '^[0-9a-f]{64}$'),
+    attestation_id uuid,
     lineage jsonb NOT NULL CHECK (jsonb_typeof(lineage)='object'),
     catalog jsonb NOT NULL CHECK (jsonb_typeof(catalog)='array'),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     UNIQUE (tenant_id, workspace_id, dataset, layer, materialization_run_id)
+);
+
+CREATE TABLE IF NOT EXISTS omega_publication.materialization_attestations (
+    attestation_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    materialization_run_id uuid NOT NULL
+      REFERENCES omega_publication.materialization_runs(materialization_run_id),
+    tenant_id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
+    dataset text NOT NULL,
+    layer text NOT NULL CHECK (layer IN ('silver', 'gold')),
+    attempt integer NOT NULL CHECK (attempt > 0),
+    object_uri text NOT NULL CHECK (object_uri ~ '^(s3|gs)://'),
+    object_checksum text NOT NULL CHECK (object_checksum ~ '^[0-9a-f]{64}$'),
+    row_count bigint NOT NULL CHECK (row_count >= 0),
+    schema_digest text NOT NULL CHECK (schema_digest ~ '^[0-9a-f]{64}$'),
+    input_digest text NOT NULL CHECK (input_digest ~ '^[0-9a-f]{64}$'),
+    contract_digest text NOT NULL CHECK (contract_digest ~ '^[0-9a-f]{64}$'),
+    lineage jsonb NOT NULL CHECK (jsonb_typeof(lineage)='object'),
+    catalog jsonb NOT NULL CHECK (jsonb_typeof(catalog)='array'),
+    verifier_identity text NOT NULL CHECK (
+      verifier_identity = 'refinement.parquet-verifier/v1'
+    ),
+    attestation_digest text NOT NULL CHECK (attestation_digest ~ '^[0-9a-f]{64}$'),
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    expires_at timestamptz NOT NULL,
+    consumed_at timestamptz,
+    invalidated_at timestamptz,
+    UNIQUE (materialization_run_id, attestation_digest)
+);
+
+ALTER TABLE omega_publication.materialization_evidence
+  DROP CONSTRAINT IF EXISTS materialization_evidence_attestation_id_fkey;
+ALTER TABLE omega_publication.materialization_evidence
+  ADD CONSTRAINT materialization_evidence_attestation_id_fkey
+  FOREIGN KEY (attestation_id)
+  REFERENCES omega_publication.materialization_attestations(attestation_id);
+
+CREATE TABLE IF NOT EXISTS omega_publication.materialization_recovery_events (
+    recovery_event_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    materialization_run_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
+    attempt integer NOT NULL CHECK (attempt > 0),
+    reason text NOT NULL,
+    evidence jsonb NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
 
 CREATE TABLE IF NOT EXISTS omega_publication.dataset_gold_relations (
@@ -114,6 +164,10 @@ ALTER TABLE omega_publication.materialization_receipts ENABLE ROW LEVEL SECURITY
 ALTER TABLE omega_publication.materialization_receipts FORCE ROW LEVEL SECURITY;
 ALTER TABLE omega_publication.materialization_evidence ENABLE ROW LEVEL SECURITY;
 ALTER TABLE omega_publication.materialization_evidence FORCE ROW LEVEL SECURITY;
+ALTER TABLE omega_publication.materialization_attestations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE omega_publication.materialization_attestations FORCE ROW LEVEL SECURITY;
+ALTER TABLE omega_publication.materialization_recovery_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE omega_publication.materialization_recovery_events FORCE ROW LEVEL SECURITY;
 ALTER TABLE omega_publication.dataset_gold_relations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE omega_publication.dataset_gold_relations FORCE ROW LEVEL SECURITY;
 
@@ -123,7 +177,8 @@ DECLARE
 BEGIN
   FOREACH table_name IN ARRAY ARRAY[
     'materialization_runs', 'dataset_publication_heads', 'materialization_receipts',
-    'materialization_evidence', 'dataset_gold_relations'
+    'materialization_evidence', 'materialization_attestations',
+    'materialization_recovery_events', 'dataset_gold_relations'
   ] LOOP
     EXECUTE format('DROP POLICY IF EXISTS %I ON omega_publication.%I', table_name || '_scope', table_name);
     EXECUTE format(
@@ -144,6 +199,7 @@ DECLARE
   relation record;
   owner_policy text;
   reader_policy text;
+  dataset_name text;
 BEGIN
   FOR relation IN
     SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
@@ -164,6 +220,10 @@ BEGIN
       THEN relation.relname || '_tenant_workspace_rls'
       ELSE 'tenant_workspace_rls'
     END;
+    SELECT min(mapping.dataset) INTO dataset_name
+      FROM omega_publication.dataset_gold_relations AS mapping
+     WHERE mapping.relation_name=relation.relname;
+    dataset_name := COALESCE(dataset_name,substr(relation.relname,6));
     EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I',
                    reader_policy, relation.relname);
     EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I',
@@ -179,8 +239,7 @@ BEGIN
       'WHERE h.tenant_id::text=NULLIF(current_setting(''app.tenant_id'',true),'''') '
       'AND h.workspace_id::text=NULLIF(current_setting(''app.workspace_id'',true),'''') '
       'AND h.dataset=%L AND h.layer=''gold''))',
-      reader_policy, relation.relname,
-      substr(relation.relname,6)
+      reader_policy,relation.relname,dataset_name
     );
   END LOOP;
 END $$;
@@ -189,6 +248,8 @@ ALTER TABLE omega_publication.materialization_runs OWNER TO omega_gold_owner;
 ALTER TABLE omega_publication.dataset_publication_heads OWNER TO omega_gold_owner;
 ALTER TABLE omega_publication.materialization_receipts OWNER TO omega_gold_owner;
 ALTER TABLE omega_publication.materialization_evidence OWNER TO omega_gold_owner;
+ALTER TABLE omega_publication.materialization_attestations OWNER TO omega_gold_owner;
+ALTER TABLE omega_publication.materialization_recovery_events OWNER TO omega_gold_owner;
 ALTER TABLE omega_publication.dataset_gold_relations OWNER TO omega_gold_owner;
 GRANT SELECT ON ALL TABLES IN SCHEMA omega_publication
   TO omega_refinement_gold, omega_gold_publisher;
@@ -265,7 +326,7 @@ BEGIN
         INSERT INTO omega_publication.dataset_gold_relations (
           tenant_id, workspace_id, dataset, relation_name
         ) SELECT tenant_id, workspace_id, %L, %L FROM identified
-        ON CONFLICT (tenant_id, workspace_id, dataset) DO NOTHING
+        ON CONFLICT DO NOTHING
       )
       INSERT INTO omega_publication.dataset_publication_heads (
         tenant_id, workspace_id, dataset, layer, materialization_run_id, generation

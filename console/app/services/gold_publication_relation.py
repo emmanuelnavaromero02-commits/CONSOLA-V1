@@ -17,6 +17,9 @@ class PublishedGoldRelation:
     table: str
     run_id: str
     generation: int
+    receipt_id: str | None
+    object_checksum: str | None
+    evidence_digest: str | None
 
     @property
     def sql(self) -> str:
@@ -30,10 +33,13 @@ async def resolve_published_gold_relation(
         raise HTTPException(400, "invalid intelligence dataset")
     row = await conn.fetchrow(
         """SELECT h.materialization_run_id::text AS run_id, h.generation,
-                  r.status, r.gold_table
+                  r.status, r.gold_table, rec.receipt_id::text,
+                  r.object_checksum, r.evidence_digest
              FROM omega_publication.dataset_publication_heads h
              JOIN omega_publication.materialization_runs r
                ON r.materialization_run_id=h.materialization_run_id
+             LEFT JOIN omega_publication.materialization_receipts rec
+               ON rec.materialization_run_id=h.materialization_run_id
             WHERE h.tenant_id=$1 AND h.workspace_id=$2
               AND h.dataset=$3 AND h.layer='gold'""",
         tenant_id,
@@ -55,6 +61,9 @@ async def resolve_published_gold_relation(
         table=table,
         run_id=str(row["run_id"]),
         generation=int(row["generation"]),
+        receipt_id=str(row["receipt_id"]) if row["receipt_id"] else None,
+        object_checksum=str(row["object_checksum"]) if row["object_checksum"] else None,
+        evidence_digest=str(row["evidence_digest"]) if row["evidence_digest"] else None,
     )
 
 

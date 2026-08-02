@@ -54,15 +54,16 @@ def published_heads(context: dict[str, Any] | None) -> dict[tuple[str, str], dic
         cur.execute(
             """
             SELECT h.dataset,h.layer,h.materialization_run_id::text,h.generation,
-                   r.object_uri,r.row_count,e.catalog
+                   r.object_uri,r.object_checksum,r.row_count,e.catalog
               FROM omega_publication.dataset_publication_heads h
               JOIN omega_publication.materialization_runs r
                 ON r.materialization_run_id=h.materialization_run_id
               LEFT JOIN omega_publication.materialization_evidence e
                 ON e.materialization_run_id=h.materialization_run_id
              WHERE h.tenant_id=%s AND h.workspace_id=%s
-               AND r.status IN ('published','legacy_unverified')
+               AND r.status='published'
                AND r.object_uri IS NOT NULL
+               AND r.object_checksum ~ '^[0-9a-f]{64}$'
             """,
             (tenant, workspace),
         )
@@ -71,8 +72,9 @@ def published_heads(context: dict[str, Any] | None) -> dict[tuple[str, str], dic
                 "run_id": str(row[2]),
                 "generation": int(row[3]),
                 "object_uri": row[4],
-                "row_count": int(row[5] or 0),
-                "catalog": row[6] or [],
+                "object_checksum": str(row[5]),
+                "row_count": int(row[6] or 0),
+                "catalog": row[7] or [],
             }
             for row in cur.fetchall()
         }
@@ -115,6 +117,22 @@ def published_object(key: str, context: dict[str, Any] | None, bucket: str) -> b
     if not materialized_object(clean):
         return clean.split("/", 1)[0] == "raw"
     return clean in published_objects(context, bucket)
+
+
+def published_object_checksum(
+    key: str, context: dict[str, Any] | None, bucket: str
+) -> str | None:
+    try:
+        clean = canonical_storage_key(key)
+    except ValueError:
+        return None
+    if not scoped_storage_allowed(clean, context, bucket=bucket):
+        return None
+    for head in published_heads(context).values():
+        object_bucket, object_key = _ref(str(head.get("object_uri") or ""))
+        if object_bucket == bucket and object_key == clean:
+            return str(head.get("object_checksum") or "") or None
+    return None
 
 
 def published_prefix(key: str, context: dict[str, Any] | None, bucket: str) -> bool:

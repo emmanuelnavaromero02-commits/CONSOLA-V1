@@ -153,6 +153,16 @@ class LiveStack:
         self, dataset: str, run: uuid.UUID, value: int, scope=(TENANT_A, WORKSPACE_A)
     ):
         stage, uri, checksum = self.stage(dataset, run, value, scope)
+        lineage = self.bound_lineage(run, valid_lineage(), scope)
+        self.attest(
+            run,
+            uri=uri,
+            checksum=checksum,
+            row_count=1,
+            lineage=lineage,
+            catalog=valid_catalog(),
+            scope=scope,
+        )
         self.sql(
             self.publisher_dsn,
             scope,
@@ -163,11 +173,53 @@ class LiveStack:
                 checksum,
                 stage,
                 stage,
-                valid_lineage(),
+                lineage,
                 valid_catalog(),
             ),
         )
         return uri
+
+    def bound_lineage(
+        self,
+        run: uuid.UUID,
+        lineage: str,
+        scope=(TENANT_A, WORKSPACE_A),
+    ) -> str:
+        input_digest, contract_digest = self.sql(
+            self.reader_dsn,
+            scope,
+            "SELECT input_digest,contract_digest "
+            "FROM omega_publication.materialization_runs "
+            "WHERE materialization_run_id=%s",
+            (str(run),),
+        )[0]
+        value = json.loads(lineage)
+        value.update(
+            input_digest=input_digest,
+            contract_digest=contract_digest,
+        )
+        return json.dumps(value, sort_keys=True)
+
+    def attest(
+        self,
+        run: uuid.UUID,
+        *,
+        uri: str,
+        checksum: str,
+        row_count: int,
+        lineage: str,
+        catalog: str,
+        scope=(TENANT_A, WORKSPACE_A),
+    ) -> str:
+        return str(
+            self.sql(
+                self.reader_dsn,
+                scope,
+                "SELECT omega_publication.record_attestation("
+                "%s,%s,%s,%s,%s::jsonb,%s::jsonb)",
+                (str(run), uri, checksum, row_count, lineage, catalog),
+            )[0][0]
+        )
 
     def publish(
         self, run: uuid.UUID, expected: uuid.UUID | None, scope=(TENANT_A, WORKSPACE_A)

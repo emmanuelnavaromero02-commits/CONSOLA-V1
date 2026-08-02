@@ -26,6 +26,13 @@ def test_duckdb_version_and_build_extensions_are_pinned() -> None:
     assert 'EXTENSIONS = ("httpfs", "postgres")' in installer
 
 
+def test_refinement_declares_parquet_authority_runtime_dependency() -> None:
+    requirements = _text("refinement/requirements.txt")
+    verifier = _text("refinement/app/publication_objects.py")
+    assert "pyarrow==23.0.1" in requirements
+    assert "import pyarrow.parquet as pq" in verifier
+
+
 def test_runtime_is_load_only_and_disables_extension_downloads() -> None:
     engine = _text("refinement/app/duckdb_engine.py")
     runtime = _text("refinement/app/duckdb_runtime.py")
@@ -42,9 +49,11 @@ def test_runtime_is_load_only_and_disables_extension_downloads() -> None:
 def test_readiness_and_ci_enforce_offline_extensions() -> None:
     main = _text("refinement/app/main.py")
     workflow = _text(".github/workflows/control-room-postgres-rls.yml")
+    preparation = _text("scripts/prepare_refinement_duckdb_ci.sh")
     runner = _text("scripts/run_refinement_duckdb_offline_smoke.sh")
     assert "require_loaded_extensions(engine._conn())" in main
-    assert "run_refinement_duckdb_offline_smoke.sh" in workflow
+    assert "prepare_refinement_duckdb_ci.sh" in workflow
+    assert "run_refinement_duckdb_offline_smoke.sh" in preparation
     assert "--network none" in runner and "network create --internal" in runner
     assert 'test "$(id -u)" -ne 0' in runner
     assert "python -m scripts.duckdb_offline_smoke" in runner

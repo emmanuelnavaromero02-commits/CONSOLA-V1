@@ -81,6 +81,9 @@ class _FakeConnection:
             "generation": 1,
             "status": "legacy_unverified",
             "gold_table": gold_fetcher._gold_table(dataset),
+            "receipt_id": None,
+            "object_checksum": None,
+            "evidence_digest": None,
         }
 
     def cursor(self, sql: str, *args: object, prefetch: int):
