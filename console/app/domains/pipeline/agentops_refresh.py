@@ -15,8 +15,7 @@ async def run_sync_agentops_monitors(
     list_agents: Any,
     load_agent: Any,
     reserve_scheduled_run: Any,
-    run_scheduled_monitor: Any,
-    finish_scheduled_run: Any,
+    execute_reserved_scheduled_monitor: Any,
     sync_agentops_monitor_candidates: Any,
     sync_agentops: Any,
     logger_warning: Any,
@@ -89,38 +88,12 @@ async def run_sync_agentops_monitors(
                 "Ejecuta el monitor operativo posterior a sincronizacion para "
                 f"{cartridge}. Usa datos reales recien extraidos; no simules."
             )
-            try:
-                result = await run_scheduled_monitor(
-                    agent,
-                    message,
-                    scheduled_fire_at=checked_at,
-                )
-            except Exception as exc:
-                await finish_scheduled_run(
-                    schedule_run_id=reservation.get("id"),
-                    agent_run_id=None,
-                    status="error",
-                    tenant_id=str(agent.tenant_id),
-                    workspace_id=str(agent.workspace_id),
-                    fencing_token=int(reservation["fencing_token"]),
-                    error_message=f"{type(exc).__name__}: {exc}",
-                    metadata={"sync_run_id": sync_run_id, "checked_at": checked_at},
-                )
-                raise
-            await finish_scheduled_run(
-                schedule_run_id=reservation.get("id"),
-                agent_run_id=result.get("run_id") if isinstance(result, dict) else None,
-                status="ok",
-                tenant_id=str(agent.tenant_id),
-                workspace_id=str(agent.workspace_id),
-                fencing_token=int(reservation["fencing_token"]),
-                metadata={
-                    "sync_run_id": sync_run_id,
-                    "checked_at": checked_at,
-                    "deterministic_monitor": bool(
-                        isinstance(result, dict) and result.get("deterministic_monitor")
-                    ),
-                },
+            result = await execute_reserved_scheduled_monitor(
+                agent=agent,
+                message=message,
+                reservation=reservation,
+                scheduled_fire_at=checked_at,
+                metadata={"sync_run_id": sync_run_id, "checked_at": checked_at},
             )
             completed += 1
             results.append(

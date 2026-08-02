@@ -617,6 +617,7 @@ from app.services import cartridge_service
 from app.services import agent_service as _agents
 from app.services import agent_runtime as _agent_runtime
 from app.services import agent_scheduler as _agent_scheduler
+from app.services import scheduled_monitor_execution as _scheduled_monitor_execution
 from app.services import auth as _auth
 from app.services import tokens as _tokens
 from app.services import email_service as _email
@@ -3946,8 +3947,9 @@ async def _run_sync_agentops_monitors(
         list_agents=_agents.list_agents,
         load_agent=_agent_runtime.load_agent,
         reserve_scheduled_run=_agent_scheduler.reserve_scheduled_run,
-        run_scheduled_monitor=_agent_runtime.run_scheduled_monitor,
-        finish_scheduled_run=_agent_scheduler.finish_scheduled_run,
+        execute_reserved_scheduled_monitor=(
+            _scheduled_monitor_execution.execute_reserved_scheduled_monitor
+        ),
         sync_agentops_monitor_candidates=_sync_agentops_monitor_candidates,
         sync_agentops=_sync_agentops,
         logger_warning=logger.warning,
@@ -5724,44 +5726,13 @@ async def _run_reserved_scheduled_agent(
     airflow_dag_run_id: str | None,
 ) -> Any:
     message = (body.get("message") or "").strip() or "Ejecuta tu tarea programada."
-    try:
-        result = await _agent_runtime.run_scheduled_monitor(
-            agent,
-            message,
-            scheduled_fire_at=scheduled_fire_at.isoformat(),
-        )
-        if (
-            not isinstance(result, dict)
-            or isinstance(result.get("run_id"), bool)
-            or not isinstance(result.get("run_id"), int)
-            or result.get("deterministic_monitor") is not True
-            or not isinstance(result.get("monitor"), dict)
-        ):
-            raise RuntimeError("scheduled monitor returned an invalid outcome")
-    except Exception as exc:
-        await _agent_scheduler.finish_scheduled_run(
-            schedule_run_id=reservation.get("id"),
-            agent_run_id=None,
-            status="error",
-            tenant_id=str(getattr(agent, "tenant_id", "")),
-            workspace_id=str(getattr(agent, "workspace_id", "")),
-            fencing_token=int(reservation["fencing_token"]),
-            error_message=f"{type(exc).__name__}: {exc}",
-            metadata={"airflow_dag_run_id": airflow_dag_run_id},
-        )
-        raise
-    await _agent_scheduler.finish_scheduled_run(
-        schedule_run_id=reservation.get("id"),
-        agent_run_id=result.get("run_id") if isinstance(result, dict) else None,
-        status="ok",
-        tenant_id=str(getattr(agent, "tenant_id", "")),
-        workspace_id=str(getattr(agent, "workspace_id", "")),
-        fencing_token=int(reservation["fencing_token"]),
+    result = await _scheduled_monitor_execution.execute_reserved_scheduled_monitor(
+        agent=agent,
+        message=message,
+        reservation=reservation,
+        scheduled_fire_at=scheduled_fire_at.isoformat(),
         metadata={
             "airflow_dag_run_id": airflow_dag_run_id,
-            "deterministic_monitor": bool(
-                isinstance(result, dict) and result.get("deterministic_monitor")
-            ),
         },
     )
     result["ok"] = True

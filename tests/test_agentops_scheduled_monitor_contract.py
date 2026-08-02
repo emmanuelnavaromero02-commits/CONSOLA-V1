@@ -148,7 +148,7 @@ def test_scheduled_agents_fail_closed_without_monitor_contract():
     assert "load_agent(agent_id, user_context=scheduled_user_context)" in section
     assert "_repair_loaded_successfactors_talent_monitor_if_needed" in section
     assert "scheduled agents require monitor role and monitor contract" in section
-    assert "run_scheduled_monitor" in section
+    assert "execute_reserved_scheduled_monitor" in section
     assert (
         "result = await _agent_runtime.run(agent, message, history=[], user=None)"
         not in section
@@ -167,7 +167,7 @@ def test_scheduled_agents_fail_closed_without_monitor_contract():
     assert "load_agent(agent_id, user_context=scheduled_user_context)" in v1_section
     assert "_repair_loaded_successfactors_talent_monitor_if_needed" in v1_section
     assert "scheduled agents require monitor role and monitor contract" in v1_section
-    assert "run_scheduled_monitor" in v1_section
+    assert "execute_reserved_scheduled_monitor" in v1_section
     assert (
         "result = await _agent_runtime.run(agent, message, history=[], user=None)"
         not in v1_section

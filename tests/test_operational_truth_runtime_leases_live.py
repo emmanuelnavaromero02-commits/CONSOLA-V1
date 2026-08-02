@@ -156,6 +156,13 @@ async def test_expired_leases_reclaim_and_old_fencing_cannot_finish(
             workspace_id=scope["workspace_id"],
             scheduled_fire_at=fire,
         )
+        with pytest.raises(RuntimeError, match="lease"):
+            await agent_scheduler.heartbeat_scheduled_run(
+                schedule_run_id=first["id"],
+                tenant_id=scope["tenant_id"],
+                workspace_id=scope["workspace_id"],
+                fencing_token=first["fencing_token"],
+            )
         with pytest.raises(RuntimeError, match="reservation"):
             await agent_scheduler.finish_scheduled_run(
                 schedule_run_id=first["id"],

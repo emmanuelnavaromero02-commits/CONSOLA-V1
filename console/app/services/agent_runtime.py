@@ -14,6 +14,7 @@ import os
 import re
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -1434,6 +1435,7 @@ async def run_scheduled_monitor(
     message: str,
     *,
     scheduled_fire_at: str | None = None,
+    lease_guard: Callable[[], Awaitable[None]] | None = None,
 ) -> dict:
     """Execute a scheduled monitor through a fixed AgentOps tool chain."""
     if not agent.is_active:
@@ -1474,6 +1476,8 @@ async def run_scheduled_monitor(
     tool_calls_log: list[dict] = []
 
     async def _call(full_name: str, args: dict[str, Any]) -> Any:
+        if lease_guard is not None:
+            await lease_guard()
         server_id, tool = full_name.split("__", 1)
         entry = {
             "tool": tool,
@@ -1791,6 +1795,8 @@ async def run_scheduled_monitor(
             f"signals={signal_count}, blockers={blocker_count}, "
             f"engines={len(engine_results)}, alert={'yes' if alert_result else 'no'}."
         )
+        if lease_guard is not None:
+            await lease_guard()
         await _finish_run(
             run_id,
             status="ok",
