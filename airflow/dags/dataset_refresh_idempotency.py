@@ -8,6 +8,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 
+MATERIALIZATION_LAYERS = frozenset({"silver", "gold"})
+
+
 def _slot_id(run_id: str, tenant_id: str, workspace_id: str, dataset: str) -> str:
     digest = hashlib.sha256(
         "\0".join((run_id, tenant_id, workspace_id, dataset)).encode("utf-8")
@@ -135,6 +138,11 @@ def finish_materialization(
         "name": str((result or {}).get("name") or ""),
         "row_count": int((result or {}).get("row_count") or 0),
     }
+    if success:
+        layer = str((result or {}).get("layer") or "").strip()
+        if layer not in MATERIALIZATION_LAYERS:
+            raise RuntimeError("materialization outcome layer is unavailable")
+        safe_result["layer"] = layer
     with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
         _scope(cur, tenant_id, workspace_id)
         cur.execute(

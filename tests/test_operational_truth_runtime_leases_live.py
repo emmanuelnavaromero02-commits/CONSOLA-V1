@@ -239,7 +239,7 @@ async def test_expired_leases_reclaim_and_old_fencing_cannot_finish(
             workspace_id=scope["workspace_id"],
             lease_token=next_slot["lease_token"],
             success=True,
-            result={"name": "employees", "row_count": 1},
+            result={"name": "employees", "layer": "silver", "row_count": 1},
         )
 
         healthy_fire = fire.replace(minute=1)
@@ -286,7 +286,7 @@ async def test_expired_leases_reclaim_and_old_fencing_cannot_finish(
             workspace_id=scope["workspace_id"],
             lease_token=healthy_slot["lease_token"],
             success=True,
-            result={"name": "employees", "row_count": 1},
+            result={"name": "employees", "layer": "silver", "row_count": 1},
         )
     finally:
         for module, factory in previous:

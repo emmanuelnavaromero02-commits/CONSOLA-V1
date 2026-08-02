@@ -106,7 +106,7 @@ async def test_live_fanout_scopes_each_workspace_and_replay_is_durable(
             workspace_id=scope_a["workspace_id"],
             lease_token=materialize_a["lease_token"],
             success=True,
-            result={"name": "pnl_mensual", "row_count": 3},
+            result={"name": "pnl_mensual", "layer": "gold", "row_count": 3},
         )
         materialize_a_replay = reserve_materialization(
             omega_console_live_dsn,
@@ -139,4 +139,5 @@ async def test_live_fanout_scopes_each_workspace_and_replay_is_durable(
     assert first_b["id"] != first_a["id"]
     assert materialize_a_replay["completed"] is True
     assert materialize_a_replay["result"]["row_count"] == 3
+    assert materialize_a_replay["result"]["layer"] == "gold"
     assert materialize_b["slot_id"] != materialize_a["slot_id"]

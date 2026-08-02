@@ -8,6 +8,7 @@ import requests
 
 from dataset_refresh_graph import _required_scope, _validate_plan
 from dataset_refresh_idempotency import (
+    MATERIALIZATION_LAYERS,
     finish_materialization,
     reserve_materialization,
 )
@@ -25,6 +26,18 @@ def _safe_result(
         "reused": reused,
         "row_count": int(payload.get("row_count") or 0),
     }
+
+
+def _reused_layer(item: dict[str, Any], payload: dict[str, Any]) -> str:
+    """Resolve a completed slot's layer from the validated plan and its evidence."""
+    planned = str(item.get("layer") or "").strip()
+    durable = str((payload or {}).get("layer") or "").strip()
+    if planned and durable and planned != durable:
+        raise RuntimeError("reused materialization layer contradicts the plan")
+    layer = durable or planned
+    if layer not in MATERIALIZATION_LAYERS:
+        raise RuntimeError("reused materialization layer is unavailable")
+    return layer
 
 
 def materialize_in_order(
@@ -60,8 +73,13 @@ def materialize_in_order(
             dataset=name,
         )
         if reservation.get("completed"):
+            durable = reservation.get("result") or {}
             results.append(
-                _safe_result(name, reservation.get("result") or {}, reused=True)
+                _safe_result(
+                    name,
+                    {**durable, "layer": _reused_layer(item, durable)},
+                    reused=True,
+                )
             )
             continue
         slot_id = str(reservation["slot_id"])

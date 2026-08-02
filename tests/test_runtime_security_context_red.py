@@ -16,6 +16,7 @@ from refinement.app.runtime_security_context import validate_runtime_context
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "airflow/dags"))
+import dataset_refresh_idempotency
 import dataset_refresh_materialize
 
 
@@ -165,19 +166,23 @@ def test_signing_key_must_not_reuse_transport_key(monkeypatch):
         )
 
 
+_DEFAULT_PLAN = [
+    {
+        "name": "employee_360",
+        "layer": "gold",
+        "cartridge": "sap_successfactors",
+    }
+]
+
+
 class _TaskInstance:
-    def __init__(self):
+    def __init__(self, plan=None):
         self.pushed = None
+        self._plan = _DEFAULT_PLAN if plan is None else plan
 
     def xcom_pull(self, *, task_ids, key):
         if key == "plan":
-            return [
-                {
-                    "name": "employee_360",
-                    "layer": "gold",
-                    "cartridge": "sap_successfactors",
-                }
-            ]
+            return self._plan
         if key == "cartridge_id":
             return "sap_successfactors"
         return None
@@ -186,9 +191,9 @@ class _TaskInstance:
         self.pushed = (key, value)
 
 
-def _materialize_context(allow_partial=True):
+def _materialize_context(allow_partial=True, plan=None):
     return {
-        "ti": _TaskInstance(),
+        "ti": _TaskInstance(plan),
         "run_id": "scheduled__2026-07-30T12:00:00Z",
         "dag_run": type(
             "DagRun",
@@ -256,14 +261,32 @@ def test_allow_partial_never_absorbs_runtime_authority_failure(monkeypatch):
     ]
 
 
-def test_successful_replay_reuses_durable_result_without_second_post(monkeypatch):
+@pytest.mark.parametrize("layer", [None, "", "raw", "GOLD"])
+def test_durable_slot_refuses_to_record_a_success_without_a_valid_layer(layer):
+    result = {"name": "employee_360", "row_count": 7}
+    if layer is not None:
+        result["layer"] = layer
+
+    with pytest.raises(RuntimeError, match="layer is unavailable"):
+        dataset_refresh_idempotency.finish_materialization(
+            "postgresql://unused",
+            slot_id="slot-a",
+            tenant_id="tenant-a",
+            workspace_id="workspace-a",
+            lease_token=1,
+            success=True,
+            result=result,
+        )
+
+
+def _replay_reservation(monkeypatch, result):
     monkeypatch.setattr(
         dataset_refresh_materialize,
         "reserve_materialization",
         lambda *_args, **_kwargs: {
             "reserved": False,
             "completed": True,
-            "result": {"name": "employee_360", "layer": "gold", "row_count": 7},
+            "result": result,
         },
     )
     monkeypatch.setattr(
@@ -271,14 +294,25 @@ def test_successful_replay_reuses_durable_result_without_second_post(monkeypatch
         "post",
         lambda *_args, **_kwargs: pytest.fail("replay performed a second POST"),
     )
-    context = _materialize_context()
-    result = dataset_refresh_materialize.materialize_in_order(
+
+
+def _replay(context):
+    return dataset_refresh_materialize.materialize_in_order(
         context,
         postgres_dsn="postgresql://unused",
         refinement_url="http://refinement",
         headers=lambda *_args: {},
         admitted_conf=context["dag_run"].conf,
     )
+
+
+def test_successful_replay_reuses_durable_result_without_second_post(monkeypatch):
+    # Exactly the payload ``finish_materialization`` persists for a slot.
+    _replay_reservation(monkeypatch, {"name": "employee_360", "row_count": 7})
+    context = _materialize_context()
+
+    result = _replay(context)
+
     assert result["materialized"] == 1
     assert result["results"] == [
         {
@@ -289,3 +323,51 @@ def test_successful_replay_reuses_durable_result_without_second_post(monkeypatch
             "row_count": 7,
         }
     ]
+
+
+def test_replay_keeps_the_durable_layer_when_the_slot_recorded_one(monkeypatch):
+    _replay_reservation(
+        monkeypatch, {"name": "employee_360", "layer": "gold", "row_count": 7}
+    )
+    context = _materialize_context()
+
+    assert _replay(context)["results"][0]["layer"] == "gold"
+
+
+def test_replay_layer_mismatch_between_plan_and_slot_fails_closed(monkeypatch):
+    _replay_reservation(
+        monkeypatch, {"name": "employee_360", "layer": "silver", "row_count": 7}
+    )
+    context = _materialize_context()
+
+    with pytest.raises(RuntimeError, match="contradicts the plan"):
+        _replay(context)
+
+
+@pytest.mark.parametrize("planned", ["", "raw", "GOLD"])
+def test_replay_without_a_resolvable_layer_fails_closed(monkeypatch, planned):
+    _replay_reservation(monkeypatch, {"name": "employee_360", "row_count": 7})
+    context = _materialize_context(
+        plan=[
+            {
+                "name": "employee_360",
+                "layer": planned,
+                "cartridge": "sap_successfactors",
+            }
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="layer is unavailable"):
+        _replay(context)
+
+
+def test_replay_with_an_invalid_durable_layer_fails_closed(monkeypatch):
+    _replay_reservation(
+        monkeypatch, {"name": "employee_360", "layer": "raw", "row_count": 7}
+    )
+    context = _materialize_context(
+        plan=[{"name": "employee_360", "layer": "", "cartridge": "sap_successfactors"}]
+    )
+
+    with pytest.raises(RuntimeError, match="layer is unavailable"):
+        _replay(context)

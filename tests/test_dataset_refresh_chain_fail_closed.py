@@ -213,3 +213,172 @@ def test_malformed_xcom_contract_fails_closed(monkeypatch, invocation: dict) -> 
             invocation,
             allow_partial=True,
         )
+
+
+class _MaterializeTaskInstance:
+    def __init__(self, plan: list[dict]):
+        self._plan = plan
+        self.pushed = None
+
+    def xcom_pull(self, *, task_ids: str, key: str | None = None):
+        if key == "plan":
+            return self._plan
+        if key == "cartridge_id":
+            return "replicon"
+        return None
+
+    def xcom_push(self, *, key: str, value: object) -> None:
+        self.pushed = (key, value)
+
+
+class _Materialized:
+    status_code = 200
+
+    def __init__(self, name: str):
+        self._name = name
+
+    def json(self) -> dict:
+        return {"name": self._name, "layer": "gold", "row_count": 5}
+
+
+def _retry_materialization(
+    monkeypatch: pytest.MonkeyPatch,
+    dataset_refresh_materialize,
+    *,
+    plan: list[dict],
+    completed: dict[str, dict],
+) -> tuple[dict, list[str]]:
+    """Re-run ``materialize_in_order`` over slots a previous attempt completed."""
+    posts: list[str] = []
+
+    def reserve(*_args, **kwargs):
+        dataset = str(kwargs["dataset"])
+        if dataset in completed:
+            return {
+                "reserved": False,
+                "completed": True,
+                "result": completed[dataset],
+            }
+        return {
+            "reserved": True,
+            "completed": False,
+            "slot_id": f"slot-{dataset}",
+            "lease_token": 1,
+        }
+
+    def post(_url: str, *, json: dict, **_kwargs) -> _Materialized:
+        name = str(json["args"]["name"])
+        posts.append(name)
+        return _Materialized(name)
+
+    monkeypatch.setattr(dataset_refresh_materialize, "reserve_materialization", reserve)
+    monkeypatch.setattr(
+        dataset_refresh_materialize, "finish_materialization", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        dataset_refresh_materialize,
+        "build_materialize_context",
+        lambda **_kwargs: {"trusted": True},
+    )
+    monkeypatch.setattr(dataset_refresh_materialize.requests, "post", post)
+
+    conf = {
+        "tenant_id": "tenant-a",
+        "workspace_id": "workspace-a",
+        "cartridge_id": "replicon",
+    }
+    context = {
+        "ti": _MaterializeTaskInstance(plan),
+        "run_id": "manual__retry",
+        "dag_run": type("DagRun", (), {"conf": conf})(),
+    }
+    invocation = dataset_refresh_materialize.materialize_in_order(
+        context,
+        postgres_dsn="postgresql://unused",
+        refinement_url="http://refinement",
+        headers=lambda *_args: {},
+        admitted_conf=conf,
+    )
+    return invocation, posts
+
+
+_RETRY_PLAN = [
+    {"name": "gold_headcount", "layer": "gold", "cartridge": "replicon"},
+    {"name": "gold_employee_360", "layer": "gold", "cartridge": "replicon"},
+]
+_DURABLE_HEADCOUNT = {"name": "gold_headcount", "row_count": 42}
+
+
+def test_partial_retry_keeps_every_reused_gold_in_the_refresh_payload(
+    monkeypatch,
+) -> None:
+    dataset_refresh_materialize = load_dag(monkeypatch, "dataset_refresh_materialize")
+    dataset_refresh_chain = load_dag(monkeypatch, "dataset_refresh_chain")
+
+    invocation, posts = _retry_materialization(
+        monkeypatch,
+        dataset_refresh_materialize,
+        plan=_RETRY_PLAN,
+        completed={"gold_headcount": _DURABLE_HEADCOUNT},
+    )
+
+    assert posts == ["gold_employee_360"]
+    saved, intelligence = _record(monkeypatch, dataset_refresh_chain, invocation)
+
+    assert saved == ["running", "success"]
+    assert intelligence == [sorted(item["name"] for item in _RETRY_PLAN)]
+
+
+def test_fully_reused_retry_still_triggers_gold_refresh(monkeypatch) -> None:
+    dataset_refresh_materialize = load_dag(monkeypatch, "dataset_refresh_materialize")
+    dataset_refresh_chain = load_dag(monkeypatch, "dataset_refresh_chain")
+
+    invocation, posts = _retry_materialization(
+        monkeypatch,
+        dataset_refresh_materialize,
+        plan=_RETRY_PLAN[:1],
+        completed={"gold_headcount": _DURABLE_HEADCOUNT},
+    )
+
+    assert posts == []
+    saved, intelligence = _record(monkeypatch, dataset_refresh_chain, invocation)
+
+    assert saved == ["running", "success"]
+    assert intelligence == [["gold_headcount"]]
+
+
+def test_retry_never_repeats_a_completed_materialization(monkeypatch) -> None:
+    dataset_refresh_materialize = load_dag(monkeypatch, "dataset_refresh_materialize")
+    dataset_refresh_chain = load_dag(monkeypatch, "dataset_refresh_chain")
+
+    invocation, posts = _retry_materialization(
+        monkeypatch,
+        dataset_refresh_materialize,
+        plan=_RETRY_PLAN,
+        completed={
+            "gold_headcount": _DURABLE_HEADCOUNT,
+            "gold_employee_360": {"name": "gold_employee_360", "row_count": 7},
+        },
+    )
+
+    assert posts == []
+    assert [item["reused"] for item in invocation["results"]] == [True, True]
+    saved, intelligence = _record(monkeypatch, dataset_refresh_chain, invocation)
+
+    assert saved == ["running", "success"]
+    assert len(intelligence) == 1
+    assert intelligence == [sorted(item["name"] for item in _RETRY_PLAN)]
+
+
+def test_retry_without_a_resolvable_gold_layer_never_reaches_success(
+    monkeypatch,
+) -> None:
+    dataset_refresh_materialize = load_dag(monkeypatch, "dataset_refresh_materialize")
+
+    with pytest.raises(RuntimeError, match="layer is unavailable"):
+        _retry_materialization(
+            monkeypatch,
+            dataset_refresh_materialize,
+            plan=[{"name": "gold_headcount", "layer": "", "cartridge": "replicon"}],
+            completed={"gold_headcount": _DURABLE_HEADCOUNT},
+        )
