@@ -18,6 +18,11 @@ from app.services.intelligence import decision_orchestrator
 from app.services.intelligence import history as intelligence_history
 from app.services.intelligence import monte_carlo_service
 from app.services.intelligence import orchestrator_execution
+from app.services.intelligence.outcome_binding import (
+    assert_expected_pipeline_run,
+    persist_gold_refresh_binding,
+)
+from app.services.intelligence.publication_trace import capture_publication_trace
 from app.services.intelligence.readiness import intelligence_readiness
 from app.services.csrf import require_csrf
 from app.services.permissions import require_permission
@@ -26,7 +31,9 @@ from app.services.security_context import verify_signed_security_context
 
 router = APIRouter(prefix="/api/intelligence", tags=["Intelligence"])
 v1_router = APIRouter(prefix="/api/v1/intelligence", tags=["Intelligence"])
-internal_router = APIRouter(prefix="/internal/intelligence", tags=["Intelligence (internal)"])
+internal_router = APIRouter(
+    prefix="/internal/intelligence", tags=["Intelligence (internal)"]
+)
 DATASETS_READ_DEPENDENCY = [Depends(require_permission("datasets.read"))]
 
 
@@ -78,7 +85,7 @@ class GoldRefreshIntelligenceRequest(_StrictModel):
     workspace_id: str = Field(min_length=1, max_length=80)
     cartridge_id: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
     airflow_dag_run_id: str = Field(min_length=1, max_length=256)
-    pipeline_run_id: str | None = Field(default=None, max_length=512)
+    pipeline_run_id: str = Field(min_length=1, max_length=512)
     materialization_status: Literal["success", "partial"] = "success"
     datasets: list[str] = Field(default_factory=list, max_length=200)
     finished_at: str | None = Field(default=None, max_length=80)
@@ -436,6 +443,16 @@ async def intelligence_gold_refresh_internal(
         )
     user = await _gold_refresh_user(body)
     run_ref = _gold_refresh_run_ref(body)
+    try:
+        await assert_expected_pipeline_run(
+            user,
+            expected_run_id=body.pipeline_run_id,
+            cartridge_id=body.cartridge_id,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503, detail="Gold intelligence outcome unavailable"
+        ) from exc
     payload = {
         "cartridge_id": body.cartridge_id,
         "datasets": body.datasets,
@@ -457,7 +474,10 @@ async def intelligence_gold_refresh_internal(
         },
     }
     try:
-        result = await intelligence_engine.run_intelligence(user, payload, persist=True)
+        with capture_publication_trace() as publication_trace:
+            result = await intelligence_engine.run_intelligence(
+                user, payload, persist=True
+            )
     except Exception as exc:
         raise HTTPException(
             status_code=503, detail="Gold intelligence outcome unavailable"
@@ -474,6 +494,19 @@ async def intelligence_gold_refresh_internal(
         raise HTTPException(
             status_code=503, detail="Gold intelligence outcome unavailable"
         )
+    try:
+        await persist_gold_refresh_binding(
+            user,
+            expected_run_id=body.pipeline_run_id,
+            expected_run_ref=run_ref,
+            intelligence_result={**result, "run_ref": result.get("run_ref") or run_ref},
+            publication_trace=publication_trace,
+            expected_datasets=body.datasets,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503, detail="Gold intelligence outcome unavailable"
+        ) from exc
     _invalidate_control_room_cache(user)
     return {
         "ok": True,

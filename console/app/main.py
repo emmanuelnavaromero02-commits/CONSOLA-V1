@@ -2716,6 +2716,17 @@ async def api_explorer_download(
     ) or not await _publication.published_object(key, user, bucket_name):
         raise HTTPException(403, "object not allowed")
     expires_in = min(max(int(expires), 60), 3600)
+    if _publication.materialized_object_key(key):
+        raw = await _publication.verified_published_object(
+            s3, key, user, bucket_name
+        )
+        if raw is None:
+            raise HTTPException(409, "published object integrity unavailable")
+        url = (
+            "/api/explorer/download-content?bucket="
+            f"{quote(bucket, safe='')}&key={quote(key, safe='')}"
+        )
+        return _explorer_download_response(url, expires_in=expires_in)
     try:
         url = await asyncio.to_thread(
             s3.generate_presigned_url,
@@ -2736,6 +2747,34 @@ async def api_explorer_download(
         metadata={"expires_in": expires_in},
     )
     return _explorer_download_response(url, expires_in=expires_in)
+
+
+@app.get(
+    "/api/explorer/download-content",
+    dependencies=[Depends(require_permission("pipelines.read"))],
+)
+async def api_explorer_download_content(
+    bucket: str,
+    key: str,
+    user: dict = Depends(require_authenticated),
+):
+    from app.services import publication_heads as _publication
+
+    if not _publication.materialized_object_key(key):
+        raise HTTPException(404, "published object not found")
+    bucket_name = _resolve_explorer_bucket(bucket, user)
+    if not _explorer_path_allowed(key, user, object_access=True):
+        raise HTTPException(403, "object not allowed")
+    raw = await _publication.verified_published_object(
+        _s3_client(), key, user, bucket_name
+    )
+    if raw is None:
+        raise HTTPException(409, "published object integrity unavailable")
+    return Response(
+        content=raw,
+        media_type="application/octet-stream",
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
 
 
 @app.delete(
