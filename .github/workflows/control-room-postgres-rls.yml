@@ -54,7 +54,9 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install \
             -r tests/requirements.txt \
-            -r console/requirements.txt
+            -r console/requirements.txt \
+            -r mcp-infra/requirements.txt
+          python -m pip check
 
       - name: Prepare hermetic Refinement DuckDB artifact
         shell: bash
@@ -87,6 +89,7 @@ jobs:
             console/tests/test_pipeline_extract.py \
             tests/test_decision*.py \
             tests/test_pipeline_control_room_refresh.py \
+            tests/test_scheduled_monitor_execution.py \
             tests/test_agentops_scheduled_monitor_contract.py \
             tests/test_agent_runner_http_outcome.py \
             tests/test_dataset_refresh_chain_fail_closed.py \
@@ -176,7 +179,7 @@ jobs:
               if any(bad.values()):
                   raise SystemExit(f"{label} JUnit is not clean: {bad}")
 
-          verify_junit("/tmp/control-room-focal.xml", minimum=9066, label="Focal Control Room")
+          verify_junit("/tmp/control-room-focal.xml", minimum=9078, label="Focal Control Room")
           verify_junit("/tmp/control-room-postgres-rls.xml", minimum=238, label="Live PostgreSQL/RLS")
           PY
 
@@ -194,12 +197,22 @@ jobs:
           E2E_WAIT_TIMEOUT_SECONDS: "600"
         run: scripts/run_operational_truth_e2e.sh
 
+      - name: Package operational truth E2E evidence
+        if: always()
+        shell: bash
+        run: >-
+          scripts/package_operational_truth_evidence.sh
+          /tmp/operational-truth-e2e
+          /tmp/operational-truth-e2e-evidence.tar.gz
+
       - name: Upload operational truth E2E evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: operational-truth-e2e
-          path: /tmp/operational-truth-e2e
+          path: |
+            /tmp/operational-truth-e2e-evidence.tar.gz
+            /tmp/operational-truth-e2e-evidence.tar.gz.sha256
           if-no-files-found: error
 
   no-control-room-needed:

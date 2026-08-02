@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 from pathlib import Path
+import subprocess
+import tarfile
 
 import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_PATH = ROOT / ".github/workflows/control-room-postgres-rls.yml"
+PACKAGE_SCRIPT = ROOT / "scripts/package_operational_truth_evidence.sh"
 
 
 def test_operational_truth_e2e_is_required_by_canonical_gate() -> None:
@@ -89,3 +93,60 @@ def test_e2e_junit_floor_matches_the_single_real_orchestrator() -> None:
 
     assert "--junitxml=/tmp/operational-truth-e2e.xml" in dockerfile
     assert 'counts != {"tests": 1, "skipped": 0, "failures": 0, "errors": 0}' in script
+
+
+def test_e2e_evidence_upload_uses_only_a_verified_portable_archive() -> None:
+    workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+    e2e = workflow.split("operational-truth-e2e:", 1)[1].split(
+        "no-control-room-needed:", 1
+    )[0]
+
+    assert "scripts/package_operational_truth_evidence.sh" in e2e
+    assert e2e.count("if: always()") == 2
+    assert "if-no-files-found: error" in e2e
+    assert "/tmp/operational-truth-e2e-evidence.tar.gz" in e2e
+    assert "/tmp/operational-truth-e2e-evidence.tar.gz.sha256" in e2e
+    upload = e2e.split("uses: actions/upload-artifact@v4", 1)[1]
+    assert "path: /tmp/operational-truth-e2e\n" not in upload
+
+
+def test_e2e_evidence_packager_preserves_forensic_paths_and_is_fail_closed(
+    tmp_path: Path,
+) -> None:
+    evidence = tmp_path / "raw-evidence"
+    forensic = evidence / "airflow-logs" / "run_id=manual__00:01:02+00:00"
+    forensic.mkdir(parents=True)
+    (forensic / "attempt=1.log").write_text("forensic-log\n", encoding="utf-8")
+    archive = tmp_path / "portable-evidence.tar.gz"
+
+    subprocess.run(
+        ["bash", str(PACKAGE_SCRIPT), str(evidence), str(archive)],
+        check=True,
+    )
+
+    assert archive.is_file() and archive.stat().st_size > 0
+    checksum = archive.with_name(f"{archive.name}.sha256")
+    assert checksum.is_file() and checksum.stat().st_size > 0
+    checksum_text = checksum.read_text(encoding="utf-8")
+    assert str(tmp_path) not in checksum_text
+    assert checksum_text.split()[0] == hashlib.sha256(archive.read_bytes()).hexdigest()
+    listing = subprocess.run(
+        ["tar", "-tzf", str(archive)],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "run_id=manual__00:01:02+00:00/attempt=1.log" in listing
+    with tarfile.open(archive, "r:gz") as bundle:
+        member = next(
+            item for item in bundle.getmembers() if item.name.endswith("/attempt=1.log")
+        )
+        extracted = bundle.extractfile(member)
+        assert extracted is not None and extracted.read() == b"forensic-log\n"
+
+    missing = subprocess.run(
+        ["bash", str(PACKAGE_SCRIPT), str(tmp_path / "missing"), str(archive)],
+        capture_output=True,
+        text=True,
+    )
+    assert missing.returncode != 0

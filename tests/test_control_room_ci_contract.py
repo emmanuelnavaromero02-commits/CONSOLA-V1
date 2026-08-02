@@ -6,7 +6,9 @@ from scripts.ci_control_room_paths import control_room_changed
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/control-room-postgres-rls.yml"
 PREPARE_SCRIPT = ROOT / "scripts/prepare_refinement_duckdb_ci.sh"
-FOCAL_MINIMUM = 9066
+MCP_REQUIREMENTS = ROOT / "mcp-infra/requirements.txt"
+MCP_DOCKERFILE = ROOT / "mcp-infra/Dockerfile"
+FOCAL_MINIMUM = 9078
 POSTGRES_MINIMUM = 238
 TENANT_EXECUTE_ISOLATION = ROOT / (
     "tests/test_control_room_live_postgres_tenant_execute_isolation.py"
@@ -91,6 +93,7 @@ REQUIRED_RELATED_TESTS = (
     "console/tests/test_pipeline_extract.py",
     "tests/test_decision*.py",
     "tests/test_pipeline_control_room_refresh.py",
+    "tests/test_scheduled_monitor_execution.py",
     "tests/test_agentops_scheduled_monitor_contract.py",
     "tests/test_agent_runner_http_outcome.py",
     "tests/test_dataset_refresh_chain_fail_closed.py",
@@ -226,3 +229,21 @@ def test_both_junit_reports_fail_closed_on_missing_or_bad_results():
     assert "refinement-duckdb-extensions.before" in text
     assert "refinement-duckdb-extensions.after" in text
     assert "cmp /tmp/refinement-duckdb-extensions.before" in text
+
+
+def test_focal_gate_installs_and_checks_the_real_mcp_dependencies_first():
+    text = _workflow_text()
+    install = text.split("- name: Install test dependencies", 1)[1].split(
+        "- name: Prepare hermetic Refinement DuckDB artifact", 1
+    )[0]
+    focal = text.index("- name: Run focal Control Room tests")
+
+    assert "-r mcp-infra/requirements.txt" in install
+    assert "python -m pip check" in install
+    assert text.index("python -m pip check") < focal
+    assert "pgvector==0.3.2" in MCP_REQUIREMENTS.read_text(encoding="utf-8")
+    dockerfile = MCP_DOCKERFILE.read_text(encoding="utf-8")
+    assert "COPY mcp-infra/requirements.txt ." in dockerfile
+    assert (
+        "pip install --prefix=/install --no-cache-dir -r requirements.txt" in dockerfile
+    )
