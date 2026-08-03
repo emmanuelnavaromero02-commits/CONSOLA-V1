@@ -29,6 +29,11 @@ from app.duckdb_runtime import connect_duckdb_runtime
 from app.middleware.request_id import request_id_var
 from app.operational_truth import replicon_generic_query_block_reason
 from app.publication_heads import published_dataset_names, scoped_semantic_source_name
+from app.sql_reader_policy import (
+    POLICY_ERROR,
+    ReaderPolicyError,
+    validate_cartridge_reader_query,
+)
 from app.registry import tool
 from app.tools._validators import validate_bounded_int, validate_identifier
 from app.tools.postgres import _conn
@@ -215,6 +220,37 @@ def _scoped_object_prefix(
 _SHARED_RAW_SCOPEABLE_ROOTS_BY_CARTRIDGE: dict[str, tuple[str, ...]] = {
     "replicon": ("fx_rates", "excel_billing"),
 }
+
+
+def _assert_reader_sandbox(
+    sql: str,
+    cartridge_id: str,
+    security_context: dict[str, Any] | None = None,
+) -> None:
+    """Fail closed unless every storage reader stays inside the caller's scope."""
+    cartridge = validate_identifier(cartridge_id, "cartridge_id")
+    tenant_id, workspace_id = _scope_values(security_context)
+    validate_cartridge_reader_query(
+        str(sql or "").replace("{bucket}", settings.minio_bucket),
+        cartridge_id=cartridge,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        expected_bucket=settings.minio_bucket,
+        shared_roots=frozenset(
+            _SHARED_RAW_SCOPEABLE_ROOTS_BY_CARTRIDGE.get(cartridge, ())
+        ),
+    )
+
+
+def _reader_policy_rejection(cartridge_id: str) -> dict[str, Any]:
+    """Redacted rejection: no SQL, no path, no secret, no parser detail."""
+    return {
+        "cartridge_id": cartridge_id,
+        "status": "partial",
+        "data_status": "unavailable",
+        "error": "query_rejected",
+        "reason": POLICY_ERROR,
+    }
 
 
 def _scope_cartridge_sql(
@@ -1424,9 +1460,20 @@ def cartridge_query_kb(
     blocked_reason = replicon_generic_query_block_reason(sql, cartridge_id=cartridge_id, connection_factory=_conn, security_context=security_context)
     if blocked_reason:
         return {"cartridge_id": cartridge_id, "status": "partial", "data_status": "unavailable", "reason": blocked_reason}
+    try:
+        _assert_reader_sandbox(sql, cartridge_id, security_context)
+    except ReaderPolicyError:
+        return _reader_policy_rejection(cartridge_id)
     resolved = _scope_cartridge_sql(sql, cartridge_id, security_context)
     if "limit" not in resolved.lower():
         resolved = f"SELECT * FROM ({resolved}) _q LIMIT {limit}"
+    # Second, independent validation of the effective statement. The rewriter
+    # runs between the two checks, so this is what guarantees that nothing the
+    # first pass approved can be smuggled past it on the way to the engine.
+    try:
+        _assert_reader_sandbox(resolved, cartridge_id, security_context)
+    except ReaderPolicyError:
+        return _reader_policy_rejection(cartridge_id)
     try:
         conn = _duckdb()
         try:
