@@ -134,8 +134,13 @@ def _relation_functions(tree: exp.Expression) -> list[exp.Func]:
             add(relation)
             continue
         if isinstance(relation, exp.Identifier) and relation.args.get("quoted"):
-            name = str(relation.this or "")
-            if any(marker in name for marker in ("/", "\\", ":", "%")):
+            # DuckDB treats quoted, unqualified relation names such as
+            # ``'secret.csv'`` as replacement scans. SQLGlot intentionally
+            # normalizes single and double quotes here, so a filename cannot
+            # be distinguished from a quoted identifier by extension alone.
+            # Public SQL has no authorized unqualified physical tables;
+            # registered Gold relations remain qualified (pggold.<table>).
+            if table.args.get("db") is None and table.args.get("catalog") is None:
                 _deny()
 
     for relation_owner in (*tree.find_all(exp.From), *tree.find_all(exp.Join)):
