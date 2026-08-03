@@ -39,9 +39,11 @@ from omega_lakehouse import ObjectAlreadyExists, storage_from_env
 try:
     from app.duckdb_runtime import connect_duckdb_runtime
     from app.sql_table_function_policy import validate_table_function_query
+    from app.storage_scope_policy import has_exact_storage_scope
 except ModuleNotFoundError:
     from refinement.app.duckdb_runtime import connect_duckdb_runtime
     from refinement.app.sql_table_function_policy import validate_table_function_query
+    from refinement.app.storage_scope_policy import has_exact_storage_scope
 
 SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 SAFE_S3_BRONZE_TAIL_RE = re.compile(r"^[a-zA-Z0-9_./=*-]+$")
@@ -640,16 +642,14 @@ class DuckDBEngine:
         tenant, workspace = self._scope_values(user_context)
         if not tenant or not workspace:
             return
-        scope_fragment = f"tenant_id={tenant}/workspace_id={workspace}/"
         bucket_prefix = self._storage_uri("")
         for match in S3_LITERAL_RE.finditer(sql or ""):
             uri = match.group(2)
             if not uri.startswith(bucket_prefix):
                 raise ValueError("S3 path uses an unapproved bucket")
             key = uri[len(bucket_prefix) :]
-            if (
-                key.startswith(("raw/", "silver/", "gold/"))
-                and scope_fragment not in key
+            if key.startswith(("raw/", "silver/", "gold/", "uploads/")) and not (
+                has_exact_storage_scope(key, tenant, workspace)
             ):
                 raise ValueError("S3 path is outside the caller tenant/workspace scope")
 

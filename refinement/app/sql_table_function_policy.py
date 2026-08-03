@@ -10,6 +10,11 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.tokens import TokenType, Tokenizer
 
+try:
+    from app.sql_scope_policy import resolved_cte_table_ids
+except ModuleNotFoundError:
+    from refinement.app.sql_scope_policy import resolved_cte_table_ids
+
 
 POLICY_ERROR = "SQL blocked by safety policy"
 _STORAGE_FUNCTIONS = {"read_parquet"}
@@ -136,7 +141,7 @@ def _read_parquet_paths(
     )
 
 
-def _relation_functions(tree: exp.Expression, tokens: list) -> list[exp.Func]:
+def _relation_functions(tree: exp.Expression) -> list[exp.Func]:
     functions: list[exp.Func] = []
     seen: set[int] = set()
 
@@ -146,14 +151,7 @@ def _relation_functions(tree: exp.Expression, tokens: list) -> list[exp.Func]:
             seen.add(identity)
             functions.append(function)
 
-    cte_names = {
-        str(cte.alias_or_name or "").casefold() for cte in tree.find_all(exp.CTE)
-    }
-    string_literals = {
-        token.text.casefold()
-        for token in tokens
-        if token.token_type is TokenType.STRING
-    }
+    resolved_ctes = resolved_cte_table_ids(tree)
     for table in tree.find_all(exp.Table):
         relation = table.this
         if isinstance(relation, exp.Func):
@@ -161,8 +159,7 @@ def _relation_functions(tree: exp.Expression, tokens: list) -> list[exp.Func]:
             continue
         if isinstance(relation, exp.Identifier) and relation.args.get("quoted"):
             if table.args.get("db") is None and table.args.get("catalog") is None:
-                name = str(relation.this or "").casefold()
-                if name not in cte_names or name in string_literals:
+                if id(table) not in resolved_ctes:
                     _deny()
 
     for relation_owner in (*tree.find_all(exp.From), *tree.find_all(exp.Join)):
@@ -235,7 +232,7 @@ def _validate_table_function_query(
         if _canonical_name(function) in _SENSITIVE_SCALAR_FUNCTIONS:
             _deny()
     reads: list[StorageRead] = []
-    for function in _relation_functions(tree, tokens):
+    for function in _relation_functions(tree):
         name = _canonical_name(function)
         if name in _SAFE_GENERATORS:
             continue
