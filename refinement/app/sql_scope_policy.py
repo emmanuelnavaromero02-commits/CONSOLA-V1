@@ -36,6 +36,8 @@ def resolved_cte_table_ids(tree: exp.Expression) -> frozenset[int]:
                 continue
             folded_sources[folded] = source
         for table in scope.tables:
+            if table.db or table.catalog:
+                continue
             folded = _duckdb_identifier_key(table.name)
             source = None if folded in ambiguous else folded_sources.get(folded)
             if isinstance(source, Scope):

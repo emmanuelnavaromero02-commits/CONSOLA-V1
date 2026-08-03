@@ -1162,12 +1162,11 @@ class DuckDBEngine:
                 ):
                     self._pg_gold_attach(con, user_context)
                 limited = f"SELECT * FROM ({effective_sql}) _q LIMIT {limit}"
-                validation_options = {"allow_server_resolved_path_list": True}
-                if allow_server_resolved_publication_relation:
-                    validation_options["allow_server_resolved_publication_relation"] = (
-                        True
-                    )
-                self._validate_effective_sql(effective_sql, **validation_options)
+                self._validate_effective_sql(
+                    effective_sql,
+                    allow_server_resolved_path_list=True,
+                    allow_server_resolved_publication_relation=True,
+                )
 
                 # Watchdog: fires con.interrupt() if the query runs past
                 # the cap. The Timer is cancelled immediately after a
@@ -1287,12 +1286,11 @@ class DuckDBEngine:
                     r'(?<![A-Za-z0-9_])"?pggold"?\s*\.', effective_sql, re.IGNORECASE
                 ):
                     self._pg_gold_attach(con, user_context)
-                validation_options = {"allow_server_resolved_path_list": True}
-                if publication_sql:
-                    validation_options["allow_server_resolved_publication_relation"] = (
-                        True
-                    )
-                self._validate_effective_sql(effective_sql, **validation_options)
+                self._validate_effective_sql(
+                    effective_sql,
+                    allow_server_resolved_path_list=True,
+                    allow_server_resolved_publication_relation=True,
+                )
                 rows = con.execute(
                     f"DESCRIBE SELECT * FROM ({effective_sql}) _q LIMIT 0",
                     rls_params,
@@ -1794,13 +1792,17 @@ class DuckDBEngine:
                 effective_sql = self._inject_latest_date(sql, sources, user_context)
                 self._validate_scoped_storage_sql(effective_sql, user_context)
                 self._validate_effective_sql(
-                    effective_sql, allow_server_resolved_path_list=True
+                    effective_sql,
+                    allow_server_resolved_path_list=True,
+                    allow_server_resolved_publication_relation=True,
                 )
                 effective_sql = self._ensure_scope_columns(
                     con, effective_sql, user_context
                 )
                 self._validate_effective_sql(
-                    effective_sql, allow_server_resolved_path_list=True
+                    effective_sql,
+                    allow_server_resolved_path_list=True,
+                    allow_server_resolved_publication_relation=True,
                 )
                 tenant, workspace = self._scope_values(user_context)
                 if not (tenant and workspace):
@@ -1836,13 +1838,17 @@ class DuckDBEngine:
                 effective_sql = self._inject_latest_date(sql, sources, user_context)
                 self._validate_scoped_storage_sql(effective_sql, user_context)
                 self._validate_effective_sql(
-                    effective_sql, allow_server_resolved_path_list=True
+                    effective_sql,
+                    allow_server_resolved_path_list=True,
+                    allow_server_resolved_publication_relation=True,
                 )
                 effective_sql = self._ensure_scope_columns(
                     con, effective_sql, user_context
                 )
                 self._validate_effective_sql(
-                    effective_sql, allow_server_resolved_path_list=True
+                    effective_sql,
+                    allow_server_resolved_path_list=True,
+                    allow_server_resolved_publication_relation=True,
                 )
                 parquet_path = self._snapshot_path(
                     "silver", cartridge, name, user_context
