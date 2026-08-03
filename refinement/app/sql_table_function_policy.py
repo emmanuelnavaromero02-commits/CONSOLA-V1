@@ -21,6 +21,8 @@ _STORAGE_FUNCTIONS = {"read_parquet"}
 _SAFE_GENERATORS = {"generate_series", "unnest"}
 _SENSITIVE_SCALAR_FUNCTIONS = {"current_setting", "getvariable"}
 _READ_PARQUET_OPTIONS = {"hive_partitioning", "union_by_name"}
+_GOLD_TABLE_RE = re.compile(r"gold_[A-Za-z0-9_]+")
+_PUBLICATION_TABLE_RE = re.compile(r"run_[0-9a-f]{32}")
 _STORAGE_URI_RE = re.compile(
     r"^(?P<scheme>s3|gs)://(?P<bucket>\{bucket\}|[a-z0-9][a-z0-9.-]{0,62})/"
     r"(?P<key>[A-Za-z0-9_.*=:/-]+)$"
@@ -28,8 +30,6 @@ _STORAGE_URI_RE = re.compile(
 
 
 class TableFunctionPolicyError(ValueError):
-    """A generic, public-safe refusal from the SQL table-function sandbox."""
-
     def __init__(self) -> None:
         super().__init__(POLICY_ERROR)
 
@@ -141,7 +141,11 @@ def _read_parquet_paths(
     )
 
 
-def _relation_functions(tree: exp.Expression) -> list[exp.Func]:
+def _relation_functions(
+    tree: exp.Expression,
+    *,
+    allow_server_resolved_publication_relation: bool,
+) -> list[exp.Func]:
     functions: list[exp.Func] = []
     seen: set[int] = set()
 
@@ -157,10 +161,25 @@ def _relation_functions(tree: exp.Expression) -> list[exp.Func]:
         if isinstance(relation, exp.Func):
             add(relation)
             continue
-        if isinstance(relation, exp.Identifier) and relation.args.get("quoted"):
-            if table.args.get("db") is None and table.args.get("catalog") is None:
-                if id(table) not in resolved_ctes:
-                    _deny()
+        if id(table) in resolved_ctes:
+            continue
+        db = str(table.db or "")
+        catalog = str(table.catalog or "")
+        name = str(table.name or "")
+        if (
+            not catalog
+            and db.isascii()
+            and db.lower() == "pggold"
+            and name.isascii()
+            and _GOLD_TABLE_RE.fullmatch(name)
+        ):
+            continue
+        if allow_server_resolved_publication_relation and catalog == "pggold":
+            if db == "omega_publication_gold" and _PUBLICATION_TABLE_RE.fullmatch(name):
+                continue
+            if db == "public" and _GOLD_TABLE_RE.fullmatch(name):
+                continue
+        _deny()
 
     for relation_owner in (*tree.find_all(exp.From), *tree.find_all(exp.Join)):
         relation = relation_owner.this
@@ -210,8 +229,8 @@ def _validate_table_function_query(
     expected_bucket: str | None = None,
     allow_bucket_placeholder: bool = True,
     allow_server_resolved_path_list: bool = False,
+    allow_server_resolved_publication_relation: bool = False,
 ) -> tuple[StorageRead, ...]:
-    """Validate a complete DuckDB statement and return authorized storage reads."""
     try:
         tokens = Tokenizer(dialect="duckdb").tokenize(sql or "")
         statements = sqlglot.parse(
@@ -232,7 +251,12 @@ def _validate_table_function_query(
         if _canonical_name(function) in _SENSITIVE_SCALAR_FUNCTIONS:
             _deny()
     reads: list[StorageRead] = []
-    for function in _relation_functions(tree):
+    for function in _relation_functions(
+        tree,
+        allow_server_resolved_publication_relation=(
+            allow_server_resolved_publication_relation
+        ),
+    ):
         name = _canonical_name(function)
         if name in _SAFE_GENERATORS:
             continue
@@ -256,6 +280,7 @@ def validate_table_function_query(
     expected_bucket: str | None = None,
     allow_bucket_placeholder: bool = True,
     allow_server_resolved_path_list: bool = False,
+    allow_server_resolved_publication_relation: bool = False,
 ) -> tuple[StorageRead, ...]:
     """Fail closed without surfacing parser, function, SQL, or path details."""
     try:
@@ -264,6 +289,9 @@ def validate_table_function_query(
             expected_bucket=expected_bucket,
             allow_bucket_placeholder=allow_bucket_placeholder,
             allow_server_resolved_path_list=allow_server_resolved_path_list,
+            allow_server_resolved_publication_relation=(
+                allow_server_resolved_publication_relation
+            ),
         )
     except TableFunctionPolicyError:
         raise

@@ -28,7 +28,8 @@ def has_exact_storage_scope(key: str, tenant: str, workspace: str) -> bool:
         index for index, part in enumerate(parts) if part.startswith("workspace_id=")
     ]
     return (
-        tenant_positions == [scope_index]
+        not any("*" in part for part in parts[: scope_index + 2])
+        and tenant_positions == [scope_index]
         and workspace_positions == [scope_index + 1]
         and parts[scope_index] == f"tenant_id={tenant}"
         and parts[scope_index + 1] == f"workspace_id={workspace}"
