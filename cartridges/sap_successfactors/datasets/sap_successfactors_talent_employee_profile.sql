@@ -21,13 +21,9 @@ hier AS (
 performance AS (
     SELECT
         user_id_hash,
-        AVG(
-            CASE
-                WHEN performance_rating IS NULL THEN NULL
-                WHEN performance_rating <= 5 THEN performance_rating * 20
-                ELSE performance_rating
-            END
-        ) AS performance_score,
+        -- Non-finite and out-of-domain ratings are dropped before averaging, so
+        -- one bad row cannot poison the whole employee's score.
+        AVG(talent_score_scale(performance_rating) * 20) AS performance_score,
         BOOL_OR(performance_status = 'ready') AS has_performance
     FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_performance_cycle/**/*.parquet',
                       hive_partitioning = true,
@@ -37,7 +33,7 @@ performance AS (
 competency AS (
     SELECT
         user_id AS user_id_hash,
-        AVG(proficiency_100) AS competency_score,
+        AVG(talent_score_scale(proficiency_100) * 20) AS competency_score,
         BOOL_OR(competency_status = 'ready') AS has_competency
     FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_employee_competency/**/*.parquet',
                       hive_partitioning = true,
@@ -47,7 +43,7 @@ competency AS (
 aspiration AS (
     SELECT
         user_id AS user_id_hash,
-        AVG(aspiration_100) AS aspiration_score,
+        AVG(talent_score_scale(aspiration_100) * 20) AS aspiration_score,
         BOOL_OR(aspiration_status = 'ready') AS has_aspiration
     FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_employee_aspiration/**/*.parquet',
                       hive_partitioning = true,

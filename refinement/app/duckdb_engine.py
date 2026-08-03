@@ -67,6 +67,27 @@ def _sql_quote(value: str) -> str:
     return "'" + (value or "").replace("'", "''") + "'"
 
 
+_SHARED_MACRO_FILES = (
+    "cartridges/sap_successfactors/datasets/_talent_score_scale.sql",
+)
+
+
+def _register_shared_macros(con: "duckdb.DuckDBPyConnection") -> None:
+    """Register the shared dataset macros on a fresh connection.
+
+    Packaged dataset SQL is a single SELECT, so it cannot define its own
+    helpers. The score normalization that keeps NaN, Infinity, negatives and
+    out-of-domain values out of Talent banding lives in one file and is
+    registered here, once per connection, so every dataset shares exactly the
+    same definition instead of repeating it.
+    """
+    root = Path(__file__).resolve().parents[2]
+    for relative in _SHARED_MACRO_FILES:
+        path = root / relative
+        if path.is_file():
+            con.execute(path.read_text(encoding="utf-8"))
+
+
 def _escape_sql_literal_inner(value: str) -> str:
     """v1.43.1 (Claude B4): same single-quote-doubling escape as
     ``_sql_quote`` but WITHOUT the wrapping quotes. Use when the template
@@ -326,6 +347,7 @@ class DuckDBEngine:
                         f"SET s3_access_key_id={_sql_quote(self.minio_access or '')};"
                         f"SET s3_secret_access_key={_sql_quote(self.minio_secret or '')};"
                     )
+                _register_shared_macros(self._con)
             except Exception:
                 if self._con is not None:
                     getattr(self._con, "close", lambda: None)()

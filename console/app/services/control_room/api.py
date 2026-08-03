@@ -2,6 +2,7 @@ from __future__ import annotations
 
 # fmt: off
 
+import math
 import types
 
 from app.services.control_room import core as _core
@@ -1890,12 +1891,24 @@ def _severity(value: Any) -> str:
 
 @_bind_to_core
 def _num(value: Any) -> float | None:
+    """Parse a number, refusing anything that cannot be serialized publicly.
+
+    NaN and Infinity survive float() and then serialize as bare NaN/Infinity
+    tokens, which are not valid JSON and would carry an invalid score all the
+    way to the client. They are treated as absent instead. This is the single
+    choke point for every numeric field the Control Room publishes.
+    """
     if value is None:
         return None
     try:
-        return float(value)
+        parsed = float(value)
     except (TypeError, ValueError):
         return None
+    return parsed if _finite_number(parsed) else None
+
+
+def _finite_number(value: float) -> bool:
+    return math.isfinite(value)
 
 
 @_bind_to_core

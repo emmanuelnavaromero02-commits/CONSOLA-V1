@@ -34,11 +34,8 @@ from app.logging_config import setup_logging
 setup_logging(service_name="refinement")
 logger = logging.getLogger(__name__)
 
-from app.dataset_store import (
-    PROTECTED_AUTHORITY_DATASETS,
-    DatasetStore,
-    ProtectedDatasetError,
-)
+from app.dataset_protection import PROTECTED_AUTHORITY_DATASETS
+from app.dataset_store import DatasetStore
 from app.duckdb_runtime import require_loaded_extensions
 from app.llm_sql import GeneratedSQLValidationError, generate_sql
 from app.publication_public import (

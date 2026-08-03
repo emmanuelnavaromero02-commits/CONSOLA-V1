@@ -27,24 +27,14 @@ normalized AS (
         emp.direct_reports,
         emp.tenure_months,
         COALESCE(roles.role_name, emp.job_code) AS role_name,
-        TRY_CAST(emp.competency_score AS DOUBLE) AS competency_score,
-        TRY_CAST(emp.performance_score AS DOUBLE) AS performance_score,
-        TRY_CAST(emp.aspiration_score AS DOUBLE) AS aspiration_score,
-        CASE
-            WHEN TRY_CAST(emp.competency_score AS DOUBLE) IS NULL THEN NULL
-            WHEN TRY_CAST(emp.competency_score AS DOUBLE) <= 5 THEN TRY_CAST(emp.competency_score AS DOUBLE) * 20
-            ELSE TRY_CAST(emp.competency_score AS DOUBLE)
-        END AS competency_100,
-        CASE
-            WHEN TRY_CAST(emp.performance_score AS DOUBLE) IS NULL THEN NULL
-            WHEN TRY_CAST(emp.performance_score AS DOUBLE) <= 5 THEN TRY_CAST(emp.performance_score AS DOUBLE) * 20
-            ELSE TRY_CAST(emp.performance_score AS DOUBLE)
-        END AS performance_100,
-        CASE
-            WHEN TRY_CAST(emp.aspiration_score AS DOUBLE) IS NULL THEN NULL
-            WHEN TRY_CAST(emp.aspiration_score AS DOUBLE) <= 5 THEN TRY_CAST(emp.aspiration_score AS DOUBLE) * 20
-            ELSE TRY_CAST(emp.aspiration_score AS DOUBLE)
-        END AS aspiration_100,
+        -- talent_score_scale rejects non-finite and out-of-domain values before
+        -- any CPA figure is derived; the *_100 columns are its percentage form.
+        talent_score_scale(emp.competency_score) AS competency_score,
+        talent_score_scale(emp.performance_score) AS performance_score,
+        talent_score_scale(emp.aspiration_score) AS aspiration_score,
+        talent_score_scale(emp.competency_score) * 20 AS competency_100,
+        talent_score_scale(emp.performance_score) * 20 AS performance_100,
+        talent_score_scale(emp.aspiration_score) * 20 AS aspiration_100,
         COALESCE(roles.role_profile_status, 'partial') AS role_profile_status,
         COALESCE(roles.required_skills_status, 'blocked') AS required_skills_status,
         emp.blockers AS source_blockers
