@@ -38,6 +38,24 @@ TABLE_FUNCTION_CANARIES = [
     f"SELECT * FROM unknown_table_reader('{SCOPED_URI}')",
     f"SELECT * FROM read_parquet('{SCOPED_URI}' || '.backup')",
     "SELECT * FROM read_parquet(?)",
+    f"SELECT * FROM read_parquet(['{SCOPED_URI}'])",
+    f"SELECT * FROM read_parquet(CAST('{SCOPED_URI}' AS VARCHAR))",
+    "SELECT * FROM parquet_scan('/etc/passwd')",
+    "SELECT * FROM glob('/etc/*')",
+    "SELECT * FROM query_table('secrets')",
+    "SELECT * FROM postgres_scan('postgresql://private', 'public', 'users')",
+    "WITH x AS (SELECT * FROM read_json_auto('/etc/passwd')) SELECT * FROM x",
+    "SELECT * FROM UNNEST([1]) JOIN read_csv_auto('/etc/passwd') ON true",
+    "SELECT * FROM LATERAL read_blob('/proc/self/environ') AS leaked",
+    "SELECT * FROM TABLE(read_csv_auto('/etc/passwd'))",
+    "SELECT * FROM '/proc/self/environ'",
+    f"SELECT * FROM read_parquet('{SCOPED_URI.replace('/data.', '//data.')}')",
+    f"SELECT * FROM read_parquet('{SCOPED_URI.replace('/data.', '/../data.')}')",
+    f"SELECT * FROM read_parquet('{SCOPED_URI}', filename=true)",
+    (
+        f"SELECT * FROM read_parquet('{SCOPED_URI}', "
+        "hive_partitioning=getvariable('unsafe'))"
+    ),
 ]
 
 
@@ -64,9 +82,7 @@ def _signed_body(sql: str) -> dict:
     return {
         "tool": "preview_transform",
         "args": {"sql": sql, "sources": [], "limit": 20},
-        "security_context": refinement_main._sign_security_context(
-            _security_context()
-        ),
+        "security_context": refinement_main._sign_security_context(_security_context()),
         "_verified_internal_service": "console",
     }
 
@@ -78,8 +94,7 @@ def test_engine_blocks_table_function_and_path_canaries(sql: str) -> None:
     with pytest.raises(ValueError, match="safety policy") as exc:
         engine._validate_safe_sql(sql)
 
-    assert "/proc" not in str(exc.value)
-    assert "/etc" not in str(exc.value)
+    assert str(exc.value) == "SQL blocked by safety policy"
 
 
 @pytest.mark.parametrize("sql", TABLE_FUNCTION_CANARIES)
@@ -90,14 +105,17 @@ def test_refinement_boundary_blocks_table_function_and_path_canaries(
         refinement_main._require_sql_storage_scope(_signed_body(sql), sql, [])
 
     assert exc.value.status_code == 403
-    assert "/proc" not in str(exc.value.detail)
-    assert "/etc" not in str(exc.value.detail)
+    assert exc.value.detail == "SQL table function or storage path is not allowed"
 
 
 @pytest.mark.parametrize(
     "sql",
     [
         f"SELECT * FROM read_parquet('{SCOPED_URI}')",
+        (
+            f"SELECT * FROM read_parquet('{SCOPED_URI}', "
+            "hive_partitioning=true, union_by_name=true)"
+        ),
         (
             "WITH scoped AS ("
             f"SELECT * FROM read_parquet('{SCOPED_URI}')"
@@ -106,7 +124,9 @@ def test_refinement_boundary_blocks_table_function_and_path_canaries(
         "WITH constants AS (SELECT 1 AS value) SELECT * FROM constants",
         "SELECT 1 AS value",
         "SELECT * FROM generate_series(1, 3)",
+        "SELECT * FROM range(3)",
         "SELECT * FROM UNNEST([1, 2, 3])",
+        "SELECT COALESCE(NULL, 1) AS value",
     ],
 )
 def test_safe_scoped_and_storage_free_queries_remain_allowed(sql: str) -> None:
@@ -142,8 +162,9 @@ async def test_mcp_http_blocks_original_exploit_before_engine(
         )
 
     assert response.status_code == 403
-    assert "/proc" not in response.text
-    assert "environ" not in response.text
+    assert response.json() == {
+        "detail": "SQL table function or storage path is not allowed"
+    }
     preview.assert_not_called()
 
 
@@ -166,5 +187,5 @@ def test_effective_sql_is_revalidated_immediately_before_execute() -> None:
         user_context={"tenant_id": TENANT, "workspace_id": WORKSPACE},
     )
 
-    assert result == {"error": "SQL blocked by table-function safety policy"}
+    assert result == {"error": "SQL blocked by safety policy"}
     connection.execute.assert_not_called()
