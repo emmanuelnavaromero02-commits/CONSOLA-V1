@@ -14,6 +14,9 @@ from app.services.gold_publication_relation import (
     published_relation_columns,
     resolve_published_gold_relation,
 )
+from app.services.intelligence.gold_projection_guard import (
+    project_operational_truth_rows as _project_operational_truth_rows,
+)
 from app.services.intelligence.utils import workspace_scope
 from app.services.intelligence.publication_trace import record_publication_read
 
@@ -170,7 +173,10 @@ async def query_gold_dataset_rows(
                     tenant_id,
                     safe_limit,
                 )
-            return _gold_cache_set(cache_key, [dict(row) for row in rows])
+            projected = _project_operational_truth_rows(
+                dataset, [dict(row) for row in rows]
+            )
+            return _gold_cache_set(cache_key, projected)
     finally:
         await conn.close()
 

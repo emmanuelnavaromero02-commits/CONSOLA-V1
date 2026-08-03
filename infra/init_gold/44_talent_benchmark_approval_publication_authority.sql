@@ -149,9 +149,17 @@ ALTER FUNCTION omega_publication.talent_approval_constraint(text, text)
 REVOKE ALL ON FUNCTION omega_publication.talent_approval_constraint(text, text)
   FROM PUBLIC, omega_refinement_gold, omega_gold_publisher, omega_gold_verifier;
 
--- Every publication and republication maps the scope in dataset_gold_relations,
--- so a deferred constraint trigger there runs at COMMIT, once
--- publish_materialization has created or extended the compatibility relation.
+-- Two installers keep the CHECK ahead of every row.
+--
+-- (a) A DDL event trigger fires the moment publish_materialization creates a
+--     benchmark compatibility relation, so the CHECK exists while the table is
+--     still empty and every subsequent row INSERT is validated by PostgreSQL
+--     itself. This covers the very first publication of a scope.
+-- (b) A plain AFTER row trigger on dataset_gold_relations re-imposes the CHECK
+--     and re-validates the whole relation every time a publication or
+--     republication touches the mapping. It fires at end of statement, so no
+--     deferred events are left pending when a later migration rerun issues
+--     ALTER TABLE on dataset_gold_relations (43 does exactly that).
 CREATE OR REPLACE FUNCTION omega_publication.enforce_talent_approval_on_publication()
 RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER
@@ -189,11 +197,37 @@ ALTER FUNCTION omega_publication.enforce_talent_approval_on_publication()
 
 DROP TRIGGER IF EXISTS talent_approval_publication_authority
   ON omega_publication.dataset_gold_relations;
-CREATE CONSTRAINT TRIGGER talent_approval_publication_authority
+CREATE TRIGGER talent_approval_publication_authority
   AFTER INSERT OR UPDATE ON omega_publication.dataset_gold_relations
-  DEFERRABLE INITIALLY DEFERRED
   FOR EACH ROW
   EXECUTE FUNCTION omega_publication.enforce_talent_approval_on_publication();
+
+CREATE OR REPLACE FUNCTION omega_publication.talent_approval_on_create()
+RETURNS event_trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $on_create$
+DECLARE
+  created RECORD;
+BEGIN
+  FOR created IN
+    SELECT objid FROM pg_event_trigger_ddl_commands()
+     WHERE command_tag = 'CREATE TABLE'
+       AND schema_name = 'public'
+       AND object_identity LIKE 'public.gold_sap_successfactors_talent_benchmark%'
+  LOOP
+    PERFORM omega_publication.talent_approval_constraint(
+      'public', (SELECT relname FROM pg_class WHERE oid = created.objid)
+    );
+  END LOOP;
+END
+$on_create$;
+
+DROP EVENT TRIGGER IF EXISTS talent_approval_on_create;
+CREATE EVENT TRIGGER talent_approval_on_create
+  ON ddl_command_end
+  WHEN TAG IN ('CREATE TABLE')
+  EXECUTE FUNCTION omega_publication.talent_approval_on_create();
 
 -- Backfill: repair the history wherever it survived 40's relocation, then pin the
 -- constraint on every benchmark relation already mapped.
