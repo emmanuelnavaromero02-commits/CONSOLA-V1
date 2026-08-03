@@ -69,7 +69,7 @@ def test_sql_quote_doubles_single_quotes():
     ("INSTALL httpfs",                                        "INSTALL"),
     ("LOAD httpfs",                                           "LOAD"),
     ("PRAGMA threads=4",                                      "PRAGMA"),
-    ("COPY (SELECT 1) TO '/tmp/x'",                           "no-op"),  # COPY TO is allowed (no FROM)
+    ("COPY (SELECT 1) TO '/tmp/x'",                           "COPY TO"),
     ("COPY t FROM '/etc/passwd'",                             "COPY FROM"),
     ("SET memory_limit='1GB'",                                "SET memory_limit"),
     ("SET GLOBAL foo=1",                                      "SET GLOBAL"),
@@ -85,10 +85,6 @@ def test_sql_quote_doubles_single_quotes():
 ])
 def test_dangerous_patterns_blocked(engine, sql, reason):
     e, _ = engine
-    if reason == "no-op":
-        # COPY ... TO ... is fine — only COPY ... FROM is blocked.
-        e._validate_safe_sql(sql)
-        return
     with pytest.raises(ValueError) as excinfo:
         e._validate_safe_sql(sql)
     assert "SQL blocked by safety policy" in str(excinfo.value)
