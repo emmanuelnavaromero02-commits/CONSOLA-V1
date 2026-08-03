@@ -45,6 +45,10 @@ from app.publication_public import (
 )
 from app.publication_snapshot import PublicationSnapshotResolver
 from app.security import get_internal_api_key
+from app.sql_table_function_policy import (
+    TableFunctionPolicyError,
+    validate_table_function_query,
+)
 from app.staged_publication_engine import StagedPublicationEngine
 from app.successfactors_fallbacks import (
     annotate_operational_fallback,
@@ -1116,6 +1120,17 @@ def _require_sql_storage_scope(
     except Exception:
         validation_sql = sql
 
+    try:
+        storage_reads = validate_table_function_query(
+            validation_sql,
+            expected_bucket=engine.minio_bucket,
+            allow_bucket_placeholder=False,
+        )
+    except TableFunctionPolicyError as exc:
+        raise HTTPException(
+            403, "SQL table function or storage path is not allowed"
+        ) from exc
+
     for source in sources or []:
         if _prefix_allowed(sec, str(source)):
             continue
@@ -1128,6 +1143,14 @@ def _require_sql_storage_scope(
         if ds and _dataset_allowed(sec, ds):
             continue
         raise HTTPException(403, "source prefix not allowed")
+
+    for storage_read in storage_reads:
+        _require_sql_path_scope(
+            sec,
+            storage_read.path,
+            sources=sources,
+            allow_registered_dataset_paths=allow_registered_dataset_paths,
+        )
 
     reader_calls = list(_SQL_READER_CALL_RE.finditer(validation_sql))
     direct_readers = list(_SCOPED_READER_RE.finditer(validation_sql))

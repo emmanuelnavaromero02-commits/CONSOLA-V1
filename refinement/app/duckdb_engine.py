@@ -38,8 +38,10 @@ from omega_lakehouse import ObjectAlreadyExists, storage_from_env
 
 try:
     from app.duckdb_runtime import connect_duckdb_runtime
+    from app.sql_table_function_policy import validate_table_function_query
 except ModuleNotFoundError:
     from refinement.app.duckdb_runtime import connect_duckdb_runtime
+    from refinement.app.sql_table_function_policy import validate_table_function_query
 
 SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 SAFE_S3_BRONZE_TAIL_RE = re.compile(r"^[a-zA-Z0-9_./=*-]+$")
@@ -1044,6 +1046,10 @@ class DuckDBEngine:
 
     def _validate_safe_sql(self, sql: str) -> None:
         policy_sql = _strip_sql_comments(sql)
+        validate_table_function_query(
+            policy_sql,
+            expected_bucket=getattr(self, "minio_bucket", None),
+        )
         for pattern in self._DANGEROUS_PATTERNS:
             if pattern.search(policy_sql):
                 raise ValueError(
@@ -1123,6 +1129,11 @@ class DuckDBEngine:
                 ):
                     self._pg_gold_attach(con, user_context)
                 limited = f"SELECT * FROM ({effective_sql}) _q LIMIT {limit}"
+                validate_table_function_query(
+                    _strip_sql_comments(effective_sql),
+                    expected_bucket=getattr(self, "minio_bucket", None),
+                    allow_bucket_placeholder=False,
+                )
 
                 # Watchdog: fires con.interrupt() if the query runs past
                 # the cap. The Timer is cancelled immediately after a
