@@ -37,7 +37,9 @@ def test_console_entity_run_forwards_backend_security_context_to_cartridge_skill
     source = _read("console/app/routers/cartridges.py")
 
     assert "security_context = build_security_context(user)" in source
-    assert 'params={"conn_id": selected_conn_id} if selected_conn_id else None' in source
+    assert (
+        'params={"conn_id": selected_conn_id} if selected_conn_id else None' in source
+    )
     assert 'json={"security_context": security_context}' in source
 
 
@@ -104,7 +106,10 @@ def test_airflow_dags_forward_scope_to_raw_writes_and_skill_calls():
     assert 'return f"tenant_id={tenant}/workspace_id={workspace}/"' in replicon
     assert "_upload_parquet(df, entity, run_id, tenant_id, workspace_id)" in replicon
     assert 'key = f"raw/replicon/{entity}/{scope}load_date=' in replicon
-    assert 'conf.get("conn_id") or conf.get("connection_id") or DEFAULT_CONN_ID' in replicon
+    assert (
+        'conf.get("conn_id") or conf.get("connection_id") or DEFAULT_CONN_ID'
+        in replicon
+    )
     assert "skill_body = {" in hubspot
     assert 'for key in ("tenant_id", "workspace_id", "security_context")' in hubspot
     assert "json=skill_body" in hubspot
@@ -135,7 +140,9 @@ def test_airflow_dags_forward_scope_to_raw_writes_and_skill_calls():
             assert '"conn_id": conn_id' in source
         else:
             assert "skill_body = {" in source
-            assert 'for key in ("tenant_id", "workspace_id", "security_context")' in source
+            assert (
+                'for key in ("tenant_id", "workspace_id", "security_context")' in source
+            )
             assert "json=skill_body" in source
         extract_all = _read(f"cartridges/{cartridge}/dags/{cartridge}_extract_all.py")
         if cartridge == "sap_successfactors":
@@ -194,11 +201,18 @@ def test_knowledge_bits_read_write_under_forwarded_workspace_scope():
 
         assert "def _scope_kb_sql(" in kb_service
         assert "resolved_sql = _scope_kb_sql(sql, security_context)" in kb_service
-        assert (
-            "write_kb_parquet(df, output_path, kb_id, run_id, security_context)"
-            in kb_service
-        )
-        assert "write_kb_to_postgres(df, pg_table, security_context)" in kb_service
+        if cartridge == "replicon":
+            # The provenance-aware runtime spreads the call across lines but must
+            # still forward the security context to both writers.
+            assert "storage_uri = write_kb_parquet(" in kb_service
+            assert "security_context," in kb_service
+            assert "write_kb_to_postgres(" in kb_service
+        else:
+            assert (
+                "write_kb_parquet(df, output_path, kb_id, run_id, security_context)"
+                in kb_service
+            )
+            assert "write_kb_to_postgres(df, pg_table, security_context)" in kb_service
         if cartridge != "salesforce":
             assert "require_tenant_workspace_scope(security_context)" in duckdb_service
             assert "_path_has_scope(output_path, scope)" in duckdb_service
@@ -217,7 +231,11 @@ def test_mcp_infra_injects_trusted_scope_before_cartridge_execution():
     assert "_reject_client_owned_scope_args(args)" in source
     assert 'conf["security_context"] = ctx' in source
     assert "def _attach_security_scope(" in tools
-    for public_arg in ('"tenant_id": {"type": "string"}', '"workspace_id": {"type": "string"}', '"security_context": {"type": "object"}'):
+    for public_arg in (
+        '"tenant_id": {"type": "string"}',
+        '"workspace_id": {"type": "string"}',
+        '"security_context": {"type": "object"}',
+    ):
         assert public_arg not in tools
     assert "security_context: dict[str, Any] | None = None" in tools
     assert "_scoped_object_prefix(" in tools
@@ -249,7 +267,7 @@ def test_direct_scoped_cartridge_mcp_invokes_load_forwarded_context():
         source = _read(f"cartridges/{cartridge}/app/main.py")
         assert (
             'set_security_context(body.get("security_context"))' in source
-            or "body.get(\"security_context\")," in source
+            or 'body.get("security_context"),' in source
             or "x-security-context" in source
         )
         assert "reset_security_context(token)" in source

@@ -95,6 +95,13 @@ metrics AS (
         (SELECT COUNT(*) FROM readiness WHERE readiness_status IN ('insufficient_data', 'blocked', 'missing')) AS readiness_pending_count,
         (SELECT COUNT(*) FROM readiness WHERE source_mode = 'cpa_real') AS readiness_cpa_real_count,
         (SELECT COUNT(*) FROM readiness WHERE source_mode = 'benchmark_internal') AS readiness_benchmark_count,
+        COALESCE((
+            SELECT BOOL_AND(
+                benchmark_approval_valid = TRUE
+                AND benchmark_provenance_status = 'approved_durable'
+            )
+            FROM readiness WHERE source_mode = 'benchmark_internal'
+        ), FALSE) AS benchmark_approval_valid,
         (SELECT COUNT(*) FROM nine_box WHERE box_status IN ('ready', 'benchmark_internal')) AS nine_box_classified_count,
         (SELECT COUNT(*) FROM nine_box WHERE box_status NOT IN ('ready', 'benchmark_internal')) AS nine_box_blocked_count,
         (SELECT COALESCE(SUM(ready_count), 0) FROM nine_box_operational) AS nine_box_operational_ready_count,
@@ -169,6 +176,12 @@ SELECT
     readiness_pending_count,
     readiness_cpa_real_count,
     readiness_benchmark_count,
+    benchmark_approval_valid,
+    CASE
+        WHEN readiness_benchmark_count = 0 THEN 'not_applicable'
+        WHEN benchmark_approval_valid THEN 'approved_durable'
+        ELSE 'unreviewed'
+    END AS benchmark_provenance_status,
     nine_box_classified_count,
     nine_box_blocked_count,
     nine_box_blocked_count AS nine_box_pending_count,
@@ -191,7 +204,7 @@ SELECT
     ROUND(role_requirements_ratio * 100, 2) AS role_requirements_coverage_pct,
     ROUND(nine_box_ratio * 100, 2) AS nine_box_coverage_pct,
     CASE
-        WHEN readiness_benchmark_count > 0 AND readiness_cpa_real_count = 0 THEN LEAST(confidence, 0.60)
+        WHEN readiness_benchmark_count > 0 AND readiness_cpa_real_count = 0 THEN NULL
         ELSE confidence
     END AS confidence,
     CASE

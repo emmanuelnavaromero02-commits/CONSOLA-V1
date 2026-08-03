@@ -67,6 +67,17 @@ jobs:
           REFINEMENT_IMAGE: refinement:offline-smoke
         run: scripts/prepare_refinement_duckdb_ci.sh
 
+      - name: Build and smoke Replicon DuckDB/httpfs image
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="replicon:httpfs-ci-${GITHUB_SHA}"
+          docker build cartridges/replicon \
+            --file cartridges/replicon/Dockerfile \
+            --tag "$image"
+          test "$(docker image inspect --format '{{.Config.User}}' "$image")" = "appuser"
+          scripts/ci_replicon_minio_smoke.sh "$image"
+
       - name: Run focal Control Room tests
         continue-on-error: true
         env:

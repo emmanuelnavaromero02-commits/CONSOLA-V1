@@ -13,6 +13,7 @@ import psycopg2
 import psycopg2.extras
 
 from app.config import settings
+from app.operational_truth import replicon_artifact_block_reason
 from app.registry import tool
 from app.tools._validators import validate_bounded_int, validate_identifier
 
@@ -210,12 +211,9 @@ def postgres_execute_query(sql: str, limit: int = 50, gold: bool = False) -> dic
     clean = sql.strip().upper()
     if not clean.startswith("SELECT") and not clean.startswith("WITH"):
         return {"error": "Only SELECT / WITH queries allowed via this tool"}
-    # Sprint v1.35 (audit B3 P0): reject multi-statement payloads. The
-    # original ``startswith("SELECT")`` guard accepted strings like
-    # ``"SELECT 1; DROP TABLE users"`` — psycopg2 happily executes both
-    # statements, so a SELECT-only contract was actually a DML/DDL
-    # primitive. We trim a single trailing ``;`` (callers commonly add
-    # one) and then reject any remaining semicolon, mirroring the rule
+    if replicon_artifact_block_reason(sql, postgres=True):
+        return {"error": "Noncurrent Replicon WIP artifacts are unavailable"}
+    # Reject multi-statement payloads and comments, mirroring the rule
     # in ``_validate_non_destructive_sql`` above. ``--`` and ``/*``
     # comments are also rejected so a hidden ``\n; DROP`` can't slip
     # through inside a line comment.
@@ -304,6 +302,8 @@ def postgres_get_sample(table: str, schema: str = "public", n: int = 10, gold: b
     schema = validate_identifier(schema, "schema")
     table = validate_identifier(table, "table")
     n = validate_bounded_int(n, "n", lo=1, hi=100)
+    if replicon_artifact_block_reason(f"{schema}.{table}", postgres=True):
+        return {"error": "Noncurrent Replicon WIP artifacts are unavailable"}
     sql  = f'SELECT * FROM "{schema}"."{table}" LIMIT {n}'
     conn = _conn(gold)
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:

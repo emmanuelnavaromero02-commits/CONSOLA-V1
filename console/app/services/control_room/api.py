@@ -2568,19 +2568,21 @@ def _replicon_pnl_thresholds(
 @_bind_to_core
 def _replicon_pnl_state(
     margin: float | None,
-    wip: float,
+    wip: float | None,
     threshold_values: dict[str, float],
 ) -> dict[str, Any] | None:
     margin_breached = (
         margin is not None and margin < threshold_values["margin_warning"]
     )
-    wip_breached = abs(wip) >= threshold_values["wip_warning"]
+    wip_breached = (
+        wip is not None and abs(wip) >= threshold_values["wip_warning"]
+    )
     if not margin_breached and not wip_breached:
         return None
     if margin is not None and margin < threshold_values["margin_critical"]:
         severity = "critical"
         threshold_state = "critical"
-    elif abs(wip) >= threshold_values["wip_critical"]:
+    elif wip is not None and abs(wip) >= threshold_values["wip_critical"]:
         severity = "critical"
         threshold_state = "critical"
     elif margin_breached:
@@ -2636,14 +2638,14 @@ def _normalize_replicon_pnl(
     row: dict[str, Any],
     thresholds: ThresholdMap | None = None,
 ) -> dict[str, Any] | None:
+    if not _financial_row_ready(row):
+        return None
     margin = _num(row.get("margen_bruto_pct"))
-    wip = _num(row.get("wip_usd")) or 0
+    wip = _num(row.get("wip_usd"))
     state = _replicon_pnl_state(margin, wip, _replicon_pnl_thresholds(thresholds))
     if state is None:
         return None
-    proyecto = str(
-        row.get("proyecto") or row.get("project_name") or "Sin proyecto"
-    ).strip()
+    proyecto = str(row.get("proyecto") or row.get("project_name") or "Sin proyecto").strip()
     manager = str(row.get("revenue_manager") or "Sin RM").strip()
     item = _base_item(
         source,
@@ -2662,7 +2664,11 @@ def _normalize_replicon_pnl(
             "observed_value": measured_value,
             **({"denominator": denominator} if denominator is not None else {}),
             "title": "Proyecto con margen o WIP fuera de control",
-            "description": f"{proyecto} esta bajo {manager}; margen={margin if margin is not None else 'N/D'}%, WIP={wip:,.0f} USD.",
+            "description": (
+                f"{proyecto} esta bajo {manager}; "
+                f"margen={margin if margin is not None else 'N/D'}%, "
+                f"WIP={f'{wip:,.0f}' if wip is not None else 'N/D'} USD."
+            ),
             "recommendation": "Revisar revenue, facturacion, costo hundido y compromiso de remediacion con finanzas.",
             "root_cause": "Desviacion entre ingreso reconocido, facturacion y costo total.",
             "impact": "Riesgo financiero directo en margen, cash flow o forecast.",
@@ -3511,13 +3517,20 @@ def _normalize_row(
 
 
 @_bind_to_core
-def _money_sum(rows: Iterable[dict[str, Any]], field: str) -> float:
-    return round(sum(_num(row.get(field)) or 0 for row in rows), 2)
+def _money_sum(
+    rows: Iterable[dict[str, Any]], field: str
+) -> float | None:
+    values = [
+        value
+        for row in rows
+        if (value := _num(row.get(field))) is not None
+    ]
+    return round(sum(values), 2) if values else None
 
 
 @_bind_to_core
-def _ratio(numerator: float, denominator: float) -> float | None:
-    if not denominator:
+def _ratio(numerator: float | None, denominator: float | None) -> float | None:
+    if numerator is None or not denominator:
         return None
     return round((numerator / denominator) * 100, 2)
 
@@ -3545,11 +3558,28 @@ def _financial_relevant_sources(
 
 
 @_bind_to_core
+def _financial_row_ready(row: dict[str, Any]) -> bool:
+    if str(row.get("financial_status") or "") != "ready":
+        return False
+    base_currency = str(row.get("base_currency") or "").strip().upper()
+    original_currency = str(row.get("original_currency") or "").strip().upper()
+    if not base_currency or not original_currency:
+        return False
+    if original_currency != base_currency:
+        return bool(row.get("fx_source") and row.get("fx_observed_at"))
+    return True
+
+
+@_bind_to_core
 def _financial_risk_projects(pnl_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     risk_rows: list[dict[str, Any]] = []
     for row in pnl_rows:
+        if not _financial_row_ready(row):
+            continue
         margin_pct = _num(row.get("margen_bruto_pct"))
-        wip = _num(row.get("wip_usd")) or 0
+        wip = _num(row.get("wip_usd"))
+        if wip is None:
+            continue
         if (margin_pct is not None and margin_pct < 20) or abs(wip) >= 5000:
             risk_rows.append(
                 {
@@ -3559,7 +3589,7 @@ def _financial_risk_projects(pnl_rows: list[dict[str, Any]]) -> list[dict[str, A
                     "owner": str(row.get("revenue_manager") or "N/D"),
                     "margin_pct": margin_pct,
                     "wip_usd": round(wip, 2),
-                    "margin_usd": round(_num(row.get("margen_bruto_usd")) or 0, 2),
+                    "margin_usd": _num(row.get("margen_bruto_usd")),
                 }
             )
     risk_rows.sort(
@@ -3572,7 +3602,31 @@ def _financial_risk_projects(pnl_rows: list[dict[str, Any]]) -> list[dict[str, A
 
 
 @_bind_to_core
-def _financial_source_status(relevant: dict[str, Any]) -> str:
+def _financial_source_status(
+    relevant: dict[str, Any],
+    pnl_rows: list[dict[str, Any]],
+) -> str:
+    pnl_statuses = {
+        str(row.get("financial_status") or "insufficient_data")
+        for row in pnl_rows
+    }
+    for blocked in (
+        "missing_fx",
+        "missing_base_currency",
+        "insufficient_data",
+        "unavailable",
+        "invalid_schema",
+        "missing",
+        "empty",
+    ):
+        if blocked in pnl_statuses:
+            return blocked
+    if any(status != "ready" for status in pnl_statuses):
+        return "insufficient_data"
+    if "ready" in pnl_statuses and any(
+        not _financial_row_ready(row) for row in pnl_rows
+    ):
+        return "insufficient_data"
     available = any(
         source["status"] == "ok" and source.get("count", 0)
         for source in relevant.values()
@@ -3599,32 +3653,34 @@ def _financial_metrics(
     rows_by_dataset: dict[str, list[dict[str, Any]]],
 ) -> dict[str, Any]:
     pnl_rows = rows_by_dataset.get("pnl_mensual", [])
+    ready_pnl_rows = [row for row in pnl_rows if _financial_row_ready(row)]
     revenue_rows = rows_by_dataset.get("revenue_by_customer", [])
     backlog_rows = rows_by_dataset.get("open_sales_orders", [])
     purchase_rows = rows_by_dataset.get("purchase_spend_by_supplier", [])
     relevant = _financial_relevant_sources(sources)
-    revenue_usd = _money_sum(pnl_rows, "revenue_usd")
-    margin_usd = _money_sum(pnl_rows, "margen_bruto_usd")
+    revenue_usd = _money_sum(ready_pnl_rows, "revenue_usd")
+    margin_usd = _money_sum(ready_pnl_rows, "margen_bruto_usd")
+    open_orders = _money_sum(backlog_rows, "open_orders")
+    backlog_ages = [
+        value
+        for row in backlog_rows
+        if (value := _num(row.get("oldest_age_days"))) is not None
+    ]
     return {
-        "status": _financial_source_status(relevant),
+        "status": _financial_source_status(relevant, pnl_rows),
         "sources": relevant,
         "revenue_usd": revenue_usd,
-        "billed_usd": _money_sum(pnl_rows, "facturacion_mes_usd"),
-        "wip_usd": _money_sum(pnl_rows, "wip_usd"),
-        "cost_usd": _money_sum(pnl_rows, "costo_total"),
+        "billed_usd": _money_sum(ready_pnl_rows, "facturacion_mes_usd"),
+        "wip_usd": _money_sum(ready_pnl_rows, "wip_usd"),
+        "cost_usd": _money_sum(ready_pnl_rows, "costo_total"),
         "margin_usd": margin_usd,
         "margin_pct": _ratio(margin_usd, revenue_usd),
         "sales_revenue": _money_sum(revenue_rows, "revenue"),
         "backlog_value": _money_sum(backlog_rows, "open_value"),
-        "open_orders": int(_money_sum(backlog_rows, "open_orders")),
-        "oldest_backlog_days": int(
-            max(
-                (_num(row.get("oldest_age_days")) or 0 for row in backlog_rows),
-                default=0,
-            )
-        ),
+        "open_orders": int(open_orders) if open_orders is not None else None,
+        "oldest_backlog_days": int(max(backlog_ages)) if backlog_ages else None,
         "purchase_spend": _money_sum(purchase_rows, "total_spend"),
-        "risk_projects": _financial_risk_projects(pnl_rows),
+        "risk_projects": _financial_risk_projects(ready_pnl_rows),
     }
 
 

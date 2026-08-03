@@ -1,55 +1,39 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Mapping, Set
 from typing import Any
 
 
-def _default_options(
-    item: Mapping[str, Any], impact: Mapping[str, Any]
-) -> list[dict[str, Any]]:
-    impact_money = (
-        f"${impact['estimate']:,.0f} {impact['currency']} en revision"
-        if impact.get("status") == "ok" and impact.get("estimate") is not None
-        else "Impacto no calculable"
-    )
-    return [
-        {
-            "id": "remediate",
-            "label": "Remediar dato/proceso",
-            "action": "Remediar dato/proceso",
-            "money": impact_money,
-            "time": "1-2 ciclos",
-            "score": 92,
-            "risk": "Bajo",
-            "auto": True,
-            "recommendation": item.get("recommendation"),
-            "selected": False,
-        },
-        {
-            "id": "exception",
-            "label": "Aprobar excepcion temporal",
-            "action": "Aprobar excepcion temporal",
-            "money": "Costo medio",
-            "time": "Mismo dia",
-            "score": 68,
-            "risk": "Medio",
-            "auto": False,
-            "recommendation": "Usar solo con responsable y fecha de control.",
-            "selected": False,
-        },
-        {
-            "id": "monitor",
-            "label": "Monitorear sin cambio inmediato",
-            "action": "Monitorear sin cambio inmediato",
-            "money": "Sin gasto inmediato",
-            "time": "Siguiente refresh",
-            "score": 45,
-            "risk": "Alto",
-            "auto": False,
-            "recommendation": "No recomendado para severidad alta o critica.",
-            "selected": False,
-        },
-    ]
+def _finite_number(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def _option_money(option: Mapping[str, Any]) -> str | None:
+    value = _finite_number(option.get("impact_expected"))
+    if value is None:
+        return None
+    currency = str(
+        option.get("impact_currency") or option.get("currency") or ""
+    ).strip()
+    suffix = f" {currency} esperado" if currency else " esperado"
+    return f"{value:,.0f}{suffix}"
+
+
+def _option_time(option: Mapping[str, Any]) -> str | None:
+    value = _finite_number(option.get("time_cost"))
+    return f"{value:,.0f} puntos tiempo" if value is not None else None
+
+
+def _option_risk(option: Mapping[str, Any]) -> str | None:
+    value = _finite_number(option.get("risk"))
+    return f"{value:,.0f}" if value is not None else None
 
 
 def omega_options(
@@ -57,8 +41,8 @@ def omega_options(
     impact: Mapping[str, Any],
     *,
     decision_intelligence: Mapping[str, Any],
-) -> tuple[list[dict[str, Any]], str, dict[str, Any]]:
-    options = _default_options(item, impact)
+) -> tuple[list[dict[str, Any]], str | None, dict[str, Any]]:
+    del impact
     intelligence = (
         dict(item["intelligence"])
         if isinstance(item.get("intelligence"), Mapping)
@@ -67,37 +51,48 @@ def omega_options(
     if decision_intelligence:
         intelligence["decision_intelligence"] = dict(decision_intelligence)
     intelligence_options = intelligence.get("options")
+    options: list[dict[str, Any]] = []
     if isinstance(intelligence_options, list) and intelligence_options:
-        projected = [
-            {
-                "id": str(
-                    option.get("option_id") or option.get("id") or f"option_{index + 1}"
-                ),
-                "label": str(option.get("label") or "Opcion supervisada"),
-                "action": str(
-                    option.get("action_kind")
-                    or option.get("label")
-                    or "accion_supervisada"
-                ),
-                "money": (
-                    f"${float(option.get('impact_expected') or 0):,.0f} USD esperado"
-                ),
-                "time": f"{float(option.get('time_cost') or 0):,.0f} puntos tiempo",
-                "score": int(round(float(option.get("score") or 0))),
-                "risk": f"{float(option.get('risk') or 0):,.0f}",
-                "auto": False,
-                "recommendation": str(
-                    option.get("score_explanation") or item.get("recommendation") or ""
-                ),
-                "selected": bool(option.get("selected")),
-            }
-            for index, option in enumerate(intelligence_options[:3])
-            if isinstance(option, Mapping)
-        ]
-        options = projected or options
-    selected = str(item.get("selected_option_id") or "remediate")
-    if selected not in {option["id"] for option in options}:
-        selected = options[0]["id"] if options else "remediate"
+        for option in intelligence_options:
+            if not isinstance(option, Mapping):
+                continue
+            option_id = str(option.get("option_id") or option.get("id") or "").strip()
+            label = str(option.get("label") or "").strip()
+            action = str(option.get("action_kind") or "").strip()
+            score = _finite_number(option.get("score"))
+            if not option_id or not label or not action or score is None:
+                continue
+            options.append(
+                {
+                    "id": option_id,
+                    "label": label,
+                    "action": action,
+                    "money": _option_money(option),
+                    "time": _option_time(option),
+                    "score": int(round(score)),
+                    "risk": _option_risk(option),
+                    "auto": False,
+                    "recommendation": str(
+                        option.get("score_explanation")
+                        or item.get("recommendation")
+                        or ""
+                    ),
+                    "selected": bool(option.get("selected")),
+                }
+            )
+            if len(options) == 3:
+                break
+    persisted_selected = str(item.get("selected_option_id") or "").strip() or None
+    selected = (
+        persisted_selected
+        if persisted_selected in {option["id"] for option in options}
+        else None
+    )
+    if selected is None:
+        selected = next(
+            (option["id"] for option in options if option.get("selected")),
+            None,
+        )
     for option in options:
         option["selected"] = option["id"] == selected
     return options, selected, intelligence
