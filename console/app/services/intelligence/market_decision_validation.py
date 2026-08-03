@@ -13,6 +13,7 @@ from app.services.intelligence import (
     monte_carlo_service,
 )
 from app.services.intelligence.gold_fetcher import query_intelligence_dataset_rows
+from app.services.intelligence.monte_carlo import MODEL_VERSION as MONTE_CARLO_MODEL_VERSION
 
 
 SOURCE_DATASET = "sap_successfactors_talent_simulation_inputs"
@@ -128,7 +129,6 @@ def _simulation_payload(source: dict[str, Any]) -> dict[str, Any]:
         "horizon_days": 30,
         "iterations": 2000,
         "seed": 45121,
-        "model_version": MODEL_VERSION,
         "input_variables": variables,
         "assumptions": assumptions,
         "use_external_market_context": True,
@@ -247,7 +247,7 @@ async def get_validation(user: dict) -> dict[str, Any]:
         (
             item
             for item in simulations.get("simulations", [])
-            if item.get("model_version") == MODEL_VERSION
+            if item.get("model_version") == MONTE_CARLO_MODEL_VERSION and _json_object(item.get("assumptions")).get("market_validation", {}).get("contract_version") == MODEL_VERSION
         ),
         None,
     )

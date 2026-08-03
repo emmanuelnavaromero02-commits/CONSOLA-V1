@@ -23,6 +23,7 @@ from app.services.intelligence import backtesting as intelligence_backtesting
 from app.services.intelligence import calibration_service
 from app.services.intelligence import decision_orchestrator
 from app.services.intelligence import history as intelligence_history
+from app.services.intelligence import monte_carlo
 from app.services.intelligence import monte_carlo_service
 from app.services.intelligence import orchestrator_execution
 from app.services.intelligence.outcome_binding import (
@@ -183,11 +184,34 @@ class BacktestRunRequest(_StrictModel):
     result_limit: int = Field(default=100, ge=0, le=1000)
 
 
+def _validate_discrete_value_sizes(value: dict[str, dict] | None) -> None:
+    for name, spec in (value or {}).items():
+        if not isinstance(spec, dict):
+            continue
+        raw_values = spec.get("values")
+        if (
+            isinstance(raw_values, list)
+            and len(raw_values) > monte_carlo.MAX_DISCRETE_VALUES
+        ):
+            raise ValueError(
+                f"{name}.values cannot contain more than "
+                f"{monte_carlo.MAX_DISCRETE_VALUES} entries"
+            )
+
+
 class MonteCarloOptionRequest(_StrictModel):
     option_id: str = Field(min_length=1, max_length=120)
     label: str | None = Field(default=None, max_length=240)
     input_variables: dict[str, dict] | None = None
     assumptions: dict | None = None
+
+    @field_validator("input_variables")
+    @classmethod
+    def _validate_option_values(
+        cls, value: dict[str, dict] | None
+    ) -> dict[str, dict] | None:
+        _validate_discrete_value_sizes(value)
+        return value
 
 
 class MonteCarloRunRequest(_StrictModel):
@@ -197,8 +221,7 @@ class MonteCarloRunRequest(_StrictModel):
     source_id: str = Field(min_length=1, max_length=256)
     horizon_days: int = Field(default=30, ge=1, le=365)
     iterations: int = Field(default=1000, ge=1, le=10_000)
-    seed: int = Field(default=0, ge=0)
-    model_version: str | None = Field(default=None, max_length=80)
+    seed: int = Field(default=0, ge=0, le=monte_carlo.MAX_SEED)
     input_variables: dict[str, dict] = Field(default_factory=dict)
     assumptions: dict = Field(default_factory=dict)
     use_external_market_context: bool = False
@@ -218,6 +241,7 @@ class MonteCarloRunRequest(_StrictModel):
         forbidden = {"tenant_id", "workspace_id", "security_context"}
         if forbidden & set(value):
             raise ValueError("scope variables are not accepted")
+        _validate_discrete_value_sizes(value)
         return value
 
 

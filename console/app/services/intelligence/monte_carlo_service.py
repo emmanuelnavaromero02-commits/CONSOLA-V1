@@ -1,23 +1,25 @@
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from fastapi import HTTPException
 
 from app.services import auth
 from app.services.db_scope import scoped_db_for_user
-from app.services.intelligence import market_context, monte_carlo
+from app.services.intelligence import market_context, monte_carlo, monte_carlo_finite
+from app.services.intelligence.monte_carlo_operational_truth import (
+    _source_exists,
+    bind_selected_result,
+    normalize_option_assumptions,
+    normalize_scenario_assumptions,
+    synthetic_allowed,
+)
 from app.services.intelligence.utils import json_dumps, public_json
 
 
-SOURCE_TYPES = {
-    "signal",
-    "decision_option",
-    "manual_fixture",
-    "backtest_case",
-    "wisdom_bit",
-}
+SOURCE_TYPES = set(
+    "signal decision_option manual_fixture backtest_case wisdom_bit".split()
+)
 FORBIDDEN_SCOPE_KEYS = {"tenant_id", "workspace_id", "security_context"}
 
 
@@ -30,18 +32,6 @@ def _actor_id(user: dict | None) -> int | None:
     except (TypeError, ValueError):
         return None
     return value if value > 0 else None
-
-
-def _synthetic_allowed() -> bool:
-    app_env = os.environ.get("APP_ENV", "production").strip().lower()
-    if app_env in {"development", "dev", "test", "testing"}:
-        return True
-    return os.environ.get("MONTE_CARLO_ALLOW_SYNTHETIC", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
 
 
 def _validate_evidence_refs(value: Any) -> list[dict[str, str]]:
@@ -81,73 +71,26 @@ def _simulation_id(
     return "mc-" + monte_carlo.reproducibility_hash({"simulation": raw})[:32]
 
 
-async def _source_exists(
-    conn: Any,
-    *,
-    workspace_id: str,
-    source_type: str,
-    source_id: str,
-) -> bool:
-    if source_type == "manual_fixture":
-        return True
-    if source_type == "wisdom_bit":
-        return source_id.strip().upper() == "WB-TALENTO"
-    if source_type == "signal":
-        value = await conn.fetchval(
-            """
-            SELECT 1
-              FROM intelligence_signals
-             WHERE workspace_id = $1
-               AND signal_id = $2
-             LIMIT 1
-            """,
-            workspace_id,
-            source_id,
-        )
-        return bool(value)
-    if source_type == "decision_option":
-        value = await conn.fetchval(
-            """
-            SELECT 1
-              FROM decision_options
-             WHERE workspace_id = $1
-               AND (id::text = $2 OR option_id = $2)
-             LIMIT 1
-            """,
-            workspace_id,
-            source_id,
-        )
-        return bool(value)
-    if source_type == "backtest_case":
-        exists = await conn.fetchval("SELECT to_regclass('public.backtest_runs')")
-        if not exists:
-            return False
-        value = await conn.fetchval(
-            """
-            SELECT 1
-              FROM backtest_runs
-             WHERE workspace_id = $1
-               AND (id::text = $2 OR run_ref = $2)
-             LIMIT 1
-            """,
-            workspace_id,
-            source_id,
-        )
-        return bool(value)
-    return False
-
-
 def _validate_payload(payload: dict[str, Any]) -> dict[str, Any]:
     clean = dict(payload or {})
+    if "model_version" in clean:
+        raise HTTPException(422, "model_version is server-owned")
     if any(key in clean for key in FORBIDDEN_SCOPE_KEYS):
         raise HTTPException(422, "tenant/workspace/security_context are not accepted")
     input_variables = clean.get("input_variables") or {}
-    if isinstance(input_variables, dict) and FORBIDDEN_SCOPE_KEYS & set(input_variables):
+    if isinstance(input_variables, dict) and FORBIDDEN_SCOPE_KEYS & set(
+        input_variables
+    ):
         raise HTTPException(422, "scope variables are not accepted")
-    for option in clean.get("options") or []:
+    raw_options = clean.get("options")
+    if raw_options is not None and not isinstance(raw_options, list):
+        raise HTTPException(422, "options must be a list")
+    for option in raw_options or []:
         if isinstance(option, dict):
             option_variables = option.get("input_variables") or {}
-            if isinstance(option_variables, dict) and FORBIDDEN_SCOPE_KEYS & set(option_variables):
+            if isinstance(option_variables, dict) and FORBIDDEN_SCOPE_KEYS & set(
+                option_variables
+            ):
                 raise HTTPException(422, "scope variables are not accepted")
     source_type = str(clean.get("source_type") or "").strip()
     if source_type not in SOURCE_TYPES:
@@ -155,11 +98,22 @@ def _validate_payload(payload: dict[str, Any]) -> dict[str, Any]:
     source_id = str(clean.get("source_id") or "").strip()
     if not source_id:
         raise HTTPException(422, "source_id is required")
-    if source_type == "manual_fixture" and not _synthetic_allowed():
-        raise HTTPException(403, "manual_fixture is disabled outside development/test")
+    if source_type == "manual_fixture" and not synthetic_allowed():
+        raise HTTPException(403, "manual_fixture requires an explicit local APP_ENV")
+    try:
+        assumptions = normalize_scenario_assumptions(clean.get("assumptions"))
+        if "options" in clean:
+            clean["options"] = normalize_option_assumptions(
+                clean["options"], assumptions, inherit_missing=False
+            )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    clean["assumptions"] = assumptions
     clean["source_type"] = source_type
     clean["source_id"] = source_id
-    clean["use_external_market_context"] = bool(clean.get("use_external_market_context"))
+    clean["use_external_market_context"] = bool(
+        clean.get("use_external_market_context")
+    )
     clean["evidence_refs"] = _validate_evidence_refs(clean.get("evidence_refs"))
     return clean
 
@@ -168,17 +122,25 @@ async def run_simulation(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
     clean = _validate_payload(payload)
     pool = await auth.pool()
     async with scoped_db_for_user(pool, user) as (conn, tenant_id, workspace_id):
-        if not await _source_exists(
+        source_is_real = await _source_exists(
             conn,
             workspace_id=workspace_id,
             source_type=clean["source_type"],
             source_id=clean["source_id"],
-        ):
+        )
+        if clean["source_type"] != "manual_fixture" and not source_is_real:
             raise HTTPException(404, "monte carlo source not found")
         clean = await market_context.resolve_market_context_inputs(clean, user)
+        if "options" in clean:
+            clean["options"] = normalize_option_assumptions(
+                clean["options"], clean["assumptions"]
+            )
         try:
             result = monte_carlo.run_monte_carlo(clean)
-        except monte_carlo.MonteCarloValidationError as exc:
+            result = bind_selected_result(clean, result)
+            monte_carlo_finite.assert_finite_tree(clean)
+            monte_carlo_finite.assert_finite_tree(result)
+        except (monte_carlo.MonteCarloValidationError, ValueError) as exc:
             raise HTTPException(422, str(exc)) from exc
 
         simulation_id = _simulation_id(
@@ -228,10 +190,10 @@ async def run_simulation(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
             clean["source_id"],
             int(clean.get("horizon_days") or 30),
             int(clean.get("iterations") or monte_carlo.DEFAULT_ITERATIONS),
-            int(clean.get("seed") or 0),
+            int(result["seed"]),
             result["model_version"],
             json_dumps(result["normalized_input_variables"]),
-            json_dumps(clean.get("assumptions") or {}),
+            json_dumps(result["assumptions"]),
             str(clean.get("output_metric") or "net_value"),
             clean.get("breach_threshold"),
             result["distribution_summary"].get("breach_direction"),
@@ -270,28 +232,26 @@ async def list_simulations(
     source_id: str | None = None,
     limit: int = 50,
 ) -> dict[str, Any]:
-    params: list[Any] = []
-    where = ["workspace_id = $1"]
+    normalized_source_type = None
+    if source_type:
+        if source_type not in SOURCE_TYPES:
+            raise HTTPException(422, "unsupported source_type")
+        normalized_source_type = source_type
     pool = await auth.pool()
     async with scoped_db_for_user(pool, user) as (conn, _tenant_id, workspace_id):
-        params.append(workspace_id)
-        if source_type:
-            if source_type not in SOURCE_TYPES:
-                raise HTTPException(422, "unsupported source_type")
-            params.append(source_type)
-            where.append(f"source_type = ${len(params)}")
-        if source_id:
-            params.append(source_id)
-            where.append(f"source_id = ${len(params)}")
-        params.append(limit)
         rows = await conn.fetch(
-            f"""
+            """
             SELECT *
               FROM monte_carlo_simulations
-             WHERE {' AND '.join(where)}
+             WHERE workspace_id = $1
+               AND ($2::text IS NULL OR source_type = $2)
+               AND ($3::text IS NULL OR source_id = $3)
              ORDER BY updated_at DESC, id DESC
-             LIMIT ${len(params)}
+             LIMIT $4
             """,
-            *params,
+            workspace_id,
+            normalized_source_type,
+            source_id or None,
+            limit,
         )
     return {"simulations": [public_json(dict(row)) for row in rows]}
