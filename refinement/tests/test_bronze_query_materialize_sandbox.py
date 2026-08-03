@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import httpx
@@ -8,6 +9,7 @@ import pytest
 
 from refinement.app import main as refinement_main
 from refinement.app.duckdb_engine import DuckDBEngine
+from refinement.app.staged_publication_engine import StagedPublicationEngine
 
 
 TENANT = "tenant-a"
@@ -168,4 +170,33 @@ def test_server_resolved_literal_list_is_only_allowed_in_effective_sql() -> None
     with pytest.raises(ValueError, match="safety policy"):
         engine._validate_safe_sql(sql)
 
-    engine._validate_effective_sql(sql)
+    with pytest.raises(ValueError, match="safety policy"):
+        engine._validate_effective_sql(sql)
+
+    engine._validate_effective_sql(sql, allow_server_resolved_path_list=True)
+
+
+def test_staged_binding_resolves_exact_list_and_preserves_scope_check() -> None:
+    engine = object.__new__(StagedPublicationEngine)
+    engine.minio_bucket = "lakehouse"
+    engine.storage = SimpleNamespace(config=SimpleNamespace(provider="s3"))
+    source = "raw/p0_probe/events"
+    context = {"tenant_id": TENANT, "workspace_id": WORKSPACE}
+    wildcard = engine._bronze_path(source, context)
+    key = SCOPED_URI.removeprefix("s3://lakehouse/")
+    engine._state = lambda: {
+        "input_state": [{"source": source, "objects": [{"key": key}]}]
+    }
+
+    effective = engine._scope_storage_sql(
+        f"SELECT * FROM read_parquet('{wildcard}')",
+        [source],
+        context,
+    )
+
+    assert effective == f"SELECT * FROM read_parquet(['{SCOPED_URI}'])"
+    engine._validate_scoped_storage_sql(effective, context)
+    engine._validate_effective_sql(effective, allow_server_resolved_path_list=True)
+    foreign = effective.replace(f"workspace_id={WORKSPACE}", "workspace_id=workspace-b")
+    with pytest.raises(ValueError, match="outside"):
+        engine._validate_scoped_storage_sql(foreign, context)

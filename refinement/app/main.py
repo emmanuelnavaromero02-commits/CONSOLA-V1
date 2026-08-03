@@ -303,7 +303,7 @@ _SQL_STORAGE_LITERAL_RE = re.compile(
     r"(['\"])(s3://.*?)(?<!\\)\1", re.IGNORECASE | re.DOTALL
 )
 _DIRECT_STORAGE_SCAN_RE = re.compile(
-    r"\b(?:from|join|table)\s+(['\"])(.*?)\1",
+    r"\b(?:from|join|table)\s+(')(.*?)\1",
     re.IGNORECASE | re.DOTALL,
 )
 _SINGLE_QUOTED_RE = re.compile(r"'(?:''|[^'])*'", re.DOTALL)

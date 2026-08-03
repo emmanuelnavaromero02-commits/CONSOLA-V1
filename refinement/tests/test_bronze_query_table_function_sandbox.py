@@ -137,6 +137,20 @@ def test_refinement_boundary_blocks_table_function_and_path_canaries(
     assert exc.value.detail == "SQL table function or storage path is not allowed"
 
 
+def test_non_query_root_is_rejected_by_ast_and_public_boundary() -> None:
+    sql = "CALL read_csv_auto('/etc/passwd')"
+    engine = object.__new__(DuckDBEngine)
+
+    with pytest.raises(ValueError, match="safety policy") as policy_exc:
+        engine._validate_safe_sql(sql)
+    with pytest.raises(HTTPException) as boundary_exc:
+        refinement_main._require_sql_storage_scope(_signed_body(sql), sql, [])
+
+    assert str(policy_exc.value) == "SQL blocked by safety policy"
+    assert boundary_exc.value.status_code == 403
+    assert boundary_exc.value.detail == "SQL must be a read-only SELECT/WITH statement"
+
+
 @pytest.mark.parametrize(
     "sql",
     [

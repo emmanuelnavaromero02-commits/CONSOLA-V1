@@ -14,6 +14,7 @@ from sqlglot.tokens import TokenType, Tokenizer
 POLICY_ERROR = "SQL blocked by safety policy"
 _STORAGE_FUNCTIONS = {"read_parquet"}
 _SAFE_GENERATORS = {"generate_series", "unnest"}
+_SENSITIVE_SCALAR_FUNCTIONS = {"current_setting", "getvariable"}
 _READ_PARQUET_OPTIONS = {"hive_partitioning", "union_by_name"}
 _STORAGE_URI_RE = re.compile(
     r"^(?P<scheme>s3|gs)://(?P<bucket>\{bucket\}|[a-z0-9][a-z0-9.-]{0,62})/"
@@ -87,17 +88,30 @@ def _canonical_storage_path(
     return value
 
 
-def _read_parquet_path(
+def _read_parquet_paths(
     function: exp.Func,
     *,
     expected_bucket: str | None,
     allow_bucket_placeholder: bool,
-) -> str:
+    allow_server_resolved_path_list: bool,
+) -> tuple[str, ...]:
     arguments = list(function.expressions)
     if not arguments:
         _deny()
-    path = arguments[0]
-    if not isinstance(path, exp.Literal) or not path.is_string:
+    path_expression = arguments[0]
+    if isinstance(path_expression, exp.Literal) and path_expression.is_string:
+        paths = [path_expression]
+    elif (
+        allow_server_resolved_path_list
+        and isinstance(path_expression, exp.Array)
+        and path_expression.expressions
+        and all(
+            isinstance(item, exp.Literal) and item.is_string
+            for item in path_expression.expressions
+        )
+    ):
+        paths = list(path_expression.expressions)
+    else:
         _deny()
     seen_options: set[str] = set()
     for option in arguments[1:]:
@@ -112,14 +126,17 @@ def _read_parquet_path(
         if not isinstance(option.expression, exp.Boolean):
             _deny()
         seen_options.add(option_name)
-    return _canonical_storage_path(
-        str(path.this),
-        expected_bucket=expected_bucket,
-        allow_bucket_placeholder=allow_bucket_placeholder,
+    return tuple(
+        _canonical_storage_path(
+            str(path.this),
+            expected_bucket=expected_bucket,
+            allow_bucket_placeholder=allow_bucket_placeholder,
+        )
+        for path in paths
     )
 
 
-def _relation_functions(tree: exp.Expression) -> list[exp.Func]:
+def _relation_functions(tree: exp.Expression, tokens: list) -> list[exp.Func]:
     functions: list[exp.Func] = []
     seen: set[int] = set()
 
@@ -129,20 +146,24 @@ def _relation_functions(tree: exp.Expression) -> list[exp.Func]:
             seen.add(identity)
             functions.append(function)
 
+    cte_names = {
+        str(cte.alias_or_name or "").casefold() for cte in tree.find_all(exp.CTE)
+    }
+    string_literals = {
+        token.text.casefold()
+        for token in tokens
+        if token.token_type is TokenType.STRING
+    }
     for table in tree.find_all(exp.Table):
         relation = table.this
         if isinstance(relation, exp.Func):
             add(relation)
             continue
         if isinstance(relation, exp.Identifier) and relation.args.get("quoted"):
-            # DuckDB treats quoted, unqualified relation names such as
-            # ``'secret.csv'`` as replacement scans. SQLGlot intentionally
-            # normalizes single and double quotes here, so a filename cannot
-            # be distinguished from a quoted identifier by extension alone.
-            # Public SQL has no authorized unqualified physical tables;
-            # registered Gold relations remain qualified (pggold.<table>).
             if table.args.get("db") is None and table.args.get("catalog") is None:
-                _deny()
+                name = str(relation.this or "").casefold()
+                if name not in cte_names or name in string_literals:
+                    _deny()
 
     for relation_owner in (*tree.find_all(exp.From), *tree.find_all(exp.Join)):
         relation = relation_owner.this
@@ -155,7 +176,7 @@ def _relation_functions(tree: exp.Expression) -> list[exp.Func]:
     return functions
 
 
-def _reject_adjacent_relation_strings(sql: str, tree: exp.Expression) -> None:
+def _reject_adjacent_relation_strings(tree: exp.Expression, tokens: list) -> None:
     """Reject DuckDB E-string replacement scans obscured by parser normalization."""
     ambiguous: set[tuple[str, str]] = set()
     for table in tree.find_all(exp.Table):
@@ -176,7 +197,6 @@ def _reject_adjacent_relation_strings(sql: str, tree: exp.Expression) -> None:
     if not ambiguous:
         return
 
-    tokens = Tokenizer(dialect="duckdb").tokenize(sql)
     for left, right in zip(tokens, tokens[1:]):
         if (
             left.token_type is TokenType.VAR
@@ -192,9 +212,11 @@ def _validate_table_function_query(
     *,
     expected_bucket: str | None = None,
     allow_bucket_placeholder: bool = True,
+    allow_server_resolved_path_list: bool = False,
 ) -> tuple[StorageRead, ...]:
     """Validate a complete DuckDB statement and return authorized storage reads."""
     try:
+        tokens = Tokenizer(dialect="duckdb").tokenize(sql or "")
         statements = sqlglot.parse(
             sql or "",
             read="duckdb",
@@ -205,21 +227,27 @@ def _validate_table_function_query(
     if len(statements) != 1 or statements[0] is None:
         _deny()
 
-    _reject_adjacent_relation_strings(sql, statements[0])
+    tree = statements[0]
+    if not isinstance(tree, exp.Query):
+        _deny()
+    _reject_adjacent_relation_strings(tree, tokens)
+    for function in tree.find_all(exp.Anonymous):
+        if _canonical_name(function) in _SENSITIVE_SCALAR_FUNCTIONS:
+            _deny()
     reads: list[StorageRead] = []
-    for function in _relation_functions(statements[0]):
+    for function in _relation_functions(tree, tokens):
         name = _canonical_name(function)
         if name in _SAFE_GENERATORS:
             continue
         if name not in _STORAGE_FUNCTIONS:
             _deny()
-        reads.append(
-            StorageRead(
-                _read_parquet_path(
-                    function,
-                    expected_bucket=expected_bucket,
-                    allow_bucket_placeholder=allow_bucket_placeholder,
-                )
+        reads.extend(
+            StorageRead(path)
+            for path in _read_parquet_paths(
+                function,
+                expected_bucket=expected_bucket,
+                allow_bucket_placeholder=allow_bucket_placeholder,
+                allow_server_resolved_path_list=allow_server_resolved_path_list,
             )
         )
     return tuple(reads)
@@ -230,6 +258,7 @@ def validate_table_function_query(
     *,
     expected_bucket: str | None = None,
     allow_bucket_placeholder: bool = True,
+    allow_server_resolved_path_list: bool = False,
 ) -> tuple[StorageRead, ...]:
     """Fail closed without surfacing parser, function, SQL, or path details."""
     try:
@@ -237,6 +266,7 @@ def validate_table_function_query(
             sql,
             expected_bucket=expected_bucket,
             allow_bucket_placeholder=allow_bucket_placeholder,
+            allow_server_resolved_path_list=allow_server_resolved_path_list,
         )
     except TableFunctionPolicyError:
         raise
