@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import traceback
 
 import pytest
 
@@ -21,4 +22,23 @@ def test_unsupported_command_does_not_log_sql_or_path(caplog):
             validate_table_function_query(sql)
 
     assert secret_path not in caplog.text
+    assert sql not in caplog.text
+
+
+def test_malformed_sql_does_not_leak_through_exception_context(caplog):
+    secret_path = "/tmp/synthetic-malformed-secret-canary.csv"
+    sql = f"SELECT * FROM read_parquet('{secret_path}'"
+
+    with caplog.at_level(logging.ERROR, logger="bronze-query-redaction-test"):
+        try:
+            validate_table_function_query(sql)
+        except TableFunctionPolicyError as exc:
+            logging.getLogger("bronze-query-redaction-test").exception("blocked")
+            rendered = "".join(traceback.format_exception(exc))
+        else:
+            raise AssertionError("malformed SQL was accepted")
+
+    assert secret_path not in rendered
+    assert secret_path not in caplog.text
+    assert sql not in rendered
     assert sql not in caplog.text
