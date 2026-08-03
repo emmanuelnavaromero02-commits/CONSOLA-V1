@@ -16,6 +16,11 @@ TENANT = "tenant-a"
 WORKSPACE = "workspace-a"
 PAIR_KEY = "p0-console-refinement-pair-key-more-than-32-characters"
 E_STRING_CANARY = "WITH e AS (SELECT 1) SELECT * FROM E'secret.csv'"
+CTE_SCOPE_CANARY = (
+    'WITH "/tmp/p0secret.csv" AS (SELECT * FROM "/tmp/p0secret.csv") '
+    'SELECT * FROM "/tmp/p0secret.csv"'
+)
+MATERIALIZE_ESCAPE_CANARIES = (E_STRING_CANARY, CTE_SCOPE_CANARY)
 SCOPED_URI = (
     "s3://lakehouse/raw/p0_probe/events/"
     f"tenant_id={TENANT}/workspace_id={WORKSPACE}/data.parquet"
@@ -78,9 +83,11 @@ def _engine_with_effective_sql(sql: str) -> tuple[DuckDBEngine, MagicMock]:
     return engine, connection
 
 
+@pytest.mark.parametrize("sql", MATERIALIZE_ESCAPE_CANARIES)
 @pytest.mark.asyncio
-async def test_mcp_http_blocks_e_string_on_save_dataset(
+async def test_mcp_http_blocks_escape_on_save_dataset(
     monkeypatch: pytest.MonkeyPatch,
+    sql: str,
 ) -> None:
     saved = MagicMock()
     monkeypatch.setattr(
@@ -92,7 +99,7 @@ async def test_mcp_http_blocks_e_string_on_save_dataset(
         "save_dataset",
         {
             "name": "p0_probe",
-            "sql": E_STRING_CANARY,
+            "sql": sql,
             "layer": "silver",
             "cartridge": "p0_probe",
             "sources": [],
@@ -108,13 +115,15 @@ async def test_mcp_http_blocks_e_string_on_save_dataset(
     saved.assert_not_called()
 
 
+@pytest.mark.parametrize("sql", MATERIALIZE_ESCAPE_CANARIES)
 @pytest.mark.asyncio
-async def test_mcp_http_blocks_stored_e_string_on_materialize(
+async def test_mcp_http_blocks_stored_escape_on_materialize(
     monkeypatch: pytest.MonkeyPatch,
+    sql: str,
 ) -> None:
     dataset = {
         "name": "p0_probe",
-        "sql_def": E_STRING_CANARY,
+        "sql_def": sql,
         "layer": "silver",
         "cartridge": "p0_probe",
         "sources": [],
@@ -122,7 +131,7 @@ async def test_mcp_http_blocks_stored_e_string_on_materialize(
         "workspace_id": WORKSPACE,
         "created_by_id": 41,
     }
-    engine, connection = _engine_with_effective_sql(E_STRING_CANARY)
+    engine, connection = _engine_with_effective_sql(sql)
     monkeypatch.setattr(
         refinement_main.store, "get_dataset", MagicMock(return_value=dataset)
     )
@@ -139,12 +148,14 @@ async def test_mcp_http_blocks_stored_e_string_on_materialize(
     assert detail["code"] == "materialization_failed"
     assert detail["detail"] == "Error interno"
     assert "secret.csv" not in response.text
+    assert "/tmp" not in response.text
     engine._conn.assert_not_called()
     connection.execute.assert_not_called()
 
 
-def test_materialize_revalidates_effective_sql_before_scope_probe() -> None:
-    engine, connection = _engine_with_effective_sql(E_STRING_CANARY)
+@pytest.mark.parametrize("sql", MATERIALIZE_ESCAPE_CANARIES)
+def test_materialize_revalidates_effective_sql_before_scope_probe(sql: str) -> None:
+    engine, connection = _engine_with_effective_sql(sql)
 
     with pytest.raises(ValueError, match="safety policy") as exc:
         engine.materialize(

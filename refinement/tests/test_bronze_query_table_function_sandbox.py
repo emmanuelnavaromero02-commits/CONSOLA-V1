@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import httpx
@@ -19,6 +20,28 @@ SCOPED_URI = (
 )
 PAIR_KEY = "p0-console-refinement-pair-key-more-than-32-characters"
 E_STRING_CANARY = "WITH e AS (SELECT 1) SELECT * FROM E'secret.csv'"
+BRONZE_SOURCE = "raw/sap_successfactors/EmpEmployment"
+
+NONCANONICAL_SCOPED_URIS = [
+    (
+        "s3://lakehouse/raw/sap_successfactors/EmpEmployment/"
+        "tenant_id=tenant-b/workspace_id=workspace-b/leak/"
+        f"tenant_id={TENANT}/workspace_id={WORKSPACE}/data.parquet"
+    ),
+    (
+        "s3://lakehouse/raw/sap_successfactors/EmpEmployment/"
+        f"tenant_id={TENANT}/workspace_id={WORKSPACE}/leak/"
+        f"tenant_id={TENANT}/workspace_id={WORKSPACE}/data.parquet"
+    ),
+    (
+        "s3://lakehouse/raw/sap_successfactors/EmpEmployment/"
+        f"workspace_id={WORKSPACE}/tenant_id={TENANT}/data.parquet"
+    ),
+    (
+        "s3://lakehouse/raw/sap_successfactors/EmpEmployment/nested/"
+        f"tenant_id={TENANT}/workspace_id={WORKSPACE}/data.parquet"
+    ),
+]
 
 TABLE_FUNCTION_CANARIES = [
     (
@@ -59,6 +82,23 @@ TABLE_FUNCTION_CANARIES = [
     "WITH e AS (SELECT 1) SELECT * FROM E'/proc/self/environ'",
     "WITH e AS (SELECT 1) SELECT * FROM E'/etc/passwd'",
     "WITH e AS (SELECT 1) SELECT * FROM E'*.parquet'",
+    (
+        'SELECT * FROM "/tmp/p0secret.csv" WHERE EXISTS '
+        '(WITH "/tmp/p0secret.csv" AS (SELECT 1) SELECT 1)'
+    ),
+    (
+        'WITH "/tmp/p0secret.csv" AS (SELECT * FROM "/tmp/p0secret.csv") '
+        'SELECT * FROM "/tmp/p0secret.csv"'
+    ),
+    (
+        'WITH holder AS (WITH "/tmp/p0secret.csv" AS (SELECT 1) SELECT 1) '
+        'SELECT * FROM "/tmp/p0secret.csv"'
+    ),
+    (
+        'SELECT * FROM "/tmp/p0secret.csv" UNION ALL '
+        "(WITH \"/tmp/p0secret.csv\" AS (SELECT 'x' AS secret) "
+        'SELECT * FROM "/tmp/p0secret.csv")'
+    ),
     "SELECT current_setting('s3_secret_access_key') AS leaked",
     "SELECT current_setting('home_directory') AS leaked",
     "SELECT getvariable('p0_secret') AS leaked",
@@ -151,6 +191,32 @@ def test_non_query_root_is_rejected_by_ast_and_public_boundary() -> None:
     assert boundary_exc.value.detail == "SQL must be a read-only SELECT/WITH statement"
 
 
+@pytest.mark.parametrize("uri", NONCANONICAL_SCOPED_URIS)
+def test_public_boundary_rejects_noncanonical_scope_markers(uri: str) -> None:
+    sql = f"SELECT * FROM read_parquet('{uri}')"
+
+    with pytest.raises(HTTPException) as exc:
+        refinement_main._require_sql_storage_scope(
+            _signed_body(sql), sql, [BRONZE_SOURCE]
+        )
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "SQL storage path not allowed"
+
+
+@pytest.mark.parametrize("uri", NONCANONICAL_SCOPED_URIS)
+def test_pre_execute_rejects_noncanonical_scope_markers(uri: str) -> None:
+    engine = object.__new__(DuckDBEngine)
+    engine.minio_bucket = "lakehouse"
+    engine.storage = SimpleNamespace(config=SimpleNamespace(provider="s3"))
+
+    with pytest.raises(ValueError, match="outside"):
+        engine._validate_scoped_storage_sql(
+            f"SELECT * FROM read_parquet('{uri}')",
+            {"tenant_id": TENANT, "workspace_id": WORKSPACE},
+        )
+
+
 @pytest.mark.parametrize(
     "sql",
     [
@@ -166,6 +232,17 @@ def test_non_query_root_is_rejected_by_ast_and_public_boundary() -> None:
         ),
         "WITH constants AS (SELECT 1 AS value) SELECT * FROM constants",
         'WITH "safe_cte" AS (SELECT 1 AS value) SELECT * FROM "safe_cte"',
+        (
+            'WITH "/tmp/p0secret.csv" AS (SELECT 1 AS value) '
+            'SELECT * FROM (SELECT * FROM "/tmp/p0secret.csv") scoped'
+        ),
+        (
+            'WITH "safe.csv" AS (SELECT 1 AS value) '
+            "SELECT * FROM \"safe.csv\" WHERE 'safe.csv'='safe.csv'"
+        ),
+        "WITH \"safe.csv\" AS (SELECT 1 AS value) SELECT * FROM 'safe.csv'",
+        'WITH "Safe" AS (SELECT 1 AS value) SELECT * FROM "safe"',
+        'WITH safe AS (SELECT 1 AS value) SELECT * FROM "SAFE"',
         "SELECT 1 AS value",
         "SELECT * FROM generate_series(1, 3)",
         "SELECT * FROM range(3)",
