@@ -57,7 +57,7 @@ def _canonical_name(function: exp.Func) -> str:
     elif isinstance(function, exp.Unnest):
         value = "unnest"
     else:
-        value = str(getattr(function, "key", "") or "")
+        value = str(function.sql_name() or "")
     if not value or not value.isascii():
         _deny()
     normalized = unicodedata.normalize("NFKC", value)
