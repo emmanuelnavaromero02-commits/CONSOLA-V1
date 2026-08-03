@@ -22,6 +22,9 @@ def execution_mod(monkeypatch):
     from app.services.intelligence import orchestrator_execution as mod
 
     monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setattr(
+        mod.truth, "execution_source_trusted", AsyncMock(return_value=True)
+    )
     return mod
 
 
@@ -121,10 +124,7 @@ class FakeExecutionDB:
             "calibration_group": group,
             "model_version": model_version,
             "posterior": {"alpha": 19, "beta": 7, "mean": 0.730769},
-            "metrics": {
-                "sample_count": sample_count,
-                "confidence_score": confidence_score,
-            },
+            "metrics": {"sample_count": sample_count, "confidence_score": confidence_score, "complete": True, "provenance_complete": True, "binary_evaluation_complete": True},
             "sample_count": sample_count,
             "confidence_score": confidence_score,
             "created_at": datetime.now(UTC),

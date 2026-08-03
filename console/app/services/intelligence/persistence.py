@@ -22,6 +22,8 @@ from app.services.intelligence.history import (
 from app.services.intelligence.control_room_observation import (
     canonical_signal_metadata,
 )
+from app.services.intelligence.outcome_writer import record_server_owned_outcome
+from app.services.intelligence.signal_metadata import durable_signal_metadata
 
 
 def _actor_id(value: Any) -> int | None:
@@ -254,25 +256,11 @@ async def persist_signal(
         signal.get("signal_subtype") or "observed",
         owner_user_id,
         json_dumps(
-            {
-                "metric_name": signal.get("metric_name"),
-                "expected_behavior": signal.get("expected_behavior"),
-                "signal_subtype": signal.get("signal_subtype") or "observed",
-                "source_system": signal.get("source_system")
-                or signal.get("cartridge_id"),
-                "source_dataset": signal.get("source_dataset") or signal.get("dataset"),
-                "dataset": signal.get("dataset"),
-                "gold_table": signal.get("gold_table")
-                or f"gold_{signal.get('dataset')}",
-                "freshness_at": signal.get("freshness_at") or signal.get("period_key"),
-                "freshness_field": signal.get("freshness_field"),
-                "evidence_pack_id": signal.get("evidence_pack_id"),
-                "decision_intelligence": signal.get("decision_intelligence")
-                if isinstance(signal.get("decision_intelligence"), dict)
-                else None,
-                "intelligence_run_id": signal.get("intelligence_run_id"),
-                "run_ref": signal.get("run_ref"),
-            }
+            durable_signal_metadata(
+                signal,
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+            )
         ),
         sorted(TERMINAL_SIGNAL_STATUSES),
     )
@@ -821,7 +809,9 @@ async def get_signal(user: dict, signal_id: str) -> dict[str, Any]:
         outcomes = await conn.fetch(
             f"""
             SELECT id, option_id, action_taken, predicted_value, actual_value,
-                   prediction_error, outcome_summary, learned_rule, metadata, created_at
+                   prediction_error, outcome_summary, learned_rule, metadata,
+                   evaluation_status, evaluation_rule_version, evaluated_at,
+                   evaluated_by, created_at
               FROM prediction_outcomes
              WHERE workspace_id = $1
                AND signal_id = $2
@@ -957,95 +947,94 @@ async def record_outcome(
         if not action_taken:
             raise HTTPException(400, "action_taken is required")
         actual_value = num(body.get("actual_value"))
-        predicted_value = num(body.get("predicted_value"))
-        if predicted_value is None:
-            predicted_value = num(signal_data.get("predicted_value")) or num(
-                signal_data.get("actual_value")
-            )
-        prediction_error = None
-        if actual_value is not None and predicted_value is not None:
-            prediction_error = round(actual_value - predicted_value, 4)
+        predicted_value = num(signal_data.get("predicted_value"))
         learned_rule = str(body.get("learned_rule") or "").strip() or None
-        if not learned_rule and prediction_error is not None:
-            learned_rule = f"Resultado medido con error {prediction_error:.2f} para {signal_data['metric']}."
         outcome_summary = str(
             body.get("outcome_summary")
             or body.get("summary")
             or learned_rule
             or "Outcome registrado."
         ).strip()
-        row = await conn.fetchrow(
-            """
-            INSERT INTO prediction_outcomes (
-                tenant_id, workspace_id, signal_id, option_id, action_taken,
-                predicted_value, actual_value, prediction_error, outcome_summary,
-                learned_rule, owner_user_id, metadata
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
-            RETURNING *
-            """,
-            tenant_id,
-            workspace_id,
-            signal_id,
-            option_id,
-            action_taken,
-            predicted_value,
-            actual_value,
-            prediction_error,
-            outcome_summary,
-            learned_rule,
-            owner_id,
-            json_dumps({"reported_by": user.get("email")}),
-        )
-        await link_outcome_to_snapshot(
+        write = await record_server_owned_outcome(
             conn,
             tenant_id=tenant_id,
             workspace_id=workspace_id,
             signal_id=signal_id,
-            outcome_row=row,
-            body=body,
+            option_id=option_id,
+            action_taken=action_taken,
+            actual_value=actual_value,
+            outcome_summary=outcome_summary,
+            learned_rule=learned_rule,
+            owner_user_id=owner_id,
+            metadata={"reported_by": user.get("email")},
         )
-        if learned_rule:
-            await conn.execute(
-                """
-                INSERT INTO control_room_lessons (
-                    tenant_id, workspace_id, item_id, cartridge_id, anomaly_type, rule, confidence, metadata
+        row = write.row
+        from app.services.intelligence.outcome_writer import (
+            is_authoritatively_evaluated_outcome,
+        )
+
+        authoritative = is_authoritatively_evaluated_outcome(row)
+        prediction_error = num(row.get("prediction_error")) if authoritative else None
+        published_rule = (
+            str(row.get("learned_rule") or "").strip() or None
+            if authoritative
+            else None
+        )
+        if authoritative and not published_rule and prediction_error is not None:
+            published_rule = (
+                f"Resultado medido con error {prediction_error:.2f} "
+                f"para {signal_data['metric']}."
+            )
+        if write.inserted:
+            await link_outcome_to_snapshot(
+                conn,
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+                signal_id=signal_id,
+                outcome_row=row,
+                body={**body, "predicted_value": row["predicted_value"]},
+            )
+            if published_rule:
+                await conn.execute(
+                    """
+                    INSERT INTO control_room_lessons (
+                        tenant_id, workspace_id, item_id, cartridge_id, anomaly_type, rule, confidence, metadata
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6, 0.70, $7::jsonb)
+                    """,
+                    tenant_id,
+                    workspace_id,
+                    signal_id,
+                    signal_data["cartridge_id"],
+                    signal_data["metric"],
+                    published_rule,
+                    json_dumps({"source": "prediction_outcome"}),
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, 0.70, $7::jsonb)
-                """,
-                tenant_id,
+            item_params: list[Any] = [
                 workspace_id,
                 signal_id,
-                signal_data["cartridge_id"],
-                signal_data["metric"],
-                learned_rule,
-                json_dumps({"source": "prediction_outcome"}),
+                json_dumps(
+                    {
+                        "intelligence_outcome": public_json(dict(row)),
+                        "lessons": [published_rule] if published_rule else [],
+                    }
+                ),
+            ]
+            item_owner_clause = ""
+            if not can_read_all:
+                item_params.append(owner_id)
+                item_owner_clause = f" AND owner_user_id = ${len(item_params)}"
+            await conn.execute(
+                f"""
+                UPDATE control_room_items
+                   SET metadata = metadata || $3::jsonb,
+                       last_seen_at = NOW()
+                 WHERE workspace_id = $1
+                   AND item_id = $2
+                   {item_owner_clause}
+                """,
+                *item_params,
             )
-        item_params: list[Any] = [
-            workspace_id,
-            signal_id,
-            json_dumps(
-                {
-                    "intelligence_outcome": public_json(dict(row)),
-                    "lessons": [learned_rule] if learned_rule else [],
-                }
-            ),
-        ]
-        item_owner_clause = ""
-        if not can_read_all:
-            item_params.append(owner_id)
-            item_owner_clause = f" AND owner_user_id = ${len(item_params)}"
-        await conn.execute(
-            f"""
-            UPDATE control_room_items
-               SET metadata = metadata || $3::jsonb,
-                   last_seen_at = NOW()
-             WHERE workspace_id = $1
-               AND item_id = $2
-               {item_owner_clause}
-            """,
-            *item_params,
-        )
     await audit_service.record_event(
         user.get("id"),
         user.get("email"),

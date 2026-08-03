@@ -230,11 +230,11 @@ class CalibrationObservationRequest(_StrictModel):
         "manual_fixture",
     ]
     source_id: str = Field(min_length=1, max_length=256)
-    predicted_metric: str = Field(min_length=1, max_length=120)
+    predicted_metric: str | None = Field(default=None, min_length=1, max_length=120)
     predicted_probability: float | None = Field(default=None, ge=0, le=1)
     predicted_value: float | None = None
     predicted_interval: dict | None = None
-    actual_status: Literal["hit", "miss", "partial", "unknown"]
+    actual_status: Literal["hit", "miss", "partial", "unknown"] | None = None
     actual_value: float | None = None
     observed_at: str | None = Field(default=None, max_length=80)
     horizon_days: int = Field(default=30, ge=1, le=3650)
@@ -246,7 +246,6 @@ class CalibrationObservationRequest(_StrictModel):
 class CalibrationRecomputeRequest(_StrictModel):
     calibration_group: str = Field(min_length=1, max_length=80)
     model_version: str | None = Field(default=None, max_length=120)
-    parent_calibration_group: str | None = Field(default=None, max_length=80)
     source_type: (
         Literal[
             "monte_carlo_simulation",

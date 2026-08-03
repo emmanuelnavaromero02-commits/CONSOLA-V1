@@ -46,32 +46,28 @@ class _FakeConnection:
 
     async def fetchrow(self, sql: str, *params):
         self.calls.append(("fetchrow", sql, params))
+        if "SELECT 1 AS trusted FROM control_room_items" in sql:
+            return {"trusted": 1}
+        if "SELECT source_type, source_id" in sql and "monte_carlo_simulations" in sql:
+            return {"source_type": "wisdom_bit", "source_id": "WB-TALENTO"}
         if "SELECT *" in sql and "FROM calibration_states" in sql:
             return None
-        if "INSERT INTO calibration_observations" in sql:
+        if "record_calibration_observation" in sql:
+            payload = __import__("json").loads(params[0])
             return {
                 "id": 1,
-                "observation_id": params[0],
-                "tenant_id": params[1],
-                "workspace_id": params[2],
-                "source_type": params[3],
-                "source_id": params[4],
-                "predicted_metric": params[5],
-                "actual_status": params[10],
-                "reproducibility_hash": params[20],
+                **payload,
+                "tenant_id": "tenant-a",
+                "workspace_id": "ws-a",
             }
-        if "INSERT INTO calibration_states" in sql:
+        if "upsert_calibration_state" in sql:
+            payload = __import__("json").loads(params[0])
             return {
                 "id": 1,
-                "state_id": params[0],
-                "tenant_id": params[1],
-                "workspace_id": params[2],
-                "calibration_group": params[3],
-                "model_version": params[4],
-                "sample_count": params[8],
-                "hit_count": params[9],
-                "confidence_score": params[18],
-                "reproducibility_hash": params[20],
+                **payload,
+                "tenant_id": "tenant-a",
+                "workspace_id": "ws-a",
+                "sample_count": payload["metrics"]["sample_count"],
             }
         return None
 
@@ -101,15 +97,14 @@ class _FakePool:
 
 def _payload():
     return {
-        "source_type": "monte_carlo_simulation",
-        "source_id": "mc-a",
+        "source_type": "manual_fixture",
+        "source_id": "fixture-a",
         "predicted_metric": "net_value",
         "predicted_probability": 0.8,
         "predicted_value": 100.0,
         "predicted_interval": {"low": 80.0, "high": 120.0},
         "actual_value": 110.0,
         "actual_status": "hit",
-        "model_version": "cal.test.v1",
         "calibration_group": "monte_carlo",
     }
 
@@ -125,8 +120,11 @@ def test_calibration_router_adds_new_endpoints_without_replacing_legacy_report()
     assert "CalibrationObservationRequest(_StrictModel)" in router
     assert "CalibrationRecomputeRequest(_StrictModel)" in router
     assert "CalibrationStateRequest(_StrictModel)" in router
-    assert '_internal_mcp_user(body, internal_service, permission="datasets.read")' in router
-    assert "parent_calibration_group" in router
+    assert (
+        '_internal_mcp_user(body, internal_service, permission="datasets.read")'
+        in router
+    )
+    assert "parent_calibration_group" not in router
     assert "await intelligence_history.calibration_report" in router
     assert "await calibration_service.observe" in router
     assert "await calibration_service.recompute" in router
@@ -136,10 +134,18 @@ def test_calibration_router_adds_new_endpoints_without_replacing_legacy_report()
 
 
 def test_calibration_service_uses_scoped_db_and_blocks_scope_payloads():
-    service = (
-        REPO / "console/app/services/intelligence/calibration_service.py"
-    ).read_text(encoding="utf-8")
-
+    service = "\n".join(
+        (REPO / "console/app/services/intelligence" / name).read_text(encoding="utf-8")
+        for name in (
+            "calibration_service.py",
+            "calibration_observation_service.py",
+            "calibration_state_repository.py",
+            "calibration_source_validation.py",
+            *"source_provenance.py source_provenance_policy.py calibration_recompute_batch.py".split(),
+            "calibration_recompute_service.py",
+            "calibration_validation_service.py",
+        )
+    )
     assert "from app.services.db_scope import scoped_db_for_user" in service
     assert "async with scoped_db_for_user(pool, user)" in service
     assert "get_state_map_for_live_calibration" in service
@@ -147,7 +153,7 @@ def test_calibration_service_uses_scoped_db_and_blocks_scope_payloads():
     assert "tenant_id" in service
     assert "workspace_id" in service
     assert "security_context" in service
-    assert "FROM monte_carlo_simulations" in service
+    assert '"scenario_assumption"' in service
     assert "FROM backtest_results" in service
 
     with pytest.raises(HTTPException):
@@ -184,21 +190,28 @@ def test_calibration_accepts_market_context_evidence_refs():
     ]
 
 
-def test_manual_fixture_is_disabled_in_production_without_explicit_flag(monkeypatch):
-    monkeypatch.setenv("APP_ENV", "production")
-    monkeypatch.delenv("CALIBRATION_ALLOW_SYNTHETIC", raising=False)
-
+@pytest.mark.parametrize(
+    "app_env", [None, "", "production", "prod", "staging", "unknown", "dev", "testing"]
+)
+def test_manual_fixture_rejects_nonlocal_env_even_with_synthetic_flag(
+    monkeypatch, app_env
+):
+    if app_env is None:
+        monkeypatch.delenv("APP_ENV", raising=False)
+    else:
+        monkeypatch.setenv("APP_ENV", app_env)
+    monkeypatch.setenv("CALIBRATION_ALLOW_SYNTHETIC", "true")
     with pytest.raises(HTTPException) as exc:
         calibration_service._validate_payload(
-            {
-                **_payload(),
-                "source_type": "manual_fixture",
-                "source_id": "fixture",
-            }
+            {**_payload(), "source_type": "manual_fixture", "source_id": "fixture"}
         )
     assert exc.value.status_code == 403
 
-    monkeypatch.setenv("CALIBRATION_ALLOW_SYNTHETIC", "true")
+
+@pytest.mark.parametrize("app_env", ["test", "local", "development"])
+def test_manual_fixture_requires_exact_explicit_local_env(monkeypatch, app_env):
+    monkeypatch.setenv("APP_ENV", app_env)
+    monkeypatch.delenv("CALIBRATION_ALLOW_SYNTHETIC", raising=False)
     clean = calibration_service._validate_payload(
         {**_payload(), "source_type": "manual_fixture", "source_id": "fixture"}
     )
@@ -219,16 +232,13 @@ async def test_observe_sets_scope_validates_source_and_persists(monkeypatch):
     assert result["state"]["state_id"].startswith("cal-state-")
     assert fake.conn.calls[0][0] == "execute"
     assert "set_config('app.tenant_id'" in fake.conn.calls[0][1]
+    assert not any("monte_carlo_simulations" in call[1] for call in fake.conn.calls)
     assert any(
-        call[0] == "fetchval" and "monte_carlo_simulations" in call[1]
+        call[0] == "fetchrow" and "record_calibration_observation" in call[1]
         for call in fake.conn.calls
     )
     assert any(
-        call[0] == "fetchrow" and "INSERT INTO calibration_observations" in call[1]
-        for call in fake.conn.calls
-    )
-    assert any(
-        call[0] == "fetchrow" and "INSERT INTO calibration_states" in call[1]
+        call[0] == "fetchrow" and "upsert_calibration_state" in call[1]
         for call in fake.conn.calls
     )
 
@@ -255,7 +265,8 @@ def test_calibration_migration_is_scoped_and_does_not_relax_rls():
     assert "current_setting('app.workspace_id', true)" in sql
     assert "USING (true)" not in sql
     assert "WITH CHECK (true)" not in sql
-    assert "GRANT SELECT, INSERT, UPDATE ON calibration_observations TO omega_console" in sql
+    assert "REVOKE UPDATE, DELETE ON calibration_observations" in sql
+    assert "GRANT SELECT, INSERT ON calibration_observations TO omega_console" in sql
     assert "GRANT SELECT, INSERT, UPDATE ON calibration_states TO omega_console" in sql
 
 

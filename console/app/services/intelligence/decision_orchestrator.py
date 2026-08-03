@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 # fmt: off
-
 import json
 import os
 from dataclasses import dataclass
@@ -22,18 +21,10 @@ from app.services.intelligence.evidence_refs import (
     normalize_evidence_refs,
 )
 from app.services.intelligence.utils import json_dumps, public_json, sample_hash
-
-
+from app.services.intelligence.source_provenance import source_is_trusted
+from app.services.intelligence.wisdom_source import load_server_wisdom_source, server_wisdom_payload
 MODEL_VERSION = "decision_orchestrator.v1"
-SOURCE_TYPES = {
-    "control_room_item",
-    "agent_alert",
-    "intelligence_signal",
-    "monte_carlo_simulation",
-    "calibration_observation",
-    "wisdom_bit",
-    "manual_fixture",
-}
+SOURCE_TYPES = set("control_room_item agent_alert intelligence_signal monte_carlo_simulation calibration_observation wisdom_bit manual_fixture".split())
 PROBLEM_TYPES = {
     "risk_forecast",
     "resource_allocation",
@@ -60,7 +51,6 @@ CANDIDATE_ENGINES = {
     "mpc_candidate",
     "game_theory_candidate",
 }
-
 
 class DecisionOrchestratorError(Exception):
     def __init__(self, status_code: int, detail: str):
@@ -220,10 +210,8 @@ def _truthy(value: Any, *, default: bool = False) -> bool:
 
 
 def _manual_fixture_allowed() -> bool:
-    app_env = os.environ.get("APP_ENV", "production").strip().lower()
-    if app_env in {"development", "dev", "test", "testing"}:
-        return True
-    return _truthy(os.environ.get("DECISION_ORCHESTRATOR_ALLOW_MANUAL_FIXTURE"))
+    app_env = os.environ.get("APP_ENV")
+    return app_env is not None and app_env.strip().lower() in {"test", "local", "development"}
 
 
 def action_creation_enabled() -> bool:
@@ -704,6 +692,10 @@ async def _load_source(
         )
         if not row:
             raise DecisionOrchestratorError(404, "orchestrator source not found")
+        if not await source_is_trusted(
+            conn, workspace_id, source_type, source_id, _manual_fixture_allowed()
+        ):
+            raise DecisionOrchestratorError(409, "source_provenance_untrusted")
         data = _row_dict(row)
         data["metadata"] = {
             "distribution_summary": _json_obj(data.get("distribution_summary")),
@@ -734,6 +726,10 @@ async def _load_source(
         )
         if not row:
             raise DecisionOrchestratorError(404, "orchestrator source not found")
+        if not await source_is_trusted(
+            conn, workspace_id, source_type, source_id, _manual_fixture_allowed()
+        ):
+            raise DecisionOrchestratorError(409, "source_provenance_untrusted")
         data = _row_dict(row)
         data["metadata"] = {
             "metrics": _json_obj(data.get("metrics")),
@@ -743,25 +739,16 @@ async def _load_source(
         }
         return data
     if source_type == "wisdom_bit":
-        metadata = {
-            "metrics": payload.get("metrics") or {},
-            "entities": payload.get("entities") or [],
-            "constraints": payload.get("constraints") or {},
-            "evidence_refs": payload.get("evidence_refs") or [],
-            "time_horizon": payload.get("time_horizon"),
-            "source": "agentops_monitor",
-        }
-        return {
-            "source_id": source_id,
-            "source_type": "wisdom_bit",
-            "title": payload.get("title") or f"WisdomBit {source_id}",
-            "description": payload.get("description")
-            or "Aggregated WisdomBit monitor evidence for advisory orchestration.",
-            "metric": (payload.get("metrics") or {}).get("risk_metric"),
-            "status": "advisory",
-            "metadata": metadata,
-            "summary": payload.get("description") or payload.get("title") or source_id,
-        }
+        if not await source_is_trusted(
+            conn, workspace_id, source_type, source_id, _manual_fixture_allowed()
+        ):
+            raise DecisionOrchestratorError(409, "source_provenance_untrusted")
+        source = await load_server_wisdom_source(
+            conn, tenant_id=tenant_id, workspace_id=workspace_id, owner_id=owner_id
+        )
+        if source is None:
+            raise DecisionOrchestratorError(409, "wisdom_bit_provenance_unavailable")
+        return source
     raise DecisionOrchestratorError(422, "unsupported source_type")
 
 
@@ -840,6 +827,8 @@ async def orchestrate(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
             payload=body,
             owner_id=source_owner_id,
         )
+        if source_type == "wisdom_bit":
+            body.update(server_wisdom_payload(source))
         plan = build_orchestration_plan(body, source)
         orchestration_id = _orchestration_id(
             workspace_id=workspace_id,

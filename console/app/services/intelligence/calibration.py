@@ -250,7 +250,7 @@ def normalize_observation(payload: dict[str, Any]) -> dict[str, Any]:
 def apply_observation(state: dict[str, Any] | None, payload: dict[str, Any]) -> dict[str, Any]:
     observation = normalize_observation(payload)
     calibration_group = str(payload.get("calibration_group") or "global")
-    model_version = str(payload.get("model_version") or MODEL_VERSION)
+    model_version = MODEL_VERSION
     current = deepcopy(state) if state else empty_state(
         calibration_group=calibration_group,
         model_version=model_version,
@@ -392,7 +392,6 @@ def apply_calibration_to_probability(
             disclaimer=RAW_HEURISTIC_DISCLAIMER,
             max_adjustment=max_adjustment,
         )
-
     metrics = _state_metrics(calibration_state)
     posterior = _state_posterior(calibration_state)
     sample_count = int(metrics.get("sample_count") or 0)
@@ -400,7 +399,8 @@ def apply_calibration_to_probability(
     posterior_mean = posterior.get("mean")
     posterior_alpha = posterior.get("alpha")
     posterior_beta = posterior.get("beta")
-    if sample_count < min_samples or posterior_mean is None:
+    provenance_complete = metrics.get("complete") is True and metrics.get("provenance_complete") is True
+    if not provenance_complete or sample_count < min_samples or posterior_mean is None:
         return _calibration_metadata(
             raw=raw,
             calibrated=raw,
@@ -410,7 +410,7 @@ def apply_calibration_to_probability(
             metrics=metrics,
             confidence_score=confidence_score,
             calibration_applied=False,
-            reason="insufficient_calibration_data",
+            reason="insufficient_calibration_data" if provenance_complete else "incomplete_calibration_provenance",
             disclaimer=RAW_HEURISTIC_DISCLAIMER,
             max_adjustment=max_adjustment,
         )
@@ -536,7 +536,8 @@ def live_calibration_groups(*, source_system: Any, metric_id: Any) -> list[str]:
 
 
 def _update_counts(metrics: dict[str, Any], status: str) -> None:
-    metrics["sample_count"] = int(metrics.get("sample_count") or 0) + 1
+    if status != "unknown":
+        metrics["sample_count"] = int(metrics.get("sample_count") or 0) + 1
     key = f"{status}_count"
     metrics[key] = int(metrics.get(key) or 0) + 1
 
