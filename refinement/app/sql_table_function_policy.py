@@ -237,6 +237,7 @@ def _validate_table_function_query(
             sql or "",
             read="duckdb",
             error_level=sqlglot.ErrorLevel.RAISE,
+            error_message_context=0,
         )
     except Exception:
         _deny()
