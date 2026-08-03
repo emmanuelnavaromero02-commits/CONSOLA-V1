@@ -17,6 +17,8 @@ SCOPED_URI = (
     "s3://lakehouse/raw/sap_successfactors/EmpEmployment/"
     f"tenant_id={TENANT}/workspace_id={WORKSPACE}/data.parquet"
 )
+PAIR_KEY = "p0-console-refinement-pair-key-more-than-32-characters"
+E_STRING_CANARY = "WITH e AS (SELECT 1) SELECT * FROM E'secret.csv'"
 
 TABLE_FUNCTION_CANARIES = [
     (
@@ -53,6 +55,10 @@ TABLE_FUNCTION_CANARIES = [
     "SELECT * FROM 'secret.json'",
     "SELECT * FROM '*.parquet'",
     'SELECT * FROM "secret.csv"',
+    E_STRING_CANARY,
+    "WITH e AS (SELECT 1) SELECT * FROM E'/proc/self/environ'",
+    "WITH e AS (SELECT 1) SELECT * FROM E'/etc/passwd'",
+    "WITH e AS (SELECT 1) SELECT * FROM E'*.parquet'",
     f"SELECT * FROM read_parquet('{SCOPED_URI.replace('/data.', '//data.')}')",
     f"SELECT * FROM read_parquet('{SCOPED_URI.replace('/data.', '/../data.')}')",
     f"SELECT * FROM read_parquet('{SCOPED_URI}', filename=true)",
@@ -89,6 +95,22 @@ def _signed_body(sql: str) -> dict:
         "security_context": refinement_main._sign_security_context(_security_context()),
         "_verified_internal_service": "console",
     }
+
+
+async def _post_mcp(body: dict, *, raise_app_exceptions: bool = True) -> httpx.Response:
+    transport = httpx.ASGITransport(
+        app=refinement_main.app,
+        raise_app_exceptions=raise_app_exceptions,
+    )
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://refinement.test",
+    ) as client:
+        return await client.post(
+            "/mcp/invoke",
+            headers={"x-api-key": PAIR_KEY, "x-internal-service": "console"},
+            json=body,
+        )
 
 
 @pytest.mark.parametrize("sql", TABLE_FUNCTION_CANARIES)
@@ -146,24 +168,10 @@ async def test_mcp_http_blocks_original_exploit_before_engine(
     sql = TABLE_FUNCTION_CANARIES[0]
     preview = MagicMock(return_value={"schema": [], "data": []})
     monkeypatch.setattr(refinement_main.engine, "preview_sql", preview)
-    pair_key = "p0-console-refinement-pair-key-more-than-32-characters"
-    monkeypatch.setenv("INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT", pair_key)
+    monkeypatch.setenv("INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT", PAIR_KEY)
     body = _signed_body(sql)
     body.pop("_verified_internal_service")
-
-    transport = httpx.ASGITransport(app=refinement_main.app)
-    async with httpx.AsyncClient(
-        transport=transport,
-        base_url="http://refinement.test",
-    ) as client:
-        response = await client.post(
-            "/mcp/invoke",
-            headers={
-                "x-api-key": pair_key,
-                "x-internal-service": "console",
-            },
-            json=body,
-        )
+    response = await _post_mcp(body)
 
     assert response.status_code == 403
     assert response.json() == {
