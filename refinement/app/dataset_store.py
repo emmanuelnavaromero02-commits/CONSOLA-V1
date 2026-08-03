@@ -11,6 +11,32 @@ import psycopg2
 import psycopg2.extras
 
 
+# Packaged internals that carry approval or readiness authority. A caller
+# holding datasets.write may load data, but must never be able to redefine the
+# datasets that decide whether a benchmark counts as approved: that would let
+# it mint its own approval by rewriting the SQL that emits approval_* columns.
+# Separation of duties between whoever loads data and whoever approves it.
+PROTECTED_AUTHORITY_DATASETS = frozenset(
+    {
+        "sap_successfactors_talent_benchmark_internal",
+        "sap_successfactors_talent_readiness",
+        "sap_successfactors_talent_9box",
+    }
+)
+
+
+class ProtectedDatasetError(PermissionError):
+    """Raised when a generic writer targets a packaged authority dataset."""
+
+    def __init__(self) -> None:
+        super().__init__("dataset is server-owned and cannot be replaced")
+
+
+def assert_dataset_is_writable(name: str) -> None:
+    if str(name or "").strip().casefold() in PROTECTED_AUTHORITY_DATASETS:
+        raise ProtectedDatasetError()
+
+
 def _dsn() -> str:
     return (
         os.environ.get("DATABASE_URL", "")
@@ -142,6 +168,7 @@ class DatasetStore:
         }
 
     def save_dataset(self, ds: dict):
+        assert_dataset_is_writable(ds.get("name"))
         sources        = ds.get("sources") or []
         column_mapping = ds.get("column_mapping") or {}
         with _conn() as conn, conn.cursor() as cur:

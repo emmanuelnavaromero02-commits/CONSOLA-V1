@@ -15,8 +15,27 @@ SIMULATION_INPUTS = "sap_successfactors_talent_simulation_inputs"
 BENCHMARK = "sap_successfactors_talent_benchmark_internal"
 
 
-def _project(dataset: str, row: dict) -> dict:
-    return gold_fetcher._project_operational_truth_rows(dataset, [row])[0]
+def _project(dataset: str, row: dict, authority: dict | None = None) -> dict:
+    return gold_fetcher._project_operational_truth_rows(
+        dataset, [row], authority or {}
+    )[0]
+
+
+def _ledger(row: dict, **overrides) -> dict:
+    """The server-owned approval entry that corroborates a benchmark row."""
+    entry = {
+        "tenant_id": row.get("tenant_id", ""),
+        "workspace_id": row.get("workspace_id", ""),
+        "actor_user_id": row.get("approved_by"),
+        "evidence_ref": row.get("approval_evidence_ref"),
+        "authorization_ref": row.get("approval_authorization_ref"),
+        "approval_status": "approved",
+        "recorded_by_server": True,
+    }
+    entry.update(overrides)
+    return {
+        (str(entry["tenant_id"]), str(entry["workspace_id"])): entry,
+    }
 
 
 def test_historical_readiness_without_durable_approval_fails_closed() -> None:
@@ -61,8 +80,16 @@ def test_durable_readiness_remains_usable_and_unchanged() -> None:
         "confidence": 0.6,
     }
     expected = deepcopy(durable)
+    ledger = {
+        ("tenant-a", "workspace-a"): {
+            "approval_status": "approved",
+            "recorded_by_server": True,
+        }
+    }
 
-    assert _project(READINESS, durable) == expected
+    # Without the ledger entry the derived row degrades; with it, it survives.
+    assert _project(READINESS, deepcopy(durable))["readiness_status"] != "ready"
+    assert _project(READINESS, durable, ledger) == expected
 
 
 def test_historical_nine_box_cannot_publish_classification() -> None:
@@ -181,9 +208,13 @@ def test_benchmark_row_accepts_complete_verified_server_attestation() -> None:
         "approval_evidence_ref": "evidence-1",
         "approval_authorization_ref": "authorization-1",
         "approval_valid": True,
+        "tenant_id": "tenant-a",
+        "workspace_id": "workspace-a",
     }
 
-    assert _project(BENCHMARK, valid) == valid
+    # The row shape alone is not enough: the ledger must corroborate it.
+    assert _project(BENCHMARK, deepcopy(valid))["approved"] is False
+    assert _project(BENCHMARK, deepcopy(valid), _ledger(valid)) == valid
 
 
 @pytest.mark.parametrize(

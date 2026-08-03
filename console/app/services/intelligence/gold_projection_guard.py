@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
@@ -51,16 +52,40 @@ def _server_actor_id(value: Any) -> int | None:
     return int(text)
 
 
-def _benchmark_attested(row: dict[str, Any]) -> bool:
-    return (
+def _benchmark_attested(
+    row: dict[str, Any], authority: Mapping[str, Any] | None = None
+) -> bool:
+    """A row never attests itself.
+
+    The shape below is necessary but not sufficient: approval only holds when a
+    server-owned ledger entry, scoped to the same tenant/workspace, corroborates
+    the very same actor and references. Without that entry — the default for any
+    caller-supplied row — the benchmark stays unreviewed.
+    """
+    actor = _server_actor_id(row.get("approved_by"))
+    shape_is_complete = (
         row.get("approved") is True
-        and _server_actor_id(row.get("approved_by")) is not None
+        and actor is not None
         and _parseable_timestamp(row.get("approved_at"))
         and row.get("approval_actor_source") == "server"
         and row.get("approval_recorded_by_server") is True
         and row.get("approval_authorization_verified") is True
         and _nonempty(row.get("approval_evidence_ref"))
         and _nonempty(row.get("approval_authorization_ref"))
+    )
+    if not shape_is_complete or not isinstance(authority, Mapping):
+        return False
+    return (
+        authority.get("approval_status") == "approved"
+        and authority.get("recorded_by_server") is True
+        and _server_actor_id(authority.get("actor_user_id")) == actor
+        and str(authority.get("evidence_ref") or "").strip()
+        == str(row.get("approval_evidence_ref") or "").strip()
+        and str(authority.get("authorization_ref") or "").strip()
+        == str(row.get("approval_authorization_ref") or "").strip()
+        and str(authority.get("tenant_id") or "") == str(row.get("tenant_id") or "")
+        and str(authority.get("workspace_id") or "")
+        == str(row.get("workspace_id") or "")
     )
 
 
@@ -82,10 +107,23 @@ def _claims_benchmark_result(row: dict[str, Any]) -> bool:
     )
 
 
-def _durable_benchmark_result(row: dict[str, Any]) -> bool:
-    return (
+def _durable_benchmark_result(
+    row: dict[str, Any],
+    ledger: Mapping[tuple[str, str], Mapping[str, Any]] | None = None,
+) -> bool:
+    """A derived row may only claim a durable benchmark the ledger corroborates."""
+    if not (
         row.get("benchmark_approval_valid") is True
         and row.get("benchmark_provenance_status") == "approved_durable"
+    ):
+        return False
+    entry = (ledger or {}).get(
+        (str(row.get("tenant_id") or ""), str(row.get("workspace_id") or ""))
+    )
+    return (
+        isinstance(entry, Mapping)
+        and entry.get("approval_status") == "approved"
+        and entry.get("recorded_by_server") is True
     )
 
 
@@ -149,17 +187,31 @@ def _degrade_benchmark_result(dataset: str, row: dict[str, Any]) -> None:
 
 
 def project_operational_truth_rows(
-    dataset: str, rows: list[dict[str, Any]]
+    dataset: str,
+    rows: list[dict[str, Any]],
+    authority: Mapping[tuple[str, str], Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
+    """Project Gold rows, refusing every claim the server cannot corroborate.
+
+    ``authority`` maps (tenant_id, workspace_id) to the ledger entry read from
+    ``talent_benchmark_approvals``. It defaults to empty, so a caller that does
+    not resolve the ledger gets the fail-closed projection.
+    """
+    ledger = authority or {}
     projected: list[dict[str, Any]] = []
     for source in rows:
         row = dict(source)
-        if dataset == _BENCHMARK_DATASET and not _benchmark_attested(row):
+        if dataset == _BENCHMARK_DATASET and not _benchmark_attested(
+            row,
+            ledger.get(
+                (str(row.get("tenant_id") or ""), str(row.get("workspace_id") or ""))
+            ),
+        ):
             _sanitize_benchmark_row(row)
         elif (
             dataset in _DERIVED_DATASETS
             and _claims_benchmark_result(row)
-            and not _durable_benchmark_result(row)
+            and not _durable_benchmark_result(row, ledger)
         ):
             if (
                 dataset == "sap_successfactors_talent_readiness"
