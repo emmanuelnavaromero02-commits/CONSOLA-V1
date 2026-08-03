@@ -21,14 +21,20 @@ CTE_SCOPE_CANARY = (
     'SELECT * FROM "/tmp/p0secret.csv"'
 )
 QUALIFIED_SCAN_CANARY = 'SELECT * FROM foo."bar.csv"'
+QUALIFIED_CTE_SCAN_CANARY = 'WITH "bar.csv" AS (SELECT 1) SELECT * FROM foo."bar.csv"'
 MATERIALIZE_ESCAPE_CANARIES = (
     E_STRING_CANARY,
     CTE_SCOPE_CANARY,
     QUALIFIED_SCAN_CANARY,
+    QUALIFIED_CTE_SCAN_CANARY,
 )
 SCOPED_URI = (
     "s3://lakehouse/raw/p0_probe/events/"
     f"tenant_id={TENANT}/workspace_id={WORKSPACE}/data.parquet"
+)
+PUBLISHED_GOLD_SQL = (
+    "SELECT * FROM pggold.omega_publication_gold."
+    '"run_0123456789abcdef0123456789abcdef"'
 )
 
 
@@ -216,3 +222,34 @@ def test_staged_binding_resolves_exact_list_and_preserves_scope_check() -> None:
     foreign = effective.replace(f"workspace_id={WORKSPACE}", "workspace_id=workspace-b")
     with pytest.raises(ValueError, match="outside"):
         engine._validate_scoped_storage_sql(foreign, context)
+
+
+@pytest.mark.parametrize("layer", ["silver", "gold"])
+def test_materialize_marks_both_effective_gates_as_server_resolved(layer: str) -> None:
+    class ValidationComplete(Exception):
+        pass
+
+    engine, _connection = _engine_with_effective_sql(PUBLISHED_GOLD_SQL)
+    validate_effective = MagicMock(side_effect=[None, ValidationComplete])
+    engine._validate_effective_sql = validate_effective
+    engine._ensure_scope_columns = lambda _con, sql, _ctx: sql
+    engine._pg_gold_attach = lambda *_args: None
+
+    with pytest.raises(ValidationComplete):
+        engine.materialize(
+            {
+                "name": "p0_probe",
+                "sql_def": "SELECT 1 AS value",
+                "layer": layer,
+                "cartridge": "p0_probe",
+                "sources": [],
+            },
+            {"tenant_id": TENANT, "workspace_id": WORKSPACE},
+        )
+
+    assert validate_effective.call_count == 2
+    for call in validate_effective.call_args_list:
+        assert call.kwargs == {
+            "allow_server_resolved_path_list": True,
+            "allow_server_resolved_publication_relation": True,
+        }

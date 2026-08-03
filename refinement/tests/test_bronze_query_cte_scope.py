@@ -48,6 +48,9 @@ def test_relation_alias_does_not_launder_local_relation(sql: str) -> None:
         'SELECT * FROM main."secret.csv"',
         'SELECT * FROM pggold."gold_secret.csv"',
         'SELECT * FROM "foo"."bar"."csv"',
+        'WITH "bar.csv" AS (SELECT 1) SELECT * FROM foo."bar.csv"',
+        'WITH "BAR.CSV" AS (SELECT 1) SELECT * FROM foo."bar.csv"',
+        'WITH "csv" AS (SELECT 1) SELECT * FROM "foo"."bar"."csv"',
     ],
 )
 def test_qualified_relation_does_not_launder_local_relation(sql: str) -> None:
