@@ -22,6 +22,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 DATASETS = ROOT / "cartridges/sap_successfactors/datasets"
+SHARED_SQL = ROOT / "cartridges/sap_successfactors/sql"
 NINE_BOX = DATASETS / "sap_successfactors_talent_9box.sql"
 
 # The exact values reproduced by the independent audit.
@@ -47,11 +48,11 @@ def _normalization_sql() -> str:
     assert (
         "talent_score_scale" in body
     ), "9-box must route every score through the shared normalization"
-    return ROOT / "cartridges/sap_successfactors/datasets/_talent_score_scale.sql"
+    return SHARED_SQL / "_talent_score_scale.sql"
 
 
 def _scale(con: duckdb.DuckDBPyConnection, value: float) -> float | None:
-    macro = (DATASETS / "_talent_score_scale.sql").read_text(encoding="utf-8")
+    macro = (SHARED_SQL / "_talent_score_scale.sql").read_text(encoding="utf-8")
     con.execute(macro)
     row = con.execute("SELECT talent_score_scale(?::DOUBLE)", [value]).fetchone()
     return row[0]
@@ -79,7 +80,7 @@ def test_valid_scores_and_boundaries_are_preserved(con, value, expected):
 
 
 def test_null_stays_null(con):
-    macro = (DATASETS / "_talent_score_scale.sql").read_text(encoding="utf-8")
+    macro = (SHARED_SQL / "_talent_score_scale.sql").read_text(encoding="utf-8")
     con.execute(macro)
     assert con.execute("SELECT talent_score_scale(NULL::DOUBLE)").fetchone()[0] is None
 
@@ -100,21 +101,32 @@ def test_nine_box_sql_validates_finiteness_before_banding():
     assert "TRY_CAST(competency_score AS DOUBLE) > 5" not in scored
 
 
-@pytest.mark.parametrize(
-    "dataset",
-    [
-        "sap_successfactors_talent_employee_profile.sql",
-        "sap_successfactors_talent_cpa_scores.sql",
-        "sap_successfactors_talent_9box.sql",
-        "sap_successfactors_talent_action_candidates.sql",
-        "sap_successfactors_talent_signals.sql",
-    ],
-)
-def test_every_talent_dataset_applies_the_shared_normalization(dataset):
+# The datasets that turn a raw score into a scale, a band or a CPA figure.
+SCORING_DATASETS = [
+    "sap_successfactors_talent_employee_profile.sql",
+    "sap_successfactors_talent_cpa_scores.sql",
+    "sap_successfactors_talent_9box.sql",
+]
+# The datasets downstream of them: they consume already-normalized columns and
+# must never reintroduce a raw cast of their own.
+CONSUMING_DATASETS = [
+    "sap_successfactors_talent_action_candidates.sql",
+    "sap_successfactors_talent_signals.sql",
+]
+
+
+@pytest.mark.parametrize("dataset", SCORING_DATASETS)
+def test_scoring_datasets_apply_the_shared_normalization(dataset):
     body = (DATASETS / dataset).read_text(encoding="utf-8")
-    if "_score" not in body:
-        pytest.skip(f"{dataset} does not consume raw scores")
     assert "talent_score_scale(" in body or "talent_score_is_valid(" in body
+
+
+@pytest.mark.parametrize("dataset", CONSUMING_DATASETS)
+def test_consuming_datasets_never_recast_raw_scores(dataset):
+    body = (DATASETS / dataset).read_text(encoding="utf-8")
+    assert "TRY_CAST(performance_score" not in body
+    assert "TRY_CAST(competency_score" not in body
+    assert "TRY_CAST(aspiration_score" not in body
 
 
 def test_invalid_scores_never_reach_control_room_serialization():

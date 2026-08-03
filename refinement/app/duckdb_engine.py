@@ -68,7 +68,7 @@ def _sql_quote(value: str) -> str:
 
 
 _SHARED_MACRO_FILES = (
-    "cartridges/sap_successfactors/datasets/_talent_score_scale.sql",
+    "cartridges/sap_successfactors/sql/_talent_score_scale.sql",
 )
 
 

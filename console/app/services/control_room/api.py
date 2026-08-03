@@ -1904,11 +1904,7 @@ def _num(value: Any) -> float | None:
         parsed = float(value)
     except (TypeError, ValueError):
         return None
-    return parsed if _finite_number(parsed) else None
-
-
-def _finite_number(value: float) -> bool:
-    return math.isfinite(value)
+    return parsed if math.isfinite(parsed) else None
 
 
 @_bind_to_core
