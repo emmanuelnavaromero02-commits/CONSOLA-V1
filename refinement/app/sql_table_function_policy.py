@@ -240,7 +240,7 @@ def _validate_table_function_query(
             error_message_context=0,
         )
     except Exception:
-        _deny()
+        raise TableFunctionPolicyError() from None
     if len(statements) != 1 or statements[0] is None:
         _deny()
 
