@@ -14,6 +14,10 @@ TENANT = "tenant-a"
 WORKSPACE = "workspace-a"
 PAIR_KEY = "p0-console-refinement-pair-key-more-than-32-characters"
 E_STRING_CANARY = "WITH e AS (SELECT 1) SELECT * FROM E'secret.csv'"
+SCOPED_URI = (
+    "s3://lakehouse/raw/p0_probe/events/"
+    f"tenant_id={TENANT}/workspace_id={WORKSPACE}/data.parquet"
+)
 
 
 def _security_context() -> dict:
@@ -154,3 +158,14 @@ def test_materialize_revalidates_effective_sql_before_scope_probe() -> None:
 
     assert str(exc.value) == "SQL blocked by safety policy"
     connection.execute.assert_not_called()
+
+
+def test_server_resolved_literal_list_is_only_allowed_in_effective_sql() -> None:
+    engine = object.__new__(DuckDBEngine)
+    engine.minio_bucket = "lakehouse"
+    sql = f"SELECT * FROM read_parquet(['{SCOPED_URI}'])"
+
+    with pytest.raises(ValueError, match="safety policy"):
+        engine._validate_safe_sql(sql)
+
+    engine._validate_effective_sql(sql)

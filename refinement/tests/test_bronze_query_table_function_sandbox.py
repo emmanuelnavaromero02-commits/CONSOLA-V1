@@ -59,6 +59,9 @@ TABLE_FUNCTION_CANARIES = [
     "WITH e AS (SELECT 1) SELECT * FROM E'/proc/self/environ'",
     "WITH e AS (SELECT 1) SELECT * FROM E'/etc/passwd'",
     "WITH e AS (SELECT 1) SELECT * FROM E'*.parquet'",
+    "SELECT current_setting('s3_secret_access_key') AS leaked",
+    "SELECT current_setting('home_directory') AS leaked",
+    "SELECT getvariable('p0_secret') AS leaked",
     f"SELECT * FROM read_parquet('{SCOPED_URI.replace('/data.', '//data.')}')",
     f"SELECT * FROM read_parquet('{SCOPED_URI.replace('/data.', '/../data.')}')",
     f"SELECT * FROM read_parquet('{SCOPED_URI}', filename=true)",
@@ -148,6 +151,7 @@ def test_refinement_boundary_blocks_table_function_and_path_canaries(
             ") SELECT * FROM scoped"
         ),
         "WITH constants AS (SELECT 1 AS value) SELECT * FROM constants",
+        'WITH "safe_cte" AS (SELECT 1 AS value) SELECT * FROM "safe_cte"',
         "SELECT 1 AS value",
         "SELECT * FROM generate_series(1, 3)",
         "SELECT * FROM range(3)",
