@@ -36,9 +36,7 @@ def _signed_tool_body(tool: str, args: dict) -> dict:
     return {
         "tool": tool,
         "args": args,
-        "security_context": refinement_main._sign_security_context(
-            _security_context()
-        ),
+        "security_context": refinement_main._sign_security_context(_security_context()),
     }
 
 
@@ -79,7 +77,9 @@ async def test_mcp_http_blocks_e_string_on_save_dataset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     saved = MagicMock()
-    monkeypatch.setattr(refinement_main.store, "get_dataset", MagicMock(return_value=None))
+    monkeypatch.setattr(
+        refinement_main.store, "get_dataset", MagicMock(return_value=None)
+    )
     monkeypatch.setattr(refinement_main.store, "save_dataset", saved)
     monkeypatch.setenv("INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT", PAIR_KEY)
     body = _signed_tool_body(
@@ -117,7 +117,9 @@ async def test_mcp_http_blocks_stored_e_string_on_materialize(
         "created_by_id": 41,
     }
     engine, connection = _engine_with_effective_sql(E_STRING_CANARY)
-    monkeypatch.setattr(refinement_main.store, "get_dataset", MagicMock(return_value=dataset))
+    monkeypatch.setattr(
+        refinement_main.store, "get_dataset", MagicMock(return_value=dataset)
+    )
     monkeypatch.setattr(refinement_main.engine, "materialize", engine.materialize)
     monkeypatch.setenv("INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT", PAIR_KEY)
 

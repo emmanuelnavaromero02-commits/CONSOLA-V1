@@ -8,6 +8,7 @@ import unicodedata
 
 import sqlglot
 from sqlglot import exp
+from sqlglot.tokens import TokenType, Tokenizer
 
 
 POLICY_ERROR = "SQL blocked by safety policy"
@@ -154,6 +155,38 @@ def _relation_functions(tree: exp.Expression) -> list[exp.Func]:
     return functions
 
 
+def _reject_adjacent_relation_strings(sql: str, tree: exp.Expression) -> None:
+    """Reject DuckDB E-string replacement scans obscured by parser normalization."""
+    ambiguous: set[tuple[str, str]] = set()
+    for table in tree.find_all(exp.Table):
+        if table.args.get("db") is not None or table.args.get("catalog") is not None:
+            continue
+        relation = table.this
+        alias = table.args.get("alias")
+        alias_id = alias.this if isinstance(alias, exp.TableAlias) else None
+        if (
+            isinstance(relation, exp.Identifier)
+            and not relation.args.get("quoted")
+            and isinstance(alias_id, exp.Identifier)
+            and alias_id.args.get("quoted")
+        ):
+            ambiguous.add(
+                (str(relation.this or "").casefold(), str(alias_id.this or ""))
+            )
+    if not ambiguous:
+        return
+
+    tokens = Tokenizer(dialect="duckdb").tokenize(sql)
+    for left, right in zip(tokens, tokens[1:]):
+        if (
+            left.token_type is TokenType.VAR
+            and right.token_type is TokenType.STRING
+            and left.end + 1 == right.start
+            and (left.text.casefold(), right.text) in ambiguous
+        ):
+            _deny()
+
+
 def _validate_table_function_query(
     sql: str,
     *,
@@ -172,6 +205,7 @@ def _validate_table_function_query(
     if len(statements) != 1 or statements[0] is None:
         _deny()
 
+    _reject_adjacent_relation_strings(sql, statements[0])
     reads: list[StorageRead] = []
     for function in _relation_functions(statements[0]):
         name = _canonical_name(function)

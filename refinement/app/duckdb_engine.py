@@ -1062,6 +1062,13 @@ class DuckDBEngine:
             if not path.startswith("s3://"):
                 raise ValueError("read_parquet is only allowed for s3:// sources")
 
+    def _validate_effective_sql(self, sql: str) -> None:
+        validate_table_function_query(
+            sql,
+            expected_bucket=getattr(self, "minio_bucket", None),
+            allow_bucket_placeholder=False,
+        )
+
     # Hard cap on preview/query result size — protects the server from a
     # runaway query (cartesian product, missing WHERE, etc.) that asks for
     # millions of rows in one shot. Single point of enforcement: any caller
@@ -1129,11 +1136,7 @@ class DuckDBEngine:
                 ):
                     self._pg_gold_attach(con, user_context)
                 limited = f"SELECT * FROM ({effective_sql}) _q LIMIT {limit}"
-                validate_table_function_query(
-                    _strip_sql_comments(effective_sql),
-                    expected_bucket=getattr(self, "minio_bucket", None),
-                    allow_bucket_placeholder=False,
-                )
+                self._validate_effective_sql(effective_sql)
 
                 # Watchdog: fires con.interrupt() if the query runs past
                 # the cap. The Timer is cancelled immediately after a
@@ -1244,6 +1247,7 @@ class DuckDBEngine:
                     r'(?<![A-Za-z0-9_])"?pggold"?\s*\.', effective_sql, re.IGNORECASE
                 ):
                     self._pg_gold_attach(con, user_context)
+                self._validate_effective_sql(effective_sql)
                 rows = con.execute(
                     f"DESCRIBE SELECT * FROM ({effective_sql}) _q LIMIT 0",
                     rls_params,
@@ -1718,9 +1722,11 @@ class DuckDBEngine:
                 validate_safe_identifier(table, "table")
                 effective_sql = self._inject_latest_date(sql, sources, user_context)
                 self._validate_scoped_storage_sql(effective_sql, user_context)
+                self._validate_effective_sql(effective_sql)
                 effective_sql = self._ensure_scope_columns(
                     con, effective_sql, user_context
                 )
+                self._validate_effective_sql(effective_sql)
                 tenant, workspace = self._scope_values(user_context)
                 if not (tenant and workspace):
                     raise ValueError(
@@ -1754,9 +1760,11 @@ class DuckDBEngine:
                 # ── Silver → Parquet snapshot inmutable (última extracción vía lineage) ──
                 effective_sql = self._inject_latest_date(sql, sources, user_context)
                 self._validate_scoped_storage_sql(effective_sql, user_context)
+                self._validate_effective_sql(effective_sql)
                 effective_sql = self._ensure_scope_columns(
                     con, effective_sql, user_context
                 )
+                self._validate_effective_sql(effective_sql)
                 parquet_path = self._snapshot_path(
                     "silver", cartridge, name, user_context
                 )
