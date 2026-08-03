@@ -20,7 +20,12 @@ CTE_SCOPE_CANARY = (
     'WITH "/tmp/p0secret.csv" AS (SELECT * FROM "/tmp/p0secret.csv") '
     'SELECT * FROM "/tmp/p0secret.csv"'
 )
-MATERIALIZE_ESCAPE_CANARIES = (E_STRING_CANARY, CTE_SCOPE_CANARY)
+QUALIFIED_SCAN_CANARY = 'SELECT * FROM foo."bar.csv"'
+MATERIALIZE_ESCAPE_CANARIES = (
+    E_STRING_CANARY,
+    CTE_SCOPE_CANARY,
+    QUALIFIED_SCAN_CANARY,
+)
 SCOPED_URI = (
     "s3://lakehouse/raw/p0_probe/events/"
     f"tenant_id={TENANT}/workspace_id={WORKSPACE}/data.parquet"
