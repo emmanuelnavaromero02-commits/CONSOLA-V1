@@ -45,6 +45,12 @@ from app.publication_public import (
 )
 from app.publication_snapshot import PublicationSnapshotResolver
 from app.security import get_internal_api_key
+from app.sql_table_function_policy import (
+    TableFunctionPolicyError,
+    validate_table_function_query,
+)
+from app.sql_scope_policy import resolved_cte_table_ids
+from app.storage_scope_policy import has_exact_storage_scope
 from app.staged_publication_engine import StagedPublicationEngine
 from app.successfactors_fallbacks import (
     annotate_operational_fallback,
@@ -297,10 +303,6 @@ _BRONZE_READ_PARQUET_SOURCE_RE = re.compile(
 _SAFE_BRONZE_SOURCE_SEGMENT_RE = re.compile(r"[A-Za-z0-9_.:-]+")
 _SQL_STORAGE_LITERAL_RE = re.compile(
     r"(['\"])(s3://.*?)(?<!\\)\1", re.IGNORECASE | re.DOTALL
-)
-_DIRECT_STORAGE_SCAN_RE = re.compile(
-    r"\b(?:from|join|table)\s+(['\"])(.*?)\1",
-    re.IGNORECASE | re.DOTALL,
 )
 _SINGLE_QUOTED_RE = re.compile(r"'(?:''|[^'])*'", re.DOTALL)
 _PGDB_SCHEMA_RE = re.compile(r'(?<![A-Za-z0-9_])"?pgdb"?\s*\.', re.IGNORECASE)
@@ -675,8 +677,7 @@ def _has_invalid_scoped_storage_path(sec: dict, key: str) -> bool:
         return False
     expected_tenant = str(sec.get("tenant_id") or "").strip()
     expected_workspace = str(sec.get("workspace_id") or "").strip()
-    tenant, workspace = _storage_scope_markers(key)
-    return tenant != expected_tenant or workspace != expected_workspace
+    return not has_exact_storage_scope(key, expected_tenant, expected_workspace)
 
 
 def _require_cartridge_scope(sec: dict, cartridge_id: str) -> None:
@@ -820,11 +821,7 @@ def _sql_table_references(sql: str) -> list[tuple[str, str, str]]:
         raise HTTPException(
             403, "SQL could not be parsed for table scope validation"
         ) from exc
-    ctes = {
-        str(cte.alias_or_name).lower()
-        for cte in tree.find_all(sql_exp.CTE)
-        if cte.alias_or_name
-    }
+    resolved_ctes = resolved_cte_table_ids(tree)
     refs: list[tuple[str, str, str]] = []
     for table in tree.find_all(sql_exp.Table):
         name = str(table.name or "").strip('"').strip()
@@ -832,7 +829,7 @@ def _sql_table_references(sql: str) -> list[tuple[str, str, str]]:
             continue
         catalog = str(table.catalog or "").strip('"').strip().lower()
         db = str(table.db or "").strip('"').strip().lower()
-        if not db and name.lower() in ctes:
+        if not db and id(table) in resolved_ctes:
             continue
         refs.append((catalog, db, name))
     return refs
@@ -1116,6 +1113,17 @@ def _require_sql_storage_scope(
     except Exception:
         validation_sql = sql
 
+    try:
+        storage_reads = validate_table_function_query(
+            validation_sql,
+            expected_bucket=engine.minio_bucket,
+            allow_bucket_placeholder=False,
+        )
+    except TableFunctionPolicyError as exc:
+        raise HTTPException(
+            403, "SQL table function or storage path is not allowed"
+        ) from exc
+
     for source in sources or []:
         if _prefix_allowed(sec, str(source)):
             continue
@@ -1128,6 +1136,14 @@ def _require_sql_storage_scope(
         if ds and _dataset_allowed(sec, ds):
             continue
         raise HTTPException(403, "source prefix not allowed")
+
+    for storage_read in storage_reads:
+        _require_sql_path_scope(
+            sec,
+            storage_read.path,
+            sources=sources,
+            allow_registered_dataset_paths=allow_registered_dataset_paths,
+        )
 
     reader_calls = list(_SQL_READER_CALL_RE.finditer(validation_sql))
     direct_readers = list(_SCOPED_READER_RE.finditer(validation_sql))
@@ -1147,14 +1163,6 @@ def _require_sql_storage_scope(
             sources=sources,
             allow_registered_dataset_paths=allow_registered_dataset_paths,
         )
-    for match in _DIRECT_STORAGE_SCAN_RE.finditer(validation_sql):
-        _require_sql_path_scope(
-            sec,
-            match.group(2),
-            sources=sources,
-            allow_registered_dataset_paths=allow_registered_dataset_paths,
-        )
-
     for catalog, db, table in _sql_table_references(sql):
         if catalog:
             raise HTTPException(

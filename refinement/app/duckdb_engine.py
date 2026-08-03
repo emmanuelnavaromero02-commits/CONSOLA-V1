@@ -38,8 +38,12 @@ from omega_lakehouse import ObjectAlreadyExists, storage_from_env
 
 try:
     from app.duckdb_runtime import connect_duckdb_runtime
+    from app.sql_table_function_policy import validate_table_function_query
+    from app.storage_scope_policy import has_exact_storage_scope
 except ModuleNotFoundError:
     from refinement.app.duckdb_runtime import connect_duckdb_runtime
+    from refinement.app.sql_table_function_policy import validate_table_function_query
+    from refinement.app.storage_scope_policy import has_exact_storage_scope
 
 SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 SAFE_S3_BRONZE_TAIL_RE = re.compile(r"^[a-zA-Z0-9_./=*-]+$")
@@ -638,16 +642,14 @@ class DuckDBEngine:
         tenant, workspace = self._scope_values(user_context)
         if not tenant or not workspace:
             return
-        scope_fragment = f"tenant_id={tenant}/workspace_id={workspace}/"
         bucket_prefix = self._storage_uri("")
         for match in S3_LITERAL_RE.finditer(sql or ""):
             uri = match.group(2)
             if not uri.startswith(bucket_prefix):
                 raise ValueError("S3 path uses an unapproved bucket")
             key = uri[len(bucket_prefix) :]
-            if (
-                key.startswith(("raw/", "silver/", "gold/"))
-                and scope_fragment not in key
+            if key.startswith(("raw/", "silver/", "gold/", "uploads/")) and not (
+                has_exact_storage_scope(key, tenant, workspace)
             ):
                 raise ValueError("S3 path is outside the caller tenant/workspace scope")
 
@@ -1042,8 +1044,20 @@ class DuckDBEngine:
     )
     _DANGEROUS_PATH_RE = re.compile(r"(?i)(file://|['\"]/(?:etc|proc|var)/)")
 
-    def _validate_safe_sql(self, sql: str) -> None:
+    def _validate_safe_sql(
+        self,
+        sql: str,
+        *,
+        allow_server_resolved_publication_relation: bool = False,
+    ) -> None:
         policy_sql = _strip_sql_comments(sql)
+        validate_table_function_query(
+            policy_sql,
+            expected_bucket=getattr(self, "minio_bucket", None),
+            allow_server_resolved_publication_relation=(
+                allow_server_resolved_publication_relation
+            ),
+        )
         for pattern in self._DANGEROUS_PATTERNS:
             if pattern.search(policy_sql):
                 raise ValueError(
@@ -1055,6 +1069,23 @@ class DuckDBEngine:
             path = match.group(2).strip()
             if not path.startswith("s3://"):
                 raise ValueError("read_parquet is only allowed for s3:// sources")
+
+    def _validate_effective_sql(
+        self,
+        sql: str,
+        *,
+        allow_server_resolved_path_list: bool = False,
+        allow_server_resolved_publication_relation: bool = False,
+    ) -> None:
+        validate_table_function_query(
+            sql,
+            expected_bucket=getattr(self, "minio_bucket", None),
+            allow_bucket_placeholder=False,
+            allow_server_resolved_path_list=allow_server_resolved_path_list,
+            allow_server_resolved_publication_relation=(
+                allow_server_resolved_publication_relation
+            ),
+        )
 
     # Hard cap on preview/query result size — protects the server from a
     # runaway query (cartesian product, missing WHERE, etc.) that asks for
@@ -1080,6 +1111,8 @@ class DuckDBEngine:
         sources: list[str] | None = None,
         user_context: dict = None,
         params: list = None,
+        *,
+        allow_server_resolved_publication_relation: bool = False,
     ) -> dict:
         """Execute SQL with RLS applied and caller params merged.
 
@@ -1101,7 +1134,13 @@ class DuckDBEngine:
             limit = self._DEFAULT_PREVIEW_LIMIT
         elif limit > self._MAX_PREVIEW_LIMIT:
             limit = self._MAX_PREVIEW_LIMIT
-        self._validate_safe_sql(sql)
+        if allow_server_resolved_publication_relation:
+            self._validate_safe_sql(
+                sql,
+                allow_server_resolved_publication_relation=True,
+            )
+        else:
+            self._validate_safe_sql(sql)
         caller_params = list(params or [])
         try:
             with self._duckdb_lock:
@@ -1123,6 +1162,11 @@ class DuckDBEngine:
                 ):
                     self._pg_gold_attach(con, user_context)
                 limited = f"SELECT * FROM ({effective_sql}) _q LIMIT {limit}"
+                self._validate_effective_sql(
+                    effective_sql,
+                    allow_server_resolved_path_list=True,
+                    allow_server_resolved_publication_relation=True,
+                )
 
                 # Watchdog: fires con.interrupt() if the query runs past
                 # the cap. The Timer is cancelled immediately after a
@@ -1216,7 +1260,16 @@ class DuckDBEngine:
         try:
             validate_safe_identifier(ds["name"], "dataset")
             sql = self._managed_materialized_sql(ds, user_context)
-            self._validate_safe_sql(sql)
+            publication_sql = self._is_server_resolved_publication_sql(
+                ds, user_context, sql
+            )
+            if publication_sql:
+                self._validate_safe_sql(
+                    sql,
+                    allow_server_resolved_publication_relation=True,
+                )
+            else:
+                self._validate_safe_sql(sql)
             sources = ds.get("sources") or []
             with self._duckdb_lock:
                 rls_sql, rls_params = self.get_rls_filters(sql, user_context or {})
@@ -1233,6 +1286,11 @@ class DuckDBEngine:
                     r'(?<![A-Za-z0-9_])"?pggold"?\s*\.', effective_sql, re.IGNORECASE
                 ):
                     self._pg_gold_attach(con, user_context)
+                self._validate_effective_sql(
+                    effective_sql,
+                    allow_server_resolved_path_list=True,
+                    allow_server_resolved_publication_relation=True,
+                )
                 rows = con.execute(
                     f"DESCRIBE SELECT * FROM ({effective_sql}) _q LIMIT 0",
                     rls_params,
@@ -1390,7 +1448,16 @@ class DuckDBEngine:
     ) -> dict:
         validate_safe_identifier(ds.get("name", ""), "dataset")
         sql = self._managed_materialized_sql(ds, user_context)
-        self._validate_safe_sql(sql)
+        publication_sql = self._is_server_resolved_publication_sql(
+            ds, user_context, sql
+        )
+        if publication_sql:
+            self._validate_safe_sql(
+                sql,
+                allow_server_resolved_publication_relation=True,
+            )
+        else:
+            self._validate_safe_sql(sql)
         filter_params = []
         if filters:
             for key in filters.keys():
@@ -1408,7 +1475,24 @@ class DuckDBEngine:
             sources=ds.get("sources") or [],
             params=filter_params,
             user_context=user_context,
+            allow_server_resolved_publication_relation=publication_sql,
         )
+
+    def _is_server_resolved_publication_sql(
+        self,
+        ds: dict,
+        user_context: dict | None,
+        sql: str,
+    ) -> bool:
+        head_loader = getattr(self, "_published_dataset_head", None)
+        sql_resolver = getattr(self, "_published_sql", None)
+        if not callable(head_loader) or not callable(sql_resolver):
+            return False
+        try:
+            head = head_loader(ds, user_context)
+            return sql == sql_resolver(ds, head)
+        except Exception:
+            return False
 
     def _inject_latest_date(
         self,
@@ -1707,8 +1791,18 @@ class DuckDBEngine:
                 validate_safe_identifier(table, "table")
                 effective_sql = self._inject_latest_date(sql, sources, user_context)
                 self._validate_scoped_storage_sql(effective_sql, user_context)
+                self._validate_effective_sql(
+                    effective_sql,
+                    allow_server_resolved_path_list=True,
+                    allow_server_resolved_publication_relation=True,
+                )
                 effective_sql = self._ensure_scope_columns(
                     con, effective_sql, user_context
+                )
+                self._validate_effective_sql(
+                    effective_sql,
+                    allow_server_resolved_path_list=True,
+                    allow_server_resolved_publication_relation=True,
                 )
                 tenant, workspace = self._scope_values(user_context)
                 if not (tenant and workspace):
@@ -1743,8 +1837,18 @@ class DuckDBEngine:
                 # ── Silver → Parquet snapshot inmutable (última extracción vía lineage) ──
                 effective_sql = self._inject_latest_date(sql, sources, user_context)
                 self._validate_scoped_storage_sql(effective_sql, user_context)
+                self._validate_effective_sql(
+                    effective_sql,
+                    allow_server_resolved_path_list=True,
+                    allow_server_resolved_publication_relation=True,
+                )
                 effective_sql = self._ensure_scope_columns(
                     con, effective_sql, user_context
+                )
+                self._validate_effective_sql(
+                    effective_sql,
+                    allow_server_resolved_path_list=True,
+                    allow_server_resolved_publication_relation=True,
                 )
                 parquet_path = self._snapshot_path(
                     "silver", cartridge, name, user_context
