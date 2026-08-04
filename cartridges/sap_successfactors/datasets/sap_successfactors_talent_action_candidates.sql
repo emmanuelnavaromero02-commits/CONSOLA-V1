@@ -40,7 +40,7 @@ metrics AS (
             AND NOT COALESCE(invalid_score_input, TRUE)) AS insufficient_count,
         (SELECT COUNT(*) FROM nine_box_detail
           WHERE box_status = 'ready'
-            AND NOT COALESCE(invalid_score_input, FALSE)
+            AND invalid_score_input IS FALSE
             AND talent_percent_is_valid(performance_score)
             AND talent_percent_is_valid(potential_score)) AS classified_count,
         (SELECT COUNT(*) FROM risk

@@ -100,7 +100,9 @@ def test_percent_scores_are_never_reinterpreted_as_five_point_ratings(
     con, value, expected
 ):
     con.execute((SHARED_SQL / "talent_score_scale.sql").read_text(encoding="utf-8"))
-    result = con.execute("SELECT talent_percent_scale(?::DOUBLE)", [value]).fetchone()[0]
+    result = con.execute("SELECT talent_percent_scale(?::DOUBLE)", [value]).fetchone()[
+        0
+    ]
     assert result == expected
 
 
@@ -132,9 +134,7 @@ CONSUMING_DATASETS = [
 @pytest.mark.parametrize("dataset", SCORING_DATASETS)
 def test_scoring_datasets_apply_the_shared_normalization(dataset):
     body = (DATASETS / dataset).read_text(encoding="utf-8")
-    assert "talent_" in body and (
-        "_scale(" in body or "_is_valid(" in body
-    )
+    assert "talent_" in body and ("_scale(" in body or "_is_valid(" in body)
 
 
 @pytest.mark.parametrize("dataset", CONSUMING_DATASETS)
@@ -173,9 +173,7 @@ def test_control_room_never_treats_invalid_scores_as_available(value):
     if not math.isfinite(value):
         assert control_room_api._sf_talent_float(value) is None
     assert control_room_api._sf_talent_performance_band(value) is None
-    assert (
-        control_room_api._sf_talent_nine_box_available_count({}, [row]) == 0
-    )
+    assert control_room_api._sf_talent_nine_box_available_count({}, [row]) == 0
     aggregate = control_room_api._sf_talent_9box_operational_rows_from_detail([row])
     assert aggregate[0]["ready_count"] == 0
     assert aggregate[0]["blocked_count"] == 1
@@ -204,11 +202,15 @@ def test_public_projection_never_emits_non_finite_numbers(value):
 
 def test_promotion_and_action_sql_require_a_valid_ready_9box_row():
     promotion = (
-        DATASETS / "sap_successfactors_talent_promotion_alignment.sql"
-    ).read_text(encoding="utf-8").lower()
+        (DATASETS / "sap_successfactors_talent_promotion_alignment.sql")
+        .read_text(encoding="utf-8")
+        .lower()
+    )
     candidates = (
-        DATASETS / "sap_successfactors_talent_action_candidates.sql"
-    ).read_text(encoding="utf-8").lower()
+        (DATASETS / "sap_successfactors_talent_action_candidates.sql")
+        .read_text(encoding="utf-8")
+        .lower()
+    )
 
     assert "nine_box.box_status = 'ready'" in promotion
     assert "from nine_box_detail as nb, mobility as mv" in candidates
@@ -235,9 +237,7 @@ def test_operational_count_never_overrules_invalid_detail():
         "potential_score": 80.0,
     }
     assert (
-        control_room_api._sf_talent_nine_box_available_count(
-            operational, [invalid]
-        )
+        control_room_api._sf_talent_nine_box_available_count(operational, [invalid])
         == 0
     )
 
@@ -250,6 +250,7 @@ def test_valid_performance_remains_available_while_potential_is_pending():
         "performance_band_available": "high",
         "potential_pending": True,
         "box_status": "blocked",
+        "invalid_score_input": False,
     }
     masked = control_room_api._sf_talent_masked_roster_row(row)
     assert masked["performance_band_available"] == "high"
@@ -259,12 +260,21 @@ def test_valid_performance_remains_available_while_potential_is_pending():
 
 def test_invalid_benchmark_row_cannot_steal_valid_cpa_attribution():
     rows = [
-        {"box_key": "core", "box_status": "ready", "source_mode": "cpa_real",
-         "performance_score": 80.0, "potential_score": 80.0,
-         "invalid_score_input": False},
-        {"box_key": "core", "box_status": "ready",
-         "source_mode": "benchmark_internal", "performance_score": -1.0,
-         "potential_score": 80.0},
+        {
+            "box_key": "core",
+            "box_status": "ready",
+            "source_mode": "cpa_real",
+            "performance_score": 80.0,
+            "potential_score": 80.0,
+            "invalid_score_input": False,
+        },
+        {
+            "box_key": "core",
+            "box_status": "ready",
+            "source_mode": "benchmark_internal",
+            "performance_score": -1.0,
+            "potential_score": 80.0,
+        },
     ]
     aggregate = control_room_api._sf_talent_9box_operational_rows_from_detail(rows)[0]
     assert aggregate["ready_count"] == 1
@@ -279,13 +289,27 @@ async def test_public_endpoint_rebuilds_stale_ready_aggregate_from_detail(
 ):
     async def result(dataset, _user, _limit):
         if dataset.endswith("9box_operational"):
-            rows = [{"box_key": "estrella", "employee_count": 1,
-                     "ready_count": 1, "blocked_count": 0,
-                     "benchmark_count": 0, "box_status": "ready"}]
+            rows = [
+                {
+                    "box_key": "estrella",
+                    "employee_count": 1,
+                    "ready_count": 1,
+                    "blocked_count": 0,
+                    "benchmark_count": 0,
+                    "box_status": "ready",
+                }
+            ]
         else:
-            rows = [{"user_id": "employee-1", "box_key": "estrella",
-                     "box_status": "ready", "source_mode": "cpa_real",
-                     "performance_score": value, "potential_score": 80.0}]
+            rows = [
+                {
+                    "user_id": "employee-1",
+                    "box_key": "estrella",
+                    "box_status": "ready",
+                    "source_mode": "cpa_real",
+                    "performance_score": value,
+                    "potential_score": 80.0,
+                }
+            ]
         return {"dataset": dataset, "rows": rows, "status": "ready", "error": None}
 
     monkeypatch.setattr(control_room_api._core, "_sf_talent_gold_result", result)
@@ -295,6 +319,9 @@ async def test_public_endpoint_rebuilds_stale_ready_aggregate_from_detail(
 
     assert payload["status"] == "blocked"
     assert payload["totals"]["ready"] == 0
-    assert next(cell for cell in payload["cells"] if cell["box_id"] == "estrella")[
-        "status"
-    ] == "blocked"
+    assert (
+        next(cell for cell in payload["cells"] if cell["box_id"] == "estrella")[
+            "status"
+        ]
+        == "blocked"
+    )

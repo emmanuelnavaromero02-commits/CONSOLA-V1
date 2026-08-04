@@ -45,11 +45,14 @@ def test_invalid_fit_scores_never_create_lateral_candidates_or_signals(tmp_path)
                 },
             )
         )
-        assert con.execute(
-            "SELECT count(*) FROM risk WHERE status <> 'blocked' "
-            "OR risk_band <> 'insufficient_data' OR retention_risk_score IS NOT NULL "
-            "OR fit_score IS NOT NULL"
-        ).fetchone()[0] == 0
+        assert (
+            con.execute(
+                "SELECT count(*) FROM risk WHERE status <> 'blocked' "
+                "OR risk_band <> 'insufficient_data' OR retention_risk_score IS NOT NULL "
+                "OR fit_score IS NOT NULL"
+            ).fetchone()[0]
+            == 0
+        )
         risk = tmp_path / "risk.parquet"
         _copy(con, "risk", risk)
 
@@ -69,17 +72,20 @@ def test_invalid_fit_scores_never_create_lateral_candidates_or_signals(tmp_path)
                 },
             )
         )
-        assert con.execute(
-            "SELECT count(*) FROM role_fit WHERE status <> 'blocked' "
-            "OR assignment_recommendation IS NOT NULL OR fit_score IS NOT NULL"
-        ).fetchone()[0] == 0
+        assert (
+            con.execute(
+                "SELECT count(*) FROM role_fit WHERE status <> 'blocked' "
+                "OR assignment_recommendation IS NOT NULL OR fit_score IS NOT NULL"
+            ).fetchone()[0]
+            == 0
+        )
         role_fit = tmp_path / "role-fit.parquet"
         _copy(con, "role_fit", role_fit)
 
         empty_specs = {
-                "nine_box": (
-                    "user_id VARCHAR, box_key VARCHAR, box_status VARCHAR, "
-                    "invalid_score_input BOOLEAN, "
+            "nine_box": (
+                "user_id VARCHAR, box_key VARCHAR, box_status VARCHAR, "
+                "invalid_score_input BOOLEAN, "
                 "performance_score DOUBLE, potential_score DOUBLE"
             ),
             "promotion": "box_key VARCHAR, misaligned_count BIGINT, status VARCHAR",

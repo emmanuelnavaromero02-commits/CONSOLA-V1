@@ -67,9 +67,7 @@ def _sql_quote(value: str) -> str:
     return "'" + (value or "").replace("'", "''") + "'"
 
 
-_SHARED_MACRO_FILES = (
-    "sql/talent_score_scale.sql",
-)
+_SHARED_MACRO_FILES = ("sql/talent_score_scale.sql",)
 
 
 def _register_shared_macros(con: "duckdb.DuckDBPyConnection") -> None:

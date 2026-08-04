@@ -41,17 +41,21 @@ def test_invalid_9box_never_creates_promotion_candidate_or_signal(tmp_path):
             """
             CREATE TABLE readiness_src AS SELECT
               'tenant-a'::VARCHAR tenant_id, 'workspace-a'::VARCHAR workspace_id,
-              'employee-1'::VARCHAR user_id, 'Persona'::VARCHAR full_name,
+              user_id, 'Persona'::VARCHAR full_name,
               'Empresa'::VARCHAR company_name, 'Area'::VARCHAR department_name,
               'Madrid'::VARCHAR location_name, 'JOB'::VARCHAR job_code,
-              'Rol'::VARCHAR role_name, -1.0::DOUBLE performance_score,
+              'Rol'::VARCHAR role_name, performance_score,
               80.0::DOUBLE competency_score, 80.0::DOUBLE aspiration_score,
               80.0::DOUBLE readiness_score, 'cpa_real'::VARCHAR source_mode,
               NULL::VARCHAR benchmark_version, FALSE benchmark_approval_valid,
               'not_applicable'::VARCHAR benchmark_provenance_status,
-              TRUE::BOOLEAN invalid_score_input,
+              invalid_score_input,
               'insufficient_data'::VARCHAR readiness_status,
               '["talent_score_input_invalid"]'::VARCHAR blockers
+            FROM (VALUES
+              ('employee-invalid', -1.0::DOUBLE, TRUE::BOOLEAN),
+              ('employee-null-provenance', 80.0::DOUBLE, NULL::BOOLEAN)
+            ) source(user_id, performance_score, invalid_score_input)
             """
         )
         readiness = tmp_path / "readiness.parquet"
@@ -65,14 +69,19 @@ def test_invalid_9box_never_creates_promotion_candidate_or_signal(tmp_path):
             )
         )
         assert con.execute(
-            "SELECT box_status, box_key FROM nine_box"
-        ).fetchone() == ("blocked", "insufficient_data")
+            "SELECT invalid_score_input, box_status, box_key FROM nine_box "
+            "ORDER BY user_id"
+        ).fetchall() == [
+            (True, "blocked", "insufficient_data"),
+            (True, "blocked", "insufficient_data"),
+        ]
         nine_box_path = tmp_path / "nine_box.parquet"
         _copy(con, "nine_box", nine_box_path)
 
         con.execute(
-            "CREATE TABLE mobility AS SELECT 'employee-1'::VARCHAR user_id, "
-            "'PROMOTION'::VARCHAR latest_event_reason, 0::BIGINT movement_events"
+            "CREATE TABLE mobility AS SELECT user_id, "
+            "'PROMOTION'::VARCHAR latest_event_reason, 0::BIGINT movement_events "
+            "FROM readiness_src"
         )
         mobility = tmp_path / "mobility.parquet"
         _copy(con, "mobility", mobility)
@@ -214,7 +223,9 @@ def test_profile_cpa_and_runtime_fallback_drop_only_invalid_scores(tmp_path):
             "cpa_status, blockers FROM profile WHERE user_id='invalid'"
         ).fetchone()
         assert invalid[:4] == (None, None, None, "blocked")
-        assert all(name in invalid[4] for name in ("performance", "competency", "aspiration"))
+        assert all(
+            name in invalid[4] for name in ("performance", "competency", "aspiration")
+        )
         assert con.execute(
             "SELECT performance_score, competency_score, aspiration_score, cpa_status "
             "FROM profile WHERE user_id='mixed'"

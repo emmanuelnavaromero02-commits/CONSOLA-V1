@@ -12,7 +12,7 @@ scored AS (
     SELECT
         box_key,
         box_status,
-        COALESCE(invalid_score_input, FALSE) AS invalid_score_input,
+        invalid_score_input IS DISTINCT FROM FALSE AS invalid_score_input,
         talent_percent_scale(performance_score) AS performance_scale,
         talent_percent_scale(potential_score) AS potential_scale
     FROM nine_box

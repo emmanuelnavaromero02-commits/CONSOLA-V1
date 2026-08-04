@@ -122,12 +122,12 @@ metrics AS (
         ), FALSE) AS benchmark_approval_valid,
         (SELECT COUNT(*) FROM nine_box
           WHERE box_status = 'ready'
-            AND NOT COALESCE(invalid_score_input, FALSE)
+            AND invalid_score_input IS FALSE
             AND talent_percent_is_valid(performance_score)
             AND talent_percent_is_valid(potential_score)) AS nine_box_classified_count,
         (SELECT COUNT(*) FROM nine_box
           WHERE box_status <> 'ready'
-             OR COALESCE(invalid_score_input, FALSE)
+             OR invalid_score_input IS DISTINCT FROM FALSE
              OR NOT talent_percent_is_valid(performance_score)
              OR NOT talent_percent_is_valid(potential_score)) AS nine_box_blocked_count,
         (SELECT COUNT(*) FROM nine_box

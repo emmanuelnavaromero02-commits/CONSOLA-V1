@@ -12,10 +12,10 @@ scored AS (
     -- Readiness scores are percentages. Convert that explicit domain to 0..5
     -- exactly once; a legitimate 5% remains low rather than becoming 5/5.
     SELECT *,
-        CASE WHEN COALESCE(invalid_score_input, FALSE) THEN NULL
+        CASE WHEN invalid_score_input IS DISTINCT FROM FALSE THEN NULL
              ELSE talent_percent_scale(performance_score) END AS performance_scale,
         CASE
-            WHEN COALESCE(invalid_score_input, FALSE) THEN NULL
+            WHEN invalid_score_input IS DISTINCT FROM FALSE THEN NULL
             WHEN talent_percent_scale(competency_score) IS NULL
               OR talent_percent_scale(aspiration_score) IS NULL THEN NULL
             ELSE
@@ -52,7 +52,7 @@ SELECT
     ROUND(readiness_score, 2) AS readiness_score,
     source_mode, benchmark_version, benchmark_approval_valid,
     benchmark_provenance_status,
-    COALESCE(invalid_score_input, FALSE) AS invalid_score_input,
+    invalid_score_input IS DISTINCT FROM FALSE AS invalid_score_input,
     performance_band_calc AS performance_band,
     CASE
         WHEN performance_scale IS NULL THEN NULL

@@ -178,7 +178,7 @@ WITH emp AS (
 normalized AS (
     SELECT emp.*,
         (
-            COALESCE(invalid_score_input, FALSE)
+            invalid_score_input IS DISTINCT FROM FALSE
             OR (competency_score IS NOT NULL
                 AND NOT talent_percent_is_valid(competency_score))
             OR (performance_score IS NOT NULL

@@ -165,14 +165,16 @@ def test_unknown_status_never_counts_as_available():
 
 def test_invalid_readiness_detail_overrules_stale_calculable_aggregate():
     aggregate = {"calculable_count": 99, "readiness_pending_count": 0}
-    invalid = [{
-        "source_mode": "cpa_real",
-        "readiness_status": "ready",
-        "invalid_score_input": True,
-        "competency_score": 80.0,
-        "performance_score": -1.0,
-        "aspiration_score": 80.0,
-    }]
+    invalid = [
+        {
+            "source_mode": "cpa_real",
+            "readiness_status": "ready",
+            "invalid_score_input": True,
+            "competency_score": 80.0,
+            "performance_score": -1.0,
+            "aspiration_score": 80.0,
+        }
+    ]
     counts = control_room_api._sf_talent_readiness_counts(aggregate, invalid)
     assert counts == {"readiness_calculable": 0, "readiness_insufficient": 1}
 
@@ -214,9 +216,28 @@ def test_missing_or_null_validation_provenance_fails_closed():
     }
     assert control_room_api._sf_talent_cpa_scores_valid(base) is False
     assert control_room_api._sf_talent_nine_box_scores_valid(base) is False
-    assert control_room_api._sf_talent_cpa_scores_valid(
-        {**base, "invalid_score_input": None}
-    ) is False
+    assert (
+        control_room_api._sf_talent_cpa_scores_valid(
+            {**base, "invalid_score_input": None}
+        )
+        is False
+    )
+    for provenance in (
+        {},
+        {"invalid_score_input": None},
+        {"invalid_score_input": True},
+    ):
+        row = {**base, **provenance, "fit_score": 80.0, "potential_pending": True}
+        masked = control_room_api._sf_talent_masked_roster_row(row)
+        assert masked["performance_band_available"] == "insufficient_data"
+        assert masked["fit_band"] == "insufficient_data"
+        assert masked["desempeno_disponible"] is False
+        assert (
+            control_room_api._sf_talent_cpa_readiness_counts([row])[
+                "performance_present"
+            ]
+            == 0
+        )
 
 
 def test_stale_score_signal_requires_current_server_validation_marker():
@@ -228,12 +249,13 @@ def test_stale_score_signal_requires_current_server_validation_marker():
     valid = {**stale, "source_validation_status": "server_validated_v1"}
     unrelated = {"signal_id": "talent_mobility_observed", "affected_count": 1}
 
-    assert control_room_api._sf_talent_validated_signal_rows(
-        [stale, unrelated], 1
-    ) == [unrelated]
-    assert control_room_api._sf_talent_validated_signal_rows(
-        [valid, unrelated], 1
-    ) == [valid, unrelated]
+    assert control_room_api._sf_talent_validated_signal_rows([stale, unrelated], 1) == [
+        unrelated
+    ]
+    assert control_room_api._sf_talent_validated_signal_rows([valid, unrelated], 1) == [
+        valid,
+        unrelated,
+    ]
     assert control_room_api._sf_talent_validated_signal_rows([valid], 0) == []
 
 

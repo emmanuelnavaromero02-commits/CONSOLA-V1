@@ -26,7 +26,7 @@ promotions AS (
     FROM mobility
     JOIN nine_box ON nine_box.user_id = mobility.user_id
     WHERE nine_box.box_status = 'ready'
-      AND NOT COALESCE(nine_box.invalid_score_input, FALSE)
+      AND nine_box.invalid_score_input IS FALSE
       AND talent_percent_is_valid(nine_box.performance_score)
       AND talent_percent_is_valid(nine_box.potential_score)
       AND (

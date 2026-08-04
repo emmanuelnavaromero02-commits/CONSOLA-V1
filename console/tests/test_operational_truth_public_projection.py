@@ -110,10 +110,7 @@ def test_durable_readiness_remains_usable_and_unchanged() -> None:
     # Without the ledger entry the derived row degrades; with it, it survives.
     assert _project(READINESS, deepcopy(durable))["readiness_status"] != "ready"
     assert (
-        _project(
-            READINESS, durable, ledger, benchmark_head=BENCHMARK_HEAD
-        )
-        == expected
+        _project(READINESS, durable, ledger, benchmark_head=BENCHMARK_HEAD) == expected
     )
 
 

@@ -26,20 +26,20 @@ metrics AS (
         COUNT(*) AS employee_count,
         COUNT(*) FILTER (
             WHERE box_status = 'ready'
-              AND NOT COALESCE(invalid_score_input, FALSE)
+              AND invalid_score_input IS FALSE
               AND talent_percent_is_valid(performance_score)
               AND talent_percent_is_valid(potential_score)
         ) AS ready_count,
         COUNT(*) FILTER (
             WHERE box_status = 'ready'
               AND source_mode = 'benchmark_internal'
-              AND NOT COALESCE(invalid_score_input, FALSE)
+              AND invalid_score_input IS FALSE
               AND talent_percent_is_valid(performance_score)
               AND talent_percent_is_valid(potential_score)
         ) AS benchmark_count,
         COUNT(*) FILTER (
             WHERE box_status <> 'ready'
-               OR COALESCE(invalid_score_input, FALSE)
+               OR invalid_score_input IS DISTINCT FROM FALSE
                OR NOT talent_percent_is_valid(performance_score)
                OR NOT talent_percent_is_valid(potential_score)
         ) AS blocked_count

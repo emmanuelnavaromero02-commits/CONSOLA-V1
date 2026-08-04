@@ -173,6 +173,7 @@ async def test_talent_metadata_and_preview_remain_recommendation_only(monkeypatc
                     "competency_score": 4.0,
                     "performance_score": 4.0,
                     "aspiration_score": 3.5,
+                    "invalid_score_input": False,
                 },
                 {"user_id": "101", "cpa_status": "insufficient_data"},
             ]

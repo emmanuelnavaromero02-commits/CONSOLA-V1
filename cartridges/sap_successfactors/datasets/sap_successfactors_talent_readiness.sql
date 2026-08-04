@@ -125,7 +125,7 @@ cohort AS (
 classified AS (
     SELECT *,
         CASE
-            WHEN COALESCE(invalid_score_input, FALSE) THEN 'insufficient_data'
+            WHEN invalid_score_input IS DISTINCT FROM FALSE THEN 'insufficient_data'
             WHEN fit_score IS NOT NULL THEN 'cpa_real'
             WHEN benchmark_approval_valid
               AND benchmark_raw_score IS NOT NULL
@@ -134,7 +134,7 @@ classified AS (
             ELSE 'insufficient_data'
         END AS source_mode,
         CASE
-            WHEN COALESCE(invalid_score_input, FALSE) THEN NULL
+            WHEN invalid_score_input IS DISTINCT FROM FALSE THEN NULL
             WHEN fit_score IS NOT NULL THEN fit_score
             WHEN benchmark_approval_valid
               AND benchmark_raw_score IS NOT NULL
@@ -148,9 +148,9 @@ classified AS (
 with_blockers AS (
     SELECT *, list_filter([
         CASE WHEN source_mode = 'insufficient_data' AND fit_score IS NULL
-                  AND NOT COALESCE(invalid_score_input, FALSE)
+                  AND invalid_score_input IS FALSE
             THEN 'talent_cpa_inputs_missing' END,
-        CASE WHEN COALESCE(invalid_score_input, FALSE)
+        CASE WHEN invalid_score_input IS DISTINCT FROM FALSE
             THEN 'talent_score_input_invalid' END,
         CASE WHEN source_mode = 'insufficient_data' AND NOT benchmark_approval_valid
             THEN 'benchmark_internal_not_reviewed' END,
@@ -172,7 +172,7 @@ SELECT
     tenant_id, workspace_id, user_id, full_name, company_name, department_name,
     location_name, job_code, direct_reports, tenure_months, role_name,
     competency_score, performance_score, aspiration_score, fit_score,
-    COALESCE(invalid_score_input, FALSE) AS invalid_score_input,
+    invalid_score_input IS DISTINCT FROM FALSE AS invalid_score_input,
     benchmark_raw_score,
     CASE WHEN benchmark_approval_valid THEN ROUND(benchmark_percentile * 100.0, 2) END AS benchmark_score,
     ROUND(readiness_score, 2) AS readiness_score,

@@ -42,7 +42,7 @@ normalized AS (
         CASE WHEN talent_percent_is_valid(emp.aspiration_score)
             THEN TRY_CAST(emp.aspiration_score AS DOUBLE) END AS aspiration_100,
         (
-            COALESCE(emp.invalid_score_input, FALSE)
+            emp.invalid_score_input IS DISTINCT FROM FALSE
             OR (emp.competency_score IS NOT NULL
                 AND NOT talent_percent_is_valid(emp.competency_score))
             OR (emp.performance_score IS NOT NULL

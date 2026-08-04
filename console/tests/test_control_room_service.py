@@ -532,7 +532,9 @@ async def test_dashboard_includes_successfactors_talent_gold_signals(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_sap_successfactors_talent_9box_rebuilds_aggregate_from_detail(monkeypatch):
+async def test_sap_successfactors_talent_9box_rebuilds_aggregate_from_detail(
+    monkeypatch,
+):
     async def fake_rows(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
         if dataset == "sap_successfactors_talent_9box_operational":
             return [
@@ -684,23 +686,23 @@ async def test_sap_successfactors_talent_kpis_use_readiness_when_operational_row
             return [{"employee_key": "tal_1"}, {"employee_key": "tal_2"}]
         if dataset == "sap_successfactors_talent_readiness":
             return [
-                    {
-                        "employee_key": "tal_1",
-                        "readiness_status": "ready",
-                        "source_mode": "benchmark_internal",
-                        "readiness_score": 60.0,
-                        "benchmark_approval_valid": True,
-                        "benchmark_provenance_status": "approved_durable",
-                        "invalid_score_input": False,
-                    },
+                {
+                    "employee_key": "tal_1",
+                    "readiness_status": "ready",
+                    "source_mode": "benchmark_internal",
+                    "readiness_score": 60.0,
+                    "benchmark_approval_valid": True,
+                    "benchmark_provenance_status": "approved_durable",
+                    "invalid_score_input": False,
+                },
                 {
                     "employee_key": "tal_2",
-                        "readiness_status": "ready",
-                        "source_mode": "benchmark_internal",
-                        "readiness_score": 60.0,
-                        "benchmark_approval_valid": True,
-                        "benchmark_provenance_status": "approved_durable",
-                        "invalid_score_input": False,
+                    "readiness_status": "ready",
+                    "source_mode": "benchmark_internal",
+                    "readiness_score": 60.0,
+                    "benchmark_approval_valid": True,
+                    "benchmark_provenance_status": "approved_durable",
+                    "invalid_score_input": False,
                 },
             ]
         if dataset == "sap_successfactors_talent_9box":
@@ -874,6 +876,7 @@ async def test_talent_performance_entity_available_when_performance_present(
                     "performance_score": 4.0,
                     "competency_score": None,
                     "aspiration_score": None,
+                    "invalid_score_input": False,
                 },
                 {
                     "user_id": "201",
@@ -956,6 +959,7 @@ def test_talent_roster_row_desempeno_disponible_and_separation():
         "performance_band_available": "high",
         "potential_pending": True,
         "fit_score": None,
+        "invalid_score_input": False,
     }
     row_noperf = {
         "user_id": "2",
@@ -963,6 +967,7 @@ def test_talent_roster_row_desempeno_disponible_and_separation():
         "performance_band_available": None,
         "potential_pending": True,
         "fit_score": None,
+        "invalid_score_input": False,
     }
     row_full = {
         "user_id": "3",
@@ -970,6 +975,7 @@ def test_talent_roster_row_desempeno_disponible_and_separation():
         "performance_band_available": "high",
         "potential_pending": False,
         "fit_score": 85,
+        "invalid_score_input": False,
     }
     masked_perf = control_room_service._sf_talent_masked_roster_row(row_perf)
     assert masked_perf["performance_band_available"] == "high"
@@ -992,7 +998,12 @@ def test_talent_roster_row_desempeno_disponible_and_separation():
 
 def test_talent_roster_row_band_compute_fallback_without_gold_column():
     """Si el gold aun no trae performance_band_available, se calcula desde performance_score."""
-    row = {"user_id": "9", "performance_score": 4.6, "cpa_status": "insufficient_data"}
+    row = {
+        "user_id": "9",
+        "performance_score": 4.6,
+        "cpa_status": "insufficient_data",
+        "invalid_score_input": False,
+    }
     masked = control_room_service._sf_talent_masked_roster_row(row)
     assert masked["performance_band_available"] == "high"
     assert masked["desempeno_disponible"] is True  # perf presente + cpa insuficiente
@@ -1005,24 +1016,28 @@ def test_talent_desempeno_cohort_counts_bands_and_sorts():
             "performance_score": 4.5,
             "performance_band_available": "high",
             "potential_pending": True,
+            "invalid_score_input": False,
         },
         {
             "user_id": "2",
             "performance_score": 3.1,
             "performance_band_available": "medium",
             "potential_pending": True,
+            "invalid_score_input": False,
         },
         {
             "user_id": "3",
             "performance_score": None,
             "performance_band_available": None,
             "potential_pending": True,
+            "invalid_score_input": False,
         },
         {
             "user_id": "4",
             "performance_score": 4.0,
             "performance_band_available": "high",
             "potential_pending": False,
+            "invalid_score_input": False,
         },
     ]
     cohort = control_room_service._sf_talent_desempeno_cohort(rows)
@@ -1046,6 +1061,7 @@ async def test_talent_9box_payload_exposes_desempeno_cohort(monkeypatch):
                     "box_status": "benchmark_internal",
                     "performance_band": "high",
                     "potential_band": "medium",
+                    "invalid_score_input": False,
                 },
                 {
                     "user_id": "2",
@@ -1057,6 +1073,7 @@ async def test_talent_9box_payload_exposes_desempeno_cohort(monkeypatch):
                     "box_status": "benchmark_internal",
                     "performance_band": "medium",
                     "potential_band": "low",
+                    "invalid_score_input": False,
                 },
                 {
                     "user_id": "3",
@@ -1068,6 +1085,7 @@ async def test_talent_9box_payload_exposes_desempeno_cohort(monkeypatch):
                     "box_status": "blocked",
                     "performance_band": "insufficient_data",
                     "potential_band": "insufficient_data",
+                    "invalid_score_input": True,
                 },
             ]
         return []

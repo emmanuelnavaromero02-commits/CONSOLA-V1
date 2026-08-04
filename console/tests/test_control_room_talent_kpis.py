@@ -73,6 +73,7 @@ async def test_sap_successfactors_talent_kpis_returns_aggregates_without_pii(
                     "affected_count": 2,
                     "recommendation": "Habilitar C/P/A.",
                     "status": "recommendation_only",
+                    "source_validation_status": "server_validated_v1",
                 }
             ]
         return []

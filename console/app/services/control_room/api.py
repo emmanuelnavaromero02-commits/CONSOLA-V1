@@ -1289,13 +1289,17 @@ def _sf_talent_movement_bucket(value: Any) -> str:
 @_bind_to_core
 def _sf_talent_masked_roster_row(row: dict[str, Any]) -> dict[str, Any]:
     employee_key = _sf_talent_employee_key(row.get("user_id") or row.get("employee_id"))
-    performance_valid = _sf_talent_score(row.get("performance_score")) is not None
+    provenance_valid = row.get("invalid_score_input") is False
+    performance_valid = (
+        provenance_valid
+        and _sf_talent_score(row.get("performance_score")) is not None
+    )
     scores_valid = _sf_talent_nine_box_scores_valid(row)
     # Banda de desempeno REAL: preferir la columna gold; si aun no existe, calcular desde
     # performance_score (compute-fallback). NUNCA es el proxy benchmark (que vive en
     # performance_band). None si no hay desempeno real.
     band_available = row.get("performance_band_available") if performance_valid else None
-    if band_available not in {"high", "medium", "low"}:
+    if performance_valid and band_available not in {"high", "medium", "low"}:
         band_available = _sf_talent_performance_band(row.get("performance_score"))
     # Potencial pendiente (faltan Competencias y Aspiracion): preferir columna gold; si no,
     # inferir de cpa_status/box_status insuficiente.
@@ -1329,7 +1333,11 @@ def _sf_talent_masked_roster_row(row: dict[str, Any]) -> dict[str, Any]:
         "potential_band": (
             str(row.get("potential_band") or "unknown") if scores_valid else "unknown"
         ),
-        "fit_band": _sf_talent_fit_band(row.get("fit_score")),
+        "fit_band": (
+            _sf_talent_fit_band(row.get("fit_score"))
+            if provenance_valid
+            else "insufficient_data"
+        ),
         "movement_age_bucket": _sf_talent_movement_bucket(row.get("months_since_movement")),
         "data_status": (
             _sf_talent_status(row.get("box_status") or row.get("cpa_status"), "blocked")
@@ -1783,7 +1791,10 @@ def _sf_talent_cpa_readiness_counts(cpa_rows: list[dict[str, Any]]) -> dict[str,
         or not _sf_talent_cpa_scores_valid(row)
     )
     performance_present = sum(
-        1 for row in cpa_rows if _sf_talent_score(row.get("performance_score")) is not None
+        1
+        for row in cpa_rows
+        if row.get("invalid_score_input") is False
+        and _sf_talent_score(row.get("performance_score")) is not None
     )
     return {
         "ready_cpa": ready_cpa,
