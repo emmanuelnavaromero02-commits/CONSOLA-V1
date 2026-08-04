@@ -13,7 +13,9 @@ from app.services.intelligence import (
     monte_carlo_service,
 )
 from app.services.intelligence.gold_fetcher import query_intelligence_dataset_rows
-from app.services.intelligence.monte_carlo import MODEL_VERSION as MONTE_CARLO_MODEL_VERSION
+from app.services.intelligence.monte_carlo import (
+    MODEL_VERSION as MONTE_CARLO_MODEL_VERSION,
+)
 
 
 SOURCE_DATASET = "sap_successfactors_talent_simulation_inputs"
@@ -180,7 +182,13 @@ def _report(
     summary = _json_object((simulation or {}).get("distribution_summary"))
     source_mode = str((source or {}).get("source_mode") or "")
     complete = bool(simulation and orchestration and market)
-    status = "ready" if complete and states and source_mode == "cpa_real" else "partial" if complete else "insufficient_data"
+    status = (
+        "ready"
+        if complete and states and source_mode == "cpa_real"
+        else "partial"
+        if complete
+        else "insufficient_data"
+    )
     state = states[0] if states else {}
     return {
         "status": status,
@@ -211,7 +219,9 @@ def _report(
             "p90": summary.get("p90"),
             "updated_at": (simulation or {}).get("updated_at"),
             "market_evidence_count": sum(
-                1 for item in _evidence_refs(simulation or {}) if item["type"] == "market_context"
+                1
+                for item in _evidence_refs(simulation or {})
+                if item["type"] == "market_context"
             ),
         },
         "bayes": {
@@ -247,7 +257,11 @@ async def get_validation(user: dict) -> dict[str, Any]:
         (
             item
             for item in simulations.get("simulations", [])
-            if item.get("model_version") == MONTE_CARLO_MODEL_VERSION and _json_object(item.get("assumptions")).get("market_validation", {}).get("contract_version") == MODEL_VERSION
+            if item.get("model_version") == MONTE_CARLO_MODEL_VERSION
+            and _json_object(item.get("assumptions"))
+            .get("market_validation", {})
+            .get("contract_version")
+            == MODEL_VERSION
         ),
         None,
     )
@@ -268,9 +282,9 @@ async def run_validation(user: dict) -> dict[str, Any]:
     if not source or str(source.get("input_status")) != "ready":
         raise HTTPException(422, "SuccessFactors validation inputs are not ready")
     market = await _market_snapshot(user)
-    simulation = (await monte_carlo_service.run_simulation(user, _simulation_payload(source)))[
-        "simulation"
-    ]
+    simulation = (
+        await monte_carlo_service.run_simulation(user, _simulation_payload(source))
+    )["simulation"]
     assumption = _market_assumption(simulation)
     if str(assumption.get("as_of")) != str(market.get("as_of")):
         raise HTTPException(409, "market context changed during validation")
@@ -294,6 +308,8 @@ async def run_validation(user: dict) -> dict[str, Any]:
             },
         )
     )["orchestration"]
-    if orchestration.get("action_recommended") or orchestration.get("external_action_id"):
+    if orchestration.get("action_recommended") or orchestration.get(
+        "external_action_id"
+    ):
         raise HTTPException(500, "recommendation-only validation attempted an action")
     return _report(source, simulation, orchestration, await _bayes_states(user))

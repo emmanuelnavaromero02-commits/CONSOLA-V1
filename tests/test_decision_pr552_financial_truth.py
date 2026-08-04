@@ -33,9 +33,7 @@ def test_all_eight_productive_fx_divisors_are_removed() -> None:
         assert "math.round(+n||0)" not in lowered
         assert "+r.costo_directo||0" not in lowered
         assert "+r.revenue_aporte||0" not in lowered
-        assert len(
-            re.findall(r"projectcurrencyid\s*=\s*8\s*then\s+null", lowered)
-        ) == 2
+        assert len(re.findall(r"projectcurrencyid\s*=\s*8\s*then\s+null", lowered)) == 2
         assert (
             len(
                 re.findall(

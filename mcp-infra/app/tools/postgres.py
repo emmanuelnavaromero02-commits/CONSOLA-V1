@@ -5,6 +5,7 @@ These tools are intentionally limited to the operational main database.
 Analytical Gold data must go through Refinement, where the sqlglot AST RLS
 guard rewrites pggold queries with tenant/workspace scope.
 """
+
 from __future__ import annotations
 
 import re
@@ -90,7 +91,9 @@ def _validate_non_destructive_sql(sql: str) -> str:
         raise ValueError("SQL construct rejected by postgres_execute_ddl")
 
     if _CREATE_TABLE_RE.match(normalized):
-        if re.search(r"\bAS\s+SELECT\b", normalized, re.IGNORECASE) or _SELECT_RE.search(normalized):
+        if re.search(
+            r"\bAS\s+SELECT\b", normalized, re.IGNORECASE
+        ) or _SELECT_RE.search(normalized):
             raise ValueError("CREATE TABLE AS SELECT is not allowed")
         return sql
 
@@ -103,10 +106,13 @@ def _validate_non_destructive_sql(sql: str) -> str:
     if _CREATE_SCHEMA_RE.fullmatch(normalized):
         return sql
 
-    raise ValueError("Only CREATE TABLE, CREATE VIEW, CREATE OR REPLACE VIEW, CREATE INDEX and CREATE SCHEMA are allowed")
+    raise ValueError(
+        "Only CREATE TABLE, CREATE VIEW, CREATE OR REPLACE VIEW, CREATE INDEX and CREATE SCHEMA are allowed"
+    )
 
 
 # ── Schema discovery ───────────────────────────────────────────────────────────
+
 
 @tool(
     name="postgres_list_schemas",
@@ -114,7 +120,10 @@ def _validate_non_destructive_sql(sql: str) -> str:
     input_schema={
         "type": "object",
         "properties": {
-            "gold": {"type": "boolean", "description": "Query gold DB instead of main (default false)"},
+            "gold": {
+                "type": "boolean",
+                "description": "Query gold DB instead of main (default false)",
+            },
         },
         "required": [],
     },
@@ -138,8 +147,14 @@ def postgres_list_schemas(gold: bool = False) -> dict:
     input_schema={
         "type": "object",
         "properties": {
-            "schema": {"type": "string", "description": "Schema name (default: public)"},
-            "gold":   {"type": "boolean", "description": "Deprecated; Gold must be queried through Refinement"},
+            "schema": {
+                "type": "string",
+                "description": "Schema name (default: public)",
+            },
+            "gold": {
+                "type": "boolean",
+                "description": "Deprecated; Gold must be queried through Refinement",
+            },
         },
         "required": [],
     },
@@ -164,14 +179,19 @@ def postgres_list_tables(schema: str = "public", gold: bool = False) -> dict:
     input_schema={
         "type": "object",
         "properties": {
-            "table":  {"type": "string"},
+            "table": {"type": "string"},
             "schema": {"type": "string", "description": "Schema (default: public)"},
-            "gold":   {"type": "boolean", "description": "Deprecated; Gold must be queried through Refinement"},
+            "gold": {
+                "type": "boolean",
+                "description": "Deprecated; Gold must be queried through Refinement",
+            },
         },
         "required": ["table"],
     },
 )
-def postgres_get_table_schema(table: str, schema: str = "public", gold: bool = False) -> dict:
+def postgres_get_table_schema(
+    table: str, schema: str = "public", gold: bool = False
+) -> dict:
     conn = _conn(gold)
     with conn.cursor() as cur:
         cur.execute(
@@ -191,6 +211,7 @@ def postgres_get_table_schema(table: str, schema: str = "public", gold: bool = F
 
 # ── Query execution ────────────────────────────────────────────────────────────
 
+
 @tool(
     name="postgres_execute_query",
     description=(
@@ -200,9 +221,12 @@ def postgres_get_table_schema(table: str, schema: str = "public", gold: bool = F
     input_schema={
         "type": "object",
         "properties": {
-            "sql":   {"type": "string", "description": "SELECT statement"},
+            "sql": {"type": "string", "description": "SELECT statement"},
             "limit": {"type": "integer", "description": "Max rows (default 50)"},
-            "gold":  {"type": "boolean", "description": "Deprecated; Gold must be queried through Refinement"},
+            "gold": {
+                "type": "boolean",
+                "description": "Deprecated; Gold must be queried through Refinement",
+            },
         },
         "required": ["sql"],
     },
@@ -264,8 +288,14 @@ def postgres_execute_query(sql: str, limit: int = 50, gold: bool = False) -> dic
     input_schema={
         "type": "object",
         "properties": {
-            "sql":  {"type": "string", "description": "Single allowlisted DDL statement to execute"},
-            "gold": {"type": "boolean", "description": "Deprecated; Gold must be managed through Refinement migrations"},
+            "sql": {
+                "type": "string",
+                "description": "Single allowlisted DDL statement to execute",
+            },
+            "gold": {
+                "type": "boolean",
+                "description": "Deprecated; Gold must be managed through Refinement migrations",
+            },
         },
         "required": ["sql"],
     },
@@ -286,15 +316,20 @@ def postgres_execute_ddl(sql: str, gold: bool = False) -> dict:
     input_schema={
         "type": "object",
         "properties": {
-            "table":  {"type": "string"},
+            "table": {"type": "string"},
             "schema": {"type": "string", "description": "Schema (default: public)"},
-            "n":      {"type": "integer", "description": "Rows (default 10)"},
-            "gold":   {"type": "boolean", "description": "Deprecated; Gold must be queried through Refinement"},
+            "n": {"type": "integer", "description": "Rows (default 10)"},
+            "gold": {
+                "type": "boolean",
+                "description": "Deprecated; Gold must be queried through Refinement",
+            },
         },
         "required": ["table"],
     },
 )
-def postgres_get_sample(table: str, schema: str = "public", n: int = 10, gold: bool = False) -> dict:
+def postgres_get_sample(
+    table: str, schema: str = "public", n: int = 10, gold: bool = False
+) -> dict:
     # Sprint v1.35 (audit B3 P0): validate schema/table as SQL identifiers
     # and coerce n to a bounded int before f-stringing them into the
     # query. The pre-v1.35 version closed the surrounding ``"..."`` with
@@ -304,7 +339,7 @@ def postgres_get_sample(table: str, schema: str = "public", n: int = 10, gold: b
     n = validate_bounded_int(n, "n", lo=1, hi=100)
     if replicon_artifact_block_reason(f"{schema}.{table}", postgres=True):
         return {"error": "Noncurrent Replicon WIP artifacts are unavailable"}
-    sql  = f'SELECT * FROM "{schema}"."{table}" LIMIT {n}'
+    sql = f'SELECT * FROM "{schema}"."{table}" LIMIT {n}'
     conn = _conn(gold)
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(sql)
