@@ -13,11 +13,18 @@ READINESS = "sap_successfactors_talent_readiness"
 NINE_BOX = "sap_successfactors_talent_9box"
 SIMULATION_INPUTS = "sap_successfactors_talent_simulation_inputs"
 BENCHMARK = "sap_successfactors_talent_benchmark_internal"
+BENCHMARK_HEAD = "33333333-3333-3333-3333-333333333333"
 
 
-def _project(dataset: str, row: dict, authority: dict | None = None) -> dict:
+def _project(
+    dataset: str,
+    row: dict,
+    authority: dict | None = None,
+    *,
+    benchmark_head: str = "",
+) -> dict:
     return gold_fetcher._project_operational_truth_rows(
-        dataset, [row], authority or {}
+        dataset, [row], authority or {}, benchmark_head=benchmark_head
     )[0]
 
 
@@ -29,6 +36,14 @@ def _ledger(row: dict, **overrides) -> dict:
         "actor_user_id": row.get("approved_by"),
         "evidence_ref": row.get("approval_evidence_ref"),
         "authorization_ref": row.get("approval_authorization_ref"),
+        "authorization_role_id": 9,
+        "evidence_digest": "a" * 64,
+        "evidence_digest_version": 1,
+        "evidence_item_count": 1,
+        "authorization_digest": "b" * 64,
+        "dataset": BENCHMARK,
+        "materialization_head": BENCHMARK_HEAD,
+        "approved_at": row.get("approved_at"),
         "approval_status": "approved",
         "recorded_by_server": True,
     }
@@ -74,22 +89,32 @@ def test_durable_readiness_remains_usable_and_unchanged() -> None:
         "readiness_status": "ready",
         "benchmark_approval_valid": True,
         "benchmark_provenance_status": "approved_durable",
+        "benchmark_materialization_head": BENCHMARK_HEAD,
         "benchmark_raw_score": 71.0,
         "benchmark_score": 88.0,
         "readiness_score": 88.0,
         "confidence": 0.6,
     }
     expected = deepcopy(durable)
-    ledger = {
-        ("tenant-a", "workspace-a"): {
-            "approval_status": "approved",
-            "recorded_by_server": True,
+    ledger = _ledger(
+        {
+            "tenant_id": "tenant-a",
+            "workspace_id": "workspace-a",
+            "approved_by": "42",
+            "approved_at": "2026-07-30T10:00:00Z",
+            "approval_evidence_ref": "evidence-1",
+            "approval_authorization_ref": "authorization-1",
         }
-    }
+    )
 
     # Without the ledger entry the derived row degrades; with it, it survives.
     assert _project(READINESS, deepcopy(durable))["readiness_status"] != "ready"
-    assert _project(READINESS, durable, ledger) == expected
+    assert (
+        _project(
+            READINESS, durable, ledger, benchmark_head=BENCHMARK_HEAD
+        )
+        == expected
+    )
 
 
 def test_historical_nine_box_cannot_publish_classification() -> None:
@@ -214,7 +239,15 @@ def test_benchmark_row_accepts_complete_verified_server_attestation() -> None:
 
     # The row shape alone is not enough: the ledger must corroborate it.
     assert _project(BENCHMARK, deepcopy(valid))["approved"] is False
-    assert _project(BENCHMARK, deepcopy(valid), _ledger(valid)) == valid
+    assert (
+        _project(
+            BENCHMARK,
+            deepcopy(valid),
+            _ledger(valid),
+            benchmark_head=BENCHMARK_HEAD,
+        )
+        == valid
+    )
 
 
 @pytest.mark.parametrize(

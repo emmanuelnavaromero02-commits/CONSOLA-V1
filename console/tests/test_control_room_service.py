@@ -532,7 +532,7 @@ async def test_dashboard_includes_successfactors_talent_gold_signals(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_sap_successfactors_talent_9box_payload_is_aggregate(monkeypatch):
+async def test_sap_successfactors_talent_9box_rebuilds_aggregate_from_detail(monkeypatch):
     async def fake_rows(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
         if dataset == "sap_successfactors_talent_9box_operational":
             return [
@@ -544,6 +544,18 @@ async def test_sap_successfactors_talent_9box_payload_is_aggregate(monkeypatch):
                     "blocked_count": 0,
                     "box_status": "ready",
                 }
+            ]
+        if dataset == "sap_successfactors_talent_9box":
+            return [
+                {
+                    "user_id": f"employee-{index}",
+                    "box_key": "estrella",
+                    "box_status": "ready",
+                    "source_mode": "cpa_real",
+                    "performance_score": 100.0,
+                    "potential_score": 100.0,
+                }
+                for index in range(3)
             ]
         return []
 
@@ -574,6 +586,18 @@ async def test_sap_successfactors_talent_9box_accepts_internal_reference(monkeyp
                     "blocked_count": 0,
                     "box_status": "benchmark_internal",
                 }
+            ]
+        if dataset == "sap_successfactors_talent_9box":
+            return [
+                {
+                    "user_id": f"reference-{index}",
+                    "box_key": "core",
+                    "box_status": "ready",
+                    "source_mode": "benchmark_internal",
+                    "performance_score": 60.0,
+                    "potential_score": 60.0,
+                }
+                for index in range(8)
             ]
         return []
 
@@ -613,6 +637,27 @@ async def test_sap_successfactors_talent_kpis_reads_operational_blocked_count_al
                     "source_mode": "benchmark_internal",
                 }
             ]
+        if dataset == "sap_successfactors_talent_9box":
+            return [
+                {
+                    "box_key": "core",
+                    "box_status": "ready",
+                    "performance_score": 60.0,
+                    "potential_score": 60.0,
+                }
+                for _ in range(1288)
+            ]
+        if dataset == "sap_successfactors_talent_readiness":
+            return [
+                {
+                    "source_mode": "benchmark_internal",
+                    "readiness_status": "ready",
+                    "readiness_score": 60.0,
+                    "benchmark_approval_valid": True,
+                    "benchmark_provenance_status": "approved_durable",
+                }
+                for _ in range(1288)
+            ]
         return []
 
     monkeypatch.setattr(control_room_service, "query_dataset_rows", fake_rows)
@@ -635,23 +680,32 @@ async def test_sap_successfactors_talent_kpis_use_readiness_when_operational_row
             return [{"employee_key": "tal_1"}, {"employee_key": "tal_2"}]
         if dataset == "sap_successfactors_talent_readiness":
             return [
-                {
-                    "employee_key": "tal_1",
-                    "readiness_status": "benchmark_internal",
-                    "source_mode": "benchmark_internal",
-                },
+                    {
+                        "employee_key": "tal_1",
+                        "readiness_status": "ready",
+                        "source_mode": "benchmark_internal",
+                        "readiness_score": 60.0,
+                        "benchmark_approval_valid": True,
+                        "benchmark_provenance_status": "approved_durable",
+                    },
                 {
                     "employee_key": "tal_2",
-                    "readiness_status": "benchmark_internal",
-                    "source_mode": "benchmark_internal",
+                        "readiness_status": "ready",
+                        "source_mode": "benchmark_internal",
+                        "readiness_score": 60.0,
+                        "benchmark_approval_valid": True,
+                        "benchmark_provenance_status": "approved_durable",
                 },
             ]
         if dataset == "sap_successfactors_talent_9box":
             return [
                 {
                     "employee_key": "tal_1",
-                    "box_status": "benchmark_internal",
+                    "box_key": "core",
+                    "box_status": "ready",
                     "source_mode": "benchmark_internal",
+                    "performance_score": 60.0,
+                    "potential_score": 60.0,
                 }
             ]
         if dataset == "sap_successfactors_talent_operational_features":
@@ -700,14 +754,18 @@ async def test_sap_successfactors_talent_9box_falls_back_to_detailed_rows(monkey
                 {
                     "employee_key": "tal_1",
                     "box_key": "core",
-                    "box_status": "benchmark_internal",
+                    "box_status": "ready",
                     "source_mode": "benchmark_internal",
+                    "performance_score": 60.0,
+                    "potential_score": 60.0,
                 },
                 {
                     "employee_key": "tal_2",
                     "box_key": "estrella",
                     "box_status": "ready",
                     "source_mode": "cpa_real",
+                    "performance_score": 100.0,
+                    "potential_score": 100.0,
                 },
             ]
         return []
@@ -742,6 +800,8 @@ async def test_sap_successfactors_talent_9box_roster_masks_people(monkeypatch):
                     "performance_band": "high",
                     "potential_band": "high",
                     "fit_score": 91.4,
+                    "performance_score": 100.0,
+                    "potential_score": 100.0,
                     "box_status": "ready",
                 },
                 {
@@ -757,6 +817,8 @@ async def test_sap_successfactors_talent_9box_roster_masks_people(monkeypatch):
                     "performance_band": "high",
                     "potential_band": "high",
                     "fit_score": 82,
+                    "performance_score": 100.0,
+                    "potential_score": 100.0,
                     "box_status": "ready",
                 },
             ]

@@ -1,21 +1,4 @@
-"""Closed DuckDB reader policy for cartridge-supplied SELECT SQL.
-
-The scoping rewriter in ``app.tools.cartridges`` is a regex: it inspects the
-first scoped literal and leaves it alone once it already carries a
-``tenant_id``. DuckDB evaluates the *effective* argument, so slicing,
-concatenation, casts or nested calls can build a path the rewriter never saw
-— including ``/etc/passwd`` or another workspace's prefix.
-
-This module replaces that inspection with a closed allowlist over the parsed
-tree. A storage reader may only receive direct string literals, and the
-resulting path must resolve, server side, to the caller's own
-tenant/workspace under an allowed layer of the cartridge it asked for.
-Anything else — concatenation, subscripting, casts, parameters, nested
-functions, macros, replacement scans, dynamic lists, arithmetic, CALL/COPY, or
-any construct not recognised here — is denied.
-
-Errors never carry the SQL, the path or any secret.
-"""
+"""Closed DuckDB reader policy for cartridge-supplied SELECT SQL."""
 
 from __future__ import annotations
 
@@ -25,7 +8,12 @@ import unicodedata
 
 import sqlglot
 from sqlglot import exp
-from sqlglot.tokens import TokenType, Tokenizer
+from sqlglot.tokens import Tokenizer
+
+from app.sql_scope_policy import (
+    has_adjacent_relation_string_scan,
+    resolved_cte_table_ids,
+)
 
 
 POLICY_ERROR = "SQL blocked by safety policy"
@@ -47,6 +35,9 @@ _READER_OPTIONS = {
     "auto_detect",
 }
 _ALLOWED_LAYERS = {"raw", "silver", "gold"}
+SHARED_RAW_ROOTS_BY_CARTRIDGE: dict[str, frozenset[str]] = {
+    "replicon": frozenset({"fx_rates", "excel_billing"}),
+}
 _STORAGE_URI_RE = re.compile(
     r"^s3://(?P<bucket>\{bucket\}|[a-z0-9][a-z0-9.-]{0,62})/"
     r"(?P<key>[A-Za-z0-9_.*=:/-]+)$"
@@ -122,6 +113,7 @@ def _resolve_scope(
     tenant_id: str,
     workspace_id: str,
     shared_roots: frozenset[str],
+    allow_server_resolution: bool,
 ) -> StorageRead:
     """Validate layer, cartridge root and scope on the effective path."""
     key = _STORAGE_URI_RE.fullmatch(path).group("key")
@@ -135,6 +127,11 @@ def _resolve_scope(
         _deny()
     scope = _SCOPE_RE.search(key)
     if not scope:
+        # The public contract accepts a canonical cartridge path and inserts
+        # tenant/workspace server-side.  This exception is only for the first
+        # pass; the independent pre-execute pass requires the effective scope.
+        if allow_server_resolution:
+            return StorageRead(path=path, layer=layer, root=root)
         _deny()
     if scope.group("tenant") != tenant_id or scope.group("workspace") != workspace_id:
         _deny()
@@ -187,11 +184,7 @@ def _relation_functions(tree: exp.Expression) -> list[exp.Func]:
             seen.add(id(function))
             functions.append(function)
 
-    cte_names = {
-        str(cte.alias_or_name or "").casefold()
-        for cte in tree.find_all(exp.CTE)
-        if cte.alias_or_name
-    }
+    resolved_ctes = resolved_cte_table_ids(tree)
     for table in tree.find_all(exp.Table):
         relation = table.this
         if isinstance(relation, exp.Func):
@@ -199,8 +192,7 @@ def _relation_functions(tree: exp.Expression) -> list[exp.Func]:
             continue
         if table.db or table.catalog:
             _deny()
-        name = str(table.name or "")
-        if not name.isascii() or name.casefold() not in cte_names:
+        if id(table) not in resolved_ctes:
             _deny()
     for owner in (*tree.find_all(exp.From), *tree.find_all(exp.Join)):
         relation = owner.this
@@ -213,36 +205,6 @@ def _relation_functions(tree: exp.Expression) -> list[exp.Func]:
     return functions
 
 
-def _reject_adjacent_relation_strings(tree: exp.Expression, tokens: list) -> None:
-    """Reject DuckDB E-string replacement scans obscured by parser normalization."""
-    ambiguous: set[tuple[str, str]] = set()
-    for table in tree.find_all(exp.Table):
-        if table.args.get("db") is not None or table.args.get("catalog") is not None:
-            continue
-        relation = table.this
-        alias = table.args.get("alias")
-        alias_id = alias.this if isinstance(alias, exp.TableAlias) else None
-        if (
-            isinstance(relation, exp.Identifier)
-            and not relation.args.get("quoted")
-            and isinstance(alias_id, exp.Identifier)
-            and alias_id.args.get("quoted")
-        ):
-            ambiguous.add(
-                (str(relation.this or "").casefold(), str(alias_id.this or ""))
-            )
-    if not ambiguous:
-        return
-    for left, right in zip(tokens, tokens[1:]):
-        if (
-            left.token_type is TokenType.VAR
-            and right.token_type is TokenType.STRING
-            and left.end + 1 == right.start
-            and (left.text.casefold(), right.text) in ambiguous
-        ):
-            _deny()
-
-
 def _validate(
     sql: str,
     *,
@@ -251,6 +213,7 @@ def _validate(
     workspace_id: str,
     expected_bucket: str | None,
     shared_roots: frozenset[str],
+    allow_server_resolution: bool,
 ) -> tuple[StorageRead, ...]:
     if not tenant_id or not workspace_id:
         _deny()
@@ -270,9 +233,15 @@ def _validate(
     # CALL, COPY, PRAGMA, ATTACH and every other statement kind fail here.
     if not isinstance(tree, exp.Query):
         _deny()
+    # SQLGlot's scope walker logs the complete PIVOT expression (including
+    # replacement-scan paths) when it cannot traverse it. Reject before that
+    # helper so denied SQL cannot reach logs as a warning.
+    if isinstance(tree, exp.Pivot) or next(tree.find_all(exp.Pivot), None):
+        _deny()
     if list(tree.find_all(exp.Placeholder)) or list(tree.find_all(exp.Parameter)):
         _deny()
-    _reject_adjacent_relation_strings(tree, tokens)
+    if has_adjacent_relation_string_scan(tree, tokens):
+        _deny()
     for function in tree.find_all(exp.Anonymous):
         if _canonical_name(function) in _SENSITIVE_SCALAR_FUNCTIONS:
             _deny()
@@ -292,6 +261,7 @@ def _validate(
                     tenant_id=tenant_id,
                     workspace_id=workspace_id,
                     shared_roots=shared_roots,
+                    allow_server_resolution=allow_server_resolution,
                 )
             )
     return tuple(reads)
@@ -305,6 +275,7 @@ def validate_cartridge_reader_query(
     workspace_id: str,
     expected_bucket: str | None = None,
     shared_roots: frozenset[str] = frozenset(),
+    allow_server_resolution: bool = False,
 ) -> tuple[StorageRead, ...]:
     """Validate reader arguments and their effective scope, or fail closed."""
     try:
@@ -315,6 +286,7 @@ def validate_cartridge_reader_query(
             workspace_id=workspace_id,
             expected_bucket=expected_bucket,
             shared_roots=shared_roots,
+            allow_server_resolution=allow_server_resolution,
         )
     except ReaderPolicyError:
         raise

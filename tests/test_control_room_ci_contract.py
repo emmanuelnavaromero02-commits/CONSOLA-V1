@@ -9,7 +9,7 @@ WORKFLOW = ROOT / ".github/workflows/control-room-postgres-rls.yml"
 PREPARE_SCRIPT = ROOT / "scripts/prepare_refinement_duckdb_ci.sh"
 MCP_REQUIREMENTS = ROOT / "mcp-infra/requirements.txt"
 MCP_DOCKERFILE = ROOT / "mcp-infra/Dockerfile"
-FOCAL_MINIMUM = 9589
+FOCAL_MINIMUM = 9620
 POSTGRES_MINIMUM = 276
 OPERATIONAL_TRUTH_TESTS = (
     "console/tests/test_operational_truth_statistical_fallbacks.py",
@@ -36,6 +36,7 @@ OPERATIONAL_TRUTH_TESTS = (
     "tests/test_cartridge_query_kb_reader_sandbox.py",
     "tests/test_talent_benchmark_approval_authority.py",
     "tests/test_talent_nine_box_fail_closed.py",
+    "tests/test_talent_nine_box_downstream.py",
 )
 TENANT_EXECUTE_ISOLATION = ROOT / (
     "tests/test_control_room_live_postgres_tenant_execute_isolation.py"

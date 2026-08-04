@@ -18,13 +18,16 @@ performance AS (
     SELECT
         user_id_hash,
         MAX(
-            CASE
-                WHEN performance_rating IS NULL THEN NULL
-                WHEN performance_rating <= 5 THEN performance_rating * 20
-                ELSE performance_rating
-            END
+            talent_score_scale(performance_rating) * 20
         ) AS performance_score,
-        BOOL_OR(performance_status = 'ready') AS has_performance
+        BOOL_OR(
+            performance_status = 'ready'
+            AND talent_score_is_valid(performance_rating)
+        ) AS has_performance,
+        BOOL_OR(
+            performance_rating IS NOT NULL
+            AND NOT talent_score_is_valid(performance_rating)
+        ) AS saw_invalid_performance
     FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_performance_cycle/**/*.parquet',
                       hive_partitioning = true,
                       union_by_name = true)
@@ -56,8 +59,24 @@ SELECT
     NULL::DOUBLE AS competency_score,
     performance.performance_score AS performance_score,
     NULL::DOUBLE AS aspiration_score,
-    'insufficient_data' AS cpa_status,
-    CASE WHEN COALESCE(performance.has_performance, FALSE) THEN 'partial' ELSE 'foundation_ready' END AS profile_status,
+    (COALESCE(performance.saw_invalid_performance, FALSE)
+     AND NOT COALESCE(performance.has_performance, FALSE))
+        AS invalid_performance_input,
+    FALSE AS invalid_competency_input,
+    FALSE AS invalid_aspiration_input,
+    (COALESCE(performance.saw_invalid_performance, FALSE)
+     AND NOT COALESCE(performance.has_performance, FALSE)) AS invalid_score_input,
+    CASE
+        WHEN COALESCE(performance.saw_invalid_performance, FALSE)
+             AND NOT COALESCE(performance.has_performance, FALSE) THEN 'blocked'
+        ELSE 'insufficient_data'
+    END AS cpa_status,
+    CASE
+        WHEN COALESCE(performance.saw_invalid_performance, FALSE)
+             AND NOT COALESCE(performance.has_performance, FALSE) THEN 'blocked'
+        WHEN COALESCE(performance.has_performance, FALSE) THEN 'partial'
+        ELSE 'foundation_ready'
+    END AS profile_status,
     CASE
         WHEN COALESCE(performance.has_performance, FALSE)
             THEN '["missing_competency","missing_aspiration"]'
@@ -155,6 +174,19 @@ WITH emp AS (
     FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_employee_profile/**/*.parquet',
                       hive_partitioning = true,
                       union_by_name = true)
+),
+normalized AS (
+    SELECT emp.*,
+        (
+            COALESCE(invalid_score_input, FALSE)
+            OR (competency_score IS NOT NULL
+                AND NOT talent_percent_is_valid(competency_score))
+            OR (performance_score IS NOT NULL
+                AND NOT talent_percent_is_valid(performance_score))
+            OR (aspiration_score IS NOT NULL
+                AND NOT talent_percent_is_valid(aspiration_score))
+        ) AS invalid_score_detected
+    FROM emp
 )
 SELECT
     tenant_id,
@@ -168,25 +200,34 @@ SELECT
     direct_reports,
     tenure_months,
     COALESCE(job_code, '(sin rol)') AS role_name,
-    TRY_CAST(competency_score AS DOUBLE) AS competency_score,
-    TRY_CAST(performance_score AS DOUBLE) AS performance_score,
-    TRY_CAST(aspiration_score AS DOUBLE) AS aspiration_score,
-    NULL::DOUBLE AS competency_100,
-    NULL::DOUBLE AS performance_100,
-    NULL::DOUBLE AS aspiration_100,
+    CASE WHEN talent_percent_is_valid(competency_score)
+        THEN TRY_CAST(competency_score AS DOUBLE) END AS competency_score,
+    CASE WHEN talent_percent_is_valid(performance_score)
+        THEN TRY_CAST(performance_score AS DOUBLE) END AS performance_score,
+    CASE WHEN talent_percent_is_valid(aspiration_score)
+        THEN TRY_CAST(aspiration_score AS DOUBLE) END AS aspiration_score,
+    CASE WHEN talent_percent_is_valid(competency_score)
+        THEN TRY_CAST(competency_score AS DOUBLE) END AS competency_100,
+    CASE WHEN talent_percent_is_valid(performance_score)
+        THEN TRY_CAST(performance_score AS DOUBLE) END AS performance_100,
+    CASE WHEN talent_percent_is_valid(aspiration_score)
+        THEN TRY_CAST(aspiration_score AS DOUBLE) END AS aspiration_100,
+    invalid_score_detected AS invalid_score_input,
     NULL::DOUBLE AS fit_score,
-    'insufficient_data' AS cpa_status,
+    CASE WHEN invalid_score_detected THEN 'blocked'
+         ELSE 'insufficient_data' END AS cpa_status,
     'partial' AS role_profile_status,
     'blocked' AS required_skills_status,
     -- GATE 3 (Fase B): blockers condicionales por componente (aqui C/P/A_100 son NULL
     -- por fallback foundation-safe, asi que emite los 3; mismo patron que cpa_scores).
+    CASE WHEN invalid_score_detected THEN '["invalid_score_input"]' ELSE
     to_json(list_filter([
         CASE WHEN competency_100 IS NULL THEN 'KB-COMPETENCIAS blocked' END,
         CASE WHEN performance_100 IS NULL THEN 'KB-DESEMPENO blocked' END,
         CASE WHEN aspiration_100 IS NULL THEN 'KB-ASPIRACION blocked' END
-    ], x -> x IS NOT NULL))::VARCHAR AS blockers,
+    ], x -> x IS NOT NULL))::VARCHAR END AS blockers,
     CURRENT_TIMESTAMP AS generated_at
-FROM emp
+FROM normalized
 ORDER BY user_id
 """,
 }

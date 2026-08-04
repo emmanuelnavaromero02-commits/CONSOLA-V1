@@ -82,6 +82,26 @@ EXFIL_ARITHMETIC = (
     "SELECT * FROM read_csv('/etc/passwd' || repeat('a', 1 + 1), header=false)"
 )
 
+# SQLGlot represents DuckDB's PIVOT replacement scan as a plain Table.  A CTE
+# with the same name in another lexical scope must not make that local file
+# reference look like a visible CTE.
+EXFIL_PIVOT_SCOPE_LAUNDERING = f'''WITH decoy AS (
+  SELECT * FROM read_parquet(
+    's3://lakehouse/raw/sap_successfactors/x/tenant_id={TENANT}/workspace_id={WORKSPACE}/x.parquet'
+  )
+),
+evil AS (
+  PIVOT '/usr/local/lib/python3.12/site-packages/pyarrow/tests/data/parquet/v0.7.1.parquet'
+  ON cut USING count(*)
+)
+SELECT count(*) AS n
+FROM evil
+WHERE EXISTS (
+  WITH "/usr/local/lib/python3.12/site-packages/pyarrow/tests/data/parquet/v0.7.1.parquet"
+       AS (SELECT 1)
+  SELECT 1
+)'''
+
 BLOCKED = [
     pytest.param(EXFIL_SLICE_CONCAT, id="slice-then-concat"),
     pytest.param(EXFIL_ENVIRON, id="proc-self-environ"),
@@ -96,6 +116,7 @@ BLOCKED = [
     pytest.param(EXFIL_LIST, id="dynamic-list"),
     pytest.param(EXFIL_ARITHMETIC, id="arithmetic"),
     pytest.param(EXFIL_CROSS_WORKSPACE, id="cross-workspace-uri"),
+    pytest.param(EXFIL_PIVOT_SCOPE_LAUNDERING, id="pivot-cte-scope-laundering"),
 ]
 
 VALID = [
@@ -107,6 +128,11 @@ VALID = [
         id="scoped-parquet",
     ),
     pytest.param("SELECT 1 AS n", id="no-reader"),
+    pytest.param(
+        "SELECT * FROM read_parquet("
+        "'s3://{bucket}/raw/sap_successfactors/x/**/*.parquet')",
+        id="server-resolved-parquet",
+    ),
 ]
 
 
@@ -219,3 +245,27 @@ def test_second_validation_runs_immediately_before_execute(monkeypatch):
 
     assert spy.executed == []
     assert result.get("error") or result.get("data_status") == "unavailable"
+
+
+def test_public_mcp_guard_uses_the_same_closed_ast_policy(monkeypatch, caplog):
+    """The HTTP boundary must reject the PIVOT bypass before tool dispatch."""
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("INTERNAL_API_KEY", "m" * 32)
+    monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", "s" * 32)
+    tools = _load_cartridge_tools(monkeypatch)
+    main = importlib.import_module("app.main")
+
+    with pytest.raises(Exception) as excinfo:
+        main._validate_cartridge_query_sql(
+            _context(), "sap_successfactors", EXFIL_PIVOT_SCOPE_LAUNDERING
+        )
+
+    # FastAPI's public exception is deliberately generic and must not retain a
+    # parser/path exception as either an explicit or implicit cause.
+    assert getattr(excinfo.value, "status_code", None) == 403
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__context__ is None
+    assert "/usr/local" not in str(excinfo.value)
+    assert "/usr/local" not in caplog.text
+    assert "PIVOT" not in caplog.text
+    assert tools is not None

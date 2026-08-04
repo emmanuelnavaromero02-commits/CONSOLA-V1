@@ -138,7 +138,9 @@ async def _wait_for_schema(dsn: str, container_id: str) -> None:
                         to_regclass('public.control_room_items') AS control_room_items,
                         to_regclass('public.pipeline_runs') AS pipeline_runs,
                         to_regclass('public.rag_sources') AS rag_sources,
-                        to_regclass('public.entity_watermarks') AS entity_watermarks
+                        to_regclass('public.entity_watermarks') AS entity_watermarks,
+                        to_regclass('public.talent_benchmark_approvals')
+                            AS talent_benchmark_approvals
                     """
                 )
                 if all(required.values()):

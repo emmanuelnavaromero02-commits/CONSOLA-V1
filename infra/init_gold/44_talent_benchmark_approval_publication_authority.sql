@@ -13,23 +13,23 @@
 -- historical rows wherever they live, and installs a deferred constraint trigger
 -- so every publication and republication re-imposes the benchmark rule.
 
--- Durable approval predicate. A benchmark row may only claim approval with a
--- server-recorded numeric actor, a timestamp, evidence and a verified
--- authorization reference.
+-- Gold carries benchmark inputs, never approval authority.  Approval is
+-- overlaid at read time from the scoped Console ledger for this exact head.
+-- Therefore every published row must remain explicitly unreviewed, regardless
+-- of how complete its self-asserted approval_* shape looks.
 CREATE OR REPLACE FUNCTION omega_publication.talent_approval_predicate()
 RETURNS text
 LANGUAGE sql IMMUTABLE
 AS $predicate$
-  SELECT $$COALESCE((approved=TRUE
-    AND approved_by IS NOT NULL
-    AND approved_at IS NOT NULL
-    AND trim(approved_by::text) ~ '^[1-9][0-9]*$'
-    AND approval_actor_source='server'
-    AND approval_recorded_by_server=TRUE
-    AND NULLIF(trim(approval_evidence_ref), '') IS NOT NULL
-    AND NULLIF(trim(approval_authorization_ref), '') IS NOT NULL
-    AND approval_authorization_verified=TRUE
-    AND approval_status='approved'), FALSE)$$;
+  SELECT $$COALESCE((approved IS NOT TRUE
+    AND approved_by IS NULL
+    AND approved_at IS NULL
+    AND approval_actor_source IS NULL
+    AND approval_recorded_by_server IS NOT TRUE
+    AND approval_evidence_ref IS NULL
+    AND approval_authorization_ref IS NULL
+    AND approval_authorization_verified IS NOT TRUE
+    AND approval_status='unreviewed'), FALSE)$$;
 $predicate$;
 
 ALTER FUNCTION omega_publication.talent_approval_predicate() OWNER TO omega_gold_owner;
@@ -48,6 +48,9 @@ BEGIN
   END IF;
 
   IF p_dataset = 'sap_successfactors_talent_benchmark_internal' THEN
+    EXECUTE format('ALTER TABLE %s ADD COLUMN IF NOT EXISTS approval_source TEXT', target);
+    EXECUTE format('ALTER TABLE %s ADD COLUMN IF NOT EXISTS benchmark_version TEXT', target);
+    EXECUTE format('ALTER TABLE %s ADD COLUMN IF NOT EXISTS blockers TEXT', target);
     EXECUTE format('ALTER TABLE %s ADD COLUMN IF NOT EXISTS approval_actor_source TEXT', target);
     EXECUTE format('ALTER TABLE %s ADD COLUMN IF NOT EXISTS approval_recorded_by_server BOOLEAN NOT NULL DEFAULT FALSE', target);
     EXECUTE format('ALTER TABLE %s ADD COLUMN IF NOT EXISTS approval_evidence_ref TEXT', target);
@@ -62,7 +65,7 @@ BEGIN
       'approval_status=''unreviewed'', '
       'benchmark_version=''talent_benchmark_internal.v1.unreviewed'', '
       'blockers=''["benchmark_internal_unreviewed"]'' '
-      'WHERE NOT %s', target, omega_publication.talent_approval_predicate()
+      'WHERE NOT (%s)', target, omega_publication.talent_approval_predicate()
     );
 
   ELSIF p_dataset = 'sap_successfactors_talent_readiness' THEN
@@ -106,9 +109,8 @@ ALTER FUNCTION omega_publication.talent_approval_repair(text, text, text)
 REVOKE ALL ON FUNCTION omega_publication.talent_approval_repair(text, text, text)
   FROM PUBLIC, omega_refinement_gold, omega_gold_publisher, omega_gold_verifier;
 
--- Install (or reinstall) the CHECK on a benchmark relation and validate it. A
--- relation whose rows claim approval without durable authority fails here, which
--- is what makes an initial publication or a republication fail closed.
+-- Install (or reinstall) the CHECK before rows land.  No Gold row can mint
+-- authority; even a syntactically complete approval claim fails here.
 CREATE OR REPLACE FUNCTION omega_publication.talent_approval_constraint(
   p_schema text, p_relation text
 ) RETURNS void
@@ -134,7 +136,7 @@ BEGIN
   );
   EXECUTE format(
     'ALTER TABLE %s ADD CONSTRAINT talent_benchmark_approval_authority_check '
-    'CHECK ((approved IS NOT TRUE AND approval_status=''unreviewed'') OR %s) NOT VALID',
+    'CHECK (%s) NOT VALID',
     target, omega_publication.talent_approval_predicate()
   );
   EXECUTE format(

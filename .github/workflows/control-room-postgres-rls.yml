@@ -165,6 +165,7 @@ jobs:
             tests/test_cartridge_query_kb_reader_sandbox.py \
             tests/test_talent_benchmark_approval_authority.py \
             tests/test_talent_nine_box_fail_closed.py \
+            tests/test_talent_nine_box_downstream.py \
             tests/test_v1_router_mount.py
 
       - name: Run live PostgreSQL/RLS tests
@@ -241,7 +242,7 @@ jobs:
               if any(bad.values()):
                   raise SystemExit(f"{label} JUnit is not clean: {bad}")
 
-          verify_junit("/tmp/control-room-focal.xml", minimum=9589, label="Focal Control Room")
+          verify_junit("/tmp/control-room-focal.xml", minimum=9620, label="Focal Control Room")
           verify_junit("/tmp/control-room-postgres-rls.xml", minimum=276, label="Live PostgreSQL/RLS")
           PY
 

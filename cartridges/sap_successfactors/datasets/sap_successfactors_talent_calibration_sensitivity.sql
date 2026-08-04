@@ -12,20 +12,25 @@ scored AS (
     SELECT
         box_key,
         box_status,
-        CASE
-            WHEN TRY_CAST(performance_score AS DOUBLE) IS NULL THEN NULL
-            WHEN TRY_CAST(performance_score AS DOUBLE) > 5 THEN TRY_CAST(performance_score AS DOUBLE) / 20
-            ELSE TRY_CAST(performance_score AS DOUBLE)
-        END AS performance_scale,
-        TRY_CAST(potential_score AS DOUBLE) AS potential_scale
+        COALESCE(invalid_score_input, FALSE) AS invalid_score_input,
+        talent_percent_scale(performance_score) AS performance_scale,
+        talent_percent_scale(potential_score) AS potential_scale
     FROM nine_box
 ),
 metrics AS (
     SELECT
         COUNT(*) AS employee_count,
-        COUNT(*) FILTER (WHERE box_status = 'ready') AS classified_count,
         COUNT(*) FILTER (
             WHERE box_status = 'ready'
+              AND NOT invalid_score_input
+              AND performance_scale IS NOT NULL
+              AND potential_scale IS NOT NULL
+        ) AS classified_count,
+        COUNT(*) FILTER (
+            WHERE box_status = 'ready'
+              AND NOT invalid_score_input
+              AND performance_scale IS NOT NULL
+              AND potential_scale IS NOT NULL
               AND (
                     ABS(performance_scale - 3.0) <= 0.30
                  OR ABS(performance_scale - 4.0) <= 0.30

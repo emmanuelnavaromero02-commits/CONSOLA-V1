@@ -9,17 +9,18 @@ WITH readiness AS (
                       hive_partitioning = true, union_by_name = true)
 ),
 scored AS (
-    -- Every score goes through talent_score_scale, which rejects non-finite and
-    -- out-of-domain values before any band is derived. A NULL here propagates
-    -- into insufficient_data/blocked instead of a fabricated box.
+    -- Readiness scores are percentages. Convert that explicit domain to 0..5
+    -- exactly once; a legitimate 5% remains low rather than becoming 5/5.
     SELECT *,
-        talent_score_scale(performance_score) AS performance_scale,
+        CASE WHEN COALESCE(invalid_score_input, FALSE) THEN NULL
+             ELSE talent_percent_scale(performance_score) END AS performance_scale,
         CASE
-            WHEN talent_score_scale(competency_score) IS NULL
-              OR talent_score_scale(aspiration_score) IS NULL THEN NULL
+            WHEN COALESCE(invalid_score_input, FALSE) THEN NULL
+            WHEN talent_percent_scale(competency_score) IS NULL
+              OR talent_percent_scale(aspiration_score) IS NULL THEN NULL
             ELSE
-                0.60 * talent_score_scale(competency_score)
-                + 0.40 * talent_score_scale(aspiration_score)
+                0.60 * talent_percent_scale(competency_score)
+                + 0.40 * talent_percent_scale(aspiration_score)
         END AS potential_scale,
         NULL::DOUBLE AS benchmark_performance_proxy,
         NULL::DOUBLE AS benchmark_potential_proxy
@@ -51,6 +52,7 @@ SELECT
     ROUND(readiness_score, 2) AS readiness_score,
     source_mode, benchmark_version, benchmark_approval_valid,
     benchmark_provenance_status,
+    COALESCE(invalid_score_input, FALSE) AS invalid_score_input,
     performance_band_calc AS performance_band,
     CASE
         WHEN performance_scale IS NULL THEN NULL

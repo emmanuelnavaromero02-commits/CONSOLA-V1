@@ -31,6 +31,7 @@ from app.operational_truth import replicon_generic_query_block_reason
 from app.publication_heads import published_dataset_names, scoped_semantic_source_name
 from app.sql_reader_policy import (
     POLICY_ERROR,
+    SHARED_RAW_ROOTS_BY_CARTRIDGE,
     ReaderPolicyError,
     validate_cartridge_reader_query,
 )
@@ -217,15 +218,12 @@ def _scoped_object_prefix(
     return f"{normalized}/{scope}"
 
 
-_SHARED_RAW_SCOPEABLE_ROOTS_BY_CARTRIDGE: dict[str, tuple[str, ...]] = {
-    "replicon": ("fx_rates", "excel_billing"),
-}
-
-
 def _assert_reader_sandbox(
     sql: str,
     cartridge_id: str,
     security_context: dict[str, Any] | None = None,
+    *,
+    allow_server_resolution: bool = False,
 ) -> None:
     """Fail closed unless every storage reader stays inside the caller's scope."""
     cartridge = validate_identifier(cartridge_id, "cartridge_id")
@@ -237,8 +235,9 @@ def _assert_reader_sandbox(
         workspace_id=workspace_id,
         expected_bucket=settings.minio_bucket,
         shared_roots=frozenset(
-            _SHARED_RAW_SCOPEABLE_ROOTS_BY_CARTRIDGE.get(cartridge, ())
+            SHARED_RAW_ROOTS_BY_CARTRIDGE.get(cartridge, ())
         ),
+        allow_server_resolution=allow_server_resolution,
     )
 
 
@@ -268,7 +267,7 @@ def _scope_cartridge_sql(
     pattern = re.compile(
         rf"(s3://[^'\"\s)]+/(?:raw|silver|gold)/{re.escape(cartridge)}/)([^'\"\s)]*)"
     )
-    shared_roots = _SHARED_RAW_SCOPEABLE_ROOTS_BY_CARTRIDGE.get(cartridge, ())
+    shared_roots = SHARED_RAW_ROOTS_BY_CARTRIDGE.get(cartridge, ())
     shared_pattern = (
         re.compile(
             rf"(s3://[^'\"\s)]+/raw/(?:{'|'.join(map(re.escape, shared_roots))})/)([^'\"\s)]*)"
@@ -1461,7 +1460,12 @@ def cartridge_query_kb(
     if blocked_reason:
         return {"cartridge_id": cartridge_id, "status": "partial", "data_status": "unavailable", "reason": blocked_reason}
     try:
-        _assert_reader_sandbox(sql, cartridge_id, security_context)
+        _assert_reader_sandbox(
+            sql,
+            cartridge_id,
+            security_context,
+            allow_server_resolution=True,
+        )
     except ReaderPolicyError:
         return _reader_policy_rejection(cartridge_id)
     resolved = _scope_cartridge_sql(sql, cartridge_id, security_context)

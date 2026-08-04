@@ -258,6 +258,8 @@ async def sap_successfactors_gold_kpis(user: dict | None) -> dict[str, Any]:
 
 @_bind_to_core
 def _sf_talent_public_value(value: Any) -> Any:
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     if isinstance(value, datetime):
@@ -386,6 +388,29 @@ def _sf_talent_profiled_count(
 
 
 @_bind_to_core
+def _sf_talent_readiness_row_valid(row: dict[str, Any]) -> bool:
+    if _sf_talent_bool(row.get("invalid_score_input")):
+        return False
+    if _sf_talent_status(row.get("readiness_status"), "") not in {
+        "ready",
+        "near",
+        "not_ready",
+    }:
+        return False
+    mode = _sf_talent_status(row.get("source_mode"), "")
+    if mode == "cpa_real":
+        return _sf_talent_cpa_scores_valid(row) and _sf_talent_score(
+            row.get("readiness_score")
+        ) is not None
+    return (
+        mode == "benchmark_internal"
+        and row.get("benchmark_approval_valid") is True
+        and row.get("benchmark_provenance_status") == "approved_durable"
+        and _sf_talent_score(row.get("readiness_score")) is not None
+    )
+
+
+@_bind_to_core
 def _sf_talent_readiness_counts(
     operational_row: dict[str, Any],
     readiness_rows: list[dict[str, Any]],
@@ -393,30 +418,22 @@ def _sf_talent_readiness_counts(
     calculable_rows = sum(
         1
         for row in readiness_rows
-        if (
-            _sf_talent_status(row.get("readiness_status"))
-            not in {"insufficient_data", "blocked", "missing"}
-            or _sf_talent_status(row.get("source_mode"))
-            in {"cpa_real", "benchmark_internal"}
-        )
+        if _sf_talent_readiness_row_valid(row)
     )
     insufficient_rows = sum(
         1
         for row in readiness_rows
-        if _sf_talent_status(row.get("readiness_status")) == "insufficient_data"
+        if not _sf_talent_readiness_row_valid(row)
     )
     if not operational_row:
         return {
             "readiness_calculable": calculable_rows,
             "readiness_insufficient": insufficient_rows,
         }
-    operational_calculable = (
-        _sf_talent_int(operational_row.get("calculable_count"))
-        or _sf_talent_int(operational_row.get("calculable_employee_count"))
-    )
     operational_pending = _sf_talent_int(operational_row.get("readiness_pending_count"))
     return {
-        "readiness_calculable": max(operational_calculable, calculable_rows),
+        # The aggregate is display evidence, never authority for readiness.
+        "readiness_calculable": calculable_rows,
         "readiness_insufficient": (
             insufficient_rows if readiness_rows else operational_pending
         ),
@@ -432,17 +449,15 @@ def _sf_talent_nine_box_available_count(
         1
         for row in nine_box_rows
         if (
-            _sf_talent_status(row.get("box_status"))
-            not in {"blocked", "insufficient_data", "missing"}
-            or _sf_talent_status(row.get("source_mode"))
-            in {"cpa_real", "benchmark_internal"}
+            _sf_talent_nine_box_scores_valid(row)
+            and _sf_talent_status(row.get("box_status")) == "ready"
         )
     )
     if operational_row:
-        return max(
-            _sf_talent_int(operational_row.get("nine_box_classified_count")),
-            row_count,
-        )
+        # The aggregate is not authority: only validated detail can prove that
+        # a person is classified. A stale/tampered count must not manufacture
+        # public 9-box availability.
+        return row_count
     return row_count
 
 
@@ -451,11 +466,17 @@ def _sf_talent_source_mode(
     operational_row: dict[str, Any],
     readiness_rows: list[dict[str, Any]],
 ) -> str:
-    modes = {_sf_talent_status(row.get("source_mode"), "") for row in readiness_rows}
+    modes = {
+        _sf_talent_status(row.get("source_mode"), "")
+        for row in readiness_rows
+        if _sf_talent_readiness_row_valid(row)
+    }
     if "cpa_real" in modes:
         return "cpa_real"
     if "benchmark_internal" in modes:
         return "benchmark_internal"
+    if readiness_rows:
+        return "insufficient_data"
     return _sf_talent_status(operational_row.get("source_mode") or "")
 
 
@@ -480,7 +501,7 @@ def _sf_talent_kpi_metrics(
     operational_row = rows["operational_row"]
     readiness_counts = _sf_talent_readiness_counts(operational_row, readiness_rows)
     source_mode = _sf_talent_source_mode(operational_row, readiness_rows)
-    return {
+    metrics = {
         "profiled_employees": _sf_talent_profiled_count(operational_row, profile_rows),
         "roles_profiled": _sf_talent_int(operational_row.get("role_count")) or len(role_rows),
         "mobility_observed": _sf_talent_int(operational_row.get("mobility_observed_count")) or sum(
@@ -516,6 +537,21 @@ def _sf_talent_kpi_metrics(
         "source_mode": source_mode,
         "operational_label": str(operational_row.get("user_status_label") or "En espera de datos"),
     }
+    # Nothing calculable means the analysis cannot be trusted, so it degrades to
+    # insufficient_data. An unreadable dataset keeps its own status instead:
+    # "missing" says we never read it, which is a different fact from having
+    # read it and found the inputs too thin.
+    if (
+        metrics["readiness_calculable"] == 0
+        and metrics["operational_status"] not in {"missing", "unavailable", "error"}
+    ):
+        metrics.update(
+            operational_status="insufficient_data",
+            operational_label="Requiere historial adicional",
+            confidence=None,
+            source_mode="insufficient_data",
+        )
+    return metrics
 
 
 @_bind_to_core
@@ -597,6 +633,28 @@ def _sf_talent_signal_payloads(signal_rows: list[dict[str, Any]]) -> list[dict[s
             "status": str(row.get("status") or "recommendation_only"),
         }
         for idx, row in enumerate(signal_rows)
+    ]
+
+
+@_bind_to_core
+def _sf_talent_validated_signal_rows(
+    signal_rows: list[dict[str, Any]], readiness_calculable: int
+) -> list[dict[str, Any]]:
+    score_derived = {
+        "talent_9box_operational_ready",
+        "talent_retention_risk",
+        "talent_promotion_alignment",
+        "talent_calibration_sensitivity",
+        "talent_role_fit_assignments",
+    }
+    return [
+        row
+        for row in signal_rows
+        if str(row.get("signal_id") or "") not in score_derived
+        or (
+            readiness_calculable > 0
+            and row.get("source_validation_status") == "server_validated_v1"
+        )
     ]
 
 
@@ -757,11 +815,36 @@ def _sf_talent_operational_features_payload(
     metrics: dict[str, Any],
     operational_row: dict[str, Any],
 ) -> dict[str, Any]:
+    public_row = {
+        key: _sf_talent_public_value(value) for key, value in operational_row.items()
+    }
+    if metrics["readiness_calculable"] == 0:
+        public_row.update(
+            calculable_count=0,
+            calculable_employee_count=0,
+            readiness_low=0,
+            readiness_low_count=0,
+            readiness_medium=0,
+            readiness_medium_count=0,
+            readiness_high=0,
+            readiness_high_count=0,
+            readiness_pending_count=metrics["readiness_insufficient"],
+            readiness_status="insufficient_data",
+            feature_status="insufficient_data",
+            source_mode="insufficient_data",
+            confidence=None,
+            nine_box_classified_count=0,
+            nine_box_operational_ready_count=0,
+            open_signal_count=0,
+            high_severity_signal_count=0,
+            user_status_label="Requiere historial adicional",
+            blockers='["talent_cpa_inputs_missing"]',
+        )
     return {
         "dataset": datasets["operational_features"],
         "status": metrics["operational_status"],
         "label": metrics["operational_label"],
-        "row": {key: _sf_talent_public_value(value) for key, value in operational_row.items()},
+        "row": public_row,
     }
 
 
@@ -772,13 +855,18 @@ def _sf_talent_analysis_inputs_payload(
     metrics: dict[str, Any],
     simulation_row: dict[str, Any],
 ) -> dict[str, Any]:
+    fail_closed = metrics["readiness_calculable"] == 0
     return {
         "dataset": datasets["simulation_inputs"],
-        "status": _sf_talent_status(
+        "status": "blocked" if fail_closed else _sf_talent_status(
             simulation_row.get("input_status") or results["simulation_inputs"]["status"]
         ),
-        "label": str(simulation_row.get("user_status_label") or metrics["operational_label"]),
-        "scenario_count": _sf_talent_int(simulation_row.get("scenario_count")),
+        "label": metrics["operational_label"] if fail_closed else str(
+            simulation_row.get("user_status_label") or metrics["operational_label"]
+        ),
+        "scenario_count": 0 if fail_closed else _sf_talent_int(
+            simulation_row.get("scenario_count")
+        ),
         "contract_version": simulation_row.get("analysis_contract_version"),
     }
 
@@ -953,8 +1041,13 @@ async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
         )
         or metrics["operational_status"]
     )
+    if metrics["readiness_calculable"] == 0:
+        metrics["readiness_status"] = "insufficient_data"
     blockers = _sf_talent_kpi_blockers(rows, results, metrics)
-    signals = _sf_talent_signal_payloads(rows["signal_rows"])
+    signal_rows = _sf_talent_validated_signal_rows(
+        rows["signal_rows"], metrics["readiness_calculable"]
+    )
+    signals = _sf_talent_signal_payloads(signal_rows)
     role_samples = _sf_talent_role_samples(rows["role_rows"])
     widgets = _sf_talent_kpi_widgets(datasets, results, rows, metrics, signals, role_samples)
 
@@ -1022,11 +1115,39 @@ def _sf_talent_int(value: Any) -> int:
 @_bind_to_core
 def _sf_talent_float(value: Any) -> float | None:
     try:
-        if value is None or value == "":
+        if value is None or value == "" or isinstance(value, bool):
             return None
-        return float(value)
+        result = float(value)
+        return result if math.isfinite(result) else None
     except (TypeError, ValueError):
         return None
+
+
+@_bind_to_core
+def _sf_talent_score(value: Any) -> float | None:
+    score = _sf_talent_float(value)
+    if score is None or score < 0 or score > 100:
+        return None
+    return score
+
+
+@_bind_to_core
+def _sf_talent_nine_box_scores_valid(row: dict[str, Any]) -> bool:
+    return (
+        not _sf_talent_bool(row.get("invalid_score_input"))
+        and "performance_score" in row
+        and "potential_score" in row
+        and _sf_talent_score(row.get("performance_score")) is not None
+        and _sf_talent_score(row.get("potential_score")) is not None
+    )
+
+
+@_bind_to_core
+def _sf_talent_cpa_scores_valid(row: dict[str, Any]) -> bool:
+    return not _sf_talent_bool(row.get("invalid_score_input")) and all(
+        _sf_talent_score(row.get(field)) is not None
+        for field in ("competency_score", "performance_score", "aspiration_score")
+    )
 
 
 @_bind_to_core
@@ -1106,7 +1227,7 @@ def _sf_talent_masked_name(employee_key: str) -> str:
 
 @_bind_to_core
 def _sf_talent_fit_band(value: Any) -> str:
-    score = _sf_talent_float(value)
+    score = _sf_talent_score(value)
     if score is None:
         return "insufficient_data"
     if score >= 80:
@@ -1118,10 +1239,8 @@ def _sf_talent_fit_band(value: Any) -> str:
 
 @_bind_to_core
 def _sf_talent_performance_band(value: Any) -> str | None:
-    """Banda de desempeno REAL desde performance_score, con los cortes actuales del 9-box
-    (escala 0-5: >=4 alto, >=3 medio, else bajo). NUNCA usa el proxy benchmark. None si no
-    hay desempeno. Es el compute-fallback cuando el gold aun no trae performance_band_available."""
-    score = _sf_talent_float(value)
+    """Band legacy 0..5 or current percentage scores after bounded validation."""
+    score = _sf_talent_score(value)
     if score is None:
         return None
     scale = score / 20 if score > 5 else score
@@ -1156,15 +1275,20 @@ def _sf_talent_movement_bucket(value: Any) -> str:
 @_bind_to_core
 def _sf_talent_masked_roster_row(row: dict[str, Any]) -> dict[str, Any]:
     employee_key = _sf_talent_employee_key(row.get("user_id") or row.get("employee_id"))
+    performance_valid = _sf_talent_score(row.get("performance_score")) is not None
+    scores_valid = _sf_talent_nine_box_scores_valid(row)
     # Banda de desempeno REAL: preferir la columna gold; si aun no existe, calcular desde
     # performance_score (compute-fallback). NUNCA es el proxy benchmark (que vive en
     # performance_band). None si no hay desempeno real.
-    band_available = row.get("performance_band_available")
+    band_available = row.get("performance_band_available") if performance_valid else None
     if band_available not in {"high", "medium", "low"}:
         band_available = _sf_talent_performance_band(row.get("performance_score"))
     # Potencial pendiente (faltan Competencias y Aspiracion): preferir columna gold; si no,
     # inferir de cpa_status/box_status insuficiente.
     if row.get("potential_pending") is not None:
+        # This field describes the performance-only cohort, not whether the
+        # complete 9-box pair passed validation.  Preserve an explicit false;
+        # converting it to true would invent a pending-potential cohort.
         potential_pending = _sf_talent_bool(row.get("potential_pending"))
     else:
         potential_pending = _sf_talent_status(
@@ -1177,17 +1301,27 @@ def _sf_talent_masked_roster_row(row: dict[str, Any]) -> dict[str, Any]:
         "unit": str(row.get("department_name") or row.get("company_name") or "Unidad no disponible"),
         "region": str(row.get("location_name") or row.get("region") or "Region no disponible"),
         "readiness_status": _sf_talent_status(row.get("readiness_status"), "blocked"),
-        "box_id": str(row.get("box_key") or ""),
+        "box_id": str(row.get("box_key") or "") if scores_valid else "",
         "box_label": str(row.get("box_label") or "9-box"),
-        "performance_band": str(row.get("performance_band") or "unknown"),
+        "performance_band": (
+            str(row.get("performance_band") or "unknown")
+            if scores_valid
+            else "unknown"
+        ),
         # Banda "Desempeno disponible" (real) + cohorte esperando Competencias y Aspiracion.
         "performance_band_available": band_available or "insufficient_data",
         "potential_pending": bool(potential_pending),
         "desempeno_disponible": bool(band_available) and bool(potential_pending),
-        "potential_band": str(row.get("potential_band") or "unknown"),
+        "potential_band": (
+            str(row.get("potential_band") or "unknown") if scores_valid else "unknown"
+        ),
         "fit_band": _sf_talent_fit_band(row.get("fit_score")),
         "movement_age_bucket": _sf_talent_movement_bucket(row.get("months_since_movement")),
-        "data_status": _sf_talent_status(row.get("box_status") or row.get("cpa_status"), "blocked"),
+        "data_status": (
+            _sf_talent_status(row.get("box_status") or row.get("cpa_status"), "blocked")
+            if scores_valid
+            else "blocked"
+        ),
     }
 
 
@@ -1393,7 +1527,7 @@ def _sf_talent_9box_operational_rows_from_detail(
     by_box: dict[str, dict[str, int]] = {}
     for row in rows:
         box_key = str(row.get("box_key") or "").strip()
-        if not box_key:
+        if box_key not in {item["box_id"] for item in _sf_talent_box_definitions()}:
             continue
         counts = by_box.setdefault(
             box_key,
@@ -1408,15 +1542,14 @@ def _sf_talent_9box_operational_rows_from_detail(
         box_status = _sf_talent_status(row.get("box_status"), "")
         source_mode = _sf_talent_status(row.get("source_mode"), "")
         is_ready = (
-            box_status not in {"blocked", "insufficient_data", "missing", ""}
-            or source_mode in {"cpa_real", "benchmark_internal"}
+            _sf_talent_nine_box_scores_valid(row) and box_status == "ready"
         )
         if is_ready:
             counts["ready_count"] += 1
+            if source_mode == "benchmark_internal":
+                counts["benchmark_count"] += 1
         else:
             counts["blocked_count"] += 1
-        if source_mode == "benchmark_internal" or box_status == "benchmark_internal":
-            counts["benchmark_count"] += 1
     return [
         {
             "box_key": box_key,
@@ -1500,27 +1633,19 @@ def _sf_talent_desempeno_cohort(
 @_bind_to_core
 async def sap_successfactors_talent_9box(user: dict | None) -> dict[str, Any]:
     dataset = "sap_successfactors_talent_9box_operational"
-    result = await _sf_talent_gold_result(dataset, user, 100)
-    cells = _sf_talent_9box_cells(result["rows"])
+    operational_result = await _sf_talent_gold_result(dataset, user, 100)
+    detail_result = await _sf_talent_gold_result(
+        "sap_successfactors_talent_9box", user, 5000
+    )
+    raw_detail_rows = detail_result["rows"]
+    detail_rows = _sf_talent_9box_operational_rows_from_detail(raw_detail_rows)
+    cells = _sf_talent_9box_cells(detail_rows)
     totals = _sf_talent_9box_totals(cells)
-    raw_detail_rows: list[dict[str, Any]] | None = None
-    if totals["ready"] == 0:
-        detail_result = await _sf_talent_gold_result("sap_successfactors_talent_9box", user, 5000)
-        raw_detail_rows = detail_result["rows"]
-        detail_rows = _sf_talent_9box_operational_rows_from_detail(raw_detail_rows)
-        detail_cells = _sf_talent_9box_cells(detail_rows)
-        detail_totals = _sf_talent_9box_totals(detail_cells)
-        if detail_totals["ready"] > 0:
-            cells = detail_cells
-            totals = detail_totals
-            result = detail_result
+    result = detail_result if raw_detail_rows else operational_result
     blockers = _sf_talent_9box_blockers(result, total_ready=totals["ready"])
 
-    # Cohorte "Desempeno disponible" (per-empleado, del detalle 9box). Reutiliza el read del
-    # fallback si ya se hizo; si no, lo consulta una vez.
-    if raw_detail_rows is None:
-        cohort_detail = await _sf_talent_gold_result("sap_successfactors_talent_9box", user, 5000)
-        raw_detail_rows = cohort_detail["rows"]
+    # The aggregate is display-only evidence. Public readiness is always rebuilt
+    # from the validated detail, so a stale ready_count cannot overrule scores.
     desempeno_disponible = _sf_talent_desempeno_cohort(raw_detail_rows)
 
     tenant_id, workspace_id = _workspace_scope(user)
@@ -1553,7 +1678,10 @@ async def sap_successfactors_talent_9box_box(
     dataset = "sap_successfactors_talent_9box"
     result = await _sf_talent_gold_result(dataset, user, 5000)
     rows = [
-        row for row in result["rows"] if str(row.get("box_key") or "") == box_id
+        row
+        for row in result["rows"]
+        if str(row.get("box_key") or "") == box_id
+        and _sf_talent_nine_box_scores_valid(row)
     ]
     roster = [_sf_talent_masked_roster_row(row) for row in rows[:100]]
     raw_blockers: set[str] = set()
@@ -1629,15 +1757,19 @@ async def sap_successfactors_talent_anomalies(user: dict | None) -> dict[str, An
 @_bind_to_core
 def _sf_talent_cpa_readiness_counts(cpa_rows: list[dict[str, Any]]) -> dict[str, int]:
     ready_cpa = sum(
-        1 for row in cpa_rows if _sf_talent_status(row.get("cpa_status")) == "ready"
+        1
+        for row in cpa_rows
+        if _sf_talent_status(row.get("cpa_status")) == "ready"
+        and _sf_talent_cpa_scores_valid(row)
     )
     insufficient = sum(
         1
         for row in cpa_rows
         if _sf_talent_status(row.get("cpa_status")) in {"insufficient_data", "blocked"}
+        or not _sf_talent_cpa_scores_valid(row)
     )
     performance_present = sum(
-        1 for row in cpa_rows if _sf_talent_float(row.get("performance_score")) is not None
+        1 for row in cpa_rows if _sf_talent_score(row.get("performance_score")) is not None
     )
     return {
         "ready_cpa": ready_cpa,

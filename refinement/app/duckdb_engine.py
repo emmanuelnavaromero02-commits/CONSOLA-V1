@@ -68,7 +68,7 @@ def _sql_quote(value: str) -> str:
 
 
 _SHARED_MACRO_FILES = (
-    "cartridges/sap_successfactors/sql/_talent_score_scale.sql",
+    "sql/talent_score_scale.sql",
 )
 
 
@@ -81,11 +81,12 @@ def _register_shared_macros(con: "duckdb.DuckDBPyConnection") -> None:
     registered here, once per connection, so every dataset shares exactly the
     same definition instead of repeating it.
     """
-    root = Path(__file__).resolve().parents[2]
+    root = Path(__file__).resolve().parent
     for relative in _SHARED_MACRO_FILES:
         path = root / relative
-        if path.is_file():
-            con.execute(path.read_text(encoding="utf-8"))
+        if not path.is_file():
+            raise RuntimeError("required DuckDB macro is unavailable")
+        con.execute(path.read_text(encoding="utf-8"))
 
 
 def _escape_sql_literal_inner(value: str) -> str:

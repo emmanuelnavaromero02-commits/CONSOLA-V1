@@ -24,7 +24,14 @@ performance AS (
         -- Non-finite and out-of-domain ratings are dropped before averaging, so
         -- one bad row cannot poison the whole employee's score.
         AVG(talent_score_scale(performance_rating) * 20) AS performance_score,
-        BOOL_OR(performance_status = 'ready') AS has_performance
+        BOOL_OR(
+            performance_status = 'ready'
+            AND talent_score_is_valid(performance_rating)
+        ) AS has_performance,
+        BOOL_OR(
+            performance_rating IS NOT NULL
+            AND NOT talent_score_is_valid(performance_rating)
+        ) AS saw_invalid_performance
     FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_performance_cycle/**/*.parquet',
                       hive_partitioning = true,
                       union_by_name = true)
@@ -33,8 +40,16 @@ performance AS (
 competency AS (
     SELECT
         user_id AS user_id_hash,
-        AVG(talent_score_scale(proficiency_100) * 20) AS competency_score,
-        BOOL_OR(competency_status = 'ready') AS has_competency
+        AVG(CASE WHEN talent_percent_is_valid(proficiency_100)
+            THEN TRY_CAST(proficiency_100 AS DOUBLE) END) AS competency_score,
+        BOOL_OR(
+            competency_status = 'ready'
+            AND talent_percent_is_valid(proficiency_100)
+        ) AS has_competency,
+        BOOL_OR(
+            proficiency_100 IS NOT NULL
+            AND NOT talent_percent_is_valid(proficiency_100)
+        ) AS saw_invalid_competency
     FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_employee_competency/**/*.parquet',
                       hive_partitioning = true,
                       union_by_name = true)
@@ -43,8 +58,16 @@ competency AS (
 aspiration AS (
     SELECT
         user_id AS user_id_hash,
-        AVG(talent_score_scale(aspiration_100) * 20) AS aspiration_score,
-        BOOL_OR(aspiration_status = 'ready') AS has_aspiration
+        AVG(CASE WHEN talent_percent_is_valid(aspiration_100)
+            THEN TRY_CAST(aspiration_100 AS DOUBLE) END) AS aspiration_score,
+        BOOL_OR(
+            aspiration_status = 'ready'
+            AND talent_percent_is_valid(aspiration_100)
+        ) AS has_aspiration,
+        BOOL_OR(
+            aspiration_100 IS NOT NULL
+            AND NOT talent_percent_is_valid(aspiration_100)
+        ) AS saw_invalid_aspiration
     FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_employee_aspiration/**/*.parquet',
                       hive_partitioning = true,
                       union_by_name = true)
@@ -79,7 +102,24 @@ profile AS (
         aspiration.aspiration_score,
         COALESCE(performance.has_performance, FALSE) AS has_performance,
         COALESCE(competency.has_competency, FALSE) AS has_competency,
-        COALESCE(aspiration.has_aspiration, FALSE) AS has_aspiration
+        COALESCE(aspiration.has_aspiration, FALSE) AS has_aspiration,
+        (COALESCE(performance.saw_invalid_performance, FALSE)
+         AND NOT COALESCE(performance.has_performance, FALSE))
+            AS invalid_performance_input,
+        (COALESCE(competency.saw_invalid_competency, FALSE)
+         AND NOT COALESCE(competency.has_competency, FALSE))
+            AS invalid_competency_input,
+        (COALESCE(aspiration.saw_invalid_aspiration, FALSE)
+         AND NOT COALESCE(aspiration.has_aspiration, FALSE))
+            AS invalid_aspiration_input,
+        (
+            (COALESCE(performance.saw_invalid_performance, FALSE)
+             AND NOT COALESCE(performance.has_performance, FALSE))
+            OR (COALESCE(competency.saw_invalid_competency, FALSE)
+                AND NOT COALESCE(competency.has_competency, FALSE))
+            OR (COALESCE(aspiration.saw_invalid_aspiration, FALSE)
+                AND NOT COALESCE(aspiration.has_aspiration, FALSE))
+        ) AS invalid_score_input
     FROM emp
     LEFT JOIN hier ON hier.user_id = emp.user_id
     -- Talento une por user_id_hash (shadowed en ambos lados); manager_hierarchy
@@ -111,18 +151,30 @@ SELECT
     competency_score,
     performance_score,
     aspiration_score,
+    invalid_performance_input,
+    invalid_competency_input,
+    invalid_aspiration_input,
+    invalid_score_input,
     CASE
+        WHEN invalid_score_input THEN 'blocked'
         WHEN has_performance AND has_competency AND has_aspiration THEN 'ready'
         WHEN has_performance OR has_competency OR has_aspiration THEN 'partial'
         ELSE 'insufficient_data'
     END AS cpa_status,
-    'foundation_ready' AS profile_status,
+    CASE WHEN invalid_score_input THEN 'blocked'
+         ELSE 'foundation_ready' END AS profile_status,
     '[' ||
         CONCAT_WS(
             ',',
-            CASE WHEN has_competency THEN NULL ELSE '"missing_competency"' END,
-            CASE WHEN has_performance THEN NULL ELSE '"missing_performance"' END,
-            CASE WHEN has_aspiration THEN NULL ELSE '"missing_aspiration"' END
+            CASE WHEN invalid_competency_input
+                THEN '"invalid_competency_score"'
+                WHEN has_competency THEN NULL ELSE '"missing_competency"' END,
+            CASE WHEN invalid_performance_input
+                THEN '"invalid_performance_score"'
+                WHEN has_performance THEN NULL ELSE '"missing_performance"' END,
+            CASE WHEN invalid_aspiration_input
+                THEN '"invalid_aspiration_score"'
+                WHEN has_aspiration THEN NULL ELSE '"missing_aspiration"' END
         ) ||
     ']' AS blockers,
     CURRENT_TIMESTAMP AS generated_at

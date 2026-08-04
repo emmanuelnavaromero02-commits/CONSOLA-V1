@@ -7,8 +7,8 @@ on the physical relations the runtime actually reads:
 * the initial publication installs the CHECK before any row lands;
 * a republication claiming approval without durable authority fails closed and
   the head does not advance;
-* a republication with a new schema digest and legitimate server-recorded
-  approval succeeds;
+* a legitimate unreviewed republication succeeds, while even a complete
+  self-attested approval remains forbidden;
 * scopes stay isolated: another tenant publishes into its own relation and the
   first scope's rows remain untouched.
 """
@@ -183,21 +183,31 @@ def test_benchmark_approval_survives_publication_and_republication(
     assert after_forgery[1] == 1
     assert _admin_rows(stack, relation) == [(TENANT_A, False, "unreviewed")]
 
-    # A republication with a new schema digest and a legitimate server-recorded
-    # approval succeeds and advances the head.
+    # Even a complete approval-shaped row cannot self-attest: authority lives
+    # in Console's scoped ledger and is overlaid only while reading this head.
     extended = _COLUMNS + [{"name": "note", "type": "TEXT"}]
-    approved = uuid.uuid4()
+    self_attested = uuid.uuid4()
+    with pytest.raises(psycopg2.Error) as self_attested_error:
+        _publish_benchmark(
+            stack,
+            self_attested,
+            SERVER_APPROVAL + ("forged",),
+            scope=scope_a,
+            columns=extended,
+            expected_head=head[0],
+        )
+    assert self_attested_error.value.pgcode in {"23514", "P0001"}
+    assert stack.head(DATASET, scope_a)[0] == head[0]
+
+    # A legitimate unreviewed republication with a new schema advances.
+    republished = uuid.uuid4()
     _publish_benchmark(
-        stack,
-        approved,
-        SERVER_APPROVAL + ("republished",),
-        scope=scope_a,
-        columns=extended,
-        expected_head=head[0],
+        stack, republished, UNREVIEWED + ("republished",), scope=scope_a,
+        columns=extended, expected_head=head[0],
     )
     advanced = stack.head(DATASET, scope_a)
     assert advanced is not None and advanced[1] == 2
-    assert _admin_rows(stack, relation) == [(TENANT_A, True, "approved")]
+    assert _admin_rows(stack, relation) == [(TENANT_A, False, "unreviewed")]
 
     # Another tenant publishes into its own physical relation; scope A's rows
     # stay untouched and both relations remain scope-pure.
@@ -206,5 +216,5 @@ def test_benchmark_approval_survives_publication_and_republication(
     _publish_benchmark(stack, other, UNREVIEWED, scope=scope_b)
     relation_b = _relation_name(stack, scope_b)
     assert relation_b != relation
-    assert _admin_rows(stack, relation) == [(TENANT_A, True, "approved")]
+    assert _admin_rows(stack, relation) == [(TENANT_A, False, "unreviewed")]
     assert _admin_rows(stack, relation_b) == [(TENANT_B, False, "unreviewed")]
