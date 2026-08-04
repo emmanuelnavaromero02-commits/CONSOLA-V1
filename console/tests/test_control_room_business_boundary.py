@@ -292,7 +292,7 @@ def test_validated_parent_context_survives_builders_without_serializing():
         control_room_service._impact_for_item(projected),
     )
 
-    assert projected["omega"]["options"]
+    assert projected["omega"]["options"] == []
     assert template["template_id"]
     assert metadata["parent_item_id"] == "parent-1"
     assert "eligible_parent" not in json.dumps(projected)

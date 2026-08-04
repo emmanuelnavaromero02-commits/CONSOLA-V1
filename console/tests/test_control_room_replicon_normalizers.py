@@ -17,6 +17,9 @@ def test_replicon_pnl_normalizer_types_margin_with_revenue_denominator():
             "proyecto": "P-ZERO",
             "revenue_usd": 100_000,
             "margen_bruto_pct": 0,
+            "base_currency": "USD",
+            "original_currency": "USD",
+            "financial_status": "ready",
         },
     )
 
@@ -24,6 +27,42 @@ def test_replicon_pnl_normalizer_types_margin_with_revenue_denominator():
     assert item["metric_type"] == "percentage"
     assert item["observed_value"] == 0
     assert item["denominator"] == 100_000
+
+
+def test_replicon_pnl_normalizer_blocks_unverified_currency_rows():
+    source = next(
+        source
+        for source in control_room_service._all_sources()  # noqa: SLF001
+        if source.dataset == "pnl_mensual"
+    )
+    item = control_room_service._normalize_replicon_pnl(  # noqa: SLF001
+        source,
+        {
+            "proyecto": "legacy-fx",
+            "margen_bruto_pct": -10,
+            "wip_usd": 50_000,
+            "financial_status": "missing_fx",
+        },
+    )
+    assert item is None
+
+
+def test_replicon_pnl_normalizer_blocks_ready_without_currency_provenance():
+    source = next(
+        source
+        for source in control_room_service._all_sources()  # noqa: SLF001
+        if source.dataset == "pnl_mensual"
+    )
+    item = control_room_service._normalize_replicon_pnl(  # noqa: SLF001
+        source,
+        {
+            "proyecto": "unproven-ready",
+            "margen_bruto_pct": -10,
+            "wip_usd": None,
+            "financial_status": "ready",
+        },
+    )
+    assert item is None
 
 
 def test_source_state_cleanup_is_not_exposed_on_read_service():

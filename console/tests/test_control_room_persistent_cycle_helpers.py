@@ -232,21 +232,32 @@ def guarded_fetchrows(value: dict, rows, *, has_dry_run: bool = True):
                 status=_args[5],
                 template_id=_args[3],
             )
-        if "INSERT INTO prediction_outcomes" in sql:
+        if "record_prediction_outcome" in sql:
             return {
-                "id": 701,
-                "tenant_id": "tenant-A",
-                "workspace_id": "workspace-A",
-                "signal_id": value["id"],
-                "option_id": "remediate",
-                "action_taken": "create_followup_task",
-                "predicted_value": 12000,
-                "actual_value": 9500,
-                "prediction_error": -2500,
-                "outcome_summary": "Seguimiento redujo el riesgo",
-                "learned_rule": "Cuando WIP sube, abrir seguimiento financiero semanal.",
-                "metadata": {"source": "control_room"},
-                "created_at": datetime(2026, 6, 12, 10, 4, 0),
+                "outcome": {
+                    "id": 701,
+                    "tenant_id": "tenant-A",
+                    "workspace_id": "workspace-A",
+                    "signal_id": value["id"],
+                    "option_id": "remediate",
+                    "action_taken": "create_followup_task",
+                    "predicted_value": 12000,
+                    "actual_value": 9500,
+                    "prediction_error": -2500,
+                    "outcome_summary": "Seguimiento redujo el riesgo",
+                    "learned_rule": (
+                        "Cuando WIP sube, abrir seguimiento financiero semanal."
+                    ),
+                    "metadata": {
+                        "source": "control_room",
+                        "input_classification": "observed",
+                    },
+                    "evaluation_status": "hit",
+                    "evaluated_by": "omega_outcome_evaluator.v1",
+                    "evaluated_at": datetime(2026, 6, 12, 10, 4, 0),
+                    "created_at": datetime(2026, 6, 12, 10, 4, 0),
+                },
+                "inserted": True,
             }
         return next(iterator)
 

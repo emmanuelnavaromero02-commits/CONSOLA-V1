@@ -78,6 +78,16 @@ def _mode(value: Any) -> str:
     mode = str(value or "historical_replay").strip().lower()
     if mode not in BACKTEST_MODES:
         raise HTTPException(400, "unsupported backtest mode")
+    if mode == "fixture_validation":
+        app_env = os.environ.get("APP_ENV")
+        if app_env is None or app_env.strip().lower() not in {
+            "test",
+            "local",
+            "development",
+        }:
+            raise HTTPException(
+                403, "fixture_validation requires an explicit local APP_ENV"
+            )
     return mode
 
 

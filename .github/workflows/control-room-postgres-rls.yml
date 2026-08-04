@@ -67,6 +67,17 @@ jobs:
           REFINEMENT_IMAGE: refinement:offline-smoke
         run: scripts/prepare_refinement_duckdb_ci.sh
 
+      - name: Build and smoke Replicon DuckDB/httpfs image
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="replicon:httpfs-ci-${GITHUB_SHA}"
+          docker build cartridges/replicon \
+            --file cartridges/replicon/Dockerfile \
+            --tag "$image"
+          test "$(docker image inspect --format '{{.Config.User}}' "$image")" = "appuser"
+          scripts/ci_replicon_minio_smoke.sh "$image"
+
       - name: Run focal Control Room tests
         continue-on-error: true
         env:
@@ -121,6 +132,44 @@ jobs:
             tests/test_pipeline_run_save_authority.py \
             tests/test_scheduled_effect_fencing.py \
             tests/test_staged_publication_compatibility_projection.py \
+            console/tests/test_operational_truth_statistical_fallbacks.py \
+            console/tests/test_operational_truth_public_projection.py \
+            tests/test_operational_truth_data_integrity.py \
+            tests/test_operational_truth_data_kb_config.py \
+            tests/test_operational_truth_data_kb_runtime.py \
+            tests/test_operational_truth_data_historical_repair.py \
+            tests/test_replicon_wip_v3_currency.py \
+            tests/test_sap_successfactors_talent_migration.py \
+            tests/test_intelligence_provenance_resolver.py \
+            tests/test_calibration_recompute_complete_batch.py \
+            tests/test_calibration_authoritative_observation.py \
+            tests/test_calibration_idempotency_schema.py \
+            tests/test_calibration_observe_idempotency.py \
+            tests/test_calibration_legacy_quarantine_migration.py \
+            tests/test_calibration_reconstructible_authority.py \
+            tests/test_bayesian_calibration_engine.py \
+            tests/test_monte_carlo_engine.py \
+            tests/test_monte_carlo_api_contract.py \
+            tests/test_monte_carlo_finiteness.py \
+            tests/test_monte_carlo_operational_truth.py \
+            tests/test_monte_carlo_persistence_contract.py \
+            tests/test_monte_carlo_discrete_weight_normalization.py \
+            tests/test_bayesian_calibration_api_contract.py \
+            tests/test_bayesian_calibration_recompute_policy.py \
+            tests/test_decision_operational_truth_duckdb_httpfs.py \
+            tests/test_replicon_minio_image_contract.py \
+            tests/test_cartridge_query_kb_sql_guard.py \
+            tests/test_cartridge_scope_propagation.py \
+            tests/test_seed_packaged_datasets_logging.py \
+            tests/test_successfactors_talent_fallbacks.py \
+            tests/test_cartridge_query_kb_reader_sandbox.py \
+            tests/test_talent_benchmark_approval_authority.py \
+            tests/test_talent_nine_box_fail_closed.py \
+            tests/test_talent_nine_box_downstream.py \
+            tests/test_talent_nine_box_lateral_guards.py \
+            tests/test_talent_nine_box_projection_guards.py \
+            tests/test_talent_readiness_benchmark_guards.py \
+            tests/test_talent_score_type_guards.py \
             tests/test_v1_router_mount.py
 
       - name: Run live PostgreSQL/RLS tests
@@ -153,7 +202,8 @@ jobs:
             tests/test_staged_publication_reader_boundaries.py \
             tests/test_staged_publication_recovery_matrix_live.py \
             tests/test_staged_publication_red.py \
-            tests/test_staged_publication_verifier_boundary_live.py
+            tests/test_staged_publication_verifier_boundary_live.py \
+            tests/test_talent_benchmark_publication_authority_live.py
 
       - name: Verify hermetic DuckDB extension cache
         if: always()
@@ -196,8 +246,8 @@ jobs:
               if any(bad.values()):
                   raise SystemExit(f"{label} JUnit is not clean: {bad}")
 
-          verify_junit("/tmp/control-room-focal.xml", minimum=9104, label="Focal Control Room")
-          verify_junit("/tmp/control-room-postgres-rls.xml", minimum=268, label="Live PostgreSQL/RLS")
+          verify_junit("/tmp/control-room-focal.xml", minimum=9650, label="Focal Control Room")
+          verify_junit("/tmp/control-room-postgres-rls.xml", minimum=276, label="Live PostgreSQL/RLS")
           PY
 
   operational-truth-e2e:

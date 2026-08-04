@@ -3,7 +3,8 @@
 -- description: Alineacion de promociones contra 9-box usando eventReason observado. Si no hay C/P/A o promociones, queda parcial.
 
 WITH nine_box AS (
-    SELECT user_id, box_key, box_label, box_status
+    SELECT user_id, box_key, box_label, box_status, performance_score,
+           potential_score, invalid_score_input
     FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_9box/**/*.parquet',
                       hive_partitioning = true,
                       union_by_name = true)
@@ -24,9 +25,15 @@ promotions AS (
         COUNT(*) FILTER (WHERE nine_box.box_key NOT IN ('estrella', 'crecimiento', 'alto_impacto')) AS misaligned_count
     FROM mobility
     JOIN nine_box ON nine_box.user_id = mobility.user_id
-    WHERE LOWER(COALESCE(mobility.latest_event_reason, '')) LIKE '%promot%'
-       OR LOWER(COALESCE(mobility.latest_event_reason, '')) LIKE '%promotion%'
-       OR LOWER(COALESCE(mobility.latest_event_reason, '')) LIKE '%promo%'
+    WHERE nine_box.box_status = 'ready'
+      AND nine_box.invalid_score_input IS FALSE
+      AND talent_percent_is_valid(nine_box.performance_score)
+      AND talent_percent_is_valid(nine_box.potential_score)
+      AND (
+        LOWER(COALESCE(mobility.latest_event_reason, '')) LIKE '%promot%'
+        OR LOWER(COALESCE(mobility.latest_event_reason, '')) LIKE '%promotion%'
+        OR LOWER(COALESCE(mobility.latest_event_reason, '')) LIKE '%promo%'
+      )
     GROUP BY nine_box.box_key, nine_box.box_label, nine_box.box_status
 )
 SELECT

@@ -24,9 +24,25 @@ metrics AS (
     SELECT
         box_key,
         COUNT(*) AS employee_count,
-        COUNT(*) FILTER (WHERE box_status IN ('ready', 'benchmark_internal')) AS ready_count,
-        COUNT(*) FILTER (WHERE box_status = 'benchmark_internal') AS benchmark_count,
-        COUNT(*) FILTER (WHERE box_status NOT IN ('ready', 'benchmark_internal')) AS blocked_count
+        COUNT(*) FILTER (
+            WHERE box_status = 'ready'
+              AND invalid_score_input IS FALSE
+              AND talent_percent_is_valid(performance_score)
+              AND talent_percent_is_valid(potential_score)
+        ) AS ready_count,
+        COUNT(*) FILTER (
+            WHERE box_status = 'ready'
+              AND source_mode = 'benchmark_internal'
+              AND invalid_score_input IS FALSE
+              AND talent_percent_is_valid(performance_score)
+              AND talent_percent_is_valid(potential_score)
+        ) AS benchmark_count,
+        COUNT(*) FILTER (
+            WHERE box_status <> 'ready'
+               OR invalid_score_input IS DISTINCT FROM FALSE
+               OR NOT talent_percent_is_valid(performance_score)
+               OR NOT talent_percent_is_valid(potential_score)
+        ) AS blocked_count
     FROM rows
     GROUP BY box_key
 )

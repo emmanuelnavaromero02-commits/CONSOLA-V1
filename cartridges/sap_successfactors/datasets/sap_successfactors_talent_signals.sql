@@ -36,12 +36,14 @@ SELECT
     title,
     recommendation,
     status,
+    source_validation_status,
     CURRENT_TIMESTAMP AS generated_at,
     'gold_ready' AS readiness_status,
     (SELECT action_count FROM metrics) AS source_row_count,
     CURRENT_TIMESTAMP AS materialized_at,
     '[]' AS blockers
 FROM actions
+WHERE source_validation_status = 'server_validated_v1'
 UNION ALL
 SELECT
     'talent_role_requirements_missing' AS signal_id,
@@ -51,6 +53,7 @@ SELECT
     'Requisitos de rol pendientes' AS title,
     'Validar Position y entidades de skills para comparar persona contra rol.' AS recommendation,
     'recommendation_only' AS status,
+    'server_validated_v1' AS source_validation_status,
     CURRENT_TIMESTAMP AS generated_at,
     'partial' AS readiness_status,
     role_count AS source_row_count,
@@ -67,6 +70,7 @@ SELECT
     'Movilidad observada disponible' AS title,
     'Usar historial EmpJob como proxy temporal mientras aspiracion declarada queda pendiente.' AS recommendation,
     'recommendation_only' AS status,
+    'server_validated_v1' AS source_validation_status,
     CURRENT_TIMESTAMP AS generated_at,
     'gold_ready' AS readiness_status,
     mobility_count AS source_row_count,

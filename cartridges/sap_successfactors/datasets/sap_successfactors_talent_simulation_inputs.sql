@@ -25,6 +25,11 @@ scored AS (
         LEAST(1.0, GREATEST(0.0, 1.0 - COALESCE(confidence, 0.0))) AS incertidumbre,
         CASE
             WHEN employee_count = 0 THEN 0
+            WHEN source_mode = 'benchmark_internal'
+              AND NOT (
+                  benchmark_approval_valid = TRUE
+                  AND benchmark_provenance_status = 'approved_durable'
+              ) THEN 0
             WHEN readiness_status IN ('ready', 'benchmark_internal') THEN 3
             ELSE 0
         END AS scenario_count_calc
@@ -74,6 +79,8 @@ SELECT
     confidence,
     readiness_status,
     source_mode,
+    benchmark_approval_valid,
+    benchmark_provenance_status,
     ROUND(riesgo_base, 2) AS riesgo_base,
     ROUND(incertidumbre, 4) AS incertidumbre,
     scenario_count_calc AS scenario_count,

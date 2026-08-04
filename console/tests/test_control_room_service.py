@@ -532,7 +532,9 @@ async def test_dashboard_includes_successfactors_talent_gold_signals(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_sap_successfactors_talent_9box_payload_is_aggregate(monkeypatch):
+async def test_sap_successfactors_talent_9box_rebuilds_aggregate_from_detail(
+    monkeypatch,
+):
     async def fake_rows(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
         if dataset == "sap_successfactors_talent_9box_operational":
             return [
@@ -544,6 +546,19 @@ async def test_sap_successfactors_talent_9box_payload_is_aggregate(monkeypatch):
                     "blocked_count": 0,
                     "box_status": "ready",
                 }
+            ]
+        if dataset == "sap_successfactors_talent_9box":
+            return [
+                {
+                    "user_id": f"employee-{index}",
+                    "box_key": "estrella",
+                    "box_status": "ready",
+                    "source_mode": "cpa_real",
+                    "performance_score": 100.0,
+                    "potential_score": 100.0,
+                    "invalid_score_input": False,
+                }
+                for index in range(3)
             ]
         return []
 
@@ -574,6 +589,19 @@ async def test_sap_successfactors_talent_9box_accepts_internal_reference(monkeyp
                     "blocked_count": 0,
                     "box_status": "benchmark_internal",
                 }
+            ]
+        if dataset == "sap_successfactors_talent_9box":
+            return [
+                {
+                    "user_id": f"reference-{index}",
+                    "box_key": "core",
+                    "box_status": "ready",
+                    "source_mode": "benchmark_internal",
+                    "performance_score": 60.0,
+                    "potential_score": 60.0,
+                    "invalid_score_input": False,
+                }
+                for index in range(8)
             ]
         return []
 
@@ -613,6 +641,29 @@ async def test_sap_successfactors_talent_kpis_reads_operational_blocked_count_al
                     "source_mode": "benchmark_internal",
                 }
             ]
+        if dataset == "sap_successfactors_talent_9box":
+            return [
+                {
+                    "box_key": "core",
+                    "box_status": "ready",
+                    "performance_score": 60.0,
+                    "potential_score": 60.0,
+                    "invalid_score_input": False,
+                }
+                for _ in range(1288)
+            ]
+        if dataset == "sap_successfactors_talent_readiness":
+            return [
+                {
+                    "source_mode": "benchmark_internal",
+                    "readiness_status": "ready",
+                    "readiness_score": 60.0,
+                    "benchmark_approval_valid": True,
+                    "benchmark_provenance_status": "approved_durable",
+                    "invalid_score_input": False,
+                }
+                for _ in range(1288)
+            ]
         return []
 
     monkeypatch.setattr(control_room_service, "query_dataset_rows", fake_rows)
@@ -637,21 +688,33 @@ async def test_sap_successfactors_talent_kpis_use_readiness_when_operational_row
             return [
                 {
                     "employee_key": "tal_1",
-                    "readiness_status": "benchmark_internal",
+                    "readiness_status": "ready",
                     "source_mode": "benchmark_internal",
+                    "readiness_score": 60.0,
+                    "benchmark_approval_valid": True,
+                    "benchmark_provenance_status": "approved_durable",
+                    "invalid_score_input": False,
                 },
                 {
                     "employee_key": "tal_2",
-                    "readiness_status": "benchmark_internal",
+                    "readiness_status": "ready",
                     "source_mode": "benchmark_internal",
+                    "readiness_score": 60.0,
+                    "benchmark_approval_valid": True,
+                    "benchmark_provenance_status": "approved_durable",
+                    "invalid_score_input": False,
                 },
             ]
         if dataset == "sap_successfactors_talent_9box":
             return [
                 {
                     "employee_key": "tal_1",
-                    "box_status": "benchmark_internal",
+                    "box_key": "core",
+                    "box_status": "ready",
                     "source_mode": "benchmark_internal",
+                    "performance_score": 60.0,
+                    "potential_score": 60.0,
+                    "invalid_score_input": False,
                 }
             ]
         if dataset == "sap_successfactors_talent_operational_features":
@@ -700,14 +763,20 @@ async def test_sap_successfactors_talent_9box_falls_back_to_detailed_rows(monkey
                 {
                     "employee_key": "tal_1",
                     "box_key": "core",
-                    "box_status": "benchmark_internal",
+                    "box_status": "ready",
                     "source_mode": "benchmark_internal",
+                    "performance_score": 60.0,
+                    "potential_score": 60.0,
+                    "invalid_score_input": False,
                 },
                 {
                     "employee_key": "tal_2",
                     "box_key": "estrella",
                     "box_status": "ready",
                     "source_mode": "cpa_real",
+                    "performance_score": 100.0,
+                    "potential_score": 100.0,
+                    "invalid_score_input": False,
                 },
             ]
         return []
@@ -742,7 +811,10 @@ async def test_sap_successfactors_talent_9box_roster_masks_people(monkeypatch):
                     "performance_band": "high",
                     "potential_band": "high",
                     "fit_score": 91.4,
+                    "performance_score": 100.0,
+                    "potential_score": 100.0,
                     "box_status": "ready",
+                    "invalid_score_input": False,
                 },
                 {
                     "user_id": "101",
@@ -757,7 +829,10 @@ async def test_sap_successfactors_talent_9box_roster_masks_people(monkeypatch):
                     "performance_band": "high",
                     "potential_band": "high",
                     "fit_score": 82,
+                    "performance_score": 100.0,
+                    "potential_score": 100.0,
                     "box_status": "ready",
+                    "invalid_score_input": False,
                 },
             ]
         return []
@@ -801,6 +876,7 @@ async def test_talent_performance_entity_available_when_performance_present(
                     "performance_score": 4.0,
                     "competency_score": None,
                     "aspiration_score": None,
+                    "invalid_score_input": False,
                 },
                 {
                     "user_id": "201",
@@ -883,6 +959,7 @@ def test_talent_roster_row_desempeno_disponible_and_separation():
         "performance_band_available": "high",
         "potential_pending": True,
         "fit_score": None,
+        "invalid_score_input": False,
     }
     row_noperf = {
         "user_id": "2",
@@ -890,6 +967,7 @@ def test_talent_roster_row_desempeno_disponible_and_separation():
         "performance_band_available": None,
         "potential_pending": True,
         "fit_score": None,
+        "invalid_score_input": False,
     }
     row_full = {
         "user_id": "3",
@@ -897,6 +975,7 @@ def test_talent_roster_row_desempeno_disponible_and_separation():
         "performance_band_available": "high",
         "potential_pending": False,
         "fit_score": 85,
+        "invalid_score_input": False,
     }
     masked_perf = control_room_service._sf_talent_masked_roster_row(row_perf)
     assert masked_perf["performance_band_available"] == "high"
@@ -919,7 +998,12 @@ def test_talent_roster_row_desempeno_disponible_and_separation():
 
 def test_talent_roster_row_band_compute_fallback_without_gold_column():
     """Si el gold aun no trae performance_band_available, se calcula desde performance_score."""
-    row = {"user_id": "9", "performance_score": 4.6, "cpa_status": "insufficient_data"}
+    row = {
+        "user_id": "9",
+        "performance_score": 4.6,
+        "cpa_status": "insufficient_data",
+        "invalid_score_input": False,
+    }
     masked = control_room_service._sf_talent_masked_roster_row(row)
     assert masked["performance_band_available"] == "high"
     assert masked["desempeno_disponible"] is True  # perf presente + cpa insuficiente
@@ -932,24 +1016,28 @@ def test_talent_desempeno_cohort_counts_bands_and_sorts():
             "performance_score": 4.5,
             "performance_band_available": "high",
             "potential_pending": True,
+            "invalid_score_input": False,
         },
         {
             "user_id": "2",
             "performance_score": 3.1,
             "performance_band_available": "medium",
             "potential_pending": True,
+            "invalid_score_input": False,
         },
         {
             "user_id": "3",
             "performance_score": None,
             "performance_band_available": None,
             "potential_pending": True,
+            "invalid_score_input": False,
         },
         {
             "user_id": "4",
             "performance_score": 4.0,
             "performance_band_available": "high",
             "potential_pending": False,
+            "invalid_score_input": False,
         },
     ]
     cohort = control_room_service._sf_talent_desempeno_cohort(rows)
@@ -973,6 +1061,7 @@ async def test_talent_9box_payload_exposes_desempeno_cohort(monkeypatch):
                     "box_status": "benchmark_internal",
                     "performance_band": "high",
                     "potential_band": "medium",
+                    "invalid_score_input": False,
                 },
                 {
                     "user_id": "2",
@@ -984,6 +1073,7 @@ async def test_talent_9box_payload_exposes_desempeno_cohort(monkeypatch):
                     "box_status": "benchmark_internal",
                     "performance_band": "medium",
                     "potential_band": "low",
+                    "invalid_score_input": False,
                 },
                 {
                     "user_id": "3",
@@ -995,6 +1085,7 @@ async def test_talent_9box_payload_exposes_desempeno_cohort(monkeypatch):
                     "box_status": "blocked",
                     "performance_band": "insufficient_data",
                     "potential_band": "insufficient_data",
+                    "invalid_score_input": True,
                 },
             ]
         return []
@@ -1292,7 +1383,9 @@ async def test_dashboard_exposes_real_financial_metrics_from_available_sources()
                 "wip_usd": 24000,
                 "costo_total": 70000,
                 "margen_bruto_usd": 30000,
-                "margen_bruto_pct": 30,
+                "base_currency": "USD",
+                "original_currency": "USD",
+                **dict(margen_bruto_pct=30, financial_status="ready"),
             },
             {
                 "mes": "2026-05-01",
@@ -1304,7 +1397,9 @@ async def test_dashboard_exposes_real_financial_metrics_from_available_sources()
                 "wip_usd": -6000,
                 "costo_total": 25000,
                 "margen_bruto_usd": -5000,
-                "margen_bruto_pct": -25,
+                "base_currency": "USD",
+                "original_currency": "USD",
+                **dict(margen_bruto_pct=-25, financial_status="ready"),
             },
         ]
         rows["revenue_by_customer"] = [{"customer_code": "C-1", "revenue": 50000}]
@@ -1372,7 +1467,9 @@ async def finance_fetcher(dataset: str, _user: dict | None, _limit: int) -> list
             "wip_usd": 6000,
             "costo_total": 95000,
             "margen_bruto_usd": 5000,
-            "margen_bruto_pct": 5,
+            "base_currency": "USD",
+            "original_currency": "USD",
+            **dict(margen_bruto_pct=5, financial_status="ready"),
         }
     ]
     return _scoped_rows(dataset, rows[dataset], _user)
@@ -1393,7 +1490,9 @@ async def threshold_margin_fetcher(
             "wip_usd": 0,
             "costo_total": 85000,
             "margen_bruto_usd": 15000,
-            "margen_bruto_pct": 15,
+            "base_currency": "USD",
+            "original_currency": "USD",
+            **dict(margen_bruto_pct=15, financial_status="ready"),
         }
     ]
     return _scoped_rows(dataset, rows[dataset], _user)
@@ -2020,6 +2119,17 @@ async def test_select_item_option_persists_metadata_and_records_audit_event():
     anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))[
         "anomalies"
     ][0]
+    anomaly["intelligence"] = {
+        "options": [
+            {
+                "id": "exception",
+                "label": "Review the source exception",
+                "action_kind": "review_source_exception",
+                "score": 0.75,
+            }
+        ]
+    }
+    anomaly["omega"]["options"] = [{"id": "exception"}]
     mock_pool = AsyncMock()
     _enable_successful_writes(mock_pool)
     mock_pool.fetch.return_value = []

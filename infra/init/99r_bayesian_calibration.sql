@@ -6,6 +6,8 @@
 CREATE TABLE IF NOT EXISTS calibration_observations (
     id                       BIGSERIAL PRIMARY KEY,
     observation_id           TEXT NOT NULL,
+    idempotency_key           TEXT NOT NULL,
+    evidence_digest           TEXT NOT NULL,
     tenant_id                UUID REFERENCES tenants(id) ON DELETE CASCADE,
     workspace_id             UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     source_type              TEXT NOT NULL
@@ -39,7 +41,8 @@ CREATE TABLE IF NOT EXISTS calibration_observations (
     created_by               BIGINT REFERENCES users(id) ON DELETE SET NULL,
     created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (workspace_id, observation_id)
+    UNIQUE (workspace_id, observation_id),
+    UNIQUE (workspace_id, idempotency_key)
 );
 
 CREATE TABLE IF NOT EXISTS calibration_states (
@@ -129,7 +132,8 @@ CREATE POLICY calibration_states_console_scope_rls
         )
     );
 
-GRANT SELECT, INSERT, UPDATE ON calibration_observations TO omega_console;
+REVOKE UPDATE, DELETE ON calibration_observations FROM omega_console;
+GRANT SELECT, INSERT ON calibration_observations TO omega_console;
 GRANT SELECT, INSERT, UPDATE ON calibration_states TO omega_console;
 GRANT USAGE, SELECT ON SEQUENCE calibration_observations_id_seq TO omega_console;
 GRANT USAGE, SELECT ON SEQUENCE calibration_states_id_seq TO omega_console;

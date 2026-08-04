@@ -172,12 +172,19 @@ def preview(entity: str, limit: int = 20) -> dict[str, Any]:
     try:
         ctx = require_tenant_workspace_scope()
     except SecurityContextError as exc:
-        return {"error": "security_context_denied", "reason": str(exc), "rows": [], "columns": []}
+        return {
+            "error": "security_context_denied",
+            "reason": str(exc),
+            "rows": [],
+            "columns": [],
+        }
     scope = scoped_prefix(ctx)
-    path = f"s3://{bucket}/raw/replicon/{entity}/{scope}load_date=*/batch_id=*/*.parquet"
+    path = (
+        f"s3://{bucket}/raw/replicon/{entity}/{scope}load_date=*/batch_id=*/*.parquet"
+    )
     sql = f"SELECT * FROM read_parquet('{path}', hive_partitioning=true) LIMIT {limit}"
     try:
-        conn = _get_duckdb_connection()
+        conn = _get_duckdb_connection(sql)
         try:
             rel = conn.execute(sql)
             columns = [desc[0] for desc in rel.description]
@@ -234,7 +241,9 @@ async def extract(
 
 
 @mcp.tool()
-async def extract_all(mode: str = "incremental", conn_id: str | None = None) -> dict[str, Any]:
+async def extract_all(
+    mode: str = "incremental", conn_id: str | None = None
+) -> dict[str, Any]:
     """
     [BATCH — async] Extrae TODAS las entidades de Replicon en paralelo (máx 4 simultáneas).
 
@@ -400,7 +409,7 @@ def query_kb(sql: str, limit: int = 100) -> dict[str, Any]:
 
     resolved = f"SELECT * FROM ({resolved}) _q LIMIT {limit}"
     try:
-        conn = _get_duckdb_connection()
+        conn = _get_duckdb_connection(resolved)
         try:
             rel = conn.execute(resolved)
             columns = [desc[0] for desc in rel.description]
@@ -449,7 +458,7 @@ def _make_sql_tool(name: str, description: str, sql: str) -> None:
         if not ok:
             return {"error": "sql_blocked", "reason": err}
         scoped_sql = f"SELECT * FROM ({resolved_sql}) _q LIMIT 100"
-        conn = _get_duckdb_connection()
+        conn = _get_duckdb_connection(scoped_sql)
         try:
             rel = conn.execute(scoped_sql)
             columns = [d[0] for d in rel.description]

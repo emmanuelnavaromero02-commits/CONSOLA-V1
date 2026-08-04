@@ -26,5 +26,6 @@ pgvector==0.3.2
 # Public API used by mcp-infra (PdfReader, page extraction) is
 # unchanged across the 4 -> 6 major bump per pypdf's stability policy.
 pypdf==6.14.2
+sqlglot==25.16.1
 boto3>=1.34.0
 google-cloud-storage>=2.18.0,<4

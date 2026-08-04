@@ -435,7 +435,7 @@ proj_contract AS (
             code                                                            AS project_code,
             clientname                                                      AS cliente,
             CASE WHEN projectcurrencyid = 8
-                 THEN COALESCE(totalestimatedcontractamount, 0) / 20.0
+                 THEN NULL
                  ELSE COALESCE(totalestimatedcontractamount, 0)
             END                                                             AS valor_contrato,
             ROW_NUMBER() OVER (PARTITION BY code ORDER BY load_date DESC NULLS LAST) AS rn
@@ -494,8 +494,8 @@ facturacion AS (
     SELECT
         DATE_TRUNC('month', CAST("Fecha" AS DATE))                         AS mes,
         CAST(TRY_CAST(TRY_CAST("Project Code" AS DOUBLE) AS BIGINT) AS VARCHAR) AS project_code,
-        SUM(CASE WHEN "Moneda" = 'MXN' THEN "Subtotal" / 20.0
-                 ELSE "Subtotal" END)                                      AS facturacion_mes_usd
+        CASE WHEN COUNT(*) FILTER (WHERE "Moneda" = 'MXN') > 0
+             THEN NULL ELSE SUM("Subtotal") END                            AS facturacion_mes_usd
     FROM read_parquet('s3://{bucket}/silver/replicon/replicon_projectbilling_curated/data.parquet')
     WHERE "Fecha" IS NOT NULL AND "Project Code" != '0'
     GROUP BY 1, 2
@@ -572,40 +572,14 @@ SELECT
     ROUND(ta.horas_facturables, 2)                                         AS horas_facturables,
     ROUND(ta.horas_no_facturables, 2)                                      AS horas_no_facturables,
     ROUND(ta.horas_totales, 2)                                             AS horas_totales,
-    ROUND(ta.billing_rate_usd, 2)                                          AS billing_rate_usd,
-    ROUND(ta.costo_hora, 2)                                                AS costo_hora,
-    -- COSTO DIRECTO (consultor)
-    ROUND(ta.costo_directo, 2)                                             AS costo_directo,
-    -- COSTO HUNDIDO atribuido al consultor en este proyecto:
-    --   peso = horas_fact del consultor en este proyecto / total horas_fact del consultor en el mes
-    ROUND(
-        CASE WHEN he.hrs_fact_total > 0
-             THEN ta.horas_facturables / he.hrs_fact_total * he.costo_hundido_total
-             ELSE 0 END, 2)                                                AS costo_hundido_aporte,
-    -- REVENUE atribuido al consultor:
-    --   T&M / AMS OnDemand → su propia hrs × tarifa (o BillingItem)
-    --   FPP / AMS Baseline / BPO → revenue del proyecto × share de su horas_fact en el mes-proyecto
-    ROUND(
-        CASE
-            WHEN pc.project_type IN ('T&M', 'AMS (On Demand)')
-              THEN CASE WHEN ta.revenue_tarifa_usr > 0 THEN ta.revenue_tarifa_usr
-                        ELSE COALESCE(biu.revenue_bi, 0) END
-            WHEN pc.project_type = 'FPP'
-              THEN CASE WHEN ph.hrs_fact_proyecto > 0
-                        THEN ta.horas_facturables / ph.hrs_fact_proyecto
-                             * COALESCE(fr.revenue_usd, 0)
-                        ELSE 0 END
-            WHEN pc.project_type IN ('AMS (Base Line)', 'BPO', 'CFDI-Timbrado')
-              THEN CASE WHEN ph.hrs_fact_proyecto > 0
-                        THEN ta.horas_facturables / ph.hrs_fact_proyecto
-                             * COALESCE(fac.facturacion_mes_usd, 0)
-                        ELSE 0 END
-            ELSE CASE WHEN ta.revenue_tarifa_usr > 0 THEN ta.revenue_tarifa_usr
-                      ELSE COALESCE(biu.revenue_bi, 0) END
-        END, 2)                                                            AS revenue_aporte,
-    -- Totales del proyecto-mes para contexto
-    ROUND(COALESCE(fr.revenue_usd, 0), 2)                                  AS proj_revenue_fpp_mes,
-    ROUND(COALESCE(fac.facturacion_mes_usd, 0), 2)                         AS proj_facturacion_mes
+    NULL::DOUBLE AS billing_rate_usd,
+    NULL::DOUBLE AS costo_hora,
+    NULL::DOUBLE AS costo_directo,
+    NULL::DOUBLE AS costo_hundido_aporte,
+    NULL::DOUBLE AS revenue_aporte,
+    NULL::DOUBLE AS proj_revenue_fpp_mes,
+    NULL::DOUBLE AS proj_facturacion_mes,
+    'insufficient_data' AS financial_status
 FROM te_agg ta
 LEFT JOIN proj_catalog pc   ON pc.project_code  = ta.project_code
 LEFT JOIN proj_contract pc2 ON pc2.project_code = ta.project_code
@@ -644,7 +618,7 @@ proj_contract AS (
             code                                                             AS project_code,
             clientname                                                       AS cliente,
             CASE WHEN projectcurrencyid = 8
-                 THEN COALESCE(totalestimatedcontractamount, 0) / 20.0
+                 THEN NULL
                  ELSE COALESCE(totalestimatedcontractamount, 0)
             END                                                              AS valor_contrato,
             ROW_NUMBER() OVER (PARTITION BY code ORDER BY load_date DESC NULLS LAST) AS rn
@@ -706,8 +680,8 @@ facturacion AS (
     SELECT
         DATE_TRUNC('month', CAST("Fecha" AS DATE))                         AS mes,
         CAST(TRY_CAST(TRY_CAST("Project Code" AS DOUBLE) AS BIGINT) AS VARCHAR) AS project_code,
-        SUM(CASE WHEN "Moneda" = 'MXN' THEN "Subtotal" / 20.0
-                 ELSE "Subtotal" END)                                      AS facturacion_mes_usd
+        CASE WHEN COUNT(*) FILTER (WHERE "Moneda" = 'MXN') > 0
+             THEN NULL ELSE SUM("Subtotal") END                            AS facturacion_mes_usd
     FROM read_parquet('s3://{bucket}/silver/replicon/replicon_projectbilling_curated/data.parquet')
     WHERE "Fecha" IS NOT NULL AND "Project Code" != '0'
     GROUP BY 1, 2
@@ -839,20 +813,18 @@ SELECT
     proyecto,
     project_name,
     tipo_proyecto,
-    ROUND(revenue_usd, 2)                                                  AS revenue_usd,
-    ROUND(facturacion_mes_usd, 2)                                          AS facturacion_mes_usd,
-    ROUND(revenue_usd - facturacion_mes_usd, 2)                            AS wip_usd,
-    ROUND(costo_directo, 2)                                                AS costo_directo,
-    ROUND(costo_hundido, 2)                                                AS costo_hundido,
-    ROUND(costo_total, 2)                                                  AS costo_total,
-    ROUND(revenue_usd - costo_total, 2)                                    AS margen_bruto_usd,
-    ROUND(
-        CASE WHEN revenue_usd > 0
-             THEN (revenue_usd - costo_total) / revenue_usd * 100
-             ELSE NULL END, 2)                                             AS margen_bruto_pct,
+    NULL::DOUBLE AS revenue_usd,
+    NULL::DOUBLE AS facturacion_mes_usd,
+    NULL::DOUBLE AS wip_usd,
+    NULL::DOUBLE AS costo_directo,
+    NULL::DOUBLE AS costo_hundido,
+    NULL::DOUBLE AS costo_total,
+    NULL::DOUBLE AS margen_bruto_usd,
+    NULL::DOUBLE AS margen_bruto_pct,
     ROUND(horas_facturables, 2)                                            AS horas_facturables,
     ROUND(horas_totales, 2)                                                AS horas_totales,
-    ROUND(pct_avance_real, 2)                                              AS pct_avance_real
+    ROUND(pct_avance_real, 2)                                              AS pct_avance_real,
+    'insufficient_data' AS financial_status
 FROM pnl_base
 ORDER BY mes DESC, revenue_manager, cliente, proyecto$seed$, $seed$P&L mensual por Revenue Manager/Cliente/Proyecto. Revenue por tipo: FPP=avance*contrato, T&M/AMS On Demand=horas*tarifa, AMS Base Line/BPO=facturado. Costo en directo+hundido. WIP=revenue-facturacion.$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW())
 ON CONFLICT (name) DO NOTHING;
@@ -2131,8 +2103,12 @@ function fiscalYear(s){
 }
 function groupBy(arr,key){return arr.reduce((m,r)=>{(m[r[key]]=m[r[key]]||[]).push(r);return m;},{});}
 function sumRows(rows){
-  const a={revenue_usd:0,facturacion_mes_usd:0,wip_usd:0,costo_directo:0,costo_hundido:0,costo_total:0,margen_bruto_usd:0,horas_facturables:0,horas_totales:0};
-  rows.forEach(r=>Object.keys(a).forEach(k=>a[k]+=(+r[k]||0)));
+  const financial=['revenue_usd','facturacion_mes_usd','wip_usd','costo_directo','costo_hundido','costo_total','margen_bruto_usd'];
+  const hours=['horas_facturables','horas_totales'];
+  const a={revenue_usd:null,facturacion_mes_usd:null,wip_usd:null,costo_directo:null,costo_hundido:null,costo_total:null,margen_bruto_usd:null,horas_facturables:null,horas_totales:null};
+  const ready=rows.filter(r=>r.financial_status==='ready');
+  financial.forEach(k=>a[k]=ready.length&&ready.every(r=>r[k]!=null)?ready.reduce((sum,r)=>sum+Number(r[k]),0):null);
+  hours.forEach(k=>a[k]=rows.length&&rows.every(r=>r[k]!=null)?rows.reduce((sum,r)=>sum+Number(r[k]),0):null);
   a.margen_bruto_pct=a.revenue_usd?(a.margen_bruto_usd/a.revenue_usd*100):null;
   return a;
 }
@@ -2149,7 +2125,7 @@ function badgeClass(pct){
   return 'badge-red';
 }
 function badgeLabel(pct){
-  if(pct==null) return 'SIN REVENUE';
+  if(pct==null) return 'DATOS INSUFICIENTES';
   if(pct>=20)   return '✓ BUENO';
   if(pct>=10)   return '⚠ ALERTA';
   return '✕ CRÍTICO';
@@ -2690,8 +2666,12 @@ const kpiColor  = v => v==null?'':v>0?'pos':v<0?'neg':'neu';
 
 function groupBy(arr,key){return arr.reduce((m,r)=>{(m[r[key]]=m[r[key]]||[]).push(r);return m;},{});}
 function sumRows(rows){
-  const a={revenue_usd:0,facturacion_mes_usd:0,wip_usd:0,costo_directo:0,costo_hundido:0,costo_total:0,margen_bruto_usd:0,horas_facturables:0,horas_totales:0};
-  rows.forEach(r=>Object.keys(a).forEach(k=>a[k]+=(r[k]||0)));
+  const financial=['revenue_usd','facturacion_mes_usd','wip_usd','costo_directo','costo_hundido','costo_total','margen_bruto_usd'];
+  const hours=['horas_facturables','horas_totales'];
+  const a={revenue_usd:null,facturacion_mes_usd:null,wip_usd:null,costo_directo:null,costo_hundido:null,costo_total:null,margen_bruto_usd:null,horas_facturables:null,horas_totales:null};
+  const ready=rows.filter(r=>r.financial_status==='ready');
+  financial.forEach(k=>a[k]=ready.length&&ready.every(r=>r[k]!=null)?ready.reduce((sum,r)=>sum+Number(r[k]),0):null);
+  hours.forEach(k=>a[k]=rows.length&&rows.every(r=>r[k]!=null)?rows.reduce((sum,r)=>sum+Number(r[k]),0):null);
   a.margen_bruto_pct=a.revenue_usd?(a.margen_bruto_usd/a.revenue_usd*100):null;
   return a;
 }
@@ -3045,21 +3025,24 @@ async function toggleDrill(proj, projId, tr){
     const byCon = {};
     data.forEach(r=>{
       const c = r.consultor || '—';
-      if(!byCon[c]) byCon[c]={consultor:c, tipo_empleado:r.tipo_empleado, hrs_fact:0, hrs_nofact:0, hrs_tot:0, costo_dir:0, costo_hund:0, rev:0, costo_hora:r.costo_hora, billing_rate_usd:r.billing_rate_usd};
+      if(!byCon[c]) byCon[c]={consultor:c, tipo_empleado:r.tipo_empleado, hrs_fact:0, hrs_nofact:0, hrs_tot:0, costo_dir:0, costo_hund:0, rev:0, costo_hora:r.costo_hora, billing_rate_usd:r.billing_rate_usd, financial_ready:true, missing:{}};
       const a=byCon[c];
-      a.hrs_fact   += +r.horas_facturables||0;
-      a.hrs_nofact += +r.horas_no_facturables||0;
-      a.hrs_tot    += +r.horas_totales||0;
-      a.costo_dir  += +r.costo_directo||0;
-      a.costo_hund += +r.costo_hundido_aporte||0;
-      a.rev        += +r.revenue_aporte||0;
+      a.financial_ready = a.financial_ready && r.financial_status==='ready';
+      [['hrs_fact','horas_facturables'],['hrs_nofact','horas_no_facturables'],['hrs_tot','horas_totales'],['costo_dir','costo_directo'],['costo_hund','costo_hundido_aporte'],['rev','revenue_aporte']].forEach(([dst,src])=>{
+        if(r[src]==null) a.missing[dst]=true;
+        else a[dst]+=Number(r[src]);
+      });
     });
-    const cons = Object.values(byCon).sort((a,b)=>b.rev-a.rev);
-    const fH = n => (+n||0).toFixed(1)+'h';
-    const fM = n => '$'+Math.round(+n||0).toLocaleString('en');
-    const fR = n => (+n? '$'+(+n).toFixed(2)+'/h' : '—');
-    let totals={hrs_fact:0,hrs_nofact:0,hrs_tot:0,costo_dir:0,costo_hund:0,rev:0};
-    cons.forEach(c=>['hrs_fact','hrs_nofact','hrs_tot','costo_dir','costo_hund','rev'].forEach(k=>totals[k]+=c[k]));
+    const money=['costo_dir','costo_hund','rev'];
+    const fields=['hrs_fact','hrs_nofact','hrs_tot',...money];
+    const cons = Object.values(byCon).map(a=>{
+      fields.forEach(k=>{if(a.missing[k]||(money.includes(k)&&!a.financial_ready))a[k]=null;});
+      return a;
+    }).sort((a,b)=>(b.rev??-Infinity)-(a.rev??-Infinity));
+    const fH = n => n==null?'—':Number(n).toFixed(1)+'h';
+    const fM = n => n==null?'—':'$'+Math.round(Number(n)).toLocaleString('en');
+    const fR = n => n==null?'—':'$'+Number(n).toFixed(2)+'/h';
+    const totals=Object.fromEntries(fields.map(k=>[k,cons.length&&cons.every(c=>c[k]!=null)?cons.reduce((sum,c)=>sum+Number(c[k]),0):null]));
     body.innerHTML = `
       <div style="font-size:9px;color:var(--text3);letter-spacing:1px;margin-bottom:6px">CONSULTORES — ${cons.length} · ${meses.length} mes(es)</div>
       <table style="width:100%;border-collapse:collapse;font-size:10px">
@@ -3078,8 +3061,8 @@ async function toggleDrill(proj, projId, tr){
         </tr></thead>
         <tbody>
           ${cons.map(c=>{
-            const margen = c.rev - c.costo_dir - c.costo_hund;
-            const mc = margen>0?'pos':margen<0?'neg':'';
+            const margen = money.every(k=>c[k]!=null)?c.rev-c.costo_dir-c.costo_hund:null;
+            const mc = margen==null?'':margen>0?'pos':margen<0?'neg':'';
             return `<tr>
               <td class="left" style="padding:3px 8px">${c.consultor}</td>
               <td class="left" style="padding:3px 8px;color:var(--text3);font-size:9px">${c.tipo_empleado||'—'}</td>
@@ -3103,7 +3086,7 @@ async function toggleDrill(proj, projId, tr){
             <td style="text-align:right;padding:4px 8px">${fM(totals.costo_dir)}</td>
             <td style="text-align:right;padding:4px 8px">${fM(totals.costo_hund)}</td>
             <td style="text-align:right;padding:4px 8px">${fM(totals.rev)}</td>
-            <td style="text-align:right;padding:4px 8px">${fM(totals.rev-totals.costo_dir-totals.costo_hund)}</td>
+            <td style="text-align:right;padding:4px 8px">${fM(money.every(k=>totals[k]!=null)?totals.rev-totals.costo_dir-totals.costo_hund:null)}</td>
           </tr>
         </tbody>
       </table>`;

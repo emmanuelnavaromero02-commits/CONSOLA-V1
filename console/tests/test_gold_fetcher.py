@@ -197,8 +197,10 @@ async def test_gold_fetcher_cache_is_scoped_by_workspace(monkeypatch):
 
 
 def test_clear_gold_row_cache_removes_only_requested_scope():
-    key_1 = ("dataset_a", "tenant-1", "workspace-1", 20, "run-1", 1)
-    key_2 = ("dataset_a", "tenant-1", "workspace-2", 20, "run-2", 1)
+    # The key carries the approval-authority revision as its seventh field, so a
+    # revoked approval invalidates the cached rows.
+    key_1 = ("dataset_a", "tenant-1", "workspace-1", 20, "run-1", 1, "")
+    key_2 = ("dataset_a", "tenant-1", "workspace-2", 20, "run-2", 1, "")
     gold_fetcher._GOLD_ROW_CACHE[key_1] = (
         999999999.0,
         [{"value": 1}],

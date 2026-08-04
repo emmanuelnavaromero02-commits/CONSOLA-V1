@@ -1,5 +1,5 @@
 -- sap_successfactors_talent_action_candidates  (gold)  cartridge: sap_successfactors
--- sources: ["gold/sap_successfactors/sap_successfactors_talent_readiness", "gold/sap_successfactors/sap_successfactors_talent_9box_operational", "gold/sap_successfactors/sap_successfactors_talent_retention_risk", "gold/sap_successfactors/sap_successfactors_talent_promotion_alignment", "gold/sap_successfactors/sap_successfactors_talent_calibration_sensitivity", "gold/sap_successfactors/sap_successfactors_talent_role_fit_assignments"]
+-- sources: ["gold/sap_successfactors/sap_successfactors_talent_readiness", "gold/sap_successfactors/sap_successfactors_talent_9box", "gold/sap_successfactors/sap_successfactors_talent_retention_risk", "gold/sap_successfactors/sap_successfactors_talent_role_fit_assignments", "gold/sap_successfactors/sap_successfactors_talent_mobility_history"]
 -- description: Candidatos de accion WB-TALENTO para Control Room. Solo recomendaciones; sin write-back.
 
 WITH readiness AS (
@@ -8,9 +8,9 @@ WITH readiness AS (
                       hive_partitioning = true,
                       union_by_name = true)
 ),
-nine_box AS (
+nine_box_detail AS (
     SELECT *
-    FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_9box_operational/**/*.parquet',
+    FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_9box/**/*.parquet',
                       hive_partitioning = true,
                       union_by_name = true)
 ),
@@ -20,15 +20,9 @@ risk AS (
                       hive_partitioning = true,
                       union_by_name = true)
 ),
-promotion AS (
+mobility AS (
     SELECT *
-    FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_promotion_alignment/**/*.parquet',
-                      hive_partitioning = true,
-                      union_by_name = true)
-),
-sensitivity AS (
-    SELECT *
-    FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_calibration_sensitivity/**/*.parquet',
+    FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_mobility_history/**/*.parquet',
                       hive_partitioning = true,
                       union_by_name = true)
 ),
@@ -41,12 +35,43 @@ role_fit AS (
 metrics AS (
     SELECT
         (SELECT COUNT(*) FROM readiness) AS employee_count,
-        (SELECT COUNT(*) FROM readiness WHERE readiness_status = 'insufficient_data') AS insufficient_count,
-        (SELECT COALESCE(SUM(employee_count), 0) FROM nine_box WHERE box_status = 'ready') AS classified_count,
-        (SELECT COUNT(*) FROM risk WHERE risk_band = 'high') AS high_risk_count,
-        (SELECT COALESCE(SUM(misaligned_count), 0) FROM promotion WHERE box_key = 'summary') AS misaligned_promotion_count,
-        (SELECT COALESCE(MAX(near_cut_count), 0) FROM sensitivity) AS near_cut_count,
-        (SELECT COUNT(*) FROM role_fit WHERE assignment_recommendation = 'review_role_fit') AS role_fit_review_count
+        (SELECT COUNT(*) FROM readiness
+          WHERE readiness_status = 'insufficient_data'
+            AND NOT COALESCE(invalid_score_input, TRUE)) AS insufficient_count,
+        (SELECT COUNT(*) FROM nine_box_detail
+          WHERE box_status = 'ready'
+            AND invalid_score_input IS FALSE
+            AND talent_percent_is_valid(performance_score)
+            AND talent_percent_is_valid(potential_score)) AS classified_count,
+        (SELECT COUNT(*) FROM risk
+          WHERE risk_band = 'high'
+            AND status = 'recommendation_only'
+            AND NOT COALESCE(invalid_score_input, TRUE)
+            AND talent_percent_is_valid(fit_score)) AS high_risk_count,
+        (SELECT COUNT(*) FROM nine_box_detail AS nb, mobility AS mv
+          WHERE mv.user_id = nb.user_id
+            AND nb.box_status = 'ready'
+            AND NOT COALESCE(nb.invalid_score_input, TRUE)
+            AND talent_percent_is_valid(nb.performance_score)
+            AND talent_percent_is_valid(nb.potential_score)
+            AND nb.box_key NOT IN ('estrella', 'crecimiento', 'alto_impacto')
+            AND LOWER(COALESCE(mv.latest_event_reason, '')) LIKE '%promo%') AS misaligned_promotion_count,
+        (SELECT COUNT(*) FROM nine_box_detail AS nb
+          WHERE nb.box_status = 'ready'
+            AND NOT COALESCE(nb.invalid_score_input, TRUE)
+            AND talent_percent_is_valid(nb.performance_score)
+            AND talent_percent_is_valid(nb.potential_score)
+            AND (
+                ABS(talent_percent_scale(nb.performance_score) - 3.0) <= 0.30
+             OR ABS(talent_percent_scale(nb.performance_score) - 4.0) <= 0.30
+             OR ABS(talent_percent_scale(nb.potential_score) - 3.0) <= 0.30
+             OR ABS(talent_percent_scale(nb.potential_score) - 4.0) <= 0.30
+            )) AS near_cut_count,
+        (SELECT COUNT(*) FROM role_fit
+          WHERE assignment_recommendation = 'review_role_fit'
+            AND status IN ('recommendation_only', 'partial')
+            AND NOT COALESCE(invalid_score_input, TRUE)
+            AND talent_percent_is_valid(fit_score)) AS role_fit_review_count
 )
 SELECT
     'talent_cpa_missing_inputs' AS action_id,
@@ -57,6 +82,7 @@ SELECT
     'Habilitar desempeno, competencias y aspiracion para calcular readiness real.' AS recommendation,
     'recommendation_only' AS status,
     'metadata_preflight' AS method,
+    'server_validated_v1' AS source_validation_status,
     CURRENT_TIMESTAMP AS generated_at
 FROM metrics
 WHERE insufficient_count > 0
@@ -70,6 +96,7 @@ SELECT
     'Usar matriz 9-box para priorizar sucesion, desarrollo y movilidad.' AS recommendation,
     'recommendation_only' AS status,
     'nine_box' AS method,
+    'server_validated_v1' AS source_validation_status,
     CURRENT_TIMESTAMP AS generated_at
 FROM metrics
 WHERE classified_count > 0
@@ -83,6 +110,7 @@ SELECT
     'Revisar estancamiento y Fit Score antes de proponer retencion.' AS recommendation,
     'recommendation_only' AS status,
     'retention_risk' AS method,
+    'server_validated_v1' AS source_validation_status,
     CURRENT_TIMESTAMP AS generated_at
 FROM metrics
 WHERE high_risk_count > 0
@@ -96,6 +124,7 @@ SELECT
     'Revisar promociones observadas contra cajas de alto potencial.' AS recommendation,
     'recommendation_only' AS status,
     'permutation' AS method,
+    'server_validated_v1' AS source_validation_status,
     CURRENT_TIMESTAMP AS generated_at
 FROM metrics
 WHERE misaligned_promotion_count > 0
@@ -109,6 +138,7 @@ SELECT
     'Revisar casos cercanos a 3.0/4.0 antes de cerrar calibracion.' AS recommendation,
     'recommendation_only' AS status,
     'cut_sensitivity' AS method,
+    'server_validated_v1' AS source_validation_status,
     CURRENT_TIMESTAMP AS generated_at
 FROM metrics
 WHERE near_cut_count > 0
@@ -122,6 +152,7 @@ SELECT
     'Evaluar cambio de rol antes de PIP cuando el ajuste sea bajo.' AS recommendation,
     'recommendation_only' AS status,
     'assignment' AS method,
+    'server_validated_v1' AS source_validation_status,
     CURRENT_TIMESTAMP AS generated_at
 FROM metrics
 WHERE role_fit_review_count > 0

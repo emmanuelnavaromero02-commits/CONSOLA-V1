@@ -32,13 +32,8 @@ def test_talent_chain_fallbacks_keep_downstream_gold_materializable():
         "sap_successfactors_talent_cpa_scores": [
             "gold/sap_successfactors/sap_successfactors_talent_employee_profile"
         ],
-        "sap_successfactors_talent_readiness": [
-            "gold/sap_successfactors/sap_successfactors_talent_cpa_scores",
-            "gold/sap_successfactors/sap_successfactors_talent_benchmark_internal",
-        ],
-        "sap_successfactors_talent_9box": [
-            "gold/sap_successfactors/sap_successfactors_talent_readiness"
-        ],
+        "sap_successfactors_talent_readiness": [],
+        "sap_successfactors_talent_9box": [],
     }
 
     for dataset, sources in expected_sources.items():
@@ -56,19 +51,17 @@ def test_talent_chain_fallbacks_keep_downstream_gold_materializable():
         RuntimeError("No files found that match read_parquet source"),
     )
     assert readiness is not None
-    assert "sap_successfactors_talent_benchmark_internal" in readiness["sql_def"]
-    assert "benchmark_internal" in readiness["sql_def"]
-    assert "PERCENT_RANK()" in readiness["sql_def"]
-    assert "workspace_employee_count >= 50" in readiness["sql_def"]
-    assert "benchmark_input_coverage >= 0.80" in readiness["sql_def"]
+    assert "WHERE FALSE" in readiness["sql_def"]
+    assert "'insufficient_data' AS readiness_status" in readiness["sql_def"]
+    assert "'unreviewed' AS benchmark_provenance_status" in readiness["sql_def"]
+    assert "FROM read_parquet" not in readiness["sql_def"]
 
     nine_box = fallback_dataset_for_successfactors(
         {"name": "sap_successfactors_talent_9box", "layer": "gold"},
         RuntimeError("No files found that match read_parquet source"),
     )
     assert nine_box is not None
-    assert "benchmark_performance_proxy" in nine_box["sql_def"]
-    assert "benchmark_potential_proxy" in nine_box["sql_def"]
-    assert "benchmark_performance_percentile" in nine_box["sql_def"]
-    assert "benchmark_potential_percentile" in nine_box["sql_def"]
-    assert "TRY_CAST(readiness_score AS DOUBLE) / 20" not in nine_box["sql_def"]
+    assert "WHERE FALSE" in nine_box["sql_def"]
+    assert "'insufficient_data' AS box_key" in nine_box["sql_def"]
+    assert "'unreviewed' AS benchmark_provenance_status" in nine_box["sql_def"]
+    assert "FROM read_parquet" not in nine_box["sql_def"]

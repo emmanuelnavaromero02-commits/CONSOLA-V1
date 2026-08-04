@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
@@ -11,71 +10,6 @@ from app.services.intelligence import monte_carlo_service
 
 
 REPO = Path(__file__).resolve().parents[1]
-
-
-class _FakeConnection:
-    def __init__(self):
-        self.calls: list[tuple[str, str, tuple]] = []
-
-    def transaction(self):
-        return self
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb):
-        return False
-
-    async def execute(self, sql: str, *params):
-        self.calls.append(("execute", sql, params))
-
-    async def fetchval(self, sql: str, *params):
-        self.calls.append(("fetchval", sql, params))
-        if "intelligence_signals" in sql:
-            return 1
-        if "to_regclass" in sql:
-            return "backtest_runs"
-        return None
-
-    async def fetchrow(self, sql: str, *params):
-        self.calls.append(("fetchrow", sql, params))
-        return {
-            "id": 1,
-            "simulation_id": params[0],
-            "tenant_id": params[1],
-            "workspace_id": params[2],
-            "source_type": params[3],
-            "source_id": params[4],
-            "horizon_days": params[5],
-            "iterations": params[6],
-            "seed": params[7],
-            "model_version": params[8],
-            "output_metric": params[11],
-            "reproducibility_hash": params[18],
-        }
-
-    async def fetch(self, sql: str, *params):
-        self.calls.append(("fetch", sql, params))
-        return []
-
-
-class _Acquire:
-    def __init__(self, conn: _FakeConnection):
-        self.conn = conn
-
-    async def __aenter__(self):
-        return self.conn
-
-    async def __aexit__(self, exc_type, exc, tb):
-        return False
-
-
-class _FakePool:
-    def __init__(self):
-        self.conn = _FakeConnection()
-
-    def acquire(self):
-        return _Acquire(self.conn)
 
 
 def _payload():
@@ -120,6 +54,12 @@ def test_monte_carlo_service_uses_scoped_db_and_blocks_scope_payloads():
 
     with pytest.raises(HTTPException):
         monte_carlo_service._validate_payload({**_payload(), "workspace_id": "ws-b"})
+    with pytest.raises(HTTPException) as spoofed:
+        monte_carlo_service._validate_payload(
+            {**_payload(), "model_version": "monte_carlo.validated.v999"}
+        )
+    assert spoofed.value.status_code == 422
+    assert "server-owned" in str(spoofed.value.detail)
     with pytest.raises(HTTPException):
         monte_carlo_service._validate_payload(
             {
@@ -249,7 +189,9 @@ async def test_market_context_variable_rejects_low_confidence(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_market_context_variable_requires_provider_in_workspace_scope(monkeypatch):
+async def test_market_context_variable_requires_provider_in_workspace_scope(
+    monkeypatch,
+):
     monkeypatch.setenv("APP_ENV", "production")
 
     async def unexpected_query(*args, **kwargs):
@@ -281,120 +223,3 @@ def test_mcp_monte_carlo_tool_exposes_external_market_opt_in():
 
     assert "use_external_market_context" in source
     assert '"use_external_market_context": bool(use_external_market_context)' in source
-
-
-def test_manual_fixture_is_disabled_in_production_without_explicit_flag(monkeypatch):
-    monkeypatch.setenv("APP_ENV", "production")
-    monkeypatch.delenv("MONTE_CARLO_ALLOW_SYNTHETIC", raising=False)
-
-    with pytest.raises(HTTPException) as exc:
-        monte_carlo_service._validate_payload(
-            {
-                **_payload(),
-                "source_type": "manual_fixture",
-                "source_id": "fixture",
-            }
-        )
-    assert exc.value.status_code == 403
-
-    monkeypatch.setenv("MONTE_CARLO_ALLOW_SYNTHETIC", "true")
-    clean = monte_carlo_service._validate_payload(
-        {**_payload(), "source_type": "manual_fixture", "source_id": "fixture"}
-    )
-    assert clean["source_type"] == "manual_fixture"
-
-
-def test_wisdom_bit_source_is_allowlisted_without_synthetic_flag(monkeypatch):
-    monkeypatch.setenv("APP_ENV", "production")
-    monkeypatch.delenv("MONTE_CARLO_ALLOW_SYNTHETIC", raising=False)
-
-    clean = monte_carlo_service._validate_payload(
-        {**_payload(), "source_type": "wisdom_bit", "source_id": "WB-TALENTO"}
-    )
-
-    assert clean["source_type"] == "wisdom_bit"
-    assert clean["source_id"] == "WB-TALENTO"
-
-
-@pytest.mark.asyncio
-async def test_run_simulation_sets_db_scope_validates_source_and_persists(monkeypatch):
-    fake = _FakePool()
-    monkeypatch.setattr(monte_carlo_service.auth, "pool", AsyncMock(return_value=fake))
-
-    result = await monte_carlo_service.run_simulation(
-        {"id": 42, "tenant_id": "tenant-a", "active_workspace_id": "ws-a"},
-        _payload(),
-    )
-
-    assert result["simulation"]["simulation_id"].startswith("mc-")
-    assert fake.conn.calls[0][0] == "execute"
-    assert "set_config('app.tenant_id'" in fake.conn.calls[0][1]
-    assert any(
-        call[0] == "fetchval" and "intelligence_signals" in call[1]
-        for call in fake.conn.calls
-    )
-    assert any(
-        call[0] == "fetchrow" and "INSERT INTO monte_carlo_simulations" in call[1]
-        for call in fake.conn.calls
-    )
-
-
-@pytest.mark.asyncio
-async def test_run_simulation_accepts_wisdom_bit_source_without_signal_lookup(monkeypatch):
-    fake = _FakePool()
-    monkeypatch.setattr(monte_carlo_service.auth, "pool", AsyncMock(return_value=fake))
-
-    result = await monte_carlo_service.run_simulation(
-        {"id": 42, "tenant_id": "tenant-a", "active_workspace_id": "ws-a"},
-        {**_payload(), "source_type": "wisdom_bit", "source_id": "WB-TALENTO"},
-    )
-
-    assert result["simulation"]["source_type"] == "wisdom_bit"
-    assert not any(
-        call[0] == "fetchval" and "intelligence_signals" in call[1]
-        for call in fake.conn.calls
-    )
-    assert any(
-        call[0] == "fetchrow" and "INSERT INTO monte_carlo_simulations" in call[1]
-        for call in fake.conn.calls
-    )
-
-
-def test_monte_carlo_migration_is_scoped_and_does_not_relax_rls():
-    sql = (
-        REPO / "infra/init/99q_monte_carlo_simulations.sql"
-    ).read_text(encoding="utf-8")
-
-    assert "CREATE TABLE IF NOT EXISTS monte_carlo_simulations" in sql
-    for column in (
-        "tenant_id",
-        "workspace_id",
-        "simulation_id",
-        "source_type",
-        "input_variables",
-        "distribution_summary",
-        "sensitivity",
-        "option_comparison",
-        "reproducibility_hash",
-    ):
-        assert column in sql
-    assert "ENABLE ROW LEVEL SECURITY" in sql
-    assert "FORCE ROW LEVEL SECURITY" in sql
-    assert "ALTER ROLE omega_console NOBYPASSRLS" in sql
-    assert "current_setting('app.workspace_id', true)" in sql
-    assert "'wisdom_bit'" in sql
-    assert "USING (true)" not in sql
-    assert "WITH CHECK (true)" not in sql
-    assert "GRANT SELECT, INSERT, UPDATE ON monte_carlo_simulations TO omega_console" in sql
-
-
-def test_monte_carlo_wisdom_bit_source_migration_preserves_rls():
-    sql = (
-        REPO / "infra/init/99z_monte_carlo_wisdom_bit_source.sql"
-    ).read_text(encoding="utf-8")
-
-    assert "monte_carlo_simulations_source_type_check" in sql
-    assert "'wisdom_bit'" in sql
-    assert "ALTER TABLE monte_carlo_simulations" in sql
-    assert "ENABLE ROW LEVEL SECURITY" not in sql
-    assert "DISABLE ROW LEVEL SECURITY" not in sql

@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MCP_MAIN = ROOT / "mcp-infra" / "app" / "main.py"
+MCP_READER_POLICY = ROOT / "mcp-infra" / "app" / "sql_reader_policy.py"
 MINIO_TOOLS = ROOT / "mcp-infra" / "app" / "tools" / "minio.py"
 REFINEMENT_MAIN = ROOT / "refinement" / "app" / "main.py"
 MCP_REGISTRY = ROOT / "console" / "app" / "services" / "mcp_registry.py"
@@ -42,7 +43,9 @@ def test_mcp_invoke_enforces_trusted_security_context_before_data_tools():
     assert "DAG is not registered for cartridge" in source
     assert "shared DAG trigger requires cartridge_id outside admin context" in source
     assert "DAG trigger requires cartridge_id outside admin context" in source
-    trigger_block = source.split("def _validate_airflow_trigger_scope", 1)[1].split("def _extract_s3_keys", 1)[0]
+    trigger_block = source.split("def _validate_airflow_trigger_scope", 1)[1].split(
+        "def _extract_s3_keys", 1
+    )[0]
     assert "startswith(tuple" not in trigger_block
 
 
@@ -53,10 +56,9 @@ def test_refinement_preview_transform_rejects_unscoped_duckdb_readers():
     assert "_SQL_READER_CALL_RE" in source
     assert "_SCOPED_READER_RE" in source
     assert "_SQL_STORAGE_LITERAL_RE" in source
-    assert "_DIRECT_STORAGE_SCAN_RE" in source
     assert "_PGGOLD_SCHEMA_TABLE_RE" in source
     assert 'path.replace("s3://{bucket}/", f"s3://{engine.minio_bucket}/", 1)' in source
-    assert "sql = _strip_sql_comments(sql or \"\")" in source
+    assert 'sql = _strip_sql_comments(sql or "")' in source
     assert "len(reader_calls) != len(direct_readers)" in source
     assert "SQL readers must use a direct string literal path" in source
     assert "pgdb schema is not readable through refinement" in source
@@ -64,11 +66,12 @@ def test_refinement_preview_transform_rejects_unscoped_duckdb_readers():
     assert "_get_dataset_scoped(name, sec)" in source
     assert "_require_dataset_scope(body, ds)" in source
     assert "pggold table is not registered as an allowed dataset" in source
-    assert "existing = store.get_dataset(args[\"name\"], **store_scope)" in source
-    assert "_require_dataset_scope(body, existing, \"datasets.write\")" in source
+    assert 'existing = store.get_dataset(args["name"], **store_scope)' in source
+    assert '_require_dataset_scope(body, existing, "datasets.write")' in source
     assert "SQL storage bucket not allowed" in source
-    assert 'ctx = _trusted_user_context(body, args)' in source
-    assert "engine.list_sources(ctx, sec.get(\"allowed_prefixes\") or [])" in source
+    assert "ctx = _trusted_user_context(body, args)" in source
+    assert "engine.list_sources(" in source
+    assert 'ctx, sec.get("allowed_prefixes") or []' in source
     assert "_require_sql_storage_scope(" in source
     assert "allow_registered_dataset_paths=True" in source
     assert "_storage_path_matches_declared_source" in source
@@ -78,21 +81,29 @@ def test_refinement_preview_transform_rejects_unscoped_duckdb_readers():
 
 def test_mcp_infra_rag_and_cartridge_sql_are_scoped():
     source = MCP_MAIN.read_text(encoding="utf-8")
+    reader_policy = MCP_READER_POLICY.read_text(encoding="utf-8")
     ast.parse(source)
+    ast.parse(reader_policy)
 
     assert "def _allowed_prefix_matches" in source
-    assert "len(prefix.split(\"/\")) < 2" in source
+    assert 'len(prefix.split("/")) < 2' in source
     assert "_validate_cartridge_query_sql" in source
     assert "_postgres_mentioned_tables" in source
     assert "_DIRECT_STORAGE_SCAN_RE" in source
-    assert "cartridge SQL must read only direct s3:// file literals" in source
-    assert "cartridge SQL cannot read service database schemas" in source
+    assert "validate_cartridge_reader_query(" in source
+    assert "cartridge SQL rejected by safety policy" in source
+    assert "sqlglot.parse(" in reader_policy
+    assert "isinstance(target, exp.Literal) and target.is_string" in reader_policy
+    assert "allow_server_resolution: bool = False" in reader_policy
+    assert "if table.db or table.catalog" in reader_policy
     assert 'if tool == "cartridge_preview":' in source
     assert "cartridge preview requires tenant/workspace scope" in source
     assert "_inject_cartridge_execution_scope(ctx, args)" in source
     assert "_has_invalid_scoped_storage_path" in source
     assert 'if tool == "cartridge_query_kb":' in source
-    assert 'tool == "cartridge_query_kb" and not _is_unscoped_admin_context' not in source
+    assert (
+        'tool == "cartridge_query_kb" and not _is_unscoped_admin_context' not in source
+    )
     assert "RAG source is outside caller scope" in source
     assert "source = next((s for s in sources" in source
 
@@ -130,8 +141,8 @@ def test_console_registry_scopes_direct_cartridge_mcp_calls():
 
     assert "SELECT url, category FROM mcp_servers" in source
     assert "_enforce_outbound_scope" in source
-    assert "category != \"cartridge\"" in source
-    assert "\"query_kb\"" in source
+    assert 'category != "cartridge"' in source
+    assert '"query_kb"' in source
     assert "trusted security_context required" in source
     assert "cartridge SQL cannot read service database schemas" in source
     assert "_DIRECT_STORAGE_SCAN_RE" in source

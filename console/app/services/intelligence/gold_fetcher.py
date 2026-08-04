@@ -14,12 +14,21 @@ from app.services.gold_publication_relation import (
     published_relation_columns,
     resolve_published_gold_relation,
 )
+from app.services.intelligence.gold_projection_guard import (
+    project_operational_truth_rows as _project_operational_truth_rows,
+)
+from app.services.intelligence.benchmark_authority import (
+    BENCHMARK_AUTHORITY_DATASETS,
+    BENCHMARK_DATASET,
+    authority_revision,
+    resolve_benchmark_approval_authority,
+)
 from app.services.intelligence.utils import workspace_scope
 from app.services.intelligence.publication_trace import record_publication_read
 
 
 _SAFE_DATASET_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
-_CacheKey = tuple[str, str, str, int, str, int]
+_CacheKey = tuple[str, str, str, int, str, int, str]
 _GOLD_ROW_CACHE: dict[_CacheKey, tuple[float, list[dict[str, Any]]]] = {}
 _GOLD_ROW_CACHE_LOCKS: dict[_CacheKey, asyncio.Lock] = {}
 
@@ -83,7 +92,7 @@ def clear_gold_row_cache(
         return
 
     def matches(key: _CacheKey) -> bool:
-        _dataset, key_tenant, key_workspace, _limit, _run, _generation = key
+        _dataset, key_tenant, key_workspace, _limit, _run, _generation, _authority = key
         if tenant_text and key_tenant != tenant_text:
             return False
         if workspace_text and key_workspace != workspace_text:
@@ -130,6 +139,22 @@ async def query_gold_dataset_rows(
             )
             materialization_run_id = relation.run_id
             head_generation = relation.generation
+            benchmark_head = ""
+            authority: dict[tuple[str, str], dict[str, Any]] = {}
+            if dataset in BENCHMARK_AUTHORITY_DATASETS:
+                if dataset == BENCHMARK_DATASET:
+                    benchmark_head = materialization_run_id
+                else:
+                    try:
+                        benchmark_relation = await resolve_published_gold_relation(
+                            conn, tenant_id, workspace_id, BENCHMARK_DATASET
+                        )
+                        benchmark_head = benchmark_relation.run_id
+                    except HTTPException:
+                        benchmark_head = ""
+                authority = await resolve_benchmark_approval_authority(
+                    tenant_id, workspace_id, benchmark_head
+                )
             cache_key = (
                 str(dataset),
                 str(tenant_id),
@@ -137,6 +162,7 @@ async def query_gold_dataset_rows(
                 safe_limit,
                 materialization_run_id,
                 head_generation,
+                authority_revision(authority),
             )
             record_publication_read(dataset, relation)
             cached = _gold_cache_get(cache_key)
@@ -170,7 +196,13 @@ async def query_gold_dataset_rows(
                     tenant_id,
                     safe_limit,
                 )
-            return _gold_cache_set(cache_key, [dict(row) for row in rows])
+            projected = _project_operational_truth_rows(
+                dataset,
+                [dict(row) for row in rows],
+                authority,
+                benchmark_head=benchmark_head,
+            )
+            return _gold_cache_set(cache_key, projected)
     finally:
         await conn.close()
 

@@ -41,6 +41,11 @@ from app.config import settings
 from app.logging_config import setup_logging  # noqa: E402
 from app.response_redaction import redact_response_value  # noqa: E402
 from app.storage_scope import canonical_storage_key, scoped_storage_key
+from app.sql_reader_policy import (
+    SHARED_RAW_ROOTS_BY_CARTRIDGE,
+    ReaderPolicyError,
+    validate_cartridge_reader_query,
+)
 
 setup_logging(service_name="mcp-infra")
 logger = logging.getLogger(__name__)
@@ -1085,35 +1090,24 @@ def _require_cartridge_sql_path(
 def _validate_cartridge_query_sql(
     ctx: dict[str, Any], cartridge_id: str, sql: str
 ) -> None:
-    sql = sql or ""
-    masked = _mask_single_quoted(sql)
-    if not _SQL_START_RE.search(masked):
-        raise HTTPException(403, detail="cartridge SQL must be read-only SELECT/WITH")
-    if (
-        ";" in masked
-        or _SQL_COMMENT_RE.search(masked)
-        or _SQL_FORBIDDEN_RE.search(masked)
-    ):
-        raise HTTPException(
-            403, detail="cartridge SQL contains unsafe statements or comments"
+    tenant_id = str(ctx.get("tenant_id") or "").strip()
+    workspace_id = str(ctx.get("workspace_id") or "").strip()
+    cartridge = str(cartridge_id or "").strip()
+    blocked = False
+    try:
+        validate_cartridge_reader_query(
+            str(sql or "").replace("{bucket}", settings.minio_bucket),
+            cartridge_id=cartridge,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            expected_bucket=settings.minio_bucket,
+            shared_roots=SHARED_RAW_ROOTS_BY_CARTRIDGE.get(cartridge, frozenset()),
+            allow_server_resolution=True,
         )
-    if _DUCKDB_SCHEMA_RE.search(masked):
-        raise HTTPException(
-            403, detail="cartridge SQL cannot read service database schemas"
-        )
-
-    reader_calls = list(_SQL_READER_CALL_RE.finditer(sql))
-    direct_readers = list(_SCOPED_READER_RE.finditer(sql))
-    if not direct_readers or len(reader_calls) != len(direct_readers):
-        raise HTTPException(
-            403, detail="cartridge SQL must read only direct s3:// file literals"
-        )
-    for match in direct_readers:
-        _require_cartridge_sql_path(ctx, cartridge_id, match.group(3))
-    for match in _SQL_STORAGE_LITERAL_RE.finditer(sql):
-        _require_cartridge_sql_path(ctx, cartridge_id, match.group(2))
-    for match in _DIRECT_STORAGE_SCAN_RE.finditer(sql):
-        _require_cartridge_sql_path(ctx, cartridge_id, match.group(2))
+    except ReaderPolicyError:
+        blocked = True
+    if blocked:
+        raise HTTPException(403, detail="cartridge SQL rejected by safety policy")
 
 
 def _postgres_mentioned_tables(sql: str, table: str = "") -> set[str]:

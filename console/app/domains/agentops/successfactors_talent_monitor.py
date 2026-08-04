@@ -34,7 +34,9 @@ def sync_agentops_is_terminal(payload: Any) -> bool:
     }
 
 
-def sync_agentops_monitor_candidates(agents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def sync_agentops_monitor_candidates(
+    agents: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
     for agent in agents:
         if not agent.get("is_active", True):
@@ -63,7 +65,9 @@ def sync_agentops_monitor_candidates(agents: list[dict[str, Any]]) -> list[dict[
     return candidates
 
 
-def successfactors_talent_monitor_contract() -> tuple[list[str], dict[str, Any], dict[str, Any]]:
+def successfactors_talent_monitor_contract() -> (
+    tuple[list[str], dict[str, Any], dict[str, Any]]
+):
     allowed_tools = [
         "mcp-infra__wisdom_bits__run",
         "mcp-infra__control_room__raise_analysis_alert",
@@ -130,7 +134,6 @@ def successfactors_talent_monitor_contract() -> tuple[list[str], dict[str, Any],
                     "name": "bayesian_calibration",
                     "enabled": True,
                     "calibration_group": "sap_successfactors:talent_readiness",
-                    "model_version": "bayesian_calibration.v1",
                     "limit": 10,
                     "assumptions": {
                         "basis": "Estado historico agregado de readiness de talento.",
@@ -186,11 +189,12 @@ def successfactors_talent_monitor_contract() -> tuple[list[str], dict[str, Any],
                                 "privacy": "Sin PII.",
                                 "decision_mode": "recommendation_only",
                             },
-                            "evidence_refs": [{"type": "wisdom_bit", "id": "WB-TALENTO"}],
+                            "evidence_refs": [
+                                {"type": "wisdom_bit", "id": "WB-TALENTO"}
+                            ],
                         },
                         "bayesian_calibration": {
                             "calibration_group": "sap_successfactors:talent_readiness",
-                            "model_version": "bayesian_calibration.v1",
                             "limit": 10,
                         },
                     },
@@ -248,12 +252,17 @@ def coerce_successfactors_talent_monitor_payload(body: dict) -> dict:
         return body
     cartridge_id = str(body.get("cartridge_id") or "").strip()
     slug = str(body.get("slug") or "").strip()
-    if cartridge_id != "sap_successfactors" or slug != SUCCESSFACTORS_TALENT_MONITOR_SLUG:
+    if (
+        cartridge_id != "sap_successfactors"
+        or slug != SUCCESSFACTORS_TALENT_MONITOR_SLUG
+    ):
         return body
 
     allowed_tools, rag_filter, contract_extra = successfactors_talent_monitor_contract()
     patched = dict(body)
-    incoming_extra = patched.get("extra") if isinstance(patched.get("extra"), dict) else {}
+    incoming_extra = (
+        patched.get("extra") if isinstance(patched.get("extra"), dict) else {}
+    )
     merged_extra = {**contract_extra, **incoming_extra}
     merged_extra["role"] = "monitor"
     merged_extra["category"] = str(merged_extra.get("category") or "control_room")
@@ -266,10 +275,12 @@ def coerce_successfactors_talent_monitor_payload(body: dict) -> dict:
     monitor = merged_extra.get("monitor")
     if isinstance(monitor, dict) and monitor:
         merged_monitor = {**contract_extra.get("monitor", {}), **monitor}
-        if not isinstance(merged_monitor.get("engines"), list) or not merged_monitor.get(
-            "engines"
-        ):
-            merged_monitor["engines"] = contract_extra.get("monitor", {}).get("engines", [])
+        if not isinstance(
+            merged_monitor.get("engines"), list
+        ) or not merged_monitor.get("engines"):
+            merged_monitor["engines"] = contract_extra.get("monitor", {}).get(
+                "engines", []
+            )
         merged_extra["monitor"] = merged_monitor
     else:
         merged_extra["monitor"] = contract_extra.get("monitor")
@@ -279,7 +290,9 @@ def coerce_successfactors_talent_monitor_payload(body: dict) -> dict:
 
     patched["extra"] = merged_extra
     patched["role"] = "monitor"
-    patched["allowed_tools"] = merge_agent_tools(allowed_tools, patched.get("allowed_tools"))
+    patched["allowed_tools"] = merge_agent_tools(
+        allowed_tools, patched.get("allowed_tools")
+    )
     if not isinstance(patched.get("rag_filter"), dict) or not patched.get("rag_filter"):
         patched["rag_filter"] = rag_filter
     patched["model"] = str(patched.get("model") or "claude-sonnet-4-6")

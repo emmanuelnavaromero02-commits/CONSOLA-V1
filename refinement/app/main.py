@@ -34,6 +34,7 @@ from app.logging_config import setup_logging
 setup_logging(service_name="refinement")
 logger = logging.getLogger(__name__)
 
+from app.dataset_protection import is_protected_dataset
 from app.dataset_store import DatasetStore
 from app.duckdb_runtime import require_loaded_extensions
 from app.llm_sql import GeneratedSQLValidationError, generate_sql
@@ -1884,6 +1885,10 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
 
     if tool == "save_dataset":
         sec = _require_security_permission(body, "datasets.write")
+        # datasets.write loads data; it does not confer authority to redefine
+        # the packaged datasets that decide approval and readiness.
+        if is_protected_dataset(args.get("name")):
+            raise HTTPException(403, "dataset is server-owned and cannot be replaced")
         store_scope = _dataset_store_scope(sec)
         args = {
             **args,

@@ -22,6 +22,9 @@ def execution_mod(monkeypatch):
     from app.services.intelligence import orchestrator_execution as mod
 
     monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setattr(
+        mod.truth, "execution_source_trusted", AsyncMock(return_value=True)
+    )
     return mod
 
 
@@ -116,7 +119,8 @@ class FakeExecutionDB:
     ) -> None:
         self.calibration_states[(workspace_id, group, model_version)] = {
             "id": 10,
-            "tenant_id": self.current_tenant_id or "11111111-1111-1111-1111-111111111111",
+            "tenant_id": self.current_tenant_id
+            or "11111111-1111-1111-1111-111111111111",
             "workspace_id": workspace_id,
             "calibration_group": group,
             "model_version": model_version,
@@ -124,6 +128,9 @@ class FakeExecutionDB:
             "metrics": {
                 "sample_count": sample_count,
                 "confidence_score": confidence_score,
+                "complete": True,
+                "provenance_complete": True,
+                "binary_evaluation_complete": True,
             },
             "sample_count": sample_count,
             "confidence_score": confidence_score,
@@ -134,10 +141,9 @@ class FakeExecutionDB:
     def _visible(self, row: dict[str, Any] | None) -> bool:
         if not row or not self.current_workspace_id:
             return False
-        return (
-            str(row.get("workspace_id")) == str(self.current_workspace_id)
-            and str(row.get("tenant_id") or "") == str(self.current_tenant_id or "")
-        )
+        return str(row.get("workspace_id")) == str(self.current_workspace_id) and str(
+            row.get("tenant_id") or ""
+        ) == str(self.current_tenant_id or "")
 
     async def execute(self, query: str, *args):
         q = " ".join(query.split())
@@ -147,7 +153,11 @@ class FakeExecutionDB:
             self.scope_calls.append((self.current_tenant_id, self.current_workspace_id))
             return None
         if q.startswith("UPDATE decision_orchestration_runs SET engine_plan"):
-            workspace_id, orchestration_id, engine_plan = str(args[0]), str(args[1]), args[2]
+            workspace_id, orchestration_id, engine_plan = (
+                str(args[0]),
+                str(args[1]),
+                args[2],
+            )
             row = self.runs.get((workspace_id, orchestration_id))
             if row and self._visible(row):
                 row["engine_plan"] = engine_plan
@@ -161,7 +171,11 @@ class FakeExecutionDB:
             row = self.runs.get((str(args[0]), str(args[1])))
             return row if self._visible(row) else None
         if q.startswith("SELECT * FROM decision_orchestration_executions"):
-            workspace_id, orchestration_id, engine_name = str(args[0]), str(args[1]), str(args[2])
+            workspace_id, orchestration_id, engine_name = (
+                str(args[0]),
+                str(args[1]),
+                str(args[2]),
+            )
             for row in self.executions:
                 if (
                     row["workspace_id"] == workspace_id
@@ -220,12 +234,20 @@ class FakeExecutionDB:
             }
             self.executions.append(row)
             return row
-        if q.startswith("SELECT calibration_group, model_version FROM calibration_observations"):
+        if q.startswith(
+            "SELECT calibration_group, model_version FROM calibration_observations"
+        ):
             row = self.calibration_observations.get((str(args[0]), str(args[1])))
             return row if self._visible(row) else None
         if q.startswith("SELECT * FROM calibration_states"):
-            row = self.calibration_states.get((str(args[0]), str(args[1]), str(args[2])))
-            return row if row and str(row["workspace_id"]) == str(self.current_workspace_id) else None
+            row = self.calibration_states.get(
+                (str(args[0]), str(args[1]), str(args[2]))
+            )
+            return (
+                row
+                if row and str(row["workspace_id"]) == str(self.current_workspace_id)
+                else None
+            )
         raise AssertionError(f"unmocked fetchrow: {q[:180]}")
 
     async def fetch(self, query: str, *args):
@@ -341,14 +363,21 @@ async def test_risk_forecast_executes_monte_carlo_and_bayes_idempotently(
         "monte_carlo_simulation",
         "calibration_state",
     }
-    assert second["aggregate"]["executed_engines"] == first["aggregate"]["executed_engines"]
+    assert (
+        second["aggregate"]["executed_engines"]
+        == first["aggregate"]["executed_engines"]
+    )
     assert len(monte_carlo_calls) == 1
-    assert len([row for row in db.executions if row["engine_name"] == "monte_carlo"]) == 1
+    assert (
+        len([row for row in db.executions if row["engine_name"] == "monte_carlo"]) == 1
+    )
     assert db.scope_calls
 
 
 @pytest.mark.asyncio
-async def test_engine_failure_does_not_stop_other_safe_engines(execution_mod, monkeypatch):
+async def test_engine_failure_does_not_stop_other_safe_engines(
+    execution_mod, monkeypatch
+):
     db = FakeExecutionDB()
     db.add_run()
     db.add_calibration_state()
@@ -387,7 +416,9 @@ async def test_engine_failure_does_not_stop_other_safe_engines(execution_mod, mo
 
 
 @pytest.mark.asyncio
-async def test_missing_data_skips_engines_with_explicit_reasons(execution_mod, monkeypatch):
+async def test_missing_data_skips_engines_with_explicit_reasons(
+    execution_mod, monkeypatch
+):
     db = FakeExecutionDB()
     db.add_run()
     _patch_pool(execution_mod, monkeypatch, db)
@@ -401,8 +432,13 @@ async def test_missing_data_skips_engines_with_explicit_reasons(execution_mod, m
         fake_run_simulation,
     )
 
-    result = await execution_mod.execute_engines(_user(), "orch-risk", {"engine_inputs": {}})
-    skipped = {(item["engine"], item["reason"]) for item in result["aggregate"]["skipped_engines"]}
+    result = await execution_mod.execute_engines(
+        _user(), "orch-risk", {"engine_inputs": {}}
+    )
+    skipped = {
+        (item["engine"], item["reason"])
+        for item in result["aggregate"]["skipped_engines"]
+    }
 
     assert ("monte_carlo", "missing_monte_carlo_inputs") in skipped
     assert ("bayesian_calibration", "missing_calibration_group") in skipped
@@ -410,7 +446,9 @@ async def test_missing_data_skips_engines_with_explicit_reasons(execution_mod, m
 
 
 @pytest.mark.asyncio
-async def test_candidate_engines_are_recorded_but_never_executed(execution_mod, monkeypatch):
+async def test_candidate_engines_are_recorded_but_never_executed(
+    execution_mod, monkeypatch
+):
     db = FakeExecutionDB()
     db.add_run(
         orchestration_id="orch-temporal",
@@ -442,7 +480,9 @@ async def test_candidate_engines_are_recorded_but_never_executed(execution_mod, 
                 "monte_carlo": {
                     "source_type": "signal",
                     "source_id": "sig-1",
-                    "input_variables": {"baseline_value": {"type": "fixed", "value": 1}},
+                    "input_variables": {
+                        "baseline_value": {"type": "fixed", "value": 1}
+                    },
                 }
             }
         },
@@ -465,7 +505,9 @@ async def test_tenant_b_cannot_execute_or_list_tenant_a_run(execution_mod, monke
     )
 
     with pytest.raises(execution_mod.OrchestratorExecutionError) as execute_exc:
-        await execution_mod.execute_engines(tenant_b, "orch-risk", {"engine_inputs": {}})
+        await execution_mod.execute_engines(
+            tenant_b, "orch-risk", {"engine_inputs": {}}
+        )
     with pytest.raises(execution_mod.OrchestratorExecutionError) as list_exc:
         await execution_mod.list_executions(tenant_b, "orch-risk")
 
@@ -527,7 +569,9 @@ async def test_resource_allocation_runs_only_monte_carlo_and_optimizer_candidate
                 "monte_carlo": {
                     "source_type": "signal",
                     "source_id": "sig-2",
-                    "input_variables": {"baseline_value": {"type": "fixed", "value": 10}},
+                    "input_variables": {
+                        "baseline_value": {"type": "fixed", "value": 10}
+                    },
                 }
             }
         },

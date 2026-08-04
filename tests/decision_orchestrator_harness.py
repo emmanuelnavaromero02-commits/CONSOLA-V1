@@ -139,6 +139,14 @@ class FakeOrchestratorDB:
 
     async def fetchrow(self, query: str, *args):
         q = " ".join(query.split())
+        if "metadata->>'origin' = 'wisdom_bit'" in q:
+            rows = (
+                row
+                for row in self.sources.values()
+                if row.get("item_kind") == "agent_alert"
+                and (row.get("metadata") or {}).get("origin") == "wisdom_bit"
+            )
+            return next((row for row in rows if self._visible(row)), None)
         if "FROM control_room_items" in q:
             workspace_id, source_id = str(args[0]), str(args[1])
             source_type = (

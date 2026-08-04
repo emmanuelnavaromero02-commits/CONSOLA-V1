@@ -220,8 +220,16 @@ class TransactionConnection:
 
     async def fetchrow(self, sql: str, *_args: Any) -> dict[str, Any] | None:
         self.pool.calls.append((self.name, self.in_transaction, sql))
-        if "INSERT INTO prediction_outcomes" in sql:
-            return {"id": 81, "metadata": {}, "signal_id": "business-race-1"}
+        if "record_prediction_outcome" in sql:
+            return {
+                "outcome": {
+                    "id": 81,
+                    "metadata": {"input_classification": "reported_outcome"},
+                    "predicted_value": None,
+                    "signal_id": "business-race-1",
+                },
+                "inserted": True,
+            }
         return self.pool.locked_row
 
 
@@ -256,7 +264,9 @@ async def test_outcome_and_event_share_one_connection_and_transaction() -> None:
             "business-race-1", {"action_taken": "review"}, USER
         )
 
-    outcome = next(call for call in pool.calls if "prediction_outcomes" in call[2])
+    outcome = next(
+        call for call in pool.calls if "record_prediction_outcome" in call[2]
+    )
     event = next(call for call in pool.calls if "control_room_item_events" in call[2])
     assert outcome[0] == event[0]
     assert outcome[1] is event[1] is True

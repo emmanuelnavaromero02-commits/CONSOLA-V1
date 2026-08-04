@@ -20,6 +20,23 @@ readiness AS (
                       hive_partitioning = true,
                       union_by_name = true)
 ),
+readiness_validated AS (
+    SELECT *,
+        NOT COALESCE(invalid_score_input, TRUE)
+        AND COALESCE(readiness_status IN ('ready', 'near', 'not_ready'), FALSE)
+        AND (
+            (source_mode = 'cpa_real'
+             AND talent_percent_is_valid(competency_score)
+             AND talent_percent_is_valid(performance_score)
+             AND talent_percent_is_valid(aspiration_score)
+             AND talent_percent_is_valid(readiness_score))
+            OR (source_mode = 'benchmark_internal'
+                AND benchmark_approval_valid = TRUE
+                AND benchmark_provenance_status = 'approved_durable'
+                AND talent_percent_is_valid(readiness_score))
+        ) AS score_valid
+    FROM readiness
+),
 nine_box AS (
     SELECT *
     FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_9box/**/*.parquet',
@@ -88,16 +105,36 @@ metrics AS (
         (SELECT MAX(CAST(workspace_id AS VARCHAR)) FROM employee_profile) AS workspace_id,
         (SELECT COUNT(*) FROM employee_profile) AS employee_count,
         (SELECT COUNT(*) FROM employee_profile WHERE profile_status IN ('foundation_ready', 'ready', 'partial')) AS profiled_count,
-        (SELECT COUNT(*) FROM readiness WHERE source_mode IN ('cpa_real', 'benchmark_internal')) AS calculable_count,
-        (SELECT COUNT(*) FROM readiness WHERE readiness_status = 'not_ready') AS readiness_low,
-        (SELECT COUNT(*) FROM readiness WHERE readiness_status = 'near') AS readiness_medium,
-        (SELECT COUNT(*) FROM readiness WHERE readiness_status = 'ready') AS readiness_high,
-        (SELECT COUNT(*) FROM readiness WHERE readiness_status IN ('insufficient_data', 'blocked', 'missing')) AS readiness_pending_count,
-        (SELECT COUNT(*) FROM readiness WHERE source_mode = 'cpa_real') AS readiness_cpa_real_count,
-        (SELECT COUNT(*) FROM readiness WHERE source_mode = 'benchmark_internal') AS readiness_benchmark_count,
-        (SELECT COUNT(*) FROM nine_box WHERE box_status IN ('ready', 'benchmark_internal')) AS nine_box_classified_count,
-        (SELECT COUNT(*) FROM nine_box WHERE box_status NOT IN ('ready', 'benchmark_internal')) AS nine_box_blocked_count,
-        (SELECT COALESCE(SUM(ready_count), 0) FROM nine_box_operational) AS nine_box_operational_ready_count,
+        (SELECT COUNT(*) FROM readiness_validated WHERE score_valid) AS calculable_count,
+        (SELECT COUNT(*) FROM readiness_validated WHERE score_valid AND readiness_status = 'not_ready') AS readiness_low,
+        (SELECT COUNT(*) FROM readiness_validated WHERE score_valid AND readiness_status = 'near') AS readiness_medium,
+        (SELECT COUNT(*) FROM readiness_validated WHERE score_valid AND readiness_status = 'ready') AS readiness_high,
+        (SELECT COUNT(*) FROM readiness_validated WHERE NOT score_valid) AS readiness_pending_count,
+        (SELECT COUNT(*) FROM readiness_validated WHERE score_valid AND source_mode = 'cpa_real') AS readiness_cpa_real_count,
+        (SELECT COUNT(*) FROM readiness_validated WHERE score_valid AND source_mode = 'benchmark_internal') AS readiness_benchmark_count,
+        COALESCE((
+            SELECT BOOL_AND(
+                benchmark_approval_valid = TRUE
+                AND benchmark_provenance_status = 'approved_durable'
+            )
+            FROM readiness_validated
+            WHERE score_valid AND source_mode = 'benchmark_internal'
+        ), FALSE) AS benchmark_approval_valid,
+        (SELECT COUNT(*) FROM nine_box
+          WHERE box_status = 'ready'
+            AND invalid_score_input IS FALSE
+            AND talent_percent_is_valid(performance_score)
+            AND talent_percent_is_valid(potential_score)) AS nine_box_classified_count,
+        (SELECT COUNT(*) FROM nine_box
+          WHERE box_status <> 'ready'
+             OR invalid_score_input IS DISTINCT FROM FALSE
+             OR NOT talent_percent_is_valid(performance_score)
+             OR NOT talent_percent_is_valid(potential_score)) AS nine_box_blocked_count,
+        (SELECT COUNT(*) FROM nine_box
+          WHERE box_status = 'ready'
+            AND NOT COALESCE(invalid_score_input, TRUE)
+            AND talent_percent_is_valid(performance_score)
+            AND talent_percent_is_valid(potential_score)) AS nine_box_operational_ready_count,
         (SELECT COUNT(*) FROM role_profile) AS role_count,
         (SELECT COUNT(*) FROM role_profile WHERE required_skills_status IN ('blocked', 'insufficient_data', 'missing')) AS roles_without_requirements,
         (SELECT COUNT(*) FROM signals) AS open_signal_count,
@@ -169,6 +206,12 @@ SELECT
     readiness_pending_count,
     readiness_cpa_real_count,
     readiness_benchmark_count,
+    benchmark_approval_valid,
+    CASE
+        WHEN readiness_benchmark_count = 0 THEN 'not_applicable'
+        WHEN benchmark_approval_valid THEN 'approved_durable'
+        ELSE 'unreviewed'
+    END AS benchmark_provenance_status,
     nine_box_classified_count,
     nine_box_blocked_count,
     nine_box_blocked_count AS nine_box_pending_count,
@@ -191,7 +234,7 @@ SELECT
     ROUND(role_requirements_ratio * 100, 2) AS role_requirements_coverage_pct,
     ROUND(nine_box_ratio * 100, 2) AS nine_box_coverage_pct,
     CASE
-        WHEN readiness_benchmark_count > 0 AND readiness_cpa_real_count = 0 THEN LEAST(confidence, 0.60)
+        WHEN readiness_benchmark_count > 0 AND readiness_cpa_real_count = 0 THEN NULL
         ELSE confidence
     END AS confidence,
     CASE

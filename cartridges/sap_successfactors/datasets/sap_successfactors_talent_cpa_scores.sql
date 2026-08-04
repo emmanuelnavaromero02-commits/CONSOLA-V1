@@ -27,24 +27,29 @@ normalized AS (
         emp.direct_reports,
         emp.tenure_months,
         COALESCE(roles.role_name, emp.job_code) AS role_name,
-        TRY_CAST(emp.competency_score AS DOUBLE) AS competency_score,
-        TRY_CAST(emp.performance_score AS DOUBLE) AS performance_score,
-        TRY_CAST(emp.aspiration_score AS DOUBLE) AS aspiration_score,
-        CASE
-            WHEN TRY_CAST(emp.competency_score AS DOUBLE) IS NULL THEN NULL
-            WHEN TRY_CAST(emp.competency_score AS DOUBLE) <= 5 THEN TRY_CAST(emp.competency_score AS DOUBLE) * 20
-            ELSE TRY_CAST(emp.competency_score AS DOUBLE)
-        END AS competency_100,
-        CASE
-            WHEN TRY_CAST(emp.performance_score AS DOUBLE) IS NULL THEN NULL
-            WHEN TRY_CAST(emp.performance_score AS DOUBLE) <= 5 THEN TRY_CAST(emp.performance_score AS DOUBLE) * 20
-            ELSE TRY_CAST(emp.performance_score AS DOUBLE)
-        END AS performance_100,
-        CASE
-            WHEN TRY_CAST(emp.aspiration_score AS DOUBLE) IS NULL THEN NULL
-            WHEN TRY_CAST(emp.aspiration_score AS DOUBLE) <= 5 THEN TRY_CAST(emp.aspiration_score AS DOUBLE) * 20
-            ELSE TRY_CAST(emp.aspiration_score AS DOUBLE)
-        END AS aspiration_100,
+        -- Profile scores are already percentages. Preserve them byte-for-value;
+        -- only the 9-box banding step converts percentages to the 0..5 scale.
+        CASE WHEN talent_percent_is_valid(emp.competency_score)
+            THEN TRY_CAST(emp.competency_score AS DOUBLE) END AS competency_score,
+        CASE WHEN talent_percent_is_valid(emp.performance_score)
+            THEN TRY_CAST(emp.performance_score AS DOUBLE) END AS performance_score,
+        CASE WHEN talent_percent_is_valid(emp.aspiration_score)
+            THEN TRY_CAST(emp.aspiration_score AS DOUBLE) END AS aspiration_score,
+        CASE WHEN talent_percent_is_valid(emp.competency_score)
+            THEN TRY_CAST(emp.competency_score AS DOUBLE) END AS competency_100,
+        CASE WHEN talent_percent_is_valid(emp.performance_score)
+            THEN TRY_CAST(emp.performance_score AS DOUBLE) END AS performance_100,
+        CASE WHEN talent_percent_is_valid(emp.aspiration_score)
+            THEN TRY_CAST(emp.aspiration_score AS DOUBLE) END AS aspiration_100,
+        (
+            emp.invalid_score_input IS DISTINCT FROM FALSE
+            OR (emp.competency_score IS NOT NULL
+                AND NOT talent_percent_is_valid(emp.competency_score))
+            OR (emp.performance_score IS NOT NULL
+                AND NOT talent_percent_is_valid(emp.performance_score))
+            OR (emp.aspiration_score IS NOT NULL
+                AND NOT talent_percent_is_valid(emp.aspiration_score))
+        ) AS invalid_score_input,
         COALESCE(roles.role_profile_status, 'partial') AS role_profile_status,
         COALESCE(roles.required_skills_status, 'blocked') AS required_skills_status,
         emp.blockers AS source_blockers
@@ -69,11 +74,13 @@ SELECT
     competency_100,
     performance_100,
     aspiration_100,
+    invalid_score_input,
     CASE
         WHEN competency_100 IS NULL OR performance_100 IS NULL OR aspiration_100 IS NULL THEN NULL
         ELSE ROUND((0.45 * competency_100) + (0.30 * performance_100) + (0.25 * aspiration_100), 2)
     END AS fit_score,
     CASE
+        WHEN invalid_score_input THEN 'blocked'
         WHEN competency_100 IS NULL OR performance_100 IS NULL OR aspiration_100 IS NULL THEN 'insufficient_data'
         WHEN required_skills_status = 'blocked' THEN 'partial'
         ELSE 'ready'
@@ -81,6 +88,7 @@ SELECT
     role_profile_status,
     required_skills_status,
     CASE
+        WHEN invalid_score_input THEN '["invalid_score_input"]'
         WHEN competency_100 IS NULL OR performance_100 IS NULL OR aspiration_100 IS NULL
             -- GATE 3 (Fase B): blockers CONDICIONALES por componente — cada KB solo
             -- se lista si su score falta. Antes se emitian los 3 en bloque, marcando

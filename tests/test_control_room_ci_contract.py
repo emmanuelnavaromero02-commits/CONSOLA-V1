@@ -1,3 +1,4 @@
+import shlex
 from pathlib import Path
 
 from scripts.ci_control_room_paths import control_room_changed
@@ -8,8 +9,35 @@ WORKFLOW = ROOT / ".github/workflows/control-room-postgres-rls.yml"
 PREPARE_SCRIPT = ROOT / "scripts/prepare_refinement_duckdb_ci.sh"
 MCP_REQUIREMENTS = ROOT / "mcp-infra/requirements.txt"
 MCP_DOCKERFILE = ROOT / "mcp-infra/Dockerfile"
-FOCAL_MINIMUM = 9104
-POSTGRES_MINIMUM = 268
+FOCAL_MINIMUM = 9650
+POSTGRES_MINIMUM = 276
+OPERATIONAL_TRUTH_TESTS = (
+    "console/tests/test_operational_truth_statistical_fallbacks.py",
+    "console/tests/test_operational_truth_public_projection.py",
+    "tests/test_operational_truth_data_integrity.py",
+    "tests/test_operational_truth_data_kb_config.py",
+    "tests/test_operational_truth_data_kb_runtime.py",
+    "tests/test_operational_truth_data_historical_repair.py",
+    "tests/test_replicon_wip_v3_currency.py",
+    "tests/test_sap_successfactors_talent_migration.py",
+    "tests/test_intelligence_provenance_resolver.py",
+    "tests/test_calibration_recompute_complete_batch.py",
+    "tests/test_calibration_authoritative_observation.py",
+    "tests/test_calibration_idempotency_schema.py",
+    "tests/test_calibration_observe_idempotency.py",
+    "tests/test_monte_carlo_engine.py",
+    "tests/test_monte_carlo_api_contract.py",
+    "tests/test_monte_carlo_finiteness.py",
+    "tests/test_monte_carlo_operational_truth.py",
+    "tests/test_monte_carlo_persistence_contract.py",
+    "tests/test_bayesian_calibration_api_contract.py",
+    "tests/test_bayesian_calibration_recompute_policy.py",
+    "tests/test_decision_operational_truth_duckdb_httpfs.py",
+    "tests/test_cartridge_query_kb_reader_sandbox.py",
+    "tests/test_talent_benchmark_approval_authority.py",
+    "tests/test_talent_nine_box_fail_closed.py",
+    "tests/test_talent_nine_box_downstream.py",
+)
 TENANT_EXECUTE_ISOLATION = ROOT / (
     "tests/test_control_room_live_postgres_tenant_execute_isolation.py"
 )
@@ -155,6 +183,7 @@ LIVE_POSTGRES_TESTS = (
     "tests/test_staged_publication_reader_boundaries.py",
     "tests/test_staged_publication_red.py",
     "tests/test_staged_publication_verifier_boundary_live.py",
+    "tests/test_talent_benchmark_publication_authority_live.py",
 )
 
 
@@ -175,6 +204,24 @@ def test_control_room_workflow_runs_all_related_contract_suites():
     )
     for test_path in FOCAL_TESTS:
         assert test_path in focal_step
+
+
+def _focal_pytest_argv() -> list[str]:
+    focal_step = (
+        _workflow_text()
+        .split("- name: Run focal", 1)[1]
+        .split("- name: Run live", 1)[0]
+    )
+    command = focal_step.split("run: |", 1)[1].replace("\\\n", " ")
+    return shlex.split(command)
+
+
+def test_operational_truth_suites_are_pytest_arguments_in_focal_gate():
+    argv = _focal_pytest_argv()
+    assert argv[0] == "pytest"
+    assert "--junitxml=/tmp/control-room-focal.xml" in argv
+    for test_path in OPERATIONAL_TRUTH_TESTS:
+        assert test_path in argv
 
 
 def test_control_room_workflow_runs_all_live_postgres_suites():

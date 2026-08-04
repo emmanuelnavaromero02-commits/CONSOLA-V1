@@ -1,6 +1,7 @@
 """
 Dataset Store — persiste definiciones de datasets en PostgreSQL.
 """
+
 from __future__ import annotations
 
 import json
@@ -11,10 +12,16 @@ import psycopg2
 import psycopg2.extras
 
 
+from app.dataset_protection import (  # noqa: F401  (re-exported)
+    PROTECTED_AUTHORITY_DATASETS,
+    ProtectedDatasetError,
+    assert_dataset_is_writable,
+)
+
+
 def _dsn() -> str:
-    return (
-        os.environ.get("DATABASE_URL", "")
-        .replace("postgresql+psycopg2://", "postgresql://")
+    return os.environ.get("DATABASE_URL", "").replace(
+        "postgresql+psycopg2://", "postgresql://"
     )
 
 
@@ -96,15 +103,19 @@ class DatasetStore:
             rows = cur.fetchall()
         return [
             {
-                "name":         r["name"],
-                "description":  r["description"] or "",
-                "layer":        r["layer"],
-                "cartridge":    r["cartridge"] or "",
-                "sources":      r["sources"] or [],
-                "schedule":     r["schedule"],
-                "last_refresh": r["last_refresh"].isoformat() if r["last_refresh"] else None,
-                "row_count":    r["row_count"],
-                "workspace_id":  str(r["workspace_id"]) if r.get("workspace_id") else None,
+                "name": r["name"],
+                "description": r["description"] or "",
+                "layer": r["layer"],
+                "cartridge": r["cartridge"] or "",
+                "sources": r["sources"] or [],
+                "schedule": r["schedule"],
+                "last_refresh": r["last_refresh"].isoformat()
+                if r["last_refresh"]
+                else None,
+                "row_count": r["row_count"],
+                "workspace_id": str(r["workspace_id"])
+                if r.get("workspace_id")
+                else None,
                 "created_by_id": r["created_by_id"],
             }
             for r in rows
@@ -115,34 +126,40 @@ class DatasetStore:
     ) -> dict | None:
         with _conn() as conn, conn.cursor() as cur:
             _apply_scope(cur, tenant_id, workspace_id)
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT name, layer, cartridge, sources, sql_def,
                        column_mapping, schedule, description, last_refresh, row_count,
                        workspace_id, created_by_id
                 FROM datasets
                 WHERE name = %s
                   AND (%s::uuid IS NULL OR workspace_id = %s::uuid)
-            """, (name, workspace_id, workspace_id))
+            """,
+                (name, workspace_id, workspace_id),
+            )
             r = cur.fetchone()
         if not r:
             return None
         return {
-            "name":           r["name"],
-            "layer":          r["layer"],
-            "cartridge":      r["cartridge"] or "unknown",
-            "sources":        r["sources"] or [],
-            "sql_def":        r["sql_def"] or "",
+            "name": r["name"],
+            "layer": r["layer"],
+            "cartridge": r["cartridge"] or "unknown",
+            "sources": r["sources"] or [],
+            "sql_def": r["sql_def"] or "",
             "column_mapping": r["column_mapping"] or {},
-            "schedule":       r["schedule"],
-            "description":    r["description"] or "",
-            "last_refresh":   r["last_refresh"].isoformat() if r.get("last_refresh") else None,
-            "row_count":      r["row_count"],
-            "workspace_id":    str(r["workspace_id"]) if r.get("workspace_id") else None,
-            "created_by_id":   r["created_by_id"],
+            "schedule": r["schedule"],
+            "description": r["description"] or "",
+            "last_refresh": r["last_refresh"].isoformat()
+            if r.get("last_refresh")
+            else None,
+            "row_count": r["row_count"],
+            "workspace_id": str(r["workspace_id"]) if r.get("workspace_id") else None,
+            "created_by_id": r["created_by_id"],
         }
 
     def save_dataset(self, ds: dict):
-        sources        = ds.get("sources") or []
+        assert_dataset_is_writable(ds.get("name"))
+        sources = ds.get("sources") or []
         column_mapping = ds.get("column_mapping") or {}
         with _conn() as conn, conn.cursor() as cur:
             workspace_id = ds.get("workspace_id") or _default_workspace_id(cur)
@@ -155,7 +172,8 @@ class DatasetStore:
                 else "(name)"
             )
             if has_tenant_id:
-                cur.execute(f"""
+                cur.execute(
+                    f"""
                     INSERT INTO datasets
                       (name, layer, cartridge, sources, sql_def, description,
                        column_mapping, schedule, created_by_id, tenant_id, workspace_id, updated_at)
@@ -172,21 +190,24 @@ class DatasetStore:
                       tenant_id      = COALESCE(EXCLUDED.tenant_id, datasets.tenant_id),
                       workspace_id   = COALESCE(EXCLUDED.workspace_id, datasets.workspace_id),
                       updated_at     = NOW()
-                """, (
-                    ds["name"],
-                    ds.get("layer", "silver"),
-                    ds.get("cartridge", ""),
-                    json.dumps(sources),
-                    ds.get("sql", ds.get("sql_def", "")),
-                    ds.get("description", ""),
-                    json.dumps(column_mapping),
-                    ds.get("schedule"),
-                    ds.get("created_by_id"),
-                    tenant_id,
-                    workspace_id,
-                ))
+                """,
+                    (
+                        ds["name"],
+                        ds.get("layer", "silver"),
+                        ds.get("cartridge", ""),
+                        json.dumps(sources),
+                        ds.get("sql", ds.get("sql_def", "")),
+                        ds.get("description", ""),
+                        json.dumps(column_mapping),
+                        ds.get("schedule"),
+                        ds.get("created_by_id"),
+                        tenant_id,
+                        workspace_id,
+                    ),
+                )
             else:
-                cur.execute(f"""
+                cur.execute(
+                    f"""
                     INSERT INTO datasets
                       (name, layer, cartridge, sources, sql_def, description,
                        column_mapping, schedule, created_by_id, workspace_id, updated_at)
@@ -202,18 +223,20 @@ class DatasetStore:
                       created_by_id  = COALESCE(EXCLUDED.created_by_id, datasets.created_by_id),
                       workspace_id   = COALESCE(EXCLUDED.workspace_id, datasets.workspace_id),
                       updated_at     = NOW()
-                """, (
-                    ds["name"],
-                    ds.get("layer", "silver"),
-                    ds.get("cartridge", ""),
-                    json.dumps(sources),
-                    ds.get("sql", ds.get("sql_def", "")),
-                    ds.get("description", ""),
-                    json.dumps(column_mapping),
-                    ds.get("schedule"),
-                    ds.get("created_by_id"),
-                    workspace_id,
-                ))
+                """,
+                    (
+                        ds["name"],
+                        ds.get("layer", "silver"),
+                        ds.get("cartridge", ""),
+                        json.dumps(sources),
+                        ds.get("sql", ds.get("sql_def", "")),
+                        ds.get("description", ""),
+                        json.dumps(column_mapping),
+                        ds.get("schedule"),
+                        ds.get("created_by_id"),
+                        workspace_id,
+                    ),
+                )
             conn.commit()
 
     def delete_dataset(
@@ -228,7 +251,7 @@ class DatasetStore:
             row = cur.fetchone()
             if not row:
                 return {"deleted": False, "error": "not found"}
-            layer     = row["layer"]
+            layer = row["layer"]
             cartridge = row["cartridge"] or "unknown"
             cur.execute(
                 "DELETE FROM datasets WHERE name = %s AND (%s::uuid IS NULL OR workspace_id = %s::uuid)",
@@ -246,10 +269,13 @@ class DatasetStore:
     ):
         with _conn() as conn, conn.cursor() as cur:
             _apply_scope(cur, tenant_id, workspace_id)
-            cur.execute("""
+            cur.execute(
+                """
                 UPDATE datasets
                 SET last_refresh = NOW(), row_count = %s, updated_at = NOW()
                 WHERE name = %s
                   AND (%s::uuid IS NULL OR workspace_id = %s::uuid)
-            """, (row_count, name, workspace_id, workspace_id))
+            """,
+                (row_count, name, workspace_id, workspace_id),
+            )
             conn.commit()

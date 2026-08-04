@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 
+from app.services.intelligence import orchestrator_execution
 from tests.decision_orchestrator_harness import (
     FakeOrchestratorDB,
     _patch_pool,
@@ -12,6 +13,32 @@ from tests.decision_orchestrator_harness import (
     orchestrator,
     runtime_evidence,
 )
+
+
+@pytest.mark.parametrize(
+    ("app_env", "disabled"),
+    [
+        (None, True),
+        ("", True),
+        ("production", True),
+        ("dev", True),
+        ("testing", True),
+        ("unknown", True),
+        ("test", False),
+        ("local", False),
+        ("development", False),
+    ],
+)
+def test_execution_manual_fixture_requires_exact_local_env(
+    monkeypatch, app_env, disabled
+):
+    if app_env is None:
+        monkeypatch.delenv("APP_ENV", raising=False)
+    else:
+        monkeypatch.setenv("APP_ENV", app_env)
+
+    assert orchestrator_execution._manual_fixture_disabled("manual_fixture") is disabled
+    assert orchestrator_execution._manual_fixture_disabled("signal") is False
 
 
 def test_classifier_routes_available_and_candidate_engines(orchestrator):
@@ -183,32 +210,7 @@ async def test_orchestrator_persists_with_scoped_runtime_and_tenant_isolation(
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_accepts_wisdombit_monitor_source(orchestrator, monkeypatch):
-    db = FakeOrchestratorDB()
-    _patch_pool(orchestrator, monkeypatch, db)
-    user = _user(12)
-
-    result = await orchestrator.orchestrate(
-        user,
-        {
-            "source_type": "wisdom_bit",
-            "source_id": "WB-TALENTO",
-            "title": "Decision operativa WB-TALENTO",
-            "description": "Aggregated talent readiness monitor with blockers and simulation evidence.",
-            "metrics": {"risk_metric": "talent_readiness_delta"},
-            "constraints": {"recommendation_only": True},
-            "evidence_refs": [{"type": "wisdom_bit", "id": "WB-TALENTO"}],
-        },
-    )
-
-    run = result["orchestration"]
-    assert run["source_type"] == "wisdom_bit"
-    assert run["source_id"] == "WB-TALENTO"
-    assert run["problem_type"] in {"risk_forecast", "data_quality"}
-
-
-@pytest.mark.asyncio
-async def test_orchestrator_rejects_payload_scope_and_manual_fixture_without_flag(
+async def test_orchestrator_rejects_payload_scope(
     orchestrator,
     monkeypatch,
 ):
@@ -227,12 +229,43 @@ async def test_orchestrator_rejects_payload_scope_and_manual_fixture_without_fla
         )
     assert scope_error.value.status_code == 422
 
-    with pytest.raises(orchestrator.DecisionOrchestratorError) as fixture_error:
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "app_env", [None, "", "production", "prod", "staging", "unknown", "dev", "testing"]
+)
+async def test_orchestrator_rejects_manual_fixture_even_with_isolated_flag(
+    orchestrator, monkeypatch, app_env
+):
+    _patch_pool(orchestrator, monkeypatch, FakeOrchestratorDB())
+    if app_env is None:
+        monkeypatch.delenv("APP_ENV", raising=False)
+    else:
+        monkeypatch.setenv("APP_ENV", app_env)
+    monkeypatch.setenv("DECISION_ORCHESTRATOR_ALLOW_MANUAL_FIXTURE", "true")
+
+    with pytest.raises(orchestrator.DecisionOrchestratorError) as exc:
         await orchestrator.orchestrate(
-            user,
+            _user(20),
             {"source_type": "manual_fixture", "source_id": "fixture-1"},
         )
-    assert fixture_error.value.status_code == 403
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("app_env", ["test", "local", "development"])
+async def test_orchestrator_accepts_manual_fixture_only_in_exact_local_env(
+    orchestrator, monkeypatch, app_env
+):
+    _patch_pool(orchestrator, monkeypatch, FakeOrchestratorDB())
+    monkeypatch.setenv("APP_ENV", app_env)
+    monkeypatch.delenv("DECISION_ORCHESTRATOR_ALLOW_MANUAL_FIXTURE", raising=False)
+
+    result = await orchestrator.orchestrate(
+        _user(20),
+        {"source_type": "manual_fixture", "source_id": "fixture-1"},
+    )
+    assert result["orchestration"]["source_type"] == "manual_fixture"
 
 
 @pytest.mark.asyncio

@@ -8,6 +8,7 @@ import pytest
 
 from app.domains.system.lifespan import _default_startup_seeds
 from app.services import seed_packaged_datasets as packaged_seed
+from app.services import seed_packaged_dataset_rows as row_helpers
 
 
 class _Context:
@@ -93,10 +94,14 @@ async def test_general_seed_refreshes_obsolete_definition_idempotently(
         "_dataset_files",
         lambda: {"sap_successfactors": [headcount, employee]},
     )
-    monkeypatch.setattr(packaged_seed, "_datasets_has_column", yes)
     monkeypatch.setattr(
-        packaged_seed,
-        "_datasets_workspace_name_conflict_available",
+        row_helpers,
+        "datasets_has_column",
+        yes,
+    )
+    monkeypatch.setattr(
+        row_helpers,
+        "datasets_workspace_name_conflict_available",
         yes,
     )
     monkeypatch.setattr(packaged_seed, "_set_seed_scope", set_scope)

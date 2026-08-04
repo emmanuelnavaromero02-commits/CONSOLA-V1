@@ -165,7 +165,16 @@ async def test_talent_metadata_and_preview_remain_recommendation_only(monkeypatc
     async def fake_rows(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
         if dataset == "sap_successfactors_talent_cpa_scores":
             return [
-                {"user_id": "100", "cpa_status": "ready"},
+                # A genuinely ready CPA row carries its three observed scores;
+                # a row that only claims "ready" no longer counts as one.
+                {
+                    "user_id": "100",
+                    "cpa_status": "ready",
+                    "competency_score": 4.0,
+                    "performance_score": 4.0,
+                    "aspiration_score": 3.5,
+                    "invalid_score_input": False,
+                },
                 {"user_id": "101", "cpa_status": "insufficient_data"},
             ]
         return []

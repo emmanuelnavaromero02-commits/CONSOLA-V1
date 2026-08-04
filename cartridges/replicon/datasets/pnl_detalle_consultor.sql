@@ -1,10 +1,17 @@
 -- pnl_detalle_consultor  (gold)  cartridge: replicon
--- description: P&L mensual prorrateado al consultor. Revenue por tipo: FPP=avance*contrato; T&M/AMS OnDemand=horas×tarifa (fallback BillingItem); Iguala/AMS Baseline/BPO/CFDI-Timbrado=BillingItem del proyecto-mes × share de horas facturables del consultor. Costo hundido prorrateado por peso de horas facturables del consultor.
--- exported from AWS postgres on session
-
 WITH
-
--- 1. Catalogo proyectos
+fx_rates AS (
+    SELECT
+        DATE_TRUNC('month', TRY_CAST(year_month AS DATE))                  AS mes,
+        CASE WHEN COUNT(*) = 1
+                  AND isfinite(MAX(TRY_CAST(avg_rate AS DOUBLE)))
+                  AND MAX(TRY_CAST(avg_rate AS DOUBLE)) > 0
+             THEN MAX(TRY_CAST(avg_rate AS DOUBLE)) END                    AS mxn_to_usd,
+        'raw/fx_rates/mxn_usd/fx_rates.parquet'                            AS fx_source,
+        MAX(TRY_CAST(year_month AS TIMESTAMP))                             AS fx_observed_at
+    FROM read_parquet('s3://{bucket}/raw/fx_rates/mxn_usd/fx_rates.parquet')
+    GROUP BY 1
+),
 proj_catalog AS (
     SELECT project_code, project_name, revenue_manager, project_type, pct_avance_real FROM (
         SELECT
@@ -17,54 +24,61 @@ proj_catalog AS (
         FROM read_parquet('s3://{bucket}/silver/replicon/replicon_project_detail_curated/data.parquet')
     ) WHERE rn = 1
 ),
-
--- 2. Valor de contrato (FPP)
 proj_contract AS (
-    SELECT project_code, cliente, valor_contrato FROM (
+    SELECT project_code, cliente, original_contract_amount,
+           original_currency, contract_amount_usd, contract_financial_status,
+           fx_source, fx_observed_at FROM (
         SELECT
             code                                                            AS project_code,
             clientname                                                      AS cliente,
-            CASE WHEN projectcurrencyid = 8
-                 THEN COALESCE(totalestimatedcontractamount, 0) / 20.0
-                 ELSE COALESCE(totalestimatedcontractamount, 0)
-            END                                                             AS valor_contrato,
+            totalestimatedcontractamount                                    AS original_contract_amount,
+            CASE projectcurrencyid WHEN 1 THEN 'USD' WHEN 8 THEN 'MXN' END  AS original_currency,
+            CASE
+                WHEN projectcurrencyid = 1 THEN totalestimatedcontractamount
+                WHEN projectcurrencyid = 8 AND fx.mxn_to_usd IS NOT NULL
+                    THEN totalestimatedcontractamount * fx.mxn_to_usd
+            END                                                             AS contract_amount_usd,
+            CASE
+                WHEN totalestimatedcontractamount IS NULL THEN 'insufficient_data'
+                WHEN projectcurrencyid = 1 THEN 'ready'
+                WHEN projectcurrencyid = 8 AND fx.mxn_to_usd IS NOT NULL THEN 'ready'
+                ELSE 'missing_fx'
+            END                                                             AS contract_financial_status,
+            CASE WHEN projectcurrencyid = 8 AND fx.mxn_to_usd IS NOT NULL
+                 THEN fx.fx_source END                                      AS fx_source,
+            CASE WHEN projectcurrencyid = 8 AND fx.mxn_to_usd IS NOT NULL
+                 THEN fx.fx_observed_at END                                 AS fx_observed_at,
             ROW_NUMBER() OVER (PARTITION BY code ORDER BY load_date DESC NULLS LAST) AS rn
         FROM read_parquet('s3://{bucket}/silver/replicon/replicon_project_latest/data.parquet')
+        LEFT JOIN fx_rates fx
+          ON fx.mes = DATE_TRUNC('month', TRY_CAST(load_date AS DATE))
     ) WHERE rn = 1
 ),
-
--- 3. Tarifa por usuario+proyecto — dedup a 1 fila por (userid, projectcode)
 billing_rates AS (
-    SELECT userid, projectcode, MAX(billing_rate_usd) AS billing_rate_usd
+    SELECT userid, projectcode,
+           MAX(billing_rate_usd) AS billing_rate_base_amount
     FROM read_parquet('s3://{bucket}/silver/replicon/replicon_resourceallocation_latest/data.parquet')
     GROUP BY userid, projectcode
 ),
-
--- 4. Revenue desde BillingItem
---   4a. Por proyecto-mes-consultor (fallback T&M / AMS OnDemand)
 billing_items_user AS (
     SELECT
         DATE_TRUNC('month', CAST(entrydate AS DATE))                        AS mes,
         projectcode,
         username,
-        SUM(COALESCE(billableamountbasecurrency, 0))                       AS revenue_bi
+        SUM(billableamountbasecurrency)                                    AS revenue_base_amount
     FROM read_parquet('s3://{bucket}/silver/replicon/replicon_billingitem_latest/data.parquet')
     WHERE isbillable = true AND entrydate IS NOT NULL
     GROUP BY 1, 2, 3
 ),
-
---   4b. Por proyecto-mes (Iguala / AMS Baseline / BPO / CFDI-Timbrado)
 billing_items_proj AS (
     SELECT
         DATE_TRUNC('month', CAST(entrydate AS DATE))                        AS mes,
         projectcode,
-        SUM(COALESCE(billableamountbasecurrency, 0))                       AS revenue_bi
+        SUM(billableamountbasecurrency)                                    AS revenue_base_amount
     FROM read_parquet('s3://{bucket}/silver/replicon/replicon_billingitem_latest/data.parquet')
     WHERE isbillable = true AND entrydate IS NOT NULL
     GROUP BY 1, 2
 ),
-
--- 5. Revenue FPP: avance_último_mes_actual − avance_último_mes_anterior × contrato
 fpp_monthly_last AS (
     SELECT mes, project_code, real_progress AS last_progress
     FROM (
@@ -80,30 +94,71 @@ fpp_monthly_last AS (
         WHERE real_progress IS NOT NULL
     ) WHERE rn = 1
 ),
-
 fpp_revenue AS (
     SELECT
         m.mes, m.project_code,
         (m.last_progress - COALESCE(LAG(m.last_progress) OVER (
             PARTITION BY m.project_code ORDER BY m.mes
-        ), 0)) / 100.0 * COALESCE(pc.valor_contrato, 0)                    AS revenue_usd
+        ), 0)) / 100.0 * pc.contract_amount_usd                            AS revenue_usd,
+        (m.last_progress - COALESCE(LAG(m.last_progress) OVER (
+            PARTITION BY m.project_code ORDER BY m.mes
+        ), 0)) / 100.0 * pc.original_contract_amount                       AS revenue_original_amount,
+        pc.contract_financial_status,
+        pc.original_contract_amount,
+        pc.original_currency,
+        pc.fx_source,
+        pc.fx_observed_at
     FROM fpp_monthly_last m
     LEFT JOIN proj_contract pc ON pc.project_code = m.project_code
 ),
-
--- 6. Facturación por mes-proyecto (AMS Base Line / BPO)
-facturacion AS (
+billing_rows AS (
     SELECT
         DATE_TRUNC('month', CAST("Fecha" AS DATE))                         AS mes,
         CAST(TRY_CAST(TRY_CAST("Project Code" AS DOUBLE) AS BIGINT) AS VARCHAR) AS project_code,
-        SUM(CASE WHEN "Moneda" = 'MXN' THEN "Subtotal" / 20.0
-                 ELSE "Subtotal" END)                                      AS facturacion_mes_usd
-    FROM read_parquet('s3://{bucket}/silver/replicon/replicon_projectbilling_curated/data.parquet')
+        "Subtotal"                                                         AS original_amount,
+        CASE
+            WHEN UPPER(TRIM("Moneda")) IN ('USD', 'USD$') THEN 'USD'
+            WHEN UPPER(TRIM("Moneda")) = 'MXN' THEN 'MXN'
+        END                                                                AS currency,
+        fx.mxn_to_usd,
+        fx.fx_source,
+        fx.fx_observed_at
+    FROM read_parquet('s3://{bucket}/silver/replicon/replicon_projectbilling_curated/data.parquet') billing
+    LEFT JOIN fx_rates fx
+      ON fx.mes = DATE_TRUNC('month', TRY_CAST(billing."Fecha" AS DATE))
     WHERE "Fecha" IS NOT NULL AND "Project Code" != '0'
+),
+facturacion AS (
+    SELECT
+        mes,
+        project_code,
+        SUM(CASE WHEN currency = 'USD' THEN original_amount END)           AS original_billing_amount_usd,
+        SUM(CASE WHEN currency = 'MXN' THEN original_amount END)           AS original_billing_amount_mxn,
+        CASE WHEN COUNT(DISTINCT currency) = 1 THEN MAX(currency) END      AS original_currency,
+        CASE WHEN COUNT(DISTINCT currency) = 1
+             THEN SUM(original_amount) END                                 AS original_billing_amount,
+        CASE
+            WHEN COUNT(*) FILTER (WHERE original_amount IS NULL) > 0
+                THEN 'insufficient_data'
+            WHEN COUNT(*) FILTER (
+                WHERE currency IS NULL
+                   OR (currency = 'MXN' AND mxn_to_usd IS NULL)
+            ) > 0 THEN 'missing_fx'
+            ELSE 'ready'
+        END                                                                AS billing_financial_status,
+        CASE WHEN billing_financial_status = 'ready' THEN SUM(
+            CASE WHEN currency = 'USD' THEN original_amount
+                 WHEN currency = 'MXN' THEN original_amount * mxn_to_usd END
+        ) END                                                              AS facturacion_mes_usd,
+        CASE WHEN COUNT(*) FILTER (
+            WHERE currency = 'MXN' AND mxn_to_usd IS NOT NULL
+        ) > 0 THEN MAX(fx_source) END                                      AS fx_source,
+        CASE WHEN COUNT(*) FILTER (
+            WHERE currency = 'MXN' AND mxn_to_usd IS NOT NULL
+        ) > 0 THEN MAX(fx_observed_at) END                                 AS fx_observed_at
+    FROM billing_rows
     GROUP BY 1, 2
 ),
-
--- 7. TimeEntry enriquecido por consultor
 te_enriched AS (
     SELECT
         te.username,
@@ -113,7 +168,7 @@ te_enriched AS (
         DATE_TRUNC('month', TRY_CAST(te.entrydate AS DATE))                AS mes,
         te.durationhours,
         te.isbillable,
-        COALESCE(br.billing_rate_usd, 0)                                   AS billing_rate_usd,
+        COALESCE(br.billing_rate_base_amount, 0)                           AS billing_rate_base_amount,
         COALESCE(em.costo_hora, 0)                                         AS costo_hora,
         COALESCE(em.tipo_empleado, 'Unknown')                              AS tipo_empleado
     FROM read_parquet('s3://{bucket}/silver/replicon/replicon_timeentry_latest/data.parquet') te
@@ -122,8 +177,6 @@ te_enriched AS (
     LEFT JOIN read_parquet('s3://{bucket}/silver/replicon/empleados_maestro/data.parquet') em
         ON LOWER(TRIM(em.usuario)) = LOWER(TRIM(te.username))
 ),
-
--- 8. Costo hundido por empleado/mes
 hundido_emp AS (
     SELECT
         username, mes, costo_hora,
@@ -133,28 +186,24 @@ hundido_emp AS (
     WHERE mes IS NOT NULL AND tipo_empleado = 'Employee' AND costo_hora > 0
     GROUP BY username, mes, costo_hora
 ),
-
--- 9. Métricas TE por (mes, proyecto, consultor)
 te_agg AS (
     SELECT
         mes,
         projectcode                                                         AS project_code,
         username                                                            AS consultor,
         MAX(clientname)                                                     AS cliente_te,
-        MAX(billing_rate_usd)                                               AS billing_rate_usd,
+        MAX(billing_rate_base_amount)                                       AS billing_rate_base_amount,
         MAX(costo_hora)                                                     AS costo_hora,
         MAX(tipo_empleado)                                                  AS tipo_empleado,
         SUM(CASE WHEN isbillable     THEN durationhours ELSE 0 END)        AS horas_facturables,
         SUM(CASE WHEN NOT isbillable THEN durationhours ELSE 0 END)        AS horas_no_facturables,
         SUM(durationhours)                                                  AS horas_totales,
-        SUM(CASE WHEN isbillable THEN durationhours * billing_rate_usd ELSE 0 END) AS revenue_tarifa_usr,
+        SUM(CASE WHEN isbillable THEN durationhours * billing_rate_base_amount ELSE 0 END) AS revenue_tarifa_base,
         SUM(CASE WHEN isbillable THEN durationhours * costo_hora ELSE 0 END) AS costo_directo
     FROM te_enriched
     WHERE mes IS NOT NULL
     GROUP BY mes, project_code, consultor
 ),
-
--- 10. Total horas facturables por (mes, proyecto) — para prorratear revenue del proyecto a consultores
 proj_hrs AS (
     SELECT mes, project_code,
            SUM(horas_facturables) AS hrs_fact_proyecto
@@ -169,30 +218,46 @@ SELECT
     ta.project_code                                                         AS proyecto,
     COALESCE(pc.project_name, '')                                          AS project_name,
     COALESCE(pc.project_type, 'N/D')                                       AS tipo_proyecto,
+    fr.original_contract_amount,
+    fr.original_currency                                                   AS contract_original_currency,
+    fac.original_billing_amount,
+    fac.original_billing_amount_usd,
+    fac.original_billing_amount_mxn,
+    fac.original_currency                                                  AS billing_original_currency,
+    COALESCE(fac.original_currency, fr.original_currency)                  AS original_currency,
+    COALESCE(fac.fx_source, fr.fx_source)                                  AS fx_source,
+    COALESCE(fac.fx_observed_at, fr.fx_observed_at)                        AS fx_observed_at,
+    CASE
+        WHEN pc.project_type = 'FPP'
+             AND COALESCE(fr.contract_financial_status, 'insufficient_data') <> 'ready'
+            THEN COALESCE(fr.contract_financial_status, 'insufficient_data')
+        WHEN COALESCE(fac.billing_financial_status, 'insufficient_data') <> 'ready'
+            THEN COALESCE(fac.billing_financial_status, 'insufficient_data')
+        ELSE 'missing_base_currency'
+    END                                                                    AS financial_status,
     ta.consultor,
     ta.tipo_empleado,
     ROUND(ta.horas_facturables, 2)                                         AS horas_facturables,
     ROUND(ta.horas_no_facturables, 2)                                      AS horas_no_facturables,
     ROUND(ta.horas_totales, 2)                                             AS horas_totales,
-    ROUND(ta.billing_rate_usd, 2)                                          AS billing_rate_usd,
-    ROUND(ta.costo_hora, 2)                                                AS costo_hora,
-    -- COSTO DIRECTO (consultor)
-    ROUND(ta.costo_directo, 2)                                             AS costo_directo,
-    -- COSTO HUNDIDO atribuido al consultor en este proyecto:
-    --   peso = horas_fact del consultor en este proyecto / total horas_fact del consultor en el mes
-    ROUND(
+    ta.billing_rate_base_amount                                            AS billing_rate_base_amount,
+    ta.costo_hora                                                          AS cost_rate_base_amount,
+    NULL::VARCHAR                                                          AS base_currency,
+    CASE WHEN financial_status = 'ready'
+         THEN ROUND(ta.billing_rate_base_amount, 2) END                    AS billing_rate_usd,
+    CASE WHEN financial_status = 'ready'
+         THEN ROUND(ta.costo_hora, 2) END                                  AS costo_hora,
+    CASE WHEN financial_status = 'ready'
+         THEN ROUND(ta.costo_directo, 2) END                               AS costo_directo,
+    ROUND(CASE WHEN financial_status = 'ready' THEN
         CASE WHEN he.hrs_fact_total > 0
              THEN ta.horas_facturables / he.hrs_fact_total * he.costo_hundido_total
-             ELSE 0 END, 2)                                                AS costo_hundido_aporte,
-    -- REVENUE atribuido al consultor:
-    --   T&M / AMS OnDemand                        → su propia hrs × tarifa (fallback BillingItem)
-    --   FPP                                       → revenue FPP del proyecto × share de su horas_fact
-    --   Iguala / AMS Baseline / BPO / CFDI-Timbrado → BillingItem del proyecto-mes × share de horas_fact
+             ELSE 0 END END, 2)                                            AS costo_hundido_aporte,
     ROUND(
-        CASE
+        CASE WHEN financial_status = 'ready' THEN CASE
             WHEN pc.project_type IN ('T&M', 'AMS (On Demand)')
-              THEN CASE WHEN ta.revenue_tarifa_usr > 0 THEN ta.revenue_tarifa_usr
-                        ELSE COALESCE(biu.revenue_bi, 0) END
+              THEN CASE WHEN ta.revenue_tarifa_base > 0 THEN ta.revenue_tarifa_base
+                        ELSE COALESCE(biu.revenue_base_amount, 0) END
             WHEN pc.project_type = 'FPP'
               THEN CASE WHEN ph.hrs_fact_proyecto > 0
                         THEN ta.horas_facturables / ph.hrs_fact_proyecto
@@ -206,14 +271,15 @@ SELECT
                  )
               THEN CASE WHEN ph.hrs_fact_proyecto > 0
                         THEN ta.horas_facturables / ph.hrs_fact_proyecto
-                             * COALESCE(bip.revenue_bi, 0)
+                             * COALESCE(bip.revenue_base_amount, 0)
                         ELSE 0 END
-            ELSE CASE WHEN ta.revenue_tarifa_usr > 0 THEN ta.revenue_tarifa_usr
-                      ELSE COALESCE(biu.revenue_bi, 0) END
-        END, 2)                                                            AS revenue_aporte,
-    -- Totales del proyecto-mes para contexto
-    ROUND(COALESCE(fr.revenue_usd, 0), 2)                                  AS proj_revenue_fpp_mes,
-    ROUND(COALESCE(fac.facturacion_mes_usd, 0), 2)                         AS proj_facturacion_mes
+            ELSE CASE WHEN ta.revenue_tarifa_base > 0 THEN ta.revenue_tarifa_base
+                      ELSE COALESCE(biu.revenue_base_amount, 0) END
+        END END, 2)                                                        AS revenue_aporte,
+    CASE WHEN financial_status = 'ready'
+         THEN ROUND(fr.revenue_usd, 2) END                                 AS proj_revenue_fpp_mes,
+    CASE WHEN financial_status = 'ready'
+         THEN ROUND(fac.facturacion_mes_usd, 2) END                        AS proj_facturacion_mes
 FROM te_agg ta
 LEFT JOIN proj_catalog pc   ON pc.project_code  = ta.project_code
 LEFT JOIN proj_contract pc2 ON pc2.project_code = ta.project_code
@@ -226,4 +292,3 @@ LEFT JOIN billing_items_proj bip
     ON bip.projectcode = ta.project_code AND bip.mes = ta.mes
 LEFT JOIN hundido_emp he ON he.username = ta.consultor AND he.mes = ta.mes
 ORDER BY ta.mes DESC, revenue_manager, ta.project_code, ta.consultor
-

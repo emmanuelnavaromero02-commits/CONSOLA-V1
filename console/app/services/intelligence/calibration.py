@@ -84,7 +84,9 @@ def _probability(value: Any) -> float | None:
     if parsed is None:
         return None
     if parsed < 0 or parsed > 1:
-        raise CalibrationValidationError("predicted_probability must be between 0 and 1")
+        raise CalibrationValidationError(
+            "predicted_probability must be between 0 and 1"
+        )
     return parsed
 
 
@@ -102,7 +104,9 @@ def _clamp(value: float, low: float, high: float) -> float:
 def _status(value: Any) -> str:
     status = str(value or "").strip().lower()
     if status not in STATUS_VALUES:
-        raise CalibrationValidationError("actual_status must be hit, miss, partial, or unknown")
+        raise CalibrationValidationError(
+            "actual_status must be hit, miss, partial, or unknown"
+        )
     return status
 
 
@@ -131,7 +135,9 @@ def _posterior_after(prior: dict[str, float], status: str) -> dict[str, float]:
     return _posterior_payload(alpha, beta)
 
 
-def _posterior_payload(alpha: float, beta: float) -> dict[str, float | dict[str, float] | str]:
+def _posterior_payload(
+    alpha: float, beta: float
+) -> dict[str, float | dict[str, float] | str]:
     total = alpha + beta
     mean = alpha / total
     variance = (alpha * beta) / ((total * total) * (total + 1.0))
@@ -190,7 +196,9 @@ def empty_state(
     prior: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     prior_payload = _normalize_prior(prior)
-    posterior = _posterior_payload(float(prior_payload["alpha"]), float(prior_payload["beta"]))
+    posterior = _posterior_payload(
+        float(prior_payload["alpha"]), float(prior_payload["beta"])
+    )
     return {
         "calibration_group": calibration_group,
         "model_version": model_version,
@@ -233,7 +241,11 @@ def normalize_observation(payload: dict[str, Any]) -> dict[str, Any]:
     metric = str(payload.get("predicted_metric") or "").strip()
     if not metric or len(metric) > 120:
         raise CalibrationValidationError("predicted_metric is required")
-    if status in {"hit", "miss", "partial"} and predicted_probability is None and predicted_value is None:
+    if (
+        status in {"hit", "miss", "partial"}
+        and predicted_probability is None
+        and predicted_value is None
+    ):
         raise CalibrationValidationError(
             "predicted_probability or predicted_value is required for scored outcomes"
         )
@@ -247,13 +259,19 @@ def normalize_observation(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def apply_observation(state: dict[str, Any] | None, payload: dict[str, Any]) -> dict[str, Any]:
+def apply_observation(
+    state: dict[str, Any] | None, payload: dict[str, Any]
+) -> dict[str, Any]:
     observation = normalize_observation(payload)
     calibration_group = str(payload.get("calibration_group") or "global")
-    model_version = str(payload.get("model_version") or MODEL_VERSION)
-    current = deepcopy(state) if state else empty_state(
-        calibration_group=calibration_group,
-        model_version=model_version,
+    model_version = MODEL_VERSION
+    current = (
+        deepcopy(state)
+        if state
+        else empty_state(
+            calibration_group=calibration_group,
+            model_version=model_version,
+        )
     )
     prior_before = dict(current.get("posterior") or _posterior_payload(1.0, 1.0))
     posterior = _posterior_after(prior_before, observation["actual_status"])
@@ -269,7 +287,9 @@ def apply_observation(state: dict[str, Any] | None, payload: dict[str, Any]) -> 
         "posterior": posterior,
         "metrics": metrics,
     }
-    explanation = _explanation(prior_before, posterior, metrics, observation["actual_status"])
+    explanation = _explanation(
+        prior_before, posterior, metrics, observation["actual_status"]
+    )
     result_hash = reproducibility_hash(
         {
             "model_version": MODEL_VERSION,
@@ -378,7 +398,8 @@ def apply_calibration_to_probability(
     raw = _required_probability(raw_probability)
     group = calibration_group or (
         str(calibration_state.get("calibration_group"))
-        if isinstance(calibration_state, dict) and calibration_state.get("calibration_group")
+        if isinstance(calibration_state, dict)
+        and calibration_state.get("calibration_group")
         else None
     )
     if not calibration_state:
@@ -392,7 +413,6 @@ def apply_calibration_to_probability(
             disclaimer=RAW_HEURISTIC_DISCLAIMER,
             max_adjustment=max_adjustment,
         )
-
     metrics = _state_metrics(calibration_state)
     posterior = _state_posterior(calibration_state)
     sample_count = int(metrics.get("sample_count") or 0)
@@ -400,7 +420,10 @@ def apply_calibration_to_probability(
     posterior_mean = posterior.get("mean")
     posterior_alpha = posterior.get("alpha")
     posterior_beta = posterior.get("beta")
-    if sample_count < min_samples or posterior_mean is None:
+    provenance_complete = (
+        metrics.get("complete") is True and metrics.get("provenance_complete") is True
+    )
+    if not provenance_complete or sample_count < min_samples or posterior_mean is None:
         return _calibration_metadata(
             raw=raw,
             calibrated=raw,
@@ -410,7 +433,9 @@ def apply_calibration_to_probability(
             metrics=metrics,
             confidence_score=confidence_score,
             calibration_applied=False,
-            reason="insufficient_calibration_data",
+            reason="insufficient_calibration_data"
+            if provenance_complete
+            else "incomplete_calibration_provenance",
             disclaimer=RAW_HEURISTIC_DISCLAIMER,
             max_adjustment=max_adjustment,
         )
@@ -479,7 +504,9 @@ def _calibration_metadata(
         "calibration_applied": bool(calibration_applied),
         "calibration_reason": reason,
         "calibration_group": group,
-        "calibration_source": "bayesian_posterior" if calibration_applied else "raw_heuristic",
+        "calibration_source": "bayesian_posterior"
+        if calibration_applied
+        else "raw_heuristic",
         "sample_count": int(sample_count),
         "posterior_mean": posterior.get("mean"),
         "posterior_alpha": posterior.get("alpha"),
@@ -532,16 +559,21 @@ def source_type_calibration_group(source_system: Any, metric_id: Any) -> str:
 def live_calibration_groups(*, source_system: Any, metric_id: Any) -> list[str]:
     source_group = source_type_calibration_group(source_system, metric_id)
     global_group = global_calibration_group(metric_id)
-    return [source_group, global_group] if source_group != global_group else [global_group]
+    return (
+        [source_group, global_group] if source_group != global_group else [global_group]
+    )
 
 
 def _update_counts(metrics: dict[str, Any], status: str) -> None:
-    metrics["sample_count"] = int(metrics.get("sample_count") or 0) + 1
+    if status != "unknown":
+        metrics["sample_count"] = int(metrics.get("sample_count") or 0) + 1
     key = f"{status}_count"
     metrics[key] = int(metrics.get(key) or 0) + 1
 
 
-def _update_probability_metrics(metrics: dict[str, Any], observation: dict[str, Any]) -> None:
+def _update_probability_metrics(
+    metrics: dict[str, Any], observation: dict[str, Any]
+) -> None:
     predicted_probability = observation.get("predicted_probability")
     actual = _binary_actual(observation["actual_status"])
     if predicted_probability is None or actual is None:
@@ -555,18 +587,26 @@ def _update_probability_metrics(metrics: dict[str, Any], observation: dict[str, 
     metrics["probability_count"] = int(metrics.get("probability_count") or 0) + 1
 
 
-def _update_continuous_metrics(metrics: dict[str, Any], observation: dict[str, Any]) -> None:
+def _update_continuous_metrics(
+    metrics: dict[str, Any], observation: dict[str, Any]
+) -> None:
     predicted_value = observation.get("predicted_value")
     actual_value = observation.get("actual_value")
     if predicted_value is not None and actual_value is not None:
         error = actual_value - predicted_value
-        metrics["abs_error_sum"] = float(metrics.get("abs_error_sum") or 0.0) + abs(error)
-        metrics["squared_error_sum"] = float(metrics.get("squared_error_sum") or 0.0) + error * error
+        metrics["abs_error_sum"] = float(metrics.get("abs_error_sum") or 0.0) + abs(
+            error
+        )
+        metrics["squared_error_sum"] = (
+            float(metrics.get("squared_error_sum") or 0.0) + error * error
+        )
         metrics["continuous_count"] = int(metrics.get("continuous_count") or 0) + 1
     interval = observation.get("predicted_interval") or {}
     if actual_value is not None and interval:
         if float(interval["low"]) <= actual_value <= float(interval["high"]):
-            metrics["coverage_hit_count"] = int(metrics.get("coverage_hit_count") or 0) + 1
+            metrics["coverage_hit_count"] = (
+                int(metrics.get("coverage_hit_count") or 0) + 1
+            )
         metrics["coverage_count"] = int(metrics.get("coverage_count") or 0) + 1
 
 
@@ -576,16 +616,22 @@ def _finalize_metrics(metrics: dict[str, Any]) -> None:
     continuous_count = int(metrics.get("continuous_count") or 0)
     coverage_count = int(metrics.get("coverage_count") or 0)
     if brier_count:
-        metrics["brier_score"] = round(float(metrics.get("brier_sum") or 0.0) / brier_count, 6)
+        metrics["brier_score"] = round(
+            float(metrics.get("brier_sum") or 0.0) / brier_count, 6
+        )
     if probability_count:
         metrics["calibration_error"] = round(
             float(metrics.get("probability_abs_error_sum") or 0.0) / probability_count,
             6,
         )
     if continuous_count:
-        metrics["mae"] = round(float(metrics.get("abs_error_sum") or 0.0) / continuous_count, 6)
+        metrics["mae"] = round(
+            float(metrics.get("abs_error_sum") or 0.0) / continuous_count, 6
+        )
         metrics["rmse"] = round(
-            math.sqrt(float(metrics.get("squared_error_sum") or 0.0) / continuous_count),
+            math.sqrt(
+                float(metrics.get("squared_error_sum") or 0.0) / continuous_count
+            ),
             6,
         )
     if coverage_count:
@@ -602,7 +648,9 @@ def _finalize_metrics(metrics: dict[str, Any]) -> None:
     calibration_error = float(metrics.get("calibration_error") or 0.0)
     coverage = metrics.get("coverage_p10_p90")
     coverage_penalty = abs(0.8 - float(coverage)) if coverage is not None else 0.0
-    score = sample_factor * max(0.0, 1.0 - (0.5 * calibration_error) - (0.25 * coverage_penalty))
+    score = sample_factor * max(
+        0.0, 1.0 - (0.5 * calibration_error) - (0.25 * coverage_penalty)
+    )
     metrics["confidence_score"] = round(max(0.0, min(1.0, score)), 6)
 
 
