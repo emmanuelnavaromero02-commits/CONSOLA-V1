@@ -85,7 +85,7 @@ EXFIL_ARITHMETIC = (
 # SQLGlot represents DuckDB's PIVOT replacement scan as a plain Table.  A CTE
 # with the same name in another lexical scope must not make that local file
 # reference look like a visible CTE.
-EXFIL_PIVOT_SCOPE_LAUNDERING = f'''WITH decoy AS (
+EXFIL_PIVOT_SCOPE_LAUNDERING = f"""WITH decoy AS (
   SELECT * FROM read_parquet(
     's3://lakehouse/raw/sap_successfactors/x/tenant_id={TENANT}/workspace_id={WORKSPACE}/x.parquet'
   )
@@ -100,7 +100,7 @@ WHERE EXISTS (
   WITH "/usr/local/lib/python3.12/site-packages/pyarrow/tests/data/parquet/v0.7.1.parquet"
        AS (SELECT 1)
   SELECT 1
-)'''
+)"""
 
 BLOCKED = [
     pytest.param(EXFIL_SLICE_CONCAT, id="slice-then-concat"),

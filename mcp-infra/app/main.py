@@ -1101,9 +1101,7 @@ def _validate_cartridge_query_sql(
             tenant_id=tenant_id,
             workspace_id=workspace_id,
             expected_bucket=settings.minio_bucket,
-            shared_roots=SHARED_RAW_ROOTS_BY_CARTRIDGE.get(
-                cartridge, frozenset()
-            ),
+            shared_roots=SHARED_RAW_ROOTS_BY_CARTRIDGE.get(cartridge, frozenset()),
             allow_server_resolution=True,
         )
     except ReaderPolicyError:

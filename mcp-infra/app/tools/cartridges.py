@@ -161,7 +161,9 @@ def _scope_values(
     return _safe_scope_segment(tenant_id), _safe_scope_segment(workspace_id)
 
 
-def _set_pg_scope(cur: Any, security_context: dict[str, Any] | None = None) -> tuple[str, str]:
+def _set_pg_scope(
+    cur: Any, security_context: dict[str, Any] | None = None
+) -> tuple[str, str]:
     tenant_id, workspace_id = _scope_values(security_context)
     cur.execute(
         "SELECT set_config('app.tenant_id', %s, true), set_config('app.workspace_id', %s, true)",
@@ -170,7 +172,9 @@ def _set_pg_scope(cur: Any, security_context: dict[str, Any] | None = None) -> t
     return tenant_id, workspace_id
 
 
-def _catalog_scope_sql(tenant_id: str, workspace_id: str) -> tuple[str, tuple[Any, ...]]:
+def _catalog_scope_sql(
+    tenant_id: str, workspace_id: str
+) -> tuple[str, tuple[Any, ...]]:
     if not workspace_id:
         return "", ()
     if tenant_id:
@@ -234,9 +238,7 @@ def _assert_reader_sandbox(
         tenant_id=tenant_id,
         workspace_id=workspace_id,
         expected_bucket=settings.minio_bucket,
-        shared_roots=frozenset(
-            SHARED_RAW_ROOTS_BY_CARTRIDGE.get(cartridge, ())
-        ),
+        shared_roots=frozenset(SHARED_RAW_ROOTS_BY_CARTRIDGE.get(cartridge, ())),
         allow_server_resolution=allow_server_resolution,
     )
 
@@ -298,7 +300,7 @@ def _scoped_rag_source_name(
     workspace_id: str | None = None,
 ) -> str:
     tenant, workspace = _scope_values(security_context, tenant_id, workspace_id)
-    return scoped_semantic_source_name(base_name,security_context,tenant,workspace)
+    return scoped_semantic_source_name(base_name, security_context, tenant, workspace)
 
 
 # ── Tool · get_semantic ───────────────────────────────────────────────────────
@@ -370,7 +372,10 @@ def cartridge_get_semantic(
         "type": "object",
         "properties": {
             "cartridge_id": {"type": "string"},
-            "conn_id": {"type": "string", "description": "Optional Vault connection id"},
+            "conn_id": {
+                "type": "string",
+                "description": "Optional Vault connection id",
+            },
         },
         "required": ["cartridge_id"],
     },
@@ -513,7 +518,16 @@ async def cartridge_search_term(
             "  %s = ANY(tags)) "
             f"{scope_sql} "
             "ORDER BY dataset, column_name",
-            (cartridge_id, p_space, p_under, p_dash, p_space, p_under, tag, *scope_params),
+            (
+                cartridge_id,
+                p_space,
+                p_under,
+                p_dash,
+                p_space,
+                p_under,
+                tag,
+                *scope_params,
+            ),
         )
         columns = [
             {"dataset": r[0], "column": r[1], "type": r[2], "description": r[3]}
@@ -546,8 +560,7 @@ async def cartridge_search_term(
         "matches_in_data_catalog": columns,
         "matches_in_rag": rag_results,
         "rag_synced": any(
-            s.get("name") == target_name
-            for s in (await _safe_list_rag_sources())
+            s.get("name") == target_name for s in (await _safe_list_rag_sources())
         ),
     }
 
@@ -707,7 +720,9 @@ def list_cartridges() -> list[dict[str, Any]]:
         "required": ["cartridge_id"],
     },
 )
-def _watermark_scope(tenant_id: str | None = None, workspace_id: str | None = None) -> str:
+def _watermark_scope(
+    tenant_id: str | None = None, workspace_id: str | None = None
+) -> str:
     tenant = str(tenant_id or "").strip()
     workspace = str(workspace_id or "").strip()
     if tenant and workspace:
@@ -723,7 +738,9 @@ def cartridge_list_entities(
     watermark_scope = _watermark_scope(tenant_id, workspace_id)
     with _conn() as c, c.cursor() as cur:
         cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id or "",))
-        cur.execute("SELECT set_config('app.workspace_id', %s, true)", (workspace_id or "",))
+        cur.execute(
+            "SELECT set_config('app.workspace_id', %s, true)", (workspace_id or "",)
+        )
         cur.execute(
             "SELECT set_config('app.platform_admin', %s, true)",
             ("false" if tenant_id and workspace_id else "true",),
@@ -965,11 +982,7 @@ async def cartridge_extract(
     if not row or not row[0]:
         return {"error": f"No dag_id configured for {cartridge_id}.{resolved}"}
     dag_id = row[0]
-    selected_conn_id = (
-        conn_id
-        or row[1]
-        or ""
-    ).strip()
+    selected_conn_id = (conn_id or row[1] or "").strip()
     entity = resolved
     run_id = uuid.uuid4().hex[:8]
 
@@ -1021,7 +1034,10 @@ async def cartridge_extract(
                 "enum": ["full", "incremental"],
                 "default": "incremental",
             },
-            "conn_id": {"type": "string", "description": "Optional Vault connection id"},
+            "conn_id": {
+                "type": "string",
+                "description": "Optional Vault connection id",
+            },
         },
         "required": ["cartridge_id"],
     },
@@ -1048,11 +1064,7 @@ async def cartridge_extract_all(
     ) as client:
         for entity, dag_id, configured_conn_id in rows:
             run_id = uuid.uuid4().hex[:8]
-            selected_conn_id = (
-                conn_id
-                or configured_conn_id
-                or ""
-            ).strip()
+            selected_conn_id = (conn_id or configured_conn_id or "").strip()
             conf = _attach_security_scope(
                 {
                     "job_id": run_id,
@@ -1200,7 +1212,9 @@ def cartridge_list_jobs(
     tenant_id, workspace_id = _scope_values(security_context)
     with _conn() as c, c.cursor() as cur:
         cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id or "",))
-        cur.execute("SELECT set_config('app.workspace_id', %s, true)", (workspace_id or "",))
+        cur.execute(
+            "SELECT set_config('app.workspace_id', %s, true)", (workspace_id or "",)
+        )
         cur.execute(
             """
             SELECT run_id, dag_id, entity, mode, status,
@@ -1243,7 +1257,9 @@ def cartridge_list_kbs(
     security_context: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     _scope_values(security_context)
-    reserved = {"kb_wip_mensual", "kb_wip_resumen"} if cartridge_id == "replicon" else set()
+    reserved = (
+        {"kb_wip_mensual", "kb_wip_resumen"} if cartridge_id == "replicon" else set()
+    )
     with _conn() as c, c.cursor() as cur:
         cur.execute(
             "SELECT kb_id, name, description, pg_table, output_path "
@@ -1288,7 +1304,12 @@ def cartridge_run_kb(
     security_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if cartridge_id == "replicon" and kb_id in {"kb_wip_mensual", "kb_wip_resumen"}:
-        return {"kb_id": kb_id, "status": "partial", "data_status": "unavailable", "error": "reserved Replicon WIP requires its provenance-aware runtime"}
+        return {
+            "kb_id": kb_id,
+            "status": "partial",
+            "data_status": "unavailable",
+            "error": "reserved Replicon WIP requires its provenance-aware runtime",
+        }
     with _conn() as c, c.cursor() as cur:
         cur.execute(
             "SELECT sql, pg_table, output_path FROM kb_config "
@@ -1456,9 +1477,19 @@ def cartridge_query_kb(
     security_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     limit = validate_bounded_int(limit, "limit", lo=1, hi=5000)
-    blocked_reason = replicon_generic_query_block_reason(sql, cartridge_id=cartridge_id, connection_factory=_conn, security_context=security_context)
+    blocked_reason = replicon_generic_query_block_reason(
+        sql,
+        cartridge_id=cartridge_id,
+        connection_factory=_conn,
+        security_context=security_context,
+    )
     if blocked_reason:
-        return {"cartridge_id": cartridge_id, "status": "partial", "data_status": "unavailable", "reason": blocked_reason}
+        return {
+            "cartridge_id": cartridge_id,
+            "status": "partial",
+            "data_status": "unavailable",
+            "reason": blocked_reason,
+        }
     try:
         _assert_reader_sandbox(
             sql,

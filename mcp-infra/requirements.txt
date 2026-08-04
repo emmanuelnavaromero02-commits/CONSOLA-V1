@@ -1,31 +1,31 @@
-# CVE-2026-59935/GHSA-g867-7843-wf8q (6.14.2).
-# CVE-2026-59936/GHSA-5xf7-4p34-54qr (6.14.1), and
-# CVE-2026-59937/GHSA-55h5-xmcq-c37v (6.14.0),
-# dataset/RAG parquet API surface used here unchanged.
-# developer/test install resolves cleanly.
-# fixes: CVE-2026-59938/GHSA-5qjq-93h5-hrgp and
-# Keep mcp-infra aligned with the other FastAPI services so a combined
-# loop bombs, unbounded recursion). 6.14.2 includes the four latest parser
-# Public API used by mcp-infra (PdfReader, page extraction) is
-# starlette + fastapi CVE chain rationale.
-# unchanged across the 4 -> 6 major bump per pypdf's stability policy.
-# v1.43.2 (DevOps R1 follow-up): pypdf 4.3.1 had 13+ CVEs (parser DoS,
 # v1.43.2 (DevOps R1 follow-up): see console/requirements.txt for the
-# v1.43.5: pyarrow 23.0.1 closes PYSEC-2026-113 while keeping the
-asyncpg==0.29.0
-boto3>=1.34.0
-duckdb==1.2.2
+# starlette + fastapi CVE chain rationale.
 fastapi==0.136.1
-google-cloud-storage>=2.18.0,<4
-httpx==0.28.1
-minio==7.2.9
-pandas==2.1.4
-pgvector==0.3.2
-psycopg2-binary==2.9.9
-pyarrow==23.0.1
-pydantic-settings==2.14.2
-pypdf==6.14.2
-sqlalchemy==2.0.34
-sqlglot==25.16.1
 starlette>=1.0.1
+# Keep mcp-infra aligned with the other FastAPI services so a combined
+# developer/test install resolves cleanly.
 uvicorn[standard]==0.47.0
+httpx==0.28.1
+psycopg2-binary==2.9.9
+minio==7.2.9
+# v1.43.5: pyarrow 23.0.1 closes PYSEC-2026-113 while keeping the
+# dataset/RAG parquet API surface used here unchanged.
+pyarrow==23.0.1
+pandas==2.1.4
+pydantic-settings==2.14.2
+duckdb==1.2.2
+sqlalchemy==2.0.34
+asyncpg==0.29.0
+pgvector==0.3.2
+# v1.43.2 (DevOps R1 follow-up): pypdf 4.3.1 had 13+ CVEs (parser DoS,
+# loop bombs, unbounded recursion). 6.14.2 includes the four latest parser
+# fixes: CVE-2026-59938/GHSA-5qjq-93h5-hrgp and
+# CVE-2026-59937/GHSA-55h5-xmcq-c37v (6.14.0),
+# CVE-2026-59936/GHSA-5xf7-4p34-54qr (6.14.1), and
+# CVE-2026-59935/GHSA-g867-7843-wf8q (6.14.2).
+# Public API used by mcp-infra (PdfReader, page extraction) is
+# unchanged across the 4 -> 6 major bump per pypdf's stability policy.
+pypdf==6.14.2
+sqlglot==25.16.1
+boto3>=1.34.0
+google-cloud-storage>=2.18.0,<4
