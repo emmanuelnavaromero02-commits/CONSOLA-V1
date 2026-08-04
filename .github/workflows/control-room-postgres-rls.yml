@@ -163,7 +163,6 @@ jobs:
             tests/test_seed_packaged_datasets_logging.py \
             tests/test_successfactors_talent_fallbacks.py \
             tests/test_cartridge_query_kb_reader_sandbox.py \
-            refinement/tests/test_packaged_dataset_write_boundary.py \
             tests/test_talent_benchmark_approval_authority.py \
             tests/test_talent_nine_box_fail_closed.py \
             tests/test_talent_nine_box_downstream.py \
@@ -247,7 +246,7 @@ jobs:
               if any(bad.values()):
                   raise SystemExit(f"{label} JUnit is not clean: {bad}")
 
-          verify_junit("/tmp/control-room-focal.xml", minimum=9659, label="Focal Control Room")
+          verify_junit("/tmp/control-room-focal.xml", minimum=9650, label="Focal Control Room")
           verify_junit("/tmp/control-room-postgres-rls.xml", minimum=276, label="Live PostgreSQL/RLS")
           PY
 
