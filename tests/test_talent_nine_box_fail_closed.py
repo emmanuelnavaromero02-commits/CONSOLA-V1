@@ -260,7 +260,8 @@ def test_valid_performance_remains_available_while_potential_is_pending():
 def test_invalid_benchmark_row_cannot_steal_valid_cpa_attribution():
     rows = [
         {"box_key": "core", "box_status": "ready", "source_mode": "cpa_real",
-         "performance_score": 80.0, "potential_score": 80.0},
+         "performance_score": 80.0, "potential_score": 80.0,
+         "invalid_score_input": False},
         {"box_key": "core", "box_status": "ready",
          "source_mode": "benchmark_internal", "performance_score": -1.0,
          "potential_score": 80.0},

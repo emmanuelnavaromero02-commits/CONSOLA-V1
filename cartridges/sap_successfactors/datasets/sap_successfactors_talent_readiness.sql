@@ -2,28 +2,48 @@
 -- sources: ["gold/sap_successfactors/sap_successfactors_talent_cpa_scores", "gold/sap_successfactors/sap_successfactors_talent_benchmark_internal"]
 -- description: Readiness con C/P/A observado o percentiles internos; el benchmark sólo es utilizable con aprobación durable registrada por servidor.
 
-WITH cpa AS (
+WITH cpa_source AS (
     SELECT *
     FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_cpa_scores/**/*.parquet',
                       hive_partitioning = true, union_by_name = true)
 ),
+cpa AS (
+    SELECT * EXCLUDE (
+            invalid_score_input, competency_score, performance_score,
+            aspiration_score, fit_score
+        ),
+        CASE WHEN talent_percent_is_valid(competency_score)
+            THEN TRY_CAST(competency_score AS DOUBLE) END AS competency_score,
+        CASE WHEN talent_percent_is_valid(performance_score)
+            THEN TRY_CAST(performance_score AS DOUBLE) END AS performance_score,
+        CASE WHEN talent_percent_is_valid(aspiration_score)
+            THEN TRY_CAST(aspiration_score AS DOUBLE) END AS aspiration_score,
+        CASE WHEN talent_percent_is_valid(fit_score)
+            THEN TRY_CAST(fit_score AS DOUBLE) END AS fit_score,
+        (
+            invalid_score_input IS DISTINCT FROM FALSE
+            OR (competency_score IS NOT NULL
+                AND NOT talent_percent_is_valid(competency_score))
+            OR (performance_score IS NOT NULL
+                AND NOT talent_percent_is_valid(performance_score))
+            OR (aspiration_score IS NOT NULL
+                AND NOT talent_percent_is_valid(aspiration_score))
+            OR (fit_score IS NOT NULL
+                AND NOT talent_percent_is_valid(fit_score))
+        ) AS invalid_score_input
+    FROM cpa_source
+),
 benchmark AS (
-    SELECT *,
-        CASE
-            WHEN approved = TRUE
-              AND TRY_CAST(approved_by AS BIGINT) > 0
-              AND TRY_CAST(approved_at AS TIMESTAMP) IS NOT NULL
-              AND approval_actor_source = 'server'
-              AND approval_recorded_by_server = TRUE
-              AND NULLIF(TRIM(CAST(approval_evidence_ref AS VARCHAR)), '') IS NOT NULL
-              AND NULLIF(TRIM(CAST(approval_authorization_ref AS VARCHAR)), '') IS NOT NULL
-              AND approval_authorization_verified = TRUE
-            THEN TRUE ELSE FALSE
-        END AS approval_valid
+    -- Dataset rows never carry approval authority.  The Console may overlay a
+    -- separately verified ledger record when projecting the benchmark itself,
+    -- but derived materialization stays fail-closed until a server-owned
+    -- authority binding is present; caller-controlled approval_* fields are
+    -- deliberately ignored here.
+    SELECT *, FALSE AS approval_valid
     FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_benchmark_internal/**/*.parquet',
                       hive_partitioning = true, union_by_name = true)
     WHERE enabled = TRUE
-    ORDER BY approval_valid DESC, materialized_at DESC NULLS LAST
+    ORDER BY materialized_at DESC NULLS LAST
     LIMIT 1
 ),
 benchmark_raw AS (
@@ -36,6 +56,7 @@ benchmark_raw AS (
         benchmark.readiness_high_threshold,
         benchmark.readiness_medium_threshold,
         CASE
+            WHEN cpa.invalid_score_input THEN NULL
             WHEN cpa.fit_score IS NOT NULL THEN NULL
             WHEN NOT COALESCE(benchmark.approval_valid, FALSE) THEN NULL
             WHEN benchmark.role_coverage_weight IS NULL
@@ -64,6 +85,7 @@ benchmark_raw AS (
             )), 2)
         END AS benchmark_raw_score,
         CASE
+            WHEN cpa.invalid_score_input THEN 0.0
             WHEN cpa.fit_score IS NOT NULL THEN 1.0
             WHEN cpa.required_skills_status NOT IN ('blocked', 'insufficient_data', 'missing')
               AND TRY_CAST(cpa.tenure_months AS DOUBLE) IS NOT NULL

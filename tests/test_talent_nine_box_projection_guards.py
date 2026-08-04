@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import duckdb
+import pytest
+from decimal import Decimal
 
 from app.services.control_room import api as control_room_api
 from tests.test_talent_nine_box_downstream import MACRO, _copy, _dataset_sql
@@ -187,6 +189,36 @@ def test_invalid_input_provenance_overrules_in_range_derived_scores():
     assert control_room_api._sf_talent_cpa_scores_valid(row) is False
 
 
+@pytest.mark.parametrize(
+    "value",
+    ["80", "-1e-400", "100.00000000000000000000000000000000001"],
+)
+def test_string_typed_scores_never_cross_the_public_projection(value):
+    assert control_room_api._sf_talent_score(value) is None
+
+
+@pytest.mark.parametrize(
+    "value",
+    [Decimal("-1e-400"), Decimal("100.000000000000000000000001")],
+)
+def test_decimal_boundaries_are_checked_before_public_float_conversion(value):
+    assert control_room_api._sf_talent_score(value) is None
+
+
+def test_missing_or_null_validation_provenance_fails_closed():
+    base = {
+        "competency_score": 80.0,
+        "performance_score": 80.0,
+        "aspiration_score": 80.0,
+        "potential_score": 80.0,
+    }
+    assert control_room_api._sf_talent_cpa_scores_valid(base) is False
+    assert control_room_api._sf_talent_nine_box_scores_valid(base) is False
+    assert control_room_api._sf_talent_cpa_scores_valid(
+        {**base, "invalid_score_input": None}
+    ) is False
+
+
 def test_stale_score_signal_requires_current_server_validation_marker():
     stale = {
         "signal_id": "talent_promotion_alignment",
@@ -203,3 +235,14 @@ def test_stale_score_signal_requires_current_server_validation_marker():
         [valid, unrelated], 1
     ) == [valid, unrelated]
     assert control_room_api._sf_talent_validated_signal_rows([valid], 0) == []
+
+
+def test_missing_input_signal_requires_marker_but_not_a_calculable_row():
+    stale = {
+        "signal_id": "talent_cpa_missing_inputs",
+        "affected_count": 1,
+    }
+    valid = {**stale, "source_validation_status": "server_validated_v1"}
+
+    assert control_room_api._sf_talent_validated_signal_rows([stale], 0) == []
+    assert control_room_api._sf_talent_validated_signal_rows([valid], 0) == [valid]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import types
+from decimal import Decimal
 
 from app.services.control_room import core as _core
 from app.services.control_room.talent_catalog import (
@@ -81,6 +82,7 @@ for _helper in (
     _sf_load_foundation_gold_results,
 ):
     _core.__dict__.setdefault(_helper.__name__, _helper)
+_core.__dict__.setdefault("Decimal", Decimal)
 
 
 def _bind_to_core(fn):
@@ -389,7 +391,7 @@ def _sf_talent_profiled_count(
 
 @_bind_to_core
 def _sf_talent_readiness_row_valid(row: dict[str, Any]) -> bool:
-    if _sf_talent_bool(row.get("invalid_score_input")):
+    if row.get("invalid_score_input") is not False:
         return False
     if _sf_talent_status(row.get("readiness_status"), "") not in {
         "ready",
@@ -640,6 +642,7 @@ def _sf_talent_signal_payloads(signal_rows: list[dict[str, Any]]) -> list[dict[s
 def _sf_talent_validated_signal_rows(
     signal_rows: list[dict[str, Any]], readiness_calculable: int
 ) -> list[dict[str, Any]]:
+    missing_input_signals = {"talent_cpa_missing_inputs"}
     score_derived = {
         "talent_9box_operational_ready",
         "talent_retention_risk",
@@ -650,10 +653,14 @@ def _sf_talent_validated_signal_rows(
     return [
         row
         for row in signal_rows
-        if str(row.get("signal_id") or "") not in score_derived
+        if str(row.get("signal_id") or "")
+        not in score_derived | missing_input_signals
         or (
-            readiness_calculable > 0
-            and row.get("source_validation_status") == "server_validated_v1"
+            row.get("source_validation_status") == "server_validated_v1"
+            and (
+                str(row.get("signal_id") or "") in missing_input_signals
+                or readiness_calculable > 0
+            )
         )
     ]
 
@@ -1125,8 +1132,15 @@ def _sf_talent_float(value: Any) -> float | None:
 
 @_bind_to_core
 def _sf_talent_score(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
+        return None
+    if isinstance(value, Decimal):
+        if not value.is_finite() or value < Decimal(0) or value > Decimal(100):
+            return None
     score = _sf_talent_float(value)
     if score is None or score < 0 or score > 100:
+        return None
+    if value != 0 and score == 0:
         return None
     return score
 
@@ -1134,7 +1148,7 @@ def _sf_talent_score(value: Any) -> float | None:
 @_bind_to_core
 def _sf_talent_nine_box_scores_valid(row: dict[str, Any]) -> bool:
     return (
-        not _sf_talent_bool(row.get("invalid_score_input"))
+        row.get("invalid_score_input") is False
         and "performance_score" in row
         and "potential_score" in row
         and _sf_talent_score(row.get("performance_score")) is not None
@@ -1144,7 +1158,7 @@ def _sf_talent_nine_box_scores_valid(row: dict[str, Any]) -> bool:
 
 @_bind_to_core
 def _sf_talent_cpa_scores_valid(row: dict[str, Any]) -> bool:
-    return not _sf_talent_bool(row.get("invalid_score_input")) and all(
+    return row.get("invalid_score_input") is False and all(
         _sf_talent_score(row.get(field)) is not None
         for field in ("competency_score", "performance_score", "aspiration_score")
     )

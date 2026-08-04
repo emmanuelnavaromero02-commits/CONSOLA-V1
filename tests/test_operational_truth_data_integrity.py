@@ -69,22 +69,21 @@ def test_packaged_talent_benchmark_is_unreviewed_system_default() -> None:
     assert "benchmark aprendido" not in lowered
 
 
-def test_talent_readiness_requires_real_actor_and_date_for_approval() -> None:
+def test_talent_readiness_never_uses_dataset_rows_as_approval_authority() -> None:
     sql = READINESS.read_text(encoding="utf-8")
     benchmark_cte = sql.split("benchmark AS (", 1)[1].split(
         "),\nbenchmark_raw AS (", 1
     )[0]
 
-    assert "WHEN approved = TRUE" in benchmark_cte
-    assert "TRY_CAST(approved_at AS TIMESTAMP) IS NOT NULL" in benchmark_cte
-    assert "TRY_CAST(approved_by AS BIGINT) > 0" in benchmark_cte
-    assert "NOT LIKE 'system%'" not in benchmark_cte
-    assert "approval_actor_source = 'server'" in benchmark_cte
-    assert "approval_evidence_ref" in benchmark_cte
-    assert "approval_authorization_ref" in benchmark_cte
-    assert "END AS approval_valid" in benchmark_cte
+    assert "SELECT *, FALSE AS approval_valid" in benchmark_cte
+    assert "WHEN approved = TRUE" not in benchmark_cte
+    assert "TRY_CAST(approved_at" not in benchmark_cte
+    assert "TRY_CAST(approved_by" not in benchmark_cte
+    assert "approval_actor_source =" not in benchmark_cte
+    assert "approval_evidence_ref)" not in benchmark_cte
+    assert "approval_authorization_ref)" not in benchmark_cte
     assert "WHERE enabled = TRUE" in benchmark_cte
-    assert "ORDER BY approval_valid DESC" in benchmark_cte
+    assert "ORDER BY materialized_at DESC" in benchmark_cte
     assert "AND approved = TRUE" not in benchmark_cte
     assert "benchmark_approval_valid" in sql
     assert "PERCENT_RANK() OVER" in sql
@@ -101,8 +100,9 @@ def test_talent_benchmark_needs_durable_server_side_approval() -> None:
     assert "null as approval_actor_source" in benchmark
     assert "false as approval_recorded_by_server" in benchmark
     assert "false as approval_authorization_verified" in benchmark
-    assert "approval_recorded_by_server = true" in readiness
-    assert "approval_authorization_verified = true" in readiness
+    assert "select *, false as approval_valid" in readiness
+    assert "approval_recorded_by_server = true" not in readiness
+    assert "approval_authorization_verified = true" not in readiness
     assert "benchmark_approval_valid" in readiness
     assert "benchmark_provenance_status" in readiness
     assert (

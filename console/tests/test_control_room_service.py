@@ -554,6 +554,7 @@ async def test_sap_successfactors_talent_9box_rebuilds_aggregate_from_detail(mon
                     "source_mode": "cpa_real",
                     "performance_score": 100.0,
                     "potential_score": 100.0,
+                    "invalid_score_input": False,
                 }
                 for index in range(3)
             ]
@@ -596,6 +597,7 @@ async def test_sap_successfactors_talent_9box_accepts_internal_reference(monkeyp
                     "source_mode": "benchmark_internal",
                     "performance_score": 60.0,
                     "potential_score": 60.0,
+                    "invalid_score_input": False,
                 }
                 for index in range(8)
             ]
@@ -644,6 +646,7 @@ async def test_sap_successfactors_talent_kpis_reads_operational_blocked_count_al
                     "box_status": "ready",
                     "performance_score": 60.0,
                     "potential_score": 60.0,
+                    "invalid_score_input": False,
                 }
                 for _ in range(1288)
             ]
@@ -655,6 +658,7 @@ async def test_sap_successfactors_talent_kpis_reads_operational_blocked_count_al
                     "readiness_score": 60.0,
                     "benchmark_approval_valid": True,
                     "benchmark_provenance_status": "approved_durable",
+                    "invalid_score_input": False,
                 }
                 for _ in range(1288)
             ]
@@ -687,6 +691,7 @@ async def test_sap_successfactors_talent_kpis_use_readiness_when_operational_row
                         "readiness_score": 60.0,
                         "benchmark_approval_valid": True,
                         "benchmark_provenance_status": "approved_durable",
+                        "invalid_score_input": False,
                     },
                 {
                     "employee_key": "tal_2",
@@ -695,6 +700,7 @@ async def test_sap_successfactors_talent_kpis_use_readiness_when_operational_row
                         "readiness_score": 60.0,
                         "benchmark_approval_valid": True,
                         "benchmark_provenance_status": "approved_durable",
+                        "invalid_score_input": False,
                 },
             ]
         if dataset == "sap_successfactors_talent_9box":
@@ -706,6 +712,7 @@ async def test_sap_successfactors_talent_kpis_use_readiness_when_operational_row
                     "source_mode": "benchmark_internal",
                     "performance_score": 60.0,
                     "potential_score": 60.0,
+                    "invalid_score_input": False,
                 }
             ]
         if dataset == "sap_successfactors_talent_operational_features":
@@ -758,6 +765,7 @@ async def test_sap_successfactors_talent_9box_falls_back_to_detailed_rows(monkey
                     "source_mode": "benchmark_internal",
                     "performance_score": 60.0,
                     "potential_score": 60.0,
+                    "invalid_score_input": False,
                 },
                 {
                     "employee_key": "tal_2",
@@ -766,6 +774,7 @@ async def test_sap_successfactors_talent_9box_falls_back_to_detailed_rows(monkey
                     "source_mode": "cpa_real",
                     "performance_score": 100.0,
                     "potential_score": 100.0,
+                    "invalid_score_input": False,
                 },
             ]
         return []
@@ -803,6 +812,7 @@ async def test_sap_successfactors_talent_9box_roster_masks_people(monkeypatch):
                     "performance_score": 100.0,
                     "potential_score": 100.0,
                     "box_status": "ready",
+                    "invalid_score_input": False,
                 },
                 {
                     "user_id": "101",
@@ -820,6 +830,7 @@ async def test_sap_successfactors_talent_9box_roster_masks_people(monkeypatch):
                     "performance_score": 100.0,
                     "potential_score": 100.0,
                     "box_status": "ready",
+                    "invalid_score_input": False,
                 },
             ]
         return []

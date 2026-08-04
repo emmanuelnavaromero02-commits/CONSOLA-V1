@@ -180,11 +180,11 @@ def test_packaged_authority_datasets_are_not_writable_through_save_dataset():
     """The generic dataset writer must refuse authority/readiness internals."""
     source = (ROOT / "refinement/app/main.py").read_text(encoding="utf-8")
 
-    assert "PROTECTED_AUTHORITY_DATASETS" in source
+    assert "is_protected_dataset" in source
     save_block = source.split('if tool == "save_dataset":', 1)[1].split(
         'if tool == "delete_dataset":', 1
     )[0]
-    assert "PROTECTED_AUTHORITY_DATASETS" in save_block
+    assert "is_protected_dataset" in save_block
 
 
 def test_protected_registry_covers_the_authority_and_readiness_internals():
@@ -197,11 +197,11 @@ def test_protected_registry_covers_the_authority_and_readiness_internals():
         except ValueError:
             pass
 
-    protected = getattr(store, "PROTECTED_AUTHORITY_DATASETS", frozenset())
-    assert BENCHMARK in protected
-    assert "sap_successfactors_talent_readiness" in protected
-    assert "sap_successfactors_talent_9box" in protected
-    assert {
+    protection = importlib.import_module("app.dataset_protection")
+    protected = {
+        BENCHMARK,
+        "sap_successfactors_talent_readiness",
+        "sap_successfactors_talent_9box",
         "sap_successfactors_talent_employee_profile",
         "sap_successfactors_talent_cpa_scores",
         "sap_successfactors_talent_9box_operational",
@@ -215,7 +215,13 @@ def test_protected_registry_covers_the_authority_and_readiness_internals():
         "sap_successfactors_talent_signals",
         "sap_successfactors_talent_operational_features",
         "sap_successfactors_talent_simulation_inputs",
-    }.issubset(protected)
+        "sap_successfactors_employee_360",
+        "sap_successfactors_performance_cycle",
+        "sap_successfactors_employee_competency",
+        "sap_successfactors_employee_aspiration",
+    }
+    assert all(protection.is_protected_dataset(name) for name in protected)
+    assert not protection.is_protected_dataset("custom_workforce_view")
 
 
 def test_save_dataset_refuses_a_protected_dataset(monkeypatch):

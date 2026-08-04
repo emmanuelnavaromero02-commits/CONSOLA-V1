@@ -10,7 +10,16 @@ from tests.test_talent_nine_box_downstream import MACRO, _copy, _dataset_sql
 
 @pytest.mark.parametrize(
     "literal",
-    ["TRUE", "FALSE", "json('true')", "json('false')"],
+    [
+        "TRUE",
+        "FALSE",
+        "json('true')",
+        "json('false')",
+        "'-1e-400'",
+        "'-1e-324'",
+        "'100.00000000000000000000000000000000001'",
+        "'75'",
+    ],
 )
 def test_castable_semantic_types_are_not_numeric_scores(literal):
     con = duckdb.connect()
@@ -22,6 +31,25 @@ def test_castable_semantic_types_are_not_numeric_scores(literal):
         assert con.execute(
             f"SELECT talent_percent_scale({literal})"
         ).fetchone()[0] is None
+    finally:
+        con.close()
+
+
+def test_decimal_range_is_checked_before_conversion_to_double():
+    con = duckdb.connect()
+    try:
+        con.execute(MACRO.read_text(encoding="utf-8"))
+        assert con.execute(
+            "SELECT talent_score_scale("
+            "100.00000000000000000000000000000000001::DECIMAL(38,35))"
+        ).fetchone()[0] is None
+        assert con.execute(
+            "SELECT talent_score_scale("
+            "-0.00000000000000000000000000000000001::DECIMAL(38,35))"
+        ).fetchone()[0] is None
+        assert con.execute(
+            "SELECT talent_score_scale(100.0::DECIMAL(38,35))"
+        ).fetchone()[0] == 5.0
     finally:
         con.close()
 

@@ -34,6 +34,13 @@ PROTECTED_AUTHORITY_DATASETS = frozenset(
     }
 )
 
+# Packaged SuccessFactors definitions form one server-owned dependency graph.
+# Protecting only its final readiness/action nodes is insufficient: replacing a
+# packaged upstream definition can mint otherwise well-formed scores and flow
+# through every protected downstream node.  Custom datasets remain available
+# under their own namespace.
+SERVER_OWNED_DATASET_PREFIXES = ("sap_successfactors_",)
+
 
 class ProtectedDatasetError(PermissionError):
     """Raised when a generic writer targets a packaged authority dataset."""
@@ -43,7 +50,10 @@ class ProtectedDatasetError(PermissionError):
 
 
 def is_protected_dataset(name: str) -> bool:
-    return str(name or "").strip().casefold() in PROTECTED_AUTHORITY_DATASETS
+    normalized = str(name or "").strip().casefold()
+    return normalized in PROTECTED_AUTHORITY_DATASETS or normalized.startswith(
+        SERVER_OWNED_DATASET_PREFIXES
+    )
 
 
 def assert_dataset_is_writable(name: str) -> None:
