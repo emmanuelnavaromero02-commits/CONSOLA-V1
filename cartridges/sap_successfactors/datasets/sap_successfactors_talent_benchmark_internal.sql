@@ -1,5 +1,5 @@
 -- sap_successfactors_talent_benchmark_internal  (gold)  cartridge: sap_successfactors
--- sources: []
+-- sources: ["config/sap_successfactors/talent_benchmark_internal"]
 -- description: Referencia interna empaquetada y no revisada. Es un system default; no es sectorial, externa, aprendida ni aprobada por el tenant.
 
 SELECT

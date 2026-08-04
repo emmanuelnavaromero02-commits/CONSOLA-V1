@@ -147,7 +147,9 @@ def _sanitize_benchmark_row(row: dict[str, Any]) -> None:
     )
 
 
-def _apply_benchmark_authority(row: dict[str, Any], authority: Mapping[str, Any]) -> None:
+def _apply_benchmark_authority(
+    row: dict[str, Any], authority: Mapping[str, Any]
+) -> None:
     _sanitize_benchmark_row(row)
     _update_present(
         row,

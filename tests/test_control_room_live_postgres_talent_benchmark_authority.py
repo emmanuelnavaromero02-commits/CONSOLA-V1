@@ -120,15 +120,11 @@ async def _seed(admin: asyncpg.Connection) -> dict[str, object]:
         "head_a": head_a,
         "head_b": head_b,
         "users": users,
-        "evidence_a": await evidence(
-            tenant_a, workspace_a, users["maker_a"], head_a
-        ),
+        "evidence_a": await evidence(tenant_a, workspace_a, users["maker_a"], head_a),
         "evidence_wrong_head": await evidence(
             tenant_a, workspace_a, users["maker_a"], wrong_head
         ),
-        "evidence_b": await evidence(
-            tenant_b, workspace_b, users["checker_b"], head_b
-        ),
+        "evidence_b": await evidence(tenant_b, workspace_b, users["checker_b"], head_b),
     }
 
 
@@ -218,12 +214,17 @@ async def test_benchmark_ledger_derives_authority_and_fails_closed(
                     """INSERT INTO evidence_items(
                     tenant_id,workspace_id,evidence_pack_id,source_type,source_ref
                     ) VALUES($1,$2,$3,'gold_dataset','late-item')""",
-                    seed["tenant_a"], seed["workspace_a"], seed["evidence_a"],
+                    seed["tenant_a"],
+                    seed["workspace_a"],
+                    seed["evidence_a"],
                 )
-        assert await admin.fetchval(
-            "SELECT count(*) FROM evidence_items WHERE evidence_pack_id=$1",
-            seed["evidence_a"],
-        ) == 1
+        assert (
+            await admin.fetchval(
+                "SELECT count(*) FROM evidence_items WHERE evidence_pack_id=$1",
+                seed["evidence_a"],
+            )
+            == 1
+        )
 
         rejected = [
             dict(
@@ -301,7 +302,10 @@ async def test_benchmark_ledger_derives_authority_and_fails_closed(
         migration = MIGRATION.read_text(encoding="utf-8")
         await admin.execute(migration)
         await admin.execute(migration)
-        assert await admin.fetchval("SELECT count(*) FROM talent_benchmark_approvals") == before
+        assert (
+            await admin.fetchval("SELECT count(*) FROM talent_benchmark_approvals")
+            == before
+        )
     finally:
         await console.close()
         await admin.close()

@@ -158,7 +158,10 @@ def test_server_authority_overlays_instead_of_corroborating_row_claims():
     "authority",
     [
         pytest.param(_authority(dataset="attacker-selected"), id="wrong-dataset"),
-        pytest.param(_authority(materialization_head="55555555-5555-5555-5555-555555555555"), id="wrong-head"),
+        pytest.param(
+            _authority(materialization_head="55555555-5555-5555-5555-555555555555"),
+            id="wrong-head",
+        ),
         pytest.param(_authority(tenant_id=OTHER_TENANT), id="wrong-tenant"),
         pytest.param(_authority(workspace_id=OTHER_WORKSPACE), id="wrong-workspace"),
     ],
@@ -248,10 +251,14 @@ def test_save_dataset_refuses_a_protected_dataset(monkeypatch):
 
 
 def test_ledger_function_derives_scope_actor_and_authorization_server_side():
-    sql = (ROOT / "infra/init/99zzs_talent_benchmark_approval_ledger.sql").read_text(
-        encoding="utf-8"
-    ).lower()
-    function = sql.split("create or replace function record_talent_benchmark_approval", 1)[1]
+    sql = (
+        (ROOT / "infra/init/99zzs_talent_benchmark_approval_ledger.sql")
+        .read_text(encoding="utf-8")
+        .lower()
+    )
+    function = sql.split(
+        "create or replace function record_talent_benchmark_approval", 1
+    )[1]
 
     assert "current_setting('app.tenant_id'" in function
     assert "current_setting('app.workspace_id'" in function
@@ -264,9 +271,9 @@ def test_ledger_function_derives_scope_actor_and_authorization_server_side():
 
 
 def test_gold_fetcher_resolves_authority_for_the_exact_benchmark_head():
-    source = (
-        ROOT / "console/app/services/intelligence/gold_fetcher.py"
-    ).read_text(encoding="utf-8")
+    source = (ROOT / "console/app/services/intelligence/gold_fetcher.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "resolve_benchmark_approval_authority" in source
     assert "benchmark_head=" in source

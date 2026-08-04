@@ -46,14 +46,37 @@ _COLUMNS = [
 ]
 
 UNREVIEWED = (
-    False, None, None, None, False, None, None, False, "unreviewed",
+    False,
+    None,
+    None,
+    None,
+    False,
+    None,
+    None,
+    False,
+    "unreviewed",
 )
 FORGED_APPROVAL = (
-    True, None, None, None, False, None, None, False, "unreviewed",
+    True,
+    None,
+    None,
+    None,
+    False,
+    None,
+    None,
+    False,
+    "unreviewed",
 )
 SERVER_APPROVAL = (
-    True, "42", "2026-08-01T00:00:00Z", "server", True,
-    "evidence:benchmark:v1", "authorization:benchmark:v1", True, "approved",
+    True,
+    "42",
+    "2026-08-01T00:00:00Z",
+    "server",
+    True,
+    "evidence:benchmark:v1",
+    "authorization:benchmark:v1",
+    True,
+    "approved",
 )
 
 
@@ -202,8 +225,12 @@ def test_benchmark_approval_survives_publication_and_republication(
     # A legitimate unreviewed republication with a new schema advances.
     republished = uuid.uuid4()
     _publish_benchmark(
-        stack, republished, UNREVIEWED + ("republished",), scope=scope_a,
-        columns=extended, expected_head=head[0],
+        stack,
+        republished,
+        UNREVIEWED + ("republished",),
+        scope=scope_a,
+        columns=extended,
+        expected_head=head[0],
     )
     advanced = stack.head(DATASET, scope_a)
     assert advanced is not None and advanced[1] == 2
