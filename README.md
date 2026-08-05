@@ -45,6 +45,27 @@ docker compose -f infra/docker-compose.yml -f infra/docker-compose.dev.yml --pro
 El compose base mantiene `RATE_LIMIT_ENABLED` activo. El override
 `infra/docker-compose.dev.yml` solo lo apaga para desarrollo/E2E local.
 
+## Que Ejecutar Segun El Caso
+
+Tres niveles, de mas barato a mas caro. No sustituyen uno al otro.
+
+| Nivel | Comando | Necesita stack | Duracion | Para que sirve |
+|---|---|---|---|---|
+| Baseline | `make baseline-smoke` | No | < 1 min | El checkout es coherente: VERSION, comandos, YAML, ruff |
+| Rapido | `make smoke` | Si | ~2 min | El stack levantado responde de verdad |
+| Gate | `make test` + `make beta-smoke` + `make e2e` | Si | horas | Puerta de release |
+
+`make baseline-smoke` es lo primero tras clonar o cambiar de rama: no
+levanta Docker y solo detecta drift del baseline. No es una puerta de
+producto — nunca reemplaza a `make test` ni a `make beta-smoke`.
+
+El gate completo esta en `make verify-release`, que reproduce lo que CI
+ejecuta (`.github/workflows/lint.yml` y `security.yml`) mas el stack real.
+El `pip-audit` de ambos es fail-closed y sin supresiones: si divergen, CI
+es la referencia.
+
+Riesgos y deuda vigentes del baseline: `docs/baseline.md`.
+
 ## Validacion Rapida
 
 Con el stack arriba:
