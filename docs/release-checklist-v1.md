@@ -2,7 +2,12 @@
 
 Current status: NOT APPROVED for public v1.0.
 
-Current `VERSION`: `1.45.74-beta`.
+Current `VERSION`: read the `VERSION` file at the repo root — it is the
+single source of truth (`console/app/version.py`, `/healthz`,
+`/api/system/info` and the Control Room `meta` all resolve through it).
+This document deliberately does not restate the number: a checklist that
+contradicts `VERSION` is a credibility bug, and it silently went 131
+patch releases stale before.
 
 ## Hard Rule
 

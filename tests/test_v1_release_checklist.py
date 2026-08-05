@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -24,11 +25,51 @@ def test_no_final_v1_tag_exists_while_p2_is_blocked():
     assert "v1.0.0" not in tags
 
 
+def test_v1_release_checklist_never_restates_a_version_literal():
+    """The checklist must point at ``VERSION``, never copy it.
+
+    It used to pin ``1.45.74-beta`` in prose, and this test froze that
+    literal — so the doc drifted 131 patch releases behind the real
+    ``VERSION`` while the suite stayed green. Assert coherence (no
+    hardcoded release number at all) instead of a fixed string.
+    """
+    text = (REPO / "docs/release-checklist-v1.md").read_text(encoding="utf-8")
+    stale = re.findall(r"\b\d+\.\d+\.\d+-beta\b", text)
+    assert not stale, f"checklist restates version literals: {sorted(set(stale))}"
+    assert "`VERSION` file at the repo root" in text
+
+
+def test_baseline_smoke_names_required_workflows_explicitly():
+    """The smoke must not decide "workflows are fine" from a glob alone.
+
+    A glob over ``.github/workflows`` yields nothing when a required
+    workflow is deleted, and "0 files parsed, 0 errors" reports PASS —
+    a false green on exactly the event worth catching. Pin the four gate
+    families by path so removing one is a failure, not a silent skip.
+    """
+    smoke = (REPO / "scripts/baseline_smoke.sh").read_text(encoding="utf-8")
+    assert "REQUIRED_WORKFLOWS" in smoke
+    for workflow in (
+        ".github/workflows/lint.yml",
+        ".github/workflows/security.yml",
+        ".github/workflows/mcp-infra-pdf-security.yml",
+        ".github/workflows/control-room-postgres-rls.yml",
+    ):
+        assert workflow in smoke, f"{workflow} is no longer pinned in the smoke"
+        assert (REPO / workflow).is_file(), f"{workflow} is required but absent"
+
+
+def test_baseline_bandit_scope_matches_security_workflow():
+    """`make security-scan` must not audit less than CI does."""
+    makefile = (REPO / "Makefile").read_text(encoding="utf-8")
+    for helper in ("scripts/ci_changed_areas.py", "scripts/ci_control_room_paths.py"):
+        assert helper in makefile, f"local bandit scope omits {helper}, CI audits it"
+
+
 def test_v1_release_checklist_blocks_public_release_until_p2_green():
     text = (REPO / "docs/release-checklist-v1.md").read_text(encoding="utf-8")
     for needle in (
         "Current status: NOT APPROVED",
-        "Current `VERSION`: `1.45.74-beta`",
         "`make beta-smoke` green",
         "do not create a final `v1.0` or",
         "P2-19 live readiness | BLOCKED",

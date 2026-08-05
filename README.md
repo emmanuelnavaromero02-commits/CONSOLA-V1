@@ -45,6 +45,34 @@ docker compose -f infra/docker-compose.yml -f infra/docker-compose.dev.yml --pro
 El compose base mantiene `RATE_LIMIT_ENABLED` activo. El override
 `infra/docker-compose.dev.yml` solo lo apaga para desarrollo/E2E local.
 
+## Que Ejecutar Segun El Caso
+
+Tres niveles, de mas barato a mas caro. No sustituyen uno al otro.
+
+| Nivel | Comando | Necesita stack | Duracion | Para que sirve |
+|---|---|---|---|---|
+| Baseline | `make baseline-smoke` | No | < 1 min | El checkout es coherente: VERSION, comandos, YAML, ruff |
+| Rapido | `make smoke` | Si | ~2 min | El stack levantado responde de verdad |
+| Gate | `make test` + `make beta-smoke` + `make e2e` | Si | horas | Puerta de release |
+
+`make baseline-smoke` es lo primero tras clonar o cambiar de rama: no
+levanta Docker y solo detecta drift del baseline. No es una puerta de
+producto — nunca reemplaza a `make test` ni a `make beta-smoke`.
+
+El gate completo esta en `make verify-release`. Reproduce los controles
+locales **equivalentes** de lint, Bandit, auditorias de dependencias y
+stack real. No es identico a CI y no lo pretende: CI ejecuta jobs
+condicionales por area cambiada, en su propio entorno y con versiones de
+herramienta fijadas. Ante cualquier diferencia de entorno, de seleccion
+condicional o de ejecucion, **CI es la autoridad**.
+
+Donde si hay paridad exacta y verificada: `pip-audit` corre fail-closed y
+sin supresiones en ambos lados, y el alcance de Bandit local incluye
+`scripts/ci_changed_areas.py` y `scripts/ci_control_room_paths.py`, igual
+que `security.yml`.
+
+Riesgos y deuda vigentes del baseline: `docs/baseline.md`.
+
 ## Validacion Rapida
 
 Con el stack arriba:
@@ -79,7 +107,9 @@ Auditorias de dependencias y seguridad:
 
 ```bash
 make security-scan
-.venv/bin/bandit -r console workspace vault refinement mcp-infra cartridges --severity-level medium --confidence-level high
+.venv/bin/bandit -r console workspace vault refinement mcp-infra cartridges \
+  scripts/ci_changed_areas.py scripts/ci_control_room_paths.py \
+  --severity-level medium --confidence-level high
 .venv/bin/pip-audit
 npm --prefix console-next audit
 npm --prefix tests-e2e audit --audit-level=high

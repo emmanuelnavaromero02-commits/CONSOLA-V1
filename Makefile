@@ -18,7 +18,7 @@ TARGET ?= local
 WORKLOAD ?= sap_successfactors
 PROFILE ?= beta-safe
 
-.PHONY: help bootstrap-env up up-core down nuke repair-local-stack logs ps test smoke beta-smoke beta-smoke-aws stress stress-smoke stress-beta stress-spike stress-breakpoint stress-soak-24h stress-write-heavy multiuser-simulation tenant-ab-local tenant-ab-aws live-cartridge-tests monitor-check production-readiness v1-live-readiness production-readiness-aws v1-ga-lite-local v1-ga-lite-aws v1-ga-max-aws v1-ga-cleanup v1-ga-report data-integrity-audit copilot-redteam cartridge-resilience chaos-local chaos-aws enterprise-readiness sap-successfactors-aws-live-max dr-rehearsal backup-aws dr-rehearsal-aws rollback-aws rollback-rehearsal rollback-rehearsal-aws deploy-main-aws aws-full-regression aws-observability-report aws-tls-status aws-superset-probe superset-tenant-probe superset-tenant-probe-aws monte-carlo-aws-probe bayesian-calibration-aws-probe bayesian-loop-probe bayesian-loop-probe-aws control-room-gold-engine-aws-probe control-room-mock-volume-aws-probe control-room-mock-volume-aws-cleanup cartridge-kb-scope-aws-probe action-framework-aws-probe decision-orchestrator-aws-probe decision-orchestrator-execution-aws-probe migrate rotate-keys e2e acceptance preflight demo-check security-scan verify-release verify-v1-public seed-intelligence-gold seed-replicon-beta-gold seed-replicon-beta-gold-aws run-intelligence-scheduled-local run-intelligence-scheduled-aws decision-backtest-local decision-backtest-aws
+.PHONY: help bootstrap-env up up-core down nuke repair-local-stack logs ps test baseline-smoke smoke beta-smoke beta-smoke-aws stress stress-smoke stress-beta stress-spike stress-breakpoint stress-soak-24h stress-write-heavy multiuser-simulation tenant-ab-local tenant-ab-aws live-cartridge-tests monitor-check production-readiness v1-live-readiness production-readiness-aws v1-ga-lite-local v1-ga-lite-aws v1-ga-max-aws v1-ga-cleanup v1-ga-report data-integrity-audit copilot-redteam cartridge-resilience chaos-local chaos-aws enterprise-readiness sap-successfactors-aws-live-max dr-rehearsal backup-aws dr-rehearsal-aws rollback-aws rollback-rehearsal rollback-rehearsal-aws deploy-main-aws aws-full-regression aws-observability-report aws-tls-status aws-superset-probe superset-tenant-probe superset-tenant-probe-aws monte-carlo-aws-probe bayesian-calibration-aws-probe bayesian-loop-probe bayesian-loop-probe-aws control-room-gold-engine-aws-probe control-room-mock-volume-aws-probe control-room-mock-volume-aws-cleanup cartridge-kb-scope-aws-probe action-framework-aws-probe decision-orchestrator-aws-probe decision-orchestrator-execution-aws-probe migrate rotate-keys e2e acceptance preflight demo-check security-scan verify-release verify-v1-public seed-intelligence-gold seed-replicon-beta-gold seed-replicon-beta-gold-aws run-intelligence-scheduled-local run-intelligence-scheduled-aws decision-backtest-local decision-backtest-aws
 .PHONY: test-hermetic reconcile-db-passwords
 
 help:
@@ -36,6 +36,8 @@ help:
 	@echo "                    reconcile stale local DB roles / optional Superset metastore"
 	@echo "  make logs         follow service logs"
 	@echo "  make ps           list running services"
+	@echo "  make baseline-smoke"
+	@echo "                    fast hermetic baseline check (no Docker, <1 min)"
 	@echo "  make test         run the python test suites"
 	@echo "  make test-hermetic"
 	@echo "                    run tests/ against isolated mock services"
@@ -250,6 +252,12 @@ test-hermetic:
 	OMEGA_SAP_S4HANA_BASE=http://127.0.0.1:$(MOCK_SAP_S4HANA_PORT) \
 		$(PYTEST) tests/ -q
 
+# Fast, hermetic baseline coherence check. No Docker, no DB, no network.
+# Answers "is this checkout coherent enough to work from?", not "does the
+# product work" — that stays with smoke / beta-smoke / test.
+baseline-smoke:
+	@bash scripts/baseline_smoke.sh
+
 # Sprint v1.23 (audit B3): real end-to-end smoke. Verifies the stack is
 # functional — not just "containers running" — by hitting /healthz on
 # every app service, probing Postgres + MinIO, checking the auth gate,
@@ -438,7 +446,9 @@ acceptance:
 security-scan:
 	@test -x "$(BANDIT)" || { echo "$(BANDIT) not found. Install dev deps into .venv first."; exit 1; }
 	@test -x "$(PIP_AUDIT)" || { echo "$(PIP_AUDIT) not found. Install dev deps into .venv first."; exit 1; }
-	$(BANDIT) -r console workspace vault refinement mcp-infra cartridges --severity-level medium --confidence-level high
+	$(BANDIT) -r console workspace vault refinement mcp-infra cartridges \
+		scripts/ci_changed_areas.py scripts/ci_control_room_paths.py \
+		--severity-level medium --confidence-level high
 	$(PIP_AUDIT)
 	npm --prefix console-next audit
 
@@ -459,7 +469,7 @@ verify-release:
 	$(MAKE) security-scan
 	@set -e; for req in $$(find . -name requirements.txt -not -path './.git/*' -not -path './*/vendor/*' -not -path './*/node_modules/*' | sort); do \
 		echo "=== Auditing $$req ==="; \
-		$(PIP_AUDIT) -r "$$req" --vulnerability-service=pypi --ignore-vuln PYSEC-2025-183 --ignore-vuln PYSEC-2025-185; \
+		$(PIP_AUDIT) -r "$$req" --vulnerability-service=pypi; \
 	done
 	$(COMPOSE_BASE) --profile sap config -q
 	$(E2E_STACK_ENV) $(COMPOSE_FULL) config -q
