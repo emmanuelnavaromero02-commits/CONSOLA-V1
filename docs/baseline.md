@@ -62,9 +62,22 @@ make smoke
 make verify-release
 ```
 
-Reproduce lo que CI ejecuta (`lint.yml`, `security.yml`) mas el stack real,
-`make test`, `make smoke` y `make e2e`. El `pip-audit` es fail-closed y sin
-supresiones, igual que CI. Si local y CI divergen, **CI es la referencia**.
+Reproduce los controles locales **equivalentes** de lint, Bandit, auditorias
+de dependencias y stack real, mas `make test`, `make smoke` y `make e2e`.
+
+No es identico a CI y no debe describirse como tal. CI selecciona jobs de
+forma condicional segun el area cambiada (`scripts/ci_changed_areas.py`),
+corre en su propio entorno y fija versiones de herramienta (`bandit==1.7.10`).
+Ante cualquier diferencia de entorno, de seleccion condicional o de
+ejecucion, **CI es la autoridad**.
+
+Paridad exacta y verificada en dos puntos concretos:
+
+- `pip-audit` corre fail-closed y sin supresiones en ambos lados.
+- El alcance de Bandit local incluye `scripts/ci_changed_areas.py` y
+  `scripts/ci_control_room_paths.py`, igual que el job `bandit` de
+  `security.yml`. Mismos umbrales: `--severity-level medium
+  --confidence-level high`.
 
 ### Cierre limpio
 
@@ -88,6 +101,7 @@ Registrados, no corregidos en esta fase. Ninguno bloquea el baseline.
 | B-3 | P3 | Rama cerrada citada | `docs/audits/operational-truth-data-integrity.md` cita `fix/operational-truth-data-integrity` como rama de trabajo. Esa rama es `#552`, cerrada sin merge; el contenido vive en main desde `#557`. |
 | B-4 | P3 | Cifras sin verificar | El README afirma `47/47 checks passed` en smoke y `~357 passed, 3 skipped` en E2E. Son observaciones de una corrida pasada, no contratos: nada las verifica y drift silenciosamente. |
 | B-5 | P3 | Nota documental cp39/cp311 | Observacion heredada de `#559` sobre el tag de wheel abi3 descrito en la evidencia. Sin efecto funcional: las cuatro imagenes instalan desde wheel precompilado y el smoke criptografico real pasa. |
+| B-6 | P2 | `baseline-smoke` no es estrictamente no-mutante | El smoke genera caches locales al ejecutar `compileall`, `ruff` y `pytest`: `__pycache__/`, `.pyc`, `.pytest_cache/`, `.ruff_cache/`. Todas estan en `.gitignore`, asi que **no altera ningun fichero versionado** y `git status` queda limpio. Aun asi escribe en el arbol de trabajo, de modo que describirlo como no-mutante seria inexacto. Registrado, no corregido en esta ronda. |
 
 ## Lo que esta fase no toco
 

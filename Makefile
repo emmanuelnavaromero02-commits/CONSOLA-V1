@@ -446,7 +446,9 @@ acceptance:
 security-scan:
 	@test -x "$(BANDIT)" || { echo "$(BANDIT) not found. Install dev deps into .venv first."; exit 1; }
 	@test -x "$(PIP_AUDIT)" || { echo "$(PIP_AUDIT) not found. Install dev deps into .venv first."; exit 1; }
-	$(BANDIT) -r console workspace vault refinement mcp-infra cartridges --severity-level medium --confidence-level high
+	$(BANDIT) -r console workspace vault refinement mcp-infra cartridges \
+		scripts/ci_changed_areas.py scripts/ci_control_room_paths.py \
+		--severity-level medium --confidence-level high
 	$(PIP_AUDIT)
 	npm --prefix console-next audit
 

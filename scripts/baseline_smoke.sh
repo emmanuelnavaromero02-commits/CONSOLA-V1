@@ -72,26 +72,71 @@ done
 step "Config parses"
 
 if "$PYTHON" - <<'PY'
-import glob, sys
+import glob, os, pathlib, sys
 try:
     import yaml
 except ImportError:
     print("PyYAML unavailable", file=sys.stderr)
     sys.exit(2)
+
+# Explicit, not globbed. A glob over .github/workflows reports PASS when a
+# required workflow is DELETED — there is simply nothing left to parse, and
+# "0 files, 0 errors" reads as success. That is a false green on the exact
+# event the check exists to catch, so the four gate families are named here
+# and their absence is a failure. Keep this list in step with the gates:
+# tests/test_v1_release_checklist.py enforces that it stays explicit.
+REQUIRED_WORKFLOWS = {
+    ".github/workflows/lint.yml": "Lint",
+    ".github/workflows/security.yml": "Security Scan",
+    ".github/workflows/mcp-infra-pdf-security.yml": "MCP Infra PDF Security",
+    ".github/workflows/control-room-postgres-rls.yml": "Control Room PostgreSQL RLS",
+}
+
+missing = []
+for path in sorted(REQUIRED_WORKFLOWS):
+    p = pathlib.Path(path)
+    if not p.is_file():
+        missing.append(f"{path}: required workflow is absent or not a regular file")
+    elif not os.access(path, os.R_OK):
+        missing.append(f"{path}: required workflow is not readable")
+    elif p.stat().st_size == 0:
+        missing.append(f"{path}: required workflow is empty")
+if missing:
+    print("\n".join(missing), file=sys.stderr)
+    sys.exit(1)
+
+targets = sorted(
+    set(REQUIRED_WORKFLOWS)
+    | set(glob.glob(".github/workflows/*.yml"))
+    | set(glob.glob("infra/docker-compose*.yml"))
+)
+# An empty collection must never read as success.
+if not targets:
+    print("no workflow or compose files discovered", file=sys.stderr)
+    sys.exit(1)
+
 bad = []
-for path in sorted(glob.glob(".github/workflows/*.yml") + glob.glob("infra/docker-compose*.yml")):
+for path in targets:
     try:
-        yaml.safe_load(open(path, encoding="utf-8"))
+        doc = yaml.safe_load(open(path, encoding="utf-8"))
     except Exception as exc:
         bad.append(f"{path}: {exc}")
+        continue
+    expected = REQUIRED_WORKFLOWS.get(path)
+    if expected is None:
+        continue
+    if not isinstance(doc, dict):
+        bad.append(f"{path}: required workflow did not parse to a mapping")
+    elif doc.get("name") != expected:
+        bad.append(f"{path}: expected workflow name {expected!r}, got {doc.get('name')!r}")
 if bad:
     print("\n".join(bad), file=sys.stderr)
     sys.exit(1)
 PY
 then
-  ok "workflows and compose files are valid YAML"
+  ok "required workflows present; workflows and compose are valid YAML"
 else
-  bad "workflows and compose files are valid YAML" "see stderr above"
+  bad "required workflows present; workflows and compose are valid YAML" "see stderr above"
 fi
 
 SH_BAD=""
