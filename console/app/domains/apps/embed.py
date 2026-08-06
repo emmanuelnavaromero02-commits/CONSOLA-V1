@@ -17,6 +17,10 @@ from urllib.parse import quote
 
 from app.domains.apps.payloads import DATASET_NAME_RE
 
+# ``secrets.token_urlsafe`` alphabet. Validating the shape keeps a caller-supplied
+# value from ever reaching the policy or the markup.
+_NONCE_RE = re.compile(r"[A-Za-z0-9_-]{16,}")
+
 
 def datasets_from_app_html(html_text: str) -> list[str]:
     return sorted(
@@ -31,15 +35,44 @@ def datasets_from_app_html(html_text: str) -> list[str]:
     )
 
 
-def app_content_headers() -> dict[str, str]:
+_INLINE_SCRIPT_OPEN_RE = re.compile(
+    r"<script(?![^>]*\bsrc\s*=)(?![^>]*\bnonce\s*=)([^>]*)>",
+    re.IGNORECASE,
+)
+
+
+def inject_script_nonce(html_text: str, nonce: str) -> str:
+    """Stamp a server-owned nonce on inline scripts only.
+
+    Scripts carrying ``src`` keep their integrity/crossorigin contract untouched:
+    a nonce on an external script would widen the policy for no benefit.
+    """
+    if not nonce or not _NONCE_RE.fullmatch(nonce):
+        raise ValueError("invalid script nonce")
+    escaped = html.escape(nonce, quote=True)
+    return _INLINE_SCRIPT_OPEN_RE.sub(
+        lambda match: f'<script nonce="{escaped}"{match.group(1)}>', html_text or ""
+    )
+
+
+def app_content_headers(nonce: str) -> dict[str, str]:
+    """Headers for published app HTML.
+
+    ``script-src`` carries a per-response nonce so the app's own inline bootstrap
+    runs without ``unsafe-inline``. jsDelivr stays allow-listed because the
+    charting runtime is loaded from it with an integrity hash.
+    """
+    if not nonce or not _NONCE_RE.fullmatch(nonce):
+        raise ValueError("invalid script nonce")
     return {
         "Content-Security-Policy": (
             "default-src 'self'; "
-            "script-src 'self' https://cdn.jsdelivr.net https://cdn.plot.ly; "
+            f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
             "font-src 'self' data: https://fonts.gstatic.com; "
             "img-src 'self' data: blob:; "
             "connect-src 'self'; "
+            "object-src 'none'; "
             "frame-ancestors 'self'; "
             "base-uri 'self'; "
             "form-action 'self'"
@@ -123,7 +156,9 @@ def app_embed_wrapper_html(name: str, datasets_used: list[str], nonce: str) -> s
       min-height: 640px;
       height: calc(100vh - 58px);
       border: 0;
-      background: #ffffff;
+      /* Matches the wrapper shell: a white canvas here flashed full-screen
+         while the app was still loading. */
+      background: #07111e;
     }}
     .blocked {{
       display: none;

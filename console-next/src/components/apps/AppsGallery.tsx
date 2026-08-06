@@ -11,8 +11,11 @@ export function AppsGallery() {
       <p className="mx-auto mt-2 max-w-2xl text-sm text-muted-foreground">
         Revisa indicadores, agentes y decisiones desde la Sala de Control.
       </p>
+      {/* Component is not mounted anywhere today; the href is kept pointing at
+          the canonical surface so mounting it later cannot resurrect the dead
+          /control-room#apps anchor. Removal is tracked separately. */}
       <Link
-        href="/control-room#apps"
+        href="/analytics"
         className="mt-4 inline-flex min-h-[44px] items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         Abrir modulos

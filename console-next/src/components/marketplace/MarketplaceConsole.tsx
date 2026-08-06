@@ -146,13 +146,25 @@ function textSearch(values: Array<string | number | boolean | null | undefined>,
   return values.some((value) => String(value ?? "").toLowerCase().includes(q));
 }
 
-function Counter({ label, value }: { label: string; value: number }) {
-  return (
-    <article className="rounded-lg border bg-card p-4">
+function Counter({ label, value, href }: { label: string; value: number; href?: string }) {
+  const body = (
+    <>
       <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{label}</p>
       <p className="mt-1 text-2xl font-semibold tracking-tight">{value}</p>
-    </article>
+    </>
   );
+  // A count is only a link when there is something to open behind it.
+  if (href && value > 0) {
+    return (
+      <Link
+        href={href}
+        className="rounded-lg border bg-card p-4 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {body}
+      </Link>
+    );
+  }
+  return <article className="rounded-lg border bg-card p-4">{body}</article>;
 }
 
 function MarketplaceTabs({ mode, canAdmin }: { mode: MarketplaceMode; canAdmin: boolean }) {
@@ -239,7 +251,11 @@ function ProductCard({
       <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
         <Counter label="Entidades" value={Number(product.entity_count ?? 0)} />
         <Counter label="Datasets" value={Number(product.dataset_count ?? 0)} />
-        <Counter label="Apps" value={Number(product.app_count ?? 0)} />
+        <Counter
+          label="Apps"
+          value={Number(product.app_count ?? 0)}
+          href={`/analytics?cartridge=${encodeURIComponent(product.cartridge_id ?? "")}`}
+        />
       </div>
 
       {domains.length ? (

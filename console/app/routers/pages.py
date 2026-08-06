@@ -539,6 +539,20 @@ async def apps_gallery(request: Request):
     return _console_next_response(request, "apps-gallery/index.html")
 
 
+# Canonical home for published analytic apps. Control Room answers "what needs
+# attention"; this surface answers "let me explore the dashboards".
+@router.get("/analytics", dependencies=[Depends(require_permission("apps.read"))])
+async def analytics_page(request: Request):
+    return _console_next_response(request, "analytics/index.html")
+
+
+@router.get(
+    "/analytics/viewer", dependencies=[Depends(require_permission("apps.read"))]
+)
+async def analytics_viewer_page(request: Request):
+    return _console_next_response(request, "analytics/viewer/index.html")
+
+
 # Sprint v1.41.0 — auditor P1 operativa: cartridge wizard page.
 @router.get(
     "/cartridges",

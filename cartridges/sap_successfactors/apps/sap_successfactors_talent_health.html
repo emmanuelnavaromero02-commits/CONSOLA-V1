@@ -6,12 +6,14 @@
   cartridge: sap_successfactors
   datasets: [sap_successfactors_employees_anomalies, sap_successfactors_recruitment_funnel, sap_successfactors_manager_hierarchy]
 -->
-<html lang="es" data-theme="dark">
+<html lang="es">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Talent Health — SAP SuccessFactors</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"
+        integrity="sha384-9nhczxUqK87bcKHh20fSQcTGD4qq5GhayNYSYWqwBkINBhOfQLg/P5HG5lF1urn4"
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <style>
   :root{
     --bg:#0d1117; --bg2:#161b22; --border:#30363d;
@@ -62,12 +64,12 @@
   <h1>◆ Talent Health</h1>
   <div class="subtitle">SAP SuccessFactors · anomalías · reclutamiento · span of control</div>
 
-  <div id="error"></div>
+  <div id="error" role="alert" aria-live="assertive"></div>
 
   <div class="controls">
     <label for="anomaly-filter">Tipo de anomalía</label>
     <select id="anomaly-filter"><option value="">Todas las anomalías</option></select>
-    <button onclick="resetFilter()">RESET</button>
+    <button id="reset-filter" type="button">RESET</button>
   </div>
 
   <div class="kpis" id="kpis"></div>
@@ -91,8 +93,20 @@
 const COLORS = ['#7c9fff','#3fb950','#d29922','#bc8cff','#39d3ff','#f85149','#db61a2','#56d4dd','#e3b341','#a5d6ff'];
 const fmtN = n => n==null ? '—' : Number(n).toLocaleString('es-MX');
 const fmtD = n => n==null ? '—' : Number(n).toLocaleString('es-MX',{minimumFractionDigits:1,maximumFractionDigits:1});
+const themed = (name, fallback) =>
+  (getComputedStyle(document.documentElement).getPropertyValue(name) || '').trim() || fallback;
+const AXIS = themed('--text3', '#8b949e');
+const AXIS_STRONG = themed('--text1', '#e6edf3');
+const GRID = themed('--border', '#21262d');
 const charts = {};
-function showError(msg){ document.getElementById('error').innerHTML = `<div class="error">Error cargando datos: ${msg}</div>`; }
+function showError(msg){
+  const box = document.getElementById('error');
+  box.textContent = '';
+  const card = document.createElement('div');
+  card.className = 'error';
+  card.textContent = 'Error cargando datos: ' + msg;
+  box.appendChild(card);
+}
 function showNotice(msg){ document.getElementById('error').innerHTML = msg ? `<div class="notice">${msg}</div>` : ''; }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function missingMessage(label, error){
@@ -195,7 +209,7 @@ function renderSpanChart(){
     type:'bar',
     data:{ labels:Object.keys(buckets), datasets:[{ label:'Managers', data:Object.values(buckets), backgroundColor:'#bc8cff', borderRadius:4 }] },
     options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}},
-      scales:{ x:{ticks:{color:'#e6edf3'},grid:{display:false}}, y:{ticks:{color:'#8b949e'},grid:{color:'#21262d'}} } }
+      scales:{ x:{ticks:{color:AXIS_STRONG},grid:{display:false}}, y:{ticks:{color:AXIS},grid:{color:GRID}} } }
   });
 }
 
@@ -217,7 +231,7 @@ function renderRecruitChart(){
     ] },
     options:{ responsive:true, maintainAspectRatio:false,
       plugins:{ legend:{position:'top', labels:{color:'#e6edf3', font:{size:11}}} },
-      scales:{ x:{ticks:{color:'#8b949e'},grid:{display:false}}, y:{ticks:{color:'#8b949e'},grid:{color:'#21262d'}} } }
+      scales:{ x:{ticks:{color:AXIS},grid:{display:false}}, y:{ticks:{color:AXIS},grid:{color:GRID}} } }
   });
 }
 
@@ -251,7 +265,13 @@ async function init(){
     renderRecruitChart();
   }catch(e){ showError(e.message); }
 }
-init();
+document.getElementById('reset-filter').addEventListener('click', resetFilter);
+
+if (typeof Chart === 'undefined') {
+  showError('No se pudo cargar la libreria de graficas. Reintenta o avisa a soporte.');
+} else {
+  init();
+}
 </script>
 </body>
 </html>

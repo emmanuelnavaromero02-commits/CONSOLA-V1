@@ -65,6 +65,7 @@ from app.domains.apps.embed import (
     app_embed_csp as _app_embed_csp,
     app_embed_wrapper_html as _app_embed_wrapper_html,
     datasets_from_app_html as _datasets_from_app_html,
+    inject_script_nonce as _inject_script_nonce,
     workspace_server_url as _workspace_server_url_impl,
 )
 from app.domains.agentops.successfactors_talent_monitor import (
@@ -2862,9 +2863,14 @@ async def _proxy_workspace_app(
         if cartridge not in active:
             return RedirectResponse(url="/apps-gallery", status_code=303)
     html_text, _app = await _refinement_app_html(name, runtime_user)
+    # Server-owned, one per response: the app's inline bootstrap runs under a
+    # nonce instead of widening the policy with 'unsafe-inline'.
+    nonce = secrets.token_urlsafe(16)
+    html_text = _inject_published_app_theme(html_text)
+    html_text = _inject_script_nonce(html_text, nonce)
     return HTMLResponse(
         content=html_text,
-        headers=_app_content_headers(),
+        headers=_app_content_headers(nonce),
     )
 
 
