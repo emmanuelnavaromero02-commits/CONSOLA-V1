@@ -2928,34 +2928,131 @@ async def _proxy_workspace_app(
     )
 
 
+def _peek_content_capability(cap: str) -> dict | None:
+    """Read the claims without trusting them, to learn which subject to load.
+
+    The signature is verified afterwards against the values the server resolves
+    independently, so nothing here is an authorisation decision — it only says
+    which user and workspace to go and look up.
+    """
+    import base64
+    import json as _json
+
+    if not cap or not isinstance(cap, str) or cap.count(".") != 1:
+        return None
+    encoded = cap.split(".", 1)[0]
+    try:
+        padding = "=" * (-len(encoded) % 4)
+        claims = _json.loads(base64.urlsafe_b64decode(encoded + padding))
+    except Exception:
+        return None
+    return claims if isinstance(claims, dict) else None
+
+
+async def _resolve_capability_subject(claims: dict) -> dict | None:
+    """Load the user the capability names, and confirm the membership stands.
+
+    The cookie is deliberately not consulted: the frame is credentialless and
+    sends none, and completing the claims from a cookie would reintroduce the
+    ambient authority the sandbox exists to remove.
+    """
+    try:
+        user_id = int(str(claims.get("user") or ""))
+    except (TypeError, ValueError):
+        return None
+    tenant_id = str(claims.get("tenant") or "")
+    workspace_id = str(claims.get("workspace") or "")
+    if not tenant_id or not workspace_id:
+        return None
+    try:
+        pool = await _get_db_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT u.id, u.role, w.tenant_id, w.id AS workspace_id
+                  FROM public.users u
+                  JOIN public.user_workspace_roles uwr ON uwr.user_id = u.id
+                  JOIN public.workspaces w ON w.id = uwr.workspace_id
+                 WHERE u.id = $1
+                   AND u.is_active = TRUE
+                   AND w.id = $2::uuid
+                   AND w.tenant_id = $3::uuid
+                 LIMIT 1
+                """,
+                user_id, workspace_id, tenant_id,
+            )
+    except Exception:
+        logger.warning("[app-content] capability subject lookup failed", exc_info=True)
+        return None
+    if row is None:
+        return None
+    return {
+        "id": int(row["id"]),
+        "role": row["role"],
+        "tenant_id": str(row["tenant_id"]),
+        "workspace_id": str(row["workspace_id"]),
+        "active_tenant_id": str(row["tenant_id"]),
+        "active_workspace_id": str(row["workspace_id"]),
+    }
+
+
+async def _active_manifest_digest(
+    name: str, tenant_id: str, workspace_id: str
+) -> str | None:
+    """The digest the registry currently calls active for this app."""
+    try:
+        pool = await _get_db_pool()
+        async with pool.acquire() as conn:
+            await _set_rls_scope(conn, tenant_id, workspace_id)
+            return await conn.fetchval(
+                "SELECT manifest_digest FROM public.analytic_app_manifests "
+                "WHERE app_name = $1 AND revision = 'active'",
+                str(name),
+            )
+    except Exception:
+        logger.warning("[app-content] manifest lookup failed", exc_info=True)
+        return None
+
+
 async def _require_app_content_capability(
     request: Request, name: str, cap: str, user: dict | None
 ) -> dict:
-    """Admit a /content request only as a capability-bearing frame load.
+    """Admit a /content request on the capability alone, then re-check it all.
 
-    Single implementation on purpose: this path is registered twice — here and
-    in the v1 marketplace router — and two copies of a security check is how
-    one of them silently stops matching the other.
+    A signature only proves the claims were minted by us. Everything they
+    assert is verified again against current state — the user is still active
+    and still a member of that workspace, the app is still packaged, the
+    manifest is still the active revision, the installation is still ready —
+    so a capability issued a minute ago stops working the moment any of that
+    changes.
+
+    Single implementation: this path is registered twice, here and in the v1
+    marketplace router, and two copies of a security check is how one of them
+    silently stops matching the other.
     """
+    denied = HTTPException(403, "app content is not available")
     _validate_dataset_name(name)
-    _html_text, _granted, digest, _cartridge = await _app_grant_context(
-        request, name, user
-    )
-    tenant_id, workspace_id = await _app_scope_for(user)
-    claims = _verify_content_capability(
+    claims = _peek_content_capability(cap)
+    if claims is None or not _frame_fetch_metadata_ok(request.headers):
+        raise denied
+
+    resolved = await _resolve_capability_subject(claims)
+    if resolved is None:
+        raise denied
+
+    verified = _verify_content_capability(
         cap,
         app_name=name,
-        tenant_id=tenant_id,
-        workspace_id=workspace_id,
-        user_id=(user or {}).get("id"),
-        manifest_digest=digest,
+        tenant_id=resolved["tenant_id"],
+        workspace_id=resolved["workspace_id"],
+        user_id=resolved["id"],
+        manifest_digest=await _active_manifest_digest(
+            name, resolved["tenant_id"], resolved["workspace_id"]
+        ),
     )
-    if claims is None or not _frame_fetch_metadata_ok(request.headers):
-        # One shape of refusal for every failure, so probing cannot tell a
-        # missing capability from an expired one, or a real app from an absent
-        # one.
-        raise HTTPException(403, "app content is not available")
-    return claims
+    if verified is None:
+        raise denied
+    return resolved
 
 
 async def _build_app_embed_response(
@@ -3111,14 +3208,11 @@ async def serve_app_embed(
     return await _build_app_embed_response(request, name, user)
 
 
-@app.get(
-    "/apps/{name}/content", dependencies=[Depends(require_permission("apps.read"))]
-)
+@app.get("/apps/{name}/content")
 async def serve_app_content_proxy(
     request: Request,
     name: str,
     cap: str = "",
-    user: dict = Depends(require_permission("apps.read")),
 ):
     """Untrusted app HTML, admitted only as a frame of our own wrapper.
 
@@ -3128,7 +3222,13 @@ async def serve_app_content_proxy(
     re-attaches the Lax cookie. The capability minted by /embed is the control;
     the Fetch Metadata check below is a second, cheaper one.
     """
-    await _require_app_content_capability(request, name, cap, user)
+    # No session dependency on this route by design. The inner frame is
+    # credentialless, so it sends no cookie — gating on the cookie would 401
+    # before the capability was even read, and re-adding the cookie to make
+    # that work would hand the frame back the credentials the sandbox removes.
+    # The capability is the authorisation; everything in it is re-checked
+    # against the server's own state below.
+    user = await _require_app_content_capability(request, name, cap, None)
     return await _proxy_workspace_app(request, name, content=True, user=user)
 
 

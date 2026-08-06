@@ -20,16 +20,12 @@ from app.domains.apps.manifests import (
 
 logger = logging.getLogger(__name__)
 
-_SELECT_GRANTS = """
-    SELECT dataset_name
-      FROM analytic_app_dataset_grants
-     WHERE tenant_id = $1::uuid
-       AND workspace_id = $2::uuid
-       AND app_name = $3
-       AND manifest_digest = $4
-       AND revoked_at IS NULL
-     ORDER BY dataset_name
-"""
+# One authoritative call. Reading the grant here and checking the installation
+# separately would leave a TOCTOU window: a cartridge can stop being ready
+# between the two statements, and the read would still be served. The SQL
+# function joins grant, active manifest, ready installation and the workspace's
+# own dataset row in a single query.
+_SELECT_GRANTS = "SELECT dataset_name FROM public.analytic_app_granted_datasets($1, $2)"
 
 
 async def granted_datasets(
@@ -50,10 +46,7 @@ async def granted_datasets(
         return []
     if not tenant_id or not workspace_id:
         return []
-    rows = await conn.fetch(
-        _SELECT_GRANTS, str(tenant_id), str(workspace_id), str(app_name),
-        str(manifest_digest),
-    )
+    rows = await conn.fetch(_SELECT_GRANTS, str(app_name), str(manifest_digest))
     return [str(row["dataset_name"]) for row in rows]
 
 
@@ -83,28 +76,28 @@ async def reconcile_app(
     conn: Any,
     *,
     app_name: str,
-    served_html: str,
+    served_html: str | None = None,
 ) -> list[dict[str, str]]:
-    """Bring one packaged app's grants in line with its reviewed manifest.
+    """Bring one packaged app's grants in line with the registry.
 
-    The dataset list comes from the packaged manifest; the digest covers the
-    HTML actually being served. A user-created or unknown app is a no-op: it
-    gets no grants, ever, from this path.
+    Passes the app name and nothing else. The cartridge, the digest, the
+    dataset list and the actor are all resolved inside the database from
+    ``analytic_app_manifests`` — a caller able to supply any of them could
+    grant itself anything, which is exactly the hole this closes.
+
+    ``served_html`` is used only to state which revision the caller believes is
+    current; the database compares it and aborts on a mismatch. It never
+    selects the datasets.
     """
     manifest = packaged_manifest(app_name)
     if manifest is None:
         return []
-    digest = served_digest(app_name, served_html)
-    if digest is None:
-        return []
+    expected = served_digest(app_name, served_html) if served_html is not None else None
     rows = await conn.fetch(
-        "SELECT dataset_name, action FROM reconcile_analytic_app_dataset_grants("
-        "$1, $2, $3::text[], $4, $5)",
+        "SELECT dataset_name, action FROM "
+        "public.reconcile_analytic_app_dataset_grants($1, $2)",
         manifest["app_name"],
-        manifest["cartridge_id"],
-        list(manifest["datasets"]),
-        digest,
-        "server:packaged_manifest",
+        expected,
     )
     return [
         {"dataset": str(r["dataset_name"]), "action": str(r["action"])} for r in rows
@@ -119,29 +112,25 @@ async def reconcile_workspace(
 ) -> dict[str, Any]:
     """Reconcile every packaged app of a cartridge for the caller's scope.
 
-    Called from the server-owned activation/installation flow, so a workspace
-    gets its grants when the cartridge becomes available — not when a user
-    happens to open an app. Opening an app must never be what approves it.
+    Strict: any database error propagates and rolls the caller's transaction
+    back. Swallowing them meant an installation could be marked ready with its
+    grants half-written and the audit trail recording success — an activation
+    that silently produced a broken authority state is worse than one that
+    fails.
+
+    A user-created app is skipped by the database (no registry row) and a
+    workspace whose Gold is not materialised simply gets fewer grants; neither
+    is an error.
     """
     manifests = load_packaged_manifests()
     summary: dict[str, Any] = {"granted": 0, "revoked": 0, "apps": []}
     for name, manifest in sorted(manifests.items()):
         if cartridge_id and manifest["cartridge_id"] != cartridge_id:
             continue
-        html = manifest["packaged_html"]
+        html = None
         if app_html_loader is not None:
-            try:
-                html = await app_html_loader(name)
-            except Exception:
-                logger.debug("[app-grants] no served html for %s", name, exc_info=True)
-                continue
-        try:
-            actions = await reconcile_app(conn, app_name=name, served_html=html)
-        except Exception:
-            # A workspace without this cartridge installed is refused by the
-            # database guard; that is expected, not an error worth raising.
-            logger.debug("[app-grants] skipped %s", name, exc_info=True)
-            continue
+            html = await app_html_loader(name)
+        actions = await reconcile_app(conn, app_name=name, served_html=html)
         granted = sum(1 for a in actions if a["action"] == "granted")
         revoked = sum(1 for a in actions if a["action"] == "revoked")
         summary["granted"] += granted
@@ -153,13 +142,19 @@ async def reconcile_workspace(
     return summary
 
 
-async def revoke_grant(
-    conn: Any, *, app_name: str, dataset: str, reason: str = "explicit_revocation"
+async def revoke_cartridge_grants(
+    conn: Any, *, cartridge_id: str, reason: str = "installation_not_ready"
 ) -> int:
+    """Revoke every grant a cartridge holds in the caller's scope.
+
+    Called in the same transaction that takes an installation out of ready, so
+    a paused, revoked or failed cartridge stops authorising immediately rather
+    than at the next reconciliation.
+    """
     return int(
         await conn.fetchval(
-            "SELECT revoke_analytic_app_dataset_grant($1, $2, $3, $4)",
-            str(app_name), str(dataset), "server:revocation", str(reason),
+            "SELECT public.revoke_analytic_app_cartridge_grants($1, $2)",
+            str(cartridge_id), str(reason),
         )
         or 0
     )

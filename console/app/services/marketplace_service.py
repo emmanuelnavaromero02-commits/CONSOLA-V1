@@ -1173,43 +1173,48 @@ async def _reconcile_packaged_app_grants(
     cartridge_id: Any,
     installation_status: str,
 ) -> None:
-    """Bring this workspace's packaged app grants in line with the manifests.
+    """Keep this workspace's app grants in step with the installation state.
 
-    Reads nothing from the runtime: the dataset lists come from the reviewed
-    manifests baked into the image, and the digest covers the packaged HTML.
-    A cartridge leaving 'ready' is not reconciled forward — the grants stay as
-    they are and the install-state check in the ledger's own trigger, plus the
-    cartridge visibility check on every read, do the blocking.
+    Entering ready reconciles from the registry; leaving it revokes everything
+    the cartridge granted, in the same transaction that made the change. A
+    grant that outlived its installation is an authority the operator believes
+    they withdrew.
 
-    Never raises into the caller: a workspace whose Gold is not materialised
-    yet simply gets no grants, and that must not fail an activation.
+    Strict on purpose: errors propagate. Swallowing them let an installation be
+    marked ready with its grants half-written while the audit trail recorded
+    success. A workspace whose Gold is not materialised yet, and a user-created
+    app, are handled inside the SQL and are not errors.
     """
-    if installation_status != READY_INSTALLATION_STATUS:
-        return
     if not tenant_id or not workspace_id or not cartridge_id:
         return
-    try:
-        from app.domains.apps import grants as app_grants
+    from app.domains.apps import grants as app_grants
 
-        await conn.execute(
-            "SELECT set_config('app.tenant_id', $1, true), "
-            "set_config('app.workspace_id', $2, true)",
-            str(tenant_id),
-            str(workspace_id),
-        )
-        summary = await app_grants.reconcile_workspace(
-            conn, cartridge_id=str(cartridge_id)
+    await conn.execute(
+        "SELECT set_config('app.tenant_id', $1, true), "
+        "set_config('app.workspace_id', $2, true)",
+        str(tenant_id),
+        str(workspace_id),
+    )
+    if installation_status != READY_INSTALLATION_STATUS:
+        revoked = await app_grants.revoke_cartridge_grants(
+            conn,
+            cartridge_id=str(cartridge_id),
+            reason=f"installation_{installation_status}",
         )
         logger.info(
-            "[app-grants] %s/%s %s: granted=%s revoked=%s",
-            tenant_id, workspace_id, cartridge_id,
-            summary.get("granted"), summary.get("revoked"),
+            "[app-grants] %s/%s %s left ready (%s): revoked=%s",
+            tenant_id, workspace_id, cartridge_id, installation_status, revoked,
         )
-    except Exception:
-        logger.warning(
-            "[app-grants] reconciliation skipped for %s/%s %s",
-            tenant_id, workspace_id, cartridge_id, exc_info=True,
-        )
+        return
+
+    summary = await app_grants.reconcile_workspace(
+        conn, cartridge_id=str(cartridge_id)
+    )
+    logger.info(
+        "[app-grants] %s/%s %s: granted=%s revoked=%s",
+        tenant_id, workspace_id, cartridge_id,
+        summary.get("granted"), summary.get("revoked"),
+    )
 
 
 async def _set_installation_state(

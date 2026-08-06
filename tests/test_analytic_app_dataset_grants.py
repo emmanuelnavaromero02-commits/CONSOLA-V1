@@ -1,19 +1,20 @@
 """The grant ledger is the only thing that authorises a published app's read.
 
-These are C1's three self-authorisation canaries, run against a real
-PostgreSQL with the real migration applied:
+Run against a real PostgreSQL with the real migrations applied. Three families
+of check live here:
 
-A. the app's HTML mentions a dataset its reviewed manifest does not list;
-B. runtime metadata (``analytic_apps.datasets_used``) declares one;
-C. a SuccessFactors app claims a dataset belonging to another cartridge.
+* **self-authorisation** — C1's canaries: the app's HTML, its stored
+  ``datasets_used`` and a cross-cartridge claim must all fail to grant;
+* **pg_temp shadowing** — a caller that creates temp tables named like the
+  tables a ``SECURITY DEFINER`` function consults must not be able to steer it.
+  This was reproducible: with ``search_path = pg_catalog, public`` PostgreSQL
+  searches the temporary schema *first* for relations, and the function was
+  owned by a superuser, so shadowing it granted an unapproved dataset;
+* **lifecycle** — revocation, scope isolation, and grants dying with their
+  installation.
 
-None of them may reach the ledger, the wrapper's allowlist, or the backend.
-Alongside them: the positive read, immediate revocation, digest drift,
-cross-scope isolation and a user-created app with no approval.
-
-Set ``OMEGA_TEST_GRANTS_DSN`` to run. Skipped otherwise — this asserts real
-database behaviour (RLS, FORCE RLS, triggers, SECURITY DEFINER), none of which
-a mock can stand in for.
+``OMEGA_TEST_GRANTS_DSN`` selects the database. CI sets it and these tests must
+not skip there; locally they skip when it is absent.
 """
 
 from __future__ import annotations
@@ -55,8 +56,6 @@ CUSTOM_APP = "custom_user_app"
 APPROVED = "sap_successfactors_employees_anomalies"
 SENSITIVE = "sensitive_same_workspace"
 OTHER_CARTRIDGE = "consultor_mensual"
-DIGEST = "c" * 64
-STALE = "d" * 64
 
 
 async def _scoped(conn, tenant: str, workspace: str) -> None:
@@ -71,186 +70,347 @@ async def _scoped(conn, tenant: str, workspace: str) -> None:
 async def conn():
     connection = await asyncpg.connect(DSN)
     try:
-        await connection.execute("DELETE FROM analytic_app_dataset_grants")
+        await connection.execute("DELETE FROM public.analytic_app_dataset_grants")
+        await connection.execute(
+            "UPDATE public.cartridge_installations SET status = 'ready'"
+        )
         yield connection
     finally:
         await connection.close()
 
 
-async def _grant(conn, datasets, *, digest=DIGEST, app=APP, cartridge="sap_successfactors"):
+@pytest_asyncio.fixture
+async def app_conn():
+    """A connection acting as omega_console — what the service really is."""
+    connection = await asyncpg.connect(DSN)
+    try:
+        await connection.execute("DELETE FROM public.analytic_app_dataset_grants")
+        await connection.execute("SET ROLE omega_console")
+        yield connection
+    finally:
+        await connection.close()
+
+
+async def _reconcile(conn, app=APP, expected=None):
     return await conn.fetch(
-        "SELECT * FROM reconcile_analytic_app_dataset_grants($1,$2,$3::text[],$4,$5)",
-        app, cartridge, list(datasets), digest, "server:test",
+        "SELECT * FROM public.reconcile_analytic_app_dataset_grants($1, $2)",
+        app, expected,
     )
 
 
-# --- canary A: the HTML says so -------------------------------------------
+async def _active_digest(conn, app=APP):
+    return await conn.fetchval(
+        "SELECT manifest_digest FROM public.analytic_app_manifests "
+        "WHERE app_name = $1 AND revision = 'active'", app,
+    )
+
+
+# --- pg_temp shadowing ------------------------------------------------------
+
+
+async def test_temp_tables_cannot_steer_the_definer_function(app_conn):
+    """The reproduced P0, kept as a canary.
+
+    Five temp tables shadow every relation the function consults, including a
+    forged manifest registry that "approves" a dataset nobody reviewed. The
+    function must resolve public.* regardless and grant only what the real
+    registry holds.
+    """
+    await _scoped(app_conn, TENANT_A, WS_A1)
+    await app_conn.execute("""
+        CREATE TEMP TABLE datasets (name TEXT, layer TEXT, cartridge TEXT,
+            workspace_id UUID, tenant_id UUID, scope_status TEXT);
+        CREATE TEMP TABLE analytic_apps (name TEXT, title TEXT, html TEXT,
+            cartridge_id TEXT, created_by_id BIGINT);
+        CREATE TEMP TABLE cartridge_installations (id TEXT, tenant_id UUID,
+            workspace_id UUID, cartridge_id TEXT, status TEXT);
+        CREATE TEMP TABLE analytic_app_manifests (app_name TEXT,
+            cartridge_id TEXT, manifest_digest CHAR(64), html_sha256 CHAR(64),
+            revision TEXT, source TEXT);
+        CREATE TEMP TABLE analytic_app_manifest_datasets (app_name TEXT,
+            manifest_digest CHAR(64), dataset_name TEXT);
+    """)
+    await app_conn.execute(
+        "INSERT INTO pg_temp.analytic_app_manifests VALUES "
+        "($1,'sap_successfactors',repeat('a',64),repeat('a',64),'active','packaged_manifest')",
+        APP,
+    )
+    await app_conn.execute(
+        "INSERT INTO pg_temp.analytic_app_manifest_datasets VALUES "
+        "($1,repeat('a',64),$2)", APP, SENSITIVE,
+    )
+    await app_conn.execute(
+        "INSERT INTO pg_temp.datasets VALUES ($1,'gold','sap_successfactors',$2::uuid,$3::uuid,'scoped')",
+        SENSITIVE, WS_A1, TENANT_A,
+    )
+
+    granted = [r["dataset_name"] for r in await _reconcile(app_conn)]
+    assert SENSITIVE not in granted
+    assert await app_conn.fetchval(
+        "SELECT count(*) FROM public.analytic_app_dataset_grants "
+        "WHERE dataset_name = $1 AND revoked_at IS NULL", SENSITIVE,
+    ) == 0
+
+
+async def test_the_old_permissive_signature_is_gone(app_conn):
+    """A caller that can pass datasets, cartridge or actor grants itself
+    anything. That overload must not exist at all."""
+    with pytest.raises(asyncpg.PostgresError):
+        await app_conn.fetch(
+            "SELECT * FROM public.reconcile_analytic_app_dataset_grants"
+            "($1,$2,$3::text[],$4,$5)",
+            APP, "sap_successfactors", [SENSITIVE], "a" * 64, "attacker",
+        )
+
+
+async def test_definer_functions_are_not_owned_by_a_superuser(conn):
+    rows = await conn.fetch("""
+        SELECT p.proname, pg_get_userbyid(p.proowner) AS owner,
+               r.rolsuper, r.rolbypassrls, p.proconfig
+          FROM pg_proc p
+          JOIN pg_namespace n ON n.oid = p.pronamespace
+          JOIN pg_roles r ON r.oid = p.proowner
+         WHERE n.nspname = 'public' AND p.proname LIKE '%analytic_app%'
+    """)
+    assert rows, "the grant functions must exist"
+    for row in rows:
+        assert row["owner"] == "omega_app_grants_owner", row["proname"]
+        assert row["rolsuper"] is False, row["proname"]
+        assert row["rolbypassrls"] is False, row["proname"]
+        config = list(row["proconfig"] or [])
+        assert "search_path=pg_catalog, pg_temp" in config, row["proname"]
+        # public must not be on the path; every name is qualified instead.
+        assert not any("public" in item for item in config), row["proname"]
+
+
+async def test_the_owner_role_cannot_log_in_or_escalate(conn):
+    row = await conn.fetchrow(
+        "SELECT rolcanlogin, rolsuper, rolbypassrls, rolcreaterole, rolcreatedb "
+        "FROM pg_roles WHERE rolname = 'omega_app_grants_owner'"
+    )
+    assert row is not None
+    assert not any(row.values())
+
+
+async def test_no_application_role_may_write_the_ledger_or_the_registry(app_conn):
+    await _scoped(app_conn, TENANT_A, WS_A1)
+    for statement in (
+        "INSERT INTO public.analytic_app_dataset_grants(tenant_id,workspace_id,"
+        "app_name,cartridge_id,dataset_name,manifest_digest,grant_source,granted_by)"
+        f" VALUES('{TENANT_A}','{WS_A1}','{APP}','sap_successfactors','{SENSITIVE}',"
+        "repeat('a',64),'packaged_manifest','server:packaged_manifest')",
+        "UPDATE public.analytic_app_dataset_grants SET revoked_at = NULL",
+        "DELETE FROM public.analytic_app_dataset_grants",
+        f"INSERT INTO public.analytic_app_manifest_datasets VALUES('{APP}',repeat('a',64),'{SENSITIVE}')",
+    ):
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await app_conn.execute(statement)
+
+
+# --- self-authorisation canaries -------------------------------------------
 
 
 async def test_html_mention_does_not_authorise(conn):
     """The app's own markup is not an approval, however plainly it asks."""
     await _scoped(conn, TENANT_A, WS_A1)
-    await _grant(conn, [APPROVED])
-
-    html = f'<script>fetch("/api/data/{SENSITIVE}")</script>'
-    assert SENSITIVE in html  # the app really is asking
-
+    await _reconcile(conn)
+    digest = await _active_digest(conn)
     allowed = await granted_datasets(
         conn, tenant_id=TENANT_A, workspace_id=WS_A1,
-        app_name=APP, manifest_digest=DIGEST,
+        app_name=APP, manifest_digest=digest,
     )
     assert SENSITIVE not in allowed
-    assert allowed == [APPROVED]
-    assert not await has_grant(
-        conn, tenant_id=TENANT_A, workspace_id=WS_A1, app_name=APP,
-        manifest_digest=DIGEST, dataset=SENSITIVE,
-    )
-
-
-# --- canary B: runtime metadata says so ------------------------------------
+    assert APPROVED in allowed
 
 
 async def test_runtime_metadata_does_not_authorise(conn):
-    """``analytic_apps.datasets_used`` is stored beside the app and moves with
-    it, so it is the app talking. It informs nothing about permission."""
     await _scoped(conn, TENANT_A, WS_A1)
-    await _grant(conn, [APPROVED])
     await conn.execute(
-        "UPDATE analytic_apps SET datasets_used = $1::text[] WHERE name = $2",
+        "UPDATE public.analytic_apps SET datasets_used = $1::text[] WHERE name = $2",
         [APPROVED, SENSITIVE], APP,
     )
+    await _reconcile(conn)
+    digest = await _active_digest(conn)
     allowed = await granted_datasets(
         conn, tenant_id=TENANT_A, workspace_id=WS_A1,
-        app_name=APP, manifest_digest=DIGEST,
+        app_name=APP, manifest_digest=digest,
     )
-    assert allowed == [APPROVED]
+    assert SENSITIVE not in allowed
 
 
-# --- canary C: another cartridge's dataset ---------------------------------
-
-
-async def test_cross_cartridge_grant_is_refused_by_the_database(conn):
-    """Refused in the schema, not only in the service: a bug in the caller
-    cannot produce a row that crosses cartridges."""
+async def test_cross_cartridge_dataset_is_never_granted(conn):
+    """The registry has no such row for this app, so there is nothing to grant
+    — and the manifest FK would refuse the row even if something tried."""
     await _scoped(conn, TENANT_A, WS_A1)
-    with pytest.raises(asyncpg.PostgresError, match="cartridge"):
-        await _grant(conn, [OTHER_CARTRIDGE])
-    assert await conn.fetchval(
-        "SELECT count(*) FROM analytic_app_dataset_grants "
-        "WHERE dataset_name = $1", OTHER_CARTRIDGE,
-    ) == 0
+    granted = [r["dataset_name"] for r in await _reconcile(conn)]
+    assert OTHER_CARTRIDGE not in granted
+
+
+async def test_a_custom_app_gets_nothing(conn):
+    await _scoped(conn, TENANT_A, WS_A1)
+    assert await _reconcile(conn, app=CUSTOM_APP) == []
+    assert served_digest(CUSTOM_APP, "<html></html>") is None
+
+
+async def test_a_stale_expected_digest_aborts(conn):
+    await _scoped(conn, TENANT_A, WS_A1)
+    with pytest.raises(asyncpg.PostgresError, match="stale"):
+        await _reconcile(conn, expected="f" * 64)
 
 
 # --- the positive read ------------------------------------------------------
 
 
-async def test_a_reviewed_grant_authorises_exactly_its_dataset(conn):
+async def test_a_reviewed_manifest_authorises_exactly_its_datasets(conn):
     await _scoped(conn, TENANT_A, WS_A1)
-    actions = await _grant(conn, [APPROVED])
-    assert [(r["dataset_name"], r["action"]) for r in actions] == [(APPROVED, "granted")]
+    actions = await _reconcile(conn)
+    assert all(r["action"] == "granted" for r in actions)
+    digest = await _active_digest(conn)
+    allowed = await granted_datasets(
+        conn, tenant_id=TENANT_A, workspace_id=WS_A1,
+        app_name=APP, manifest_digest=digest,
+    )
+    registry = [
+        r["dataset_name"] for r in await conn.fetch(
+            "SELECT dataset_name FROM public.analytic_app_manifest_datasets "
+            "WHERE app_name = $1 AND manifest_digest = $2 ORDER BY dataset_name",
+            APP, digest,
+        )
+    ]
+    # Only the registry datasets that exist in this workspace.
+    assert set(allowed) <= set(registry)
+    assert APPROVED in allowed
     assert await has_grant(
         conn, tenant_id=TENANT_A, workspace_id=WS_A1, app_name=APP,
-        manifest_digest=DIGEST, dataset=APPROVED,
+        manifest_digest=digest, dataset=APPROVED,
     )
 
 
-# --- revocation -------------------------------------------------------------
-
-
-async def test_revocation_takes_effect_on_the_next_read(conn):
-    """No cache, no grace: the next lookup is already refused."""
+async def test_reconciliation_is_idempotent(conn):
     await _scoped(conn, TENANT_A, WS_A1)
-    await _grant(conn, [APPROVED])
+    first = len(await _reconcile(conn))
+    assert first > 0
+    assert await _reconcile(conn) == []
+    assert await _reconcile(conn) == []
+
+
+# --- lifecycle --------------------------------------------------------------
+
+
+async def test_leaving_ready_revokes_immediately(conn):
+    """A grant that outlives its installation is authority the operator
+    believes they withdrew."""
+    await _scoped(conn, TENANT_A, WS_A1)
+    await _reconcile(conn)
+    digest = await _active_digest(conn)
+    assert await granted_datasets(
+        conn, tenant_id=TENANT_A, workspace_id=WS_A1,
+        app_name=APP, manifest_digest=digest,
+    )
+    revoked = await conn.fetchval(
+        "SELECT public.revoke_analytic_app_cartridge_grants($1, $2)",
+        "sap_successfactors", "installation_paused",
+    )
+    assert revoked > 0
+    assert await granted_datasets(
+        conn, tenant_id=TENANT_A, workspace_id=WS_A1,
+        app_name=APP, manifest_digest=digest,
+    ) == []
+
+
+async def test_a_not_ready_installation_blocks_the_read_without_revoking(conn):
+    """The authoritative read joins the installation, so there is no window
+    between the grant lookup and the state check."""
+    await _scoped(conn, TENANT_A, WS_A1)
+    await _reconcile(conn)
+    digest = await _active_digest(conn)
+    await conn.execute(
+        "UPDATE public.cartridge_installations SET status = 'paused' "
+        "WHERE tenant_id = $1::uuid AND workspace_id = $2::uuid", TENANT_A, WS_A1,
+    )
+    assert await granted_datasets(
+        conn, tenant_id=TENANT_A, workspace_id=WS_A1,
+        app_name=APP, manifest_digest=digest,
+    ) == []
+
+
+async def test_returning_to_ready_reconciles_without_resurrecting(conn):
+    await _scoped(conn, TENANT_A, WS_A1)
+    await _reconcile(conn)
+    before = await conn.fetchval(
+        "SELECT count(*) FROM public.analytic_app_dataset_grants WHERE revoked_at IS NULL"
+    )
     await conn.fetchval(
-        "SELECT revoke_analytic_app_dataset_grant($1,$2,$3,$4)",
-        APP, APPROVED, "server:test", "explicit_revocation",
+        "SELECT public.revoke_analytic_app_cartridge_grants($1, $2)",
+        "sap_successfactors", "installation_paused",
     )
-    assert await granted_datasets(
-        conn, tenant_id=TENANT_A, workspace_id=WS_A1,
-        app_name=APP, manifest_digest=DIGEST,
-    ) == []
+    await _reconcile(conn)
+    after = await conn.fetchval(
+        "SELECT count(*) FROM public.analytic_app_dataset_grants WHERE revoked_at IS NULL"
+    )
+    assert after == before
+    # The revoked rows stay revoked; new rows were issued instead.
+    assert await conn.fetchval(
+        "SELECT count(*) FROM public.analytic_app_dataset_grants WHERE revoked_at IS NOT NULL"
+    ) == before
 
 
-# --- drift ------------------------------------------------------------------
-
-
-async def test_a_new_digest_strands_every_earlier_grant(conn):
-    """Editing the app moves the digest, and the old grants stop serving.
-    There is no path by which changing an app re-approves it."""
+async def test_scope_isolation(conn):
+    """The same dataset name exists in all three scopes, so this really tests
+    scope and not name matching."""
     await _scoped(conn, TENANT_A, WS_A1)
-    await _grant(conn, [APPROVED], digest=DIGEST)
-    await _grant(conn, [APPROVED], digest=STALE)
-    assert await granted_datasets(
-        conn, tenant_id=TENANT_A, workspace_id=WS_A1,
-        app_name=APP, manifest_digest=DIGEST,
-    ) == []
-    assert await granted_datasets(
-        conn, tenant_id=TENANT_A, workspace_id=WS_A1,
-        app_name=APP, manifest_digest=STALE,
-    ) == [APPROVED]
-
-
-async def test_an_unknown_digest_authorises_nothing(conn):
-    await _scoped(conn, TENANT_A, WS_A1)
-    await _grant(conn, [APPROVED])
-    assert await granted_datasets(
-        conn, tenant_id=TENANT_A, workspace_id=WS_A1,
-        app_name=APP, manifest_digest="f" * 64,
-    ) == []
-    assert await granted_datasets(
-        conn, tenant_id=TENANT_A, workspace_id=WS_A1,
-        app_name=APP, manifest_digest=None,
-    ) == []
-
-
-# --- scope ------------------------------------------------------------------
-
-
-async def test_a_grant_in_one_workspace_does_not_serve_another(conn):
-    """The same dataset name exists in all three scopes, so this is really
-    testing scope and not name matching."""
-    await _scoped(conn, TENANT_A, WS_A1)
-    await _grant(conn, [APPROVED])
-
+    await _reconcile(conn)
+    digest = await _active_digest(conn)
     for tenant, workspace in ((TENANT_A, WS_A2), (TENANT_B, WS_B2)):
         await _scoped(conn, tenant, workspace)
         assert await granted_datasets(
             conn, tenant_id=tenant, workspace_id=workspace,
-            app_name=APP, manifest_digest=DIGEST,
+            app_name=APP, manifest_digest=digest,
         ) == []
 
 
-async def test_a_custom_app_gets_nothing_automatically(conn):
-    """A user-created app has no reviewed manifest, so it has no digest, so it
-    has no grants — and fails closed rather than falling back."""
-    await _scoped(conn, TENANT_A, WS_A1)
-    assert served_digest(CUSTOM_APP, "<html></html>") is None
-    assert await granted_datasets(
-        conn, tenant_id=TENANT_A, workspace_id=WS_A1,
-        app_name=CUSTOM_APP, manifest_digest=None,
-    ) == []
+async def test_rls_hides_other_scopes_from_the_application_role(app_conn):
+    await _scoped(app_conn, TENANT_A, WS_A1)
+    await _reconcile(app_conn)
+    mine = await app_conn.fetchval(
+        "SELECT count(*) FROM public.analytic_app_dataset_grants"
+    )
+    assert mine > 0
+    await _scoped(app_conn, TENANT_B, WS_B2)
+    assert await app_conn.fetchval(
+        "SELECT count(*) FROM public.analytic_app_dataset_grants"
+    ) == 0
 
 
-# --- diagnostics stay diagnostics ------------------------------------------
+# --- registry integrity -----------------------------------------------------
+
+
+async def test_the_registry_matches_the_packaged_manifests(conn):
+    manifests = load_packaged_manifests()
+    assert len(manifests) == 18
+    rows = await conn.fetch(
+        "SELECT app_name, cartridge_id, manifest_digest FROM public.analytic_app_manifests "
+        "WHERE revision = 'active' ORDER BY app_name"
+    )
+    assert len(rows) == 18
+    for row in rows:
+        packaged = manifests[row["app_name"]]
+        assert row["cartridge_id"] == packaged["cartridge_id"]
+        assert row["manifest_digest"] == packaged["packaged_digest"]
 
 
 async def test_drift_report_describes_but_never_widens():
     report = drift_report(
-        granted=[APPROVED],
-        referenced=[APPROVED, SENSITIVE],
-        manifest_datasets=[APPROVED],
-        served="a" * 64,
-        packaged="b" * 64,
+        granted=[APPROVED], referenced=[APPROVED, SENSITIVE],
+        manifest_datasets=[APPROVED], served="a" * 64, packaged="b" * 64,
     )
     assert report["requested_but_not_granted"] == [SENSITIVE]
     assert report["manifest_drift"] is True
-    # It reports. It returns no allowlist of its own.
     assert "allowed" not in report
 
 
-async def test_packaged_digest_is_deterministic_and_covers_the_html():
+async def test_packaged_digest_covers_the_html():
     manifests = load_packaged_manifests()
-    assert len(manifests) == 18
     one = manifests[APP]
     same = manifest_digest(
         app_name=one["app_name"], cartridge_id=one["cartridge_id"],

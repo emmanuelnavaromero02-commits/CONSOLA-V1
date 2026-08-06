@@ -147,9 +147,14 @@ def test_unauthenticated_callers_are_refused(make_client):
 @pytest.mark.parametrize("scope", ["tenantA/workspaceB", "tenantB/workspaceB"])
 @pytest.mark.parametrize("suffix", ["/embed", "/content"])
 def test_other_scopes_cannot_reach_app_content(make_client, scope, suffix):
-    """A workspace the app was not published for gets nothing, on either route."""
+    """A workspace the app was not published for gets nothing, on either route.
+
+    /embed answers 404 (the catalog genuinely has no such app for this caller);
+    /content answers one uniform 403 for every reason, so the status cannot be
+    used to learn whether the app exists.
+    """
     r = make_client(SCOPES[scope]).get(f"/apps/{APP}{suffix}")
-    assert r.status_code == 404
+    assert r.status_code == (404 if suffix == "/embed" else 403)
     assert DATASET not in r.text
 
 

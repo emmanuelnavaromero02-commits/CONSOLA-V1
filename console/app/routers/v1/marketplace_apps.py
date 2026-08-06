@@ -33,15 +33,14 @@ def _bind_to_main(fn):
 # Mirrors app.main.serve_app_content_proxy exactly. Two registrations of the
 # same path are two doors: if only one carries the capability check, the other
 # is the way in. Both must stay identical.
-@router.get("/apps/{name}/content", dependencies=[Depends(require_permission("apps.read"))])
+@router.get("/apps/{name}/content")
 @_bind_to_main
 async def serve_app_content_proxy(
     request: Request,
     name: str,
     cap: str = "",
-    user: dict = Depends(require_permission("apps.read")),
 ):
-    await _require_app_content_capability(request, name, cap, user)
+    user = await _require_app_content_capability(request, name, cap, None)
     return await _proxy_workspace_app(request, name, content=True, user=user)
 
 # /apps/{name}/embed
