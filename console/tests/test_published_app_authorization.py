@@ -171,25 +171,50 @@ def test_hidden_cartridge_is_refused(make_client):
 def test_visible_but_not_installed_cartridge_does_not_serve_content(make_client):
     user = {**SCOPES["tenantA/workspaceA"], "_not_installed": True}
     r = make_client(user).get(f"/apps/{APP}/content")
-    assert r.status_code == 303
+    assert r.status_code in (303, 403)
     assert "<script" not in r.text
 
 
 # --- what the content response carries --------------------------------------
 
 
-def test_content_is_sandboxed_and_networkless_and_carries_the_broker(make_client):
+def test_content_refuses_a_request_that_is_not_a_capability_bearing_frame_load(
+    make_client,
+):
+    """The session cookie no longer admits this route.
+
+    Opened as a top-level document, published HTML would run at our origin and
+    could navigate to an authenticated API, where the browser re-attaches the
+    SameSite=Lax cookie. Without the capability minted by /embed and the frame
+    Fetch Metadata, there is no HTML at all.
+    """
     r = make_client(SCOPES["tenantA/workspaceA"]).get(f"/apps/{APP}/content")
-    assert r.status_code == 200
-    csp = r.headers["content-security-policy"]
-    assert "sandbox allow-scripts" in csp
-    assert "connect-src 'none'" in csp
-    assert "omegaBrokeredFetch" in r.text
+    assert r.status_code == 403
+    assert "<script" not in r.text
+    assert "omegaBrokeredFetch" not in r.text
 
 
-def test_declared_datasets_reach_the_wrapper_allowlist_and_others_do_not(make_client):
+def test_content_refusal_does_not_distinguish_its_reason(make_client):
+    """A missing capability, an expired one and an unknown app must look the
+    same, or the refusal itself becomes a probe."""
+    missing = make_client(SCOPES["tenantA/workspaceA"]).get(f"/apps/{APP}/content")
+    forged = make_client(SCOPES["tenantA/workspaceA"]).get(
+        f"/apps/{APP}/content?cap=not.avalidcapability"
+    )
+    assert missing.status_code == forged.status_code == 403
+    assert missing.json() == forged.json()
+
+
+def test_wrapper_allowlist_is_empty_without_a_durable_grant(make_client):
+    """Authority comes from the grant ledger, never from the app.
+
+    Here the ledger is unreachable, which must read as "no grants" rather than
+    falling back to the datasets scraped from the app's HTML — the fallback
+    that let an app authorise itself.
+    """
     wrapper = make_client(SCOPES["tenantA/workspaceA"]).get(f"/apps/{APP}/embed").text
-    assert f'"{DATASET}"' in wrapper
+    assert "allowedDatasets = new Set([])" in wrapper
+    assert f'"{DATASET}"' not in wrapper
     assert UNDECLARED not in wrapper
 
 

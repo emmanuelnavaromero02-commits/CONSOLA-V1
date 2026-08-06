@@ -30,13 +30,18 @@ def _bind_to_main(fn):
     return rebound
 
 # /apps/{name}/content
+# Mirrors app.main.serve_app_content_proxy exactly. Two registrations of the
+# same path are two doors: if only one carries the capability check, the other
+# is the way in. Both must stay identical.
 @router.get("/apps/{name}/content", dependencies=[Depends(require_permission("apps.read"))])
 @_bind_to_main
 async def serve_app_content_proxy(
     request: Request,
     name: str,
+    cap: str = "",
     user: dict = Depends(require_permission("apps.read")),
 ):
+    await _require_app_content_capability(request, name, cap, user)
     return await _proxy_workspace_app(request, name, content=True, user=user)
 
 # /apps/{name}/embed
@@ -47,18 +52,7 @@ async def serve_app_embed(
     name: str,
     user: dict = Depends(require_permission("apps.read")),
 ):
-    _validate_dataset_name(name)
-    _html_text, datasets_used = await _workspace_app_content_for_embed(
-        request, name, user
-    )
-    nonce = secrets.token_urlsafe(16)
-    return HTMLResponse(
-        content=_app_embed_wrapper_html(name, datasets_used, nonce),
-        headers={
-            "Content-Security-Policy": _app_embed_csp(nonce),
-            "X-Frame-Options": "SAMEORIGIN",
-        },
-    )
+    return await _build_app_embed_response(request, name, user)
 
 # /apps/{name}
 @router.get("/apps/{name}", dependencies=[Depends(require_permission("apps.read"))])

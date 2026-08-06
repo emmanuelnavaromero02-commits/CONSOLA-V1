@@ -134,3 +134,76 @@ anything: it requests the URLs directly.
 The harness lives outside the repository (session scratch). It needs only
 `console/app/domains/apps/embed.py`; regenerate the artefacts with the real
 helpers, serve them with the real headers, and drive Chromium.
+
+---
+
+# P1 closure — server-owned grants and content capability
+
+Two P1s C1 reproduced on `f986c8f3`: the app's own HTML and metadata
+authorised its datasets, and `/content` could be opened as a top-level
+document and navigated to an authenticated API where the browser re-attaches
+the `SameSite=Lax` cookie.
+
+## P1-1 — authority moved into the database
+
+`analytic_app_dataset_grants` (migration `99zzt`) is the only root of
+authority. Verified against a real PostgreSQL with the migration applied:
+
+| Check | Result |
+|---|---|
+| HTML mentions `sensitive_same_workspace` | not granted, not in the allowlist |
+| `analytic_apps.datasets_used` declares it | not granted |
+| SuccessFactors app claims a Replicon dataset | refused by the schema: `grant dataset does not belong to the cartridge` |
+| Cartridge not installed for the workspace | refused: `cartridge is not installed for this workspace` |
+| Reviewed manifest, current digest | granted, and only that dataset |
+| Revocation | takes effect on the next read, no cache |
+| New digest after an edit | every earlier grant revoked; old digest resolves to nothing |
+| Same dataset name in three scopes | each scope sees exactly 1 row; no scope set sees 0 |
+| `omega_console` INSERT / UPDATE / DELETE | `permission denied` on all three |
+| FORCE ROW LEVEL SECURITY | `rls=true force=true` on both tables |
+| SECURITY DEFINER functions | `search_path=pg_catalog, public`, both writers |
+| Custom app | no digest, therefore no grants, ever |
+
+The scraper that used to grant access produced **7 spurious dataset names**
+across the packaged apps — `sale`, `pnl_men`, `salesforce_deals_en_rie`,
+`salesforce_forecast_v`, `salesforce_pipeline_foreca` — fragments of template
+literals. It is kept only as a drift diagnostic
+(`requested_but_not_granted`, `granted_but_not_referenced`, `manifest_drift`);
+36 datasets across 18 apps now come from reviewed manifests.
+
+## P1-2 — /content needs a capability, not a cookie
+
+Signed with the repo's own `sign_server_payload` under the purpose
+`published_app_content`. Chromium, against the real verifier:
+
+| Case | Served |
+|---|---|
+| valid capability, framed by the wrapper | **yes** |
+| missing / expired / tampered signature | no |
+| another app / user / tenant / workspace / digest | no |
+| **valid capability opened top-level** | **no** — refused on Fetch Metadata |
+| Fetch Metadata absent / wrong | no |
+
+Navigation attempts from inside the sandboxed app — `location.href`,
+`location.assign`, `location.replace`, `target=_self`, `meta refresh`, all at
+`/api/me`:
+
+```
+/api/me  dest=iframe  mode=navigate  site=cross-site  blocked=true  businessRan=false  cookie=no
+```
+
+Four requests arrived; all four were refused by the navigation guard before
+any handler ran, and none carried a cookie. The API navigation guard has an
+empty exception list: no `/api` route serves a downloadable or navigable
+document, checked by inspection.
+
+## Migration and upgrade
+
+Fresh install, two reruns, three repeated backfills (1 granted, then 0, then
+0), workspace without the cartridge, custom app, and a mid-reconciliation
+failure that rolled back leaving the prior state intact.
+
+## 18 apps
+
+18/18 render, 18/18 read through the app-scoped endpoint, zero CSP
+violations, zero cross-cartridge datasets.

@@ -96,7 +96,13 @@ def app_content_headers(nonce: str) -> dict[str, str]:
         ),
         "X-Frame-Options": "SAMEORIGIN",
         "X-Content-Type-Options": "nosniff",
-        "Referrer-Policy": "same-origin",
+        # no-referrer, not same-origin: the capability rides in the query
+        # string, and a same-origin referrer would leak it to anything the
+        # frame loads. no-store keeps the response out of the back/forward
+        # cache, so an expired capability cannot be replayed from history.
+        "Referrer-Policy": "no-referrer",
+        "Cache-Control": "no-store, no-cache, must-revalidate, private",
+        "Pragma": "no-cache",
     }
 
 
@@ -294,10 +300,25 @@ def inject_app_bridge(html_text: str, nonce: str) -> str:
     return bridge + text
 
 
-def app_embed_wrapper_html(name: str, datasets_used: list[str], nonce: str) -> str:
+def app_embed_wrapper_html(
+    name: str,
+    datasets_used: list[str],
+    nonce: str,
+    *,
+    capability: str | None = None,
+) -> str:
+    """Render the trusted wrapper.
+
+    ``datasets_used`` must already come from the durable grant ledger — this
+    function does not derive, widen or re-check it, it only publishes it to the
+    broker. The app-scoped endpoint re-validates every request regardless.
+    """
     title = html.escape(name.replace("_", " ").strip() or "Analytic app")
     content_src = f"/apps/{quote(name, safe='')}/content"
+    if capability:
+        content_src = f"{content_src}?cap={quote(capability, safe='')}"
     content_src_json = json.dumps(content_src)
+    app_name_json = json.dumps(str(name))
     DATA_SUBPATHS_JSON = json.dumps(sorted(APP_DATA_SUBPATHS))
     allowed_datasets_json = json.dumps(
         sorted(
@@ -391,7 +412,11 @@ def app_embed_wrapper_html(name: str, datasets_used: list[str], nonce: str) -> s
       </div>
     </header>
     <div class="frame-wrap">
-      <iframe id="omega-app-frame" title={json.dumps(title)} sandbox="allow-scripts" referrerpolicy="same-origin" src={json.dumps(content_src)}></iframe>
+      <!-- credentialless: extra depth on browsers that support it — the frame
+           gets an ephemeral, cookie-less storage partition. Unknown attributes
+           are ignored elsewhere, so this never becomes a compatibility break,
+           and it is never the control: sandbox, the CSP and the capability are. -->
+      <iframe id="omega-app-frame" title={json.dumps(title)} sandbox="allow-scripts" credentialless referrerpolicy="no-referrer" src={json.dumps(content_src)}></iframe>
       <div id="blocked" class="blocked" role="alert"></div>
     </div>
   </div>
@@ -400,6 +425,10 @@ def app_embed_wrapper_html(name: str, datasets_used: list[str], nonce: str) -> s
       const frame = document.getElementById("omega-app-frame");
       const blocked = document.getElementById("blocked");
       const allowedSrc = {content_src_json};
+      const appName = {app_name_json};
+      // Straight from the durable grant ledger for this tenant, workspace, app
+      // and manifest digest. Nothing scraped from the app's HTML or metadata
+      // reaches this set.
       const allowedDatasets = new Set({allowed_datasets_json});
       const csrfToken = () => {{
         const match = document.cookie.match(/(?:^|;\\s*)csrf_token=([^;]+)/);
@@ -467,7 +496,15 @@ def app_embed_wrapper_html(name: str, datasets_used: list[str], nonce: str) -> s
             const csrf = csrfToken();
             if (csrf) headers["X-CSRF-Token"] = csrf;
           }}
-          const response = await fetch(url.pathname + url.search, {{
+          // Translate to the app-scoped route. The app asks for
+          // /api/data/<dataset>; the server-owned app name is spliced in here,
+          // never taken from the message, and the backend re-checks the grant.
+          // The wrapper's filtering is convenience — that route is the
+          // authority, and it refuses anything this app was not granted.
+          const scoped = "/api/apps/" + encodeURIComponent(appName)
+            + "/data/" + encodeURIComponent(dataset)
+            + (parts.length === 4 ? "/" + parts[3] : "");
+          const response = await fetch(scoped + url.search, {{
             method,
             headers,
             body: requestBody,

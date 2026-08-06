@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+import logging
 from typing import Any
 
 import asyncpg
@@ -19,6 +20,8 @@ _SCHEMA_READY = False
 
 
 ACTIVE_ENTITLEMENT_STATUS = "active"
+logger = logging.getLogger(__name__)
+
 READY_INSTALLATION_STATUS = "ready"
 CUSTOMER_PRODUCT_STATUSES = {"active"}
 GLOBAL_ADMIN_ROLES = {"admin", "owner", "super_admin"}
@@ -1162,6 +1165,53 @@ async def set_installation_user_access(
     )
 
 
+async def _reconcile_packaged_app_grants(
+    conn,
+    *,
+    tenant_id: Any,
+    workspace_id: Any,
+    cartridge_id: Any,
+    installation_status: str,
+) -> None:
+    """Bring this workspace's packaged app grants in line with the manifests.
+
+    Reads nothing from the runtime: the dataset lists come from the reviewed
+    manifests baked into the image, and the digest covers the packaged HTML.
+    A cartridge leaving 'ready' is not reconciled forward — the grants stay as
+    they are and the install-state check in the ledger's own trigger, plus the
+    cartridge visibility check on every read, do the blocking.
+
+    Never raises into the caller: a workspace whose Gold is not materialised
+    yet simply gets no grants, and that must not fail an activation.
+    """
+    if installation_status != READY_INSTALLATION_STATUS:
+        return
+    if not tenant_id or not workspace_id or not cartridge_id:
+        return
+    try:
+        from app.domains.apps import grants as app_grants
+
+        await conn.execute(
+            "SELECT set_config('app.tenant_id', $1, true), "
+            "set_config('app.workspace_id', $2, true)",
+            str(tenant_id),
+            str(workspace_id),
+        )
+        summary = await app_grants.reconcile_workspace(
+            conn, cartridge_id=str(cartridge_id)
+        )
+        logger.info(
+            "[app-grants] %s/%s %s: granted=%s revoked=%s",
+            tenant_id, workspace_id, cartridge_id,
+            summary.get("granted"), summary.get("revoked"),
+        )
+    except Exception:
+        logger.warning(
+            "[app-grants] reconciliation skipped for %s/%s %s",
+            tenant_id, workspace_id, cartridge_id, exc_info=True,
+        )
+
+
 async def _set_installation_state(
     installation_id: str,
     user: dict,
@@ -1306,6 +1356,25 @@ async def _set_installation_state(
                 },
             )
             installation = await _installation_row(conn, installation_id, admin=True)
+            # Reconcile the packaged apps' dataset grants inside the same
+            # transaction that made the cartridge usable.
+            #
+            # Every activation path — approve, reactivate, retry, admin
+            # activate — funnels through this function, so hooking it here
+            # covers all of them rather than one. Doing it on activation, and
+            # only here, is what keeps a plain read from ever widening
+            # authority: opening an app must not be what approves it.
+            #
+            # In-transaction on purpose: a partial reconciliation rolls back
+            # with the state change, so a workspace is never left marked ready
+            # with half its grants.
+            await _reconcile_packaged_app_grants(
+                conn,
+                tenant_id=installation.get("tenant_id"),
+                workspace_id=installation.get("workspace_id"),
+                cartridge_id=installation.get("cartridge_id"),
+                installation_status=installation_status,
+            )
 
     await _audit(
         user,
