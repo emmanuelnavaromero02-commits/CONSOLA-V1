@@ -57,8 +57,36 @@ describe("Analytics surface boundary", () => {
     const viewer = read("src/components/analytics/AppViewer.tsx");
     expect(viewer).toContain("isPublishedAppName");
     expect(viewer).toContain("encodeURIComponent(app.name)");
-    // The iframe target is always a same-origin path.
-    expect(viewer).toContain("src={`/apps/${encodeURIComponent(app.name)}`}");
+  });
+
+  it("loads the trusted wrapper, never the published app directly", () => {
+    // Regression for the P0: the viewer framed `/apps/{name}` — untrusted,
+    // externally-authored HTML — as a same-origin document, so a malicious
+    // published app could read parent.document, storage, cookies and the CSRF
+    // token, and call authenticated endpoints. `/embed` is first-party markup
+    // we generate; it hosts the app in an opaque-origin child of its own.
+    const viewer = read("src/components/analytics/AppViewer.tsx");
+    expect(viewer).toContain("src={`/apps/${encodeURIComponent(app.name)}/embed`}");
+    const iframeSrc = viewer.match(/src=\{`\/apps\/[^`]*`\}/g) ?? [];
+    expect(iframeSrc).toEqual(["src={`/apps/${encodeURIComponent(app.name)}/embed`}"]);
+    expect(viewer).not.toContain("src={`/apps/${encodeURIComponent(app.name)}`}");
+  });
+
+  it("keeps the outer sandbox minimal and downloads disabled", () => {
+    // The outer sandbox is not the boundary — the wrapper needs
+    // allow-same-origin to read the CSRF cookie and call the API for the user.
+    // The boundary is the wrapper's inner frame. Still, nothing beyond those
+    // two tokens is justified, and allow-downloads never was.
+    const viewer = read("src/components/analytics/AppViewer.tsx");
+    // Anchor to the JSX element: the surrounding comment names the inner
+    // frame's own sandbox, which is a different (stricter) value.
+    const iframe = viewer.slice(viewer.indexOf("<iframe"));
+    const sandbox = iframe.match(/^\s*sandbox="([^"]*)"/m)?.[1] ?? "";
+    expect(sandbox.split(/\s+/).filter(Boolean).sort()).toEqual([
+      "allow-same-origin",
+      "allow-scripts",
+    ]);
+    expect(sandbox).not.toContain("allow-downloads");
   });
 
   it("only offers apps the API returned for this caller", () => {

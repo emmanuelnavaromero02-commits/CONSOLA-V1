@@ -121,12 +121,27 @@ export function AppViewer({ appName }: { appName: string | null }) {
       ) : null}
 
       <iframe
-        // Server-side name validation happens again in /apps/{name}; this
+        // Always the wrapper, never the app. `/apps/{name}` returns published
+        // HTML authored outside this repo; `/apps/{name}/embed` returns a
+        // first-party document we generate, which then hosts that HTML in its
+        // own sandboxed child. Loading the app directly here would run
+        // untrusted markup at the console's origin.
+        //
+        // The sandbox below is not the security boundary — it cannot be, since
+        // the wrapper needs `allow-same-origin` to read the CSRF cookie and
+        // make credentialed calls on the user's behalf. The real boundary is
+        // one level down: the wrapper's inner iframe is `sandbox="allow-scripts"`
+        // with no `allow-same-origin`, so the app holds an opaque origin and
+        // reaches data only through the postMessage broker. This attribute is
+        // defence in depth over trusted markup; `allow-downloads` is gone
+        // because the wrapper has no reason to start one.
+        //
+        // Server-side name validation happens again in /apps/{name}/embed; this
         // encode keeps the client from building anything but a same-origin path.
-        src={`/apps/${encodeURIComponent(app.name)}`}
+        src={`/apps/${encodeURIComponent(app.name)}/embed`}
         title={title}
         className="min-h-[60vh] flex-1 rounded-lg border bg-background"
-        sandbox="allow-scripts allow-same-origin allow-downloads"
+        sandbox="allow-scripts allow-same-origin"
         referrerPolicy="same-origin"
       />
     </main>

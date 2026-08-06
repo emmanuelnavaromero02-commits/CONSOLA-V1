@@ -64,7 +64,10 @@ async def serve_app_embed(
 @router.get("/apps/{name}", dependencies=[Depends(require_permission("apps.read"))])
 @_bind_to_main
 async def serve_app(name: str, request: Request, user: dict = Depends(require_permission("apps.read"))):
-    return await _proxy_workspace_app(request, name, user=user)
+    # Mirrors app.main.serve_app: the published HTML is never served as a
+    # top-level same-origin document. The wrapper at /embed is the only path in.
+    _validate_dataset_name(name)
+    return RedirectResponse(url=f"/analytics/viewer?app={quote(name, safe='')}", status_code=303)
 
 # /studio
 @router.get("/studio", dependencies=[Depends(require_permission("studio.read")), Depends(require_admin)])

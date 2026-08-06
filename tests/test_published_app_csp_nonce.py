@@ -57,9 +57,14 @@ def test_policy_keeps_the_rest_of_the_surface_closed():
     assert "default-src 'self'" in csp
     assert "object-src 'none'" in csp
     assert "frame-ancestors 'self'" in csp
-    assert "connect-src 'self'" in csp
-    assert "base-uri 'self'" in csp
-    assert "form-action 'self'" in csp
+    # Tightened after the viewer P0: published app HTML is untrusted, so it
+    # gets no network of its own (the broker carries data over postMessage),
+    # no <base> rewriting and no form submissions. See
+    # tests/test_published_app_isolation.py for the full boundary.
+    assert "connect-src 'none'" in csp
+    assert "base-uri 'none'" in csp
+    assert "form-action 'none'" in csp
+    assert "sandbox allow-scripts" in csp
 
 
 def test_distinct_nonces_produce_distinct_policies():

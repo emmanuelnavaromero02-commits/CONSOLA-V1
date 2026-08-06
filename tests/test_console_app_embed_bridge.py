@@ -20,7 +20,11 @@ def test_console_app_embed_uses_same_origin_wrapper_and_bridge():
     assert "omega-app-fetch" in embed_source
     assert "omega-app-fetch-result" in embed_source
     assert "allowedDatasets" in embed_source
-    assert 'url.pathname.startsWith("/api/data/")' in embed_source
+    # Tightened from a startsWith() prefix check to an exact shape:
+    # /api/data/<dataset> plus the two sub-resources the data API exposes,
+    # so a deeper path or a traversal segment cannot ride along.
+    assert "parts.length === 3" in embed_source
+    assert "DATA_SUBPATHS.has(parts[3])" in embed_source
     assert 'dataset ${{dataset || "(empty)"}} not declared by app' in embed_source
     assert "sandbox=\"allow-scripts\"" in embed_source
 

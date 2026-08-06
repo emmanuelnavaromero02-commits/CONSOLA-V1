@@ -65,6 +65,7 @@ from app.domains.apps.embed import (
     app_embed_csp as _app_embed_csp,
     app_embed_wrapper_html as _app_embed_wrapper_html,
     datasets_from_app_html as _datasets_from_app_html,
+    inject_app_bridge as _inject_app_bridge,
     inject_script_nonce as _inject_script_nonce,
     workspace_server_url as _workspace_server_url_impl,
 )
@@ -2868,6 +2869,10 @@ async def _proxy_workspace_app(
     nonce = secrets.token_urlsafe(16)
     html_text = _inject_published_app_theme(html_text)
     html_text = _inject_script_nonce(html_text, nonce)
+    # The broker client goes in ahead of the app's own scripts. Under
+    # ``connect-src 'none'`` this is the app's only route to data, so it must
+    # be installed before anything the author ships can capture ``fetch``.
+    html_text = _inject_app_bridge(html_text, nonce)
     return HTMLResponse(
         content=html_text,
         headers=_app_content_headers(nonce),
@@ -2945,7 +2950,20 @@ async def serve_app_content_proxy(
 async def serve_app(
     name: str, request: Request, user: dict = Depends(require_permission("apps.read"))
 ):
-    return await _proxy_workspace_app(request, name, user=user)
+    """Send the caller to the app's canonical home instead of serving it here.
+
+    This route used to return the published HTML as a top-level, same-origin
+    document. Anything reaching it that way ran with the console's origin —
+    its storage, its cookies, its authenticated endpoints — which is exactly
+    the escape the viewer is built to prevent. The only supported path to app
+    content is the wrapper at ``/apps/{name}/embed``, and the only supported
+    entry point is the viewer, so a direct hit redirects there rather than
+    quietly handing back a second, unprotected way in.
+    """
+    _validate_dataset_name(name)
+    return RedirectResponse(
+        url=f"/analytics/viewer?app={quote(name, safe='')}", status_code=303
+    )
 
 
 async def _workspace_scope_for_apps_filter(user: dict | None) -> tuple[str, str]:
