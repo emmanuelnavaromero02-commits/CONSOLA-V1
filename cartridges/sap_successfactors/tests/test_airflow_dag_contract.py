@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -70,7 +71,24 @@ def test_single_entity_dag_records_missing_connection_without_retry():
 def test_extract_all_dag_classifies_missing_entity_connections_per_entity():
     source = (ROOT / "dags" / "sap_successfactors_extract_all.py").read_text(encoding="utf-8")
 
-    assert "entity_idempotency_key = _entity_idempotency_key(base_idempotency_key, entity)" in source
+    # Each entity gets its own idempotency key, derived from the run's base key
+    # and the entity itself, so one entity retrying cannot collide with another.
+    #
+    # Asserted on the call's parts rather than on one physical line: the
+    # previous version required the whole expression unwrapped, and a routine
+    # reformat broke the release gate while the behaviour was intact. What
+    # matters is that the derivation happens and takes both inputs.
+    assignment = re.search(
+        r"entity_idempotency_key\s*=\s*_entity_idempotency_key\(\s*"
+        r"base_idempotency_key\s*,\s*entity\s*,?\s*\)",
+        source,
+    )
+    assert assignment, "entity_idempotency_key must derive from (base_idempotency_key, entity)"
+    # And it must sit inside the per-entity loop, not be hoisted out of it.
+    per_entity_loop = source.index("for config in entities:")
+    assert assignment.start() > per_entity_loop, (
+        "the per-entity idempotency key must be derived inside the entity loop"
+    )
     assert "try:\n                    conn_id = _required_config_conn_id(conf, config)" in source
     assert "runtime.classify_extraction_exception(entity, exc)" in source
 
@@ -189,7 +207,18 @@ def test_extract_all_dag_bridges_to_intelligence_via_dataset_refresh_chain():
 
     assert "dataset_refresh_chain" in source
     assert "def trigger_refresh_chain" in source
-    assert "trigger_refresh_chain(trigger_extract_all())" in source
+    # The bridge now carries an authority token end to end: the chain is
+    # authorised once and that authorisation is threaded through both the
+    # extraction and the trigger, so a refresh cannot be fired without it.
+    # That is a deliberate tightening — assert the current shape rather than
+    # the old unauthenticated call.
+    assert re.search(r"authority\s*=\s*authorize_refresh_chain\(", source), (
+        "the refresh chain must be authorised before it is triggered"
+    )
+    assert re.search(
+        r"trigger_refresh_chain\(\s*trigger_extract_all\(\s*authority\s*\)\s*,\s*authority\s*,?\s*\)",
+        source,
+    ), "trigger_refresh_chain must receive the extraction result and the authority"
     # Debe respetar la separacion de responsabilidades: puentea por REST, NO
     # importando el job_runner del cartucho dentro del DAG.
     assert "app.core.job_runner" not in source
