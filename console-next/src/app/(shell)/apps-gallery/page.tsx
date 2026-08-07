@@ -3,23 +3,28 @@
 import Link from "next/link";
 import { useEffect } from "react";
 
+/**
+ * Legacy entry point. It used to bounce to /control-room#apps, an anchor that
+ * stopped existing when Control Room moved to the business experience. The
+ * canonical home for published apps is /analytics.
+ */
 export default function AppsGalleryPage() {
   useEffect(() => {
-    window.location.replace("/control-room#apps");
+    window.location.replace("/analytics");
   }, []);
 
   return (
     <main className="mx-auto flex min-h-[60vh] max-w-3xl flex-col items-center justify-center gap-4 px-6 py-12 text-center">
       <p className="text-xs font-semibold uppercase text-cyan-700 dark:text-cyan-300/80">Analitica operativa</p>
-      <h1 className="text-2xl font-semibold tracking-tight">Analitica del workspace en Control Room</h1>
+      <h1 className="text-2xl font-semibold tracking-tight">Las aplicaciones se abren desde Analytics</h1>
       <p className="text-sm text-muted-foreground">
-        Redirigiendo al centro operativo.
+        Redirigiendo al catálogo.
       </p>
       <Link
-        href="/control-room#apps"
+        href="/analytics"
         className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
-        Abrir Control Room
+        Abrir Analytics
       </Link>
     </main>
   );

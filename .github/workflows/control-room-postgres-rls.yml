@@ -172,15 +172,49 @@ jobs:
             tests/test_talent_score_type_guards.py \
             tests/test_v1_router_mount.py
 
+      - name: Provision the app-grant database
+        env:
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          # The published-app grant ledger is authority for what an app may
+          # read, so its guarantees — pg_temp shadowing, function ownership,
+          # ACL, RLS, revocation — have to be exercised against a real server.
+          # Applying the real migrations here is what keeps these tests from
+          # skipping in CI, which is how they were passing without running.
+          psql -h 127.0.0.1 -p 55432 -U postgres -d postgres \
+            -v ON_ERROR_STOP=1 -c "DROP DATABASE IF EXISTS app_grants" \
+            -c "CREATE DATABASE app_grants"
+          for f in tests/fixtures/app_grants_schema.sql \
+                   infra/init/99zzt_analytic_app_dataset_grants.sql \
+                   infra/init/99zzu_analytic_app_manifest_registry.sql \
+                   tests/fixtures/app_grants_seed.sql; do
+            echo "[app-grants] applying $f"
+            psql -h 127.0.0.1 -p 55432 -U postgres -d app_grants \
+              -v ON_ERROR_STOP=1 -q -f "$f"
+          done
+          # Applying twice proves the migration is idempotent on every run.
+          psql -h 127.0.0.1 -p 55432 -U postgres -d app_grants -v ON_ERROR_STOP=1 -q \
+            -f infra/init/99zzt_analytic_app_dataset_grants.sql
+          psql -h 127.0.0.1 -p 55432 -U postgres -d app_grants -v ON_ERROR_STOP=1 -q \
+            -f infra/init/99zzu_analytic_app_manifest_registry.sql
+
+      - name: Manifest registry is regenerable and unchanged
+        env:
+          PYTHONPATH: .:console
+        run: python3 scripts/generate_app_manifest_registry.py --check
+
       - name: Run live PostgreSQL/RLS tests
         if: always()
         continue-on-error: true
         env:
+          OMEGA_TEST_GRANTS_DSN: postgresql://postgres:postgres@127.0.0.1:55432/app_grants
           HOME: /tmp/refinement-duckdb-home
           DOCKER_HOST: unix:///var/run/docker.sock
           PYTHONPATH: .:console
         run: |
           pytest -ra --junitxml=/tmp/control-room-postgres-rls.xml \
+            tests/test_analytic_app_dataset_grants.py \
             tests/test_operational_rls_console_refinement.py \
             tests/test_operational_rls_policy_guard.py \
             tests/test_control_room_live_postgres*.py \
@@ -247,7 +281,7 @@ jobs:
                   raise SystemExit(f"{label} JUnit is not clean: {bad}")
 
           verify_junit("/tmp/control-room-focal.xml", minimum=9650, label="Focal Control Room")
-          verify_junit("/tmp/control-room-postgres-rls.xml", minimum=276, label="Live PostgreSQL/RLS")
+          verify_junit("/tmp/control-room-postgres-rls.xml", minimum=296, label="Live PostgreSQL/RLS")
           PY
 
   operational-truth-e2e:

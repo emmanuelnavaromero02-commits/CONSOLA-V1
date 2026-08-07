@@ -102,7 +102,7 @@ const NAV_SECTIONS: NavSection[] = [
         active: ["/marketplace", "/customer/cartridges", "/admin/installations", "/admin/licenses", "/cartridges", "/cartridges/viewer"],
         keywords: "marketplace cartuchos licencias instalaciones monitor tecnico conectores integraciones",
       },
-      { href: "/control-room#apps", label: "Apps analíticas", icon: Sparkles, section: "Integraciones", capability: "can_view_apps", keywords: "aplicaciones control room dashboards workspace analiticas" },
+      { href: "/analytics", label: "Apps analíticas", icon: Sparkles, section: "Integraciones", capability: "can_view_apps", keywords: "aplicaciones dashboards analiticas graficas explorar" },
     ],
   },
   {
@@ -122,7 +122,8 @@ const NAV_SECTIONS: NavSection[] = [
 ];
 
 function navPath(href: string): string {
-  return href.split("?")[0] || href;
+  // Split on '#' too: a hash target used to leave the pressed item unhighlighted.
+  return href.split(/[?#]/)[0] || href;
 }
 
 function isActive(pathname: string, item: NavItem): boolean {

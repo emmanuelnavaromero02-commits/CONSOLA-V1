@@ -44,7 +44,35 @@ def test_html_files_exist_and_parse(name):
     html = path.read_text(encoding="utf-8")
     HTMLParser().feed(html)
     assert "<canvas" in html, f"{name}: no chart canvas"
-    assert "cdn.jsdelivr.net/npm/chart.js" in html, f"{name}: Chart.js CDN not loaded"
+    # Pinned + integrity: a floating CDN tag lets an upstream change run
+    # arbitrary code inside the published app.
+    assert (
+        "cdn.jsdelivr.net/npm/chart.js@" in html
+    ), f"{name}: Chart.js must be pinned to an exact version"
+    assert "integrity=\"sha384-" in html, f"{name}: Chart.js CDN tag has no SRI hash"
+    assert "crossorigin=" in html, f"{name}: SRI needs crossorigin"
+
+
+@pytest.mark.parametrize("name", APP_NAMES)
+def test_html_has_no_inline_event_handlers(name):
+    """The published CSP carries a nonce, which cannot authorise on* attributes."""
+    html = _html(name)
+    for handler in ("onclick=", "onload=", "onerror=", "onchange=", "onsubmit="):
+        assert handler not in html, f"{name}: inline handler {handler} blocks under CSP"
+
+
+@pytest.mark.parametrize("name", APP_NAMES)
+def test_html_does_not_force_a_theme(name):
+    """The shell's theme shim decides light/dark; a fixed attribute overrode it."""
+    assert 'data-theme="dark"' not in _html(name), f"{name}: hard-coded dark theme"
+
+
+@pytest.mark.parametrize("name", APP_NAMES)
+def test_html_reports_missing_chart_runtime(name):
+    """A blocked or failed Chart.js must not leave a silent empty shell."""
+    html = _html(name)
+    assert "typeof Chart === 'undefined'" in html, f"{name}: no chart runtime guard"
+    assert 'role="alert"' in html, f"{name}: error container is not announced"
 
 
 @pytest.mark.parametrize("name", APP_NAMES)

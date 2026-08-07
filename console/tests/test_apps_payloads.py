@@ -110,7 +110,9 @@ def test_app_embed_helpers_extract_and_guard_declared_datasets():
     assert 'sandbox="allow-scripts"' in html
     assert "omega-app-fetch" in html
     assert "omega-app-fetch-result" in html
-    assert '"/api/data/"' in html
+    # The wrapper now requires the exact /api/data/<dataset>[/options|/query]
+    # shape instead of a prefix match, so the literal prefix string is gone.
+    assert 'parts[1] === "data"' in html
     assert '"also_valid", "valid_one"' in html
     assert "bad-name" not in html
     assert "dataset ${dataset || \"(empty)\"} not declared by app" in html

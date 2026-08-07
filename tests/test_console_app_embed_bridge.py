@@ -20,13 +20,31 @@ def test_console_app_embed_uses_same_origin_wrapper_and_bridge():
     assert "omega-app-fetch" in embed_source
     assert "omega-app-fetch-result" in embed_source
     assert "allowedDatasets" in embed_source
-    assert 'url.pathname.startsWith("/api/data/")' in embed_source
+    # Tightened from a startsWith() prefix check to an exact shape:
+    # /api/data/<dataset> plus the two sub-resources the data API exposes,
+    # so a deeper path or a traversal segment cannot ride along.
+    assert "parts.length === 3" in embed_source
+    assert "DATA_SUBPATHS.has(parts[3])" in embed_source
     assert 'dataset ${{dataset || "(empty)"}} not declared by app' in embed_source
     assert "sandbox=\"allow-scripts\"" in embed_source
 
 
-def test_legacy_marketplace_router_exposes_same_embed_route():
+def test_legacy_marketplace_router_shares_one_implementation():
+    """Both routers register these paths; only one implementation may exist.
+
+    They used to carry their own copies of the embed and content logic, and a
+    security check added to one silently left the other unguarded — that is how
+    /content kept serving without a capability after the guard landed in
+    app.main. Now both delegate to the same helpers, so a change cannot reach
+    one door and miss the other.
+    """
     source = V1_APPS.read_text(encoding="utf-8")
+    main_source = MAIN.read_text(encoding="utf-8")
     assert '@router.get("/apps/{name}/embed"' in source
-    assert "_app_embed_wrapper_html" in source
-    assert "_workspace_app_content_for_embed" in source
+    assert '@router.get("/apps/{name}/content"' in source
+    for helper in ("_build_app_embed_response", "_require_app_content_capability"):
+        assert helper in source, f"v1 router must delegate to {helper}"
+        assert f"async def {helper}(" in main_source, f"{helper} must be defined once"
+    # No second copy of the capability or wrapper logic in the router.
+    assert "_app_embed_wrapper_html" not in source
+    assert "_verify_content_capability" not in source

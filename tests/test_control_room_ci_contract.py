@@ -10,7 +10,11 @@ PREPARE_SCRIPT = ROOT / "scripts/prepare_refinement_duckdb_ci.sh"
 MCP_REQUIREMENTS = ROOT / "mcp-infra/requirements.txt"
 MCP_DOCKERFILE = ROOT / "mcp-infra/Dockerfile"
 FOCAL_MINIMUM = 9650
-POSTGRES_MINIMUM = 276
+# Raised 276 -> 296 when the published-app grant suite was wired in. Those
+# tests assert real database behaviour — pg_temp shadowing, function
+# ownership, ACL, RLS, revocation — and had been skipping in CI for want of a
+# DSN, so the floor moves with them to keep that from happening again.
+POSTGRES_MINIMUM = 296
 OPERATIONAL_TRUTH_TESTS = (
     "console/tests/test_operational_truth_statistical_fallbacks.py",
     "console/tests/test_operational_truth_public_projection.py",

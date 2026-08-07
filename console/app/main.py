@@ -65,7 +65,25 @@ from app.domains.apps.embed import (
     app_embed_csp as _app_embed_csp,
     app_embed_wrapper_html as _app_embed_wrapper_html,
     datasets_from_app_html as _datasets_from_app_html,
+    inject_app_bridge as _inject_app_bridge,
+    inject_script_nonce as _inject_script_nonce,
     workspace_server_url as _workspace_server_url_impl,
+)
+from app.domains.apps.manifests import (
+    drift_report as _app_drift_report,
+    packaged_manifest as _packaged_manifest,
+    served_digest as _served_manifest_digest,
+)
+from app.domains.apps.grants import (
+    granted_datasets as _granted_datasets,
+    has_grant as _has_app_grant,
+    reconcile_workspace as _reconcile_app_grants_for_workspace,
+)
+from app.domains.apps.capability import (
+    api_navigation_blocked as _api_navigation_blocked,
+    frame_fetch_metadata_ok as _frame_fetch_metadata_ok,
+    issue_content_capability as _issue_content_capability,
+    verify_content_capability as _verify_content_capability,
 )
 from app.domains.agentops.successfactors_talent_monitor import (
     SUCCESSFACTORS_TALENT_MONITOR_SLUG as _SUCCESSFACTORS_TALENT_MONITOR_SLUG,
@@ -1123,6 +1141,39 @@ def _rate_limit_disabled() -> bool:
     unset, so the limiter stays on.
     """
     return _request_rate_limits.rate_limit_disabled()
+
+
+# Inventory behind this guard: no /api route serves a downloadable or
+# navigable document. Every one answers JSON to a same-origin fetch/XHR, and
+# the surfaces that do stream files live under /viewer and /static. So the
+# exception list is empty by inspection rather than by assumption; add a path
+# here only with the same check done again.
+_API_NAVIGATION_EXEMPT: frozenset[str] = frozenset()
+
+
+@app.middleware("http")
+async def api_navigation_guard_middleware(request: Request, call_next):
+    """Stop a sandboxed app turning an authenticated API into a navigation.
+
+    ``connect-src 'none'`` denies a published app every fetch primitive, but
+    not navigation — and a top-level GET carries the SameSite=Lax session
+    cookie, which is how an app framed at our origin could still read
+    ``/api/me``. Nothing under /api is meant to be reached as a document, so a
+    document/frame destination is refused before any handler runs.
+
+    This is defence in depth layered on the capability check, not a substitute
+    for it, and it deliberately does not touch the cookie's SameSite setting.
+    """
+    path = request.url.path
+    if (
+        path.startswith("/api/")
+        and path not in _API_NAVIGATION_EXEMPT
+        and _api_navigation_blocked(request.headers)
+    ):
+        return _apply_security_headers(
+            JSONResponse({"detail": "not available"}, status_code=403), path
+        )
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -2862,10 +2913,254 @@ async def _proxy_workspace_app(
         if cartridge not in active:
             return RedirectResponse(url="/apps-gallery", status_code=303)
     html_text, _app = await _refinement_app_html(name, runtime_user)
+    # Server-owned, one per response: the app's inline bootstrap runs under a
+    # nonce instead of widening the policy with 'unsafe-inline'.
+    nonce = secrets.token_urlsafe(16)
+    html_text = _inject_published_app_theme(html_text)
+    html_text = _inject_script_nonce(html_text, nonce)
+    # The broker client goes in ahead of the app's own scripts. Under
+    # ``connect-src 'none'`` this is the app's only route to data, so it must
+    # be installed before anything the author ships can capture ``fetch``.
+    html_text = _inject_app_bridge(html_text, nonce)
     return HTMLResponse(
         content=html_text,
-        headers=_app_content_headers(),
+        headers=_app_content_headers(nonce),
     )
+
+
+def _peek_content_capability(cap: str) -> dict | None:
+    """Read the claims without trusting them, to learn which subject to load.
+
+    The signature is verified afterwards against the values the server resolves
+    independently, so nothing here is an authorisation decision — it only says
+    which user and workspace to go and look up.
+    """
+    import base64
+    import json as _json
+
+    if not cap or not isinstance(cap, str) or cap.count(".") != 1:
+        return None
+    encoded = cap.split(".", 1)[0]
+    try:
+        padding = "=" * (-len(encoded) % 4)
+        claims = _json.loads(base64.urlsafe_b64decode(encoded + padding))
+    except Exception:
+        return None
+    return claims if isinstance(claims, dict) else None
+
+
+async def _resolve_capability_subject(claims: dict) -> dict | None:
+    """Load the user the capability names, and confirm the membership stands.
+
+    The cookie is deliberately not consulted: the frame is credentialless and
+    sends none, and completing the claims from a cookie would reintroduce the
+    ambient authority the sandbox exists to remove.
+    """
+    try:
+        user_id = int(str(claims.get("user") or ""))
+    except (TypeError, ValueError):
+        return None
+    tenant_id = str(claims.get("tenant") or "")
+    workspace_id = str(claims.get("workspace") or "")
+    if not tenant_id or not workspace_id:
+        return None
+    try:
+        pool = await _get_db_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT u.id, u.role, w.tenant_id, w.id AS workspace_id
+                  FROM public.users u
+                  JOIN public.user_workspace_roles uwr ON uwr.user_id = u.id
+                  JOIN public.workspaces w ON w.id = uwr.workspace_id
+                 WHERE u.id = $1
+                   AND u.is_active = TRUE
+                   AND w.id = $2::uuid
+                   AND w.tenant_id = $3::uuid
+                 LIMIT 1
+                """,
+                user_id, workspace_id, tenant_id,
+            )
+    except Exception:
+        logger.warning("[app-content] capability subject lookup failed", exc_info=True)
+        return None
+    if row is None:
+        return None
+    return {
+        "id": int(row["id"]),
+        "role": row["role"],
+        "tenant_id": str(row["tenant_id"]),
+        "workspace_id": str(row["workspace_id"]),
+        "active_tenant_id": str(row["tenant_id"]),
+        "active_workspace_id": str(row["workspace_id"]),
+    }
+
+
+async def _active_manifest_digest(
+    name: str, tenant_id: str, workspace_id: str
+) -> str | None:
+    """The digest the registry currently calls active for this app."""
+    try:
+        pool = await _get_db_pool()
+        async with pool.acquire() as conn:
+            await _set_rls_scope(conn, tenant_id, workspace_id)
+            return await conn.fetchval(
+                "SELECT manifest_digest FROM public.analytic_app_manifests "
+                "WHERE app_name = $1 AND revision = 'active'",
+                str(name),
+            )
+    except Exception:
+        logger.warning("[app-content] manifest lookup failed", exc_info=True)
+        return None
+
+
+async def _require_app_content_capability(
+    request: Request, name: str, cap: str, user: dict | None
+) -> dict:
+    """Admit a /content request on the capability alone, then re-check it all.
+
+    A signature only proves the claims were minted by us. Everything they
+    assert is verified again against current state — the user is still active
+    and still a member of that workspace, the app is still packaged, the
+    manifest is still the active revision, the installation is still ready —
+    so a capability issued a minute ago stops working the moment any of that
+    changes.
+
+    Single implementation: this path is registered twice, here and in the v1
+    marketplace router, and two copies of a security check is how one of them
+    silently stops matching the other.
+    """
+    denied = HTTPException(403, "app content is not available")
+    _validate_dataset_name(name)
+    claims = _peek_content_capability(cap)
+    if claims is None or not _frame_fetch_metadata_ok(request.headers):
+        raise denied
+
+    resolved = await _resolve_capability_subject(claims)
+    if resolved is None:
+        raise denied
+
+    verified = _verify_content_capability(
+        cap,
+        app_name=name,
+        tenant_id=resolved["tenant_id"],
+        workspace_id=resolved["workspace_id"],
+        user_id=resolved["id"],
+        manifest_digest=await _active_manifest_digest(
+            name, resolved["tenant_id"], resolved["workspace_id"]
+        ),
+    )
+    if verified is None:
+        raise denied
+    return resolved
+
+
+async def _build_app_embed_response(
+    request: Request, name: str, user: dict | None
+) -> HTMLResponse:
+    """Mint the capability and render the wrapper. Shared by both routers."""
+    _validate_dataset_name(name)
+    _html_text, granted, digest, cartridge = await _app_grant_context(
+        request, name, user
+    )
+    nonce = secrets.token_urlsafe(16)
+    capability = None
+    if digest:
+        tenant_id, workspace_id = await _app_scope_for(user)
+        capability = _issue_content_capability(
+            app_name=name,
+            cartridge_id=cartridge or "",
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            user_id=(user or {}).get("id"),
+            manifest_digest=digest,
+        )
+    return HTMLResponse(
+        content=_app_embed_wrapper_html(name, granted, nonce, capability=capability),
+        headers={
+            "Content-Security-Policy": _app_embed_csp(nonce),
+            "X-Frame-Options": "SAMEORIGIN",
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+async def _require_app_scoped_grant(
+    request: Request, app_name: str, dataset: str, user: dict | None
+) -> None:
+    """Refuse unless the durable ledger grants this exact read, right now.
+
+    Every rejection is the same 403 with the same wording: a message that
+    distinguished "no such dataset" from "not granted" would let a published
+    app enumerate the workspace's datasets one refusal at a time.
+    """
+    denied = HTTPException(403, "app data access is not granted")
+    _validate_dataset_name(app_name)
+    _validate_dataset_name(dataset)
+    if _api_navigation_blocked(request.headers):
+        raise denied
+    try:
+        html_text, granted, digest, _cartridge = await _app_grant_context(
+            request, app_name, user
+        )
+    except HTTPException:
+        raise denied
+    if not digest or dataset not in granted:
+        raise denied
+
+
+async def _set_rls_scope(conn, tenant_id: str, workspace_id: str) -> None:
+    """Bind the connection to the caller's scope so RLS applies to the ledger."""
+    await conn.execute(
+        "SELECT set_config('app.tenant_id', $1, true), "
+        "set_config('app.workspace_id', $2, true)",
+        str(tenant_id or ""),
+        str(workspace_id or ""),
+    )
+
+
+async def _app_scope_for(user: dict | None) -> tuple[str, str]:
+    """The caller's tenant/workspace, resolved server side."""
+    return await _workspace_scope_for_apps_filter(user or {})
+
+
+async def _app_grant_context(
+    request: Request, name: str, user: dict | None
+) -> tuple[str, list[str], str | None, str | None]:
+    """Everything the embed needs, with authority taken only from the ledger.
+
+    Returns the HTML about to be served, the datasets the durable ledger grants
+    for this scope/app/digest, that digest, and the cartridge. A user-created
+    app, an unknown app, or one whose served HTML no longer matches the
+    reviewed revision resolves to an empty grant list — never to a fallback.
+    """
+    html_text, app_row = await _refinement_app_html(
+        name, getattr(request.state, "user", None) or user or {}
+    )
+    manifest = _packaged_manifest(name)
+    digest = _served_manifest_digest(name, html_text)
+    cartridge = (manifest or {}).get("cartridge_id") or _app_cartridge_id(
+        {"name": name, **(app_row or {})}
+    )
+    granted: list[str] = []
+    if digest:
+        tenant_id, workspace_id = await _app_scope_for(user)
+        try:
+            pool = await _get_db_pool()
+            async with pool.acquire() as conn:
+                await _set_rls_scope(conn, tenant_id, workspace_id)
+                granted = await _granted_datasets(
+                    conn,
+                    tenant_id=tenant_id,
+                    workspace_id=workspace_id,
+                    app_name=name,
+                    manifest_digest=digest,
+                )
+        except Exception:
+            # Fail closed: an unreachable ledger grants nothing.
+            logger.warning("[app-grants] grant lookup failed for %s", name, exc_info=True)
+            granted = []
+    return html_text, granted, digest, cartridge
 
 
 async def _workspace_app_content_for_embed(
@@ -2910,36 +3205,108 @@ async def serve_app_embed(
     name: str,
     user: dict = Depends(require_permission("apps.read")),
 ):
-    _validate_dataset_name(name)
-    _html_text, datasets_used = await _workspace_app_content_for_embed(
-        request, name, user
-    )
-    nonce = secrets.token_urlsafe(16)
-    return HTMLResponse(
-        content=_app_embed_wrapper_html(name, datasets_used, nonce),
-        headers={
-            "Content-Security-Policy": _app_embed_csp(nonce),
-            "X-Frame-Options": "SAMEORIGIN",
-        },
-    )
+    return await _build_app_embed_response(request, name, user)
 
 
-@app.get(
-    "/apps/{name}/content", dependencies=[Depends(require_permission("apps.read"))]
-)
+@app.get("/apps/{name}/content")
 async def serve_app_content_proxy(
     request: Request,
     name: str,
-    user: dict = Depends(require_permission("apps.read")),
+    cap: str = "",
 ):
+    """Untrusted app HTML, admitted only as a frame of our own wrapper.
+
+    The session cookie is deliberately not what authorises this route. Opened
+    as a top-level document it would render an attacker's page at our origin
+    and let it navigate to authenticated endpoints, where the browser
+    re-attaches the Lax cookie. The capability minted by /embed is the control;
+    the Fetch Metadata check below is a second, cheaper one.
+    """
+    # No session dependency on this route by design. The inner frame is
+    # credentialless, so it sends no cookie — gating on the cookie would 401
+    # before the capability was even read, and re-adding the cookie to make
+    # that work would hand the frame back the credentials the sandbox removes.
+    # The capability is the authorisation; everything in it is re-checked
+    # against the server's own state below.
+    user = await _require_app_content_capability(request, name, cap, None)
     return await _proxy_workspace_app(request, name, content=True, user=user)
+
+
+@app.get(
+    "/api/apps/{app_name}/data/{dataset}",
+    dependencies=[Depends(require_permission("apps.read"))],
+)
+async def api_app_scoped_data(
+    app_name: str,
+    dataset: str,
+    request: Request,
+    limit: int = 5000,
+    user: dict = Depends(require_permission("datasets.read")),
+):
+    """The definitive authority for a published app's data read.
+
+    The wrapper filters too, but that runs in the browser and a browser check
+    is a convenience, not a control. Everything is re-established here from the
+    server's own view: the caller's scope, the app's cartridge and install
+    state, the digest of the HTML currently served, and an unrevoked grant in
+    the durable ledger. Only then does it delegate to the ordinary dataset
+    read, which still applies RLS.
+    """
+    await _require_app_scoped_grant(request, app_name, dataset, user)
+    return await api_data(dataset=dataset, request=request, limit=limit, user=user)
+
+
+@app.get(
+    "/api/apps/{app_name}/data/{dataset}/options",
+    dependencies=[Depends(require_permission("apps.read"))],
+)
+async def api_app_scoped_data_options(
+    app_name: str,
+    dataset: str,
+    request: Request,
+    columns: str = "",
+    user: dict = Depends(require_permission("datasets.read")),
+):
+    await _require_app_scoped_grant(request, app_name, dataset, user)
+    return await api_data_options(dataset=dataset, columns=columns, user=user)
+
+
+@app.post(
+    "/api/apps/{app_name}/data/{dataset}/query",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("apps.read")),
+    ],
+)
+async def api_app_scoped_data_query(
+    app_name: str,
+    dataset: str,
+    request: Request,
+    body: dict = Body(default_factory=dict),
+    user: dict = Depends(require_permission("datasets.read")),
+):
+    await _require_app_scoped_grant(request, app_name, dataset, user)
+    return await api_data_query(dataset=dataset, request=request, body=body, user=user)
 
 
 @app.get("/apps/{name}", dependencies=[Depends(require_permission("apps.read"))])
 async def serve_app(
     name: str, request: Request, user: dict = Depends(require_permission("apps.read"))
 ):
-    return await _proxy_workspace_app(request, name, user=user)
+    """Send the caller to the app's canonical home instead of serving it here.
+
+    This route used to return the published HTML as a top-level, same-origin
+    document. Anything reaching it that way ran with the console's origin —
+    its storage, its cookies, its authenticated endpoints — which is exactly
+    the escape the viewer is built to prevent. The only supported path to app
+    content is the wrapper at ``/apps/{name}/embed``, and the only supported
+    entry point is the viewer, so a direct hit redirects there rather than
+    quietly handing back a second, unprotected way in.
+    """
+    _validate_dataset_name(name)
+    return RedirectResponse(
+        url=f"/analytics/viewer?app={quote(name, safe='')}", status_code=303
+    )
 
 
 async def _workspace_scope_for_apps_filter(user: dict | None) -> tuple[str, str]:
