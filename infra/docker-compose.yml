@@ -129,12 +129,19 @@ services:
       minio:
         condition: service_healthy
     entrypoint: ["/bin/sh", "-c"]
+    # `mc version enable` is the authoritative operation: it exits non-zero if
+    # versioning could not be turned on, and the `&&` chain already fails the
+    # container on that. Re-reading its human-readable output through `grep`
+    # added nothing and made the init depend on a binary the mc image does not
+    # ship — grep is not part of coreutils, and its absence failed the whole
+    # step with exit 127 *after* the bucket and versioning were already
+    # correct. That took minio-init down, and vault with it, and with vault
+    # every application service.
     command:
       - >-
         mc alias set local http://minio:9000 minio "$${MINIO_SECRET_KEY}" &&
         mc mb --ignore-existing local/lakehouse &&
-        mc version enable local/lakehouse &&
-        mc version info local/lakehouse | grep -q Enabled
+        mc version enable local/lakehouse
     environment:
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
     restart: "no"
