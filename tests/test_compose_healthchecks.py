@@ -197,3 +197,43 @@ def test_service_healthy_dependencies_have_healthchecks():
             if not healthcheck or not healthcheck.get("test"):
                 offenders.append(f"{service} waits on {target}, but {target} has no healthcheck")
     assert not offenders, "\n".join(offenders)
+
+
+# ── minio-init: no grep dependency ───────────────────────────────────────────
+
+# Same failure class as the healthcheck probes above, one service over. The
+# init chained `| grep -q Enabled` after `mc version enable`, and the mc image
+# does not ship grep (it is not part of coreutils). The step exited 127 *after*
+# the bucket and versioning were already correct, which took minio-init down,
+# vault with it, and every application service after that.
+#
+# Scoped to grep on purpose. That is the absence the reproduction demonstrated;
+# asserting the same about awk/sed/curl/wget/jq would be guessing at what else
+# the image lacks, and a test should only defend what was actually shown.
+
+
+def _minio_init_command() -> str:
+    compose = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
+    service = compose["services"]["minio-init"]
+    command = service.get("command")
+    if isinstance(command, list):
+        return " ".join(str(part) for part in command)
+    return str(command or "")
+
+
+def test_minio_init_does_not_depend_on_grep():
+    tokens = shlex.split(_minio_init_command())
+    assert "grep" not in tokens, (
+        "minio-init must not call grep: the mc image does not ship it, "
+        "and the init already fails closed on mc's own exit code"
+    )
+
+
+def test_minio_init_still_creates_the_bucket_and_enables_versioning():
+    """The init must keep doing its job — this is not a licence to drop steps."""
+    command = _minio_init_command()
+    assert "mc alias set local" in command
+    assert "mc mb --ignore-existing local/lakehouse" in command
+    assert "mc version enable local/lakehouse" in command
+    # Chained with && so any failing step fails the container.
+    assert command.count("&&") >= 2
