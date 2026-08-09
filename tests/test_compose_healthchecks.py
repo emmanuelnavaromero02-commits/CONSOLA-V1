@@ -199,7 +199,7 @@ def test_service_healthy_dependencies_have_healthchecks():
     assert not offenders, "\n".join(offenders)
 
 
-# ── minio-init: no shelling out to binaries the image lacks ──────────────────
+# ── minio-init: no grep dependency ───────────────────────────────────────────
 
 # Same failure class as the healthcheck probes above, one service over. The
 # init chained `| grep -q Enabled` after `mc version enable`, and the mc image
@@ -207,10 +207,9 @@ def test_service_healthy_dependencies_have_healthchecks():
 # the bucket and versioning were already correct, which took minio-init down,
 # vault with it, and every application service after that.
 #
-# Asserted as a property, not a line: the init may use whatever mc subcommands
-# it needs, but it must not depend on external utilities that the image is free
-# to stop shipping.
-_MC_IMAGE_MISSING = ("grep", "awk", "sed", "curl", "wget", "jq")
+# Scoped to grep on purpose. That is the absence the reproduction demonstrated;
+# asserting the same about awk/sed/curl/wget/jq would be guessing at what else
+# the image lacks, and a test should only defend what was actually shown.
 
 
 def _minio_init_command() -> str:
@@ -222,11 +221,10 @@ def _minio_init_command() -> str:
     return str(command or "")
 
 
-@pytest.mark.parametrize("binary", _MC_IMAGE_MISSING)
-def test_minio_init_does_not_depend_on_absent_utilities(binary):
+def test_minio_init_does_not_depend_on_grep():
     tokens = shlex.split(_minio_init_command())
-    assert binary not in tokens, (
-        f"minio-init must not call {binary}: the mc image does not ship it, "
+    assert "grep" not in tokens, (
+        "minio-init must not call grep: the mc image does not ship it, "
         "and the init already fails closed on mc's own exit code"
     )
 
