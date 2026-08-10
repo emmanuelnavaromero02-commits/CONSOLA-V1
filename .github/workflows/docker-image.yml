@@ -235,7 +235,7 @@ jobs:
           INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE: dummy_sap_hcm_to_console_key_for_ci_only_32chars_xxxxxxxx
           INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE: dummy_sap_s4hana_to_console_key_for_ci_only_32chars_xxxx
           INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE: dummy_sap_sf_to_console_key_for_ci_only_32chars_xxxxx
-        run: docker compose config --quiet
+        run: docker compose --env-file .env.example config --quiet
 
   no-compose-validation-needed:
     needs: changes

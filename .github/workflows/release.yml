@@ -94,7 +94,8 @@ jobs:
         env:
           AWS_REGION: us-east-1
           S3_BUCKET_NAME: dummy-lakehouse
-          AWS_ENV_FILE: infra/terraform/deploy/.env.example
+          AWS_ENV_FILE: ${{ github.workspace }}/infra/terraform/deploy/.env.example
+          MODECISSIONS_CONTROL_ROOM_EVIDENCE_ENV_FILE: /dev/null
           CONSOLE_URL: https://console.example.com
           WORKSPACE_PUBLIC_URL: https://workspace.example.com
           AIRFLOW_PUBLIC_URL: http://10.0.0.1:8082
