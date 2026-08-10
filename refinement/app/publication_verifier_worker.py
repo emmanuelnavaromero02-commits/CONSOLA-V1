@@ -149,6 +149,15 @@ def _handle(conn: socket.socket) -> dict[str, object]:
     raise ValueError("invalid verifier request")
 
 
+def _send_result(conn: socket.socket, result: dict[str, object]) -> bool:
+    payload = json.dumps(result, separators=(",", ":")).encode() + b"\n"
+    try:
+        conn.sendall(payload)
+    except ConnectionError:
+        return False
+    return True
+
+
 def serve(socket_path: str) -> None:
     path = Path(socket_path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -171,7 +180,7 @@ def serve(socket_path: str) -> None:
                         flush=True,
                     )
                     result = {"ok": False, "error": "verification unavailable"}
-                conn.sendall(json.dumps(result, separators=(",", ":")).encode() + b"\n")
+                _send_result(conn, result)
 
 
 if __name__ == "__main__":
