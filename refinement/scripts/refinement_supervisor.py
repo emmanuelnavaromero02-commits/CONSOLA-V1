@@ -16,6 +16,21 @@ RUNTIME_GROUP = "omega-refinement"
 SOCKET_PATH = "/run/omega/publication-verifier.sock"
 
 
+def _verifier_startup_timeout_seconds() -> float:
+    raw = os.environ.get("PUBLICATION_VERIFIER_STARTUP_TIMEOUT_SECONDS", "60")
+    try:
+        timeout = float(raw)
+    except ValueError as exc:
+        raise RuntimeError(
+            "publication verifier startup timeout must be between 1 and 120 seconds"
+        ) from exc
+    if not 1 <= timeout <= 120:
+        raise RuntimeError(
+            "publication verifier startup timeout must be between 1 and 120 seconds"
+        )
+    return timeout
+
+
 def _identity(name: str) -> tuple[int, int]:
     entry = pwd.getpwnam(name)
     return entry.pw_uid, entry.pw_gid
@@ -101,12 +116,13 @@ def supervise(command: list[str]) -> int:
     Path(SOCKET_PATH).unlink(missing_ok=True)
     verifier_env = _child_env(verifier=True, verifier_dsn=verifier_dsn)
     verifier_env["PUBLICATION_APP_UID"] = str(app_uid)
+    verifier_startup_timeout = _verifier_startup_timeout_seconds()
     verifier = subprocess.Popen(
         [sys.executable, "-m", "app.publication_verifier_worker"],
         env=verifier_env,
         preexec_fn=_drop(verifier_uid, verifier_gid),
     )
-    deadline = time.monotonic() + 10
+    deadline = time.monotonic() + verifier_startup_timeout
     while not Path(SOCKET_PATH).exists():
         if verifier.poll() is not None or time.monotonic() >= deadline:
             _terminate(verifier)
