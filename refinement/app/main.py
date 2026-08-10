@@ -6,6 +6,7 @@ transforma a Silver/Gold con términos de negocio y trazabilidad de lineage.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import io
 import hmac
@@ -71,6 +72,100 @@ _SECURITY_CONTEXT_SIGNATURE_TTL_SECONDS = 300
 _SECURITY_CONTEXT_SIGNATURE_FUTURE_SKEW_SECONDS = 30
 _SECURITY_CONTEXT_MIN_SIGNING_KEY_LEN = 32
 _RUNTIME_CONTEXT_VALIDATED = object()
+
+# Refinement runs with a 1 CPU / 1 GiB production quota. A single admitted
+# data-plane worker avoids the superlinear CPU/GIL contention observed when
+# dataset and source discovery run together. Readiness has a separate
+# single-flight lane below.
+_SYNC_IO_MAX_CONCURRENCY = 1
+_SYNC_LONG_IO_MAX_CONCURRENCY = 1
+_READINESS_TIMEOUT_SECONDS = 2.5
+_READINESS_SUCCESS_CACHE_TTL_SECONDS = 0.5
+_SERIALIZED_MCP_MUTATIONS = {
+    "delete_app",
+    "delete_dataset",
+    "materialize",
+    "publish_app",
+    "register_relationship",
+    "save_dataset",
+    "upsert_catalog_entries",
+}
+
+_sync_io_loop: asyncio.AbstractEventLoop | None = None
+_sync_io_gate: asyncio.Semaphore | None = None
+_sync_long_io_loop: asyncio.AbstractEventLoop | None = None
+_sync_long_io_gate: asyncio.Semaphore | None = None
+_readiness_loop: asyncio.AbstractEventLoop | None = None
+_readiness_lock: asyncio.Lock | None = None
+_readiness_in_flight: asyncio.Task | None = None
+_readiness_started_at: float | None = None
+_readiness_success_cache: tuple[float, dict[str, str]] | None = None
+
+
+def _sync_io_admission_gate() -> asyncio.Semaphore:
+    """Return the data-plane gate bound to the active server event loop."""
+    global _sync_io_gate, _sync_io_loop
+
+    loop = asyncio.get_running_loop()
+    if _sync_io_gate is None or _sync_io_loop is not loop:
+        _sync_io_loop = loop
+        _sync_io_gate = asyncio.Semaphore(_SYNC_IO_MAX_CONCURRENCY)
+    return _sync_io_gate
+
+
+def _sync_long_io_admission_gate() -> asyncio.Semaphore:
+    """Serialize mutations that could otherwise consume both data slots."""
+    global _sync_long_io_gate, _sync_long_io_loop
+
+    loop = asyncio.get_running_loop()
+    if _sync_long_io_gate is None or _sync_long_io_loop is not loop:
+        _sync_long_io_loop = loop
+        _sync_long_io_gate = asyncio.Semaphore(_SYNC_LONG_IO_MAX_CONCURRENCY)
+    return _sync_long_io_gate
+
+
+def _consume_background_task(task: asyncio.Task) -> None:
+    """Retrieve a detached task exception after its request was cancelled."""
+    try:
+        task.exception()
+    except asyncio.CancelledError:
+        pass
+
+
+async def _run_sync_io(func, *args, long_running: bool = False):
+    """Run synchronous data-plane I/O under the dedicated admission gate.
+
+    Once admitted, the worker keeps its token until it actually finishes.
+    Shielding is important for materialization: a disconnected caller must
+    not abandon the thread-local materialize/replay/update/reindex chain or
+    let a replacement worker exceed the configured capacity.
+    """
+    long_gate = _sync_long_io_admission_gate() if long_running else None
+    if long_gate is not None:
+        await long_gate.acquire()
+    gate = _sync_io_admission_gate()
+    try:
+        await gate.acquire()
+    except BaseException:
+        if long_gate is not None:
+            long_gate.release()
+        raise
+    try:
+        worker = asyncio.create_task(run_in_threadpool(func, *args))
+    except BaseException:
+        gate.release()
+        if long_gate is not None:
+            long_gate.release()
+        raise
+
+    def release_worker(_task: asyncio.Task) -> None:
+        gate.release()
+        if long_gate is not None:
+            long_gate.release()
+        _consume_background_task(_task)
+
+    worker.add_done_callback(release_worker)
+    return await asyncio.shield(worker)
 
 
 def _publication_snapshot_resolver() -> PublicationSnapshotResolver:
@@ -1235,6 +1330,18 @@ def verify_api_key(
     return x_internal_service
 
 
+async def verify_api_key_dependency(
+    x_api_key: str = Header(None), x_internal_service: str = Header(None)
+):
+    """Run the constant-time in-memory API-key check on the event loop.
+
+    FastAPI delegates synchronous dependencies to AnyIO's shared worker pool.
+    Keeping the original function callable preserves its focused auth tests,
+    while this async adapter prevents an unbounded pre-admission thread burst.
+    """
+    return verify_api_key(x_api_key, x_internal_service)
+
+
 app = FastAPI(title="MODecissionsPaaS Refinement", lifespan=lifespan)
 
 
@@ -1334,11 +1441,91 @@ def _readiness_checks() -> dict[str, str]:
     return checks
 
 
+def _readiness_state_lock() -> asyncio.Lock:
+    """Return the readiness lock and reset state after an event-loop change."""
+    global _readiness_in_flight, _readiness_lock, _readiness_loop
+    global _readiness_started_at, _readiness_success_cache
+
+    loop = asyncio.get_running_loop()
+    if _readiness_lock is None or _readiness_loop is not loop:
+        _readiness_loop = loop
+        _readiness_lock = asyncio.Lock()
+        _readiness_in_flight = None
+        _readiness_started_at = None
+        _readiness_success_cache = None
+    return _readiness_lock
+
+
+def _complete_readiness_task(task: asyncio.Task) -> None:
+    """Publish only healthy results and release the single-flight slot."""
+    global _readiness_in_flight, _readiness_started_at
+    global _readiness_success_cache
+
+    if task is not _readiness_in_flight:
+        _consume_background_task(task)
+        return
+    try:
+        checks = task.result()
+    except asyncio.CancelledError:
+        checks = None
+    except Exception:
+        logger.exception("refinement readyz dependency check crashed")
+        checks = None
+    loop = _readiness_loop
+    completed_within_deadline = (
+        loop is not None
+        and _readiness_started_at is not None
+        and loop.time() - _readiness_started_at <= _READINESS_TIMEOUT_SECONDS
+    )
+    if (
+        checks
+        and completed_within_deadline
+        and all(status == "up" for status in checks.values())
+    ):
+        if loop is not None:
+            _readiness_success_cache = (loop.time(), dict(checks))
+    _readiness_in_flight = None
+    _readiness_started_at = None
+
+
+async def _coalesced_readiness_checks() -> dict[str, str] | None:
+    """Share one bounded readiness check; never cache a degraded result."""
+    global _readiness_in_flight, _readiness_started_at
+
+    lock = _readiness_state_lock()
+    loop = asyncio.get_running_loop()
+    async with lock:
+        cached = _readiness_success_cache
+        if cached and loop.time() - cached[0] <= _READINESS_SUCCESS_CACHE_TTL_SECONDS:
+            return dict(cached[1])
+        task = _readiness_in_flight
+        if task is None:
+            task = asyncio.create_task(run_in_threadpool(_readiness_checks))
+            _readiness_in_flight = task
+            _readiness_started_at = loop.time()
+            task.add_done_callback(_complete_readiness_task)
+
+    try:
+        checks = await asyncio.wait_for(
+            asyncio.shield(task), timeout=_READINESS_TIMEOUT_SECONDS
+        )
+    except TimeoutError:
+        logger.error(
+            "refinement readyz dependency check timed out after %.1fs",
+            _READINESS_TIMEOUT_SECONDS,
+        )
+        return None
+    except Exception:
+        logger.exception("refinement readyz dependency check failed")
+        return None
+    return dict(checks)
+
+
 @app.get("/readyz")
 async def readyz():
     """Dependency readiness with sanitized public response."""
-    checks = await run_in_threadpool(_readiness_checks)
-    ok = all(status == "up" for status in checks.values())
+    checks = await _coalesced_readiness_checks()
+    ok = checks is not None and all(status == "up" for status in checks.values())
     return JSONResponse(
         {"ok": ok, "service": "refinement"},
         status_code=200 if ok else 503,
@@ -1348,7 +1535,7 @@ async def readyz():
 # ── MCP tools (consumidas por la consola y el LLM) ────────────────────────────
 
 
-@app.get("/mcp/tools", dependencies=[Depends(verify_api_key)])
+@app.get("/mcp/tools", dependencies=[Depends(verify_api_key_dependency)])
 async def mcp_tools():
     return {
         "tools": [
@@ -1833,9 +2020,54 @@ async def mcp_tools():
     }
 
 
+def _transform_source_schemas(body: dict, args: dict) -> dict:
+    ctx = _trusted_user_context(body, args)
+    return {
+        source: _schema_for_transform_source(body, source, ctx)
+        for source in args["sources"]
+    }
+
+
 @app.post("/mcp/invoke")
-async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)):
+async def mcp_invoke(
+    body: dict, internal_service: str = Depends(verify_api_key_dependency)
+):
     body = {**body, "_verified_internal_service": internal_service}
+    tool = body.get("tool")
+    args = body.get("args", {})
+
+    # SQL generation is genuinely async, but schema discovery performs
+    # synchronous Postgres/S3/DuckDB reads. Keep only the LLM call on the
+    # event loop and move the complete discovery operation to one worker.
+    if tool == "generate_transform":
+        layer = str(args.get("layer") or "silver").lower()
+        schemas = await _run_sync_io(_transform_source_schemas, body, args)
+        try:
+            sql, explanation = await generate_sql(
+                args["description"], schemas, layer=layer
+            )
+        except GeneratedSQLValidationError as exc:
+            raise HTTPException(
+                422, f"LLM SQL generation failed validation: {exc}"
+            ) from exc
+        return {
+            "sql": sql,
+            "explanation": explanation,
+            "cartridge": args.get("cartridge"),
+            "layer": layer,
+        }
+
+    # Every other MCP branch is synchronous and may reach Postgres, MinIO,
+    # DuckDB or HTTP. Delegating the whole branch (rather than individual
+    # calls) also preserves thread-local publication replay state.
+    return await _run_sync_io(
+        _mcp_invoke_sync,
+        body,
+        long_running=isinstance(tool, str) and tool in _SERIALIZED_MCP_MUTATIONS,
+    )
+
+
+def _mcp_invoke_sync(body: dict):
     tool = body.get("tool")
     args = body.get("args", {})
 
@@ -1863,27 +2095,6 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
         return engine.preview_source(
             args["source"], args.get("limit", 5), _trusted_user_context(body, args)
         )
-
-    if tool == "generate_transform":
-        ctx = _trusted_user_context(body, args)
-        layer = str(args.get("layer") or "silver").lower()
-        schemas = {
-            s: _schema_for_transform_source(body, s, ctx) for s in args["sources"]
-        }
-        try:
-            sql, explanation = await generate_sql(
-                args["description"], schemas, layer=layer
-            )
-        except GeneratedSQLValidationError as exc:
-            raise HTTPException(
-                422, f"LLM SQL generation failed validation: {exc}"
-            ) from exc
-        return {
-            "sql": sql,
-            "explanation": explanation,
-            "cartridge": args.get("cartridge"),
-            "layer": layer,
-        }
 
     if tool == "preview_transform":
         sources = _merge_declared_and_inferred_bronze_sources(
@@ -2061,7 +2272,7 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
 
     if tool == "list_datasets":
         sec = _require_security_permission(body, "datasets.read")
-        return await run_in_threadpool(_published_datasets_for_scope, sec)
+        return _published_datasets_for_scope(sec)
 
     if tool == "get_dataset_definition":
         sec = _require_security_permission(body, "datasets.read")
@@ -2204,8 +2415,7 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
 
     if tool == "get_data_catalog":
         sec = _require_security_permission(body, "datasets.read")
-        return await run_in_threadpool(
-            _get_data_catalog,
+        return _get_data_catalog(
             layer=args.get("layer"),
             cartridge=args.get("cartridge"),
             tags=args.get("tags"),
@@ -3121,14 +3331,18 @@ def _seed_relationships() -> int:
 # ── REST API ──────────────────────────────────────────────────────────────────
 
 
+def _list_datasets_sync(body: dict) -> dict[str, list[dict]]:
+    sec = _require_security_permission(body, "datasets.read")
+    return _published_datasets_for_scope(sec, True)
+
+
 @app.get("/datasets")
 async def list_datasets(
     x_security_context: str | None = Header(None, alias="x-security-context"),
-    internal_service: str = Depends(verify_api_key),
+    internal_service: str = Depends(verify_api_key_dependency),
 ):
     body = _body_from_security_header(internal_service, x_security_context)
-    sec = _require_security_permission(body, "datasets.read")
-    return await run_in_threadpool(_published_datasets_for_scope, sec, True)
+    return await _run_sync_io(_list_datasets_sync, body)
 
 
 def _reindex_dataset_best_effort(name: str, auth_body: dict | None = None) -> None:
@@ -3227,13 +3441,7 @@ def _annotate_staleness(datasets: list[dict], sec: dict | None = None) -> None:
             dataset["staleness_reason"] = reason
 
 
-@app.get("/datasets/{name}/definition")
-async def dataset_definition(
-    name: str,
-    x_security_context: str | None = Header(None, alias="x-security-context"),
-    internal_service: str = Depends(verify_api_key),
-):
-    body = _body_from_security_header(internal_service, x_security_context)
+def _dataset_definition_sync(name: str, body: dict) -> dict:
     sec = _require_security_permission(body, "datasets.read")
     ds = _get_dataset_scoped(name, sec)
     if not ds:
@@ -3245,13 +3453,17 @@ async def dataset_definition(
     return _sanitize_dataset_for_scope(sec, published)
 
 
-@app.get("/datasets/{name}/schema")
-async def dataset_schema(
+@app.get("/datasets/{name}/definition")
+async def dataset_definition(
     name: str,
     x_security_context: str | None = Header(None, alias="x-security-context"),
-    internal_service: str = Depends(verify_api_key),
+    internal_service: str = Depends(verify_api_key_dependency),
 ):
     body = _body_from_security_header(internal_service, x_security_context)
+    return await _run_sync_io(_dataset_definition_sync, name, body)
+
+
+def _dataset_schema_sync(name: str, body: dict) -> dict:
     sec = _require_security_permission(body, "datasets.read")
     ds = _get_dataset_scoped(name, sec)
     if not ds:
@@ -3260,7 +3472,19 @@ async def dataset_schema(
     return engine.get_dataset_schema(ds, _trusted_user_context(body, {}))
 
 
-@app.get("/datasets/{name}/data", dependencies=[Depends(verify_api_key)])
+@app.get("/datasets/{name}/schema")
+async def dataset_schema(
+    name: str,
+    x_security_context: str | None = Header(None, alias="x-security-context"),
+    internal_service: str = Depends(verify_api_key_dependency),
+):
+    body = _body_from_security_header(internal_service, x_security_context)
+    return await _run_sync_io(_dataset_schema_sync, name, body)
+
+
+@app.get(
+    "/datasets/{name}/data", dependencies=[Depends(verify_api_key_dependency)]
+)
 async def dataset_data(name: str, limit: int = 100):
     # This GET endpoint cannot carry a per-user context, so it must not
     # return data — callers must use POST /mcp/invoke with tool=query_dataset
@@ -3272,13 +3496,7 @@ async def dataset_data(name: str, limit: int = 100):
     )
 
 
-@app.post("/datasets/{name}/refresh")
-async def refresh_dataset(
-    name: str,
-    x_security_context: str | None = Header(None, alias="x-security-context"),
-    internal_service: str = Depends(verify_api_key),
-):
-    auth_body = _body_from_security_header(internal_service, x_security_context)
+def _refresh_dataset_sync(name: str, auth_body: dict) -> dict:
     sec = _require_security_permission(auth_body, "datasets.write")
     store_scope = _dataset_store_scope(sec)
     ds = store.get_dataset(name, **store_scope)
@@ -3294,11 +3512,19 @@ async def refresh_dataset(
     return result
 
 
-@app.post("/refresh-by-source")
-async def refresh_by_source(
-    body: dict,
-    internal_service: str = Depends(verify_api_key),
+@app.post("/datasets/{name}/refresh")
+async def refresh_dataset(
+    name: str,
+    x_security_context: str | None = Header(None, alias="x-security-context"),
+    internal_service: str = Depends(verify_api_key_dependency),
 ):
+    auth_body = _body_from_security_header(internal_service, x_security_context)
+    return await _run_sync_io(
+        _refresh_dataset_sync, name, auth_body, long_running=True
+    )
+
+
+def _refresh_by_source_sync(body: dict, internal_service: str) -> dict:
     """
     Re-materializa todos los datasets Silver/Master cuyas fuentes incluyen
     la ruta Bronze indicada. Llamado automáticamente por el job_runner
@@ -3395,3 +3621,13 @@ async def refresh_by_source(
         "refreshed": len([r for r in results if r.get("status") == "ok"]),
         "results": results,
     }
+
+
+@app.post("/refresh-by-source")
+async def refresh_by_source(
+    body: dict,
+    internal_service: str = Depends(verify_api_key_dependency),
+):
+    return await _run_sync_io(
+        _refresh_by_source_sync, body, internal_service, long_running=True
+    )
