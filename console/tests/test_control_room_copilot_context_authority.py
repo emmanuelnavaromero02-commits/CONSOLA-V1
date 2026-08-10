@@ -35,9 +35,6 @@ def modules():
 def _client(router, user: dict, *, bypass_csrf: bool = True) -> TestClient:
     from starlette.middleware.base import BaseHTTPMiddleware
 
-    from app.dependencies import require_authenticated
-    from app.services.csrf import require_csrf
-
     class InjectUser(BaseHTTPMiddleware):
         async def dispatch(self, request, call_next):
             request.state.user = user
@@ -46,9 +43,9 @@ def _client(router, user: dict, *, bypass_csrf: bool = True) -> TestClient:
     app = FastAPI()
     app.add_middleware(InjectUser)
     app.include_router(router.router)
-    app.dependency_overrides[require_authenticated] = lambda: user
+    app.dependency_overrides[router.require_authenticated] = lambda: user
     if bypass_csrf:
-        app.dependency_overrides[require_csrf] = lambda: None
+        app.dependency_overrides[router.require_csrf] = lambda: None
     return TestClient(app)
 
 

@@ -16,13 +16,14 @@ Covered:
   * Pages exist for grid and detail.
   * Build outputs /cartridges and /cartridges/viewer static routes.
 """
+
 from __future__ import annotations
 
 import re
 from pathlib import Path
 
 
-REPO     = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[1]
 NEXT_SRC = REPO / "console-next/src"
 
 
@@ -35,11 +36,17 @@ def _read(path: Path) -> str:
 
 def test_cartridges_api_helpers_exist():
     src = _read(NEXT_SRC / "lib/cartridges.ts")
-    for fn in ("listCartridges", "getConnectorSchema", "saveCredentials",
-               "testConnection", "deleteCredentials", "activateCartridge"):
-        assert f"export async function {fn}" in src, (
-            f"lib/cartridges.ts missing helper {fn}"
-        )
+    for fn in (
+        "listCartridges",
+        "getConnectorSchema",
+        "saveCredentials",
+        "testConnection",
+        "deleteCredentials",
+        "activateCartridge",
+    ):
+        assert (
+            f"export async function {fn}" in src
+        ), f"lib/cartridges.ts missing helper {fn}"
 
 
 def test_hubspot_is_visible_in_next_cartridge_surfaces():
@@ -89,12 +96,14 @@ def test_cartridges_api_helper_handles_dict_form_schema():
 
 def test_use_cartridges_hooks_present():
     src = _read(NEXT_SRC / "lib/hooks/useCartridges.ts")
-    for hook in ("useCartridgeList", "useConnectorSchema",
-                 "useSaveCredentials", "useTestConnection",
-                 "useDeleteCredentials"):
-        assert f"export function {hook}" in src, (
-            f"useCartridges missing hook {hook}"
-        )
+    for hook in (
+        "useCartridgeList",
+        "useConnectorSchema",
+        "useSaveCredentials",
+        "useTestConnection",
+        "useDeleteCredentials",
+    ):
+        assert f"export function {hook}" in src, f"useCartridges missing hook {hook}"
 
 
 def test_save_and_delete_invalidate_cartridges_root_key():
@@ -102,7 +111,7 @@ def test_save_and_delete_invalidate_cartridges_root_key():
     # Both mutating hooks must call queryClient.invalidateQueries on
     # the root cartridges key so the grid badge reflects the change.
     assert src.count("invalidateQueries") >= 2
-    assert 'queryKey: [ROOT_KEY]' in src
+    assert "queryKey: [ROOT_KEY]" in src
     assert 'const ROOT_KEY = "cartridges"' in src
 
 
@@ -157,7 +166,7 @@ def test_credentials_form_uses_vault_cta_for_credentials():
 def test_credentials_form_password_field_has_eye_toggle():
     """The brief calls out password handling only for Vault-scoped flows,\n    so this component no longer renders local password inputs."""
     src = _read(NEXT_SRC / "components/cartridges/CredentialsForm.tsx")
-    assert "type=\"password\"" not in src
+    assert 'type="password"' not in src
     assert "Eye" not in src
     assert "EyeOff" not in src
 
@@ -223,13 +232,15 @@ def test_grid_derives_status_from_kpi_freshness():
     """The grid avoids a second per-cartridge endpoint by reading
     /api/dashboard/kpis.data_freshness. Lock the mapping:
       never      → unconfigured
-      very_stale → failed
-      fresh|stale → connected
+      stale      → stale
+      very_stale → very_stale
+      fresh      → connected
     """
     src = _read(NEXT_SRC / "app/(shell)/cartridges/page.tsx")
     assert "useKpis" in src
     assert '"unconfigured"' in src
-    assert '"failed"' in src
+    assert 'if (info.status === "stale") return "stale"' in src
+    assert 'if (info.status === "very_stale") return "very_stale"' in src
     assert '"connected"' in src
     assert "data_freshness" in src
 
@@ -239,6 +250,7 @@ def test_grid_derives_status_from_kpi_freshness():
 
 def test_package_json_pins_form_deps():
     import json
+
     pkg = json.loads(_read(REPO / "console-next/package.json"))
     deps = pkg["dependencies"]
     for dep in ("react-hook-form", "@hookform/resolvers", "zod"):

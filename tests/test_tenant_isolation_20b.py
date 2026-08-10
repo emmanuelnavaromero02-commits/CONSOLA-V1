@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -106,10 +107,33 @@ def test_catalog_refinement_and_mcp_infra_set_db_scope_before_catalog_access():
     assert "def _default_workspace_security_context" in refinement
     assert "scope_status = 'scoped'" in refinement
     assert "ON CONFLICT (workspace_id, dataset, column_name)" in refinement
-    assert "ON CONFLICT (workspace_id, from_dataset, from_column, to_dataset, to_column)" in refinement
+    assert (
+        "ON CONFLICT (workspace_id, from_dataset, from_column, to_dataset, to_column)"
+        in refinement
+    )
 
     duckdb_engine = _read(REPO / "refinement/app/duckdb_engine.py")
-    assert "user_context   = user_context" in duckdb_engine
+    tree = ast.parse(duckdb_engine)
+    materialize = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "materialize"
+    )
+    catalog_calls = [
+        node
+        for node in ast.walk(materialize)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "_update_catalog"
+    ]
+    assert len(catalog_calls) == 1
+    user_context = next(
+        keyword.value
+        for keyword in catalog_calls[0].keywords
+        if keyword.arg == "user_context"
+    )
+    assert isinstance(user_context, ast.Name)
+    assert user_context.id == "user_context"
     assert "workspace_id = EXCLUDED.workspace_id" not in duckdb_engine
     assert "ON CONFLICT (workspace_id, dataset, column_name)" in duckdb_engine
 
@@ -133,13 +157,23 @@ def test_startup_seeders_declare_platform_or_workspace_scope():
     assert "scope_status = 'platform_template'" in packaged_apps
 
     dataset_store = _read(REPO / "refinement/app/dataset_store.py")
-    save_dataset = dataset_store.split("def save_dataset", 1)[1].split("def delete_dataset", 1)[0]
-    assert "workspace_id = ds.get(\"workspace_id\") or _default_workspace_id(cur)" in save_dataset
-    assert "tenant_id = ds.get(\"tenant_id\") or _tenant_for_workspace(cur, workspace_id)" in save_dataset
+    save_dataset = dataset_store.split("def save_dataset", 1)[1].split(
+        "def delete_dataset", 1
+    )[0]
+    assert (
+        'workspace_id = ds.get("workspace_id") or _default_workspace_id(cur)'
+        in save_dataset
+    )
+    assert (
+        'tenant_id = ds.get("tenant_id") or _tenant_for_workspace(cur, workspace_id)'
+        in save_dataset
+    )
     assert "_apply_scope(cur, tenant_id, workspace_id)" in save_dataset
 
     refinement = _read(REPO / "refinement/app/main.py")
-    seed_relationships = refinement.split("def _seed_relationships", 1)[1].split("# ── REST API", 1)[0]
+    seed_relationships = refinement.split("def _seed_relationships", 1)[1].split(
+        "# ── REST API", 1
+    )[0]
     assert "_default_workspace_security_context()" in seed_relationships
     assert "tenant_id, workspace_id, scope_status" in seed_relationships
     assert "security_context=security_context" in seed_relationships
@@ -161,8 +195,16 @@ def _tenant_like_tables(sql: str) -> set[str]:
 def _assert_tenant_like_tables_have_rls(sql: str) -> None:
     for table in _tenant_like_tables(sql):
         table_re = re.escape(table)
-        assert re.search(rf"ALTER\s+TABLE\s+(?:public\.)?{table_re}\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY", sql, re.I)
-        assert re.search(rf"ALTER\s+TABLE\s+(?:public\.)?{table_re}\s+FORCE\s+ROW\s+LEVEL\s+SECURITY", sql, re.I)
+        assert re.search(
+            rf"ALTER\s+TABLE\s+(?:public\.)?{table_re}\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY",
+            sql,
+            re.I,
+        )
+        assert re.search(
+            rf"ALTER\s+TABLE\s+(?:public\.)?{table_re}\s+FORCE\s+ROW\s+LEVEL\s+SECURITY",
+            sql,
+            re.I,
+        )
     assert "USING (true)" not in sql
 
 

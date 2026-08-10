@@ -32,6 +32,7 @@ import requests
 from airflow.decorators import dag, task
 from minio import Minio
 from urllib3.util.retry import Retry
+from runtime_security_context import build_pipeline_run_context
 
 VALUE = os.environ.get("X", "ok")
 """

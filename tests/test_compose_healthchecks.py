@@ -6,6 +6,7 @@ must each declare a healthcheck so dependent services can wait on
 itself is asserted to use python3 -c (the images are python:3.12-slim
 and don't ship with wget/curl).
 """
+
 from __future__ import annotations
 
 import shlex
@@ -20,11 +21,15 @@ COMPOSE = REPO_ROOT / "infra" / "docker-compose.yml"
 
 
 APP_SERVICES_WITH_PORTS = {
-    "console":    8000,
-    "workspace":  8001,
+    "console": 8000,
+    "workspace": 8001,
     "refinement": 8500,
-    "vault":      8300,
-    "mcp-infra":  8010,
+    "vault": 8300,
+    "mcp-infra": 8010,
+}
+APP_SERVICE_HEALTH_PATHS = {
+    service: "/readyz" if service == "refinement" else "/healthz"
+    for service in APP_SERVICES_WITH_PORTS
 }
 
 
@@ -49,17 +54,19 @@ def test_app_service_has_healthcheck(service):
 
 @pytest.mark.parametrize("service,port", sorted(APP_SERVICES_WITH_PORTS.items()))
 def test_app_service_healthcheck_targets_healthz_on_correct_port(service, port):
-    """The probe must hit /healthz on the service's own port. A wrong
-    port silently fails forever — start_period: 20s masks it until
-    retries are exhausted, then dependent services never start."""
+    """The probe must hit the approved endpoint on the service's own port.
+
+    Refinement intentionally uses dependency-aware /readyz because downstream
+    services must not start before Postgres, DuckDB and the publication verifier
+    are ready. The remaining app services use their cheap /healthz endpoint.
+    """
     hc = _compose_doc()["services"][service]["healthcheck"]
     # `test:` can be either ["CMD", arg1, arg2, …] or ["CMD-SHELL", "string"]
     joined = _healthcheck_command(service)
-    assert "/healthz" in joined, (
-        f"{service} healthcheck does not call /healthz: {joined!r}"
-    )
-    assert f":{port}/" in joined, (
-        f"{service} healthcheck does not target port {port}: {joined!r}"
+    endpoint = APP_SERVICE_HEALTH_PATHS[service]
+    assert f":{port}{endpoint}" in joined, (
+        f"{service} healthcheck does not target {endpoint} on port {port}: "
+        f"{joined!r}"
     )
 
 
@@ -116,15 +123,24 @@ def test_app_service_healthcheck_has_start_period(service):
 # Init / one-shot containers exit with status 0 by design; docker compose
 # represents their terminal state as Exited (0), not a healthy/unhealthy
 # pair, so a healthcheck on these would only confuse compose ps.
-_INIT_SERVICES = {"airflow-init", "superset-init", "postgres_dev_seed"}
+_INIT_SERVICES = {
+    "airflow-init",
+    "minio-init",
+    "superset-init",
+    "postgres_dev_seed",
+}
 
 
 def _long_running_services():
     doc = _compose_doc()
-    return [
-        name for name in doc.get("services", {})
-        if name not in _INIT_SERVICES
-    ]
+    return [name for name in doc.get("services", {}) if name not in _INIT_SERVICES]
+
+
+def test_minio_init_is_classified_as_one_shot():
+    service = _compose_doc()["services"]["minio-init"]
+    assert "minio-init" in _INIT_SERVICES
+    assert "minio-init" not in _long_running_services()
+    assert service.get("restart") == "no"
 
 
 @pytest.mark.parametrize("service", sorted(_long_running_services()))
@@ -195,7 +211,9 @@ def test_service_healthy_dependencies_have_healthchecks():
             target_body = services.get(target) or {}
             healthcheck = target_body.get("healthcheck")
             if not healthcheck or not healthcheck.get("test"):
-                offenders.append(f"{service} waits on {target}, but {target} has no healthcheck")
+                offenders.append(
+                    f"{service} waits on {target}, but {target} has no healthcheck"
+                )
     assert not offenders, "\n".join(offenders)
 
 

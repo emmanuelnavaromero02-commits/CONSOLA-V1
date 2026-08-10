@@ -27,6 +27,7 @@ short-circuit before any DB access on these probes). They would have
 caught the v1.44.3.2.2 R-Mac regression in CI rather than waiting
 for Codex's Mac curl.
 """
+
 from __future__ import annotations
 
 import os
@@ -72,6 +73,7 @@ def client(monkeypatch_module):
     from starlette.testclient import TestClient
 
     from app.main import app
+
     return TestClient(app)
 
 
@@ -99,7 +101,7 @@ def test_options_preflight_returns_allow_origin(client):
         "/auth/login",
         headers={
             "Origin": "http://localhost:8001",
-            "Access-Control-Request-Method":  "POST",
+            "Access-Control-Request-Method": "POST",
             "Access-Control-Request-Headers": "X-CSRF-Token,Content-Type",
         },
     )
@@ -139,8 +141,10 @@ def test_options_preflight_for_disallowed_origin_returns_no_allow_origin(client)
     )
     # Either the preflight rejects or it succeeds without Allow-Origin.
     # Starlette's CORSMiddleware emits 400 on origin mismatch.
-    assert r.headers.get("access-control-allow-origin") is None or \
-           r.headers.get("access-control-allow-origin") != "http://evil.example.com"
+    assert (
+        r.headers.get("access-control-allow-origin") is None
+        or r.headers.get("access-control-allow-origin") != "http://evil.example.com"
+    )
 
 
 # ── Simple requests carry Allow-Origin on the response ─────────────────
@@ -203,7 +207,7 @@ def test_x_csrf_token_in_allow_headers(client):
         "/auth/login",
         headers={
             "Origin": "http://localhost:8001",
-            "Access-Control-Request-Method":  "POST",
+            "Access-Control-Request-Method": "POST",
             "Access-Control-Request-Headers": "X-CSRF-Token",
         },
     )
@@ -255,18 +259,29 @@ def test_cors_middleware_is_outermost(client):
 
 
 def test_middleware_stack_full_snapshot(client):
-    """R-Mac-3 review (DevOps P2): pinning only [0] and [1] lets a
-    future refactor slip a new middleware in at index 2 without
-    anyone noticing. Snapshot the full ordering so any reordering
-    forces a test update + reviewer awareness."""
+    """Pin the semantic dispatch order, not Starlette's wrapper class.
+
+    ``@app.middleware("http")`` registers every function through the same
+    ``BaseHTTPMiddleware`` class. Comparing class names alone cannot tell an
+    auth wrapper from a security-header or navigation wrapper, so it both
+    misses semantic reordering and fails opaquely when a new dispatch is
+    added.
+    """
     from app.main import app
 
-    actual = [m.cls.__name__ for m in app.user_middleware]
+    def semantic_name(middleware):
+        dispatch = middleware.kwargs.get("dispatch")
+        if dispatch is not None:
+            return dispatch.__name__
+        return middleware.cls.__name__
+
+    actual = [semantic_name(middleware) for middleware in app.user_middleware]
     expected = [
-        "CORSMiddleware",        # OUTERMOST — must see every request, incl. preflight
-        "RequestIDMiddleware",   # X-Request-ID on auth 401s (v1.42.1 invariant)
-        "BaseHTTPMiddleware",    # auth_middleware (@app.middleware decorator)
-        "BaseHTTPMiddleware",    # security_headers_middleware (@app.middleware decorator)
+        "CORSMiddleware",  # OUTERMOST — sees preflight and short-circuit responses
+        "RequestIDMiddleware",  # X-Request-ID still lands on auth failures
+        "auth_middleware",
+        "security_headers_middleware",
+        "api_navigation_guard_middleware",
     ]
     assert actual == expected, (
         f"Middleware ordering changed unexpectedly.\n"

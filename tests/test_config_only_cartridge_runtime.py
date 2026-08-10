@@ -29,7 +29,10 @@ def _read(path: str) -> str:
 def _function_args(source: str, name: str) -> set[str]:
     tree = ast.parse(source)
     for node in ast.walk(tree):
-        if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)) and node.name == name:
+        if (
+            isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))
+            and node.name == name
+        ):
             return {arg.arg for arg in node.args.args + node.args.kwonlyargs}
     raise AssertionError(f"function not found: {name}")
 
@@ -98,19 +101,34 @@ def test_semantic_and_control_room_use_config_only_entitlements_not_vault_only_c
     main = _read("console/app/main.py")
     control_room = _read("console/app/services/control_room/api.py")
     control_room_page = _read("console-next/src/app/(shell)/control-room/page.tsx")
+    experience_page = _read(
+        "console-next/src/components/control-room/experience/ControlRoomExperiencePage.tsx"
+    )
+    experience_client = _read("console-next/src/lib/control-room/experience-client.ts")
 
     assert "def _resolve_scoped_config_cartridge(" in main
-    semantic_section = main.split('@app.get("/api/semantic"', 1)[1].split("# ── Data Catalog API", 1)[0]
-    assert "cartridge, _active = await _resolve_scoped_operation_cartridge(" in semantic_section
+    semantic_section = main.split('@app.get("/api/semantic"', 1)[1].split(
+        "# ── Data Catalog API", 1
+    )[0]
+    assert (
+        "cartridge, _active = await _resolve_scoped_operation_cartridge("
+        in semantic_section
+    )
     assert "must not require an active Vault" in main
 
-    installation_filter = control_room.split("async def _filter_installations_by_scoped_connections", 1)[1].split("@_bind_to_core", 1)[0]
-    assert "connected = [row for row in candidates if row.get(\"connection_count\")]" in installation_filter
+    installation_filter = control_room.split(
+        "async def _filter_installations_by_scoped_connections", 1
+    )[1].split("@_bind_to_core", 1)[0]
+    assert (
+        'connected = [row for row in candidates if row.get("connection_count")]'
+        in installation_filter
+    )
     assert "return connected or candidates" in installation_filter
 
-    assert "successFactorsAvailable" in control_room_page
-    assert "clearSuccessFactorsState" in control_room_page
-    assert "item.connector_id === \"sap_successfactors\"" in control_room_page
+    assert "ControlRoomExperiencePage" in control_room_page
+    assert "useControlRoomExperience" in experience_page
+    assert "CONTROL_ROOM_EXPERIENCE_ENDPOINT" in experience_client
+    assert '"/api/control-room/experience/v2"' in experience_client
 
 
 def test_users_and_vault_are_workspace_scoped_in_ui():
@@ -164,4 +182,6 @@ def test_mcp_generic_cartridge_tools_do_not_expose_client_owned_scope_args():
     assert "_scoped_rag_source_name(" in tools
     assert "connections = []" in tools
     assert "if not workspace_scoped:" in tools
-    assert "resolved = _scope_cartridge_sql(sql, cartridge_id, security_context)" in tools
+    assert (
+        "resolved = _scope_cartridge_sql(sql, cartridge_id, security_context)" in tools
+    )

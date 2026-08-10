@@ -1,6 +1,16 @@
 from __future__ import annotations
 
+import os
 import uuid
+
+import pytest
+
+
+if os.environ.get("OMEGA_OPERATIONAL_TRUTH_E2E") != "1":
+    pytest.skip(
+        "operational truth E2E runs only through its isolated compose gate",
+        allow_module_level=True,
+    )
 
 from .clients import (
     assert_airflow_replay_rejected,

@@ -17,8 +17,16 @@ from tests.test_staged_publication_live import staged_publication_live_stack
 
 
 def _engine(
-    stack: LiveStack, monkeypatch: pytest.MonkeyPatch, bucket: str = "lakehouse"
+    stack: LiveStack,
+    monkeypatch: pytest.MonkeyPatch,
+    bucket: str = "lakehouse",
+    *,
+    database_url: str | None = None,
 ):
+    if database_url is None:
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+    else:
+        monkeypatch.setenv("DATABASE_URL", database_url)
     for name, value in {
         "GOLD_DATABASE_URL": stack.reader_dsn,
         "GOLD_PUBLISHER_DATABASE_URL": stack.publisher_dsn,

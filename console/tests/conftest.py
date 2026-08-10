@@ -39,6 +39,7 @@ def _looks_like_auth_stub(module: object) -> bool:
 
 sys.modules.pop("app.services.auth", None)
 CANONICAL_AUTH = import_module("app.services.auth")
+CANONICAL_DEPENDENCIES = import_module("app.dependencies")
 
 
 def _restore_real_auth_module() -> None:
@@ -60,12 +61,22 @@ def _restore_real_auth_module() -> None:
             setattr(module, "auth", auth)
 
 
+def _restore_real_dependencies_module() -> None:
+    if sys.modules.get("app.dependencies") is not CANONICAL_DEPENDENCIES:
+        sys.modules["app.dependencies"] = CANONICAL_DEPENDENCIES
+    app_pkg = import_module("app")
+    if getattr(app_pkg, "dependencies", None) is not CANONICAL_DEPENDENCIES:
+        setattr(app_pkg, "dependencies", CANONICAL_DEPENDENCIES)
+
+
 _restore_real_auth_module()
+_restore_real_dependencies_module()
 
 
 @pytest.fixture(autouse=True)
 def _isolate_console_auth_stubs(monkeypatch):
     _restore_real_auth_module()
+    _restore_real_dependencies_module()
     scoped_reads = import_module("app.domains.data_platform.scoped_reads")
 
     async def stable_publication_epoch(_user):
@@ -74,3 +85,4 @@ def _isolate_console_auth_stubs(monkeypatch):
     monkeypatch.setattr(scoped_reads, "publication_epoch", stable_publication_epoch)
     yield
     _restore_real_auth_module()
+    _restore_real_dependencies_module()

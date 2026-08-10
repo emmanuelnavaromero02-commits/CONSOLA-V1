@@ -20,6 +20,7 @@ from tests.test_control_room_live_postgres_operational_truth_pipeline import (
 )
 from tests.test_operational_rls_console_refinement import (
     OMEGA_OUTCOME_BINDER_PASSWORD,
+    OMEGA_REFINEMENT_PASSWORD,
     POSTGRES_PASSWORD,
     omega_console_live_dsn,
     postgres_with_real_init_schema,
@@ -79,6 +80,10 @@ async def test_gold_refresh_crashes_converge_to_one_binding(
         ],
     )
     for name, value in {
+        "DATABASE_URL": postgres_with_real_init_schema.replace(
+            f"postgres:{POSTGRES_PASSWORD}",
+            f"omega_refinement:{OMEGA_REFINEMENT_PASSWORD}",
+        ),
         "GOLD_DATABASE_URL": stack.reader_dsn,
         "GOLD_PUBLISHER_DATABASE_URL": stack.publisher_dsn,
         "MINIO_ENDPOINT": stack.minio_endpoint.removeprefix("http://"),

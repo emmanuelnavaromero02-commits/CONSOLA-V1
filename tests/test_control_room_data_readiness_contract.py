@@ -12,7 +12,16 @@ CONTROL_ROOM_CORE = REPO / "console/app/services/control_room/core.py"
 CONTROL_ROOM_API = REPO / "console/app/services/control_room/api.py"
 CONTROL_ROOM_STATE = REPO / "console/app/services/control_room/state.py"
 CONTROL_ROOM_UI = REPO / "console-next/src/app/(shell)/control-room/page.tsx"
-READINESS_MANIFEST = REPO / "console/app/services/control_room/data_readiness_manifest.yaml"
+CONTROL_ROOM_EXPERIENCE_UI = (
+    REPO
+    / "console-next/src/components/control-room/experience/ControlRoomExperiencePage.tsx"
+)
+CONTROL_ROOM_EXPERIENCE_CLIENT = (
+    REPO / "console-next/src/lib/control-room/experience-client.ts"
+)
+READINESS_MANIFEST = (
+    REPO / "console/app/services/control_room/data_readiness_manifest.yaml"
+)
 
 
 def _readiness_entries() -> list[dict]:
@@ -57,9 +66,14 @@ def test_control_room_source_contract_columns_match_known_dataset_shapes():
         assert good_field in src
 
 
-def test_dashboard_exposes_data_readiness_in_backend_and_ui():
-    backend = "\n".join(_read(path) for path in (CONTROL_ROOM_CORE, CONTROL_ROOM_API, CONTROL_ROOM_STATE))
-    ui = _read(CONTROL_ROOM_UI)
+def test_dashboard_tracks_readiness_and_projects_a_sanitized_experience_ui():
+    backend = "\n".join(
+        _read(path)
+        for path in (CONTROL_ROOM_CORE, CONTROL_ROOM_API, CONTROL_ROOM_STATE)
+    )
+    ui_root = _read(CONTROL_ROOM_UI)
+    ui_experience = _read(CONTROL_ROOM_EXPERIENCE_UI)
+    ui_client = _read(CONTROL_ROOM_EXPERIENCE_CLIENT)
     for needle in (
         "operationally_ready",
         "data_ready_modules",
@@ -69,22 +83,19 @@ def test_dashboard_exposes_data_readiness_in_backend_and_ui():
         "readiness_blockers",
     ):
         assert needle in backend
-        assert needle in ui
-    assert "frentes con se\u00f1ales" in ui
-    assert "listos para decidir" in ui
-    for label in (
-        "datos parciales",
-        "fuera de alcance actual",
-        "Requiere permisos OData",
-        "Dataset no materializado",
-        "Sin datos configurados",
-        "No aplica",
+    assert "ControlRoomExperiencePage" in ui_root
+    assert "useControlRoomExperience" in ui_experience
+    assert "ControlRoomExperienceV2" in ui_experience
+    assert '"/api/control-room/experience/v2"' in ui_client
+    for backend_only_field in (
+        "operationally_ready",
+        "partial_modules",
+        "stub_modules",
+        "readiness_reason",
+        "readiness_blockers",
     ):
-        assert label in ui
-    assert "Bloqueado por permisos." not in ui
-    assert "Datos incompletos para una decisi\u00f3n autom\u00e1tica." not in ui
-    assert "sin informaci\u00f3n suficiente" not in ui
-    assert "modulos activos" not in ui
+        assert backend_only_field not in ui_root
+        assert backend_only_field not in ui_experience
 
 
 def test_readyz_supports_strict_control_room_data_mode():
@@ -101,9 +112,21 @@ def test_readyz_supports_strict_control_room_data_mode():
         assert "intelligence_opt_out_allowed" in src
         assert "require_data=require_intelligence_data" in src
         assert re.search(r"status_code=200 if ok else 503", src)
-    assert "silver_lineage" in readyz_data_src
+    assert "omega_publication.dataset_publication_heads" in readyz_data_src
+    assert "omega_publication.materialization_runs" in readyz_data_src
+    assert "r.status IN ('published','legacy_unverified')" in readyz_data_src
+    assert "h.layer='gold'" in readyz_data_src
+    assert "set_config('app.tenant_id'" in readyz_data_src
+    assert "set_config('app.workspace_id'" in readyz_data_src
+    assert 'isolation="repeatable_read", readonly=True' in readyz_data_src
     assert "lineage_gold_rows" in readyz_data_src
     intelligence = _read(REPO / "console/app/services/intelligence/readiness.py")
-    assert "def _lineage_gold_counts" in intelligence
-    assert '"source": "silver_lineage"' in intelligence
+    assert "def _gold_counts" in intelligence
+    assert "omega_publication.dataset_publication_heads" in intelligence
+    assert "omega_publication.materialization_runs" in intelligence
+    assert '"source": "publication_head"' in intelligence
+    assert "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY" in intelligence
+    assert "set_config('app.tenant_id'" in intelligence
+    assert "set_config('app.workspace_id'" in intelligence
+    assert "_PUBLISHED_RELATION_RE.fullmatch" in intelligence
     assert "readyz?require_data=1" in makefile

@@ -12,6 +12,7 @@ booting FastAPI — this keeps the suite fast and avoids the heavy import
 side-effects (DB pools, mcp_registry, logging config) that
 console/app/main.py triggers at import.
 """
+
 from __future__ import annotations
 
 import ast
@@ -33,36 +34,36 @@ CONSOLE_MAIN = REPO_ROOT / "console" / "app" / "main.py"
 PUBLIC_ROUTE_ALLOWLIST = {
     # Auth surface — these endpoints ARE the gateway, so they can't
     # depend on auth being present (chicken-and-egg).
-    ("/auth/login",          "POST"),
+    ("/auth/login", "POST"),
     # Legacy compat alias for /auth/login. Public by gateway design;
     # internally delegates to the same CSRF-protected credential flow.
-    ("/api/auth/login",      "POST"),
-    ("/auth/refresh",        "POST"),
-    ("/auth/logout",         "POST"),
+    ("/api/auth/login", "POST"),
+    ("/auth/refresh", "POST"),
+    ("/auth/logout", "POST"),
     ("/auth/forgot-password", "POST"),
     ("/auth/reset-password", "POST"),
-    ("/auth/activate",       "POST"),
+    ("/auth/activate", "POST"),
     # GETs on login / change-password forms render the HTML page; the
     # POSTs above are the actual gateways. Auth-gating the page itself
     # would 401 anonymous visitors before they see the login form.
-    ("/login",               "GET"),
-    ("/me",                  "GET"),
-    ("/forgot-password",     "GET"),
-    ("/reset-password",      "GET"),
-    ("/activate",            "GET"),
+    ("/login", "GET"),
+    ("/me", "GET"),
+    ("/forgot-password", "GET"),
+    ("/reset-password", "GET"),
+    ("/activate", "GET"),
     # Liveness / runtime config — non-sensitive.
-    ("/healthz",             "GET"),
+    ("/healthz", "GET"),
     # Readiness is public by deploy design: load balancers and wait
     # scripts need dependency state before any user session exists.
-    ("/readyz",              "GET"),
-    ("/api/config",          "GET"),
-    ("/favicon.ico",         "GET"),
+    ("/readyz", "GET"),
+    ("/api/config", "GET"),
+    ("/favicon.ico", "GET"),
     # CSRF token endpoint — needs to be reachable before any
     # state-changing form posts, so it can't itself require auth.
-    ("/api/csrf",            "GET"),
+    ("/api/csrf", "GET"),
     # VPN config download is token-protected: the random one-time token in
     # the path is the auth factor sent in the invitation email.
-    ("/vpn-config/{token}",   "GET"),
+    ("/vpn-config/{token}", "GET"),
 }
 
 
@@ -89,15 +90,15 @@ KNOWN_GAPS_DEFERRED_TO_V1_22: set[tuple[str, str]] = set()
 # These were in v1.21's gap list because v1.21 (incorrectly) treated
 # every route without a decorator-level dep as missing auth.
 AUTH_SURFACE_ALLOWLIST = {
-    ("/auth/me",            "GET"),
+    ("/auth/me", "GET"),
     ("/auth/activate/info", "GET"),
-    ("/auth/reset/info",    "GET"),
+    ("/auth/reset/info", "GET"),
     # /auth/me-jwt authenticates inline (reads the Authorization
     # header directly and raises 401 if missing or invalid), so the
     # AST visitor can't see a `Depends()`. Functionally gated. A
     # future cleanup can refactor it to a Depends and remove this
     # entry from the allowlist.
-    ("/auth/me-jwt",        "GET"),
+    ("/auth/me-jwt", "GET"),
 }
 
 
@@ -125,6 +126,16 @@ AUTH_DEPENDS = (
 )
 
 
+# The credentialless published-app frame cannot use the session cookie. Its
+# content route is instead authenticated by a short-lived, purpose-bound
+# capability. Keep this separate from the public allowlists: every duplicate
+# registration must execute the gate as its first operation, or the route is an
+# auth gap.
+INLINE_AUTH_GATES = {
+    ("/apps/{name}/content", "GET"): "_require_app_content_capability",
+}
+
+
 def _route_decorators(tree: ast.Module):
     """Yield (path, method, decorator_ast, function_ast) for every
     @app.{method}("path", …) at the module level.
@@ -140,9 +151,12 @@ def _route_decorators(tree: ast.Module):
             if not isinstance(deco, ast.Call):
                 continue
             f = deco.func
-            if not (isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name)
-                    and f.value.id == "app"
-                    and f.attr in {"get", "post", "put", "patch", "delete", "head"}):
+            if not (
+                isinstance(f, ast.Attribute)
+                and isinstance(f.value, ast.Name)
+                and f.value.id == "app"
+                and f.attr in {"get", "post", "put", "patch", "delete", "head"}
+            ):
                 continue
             if not deco.args or not isinstance(deco.args[0], ast.Constant):
                 continue
@@ -201,16 +215,54 @@ def _param_auth_deps(func: ast.AST) -> list[str]:
     return found
 
 
-def _route_has_auth(deco: ast.Call, func: ast.AST) -> bool:
-    """A route is authenticated if it has any auth dep either at the
-    decorator level OR at the parameter level."""
-    return bool(_decorator_auth_deps(deco)) or bool(_param_auth_deps(func))
+def _inline_auth_gate(path: str, method: str, func: ast.AST) -> str | None:
+    """Return the required inline gate when it runs before handler logic.
+
+    Only an awaited call in the first executable statement qualifies. A call
+    hidden in a branch, after a return, or elsewhere in the body must not make
+    a credential-free route appear authenticated.
+    """
+    required = INLINE_AUTH_GATES.get((path, method))
+    if required is None:
+        return None
+    body = getattr(func, "body", [])
+    first = next(
+        (
+            statement
+            for statement in body
+            if not (
+                isinstance(statement, ast.Expr)
+                and isinstance(statement.value, ast.Constant)
+                and isinstance(statement.value.value, str)
+            )
+        ),
+        None,
+    )
+    if not isinstance(first, (ast.Assign, ast.AnnAssign, ast.Expr)):
+        return None
+    value = first.value
+    if not isinstance(value, ast.Await) or not isinstance(value.value, ast.Call):
+        return None
+    called = value.value.func
+    if isinstance(called, ast.Name) and called.id == required:
+        return required
+    return None
+
+
+def _route_has_auth(path: str, method: str, deco: ast.Call, func: ast.AST) -> bool:
+    """A route has a dependency gate or its exact required inline gate."""
+    return (
+        bool(_decorator_auth_deps(deco))
+        or bool(_param_auth_deps(func))
+        or bool(_inline_auth_gate(path, method, func))
+    )
 
 
 def _decorator_has_auth(deco: ast.Call) -> bool:
     """Legacy v1.21 helper — decorator-level only. Kept for back-compat
     with the v1.21 monitoring/mcp/invoke pin (which uses the decorator
-    form). New tests should call `_route_has_auth(deco, func)` instead."""
+    form). New tests should call `_route_has_auth(path, method, deco, func)`
+    instead."""
     return bool(_decorator_auth_deps(deco))
 
 
@@ -227,14 +279,31 @@ def test_monitoring_mcp_invoke_requires_auth(console_routes):
     a future refactor to parameter-level Depends() is also acceptable
     (the test then continues to pass via _route_has_auth)."""
     matches = [
-        (p, m, d, f) for p, m, d, f in console_routes
+        (p, m, d, f)
+        for p, m, d, f in console_routes
         if p == "/monitoring/mcp/invoke" and m == "POST"
     ]
     assert matches, "POST /monitoring/mcp/invoke is no longer declared on app"
     path, method, deco, func = matches[0]
-    assert _route_has_auth(deco, func), (
+    assert _route_has_auth(path, method, deco, func), (
         f"POST {path} must declare an auth dep (decorator-level or "
         f"parameter-level Depends)."
+    )
+
+
+def test_app_content_uses_inline_capability_gate_not_public_allowlist(console_routes):
+    route = ("/apps/{name}/content", "GET")
+    assert route not in PUBLIC_ROUTE_ALLOWLIST
+    assert route not in AUTH_SURFACE_ALLOWLIST
+    matches = [
+        (path, method, func)
+        for path, method, _deco, func in console_routes
+        if (path, method) == route
+    ]
+    assert len(matches) == 2, "main and the v1 router must expose the same gated door"
+    assert all(
+        _inline_auth_gate(path, method, func) == INLINE_AUTH_GATES[route]
+        for path, method, func in matches
     )
 
 
@@ -261,7 +330,7 @@ def test_no_unexpected_public_endpoint(console_routes):
             continue
         if (path, method) in KNOWN_GAPS_DEFERRED_TO_V1_22:
             continue
-        if _route_has_auth(deco, func):
+        if _route_has_auth(path, method, deco, func):
             continue
         bad.append(f"{method} {path}")
     if bad:
@@ -269,8 +338,7 @@ def test_no_unexpected_public_endpoint(console_routes):
             "NEW unauthenticated route detected (not in any allowlist). "
             "Add `dependencies=[Depends(require_*)]` to the decorator "
             "or `user: dict = Depends(require_authenticated)` to the "
-            "handler signature:\n  "
-            + "\n  ".join(sorted(bad))
+            "handler signature:\n  " + "\n  ".join(sorted(bad))
         )
 
 
@@ -280,7 +348,9 @@ def test_v22_gap_list_only_contains_gaps_that_still_exist(console_routes):
     better still be missing auth (otherwise the entry is stale)."""
     stale = []
     fixed = []
-    actual_routes = {(p, m): _route_has_auth(d, f) for p, m, d, f in console_routes}
+    actual_routes = {
+        (p, m): _route_has_auth(p, m, d, f) for p, m, d, f in console_routes
+    }
     for entry in sorted(KNOWN_GAPS_DEFERRED_TO_V1_22):
         if entry not in actual_routes:
             stale.append(f"{entry[1]} {entry[0]}  (route no longer exists)")
@@ -288,9 +358,14 @@ def test_v22_gap_list_only_contains_gaps_that_still_exist(console_routes):
             fixed.append(f"{entry[1]} {entry[0]}  (now has auth — remove from list)")
     msgs = []
     if stale:
-        msgs.append("Stale entries in KNOWN_GAPS_DEFERRED_TO_V1_22:\n  " + "\n  ".join(stale))
+        msgs.append(
+            "Stale entries in KNOWN_GAPS_DEFERRED_TO_V1_22:\n  " + "\n  ".join(stale)
+        )
     if fixed:
-        msgs.append("Already-fixed entries still in KNOWN_GAPS_DEFERRED_TO_V1_22:\n  " + "\n  ".join(fixed))
+        msgs.append(
+            "Already-fixed entries still in KNOWN_GAPS_DEFERRED_TO_V1_22:\n  "
+            + "\n  ".join(fixed)
+        )
     assert not msgs, "\n\n".join(msgs)
 
 

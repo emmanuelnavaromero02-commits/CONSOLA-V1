@@ -381,19 +381,20 @@ test.describe("Studio — Analytics tab", () => {
     if (!(await abrir.isVisible({ timeout: 10_000 }).catch(() => false))) {
       test.skip(true, "'Abrir Superset' button not present");
     }
-    // The click may open a new tab; listen for it.
-    const popupPromise = context.waitForEvent("page", { timeout: 5_000 }).catch(() => null);
+    const href = await abrir.getAttribute("href");
+    expect(href, "Superset link must expose a real target").toBeTruthy();
+    const targetOrigin = new URL(href!, page.url()).origin;
+    // `window.open(..., "noopener")` deliberately severs the popup handle.
+    // Observe the cross-origin navigation request without weakening noopener.
+    const requestPromise = context.waitForEvent("request", {
+      predicate: (request) =>
+        request.isNavigationRequest() &&
+        new URL(request.url()).origin === targetOrigin,
+      timeout: 15_000,
+    });
     await abrir.click();
-    const popup = await popupPromise;
-    if (popup) {
-      expect(popup.url()).toMatch(/superset|:8088/);
-      await popup.close();
-    } else {
-      // Or the same-tab path.
-      await page.waitForURL(/superset|:8088/, { timeout: 5_000 }).catch(() => {
-        throw new Error("'Abrir Superset' did neither popup nor navigate");
-      });
-    }
+    const request = await requestPromise;
+    expect(new URL(request.url()).origin).toBe(targetOrigin);
   });
 });
 

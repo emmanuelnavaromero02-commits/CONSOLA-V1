@@ -23,6 +23,7 @@ _AIRFLOW_RUNTIME_IMPORTS = {
     "pandas",
     "pyarrow",
     "requests",
+    "runtime_security_context",
     "urllib3",
 }
 _ALLOWED_STDLIB_IMPORTS = {

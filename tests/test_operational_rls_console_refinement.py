@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import asyncio
 import os
 import subprocess
@@ -56,6 +57,11 @@ def _docker(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
             f"docker {' '.join(args)}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
         )
     return result
+
+
+def _remove_test_container(container_id: str) -> None:
+    """Remove a test container and any anonymous data volumes it created."""
+    _docker("rm", "-f", "-v", container_id, check=False)
 
 
 def _require_docker() -> None:
@@ -187,7 +193,43 @@ def postgres_with_real_init_schema() -> str:
         asyncio.run(_wait_for_schema(dsn, container_id))
         yield dsn
     finally:
-        _docker("rm", "-f", container_id, check=False)
+        _remove_test_container(container_id)
+
+
+def test_postgres_fixture_cleanup_removes_anonymous_data_volume(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[tuple[str, ...], bool]] = []
+
+    def record(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+        calls.append((args, check))
+        return subprocess.CompletedProcess(["docker", *args], 0, "", "")
+
+    monkeypatch.setitem(globals(), "_docker", record)
+    _remove_test_container("test-container")
+
+    assert calls == [(("rm", "-f", "-v", "test-container"), False)]
+
+
+def test_python_test_container_teardowns_remove_anonymous_volumes() -> None:
+    offenders: list[str] = []
+    for root in (REPO / "tests", REPO / "console" / "tests"):
+        for path in root.rglob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                if not isinstance(node.func, ast.Name) or node.func.id != "_docker":
+                    continue
+                args = [
+                    arg.value
+                    for arg in node.args
+                    if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+                ]
+                if args[:2] == ["rm", "-f"] and "-v" not in args:
+                    offenders.append(f"{path.relative_to(REPO)}:{node.lineno}")
+
+    assert offenders == []
 
 
 async def _seed_probe(conn: asyncpg.Connection) -> dict[str, str]:

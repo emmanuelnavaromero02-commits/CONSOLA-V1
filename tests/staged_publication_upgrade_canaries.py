@@ -116,7 +116,7 @@ def _historical_gold_upgrade(stack, migrations, old_names) -> None:
                 )
                 assert cur.fetchone()[0] == len(migrations)
         finally:
-            _docker("rm", "-f", container, check=False)
+            _docker("rm", "-f", "-v", container, check=False)
 
 
 def C11_legacy_drop_negative_control(stack):

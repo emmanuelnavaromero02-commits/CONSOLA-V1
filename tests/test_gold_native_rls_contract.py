@@ -127,7 +127,7 @@ def postgres_gold_with_native_rls() -> str:
         _wait_for_gold_schema(dsn, container_id)
         yield dsn
     finally:
-        _docker("rm", "-f", container_id, check=False)
+        _docker("rm", "-f", "-v", container_id, check=False)
 
 
 def test_gold_native_rls_migration_default_denies_legacy_unscoped_tables():

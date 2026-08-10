@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import re
 import sys
 from pathlib import Path
 
@@ -42,7 +43,11 @@ def test_workspace_security_context_never_grants_wildcard_from_permissions(monke
             "workspace_role": "tenant_admin",
             "active_tenant_id": "00000000-0000-0000-0000-000000000001",
             "active_workspace_id": "00000000-0000-0000-0000-000000000002",
-            "permissions": ["cartridges.read", "datasets.read", "vault.connections.read"],
+            "permissions": [
+                "cartridges.read",
+                "datasets.read",
+                "vault.connections.read",
+            ],
         }
         ctx = module.build_security_context(user)
     finally:
@@ -58,7 +63,9 @@ def test_rag_store_filters_by_scope_before_vector_ranking():
     assert "{alias}.workspace_id::text = $SCOPE_WORKSPACE" in source
     assert "await _set_rls_context(conn, scope)" in source
     assert "ORDER BY c.embedding <=> $1" in source
-    assert source.index("{alias}.tenant_id::text = $SCOPE_TENANT") < source.index("ORDER BY c.embedding <=> $1")
+    assert source.index("{alias}.tenant_id::text = $SCOPE_TENANT") < source.index(
+        "ORDER BY c.embedding <=> $1"
+    )
 
 
 def test_mcp_rag_tools_receive_server_owned_scope():
@@ -79,9 +86,12 @@ def test_watermark_tools_are_workspace_scoped():
 
     assert "watermark_scope" in source
     assert "ON CONFLICT (watermark_scope, cartridge_id, entity_name)" in source
-    assert 'tool in {"watermark_get", "watermark_set"}' in gateway
-    assert "args[\"tenant_id\"]" in gateway
-    assert "args[\"workspace_id\"]" in gateway
+    assert re.search(
+        r'tool\s+in\s+\{\s*"watermark_get"\s*,\s*"watermark_set"\s*,?\s*\}',
+        gateway,
+    )
+    assert 'args["tenant_id"]' in gateway
+    assert 'args["workspace_id"]' in gateway
     assert "cartridge_list_entities" in gateway
     assert "w.watermark_scope = %s" in cartridge_tools
     assert "PRIMARY KEY (watermark_scope, cartridge_id, entity_name)" in migration
@@ -91,7 +101,9 @@ def test_direct_cartridge_watermark_services_use_scoped_conflict_key():
     for path in [*WATERMARK_SERVICES, REPLICON_DAG]:
         source = _read(path)
         assert "watermark_scope" in source, path
-        assert "ON CONFLICT (watermark_scope, cartridge_id, entity_name)" in source, path
+        assert (
+            "ON CONFLICT (watermark_scope, cartridge_id, entity_name)" in source
+        ), path
         assert "ON CONFLICT (cartridge_id, entity_name)" not in source, path
         assert "set_config('app.tenant_id'" in source, path
 

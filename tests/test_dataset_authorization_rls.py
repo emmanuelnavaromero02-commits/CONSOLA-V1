@@ -13,6 +13,7 @@ the same logical-identity grant as the existing 3-segment form.
 
 These tests exercise the real functions (imported, not parsed).
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -28,13 +29,22 @@ from fastapi import HTTPException
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# The module validates INTERNAL_API_KEY at import time and constructs a
-# DuckDBEngine (lazy — no connection). Provide safe defaults so the import
-# succeeds in CI without touching real infra. setdefault keeps any real values.
-os.environ.setdefault("INTERNAL_API_KEY", "x7Qp9zR2mK4vL8wN6tJ3sH1bD5fG0aYcE7uV2iO9kP4qZ")
-os.environ.setdefault("SECURITY_CONTEXT_SIGNING_KEY", "dataset_authorization_signing_key_64_chars_aaaaaaaaaaa")
-os.environ.setdefault("MINIO_SECRET_KEY", "test-secret")
-os.environ.setdefault("DATABASE_URL", "postgresql://u:p@localhost/db")
+# The module validates these settings at import time and constructs a lazy
+# DuckDBEngine. Keep the temporary defaults scoped to this import so collection
+# cannot poison DATABASE_URL for later live tests in the same pytest process.
+_IMPORT_DEFAULTS = {
+    "INTERNAL_API_KEY": "x7Qp9zR2mK4vL8wN6tJ3sH1bD5fG0aYcE7uV2iO9kP4qZ",
+    "SECURITY_CONTEXT_SIGNING_KEY": (
+        "dataset_authorization_signing_key_64_chars_aaaaaaaaaaa"
+    ),
+    "MINIO_SECRET_KEY": "test-secret",
+    "DATABASE_URL": "postgresql://u:p@localhost/db",
+}
+_PREVIOUS_IMPORT_ENV = {name: os.environ.get(name) for name in _IMPORT_DEFAULTS}
+for _name, _value in _IMPORT_DEFAULTS.items():
+    os.environ.setdefault(_name, _value)
+
+
 def _purge_app_namespace() -> None:
     for module_name in list(sys.modules):
         if module_name == "app" or module_name.startswith("app."):
@@ -53,6 +63,11 @@ finally:
     # Keep the imported module object for these regression tests, but do not
     # leak refinement's ``app.*`` modules into collection of console tests.
     _purge_app_namespace()
+    for _name, _previous in _PREVIOUS_IMPORT_ENV.items():
+        if _previous is None:
+            os.environ.pop(_name, None)
+        else:
+            os.environ[_name] = _previous
 
 _dataset_allowed = refinement_main._dataset_allowed
 _prefix_allowed = refinement_main._prefix_allowed
@@ -71,7 +86,9 @@ def _scoped_sec(*, workspace="ws-1", cartridges=("replicon", "sap_hcm")):
     ctx["_signed_at"] = int(time.time())
     ctx["_signature_version"] = "hmac-sha256-v1"
     payload = {key: value for key, value in ctx.items() if key != "_signature"}
-    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    raw = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
     ctx["_signature"] = hmac.new(
         os.environ["SECURITY_CONTEXT_SIGNING_KEY"].encode("utf-8"),
         raw,
@@ -80,8 +97,19 @@ def _scoped_sec(*, workspace="ws-1", cartridges=("replicon", "sap_hcm")):
     return ctx
 
 
-def _dataset(*, cartridge="replicon", layer="silver", name="replicon_project_latest", workspace="ws-1"):
-    return {"cartridge": cartridge, "layer": layer, "name": name, "workspace_id": workspace}
+def _dataset(
+    *,
+    cartridge="replicon",
+    layer="silver",
+    name="replicon_project_latest",
+    workspace="ws-1",
+):
+    return {
+        "cartridge": cartridge,
+        "layer": layer,
+        "name": name,
+        "workspace_id": workspace,
+    }
 
 
 # 1. Happy path that used to fail: scoped user, matching workspace, allowed cartridge.
@@ -118,13 +146,21 @@ def test_scoped_user_denied_other_workspace():
 
 # 4. Legacy 3-segment prefix still works (no trailing slash).
 def test_legacy_three_part_prefix_allowed():
-    assert _prefix_allowed(_scoped_sec(), "silver/replicon/replicon_project_latest") is True
+    assert (
+        _prefix_allowed(_scoped_sec(), "silver/replicon/replicon_project_latest")
+        is True
+    )
 
 
 # The fix itself: 4-segment logical prefix (trailing slash) is now accepted.
 def test_four_part_logical_prefix_allowed():
-    assert _prefix_allowed(_scoped_sec(), "silver/replicon/replicon_project_latest/") is True
-    assert _prefix_allowed(_scoped_sec(), "gold/sap_hcm/headcount_by_department/") is True
+    assert (
+        _prefix_allowed(_scoped_sec(), "silver/replicon/replicon_project_latest/")
+        is True
+    )
+    assert (
+        _prefix_allowed(_scoped_sec(), "gold/sap_hcm/headcount_by_department/") is True
+    )
 
 
 # A 4-segment path whose last segment is NOT empty must not be treated as the
@@ -132,7 +168,9 @@ def test_four_part_logical_prefix_allowed():
 def test_four_part_nonempty_tail_not_logical_form():
     # tenant partition without the workspace partition -> not a valid 5-part
     # physical path and not the logical trailing-slash form -> denied.
-    assert _prefix_allowed(_scoped_sec(), "silver/replicon/x/tenant_id=tenant-1") is False
+    assert (
+        _prefix_allowed(_scoped_sec(), "silver/replicon/x/tenant_id=tenant-1") is False
+    )
 
 
 # 5. Multi-tenant 5+-segment physical paths keep matching on tenant+workspace.
@@ -187,27 +225,36 @@ def test_dataset_source_sanitizer_hides_foreign_physical_references():
 def test_scoped_lineage_hides_legacy_or_foreign_rows_without_workspace_proof():
     sec = _scoped_sec(cartridges=("replicon",))
 
-    assert refinement_main._lineage_row_visible_for_scope(
-        sec,
-        {
-            "source_entity": "raw/replicon/Entity",
-            "storage_uri": "s3://lakehouse/silver/replicon/dataset/data.parquet",
-        },
-    ) is False
-    assert refinement_main._lineage_row_visible_for_scope(
-        sec,
-        {
-            "source_entity": "raw/replicon/Entity/tenant_id=tenant-1/workspace_id=ws-1/data.parquet",
-            "storage_uri": "s3://lakehouse/silver/replicon/dataset/tenant_id=tenant-1/workspace_id=ws-1/data.parquet",
-        },
-    ) is True
-    assert refinement_main._lineage_row_visible_for_scope(
-        sec,
-        {
-            "source_entity": "raw/replicon/Entity/tenant_id=tenant-9/workspace_id=ws-9/data.parquet",
-            "storage_uri": "s3://lakehouse/silver/replicon/dataset/tenant_id=tenant-9/workspace_id=ws-9/data.parquet",
-        },
-    ) is False
+    assert (
+        refinement_main._lineage_row_visible_for_scope(
+            sec,
+            {
+                "source_entity": "raw/replicon/Entity",
+                "storage_uri": "s3://lakehouse/silver/replicon/dataset/data.parquet",
+            },
+        )
+        is False
+    )
+    assert (
+        refinement_main._lineage_row_visible_for_scope(
+            sec,
+            {
+                "source_entity": "raw/replicon/Entity/tenant_id=tenant-1/workspace_id=ws-1/data.parquet",
+                "storage_uri": "s3://lakehouse/silver/replicon/dataset/tenant_id=tenant-1/workspace_id=ws-1/data.parquet",
+            },
+        )
+        is True
+    )
+    assert (
+        refinement_main._lineage_row_visible_for_scope(
+            sec,
+            {
+                "source_entity": "raw/replicon/Entity/tenant_id=tenant-9/workspace_id=ws-9/data.parquet",
+                "storage_uri": "s3://lakehouse/silver/replicon/dataset/tenant_id=tenant-9/workspace_id=ws-9/data.parquet",
+            },
+        )
+        is False
+    )
 
 
 def test_declared_source_physical_glob_requires_scope_for_scoped_query():
@@ -241,7 +288,9 @@ def test_declared_source_physical_glob_rejects_foreign_scope_for_scoped_query():
 def test_registered_dataset_physical_glob_allowed_only_for_dataset_query(monkeypatch):
     sec = _scoped_sec(cartridges=("sap_hcm",))
     path = "s3://lakehouse/silver/sap_hcm/sap_hcm_employee_master_full/**/*.parquet"
-    legacy_snapshot_path = "s3://lakehouse/silver/sap_hcm/sap_hcm_employee_master_full/data.parquet"
+    legacy_snapshot_path = (
+        "s3://lakehouse/silver/sap_hcm/sap_hcm_employee_master_full/data.parquet"
+    )
     scoped_path = (
         "s3://lakehouse/silver/sap_hcm/sap_hcm_employee_master_full/"
         "tenant_id=tenant-1/workspace_id=ws-1/**/*.parquet"
@@ -262,7 +311,9 @@ def test_registered_dataset_physical_glob_allowed_only_for_dataset_query(monkeyp
         refinement_main._require_sql_path_scope(sec, path)
 
     with pytest.raises(HTTPException):
-        refinement_main._require_sql_path_scope(sec, path, allow_registered_dataset_paths=True)
+        refinement_main._require_sql_path_scope(
+            sec, path, allow_registered_dataset_paths=True
+        )
 
     with pytest.raises(HTTPException):
         refinement_main._require_sql_path_scope(
@@ -277,13 +328,18 @@ def test_registered_dataset_physical_glob_allowed_only_for_dataset_query(monkeyp
         sources=["silver/sap_hcm/sap_hcm_employee_master_full"],
         allow_registered_dataset_paths=True,
     )
-    refinement_main._require_sql_path_scope(sec, scoped_path, allow_registered_dataset_paths=True)
+    refinement_main._require_sql_path_scope(
+        sec, scoped_path, allow_registered_dataset_paths=True
+    )
 
 
 # 4. Unscoped admin (no tenant/workspace, allowed_cartridges == ["*"]) sees everything.
 def test_unscoped_admin_sees_all():
     admin = {"trusted": True, "role": "admin", "allowed_cartridges": ["*"]}
-    assert _dataset_allowed(admin, _dataset(workspace="ws-ANY", cartridge="anything")) is True
+    assert (
+        _dataset_allowed(admin, _dataset(workspace="ws-ANY", cartridge="anything"))
+        is True
+    )
 
 
 # 6. Endpoint-level proxy: /datasets, /api/catalog and /api/lineage all filter
@@ -292,10 +348,24 @@ def test_unscoped_admin_sees_all():
 def test_endpoint_filter_returns_scoped_datasets():
     sec = _scoped_sec(workspace="ws-1", cartridges=("replicon", "sap_hcm"))
     catalog = [
-        _dataset(cartridge="replicon", layer="silver", name="replicon_project_latest", workspace="ws-1"),
-        _dataset(cartridge="sap_hcm", layer="gold", name="headcount_by_department", workspace="ws-1"),
-        _dataset(cartridge="sap_s4hana", layer="silver", name="gl_account", workspace="ws-1"),  # cartridge not allowed
-        _dataset(cartridge="replicon", layer="silver", name="other_ws", workspace="ws-2"),       # other workspace
+        _dataset(
+            cartridge="replicon",
+            layer="silver",
+            name="replicon_project_latest",
+            workspace="ws-1",
+        ),
+        _dataset(
+            cartridge="sap_hcm",
+            layer="gold",
+            name="headcount_by_department",
+            workspace="ws-1",
+        ),
+        _dataset(
+            cartridge="sap_s4hana", layer="silver", name="gl_account", workspace="ws-1"
+        ),  # cartridge not allowed
+        _dataset(
+            cartridge="replicon", layer="silver", name="other_ws", workspace="ws-2"
+        ),  # other workspace
     ]
     visible = [ds for ds in catalog if _dataset_allowed(sec, ds)]
     names = {ds["name"] for ds in visible}
@@ -303,7 +373,10 @@ def test_endpoint_filter_returns_scoped_datasets():
 
 
 def _body(sec: dict | None = None):
-    return {"security_context": sec or _scoped_sec(), "_verified_internal_service": "console"}
+    return {
+        "security_context": sec or _scoped_sec(),
+        "_verified_internal_service": "console",
+    }
 
 
 def test_sql_storage_scope_rejects_unregistered_table_reads():
@@ -311,17 +384,19 @@ def test_sql_storage_scope_rejects_unregistered_table_reads():
         refinement_main._require_sql_storage_scope(_body(), "SELECT * FROM users", [])
 
     assert exc.value.status_code == 403
-    assert "table references" in exc.value.detail
+    assert exc.value.detail == "SQL table function or storage path is not allowed"
 
 
 def test_sql_storage_scope_rejects_unregistered_pggold_tables(monkeypatch):
     monkeypatch.setattr(refinement_main.store, "get_dataset", lambda _name: None)
 
     with pytest.raises(HTTPException) as exc:
-        refinement_main._require_sql_storage_scope(_body(), "SELECT * FROM pggold.billing", [])
+        refinement_main._require_sql_storage_scope(
+            _body(), "SELECT * FROM pggold.billing", []
+        )
 
     assert exc.value.status_code == 403
-    assert "pggold table is not registered" in exc.value.detail
+    assert exc.value.detail == "SQL table function or storage path is not allowed"
 
 
 def test_sql_storage_scope_allows_registered_pggold_gold_tables(monkeypatch):
@@ -337,7 +412,9 @@ def test_sql_storage_scope_allows_registered_pggold_gold_tables(monkeypatch):
 
     monkeypatch.setattr(refinement_main.store, "get_dataset", fake_get_dataset)
 
-    refinement_main._require_sql_storage_scope(_body(), "SELECT * FROM pggold.gold_sales", [])
+    refinement_main._require_sql_storage_scope(
+        _body(), "SELECT * FROM pggold.gold_sales", []
+    )
 
 
 def test_sql_storage_scope_rejects_pggold_table_registered_as_silver(monkeypatch):
@@ -354,7 +431,9 @@ def test_sql_storage_scope_rejects_pggold_table_registered_as_silver(monkeypatch
     monkeypatch.setattr(refinement_main.store, "get_dataset", fake_get_dataset)
 
     with pytest.raises(HTTPException) as exc:
-        refinement_main._require_sql_storage_scope(_body(), "SELECT * FROM pggold.gold_sales", [])
+        refinement_main._require_sql_storage_scope(
+            _body(), "SELECT * FROM pggold.gold_sales", []
+        )
 
     assert exc.value.status_code == 403
     assert "pggold table is not registered" in exc.value.detail
@@ -374,10 +453,12 @@ def test_sql_storage_scope_rejects_three_part_external_pggold_reference(monkeypa
     monkeypatch.setattr(refinement_main.store, "get_dataset", fake_get_dataset)
 
     with pytest.raises(HTTPException) as exc:
-        refinement_main._require_sql_storage_scope(_body(), "SELECT * FROM other.pggold.gold_sales", [])
+        refinement_main._require_sql_storage_scope(
+            _body(), "SELECT * FROM other.pggold.gold_sales", []
+        )
 
     assert exc.value.status_code == 403
-    assert "database/schema" in exc.value.detail
+    assert exc.value.detail == "SQL table function or storage path is not allowed"
 
 
 def test_gold_sql_scope_allows_declared_registered_silver_source_path(monkeypatch):
@@ -399,7 +480,9 @@ def test_gold_sql_scope_allows_declared_registered_silver_source_path(monkeypatc
     broad_sql = "SELECT * FROM read_parquet('s3://lakehouse/silver/replicon/timeentry_clean/data.parquet')"
 
     with pytest.raises(HTTPException):
-        refinement_main._require_sql_storage_scope(_body(), broad_sql, ["timeentry_clean"])
+        refinement_main._require_sql_storage_scope(
+            _body(), broad_sql, ["timeentry_clean"]
+        )
 
     refinement_main._require_sql_storage_scope(
         _body(),
@@ -418,7 +501,9 @@ def test_gold_sql_scope_allows_declared_registered_silver_source_path(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_generate_transform_mcp_propagates_gold_layer_for_registered_dataset(monkeypatch):
+async def test_generate_transform_mcp_propagates_gold_layer_for_registered_dataset(
+    monkeypatch,
+):
     captured = {}
 
     def fake_get_dataset(name: str):
@@ -432,7 +517,12 @@ async def test_generate_transform_mcp_propagates_gold_layer_for_registered_datas
         return None
 
     def fake_get_dataset_schema(_ds, user_context=None):
-        return {"fields": [{"name": "customer_id", "type": "string"}, {"name": "amount", "type": "float"}]}
+        return {
+            "fields": [
+                {"name": "customer_id", "type": "string"},
+                {"name": "amount", "type": "float"},
+            ]
+        }
 
     async def fake_generate_sql(description, schemas, layer="silver"):
         captured["description"] = description
@@ -441,7 +531,9 @@ async def test_generate_transform_mcp_propagates_gold_layer_for_registered_datas
         return "SELECT * FROM pggold.gold_sales", "ok"
 
     monkeypatch.setattr(refinement_main.store, "get_dataset", fake_get_dataset)
-    monkeypatch.setattr(refinement_main.engine, "get_dataset_schema", fake_get_dataset_schema)
+    monkeypatch.setattr(
+        refinement_main.engine, "get_dataset_schema", fake_get_dataset_schema
+    )
     monkeypatch.setattr(refinement_main, "generate_sql", fake_generate_sql)
 
     result = await refinement_main.mcp_invoke(

@@ -9,7 +9,11 @@ from typing import Any
 
 import psycopg2
 from psycopg2 import sql
-from staged_publication_guard import require_legacy_gold_writer
+
+if __package__:
+    from scripts.staged_publication_guard import require_legacy_gold_writer
+else:
+    from staged_publication_guard import require_legacy_gold_writer
 
 
 DATASETS: dict[str, dict[str, Any]] = {
@@ -290,7 +294,9 @@ def _operational_conn():
 
 
 def _gold_conn():
-    dsn = _normalize_dsn(os.environ.get("GOLD_DATABASE_URL") or os.environ.get("DATABASE_URL", ""))
+    dsn = _normalize_dsn(
+        os.environ.get("GOLD_DATABASE_URL") or os.environ.get("DATABASE_URL", "")
+    )
     if not dsn:
         raise SystemExit("GOLD_DATABASE_URL or DATABASE_URL is required")
     return psycopg2.connect(dsn)
@@ -343,7 +349,9 @@ def _create_table(cur, table_name: str, columns: list[tuple[str, str]]) -> None:
     )
 
 
-def _seed_dataset(cur, dataset: str, payload: dict[str, Any], tenant: str | None, workspace: str) -> int:
+def _seed_dataset(
+    cur, dataset: str, payload: dict[str, Any], tenant: str | None, workspace: str
+) -> int:
     table_name = f"gold_{dataset}"
     columns = payload["columns"]
     _create_table(cur, table_name, columns)
@@ -352,9 +360,7 @@ def _seed_dataset(cur, dataset: str, payload: dict[str, Any], tenant: str | None
             "DELETE FROM public.{} "
             "WHERE workspace_id::text = %s "
             "AND (%s IS NULL OR tenant_id::text = %s)"
-        ).format(
-            sql.Identifier(table_name)
-        ),
+        ).format(sql.Identifier(table_name)),
         (workspace, tenant, tenant),
     )
     target_columns = ["tenant_id", "workspace_id", *[name for name, _ in columns]]
@@ -386,7 +392,9 @@ def main() -> None:
         conn.commit()
     finally:
         conn.close()
-    print(f"seeded {total} intelligence Gold rows for workspace={workspace} tenant={tenant or 'null'}")
+    print(
+        f"seeded {total} intelligence Gold rows for workspace={workspace} tenant={tenant or 'null'}"
+    )
 
 
 if __name__ == "__main__":
