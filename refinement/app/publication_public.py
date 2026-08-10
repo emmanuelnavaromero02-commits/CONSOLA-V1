@@ -204,6 +204,7 @@ def published_catalog(
     metadata = list(datasets_meta)
     output: dict[str, Any] = {}
     snapshot_by_dataset: dict[str, PublicationSnapshot] = {}
+    selected_metadata = []
     for ds in metadata:
         name = str(ds.get("name") or "")
         ds_layer = str(ds.get("layer") or "silver")
@@ -216,7 +217,18 @@ def published_catalog(
             continue
         if datasets and name not in datasets:
             continue
-        snapshot = resolver.published_snapshot(ds, context)
+        selected_metadata.append(ds)
+    published_snapshots = getattr(resolver, "published_snapshots", None)
+    if callable(published_snapshots):
+        snapshots = published_snapshots(selected_metadata, context)
+    else:
+        snapshots = [
+            resolver.published_snapshot(ds, context) for ds in selected_metadata
+        ]
+    for ds, snapshot in zip(selected_metadata, snapshots, strict=True):
+        name = str(ds.get("name") or "")
+        ds_layer = str(ds.get("layer") or "silver")
+        ds_cartridge = str(ds.get("cartridge") or "")
         if not snapshot:
             continue
         snapshot.validate_snapshot()
@@ -254,7 +266,7 @@ def published_catalog(
             "columns": columns,
         }
     relationships = []
-    for ds in metadata:
+    for ds in selected_metadata:
         name = str(ds.get("name") or "")
         if name not in output:
             continue

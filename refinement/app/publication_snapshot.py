@@ -73,47 +73,10 @@ class PublicationSnapshotResolver:
             (scope.workspace_id,),
         )
 
-    def _read(self, scope: PublicationScope) -> PublicationSnapshot | None:
-        conn = psycopg2.connect(self.database_url)
-        try:
-            conn.set_session(readonly=True, isolation_level="REPEATABLE READ")
-            with conn.cursor() as cur:
-                self._scope(cur, scope)
-                cur.execute(
-                    """
-                    SELECT h.materialization_run_id::text,h.generation,h.published_at,
-                           r.status,r.gold_table,r.input_digest,r.contract_digest,
-                           e.object_uri,e.object_version,e.object_checksum,e.row_count,
-                           e.schema_digest,e.evidence_digest,e.lineage,e.catalog,e.created_at,
-                           rec.receipt_id::text
-                      FROM omega_publication.dataset_publication_heads h
-                      JOIN omega_publication.materialization_runs r
-                        ON r.materialization_run_id=h.materialization_run_id
-                       AND r.tenant_id=h.tenant_id AND r.workspace_id=h.workspace_id
-                       AND r.dataset=h.dataset AND r.layer=h.layer
-                      LEFT JOIN omega_publication.materialization_receipts rec
-                        ON rec.materialization_run_id=h.materialization_run_id
-                       AND rec.tenant_id=h.tenant_id AND rec.workspace_id=h.workspace_id
-                       AND rec.dataset=h.dataset AND rec.layer=h.layer
-                       AND rec.generation=h.generation
-                      LEFT JOIN omega_publication.materialization_evidence e
-                        ON e.materialization_run_id=h.materialization_run_id
-                       AND e.tenant_id=h.tenant_id AND e.workspace_id=h.workspace_id
-                       AND e.dataset=h.dataset AND e.layer=h.layer
-                       AND e.object_version=rec.object_version
-                       AND e.object_checksum=rec.object_checksum
-                       AND e.schema_digest=rec.schema_digest
-                       AND e.evidence_digest=rec.evidence_digest
-                       AND e.row_count=rec.row_count
-                     WHERE h.tenant_id=%s AND h.workspace_id=%s
-                       AND h.dataset=%s AND h.layer=%s
-                    """,
-                    (scope.tenant_id, scope.workspace_id, scope.dataset, scope.layer),
-                )
-                row = cur.fetchone()
-            conn.commit()
-        finally:
-            conn.close()
+    @staticmethod
+    def _snapshot_from_row(
+        scope: PublicationScope, row: Any
+    ) -> PublicationSnapshot | None:
         if not row:
             return None
         exact = {
@@ -147,6 +110,82 @@ class PublicationSnapshotResolver:
             }
         )
         return PublicationSnapshot(scope, head, evidence)
+
+    def _read_many(
+        self, scopes: list[PublicationScope]
+    ) -> dict[PublicationScope, PublicationSnapshot | None]:
+        unique_scopes = list(dict.fromkeys(scopes))
+        if not unique_scopes:
+            return {}
+        boundary = (unique_scopes[0].tenant_id, unique_scopes[0].workspace_id)
+        if any((scope.tenant_id, scope.workspace_id) != boundary for scope in scopes):
+            raise ValueError("publication snapshot batch scope mismatch")
+
+        conn = psycopg2.connect(self.database_url, connect_timeout=2)
+        try:
+            conn.set_session(readonly=True, isolation_level="REPEATABLE READ")
+            with conn.cursor() as cur:
+                self._scope(cur, unique_scopes[0])
+                cur.execute(
+                    """
+                    WITH requested AS (
+                        SELECT DISTINCT dataset, layer
+                          FROM unnest(%s::text[], %s::text[])
+                               AS requested_scope(dataset, layer)
+                    )
+                    SELECT requested.dataset,requested.layer,
+                           h.materialization_run_id::text,h.generation,h.published_at,
+                           r.status,r.gold_table,r.input_digest,r.contract_digest,
+                           e.object_uri,e.object_version,e.object_checksum,e.row_count,
+                           e.schema_digest,e.evidence_digest,e.lineage,e.catalog,e.created_at,
+                           rec.receipt_id::text
+                      FROM requested
+                      JOIN omega_publication.dataset_publication_heads h
+                        ON h.tenant_id=%s AND h.workspace_id=%s
+                       AND h.dataset=requested.dataset AND h.layer=requested.layer
+                      JOIN omega_publication.materialization_runs r
+                        ON r.materialization_run_id=h.materialization_run_id
+                       AND r.tenant_id=h.tenant_id AND r.workspace_id=h.workspace_id
+                       AND r.dataset=h.dataset AND r.layer=h.layer
+                      LEFT JOIN omega_publication.materialization_receipts rec
+                        ON rec.materialization_run_id=h.materialization_run_id
+                       AND rec.tenant_id=h.tenant_id AND rec.workspace_id=h.workspace_id
+                       AND rec.dataset=h.dataset AND rec.layer=h.layer
+                       AND rec.generation=h.generation
+                      LEFT JOIN omega_publication.materialization_evidence e
+                        ON e.materialization_run_id=h.materialization_run_id
+                       AND e.tenant_id=h.tenant_id AND e.workspace_id=h.workspace_id
+                       AND e.dataset=h.dataset AND e.layer=h.layer
+                       AND e.object_version=rec.object_version
+                       AND e.object_checksum=rec.object_checksum
+                       AND e.schema_digest=rec.schema_digest
+                       AND e.evidence_digest=rec.evidence_digest
+                       AND e.row_count=rec.row_count
+                    """,
+                    (
+                        [scope.dataset for scope in unique_scopes],
+                        [scope.layer for scope in unique_scopes],
+                        boundary[0],
+                        boundary[1],
+                    ),
+                )
+                snapshots: dict[
+                    PublicationScope, PublicationSnapshot | None
+                ] = dict.fromkeys(unique_scopes)
+                for row in cur.fetchall():
+                    scope = PublicationScope(
+                        boundary[0], boundary[1], str(row[0]), str(row[1])
+                    )
+                    if scope not in snapshots or snapshots[scope] is not None:
+                        raise RuntimeError("publication snapshot batch result mismatch")
+                    snapshots[scope] = self._snapshot_from_row(scope, row[2:])
+            conn.commit()
+        finally:
+            conn.close()
+        return snapshots
+
+    def _read(self, scope: PublicationScope) -> PublicationSnapshot | None:
+        return self._read_many([scope])[scope]
 
     def _validate_object(self, snapshot: PublicationSnapshot) -> None:
         if not self.storage or snapshot.head.get("status") == "legacy_unverified":
@@ -183,3 +222,23 @@ class PublicationSnapshotResolver:
         snapshot.validate_snapshot()
         self._validate_object(snapshot)
         return snapshot
+
+    def published_snapshots(
+        self, datasets: list[dict[str, Any]], context: dict[str, str]
+    ) -> list[PublicationSnapshot | None]:
+        scopes = [
+            PublicationScope(
+                context["tenant_id"],
+                context["workspace_id"],
+                str(ds.get("name") or ""),
+                str(ds.get("layer") or "silver"),
+            )
+            for ds in datasets
+        ]
+        snapshots = self._read_many(scopes)
+        for snapshot in snapshots.values():
+            if snapshot is None:
+                continue
+            snapshot.validate_snapshot()
+            self._validate_object(snapshot)
+        return [snapshots[scope] for scope in scopes]
