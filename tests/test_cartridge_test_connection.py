@@ -9,12 +9,19 @@ Static introspection only — does not boot the console app (its lifespan
 needs Postgres). When test_main_endpoints adds live coverage we will
 parametrise the live test there.
 """
+
 from __future__ import annotations
 
 import re
 from pathlib import Path
 
-CARTRIDGES_ROUTER = Path(__file__).resolve().parents[1] / "console" / "app" / "routers" / "cartridges.py"
+CARTRIDGES_ROUTER = (
+    Path(__file__).resolve().parents[1]
+    / "console"
+    / "app"
+    / "routers"
+    / "cartridges.py"
+)
 
 
 def _router_source() -> str:
@@ -65,26 +72,44 @@ def test_test_connection_requires_explicit_ok_status():
 
 def test_router_registered_in_main():
     """main.py must include the new cartridges router."""
-    main_src = (Path(__file__).resolve().parents[1] / "console" / "app" / "main.py").read_text(encoding="utf-8")
+    main_src = (
+        Path(__file__).resolve().parents[1] / "console" / "app" / "main.py"
+    ).read_text(encoding="utf-8")
     assert "cartridges_router" in main_src
     assert "app.include_router(cartridges_router.router)" in main_src
 
 
 def test_cartridge_permissions_registered():
     from pathlib import Path as _Path
-    perms = _Path(__file__).resolve().parents[1] / "console" / "app" / "services" / "permissions.py"
-    src = perms.read_text(encoding="utf-8")
-    assert '"cartridges.read"' in src
-    assert '"cartridges.write"' in src
-    assert '"cartridges.execute"' in src
+
+    services = _Path(__file__).resolve().parents[1] / "console" / "app" / "services"
+    catalog_src = (services / "permission_catalog.py").read_text(encoding="utf-8")
+    permissions_src = (services / "permissions.py").read_text(encoding="utf-8")
+    for permission in (
+        "cartridges.read",
+        "cartridges.write",
+        "cartridges.execute",
+    ):
+        assert f'"{permission}"' in catalog_src
+    assert "from app.services.permission_catalog import" in permissions_src
+    assert "PERMISSION_KEYS" in permissions_src
 
 
 def test_cartridge_skills_test_connection_routes_exist():
     """Each cartridge exposes /skills/test_connection guarded by verify_api_key."""
     root = Path(__file__).resolve().parents[1] / "cartridges"
-    for cart in ("hubspot", "replicon", "sap_hcm", "sap_s4hana", "sap_successfactors", "salesforce"):
+    for cart in (
+        "hubspot",
+        "replicon",
+        "sap_hcm",
+        "sap_s4hana",
+        "sap_successfactors",
+        "salesforce",
+    ):
         routes = root / cart / "app" / "api" / "routes_skills.py"
         src = routes.read_text(encoding="utf-8")
-        assert '@router.post("/test_connection")' in src, f"{cart} missing /test_connection"
+        assert (
+            '@router.post("/test_connection")' in src
+        ), f"{cart} missing /test_connection"
         # router-level dependencies=[Depends(verify_api_key)] still in force
         assert "dependencies=[Depends(verify_api_key)]" in src

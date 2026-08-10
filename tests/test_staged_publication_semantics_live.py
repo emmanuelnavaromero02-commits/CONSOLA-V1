@@ -58,8 +58,11 @@ def test_public_semantics_are_snapshotted_into_immutable_head_evidence(
             (TENANT_A, WORKSPACE_A),
         )
 
-    monkeypatch.setenv("DATABASE_URL", _refinement_dsn(postgres_with_real_init_schema))
-    engine = _engine(staged_publication_live_stack, monkeypatch)
+    engine = _engine(
+        staged_publication_live_stack,
+        monkeypatch,
+        database_url=_refinement_dsn(postgres_with_real_init_schema),
+    )
     engine.materialize(
         {
             "name": "semantic_snapshot",

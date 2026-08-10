@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -65,10 +67,15 @@ services:
 """
 
 
+def _compose_env(root: Path) -> dict[str, str]:
+    return {**os.environ, "COMPOSE_PROJECT_NAME": root.name}
+
+
 def _run(root: Path, *args: str, check: bool = True):
     result = subprocess.run(
         ["docker", "compose", "-f", str(root / "infra/docker-compose.yml"), *args],
         cwd=root,
+        env=_compose_env(root),
         text=True,
         capture_output=True,
         check=False,
@@ -167,73 +174,80 @@ def _assert_repaired(root: Path) -> None:
 
 @pytest.mark.parametrize("mode", ["fresh", "upgrade"])
 def test_real_main_and_gold_runner_repair_is_complete_and_idempotent(
-    tmp_path: Path, mode: str
+    mode: str,
 ) -> None:
     assert subprocess.run(["docker", "info"], capture_output=True).returncode == 0
-    root = _prepare(tmp_path, include_repair=mode == "fresh")
-    try:
-        _run(root, "up", "-d", "postgres", "postgres_gold")
-        _wait(root, include_repair=mode == "fresh")
-        if mode == "upgrade":
-            shutil.copy2(MIGRATION, root / "infra/init_gold" / MIGRATION_NAME)
+    with tempfile.TemporaryDirectory(
+        prefix="omega-gold-repair-", dir=ROOT.parent
+    ) as sandbox:
+        root = _prepare(Path(sandbox), include_repair=mode == "fresh")
+        try:
+            _run(root, "up", "-d", "postgres", "postgres_gold")
+            _wait(root, include_repair=mode == "fresh")
+            if mode == "upgrade":
+                shutil.copy2(MIGRATION, root / "infra/init_gold" / MIGRATION_NAME)
+                subprocess.run(
+                    ["bash", str(root / "scripts/apply_db_migrations.sh")],
+                    cwd=root,
+                    env=_compose_env(root),
+                    check=True,
+                )
+            _assert_repaired(root)
             subprocess.run(
                 ["bash", str(root / "scripts/apply_db_migrations.sh")],
                 cwd=root,
+                env=_compose_env(root),
                 check=True,
             )
-        _assert_repaired(root)
-        subprocess.run(
-            ["bash", str(root / "scripts/apply_db_migrations.sh")],
-            cwd=root,
-            check=True,
-        )
-        before = _psql(
-            root,
-            "postgres_gold",
-            "modecissions_gold",
-            "SELECT COUNT(*), MIN(applied_at)=MAX(applied_at) FROM schema_migrations",
-        ).stdout.strip()
-        subprocess.run(
-            ["bash", str(root / "scripts/apply_db_migrations.sh")],
-            cwd=root,
-            check=True,
-        )
-        after = _psql(
-            root,
-            "postgres_gold",
-            "modecissions_gold",
-            "SELECT COUNT(*), MIN(applied_at)=MAX(applied_at) FROM schema_migrations",
-        ).stdout.strip()
-        assert after == before
-        if mode == "upgrade":
-            _psql(
+            before = _psql(
                 root,
                 "postgres_gold",
                 "modecissions_gold",
-                f"""UPDATE gold_sap_successfactors_talent_benchmark_internal
-                       SET approved=TRUE, approved_by='1', approved_at=NOW();
-                    ALTER TABLE gold_sap_successfactors_talent_readiness
-                       DROP COLUMN readiness_status;
-                    DELETE FROM schema_migrations
-                     WHERE filename='gold/{MIGRATION_NAME}';""",
-            )
-            failed = subprocess.run(
+                "SELECT COUNT(*), MIN(applied_at)=MAX(applied_at) FROM schema_migrations",
+            ).stdout.strip()
+            subprocess.run(
                 ["bash", str(root / "scripts/apply_db_migrations.sh")],
                 cwd=root,
-                capture_output=True,
-                text=True,
-                check=False,
+                env=_compose_env(root),
+                check=True,
             )
-            assert failed.returncode != 0
-            rolled_back = _psql(
+            after = _psql(
                 root,
                 "postgres_gold",
                 "modecissions_gold",
-                f"""SELECT approved,
-                           (SELECT COUNT(*) FROM schema_migrations
-                             WHERE filename='gold/{MIGRATION_NAME}')
-                      FROM gold_sap_successfactors_talent_benchmark_internal""",
+                "SELECT COUNT(*), MIN(applied_at)=MAX(applied_at) FROM schema_migrations",
             ).stdout.strip()
-            assert rolled_back == "t|0"
-    finally:
-        _run(root, "down", "-v", check=False)
+            assert after == before
+            if mode == "upgrade":
+                _psql(
+                    root,
+                    "postgres_gold",
+                    "modecissions_gold",
+                    f"""UPDATE gold_sap_successfactors_talent_benchmark_internal
+                           SET approved=TRUE, approved_by='1', approved_at=NOW();
+                        ALTER TABLE gold_sap_successfactors_talent_readiness
+                           DROP COLUMN readiness_status;
+                        DELETE FROM schema_migrations
+                         WHERE filename='gold/{MIGRATION_NAME}';""",
+                )
+                failed = subprocess.run(
+                    ["bash", str(root / "scripts/apply_db_migrations.sh")],
+                    cwd=root,
+                    env=_compose_env(root),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                assert failed.returncode != 0
+                rolled_back = _psql(
+                    root,
+                    "postgres_gold",
+                    "modecissions_gold",
+                    f"""SELECT approved,
+                               (SELECT COUNT(*) FROM schema_migrations
+                                 WHERE filename='gold/{MIGRATION_NAME}')
+                          FROM gold_sap_successfactors_talent_benchmark_internal""",
+                ).stdout.strip()
+                assert rolled_back == "t|0"
+        finally:
+            _run(root, "down", "-v", check=False)

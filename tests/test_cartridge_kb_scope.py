@@ -1,14 +1,9 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import pandas as pd
 import pytest
-import yaml
 
 from tests.conftest import load_cartridge_app
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
 
 SCOPED_KB_CASES = [
     ("replicon", "TimeEntry"),
@@ -86,13 +81,11 @@ def test_replicon_shared_kb_inputs_are_scoped_when_context_is_forwarded():
 
 def test_replicon_wip_kbs_do_not_run_global_shared_raw_reads_when_scoped():
     load_cartridge_app("replicon")
-    from app.services import kb_service
+    from app.services import catalog_service, kb_service
 
-    kb_path = REPO_ROOT / "cartridges/replicon/app/config/knowledge_bits.yaml"
-    data = yaml.safe_load(kb_path.read_text(encoding="utf-8"))
     configs = {
         item["id"]: item
-        for item in data.get("knowledge_bits", [])
+        for item in catalog_service._yaml_kbs()
         if item.get("id") in {"kb_wip_mensual", "kb_wip_resumen"}
     }
 
@@ -127,16 +120,31 @@ def test_kb_output_parquet_path_uses_forwarded_tenant_workspace_scope(
         lambda *, local_path, object_name: uploads.append(object_name),
     )
 
+    provenance = {}
+    provenance_prefix = ""
+    if cartridge == "replicon":
+        provenance = {
+            "package_version": "test-package",
+            "sql_digest": "test-sql",
+            "input_digest": "test-input",
+        }
+        provenance_prefix = (
+            "package_version=test-package/sql_digest=test-sql/"
+            "input_digest=test-input/"
+        )
+
     uri = duckdb_service.write_kb_parquet(
         pd.DataFrame([{"id": "1", "entity": entity}]),
         output_path=f"silver/{cartridge}/kb_test",
         kb_id="kb_test",
         run_id="run-1",
         security_context=_ctx(),
+        **provenance,
     )
 
     expected = (
-        f"silver/{cartridge}/kb_test/tenant_id=tenant-1/workspace_id=ws-1/load_date="
+        f"silver/{cartridge}/kb_test/{provenance_prefix}"
+        "tenant_id=tenant-1/workspace_id=ws-1/load_date="
     )
     assert uploads
     assert uploads[0].startswith(expected)

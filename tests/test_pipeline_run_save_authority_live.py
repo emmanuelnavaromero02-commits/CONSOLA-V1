@@ -57,6 +57,10 @@ async def test_unsigned_airflow_http_cannot_write_chosen_workspace(
     tenant, workspace = await _scope(postgres_with_real_init_schema)
     tenant_b, workspace_b = await _scope(postgres_with_real_init_schema)
     parsed = urlsplit(postgres_with_real_init_schema)
+    mcp_dsn = postgres_with_real_init_schema.replace(
+        f"{POSTGRES_USER}:{POSTGRES_PASSWORD}",
+        f"omega_mcp_infra:{MCP_PASSWORD}",
+    )
     _purge_app()
     monkeypatch.syspath_prepend(str(ROOT / "mcp-infra"))
     monkeypatch.syspath_prepend(str(ROOT / "airflow" / "dags"))
@@ -65,6 +69,7 @@ async def test_unsigned_airflow_http_cannot_write_chosen_workspace(
         "INTERNAL_API_KEY": "transport-key-that-is-long-enough-123456",
         "INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA": "airflow-pair-key-123456",
         "SECURITY_CONTEXT_SIGNING_KEY": "signing-key-distinct-and-long-enough-123456",
+        "DATABASE_URL": mcp_dsn,
         "PG_HOST": parsed.hostname or "127.0.0.1",
         "PG_PORT": str(parsed.port),
         "PG_DB": parsed.path.lstrip("/"),

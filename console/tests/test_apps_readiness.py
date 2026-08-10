@@ -17,6 +17,7 @@ class _GoldConn:
     def __init__(self):
         self.closed = False
         self.configured_scope = None
+        self.head_lookups = []
 
     def transaction(self):
         return _Tx()
@@ -24,27 +25,43 @@ class _GoldConn:
     async def execute(self, _sql, tenant_id, workspace_id):
         self.configured_scope = (tenant_id, workspace_id)
 
-    async def fetchval(self, sql, *args):
-        if "to_regclass" in sql:
-            table_ref = args[0]
-            if table_ref in {
-                "public.gold_ready_dataset",
-                "public.gold_empty_dataset",
-                "public.gold_workspace_only_dataset",
-            }:
-                return table_ref
+    async def fetchrow(self, _sql, tenant_id, workspace_id, dataset):
+        self.head_lookups.append((tenant_id, workspace_id, dataset))
+        table_by_dataset = {
+            "ready_dataset": f"run_{'1' * 32}",
+            "empty_dataset": f"run_{'2' * 32}",
+            "workspace_only_dataset": f"run_{'3' * 32}",
+        }
+        table = table_by_dataset.get(dataset)
+        if table is None:
             return None
-        if 'public."gold_ready_dataset"' in sql:
-            return 1
-        if 'public."gold_workspace_only_dataset"' in sql:
+        return {
+            "run_id": f"run-id-{dataset}",
+            "generation": 1,
+            "status": "published",
+            "gold_table": table,
+            "receipt_id": None,
+            "object_checksum": None,
+            "evidence_digest": None,
+            "object_uri": None,
+            "object_version": None,
+            "schema_digest": None,
+        }
+
+    async def fetchval(self, sql, *args):
+        if f'"run_{"1" * 32}"' in sql:
             return 1
         return None
 
-    async def fetch(self, _sql, table):
-        if table == "gold_workspace_only_dataset":
-            return [{"column_name": "workspace_id"}]
-        if table in {"gold_ready_dataset", "gold_empty_dataset"}:
-            return [{"column_name": "tenant_id"}, {"column_name": "workspace_id"}]
+    async def fetch(self, _sql, schema, table):
+        assert schema == "omega_publication_gold"
+        if table == f"run_{'3' * 32}":
+            return [{"column_name": "workspace_id", "data_type": "uuid"}]
+        if table in {f"run_{'1' * 32}", f"run_{'2' * 32}"}:
+            return [
+                {"column_name": "tenant_id", "data_type": "uuid"},
+                {"column_name": "workspace_id", "data_type": "uuid"},
+            ]
         return []
 
     async def close(self):
@@ -77,9 +94,15 @@ async def test_gold_ready_datasets_for_apps_checks_scoped_rows():
         connect_gold=_connect,
     )
 
-    assert ready == {"ready_dataset", "workspace_only_dataset"}
+    assert ready == {"ready_dataset"}
     assert mode == "checked"
     assert conn.configured_scope == ("tenant-1", "workspace-1")
+    assert conn.head_lookups == [
+        ("tenant-1", "workspace-1", "empty_dataset"),
+        ("tenant-1", "workspace-1", "missing_dataset"),
+        ("tenant-1", "workspace-1", "ready_dataset"),
+        ("tenant-1", "workspace-1", "workspace_only_dataset"),
+    ]
     assert conn.closed is True
 
 

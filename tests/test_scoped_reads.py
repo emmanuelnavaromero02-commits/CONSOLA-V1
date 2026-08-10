@@ -56,26 +56,32 @@ def test_merge_declared_and_inferred_sources_preserves_order():
 
 
 def test_bronze_latest_date_from_objects_supports_scoped_and_legacy_paths():
-    assert scoped_reads.bronze_latest_date_from_objects(
-        "sap_successfactors",
-        "User",
-        [
-            "raw/sap_successfactors/User/load_date=2026-06-28/part-000.parquet",
-            (
-                "raw/sap_successfactors/User/tenant_id=t1/workspace_id=w1/"
-                "load_date=2026-06-29/part-000.parquet"
-            ),
-            "raw/sap_successfactors/User/load_date=2026-06-27/not-parquet.csv",
-        ],
-    ) == "2026-06-29"
+    assert (
+        scoped_reads.bronze_latest_date_from_objects(
+            "sap_successfactors",
+            "User",
+            [
+                "raw/sap_successfactors/User/load_date=2026-06-28/part-000.parquet",
+                (
+                    "raw/sap_successfactors/User/tenant_id=t1/workspace_id=w1/"
+                    "load_date=2026-06-29/part-000.parquet"
+                ),
+                "raw/sap_successfactors/User/load_date=2026-06-27/not-parquet.csv",
+            ],
+        )
+        == "2026-06-29"
+    )
 
 
 def test_bronze_latest_date_from_objects_rejects_unsafe_names():
-    assert scoped_reads.bronze_latest_date_from_objects(
-        "sap_successfactors",
-        "../User",
-        ["raw/sap_successfactors/User/load_date=2026-06-28/part-000.parquet"],
-    ) is None
+    assert (
+        scoped_reads.bronze_latest_date_from_objects(
+            "sap_successfactors",
+            "../User",
+            ["raw/sap_successfactors/User/load_date=2026-06-28/part-000.parquet"],
+        )
+        is None
+    )
 
 
 def test_scoped_bronze_s3_path_uses_tenant_workspace_partitions(monkeypatch):
@@ -117,11 +123,14 @@ def test_bronze_latest_s3_glob_uses_scope_when_available(monkeypatch):
 def test_bronze_latest_s3_glob_falls_back_without_scope(monkeypatch):
     monkeypatch.setenv("S3_BUCKET_NAME", "lakehouse-test")
 
-    assert scoped_reads.bronze_latest_s3_glob(
-        "raw/sap_successfactors/User",
-        "2026-06-29",
-        None,
-    ) == "s3://lakehouse-test/raw/sap_successfactors/User/load_date=2026-06-29/**/*.parquet"
+    assert (
+        scoped_reads.bronze_latest_s3_glob(
+            "raw/sap_successfactors/User",
+            "2026-06-29",
+            None,
+        )
+        == "s3://lakehouse-test/raw/sap_successfactors/User/load_date=2026-06-29/**/*.parquet"
+    )
 
 
 def test_rewrite_bronze_logical_paths_adds_scoped_read_options(monkeypatch):
@@ -156,9 +165,7 @@ def test_scoped_read_cache_isolation_and_invalidation(monkeypatch):
     scoped_reads.scoped_read_cache_set("catalog", USER, {"rows": [1]}, "gold")
     scoped_reads.scoped_read_cache_set("catalog", other_user, {"rows": [2]}, "gold")
 
-    assert scoped_reads.scoped_read_cache_get("catalog", USER, "gold") == {
-        "rows": [1]
-    }
+    assert scoped_reads.scoped_read_cache_get("catalog", USER, "gold") == {"rows": [1]}
     assert scoped_reads.scoped_read_cache_get("catalog", other_user, "gold") == {
         "rows": [2]
     }
@@ -172,15 +179,51 @@ def test_scoped_read_cache_isolation_and_invalidation(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_scoped_read_cache_get_or_set_fails_closed_without_publication_epoch(
+    monkeypatch,
+):
+    monkeypatch.setenv("OMEGA_SCOPED_READ_CACHE_TTL_SECONDS", "60")
+    loader_called = False
+
+    async def unavailable_publication_epoch(_user):
+        return None
+
+    async def loader():
+        nonlocal loader_called
+        loader_called = True
+        return {"rows": []}
+
+    monkeypatch.setattr(
+        scoped_reads, "publication_epoch", unavailable_publication_epoch
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await scoped_reads.scoped_read_cache_get_or_set(
+            "schema",
+            USER,
+            ("raw/sap_successfactors/User",),
+            loader,
+        )
+
+    assert exc.value.status_code == 503
+    assert loader_called is False
+
+
+@pytest.mark.asyncio
 async def test_scoped_read_cache_get_or_set_singleflights(monkeypatch):
     monkeypatch.setenv("OMEGA_SCOPED_READ_CACHE_TTL_SECONDS", "60")
     calls = 0
+
+    async def fixed_publication_epoch(_user):
+        return "test-publication-epoch"
 
     async def loader():
         nonlocal calls
         calls += 1
         await asyncio.sleep(0.01)
         return {"rows": [calls]}
+
+    monkeypatch.setattr(scoped_reads, "publication_epoch", fixed_publication_epoch)
 
     results = await asyncio.gather(
         *(

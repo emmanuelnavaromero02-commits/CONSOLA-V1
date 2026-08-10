@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import re
+import runpy
 from pathlib import Path
+
+import pytest
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -36,7 +39,10 @@ def test_20c_cartridge_kb_tools_fail_closed_without_signed_workspace_scope():
         assert "resolved_sql = _scope_kb_sql(sql, security_context)" in kb_service
         assert "required_scope=scoped_prefix(security_context)" in kb_service
         assert "require_tenant_workspace_scope(security_context)" in duckdb_service
-        assert "KB output path is outside the active tenant/workspace scope" in duckdb_service
+        assert (
+            "KB output path is outside the active tenant/workspace scope"
+            in duckdb_service
+        )
         assert "security_context_denied" in mcp_server
         assert "required_scope=scope" in mcp_server
         assert "x-security-context" in main
@@ -66,15 +72,45 @@ def test_20c_hubspot_pii_contract_masks_or_shadows_contact_identifiers():
 
 def test_20c_mcp_infra_denies_unscoped_cartridge_tools_and_canonicalizes_paths():
     source = _read("mcp-infra/app/main.py")
+    storage_scope_source = _read("mcp-infra/app/storage_scope.py")
+    storage_scope = runpy.run_path(str(REPO / "mcp-infra/app/storage_scope.py"))
+    canonical_storage_key = storage_scope["canonical_storage_key"]
+    scoped_storage_key = storage_scope["scoped_storage_key"]
 
     assert "def _canonical_storage_key" in source
     assert "def _key_has_exact_scope" in source
-    assert "unquote" in source
+    assert "return canonical_storage_key(value)" in source
+    assert "unicodedata.normalize" in storage_scope_source
+    assert 'or "%" in raw' in storage_scope_source
     assert 'tool.startswith("cartridge_")' in source
     assert "cartridge tool lacks tenancy metadata" in source
-    assert "_require_scoped_object_path(ctx, key)" in source
+    assert "_require_scoped_object_path(ctx, str(path))" in source
     assert "cartridge tools require tenant/workspace scope" in source
-    assert "elif tool.startswith(\"cartridge_\")" in source
+    assert 'elif tool.startswith("cartridge_")' in source
+
+    valid = (
+        "raw/replicon/TimeEntry/tenant_id=tenant-1/" "workspace_id=ws-1/file.parquet"
+    )
+    context = {
+        "tenant_id": "tenant-1",
+        "workspace_id": "ws-1",
+        "allowed_cartridges": ["replicon"],
+    }
+    assert canonical_storage_key(valid) == valid
+    assert scoped_storage_key(valid, context) == valid
+    for hostile in (
+        "raw/replicon/TimeEntry/%2e%2e/file.parquet",
+        "raw/replicon/TimeEntry/../file.parquet",
+        "raw/replicon//TimeEntry/file.parquet",
+        "raw\\replicon\\TimeEntry\\file.parquet",
+        "raw/replicon/ＴimeEntry/file.parquet",
+    ):
+        with pytest.raises(ValueError):
+            canonical_storage_key(hostile)
+    with pytest.raises(PermissionError):
+        scoped_storage_key(
+            valid.replace("workspace_id=ws-1", "workspace_id=ws-2"), context
+        )
 
 
 def test_20c_observability_migration_scopes_runs_and_legacy_rows():
@@ -128,15 +164,26 @@ def test_20c_dataset_app_and_lineage_reads_by_name_are_workspace_scoped():
     dataset_store = _read("refinement/app/dataset_store.py")
     refinement = _read("refinement/app/main.py")
 
-    assert "name = %s AND (%s::uuid IS NULL OR workspace_id = %s::uuid)" in dataset_store
+    assert (
+        "name = %s AND (%s::uuid IS NULL OR workspace_id = %s::uuid)" in dataset_store
+    )
     assert "datasets_workspace_name_key" in dataset_store
     assert "ON CONFLICT {conflict_target} DO UPDATE SET" in dataset_store
     assert "workspace_id = %s::uuid OR scope_status = 'platform_template'" in refinement
-    assert "DELETE FROM analytic_apps WHERE name=%s AND (%s::uuid IS NULL OR workspace_id = %s::uuid)" in refinement
-    lineage_block = refinement.split('if tool == "get_lineage":', 1)[1].split('if tool == "describe_source":', 1)[0]
-    assert 'store.get_dataset(args["name"], **_dataset_store_scope(sec))' in lineage_block
+    assert (
+        "DELETE FROM analytic_apps WHERE name=%s AND (%s::uuid IS NULL OR workspace_id = %s::uuid)"
+        in refinement
+    )
+    lineage_block = refinement.split('if tool == "get_lineage":', 1)[1].split(
+        'if tool == "describe_source":', 1
+    )[0]
+    assert (
+        'store.get_dataset(args["name"], **_dataset_store_scope(sec))' in lineage_block
+    )
     assert "if not ds:" in lineage_block
-    assert 'return _get_lineage(args["name"], args.get("limit", 10), sec)' in lineage_block
+    assert (
+        'return _get_lineage(args["name"], args.get("limit", 10), sec)' in lineage_block
+    )
 
 
 def test_20c_scheduled_agent_policy_requires_rls_workspace_match():

@@ -20,6 +20,7 @@ from tests.test_operational_rls_console_refinement import (
     _docker,
     _init_pgoptions,
     _mapped_postgres_port,
+    _remove_test_container,
     _wait_for_schema,
     postgres_with_real_init_schema,
 )
@@ -215,7 +216,7 @@ async def test_authority_migrations_upgrade_exact_historical_tree_and_rerun(
         finally:
             await conn.close()
     finally:
-        _docker("rm", "-f", container_id, check=False)
+        _remove_test_container(container_id)
         if history_root != tmp_path:
             shutil.rmtree(history_root)
 

@@ -58,36 +58,44 @@ class TimeoutClient:
 
 
 def _request() -> Request:
-    request = Request({"type": "http", "method": "GET", "path": "/api/data/x", "headers": []})
+    request = Request(
+        {"type": "http", "method": "GET", "path": "/api/data/x", "headers": []}
+    )
     request.state.user = USER
     return request
 
 
+def _runtime_endpoint(path: str, method: str):
+    return next(
+        route.endpoint
+        for route in console_main.app.routes
+        if getattr(route, "path", None) == path
+        and method in (getattr(route, "methods", None) or set())
+    )
+
+
 @pytest.mark.asyncio
-async def test_api_data_maps_refinement_error_payload_to_http(monkeypatch):
+async def test_api_data_preserves_gold_error_without_refinement_fallback(monkeypatch):
     from app.services.intelligence import gold_fetcher
 
     async def missing_gold(*_args, **_kwargs):
         raise HTTPException(404, "gold table missing")
 
-    payload = {
-        "error": (
-            "HTTP Error: Unable to connect to URL "
-            "\"https://s3.amazonaws.com/modecissions-lakehouse-783792/"
-            "silver/sap_successfactors/sap_successfactors_empemployment_latest/"
-            "tenant_id%3Db95/workspace_id%3Da2/data.parquet\": 404 (Not Found)."
-        )
-    }
-
     monkeypatch.setattr(gold_fetcher, "query_gold_dataset_rows", missing_gold)
+
+    def unexpected_refinement_client(**_kwargs):
+        raise AssertionError(
+            "the scoped Gold data API must not fall back to Refinement"
+        )
+
     monkeypatch.setattr(
         console_main.httpx,
         "AsyncClient",
-        lambda **_kwargs: FakeClient(payload),
+        unexpected_refinement_client,
     )
 
     with pytest.raises(HTTPException) as exc:
-        await console_main.api_data(
+        await _runtime_endpoint("/api/data/{dataset}", "GET")(
             "sap_successfactors_employee_360",
             _request(),
             limit=20,
@@ -95,7 +103,7 @@ async def test_api_data_maps_refinement_error_payload_to_http(monkeypatch):
         )
 
     assert exc.value.status_code == 404
-    assert "sap_successfactors_empemployment_latest" in str(exc.value.detail)
+    assert exc.value.detail == "gold table missing"
 
 
 @pytest.mark.asyncio
@@ -104,16 +112,20 @@ async def test_bronze_query_maps_refinement_error_payload_to_http(monkeypatch):
     monkeypatch.setattr(
         console_main.httpx,
         "AsyncClient",
-        lambda **_kwargs: FakeClient({
-            "code": "source_files_missing",
-            "error": "No hay archivos Parquet para la fuente seleccionada.",
-            "raw_error": "No files found that match the pattern s3://bucket/raw/sap_successfactors/PerPerson",
-        }),
+        lambda **_kwargs: FakeClient(
+            {
+                "code": "source_files_missing",
+                "error": "No hay archivos Parquet para la fuente seleccionada.",
+                "raw_error": "No files found that match the pattern s3://bucket/raw/sap_successfactors/PerPerson",
+            }
+        ),
     )
 
     with pytest.raises(HTTPException) as exc:
-        await console_main.api_bronze_query(
-            {"sql": "select * from read_parquet('raw/sap_successfactors/PerPerson') limit 20"},
+        await _runtime_endpoint("/api/bronze/query", "POST")(
+            {
+                "sql": "select * from read_parquet('raw/sap_successfactors/PerPerson') limit 20"
+            },
             user=USER,
         )
 
@@ -124,22 +136,29 @@ async def test_bronze_query_maps_refinement_error_payload_to_http(monkeypatch):
 @pytest.mark.asyncio
 async def test_schema_maps_partition_error_payload_to_controlled_status(monkeypatch):
     monkeypatch.setenv("OMEGA_SCOPED_READ_CACHE_TTL_SECONDS", "0")
-    fake_client = FakeClient([
-        {"source": "raw/sap_successfactors/PerPerson", "error": "AccessDenied: not authorized"},
-        {
-            "source": "raw/sap_successfactors/PerPerson",
-            "schema": [{"name": "userId", "type": "VARCHAR"}],
-            "columns": [{"name": "userId", "type": "VARCHAR"}],
-            "data": [],
-        },
-    ])
+    fake_client = FakeClient(
+        [
+            {
+                "source": "raw/sap_successfactors/PerPerson",
+                "error": "AccessDenied: not authorized",
+            },
+            {
+                "source": "raw/sap_successfactors/PerPerson",
+                "schema": [{"name": "userId", "type": "VARCHAR"}],
+                "columns": [{"name": "userId", "type": "VARCHAR"}],
+                "data": [],
+            },
+        ]
+    )
     monkeypatch.setattr(
         console_main.httpx,
         "AsyncClient",
         lambda **_kwargs: fake_client,
     )
 
-    payload = await console_main.api_schema("raw/sap_successfactors/PerPerson", user=USER)
+    payload = await _runtime_endpoint("/api/schema", "GET")(
+        "raw/sap_successfactors/PerPerson", user=USER
+    )
 
     assert payload["status"] == "partial"
     assert payload["message"] == "datos parciales"
@@ -154,11 +173,15 @@ async def test_catalog_maps_refinement_error_payload_to_http(monkeypatch):
     async def fake_refinement(*_args, **_kwargs):
         return {"error": "Connection timeout while reading data_catalog"}
 
-    monkeypatch.setattr(console_main, "_active_scoped_connection_cartridges", AsyncMock(return_value=set()))
+    monkeypatch.setattr(
+        console_main,
+        "_active_scoped_connection_cartridges",
+        AsyncMock(return_value=set()),
+    )
     monkeypatch.setattr(console_main, "_refinement_invoke", fake_refinement)
 
     with pytest.raises(HTTPException) as exc:
-        await console_main.api_catalog_get(layer="gold", user=USER)
+        await _runtime_endpoint("/api/catalog", "GET")(layer="gold", user=USER)
 
     assert exc.value.status_code == 503
     assert "timeout" in str(exc.value.detail).lower()
@@ -166,10 +189,14 @@ async def test_catalog_maps_refinement_error_payload_to_http(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_refinement_transport_timeout_maps_to_503(monkeypatch):
-    monkeypatch.setattr(console_main.httpx, "AsyncClient", lambda **_kwargs: TimeoutClient())
+    monkeypatch.setattr(
+        console_main.httpx, "AsyncClient", lambda **_kwargs: TimeoutClient()
+    )
 
     with pytest.raises(HTTPException) as exc:
-        await console_main._refinement_invoke("get_data_catalog", {"layer": "gold"}, user=USER)
+        await console_main._refinement_invoke(
+            "get_data_catalog", {"layer": "gold"}, user=USER
+        )
 
     assert exc.value.status_code == 503
     assert "timed out" in str(exc.value.detail).lower()

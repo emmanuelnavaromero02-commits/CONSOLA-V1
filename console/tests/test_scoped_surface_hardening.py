@@ -32,8 +32,29 @@ USER = {
 }
 
 
+def _runtime_endpoint(path: str, method: str):
+    return next(
+        route.endpoint
+        for route in console_main.app.routes
+        if getattr(route, "path", None) == path
+        and method in (getattr(route, "methods", None) or set())
+    )
+
+
 @pytest.fixture(autouse=True)
-def _clear_scoped_read_cache():
+def _isolate_scoped_read_runtime(monkeypatch):
+    runtime_endpoints = {
+        "api_apps": ("/api/apps", "GET"),
+        "api_bronze_query": ("/api/bronze/query", "POST"),
+        "api_catalog_get": ("/api/catalog", "GET"),
+        "api_dataset_save": ("/api/datasets/save", "POST"),
+        "api_pipeline": ("/api/pipeline", "GET"),
+        "api_semantic": ("/api/semantic", "GET"),
+        "api_semantic_enrich": ("/api/semantic/enrich", "POST"),
+        "api_sources": ("/api/sources", "GET"),
+    }
+    for name, (path, method) in runtime_endpoints.items():
+        monkeypatch.setattr(console_main, name, _runtime_endpoint(path, method))
     console_main._SCOPED_READ_CACHE.clear()
     console_main._SCOPED_READ_CACHE_LOCKS.clear()
     yield

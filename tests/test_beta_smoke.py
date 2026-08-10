@@ -54,7 +54,7 @@ def test_beta_smoke_dirty_tree_filter_keeps_evidence_out_of_release_identity() -
 def test_beta_smoke_checks_gold_lineage_rls_and_superset() -> None:
     source = _read(SCRIPT)
     for needle in (
-        "silver_lineage",
+        "omega_publication.published_lineage",
         "layer='gold'",
         "mode_postgres_gold",
         "rolbypassrls",

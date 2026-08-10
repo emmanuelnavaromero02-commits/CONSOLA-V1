@@ -2518,7 +2518,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         </div>
       `;
 
-      fetch('/datasets').then(r => r.json()).then(d => {
+      fetchWithTimeout('/datasets', {}, 10_000).then(r => r.json()).then(d => {
         const gold = (d.datasets || []).filter(ds =>
           ds.layer === 'gold' && (!cartridge || ds.cartridge === cartridge)
         );

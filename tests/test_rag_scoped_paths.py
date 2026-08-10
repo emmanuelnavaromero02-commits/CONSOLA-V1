@@ -13,18 +13,35 @@ This is a source-level test on mcp-infra/app/main.py. It guarantees that:
   * `_build_raw_doc` builds a tenant/workspace-partitioned path when the
     caller is scoped, NOT a global `raw/<cart>/<ent>/**/*.parquet`.
 """
+
 from __future__ import annotations
 
-import importlib
-import inspect
+import ast
 from pathlib import Path
-
-import pytest
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MCP_MAIN = REPO_ROOT / "mcp-infra/app/main.py"
 SRC = MCP_MAIN.read_text(encoding="utf-8")
+TREE = ast.parse(SRC, filename=str(MCP_MAIN))
+
+
+def _function_parameter_names(name: str) -> set[str]:
+    for node in TREE.body:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == name
+        ):
+            parameters = [
+                *node.args.posonlyargs,
+                *node.args.args,
+                *node.args.kwonlyargs,
+            ]
+            if node.args.vararg is not None:
+                parameters.append(node.args.vararg)
+            if node.args.kwarg is not None:
+                parameters.append(node.args.kwarg)
+            return {parameter.arg for parameter in parameters}
+    raise AssertionError(f"function {name} not found in {MCP_MAIN}")
 
 
 def _function_source(name: str) -> str:
@@ -54,26 +71,24 @@ def _async_function_source(name: str) -> str:
 # were missing the parameter, which would crash /rag/reindex at runtime.
 # ---------------------------------------------------------------------------
 
+
 def test_build_raw_doc_accepts_ctx_parameter():
-    sig_line = _function_source("_build_raw_doc").splitlines()[0]
-    assert "ctx" in sig_line, (
+    assert "ctx" in _function_parameter_names("_build_raw_doc"), (
         "_build_raw_doc must accept a `ctx` security-context parameter so "
         "RAG documents are scoped to the caller's tenant/workspace."
     )
 
 
 def test_build_dataset_doc_accepts_ctx_parameter():
-    sig_line = _function_source("_build_dataset_doc").splitlines()[0]
-    assert "ctx" in sig_line, (
-        "_build_dataset_doc must accept a `ctx` security-context parameter."
-    )
+    assert "ctx" in _function_parameter_names(
+        "_build_dataset_doc"
+    ), "_build_dataset_doc must accept a `ctx` security-context parameter."
 
 
 def test_cartridge_of_accepts_ctx_parameter():
-    sig_line = _function_source("_cartridge_of").splitlines()[0]
-    assert "ctx" in sig_line, (
-        "_cartridge_of is invoked with ctx; its signature must accept it."
-    )
+    assert "ctx" in _function_parameter_names(
+        "_cartridge_of"
+    ), "_cartridge_of is invoked with ctx; its signature must accept it."
 
 
 # ---------------------------------------------------------------------------
@@ -81,14 +96,15 @@ def test_cartridge_of_accepts_ctx_parameter():
 # partition, not the global glob.
 # ---------------------------------------------------------------------------
 
+
 def test_build_raw_doc_uses_scoped_partition_when_ctx_present():
     body = _function_source("_build_raw_doc")
-    assert "_has_tenant_workspace_scope(ctx)" in body, (
-        "_build_raw_doc must check whether the caller is tenant/workspace-scoped"
-    )
-    assert "tenant_id={tenant_id}/workspace_id={workspace_id}" in body, (
-        "_build_raw_doc must build a hive partition path when scoped"
-    )
+    assert (
+        "_has_tenant_workspace_scope(ctx)" in body
+    ), "_build_raw_doc must check whether the caller is tenant/workspace-scoped"
+    assert (
+        "tenant_id={tenant_id}/workspace_id={workspace_id}" in body
+    ), "_build_raw_doc must build a hive partition path when scoped"
 
 
 def test_build_dataset_doc_rejects_out_of_scope_cartridge():
@@ -123,8 +139,11 @@ def test_rebuild_semantic_doc_scopes_the_silver_read_parquet():
     # scoped_raw_read is set, NOT the bare global `silver/{cartridge}/{name}/
     # data.parquet`.
     assert "scoped_raw_read" in body, "silver describe must apply scoped_raw_read"
-    assert 'f"s3://{bucket}/silver/{cartridge}/{name}/"' in body or \
-           'f"s3://{bucket}/silver/{cartridge}/{name}/{scoped_raw_read}data.parquet"' in body, (
+    assert (
+        'f"s3://{bucket}/silver/{cartridge}/{name}/"' in body
+        or 'f"s3://{bucket}/silver/{cartridge}/{name}/{scoped_raw_read}data.parquet"'
+        in body
+    ), (
         "_rebuild_semantic_doc must build a scoped silver parquet path when "
         "the caller is tenant/workspace-scoped"
     )
@@ -134,12 +153,13 @@ def test_rebuild_semantic_doc_scopes_the_silver_read_parquet():
 # Callers — the reindex endpoint passes ctx; the source must keep that wiring.
 # ---------------------------------------------------------------------------
 
+
 def test_rag_reindex_passes_ctx_to_build_helpers():
     """`/rag/reindex` already passes ctx to both helpers; this test pins
     that contract so a future refactor cannot quietly drop it."""
-    assert "_build_raw_doc(cartridge, name, ctx)" in SRC, (
-        "/rag/reindex must call _build_raw_doc with ctx"
-    )
-    assert "_build_dataset_doc(name, ctx)" in SRC, (
-        "/rag/reindex must call _build_dataset_doc with ctx"
-    )
+    assert (
+        "_build_raw_doc(cartridge, name, ctx)" in SRC
+    ), "/rag/reindex must call _build_raw_doc with ctx"
+    assert (
+        "_build_dataset_doc(name, ctx)" in SRC
+    ), "/rag/reindex must call _build_dataset_doc with ctx"

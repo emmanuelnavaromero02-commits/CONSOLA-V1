@@ -1,6 +1,6 @@
     // ── SQL Runner ──────────────────────────────────────────────────────────
     import { state } from './legacy-state.js';
-    import { esc, _renderQueryTable, _currentEditorEntity } from './legacy.js';
+    import { esc, _renderQueryTable, _currentEditorEntity } from './legacy.js?v=studio-autopilot-ui5';
 
     function readCookie(name) {
       const prefix = `${name}=`;

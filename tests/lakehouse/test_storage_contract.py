@@ -22,11 +22,20 @@ class NotFound(Exception):
     response = {"Error": {"Code": "404"}}
 
 
+class PreconditionFailed(Exception):
+    response = {"Error": {"Code": "PreconditionFailed"}}
+
+
 class FakeS3:
     def __init__(self) -> None:
         self.objects: dict[str, dict] = {}
         self.deleted: list[str] = []
         self.fail_copy = False
+        self.version_counter = 0
+
+    def _next_version(self) -> str:
+        self.version_counter += 1
+        return f"v{self.version_counter}"
 
     def head_object(self, Bucket, Key):
         if Key not in self.objects:
@@ -40,14 +49,26 @@ class FakeS3:
             "Metadata": obj.get("metadata", {}),
         }
 
-    def put_object(self, Bucket, Key, Body, Metadata=None, ContentType=None):
+    def put_object(
+        self,
+        Bucket,
+        Key,
+        Body,
+        Metadata=None,
+        ContentType=None,
+        IfNoneMatch=None,
+    ):
+        if IfNoneMatch == "*" and Key in self.objects:
+            raise PreconditionFailed()
         body = Body.read() if hasattr(Body, "read") else Body
+        version = self._next_version()
         self.objects[Key] = {
             "body": body,
             "metadata": Metadata or {},
             "updated": datetime.now(timezone.utc),
-            "version": f"v{len(self.objects) + 1}",
+            "version": version,
         }
+        return {"VersionId": version}
 
     def get_object(self, Bucket, Key):
         if Key not in self.objects:
@@ -61,12 +82,14 @@ class FakeS3:
         if source_key not in self.objects:
             raise NotFound()
         source = self.objects[source_key]
+        version = self._next_version()
         self.objects[Key] = {
             "body": source["body"],
             "metadata": kwargs.get("Metadata") or source.get("metadata", {}),
             "updated": datetime.now(timezone.utc),
-            "version": f"v{len(self.objects) + 1}",
+            "version": version,
         }
+        return {"VersionId": version}
 
     def list_objects_v2(self, **kwargs):
         prefix = kwargs.get("Prefix") or ""
@@ -78,34 +101,50 @@ class FakeS3:
         prefixes = []
         seen = set()
         for key in keys:
-            tail = key[len(prefix):]
+            tail = key[len(prefix) :]
             if delimiter and delimiter in tail:
                 folder = prefix + tail.split(delimiter, 1)[0] + delimiter
                 if folder not in seen:
                     seen.add(folder)
                     prefixes.append({"Prefix": folder})
                 continue
-            contents.append({"Key": key, "Size": len(self.objects[key]["body"]), "LastModified": self.objects[key]["updated"]})
-        page = contents[start:start + max_keys]
+            contents.append(
+                {
+                    "Key": key,
+                    "Size": len(self.objects[key]["body"]),
+                    "LastModified": self.objects[key]["updated"],
+                }
+            )
+        page = contents[start : start + max_keys]
         next_token = str(start + max_keys) if start + max_keys < len(contents) else None
-        return {"Contents": page, "CommonPrefixes": prefixes, "NextContinuationToken": next_token, "IsTruncated": bool(next_token)}
+        return {
+            "Contents": page,
+            "CommonPrefixes": prefixes,
+            "NextContinuationToken": next_token,
+            "IsTruncated": bool(next_token),
+        }
 
     def delete_object(self, Bucket, Key):
         self.deleted.append(Key)
         self.objects.pop(Key, None)
 
     def generate_presigned_url(self, method, *, Params, ExpiresIn):
-        return f"https://signed.local/{Params['Bucket']}/{Params['Key']}?ttl={ExpiresIn}"
+        return (
+            f"https://signed.local/{Params['Bucket']}/{Params['Key']}?ttl={ExpiresIn}"
+        )
 
 
 def _storage(fake: FakeS3 | None = None) -> S3Storage:
-    config = LakehouseStorageConfig(provider="minio", bucket="lakehouse", endpoint="http://minio:9000", secure=False)
+    config = LakehouseStorageConfig(
+        provider="minio", bucket="lakehouse", endpoint="http://minio:9000", secure=False
+    )
     return S3Storage(config, client=fake or FakeS3())
 
 
 def test_read_methods_and_native_uri_roundtrip(tmp_path):
     storage = _storage()
-    storage.put_bytes("raw/a/file.txt", b"hello")
+    result = storage.put_bytes("raw/a/file.txt", b"hello")
+    assert result.version == "v1"
     assert storage.uri_for("raw/a/file.txt") == "s3://lakehouse/raw/a/file.txt"
     assert storage.get_bytes("raw/a/file.txt") == b"hello"
     assert storage.open_reader("raw/a/file.txt").read() == b"hello"
@@ -131,7 +170,11 @@ def test_publish_copies_validates_then_deletes_staging():
     fake = FakeS3()
     storage = _storage(fake)
     staging = storage.put_bytes("tmp/batch.parquet", b"data")
-    result = storage.publish("tmp/batch.parquet", "raw/final.parquet", expected_sha256=staging.checksum_sha256)
+    result = storage.publish(
+        "tmp/batch.parquet",
+        "raw/final.parquet",
+        expected_sha256=staging.checksum_sha256,
+    )
     assert result.staging_deleted is True
     assert fake.deleted == ["tmp/batch.parquet"]
     assert storage.get_bytes("raw/final.parquet") == b"data"
@@ -172,7 +215,9 @@ def test_key_delete_limits_and_secret_redaction(monkeypatch):
         storage.delete_prefix("raw/a/", max_objects=1)
 
     secret = SecretValue("super-secret")
-    config = LakehouseStorageConfig(provider="s3", bucket="b", access_key=secret, secret_key=secret)
+    config = LakehouseStorageConfig(
+        provider="s3", bucket="b", access_key=secret, secret_key=secret
+    )
     err = StorageError("failed", provider="s3", bucket="b", key="raw/a")
     assert "super-secret" not in repr(config)
     assert "super-secret" not in str(secret)
@@ -183,4 +228,7 @@ def test_gcs_uri_is_native_without_importing_sdk():
     from omega_lakehouse.gcs_storage import GCSStorage
 
     config = LakehouseStorageConfig(provider="gcs", bucket="lakehouse")
-    assert GCSStorage(config, client=object()).uri_for("raw/a.txt") == "gs://lakehouse/raw/a.txt"
+    assert (
+        GCSStorage(config, client=object()).uri_for("raw/a.txt")
+        == "gs://lakehouse/raw/a.txt"
+    )

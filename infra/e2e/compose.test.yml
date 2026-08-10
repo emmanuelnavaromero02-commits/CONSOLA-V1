@@ -4,6 +4,7 @@ services:
       context: ../..
       dockerfile: infra/e2e/Dockerfile
     environment:
+      OMEGA_OPERATIONAL_TRUTH_E2E: "1"
       AIRFLOW_URL: http://airflow:8080
       AIRFLOW_ADMIN_USER: ${AIRFLOW_ADMIN_USER:?required}
       AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?required}

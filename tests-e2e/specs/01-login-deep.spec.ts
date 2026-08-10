@@ -248,15 +248,29 @@ test.describe("Logout + session lifecycle", () => {
       'button[name="logout"], a[href*="logout"], button:has-text("Cerrar sesión"), button:has-text("Logout")',
     );
     if (await logout.first().isVisible({ timeout: 5_000 }).catch(() => false)) {
-      await logout.first().click();
-      await page.waitForTimeout(2_000);
-      const cookies = await page.context().cookies();
-      const session = cookies.find((c) =>
-        /mod_session|access_token|jwt/.test(c.name) && c.value.length > 0,
-      );
-      expect(session,
-        "session cookie should be cleared (or expired) after logout",
-      ).toBeFalsy();
+      const [response] = await Promise.all([
+        page.waitForResponse(
+          (candidate) =>
+            candidate.request().method() === "POST" &&
+            /\/auth\/logout(?:\?|$)/.test(candidate.url()),
+          { timeout: 10_000 },
+        ),
+        logout.first().click(),
+      ]);
+      expect(response.ok(), "POST /auth/logout should succeed").toBeTruthy();
+      await expect.poll(
+        async () => {
+          const cookies = await page.context().cookies();
+          return cookies.some((cookie) =>
+            /mod_session|refresh_token|access_token|jwt/.test(cookie.name) &&
+            cookie.value.length > 0,
+          );
+        },
+        {
+          message: "session cookies should be cleared (or expired) after logout",
+          timeout: 10_000,
+        },
+      ).toBe(false);
     } else {
       test.fail(true, "no logout affordance found in Next.js UI — gap for v1.44.4");
     }

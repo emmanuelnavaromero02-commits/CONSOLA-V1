@@ -202,7 +202,7 @@ def postgres_with_real_init_schema() -> str:
         asyncio.run(_wait_for_schema(dsn, container_id))
         yield dsn
     finally:
-        _docker("rm", "-f", container_id, check=False)
+        _docker("rm", "-f", "-v", container_id, check=False)
 
 
 async def _seed_rls_probe(conn: asyncpg.Connection) -> dict[str, str]:

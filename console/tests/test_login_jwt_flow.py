@@ -465,26 +465,17 @@ def test_api_data_without_auth_returns_401(console_main):
 
 
 def test_api_data_with_valid_jwt_returns_200(console_main, monkeypatch):
-    class FakeResponse:
-        status_code = 200
+    from app.services.intelligence import gold_fetcher
 
-        def json(self):
-            return {"data": [{"customer_id": "cust-1"}]}
+    async def query_gold_dataset_rows(dataset, user, limit):
+        assert dataset == "gold_sales"
+        assert user["id"] == 42
+        assert limit == 5000
+        return [{"customer_id": "cust-1"}]
 
-    class FakeAsyncClient:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def post(self, *args, **kwargs):
-            return FakeResponse()
-
-    monkeypatch.setattr(console_main.httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(
+        gold_fetcher, "query_gold_dataset_rows", query_gold_dataset_rows
+    )
     client = TestClient(console_main.app)
     token = create_access_token(
         {"sub": "42", "email": "analyst@example.com", "role": "analyst"}

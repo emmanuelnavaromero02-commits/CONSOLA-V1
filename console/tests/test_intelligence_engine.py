@@ -197,6 +197,8 @@ def test_build_metric_artifacts_applies_live_bayesian_calibration_metadata():
             "metrics": {
                 "sample_count": 30,
                 "confidence_score": 1.0,
+                "complete": True,
+                "provenance_complete": True,
                 "prior_source": "global",
                 "partial_pooling_applied": True,
                 "parent_calibration_group": "global:forecast_weighted:v1",
@@ -784,7 +786,7 @@ async def test_run_intelligence_gold_refresh_filters_datasets_and_uses_run_ref(
     monkeypatch,
 ):
     fetched: list[str] = []
-    finished: list[dict] = []
+    authority_steps: list[str] = []
     events: list[dict] = []
 
     async def fake_fetcher(dataset: str, user: dict | None, limit: int):
@@ -822,52 +824,72 @@ async def test_run_intelligence_gold_refresh_filters_datasets_and_uses_run_ref(
         assert source_system == "hubspot"
         assert run_mode == "gold_refresh"
         assert run_ref == "gold-refresh:workspace-1:hubspot:dag-run-1"
-        assert [item["dataset"] for item in datasets_evaluated] == [
-            "forecast_mensual"
-        ]
+        assert [item["dataset"] for item in datasets_evaluated] == ["forecast_mensual"]
         return {"id": 123, "run_ref": run_ref}
 
-    async def fake_persist_artifacts(
-        tenant_id,
-        workspace_id,
-        user,
-        artifacts,
-        *,
-        intelligence_run_id=None,
-        run_ref=None,
-    ):
-        assert intelligence_run_id == 123
-        assert run_ref == "gold-refresh:workspace-1:hubspot:dag-run-1"
-        assert all(
-            artifact["signal"]["run_mode"] == "gold_refresh"
-            for artifact in artifacts
+    async def unexpected_persist_artifacts(*_args, **_kwargs):
+        raise AssertionError(
+            "Gold refresh must use the outcome-binding persistence path"
         )
 
-    async def fake_finish_run(
+    async def fake_stage_gold_refresh_authority(
+        user,
+        *,
+        expected_run_id,
+        expected_run_ref,
+        intelligence_run_id,
+        publication_trace,
+        expected_datasets,
+    ):
+        assert user == USER
+        assert expected_run_id == "pipeline-run-1"
+        assert expected_run_ref == "gold-refresh:workspace-1:hubspot:dag-run-1"
+        assert intelligence_run_id == 123
+        assert publication_trace is not None
+        assert expected_datasets == ["forecast_mensual"]
+        authority_steps.append("staged")
+
+    async def fake_persist_gold_refresh_pending(
         user,
         *,
         run_id,
-        status,
+        run_ref,
         artifacts,
         skipped,
         datasets_evaluated,
         duration_ms,
-        errors=None,
     ):
-        finished.append(
-            {
-                "run_id": run_id,
-                "status": status,
-                "artifacts": artifacts,
-                "skipped": skipped,
-                "datasets_evaluated": datasets_evaluated,
-            }
+        assert user == USER
+        assert run_id == 123
+        assert run_ref == "gold-refresh:workspace-1:hubspot:dag-run-1"
+        assert all(
+            artifact["signal"]["run_mode"] == "gold_refresh" for artifact in artifacts
         )
-        return {
-            "id": run_id,
-            "run_ref": "gold-refresh:workspace-1:hubspot:dag-run-1",
-            "status": status,
-        }
+        assert skipped == []
+        assert datasets_evaluated[0]["dataset"] == "forecast_mensual"
+        assert duration_ms >= 0
+        authority_steps.append("pending")
+        return {"id": run_id, "run_ref": run_ref, "status": "binding_pending"}
+
+    async def fake_persist_gold_refresh_binding(
+        user,
+        *,
+        expected_run_id,
+        expected_run_ref,
+        intelligence_result,
+        publication_trace,
+        expected_datasets,
+    ):
+        assert user == USER
+        assert expected_run_id == "pipeline-run-1"
+        assert expected_run_ref == "gold-refresh:workspace-1:hubspot:dag-run-1"
+        assert intelligence_result["intelligence_run_id"] == 123
+        assert publication_trace is not None
+        assert expected_datasets == ["forecast_mensual"]
+        authority_steps.append("bound")
+
+    async def unexpected_finish_run(*_args, **_kwargs):
+        raise AssertionError("Gold refresh must not use the legacy finish path")
 
     async def fake_record_event(
         user_id, email, action, resource_type, resource_id, metadata=None
@@ -881,15 +903,32 @@ async def test_run_intelligence_gold_refresh_filters_datasets_and_uses_run_ref(
             {**_contract(), "metrics": [_metric(), _second_metric()]}
         ],
     )
-    monkeypatch.setattr(intelligence_engine_module, "get_run_by_ref", fake_get_run_by_ref)
+    monkeypatch.setattr(
+        intelligence_engine_module, "get_run_by_ref", fake_get_run_by_ref
+    )
     monkeypatch.setattr(
         intelligence_engine_module, "start_intelligence_run", fake_start_run
     )
     monkeypatch.setattr(
-        intelligence_engine_module, "persist_artifacts", fake_persist_artifacts
+        intelligence_engine_module, "persist_artifacts", unexpected_persist_artifacts
     )
     monkeypatch.setattr(
-        intelligence_engine_module, "finish_intelligence_run", fake_finish_run
+        intelligence_engine_module,
+        "stage_gold_refresh_authority",
+        fake_stage_gold_refresh_authority,
+    )
+    monkeypatch.setattr(
+        intelligence_engine_module,
+        "persist_gold_refresh_pending",
+        fake_persist_gold_refresh_pending,
+    )
+    monkeypatch.setattr(
+        intelligence_engine_module,
+        "persist_gold_refresh_binding",
+        fake_persist_gold_refresh_binding,
+    )
+    monkeypatch.setattr(
+        intelligence_engine_module, "finish_intelligence_run", unexpected_finish_run
     )
     monkeypatch.setattr(
         intelligence_engine_module.audit_service, "record_event", fake_record_event
@@ -902,6 +941,7 @@ async def test_run_intelligence_gold_refresh_filters_datasets_and_uses_run_ref(
             "datasets": ["forecast_mensual"],
             "run_mode": "gold_refresh",
             "run_ref": "gold-refresh:workspace-1:hubspot:dag-run-1",
+            "metadata": {"pipeline_run_id": "pipeline-run-1"},
         },
         fetcher=fake_fetcher,
         persist=True,
@@ -912,8 +952,7 @@ async def test_run_intelligence_gold_refresh_filters_datasets_and_uses_run_ref(
     assert result["run_ref"] == "gold-refresh:workspace-1:hubspot:dag-run-1"
     assert result["idempotent"] is False
     assert result["datasets_requested"] == ["forecast_mensual"]
-    assert finished[0]["status"] == "completed"
-    assert finished[0]["datasets_evaluated"][0]["dataset"] == "forecast_mensual"
+    assert authority_steps == ["staged", "pending", "bound"]
     assert result["skipped_counts"] == {}
     assert result["monte_carlo_counts"] == {"completed": 1}
     assert result["math_ruleset_version"] == "control_room_gold_signal.v1"
@@ -974,9 +1013,21 @@ async def test_run_intelligence_skips_generic_for_cross_sectional_snapshot(monke
     async def fake_fetcher(dataset: str, user: dict | None, limit: int):
         assert dataset == "talent_snapshot"
         return [
-            {"generated_at": "2026-07-05 04:43:23", "user_id": 103169, "performance_100": 80},
-            {"generated_at": "2026-07-05 04:43:23", "user_id": 103252, "performance_100": 40},
-            {"generated_at": "2026-07-05 04:43:23", "user_id": 999999999, "performance_100": 10},
+            {
+                "generated_at": "2026-07-05 04:43:23",
+                "user_id": 103169,
+                "performance_100": 80,
+            },
+            {
+                "generated_at": "2026-07-05 04:43:23",
+                "user_id": 103252,
+                "performance_100": 40,
+            },
+            {
+                "generated_at": "2026-07-05 04:43:23",
+                "user_id": 999999999,
+                "performance_100": 10,
+            },
         ]
 
     monkeypatch.setattr(
@@ -1024,7 +1075,9 @@ async def test_run_intelligence_gold_refresh_run_ref_is_idempotent(monkeypatch):
         "load_contracts",
         lambda cartridge_ids=None: [{**_contract(), "metrics": [_metric()]}],
     )
-    monkeypatch.setattr(intelligence_engine_module, "get_run_by_ref", fake_get_run_by_ref)
+    monkeypatch.setattr(
+        intelligence_engine_module, "get_run_by_ref", fake_get_run_by_ref
+    )
     monkeypatch.setattr(
         intelligence_engine_module, "start_intelligence_run", fail_start_run
     )

@@ -7,6 +7,17 @@
  * or a 4xx from /api/dashboard/kpis.
  */
 import { test, expect } from "../fixtures/auth";
+import type { Page } from "@playwright/test";
+
+const KPI_LABELS = [
+  "Cartuchos conectados",
+  "Extracciones hoy",
+  "Usuarios activos",
+  "Acciones copiloto",
+] as const;
+
+const kpiCard = (page: Page, label: string) =>
+  page.locator(`[data-testid="kpi-card"][data-label="${label}"]`);
 
 test.describe("Dashboard (Next.js, /dashboard)", () => {
   test("renders the 'Panel' heading", async ({ authedPage: page }) => {
@@ -23,50 +34,42 @@ test.describe("Dashboard (Next.js, /dashboard)", () => {
     // The KpiCard label section uses uppercase letter-spaced text;
     // we match the documented labels directly so a re-skin can't
     // false-positive this test.
-    for (const label of [
-      /cartuchos conectados/i,
-      /extracciones hoy/i,
-      /usuarios activos/i,
-      /acciones copiloto/i,
-    ]) {
-      await expect(page.getByText(label)).toBeVisible({ timeout: 15_000 });
+    for (const label of KPI_LABELS) {
+      const card = kpiCard(page, label);
+      await expect(card).toBeVisible({ timeout: 15_000 });
+      await expect(card.getByText(label, { exact: false })).toBeVisible();
     }
-    // Pulse-animation skeletons share the `.animate-pulse` class.
-    // After 15 s every tile should be populated and no skeleton
-    // should remain on screen.
-    await page.waitForTimeout(1_500);
-    const stillPulsing = await page.locator(".animate-pulse").count();
-    expect(stillPulsing,
-      "KPI skeleton placeholders should resolve to real values within 15 s",
-    ).toBe(0);
+    // Briefing cards have an independent loading lifecycle, so only
+    // the KPI skeletons belong to this contract.
+    await expect(page.getByTestId("kpi-card").locator(".animate-pulse")).toHaveCount(0, {
+      timeout: 15_000,
+    });
   });
 
   test("'Cartuchos conectados' renders a numeric value", async ({
     authedPage: page,
   }) => {
     await page.goto("/dashboard");
-    // The tile's value sits in a 3xl text node directly under the
-    // label. We just need to verify it's parseable as either "N / N"
-    // or a single integer — both shapes are valid per the KPI helper.
-    const label = page.getByText(/cartuchos conectados/i);
-    await expect(label).toBeVisible({ timeout: 15_000 });
-    // Walk up to the tile container and read the big number node.
-    const tile = label.locator("..");
-    const text = (await tile.innerText()).trim();
-    expect(text,
-      "Cartuchos KPI value must contain at least one digit",
-    ).toMatch(/\d/);
+    const value = kpiCard(page, "Cartuchos conectados")
+      .getByTestId("kpi-card-value");
+    await expect(value).toHaveAttribute("data-numeric-value", /^\d+$/, {
+      timeout: 15_000,
+    });
+    await expect(value).toBeVisible();
+    await expect(value).toContainText(/\d/);
   });
 
   test("'Extracciones hoy' renders a numeric value", async ({
     authedPage: page,
   }) => {
     await page.goto("/dashboard");
-    const label = page.getByText(/extracciones hoy/i);
-    await expect(label).toBeVisible({ timeout: 15_000 });
-    const tile = label.locator("..");
-    const text = (await tile.innerText()).trim();
-    expect(text).toMatch(/\d/);
+    const value = kpiCard(page, "Extracciones hoy")
+      .getByTestId("kpi-card-value");
+    await expect(value).toHaveAttribute("data-numeric-value", /^\d+$/, {
+      timeout: 15_000,
+    });
+    await expect(value).toBeVisible();
+    await expect(value).toContainText(/\d/);
   });
 
   test("'Frescura de datos' table renders rows", async ({

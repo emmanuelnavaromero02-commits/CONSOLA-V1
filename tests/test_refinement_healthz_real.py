@@ -105,12 +105,13 @@ async def test_refinement_healthz_is_liveness_only(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_refinement_readyz_checks_postgres_and_duckdb(monkeypatch):
+async def test_refinement_readyz_checks_all_dependencies(monkeypatch):
     main = _load_refinement_main(monkeypatch)
     import psycopg2
 
     monkeypatch.setattr(psycopg2, "connect", lambda dsn: FakeConn())
     monkeypatch.setattr(main.engine, "_conn", lambda: FakeDuck())
+    monkeypatch.setattr(main.engine._publication_verifier, "ready", lambda: True)
 
     resp = await main.readyz()
     assert resp.status_code == 200
@@ -118,13 +119,15 @@ async def test_refinement_readyz_checks_postgres_and_duckdb(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_refinement_readyz_returns_503_on_dependency_failure(monkeypatch):
+async def test_refinement_readyz_returns_503_on_postgres_failure(monkeypatch):
     main = _load_refinement_main(monkeypatch)
     import psycopg2
 
     monkeypatch.setattr(
         psycopg2, "connect", lambda dsn: (_ for _ in ()).throw(RuntimeError("db down"))
     )
+    monkeypatch.setattr(main.engine, "_conn", lambda: FakeDuck())
+    monkeypatch.setattr(main.engine._publication_verifier, "ready", lambda: True)
 
     resp = await main.readyz()
     assert resp.status_code == 503
@@ -140,11 +143,28 @@ async def test_refinement_readyz_fails_closed_when_built_extension_is_missing(
 
     monkeypatch.setattr(psycopg2, "connect", lambda dsn: FakeConn())
     monkeypatch.setattr(main.engine, "_conn", lambda: MissingExtensionDuck())
+    monkeypatch.setattr(main.engine._publication_verifier, "ready", lambda: True)
     monkeypatch.setattr(
         main.engine._publication_store,
         "publish",
         lambda *_args: (_ for _ in ()).throw(AssertionError("head must not advance")),
     )
+    resp = await main.readyz()
+    assert resp.status_code == 503
+    assert json.loads(resp.body) == {"ok": False, "service": "refinement"}
+
+
+@pytest.mark.asyncio
+async def test_refinement_readyz_returns_503_when_publication_verifier_is_down(
+    monkeypatch,
+):
+    main = _load_refinement_main(monkeypatch)
+    import psycopg2
+
+    monkeypatch.setattr(psycopg2, "connect", lambda dsn: FakeConn())
+    monkeypatch.setattr(main.engine, "_conn", lambda: FakeDuck())
+    monkeypatch.setattr(main.engine._publication_verifier, "ready", lambda: False)
+
     resp = await main.readyz()
     assert resp.status_code == 503
     assert json.loads(resp.body) == {"ok": False, "service": "refinement"}

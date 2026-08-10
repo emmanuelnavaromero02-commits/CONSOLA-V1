@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import yaml
@@ -10,6 +11,23 @@ REPO = Path(__file__).resolve().parents[1]
 
 def _yaml(path: str) -> dict:
     return yaml.safe_load((REPO / path).read_text(encoding="utf-8"))
+
+
+def _literal_assignment(source: str, name: str):
+    tree = ast.parse(source)
+    for node in tree.body:
+        if (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == name
+        ):
+            return ast.literal_eval(node.value)
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == name
+            for target in node.targets
+        ):
+            return ast.literal_eval(node.value)
+    raise AssertionError(f"assignment {name!r} not found")
 
 
 def test_hubspot_local_compose_service_is_executable():
@@ -25,12 +43,17 @@ def test_hubspot_local_compose_service_is_executable():
     assert env["HUBSPOT_API_TOKEN"] == "${HUBSPOT_API_TOKEN:-}"
     assert "INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE" in env
     assert "8210/health" in " ".join(svc["healthcheck"]["test"])
-    assert "app.omega_cartridge_hubspot_password" in services["postgres"]["environment"]["PGOPTIONS"]
+    assert (
+        "app.omega_cartridge_hubspot_password"
+        in services["postgres"]["environment"]["PGOPTIONS"]
+    )
 
 
 def test_hubspot_airflow_wiring_exists_locally_and_in_aws():
     local = (REPO / "infra/docker-compose.yml").read_text(encoding="utf-8")
-    aws = (REPO / "infra/terraform/deploy/docker-compose.aws.yml").read_text(encoding="utf-8")
+    aws = (REPO / "infra/terraform/deploy/docker-compose.aws.yml").read_text(
+        encoding="utf-8"
+    )
     for src in (local, aws):
         assert src.count("HUBSPOT_URL") >= 2
         assert "cartridges/hubspot/dags" in src
@@ -40,7 +63,10 @@ def test_hubspot_airflow_wiring_exists_locally_and_in_aws():
 def test_hubspot_aws_overlay_ships_release_image():
     overlay = _yaml("infra/terraform/deploy/docker-compose.cartridges.yml")
     svc = overlay["services"]["hubspot"]
-    assert svc["image"] == "ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/hubspot:${IMAGE_TAG:?IMAGE_TAG is required}"
+    assert (
+        svc["image"]
+        == "ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/hubspot:${IMAGE_TAG:?IMAGE_TAG is required}"
+    )
     env = svc["environment"]
     assert "omega_cartridge_hubspot" in env["DATABASE_URL"]
     assert "INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE" in env
@@ -89,10 +115,17 @@ def test_hubspot_refinement_datasets_are_seeded():
 
 
 def test_hubspot_refresh_by_source_uses_trusted_security_context():
-    job_runner = (REPO / "cartridges/hubspot/app/core/job_runner.py").read_text(encoding="utf-8")
-    request_context = (REPO / "cartridges/hubspot/app/core/request_context.py").read_text(encoding="utf-8")
+    job_runner = (REPO / "cartridges/hubspot/app/core/job_runner.py").read_text(
+        encoding="utf-8"
+    )
+    request_context = (
+        REPO / "cartridges/hubspot/app/core/request_context.py"
+    ).read_text(encoding="utf-8")
     assert '"x-internal-service": "cartridge-hubspot"' in job_runner
-    assert '"security_context": refinement_security_context(security_context)' in job_runner
+    assert (
+        '"security_context": refinement_security_context(security_context)'
+        in job_runner
+    )
     assert 'source": "cartridge-hubspot"' in request_context
     assert 'permissions": ["datasets.read", "datasets.write"]' in request_context
     assert 'allowed_cartridges": ["hubspot"]' in request_context
@@ -102,37 +135,52 @@ def test_hubspot_refresh_by_source_uses_trusted_security_context():
 
 def test_hubspot_extraction_preserves_console_workspace_scope():
     main = (REPO / "cartridges/hubspot/app/main.py").read_text(encoding="utf-8")
-    job_runner = (REPO / "cartridges/hubspot/app/core/job_runner.py").read_text(encoding="utf-8")
-    extraction = (REPO / "cartridges/hubspot/app/services/extraction_service.py").read_text(encoding="utf-8")
-    parquet = (REPO / "cartridges/hubspot/app/services/parquet_service.py").read_text(encoding="utf-8")
+    job_runner = (REPO / "cartridges/hubspot/app/core/job_runner.py").read_text(
+        encoding="utf-8"
+    )
+    extraction = (
+        REPO / "cartridges/hubspot/app/services/extraction_service.py"
+    ).read_text(encoding="utf-8")
+    parquet = (REPO / "cartridges/hubspot/app/services/parquet_service.py").read_text(
+        encoding="utf-8"
+    )
     mcp = (REPO / "cartridges/hubspot/app/mcp_server.py").read_text(encoding="utf-8")
-    extract_all_dag = (REPO / "cartridges/hubspot/dags/hubspot_extract_all.py").read_text(encoding="utf-8")
+    extract_all_dag = (
+        REPO / "cartridges/hubspot/dags/hubspot_extract_all.py"
+    ).read_text(encoding="utf-8")
     assert (
-        "set_security_context(body.get(\"security_context\"))" in main
-        or "body.get(\"security_context\")," in main
+        'set_security_context(body.get("security_context"))' in main
+        or 'body.get("security_context"),' in main
     )
     assert 'config = {**config, "security_context": security_context}' in job_runner
     assert 'overridden["security_context"] = security_context' in job_runner
-    assert 'security_context=security_context' in extraction
+    assert "security_context=security_context" in extraction
     assert 'f"raw/hubspot/{entity}/{scope}"' in parquet
     assert "require_tenant_workspace_scope()" in mcp
     assert "scope = scoped_prefix(ctx)" in mcp
     assert "skill_body = {" in extract_all_dag
-    assert 'for key in ("tenant_id", "workspace_id", "security_context")' in extract_all_dag
+    assert (
+        'for key in ("tenant_id", "workspace_id", "security_context")'
+        in extract_all_dag
+    )
     assert "json=skill_body" in extract_all_dag
 
 
 def test_refinement_accepts_hubspot_internal_origin():
     refinement = (REPO / "refinement/app/main.py").read_text(encoding="utf-8")
-    assert '"hubspot":              "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT"' in refinement
-    assert '"cartridge-hubspot":    "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT"' in refinement
-    assert '"cartridge-hubspot": {"cartridge-hubspot", "hubspot"}' in refinement
-    assert "source.startswith(\"cartridge-\")" in refinement
+    allowed_services = _literal_assignment(refinement, "_ALLOWED_SERVICES_TO_KEY_ENV")
+    security_sources = _literal_assignment(refinement, "_SECURITY_SOURCE_BY_SERVICE")
+    for service in ("hubspot", "cartridge-hubspot"):
+        assert allowed_services[service] == "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT"
+        assert security_sources[service] == {"cartridge-hubspot", "hubspot"}
+    assert 'source.startswith("cartridge-")' in refinement
     assert "service_materializer" in refinement
 
 
 def test_hubspot_docker_ci_and_release_publish_image():
-    docker_ci = (REPO / ".github/workflows/docker-image.yml").read_text(encoding="utf-8")
+    docker_ci = (REPO / ".github/workflows/docker-image.yml").read_text(
+        encoding="utf-8"
+    )
     release = (REPO / ".github/workflows/release.yml").read_text(encoding="utf-8")
     changed_areas = (REPO / "scripts/ci_changed_areas.py").read_text(encoding="utf-8")
     assert '"hubspot": "./cartridges/hubspot"' in changed_areas

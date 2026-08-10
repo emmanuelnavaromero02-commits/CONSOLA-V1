@@ -167,8 +167,8 @@ def staged_publication_live_stack() -> LiveStack:
             os.environ["PUBLICATION_VERIFIER_SOCKET"] = original_socket
         if "verifier_dir" in locals():
             verifier_dir.cleanup()
-        _docker("rm", "-f", minio, check=False)
-        _docker("rm", "-f", gold, check=False)
+        _docker("rm", "-f", "-v", minio, check=False)
+        _docker("rm", "-f", "-v", gold, check=False)
 
 
 @pytest.mark.parametrize("canary", sorted(CANARY_IMPLEMENTATIONS))
@@ -182,6 +182,7 @@ def test_real_engine_publishes_one_complete_silver_run(
     staged_publication_live_stack: LiveStack, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     stack = staged_publication_live_stack
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     for name, value in {
         "GOLD_DATABASE_URL": stack.reader_dsn,
         "GOLD_PUBLISHER_DATABASE_URL": stack.publisher_dsn,
@@ -221,6 +222,7 @@ def test_real_engine_publishes_gold_only_at_the_cas(
     staged_publication_live_stack: LiveStack, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     stack = staged_publication_live_stack
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     for name, value in {
         "GOLD_DATABASE_URL": stack.reader_dsn,
         "GOLD_PUBLISHER_DATABASE_URL": stack.publisher_dsn,

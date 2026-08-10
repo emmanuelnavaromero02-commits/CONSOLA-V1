@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import sys
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
@@ -10,6 +12,12 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 CSRF = "csrf-test-token"
+TENANT_ID = "00000000-0000-0000-0000-000000000001"
+WORKSPACE_ID = "00000000-0000-0000-0000-000000000002"
+SCOPED_GOLD_DATABASE_NAME = (
+    "modecissions_gold_"
+    + hashlib.sha256(f"{TENANT_ID}:{WORKSPACE_ID}".encode()).hexdigest()[:20]
+)
 
 
 def test_studio_superset_copy_describes_internal_access():
@@ -49,7 +57,9 @@ def _auth_transport(extra_handler=None):
     return httpx.MockTransport(handler)
 
 
-def test_superset_client_requires_service_account_in_production(superset_client_module, monkeypatch):
+def test_superset_client_requires_service_account_in_production(
+    superset_client_module, monkeypatch
+):
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("SUPERSET_URL", "https://superset.internal")
     monkeypatch.delenv("SUPERSET_SERVICE_USER", raising=False)
@@ -57,7 +67,9 @@ def test_superset_client_requires_service_account_in_production(superset_client_
     monkeypatch.setenv("SUPERSET_ADMIN_USER", "admin")
     monkeypatch.setenv("SUPERSET_ADMIN_PASSWORD", "admin-password")
 
-    with pytest.raises(superset_client_module.SupersetConfigError, match="SERVICE_USER"):
+    with pytest.raises(
+        superset_client_module.SupersetConfigError, match="SERVICE_USER"
+    ):
         superset_client_module.SupersetClient()
 
 
@@ -105,7 +117,16 @@ async def test_create_dataset_handles_409_existing(superset_client_module):
         if request.url.path == "/api/v1/dataset/" and request.method == "GET":
             return httpx.Response(
                 200,
-                json={"result": [{"id": 42, "table_name": "gold_hours", "schema": "public", "database": {"id": 7}}]},
+                json={
+                    "result": [
+                        {
+                            "id": 42,
+                            "table_name": "gold_hours",
+                            "schema": "public",
+                            "database": {"id": 7},
+                        }
+                    ]
+                },
             )
         return httpx.Response(404)
 
@@ -118,7 +139,12 @@ async def test_create_dataset_handles_409_existing(superset_client_module):
 
     result = await client.create_dataset(7, "gold_hours", "public")
 
-    assert result == {"dataset_id": 42, "table": "gold_hours", "schema": "public", "existing": True}
+    assert result == {
+        "dataset_id": 42,
+        "table": "gold_hours",
+        "schema": "public",
+        "existing": True,
+    }
 
 
 @pytest.mark.asyncio
@@ -152,7 +178,9 @@ async def test_create_dataset_retries_on_timeout(superset_client_module, monkeyp
 
 
 @pytest.mark.asyncio
-async def test_create_dataset_preserves_superset_csrf_session_cookie(superset_client_module):
+async def test_create_dataset_preserves_superset_csrf_session_cookie(
+    superset_client_module,
+):
     seen = {"dataset_cookie": ""}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -186,7 +214,9 @@ async def test_create_dataset_preserves_superset_csrf_session_cookie(superset_cl
 def studio_client(monkeypatch):
     os.environ["APP_ENV"] = "test"
     os.environ["INTERNAL_API_KEY"] = "x" * 64
-    os.environ.setdefault("FIELD_ENCRYPTION_KEY", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=")
+    os.environ.setdefault(
+        "FIELD_ENCRYPTION_KEY", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa="
+    )
     console_dir = str(REPO / "console")
     sys.path[:] = [p for p in sys.path if p != console_dir]
     sys.path.insert(0, console_dir)
@@ -199,11 +229,36 @@ def studio_client(monkeypatch):
     from app.dependencies import require_authenticated
     from app.main import app
     from app.routers import studio as studio_router
+    from app.services import superset_gold_scope
 
-    admin = {"id": 1, "email": "admin@local.ai", "role": "admin", "workspace_role": "admin"}
+    admin = {
+        "id": 1,
+        "email": "admin@local.ai",
+        "role": "admin",
+        "workspace_role": "admin",
+        "active_tenant_id": TENANT_ID,
+        "active_workspace_id": WORKSPACE_ID,
+        "allowed_cartridges": ["replicon"],
+    }
     app.dependency_overrides[require_authenticated] = lambda: admin
     app.dependency_overrides[studio_router.require_studio_write] = lambda: admin
     app.dependency_overrides[studio_router.require_studio_global_admin] = lambda: admin
+
+    class FakePublishedRelation:
+        schema = "public"
+        table = "gold_hours"
+
+    async def fake_superset_gold_relation(user, dataset):
+        assert user["active_tenant_id"] == TENANT_ID
+        assert user["active_workspace_id"] == WORKSPACE_ID
+        assert dataset == "hours"
+        return FakePublishedRelation()
+
+    monkeypatch.setattr(
+        superset_gold_scope,
+        "resolve_superset_gold_relation",
+        fake_superset_gold_relation,
+    )
 
     client = TestClient(app)
     client.cookies.set("csrf_token", CSRF)
@@ -221,7 +276,9 @@ def test_dataset_endpoint_returns_503_without_config(studio_client, monkeypatch)
     class MissingClient:
         configured = False
 
-    monkeypatch.setattr(studio_router.superset_client, "client_from_env", lambda: MissingClient())
+    monkeypatch.setattr(
+        studio_router.superset_client, "client_from_env", lambda: MissingClient()
+    )
 
     response = client.post(
         "/api/studio/superset/dataset",
@@ -234,19 +291,25 @@ def test_dataset_endpoint_returns_503_without_config(studio_client, monkeypatch)
     assert "Solicita acceso interno/VPN para abrir dashboards" in response.text
 
 
-def test_dataset_endpoint_returns_503_when_superset_unreachable(studio_client, monkeypatch):
+def test_dataset_endpoint_returns_503_when_superset_unreachable(
+    studio_client, monkeypatch
+):
     client, studio_router = studio_client
 
     class FailingClient:
         configured = True
 
         async def list_databases(self):
-            raise studio_router.superset_client.SupersetRequestError(503, "Superset connection failed")
+            raise studio_router.superset_client.SupersetRequestError(
+                503, "Superset connection failed"
+            )
 
     async def fake_datasets(*_args, **_kwargs):
         return [{"name": "hours", "layer": "gold", "cartridge": "replicon"}]
 
-    monkeypatch.setattr(studio_router.superset_client, "client_from_env", lambda: FailingClient())
+    monkeypatch.setattr(
+        studio_router.superset_client, "client_from_env", lambda: FailingClient()
+    )
     monkeypatch.setattr(studio_router, "_refinement_datasets", fake_datasets)
 
     response = client.post(
@@ -267,10 +330,15 @@ def test_dataset_endpoint_audits_creation(studio_client, monkeypatch):
         configured = True
 
         async def list_databases(self):
-            return [{"id": 7, "name": "modecissions_gold"}]
+            return [{"id": 7, "name": SCOPED_GOLD_DATABASE_NAME}]
 
         async def create_dataset(self, database_id, table_name, schema="public"):
-            return {"dataset_id": 9, "table": table_name, "schema": schema, "existing": False}
+            return {
+                "dataset_id": 9,
+                "table": table_name,
+                "schema": schema,
+                "existing": False,
+            }
 
     async def fake_audit(**kwargs):
         audits.append(kwargs)
@@ -278,7 +346,9 @@ def test_dataset_endpoint_audits_creation(studio_client, monkeypatch):
     async def fake_datasets(*_args, **_kwargs):
         return [{"name": "hours", "layer": "gold", "cartridge": "replicon"}]
 
-    monkeypatch.setattr(studio_router.superset_client, "client_from_env", lambda: FakeClient())
+    monkeypatch.setattr(
+        studio_router.superset_client, "client_from_env", lambda: FakeClient()
+    )
     monkeypatch.setattr(studio_router.audit_service, "record_event", fake_audit)
     monkeypatch.setattr(studio_router, "_refinement_datasets", fake_datasets)
 
@@ -293,7 +363,9 @@ def test_dataset_endpoint_audits_creation(studio_client, monkeypatch):
     assert audits[0]["action"] == "studio.superset.dataset_create"
 
 
-def test_dataset_endpoint_creates_gold_database_when_missing(studio_client, monkeypatch):
+def test_dataset_endpoint_creates_gold_database_when_missing(
+    studio_client, monkeypatch
+):
     client, studio_router = studio_client
     calls = []
 
@@ -309,7 +381,12 @@ def test_dataset_endpoint_creates_gold_database_when_missing(studio_client, monk
 
         async def create_dataset(self, database_id, table_name, schema="public"):
             calls.append(("dataset", database_id, table_name, schema))
-            return {"dataset_id": 9, "table": table_name, "schema": schema, "existing": False}
+            return {
+                "dataset_id": 9,
+                "table": table_name,
+                "schema": schema,
+                "existing": False,
+            }
 
     async def fake_audit(**kwargs):
         return None
@@ -317,8 +394,13 @@ def test_dataset_endpoint_creates_gold_database_when_missing(studio_client, monk
     async def fake_datasets(*_args, **_kwargs):
         return [{"name": "hours", "layer": "gold", "cartridge": "replicon"}]
 
-    monkeypatch.setenv("SUPERSET_GOLD_SQLALCHEMY_URI", "postgresql+psycopg2://gold@postgres_gold/modecissions_gold")
-    monkeypatch.setattr(studio_router.superset_client, "client_from_env", lambda: FakeClient())
+    monkeypatch.setenv(
+        "SUPERSET_GOLD_SQLALCHEMY_URI",
+        "postgresql+psycopg2://gold@postgres_gold/modecissions_gold",
+    )
+    monkeypatch.setattr(
+        studio_router.superset_client, "client_from_env", lambda: FakeClient()
+    )
     monkeypatch.setattr(studio_router.audit_service, "record_event", fake_audit)
     monkeypatch.setattr(studio_router, "_refinement_datasets", fake_datasets)
 
@@ -329,20 +411,27 @@ def test_dataset_endpoint_creates_gold_database_when_missing(studio_client, monk
     )
 
     assert response.status_code == 200, response.text
-    assert calls == [
-        ("database", "modecissions_gold", "postgresql+psycopg2://gold@postgres_gold/modecissions_gold"),
-        ("dataset", 7, "gold_hours", "public"),
+    assert calls[0][:2] == ("database", SCOPED_GOLD_DATABASE_NAME)
+    created_uri = urlsplit(calls[0][2])
+    assert created_uri.scheme == "postgresql+psycopg2"
+    assert created_uri.netloc == "gold@postgres_gold"
+    assert created_uri.path == "/modecissions_gold"
+    assert parse_qs(created_uri.query)["options"] == [
+        f"-c app.tenant_id={TENANT_ID} -c app.workspace_id={WORKSPACE_ID}"
     ]
+    assert calls[1] == ("dataset", 7, "gold_hours", "public")
 
 
-def test_dataset_endpoint_returns_materialization_hint_for_missing_gold_table(studio_client, monkeypatch):
+def test_dataset_endpoint_returns_materialization_hint_for_missing_gold_table(
+    studio_client, monkeypatch
+):
     client, studio_router = studio_client
 
     class FakeClient:
         configured = True
 
         async def list_databases(self):
-            return [{"id": 7, "name": "modecissions_gold"}]
+            return [{"id": 7, "name": SCOPED_GOLD_DATABASE_NAME}]
 
         async def create_dataset(self, database_id, table_name, schema="public"):
             raise studio_router.superset_client.SupersetRequestError(
@@ -353,7 +442,9 @@ def test_dataset_endpoint_returns_materialization_hint_for_missing_gold_table(st
     async def fake_datasets(*_args, **_kwargs):
         return [{"name": "hours", "layer": "gold", "cartridge": "replicon"}]
 
-    monkeypatch.setattr(studio_router.superset_client, "client_from_env", lambda: FakeClient())
+    monkeypatch.setattr(
+        studio_router.superset_client, "client_from_env", lambda: FakeClient()
+    )
     monkeypatch.setattr(studio_router, "_refinement_datasets", fake_datasets)
 
     response = client.post(
@@ -373,7 +464,12 @@ def test_dag_delete_passes_cartridge_scope(studio_client, monkeypatch):
     invoked = []
 
     async def fake_get_cartridge(cartridge):
-        return {"id": cartridge, "name": cartridge, "dags": [{"dag_id": "replicon_extract"}], "entities": []}
+        return {
+            "id": cartridge,
+            "name": cartridge,
+            "dags": [{"dag_id": "replicon_extract"}],
+            "entities": [],
+        }
 
     async def fake_invoke(server, tool, payload, **_kwargs):
         invoked.append((server, tool, payload))
@@ -382,7 +478,9 @@ def test_dag_delete_passes_cartridge_scope(studio_client, monkeypatch):
     async def fake_audit(**kwargs):
         return None
 
-    monkeypatch.setattr(studio_router.cartridge_service, "get_cartridge", fake_get_cartridge)
+    monkeypatch.setattr(
+        studio_router.cartridge_service, "get_cartridge", fake_get_cartridge
+    )
     monkeypatch.setattr(studio_router.mcp_registry, "invoke", fake_invoke)
     monkeypatch.setattr(studio_router.audit_service, "record_event", fake_audit)
 
@@ -393,7 +491,11 @@ def test_dag_delete_passes_cartridge_scope(studio_client, monkeypatch):
 
     assert response.status_code == 200, response.text
     assert invoked == [
-        ("infra", "airflow_delete_dag", {"dag_id": "replicon_extract", "cartridge_id": "replicon"})
+        (
+            "infra",
+            "airflow_delete_dag",
+            {"dag_id": "replicon_extract", "cartridge_id": "replicon"},
+        )
     ]
 
 
@@ -412,7 +514,9 @@ def test_dag_deploy_posts_to_mcp_registry_and_audits(studio_client, monkeypatch)
     async def fake_audit(**kwargs):
         audits.append(kwargs)
 
-    monkeypatch.setattr(studio_router.cartridge_service, "get_cartridge", fake_get_cartridge)
+    monkeypatch.setattr(
+        studio_router.cartridge_service, "get_cartridge", fake_get_cartridge
+    )
     monkeypatch.setattr(studio_router.mcp_registry, "invoke", fake_invoke)
     monkeypatch.setattr(studio_router.audit_service, "record_event", fake_audit)
 
@@ -456,7 +560,9 @@ def test_dag_deploy_surfaces_rce_gate_as_structured_403(studio_client, monkeypat
     async def fake_audit(**_kwargs):
         return None
 
-    monkeypatch.setattr(studio_router.cartridge_service, "get_cartridge", fake_get_cartridge)
+    monkeypatch.setattr(
+        studio_router.cartridge_service, "get_cartridge", fake_get_cartridge
+    )
     monkeypatch.setattr(studio_router.mcp_registry, "invoke", fake_invoke)
     monkeypatch.setattr(studio_router.audit_service, "record_event", fake_audit)
 
@@ -479,13 +585,20 @@ def test_dag_delete_rejects_other_cartridge_prefix(studio_client, monkeypatch):
     invoked = []
 
     async def fake_get_cartridge(cartridge):
-        return {"id": cartridge, "name": cartridge, "dags": [{"dag_id": "replicon_extract"}], "entities": []}
+        return {
+            "id": cartridge,
+            "name": cartridge,
+            "dags": [{"dag_id": "replicon_extract"}],
+            "entities": [],
+        }
 
     async def fake_invoke(server, tool, payload, **_kwargs):
         invoked.append((server, tool, payload))
         return {"deleted_file": True, "deleted_db": True}
 
-    monkeypatch.setattr(studio_router.cartridge_service, "get_cartridge", fake_get_cartridge)
+    monkeypatch.setattr(
+        studio_router.cartridge_service, "get_cartridge", fake_get_cartridge
+    )
     monkeypatch.setattr(studio_router.mcp_registry, "invoke", fake_invoke)
 
     response = client.delete(

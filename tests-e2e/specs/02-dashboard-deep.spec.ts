@@ -7,8 +7,18 @@
  * lands on /dashboard already authenticated.
  */
 import { test, expect } from "../fixtures/auth";
+import type { Page } from "@playwright/test";
 
 const EMAIL = process.env.TEST_EMAIL || "emmanuel@local.ai";
+const KPI_LABELS = [
+  "Cartuchos conectados",
+  "Extracciones hoy",
+  "Usuarios activos",
+  "Acciones copiloto",
+] as const;
+
+const kpiCard = (page: Page, label: string) =>
+  page.locator(`[data-testid="kpi-card"][data-label="${label}"]`);
 
 test.describe("Dashboard layout", () => {
   test("renders the 'Panel' h1", async ({ page }) => {
@@ -21,18 +31,20 @@ test.describe("Dashboard layout", () => {
   test("renders the dashboard description tagline", async ({ page }) => {
     await page.goto("/dashboard");
     await expect(
-      page.getByText(/estado en tiempo real|tiempo real/i).first(),
+      page.getByText(
+        /estado de cartuchos, extracciones y copiloto \(actualizado cada 30 s\)\./i,
+      ).first(),
     ).toBeVisible();
   });
 
-  test("page does NOT have stale skeleton placeholders after 15 s",
+  test("KPI tiles do NOT have stale skeleton placeholders after 15 s",
     async ({ page }) => {
       // v1.44.3.2.1 R1 Testing F1: was a bare waitForTimeout(15s)
       // + count. expect(...).toHaveCount(0, {timeout}) auto-resolves
       // as soon as the skeletons disappear — short-circuits on a
       // fast backend and still bounds the wait at 15 s.
       await page.goto("/dashboard");
-      await expect(page.locator(".animate-pulse")).toHaveCount(0, {
+      await expect(page.getByTestId("kpi-card").locator(".animate-pulse")).toHaveCount(0, {
         timeout: 15_000,
       });
     },
@@ -50,30 +62,24 @@ test.describe("Dashboard layout", () => {
 });
 
 test.describe("Dashboard — KPI tiles", () => {
-  const KPI_LABELS = [
-    /cartuchos conectados/i,
-    /extracciones hoy/i,
-    /usuarios activos/i,
-    /acciones copiloto/i,
-  ];
-
   for (const label of KPI_LABELS) {
-    test(`KPI '${label.source}' label is visible`, async ({ page }) => {
+    test(`KPI '${label}' label is visible`, async ({ page }) => {
       await page.goto("/dashboard");
-      await expect(page.getByText(label).first()).toBeVisible({
+      const card = kpiCard(page, label);
+      await expect(card).toBeVisible({
         timeout: 15_000,
       });
+      await expect(card.getByText(label, { exact: false })).toBeVisible();
     });
 
-    test(`KPI '${label.source}' value contains a digit`, async ({ page }) => {
+    test(`KPI '${label}' exposes a numeric value`, async ({ page }) => {
       await page.goto("/dashboard");
-      const labelLoc = page.getByText(label).first();
-      await expect(labelLoc).toBeVisible({ timeout: 15_000 });
-      const tile = labelLoc.locator("..");
-      const text = (await tile.innerText()).trim();
-      expect(text,
-        `${label.source} KPI tile must render a numeric value`,
-      ).toMatch(/\d/);
+      const value = kpiCard(page, label).getByTestId("kpi-card-value");
+      await expect(value).toHaveAttribute("data-numeric-value", /^\d+$/, {
+        timeout: 15_000,
+      });
+      await expect(value).toBeVisible();
+      await expect(value).toContainText(/\d/);
     });
   }
 
@@ -97,7 +103,7 @@ test.describe("Dashboard — KPI tiles", () => {
     // The grid uses md:grid-cols-2 lg:grid-cols-4; at 400 px width
     // the tiles stack. We assert each tile occupies the full content
     // width (within tolerance).
-    const tile = page.getByText(/cartuchos conectados/i).first().locator("..");
+    const tile = kpiCard(page, "Cartuchos conectados");
     const box = await tile.boundingBox();
     expect(box?.width,
       "on mobile the KPI tile should be near-full-width (≥ 280 px)",
@@ -115,7 +121,7 @@ test.describe("Dashboard — Freshness table", () => {
 
   test("table has scoped freshness rows for visible cartridges", async ({ page }) => {
     await page.goto("/dashboard");
-    await expect(page.locator(".animate-pulse")).toHaveCount(0, {
+    await expect(page.locator("table .animate-pulse")).toHaveCount(0, {
       timeout: 15_000,
     });
     const rows = page.locator("table tbody tr");
@@ -128,7 +134,7 @@ test.describe("Dashboard — Freshness table", () => {
 
   test("each visible scoped row has a cartridge link", async ({ page }) => {
     await page.goto("/dashboard");
-    await expect(page.locator(".animate-pulse")).toHaveCount(0, {
+    await expect(page.locator("table .animate-pulse")).toHaveCount(0, {
       timeout: 15_000,
     });
     const rows = page.locator("table tbody tr");

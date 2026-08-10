@@ -20,6 +20,7 @@ from tests.operational_truth_inputs import pnl_dataset, seed_pnl_input
 from tests.test_staged_publication_live import staged_publication_live_stack
 from tests.test_operational_rls_console_refinement import (
     OMEGA_OUTCOME_BINDER_PASSWORD,
+    OMEGA_REFINEMENT_PASSWORD,
     POSTGRES_PASSWORD,
     omega_console_live_dsn,
     postgres_with_real_init_schema,
@@ -141,6 +142,10 @@ async def test_live_two_workspace_materialize_intelligence_projection_and_replay
     )
     seed_pnl_input(stack, scope_b, [("project-b", "Proyecto B", "2026-03-01", 50.0)])
     for name, value in {
+        "DATABASE_URL": postgres_with_real_init_schema.replace(
+            f"postgres:{POSTGRES_PASSWORD}",
+            f"omega_refinement:{OMEGA_REFINEMENT_PASSWORD}",
+        ),
         "GOLD_DATABASE_URL": stack.reader_dsn,
         "GOLD_PUBLISHER_DATABASE_URL": stack.publisher_dsn,
         "MINIO_ENDPOINT": stack.minio_endpoint.removeprefix("http://"),

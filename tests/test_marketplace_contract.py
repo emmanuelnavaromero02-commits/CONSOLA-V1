@@ -1,3 +1,4 @@
+import ast
 import re
 from pathlib import Path
 
@@ -9,6 +10,17 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
+
+
+def _assignment_expression(source: str, name: str) -> ast.expr:
+    tree = ast.parse(source)
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == name
+            for target in node.targets
+        ):
+            return node.value
+    raise AssertionError(f"assignment {name!r} not found")
 
 
 def test_marketplace_has_no_standalone_html_page():
@@ -160,28 +172,75 @@ def test_marketplace_admin_status_lock_targets_installation_only():
 
 
 def test_marketplace_permissions_distinguish_request_from_admin():
-    source = read("console/app/services/permissions.py")
-    assert '"marketplace.request"' in source
-    assert '"marketplace.admin"' in source
-    assert (
-        '"workspace_user": {"workspace.access", "apps.read", "marketplace.read", "marketplace.request"}'
-        in source
+    catalog_source = read("console/app/services/permission_catalog.py")
+    roles_source = read("console/app/services/permission_roles.py")
+    facade_source = read("console/app/services/permissions.py")
+
+    permissions = _assignment_expression(catalog_source, "PERMISSIONS")
+    assert isinstance(permissions, ast.List)
+    permission_keys = {
+        item.args[0].value
+        for item in permissions.elts
+        if isinstance(item, ast.Call)
+        and item.args
+        and isinstance(item.args[0], ast.Constant)
+    }
+    assert {"marketplace.request", "marketplace.admin"} <= permission_keys
+
+    role_permissions = _assignment_expression(roles_source, "ROLE_PERMISSIONS")
+    assert isinstance(role_permissions, ast.Dict)
+    required_roles = {"workspace_user", "viewer", "user", "tenant_admin"}
+    roles = {
+        key.value: ast.literal_eval(value)
+        for key, value in zip(role_permissions.keys, role_permissions.values)
+        if isinstance(key, ast.Constant) and key.value in required_roles
+    }
+    assert set(roles) == required_roles
+    assert roles["workspace_user"] == {
+        "workspace.access",
+        "apps.read",
+        "marketplace.read",
+        "marketplace.request",
+    }
+    assert roles["viewer"] == {
+        "monitor.read",
+        "workspace.access",
+        "apps.read",
+        "pipelines.read",
+        "datasets.read",
+        "cartridges.read",
+        "marketplace.read",
+        "copilot.use",
+    }
+    assert roles["user"] == {
+        "monitor.read",
+        "workspace.access",
+        "apps.read",
+        "marketplace.read",
+    }
+    tenant_admin = roles["tenant_admin"]
+    assert {"iam.users.write", "pipelines.run"} <= tenant_admin
+    assert not {"pipelines.write", "studio.read", "datasets.write"} & tenant_admin
+
+    facade_tree = ast.parse(facade_source)
+    catalog_imports = {
+        alias.name
+        for node in facade_tree.body
+        if isinstance(node, ast.ImportFrom)
+        and node.module == "app.services.permission_catalog"
+        for alias in node.names
+    }
+    role_imports = {
+        alias.name
+        for node in facade_tree.body
+        if isinstance(node, ast.ImportFrom)
+        and node.module == "app.services.permission_roles"
+        for alias in node.names
+    }
+    assert {"PERMISSIONS", "PERMISSION_KEYS", "RESOURCE_ACTION_PERMISSIONS"} <= (
+        catalog_imports
     )
-    assert (
-        '"viewer": {"monitor.read", "workspace.access", "apps.read", "pipelines.read", "datasets.read", "cartridges.read", "marketplace.read", "copilot.use"}'
-        in source
-    )
-    assert (
-        '"user": {"monitor.read", "workspace.access", "apps.read", "marketplace.read"}'
-        in source
-    )
-    assert '"tenant_admin": {' in source
-    tenant_admin_section = source.split('"tenant_admin": {', 2)[2].split("},", 1)[0]
-    assert '"iam.users.write"' in tenant_admin_section
-    assert '"pipelines.run"' in tenant_admin_section
-    assert '"pipelines.write"' not in tenant_admin_section
-    assert '"studio.read"' not in tenant_admin_section
-    assert '"datasets.write"' not in tenant_admin_section
+    assert {"ROLE_DEFINITIONS", "ROLE_PERMISSIONS"} <= role_imports
 
 
 def test_marketplace_admin_and_retry_do_not_escalate_customer_access():
@@ -222,7 +281,7 @@ def test_marketplace_permissions_follow_selected_workspace_header():
     deps = read("console/app/dependencies.py")
     workspace_session = read("workspace/app/services/session.py")
     assert "requested_workspace_id_from_request(request)" in main
-    assert "ACTIVE_WORKSPACE_COOKIE = \"omega_active_workspace_id\"" in deps
+    assert 'ACTIVE_WORKSPACE_COOKIE = "omega_active_workspace_id"' in deps
     assert 'request.headers.get("x-workspace-id")' in deps
     assert "request.cookies.get(ACTIVE_WORKSPACE_COOKIE)" in deps
     assert '"workspace access forbidden"' in main
@@ -282,10 +341,15 @@ def test_marketplace_admin_user_access_api_is_server_side_and_audited():
     assert "MarketplaceAdminScope" in lib
     assert "function adminScopeQuery" in lib
     assert "listAdminInstallations(scope?: MarketplaceAdminScope)" in lib
-    assert "runAdminInstallationAction(\n  installationId: string,\n  action: AdminInstallationAction,\n  scope?: MarketplaceAdminScope," in lib
+    assert (
+        "runAdminInstallationAction(\n  installationId: string,\n  action: AdminInstallationAction,\n  scope?: MarketplaceAdminScope,"
+        in lib
+    )
     assert "selectedMarketplaceScope" in companies
     assert "listAdminInstallations(selectedMarketplaceScope)" in companies
-    assert "runAdminInstallationAction(id, action, selectedMarketplaceScope)" in companies
+    assert (
+        "runAdminInstallationAction(id, action, selectedMarketplaceScope)" in companies
+    )
 
 
 def test_marketplace_rls_tables_use_scoped_db_context():

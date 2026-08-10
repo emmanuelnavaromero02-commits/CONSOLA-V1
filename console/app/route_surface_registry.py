@@ -14,7 +14,9 @@ class RouteSurfaceRule:
 
 
 ROUTE_SURFACE_REGISTRY: tuple[RouteSurfaceRule, ...] = (
-    RouteSurfaceRule("/api/control-room/internal", "internal", "server-side Control Room reader"),
+    RouteSurfaceRule(
+        "/api/control-room/internal", "internal", "server-side Control Room reader"
+    ),
     RouteSurfaceRule("/monitoring/mcp", "internal", "MCP monitoring transport"),
     RouteSurfaceRule("/studio_ops/mcp", "internal", "Studio MCP transport"),
     RouteSurfaceRule("/internal", "internal", "internal service-to-service API"),
@@ -24,9 +26,15 @@ ROUTE_SURFACE_REGISTRY: tuple[RouteSurfaceRule, ...] = (
     RouteSurfaceRule("/api/intelligence", "frontend", "Operational Intelligence API"),
     RouteSurfaceRule("/api/actions", "frontend", "Supervised Actions API"),
     RouteSurfaceRule("/api/copilot/context", "frontend", "Copilot live context API"),
-    RouteSurfaceRule("/api/copilot/recommendations", "frontend", "Copilot recommendation API"),
+    RouteSurfaceRule(
+        "/api/copilot/recommendations", "frontend", "Copilot recommendation API"
+    ),
     RouteSurfaceRule("/api/copilot", "frontend", "Copilot API"),
-    RouteSurfaceRule("/api/control-room/decision-intelligence", "legacy", "Control Room legacy intelligence facade"),
+    RouteSurfaceRule(
+        "/api/control-room/decision-intelligence",
+        "legacy",
+        "Control Room legacy intelligence facade",
+    ),
     RouteSurfaceRule("/api/control-room", "frontend", "Control Room API"),
     RouteSurfaceRule("/api/admin", "admin_only", "administration API"),
     RouteSurfaceRule("/api/settings", "admin_only", "settings API"),
@@ -73,6 +81,7 @@ ROUTE_SURFACE_REGISTRY: tuple[RouteSurfaceRule, ...] = (
     RouteSurfaceRule("/activate", "frontend", "activation UI"),
     RouteSurfaceRule("/admin", "admin_only", "legacy administration UI"),
     RouteSurfaceRule("/agents", "frontend", "agents UI"),
+    RouteSurfaceRule("/analytics", "frontend", "analytics UI"),
     RouteSurfaceRule("/apps", "frontend", "analytic app UI"),
     RouteSurfaceRule("/apps-gallery", "frontend", "analytic app gallery"),
     RouteSurfaceRule("/assistant", "legacy", "legacy assistant UI"),
@@ -99,7 +108,9 @@ ROUTE_SURFACE_REGISTRY: tuple[RouteSurfaceRule, ...] = (
     RouteSurfaceRule("/monitor", "frontend", "monitor UI"),
     RouteSurfaceRule("/my-access", "frontend", "access UI"),
     RouteSurfaceRule("/openapi.json", "admin_only", "OpenAPI schema"),
-    RouteSurfaceRule("/operational-intelligence", "frontend", "operational intelligence UI"),
+    RouteSurfaceRule(
+        "/operational-intelligence", "frontend", "operational intelligence UI"
+    ),
     RouteSurfaceRule("/rag", "frontend", "RAG UI"),
     RouteSurfaceRule("/readyz", "internal", "readiness probe"),
     RouteSurfaceRule("/redoc", "admin_only", "API documentation"),
@@ -124,7 +135,9 @@ def _matches_route(rule: RouteSurfaceRule, path: str) -> bool:
 
 def classify_route_surface(path: str) -> RouteSurface | None:
     normalized = (path or "").strip() or "/"
-    for rule in sorted(ROUTE_SURFACE_REGISTRY, key=lambda item: len(item.prefix), reverse=True):
+    for rule in sorted(
+        ROUTE_SURFACE_REGISTRY, key=lambda item: len(item.prefix), reverse=True
+    ):
         if _matches_route(rule, normalized):
             return rule.surface
     return None
@@ -132,7 +145,9 @@ def classify_route_surface(path: str) -> RouteSurface | None:
 
 def route_surface_rule(path: str) -> RouteSurfaceRule | None:
     normalized = (path or "").strip() or "/"
-    for rule in sorted(ROUTE_SURFACE_REGISTRY, key=lambda item: len(item.prefix), reverse=True):
+    for rule in sorted(
+        ROUTE_SURFACE_REGISTRY, key=lambda item: len(item.prefix), reverse=True
+    ):
         if _matches_route(rule, normalized):
             return rule
     return None
