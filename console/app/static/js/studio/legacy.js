@@ -679,42 +679,69 @@ import { state } from './legacy-state.js';
       try {
         // Fetch entities + pipeline_runs + DAG list in parallel
         const [semRes, runsRes, dagRes] = await Promise.all([
-          fetch(`/api/studio/entities?cartridge=${encodeURIComponent(cartridge)}`),
-          fetch(`/api/pipeline_runs?cartridge=${encodeURIComponent(cartridge)}&limit=200`).catch(() => null),
-          fetch(`/api/studio/dags?cartridge=${encodeURIComponent(cartridge)}`).catch(() => null),
+          fetchWithTimeout(
+            `/api/studio/entities?cartridge=${encodeURIComponent(cartridge)}`,
+            {},
+            10_000,
+          ),
+          fetchWithTimeout(
+            `/api/pipeline_runs?cartridge=${encodeURIComponent(cartridge)}&limit=200`,
+            {},
+            5_000,
+          ).catch(() => null),
+          fetchWithTimeout(
+            `/api/studio/dags?cartridge=${encodeURIComponent(cartridge)}`,
+            {},
+            5_000,
+          ).catch(() => null),
         ]);
 
-        const d        = await semRes.json();
+        const d        = await jsonOrThrow(semRes);
         const raw      = d.entities || {};
         const entities = Array.isArray(raw) ? raw : (raw.entities || []);
-
-        if (!entities.length) {
-          area.innerHTML = '<div class="empty-card">Sin entidades registradas en este cartucho.</div>';
-          if (restoreNewEntityRow) showAddEntityRow();
-          return;
-        }
 
         // Build last-run map (most recent per entity — API returns DESC so first = latest)
         state._runsByEntity = {};
         if (runsRes?.ok) {
-          const runsData = await runsRes.json();
-          for (const run of (runsData.runs || [])) {
-            if (!state._runsByEntity[run.entity]) state._runsByEntity[run.entity] = run;
+          try {
+            const runsData = await runsRes.json();
+            for (const run of (runsData.runs || [])) {
+              if (!state._runsByEntity[run.entity]) state._runsByEntity[run.entity] = run;
+            }
+          } catch (_) {
+            // Run history is auxiliary; entity configuration remains usable.
           }
         }
 
         // DAG list
         let dagOptions = [];
+        let dagInventoryUnavailable = !dagRes?.ok;
         if (dagRes?.ok) {
-          const dagData = await dagRes.json();
-          const registered = new Set((state._currentCartridge?.dags || []).map(d => d.dag_id).filter(Boolean));
-          dagOptions = (dagData.dags || dagData.result?.dags || [])
-            .map(d => d.dag_id)
-            .filter(id => id.startsWith(cartridge + '_') || registered.has(id))
-            .sort();
+          try {
+            const dagData = await dagRes.json();
+            const registered = new Set((state._currentCartridge?.dags || []).map(d => d.dag_id).filter(Boolean));
+            dagOptions = (dagData.dags || dagData.result?.dags || [])
+              .map(d => d.dag_id)
+              .filter(id => id.startsWith(cartridge + '_') || registered.has(id))
+              .sort();
+          } catch (_) {
+            dagInventoryUnavailable = true;
+          }
+        }
+        const airflowNotice = dagInventoryUnavailable
+          ? `<div data-studio-dag-status="unavailable" class="empty-card" style="color:var(--amber);margin-bottom:8px">
+               Airflow no disponible; se muestran las entidades sin inventario de DAGs.
+             </div>`
+          : '';
+
+        if (!entities.length) {
+          area.innerHTML = `${airflowNotice}<div class="empty-card">Sin entidades registradas en este cartucho.</div>`;
+          if (restoreNewEntityRow) showAddEntityRow();
+          return;
         }
 
         area.innerHTML = `
+          ${airflowNotice}
           <div class="et-table empty-state">
             <div class="et-hdr">
               <span>ENTIDAD</span>
@@ -1192,7 +1219,11 @@ import { state } from './legacy-state.js';
       const sel = document.getElementById(selectId);
       if (!sel) return;
       try {
-        const r = await fetch(`/api/studio/dags?cartridge=${encodeURIComponent(cartridge)}`);
+        const r = await fetchWithTimeout(
+          `/api/studio/dags?cartridge=${encodeURIComponent(cartridge)}`,
+          {},
+          5_000,
+        );
         if (!r.ok) throw new Error();
         const data = await r.json();
         const dags = (data.dags || [])
@@ -3857,7 +3888,11 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text3);font-size:11px">Cargando…</div>';
       const cartridge = _dagCartridge();
       try {
-        const r = await fetch(`/api/studio/dags${cartridge ? '?cartridge=' + encodeURIComponent(cartridge) : ''}`);
+        const r = await fetchWithTimeout(
+          `/api/studio/dags${cartridge ? '?cartridge=' + encodeURIComponent(cartridge) : ''}`,
+          {},
+          5_000,
+        );
         const d = await jsonOrThrow(r);
         const allDags = (d.dags || []).sort((a, b) => a.dag_id.localeCompare(b.dag_id));
         state._dagsCache = allDags;
@@ -3890,7 +3925,9 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
           ? state._selectedDag : state._dagsCache[0]?.dag_id;
         if (toSelect) await selectDag(toSelect);
       } catch(e) {
-        list.innerHTML = `<div style="padding:16px;color:var(--red);font-size:11px">Error: ${esc(e.message)}</div>`;
+        list.innerHTML = `<div data-studio-dag-status="unavailable" style="padding:16px;color:var(--amber);font-size:11px">
+          Airflow no disponible: ${esc(e.message)}
+        </div>`;
       }
     }
 

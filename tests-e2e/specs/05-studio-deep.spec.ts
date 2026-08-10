@@ -14,8 +14,14 @@
  */
 import { test, expect } from "../fixtures/auth";
 import type { Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
 const LEGACY = process.env.LEGACY_URL || "http://localhost:8000";
+const REPO = path.basename(process.cwd()) === "tests-e2e"
+  ? path.resolve(process.cwd(), "..")
+  : process.cwd();
+const STUDIO_STATIC = path.join(REPO, "console/app/static");
 const STEP_READY: Record<number, RegExp> = {
   2: /DAGS|Airflow|Plantillas/i,
   3: /Entidades|Extractores|ENTIDAD/i,
@@ -89,6 +95,73 @@ async function openAssistantPanel(page: Page) {
   }
   await expect(panel).toBeVisible({ timeout: 10_000 });
   return panel;
+}
+
+async function installHermeticStudioDagTimeoutHarness(page: Page) {
+  const cartridge = {
+    id: "acme",
+    name: "Acme ERP",
+    status: "operational",
+    entities: [
+      {
+        entity: "Invoice",
+        display_name: "Invoice",
+        mode: "full",
+        dag_id: "acme_invoice",
+      },
+    ],
+    dags: [{ dag_id: "acme_invoice" }],
+  };
+
+  await page.route("**/*", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/studio") {
+      await route.fulfill({
+        contentType: "text/html",
+        body: readFileSync(path.join(STUDIO_STATIC, "studio.html")),
+      });
+      return;
+    }
+    if (url.pathname.startsWith("/static/")) {
+      const file = path.resolve(STUDIO_STATIC, url.pathname.slice("/static/".length));
+      if (!file.startsWith(`${STUDIO_STATIC}${path.sep}`)) {
+        await route.abort("blockedbyclient");
+        return;
+      }
+      const contentType = file.endsWith(".js")
+        ? "application/javascript"
+        : file.endsWith(".css")
+          ? "text/css"
+          : "application/octet-stream";
+      await route.fulfill({ contentType, body: readFileSync(file) });
+      return;
+    }
+    if (url.pathname === "/studio/cartridges") {
+      await route.fulfill({ json: { cartridges: [cartridge] } });
+      return;
+    }
+    if (url.pathname === "/studio/cartridges/acme/status") {
+      await route.fulfill({ json: { status: "operational" } });
+      return;
+    }
+    if (url.pathname === "/studio/cartridges/acme") {
+      await route.fulfill({ json: cartridge });
+      return;
+    }
+    if (url.pathname === "/api/studio/entities") {
+      await route.fulfill({ json: { entities: cartridge.entities } });
+      return;
+    }
+    if (url.pathname === "/api/pipeline_runs") {
+      await route.fulfill({ json: { runs: [] } });
+      return;
+    }
+    if (url.pathname === "/api/config") {
+      await route.fulfill({ json: {} });
+      return;
+    }
+    await route.fulfill({ json: {} });
+  });
 }
 
 test.describe("Studio — 7 tabs render", () => {
@@ -254,6 +327,70 @@ test.describe("Studio — DAGs tab (USER-REPORTED BUGS pin)", () => {
 });
 
 test.describe("Studio — Entidades tab", () => {
+  test("a stalled optional DAG inventory does not block entities", async ({
+    authedPage: page,
+  }) => {
+    await installHermeticStudioDagTimeoutHarness(page);
+    await page.addInitScript(() => {
+      const nativeFetch = window.fetch.bind(window);
+      window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = input instanceof Request ? input : null;
+        const url = request?.url || String(input);
+        if (!url.includes("/api/studio/dags")) {
+          return nativeFetch(input, init);
+        }
+        const signal = init?.signal || request?.signal;
+        return new Promise<Response>((_resolve, reject) => {
+          const abort = () => {
+            (window as typeof window & { __studioDagFetchAborted?: boolean })
+              .__studioDagFetchAborted = true;
+            reject(new DOMException("Aborted", "AbortError"));
+          };
+          if (!signal) return;
+          if (signal.aborted) abort();
+          else signal.addEventListener("abort", abort, { once: true });
+        });
+      };
+    });
+
+    await openStudio(page);
+    await waitStudioReady(page);
+    const startedAt = Date.now();
+    await page.evaluate(() => {
+      const win = window as typeof window & {
+        goStep: (step: number) => Promise<void> | void;
+      };
+      return win.goStep(3);
+    });
+    expect(Date.now() - startedAt).toBeLessThan(6_000);
+
+    const area = page.locator("#entity-list-area");
+    await expect(area).toContainText(/Airflow no disponible/i);
+    const addBtn = page.getByRole("button", { name: /\+ entidad/i }).first();
+    await expect(addBtn).toBeVisible();
+    await addBtn.click();
+    await expect(page.locator("#new-entity-row")).toBeVisible();
+    await expect(page.locator("#ne-dag")).toContainText(/Airflow no disponible/i, {
+      timeout: 6_000,
+    });
+    await page.evaluate(async () => {
+      const list = document.createElement("div");
+      list.id = "dag-list";
+      document.body.appendChild(list);
+      const win = window as typeof window & { loadDags: () => Promise<void> };
+      await win.loadDags();
+    });
+    await expect(page.locator("#dag-list")).toContainText(/Airflow no disponible/i);
+    expect(
+      await page.evaluate(() =>
+        Boolean(
+          (window as typeof window & { __studioDagFetchAborted?: boolean })
+            .__studioDagFetchAborted,
+        ),
+      ),
+    ).toBe(true);
+  });
+
   test("'+ Entidad' button opens new-entity form", async ({
     authedPage: page,
   }) => {
