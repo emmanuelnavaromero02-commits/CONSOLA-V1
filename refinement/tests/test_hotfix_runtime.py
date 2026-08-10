@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+import threading
 import types
 
 import pytest
@@ -114,6 +115,123 @@ def test_dataset_allowed_filters_owned_datasets_for_workspace_employees(
     assert refinement_main._dataset_allowed(base_sec, legacy_workspace_dataset)
     assert refinement_main._dataset_allowed(workspace_admin_sec, other_employee_dataset)
     assert refinement_main._dataset_allowed(wildcard_admin_sec, other_employee_dataset)
+
+
+def test_published_dataset_listing_fails_closed_without_scope(refinement_main):
+    assert refinement_main._published_datasets_for_scope({}) == {"datasets": []}
+
+
+@pytest.mark.anyio
+async def test_mcp_list_datasets_offloads_blocking_publication_reads(
+    refinement_main,
+    monkeypatch,
+):
+    request_thread = threading.get_ident()
+    observed = {}
+    security_context = {"tenant_id": "tenant", "workspace_id": "workspace"}
+
+    def list_published(sec, annotate_staleness=False):
+        observed["thread"] = threading.get_ident()
+        observed["sec"] = sec
+        observed["annotate_staleness"] = annotate_staleness
+        return {"datasets": []}
+
+    monkeypatch.setattr(
+        refinement_main,
+        "_published_datasets_for_scope",
+        list_published,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        refinement_main,
+        "_require_security_permission",
+        lambda *_args: security_context,
+    )
+
+    result = await refinement_main.mcp_invoke(
+        {"tool": "list_datasets"}, internal_service="console"
+    )
+
+    assert result == {"datasets": []}
+    assert observed == {
+        "thread": observed["thread"],
+        "sec": security_context,
+        "annotate_staleness": False,
+    }
+    assert observed["thread"] != request_thread
+
+
+@pytest.mark.anyio
+async def test_mcp_data_catalog_offloads_blocking_publication_reads(
+    refinement_main,
+    monkeypatch,
+):
+    request_thread = threading.get_ident()
+    observed = {}
+    security_context = {"tenant_id": "tenant", "workspace_id": "workspace"}
+
+    def get_data_catalog(*_args, **_kwargs):
+        observed["thread"] = threading.get_ident()
+        return {"datasets": {}, "relationships": []}
+
+    monkeypatch.setattr(refinement_main, "_get_data_catalog", get_data_catalog)
+    monkeypatch.setattr(
+        refinement_main,
+        "_require_security_permission",
+        lambda *_args: security_context,
+    )
+
+    result = await refinement_main.mcp_invoke(
+        {"tool": "get_data_catalog", "args": {}}, internal_service="console"
+    )
+
+    assert result == {"datasets": {}, "relationships": []}
+    assert observed["thread"] != request_thread
+
+
+@pytest.mark.anyio
+async def test_rest_list_datasets_offloads_blocking_publication_reads(
+    refinement_main,
+    monkeypatch,
+):
+    request_thread = threading.get_ident()
+    observed = {}
+    security_context = {"tenant_id": "tenant", "workspace_id": "workspace"}
+
+    def list_published(sec, annotate_staleness=False):
+        observed["thread"] = threading.get_ident()
+        observed["sec"] = sec
+        observed["annotate_staleness"] = annotate_staleness
+        return {"datasets": []}
+
+    monkeypatch.setattr(
+        refinement_main,
+        "_published_datasets_for_scope",
+        list_published,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        refinement_main,
+        "_body_from_security_header",
+        lambda *_args: {},
+    )
+    monkeypatch.setattr(
+        refinement_main,
+        "_require_security_permission",
+        lambda *_args: security_context,
+    )
+
+    result = await refinement_main.list_datasets(
+        x_security_context=None, internal_service="console"
+    )
+
+    assert result == {"datasets": []}
+    assert observed == {
+        "thread": observed["thread"],
+        "sec": security_context,
+        "annotate_staleness": True,
+    }
+    assert observed["thread"] != request_thread
 
 
 @pytest.mark.anyio

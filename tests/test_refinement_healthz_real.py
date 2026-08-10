@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import json
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -116,6 +117,28 @@ async def test_refinement_readyz_checks_all_dependencies(monkeypatch):
     resp = await main.readyz()
     assert resp.status_code == 200
     assert json.loads(resp.body) == {"ok": True, "service": "refinement"}
+
+
+@pytest.mark.asyncio
+async def test_refinement_readyz_offloads_blocking_dependency_checks(monkeypatch):
+    main = _load_refinement_main(monkeypatch)
+    request_thread = threading.get_ident()
+    observed = {}
+
+    def readiness_checks():
+        observed["thread"] = threading.get_ident()
+        return {
+            "postgres": "up",
+            "duckdb": "up",
+            "publication_verifier": "up",
+        }
+
+    monkeypatch.setattr(main, "_readiness_checks", readiness_checks)
+
+    resp = await main.readyz()
+
+    assert resp.status_code == 200
+    assert observed["thread"] != request_thread
 
 
 @pytest.mark.asyncio

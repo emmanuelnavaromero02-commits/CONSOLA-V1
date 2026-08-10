@@ -25,6 +25,7 @@ import sqlglot
 from sqlglot import exp as sql_exp
 from fastapi import FastAPI, Header, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 # Sprint v1.18: structured JSON logs to stdout, with secret redaction.
 # Wired up before any other module-level import that might log so the
@@ -74,6 +75,30 @@ _RUNTIME_CONTEXT_VALIDATED = object()
 
 def _publication_snapshot_resolver() -> PublicationSnapshotResolver:
     return PublicationSnapshotResolver(engine.storage)
+
+
+def _published_datasets_for_scope(
+    sec: dict, annotate_staleness: bool = False
+) -> dict[str, list[dict]]:
+    if not str(sec.get("tenant_id") or "").strip() or not str(
+        sec.get("workspace_id") or ""
+    ).strip():
+        return {"datasets": []}
+    source_datasets = [
+        ds
+        for ds in store.list_datasets(**_dataset_store_scope(sec))
+        if _dataset_allowed(sec, ds)
+    ]
+    resolver = _publication_snapshot_resolver()
+    snapshots = resolver.published_snapshots(source_datasets, sec)
+    datasets = [
+        _sanitize_dataset_for_scope(sec, public_dataset_projection(ds, snapshot))
+        for ds, snapshot in zip(source_datasets, snapshots, strict=True)
+        if snapshot is not None
+    ]
+    if annotate_staleness:
+        _annotate_staleness(datasets, sec)
+    return {"datasets": datasets}
 
 
 def _materialize_with_operational_fallback(ds: dict, user_context: dict) -> dict:
@@ -1278,7 +1303,7 @@ async def healthz():
     return {"ok": True, "service": "refinement"}
 
 
-async def _readiness_checks() -> dict[str, str]:
+def _readiness_checks() -> dict[str, str]:
     checks: dict[str, str] = {}
     try:
         import psycopg2
@@ -1312,7 +1337,7 @@ async def _readiness_checks() -> dict[str, str]:
 @app.get("/readyz")
 async def readyz():
     """Dependency readiness with sanitized public response."""
-    checks = await _readiness_checks()
+    checks = await run_in_threadpool(_readiness_checks)
     ok = all(status == "up" for status in checks.values())
     return JSONResponse(
         {"ok": ok, "service": "refinement"},
@@ -2036,16 +2061,7 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
 
     if tool == "list_datasets":
         sec = _require_security_permission(body, "datasets.read")
-        resolver = _publication_snapshot_resolver()
-        return {
-            "datasets": [
-                _sanitize_dataset_for_scope(sec, published)
-                for ds in store.list_datasets(**_dataset_store_scope(sec))
-                if _dataset_allowed(sec, ds)
-                and (published := published_dataset_metadata(ds, sec, resolver))
-                is not None
-            ]
-        }
+        return await run_in_threadpool(_published_datasets_for_scope, sec)
 
     if tool == "get_dataset_definition":
         sec = _require_security_permission(body, "datasets.read")
@@ -2188,7 +2204,8 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
 
     if tool == "get_data_catalog":
         sec = _require_security_permission(body, "datasets.read")
-        return _get_data_catalog(
+        return await run_in_threadpool(
+            _get_data_catalog,
             layer=args.get("layer"),
             cartridge=args.get("cartridge"),
             tags=args.get("tags"),
@@ -3111,15 +3128,7 @@ async def list_datasets(
 ):
     body = _body_from_security_header(internal_service, x_security_context)
     sec = _require_security_permission(body, "datasets.read")
-    resolver = _publication_snapshot_resolver()
-    datasets = [
-        _sanitize_dataset_for_scope(sec, published)
-        for d in store.list_datasets(**_dataset_store_scope(sec))
-        if _dataset_allowed(sec, d)
-        and (published := published_dataset_metadata(d, sec, resolver)) is not None
-    ]
-    _annotate_staleness(datasets, sec)
-    return {"datasets": datasets}
+    return await run_in_threadpool(_published_datasets_for_scope, sec, True)
 
 
 def _reindex_dataset_best_effort(name: str, auth_body: dict | None = None) -> None:

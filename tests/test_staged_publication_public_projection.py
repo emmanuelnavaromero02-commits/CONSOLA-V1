@@ -95,10 +95,10 @@ def test_catalog_columns_and_relationships_share_one_pinned_snapshot() -> None:
     class Resolver:
         calls = 0
 
-        def published_snapshot(self, *_args):
+        def published_snapshots(self, datasets, *_args):
             value = snapshots[min(self.calls, 1)]
             self.calls += 1
-            return value
+            return [value for _ in datasets]
 
     resolver = Resolver()
     result = publication_public.published_catalog(
