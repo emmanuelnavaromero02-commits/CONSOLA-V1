@@ -86,6 +86,7 @@ VAULT_URL = os.environ.get("VAULT_URL", "http://vault:8300")
 _MAX_SPEC_BYTES = 2 * 1024 * 1024
 _MAX_METADATA_BYTES = 5 * 1024 * 1024
 _BLOCKED_SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
+_AIRFLOW_DAGS_TIMEOUT_SECONDS = 4.0
 
 
 def _is_studio_admin_user(user: dict | None) -> bool:
@@ -2005,7 +2006,13 @@ async def dags_list(
         _require_cartridge_visible(user, cartridge)
     manifest = await cartridge_service.get_cartridge(cartridge) if cartridge else None
     registered = _manifest_dag_ids(manifest)
-    result = await mcp_registry.invoke("infra", "airflow_list_dags", {}, user=user)
+    try:
+        result = await asyncio.wait_for(
+            mcp_registry.invoke("infra", "airflow_list_dags", {}, user=user),
+            timeout=_AIRFLOW_DAGS_TIMEOUT_SECONDS,
+        )
+    except TimeoutError as exc:
+        raise HTTPException(504, "Airflow DAG list timed out") from exc
     if isinstance(result, dict) and result.get("error"):
         raise HTTPException(502, f"Airflow DAG list failed: {result['error']}")
     raw_dags = result.get("dags") if isinstance(result, dict) else result
