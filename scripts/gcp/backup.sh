@@ -22,6 +22,8 @@ BACKUP_POLICY_SHA256="${10:-}"
 BACKUP_LOCATION="${11:-}"
 PROJECT_ID="${12:-}"
 OPERATION_MODE="${13:-backup}"
+EXPECTED_CURRENT_VERSION="${14:-}"
+BACKUP_PURPOSE="${15:-predeploy}"
 APP_ROOT="${OMEGA_GCP_APP_ROOT:-/opt/modecissions}"
 CURRENT_LINK="${APP_ROOT}/current"
 SHARED_ROOT="${APP_ROOT}/shared"
@@ -316,6 +318,12 @@ fi
 if [[ ! "$EXPECTED_CURRENT_REF" =~ ^[0-9a-f]{40}$ ]]; then
   fail "expected current release" "one exact pre-deploy live ref is required" 22
 fi
+if [[ "$OPERATION_MODE" == "backup" && \
+      ( ! "$EXPECTED_CURRENT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ || \
+        ( "$BACKUP_PURPOSE" != "predeploy" && \
+          "$BACKUP_PURPOSE" != "rollback-baseline" ) ) ]]; then
+  fail "expected current release" "exact live VERSION and backup purpose are required" 22
+fi
 if [[ ! -L "$CURRENT_LINK" ]]; then
   fail "canonical runtime inputs" "current release link missing" 23
 fi
@@ -344,6 +352,10 @@ fi
 if [[ "$CURRENT_REF" != "$EXPECTED_CURRENT_REF" ]]; then
   fail "expected current release" "live ref differs from Terraform/operator contract" 25
 fi
+if [[ "$OPERATION_MODE" == "backup" && \
+      "$CURRENT_VERSION" != "$EXPECTED_CURRENT_VERSION" ]]; then
+  fail "expected current release" "live VERSION differs from controller contract" 25
+fi
 
 exec 9>"/var/lock/omega-gcp-day2.lock"
 if ! flock -n 9; then
@@ -354,7 +366,7 @@ install -d -m 0755 "$SHARED_ROOT"
 if [[ -e "$OPERATION_MARKER" ]]; then
   fail "durable operation fence" "an incomplete operation marker already exists" 26
 fi
-if [[ "$OPERATION_MODE" == "backup" ]]; then
+if [[ "$OPERATION_MODE" == "backup" && "$BACKUP_PURPOSE" == "predeploy" ]]; then
   if [[ -L "$PREDEPLOY_ATTESTATION" || \
         ( -e "$PREDEPLOY_ATTESTATION" && ! -f "$PREDEPLOY_ATTESTATION" ) ]]; then
     fail "pre-deploy backup attestation" "existing attestation path is unsafe" 26
@@ -985,11 +997,11 @@ RUNTIME_FENCED=1
 emit "independent operation watchdog" "PASS" "systemd monitor armed before durable marker and writer mutation"
 "${COMPOSE[@]}" stop --timeout 60 "${WRITER_SERVICES[@]}"
 python3 "$RUNTIME_CONTRACT" writer-fence --compose-project "$COMPOSE_PROJECT" >/dev/null || \
-  fail "writer fence" "a global labeled or unlabeled proprietary writer remains running" 28
+  fail "writer fence" "a host-local labeled or unlabeled proprietary writer remains running" 28
 DB_FENCE_ACTIVE=1
 database_fence on || fail "database write fence" "cannot persist read-only defaults" 29
 write_operation_state "fenced"
-emit "writer and scheduler fence" "PASS" "all global application writers stopped; databases persistently read-only"
+emit "writer and scheduler fence" "PASS" "all GCP host-local application writers stopped; databases persistently read-only"
 
 # pg_dumpall necessarily serializes the temporary catalog fence. Preserve the
 # exact pre-fence database policy independently so a restore can remain fenced
@@ -1383,33 +1395,131 @@ PY
 OBJECT_SHA="$(sha256sum "${WORKDIR}/lakehouse_objects.jsonl" | awk '{print $1}')"
 emit "versioned object manifest" "PASS" "objects=${OBJECT_COUNT} bytes=${OBJECT_BYTES} sha256=${OBJECT_SHA} stable_passes=2 temporarily_held=${OBJECT_COUNT}"
 
-python3 - "${WORKDIR}/runtime-images.json" "$COMPOSE_PROJECT" <<'PY'
+python3 - "${WORKDIR}/runtime-images.json" "$COMPOSE_PROJECT" \
+  "$CURRENT_REF" "$CURRENT_VERSION" "$PROVENANCE_MODE" <<'PY'
 import json
+import re
 import subprocess
 import sys
 
 project = sys.argv[2]
+source_ref = sys.argv[3]
+source_version = sys.argv[4]
+provenance_mode = sys.argv[5]
+owner = "emmanuelnavaromero02-commits"
+canonical_source = "https://github.com/emmanuelnavaromero02-commits/CONSOLA-V1"
+package_services = {
+    "console": {"console"},
+    "workspace": {"workspace"},
+    "refinement": {"refinement"},
+    "vault": {"vault"},
+    "mcp-infra": {"mcp-infra"},
+    "airflow": {"airflow-init", "airflow", "airflow-scheduler"},
+    "replicon": {"replicon"},
+    "hubspot": {"hubspot"},
+    "banxico": {"banxico"},
+    "inegi": {"inegi"},
+    "sec_edgar": {"sec-edgar"},
+    "sap_hcm": {"sap-hcm"},
+    "sap_s4hana": {"sap-s4hana"},
+    "sap_successfactors": {"sap-successfactors"},
+    "salesforce": {"salesforce"},
+}
+service_package = {
+    service: package
+    for package, services in package_services.items()
+    for service in services
+}
 result = subprocess.run(
     ["docker", "ps", "-a", "--filter", f"label=com.docker.compose.project={project}", "--format", "{{.ID}}"],
     text=True,
     stdout=subprocess.PIPE,
     check=True,
 )
-images = {}
+service_rows = {}
 for container_id in filter(None, result.stdout.splitlines()):
-    inspect = subprocess.run(
-        ["docker", "inspect", container_id, "--format", "{{json .Config.Labels}}\t{{.Config.Image}}\t{{.Image}}"],
-        text=True,
-        stdout=subprocess.PIPE,
-        check=True,
-    ).stdout.strip()
-    labels_json, configured, image_id = inspect.split("\t", 2)
-    labels = json.loads(labels_json)
+    info = json.loads(
+        subprocess.run(
+            ["docker", "inspect", container_id],
+            text=True,
+            stdout=subprocess.PIPE,
+            check=True,
+        ).stdout
+    )[0]
+    labels = info.get("Config", {}).get("Labels") or {}
     service = labels.get("com.docker.compose.service")
-    if service:
-        images[service] = {"configured_ref": configured, "image_id": image_id}
+    if service not in service_package:
+        continue
+    if service in service_rows:
+        raise SystemExit(f"duplicate runtime container for proprietary service: {service}")
+    package = service_package[service]
+    repository = f"ghcr.io/{owner}/{package}"
+    configured = info.get("Config", {}).get("Image", "")
+    image_id = info.get("Image", "")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
+        raise SystemExit(f"runtime image ID is invalid: {service}")
+    image = json.loads(
+        subprocess.run(
+            ["docker", "image", "inspect", image_id],
+            text=True,
+            stdout=subprocess.PIPE,
+            check=True,
+        ).stdout
+    )[0]
+    repo_digests = sorted(
+        value
+        for value in image.get("RepoDigests") or []
+        if isinstance(value, str) and value.startswith(repository + "@sha256:")
+    )
+    if len(repo_digests) != 1 or re.fullmatch(
+        re.escape(repository) + r"@sha256:[0-9a-f]{64}", repo_digests[0]
+    ) is None:
+        raise SystemExit(f"runtime image lacks one canonical RepoDigest: {service}")
+    digest = repo_digests[0].split("@", 1)[1]
+    if configured not in {
+        f"{repository}:v{source_version}",
+        f"{repository}:v{source_version}@{digest}",
+    }:
+        raise SystemExit(f"runtime configured image is not release/digest pinned: {service}")
+    image_labels = (image.get("Config") or {}).get("Labels") or {}
+    if provenance_mode == "day2" and (
+        image_labels.get("org.opencontainers.image.revision") != source_ref
+        or image_labels.get("org.opencontainers.image.version") != source_version
+        or image_labels.get("org.opencontainers.image.source") != canonical_source
+    ):
+        raise SystemExit(f"runtime image provenance differs: {service}")
+    service_rows[service] = {
+        "configured_ref": configured,
+        "repo_digest": repo_digests[0],
+        "image_id": image_id,
+    }
+
+if set(service_rows) != set(service_package):
+    missing = sorted(set(service_package) - set(service_rows))
+    raise SystemExit(f"runtime proprietary service inventory is incomplete: {missing}")
+images = {}
+for package, services in package_services.items():
+    rows = [service_rows[service] for service in sorted(services)]
+    first = rows[0]
+    if any(row != first for row in rows[1:]):
+        raise SystemExit(f"runtime services disagree on package digest/ID: {package}")
+    images[package] = first
+if set(images) != set(package_services) or len(
+    {row["repo_digest"] for row in images.values()}
+) != 15:
+    raise SystemExit("runtime authority is not exactly 15 unique canonical repositories")
 with open(sys.argv[1], "w", encoding="utf-8") as stream:
-    json.dump({"services": images, "secret_values_included": False}, stream, indent=2, sort_keys=True)
+    json.dump(
+        {
+            "schema_version": 2,
+            "source_release": {"deploy_ref": source_ref, "version": source_version},
+            "images": images,
+            "secret_values_included": False,
+        },
+        stream,
+        indent=2,
+        sort_keys=True,
+    )
     stream.write("\n")
 PY
 
@@ -1751,6 +1861,7 @@ rm -f -- "$OPERATION_MARKER"
 "$WATCHDOG" disarm "$$" "$OPERATION_MARKER"
 RUNTIME_FENCED=0
 DB_FENCE_ACTIVE=0
+if [[ "$BACKUP_PURPOSE" == "predeploy" ]]; then
 python3 - "$PREDEPLOY_ATTESTATION" "$BACKUP_ID" "$CURRENT_REF" \
   "$CANDIDATE_REF" "gs://${RELEASE_BACKUP_BUCKET}/${BACKUP_PREFIX}/manifest.json" \
   "$MANIFEST_GENERATION" "$MANIFEST_SIZE_BYTES" "$MANIFEST_SHA" \
@@ -1804,6 +1915,18 @@ finally:
         os.unlink(temporary)
 PY
 emit "pre-deploy backup attestation" "PASS" "fresh server-owned one-time deploy binding created"
+else
+  emit "rollback baseline backup" "PASS" \
+    "current live ref/version captured without creating a pre-deploy deploy attestation"
+fi
 emit "runtime restored after backup" "PASS" "all previously-active services running/healthy; scheduler=1"
-printf 'OMEGA_GCP_BACKUP_JSON={"status":"PASS","backup_id":"%s","manifest_uri":"gs://%s/%s/manifest.json","manifest_sha256":"%s","manifest_generation":"%s","manifest_size_bytes":%s,"object_count":%s,"lakehouse_bucket":"%s","backup_bucket":"%s"}\n' \
-  "$BACKUP_ID" "$RELEASE_BACKUP_BUCKET" "$BACKUP_PREFIX" "$MANIFEST_SHA" "$MANIFEST_GENERATION" "$MANIFEST_SIZE_BYTES" "$OBJECT_COUNT" "$LAKEHOUSE_BUCKET" "$RELEASE_BACKUP_BUCKET"
+RUNTIME_IMAGES_GENERATION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["generation"])' "${WORKDIR}/images.meta.json")"
+RUNTIME_IMAGES_SIZE_BYTES="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["size"])' "${WORKDIR}/images.meta.json")"
+RUNTIME_IMAGES_SHA256="$(sha256sum "${WORKDIR}/runtime-images.json" | awk '{print $1}')"
+printf 'OMEGA_GCP_BACKUP_JSON={"status":"PASS","purpose":"%s","backup_id":"%s","source_ref":"%s","source_version":"%s","manifest_uri":"gs://%s/%s/manifest.json","manifest_sha256":"%s","manifest_generation":"%s","manifest_size_bytes":%s,"runtime_images_uri":"gs://%s/%s/runtime-images.json","runtime_images_sha256":"%s","runtime_images_generation":"%s","runtime_images_size_bytes":%s,"object_count":%s,"lakehouse_bucket":"%s","backup_bucket":"%s"}\n' \
+  "$BACKUP_PURPOSE" "$BACKUP_ID" "$CURRENT_REF" "$CURRENT_VERSION" \
+  "$RELEASE_BACKUP_BUCKET" "$BACKUP_PREFIX" "$MANIFEST_SHA" \
+  "$MANIFEST_GENERATION" "$MANIFEST_SIZE_BYTES" "$RELEASE_BACKUP_BUCKET" \
+  "$BACKUP_PREFIX" "$RUNTIME_IMAGES_SHA256" "$RUNTIME_IMAGES_GENERATION" \
+  "$RUNTIME_IMAGES_SIZE_BYTES" "$OBJECT_COUNT" "$LAKEHOUSE_BUCKET" \
+  "$RELEASE_BACKUP_BUCKET"

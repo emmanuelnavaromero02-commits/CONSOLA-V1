@@ -30,6 +30,8 @@ GCP_ENVIRONMENT="${14:-}"
 GHCR_SECRET_VERSION="${15:-}"
 BACKUP_POLICY_SHA256="${16:-}"
 PROJECT_ID="${17:-}"
+PUBLISHED_MANIFEST_SHA256="${18:-}"
+PUBLISHED_TAG_OBJECT_SHA="${19:-}"
 
 APP_ROOT="${OMEGA_GCP_APP_ROOT:-/opt/modecissions}"
 RELEASE_ROOT="${APP_ROOT}/releases"
@@ -70,6 +72,7 @@ DB_READONLY_MODECISSIONS=""
 DB_READONLY_GOLD=""
 DB_READONLY_CONFIG_MODECISSIONS=""
 DB_READONLY_CONFIG_GOLD=""
+RECONCILIATION_HANDOFF=0
 WRITER_SERVICES=(airflow-scheduler console workspace refinement vault mcp-infra airflow replicon hubspot salesforce banxico inegi sec-edgar sap-hcm sap-successfactors sap-s4hana superset)
 ONE_SHOT_MUTATORS=(airflow-init minio-init postgres_dev_seed superset-init)
 MUTATING_SERVICES=("${WRITER_SERVICES[@]}" "${ONE_SHOT_MUTATORS[@]}")
@@ -271,8 +274,8 @@ attested = datetime.fromisoformat(payload["attested_at"].replace("Z", "+00:00"))
 now = datetime.now(timezone.utc)
 if (
     attested.tzinfo is None
-    or now - attested > timedelta(hours=4)
-    or attested - now > timedelta(minutes=5)
+    or now - attested > timedelta(minutes=30)
+    or attested > now
 ):
     raise SystemExit("pre-deploy backup attestation expired before consumption")
 payload["state"] = "consumed"
@@ -472,6 +475,10 @@ if [[ ! "$BACKUP_POLICY_SHA256" =~ ^[0-9a-f]{64}$ || \
       ! "$PROJECT_ID" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]]; then
   fail "release backup policy" "controller policy attestation is invalid" 27
 fi
+if [[ ! "$PUBLISHED_MANIFEST_SHA256" =~ ^sha256:[0-9a-f]{64}$ || \
+      ! "$PUBLISHED_TAG_OBJECT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  fail "published image authority" "controller-verified annotated tag binding is required" 27
+fi
 for managed in "$APP_ROOT" "$RELEASE_ROOT" "$SHARED_ROOT"; do
   validate_managed_directory "$managed" required || \
     fail "managed host path" "${managed} is linked, escaped, unowned, or writable" 28
@@ -512,8 +519,94 @@ if ! flock -n 9; then
 fi
 emit "exclusive day-2 lock" "PASS" "acquired"
 
-if [[ -e "$OPERATION_MARKER" ]]; then
-  fail "durable operation fence" "an incomplete operation marker already exists" 32
+if [[ -e "$OPERATION_MARKER" || -L "$OPERATION_MARKER" ]]; then
+  if ! python3 - "$OPERATION_MARKER" "$OLD_REF" "$DEPLOY_REF" "$TARGET_TAG" \
+      "$BACKUP_MANIFEST_URI" "$BACKUP_MANIFEST_SHA256" "$SHARED_ROOT" \
+      "$PUBLISHED_MANIFEST_SHA256" "$PUBLISHED_TAG_OBJECT_SHA" <<'PY'
+import hashlib
+import json
+import pathlib
+import stat
+import sys
+from datetime import datetime, timezone
+
+marker_path = pathlib.Path(sys.argv[1])
+info = marker_path.lstat()
+if (
+    not stat.S_ISREG(info.st_mode)
+    or info.st_uid != 0
+    or info.st_gid != 0
+    or stat.S_IMODE(info.st_mode) != 0o600
+    or info.st_nlink != 1
+):
+    raise SystemExit("handoff marker ownership differs")
+marker = json.load(open(marker_path, encoding="utf-8"))
+published_preflight = marker.get("published_release_preflight")
+if (
+    marker.get("schema_version") != 2
+    or marker.get("operation") != "pipeline-run-reconciliation"
+    or marker.get("state") != "handoff-ready"
+    or marker.get("current_ref") != sys.argv[2]
+    or marker.get("candidate_ref") != sys.argv[3]
+    or marker.get("published_release_tag") != sys.argv[4]
+    or marker.get("backup_manifest", {}).get("uri") != sys.argv[5]
+    or marker.get("backup_manifest", {}).get("sha256") != sys.argv[6]
+    or not isinstance(published_preflight, dict)
+    or published_preflight.get("release_candidate_manifest_digest") != sys.argv[8]
+    or published_preflight.get("release_tag_object_sha") != sys.argv[9]
+):
+    raise SystemExit("handoff identity differs")
+expires = datetime.fromisoformat(str(marker.get("expires_at", "")).replace("Z", "+00:00"))
+if expires.tzinfo is None or expires <= datetime.now(timezone.utc):
+    raise SystemExit("handoff expired")
+receipt_identity = marker.get("receipt")
+if not isinstance(receipt_identity, dict) or set(receipt_identity) != {"path", "sha256"}:
+    raise SystemExit("handoff receipt identity is invalid")
+receipt_path = pathlib.Path(receipt_identity["path"])
+receipt_root = (pathlib.Path(sys.argv[7]) / "reconciliation-receipts").resolve()
+if receipt_path.resolve().parent != receipt_root:
+    raise SystemExit("handoff receipt escaped its server-owned directory")
+receipt_info = receipt_path.lstat()
+raw = receipt_path.read_bytes()
+if (
+    not stat.S_ISREG(receipt_info.st_mode)
+    or receipt_info.st_uid != 0
+    or receipt_info.st_gid != 0
+    or stat.S_IMODE(receipt_info.st_mode) != 0o600
+    or receipt_info.st_nlink != 1
+    or hashlib.sha256(raw).hexdigest() != receipt_identity["sha256"]
+):
+    raise SystemExit("handoff receipt bytes or ownership differ")
+receipt = json.loads(raw)
+if (
+    receipt.get("status") != "PASS"
+    or receipt.get("current_ref") != sys.argv[2]
+    or receipt.get("candidate_ref") != sys.argv[3]
+    or receipt.get("published_release_tag") != sys.argv[4]
+    or receipt.get("backup_manifest") != marker.get("backup_manifest")
+    or receipt.get("manifest") != marker.get("manifest")
+    or receipt.get("external_routing_scheduler_attestation")
+       != marker.get("external_routing_scheduler_attestation")
+    or receipt.get("published_release_preflight")
+       != marker.get("published_release_preflight")
+    or receipt.get("dry_run") != "would_apply"
+    or receipt.get("apply") != "applied"
+    or receipt.get("poststate") != "already_applied"
+    or receipt.get("gcp_host_local_writer_fence") != "held"
+    or receipt.get("checkpoint_zero_aws_writer_gate") != "PASS"
+    or receipt.get("pre_release_runtime_restart_attempted") is not False
+):
+    raise SystemExit("handoff receipt does not authorize deploy")
+PY
+  then
+    fail "reconciliation handoff" "marker is expired, mismatched, or not deploy-authorizing" 32
+  fi
+  if [[ ! -x "$WATCHDOG" ]] || ! "$WATCHDOG" arm "$$" "$OPERATION_MARKER"; then
+    fail "reconciliation handoff" "continuous watchdog ownership could not transfer" 32
+  fi
+  RECONCILIATION_HANDOFF=1
+  emit "reconciliation handoff" "PASS" \
+    "published-release/backup/receipt-bound writer fence adopted without restarting the old runtime"
 fi
 if [[ ! -s "$SHARED_ENV" || ! -s "$GCP_RUNTIME_COMPOSE" || \
       ! -s "$BOOTSTRAP_STATE" || ! -s "$RUNTIME_PROVENANCE" ]]; then
@@ -539,7 +632,8 @@ if grep -Eq '^(GHCR_[A-Z0-9_]*(TOKEN|PASSWORD|SECRET|CREDENTIAL|AUTH|USER)|GITHU
 fi
 emit "shared runtime inputs" "PASS" "host-owned env and generated GCP overlay are canonical"
 if [[ ! -x /usr/local/sbin/omega-operation-gate ]] || \
-    ! /usr/local/sbin/omega-operation-gate; then
+    ! OMEGA_GCP_ALLOW_OPERATION_MARKER="$RECONCILIATION_HANDOFF" \
+      /usr/local/sbin/omega-operation-gate; then
   fail "reboot operation guard" "installed Docker gate rejected the current atomic state" 32
 fi
 
@@ -828,9 +922,10 @@ created = parsed(manifest.get("created_at"))
 attested = parsed(attestation.get("attested_at"))
 now = datetime.now(timezone.utc)
 if not (
-    started <= created <= attested <= now + timedelta(minutes=5)
+    started <= created <= attested <= now
     and now - started <= timedelta(hours=4)
-    and now - attested <= timedelta(hours=4)
+    and now - created <= timedelta(minutes=30)
+    and now - attested <= timedelta(minutes=30)
 ):
     raise SystemExit("pre-deploy backup is stale or temporally incoherent")
 PY
@@ -986,14 +1081,22 @@ if [[ ! -x "$CANDIDATE_AUTH_RUNNER" || ! -x "$CANDIDATE_PREFLIGHT" || \
       ! -x "$CANDIDATE_FIREWALL" || ! -x "$CANDIDATE_OPERATION_GUARD" ]]; then
   fail "candidate release helpers" "release does not contain the audited auth, preflight, and runtime helpers" 38
 fi
-"$CANDIDATE_FIREWALL" install-and-verify-container >/dev/null
-emit "container metadata isolation" "PASS" "IPv4/IPv6 metadata endpoints denied from running proprietary container"
-if ! "$CANDIDATE_OPERATION_GUARD"; then
-  fail "reboot operation guard" "candidate guard is incompatible with the current atomic state" 38
+"$CANDIDATE_FIREWALL" install >/dev/null
+emit "container metadata host policy" "PASS" \
+  "IPv4/IPv6 forwarding deny installed before candidate containers start"
+if [[ "$RECONCILIATION_HANDOFF" == "1" ]]; then
+  if ! OMEGA_GCP_ALLOW_OPERATION_MARKER=1 "$CANDIDATE_OPERATION_GUARD"; then
+    fail "reboot operation guard" "candidate guard rejected the exact reconciliation handoff" 38
+  fi
+else
+  if ! "$CANDIDATE_OPERATION_GUARD"; then
+    fail "reboot operation guard" "candidate guard is incompatible with the current atomic state" 38
+  fi
 fi
 install_operation_guard "$CANDIDATE_OPERATION_GUARD"
 install_operation_watchdog "$CANDIDATE_WATCHDOG"
-if ! /usr/local/sbin/omega-operation-gate; then
+if ! OMEGA_GCP_ALLOW_OPERATION_MARKER="$RECONCILIATION_HANDOFF" \
+    /usr/local/sbin/omega-operation-gate; then
   fail "reboot operation guard" "candidate guard rejected the current atomic state" 38
 fi
 emit "reboot operation guard" "PASS" "exact candidate ExecStartPre installed and current state verified"
@@ -1010,24 +1113,79 @@ LOCK_TMP="${SHARED_ROOT}/image-locks/.${DEPLOY_REF}.tmp.$$"
 install -d -m 0700 "$LOCK_TMP"
 NEW_LOCK_ENV="${LOCK_TMP}/release-images.env"
 NEW_LOCK_MANIFEST="${LOCK_TMP}/manifest.json"
+NEW_IMAGE_AUTHORITY_TMP="${NEW_LOCK_ENV}.authority.json"
+NEW_IMAGE_AUTHORITY="${LOCK_TMP}/image-authority.json"
 if ! OMEGA_GCP_ENVIRONMENT="$GCP_ENVIRONMENT" \
   OMEGA_GHCR_PULL_SECRET_VERSION="$GHCR_SECRET_VERSION" \
+  OMEGA_GCP_IMAGE_AUTHORITY_MODE=published \
+  OMEGA_RELEASE_TAG_MANIFEST_SHA256="$PUBLISHED_MANIFEST_SHA256" \
+  OMEGA_RELEASE_TAG_OBJECT_SHA="$PUBLISHED_TAG_OBJECT_SHA" \
   "$AUTH_RUNNER" "$CANDIDATE_PREFLIGHT" "$GHCR_OWNER" "$TARGET_TAG" \
     "$DEPLOY_REF" "$EXPECTED_VERSION" "$NEW_LOCK_ENV" >/dev/null 2>&1; then
   fail "private GHCR release pull" "less than 15/15 images pullable; credential output suppressed" 41
 fi
+if [[ ! -s "$NEW_IMAGE_AUTHORITY_TMP" ]]; then
+  fail "published image authority" "fresh sealed-manifest receipt is missing" 41
+fi
+mv -T "$NEW_IMAGE_AUTHORITY_TMP" "$NEW_IMAGE_AUTHORITY"
 emit "private GHCR release pull" "PASS" "15/15 tag=${TARGET_TAG}"
+
+PUBLISHED_PREFLIGHT_ROOT="${SHARED_ROOT}/image-preflights/release-published-${TARGET_TAG}-${DEPLOY_REF}-by-${DEPLOY_REF}"
+PUBLISHED_PREFLIGHT_LOCK="${PUBLISHED_PREFLIGHT_ROOT}/release-images.env"
+PUBLISHED_PREFLIGHT_MANIFEST="${PUBLISHED_PREFLIGHT_ROOT}/manifest.json"
+PUBLISHED_PREFLIGHT_AUTHORITY="${PUBLISHED_PREFLIGHT_ROOT}/image-authority.json"
+if [[ ! -s "$PUBLISHED_PREFLIGHT_LOCK" || \
+      ! -s "$PUBLISHED_PREFLIGHT_MANIFEST" || \
+      ! -s "$PUBLISHED_PREFLIGHT_AUTHORITY" ]]; then
+  fail "published preflight handoff" "immutable published preflight evidence is incomplete" 41
+fi
+if ! python3 - "$PUBLISHED_PREFLIGHT_MANIFEST" \
+    "$PUBLISHED_PREFLIGHT_AUTHORITY" "$PUBLISHED_MANIFEST_SHA256" \
+    "$PUBLISHED_TAG_OBJECT_SHA" "$DEPLOY_REF" "$TARGET_TAG" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+authority_raw = pathlib.Path(sys.argv[2]).read_bytes()
+authority = json.loads(authority_raw)
+if (
+    manifest.get("schema_version") != 2
+    or manifest.get("image_authority_sha256") != hashlib.sha256(authority_raw).hexdigest()
+    or manifest.get("release_candidate_manifest_digest") != sys.argv[3]
+    or manifest.get("release_tag_object_sha") != sys.argv[4]
+    or manifest.get("target_ref") != sys.argv[5]
+    or manifest.get("target_tag") != sys.argv[6]
+    or authority.get("authority_mode") != "published"
+    or authority.get("manifest_digest") != sys.argv[3]
+    or authority.get("tag_object_sha") != sys.argv[4]
+):
+    raise SystemExit("published preflight authority binding differs")
+PY
+then
+  fail "published preflight handoff" "annotated-tag/sealed-manifest binding differs" 41
+fi
+cmp "$PUBLISHED_PREFLIGHT_LOCK" "$NEW_LOCK_ENV" >/dev/null || \
+  fail "published preflight handoff" "fresh digest lock differs byte-for-byte" 41
+cmp "$PUBLISHED_PREFLIGHT_AUTHORITY" "$NEW_IMAGE_AUTHORITY" >/dev/null || \
+  fail "published preflight handoff" "fresh authority receipt differs byte-for-byte" 41
+emit "published preflight handoff" "PASS" \
+  "same sealed payload and exact 15 digest lock consumed byte-for-byte"
 
 python3 - "$NEW_LOCK_ENV" "$NEW_LOCK_MANIFEST" "$DEPLOY_REF" "$EXPECTED_VERSION" \
   "$ARTIFACT_URI" "$ARTIFACT_GENERATION" "$ARTIFACT_SIZE_BYTES" \
-  "$ARTIFACT_SHA256" "$GHCR_OWNER" "$COMPOSE_PROJECT" "$TARGET_TAG" <<'PY'
+  "$ARTIFACT_SHA256" "$GHCR_OWNER" "$COMPOSE_PROJECT" "$TARGET_TAG" \
+  "$NEW_IMAGE_AUTHORITY" "$PUBLISHED_MANIFEST_SHA256" \
+  "$PUBLISHED_TAG_OBJECT_SHA" <<'PY'
 import json
 import pathlib
 import re
 import sys
 
 (lock_path, manifest_path, deploy_ref, version, artifact_uri, artifact_generation,
- artifact_size, artifact_sha, owner, project, tag) = sys.argv[1:]
+ artifact_size, artifact_sha, owner, project, tag, authority_path,
+ sealed_digest, tag_object_sha) = sys.argv[1:]
 assignments = {}
 for raw_line in pathlib.Path(lock_path).read_text(encoding="utf-8").splitlines():
     line = raw_line.strip()
@@ -1083,7 +1241,7 @@ service_images = {
     "sap-s4hana": "sap_s4hana",
 }
 payload = {
-    "schema_version": 2,
+    "schema_version": 3,
     "deploy_ref": deploy_ref,
     "version": version,
     "artifact_uri": artifact_uri,
@@ -1095,13 +1253,18 @@ payload = {
     "tag": tag,
     "unique_image_count": len(images),
     "service_binding_count": len(service_images),
+    "image_authority_sha256": __import__("hashlib").sha256(
+        pathlib.Path(authority_path).read_bytes()
+    ).hexdigest(),
+    "release_candidate_manifest_digest": sealed_digest,
+    "release_tag_object_sha": tag_object_sha,
     "images": images,
     "services": {service: images[image] for service, image in service_images.items()},
 }
 pathlib.Path(manifest_path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
-chmod 0400 "$NEW_LOCK_ENV" "$NEW_LOCK_MANIFEST"
-"$SAFE_IO" fsync-file "$NEW_LOCK_ENV" "$NEW_LOCK_MANIFEST"
+chmod 0400 "$NEW_LOCK_ENV" "$NEW_LOCK_MANIFEST" "$NEW_IMAGE_AUTHORITY"
+"$SAFE_IO" fsync-file "$NEW_LOCK_ENV" "$NEW_LOCK_MANIFEST" "$NEW_IMAGE_AUTHORITY"
 "$SAFE_IO" fsync-dir "$LOCK_TMP"
 NEW_LOCK_TREE_SHA256="$($SAFE_IO tree-sha256 --root "$LOCK_TMP")"
 if [[ -e "$LOCK_DIR" || -L "$LOCK_DIR" ]]; then
@@ -1195,11 +1358,11 @@ consume_predeploy_attestation
 emit "pre-deploy backup attestation" "PASS" "fresh server-owned binding consumed exactly once"
 "${COMPOSE[@]}" stop --timeout 60 "${MUTATING_SERVICES[@]}"
 python3 "$RUNTIME_CONTRACT" writer-fence --compose-project "$COMPOSE_PROJECT" >/dev/null || \
-  fail "writer and mutator fence" "global labeled or unlabeled proprietary writer remains running" 44
+  fail "writer and mutator fence" "host-local labeled or unlabeled proprietary writer remains running" 44
 DB_FENCE_ACTIVE=1
 database_fence on || fail "database write fence" "cannot persist read-only defaults" 44
 write_operation_state "fenced"
-emit "writer and scheduler fence" "PASS" "all global mutators stopped; both databases persistently read-only"
+emit "writer and scheduler fence" "PASS" "all GCP host-local mutators stopped; both databases persistently read-only"
 
 # Legacy Airflow data is copied only after the backup, candidate, image, and
 # volume identities are verified and the independent fail-closed watchdog plus
@@ -1324,6 +1487,11 @@ if [[ "$READY" != "1" ]]; then
   fail "candidate data readiness" "healthz/readyz/require_data did not become exact-version green" 48
 fi
 emit "candidate data readiness" "PASS" "healthz=200 readyz=200 require_data=200 version=${EXPECTED_VERSION}"
+
+"$CANDIDATE_FIREWALL" verify-container >/dev/null || \
+  fail "container metadata isolation" "candidate console could reach VM metadata or firewall verification failed" 48
+emit "container metadata isolation" "PASS" \
+  "candidate console denied IPv4/IPv6 VM metadata while host identity remains available"
 
 RUNTIME_GREEN=0
 for _ in $(seq 1 60); do

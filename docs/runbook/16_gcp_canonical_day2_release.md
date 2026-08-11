@@ -5,6 +5,16 @@ production environment. It deploys an already-published annotated tag; it does
 not build images, move tags, change DNS, create another scheduler, promote AWS,
 or read a GHCR credential on the operator machine.
 
+> **Checkpoint 5.5 is currently BLOCKED. Do not execute sections 2–5.** The
+> verified routing/scheduler evidence says that the destination AWS ALB still
+> serves the application and does not prove a database/API hard fence. The
+> accepted `omega.gcp-canonical-routing-scheduler-attestation/v1` schema is
+> deliberately observation-only and can authorize neither backup,
+> reconciliation, nor deploy. A self-asserted boolean `PASS` is not an
+> acceptable replacement. A separate, independently verifiable zero-AWS-writer
+> evidence design and explicit operator approval of the reordered release
+> window described below are required first.
+
 ## Safety model
 
 - `origin/main`, the annotated tag, `VERSION`, and the full commit SHA must all
@@ -69,6 +79,7 @@ export GCP_LAKEHOUSE_BUCKET='<versioned-lakehouse-bucket>'
 export GCP_SOURCE_BUCKET='<private-source-bucket>'
 export GCP_CURRENT_LIVE_REF='<exact-40-char-ref-running-before-backup>'
 export GCP_DEPLOY_REF='<exact-approved-origin-main-candidate>'
+export GCP_RELEASE_TAG='<exact-annotated-published-release-tag>'
 export OMEGA_GCP_ENVIRONMENT='staging'
 export OMEGA_GHCR_PULL_SECRET_VERSION='<numeric-enabled-secret-version>'
 export OMEGA_TERRAFORM_BIN='tofu'
@@ -82,12 +93,33 @@ export GCP_SOURCE_GENERATION='<exact-generation-from-prepare-artifacts>'
 export GCP_SOURCE_SIZE_BYTES='<exact-byte-size-from-prepare-artifacts>'
 export GCP_SOURCE_ARCHIVE_SHA256='<exact-sha256-from-prepare-artifacts>'
 export GCP_RELEASE_BACKUP_BUCKET='<private-dedicated-release-backup-bucket>'
+export GCP_EXTERNAL_ROUTING_SCHEDULER_ATTESTATION='<external-mode-0600-pre-operation-evidence.json>'
+export GCP_POSTDEPLOY_EXTERNAL_ROUTING_SCHEDULER_ATTESTATION='<distinct-external-mode-0600-postdeploy-evidence.json>'
 GCP_PRIVATE_PLAN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/omega-gcp-plan.XXXXXX")"
 chmod 700 "$GCP_PRIVATE_PLAN_DIR"
 export GCP_GHCR_ACCESS_PLAN="$GCP_PRIVATE_PLAN_DIR/grants.tfplan"
 ```
 
 Do not put the GHCR username or token in any of these variables.
+
+The accepted observation-only attestation is exact-allowlisted to:
+
+- origin ALB `modecissions-public-255609366.us-east-1.elb.amazonaws.com`,
+  frozen source `ee35b035044cffea7270160d829cb17505c4d16a`, `/healthz=502`;
+- destination ALB
+  `modecissions-public-1973504078.us-east-1.elb.amazonaws.com`,
+  `/healthz=200`, `/airflow/health=200`, scheduler `unhealthy`, heartbeat
+  `2026-08-07T01:26:04.241563+00:00`; and
+- forensic reference
+  `codex-session-event:019ff064-b6ab-7ac1-aa60-078ec27f2c29@2026-08-11T10:47:44.485Z#payload.message+LF`,
+  SHA-256
+  `adf099625e43bbe93ea66151f132a5baa9e6d5617e0b037e5005b604429238a2`.
+
+Every HTTPS probe resolves and visits every A record but uses
+`console.7businesssolutions.com` for both verified TLS SNI and HTTP `Host`;
+default CA/hostname verification is mandatory. Canonical DNS is checked
+separately and must resolve only to GCP. These observations prove routing and
+scheduler state, not that AWS database/API writes are impossible.
 
 ## 1. Reconcile startup metadata before legacy adoption
 
@@ -252,16 +284,60 @@ private bucket controls, versioning, soft-delete and retention settings, exact
 three-permission custom role, resource-scoped VM binding, and unchanged live
 canonical instance identity.
 
-## 2. Authenticated pre-tag image preflights
+## 2. Image authority and preflights — BLOCKED
 
-Before tag creation, prove the approved published rollback tag is pullable
-15/15 through the VM-owned Secret Manager credential:
+The commands in this section are reference contracts, not current execution
+instructions. Do not run them until the zero-AWS-writer blocker and release
+ordering decision are closed. A tag plus OCI labels is not image authority.
+For 1.45.207, the annotated tag must bind
+`OMEGA-Release-Candidate-Manifest-SHA256`; the server-owned GCP pull path must
+fetch that private sealed manifest by digest and require its exact 15 service
+digests. For legacy rollback tags without that annotation, the verified
+backup/runtime `runtime-images.json` is the authority and every image is pulled
+by its recorded digest. Labels are only a secondary consistency check.
+
+Before either image preflight, take a full writer-fenced rollback baseline from
+the live runtime. This phase requires the intended 1.45.207 tag to remain
+absent. It binds the helper to exact current `origin/main`, but records the live
+runtime's source ref/version independently; it does not create the one-time
+pre-deploy attestation used by reconciliation:
+
+```bash
+export GCP_BACKUP_PHASE='rollback-baseline'
+export GCP_RELEASE_TAG='v1.45.207-beta' # must still be absent
+export GCP_CURRENT_LIVE_REF='<exact-live-runtime-source-ref>'
+export GCP_CURRENT_LIVE_VERSION='1.45.205-beta'
+# BLOCKED: reference only; zero-AWS-writer evidence is not yet sufficient.
+# CONFIRM_GCP_BACKUP=1 make backup-gcp-canonical
+```
+
+Record all eight immutable authority values emitted by that operation:
+
+- `runtime_images_uri`, `runtime_images_generation`,
+  `runtime_images_size_bytes`, `runtime_images_sha256`;
+- `manifest_uri`, `manifest_generation`, `manifest_size_bytes`,
+  `manifest_sha256`.
+
+Then prove the approved legacy rollback release is pullable 15/15 through the
+VM-owned Secret Manager credential. `GCP_IMAGE_PREFLIGHT_REF` is the exact
+`source_ref` emitted by the rollback-baseline backup, not the commit peeled
+from the legacy tag. The controller verifies the annotated legacy tag and its
+VERSION separately and records both identities, but only the checksum-bound
+backup RepoDigests and ImageIDs authorize image pulls:
 
 ```bash
 export GCP_IMAGE_PREFLIGHT_PURPOSE='rollback'
 export GCP_IMAGE_PREFLIGHT_TAG='<approved-published-rollback-tag>'
-export GCP_IMAGE_PREFLIGHT_REF='<exact-rollback-tag-commit>'
-CONFIRM_GCP_IMAGE_PREFLIGHT=1 make gcp-image-preflight
+export GCP_IMAGE_PREFLIGHT_REF='<exact-live-runtime-source-ref-from-rollback-baseline>'
+export GCP_ROLLBACK_RUNTIME_IMAGES_URI='<runtime_images_uri>'
+export GCP_ROLLBACK_RUNTIME_IMAGES_GENERATION='<runtime_images_generation>'
+export GCP_ROLLBACK_RUNTIME_IMAGES_SIZE_BYTES='<runtime_images_size_bytes>'
+export GCP_ROLLBACK_RUNTIME_IMAGES_SHA256='<runtime_images_sha256>'
+export GCP_ROLLBACK_BACKUP_MANIFEST_URI='<manifest_uri>'
+export GCP_ROLLBACK_BACKUP_MANIFEST_GENERATION='<manifest_generation>'
+export GCP_ROLLBACK_BACKUP_MANIFEST_SIZE_BYTES='<manifest_size_bytes>'
+export GCP_ROLLBACK_BACKUP_MANIFEST_SHA256='<manifest_sha256>'
+# BLOCKED: reference only; do not invoke gcp-image-preflight yet.
 ```
 
 This downloads an exact candidate helper artifact, uses an ephemeral
@@ -277,8 +353,15 @@ exact candidate set through the same server-owned credential:
 export GCP_IMAGE_PREFLIGHT_PURPOSE='release'
 export GCP_IMAGE_PREFLIGHT_TAG="candidate-${GCP_DEPLOY_REF}"
 export GCP_IMAGE_PREFLIGHT_REF="$GCP_DEPLOY_REF"
-CONFIRM_GCP_IMAGE_PREFLIGHT=1 make gcp-image-preflight
+export GCP_RELEASE_CANDIDATE_WORKFLOW_RUN_ID='<exact-successful-run-id>'
+export GCP_RELEASE_CANDIDATE_WORKFLOW_RUN_ATTEMPT='<exact-run-attempt>'
+# BLOCKED: reference only; do not invoke the candidate preflight yet.
 ```
+
+The controller authenticates with `gh`, verifies that exact run is completed
+and successful for the exact main SHA and workflow path, downloads the unique
+`release-candidate-<SHA>` artifact, and binds the VM proof to its exact
+canonical payload bytes. No GitHub credential is sent to the VM.
 
 Only these two 15/15 pre-tag proofs permit creation of the annotated immutable
 release tag. After the tag-triggered Release Images workflow promotes the
@@ -289,19 +372,31 @@ the published tag before deploy:
 export GCP_IMAGE_PREFLIGHT_PURPOSE='release'
 export GCP_IMAGE_PREFLIGHT_TAG="$GCP_RELEASE_TAG"
 export GCP_IMAGE_PREFLIGHT_REF="$GCP_DEPLOY_REF"
-CONFIRM_GCP_IMAGE_PREFLIGHT=1 make gcp-image-preflight
+# BLOCKED: requires the authorized reordered window and sealed-manifest binding.
 ```
 
-## 3. Writer-fenced pre-deploy backup
+## 3. Fresh writer-fenced pre-deploy backup — BLOCKED
 
-First verify externally that GCP is the only writer, DNS still points to GCP,
-AWS is fenced, and exactly one scheduler is running. Then run:
+First prove externally that GCP is the only writer, DNS still points to GCP,
+AWS database and API writes are independently hard-fenced, and exactly one
+scheduler is running. The current scoped routing/scheduler evidence explicitly
+does not prove that hard fence, so the controller stops before upload or remote
+mutation. The safe reordered proposal requires this to be a **second, fresh
+backup after the annotated tag, Release Images 15/15, and published 15/15 pull
+receipt**, not the earlier pre-tag snapshot. The backup command also requires
+the exact published release tag.
 
 ```bash
-CONFIRM_GCP_BACKUP=1 make backup-gcp-canonical
+# BLOCKED: do not invoke backup-gcp-canonical in the current state.
 ```
 
-The backup requires the startup/runtime adoption in step 1 to have completed.
+Set `GCP_BACKUP_PHASE=predeploy` for this second backup; the controller now
+requires the published annotated release tag and its sealed-manifest binding.
+Only this second backup's four manifest values may feed reconciliation and
+deploy. The earlier rollback-baseline manifest remains immutable rollback
+evidence and must not be substituted.
+
+The future backup requires the startup/runtime adoption in step 1 to have completed.
 It never creates canonical runtime state as a side effect. It revalidates the
 already-published atomic state, exact live VERSION, `healthz`, 15 healthy
 proprietary services, exactly one scheduler, and all one-shot exit states before
@@ -324,6 +419,15 @@ The operation takes a bounded write outage while it:
    last; and
 10. restores exactly the previously-running services and requires one scheduler.
 
+The published preflight stores an immutable `completion.json` receipt binding
+its completion timestamp plus the manifest and 15-image lock SHA-256 values.
+Reconciliation rejects a backup whose manifest completion is not strictly
+later than that receipt, or whose final server-owned attestation is older than
+30 minutes. Writes accepted between snapshot completion and the later writer
+fence are the explicit recovery-point objective (RPO). Do not proceed unless a
+delta reconciliation proves it is zero or the operator explicitly approves
+that bounded RPO with `CONFIRM_GCP_SNAPSHOT_TO_FENCE_RPO=1`.
+
 Record the emitted `manifest_uri`, `manifest_sha256`, and
 `manifest_generation`, plus `manifest_size_bytes`. No `.env` or plaintext
 runtime/GHCR credential is copied into the backup artifacts or evidence.
@@ -344,12 +448,27 @@ connection-limit/read-only fence by design. Restore uses the unmodified dumps,
 keeps the restored databases fenced through every verification gate, and
 reapplies the recorded pre-fence policy only at an explicit cutover.
 
-## 4. Atomic stale pipeline-run reconciliation
+## 4. Atomic stale pipeline-run reconciliation — BLOCKED
 
-For Checkpoint 5.5 the execution order is the backup above, this
-reconciliation, private-GHCR adaptation and both 15/15 pre-tag image proofs,
-then tag creation. The earlier GHCR section is configuration reference; do not
-use its operational preflight commands ahead of this backup-bound transition.
+The originally requested order (backup → reconciliation → tag → Release
+Images) is unsafe for the current live 1.45.205 runtime. Several ordinary live
+writers can reopen these deterministic run ids; therefore the old runtime must
+not restart after the CAS. Holding that fence while tag CI runs can exceed the
+handoff and cause an extended production outage. The only reviewed safe
+proposal is:
+
+1. independently prove zero AWS writers and obtain explicit authorization for
+   this reordered maintenance window;
+2. create the exact annotated tag and complete Release Images 15/15;
+3. perform the published, sealed-manifest-bound 15/15 GCP pull;
+4. take the second fresh backup from section 3;
+5. approve or reconcile the snapshot-to-fence RPO;
+6. reconcile the exact 17 rows, keeping the GCP writer fence continuously; and
+7. hand off immediately to day-2 deploy within 300–3600 seconds.
+
+Do not execute this proposal without the required user decision. The current
+observation-only AWS evidence causes both controller and remote helper to stop
+before marker creation, service stop, or CAS.
 
 Prepare the independently reviewed JSON manifest outside the repository. It
 uses schema `omega.pipeline-run-reconciliation/v1`, one unique `change_id`, and
@@ -362,6 +481,10 @@ forensic evidence including an explicit UTC `observed_at`. For the Checkpoint
 ```bash
 export GCP_PIPELINE_RECONCILIATION_MANIFEST='<absolute-external-manifest.json>'
 export GCP_PIPELINE_RECONCILIATION_EXPECTED_COUNT='17'
+export GCP_RELEASE_TAG='<already-published-exact-annotated-tag>'
+export GCP_RECONCILIATION_HANDOFF_TIMEOUT='1800'
+# Requires a separate explicit operator decision if delta reconciliation is nonzero:
+# export CONFIRM_GCP_SNAPSHOT_TO_FENCE_RPO=1
 chmod 0600 "$GCP_PIPELINE_RECONCILIATION_MANIFEST"
 
 export GCP_BACKUP_MANIFEST_URI='gs://.../_omega_backups/.../manifest.json'
@@ -369,7 +492,7 @@ export GCP_BACKUP_MANIFEST_GENERATION='<exact-generation-from-step-3>'
 export GCP_BACKUP_MANIFEST_SIZE_BYTES='<exact-byte-size-from-step-3>'
 export GCP_BACKUP_MANIFEST_SHA256='<sha256-from-step-3>'
 
-CONFIRM_GCP_PIPELINE_RUN_RECONCILIATION=1 make reconcile-gcp-pipeline-runs
+# BLOCKED: do not invoke reconcile-gcp-pipeline-runs in the current state.
 ```
 
 The controller rejects repository files, symlinks, hard links, non-owner files,
@@ -390,7 +513,7 @@ transaction.
 On success it preserves every row, writes the terminal state, clears lease and
 heartbeat fields, increments the fencing token, and appends the immutable
 manifest identity, reason, forensic evidence, prior state/token, and transition
-time under `extra.omega_release_reconciliation`. It then reads back exactly N
+time under `extra.reconciliation`. It then reads back exactly N
 rows and the terminal distribution before commit. There is no `DELETE`, no
 best-effort partial mode, and no hardcoded run inventory in the code. Preserve
 the emitted evidence and keep the pre-deploy attestation unconsumed for deploy.
@@ -400,10 +523,14 @@ finish paths require `status='running'`, the prior exact fencing token, and an
 unexpired lease, so a stale scheduler worker cannot rewrite the reconciled
 outcome.
 
-## 5. Release gate and deploy
+## 5. Release gate and deploy — BLOCKED
 
-Do not run this until Release Images has succeeded 15/15 and the private pull
-preflight has been demonstrated. Set only public identifiers:
+Do not run this until the reordered sequence is explicitly authorized, Release
+Images has succeeded 15/15, the sealed-manifest-bound published pull has been
+demonstrated, the second backup is fresh, and reconciliation has handed over a
+still-live writer fence. The pre-deploy external attestation must be fresh and
+must use a future independently verifiable zero-writer schema; the current
+routing/scheduler schema can only return `BLOCKED`.
 
 ```bash
 export GCP_RELEASE_TAG='v1.45.207-beta'
@@ -412,8 +539,18 @@ export GCP_BACKUP_MANIFEST_URI='gs://.../_omega_backups/.../manifest.json'
 export GCP_BACKUP_MANIFEST_GENERATION='<exact-generation-from-step-3>'
 export GCP_BACKUP_MANIFEST_SIZE_BYTES='<exact-byte-size-from-step-3>'
 export GCP_BACKUP_MANIFEST_SHA256='<sha256-from-step-3>'
-CONFIRM_GCP_DEPLOY=1 make deploy-gcp-canonical
+export GCP_POSTDEPLOY_EXTERNAL_ROUTING_SCHEDULER_ATTESTATION='<distinct-evidence-produced-after-remote-deploy-completion>'
+# BLOCKED: do not invoke deploy-gcp-canonical in the current state.
 ```
+
+After a successful remote deploy, the controller first persists partial
+evidence, then waits up to the explicit bounded timeout for a **distinct**
+mode-0600 attestation whose SHA-256 differs from the pre-deploy bytes and whose
+observation timestamp is strictly later than remote deploy completion. A stale,
+reused, equal-boundary, or missing attestation fails the final gate. A remote
+failure never waits for this evidence; its failure evidence is returned
+immediately. Live DNS, all allowlisted AWS ALB A records, verified CA/SNI/Host,
+`/healthz`, and `/airflow/health` are probed again after deploy.
 
 Before this command, update the same reviewed tfvars source identity to the final
 tag commit at `deploy-artifacts/<GCP_DEPLOY_REF>/repo.tar.gz`, set

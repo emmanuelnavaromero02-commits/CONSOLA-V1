@@ -47,3 +47,15 @@ def test_gcp_secret_manifest_includes_macro_cartridges():
     }
     missing = sorted(item for item in required if item not in locals_tf)
     assert missing == []
+
+
+def test_lakehouse_iam_binds_the_effective_canonical_bucket():
+    iam = (GCP_TF / "iam.tf").read_text(encoding="utf-8")
+    resource = iam[
+        iam.index('resource "google_storage_bucket_iam_member" "app_lakehouse"') :
+        iam.index(
+            'resource "google_project_iam_custom_role" "release_backup_writer"'
+        )
+    ]
+    assert "bucket = local.lakehouse_bucket" in resource
+    assert "google_storage_bucket.lakehouse" not in resource

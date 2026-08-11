@@ -94,7 +94,9 @@ class _Cursor:
             current = self.rows.get(run_id)
             assert current is not None
             self.pending = (
-                None if self.cas_lost else (str(args[0]), int(current[3]) + 1)
+                None
+                if self.cas_lost
+                else (str(args[0]), int(current[3]) + 1, None, None)
             )
         elif normalized.startswith("SELECT to_regclass"):
             self.pending = ("audit_events",)
@@ -123,13 +125,22 @@ class _Connection:
         self.rollbacks += 1
 
 
-def _row(*, status: str = "running", fence: int = 7, extra: dict | None = None):
+def _row(
+    *,
+    status: str = "running",
+    fence: int = 7,
+    extra: dict | None = None,
+    lease_available: bool = True,
+    heartbeat: datetime | None = None,
+):
     return (
         "sync_now:sap_successfactors:orphan-1",
         status,
         STARTED,
         fence,
         extra or {},
+        lease_available,
+        heartbeat,
     )
 
 
@@ -421,6 +432,8 @@ def test_missing_run_fails_closed_without_insert_or_commit(tmp_path: Path) -> No
                 datetime(2026, 8, 8, 12, 1, tzinfo=timezone.utc),
                 7,
                 {},
+                True,
+                None,
             ),
             "started_at changed",
         ),
@@ -463,6 +476,28 @@ def test_apply_fails_closed_if_cas_loses_after_the_locked_read(tmp_path: Path) -
     )
 
 
+@pytest.mark.parametrize("apply", [False, True])
+def test_active_lease_is_rejected_for_dry_run_and_apply(
+    tmp_path: Path, apply: bool
+) -> None:
+    manifest = _manifest(tmp_path, [_run()])
+    conn = _Connection(
+        {manifest.runs[0].run_id: _row(lease_available=False)}
+    )
+
+    with pytest.raises(RECONCILE.ReconciliationConflict, match="lease is still active"):
+        RECONCILE.reconcile(
+            conn,
+            manifest,
+            apply=apply,
+            actor="gcp-release-operator" if apply else "dry-run",
+        )
+
+    assert conn.commits == 0
+    assert conn.rollbacks == 1
+    assert _mutating_sql(conn.cursor_obj) == []
+
+
 def test_aggregate_airflow_success_with_blocked_children_targets_partial(
     tmp_path: Path,
 ) -> None:
@@ -485,6 +520,8 @@ def test_aggregate_airflow_success_with_blocked_children_targets_partial(
         STARTED,
         7,
         {},
+        True,
+        None,
     )
     conn = _Connection({aggregate["run_id"]: row})
 

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import subprocess
 from pathlib import Path
 
 import pytest
+from scripts import release_images
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,6 +42,49 @@ def _read(path: Path) -> str:
 def _write_executable(path: Path, source: str) -> None:
     path.write_text(source, encoding="utf-8")
     path.chmod(0o700)
+
+
+def test_registry_private_auth_file_is_nofollow_confined_and_exact(
+    tmp_path: Path,
+) -> None:
+    auth_root = tmp_path / "auth"
+    auth_root.mkdir(mode=0o700)
+    auth = base64.b64encode(b"release-reader:server-owned-token").decode("ascii")
+    config = auth_root / "config.json"
+    config.write_text(
+        json.dumps({"auths": {"ghcr.io": {"auth": auth}}}), encoding="utf-8"
+    )
+    config.chmod(0o600)
+
+    assert isinstance(
+        release_images.RegistryClient.from_private_auth_file(config),
+        release_images.RegistryClient,
+    )
+
+    config.chmod(0o644)
+    with pytest.raises(release_images.ReleaseImageError, match="ownership or mode"):
+        release_images.RegistryClient.from_private_auth_file(config)
+    config.chmod(0o600)
+    linked_root = tmp_path / "linked-auth"
+    linked_root.mkdir(mode=0o700)
+    linked = linked_root / "config.json"
+    linked.symlink_to(config)
+    with pytest.raises(release_images.ReleaseImageError):
+        release_images.RegistryClient.from_private_auth_file(linked)
+
+    config.write_text(
+        json.dumps(
+            {
+                "auths": {
+                    "ghcr.io": {"auth": auth},
+                    "docker.io": {"auth": auth},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(release_images.ReleaseImageError, match="registry-exclusive"):
+        release_images.RegistryClient.from_private_auth_file(config)
 
 
 def test_terraform_owns_only_a_resource_scoped_ghcr_secret_container() -> None:
@@ -277,10 +322,15 @@ def test_auth_runner_rejects_latest_without_contacting_metadata(
 
 
 @pytest.mark.parametrize(
-    "image_tag", ["v1.45.207-beta", f"candidate-{'b' * 40}"]
+    ("image_tag", "authority_mode"),
+    [
+        ("v1.45.207-beta", "published"),
+        (f"candidate-{'b' * 40}", "candidate"),
+        ("v1.45.207-beta", "legacy-rollback"),
+    ],
 )
 def test_preflight_pulls_exactly_15_and_writes_digest_lock(
-    tmp_path: Path, image_tag: str
+    tmp_path: Path, image_tag: str, authority_mode: str
 ) -> None:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -294,6 +344,77 @@ def test_preflight_pulls_exactly_15_and_writes_digest_lock(
     digest = "a" * 64
     revision = "b" * 40
     version = "1.45.207-beta"
+    authority_file = tmp_path / "authority.json"
+    legacy_image_id = f"sha256:{'e' * 64}"
+    ordered_images = [
+        "console",
+        "workspace",
+        "refinement",
+        "vault",
+        "mcp-infra",
+        "airflow",
+        "replicon",
+        "hubspot",
+        "banxico",
+        "inegi",
+        "sec_edgar",
+        "sap_hcm",
+        "sap_s4hana",
+        "sap_successfactors",
+        "salesforce",
+    ]
+    authority_file.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "authority_mode": authority_mode,
+                "source_sha": revision,
+                "release_tag": f"v{version}",
+                "image_tag": image_tag,
+                "version": version,
+                "manifest_digest": (
+                    None
+                    if authority_mode == "legacy-rollback"
+                    else f"sha256:{'c' * 64}"
+                ),
+                "tag_object_sha": "d" * 40 if authority_mode == "published" else None,
+                "candidate_workflow": {
+                    "run_id": "7",
+                    "run_attempt": "1",
+                    "head_sha": revision,
+                },
+                "legacy_image_ids": (
+                    {service: legacy_image_id for service in ordered_images}
+                    if authority_mode == "legacy-rollback"
+                    else None
+                ),
+                "legacy_tag_commit": (
+                    "f" * 40 if authority_mode == "legacy-rollback" else None
+                ),
+                "images": [
+                    {
+                        "service": service,
+                        "digest": f"sha256:{digest}",
+                        "reference": (
+                            "ghcr.io/emmanuelnavaromero02-commits/"
+                            f"{service}@sha256:{digest}"
+                        ),
+                        "visibility": (
+                            "private"
+                            if service in {"banxico", "inegi", "sec_edgar"}
+                            else "public"
+                        ),
+                    }
+                    for service in ordered_images
+                ],
+                "labels_authoritative": False,
+                "secrets_included": False,
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     _write_executable(
         fake_bin / "docker",
@@ -307,9 +428,15 @@ case "${{1:-}}" in
   image)
     test "${{2:-}}" = "inspect"
     reference="${{@: -1}}"
-    repository="${{reference%:*}}"
-    if [[ "$*" == *org.opencontainers.image.revision* ]]; then
-      printf '%s\n%s\n%s\n' '{revision}' '{version}' 'https://github.com/emmanuelnavaromero02-commits/CONSOLA-V1'
+    repository="${{reference%@*}}"
+    if [[ "$*" == *'{{{{.Id}}}}'* ]]; then
+      printf '%s\n' '{legacy_image_id}'
+    elif [[ "$*" == *org.opencontainers.image.revision* ]]; then
+      if [[ "${{OMEGA_GCP_IMAGE_AUTHORITY_MODE:-}}" == legacy-rollback ]]; then
+        printf '\n\n\n'
+      else
+        printf '%s\n%s\n%s\n' '{revision}' '{version}' 'https://github.com/emmanuelnavaromero02-commits/CONSOLA-V1'
+      fi
     else
       printf '["%s@sha256:{digest}"]\n' "$repository"
     fi
@@ -342,6 +469,8 @@ esac
             "OMEGA_GHCR_PRIVATE_PACKAGES_VERIFIED": "1",
             "OMEGA_GHCR_PREFLIGHT_TEST_MODE": "1",
             "OMEGA_GHCR_PREFLIGHT_TEST_DOCKER_ROOT": str(docker_root),
+            "OMEGA_GCP_IMAGE_AUTHORITY_MODE": authority_mode,
+            "OMEGA_GHCR_PREFLIGHT_TEST_AUTHORITY_FILE": str(authority_file),
             "TEST_PULL_RECORD": str(pull_record),
         },
         text=True,
@@ -354,7 +483,8 @@ esac
     assert "PASS\t15/15" in result.stdout
     pulls = pull_record.read_text(encoding="utf-8").splitlines()
     assert len(pulls) == 15
-    assert {line.rsplit("/", 1)[1].split(":", 1)[0] for line in pulls} == RELEASE_IMAGES
+    assert {line.rsplit("/", 1)[1].split("@", 1)[0] for line in pulls} == RELEASE_IMAGES
+    assert all(line.endswith(f"@sha256:{digest}") for line in pulls)
     lock_lines = [
         line
         for line in lock_file.read_text(encoding="utf-8").splitlines()
@@ -364,6 +494,9 @@ esac
     assert len({line.split("=", 1)[0] for line in lock_lines}) == 15
     assert all(f":{image_tag}@sha256:" in line for line in lock_lines)
     assert lock_file.stat().st_mode & 0o777 == 0o600
+    assert (
+        Path(f"{lock_file}.authority.json").read_bytes() == authority_file.read_bytes()
+    )
 
 
 def test_preflight_rejects_mutable_latest_before_docker(tmp_path: Path) -> None:
@@ -444,6 +577,7 @@ def test_preflight_rejects_low_docker_headroom_before_first_pull(
             "OMEGA_GHCR_PRIVATE_PACKAGES_VERIFIED": "1",
             "OMEGA_GHCR_PREFLIGHT_TEST_MODE": "1",
             "OMEGA_GHCR_PREFLIGHT_TEST_DOCKER_ROOT": str(docker_root),
+            "OMEGA_GCP_IMAGE_AUTHORITY_MODE": "candidate",
         },
         text=True,
         stdout=subprocess.PIPE,

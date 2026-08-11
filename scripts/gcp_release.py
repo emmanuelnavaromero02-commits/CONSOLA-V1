@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -31,7 +32,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-
 REPO = Path(__file__).resolve().parents[1]
 REMOTE_ROOT = REPO / "scripts" / "gcp"
 SAFE_IO = REMOTE_ROOT / "safe_io.py"
@@ -40,9 +40,13 @@ EVIDENCE_ROOT = Path(
 ).resolve()
 FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+OCI_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 TAG_RE = re.compile(r"^v[0-9][0-9A-Za-z._-]*$")
 GCS_BUCKET_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$")
 RECONCILIATION_SCHEMA = "omega.pipeline-run-reconciliation/v1"
+ROUTING_SCHEDULER_ATTESTATION_SCHEMA = (
+    "omega.gcp-canonical-routing-scheduler-attestation/v1"
+)
 RECONCILIATION_RUN_KEYS = frozenset(
     {
         "run_id",
@@ -57,10 +61,27 @@ RECONCILIATION_RUN_KEYS = frozenset(
     }
 )
 MAX_RECONCILIATION_MANIFEST_BYTES = 1024 * 1024
+MAX_ROUTING_SCHEDULER_ATTESTATION_BYTES = 64 * 1024
 CANONICAL_GITHUB_REPOSITORY = "emmanuelnavaromero02-commits/CONSOLA-V1"
 CANONICAL_GHCR_OWNER = "emmanuelnavaromero02-commits"
 CANONICAL_TRANSFER_JOB = "transferJobs/10381442634122910808"
 CANONICAL_GCP_CERTIFICATE_MAP = "sevenbs-production-map"
+CANONICAL_PUBLIC_TLS_NAME = "console.7businesssolutions.com"
+CANONICAL_AWS_ORIGIN_ALB = "modecissions-public-255609366.us-east-1.elb.amazonaws.com"
+CANONICAL_AWS_DESTINATION_ALB = (
+    "modecissions-public-1973504078.us-east-1.elb.amazonaws.com"
+)
+CANONICAL_AWS_ORIGIN_FROZEN_SHA = "ee35b035044cffea7270160d829cb17505c4d16a"
+CANONICAL_AWS_DESTINATION_SCHEDULER_HEARTBEAT = "2026-08-07T01:26:04.241563+00:00"
+CANONICAL_AWS_FORENSIC_OBSERVED_AT = "2026-08-11T10:44:00Z"
+CANONICAL_AWS_FORENSIC_EVENT_AT = "2026-08-11T10:47:44.485Z"
+CANONICAL_AWS_FORENSIC_REFERENCE = (
+    "codex-session-event:019ff064-b6ab-7ac1-aa60-078ec27f2c29"
+    "@2026-08-11T10:47:44.485Z#payload.message+LF"
+)
+CANONICAL_AWS_FORENSIC_SHA256 = (
+    "adf099625e43bbe93ea66151f132a5baa9e6d5617e0b037e5005b604429238a2"
+)
 CANONICAL_ORIGIN_URLS = frozenset(
     {
         f"https://github.com/{CANONICAL_GITHUB_REPOSITORY}",
@@ -108,6 +129,30 @@ class ArtifactRef:
         }
 
 
+@dataclass(frozen=True)
+class BoundReleaseIdentity:
+    version: str
+    manifest_digest: str
+    tag_object_sha: str
+
+
+@dataclass(frozen=True)
+class CandidateWorkflowAuthority:
+    run_id: str
+    run_attempt: str
+    manifest_digest: str
+    payload_sha256: str
+    artifact_id: str
+
+
+@dataclass(frozen=True)
+class LegacyRollbackIdentity:
+    version: str
+    tag_object_sha: str
+    tag_commit: str
+    runtime_source_ref: str
+
+
 def _strict_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
@@ -118,11 +163,15 @@ def _strict_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 def _parse_utc_timestamp(value: object, *, field: str) -> datetime:
-    if not isinstance(value, str) or re.fullmatch(
-        r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
-        r"(?:\.[0-9]{1,6})?\+00:00",
-        value,
-    ) is None:
+    if (
+        not isinstance(value, str)
+        or re.fullmatch(
+            r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+            r"(?:\.[0-9]{1,6})?\+00:00",
+            value,
+        )
+        is None
+    ):
         raise ValueError(f"{field} must be an explicit UTC ISO-8601 timestamp")
     try:
         parsed = datetime.fromisoformat(value)
@@ -171,9 +220,10 @@ def _validate_reconciliation_evidence(value: object) -> dict[str, Any]:
             if len(item) > 100:
                 raise ValueError("run evidence object is too large")
             for key, nested in item.items():
-                if not isinstance(key, str) or re.fullmatch(
-                    r"[a-z][a-z0-9_]{0,63}", key
-                ) is None:
+                if (
+                    not isinstance(key, str)
+                    or re.fullmatch(r"[a-z][a-z0-9_]{0,63}", key) is None
+                ):
                     raise ValueError("run evidence key is invalid")
                 if re.search(
                     r"(?i)(?:password|secret|credential|authorization|access_token|token)",
@@ -219,9 +269,10 @@ def validate_pipeline_run_reconciliation_manifest(
     if payload["schema"] != RECONCILIATION_SCHEMA:
         raise ValueError("pipeline-run reconciliation schema is unsupported")
     change_id = payload["change_id"]
-    if not isinstance(change_id, str) or re.fullmatch(
-        r"[a-z0-9][a-z0-9._-]{2,127}", change_id
-    ) is None:
+    if (
+        not isinstance(change_id, str)
+        or re.fullmatch(r"[a-z0-9][a-z0-9._-]{2,127}", change_id) is None
+    ):
         raise ValueError("pipeline-run reconciliation change_id is invalid")
     runs = payload["runs"]
     if not isinstance(runs, list) or len(runs) != expected_count:
@@ -276,9 +327,10 @@ def validate_pipeline_run_reconciliation_manifest(
         if row["target_status"] not in {"failed", "blocked"}:
             raise ValueError("pipeline-run target status is not terminal and approved")
         reason = row["reason"]
-        if not isinstance(reason, str) or re.fullmatch(
-            r"[a-z][a-z0-9_]{2,63}", reason
-        ) is None:
+        if (
+            not isinstance(reason, str)
+            or re.fullmatch(r"[a-z][a-z0-9_]{2,63}", reason) is None
+        ):
             raise ValueError("pipeline-run reconciliation reason is invalid")
         evidence = _validate_reconciliation_evidence(row["evidence"])
         observed_at = _parse_utc_timestamp(
@@ -305,7 +357,9 @@ def read_private_reconciliation_manifest(
     except ValueError:
         pass
     else:
-        raise ValueError("pipeline-run reconciliation manifest must remain outside the repo")
+        raise ValueError(
+            "pipeline-run reconciliation manifest must remain outside the repo"
+        )
     flags = os.O_RDONLY
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
@@ -335,6 +389,308 @@ def read_private_reconciliation_manifest(
     return raw, validate_pipeline_run_reconciliation_manifest(
         raw, expected_count=expected_count
     )
+
+
+def validate_external_routing_scheduler_attestation(
+    raw: bytes,
+    *,
+    source_sha: str,
+    instance_id: str,
+    project: str,
+    environment: str,
+    console_domain: str,
+    workspace_domain: str,
+) -> dict[str, Any]:
+    """Validate a short-lived routing/scheduler observation, never a hard fence."""
+    if not 1 <= len(raw) <= MAX_ROUTING_SCHEDULER_ATTESTATION_BYTES:
+        raise ValueError("external routing/scheduler attestation size is invalid")
+    try:
+        payload = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_strict_json_object,
+            parse_constant=lambda value: (_ for _ in ()).throw(
+                ValueError(f"non-finite JSON constant: {value}")
+            ),
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ValueError("external routing/scheduler attestation is malformed") from exc
+    root_keys = {
+        "schema",
+        "scope",
+        "attested_at",
+        "source_sha",
+        "instance_id",
+        "gcp_public_ip",
+        "gcp_console_domain",
+        "gcp_console_addresses",
+        "gcp_workspace_domain",
+        "gcp_workspace_addresses",
+        "gcp_scheduler_count",
+        "transfer_job",
+        "aws",
+        "forensic_evidence",
+        "decision",
+    }
+    if not isinstance(payload, dict) or set(payload) != root_keys:
+        raise ValueError("external routing/scheduler attestation shape is invalid")
+    observed = _parse_utc_timestamp(payload["attested_at"], field="attested_at")
+    now = datetime.now(timezone.utc)
+    if observed > now or now - observed > timedelta(minutes=15):
+        raise ValueError(
+            "external routing/scheduler attestation is outside its 15-minute TTL"
+        )
+    if payload["schema"] != ROUTING_SCHEDULER_ATTESTATION_SCHEMA:
+        raise ValueError("external routing/scheduler attestation schema is unsupported")
+    if payload["scope"] != "routing-and-scheduler-observation-only":
+        raise ValueError("external routing/scheduler attestation overstates its scope")
+    if payload["source_sha"] != source_sha or payload["instance_id"] != instance_id:
+        raise ValueError("external routing/scheduler candidate or GCE instance differs")
+
+    address_result = run(
+        [
+            "gcloud",
+            "--quiet",
+            "compute",
+            "addresses",
+            "describe",
+            f"omega-{environment}-public-https-ip",
+            f"--project={project}",
+            "--global",
+            "--format=value(address)",
+        ],
+        timeout=120,
+    )
+    public_ip = address_result.stdout.strip()
+    if address_result.returncode != 0 or not public_ip:
+        raise RuntimeError(
+            "cannot bind routing/scheduler evidence to the GCP public IP"
+        )
+    expected_dns = {
+        "gcp_console_domain": console_domain,
+        "gcp_console_addresses": [public_ip],
+        "gcp_workspace_domain": workspace_domain,
+        "gcp_workspace_addresses": [public_ip],
+    }
+    for key, expected in expected_dns.items():
+        if payload[key] != expected:
+            raise ValueError(
+                f"external routing/scheduler GCP DNS assertion differs: {key}"
+            )
+    if payload["gcp_public_ip"] != public_ip or payload["gcp_scheduler_count"] != 1:
+        raise ValueError("external routing/scheduler GCP IP or scheduler count differs")
+    transfer = payload["transfer_job"]
+    if not isinstance(transfer, dict) or set(transfer) != {
+        "name",
+        "status",
+        "last_operation_name",
+        "last_operation_status",
+        "last_operation_ended_at",
+    }:
+        raise ValueError(
+            "external routing/scheduler transfer assertion shape is invalid"
+        )
+    if (
+        transfer["name"] != CANONICAL_TRANSFER_JOB
+        or transfer["status"] != "DISABLED"
+        or not isinstance(transfer["last_operation_name"], str)
+        or not transfer["last_operation_name"].startswith("transferOperations/")
+        or transfer["last_operation_status"] not in {"SUCCESS", "FAILED", "ABORTED"}
+    ):
+        raise ValueError(
+            "external routing/scheduler transfer job is not disabled and closed"
+        )
+    ended = _parse_utc_timestamp(
+        transfer["last_operation_ended_at"], field="last_operation_ended_at"
+    )
+    if ended > observed + timedelta(minutes=2):
+        raise ValueError(
+            "external routing/scheduler transfer operation end time is inconsistent"
+        )
+
+    aws = payload["aws"]
+    if not isinstance(aws, dict) or set(aws) != {
+        "origin",
+        "destination",
+        "db_api_hard_fence_proven",
+        "hard_fence_phase",
+    }:
+        raise ValueError("external routing/scheduler AWS assertion shape is invalid")
+    origin = aws["origin"]
+    destination = aws["destination"]
+    if (
+        not isinstance(origin, dict)
+        or set(origin)
+        != {
+            "alb_hostname",
+            "https_healthz_status",
+            "http_redirect_status",
+            "frozen_source_sha",
+        }
+        or origin["alb_hostname"] != CANONICAL_AWS_ORIGIN_ALB
+        or origin["https_healthz_status"] != 502
+        or origin["http_redirect_status"] not in {301, 302, 307, 308}
+        or origin["frozen_source_sha"] != CANONICAL_AWS_ORIGIN_FROZEN_SHA
+    ):
+        raise ValueError("external routing/scheduler AWS origin assertion is invalid")
+    if (
+        not isinstance(destination, dict)
+        or set(destination)
+        != {
+            "alb_hostname",
+            "https_healthz_status",
+            "scheduler_status",
+            "scheduler_last_heartbeat_at",
+            "canonical_dns_target",
+            "scheduled_writer_count",
+        }
+        or destination["alb_hostname"] != CANONICAL_AWS_DESTINATION_ALB
+        or destination["https_healthz_status"] != 200
+        or destination["scheduler_status"] != "unhealthy"
+        or destination["canonical_dns_target"] is not False
+        or destination["scheduled_writer_count"] != 0
+        or aws["db_api_hard_fence_proven"] is not False
+        or aws["hard_fence_phase"] != "16-17"
+    ):
+        raise ValueError(
+            "external routing/scheduler AWS destination assertion is invalid"
+        )
+    heartbeat = _parse_utc_timestamp(
+        destination["scheduler_last_heartbeat_at"],
+        field="scheduler_last_heartbeat_at",
+    )
+    expected_heartbeat = _parse_utc_timestamp(
+        CANONICAL_AWS_DESTINATION_SCHEDULER_HEARTBEAT,
+        field="canonical_scheduler_last_heartbeat_at",
+    )
+    if heartbeat != expected_heartbeat or heartbeat > observed:
+        raise ValueError("external routing/scheduler AWS heartbeat differs")
+
+    forensic = payload["forensic_evidence"]
+    if not isinstance(forensic, dict) or forensic != {
+        "observed_at": CANONICAL_AWS_FORENSIC_OBSERVED_AT,
+        "event_at": CANONICAL_AWS_FORENSIC_EVENT_AT,
+        "reference": CANONICAL_AWS_FORENSIC_REFERENCE,
+        "sha256": CANONICAL_AWS_FORENSIC_SHA256,
+    }:
+        raise ValueError("external routing/scheduler forensic binding differs")
+
+    revalidate_external_routing_scheduler_live(
+        payload,
+        console_domain=console_domain,
+        workspace_domain=workspace_domain,
+    )
+
+    decision = payload["decision"]
+    if not isinstance(decision, dict) or decision != {
+        "canonical_cloud": "GCP",
+        "canonical_writer": "GCP",
+        "aws_role": "standby",
+        "exactly_one_scheduled_writer_gcp": True,
+        "checkpoint_zero_aws_writer_gate": "BLOCKED",
+        "deployment_authorized": False,
+    }:
+        raise ValueError(
+            "external routing/scheduler operator decision is not GCP-canonical"
+        )
+    return payload
+
+
+def read_private_external_routing_scheduler_attestation(
+    path: Path, **validation: str
+) -> tuple[bytes, dict[str, Any]]:
+    """Read one scoped mode-0600 attestation without following links."""
+    resolved = path.resolve()
+    try:
+        resolved.relative_to(REPO.resolve())
+    except ValueError:
+        pass
+    else:
+        raise ValueError(
+            "external routing/scheduler attestation must remain outside the repo"
+        )
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise ValueError(
+            "external routing/scheduler attestation is unavailable"
+        ) from exc
+    try:
+        info = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or info.st_mode & 0o777 != 0o600
+            or info.st_nlink != 1
+            or not 1 <= info.st_size <= MAX_ROUTING_SCHEDULER_ATTESTATION_BYTES
+        ):
+            raise ValueError(
+                "external routing/scheduler attestation must be operator-owned mode 0600 "
+                "single-link regular file"
+            )
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            raw = stream.read(MAX_ROUTING_SCHEDULER_ATTESTATION_BYTES + 1)
+        if len(raw) != info.st_size:
+            raise ValueError(
+                "external routing/scheduler attestation changed while read"
+            )
+    finally:
+        os.close(descriptor)
+    return raw, validate_external_routing_scheduler_attestation(raw, **validation)
+
+
+def require_zero_aws_writer_gate(payload: dict[str, Any], *, operation: str) -> None:
+    """Keep mutations out until a separately verified AWS DB/API hard fence exists."""
+    aws = payload.get("aws", {})
+    decision = payload.get("decision", {})
+    if (
+        aws.get("db_api_hard_fence_proven") is not True
+        or decision.get("checkpoint_zero_aws_writer_gate") != "PASS"
+        or decision.get("deployment_authorized") is not True
+    ):
+        raise SystemExit(
+            f"{operation} BLOCKED: routing/scheduler evidence does not prove the "
+            "required AWS database and API write fence"
+        )
+
+
+def wait_for_fresh_postdeploy_routing_scheduler_attestation(
+    path: Path,
+    *,
+    predeploy_sha256: str,
+    not_before: datetime,
+    timeout_seconds: int,
+    **validation: str,
+) -> tuple[bytes, dict[str, Any]]:
+    """Wait for distinct evidence observed after the remote deploy completed."""
+    if not SHA256_RE.fullmatch(predeploy_sha256):
+        raise ValueError("pre-deploy routing/scheduler checksum is invalid")
+    if not_before.tzinfo is None or not_before.utcoffset() != timedelta(0):
+        raise ValueError("post-deploy evidence boundary must be UTC")
+    if not 30 <= timeout_seconds <= 600:
+        raise ValueError("post-deploy evidence wait must be 30..600 seconds")
+    deadline = time.monotonic() + timeout_seconds
+    last_error = "post-deploy routing/scheduler evidence is unavailable"
+    while True:
+        try:
+            raw, payload = read_private_external_routing_scheduler_attestation(
+                path, **validation
+            )
+            digest = hashlib.sha256(raw).hexdigest()
+            observed = _parse_utc_timestamp(
+                payload.get("attested_at"), field="attested_at"
+            )
+            if digest == predeploy_sha256:
+                raise ValueError("post-deploy evidence reused pre-deploy bytes")
+            if observed <= not_before:
+                raise ValueError("post-deploy evidence predates deploy completion")
+            return raw, payload
+        except (OSError, RuntimeError, ValueError) as exc:
+            last_error = str(exc)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError(last_error)
+        time.sleep(min(2.0, remaining))
 
 
 def artifact_from_inputs(
@@ -446,7 +802,9 @@ def validate_backup_bucket_controls(
         or controls["retention_seconds"] != 604800
         or controls["retention_locked"] is not False
     ):
-        raise RuntimeError("release backup bucket controls differ from the reviewed policy")
+        raise RuntimeError(
+            "release backup bucket controls differ from the reviewed policy"
+        )
 
     member = f"serviceAccount:omega-{environment}-app@{project}.iam.gserviceaccount.com"
     policy = run(
@@ -474,7 +832,9 @@ def validate_backup_bucket_controls(
             raise RuntimeError("release backup bucket IAM binding is malformed")
         if member in binding.get("members", []):
             if "condition" in binding or not isinstance(binding.get("role"), str):
-                raise RuntimeError("release backup VM IAM binding is conditional or invalid")
+                raise RuntimeError(
+                    "release backup VM IAM binding is conditional or invalid"
+                )
             roles.add(binding["role"])
     expected_roles = {f"projects/{project}/roles/omegaReleaseBackupWriter"}
     if roles != expected_roles:
@@ -589,15 +949,20 @@ def validate_transfer_fence(
     job = sink_jobs[0]
     if job.get("status") != "DISABLED":
         raise RuntimeError("AWS-to-GCP Storage Transfer job is not disabled")
-    if _nested_first(
-        job, ("transferSpec", "transferOptions", "deleteObjectsUniqueInSink")
-    ) is not True:
-        raise RuntimeError("historical sink-delete transfer contract unexpectedly changed")
+    if (
+        _nested_first(
+            job, ("transferSpec", "transferOptions", "deleteObjectsUniqueInSink")
+        )
+        is not True
+    ):
+        raise RuntimeError(
+            "historical sink-delete transfer contract unexpectedly changed"
+        )
     source = _nested_first(job, ("transferSpec", "awsS3DataSource"))
     nested_access = source.get("awsAccessKey", {}) if isinstance(source, dict) else {}
-    role_arn = (
-        source.get("roleArn") if isinstance(source, dict) else None
-    ) or (nested_access.get("roleArn") if isinstance(nested_access, dict) else None)
+    role_arn = (source.get("roleArn") if isinstance(source, dict) else None) or (
+        nested_access.get("roleArn") if isinstance(nested_access, dict) else None
+    )
     if (
         not isinstance(source, dict)
         or not isinstance(role_arn, str)
@@ -661,7 +1026,9 @@ def validate_transfer_fence(
     except (AttributeError, json.JSONDecodeError) as exc:
         raise RuntimeError("lakehouse IAM for transfer fence is malformed") from exc
     if any(service_agent in binding.get("members", []) for binding in bindings):
-        raise RuntimeError("Storage Transfer service agent still has lakehouse bucket IAM")
+        raise RuntimeError(
+            "Storage Transfer service agent still has lakehouse bucket IAM"
+        )
 
     project_iam = run(
         [
@@ -914,6 +1281,292 @@ def validate_release_identity(tag: str, deploy_ref: str) -> str:
     return validate_published_release_identity(tag, deploy_ref, require_main=True)
 
 
+def validate_bound_release_identity(
+    tag: str, deploy_ref: str, *, require_main: bool = True
+) -> BoundReleaseIdentity:
+    """Bind the exact remote tag object to one sealed candidate payload digest."""
+    version = validate_published_release_identity(
+        tag, deploy_ref, require_main=require_main
+    )
+    tag_object_sha = git("rev-parse", f"refs/tags/{tag}")
+    raw_tag = git("cat-file", "tag", f"refs/tags/{tag}")
+    raw_headers, separator, message = raw_tag.partition("\n\n")
+    if not separator:
+        raise ValueError("annotated release tag has no manifest-binding message")
+    selected: dict[str, list[str]] = {"object": [], "type": [], "tag": []}
+    for line in raw_headers.splitlines():
+        key, split, value = line.partition(" ")
+        if split and key in selected:
+            selected[key].append(value)
+    if selected != {
+        "object": [deploy_ref],
+        "type": ["commit"],
+        "tag": [tag],
+    }:
+        raise ValueError("annotated release tag headers differ from the exact release")
+    prefix = "OMEGA-Release-Candidate-Manifest-SHA256: "
+    bindings = [
+        line.removeprefix(prefix)
+        for line in message.splitlines()
+        if line.startswith(prefix)
+    ]
+    if len(bindings) != 1 or OCI_DIGEST_RE.fullmatch(bindings[0]) is None:
+        raise ValueError(
+            "annotated release tag must contain one exact sealed manifest binding"
+        )
+    return BoundReleaseIdentity(version, bindings[0], tag_object_sha)
+
+
+def _positive_decimal(value: object, *, field: str) -> str:
+    rendered = str(value)
+    if re.fullmatch(r"[1-9][0-9]{0,19}", rendered) is None:
+        raise ValueError(f"{field} must be an explicit positive integer")
+    return rendered
+
+
+def _gh_api_json(path: str) -> dict[str, Any]:
+    """Read one authenticated GitHub API object without exposing credentials."""
+    if (
+        not path.startswith(f"/repos/{CANONICAL_GITHUB_REPOSITORY}/")
+        or "#" in path
+        or re.search(r"[\x00-\x20]", path)
+    ):
+        raise ValueError("GitHub API path is not canonical")
+    result = run(
+        [
+            "gh",
+            "api",
+            "--method",
+            "GET",
+            "-H",
+            "Accept: application/vnd.github+json",
+            "-H",
+            "X-GitHub-Api-Version: 2022-11-28",
+            path,
+        ],
+        timeout=120,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            "authenticated GitHub release-authority lookup failed: "
+            + redact(result.stderr or result.stdout)
+        )
+    try:
+        payload = json.loads(
+            result.stdout,
+            object_pairs_hook=_strict_json_object,
+            parse_constant=lambda value: (_ for _ in ()).throw(
+                ValueError(f"non-finite JSON constant: {value}")
+            ),
+        )
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise RuntimeError("GitHub release-authority response is malformed") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("GitHub release-authority response is not an object")
+    return payload
+
+
+def _read_candidate_manifest_artifact(
+    directory: Path,
+    *,
+    source_sha: str,
+    version: str,
+    run_id: str,
+    run_attempt: str,
+) -> bytes:
+    entries = list(directory.rglob("*"))
+    expected = directory / "release-candidate.json"
+    if entries != [expected]:
+        raise RuntimeError(
+            "release-candidate workflow artifact must contain exactly "
+            "release-candidate.json"
+        )
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(expected, flags)
+    except OSError as exc:
+        raise RuntimeError("release-candidate workflow artifact is unavailable") from exc
+    try:
+        info = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or info.st_nlink != 1
+            or not 1 <= info.st_size <= 1024 * 1024
+        ):
+            raise RuntimeError("release-candidate workflow artifact file is unsafe")
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            raw = stream.read(1024 * 1024 + 1)
+        if len(raw) != info.st_size:
+            raise RuntimeError("release-candidate workflow artifact changed while read")
+    finally:
+        os.close(descriptor)
+    try:
+        payload = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_strict_json_object,
+            parse_constant=lambda value: (_ for _ in ()).throw(
+                ValueError(f"non-finite JSON constant: {value}")
+            ),
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise RuntimeError("release-candidate workflow artifact is malformed") from exc
+    exact_keys = {
+        "candidate_tag",
+        "github_run_attempt",
+        "github_run_id",
+        "images",
+        "registry",
+        "release_tag",
+        "repository",
+        "schema_version",
+        "source",
+        "source_sha",
+        "version",
+    }
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != exact_keys
+        or payload.get("schema_version") != 1
+        or payload.get("candidate_tag") != f"candidate-{source_sha}"
+        or payload.get("github_run_id") != run_id
+        or payload.get("github_run_attempt") != run_attempt
+        or payload.get("registry") != "ghcr.io"
+        or payload.get("release_tag") != f"v{version}"
+        or payload.get("repository") != CANONICAL_GITHUB_REPOSITORY
+        or payload.get("source")
+        != f"https://github.com/{CANONICAL_GITHUB_REPOSITORY}"
+        or payload.get("source_sha") != source_sha
+        or payload.get("version") != version
+        or not isinstance(payload.get("images"), list)
+        or len(payload["images"]) != 15
+    ):
+        raise RuntimeError("release-candidate workflow artifact identity differs")
+    canonical = (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    if raw != canonical:
+        raise RuntimeError("release-candidate workflow artifact is not canonical JSON")
+    return raw
+
+
+def validate_candidate_workflow_authority(
+    *, source_sha: str, version: str, run_id: str, run_attempt: str
+) -> CandidateWorkflowAuthority:
+    """Bind a pre-tag 15/15 preflight to one successful private workflow artifact."""
+    if not FULL_SHA_RE.fullmatch(source_sha):
+        raise ValueError("candidate workflow source must be one exact commit SHA")
+    if not re.fullmatch(
+        r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?", version
+    ):
+        raise ValueError("candidate workflow VERSION is invalid")
+    run_id = _positive_decimal(run_id, field="candidate workflow run ID")
+    run_attempt = _positive_decimal(
+        run_attempt, field="candidate workflow run attempt"
+    )
+    run_payload = _gh_api_json(
+        f"/repos/{CANONICAL_GITHUB_REPOSITORY}/actions/runs/{run_id}"
+    )
+    repository = run_payload.get("repository")
+    head_repository = run_payload.get("head_repository")
+    workflow_path = str(run_payload.get("path", "")).removeprefix("/")
+    if (
+        str(run_payload.get("id")) != run_id
+        or str(run_payload.get("run_attempt")) != run_attempt
+        or run_payload.get("head_sha") != source_sha
+        or run_payload.get("head_branch") != "main"
+        or run_payload.get("event") != "workflow_dispatch"
+        or run_payload.get("status") != "completed"
+        or run_payload.get("conclusion") != "success"
+        or workflow_path != ".github/workflows/release-candidate.yml"
+        or not isinstance(repository, dict)
+        or repository.get("full_name") != CANONICAL_GITHUB_REPOSITORY
+        or not isinstance(head_repository, dict)
+        or head_repository.get("full_name") != CANONICAL_GITHUB_REPOSITORY
+    ):
+        raise RuntimeError(
+            "release-candidate workflow run/head/attempt is not exact and successful"
+        )
+
+    artifacts_payload = _gh_api_json(
+        f"/repos/{CANONICAL_GITHUB_REPOSITORY}/actions/runs/{run_id}"
+        "/artifacts?per_page=100"
+    )
+    artifacts = artifacts_payload.get("artifacts")
+    total_count = artifacts_payload.get("total_count")
+    if (
+        not isinstance(artifacts, list)
+        or not isinstance(total_count, int)
+        or total_count != len(artifacts)
+        or total_count > 100
+    ):
+        raise RuntimeError("release-candidate workflow artifact listing is incomplete")
+    artifact_name = f"release-candidate-{source_sha}"
+    matches = [
+        artifact
+        for artifact in artifacts
+        if isinstance(artifact, dict) and artifact.get("name") == artifact_name
+    ]
+    if len(matches) != 1:
+        raise RuntimeError("exact release-candidate workflow artifact is not unique")
+    artifact = matches[0]
+    artifact_id = _positive_decimal(
+        artifact.get("id"), field="candidate workflow artifact ID"
+    )
+    workflow_run = artifact.get("workflow_run")
+    if (
+        artifact.get("expired") is not False
+        or not isinstance(workflow_run, dict)
+        or str(workflow_run.get("id")) != run_id
+        or workflow_run.get("head_sha") != source_sha
+        or artifact.get("archive_download_url")
+        != (
+            f"https://api.github.com/repos/{CANONICAL_GITHUB_REPOSITORY}"
+            f"/actions/artifacts/{artifact_id}/zip"
+        )
+    ):
+        raise RuntimeError("release-candidate workflow artifact metadata differs")
+
+    with tempfile.TemporaryDirectory(prefix="omega-release-candidate-authority-") as temp:
+        destination = Path(temp) / "artifact"
+        destination.mkdir(mode=0o700)
+        downloaded = run(
+            [
+                "gh",
+                "run",
+                "download",
+                run_id,
+                "--repo",
+                CANONICAL_GITHUB_REPOSITORY,
+                "--name",
+                artifact_name,
+                "--dir",
+                str(destination),
+            ],
+            timeout=300,
+        )
+        if downloaded.returncode != 0:
+            raise RuntimeError(
+                "cannot download exact release-candidate workflow artifact: "
+                + redact(downloaded.stderr or downloaded.stdout)
+            )
+        raw = _read_candidate_manifest_artifact(
+            destination,
+            source_sha=source_sha,
+            version=version,
+            run_id=run_id,
+            run_attempt=run_attempt,
+        )
+    payload_sha256 = hashlib.sha256(raw).hexdigest()
+    return CandidateWorkflowAuthority(
+        run_id=run_id,
+        run_attempt=run_attempt,
+        manifest_digest=f"sha256:{payload_sha256}",
+        payload_sha256=payload_sha256,
+        artifact_id=artifact_id,
+    )
+
+
 def validate_image_target_identity(
     *, target_tag: str, target_ref: str, helper_ref: str, purpose: str
 ) -> tuple[str, str]:
@@ -926,10 +1579,78 @@ def validate_image_target_identity(
             )
         return validate_candidate_main(target_ref), "candidate"
     return (
-        validate_published_release_identity(
-            target_tag, target_ref, require_main=False
-        ),
+        validate_published_release_identity(target_tag, target_ref, require_main=False),
         "published",
+    )
+
+
+def validate_legacy_rollback_identity(
+    *, target_tag: str, runtime_source_ref: str, helper_ref: str, purpose: str
+) -> LegacyRollbackIdentity:
+    """Record a legacy tag separately from checksum-bound runtime authority."""
+    if purpose != "rollback" or helper_ref == runtime_source_ref:
+        raise ValueError("legacy rollback target/helper relationship is invalid")
+    if not TAG_RE.fullmatch(target_tag) or "latest" in target_tag:
+        raise ValueError("legacy rollback tag is invalid")
+    require_canonical_origin()
+    fetched = run(["git", "fetch", "origin", "--tags"], timeout=300)
+    if fetched.returncode != 0:
+        raise RuntimeError(redact(fetched.stderr or fetched.stdout))
+    if git("cat-file", "-t", f"refs/tags/{target_tag}") != "tag":
+        raise ValueError("legacy rollback tag must be annotated")
+    tag_object_sha = git("rev-parse", f"refs/tags/{target_tag}")
+    tag_commit = git("rev-parse", f"refs/tags/{target_tag}^{{commit}}")
+    if not FULL_SHA_RE.fullmatch(tag_object_sha) or not FULL_SHA_RE.fullmatch(
+        tag_commit
+    ):
+        raise ValueError("legacy rollback tag identity is malformed")
+    raw_tag = git("cat-file", "tag", f"refs/tags/{target_tag}")
+    headers = raw_tag.partition("\n\n")[0]
+    selected: dict[str, list[str]] = {"object": [], "type": [], "tag": []}
+    for line in headers.splitlines():
+        key, separator, value = line.partition(" ")
+        if separator and key in selected:
+            selected[key].append(value)
+    if selected != {
+        "object": [tag_commit],
+        "type": ["commit"],
+        "tag": [target_tag],
+    }:
+        raise ValueError("legacy rollback annotated tag headers differ")
+    remote = run(
+        [
+            "git",
+            "ls-remote",
+            "--tags",
+            "origin",
+            f"refs/tags/{target_tag}",
+            f"refs/tags/{target_tag}^{{}}",
+        ],
+        timeout=120,
+    )
+    if remote.returncode != 0:
+        raise RuntimeError(redact(remote.stderr or remote.stdout))
+    remote_refs: dict[str, str] = {}
+    for line in remote.stdout.splitlines():
+        fields = line.split()
+        if len(fields) != 2 or not FULL_SHA_RE.fullmatch(fields[0]):
+            raise ValueError("remote legacy rollback tag response is malformed")
+        if fields[1] in remote_refs:
+            raise ValueError("remote legacy rollback tag response is duplicated")
+        remote_refs[fields[1]] = fields[0]
+    if remote_refs != {
+        f"refs/tags/{target_tag}": tag_object_sha,
+        f"refs/tags/{target_tag}^{{}}": tag_commit,
+    }:
+        raise ValueError("remote legacy rollback tag differs from local")
+    version = target_tag.removeprefix("v")
+    validate_current_live_source(tag_commit, version)
+    validate_current_live_source(runtime_source_ref, version)
+    return LegacyRollbackIdentity(
+        version=version,
+        tag_object_sha=tag_object_sha,
+        tag_commit=tag_commit,
+        runtime_source_ref=runtime_source_ref,
     )
 
 
@@ -948,6 +1669,61 @@ def validate_candidate_main(deploy_ref: str) -> str:
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", version):
         raise ValueError("candidate VERSION is invalid")
     return version
+
+
+def validate_unpublished_release_identity(tag: str, deploy_ref: str) -> str:
+    """Require an exact current-main candidate whose intended tag is still absent."""
+    version = validate_candidate_main(deploy_ref)
+    if not TAG_RE.fullmatch(tag) or tag != f"v{version}":
+        raise ValueError("unpublished release tag differs from candidate VERSION")
+    fetched = run(["git", "fetch", "origin", "--tags"], timeout=300)
+    if fetched.returncode != 0:
+        raise RuntimeError(redact(fetched.stderr or fetched.stdout))
+    local_tag = run(["git", "show-ref", "--verify", "--quiet", f"refs/tags/{tag}"])
+    if local_tag.returncode == 0:
+        raise ValueError("candidate release tag already exists locally")
+    if local_tag.returncode not in {1}:
+        raise RuntimeError(redact(local_tag.stderr or local_tag.stdout))
+    remote_tag = run(
+        [
+            "git",
+            "ls-remote",
+            "--tags",
+            "origin",
+            f"refs/tags/{tag}",
+            f"refs/tags/{tag}^{{}}",
+        ],
+        timeout=120,
+    )
+    if remote_tag.returncode != 0:
+        raise RuntimeError(redact(remote_tag.stderr or remote_tag.stdout))
+    if remote_tag.stdout.strip():
+        raise ValueError("candidate release tag already exists remotely")
+    return version
+
+
+def validate_current_live_source(deploy_ref: str, expected_version: str) -> str:
+    """Bind the observed live release to canonical history without trusting a tag."""
+    if not FULL_SHA_RE.fullmatch(deploy_ref):
+        raise ValueError("current live ref must be one exact commit SHA")
+    if not re.fullmatch(
+        r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?",
+        expected_version,
+    ):
+        raise ValueError("current live VERSION is invalid")
+    if git("cat-file", "-t", deploy_ref) != "commit":
+        raise ValueError("current live ref is not a canonical commit")
+    ancestor = run(["git", "merge-base", "--is-ancestor", deploy_ref, "origin/main"])
+    if ancestor.returncode != 0:
+        if ancestor.returncode == 1:
+            raise ValueError("current live ref is not an ancestor of origin/main")
+        raise RuntimeError(redact(ancestor.stderr or ancestor.stdout))
+    actual_version = git("show", f"{deploy_ref}:VERSION").strip()
+    if actual_version != expected_version:
+        raise ValueError(
+            f"current live VERSION {actual_version} differs from operator contract"
+        )
+    return actual_version
 
 
 def require_local_file_at_ref(deploy_ref: str, relative: str) -> None:
@@ -972,9 +1748,7 @@ def require_startup_files_at_ref(deploy_ref: str) -> None:
         require_local_file_at_ref(deploy_ref, relative)
 
 
-def require_exact_terraform_tree_at_ref(
-    deploy_ref: str, terraform_dir: Path
-) -> None:
+def require_exact_terraform_tree_at_ref(deploy_ref: str, terraform_dir: Path) -> None:
     """Bind every locally loaded Terraform source file to one reviewed ref.
 
     Provider/backend cache data under ``.terraform`` is runtime state rather
@@ -1012,9 +1786,7 @@ def require_exact_terraform_tree_at_ref(
         module_relative = path.relative_to(resolved).as_posix()
         if path.is_symlink():
             raise ValueError(f"Terraform tree contains a symlink: {module_relative}")
-        if module_relative == ".terraform" or module_relative.startswith(
-            ".terraform/"
-        ):
+        if module_relative == ".terraform" or module_relative.startswith(".terraform/"):
             continue
         if path.is_file() and relative not in tracked:
             raise ValueError(
@@ -1037,9 +1809,7 @@ def require_private_reviewed_var_file(var_file: Path) -> Path:
         or info.st_uid != os.geteuid()
         or info.st_mode & 0o077
     ):
-        raise ValueError(
-            "reviewed production tfvars must be operator-owned mode 0600"
-        )
+        raise ValueError("reviewed production tfvars must be operator-owned mode 0600")
     if var_file.name in {"terraform.tfvars", "terraform.tfvars.json"} or re.search(
         r"\.auto\.tfvars(?:\.json)?$", var_file.name
     ):
@@ -1158,9 +1928,10 @@ def upload_reconciliation_manifest_immutable(
     if not FULL_SHA_RE.fullmatch(helper_ref):
         raise ValueError("reconciliation helper ref must be an exact commit")
     change_id = manifest.get("change_id")
-    if not isinstance(change_id, str) or re.fullmatch(
-        r"[a-z0-9][a-z0-9._-]{2,127}", change_id
-    ) is None:
+    if (
+        not isinstance(change_id, str)
+        or re.fullmatch(r"[a-z0-9][a-z0-9._-]{2,127}", change_id) is None
+    ):
         raise ValueError("reconciliation change id is invalid")
     manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
     uri = (
@@ -1216,7 +1987,9 @@ def upload_reconciliation_manifest_immutable(
             generation = str(payload["generation"])
             size_bytes = int(payload["size"])
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise RuntimeError("immutable reconciliation metadata is malformed") from exc
+            raise RuntimeError(
+                "immutable reconciliation metadata is malformed"
+            ) from exc
         if not re.fullmatch(r"[1-9][0-9]*", generation):
             raise RuntimeError("immutable reconciliation generation is invalid")
         if size_bytes != len(manifest_bytes):
@@ -1250,6 +2023,97 @@ def upload_reconciliation_manifest_immutable(
     return ArtifactRef(uri, generation, size_bytes, manifest_sha256)
 
 
+def upload_external_routing_scheduler_attestation_immutable(
+    *, raw: bytes, bucket: str, source_sha: str
+) -> ArtifactRef:
+    """Publish the scoped routing/scheduler observation under its content address."""
+    if GCS_BUCKET_RE.fullmatch(bucket) is None or not FULL_SHA_RE.fullmatch(source_sha):
+        raise ValueError("external routing/scheduler upload identity is invalid")
+    digest = hashlib.sha256(raw).hexdigest()
+    uri = (
+        f"gs://{bucket}/external-routing-scheduler-attestations/"
+        f"{source_sha}/{digest}.json"
+    )
+    metadata = f"omega-routing-scheduler-sha256={digest},omega-source-sha={source_sha}"
+    with tempfile.TemporaryDirectory(prefix="omega-routing-scheduler-upload-") as temp:
+        source = Path(temp) / "attestation.json"
+        descriptor = os.open(source, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(descriptor, "wb", closefd=False) as stream:
+                stream.write(raw)
+                stream.flush()
+                os.fsync(stream.fileno())
+        finally:
+            os.close(descriptor)
+        upload = run(
+            [
+                "gcloud",
+                "--quiet",
+                "storage",
+                "cp",
+                str(source),
+                uri,
+                "--if-generation-match=0",
+                f"--custom-metadata={metadata}",
+            ],
+            timeout=600,
+        )
+        describe = run(
+            [
+                "gcloud",
+                "--quiet",
+                "storage",
+                "objects",
+                "describe",
+                uri,
+                "--format=json",
+            ],
+            timeout=120,
+        )
+        if describe.returncode != 0:
+            raise RuntimeError(redact(upload.stderr or upload.stdout))
+        try:
+            payload = json.loads(describe.stdout)
+            generation = str(payload["generation"])
+            size_bytes = int(payload["size"])
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                "immutable external routing/scheduler metadata is malformed"
+            ) from exc
+        if (
+            re.fullmatch(r"[1-9][0-9]*", generation) is None
+            or size_bytes != len(raw)
+            or _custom_metadata(payload)
+            != {
+                "omega-routing-scheduler-sha256": digest,
+                "omega-source-sha": source_sha,
+            }
+        ):
+            raise RuntimeError("immutable external routing/scheduler identity differs")
+        downloaded = Path(temp) / "readback.json"
+        readback = run(
+            [
+                "gcloud",
+                "--quiet",
+                "storage",
+                "cp",
+                f"{uri}#{generation}",
+                str(downloaded),
+            ],
+            timeout=600,
+        )
+        if (
+            readback.returncode != 0
+            or not downloaded.is_file()
+            or downloaded.stat().st_size != size_bytes
+            or sha256_file(downloaded) != digest
+        ):
+            raise RuntimeError(
+                "immutable external routing/scheduler readback bytes differ"
+            )
+    return ArtifactRef(uri, generation, size_bytes, digest)
+
+
 def remote_script(
     *,
     project: str,
@@ -1258,6 +2122,7 @@ def remote_script(
     script: Path,
     arguments: list[str],
     timeout: int,
+    companion_scripts: dict[str, Path] | None = None,
 ) -> RemoteResult:
     if not script.is_file():
         raise FileNotFoundError(script)
@@ -1270,6 +2135,23 @@ def remote_script(
     helper_bytes = SAFE_IO.read_bytes()
     script_b64 = base64.b64encode(script_bytes).decode("ascii")
     helper_b64 = base64.b64encode(helper_bytes).decode("ascii")
+    companion_lines: list[str] = []
+    for name, path in sorted((companion_scripts or {}).items()):
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", name) is None:
+            raise ValueError("remote companion script name is invalid")
+        if not path.is_file() or path.is_symlink():
+            raise FileNotFoundError(path)
+        value = path.read_bytes()
+        encoded = base64.b64encode(value).decode("ascii")
+        digest = hashlib.sha256(value).hexdigest()
+        companion_lines.extend(
+            (
+                f"printf '%s' '{encoded}' | base64 -d > \"$remote_root/{name}\"",
+                f'chmod 0700 "$remote_root/{name}"',
+                f'test "$(sha256sum "$remote_root/{name}" | awk \'{{print $1}}\')" = "{digest}"',
+            )
+        )
+    companions = "\n".join(companion_lines)
     wrapper = f"""#!/usr/bin/env bash
 set -Eeuo pipefail
 umask 077
@@ -1286,7 +2168,9 @@ printf '%s' '{helper_b64}' | base64 -d > "$remote_root/safe_io.py"
 chmod 0700 "$remote_root/entrypoint.sh" "$remote_root/safe_io.py"
 test "$(sha256sum "$remote_root/entrypoint.sh" | awk '{{print $1}}')" = "{hashlib.sha256(script_bytes).hexdigest()}"
 test "$(sha256sum "$remote_root/safe_io.py" | awk '{{print $1}}')" = "{hashlib.sha256(helper_bytes).hexdigest()}"
+{companions}
 export OMEGA_GCP_SAFE_IO="$remote_root/safe_io.py"
+export OMEGA_GCP_REMOTE_ROOT="$remote_root"
 bash "$remote_root/entrypoint.sh" "$@"
 """
     result = run(
@@ -1528,7 +2412,10 @@ def validate_live_canonical_target(
         ],
         timeout=120,
     )
-    if project_identity.returncode != 0 or project_identity.stdout.strip() != project_number:
+    if (
+        project_identity.returncode != 0
+        or project_identity.stdout.strip() != project_number
+    ):
         raise RuntimeError("live GCP project number differs from the reviewed target")
     described = run(
         [
@@ -1567,7 +2454,9 @@ def validate_live_canonical_target(
         or labels.get("env") != environment
         or labels.get("project") != "modecissions"
     ):
-        raise RuntimeError("live GCE instance identity differs from the reviewed target")
+        raise RuntimeError(
+            "live GCE instance identity differs from the reviewed target"
+        )
 
     inventory = run(
         [
@@ -1674,9 +2563,8 @@ def validate_live_canonical_target(
             backends = json.loads(backend.stdout).get("backends", [])
         except (AttributeError, json.JSONDecodeError) as exc:
             raise RuntimeError(f"canonical {service} backend is malformed") from exc
-        if (
-            len(backends) != 1
-            or not str(backends[0].get("group", "")).endswith(group_suffix)
+        if len(backends) != 1 or not str(backends[0].get("group", "")).endswith(
+            group_suffix
         ):
             raise RuntimeError(f"canonical {service} backend target differs")
 
@@ -1716,6 +2604,205 @@ def _probe_https_health(hostname: str, address: str) -> None:
         raise RuntimeError("canonical public health endpoint is not HTTP 200")
 
 
+def _resolve_external_a_records(hostname: str, port: int) -> set[str]:
+    """Resolve every IPv4 A record for one allowlisted external endpoint."""
+    try:
+        values = socket.getaddrinfo(
+            hostname,
+            port,
+            family=socket.AF_INET,
+            type=socket.SOCK_STREAM,
+        )
+    except socket.gaierror as exc:
+        raise RuntimeError("external ALB A records cannot be resolved") from exc
+    addresses = {str(item[4][0]) for item in values}
+    if not addresses:
+        raise RuntimeError("external ALB returned no A records")
+    return addresses
+
+
+def _probe_external_endpoint(
+    endpoint_hostname: str,
+    *,
+    http_host: str,
+    path: str,
+    tls: bool,
+) -> list[tuple[str, int, dict[str, str], bytes]]:
+    """Probe all A records while keeping canonical HTTP Host and verified TLS SNI."""
+    if endpoint_hostname not in {
+        CANONICAL_AWS_ORIGIN_ALB,
+        CANONICAL_AWS_DESTINATION_ALB,
+    }:
+        raise ValueError("external ALB hostname is outside the exact allowlist")
+    if http_host != CANONICAL_PUBLIC_TLS_NAME:
+        raise ValueError("external ALB probe Host/SNI is not canonical")
+    if not path.startswith("/") or "\r" in path or "\n" in path:
+        raise ValueError("external ALB probe path is invalid")
+    port = 443 if tls else 80
+    context = ssl.create_default_context() if tls else None
+    results: list[tuple[str, int, dict[str, str], bytes]] = []
+    for address in sorted(_resolve_external_a_records(endpoint_hostname, port)):
+        stream: Any = None
+        try:
+            raw = socket.create_connection((address, port), timeout=15)
+            stream = (
+                context.wrap_socket(raw, server_hostname=http_host)
+                if context is not None
+                else raw
+            )
+            stream.sendall(
+                (
+                    f"GET {path} HTTP/1.1\r\n"
+                    f"Host: {http_host}\r\n"
+                    "User-Agent: omega-gcp-routing-scheduler-attestation/1\r\n"
+                    "Accept: application/json\r\n"
+                    "Connection: close\r\n\r\n"
+                ).encode("ascii")
+            )
+            response = http.client.HTTPResponse(stream)
+            response.begin()
+            body = response.read(MAX_ROUTING_SCHEDULER_ATTESTATION_BYTES + 1)
+            if len(body) > MAX_ROUTING_SCHEDULER_ATTESTATION_BYTES:
+                raise RuntimeError("external ALB response exceeded the bounded size")
+            headers = {key.lower(): value for key, value in response.getheaders()}
+            results.append((address, response.status, headers, body))
+        except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
+            raise RuntimeError(
+                f"external ALB probe failed for allowlisted A record {address}"
+            ) from exc
+        finally:
+            if stream is not None:
+                stream.close()
+    return results
+
+
+def _probe_external_health_status(
+    hostname: str, *, tls_server_name: str, expected_status: int
+) -> None:
+    results = _probe_external_endpoint(
+        hostname,
+        http_host=tls_server_name,
+        path="/healthz",
+        tls=True,
+    )
+    if any(status != expected_status for _address, status, _headers, _body in results):
+        raise RuntimeError(
+            "external ALB health status changed on at least one A record"
+        )
+
+
+def _probe_external_json_status(
+    hostname: str,
+    *,
+    tls_server_name: str,
+    path: str,
+    expected_status: int,
+) -> dict[str, Any]:
+    parsed: list[dict[str, Any]] = []
+    for _address, status, _headers, body in _probe_external_endpoint(
+        hostname,
+        http_host=tls_server_name,
+        path=path,
+        tls=True,
+    ):
+        if status != expected_status:
+            raise RuntimeError("external ALB JSON status changed")
+        try:
+            value = json.loads(body)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("external ALB JSON response is malformed") from exc
+        if not isinstance(value, dict):
+            raise RuntimeError("external ALB JSON response is not an object")
+        parsed.append(value)
+    if not parsed or any(value != parsed[0] for value in parsed[1:]):
+        raise RuntimeError("external ALB A records returned inconsistent JSON")
+    return parsed[0]
+
+
+def _probe_external_http_redirect(
+    hostname: str, *, http_host: str, expected_status: int
+) -> None:
+    results = _probe_external_endpoint(
+        hostname,
+        http_host=http_host,
+        path="/healthz",
+        tls=False,
+    )
+    for _address, status, headers, _body in results:
+        location = headers.get("location", "")
+        allowed_locations = {
+            f"https://{http_host}/healthz",
+            f"https://{http_host}:443/healthz",
+        }
+        if status != expected_status or location not in allowed_locations:
+            raise RuntimeError("external ALB HTTP-to-HTTPS redirect changed")
+
+
+def revalidate_external_routing_scheduler_live(
+    payload: dict[str, Any], *, console_domain: str, workspace_domain: str
+) -> dict[str, Any]:
+    """Re-read DNS and every allowlisted ALB A record at the call boundary."""
+    public_ip = str(payload.get("gcp_public_ip", ""))
+    if _resolve_public_addresses(console_domain) != {
+        public_ip
+    } or _resolve_public_addresses(workspace_domain) != {public_ip}:
+        raise RuntimeError("live public DNS no longer points only to canonical GCP")
+    aws = payload.get("aws")
+    if not isinstance(aws, dict):
+        raise ValueError("external routing/scheduler AWS payload is unavailable")
+    origin = aws.get("origin")
+    destination = aws.get("destination")
+    if not isinstance(origin, dict) or not isinstance(destination, dict):
+        raise ValueError("external routing/scheduler ALB observations are unavailable")
+    canonical_names = {console_domain, workspace_domain}
+    if (
+        origin.get("alb_hostname") in canonical_names
+        or destination.get("alb_hostname") in canonical_names
+    ):
+        raise ValueError("an AWS ALB appears in the canonical GCP DNS names")
+
+    _probe_external_health_status(
+        str(origin.get("alb_hostname", "")),
+        tls_server_name=console_domain,
+        expected_status=502,
+    )
+    _probe_external_http_redirect(
+        str(origin.get("alb_hostname", "")),
+        http_host=console_domain,
+        expected_status=int(origin.get("http_redirect_status", 0)),
+    )
+    _probe_external_health_status(
+        str(destination.get("alb_hostname", "")),
+        tls_server_name=console_domain,
+        expected_status=200,
+    )
+    scheduler_health = _probe_external_json_status(
+        str(destination.get("alb_hostname", "")),
+        tls_server_name=console_domain,
+        path="/airflow/health",
+        expected_status=200,
+    )
+    live_scheduler = scheduler_health.get("scheduler")
+    if (
+        not isinstance(live_scheduler, dict)
+        or live_scheduler.get("status") != destination.get("scheduler_status")
+        or live_scheduler.get("latest_scheduler_heartbeat")
+        != destination.get("scheduler_last_heartbeat_at")
+    ):
+        raise RuntimeError("live AWS scheduler status or heartbeat changed")
+    return {
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "gcp_dns_only": True,
+        "origin_healthz_status": 502,
+        "destination_healthz_status": 200,
+        "destination_scheduler_status": live_scheduler["status"],
+        "destination_scheduler_last_heartbeat_at": live_scheduler[
+            "latest_scheduler_heartbeat"
+        ],
+        "db_api_hard_fence_proven": aws.get("db_api_hard_fence_proven") is True,
+    }
+
+
 def validate_live_public_edge(
     *,
     project: str,
@@ -1726,8 +2813,7 @@ def validate_live_public_edge(
     """Bind public DNS/TLS routing to the canonical GCP writer backends."""
     domains = (public_console_domain, public_workspace_domain)
     if len(set(domains)) != 2 or any(
-        re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,62}\.)+[a-z]{2,63}", value)
-        is None
+        re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,62}\.)+[a-z]{2,63}", value) is None
         for value in domains
     ):
         raise ValueError("canonical public domains are invalid or not distinct")
@@ -1748,7 +2834,10 @@ def validate_live_public_edge(
         timeout=120,
     )
     address = address_result.stdout.strip()
-    if address_result.returncode != 0 or re.fullmatch(r"(?:[0-9]{1,3}\.){3}[0-9]{1,3}", address) is None:
+    if (
+        address_result.returncode != 0
+        or re.fullmatch(r"(?:[0-9]{1,3}\.){3}[0-9]{1,3}", address) is None
+    ):
         raise RuntimeError("canonical public GCP address cannot be verified")
 
     forwarding_result = run(
@@ -2103,8 +3192,13 @@ def validate_terraform_source_contract(
     }
     if not isinstance(config, dict) or config.get("source") != expected_source:
         raise RuntimeError("Terraform startup render is not byte-bound to the artifact")
-    if lakehouse_bucket is not None and config.get("lakehouse_bucket") != lakehouse_bucket:
-        raise RuntimeError("Terraform startup render targets a different lakehouse bucket")
+    if (
+        lakehouse_bucket is not None
+        and config.get("lakehouse_bucket") != lakehouse_bucket
+    ):
+        raise RuntimeError(
+            "Terraform startup render targets a different lakehouse bucket"
+        )
     return hashlib.sha256(startup.encode()).hexdigest()
 
 
@@ -2675,8 +3769,7 @@ def validate_backup_storage_saved_plan(
         after_by_address[address] = after
     if actual != BACKUP_STORAGE_PLAN_ACTIONS:
         raise RuntimeError(
-            "release-backup plan actions differ: "
-            + json.dumps(actual, sort_keys=True)
+            "release-backup plan actions differ: " + json.dumps(actual, sort_keys=True)
         )
     output_changes = payload.get("output_changes") or {}
     unexpected_outputs = {
@@ -2709,9 +3802,7 @@ def validate_backup_storage_saved_plan(
         or retention[0].get("is_locked") is not False
     ):
         raise RuntimeError("release-backup bucket target differs from policy")
-    custom = after_by_address[
-        "google_project_iam_custom_role.release_backup_writer"
-    ]
+    custom = after_by_address["google_project_iam_custom_role.release_backup_writer"]
     if (
         custom.get("project") != project
         or custom.get("role_id") != "omegaReleaseBackupWriter"
@@ -2724,16 +3815,13 @@ def validate_backup_storage_saved_plan(
         or custom.get("deleted") is True
     ):
         raise RuntimeError("release-backup custom role target differs")
-    binding = after_by_address[
-        "google_storage_bucket_iam_member.app_release_backup"
-    ]
+    binding = after_by_address["google_storage_bucket_iam_member.app_release_backup"]
     expected_member = (
         f"serviceAccount:omega-{environment}-app@{project}.iam.gserviceaccount.com"
     )
     if (
         binding.get("bucket") != bucket_name
-        or binding.get("role")
-        != f"projects/{project}/roles/omegaReleaseBackupWriter"
+        or binding.get("role") != f"projects/{project}/roles/omegaReleaseBackupWriter"
         or binding.get("member") != expected_member
         or binding.get("condition") not in (None, [])
     ):
@@ -3077,7 +4165,9 @@ def validate_live_ghcr_access(
         granted_count = 0
         denied_count = 0
         for secret_id in sorted(secret_ids):
-            resource = f"//secretmanager.googleapis.com/projects/{project}/secrets/{secret_id}"
+            resource = (
+                f"//secretmanager.googleapis.com/projects/{project}/secrets/{secret_id}"
+            )
             troubleshoot = run(
                 [
                     "gcloud",
@@ -3130,9 +4220,7 @@ def validate_effective_least_privilege(
         timeout=timeout,
     )
     if effective.returncode != 0:
-        raise RuntimeError(
-            "effective least-privilege Secret Manager gate failed"
-        )
+        raise RuntimeError("effective least-privilege Secret Manager gate failed")
 
 
 def command_apply_ghcr_access(args: argparse.Namespace) -> int:
@@ -3182,9 +4270,7 @@ def command_apply_ghcr_access(args: argparse.Namespace) -> int:
         timeout=args.timeout_seconds,
     )
     if firewall.returncode != 0:
-        raise RuntimeError(
-            "container metadata isolation must pass before IAM mutation"
-        )
+        raise RuntimeError("container metadata isolation must pass before IAM mutation")
     applied = run(
         [
             terraform_binary(),
@@ -3407,12 +4493,144 @@ def command_image_preflight(args: argparse.Namespace) -> int:
     if not re.fullmatch(r"[1-9][0-9]*", args.ghcr_secret_version):
         raise SystemExit("GCP_GHCR_SECRET_VERSION must be an explicit numeric version")
     require_canonical_ghcr_owner(args.ghcr_owner)
-    target_version, target_kind = validate_image_target_identity(
-        target_tag=args.target_tag,
-        target_ref=args.target_ref,
-        helper_ref=args.helper_ref,
-        purpose=args.purpose,
+    candidate_inputs = (args.candidate_workflow_run_id, args.candidate_workflow_run_attempt)
+    rollback_inputs = (
+        args.rollback_runtime_images_uri,
+        args.rollback_runtime_images_generation,
+        args.rollback_runtime_images_size_bytes,
+        args.rollback_runtime_images_sha256,
+        args.rollback_backup_manifest_uri,
+        args.rollback_backup_manifest_generation,
+        args.rollback_backup_manifest_size_bytes,
+        args.rollback_backup_manifest_sha256,
     )
+    legacy_identity: LegacyRollbackIdentity | None = None
+    controller_authority: dict[str, Any]
+    if any(rollback_inputs):
+        validate_candidate_main(args.helper_ref)
+        legacy_identity = validate_legacy_rollback_identity(
+            target_tag=args.target_tag,
+            runtime_source_ref=args.target_ref,
+            helper_ref=args.helper_ref,
+            purpose=args.purpose,
+        )
+        target_version, target_kind = legacy_identity.version, "published"
+    else:
+        target_version, target_kind = validate_image_target_identity(
+            target_tag=args.target_tag,
+            target_ref=args.target_ref,
+            helper_ref=args.helper_ref,
+            purpose=args.purpose,
+        )
+    authority_arguments: list[str]
+    if target_kind == "candidate":
+        if any(rollback_inputs):
+            raise SystemExit("candidate preflight cannot use rollback image authority")
+        candidate_authority = validate_candidate_workflow_authority(
+            source_sha=args.target_ref,
+            version=target_version,
+            run_id=args.candidate_workflow_run_id,
+            run_attempt=args.candidate_workflow_run_attempt,
+        )
+        authority_arguments = [
+            candidate_authority.manifest_digest,
+            candidate_authority.run_id,
+            candidate_authority.run_attempt,
+            candidate_authority.payload_sha256,
+        ]
+        controller_authority = {
+            "mode": "candidate",
+            "manifest_digest": candidate_authority.manifest_digest,
+            "workflow_run_id": candidate_authority.run_id,
+            "workflow_run_attempt": candidate_authority.run_attempt,
+            "workflow_artifact_id": candidate_authority.artifact_id,
+        }
+    elif any(rollback_inputs):
+        if args.purpose != "rollback" or any(candidate_inputs):
+            raise SystemExit(
+                "legacy rollback authority is only valid for rollback preflight"
+            )
+        if not all(rollback_inputs):
+            raise SystemExit("legacy rollback runtime image authority is incomplete")
+        expected_prefix = f"gs://{args.backup_bucket}/_omega_backups/"
+        runtime_prefix = args.rollback_runtime_images_uri.removesuffix(
+            "/runtime-images.json"
+        )
+        manifest_prefix = args.rollback_backup_manifest_uri.removesuffix(
+            "/manifest.json"
+        )
+        if (
+            not args.backup_bucket
+            or not args.rollback_runtime_images_uri.startswith(expected_prefix)
+            or re.fullmatch(
+                rf"{re.escape(expected_prefix)}[^/]+/runtime-images\.json",
+                args.rollback_runtime_images_uri,
+            )
+            is None
+            or re.fullmatch(
+                r"[1-9][0-9]*", args.rollback_runtime_images_generation
+            )
+            is None
+            or re.fullmatch(
+                r"[1-9][0-9]*", args.rollback_runtime_images_size_bytes
+            )
+            is None
+            or SHA256_RE.fullmatch(args.rollback_runtime_images_sha256) is None
+            or not args.rollback_backup_manifest_uri.startswith(expected_prefix)
+            or re.fullmatch(
+                rf"{re.escape(expected_prefix)}[^/]+/manifest\.json",
+                args.rollback_backup_manifest_uri,
+            )
+            is None
+            or re.fullmatch(
+                r"[1-9][0-9]*", args.rollback_backup_manifest_generation
+            )
+            is None
+            or re.fullmatch(
+                r"[1-9][0-9]*", args.rollback_backup_manifest_size_bytes
+            )
+            is None
+            or SHA256_RE.fullmatch(args.rollback_backup_manifest_sha256) is None
+            or runtime_prefix != manifest_prefix
+        ):
+            raise SystemExit(
+                "legacy rollback requires one exact canonical backup runtime inventory"
+            )
+        validate_backup_bucket_controls(
+            project=args.project,
+            project_number=args.project_number,
+            environment=args.environment,
+            bucket=args.backup_bucket,
+        )
+        assert legacy_identity is not None
+        authority_arguments = [*rollback_inputs, legacy_identity.tag_commit]
+        controller_authority = {
+            "mode": "legacy-rollback",
+            "legacy_tag": args.target_tag,
+            "legacy_tag_object_sha": legacy_identity.tag_object_sha,
+            "legacy_tag_commit": legacy_identity.tag_commit,
+            "runtime_source_ref": legacy_identity.runtime_source_ref,
+            "version": legacy_identity.version,
+        }
+    else:
+        if any(candidate_inputs):
+            raise SystemExit("published preflight cannot use candidate workflow inputs")
+        release_identity = validate_bound_release_identity(
+            args.target_tag,
+            args.target_ref,
+            require_main=args.purpose == "release",
+        )
+        if release_identity.version != target_version:
+            raise RuntimeError("published preflight release identity differs")
+        authority_arguments = [
+            release_identity.manifest_digest,
+            release_identity.tag_object_sha,
+        ]
+        controller_authority = {
+            "mode": "published",
+            "manifest_digest": release_identity.manifest_digest,
+            "tag_object_sha": release_identity.tag_object_sha,
+        }
     validate_candidate_main(args.helper_ref)
     require_local_file_at_ref(args.helper_ref, "scripts/gcp/image-preflight.sh")
     require_local_file_at_ref(args.helper_ref, "scripts/gcp/safe_io.py")
@@ -3468,6 +4686,7 @@ def command_image_preflight(args: argparse.Namespace) -> int:
             args.environment,
             args.ghcr_secret_version,
             args.purpose,
+            *authority_arguments,
         ],
         timeout=args.timeout_seconds,
     )
@@ -3476,6 +4695,7 @@ def command_image_preflight(args: argparse.Namespace) -> int:
         "OMEGA_GCP_IMAGE_PREFLIGHT_CHECK",
         "OMEGA_GCP_IMAGE_PREFLIGHT_JSON",
     )
+    payload = {**payload, "controller_authority": controller_authority}
     evidence = args.evidence_dir or EVIDENCE_ROOT / "image-preflight-gcp" / utc_stamp()
     status = write_evidence(
         evidence,
@@ -3555,12 +4775,77 @@ def command_prepare_artifacts(args: argparse.Namespace) -> int:
     return 0
 
 
+def validate_backup_result_payload(
+    payload: dict[str, Any],
+    *,
+    purpose: str,
+    backup_id: str,
+    source_ref: str,
+    source_version: str,
+    backup_bucket: str,
+    lakehouse_bucket: str,
+) -> None:
+    exact_keys = {
+        "status",
+        "purpose",
+        "backup_id",
+        "source_ref",
+        "source_version",
+        "manifest_uri",
+        "manifest_sha256",
+        "manifest_generation",
+        "manifest_size_bytes",
+        "runtime_images_uri",
+        "runtime_images_sha256",
+        "runtime_images_generation",
+        "runtime_images_size_bytes",
+        "object_count",
+        "lakehouse_bucket",
+        "backup_bucket",
+    }
+    prefix = f"gs://{backup_bucket}/_omega_backups/{backup_id}"
+    if (
+        set(payload) != exact_keys
+        or payload.get("status") != "PASS"
+        or payload.get("purpose") != purpose
+        or payload.get("backup_id") != backup_id
+        or payload.get("source_ref") != source_ref
+        or payload.get("source_version") != source_version
+        or payload.get("manifest_uri") != f"{prefix}/manifest.json"
+        or payload.get("runtime_images_uri") != f"{prefix}/runtime-images.json"
+        or payload.get("backup_bucket") != backup_bucket
+        or payload.get("lakehouse_bucket") != lakehouse_bucket
+        or SHA256_RE.fullmatch(str(payload.get("manifest_sha256", ""))) is None
+        or SHA256_RE.fullmatch(str(payload.get("runtime_images_sha256", "")))
+        is None
+        or re.fullmatch(
+            r"[1-9][0-9]*", str(payload.get("manifest_generation", ""))
+        )
+        is None
+        or re.fullmatch(
+            r"[1-9][0-9]*", str(payload.get("runtime_images_generation", ""))
+        )
+        is None
+        or not isinstance(payload.get("manifest_size_bytes"), int)
+        or payload["manifest_size_bytes"] <= 0
+        or not isinstance(payload.get("runtime_images_size_bytes"), int)
+        or payload["runtime_images_size_bytes"] <= 0
+        or not isinstance(payload.get("object_count"), int)
+        or payload["object_count"] <= 0
+    ):
+        raise ValueError("remote backup result is not exact source/manifest authority")
+
+
 def command_backup(args: argparse.Namespace) -> int:
     require_target(args)
     if not args.confirm and os.environ.get("CONFIRM_GCP_BACKUP") != "1":
         raise SystemExit("backup requires --confirm or CONFIRM_GCP_BACKUP=1")
-    backup_id = args.backup_id or f"{utc_stamp()}-predeploy"
-    validate_candidate_identity(args.candidate_ref)
+    backup_id = args.backup_id or f"{utc_stamp()}-{args.backup_phase}"
+    if args.backup_phase == "rollback-baseline":
+        validate_unpublished_release_identity(args.release_tag, args.candidate_ref)
+    else:
+        validate_bound_release_identity(args.release_tag, args.candidate_ref)
+    validate_current_live_source(args.current_live_ref, args.current_live_version)
     require_exact_terraform_tree_at_ref(args.candidate_ref, args.terraform_dir)
     validate_reviewed_target_identity(
         var_file=args.terraform_var_file,
@@ -3607,8 +4892,21 @@ def command_backup(args: argparse.Namespace) -> int:
         project_number=args.project_number,
         lakehouse_bucket=args.lakehouse_bucket,
     )
-    if not FULL_SHA_RE.fullmatch(args.current_live_ref):
-        raise SystemExit("GCP_CURRENT_LIVE_REF must be one full lowercase SHA")
+    routing_raw, _routing = read_private_external_routing_scheduler_attestation(
+        args.external_routing_scheduler_attestation,
+        source_sha=args.candidate_ref,
+        instance_id=args.instance_id,
+        project=args.project,
+        environment=args.environment,
+        console_domain=args.public_console_domain,
+        workspace_domain=args.public_workspace_domain,
+    )
+    require_zero_aws_writer_gate(_routing, operation="GCP pre-deploy backup")
+    routing_attestation = upload_external_routing_scheduler_attestation_immutable(
+        raw=routing_raw,
+        bucket=args.artifact_bucket,
+        source_sha=args.candidate_ref,
+    )
     with tempfile.TemporaryDirectory(prefix="omega-gcp-backup-candidate-") as temp:
         archive = Path(temp) / "repo.tar.gz"
         artifact_sha = create_archive(args.candidate_ref, archive)
@@ -3658,12 +4956,33 @@ def command_backup(args: argparse.Namespace) -> int:
             str(backup_controls["location"]),
             args.project,
             "backup",
+            args.current_live_version,
+            args.backup_phase,
         ],
         timeout=args.timeout_seconds,
     )
     checks, payload = parse_remote(
         result.stdout, "OMEGA_GCP_BACKUP_CHECK", "OMEGA_GCP_BACKUP_JSON"
     )
+    try:
+        validate_backup_result_payload(
+            payload,
+            purpose=args.backup_phase,
+            backup_id=backup_id,
+            source_ref=args.current_live_ref,
+            source_version=args.current_live_version,
+            backup_bucket=args.backup_bucket,
+            lakehouse_bucket=args.lakehouse_bucket,
+        )
+    except ValueError as exc:
+        checks.append(
+            {
+                "name": "exact backup result authority",
+                "status": "FAIL",
+                "evidence": str(exc),
+            }
+        )
+        payload = {**payload, "status": "FAIL"}
     evidence = args.evidence_dir or EVIDENCE_ROOT / "backup-gcp" / utc_stamp()
     status = write_evidence(
         evidence,
@@ -3674,7 +4993,16 @@ def command_backup(args: argparse.Namespace) -> int:
     )
     print(
         json.dumps(
-            {"status": status, "evidence_dir": str(evidence), **payload}, indent=2
+            {
+                "status": status,
+                "backup_phase": args.backup_phase,
+                "evidence_dir": str(evidence),
+                "external_routing_scheduler_attestation": (
+                    routing_attestation.as_dict()
+                ),
+                **payload,
+            },
+            indent=2,
         )
     )
     return 0 if status == "PASS" else 1
@@ -3691,12 +5019,32 @@ def command_reconcile_pipeline_runs(args: argparse.Namespace) -> int:
             "pipeline-run reconciliation requires --confirm or "
             "CONFIRM_GCP_PIPELINE_RUN_RECONCILIATION=1"
         )
-    if not isinstance(args.expected_count, int) or not 1 <= args.expected_count <= 1_000:
+    if (
+        not isinstance(args.expected_count, int)
+        or not 1 <= args.expected_count <= 1_000
+    ):
         raise SystemExit("GCP_PIPELINE_RECONCILIATION_EXPECTED_COUNT is required")
-    validate_candidate_identity(args.helper_ref)
-    require_local_file_at_ref(
-        args.helper_ref, "scripts/gcp/reconcile-pipeline-runs.sh"
+    if (
+        not args.approve_snapshot_to_fence_rpo
+        and os.environ.get("CONFIRM_GCP_SNAPSHOT_TO_FENCE_RPO") != "1"
+    ):
+        raise SystemExit(
+            "pipeline-run reconciliation requires explicit approval of any writes "
+            "between fresh backup completion and the writer fence"
+        )
+    if not 300 <= args.handoff_timeout_seconds <= 3_600:
+        raise SystemExit("reconciliation-to-deploy handoff must be 300..3600 seconds")
+    release_identity = validate_bound_release_identity(
+        args.release_tag, args.helper_ref
     )
+    require_local_file_at_ref(args.helper_ref, "scripts/gcp/reconcile-pipeline-runs.sh")
+    for relative in (
+        "scripts/reconcile_pipeline_runs.py",
+        "scripts/gcp/runtime_contract.py",
+        "scripts/gcp/operation-watchdog.sh",
+        "scripts/gcp/metadata-firewall.sh",
+    ):
+        require_local_file_at_ref(args.helper_ref, relative)
     require_exact_terraform_tree_at_ref(args.helper_ref, args.terraform_dir)
     validate_reviewed_target_identity(
         var_file=args.terraform_var_file,
@@ -3757,11 +5105,26 @@ def command_reconcile_pipeline_runs(args: argparse.Namespace) -> int:
     manifest_bytes, manifest = read_private_reconciliation_manifest(
         args.manifest, expected_count=args.expected_count
     )
+    routing_raw, routing = read_private_external_routing_scheduler_attestation(
+        args.external_routing_scheduler_attestation,
+        source_sha=args.helper_ref,
+        instance_id=args.instance_id,
+        project=args.project,
+        environment=args.environment,
+        console_domain=args.public_console_domain,
+        workspace_domain=args.public_workspace_domain,
+    )
+    require_zero_aws_writer_gate(routing, operation="pipeline-run reconciliation")
     immutable = upload_reconciliation_manifest_immutable(
         manifest_bytes=manifest_bytes,
         manifest=manifest,
         bucket=args.artifact_bucket,
         helper_ref=args.helper_ref,
+    )
+    routing_attestation = upload_external_routing_scheduler_attestation_immutable(
+        raw=routing_raw,
+        bucket=args.artifact_bucket,
+        source_sha=args.helper_ref,
     )
     result = remote_script(
         project=args.project,
@@ -3786,8 +5149,25 @@ def command_reconcile_pipeline_runs(args: argparse.Namespace) -> int:
             args.project,
             args.artifact_bucket,
             args.compose_project,
+            routing_attestation.uri,
+            routing_attestation.generation,
+            str(routing_attestation.size_bytes),
+            routing_attestation.sha256,
+            args.instance_id,
+            args.release_tag,
+            release_identity.manifest_digest,
+            release_identity.tag_object_sha,
+            str(args.handoff_timeout_seconds),
         ],
         timeout=args.timeout_seconds,
+        companion_scripts={
+            "reconcile_pipeline_runs.py": REPO
+            / "scripts"
+            / "reconcile_pipeline_runs.py",
+            "runtime_contract.py": REMOTE_ROOT / "runtime_contract.py",
+            "operation-watchdog.sh": REMOTE_ROOT / "operation-watchdog.sh",
+            "metadata-firewall.sh": REMOTE_ROOT / "metadata-firewall.sh",
+        },
     )
     checks, payload = parse_remote(
         result.stdout,
@@ -3795,8 +5175,7 @@ def command_reconcile_pipeline_runs(args: argparse.Namespace) -> int:
         "OMEGA_GCP_RECONCILE_JSON",
     )
     evidence = (
-        args.evidence_dir
-        or EVIDENCE_ROOT / "reconcile-pipeline-runs-gcp" / utc_stamp()
+        args.evidence_dir or EVIDENCE_ROOT / "reconcile-pipeline-runs-gcp" / utc_stamp()
     )
     status = write_evidence(
         evidence,
@@ -3811,6 +5190,9 @@ def command_reconcile_pipeline_runs(args: argparse.Namespace) -> int:
                 "status": status,
                 "evidence_dir": str(evidence),
                 "manifest": immutable.as_dict(),
+                "external_routing_scheduler_attestation": (
+                    routing_attestation.as_dict()
+                ),
                 **payload,
             },
             indent=2,
@@ -3832,7 +5214,8 @@ def command_deploy(args: argparse.Namespace) -> int:
     if not re.fullmatch(r"[1-9][0-9]*", args.ghcr_secret_version):
         raise SystemExit("GCP_GHCR_SECRET_VERSION must be an explicit numeric version")
     require_canonical_ghcr_owner(args.ghcr_owner)
-    version = validate_release_identity(args.tag, args.deploy_ref)
+    release_identity = validate_bound_release_identity(args.tag, args.deploy_ref)
+    version = release_identity.version
     require_startup_files_at_ref(args.deploy_ref)
     require_exact_terraform_tree_at_ref(args.deploy_ref, args.terraform_dir)
     require_local_file_at_ref(args.deploy_ref, "scripts/gcp/verify-secret-access.sh")
@@ -3881,9 +5264,26 @@ def command_deploy(args: argparse.Namespace) -> int:
         project_number=args.project_number,
         lakehouse_bucket=args.lakehouse_bucket,
     )
+    routing_raw, routing = read_private_external_routing_scheduler_attestation(
+        args.external_routing_scheduler_attestation,
+        source_sha=args.deploy_ref,
+        instance_id=args.instance_id,
+        project=args.project,
+        environment=args.environment,
+        console_domain=args.public_console_domain,
+        workspace_domain=args.public_workspace_domain,
+    )
+    require_zero_aws_writer_gate(routing, operation="GCP deploy")
+    routing_attestation = upload_external_routing_scheduler_attestation_immutable(
+        raw=routing_raw,
+        bucket=args.artifact_bucket,
+        source_sha=args.deploy_ref,
+    )
     expected_manifest_prefix = f"gs://{args.backup_bucket}/_omega_backups/"
     if not args.backup_manifest_uri.startswith(expected_manifest_prefix):
-        raise SystemExit("backup manifest is outside the canonical release backup bucket")
+        raise SystemExit(
+            "backup manifest is outside the canonical release backup bucket"
+        )
     validate_effective_least_privilege(
         project=args.project,
         zone=args.zone,
@@ -3968,13 +5368,115 @@ def command_deploy(args: argparse.Namespace) -> int:
             args.ghcr_secret_version,
             str(backup_controls["policy_sha256"]),
             args.project,
+            release_identity.manifest_digest,
+            release_identity.tag_object_sha,
         ],
         timeout=args.timeout_seconds,
     )
+    deploy_completed_at = datetime.now(timezone.utc)
     checks, payload = parse_remote(
         result.stdout, "OMEGA_GCP_RELEASE_CHECK", "OMEGA_GCP_RELEASE_JSON"
     )
     evidence = args.evidence_dir or EVIDENCE_ROOT / "deploy-gcp" / utc_stamp()
+    remote_status = write_evidence(
+        evidence,
+        operation="Deploy (post-deploy external gate pending)",
+        result=result,
+        checks=checks,
+        payload=payload,
+    )
+    if remote_status != "PASS":
+        print(
+            json.dumps(
+                {
+                    **payload,
+                    "status": "FAIL",
+                    "evidence_dir": str(evidence),
+                    "postdeploy_external_gate_attempted": False,
+                },
+                indent=2,
+            )
+        )
+        return 1
+    try:
+        postdeploy_raw, postdeploy_routing_payload = (
+            wait_for_fresh_postdeploy_routing_scheduler_attestation(
+                args.postdeploy_external_routing_scheduler_attestation,
+                predeploy_sha256=routing_attestation.sha256,
+                not_before=deploy_completed_at,
+                timeout_seconds=args.postdeploy_attestation_timeout_seconds,
+                source_sha=args.deploy_ref,
+                instance_id=args.instance_id,
+                project=args.project,
+                environment=args.environment,
+                console_domain=args.public_console_domain,
+                workspace_domain=args.public_workspace_domain,
+            )
+        )
+        require_zero_aws_writer_gate(
+            postdeploy_routing_payload, operation="post-deploy regression"
+        )
+    except (OSError, RuntimeError, ValueError, SystemExit) as exc:
+        checks.append(
+            {
+                "name": "fresh post-deploy external zero-writer evidence",
+                "status": "FAIL",
+                "evidence": redact(str(exc)),
+            }
+        )
+        failure_payload = {
+            **payload,
+            "status": "FAIL",
+            "postdeploy_external_gate": "FAIL",
+        }
+        write_evidence(
+            evidence,
+            operation="Deploy",
+            result=result,
+            checks=checks,
+            payload=failure_payload,
+        )
+        print(
+            json.dumps(
+                {
+                    **payload,
+                    "status": "FAIL",
+                    "evidence_dir": str(evidence),
+                    "postdeploy_external_gate": "FAIL",
+                },
+                indent=2,
+            )
+        )
+        return 1
+    postdeploy_attestation = upload_external_routing_scheduler_attestation_immutable(
+        raw=postdeploy_raw,
+        bucket=args.artifact_bucket,
+        source_sha=args.deploy_ref,
+    )
+    validate_live_public_edge(
+        project=args.project,
+        environment=args.environment,
+        public_console_domain=args.public_console_domain,
+        public_workspace_domain=args.public_workspace_domain,
+    )
+    validate_transfer_fence(
+        project=args.project,
+        project_number=args.project_number,
+        lakehouse_bucket=args.lakehouse_bucket,
+    )
+    postdeploy_routing = revalidate_external_routing_scheduler_live(
+        postdeploy_routing_payload,
+        console_domain=args.public_console_domain,
+        workspace_domain=args.public_workspace_domain,
+    )
+    checks.append(
+        {
+            "name": "fresh post-deploy external zero-writer evidence",
+            "status": "PASS",
+            "evidence": "distinct post-completion attestation and live probes passed",
+        }
+    )
+    payload = {**payload, "postdeploy_external_gate": "PASS"}
     status = write_evidence(
         evidence,
         operation="Deploy",
@@ -3984,7 +5486,19 @@ def command_deploy(args: argparse.Namespace) -> int:
     )
     print(
         json.dumps(
-            {"status": status, "evidence_dir": str(evidence), **payload}, indent=2
+            {
+                "status": status,
+                "evidence_dir": str(evidence),
+                "external_routing_scheduler_attestation": (
+                    routing_attestation.as_dict()
+                ),
+                "postdeploy_routing_scheduler_observation": postdeploy_routing,
+                "postdeploy_routing_scheduler_attestation": (
+                    postdeploy_attestation.as_dict()
+                ),
+                **payload,
+            },
+            indent=2,
         )
     )
     return 0 if status == "PASS" else 1
@@ -3999,7 +5513,9 @@ def command_rehearsal(args: argparse.Namespace) -> int:
     if not re.fullmatch(r"[1-9][0-9]*", args.backup_manifest_size_bytes):
         raise SystemExit("GCP_BACKUP_MANIFEST_SIZE_BYTES must be explicit")
     if args.object_verify_mode != "all":
-        raise SystemExit("formal restore rehearsal requires verification of all objects")
+        raise SystemExit(
+            "formal restore rehearsal requires verification of all objects"
+        )
     if not FULL_SHA_RE.fullmatch(args.expected_source_ref):
         raise SystemExit("GCP_RESTORE_SOURCE_REF must be one exact commit SHA")
     if not re.fullmatch(
@@ -4012,11 +5528,14 @@ def command_rehearsal(args: argparse.Namespace) -> int:
         args.expected_backup_id,
     ):
         raise SystemExit("GCP_RESTORE_BACKUP_ID must be exact")
-    if re.fullmatch(
-        rf"gs://[a-z0-9][a-z0-9._-]{{1,61}}[a-z0-9]/_omega_backups/"
-        rf"{re.escape(args.expected_backup_id)}/manifest\.json",
-        args.backup_manifest_uri,
-    ) is None:
+    if (
+        re.fullmatch(
+            rf"gs://[a-z0-9][a-z0-9._-]{{1,61}}[a-z0-9]/_omega_backups/"
+            rf"{re.escape(args.expected_backup_id)}/manifest\.json",
+            args.backup_manifest_uri,
+        )
+        is None
+    ):
         raise SystemExit("restore manifest URI differs from GCP_RESTORE_BACKUP_ID")
     if git("cat-file", "-t", args.expected_source_ref) != "commit":
         raise SystemExit("GCP_RESTORE_SOURCE_REF is not a local Git commit")
@@ -4349,9 +5868,7 @@ def build_parser() -> argparse.ArgumentParser:
     backup_apply.add_argument(
         "--environment", default=os.environ.get("OMEGA_GCP_ENVIRONMENT", "")
     )
-    backup_apply.add_argument(
-        "--region", default=os.environ.get("GCP_REGION", "")
-    )
+    backup_apply.add_argument("--region", default=os.environ.get("GCP_REGION", ""))
     backup_apply.add_argument("--confirm", action="store_true")
     backup_apply.set_defaults(handler=command_apply_backup_storage)
 
@@ -4399,6 +5916,49 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("release", "rollback"),
         default=os.environ.get("GCP_IMAGE_PREFLIGHT_PURPOSE", "rollback"),
     )
+    image_preflight.add_argument(
+        "--candidate-workflow-run-id",
+        default=os.environ.get("GCP_RELEASE_CANDIDATE_WORKFLOW_RUN_ID", ""),
+    )
+    image_preflight.add_argument(
+        "--candidate-workflow-run-attempt",
+        default=os.environ.get("GCP_RELEASE_CANDIDATE_WORKFLOW_RUN_ATTEMPT", ""),
+    )
+    image_preflight.add_argument(
+        "--backup-bucket", default=os.environ.get("GCP_RELEASE_BACKUP_BUCKET", "")
+    )
+    image_preflight.add_argument(
+        "--rollback-runtime-images-uri",
+        default=os.environ.get("GCP_ROLLBACK_RUNTIME_IMAGES_URI", ""),
+    )
+    image_preflight.add_argument(
+        "--rollback-runtime-images-generation",
+        default=os.environ.get("GCP_ROLLBACK_RUNTIME_IMAGES_GENERATION", ""),
+    )
+    image_preflight.add_argument(
+        "--rollback-runtime-images-size-bytes",
+        default=os.environ.get("GCP_ROLLBACK_RUNTIME_IMAGES_SIZE_BYTES", ""),
+    )
+    image_preflight.add_argument(
+        "--rollback-runtime-images-sha256",
+        default=os.environ.get("GCP_ROLLBACK_RUNTIME_IMAGES_SHA256", ""),
+    )
+    image_preflight.add_argument(
+        "--rollback-backup-manifest-uri",
+        default=os.environ.get("GCP_ROLLBACK_BACKUP_MANIFEST_URI", ""),
+    )
+    image_preflight.add_argument(
+        "--rollback-backup-manifest-generation",
+        default=os.environ.get("GCP_ROLLBACK_BACKUP_MANIFEST_GENERATION", ""),
+    )
+    image_preflight.add_argument(
+        "--rollback-backup-manifest-size-bytes",
+        default=os.environ.get("GCP_ROLLBACK_BACKUP_MANIFEST_SIZE_BYTES", ""),
+    )
+    image_preflight.add_argument(
+        "--rollback-backup-manifest-sha256",
+        default=os.environ.get("GCP_ROLLBACK_BACKUP_MANIFEST_SHA256", ""),
+    )
     image_preflight.add_argument("--confirm", action="store_true")
     image_preflight.set_defaults(handler=command_image_preflight)
 
@@ -4415,12 +5975,27 @@ def build_parser() -> argparse.ArgumentParser:
         "--environment", default=os.environ.get("OMEGA_GCP_ENVIRONMENT", "")
     )
     backup.add_argument("--backup-id", default=os.environ.get("GCP_BACKUP_ID", ""))
+    backup.add_argument(
+        "--backup-phase",
+        choices=("rollback-baseline", "predeploy"),
+        default=os.environ.get("GCP_BACKUP_PHASE", "predeploy"),
+    )
     backup.add_argument("--candidate-ref", default=os.environ.get("GCP_DEPLOY_REF", ""))
+    backup.add_argument("--release-tag", default=os.environ.get("GCP_RELEASE_TAG", ""))
     backup.add_argument(
         "--artifact-bucket", default=os.environ.get("GCP_SOURCE_BUCKET", "")
     )
     backup.add_argument(
+        "--external-routing-scheduler-attestation",
+        type=Path,
+        default=Path(os.environ.get("GCP_EXTERNAL_ROUTING_SCHEDULER_ATTESTATION", "")),
+    )
+    backup.add_argument(
         "--current-live-ref", default=os.environ.get("GCP_CURRENT_LIVE_REF", "")
+    )
+    backup.add_argument(
+        "--current-live-version",
+        default=os.environ.get("GCP_CURRENT_LIVE_VERSION", ""),
     )
     backup.add_argument("--confirm", action="store_true")
     backup.set_defaults(handler=command_backup)
@@ -4437,12 +6012,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path(os.environ.get("GCP_PIPELINE_RECONCILIATION_MANIFEST", "")),
     )
     reconcile.add_argument(
+        "--external-routing-scheduler-attestation",
+        type=Path,
+        default=Path(os.environ.get("GCP_EXTERNAL_ROUTING_SCHEDULER_ATTESTATION", "")),
+    )
+    reconcile.add_argument(
         "--expected-count",
         type=int,
         default=os.environ.get("GCP_PIPELINE_RECONCILIATION_EXPECTED_COUNT", "0"),
     )
+    reconcile.add_argument("--helper-ref", default=os.environ.get("GCP_DEPLOY_REF", ""))
     reconcile.add_argument(
-        "--helper-ref", default=os.environ.get("GCP_DEPLOY_REF", "")
+        "--release-tag", default=os.environ.get("GCP_RELEASE_TAG", "")
     )
     reconcile.add_argument(
         "--current-live-ref", default=os.environ.get("GCP_CURRENT_LIVE_REF", "")
@@ -4475,6 +6056,16 @@ def build_parser() -> argparse.ArgumentParser:
     reconcile.add_argument(
         "--environment", default=os.environ.get("OMEGA_GCP_ENVIRONMENT", "")
     )
+    reconcile.add_argument(
+        "--handoff-timeout-seconds",
+        type=int,
+        default=int(os.environ.get("GCP_RECONCILIATION_HANDOFF_TIMEOUT", "1800")),
+    )
+    reconcile.add_argument(
+        "--approve-snapshot-to-fence-rpo",
+        action="store_true",
+        help="acknowledge the bounded snapshot-completion to writer-fence RPO",
+    )
     reconcile.add_argument("--confirm", action="store_true")
     reconcile.set_defaults(handler=command_reconcile_pipeline_runs)
 
@@ -4485,6 +6076,23 @@ def build_parser() -> argparse.ArgumentParser:
     deploy.add_argument("--deploy-ref", default=os.environ.get("GCP_DEPLOY_REF", ""))
     deploy.add_argument(
         "--artifact-bucket", default=os.environ.get("GCP_SOURCE_BUCKET", "")
+    )
+    deploy.add_argument(
+        "--external-routing-scheduler-attestation",
+        type=Path,
+        default=Path(os.environ.get("GCP_EXTERNAL_ROUTING_SCHEDULER_ATTESTATION", "")),
+    )
+    deploy.add_argument(
+        "--postdeploy-external-routing-scheduler-attestation",
+        type=Path,
+        default=Path(
+            os.environ.get("GCP_POSTDEPLOY_EXTERNAL_ROUTING_SCHEDULER_ATTESTATION", "")
+        ),
+    )
+    deploy.add_argument(
+        "--postdeploy-attestation-timeout-seconds",
+        type=int,
+        default=int(os.environ.get("GCP_POSTDEPLOY_ATTESTATION_TIMEOUT", "300")),
     )
     deploy.add_argument(
         "--backup-bucket", default=os.environ.get("GCP_RELEASE_BACKUP_BUCKET", "")

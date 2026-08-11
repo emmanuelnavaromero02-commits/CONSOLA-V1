@@ -308,6 +308,7 @@ emit "backup manifest checksum" "PASS" "sha256=${ACTUAL_MANIFEST_SHA}"
 
 mapfile -t DB_RESTORE_VALUES < <(python3 - "$MANIFEST" <<'PY'
 import json
+import re
 import sys
 
 settings = json.load(open(sys.argv[1], encoding="utf-8"))["database_restore_settings"]["databases"]
@@ -431,8 +432,42 @@ import sys
 
 images = json.load(open(sys.argv[1], encoding="utf-8"))
 provenance = json.load(open(sys.argv[2], encoding="utf-8"))
-if images.get("secret_values_included") is not False or not isinstance(images.get("services"), dict):
-    raise SystemExit("runtime image evidence is malformed")
+expected_packages = {
+    "console", "workspace", "refinement", "vault", "mcp-infra", "airflow",
+    "replicon", "hubspot", "banxico", "inegi", "sec_edgar", "sap_hcm",
+    "sap_s4hana", "sap_successfactors", "salesforce",
+}
+if (
+    set(images) != {"schema_version", "source_release", "images", "secret_values_included"}
+    or images.get("schema_version") != 2
+    or images.get("source_release")
+       != {"deploy_ref": sys.argv[3], "version": sys.argv[4]}
+    or images.get("secret_values_included") is not False
+    or not isinstance(images.get("images"), dict)
+    or set(images["images"]) != expected_packages
+):
+    raise SystemExit("runtime image authority is not exact schema v2 15/15")
+owner = "emmanuelnavaromero02-commits"
+for package, row in images["images"].items():
+    repository = f"ghcr.io/{owner}/{package}"
+    if not isinstance(row, dict) or set(row) != {
+        "configured_ref", "repo_digest", "image_id"
+    }:
+        raise SystemExit(f"runtime image row shape differs: {package}")
+    repo_digest = row.get("repo_digest", "")
+    if re.fullmatch(
+        re.escape(repository) + r"@sha256:[0-9a-f]{64}", repo_digest
+    ) is None:
+        raise SystemExit(f"runtime RepoDigest differs: {package}")
+    digest = repo_digest.split("@", 1)[1]
+    if (
+        row.get("configured_ref") not in {
+            f"{repository}:v{sys.argv[4]}",
+            f"{repository}:v{sys.argv[4]}@{digest}",
+        }
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", str(row.get("image_id", ""))) is None
+    ):
+        raise SystemExit(f"runtime configured ref or ImageID differs: {package}")
 if (
     provenance.get("deploy_ref") != sys.argv[3]
     or provenance.get("version") != sys.argv[4]

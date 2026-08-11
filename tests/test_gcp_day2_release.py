@@ -42,6 +42,12 @@ def test_gcp_release_overlay_covers_exactly_15_proprietary_images() -> None:
     assert overlay.count("OMEGA_GCP_IMAGE_AIRFLOW") == 3
     assert overlay.count("build: !reset null") == 17
     assert overlay.count("pull_policy: never") == 17
+    assert overlay.count("/opt/modecissions/shared/airflow/dags:/opt/airflow/dags") == 3
+    assert overlay.count("/opt/modecissions/shared/airflow/logs:/opt/airflow/logs") == 2
+    assert (
+        overlay.count("/opt/modecissions/shared/airflow/plugins:/opt/airflow/plugins")
+        == 2
+    )
 
 
 def test_gcp_release_overlay_resolves_with_base_compose() -> None:
@@ -189,11 +195,10 @@ def test_permanent_operation_gate_publication_is_crash_safe() -> None:
         assert "fsync-file" in publish
         assert publish.index(
             'mv -Tf "$dropin_tmp" /etc/systemd/system/docker.service.d/omega-operation-gate.conf'
-        ) < publish.index(
-            'mv -Tf "$guard_tmp" /usr/local/sbin/omega-operation-gate'
-        )
-        assert "> /etc/systemd/system/docker.service.d/omega-operation-gate.conf" not in (
-            publish
+        ) < publish.index('mv -Tf "$guard_tmp" /usr/local/sbin/omega-operation-gate')
+        assert (
+            "> /etc/systemd/system/docker.service.d/omega-operation-gate.conf"
+            not in (publish)
         )
 
 
@@ -214,9 +219,7 @@ def test_state_bundle_cleanup_is_disarmed_at_the_atomic_commit_point() -> None:
 def test_failed_restore_or_deploy_reestablishes_verified_writer_fence() -> None:
     backup = _read("scripts/gcp/backup.sh")
     backup_recovery = backup[
-        backup.index("ensure_fail_closed_runtime()") : backup.index(
-            "restore_runtime()"
-        )
+        backup.index("ensure_fail_closed_runtime()") : backup.index("restore_runtime()")
     ]
     assert 'write_operation_state "restore-failed"' in backup_recovery
     assert 'stop --timeout 30 "${WRITER_SERVICES[@]}"' in backup_recovery
@@ -237,7 +240,7 @@ def test_failed_restore_or_deploy_reestablishes_verified_writer_fence() -> None:
         match = re.search(r"database_fence\(\) \{\n(.*?)\n\}", script, re.DOTALL)
         assert match
         fence = match.group(1)
-        assert 'local rc=0' in fence
+        assert "local rc=0" in fence
         assert 'return "$rc"' in fence
 
 
@@ -267,9 +270,7 @@ def test_independent_watchdog_covers_every_live_writer_mutation_window() -> None
         assert "operation-watchdog.sh" in script
         arm = re.search(r'(?m)^.*WATCHDOG[^\n]* arm "\$\$"', script)
         assert arm
-        disarm = re.search(
-            r'(?m)^.*WATCHDOG[^\n]* disarm "\$\$"', script[arm.end() :]
-        )
+        disarm = re.search(r'(?m)^.*WATCHDOG[^\n]* disarm "\$\$"', script[arm.end() :])
         assert disarm
 
 
@@ -302,8 +303,10 @@ def test_reused_release_lock_and_evidence_reject_path_and_mode_drift() -> None:
     assert "info.st_gid != 0" in managed
     assert "stat.S_IMODE(info.st_mode) & 0o022" in managed
 
-    release = deploy[deploy.index('RELEASE_MARKER="${RELEASE_DIR}/.omega-release.json"') :]
-    release = release[: release.index('ACTUAL_VERSION=')]
+    release = deploy[
+        deploy.index('RELEASE_MARKER="${RELEASE_DIR}/.omega-release.json"') :
+    ]
+    release = release[: release.index("ACTUAL_VERSION=")]
     assert '[[ -e "$RELEASE_DIR" || -L "$RELEASE_DIR" ]]' in release
     assert "--exclude .omega-release.json --require-read-only" in release
     assert "not stat.S_ISREG(info.st_mode)" in release
@@ -314,13 +317,13 @@ def test_reused_release_lock_and_evidence_reject_path_and_mode_drift() -> None:
         'TREE_SHA256="$($SAFE_IO tree-sha256 --root "$RELEASE_TMP" --require-read-only)"'
     )
 
-    lock = deploy[deploy.index('NEW_LOCK_TREE_SHA256=') : deploy.index("COMPOSE=(")]
+    lock = deploy[deploy.index("NEW_LOCK_TREE_SHA256=") : deploy.index("COMPOSE=(")]
     assert '[[ -e "$LOCK_DIR" || -L "$LOCK_DIR" ]]' in lock
     assert 'tree-sha256 --root "$LOCK_DIR"' in lock
     assert '"$EXISTING_LOCK_TREE_SHA256" != "$NEW_LOCK_TREE_SHA256"' in lock
     assert '"$LOCK_TREE_SHA256" != "$NEW_LOCK_TREE_SHA256"' in lock
 
-    evidence = deploy[deploy.index('DEPLOYMENT_PROVENANCE_STAGE=') :]
+    evidence = deploy[deploy.index("DEPLOYMENT_PROVENANCE_STAGE=") :]
     evidence = evidence[: evidence.index('write_operation_state "validated"')]
     assert '--write-provenance "$DEPLOYMENT_PROVENANCE_STAGE"' in evidence
     assert "not stat.S_ISREG(info.st_mode)" in evidence
@@ -360,10 +363,12 @@ def test_deploy_fails_closed_and_promotes_only_after_all_gates() -> None:
     assert "--scheduler stopped --one-shots" in deploy
     assert "--scheduler required --one-shots" in deploy
     assert (
-        "running=22 healthy=22 scheduler=1 analytics=healthy exact_lock=true"
+        "running=22 healthy=22 scheduler=1 analytics=healthy exact_lock=true" in deploy
+    )
+    assert (
+        "manual recovery required; one or more stop/fence/marker checks failed"
         in deploy
     )
-    assert "manual recovery required; one or more stop/fence/marker checks failed" in deploy
     assert 'write_operation_state "fencing"' in deploy
     assert 'write_operation_state "fenced"' in deploy
     assert 'write_operation_state "migrated"' in deploy
@@ -396,7 +401,7 @@ def test_backup_is_writer_fenced_versioned_and_immutable() -> None:
     backup = _read("scripts/gcp/backup.sh")
     assert "expected one scheduler" in backup
     assert "registry credential found in runtime env" in backup
-    assert "all global application writers stopped" in backup
+    assert "all GCP host-local application writers stopped" in backup
     assert "pg_dumpall" in backup
     assert 'get("versioning", {}).get("enabled") is not True' in backup
     assert "object-generation" not in backup
@@ -426,7 +431,9 @@ def test_backup_is_writer_fenced_versioned_and_immutable() -> None:
     assert "down -v" not in backup
 
     staged = backup.index('--output "$ACTIVE_PROVENANCE"')
-    health = backup.index("health/version or readyz/data gate differs from current release")
+    health = backup.index(
+        "health/version or readyz/data gate differs from current release"
+    )
     provenance = backup.index('--provenance "$ACTIVE_PROVENANCE"')
     publication = backup.index('mv -Tf "$STATE_PREVIEW" "$STATE_LINK"')
     assert staged < health < provenance < publication
@@ -434,14 +441,18 @@ def test_backup_is_writer_fenced_versioned_and_immutable() -> None:
     assert "state_pair=atomic" in backup
 
 
-def test_legacy_adoption_binds_host_inputs_and_keeps_cas_marker_until_readback() -> None:
+def test_legacy_adoption_binds_host_inputs_and_keeps_cas_marker_until_readback() -> (
+    None
+):
     backup = _read("scripts/gcp/backup.sh")
     controller = _read("scripts/gcp_release.py")
     finalizer = _read("scripts/gcp/finalize-startup-adoption.sh")
 
     marker = backup.index('write_operation_state "metadata-cas-preparing"')
-    env_backup = backup.index('ENV_BACKUP="${ENV_BACKUPS_ROOT}/${ENV_BEFORE_SHA256}.env"')
-    env_publish = backup.index("env-set --path \"$SHARED_ENV\"")
+    env_backup = backup.index(
+        'ENV_BACKUP="${ENV_BACKUPS_ROOT}/${ENV_BEFORE_SHA256}.env"'
+    )
+    env_publish = backup.index('env-set --path "$SHARED_ENV"')
     gcp_overlay = backup.index(
         'publish_private_file "$LIVE_GCP_RUNTIME_COMPOSE" "$GCP_RUNTIME_COMPOSE"'
     )
@@ -486,6 +497,49 @@ def test_prebackup_data_readiness_exception_is_exact_and_sql_attested() -> None:
     assert "omega_publication.dataset_publication_heads" in backup
     assert "omega_publication.materialization_runs" in backup
     assert "OPERATIONAL_ITEMS + GOLD_ROWS + SILVER_ROWS" in backup
+    assert "omega_publication.dataset_gold_relations" in backup
+    assert "has_table_privilege('omega_refinement_gold',c.oid,'SELECT')" in backup
+    assert "c.relrowsecurity AND c.relforcerowsecurity" in backup
+    assert '"$GOLD_SECURED_RELATIONS" != "$GOLD_REFERENCED_RELATIONS"' in backup
+    assert '"$GOLD_MISSING_RELATIONS" != "0"' in backup
+    assert '"$GOLD_STALE_EXPOSED_RELATIONS" != "0"' in backup
+    assert '"$GOLD_REFERENCED_RELATIONS" != "57"' in backup
+
+
+def test_backup_captures_exact_15_digest_runtime_authority_for_pre_tag_rollback() -> (
+    None
+):
+    backup = _read("scripts/gcp/backup.sh")
+    restore = _read("scripts/gcp/restore-rehearsal.sh")
+    assert 'EXPECTED_CURRENT_VERSION="${14:-}"' in backup
+    assert 'BACKUP_PURPOSE="${15:-predeploy}"' in backup
+    assert '"rollback-baseline"' in backup
+    assert '"schema_version": 2' in backup
+    assert (
+        '"source_release": {"deploy_ref": source_ref, "version": source_version}'
+        in backup
+    )
+    assert '"repo_digest": repo_digests[0]' in backup
+    assert '"image_id": image_id' in backup
+    assert '"airflow-init", "airflow", "airflow-scheduler"' in backup
+    assert '"sec_edgar": {"sec-edgar"}' in backup
+    assert "configured not in {" in backup
+    assert 'provenance_mode == "day2"' in backup
+    assert '"runtime_images_uri"' in backup
+    assert 'images.get("schema_version") != 2' in restore
+    assert 'row.get("configured_ref") not in {' in restore
+    assert "runtime image authority is not exact schema v2 15/15" in restore
+
+
+def test_day2_consumes_published_sealed_authority_and_lock_byte_for_byte() -> None:
+    deploy = _read("scripts/gcp/day2-release.sh")
+    assert 'PUBLISHED_MANIFEST_SHA256="${18:-}"' in deploy
+    assert 'PUBLISHED_TAG_OBJECT_SHA="${19:-}"' in deploy
+    assert "OMEGA_GCP_IMAGE_AUTHORITY_MODE=published" in deploy
+    assert 'cmp "$PUBLISHED_PREFLIGHT_LOCK" "$NEW_LOCK_ENV"' in deploy
+    assert 'cmp "$PUBLISHED_PREFLIGHT_AUTHORITY" "$NEW_IMAGE_AUTHORITY"' in deploy
+    assert '"release_candidate_manifest_digest": sealed_digest' in deploy
+    assert '"release_tag_object_sha": tag_object_sha' in deploy
 
 
 def test_backup_temporarily_holds_every_exact_gcs_generation_before_success() -> None:
@@ -934,15 +988,15 @@ def test_operation_gate_verifies_atomic_pair_current_and_helper_hashes(
                 "schema_version": 1,
                 "mode": "day2",
                 "compose_project": "infra",
-                    "deploy_ref": release_ref,
-                    "version": "1.45.207-beta",
-                    "runtime_input_sha256": {
-                        "shared_env": digest(shared_env),
-                        "base_compose": digest(base_compose),
-                        "gcp_compose": digest(gcp_compose),
-                        "release_compose": digest(release_compose),
-                    },
-                    "services": {},
+                "deploy_ref": release_ref,
+                "version": "1.45.207-beta",
+                "runtime_input_sha256": {
+                    "shared_env": digest(shared_env),
+                    "base_compose": digest(base_compose),
+                    "gcp_compose": digest(gcp_compose),
+                    "release_compose": digest(release_compose),
+                },
+                "services": {},
             }
         ),
         encoding="utf-8",
@@ -1668,17 +1722,13 @@ def test_day2_ci_runs_focal_tests_and_static_scanners() -> None:
     ):
         assert test in focal
     assert lint.count("scripts/gcp_release.py scripts/release_images.py") == 2
-    assert lint.count(
-        "scripts/gcp/runtime_contract.py scripts/gcp/safe_io.py"
-    ) == 2
+    assert lint.count("scripts/gcp/runtime_contract.py scripts/gcp/safe_io.py") == 2
     assert (
         lint.count("scripts/migration_guard.py scripts/generate_migration_manifests.py")
         == 2
     )
     assert security.count("scripts/gcp_release.py scripts/release_images.py") == 2
-    assert security.count(
-        "scripts/gcp/runtime_contract.py scripts/gcp/safe_io.py"
-    ) == 2
+    assert security.count("scripts/gcp/runtime_contract.py scripts/gcp/safe_io.py") == 2
     assert (
         security.count(
             "scripts/migration_guard.py scripts/generate_migration_manifests.py"

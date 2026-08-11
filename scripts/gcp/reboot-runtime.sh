@@ -168,7 +168,7 @@ PY
 MUTATION_STARTED=1
 "${COMPOSE[@]}" stop --timeout 60 "${MUTATING_SERVICES[@]}"
 python3 "$RUNTIME_CONTRACT" writer-fence --compose-project "$COMPOSE_PROJECT" >/dev/null || \
-  fail "reboot writer fence" "a global labeled or unlabeled proprietary writer remains running"
+  fail "reboot writer fence" "a host-local labeled or unlabeled proprietary writer remains running"
 
 # Reuse existing containers only. A missing/replaced container is provenance
 # drift and requires an explicit day-2 operation; reboot never builds or pulls.

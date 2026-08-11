@@ -370,7 +370,15 @@ def _already_applied(row: tuple[Any, ...], expected: RunExpectation) -> bool:
 def _verify_locked_row(row: tuple[Any, ...] | None, expected: RunExpectation) -> str:
     if row is None:
         raise ReconciliationConflict(f"{expected.run_id}: missing; no row was inserted")
+    if row[5] is not True:
+        raise ReconciliationConflict(
+            f"{expected.run_id}: lease is still active; reconciliation is forbidden"
+        )
     if _already_applied(row, expected):
+        if row[6] is not None:
+            raise ReconciliationConflict(
+                f"{expected.run_id}: reconciled row still has a heartbeat"
+            )
         return "already_applied"
     live_status = _normalized_status(row[1])
     live_started_at = _timestamp_text(row[2])
@@ -401,7 +409,10 @@ def _select_row(
     suffix = " FOR UPDATE" if lock else ""
     cur.execute(
         """
-        SELECT run_id, status, started_at, fencing_token, extra
+        SELECT run_id, status, started_at, fencing_token, extra,
+               (lease_expires_at IS NULL OR
+                lease_expires_at <= clock_timestamp()) AS lease_available,
+               heartbeat_at
           FROM pipeline_runs
          WHERE run_id=%s
            AND tenant_id=%s::uuid
@@ -466,6 +477,7 @@ def _apply_one(
                finished_at=COALESCE(finished_at, NOW()),
                error_message=COALESCE(error_message, %s),
                lease_expires_at=NULL,
+               heartbeat_at=NULL,
                fencing_token=fencing_token + 1,
                extra=jsonb_set(
                    COALESCE(extra, '{}'::jsonb),
@@ -486,7 +498,9 @@ def _apply_one(
            AND LOWER(COALESCE(status, 'unknown'))=%s
            AND started_at IS NOT DISTINCT FROM %s::timestamptz
            AND fencing_token=%s
-         RETURNING status, fencing_token
+           AND (lease_expires_at IS NULL OR
+                lease_expires_at <= clock_timestamp())
+         RETURNING status, fencing_token, heartbeat_at, lease_expires_at
         """,
         (
             expected.target_status,
@@ -503,6 +517,10 @@ def _apply_one(
     updated = cur.fetchone()
     if updated is None:
         raise ReconciliationConflict(f"{expected.run_id}: CAS update lost its fence")
+    if updated[2] is not None or updated[3] is not None:
+        raise ReconciliationConflict(
+            f"{expected.run_id}: lease/heartbeat clear readback failed"
+        )
     _append_audit(cur, expected, event=event)
     return {
         "run_id": expected.run_id,

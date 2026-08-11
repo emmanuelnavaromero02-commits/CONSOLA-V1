@@ -19,6 +19,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import urllib.error
@@ -427,6 +428,88 @@ class RegistryClient:
             token=os.environ.get("GITHUB_TOKEN", ""),
         )
 
+    @classmethod
+    def from_private_auth_file(cls, path: Path) -> RegistryClient:
+        """Load one Docker GHCR credential from a confined private file.
+
+        GCP writes this file only below its root-owned tmpfs authentication
+        directory.  Opening it directly with ``O_NOFOLLOW`` avoids a pathname
+        check/use race, and the credential remains process-memory-only.
+        """
+
+        if not path.is_absolute() or path.name != "config.json":
+            raise ReleaseImageError("GHCR auth file must be one absolute config.json")
+        parent = path.parent
+        try:
+            parent_info = parent.lstat()
+        except OSError as exc:
+            raise ReleaseImageError("GHCR auth directory is unavailable") from exc
+        if (
+            not stat.S_ISDIR(parent_info.st_mode)
+            or parent_info.st_uid != os.geteuid()
+            or stat.S_IMODE(parent_info.st_mode) != 0o700
+            or parent.resolve(strict=True) != parent
+        ):
+            raise ReleaseImageError("GHCR auth directory is not privately confined")
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(path, flags)
+        except OSError as exc:
+            raise ReleaseImageError("GHCR auth file is unavailable or linked") from exc
+        try:
+            info = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_uid != os.geteuid()
+                or stat.S_IMODE(info.st_mode) != 0o600
+                or info.st_nlink != 1
+                or not 2 <= info.st_size <= 65536
+            ):
+                raise ReleaseImageError("GHCR auth file ownership or mode is unsafe")
+            raw = b""
+            while len(raw) <= 65536:
+                chunk = os.read(descriptor, 65536 - len(raw) + 1)
+                if not chunk:
+                    break
+                raw += chunk
+            if len(raw) != info.st_size or len(raw) > 65536:
+                raise ReleaseImageError("GHCR auth file changed while reading")
+        finally:
+            os.close(descriptor)
+        try:
+            document = json.loads(raw)
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise ReleaseImageError("GHCR auth file is invalid JSON") from exc
+        if not isinstance(document, dict) or set(document) != {"auths"}:
+            raise ReleaseImageError("GHCR auth file has an unexpected schema")
+        auths = document.get("auths")
+        if not isinstance(auths, dict) or set(auths) != {REGISTRY}:
+            raise ReleaseImageError("GHCR auth file is not registry-exclusive")
+        record = auths.get(REGISTRY)
+        if not isinstance(record, dict) or set(record) != {"auth"}:
+            raise ReleaseImageError("GHCR auth record has an unexpected schema")
+        encoded = record.get("auth")
+        if (
+            not isinstance(encoded, str)
+            or re.fullmatch(r"[A-Za-z0-9+/]+={0,2}", encoded) is None
+        ):
+            raise ReleaseImageError("GHCR auth record is not exact base64")
+        try:
+            decoded = base64.b64decode(encoded, validate=True).decode("utf-8")
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise ReleaseImageError("GHCR auth record is invalid") from exc
+        actor, separator, token = decoded.partition(":")
+        if (
+            not separator
+            or ":" in token
+            or re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?", actor)
+            is None
+            or not 1 <= len(token) <= 4096
+            or any(character.isspace() or ord(character) < 0x21 for character in token)
+        ):
+            raise ReleaseImageError("GHCR auth record credentials are invalid")
+        return cls(actor=actor, token=token)
+
     def _basic(self) -> str:
         value = base64.b64encode(f"{self._actor}:{self._token}".encode()).decode()
         return f"Basic {value}"
@@ -819,7 +902,13 @@ def collect_candidate_records(
 
 
 def candidate_manifest(
-    *, source_sha: str, release_tag: str, version: str, records: Iterable[ImageRecord]
+    *,
+    source_sha: str,
+    release_tag: str,
+    version: str,
+    records: Iterable[ImageRecord],
+    github_run_id: str,
+    github_run_attempt: str,
 ) -> dict[str, Any]:
     expected_version = version_for_tag(release_tag)
     if version != expected_version:
@@ -839,6 +928,12 @@ def candidate_manifest(
         "source": CANONICAL_SOURCE,
         "source_sha": source_sha,
         "version": version,
+        "github_run_id": _require_workflow_run_value(
+            github_run_id, field="github_run_id"
+        ),
+        "github_run_attempt": _require_workflow_run_value(
+            github_run_attempt, field="github_run_attempt"
+        ),
     }
 
 
@@ -904,15 +999,26 @@ def seal_candidate(
     release_tag: str,
     version: str,
     output: Path,
+    records: tuple[ImageRecord, ...],
+    digest_manifests: Mapping[str, RegistryResponse],
+    github_run_id: str,
+    github_run_attempt: str,
 ) -> str:
-    records = collect_candidate_records(
-        registry, source_sha=source_sha, version=version
-    )
+    expected_services = tuple(image.service for image in IMAGES)
+    if tuple(record.service for record in records) != expected_services or set(
+        digest_manifests
+    ) != set(expected_services):
+        raise ReleaseImageError("seal input is not the exact receipt-bound inventory")
+    for record in records:
+        response = digest_manifests[record.service]
+        _manifest_json(response, expected_digest=record.digest)
     document = candidate_manifest(
         source_sha=source_sha,
         release_tag=release_tag,
         version=version,
         records=records,
+        github_run_id=github_run_id,
+        github_run_attempt=github_run_attempt,
     )
     payload = _canonical_json(document)
     config, oci_manifest = _artifact_manifest(payload, document)
@@ -929,29 +1035,22 @@ def seal_candidate(
         raise ReleaseImageError(
             "release candidate manifest package must remain private"
         )
-    if current is not None and prior_visibility is None:
-        raise ReleaseImageError(
-            "sealed candidate artifact exists without verifiable package metadata"
-        )
     if current is not None:
-        _manifest_json(current, expected_digest=_sha256(oci_manifest))
-        if current.body != oci_manifest:
-            raise ReleaseImageError(
-                "sealed candidate manifest tag already exists with different content"
-            )
-    else:
-        if registry.put_blob(repository, config) != _sha256(config):
-            raise ReleaseImageError(
-                "sealed candidate config upload was not content-addressed"
-            )
-        if registry.put_blob(repository, payload) != _sha256(payload):
-            raise ReleaseImageError(
-                "sealed candidate payload upload was not content-addressed"
-            )
-        if registry.put_manifest(
-            repository, tag, oci_manifest, OCI_MANIFEST_MEDIA_TYPE
-        ) != _sha256(oci_manifest):
-            raise ReleaseImageError("sealed candidate manifest upload digest mismatch")
+        raise ReleaseImageError(
+            "candidate namespace already exists; sealed manifest collision"
+        )
+    if registry.put_blob(repository, config) != _sha256(config):
+        raise ReleaseImageError(
+            "sealed candidate config upload was not content-addressed"
+        )
+    if registry.put_blob(repository, payload) != _sha256(payload):
+        raise ReleaseImageError(
+            "sealed candidate payload upload was not content-addressed"
+        )
+    if registry.put_manifest(
+        repository, tag, oci_manifest, OCI_MANIFEST_MEDIA_TYPE
+    ) != _sha256(oci_manifest):
+        raise ReleaseImageError("sealed candidate manifest upload digest mismatch")
     verified = registry.get_manifest(repository, tag)
     if verified is None or verified.body != oci_manifest:
         raise ReleaseImageError("sealed candidate manifest read-back mismatch")
@@ -1034,6 +1133,8 @@ def verify_sealed_candidate(
         release_tag=release_tag,
         version=version,
         records=records,
+        github_run_id=str(sealed.get("github_run_id", "")),
+        github_run_attempt=str(sealed.get("github_run_attempt", "")),
     )
     if sealed_payload != _canonical_json(expected):
         raise ReleaseImageError(
@@ -1048,14 +1149,341 @@ def verify_sealed_candidate(
     return sealed, records
 
 
+def _records_from_bound_payload(
+    payload: bytes,
+    *,
+    source_sha: str,
+    release_tag: str,
+    version: str,
+    bound_manifest_digest: str,
+) -> tuple[dict[str, Any], tuple[ImageRecord, ...]]:
+    bound_manifest_digest = _require_digest(bound_manifest_digest)
+    if _sha256(payload) != bound_manifest_digest:
+        raise ReleaseImageError("sealed candidate payload differs from its binding")
+    try:
+        document = json.loads(payload)
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise ReleaseImageError("sealed candidate payload is invalid JSON") from exc
+    if not isinstance(document, dict) or payload != _canonical_json(document):
+        raise ReleaseImageError("sealed candidate payload is not canonical JSON")
+    exact_keys = {
+        "candidate_tag",
+        "images",
+        "registry",
+        "release_tag",
+        "repository",
+        "schema_version",
+        "source",
+        "source_sha",
+        "version",
+        "github_run_id",
+        "github_run_attempt",
+    }
+    if (
+        set(document) != exact_keys
+        or document.get("schema_version") != MANIFEST_SCHEMA
+        or document.get("candidate_tag") != candidate_tag(source_sha)
+        or document.get("registry") != REGISTRY
+        or document.get("release_tag") != _require_release_tag(release_tag)
+        or document.get("repository") != CANONICAL_REPOSITORY
+        or document.get("source") != CANONICAL_SOURCE
+        or document.get("source_sha") != _require_sha(source_sha)
+        or document.get("version") != version
+        or re.fullmatch(r"[1-9][0-9]{0,19}", str(document.get("github_run_id", "")))
+        is None
+        or re.fullmatch(
+            r"[1-9][0-9]{0,19}", str(document.get("github_run_attempt", ""))
+        )
+        is None
+        or version_for_tag(release_tag) != version
+        or not isinstance(document.get("images"), list)
+        or len(document["images"]) != len(IMAGES)
+    ):
+        raise ReleaseImageError("sealed candidate payload identity or shape differs")
+    records: list[ImageRecord] = []
+    for spec, row in zip(IMAGES, document["images"], strict=True):
+        if not isinstance(row, dict) or set(row) != {
+            "service",
+            "digest",
+            "reference",
+            "visibility",
+        }:
+            raise ReleaseImageError("sealed candidate image row shape differs")
+        digest = row.get("digest")
+        visibility = row.get("visibility")
+        expected_reference = f"{REGISTRY}/{image_repository(spec.service)}@{digest}"
+        if (
+            row.get("service") != spec.service
+            or not isinstance(digest, str)
+            or DIGEST_RE.fullmatch(digest) is None
+            or row.get("reference") != expected_reference
+            or (
+                visibility != "private"
+                if spec.service in PROTECTED_PRIVATE_PACKAGES
+                else visibility not in {"public", "private"}
+            )
+        ):
+            raise ReleaseImageError(
+                f"sealed candidate image identity differs: {spec.service}"
+            )
+        assert isinstance(visibility, str)
+        records.append(
+            ImageRecord(spec.service, digest, expected_reference, visibility)
+        )
+    return document, tuple(records)
+
+
+def _records_from_runtime_images(
+    path: Path, *, source_sha: str, version: str
+) -> tuple[tuple[ImageRecord, ...], dict[str, str]]:
+    try:
+        raw = path.read_bytes()
+        document = json.loads(raw)
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        raise ReleaseImageError("rollback runtime image authority is invalid") from exc
+    if (
+        not isinstance(document, dict)
+        or set(document)
+        != {
+            "schema_version",
+            "source_release",
+            "images",
+            "secret_values_included",
+        }
+        or document.get("schema_version") != 2
+        or document.get("source_release")
+        != {"deploy_ref": _require_sha(source_sha), "version": version}
+        or document.get("secret_values_included") is not False
+        or not isinstance(document.get("images"), dict)
+        or set(document["images"]) != set(IMAGE_BY_SERVICE)
+    ):
+        raise ReleaseImageError("rollback runtime image authority shape differs")
+    records = []
+    image_ids: dict[str, str] = {}
+    for spec in IMAGES:
+        row = document["images"][spec.service]
+        repository = f"{REGISTRY}/{image_repository(spec.service)}"
+        if not isinstance(row, dict) or set(row) != {
+            "configured_ref",
+            "repo_digest",
+            "image_id",
+        }:
+            raise ReleaseImageError(
+                f"rollback runtime image row shape differs: {spec.service}"
+            )
+        repo_digest = row.get("repo_digest", "")
+        expected_prefix = f"{repository}@"
+        digest = repo_digest.removeprefix(expected_prefix)
+        if (
+            not isinstance(repo_digest, str)
+            or not repo_digest.startswith(expected_prefix)
+            or DIGEST_RE.fullmatch(digest) is None
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", str(row.get("image_id", "")))
+            is None
+            or str(row.get("configured_ref", ""))
+            not in {
+                f"{repository}:v{version}",
+                f"{repository}:v{version}@{digest}",
+            }
+        ):
+            raise ReleaseImageError(
+                f"rollback runtime image identity differs: {spec.service}"
+            )
+        records.append(
+            ImageRecord(
+                spec.service,
+                digest,
+                repo_digest,
+                "private" if spec.service in PROTECTED_PRIVATE_PACKAGES else "unknown",
+            )
+        )
+        image_ids[spec.service] = str(row["image_id"])
+    return tuple(records), image_ids
+
+
+def verify_bound_sealed_lock(
+    registry: RegistryProtocol,
+    *,
+    authority_mode: str,
+    source_sha: str,
+    release_tag: str,
+    image_tag: str,
+    version: str,
+    output: Path,
+    bound_manifest_digest: str | None = None,
+    tag_object_sha: str | None = None,
+    github_run_id: str | None = None,
+    github_run_attempt: str | None = None,
+    controller_attestation_sha256: str | None = None,
+    runtime_images: Path | None = None,
+    legacy_tag_commit: str | None = None,
+) -> str:
+    """Build deterministic GCP image authority from immutable evidence."""
+
+    source_sha = _require_sha(source_sha)
+    release_tag = _require_release_tag(release_tag)
+    if version_for_tag(release_tag) != version:
+        raise ReleaseImageError("GCP image authority version differs from release tag")
+    workflow: dict[str, str] | None = None
+    legacy_image_ids: dict[str, str] | None = None
+    if authority_mode == "published":
+        if (
+            image_tag != release_tag
+            or bound_manifest_digest is None
+            or tag_object_sha is None
+            or SHA_RE.fullmatch(tag_object_sha) is None
+            or any(
+                value is not None
+                for value in (
+                    github_run_id,
+                    github_run_attempt,
+                    controller_attestation_sha256,
+                    runtime_images,
+                    legacy_tag_commit,
+                )
+            )
+        ):
+            raise ReleaseImageError("published image authority inputs are ambiguous")
+    elif authority_mode == "candidate":
+        if (
+            image_tag != candidate_tag(source_sha)
+            or bound_manifest_digest is None
+            or github_run_id is None
+            or github_run_attempt is None
+            or controller_attestation_sha256 is None
+            or re.fullmatch(r"[0-9a-f]{64}", controller_attestation_sha256) is None
+            or controller_attestation_sha256
+            != _require_digest(bound_manifest_digest).removeprefix("sha256:")
+            or tag_object_sha is not None
+            or runtime_images is not None
+            or legacy_tag_commit is not None
+        ):
+            raise ReleaseImageError("candidate image authority inputs are incomplete")
+        workflow = {
+            "run_id": _require_workflow_run_value(github_run_id, field="github_run_id"),
+            "run_attempt": _require_workflow_run_value(
+                github_run_attempt, field="github_run_attempt"
+            ),
+            "head_sha": source_sha,
+            "controller_attestation_sha256": controller_attestation_sha256,
+        }
+    elif authority_mode == "legacy-rollback":
+        if (
+            image_tag != release_tag
+            or runtime_images is None
+            or any(
+                value is not None
+                for value in (
+                    bound_manifest_digest,
+                    github_run_id,
+                    github_run_attempt,
+                    controller_attestation_sha256,
+                    tag_object_sha,
+                )
+            )
+            or legacy_tag_commit is None
+            or SHA_RE.fullmatch(legacy_tag_commit) is None
+        ):
+            raise ReleaseImageError("rollback image authority inputs are incomplete")
+        records, legacy_image_ids = _records_from_runtime_images(
+            runtime_images, source_sha=source_sha, version=version
+        )
+    else:
+        raise ReleaseImageError("GCP image authority mode is invalid")
+
+    if authority_mode != "legacy-rollback":
+        assert bound_manifest_digest is not None
+        if registry.package_visibility(MANIFEST_PACKAGE) != "private":
+            raise ReleaseImageError(
+                "release candidate manifest package must remain private"
+            )
+        payload = registry.get_blob(
+            f"{CANONICAL_OWNER}/{MANIFEST_PACKAGE}",
+            _require_digest(bound_manifest_digest),
+        )
+        sealed_document, records = _records_from_bound_payload(
+            payload,
+            source_sha=source_sha,
+            release_tag=release_tag,
+            version=version,
+            bound_manifest_digest=bound_manifest_digest,
+        )
+        if authority_mode == "candidate" and (
+            sealed_document.get("github_run_id") != github_run_id
+            or sealed_document.get("github_run_attempt") != github_run_attempt
+        ):
+            raise ReleaseImageError(
+                "sealed payload was not produced by the controller-attested run"
+            )
+        if authority_mode == "published":
+            workflow = {
+                "run_id": str(sealed_document["github_run_id"]),
+                "run_attempt": str(sealed_document["github_run_attempt"]),
+                "head_sha": source_sha,
+            }
+
+    for package in PROTECTED_PRIVATE_PACKAGES:
+        if registry.package_visibility(package) != "private":
+            raise ReleaseImageError(
+                f"protected GHCR package must remain private: {package}"
+            )
+    for record in records:
+        repository = image_repository(record.service)
+        immutable = registry.get_manifest(repository, record.digest)
+        drift_tag = (
+            None
+            if authority_mode == "legacy-rollback"
+            else registry.get_manifest(repository, image_tag)
+        )
+        if immutable is None or (
+            authority_mode != "legacy-rollback" and drift_tag is None
+        ):
+            raise ReleaseImageError(
+                f"GCP image authority is not pullable: {record.service}"
+            )
+        _manifest_json(immutable, expected_digest=record.digest)
+        if drift_tag is not None:
+            _manifest_json(drift_tag, expected_digest=record.digest)
+            if immutable.body != drift_tag.body:
+                raise ReleaseImageError(
+                    f"mutable image tag drifted from authority: {record.service}"
+                )
+
+    receipt = {
+        "schema_version": 1,
+        "authority_mode": authority_mode,
+        "source_sha": source_sha,
+        "release_tag": release_tag,
+        "image_tag": image_tag,
+        "version": version,
+        "manifest_digest": bound_manifest_digest,
+        "tag_object_sha": tag_object_sha,
+        "candidate_workflow": workflow,
+        "legacy_image_ids": legacy_image_ids,
+        "legacy_tag_commit": legacy_tag_commit,
+        "images": [record.as_json() for record in records],
+        "labels_authoritative": False,
+        "secrets_included": False,
+    }
+    output.write_bytes(_canonical_json(receipt))
+    return _sha256(_canonical_json(receipt))
+
+
 def candidate_state(
     registry: RegistryProtocol,
     *,
     service: str,
     source_sha: str,
     release_tag: str,
-    receipt: Path | None = None,
 ) -> tuple[str, str]:
+    """Require a pristine candidate namespace for this workflow run.
+
+    OCI labels and tag content are writable by any principal with package
+    mutation authority, so they cannot prove that a candidate was produced by
+    this workflow run.  Digest-only build outputs may be content-addressed and
+    shared by the registry, but candidate tags and the sealed manifest must be
+    absent when the run starts.
+    """
     version = version_for_tag(release_tag)
     record = inspect_candidate(
         registry,
@@ -1064,39 +1492,40 @@ def candidate_state(
         version=version,
         allow_missing=True,
     )
-    if record is None:
-        sealed = registry.get_manifest(
-            f"{CANONICAL_OWNER}/{MANIFEST_PACKAGE}", candidate_tag(source_sha)
-        )
-        if sealed is not None:
-            raise ReleaseImageError(
-                "sealed candidate exists but one of its images is missing"
-            )
-        return "missing", ""
     sealed_response = registry.get_manifest(
         f"{CANONICAL_OWNER}/{MANIFEST_PACKAGE}", candidate_tag(source_sha)
     )
-    if sealed_response is not None:
-        sealed, _ = load_sealed_candidate(registry, source_sha=source_sha)
-        if sealed.get("release_tag") != release_tag:
-            raise ReleaseImageError(
-                "sealed candidate was created for a different release tag"
-            )
-        by_service = {
-            row.get("service"): row
-            for row in sealed.get("images", [])
-            if isinstance(row, dict)
-        }
-        if by_service.get(service, {}).get("digest") != record.digest:
-            raise ReleaseImageError("candidate image digest changed after sealing")
-    if receipt is not None:
-        write_digest_receipt(receipt, record)
-    return "reusable", record.digest
+    if record is not None or sealed_response is not None:
+        raise ReleaseImageError(
+            "candidate namespace already exists; cross-run reuse is forbidden"
+        )
+    return "missing", ""
 
 
-def write_digest_receipt(path: Path, record: ImageRecord) -> None:
+def _require_workflow_run_value(value: str, *, field: str) -> str:
+    if re.fullmatch(r"[1-9][0-9]{0,19}", value) is None:
+        raise ReleaseImageError(f"{field} must be an explicit positive integer")
+    return value
+
+
+def write_digest_receipt(
+    path: Path,
+    record: ImageRecord,
+    *,
+    github_run_id: str,
+    github_run_attempt: str,
+) -> None:
+    document = {
+        **record.as_json(),
+        "github_run_id": _require_workflow_run_value(
+            github_run_id, field="github_run_id"
+        ),
+        "github_run_attempt": _require_workflow_run_value(
+            github_run_attempt, field="github_run_attempt"
+        ),
+    }
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(_canonical_json(record.as_json()))
+    path.write_bytes(_canonical_json(document))
 
 
 def verify_built_digest(
@@ -1107,6 +1536,8 @@ def verify_built_digest(
     release_tag: str,
     digest: str,
     receipt: Path,
+    github_run_id: str,
+    github_run_attempt: str,
 ) -> ImageRecord:
     if not DIGEST_RE.fullmatch(digest):
         raise ReleaseImageError("build action did not return an exact sha256 digest")
@@ -1122,11 +1553,22 @@ def verify_built_digest(
         raise ReleaseImageError(
             "pushed-by-digest image differs from the build output digest"
         )
-    write_digest_receipt(receipt, record)
+    write_digest_receipt(
+        receipt,
+        record,
+        github_run_id=github_run_id,
+        github_run_attempt=github_run_attempt,
+    )
     return record
 
 
-def _load_digest_receipts(receipts_dir: Path) -> tuple[ImageRecord, ...]:
+def _load_digest_receipts(
+    receipts_dir: Path, *, github_run_id: str, github_run_attempt: str
+) -> tuple[ImageRecord, ...]:
+    github_run_id = _require_workflow_run_value(github_run_id, field="github_run_id")
+    github_run_attempt = _require_workflow_run_value(
+        github_run_attempt, field="github_run_attempt"
+    )
     expected_paths = {f"{image.service}.json" for image in IMAGES}
     if not receipts_dir.is_dir():
         raise ReleaseImageError("candidate digest receipt directory is missing")
@@ -1153,10 +1595,24 @@ def _load_digest_receipts(receipts_dir: Path) -> tuple[ImageRecord, ...]:
             raise ReleaseImageError(
                 f"candidate digest receipt is not canonical: {image.service}"
             )
-        expected_keys = {"service", "digest", "reference", "visibility"}
+        expected_keys = {
+            "service",
+            "digest",
+            "reference",
+            "visibility",
+            "github_run_id",
+            "github_run_attempt",
+        }
         if set(document) != expected_keys or document.get("service") != image.service:
             raise ReleaseImageError(
                 f"candidate digest receipt has invalid fields: {image.service}"
+            )
+        if (
+            document.get("github_run_id") != github_run_id
+            or document.get("github_run_attempt") != github_run_attempt
+        ):
+            raise ReleaseImageError(
+                "candidate digest receipts mix workflow runs or attempts"
             )
         digest = document.get("digest", "")
         if not isinstance(digest, str) or not DIGEST_RE.fullmatch(digest):
@@ -1192,19 +1648,32 @@ def assemble_candidate(
     release_tag: str,
     receipts_dir: Path,
     output: Path,
+    github_run_id: str,
+    github_run_attempt: str,
 ) -> str:
-    """Aggregate digest-only builds, then create candidate tags and seal once.
+    """Aggregate this run's digest-only builds, tag all 15, and seal once.
 
-    All 15 receipts and all pre-existing candidate tags are validated before
-    the first tag write.  Therefore a matrix failure cannot overwrite a partial
-    candidate.  A retry accepts only an already-identical digest.
+    A pre-existing service tag or sealed-manifest tag is a collision even when
+    its bytes are identical.  Registry labels/content are not proof of workflow
+    provenance, so this command never reuses cross-run candidate state.
     """
 
     version = version_for_tag(release_tag)
-    records = _load_digest_receipts(receipts_dir)
+    records = _load_digest_receipts(
+        receipts_dir,
+        github_run_id=github_run_id,
+        github_run_attempt=github_run_attempt,
+    )
     by_service = {record.service: record for record in records}
     manifests: dict[str, RegistryResponse] = {}
-    missing: list[str] = []
+    manifest_repository = f"{CANONICAL_OWNER}/{MANIFEST_PACKAGE}"
+    if (
+        registry.get_manifest(manifest_repository, candidate_tag(source_sha))
+        is not None
+    ):
+        raise ReleaseImageError(
+            "candidate namespace already exists; sealed manifest collision"
+        )
     for image in IMAGES:
         record = by_service[image.service]
         digest_response = registry.get_manifest(
@@ -1231,22 +1700,14 @@ def assemble_candidate(
         existing = registry.get_manifest(
             image_repository(image.service), candidate_tag(source_sha)
         )
-        if existing is None:
-            missing.append(image.service)
-            continue
-        try:
-            _manifest_json(existing, expected_digest=record.digest)
-        except ReleaseImageError as exc:
+        if existing is not None:
             raise ReleaseImageError(
-                f"existing candidate tag differs from aggregate digest: {image.service}"
-            ) from exc
-        if existing.body != digest_response.body:
-            raise ReleaseImageError(
-                f"existing candidate tag differs from aggregate digest: {image.service}"
+                "candidate namespace already exists; service tag collision: "
+                f"{image.service}"
             )
 
-    # Only absent tags are created; an existing candidate tag is never moved.
-    for service in missing:
+    # Every tag below is created from a receipt produced in this exact run.
+    for service in (image.service for image in IMAGES):
         record = by_service[service]
         response = manifests[service]
         media_type = response.headers.get("content-type", "").split(";", 1)[0]
@@ -1284,6 +1745,10 @@ def assemble_candidate(
         release_tag=release_tag,
         version=version,
         output=output,
+        records=records,
+        digest_manifests=manifests,
+        github_run_id=github_run_id,
+        github_run_attempt=github_run_attempt,
     )
 
 
@@ -1345,12 +1810,24 @@ def promote_one(
     if expected is None:
         raise ReleaseImageError(f"service is absent from sealed candidate: {service}")
     repository = image_repository(service)
-    candidate = registry.get_manifest(repository, candidate_tag(source_sha))
-    if candidate is None:
+    sealed_digest_manifest = registry.get_manifest(repository, expected.digest)
+    if sealed_digest_manifest is None:
         raise ReleaseImageError(
-            f"candidate image disappeared before promotion: {service}"
+            f"sealed candidate digest disappeared before promotion: {service}"
         )
-    _manifest_json(candidate, expected_digest=expected.digest)
+    _manifest_json(sealed_digest_manifest, expected_digest=expected.digest)
+    # The mutable convenience tag is never the source of promotion bytes.  It
+    # is still checked so concurrent package mutation fails visibly.
+    candidate_tag_manifest = registry.get_manifest(
+        repository, candidate_tag(source_sha)
+    )
+    if candidate_tag_manifest is None:
+        raise ReleaseImageError(
+            f"candidate tag disappeared before promotion: {service}"
+        )
+    _manifest_json(candidate_tag_manifest, expected_digest=expected.digest)
+    if candidate_tag_manifest.body != sealed_digest_manifest.body:
+        raise ReleaseImageError(f"candidate tag drifted before promotion: {service}")
     existing = registry.get_manifest(repository, release_tag)
     if existing is not None:
         try:
@@ -1359,18 +1836,20 @@ def promote_one(
             raise ReleaseImageError(
                 f"existing release tag differs from candidate: {service}"
             ) from exc
-        if existing.body != candidate.body:
+        if existing.body != sealed_digest_manifest.body:
             raise ReleaseImageError(
                 f"existing release tag differs from candidate: {service}"
             )
     else:
-        media_type = candidate.headers.get("content-type", "").split(";", 1)[0]
+        media_type = sealed_digest_manifest.headers.get("content-type", "").split(
+            ";", 1
+        )[0]
         if media_type not in OCI_INDEX_MEDIA_TYPES | IMAGE_MANIFEST_MEDIA_TYPES:
             raise ReleaseImageError(
                 f"candidate manifest media type is unsafe to promote: {service}"
             )
         promoted = registry.put_manifest(
-            repository, release_tag, candidate.body, media_type
+            repository, release_tag, sealed_digest_manifest.body, media_type
         )
         if promoted != expected.digest:
             raise ReleaseImageError(
@@ -1380,9 +1859,9 @@ def promote_one(
     if readback is None:
         raise ReleaseImageError(f"release tag read-back failed: {service}")
     _manifest_json(readback, expected_digest=expected.digest)
-    if readback.body != candidate.body:
+    if readback.body != sealed_digest_manifest.body:
         raise ReleaseImageError(
-            f"release tag read-back differs from candidate: {service}"
+            f"release tag read-back differs from sealed digest: {service}"
         )
     return expected.digest
 
@@ -1405,15 +1884,17 @@ def verify_release_images(
     )
     for record in records:
         repository = image_repository(record.service)
+        sealed_digest_manifest = registry.get_manifest(repository, record.digest)
         candidate = registry.get_manifest(repository, candidate_tag(source_sha))
         released = registry.get_manifest(repository, release_tag)
-        if candidate is None or released is None:
+        if sealed_digest_manifest is None or candidate is None or released is None:
             raise ReleaseImageError(
                 f"release image is missing after promotion: {record.service}"
             )
+        _manifest_json(sealed_digest_manifest, expected_digest=record.digest)
         _manifest_json(candidate, expected_digest=record.digest)
         _manifest_json(released, expected_digest=record.digest)
-        if candidate.body != released.body:
+        if not (candidate.body == sealed_digest_manifest.body == released.body):
             raise ReleaseImageError(
                 f"release image was not an exact digest promotion: {record.service}"
             )
@@ -1460,22 +1941,21 @@ def build_parser() -> argparse.ArgumentParser:
     check = commands.add_parser("check-candidate")
     _add_common_registry_args(check)
     check.add_argument("--service", required=True)
-    check.add_argument("--receipt", type=Path)
 
     built = commands.add_parser("verify-built-digest")
     _add_common_registry_args(built)
     built.add_argument("--service", required=True)
     built.add_argument("--digest", required=True)
     built.add_argument("--receipt", type=Path, required=True)
-
-    seal = commands.add_parser("seal-candidate")
-    _add_common_registry_args(seal)
-    seal.add_argument("--output", type=Path, required=True)
+    built.add_argument("--github-run-id", required=True)
+    built.add_argument("--github-run-attempt", required=True)
 
     assemble = commands.add_parser("assemble-candidate")
     _add_common_registry_args(assemble)
     assemble.add_argument("--receipts-dir", type=Path, required=True)
     assemble.add_argument("--output", type=Path, required=True)
+    assemble.add_argument("--github-run-id", required=True)
+    assemble.add_argument("--github-run-attempt", required=True)
 
     verify_tag = commands.add_parser("verify-release-tag")
     verify_tag.add_argument("--repo-root", type=Path, default=Path.cwd())
@@ -1498,6 +1978,24 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common_registry_args(verify)
     verify.add_argument("--bound-manifest-digest", required=True)
     verify.add_argument("--output", type=Path, required=True)
+
+    gcp_lock = commands.add_parser("verify-bound-sealed-lock")
+    _add_common_registry_args(gcp_lock)
+    gcp_lock.add_argument(
+        "--authority-mode",
+        choices=("candidate", "published", "legacy-rollback"),
+        required=True,
+    )
+    gcp_lock.add_argument("--image-tag", required=True)
+    gcp_lock.add_argument("--docker-auth-file", type=Path, required=True)
+    gcp_lock.add_argument("--bound-manifest-digest")
+    gcp_lock.add_argument("--tag-object-sha")
+    gcp_lock.add_argument("--github-run-id")
+    gcp_lock.add_argument("--github-run-attempt")
+    gcp_lock.add_argument("--controller-attestation-sha256")
+    gcp_lock.add_argument("--runtime-images", type=Path)
+    gcp_lock.add_argument("--legacy-tag-commit")
+    gcp_lock.add_argument("--output", type=Path, required=True)
     return parser
 
 
@@ -1545,6 +2043,30 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 0
 
+        if args.command == "verify-bound-sealed-lock":
+            registry = RegistryClient.from_private_auth_file(args.docker_auth_file)
+            receipt_digest = verify_bound_sealed_lock(
+                registry,
+                authority_mode=args.authority_mode,
+                source_sha=args.source_sha,
+                release_tag=args.release_tag,
+                image_tag=args.image_tag,
+                version=version_for_tag(args.release_tag),
+                output=args.output,
+                bound_manifest_digest=args.bound_manifest_digest,
+                tag_object_sha=args.tag_object_sha,
+                github_run_id=args.github_run_id,
+                github_run_attempt=args.github_run_attempt,
+                controller_attestation_sha256=args.controller_attestation_sha256,
+                runtime_images=args.runtime_images,
+                legacy_tag_commit=args.legacy_tag_commit,
+            )
+            print(
+                "GCP_RELEASE_IMAGE_AUTHORITY\tPASS\t15/15"
+                f"\tmode={args.authority_mode}\treceipt={receipt_digest}"
+            )
+            return 0
+
         registry = RegistryClient.from_env()
         version = version_for_tag(args.release_tag)
         if args.command == "check-candidate":
@@ -1553,7 +2075,6 @@ def main(argv: list[str] | None = None) -> int:
                 service=args.service,
                 source_sha=args.source_sha,
                 release_tag=args.release_tag,
-                receipt=args.receipt,
             )
             _write_github_output({"state": state, "digest": digest})
             print(f"CANDIDATE_IMAGE\t{args.service}\t{state.upper()}")
@@ -1566,23 +2087,10 @@ def main(argv: list[str] | None = None) -> int:
                 release_tag=args.release_tag,
                 digest=args.digest,
                 receipt=args.receipt,
+                github_run_id=args.github_run_id,
+                github_run_attempt=args.github_run_attempt,
             )
             print(f"CANDIDATE_DIGEST\t{args.service}\tPASS\t{record.digest}")
-            return 0
-        if args.command == "seal-candidate":
-            digest = seal_candidate(
-                registry,
-                source_sha=args.source_sha,
-                release_tag=args.release_tag,
-                version=version,
-                output=args.output,
-            )
-            _write_github_output({"manifest_digest": digest})
-            print(
-                "RELEASE_CANDIDATE_IMAGES\tPASS\t15/15\tvisibility=15/15"
-                "\tprotected-private=3/3"
-                f"\tmanifest-package=private\tmanifest={digest}"
-            )
             return 0
         if args.command == "assemble-candidate":
             digest = assemble_candidate(
@@ -1591,6 +2099,8 @@ def main(argv: list[str] | None = None) -> int:
                 release_tag=args.release_tag,
                 receipts_dir=args.receipts_dir,
                 output=args.output,
+                github_run_id=args.github_run_id,
+                github_run_attempt=args.github_run_attempt,
             )
             _write_github_output({"manifest_digest": digest})
             print(

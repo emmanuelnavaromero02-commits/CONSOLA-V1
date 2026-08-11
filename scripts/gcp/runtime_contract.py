@@ -251,7 +251,7 @@ def _verify_global_writer_inventory(
 def verify_global_fence(project: str) -> None:
     for service in MUTATING_SERVICES:
         if _global_running_ids(service):
-            raise RuntimeError(f"global mutator remains running: {service}")
+            raise RuntimeError(f"GCP host-local mutator remains running: {service}")
     for container_id in _all_running_ids():
         configured = str((_inspect(container_id).get("Config") or {}).get("Image", ""))
         if _proprietary_repository(configured) is not None:
