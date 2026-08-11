@@ -23,14 +23,17 @@ EVIDENCE_NAMES = {
 
 @pytest.mark.parametrize("custom_private", [False, True])
 def test_compose_resolves_private_env_only_for_console(
-    tmp_path: Path, custom_private: bool
+    tmp_path: Path, custom_private: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     docker = shutil.which("docker")
     if not docker:
         pytest.skip("docker compose is required for env_file resolution")
     shared = tmp_path / "shared.env"
     private = tmp_path / "custom-evidence.env"
+    monkeypatch.setenv("S3_BUCKET_NAME", "")
     env = os.environ.copy()
+    # Shell values outrank --env-file; ignore the empty local bootstrap value.
+    env.pop("S3_BUCKET_NAME", None)
     env.pop("MODECISSIONS_CONTROL_ROOM_EVIDENCE_ENV_FILE", None)
     env["AWS_ENV_FILE"] = str(shared)
     if custom_private:
