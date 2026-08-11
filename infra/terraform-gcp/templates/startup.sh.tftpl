@@ -152,8 +152,6 @@ set_env CONTROL_ROOM_EVIDENCE_SIGNING_KEY "$${CONTROL_ROOM_EVIDENCE_SIGNING_KEY}
 set_env CONTROL_ROOM_EVIDENCE_SIGNING_PREVIOUS_KEYS "$${CONTROL_ROOM_EVIDENCE_SIGNING_PREVIOUS_KEYS}"
 bash infra/bootstrap-keys.sh infra/.env
 chmod 600 infra/.env
-cp infra/.env "$${SHARED_ENV}"
-chmod 600 "$${SHARED_ENV}"
 mkdir -p data/lakehouse
 mkdir -p airflow/dags airflow/logs/scheduler airflow/plugins
 chown -R 50000:0 airflow/dags airflow/logs airflow/plugins
@@ -198,7 +196,16 @@ if hmac_secret_key="$(secret_value gcs_hmac_secret_access_key)"; then
   set_env LAKEHOUSE_SECRET_KEY "$${hmac_secret_key}"
 fi
 
+# Publish the fully reconciled GCP runtime env only after every production,
+# lakehouse, and optional HMAC value has been applied.  Copying it earlier
+# leaves day-2 releases with the bootstrap defaults instead of the live GCP
+# contract.
+cp infra/.env "$${SHARED_ENV}"
+chmod 600 "$${SHARED_ENV}"
+
 printf '%s\n' "$${COMPOSE_OVERRIDE}" > infra/docker-compose.gcp.yml
+cp infra/docker-compose.gcp.yml "$${APP_ROOT}/shared/docker-compose.gcp.yml"
+chmod 600 "$${APP_ROOT}/shared/docker-compose.gcp.yml"
 
 COMPOSE=(docker compose --env-file infra/.env -f infra/docker-compose.yml -f infra/docker-compose.gcp.yml --profile sap)
 "$${COMPOSE[@]}" config -q

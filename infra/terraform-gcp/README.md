@@ -51,3 +51,9 @@ file with `release/docker-compose.release.yml`; the overlay removes source
 builds and forbids late pulls, so deployment consumes only the digests already
 proved by the authenticated preflight. Never place the GHCR JSON value in
 `infra/.env`, a container environment, a workflow payload, or release evidence.
+
+Initial provisioning still uses the metadata startup script. Subsequent
+production changes must use the fail-closed day-2 path documented in
+`docs/runbook/16_gcp_canonical_day2_release.md`: `make backup-gcp-canonical`,
+`make deploy-gcp-canonical`, and `make restore-rehearsal-gcp`. Do not rerun the
+startup script as an ad-hoc deploy mechanism.
