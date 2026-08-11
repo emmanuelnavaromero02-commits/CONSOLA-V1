@@ -12,13 +12,25 @@ fi
 LAKEHOUSE_BUCKET="${1:-}"
 BACKUP_ID="${2:-}"
 COMPOSE_PROJECT="${3:-infra}"
+CANDIDATE_REF="${4:-}"
+CANDIDATE_ARTIFACT_URI="${5:-}"
+CANDIDATE_ARTIFACT_SHA256="${6:-}"
+EXPECTED_CURRENT_REF="${7:-}"
 APP_ROOT="${OMEGA_GCP_APP_ROOT:-/opt/modecissions}"
 CURRENT_LINK="${APP_ROOT}/current"
 SHARED_ROOT="${APP_ROOT}/shared"
 SHARED_ENV="${SHARED_ROOT}/infra.env"
 GCP_RUNTIME_COMPOSE="${SHARED_ROOT}/docker-compose.gcp.yml"
+OPERATION_MARKER="${SHARED_ROOT}/operation-state.json"
+STATE_LINK="${SHARED_ROOT}/runtime-state"
+STATE_BUNDLES_ROOT="${SHARED_ROOT}/state-bundles"
+BOOTSTRAP_STATE="${STATE_LINK}/bootstrap-state.json"
+RUNTIME_PROVENANCE="${STATE_LINK}/runtime-provenance.json"
 BACKUP_PREFIX="_omega_backups/${BACKUP_ID}"
 WORKDIR=""
+STATE_STAGE=""
+STATE_PREVIEW=""
+STATE_FINAL=""
 RUNTIME_FENCED=0
 RUNNING_BEFORE=()
 
@@ -35,6 +47,57 @@ fail() {
   exit "${3:-20}"
 }
 
+install_operation_guard() {
+  local source="$1" guard_tmp dropin_tmp
+  if [[ ! -x "$source" ]]; then
+    fail "reboot operation guard" "exact candidate operation gate is missing" 26
+  fi
+  guard_tmp="$(mktemp /tmp/omega-operation-gate.XXXXXX)"
+  dropin_tmp="$(mktemp /tmp/omega-docker-operation-gate.XXXXXX)"
+  install -m 0755 "$source" "$guard_tmp"
+  printf '%s\n' '[Service]' \
+    'ExecStartPre=/usr/local/sbin/omega-operation-gate' > "$dropin_tmp"
+  install -m 0755 "$guard_tmp" /usr/local/sbin/omega-operation-gate
+  install -d -m 0755 /etc/systemd/system/docker.service.d
+  install -m 0644 "$dropin_tmp" /etc/systemd/system/docker.service.d/omega-operation-gate.conf
+  rm -f -- "$guard_tmp" "$dropin_tmp"
+  systemctl daemon-reload
+}
+
+write_operation_state() {
+  local state="$1"
+  python3 - "$OPERATION_MARKER" "$state" "$BACKUP_ID" "$CURRENT_REF" <<'PY'
+import json
+import os
+import pathlib
+import sys
+import tempfile
+from datetime import datetime, timezone
+
+path = pathlib.Path(sys.argv[1])
+payload = {
+    "schema_version": 1,
+    "operation": "backup",
+    "state": sys.argv[2],
+    "backup_id": sys.argv[3],
+    "deploy_ref": sys.argv[4],
+    "updated_at": datetime.now(timezone.utc).isoformat(),
+}
+descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+try:
+    os.fchmod(descriptor, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        json.dump(payload, stream, indent=2, sort_keys=True)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+PY
+}
+
 if [[ ! "$LAKEHOUSE_BUCKET" =~ ^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$ ]]; then
   fail "lakehouse bucket" "invalid bucket name" 20
 fi
@@ -43,6 +106,14 @@ if [[ ! "$BACKUP_ID" =~ ^[0-9]{8}T[0-9]{6}Z-[a-z0-9][a-z0-9.-]{0,80}$ ]]; then
 fi
 if [[ ! "$COMPOSE_PROJECT" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
   fail "Compose project" "invalid project name" 22
+fi
+if [[ ! "$CANDIDATE_REF" =~ ^[0-9a-f]{40}$ || \
+      ! "$CANDIDATE_ARTIFACT_SHA256" =~ ^[0-9a-f]{64}$ || \
+      ! "$CANDIDATE_ARTIFACT_URI" =~ ^gs://[^/]+/deploy-artifacts/${CANDIDATE_REF}/repo\.tar\.gz$ ]]; then
+  fail "candidate helper artifact" "exact ref, URI, and sha256 are required" 22
+fi
+if [[ ! "$EXPECTED_CURRENT_REF" =~ ^[0-9a-f]{40}$ ]]; then
+  fail "expected current release" "one exact pre-deploy live ref is required" 22
 fi
 if [[ ! -L "$CURRENT_LINK" ]]; then
   fail "canonical runtime inputs" "current release link missing" 23
@@ -54,10 +125,14 @@ case "$CURRENT_RELEASE" in
   *) fail "current release confinement" "current points outside release root" 24 ;;
 esac
 BASE_COMPOSE="${CURRENT_RELEASE}/infra/docker-compose.yml"
-CURRENT_ENV="${CURRENT_RELEASE}/infra/.env"
-CURRENT_GCP_COMPOSE="${CURRENT_RELEASE}/infra/docker-compose.gcp.yml"
-if [[ ! -s "$BASE_COMPOSE" || ! -s "$CURRENT_ENV" || ! -s "$CURRENT_GCP_COMPOSE" ]]; then
-  fail "current runtime inputs" "base Compose, runtime env, or generated GCP override missing" 25
+CURRENT_REF="$(basename "$CURRENT_RELEASE")"
+CURRENT_VERSION="$(tr -d '\r\n' < "${CURRENT_RELEASE}/VERSION" 2>/dev/null || true)"
+if [[ ! "$CURRENT_REF" =~ ^[0-9a-f]{40}$ || -z "$CURRENT_VERSION" || \
+      ! -s "$BASE_COMPOSE" || ! -s "$SHARED_ENV" || ! -s "$GCP_RUNTIME_COMPOSE" ]]; then
+  fail "current runtime inputs" "exact release or shared host state missing" 25
+fi
+if [[ "$CURRENT_REF" != "$EXPECTED_CURRENT_REF" ]]; then
+  fail "expected current release" "live ref differs from Terraform/operator contract" 25
 fi
 
 exec 9>"/var/lock/omega-gcp-day2.lock"
@@ -66,19 +141,268 @@ if ! flock -n 9; then
 fi
 
 install -d -m 0755 "$SHARED_ROOT"
-if grep -Eq '^(GHCR_[A-Z0-9_]*(TOKEN|PASSWORD|SECRET|CREDENTIAL|AUTH|USER)|GITHUB_TOKEN|DOCKER_AUTH_CONFIG)=' "$CURRENT_ENV"; then
+if [[ -e "$OPERATION_MARKER" ]]; then
+  fail "durable operation fence" "an incomplete operation marker already exists" 26
+fi
+if grep -Eq '^(GHCR_[A-Z0-9_]*(TOKEN|PASSWORD|SECRET|CREDENTIAL|AUTH|USER)|GITHUB_TOKEN|DOCKER_AUTH_CONFIG)=' "$SHARED_ENV"; then
   fail "server-owned registry credential boundary" "registry credential found in runtime env" 26
 fi
-SHARED_ENV_TMP="${SHARED_ROOT}/.infra.env.backup.$$"
-install -m 0600 "$CURRENT_ENV" "$SHARED_ENV_TMP"
-mv -Tf "$SHARED_ENV_TMP" "$SHARED_ENV"
-GCP_COMPOSE_TMP="${SHARED_ROOT}/.docker-compose.gcp.backup.$$"
-install -m 0600 "$CURRENT_GCP_COMPOSE" "$GCP_COMPOSE_TMP"
-mv -Tf "$GCP_COMPOSE_TMP" "$GCP_RUNTIME_COMPOSE"
-COMPOSE=(docker compose --project-name "$COMPOSE_PROJECT" --env-file "$SHARED_ENV" \
-  -f "$BASE_COMPOSE" -f "$GCP_RUNTIME_COMPOSE" --profile sap)
+
+WORKDIR="$(mktemp -d /tmp/omega-gcp-backup.XXXXXX)"
+cleanup_early() {
+  local rc=$?
+  if [[ -n "$STATE_PREVIEW" && "$STATE_PREVIEW" == "${SHARED_ROOT}/.runtime-state."* ]]; then
+    rm -f -- "$STATE_PREVIEW"
+  fi
+  if [[ -n "$STATE_STAGE" && "$STATE_STAGE" == "${STATE_BUNDLES_ROOT}/."* ]]; then
+    rm -rf -- "$STATE_STAGE"
+  fi
+  if [[ -n "$STATE_FINAL" && "$STATE_FINAL" == "${STATE_BUNDLES_ROOT}/legacy-"* ]]; then
+    rm -rf -- "$STATE_FINAL"
+  fi
+  if [[ -n "$WORKDIR" && "$WORKDIR" == /tmp/omega-gcp-backup.* ]]; then
+    rm -rf -- "$WORKDIR"
+  fi
+  exit "$rc"
+}
+trap cleanup_early EXIT
+
+python3 - "$CANDIDATE_ARTIFACT_URI" "${WORKDIR}/candidate.tar.gz" <<'PY'
+import json
+import pathlib
+import sys
+import urllib.parse
+import urllib.request
+
+uri, destination = sys.argv[1:]
+parsed = urllib.parse.urlparse(uri)
+token_request = urllib.request.Request(
+    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
+    headers={"Metadata-Flavor": "Google"},
+)
+with urllib.request.urlopen(token_request, timeout=10) as response:
+    token = json.load(response)["access_token"]
+url = "https://storage.googleapis.com/download/storage/v1/b/{}/o/{}?alt=media".format(
+    urllib.parse.quote(parsed.netloc, safe=""),
+    urllib.parse.quote(parsed.path.lstrip("/"), safe=""),
+)
+request = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+with urllib.request.urlopen(request, timeout=120) as response, pathlib.Path(destination).open("wb") as stream:
+    while chunk := response.read(1024 * 1024):
+        stream.write(chunk)
+PY
+CANDIDATE_ACTUAL_SHA256="$(sha256sum "${WORKDIR}/candidate.tar.gz" | awk '{print $1}')"
+if [[ "$CANDIDATE_ACTUAL_SHA256" != "$CANDIDATE_ARTIFACT_SHA256" ]]; then
+  fail "candidate helper artifact" "downloaded artifact checksum mismatch" 26
+fi
+install -d -m 0700 "${WORKDIR}/candidate"
+python3 - "${WORKDIR}/candidate.tar.gz" "${WORKDIR}/candidate" <<'PY'
+import pathlib
+import sys
+import tarfile
+
+destination = pathlib.Path(sys.argv[2])
+with tarfile.open(sys.argv[1], "r:gz") as archive:
+    members = archive.getmembers()
+    if not members:
+        raise SystemExit("empty candidate archive")
+    for member in members:
+        path = pathlib.PurePosixPath(member.name)
+        if path.is_absolute() or ".." in path.parts or member.isdev():
+            raise SystemExit("unsafe candidate archive")
+        if member.issym() or member.islnk():
+            link = pathlib.PurePosixPath(member.linkname)
+            if link.is_absolute() or ".." in link.parts:
+                raise SystemExit("unsafe candidate archive link")
+    archive.extractall(destination, members=members)
+PY
+RUNTIME_CONTRACT="${WORKDIR}/candidate/scripts/gcp/runtime_contract.py"
+REBOOT_HELPER="${WORKDIR}/candidate/scripts/gcp/reboot-runtime.sh"
+CANDIDATE_GUARD="${WORKDIR}/candidate/infra/terraform-gcp/templates/omega-operation-gate"
+if [[ ! -x "$RUNTIME_CONTRACT" || ! -x "$REBOOT_HELPER" || ! -x "$CANDIDATE_GUARD" ]]; then
+  fail "candidate helper artifact" "exact candidate runtime/reboot/operation helpers are missing" 26
+fi
+emit "candidate helper artifact" "PASS" "ref=${CANDIDATE_REF} sha256=${CANDIDATE_ARTIFACT_SHA256}"
+
+# The candidate guard is installed before any legacy state is made visible.
+# Docker therefore cannot auto-restart writers against a partial adoption.
+install_operation_guard "$CANDIDATE_GUARD"
+emit "reboot operation guard" "PASS" "exact candidate ExecStartPre installed before state publication"
+
+LEGACY_BOOTSTRAP_STATE="${SHARED_ROOT}/bootstrap-state.json"
+LEGACY_RUNTIME_PROVENANCE="${SHARED_ROOT}/runtime-provenance.json"
+if [[ -e "$LEGACY_BOOTSTRAP_STATE" || -e "$LEGACY_RUNTIME_PROVENANCE" ]]; then
+  if [[ ! -s "$LEGACY_BOOTSTRAP_STATE" || ! -s "$LEGACY_RUNTIME_PROVENANCE" ]]; then
+    fail "legacy adoption state" "one-existing/one-missing direct state pair is corrupt" 26
+  fi
+  fail "legacy adoption state" "non-atomic direct state pair requires explicit reconciliation" 26
+fi
+
+ADOPTION_NEEDED=0
+ACTIVE_PROVENANCE="$RUNTIME_PROVENANCE"
+if [[ -e "$STATE_LINK" || -L "$STATE_LINK" ]]; then
+  if [[ ! -s "$BOOTSTRAP_STATE" || ! -s "$RUNTIME_PROVENANCE" ]]; then
+    fail "canonical runtime state" "atomic state link does not expose both required files" 26
+  fi
+  if ! /usr/local/sbin/omega-operation-gate; then
+    fail "canonical runtime state" "operation gate rejected existing state/helper provenance" 26
+  fi
+else
+  ADOPTION_NEEDED=1
+  install -d -m 0700 "$STATE_BUNDLES_ROOT" "${SHARED_ROOT}/bin"
+
+  # Stage immutable, ref-addressed helpers. The directory is published before
+  # state, but remains inert until the atomic state link references its hashes.
+  HELPER_ROOT="${SHARED_ROOT}/bin/${CANDIDATE_REF}"
+  HELPER_TMP="${SHARED_ROOT}/bin/.${CANDIDATE_REF}.$$"
+  REBOOT_SHA256="$(sha256sum "$REBOOT_HELPER" | awk '{print $1}')"
+  CONTRACT_SHA256="$(sha256sum "$RUNTIME_CONTRACT" | awk '{print $1}')"
+  if [[ -e "$HELPER_ROOT" ]]; then
+    if [[ ! -x "${HELPER_ROOT}/reboot-runtime.sh" || \
+          ! -x "${HELPER_ROOT}/runtime_contract.py" || \
+          "$(sha256sum "${HELPER_ROOT}/reboot-runtime.sh" | awk '{print $1}')" != "$REBOOT_SHA256" || \
+          "$(sha256sum "${HELPER_ROOT}/runtime_contract.py" | awk '{print $1}')" != "$CONTRACT_SHA256" ]]; then
+      fail "shared reboot helper bundle" "existing candidate-ref helper bundle differs" 26
+    fi
+  else
+    install -d -m 0700 "$HELPER_TMP"
+    install -m 0755 "$REBOOT_HELPER" "${HELPER_TMP}/reboot-runtime.sh"
+    install -m 0755 "$RUNTIME_CONTRACT" "${HELPER_TMP}/runtime_contract.py"
+    python3 - "${HELPER_TMP}/source.json" "$CANDIDATE_REF" \
+      "$CANDIDATE_ARTIFACT_URI" "$CANDIDATE_ARTIFACT_SHA256" \
+      "$REBOOT_SHA256" "$CONTRACT_SHA256" <<'PY'
+import json
+import pathlib
+import sys
+
+payload = {
+    "schema_version": 1,
+    "source_ref": sys.argv[2],
+    "source_artifact_uri": sys.argv[3],
+    "source_artifact_sha256": sys.argv[4],
+    "reboot_runtime_sha256": sys.argv[5],
+    "runtime_contract_sha256": sys.argv[6],
+}
+pathlib.Path(sys.argv[1]).write_text(
+    json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+)
+PY
+    chmod 0400 "${HELPER_TMP}/source.json"
+    mv "$HELPER_TMP" "$HELPER_ROOT"
+  fi
+  emit "shared reboot helper bundle" "PASS" "candidate_ref=${CANDIDATE_REF} exact hashes recorded"
+
+  STATE_STAGE="$(mktemp -d "${STATE_BUNDLES_ROOT}/.legacy.${CURRENT_REF}.XXXXXX")"
+  ACTIVE_PROVENANCE="${STATE_STAGE}/runtime-provenance.json"
+  python3 "$RUNTIME_CONTRACT" bootstrap-record --compose-project "$COMPOSE_PROJECT" \
+    --deploy-ref "$CURRENT_REF" --version "$CURRENT_VERSION" \
+    --output "$ACTIVE_PROVENANCE"
+  python3 - "$ACTIVE_PROVENANCE" "${STATE_STAGE}/bootstrap-state.json" \
+    "$CURRENT_REF" "$CURRENT_VERSION" "$CANDIDATE_REF" \
+    "$CANDIDATE_ARTIFACT_URI" "$CANDIDATE_ARTIFACT_SHA256" \
+    "$REBOOT_SHA256" "$CONTRACT_SHA256" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+from datetime import datetime, timezone
+
+provenance_path = pathlib.Path(sys.argv[1])
+bootstrap_path = pathlib.Path(sys.argv[2])
+provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+provenance["legacy_adoption"] = {
+    "candidate_helper_ref": sys.argv[5],
+    "candidate_artifact_uri": sys.argv[6],
+    "candidate_artifact_sha256": sys.argv[7],
+    "validated_at": datetime.now(timezone.utc).isoformat(),
+}
+provenance_path.write_text(
+    json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+)
+provenance_sha = hashlib.sha256(provenance_path.read_bytes()).hexdigest()
+bootstrap = {
+    "schema_version": 2,
+    "state": "complete",
+    "deploy_ref": sys.argv[3],
+    "version": sys.argv[4],
+    "runtime_provenance_sha256": provenance_sha,
+    "reboot_helper": {
+        "mode": "shared",
+        "source_ref": sys.argv[5],
+        "source_artifact_uri": sys.argv[6],
+        "source_artifact_sha256": sys.argv[7],
+        "reboot_runtime_sha256": sys.argv[8],
+        "runtime_contract_sha256": sys.argv[9],
+    },
+    "completed_at": datetime.now(timezone.utc).isoformat(),
+}
+bootstrap_path.write_text(
+    json.dumps(bootstrap, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+)
+PY
+  chmod 0600 "$ACTIVE_PROVENANCE" "${STATE_STAGE}/bootstrap-state.json"
+fi
+
+PROVENANCE_MODE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["mode"])' "$ACTIVE_PROVENANCE")"
+PROVENANCE_ARGS=()
+if [[ "$PROVENANCE_MODE" == "day2" ]]; then
+  LOCK_ENV="${SHARED_ROOT}/image-locks/${CURRENT_REF}/release-images.env"
+  RELEASE_COMPOSE="${CURRENT_RELEASE}/infra/terraform-gcp/release/docker-compose.release.yml"
+  if [[ ! -s "$LOCK_ENV" || ! -s "$RELEASE_COMPOSE" ]]; then
+    fail "day-2 runtime inputs" "exact image lock or release overlay missing" 25
+  fi
+  COMPOSE=(docker compose --project-name "$COMPOSE_PROJECT" --env-file "$SHARED_ENV" \
+    --env-file "$LOCK_ENV" -f "$BASE_COMPOSE" -f "$GCP_RUNTIME_COMPOSE" \
+    -f "$RELEASE_COMPOSE" --profile sap)
+  PROVENANCE_ARGS=(--lock-env "$LOCK_ENV")
+elif [[ "$PROVENANCE_MODE" == "bootstrap" ]]; then
+  COMPOSE=(docker compose --project-name "$COMPOSE_PROJECT" --env-file "$SHARED_ENV" \
+    -f "$BASE_COMPOSE" -f "$GCP_RUNTIME_COMPOSE" --profile sap)
+else
+  fail "runtime provenance" "unsupported provenance mode" 25
+fi
 "${COMPOSE[@]}" config -q
-emit "shared runtime inputs" "PASS" "refreshed from current release without registry credentials"
+emit "shared runtime inputs" "PASS" "host-owned env and generated GCP overlay are canonical"
+
+if ! python3 - "$CURRENT_VERSION" <<'PY'
+import json
+import sys
+import urllib.request
+
+with urllib.request.urlopen("http://127.0.0.1:8000/healthz", timeout=5) as response:
+    if response.status != 200:
+        raise SystemExit(1)
+    payload = json.load(response)
+if payload.get("version") != sys.argv[1] or payload.get("app_env") != "production":
+    raise SystemExit(1)
+if payload.get("ok") is not True and payload.get("status") not in {"ok", "healthy"}:
+    raise SystemExit(1)
+PY
+then
+  fail "live release coherence" "healthz version/app_env differs from current release" 27
+fi
+if ! python3 "$RUNTIME_CONTRACT" provenance --provenance "$ACTIVE_PROVENANCE" \
+    --compose-project "$COMPOSE_PROJECT" --deploy-ref "$CURRENT_REF" \
+    --version "$CURRENT_VERSION" --one-shots "${PROVENANCE_ARGS[@]}" >/dev/null; then
+  fail "live runtime provenance" "containers, images, project, health, or scheduler drifted" 27
+fi
+emit "live release coherence" "PASS" "healthz.version=${CURRENT_VERSION} runtime provenance exact scheduler=1"
+
+if [[ "$ADOPTION_NEEDED" == "1" ]]; then
+  STATE_FINAL="${STATE_BUNDLES_ROOT}/legacy-${CURRENT_REF}-by-${CANDIDATE_REF}-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  mv "$STATE_STAGE" "$STATE_FINAL"
+  STATE_STAGE=""
+  STATE_PREVIEW="${SHARED_ROOT}/.runtime-state.${CURRENT_REF}.$$"
+  ln -s "$STATE_FINAL" "$STATE_PREVIEW"
+  if ! OMEGA_GCP_STATE_LINK_OVERRIDE="$STATE_PREVIEW" /usr/local/sbin/omega-operation-gate; then
+    fail "legacy runtime adoption" "staged atomic state/helper verification failed" 27
+  fi
+  mv -Tf "$STATE_PREVIEW" "$STATE_LINK"
+  STATE_PREVIEW=""
+  STATE_FINAL=""
+  ACTIVE_PROVENANCE="$RUNTIME_PROVENANCE"
+  emit "legacy runtime adoption" "PASS" "current=${CURRENT_REF} candidate_helper=${CANDIDATE_REF} state_pair=atomic"
+fi
 
 WRITER_SERVICES=(airflow-scheduler console workspace refinement vault mcp-infra airflow replicon hubspot salesforce banxico inegi sec-edgar sap-hcm sap-successfactors sap-s4hana superset)
 SCHEDULER_COUNT="$(docker ps -q --filter 'label=com.docker.compose.service=airflow-scheduler' | grep -c . || true)"
@@ -104,12 +428,27 @@ for service in "${WRITER_SERVICES[@]}"; do
   fi
 done
 
-wait_for_scheduler() {
-  local scheduler_id count
+wait_for_runtime_restore() {
+  local scheduler_id count service ids state health all_green
   for _ in $(seq 1 60); do
+    all_green=1
+    for service in "${RUNNING_BEFORE[@]}"; do
+      ids="$(docker ps -q --filter "label=com.docker.compose.project=${COMPOSE_PROJECT}" \
+        --filter "label=com.docker.compose.service=${service}")"
+      if [[ "$(grep -c . <<<"$ids" || true)" != "1" ]]; then
+        all_green=0
+        break
+      fi
+      state="$(docker inspect "$ids" --format '{{.State.Running}}' 2>/dev/null || true)"
+      health="$(docker inspect "$ids" --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' 2>/dev/null || true)"
+      if [[ "$state" != "true" || ( -n "$health" && "$health" != "healthy" ) ]]; then
+        all_green=0
+        break
+      fi
+    done
     scheduler_id="$(docker ps -q --filter 'label=com.docker.compose.service=airflow-scheduler')"
     count="$(grep -c . <<<"$scheduler_id" || true)"
-    if [[ "$count" == "1" ]] && \
+    if [[ "$all_green" == "1" && "$count" == "1" ]] && \
         [[ "$(docker inspect "$scheduler_id" --format '{{.State.Health.Status}}' 2>/dev/null || true)" == "healthy" ]]; then
       return 0
     fi
@@ -126,11 +465,13 @@ restore_runtime() {
       emit "runtime restored after backup" "FAIL" "one or more previously-running services did not restart"
       rc=70
     else
-      if ! wait_for_scheduler; then
-        emit "runtime restored after backup" "FAIL" "sole scheduler did not return healthy"
+      if ! wait_for_runtime_restore; then
+        emit "runtime restored after backup" "FAIL" "not every previously-active service returned running/healthy"
         rc=71
       else
-        emit "runtime restored after backup" "PASS" "previous service state restored; scheduler=1 healthy"
+        rm -f -- "$OPERATION_MARKER"
+        RUNTIME_FENCED=0
+        emit "runtime restored after backup" "PASS" "all previously-active services running/healthy; scheduler=1"
       fi
     fi
   fi
@@ -141,7 +482,7 @@ restore_runtime() {
 }
 trap restore_runtime EXIT
 
-WORKDIR="$(mktemp -d /tmp/omega-gcp-backup.XXXXXX)"
+write_operation_state "fencing"
 RUNTIME_FENCED=1
 "${COMPOSE[@]}" stop --timeout 60 "${WRITER_SERVICES[@]}"
 for service in "${WRITER_SERVICES[@]}"; do
@@ -150,6 +491,7 @@ for service in "${WRITER_SERVICES[@]}"; do
     fail "writer fence" "service still running=${service}" 28
   fi
 done
+write_operation_state "fenced"
 emit "writer and scheduler fence" "PASS" "all known application writers stopped"
 
 for pair in "mode_postgres:5432" "mode_postgres_gold:5433"; do
@@ -315,34 +657,103 @@ with open(sys.argv[1], "w", encoding="utf-8") as stream:
     stream.write("\n")
 PY
 
-gcs_token() {
-  curl -fsS -H 'Metadata-Flavor: Google' \
-    'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token' \
-    | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])'
-}
+python3 - "${WORKDIR}/database-images.json" mode_postgres mode_postgres_gold <<'PY'
+import json
+import re
+import subprocess
+import sys
+
+output = sys.argv[1]
+images = {}
+for name, container in zip(("postgres", "postgres_gold"), sys.argv[2:]):
+    info = json.loads(
+        subprocess.run(
+            ["docker", "inspect", container],
+            text=True,
+            stdout=subprocess.PIPE,
+            check=True,
+        ).stdout
+    )[0]
+    configured_ref = info["Config"]["Image"]
+    image_id = info["Image"]
+    image = json.loads(
+        subprocess.run(
+            ["docker", "image", "inspect", image_id],
+            text=True,
+            stdout=subprocess.PIPE,
+            check=True,
+        ).stdout
+    )[0]
+    repository = configured_ref.rsplit(":", 1)[0]
+    matches = sorted(
+        value
+        for value in image.get("RepoDigests") or []
+        if value.startswith(repository + "@sha256:")
+    )
+    if len(matches) != 1 or not re.fullmatch(
+        re.escape(repository) + r"@sha256:[0-9a-f]{64}", matches[0]
+    ):
+        raise SystemExit(f"database image lacks one immutable RepoDigest: {name}")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
+        raise SystemExit(f"database image ID is invalid: {name}")
+    images[name] = {
+        "configured_ref": configured_ref,
+        "repo_digest": matches[0],
+        "image_id": image_id,
+    }
+with open(output, "w", encoding="utf-8") as stream:
+    json.dump(images, stream, indent=2, sort_keys=True)
+    stream.write("\n")
+PY
+install -m 0600 "$RUNTIME_PROVENANCE" "${WORKDIR}/runtime-provenance.json"
 
 upload_immutable() {
-  local source="$1" key="$2" metadata_output="$3" token encoded_key http_code
-  token="$(gcs_token)"
-  encoded_key="$(python3 - "$key" <<'PY'
+  local source="$1" key="$2" metadata_output="$3"
+  python3 - "$source" "$LAKEHOUSE_BUCKET" "$key" "$metadata_output" <<'PY'
+import http.client
+import json
+import pathlib
 import sys
-from urllib.parse import quote
-print(quote(sys.argv[1], safe=""))
-PY
-)"
-  http_code="$(curl -sS -o "$metadata_output" -w '%{http_code}' \
-    -X POST -H "Authorization: Bearer ${token}" -H 'Content-Type: application/octet-stream' \
-    --data-binary "@${source}" \
-    "https://storage.googleapis.com/upload/storage/v1/b/${LAKEHOUSE_BUCKET}/o?uploadType=media&name=${encoded_key}&ifGenerationMatch=0")"
-  unset token
-  if [[ "$http_code" != "200" ]]; then
-    fail "immutable backup upload" "object=${key} http=${http_code}" 29
-  fi
-  python3 - "$metadata_output" <<'PY'
-import json, sys
-payload = json.load(open(sys.argv[1], encoding="utf-8"))
+import urllib.parse
+import urllib.request
+
+source, bucket, key, metadata_output = sys.argv[1:]
+token_request = urllib.request.Request(
+    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
+    headers={"Metadata-Flavor": "Google"},
+)
+with urllib.request.urlopen(token_request, timeout=10) as response:
+    token = json.load(response)["access_token"]
+target = "/upload/storage/v1/b/{}/o?{}".format(
+    urllib.parse.quote(bucket, safe=""),
+    urllib.parse.urlencode(
+        {"uploadType": "media", "name": key, "ifGenerationMatch": "0"}
+    ),
+)
+path = pathlib.Path(source)
+connection = http.client.HTTPSConnection("storage.googleapis.com", timeout=180)
+with path.open("rb") as stream:
+    connection.request(
+        "POST",
+        target,
+        body=stream,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/octet-stream",
+            "Content-Length": str(path.stat().st_size),
+        },
+    )
+    response = connection.getresponse()
+    body = response.read()
+connection.close()
+if response.status != 200:
+    raise SystemExit(f"immutable GCS upload failed: http={response.status}")
+payload = json.loads(body)
 if not payload.get("generation") or not payload.get("crc32c") or not payload.get("size"):
     raise SystemExit("uploaded object metadata is incomplete")
+pathlib.Path(metadata_output).write_text(
+    json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+)
 PY
 }
 
@@ -350,17 +761,17 @@ upload_immutable "${WORKDIR}/postgres.sql.gz" "${BACKUP_PREFIX}/postgres.sql.gz"
 upload_immutable "${WORKDIR}/postgres_gold.sql.gz" "${BACKUP_PREFIX}/postgres_gold.sql.gz" "${WORKDIR}/postgres_gold.meta.json"
 upload_immutable "${WORKDIR}/lakehouse_objects.jsonl" "${BACKUP_PREFIX}/lakehouse_objects.jsonl" "${WORKDIR}/objects.meta.json"
 upload_immutable "${WORKDIR}/runtime-images.json" "${BACKUP_PREFIX}/runtime-images.json" "${WORKDIR}/images.meta.json"
+upload_immutable "${WORKDIR}/runtime-provenance.json" "${BACKUP_PREFIX}/runtime-provenance.json" "${WORKDIR}/provenance.meta.json"
 
-SOURCE_REF="$(basename "$CURRENT_RELEASE")"
-SOURCE_VERSION="$(tr -d '\r\n' < "${CURRENT_RELEASE}/VERSION")"
-OP_IMAGE="$(docker inspect mode_postgres --format '{{.Config.Image}}')"
-GOLD_IMAGE="$(docker inspect mode_postgres_gold --format '{{.Config.Image}}')"
+SOURCE_REF="$CURRENT_REF"
+SOURCE_VERSION="$CURRENT_VERSION"
 python3 - "${WORKDIR}/manifest.json" "$BACKUP_ID" "$LAKEHOUSE_BUCKET" "$BACKUP_PREFIX" \
-  "$SOURCE_REF" "$SOURCE_VERSION" "$OBJECT_COUNT" "$OBJECT_BYTES" "$OP_IMAGE" "$GOLD_IMAGE" \
+  "$SOURCE_REF" "$SOURCE_VERSION" "$OBJECT_COUNT" "$OBJECT_BYTES" \
   "${WORKDIR}/postgres.meta.json" "${WORKDIR}/postgres_gold.meta.json" \
-  "${WORKDIR}/objects.meta.json" "${WORKDIR}/images.meta.json" \
+  "${WORKDIR}/objects.meta.json" "${WORKDIR}/images.meta.json" "${WORKDIR}/provenance.meta.json" \
   "${WORKDIR}/postgres.sql.gz" "${WORKDIR}/postgres_gold.sql.gz" \
-  "${WORKDIR}/lakehouse_objects.jsonl" "${WORKDIR}/runtime-images.json" <<'PY'
+  "${WORKDIR}/lakehouse_objects.jsonl" "${WORKDIR}/runtime-images.json" \
+  "${WORKDIR}/runtime-provenance.json" "${WORKDIR}/database-images.json" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -368,11 +779,12 @@ import sys
 from datetime import datetime, timezone
 
 (output, backup_id, bucket, prefix, source_ref, source_version, object_count,
- object_bytes, op_image, gold_image, *paths) = sys.argv[1:]
-meta_paths = paths[:4]
-local_paths = paths[4:]
-names = ["postgres", "postgres_gold", "object_manifest", "runtime_images"]
-keys = ["postgres.sql.gz", "postgres_gold.sql.gz", "lakehouse_objects.jsonl", "runtime-images.json"]
+ object_bytes, *paths) = sys.argv[1:]
+meta_paths = paths[:5]
+local_paths = paths[5:10]
+database_images_path = paths[10]
+names = ["postgres", "postgres_gold", "object_manifest", "runtime_images", "runtime_provenance"]
+keys = ["postgres.sql.gz", "postgres_gold.sql.gz", "lakehouse_objects.jsonl", "runtime-images.json", "runtime-provenance.json"]
 artifacts = {}
 for name, key, meta_path, local_path in zip(names, keys, meta_paths, local_paths):
     metadata = json.load(open(meta_path, encoding="utf-8"))
@@ -386,7 +798,7 @@ for name, key, meta_path, local_path in zip(names, keys, meta_paths, local_paths
         "sha256": digest,
     }
 payload = {
-    "schema_version": 1,
+    "schema_version": 2,
     "complete": True,
     "backup_id": backup_id,
     "created_at": datetime.now(timezone.utc).isoformat(),
@@ -404,7 +816,8 @@ payload = {
         "total_bytes": int(object_bytes),
         "restore_point": "exact live object generations recorded in object_manifest",
     },
-    "database_images": {"postgres": op_image, "postgres_gold": gold_image},
+    "database_images": json.load(open(database_images_path, encoding="utf-8")),
+    "runtime_provenance_sha256": artifacts["runtime_provenance"]["sha256"],
     "artifacts": artifacts,
     "plaintext_runtime_secrets_included": False,
     "database_contents_sensitive": True,
@@ -416,11 +829,14 @@ upload_immutable "${WORKDIR}/manifest.json" "${BACKUP_PREFIX}/manifest.json" "${
 MANIFEST_GENERATION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["generation"])' "${WORKDIR}/manifest.meta.json")"
 emit "immutable backup manifest" "PASS" "sha256=${MANIFEST_SHA} generation=${MANIFEST_GENERATION}"
 
+write_operation_state "captured"
 "${COMPOSE[@]}" start "${RUNNING_BEFORE[@]}" >/dev/null
-if ! wait_for_scheduler; then
-  fail "runtime restored after backup" "sole scheduler did not return healthy" 30
+if ! wait_for_runtime_restore; then
+  fail "runtime restored after backup" "not every previously-active service returned running/healthy" 30
 fi
 RUNTIME_FENCED=0
-emit "runtime restored after backup" "PASS" "previous service state restored; scheduler=1 healthy"
+write_operation_state "restored"
+rm -f -- "$OPERATION_MARKER"
+emit "runtime restored after backup" "PASS" "all previously-active services running/healthy; scheduler=1"
 printf 'OMEGA_GCP_BACKUP_JSON={"status":"PASS","backup_id":"%s","manifest_uri":"gs://%s/%s/manifest.json","manifest_sha256":"%s","manifest_generation":"%s","object_count":%s}\n' \
   "$BACKUP_ID" "$LAKEHOUSE_BUCKET" "$BACKUP_PREFIX" "$MANIFEST_SHA" "$MANIFEST_GENERATION" "$OBJECT_COUNT"

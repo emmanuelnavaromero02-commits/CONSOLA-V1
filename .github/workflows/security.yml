@@ -63,6 +63,7 @@ jobs:
             console workspace vault refinement mcp-infra cartridges \
             scripts/ci_changed_areas.py scripts/ci_control_room_paths.py \
             scripts/reconcile_pipeline_runs.py \
+            scripts/gcp_release.py scripts/gcp/runtime_contract.py \
             --severity-level medium \
             -f json -o bandit-report.json || true
           # v1.45.17 audit follow-up: fail the job on MEDIUM+
@@ -75,6 +76,7 @@ jobs:
             console workspace vault refinement mcp-infra cartridges \
             scripts/ci_changed_areas.py scripts/ci_control_room_paths.py \
             scripts/reconcile_pipeline_runs.py \
+            scripts/gcp_release.py scripts/gcp/runtime_contract.py \
             --severity-level medium \
             --confidence-level high
 

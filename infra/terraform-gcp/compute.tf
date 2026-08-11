@@ -40,28 +40,7 @@ resource "google_compute_instance" "app" {
     enable-oslogin = "TRUE"
   }
 
-  metadata_startup_script = templatefile("${path.module}/templates/startup.sh.tftpl", {
-    project_id               = var.project_id
-    source_bucket            = var.source_bucket
-    source_object            = var.source_object
-    source_sha               = var.source_sha
-    public_console_url       = local.console_public_url
-    public_workspace_url     = local.workspace_public_url
-    public_airflow_url       = local.airflow_public_url
-    technical_console_url    = local.technical_console_url
-    technical_workspace_url  = local.technical_workspace_url
-    admin_email              = var.admin_email
-    cookie_secure            = local.public_https_enabled ? "true" : "false"
-    lakehouse_bucket         = local.lakehouse_bucket
-    lakehouse_endpoint       = var.lakehouse_endpoint
-    enable_airflow_scheduler = var.enable_airflow_scheduler ? "true" : "false"
-    secret_prefix            = "omega-${var.environment}-"
-    compose_override         = templatefile("${path.module}/templates/docker-compose.gcp.yml.tftpl", {})
-  })
-
-  lifecycle {
-    ignore_changes = [metadata_startup_script]
-  }
+  metadata_startup_script = local.startup_script
 
   service_account {
     email  = google_service_account.app.email

@@ -36,6 +36,29 @@ locals {
   airflow_public_url = "${local.console_public_url}/airflow"
   lakehouse_bucket   = var.lakehouse_bucket_name != "" ? var.lakehouse_bucket_name : google_storage_bucket.lakehouse.name
 
+  # Version the effective reboot/bootstrap controller. Changes are deliberately
+  # reconciled by Terraform and exposed as a hash for operator read-back; they
+  # are no longer hidden behind ignore_changes on the VM metadata.
+  startup_script = templatefile("${path.module}/templates/startup.sh.tftpl", {
+    project_id               = var.project_id
+    source_bucket            = var.source_bucket
+    source_object            = var.source_object
+    source_sha               = var.source_sha
+    public_console_url       = local.console_public_url
+    public_workspace_url     = local.workspace_public_url
+    public_airflow_url       = local.airflow_public_url
+    technical_console_url    = local.technical_console_url
+    technical_workspace_url  = local.technical_workspace_url
+    admin_email              = var.admin_email
+    cookie_secure            = local.public_https_enabled ? "true" : "false"
+    lakehouse_bucket         = local.lakehouse_bucket
+    lakehouse_endpoint       = var.lakehouse_endpoint
+    enable_airflow_scheduler = var.enable_airflow_scheduler ? "true" : "false"
+    secret_prefix            = "omega-${var.environment}-"
+    compose_override         = templatefile("${path.module}/templates/docker-compose.gcp.yml.tftpl", {})
+    operation_guard_base64   = base64encode(file("${path.module}/templates/omega-operation-gate"))
+  })
+
   required_services = toset([
     "artifactregistry.googleapis.com",
     "billingbudgets.googleapis.com",

@@ -25,6 +25,12 @@ or read a GHCR credential on the operator machine.
   the fence. This is intentional; do not bypass it by starting containers
   manually. Diagnose, restore from the verified backup if required, and rerun
   the canonical operation.
+- `/opt/modecissions/shared/runtime-state` is one atomic symlink to a state
+  bundle containing both `bootstrap-state.json` and
+  `runtime-provenance.json`. Docker's `ExecStartPre` validates that pair, the
+  current release identity, provenance checksum, and reboot-helper hashes. A
+  partial backup/bootstrap/deploy therefore cannot restart Docker after a
+  reboot or `SIGKILL`.
 
 ## Private GHCR contract
 
@@ -56,13 +62,99 @@ export GCP_APP_ZONE='<zone>'
 export GCP_APP_INSTANCE='<instance>'
 export GCP_LAKEHOUSE_BUCKET='<versioned-lakehouse-bucket>'
 export GCP_SOURCE_BUCKET='<private-source-bucket>'
+export GCP_CURRENT_LIVE_REF='<exact-40-char-ref-running-before-backup>'
+export GCP_DEPLOY_REF='<exact-approved-origin-main-candidate>'
 export OMEGA_GCP_ENVIRONMENT='staging'
 export OMEGA_GHCR_PULL_SECRET_VERSION='<numeric-enabled-secret-version>'
+export OMEGA_TERRAFORM_BIN='tofu'
+export GCP_TERRAFORM_VAR_FILE='<absolute-path-to-reviewed-production.tfvars>'
+export GCP_PROJECT_NUMBER='894064513501'
+export GCP_BILLING_ACCOUNT_ID='01A3E0-B708F4-6EA299'
+export GCP_PUBLIC_CONSOLE_DOMAIN='<exact-live-gcp-console-domain>'
+export GCP_PUBLIC_WORKSPACE_DOMAIN='<exact-live-gcp-workspace-domain>'
 ```
 
 Do not put the GHCR username or token in any of these variables.
 
-## 1. Writer-fenced pre-deploy backup
+## 1. Reconcile startup metadata before legacy adoption
+
+Do not run backup against the historical startup script. At the 5.5
+reconciliation point, live evidence showed all of the following drift:
+
+- Terraform state `source_sha` was
+  `295ad0fd344c8a5f45afae960e974d481ee08973`;
+- live GCE startup metadata embedded
+  `6b12883c5b5ea0537120279ccbee4947137998a2` and had SHA-256
+  `69d1ebdfdd946a68e77b8364bf2f54331577bb8eb43bb7473d0bd8c601881712`;
+- the live boot disk was 60 GB while state/default input was 30 GB;
+- the billing budget was EUR 100 while the code default is USD;
+- the data disk was 150 GB and machine type was `e2-standard-4`; and
+- the existing managed-certificate domains were the live GCP console and
+  workspace domains.
+
+These values are evidence, not permission to apply. Never plan with defaults
+or an example tfvars. First publish both immutable source objects:
+
+```bash
+make prepare-gcp-artifacts
+```
+
+Create a reviewed production tfvars outside the repository. It must explicitly
+set every value checked by `scripts/gcp_release.py`, including project/billing
+identity, `boot_disk_size_gb = 60`, `data_disk_size_gb = 150`,
+`monthly_budget_currency = "EUR"`, both exact live certificate domains,
+`enable_https = true`, `enable_airflow_scheduler = true`, and the exact source
+triple:
+
+```hcl
+source_bucket = "<GCP_SOURCE_BUCKET>"
+source_object = "deploy-artifacts/<GCP_CURRENT_LIVE_REF>/repo.tar.gz"
+source_sha    = "<GCP_CURRENT_LIVE_REF>"
+```
+
+Generate a saved plan with that explicit file. Review the complete plan. Before
+backup, the only acceptable resource mutation is the app VM's
+`metadata_startup_script` (plus corresponding output changes). There must be
+zero budget, boot/data disk, machine type, certificate, LB, DNS, IAM, database,
+or object-storage changes.
+
+```bash
+tofu -chdir=infra/terraform-gcp plan \
+  -input=false -var-file="$GCP_TERRAFORM_VAR_FILE" \
+  -out=/tmp/omega-gcp-startup-live-ref.tfplan
+tofu -chdir=infra/terraform-gcp show /tmp/omega-gcp-startup-live-ref.tfplan
+# Apply only after the reviewed plan is explicitly approved.
+tofu -chdir=infra/terraform-gcp apply /tmp/omega-gcp-startup-live-ref.tfplan
+tofu -chdir=infra/terraform-gcp plan \
+  -detailed-exitcode -input=false -var-file="$GCP_TERRAFORM_VAR_FILE"
+```
+
+The final command must exit 0. Exit 2 is a hard stop. The backup controller
+repeats this zero-change plan, requires Terraform `source_sha` and
+`source_object` to match the exact live ref artifact, derives the expected
+startup hash from Terraform output, and compares it to live GCE metadata before
+opening SSH. `OMEGA_TERRAFORM_BIN` defaults to `tofu` and fails closed if the
+configured binary is unavailable.
+
+## 2. Authenticated rollback-image preflight
+
+Before tag creation, prove the approved published rollback tag is pullable
+15/15 through the VM-owned Secret Manager credential:
+
+```bash
+export GCP_IMAGE_PREFLIGHT_PURPOSE='rollback'
+export GCP_IMAGE_PREFLIGHT_TAG='<approved-published-rollback-tag>'
+export GCP_IMAGE_PREFLIGHT_REF='<exact-rollback-tag-commit>'
+CONFIRM_GCP_IMAGE_PREFLIGHT=1 make gcp-image-preflight
+```
+
+This downloads an exact candidate helper artifact, uses an ephemeral
+`DOCKER_CONFIG`, and stores only a secret-free immutable digest lock under
+`/opt/modecissions/shared/image-preflights/`. A result below 15/15 is a hard
+stop. The same target with `PURPOSE=release` is mandatory after Release Images
+publishes the new tag and before deploy.
+
+## 3. Writer-fenced pre-deploy backup
 
 First verify externally that GCP is the only writer, DNS still points to GCP,
 AWS is fenced, and exactly one scheduler is running. Then run:
@@ -70,6 +162,15 @@ AWS is fenced, and exactly one scheduler is running. Then run:
 ```bash
 CONFIRM_GCP_BACKUP=1 make backup-gcp-canonical
 ```
+
+On a legacy runtime with no canonical state, the backup first obtains the
+exact pre-tag candidate artifact, stages ref-addressed reboot helpers in
+`shared/bin`, installs the Docker operation gate, and generates provenance in
+a temporary state bundle. It validates Compose, exact live VERSION,
+`healthz`, 15 healthy proprietary services, exactly one scheduler, and all
+one-shot exit states against that temporary record. Only then is the atomic
+`runtime-state` link published. A post-record health failure leaves the prior
+state unchanged.
 
 The operation takes a bounded write outage while it:
 
@@ -93,7 +194,7 @@ retain their private GCS access boundary. The object rollback point is the
 exact set of recorded GCS generations; the script does not duplicate hundreds
 of gigabytes under a second prefix.
 
-## 2. Release gate and deploy
+## 4. Release gate and deploy
 
 Do not run this until Release Images has succeeded 15/15 and the private pull
 preflight has been demonstrated. Set only public identifiers:
@@ -102,9 +203,16 @@ preflight has been demonstrated. Set only public identifiers:
 export GCP_RELEASE_TAG='v1.45.207-beta'
 export GCP_DEPLOY_REF='<full-approved-main-sha>'
 export GCP_BACKUP_MANIFEST_URI='gs://.../_omega_backups/.../manifest.json'
-export GCP_BACKUP_MANIFEST_SHA256='<sha256-from-step-1>'
+export GCP_BACKUP_MANIFEST_SHA256='<sha256-from-step-3>'
 CONFIRM_GCP_DEPLOY=1 make deploy-gcp-canonical
 ```
+
+Before this command, update the same reviewed tfvars source triple to the final
+tag commit at `deploy-artifacts/<GCP_DEPLOY_REF>/repo.tar.gz`, review/apply a
+second saved plan with no unrelated changes, and require a subsequent plan to
+exit 0. The deploy controller repeats the explicit-tfvars zero-drift gate and
+startup metadata read-back. It will not accept an operator-supplied startup
+hash.
 
 The remote operation verifies the artifact and backup before it pulls all 15
 images through the server-owned auth helper. Only then does it fence writers,
@@ -115,7 +223,9 @@ from the old release to the candidate; `down`, `down -v`, and volume deletion
 are never used.
 
 Pending migrations run only through `scripts/apply_db_migrations.sh`, with the
-shared production env and stable Compose project supplied explicitly. The
+shared production env, stable Compose project, exact old/candidate refs,
+release version, and checksum-bound baseline/release migration manifests
+supplied explicitly. Bootstrap mode is forbidden for day-2. The
 scheduler remains stopped while all non-scheduler services start. Promotion
 requires:
 
@@ -128,7 +238,7 @@ requires:
 Evidence is written below `docs/release-evidence/deploy-gcp/`; credential-like
 values are redacted and the GHCR helper's pull output is never copied.
 
-## 3. Isolated restore rehearsal
+## 5. Isolated restore rehearsal
 
 Use the same manifest values:
 
@@ -143,12 +253,11 @@ operational and Gold migration ledgers, and removes the rehearsal containers
 and volumes. The live Compose project and live volumes are not opened or
 modified.
 
-Because `pg_dumpall --clean` emits `DROP ROLE` and `CREATE ROLE` for its own
-bootstrap `postgres` session user, the rehearsal validates and omits exactly
-those two byte-exact statements inside the global role sections. It preserves
-`ALTER ROLE postgres`, quoted or similarly named roles, and identical text in
-database payloads. Any dump-format drift or any other SQL error remains fatal
-under `psql -v ON_ERROR_STOP=1`.
+The dump is never filtered or rewritten. Each rehearsal database starts with a
+fresh, collision-checked `omega_rehearsal_*` superuser distinct from every role
+in the unmodified `pg_dumpall` stream. Restore runs as that role under
+`psql -v ON_ERROR_STOP=1`. Database images are fixed by both the backup's exact
+RepoDigest and local ImageID, and `--pull never` forbids substitution.
 
 `GCP_OBJECT_VERIFY_MODE=sample` exists only for fast diagnostics and is not
 release evidence.

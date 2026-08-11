@@ -1,0 +1,164 @@
+#!/bin/sh
+# Docker ExecStartPre gate for the canonical GCP runtime.
+set -eu
+
+app_root="${OMEGA_GCP_APP_ROOT:-/opt/modecissions}"
+shared_root="${app_root}/shared"
+operation_marker="${shared_root}/operation-state.json"
+state_link="${OMEGA_GCP_STATE_LINK_OVERRIDE:-${shared_root}/runtime-state}"
+
+if [ -e "$operation_marker" ] && [ "${OMEGA_GCP_ALLOW_OPERATION_MARKER:-0}" != "1" ]; then
+  echo "omega: durable canonical operation is incomplete; Docker remains fenced" >&2
+  exit 75
+fi
+
+# A missing state link is valid only on the very first bootstrap. Once the
+# link exists, a single Python validation covers the state pair, current
+# release identity, runtime provenance checksum, and reboot helper hashes.
+if [ ! -e "$state_link" ] && [ ! -L "$state_link" ]; then
+  [ "${1:-verify}" = "print-helpers" ] && exit 76
+  exit 0
+fi
+
+python3 - "$app_root" "$state_link" "${1:-verify}" <<'PY'
+import hashlib
+import json
+import os
+import pathlib
+import re
+import sys
+
+
+app_root = pathlib.Path(sys.argv[1])
+state_link = pathlib.Path(sys.argv[2])
+mode = sys.argv[3]
+shared_root = app_root / "shared"
+bundles_root = shared_root / "state-bundles"
+current_link = pathlib.Path(os.environ.get("OMEGA_GCP_CURRENT_LINK_OVERRIDE", app_root / "current"))
+
+
+def fail(message: str) -> None:
+    print(f"omega: {message}; Docker remains fenced", file=sys.stderr)
+    raise SystemExit(76)
+
+
+def sha256(path: pathlib.Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+if mode not in {"verify", "print-helpers"}:
+    fail("unsupported operation-gate mode")
+if not state_link.is_symlink():
+    fail("canonical runtime-state is not an atomic symlink")
+try:
+    state_dir = state_link.resolve(strict=True)
+    state_dir.relative_to(bundles_root.resolve(strict=True))
+except (FileNotFoundError, ValueError, RuntimeError):
+    fail("canonical runtime-state target is missing or unconfined")
+if not state_dir.is_dir():
+    fail("canonical runtime-state target is not a directory")
+
+bootstrap_path = state_dir / "bootstrap-state.json"
+provenance_path = state_dir / "runtime-provenance.json"
+if not bootstrap_path.is_file() or not provenance_path.is_file():
+    fail("canonical runtime-state pair is incomplete")
+try:
+    bootstrap = json.loads(bootstrap_path.read_text(encoding="utf-8"))
+    provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError):
+    fail("canonical runtime-state pair is unreadable")
+
+deploy_ref = bootstrap.get("deploy_ref")
+version = bootstrap.get("version")
+if (
+    bootstrap.get("schema_version") != 2
+    or bootstrap.get("state") != "complete"
+    or not isinstance(deploy_ref, str)
+    or re.fullmatch(r"[0-9a-f]{40}", deploy_ref) is None
+    or not isinstance(version, str)
+    or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", version) is None
+):
+    fail("bootstrap state identity is invalid")
+if bootstrap.get("runtime_provenance_sha256") != sha256(provenance_path):
+    fail("runtime provenance checksum differs from bootstrap state")
+for key, expected in (
+    ("schema_version", 1),
+    ("deploy_ref", deploy_ref),
+    ("version", version),
+):
+    if provenance.get(key) != expected:
+        fail(f"runtime provenance identity differs: {key}")
+
+if not current_link.is_symlink():
+    fail("current release link is missing")
+try:
+    current_release = current_link.resolve(strict=True)
+    current_release.relative_to((app_root / "releases").resolve(strict=True))
+except (FileNotFoundError, ValueError, RuntimeError):
+    fail("current release is missing or unconfined")
+if current_release.name != deploy_ref:
+    fail("current release ref differs from bootstrap state")
+try:
+    current_version = (current_release / "VERSION").read_text(encoding="utf-8").strip()
+except OSError:
+    fail("current VERSION is unreadable")
+if current_version != version:
+    fail("current VERSION differs from bootstrap state")
+
+helper = bootstrap.get("reboot_helper")
+if not isinstance(helper, dict):
+    fail("reboot helper provenance is missing")
+helper_mode = helper.get("mode")
+source_ref = helper.get("source_ref")
+if not isinstance(source_ref, str) or re.fullmatch(r"[0-9a-f]{40}", source_ref) is None:
+    fail("reboot helper source ref is invalid")
+if helper_mode == "current":
+    if source_ref != deploy_ref:
+        fail("current reboot helper ref differs from current release")
+    helper_root = current_release / "scripts" / "gcp"
+elif helper_mode == "shared":
+    helper_root = shared_root / "bin" / source_ref
+    try:
+        helper_root.resolve(strict=True).relative_to(
+            (shared_root / "bin").resolve(strict=True)
+        )
+    except (FileNotFoundError, ValueError, RuntimeError):
+        fail("shared reboot helper directory is missing or unconfined")
+    artifact_uri = helper.get("source_artifact_uri")
+    artifact_sha = helper.get("source_artifact_sha256")
+    if (
+        not isinstance(artifact_uri, str)
+        or re.fullmatch(
+            rf"gs://[^/]+/deploy-artifacts/{re.escape(source_ref)}/repo\.tar\.gz",
+            artifact_uri,
+        )
+        is None
+        or not isinstance(artifact_sha, str)
+        or re.fullmatch(r"[0-9a-f]{64}", artifact_sha) is None
+    ):
+        fail("shared reboot helper artifact provenance is invalid")
+else:
+    fail("reboot helper mode is invalid")
+
+reboot_helper = helper_root / "reboot-runtime.sh"
+runtime_helper = helper_root / "runtime_contract.py"
+for path, field in (
+    (reboot_helper, "reboot_runtime_sha256"),
+    (runtime_helper, "runtime_contract_sha256"),
+):
+    expected = helper.get(field)
+    if (
+        not path.is_file()
+        or not isinstance(expected, str)
+        or re.fullmatch(r"[0-9a-f]{64}", expected) is None
+        or sha256(path) != expected
+    ):
+        fail(f"reboot helper checksum differs: {path.name}")
+
+if mode == "print-helpers":
+    print(f"{reboot_helper}\t{runtime_helper}")
+PY

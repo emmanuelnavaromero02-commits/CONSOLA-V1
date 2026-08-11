@@ -64,6 +64,19 @@ output "source_sha" {
   value = var.source_sha
 }
 
+output "source_bucket" {
+  value = var.source_bucket
+}
+
+output "source_object" {
+  value = var.source_object
+}
+
+output "startup_script_sha256" {
+  description = "Expected SHA-256 of the effective GCE metadata startup script; verify by read-back before day-2 deploy."
+  value       = sha256(local.startup_script)
+}
+
 output "admin_credentials_path_on_vm" {
   value = "/opt/modecissions/admin_credentials.txt"
 }

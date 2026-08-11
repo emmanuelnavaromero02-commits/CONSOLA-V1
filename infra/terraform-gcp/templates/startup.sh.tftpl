@@ -21,15 +21,58 @@ COMPOSE_OVERRIDE='${compose_override}'
 APP_ROOT="/opt/modecissions"
 RELEASE_DIR="$${APP_ROOT}/releases/$${SOURCE_SHA}"
 CURRENT_DIR="$${APP_ROOT}/current"
-SHARED_ENV="$${APP_ROOT}/shared/infra.env"
+SHARED_ROOT="$${APP_ROOT}/shared"
+SHARED_ENV="$${SHARED_ROOT}/infra.env"
+GCP_RUNTIME_COMPOSE="$${SHARED_ROOT}/docker-compose.gcp.yml"
+OPERATION_MARKER="$${SHARED_ROOT}/operation-state.json"
+STATE_LINK="$${SHARED_ROOT}/runtime-state"
+STATE_BUNDLES_ROOT="$${SHARED_ROOT}/state-bundles"
+BOOTSTRAP_STATE="$${STATE_LINK}/bootstrap-state.json"
+RUNTIME_PROVENANCE="$${STATE_LINK}/runtime-provenance.json"
 DATA_DISK="/dev/disk/by-id/google-omega-docker-data"
 SECRET_PREFIX="${secret_prefix}"
 
 echo "[omega-startup] start $(date -Iseconds)"
 
+# A SIGKILL or reboot during backup/deploy leaves this durable marker. Stop the
+# daemon/socket before any restart policy can reactivate a writer or scheduler.
+if [[ -e "$${OPERATION_MARKER}" ]]; then
+  echo "[omega-startup] incomplete canonical operation; Docker remains fenced" >&2
+  systemctl stop docker.service docker.socket containerd.service >/dev/null 2>&1 || true
+  exit 75
+fi
+
+# On every reboot after bootstrap/adoption, the already-installed systemd gate
+# must verify the atomic state pair and its reboot helpers before this startup
+# script is allowed to touch Docker or package management.
+if [[ -e "$${STATE_LINK}" || -L "$${STATE_LINK}" ]]; then
+  if [[ ! -x /usr/local/sbin/omega-operation-gate ]] || \
+      ! /usr/local/sbin/omega-operation-gate; then
+    echo "[omega-startup] canonical runtime-state verification failed; Docker remains fenced" >&2
+    systemctl stop docker.service docker.socket containerd.service >/dev/null 2>&1 || true
+    exit 76
+  fi
+fi
+
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y ca-certificates curl gnupg jq python3 openssl lsof
+
+# Install the exact Terraform-rendered guard before installing/upgrading Docker,
+# so even a package-triggered daemon start is subject to state verification.
+printf '%s' '${operation_guard_base64}' | base64 -d > /usr/local/sbin/omega-operation-gate
+chmod 0755 /usr/local/sbin/omega-operation-gate
+install -d -m 0755 /etc/systemd/system/docker.service.d
+printf '%s\n' \
+  '[Service]' \
+  'ExecStartPre=/usr/local/sbin/omega-operation-gate' \
+  > /etc/systemd/system/docker.service.d/omega-operation-gate.conf
+systemctl daemon-reload
+if ! /usr/local/sbin/omega-operation-gate; then
+  echo "[omega-startup] rendered Docker operation gate rejected runtime state" >&2
+  systemctl stop docker.service docker.socket containerd.service >/dev/null 2>&1 || true
+  exit 76
+fi
 
 mkdir -p /var/lib/docker
 if [[ -e "$${DATA_DISK}" ]]; then
@@ -49,8 +92,33 @@ chmod a+r /etc/apt/keyrings/docker.asc
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $${VERSION_CODENAME} stable" > /etc/apt/sources.list.d/docker.list
 apt-get update -y
 apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+systemctl daemon-reload
 systemctl enable docker
 systemctl start docker
+
+if [[ -e "$${BOOTSTRAP_STATE}" ]]; then
+  if [[ ! -L "$${CURRENT_DIR}" || ! -s "$${SHARED_ENV}" || \
+        ! -s "$${GCP_RUNTIME_COMPOSE}" || ! -s "$${RUNTIME_PROVENANCE}" ]]; then
+    echo "[omega-startup] bootstrap state exists but canonical shared inputs are incomplete" >&2
+    exit 76
+  fi
+  if ! HELPER_PATHS="$(/usr/local/sbin/omega-operation-gate print-helpers)"; then
+    echo "[omega-startup] verified reboot helpers are unavailable" >&2
+    systemctl stop docker.service docker.socket containerd.service >/dev/null 2>&1 || true
+    exit 76
+  fi
+  IFS=$'\t' read -r REBOOT_HELPER RUNTIME_HELPER <<<"$${HELPER_PATHS}"
+  if [[ -z "$${REBOOT_HELPER}" || -z "$${RUNTIME_HELPER}" ]]; then
+    echo "[omega-startup] operation gate returned incomplete helper paths" >&2
+    systemctl stop docker.service docker.socket containerd.service >/dev/null 2>&1 || true
+    exit 76
+  fi
+  echo "[omega-startup] bootstrap already complete; recovering exact current without download/build/pull"
+  OMEGA_GCP_APP_ROOT="$${APP_ROOT}" OMEGA_GCP_COMPOSE_PROJECT=infra \
+    OMEGA_GCP_RUNTIME_CONTRACT="$${RUNTIME_HELPER}" bash "$${REBOOT_HELPER}"
+  echo "[omega-startup] exact reboot recovery complete $(date -Iseconds)"
+  exit 0
+fi
 
 download_source() {
   local token object_url
@@ -119,7 +187,48 @@ load_required_secret() {
   export "$${env_name}"
 }
 
-mkdir -p "$${APP_ROOT}/releases"
+bootstrap_fail_closed() {
+  local rc=$?
+  if [[ "$${BOOTSTRAP_MUTATION_STARTED:-0}" == "1" ]]; then
+    echo "[omega-startup] bootstrap incomplete; stopping Docker with durable marker retained" >&2
+    systemctl stop docker.service docker.socket containerd.service >/dev/null 2>&1 || true
+  fi
+  exit "$${rc}"
+}
+
+mkdir -p "$${APP_ROOT}/releases" "$${SHARED_ROOT}"
+python3 - "$${OPERATION_MARKER}" "$${SOURCE_SHA}" <<'PY'
+import json
+import os
+import pathlib
+import sys
+import tempfile
+from datetime import datetime, timezone
+
+path = pathlib.Path(sys.argv[1])
+payload = {
+    "schema_version": 1,
+    "operation": "bootstrap",
+    "state": "initializing",
+    "deploy_ref": sys.argv[2],
+    "updated_at": datetime.now(timezone.utc).isoformat(),
+}
+descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+try:
+    os.fchmod(descriptor, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        json.dump(payload, stream, indent=2, sort_keys=True)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+PY
+BOOTSTRAP_MUTATION_STARTED=1
+trap bootstrap_fail_closed EXIT
+
 EXISTING_ENV=""
 if [[ -f "$${SHARED_ENV}" ]]; then
   EXISTING_ENV="$${SHARED_ENV}"
@@ -212,6 +321,8 @@ COMPOSE=(docker compose --env-file infra/.env -f infra/docker-compose.yml -f inf
 "$${COMPOSE[@]}" up --build -d
 if [[ "$${ENABLE_AIRFLOW_SCHEDULER}" != "true" ]]; then
   "$${COMPOSE[@]}" stop airflow-scheduler || true
+  echo "[omega-startup] GCP canonical requires exactly one scheduler" >&2
+  exit 1
 fi
 
 echo "[omega-startup] waiting for console readiness"
@@ -249,7 +360,104 @@ fi
   -e BOOTSTRAP_ADMIN_FULL_NAME="OMEGA Admin" \
   console python -m app.bootstrap_admin "$${ADMIN_EMAIL}"
 
+RUNTIME_CONTRACT="$${CURRENT_DIR}/scripts/gcp/runtime_contract.py"
+REBOOT_HELPER="$${CURRENT_DIR}/scripts/gcp/reboot-runtime.sh"
+if [[ ! -x "$${RUNTIME_CONTRACT}" || ! -x "$${REBOOT_HELPER}" ]]; then
+  echo "[omega-startup] runtime provenance helper missing" >&2
+  exit 1
+fi
+VERSION="$(tr -d '\r\n' < "$${CURRENT_DIR}/VERSION")"
+install -d -m 0700 "$${STATE_BUNDLES_ROOT}"
+STATE_STAGE="$(mktemp -d "$${STATE_BUNDLES_ROOT}/.bootstrap.$${SOURCE_SHA}.XXXXXX")"
+STATE_FINAL="$${STATE_BUNDLES_ROOT}/bootstrap-$${SOURCE_SHA}"
+runtime_green=0
+for _ in $(seq 1 60); do
+  if python3 "$${RUNTIME_CONTRACT}" bootstrap-record \
+      --compose-project infra --deploy-ref "$${SOURCE_SHA}" --version "$${VERSION}" \
+      --output "$${STATE_STAGE}/runtime-provenance.json" >/dev/null 2>&1; then
+    runtime_green=1
+    break
+  fi
+  sleep 3
+done
+if [[ "$${runtime_green}" != "1" ]]; then
+  echo "[omega-startup] bootstrap runtime is not exact/running/healthy" >&2
+  exit 1
+fi
+
+python3 - "$${STATE_STAGE}/bootstrap-state.json" \
+  "$${STATE_STAGE}/runtime-provenance.json" "$${SOURCE_SHA}" "$${VERSION}" \
+  "$${REBOOT_HELPER}" "$${RUNTIME_CONTRACT}" \
+  "gs://$${SOURCE_BUCKET}/$${SOURCE_OBJECT}" <<'PY'
+import hashlib
+import json
+import os
+import pathlib
+import sys
+import tempfile
+from datetime import datetime, timezone
+
+path = pathlib.Path(sys.argv[1])
+
+
+def sha256(name: str) -> str:
+    digest = hashlib.sha256()
+    with open(name, "rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+payload = {
+    "schema_version": 2,
+    "state": "complete",
+    "deploy_ref": sys.argv[3],
+    "version": sys.argv[4],
+    "runtime_provenance_sha256": sha256(sys.argv[2]),
+    "reboot_helper": {
+        "mode": "current",
+        "source_ref": sys.argv[3],
+        "source_artifact_uri": sys.argv[7],
+        "reboot_runtime_sha256": sha256(sys.argv[5]),
+        "runtime_contract_sha256": sha256(sys.argv[6]),
+    },
+    "completed_at": datetime.now(timezone.utc).isoformat(),
+}
+descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+try:
+    os.fchmod(descriptor, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        json.dump(payload, stream, indent=2, sort_keys=True)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+PY
+
+chmod 0600 "$${STATE_STAGE}/bootstrap-state.json" "$${STATE_STAGE}/runtime-provenance.json"
+if [[ -e "$${STATE_FINAL}" ]]; then
+  echo "[omega-startup] uncommitted bootstrap state bundle already exists" >&2
+  rm -rf -- "$${STATE_STAGE}"
+  exit 1
+fi
+mv "$${STATE_STAGE}" "$${STATE_FINAL}"
+STATE_LINK_TMP="$${SHARED_ROOT}/.runtime-state.$${SOURCE_SHA}.$$"
+ln -s "$${STATE_FINAL}" "$${STATE_LINK_TMP}"
+mv -Tf "$${STATE_LINK_TMP}" "$${STATE_LINK}"
+if ! OMEGA_GCP_ALLOW_OPERATION_MARKER=1 /usr/local/sbin/omega-operation-gate; then
+  echo "[omega-startup] published bootstrap state failed operation-gate verification" >&2
+  systemctl stop docker.service docker.socket containerd.service >/dev/null 2>&1 || true
+  exit 76
+fi
+
 date -Iseconds > "$${APP_ROOT}/DEPLOYED"
 "$${COMPOSE[@]}" ps > "$${APP_ROOT}/compose-status.txt" || true
+
+rm -f -- "$${OPERATION_MARKER}"
+BOOTSTRAP_MUTATION_STARTED=0
+trap - EXIT
 
 echo "[omega-startup] done $(date -Iseconds)"

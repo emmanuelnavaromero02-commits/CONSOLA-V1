@@ -19,6 +19,7 @@ OP_CONTAINER=""
 GOLD_CONTAINER=""
 OP_VOLUME=""
 GOLD_VOLUME=""
+REHEARSAL_ADMIN=""
 
 emit() {
   local name="$1" status="$2" evidence="${3:-}"
@@ -104,51 +105,6 @@ with urllib.request.urlopen(request, timeout=120) as response, path.open("wb") a
 PY
 }
 
-# pg_dumpall --clean emits DROP/CREATE for the bootstrap role used by psql.
-# Dropping the current session user is impossible, while retaining CREATE after
-# omitting DROP fails because the role already exists.  Filter only those two
-# byte-exact statements, and only inside pg_dumpall's global role sections.
-# Once the Databases section begins, identical application data is preserved.
-filter_pg_dump_bootstrap_role() {
-  python3 -c '
-import sys
-
-drop_header = b"-- Drop roles\n"
-roles_header = b"-- Roles\n"
-user_config_header = b"-- User Configurations\n"
-databases_header = b"-- Databases\n"
-drop_statement = b"DROP ROLE IF EXISTS postgres;\n"
-create_statement = b"CREATE ROLE postgres;\n"
-section = "header"
-database_phase = False
-drop_count = 0
-create_count = 0
-
-for line in sys.stdin.buffer:
-    if not database_phase:
-        if line == databases_header:
-            database_phase = True
-            section = "database"
-        elif line == drop_header:
-            section = "drop"
-        elif line == roles_header:
-            section = "roles"
-        elif line == user_config_header:
-            section = "user_config"
-    if not database_phase and section == "drop" and line == drop_statement:
-        drop_count += 1
-        continue
-    if not database_phase and section == "roles" and line == create_statement:
-        create_count += 1
-        continue
-    sys.stdout.buffer.write(line)
-
-if drop_count != 1 or create_count != 1:
-    sys.stderr.write("bootstrap role filter expected one exact DROP and CREATE statement\n")
-    raise SystemExit(42)
-'
-}
-
 MANIFEST="${WORKDIR}/manifest.json"
 gcs_download "$MANIFEST_URI" "$MANIFEST"
 ACTUAL_MANIFEST_SHA="$(sha256sum "$MANIFEST" | awk '{print $1}')"
@@ -158,8 +114,8 @@ fi
 python3 - "$MANIFEST" <<'PY'
 import json, re, sys
 payload = json.load(open(sys.argv[1], encoding="utf-8"))
-if payload.get("schema_version") != 1 or payload.get("complete") is not True:
-    raise SystemExit("manifest is not complete schema v1")
+if payload.get("schema_version") != 2 or payload.get("complete") is not True:
+    raise SystemExit("manifest is not complete schema v2")
 if payload.get("plaintext_runtime_secrets_included") is not False:
     raise SystemExit("backup must explicitly exclude plaintext runtime secrets")
 if not payload.get("object_storage", {}).get("versioning_enabled"):
@@ -170,6 +126,12 @@ for name in ("postgres", "postgres_gold", "object_manifest"):
         raise SystemExit(f"invalid {name} sha256")
     if not str(artifact.get("generation", "")).isdigit():
         raise SystemExit(f"invalid {name} generation")
+for name in ("postgres", "postgres_gold"):
+    image = payload.get("database_images", {}).get(name, {})
+    if not re.fullmatch(r"[a-z0-9./_-]+@sha256:[0-9a-f]{64}", image.get("repo_digest", "")):
+        raise SystemExit(f"invalid immutable database image: {name}")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", image.get("image_id", "")):
+        raise SystemExit(f"invalid database image ID: {name}")
 PY
 emit "backup manifest checksum" "PASS" "sha256=${ACTUAL_MANIFEST_SHA}"
 
@@ -204,10 +166,6 @@ for item in "postgres.sql.gz:${OP_SHA}" "postgres_gold.sql.gz:${GOLD_SHA}" "lake
 done
 gzip -t "${WORKDIR}/postgres.sql.gz"
 gzip -t "${WORKDIR}/postgres_gold.sql.gz"
-for dump in "${WORKDIR}/postgres.sql.gz" "${WORKDIR}/postgres_gold.sql.gz"; do
-  gzip -dc "$dump" | filter_pg_dump_bootstrap_role >/dev/null
-done
-emit "bootstrap role restore filter" "PASS" "one exact DROP and CREATE omitted per dump; ALTER and database payload preserved"
 emit "backup artifact checksums" "PASS" "logical dumps and object manifest exact generations verified"
 
 OBJECT_RESULT="$(python3 - "$MANIFEST" "${WORKDIR}/lakehouse_objects.jsonl" "$OBJECT_VERIFY_MODE" <<'PY'
@@ -294,26 +252,60 @@ emit "object-generation restore points" "PASS" "$OBJECT_RESULT"
 
 BACKUP_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["backup_id"])' "$MANIFEST")"
 SUFFIX="$(printf '%s' "${BACKUP_ID}-${MANIFEST_SHA256}" | sha256sum | cut -c1-16)_$$"
+REHEARSAL_ADMIN="omega_rehearsal_${SUFFIX}"
+if [[ ! "$REHEARSAL_ADMIN" =~ ^[a-z_][a-z0-9_]{0,62}$ ]]; then
+  fail "isolated bootstrap role" "generated role is not a valid PostgreSQL identifier" 26
+fi
+for dump in "${WORKDIR}/postgres.sql.gz" "${WORKDIR}/postgres_gold.sql.gz"; do
+  if ! gzip -dc "$dump" | python3 -c '
+import re
+import sys
+
+role = re.escape(sys.argv[1].encode())
+pattern = re.compile(rb"^(?:CREATE|DROP|ALTER) ROLE \"?" + role + rb"\"?(?:[ ;]|$)")
+for line in sys.stdin.buffer:
+    if pattern.match(line):
+        raise SystemExit(1)
+' "$REHEARSAL_ADMIN"
+  then
+    fail "isolated bootstrap role" "generated role unexpectedly exists in source dump" 26
+  fi
+done
+emit "isolated bootstrap role" "PASS" "unique role absent from both unmodified dumps"
 OP_CONTAINER="omega_gcp_rehearsal_${SUFFIX}_op"
 GOLD_CONTAINER="omega_gcp_rehearsal_${SUFFIX}_gold"
 OP_VOLUME="omega_gcp_rehearsal_${SUFFIX}_op"
 GOLD_VOLUME="omega_gcp_rehearsal_${SUFFIX}_gold"
-OP_IMAGE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["database_images"]["postgres"])' "$MANIFEST")"
-GOLD_IMAGE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["database_images"]["postgres_gold"])' "$MANIFEST")"
-if [[ ! "$OP_IMAGE" =~ ^pgvector/pgvector:(pg15|[0-9A-Za-z._-]+)$ ]]; then
+read_database_image_field() {
+  python3 - "$MANIFEST" "$1" "$2" <<'PY'
+import json, sys
+print(json.load(open(sys.argv[1], encoding="utf-8"))["database_images"][sys.argv[2]][sys.argv[3]])
+PY
+}
+OP_IMAGE="$(read_database_image_field postgres repo_digest)"
+OP_IMAGE_ID="$(read_database_image_field postgres image_id)"
+GOLD_IMAGE="$(read_database_image_field postgres_gold repo_digest)"
+GOLD_IMAGE_ID="$(read_database_image_field postgres_gold image_id)"
+if [[ ! "$OP_IMAGE" =~ ^pgvector/pgvector@sha256:[0-9a-f]{64}$ || ! "$OP_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]; then
   fail "isolated database image" "unexpected operational image" 26
 fi
-if [[ ! "$GOLD_IMAGE" =~ ^postgres:15([.-][0-9A-Za-z._-]+)?$ ]]; then
+if [[ ! "$GOLD_IMAGE" =~ ^postgres@sha256:[0-9a-f]{64}$ || ! "$GOLD_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]; then
   fail "isolated database image" "unexpected Gold image" 27
+fi
+if [[ "$(docker image inspect "$OP_IMAGE" --format '{{.Id}}' 2>/dev/null || true)" != "$OP_IMAGE_ID" || \
+      "$(docker image inspect "$GOLD_IMAGE" --format '{{.Id}}' 2>/dev/null || true)" != "$GOLD_IMAGE_ID" ]]; then
+  fail "isolated database image" "exact backup image digest/image ID is not locally available" 27
 fi
 
 docker volume create "$OP_VOLUME" >/dev/null
 docker volume create "$GOLD_VOLUME" >/dev/null
-docker run -d --name "$OP_CONTAINER" --network none \
+docker run -d --pull never --name "$OP_CONTAINER" --network none \
   --mount "type=volume,source=${OP_VOLUME},target=/var/lib/postgresql/data" \
+  -e POSTGRES_USER="$REHEARSAL_ADMIN" -e POSTGRES_DB=postgres \
   -e POSTGRES_HOST_AUTH_METHOD=trust "$OP_IMAGE" >/dev/null
-docker run -d --name "$GOLD_CONTAINER" --network none \
+docker run -d --pull never --name "$GOLD_CONTAINER" --network none \
   --mount "type=volume,source=${GOLD_VOLUME},target=/var/lib/postgresql/data" \
+  -e POSTGRES_USER="$REHEARSAL_ADMIN" -e POSTGRES_DB=postgres \
   -e POSTGRES_HOST_AUTH_METHOD=trust "$GOLD_IMAGE" -p 5433 >/dev/null
 
 for pair in "${OP_CONTAINER}:5432" "${GOLD_CONTAINER}:5433"; do
@@ -321,7 +313,7 @@ for pair in "${OP_CONTAINER}:5432" "${GOLD_CONTAINER}:5433"; do
   port="${pair#*:}"
   ready=0
   for _ in $(seq 1 60); do
-    if docker exec "$container" pg_isready -h 127.0.0.1 -p "$port" -U postgres >/dev/null 2>&1; then
+    if docker exec "$container" pg_isready -h 127.0.0.1 -p "$port" -U "$REHEARSAL_ADMIN" >/dev/null 2>&1; then
       ready=1
       break
     fi
@@ -333,24 +325,29 @@ for pair in "${OP_CONTAINER}:5432" "${GOLD_CONTAINER}:5433"; do
 done
 
 gzip -dc "${WORKDIR}/postgres.sql.gz" \
-  | filter_pg_dump_bootstrap_role \
-  | docker exec -i "$OP_CONTAINER" psql -v ON_ERROR_STOP=1 -U postgres -d postgres >/dev/null
+  | docker exec -i "$OP_CONTAINER" psql -v ON_ERROR_STOP=1 -U "$REHEARSAL_ADMIN" -d postgres >/dev/null
 gzip -dc "${WORKDIR}/postgres_gold.sql.gz" \
-  | filter_pg_dump_bootstrap_role \
-  | docker exec -i "$GOLD_CONTAINER" psql -v ON_ERROR_STOP=1 -U postgres -d postgres -p 5433 >/dev/null
+  | docker exec -i "$GOLD_CONTAINER" psql -v ON_ERROR_STOP=1 -U "$REHEARSAL_ADMIN" -d postgres -p 5433 >/dev/null
 
-OP_MIGRATIONS="$(docker exec "$OP_CONTAINER" psql -At -U postgres -d modecissions \
+OP_MIGRATIONS="$(docker exec "$OP_CONTAINER" psql -At -U "$REHEARSAL_ADMIN" -d modecissions \
   -c 'SELECT count(*) FROM schema_migrations;' | tr -d '\r')"
-GOLD_MIGRATIONS="$(docker exec "$GOLD_CONTAINER" psql -At -U postgres -d modecissions_gold -p 5433 \
+GOLD_MIGRATIONS="$(docker exec "$GOLD_CONTAINER" psql -At -U "$REHEARSAL_ADMIN" -d modecissions_gold -p 5433 \
   -c 'SELECT count(*) FROM schema_migrations;' | tr -d '\r')"
 if [[ ! "$OP_MIGRATIONS" =~ ^[1-9][0-9]*$ || ! "$GOLD_MIGRATIONS" =~ ^[1-9][0-9]*$ ]]; then
   fail "isolated logical restore" "schema_migrations missing after restore" 29
 fi
-PIPELINE_RUNS="$(docker exec "$OP_CONTAINER" psql -At -U postgres -d modecissions \
+POSTGRES_ROLES="$(docker exec "$OP_CONTAINER" psql -At -U "$REHEARSAL_ADMIN" -d postgres \
+  -c "SELECT count(*) FROM pg_roles WHERE rolname IN ('postgres', '${REHEARSAL_ADMIN}') AND rolsuper;" | tr -d '\r')"
+GOLD_POSTGRES_ROLES="$(docker exec "$GOLD_CONTAINER" psql -At -U "$REHEARSAL_ADMIN" -d postgres -p 5433 \
+  -c "SELECT count(*) FROM pg_roles WHERE rolname IN ('postgres', '${REHEARSAL_ADMIN}') AND rolsuper;" | tr -d '\r')"
+if [[ "$POSTGRES_ROLES" != "2" || "$GOLD_POSTGRES_ROLES" != "2" ]]; then
+  fail "isolated logical restore" "bootstrap and restored postgres roles are not both superusers" 29
+fi
+PIPELINE_RUNS="$(docker exec "$OP_CONTAINER" psql -At -U "$REHEARSAL_ADMIN" -d modecissions \
   -c 'SELECT count(*) FROM pipeline_runs;' | tr -d '\r')"
-DATASETS="$(docker exec "$OP_CONTAINER" psql -At -U postgres -d modecissions \
+DATASETS="$(docker exec "$OP_CONTAINER" psql -At -U "$REHEARSAL_ADMIN" -d modecissions \
   -c 'SELECT count(*) FROM datasets;' | tr -d '\r')"
-GOLD_TABLES="$(docker exec "$GOLD_CONTAINER" psql -At -U postgres -d modecissions_gold -p 5433 \
+GOLD_TABLES="$(docker exec "$GOLD_CONTAINER" psql -At -U "$REHEARSAL_ADMIN" -d modecissions_gold -p 5433 \
   -c "SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog', 'information_schema');" | tr -d '\r')"
 for value in "$PIPELINE_RUNS" "$DATASETS" "$GOLD_TABLES"; do
   if [[ ! "$value" =~ ^[1-9][0-9]*$ ]]; then

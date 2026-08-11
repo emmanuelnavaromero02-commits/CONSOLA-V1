@@ -11,6 +11,7 @@ source_object = "CONSOLA-V1-<sha>.tar.gz"
 source_sha    = "<sha>"
 
 app_machine_type = "e2-standard-4"
+boot_disk_size_gb = 60
 data_disk_size_gb = 150
 admin_email       = "emmanuelromero060601@gmail.com"
 
