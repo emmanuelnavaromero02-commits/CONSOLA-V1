@@ -42,6 +42,14 @@ resource "google_compute_instance" "app" {
 
   metadata_startup_script = local.startup_script
 
+  # The provider marks metadata_startup_script ForceNew. Replacing the
+  # canonical writer VM merely to refresh reboot metadata is forbidden.
+  # scripts/gcp_release.py performs the reviewed startup-script update in
+  # place through Compute setMetadata with the live fingerprint as a CAS.
+  lifecycle {
+    ignore_changes = [metadata_startup_script]
+  }
+
   service_account {
     email  = google_service_account.app.email
     scopes = ["https://www.googleapis.com/auth/cloud-platform"]

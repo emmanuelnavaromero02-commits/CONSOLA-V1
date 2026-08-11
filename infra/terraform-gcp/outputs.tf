@@ -73,7 +73,7 @@ output "source_object" {
 }
 
 output "startup_script_sha256" {
-  description = "Expected SHA-256 of the effective GCE metadata startup script; verify by read-back before day-2 deploy."
+  description = "Expected SHA-256 of the reviewed startup render; adopt with metadata CAS and verify by live read-back."
   value       = sha256(local.startup_script)
 }
 

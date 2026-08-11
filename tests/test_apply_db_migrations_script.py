@@ -39,7 +39,10 @@ def test_apply_db_migrations_tracks_schema_migrations_and_pgoptions():
     assert "99zzu_analytic_app_manifest_registry.sql" in guard
     assert "both databases are inspected" in script
     assert "checksum_manifest_sha256" in guard
-    assert "checksum_attested_at" in guard
+    assert "checksum_evidence_kind" in guard
+    assert "checksum_guarded_at" in guard
+    assert "baseline_expected" in guard
+    assert "guarded_transaction" in guard
     assert "PSQL_GOLD" in script
     assert "docker compose" in script
     assert "PGOPTIONS=" in script

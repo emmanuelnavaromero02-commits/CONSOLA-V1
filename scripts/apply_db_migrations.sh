@@ -14,8 +14,8 @@ GUARD="${ROOT_DIR}/scripts/migration_guard.py"
 BASELINE_REF="6b12883c5b5ea0537120279ccbee4947137998a2"
 BASELINE_MANIFEST_DEFAULT="${ROOT_DIR}/infra/migrations/manifests/gcp-live-${BASELINE_REF}.json"
 RELEASE_MANIFEST_DEFAULT="${ROOT_DIR}/infra/migrations/manifests/v1.45.207-beta.json"
-BASELINE_MANIFEST_SHA256_DEFAULT="b3b984fb88f48a5d75e172196e1981a45b54aba90eb3365d7e5afbcdac929221"
-RELEASE_MANIFEST_SHA256_DEFAULT="aefda14599840b6ee419eb6b76878478e6be64e2706a80363d7cfac19cdf79a6"
+BASELINE_MANIFEST_SHA256_DEFAULT="b6cb33c9b1a0f93e13fe2eb68f2e8fff1fdeedb2979bbfb22840a2a35d2e4a18"
+RELEASE_MANIFEST_SHA256_DEFAULT="fbc2db83f82eecf9733a60a23fae7c9982d0f9aba52e474f41ba909acbaedc93"
 WORKDIR=""
 
 cleanup() {
@@ -76,19 +76,27 @@ if [[ "${OMEGA_MIGRATION_REQUIRE_EXPLICIT_CONTRACT:-0}" == "1" ]]; then
   done
 fi
 
-BOOTSTRAP_MODE="${OMEGA_MIGRATION_BOOTSTRAP_MODE:-}"
-if [[ -z "$BOOTSTRAP_MODE" ]]; then
-  if [[ "${OMEGA_MIGRATION_REQUIRE_EXPLICIT_CONTRACT:-0}" == "1" ]]; then
-    BOOTSTRAP_MODE="0"
-  else
-    BOOTSTRAP_MODE="1"
-  fi
-fi
+BOOTSTRAP_MODE="${OMEGA_MIGRATION_BOOTSTRAP_MODE:-0}"
 if [[ "$BOOTSTRAP_MODE" != "0" && "$BOOTSTRAP_MODE" != "1" ]]; then
   fail "OMEGA_MIGRATION_BOOTSTRAP_MODE must be 0 or 1" 13
 fi
 if [[ "${OMEGA_MIGRATION_REQUIRE_EXPLICIT_CONTRACT:-0}" == "1" && "$BOOTSTRAP_MODE" == "1" ]]; then
-  fail "bootstrap ledger attestation is forbidden for an explicit day-2 contract" 13
+  fail "bootstrap source-inferred ledger evidence is forbidden for an explicit day-2 contract" 13
+fi
+if [[ "$BOOTSTRAP_MODE" == "1" ]]; then
+  if [[ "${OMEGA_MIGRATION_ALLOW_BOOTSTRAP_LEDGER:-0}" != "1" ]]; then
+    fail "bootstrap source-inferred ledger evidence requires explicit local opt-in" 13
+  fi
+  MIGRATION_ENVIRONMENT="${OMEGA_MIGRATION_ENVIRONMENT:-${APP_ENV:-}}"
+  if [[ "$MIGRATION_ENVIRONMENT" != "local" && \
+        "$MIGRATION_ENVIRONMENT" != "development" && \
+        "$MIGRATION_ENVIRONMENT" != "test" ]]; then
+    fail "bootstrap source-inferred ledger evidence is restricted to local/development/test" 13
+  fi
+fi
+EXPECTED_PENDING_EVIDENCE="guarded_transaction"
+if [[ "$BOOTSTRAP_MODE" == "1" ]]; then
+  EXPECTED_PENDING_EVIDENCE="baseline_expected"
 fi
 
 OLD_REF="${OMEGA_MIGRATION_OLD_REF:-${BASELINE_REF}}"
@@ -159,7 +167,8 @@ LEDGER_QUERY="SELECT json_build_object(
   'checksum', checksum,
   'source_ref', to_jsonb(sm)->>'checksum_source_ref',
   'manifest_sha256', to_jsonb(sm)->>'checksum_manifest_sha256',
-  'attested', NULLIF(to_jsonb(sm)->>'checksum_attested_at', '') IS NOT NULL
+  'evidence_kind', to_jsonb(sm)->>'checksum_evidence_kind',
+  'guarded', NULLIF(to_jsonb(sm)->>'checksum_guarded_at', '') IS NOT NULL
 )::text
 FROM public.schema_migrations sm
 ORDER BY filename;"
@@ -189,9 +198,10 @@ else
     --plan "$PLAN"
 fi
 
-# Gold has no pending schema delta in this release.  Attest it first so the
+# Gold has no pending schema delta in this release. Record its source-inferred
+# expected-byte evidence first so the
 # transaction that installs the operational 99zzt/99zzu pair is the last
-# durable write; a retry accepts Gold-attested/operational-baseline safely.
+# durable write; a retry accepts Gold-expected/operational-baseline safely.
 python3 "$GUARD" render-sql --plan "$PLAN" --database gold > "$GOLD_SQL"
 "${PSQL_GOLD[@]}" -f - < "$GOLD_SQL"
 
@@ -203,6 +213,11 @@ dump_operational_ledger > "$OPERATIONAL_AFTER"
 dump_gold_ledger > "$GOLD_AFTER"
 python3 "$GUARD" postflight "${CONTRACT_ARGS[@]}" \
   --operational-ledger "$OPERATIONAL_AFTER" \
-  --gold-ledger "$GOLD_AFTER"
+  --gold-ledger "$GOLD_AFTER" \
+  --expected-pending-evidence "$EXPECTED_PENDING_EVIDENCE"
 
-echo "[migrate] done: operational=200 gold=12 checksums=attested"
+if [[ "$BOOTSTRAP_MODE" == "1" ]]; then
+  echo "[migrate] done: operational=200 gold=12 baseline_expected=212 guarded_transaction=0"
+else
+  echo "[migrate] done: operational=200 gold=12 baseline_expected=210 guarded_transaction=2"
+fi

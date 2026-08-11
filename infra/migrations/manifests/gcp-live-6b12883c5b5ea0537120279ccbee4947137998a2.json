@@ -1,4 +1,11 @@
 {
+  "checksum_provenance": {
+    "basis": "sha256_of_migration_files_in_git_tree_at_source_ref",
+    "caveat": "Expected bytes inferred from the pinned source tree; not contemporaneous proof of historical execution.",
+    "classification": "baseline_expected",
+    "historical_execution_receipt": false,
+    "source_ref": "6b12883c5b5ea0537120279ccbee4947137998a2"
+  },
   "databases": {
     "gold": {
       "gold/00_schema.sql": "9e77a9c33d2abc79cf7cb58fde4e27915e7abb59c7708b120cffca6873ff687e",

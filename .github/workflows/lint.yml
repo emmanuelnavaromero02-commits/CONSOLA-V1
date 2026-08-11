@@ -47,7 +47,8 @@ jobs:
             --output-format=github \
             console workspace vault refinement mcp-infra cartridges airflow \
             scripts/reconcile_pipeline_runs.py \
-            scripts/gcp_release.py scripts/gcp/runtime_contract.py
+            scripts/gcp_release.py scripts/gcp/runtime_contract.py \
+            scripts/migration_guard.py scripts/generate_migration_manifests.py
 
       - name: ruff format --check (advisory)
         continue-on-error: true
@@ -55,7 +56,8 @@ jobs:
           ruff format --check \
             console workspace vault refinement mcp-infra cartridges airflow \
             scripts/reconcile_pipeline_runs.py \
-            scripts/gcp_release.py scripts/gcp/runtime_contract.py
+            scripts/gcp_release.py scripts/gcp/runtime_contract.py \
+            scripts/migration_guard.py scripts/generate_migration_manifests.py
 
   console-next:
     needs: changes

@@ -16,8 +16,8 @@ BASELINE_MANIFEST = (
     ROOT / "infra" / "migrations" / "manifests" / (f"gcp-live-{BASELINE_REF}.json")
 )
 RELEASE_MANIFEST = ROOT / "infra" / "migrations" / "manifests" / "v1.45.207-beta.json"
-BASELINE_SHA = "b3b984fb88f48a5d75e172196e1981a45b54aba90eb3365d7e5afbcdac929221"
-RELEASE_SHA = "aefda14599840b6ee419eb6b76878478e6be64e2706a80363d7cfac19cdf79a6"
+BASELINE_SHA = "b6cb33c9b1a0f93e13fe2eb68f2e8fff1fdeedb2979bbfb22840a2a35d2e4a18"
+RELEASE_SHA = "fbc2db83f82eecf9733a60a23fae7c9982d0f9aba52e474f41ba909acbaedc93"
 
 
 COMPOSE = """
@@ -150,6 +150,7 @@ def test_real_postgres15_atomic_pair_rollback_retry_and_idempotency(
     compose.write_text(COMPOSE, encoding="utf-8")
     project = f"omega_migrate_{uuid.uuid4().hex[:10]}"
     baseline = json.loads(BASELINE_MANIFEST.read_text(encoding="utf-8"))
+    release = json.loads(RELEASE_MANIFEST.read_text(encoding="utf-8"))
     try:
         _run(compose, project, "up", "-d")
         _wait(compose, project)
@@ -170,6 +171,80 @@ def test_real_postgres15_atomic_pair_rollback_retry_and_idempotency(
             "modecissions",
             input_text=FIXTURE.read_text(encoding="utf-8"),
         )
+        for filename in (
+            "99zzt_analytic_app_dataset_grants.sql",
+            "99zzu_analytic_app_manifest_registry.sql",
+        ):
+            _run(
+                compose,
+                project,
+                "cp",
+                str(ROOT / "infra" / "init" / filename),
+                f"postgres:/docker-entrypoint-initdb.d/{filename}",
+            )
+
+        # A filename-complete 200-row ledger with NULL checksum/evidence is
+        # not a historical execution receipt. Production mode must reject it
+        # before either database receives a write.
+        _psql(
+            compose,
+            project,
+            "modecissions",
+            _ledger_sql(release, "operational"),
+        )
+        _psql(
+            compose,
+            project,
+            "modecissions_gold",
+            _ledger_sql(baseline, "gold"),
+        )
+        null_release = subprocess.run(
+            ["bash", str(RUNNER)],
+            cwd=ROOT,
+            env=_runner_env(compose, project),
+            text=True,
+            capture_output=True,
+            timeout=240,
+            check=False,
+        )
+        assert null_release.returncode != 0
+        assert "guarded transaction receipt" in null_release.stderr
+        operational_unchanged = _psql(
+            compose,
+            project,
+            "modecissions",
+            """
+SELECT count(*), count(checksum),
+       NOT EXISTS (
+         SELECT 1 FROM information_schema.columns
+          WHERE table_schema='public' AND table_name='schema_migrations'
+            AND column_name='checksum_evidence_kind')
+FROM schema_migrations;
+""",
+        ).stdout.strip()
+        gold_unchanged = _psql(
+            compose,
+            project,
+            "modecissions_gold",
+            """
+SELECT count(*), count(checksum),
+       NOT EXISTS (
+         SELECT 1 FROM information_schema.columns
+          WHERE table_schema='public' AND table_name='schema_migrations'
+            AND column_name='checksum_evidence_kind')
+FROM schema_migrations;
+""",
+        ).stdout.strip()
+        assert operational_unchanged == "200|0|t"
+        assert gold_unchanged == "12|0|t"
+
+        _psql(compose, project, "modecissions", "DROP TABLE schema_migrations")
+        _psql(
+            compose,
+            project,
+            "modecissions_gold",
+            "DROP TABLE schema_migrations",
+        )
         _psql(
             compose,
             project,
@@ -182,18 +257,6 @@ def test_real_postgres15_atomic_pair_rollback_retry_and_idempotency(
             "modecissions_gold",
             _ledger_sql(baseline, "gold"),
         )
-
-        for filename in (
-            "99zzt_analytic_app_dataset_grants.sql",
-            "99zzu_analytic_app_manifest_registry.sql",
-        ):
-            _run(
-                compose,
-                project,
-                "cp",
-                str(ROOT / "infra" / "init" / filename),
-                f"postgres:/docker-entrypoint-initdb.d/{filename}",
-            )
 
         tampered = tmp_path / "99zzu_analytic_app_manifest_registry.sql"
         tampered.write_text("SELECT 1;\n", encoding="utf-8")
@@ -293,15 +356,19 @@ FROM schema_migrations;
         ).stdout.strip()
         assert rolled_back == "198|0|t|t"
 
-        # Gold committed only its checksum attestation before the operational
-        # failure.  This is the only accepted cross-database retry state.
+        # Gold committed only source-inferred expected-byte evidence before
+        # the operational failure. It did not mint a historical receipt.
         gold_after_failure = _psql(
             compose,
             project,
             "modecissions_gold",
-            "SELECT count(*), count(checksum), count(checksum_attested_at) FROM schema_migrations",
+            """
+SELECT count(*), count(checksum), count(checksum_guarded_at),
+       count(*) FILTER (WHERE checksum_evidence_kind = 'baseline_expected')
+FROM schema_migrations
+""",
         ).stdout.strip()
-        assert gold_after_failure == "12|12|12"
+        assert gold_after_failure == "12|12|0|12"
 
         _psql(
             compose,
@@ -322,21 +389,27 @@ DROP FUNCTION public.omega_test_reject_registry();
             check=False,
         )
         assert first.returncode == 0, first.stdout + first.stderr
-        assert "operational=200 gold=12 checksums=attested" in first.stdout
+        assert (
+            "operational=200 gold=12 baseline_expected=210 "
+            "guarded_transaction=2" in first.stdout
+        )
         final = _psql(
             compose,
             project,
             "modecissions",
             """
 SELECT count(*), count(checksum), count(checksum_source_ref),
-       count(checksum_manifest_sha256), count(checksum_attested_at),
+       count(checksum_manifest_sha256), count(checksum_evidence_kind),
+       count(checksum_guarded_at),
+       count(*) FILTER (WHERE checksum_evidence_kind = 'baseline_expected'),
+       count(*) FILTER (WHERE checksum_evidence_kind = 'guarded_transaction'),
        count(*) FILTER (WHERE filename IN (
          '99zzt_analytic_app_dataset_grants.sql',
          '99zzu_analytic_app_manifest_registry.sql'))
 FROM schema_migrations;
 """,
         ).stdout.strip()
-        assert final == "200|200|200|200|200|2"
+        assert final == "200|200|200|200|200|2|198|2|2"
         applied_before = _psql(
             compose,
             project,

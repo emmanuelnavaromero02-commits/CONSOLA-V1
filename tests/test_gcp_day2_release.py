@@ -493,10 +493,55 @@ def test_unmodified_pg_dumpall_restores_with_distinct_bootstrap_role(
 
 def test_migration_runner_accepts_only_a_safe_explicit_project_and_env() -> None:
     migration = _read("scripts/apply_db_migrations.sh")
+    deploy = _read("scripts/gcp/day2-release.sh")
     assert "OMEGA_MIGRATION_ENV_FILE" in migration
     assert "OMEGA_MIGRATION_COMPOSE_PROJECT_NAME" in migration
     assert "^[a-z0-9][a-z0-9_-]*$" in migration
     assert 'docker compose --project-name "${COMPOSE_PROJECT_NAME_VALUE}"' in migration
+    assert 'BOOTSTRAP_MODE="${OMEGA_MIGRATION_BOOTSTRAP_MODE:-0}"' in migration
+    assert "OMEGA_MIGRATION_ALLOW_BOOTSTRAP_LEDGER" in migration
+    assert "restricted to local/development/test" in migration
+    for binding in (
+        "OMEGA_MIGRATION_REQUIRE_EXPLICIT_CONTRACT=1",
+        "OMEGA_MIGRATION_BOOTSTRAP_MODE=0",
+        'OMEGA_MIGRATION_OLD_REF="$OLD_REF"',
+        'OMEGA_MIGRATION_CANDIDATE_REF="$DEPLOY_REF"',
+        'OMEGA_MIGRATION_RELEASE_VERSION="$EXPECTED_VERSION"',
+        "OMEGA_MIGRATION_BASELINE_MANIFEST=",
+        "OMEGA_MIGRATION_BASELINE_MANIFEST_SHA256=",
+        "OMEGA_MIGRATION_RELEASE_MANIFEST=",
+        "OMEGA_MIGRATION_RELEASE_MANIFEST_SHA256=",
+    ):
+        assert binding in deploy
+
+
+def test_candidate_git_archive_has_no_git_metadata_and_day2_needs_no_git() -> None:
+    archive = subprocess.run(
+        ["git", "archive", "--format=tar", "HEAD"],
+        cwd=REPO,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert archive.returncode == 0, archive.stderr.decode()
+    listing = subprocess.run(
+        ["tar", "-tf", "-"],
+        input=archive.stdout,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert listing.returncode == 0, listing.stderr.decode()
+    names = listing.stdout.decode().splitlines()
+    assert not any(name == ".git" or name.startswith(".git/") for name in names)
+    deploy = _read("scripts/gcp/day2-release.sh")
+    migration_call = deploy[
+        deploy.index("OMEGA_MIGRATION_REQUIRE_EXPLICIT_CONTRACT=1") : deploy.index(
+            'write_operation_state "migrated"'
+        )
+    ]
+    assert 'OMEGA_MIGRATION_CANDIDATE_REF="$DEPLOY_REF"' in migration_call
+    assert "git rev-parse" not in migration_call
 
 
 def test_startup_publishes_shared_runtime_only_after_gcp_reconciliation() -> None:
@@ -519,7 +564,8 @@ def test_startup_is_bootstrap_once_and_fences_partial_reboot_state() -> None:
 
     assert "operation_guard_base64" in locals
     assert "metadata_startup_script = local.startup_script" in compute
-    assert "ignore_changes" not in compute
+    assert "ignore_changes = [metadata_startup_script]" in compute
+    assert "setMetadata" in compute
     assert 'output "source_sha"' in outputs
     assert 'output "source_object"' in outputs
     assert 'output "startup_script_sha256"' in outputs
@@ -577,37 +623,41 @@ def test_controller_binds_backup_and_deploy_to_live_terraform_render(
     module = _load_module()
     monkeypatch.setenv("OMEGA_TERRAFORM_BIN", sys.executable)
     deploy_ref = "a" * 40
-    startup_sha = "b" * 64
-    outputs = {
-        "source_sha": {"value": deploy_ref},
-        "source_bucket": {"value": "omega-source-bucket"},
-        "source_object": {"value": f"deploy-artifacts/{deploy_ref}/repo.tar.gz"},
-        "startup_script_sha256": {"value": startup_sha},
-    }
+    startup = "\n".join(
+        [
+            "#!/usr/bin/env bash",
+            'SOURCE_BUCKET="omega-source-bucket"',
+            f'SOURCE_OBJECT="deploy-artifacts/{deploy_ref}/repo.tar.gz"',
+            f'SOURCE_SHA="{deploy_ref}"',
+            "",
+        ]
+    )
     monkeypatch.setattr(
         module,
         "run",
         lambda *_args, **_kwargs: subprocess.CompletedProcess(
-            [], 0, json.dumps(outputs), ""
+            [], 0, json.dumps(b64encode(startup.encode()).decode()), ""
         ),
     )
+    reviewed = tmp_path / "production.tfvars"
+    reviewed.write_text("placeholder\n", encoding="utf-8")
     assert (
         module.validate_terraform_source_contract(
             terraform_dir=REPO / "infra/terraform-gcp",
+            var_file=reviewed,
             source_ref=deploy_ref,
             artifact_bucket="omega-source-bucket",
         )
-        == startup_sha
+        == hashlib.sha256(startup.encode()).hexdigest()
     )
-    outputs["source_sha"]["value"] = "c" * 40
-    with pytest.raises(RuntimeError, match="does not match expected ref"):
+    with pytest.raises(RuntimeError, match="not bound to the exact"):
         module.validate_terraform_source_contract(
             terraform_dir=REPO / "infra/terraform-gcp",
-            source_ref=deploy_ref,
+            var_file=reviewed,
+            source_ref="c" * 40,
             artifact_bucket="omega-source-bucket",
         )
 
-    reviewed = tmp_path / "production.tfvars"
     reviewed.write_text(
         "\n".join(
             [
@@ -630,12 +680,7 @@ def test_controller_binds_backup_and_deploy_to_live_terraform_render(
         + "\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(
-        module,
-        "run",
-        lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0, "", ""),
-    )
-    module.validate_reviewed_terraform_plan(
+    module.validate_reviewed_terraform_inputs(
         terraform_dir=REPO / "infra/terraform-gcp",
         var_file=reviewed,
         source_ref=deploy_ref,
@@ -648,7 +693,7 @@ def test_controller_binds_backup_and_deploy_to_live_terraform_render(
     )
     reviewed.write_text(reviewed.read_text().replace("60", "30", 1), encoding="utf-8")
     with pytest.raises(ValueError, match="boot_disk_size_gb"):
-        module.validate_reviewed_terraform_plan(
+        module.validate_reviewed_terraform_inputs(
             terraform_dir=REPO / "infra/terraform-gcp",
             var_file=reviewed,
             source_ref=deploy_ref,
@@ -666,7 +711,7 @@ def test_controller_binds_backup_and_deploy_to_live_terraform_render(
     assert backup_call.index("validate_terraform_source_contract") < backup_call.index(
         'script=REMOTE_ROOT / "backup.sh"'
     )
-    assert backup_call.index("validate_reviewed_terraform_plan") < backup_call.index(
+    assert backup_call.index("validate_reviewed_terraform_inputs") < backup_call.index(
         'script=REMOTE_ROOT / "backup.sh"'
     )
     assert backup_call.index("validate_startup_metadata") < backup_call.index(
@@ -692,6 +737,232 @@ def test_terraform_binary_defaults_to_tofu_and_fails_closed(monkeypatch) -> None
         module.terraform_binary()
 
 
+def test_startup_metadata_cas_rejects_stale_hash_and_preserves_runtime_identity(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    old_startup = "#!/usr/bin/env bash\necho old\n"
+    new_startup = "#!/usr/bin/env bash\necho new\n"
+    before = module.InstanceMetadataSnapshot(
+        fingerprint="oldFingerprint=",
+        items={"enable-oslogin": "TRUE", "startup-script": old_startup},
+        instance_id="12345",
+        status="RUNNING",
+        last_start_timestamp="2026-08-07T00:00:00Z",
+    )
+    after = module.InstanceMetadataSnapshot(
+        fingerprint="newFingerprint=",
+        items={"enable-oslogin": "TRUE", "startup-script": new_startup},
+        instance_id="12345",
+        status="RUNNING",
+        last_start_timestamp="2026-08-07T00:00:00Z",
+    )
+    reads = iter([before, after])
+    monkeypatch.setattr(module, "read_instance_metadata", lambda **_kwargs: next(reads))
+    captured = {}
+
+    def set_metadata(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(module, "_set_instance_metadata_cas", set_metadata)
+    old_sha = hashlib.sha256(old_startup.encode()).hexdigest()
+    used_before, used_after = module.replace_startup_metadata_cas(
+        project="omega-production",
+        zone="us-central1-a",
+        instance="omega-production-app",
+        expected_old_sha256=old_sha,
+        new_startup=new_startup,
+    )
+    assert used_before == before
+    assert used_after == after
+    assert captured["fingerprint"] == before.fingerprint
+    assert captured["items"]["enable-oslogin"] == "TRUE"
+    assert captured["items"]["startup-script"] == new_startup
+
+    monkeypatch.setattr(module, "read_instance_metadata", lambda **_kwargs: before)
+    with pytest.raises(RuntimeError, match="differs from the reviewed old hash"):
+        module.replace_startup_metadata_cas(
+            project="omega-production",
+            zone="us-central1-a",
+            instance="omega-production-app",
+            expected_old_sha256="0" * 64,
+            new_startup=new_startup,
+        )
+
+    monkeypatch.setattr(
+        module,
+        "_set_instance_metadata_cas",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("GCE metadata fingerprint changed; CAS rejected")
+        ),
+    )
+    with pytest.raises(RuntimeError, match="fingerprint changed; CAS rejected"):
+        module.replace_startup_metadata_cas(
+            project="omega-production",
+            zone="us-central1-a",
+            instance="omega-production-app",
+            expected_old_sha256=old_sha,
+            new_startup=new_startup,
+            before=before,
+        )
+
+
+def test_startup_metadata_backup_is_byte_exact_and_restore_bound(
+    monkeypatch, tmp_path: Path
+) -> None:
+    module = _load_module()
+    startup = "#!/usr/bin/env bash\nprintf 'prior bytes\\n'\n"
+    snapshot = module.InstanceMetadataSnapshot(
+        fingerprint="exactFingerprint=",
+        items={"enable-oslogin": "TRUE", "startup-script": startup},
+        instance_id="12345",
+        status="RUNNING",
+        last_start_timestamp="2026-08-07T00:00:00Z",
+    )
+    sha = hashlib.sha256(startup.encode()).hexdigest()
+
+    def fake_run(command, **_kwargs):
+        if "describe" in command:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                json.dumps(
+                    {
+                        "generation": "123456",
+                        "size": len(startup.encode()),
+                        "metadata": {
+                            "omega-startup-sha256": sha,
+                            "omega-metadata-fingerprint": snapshot.fingerprint,
+                            "omega-instance-id": snapshot.instance_id,
+                        },
+                    }
+                ),
+                "",
+            )
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(module, "run", fake_run)
+    backup = module.backup_startup_metadata(
+        snapshot=snapshot,
+        bucket="omega-source-bucket",
+        instance="omega-production-app",
+        evidence_dir=tmp_path,
+    )
+    assert (tmp_path / "prior-startup.sh").read_bytes() == startup.encode()
+    assert backup["generation"] == "123456"
+    assert backup["sha256"] == sha
+    assert backup["fingerprint"] == snapshot.fingerprint
+
+
+def test_ghcr_saved_plan_allows_exactly_two_creates(
+    monkeypatch, tmp_path: Path
+) -> None:
+    module = _load_module()
+    plan = tmp_path / "ghcr.tfplan"
+    plan.write_bytes(b"saved-plan")
+
+    def payload(actions: list[str] | None = None) -> dict:
+        changes = []
+        for address, expected in module.GHCR_PLAN_ACTIONS.items():
+            after = {
+                "project": "omega-production",
+                "secret_id": "omega-production-ghcr_pull_credentials",
+            }
+            if "iam_member" in address:
+                after.update(
+                    {
+                        "role": "roles/secretmanager.secretAccessor",
+                        "member": (
+                            "serviceAccount:omega-production-app@"
+                            "omega-production.iam.gserviceaccount.com"
+                        ),
+                    }
+                )
+            changes.append(
+                {
+                    "address": address,
+                    "change": {
+                        "actions": actions or expected,
+                        "before": None,
+                        "after": after,
+                        "replace_paths": None,
+                    },
+                }
+            )
+        changes.append(
+            {
+                "address": "google_service_account.app",
+                "change": {"actions": ["no-op"], "replace_paths": None},
+            }
+        )
+        return {"resource_changes": changes, "output_changes": None}
+
+    monkeypatch.setenv("OMEGA_TERRAFORM_BIN", sys.executable)
+    monkeypatch.setattr(
+        module,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            [], 0, json.dumps(payload()), ""
+        ),
+    )
+    module.validate_ghcr_saved_plan(
+        terraform_dir=REPO / "infra/terraform-gcp",
+        plan_path=plan,
+        project="omega-production",
+        environment="production",
+    )
+
+    monkeypatch.setattr(
+        module,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            [], 0, json.dumps(payload(["update"])), ""
+        ),
+    )
+    with pytest.raises(RuntimeError, match="actions differ"):
+        module.validate_ghcr_saved_plan(
+            terraform_dir=REPO / "infra/terraform-gcp",
+            plan_path=plan,
+            project="omega-production",
+            environment="production",
+        )
+
+    wrong_target = payload()
+    wrong_target["resource_changes"][0]["change"]["after"]["project"] = "other-project"
+    monkeypatch.setattr(
+        module,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            [], 0, json.dumps(wrong_target), ""
+        ),
+    )
+    with pytest.raises(RuntimeError, match="target differs"):
+        module.validate_ghcr_saved_plan(
+            terraform_dir=REPO / "infra/terraform-gcp",
+            plan_path=plan,
+            project="omega-production",
+            environment="production",
+        )
+
+
+def test_startup_restore_and_saved_plan_only_are_operator_contracts() -> None:
+    controller = _read("scripts/gcp_release.py")
+    compute = _read("infra/terraform-gcp/compute.tf")
+    runbook = _read("docs/runbook/16_gcp_canonical_day2_release.md")
+    apply = controller[controller.index("def command_apply_ghcr_access") :]
+    apply = apply[: apply.index("def command_image_preflight")]
+    assert "ignore_changes = [metadata_startup_script]" in compute
+    assert "backup_startup_metadata" in controller
+    assert "restore_contract" in controller
+    assert "backup_generation" in controller
+    assert "expected_current_sha256" in controller
+    assert "setMetadata" in controller
+    assert '"apply"' in apply
+    assert '"-target=' not in apply
+    assert "exactly two creates" in runbook
+    assert "inverse CAS" in runbook
+
+
 def test_day2_ci_runs_focal_tests_and_static_scanners() -> None:
     focal = _read(".github/workflows/control-room-postgres-rls.yml")
     lint = _read(".github/workflows/lint.yml")
@@ -699,9 +970,21 @@ def test_day2_ci_runs_focal_tests_and_static_scanners() -> None:
     changed = _read("scripts/ci_changed_areas.py")
     assert "tests/test_gcp_day2_release.py" in focal
     assert "scripts/gcp_release.py scripts/gcp/runtime_contract.py" in lint
+    assert (
+        lint.count("scripts/migration_guard.py scripts/generate_migration_manifests.py")
+        == 2
+    )
     assert security.count("scripts/gcp_release.py scripts/gcp/runtime_contract.py") == 2
+    assert (
+        security.count(
+            "scripts/migration_guard.py scripts/generate_migration_manifests.py"
+        )
+        == 2
+    )
     assert '"scripts/gcp_release.py"' in changed
     assert '"scripts/gcp/runtime_contract.py"' in changed
+    assert '"scripts/migration_guard.py"' in changed
+    assert '"scripts/generate_migration_manifests.py"' in changed
 
 
 def test_authenticated_image_preflight_is_15_of_15_and_server_owned() -> None:
@@ -776,6 +1059,10 @@ def test_make_targets_and_runbook_define_no_blind_n_minus_one_rollback() -> None
     assert "backup-gcp-canonical:" in makefile
     assert "deploy-gcp-canonical:" in makefile
     assert "restore-rehearsal-gcp:" in makefile
+    assert "adopt-gcp-startup-metadata:" in makefile
+    assert "restore-gcp-startup-metadata:" in makefile
+    assert "plan-gcp-ghcr-access:" in makefile
+    assert "apply-gcp-ghcr-access:" in makefile
     assert "There is intentionally no blind N-1" in runbook
     assert "AWS is DR/standby, not a second writer" in runbook
     assert "GCP_OBJECT_VERIFY_MODE=all" in runbook

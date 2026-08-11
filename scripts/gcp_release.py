@@ -9,6 +9,7 @@ Manager.  No registry or application credential crosses SSH or evidence files.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -17,6 +18,9 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,6 +44,15 @@ class RemoteResult:
     returncode: int
     stdout: str
     stderr: str
+
+
+@dataclass(frozen=True)
+class InstanceMetadataSnapshot:
+    fingerprint: str
+    items: dict[str, str]
+    instance_id: str
+    status: str
+    last_start_timestamp: str
 
 
 def utc_stamp() -> str:
@@ -411,12 +424,19 @@ def require_target(args: argparse.Namespace) -> None:
         )
 
 
-def validate_startup_metadata(
-    *, project: str, zone: str, instance: str, expected_sha256: str
-) -> None:
-    """Read back the effective GCE startup script and require Terraform's hash."""
-    if not SHA256_RE.fullmatch(expected_sha256):
-        raise ValueError("GCP_STARTUP_SCRIPT_SHA256 must be an exact sha256")
+def _validate_gcp_target(project: str, zone: str, instance: str) -> None:
+    if not re.fullmatch(r"[a-z][a-z0-9-]{4,28}[a-z0-9]", project):
+        raise ValueError("GCP project id is invalid")
+    if not re.fullmatch(r"[a-z0-9-]{3,40}", zone):
+        raise ValueError("GCP zone is invalid")
+    if not re.fullmatch(r"[a-z](?:[-a-z0-9]{0,61}[a-z0-9])?", instance):
+        raise ValueError("GCP instance name is invalid")
+
+
+def read_instance_metadata(
+    *, project: str, zone: str, instance: str
+) -> InstanceMetadataSnapshot:
+    _validate_gcp_target(project, zone, instance)
     result = run(
         [
             "gcloud",
@@ -427,20 +447,191 @@ def validate_startup_metadata(
             instance,
             f"--project={project}",
             f"--zone={zone}",
-            "--format=json(metadata.items)",
+            "--format=json(id,status,lastStartTimestamp,metadata)",
         ],
         timeout=120,
     )
     if result.returncode != 0:
-        raise RuntimeError(redact(result.stderr or result.stdout))
-    payload = json.loads(result.stdout)
-    items = payload.get("metadata", {}).get("items", [])
-    values = [
-        item.get("value", "") for item in items if item.get("key") == "startup-script"
-    ]
-    if len(values) != 1:
+        raise RuntimeError("cannot read live GCE instance metadata")
+    try:
+        payload = json.loads(result.stdout)
+        metadata = payload["metadata"]
+        fingerprint = metadata["fingerprint"]
+        raw_items = metadata["items"]
+    except (KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("live GCE metadata response is malformed") from exc
+    if not isinstance(fingerprint, str) or not re.fullmatch(
+        r"[A-Za-z0-9_-]+={0,2}", fingerprint
+    ):
+        raise RuntimeError("live GCE metadata fingerprint is invalid")
+    if not isinstance(raw_items, list):
+        raise RuntimeError("live GCE metadata items are invalid")
+    items: dict[str, str] = {}
+    for item in raw_items:
+        if not isinstance(item, dict) or set(item) != {"key", "value"}:
+            raise RuntimeError("live GCE metadata item is malformed")
+        key, value = item["key"], item["value"]
+        if not isinstance(key, str) or not isinstance(value, str) or key in items:
+            raise RuntimeError("live GCE metadata key/value is invalid or duplicated")
+        items[key] = value
+    if "startup-script" not in items:
         raise RuntimeError("GCE metadata must contain exactly one startup-script")
-    actual = hashlib.sha256(values[0].encode()).hexdigest()
+    return InstanceMetadataSnapshot(
+        fingerprint=fingerprint,
+        items=items,
+        instance_id=str(payload.get("id", "")),
+        status=str(payload.get("status", "")),
+        last_start_timestamp=str(payload.get("lastStartTimestamp", "")),
+    )
+
+
+def render_terraform_startup_script(*, terraform_dir: Path, var_file: Path) -> str:
+    resolved = terraform_dir.resolve()
+    try:
+        resolved.relative_to(REPO.resolve())
+    except ValueError as exc:
+        raise ValueError("Terraform directory must be inside this repository") from exc
+    if not var_file.is_file():
+        raise ValueError("GCP_TERRAFORM_VAR_FILE must be a reviewed existing file")
+    result = run(
+        [
+            terraform_binary(),
+            f"-chdir={resolved}",
+            "console",
+            f"-var-file={var_file.resolve()}",
+        ],
+        input_text="base64encode(local.startup_script)\n",
+        timeout=300,
+    )
+    if result.returncode != 0:
+        raise RuntimeError("cannot render the reviewed Terraform startup script")
+    try:
+        encoded = json.loads(result.stdout.strip())
+        startup = base64.b64decode(encoded, validate=True).decode("utf-8")
+    except (TypeError, ValueError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Terraform startup render is malformed") from exc
+    if (
+        not startup.startswith("#!/usr/bin/env bash\n")
+        or len(startup.encode()) > 256000
+    ):
+        raise RuntimeError("Terraform startup render is unsafe or too large")
+    return startup
+
+
+def _set_instance_metadata_cas(
+    *,
+    project: str,
+    zone: str,
+    instance: str,
+    fingerprint: str,
+    items: dict[str, str],
+) -> None:
+    _validate_gcp_target(project, zone, instance)
+    token_result = run(["gcloud", "--quiet", "auth", "print-access-token"], timeout=120)
+    token = token_result.stdout.strip()
+    if token_result.returncode != 0 or not token or "\n" in token:
+        raise RuntimeError("cannot obtain a GCP access token for metadata CAS")
+    url = (
+        "https://compute.googleapis.com/compute/v1/projects/"
+        f"{project}/zones/{zone}/instances/{instance}/setMetadata"
+    )
+    body = json.dumps(
+        {
+            "fingerprint": fingerprint,
+            "items": [
+                {"key": key, "value": value} for key, value in sorted(items.items())
+            ],
+        },
+        separators=(",", ":"),
+    ).encode()
+    request = urllib.request.Request(  # nosec B310
+        url,
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:  # nosec B310
+            if response.status not in {200, 201}:
+                raise RuntimeError("Compute setMetadata returned an unexpected status")
+    except urllib.error.HTTPError as exc:
+        if exc.code in {409, 412}:
+            raise RuntimeError(
+                "GCE metadata fingerprint changed; CAS rejected"
+            ) from exc
+        raise RuntimeError(f"Compute setMetadata failed with HTTP {exc.code}") from exc
+
+
+def replace_startup_metadata_cas(
+    *,
+    project: str,
+    zone: str,
+    instance: str,
+    expected_old_sha256: str,
+    new_startup: str,
+    before: InstanceMetadataSnapshot | None = None,
+) -> tuple[InstanceMetadataSnapshot, InstanceMetadataSnapshot]:
+    if not SHA256_RE.fullmatch(expected_old_sha256):
+        raise ValueError("expected old startup SHA-256 is invalid")
+    before = before or read_instance_metadata(
+        project=project, zone=zone, instance=instance
+    )
+    if before.status != "RUNNING" or not before.instance_id:
+        raise RuntimeError("canonical GCE instance is not a running stable identity")
+    old_sha256 = hashlib.sha256(before.items["startup-script"].encode()).hexdigest()
+    if old_sha256 != expected_old_sha256:
+        raise RuntimeError(
+            f"live startup SHA-256 {old_sha256} differs from the reviewed old hash"
+        )
+    expected_items = dict(before.items)
+    expected_items["startup-script"] = new_startup
+    new_sha256 = hashlib.sha256(new_startup.encode()).hexdigest()
+    if new_sha256 == old_sha256:
+        return before, before
+    _set_instance_metadata_cas(
+        project=project,
+        zone=zone,
+        instance=instance,
+        fingerprint=before.fingerprint,
+        items=expected_items,
+    )
+    deadline = time.monotonic() + 120
+    while True:
+        after = read_instance_metadata(project=project, zone=zone, instance=instance)
+        observed_sha256 = hashlib.sha256(
+            after.items["startup-script"].encode()
+        ).hexdigest()
+        if observed_sha256 == new_sha256:
+            break
+        if time.monotonic() >= deadline:
+            raise RuntimeError("startup metadata CAS did not become visible")
+        time.sleep(2)
+    if after.fingerprint == before.fingerprint:
+        raise RuntimeError("startup metadata fingerprint did not advance")
+    if {k: v for k, v in after.items.items() if k != "startup-script"} != {
+        k: v for k, v in before.items.items() if k != "startup-script"
+    }:
+        raise RuntimeError("non-startup GCE metadata changed during CAS")
+    if (
+        after.instance_id != before.instance_id
+        or after.status != "RUNNING"
+        or after.last_start_timestamp != before.last_start_timestamp
+    ):
+        raise RuntimeError("startup metadata update restarted or replaced the instance")
+    return before, after
+
+
+def validate_startup_metadata(
+    *, project: str, zone: str, instance: str, expected_sha256: str
+) -> None:
+    """Read back the effective GCE startup script and require Terraform's hash."""
+    if not SHA256_RE.fullmatch(expected_sha256):
+        raise ValueError("GCP_STARTUP_SCRIPT_SHA256 must be an exact sha256")
+    snapshot = read_instance_metadata(project=project, zone=zone, instance=instance)
+    actual = hashlib.sha256(snapshot.items["startup-script"].encode()).hexdigest()
     if actual != expected_sha256:
         raise RuntimeError(
             f"GCE startup-script sha256 {actual} differs from Terraform output"
@@ -448,51 +639,26 @@ def validate_startup_metadata(
 
 
 def validate_terraform_source_contract(
-    *, terraform_dir: Path, source_ref: str, artifact_bucket: str
+    *, terraform_dir: Path, var_file: Path, source_ref: str, artifact_bucket: str
 ) -> str:
-    """Bind live Terraform outputs to the exact candidate artifact and render."""
-    resolved = terraform_dir.resolve()
-    try:
-        resolved.relative_to(REPO.resolve())
-    except ValueError as exc:
-        raise ValueError("Terraform directory must be inside this repository") from exc
-    terraform_bin = terraform_binary()
-    result = run(
-        [terraform_bin, f"-chdir={resolved}", "output", "-json"],
-        timeout=120,
+    """Bind the reviewed, unapplied render to one exact immutable artifact."""
+    startup = render_terraform_startup_script(
+        terraform_dir=terraform_dir, var_file=var_file
     )
-    if result.returncode != 0:
-        raise RuntimeError(redact(result.stderr or result.stdout))
-    payload = json.loads(result.stdout)
-
-    def output(name: str) -> str:
-        item = payload.get(name)
-        value = item.get("value") if isinstance(item, dict) else None
-        if not isinstance(value, str) or not value:
-            raise RuntimeError(f"Terraform output is missing or not a string: {name}")
-        return value
-
-    source_sha = output("source_sha")
-    source_bucket = output("source_bucket")
-    source_object = output("source_object")
-    startup_sha = output("startup_script_sha256")
-    if source_sha != source_ref:
-        raise RuntimeError(
-            f"Terraform source_sha {source_sha} does not match expected ref {source_ref}"
-        )
-    if source_bucket != artifact_bucket:
-        raise RuntimeError("Terraform source_bucket differs from the artifact bucket")
     expected_object = f"deploy-artifacts/{source_ref}/repo.tar.gz"
-    if source_object != expected_object:
+    expected_lines = {
+        f'SOURCE_BUCKET="{artifact_bucket}"',
+        f'SOURCE_OBJECT="{expected_object}"',
+        f'SOURCE_SHA="{source_ref}"',
+    }
+    if not expected_lines.issubset(set(startup.splitlines())):
         raise RuntimeError(
-            "Terraform source_object is not the exact immutable candidate artifact"
+            "Terraform startup render is not bound to the exact immutable artifact"
         )
-    if not SHA256_RE.fullmatch(startup_sha):
-        raise RuntimeError("Terraform startup_script_sha256 output is invalid")
-    return startup_sha
+    return hashlib.sha256(startup.encode()).hexdigest()
 
 
-def validate_reviewed_terraform_plan(
+def validate_reviewed_terraform_inputs(
     *,
     terraform_dir: Path,
     var_file: Path,
@@ -504,7 +670,7 @@ def validate_reviewed_terraform_plan(
     public_console_domain: str,
     public_workspace_domain: str,
 ) -> None:
-    """Require explicit production invariants and a zero-change post-apply plan."""
+    """Require explicit release-critical inputs without blessing full-stack drift."""
     if not var_file.is_file():
         raise ValueError("GCP_TERRAFORM_VAR_FILE must be a reviewed existing file")
     text = var_file.read_text(encoding="utf-8")
@@ -535,6 +701,10 @@ def validate_reviewed_terraform_plan(
         "enable_airflow_scheduler": "true",
         "monthly_budget_currency": "EUR",
     }
+    if not FULL_SHA_RE.fullmatch(source_ref):
+        raise ValueError("reviewed Terraform source ref must be an exact SHA")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]", source_bucket):
+        raise ValueError("reviewed Terraform source bucket is invalid")
     if not re.fullmatch(r"[0-9]+", project_number):
         raise ValueError("GCP_PROJECT_NUMBER must be numeric")
     if not re.fullmatch(r"[0-9A-F]{6}-[0-9A-F]{6}-[0-9A-F]{6}", billing_account_id):
@@ -545,33 +715,481 @@ def validate_reviewed_terraform_plan(
     for name, value in expected.items():
         if assignment(name) != value:
             raise ValueError(f"reviewed tfvars value differs: {name}")
-
     resolved = terraform_dir.resolve()
     try:
         resolved.relative_to(REPO.resolve())
     except ValueError as exc:
         raise ValueError("Terraform directory must be inside this repository") from exc
-    terraform_bin = terraform_binary()
-    plan = run(
+
+
+def _startup_sha256(snapshot: InstanceMetadataSnapshot) -> str:
+    return hashlib.sha256(snapshot.items["startup-script"].encode()).hexdigest()
+
+
+def backup_startup_metadata(
+    *,
+    snapshot: InstanceMetadataSnapshot,
+    bucket: str,
+    instance: str,
+    evidence_dir: Path,
+) -> dict[str, str]:
+    if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]", bucket):
+        raise ValueError("invalid GCS startup-backup bucket")
+    stamp = utc_stamp()
+    old_sha256 = _startup_sha256(snapshot)
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    local_backup = evidence_dir / "prior-startup.sh"
+    local_backup.write_text(snapshot.items["startup-script"], encoding="utf-8")
+    local_backup.chmod(0o600)
+    uri = (
+        f"gs://{bucket}/startup-metadata-backups/{instance}/" f"{stamp}-{old_sha256}.sh"
+    )
+    metadata = (
+        f"omega-startup-sha256={old_sha256},"
+        f"omega-metadata-fingerprint={snapshot.fingerprint},"
+        f"omega-instance-id={snapshot.instance_id}"
+    )
+    upload = run(
         [
-            terraform_bin,
+            "gcloud",
+            "--quiet",
+            "storage",
+            "cp",
+            str(local_backup),
+            uri,
+            "--if-generation-match=0",
+            f"--custom-metadata={metadata}",
+        ],
+        timeout=300,
+    )
+    if upload.returncode != 0:
+        raise RuntimeError("cannot create immutable startup metadata backup")
+    describe = run(
+        [
+            "gcloud",
+            "--quiet",
+            "storage",
+            "objects",
+            "describe",
+            uri,
+            "--format=json",
+        ],
+        timeout=120,
+    )
+    if describe.returncode != 0:
+        raise RuntimeError("cannot verify immutable startup metadata backup")
+    try:
+        payload = json.loads(describe.stdout)
+        generation = str(payload["generation"])
+        size = int(payload["size"])
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError("startup metadata backup response is malformed") from exc
+    custom = _custom_metadata(payload)
+    if (
+        not generation.isdigit()
+        or size != len(snapshot.items["startup-script"].encode())
+        or custom.get("omega-startup-sha256") != old_sha256
+        or custom.get("omega-metadata-fingerprint") != snapshot.fingerprint
+        or custom.get("omega-instance-id") != snapshot.instance_id
+    ):
+        raise RuntimeError("startup metadata backup verification differs")
+    return {
+        "uri": uri,
+        "generation": generation,
+        "sha256": old_sha256,
+        "fingerprint": snapshot.fingerprint,
+        "created_at": stamp,
+    }
+
+
+def _write_startup_evidence(evidence_dir: Path, payload: dict[str, Any]) -> None:
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    (evidence_dir / "summary.json").write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
+def command_adopt_startup_metadata(args: argparse.Namespace) -> int:
+    require_target(args)
+    if not args.confirm and os.environ.get("CONFIRM_GCP_STARTUP_ADOPTION") != "1":
+        raise SystemExit("startup metadata adoption requires explicit confirmation")
+    if not SHA256_RE.fullmatch(args.expected_old_sha256):
+        raise ValueError("reviewed old startup SHA-256 is invalid")
+    validate_reviewed_terraform_inputs(
+        terraform_dir=args.terraform_dir,
+        var_file=args.terraform_var_file,
+        source_ref=args.source_ref,
+        source_bucket=args.artifact_bucket,
+        project_id=args.project,
+        project_number=args.project_number,
+        billing_account_id=args.billing_account_id,
+        public_console_domain=args.public_console_domain,
+        public_workspace_domain=args.public_workspace_domain,
+    )
+    new_startup = render_terraform_startup_script(
+        terraform_dir=args.terraform_dir, var_file=args.terraform_var_file
+    )
+    new_sha256 = hashlib.sha256(new_startup.encode()).hexdigest()
+    before = read_instance_metadata(
+        project=args.project, zone=args.zone, instance=args.instance
+    )
+    if _startup_sha256(before) != args.expected_old_sha256:
+        raise RuntimeError("live startup hash differs before backup; refusing adoption")
+    evidence_dir = args.evidence_dir or (
+        EVIDENCE_ROOT / "startup-metadata-gcp" / utc_stamp()
+    )
+    backup = backup_startup_metadata(
+        snapshot=before,
+        bucket=args.artifact_bucket,
+        instance=args.instance,
+        evidence_dir=evidence_dir,
+    )
+    evidence: dict[str, Any] = {
+        "schema_version": 1,
+        "operation": "startup-metadata-adoption",
+        "status": "BACKUP_VERIFIED",
+        "instance_id": before.instance_id,
+        "instance_status": before.status,
+        "last_start_timestamp": before.last_start_timestamp,
+        "before": backup,
+        "after_sha256": new_sha256,
+        "restore_contract": {
+            "backup_uri": backup["uri"],
+            "backup_generation": backup["generation"],
+            "backup_sha256": backup["sha256"],
+            "expected_current_sha256": new_sha256,
+        },
+        "secrets_included": False,
+    }
+    _write_startup_evidence(evidence_dir, evidence)
+    before_used, after = replace_startup_metadata_cas(
+        project=args.project,
+        zone=args.zone,
+        instance=args.instance,
+        expected_old_sha256=args.expected_old_sha256,
+        new_startup=new_startup,
+        before=before,
+    )
+    if before_used.fingerprint != backup["fingerprint"]:
+        raise RuntimeError("metadata CAS did not use the backed-up fingerprint")
+    evidence.update(
+        {
+            "status": "PASS",
+            "before_fingerprint": before_used.fingerprint,
+            "after_fingerprint": after.fingerprint,
+            "after_sha256": _startup_sha256(after),
+            "instance_restarted": False,
+            "instance_replaced": False,
+        }
+    )
+    _write_startup_evidence(evidence_dir, evidence)
+    print(json.dumps({"status": "PASS", "evidence_dir": str(evidence_dir), **evidence}))
+    return 0
+
+
+def command_restore_startup_metadata(args: argparse.Namespace) -> int:
+    require_target(args)
+    if not args.confirm and os.environ.get("CONFIRM_GCP_STARTUP_RESTORE") != "1":
+        raise SystemExit("startup metadata restore requires explicit confirmation")
+    if not SHA256_RE.fullmatch(args.backup_sha256):
+        raise ValueError("startup backup SHA-256 is invalid")
+    if not re.fullmatch(r"[1-9][0-9]*", args.backup_generation):
+        raise ValueError("startup backup generation is invalid")
+    prefix = (
+        f"gs://{args.artifact_bucket}/startup-metadata-backups/" f"{args.instance}/"
+    )
+    if not args.backup_uri.startswith(prefix) or not args.backup_uri.endswith(".sh"):
+        raise ValueError("startup backup URI is outside the canonical prefix")
+    with tempfile.TemporaryDirectory(prefix="omega-startup-restore-") as temp:
+        restored_path = Path(temp) / "startup.sh"
+        download = run(
+            [
+                "gcloud",
+                "--quiet",
+                "storage",
+                "cp",
+                f"{args.backup_uri}#{args.backup_generation}",
+                str(restored_path),
+            ],
+            timeout=300,
+        )
+        if download.returncode != 0 or not restored_path.is_file():
+            raise RuntimeError("cannot download the exact startup backup generation")
+        restored = restored_path.read_text(encoding="utf-8")
+    if hashlib.sha256(restored.encode()).hexdigest() != args.backup_sha256:
+        raise RuntimeError("downloaded startup backup checksum differs")
+    before, after = replace_startup_metadata_cas(
+        project=args.project,
+        zone=args.zone,
+        instance=args.instance,
+        expected_old_sha256=args.expected_current_sha256,
+        new_startup=restored,
+    )
+    evidence_dir = args.evidence_dir or (
+        EVIDENCE_ROOT / "startup-metadata-restore-gcp" / utc_stamp()
+    )
+    evidence = {
+        "schema_version": 1,
+        "operation": "startup-metadata-restore",
+        "status": "PASS",
+        "backup_uri": args.backup_uri,
+        "backup_generation": args.backup_generation,
+        "backup_sha256": args.backup_sha256,
+        "before_sha256": _startup_sha256(before),
+        "after_sha256": _startup_sha256(after),
+        "before_fingerprint": before.fingerprint,
+        "after_fingerprint": after.fingerprint,
+        "instance_restarted": False,
+        "instance_replaced": False,
+        "secrets_included": False,
+    }
+    _write_startup_evidence(evidence_dir, evidence)
+    print(json.dumps({"status": "PASS", "evidence_dir": str(evidence_dir), **evidence}))
+    return 0
+
+
+GHCR_PLAN_ACTIONS = {
+    "google_secret_manager_secret.ghcr_pull_credentials": ["create"],
+    "google_secret_manager_secret_iam_member.app_ghcr_pull_credentials_access": [
+        "create"
+    ],
+}
+
+
+def validate_ghcr_saved_plan(
+    *,
+    terraform_dir: Path,
+    plan_path: Path,
+    project: str,
+    environment: str,
+) -> dict[str, Any]:
+    if not re.fullmatch(r"[a-z][a-z0-9-]{4,28}[a-z0-9]", project):
+        raise ValueError("GCP project id is invalid")
+    if not re.fullmatch(r"[a-z][a-z0-9-]{0,30}", environment):
+        raise ValueError("GCP environment is invalid")
+    resolved = terraform_dir.resolve()
+    try:
+        resolved.relative_to(REPO.resolve())
+    except ValueError as exc:
+        raise ValueError("Terraform directory must be inside this repository") from exc
+    result = run(
+        [
+            terraform_binary(),
             f"-chdir={resolved}",
+            "show",
+            "-json",
+            str(plan_path.resolve()),
+        ],
+        timeout=300,
+    )
+    if result.returncode != 0:
+        raise RuntimeError("cannot inspect saved GHCR access plan")
+    try:
+        payload = json.loads(result.stdout)
+        changes = payload["resource_changes"]
+    except (KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("saved GHCR access plan JSON is malformed") from exc
+    actual: dict[str, list[str]] = {}
+    planned_after: dict[str, dict[str, Any]] = {}
+    for resource in changes:
+        change = resource.get("change", {})
+        actions = change.get("actions")
+        if actions == ["no-op"]:
+            continue
+        address = resource.get("address")
+        if not isinstance(address, str) or not isinstance(actions, list):
+            raise RuntimeError("saved GHCR access plan change is malformed")
+        if address in actual:
+            raise RuntimeError("saved GHCR access plan repeats a resource change")
+        if change.get("replace_paths"):
+            raise RuntimeError("saved GHCR access plan contains replacement paths")
+        after = change.get("after")
+        if change.get("before") is not None or not isinstance(after, dict):
+            raise RuntimeError("saved GHCR access plan is not a pure create")
+        actual[address] = actions
+        planned_after[address] = after
+    if actual != GHCR_PLAN_ACTIONS:
+        raise RuntimeError(
+            f"saved GHCR access plan actions differ: {json.dumps(actual, sort_keys=True)}"
+        )
+    output_changes = payload.get("output_changes") or {}
+    if any(item.get("actions") != ["no-op"] for item in output_changes.values()):
+        raise RuntimeError("saved GHCR access plan contains output drift")
+    secret_id = f"omega-{environment}-ghcr_pull_credentials"
+    member = f"serviceAccount:omega-{environment}-app@{project}.iam.gserviceaccount.com"
+    exact_fields = {
+        "google_secret_manager_secret.ghcr_pull_credentials": {
+            "project": project,
+            "secret_id": secret_id,
+        },
+        "google_secret_manager_secret_iam_member.app_ghcr_pull_credentials_access": {
+            "project": project,
+            "secret_id": secret_id,
+            "role": "roles/secretmanager.secretAccessor",
+            "member": member,
+        },
+    }
+    for address, expected in exact_fields.items():
+        after = planned_after[address]
+        if any(after.get(key) != value for key, value in expected.items()):
+            raise RuntimeError(f"saved GHCR access plan target differs for {address}")
+    return payload
+
+
+def _require_plan_outside_repo(plan_path: Path) -> Path:
+    resolved = plan_path.resolve()
+    try:
+        resolved.relative_to(REPO.resolve())
+    except ValueError:
+        pass
+    else:
+        raise ValueError("saved Terraform plans must remain outside the repository")
+    if not resolved.parent.is_dir():
+        raise ValueError("saved Terraform plan parent directory does not exist")
+    return resolved
+
+
+def command_plan_ghcr_access(args: argparse.Namespace) -> int:
+    require_target(args)
+    validate_reviewed_terraform_inputs(
+        terraform_dir=args.terraform_dir,
+        var_file=args.terraform_var_file,
+        source_ref=args.source_ref,
+        source_bucket=args.artifact_bucket,
+        project_id=args.project,
+        project_number=args.project_number,
+        billing_account_id=args.billing_account_id,
+        public_console_domain=args.public_console_domain,
+        public_workspace_domain=args.public_workspace_domain,
+    )
+    plan_path = _require_plan_outside_repo(args.plan)
+    if plan_path.exists():
+        raise ValueError("refusing to overwrite an existing saved Terraform plan")
+    result = run(
+        [
+            terraform_binary(),
+            f"-chdir={args.terraform_dir.resolve()}",
             "plan",
-            "-detailed-exitcode",
+            "-refresh=true",
+            "-lock=false",
             "-input=false",
-            "-no-color",
-            f"-var-file={var_file.resolve()}",
+            "-detailed-exitcode",
+            f"-var-file={args.terraform_var_file.resolve()}",
+            "-target=google_secret_manager_secret.ghcr_pull_credentials",
+            "-target=google_secret_manager_secret_iam_member.app_ghcr_pull_credentials_access",
+            f"-out={plan_path}",
         ],
         timeout=600,
     )
-    if plan.returncode == 2:
+    if result.returncode != 2 or not plan_path.is_file():
         raise RuntimeError(
-            "Terraform has unapplied changes; review/apply the saved plan before release operations"
+            "GHCR target plan did not produce exactly the required changes"
         )
-    if plan.returncode != 0:
-        raise RuntimeError(
-            "Terraform zero-drift plan failed; output intentionally suppressed"
+    validate_ghcr_saved_plan(
+        terraform_dir=args.terraform_dir,
+        plan_path=plan_path,
+        project=args.project,
+        environment=args.environment,
+    )
+    print(
+        json.dumps(
+            {
+                "status": "PASS",
+                "plan": str(plan_path),
+                "actions": GHCR_PLAN_ACTIONS,
+                "delete": 0,
+                "replace": 0,
+            },
+            sort_keys=True,
         )
+    )
+    return 0
+
+
+def validate_live_ghcr_access(*, project: str, environment: str) -> None:
+    if not re.fullmatch(r"[a-z][a-z0-9-]{0,30}", environment):
+        raise ValueError("GCP environment is invalid")
+    secret = f"omega-{environment}-ghcr_pull_credentials"
+    describe = run(
+        [
+            "gcloud",
+            "--quiet",
+            "secrets",
+            "describe",
+            secret,
+            f"--project={project}",
+            "--format=json(name)",
+        ],
+        timeout=120,
+    )
+    policy = run(
+        [
+            "gcloud",
+            "--quiet",
+            "secrets",
+            "get-iam-policy",
+            secret,
+            f"--project={project}",
+            "--format=json(bindings)",
+        ],
+        timeout=120,
+    )
+    if describe.returncode != 0 or policy.returncode != 0:
+        raise RuntimeError("GHCR secret container/IAM readback failed")
+    try:
+        name = json.loads(describe.stdout)["name"]
+        bindings = json.loads(policy.stdout).get("bindings", [])
+    except (KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("GHCR secret container/IAM readback is malformed") from exc
+    member = f"serviceAccount:omega-{environment}-app@{project}.iam.gserviceaccount.com"
+    accessor = [
+        binding
+        for binding in bindings
+        if binding.get("role") == "roles/secretmanager.secretAccessor"
+    ]
+    if not str(name).endswith(f"/secrets/{secret}") or len(accessor) != 1:
+        raise RuntimeError("GHCR secret container or resource IAM is not exact")
+    if member not in accessor[0].get("members", []):
+        raise RuntimeError("GCP app service account lacks resource-scoped GHCR access")
+
+
+def command_apply_ghcr_access(args: argparse.Namespace) -> int:
+    require_target(args)
+    if not args.confirm and os.environ.get("CONFIRM_GCP_GHCR_ACCESS_APPLY") != "1":
+        raise SystemExit("GHCR access apply requires explicit confirmation")
+    plan_path = _require_plan_outside_repo(args.plan)
+    if not plan_path.is_file():
+        raise ValueError("saved GHCR access plan does not exist")
+    validate_ghcr_saved_plan(
+        terraform_dir=args.terraform_dir,
+        plan_path=plan_path,
+        project=args.project,
+        environment=args.environment,
+    )
+    applied = run(
+        [
+            terraform_binary(),
+            f"-chdir={args.terraform_dir.resolve()}",
+            "apply",
+            "-input=false",
+            str(plan_path),
+        ],
+        timeout=600,
+    )
+    if applied.returncode != 0:
+        raise RuntimeError("saved GHCR access plan apply failed")
+    validate_live_ghcr_access(project=args.project, environment=args.environment)
+    print(
+        json.dumps(
+            {
+                "status": "PASS",
+                "actions": GHCR_PLAN_ACTIONS,
+                "readback": "secret-container+resource-scoped-iam",
+            },
+            sort_keys=True,
+        )
+    )
+    return 0
 
 
 def command_image_preflight(args: argparse.Namespace) -> int:
@@ -707,7 +1325,7 @@ def command_backup(args: argparse.Namespace) -> int:
     )
     if live_artifact_uri != expected_live_uri:
         raise RuntimeError("current live source artifact URI is not exact")
-    validate_reviewed_terraform_plan(
+    validate_reviewed_terraform_inputs(
         terraform_dir=args.terraform_dir,
         var_file=args.terraform_var_file,
         source_ref=args.current_live_ref,
@@ -720,6 +1338,7 @@ def command_backup(args: argparse.Namespace) -> int:
     )
     startup_sha = validate_terraform_source_contract(
         terraform_dir=args.terraform_dir,
+        var_file=args.terraform_var_file,
         source_ref=args.current_live_ref,
         artifact_bucket=args.artifact_bucket,
     )
@@ -779,7 +1398,7 @@ def command_deploy(args: argparse.Namespace) -> int:
         artifact_uri = upload_artifact_immutable(
             archive, args.artifact_bucket, args.deploy_ref, artifact_sha
         )
-    validate_reviewed_terraform_plan(
+    validate_reviewed_terraform_inputs(
         terraform_dir=args.terraform_dir,
         var_file=args.terraform_var_file,
         source_ref=args.deploy_ref,
@@ -792,6 +1411,7 @@ def command_deploy(args: argparse.Namespace) -> int:
     )
     startup_sha = validate_terraform_source_contract(
         terraform_dir=args.terraform_dir,
+        var_file=args.terraform_var_file,
         source_ref=args.deploy_ref,
         artifact_bucket=args.artifact_bucket,
     )
@@ -895,6 +1515,99 @@ def build_parser() -> argparse.ArgumentParser:
         "--artifact-bucket", default=os.environ.get("GCP_SOURCE_BUCKET", "")
     )
     prepare.set_defaults(handler=command_prepare_artifacts)
+
+    startup = commands.add_parser(
+        "adopt-startup-metadata",
+        help="replace ForceNew startup metadata in place with fingerprint CAS",
+    )
+    common_args(startup)
+    terraform_safety_args(startup)
+    startup.add_argument(
+        "--source-ref",
+        default=os.environ.get(
+            "GCP_STARTUP_SOURCE_REF", os.environ.get("GCP_CURRENT_LIVE_REF", "")
+        ),
+    )
+    startup.add_argument(
+        "--artifact-bucket", default=os.environ.get("GCP_SOURCE_BUCKET", "")
+    )
+    startup.add_argument(
+        "--expected-old-sha256",
+        default=os.environ.get("GCP_EXPECTED_OLD_STARTUP_SHA256", ""),
+    )
+    startup.add_argument("--confirm", action="store_true")
+    startup.set_defaults(handler=command_adopt_startup_metadata)
+
+    startup_restore = commands.add_parser(
+        "restore-startup-metadata",
+        help="restore one immutable startup metadata generation with CAS",
+    )
+    common_args(startup_restore)
+    startup_restore.add_argument(
+        "--artifact-bucket", default=os.environ.get("GCP_SOURCE_BUCKET", "")
+    )
+    startup_restore.add_argument(
+        "--backup-uri", default=os.environ.get("GCP_STARTUP_BACKUP_URI", "")
+    )
+    startup_restore.add_argument(
+        "--backup-generation",
+        default=os.environ.get("GCP_STARTUP_BACKUP_GENERATION", ""),
+    )
+    startup_restore.add_argument(
+        "--backup-sha256",
+        default=os.environ.get("GCP_STARTUP_BACKUP_SHA256", ""),
+    )
+    startup_restore.add_argument(
+        "--expected-current-sha256",
+        default=os.environ.get("GCP_EXPECTED_CURRENT_STARTUP_SHA256", ""),
+    )
+    startup_restore.add_argument("--confirm", action="store_true")
+    startup_restore.set_defaults(handler=command_restore_startup_metadata)
+
+    ghcr_plan = commands.add_parser(
+        "plan-ghcr-access",
+        help="save and validate the exact two-create GHCR Secret Manager plan",
+    )
+    common_args(ghcr_plan)
+    terraform_safety_args(ghcr_plan)
+    ghcr_plan.add_argument(
+        "--source-ref", default=os.environ.get("GCP_CURRENT_LIVE_REF", "")
+    )
+    ghcr_plan.add_argument(
+        "--artifact-bucket", default=os.environ.get("GCP_SOURCE_BUCKET", "")
+    )
+    ghcr_plan.add_argument(
+        "--environment", default=os.environ.get("OMEGA_GCP_ENVIRONMENT", "")
+    )
+    ghcr_plan.add_argument(
+        "--plan",
+        type=Path,
+        default=Path(os.environ.get("GCP_GHCR_ACCESS_PLAN", "")),
+    )
+    ghcr_plan.set_defaults(handler=command_plan_ghcr_access)
+
+    ghcr_apply = commands.add_parser(
+        "apply-ghcr-access",
+        help="apply only the prevalidated saved GHCR access plan",
+    )
+    common_args(ghcr_apply)
+    ghcr_apply.add_argument(
+        "--terraform-dir",
+        type=Path,
+        default=Path(
+            os.environ.get("GCP_TERRAFORM_DIR", str(REPO / "infra/terraform-gcp"))
+        ),
+    )
+    ghcr_apply.add_argument(
+        "--plan",
+        type=Path,
+        default=Path(os.environ.get("GCP_GHCR_ACCESS_PLAN", "")),
+    )
+    ghcr_apply.add_argument(
+        "--environment", default=os.environ.get("OMEGA_GCP_ENVIRONMENT", "")
+    )
+    ghcr_apply.add_argument("--confirm", action="store_true")
+    ghcr_apply.set_defaults(handler=command_apply_ghcr_access)
 
     image_preflight = commands.add_parser(
         "image-preflight",

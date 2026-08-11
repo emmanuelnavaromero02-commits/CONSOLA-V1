@@ -72,6 +72,8 @@ export GCP_PROJECT_NUMBER='894064513501'
 export GCP_BILLING_ACCOUNT_ID='01A3E0-B708F4-6EA299'
 export GCP_PUBLIC_CONSOLE_DOMAIN='<exact-live-gcp-console-domain>'
 export GCP_PUBLIC_WORKSPACE_DOMAIN='<exact-live-gcp-workspace-domain>'
+export GCP_EXPECTED_OLD_STARTUP_SHA256='<fresh-readback-sha256>'
+export GCP_GHCR_ACCESS_PLAN='/tmp/omega-gcp-ghcr-access.tfplan'
 ```
 
 Do not put the GHCR username or token in any of these variables.
@@ -84,16 +86,26 @@ reconciliation point, live evidence showed all of the following drift:
 - Terraform state `source_sha` was
   `295ad0fd344c8a5f45afae960e974d481ee08973`;
 - live GCE startup metadata embedded
-  `6b12883c5b5ea0537120279ccbee4947137998a2` and had SHA-256
-  `69d1ebdfdd946a68e77b8364bf2f54331577bb8eb43bb7473d0bd8c601881712`;
+  `6b12883c5b5ea0537120279ccbee4947137998a2`; a byte-exact JSON-value
+  readback on 2026-08-11 had SHA-256
+  `345fd1b9004b2fb4fed9eb459e536cc46c75053b5fa587d8f3d9837a2034242a`
+  and fingerprint `hQkaMrta_Vc=` (always re-read both immediately before use);
 - the live boot disk was 60 GB while state/default input was 30 GB;
 - the billing budget was EUR 100 while the code default is USD;
 - the data disk was 150 GB and machine type was `e2-standard-4`; and
 - the existing managed-certificate domains were the live GCP console and
   workspace domains.
 
-These values are evidence, not permission to apply. Never plan with defaults
-or an example tfvars. First publish both immutable source objects:
+These values are evidence, not permission to apply. A real full read-only plan
+with the live values proved that `metadata_startup_script` is ForceNew: it
+planned `delete/create` of `google_compute_instance.app`. The same plan also
+contained unrelated LB/IAM/secret drift. Never apply that full plan. Terraform
+therefore keeps lifecycle ignore on this ForceNew attribute; the canonical
+controller uses Compute `setMetadata` in place with the just-read metadata
+fingerprint as a compare-and-swap.
+
+Never plan with defaults or an example tfvars. First publish both immutable
+source objects:
 
 ```bash
 make prepare-gcp-artifacts
@@ -112,29 +124,58 @@ source_object = "deploy-artifacts/<GCP_CURRENT_LIVE_REF>/repo.tar.gz"
 source_sha    = "<GCP_CURRENT_LIVE_REF>"
 ```
 
-Generate a saved plan with that explicit file. Review the complete plan. Before
-backup, the only acceptable resource mutation is the app VM's
-`metadata_startup_script` (plus corresponding output changes). There must be
-zero budget, boot/data disk, machine type, certificate, LB, DNS, IAM, database,
-or object-storage changes.
+Before adoption, obtain the startup script through
+`instances describe --format=json(metadata)` and hash the decoded JSON string
+bytes (not a shell-escaped representation). Set that exact value as
+`GCP_EXPECTED_OLD_STARTUP_SHA256`, then run:
 
 ```bash
-tofu -chdir=infra/terraform-gcp plan \
-  -input=false -var-file="$GCP_TERRAFORM_VAR_FILE" \
-  -out=/tmp/omega-gcp-startup-live-ref.tfplan
-tofu -chdir=infra/terraform-gcp show /tmp/omega-gcp-startup-live-ref.tfplan
-# Apply only after the reviewed plan is explicitly approved.
-tofu -chdir=infra/terraform-gcp apply /tmp/omega-gcp-startup-live-ref.tfplan
-tofu -chdir=infra/terraform-gcp plan \
-  -detailed-exitcode -input=false -var-file="$GCP_TERRAFORM_VAR_FILE"
+export GCP_STARTUP_SOURCE_REF="$GCP_CURRENT_LIVE_REF"
+CONFIRM_GCP_STARTUP_ADOPTION=1 make adopt-gcp-startup-metadata
 ```
 
-The final command must exit 0. Exit 2 is a hard stop. The backup controller
-repeats this zero-change plan, requires Terraform `source_sha` and
-`source_object` to match the exact live ref artifact, derives the expected
-startup hash from Terraform output, and compares it to live GCE metadata before
-opening SSH. `OMEGA_TERRAFORM_BIN` defaults to `tofu` and fails closed if the
+Before the CAS, this command saves the exact prior script under an immutable
+GCS generation and writes its SHA-256, live fingerprint, instance id/start
+timestamp, and a complete restore contract to secret-free local evidence. It
+then preserves every other metadata key, uses the backed-up fingerprint in the
+`setMetadata` request, reads back the exact new hash/fingerprint, and proves
+the VM id, `RUNNING` status, and last-start timestamp did not change. A stale
+old hash or fingerprint fails closed. The evidence is already sufficient to
+run the inverse CAS before the forward mutation is attempted:
+
+```bash
+export GCP_STARTUP_BACKUP_URI='gs://.../startup-metadata-backups/.../....sh'
+export GCP_STARTUP_BACKUP_GENERATION='<exact-generation>'
+export GCP_STARTUP_BACKUP_SHA256='<prior-script-sha256>'
+export GCP_EXPECTED_CURRENT_STARTUP_SHA256='<forward-script-sha256>'
+CONFIRM_GCP_STARTUP_RESTORE=1 make restore-gcp-startup-metadata
+```
+
+The backup/deploy controllers validate the explicit release-critical tfvars,
+render the startup script directly from that reviewed file, and compare its
+hash to live metadata. They do not claim the known full-stack Terraform drift
+is clean. `OMEGA_TERRAFORM_BIN` defaults to `tofu` and fails closed if the
 configured binary is unavailable.
+
+### Private GHCR Secret Manager resources
+
+Do not apply the full Terraform graph. Create one saved, target-only plan and
+require its JSON actions to be exactly two creates: the credential secret
+container and its resource-scoped `roles/secretmanager.secretAccessor` member.
+Zero updates, deletes, replacements, replacement paths, or output drift are
+allowed.
+
+```bash
+make plan-gcp-ghcr-access
+tofu -chdir=infra/terraform-gcp show "$GCP_GHCR_ACCESS_PLAN"
+CONFIRM_GCP_GHCR_ACCESS_APPLY=1 make apply-gcp-ghcr-access
+```
+
+The apply command consumes only that already-validated saved plan; it never
+reconstructs a direct `-target` apply. It then reads back the secret container
+and the exact VM service-account member on the resource policy. Add the JSON
+credential version separately through the approved secret-entry path; neither
+username nor token belongs in Terraform state, arguments, logs, or evidence.
 
 ## 2. Authenticated rollback-image preflight
 
@@ -208,11 +249,12 @@ CONFIRM_GCP_DEPLOY=1 make deploy-gcp-canonical
 ```
 
 Before this command, update the same reviewed tfvars source triple to the final
-tag commit at `deploy-artifacts/<GCP_DEPLOY_REF>/repo.tar.gz`, review/apply a
-second saved plan with no unrelated changes, and require a subsequent plan to
-exit 0. The deploy controller repeats the explicit-tfvars zero-drift gate and
-startup metadata read-back. It will not accept an operator-supplied startup
-hash.
+tag commit at `deploy-artifacts/<GCP_DEPLOY_REF>/repo.tar.gz`, set
+`GCP_STARTUP_SOURCE_REF=$GCP_DEPLOY_REF`, re-read the then-live startup hash,
+and run the same reversible metadata CAS adoption. Do not apply the full
+Terraform drift. The deploy controller repeats the explicit release-critical
+tfvars validation, renders the expected startup bytes itself, and performs the
+live metadata read-back. It will not accept an operator-supplied new hash.
 
 The remote operation verifies the artifact and backup before it pulls all 15
 images through the server-owned auth helper. Only then does it fence writers,

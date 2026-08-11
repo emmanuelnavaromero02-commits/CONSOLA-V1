@@ -226,6 +226,23 @@
       "99zzu_analytic_app_manifest_registry.sql": "adad0c9f710ce80aa5ec46dad16b919233f1f0f20ad8fd6d9af7984197577123"
     }
   },
+  "evidence_contract": {
+    "baseline": {
+      "basis": "sha256_of_migration_files_in_git_tree_at_source_ref",
+      "caveat": "Expected bytes inferred from the pinned source tree; not contemporaneous proof of historical execution.",
+      "classification": "baseline_expected",
+      "historical_execution_receipt": false,
+      "source_ref": "6b12883c5b5ea0537120279ccbee4947137998a2"
+    },
+    "pending": {
+      "basis": "checksum_and_ledger_row_recorded_in_the_same_database_transaction_as_the_migration",
+      "classification": "guarded_transaction",
+      "filenames": [
+        "99zzt_analytic_app_dataset_grants.sql",
+        "99zzu_analytic_app_manifest_registry.sql"
+      ]
+    }
+  },
   "kind": "omega_database_migration_release_lock",
   "release_version": "1.45.207-beta",
   "schema_version": 1

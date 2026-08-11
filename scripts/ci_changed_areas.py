@@ -63,6 +63,8 @@ PY_RUNTIME_ROOTS = (
     "infra/airflow/",
     "scripts/gcp_release.py",
     "scripts/gcp/runtime_contract.py",
+    "scripts/migration_guard.py",
+    "scripts/generate_migration_manifests.py",
 )
 
 PY_RUNTIME_EXACT_PATHS = frozenset({"scripts/reconcile_pipeline_runs.py"})

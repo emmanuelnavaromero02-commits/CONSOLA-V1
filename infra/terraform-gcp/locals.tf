@@ -36,9 +36,10 @@ locals {
   airflow_public_url = "${local.console_public_url}/airflow"
   lakehouse_bucket   = var.lakehouse_bucket_name != "" ? var.lakehouse_bucket_name : google_storage_bucket.lakehouse.name
 
-  # Version the effective reboot/bootstrap controller. Changes are deliberately
-  # reconciled by Terraform and exposed as a hash for operator read-back; they
-  # are no longer hidden behind ignore_changes on the VM metadata.
+  # Version the effective reboot/bootstrap controller. The provider's
+  # metadata_startup_script field is ForceNew, so scripts/gcp_release.py
+  # reconciles these exact rendered bytes in place with metadata fingerprint
+  # CAS and verifies this hash by read-back without replacing the writer VM.
   startup_script = templatefile("${path.module}/templates/startup.sh.tftpl", {
     project_id               = var.project_id
     source_bucket            = var.source_bucket

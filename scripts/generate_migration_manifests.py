@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Generate the immutable migration manifests used by the GCP day-2 runner.
 
-The live baseline is read from the exact Git commit that is running in GCP.
-The release lock is read from the current worktree.  A release manifest binds
-every migration byte; the deployment controller separately binds that tree to
-the exact candidate commit supplied as ``OMEGA_MIGRATION_CANDIDATE_REF``.
+The baseline checksums are expectations inferred from the exact source tree
+currently running in GCP.  They are deliberately *not* represented as receipts
+for historical executions.  The release lock is read from the current
+worktree; the deployment controller separately binds that tree to the exact
+candidate commit supplied as ``OMEGA_MIGRATION_CANDIDATE_REF``.
 """
 
 from __future__ import annotations
@@ -27,6 +28,16 @@ PENDING_OPERATIONAL = (
     "99zzt_analytic_app_dataset_grants.sql",
     "99zzu_analytic_app_manifest_registry.sql",
 )
+BASELINE_PROVENANCE = {
+    "basis": "sha256_of_migration_files_in_git_tree_at_source_ref",
+    "caveat": (
+        "Expected bytes inferred from the pinned source tree; not "
+        "contemporaneous proof of historical execution."
+    ),
+    "classification": "baseline_expected",
+    "historical_execution_receipt": False,
+    "source_ref": BASELINE_REF,
+}
 
 _OPERATIONAL = re.compile(r"^infra/init/[0-9]{2}.*_.*\.sql$")
 _GOLD = re.compile(r"^infra/init_gold/[0-9]{2}_.*\.sql$")
@@ -49,7 +60,7 @@ def _entry(path: str, payload: bytes, *, gold: bool) -> dict[str, str]:
     }
 
 
-def _historical_entries(ref: str, *, gold: bool) -> dict[str, str]:
+def _pinned_source_entries(ref: str, *, gold: bool) -> dict[str, str]:
     root = "infra/init_gold" if gold else "infra/init"
     matcher = _GOLD if gold else _OPERATIONAL
     names = str(_git("ls-tree", "-r", "--name-only", ref, "--", root)).splitlines()
@@ -73,13 +84,14 @@ def _worktree_entries(*, gold: bool) -> dict[str, str]:
 
 def _baseline() -> dict[str, object]:
     return {
+        "checksum_provenance": BASELINE_PROVENANCE,
         "schema_version": 1,
         "kind": "omega_database_migration_baseline",
         "environment": "gcp-canonical",
         "source_ref": BASELINE_REF,
         "databases": {
-            "operational": _historical_entries(BASELINE_REF, gold=False),
-            "gold": _historical_entries(BASELINE_REF, gold=True),
+            "operational": _pinned_source_entries(BASELINE_REF, gold=False),
+            "gold": _pinned_source_entries(BASELINE_REF, gold=True),
         },
     }
 
@@ -91,6 +103,17 @@ def _release() -> dict[str, object]:
         "release_version": RELEASE_VERSION,
         "candidate_ref_binding": "runtime_exact_40_hex_sha",
         "baseline_source_ref": BASELINE_REF,
+        "evidence_contract": {
+            "baseline": BASELINE_PROVENANCE,
+            "pending": {
+                "basis": (
+                    "checksum_and_ledger_row_recorded_in_the_same_database_"
+                    "transaction_as_the_migration"
+                ),
+                "classification": "guarded_transaction",
+                "filenames": list(PENDING_OPERATIONAL),
+            },
+        },
         "allowed_new_migrations": {
             "operational": list(PENDING_OPERATIONAL),
             "gold": [],

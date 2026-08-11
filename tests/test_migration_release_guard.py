@@ -34,7 +34,7 @@ def _rows(
     database: str,
     *,
     state: str,
-    attested: bool = False,
+    profile: str = "blank",
 ) -> dict[str, guard.LedgerRow]:
     names = (
         contract.baseline[database]
@@ -44,17 +44,30 @@ def _rows(
     result = {}
     for filename in names:
         source, manifest = guard._expected_provenance(contract, database, filename)
+        is_pending = database == "operational" and filename in guard.PENDING_OPERATIONAL
+        evidence_kind = (
+            guard.GUARDED_EVIDENCE
+            if profile == "guarded" and is_pending
+            else guard.BASELINE_EVIDENCE
+        )
+        populated = profile != "blank"
         result[filename] = guard.LedgerRow(
-            checksum=contract.release[database][filename] if attested else None,
-            source_ref=source if attested else None,
-            manifest_sha256=manifest if attested else None,
-            attested=attested,
+            checksum=contract.release[database][filename] if populated else None,
+            source_ref=source if populated else None,
+            manifest_sha256=manifest if populated else None,
+            evidence_kind=evidence_kind if populated else None,
+            guarded=populated and evidence_kind == guard.GUARDED_EVIDENCE,
         )
     return result
 
 
 def test_complete_manifests_are_exact_and_only_add_the_pending_pair() -> None:
     contract = guard._validate_contract(_args())
+    baseline_json = json.loads(contract.baseline_path.read_text(encoding="utf-8"))
+    release_json = json.loads(contract.release_path.read_text(encoding="utf-8"))
+    assert baseline_json["checksum_provenance"] == guard.BASELINE_PROVENANCE
+    assert baseline_json["checksum_provenance"]["historical_execution_receipt"] is False
+    assert release_json["evidence_contract"] == guard.RELEASE_EVIDENCE_CONTRACT
     assert len(contract.baseline["operational"]) == 198
     assert len(contract.baseline["gold"]) == 12
     assert len(contract.release["operational"]) == 200
@@ -90,17 +103,17 @@ def test_partial_pending_pair_and_unknown_rows_fail_closed() -> None:
     contract = guard._validate_contract(_args())
     partial = _rows(contract, "operational", state="baseline")
     filename = guard.PENDING_OPERATIONAL[0]
-    partial[filename] = guard.LedgerRow(None, None, None, False)
+    partial[filename] = guard.LedgerRow(None, None, None, None, False)
     with pytest.raises(SystemExit, match="partial/tampered"):
         guard._validate_ledger(contract, "operational", partial, require_release=False)
 
     unknown = _rows(contract, "gold", state="release")
-    unknown["gold/99_unknown.sql"] = guard.LedgerRow(None, None, None, False)
+    unknown["gold/99_unknown.sql"] = guard.LedgerRow(None, None, None, None, False)
     with pytest.raises(SystemExit, match="partial/tampered"):
         guard._validate_ledger(contract, "gold", unknown, require_release=False)
 
 
-def test_release_filenames_with_null_pending_attestation_are_not_blessed() -> None:
+def test_release_filenames_with_null_evidence_are_not_blessed() -> None:
     contract = guard._validate_contract(_args())
     fresh = _rows(contract, "operational", state="release")
     with pytest.raises(SystemExit, match="refusing to bless"):
@@ -120,7 +133,11 @@ def test_release_filenames_with_null_pending_attestation_are_not_blessed() -> No
     filename = guard.PENDING_OPERATIONAL[0]
     source, manifest = guard._expected_provenance(contract, "operational", filename)
     partial[filename] = guard.LedgerRow(
-        contract.release["operational"][filename], source, manifest, True
+        contract.release["operational"][filename],
+        source,
+        manifest,
+        guard.GUARDED_EVIDENCE,
+        True,
     )
     with pytest.raises(SystemExit, match="refusing to bless"):
         guard._validate_ledger(
@@ -132,28 +149,76 @@ def test_release_filenames_with_null_pending_attestation_are_not_blessed() -> No
         )
 
 
+def test_postflight_separates_expected_baseline_from_guarded_pending_pair() -> None:
+    contract = guard._validate_contract(_args())
+    guarded = _rows(contract, "operational", state="release", profile="guarded")
+    assert (
+        guard._validate_ledger(
+            contract,
+            "operational",
+            guarded,
+            require_release=True,
+            expected_pending_evidence=guard.GUARDED_EVIDENCE,
+        )
+        == "release_guarded"
+    )
+    assert (
+        sum(row.evidence_kind == guard.BASELINE_EVIDENCE for row in guarded.values())
+        == 198
+    )
+    assert (
+        sum(row.evidence_kind == guard.GUARDED_EVIDENCE for row in guarded.values())
+        == 2
+    )
+
+    source_inferred = _rows(
+        contract, "operational", state="release", profile="baseline"
+    )
+    with pytest.raises(SystemExit, match="guarded transaction receipt"):
+        guard._validate_ledger(
+            contract,
+            "operational",
+            source_inferred,
+            require_release=True,
+            expected_pending_evidence=guard.GUARDED_EVIDENCE,
+        )
+    assert (
+        guard._validate_ledger(
+            contract,
+            "operational",
+            source_inferred,
+            require_release=True,
+            allow_bootstrap_release=True,
+            expected_pending_evidence=guard.BASELINE_EVIDENCE,
+        )
+        == "release_expected"
+    )
+
+
 def test_tampered_checksum_or_provenance_fails_before_writes() -> None:
     contract = guard._validate_contract(_args())
-    rows = _rows(contract, "operational", state="baseline", attested=True)
+    rows = _rows(contract, "operational", state="baseline", profile="baseline")
     filename = next(iter(rows))
     original = rows[filename]
     rows[filename] = guard.LedgerRow(
         checksum="0" * 64,
         source_ref=original.source_ref,
         manifest_sha256=original.manifest_sha256,
-        attested=True,
+        evidence_kind=original.evidence_kind,
+        guarded=original.guarded,
     )
     with pytest.raises(SystemExit, match="checksum mismatch"):
         guard._validate_ledger(contract, "operational", rows, require_release=False)
 
-    rows = _rows(contract, "gold", state="release", attested=True)
+    rows = _rows(contract, "gold", state="release", profile="baseline")
     filename = next(iter(rows))
     original = rows[filename]
     rows[filename] = guard.LedgerRow(
         checksum=original.checksum,
         source_ref="2" * 40,
         manifest_sha256=original.manifest_sha256,
-        attested=True,
+        evidence_kind=original.evidence_kind,
+        guarded=original.guarded,
     )
     with pytest.raises(SystemExit, match="source provenance mismatch"):
         guard._validate_ledger(contract, "gold", rows, require_release=False)
@@ -170,7 +235,8 @@ def test_ledger_json_preserves_sql_null_and_rejects_sentinel_strings(
                 "checksum": "-",
                 "source_ref": None,
                 "manifest_sha256": None,
-                "attested": False,
+                "evidence_kind": None,
+                "guarded": False,
             }
         )
         + "\n",
@@ -180,31 +246,31 @@ def test_ledger_json_preserves_sql_null_and_rejects_sentinel_strings(
         guard._load_ledger(path, "operational")
 
 
-def test_partial_metadata_is_repaired_but_cannot_pass_postflight() -> None:
+def test_partial_evidence_profile_fails_closed() -> None:
     contract = guard._validate_contract(_args())
-    rows = _rows(contract, "gold", state="release", attested=True)
+    rows = _rows(contract, "gold", state="release", profile="baseline")
     filename = next(iter(rows))
     original = rows[filename]
     rows[filename] = guard.LedgerRow(
         checksum=original.checksum,
         source_ref=original.source_ref,
         manifest_sha256=original.manifest_sha256,
-        attested=False,
+        evidence_kind=None,
+        guarded=False,
     )
-    assert (
+    with pytest.raises(SystemExit, match="neither uniformly blank nor exact"):
         guard._validate_ledger(contract, "gold", rows, require_release=False)
-        == "release"
-    )
-    with pytest.raises(SystemExit, match="not fully attested"):
+    with pytest.raises(SystemExit, match="neither uniformly blank nor exact"):
         guard._validate_ledger(contract, "gold", rows, require_release=True)
-    sql = guard._render_sql(contract, "gold", "release")
-    assert "OR sm.checksum_attested_at IS NULL" in sql
+    sql = guard._render_sql(contract, "gold", "baseline_expected")
+    assert "checksum_evidence_kind" in sql
+    assert "checksum_guarded_at" in sql
 
 
-def test_retry_accepts_gold_attested_with_operational_still_at_baseline() -> None:
+def test_retry_accepts_gold_expected_with_operational_still_at_baseline() -> None:
     contract = guard._validate_contract(_args())
     operational = _rows(contract, "operational", state="baseline")
-    gold = _rows(contract, "gold", state="release", attested=True)
+    gold = _rows(contract, "gold", state="release", profile="baseline")
     assert (
         guard._validate_ledger(
             contract, "operational", operational, require_release=False
@@ -213,7 +279,7 @@ def test_retry_accepts_gold_attested_with_operational_still_at_baseline() -> Non
     )
     assert (
         guard._validate_ledger(contract, "gold", gold, require_release=False)
-        == "release"
+        == "baseline_expected"
     )
 
 
@@ -229,6 +295,9 @@ def test_pending_pair_is_one_psql_transaction_without_nested_terminators() -> No
         f"\\i /docker-entrypoint-initdb.d/{guard.PENDING_OPERATIONAL[1]}"
     )
     assert first < second < sql.rindex("COMMIT;")
+    assert sql.count("'guarded_transaction', clock_timestamp()") == 2
+    assert "checksum_evidence_kind" in sql
+    assert "checksum_guarded_at" in sql
     terminator = re.compile(
         r"^\s*(?:BEGIN|COMMIT|ROLLBACK|START\s+TRANSACTION)\s*;",
         flags=re.IGNORECASE | re.MULTILINE,
@@ -247,7 +316,7 @@ def test_shell_orders_two_database_preflight_then_gold_then_operational() -> Non
     assert script.index("dump_gold_ledger >") < preflight
     assert preflight < gold < operational
     assert "OMEGA_MIGRATION_REQUIRE_EXPLICIT_CONTRACT" in script
-    assert "bootstrap ledger attestation is forbidden" in script
+    assert "bootstrap source-inferred ledger evidence is forbidden" in script
     assert 'exec -T postgres sha256sum "$container_path"' in script
     for checksum in (
         "99f87377bf875474ae0be08ce69dac28a84a4951fab7f49655ac229cfd4e975f",
@@ -259,11 +328,11 @@ def test_shell_orders_two_database_preflight_then_gold_then_operational() -> Non
 def test_plan_contains_no_unreviewed_fields(tmp_path: Path) -> None:
     contract = guard._validate_contract(_args())
     plan = tmp_path / "plan.json"
-    guard._write_plan(contract, "baseline", "release", plan)
+    guard._write_plan(contract, "baseline", "baseline_expected", plan)
     value = json.loads(plan.read_text(encoding="utf-8"))
     assert value["candidate_ref"] == CANDIDATE_REF
     assert value["operational_state"] == "baseline"
-    assert value["gold_state"] == "release"
+    assert value["gold_state"] == "baseline_expected"
 
 
 def test_control_room_ci_runs_and_fail_closes_the_real_migration_gate() -> None:
