@@ -332,6 +332,24 @@ else
   exit 23
 fi
 
+available_services="$(docker compose $COMPOSE_FILES config --services)"
+services=""
+for service in console workspace refinement vault mcp-infra airflow airflow-scheduler sap-successfactors replicon hubspot salesforce banxico inegi sec-edgar sap-hcm sap-s4hana; do
+  if printf '%s\\n' "$available_services" | grep -qx "$service"; then
+    services="$services $service"
+  fi
+done
+emit "runtime services selected" "PASS" "services=$(printf '%s' "$services" | xargs)"
+AUTH_RUNNER="$DEPLOY_DIR/ghcr-auth-run.sh"
+if [ ! -f "$AUTH_RUNNER" ]; then
+  emit "server-owned GHCR auth" "FAIL" "$AUTH_RUNNER missing"
+  exit 25
+fi
+bash "$AUTH_RUNNER" docker compose $COMPOSE_FILES pull $services >/tmp/omega-deploy-pull.out 2>/tmp/omega-deploy-pull.err || {{ emit "pull app images" "FAIL" "$(tail -c 400 /tmp/omega-deploy-pull.err || true)"; exit 25; }}
+emit "pull app images" "PASS" "image_tag=$IMAGE_TAG_NEW"
+
+# Authentication and every immutable image are proven before any schema
+# mutation, so expired/missing private-package credentials fail closed.
 if [ "$RUN_MIGRATIONS" = "1" ] && [ -x "$DEPLOY_DIR/apply_db_migrations.sh" ]; then
   if bash "$DEPLOY_DIR/apply_db_migrations.sh" >/tmp/omega-deploy-migrations.out 2>/tmp/omega-deploy-migrations.err; then
     emit "db migrations" "PASS" "apply_db_migrations.sh completed"
@@ -343,17 +361,7 @@ else
   emit "db migrations" "PASS" "skipped"
 fi
 
-available_services="$(docker compose $COMPOSE_FILES config --services)"
-services=""
-for service in console workspace refinement vault mcp-infra airflow airflow-scheduler sap-successfactors replicon hubspot salesforce banxico inegi sec-edgar sap-hcm sap-s4hana; do
-  if printf '%s\\n' "$available_services" | grep -qx "$service"; then
-    services="$services $service"
-  fi
-done
-emit "runtime services selected" "PASS" "services=$(printf '%s' "$services" | xargs)"
-docker compose $COMPOSE_FILES pull $services >/tmp/omega-deploy-pull.out 2>/tmp/omega-deploy-pull.err || {{ emit "pull app images" "FAIL" "$(tail -c 400 /tmp/omega-deploy-pull.err || true)"; exit 25; }}
-emit "pull app images" "PASS" "image_tag=$IMAGE_TAG_NEW"
-docker compose $COMPOSE_FILES up -d --force-recreate $services >/tmp/omega-deploy-up.out 2>/tmp/omega-deploy-up.err || {{ emit "recreate app services" "FAIL" "$(tail -c 400 /tmp/omega-deploy-up.err || true)"; exit 26; }}
+docker compose $COMPOSE_FILES up -d --pull never --force-recreate $services >/tmp/omega-deploy-up.out 2>/tmp/omega-deploy-up.err || {{ emit "recreate app services" "FAIL" "$(tail -c 400 /tmp/omega-deploy-up.err || true)"; exit 26; }}
 emit "recreate app services" "PASS" "services=$(printf '%s' "$services" | xargs)"
 
 health_ok=0

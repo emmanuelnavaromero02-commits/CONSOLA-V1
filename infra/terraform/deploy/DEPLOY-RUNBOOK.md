@@ -108,7 +108,9 @@ Get-Content .\modecissions-deploy-key.pub
 cd infra\terraform\infra
 terraform init
 
-terraform apply -target=aws_secretsmanager_secret.app
+terraform apply `
+  -target=aws_secretsmanager_secret.app `
+  -target=aws_secretsmanager_secret.ghcr_pull_credentials
 
 aws secretsmanager put-secret-value `
   --secret-id modecissions/github_deploy_key `
@@ -300,6 +302,40 @@ Además, carga todas las llaves direccionales `INTERNAL_API_KEY_*` declaradas
 en `infra/terraform/infra/secretsmanager.tf`. El entrypoint falla cerrado si
 cualquiera de esas llaves obligatorias falta.
 
+### Credencial pull-only para paquetes GHCR privados
+
+`modecissions/ghcr_pull_credentials` es un secreto dedicado con este contrato
+JSON: `{"username":"<cuenta-maquina>","token":"<PAT>"}`. No pertenece al
+conjunto de secretos de la aplicación: `aws-entrypoint.sh` nunca lo escribe en
+`.env`, los contenedores no lo reciben y los backups de runtime no lo incluyen.
+`ghcr-auth-run.sh` obtiene la versión `AWSCURRENT` mediante el instance profile,
+crea un `DOCKER_CONFIG` temporal con modo `0700`, ejecuta el pull y elimina la
+sesión y el directorio tanto en éxito como en error.
+
+La cuenta máquina de GitHub debe tener permiso **Read** únicamente sobre
+`banxico`, `inegi` y `sec_edgar`. Su PAT classic debe llevar solamente el scope
+`read:packages`; no cambies la visibilidad privada de los paquetes. Un operador
+SSO de privilegio mínimo, nunca root, carga o rota el valor sin poner el token en
+argumentos, historial o Terraform state:
+
+```bash
+python3 -c '
+import getpass, json, sys
+print("GitHub machine username: ", end="", file=sys.stderr)
+username = input().strip()
+token = getpass.getpass("GHCR pull-only PAT: ")
+if not username or not token:
+    raise SystemExit("username and token are required")
+sys.stdout.write(json.dumps({"username": username, "token": token}))
+' | aws secretsmanager put-secret-value \
+  --secret-id modecissions/ghcr_pull_credentials \
+  --secret-string file:///dev/stdin \
+  --query ARN --output text
+```
+
+Después de crear el secreto, aplica el plan Terraform completo para que el rol
+de la EC2 App reciba `secretsmanager:GetSecretValue` sobre ese ARN exacto.
+
 | Variable                | Valor                                                    | De dónde sacarlo                       |
 |-------------------------|----------------------------------------------------------|----------------------------------------|
 | `POSTGRES_PASSWORD`     | `modecissions/postgres_password`                         | AWS Secrets Manager                    |
@@ -352,7 +388,9 @@ Descarga las imágenes versionadas desde GHCR usando `GHCR_OWNER` e
 `IMAGE_TAG` escritos por `aws-entrypoint.sh` en `.env`. En producción
 `IMAGE_TAG` debe ser un tag inmutable de release; `latest` o vacío hacen
 fallar el despliegue. El compose AWS ya no consume `modecissions/*:latest`;
-si cambias el tag de release, actualiza `IMAGE_TAG` y vuelve a ejecutar este paso.
+si cambias el tag de release, actualiza `IMAGE_TAG` y vuelve a ejecutar este
+paso. La autenticación es server-owned: Actions/SSM no transportan tokens y
+cada pull obtiene la credencial dedicada directamente desde Secrets Manager.
 
 **Monitoreo en otra sesión SSM**:
 

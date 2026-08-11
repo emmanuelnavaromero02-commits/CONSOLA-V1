@@ -24,7 +24,6 @@ on:
 permissions:
   contents: read
   id-token: write
-  packages: read
 
 concurrency:
   group: aws-production-deploy
@@ -106,8 +105,6 @@ jobs:
           SERVICE: ${{ steps.deploy.outputs.service }}
           REQUIRE_DATA: ${{ inputs.require_data }}
           INSTANCE_ID: ${{ steps.instance.outputs.instance_id }}
-          GHCR_ACTOR: ${{ github.actor }}
-          GHCR_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           python3 - <<'PY' > ssm-params.json
@@ -119,8 +116,6 @@ jobs:
           image_tag = os.environ["IMAGE_TAG"]
           service = os.environ.get("SERVICE", "").strip()
           require_data = os.environ.get("REQUIRE_DATA", "true").lower() == "true"
-          ghcr_actor = os.environ["GHCR_ACTOR"]
-          ghcr_token = os.environ["GHCR_TOKEN"]
 
           def set_env_line(key: str, value: str) -> str:
               quoted = shlex.quote(f"{key}={value}")
@@ -160,12 +155,6 @@ jobs:
               (
                   "sudo bash infra/terraform/deploy/ensure_evidence_env.sh "
                   "infra/terraform/deploy/.env"
-              ),
-              "trap 'sudo docker logout ghcr.io >/dev/null 2>&1 || true' EXIT",
-              (
-                  f"printf %s {shlex.quote(ghcr_token)} | "
-                  f"sudo docker login ghcr.io -u {shlex.quote(ghcr_actor)} "
-                  "--password-stdin >/dev/null"
               ),
           ]
           if service:

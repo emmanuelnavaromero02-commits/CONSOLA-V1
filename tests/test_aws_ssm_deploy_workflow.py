@@ -15,7 +15,7 @@ def test_deploy_workflow_uses_manual_approval_oidc_and_ssm():
     assert "workflow_dispatch:" in workflow
     assert "environment: production" in workflow
     assert "id-token: write" in workflow
-    assert "packages: read" in workflow
+    assert "packages: read" not in workflow
     assert "aws-actions/configure-aws-credentials@v4" in workflow
     assert "AWS_DEPLOY_ROLE_ARN" in workflow
     assert "AWS-RunShellScript" in workflow
@@ -32,8 +32,10 @@ def test_deploy_workflow_requires_immutable_ref_and_readiness():
     assert 'set_env_line("APP_ENV", "production")' in workflow
     assert "DEPLOY_REF" in workflow
     assert "IMAGE_TAG" in workflow
-    assert "docker login ghcr.io" in workflow
-    assert "docker logout ghcr.io" in workflow
+    assert "docker login ghcr.io" not in workflow
+    assert "docker logout ghcr.io" not in workflow
+    assert "GHCR_TOKEN" not in workflow
+    assert "github.token" not in workflow
     assert "MODECISSIONS_BOOTSTRAP_CONTROL_ROOM_EVIDENCE=false" in workflow
     assert "/tmp/omega-deploy.log" in workflow
     assert "deploy heartbeat" in workflow

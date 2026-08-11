@@ -100,7 +100,20 @@ def test_iam_policy_uses_arn_specific_resources():
     assert "secretsmanager:GetSecretValue" in body
     assert 'resources = ["*"]' not in body
     assert "aws_secretsmanager_secret.app" in body
+    assert "aws_secretsmanager_secret.ghcr_pull_credentials.arn" in body
     assert "secret.arn" in body
+
+
+def test_ghcr_pull_credentials_are_dedicated_and_not_rendered_to_runtime_env():
+    secrets = _read(TF / "secretsmanager.tf")
+    entrypoint = _read(REPO / "scripts/aws-entrypoint.sh")
+    env_example = _read(DEPLOY / ".env.example")
+
+    assert 'resource "aws_secretsmanager_secret" "ghcr_pull_credentials"' in secrets
+    assert 'name        = "modecissions/ghcr_pull_credentials"' in secrets
+    assert "ghcr_pull_credentials" not in entrypoint
+    assert "GHCR_PULL_CREDENTIALS" not in entrypoint
+    assert "GHCR_PULL_CREDENTIALS" not in env_example
 
 
 def test_bedrock_policy_uses_specific_model_resources():
@@ -215,4 +228,5 @@ def test_deploy_runbook_mentions_secretsmanager_not_nano_env():
     assert "scripts/aws-entrypoint.sh" in src
     assert "nano .env" not in src
     assert "deploy_private_key" not in src
-    assert "terraform apply -target=aws_secretsmanager_secret.app" in src
+    assert "aws_secretsmanager_secret.app" in src
+    assert "aws_secretsmanager_secret.ghcr_pull_credentials" in src

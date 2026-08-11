@@ -9,7 +9,7 @@ WORKFLOW = ROOT / ".github/workflows/control-room-postgres-rls.yml"
 PREPARE_SCRIPT = ROOT / "scripts/prepare_refinement_duckdb_ci.sh"
 MCP_REQUIREMENTS = ROOT / "mcp-infra/requirements.txt"
 MCP_DOCKERFILE = ROOT / "mcp-infra/Dockerfile"
-FOCAL_MINIMUM = 9650
+FOCAL_MINIMUM = 9659
 # Raised 276 -> 296 when the published-app grant suite was wired in. Those
 # tests assert real database behaviour — pg_temp shadowing, function
 # ownership, ACL, RLS, revocation — and had been skipping in CI for want of a
@@ -92,6 +92,7 @@ P11_RELEVANT_PATHS = (
     "tests/test_aws_beta_operations.py",
     "tests/test_aws_bootstrap_shared_env_boundary.py",
     "tests/test_aws_evidence_compose_isolation.py",
+    "tests/test_aws_ghcr_private_auth.py",
     "tests/test_aws_evidence_update_env.py",
     "tests/test_aws_secrets_manager_config.py",
     "tests/test_intelligence_engine_contract.py",
@@ -142,6 +143,7 @@ REQUIRED_RELATED_TESTS = (
     "tests/test_aws_bootstrap_shared_env_boundary.py",
     "tests/test_aws_evidence_compose_isolation.py",
     "tests/test_aws_env_pair_transaction.py",
+    "tests/test_aws_ghcr_private_auth.py",
     "tests/test_aws_ssm_deploy_workflow.py",
     "tests/test_aws_evidence_env_isolation.py",
     "tests/test_aws_evidence_update_env.py",

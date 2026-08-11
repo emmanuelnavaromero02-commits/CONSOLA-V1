@@ -7,6 +7,7 @@ Default is dry-run. A real rollback requires CONFIRM_ROLLBACK=1.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 from pathlib import Path
@@ -24,9 +25,49 @@ from aws_ssm import (
 
 
 DEFAULT_EVIDENCE_ROOT = REPO / "docs" / "release-evidence" / "rollback-aws"
+GHCR_AUTH_RUNNER = REPO / "infra" / "terraform" / "deploy" / "ghcr-auth-run.sh"
+
+RELEASE_SERVICES = (
+    "console",
+    "workspace",
+    "refinement",
+    "vault",
+    "mcp-infra",
+    "airflow",
+    "replicon",
+    "hubspot",
+    "salesforce",
+    "banxico",
+    "inegi",
+    "sec-edgar",
+    "sap-hcm",
+    "sap-successfactors",
+    "sap-s4hana",
+)
+
+RELEASE_IMAGES = (
+    "console",
+    "workspace",
+    "refinement",
+    "vault",
+    "mcp-infra",
+    "airflow",
+    "replicon",
+    "hubspot",
+    "salesforce",
+    "banxico",
+    "inegi",
+    "sec_edgar",
+    "sap_hcm",
+    "sap_successfactors",
+    "sap_s4hana",
+)
 
 
 def _remote_script(target_tag: str, run_smoke: str, confirm: bool) -> str:
+    auth_runner_b64 = base64.b64encode(GHCR_AUTH_RUNNER.read_bytes()).decode("ascii")
+    release_services = " ".join(RELEASE_SERVICES)
+    release_images = " ".join(RELEASE_IMAGES)
     return f"""#!/usr/bin/env bash
 set -euo pipefail
 set +x
@@ -35,6 +76,7 @@ DEPLOY_DIR="${{DEPLOY_DIR:-${{REPO_DIR}}/infra/terraform/deploy}}"
 TARGET_TAG={json.dumps(target_tag)}
 RUN_SMOKE_VALUE={json.dumps(run_smoke)}
 CONFIRM_ROLLBACK={json.dumps("1" if confirm else "0")}
+AUTH_RUNNER_B64={json.dumps(auth_runner_b64)}
 cd "$DEPLOY_DIR"
 emit() {{
   local name="$1"
@@ -49,17 +91,77 @@ env_value() {{
   local key="$1"
   awk -F= -v key="$key" '$1 == key {{print substr($0, index($0, "=") + 1)}}' "$DEPLOY_DIR/.env" | tail -n 1 | sed "s/^[ '\\"]//; s/[ '\\"]$//"
 }}
+if [ ! -f "$DEPLOY_DIR/.env" ]; then
+  emit "deploy env exists" "FAIL" "$DEPLOY_DIR/.env missing"
+  exit 19
+fi
 if [[ -z "$TARGET_TAG" || "$TARGET_TAG" == "latest" || ! "$TARGET_TAG" =~ ^v[0-9] ]]; then
   emit "target immutable tag" "FAIL" "target=$TARGET_TAG"
   exit 20
 fi
 emit "target immutable tag" "PASS" "target=$TARGET_TAG"
-owner="$(env_value GHCR_OWNER)"
-if [ -z "$owner" ]; then owner="emmanuelnavaromero02-commits"; fi
-if docker manifest inspect "ghcr.io/${{owner}}/console:${{TARGET_TAG}}" >/dev/null 2>&1; then
-  emit "target console image exists" "PASS" "ghcr.io/${{owner}}/console:${{TARGET_TAG}}"
+
+# The host may still run a release that predates authenticated pulls.  Ship
+# this candidate's public helper source through SSM; credentials themselves
+# are fetched only on EC2 from Secrets Manager via the instance profile.
+auth_workdir="$(mktemp -d /tmp/omega-rollback-auth.XXXXXX)"
+cleanup_auth_workdir() {{
+  case "$auth_workdir" in
+    /tmp/omega-rollback-auth.*) rm -rf -- "$auth_workdir" ;;
+    *) return 70 ;;
+  esac
+}}
+trap cleanup_auth_workdir EXIT
+REMOTE_AUTH_RUNNER="$auth_workdir/ghcr-auth-run.sh"
+printf '%s' "$AUTH_RUNNER_B64" | base64 --decode > "$REMOTE_AUTH_RUNNER"
+chmod 700 "$REMOTE_AUTH_RUNNER"
+unset AUTH_RUNNER_B64
+
+preflight_env="$auth_workdir/rollback.env"
+cp "$DEPLOY_DIR/.env" "$preflight_env"
+chmod 600 "$preflight_env"
+python3 - "$preflight_env" "$TARGET_TAG" <<'PYPREFLIGHT'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+target = sys.argv[2]
+lines = path.read_text(encoding="utf-8").splitlines()
+out = []
+seen = False
+for line in lines:
+    if line.startswith("IMAGE_TAG="):
+        out.append(f"IMAGE_TAG={{target}}")
+        seen = True
+    else:
+        out.append(line)
+if not seen:
+    out.append(f"IMAGE_TAG={{target}}")
+path.write_text("\\n".join(out) + "\\n", encoding="utf-8")
+PYPREFLIGHT
+
+COMPOSE_FILES=(-f docker-compose.aws.yml -f docker-compose.cartridges.yml)
+RELEASE_SERVICES=({release_services})
+RELEASE_IMAGES=({release_images})
+if [[ "${{#RELEASE_SERVICES[@]}}" -ne 15 || "${{#RELEASE_IMAGES[@]}}" -ne 15 ]]; then
+  emit "rollback release image inventory" "FAIL" "expected exactly 15 services and images"
+  exit 21
+fi
+available_services="$(docker compose --env-file "$preflight_env" "${{COMPOSE_FILES[@]}}" config --services)"
+for service in "${{RELEASE_SERVICES[@]}}"; do
+  if ! grep -qx "$service" <<< "$available_services"; then
+    emit "rollback release image inventory" "FAIL" "missing compose service=$service"
+    exit 21
+  fi
+done
+if OMEGA_DEPLOY_ENV_FILE="$preflight_env" \
+  bash "$REMOTE_AUTH_RUNNER" \
+    docker compose --env-file "$preflight_env" "${{COMPOSE_FILES[@]}}" \
+      pull --quiet "${{RELEASE_SERVICES[@]}}" \
+      >"$auth_workdir/pull.out" 2>"$auth_workdir/pull.err"; then
+  emit "rollback release images pull" "PASS" "15/15 tag=$TARGET_TAG images=${{RELEASE_IMAGES[*]}}"
 else
-  emit "target console image exists" "FAIL" "ghcr.io/${{owner}}/console:${{TARGET_TAG}} missing"
+  emit "rollback release images pull" "FAIL" "less than 15/15 images pullable for tag=$TARGET_TAG"
   exit 21
 fi
 current_ref="$(env_value DEPLOY_REF)"
@@ -70,7 +172,11 @@ if [ "$CONFIRM_ROLLBACK" != "1" ]; then
   printf 'OMEGA_ROLLBACK_JSON={{"status":"dry_run","target_tag":"%s","destructive":false}}\\n' "$TARGET_TAG"
   exit 0
 fi
-RUN_BACKUP_BEFORE_ROLLBACK="${{RUN_BACKUP_BEFORE_ROLLBACK:-1}}" RUN_SMOKE="$RUN_SMOKE_VALUE" bash rollback.sh "$TARGET_TAG"
+OMEGA_DEPLOY_ENV_FILE="$preflight_env" \
+  bash "$REMOTE_AUTH_RUNNER" env \
+    RUN_BACKUP_BEFORE_ROLLBACK="${{RUN_BACKUP_BEFORE_ROLLBACK:-1}}" \
+    RUN_SMOKE="$RUN_SMOKE_VALUE" \
+    bash rollback.sh "$TARGET_TAG"
 emit "rollback executed" "PASS" "target=$TARGET_TAG"
 printf 'OMEGA_ROLLBACK_JSON={{"status":"executed","target_tag":"%s","destructive":true}}\\n' "$TARGET_TAG"
 """
