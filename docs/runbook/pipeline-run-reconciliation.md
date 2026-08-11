@@ -1,10 +1,10 @@
 # Pipeline run reconciliation
 
 Use `scripts/reconcile_pipeline_runs.py` only when the durable
-`pipeline_runs` row is non-terminal after its external Airflow history has
-become unavailable, when an explicitly verified sync is orphaned, or when an
-aggregate Airflow success must be refined to a product-level partial/blocked
-outcome.
+`pipeline_runs` row is non-terminal after Airflow has recorded a terminal
+failure, after its external Airflow history has become unavailable, when an
+explicitly verified sync is orphaned, or when an aggregate Airflow success
+must be refined to a product-level partial/blocked outcome.
 
 The command does not discover runs and never deletes or inserts a
 `pipeline_runs` row. Every target must be listed explicitly with its tenant,
@@ -38,9 +38,12 @@ whole transaction closed.
 }
 ```
 
-Accepted reasons are `airflow_run_missing_after_retention`, `stale_orphan`
-and `aggregate_completed_with_blocks`. A 404 alone is not terminal evidence;
-retention must be independently confirmed. For stale sync parents,
+Accepted reasons are `airflow_terminal_failure`,
+`airflow_run_missing_after_retention`, `stale_orphan` and
+`aggregate_completed_with_blocks`. A terminal Airflow failure must target
+`failed` and its exact observed state must be `failed`, `error`,
+`upstream_failed`, `cancelled` or `removed`. A 404 alone is not terminal
+evidence; retention must be independently confirmed. For stale sync parents,
 `orphan_confirmed` must be true. Aggregate block reconciliation requires an
 Airflow success plus at least one blocked child.
 

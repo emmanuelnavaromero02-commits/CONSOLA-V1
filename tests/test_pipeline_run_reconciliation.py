@@ -309,6 +309,87 @@ def test_airflow_404_without_confirmed_retention_is_rejected(tmp_path: Path) -> 
         )
 
 
+@pytest.mark.parametrize(
+    "airflow_state",
+    sorted(RECONCILE.AIRFLOW_TERMINAL_FAILURE_STATES),
+)
+def test_airflow_terminal_failure_requires_an_exact_failure_state(
+    tmp_path: Path, airflow_state: str
+) -> None:
+    manifest = _manifest(
+        tmp_path,
+        [
+            _run(
+                reason="airflow_terminal_failure",
+                evidence={
+                    "airflow_state": airflow_state,
+                    "observed_at": "2026-08-11T12:00:00Z",
+                },
+            )
+        ],
+    )
+    conn = _Connection({manifest.runs[0].run_id: _row()})
+
+    result = RECONCILE.reconcile(
+        conn,
+        manifest,
+        apply=True,
+        actor="gcp-release-operator",
+    )
+
+    assert result[0]["status"] == "failed"
+
+
+@pytest.mark.parametrize("airflow_state", ["success", "running", "not_found", None])
+def test_airflow_terminal_failure_rejects_non_failure_or_missing_state(
+    tmp_path: Path, airflow_state: str | None
+) -> None:
+    evidence = (
+        {"airflow_state": airflow_state} if airflow_state is not None else {}
+    )
+    with pytest.raises(RECONCILE.ManifestError, match="terminal failure"):
+        _manifest(
+            tmp_path,
+            [_run(reason="airflow_terminal_failure", evidence=evidence)],
+        )
+
+
+def test_airflow_terminal_failure_must_target_failed(tmp_path: Path) -> None:
+    with pytest.raises(RECONCILE.ManifestError, match="must target failed"):
+        _manifest(
+            tmp_path,
+            [
+                _run(
+                    reason="airflow_terminal_failure",
+                    target_status="blocked",
+                    evidence={"airflow_state": "failed"},
+                )
+            ],
+        )
+
+
+def test_run_id_accepts_an_iso_timezone_offset(tmp_path: Path) -> None:
+    run_id = "manual__2026-06-12T17:04:23.825231+00:00"
+
+    manifest = _manifest(tmp_path, [_run(run_id=run_id)])
+
+    assert manifest.runs[0].run_id == run_id
+
+
+@pytest.mark.parametrize(
+    "run_id",
+    [
+        "manual run",
+        "manual\nrun",
+        "manual;run",
+        "manual$(run)",
+    ],
+)
+def test_run_id_still_rejects_unsafe_characters(tmp_path: Path, run_id: str) -> None:
+    with pytest.raises(RECONCILE.ManifestError, match="run_id is invalid"):
+        _manifest(tmp_path, [_run(run_id=run_id)])
+
+
 def test_missing_run_fails_closed_without_insert_or_commit(tmp_path: Path) -> None:
     manifest = _manifest(tmp_path, [_run()])
     conn = _Connection({manifest.runs[0].run_id: None})

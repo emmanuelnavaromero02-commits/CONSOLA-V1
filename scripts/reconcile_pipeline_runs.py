@@ -48,9 +48,17 @@ STATUS_RANKS = {
     "removed": 60,
 }
 ALLOWED_REASONS = {
+    "airflow_terminal_failure",
     "airflow_run_missing_after_retention",
     "stale_orphan",
     "aggregate_completed_with_blocks",
+}
+AIRFLOW_TERMINAL_FAILURE_STATES = {
+    "failed",
+    "error",
+    "upstream_failed",
+    "cancelled",
+    "removed",
 }
 ALLOWED_TARGET_STATUSES = {"partial", "blocked", "failed"}
 ALLOWED_EVIDENCE_KEYS = {
@@ -75,7 +83,7 @@ RUN_KEYS = {
     "reason",
     "evidence",
 }
-SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/@-]{0,255}$")
+SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/@+-]{0,255}$")
 
 
 class ManifestError(ValueError):
@@ -153,7 +161,13 @@ def _validate_evidence(reason: str, evidence: object) -> dict[str, Any]:
         if state not in STATUS_RANKS and state != "not_found":
             raise ManifestError("evidence.airflow_state is unsupported")
         clean["airflow_state"] = state
-    if reason == "airflow_run_missing_after_retention":
+    if reason == "airflow_terminal_failure":
+        if clean.get("airflow_state") not in AIRFLOW_TERMINAL_FAILURE_STATES:
+            raise ManifestError(
+                "Airflow terminal failure reconciliation requires "
+                "airflow_state=failed, error, upstream_failed, cancelled or removed"
+            )
+    elif reason == "airflow_run_missing_after_retention":
         if (
             clean.get("airflow_http_status") != 404
             or clean.get("retention_confirmed") is not True
@@ -256,9 +270,11 @@ def _expectation_from_dict(raw: object) -> RunExpectation:
     if reason not in ALLOWED_REASONS:
         raise ManifestError(f"{run_id}.reason is unsupported")
     evidence = _validate_evidence(reason, raw["evidence"])
-    if reason in {"airflow_run_missing_after_retention", "stale_orphan"} and (
-        target_status != "failed"
-    ):
+    if reason in {
+        "airflow_terminal_failure",
+        "airflow_run_missing_after_retention",
+        "stale_orphan",
+    } and target_status != "failed":
         raise ManifestError(f"{run_id}.{reason} must target failed")
     if reason == "aggregate_completed_with_blocks" and target_status not in {
         "partial",
