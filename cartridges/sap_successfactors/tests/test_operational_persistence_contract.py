@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_extraction_runlog_mirrors_to_pipeline_runs():
     source = (ROOT / "app" / "services" / "runlog_service.py").read_text(encoding="utf-8")
+    mirror = source.split("def _mirror_pipeline_run", 1)[1].split("def create_run", 1)[0]
 
     assert "def _mirror_pipeline_run" in source
     assert "INSERT INTO pipeline_runs" in source
@@ -16,6 +17,8 @@ def test_extraction_runlog_mirrors_to_pipeline_runs():
     assert "workspace_id" in source
     assert "extraction_runs_mirror" in source
     assert "_mirror_pipeline_run(run_id, status=status)" in source
+    assert "postgres_monotonic_status" in mirror
+    assert "status = EXCLUDED.status" not in mirror
 
 
 def test_successfactors_extraction_touches_watermark_for_every_attempt():

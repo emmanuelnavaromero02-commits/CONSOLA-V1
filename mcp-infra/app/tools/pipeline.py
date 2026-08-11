@@ -17,6 +17,10 @@ from pathlib import Path
 from fastapi import HTTPException
 
 from app.config import settings
+from app.pipeline_run_transitions import (
+    postgres_monotonic_status,
+    postgres_status_accepts,
+)
 from app.tools.postgres import _conn
 from app.registry import tool
 
@@ -343,17 +347,23 @@ def pipeline_run_save(
                 columns.append(scoped_column)
                 values.append(scoped_value)
         placeholders = ",".join(["%s"] * len(columns))
+        monotonic_status = postgres_monotonic_status(
+            "pipeline_runs.status", "EXCLUDED.status"
+        )
+        accepts_status = postgres_status_accepts(
+            "pipeline_runs.status", "EXCLUDED.status"
+        )
         updates = [
             "airflow_dag_run_id   = COALESCE(EXCLUDED.airflow_dag_run_id, pipeline_runs.airflow_dag_run_id)",
-            "status               = EXCLUDED.status",
-            "finished_at          = EXCLUDED.finished_at",
-            "duration_seconds     = EXCLUDED.duration_seconds",
-            "record_count         = EXCLUDED.record_count",
-            "bytes_written        = EXCLUDED.bytes_written",
-            "storage_uri          = EXCLUDED.storage_uri",
-            "watermark_updated_to = EXCLUDED.watermark_updated_to",
-            "error_message        = EXCLUDED.error_message",
-            "extra                = pipeline_runs.extra || EXCLUDED.extra",
+            f"status               = {monotonic_status}",
+            f"finished_at          = CASE WHEN {accepts_status} THEN COALESCE(EXCLUDED.finished_at, pipeline_runs.finished_at) ELSE pipeline_runs.finished_at END",
+            f"duration_seconds     = CASE WHEN {accepts_status} THEN COALESCE(EXCLUDED.duration_seconds, pipeline_runs.duration_seconds) ELSE pipeline_runs.duration_seconds END",
+            f"record_count         = CASE WHEN {accepts_status} THEN COALESCE(EXCLUDED.record_count, pipeline_runs.record_count) ELSE pipeline_runs.record_count END",
+            f"bytes_written        = CASE WHEN {accepts_status} THEN COALESCE(EXCLUDED.bytes_written, pipeline_runs.bytes_written) ELSE pipeline_runs.bytes_written END",
+            f"storage_uri          = CASE WHEN {accepts_status} THEN COALESCE(EXCLUDED.storage_uri, pipeline_runs.storage_uri) ELSE pipeline_runs.storage_uri END",
+            f"watermark_updated_to = CASE WHEN {accepts_status} THEN COALESCE(EXCLUDED.watermark_updated_to, pipeline_runs.watermark_updated_to) ELSE pipeline_runs.watermark_updated_to END",
+            f"error_message        = CASE WHEN {accepts_status} THEN COALESCE(EXCLUDED.error_message, pipeline_runs.error_message) ELSE pipeline_runs.error_message END",
+            f"extra                = CASE WHEN {accepts_status} THEN COALESCE(pipeline_runs.extra, '{{}}'::jsonb) || EXCLUDED.extra ELSE pipeline_runs.extra END",
         ]
         for scoped_column in ("tenant_id", "workspace_id", "project_id"):
             if scoped_column in columns:
@@ -362,11 +372,19 @@ def pipeline_run_save(
             f"""INSERT INTO pipeline_runs ({", ".join(columns)})
                 VALUES ({placeholders})
                 ON CONFLICT (run_id) DO UPDATE
-                SET {", ".join(updates)}""",
+                SET {", ".join(updates)}
+                RETURNING status""",
             values,
         )
+        saved_status = str(cur.fetchone()[0])
         conn.commit()
-    return {"saved": True, "run_id": run_id, "status": status}
+    return {
+        "saved": True,
+        "run_id": run_id,
+        "status": saved_status,
+        "requested_status": status,
+        "status_advanced": saved_status == str(status),
+    }
 
 
 # ── DAG source storage ────────────────────────────────────────────────────────

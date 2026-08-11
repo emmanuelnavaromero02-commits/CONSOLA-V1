@@ -36,6 +36,12 @@ SCRIPT = assert_gate_shape(
 FLAGS = ("PYTHON_RUNTIME", "PYTHON_DEPS", "NODE_DEPS", "INFRA")
 
 
+def test_bandit_scans_pipeline_reconciler() -> None:
+    root = Path(__file__).resolve().parents[1]
+    workflow = (root / ".github/workflows/security.yml").read_text(encoding="utf-8")
+    assert workflow.count("scripts/reconcile_pipeline_runs.py") == 2
+
+
 def _env(
     *,
     runtime: str,

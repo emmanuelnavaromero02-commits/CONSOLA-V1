@@ -124,3 +124,70 @@ def test_pipeline_run_save_reuses_studio_trigger_row_by_airflow_run_id():
     assert "AND airflow_dag_run_id = %s" in save_section
     assert "CASE WHEN run_id = %s THEN 0 ELSE 1 END" in save_section
     assert "run_id = canonical_run_id or run_id" in save_section
+
+
+class _PipelineRunCursor(_Cursor):
+    def __init__(self, saved_status: str) -> None:
+        super().__init__()
+        self.saved_status = saved_status
+
+    def fetchall(self):
+        return [
+            (name,)
+            for name in (
+                "run_id",
+                "dag_id",
+                "cartridge_id",
+                "entity",
+                "airflow_dag_run_id",
+                "mode",
+                "status",
+                "started_at",
+                "finished_at",
+                "duration_seconds",
+                "record_count",
+                "bytes_written",
+                "storage_uri",
+                "watermark_updated_to",
+                "error_message",
+                "extra",
+                "tenant_id",
+                "workspace_id",
+            )
+        ]
+
+    def fetchone(self):
+        return (self.saved_status,)
+
+
+def test_pipeline_run_save_uses_monotonic_atomic_status_and_returns_durable_state(
+    monkeypatch,
+):
+    pipeline = _load_pipeline(monkeypatch)
+    cursor = _PipelineRunCursor("partial")
+    conn = _Conn(cursor)
+    monkeypatch.setattr(pipeline, "_conn", lambda: conn)
+
+    result = pipeline.pipeline_run_save(
+        run_id="manual__terminal-first",
+        airflow_dag_run_id="manual__terminal-first",
+        dag_id="sap_successfactors_extract_all",
+        cartridge_id="sap_successfactors",
+        entity="__extract_all__",
+        status="queued",
+        tenant_id="11111111-1111-1111-1111-111111111111",
+        workspace_id="22222222-2222-2222-2222-222222222222",
+    )
+
+    upsert = next(sql for sql, _args in cursor.executed if "INSERT INTO pipeline_runs" in sql)
+    assert "status               = CASE WHEN" in upsert
+    assert "RETURNING status" in upsert
+    assert "extra                = CASE WHEN" in upsert
+    assert "status               = EXCLUDED.status" not in upsert
+    assert result == {
+        "saved": True,
+        "run_id": "manual__terminal-first",
+        "status": "partial",
+        "requested_status": "queued",
+        "status_advanced": False,
+    }

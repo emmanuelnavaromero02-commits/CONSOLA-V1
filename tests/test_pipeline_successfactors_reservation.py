@@ -259,6 +259,10 @@ async def test_reserve_entity_extract_slot_records_legacy_schema_reservation():
     assert fetch_args == ("sap_successfactors", 300)
     insert_query, insert_args = conn.execute_calls[-1]
     assert "INSERT INTO pipeline_runs" in insert_query
+    assert "status = CASE WHEN" in insert_query
+    assert "pipeline_runs.status" in insert_query
+    assert "EXCLUDED.status" in insert_query
+    assert "status = EXCLUDED.status" not in insert_query
     assert insert_args[:6] == (
         "console__sap_successfactors_extract__User__abc",
         "sap_successfactors_extract",
