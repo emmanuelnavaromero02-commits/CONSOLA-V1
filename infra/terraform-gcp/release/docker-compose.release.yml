@@ -1,0 +1,69 @@
+services:
+  console:
+    image: ${OMEGA_GCP_IMAGE_CONSOLE:?run the authenticated GCP image preflight}
+    build: !reset null
+    pull_policy: never
+  workspace:
+    image: ${OMEGA_GCP_IMAGE_WORKSPACE:?run the authenticated GCP image preflight}
+    build: !reset null
+    pull_policy: never
+  refinement:
+    image: ${OMEGA_GCP_IMAGE_REFINEMENT:?run the authenticated GCP image preflight}
+    build: !reset null
+    pull_policy: never
+  vault:
+    image: ${OMEGA_GCP_IMAGE_VAULT:?run the authenticated GCP image preflight}
+    build: !reset null
+    pull_policy: never
+  mcp-infra:
+    image: ${OMEGA_GCP_IMAGE_MCP_INFRA:?run the authenticated GCP image preflight}
+    build: !reset null
+    pull_policy: never
+  airflow-init:
+    image: ${OMEGA_GCP_IMAGE_AIRFLOW:?run the authenticated GCP image preflight}
+    build: !reset null
+    pull_policy: never
+  airflow:
+    image: ${OMEGA_GCP_IMAGE_AIRFLOW:?run the authenticated GCP image preflight}
+    build: !reset null
+    pull_policy: never
+  airflow-scheduler:
+    image: ${OMEGA_GCP_IMAGE_AIRFLOW:?run the authenticated GCP image preflight}
+    build: !reset null
+    pull_policy: never
+  replicon:
+    image: ${OMEGA_GCP_IMAGE_REPLICON:?run the authenticated GCP image preflight}
+    build: !reset null
+    pull_policy: never
+  hubspot:
+    image: ${OMEGA_GCP_IMAGE_HUBSPOT:?run the authenticated GCP image preflight}
+    build: !reset null
+    pull_policy: never
+  banxico:
+    image: ${OMEGA_GCP_IMAGE_BANXICO:?run the authenticated GCP image preflight}
+    build: !reset null
+    pull_policy: never
+  inegi:
+    image: ${OMEGA_GCP_IMAGE_INEGI:?run the authenticated GCP image preflight}
+    build: !reset null
+    pull_policy: never
+  sec-edgar:
+    image: ${OMEGA_GCP_IMAGE_SEC_EDGAR:?run the authenticated GCP image preflight}
+    build: !reset null
+    pull_policy: never
+  sap-hcm:
+    image: ${OMEGA_GCP_IMAGE_SAP_HCM:?run the authenticated GCP image preflight}
+    build: !reset null
+    pull_policy: never
+  sap-s4hana:
+    image: ${OMEGA_GCP_IMAGE_SAP_S4HANA:?run the authenticated GCP image preflight}
+    build: !reset null
+    pull_policy: never
+  sap-successfactors:
+    image: ${OMEGA_GCP_IMAGE_SAP_SUCCESSFACTORS:?run the authenticated GCP image preflight}
+    build: !reset null
+    pull_policy: never
+  salesforce:
+    image: ${OMEGA_GCP_IMAGE_SALESFORCE:?run the authenticated GCP image preflight}
+    build: !reset null
+    pull_policy: never

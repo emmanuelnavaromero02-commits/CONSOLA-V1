@@ -34,3 +34,20 @@ GCS HMAC lakehouse credentials are read from Secret Manager secrets
 `omega-<env>-gcs_hmac_secret_access_key`. This stack creates the secret
 containers but does not create HMAC keys, because some GCP organizations block
 service-account key creation with `iam.disableServiceAccountKeyCreation`.
+
+Private GHCR pulls use the same server-owned boundary. Terraform creates only
+the `omega-<env>-ghcr_pull_credentials` container and grants the VM service
+account access on that secret resource; it never creates a secret version or
+stores a credential in Terraform state. An operator must add a JSON version
+with `username` and `token` outside Terraform.
+
+`release/ghcr-auth-run.sh` accepts only an explicit numeric Secret Manager
+version, obtains the VM identity from the metadata server, and keeps Docker
+authentication in a temporary host-only `DOCKER_CONFIG`. Run
+`release/preflight-release-images.sh` through that wrapper before a release or
+rollback. The preflight pulls exactly 15 proprietary images and atomically
+writes a non-secret lock file with `tag@sha256` references. Combine that lock
+file with `release/docker-compose.release.yml`; the overlay removes source
+builds and forbids late pulls, so deployment consumes only the digests already
+proved by the authenticated preflight. Never place the GHCR JSON value in
+`infra/.env`, a container environment, a workflow payload, or release evidence.
