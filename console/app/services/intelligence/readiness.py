@@ -14,6 +14,27 @@ _PUBLISHED_RELATION_RE = re.compile(
 )
 
 
+def _qualified_published_relation(
+    status: str, gold_table: str, *, relation_exists: bool
+) -> str | None:
+    """Build a queryable name without trusting ``regclass`` display text.
+
+    PostgreSQL omits ``public.`` when a regclass is visible on ``search_path``.
+    The catalog existence check therefore returns only a boolean; this helper
+    constructs the schema-qualified identifier from separately whitelisted
+    publication metadata.
+    """
+    if not relation_exists:
+        return None
+    if status == "published":
+        relation = f"omega_publication_gold.{gold_table}"
+    elif status == "legacy_unverified":
+        relation = f"public.{gold_table}"
+    else:
+        return None
+    return relation if _PUBLISHED_RELATION_RE.fullmatch(relation) else None
+
+
 def _normalize_dsn(raw: str) -> str:
     return (raw or "").replace("postgresql+psycopg2://", "postgresql://")
 
@@ -145,37 +166,32 @@ async def _gold_counts(
             )
             for req in requirements:
                 dataset = str(req["dataset"])
-                try:
-                    relation = str(
-                        await conn.fetchval(
-                            """SELECT to_regclass(CASE
-                                   WHEN r.status='published' AND r.gold_table ~ '^run_[0-9a-f]{32}$'
-                                     THEN 'omega_publication_gold.'||r.gold_table
-                                   WHEN r.status='legacy_unverified' AND r.gold_table ~ '^gold_[A-Za-z0-9_]+$'
-                                     THEN 'public.'||r.gold_table END)::text
-                                 FROM omega_publication.dataset_publication_heads h
-                                 JOIN omega_publication.materialization_runs r
-                                   ON r.materialization_run_id=h.materialization_run_id
-                                WHERE h.tenant_id=$1 AND h.workspace_id=$2
-                                  AND h.dataset=$3 AND h.layer='gold'""",
-                            tenant_id,
-                            workspace_id,
-                            dataset,
-                        )
-                        or ""
+                head = await conn.fetchrow(
+                    """SELECT r.status, r.gold_table,
+                              to_regclass(CASE
+                                WHEN r.status='published' AND r.gold_table ~ '^run_[0-9a-f]{32}$'
+                                  THEN 'omega_publication_gold.'||r.gold_table
+                                WHEN r.status='legacy_unverified' AND r.gold_table ~ '^gold_[A-Za-z0-9_]+$'
+                                  THEN 'public.'||r.gold_table END) IS NOT NULL AS relation_exists
+                          FROM omega_publication.dataset_publication_heads h
+                          JOIN omega_publication.materialization_runs r
+                            ON r.materialization_run_id=h.materialization_run_id
+                         WHERE h.tenant_id=$1 AND h.workspace_id=$2
+                           AND h.dataset=$3 AND h.layer='gold'""",
+                    tenant_id,
+                    workspace_id,
+                    dataset,
+                )
+                relation = (
+                    _qualified_published_relation(
+                        str(head["status"] or ""),
+                        str(head["gold_table"] or ""),
+                        relation_exists=bool(head["relation_exists"]),
                     )
-                    if not _PUBLISHED_RELATION_RE.fullmatch(relation):
-                        raise RuntimeError("published relation unavailable")
-                    row_count = int(
-                        await conn.fetchval(
-                            f"SELECT COUNT(*) FROM {relation} "
-                            "WHERE tenant_id::text = $1 AND workspace_id::text = $2",
-                            tenant_id,
-                            workspace_id,
-                        )
-                        or 0
-                    )
-                except Exception:
+                    if head
+                    else None
+                )
+                if not relation:
                     results.append(
                         {
                             **req,
@@ -186,6 +202,16 @@ async def _gold_counts(
                         }
                     )
                     continue
+                row_count = int(
+                    await conn.fetchval(
+                        # ``relation`` passed _PUBLISHED_RELATION_RE.fullmatch above.
+                        f"SELECT COUNT(*) FROM {relation} "  # nosec B608
+                        "WHERE tenant_id::text = $1 AND workspace_id::text = $2",
+                        tenant_id,
+                        workspace_id,
+                    )
+                    or 0
+                )
                 results.append(
                     {
                         **req,

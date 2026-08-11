@@ -1263,8 +1263,7 @@ async def test_intelligence_readiness_sets_rls_context_before_signal_stats(monke
     assert stats["signal_count"] == 3
 
 
-@pytest.mark.asyncio
-async def test_intelligence_readiness_counts_gold_with_default_rls_scope(monkeypatch):
+async def _gold_counts_with_head(monkeypatch, head, *, row_count: int = 7):
     class FakeOperationalConnection:
         async def fetchrow(self, query: str, *args):
             assert "FROM workspaces" in query
@@ -1272,10 +1271,6 @@ async def test_intelligence_readiness_counts_gold_with_default_rls_scope(monkeyp
                 "tenant_id": USER["active_tenant_id"],
                 "workspace_id": USER["active_workspace_id"],
             }
-
-        async def fetch(self, query: str, *args):
-            assert "silver_lineage" in query
-            return []
 
         async def close(self):
             return None
@@ -1290,6 +1285,8 @@ async def test_intelligence_readiness_counts_gold_with_default_rls_scope(monkeyp
     class FakeGoldConnection:
         def __init__(self):
             self.executed: list[tuple[str, tuple]] = []
+            self.head_queries: list[tuple[str, tuple]] = []
+            self.count_queries: list[tuple[str, tuple]] = []
 
         def transaction(self):
             return FakeTransaction()
@@ -1297,27 +1294,38 @@ async def test_intelligence_readiness_counts_gold_with_default_rls_scope(monkeyp
         async def execute(self, query: str, *args):
             self.executed.append((query, args))
 
-        async def fetch(self, query: str, *args):
-            assert "information_schema.columns" in query
-            return [{"column_name": "tenant_id"}, {"column_name": "workspace_id"}]
+        async def fetchrow(self, query: str, *args):
+            assert "omega_publication.dataset_publication_heads" in query
+            assert "to_regclass" in query and "IS NOT NULL" in query
+            assert "::text" not in query
+            assert args == (
+                USER["active_tenant_id"],
+                USER["active_workspace_id"],
+                "forecast_mensual",
+            )
+            assert any("app.workspace_id" in item[0] for item in self.executed)
+            assert any("app.tenant_id" in item[0] for item in self.executed)
+            self.head_queries.append((query, args))
+            return head
 
         async def fetchval(self, query: str, *args):
-            if "to_regclass" in query:
-                return "public.gold_forecast_mensual"
             assert "tenant_id::text = $1" in query
             assert "workspace_id::text = $2" in query
             assert any("app.workspace_id" in item[0] for item in self.executed)
             assert any("app.tenant_id" in item[0] for item in self.executed)
-            return 7
+            self.count_queries.append((query, args))
+            return row_count
 
         async def close(self):
             return None
+
+    gold = FakeGoldConnection()
 
     async def fake_connect(dsn: str, *args, **kwargs):
         if dsn == "postgresql://operational":
             return FakeOperationalConnection()
         if dsn == "postgresql://gold":
-            return FakeGoldConnection()
+            return gold
         raise AssertionError(f"unexpected dsn: {dsn}")
 
     monkeypatch.setattr(
@@ -1341,7 +1349,73 @@ async def test_intelligence_readiness_counts_gold_with_default_rls_scope(monkeyp
         ],
         None,
     )
+    return rows, gold
+
+
+@pytest.mark.asyncio
+async def test_intelligence_readiness_qualifies_public_regclass_contract(monkeypatch):
+    """A visible public regclass renders without ``public.`` in PostgreSQL."""
+    rows, gold = await _gold_counts_with_head(
+        monkeypatch,
+        {
+            "status": "legacy_unverified",
+            "gold_table": "gold_forecast_mensual",
+            "relation_exists": True,
+        },
+    )
 
     assert rows[0]["status"] == "ready"
     assert rows[0]["row_count"] == 7
     assert rows[0]["scoped"] is True
+    assert "FROM public.gold_forecast_mensual" in gold.count_queries[0][0]
+
+
+@pytest.mark.asyncio
+async def test_intelligence_readiness_missing_scoped_head_fails_closed(monkeypatch):
+    rows, gold = await _gold_counts_with_head(monkeypatch, None)
+
+    assert rows[0]["status"] == "missing"
+    assert rows[0]["reason"] == "published_head_missing"
+    assert len(gold.head_queries) == 1
+    assert gold.count_queries == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "gold_table"),
+    [
+        ("legacy_unverified", "gold_forecast_mensual;SELECT pg_sleep(10)"),
+        ("legacy_unverified", 'gold_forecast_mensual"'),
+        ("legacy_unverified", "gold_forecast_mensual.other"),
+        ("published", "run_0123456789abcdef0123456789abcdeg"),
+    ],
+)
+async def test_intelligence_readiness_rejects_untrusted_relation_names(
+    monkeypatch, status, gold_table
+):
+    rows, gold = await _gold_counts_with_head(
+        monkeypatch,
+        {
+            "status": status,
+            "gold_table": gold_table,
+            "relation_exists": True,
+        },
+    )
+
+    assert rows[0]["status"] == "missing"
+    assert gold.count_queries == []
+
+
+def test_published_relation_requires_status_shape_and_catalog_existence():
+    qualify = intelligence_readiness_module._qualified_published_relation
+
+    assert (
+        qualify(
+            "published",
+            "run_0123456789abcdef0123456789abcdef",
+            relation_exists=True,
+        )
+        == "omega_publication_gold.run_0123456789abcdef0123456789abcdef"
+    )
+    assert qualify("pending", "gold_safe", relation_exists=True) is None
+    assert qualify("legacy_unverified", "gold_safe", relation_exists=False) is None
