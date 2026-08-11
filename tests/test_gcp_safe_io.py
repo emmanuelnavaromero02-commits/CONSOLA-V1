@@ -645,3 +645,21 @@ def test_startup_config_publish_failure_leaves_no_output_or_temporary_file(
 
     assert not output.exists()
     assert list(tmp_path.glob(f".{output.name}.*")) == []
+
+
+def test_fsync_file_rejects_a_symbolic_link(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.write_text("durable", encoding="utf-8")
+    linked = tmp_path / "linked"
+    linked.symlink_to(source)
+    with pytest.raises(SystemExit, match="cannot be opened safely"):
+        safe_io.main(["fsync-file", str(linked)])
+
+
+def test_fsync_file_rejects_a_hard_link(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.write_text("durable", encoding="utf-8")
+    linked = tmp_path / "linked"
+    os.link(source, linked)
+    with pytest.raises(SystemExit, match="link count is unsafe"):
+        safe_io.main(["fsync-file", str(linked)])

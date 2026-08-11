@@ -18,6 +18,7 @@ produces byte-identical SQL, which ``--check`` enforces in CI.
 from __future__ import annotations
 
 import argparse
+import json
 import pathlib
 import sys
 
@@ -43,45 +44,44 @@ HEADER = """\
 --
 -- The tables are created by 99zzt; this file only carries their contents.
 --
--- Loaded as an upsert rather than a truncate: grants reference these rows with
--- ON DELETE RESTRICT, so wiping the table would either fail or, worse, need a
--- CASCADE that silently deleted live grants. Rows that leave the packaged set
--- are marked superseded and their dataset rows dropped only when nothing
--- references them, so history stays intact and authority still narrows.
+-- Both authority tables are new and must be empty when 99zzt creates them.
+-- Plain INSERT is deliberate: adopting or reconciling any pre-existing row
+-- would turn database state into an unaudited source of release authority.
 """
 
 FOOTER = """
--- Anything no longer packaged stops being active, and its dataset rows go only
--- when no grant still points at them.
-UPDATE public.analytic_app_manifests m
-   SET revision = 'superseded'
- WHERE m.revision = 'active'
-   AND m.app_name NOT IN ({packaged_names});
-
-DELETE FROM public.analytic_app_manifest_datasets d
- WHERE NOT EXISTS (
-        SELECT 1 FROM public.analytic_app_manifests m
-         WHERE m.app_name = d.app_name
-           AND m.manifest_digest = d.manifest_digest
-           AND m.revision = 'active')
-   AND NOT EXISTS (
-        SELECT 1 FROM public.analytic_app_dataset_grants g
-         WHERE g.app_name = d.app_name
-           AND g.manifest_digest = d.manifest_digest
-           AND g.dataset_name = d.dataset_name);
-
 -- Exactly the packaged set, no more and no less. A mismatch here means the
 -- image and this file disagree, which must stop the migration rather than
 -- quietly grant from a stale list.
 DO $registry_count$
 DECLARE
-    app_rows BIGINT;
+    actual_apps JSONB;
+    expected_apps JSONB;
+    actual_datasets JSONB;
+    expected_datasets JSONB;
 BEGIN
-    SELECT count(*) INTO app_rows FROM public.analytic_app_manifests
-     WHERE revision = 'active';
-    IF app_rows <> {expected} THEN
-        RAISE EXCEPTION 'app manifest registry expected % rows, found %',
-            {expected}, app_rows;
+    SELECT COALESCE(jsonb_agg(jsonb_build_array(
+               app_name, cartridge_id, manifest_digest, html_sha256,
+               revision, source) ORDER BY app_name), '[]'::jsonb)
+      INTO actual_apps
+      FROM public.analytic_app_manifests;
+    SELECT jsonb_agg(value ORDER BY value->>0)
+      INTO expected_apps
+      FROM jsonb_array_elements({expected_apps_json}::jsonb) value;
+    IF actual_apps IS DISTINCT FROM expected_apps THEN
+        RAISE EXCEPTION 'app manifest registry differs from packaged authority';
+    END IF;
+
+    SELECT COALESCE(jsonb_agg(jsonb_build_array(
+               app_name, manifest_digest, dataset_name)
+               ORDER BY app_name, manifest_digest, dataset_name), '[]'::jsonb)
+      INTO actual_datasets
+      FROM public.analytic_app_manifest_datasets;
+    SELECT jsonb_agg(value ORDER BY value->>0, value->>1, value->>2)
+      INTO expected_datasets
+      FROM jsonb_array_elements({expected_datasets_json}::jsonb) value;
+    IF actual_datasets IS DISTINCT FROM expected_datasets THEN
+        RAISE EXCEPTION 'app manifest dataset triples differ from packaged authority';
     END IF;
 END
 $registry_count$;
@@ -120,13 +120,7 @@ def render() -> str:
             )
         )
     lines.append(",\n".join(rows))
-    lines.append("""ON CONFLICT (app_name) DO UPDATE SET
-    cartridge_id = EXCLUDED.cartridge_id,
-    manifest_digest = EXCLUDED.manifest_digest,
-    html_sha256 = EXCLUDED.html_sha256,
-    revision = 'active',
-    source = 'packaged_manifest',
-    generated_at = clock_timestamp();""")
+    lines[-1] += ";"
 
     dataset_rows = []
     for name in sorted(manifests):
@@ -144,9 +138,36 @@ def render() -> str:
         lines.append("    (app_name, manifest_digest, dataset_name)")
         lines.append("VALUES")
         lines.append(",\n".join(dataset_rows))
-        lines.append("ON CONFLICT (app_name, manifest_digest, dataset_name) DO NOTHING;")
-    packaged_names = ",\n        ".join(_sql_literal(n) for n in sorted(manifests))
-    lines.append(FOOTER.format(expected=EXPECTED_APPS, packaged_names=packaged_names))
+        lines[-1] += ";"
+    expected_apps = []
+    expected_datasets = []
+    for name in sorted(manifests):
+        manifest = manifests[name]
+        html_sha = hashlib.sha256(manifest["packaged_html"].encode("utf-8")).hexdigest()
+        expected_apps.append(
+            [
+                manifest["app_name"],
+                manifest["cartridge_id"],
+                manifest["packaged_digest"],
+                html_sha,
+                "active",
+                "packaged_manifest",
+            ]
+        )
+        for dataset in sorted(manifest["datasets"]):
+            expected_datasets.append(
+                [manifest["app_name"], manifest["packaged_digest"], dataset]
+            )
+    lines.append(
+        FOOTER.format(
+            expected_apps_json=_sql_literal(
+                json.dumps(expected_apps, separators=(",", ":"))
+            ),
+            expected_datasets_json=_sql_literal(
+                json.dumps(expected_datasets, separators=(",", ":"))
+            ),
+        )
+    )
     return "\n".join(lines)
 
 

@@ -78,7 +78,10 @@ echo "[acceptance] ensuring patched services are built"
 "${COMPOSE[@]}" up -d --no-deps refinement hubspot console
 
 echo "[acceptance] applying pending DB migrations"
-bash scripts/apply_db_migrations.sh
+OMEGA_MIGRATION_BOOTSTRAP_MODE=1 \
+OMEGA_MIGRATION_ALLOW_BOOTSTRAP_LEDGER=1 \
+OMEGA_MIGRATION_ENVIRONMENT=development \
+scripts/run_db_migrations.py
 
 echo "[acceptance] starting fake HubSpot upstream on host port ${FAKE_PORT}"
 FAKE_HUBSPOT_PORT="$FAKE_PORT" FAKE_HUBSPOT_TOKEN="$FAKE_TOKEN" \

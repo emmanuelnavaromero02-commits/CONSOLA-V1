@@ -47,7 +47,11 @@ jobs:
             --output-format=github \
             console workspace vault refinement mcp-infra cartridges airflow \
             scripts/reconcile_pipeline_runs.py \
-            scripts/gcp/runtime_contract.py scripts/gcp/safe_io.py
+            scripts/gcp/runtime_contract.py scripts/gcp/safe_io.py \
+            scripts/migration_guard.py scripts/generate_migration_manifests.py \
+            scripts/migration_backend_control.py \
+            scripts/generate_successfactors_apps_seed.py \
+            scripts/run_db_migrations.py
 
       - name: ruff format --check (advisory)
         continue-on-error: true
@@ -55,7 +59,11 @@ jobs:
           ruff format --check \
             console workspace vault refinement mcp-infra cartridges airflow \
             scripts/reconcile_pipeline_runs.py \
-            scripts/gcp/runtime_contract.py scripts/gcp/safe_io.py
+            scripts/gcp/runtime_contract.py scripts/gcp/safe_io.py \
+            scripts/migration_guard.py scripts/generate_migration_manifests.py \
+            scripts/migration_backend_control.py \
+            scripts/generate_successfactors_apps_seed.py \
+            scripts/run_db_migrations.py
 
   console-next:
     needs: changes

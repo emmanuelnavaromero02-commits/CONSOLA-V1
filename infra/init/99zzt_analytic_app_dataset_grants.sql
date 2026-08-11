@@ -47,11 +47,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS datasets_scope_name_key
 -- and does not bypass RLS.
 DO $owner_role$
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles
-                    WHERE rolname = 'omega_app_grants_owner') THEN
-        CREATE ROLE omega_app_grants_owner
-            NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION;
+    IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles
+                WHERE rolname = 'omega_app_grants_owner') THEN
+        RAISE EXCEPTION 'analytic app authority role already exists: %',
+            'omega_app_grants_owner' USING ERRCODE = '55000';
     END IF;
+    CREATE ROLE omega_app_grants_owner
+        NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION;
 END
 $owner_role$;
 
@@ -61,8 +63,41 @@ ALTER ROLE omega_app_grants_owner
 GRANT USAGE ON SCHEMA public TO omega_app_grants_owner;
 
 
+-- These authority objects are new in this guarded release. A retry can reach
+-- this migration only when its ledger row is absent, so any pre-existing
+-- object is hostile or indeterminate state and must not be adopted.
+DO $authority_objects_absent$
+DECLARE
+    object_name TEXT;
+    function_signature TEXT;
+BEGIN
+    FOREACH object_name IN ARRAY ARRAY[
+        'analytic_app_manifests',
+        'analytic_app_manifest_datasets',
+        'analytic_app_dataset_grants',
+        'analytic_app_dataset_grant_events'
+    ] LOOP
+        IF pg_catalog.to_regclass('public.' || object_name) IS NOT NULL THEN
+            RAISE EXCEPTION 'analytic app authority object already exists: %',
+                object_name USING ERRCODE = '55000';
+        END IF;
+    END LOOP;
+    FOREACH function_signature IN ARRAY ARRAY[
+        'public.reconcile_analytic_app_dataset_grants(text,text)',
+        'public.revoke_analytic_app_cartridge_grants(text,text)',
+        'public.analytic_app_granted_datasets(text,text)'
+    ] LOOP
+        IF pg_catalog.to_regprocedure(function_signature) IS NOT NULL THEN
+            RAISE EXCEPTION 'analytic app authority function already exists: %',
+                function_signature USING ERRCODE = '55000';
+        END IF;
+    END LOOP;
+END
+$authority_objects_absent$;
+
+
 -- ── manifest registry (contents loaded by 99zzu) ───────────────────────────
-CREATE TABLE IF NOT EXISTS public.analytic_app_manifests (
+CREATE TABLE public.analytic_app_manifests (
     app_name        TEXT PRIMARY KEY,
     cartridge_id    TEXT NOT NULL,
     manifest_digest CHAR(64) NOT NULL,
@@ -82,7 +117,7 @@ CREATE TABLE IF NOT EXISTS public.analytic_app_manifests (
                AND cartridge_id ~ '^[a-z][a-z0-9_]*$')
 );
 
-CREATE TABLE IF NOT EXISTS public.analytic_app_manifest_datasets (
+CREATE TABLE public.analytic_app_manifest_datasets (
     app_name        TEXT NOT NULL
         REFERENCES public.analytic_app_manifests (app_name) ON DELETE CASCADE,
     manifest_digest CHAR(64) NOT NULL,
@@ -92,18 +127,22 @@ CREATE TABLE IF NOT EXISTS public.analytic_app_manifest_datasets (
         CHECK (dataset_name ~ '^[a-zA-Z_][a-zA-Z0-9_]*$')
 );
 
-CREATE INDEX IF NOT EXISTS analytic_app_manifest_datasets_lookup_idx
+CREATE INDEX analytic_app_manifest_datasets_lookup_idx
     ON public.analytic_app_manifest_datasets (app_name, manifest_digest);
 
-REVOKE ALL ON public.analytic_app_manifests FROM PUBLIC;
-REVOKE ALL ON public.analytic_app_manifest_datasets FROM PUBLIC;
+ALTER TABLE public.analytic_app_manifests OWNER TO omega_app_grants_owner;
+ALTER TABLE public.analytic_app_manifest_datasets OWNER TO omega_app_grants_owner;
+REVOKE ALL ON public.analytic_app_manifests,
+              public.analytic_app_manifest_datasets
+    FROM PUBLIC, omega_console, omega_refinement, omega_workspace,
+         omega_mcp_infra, omega_airflow_dag;
 GRANT SELECT ON public.analytic_app_manifests,
                 public.analytic_app_manifest_datasets
     TO omega_console, omega_refinement, omega_workspace, omega_app_grants_owner;
 
 
 -- ── the ledger ─────────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS public.analytic_app_dataset_grants (
+CREATE TABLE public.analytic_app_dataset_grants (
     id                BIGSERIAL PRIMARY KEY,
     tenant_id         UUID NOT NULL,
     workspace_id      UUID NOT NULL,
@@ -175,22 +214,22 @@ ALTER TABLE public.analytic_app_dataset_grants
     ADD CONSTRAINT analytic_app_dataset_grants_actor_check
     CHECK (granted_by = 'server:packaged_manifest');
 
-CREATE UNIQUE INDEX IF NOT EXISTS analytic_app_dataset_grants_live_key
+CREATE UNIQUE INDEX analytic_app_dataset_grants_live_key
     ON public.analytic_app_dataset_grants (
         tenant_id, workspace_id, app_name, dataset_name, manifest_digest
     ) WHERE revoked_at IS NULL;
 
-CREATE INDEX IF NOT EXISTS analytic_app_dataset_grants_lookup_idx
+CREATE INDEX analytic_app_dataset_grants_lookup_idx
     ON public.analytic_app_dataset_grants (
         tenant_id, workspace_id, app_name, manifest_digest
     ) WHERE revoked_at IS NULL;
 
-CREATE INDEX IF NOT EXISTS analytic_app_dataset_grants_cartridge_idx
+CREATE INDEX analytic_app_dataset_grants_cartridge_idx
     ON public.analytic_app_dataset_grants (
         tenant_id, workspace_id, cartridge_id
     ) WHERE revoked_at IS NULL;
 
-CREATE TABLE IF NOT EXISTS public.analytic_app_dataset_grant_events (
+CREATE TABLE public.analytic_app_dataset_grant_events (
     id            BIGSERIAL PRIMARY KEY,
     grant_id      BIGINT NOT NULL
         REFERENCES public.analytic_app_dataset_grants (id) ON DELETE CASCADE,
@@ -244,8 +283,10 @@ CREATE POLICY analytic_app_dataset_grant_events_owner_write
 
 
 -- ── ACL ────────────────────────────────────────────────────────────────────
-REVOKE ALL ON public.analytic_app_dataset_grants FROM PUBLIC;
-REVOKE ALL ON public.analytic_app_dataset_grant_events FROM PUBLIC;
+REVOKE ALL ON public.analytic_app_dataset_grants,
+              public.analytic_app_dataset_grant_events
+    FROM PUBLIC, omega_console, omega_refinement, omega_workspace,
+         omega_mcp_infra, omega_airflow_dag;
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE
     ON public.analytic_app_dataset_grants, public.analytic_app_dataset_grant_events
     FROM omega_console, omega_refinement, omega_workspace,
@@ -268,6 +309,170 @@ GRANT USAGE ON SEQUENCE public.analytic_app_dataset_grants_id_seq,
 ALTER TABLE public.analytic_app_dataset_grants OWNER TO omega_app_grants_owner;
 ALTER TABLE public.analytic_app_dataset_grant_events OWNER TO omega_app_grants_owner;
 
+-- Earlier baseline migrations granted broad sequence access, including a
+-- default grant to omega_console. New SERIAL sequences inherit that default
+-- even when their tables are subsequently locked down. Remove every explicit
+-- non-owner ACL entry by catalog identity, then prove that only the isolated
+-- authority owner can consume or observe either global sequence.
+DO $authority_sequence_acl_exact$
+DECLARE
+    authority_sequence REGCLASS;
+    grantee_oid OID;
+    grantee_name NAME;
+BEGIN
+    FOREACH authority_sequence IN ARRAY ARRAY[
+        'public.analytic_app_dataset_grants_id_seq'::REGCLASS,
+        'public.analytic_app_dataset_grant_events_id_seq'::REGCLASS
+    ] LOOP
+        FOR grantee_oid IN
+            SELECT DISTINCT a.grantee
+              FROM pg_catalog.pg_class c
+              CROSS JOIN LATERAL pg_catalog.aclexplode(
+                  COALESCE(c.relacl, pg_catalog.acldefault('S', c.relowner))
+              ) a
+             WHERE c.oid = authority_sequence
+               AND a.grantee <> c.relowner
+        LOOP
+            IF grantee_oid = 0 THEN
+                EXECUTE pg_catalog.format(
+                    'REVOKE ALL PRIVILEGES ON SEQUENCE %s FROM PUBLIC',
+                    authority_sequence
+                );
+            ELSE
+                SELECT r.rolname INTO STRICT grantee_name
+                  FROM pg_catalog.pg_roles r WHERE r.oid = grantee_oid;
+                EXECUTE pg_catalog.format(
+                    'REVOKE ALL PRIVILEGES ON SEQUENCE %s FROM %I',
+                    authority_sequence, grantee_name
+                );
+            END IF;
+        END LOOP;
+
+        IF 3 <> (
+            SELECT pg_catalog.count(*)
+              FROM pg_catalog.pg_class c
+              CROSS JOIN LATERAL pg_catalog.aclexplode(
+                  COALESCE(c.relacl, pg_catalog.acldefault('S', c.relowner))
+              ) a
+             WHERE c.oid = authority_sequence
+        ) OR EXISTS (
+            SELECT 1
+              FROM pg_catalog.pg_class c
+              CROSS JOIN LATERAL pg_catalog.aclexplode(
+                  COALESCE(c.relacl, pg_catalog.acldefault('S', c.relowner))
+              ) a
+             WHERE c.oid = authority_sequence
+               AND (a.grantee <> c.relowner
+                    OR a.grantor <> c.relowner
+                    OR a.is_grantable
+                    OR a.privilege_type NOT IN ('SELECT', 'UPDATE', 'USAGE'))
+        ) OR EXISTS (
+            SELECT 1
+              FROM pg_catalog.pg_class c
+              JOIN pg_catalog.pg_roles r ON r.oid = c.relowner
+             WHERE c.oid = authority_sequence
+               AND (c.relkind <> 'S' OR r.rolname <> 'omega_app_grants_owner')
+        ) OR NOT pg_catalog.has_sequence_privilege(
+            'omega_app_grants_owner', authority_sequence, 'USAGE'
+        ) OR NOT pg_catalog.has_sequence_privilege(
+            'omega_app_grants_owner', authority_sequence, 'SELECT'
+        ) OR NOT pg_catalog.has_sequence_privilege(
+            'omega_app_grants_owner', authority_sequence, 'UPDATE'
+        ) THEN
+            RAISE EXCEPTION 'analytic app authority sequence ACL differs from exact contract: %',
+                authority_sequence USING ERRCODE = '42501';
+        END IF;
+    END LOOP;
+END
+$authority_sequence_acl_exact$;
+
+
+-- The four authority tables have one exact ACL shape: the dedicated owner has
+-- PostgreSQL's seven owner privileges and the three runtime readers have only
+-- SELECT.  Counting and constraining every aclitem prevents a cartridge role,
+-- PUBLIC, or a predefined broad role from retaining authority through a
+-- pre-seeded object or a future edit to this migration.
+DO $authority_acl_exact$
+DECLARE
+    authority_table TEXT;
+    acl_rows INTEGER;
+BEGIN
+    IF EXISTS (
+        SELECT 1
+          FROM pg_catalog.pg_roles r
+         WHERE r.rolname = 'omega_app_grants_owner'
+           AND (r.rolsuper OR r.rolinherit OR r.rolcreaterole OR r.rolcreatedb
+                OR r.rolcanlogin OR r.rolreplication OR r.rolbypassrls)
+    ) OR EXISTS (
+        SELECT 1
+          FROM pg_catalog.pg_auth_members m
+          JOIN pg_catalog.pg_roles r
+            ON r.oid IN (m.roleid, m.member)
+         WHERE r.rolname = 'omega_app_grants_owner'
+    ) THEN
+        RAISE EXCEPTION 'analytic app authority role is not isolated'
+            USING ERRCODE = '42501';
+    END IF;
+
+    FOREACH authority_table IN ARRAY ARRAY[
+        'analytic_app_manifests',
+        'analytic_app_manifest_datasets',
+        'analytic_app_dataset_grants',
+        'analytic_app_dataset_grant_events'
+    ] LOOP
+        IF (SELECT pg_catalog.pg_get_userbyid(c.relowner)
+              FROM pg_catalog.pg_class c
+              JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname = 'public' AND c.relname = authority_table
+               AND c.relkind IN ('r', 'p'))
+           IS DISTINCT FROM 'omega_app_grants_owner' THEN
+            RAISE EXCEPTION 'analytic app authority table has wrong owner: %',
+                authority_table USING ERRCODE = '42501';
+        END IF;
+
+        SELECT count(*) INTO acl_rows
+          FROM pg_catalog.pg_class c
+          JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+          CROSS JOIN LATERAL pg_catalog.aclexplode(
+              COALESCE(c.relacl, pg_catalog.acldefault('r', c.relowner))) a
+         WHERE n.nspname = 'public' AND c.relname = authority_table;
+        IF acl_rows <> 10 OR EXISTS (
+            SELECT 1
+              FROM pg_catalog.pg_class c
+              JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+              CROSS JOIN LATERAL pg_catalog.aclexplode(
+                  COALESCE(c.relacl, pg_catalog.acldefault('r', c.relowner))) a
+             WHERE n.nspname = 'public' AND c.relname = authority_table
+               AND (
+                    a.grantee = 0
+                    OR a.is_grantable
+                    OR CASE pg_catalog.pg_get_userbyid(a.grantee)
+                        WHEN 'omega_app_grants_owner' THEN
+                            a.privilege_type NOT IN (
+                                'INSERT', 'SELECT', 'UPDATE', 'DELETE',
+                                'TRUNCATE', 'REFERENCES', 'TRIGGER')
+                        WHEN 'omega_console' THEN a.privilege_type <> 'SELECT'
+                        WHEN 'omega_refinement' THEN a.privilege_type <> 'SELECT'
+                        WHEN 'omega_workspace' THEN a.privilege_type <> 'SELECT'
+                        ELSE TRUE
+                    END
+               )
+        ) OR EXISTS (
+            SELECT 1 FROM (VALUES
+                ('omega_console'), ('omega_refinement'), ('omega_workspace')
+            ) expected(role_name)
+             WHERE NOT pg_catalog.has_table_privilege(
+                 expected.role_name,
+                 pg_catalog.format('public.%I', authority_table),
+                 'SELECT')
+        ) THEN
+            RAISE EXCEPTION 'analytic app authority ACL differs from exact contract: %',
+                authority_table USING ERRCODE = '42501';
+        END IF;
+    END LOOP;
+END
+$authority_acl_exact$;
+
 
 -- ── reconciliation ─────────────────────────────────────────────────────────
 -- Takes an app name and nothing else. Everything that decides the outcome —
@@ -275,7 +480,7 @@ ALTER TABLE public.analytic_app_dataset_grant_events OWNER TO omega_app_grants_o
 --
 -- p_expected_digest is advisory: the caller may state which revision it
 -- believes is current, and a mismatch aborts. It never selects the datasets.
-CREATE OR REPLACE FUNCTION public.reconcile_analytic_app_dataset_grants(
+CREATE FUNCTION public.reconcile_analytic_app_dataset_grants(
     p_app_name TEXT,
     p_expected_digest TEXT DEFAULT NULL
 ) RETURNS TABLE (dataset_name TEXT, action TEXT)
@@ -420,7 +625,7 @@ GRANT EXECUTE ON FUNCTION public.reconcile_analytic_app_dataset_grants(TEXT, TEX
 -- ── revocation ─────────────────────────────────────────────────────────────
 -- Everything a cartridge granted in this scope, in one statement. Called when
 -- an installation stops being ready, in that same transaction.
-CREATE OR REPLACE FUNCTION public.revoke_analytic_app_cartridge_grants(
+CREATE FUNCTION public.revoke_analytic_app_cartridge_grants(
     p_cartridge_id TEXT,
     p_reason TEXT DEFAULT 'installation_not_ready'
 ) RETURNS BIGINT
@@ -474,7 +679,7 @@ GRANT EXECUTE ON FUNCTION public.revoke_analytic_app_cartridge_grants(TEXT, TEXT
 -- One query answers "may this app read this dataset, right now". Reading the
 -- grant and then checking the installation separately is a TOCTOU window: the
 -- cartridge can stop being ready between the two.
-CREATE OR REPLACE FUNCTION public.analytic_app_granted_datasets(
+CREATE FUNCTION public.analytic_app_granted_datasets(
     p_app_name TEXT,
     p_manifest_digest TEXT
 ) RETURNS TABLE (dataset_name TEXT)
@@ -515,3 +720,73 @@ REVOKE ALL ON FUNCTION public.analytic_app_granted_datasets(TEXT, TEXT)
     FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.analytic_app_granted_datasets(TEXT, TEXT)
     TO omega_console, omega_refinement, omega_workspace;
+
+
+-- CREATE OR REPLACE preserves an existing function ACL. The signatures above
+-- are therefore required to be absent and are created without OR REPLACE. This
+-- final inventory is a second, direct proof that no pre-seeded cartridge role,
+-- PUBLIC, or other principal retained EXECUTE on a SECURITY DEFINER boundary.
+DO $authority_function_acl_exact$
+DECLARE
+    authority_function REGPROCEDURE;
+    function_signature TEXT;
+    expected_executors TEXT[];
+    expected_executor TEXT;
+BEGIN
+    FOR function_signature, expected_executors IN
+        SELECT * FROM (VALUES
+            ('public.reconcile_analytic_app_dataset_grants(text,text)',
+             ARRAY['omega_console']::TEXT[]),
+            ('public.revoke_analytic_app_cartridge_grants(text,text)',
+             ARRAY['omega_console']::TEXT[]),
+            ('public.analytic_app_granted_datasets(text,text)',
+             ARRAY['omega_console', 'omega_refinement', 'omega_workspace']::TEXT[])
+        ) AS expected(signature, executors)
+    LOOP
+        authority_function := pg_catalog.to_regprocedure(function_signature);
+        IF authority_function IS NULL OR EXISTS (
+            SELECT 1
+              FROM pg_catalog.pg_proc p
+             WHERE p.oid = authority_function
+               AND (p.proowner <> (
+                        SELECT r.oid FROM pg_catalog.pg_roles r
+                         WHERE r.rolname = 'omega_app_grants_owner')
+                    OR p.prosecdef IS NOT TRUE
+                    OR p.prokind <> 'f')
+        ) OR EXISTS (
+            SELECT 1
+              FROM pg_catalog.pg_proc p
+              CROSS JOIN LATERAL pg_catalog.aclexplode(
+                  COALESCE(p.proacl, pg_catalog.acldefault('f', p.proowner))
+              ) a
+             WHERE p.oid = authority_function
+               AND (a.privilege_type <> 'EXECUTE'
+                    OR a.grantee = 0
+                    OR (a.is_grantable AND pg_catalog.pg_get_userbyid(a.grantee)
+                        <> 'omega_app_grants_owner')
+                    OR pg_catalog.pg_get_userbyid(a.grantee)
+                       <> ALL(expected_executors || ARRAY['omega_app_grants_owner']))
+        ) THEN
+            RAISE EXCEPTION 'analytic app authority function ACL differs from exact contract: %',
+                function_signature USING ERRCODE = '42501';
+        END IF;
+        FOREACH expected_executor IN ARRAY expected_executors LOOP
+            IF NOT EXISTS (
+                SELECT 1
+                  FROM pg_catalog.pg_proc p
+                  CROSS JOIN LATERAL pg_catalog.aclexplode(
+                      COALESCE(p.proacl, pg_catalog.acldefault('f', p.proowner))
+                  ) a
+                  JOIN pg_catalog.pg_roles r ON r.oid = a.grantee
+                 WHERE p.oid = authority_function
+                   AND r.rolname = expected_executor
+                   AND a.privilege_type = 'EXECUTE'
+                   AND NOT a.is_grantable
+            ) THEN
+                RAISE EXCEPTION 'analytic app authority function executor is missing: % / %',
+                    function_signature, expected_executor USING ERRCODE = '42501';
+            END IF;
+        END LOOP;
+    END LOOP;
+END
+$authority_function_acl_exact$;

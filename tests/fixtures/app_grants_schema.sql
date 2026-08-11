@@ -1,7 +1,7 @@
 -- Minimal slice of the real schema the app-grant tests need.
 --
 -- Mirrors infra/init: tenants/workspaces (13_rbac_models), datasets
--- (00_schema + 23 + 99zd), analytic_apps (08/10), cartridge_installations
+-- (00_schema + 23 + 99zd), analytic_apps (08/10 + 99w), cartridge_installations
 -- (73_marketplace_installations) and the RLS helper (99e). Kept small on
 -- purpose so CI can stand it up in seconds; the objects under test come from
 -- the real 99zzt and 99zzu, applied on top of this.
@@ -22,7 +22,7 @@ CREATE TABLE roles (id SERIAL PRIMARY KEY, name TEXT UNIQUE NOT NULL);
 CREATE TABLE tenants (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name TEXT UNIQUE NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
 CREATE TABLE workspaces (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE, name TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), CONSTRAINT uq_workspaces_tenant_name UNIQUE (tenant_id, name));
 CREATE TABLE datasets (name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', layer TEXT NOT NULL, cartridge TEXT NOT NULL DEFAULT '', workspace_id UUID, tenant_id UUID REFERENCES tenants(id) ON DELETE SET NULL, scope_status TEXT NOT NULL DEFAULT 'scoped', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), CONSTRAINT datasets_workspace_name_key UNIQUE (workspace_id, name));
-CREATE TABLE analytic_apps (name TEXT PRIMARY KEY, title TEXT NOT NULL, html TEXT NOT NULL, description TEXT, cartridge_id TEXT, created_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL, visibility TEXT NOT NULL DEFAULT 'private', datasets_used TEXT[]);
+CREATE TABLE analytic_apps (name TEXT PRIMARY KEY, title TEXT NOT NULL, html TEXT NOT NULL, description TEXT, cartridge_id TEXT, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(), created_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL, visibility TEXT NOT NULL DEFAULT 'private', datasets_used TEXT[], tenant_id UUID REFERENCES tenants(id) ON DELETE SET NULL, workspace_id UUID REFERENCES workspaces(id) ON DELETE SET NULL, scope_status TEXT NOT NULL DEFAULT 'legacy_unscoped', CONSTRAINT analytic_apps_scope_status_check CHECK (scope_status IN ('scoped', 'platform_template', 'platform_only', 'legacy_unscoped')) NOT VALID);
 CREATE TABLE cartridges (id TEXT PRIMARY KEY);
 CREATE TABLE marketplace_products (id TEXT PRIMARY KEY);
 CREATE TABLE cartridge_installations (id TEXT PRIMARY KEY, tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE, workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE, cartridge_id TEXT NOT NULL REFERENCES cartridges(id) ON DELETE CASCADE, status TEXT NOT NULL DEFAULT 'ready');

@@ -21,6 +21,7 @@ These tests pin the contract:
      healthcheck and pair-keys plumbed.
   5. Migration 37 creates the role.
 """
+
 from __future__ import annotations
 
 import re
@@ -31,6 +32,7 @@ CART_DIR = REPO_ROOT / "cartridges" / "replicon"
 
 
 # ── 1. Cartridge present and intact ─────────────────────────────────────────
+
 
 def test_replicon_cartridge_directory_exists():
     assert CART_DIR.is_dir(), "cartridges/replicon/ missing"
@@ -76,16 +78,18 @@ def test_replicon_entities_yaml_has_eighteen_entities():
     """Original ZIP shipped 18 entities. If the YAML drifts (someone
     edits it locally and forgets to commit), this fails."""
     import yaml
+
     src = (CART_DIR / "app" / "config" / "entities.yaml").read_text(encoding="utf-8")
     data = yaml.safe_load(src)
     entities = data.get("entities") if isinstance(data, dict) else data
     assert entities, "entities.yaml is empty / unreadable"
-    assert len(entities) >= 17, (
-        f"expected at least 17 Replicon entities, got {len(entities)}"
-    )
+    assert (
+        len(entities) >= 17
+    ), f"expected at least 17 Replicon entities, got {len(entities)}"
 
 
 # ── 2. _get_connection reads Vault, not Airflow ─────────────────────────────
+
 
 def test_replicon_extract_get_connection_reads_vault():
     src = (CART_DIR / "dags" / "replicon_extract.py").read_text(encoding="utf-8")
@@ -104,7 +108,8 @@ def test_replicon_extract_does_not_use_airflow_basehook():
     # The legacy BaseHook lookup must be gone from _get_connection.
     func = re.search(
         r"def _get_connection\(.*?\n(?=\n\ndef|\nclass|\Z)",
-        src, re.DOTALL,
+        src,
+        re.DOTALL,
     )
     assert func, "could not locate _get_connection in replicon_extract.py"
     assert "BaseHook" not in func.group(0), (
@@ -114,6 +119,7 @@ def test_replicon_extract_does_not_use_airflow_basehook():
 
 
 # ── 3. Mock + zombie DAGs are gone ─────────────────────────────────────────
+
 
 def test_replicon_mock_directory_is_gone():
     mock = REPO_ROOT / "infra" / "replicon-mock"
@@ -129,13 +135,12 @@ def test_replicon_mock_not_in_compose_services():
     # Comments are allowed (we left a v1.40 note documenting the removal),
     # but no service definition or build context can mention it.
     code_lines = [
-        line for line in src.splitlines()
-        if not line.lstrip().startswith("#")
+        line for line in src.splitlines() if not line.lstrip().startswith("#")
     ]
     code = "\n".join(code_lines)
-    assert "replicon-mock" not in code, (
-        "docker-compose.yml still has live references to replicon-mock"
-    )
+    assert (
+        "replicon-mock" not in code
+    ), "docker-compose.yml still has live references to replicon-mock"
 
 
 def test_replicon_zombie_dags_are_removed():
@@ -147,7 +152,9 @@ def test_replicon_zombie_dags_are_removed():
             "replicon_ses_inbox_import.py",
             "replicon_outlook_audit_report_import.py",
         }
-        leftovers = [p for p in airflow_dags.glob("replicon_*.py") if p.name not in allowed]
+        leftovers = [
+            p for p in airflow_dags.glob("replicon_*.py") if p.name not in allowed
+        ]
         assert not leftovers, (
             f"zombie Replicon DAGs still in airflow/dags/: "
             f"{[p.name for p in leftovers]}."
@@ -156,14 +163,14 @@ def test_replicon_zombie_dags_are_removed():
 
 # ── 4. Replicon service wired into compose ──────────────────────────────────
 
+
 def test_replicon_service_in_local_compose():
     import yaml
+
     with (REPO_ROOT / "infra" / "docker-compose.yml").open("r", encoding="utf-8") as f:
         compose = yaml.safe_load(f)
     services = compose.get("services", {}) or {}
-    assert "replicon" in services, (
-        "docker-compose.yml must define a `replicon` service"
-    )
+    assert "replicon" in services, "docker-compose.yml must define a `replicon` service"
     svc = services["replicon"]
     # Healthcheck.
     assert svc.get("healthcheck"), "replicon service must have a healthcheck"
@@ -180,9 +187,7 @@ def test_replicon_service_in_local_compose():
         "FIELD_ENCRYPTION_KEY",
         "DATABASE_URL",
     ):
-        assert key in env_keys, (
-            f"replicon service environment missing {key}"
-        )
+        assert key in env_keys, f"replicon service environment missing {key}"
     # Least-privilege role on DATABASE_URL (no postgres superuser).
     db_url = env.get("DATABASE_URL", "") if isinstance(env, dict) else ""
     assert "://omega_cartridge_replicon:" in db_url, (
@@ -199,16 +204,19 @@ def test_airflow_services_mount_replicon_dags():
     must bind-mount the cartridge's dags directory so Airflow picks
     them up alongside the SAP DAGs."""
     local = (REPO_ROOT / "infra" / "docker-compose.yml").read_text(encoding="utf-8")
-    aws = (REPO_ROOT / "infra" / "terraform" / "deploy" / "docker-compose.aws.yml").read_text(encoding="utf-8")
-    assert "cartridges/replicon/dags:/opt/airflow/dags/replicon" in local, (
-        "local compose missing replicon DAG bind-mount"
-    )
-    assert "cartridges/replicon/dags:/opt/airflow/dags/replicon" in aws, (
-        "AWS compose missing replicon DAG bind-mount"
-    )
+    aws = (
+        REPO_ROOT / "infra" / "terraform" / "deploy" / "docker-compose.aws.yml"
+    ).read_text(encoding="utf-8")
+    assert (
+        "cartridges/replicon/dags:/opt/airflow/dags/replicon" in local
+    ), "local compose missing replicon DAG bind-mount"
+    assert (
+        "cartridges/replicon/dags:/opt/airflow/dags/replicon" in aws
+    ), "AWS compose missing replicon DAG bind-mount"
 
 
 # ── 5. Migration 37: role + grants ──────────────────────────────────────────
+
 
 def test_migration_37_creates_replicon_role():
     mig = REPO_ROOT / "infra" / "init" / "37_replicon_role_and_tables.sql"
@@ -223,38 +231,48 @@ def test_migration_37_creates_replicon_role():
 
 
 def test_migration_37_grants_minimum_operational_set():
-    src = (
-        REPO_ROOT / "infra" / "init" / "37_replicon_role_and_tables.sql"
-    ).read_text(encoding="utf-8")
+    src = (REPO_ROOT / "infra" / "init" / "37_replicon_role_and_tables.sql").read_text(
+        encoding="utf-8"
+    )
     # The cartridge needs to write its own catalog + run/watermark rows.
     for tbl in (
-        "cartridges", "entity_config", "kb_config",
-        "entity_watermarks", "extraction_runs", "kb_runs",
-        "jobs", "run_logs",
+        "cartridges",
+        "entity_config",
+        "kb_config",
+        "entity_watermarks",
+        "extraction_runs",
+        "kb_runs",
+        "jobs",
+        "run_logs",
     ):
         assert tbl in src, f"migration 37 missing GRANT on {tbl!r}"
 
 
 def test_migration_37_revokes_sensitive_tables():
-    src = (
-        REPO_ROOT / "infra" / "init" / "37_replicon_role_and_tables.sql"
-    ).read_text(encoding="utf-8")
+    src = (REPO_ROOT / "infra" / "init" / "37_replicon_role_and_tables.sql").read_text(
+        encoding="utf-8"
+    )
     for tbl in (
-        "users", "tenants", "decisions", "vault_entries",
-        "audit_events", "login_attempts",
+        "users",
+        "tenants",
+        "decisions",
+        "vault_entries",
+        "audit_events",
+        "login_attempts",
     ):
         assert f"'{tbl}'" in src, (
-            f"migration 37 must hard-lock {tbl!r} from "
-            f"omega_cartridge_replicon"
+            f"migration 37 must hard-lock {tbl!r} from " f"omega_cartridge_replicon"
         )
 
 
-def test_apply_db_migrations_passes_replicon_password():
-    src = (
-        REPO_ROOT / "scripts" / "apply_db_migrations.sh"
-    ).read_text(encoding="utf-8")
-    assert "OMEGA_CARTRIDGE_REPLICON_PASSWORD" in src
-    assert "app.omega_cartridge_replicon_password" in src
+def test_apply_db_migrations_does_not_put_replicon_password_in_argv():
+    src = (REPO_ROOT / "scripts" / "apply_db_migrations.sh").read_text(encoding="utf-8")
+    compose = (REPO_ROOT / "infra/docker-compose.yml").read_text(encoding="utf-8")
+    assert "OMEGA_CARTRIDGE_REPLICON_PASSWORD" in compose
+    assert "app.omega_cartridge_replicon_password" in compose
+    assert "OMEGA_CARTRIDGE_REPLICON_PASSWORD" not in src
+    assert "app.omega_cartridge_replicon_password" not in src
+    assert 'exec -T -e "PGOPTIONS=' not in src
 
 
 def test_bootstrap_generates_replicon_secrets():
@@ -265,12 +283,12 @@ def test_bootstrap_generates_replicon_secrets():
         "INTERNAL_API_KEY_REPLICON_TO_MCP_INFRA",
         "INTERNAL_API_KEY_REPLICON_TO_REFINEMENT",
     ):
-        assert re.search(rf'^{var}="\$\(openssl rand', src, re.MULTILINE), (
-            f"bootstrap.sh must generate {var}"
-        )
-        assert re.search(rf"^{var}=\$\{{{var}\}}", src, re.MULTILINE), (
-            f"bootstrap.sh must persist {var} in the env file"
-        )
+        assert re.search(
+            rf'^{var}="\$\(openssl rand', src, re.MULTILINE
+        ), f"bootstrap.sh must generate {var}"
+        assert re.search(
+            rf"^{var}=\$\{{{var}\}}", src, re.MULTILINE
+        ), f"bootstrap.sh must persist {var} in the env file"
 
 
 def test_env_example_documents_replicon_secrets():

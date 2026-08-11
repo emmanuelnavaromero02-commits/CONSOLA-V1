@@ -448,6 +448,11 @@ security-scan:
 	@test -x "$(PIP_AUDIT)" || { echo "$(PIP_AUDIT) not found. Install dev deps into .venv first."; exit 1; }
 	$(BANDIT) -r console workspace vault refinement mcp-infra cartridges \
 		scripts/ci_changed_areas.py scripts/ci_control_room_paths.py \
+		scripts/reconcile_pipeline_runs.py \
+		scripts/gcp/runtime_contract.py scripts/gcp/safe_io.py \
+		scripts/migration_guard.py scripts/generate_migration_manifests.py \
+		scripts/migration_backend_control.py \
+		scripts/generate_successfactors_apps_seed.py scripts/run_db_migrations.py \
 		--severity-level medium --confidence-level high
 	$(PIP_AUDIT)
 	npm --prefix console-next audit
@@ -480,7 +485,10 @@ verify-release:
 	$(MAKE) e2e
 
 migrate:
-	@bash scripts/apply_db_migrations.sh
+	@OMEGA_MIGRATION_BOOTSTRAP_MODE=1 \
+	 OMEGA_MIGRATION_ALLOW_BOOTSTRAP_LEDGER=1 \
+	 OMEGA_MIGRATION_ENVIRONMENT=local \
+	 scripts/run_db_migrations.py
 
 reconcile-db-passwords:
 	@bash scripts/reconcile_db_passwords.sh

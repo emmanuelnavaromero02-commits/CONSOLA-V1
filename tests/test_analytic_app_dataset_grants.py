@@ -62,7 +62,8 @@ async def _scoped(conn, tenant: str, workspace: str) -> None:
     await conn.execute(
         "SELECT set_config('app.tenant_id', $1, false), "
         "set_config('app.workspace_id', $2, false)",
-        tenant, workspace,
+        tenant,
+        workspace,
     )
 
 
@@ -94,14 +95,16 @@ async def app_conn():
 async def _reconcile(conn, app=APP, expected=None):
     return await conn.fetch(
         "SELECT * FROM public.reconcile_analytic_app_dataset_grants($1, $2)",
-        app, expected,
+        app,
+        expected,
     )
 
 
 async def _active_digest(conn, app=APP):
     return await conn.fetchval(
         "SELECT manifest_digest FROM public.analytic_app_manifests "
-        "WHERE app_name = $1 AND revision = 'active'", app,
+        "WHERE app_name = $1 AND revision = 'active'",
+        app,
     )
 
 
@@ -137,19 +140,27 @@ async def test_temp_tables_cannot_steer_the_definer_function(app_conn):
     )
     await app_conn.execute(
         "INSERT INTO pg_temp.analytic_app_manifest_datasets VALUES "
-        "($1,repeat('a',64),$2)", APP, SENSITIVE,
+        "($1,repeat('a',64),$2)",
+        APP,
+        SENSITIVE,
     )
     await app_conn.execute(
         "INSERT INTO pg_temp.datasets VALUES ($1,'gold','sap_successfactors',$2::uuid,$3::uuid,'scoped')",
-        SENSITIVE, WS_A1, TENANT_A,
+        SENSITIVE,
+        WS_A1,
+        TENANT_A,
     )
 
     granted = [r["dataset_name"] for r in await _reconcile(app_conn)]
     assert SENSITIVE not in granted
-    assert await app_conn.fetchval(
-        "SELECT count(*) FROM public.analytic_app_dataset_grants "
-        "WHERE dataset_name = $1 AND revoked_at IS NULL", SENSITIVE,
-    ) == 0
+    assert (
+        await app_conn.fetchval(
+            "SELECT count(*) FROM public.analytic_app_dataset_grants "
+            "WHERE dataset_name = $1 AND revoked_at IS NULL",
+            SENSITIVE,
+        )
+        == 0
+    )
 
 
 async def test_the_old_permissive_signature_is_gone(app_conn):
@@ -159,7 +170,11 @@ async def test_the_old_permissive_signature_is_gone(app_conn):
         await app_conn.fetch(
             "SELECT * FROM public.reconcile_analytic_app_dataset_grants"
             "($1,$2,$3::text[],$4,$5)",
-            APP, "sap_successfactors", [SENSITIVE], "a" * 64, "attacker",
+            APP,
+            "sap_successfactors",
+            [SENSITIVE],
+            "a" * 64,
+            "attacker",
         )
 
 
@@ -183,6 +198,77 @@ async def test_definer_functions_are_not_owned_by_a_superuser(conn):
         assert not any("public" in item for item in config), row["proname"]
 
 
+async def test_definer_function_execute_acls_are_exact(conn):
+    expected = {
+        "reconcile_analytic_app_dataset_grants": {"omega_console"},
+        "revoke_analytic_app_cartridge_grants": {"omega_console"},
+        "analytic_app_granted_datasets": {
+            "omega_console",
+            "omega_refinement",
+            "omega_workspace",
+        },
+    }
+    rows = await conn.fetch("""
+        SELECT p.proname,
+               CASE WHEN a.grantee = 0 THEN 'PUBLIC'
+                    ELSE pg_get_userbyid(a.grantee) END AS grantee,
+               a.privilege_type,
+               a.is_grantable
+          FROM pg_proc p
+          JOIN pg_namespace n ON n.oid = p.pronamespace
+          CROSS JOIN LATERAL aclexplode(
+              COALESCE(p.proacl, acldefault('f', p.proowner))) a
+         WHERE n.nspname = 'public'
+           AND p.proname = ANY($1::text[])
+    """, list(expected))
+    observed = {name: set() for name in expected}
+    for row in rows:
+        assert row["privilege_type"] == "EXECUTE", row
+        if row["grantee"] != "omega_app_grants_owner":
+            assert row["is_grantable"] is False, row
+            observed[row["proname"]].add(row["grantee"])
+    assert observed == expected
+
+
+async def test_authority_sequence_acls_are_owner_only(conn):
+    rows = await conn.fetch("""
+        SELECT c.relname, pg_get_userbyid(c.relowner) AS owner,
+               ARRAY(
+                   SELECT CASE WHEN a.grantee = 0 THEN 'PUBLIC'
+                               ELSE pg_get_userbyid(a.grantee) END
+                     FROM aclexplode(
+                         COALESCE(c.relacl, acldefault('S', c.relowner))) a
+                    WHERE a.grantee <> c.relowner
+                    ORDER BY 1
+               ) AS non_owner_grantees
+          FROM pg_class c
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = 'public'
+           AND c.relname = ANY($1::text[])
+           AND c.relkind = 'S'
+         ORDER BY c.relname
+    """, [
+        "analytic_app_dataset_grant_events_id_seq",
+        "analytic_app_dataset_grants_id_seq",
+    ])
+    assert len(rows) == 2
+    for row in rows:
+        assert row["owner"] == "omega_app_grants_owner"
+        assert list(row["non_owner_grantees"]) == []
+        for runtime_role in (
+            "omega_console",
+            "omega_refinement",
+            "omega_workspace",
+            "omega_mcp_infra",
+            "omega_airflow_dag",
+        ):
+            assert not await conn.fetchval(
+                "SELECT has_sequence_privilege($1, $2, 'USAGE')",
+                runtime_role,
+                f"public.{row['relname']}",
+            )
+
+
 async def test_the_owner_role_cannot_log_in_or_escalate(conn):
     row = await conn.fetchrow(
         "SELECT rolcanlogin, rolsuper, rolbypassrls, rolcreaterole, rolcreatedb "
@@ -201,7 +287,11 @@ async def test_no_application_role_may_write_the_ledger_or_the_registry(app_conn
         "repeat('a',64),'packaged_manifest','server:packaged_manifest')",
         "UPDATE public.analytic_app_dataset_grants SET revoked_at = NULL",
         "DELETE FROM public.analytic_app_dataset_grants",
+        "TRUNCATE public.analytic_app_dataset_grants",
         f"INSERT INTO public.analytic_app_manifest_datasets VALUES('{APP}',repeat('a',64),'{SENSITIVE}')",
+        "UPDATE public.analytic_app_manifests SET revision = 'superseded'",
+        "DELETE FROM public.analytic_app_manifest_datasets",
+        "TRUNCATE public.analytic_app_manifests CASCADE",
     ):
         with pytest.raises(asyncpg.InsufficientPrivilegeError):
             await app_conn.execute(statement)
@@ -216,8 +306,11 @@ async def test_html_mention_does_not_authorise(conn):
     await _reconcile(conn)
     digest = await _active_digest(conn)
     allowed = await granted_datasets(
-        conn, tenant_id=TENANT_A, workspace_id=WS_A1,
-        app_name=APP, manifest_digest=digest,
+        conn,
+        tenant_id=TENANT_A,
+        workspace_id=WS_A1,
+        app_name=APP,
+        manifest_digest=digest,
     )
     assert SENSITIVE not in allowed
     assert APPROVED in allowed
@@ -227,13 +320,17 @@ async def test_runtime_metadata_does_not_authorise(conn):
     await _scoped(conn, TENANT_A, WS_A1)
     await conn.execute(
         "UPDATE public.analytic_apps SET datasets_used = $1::text[] WHERE name = $2",
-        [APPROVED, SENSITIVE], APP,
+        [APPROVED, SENSITIVE],
+        APP,
     )
     await _reconcile(conn)
     digest = await _active_digest(conn)
     allowed = await granted_datasets(
-        conn, tenant_id=TENANT_A, workspace_id=WS_A1,
-        app_name=APP, manifest_digest=digest,
+        conn,
+        tenant_id=TENANT_A,
+        workspace_id=WS_A1,
+        app_name=APP,
+        manifest_digest=digest,
     )
     assert SENSITIVE not in allowed
 
@@ -267,22 +364,31 @@ async def test_a_reviewed_manifest_authorises_exactly_its_datasets(conn):
     assert all(r["action"] == "granted" for r in actions)
     digest = await _active_digest(conn)
     allowed = await granted_datasets(
-        conn, tenant_id=TENANT_A, workspace_id=WS_A1,
-        app_name=APP, manifest_digest=digest,
+        conn,
+        tenant_id=TENANT_A,
+        workspace_id=WS_A1,
+        app_name=APP,
+        manifest_digest=digest,
     )
     registry = [
-        r["dataset_name"] for r in await conn.fetch(
+        r["dataset_name"]
+        for r in await conn.fetch(
             "SELECT dataset_name FROM public.analytic_app_manifest_datasets "
             "WHERE app_name = $1 AND manifest_digest = $2 ORDER BY dataset_name",
-            APP, digest,
+            APP,
+            digest,
         )
     ]
     # Only the registry datasets that exist in this workspace.
     assert set(allowed) <= set(registry)
     assert APPROVED in allowed
     assert await has_grant(
-        conn, tenant_id=TENANT_A, workspace_id=WS_A1, app_name=APP,
-        manifest_digest=digest, dataset=APPROVED,
+        conn,
+        tenant_id=TENANT_A,
+        workspace_id=WS_A1,
+        app_name=APP,
+        manifest_digest=digest,
+        dataset=APPROVED,
     )
 
 
@@ -304,18 +410,28 @@ async def test_leaving_ready_revokes_immediately(conn):
     await _reconcile(conn)
     digest = await _active_digest(conn)
     assert await granted_datasets(
-        conn, tenant_id=TENANT_A, workspace_id=WS_A1,
-        app_name=APP, manifest_digest=digest,
+        conn,
+        tenant_id=TENANT_A,
+        workspace_id=WS_A1,
+        app_name=APP,
+        manifest_digest=digest,
     )
     revoked = await conn.fetchval(
         "SELECT public.revoke_analytic_app_cartridge_grants($1, $2)",
-        "sap_successfactors", "installation_paused",
+        "sap_successfactors",
+        "installation_paused",
     )
     assert revoked > 0
-    assert await granted_datasets(
-        conn, tenant_id=TENANT_A, workspace_id=WS_A1,
-        app_name=APP, manifest_digest=digest,
-    ) == []
+    assert (
+        await granted_datasets(
+            conn,
+            tenant_id=TENANT_A,
+            workspace_id=WS_A1,
+            app_name=APP,
+            manifest_digest=digest,
+        )
+        == []
+    )
 
 
 async def test_a_not_ready_installation_blocks_the_read_without_revoking(conn):
@@ -326,12 +442,20 @@ async def test_a_not_ready_installation_blocks_the_read_without_revoking(conn):
     digest = await _active_digest(conn)
     await conn.execute(
         "UPDATE public.cartridge_installations SET status = 'paused' "
-        "WHERE tenant_id = $1::uuid AND workspace_id = $2::uuid", TENANT_A, WS_A1,
+        "WHERE tenant_id = $1::uuid AND workspace_id = $2::uuid",
+        TENANT_A,
+        WS_A1,
     )
-    assert await granted_datasets(
-        conn, tenant_id=TENANT_A, workspace_id=WS_A1,
-        app_name=APP, manifest_digest=digest,
-    ) == []
+    assert (
+        await granted_datasets(
+            conn,
+            tenant_id=TENANT_A,
+            workspace_id=WS_A1,
+            app_name=APP,
+            manifest_digest=digest,
+        )
+        == []
+    )
 
 
 async def test_returning_to_ready_reconciles_without_resurrecting(conn):
@@ -342,7 +466,8 @@ async def test_returning_to_ready_reconciles_without_resurrecting(conn):
     )
     await conn.fetchval(
         "SELECT public.revoke_analytic_app_cartridge_grants($1, $2)",
-        "sap_successfactors", "installation_paused",
+        "sap_successfactors",
+        "installation_paused",
     )
     await _reconcile(conn)
     after = await conn.fetchval(
@@ -350,9 +475,12 @@ async def test_returning_to_ready_reconciles_without_resurrecting(conn):
     )
     assert after == before
     # The revoked rows stay revoked; new rows were issued instead.
-    assert await conn.fetchval(
-        "SELECT count(*) FROM public.analytic_app_dataset_grants WHERE revoked_at IS NOT NULL"
-    ) == before
+    assert (
+        await conn.fetchval(
+            "SELECT count(*) FROM public.analytic_app_dataset_grants WHERE revoked_at IS NOT NULL"
+        )
+        == before
+    )
 
 
 async def test_scope_isolation(conn):
@@ -363,10 +491,16 @@ async def test_scope_isolation(conn):
     digest = await _active_digest(conn)
     for tenant, workspace in ((TENANT_A, WS_A2), (TENANT_B, WS_B2)):
         await _scoped(conn, tenant, workspace)
-        assert await granted_datasets(
-            conn, tenant_id=tenant, workspace_id=workspace,
-            app_name=APP, manifest_digest=digest,
-        ) == []
+        assert (
+            await granted_datasets(
+                conn,
+                tenant_id=tenant,
+                workspace_id=workspace,
+                app_name=APP,
+                manifest_digest=digest,
+            )
+            == []
+        )
 
 
 async def test_rls_hides_other_scopes_from_the_application_role(app_conn):
@@ -377,9 +511,12 @@ async def test_rls_hides_other_scopes_from_the_application_role(app_conn):
     )
     assert mine > 0
     await _scoped(app_conn, TENANT_B, WS_B2)
-    assert await app_conn.fetchval(
-        "SELECT count(*) FROM public.analytic_app_dataset_grants"
-    ) == 0
+    assert (
+        await app_conn.fetchval(
+            "SELECT count(*) FROM public.analytic_app_dataset_grants"
+        )
+        == 0
+    )
 
 
 # --- registry integrity -----------------------------------------------------
@@ -401,8 +538,11 @@ async def test_the_registry_matches_the_packaged_manifests(conn):
 
 async def test_drift_report_describes_but_never_widens():
     report = drift_report(
-        granted=[APPROVED], referenced=[APPROVED, SENSITIVE],
-        manifest_datasets=[APPROVED], served="a" * 64, packaged="b" * 64,
+        granted=[APPROVED],
+        referenced=[APPROVED, SENSITIVE],
+        manifest_datasets=[APPROVED],
+        served="a" * 64,
+        packaged="b" * 64,
     )
     assert report["requested_but_not_granted"] == [SENSITIVE]
     assert report["manifest_drift"] is True
@@ -413,12 +553,16 @@ async def test_packaged_digest_covers_the_html():
     manifests = load_packaged_manifests()
     one = manifests[APP]
     same = manifest_digest(
-        app_name=one["app_name"], cartridge_id=one["cartridge_id"],
-        datasets=one["datasets"], html=one["packaged_html"],
+        app_name=one["app_name"],
+        cartridge_id=one["cartridge_id"],
+        datasets=one["datasets"],
+        html=one["packaged_html"],
     )
     edited = manifest_digest(
-        app_name=one["app_name"], cartridge_id=one["cartridge_id"],
-        datasets=one["datasets"], html=one["packaged_html"] + "<!-- x -->",
+        app_name=one["app_name"],
+        cartridge_id=one["cartridge_id"],
+        datasets=one["datasets"],
+        html=one["packaged_html"] + "<!-- x -->",
     )
     assert same == one["packaged_digest"]
     assert edited != one["packaged_digest"]

@@ -59,7 +59,7 @@ def _fsync_dir(path: Path) -> None:
 
 def _require_private_parent(path: Path) -> None:
     parent = path.parent
-    info = parent.stat(follow_symlinks=False)
+    info = parent.lstat()
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid():
         _die("output parent must be a directory owned by the invoking identity")
     if info.st_mode & 0o022:
@@ -332,7 +332,7 @@ def command_safe_extract(args: argparse.Namespace) -> int:
         _require_private_parent(destination)
         destination.mkdir(mode=0o700)
         _fsync_dir(destination.parent)
-    info = destination.stat(follow_symlinks=False)
+    info = destination.lstat()
     if info.st_uid != os.geteuid() or info.st_mode & 0o077:
         _die("extraction destination must be private and caller-owned")
 
@@ -427,9 +427,8 @@ def _tree_digest(
         resolved_root = root.resolve(strict=True)
     except OSError:
         _die("release tree root must be a regular directory")
-    if (
-        not stat.S_ISDIR(root_info.st_mode)
-        or resolved_root != Path(os.path.abspath(root))
+    if not stat.S_ISDIR(root_info.st_mode) or resolved_root != Path(
+        os.path.abspath(root)
     ):
         _die("release tree root must be a regular non-symlink directory")
 
@@ -485,7 +484,7 @@ def command_tree_sha256(args: argparse.Namespace) -> int:
 def _read_env(path: Path, forbidden_prefixes: tuple[str, ...]) -> list[tuple[str, str]]:
     if path.is_symlink() or not path.is_file():
         _die("env input must be a regular non-symlink file")
-    info = path.stat(follow_symlinks=False)
+    info = path.lstat()
     if info.st_size > MAX_ENV_BYTES:
         _die("env input exceeds the canonical size limit")
     if info.st_mode & 0o077:
@@ -661,10 +660,21 @@ def command_fsync_dir(args: argparse.Namespace) -> int:
 def command_fsync_file(args: argparse.Namespace) -> int:
     for raw in args.path:
         path = Path(raw)
-        if not path.is_absolute() or path.is_symlink() or not path.is_file():
+        if not path.is_absolute():
             _die("fsync target must be an absolute regular file")
-        descriptor = os.open(path, os.O_RDONLY)
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
         try:
+            descriptor = os.open(path, flags)
+        except OSError as exc:
+            _die(f"fsync target cannot be opened safely: {exc}")
+        try:
+            info = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_uid != os.geteuid()
+                or info.st_nlink != 1
+            ):
+                _die("fsync target ownership, type, or link count is unsafe")
             os.fsync(descriptor)
         finally:
             os.close(descriptor)
