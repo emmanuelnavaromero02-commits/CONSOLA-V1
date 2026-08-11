@@ -1,62 +1,103 @@
-"""The seed must stay byte-identical to the cartridge sources.
-
-Migration 87 embeds the app HTML inline so a fresh database can serve the apps
-before the console reconciles from /registry. That copy had silently drifted
-from the cartridge files, so a stale dashboard shipped on first boot. The seed
-is generated now, and this test is what keeps it honest.
-"""
+"""Keep migration 87 immutable and reconcile current apps at runtime."""
 
 from __future__ import annotations
 
-import importlib.util
+import asyncio
+import hashlib
 import json
 import re
+import shutil
 from pathlib import Path
 
-import pytest
+from console.app.services import seed_packaged_apps as packaged_apps
+
 
 REPO = Path(__file__).resolve().parents[1]
 SEED = REPO / "infra" / "init" / "87_sap_successfactors_apps_seed.sql"
 APPS_DIR = REPO / "cartridges" / "sap_successfactors" / "apps"
-GENERATOR = REPO / "scripts" / "generate_successfactors_apps_seed.py"
+BASELINE_MANIFEST = (
+    REPO
+    / "infra"
+    / "migrations"
+    / "manifests"
+    / ("gcp-live-6b12883c5b5ea0537120279ccbee4947137998a2.json")
+)
+RELEASE_MANIFEST = REPO / "infra" / "migrations" / "manifests" / "v1.45.207-beta.json"
+IMMUTABLE_SEED_SHA256 = (
+    "bbd5407ca36c32aa8efd6e4c8d94190d4fd80ea5c867e831a88f54a40887845d"
+)
 APP_NAMES = (
     "sap_successfactors_workforce_overview",
     "sap_successfactors_talent_health",
 )
 
 
-def _generator():
-    spec = importlib.util.spec_from_file_location("sf_seed_generator", GENERATOR)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
+class _Connection:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, tuple[object, ...]]] = []
+
+    async def execute(self, sql: str, *args: object) -> None:
+        self.calls.append((sql, args))
 
 
-def test_seed_matches_the_generator_output():
-    assert SEED.read_text(encoding="utf-8") == _generator().render(), (
-        "87_sap_successfactors_apps_seed.sql is stale; "
-        "run scripts/generate_successfactors_apps_seed.py"
-    )
+class _Acquire:
+    def __init__(self, connection: _Connection) -> None:
+        self.connection = connection
+
+    async def __aenter__(self) -> _Connection:
+        return self.connection
+
+    async def __aexit__(self, *_args: object) -> None:
+        return None
 
 
-@pytest.mark.parametrize("name", APP_NAMES)
-def test_seed_embeds_the_current_html(name):
-    sql = SEED.read_text(encoding="utf-8")
-    html = (APPS_DIR / f"{name}.html").read_text(encoding="utf-8")
-    assert html in sql, f"{name}: embedded HTML differs from the cartridge file"
+class _Pool:
+    def __init__(self, connection: _Connection) -> None:
+        self.connection = connection
+
+    def acquire(self) -> _Acquire:
+        return _Acquire(self.connection)
 
 
-@pytest.mark.parametrize("name", APP_NAMES)
-def test_seed_metadata_matches_the_sidecar(name):
-    sql = SEED.read_text(encoding="utf-8")
-    meta = json.loads((APPS_DIR / f"{name}.json").read_text(encoding="utf-8"))
-    assert f"$seed${meta['title']}$seed$" in sql
-    assert f"$seed${meta['description']}$seed$" in sql
-    assert "{" + ",".join(meta["datasets_used"]) + "}" in sql
+def test_historical_seed_is_byte_exact_in_both_migration_locks() -> None:
+    checksum = hashlib.sha256(SEED.read_bytes()).hexdigest()
+    assert checksum == IMMUTABLE_SEED_SHA256
+    for path in (BASELINE_MANIFEST, RELEASE_MANIFEST):
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        assert (
+            manifest["databases"]["operational"]["87_sap_successfactors_apps_seed.sql"]
+            == IMMUTABLE_SEED_SHA256
+        )
 
 
-def test_seed_registers_exactly_the_two_published_apps():
+def test_runtime_seed_upserts_current_packaged_html(
+    tmp_path: Path, monkeypatch
+) -> None:
+    registry = tmp_path / "registry"
+    runtime_apps = registry / "sap_successfactors" / "apps"
+    runtime_apps.mkdir(parents=True)
+    for name in APP_NAMES:
+        shutil.copy2(APPS_DIR / f"{name}.html", runtime_apps / f"{name}.html")
+        shutil.copy2(APPS_DIR / f"{name}.json", runtime_apps / f"{name}.json")
+    monkeypatch.setattr(packaged_apps, "_REGISTRY", registry)
+
+    connection = _Connection()
+    asyncio.run(packaged_apps.seed_packaged_apps(_Pool(connection)))
+    upserts = {
+        args[0]: (sql, args)
+        for sql, args in connection.calls
+        if sql.lstrip().startswith("INSERT INTO analytic_apps")
+    }
+    assert set(upserts) == set(APP_NAMES)
+    for name in APP_NAMES:
+        sql, args = upserts[name]
+        sidecar = json.loads((APPS_DIR / f"{name}.json").read_text(encoding="utf-8"))
+        assert "ON CONFLICT (name) DO UPDATE" in sql
+        assert args[2] == (APPS_DIR / f"{name}.html").read_text(encoding="utf-8")
+        assert args[5] == sorted(sidecar["datasets_used"])
+
+
+def test_historical_seed_registers_exactly_the_two_published_apps() -> None:
     sql = SEED.read_text(encoding="utf-8")
     inserted = re.findall(r"VALUES \(\$seed\$([a-z_]+)\$seed\$", sql)
-    assert inserted == list(APP_NAMES), "the seed must not invent or drop apps"
+    assert inserted == list(APP_NAMES)
