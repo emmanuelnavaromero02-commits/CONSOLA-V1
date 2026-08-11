@@ -78,9 +78,10 @@ resource "aws_iam_role_policy" "app_bedrock" {
 data "aws_iam_policy_document" "app_secretsmanager" {
   statement {
     actions = ["secretsmanager:GetSecretValue"]
-    resources = [
-      for secret in aws_secretsmanager_secret.app : secret.arn
-    ]
+    resources = concat(
+      [for secret in aws_secretsmanager_secret.app : secret.arn],
+      [aws_secretsmanager_secret.ghcr_pull_credentials.arn],
+    )
   }
 }
 

@@ -62,6 +62,7 @@ _EXACT_PATHS = frozenset(
         "tests/test_aws_beta_operations.py",
         "tests/test_aws_bootstrap_shared_env_boundary.py",
         "tests/test_aws_env_pair_transaction.py",
+        "tests/test_aws_ghcr_private_auth.py",
         "tests/test_aws_evidence_compose_isolation.py",
         "tests/test_aws_evidence_env_isolation.py",
         "tests/test_aws_evidence_update_env.py",
