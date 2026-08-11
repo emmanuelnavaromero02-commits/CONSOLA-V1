@@ -29,7 +29,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       python_runtime: ${{ steps.detect.outputs.python_runtime }}
-      python_deps: ${{ steps.detect.outputs.python_deps }}
+      # PRs stay diff-filtered; every post-merge/scheduled run audits Python deps.
+      python_deps: ${{ github.event_name != 'pull_request' && 'true' || steps.detect.outputs.python_deps }}
       node_deps: ${{ steps.detect.outputs.node_deps }}
       infra: ${{ steps.detect.outputs.infra }}
     steps:
