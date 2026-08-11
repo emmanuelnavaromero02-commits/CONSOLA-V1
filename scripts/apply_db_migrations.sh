@@ -11,6 +11,7 @@ COMPOSE_FILE="${OMEGA_MIGRATION_COMPOSE_FILE:-${ROOT_DIR}/infra/docker-compose.y
 ENV_FILE="${OMEGA_MIGRATION_ENV_FILE:-${ROOT_DIR}/infra/.env}"
 COMPOSE_PROJECT_NAME_VALUE="${OMEGA_MIGRATION_COMPOSE_PROJECT_NAME:-}"
 GUARD="${ROOT_DIR}/scripts/migration_guard.py"
+SAFE_IO="${OMEGA_GCP_SAFE_IO:-${ROOT_DIR}/scripts/gcp/safe_io.py}"
 BASELINE_REF="6b12883c5b5ea0537120279ccbee4947137998a2"
 BASELINE_MANIFEST_DEFAULT="${ROOT_DIR}/infra/migrations/manifests/gcp-live-${BASELINE_REF}.json"
 RELEASE_MANIFEST_DEFAULT="${ROOT_DIR}/infra/migrations/manifests/v1.45.207-beta.json"
@@ -39,25 +40,29 @@ fi
 if [[ ! -x "$GUARD" && ! -f "$GUARD" ]]; then
   fail "migration guard is missing" 11
 fi
+if [[ ! -f "$SAFE_IO" ]]; then
+  fail "safe I/O helper is missing" 11
+fi
+
+# The dotenv file is data for Compose, never executable shell.  Validate its
+# ownership/mode and strict assignment grammar before giving it to Compose;
+# release control-plane inputs are forbidden in that data file.
+export COMPOSE_DISABLE_ENV_FILE=1
+COMPOSE=(docker compose)
+if [[ -e "${ENV_FILE}" || -L "${ENV_FILE}" ]]; then
+  python3 "$SAFE_IO" env-validate \
+    --path "$ENV_FILE" \
+    --forbid-prefix OMEGA_MIGRATION_
+  COMPOSE+=(--env-file "$ENV_FILE")
+fi
 
 if [[ -n "${COMPOSE_PROJECT_NAME_VALUE}" ]]; then
   if [[ ! "${COMPOSE_PROJECT_NAME_VALUE}" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
     fail "invalid OMEGA_MIGRATION_COMPOSE_PROJECT_NAME" 12
   fi
-  COMPOSE=(
-    docker compose --project-name "${COMPOSE_PROJECT_NAME_VALUE}"
-    -f "${COMPOSE_FILE}"
-  )
-else
-  COMPOSE=(docker compose -f "${COMPOSE_FILE}")
+  COMPOSE+=(--project-name "${COMPOSE_PROJECT_NAME_VALUE}")
 fi
-
-if [[ -f "${ENV_FILE}" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "${ENV_FILE}"
-  set +a
-fi
+COMPOSE+=(-f "${COMPOSE_FILE}")
 
 if [[ "${OMEGA_MIGRATION_REQUIRE_EXPLICIT_CONTRACT:-0}" == "1" ]]; then
   required_contract=(
@@ -94,11 +99,6 @@ if [[ "$BOOTSTRAP_MODE" == "1" ]]; then
     fail "bootstrap source-inferred ledger evidence is restricted to local/development/test" 13
   fi
 fi
-EXPECTED_PENDING_EVIDENCE="guarded_transaction"
-if [[ "$BOOTSTRAP_MODE" == "1" ]]; then
-  EXPECTED_PENDING_EVIDENCE="baseline_expected"
-fi
-
 OLD_REF="${OMEGA_MIGRATION_OLD_REF:-${BASELINE_REF}}"
 CANDIDATE_REF="${OMEGA_MIGRATION_CANDIDATE_REF:-}"
 if [[ -z "$CANDIDATE_REF" ]] && git -C "$ROOT_DIR" rev-parse --git-dir >/dev/null 2>&1; then
@@ -125,14 +125,12 @@ CONTRACT_ARGS=(
 
 python3 "$GUARD" verify-manifests "${CONTRACT_ARGS[@]}"
 
-PGOPTIONS_VALUE="-c app.omega_console_password=${OMEGA_CONSOLE_PASSWORD:-} -c app.omega_outcome_binder_password=${OMEGA_OUTCOME_BINDER_PASSWORD:-} -c app.omega_refinement_password=${OMEGA_REFINEMENT_PASSWORD:-} -c app.omega_vault_password=${OMEGA_VAULT_PASSWORD:-} -c app.omega_workspace_password=${OMEGA_WORKSPACE_PASSWORD:-} -c app.omega_mcp_infra_password=${OMEGA_MCP_INFRA_PASSWORD:-} -c app.omega_refinement_gold_password=${OMEGA_REFINEMENT_GOLD_PASSWORD:-} -c app.omega_cartridge_sap_hcm_password=${OMEGA_CARTRIDGE_SAP_HCM_PASSWORD:-} -c app.omega_cartridge_sap_s4_password=${OMEGA_CARTRIDGE_SAP_S4_PASSWORD:-} -c app.omega_cartridge_sap_sf_password=${OMEGA_CARTRIDGE_SAP_SF_PASSWORD:-} -c app.omega_airflow_dag_password=${OMEGA_AIRFLOW_DAG_PASSWORD:-} -c app.omega_airflow_meta_password=${OMEGA_AIRFLOW_META_PASSWORD:-} -c app.omega_superset_meta_password=${OMEGA_SUPERSET_META_PASSWORD:-} -c app.omega_cartridge_replicon_password=${OMEGA_CARTRIDGE_REPLICON_PASSWORD:-} -c app.omega_cartridge_salesforce_password=${OMEGA_CARTRIDGE_SALESFORCE_PASSWORD:-} -c app.omega_cartridge_hubspot_password=${OMEGA_CARTRIDGE_HUBSPOT_PASSWORD:-} -c app.omega_cartridge_banxico_password=${OMEGA_CARTRIDGE_BANXICO_PASSWORD:-} -c app.omega_cartridge_inegi_password=${OMEGA_CARTRIDGE_INEGI_PASSWORD:-} -c app.omega_cartridge_sec_edgar_password=${OMEGA_CARTRIDGE_SEC_EDGAR_PASSWORD:-}"
-GOLD_PGOPTIONS_VALUE="-c app.omega_refinement_gold_password=${OMEGA_REFINEMENT_GOLD_PASSWORD:-} -c app.omega_gold_publisher_password=${OMEGA_GOLD_PUBLISHER_PASSWORD:-} -c app.omega_gold_verifier_password=${OMEGA_GOLD_VERIFIER_PASSWORD:-}"
 PSQL=(
-  "${COMPOSE[@]}" exec -T -e "PGOPTIONS=${PGOPTIONS_VALUE}"
+  "${COMPOSE[@]}" exec -T
   postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d modecissions
 )
 PSQL_GOLD=(
-  "${COMPOSE[@]}" exec -T -e "PGOPTIONS=${GOLD_PGOPTIONS_VALUE}"
+  "${COMPOSE[@]}" exec -T
   postgres_gold psql -X -v ON_ERROR_STOP=1 -U postgres
   -d modecissions_gold -p 5433
 )
@@ -161,10 +159,11 @@ GOLD_AFTER="${WORKDIR}/gold-after.jsonl"
 PLAN="${WORKDIR}/plan.json"
 OPERATIONAL_SQL="${WORKDIR}/operational.sql"
 GOLD_SQL="${WORKDIR}/gold.sql"
+AUTHORITY_SQL="${WORKDIR}/ledger-authority.sql"
 
 LEDGER_QUERY="SELECT json_build_object(
   'filename', filename,
-  'checksum', checksum,
+  'checksum', to_jsonb(sm)->>'checksum',
   'source_ref', to_jsonb(sm)->>'checksum_source_ref',
   'manifest_sha256', to_jsonb(sm)->>'checksum_manifest_sha256',
   'evidence_kind', to_jsonb(sm)->>'checksum_evidence_kind',
@@ -211,12 +210,20 @@ python3 "$GUARD" render-sql --plan "$PLAN" --database operational \
 
 dump_operational_ledger > "$OPERATIONAL_AFTER"
 dump_gold_ledger > "$GOLD_AFTER"
+python3 "$GUARD" render-authority-sql > "$AUTHORITY_SQL"
+"${PSQL[@]}" -f - < "$AUTHORITY_SQL"
+"${PSQL_GOLD[@]}" -f - < "$AUTHORITY_SQL"
 python3 "$GUARD" postflight "${CONTRACT_ARGS[@]}" \
   --operational-ledger "$OPERATIONAL_AFTER" \
   --gold-ledger "$GOLD_AFTER" \
-  --expected-pending-evidence "$EXPECTED_PENDING_EVIDENCE"
+  --plan "$PLAN"
 
-if [[ "$BOOTSTRAP_MODE" == "1" ]]; then
+EXPECTED_PENDING_EVIDENCE="$(
+  python3 "$GUARD" plan-field \
+    --plan "$PLAN" \
+    --field expected_pending_evidence
+)"
+if [[ "$EXPECTED_PENDING_EVIDENCE" == "baseline_expected" ]]; then
   echo "[migrate] done: operational=200 gold=12 baseline_expected=212 guarded_transaction=0"
 else
   echo "[migrate] done: operational=200 gold=12 baseline_expected=210 guarded_transaction=2"

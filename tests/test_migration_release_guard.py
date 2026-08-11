@@ -61,6 +61,15 @@ def _rows(
     return result
 
 
+def _fresh_rows(contract: guard.Contract, database: str) -> dict[str, guard.LedgerRow]:
+    missing = set(guard.FRESH_BOOTSTRAP_MISSING[database])
+    return {
+        filename: guard.LedgerRow(None, None, None, None, False)
+        for filename in contract.release[database]
+        if filename not in missing
+    }
+
+
 def test_complete_manifests_are_exact_and_only_add_the_pending_pair() -> None:
     contract = guard._validate_contract(_args())
     baseline_json = json.loads(contract.baseline_path.read_text(encoding="utf-8"))
@@ -147,6 +156,71 @@ def test_release_filenames_with_null_evidence_are_not_blessed() -> None:
             require_release=False,
             allow_bootstrap_release=True,
         )
+
+
+def test_only_exact_fresh_entrypoint_profiles_are_bootstrap_eligible() -> None:
+    contract = guard._validate_contract(_args())
+    expected_counts = {"operational": 176, "gold": 9}
+    for database, count in expected_counts.items():
+        rows = _fresh_rows(contract, database)
+        assert len(rows) == count
+        with pytest.raises(SystemExit, match="partial/tampered"):
+            guard._validate_ledger(
+                contract,
+                database,
+                rows,
+                require_release=False,
+            )
+        assert (
+            guard._validate_ledger(
+                contract,
+                database,
+                rows,
+                require_release=False,
+                allow_bootstrap_release=True,
+            )
+            == "fresh_bootstrap"
+        )
+
+        missing_one = dict(rows)
+        missing_one.pop(next(iter(missing_one)))
+        with pytest.raises(SystemExit, match="partial/tampered"):
+            guard._validate_ledger(
+                contract,
+                database,
+                missing_one,
+                require_release=False,
+                allow_bootstrap_release=True,
+            )
+
+        tampered = dict(rows)
+        filename = next(iter(tampered))
+        tampered[filename] = guard.LedgerRow("0" * 64, None, None, None, False)
+        with pytest.raises(SystemExit, match="checksum mismatch"):
+            guard._validate_ledger(
+                contract,
+                database,
+                tampered,
+                require_release=False,
+                allow_bootstrap_release=True,
+            )
+
+
+def test_fresh_bootstrap_sql_normalizes_without_reexecuting_migrations() -> None:
+    contract = guard._validate_contract(_args())
+    for database, missing_count in (("operational", 24), ("gold", 3)):
+        sql = guard._render_sql(contract, database, "fresh_bootstrap")
+        assert "ADD COLUMN IF NOT EXISTS checksum text" in sql
+        assert "CREATE TEMP TABLE omega_expected_missing" in sql
+        assert sql.count("\\i /docker-entrypoint-initdb.d/") == 0
+        missing_section = sql.split("INSERT INTO omega_expected_missing VALUES", 1)[1]
+        missing_section = missing_section.split(
+            "INSERT INTO public.schema_migrations", 1
+        )[0]
+        assert missing_section.count("'baseline_expected'") == missing_count
+        assert "'guarded_transaction'" not in missing_section
+        assert "ALTER TABLE public.schema_migrations OWNER TO postgres" in sql
+        assert "pg_write_all_data" in sql
 
 
 def test_postflight_separates_expected_baseline_from_guarded_pending_pair() -> None:
@@ -286,7 +360,9 @@ def test_retry_accepts_gold_expected_with_operational_still_at_baseline() -> Non
 def test_pending_pair_is_one_psql_transaction_without_nested_terminators() -> None:
     contract = guard._validate_contract(_args())
     sql = guard._render_sql(contract, "operational", "baseline")
-    assert sql.splitlines()[1] == "BEGIN;"
+    assert sql.splitlines()[1] == "SET default_transaction_read_only=off;"
+    assert sql.splitlines()[2] == "BEGIN;"
+    assert sql.splitlines()[3] == "SET TRANSACTION READ WRITE;"
     assert sql.rstrip().endswith("COMMIT;")
     assert sql.count("\nBEGIN;") == 1
     assert sql.count("\nCOMMIT;") == 1
@@ -333,6 +409,30 @@ def test_plan_contains_no_unreviewed_fields(tmp_path: Path) -> None:
     assert value["candidate_ref"] == CANDIDATE_REF
     assert value["operational_state"] == "baseline"
     assert value["gold_state"] == "baseline_expected"
+    assert value["schema_version"] == 2
+    assert value["expected_pending_evidence"] == guard.GUARDED_EVIDENCE
+
+    fresh_plan = tmp_path / "fresh-plan.json"
+    guard._write_plan(contract, "fresh_bootstrap", "fresh_bootstrap", fresh_plan)
+    fresh_value = json.loads(fresh_plan.read_text(encoding="utf-8"))
+    assert fresh_value["expected_pending_evidence"] == guard.BASELINE_EVIDENCE
+    guard._validate_plan(fresh_value, expected_contract=contract)
+
+    fresh_value["expected_pending_evidence"] = guard.GUARDED_EVIDENCE
+    with pytest.raises(SystemExit, match="not derived from preflight state"):
+        guard._validate_plan(fresh_value, expected_contract=contract)
+
+
+def test_ledger_authority_assertion_covers_acl_membership_and_postgres() -> None:
+    sql = "\n".join(guard._ledger_authority_assertion_lines())
+    assert "tableowner" in sql
+    assert "sequenceowner" in sql
+    assert "has_table_privilege('postgres'" in sql
+    assert "has_sequence_privilege('postgres'" in sql
+    assert "aclexplode" in sql
+    assert "pg_write_all_data" in sql
+    assert "pg_has_role(oid, 'postgres', 'MEMBER')" in sql
+    assert "rolsuper OR rolcreaterole" in sql
 
 
 def test_control_room_ci_runs_and_fail_closes_the_real_migration_gate() -> None:

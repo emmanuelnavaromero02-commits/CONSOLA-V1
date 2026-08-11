@@ -21,12 +21,15 @@ def test_gcp_terraform_files_stay_modular():
 
 def test_gcp_startup_uses_native_lakehouse_provider_not_gcsfuse():
     startup = (GCP_TF / "templates" / "startup.sh.tftpl").read_text(encoding="utf-8")
-    compose = (GCP_TF / "templates" / "docker-compose.gcp.yml.tftpl").read_text(encoding="utf-8")
-    combined = f"{startup}\n{compose}"
+    runtime = (REPO / "scripts/gcp/bootstrap-runtime.sh").read_text(encoding="utf-8")
+    compose = (GCP_TF / "templates" / "docker-compose.gcp.yml.tftpl").read_text(
+        encoding="utf-8"
+    )
+    combined = f"{startup}\n{runtime}\n{compose}"
 
     assert "gcsfuse" not in combined
     assert "gcs_fuse" not in combined
-    assert "LAKEHOUSE_PROVIDER gcs" in startup
+    assert "LAKEHOUSE_PROVIDER gcs" in runtime
     assert "LAKEHOUSE_PROVIDER: $${LAKEHOUSE_PROVIDER:-gcs}" in compose
 
 

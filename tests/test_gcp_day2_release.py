@@ -107,6 +107,7 @@ def test_gcp_release_overlay_resolves_with_base_compose() -> None:
         "restore-rehearsal.sh",
         "reboot-runtime.sh",
         "image-preflight.sh",
+        "operation-watchdog.sh",
     ],
 )
 def test_gcp_day2_shell_is_syntax_valid(script: str) -> None:
@@ -117,6 +118,217 @@ def test_gcp_day2_shell_is_syntax_valid(script: str) -> None:
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_backup_operation_state_python_helper_compiles_and_runs(
+    tmp_path: Path,
+) -> None:
+    backup = _read("scripts/gcp/backup.sh")
+    match = re.search(
+        r"""python3 - \"\$OPERATION_MARKER\" \"\$state\" \"\$BACKUP_ID\" \"\$CURRENT_REF\" \\
+    \"\$CANDIDATE_REF\" \"\$OPERATION_MODE\" <<'PY'\n(.*?)\nPY""",
+        backup,
+        re.DOTALL,
+    )
+    assert match, "write_operation_state Python heredoc is missing"
+    marker = tmp_path / "operation-state.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-",
+            str(marker),
+            "fencing",
+            "20260811T120000Z-v1.45.207-beta",
+            "a" * 40,
+            "b" * 40,
+            "backup",
+        ],
+        input=match.group(1),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(marker.read_text(encoding="utf-8"))
+    updated_at = payload.pop("updated_at")
+    assert updated_at.endswith("+00:00")
+    assert payload == {
+        "backup_id": "20260811T120000Z-v1.45.207-beta",
+        "deploy_ref": "a" * 40,
+        "operation": "backup",
+        "schema_version": 1,
+        "state": "fencing",
+    }
+    assert marker.stat().st_mode & 0o777 == 0o600
+
+
+def test_permanent_operation_gate_publication_is_crash_safe() -> None:
+    bootstrap = _read("scripts/gcp/bootstrap-runtime.sh")
+    bootstrap_publish = bootstrap[
+        bootstrap.index("GUARD_TMP=") : bootstrap.index(
+            "# A SIGKILL or reboot during backup/deploy"
+        )
+    ]
+    assert "fsync-file" in bootstrap_publish
+    assert bootstrap_publish.index(
+        'mv -Tf "${DROPIN_TMP}" /etc/systemd/system/docker.service.d/omega-operation-gate.conf'
+    ) < bootstrap_publish.index(
+        'mv -Tf "${GUARD_TMP}" /usr/local/sbin/omega-operation-gate'
+    )
+    assert "> /etc/systemd/system/docker.service.d/omega-operation-gate.conf" not in (
+        bootstrap_publish
+    )
+
+    for relative in ("scripts/gcp/backup.sh", "scripts/gcp/day2-release.sh"):
+        script = _read(relative)
+        publish = script[
+            script.index("install_operation_guard()") : script.index(
+                "write_operation_state()"
+            )
+        ]
+        assert "fsync-file" in publish
+        assert publish.index(
+            'mv -Tf "$dropin_tmp" /etc/systemd/system/docker.service.d/omega-operation-gate.conf'
+        ) < publish.index(
+            'mv -Tf "$guard_tmp" /usr/local/sbin/omega-operation-gate'
+        )
+        assert "> /etc/systemd/system/docker.service.d/omega-operation-gate.conf" not in (
+            publish
+        )
+
+
+def test_state_bundle_cleanup_is_disarmed_at_the_atomic_commit_point() -> None:
+    backup = _read("scripts/gcp/backup.sh")
+    backup_publish = backup[backup.index('mv -Tf "$STATE_PREVIEW" "$STATE_LINK"') :]
+    assert backup_publish.index('STATE_FINAL=""') < backup_publish.index(
+        '"$SAFE_IO" fsync-dir "$SHARED_ROOT"'
+    )
+
+    deploy = _read("scripts/gcp/day2-release.sh")
+    deploy_publish = deploy[deploy.index('mv -Tf "$STATE_PREVIEW" "$STATE_LINK"') :]
+    assert deploy_publish.index('STATE_FINAL=""') < deploy_publish.index(
+        '"$SAFE_IO" fsync-dir "$APP_ROOT" "$SHARED_ROOT"'
+    )
+
+
+def test_failed_restore_or_deploy_reestablishes_verified_writer_fence() -> None:
+    backup = _read("scripts/gcp/backup.sh")
+    backup_recovery = backup[
+        backup.index("ensure_fail_closed_runtime()") : backup.index(
+            "restore_runtime()"
+        )
+    ]
+    assert 'write_operation_state "restore-failed"' in backup_recovery
+    assert 'stop --timeout 30 "${WRITER_SERVICES[@]}"' in backup_recovery
+    assert "writer-fence" in backup_recovery
+    assert "database_fence on" in backup_recovery
+    assert '"FAIL" "manual recovery required' in backup_recovery
+
+    deploy = _read("scripts/gcp/day2-release.sh")
+    cleanup = deploy[deploy.index("cleanup()") : deploy.index("fail()")]
+    assert 'write_operation_state "failed"' in cleanup
+    assert 'stop --timeout 30 "${MUTATING_SERVICES[@]}"' in cleanup
+    assert "writer-fence" in cleanup
+    assert "database_fence on" in cleanup
+    assert "|| true" not in cleanup
+    assert '"FAIL" "manual recovery required' in cleanup
+
+    for script in (backup, deploy):
+        match = re.search(r"database_fence\(\) \{\n(.*?)\n\}", script, re.DOTALL)
+        assert match
+        fence = match.group(1)
+        assert 'local rc=0' in fence
+        assert 'return "$rc"' in fence
+
+
+def test_independent_watchdog_covers_every_live_writer_mutation_window() -> None:
+    watchdog = _read("scripts/gcp/operation-watchdog.sh")
+    assert "systemd-run --quiet --collect" in watchdog
+    assert "--property=Restart=on-failure" in watchdog
+    assert "--property=StartLimitIntervalSec=0" in watchdog
+    assert "database_fence_best_effort" in watchdog
+    assert "docker stop --time 30" in watchdog
+    assert "systemctl mask --runtime" in watchdog
+    assert "containerd-shim-runc-v2.*-namespace moby" in watchdog
+
+    backup = _read("scripts/gcp/backup.sh")
+    assert backup.index('"$WATCHDOG" arm "$$" "$OPERATION_MARKER"') < backup.index(
+        '"${COMPOSE[@]}" stop --timeout 60'
+    )
+    deploy = _read("scripts/gcp/day2-release.sh")
+    assert deploy.index('"$WATCHDOG" arm "$$" "$OPERATION_MARKER"') < deploy.index(
+        '"${COMPOSE[@]}" stop --timeout 60'
+    )
+    bootstrap = _read("scripts/gcp/bootstrap-runtime.sh")
+    assert bootstrap.index(
+        '"${WATCHDOG}" arm "$$" "${OPERATION_MARKER}"'
+    ) < bootstrap.index('"${COMPOSE[@]}" up --build -d')
+    for script in (backup, deploy, bootstrap):
+        assert "operation-watchdog.sh" in script
+        arm = re.search(r'(?m)^.*WATCHDOG[^\n]* arm "\$\$"', script)
+        assert arm
+        disarm = re.search(
+            r'(?m)^.*WATCHDOG[^\n]* disarm "\$\$"', script[arm.end() :]
+        )
+        assert disarm
+
+
+def test_candidate_gate_is_verified_before_permanent_replacement() -> None:
+    deploy = _read("scripts/gcp/day2-release.sh")
+    assert deploy.index('if ! "$CANDIDATE_OPERATION_GUARD"') < deploy.index(
+        'install_operation_guard "$CANDIDATE_OPERATION_GUARD"'
+    )
+    backup = _read("scripts/gcp/backup.sh")
+    assert backup.index('if ! "$CANDIDATE_GUARD"') < backup.index(
+        'install_operation_guard "$CANDIDATE_GUARD"'
+    )
+
+
+def test_image_lock_files_and_directory_are_durable_before_publication() -> None:
+    deploy = _read("scripts/gcp/day2-release.sh")
+    lock = deploy[deploy.index('chmod 0400 "$NEW_LOCK_ENV"') :]
+    file_sync = lock.index('fsync-file "$NEW_LOCK_ENV" "$NEW_LOCK_MANIFEST"')
+    directory_sync = lock.index('fsync-dir "$LOCK_TMP"')
+    publish = lock.index('mv "$LOCK_TMP" "$LOCK_DIR"')
+    assert file_sync < directory_sync < publish
+
+
+def test_reused_release_lock_and_evidence_reject_path_and_mode_drift() -> None:
+    deploy = _read("scripts/gcp/day2-release.sh")
+
+    managed = deploy[deploy.index("validate_managed_directory()") :]
+    assert "path.resolve(strict=True)" in managed
+    assert "info.st_uid != 0" in managed
+    assert "info.st_gid != 0" in managed
+    assert "stat.S_IMODE(info.st_mode) & 0o022" in managed
+
+    release = deploy[deploy.index('RELEASE_MARKER="${RELEASE_DIR}/.omega-release.json"') :]
+    release = release[: release.index('ACTUAL_VERSION=')]
+    assert '[[ -e "$RELEASE_DIR" || -L "$RELEASE_DIR" ]]' in release
+    assert "--exclude .omega-release.json --require-read-only" in release
+    assert "not stat.S_ISREG(info.st_mode)" in release
+    assert "stat.S_IMODE(info.st_mode) != 0o400" in release
+    assert "set(payload) != expected_keys" in release
+    assert '"tree_sha256": sys.argv[10]' in release
+    assert release.index('chmod -R a-w "$RELEASE_TMP"') < release.index(
+        'TREE_SHA256="$($SAFE_IO tree-sha256 --root "$RELEASE_TMP" --require-read-only)"'
+    )
+
+    lock = deploy[deploy.index('NEW_LOCK_TREE_SHA256=') : deploy.index("COMPOSE=(")]
+    assert '[[ -e "$LOCK_DIR" || -L "$LOCK_DIR" ]]' in lock
+    assert 'tree-sha256 --root "$LOCK_DIR"' in lock
+    assert '"$EXISTING_LOCK_TREE_SHA256" != "$NEW_LOCK_TREE_SHA256"' in lock
+    assert '"$LOCK_TREE_SHA256" != "$NEW_LOCK_TREE_SHA256"' in lock
+
+    evidence = deploy[deploy.index('DEPLOYMENT_PROVENANCE_STAGE=') :]
+    evidence = evidence[: evidence.index('write_operation_state "validated"')]
+    assert '--write-provenance "$DEPLOYMENT_PROVENANCE_STAGE"' in evidence
+    assert "not stat.S_ISREG(info.st_mode)" in evidence
+    assert "stat.S_IMODE(info.st_mode) != mode" in evidence
+    assert "path.resolve(strict=True)" in evidence
+    assert "os.path.lexists(destination)" in evidence
+    assert "destination.read_bytes() != staged_bytes" in evidence
+    assert "os.replace(temporary, destination)" in evidence
 
 
 def test_deploy_fails_closed_and_promotes_only_after_all_gates() -> None:
@@ -147,8 +359,11 @@ def test_deploy_fails_closed_and_promotes_only_after_all_gates() -> None:
     assert "/readyz?require_data=1" in deploy
     assert "--scheduler stopped --one-shots" in deploy
     assert "--scheduler required --one-shots" in deploy
-    assert "running=16 healthy=16 scheduler=1 exact_lock=true" in deploy
-    assert "durable operation marker retained" in deploy
+    assert (
+        "running=22 healthy=22 scheduler=1 analytics=healthy exact_lock=true"
+        in deploy
+    )
+    assert "manual recovery required; one or more stop/fence/marker checks failed" in deploy
     assert 'write_operation_state "fencing"' in deploy
     assert 'write_operation_state "fenced"' in deploy
     assert 'write_operation_state "migrated"' in deploy
@@ -181,7 +396,7 @@ def test_backup_is_writer_fenced_versioned_and_immutable() -> None:
     backup = _read("scripts/gcp/backup.sh")
     assert "expected one scheduler" in backup
     assert "registry credential found in runtime env" in backup
-    assert "all known application writers stopped" in backup
+    assert "all global application writers stopped" in backup
     assert "pg_dumpall" in backup
     assert 'get("versioning", {}).get("enabled") is not True' in backup
     assert "object-generation" not in backup
@@ -200,7 +415,9 @@ def test_backup_is_writer_fenced_versioned_and_immutable() -> None:
     assert '"repo_digest"' in backup
     assert '"image_id"' in backup
     assert "Authorization: Bearer ${token}" not in backup
-    assert 'headers={"Authorization": f"Bearer {token}"}' in backup
+    assert 'headers={"Authorization": f"Bearer {token}"}' in _read(
+        "scripts/gcp/safe_io.py"
+    )
     assert 'write_operation_state "fencing"' in backup
     assert 'write_operation_state "captured"' in backup
     assert 'write_operation_state "restored"' in backup
@@ -209,12 +426,435 @@ def test_backup_is_writer_fenced_versioned_and_immutable() -> None:
     assert "down -v" not in backup
 
     staged = backup.index('--output "$ACTIVE_PROVENANCE"')
-    health = backup.index("healthz version/app_env differs from current release")
+    health = backup.index("health/version or readyz/data gate differs from current release")
     provenance = backup.index('--provenance "$ACTIVE_PROVENANCE"')
     publication = backup.index('mv -Tf "$STATE_PREVIEW" "$STATE_LINK"')
     assert staged < health < provenance < publication
     assert "one-existing/one-missing direct state pair is corrupt" in backup
     assert "state_pair=atomic" in backup
+
+
+def test_legacy_adoption_binds_host_inputs_and_keeps_cas_marker_until_readback() -> None:
+    backup = _read("scripts/gcp/backup.sh")
+    controller = _read("scripts/gcp_release.py")
+    finalizer = _read("scripts/gcp/finalize-startup-adoption.sh")
+
+    marker = backup.index('write_operation_state "metadata-cas-preparing"')
+    env_backup = backup.index('ENV_BACKUP="${ENV_BACKUPS_ROOT}/${ENV_BEFORE_SHA256}.env"')
+    env_publish = backup.index("env-set --path \"$SHARED_ENV\"")
+    gcp_overlay = backup.index(
+        'publish_private_file "$LIVE_GCP_RUNTIME_COMPOSE" "$GCP_RUNTIME_COMPOSE"'
+    )
+    legacy_overlay = backup.index(
+        'publish_private_file "$LIVE_LEGACY_IMAGE_COMPOSE" "$LEGACY_IMAGE_COMPOSE"'
+    )
+    provenance = backup.index('bootstrap-record --compose-project "$COMPOSE_PROJECT"')
+    pending = backup.index('write_operation_state "metadata-cas-pending"')
+    hold = backup.index('"$WATCHDOG" arm-hold 3600 "$OPERATION_MARKER"')
+    assert marker < env_backup < env_publish < gcp_overlay < legacy_overlay < provenance
+    assert provenance < pending < hold
+    for runtime_input in (
+        "shared_env=${SHARED_ENV}",
+        "base_compose=${BASE_COMPOSE}",
+        "gcp_compose=${GCP_RUNTIME_COMPOSE}",
+        "legacy_image_compose=${LEGACY_IMAGE_COMPOSE}",
+    ):
+        assert f'--runtime-input "{runtime_input}"' in backup
+    assert "runtime_input_sha256" in _read("scripts/gcp/runtime_contract.py")
+
+    cas = controller.index("before_used, after = replace_startup_metadata_cas(")
+    finalize = controller.index('script=REMOTE_ROOT / "finalize-startup-adoption.sh"')
+    success = controller.index(
+        'print(json.dumps({"status": "PASS", "evidence_dir": str(evidence_dir), **evidence}))',
+        finalize,
+    )
+    assert cas < finalize < success
+    metadata_readback = finalizer.index("verify_live_startup")
+    completion_record = finalizer.index('"state": "complete"', metadata_readback)
+    marker_remove = finalizer.index('rm -f -- "$OPERATION_MARKER"', completion_record)
+    assert metadata_readback < completion_record < marker_remove
+
+
+def test_prebackup_data_readiness_exception_is_exact_and_sql_attested() -> None:
+    backup = _read("scripts/gcp/backup.sh")
+    assert 'current_ref == "6b12883c5b5ea0537120279ccbee4947137998a2"' in backup
+    assert 'current_version == "1.45.205-beta"' in backup
+    assert 'body != {"ok": False, "service": "console"}' in backup
+    assert "exc.code != 503" in backup
+    assert "direct operational DB attestation" in backup
+    assert "direct Gold DB attestation" in backup
+    assert "omega_publication.dataset_publication_heads" in backup
+    assert "omega_publication.materialization_runs" in backup
+    assert "OPERATIONAL_ITEMS + GOLD_ROWS + SILVER_ROWS" in backup
+
+
+def test_backup_temporarily_holds_every_exact_gcs_generation_before_success() -> None:
+    backup = _read("scripts/gcp/backup.sh")
+    stable_inventory = backup.index(
+        "GCS object generations changed while the backup manifest was captured"
+    )
+    patch_hold = backup.index('body = json.dumps({"temporaryHold": True}).encode()')
+    patch_method = backup.index('method="PATCH"', patch_hold)
+    exact_generation = backup.index('"generation": generation', stable_inventory)
+    metadata_cas = backup.index(
+        '"ifMetagenerationMatch": original_meta', stable_inventory
+    )
+    held_manifest = backup.index("executor.map(hold_generation, rows)", patch_method)
+    final_readback = backup.index(
+        "Re-read every exact live generation immediately before sealing"
+    )
+    manifest_success = backup.index('emit "retention-protected backup manifest"')
+
+    assert backup.index('"$WATCHDOG" arm "$$" "$OPERATION_MARKER"') < stable_inventory
+    assert (
+        stable_inventory < exact_generation < metadata_cas < patch_hold < patch_method
+    )
+    assert patch_method < held_manifest < final_readback < manifest_success
+    assert 'actual.get("temporaryHold") is not True' in backup
+    assert 'str(actual.get("metageneration", "")) != row["metageneration"]' in backup
+    assert '"all_recorded_generations_held": True' in backup
+    assert '"release_policy": "explicit-approved-release-only"' in backup
+    assert '{"temporaryHold": False}' not in backup
+    assert "ThreadPoolExecutor(max_workers=24)" in backup
+    assert "executor.map(hold_generation, rows)" in backup
+
+
+def test_restore_rehearsal_requires_live_hold_for_every_recorded_generation() -> None:
+    rehearsal = _read("scripts/gcp/restore-rehearsal.sh")
+    assert 'storage.get("generation_hold") != {' in rehearsal
+    assert '"type": "temporaryHold"' in rehearsal
+    assert 'or row.get("temporaryHold") is not True' in rehearsal
+    assert '"ifMetagenerationMatch": row["metageneration"]' in rehearsal
+    assert (
+        '"fields": "name,size,generation,metageneration,md5Hash,crc32c,temporaryHold"'
+        in rehearsal
+    )
+    assert 'actual.get("temporaryHold") is not True' in rehearsal
+    assert '"verified_temporary_holds": len(verify_rows)' in rehearsal
+    assert 'emit "held object-generation restore points" "PASS"' in rehearsal
+
+
+def test_gcs_generation_hold_python_helpers_compile() -> None:
+    backup = _read("scripts/gcp/backup.sh")
+    inventory = re.search(
+        r"python3 - \"\$LAKEHOUSE_BUCKET\" \"\$BACKUP_PREFIX\" .*? <<'PY'\n(.*?)\nPY",
+        backup,
+        re.DOTALL,
+    )
+    final_verify = re.search(
+        r"HOLD_RESULT=\"\$\(python3 - \"\$LAKEHOUSE_BUCKET\" .*? <<'PY'\n(.*?)\nPY",
+        backup,
+        re.DOTALL,
+    )
+    rehearsal = _read("scripts/gcp/restore-rehearsal.sh")
+    restore_verify = re.search(
+        r"OBJECT_RESULT=\"\$\(python3 - .*? <<'PY'\n(.*?)\nPY",
+        rehearsal,
+        re.DOTALL,
+    )
+    for helper in (inventory, final_verify, restore_verify):
+        assert helper
+        compile(helper.group(1), "<gcs-generation-hold-helper>", "exec")
+
+
+def test_gcs_inventory_applies_cas_hold_and_records_readback(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import io
+    import urllib.parse
+    import urllib.request
+
+    match = re.search(
+        r"python3 - \"\$LAKEHOUSE_BUCKET\" \"\$BACKUP_PREFIX\" .*? <<'PY'\n(.*?)\nPY",
+        _read("scripts/gcp/backup.sh"),
+        re.DOTALL,
+    )
+    assert match
+    object_manifest = tmp_path / "lakehouse_objects.jsonl"
+    bucket_evidence = tmp_path / "bucket.json"
+    original = {
+        "name": "gold/data.parquet",
+        "size": "5",
+        "generation": "101",
+        "metageneration": "7",
+        "md5Hash": "CY9rzUYh03PK3k6DJie09g==",
+        "crc32c": "GNEjNQ==",
+        "etag": "etag-7",
+        "updated": "2026-08-11T00:00:00.000Z",
+        "storageClass": "STANDARD",
+    }
+    held = {
+        **original,
+        "metageneration": "8",
+        "etag": "etag-8",
+        "temporaryHold": True,
+    }
+    calls: list[tuple[str, str]] = []
+
+    class Response(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.close()
+
+    def response(payload: dict) -> Response:
+        return Response(json.dumps(payload).encode())
+
+    def fake_urlopen(request, timeout=0):
+        del timeout
+        url = request.full_url
+        method = request.get_method()
+        calls.append((method, url))
+        if url.startswith("http://metadata.google.internal/"):
+            assert request.get_header("Metadata-flavor") == "Google"
+            return response({"access_token": "unit-token"})
+        assert request.get_header("Authorization") == "Bearer unit-token"
+        parsed = urllib.parse.urlparse(url)
+        query = urllib.parse.parse_qs(parsed.query)
+        if parsed.path == "/storage/v1/b/unit-bucket":
+            return response(
+                {
+                    "name": "unit-bucket",
+                    "location": "EU",
+                    "metageneration": "6",
+                    "versioning": {"enabled": True},
+                    "iamConfiguration": {
+                        "uniformBucketLevelAccess": {"enabled": True},
+                        "publicAccessPrevention": "enforced",
+                    },
+                    "softDeletePolicy": {"retentionDurationSeconds": "604800"},
+                    "lifecycle": {
+                        "rule": [
+                            {
+                                "action": {
+                                    "storageClass": "NEARLINE",
+                                    "type": "SetStorageClass",
+                                },
+                                "condition": {"age": 30},
+                            },
+                            {
+                                "action": {"type": "Delete"},
+                                "condition": {
+                                    "isLive": False,
+                                    "numNewerVersions": 5,
+                                },
+                            },
+                        ]
+                    },
+                }
+            )
+        if parsed.path == "/storage/v1/b/unit-bucket/o":
+            return response({"items": [original]})
+        assert parsed.path.endswith("/o/gold%2Fdata.parquet")
+        assert query["generation"] == ["101"]
+        if method == "PATCH":
+            assert query["ifMetagenerationMatch"] == ["7"]
+            assert json.loads(request.data) == {"temporaryHold": True}
+            return response(held)
+        assert method == "GET"
+        assert query["ifMetagenerationMatch"] == ["8"]
+        return response(held)
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "gcs-inventory",
+            "unit-bucket",
+            "_omega_backups/unit",
+            str(object_manifest),
+            str(bucket_evidence),
+            "EU",
+        ],
+    )
+    exec(compile(match.group(1), "<gcs-inventory>", "exec"), {})
+
+    rows = [
+        json.loads(line)
+        for line in object_manifest.read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(rows) == 1
+    assert rows[0]["generation"] == "101"
+    assert rows[0]["metageneration"] == "8"
+    assert rows[0]["temporaryHold"] is True
+    assert [method for method, _url in calls].count("PATCH") == 1
+
+
+def test_gcs_hold_pool_is_concurrent_but_manifest_order_is_deterministic(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import io
+    import threading
+    import urllib.parse
+    import urllib.request
+
+    match = re.search(
+        r"python3 - \"\$LAKEHOUSE_BUCKET\" \"\$BACKUP_PREFIX\" .*? <<'PY'\n(.*?)\nPY",
+        _read("scripts/gcp/backup.sh"),
+        re.DOTALL,
+    )
+    assert match
+    object_manifest = tmp_path / "lakehouse_objects.jsonl"
+    bucket_evidence = tmp_path / "bucket.json"
+    originals = [
+        {
+            "name": key,
+            "size": "5",
+            "generation": str(generation),
+            "metageneration": "7",
+            "md5Hash": "CY9rzUYh03PK3k6DJie09g==",
+            "crc32c": "GNEjNQ==",
+            "etag": f"etag-{generation}-7",
+            "updated": "2026-08-11T00:00:00.000Z",
+            "storageClass": "STANDARD",
+        }
+        for key, generation in (("a/data.parquet", 101), ("b/data.parquet", 102))
+    ]
+    by_generation = {row["generation"]: row for row in originals}
+    barrier = threading.Barrier(2)
+    concurrency_lock = threading.Lock()
+    active = 0
+    maximum_active = 0
+
+    class Response(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.close()
+
+    def response(payload: dict) -> Response:
+        return Response(json.dumps(payload).encode())
+
+    def fake_urlopen(request, timeout=0):
+        nonlocal active, maximum_active
+        del timeout
+        url = request.full_url
+        if url.startswith("http://metadata.google.internal/"):
+            return response({"access_token": "unit-token"})
+        parsed = urllib.parse.urlparse(url)
+        query = urllib.parse.parse_qs(parsed.query)
+        if parsed.path == "/storage/v1/b/unit-bucket":
+            return response(
+                {
+                    "name": "unit-bucket",
+                    "location": "EU",
+                    "metageneration": "6",
+                    "versioning": {"enabled": True},
+                    "iamConfiguration": {
+                        "uniformBucketLevelAccess": {"enabled": True},
+                        "publicAccessPrevention": "enforced",
+                    },
+                    "softDeletePolicy": {"retentionDurationSeconds": "604800"},
+                    "lifecycle": {
+                        "rule": [
+                            {
+                                "action": {
+                                    "storageClass": "NEARLINE",
+                                    "type": "SetStorageClass",
+                                },
+                                "condition": {"age": 30},
+                            },
+                            {
+                                "action": {"type": "Delete"},
+                                "condition": {
+                                    "isLive": False,
+                                    "numNewerVersions": 5,
+                                },
+                            },
+                        ]
+                    },
+                }
+            )
+        if parsed.path == "/storage/v1/b/unit-bucket/o":
+            return response({"items": originals})
+        generation = query["generation"][0]
+        original = by_generation[generation]
+        held = {
+            **original,
+            "metageneration": "8",
+            "temporaryHold": True,
+        }
+        if request.get_method() == "PATCH":
+            with concurrency_lock:
+                active += 1
+                maximum_active = max(maximum_active, active)
+            barrier.wait(timeout=5)
+            with concurrency_lock:
+                active -= 1
+            return response(held)
+        return response(held)
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "gcs-inventory",
+            "unit-bucket",
+            "_omega_backups/unit",
+            str(object_manifest),
+            str(bucket_evidence),
+            "EU",
+        ],
+    )
+    exec(compile(match.group(1), "<gcs-inventory-concurrent>", "exec"), {})
+
+    rows = [
+        json.loads(line)
+        for line in object_manifest.read_text(encoding="utf-8").splitlines()
+    ]
+    assert maximum_active == 2
+    assert [row["key"] for row in rows] == ["a/data.parquet", "b/data.parquet"]
+    assert all(row["temporaryHold"] is True for row in rows)
+
+
+def test_restore_object_verifier_rejects_unheld_manifest_row(
+    monkeypatch, tmp_path: Path
+) -> None:
+    match = re.search(
+        r"OBJECT_RESULT=\"\$\(python3 - .*? <<'PY'\n(.*?)\nPY",
+        _read("scripts/gcp/restore-rehearsal.sh"),
+        re.DOTALL,
+    )
+    assert match
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "object_storage": {
+                    "bucket": "unit-bucket",
+                    "object_count": 1,
+                    "total_bytes": 5,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    object_manifest = tmp_path / "lakehouse_objects.jsonl"
+    object_manifest.write_text(
+        json.dumps(
+            {
+                "key": "gold/data.parquet",
+                "size_bytes": 5,
+                "generation": "101",
+                "metageneration": "8",
+                "crc32c": "GNEjNQ==",
+                "temporaryHold": False,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["gcs-restore-verify", str(manifest), str(object_manifest), "all"],
+    )
+    with pytest.raises(SystemExit, match="object manifest"):
+        exec(compile(match.group(1), "<gcs-restore-verify>", "exec"), {})
 
 
 def test_post_record_health_failure_leaves_atomic_state_unchanged(
@@ -261,12 +901,28 @@ def test_operation_gate_verifies_atomic_pair_current_and_helper_hashes(
     helper_root.mkdir(parents=True)
     bundles.mkdir(parents=True)
     (release / "VERSION").write_text("1.45.207-beta\n", encoding="utf-8")
+    (release / "infra/terraform-gcp/release").mkdir(parents=True)
+    base_compose = release / "infra/docker-compose.yml"
+    release_compose = release / "infra/terraform-gcp/release/docker-compose.release.yml"
+    shared_env = shared / "infra.env"
+    gcp_compose = shared / "docker-compose.gcp.yml"
+    base_compose.write_text("services: {}\n", encoding="utf-8")
+    release_compose.write_text("services: {}\n", encoding="utf-8")
+    shared_env.write_text("APP_ENV=production\n", encoding="utf-8")
+    gcp_compose.write_text("services: {}\n", encoding="utf-8")
+
+    def digest(path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
     reboot = helper_root / "reboot-runtime.sh"
     contract = helper_root / "runtime_contract.py"
+    safe_io = helper_root / "safe_io.py"
     reboot.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     contract.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+    safe_io.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
     reboot.chmod(0o755)
     contract.chmod(0o755)
+    safe_io.chmod(0o755)
     (app_root / "current").symlink_to(release, target_is_directory=True)
 
     bundle = bundles / "candidate"
@@ -278,16 +934,19 @@ def test_operation_gate_verifies_atomic_pair_current_and_helper_hashes(
                 "schema_version": 1,
                 "mode": "day2",
                 "compose_project": "infra",
-                "deploy_ref": release_ref,
-                "version": "1.45.207-beta",
-                "services": {},
+                    "deploy_ref": release_ref,
+                    "version": "1.45.207-beta",
+                    "runtime_input_sha256": {
+                        "shared_env": digest(shared_env),
+                        "base_compose": digest(base_compose),
+                        "gcp_compose": digest(gcp_compose),
+                        "release_compose": digest(release_compose),
+                    },
+                    "services": {},
             }
         ),
         encoding="utf-8",
     )
-
-    def digest(path: Path) -> str:
-        return hashlib.sha256(path.read_bytes()).hexdigest()
 
     (bundle / "bootstrap-state.json").write_text(
         json.dumps(
@@ -300,8 +959,15 @@ def test_operation_gate_verifies_atomic_pair_current_and_helper_hashes(
                 "reboot_helper": {
                     "mode": "current",
                     "source_ref": release_ref,
+                    "source_artifact_uri": (
+                        f"gs://omega-source/deploy-artifacts/{release_ref}/repo.tar.gz"
+                    ),
+                    "source_artifact_generation": "123",
+                    "source_artifact_size_bytes": 456,
+                    "source_artifact_sha256": "b" * 64,
                     "reboot_runtime_sha256": digest(reboot),
                     "runtime_contract_sha256": digest(contract),
+                    "safe_io_sha256": digest(safe_io),
                 },
             }
         ),
@@ -317,7 +983,7 @@ def test_operation_gate_verifies_atomic_pair_current_and_helper_hashes(
         [gate, "print-helpers"], text=True, capture_output=True, env=env, check=False
     )
     assert helpers.returncode == 0, helpers.stderr
-    assert helpers.stdout.strip() == f"{reboot}\t{contract}"
+    assert helpers.stdout.strip() == f"{reboot}\t{contract}\t{safe_io}"
 
     reboot.write_text("tampered\n", encoding="utf-8")
     rejected = subprocess.run(
@@ -335,15 +1001,21 @@ def test_restore_rehearsal_isolated_from_live_volumes() -> None:
     assert "ThreadPoolExecutor" in rehearsal
     assert "schema_migrations" in rehearsal
     assert "live_volumes_untouched=true" in rehearsal
-    assert "mode_postgres" not in rehearsal
-    assert "mode_postgres_gold" not in rehearsal
+    assert "docker inspect mode_postgres" in rehearsal
+    assert "docker inspect mode_postgres_gold" in rehearsal
+    assert "docker stop mode_postgres" not in rehearsal
+    assert "docker stop mode_postgres_gold" not in rehearsal
+    assert "docker rm mode_postgres" not in rehearsal
+    assert "docker rm mode_postgres_gold" not in rehearsal
     assert "docker compose" not in rehearsal
-    assert rehearsal.count("psql -v ON_ERROR_STOP=1") == 2
+    assert 'docker run -d --pull never --name "$OP_CONTAINER"' in rehearsal
+    assert 'docker run -d --pull never --name "$GOLD_CONTAINER"' in rehearsal
     assert 'REHEARSAL_ADMIN="omega_rehearsal_${SUFFIX}"' in rehearsal
     assert "filter_pg_dump_bootstrap_role" not in rehearsal
     assert rehearsal.count('POSTGRES_USER="$REHEARSAL_ADMIN"') == 2
     assert rehearsal.count("POSTGRES_DB=postgres") == 2
     assert rehearsal.count("--pull never") == 2
+    assert '"$GOLD_IMAGE" postgres -p 5433' in rehearsal
     assert "repo_digest" in rehearsal
     assert "image_id" in rehearsal
     assert "unique role absent from both unmodified dumps" in rehearsal
@@ -441,7 +1113,7 @@ def test_unmodified_pg_dumpall_restores_with_distinct_bootstrap_role(
             image,
         ]
         if port != "5432":
-            command.extend(["-p", port])
+            command.extend(["postgres", "-p", port])
         started = docker(*command)
         assert started.returncode == 0, started.stderr.decode()
         for _ in range(60):
@@ -497,7 +1169,12 @@ def test_migration_runner_accepts_only_a_safe_explicit_project_and_env() -> None
     assert "OMEGA_MIGRATION_ENV_FILE" in migration
     assert "OMEGA_MIGRATION_COMPOSE_PROJECT_NAME" in migration
     assert "^[a-z0-9][a-z0-9_-]*$" in migration
-    assert 'docker compose --project-name "${COMPOSE_PROJECT_NAME_VALUE}"' in migration
+    assert 'COMPOSE+=(--project-name "${COMPOSE_PROJECT_NAME_VALUE}")' in migration
+    assert "COMPOSE_DISABLE_ENV_FILE=1" in migration
+    assert "env-validate" in migration
+    assert "--forbid-prefix OMEGA_MIGRATION_" in migration
+    assert 'source "${ENV_FILE}"' not in migration
+    assert 'exec -T -e "PGOPTIONS=' not in migration
     assert 'BOOTSTRAP_MODE="${OMEGA_MIGRATION_BOOTSTRAP_MODE:-0}"' in migration
     assert "OMEGA_MIGRATION_ALLOW_BOOTSTRAP_LEDGER" in migration
     assert "restricted to local/development/test" in migration
@@ -545,18 +1222,17 @@ def test_candidate_git_archive_has_no_git_metadata_and_day2_needs_no_git() -> No
 
 
 def test_startup_publishes_shared_runtime_only_after_gcp_reconciliation() -> None:
-    startup = _read("infra/terraform-gcp/templates/startup.sh.tftpl")
-    shared_copy = startup.index('cp infra/.env "$${SHARED_ENV}"')
-    assert shared_copy > startup.index("set_env S3_ENDPOINT_URL")
-    assert shared_copy > startup.index("if hmac_secret_key=")
-    assert (
-        'cp infra/docker-compose.gcp.yml "$${APP_ROOT}/shared/docker-compose.gcp.yml"'
-        in startup
-    )
+    runtime = _read("scripts/gcp/bootstrap-runtime.sh")
+    shared_copy = runtime.index('mv -Tf "${SHARED_ENV_TMP}" "${SHARED_ENV}"')
+    assert shared_copy > runtime.index("set_env S3_ENDPOINT_URL")
+    assert shared_copy > runtime.index("if hmac_secret_key=")
+    assert '"${SAFE_IO}" fsync-file "${SHARED_ENV_TMP}"' in runtime
+    assert 'mv -Tf "${GCP_RUNTIME_COMPOSE_TMP}" "${GCP_RUNTIME_COMPOSE}"' in runtime
 
 
 def test_startup_is_bootstrap_once_and_fences_partial_reboot_state() -> None:
     startup = _read("infra/terraform-gcp/templates/startup.sh.tftpl")
+    runtime = _read("scripts/gcp/bootstrap-runtime.sh")
     guard = _read("infra/terraform-gcp/templates/omega-operation-gate")
     locals = _read("infra/terraform-gcp/locals.tf")
     compute = _read("infra/terraform-gcp/compute.tf")
@@ -569,17 +1245,19 @@ def test_startup_is_bootstrap_once_and_fences_partial_reboot_state() -> None:
     assert 'output "source_sha"' in outputs
     assert 'output "source_object"' in outputs
     assert 'output "startup_script_sha256"' in outputs
-    assert startup.index("omega-operation-gate") < startup.index(
+    assert runtime.index("omega-operation-gate") < runtime.index(
         "docker-ce docker-ce-cli"
     )
-    assert startup.index('if [[ -e "$${BOOTSTRAP_STATE}" ]]') < startup.index(
-        "download_source()"
-    )
-    assert "recovering exact current without download/build/pull" in startup
-    assert '"operation": "bootstrap"' in startup
-    assert 'mv -Tf "$${STATE_LINK_TMP}" "$${STATE_LINK}"' in startup
-    assert 'rm -f -- "$${OPERATION_MARKER}"' in startup
-    assert "OMEGA_GCP_RUNTIME_CONTRACT" in startup
+    assert runtime.index(
+        'if [[ -e "${STATE_LINK}" || -L "${STATE_LINK}" ]]'
+    ) < runtime.index("download_source()")
+    assert "recovering exact current without download/build/pull" in runtime
+    assert '"operation": "bootstrap"' in runtime
+    assert 'mv -Tf "${STATE_LINK_TMP}" "${STATE_LINK}"' in runtime
+    assert 'rm -f -- "${OPERATION_MARKER}"' in runtime
+    assert "OMEGA_GCP_RUNTIME_CONTRACT" in runtime
+    assert "systemctl stop docker.service docker.socket containerd.service" in startup
+    assert '"$RUNTIME_ROOT/bootstrap-runtime.sh"' in startup
     assert "runtime-state is not an atomic symlink" in guard
     assert "runtime provenance checksum differs" in guard
     assert "reboot helper checksum differs" in guard
@@ -588,22 +1266,11 @@ def test_startup_is_bootstrap_once_and_fences_partial_reboot_state() -> None:
 def test_startup_template_renders_to_syntax_valid_bash() -> None:
     rendered = _read("infra/terraform-gcp/templates/startup.sh.tftpl")
     values = {
-        "project_id": "omega-production",
-        "source_bucket": "omega-source-bucket",
-        "source_object": "deploy-artifacts/" + "a" * 40 + "/repo.tar.gz",
-        "source_sha": "a" * 40,
-        "public_console_url": "https://gcp-console.example.com",
-        "public_workspace_url": "https://gcp-workspace.example.com",
-        "public_airflow_url": "https://gcp-console.example.com/airflow",
-        "technical_console_url": "http://192.0.2.1",
-        "technical_workspace_url": "http://192.0.2.2",
-        "admin_email": "operator@example.com",
-        "cookie_secure": "true",
-        "lakehouse_bucket": "omega-lakehouse",
-        "lakehouse_endpoint": "storage.googleapis.com",
-        "enable_airflow_scheduler": "true",
-        "secret_prefix": "omega-production-",
-        "compose_override": "services: {}",
+        "startup_config_base64": b64encode(b"{}").decode(),
+        "bootstrap_runtime_base64": b64encode(
+            _read("scripts/gcp/bootstrap-runtime.sh").encode()
+        ).decode(),
+        "safe_io_base64": b64encode(_read("scripts/gcp/safe_io.py").encode()).decode(),
         "operation_guard_base64": b64encode(
             _read("infra/terraform-gcp/templates/omega-operation-gate").encode()
         ).decode(),
@@ -623,12 +1290,28 @@ def test_controller_binds_backup_and_deploy_to_live_terraform_render(
     module = _load_module()
     monkeypatch.setenv("OMEGA_TERRAFORM_BIN", sys.executable)
     deploy_ref = "a" * 40
+    artifact = module.ArtifactRef(
+        uri=f"gs://omega-source-bucket/deploy-artifacts/{deploy_ref}/repo.tar.gz",
+        generation="123",
+        size_bytes=456,
+        sha256="b" * 64,
+    )
+    startup_config = {
+        "source": {
+            "bucket": "omega-source-bucket",
+            "object": f"deploy-artifacts/{deploy_ref}/repo.tar.gz",
+            "ref": deploy_ref,
+            "generation": "123",
+            "size_bytes": 456,
+            "archive_sha256": "b" * 64,
+        }
+    }
     startup = "\n".join(
         [
             "#!/usr/bin/env bash",
-            'SOURCE_BUCKET="omega-source-bucket"',
-            f'SOURCE_OBJECT="deploy-artifacts/{deploy_ref}/repo.tar.gz"',
-            f'SOURCE_SHA="{deploy_ref}"',
+            "STARTUP_CONFIG_BASE64='"
+            + b64encode(json.dumps(startup_config).encode()).decode()
+            + "'",
             "",
         ]
     )
@@ -641,21 +1324,22 @@ def test_controller_binds_backup_and_deploy_to_live_terraform_render(
     )
     reviewed = tmp_path / "production.tfvars"
     reviewed.write_text("placeholder\n", encoding="utf-8")
+    reviewed.chmod(0o600)
     assert (
         module.validate_terraform_source_contract(
             terraform_dir=REPO / "infra/terraform-gcp",
             var_file=reviewed,
             source_ref=deploy_ref,
-            artifact_bucket="omega-source-bucket",
+            artifact=artifact,
         )
         == hashlib.sha256(startup.encode()).hexdigest()
     )
-    with pytest.raises(RuntimeError, match="not bound to the exact"):
+    with pytest.raises(RuntimeError, match="not byte-bound to the artifact"):
         module.validate_terraform_source_contract(
             terraform_dir=REPO / "infra/terraform-gcp",
             var_file=reviewed,
             source_ref="c" * 40,
-            artifact_bucket="omega-source-bucket",
+            artifact=artifact,
         )
 
     reviewed.write_text(
@@ -667,6 +1351,9 @@ def test_controller_binds_backup_and_deploy_to_live_terraform_render(
                 'source_bucket = "omega-source-bucket"',
                 f'source_object = "deploy-artifacts/{deploy_ref}/repo.tar.gz"',
                 f'source_sha = "{deploy_ref}"',
+                'source_generation = "123"',
+                "source_size_bytes = 456",
+                'source_archive_sha256 = "' + "b" * 64 + '"',
                 'app_machine_type = "e2-standard-4"',
                 "boot_disk_size_gb = 60",
                 "data_disk_size_gb = 150",
@@ -684,7 +1371,7 @@ def test_controller_binds_backup_and_deploy_to_live_terraform_render(
         terraform_dir=REPO / "infra/terraform-gcp",
         var_file=reviewed,
         source_ref=deploy_ref,
-        source_bucket="omega-source-bucket",
+        artifact=artifact,
         project_id="omega-production",
         project_number="894064513501",
         billing_account_id="01A3E0-B708F4-6EA299",
@@ -697,7 +1384,7 @@ def test_controller_binds_backup_and_deploy_to_live_terraform_render(
             terraform_dir=REPO / "infra/terraform-gcp",
             var_file=reviewed,
             source_ref=deploy_ref,
-            source_bucket="omega-source-bucket",
+            artifact=artifact,
             project_id="omega-production",
             project_number="894064513501",
             billing_account_id="01A3E0-B708F4-6EA299",
@@ -854,7 +1541,7 @@ def test_startup_metadata_backup_is_byte_exact_and_restore_bound(
     assert backup["fingerprint"] == snapshot.fingerprint
 
 
-def test_ghcr_saved_plan_allows_exactly_two_creates(
+def test_ghcr_saved_plan_allows_exactly_seven_staged_creates(
     monkeypatch, tmp_path: Path
 ) -> None:
     module = _load_module()
@@ -864,9 +1551,13 @@ def test_ghcr_saved_plan_allows_exactly_two_creates(
     def payload(actions: list[str] | None = None) -> dict:
         changes = []
         for address, expected in module.GHCR_PLAN_ACTIONS.items():
+            secret_name = "ghcr_pull_credentials"
+            match = re.search(r'\["([^"]+)"\]', address)
+            if match:
+                secret_name = match.group(1)
             after = {
                 "project": "omega-production",
-                "secret_id": "omega-production-ghcr_pull_credentials",
+                "secret_id": f"omega-production-{secret_name}",
             }
             if "iam_member" in address:
                 after.update(
@@ -950,7 +1641,7 @@ def test_startup_restore_and_saved_plan_only_are_operator_contracts() -> None:
     compute = _read("infra/terraform-gcp/compute.tf")
     runbook = _read("docs/runbook/16_gcp_canonical_day2_release.md")
     apply = controller[controller.index("def command_apply_ghcr_access") :]
-    apply = apply[: apply.index("def command_image_preflight")]
+    apply = apply[: apply.index("def command_plan_backup_storage")]
     assert "ignore_changes = [metadata_startup_script]" in compute
     assert "backup_startup_metadata" in controller
     assert "restore_contract" in controller
@@ -959,7 +1650,7 @@ def test_startup_restore_and_saved_plan_only_are_operator_contracts() -> None:
     assert "setMetadata" in controller
     assert '"apply"' in apply
     assert '"-target=' not in apply
-    assert "exactly two creates" in runbook
+    assert "exactly seven creates" in runbook
     assert "inverse CAS" in runbook
 
 
@@ -968,13 +1659,26 @@ def test_day2_ci_runs_focal_tests_and_static_scanners() -> None:
     lint = _read(".github/workflows/lint.yml")
     security = _read(".github/workflows/security.yml")
     changed = _read("scripts/ci_changed_areas.py")
-    assert "tests/test_gcp_day2_release.py" in focal
-    assert "scripts/gcp_release.py scripts/gcp/runtime_contract.py" in lint
+    for test in (
+        "tests/test_gcp_day2_release.py",
+        "tests/test_gcp_operation_gate.py",
+        "tests/test_gcp_safe_io.py",
+        "tests/test_gcp_terraform_contract.py",
+        "tests/test_release_image_promotion.py",
+    ):
+        assert test in focal
+    assert lint.count("scripts/gcp_release.py scripts/release_images.py") == 2
+    assert lint.count(
+        "scripts/gcp/runtime_contract.py scripts/gcp/safe_io.py"
+    ) == 2
     assert (
         lint.count("scripts/migration_guard.py scripts/generate_migration_manifests.py")
         == 2
     )
-    assert security.count("scripts/gcp_release.py scripts/gcp/runtime_contract.py") == 2
+    assert security.count("scripts/gcp_release.py scripts/release_images.py") == 2
+    assert security.count(
+        "scripts/gcp/runtime_contract.py scripts/gcp/safe_io.py"
+    ) == 2
     assert (
         security.count(
             "scripts/migration_guard.py scripts/generate_migration_manifests.py"
@@ -982,7 +1686,8 @@ def test_day2_ci_runs_focal_tests_and_static_scanners() -> None:
         == 2
     )
     assert '"scripts/gcp_release.py"' in changed
-    assert '"scripts/gcp/runtime_contract.py"' in changed
+    assert '"scripts/release_images.py"' in changed
+    assert '"scripts/gcp/"' in changed
     assert '"scripts/migration_guard.py"' in changed
     assert '"scripts/generate_migration_manifests.py"' in changed
 
@@ -996,7 +1701,10 @@ def test_authenticated_image_preflight_is_15_of_15_and_server_owned() -> None:
     assert "versions/latest" not in preflight
     assert "GHCR_SECRET_VERSION" in preflight
     assert "credential output suppressed" in preflight
-    assert "image-preflights/${PURPOSE}-${TARGET_REF}" in preflight
+    assert (
+        "image-preflights/${PURPOSE}-${TARGET_KIND}-${TARGET_TAG}-${TARGET_REF}-by-${HELPER_REF}"
+        in preflight
+    )
 
 
 def test_operator_controller_validates_identity_and_redacts_evidence(
@@ -1009,7 +1717,11 @@ def test_operator_controller_validates_identity_and_redacts_evidence(
     assert not module.TAG_RE.fullmatch("latest")
 
     git_values = {
+        ("remote", "get-url", "origin"): (
+            "git@github.com:emmanuelnavaromero02-commits/CONSOLA-V1.git"
+        ),
         ("cat-file", "-t", "refs/tags/v1.45.207-beta"): "tag",
+        ("rev-parse", "refs/tags/v1.45.207-beta"): "b" * 40,
         ("rev-parse", "refs/tags/v1.45.207-beta^{commit}"): "a" * 40,
         ("rev-parse", "origin/main"): "a" * 40,
         ("show", f"{'a' * 40}:VERSION"): "1.45.207-beta",
@@ -1019,7 +1731,13 @@ def test_operator_controller_validates_identity_and_redacts_evidence(
         module,
         "run",
         lambda *_args, **_kwargs: subprocess.CompletedProcess(
-            [], 0, f"{'a' * 40}\trefs/tags/v1.45.207-beta^{{}}\n", ""
+            [],
+            0,
+            (
+                f"{'b' * 40}\trefs/tags/v1.45.207-beta\n"
+                f"{'a' * 40}\trefs/tags/v1.45.207-beta^{{}}\n"
+            ),
+            "",
         ),
     )
     assert (

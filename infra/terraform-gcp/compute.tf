@@ -6,6 +6,10 @@ resource "google_compute_disk" "docker_data" {
   labels = local.labels
 
   physical_block_size_bytes = 4096
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "google_compute_instance" "app" {
@@ -48,6 +52,7 @@ resource "google_compute_instance" "app" {
   # place through Compute setMetadata with the live fingerprint as a CAS.
   lifecycle {
     ignore_changes = [metadata_startup_script]
+    prevent_destroy = true
   }
 
   service_account {
@@ -64,6 +69,7 @@ resource "google_compute_instance" "app" {
   depends_on = [
     google_compute_router_nat.main,
     google_storage_bucket_iam_member.app_source,
+    google_storage_bucket_iam_member.app_release_backup,
     google_secret_manager_secret_iam_member.app_runtime_secret_access,
     google_secret_manager_secret_iam_member.app_ghcr_pull_credentials_access,
     google_project_iam_member.app_project_roles,

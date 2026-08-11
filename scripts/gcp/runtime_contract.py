@@ -42,8 +42,35 @@ ONE_SHOT_MUTATORS = (
     "postgres_dev_seed",
     "superset-init",
 )
+INFRASTRUCTURE_SERVICES = (
+    "postgres",
+    "postgres_gold",
+    "redis",
+    "minio",
+    "mailhog",
+    "superset",
+)
+GLOBAL_SINGLETON_SERVICES = ("superset",)
 FULL_SHA_RE = re.compile(r"[0-9a-f]{40}")
 SHA256_RE = re.compile(r"sha256:[0-9a-f]{64}")
+GHCR_OWNER = "emmanuelnavaromero02-commits"
+RUNTIME_INPUT_KEYS = {
+    "shared_env",
+    "base_compose",
+    "gcp_compose",
+    "legacy_image_compose",
+    "release_compose",
+}
+REPOSITORY_TO_SERVICES = {
+    repository: {service} for service, (_key, repository) in IMAGE_KEYS.items()
+}
+REPOSITORY_TO_SERVICES["airflow"].add(SCHEDULER_SERVICE)
+MUTATING_SERVICES = (
+    *IMAGE_KEYS,
+    SCHEDULER_SERVICE,
+    *ONE_SHOT_MUTATORS,
+    *GLOBAL_SINGLETON_SERVICES,
+)
 
 
 def _run(*command: str) -> str:
@@ -67,6 +94,24 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _runtime_input_hashes(values: list[str]) -> dict[str, str]:
+    hashes: dict[str, str] = {}
+    for value in values:
+        key, separator, raw_path = value.partition("=")
+        if not separator or key not in RUNTIME_INPUT_KEYS or key in hashes:
+            raise ValueError("runtime input inventory is invalid or duplicated")
+        path = Path(raw_path)
+        if path.is_symlink() or not path.is_file():
+            raise ValueError(f"runtime input is missing or linked: {key}")
+        hashes[key] = _sha256(path)
+    base = {"shared_env", "base_compose", "gcp_compose"}
+    if not base.issubset(hashes) or not set(hashes).issubset(RUNTIME_INPUT_KEYS):
+        raise ValueError("runtime input inventory lacks its canonical base")
+    if "legacy_image_compose" in hashes and "release_compose" in hashes:
+        raise ValueError("legacy and day-2 image overlays cannot be active together")
+    return hashes
+
+
 def load_lock(path: Path) -> dict[str, str]:
     expected_keys = {value[0] for value in IMAGE_KEYS.values()}
     values: dict[str, str] = {}
@@ -83,7 +128,6 @@ def load_lock(path: Path) -> dict[str, str]:
     if set(values) != expected_keys or len(values) != 15:
         raise ValueError("image lock must contain exactly 15 expected images")
 
-    owner = None
     tag = None
     for service, (key, repository) in IMAGE_KEYS.items():
         match = re.fullmatch(
@@ -93,10 +137,9 @@ def load_lock(path: Path) -> dict[str, str]:
         )
         if not match:
             raise ValueError(f"invalid locked reference for {service}")
-        owner = owner or match.group(1)
         tag = tag or match.group(2)
-        if owner != match.group(1) or tag != match.group(2):
-            raise ValueError("image lock mixes owner or release tag")
+        if match.group(1) != GHCR_OWNER or tag != match.group(2):
+            raise ValueError("image lock owner or release tag is not canonical")
     return values
 
 
@@ -135,6 +178,90 @@ def _global_running_ids(service: str) -> list[str]:
     return [line for line in output.splitlines() if line]
 
 
+def _all_running_ids() -> list[str]:
+    output = _run("docker", "ps", "--format", "{{.ID}}")
+    return [line for line in output.splitlines() if line]
+
+
+def _proprietary_repository(configured_ref: str) -> str | None:
+    match = re.match(
+        rf"^ghcr\.io/{re.escape(GHCR_OWNER)}/([a-z0-9_-]+)(?::|@)",
+        configured_ref,
+    )
+    if match and match.group(1) in REPOSITORY_TO_SERVICES:
+        return match.group(1)
+    return None
+
+
+def _verify_global_writer_inventory(
+    project: str, canonical_ids: dict[str, str], *, scheduler: str
+) -> None:
+    expected_services = set(IMAGE_KEYS)
+    if scheduler == "required":
+        expected_services.add(SCHEDULER_SERVICE)
+    for service in (*IMAGE_KEYS, SCHEDULER_SERVICE):
+        global_ids = set(_global_running_ids(service))
+        expected_ids = (
+            {canonical_ids[service]} if service in expected_services else set()
+        )
+        if global_ids != expected_ids:
+            raise RuntimeError(
+                f"global service={service} ids={len(global_ids)} expected={len(expected_ids)}"
+            )
+    for service in GLOBAL_SINGLETON_SERVICES:
+        global_ids = set(_global_running_ids(service))
+        expected_ids = {canonical_ids[service]}
+        if global_ids != expected_ids:
+            raise RuntimeError(
+                f"global service={service} ids={len(global_ids)} expected=1"
+            )
+
+    singleton_images = {
+        str((_inspect(canonical_ids[service]).get("Config") or {}).get("Image", "")):
+        (service, canonical_ids[service])
+        for service in GLOBAL_SINGLETON_SERVICES
+    }
+
+    for container_id in _all_running_ids():
+        info = _inspect(container_id)
+        config = info.get("Config") or {}
+        repository = _proprietary_repository(str(config.get("Image", "")))
+        labels = config.get("Labels") or {}
+        configured_ref = str(config.get("Image", ""))
+        if configured_ref in singleton_images:
+            singleton_service, expected_id = singleton_images[configured_ref]
+            if container_id != expected_id:
+                raise RuntimeError(
+                    f"foreign or unlabeled singleton image detected: {singleton_service}"
+                )
+        if repository is None:
+            continue
+        service = labels.get("com.docker.compose.service")
+        allowed = REPOSITORY_TO_SERVICES[repository]
+        if (
+            labels.get("com.docker.compose.project") != project
+            or service not in allowed
+            or canonical_ids.get(str(service)) != container_id
+        ):
+            raise RuntimeError(
+                f"foreign or unlabeled proprietary writer image detected: {repository}"
+            )
+
+
+def verify_global_fence(project: str) -> None:
+    for service in MUTATING_SERVICES:
+        if _global_running_ids(service):
+            raise RuntimeError(f"global mutator remains running: {service}")
+    for container_id in _all_running_ids():
+        configured = str((_inspect(container_id).get("Config") or {}).get("Image", ""))
+        if _proprietary_repository(configured) is not None:
+            raise RuntimeError("a proprietary writer image remains globally running")
+        if configured.startswith("apache/superset:") or configured.startswith(
+            "apache/superset@"
+        ):
+            raise RuntimeError("a Superset Analytics writer remains globally running")
+
+
 def _inspect(container_id: str) -> dict[str, Any]:
     payload = json.loads(_run("docker", "inspect", container_id))
     if not isinstance(payload, list) or len(payload) != 1:
@@ -150,6 +277,86 @@ def _image_id(reference: str) -> str:
     if not SHA256_RE.fullmatch(image_id):
         raise RuntimeError("locked image ID is invalid")
     return image_id
+
+
+def _runtime_config_sha256(info: dict[str, Any]) -> str:
+    """Hash deterministic runtime configuration without emitting secret values."""
+    config = info.get("Config") or {}
+    host = info.get("HostConfig") or {}
+    mounts = info.get("Mounts") or []
+    networks = (info.get("NetworkSettings") or {}).get("Networks") or {}
+    payload = {
+        "path": info.get("Path"),
+        "args": info.get("Args") or [],
+        "config": {
+            key: config.get(key)
+            for key in (
+                "Image",
+                "Env",
+                "Entrypoint",
+                "Cmd",
+                "WorkingDir",
+                "User",
+                "Labels",
+                "Healthcheck",
+                "ExposedPorts",
+                "Volumes",
+                "StopSignal",
+            )
+        },
+        "host_config": {
+            key: host.get(key)
+            for key in (
+                "Binds",
+                "CapAdd",
+                "CapDrop",
+                "CgroupnsMode",
+                "CpuQuota",
+                "CpuPeriod",
+                "CpusetCpus",
+                "Dns",
+                "ExtraHosts",
+                "IpcMode",
+                "LogConfig",
+                "Memory",
+                "MemorySwap",
+                "NanoCpus",
+                "NetworkMode",
+                "PidsLimit",
+                "PortBindings",
+                "Privileged",
+                "ReadonlyRootfs",
+                "RestartPolicy",
+                "SecurityOpt",
+                "ShmSize",
+                "Ulimits",
+                "UsernsMode",
+            )
+        },
+        "mounts": sorted(
+            (
+                {
+                    key: mount.get(key)
+                    for key in (
+                        "Type",
+                        "Name",
+                        "Source",
+                        "Destination",
+                        "Driver",
+                        "Mode",
+                        "RW",
+                        "Propagation",
+                    )
+                }
+                for mount in mounts
+                if isinstance(mount, dict)
+            ),
+            key=lambda item: (str(item.get("Destination")), str(item.get("Source"))),
+        ),
+        "networks": sorted(str(name) for name in networks),
+    }
+    encoded = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _require_exact_container(
@@ -183,7 +390,11 @@ def _require_exact_container(
             raise RuntimeError(f"service={service} local image ID mismatch")
     if not SHA256_RE.fullmatch(image_id):
         raise RuntimeError(f"service={service} image ID is invalid")
-    return {"configured_ref": configured_ref, "image_id": image_id}
+    return {
+        "configured_ref": configured_ref,
+        "image_id": image_id,
+        "runtime_config_sha256": _runtime_config_sha256(info),
+    }
 
 
 def verify_runtime(
@@ -196,6 +407,7 @@ def verify_runtime(
     if expected_refs is not None and not set(IMAGE_KEYS).issubset(expected_refs):
         raise ValueError("runtime image inventory must contain exactly 15 services")
     observed: dict[str, dict[str, str]] = {}
+    canonical_ids: dict[str, str] = {}
     for service in IMAGE_KEYS:
         observed[service] = _require_exact_container(
             project,
@@ -204,6 +416,23 @@ def verify_runtime(
             running=True,
             healthy=True,
         )
+        canonical_ids[service] = _container_ids(project, service)[0]
+
+    # These services are not part of the 15 proprietary GHCR lock, but they
+    # are still mandatory production runtime. In particular Superset is the
+    # Analytics surface, and both databases/object/cache dependencies must be
+    # healthy for a release to be considered exact. Their configured refs and
+    # local image IDs are recorded in runtime provenance and checked on every
+    # later recovery.
+    for service in INFRASTRUCTURE_SERVICES:
+        observed[service] = _require_exact_container(
+            project,
+            service,
+            expected_ref=None,
+            running=True,
+            healthy=True,
+        )
+        canonical_ids[service] = _container_ids(project, service)[0]
 
     globally_running = _global_running_ids(SCHEDULER_SERVICE)
     if scheduler == "stopped":
@@ -221,6 +450,7 @@ def verify_runtime(
             running=True,
             healthy=True,
         )
+        canonical_ids[SCHEDULER_SERVICE] = _container_ids(project, SCHEDULER_SERVICE)[0]
     else:
         raise ValueError("scheduler policy must be stopped or required")
 
@@ -261,7 +491,9 @@ def verify_runtime(
             observed[f"one-shot:{service}"] = {
                 "configured_ref": configured_ref,
                 "image_id": image_id,
+                "runtime_config_sha256": _runtime_config_sha256(info),
             }
+    _verify_global_writer_inventory(project, canonical_ids, scheduler=scheduler)
     return observed
 
 
@@ -276,6 +508,11 @@ def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temp_name, path)
+        descriptor = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
     finally:
         if os.path.exists(temp_name):
             os.unlink(temp_name)
@@ -295,6 +532,14 @@ def command_lock(args: argparse.Namespace) -> int:
     lock_path = Path(args.lock_env)
     lock = load_lock(lock_path)
     expected = expected_service_refs(lock)
+    runtime_inputs = _runtime_input_hashes(args.runtime_input)
+    if set(runtime_inputs) != {
+        "shared_env",
+        "base_compose",
+        "gcp_compose",
+        "release_compose",
+    }:
+        raise ValueError("day2 runtime inputs are not exact")
     observed = verify_runtime(
         args.compose_project,
         expected_refs=expected,
@@ -313,19 +558,27 @@ def command_lock(args: argparse.Namespace) -> int:
                 "deploy_ref": args.deploy_ref,
                 "version": args.version,
                 "image_lock_sha256": _sha256(lock_path),
+                "runtime_input_sha256": runtime_inputs,
                 "services": observed,
             },
         )
     scheduler_count = 1 if args.scheduler == "required" else 0
     print(
         "OMEGA_GCP_RUNTIME_CONTRACT\tPASS\t"
-        f"images=15/15 running=15 healthy=15 scheduler={scheduler_count}"
+        f"images=15/15 running={21 + scheduler_count} "
+        f"healthy={21 + scheduler_count} scheduler={scheduler_count}"
     )
     return 0
 
 
 def command_bootstrap_record(args: argparse.Namespace) -> int:
     _validate_identity(args.deploy_ref, args.version, args.compose_project)
+    runtime_inputs = _runtime_input_hashes(args.runtime_input)
+    expected_input_keys = {"shared_env", "base_compose", "gcp_compose"}
+    if "legacy_image_compose" in runtime_inputs:
+        expected_input_keys.add("legacy_image_compose")
+    if set(runtime_inputs) != expected_input_keys:
+        raise ValueError("bootstrap runtime inputs are not exact")
     observed = verify_runtime(
         args.compose_project,
         expected_refs=None,
@@ -340,6 +593,7 @@ def command_bootstrap_record(args: argparse.Namespace) -> int:
             "compose_project": args.compose_project,
             "deploy_ref": args.deploy_ref,
             "version": args.version,
+            "runtime_input_sha256": runtime_inputs,
             "services": observed,
         },
     )
@@ -361,6 +615,9 @@ def command_provenance(args: argparse.Namespace) -> int:
         if payload.get(key) != value:
             raise ValueError(f"runtime provenance mismatch: {key}")
     mode = payload.get("mode")
+    runtime_inputs = _runtime_input_hashes(args.runtime_input)
+    if payload.get("runtime_input_sha256") != runtime_inputs:
+        raise ValueError("runtime provenance input hash drift")
     if mode == "day2":
         if not args.lock_env:
             raise ValueError("day2 provenance requires its exact image lock")
@@ -372,6 +629,7 @@ def command_provenance(args: argparse.Namespace) -> int:
         services = payload.get("services")
         expected_names = (
             set(IMAGE_KEYS)
+            | set(INFRASTRUCTURE_SERVICES)
             | {SCHEDULER_SERVICE}
             | {f"one-shot:{service}" for service in ONE_SHOT_MUTATORS}
         )
@@ -395,12 +653,22 @@ def command_provenance(args: argparse.Namespace) -> int:
             raise ValueError(f"runtime provenance configured ref drift: {service}")
         if recorded.get("image_id") != value["image_id"]:
             raise ValueError(f"runtime provenance image ID drift: {service}")
+        if recorded.get("runtime_config_sha256") != value["runtime_config_sha256"]:
+            raise ValueError(f"runtime provenance config drift: {service}")
     print(
         "OMEGA_GCP_RUNTIME_CONTRACT\tPASS\t"
-        f"mode={mode} images=15/15 running={16 if args.scheduler == 'required' else 15} "
-        f"healthy={16 if args.scheduler == 'required' else 15} "
+        f"mode={mode} images=15/15 running={22 if args.scheduler == 'required' else 21} "
+        f"healthy={22 if args.scheduler == 'required' else 21} "
         f"scheduler={1 if args.scheduler == 'required' else 0}"
     )
+    return 0
+
+
+def command_fence(args: argparse.Namespace) -> int:
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", args.compose_project):
+        raise ValueError("Compose project is invalid")
+    verify_global_fence(args.compose_project)
+    print("OMEGA_GCP_RUNTIME_CONTRACT\tPASS\tglobal writers fenced")
     return 0
 
 
@@ -412,6 +680,7 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("--compose-project", required=True)
     common.add_argument("--deploy-ref", required=True)
     common.add_argument("--version", required=True)
+    common.add_argument("--runtime-input", action="append", required=True)
 
     lock = commands.add_parser("lock", parents=[common])
     lock.add_argument("--lock-env", required=True)
@@ -432,6 +701,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     provenance.add_argument("--one-shots", action="store_true")
     provenance.set_defaults(handler=command_provenance)
+
+    fence = commands.add_parser("writer-fence")
+    fence.add_argument("--compose-project", required=True)
+    fence.set_defaults(handler=command_fence)
     return parser
 
 

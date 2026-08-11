@@ -5,6 +5,8 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 GCP_TERRAFORM = ROOT / "infra/terraform-gcp"
@@ -43,14 +45,11 @@ def _write_executable(path: Path, source: str) -> None:
 def test_terraform_owns_only_a_resource_scoped_ghcr_secret_container() -> None:
     secrets = _read(GCP_TERRAFORM / "secrets.tf")
     iam = _read(GCP_TERRAFORM / "iam.tf")
-    project_roles = iam.split(
-        'resource "google_secret_manager_secret_iam_member"', 1
-    )[0]
+    project_roles = iam.split('resource "google_secret_manager_secret_iam_member"', 1)[
+        0
+    ]
 
-    assert (
-        'resource "google_secret_manager_secret" "ghcr_pull_credentials"'
-        in secrets
-    )
+    assert 'resource "google_secret_manager_secret" "ghcr_pull_credentials"' in secrets
     assert 'secret_id = "omega-${var.environment}-ghcr_pull_credentials"' in secrets
     assert "google_secret_manager_secret_version" not in secrets
     assert "secret_data" not in secrets
@@ -122,8 +121,12 @@ def test_release_overlay_is_digest_locked_and_disables_build_and_pull() -> None:
         assert f"OMEGA_GCP_IMAGE_{lock_name}" in overlay
 
 
-def test_auth_runner_redacts_credentials_and_removes_docker_config(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    ("github_scopes", "expected_code"),
+    [("read:packages", 0), ("read:packages, repo", 10), ("none", 10)],
+)
+def test_auth_runner_redacts_credentials_enforces_read_only_scope_and_cleans_up(
+    tmp_path: Path, github_scopes: str, expected_code: int
 ) -> None:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -152,6 +155,23 @@ elif [[ "$args" == *"versions/7:access"* ]]; then
     previous="$arg"
   done
   printf '%s' '{{"name":"projects/omega-test-project/secrets/omega-staging-ghcr_pull_credentials/versions/7","payload":{{"data":"{payload}"}}}}'
+elif [[ "$args" == *"api.github.com/users/emmanuelnavaromero02-commits/packages/container/"* ]]; then
+  package="${{@: -1}}"
+  package="${{package##*/}}"
+  previous=""
+  header_path=""
+  output_path=""
+  for arg in "$@"; do
+    [[ "$previous" == "--dump-header" ]] && header_path="$arg"
+    [[ "$previous" == "--output" ]] && output_path="$arg"
+    previous="$arg"
+  done
+  test -n "$header_path"
+  test -n "$output_path"
+  scope="${{TEST_GITHUB_SCOPES:-read:packages}}"
+  [[ "$scope" == "none" ]] && scope=""
+  printf 'HTTP/1.1 200 OK\r\nX-OAuth-Scopes: %s\r\n\r\n' "$scope" > "$header_path"
+  printf '{{"name":"%s","package_type":"container","visibility":"private"}}' "$package" > "$output_path"
 else
   exit 12
 fi
@@ -182,6 +202,7 @@ esac
             "bash",
             "-c",
             'test "$OMEGA_GHCR_AUTH_ACTIVE" = 1; '
+            'test "$OMEGA_GHCR_PRIVATE_PACKAGES_VERIFIED" = 1; '
             'test -s "$DOCKER_CONFIG/config.json"; printf "%s\\n" command-ok',
         ],
         cwd=ROOT,
@@ -190,9 +211,11 @@ esac
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
             "OMEGA_GCP_ENVIRONMENT": "staging",
             "OMEGA_GHCR_PULL_SECRET_VERSION": "7",
-            "OMEGA_GHCR_AUTH_TMPDIR": str(tmp_path),
+            "OMEGA_GHCR_AUTH_TEST_NON_ROOT": "1",
+            "OMEGA_GHCR_AUTH_TEST_TMPDIR": str(tmp_path / "auth-root"),
             "TEST_DOCKER_CONFIG_RECORD": str(docker_config_record),
             "TEST_CURL_CONFIG_RECORD": str(curl_config_record),
+            "TEST_GITHUB_SCOPES": github_scopes,
         },
         text=True,
         stdout=subprocess.PIPE,
@@ -200,8 +223,7 @@ esac
         check=False,
     )
 
-    assert result.returncode == 0, result.stderr
-    assert "command-ok" in result.stdout
+    assert result.returncode == expected_code, result.stderr
     for secret in (
         "server-owned-token",
         "metadata-access-token",
@@ -209,6 +231,14 @@ esac
     ):
         assert secret not in result.stdout
         assert secret not in result.stderr
+    if expected_code != 0:
+        assert "scope is missing or exceeds read:packages" in result.stderr
+        assert "command-ok" not in result.stdout
+        assert not docker_config_record.exists()
+        assert curl_config_record.exists()
+        assert not Path(curl_config_record.read_text(encoding="utf-8")).exists()
+        return
+    assert "command-ok" in result.stdout
     assert not Path(docker_config_record.read_text(encoding="utf-8")).exists()
     assert not Path(curl_config_record.read_text(encoding="utf-8")).exists()
 
@@ -232,6 +262,8 @@ def test_auth_runner_rejects_latest_without_contacting_metadata(
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
             "OMEGA_GCP_ENVIRONMENT": "staging",
             "OMEGA_GHCR_PULL_SECRET_VERSION": "latest",
+            "OMEGA_GHCR_AUTH_TEST_NON_ROOT": "1",
+            "OMEGA_GHCR_AUTH_TEST_TMPDIR": str(tmp_path / "auth-root"),
         },
         text=True,
         stdout=subprocess.PIPE,
@@ -244,15 +276,24 @@ def test_auth_runner_rejects_latest_without_contacting_metadata(
     assert not curl_marker.exists()
 
 
-def test_preflight_pulls_exactly_15_and_writes_digest_lock(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "image_tag", ["v1.45.207-beta", f"candidate-{'b' * 40}"]
+)
+def test_preflight_pulls_exactly_15_and_writes_digest_lock(
+    tmp_path: Path, image_tag: str
+) -> None:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     docker_config = tmp_path / "docker-config"
     docker_config.mkdir()
     (docker_config / "config.json").write_text("{}\n", encoding="utf-8")
+    docker_root = tmp_path / "docker-root"
+    docker_root.mkdir()
     pull_record = tmp_path / "pulls"
     lock_file = tmp_path / "release-images.env"
     digest = "a" * 64
+    revision = "b" * 40
+    version = "1.45.207-beta"
 
     _write_executable(
         fake_bin / "docker",
@@ -267,11 +308,19 @@ case "${{1:-}}" in
     test "${{2:-}}" = "inspect"
     reference="${{@: -1}}"
     repository="${{reference%:*}}"
-    printf '["%s@sha256:{digest}"]\n' "$repository"
+    if [[ "$*" == *org.opencontainers.image.revision* ]]; then
+      printf '%s\n%s\n%s\n' '{revision}' '{version}' 'https://github.com/emmanuelnavaromero02-commits/CONSOLA-V1'
+    else
+      printf '["%s@sha256:{digest}"]\n' "$repository"
+    fi
     ;;
   *) exit 14 ;;
 esac
 """,
+    )
+    _write_executable(
+        fake_bin / "df",
+        "#!/bin/sh\nprintf 'Avail\\n42949672960\\n'\n",
     )
 
     result = subprocess.run(
@@ -279,7 +328,9 @@ esac
             "bash",
             str(PREFLIGHT),
             "emmanuelnavaromero02-commits",
-            "v1.45.207-beta",
+            image_tag,
+            revision,
+            version,
             str(lock_file),
         ],
         cwd=ROOT,
@@ -288,6 +339,9 @@ esac
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
             "DOCKER_CONFIG": str(docker_config),
             "OMEGA_GHCR_AUTH_ACTIVE": "1",
+            "OMEGA_GHCR_PRIVATE_PACKAGES_VERIFIED": "1",
+            "OMEGA_GHCR_PREFLIGHT_TEST_MODE": "1",
+            "OMEGA_GHCR_PREFLIGHT_TEST_DOCKER_ROOT": str(docker_root),
             "TEST_PULL_RECORD": str(pull_record),
         },
         text=True,
@@ -308,7 +362,7 @@ esac
     ]
     assert len(lock_lines) == 15
     assert len({line.split("=", 1)[0] for line in lock_lines}) == 15
-    assert all(":v1.45.207-beta@sha256:" in line for line in lock_lines)
+    assert all(f":{image_tag}@sha256:" in line for line in lock_lines)
     assert lock_file.stat().st_mode & 0o777 == 0o600
 
 
@@ -325,7 +379,15 @@ def test_preflight_rejects_mutable_latest_before_docker(tmp_path: Path) -> None:
     )
 
     result = subprocess.run(
-        ["bash", str(PREFLIGHT), "owner", "latest", str(tmp_path / "lock.env")],
+        [
+            "bash",
+            str(PREFLIGHT),
+            "emmanuelnavaromero02-commits",
+            "latest",
+            "b" * 40,
+            "1.45.207-beta",
+            str(tmp_path / "lock.env"),
+        ],
         cwd=ROOT,
         env={
             **os.environ,
@@ -340,4 +402,55 @@ def test_preflight_rejects_mutable_latest_before_docker(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 5
+    assert not docker_marker.exists()
+
+
+def test_preflight_rejects_low_docker_headroom_before_first_pull(
+    tmp_path: Path,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_marker = tmp_path / "docker-ran"
+    docker_config = tmp_path / "docker-config"
+    docker_config.mkdir()
+    (docker_config / "config.json").write_text("{}\n", encoding="utf-8")
+    docker_root = tmp_path / "docker-root"
+    docker_root.mkdir()
+    _write_executable(
+        fake_bin / "docker",
+        f"#!/bin/sh\ntouch {docker_marker!s}\nexit 99\n",
+    )
+    _write_executable(
+        fake_bin / "df",
+        "#!/bin/sh\nprintf 'Avail\\n1073741824\\n'\n",
+    )
+    revision = "b" * 40
+    result = subprocess.run(
+        [
+            "bash",
+            str(PREFLIGHT),
+            "emmanuelnavaromero02-commits",
+            f"candidate-{revision}",
+            revision,
+            "1.45.207-beta",
+            str(tmp_path / "lock.env"),
+        ],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "DOCKER_CONFIG": str(docker_config),
+            "OMEGA_GHCR_AUTH_ACTIVE": "1",
+            "OMEGA_GHCR_PRIVATE_PACKAGES_VERIFIED": "1",
+            "OMEGA_GHCR_PREFLIGHT_TEST_MODE": "1",
+            "OMEGA_GHCR_PREFLIGHT_TEST_DOCKER_ROOT": str(docker_root),
+        },
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert result.returncode == 6
+    assert "30 GiB pre-pull gate" in result.stderr
     assert not docker_marker.exists()

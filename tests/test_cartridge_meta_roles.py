@@ -19,6 +19,7 @@ These tests are AST-style guards that run in milliseconds without a
 live Postgres. The live smoke test (scripts/smoke_test.sh, checks
 19-23) covers the "GRANTs actually held in pg_catalog" path.
 """
+
 from __future__ import annotations
 
 import re
@@ -47,15 +48,25 @@ NEW_ROLES = (
 # Tables the migration must EXPLICITLY REVOKE on the operational
 # roles (SAP cartridges + omega_airflow_dag).
 HARD_LOCKED_TABLES = (
-    "users", "user_sessions", "user_tokens", "refresh_tokens",
-    "tenants", "workspaces", "roles", "user_workspace_roles",
-    "decisions", "decision_actions",
-    "audit_events", "login_attempts", "vault_access_log",
+    "users",
+    "user_sessions",
+    "user_tokens",
+    "refresh_tokens",
+    "tenants",
+    "workspaces",
+    "roles",
+    "user_workspace_roles",
+    "decisions",
+    "decision_actions",
+    "audit_events",
+    "login_attempts",
+    "vault_access_log",
     "vault_entries",
 )
 
 
 # ── Migration 36 ────────────────────────────────────────────────────────────
+
 
 def test_migration_36_creates_all_six_roles():
     src = MIGRATION_36.read_text(encoding="utf-8")
@@ -86,9 +97,7 @@ def test_migration_36_hard_locks_sensitive_tables():
     # The REVOKE block iterates over an ARRAY[...] — verify every
     # sensitive table name appears in that list so it can't slip past.
     for tbl in HARD_LOCKED_TABLES:
-        assert (
-            f"'{tbl}'" in src
-        ), f"migration must REVOKE on {tbl!r}"
+        assert f"'{tbl}'" in src, f"migration must REVOKE on {tbl!r}"
     # And the four roles that must be REVOKED.
     for role in (
         "omega_cartridge_sap_hcm",
@@ -96,9 +105,9 @@ def test_migration_36_hard_locks_sensitive_tables():
         "omega_cartridge_sap_sf",
         "omega_airflow_dag",
     ):
-        assert f"'{role}'" in src, (
-            f"migration must REVOKE sensitive tables from {role!r}"
-        )
+        assert (
+            f"'{role}'" in src
+        ), f"migration must REVOKE sensitive tables from {role!r}"
 
 
 def test_migration_36_grants_operational_to_sap_cartridges():
@@ -126,11 +135,17 @@ def test_migration_36_grants_airflow_dag_runtime_observability_tables():
     )
     assert grant, "migration must grant operational tables to omega_airflow_dag"
     body = grant.group("body")
-    for tbl in ("entity_config", "entity_watermarks", "extraction_runs", "pipeline_runs"):
+    for tbl in (
+        "entity_config",
+        "entity_watermarks",
+        "extraction_runs",
+        "pipeline_runs",
+    ):
         assert tbl in body, f"omega_airflow_dag needs {tbl!r} for direct DAG runtime"
 
 
 # ── docker-compose.yml ──────────────────────────────────────────────────────
+
 
 def test_local_compose_no_postgres_superuser_in_runtime_services():
     """The five runtime services (3 SAP cartridges, airflow webserver,
@@ -142,8 +157,12 @@ def test_local_compose_no_postgres_superuser_in_runtime_services():
     services = compose.get("services", {}) or {}
 
     runtime_services = (
-        "sap-hcm", "sap-s4hana", "sap-successfactors",
-        "superset", "airflow", "airflow-scheduler",
+        "sap-hcm",
+        "sap-s4hana",
+        "sap-successfactors",
+        "superset",
+        "airflow",
+        "airflow-scheduler",
     )
     for name in runtime_services:
         svc = services.get(name)
@@ -173,9 +192,9 @@ def test_local_compose_sap_cartridges_use_dedicated_roles():
     for service_name, role in expected.items():
         env = services[service_name]["environment"]
         db_url = env.get("DATABASE_URL") if isinstance(env, dict) else ""
-        assert f"://{role}:" in db_url, (
-            f"{service_name} must connect as {role!r}, got {db_url!r}"
-        )
+        assert (
+            f"://{role}:" in db_url
+        ), f"{service_name} must connect as {role!r}, got {db_url!r}"
 
 
 def test_local_compose_airflow_runtime_uses_dedicated_roles():
@@ -187,14 +206,14 @@ def test_local_compose_airflow_runtime_uses_dedicated_roles():
         env = services[svc_name]["environment"]
         # Metastore connection.
         meta = env.get("AIRFLOW__DATABASE__SQL_ALCHEMY_CONN", "")
-        assert "://omega_airflow_meta:" in meta, (
-            f"{svc_name} metastore must use omega_airflow_meta"
-        )
+        assert (
+            "://omega_airflow_meta:" in meta
+        ), f"{svc_name} metastore must use omega_airflow_meta"
         # DAG-side variable.
         dag = env.get("AIRFLOW_VAR_POSTGRES_CONN", "")
-        assert "://omega_airflow_dag:" in dag, (
-            f"{svc_name} AIRFLOW_VAR_POSTGRES_CONN must use omega_airflow_dag"
-        )
+        assert (
+            "://omega_airflow_dag:" in dag
+        ), f"{svc_name} AIRFLOW_VAR_POSTGRES_CONN must use omega_airflow_dag"
 
 
 def test_local_compose_superset_runtime_uses_dedicated_role():
@@ -202,9 +221,9 @@ def test_local_compose_superset_runtime_uses_dedicated_role():
         compose = yaml.safe_load(f)
     env = compose["services"]["superset"]["environment"]
     uri = env.get("SQLALCHEMY_DATABASE_URI", "")
-    assert "://omega_superset_meta:" in uri, (
-        "superset runtime must use omega_superset_meta"
-    )
+    assert (
+        "://omega_superset_meta:" in uri
+    ), "superset runtime must use omega_superset_meta"
 
 
 def test_local_console_can_register_superset_gold_database():
@@ -233,12 +252,11 @@ def test_local_compose_pgoptions_carries_six_new_passwords():
     pgoptions = compose["services"]["postgres"]["environment"]["PGOPTIONS"]
     for role in NEW_ROLES:
         guc_flag = f"app.{role}_password="
-        assert guc_flag in pgoptions, (
-            f"postgres PGOPTIONS must forward {guc_flag!r}"
-        )
+        assert guc_flag in pgoptions, f"postgres PGOPTIONS must forward {guc_flag!r}"
 
 
 # ── docker-compose.aws.yml ──────────────────────────────────────────────────
+
 
 def test_aws_compose_airflow_runtime_uses_dedicated_roles():
     with AWS_COMPOSE.open("r", encoding="utf-8") as f:
@@ -247,13 +265,13 @@ def test_aws_compose_airflow_runtime_uses_dedicated_roles():
     for svc_name in ("airflow", "airflow-scheduler"):
         env = services[svc_name]["environment"]
         meta = env.get("AIRFLOW__DATABASE__SQL_ALCHEMY_CONN", "")
-        assert "://omega_airflow_meta:" in meta, (
-            f"AWS {svc_name} must use omega_airflow_meta"
-        )
+        assert (
+            "://omega_airflow_meta:" in meta
+        ), f"AWS {svc_name} must use omega_airflow_meta"
         dag = env.get("AIRFLOW_VAR_POSTGRES_CONN", "")
-        assert "://omega_airflow_dag:" in dag, (
-            f"AWS {svc_name} AIRFLOW_VAR_POSTGRES_CONN must use omega_airflow_dag"
-        )
+        assert (
+            "://omega_airflow_dag:" in dag
+        ), f"AWS {svc_name} AIRFLOW_VAR_POSTGRES_CONN must use omega_airflow_dag"
 
 
 def test_aws_console_can_register_superset_gold_database():
@@ -272,12 +290,13 @@ def test_aws_compose_airflow_init_keeps_superuser_for_bootstrap():
         compose = yaml.safe_load(f)
     env = compose["services"]["airflow-init"]["environment"]
     meta = env.get("AIRFLOW__DATABASE__SQL_ALCHEMY_CONN", "")
-    assert "://postgres:" in meta, (
-        "airflow-init must connect as postgres superuser to run db migrate"
-    )
+    assert (
+        "://postgres:" in meta
+    ), "airflow-init must connect as postgres superuser to run db migrate"
 
 
 # ── bootstrap.sh / .env.example ─────────────────────────────────────────────
+
 
 def test_bootstrap_generates_six_new_passwords():
     src = BOOTSTRAP_SH.read_text(encoding="utf-8")
@@ -290,12 +309,12 @@ def test_bootstrap_generates_six_new_passwords():
         "OMEGA_SUPERSET_META_PASSWORD",
     ):
         # bootstrap.sh must both generate AND write the variable.
-        assert re.search(rf'^{var}="\$\(openssl rand', src, re.MULTILINE), (
-            f"bootstrap.sh must generate {var!r}"
-        )
-        assert re.search(rf"^{var}=\$\{{{var}\}}", src, re.MULTILINE), (
-            f"bootstrap.sh must write {var!r} to the env file"
-        )
+        assert re.search(
+            rf'^{var}="\$\(openssl rand', src, re.MULTILINE
+        ), f"bootstrap.sh must generate {var!r}"
+        assert re.search(
+            rf"^{var}=\$\{{{var}\}}", src, re.MULTILINE
+        ), f"bootstrap.sh must write {var!r} to the env file"
 
 
 def test_env_example_documents_six_new_passwords():
@@ -313,6 +332,7 @@ def test_env_example_documents_six_new_passwords():
 
 # ── smoke_test.sh ───────────────────────────────────────────────────────────
 
+
 def test_smoke_test_includes_lockdown_checks_for_new_roles():
     src = SMOKE_SCRIPT.read_text(encoding="utf-8")
     must_appear = (
@@ -324,9 +344,9 @@ def test_smoke_test_includes_lockdown_checks_for_new_roles():
     for role in must_appear:
         assert role in src, f"smoke must exercise {role!r}"
     # And the positive check (no over-revoke).
-    assert "entity_config" in src, (
-        "smoke must also verify SAP cartridges keep operational access"
-    )
+    assert (
+        "entity_config" in src
+    ), "smoke must also verify SAP cartridges keep operational access"
 
 
 # ── Hotfix v1.38.1: live deployment evidence ────────────────────────────────
@@ -334,16 +354,16 @@ def test_smoke_test_includes_lockdown_checks_for_new_roles():
 # Background: the original v1.38 commit got merged with a green test
 # suite but failed in real life: `make migrate && make smoke` reported
 # every v1.38 role as "got: ''" — the role didn't exist at all. The
-# root cause was scripts/apply_db_migrations.sh: it forwards GUC
-# passwords to psql via the PGOPTIONS env var, but the v1.38 commit
-# only updated infra/docker-compose.yml's PGOPTIONS, not the
-# migrate-script's separate PGOPTIONS_VALUE. The migration then
+# root cause was a historical scripts/apply_db_migrations.sh copy of the GUC
+# password list drifting from infra/docker-compose.yml's container PGOPTIONS.
+# The runner now inherits the already-configured container environment and
+# never duplicates secrets in a host-side docker-exec argv. The migration then
 # raised "password not set", the script aborted the transaction for
 # that file, the next migration ran successfully, and `make smoke`
 # saw a partly-migrated DB.
 #
-# These two tests pin the contract so the hotfix can't silently
-# regress.
+# These tests pin the fail-loud migration and secret-free runner contract.
+
 
 def test_migration_36_fails_loud_when_password_missing():
     """Every CREATE-ROLE DO block in migration 36 must RAISE EXCEPTION
@@ -367,8 +387,7 @@ def test_migration_36_fails_loud_when_password_missing():
     )
     matches = pattern.findall(src)
     assert len(matches) == 6, (
-        f"expected 6 password-missing guards (one per role), found "
-        f"{len(matches)}"
+        f"expected 6 password-missing guards (one per role), found " f"{len(matches)}"
     )
     for first_keyword in matches:
         assert first_keyword.upper() == "RAISE", (
@@ -379,25 +398,21 @@ def test_migration_36_fails_loud_when_password_missing():
         )
 
 
-def test_apply_db_migrations_script_passes_six_new_passwords():
-    """scripts/apply_db_migrations.sh must forward the six new
-    v1.38 GUC passwords to psql via PGOPTIONS so migration 36 can
-    read them via current_setting()."""
-    src = (REPO_ROOT / "scripts" / "apply_db_migrations.sh").read_text(
-        encoding="utf-8"
-    )
-    must_forward = (
+def test_apply_db_migrations_inherits_container_gucs_without_secret_argv():
+    """The container owns its GUC environment; the host runner must not copy
+    role passwords into a ``docker exec`` argv visible to process listings."""
+    src = (REPO_ROOT / "scripts" / "apply_db_migrations.sh").read_text(encoding="utf-8")
+    compose = (REPO_ROOT / "infra/docker-compose.yml").read_text(encoding="utf-8")
+    for env_var, guc in (
         ("OMEGA_CARTRIDGE_SAP_HCM_PASSWORD", "app.omega_cartridge_sap_hcm_password"),
-        ("OMEGA_CARTRIDGE_SAP_S4_PASSWORD",  "app.omega_cartridge_sap_s4_password"),
-        ("OMEGA_CARTRIDGE_SAP_SF_PASSWORD",  "app.omega_cartridge_sap_sf_password"),
-        ("OMEGA_AIRFLOW_DAG_PASSWORD",       "app.omega_airflow_dag_password"),
-        ("OMEGA_AIRFLOW_META_PASSWORD",      "app.omega_airflow_meta_password"),
-        ("OMEGA_SUPERSET_META_PASSWORD",     "app.omega_superset_meta_password"),
-    )
-    for env_var, guc in must_forward:
-        assert env_var in src, (
-            f"apply_db_migrations.sh must read {env_var} from the env"
-        )
-        assert guc in src, (
-            f"apply_db_migrations.sh must forward {guc} via PGOPTIONS"
-        )
+        ("OMEGA_CARTRIDGE_SAP_S4_PASSWORD", "app.omega_cartridge_sap_s4_password"),
+        ("OMEGA_CARTRIDGE_SAP_SF_PASSWORD", "app.omega_cartridge_sap_sf_password"),
+        ("OMEGA_AIRFLOW_DAG_PASSWORD", "app.omega_airflow_dag_password"),
+        ("OMEGA_AIRFLOW_META_PASSWORD", "app.omega_airflow_meta_password"),
+        ("OMEGA_SUPERSET_META_PASSWORD", "app.omega_superset_meta_password"),
+    ):
+        assert env_var in compose
+        assert guc in compose
+        assert env_var not in src
+        assert guc not in src
+    assert 'exec -T -e "PGOPTIONS=' not in src

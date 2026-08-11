@@ -1,0 +1,288 @@
+name: Release Candidate Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact 40-character SHA that must still be current main
+        required: true
+        type: string
+      release_tag:
+        description: Absent release tag whose version must exactly match VERSION
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-images-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+jobs:
+  validate-candidate:
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.validate.outputs.release_tag }}
+      source_sha: ${{ steps.validate.outputs.source_sha }}
+      version: ${{ steps.validate.outputs.version }}
+    steps:
+      - name: Reject non-main or malformed dispatch before checkout
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/main" ]] || {
+            echo "ERROR: release candidate dispatch must run from refs/heads/main" >&2
+            exit 1
+          }
+          [[ "$REPOSITORY" == "emmanuelnavaromero02-commits/CONSOLA-V1" ]] || {
+            echo "ERROR: release candidate dispatch is not in the canonical repository" >&2
+            exit 1
+          }
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "ERROR: expected_sha must be exactly 40 lowercase hexadecimal characters" >&2
+            exit 1
+          }
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]] || {
+            echo "ERROR: release_tag is not an exact release tag" >&2
+            exit 1
+          }
+
+      # actions/checkout v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+          ref: refs/heads/main
+
+      # actions/setup-python v5.6.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12.8"
+
+      - name: Fetch and validate exact current main
+        id: validate
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          python3 scripts/release_images.py verify-candidate-request \
+            --expected-sha "$EXPECTED_SHA" \
+            --release-tag "$RELEASE_TAG" \
+            --repository "$REPOSITORY"
+          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "source_sha=${EXPECTED_SHA}" >> "$GITHUB_OUTPUT"
+
+  build-candidate-digests:
+    needs: validate-candidate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        include:
+          - service: console
+            context: .
+            dockerfile: ./console/Dockerfile
+          - service: workspace
+            context: ./workspace
+            dockerfile: ./workspace/Dockerfile
+          - service: refinement
+            context: .
+            dockerfile: ./refinement/Dockerfile
+          - service: vault
+            context: ./vault
+            dockerfile: ./vault/Dockerfile
+          - service: mcp-infra
+            context: .
+            dockerfile: ./mcp-infra/Dockerfile
+          - service: airflow
+            context: ./infra/airflow
+            dockerfile: ./infra/airflow/Dockerfile
+          - service: replicon
+            context: ./cartridges/replicon
+            dockerfile: ./cartridges/replicon/Dockerfile
+          - service: hubspot
+            context: ./cartridges/hubspot
+            dockerfile: ./cartridges/hubspot/Dockerfile
+          - service: banxico
+            context: .
+            dockerfile: ./cartridges/banxico/Dockerfile
+          - service: inegi
+            context: .
+            dockerfile: ./cartridges/inegi/Dockerfile
+          - service: sec_edgar
+            context: .
+            dockerfile: ./cartridges/sec_edgar/Dockerfile
+          - service: sap_hcm
+            context: ./cartridges/sap_hcm
+            dockerfile: ./cartridges/sap_hcm/Dockerfile
+          - service: sap_s4hana
+            context: ./cartridges/sap_s4hana
+            dockerfile: ./cartridges/sap_s4hana/Dockerfile
+          - service: sap_successfactors
+            context: ./cartridges/sap_successfactors
+            dockerfile: ./cartridges/sap_successfactors/Dockerfile
+          - service: salesforce
+            context: ./cartridges/salesforce
+            dockerfile: ./cartridges/salesforce/Dockerfile
+    steps:
+      # actions/checkout v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          ref: ${{ needs.validate-candidate.outputs.source_sha }}
+
+      # actions/setup-python v5.6.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12.8"
+
+      - name: Reuse only an exact existing candidate digest
+        id: candidate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.validate-candidate.outputs.release_tag }}
+          SOURCE_SHA: ${{ needs.validate-candidate.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release_images.py check-candidate \
+            --service "${{ matrix.service }}" \
+            --source-sha "$SOURCE_SHA" \
+            --release-tag "$RELEASE_TAG" \
+            --receipt "candidate-receipt/${{ matrix.service }}.json"
+
+      # docker/setup-buildx-action v3.11.1
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435
+        if: steps.candidate.outputs.state == 'missing'
+
+      - name: Authenticate ephemeral runner to GHCR
+        if: steps.candidate.outputs.state == 'missing'
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          set +x
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io \
+            --username "$GITHUB_ACTOR" --password-stdin >/dev/null
+
+      # docker/build-push-action v6.18.0
+      - name: Build and push ${{ matrix.service }} by digest only
+        id: build
+        if: steps.candidate.outputs.state == 'missing'
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          labels: |
+            org.opencontainers.image.revision=${{ needs.validate-candidate.outputs.source_sha }}
+            org.opencontainers.image.version=${{ needs.validate-candidate.outputs.version }}
+            org.opencontainers.image.source=https://github.com/emmanuelnavaromero02-commits/CONSOLA-V1
+          outputs: type=image,name=ghcr.io/emmanuelnavaromero02-commits/${{ matrix.service }},push-by-digest=true,name-canonical=true,push=true
+          provenance: mode=max
+
+      - name: Verify pushed digest and write canonical receipt
+        if: steps.candidate.outputs.state == 'missing'
+        env:
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.validate-candidate.outputs.release_tag }}
+          SOURCE_SHA: ${{ needs.validate-candidate.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release_images.py verify-built-digest \
+            --service "${{ matrix.service }}" \
+            --source-sha "$SOURCE_SHA" \
+            --release-tag "$RELEASE_TAG" \
+            --digest "$BUILD_DIGEST" \
+            --receipt "candidate-receipt/${{ matrix.service }}.json"
+
+      - name: Remove ephemeral Docker credential
+        if: always() && steps.candidate.outputs.state == 'missing'
+        run: docker logout ghcr.io >/dev/null 2>&1 || true
+
+      # actions/upload-artifact v4.6.2
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: candidate-digest-${{ matrix.service }}
+          path: candidate-receipt/${{ matrix.service }}.json
+          if-no-files-found: error
+          retention-days: 1
+
+  aggregate-and-seal-candidate:
+    needs: [validate-candidate, build-candidate-digests]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      # actions/checkout v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+          ref: ${{ needs.validate-candidate.outputs.source_sha }}
+
+      # actions/setup-python v5.6.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12.8"
+
+      # actions/download-artifact v4.3.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: candidate-digest-*
+          path: candidate-receipts
+          merge-multiple: true
+
+      - name: Revalidate main and tag absence immediately before aggregation
+        env:
+          EXPECTED_SHA: ${{ needs.validate-candidate.outputs.source_sha }}
+          RELEASE_TAG: ${{ needs.validate-candidate.outputs.release_tag }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          python3 scripts/release_images.py verify-candidate-request \
+            --expected-sha "$EXPECTED_SHA" \
+            --release-tag "$RELEASE_TAG" \
+            --repository "$REPOSITORY"
+
+      - name: Aggregate 15 digests, create absent candidate tags, and seal
+        id: seal
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.validate-candidate.outputs.release_tag }}
+          SOURCE_SHA: ${{ needs.validate-candidate.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release_images.py assemble-candidate \
+            --source-sha "$SOURCE_SHA" \
+            --release-tag "$RELEASE_TAG" \
+            --receipts-dir candidate-receipts \
+            --output release-candidate.json
+
+      # actions/upload-artifact v4.6.2
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-candidate-${{ needs.validate-candidate.outputs.source_sha }}
+          path: release-candidate.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Record annotated-tag binding
+        env:
+          MANIFEST_DIGEST: ${{ steps.seal.outputs.manifest_digest }}
+        run: |
+          set -euo pipefail
+          printf 'Create the annotated tag with this exact binding line:\n'
+          printf 'OMEGA-Release-Candidate-Manifest-SHA256: %s\n' "$MANIFEST_DIGEST"

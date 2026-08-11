@@ -3,8 +3,8 @@ set -Eeuo pipefail
 set +x
 umask 077
 
-if [[ "$#" -ne 3 ]]; then
-  echo "Usage: preflight-release-images.sh <ghcr-owner> <immutable-tag> <absolute-lock-file>" >&2
+if [[ "$#" -ne 5 ]]; then
+  echo "Usage: preflight-release-images.sh <ghcr-owner> <immutable-tag> <exact-revision> <exact-version> <absolute-lock-file>" >&2
   exit 2
 fi
 if [[ "${OMEGA_GHCR_AUTH_ACTIVE:-0}" != "1" ]]; then
@@ -18,22 +18,56 @@ fi
 
 owner="$1"
 image_tag="$2"
-lock_file="$3"
-if [[ ! "$owner" =~ ^[a-z0-9]([a-z0-9-]{0,37}[a-z0-9])?$ ]]; then
-  echo "ERROR: GHCR owner is invalid or is not normalized to lowercase." >&2
+target_revision="$3"
+target_version="$4"
+lock_file="$5"
+canonical_source="https://github.com/emmanuelnavaromero02-commits/CONSOLA-V1"
+if [[ "$owner" != "emmanuelnavaromero02-commits" ]]; then
+  echo "ERROR: GHCR owner differs from the canonical private namespace." >&2
   exit 4
 fi
-if [[ ! "$image_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
-  echo "ERROR: image tag must be an explicit immutable release tag." >&2
+if [[ ! "$target_revision" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "ERROR: image revision must be one exact lowercase commit SHA." >&2
   exit 5
 fi
-if [[ "$lock_file" != /* || -L "$lock_file" ]]; then
-  echo "ERROR: lock file must be an absolute, non-symlink path." >&2
+if [[ ! "$target_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+  echo "ERROR: expected image version is invalid." >&2
+  exit 5
+fi
+if [[ "$image_tag" != "candidate-${target_revision}" && "$image_tag" != "v${target_version}" ]]; then
+  echo "ERROR: image tag must be the exact candidate SHA or immutable release version." >&2
+  exit 5
+fi
+if [[ "${OMEGA_GHCR_PRIVATE_PACKAGES_VERIFIED:-0}" != "1" ]]; then
+  echo "ERROR: private GHCR package metadata was not verified." >&2
+  exit 3
+fi
+if [[ "$lock_file" != /* || -e "$lock_file" || -L "$lock_file" ]]; then
+  echo "ERROR: lock file must be a new absolute, non-symlink path." >&2
   exit 6
 fi
 lock_dir="$(dirname -- "$lock_file")"
 if [[ ! -d "$lock_dir" || ! -w "$lock_dir" ]]; then
   echo "ERROR: lock file directory must already exist and be writable." >&2
+  exit 6
+fi
+
+docker_root="/var/lib/docker"
+if [[ "${OMEGA_GHCR_PREFLIGHT_TEST_MODE:-0}" == "1" ]]; then
+  docker_root="${OMEGA_GHCR_PREFLIGHT_TEST_DOCKER_ROOT:?test Docker root is required}"
+fi
+if [[ ! -d "$docker_root" || -L "$docker_root" ]]; then
+  echo "ERROR: canonical Docker storage root is unavailable." >&2
+  exit 6
+fi
+disk_available() {
+  df --output=avail -B1 "$docker_root" | awk 'NR == 2 && $1 ~ /^[0-9]+$/ {print $1}'
+}
+initial_free="$(disk_available)"
+minimum_initial_free=$((30 * 1024 * 1024 * 1024))
+minimum_reserve=$((10 * 1024 * 1024 * 1024))
+if [[ ! "$initial_free" =~ ^[0-9]+$ || "$initial_free" -lt "$minimum_initial_free" ]]; then
+  echo "ERROR: Docker storage headroom is below the 30 GiB pre-pull gate." >&2
   exit 6
 fi
 
@@ -106,6 +140,15 @@ for index in "${!image_names[@]}"; do
     echo "ERROR: pulled image has no inspectable digest for ${image_name}." >&2
     exit 9
   fi
+  oci_identity="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}{{println}}{{index .Config.Labels "org.opencontainers.image.version"}}{{println}}{{index .Config.Labels "org.opencontainers.image.source"}}' "$reference" 2>/dev/null || true)"
+  revision="$(sed -n '1p' <<<"$oci_identity")"
+  version="$(sed -n '2p' <<<"$oci_identity")"
+  source="$(sed -n '3p' <<<"$oci_identity")"
+  if [[ "$revision" != "$target_revision" || "$version" != "$target_version" || \
+        "$source" != "$canonical_source" ]]; then
+    echo "ERROR: OCI source/version/revision identity differs for ${image_name}." >&2
+    exit 9
+  fi
   if ! digest="$(
     printf '%s' "$repo_digests" | python3 -c '
 import json
@@ -136,7 +179,19 @@ sys.stdout.write(matches[0])
   printf 'GCP_RELEASE_IMAGE\t%s\tPASS\t%s@%s\n' "$image_name" "$image_tag" "$digest"
 done
 
+final_free="$(disk_available)"
+if [[ ! "$final_free" =~ ^[0-9]+$ || "$final_free" -lt "$minimum_reserve" ]]; then
+  echo "ERROR: Docker storage reserve fell below 10 GiB after authenticated pulls." >&2
+  exit 9
+fi
+
 chmod 600 "$temp_lock"
 mv -f -- "$temp_lock" "$lock_file"
 temp_lock=""
-printf 'GCP_RELEASE_IMAGES\tPASS\t15/15\ttag=%s\tlock=%s\n' "$image_tag" "$lock_file"
+python3 - "$lock_dir" <<'PY'
+import os, sys
+fd = os.open(sys.argv[1], os.O_RDONLY | os.O_DIRECTORY)
+try: os.fsync(fd)
+finally: os.close(fd)
+PY
+printf 'GCP_RELEASE_IMAGES\tPASS\t15/15\tprivate=3/3\ttag=%s\tlock=%s\n' "$image_tag" "$lock_file"

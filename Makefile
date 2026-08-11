@@ -18,7 +18,7 @@ TARGET ?= local
 WORKLOAD ?= sap_successfactors
 PROFILE ?= beta-safe
 
-.PHONY: help bootstrap-env up up-core down nuke repair-local-stack logs ps test baseline-smoke smoke beta-smoke beta-smoke-aws stress stress-smoke stress-beta stress-spike stress-breakpoint stress-soak-24h stress-write-heavy multiuser-simulation tenant-ab-local tenant-ab-aws live-cartridge-tests monitor-check production-readiness v1-live-readiness production-readiness-aws v1-ga-lite-local v1-ga-lite-aws v1-ga-max-aws v1-ga-cleanup v1-ga-report data-integrity-audit copilot-redteam cartridge-resilience chaos-local chaos-aws enterprise-readiness sap-successfactors-aws-live-max dr-rehearsal backup-aws dr-rehearsal-aws rollback-aws rollback-rehearsal rollback-rehearsal-aws deploy-main-aws prepare-gcp-artifacts adopt-gcp-startup-metadata restore-gcp-startup-metadata plan-gcp-ghcr-access apply-gcp-ghcr-access gcp-image-preflight backup-gcp-canonical deploy-gcp-canonical restore-rehearsal-gcp aws-full-regression aws-observability-report aws-tls-status aws-superset-probe superset-tenant-probe superset-tenant-probe-aws monte-carlo-aws-probe bayesian-calibration-aws-probe bayesian-loop-probe bayesian-loop-probe-aws control-room-gold-engine-aws-probe control-room-mock-volume-aws-probe control-room-mock-volume-aws-cleanup cartridge-kb-scope-aws-probe action-framework-aws-probe decision-orchestrator-aws-probe decision-orchestrator-execution-aws-probe migrate rotate-keys e2e acceptance preflight demo-check security-scan verify-release verify-v1-public seed-intelligence-gold seed-replicon-beta-gold seed-replicon-beta-gold-aws run-intelligence-scheduled-local run-intelligence-scheduled-aws decision-backtest-local decision-backtest-aws
+.PHONY: help bootstrap-env up up-core down nuke repair-local-stack logs ps test baseline-smoke smoke beta-smoke beta-smoke-aws stress stress-smoke stress-beta stress-spike stress-breakpoint stress-soak-24h stress-write-heavy multiuser-simulation tenant-ab-local tenant-ab-aws live-cartridge-tests monitor-check production-readiness v1-live-readiness production-readiness-aws v1-ga-lite-local v1-ga-lite-aws v1-ga-max-aws v1-ga-cleanup v1-ga-report data-integrity-audit copilot-redteam cartridge-resilience chaos-local chaos-aws enterprise-readiness sap-successfactors-aws-live-max dr-rehearsal backup-aws dr-rehearsal-aws rollback-aws rollback-rehearsal rollback-rehearsal-aws deploy-main-aws prepare-gcp-artifacts adopt-gcp-startup-metadata restore-gcp-startup-metadata plan-gcp-ghcr-access apply-gcp-ghcr-access plan-gcp-backup-storage apply-gcp-backup-storage gcp-image-preflight backup-gcp-canonical reconcile-gcp-pipeline-runs deploy-gcp-canonical restore-rehearsal-gcp aws-full-regression aws-observability-report aws-tls-status aws-superset-probe superset-tenant-probe superset-tenant-probe-aws monte-carlo-aws-probe bayesian-calibration-aws-probe bayesian-loop-probe bayesian-loop-probe-aws control-room-gold-engine-aws-probe control-room-mock-volume-aws-probe control-room-mock-volume-aws-cleanup cartridge-kb-scope-aws-probe action-framework-aws-probe decision-orchestrator-aws-probe decision-orchestrator-execution-aws-probe migrate rotate-keys e2e acceptance preflight demo-check security-scan verify-release verify-v1-public seed-intelligence-gold seed-replicon-beta-gold seed-replicon-beta-gold-aws run-intelligence-scheduled-local run-intelligence-scheduled-aws decision-backtest-local decision-backtest-aws
 .PHONY: test-hermetic reconcile-db-passwords
 
 help:
@@ -103,8 +103,10 @@ help:
 	@echo "  make deploy-main-aws / aws-full-regression"
 	@echo "                    artifact deploy from main and full AWS regression via SSM"
 	@echo "  make prepare-gcp-artifacts / adopt-gcp-startup-metadata"
-	@echo "       plan-gcp-ghcr-access / apply-gcp-ghcr-access / gcp-image-preflight"
+	@echo "       plan-gcp-ghcr-access / apply-gcp-ghcr-access"
+	@echo "       plan-gcp-backup-storage / apply-gcp-backup-storage / gcp-image-preflight"
 	@echo "       restore-gcp-startup-metadata / backup-gcp-canonical"
+	@echo "       reconcile-gcp-pipeline-runs"
 	@echo "       deploy-gcp-canonical / restore-rehearsal-gcp"
 	@echo "                    writer-fenced GCP backup, digest-pinned deploy, isolated restore"
 	@echo "  make aws-observability-report / aws-tls-status / aws-superset-probe"
@@ -396,11 +398,20 @@ plan-gcp-ghcr-access:
 apply-gcp-ghcr-access:
 	@$(PYTHON) scripts/gcp_release.py apply-ghcr-access
 
+plan-gcp-backup-storage:
+	@$(PYTHON) scripts/gcp_release.py plan-backup-storage
+
+apply-gcp-backup-storage:
+	@$(PYTHON) scripts/gcp_release.py apply-backup-storage
+
 gcp-image-preflight:
 	@$(PYTHON) scripts/gcp_release.py image-preflight
 
 backup-gcp-canonical:
 	@$(PYTHON) scripts/gcp_release.py backup
+
+reconcile-gcp-pipeline-runs:
+	@$(PYTHON) scripts/gcp_release.py reconcile-pipeline-runs
 
 deploy-gcp-canonical:
 	@$(PYTHON) scripts/gcp_release.py deploy

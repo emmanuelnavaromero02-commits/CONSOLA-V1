@@ -28,6 +28,47 @@ PENDING_OPERATIONAL = (
     "99zzt_analytic_app_dataset_grants.sql",
     "99zzu_analytic_app_manifest_registry.sql",
 )
+# PostgreSQL's entrypoint executes every migration on a fresh volume, but a
+# small, historically fixed set of those files does not self-register in
+# ``schema_migrations``.  These are exact reviewed omissions observed from a
+# clean pgvector/pgvector:pg15 + infra/init bootstrap (176 rows) and a clean
+# postgres:15.18 + infra/init_gold bootstrap (9 rows).  They are not a generic
+# "missing row" allowance: only the exact complements below are accepted, and
+# only when the caller explicitly enables the local bootstrap path.
+FRESH_BOOTSTRAP_MISSING = {
+    "operational": (
+        "65_replicon_mejoras_seed_refresh.sql",
+        "66_replicon_mejoras_config_seed.sql",
+        "67_data_catalog_upgrade_shape.sql",
+        "68_agents_model_default.sql",
+        "69_data_catalog_sequence_grants.sql",
+        "70_replicon_audit_followups.sql",
+        "71_rag_embedding_dim_1024.sql",
+        "92_audit_request_id.sql",
+        "93_salesforce_role_and_tables.sql",
+        "94_hubspot_datasets_seed.sql",
+        "94_salesforce_seed.sql",
+        "95_banxico_role_and_seed.sql",
+        "95_inegi_role_and_seed.sql",
+        "95_sec_edgar_role_and_seed.sql",
+        "96_salesforce_mcp_server_registry.sql",
+        "99zp_sap_successfactors_tenant_aliases.sql",
+        "99zr_banxico_entity_watermarks_rls.sql",
+        "99zs_banxico_default_connection_id.sql",
+        "99zu_inegi_entity_watermarks_rls.sql",
+        "99zv_inegi_default_connection_id.sql",
+        "99zx_sec_edgar_default_connection_id.sql",
+        "99zy_sec_edgar_entity_watermarks_rls.sql",
+        "99zzt_analytic_app_dataset_grants.sql",
+        "99zzu_analytic_app_manifest_registry.sql",
+    ),
+    "gold": (
+        "gold/00_schema.sql",
+        "gold/34_postgres_gold_role.sql",
+        "gold/35_gold_native_rls.sql",
+    ),
+}
+FRESH_BOOTSTRAP_COUNTS = {"operational": 176, "gold": 9}
 BASELINE_EVIDENCE = "baseline_expected"
 GUARDED_EVIDENCE = "guarded_transaction"
 BASELINE_PROVENANCE = {
@@ -197,6 +238,14 @@ def _validate_contract(args: argparse.Namespace) -> Contract:
         "operational": _manifest_map(release_json, "operational", expected_count=200),
         "gold": _manifest_map(release_json, "gold", expected_count=12),
     }
+
+    for database in ("operational", "gold"):
+        missing = set(FRESH_BOOTSTRAP_MISSING[database])
+        release_names = set(release[database])
+        if not missing < release_names:
+            _die(f"{database} fresh-bootstrap omission set is invalid")
+        if len(release_names - missing) != FRESH_BOOTSTRAP_COUNTS[database]:
+            _die(f"{database} fresh-bootstrap reviewed row count drifted")
 
     for database in ("operational", "gold"):
         changed = sorted(
@@ -406,7 +455,13 @@ def _validate_ledger(
     names = set(rows)
     baseline_names = set(contract.baseline[database])
     release_names = set(contract.release[database])
-    if names != baseline_names and names != release_names:
+    fresh_bootstrap_names = release_names - set(FRESH_BOOTSTRAP_MISSING[database])
+    fresh_bootstrap = names == fresh_bootstrap_names
+    if (
+        names != baseline_names
+        and names != release_names
+        and not (allow_bootstrap_release and fresh_bootstrap)
+    ):
         unknown = sorted(names - release_names)
         missing_baseline = sorted(baseline_names - names)
         partial_pending = sorted(names & set(PENDING_OPERATIONAL))
@@ -441,7 +496,14 @@ def _validate_ledger(
         pending_evidence=GUARDED_EVIDENCE,
     )
 
-    if database == "gold" or names == baseline_names:
+    if fresh_bootstrap:
+        if not fully_blank:
+            _die(
+                f"{database} fresh-bootstrap ledger is not the exact blank "
+                "entrypoint profile"
+            )
+        state = "fresh_bootstrap"
+    elif database == "gold" or names == baseline_names:
         if fully_blank:
             state = "baseline"
         elif fully_baseline_expected:
@@ -485,11 +547,13 @@ def _write_plan(
     gold_state: str,
     path: Path,
 ) -> None:
+    expected_pending_evidence = _expected_pending_evidence_for_state(operational_state)
     value = {
-        "schema_version": 1,
+        "schema_version": 2,
         **contract.as_plan_fields(),
         "operational_state": operational_state,
         "gold_state": gold_state,
+        "expected_pending_evidence": expected_pending_evidence,
     }
     path.write_text(json.dumps(value, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -504,8 +568,19 @@ def _args_from_plan(plan: dict[str, Any]) -> argparse.Namespace:
         "baseline_sha256",
         "release_sha256",
     }
-    if plan.get("schema_version") != 1 or not required.issubset(plan):
+    expected_keys = required | {
+        "schema_version",
+        "operational_state",
+        "gold_state",
+        "expected_pending_evidence",
+    }
+    if plan.get("schema_version") != 2 or set(plan) != expected_keys:
         _die("migration plan is malformed")
+    if plan.get("expected_pending_evidence") not in {
+        BASELINE_EVIDENCE,
+        GUARDED_EVIDENCE,
+    }:
+        _die("migration plan pending evidence profile is invalid")
     return argparse.Namespace(
         old_ref=plan["old_ref"],
         candidate_ref=plan["candidate_ref"],
@@ -517,8 +592,98 @@ def _args_from_plan(plan: dict[str, Any]) -> argparse.Namespace:
     )
 
 
+def _expected_pending_evidence_for_state(operational_state: str) -> str:
+    if operational_state in {
+        "fresh_bootstrap",
+        "bootstrap_release",
+        "release_expected",
+    }:
+        return BASELINE_EVIDENCE
+    if operational_state in {"baseline", "baseline_expected", "release_guarded"}:
+        return GUARDED_EVIDENCE
+    _die("migration plan operational state is invalid")
+
+
+def _validate_plan(
+    plan: dict[str, Any], *, expected_contract: Contract | None = None
+) -> Contract:
+    contract = _validate_contract(_args_from_plan(plan))
+    if expected_contract is not None and (
+        contract.as_plan_fields() != expected_contract.as_plan_fields()
+    ):
+        _die("migration plan contract does not match postflight contract")
+    operational_state = plan.get("operational_state")
+    gold_state = plan.get("gold_state")
+    if gold_state not in {"baseline", "baseline_expected", "fresh_bootstrap"}:
+        _die("migration plan Gold state is invalid")
+    expected_evidence = _expected_pending_evidence_for_state(operational_state)
+    if plan.get("expected_pending_evidence") != expected_evidence:
+        _die("migration plan pending evidence was not derived from preflight state")
+    return contract
+
+
 def _sql_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
+
+
+def _ledger_authority_assertion_lines() -> list[str]:
+    """Return fail-closed SQL assertions for the server-owned ledger."""
+
+    return [
+        "DO $omega_ledger_authority_assert$",
+        "BEGIN",
+        "  IF session_user <> 'postgres' OR current_user <> 'postgres' THEN",
+        "    RAISE EXCEPTION 'migration ledger verification requires postgres';",
+        "  END IF;",
+        "  IF to_regclass('public.schema_migrations') IS NULL",
+        "     OR (SELECT tableowner FROM pg_tables",
+        "          WHERE schemaname='public' AND tablename='schema_migrations') <> 'postgres'",
+        "     OR NOT has_table_privilege('postgres', 'public.schema_migrations', 'INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER,REFERENCES') THEN",
+        "    RAISE EXCEPTION 'postgres does not own and control the migration ledger';",
+        "  END IF;",
+        "  IF EXISTS (",
+        "    SELECT 1",
+        "      FROM pg_class relation",
+        "      CROSS JOIN LATERAL aclexplode(COALESCE(relation.relacl, acldefault('r', relation.relowner))) privilege",
+        "     WHERE relation.oid = 'public.schema_migrations'::regclass",
+        "       AND privilege.grantee <> (SELECT oid FROM pg_roles WHERE rolname='postgres')",
+        "       AND privilege.privilege_type IN ('INSERT','UPDATE','DELETE','TRUNCATE','TRIGGER','REFERENCES')",
+        "  ) THEN",
+        "    RAISE EXCEPTION 'a non-postgres ACL can mutate the migration ledger';",
+        "  END IF;",
+        "  IF EXISTS (",
+        "    SELECT 1 FROM pg_roles",
+        "     WHERE rolname LIKE 'omega\\_%' ESCAPE '\\'",
+        "       AND (rolsuper OR rolcreaterole",
+        "         OR has_table_privilege(rolname, 'public.schema_migrations', 'INSERT')",
+        "         OR has_table_privilege(rolname, 'public.schema_migrations', 'UPDATE')",
+        "         OR has_table_privilege(rolname, 'public.schema_migrations', 'DELETE')",
+        "         OR has_table_privilege(rolname, 'public.schema_migrations', 'TRUNCATE')",
+        "         OR pg_has_role(oid, 'pg_write_all_data', 'MEMBER')",
+        "         OR pg_has_role(oid, 'postgres', 'MEMBER'))",
+        "  ) THEN",
+        "    RAISE EXCEPTION 'an application role can mutate the migration ledger';",
+        "  END IF;",
+        "  IF to_regclass('public.schema_migrations_id_seq') IS NOT NULL THEN",
+        "    IF (SELECT sequenceowner FROM pg_sequences",
+        "         WHERE schemaname='public' AND sequencename='schema_migrations_id_seq') <> 'postgres'",
+        "       OR NOT has_sequence_privilege('postgres', 'public.schema_migrations_id_seq', 'USAGE,SELECT,UPDATE') THEN",
+        "      RAISE EXCEPTION 'postgres does not own and control the migration ledger sequence';",
+        "    END IF;",
+        "    IF EXISTS (",
+        "      SELECT 1",
+        "        FROM pg_class relation",
+        "        CROSS JOIN LATERAL aclexplode(COALESCE(relation.relacl, acldefault('S', relation.relowner))) privilege",
+        "       WHERE relation.oid = 'public.schema_migrations_id_seq'::regclass",
+        "         AND privilege.grantee <> (SELECT oid FROM pg_roles WHERE rolname='postgres')",
+        "         AND privilege.privilege_type IN ('USAGE','SELECT','UPDATE')",
+        "    ) THEN",
+        "      RAISE EXCEPTION 'a non-postgres ACL can use the migration ledger sequence';",
+        "    END IF;",
+        "  END IF;",
+        "END",
+        "$omega_ledger_authority_assert$;",
+    ]
 
 
 def _values_sql(
@@ -557,26 +722,34 @@ def _render_sql(contract: Contract, database: str, state: str) -> str:
     if state not in {
         "baseline",
         "baseline_expected",
+        "fresh_bootstrap",
         "bootstrap_release",
         "release_expected",
         "release_guarded",
     }:
         _die("plan database state is invalid")
-    if database == "gold" and state not in {"baseline", "baseline_expected"}:
+    if database == "gold" and state not in {
+        "baseline",
+        "baseline_expected",
+        "fresh_bootstrap",
+    }:
         _die("Gold plan state is invalid")
 
     pending_evidence = (
         BASELINE_EVIDENCE
-        if state in {"bootstrap_release", "release_expected"}
+        if state in {"fresh_bootstrap", "bootstrap_release", "release_expected"}
         else GUARDED_EVIDENCE
     )
-    blank_preflight = state in {"baseline", "bootstrap_release"}
+    blank_preflight = state in {"baseline", "fresh_bootstrap", "bootstrap_release"}
 
-    pre_names = sorted(
-        contract.baseline[database]
-        if database == "operational" and state in {"baseline", "baseline_expected"}
-        else contract.release[database]
-    )
+    if state == "fresh_bootstrap":
+        pre_names = sorted(
+            set(contract.release[database]) - set(FRESH_BOOTSTRAP_MISSING[database])
+        )
+    elif database == "operational" and state in {"baseline", "baseline_expected"}:
+        pre_names = sorted(contract.baseline[database])
+    else:
+        pre_names = sorted(contract.release[database])
     final_names = sorted(contract.release[database])
     pre_values = _values_sql(
         contract,
@@ -593,7 +766,9 @@ def _render_sql(contract: Contract, database: str, state: str) -> str:
     lock_key = "1" if database == "operational" else "2"
     parts = [
         "\\set ON_ERROR_STOP on",
+        "SET default_transaction_read_only=off;",
         "BEGIN;",
+        "SET TRANSACTION READ WRITE;",
         f"SELECT pg_advisory_xact_lock(145207, {lock_key});",
         "CREATE TEMP TABLE omega_expected_pre (",
         "  filename text PRIMARY KEY, checksum text NOT NULL,",
@@ -611,6 +786,7 @@ def _render_sql(contract: Contract, database: str, state: str) -> str:
         "END",
         "$omega_filename$;",
         "ALTER TABLE public.schema_migrations",
+        "  ADD COLUMN IF NOT EXISTS checksum text,",
         "  ADD COLUMN IF NOT EXISTS checksum_source_ref text,",
         "  ADD COLUMN IF NOT EXISTS checksum_manifest_sha256 text,",
         "  ADD COLUMN IF NOT EXISTS checksum_evidence_kind text,",
@@ -635,6 +811,7 @@ def _render_sql(contract: Contract, database: str, state: str) -> str:
                 "  END IF;",
             ]
         )
+
     else:
         parts.extend(
             [
@@ -667,6 +844,33 @@ def _render_sql(contract: Contract, database: str, state: str) -> str:
             ]
         )
 
+    if state == "fresh_bootstrap":
+        missing_values = _values_sql(
+            contract,
+            database,
+            sorted(FRESH_BOOTSTRAP_MISSING[database]),
+            pending_evidence=BASELINE_EVIDENCE,
+        )
+        parts.extend(
+            [
+                "CREATE TEMP TABLE omega_expected_missing (",
+                "  filename text PRIMARY KEY, checksum text NOT NULL,",
+                "  source_ref text NOT NULL, manifest_sha256 text NOT NULL,",
+                "  evidence_kind text NOT NULL, guarded_required boolean NOT NULL",
+                ") ON COMMIT DROP;",
+                "INSERT INTO omega_expected_missing VALUES",
+                f"  {missing_values};",
+                "INSERT INTO public.schema_migrations",
+                "  (filename, applied_at, checksum, checksum_source_ref,",
+                "   checksum_manifest_sha256, checksum_evidence_kind,",
+                "   checksum_guarded_at)",
+                "SELECT filename, clock_timestamp(), checksum, source_ref,",
+                "       manifest_sha256, evidence_kind, NULL",
+                "  FROM omega_expected_missing",
+                " ORDER BY filename;",
+            ]
+        )
+
     if database == "operational" and state in {"baseline", "baseline_expected"}:
         for filename in PENDING_OPERATIONAL:
             checksum = contract.release[database][filename]
@@ -685,6 +889,67 @@ def _render_sql(contract: Contract, database: str, state: str) -> str:
                     ");",
                 ]
             )
+
+    # The application role defaults historically granted omega_console DML on
+    # every public table.  The migration ledger is control-plane evidence, so
+    # its table (and optional identity sequence) must remain owned and writable
+    # only by the PostgreSQL server owner.  Remove direct membership shortcuts
+    # for application roles, then fail closed if an indirect postgres or
+    # pg_write_all_data path still exists.
+    parts.extend(
+        [
+            "DO $omega_ledger_authority$",
+            "DECLARE",
+            "  role_row record;",
+            "  membership_row record;",
+            "BEGIN",
+            "  IF session_user <> 'postgres' OR current_user <> 'postgres' THEN",
+            "    RAISE EXCEPTION 'migration ledger hardening requires postgres';",
+            "  END IF;",
+            "  ALTER TABLE public.schema_migrations OWNER TO postgres;",
+            "  REVOKE ALL PRIVILEGES ON TABLE public.schema_migrations FROM PUBLIC;",
+            "  FOR role_row IN SELECT rolname FROM pg_roles WHERE rolname <> 'postgres' LOOP",
+            "    EXECUTE format('REVOKE ALL PRIVILEGES ON TABLE public.schema_migrations FROM %I', role_row.rolname);",
+            "  END LOOP;",
+            "  IF to_regclass('public.schema_migrations_id_seq') IS NOT NULL THEN",
+            "    ALTER SEQUENCE public.schema_migrations_id_seq OWNER TO postgres;",
+            "    REVOKE ALL PRIVILEGES ON SEQUENCE public.schema_migrations_id_seq FROM PUBLIC;",
+            "    FOR role_row IN SELECT rolname FROM pg_roles WHERE rolname <> 'postgres' LOOP",
+            "      EXECUTE format('REVOKE ALL PRIVILEGES ON SEQUENCE public.schema_migrations_id_seq FROM %I', role_row.rolname);",
+            "    END LOOP;",
+            "  END IF;",
+            "  FOR membership_row IN",
+            "    SELECT parent.rolname AS parent_name, member.rolname AS member_name",
+            "      FROM pg_auth_members membership",
+            "      JOIN pg_roles parent ON parent.oid = membership.roleid",
+            "      JOIN pg_roles member ON member.oid = membership.member",
+            "     WHERE parent.rolname IN ('postgres', 'pg_write_all_data')",
+            "       AND member.rolname LIKE 'omega\\_%' ESCAPE '\\'",
+            "  LOOP",
+            "    EXECUTE format('REVOKE %I FROM %I', membership_row.parent_name, membership_row.member_name);",
+            "  END LOOP;",
+            "  IF (SELECT tableowner FROM pg_tables",
+            "       WHERE schemaname='public' AND tablename='schema_migrations') <> 'postgres'",
+            "     OR NOT has_table_privilege('postgres', 'public.schema_migrations', 'INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER,REFERENCES') THEN",
+            "    RAISE EXCEPTION 'postgres does not exclusively own the migration ledger';",
+            "  END IF;",
+            "  IF EXISTS (",
+            "    SELECT 1 FROM pg_roles",
+            "     WHERE rolname LIKE 'omega\\_%' ESCAPE '\\'",
+            "       AND (has_table_privilege(rolname, 'public.schema_migrations', 'INSERT')",
+            "         OR has_table_privilege(rolname, 'public.schema_migrations', 'UPDATE')",
+            "         OR has_table_privilege(rolname, 'public.schema_migrations', 'DELETE')",
+            "         OR has_table_privilege(rolname, 'public.schema_migrations', 'TRUNCATE')",
+            "         OR pg_has_role(oid, 'pg_write_all_data', 'MEMBER')",
+            "         OR pg_has_role(oid, 'postgres', 'MEMBER'))",
+            "  ) THEN",
+            "    RAISE EXCEPTION 'an application role can mutate the migration ledger';",
+            "  END IF;",
+            "END",
+            "$omega_ledger_authority$;",
+        ]
+    )
+    parts.extend(_ledger_authority_assertion_lines())
 
     parts.extend(
         [
@@ -749,20 +1014,41 @@ def main() -> int:
     _add_contract_arguments(postflight)
     postflight.add_argument("--operational-ledger", required=True)
     postflight.add_argument("--gold-ledger", required=True)
-    postflight.add_argument(
-        "--expected-pending-evidence",
-        choices=(BASELINE_EVIDENCE, GUARDED_EVIDENCE),
-        default=GUARDED_EVIDENCE,
-    )
+    postflight.add_argument("--plan", required=True)
 
     render = commands.add_parser("render-sql")
     render.add_argument("--plan", required=True)
     render.add_argument("--database", required=True, choices=("operational", "gold"))
 
+    authority = commands.add_parser("render-authority-sql")
+
+    plan_field = commands.add_parser("plan-field")
+    plan_field.add_argument("--plan", required=True)
+    plan_field.add_argument(
+        "--field", required=True, choices=("expected_pending_evidence",)
+    )
+
     args = parser.parse_args()
+    if args.command == "render-authority-sql":
+        sys.stdout.write(
+            "\n".join(
+                [
+                    "\\set ON_ERROR_STOP on",
+                    "SET default_transaction_read_only=off;",
+                    *_ledger_authority_assertion_lines(),
+                    "",
+                ]
+            )
+        )
+        return 0
+    if args.command == "plan-field":
+        plan = _load_json(Path(args.plan))
+        _validate_plan(plan)
+        print(plan[args.field])
+        return 0
     if args.command == "render-sql":
         plan = _load_json(Path(args.plan))
-        contract = _validate_contract(_args_from_plan(plan))
+        contract = _validate_plan(plan)
         state = plan.get(f"{args.database}_state")
         sys.stdout.write(_render_sql(contract, args.database, state))
         return 0
@@ -778,6 +1064,11 @@ def main() -> int:
     operational = _load_ledger(Path(args.operational_ledger), "operational")
     gold = _load_ledger(Path(args.gold_ledger), "gold")
     require_release = args.command == "postflight"
+    expected_pending_evidence = GUARDED_EVIDENCE
+    if require_release:
+        plan = _load_json(Path(args.plan))
+        _validate_plan(plan, expected_contract=contract)
+        expected_pending_evidence = plan["expected_pending_evidence"]
     operational_state = _validate_ledger(
         contract,
         "operational",
@@ -787,17 +1078,19 @@ def main() -> int:
             (args.command == "preflight" and args.allow_bootstrap_release_ledger)
             or (
                 args.command == "postflight"
-                and args.expected_pending_evidence == BASELINE_EVIDENCE
+                and expected_pending_evidence == BASELINE_EVIDENCE
             )
         ),
-        expected_pending_evidence=(
-            args.expected_pending_evidence
-            if args.command == "postflight"
-            else GUARDED_EVIDENCE
-        ),
+        expected_pending_evidence=expected_pending_evidence,
     )
     gold_state = _validate_ledger(
-        contract, "gold", gold, require_release=require_release
+        contract,
+        "gold",
+        gold,
+        require_release=require_release,
+        allow_bootstrap_release=(
+            args.command == "preflight" and args.allow_bootstrap_release_ledger
+        ),
     )
     if args.command == "preflight":
         _write_plan(contract, operational_state, gold_state, Path(args.plan))

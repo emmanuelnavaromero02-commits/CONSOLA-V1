@@ -56,6 +56,10 @@ output "lakehouse_bucket" {
   value = local.lakehouse_bucket
 }
 
+output "release_backup_bucket" {
+  value = local.release_backup_bucket
+}
+
 output "artifact_registry_repository" {
   value = google_artifact_registry_repository.docker.name
 }

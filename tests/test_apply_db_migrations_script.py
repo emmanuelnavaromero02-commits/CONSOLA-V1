@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
 from pathlib import Path
 
 
@@ -29,7 +31,7 @@ def test_makefile_exposes_migrate_target():
     assert "scripts/apply_db_migrations.sh" in makefile
 
 
-def test_apply_db_migrations_tracks_schema_migrations_and_pgoptions():
+def test_apply_db_migrations_tracks_schema_migrations_without_secret_argv():
     script = (REPO_ROOT / "scripts/apply_db_migrations.sh").read_text()
     guard = (REPO_ROOT / "scripts/migration_guard.py").read_text()
 
@@ -45,33 +47,56 @@ def test_apply_db_migrations_tracks_schema_migrations_and_pgoptions():
     assert "guarded_transaction" in guard
     assert "PSQL_GOLD" in script
     assert "docker compose" in script
-    assert "PGOPTIONS=" in script
-    assert "app.omega_vault_password" in script
-    assert "app.omega_refinement_gold_password" in script
-    pgoptions_pairs = {
-        "OMEGA_CONSOLE_PASSWORD": "app.omega_console_password",
-        "OMEGA_OUTCOME_BINDER_PASSWORD": "app.omega_outcome_binder_password",
-        "OMEGA_REFINEMENT_PASSWORD": "app.omega_refinement_password",
-        "OMEGA_VAULT_PASSWORD": "app.omega_vault_password",
-        "OMEGA_WORKSPACE_PASSWORD": "app.omega_workspace_password",
-        "OMEGA_MCP_INFRA_PASSWORD": "app.omega_mcp_infra_password",
-        "OMEGA_REFINEMENT_GOLD_PASSWORD": "app.omega_refinement_gold_password",
-        "OMEGA_CARTRIDGE_SAP_HCM_PASSWORD": "app.omega_cartridge_sap_hcm_password",
-        "OMEGA_CARTRIDGE_SAP_S4_PASSWORD": "app.omega_cartridge_sap_s4_password",
-        "OMEGA_CARTRIDGE_SAP_SF_PASSWORD": "app.omega_cartridge_sap_sf_password",
-        "OMEGA_AIRFLOW_DAG_PASSWORD": "app.omega_airflow_dag_password",
-        "OMEGA_AIRFLOW_META_PASSWORD": "app.omega_airflow_meta_password",
-        "OMEGA_SUPERSET_META_PASSWORD": "app.omega_superset_meta_password",
-        "OMEGA_CARTRIDGE_REPLICON_PASSWORD": "app.omega_cartridge_replicon_password",
-        "OMEGA_CARTRIDGE_SALESFORCE_PASSWORD": "app.omega_cartridge_salesforce_password",
-        "OMEGA_CARTRIDGE_HUBSPOT_PASSWORD": "app.omega_cartridge_hubspot_password",
-        "OMEGA_CARTRIDGE_BANXICO_PASSWORD": "app.omega_cartridge_banxico_password",
-        "OMEGA_CARTRIDGE_INEGI_PASSWORD": "app.omega_cartridge_inegi_password",
-        "OMEGA_CARTRIDGE_SEC_EDGAR_PASSWORD": "app.omega_cartridge_sec_edgar_password",
+    assert 'source "${ENV_FILE}"' not in script
+    assert "PGOPTIONS=" not in script
+    assert "PASSWORD:-" not in script
+    assert "env-validate" in script
+    assert "--forbid-prefix OMEGA_MIGRATION_" in script
+    assert '--env-file "$ENV_FILE"' in script
+    assert "COMPOSE_DISABLE_ENV_FILE=1" in script
+    assert 'exec -T -e "PGOPTIONS=' not in script
+
+
+def test_apply_db_migrations_rejects_control_plane_or_executable_dotenv(
+    tmp_path: Path,
+):
+    compose = tmp_path / "compose.yml"
+    compose.write_text("services: {}\n", encoding="utf-8")
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "OMEGA_MIGRATION_CANDIDATE_REF=" + "1" * 40 + "\n",
+        encoding="utf-8",
+    )
+    env_file.chmod(0o600)
+    environment = {
+        **os.environ,
+        "OMEGA_MIGRATION_COMPOSE_FILE": str(compose),
+        "OMEGA_MIGRATION_ENV_FILE": str(env_file),
     }
-    for env_name, guc_name in pgoptions_pairs.items():
-        assert env_name in script
-        assert guc_name in script
+    forbidden = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts/apply_db_migrations.sh")],
+        cwd=REPO_ROOT,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert forbidden.returncode != 0
+    assert "forbidden control-plane prefix" in forbidden.stderr
+
+    marker = tmp_path / "must-not-exist"
+    env_file.write_text(f"SAFE_VALUE=$(touch {marker})\n", encoding="utf-8")
+    executable = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts/apply_db_migrations.sh")],
+        cwd=REPO_ROOT,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert executable.returncode != 0
+    assert "executable/interpolated syntax" in executable.stderr
+    assert not marker.exists()
 
 
 def test_gold_role_migration_exists_for_fresh_gold_volumes():

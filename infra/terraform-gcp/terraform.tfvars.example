@@ -7,8 +7,11 @@ zone        = "us-central1-a"
 environment = "staging"
 
 source_bucket = "omega-gcp-source-project-dd5ba7fa-374c-4554-ae6"
-source_object = "CONSOLA-V1-<sha>.tar.gz"
-source_sha    = "<sha>"
+source_object         = "deploy-artifacts/<sha>/repo.tar.gz"
+source_sha            = "<sha>"
+source_generation     = "<positive-gcs-generation>"
+source_size_bytes     = 1
+source_archive_sha256 = "<64-lowercase-hex>"
 
 app_machine_type = "e2-standard-4"
 boot_disk_size_gb = 60

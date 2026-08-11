@@ -21,6 +21,7 @@ RUNTIME_PROVENANCE="${STATE_LINK}/runtime-provenance.json"
 COMPOSE_PROJECT="${OMEGA_GCP_COMPOSE_PROJECT:-infra}"
 MUTATION_STARTED=0
 COMPOSE_READY=0
+SAFE_IO="${OMEGA_GCP_SAFE_IO:-/usr/local/sbin/omega-safe-io}"
 
 WRITER_SERVICES=(airflow-scheduler console workspace refinement vault mcp-infra airflow replicon hubspot salesforce banxico inegi sec-edgar sap-hcm sap-successfactors sap-s4hana superset)
 ONE_SHOT_MUTATORS=(airflow-init minio-init postgres_dev_seed superset-init)
@@ -43,6 +44,9 @@ trap cleanup EXIT
 
 if [[ ! "$COMPOSE_PROJECT" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
   fail "Compose project" "invalid project name"
+fi
+if [[ "$SAFE_IO" != /* || ! -x "$SAFE_IO" ]]; then
+  fail "safe I/O helper" "canonical helper is unavailable"
 fi
 if [[ -e "$OPERATION_MARKER" ]]; then
   fail "durable operation fence" "incomplete operation blocks reboot recovery" 75
@@ -73,6 +77,8 @@ fi
 if grep -Eq '^(GHCR_[A-Z0-9_]*(TOKEN|PASSWORD|SECRET|CREDENTIAL|AUTH|USER)|GITHUB_TOKEN|DOCKER_AUTH_CONFIG)=' "$SHARED_ENV"; then
   fail "server-owned registry credential boundary" "registry credential found in runtime env"
 fi
+"$SAFE_IO" env-validate --path "$SHARED_ENV" --forbid-prefix OMEGA_MIGRATION_ >/dev/null || \
+  fail "shared runtime env" "env grammar/ownership/control boundary is invalid"
 
 exec 9>"/var/lock/omega-gcp-day2.lock"
 if ! flock -n 9; then
@@ -81,6 +87,11 @@ fi
 
 PROVENANCE_MODE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["mode"])' "$RUNTIME_PROVENANCE")"
 PROVENANCE_ARGS=()
+RUNTIME_INPUT_ARGS=(
+  --runtime-input "shared_env=${SHARED_ENV}"
+  --runtime-input "base_compose=${BASE_COMPOSE}"
+  --runtime-input "gcp_compose=${GCP_RUNTIME_COMPOSE}"
+)
 if [[ "$PROVENANCE_MODE" == "day2" ]]; then
   LOCK_ENV="${SHARED_ROOT}/image-locks/${DEPLOY_REF}/release-images.env"
   RELEASE_COMPOSE="${CURRENT_RELEASE}/infra/terraform-gcp/release/docker-compose.release.yml"
@@ -91,9 +102,29 @@ if [[ "$PROVENANCE_MODE" == "day2" ]]; then
     --env-file "$LOCK_ENV" -f "$BASE_COMPOSE" -f "$GCP_RUNTIME_COMPOSE" \
     -f "$RELEASE_COMPOSE" --profile sap)
   PROVENANCE_ARGS=(--lock-env "$LOCK_ENV")
+  RUNTIME_INPUT_ARGS+=(--runtime-input "release_compose=${RELEASE_COMPOSE}")
 elif [[ "$PROVENANCE_MODE" == "bootstrap" ]]; then
-  COMPOSE=(docker compose --project-name "$COMPOSE_PROJECT" --env-file "$SHARED_ENV" \
-    -f "$BASE_COMPOSE" -f "$GCP_RUNTIME_COMPOSE" --profile sap)
+  LEGACY_IMAGE_COMPOSE="${SHARED_ROOT}/docker-compose.legacy-images.gcp.yml"
+  if python3 - "$RUNTIME_PROVENANCE" <<'PY'
+import json
+import sys
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+raise SystemExit(
+    0 if "legacy_image_compose" in payload.get("runtime_input_sha256", {}) else 1
+)
+PY
+  then
+    if [[ ! -s "$LEGACY_IMAGE_COMPOSE" ]]; then
+      fail "bootstrap reboot inputs" "recorded legacy image overlay is missing"
+    fi
+    COMPOSE=(docker compose --project-name "$COMPOSE_PROJECT" --env-file "$SHARED_ENV" \
+      -f "$BASE_COMPOSE" -f "$GCP_RUNTIME_COMPOSE" -f "$LEGACY_IMAGE_COMPOSE" --profile sap)
+    RUNTIME_INPUT_ARGS+=(--runtime-input "legacy_image_compose=${LEGACY_IMAGE_COMPOSE}")
+  else
+    COMPOSE=(docker compose --project-name "$COMPOSE_PROJECT" --env-file "$SHARED_ENV" \
+      -f "$BASE_COMPOSE" -f "$GCP_RUNTIME_COMPOSE" --profile sap)
+  fi
 else
   fail "runtime provenance" "unsupported provenance mode"
 fi
@@ -125,18 +156,19 @@ try:
         stream.flush()
         os.fsync(stream.fileno())
     os.replace(temporary, path)
+    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 finally:
     if os.path.exists(temporary):
         os.unlink(temporary)
 PY
 MUTATION_STARTED=1
 "${COMPOSE[@]}" stop --timeout 60 "${MUTATING_SERVICES[@]}"
-for service in "${MUTATING_SERVICES[@]}"; do
-  if docker ps -q --filter "label=com.docker.compose.project=${COMPOSE_PROJECT}" \
-      --filter "label=com.docker.compose.service=${service}" | grep -q .; then
-    fail "reboot writer fence" "service still running=${service}"
-  fi
-done
+python3 "$RUNTIME_CONTRACT" writer-fence --compose-project "$COMPOSE_PROJECT" >/dev/null || \
+  fail "reboot writer fence" "a global labeled or unlabeled proprietary writer remains running"
 
 # Reuse existing containers only. A missing/replaced container is provenance
 # drift and requires an explicit day-2 operation; reboot never builds or pulls.
@@ -148,7 +180,8 @@ RUNTIME_GREEN=0
 for _ in $(seq 1 120); do
   if python3 "$RUNTIME_CONTRACT" provenance --provenance "$RUNTIME_PROVENANCE" \
       --compose-project "$COMPOSE_PROJECT" --deploy-ref "$DEPLOY_REF" --version "$VERSION" \
-      --scheduler stopped "${PROVENANCE_ARGS[@]}" >/dev/null 2>&1; then
+      --scheduler stopped "${RUNTIME_INPUT_ARGS[@]}" \
+      "${PROVENANCE_ARGS[@]}" >/dev/null 2>&1; then
     RUNTIME_GREEN=1
     break
   fi
@@ -163,7 +196,8 @@ FINAL_GREEN=0
 for _ in $(seq 1 60); do
   if python3 "$RUNTIME_CONTRACT" provenance --provenance "$RUNTIME_PROVENANCE" \
       --compose-project "$COMPOSE_PROJECT" --deploy-ref "$DEPLOY_REF" --version "$VERSION" \
-      --one-shots "${PROVENANCE_ARGS[@]}" >/dev/null 2>&1; then
+      --one-shots "${RUNTIME_INPUT_ARGS[@]}" \
+      "${PROVENANCE_ARGS[@]}" >/dev/null 2>&1; then
     FINAL_GREEN=1
     break
   fi
@@ -174,6 +208,7 @@ if [[ "$FINAL_GREEN" != "1" ]]; then
 fi
 
 rm -f -- "$OPERATION_MARKER"
+"$SAFE_IO" fsync-dir "$SHARED_ROOT"
 MUTATION_STARTED=0
 printf 'OMEGA_GCP_REBOOT_CHECK\texact runtime recovery\tPASS\tref=%s version=%s mode=%s\n' \
   "$DEPLOY_REF" "$VERSION" "$PROVENANCE_MODE"

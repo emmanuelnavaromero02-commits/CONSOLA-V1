@@ -7,9 +7,15 @@ if [[ "$#" -eq 0 ]]; then
   echo "ERROR: ghcr-auth-run.sh requires a command to run." >&2
   exit 2
 fi
+test_non_root="${OMEGA_GHCR_AUTH_TEST_NON_ROOT:-0}"
+if [[ "${EUID:-$(id -u)}" -ne 0 && "$test_non_root" != "1" ]]; then
+  echo "ERROR: ghcr-auth-run.sh must run as root on the canonical host." >&2
+  exit 2
+fi
 
 if [[ "${OMEGA_GHCR_AUTH_ACTIVE:-0}" == "1" ]]; then
-  if [[ -z "${DOCKER_CONFIG:-}" || ! -s "${DOCKER_CONFIG}/config.json" ]]; then
+  if [[ -z "${DOCKER_CONFIG:-}" || ! -s "${DOCKER_CONFIG}/config.json" || \
+        "${OMEGA_GHCR_PRIVATE_PACKAGES_VERIFIED:-0}" != "1" ]]; then
     echo "ERROR: inherited GHCR authentication context is invalid." >&2
     exit 3
   fi
@@ -28,10 +34,27 @@ if [[ ! "$secret_version" =~ ^[1-9][0-9]*$ ]]; then
 fi
 secret_id="omega-${gcp_environment}-ghcr_pull_credentials"
 
-auth_root="${OMEGA_GHCR_AUTH_TMPDIR:-/run}"
-if [[ ! -d "$auth_root" || ! -w "$auth_root" ]]; then
-  auth_root="${TMPDIR:-/tmp}"
+if [[ "$test_non_root" == "1" ]]; then
+  auth_root="${OMEGA_GHCR_AUTH_TEST_TMPDIR:?test tmpdir is required}"
+  install -d -m 0700 "$auth_root"
+  [[ ! -L "$auth_root" && -d "$auth_root" ]] || exit 6
+else
+  auth_root="/run/omega-gcp-ghcr-auth"
+  if [[ "$(findmnt -n -o FSTYPE --target /run 2>/dev/null || true)" != "tmpfs" || \
+        -L "$auth_root" ]]; then
+    echo "ERROR: ephemeral GHCR auth tmpfs is unavailable." >&2
+    exit 6
+  fi
+  install -d -m 0700 -o root -g root "$auth_root"
+  if [[ "$(stat -c '%U:%G:%a' "$auth_root")" != "root:root:700" ]]; then
+    echo "ERROR: ephemeral GHCR auth directory is unsafe." >&2
+    exit 6
+  fi
 fi
+# Canonical operations are serialized by the host day-2 lock. Remove residue
+# from an untrappable prior SIGKILL before reading a new secret version.
+find "$auth_root" -mindepth 1 -maxdepth 1 -type d \
+  -name 'omega-gcp-ghcr-auth.*' -exec rm -rf -- {} +
 docker_config="$(mktemp -d "${auth_root%/}/omega-gcp-ghcr-auth.XXXXXX")"
 chmod 700 "$docker_config"
 curl_config="$docker_config/secret-manager.curl"
@@ -42,6 +65,7 @@ metadata_token_response=""
 secret_response=""
 credentials=""
 ghcr_token=""
+github_config=""
 
 cleanup() {
   local status=$?
@@ -176,6 +200,65 @@ if [[ -z "$ghcr_username" || -z "$ghcr_token" ]]; then
   exit 10
 fi
 
+# Pullability alone cannot prove the mandated packages remain private. Query
+# their authenticated package metadata with the same server-owned token and
+# retain only a boolean capability in the child process.
+github_config="$docker_config/github-api.curl"
+github_headers="$docker_config/github-api.headers"
+package_response_file="$docker_config/github-package.json"
+printf 'header = "Authorization: Bearer %s"\n' "$ghcr_token" > "$github_config"
+chmod 600 "$github_config"
+for package in banxico inegi sec_edgar; do
+  : > "$github_headers"
+  : > "$package_response_file"
+  if ! curl --fail --silent --show-error --max-time 10 \
+      --config "$github_config" \
+      --dump-header "$github_headers" \
+      --output "$package_response_file" \
+      -H 'Accept: application/vnd.github+json' \
+      -H 'X-GitHub-Api-Version: 2022-11-28' \
+      "https://api.github.com/users/emmanuelnavaromero02-commits/packages/container/${package}" \
+      || ! python3 - "$package_response_file" "$package" <<'PY'
+import json
+import sys
+
+path, expected = sys.argv[1:]
+try:
+    with open(path, encoding="utf-8") as stream:
+        payload = json.load(stream)
+except (json.JSONDecodeError, UnicodeDecodeError):
+    raise SystemExit(1)
+if (
+    payload.get("name") != expected
+    or payload.get("package_type") != "container"
+    or payload.get("visibility") != "private"
+):
+    raise SystemExit(1)
+PY
+  then
+    echo "ERROR: required GHCR package privacy could not be verified." >&2
+    exit 10
+  fi
+  if [[ "$package" == "banxico" ]] && ! python3 - "$github_headers" <<'PY'
+import pathlib
+import sys
+
+values = []
+for raw in pathlib.Path(sys.argv[1]).read_text(encoding="iso-8859-1").splitlines():
+    name, separator, value = raw.partition(":")
+    if separator and name.strip().lower() == "x-oauth-scopes":
+        values.extend(item.strip() for item in value.split(",") if item.strip())
+if set(values) != {"read:packages"} or len(values) != 1:
+    raise SystemExit(1)
+PY
+  then
+    echo "ERROR: GHCR pull credential scope is missing or exceeds read:packages." >&2
+    exit 10
+  fi
+done
+rm -f -- "$github_config" "$github_headers" "$package_response_file"
+github_config=""
+
 if ! printf '%s' "$ghcr_token" | \
   docker login ghcr.io --username "$ghcr_username" --password-stdin >/dev/null; then
   echo "ERROR: GHCR authentication failed." >&2
@@ -184,6 +267,7 @@ fi
 logged_in=1
 unset ghcr_token ghcr_username
 export OMEGA_GHCR_AUTH_ACTIVE=1
+export OMEGA_GHCR_PRIVATE_PACKAGES_VERIFIED=1
 
 command_status=0
 "$@" || command_status=$?

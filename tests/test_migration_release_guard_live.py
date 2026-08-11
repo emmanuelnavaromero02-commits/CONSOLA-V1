@@ -36,6 +36,51 @@ services:
 """
 
 
+FRESH_COMPOSE = """
+services:
+  postgres:
+    image: pgvector/pgvector:pg15
+    environment:
+      POSTGRES_DB: modecissions
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: test-operational
+      PGOPTIONS: >-
+        -c app.omega_console_password=console-test
+        -c app.omega_outcome_binder_password=outcome-test
+        -c app.omega_refinement_password=refinement-test
+        -c app.omega_vault_password=vault-test
+        -c app.omega_workspace_password=workspace-test
+        -c app.omega_mcp_infra_password=mcp-test
+        -c app.omega_cartridge_sap_hcm_password=sap-hcm-test
+        -c app.omega_cartridge_sap_s4_password=sap-s4-test
+        -c app.omega_cartridge_sap_sf_password=sap-sf-test
+        -c app.omega_airflow_dag_password=airflow-dag-test
+        -c app.omega_airflow_meta_password=airflow-meta-test
+        -c app.omega_superset_meta_password=superset-test
+        -c app.omega_cartridge_replicon_password=replicon-test
+        -c app.omega_cartridge_salesforce_password=salesforce-test
+        -c app.omega_cartridge_hubspot_password=hubspot-test
+        -c app.omega_cartridge_banxico_password=banxico-test
+        -c app.omega_cartridge_inegi_password=inegi-test
+        -c app.omega_cartridge_sec_edgar_password=sec-edgar-test
+    volumes:
+      - {operational_init}:/docker-entrypoint-initdb.d:ro
+  postgres_gold:
+    image: postgres:15.18
+    command: ["postgres", "-p", "5433"]
+    environment:
+      POSTGRES_DB: modecissions_gold
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: test-gold
+      PGOPTIONS: >-
+        -c app.omega_refinement_gold_password=gold-reader-test
+        -c app.omega_gold_publisher_password=gold-publisher-test
+        -c app.omega_gold_verifier_password=gold-verifier-test
+    volumes:
+      - {gold_init}:/docker-entrypoint-initdb.d:ro
+"""
+
+
 def _run(
     compose: Path,
     project: str,
@@ -107,6 +152,37 @@ def _wait(compose: Path, project: str) -> None:
             return
         time.sleep(1)
     raise AssertionError("temporary PostgreSQL 15 services did not become ready")
+
+
+def _wait_for_fresh_entrypoints(compose: Path, project: str) -> None:
+    """Wait past the entrypoint's temporary bootstrap server.
+
+    ``pg_isready`` becomes true while init SQL is still running, so readiness
+    alone is not evidence that the reviewed 176/9 ledgers are complete.
+    """
+
+    deadline = time.monotonic() + 180
+    last = ("unavailable", "unavailable")
+    while time.monotonic() < deadline:
+        operational = _psql(
+            compose,
+            project,
+            "modecissions",
+            "SELECT count(*) FROM schema_migrations",
+            check=False,
+        )
+        gold = _psql(
+            compose,
+            project,
+            "modecissions_gold",
+            "SELECT count(*) FROM schema_migrations",
+            check=False,
+        )
+        last = (operational.stdout.strip(), gold.stdout.strip())
+        if operational.returncode == gold.returncode == 0 and last == ("176", "9"):
+            return
+        time.sleep(1)
+    raise AssertionError(f"fresh entrypoints did not reach exact 176/9 ledgers: {last}")
 
 
 def _ledger_sql(manifest: dict[str, object], database: str) -> str:
@@ -446,5 +522,213 @@ WHERE filename IN (
 """,
         ).stdout.strip()
         assert applied_after == applied_before
+    finally:
+        _run(compose, project, "down", "-v", check=False)
+
+
+def test_real_fresh_entrypoints_are_exact_bootstrap_only_and_idempotent(
+    tmp_path: Path,
+) -> None:
+    assert subprocess.run(["docker", "info"], capture_output=True).returncode == 0
+    compose = tmp_path / "fresh-compose.yml"
+    compose.write_text(
+        FRESH_COMPOSE.format(
+            operational_init=ROOT / "infra/init",
+            gold_init=ROOT / "infra/init_gold",
+        ),
+        encoding="utf-8",
+    )
+    project = f"omega_fresh_migrate_{uuid.uuid4().hex[:10]}"
+    try:
+        _run(compose, project, "up", "-d")
+        _wait(compose, project)
+        _wait_for_fresh_entrypoints(compose, project)
+
+        assert (
+            _psql(
+                compose,
+                project,
+                "modecissions",
+                "SELECT count(*) FROM schema_migrations",
+            ).stdout.strip()
+            == "176"
+        )
+        assert (
+            _psql(
+                compose,
+                project,
+                "modecissions_gold",
+                "SELECT count(*) FROM schema_migrations",
+            ).stdout.strip()
+            == "9"
+        )
+
+        environment = _runner_env(compose, project)
+        environment["OMEGA_MIGRATION_ENV_FILE"] = str(tmp_path / "absent.env")
+        rejected = subprocess.run(
+            ["bash", str(RUNNER)],
+            cwd=ROOT,
+            env=environment,
+            text=True,
+            capture_output=True,
+            timeout=240,
+            check=False,
+        )
+        assert rejected.returncode != 0
+        assert "partial/tampered" in rejected.stderr
+        assert (
+            _psql(
+                compose,
+                project,
+                "modecissions",
+                "SELECT count(*), count(checksum) FROM schema_migrations",
+            ).stdout.strip()
+            == "176|0"
+        )
+        assert (
+            _psql(
+                compose,
+                project,
+                "modecissions_gold",
+                """
+SELECT count(*), NOT EXISTS (
+  SELECT 1 FROM information_schema.columns
+   WHERE table_schema='public' AND table_name='schema_migrations'
+     AND column_name='checksum'
+) FROM schema_migrations;
+""",
+            ).stdout.strip()
+            == "9|t"
+        )
+
+        # Exercise both historical ACL leakage and the PostgreSQL 15
+        # predefined writer-membership bypass.  The bootstrap transaction must
+        # remove both before it can commit normalized evidence.
+        _psql(
+            compose,
+            project,
+            "modecissions",
+            "GRANT pg_write_all_data TO omega_console; "
+            "GRANT INSERT, UPDATE, DELETE ON schema_migrations TO omega_console",
+        )
+        _psql(
+            compose,
+            project,
+            "modecissions_gold",
+            "GRANT pg_write_all_data TO omega_refinement_gold; "
+            "GRANT INSERT, UPDATE, DELETE ON schema_migrations "
+            "TO omega_refinement_gold",
+        )
+        _psql(
+            compose,
+            project,
+            "modecissions",
+            "ALTER DATABASE modecissions SET default_transaction_read_only=on",
+        )
+        _psql(
+            compose,
+            project,
+            "modecissions_gold",
+            "ALTER DATABASE modecissions_gold SET default_transaction_read_only=on",
+        )
+
+        environment["OMEGA_MIGRATION_REQUIRE_EXPLICIT_CONTRACT"] = "0"
+        environment["OMEGA_MIGRATION_BOOTSTRAP_MODE"] = "1"
+        environment["OMEGA_MIGRATION_ALLOW_BOOTSTRAP_LEDGER"] = "1"
+        environment["OMEGA_MIGRATION_ENVIRONMENT"] = "test"
+        first = subprocess.run(
+            ["bash", str(RUNNER)],
+            cwd=ROOT,
+            env=environment,
+            text=True,
+            capture_output=True,
+            timeout=240,
+            check=False,
+        )
+        assert first.returncode == 0, first.stdout + first.stderr
+        assert "operational=fresh_bootstrap gold=fresh_bootstrap" in first.stdout
+        assert (
+            "operational=200 gold=12 baseline_expected=212 guarded_transaction=0"
+            in first.stdout
+        )
+
+        assert (
+            _psql(
+                compose,
+                project,
+                "modecissions",
+                """
+SELECT count(*), count(checksum),
+       count(*) FILTER (WHERE checksum_evidence_kind='baseline_expected'),
+       count(checksum_guarded_at),
+       (SELECT tableowner='postgres' FROM pg_tables
+         WHERE schemaname='public' AND tablename='schema_migrations'),
+       NOT has_table_privilege('omega_console','public.schema_migrations','INSERT'),
+       NOT pg_has_role('omega_console','pg_write_all_data','MEMBER'),
+       has_table_privilege('postgres','public.schema_migrations','INSERT,UPDATE,DELETE,TRUNCATE')
+  FROM schema_migrations;
+""",
+            ).stdout.strip()
+            == "200|200|200|0|t|t|t|t"
+        )
+        assert (
+            _psql(
+                compose,
+                project,
+                "modecissions_gold",
+                """
+SELECT count(*), count(checksum),
+       count(*) FILTER (WHERE checksum_evidence_kind='baseline_expected'),
+       count(checksum_guarded_at),
+       (SELECT tableowner='postgres' FROM pg_tables
+         WHERE schemaname='public' AND tablename='schema_migrations'),
+       NOT has_table_privilege('omega_refinement_gold','public.schema_migrations','INSERT'),
+       has_table_privilege('postgres','public.schema_migrations','INSERT,UPDATE,DELETE,TRUNCATE')
+  FROM schema_migrations;
+""",
+            ).stdout.strip()
+            == "12|12|12|0|t|t|t"
+        )
+
+        normalized_before = _psql(
+            compose,
+            project,
+            "modecissions",
+            """
+SELECT string_agg(filename || '=' || applied_at::text, ',' ORDER BY filename)
+  FROM schema_migrations
+ WHERE filename = ANY(ARRAY[
+   '65_replicon_mejoras_seed_refresh.sql',
+   '99zzt_analytic_app_dataset_grants.sql',
+   '99zzu_analytic_app_manifest_registry.sql'
+ ]);
+""",
+        ).stdout.strip()
+        second = subprocess.run(
+            ["bash", str(RUNNER)],
+            cwd=ROOT,
+            env=environment,
+            text=True,
+            capture_output=True,
+            timeout=240,
+            check=False,
+        )
+        assert second.returncode == 0, second.stdout + second.stderr
+        assert "operational=release_expected gold=baseline_expected" in second.stdout
+        normalized_after = _psql(
+            compose,
+            project,
+            "modecissions",
+            """
+SELECT string_agg(filename || '=' || applied_at::text, ',' ORDER BY filename)
+  FROM schema_migrations
+ WHERE filename = ANY(ARRAY[
+   '65_replicon_mejoras_seed_refresh.sql',
+   '99zzt_analytic_app_dataset_grants.sql',
+   '99zzu_analytic_app_manifest_registry.sql'
+ ]);
+""",
+        ).stdout.strip()
+        assert normalized_after == normalized_before
     finally:
         _run(compose, project, "down", "-v", check=False)

@@ -62,7 +62,8 @@ PY_RUNTIME_ROOTS = (
     "airflow/",
     "infra/airflow/",
     "scripts/gcp_release.py",
-    "scripts/gcp/runtime_contract.py",
+    "scripts/release_images.py",
+    "scripts/gcp/",
     "scripts/migration_guard.py",
     "scripts/generate_migration_manifests.py",
 )
@@ -104,14 +105,18 @@ def _default_base_head() -> tuple[str, str]:
         if not event_path:
             raise RuntimeError("GITHUB_EVENT_PATH is required for pull_request")
         event = json.loads(Path(event_path).read_text(encoding="utf-8"))
-        return event["pull_request"]["base"]["sha"], event["pull_request"]["head"]["sha"]
+        return event["pull_request"]["base"]["sha"], event["pull_request"]["head"][
+            "sha"
+        ]
     if event_name == "push":
         before = os.environ.get("GITHUB_EVENT_BEFORE") or ""
         if not before and event_path:
             event = json.loads(Path(event_path).read_text(encoding="utf-8"))
             before = event.get("before", "")
         if before and not _zero_sha(before):
-            subprocess.run(["git", "merge-base", "--is-ancestor", before, head], check=True)
+            subprocess.run(
+                ["git", "merge-base", "--is-ancestor", before, head], check=True
+            )
             return before, head
         if _zero_sha(before):
             raise RuntimeError("push event has no safe before SHA")
@@ -121,7 +126,9 @@ def _default_base_head() -> tuple[str, str]:
 
 
 def _changed_files(base: str, head: str) -> list[str]:
-    output = subprocess.check_output(["git", "diff", "--name-only", "--no-renames", "-z", f"{base}...{head}", "--"])
+    output = subprocess.check_output(
+        ["git", "diff", "--name-only", "--no-renames", "-z", f"{base}...{head}", "--"]
+    )
     parts = output.split(b"\0")
     if parts[-1] != b"":
         raise RuntimeError("git diff did not return a NUL-terminated path list")
@@ -152,12 +159,25 @@ def _service_changed(files: list[str], service: str, context: str) -> bool:
         return True
     if service == "airflow":
         return _any(files, r"^infra/airflow/", r"^airflow/", r"^infra/docker-compose")
-    if service.startswith("sap_") or service in {"replicon", "hubspot", "salesforce", "banxico", "inegi", "sec_edgar"}:
+    if service.startswith("sap_") or service in {
+        "replicon",
+        "hubspot",
+        "salesforce",
+        "banxico",
+        "inegi",
+        "sec_edgar",
+    }:
         # Cartridge datasets and docs are mounted from the repo at runtime; the
         # service image only needs rebuilds for app code, deps, DAGs, or Docker.
-        return _any(files, rf"^{re.escape(root)}(app|dags)/", rf"^{re.escape(root)}(Dockerfile|requirements\.txt)$")
+        return _any(
+            files,
+            rf"^{re.escape(root)}(app|dags)/",
+            rf"^{re.escape(root)}(Dockerfile|requirements\.txt)$",
+        )
     if service == "console":
-        return _any(files, r"^console/(app|Dockerfile|requirements\.txt)", r"^console-next/")
+        return _any(
+            files, r"^console/(app|Dockerfile|requirements\.txt)", r"^console-next/"
+        )
     return any(path.startswith(root) for path in files)
 
 
@@ -194,7 +214,10 @@ def _cartridge_dataset_only(files: list[str], cartridge: str) -> bool:
         for path in _cartridge_files(files, cartridge)
         if not path.startswith(f"cartridges/{cartridge}/tests/")
     ]
-    return bool(paths) and all(re.match(rf"^cartridges/{re.escape(cartridge)}/datasets/.*\.sql$", path) for path in paths)
+    return bool(paths) and all(
+        re.match(rf"^cartridges/{re.escape(cartridge)}/datasets/.*\.sql$", path)
+        for path in paths
+    )
 
 
 def _cartridge_needs_root_contracts(files: list[str], cartridge: str) -> bool:
@@ -224,12 +247,32 @@ def _root_test_targets(files: list[str]) -> str:
         r"^mcp-infra/app/rag/(?:ingest|pdf_capacity|pdf_worker)\.py$",
         r"^mcp-infra/app/main\.py$",
     ):
-        targets.update({
-            "tests/test_mcp_infra_pdf_ingest.py",
-            "tests/test_mcp_infra_pdf_capacity.py",
-            "tests/test_mcp_infra_pdf_compose_capacity.py",
-            "tests/test_pypdf_security.py",
-        })
+        targets.update(
+            {
+                "tests/test_mcp_infra_pdf_ingest.py",
+                "tests/test_mcp_infra_pdf_capacity.py",
+                "tests/test_mcp_infra_pdf_compose_capacity.py",
+                "tests/test_pypdf_security.py",
+            }
+        )
+    if _any(
+        files, r"^scripts/gcp/", r"^scripts/gcp_release\.py$", r"^infra/terraform-gcp/"
+    ):
+        targets.update(
+            {
+                "tests/test_gcp_day2_release.py",
+                "tests/test_gcp_ghcr_private_auth.py",
+                "tests/test_gcp_operation_gate.py",
+                "tests/test_gcp_safe_io.py",
+                "tests/test_gcp_terraform_contract.py",
+            }
+        )
+    if _any(
+        files,
+        r"^scripts/release_images\.py$",
+        r"^\.github/workflows/release(?:-candidate)?\.yml$",
+    ):
+        targets.add("tests/test_release_image_promotion.py")
     if any(path.startswith("omega_lakehouse/") for path in files):
         targets.add("tests/lakehouse")
     for cartridge in _changed_cartridges(files):
@@ -241,7 +284,9 @@ def _root_test_targets(files: list[str]) -> str:
             if dataset_contract.exists():
                 targets.add(str(dataset_contract))
         elif _cartridge_needs_root_contracts(files, cartridge):
-            targets.update(str(path) for path in Path("tests").glob(f"test_{prefix}*.py"))
+            targets.update(
+                str(path) for path in Path("tests").glob(f"test_{prefix}*.py")
+            )
     if not targets and _any(files, r"^tests/", r"^airflow/", r"^infra/airflow/"):
         targets.add("tests")
     return _space_join(targets)
@@ -283,11 +328,22 @@ def _flags(files: list[str]) -> dict[str, bool | str]:
         for root in PY_RUNTIME_ROOTS
     )
     frontend = _any(files, r"^console-next/", r"^console/app/static/console-next/")
-    infra = _any(files, r"^infra/", r"^\.github/workflows/", r"^scripts/ci_(?:changed_areas|control_room_paths)\.py$", r"^scripts/gcp(?:/|_release\.py$)", r"^scripts/(wait_for_health|smoke|production|run-e2e|v1_stress)")
+    infra = _any(
+        files,
+        r"^infra/",
+        r"^\.github/workflows/",
+        r"^scripts/ci_(?:changed_areas|control_room_paths)\.py$",
+        r"^scripts/gcp(?:/|_release\.py$)",
+        r"^scripts/(wait_for_health|smoke|production|run-e2e|v1_stress)",
+    )
     cartridge = _any(files, r"^cartridges/")
-    dataset = _any(files, r"^cartridges/[^/]+/datasets/.*\.sql$", r"^tests/test_.*datasets.*\.py$")
+    dataset = _any(
+        files, r"^cartridges/[^/]+/datasets/.*\.sql$", r"^tests/test_.*datasets.*\.py$"
+    )
     deps_python = _any(files, r"(^|/)requirements\.txt$")
-    deps_node = _any(files, r"(^|/)(package\.json|package-lock\.json|npm-shrinkwrap\.json)$")
+    deps_node = _any(
+        files, r"(^|/)(package\.json|package-lock\.json|npm-shrinkwrap\.json)$"
+    )
     e2e = _any(
         files,
         r"^tests-e2e/(specs|fixtures)/",
@@ -301,15 +357,17 @@ def _flags(files: list[str]) -> dict[str, bool | str]:
         r"^Makefile$",
         r"^\.github/workflows/e2e\.yml$",
     )
-    compose = _any(files, r"^infra/.*docker-compose.*\.ya?ml$", r"^infra/terraform/deploy/.*compose.*\.ya?ml$")
+    compose = _any(
+        files,
+        r"^infra/.*docker-compose.*\.ya?ml$",
+        r"^infra/terraform/deploy/.*compose.*\.ya?ml$",
+    )
     build_matrix = _build_matrix(files)
     root_test_targets = _root_test_targets(files)
     cartridge_test_targets = _cartridge_test_targets(files)
 
     full_stack_files = [
-        path
-        for path in files
-        if not _matches(path, CONSOLE_SERVICE_RELEASE_EXCLUDE)
+        path for path in files if not _matches(path, CONSOLE_SERVICE_RELEASE_EXCLUDE)
     ]
     release_full_stack = compose or _any(
         full_stack_files,
@@ -366,8 +424,14 @@ def _write_outputs(flags: dict[str, bool | str], files: list[str]) -> None:
             rendered = value
             if "\n" in rendered or "\r" in rendered:
                 raise ValueError(f"{key} contains an unsafe line break")
-            shell_targets = {"root_test_targets", "cartridge_test_targets", "cartridge_requirement_paths"}
-            if key in shell_targets and not re.fullmatch(r"(?:[A-Za-z0-9_./-]+(?: [A-Za-z0-9_./-]+)*)?", rendered):
+            shell_targets = {
+                "root_test_targets",
+                "cartridge_test_targets",
+                "cartridge_requirement_paths",
+            }
+            if key in shell_targets and not re.fullmatch(
+                r"(?:[A-Za-z0-9_./-]+(?: [A-Za-z0-9_./-]+)*)?", rendered
+            ):
                 raise ValueError(f"{key} contains an unsafe shell target")
         lines.append(f"{key}={rendered}")
     text = "\n".join(lines) + "\n"
@@ -390,7 +454,9 @@ def main() -> int:
     if args.files is not None:
         files = args.files
     else:
-        base, head = (args.base, args.head) if args.base and args.head else _default_base_head()
+        base, head = (
+            (args.base, args.head) if args.base and args.head else _default_base_head()
+        )
         files = _changed_files(base, head)
     _write_outputs(_flags(files), files)
     return 0

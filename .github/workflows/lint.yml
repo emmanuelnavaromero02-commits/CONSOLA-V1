@@ -47,7 +47,8 @@ jobs:
             --output-format=github \
             console workspace vault refinement mcp-infra cartridges airflow \
             scripts/reconcile_pipeline_runs.py \
-            scripts/gcp_release.py scripts/gcp/runtime_contract.py \
+            scripts/gcp_release.py scripts/release_images.py \
+            scripts/gcp/runtime_contract.py scripts/gcp/safe_io.py \
             scripts/migration_guard.py scripts/generate_migration_manifests.py
 
       - name: ruff format --check (advisory)
@@ -56,8 +57,18 @@ jobs:
           ruff format --check \
             console workspace vault refinement mcp-infra cartridges airflow \
             scripts/reconcile_pipeline_runs.py \
-            scripts/gcp_release.py scripts/gcp/runtime_contract.py \
+            scripts/gcp_release.py scripts/release_images.py \
+            scripts/gcp/runtime_contract.py scripts/gcp/safe_io.py \
             scripts/migration_guard.py scripts/generate_migration_manifests.py
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.4'
+
+      - name: Validate GitHub Actions syntax
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          "$(go env GOPATH)/bin/actionlint" .github/workflows/*.yml
 
   console-next:
     needs: changes
