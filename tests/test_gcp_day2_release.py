@@ -30,6 +30,12 @@ def _load_module():
     return module
 
 
+def _bash_function(source: str, name: str) -> str:
+    match = re.search(rf"(?ms)^{re.escape(name)}\(\) \{{\n.*?^\}}$", source)
+    assert match, f"missing Bash function: {name}"
+    return match.group(0)
+
+
 def test_gcp_release_overlay_covers_exactly_15_proprietary_images() -> None:
     overlay = _read("infra/terraform-gcp/deploy/docker-compose.release.yml")
     repositories = re.findall(
@@ -161,6 +167,74 @@ def test_restore_rehearsal_isolated_from_live_volumes() -> None:
     assert "mode_postgres" not in rehearsal
     assert "mode_postgres_gold" not in rehearsal
     assert "docker compose" not in rehearsal
+    assert rehearsal.count("psql -v ON_ERROR_STOP=1") == 2
+
+
+def test_restore_filter_omits_only_exact_bootstrap_role_statements() -> None:
+    rehearsal = _read("scripts/gcp/restore-rehearsal.sh")
+    function = _bash_function(rehearsal, "filter_pg_dump_bootstrap_role")
+    sample = """--
+-- Drop roles
+--
+DROP ROLE IF EXISTS postgres_backup;
+DROP ROLE IF EXISTS \"postgres\";
+DROP ROLE IF EXISTS postgres;
+--
+-- Roles
+--
+CREATE ROLE postgres_backup;
+CREATE ROLE postgres;
+CREATE ROLE postgres WITH LOGIN;
+ALTER ROLE postgres WITH SUPERUSER LOGIN;
+--
+-- User Configurations
+--
+ALTER ROLE postgres SET search_path TO public;
+--
+-- Databases
+--
+DROP ROLE IF EXISTS postgres;
+CREATE ROLE postgres;
+"""
+    result = subprocess.run(
+        ["bash", "-c", f"{function}\nfilter_pg_dump_bootstrap_role"],
+        input=sample,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.count("DROP ROLE IF EXISTS postgres;\n") == 1
+    assert result.stdout.count("CREATE ROLE postgres;\n") == 1
+    assert "DROP ROLE IF EXISTS postgres_backup;" in result.stdout
+    assert 'DROP ROLE IF EXISTS "postgres";' in result.stdout
+    assert "CREATE ROLE postgres_backup;" in result.stdout
+    assert "CREATE ROLE postgres WITH LOGIN;" in result.stdout
+    assert "ALTER ROLE postgres WITH SUPERUSER LOGIN;" in result.stdout
+    assert "ALTER ROLE postgres SET search_path TO public;" in result.stdout
+
+
+def test_restore_filter_fails_closed_if_pg_dumpall_contract_changes() -> None:
+    rehearsal = _read("scripts/gcp/restore-rehearsal.sh")
+    function = _bash_function(rehearsal, "filter_pg_dump_bootstrap_role")
+    changed_format = """-- Drop roles
+DROP ROLE IF EXISTS \"postgres\";
+-- Roles
+CREATE ROLE \"postgres\";
+-- Databases
+"""
+    result = subprocess.run(
+        ["bash", "-c", f"{function}\nfilter_pg_dump_bootstrap_role"],
+        input=changed_format,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert result.returncode == 42
+    assert result.stdout == changed_format
+    assert "expected one exact DROP and CREATE" in result.stderr
 
 
 def test_migration_runner_accepts_only_a_safe_explicit_project_and_env() -> None:

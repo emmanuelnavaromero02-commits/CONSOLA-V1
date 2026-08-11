@@ -104,6 +104,51 @@ with urllib.request.urlopen(request, timeout=120) as response, path.open("wb") a
 PY
 }
 
+# pg_dumpall --clean emits DROP/CREATE for the bootstrap role used by psql.
+# Dropping the current session user is impossible, while retaining CREATE after
+# omitting DROP fails because the role already exists.  Filter only those two
+# byte-exact statements, and only inside pg_dumpall's global role sections.
+# Once the Databases section begins, identical application data is preserved.
+filter_pg_dump_bootstrap_role() {
+  python3 -c '
+import sys
+
+drop_header = b"-- Drop roles\n"
+roles_header = b"-- Roles\n"
+user_config_header = b"-- User Configurations\n"
+databases_header = b"-- Databases\n"
+drop_statement = b"DROP ROLE IF EXISTS postgres;\n"
+create_statement = b"CREATE ROLE postgres;\n"
+section = "header"
+database_phase = False
+drop_count = 0
+create_count = 0
+
+for line in sys.stdin.buffer:
+    if not database_phase:
+        if line == databases_header:
+            database_phase = True
+            section = "database"
+        elif line == drop_header:
+            section = "drop"
+        elif line == roles_header:
+            section = "roles"
+        elif line == user_config_header:
+            section = "user_config"
+    if not database_phase and section == "drop" and line == drop_statement:
+        drop_count += 1
+        continue
+    if not database_phase and section == "roles" and line == create_statement:
+        create_count += 1
+        continue
+    sys.stdout.buffer.write(line)
+
+if drop_count != 1 or create_count != 1:
+    sys.stderr.write("bootstrap role filter expected one exact DROP and CREATE statement\n")
+    raise SystemExit(42)
+'
+}
+
 MANIFEST="${WORKDIR}/manifest.json"
 gcs_download "$MANIFEST_URI" "$MANIFEST"
 ACTUAL_MANIFEST_SHA="$(sha256sum "$MANIFEST" | awk '{print $1}')"
@@ -159,6 +204,10 @@ for item in "postgres.sql.gz:${OP_SHA}" "postgres_gold.sql.gz:${GOLD_SHA}" "lake
 done
 gzip -t "${WORKDIR}/postgres.sql.gz"
 gzip -t "${WORKDIR}/postgres_gold.sql.gz"
+for dump in "${WORKDIR}/postgres.sql.gz" "${WORKDIR}/postgres_gold.sql.gz"; do
+  gzip -dc "$dump" | filter_pg_dump_bootstrap_role >/dev/null
+done
+emit "bootstrap role restore filter" "PASS" "one exact DROP and CREATE omitted per dump; ALTER and database payload preserved"
 emit "backup artifact checksums" "PASS" "logical dumps and object manifest exact generations verified"
 
 OBJECT_RESULT="$(python3 - "$MANIFEST" "${WORKDIR}/lakehouse_objects.jsonl" "$OBJECT_VERIFY_MODE" <<'PY'
@@ -284,8 +333,10 @@ for pair in "${OP_CONTAINER}:5432" "${GOLD_CONTAINER}:5433"; do
 done
 
 gzip -dc "${WORKDIR}/postgres.sql.gz" \
+  | filter_pg_dump_bootstrap_role \
   | docker exec -i "$OP_CONTAINER" psql -v ON_ERROR_STOP=1 -U postgres -d postgres >/dev/null
 gzip -dc "${WORKDIR}/postgres_gold.sql.gz" \
+  | filter_pg_dump_bootstrap_role \
   | docker exec -i "$GOLD_CONTAINER" psql -v ON_ERROR_STOP=1 -U postgres -d postgres -p 5433 >/dev/null
 
 OP_MIGRATIONS="$(docker exec "$OP_CONTAINER" psql -At -U postgres -d modecissions \

@@ -143,6 +143,13 @@ operational and Gold migration ledgers, and removes the rehearsal containers
 and volumes. The live Compose project and live volumes are not opened or
 modified.
 
+Because `pg_dumpall --clean` emits `DROP ROLE` and `CREATE ROLE` for its own
+bootstrap `postgres` session user, the rehearsal validates and omits exactly
+those two byte-exact statements inside the global role sections. It preserves
+`ALTER ROLE postgres`, quoted or similarly named roles, and identical text in
+database payloads. Any dump-format drift or any other SQL error remains fatal
+under `psql -v ON_ERROR_STOP=1`.
+
 `GCP_OBJECT_VERIFY_MODE=sample` exists only for fast diagnostics and is not
 release evidence.
 
