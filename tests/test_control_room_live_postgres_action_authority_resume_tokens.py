@@ -221,6 +221,68 @@ async def test_resume_promotions_create_one_new_intent_without_postgres_error(
 
 
 @pytest.mark.asyncio
+async def test_claim_preserves_monotonic_timestamp_with_older_transaction_clock(
+    authority_seed: AuthoritySeed,
+):
+    seed = authority_seed
+    pool = await _pool(seed)
+    try:
+        scope = await seed_authority_item(seed, seed.first, "resume-clock-rollback")
+        await insert_authority_dry_run(seed, scope)
+        action = await issue_live_binding(seed, pool, scope)
+        with (
+            patch.object(auth, "pool", new=AsyncMock(return_value=pool)),
+            patch.object(
+                business_action_intents,
+                "collect_surface_snapshot",
+                new=AsyncMock(return_value=snapshot(scope)),
+            ),
+        ):
+            promoted = await promote_action_handle(scope.maker, action.action_handle)
+
+        shared = await asyncpg.connect(seed.console_dsn)
+        try:
+            async with shared.transaction():
+                transaction_now = await shared.fetchval("SELECT NOW()")
+                conn = await asyncpg.connect(seed.admin_dsn)
+                try:
+                    shifted = await conn.fetchrow(
+                        """
+                        UPDATE control_room_action_intents
+                           SET created_at = $2::timestamptz + INTERVAL '1 second',
+                               updated_at = $2::timestamptz + INTERVAL '1 second'
+                         WHERE id = $1::uuid
+                         RETURNING created_at, updated_at
+                        """,
+                        promoted.intent_id,
+                        transaction_now,
+                    )
+                finally:
+                    await conn.close()
+                assert shifted is not None
+
+                checker = {
+                    **scope.checker,
+                    "_scheduled_effect_connection": shared,
+                }
+                with patch.object(auth, "pool", new=AsyncMock(return_value=pool)):
+                    claim = await claim_intent_for_approval(checker, promoted.intent_id)
+                assert claim.approval_handle
+
+                updated_at = await shared.fetchval(
+                    "SELECT updated_at FROM control_room_action_intents "
+                    "WHERE id=$1::uuid",
+                    promoted.intent_id,
+                )
+                assert updated_at >= shifted["created_at"]
+                assert updated_at >= shifted["updated_at"]
+        finally:
+            await shared.close()
+    finally:
+        await pool.close()
+
+
+@pytest.mark.asyncio
 async def test_resume_old_replays_and_cross_scope_cannot_affect_new_intent(
     authority_seed: AuthoritySeed,
 ):

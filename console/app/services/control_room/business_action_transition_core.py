@@ -108,7 +108,7 @@ async def transition_intent(
            SET state = $1, state_version = $2, result_code = $3,
                checker_user_id = COALESCE($4, checker_user_id),
                executor_user_id = COALESCE($5, executor_user_id),
-               updated_at = NOW()
+               updated_at = GREATEST(updated_at, NOW())
          WHERE tenant_id = $6::uuid AND workspace_id = $7::uuid
            AND id = $8::uuid AND state = $9 AND state_version = $10
          RETURNING *, id::text AS id, tenant_id::text AS tenant_id,
