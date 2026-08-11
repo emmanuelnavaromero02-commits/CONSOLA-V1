@@ -538,6 +538,8 @@ def test_api_data_prefers_scoped_gold_table(console_main, monkeypatch):
 
 def test_api_data_without_published_gold_fails_closed(console_main, monkeypatch):
     """A missing scoped publication cannot fall back to mutable Refinement data."""
+    monkeypatch.delenv("GOLD_DATABASE_URL", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     captured = {}
 
     class FakeResponse:
