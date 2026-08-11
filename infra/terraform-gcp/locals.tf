@@ -35,6 +35,49 @@ locals {
 
   airflow_public_url = "${local.console_public_url}/airflow"
   lakehouse_bucket   = var.lakehouse_bucket_name != "" ? var.lakehouse_bucket_name : google_storage_bucket.lakehouse.name
+  release_backup_bucket = google_storage_bucket.release_backups.name
+
+  # Version the effective reboot/bootstrap controller. The provider's
+  # metadata_startup_script field is ForceNew, so scripts/gcp_release.py
+  # reconciles these exact rendered bytes in place with metadata fingerprint
+  # CAS and verifies this hash by read-back without replacing the writer VM.
+  startup_contract = {
+    schema_version = 1
+    project_id     = var.project_id
+    environment    = var.environment
+    source = {
+      bucket         = var.source_bucket
+      object         = var.source_object
+      ref            = var.source_sha
+      generation     = var.source_generation
+      size_bytes     = var.source_size_bytes
+      archive_sha256 = var.source_archive_sha256
+    }
+    urls = {
+      public_console      = local.console_public_url
+      public_workspace    = local.workspace_public_url
+      public_airflow      = local.airflow_public_url
+      technical_console   = local.technical_console_url
+      technical_workspace = local.technical_workspace_url
+    }
+    admin_email              = var.admin_email
+    cookie_secure            = local.public_https_enabled
+    data_disk_size_bytes     = var.data_disk_size_gb * 1073741824
+    lakehouse_bucket         = local.lakehouse_bucket
+    release_backup_bucket    = local.release_backup_bucket
+    lakehouse_endpoint       = var.lakehouse_endpoint
+    enable_airflow_scheduler = var.enable_airflow_scheduler
+    secret_prefix            = "omega-${var.environment}-"
+    compose_override         = templatefile("${path.module}/templates/docker-compose.gcp.yml.tftpl", {})
+  }
+
+  startup_script = templatefile("${path.module}/templates/startup.sh.tftpl", {
+    startup_config_base64    = base64encode(jsonencode(local.startup_contract))
+    bootstrap_runtime_base64 = base64encode(file("${path.module}/../../scripts/gcp/bootstrap-runtime.sh"))
+    metadata_firewall_base64 = base64encode(file("${path.module}/../../scripts/gcp/metadata-firewall.sh"))
+    operation_guard_base64   = base64encode(file("${path.module}/templates/omega-operation-gate"))
+    safe_io_base64           = base64encode(file("${path.module}/../../scripts/gcp/safe_io.py"))
+  })
 
   required_services = toset([
     "artifactregistry.googleapis.com",
@@ -119,6 +162,17 @@ locals {
     "superset_admin_password",
     "superset_service_password",
     "smtp_password",
+    "gcs_hmac_access_key_id",
+    "gcs_hmac_secret_access_key",
+  ])
+
+  # The VM reads only these five runtime secrets directly. Application secrets
+  # stay container-scoped; granting the whole 69-secret inventory to the host
+  # would recreate the project-wide privilege this release removes.
+  app_host_secret_names = toset([
+    "control_room_evidence_signing_key_id",
+    "control_room_evidence_signing_key",
+    "control_room_evidence_signing_previous_keys",
     "gcs_hmac_access_key_id",
     "gcs_hmac_secret_access_key",
   ])

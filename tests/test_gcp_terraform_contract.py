@@ -10,7 +10,10 @@ GCP_TF = REPO / "infra" / "terraform-gcp"
 def test_gcp_terraform_files_stay_modular():
     offenders = []
     for path in GCP_TF.rglob("*"):
-        if any(part.startswith(".") for part in path.relative_to(GCP_TF).parts):
+        if any(
+            part.startswith(".") or part == "__pycache__"
+            for part in path.relative_to(GCP_TF).parts
+        ):
             continue
         if path.is_file() and path.suffix not in {".hcl"}:
             lines = path.read_text(encoding="utf-8").splitlines()
@@ -21,12 +24,15 @@ def test_gcp_terraform_files_stay_modular():
 
 def test_gcp_startup_uses_native_lakehouse_provider_not_gcsfuse():
     startup = (GCP_TF / "templates" / "startup.sh.tftpl").read_text(encoding="utf-8")
-    compose = (GCP_TF / "templates" / "docker-compose.gcp.yml.tftpl").read_text(encoding="utf-8")
-    combined = f"{startup}\n{compose}"
+    runtime = (REPO / "scripts/gcp/bootstrap-runtime.sh").read_text(encoding="utf-8")
+    compose = (GCP_TF / "templates" / "docker-compose.gcp.yml.tftpl").read_text(
+        encoding="utf-8"
+    )
+    combined = f"{startup}\n{runtime}\n{compose}"
 
     assert "gcsfuse" not in combined
     assert "gcs_fuse" not in combined
-    assert "LAKEHOUSE_PROVIDER gcs" in startup
+    assert "LAKEHOUSE_PROVIDER gcs" in runtime
     assert "LAKEHOUSE_PROVIDER: $${LAKEHOUSE_PROVIDER:-gcs}" in compose
 
 
@@ -44,3 +50,15 @@ def test_gcp_secret_manifest_includes_macro_cartridges():
     }
     missing = sorted(item for item in required if item not in locals_tf)
     assert missing == []
+
+
+def test_lakehouse_iam_binds_the_effective_canonical_bucket():
+    iam = (GCP_TF / "iam.tf").read_text(encoding="utf-8")
+    resource = iam[
+        iam.index('resource "google_storage_bucket_iam_member" "app_lakehouse"') :
+        iam.index(
+            'resource "google_project_iam_custom_role" "release_backup_writer"'
+        )
+    ]
+    assert "bucket = local.lakehouse_bucket" in resource
+    assert "google_storage_bucket.lakehouse" not in resource

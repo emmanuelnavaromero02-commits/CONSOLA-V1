@@ -61,6 +61,7 @@ PY_RUNTIME_ROOTS = (
     "cartridges/",
     "airflow/",
     "infra/airflow/",
+    "scripts/gcp/",
 )
 
 PY_RUNTIME_EXACT_PATHS = frozenset({"scripts/reconcile_pipeline_runs.py"})
@@ -226,6 +227,14 @@ def _root_test_targets(files: list[str]) -> str:
             "tests/test_mcp_infra_pdf_compose_capacity.py",
             "tests/test_pypdf_security.py",
         })
+    if _any(files, r"^scripts/gcp/", r"^infra/terraform-gcp/"):
+        targets.update(
+            {
+                "tests/test_gcp_operation_gate.py",
+                "tests/test_gcp_safe_io.py",
+                "tests/test_gcp_terraform_contract.py",
+            }
+        )
     if any(path.startswith("omega_lakehouse/") for path in files):
         targets.add("tests/lakehouse")
     for cartridge in _changed_cartridges(files):
@@ -279,7 +288,7 @@ def _flags(files: list[str]) -> dict[str, bool | str]:
         for root in PY_RUNTIME_ROOTS
     )
     frontend = _any(files, r"^console-next/", r"^console/app/static/console-next/")
-    infra = _any(files, r"^infra/", r"^\.github/workflows/", r"^scripts/ci_(?:changed_areas|control_room_paths)\.py$", r"^scripts/(wait_for_health|smoke|production|run-e2e|v1_stress)")
+    infra = _any(files, r"^infra/", r"^\.github/workflows/", r"^scripts/ci_(?:changed_areas|control_room_paths)\.py$", r"^scripts/gcp/", r"^scripts/(wait_for_health|smoke|production|run-e2e|v1_stress)")
     cartridge = _any(files, r"^cartridges/")
     dataset = _any(files, r"^cartridges/[^/]+/datasets/.*\.sql$", r"^tests/test_.*datasets.*\.py$")
     deps_python = _any(files, r"(^|/)requirements\.txt$")

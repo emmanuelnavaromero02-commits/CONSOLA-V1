@@ -46,14 +46,16 @@ jobs:
           ruff check \
             --output-format=github \
             console workspace vault refinement mcp-infra cartridges airflow \
-            scripts/reconcile_pipeline_runs.py
+            scripts/reconcile_pipeline_runs.py \
+            scripts/gcp/runtime_contract.py scripts/gcp/safe_io.py
 
       - name: ruff format --check (advisory)
         continue-on-error: true
         run: |
           ruff format --check \
             console workspace vault refinement mcp-infra cartridges airflow \
-            scripts/reconcile_pipeline_runs.py
+            scripts/reconcile_pipeline_runs.py \
+            scripts/gcp/runtime_contract.py scripts/gcp/safe_io.py
 
   console-next:
     needs: changes

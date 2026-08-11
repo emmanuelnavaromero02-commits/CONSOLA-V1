@@ -6,6 +6,10 @@ resource "google_compute_disk" "docker_data" {
   labels = local.labels
 
   physical_block_size_bytes = 4096
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "google_compute_instance" "app" {
@@ -40,27 +44,15 @@ resource "google_compute_instance" "app" {
     enable-oslogin = "TRUE"
   }
 
-  metadata_startup_script = templatefile("${path.module}/templates/startup.sh.tftpl", {
-    project_id               = var.project_id
-    source_bucket            = var.source_bucket
-    source_object            = var.source_object
-    source_sha               = var.source_sha
-    public_console_url       = local.console_public_url
-    public_workspace_url     = local.workspace_public_url
-    public_airflow_url       = local.airflow_public_url
-    technical_console_url    = local.technical_console_url
-    technical_workspace_url  = local.technical_workspace_url
-    admin_email              = var.admin_email
-    cookie_secure            = local.public_https_enabled ? "true" : "false"
-    lakehouse_bucket         = local.lakehouse_bucket
-    lakehouse_endpoint       = var.lakehouse_endpoint
-    enable_airflow_scheduler = var.enable_airflow_scheduler ? "true" : "false"
-    secret_prefix            = "omega-${var.environment}-"
-    compose_override         = templatefile("${path.module}/templates/docker-compose.gcp.yml.tftpl", {})
-  })
+  metadata_startup_script = local.startup_script
 
+  # The provider marks metadata_startup_script ForceNew. Replacing the
+  # canonical writer VM merely to refresh reboot metadata is forbidden.
+  # scripts/gcp_release.py performs the reviewed startup-script update in
+  # place through Compute setMetadata with the live fingerprint as a CAS.
   lifecycle {
     ignore_changes = [metadata_startup_script]
+    prevent_destroy = true
   }
 
   service_account {
@@ -77,6 +69,7 @@ resource "google_compute_instance" "app" {
   depends_on = [
     google_compute_router_nat.main,
     google_storage_bucket_iam_member.app_source,
+    google_storage_bucket_iam_member.app_release_backup,
     google_secret_manager_secret_iam_member.app_runtime_secret_access,
     google_secret_manager_secret_iam_member.app_ghcr_pull_credentials_access,
     google_project_iam_member.app_project_roles,

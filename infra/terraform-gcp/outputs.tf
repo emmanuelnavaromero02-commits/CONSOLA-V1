@@ -56,12 +56,29 @@ output "lakehouse_bucket" {
   value = local.lakehouse_bucket
 }
 
+output "release_backup_bucket" {
+  value = local.release_backup_bucket
+}
+
 output "artifact_registry_repository" {
   value = google_artifact_registry_repository.docker.name
 }
 
 output "source_sha" {
   value = var.source_sha
+}
+
+output "source_bucket" {
+  value = var.source_bucket
+}
+
+output "source_object" {
+  value = var.source_object
+}
+
+output "startup_script_sha256" {
+  description = "Expected SHA-256 of the reviewed startup render; adopt with metadata CAS and verify by live read-back."
+  value       = sha256(local.startup_script)
 }
 
 output "admin_credentials_path_on_vm" {
