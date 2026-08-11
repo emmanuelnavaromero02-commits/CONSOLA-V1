@@ -161,6 +161,14 @@ def test_security_gate_has_exact_fail_closed_contract() -> None:
     ]
 
 
+def test_security_changes_force_pip_audit_on_every_non_pr_run() -> None:
+    changes = load_job("security.yml", "changes")
+    assert changes["outputs"]["python_deps"] == (
+        "${{ github.event_name != 'pull_request' && 'true' || "
+        "steps.detect.outputs.python_deps }}"
+    )
+
+
 @pytest.mark.parametrize(
     "env",
     [
