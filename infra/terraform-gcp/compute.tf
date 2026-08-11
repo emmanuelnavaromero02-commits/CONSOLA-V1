@@ -77,6 +77,8 @@ resource "google_compute_instance" "app" {
   depends_on = [
     google_compute_router_nat.main,
     google_storage_bucket_iam_member.app_source,
+    google_secret_manager_secret_iam_member.app_runtime_secret_access,
+    google_secret_manager_secret_iam_member.app_ghcr_pull_credentials_access,
     google_project_iam_member.app_project_roles,
   ]
 }
