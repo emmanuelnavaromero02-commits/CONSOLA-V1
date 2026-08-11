@@ -63,6 +63,8 @@ PY_RUNTIME_ROOTS = (
     "infra/airflow/",
 )
 
+PY_RUNTIME_EXACT_PATHS = frozenset({"scripts/release_images.py"})
+
 CONSOLE_SERVICE_RELEASE_EXCLUDE = (
     r"^console/app/services/db_pool\.py$",
     r"^console/app/services/operations_service\.py$",
@@ -266,10 +268,13 @@ def _cartridge_requirement_paths(files: list[str]) -> str:
 def _flags(files: list[str]) -> dict[str, bool | str]:
     py_file = _any(files, r"\.py$")
     py_runtime = any(
-        path.endswith(".py")
-        and path.startswith(root)
-        and "/tests/" not in path
-        and not path.endswith("_test.py")
+        path in PY_RUNTIME_EXACT_PATHS
+        or (
+            path.endswith(".py")
+            and path.startswith(root)
+            and "/tests/" not in path
+            and not path.endswith("_test.py")
+        )
         for path in files
         for root in PY_RUNTIME_ROOTS
     )

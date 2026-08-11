@@ -110,6 +110,13 @@ def test_dependency_changes_trigger_security_without_full_stack_by_default():
     assert flags["release_full_stack"] is False
 
 
+def test_release_image_authority_helper_triggers_runtime_security_scan():
+    flags = _flags("scripts/release_images.py")
+
+    assert flags["python"] is True
+    assert flags["python_runtime"] is True
+
+
 def test_mcp_infra_pdf_changes_run_functional_security_tests():
     for changed_file in (
         "mcp-infra/requirements.txt",

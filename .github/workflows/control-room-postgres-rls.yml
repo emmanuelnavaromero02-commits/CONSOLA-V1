@@ -118,6 +118,7 @@ jobs:
             tests/test_aws_env_pair_transaction.py \
             tests/test_aws_ghcr_private_auth.py \
             tests/test_gcp_ghcr_private_auth.py \
+            tests/test_release_image_promotion.py \
             tests/test_aws_ssm_deploy_workflow.py \
             tests/test_aws_evidence_env_isolation.py \
             tests/test_aws_evidence_update_env.py \

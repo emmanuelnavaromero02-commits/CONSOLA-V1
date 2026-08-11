@@ -7,7 +7,10 @@ on:
 
 permissions:
   contents: read
-  packages: write
+
+concurrency:
+  group: release-images-${{ github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   detect-release-changes:
@@ -19,7 +22,8 @@ jobs:
       release_full_stack: ${{ steps.detect.outputs.release_full_stack }}
       changed_files: ${{ steps.detect.outputs.changed_files }}
     steps:
-      - uses: actions/checkout@v4
+      # actions/checkout v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
 
@@ -40,19 +44,23 @@ jobs:
     needs: detect-release-changes
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # actions/checkout v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
-      - uses: actions/setup-python@v5
+      # actions/setup-python v5.6.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
-          python-version: "3.12"
+          python-version: "3.12.8"
 
-      - uses: actions/setup-node@v4
+      # actions/setup-node v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: "22"
+          node-version: "22.22.0"
           cache: npm
           cache-dependency-path: console-next/package-lock.json
 
-      - uses: hashicorp/setup-terraform@v3
+      # hashicorp/setup-terraform@v3, pinned to v3.1.2.
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
         with:
           terraform_version: "1.6.6"
 
@@ -73,6 +81,7 @@ jobs:
             tests/test_aws_secrets_manager_config.py \
             tests/test_app_env_safe_default.py \
             tests/test_mcp_data_scope_source.py \
+            tests/test_release_image_promotion.py \
             tests/test_v1_public_https_closure.py
 
       - name: Changed cartridge dataset contracts
@@ -133,15 +142,18 @@ jobs:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       OPEN_REPORT: "0"
     steps:
-      - uses: actions/checkout@v4
+      # actions/checkout v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
-      - uses: actions/setup-python@v5
+      # actions/setup-python v5.6.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
-          python-version: "3.12"
+          python-version: "3.12.8"
 
-      - uses: actions/setup-node@v4
+      # actions/setup-node v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: "22"
+          node-version: "22.22.0"
           cache: npm
           cache-dependency-path: tests-e2e/package-lock.json
 
@@ -241,14 +253,15 @@ jobs:
           docker logs mode_airflow --tail 180 2>&1 || true
           docker logs mode_airflow_scheduler --tail 180 2>&1 || true
 
-      - uses: actions/upload-artifact@v4
+      # actions/upload-artifact v4.6.2
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
           name: release-playwright-report
           path: tests-e2e/playwright-report
           if-no-files-found: ignore
 
-  build-and-push:
+  verify-tag-and-candidate:
     needs: [detect-release-changes, validate-release, full-stack-release-gate]
     if: |
       always() &&
@@ -259,8 +272,75 @@ jobs:
         needs.full-stack-release-gate.result == 'success'
       )
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      bound_manifest_digest: ${{ steps.tag.outputs.bound_manifest_digest }}
+      source_sha: ${{ steps.tag.outputs.source_sha }}
+      tag_object_sha: ${{ steps.tag.outputs.tag_object_sha }}
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      # actions/checkout v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      # actions/setup-python v5.6.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12.8"
+
+      - name: Validate annotated tag, exact main, VERSION, and manifest binding
+        id: tag
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git fetch --force origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          SOURCE_SHA="$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")"
+          echo "source_sha=${SOURCE_SHA}" >> "$GITHUB_OUTPUT"
+          python3 scripts/release_images.py verify-release-tag \
+            --source-sha "$SOURCE_SHA" \
+            --release-tag "$RELEASE_TAG" \
+            --repository "$REPOSITORY"
+
+      - name: Recompute sealed 15-digest manifest before any release tag write
+        id: preflight
+        env:
+          BOUND_MANIFEST_DIGEST: ${{ steps.tag.outputs.bound_manifest_digest }}
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          SOURCE_SHA: ${{ steps.tag.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release_images.py promotion-preflight \
+            --source-sha "$SOURCE_SHA" \
+            --release-tag "$RELEASE_TAG" \
+            --bound-manifest-digest "$BOUND_MANIFEST_DIGEST" \
+            --output release-promotion-preflight.json
+
+      # actions/upload-artifact v4.6.2
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-promotion-preflight-${{ steps.tag.outputs.source_sha }}
+          path: release-promotion-preflight.json
+          if-no-files-found: error
+          retention-days: 30
+
+  build-and-push:
+    name: Promote exact candidate digest (${{ matrix.service }})
+    needs: verify-tag-and-candidate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     strategy:
       fail-fast: false
+      max-parallel: 5
       matrix:
         include:
           - service: console
@@ -268,20 +348,25 @@ jobs:
             dockerfile: ./console/Dockerfile
           - service: workspace
             context: ./workspace
+            dockerfile: ./workspace/Dockerfile
           - service: refinement
             context: .
             dockerfile: ./refinement/Dockerfile
           - service: vault
             context: ./vault
+            dockerfile: ./vault/Dockerfile
           - service: mcp-infra
             context: .
             dockerfile: ./mcp-infra/Dockerfile
           - service: airflow
             context: ./infra/airflow
+            dockerfile: ./infra/airflow/Dockerfile
           - service: replicon
             context: ./cartridges/replicon
+            dockerfile: ./cartridges/replicon/Dockerfile
           - service: hubspot
             context: ./cartridges/hubspot
+            dockerfile: ./cartridges/hubspot/Dockerfile
           - service: banxico
             context: .
             dockerfile: ./cartridges/banxico/Dockerfile
@@ -293,37 +378,112 @@ jobs:
             dockerfile: ./cartridges/sec_edgar/Dockerfile
           - service: sap_hcm
             context: ./cartridges/sap_hcm
+            dockerfile: ./cartridges/sap_hcm/Dockerfile
           - service: sap_s4hana
             context: ./cartridges/sap_s4hana
+            dockerfile: ./cartridges/sap_s4hana/Dockerfile
           - service: sap_successfactors
             context: ./cartridges/sap_successfactors
+            dockerfile: ./cartridges/sap_successfactors/Dockerfile
           - service: salesforce
             context: ./cartridges/salesforce
+            dockerfile: ./cartridges/salesforce/Dockerfile
 
     steps:
-      - uses: actions/checkout@v4
+      # actions/checkout v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: true
 
-      - name: Set image metadata
-        id: meta
+      # actions/setup-python v5.6.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12.8"
+
+      - name: Promote registry manifest without rebuilding
+        env:
+          BOUND_MANIFEST_DIGEST: ${{ needs.verify-tag-and-candidate.outputs.bound_manifest_digest }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-tag-and-candidate.outputs.tag_object_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+          SOURCE_SHA: ${{ needs.verify-tag-and-candidate.outputs.source_sha }}
         run: |
-          echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ matrix.service }}" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          remote_tag_object="$(git ls-remote --tags origin "refs/tags/${RELEASE_TAG}" | awk 'NR == 1 {print $1}')"
+          [[ "$remote_tag_object" == "$EXPECTED_TAG_OBJECT_SHA" ]] || {
+            echo "ERROR: remote annotated tag changed or disappeared before promotion" >&2
+            exit 1
+          }
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git fetch --force origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          python3 scripts/release_images.py verify-release-tag \
+            --source-sha "$SOURCE_SHA" \
+            --release-tag "$RELEASE_TAG" \
+            --repository "$REPOSITORY" \
+            --expected-tag-object-sha "$EXPECTED_TAG_OBJECT_SHA"
+          python3 scripts/release_images.py promote-one \
+            --service "${{ matrix.service }}" \
+            --source-sha "$SOURCE_SHA" \
+            --release-tag "$RELEASE_TAG" \
+            --bound-manifest-digest "$BOUND_MANIFEST_DIGEST"
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
+  verify-release-images:
+    needs: [verify-tag-and-candidate, build-and-push]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      # actions/checkout v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+          persist-credentials: true
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and push ${{ matrix.service }}
-        uses: docker/build-push-action@v6
+      # actions/setup-python v5.6.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
-          context: ${{ matrix.context }}
-          file: ${{ matrix.dockerfile || format('{0}/Dockerfile', matrix.context) }}
-          push: true
-          tags: |
-            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+          python-version: "3.12.8"
+
+      - name: Verify exact digest promotion 15/15
+        env:
+          BOUND_MANIFEST_DIGEST: ${{ needs.verify-tag-and-candidate.outputs.bound_manifest_digest }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-tag-and-candidate.outputs.tag_object_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+          SOURCE_SHA: ${{ needs.verify-tag-and-candidate.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          revalidate_tag() {
+            local remote_tag_object
+            remote_tag_object="$(git ls-remote --tags origin "refs/tags/${RELEASE_TAG}" | awk 'NR == 1 {print $1}')"
+            [[ "$remote_tag_object" == "$EXPECTED_TAG_OBJECT_SHA" ]] || {
+              echo "ERROR: remote annotated tag changed or disappeared during promotion" >&2
+              exit 1
+            }
+            git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+            git fetch --force origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+            python3 scripts/release_images.py verify-release-tag \
+              --source-sha "$SOURCE_SHA" \
+              --release-tag "$RELEASE_TAG" \
+              --repository "$REPOSITORY" \
+              --expected-tag-object-sha "$EXPECTED_TAG_OBJECT_SHA"
+          }
+          revalidate_tag
+          python3 scripts/release_images.py verify-release \
+            --source-sha "$SOURCE_SHA" \
+            --release-tag "$RELEASE_TAG" \
+            --bound-manifest-digest "$BOUND_MANIFEST_DIGEST" \
+            --output release-images.json
+          revalidate_tag
+
+      # actions/upload-artifact v4.6.2
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-images-${{ github.ref_name }}
+          path: release-images.json
+          if-no-files-found: error
+          retention-days: 90

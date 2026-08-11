@@ -45,13 +45,25 @@ jobs:
         run: |
           ruff check \
             --output-format=github \
-            console workspace vault refinement mcp-infra cartridges airflow
+            console workspace vault refinement mcp-infra cartridges airflow \
+            scripts/release_images.py \
+            infra/terraform-gcp/release/validate-image-authority.py \
+            infra/terraform-gcp/release/validate-lock-output.py
 
       - name: ruff format --check (advisory)
         continue-on-error: true
         run: |
           ruff format --check \
-            console workspace vault refinement mcp-infra cartridges airflow
+            console workspace vault refinement mcp-infra cartridges airflow \
+            scripts/release_images.py \
+            infra/terraform-gcp/release/validate-image-authority.py \
+            infra/terraform-gcp/release/validate-lock-output.py
+
+      - name: Validate private GHCR release shell syntax
+        run: |
+          bash -n \
+            infra/terraform-gcp/release/ghcr-auth-run.sh \
+            infra/terraform-gcp/release/preflight-release-images.sh
 
   console-next:
     needs: changes

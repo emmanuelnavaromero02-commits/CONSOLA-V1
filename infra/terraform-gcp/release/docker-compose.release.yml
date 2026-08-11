@@ -19,6 +19,8 @@ services:
     image: ${OMEGA_GCP_IMAGE_MCP_INFRA:?run the authenticated GCP image preflight}
     build: !reset null
     pull_policy: never
+    volumes:
+      - /opt/modecissions/shared/airflow/dags:/opt/airflow/dags
   airflow-init:
     image: ${OMEGA_GCP_IMAGE_AIRFLOW:?run the authenticated GCP image preflight}
     build: !reset null
@@ -27,10 +29,18 @@ services:
     image: ${OMEGA_GCP_IMAGE_AIRFLOW:?run the authenticated GCP image preflight}
     build: !reset null
     pull_policy: never
+    volumes:
+      - /opt/modecissions/shared/airflow/dags:/opt/airflow/dags
+      - /opt/modecissions/shared/airflow/logs:/opt/airflow/logs
+      - /opt/modecissions/shared/airflow/plugins:/opt/airflow/plugins
   airflow-scheduler:
     image: ${OMEGA_GCP_IMAGE_AIRFLOW:?run the authenticated GCP image preflight}
     build: !reset null
     pull_policy: never
+    volumes:
+      - /opt/modecissions/shared/airflow/dags:/opt/airflow/dags
+      - /opt/modecissions/shared/airflow/logs:/opt/airflow/logs
+      - /opt/modecissions/shared/airflow/plugins:/opt/airflow/plugins
   replicon:
     image: ${OMEGA_GCP_IMAGE_REPLICON:?run the authenticated GCP image preflight}
     build: !reset null
