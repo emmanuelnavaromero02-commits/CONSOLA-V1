@@ -48,6 +48,7 @@ def test_lint_workflow_uses_ruff_with_pinned_version():
     # Both check + format passes referenced.
     assert "ruff check" in raw
     assert "ruff format --check" in raw
+    assert raw.count("scripts/reconcile_pipeline_runs.py") == 2
 
 
 def test_security_workflow_has_bandit_pinned():

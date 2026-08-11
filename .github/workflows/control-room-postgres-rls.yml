@@ -101,8 +101,12 @@ jobs:
             console/tests/test_intelligence_evidence_refs_attestation.py \
             console/tests/test_ops_summary_and_version.py \
             console/tests/test_pipeline_extract.py \
+            console/tests/test_pipeline_status_monotonic.py \
             tests/test_decision*.py \
             tests/test_pipeline_control_room_refresh.py \
+            tests/test_pipeline_run_reconciliation.py \
+            tests/test_pipeline_successfactors_reservation.py \
+            tests/test_studio_airflow_source_sync.py \
             tests/test_scheduled_monitor_execution.py \
             tests/test_agentops_scheduled_monitor_contract.py \
             tests/test_agent_runner_http_outcome.py \
@@ -172,6 +176,13 @@ jobs:
             tests/test_talent_readiness_benchmark_guards.py \
             tests/test_talent_score_type_guards.py \
             tests/test_v1_router_mount.py
+
+      - name: Run SuccessFactors pipeline persistence tests
+        env:
+          PYTHONPATH: cartridges/sap_successfactors
+        run: |
+          pytest -ra \
+            cartridges/sap_successfactors/tests/test_operational_persistence_contract.py
 
       - name: Provision the app-grant database
         env:

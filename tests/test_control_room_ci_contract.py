@@ -128,8 +128,12 @@ REQUIRED_RELATED_TESTS = (
     "console/tests/test_intelligence_control_room_canonical_persistence.py",
     "console/tests/test_intelligence_evidence_refs_attestation.py",
     "console/tests/test_pipeline_extract.py",
+    "console/tests/test_pipeline_status_monotonic.py",
     "tests/test_decision*.py",
     "tests/test_pipeline_control_room_refresh.py",
+    "tests/test_pipeline_run_reconciliation.py",
+    "tests/test_pipeline_successfactors_reservation.py",
+    "tests/test_studio_airflow_source_sync.py",
     "tests/test_scheduled_monitor_execution.py",
     "tests/test_agentops_scheduled_monitor_contract.py",
     "tests/test_agent_runner_http_outcome.py",
@@ -210,6 +214,15 @@ def test_control_room_workflow_runs_all_related_contract_suites():
     )
     for test_path in FOCAL_TESTS:
         assert test_path in focal_step
+
+
+def test_control_room_workflow_runs_successfactors_pipeline_persistence() -> None:
+    workflow = _workflow_text()
+    assert "Run SuccessFactors pipeline persistence tests" in workflow
+    assert (
+        "cartridges/sap_successfactors/tests/test_operational_persistence_contract.py"
+        in workflow
+    )
 
 
 def _focal_pytest_argv() -> list[str]:

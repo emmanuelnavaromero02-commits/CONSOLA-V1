@@ -110,6 +110,14 @@ def test_dependency_changes_trigger_security_without_full_stack_by_default():
     assert flags["release_full_stack"] is False
 
 
+def test_pipeline_reconciler_is_a_security_scanned_python_runtime():
+    flags = _flags("scripts/reconcile_pipeline_runs.py")
+
+    assert flags["python"] is True
+    assert flags["python_runtime"] is True
+    assert flags["control_room"] is True
+
+
 def test_mcp_infra_pdf_changes_run_functional_security_tests():
     for changed_file in (
         "mcp-infra/requirements.txt",
