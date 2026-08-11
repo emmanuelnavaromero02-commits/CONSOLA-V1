@@ -14,7 +14,6 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATION_NAME = "37_sap_successfactors_talent_operational_truth_repair.sql"
 MIGRATION = ROOT / "infra/init_gold" / MIGRATION_NAME
-RUNNER = ROOT / "scripts/apply_db_migrations.sh"
 
 LEGACY_FIXTURE = """
 CREATE TABLE schema_migrations (
@@ -71,12 +70,18 @@ def _compose_env(root: Path) -> dict[str, str]:
     return {**os.environ, "COMPOSE_PROJECT_NAME": root.name}
 
 
-def _run(root: Path, *args: str, check: bool = True):
+def _run(
+    root: Path,
+    *args: str,
+    check: bool = True,
+    input_text: str | None = None,
+):
     result = subprocess.run(
         ["docker", "compose", "-f", str(root / "infra/docker-compose.yml"), *args],
         cwd=root,
         env=_compose_env(root),
         text=True,
+        input=input_text,
         capture_output=True,
         check=False,
     )
@@ -109,7 +114,7 @@ def _psql(root: Path, service: str, database: str, sql: str, *, check: bool = Tr
 
 def _prepare(tmp_path: Path, *, include_repair: bool) -> Path:
     root = tmp_path / f"gold-{uuid.uuid4().hex[:8]}"
-    for relative in ("infra/init", "infra/init_gold", "scripts"):
+    for relative in ("infra/init", "infra/init_gold"):
         (root / relative).mkdir(parents=True, exist_ok=True)
     (root / "infra/docker-compose.yml").write_text(COMPOSE, encoding="utf-8")
     (root / "infra/init/00_noop.sql").write_text("SELECT 1;", encoding="utf-8")
@@ -119,8 +124,30 @@ def _prepare(tmp_path: Path, *, include_repair: bool) -> Path:
     )
     if include_repair:
         shutil.copy2(MIGRATION, root / "infra/init_gold" / MIGRATION_NAME)
-    shutil.copy2(RUNNER, root / "scripts/apply_db_migrations.sh")
     return root
+
+
+def _apply_repair(root: Path, *, check: bool = True):
+    return _run(
+        root,
+        "exec",
+        "-T",
+        "postgres_gold",
+        "psql",
+        "-X",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-U",
+        "postgres",
+        "-p",
+        "5433",
+        "-d",
+        "modecissions_gold",
+        check=check,
+        input_text=(
+            f"BEGIN;\n\\i /docker-entrypoint-initdb.d/{MIGRATION_NAME}\nCOMMIT;\n"
+        ),
+    )
 
 
 def _wait(root: Path, *, include_repair: bool) -> None:
@@ -186,31 +213,16 @@ def test_real_main_and_gold_runner_repair_is_complete_and_idempotent(
             _wait(root, include_repair=mode == "fresh")
             if mode == "upgrade":
                 shutil.copy2(MIGRATION, root / "infra/init_gold" / MIGRATION_NAME)
-                subprocess.run(
-                    ["bash", str(root / "scripts/apply_db_migrations.sh")],
-                    cwd=root,
-                    env=_compose_env(root),
-                    check=True,
-                )
+                _apply_repair(root)
             _assert_repaired(root)
-            subprocess.run(
-                ["bash", str(root / "scripts/apply_db_migrations.sh")],
-                cwd=root,
-                env=_compose_env(root),
-                check=True,
-            )
+            _apply_repair(root)
             before = _psql(
                 root,
                 "postgres_gold",
                 "modecissions_gold",
                 "SELECT COUNT(*), MIN(applied_at)=MAX(applied_at) FROM schema_migrations",
             ).stdout.strip()
-            subprocess.run(
-                ["bash", str(root / "scripts/apply_db_migrations.sh")],
-                cwd=root,
-                env=_compose_env(root),
-                check=True,
-            )
+            _apply_repair(root)
             after = _psql(
                 root,
                 "postgres_gold",
@@ -230,14 +242,7 @@ def test_real_main_and_gold_runner_repair_is_complete_and_idempotent(
                         DELETE FROM schema_migrations
                          WHERE filename='gold/{MIGRATION_NAME}';""",
                 )
-                failed = subprocess.run(
-                    ["bash", str(root / "scripts/apply_db_migrations.sh")],
-                    cwd=root,
-                    env=_compose_env(root),
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
+                failed = _apply_repair(root, check=False)
                 assert failed.returncode != 0
                 rolled_back = _psql(
                     root,

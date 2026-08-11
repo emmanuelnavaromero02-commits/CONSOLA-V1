@@ -218,6 +218,17 @@ jobs:
           PYTHONPATH: .:console
         run: python3 scripts/generate_app_manifest_registry.py --check
 
+      - name: Run immutable migration release gate
+        continue-on-error: true
+        env:
+          PYTHONPATH: .:console
+        run: |
+          pytest -ra --junitxml=/tmp/migration-release-guard.xml \
+            tests/test_migration_release_guard.py \
+            tests/test_migration_release_guard_live.py \
+            tests/test_successfactors_apps_seed_sync.py \
+            tests/test_apply_db_migrations_script.py
+
       - name: Run live PostgreSQL/RLS tests
         if: always()
         continue-on-error: true
@@ -296,6 +307,7 @@ jobs:
 
           verify_junit("/tmp/control-room-focal.xml", minimum=9659, label="Focal Control Room")
           verify_junit("/tmp/control-room-postgres-rls.xml", minimum=296, label="Live PostgreSQL/RLS")
+          verify_junit("/tmp/migration-release-guard.xml", minimum=21, label="Migration release guard")
           PY
 
   operational-truth-e2e:
