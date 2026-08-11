@@ -10,7 +10,10 @@ GCP_TF = REPO / "infra" / "terraform-gcp"
 def test_gcp_terraform_files_stay_modular():
     offenders = []
     for path in GCP_TF.rglob("*"):
-        if any(part.startswith(".") for part in path.relative_to(GCP_TF).parts):
+        if any(
+            part.startswith(".") or part == "__pycache__"
+            for part in path.relative_to(GCP_TF).parts
+        ):
             continue
         if path.is_file() and path.suffix not in {".hcl"}:
             lines = path.read_text(encoding="utf-8").splitlines()
