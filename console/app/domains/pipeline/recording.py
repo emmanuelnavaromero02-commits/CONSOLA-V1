@@ -8,6 +8,11 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from app.domains.pipeline.status_transitions import (
+    advance_pipeline_status,
+    postgres_monotonic_status,
+)
+
 
 GetDbPool = Callable[[], Awaitable[object]]
 TableHasColumn = Callable[..., Awaitable[bool]]
@@ -48,6 +53,9 @@ async def record_dag_pipeline_trigger(
         raise HTTPException(403, "pipeline run tenant/workspace scope is required")
     has_scope = tenant_id and workspace_id and scope_columns_present
     extra = json.dumps({"raw_conf": conf, "triggered_by": "console"})
+    monotonic_status = postgres_monotonic_status(
+        "pipeline_runs.status", "EXCLUDED.status"
+    )
     if has_scope:
         async with pool.acquire() as conn:
             async with conn.transaction():
@@ -58,7 +66,7 @@ async def record_dag_pipeline_trigger(
                     workspace_id,
                 )
                 await conn.execute(
-                    """
+                    f"""
                     INSERT INTO pipeline_runs (
                         run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
                         mode, status, started_at, extra, tenant_id, workspace_id
@@ -67,10 +75,10 @@ async def record_dag_pipeline_trigger(
                     ON CONFLICT (run_id) DO UPDATE SET
                         airflow_dag_run_id = EXCLUDED.airflow_dag_run_id,
                         mode = EXCLUDED.mode,
-                        status = EXCLUDED.status,
+                        status = {monotonic_status},
                         tenant_id = COALESCE(pipeline_runs.tenant_id, EXCLUDED.tenant_id),
                         workspace_id = COALESCE(pipeline_runs.workspace_id, EXCLUDED.workspace_id),
-                        extra = pipeline_runs.extra || EXCLUDED.extra
+                        extra = COALESCE(pipeline_runs.extra, '{{}}'::jsonb) || EXCLUDED.extra
                     """,
                     dag_run_id,
                     dag_id,
@@ -85,7 +93,7 @@ async def record_dag_pipeline_trigger(
                 )
     else:
         await pool.execute(
-            """
+            f"""
             INSERT INTO pipeline_runs (
                 run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
                 mode, status, started_at, extra
@@ -94,8 +102,8 @@ async def record_dag_pipeline_trigger(
             ON CONFLICT (run_id) DO UPDATE SET
                 airflow_dag_run_id = EXCLUDED.airflow_dag_run_id,
                 mode = EXCLUDED.mode,
-                status = EXCLUDED.status,
-                extra = pipeline_runs.extra || EXCLUDED.extra
+                status = {monotonic_status},
+                extra = COALESCE(pipeline_runs.extra, '{{}}'::jsonb) || EXCLUDED.extra
             """,
             dag_run_id,
             dag_id,
@@ -136,18 +144,24 @@ async def refresh_dag_run_status(
         user=user,
     )
     if result.get("error"):
+        # A not-found response is not proof of failure: Airflow can age a DAG
+        # run out of its metadata retention window while pipeline_runs remains
+        # the durable product history.  Only the explicit, audited server-side
+        # reconciler may terminalize that row.
         return row
 
-    new_status = normalize_airflow_state(result.get("state"))
-    row["status"] = new_status
-    row["started_at"] = parse_iso_datetime(result.get("start_date")) or row.get(
+    observed_status = normalize_airflow_state(result.get("state"))
+    new_status = advance_pipeline_status(status, observed_status)
+    candidate = dict(row)
+    candidate["status"] = new_status
+    candidate["started_at"] = parse_iso_datetime(result.get("start_date")) or row.get(
         "started_at"
     )
-    row["finished_at"] = parse_iso_datetime(result.get("end_date")) or row.get(
+    candidate["finished_at"] = parse_iso_datetime(result.get("end_date")) or row.get(
         "finished_at"
     )
-    row["duration_seconds"] = duration_seconds(
-        row.get("started_at"), row.get("finished_at")
+    candidate["duration_seconds"] = duration_seconds(
+        candidate.get("started_at"), candidate.get("finished_at")
     )
 
     try:
@@ -155,46 +169,79 @@ async def refresh_dag_run_status(
         ctx = build_security_context(user)
         tenant_id = row.get("tenant_id") or ctx.get("tenant_id")
         workspace_id = row.get("workspace_id") or ctx.get("workspace_id")
-        if tenant_id and workspace_id:
-            async with pool.acquire() as conn:
-                async with conn.transaction():
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                scope_clause = ""
+                update_args: list[Any] = [
+                    row.get("run_id"),
+                    new_status,
+                    candidate.get("started_at"),
+                    candidate.get("finished_at"),
+                    candidate.get("duration_seconds"),
+                    status,
+                    observed_status,
+                ]
+                if tenant_id and workspace_id:
                     await conn.execute(
                         "SELECT set_config('app.tenant_id', $1, true), "
                         "set_config('app.workspace_id', $2, true)",
                         tenant_id,
                         workspace_id,
                     )
-                    await conn.execute(
-                        """
-                        UPDATE pipeline_runs
-                           SET status=$2,
-                               started_at=COALESCE($3::timestamptz, started_at),
-                               finished_at=COALESCE($4::timestamptz, finished_at),
-                               duration_seconds=COALESCE($5::numeric, duration_seconds)
-                         WHERE run_id=$1
-                        """,
-                        row.get("run_id"),
-                        new_status,
-                        row.get("started_at"),
-                        row.get("finished_at"),
-                        row.get("duration_seconds"),
+                    update_args.extend((tenant_id, workspace_id))
+                    scope_clause = (
+                        " AND tenant_id=$8::uuid AND workspace_id=$9::uuid"
                     )
-        else:
-            await pool.execute(
-                """
-                UPDATE pipeline_runs
-                   SET status=$2,
-                       started_at=COALESCE($3::timestamptz, started_at),
-                       finished_at=COALESCE($4::timestamptz, finished_at),
-                       duration_seconds=COALESCE($5::numeric, duration_seconds)
-                 WHERE run_id=$1
-                """,
-                row.get("run_id"),
-                new_status,
-                row.get("started_at"),
-                row.get("finished_at"),
-                row.get("duration_seconds"),
-            )
+                persisted = await conn.fetchrow(
+                    f"""
+                    UPDATE pipeline_runs
+                       SET status=$2,
+                           started_at=COALESCE($3::timestamptz, started_at),
+                           finished_at=COALESCE($4::timestamptz, finished_at),
+                           duration_seconds=COALESCE($5::numeric, duration_seconds),
+                           extra=COALESCE(extra, '{{}}'::jsonb) || jsonb_build_object(
+                               'airflow_observation', jsonb_build_object(
+                                   'state', $7::text,
+                                   'observed_at', NOW()
+                               )
+                           )
+                     WHERE run_id=$1
+                       AND LOWER(COALESCE(status, 'unknown')) =
+                           LOWER(COALESCE($6::text, 'unknown'))
+                       {scope_clause}
+                     RETURNING *
+                    """,
+                    *update_args,
+                )
+                if persisted:
+                    durable = dict(persisted)
+                    # The CAS predicate and SET clause make this exact in
+                    # PostgreSQL.  Keep the selected transition explicit for
+                    # lightweight asyncpg test doubles that return their
+                    # pre-update fixture for every fetchrow call.
+                    durable.update(
+                        status=new_status,
+                        started_at=candidate.get("started_at"),
+                        finished_at=candidate.get("finished_at"),
+                        duration_seconds=candidate.get("duration_seconds"),
+                    )
+                    return durable
+
+                # Another writer won after our Airflow read.  Re-read the
+                # durable row under the same RLS scope; never return the stale
+                # observation as if it had been committed.
+                select_args: list[Any] = [row.get("run_id")]
+                select_scope = ""
+                if tenant_id and workspace_id:
+                    select_args.extend((tenant_id, workspace_id))
+                    select_scope = (
+                        " AND tenant_id=$2::uuid AND workspace_id=$3::uuid"
+                    )
+                current = await conn.fetchrow(
+                    f"SELECT * FROM pipeline_runs WHERE run_id=$1{select_scope}",
+                    *select_args,
+                )
+                return dict(current) if current else row
     except Exception:
         logger_debug(
             "Failed to persist updated run status for %s",

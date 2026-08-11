@@ -570,6 +570,31 @@ async def test_record_dag_pipeline_trigger_sets_rls_scope(console_main, monkeypa
 
 
 @pytest.mark.anyio
+async def test_sync_run_upsert_cannot_regress_a_terminal_status(console_main):
+    console_main._test_asyncpg_stub.executed.clear()
+    pool = await console_main._get_db_pool()
+
+    await console_main._execute_unscoped_sync_run_upsert(
+        pool,
+        run_id="sync_now:sap_successfactors:terminal-first",
+        cartridge="sap_successfactors",
+        mode="incremental",
+        status="running",
+        finished=False,
+        error_message=None,
+        extra_json='{"steps": []}',
+    )
+
+    sql = console_main._test_asyncpg_stub.executed[-1][0]
+    assert "status = CASE WHEN" in sql
+    assert "pipeline_runs.status" in sql
+    assert "EXCLUDED.status" in sql
+    assert "error_message = CASE WHEN" in sql
+    assert "extra = CASE WHEN" in sql
+    assert "status = EXCLUDED.status" not in sql
+
+
+@pytest.mark.anyio
 async def test_fetch_sync_run_sets_rls_scope_before_select(console_main, monkeypatch):
     async def table_has_column(table, column, **_kwargs):
         return table == "pipeline_runs" and column in {"tenant_id", "workspace_id"}

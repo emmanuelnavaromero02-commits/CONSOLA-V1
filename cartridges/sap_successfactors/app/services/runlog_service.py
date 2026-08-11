@@ -7,6 +7,10 @@ from datetime import datetime
 
 from app.core.pg_client import get_connection
 from app.core.request_context import scope_values
+from app.services.pipeline_run_transitions import (
+    postgres_monotonic_status,
+    postgres_status_accepts,
+)
 
 logger = logging.getLogger(__name__)
 CARTRIDGE_DAG_ID = "sap_successfactors_extract"
@@ -73,8 +77,14 @@ def _mirror_pipeline_run(
             final_storage_uri = storage_uri if storage_uri is not None else row_storage_uri
             final_error = error_message if error_message is not None else row_error_message
             final_finished_at = finished_at if finished_at is not None else row_finished_at
+            monotonic_status = postgres_monotonic_status(
+                "pipeline_runs.status", "EXCLUDED.status"
+            )
+            accepts_status = postgres_status_accepts(
+                "pipeline_runs.status", "EXCLUDED.status"
+            )
             cur.execute(
-                """
+                f"""
                 INSERT INTO pipeline_runs (
                     run_id, dag_id, cartridge_id, entity, mode, status,
                     started_at, finished_at, record_count, storage_uri,
@@ -89,16 +99,29 @@ def _mirror_pipeline_run(
                     dag_id = EXCLUDED.dag_id,
                     cartridge_id = EXCLUDED.cartridge_id,
                     entity = EXCLUDED.entity,
-                    mode = EXCLUDED.mode,
-                    status = EXCLUDED.status,
-                    started_at = COALESCE(EXCLUDED.started_at, pipeline_runs.started_at),
-                    finished_at = EXCLUDED.finished_at,
-                    record_count = EXCLUDED.record_count,
-                    storage_uri = EXCLUDED.storage_uri,
-                    error_message = EXCLUDED.error_message,
+                    mode = CASE WHEN {accepts_status}
+                        THEN EXCLUDED.mode ELSE pipeline_runs.mode END,
+                    status = {monotonic_status},
+                    started_at = CASE WHEN {accepts_status}
+                        THEN COALESCE(EXCLUDED.started_at, pipeline_runs.started_at)
+                        ELSE pipeline_runs.started_at END,
+                    finished_at = CASE WHEN {accepts_status}
+                        THEN COALESCE(EXCLUDED.finished_at, pipeline_runs.finished_at)
+                        ELSE pipeline_runs.finished_at END,
+                    record_count = CASE WHEN {accepts_status}
+                        THEN COALESCE(EXCLUDED.record_count, pipeline_runs.record_count)
+                        ELSE pipeline_runs.record_count END,
+                    storage_uri = CASE WHEN {accepts_status}
+                        THEN COALESCE(EXCLUDED.storage_uri, pipeline_runs.storage_uri)
+                        ELSE pipeline_runs.storage_uri END,
+                    error_message = CASE WHEN {accepts_status}
+                        THEN COALESCE(EXCLUDED.error_message, pipeline_runs.error_message)
+                        ELSE pipeline_runs.error_message END,
                     tenant_id = COALESCE(EXCLUDED.tenant_id, pipeline_runs.tenant_id),
                     workspace_id = COALESCE(EXCLUDED.workspace_id, pipeline_runs.workspace_id),
-                    extra = COALESCE(pipeline_runs.extra, '{}'::jsonb) || EXCLUDED.extra
+                    extra = CASE WHEN {accepts_status}
+                        THEN COALESCE(pipeline_runs.extra, '{{}}'::jsonb) || EXCLUDED.extra
+                        ELSE pipeline_runs.extra END
                 """,
                 (
                     run_id,

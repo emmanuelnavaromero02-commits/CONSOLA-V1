@@ -402,6 +402,10 @@ from app.domains.pipeline.recording import (
     refresh_dag_run_status as _refresh_dag_run_status_impl,
     record_dag_pipeline_trigger as _record_dag_pipeline_trigger_impl,
 )
+from app.domains.pipeline.status_transitions import (
+    postgres_monotonic_status as _postgres_monotonic_pipeline_status,
+    postgres_status_accepts as _postgres_pipeline_status_accepts,
+)
 from app.domains.pipeline.successfactors_reservation import (
     reserve_entity_extract_slot as _reserve_successfactors_entity_extract_slot_impl,
 )
@@ -4375,6 +4379,12 @@ async def _execute_scoped_sync_run_upsert(
     tenant_id: str,
     workspace_id: str,
 ) -> str:
+    monotonic_status = _postgres_monotonic_pipeline_status(
+        "pipeline_runs.status", "EXCLUDED.status"
+    )
+    accepts_status = _postgres_pipeline_status_accepts(
+        "pipeline_runs.status", "EXCLUDED.status"
+    )
     async with pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute(
@@ -4384,7 +4394,7 @@ async def _execute_scoped_sync_run_upsert(
                 workspace_id,
             )
             return await conn.execute(
-                """
+                f"""
                 INSERT INTO pipeline_runs (
                     run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
                     mode, status, started_at, finished_at, error_message,
@@ -4396,13 +4406,18 @@ async def _execute_scoped_sync_run_upsert(
                     $8, $9::jsonb, $10::uuid, $11::uuid
                 )
                 ON CONFLICT (run_id) DO UPDATE SET
-                    status = EXCLUDED.status,
+                    status = {monotonic_status},
                     mode = EXCLUDED.mode,
-                    finished_at = COALESCE(EXCLUDED.finished_at, pipeline_runs.finished_at),
-                    error_message = EXCLUDED.error_message,
+                    finished_at = CASE WHEN {accepts_status}
+                        THEN COALESCE(EXCLUDED.finished_at, pipeline_runs.finished_at)
+                        ELSE pipeline_runs.finished_at END,
+                    error_message = CASE WHEN {accepts_status}
+                        THEN EXCLUDED.error_message ELSE pipeline_runs.error_message END,
                     tenant_id = COALESCE(pipeline_runs.tenant_id, EXCLUDED.tenant_id),
                     workspace_id = COALESCE(pipeline_runs.workspace_id, EXCLUDED.workspace_id),
-                    extra = COALESCE(pipeline_runs.extra, '{}'::jsonb) || EXCLUDED.extra
+                    extra = CASE WHEN {accepts_status}
+                        THEN COALESCE(pipeline_runs.extra, '{{}}'::jsonb) || EXCLUDED.extra
+                        ELSE pipeline_runs.extra END
                 """,
                 run_id,
                 _SYNC_NOW_DAG_ID,
@@ -4429,8 +4444,14 @@ async def _execute_unscoped_sync_run_upsert(
     error_message: str | None,
     extra_json: str,
 ) -> str:
+    monotonic_status = _postgres_monotonic_pipeline_status(
+        "pipeline_runs.status", "EXCLUDED.status"
+    )
+    accepts_status = _postgres_pipeline_status_accepts(
+        "pipeline_runs.status", "EXCLUDED.status"
+    )
     return await pool.execute(
-        """
+        f"""
         INSERT INTO pipeline_runs (
             run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
             mode, status, started_at, finished_at, error_message, extra
@@ -4441,11 +4462,16 @@ async def _execute_unscoped_sync_run_upsert(
             $8, $9::jsonb
         )
         ON CONFLICT (run_id) DO UPDATE SET
-            status = EXCLUDED.status,
+            status = {monotonic_status},
             mode = EXCLUDED.mode,
-            finished_at = COALESCE(EXCLUDED.finished_at, pipeline_runs.finished_at),
-            error_message = EXCLUDED.error_message,
-            extra = COALESCE(pipeline_runs.extra, '{}'::jsonb) || EXCLUDED.extra
+            finished_at = CASE WHEN {accepts_status}
+                THEN COALESCE(EXCLUDED.finished_at, pipeline_runs.finished_at)
+                ELSE pipeline_runs.finished_at END,
+            error_message = CASE WHEN {accepts_status}
+                THEN EXCLUDED.error_message ELSE pipeline_runs.error_message END,
+            extra = CASE WHEN {accepts_status}
+                THEN COALESCE(pipeline_runs.extra, '{{}}'::jsonb) || EXCLUDED.extra
+                ELSE pipeline_runs.extra END
         """,
         run_id,
         _SYNC_NOW_DAG_ID,

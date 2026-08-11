@@ -7,6 +7,11 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from app.domains.pipeline.status_transitions import (
+    postgres_monotonic_status,
+    postgres_status_accepts,
+)
+
 
 def reservation_applies(
     *, cartridge: str, dag_id: str, expected_cartridge: str, entity_dag_id: str
@@ -138,6 +143,12 @@ async def reserve_entity_extract_slot(
         token=token,
     )
     extra = reservation_extra(conf)
+    monotonic_status = postgres_monotonic_status(
+        "pipeline_runs.status", "EXCLUDED.status"
+    )
+    accepts_status = postgres_status_accepts(
+        "pipeline_runs.status", "EXCLUDED.status"
+    )
     pool = await get_db_pool()
     try:
         async with pool.acquire() as conn:
@@ -219,19 +230,24 @@ async def reserve_entity_extract_slot(
 
                 if scope_columns_present:
                     await conn.execute(
-                        """
+                        f"""
                         INSERT INTO pipeline_runs (
                             run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
                             mode, status, started_at, extra, tenant_id, workspace_id
                         )
                         VALUES ($1, $2, $3, $4, $5, $6, 'queued', NOW(), $7::jsonb, $8::uuid, $9::uuid)
                         ON CONFLICT (run_id) DO UPDATE SET
-                            airflow_dag_run_id = EXCLUDED.airflow_dag_run_id,
-                            mode = EXCLUDED.mode,
-                            status = EXCLUDED.status,
+                            airflow_dag_run_id = CASE WHEN {accepts_status}
+                                THEN EXCLUDED.airflow_dag_run_id
+                                ELSE pipeline_runs.airflow_dag_run_id END,
+                            mode = CASE WHEN {accepts_status}
+                                THEN EXCLUDED.mode ELSE pipeline_runs.mode END,
+                            status = {monotonic_status},
                             tenant_id = COALESCE(pipeline_runs.tenant_id, EXCLUDED.tenant_id),
                             workspace_id = COALESCE(pipeline_runs.workspace_id, EXCLUDED.workspace_id),
-                            extra = pipeline_runs.extra || EXCLUDED.extra
+                            extra = CASE WHEN {accepts_status}
+                                THEN COALESCE(pipeline_runs.extra, '{{}}'::jsonb) || EXCLUDED.extra
+                                ELSE pipeline_runs.extra END
                         """,
                         dag_run_id,
                         dag_id,
@@ -245,17 +261,22 @@ async def reserve_entity_extract_slot(
                     )
                 else:
                     await conn.execute(
-                        """
+                        f"""
                         INSERT INTO pipeline_runs (
                             run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
                             mode, status, started_at, extra
                         )
                         VALUES ($1, $2, $3, $4, $5, $6, 'queued', NOW(), $7::jsonb)
                         ON CONFLICT (run_id) DO UPDATE SET
-                            airflow_dag_run_id = EXCLUDED.airflow_dag_run_id,
-                            mode = EXCLUDED.mode,
-                            status = EXCLUDED.status,
-                            extra = pipeline_runs.extra || EXCLUDED.extra
+                            airflow_dag_run_id = CASE WHEN {accepts_status}
+                                THEN EXCLUDED.airflow_dag_run_id
+                                ELSE pipeline_runs.airflow_dag_run_id END,
+                            mode = CASE WHEN {accepts_status}
+                                THEN EXCLUDED.mode ELSE pipeline_runs.mode END,
+                            status = {monotonic_status},
+                            extra = CASE WHEN {accepts_status}
+                                THEN COALESCE(pipeline_runs.extra, '{{}}'::jsonb) || EXCLUDED.extra
+                                ELSE pipeline_runs.extra END
                         """,
                         dag_run_id,
                         dag_id,
