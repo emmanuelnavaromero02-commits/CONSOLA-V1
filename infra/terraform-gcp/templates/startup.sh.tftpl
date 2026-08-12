@@ -31,6 +31,14 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y ca-certificates curl gnupg jq python3 openssl lsof
 
+# The immutable host identity is provisioned and verified by the dedicated
+# PR1 foundation transaction.  Startup must never mint its own trust anchor
+# from the same metadata service that the privileged GHCR boundary verifies.
+if [[ ! -f /etc/omega/gcp-host-identity.json ]]; then
+  echo "[omega-startup] provisioned GCP host identity is unavailable" >&2
+  exit 1
+fi
+
 mkdir -p /var/lib/docker
 if [[ -e "$${DATA_DISK}" ]]; then
   if ! blkid "$${DATA_DISK}" >/dev/null 2>&1; then

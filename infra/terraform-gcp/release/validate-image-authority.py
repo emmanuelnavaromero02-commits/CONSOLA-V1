@@ -50,6 +50,8 @@ def _read_authority(path: Path) -> tuple[dict[str, Any], bytes]:
     info = path.lstat()
     if (
         not stat.S_ISREG(info.st_mode)
+        or info.st_uid != os.geteuid()
+        or info.st_gid != os.getegid()
         or info.st_nlink != 1
         or stat.S_IMODE(info.st_mode) != 0o600
         or not 2 <= info.st_size <= MAX_AUTHORITY_BYTES
@@ -82,24 +84,28 @@ def _read_authority(path: Path) -> tuple[dict[str, Any], bytes]:
 
 
 def _write_digests(path: Path, payload: bytes) -> None:
-    flags = (
-        os.O_WRONLY
-        | os.O_TRUNC
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-    )
+    flags = os.O_WRONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     descriptor = os.open(path, flags)
     try:
         info = os.fstat(descriptor)
         if (
             not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or info.st_gid != os.getegid()
             or info.st_nlink != 1
             or stat.S_IMODE(info.st_mode) != 0o600
         ):
             raise ValueError("digest output file is unsafe")
-        written = os.write(descriptor, payload)
-        if written != len(payload):
-            raise OSError("short digest output write")
+        path_info = path.lstat()
+        if (info.st_dev, info.st_ino) != (path_info.st_dev, path_info.st_ino):
+            raise ValueError("digest output file changed before write")
+        os.ftruncate(descriptor, 0)
+        offset = 0
+        while offset < len(payload):
+            written = os.write(descriptor, payload[offset:])
+            if written <= 0:
+                raise OSError("short digest output write")
+            offset += written
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
@@ -129,6 +135,7 @@ def main() -> int:
             "version",
             "manifest_digest",
             "tag_object_sha",
+            "tag_proof_sha256",
             "candidate_workflow",
             "legacy_image_ids",
             "legacy_tag_commit",
@@ -160,6 +167,7 @@ def main() -> int:
         if (
             payload.get("manifest_digest") is not None
             or payload.get("tag_object_sha") is not None
+            or payload.get("tag_proof_sha256") is not None
             or not isinstance(image_ids, dict)
             or set(image_ids) != set(SERVICES)
             or SHA.fullmatch(str(payload.get("legacy_tag_commit", ""))) is None
@@ -169,14 +177,12 @@ def main() -> int:
     if args.mode == "candidate":
         if (
             not isinstance(workflow, dict)
-            or set(workflow)
-            != {"run_id", "run_attempt", "head_sha", "controller_attestation_sha256"}
+            or set(workflow) != {"run_id", "run_attempt", "head_sha"}
             or RUN_VALUE.fullmatch(str(workflow.get("run_id", ""))) is None
             or RUN_VALUE.fullmatch(str(workflow.get("run_attempt", ""))) is None
             or workflow.get("head_sha") != args.source_sha
-            or workflow.get("controller_attestation_sha256")
-            != str(payload["manifest_digest"]).removeprefix("sha256:")
             or payload.get("tag_object_sha") is not None
+            or payload.get("tag_proof_sha256") is not None
         ):
             raise SystemExit("candidate workflow authority differs")
     elif args.mode == "published":
@@ -187,6 +193,7 @@ def main() -> int:
             or RUN_VALUE.fullmatch(str(workflow.get("run_attempt", ""))) is None
             or workflow.get("head_sha") != args.source_sha
             or SHA.fullmatch(str(payload.get("tag_object_sha", ""))) is None
+            or DIGEST.fullmatch(str(payload.get("tag_proof_sha256", ""))) is None
         ):
             raise SystemExit("published workflow authority differs")
     elif workflow is not None:

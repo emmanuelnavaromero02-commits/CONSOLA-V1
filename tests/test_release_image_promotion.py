@@ -4,6 +4,7 @@ import ast
 import hashlib
 import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
@@ -37,6 +38,7 @@ class FakeRegistry:
         self.blobs: dict[tuple[str, str], bytes] = {}
         self.visibility: dict[str, str] = {}
         self.puts: list[tuple[str, str, str]] = []
+        self.blob_puts: list[tuple[str, str]] = []
         self.gets: list[tuple[str, str]] = []
 
     def get_manifest(self, repository: str, reference: str):
@@ -51,6 +53,7 @@ class FakeRegistry:
     def put_blob(self, repository: str, payload: bytes) -> str:
         digest = _digest(payload)
         self.blobs[(repository, digest)] = payload
+        self.blob_puts.append((repository, digest))
         return digest
 
     def put_manifest(
@@ -97,10 +100,25 @@ def _write_receipt(path: Path, record: release_images.ImageRecord) -> None:
 
 
 def _assemble_candidate(registry: FakeRegistry, **kwargs) -> str:
+    output = kwargs["output"]
+    receipts_dir = kwargs["receipts_dir"]
+    intent = receipts_dir.parent / "release-candidate-intent.json"
+    if not intent.exists():
+        release_images.prepare_candidate_intent(
+            registry,
+            source_sha=kwargs["source_sha"],
+            release_tag=kwargs["release_tag"],
+            receipts_dir=receipts_dir,
+            prior_intents_dir=output.parent / "prior-intents",
+            output=intent,
+            github_run_id=GITHUB_RUN_ID,
+            github_run_attempt=GITHUB_RUN_ATTEMPT,
+        )
     return release_images.assemble_candidate(
         registry,
         github_run_id=GITHUB_RUN_ID,
         github_run_attempt=GITHUB_RUN_ATTEMPT,
+        intent=intent,
         **kwargs,
     )
 
@@ -167,22 +185,28 @@ def _add_digest_image(
     )
 
 
-def _digest_only_registry(tmp_path: Path) -> tuple[FakeRegistry, Path]:
+def _digest_only_registry(
+    tmp_path: Path, *, revision: str = SHA
+) -> tuple[FakeRegistry, Path]:
     registry = FakeRegistry()
     receipts = tmp_path / "receipts"
     for image in release_images.IMAGES:
-        record = _add_digest_image(registry, image.service, salt=image.service)
+        record = _add_digest_image(
+            registry, image.service, revision=revision, salt=image.service
+        )
         _write_receipt(receipts / f"{image.service}.json", record)
     registry.visibility[release_images.MANIFEST_PACKAGE] = "private"
     return registry, receipts
 
 
-def _assemble(tmp_path: Path) -> tuple[FakeRegistry, Path, str]:
-    registry, receipts = _digest_only_registry(tmp_path)
+def _assemble(
+    tmp_path: Path, *, source_sha: str = SHA
+) -> tuple[FakeRegistry, Path, str]:
+    registry, receipts = _digest_only_registry(tmp_path, revision=source_sha)
     output = tmp_path / "release-candidate.json"
     digest = _assemble_candidate(
         registry,
-        source_sha=SHA,
+        source_sha=source_sha,
         release_tag=TAG,
         receipts_dir=receipts,
         output=output,
@@ -232,6 +256,7 @@ def test_candidate_aggregation_tags_only_after_all_digest_receipts_validate(
         )
 
     assert registry.puts == []
+    assert registry.blob_puts == []
     assert not any(
         reference == release_images.candidate_tag(SHA) for _, reference in registry.refs
     )
@@ -302,9 +327,90 @@ def test_candidate_aggregation_rejects_every_preexisting_service_tag(
         )
 
     assert registry.puts == []
+    assert registry.blob_puts == []
 
 
-def test_candidate_seal_is_deterministic_but_cross_run_reuse_is_forbidden(
+def test_release_visibility_is_gated_before_and_revalidated_after_each_write(
+    tmp_path: Path,
+) -> None:
+    registry, _, manifest_digest = _assemble(tmp_path)
+    registry.puts.clear()
+    registry.blob_puts.clear()
+    registry.visibility["banxico"] = "public"
+    with pytest.raises(
+        release_images.ReleaseImageError, match="banxico must be private"
+    ):
+        release_images.promote_one(
+            registry,
+            service="console",
+            source_sha=SHA,
+            release_tag=TAG,
+            version=VERSION,
+            bound_manifest_digest=manifest_digest,
+        )
+    assert registry.puts == []
+    assert registry.blob_puts == []
+
+    registry.visibility["banxico"] = "private"
+    original_put = registry.put_manifest
+
+    def mutate_visibility_after_write(
+        repository: str, reference: str, payload: bytes, media_type: str
+    ) -> str:
+        digest = original_put(repository, reference, payload, media_type)
+        if reference == TAG:
+            registry.visibility["banxico"] = "public"
+        return digest
+
+    registry.put_manifest = mutate_visibility_after_write  # type: ignore[method-assign]
+    with pytest.raises(
+        release_images.ReleaseImageError, match="banxico must be private"
+    ):
+        release_images.promote_one(
+            registry,
+            service="console",
+            source_sha=SHA,
+            release_tag=TAG,
+            version=VERSION,
+            bound_manifest_digest=manifest_digest,
+        )
+    assert [reference for _repository, reference, _digest_value in registry.puts] == [
+        TAG
+    ]
+
+
+def test_candidate_aggregation_recovers_exact_partial_service_tags(
+    tmp_path: Path,
+) -> None:
+    registry, receipts = _digest_only_registry(tmp_path)
+    existing_services = ("console", "workspace", "banxico")
+    for service in existing_services:
+        receipt = json.loads((receipts / f"{service}.json").read_bytes())
+        repository = release_images.image_repository(service)
+        registry.refs[(repository, release_images.candidate_tag(SHA))] = registry.refs[
+            (repository, receipt["digest"])
+        ]
+
+    digest = _assemble_candidate(
+        registry,
+        source_sha=SHA,
+        release_tag=TAG,
+        receipts_dir=receipts,
+        output=tmp_path / "recovered-candidate.json",
+    )
+
+    assert release_images.DIGEST_RE.fullmatch(digest)
+    service_tag_puts = [
+        item
+        for item in registry.puts
+        if item[1] == release_images.candidate_tag(SHA)
+        and item[0]
+        != f"{release_images.CANONICAL_OWNER}/{release_images.MANIFEST_PACKAGE}"
+    ]
+    assert len(service_tag_puts) == 15 - len(existing_services)
+
+
+def test_candidate_seal_recovers_from_durable_prior_attempt_intent(
     tmp_path: Path,
 ) -> None:
     registry, receipts, first_digest = _assemble(tmp_path)
@@ -316,9 +422,7 @@ def test_candidate_seal_is_deterministic_but_cross_run_reuse_is_forbidden(
 
     assert first_digest == _digest(first)
     registry.puts.clear()
-    with pytest.raises(
-        release_images.ReleaseImageError, match="sealed manifest collision"
-    ):
+    assert (
         _assemble_candidate(
             registry,
             source_sha=SHA,
@@ -326,6 +430,75 @@ def test_candidate_seal_is_deterministic_but_cross_run_reuse_is_forbidden(
             receipts_dir=receipts,
             output=tmp_path / "release-candidate-second.json",
         )
+        == first_digest
+    )
+    assert registry.puts == []
+    assert (tmp_path / "release-candidate-second.json").read_bytes() == first
+
+    second_attempt_receipts = tmp_path / "second-attempt-receipts"
+    for image in release_images.IMAGES:
+        state, digest = release_images.candidate_state(
+            registry,
+            service=image.service,
+            source_sha=SHA,
+            release_tag=TAG,
+            receipt=second_attempt_receipts / f"{image.service}.json",
+            github_run_id=GITHUB_RUN_ID,
+            github_run_attempt="2",
+        )
+        assert state == "sealed"
+        assert release_images.DIGEST_RE.fullmatch(digest)
+    registry.puts.clear()
+    with pytest.raises(
+        release_images.ReleaseImageError,
+        match="cannot prove whether durable prior-attempt authority exists",
+    ):
+        release_images.prepare_candidate_intent(
+            registry,
+            source_sha=SHA,
+            release_tag=TAG,
+            receipts_dir=second_attempt_receipts,
+            prior_intents_dir=tmp_path / "missing-prior-intents",
+            output=tmp_path / "must-not-recover.json",
+            github_run_id=GITHUB_RUN_ID,
+            github_run_attempt="2",
+        )
+    assert registry.puts == []
+    prior_intent = (
+        tmp_path
+        / "prior-intents"
+        / f"candidate-intent-{GITHUB_RUN_ID}-{GITHUB_RUN_ATTEMPT}"
+    )
+    prior_intent.mkdir(parents=True)
+    (prior_intent / "release-candidate-intent.json").write_bytes(first)
+    retry_intent = tmp_path / "retry-intent.json"
+    assert (
+        release_images.prepare_candidate_intent(
+            registry,
+            source_sha=SHA,
+            release_tag=TAG,
+            receipts_dir=second_attempt_receipts,
+            prior_intents_dir=tmp_path / "prior-intents",
+            output=retry_intent,
+            github_run_id=GITHUB_RUN_ID,
+            github_run_attempt="2",
+        )
+        == first_digest
+    )
+    registry.puts.clear()
+    assert (
+        release_images.assemble_candidate(
+            registry,
+            source_sha=SHA,
+            release_tag=TAG,
+            receipts_dir=second_attempt_receipts,
+            output=tmp_path / "cross-attempt.json",
+            intent=retry_intent,
+            github_run_id=GITHUB_RUN_ID,
+            github_run_attempt="2",
+        )
+        == first_digest
+    )
     assert registry.puts == []
     document = json.loads(first)
     assert document["source_sha"] == SHA
@@ -354,14 +527,12 @@ def test_gcp_candidate_authority_is_payload_run_bound_and_digest_exact(
         bound_manifest_digest=manifest_digest,
         github_run_id=GITHUB_RUN_ID,
         github_run_attempt=GITHUB_RUN_ATTEMPT,
-        controller_attestation_sha256=manifest_digest.removeprefix("sha256:"),
     )
 
     receipt = json.loads(output.read_bytes())
     assert receipt_digest == _digest(output.read_bytes())
     assert receipt["manifest_digest"] == manifest_digest
     assert receipt["candidate_workflow"] == {
-        "controller_attestation_sha256": manifest_digest.removeprefix("sha256:"),
         "head_sha": SHA,
         "run_attempt": GITHUB_RUN_ATTEMPT,
         "run_id": GITHUB_RUN_ID,
@@ -369,9 +540,7 @@ def test_gcp_candidate_authority_is_payload_run_bound_and_digest_exact(
     assert len(receipt["images"]) == 15
     assert receipt["labels_authoritative"] is False
 
-    with pytest.raises(
-        release_images.ReleaseImageError, match="controller-attested run"
-    ):
+    with pytest.raises(release_images.ReleaseImageError, match="required workflow run"):
         release_images.verify_bound_sealed_lock(
             registry,
             authority_mode="candidate",
@@ -383,30 +552,117 @@ def test_gcp_candidate_authority_is_payload_run_bound_and_digest_exact(
             bound_manifest_digest=manifest_digest,
             github_run_id="987654322",
             github_run_attempt=GITHUB_RUN_ATTEMPT,
-            controller_attestation_sha256=manifest_digest.removeprefix("sha256:"),
         )
 
 
 def test_gcp_published_authority_rejects_tag_drift_and_live_privacy_drift(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    registry, _, manifest_digest = _assemble(tmp_path)
+    git_root = tmp_path / "git"
+    work, source_sha = _release_git_repo(
+        git_root, "sha256:" + "0" * 64, create_tag=False
+    )
+    registry, _, manifest_digest = _assemble(
+        tmp_path / "registry", source_sha=source_sha
+    )
+    _git(
+        work,
+        "tag",
+        "-a",
+        TAG,
+        "-m",
+        f"OMEGA release\n\n{release_images.TAG_BINDING_PREFIX}{manifest_digest}",
+    )
+    _git(work, "push", "origin", f"refs/tags/{TAG}")
+    tag_object_sha = _git(work, "rev-parse", f"refs/tags/{TAG}")
+    monkeypatch.setattr(
+        release_images, "CANONICAL_ORIGIN_URLS", {str(git_root / "remote.git")}
+    )
     for image in release_images.IMAGES:
         repository = release_images.image_repository(image.service)
         registry.refs[(repository, TAG)] = registry.refs[
-            (repository, release_images.candidate_tag(SHA))
+            (repository, release_images.candidate_tag(source_sha))
         ]
+    proof_root = tmp_path / "release-authority"
+    proof_parent = proof_root / source_sha
+    proof_parent.mkdir(parents=True, mode=0o700)
+    proof_root.chmod(0o755)
+    proof = proof_parent / release_images.GCP_RELEASE_TAG_PROOF_NAME
+    proof.write_bytes(
+        subprocess.run(
+            ["git", "cat-file", "tag", f"refs/tags/{TAG}"],
+            cwd=work,
+            check=True,
+            capture_output=True,
+        ).stdout
+    )
+    proof.chmod(0o400)
+    monkeypatch.setattr(release_images, "GCP_RELEASE_TAG_PROOF_ROOT", proof_root)
+    monkeypatch.setattr(release_images, "GCP_GHCR_AUTH_OWNER_UID", os.geteuid())
+    monkeypatch.setattr(release_images, "GCP_GHCR_AUTH_OWNER_GID", os.getegid())
+
+    with pytest.raises(release_images.ReleaseImageError, match="object SHA differs"):
+        release_images.verify_bound_sealed_lock(
+            registry,
+            authority_mode="published",
+            source_sha=source_sha,
+            release_tag=TAG,
+            image_tag=TAG,
+            version=VERSION,
+            output=tmp_path / "forged-tag-object.json",
+            bound_manifest_digest=manifest_digest,
+            tag_object_sha="f" * 40,
+            annotated_tag_object=proof,
+        )
+
+    with pytest.raises(release_images.ReleaseImageError, match="one exact sealed"):
+        release_images.verify_bound_sealed_lock(
+            registry,
+            authority_mode="published",
+            source_sha=source_sha,
+            release_tag=TAG,
+            image_tag=TAG,
+            version=VERSION,
+            output=tmp_path / "forged-manifest-binding.json",
+            bound_manifest_digest="sha256:" + "e" * 64,
+            tag_object_sha=tag_object_sha,
+            annotated_tag_object=proof,
+        )
 
     release_images.verify_bound_sealed_lock(
         registry,
         authority_mode="published",
-        source_sha=SHA,
+        source_sha=source_sha,
         release_tag=TAG,
         image_tag=TAG,
         version=VERSION,
         output=tmp_path / "published.json",
         bound_manifest_digest=manifest_digest,
-        tag_object_sha="4" * 40,
+        tag_object_sha=tag_object_sha,
+        annotated_tag_object=proof,
+    )
+
+    # Published deployment authority is the immutable remote annotated tag,
+    # not a moving main branch.  A later main commit must not invalidate it.
+    _git(work, "checkout", "main")
+    (work / "later.txt").write_text("later main\n", encoding="utf-8")
+    _git(work, "add", "later.txt")
+    _git(work, "commit", "-m", "later main")
+    _git(work, "push", "origin", "main")
+    _git(work, "fetch", "origin", "+refs/heads/main:refs/remotes/origin/main")
+    _git(work, "checkout", "--detach", source_sha)
+    assert _git(work, "rev-parse", "refs/remotes/origin/main") != source_sha
+    release_images.verify_bound_sealed_lock(
+        registry,
+        authority_mode="published",
+        source_sha=source_sha,
+        release_tag=TAG,
+        image_tag=TAG,
+        version=VERSION,
+        output=tmp_path / "published-after-main-moved.json",
+        bound_manifest_digest=manifest_digest,
+        tag_object_sha=tag_object_sha,
+        annotated_tag_object=proof,
     )
 
     moved = _add_digest_image(registry, "console", salt="published-drift")
@@ -418,20 +674,106 @@ def test_gcp_published_authority_rejects_tag_drift_and_live_privacy_drift(
         release_images.verify_bound_sealed_lock(
             registry,
             authority_mode="published",
-            source_sha=SHA,
+            source_sha=source_sha,
             release_tag=TAG,
             image_tag=TAG,
             version=VERSION,
             output=tmp_path / "drift.json",
             bound_manifest_digest=manifest_digest,
-            tag_object_sha="4" * 40,
+            tag_object_sha=tag_object_sha,
+            annotated_tag_object=proof,
         )
 
     registry.refs[(repository, TAG)] = registry.refs[
-        (repository, release_images.candidate_tag(SHA))
+        (repository, release_images.candidate_tag(source_sha))
     ]
     registry.visibility["banxico"] = "public"
-    with pytest.raises(release_images.ReleaseImageError, match="must remain private"):
+    with pytest.raises(release_images.ReleaseImageError, match="must be private"):
+        release_images.verify_bound_sealed_lock(
+            registry,
+            authority_mode="published",
+            source_sha=source_sha,
+            release_tag=TAG,
+            image_tag=TAG,
+            version=VERSION,
+            output=tmp_path / "privacy.json",
+            bound_manifest_digest=manifest_digest,
+            tag_object_sha=tag_object_sha,
+            annotated_tag_object=proof,
+        )
+
+    registry.visibility["banxico"] = "private"
+    registry.visibility["console"] = "private"
+    with pytest.raises(
+        release_images.ReleaseImageError, match="console must be public"
+    ):
+        release_images.verify_bound_sealed_lock(
+            registry,
+            authority_mode="published",
+            source_sha=source_sha,
+            release_tag=TAG,
+            image_tag=TAG,
+            version=VERSION,
+            output=tmp_path / "public-policy.json",
+            bound_manifest_digest=manifest_digest,
+            tag_object_sha=tag_object_sha,
+            annotated_tag_object=proof,
+        )
+
+
+def test_gcp_published_authority_uses_safe_portable_proof_without_dot_git(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry, _, manifest_digest = _assemble(tmp_path / "registry")
+    for image in release_images.IMAGES:
+        repository = release_images.image_repository(image.service)
+        registry.refs[(repository, TAG)] = registry.refs[
+            (repository, release_images.candidate_tag(SHA))
+        ]
+    raw = (
+        f"object {SHA}\n"
+        "type commit\n"
+        f"tag {TAG}\n"
+        "tagger Release Test <release@example.invalid> 0 +0000\n\n"
+        "OMEGA release\n\n"
+        f"{release_images.TAG_BINDING_PREFIX}{manifest_digest}\n"
+    ).encode()
+    envelope = b"tag " + str(len(raw)).encode() + b"\0" + raw
+    tag_object_sha = hashlib.sha1(  # noqa: S324
+        envelope, usedforsecurity=False
+    ).hexdigest()
+    proof_root = tmp_path / "release-authority"
+    proof_parent = proof_root / SHA
+    proof_parent.mkdir(parents=True, mode=0o700)
+    proof_root.chmod(0o755)
+    proof = proof_parent / release_images.GCP_RELEASE_TAG_PROOF_NAME
+    proof.write_bytes(raw)
+    proof.chmod(0o400)
+    archive = tmp_path / "release-archive"
+    archive.mkdir()
+    (archive / "VERSION").write_text(f"{VERSION}\n", encoding="utf-8")
+    assert not (archive / ".git").exists()
+    monkeypatch.setattr(release_images, "GCP_RELEASE_TAG_PROOF_ROOT", proof_root)
+    monkeypatch.setattr(release_images, "GCP_GHCR_AUTH_OWNER_UID", os.geteuid())
+    monkeypatch.setattr(release_images, "GCP_GHCR_AUTH_OWNER_GID", os.getegid())
+
+    output = tmp_path / "published-from-archive.json"
+    release_images.verify_bound_sealed_lock(
+        registry,
+        authority_mode="published",
+        source_sha=SHA,
+        release_tag=TAG,
+        image_tag=TAG,
+        version=VERSION,
+        output=output,
+        bound_manifest_digest=manifest_digest,
+        tag_object_sha=tag_object_sha,
+        annotated_tag_object=proof,
+    )
+    assert json.loads(output.read_bytes())["tag_proof_sha256"] == _digest(raw)
+
+    proof.chmod(0o660)
+    with pytest.raises(release_images.ReleaseImageError, match="proof is unsafe"):
         release_images.verify_bound_sealed_lock(
             registry,
             authority_mode="published",
@@ -439,9 +781,26 @@ def test_gcp_published_authority_rejects_tag_drift_and_live_privacy_drift(
             release_tag=TAG,
             image_tag=TAG,
             version=VERSION,
-            output=tmp_path / "privacy.json",
+            output=tmp_path / "unsafe-mode.json",
             bound_manifest_digest=manifest_digest,
-            tag_object_sha="4" * 40,
+            tag_object_sha=tag_object_sha,
+            annotated_tag_object=proof,
+        )
+    proof.chmod(0o400)
+    proof.unlink()
+    proof.symlink_to(tmp_path / "attacker-tag.object")
+    with pytest.raises(release_images.ReleaseImageError, match="proof is unsafe"):
+        release_images.verify_bound_sealed_lock(
+            registry,
+            authority_mode="published",
+            source_sha=SHA,
+            release_tag=TAG,
+            image_tag=TAG,
+            version=VERSION,
+            output=tmp_path / "symlink.json",
+            bound_manifest_digest=manifest_digest,
+            tag_object_sha=tag_object_sha,
+            annotated_tag_object=proof,
         )
 
 
@@ -510,6 +869,14 @@ def test_gcp_legacy_rollback_uses_backup_digest_and_image_id_without_tag(
     assert receipt["tag_object_sha"] is None
     assert receipt["legacy_image_ids"] == expected_ids
     assert receipt["legacy_tag_commit"] == SHA
+    assert len(receipt["images"]) == 15
+    assert {row["service"] for row in receipt["images"]} == {
+        image.service for image in release_images.IMAGES
+    }
+    assert {
+        row["service"] for row in receipt["images"] if row["visibility"] == "private"
+    } == release_images.PROTECTED_PRIVATE_PACKAGES
+    assert all("@sha256:" in row["reference"] for row in receipt["images"])
     assert not any(reference == TAG for _, reference in registry.gets)
 
     with pytest.raises(
@@ -637,7 +1004,7 @@ def test_sealed_candidate_rejects_any_later_tag_movement(tmp_path: Path) -> None
     assert not any(reference == TAG for _, reference, _ in registry.puts)
 
 
-def test_candidate_matrix_rejects_even_identical_preexisting_tag(
+def test_candidate_matrix_rebuilds_digest_when_partial_tag_already_exists(
     tmp_path: Path,
 ) -> None:
     registry = FakeRegistry()
@@ -646,17 +1013,229 @@ def test_candidate_matrix_rejects_even_identical_preexisting_tag(
         (release_images.image_repository("console"), release_images.candidate_tag(SHA))
     ] = registry.refs[(release_images.image_repository("console"), record.digest)]
 
-    receipt = tmp_path / "must-not-exist.json"
+    assert release_images.candidate_state(
+        registry,
+        service="console",
+        source_sha=SHA,
+        release_tag=TAG,
+        receipt=tmp_path / "console.json",
+        github_run_id=GITHUB_RUN_ID,
+        github_run_attempt=GITHUB_RUN_ATTEMPT,
+    ) == ("missing", "")
+    assert not (tmp_path / "console.json").exists()
+
+
+def test_candidate_matrix_recovers_prior_intent_without_rebuild(
+    tmp_path: Path,
+) -> None:
+    registry, receipts = _digest_only_registry(tmp_path / "first")
+    intent_root = (
+        tmp_path
+        / "prior-intents"
+        / f"candidate-intent-{GITHUB_RUN_ID}-{GITHUB_RUN_ATTEMPT}"
+    )
+    intent_root.mkdir(parents=True)
+    intent = intent_root / "release-candidate-intent.json"
+    release_images.prepare_candidate_intent(
+        registry,
+        source_sha=SHA,
+        release_tag=TAG,
+        receipts_dir=receipts,
+        prior_intents_dir=tmp_path / "unused",
+        output=intent,
+        github_run_id=GITHUB_RUN_ID,
+        github_run_attempt=GITHUB_RUN_ATTEMPT,
+    )
+    console = json.loads((receipts / "console.json").read_bytes())
+    repository = release_images.image_repository("console")
+    registry.refs[(repository, release_images.candidate_tag(SHA))] = registry.refs[
+        (repository, console["digest"])
+    ]
+    recovered = tmp_path / "recovered-console.json"
+
+    assert release_images.recover_candidate_receipt(
+        registry,
+        service="console",
+        source_sha=SHA,
+        release_tag=TAG,
+        receipt=recovered,
+        prior_intents_dir=tmp_path / "prior-intents",
+        github_run_id=GITHUB_RUN_ID,
+        github_run_attempt="2",
+    ) == ("recovered", console["digest"])
+    document = json.loads(recovered.read_bytes())
+    assert document["github_run_attempt"] == "2"
+    assert document["digest"] == console["digest"]
+
+    registry.refs[(repository, release_images.candidate_tag(SHA))] = registry.refs[
+        (repository, _add_digest_image(registry, "console", salt="collision").digest)
+    ]
     with pytest.raises(
-        release_images.ReleaseImageError, match="cross-run reuse is forbidden"
+        release_images.ReleaseImageError,
+        match="partial candidate tag differs|registry manifest changed",
     ):
-        release_images.candidate_state(
+        release_images.recover_candidate_receipt(
             registry,
             service="console",
             source_sha=SHA,
             release_tag=TAG,
+            receipt=tmp_path / "must-not-recover.json",
+            prior_intents_dir=tmp_path / "prior-intents",
+            github_run_id=GITHUB_RUN_ID,
+            github_run_attempt="2",
         )
-    assert not receipt.exists()
+
+
+def test_candidate_rerun_without_intent_fails_closed_before_rebuild(
+    tmp_path: Path,
+) -> None:
+    registry = FakeRegistry()
+    with pytest.raises(
+        release_images.ReleaseImageError,
+        match="cannot prove whether durable prior-attempt authority exists",
+    ):
+        release_images.recover_candidate_receipt(
+            registry,
+            service="console",
+            source_sha=SHA,
+            release_tag=TAG,
+            receipt=tmp_path / "must-not-exist.json",
+            prior_intents_dir=tmp_path / "missing-intents",
+            github_run_id=GITHUB_RUN_ID,
+            github_run_attempt="2",
+        )
+    assert not (tmp_path / "must-not-exist.json").exists()
+
+    record = _add_digest_image(registry, "console", salt="orphan-partial")
+    repository = release_images.image_repository("console")
+    registry.refs[(repository, release_images.candidate_tag(SHA))] = registry.refs[
+        (repository, record.digest)
+    ]
+    with pytest.raises(
+        release_images.ReleaseImageError,
+        match="cannot prove whether durable prior-attempt authority exists",
+    ):
+        release_images.recover_candidate_receipt(
+            registry,
+            service="console",
+            source_sha=SHA,
+            release_tag=TAG,
+            receipt=tmp_path / "must-not-recover-orphan.json",
+            prior_intents_dir=tmp_path / "missing-intents",
+            github_run_id=GITHUB_RUN_ID,
+            github_run_attempt="2",
+        )
+
+
+def test_candidate_intent_output_is_exclusive_and_never_replaces_a_name(
+    tmp_path: Path,
+) -> None:
+    registry, receipts = _digest_only_registry(tmp_path / "registry")
+    existing = tmp_path / "release-candidate-intent.json"
+    existing.write_bytes(b"durable-original")
+    with pytest.raises(
+        release_images.ReleaseImageError, match="already exists or is unsafe"
+    ):
+        release_images.prepare_candidate_intent(
+            registry,
+            source_sha=SHA,
+            release_tag=TAG,
+            receipts_dir=receipts,
+            prior_intents_dir=tmp_path / "absent",
+            output=existing,
+            github_run_id=GITHUB_RUN_ID,
+            github_run_attempt="1",
+        )
+    assert existing.read_bytes() == b"durable-original"
+
+    existing.unlink()
+    victim = tmp_path / "victim"
+    victim.write_bytes(b"do-not-replace")
+    existing.symlink_to(victim)
+    with pytest.raises(
+        release_images.ReleaseImageError, match="already exists or is unsafe"
+    ):
+        release_images.prepare_candidate_intent(
+            registry,
+            source_sha=SHA,
+            release_tag=TAG,
+            receipts_dir=receipts,
+            prior_intents_dir=tmp_path / "absent",
+            output=existing,
+            github_run_id=GITHUB_RUN_ID,
+            github_run_attempt="1",
+        )
+    assert victim.read_bytes() == b"do-not-replace"
+
+
+def test_unsealed_rerun_reuses_durable_intent_and_rejects_new_digest(
+    tmp_path: Path,
+) -> None:
+    registry, first_receipts = _digest_only_registry(tmp_path / "first")
+    prior_root = (
+        tmp_path
+        / "prior-intents"
+        / f"candidate-intent-{GITHUB_RUN_ID}-{GITHUB_RUN_ATTEMPT}"
+    )
+    prior_root.mkdir(parents=True)
+    durable = prior_root / "release-candidate-intent.json"
+    release_images.prepare_candidate_intent(
+        registry,
+        source_sha=SHA,
+        release_tag=TAG,
+        receipts_dir=first_receipts,
+        prior_intents_dir=tmp_path / "absent",
+        output=durable,
+        github_run_id=GITHUB_RUN_ID,
+        github_run_attempt="1",
+    )
+    durable_bytes = durable.read_bytes()
+    assert not any(
+        reference == release_images.candidate_tag(SHA)
+        for _repository, reference in registry.refs
+    )
+
+    second_receipts = tmp_path / "second" / "receipts"
+    second_receipts.mkdir(parents=True)
+    for path in first_receipts.iterdir():
+        document = json.loads(path.read_bytes())
+        document["github_run_attempt"] = "2"
+        (second_receipts / path.name).write_bytes(_canonical(document))
+    reused = tmp_path / "reused-intent.json"
+    release_images.prepare_candidate_intent(
+        registry,
+        source_sha=SHA,
+        release_tag=TAG,
+        receipts_dir=second_receipts,
+        prior_intents_dir=tmp_path / "prior-intents",
+        output=reused,
+        github_run_id=GITHUB_RUN_ID,
+        github_run_attempt="2",
+    )
+    assert reused.read_bytes() == durable_bytes
+
+    replacement = _add_digest_image(registry, "console", salt="rerun-replacement")
+    release_images.write_digest_receipt(
+        second_receipts / "console.json",
+        replacement,
+        github_run_id=GITHUB_RUN_ID,
+        github_run_attempt="2",
+    )
+    with pytest.raises(
+        release_images.ReleaseImageError,
+        match="would replace durable prior-attempt authority",
+    ):
+        release_images.prepare_candidate_intent(
+            registry,
+            source_sha=SHA,
+            release_tag=TAG,
+            receipts_dir=second_receipts,
+            prior_intents_dir=tmp_path / "prior-intents",
+            output=tmp_path / "must-not-replace.json",
+            github_run_id=GITHUB_RUN_ID,
+            github_run_attempt="2",
+        )
+    assert not (tmp_path / "must-not-replace.json").exists()
 
 
 @pytest.mark.parametrize(
@@ -691,7 +1270,7 @@ def test_protected_private_visibility_and_exact_oci_labels_are_hard_gates(
     registry, receipts = _digest_only_registry(tmp_path)
     registry.visibility["banxico"] = "public"
     with pytest.raises(
-        release_images.ReleaseImageError, match="must remain private: banxico"
+        release_images.ReleaseImageError, match="banxico must be private"
     ):
         _assemble_candidate(
             registry,
@@ -701,6 +1280,7 @@ def test_protected_private_visibility_and_exact_oci_labels_are_hard_gates(
             output=tmp_path / "manifest.json",
         )
     assert registry.puts == []
+    assert registry.blob_puts == []
 
     # The release inventory has exactly three private packages.  Any private
     # drift in the other twelve fails closed; the workflow never changes it.
@@ -889,15 +1469,27 @@ def test_release_tag_must_be_annotated_and_bind_exact_manifest(
         release_images, "CANONICAL_ORIGIN_URLS", {str(tmp_path / "remote.git")}
     )
 
+    portable_proof = tmp_path / "annotated-tag.object"
     version, parsed_binding, tag_object_sha = release_images.verify_release_tag(
         repo_root=work,
         source_sha=sha,
         release_tag=TAG,
         repository=release_images.CANONICAL_REPOSITORY,
+        portable_tag_output=portable_proof,
     )
     assert version == VERSION
     assert parsed_binding == binding
     assert tag_object_sha == _git(work, "rev-parse", f"refs/tags/{TAG}")
+    assert (
+        portable_proof.read_bytes()
+        == subprocess.run(
+            ["git", "cat-file", "tag", f"refs/tags/{TAG}"],
+            cwd=work,
+            check=True,
+            capture_output=True,
+        ).stdout
+    )
+    assert portable_proof.stat().st_mode & 0o777 == 0o600
 
     with pytest.raises(
         release_images.ReleaseImageError, match="changed after preflight"
@@ -953,6 +1545,88 @@ def test_candidate_request_requires_current_main_version_and_absent_tag(
         )
 
 
+def test_private_remote_tag_revalidation_uses_confined_github_api_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected_tag_object = "a" * 40
+    secret = "workflow-token-material-12345"
+    requests: list[urllib.request.Request] = []
+    handlers: list[object] = []
+
+    class Response:
+        status = 200
+        headers: dict[str, str] = {}
+
+        def __init__(self, body: bytes) -> None:
+            self.body = body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, maximum: int) -> bytes:
+            assert maximum == release_images.MAX_API_JSON_BYTES + 1
+            return self.body
+
+    class Opener:
+        tag_object = expected_tag_object
+
+        def open(self, request: urllib.request.Request, *, timeout: int):
+            assert timeout == 30
+            requests.append(request)
+            return Response(
+                _canonical(
+                    {
+                        "object": {"sha": self.tag_object, "type": "tag"},
+                        "ref": f"refs/tags/{TAG}",
+                    }
+                )
+            )
+
+    opener = Opener()
+
+    def fake_build_opener(*supplied: object) -> Opener:
+        handlers.extend(supplied)
+        return opener
+
+    monkeypatch.setenv("GITHUB_TOKEN", secret)
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:9")
+    monkeypatch.setattr(urllib.request, "build_opener", fake_build_opener)
+
+    assert (
+        release_images.verify_remote_tag_object(
+            repository=release_images.CANONICAL_REPOSITORY,
+            release_tag=TAG,
+            expected_tag_object_sha=expected_tag_object,
+        )
+        == expected_tag_object
+    )
+    assert len(handlers) == 3
+    assert isinstance(handlers[0], urllib.request.ProxyHandler)
+    assert handlers[0].proxies == {}
+    assert isinstance(handlers[1], urllib.request.HTTPSHandler)
+    assert isinstance(handlers[2], release_images._SafeRedirectHandler)
+    assert len(requests) == 1
+    assert requests[0].full_url == (
+        "https://api.github.com/repos/"
+        "emmanuelnavaromero02-commits/CONSOLA-V1/git/ref/tags/v1.45.207-beta"
+    )
+    assert requests[0].get_header("Authorization") == f"Bearer {secret}"
+
+    opener.tag_object = "b" * 40
+    with pytest.raises(
+        release_images.ReleaseImageError, match="changed or disappeared"
+    ) as caught:
+        release_images.verify_remote_tag_object(
+            repository=release_images.CANONICAL_REPOSITORY,
+            release_tag=TAG,
+            expected_tag_object_sha=expected_tag_object,
+        )
+    assert secret not in str(caught.value)
+
+
 def test_cross_host_redirect_drops_authorization_header() -> None:
     handler = release_images._SafeRedirectHandler()
     request = urllib.request.Request(
@@ -972,11 +1646,15 @@ def test_cross_host_redirect_drops_authorization_header() -> None:
 
 
 def test_registry_client_disables_environment_proxies_before_safe_redirects(
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     for variable in ("ALL_PROXY", "HTTP_PROXY", "HTTPS_PROXY"):
         monkeypatch.setenv(variable, "http://127.0.0.1:9")
     monkeypatch.setenv("NO_PROXY", "")
+    keylog = tmp_path / "hostile-tls-keys.log"
+    monkeypatch.setenv("SSL_CERT_FILE", str(tmp_path / "hostile-ca.pem"))
+    monkeypatch.setenv("SSL_CERT_DIR", str(tmp_path / "hostile-ca-dir"))
+    monkeypatch.setenv("SSLKEYLOGFILE", str(keylog))
 
     supplied_handlers: list[object] = []
     real_build_opener = urllib.request.build_opener
@@ -988,12 +1666,38 @@ def test_registry_client_disables_environment_proxies_before_safe_redirects(
     monkeypatch.setattr(urllib.request, "build_opener", capture_build_opener)
     client = release_images.RegistryClient(actor="release-reader", token="token")
 
-    assert len(supplied_handlers) == 2
-    proxy_handler, redirect_handler = supplied_handlers
+    assert len(supplied_handlers) == 3
+    proxy_handler, https_handler, redirect_handler = supplied_handlers
     assert isinstance(proxy_handler, urllib.request.ProxyHandler)
     assert proxy_handler.proxies == {}
+    assert isinstance(https_handler, urllib.request.HTTPSHandler)
+    assert https_handler._context is client._ssl_context
+    assert client._ssl_context.keylog_filename is None
     assert isinstance(redirect_handler, release_images._SafeRedirectHandler)
     assert client._opener is not None
+    assert not keylog.exists()
+
+
+def test_registry_client_rejects_writable_or_linked_ca_bundle(tmp_path: Path) -> None:
+    hostile = tmp_path / "writable-ca.pem"
+    hostile.write_bytes(release_images.CANONICAL_CA_BUNDLE.read_bytes())
+    hostile.chmod(0o666)
+    with pytest.raises(release_images.ReleaseImageError, match="CA bundle is unsafe"):
+        release_images.RegistryClient(
+            actor="release-reader",
+            token="workflow-token-material-12345",
+            ca_bundle=hostile,
+        )
+
+    hostile.chmod(0o644)
+    linked = tmp_path / "linked-ca.pem"
+    linked.symlink_to(hostile)
+    with pytest.raises(release_images.ReleaseImageError, match="CA bundle is unsafe"):
+        release_images.RegistryClient(
+            actor="release-reader",
+            token="workflow-token-material-12345",
+            ca_bundle=linked,
+        )
 
 
 def test_existing_blob_head_allows_exact_empty_body_without_reupload() -> None:
@@ -1216,10 +1920,14 @@ def test_release_helper_has_unique_module_functions_and_cli_commands() -> None:
     assert set(choices) == {
         "matrix",
         "verify-candidate-request",
+        "verify-visibility-policy",
         "check-candidate",
         "verify-built-digest",
+        "recover-candidate-receipt",
+        "prepare-candidate-intent",
         "assemble-candidate",
         "verify-release-tag",
+        "verify-remote-tag-object",
         "promotion-preflight",
         "promote-one",
         "verify-release",
@@ -1245,16 +1953,39 @@ def test_workflows_pin_actions_and_separate_build_from_digest_promotion() -> Non
     assert "workflow_dispatch:" in candidate
     assert "push-by-digest=true" in candidate
     assert "assemble-candidate" in candidate
-    assert "Reject every pre-existing candidate namespace collision" in candidate
+    assert "Require an unsealed candidate namespace for this attempt" in candidate
     assert "Reuse only" not in candidate
     assert '--github-run-id "$GITHUB_RUN_ID"' in candidate
     assert '--github-run-attempt "$GITHUB_RUN_ATTEMPT"' in candidate
     assert (
+        "candidate-digest-${{ github.run_id }}-${{ github.run_attempt }}-*" in candidate
+    )
+    assert (
+        "release-candidate-${{ needs.validate-candidate.outputs.source_sha }}-"
+        "${{ github.run_attempt }}" in candidate
+    )
+    assert (
         "--receipt"
-        not in candidate.split("check-candidate", 1)[1].split(
+        in candidate.split("check-candidate", 1)[1].split(
             "docker/setup-buildx-action", 1
         )[0]
     )
+    assert "prepare-candidate-intent" in candidate
+    assert "recover-candidate-receipt" in candidate
+    assert candidate.count("verify-visibility-policy") == 4
+    assert candidate.index(
+        "Revalidate exact GHCR visibility immediately before digest push"
+    ) < candidate.index("Build and push ${{ matrix.service }} by digest only")
+    assert candidate.index(
+        "Verify pushed digest and write canonical receipt"
+    ) < candidate.index("Revalidate exact GHCR visibility after digest push")
+    assert "continue-on-error: true" not in candidate
+    assert (
+        "candidate-intent-${{ github.run_id }}-${{ github.run_attempt }}" in candidate
+    )
+    assert candidate.index(
+        "Prepare durable pre-seal candidate intent"
+    ) < candidate.index("Aggregate 15 intent-bound digests")
     assert (
         "tags: candidate-" not in candidate
     )  # the aggregate step owns tag construction.
@@ -1272,6 +2003,20 @@ def test_workflows_pin_actions_and_separate_build_from_digest_promotion() -> Non
     assert "docker/build-push-action@" not in release
     assert "org.opencontainers.image.revision=" not in release
     assert "group: release-images-${{ github.ref_name }}" in release
+    assert (
+        "release-promotion-preflight-${{ steps.tag.outputs.source_sha }}-"
+        "${{ github.run_attempt }}" in release
+    )
+    assert "release-images-${{ github.ref_name }}-${{ github.run_attempt }}" in release
+    assert "release-playwright-report-${{ github.run_attempt }}" in release
+    assert (
+        "release-tag-proof-${{ steps.tag.outputs.source_sha }}-"
+        "${{ github.run_attempt }}" in release
+    )
+    assert "origin/main" not in release
+    assert "git ls-remote" not in release
+    assert release.count("verify-remote-tag-object") == 2
+    assert release.count("EXPECTED_TAG_OBJECT_SHA") >= 4
 
     expected_matrix = [
         {
@@ -1283,6 +2028,12 @@ def test_workflows_pin_actions_and_separate_build_from_digest_promotion() -> Non
     ]
     candidate_doc = yaml.safe_load(candidate)
     release_doc = yaml.safe_load(release)
+
+    for workflow in (candidate_doc, release_doc):
+        for job in workflow["jobs"].values():
+            for step in job.get("steps", []):
+                if str(step.get("uses", "")).startswith("actions/upload-artifact@"):
+                    assert "${{ github.run_attempt }}" in step["with"]["name"]
 
     def checkout_step(job: dict) -> dict:
         return next(
@@ -1307,6 +2058,23 @@ def test_workflows_pin_actions_and_separate_build_from_digest_promotion() -> Non
     release_gate = release_doc["jobs"]["verify-tag-and-candidate"]
     release_promote = release_doc["jobs"]["build-and-push"]
 
+    assert {
+        name: job["timeout-minutes"] for name, job in candidate_doc["jobs"].items()
+    } == {
+        "validate-candidate": 10,
+        "build-candidate-digests": 120,
+        "aggregate-and-seal-candidate": 30,
+    }
+    for name in (
+        "detect-release-changes",
+        "validate-release",
+        "full-stack-release-gate",
+        "verify-tag-and-candidate",
+        "build-and-push",
+        "verify-release-images",
+    ):
+        assert isinstance(release_doc["jobs"][name].get("timeout-minutes"), int)
+
     assert "refs/heads/main" in candidate_validate["steps"][0]["run"]
     assert checkout_step(candidate_validate)["with"] == {
         "fetch-depth": 0,
@@ -1326,13 +2094,17 @@ def test_workflows_pin_actions_and_separate_build_from_digest_promotion() -> Non
     assert checkout_step(candidate_seal)["with"]["persist-credentials"] is True
     assert checkout_step(release_gate)["with"]["persist-credentials"] is True
     assert checkout_step(release_promote)["with"] == {
-        "fetch-depth": 0,
-        "persist-credentials": True,
+        "persist-credentials": False,
+        "ref": "${{ needs.verify-tag-and-candidate.outputs.source_sha }}",
     }
 
     # Package mutation is absent globally and granted only to the two jobs that
     # build digest content or aggregate exact candidate tags.
     assert candidate_doc.get("permissions") == {"contents": "read"}
+    assert candidate_validate["permissions"] == {
+        "contents": "read",
+        "packages": "read",
+    }
     assert candidate_build["permissions"] == {
         "contents": "read",
         "packages": "write",
@@ -1356,12 +2128,21 @@ def test_workflows_pin_actions_and_separate_build_from_digest_promotion() -> Non
         "packages": "read",
     }
     assert checkout_step(release_verify)["with"] == {
-        "fetch-depth": 0,
-        "persist-credentials": True,
+        "persist-credentials": False,
+        "ref": "${{ needs.verify-tag-and-candidate.outputs.source_sha }}",
     }
     assert "tag_object_sha" in release_gate["outputs"]
-    assert release_promote["steps"][-1]["run"].count("--expected-tag-object-sha") == 1
-    assert release_verify["steps"][-2]["run"].count("--expected-tag-object-sha") == 1
+    promote_run = release_promote["steps"][-1]["run"]
+    verify_run = release_verify["steps"][-2]["run"]
+    for run, command in (
+        (promote_run, "python3 scripts/release_images.py promote-one"),
+        (verify_run, "python3 scripts/release_images.py verify-release"),
+    ):
+        mutation = run.index(command)
+        assert run.count("revalidate_remote_tag") == 3
+        assert run.index("revalidate_remote_tag\n") < mutation
+        assert run.rindex("revalidate_remote_tag") > mutation
+        assert '--expected-tag-object-sha "$EXPECTED_TAG_OBJECT_SHA"' in run
     assert (
         release_doc["jobs"]["build-and-push"]["strategy"]["matrix"]["include"]
         == expected_matrix
@@ -1377,6 +2158,8 @@ def test_ci_routes_and_scans_release_authority_implementation() -> None:
 
     python_targets = (
         "scripts/release_images.py",
+        "infra/terraform-gcp/release/publish-image-lock.py",
+        "infra/terraform-gcp/release/secure-ghcr-session.py",
         "infra/terraform-gcp/release/validate-image-authority.py",
         "infra/terraform-gcp/release/validate-lock-output.py",
     )

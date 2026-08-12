@@ -22,6 +22,10 @@ concurrency:
 jobs:
   validate-candidate:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read
     outputs:
       release_tag: ${{ steps.validate.outputs.release_tag }}
       source_sha: ${{ steps.validate.outputs.source_sha }}
@@ -79,9 +83,17 @@ jobs:
           echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
           echo "source_sha=${EXPECTED_SHA}" >> "$GITHUB_OUTPUT"
 
+      - name: Gate exact GHCR visibility before every build or push
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release_images.py verify-visibility-policy
+
   build-candidate-digests:
     needs: validate-candidate
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     permissions:
       contents: read
       packages: write
@@ -147,7 +159,7 @@ jobs:
         with:
           python-version: "3.12.8"
 
-      - name: Reject every pre-existing candidate namespace collision
+      - name: Require an unsealed candidate namespace for this attempt
         id: candidate
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -158,14 +170,45 @@ jobs:
           python3 scripts/release_images.py check-candidate \
             --service "${{ matrix.service }}" \
             --source-sha "$SOURCE_SHA" \
-            --release-tag "$RELEASE_TAG"
+            --release-tag "$RELEASE_TAG" \
+            --github-run-id "$GITHUB_RUN_ID" \
+            --github-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --receipt "candidate-receipt/${{ matrix.service }}.json"
+
+      # A rerun interrupted after durable intent and one or more candidate-tag
+      # writes recovers the exact intended digest before considering a rebuild.
+      # actions/download-artifact v4.3.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        if: steps.candidate.outputs.state == 'missing' && github.run_attempt > 1
+        with:
+          pattern: candidate-intent-${{ github.run_id }}-*
+          path: prior-candidate-intents
+          merge-multiple: false
+
+      - name: Recover an interrupted pre-seal digest from durable intent
+        id: recover
+        if: steps.candidate.outputs.state == 'missing' && github.run_attempt > 1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.validate-candidate.outputs.release_tag }}
+          SOURCE_SHA: ${{ needs.validate-candidate.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release_images.py recover-candidate-receipt \
+            --service "${{ matrix.service }}" \
+            --source-sha "$SOURCE_SHA" \
+            --release-tag "$RELEASE_TAG" \
+            --github-run-id "$GITHUB_RUN_ID" \
+            --github-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --prior-intents-dir prior-candidate-intents \
+            --receipt "candidate-receipt/${{ matrix.service }}.json"
 
       # docker/setup-buildx-action v3.11.1
       - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435
-        if: steps.candidate.outputs.state == 'missing'
+        if: steps.candidate.outputs.state == 'missing' && steps.recover.outputs.state != 'recovered'
 
       - name: Authenticate ephemeral runner to GHCR
-        if: steps.candidate.outputs.state == 'missing'
+        if: steps.candidate.outputs.state == 'missing' && steps.recover.outputs.state != 'recovered'
         env:
           GHCR_TOKEN: ${{ github.token }}
         run: |
@@ -174,10 +217,18 @@ jobs:
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io \
             --username "$GITHUB_ACTOR" --password-stdin >/dev/null
 
+      - name: Revalidate exact GHCR visibility immediately before digest push
+        if: steps.candidate.outputs.state == 'missing' && steps.recover.outputs.state != 'recovered'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release_images.py verify-visibility-policy
+
       # docker/build-push-action v6.18.0
       - name: Build and push ${{ matrix.service }} by digest only
         id: build
-        if: steps.candidate.outputs.state == 'missing'
+        if: steps.candidate.outputs.state == 'missing' && steps.recover.outputs.state != 'recovered'
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83
         with:
           context: ${{ matrix.context }}
@@ -190,7 +241,7 @@ jobs:
           provenance: mode=max
 
       - name: Verify pushed digest and write canonical receipt
-        if: steps.candidate.outputs.state == 'missing'
+        if: steps.candidate.outputs.state == 'missing' && steps.recover.outputs.state != 'recovered'
         env:
           BUILD_DIGEST: ${{ steps.build.outputs.digest }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -207,14 +258,22 @@ jobs:
             --github-run-attempt "$GITHUB_RUN_ATTEMPT" \
             --receipt "candidate-receipt/${{ matrix.service }}.json"
 
+      - name: Revalidate exact GHCR visibility after digest push
+        if: steps.candidate.outputs.state == 'missing' && steps.recover.outputs.state != 'recovered'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release_images.py verify-visibility-policy
+
       - name: Remove ephemeral Docker credential
-        if: always() && steps.candidate.outputs.state == 'missing'
+        if: always() && steps.candidate.outputs.state == 'missing' && steps.recover.outputs.state != 'recovered'
         run: docker logout ghcr.io >/dev/null 2>&1 || true
 
       # actions/upload-artifact v4.6.2
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: candidate-digest-${{ matrix.service }}
+          name: candidate-digest-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.service }}
           path: candidate-receipt/${{ matrix.service }}.json
           if-no-files-found: error
           retention-days: 1
@@ -222,6 +281,7 @@ jobs:
   aggregate-and-seal-candidate:
     needs: [validate-candidate, build-candidate-digests]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -241,9 +301,20 @@ jobs:
       # actions/download-artifact v4.3.0
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          pattern: candidate-digest-*
+          pattern: candidate-digest-${{ github.run_id }}-${{ github.run_attempt }}-*
           path: candidate-receipts
           merge-multiple: true
+
+      # A first attempt has no prior intent. On a rerun, any transport failure
+      # here remains fail-closed because prepare-candidate-intent requires the
+      # exact prior-attempt path whenever a sealed namespace already exists.
+      # actions/download-artifact v4.3.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        if: github.run_attempt > 1
+        with:
+          pattern: candidate-intent-${{ github.run_id }}-*
+          path: prior-candidate-intents
+          merge-multiple: false
 
       - name: Revalidate main and tag absence immediately before aggregation
         env:
@@ -258,7 +329,40 @@ jobs:
             --release-tag "$RELEASE_TAG" \
             --repository "$REPOSITORY"
 
-      - name: Aggregate 15 current-run digests, create candidate tags, and seal
+      - name: Prepare durable pre-seal candidate intent
+        id: intent
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.validate-candidate.outputs.release_tag }}
+          SOURCE_SHA: ${{ needs.validate-candidate.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release_images.py prepare-candidate-intent \
+            --source-sha "$SOURCE_SHA" \
+            --release-tag "$RELEASE_TAG" \
+            --github-run-id "$GITHUB_RUN_ID" \
+            --github-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --receipts-dir candidate-receipts \
+            --prior-intents-dir prior-candidate-intents \
+            --output release-candidate-intent.json
+
+      - name: Revalidate exact GHCR visibility before candidate writes
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release_images.py verify-visibility-policy
+
+      # This evidence must exist before the first registry seal write.
+      # actions/upload-artifact v4.6.2
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: candidate-intent-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release-candidate-intent.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Aggregate 15 intent-bound digests, create candidate tags, and seal
         id: seal
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -272,12 +376,13 @@ jobs:
             --github-run-id "$GITHUB_RUN_ID" \
             --github-run-attempt "$GITHUB_RUN_ATTEMPT" \
             --receipts-dir candidate-receipts \
+            --intent release-candidate-intent.json \
             --output release-candidate.json
 
       # actions/upload-artifact v4.6.2
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: release-candidate-${{ needs.validate-candidate.outputs.source_sha }}
+          name: release-candidate-${{ needs.validate-candidate.outputs.source_sha }}-${{ github.run_attempt }}
           path: release-candidate.json
           if-no-files-found: error
           retention-days: 30
