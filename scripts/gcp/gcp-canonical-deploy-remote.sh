@@ -1,0 +1,197 @@
+#!/usr/bin/env bash
+# On-VM half of the canonical GCP deploy. Runs as root, invoked by
+# gcp-canonical-deploy.sh over IAP SSH. Fail-closed: a verified backup of BOTH
+# databases is taken BEFORE any mutation, and any failure after that point rolls
+# back to the previous release and restores the databases.
+#
+# It matches the live deploy mechanism exactly:
+#   /opt/modecissions/releases/<ref>/  +  current symlink
+#   compose = docker-compose.yml + docker-compose.gcp.yml + docker-compose.aws-images.gcp.yml
+#   env     = /opt/modecissions/shared/infra.env
+#
+# First-run sensitive: it discovers the live postgres containers dynamically
+# rather than assuming names, and never assumes an empty backup is healthy.
+set -Eeuo pipefail
+set +x
+umask 077
+
+[[ "${EUID:-$(id -u)}" -eq 0 ]] || { echo "must run as root (via sudo)" >&2; exit 10; }
+for v in TARGET_TAG DEPLOY_REF OMEGA_PROJECT_ID ENVIRONMENT GHCR_OWNER GHCR_SECRET_VERSION SOURCE_BUCKET SOURCE_OBJECT IMAGES_OVERLAY; do
+  [[ -n "${!v:-}" ]] || { echo "missing required env ${v}" >&2; exit 11; }
+done
+
+APP_ROOT="/opt/modecissions"
+RELEASE_DIR="${APP_ROOT}/releases/${DEPLOY_REF}"
+CURRENT="${APP_ROOT}/current"
+SHARED_ENV="${APP_ROOT}/shared/infra.env"
+BACKUP_ROOT="/var/lib/docker/omega-deploy-backups"   # persistent data disk
+PREV_TARGET="$(readlink -f "${CURRENT}" 2>/dev/null || true)"
+
+log() { printf '[remote-deploy] %s\n' "$*"; }
+die() { printf '[remote-deploy] ERROR: %s\n' "$*" >&2; exit 1; }
+
+# Resolve the live postgres containers by EXACT name, and require exactly one
+# match each — a wrong or ambiguous match would produce a backup that is trusted
+# as the safety net but is not the real database. Fail closed on 0 or >1.
+find_one_container() {
+  local name matches count
+  name="$1"
+  matches="$(docker ps --format '{{.Names}}' | grep -xE "${name}" || true)"
+  count="$(printf '%s' "${matches}" | grep -c . || true)"
+  [[ "${count}" -eq 1 ]] || return 1
+  printf '%s' "${matches}"
+}
+main_pg="$(find_one_container 'mode_postgres')" \
+  || die "expected exactly one running 'mode_postgres' container for the main-DB backup."
+gold_pg="$(find_one_container 'mode_postgres_gold')" \
+  || die "expected exactly one running 'mode_postgres_gold' container for the gold-DB backup."
+
+sha256_of() { sha256sum -- "$1" | awk '{print $1}'; }
+
+BACKUP_DIR="${BACKUP_ROOT}/${TARGET_TAG}-${DEPLOY_REF}-$(date -u +%Y%m%dT%H%M%SZ)"
+BACKUP_DONE=0
+MUTATED=0
+PROMOTED=0
+
+# Atomic, isolated restore of one database from a checksum-verified dump.
+# --single-transaction makes it all-or-nothing: a mid-restore error rolls the
+# whole thing back, so the database is NEVER left partially dropped (no data
+# loss). Backends are terminated first so the DROPs are not blocked by the app.
+restore_db() {
+  local container="$1" db="$2" port="$3" dump="$4" want_sha="$5"
+  local pflag=(); [[ -n "${port}" ]] && pflag=(-p "${port}")
+  if [[ "$(sha256_of "${dump}")" != "${want_sha}" ]]; then
+    log "rollback: ${db} backup checksum mismatch — NOT restoring; investigate ${BACKUP_DIR}"; return 1
+  fi
+  docker exec "${container}" psql "${pflag[@]}" -U postgres -d "${db}" \
+    -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${db}' AND pid <> pg_backend_pid();" >/dev/null 2>&1 || true
+  if docker exec -i "${container}" psql --single-transaction -v ON_ERROR_STOP=1 "${pflag[@]}" \
+      -U postgres -d "${db}" < "${dump}" >/dev/null; then
+    log "rollback: ${db} restored"
+  else
+    log "rollback: ${db} restore FAILED (rolled back atomically; DB unchanged) — investigate ${BACKUP_DIR}"
+  fi
+}
+
+rollback() {
+  log "ROLLBACK: restoring databases, then the previous release"
+  # Restore FIRST (with no competing writers) if migrations ran, THEN bring the
+  # previous release up — so the restore never races the app.
+  if [[ "${MUTATED}" -eq 1 && "${BACKUP_DONE}" -eq 1 ]]; then
+    restore_db "${main_pg}" "${main_db}" ""     "${BACKUP_DIR}/${main_db}.sql" "${main_sha}"
+    restore_db "${gold_pg}" "${gold_db}" "5433" "${BACKUP_DIR}/${gold_db}.sql" "${gold_sha}"
+  fi
+  if [[ -n "${PREV_TARGET}" && -d "${PREV_TARGET}" ]]; then
+    ln -sfn "${PREV_TARGET}" "${CURRENT}"
+    ( cd "${PREV_TARGET}" && compose_up ) || log "rollback: previous compose up reported an error"
+  fi
+}
+on_err() {
+  local rc=$?; trap - ERR EXIT
+  [[ "${PROMOTED}" -eq 1 ]] && exit "${rc}"
+  [[ "${BACKUP_DONE}" -eq 1 ]] && rollback || log "aborted before any mutation; nothing to roll back"
+  exit "${rc}"
+}
+trap on_err ERR EXIT
+
+main_db="modecissions"; gold_db="modecissions_gold"
+
+compose_up() {
+  docker compose --env-file infra/.env \
+    -f infra/docker-compose.yml \
+    -f infra/docker-compose.gcp.yml \
+    -f infra/docker-compose.aws-images.gcp.yml \
+    --profile sap up -d
+}
+
+# ── 1. Verified backup of BOTH databases (before any mutation) ──────────────
+log "step 1 backup: ${main_db} (${main_pg}) + ${gold_db} (${gold_pg}) -> ${BACKUP_DIR}"
+mkdir -p "${BACKUP_DIR}"; chmod 700 "${BACKUP_DIR}"
+docker exec "${main_pg}" pg_dump --clean --if-exists -U postgres -d "${main_db}" > "${BACKUP_DIR}/${main_db}.sql"
+docker exec "${gold_pg}" pg_dump --clean --if-exists -U postgres -p 5433 -d "${gold_db}" > "${BACKUP_DIR}/${gold_db}.sql"
+[[ -s "${BACKUP_DIR}/${main_db}.sql" && -s "${BACKUP_DIR}/${gold_db}.sql" ]] || die "a backup dump is empty; refusing to proceed."
+main_sha="$(sha256_of "${BACKUP_DIR}/${main_db}.sql")"; gold_sha="$(sha256_of "${BACKUP_DIR}/${gold_db}.sql")"
+printf '%s\t%s\n%s\t%s\n' "${main_db}" "${main_sha}" "${gold_db}" "${gold_sha}" > "${BACKUP_DIR}/SHA256SUMS"
+BACKUP_DONE=1
+log "step 1 backup: OK (main=$(wc -c <"${BACKUP_DIR}/${main_db}.sql")B gold=$(wc -c <"${BACKUP_DIR}/${gold_db}.sql")B)"
+
+# ── 2. Stage the new release dir (exact tarball + overlays + shared env) ─────
+log "step 2 stage: releases/${DEPLOY_REF}"
+if [[ ! -d "${RELEASE_DIR}" ]]; then
+  token="$(curl -fsS -H 'Metadata-Flavor: Google' 'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token' | python3 -c 'import json,sys;print(json.load(sys.stdin)["access_token"])')"
+  obj="$(python3 - "${SOURCE_OBJECT}" <<'PY'
+import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1],safe=""))
+PY
+)"
+  curl -fL -H "Authorization: Bearer ${token}" \
+    "https://storage.googleapis.com/storage/v1/b/${SOURCE_BUCKET}/o/${obj}?alt=media" -o /tmp/omega-src.tgz
+  mkdir -p "${RELEASE_DIR}"
+  tar -xzf /tmp/omega-src.tgz --strip-components=1 -C "${RELEASE_DIR}"
+  rm -f /tmp/omega-src.tgz
+fi
+# Carry the environment overlay + shared env + tag-pinned image overlay into the
+# NEW release dir. Never overwrite the currently-live release tree, so a dry-run
+# that re-validates the live ref stays truly non-destructive.
+if [[ "$(readlink -f "${RELEASE_DIR}")" != "${PREV_TARGET}" ]]; then
+  cp -f "${CURRENT}/infra/docker-compose.gcp.yml" "${RELEASE_DIR}/infra/docker-compose.gcp.yml"
+  cp -f "${SHARED_ENV}" "${RELEASE_DIR}/infra/.env"
+  chmod 600 "${RELEASE_DIR}/infra/.env"
+  cp -f "${IMAGES_OVERLAY}" "${RELEASE_DIR}/infra/docker-compose.aws-images.gcp.yml"
+else
+  log "step 2 stage: target ref is the live release; leaving its tree untouched"
+fi
+
+# ── 3. Authenticated pull of the 15 images at the tag (server-owned) ─────────
+log "step 3 images: authenticated pull of 15 images at ${TARGET_TAG}"
+IMAGES=(airflow banxico console hubspot inegi mcp-infra refinement replicon salesforce sap_hcm sap_s4hana sap_successfactors sec_edgar vault workspace)
+pull_all() { for image in "${IMAGES[@]}"; do docker pull --quiet "ghcr.io/${GHCR_OWNER}/${image}:${TARGET_TAG}" >/dev/null || return 1; done; }
+OMEGA_GCP_ENVIRONMENT="${ENVIRONMENT}" OMEGA_GHCR_PULL_SECRET_VERSION="${GHCR_SECRET_VERSION}" \
+  bash "${RELEASE_DIR}/infra/terraform-gcp/release/ghcr-auth-run.sh" bash -c "$(declare -f pull_all); IMAGES=(${IMAGES[*]}); GHCR_OWNER='${GHCR_OWNER}'; TARGET_TAG='${TARGET_TAG}'; pull_all" \
+  || die "authenticated image pull failed (15/15 required)."
+
+# Dry-run stops here: everything so far (backup, stage, pull) is non-destructive
+# to the running services and databases. This validates the risky live-specific
+# assumptions (container discovery, backup non-empty, tarball fetch, auth pull)
+# WITHOUT migrating the database or swapping the running release.
+if [[ "${DEPLOY_MODE:-apply}" == "dryrun" ]]; then
+  trap - ERR EXIT
+  log "DRY-RUN OK: backup verified, release staged, 15/15 images pulled. No DB/service mutation."
+  printf 'REMOTE_DEPLOY\tDRYRUN_PASS\ttag=%s\tref=%s\tbackup=%s\n' "${TARGET_TAG}" "${DEPLOY_REF}" "${BACKUP_DIR}"
+  exit 0
+fi
+
+# ── 4. Forward-only migrations with drift guard (Checkpoint 5.5) ─────────────
+MUTATED=1   # from here the DB/runtime change and a failure triggers rollback
+log "step 4 migrations: forward-only ledger + drift guard"
+( cd "${RELEASE_DIR}" && bash scripts/apply_db_migrations.sh )
+
+# ── 5. Deploy the candidate (compose up by pinned tag) ──────────────────────
+# compose_up uses infra/-relative -f paths, so cwd MUST be the release ROOT
+# (matches the live startup: cd <release>; docker compose -f infra/...).
+log "step 5 deploy: compose up ${TARGET_TAG}"
+( cd "${RELEASE_DIR}" && compose_up )
+
+# ── 6. Health gate: version + app_env + readiness ───────────────────────────
+log "step 6 health: /healthz version+app_env and /readyz"
+EXPECTED_VERSION="${TARGET_TAG#v}"
+ok=0
+for _ in $(seq 1 60); do
+  hz="$(curl -fsS --max-time 5 http://127.0.0.1:8000/healthz 2>/dev/null || true)"
+  rz="$(curl -o /dev/null -s -w '%{http_code}' --max-time 8 http://127.0.0.1:8000/readyz 2>/dev/null || true)"
+  vok="$(printf '%s' "${hz}" | VER="${EXPECTED_VERSION}" python3 -c 'import json,os,sys
+try: p=json.load(sys.stdin)
+except Exception: sys.exit(1)
+sys.exit(0 if p.get("version")==os.environ["VER"] and p.get("app_env")=="production" else 1)' && echo yes || echo no)"
+  if [[ "${vok}" == "yes" && "${rz}" == "200" ]]; then ok=1; log "health green (version=${EXPECTED_VERSION}, readyz=200)"; break; fi
+  sleep 5
+done
+[[ "${ok}" -eq 1 ]] || die "health gate never went green for ${EXPECTED_VERSION}."
+
+# ── 7. Promote (atomic pointer) ─────────────────────────────────────────────
+log "step 7 promote: current -> releases/${DEPLOY_REF}"
+ln -sfn "${RELEASE_DIR}" "${CURRENT}"
+date -Iseconds > "${APP_ROOT}/DEPLOYED"
+PROMOTED=1
+trap - ERR EXIT
+log "PROMOTED ${TARGET_TAG} (${DEPLOY_REF}); backup retained at ${BACKUP_DIR}"
+printf 'REMOTE_DEPLOY\tPASS\ttag=%s\tref=%s\tbackup=%s\n' "${TARGET_TAG}" "${DEPLOY_REF}" "${BACKUP_DIR}"
