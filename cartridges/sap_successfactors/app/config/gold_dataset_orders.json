@@ -6,7 +6,8 @@
     "sap_successfactors_headcount_by_location",
     "sap_successfactors_headcount_by_department",
     "sap_successfactors_headcount_by_company",
-    "sap_successfactors_manager_hierarchy"
+    "sap_successfactors_manager_hierarchy",
+    "sap_successfactors_employees_anomalies"
   ],
   "silver_talent_curated_order": [
     "sap_successfactors_performance_cycle",

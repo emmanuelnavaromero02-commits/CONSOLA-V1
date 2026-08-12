@@ -26,6 +26,25 @@ TALENT_GOLD_FALLBACK_SQL = {
     **TALENT_EMPTY_FALLBACK_SQL,
 }
 
+# Employee Central operational anomalies (Fase 6). Deliberately NOT a foundation
+# fallback: an EMPTY anomalies result is HEALTHY ("no hay empleados irregulares"),
+# so it must never escalate to a strict foundation error. When employee_360 or the
+# fojobcode silver dependency is missing, the dataset degrades to this empty shape
+# instead of hard-erroring, keeping the Control Room "Employee Central" module
+# materializable. Columns mirror sap_successfactors_employees_anomalies exactly.
+EMPLOYEE_CENTRAL_FALLBACK_SQL: dict[str, str] = {
+    "sap_successfactors_employees_anomalies": """
+SELECT
+    NULL::VARCHAR AS user_id,
+    NULL::VARCHAR AS full_name,
+    NULL::VARCHAR AS anomaly_type,
+    NULL::VARCHAR AS severity,
+    NULL::VARCHAR AS details,
+    CURRENT_TIMESTAMP AS detected_at
+WHERE FALSE
+""",
+}
+
 SUCCESSFACTORS_GOLD_FALLBACK_SOURCES: dict[str, list[str]] = {
     "sap_successfactors_performance_cycle": [
         "silver/sap_successfactors/sap_successfactors_performancereview_latest",
@@ -47,6 +66,7 @@ SUCCESSFACTORS_GOLD_FALLBACK_SOURCES: dict[str, list[str]] = {
 SUCCESSFACTORS_GOLD_FALLBACK_SQL: dict[str, str] = {
     **FOUNDATION_GOLD_FALLBACK_SQL,
     **TALENT_GOLD_FALLBACK_SQL,
+    **EMPLOYEE_CENTRAL_FALLBACK_SQL,
 }
 
 
