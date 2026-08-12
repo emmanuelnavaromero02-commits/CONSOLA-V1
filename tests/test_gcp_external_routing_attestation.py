@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import sys
@@ -136,7 +137,14 @@ def test_bound_release_identity_parses_one_exact_tag_object_manifest_binding(
 ) -> None:
     tag = "v1.45.207-beta"
     digest = f"sha256:{'a' * 64}"
-    tag_object = "b" * 40
+    raw_tag = (
+        f"object {SOURCE_SHA}\ntype commit\ntag {tag}\n"
+        "tagger Release <release@example.com> 0 +0000\n\n"
+        f"release\nOMEGA-Release-Candidate-Manifest-SHA256: {digest}\n"
+    ).encode()
+    tag_object = hashlib.sha1(  # noqa: S324 - Git object identity is SHA-1.
+        f"tag {len(raw_tag)}\0".encode() + raw_tag, usedforsecurity=False
+    ).hexdigest()
     monkeypatch.setattr(
         CONTROLLER,
         "validate_published_release_identity",
@@ -146,15 +154,10 @@ def test_bound_release_identity_parses_one_exact_tag_object_manifest_binding(
     def fake_git(*args: str) -> str:
         if args[:2] == ("rev-parse", f"refs/tags/{tag}"):
             return tag_object
-        if args[:2] == ("cat-file", "tag"):
-            return (
-                f"object {SOURCE_SHA}\ntype commit\ntag {tag}\n"
-                "tagger Release <release@example.com> 0 +0000\n\n"
-                f"release\nOMEGA-Release-Candidate-Manifest-SHA256: {digest}\n"
-            )
         raise AssertionError(args)
 
     monkeypatch.setattr(CONTROLLER, "git", fake_git)
+    monkeypatch.setattr(CONTROLLER, "git_bytes", lambda *_args: raw_tag)
     assert CONTROLLER.validate_bound_release_identity(tag, SOURCE_SHA) == (
         CONTROLLER.BoundReleaseIdentity("1.45.207-beta", digest, tag_object)
     )
@@ -165,6 +168,12 @@ def test_bound_release_identity_rejects_duplicate_manifest_bindings(
 ) -> None:
     tag = "v1.45.207-beta"
     binding = f"OMEGA-Release-Candidate-Manifest-SHA256: sha256:{'a' * 64}"
+    raw_tag = (
+        f"object {SOURCE_SHA}\ntype commit\ntag {tag}\n\n{binding}\n{binding}\n"
+    ).encode()
+    tag_object = hashlib.sha1(  # noqa: S324 - Git object identity is SHA-1.
+        f"tag {len(raw_tag)}\0".encode() + raw_tag, usedforsecurity=False
+    ).hexdigest()
     monkeypatch.setattr(
         CONTROLLER,
         "validate_published_release_identity",
@@ -174,11 +183,10 @@ def test_bound_release_identity_rejects_duplicate_manifest_bindings(
         CONTROLLER,
         "git",
         lambda *args: (
-            "b" * 40
-            if args[0] == "rev-parse"
-            else f"object {SOURCE_SHA}\ntype commit\ntag {tag}\n\n{binding}\n{binding}\n"
+            tag_object if args[0] == "rev-parse" else pytest.fail(str(args))
         ),
     )
+    monkeypatch.setattr(CONTROLLER, "git_bytes", lambda *_args: raw_tag)
     with pytest.raises(ValueError, match="one exact sealed manifest binding"):
         CONTROLLER.validate_bound_release_identity(tag, SOURCE_SHA)
 
@@ -216,7 +224,7 @@ def test_scoped_attestation_rejects_allowlist_or_forensic_drift(
 @pytest.mark.parametrize(
     "attested_at",
     [
-        datetime.now(timezone.utc) + timedelta(seconds=30),
+        datetime.now(timezone.utc) + timedelta(minutes=5),
         datetime.now(timezone.utc) - timedelta(minutes=16),
     ],
 )

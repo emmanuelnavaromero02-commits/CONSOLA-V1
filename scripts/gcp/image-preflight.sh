@@ -88,8 +88,9 @@ else
 fi
 if [[ "$GHCR_OWNER" != "emmanuelnavaromero02-commits" || \
       ! "$GCP_ENVIRONMENT" =~ ^[a-z][a-z0-9-]*$ || \
-      ! "$GHCR_SECRET_VERSION" =~ ^[1-9][0-9]*$ ]]; then
-  fail "server-owned GHCR identity" "canonical owner/environment/secret version invalid"
+      ( -n "$GHCR_SECRET_VERSION" && \
+        ! "$GHCR_SECRET_VERSION" =~ ^[1-9][0-9]*$ ) ]]; then
+  fail "server-owned GHCR identity" "canonical owner/environment/version assertion invalid"
 fi
 if [[ "$PURPOSE" != "release" && "$PURPOSE" != "rollback" ]]; then
   fail "preflight purpose" "expected release or rollback"
@@ -127,12 +128,101 @@ else
     fail "rollback image authority" "checksum-bound backup runtime image inventory is required"
   fi
 fi
-
 exec 9>"/var/lock/omega-gcp-day2.lock"
 if ! flock -n 9; then
   fail "exclusive day-2 lock" "another canonical operation is active"
 fi
+ANNOTATED_TAG_OBJECT_FILE=""
+if [[ "$AUTHORITY_MODE" == "published" ]]; then
+  TAG_PROOF_SOURCE="${OMEGA_GCP_REMOTE_ROOT:-}/annotated-tag.object"
+  TAG_PROOF_ROOT="${SHARED_ROOT}/release-authority/${TARGET_REF}"
+  ANNOTATED_TAG_OBJECT_FILE="${TAG_PROOF_ROOT}/annotated-tag.object"
+  if [[ "${OMEGA_GCP_REMOTE_ROOT:-}" != /run/omega-gcp-remote.* || \
+        ! -f "$TAG_PROOF_SOURCE" || -L "$TAG_PROOF_SOURCE" ]]; then
+    fail "published image authority" "exact transported annotated-tag object is unavailable"
+  fi
+  install -d -o root -g root -m 0700 \
+    "${SHARED_ROOT}/release-authority" "$TAG_PROOF_ROOT"
+  /usr/bin/python3 -I - "$TAG_PROOF_SOURCE" "$ANNOTATED_TAG_OBJECT_FILE" \
+    "$TAG_PROOF_ROOT" <<'PY'
+import os
+import pathlib
+import stat
+import sys
+
+source, destination, parent = map(pathlib.Path, sys.argv[1:])
+flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+source_fd = os.open(source, flags)
+try:
+    info = os.fstat(source_fd)
+    raw = os.read(source_fd, 1024 * 1024 + 1)
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or info.st_nlink != 1
+        or not 1 <= len(raw) <= 1024 * 1024
+        or len(raw) != info.st_size
+    ):
+        raise ValueError("transported annotated-tag object is unsafe")
+finally:
+    os.close(source_fd)
+
+parent_info = parent.lstat()
+if (
+    not stat.S_ISDIR(parent_info.st_mode)
+    or parent_info.st_uid != 0
+    or parent_info.st_gid != 0
+    or stat.S_IMODE(parent_info.st_mode) != 0o700
+    or parent.resolve(strict=True) != parent
+):
+    raise ValueError("release-authority directory is unsafe")
+
+if os.path.lexists(destination):
+    destination_fd = os.open(destination, flags)
+    try:
+        current = os.fstat(destination_fd)
+        existing = os.read(destination_fd, 1024 * 1024 + 1)
+        if (
+            not stat.S_ISREG(current.st_mode)
+            or current.st_uid != 0
+            or current.st_gid != 0
+            or stat.S_IMODE(current.st_mode) != 0o400
+            or current.st_nlink != 1
+            or existing != raw
+        ):
+            raise ValueError("existing annotated-tag object differs")
+    finally:
+        os.close(destination_fd)
+else:
+    temporary = parent / f".annotated-tag.object.tmp.{os.getpid()}"
+    output_fd = os.open(
+        temporary,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+        0o400,
+    )
+    try:
+        os.fchown(output_fd, 0, 0)
+        os.fchmod(output_fd, 0o400)
+        offset = 0
+        while offset < len(raw):
+            written = os.write(output_fd, raw[offset:])
+            if written <= 0:
+                raise OSError("short annotated-tag write")
+            offset += written
+        os.fsync(output_fd)
+    finally:
+        os.close(output_fd)
+    os.link(temporary, destination, follow_symlinks=False)
+    os.unlink(temporary)
+    directory_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+PY
+fi
 WORKDIR="$(mktemp -d /tmp/omega-gcp-image-preflight.XXXXXX)"
+LOCK_STAGE=""
 cleanup() {
   local rc=$?
   trap - EXIT
@@ -142,6 +232,9 @@ cleanup() {
   if [[ -n "$PREFLIGHT_TMP" && "$PREFLIGHT_TMP" == "${SHARED_ROOT}/image-preflights/."* ]]; then
     rm -rf -- "$PREFLIGHT_TMP"
   fi
+  if [[ -n "$LOCK_STAGE" && "$LOCK_STAGE" == "${SHARED_ROOT}/image-locks/.${TARGET_REF}.tmp."* ]]; then
+    rm -rf -- "$LOCK_STAGE"
+  fi
   exit "$rc"
 }
 trap cleanup EXIT
@@ -149,20 +242,37 @@ trap cleanup EXIT
 "$SAFE_IO" gcs-download --uri "$HELPER_ARTIFACT_URI" \
   --generation "$HELPER_ARTIFACT_GENERATION" --size "$HELPER_ARTIFACT_SIZE_BYTES" \
   --sha256 "$HELPER_ARTIFACT_SHA256" --output "${WORKDIR}/candidate.tar.gz"
-install -d -m 0700 "${WORKDIR}/candidate"
+install -d -m 0700 "${WORKDIR}/${HELPER_REF}"
 "$SAFE_IO" safe-extract --archive "${WORKDIR}/candidate.tar.gz" \
-  --destination "${WORKDIR}/candidate"
-AUTH_RUNNER="${WORKDIR}/candidate/infra/terraform-gcp/release/ghcr-auth-run.sh"
-PREFLIGHT="${WORKDIR}/candidate/infra/terraform-gcp/release/preflight-release-images.sh"
-METADATA_FIREWALL="${WORKDIR}/candidate/scripts/gcp/metadata-firewall.sh"
-if [[ ! -x "$AUTH_RUNNER" || ! -x "$PREFLIGHT" || ! -x "$METADATA_FIREWALL" ]]; then
+  --destination "${WORKDIR}/${HELPER_REF}"
+SOURCE_ROOT="${WORKDIR}/${HELPER_REF}"
+BUNDLE_INSTALLER="${SOURCE_ROOT}/infra/terraform-gcp/release/install-ghcr-release-bundle.py"
+METADATA_FIREWALL="${SOURCE_ROOT}/scripts/gcp/metadata-firewall.sh"
+install -d -o root -g root -m 0700 "${SHARED_ROOT}/ghcr-release-bundles"
+if [[ ! -f "$BUNDLE_INSTALLER" || -L "$BUNDLE_INSTALLER" || \
+      ! -x "$METADATA_FIREWALL" ]]; then
   fail "helper artifact" "audited GHCR helpers are missing from exact candidate"
+fi
+BUNDLE_ROOT="$(/usr/bin/python3 -I "$BUNDLE_INSTALLER" \
+  --release-root "$SOURCE_ROOT" --source-sha "$HELPER_REF")" || \
+  fail "helper bundle" "exact authenticated helper bundle could not be installed"
+EXPECTED_BUNDLE_ROOT="${SHARED_ROOT}/ghcr-release-bundles/${HELPER_REF}"
+if [[ "$BUNDLE_ROOT" != "$EXPECTED_BUNDLE_ROOT" ]]; then
+  fail "helper bundle" "installed helper bundle path differs"
+fi
+AUTH_RUNNER="${BUNDLE_ROOT}/ghcr-auth-run.sh"
+PREFLIGHT="${BUNDLE_ROOT}/preflight-release-images.sh"
+if [[ ! -x "$AUTH_RUNNER" || ! -x "$PREFLIGHT" ]]; then
+  fail "helper bundle" "sealed sibling entrypoints are unavailable"
 fi
 emit "helper artifact" "PASS" "ref=${HELPER_REF} sha256=${HELPER_ARTIFACT_SHA256}"
 "$METADATA_FIREWALL" install-and-verify-container >/dev/null
 emit "container metadata isolation" "PASS" "IPv4/IPv6 metadata endpoints denied from running proprietary container"
 
-LOCK_FILE="${WORKDIR}/release-images.env"
+install -d -o root -g root -m 0700 "${SHARED_ROOT}/image-locks"
+LOCK_STAGE="${SHARED_ROOT}/image-locks/.${TARGET_REF}.tmp.$$"
+install -d -m 0700 "$LOCK_STAGE"
+LOCK_FILE="${LOCK_STAGE}/release-images.env"
 ROLLBACK_RUNTIME_IMAGES=""
 if [[ "$AUTHORITY_MODE" == "legacy-rollback" ]]; then
   ROLLBACK_RUNTIME_IMAGES="${WORKDIR}/rollback-runtime-images.json"
@@ -208,6 +318,7 @@ if ! OMEGA_GCP_ENVIRONMENT="$GCP_ENVIRONMENT" \
     OMEGA_RELEASE_CANDIDATE_CONTROLLER_ATTESTATION_SHA256="$CANDIDATE_CONTROLLER_ATTESTATION_SHA256" \
     OMEGA_RELEASE_TAG_MANIFEST_SHA256="$PUBLISHED_MANIFEST_SHA256" \
     OMEGA_RELEASE_TAG_OBJECT_SHA="$PUBLISHED_TAG_OBJECT_SHA" \
+    OMEGA_RELEASE_ANNOTATED_TAG_OBJECT_FILE="$ANNOTATED_TAG_OBJECT_FILE" \
     OMEGA_GCP_ROLLBACK_RUNTIME_IMAGES="$ROLLBACK_RUNTIME_IMAGES" \
     OMEGA_GCP_LEGACY_TAG_COMMIT="$LEGACY_TAG_COMMIT" \
     "$AUTH_RUNNER" "$PREFLIGHT" "$GHCR_OWNER" "$TARGET_TAG" "$TARGET_REF" \
@@ -216,7 +327,8 @@ if ! OMEGA_GCP_ENVIRONMENT="$GCP_ENVIRONMENT" \
   fail "authenticated image pull" "less than 15/15; credential output suppressed"
 fi
 AUTHORITY_FILE="${LOCK_FILE}.authority.json"
-if [[ ! -s "$AUTHORITY_FILE" ]]; then
+COMMIT_FILE="${LOCK_FILE}.commit.json"
+if [[ ! -s "$AUTHORITY_FILE" || ! -s "$COMMIT_FILE" ]]; then
   fail "immutable image authority" "verified authority receipt is missing"
 fi
 
@@ -315,9 +427,11 @@ install -d -m 0700 "$PREFLIGHT_TMP"
 install -m 0400 "$LOCK_FILE" "${PREFLIGHT_TMP}/release-images.env"
 install -m 0400 "${WORKDIR}/manifest.json" "${PREFLIGHT_TMP}/manifest.json"
 install -m 0400 "$AUTHORITY_FILE" "${PREFLIGHT_TMP}/image-authority.json"
+install -m 0400 "$COMMIT_FILE" "${PREFLIGHT_TMP}/image-lock-commit.json"
 install -m 0400 "${WORKDIR}/completion.json" "${PREFLIGHT_TMP}/completion.json"
 "$SAFE_IO" fsync-file "${PREFLIGHT_TMP}/release-images.env" \
   "${PREFLIGHT_TMP}/manifest.json" "${PREFLIGHT_TMP}/image-authority.json" \
+  "${PREFLIGHT_TMP}/image-lock-commit.json" \
   "${PREFLIGHT_TMP}/completion.json"
 "$SAFE_IO" fsync-dir "$PREFLIGHT_TMP"
 if [[ -e "$PREFLIGHT_ROOT" || -L "$PREFLIGHT_ROOT" ]]; then
@@ -331,6 +445,9 @@ if [[ -e "$PREFLIGHT_ROOT" || -L "$PREFLIGHT_ROOT" ]]; then
   cmp "${PREFLIGHT_ROOT}/image-authority.json" \
     "${PREFLIGHT_TMP}/image-authority.json" >/dev/null || \
     fail "immutable preflight evidence" "existing immutable image authority differs"
+  cmp "${PREFLIGHT_ROOT}/image-lock-commit.json" \
+    "${PREFLIGHT_TMP}/image-lock-commit.json" >/dev/null || \
+    fail "immutable preflight evidence" "existing lock commit differs"
   python3 - "${PREFLIGHT_ROOT}/completion.json" "$MANIFEST_SHA256" \
     "$LOCK_SHA256" "$HELPER_REF" "$TARGET_TAG" "$TARGET_REF" \
     "$TARGET_KIND" "$PURPOSE" <<'PY'

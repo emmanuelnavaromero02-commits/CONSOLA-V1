@@ -32,6 +32,9 @@ BACKUP_POLICY_SHA256="${16:-}"
 PROJECT_ID="${17:-}"
 PUBLISHED_MANIFEST_SHA256="${18:-}"
 PUBLISHED_TAG_OBJECT_SHA="${19:-}"
+ARTIFACT_METAGENERATION="${20:-}"
+ARTIFACT_CRC32C="${21:-}"
+ARTIFACT_MD5="${22:-}"
 
 APP_ROOT="${OMEGA_GCP_APP_ROOT:-/opt/modecissions}"
 RELEASE_ROOT="${APP_ROOT}/releases"
@@ -40,7 +43,7 @@ PREVIOUS_LINK="${APP_ROOT}/previous"
 SHARED_ROOT="${APP_ROOT}/shared"
 SHARED_ENV="${SHARED_ROOT}/infra.env"
 GCP_RUNTIME_COMPOSE="${SHARED_ROOT}/docker-compose.gcp.yml"
-AUTH_RUNNER="${OMEGA_GCP_GHCR_AUTH_RUNNER:-${SHARED_ROOT}/bin/ghcr-auth-run}"
+AUTH_RUNNER=""
 RELEASE_DIR="${RELEASE_ROOT}/${DEPLOY_REF}"
 LOCK_DIR="${SHARED_ROOT}/image-locks/${DEPLOY_REF}"
 LOCK_ENV="${LOCK_DIR}/release-images.env"
@@ -63,6 +66,7 @@ STATE_STAGE=""
 STATE_PREVIEW=""
 STATE_FINAL=""
 CURRENT_PREVIEW=""
+MIGRATION_STDOUT=""
 SAFE_IO="${OMEGA_GCP_SAFE_IO:-}"
 WATCHDOG="/usr/local/sbin/omega-operation-watchdog"
 DB_FENCE_ACTIVE=0
@@ -441,9 +445,12 @@ if [[ ! "$DEPLOY_REF" =~ ^[0-9a-f]{40}$ ]]; then
   fail "exact deploy ref" "must be a full lowercase SHA" 21
 fi
 if [[ ! "$ARTIFACT_GENERATION" =~ ^[1-9][0-9]*$ || \
+      ! "$ARTIFACT_METAGENERATION" =~ ^[1-9][0-9]*$ || \
       ! "$ARTIFACT_SIZE_BYTES" =~ ^[1-9][0-9]*$ || \
-      ! "$ARTIFACT_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
-  fail "artifact checksum input" "invalid sha256" 22
+      ! "$ARTIFACT_SHA256" =~ ^[0-9a-f]{64}$ || \
+      ! "$ARTIFACT_CRC32C" =~ ^[A-Za-z0-9+/]{6}==$ || \
+      ! "$ARTIFACT_MD5" =~ ^[A-Za-z0-9+/]{22}==$ ]]; then
+  fail "artifact checksum input" "invalid immutable GCS identity" 22
 fi
 if [[ ! "$BACKUP_MANIFEST_GENERATION" =~ ^[1-9][0-9]*$ || \
       ! "$BACKUP_MANIFEST_SIZE_BYTES" =~ ^[1-9][0-9]*$ || \
@@ -468,8 +475,9 @@ fi
 if [[ ! "$GCP_ENVIRONMENT" =~ ^[a-z][a-z0-9-]*$ ]]; then
   fail "GCP environment" "explicit environment is required" 27
 fi
-if [[ ! "$GHCR_SECRET_VERSION" =~ ^[1-9][0-9]*$ ]]; then
-  fail "GHCR secret version" "an explicit numeric Secret Manager version is required" 27
+if [[ -n "$GHCR_SECRET_VERSION" && \
+      ! "$GHCR_SECRET_VERSION" =~ ^[1-9][0-9]*$ ]]; then
+  fail "GHCR secret version" "optional version assertion must be numeric" 27
 fi
 if [[ ! "$BACKUP_POLICY_SHA256" =~ ^[0-9a-f]{64}$ || \
       ! "$PROJECT_ID" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]]; then
@@ -944,8 +952,9 @@ if [[ -e "$RELEASE_DIR" || -L "$RELEASE_DIR" ]]; then
     fail "immutable release directory" "existing release ownership, mode, or path confinement is unsafe" 36
   fi
   if ! python3 - "$RELEASE_MARKER" "$RELEASE_DIR" "$RELEASE_ROOT" \
-    "$DEPLOY_REF" "$TARGET_TAG" \
-    "$ARTIFACT_GENERATION" "$ARTIFACT_SIZE_BYTES" "$ARTIFACT_SHA256" \
+    "$DEPLOY_REF" "$TARGET_TAG" "$ARTIFACT_URI" \
+    "$ARTIFACT_GENERATION" "$ARTIFACT_METAGENERATION" \
+    "$ARTIFACT_SIZE_BYTES" "$ARTIFACT_SHA256" "$ARTIFACT_CRC32C" "$ARTIFACT_MD5" \
     "$EXPECTED_VERSION" "$EXISTING_TREE_SHA256" <<'PY'
 from datetime import datetime
 import json
@@ -973,9 +982,13 @@ expected_keys = {
     "schema_version",
     "deploy_ref",
     "tag",
+    "artifact_uri",
     "artifact_generation",
+    "artifact_metageneration",
     "artifact_size_bytes",
     "artifact_sha256",
+    "artifact_crc32c",
+    "artifact_md5",
     "version",
     "tree_sha256",
     "installed_at",
@@ -986,11 +999,15 @@ expected = {
     "schema_version": 1,
     "deploy_ref": sys.argv[4],
     "tag": sys.argv[5],
-    "artifact_generation": sys.argv[6],
-    "artifact_size_bytes": int(sys.argv[7]),
-    "artifact_sha256": sys.argv[8],
-    "version": sys.argv[9],
-    "tree_sha256": sys.argv[10],
+    "artifact_uri": sys.argv[6],
+    "artifact_generation": sys.argv[7],
+    "artifact_metageneration": sys.argv[8],
+    "artifact_size_bytes": int(sys.argv[9]),
+    "artifact_sha256": sys.argv[10],
+    "artifact_crc32c": sys.argv[11],
+    "artifact_md5": sys.argv[12],
+    "version": sys.argv[13],
+    "tree_sha256": sys.argv[14],
 }
 for key, value in expected.items():
     if payload.get(key) != value:
@@ -1016,8 +1033,9 @@ else
   chmod -R a-w "$RELEASE_TMP"
   TREE_SHA256="$($SAFE_IO tree-sha256 --root "$RELEASE_TMP" --require-read-only)"
   RELEASE_MARKER_STAGE="${WORKDIR}/.omega-release.${DEPLOY_REF}.json"
-  python3 - "$RELEASE_MARKER_STAGE" "$DEPLOY_REF" "$TARGET_TAG" \
-    "$ARTIFACT_GENERATION" "$ARTIFACT_SIZE_BYTES" "$ARTIFACT_SHA256" \
+  python3 - "$RELEASE_MARKER_STAGE" "$DEPLOY_REF" "$TARGET_TAG" "$ARTIFACT_URI" \
+    "$ARTIFACT_GENERATION" "$ARTIFACT_METAGENERATION" \
+    "$ARTIFACT_SIZE_BYTES" "$ARTIFACT_SHA256" "$ARTIFACT_CRC32C" "$ARTIFACT_MD5" \
     "$EXPECTED_VERSION" "$TREE_SHA256" <<'PY'
 import json
 import pathlib
@@ -1029,11 +1047,15 @@ payload = {
     "schema_version": 1,
     "deploy_ref": sys.argv[2],
     "tag": sys.argv[3],
-    "artifact_generation": sys.argv[4],
-    "artifact_size_bytes": int(sys.argv[5]),
-    "artifact_sha256": sys.argv[6],
-    "version": sys.argv[7],
-    "tree_sha256": sys.argv[8],
+    "artifact_uri": sys.argv[4],
+    "artifact_generation": sys.argv[5],
+    "artifact_metageneration": sys.argv[6],
+    "artifact_size_bytes": int(sys.argv[7]),
+    "artifact_sha256": sys.argv[8],
+    "artifact_crc32c": sys.argv[9],
+    "artifact_md5": sys.argv[10],
+    "version": sys.argv[11],
+    "tree_sha256": sys.argv[12],
     "installed_at": datetime.now(timezone.utc).isoformat(),
 }
 path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -1069,15 +1091,21 @@ fi
 
 CANDIDATE_AUTH_RUNNER="${RELEASE_DIR}/infra/terraform-gcp/release/ghcr-auth-run.sh"
 CANDIDATE_PREFLIGHT="${RELEASE_DIR}/infra/terraform-gcp/release/preflight-release-images.sh"
+CANDIDATE_BUNDLE_INSTALLER="${RELEASE_DIR}/infra/terraform-gcp/release/install-ghcr-release-bundle.py"
+CANDIDATE_BUNDLE_MANIFEST="${RELEASE_DIR}/infra/terraform-gcp/release/ghcr-release-bundle.manifest.json"
 RUNTIME_CONTRACT="${RELEASE_DIR}/scripts/gcp/runtime_contract.py"
 CANDIDATE_REBOOT_HELPER="${RELEASE_DIR}/scripts/gcp/reboot-runtime.sh"
 CANDIDATE_SAFE_IO="${RELEASE_DIR}/scripts/gcp/safe_io.py"
+CANDIDATE_MIGRATION_HANDOFF="${RELEASE_DIR}/scripts/gcp/migration_handoff.py"
 CANDIDATE_WATCHDOG="${RELEASE_DIR}/scripts/gcp/operation-watchdog.sh"
 CANDIDATE_FIREWALL="${RELEASE_DIR}/scripts/gcp/metadata-firewall.sh"
 CANDIDATE_OPERATION_GUARD="${RELEASE_DIR}/infra/terraform-gcp/templates/omega-operation-gate"
 if [[ ! -x "$CANDIDATE_AUTH_RUNNER" || ! -x "$CANDIDATE_PREFLIGHT" || \
+      ! -f "$CANDIDATE_BUNDLE_INSTALLER" || -L "$CANDIDATE_BUNDLE_INSTALLER" || \
+      ! -f "$CANDIDATE_BUNDLE_MANIFEST" || -L "$CANDIDATE_BUNDLE_MANIFEST" || \
       ! -x "$RUNTIME_CONTRACT" || ! -x "$CANDIDATE_REBOOT_HELPER" || \
       ! -x "$CANDIDATE_SAFE_IO" || ! -x "$CANDIDATE_WATCHDOG" || \
+      ! -x "$CANDIDATE_MIGRATION_HANDOFF" || \
       ! -x "$CANDIDATE_FIREWALL" || ! -x "$CANDIDATE_OPERATION_GUARD" ]]; then
   fail "candidate release helpers" "release does not contain the audited auth, preflight, and runtime helpers" 38
 fi
@@ -1100,43 +1128,142 @@ if ! OMEGA_GCP_ALLOW_OPERATION_MARKER="$RECONCILIATION_HANDOFF" \
   fail "reboot operation guard" "candidate guard rejected the current atomic state" 38
 fi
 emit "reboot operation guard" "PASS" "exact candidate ExecStartPre installed and current state verified"
-install -d -m 0700 "$(dirname "$AUTH_RUNNER")"
-AUTH_RUNNER_TMP="$(dirname "$AUTH_RUNNER")/.ghcr-auth-run.${DEPLOY_REF}.$$"
-install -m 0700 "$CANDIDATE_AUTH_RUNNER" "$AUTH_RUNNER_TMP"
-mv -Tf "$AUTH_RUNNER_TMP" "$AUTH_RUNNER"
-"$SAFE_IO" fsync-file "$AUTH_RUNNER"
-"$SAFE_IO" fsync-dir "$(dirname "$AUTH_RUNNER")"
-emit "server-owned GHCR auth runner" "PASS" "installed from exact release artifact"
+install -d -o root -g root -m 0700 "${SHARED_ROOT}/ghcr-release-bundles"
+BUNDLE_ROOT="$(/usr/bin/python3 -I "$CANDIDATE_BUNDLE_INSTALLER" \
+  --release-root "$RELEASE_DIR" --source-sha "$DEPLOY_REF")" || \
+  fail "server-owned GHCR helper bundle" \
+    "exact release helper bundle could not be installed" 41
+EXPECTED_BUNDLE_ROOT="${SHARED_ROOT}/ghcr-release-bundles/${DEPLOY_REF}"
+if [[ "$BUNDLE_ROOT" != "$EXPECTED_BUNDLE_ROOT" ]]; then
+  fail "server-owned GHCR helper bundle" "installed path differs" 41
+fi
+AUTH_RUNNER="${BUNDLE_ROOT}/ghcr-auth-run.sh"
+BUNDLE_PREFLIGHT="${BUNDLE_ROOT}/preflight-release-images.sh"
+if [[ ! -x "$AUTH_RUNNER" || ! -x "$BUNDLE_PREFLIGHT" ]]; then
+  fail "server-owned GHCR helper bundle" "sealed sibling entrypoints unavailable" 41
+fi
+emit "server-owned GHCR helper bundle" "PASS" \
+  "installed atomically from exact release artifact"
+
+TAG_PROOF_SOURCE="${OMEGA_GCP_REMOTE_ROOT:-}/annotated-tag.object"
+TAG_PROOF_ROOT="${SHARED_ROOT}/release-authority/${DEPLOY_REF}"
+ANNOTATED_TAG_OBJECT_FILE="${TAG_PROOF_ROOT}/annotated-tag.object"
+if [[ "${OMEGA_GCP_REMOTE_ROOT:-}" != /run/omega-gcp-remote.* || \
+      ! -f "$TAG_PROOF_SOURCE" || -L "$TAG_PROOF_SOURCE" ]]; then
+  fail "published annotated-tag authority" "transported exact tag object unavailable" 41
+fi
+install -d -o root -g root -m 0700 \
+  "${SHARED_ROOT}/release-authority" "$TAG_PROOF_ROOT"
+/usr/bin/python3 -I - "$TAG_PROOF_SOURCE" "$ANNOTATED_TAG_OBJECT_FILE" \
+  "$TAG_PROOF_ROOT" <<'PY'
+import os
+import pathlib
+import stat
+import sys
+
+source, destination, parent = map(pathlib.Path, sys.argv[1:])
+flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+source_fd = os.open(source, flags)
+try:
+    source_info = os.fstat(source_fd)
+    raw = os.read(source_fd, 1024 * 1024 + 1)
+    if (
+        not stat.S_ISREG(source_info.st_mode)
+        or source_info.st_nlink != 1
+        or not 1 <= len(raw) <= 1024 * 1024
+        or len(raw) != source_info.st_size
+    ):
+        raise ValueError("transported annotated-tag object is unsafe")
+finally:
+    os.close(source_fd)
+
+parent_info = parent.lstat()
+if (
+    not stat.S_ISDIR(parent_info.st_mode)
+    or parent_info.st_uid != 0
+    or parent_info.st_gid != 0
+    or stat.S_IMODE(parent_info.st_mode) != 0o700
+    or parent.resolve(strict=True) != parent
+):
+    raise ValueError("release-authority directory is unsafe")
+
+if os.path.lexists(destination):
+    destination_fd = os.open(destination, flags)
+    try:
+        current = os.fstat(destination_fd)
+        existing = os.read(destination_fd, 1024 * 1024 + 1)
+        if (
+            not stat.S_ISREG(current.st_mode)
+            or current.st_uid != 0
+            or current.st_gid != 0
+            or stat.S_IMODE(current.st_mode) != 0o400
+            or current.st_nlink != 1
+            or existing != raw
+        ):
+            raise ValueError("existing annotated-tag object differs")
+    finally:
+        os.close(destination_fd)
+else:
+    temporary = parent / f".annotated-tag.object.tmp.{os.getpid()}"
+    output_fd = os.open(
+        temporary,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+        0o400,
+    )
+    try:
+        os.fchown(output_fd, 0, 0)
+        os.fchmod(output_fd, 0o400)
+        offset = 0
+        while offset < len(raw):
+            written = os.write(output_fd, raw[offset:])
+            if written <= 0:
+                raise OSError("short annotated-tag write")
+            offset += written
+        os.fsync(output_fd)
+    finally:
+        os.close(output_fd)
+    os.link(temporary, destination, follow_symlinks=False)
+    os.unlink(temporary)
+    directory_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+PY
+emit "published annotated-tag authority" "PASS" "exact raw object installed"
 
 RELEASE_SERVICES=(console workspace refinement vault mcp-infra airflow replicon hubspot salesforce banxico inegi sec-edgar sap-hcm sap-successfactors sap-s4hana)
 LOCK_TMP="${SHARED_ROOT}/image-locks/.${DEPLOY_REF}.tmp.$$"
 install -d -m 0700 "$LOCK_TMP"
 NEW_LOCK_ENV="${LOCK_TMP}/release-images.env"
 NEW_LOCK_MANIFEST="${LOCK_TMP}/manifest.json"
-NEW_IMAGE_AUTHORITY_TMP="${NEW_LOCK_ENV}.authority.json"
-NEW_IMAGE_AUTHORITY="${LOCK_TMP}/image-authority.json"
+NEW_IMAGE_AUTHORITY="${NEW_LOCK_ENV}.authority.json"
+NEW_IMAGE_COMMIT="${NEW_LOCK_ENV}.commit.json"
 if ! OMEGA_GCP_ENVIRONMENT="$GCP_ENVIRONMENT" \
   OMEGA_GHCR_PULL_SECRET_VERSION="$GHCR_SECRET_VERSION" \
   OMEGA_GCP_IMAGE_AUTHORITY_MODE=published \
   OMEGA_RELEASE_TAG_MANIFEST_SHA256="$PUBLISHED_MANIFEST_SHA256" \
   OMEGA_RELEASE_TAG_OBJECT_SHA="$PUBLISHED_TAG_OBJECT_SHA" \
-  "$AUTH_RUNNER" "$CANDIDATE_PREFLIGHT" "$GHCR_OWNER" "$TARGET_TAG" \
+  OMEGA_RELEASE_ANNOTATED_TAG_OBJECT_FILE="$ANNOTATED_TAG_OBJECT_FILE" \
+  "$AUTH_RUNNER" "$BUNDLE_PREFLIGHT" "$GHCR_OWNER" "$TARGET_TAG" \
     "$DEPLOY_REF" "$EXPECTED_VERSION" "$NEW_LOCK_ENV" >/dev/null 2>&1; then
   fail "private GHCR release pull" "less than 15/15 images pullable; credential output suppressed" 41
 fi
-if [[ ! -s "$NEW_IMAGE_AUTHORITY_TMP" ]]; then
-  fail "published image authority" "fresh sealed-manifest receipt is missing" 41
+if [[ ! -s "$NEW_IMAGE_AUTHORITY" || ! -s "$NEW_IMAGE_COMMIT" ]]; then
+  fail "published image authority" "fresh authority/commit receipts are missing" 41
 fi
-mv -T "$NEW_IMAGE_AUTHORITY_TMP" "$NEW_IMAGE_AUTHORITY"
 emit "private GHCR release pull" "PASS" "15/15 tag=${TARGET_TAG}"
 
 PUBLISHED_PREFLIGHT_ROOT="${SHARED_ROOT}/image-preflights/release-published-${TARGET_TAG}-${DEPLOY_REF}-by-${DEPLOY_REF}"
 PUBLISHED_PREFLIGHT_LOCK="${PUBLISHED_PREFLIGHT_ROOT}/release-images.env"
 PUBLISHED_PREFLIGHT_MANIFEST="${PUBLISHED_PREFLIGHT_ROOT}/manifest.json"
 PUBLISHED_PREFLIGHT_AUTHORITY="${PUBLISHED_PREFLIGHT_ROOT}/image-authority.json"
+PUBLISHED_PREFLIGHT_COMMIT="${PUBLISHED_PREFLIGHT_ROOT}/image-lock-commit.json"
 if [[ ! -s "$PUBLISHED_PREFLIGHT_LOCK" || \
       ! -s "$PUBLISHED_PREFLIGHT_MANIFEST" || \
-      ! -s "$PUBLISHED_PREFLIGHT_AUTHORITY" ]]; then
+      ! -s "$PUBLISHED_PREFLIGHT_AUTHORITY" || \
+      ! -s "$PUBLISHED_PREFLIGHT_COMMIT" ]]; then
   fail "published preflight handoff" "immutable published preflight evidence is incomplete" 41
 fi
 if ! python3 - "$PUBLISHED_PREFLIGHT_MANIFEST" \
@@ -1170,6 +1297,8 @@ cmp "$PUBLISHED_PREFLIGHT_LOCK" "$NEW_LOCK_ENV" >/dev/null || \
   fail "published preflight handoff" "fresh digest lock differs byte-for-byte" 41
 cmp "$PUBLISHED_PREFLIGHT_AUTHORITY" "$NEW_IMAGE_AUTHORITY" >/dev/null || \
   fail "published preflight handoff" "fresh authority receipt differs byte-for-byte" 41
+cmp "$PUBLISHED_PREFLIGHT_COMMIT" "$NEW_IMAGE_COMMIT" >/dev/null || \
+  fail "published preflight handoff" "fresh lock commit differs byte-for-byte" 41
 emit "published preflight handoff" "PASS" \
   "same sealed payload and exact 15 digest lock consumed byte-for-byte"
 
@@ -1263,8 +1392,10 @@ payload = {
 }
 pathlib.Path(manifest_path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
-chmod 0400 "$NEW_LOCK_ENV" "$NEW_LOCK_MANIFEST" "$NEW_IMAGE_AUTHORITY"
-"$SAFE_IO" fsync-file "$NEW_LOCK_ENV" "$NEW_LOCK_MANIFEST" "$NEW_IMAGE_AUTHORITY"
+chmod 0400 "$NEW_LOCK_ENV" "$NEW_LOCK_MANIFEST" "$NEW_IMAGE_AUTHORITY" \
+  "$NEW_IMAGE_COMMIT"
+"$SAFE_IO" fsync-file "$NEW_LOCK_ENV" "$NEW_LOCK_MANIFEST" \
+  "$NEW_IMAGE_AUTHORITY" "$NEW_IMAGE_COMMIT"
 "$SAFE_IO" fsync-dir "$LOCK_TMP"
 NEW_LOCK_TREE_SHA256="$($SAFE_IO tree-sha256 --root "$LOCK_TMP")"
 if [[ -e "$LOCK_DIR" || -L "$LOCK_DIR" ]]; then
@@ -1426,6 +1557,7 @@ for container in mode_postgres mode_postgres_gold; do
   fi
 done
 
+MIGRATION_STDOUT="${WORKDIR}/migration.stdout"
 env -i \
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
 HOME=/root \
@@ -1442,10 +1574,24 @@ OMEGA_MIGRATION_RELEASE_VERSION="$EXPECTED_VERSION" \
 OMEGA_MIGRATION_BASELINE_MANIFEST="${RELEASE_DIR}/infra/migrations/manifests/gcp-live-6b12883c5b5ea0537120279ccbee4947137998a2.json" \
 OMEGA_MIGRATION_BASELINE_MANIFEST_SHA256="b6cb33c9b1a0f93e13fe2eb68f2e8fff1fdeedb2979bbfb22840a2a35d2e4a18" \
 OMEGA_MIGRATION_RELEASE_MANIFEST="${RELEASE_DIR}/infra/migrations/manifests/v1.45.207-beta.json" \
-OMEGA_MIGRATION_RELEASE_MANIFEST_SHA256="fbc2db83f82eecf9733a60a23fae7c9982d0f9aba52e474f41ba909acbaedc93" \
-  bash "${RELEASE_DIR}/scripts/apply_db_migrations.sh"
+OMEGA_MIGRATION_RELEASE_MANIFEST_SHA256="79a607d045b853fba26812311b930b21d84e676d6cbde43f05ad4ec8150700b2" \
+OMEGA_MIGRATION_RELEASE_ATTESTATION="$RELEASE_MARKER" \
+  /usr/bin/python3 -I "${RELEASE_DIR}/scripts/run_db_migrations.py" \
+  > "$MIGRATION_STDOUT"
+chmod 0400 "$MIGRATION_STDOUT"
+"$SAFE_IO" fsync-file "$MIGRATION_STDOUT"
+/usr/bin/python3 -I "${RELEASE_DIR}/scripts/gcp/migration_handoff.py" \
+  --stdout "$MIGRATION_STDOUT" \
+  --guard "${RELEASE_DIR}/scripts/migration_guard.py" \
+  --candidate-ref "$DEPLOY_REF" \
+  --release-version "$EXPECTED_VERSION" \
+  --release-manifest-sha256 \
+    "79a607d045b853fba26812311b930b21d84e676d6cbde43f05ad4ec8150700b2" \
+  >/dev/null || fail "canonical database migration receipt" \
+    "exact immutable PASS receipt did not revalidate" 48
 write_operation_state "migrated"
-emit "canonical database migrations" "PASS" "operational and Gold runner completed"
+emit "canonical database migrations" "PASS" \
+  "operational and Gold runner completed; exact immutable receipt revalidated"
 
 write_operation_state "unfencing-databases"
 database_fence off || fail "database write fence release" "cannot reset persistent read-only defaults" 48

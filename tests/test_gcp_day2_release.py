@@ -34,6 +34,162 @@ def _load_module():
     return module
 
 
+def _load_migration_handoff():
+    path = REPO / "scripts/gcp/migration_handoff.py"
+    spec = importlib.util.spec_from_file_location("migration_handoff", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _migration_handoff_fixture(
+    tmp_path: Path,
+) -> tuple[object, Path, Path, dict[str, str]]:
+    module = _load_migration_handoff()
+    candidate = "a" * 40
+    manifest_sha = "b" * 64
+    payload = {
+        "candidate_ref": candidate,
+        "database_commit_state": "gold_operational_and_authority",
+        "receipt_dir": (
+            "/opt/modecissions/shared/operation-receipts/"
+            f"migration-{candidate}-20260812T010203Z-123"
+        ),
+        "release_manifest_sha256": manifest_sha,
+        "release_version": "1.45.207-beta",
+        "run_id": "omega_migration_123_456",
+        "status": "PASS",
+    }
+    stdout = tmp_path / "migration.stdout"
+    stdout.write_text(
+        "migration safe progress\n"
+        + module.MARKER_PREFIX
+        + json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        + "\n",
+        encoding="utf-8",
+    )
+    stdout.chmod(0o400)
+    guard = tmp_path / "migration_guard.py"
+    guard.write_text(
+        "raise SystemExit('fake guard must not execute')\n", encoding="utf-8"
+    )
+    guard.chmod(0o555)
+    return module, stdout, guard, payload
+
+
+def test_migration_handoff_revalidates_exact_receipt_before_migrated_state(
+    tmp_path: Path,
+) -> None:
+    module, stdout, guard, payload = _migration_handoff_fixture(tmp_path)
+    commands: list[list[str]] = []
+
+    def fake_runner(command: list[str], **kwargs: object):
+        commands.append(command)
+        assert kwargs["env"] == {
+            "HOME": "/var/empty",
+            "LANG": "C",
+            "LC_ALL": "C",
+            "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
+            "PYTHONHASHSEED": "0",
+            "PYTHONIOENCODING": "utf-8:strict",
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONSAFEPATH": "1",
+        }
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        return subprocess.CompletedProcess(command, 0, (canonical + "\n").encode(), b"")
+
+    result = module.validate_handoff(
+        stdout,
+        guard,
+        candidate_ref="a" * 40,
+        release_version="1.45.207-beta",
+        manifest_sha="b" * 64,
+        runner=fake_runner,
+    )
+    assert result == payload
+    assert len(commands) == 1
+    assert "validate-success-receipt" in commands[0]
+    assert payload["receipt_dir"] in commands[0]
+    assert payload["run_id"] in commands[0]
+
+    deploy = _read("scripts/gcp/day2-release.sh")
+    launcher = deploy.index("scripts/run_db_migrations.py")
+    handoff = deploy.index("scripts/gcp/migration_handoff.py", launcher)
+    migrated = deploy.index('write_operation_state "migrated"', handoff)
+    assert launcher < handoff < migrated
+
+
+@pytest.mark.parametrize("mutation", ["duplicate_marker", "fail", "extra_field"])
+def test_migration_handoff_rejects_ambiguous_or_nonterminal_marker(
+    tmp_path: Path, mutation: str
+) -> None:
+    module, stdout, guard, payload = _migration_handoff_fixture(tmp_path)
+    if mutation == "duplicate_marker":
+        stdout.chmod(0o600)
+        with stdout.open("a", encoding="utf-8") as destination:
+            destination.write(
+                module.MARKER_PREFIX
+                + json.dumps(payload, sort_keys=True, separators=(",", ":"))
+                + "\n"
+            )
+    else:
+        if mutation == "fail":
+            payload["status"] = "FAIL"
+        else:
+            payload["unreviewed"] = "value"
+        stdout.chmod(0o600)
+        stdout.write_text(
+            module.MARKER_PREFIX
+            + json.dumps(payload, sort_keys=True, separators=(",", ":"))
+            + "\n",
+            encoding="utf-8",
+        )
+    stdout.chmod(0o400)
+    with pytest.raises(SystemExit, match="migration handoff"):
+        module.validate_handoff(
+            stdout,
+            guard,
+            candidate_ref="a" * 40,
+            release_version="1.45.207-beta",
+            manifest_sha="b" * 64,
+            runner=lambda *_args, **_kwargs: pytest.fail(
+                "receipt validator must not run for an invalid marker"
+            ),
+        )
+
+
+def test_migration_handoff_rejects_linked_stdout_and_validator_disagreement(
+    tmp_path: Path,
+) -> None:
+    module, stdout, guard, payload = _migration_handoff_fixture(tmp_path)
+    linked = tmp_path / "linked.stdout"
+    os.link(stdout, linked)
+    with pytest.raises(SystemExit, match="links"):
+        module.validate_handoff(
+            stdout,
+            guard,
+            candidate_ref="a" * 40,
+            release_version="1.45.207-beta",
+            manifest_sha="b" * 64,
+        )
+    linked.unlink()
+
+    def disagree(command: list[str], **_kwargs: object):
+        return subprocess.CompletedProcess(command, 0, b"{}\n", b"")
+
+    with pytest.raises(SystemExit, match="did not revalidate exactly"):
+        module.validate_handoff(
+            stdout,
+            guard,
+            candidate_ref="a" * 40,
+            release_version="1.45.207-beta",
+            manifest_sha="b" * 64,
+            runner=disagree,
+        )
+
+
 def test_gcp_release_overlay_covers_exactly_15_proprietary_images() -> None:
     overlay = _read("infra/terraform-gcp/release/docker-compose.release.yml")
     lock_names = set(re.findall(r"image: \$\{(OMEGA_GCP_IMAGE_[A-Z0-9_]+):", overlay))
@@ -124,6 +280,65 @@ def test_gcp_day2_shell_is_syntax_valid(script: str) -> None:
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_image_preflight_selects_authority_mode_before_first_use(
+    tmp_path: Path,
+) -> None:
+    source = _read("scripts/gcp/image-preflight.sh")
+    root_guard = """if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+  echo "ERROR: image-preflight.sh must run through sudo" >&2
+  exit 10
+fi"""
+    assert source.count(root_guard) == 1
+    source = source.replace(root_guard, ": # test-only root boundary")
+    source = source.replace(
+        'exec 9>"/var/lock/omega-gcp-day2.lock"',
+        f'exec 9>"{tmp_path / "day2.lock"}"',
+    )
+    candidate = tmp_path / "image-preflight.sh"
+    candidate.write_text(source, encoding="utf-8")
+    candidate.chmod(0o700)
+    helper_ref = "a" * 40
+    result = subprocess.run(
+        [
+            "/bin/bash",
+            "-p",
+            str(candidate),
+            helper_ref,
+            f"gs://omega-test/deploy-artifacts/{helper_ref}/repo.tar.gz",
+            "1",
+            "1",
+            "b" * 64,
+            f"candidate-{helper_ref}",
+            helper_ref,
+            "1.45.207-beta",
+            "candidate",
+            "emmanuelnavaromero02-commits",
+            "staging",
+            "",
+            "release",
+            f"sha256:{'c' * 64}",
+            "1",
+            "1",
+            "d" * 64,
+        ],
+        cwd=REPO,
+        env={
+            **os.environ,
+            "OMEGA_GCP_APP_ROOT": str(tmp_path / "app"),
+            "OMEGA_GCP_SAFE_IO": "/usr/bin/false",
+        },
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "AUTHORITY_MODE: unbound variable" not in result.stderr
+    assert source.index('AUTHORITY_MODE="candidate"') < source.index(
+        'if [[ "$AUTHORITY_MODE" == "published" ]]'
+    )
 
 
 def test_backup_operation_state_python_helper_compiles_and_runs(
@@ -312,7 +527,8 @@ def test_reused_release_lock_and_evidence_reject_path_and_mode_drift() -> None:
     assert "not stat.S_ISREG(info.st_mode)" in release
     assert "stat.S_IMODE(info.st_mode) != 0o400" in release
     assert "set(payload) != expected_keys" in release
-    assert '"tree_sha256": sys.argv[10]' in release
+    assert '"tree_sha256": sys.argv[14]' in release
+    assert '"tree_sha256": sys.argv[12]' in release
     assert release.index('chmod -R a-w "$RELEASE_TMP"') < release.index(
         'TREE_SHA256="$($SAFE_IO tree-sha256 --root "$RELEASE_TMP" --require-read-only)"'
     )
@@ -347,8 +563,15 @@ def test_deploy_fails_closed_and_promotes_only_after_all_gates() -> None:
     assert "host-owned env and generated GCP overlay are canonical" in deploy
     assert 'CURRENT_ENV="${OLD_RELEASE}/infra/.env"' not in deploy
     assert '"${OLD_RELEASE}/infra/docker-compose.gcp.yml"' not in deploy
-    assert "OMEGA_GCP_GHCR_AUTH_RUNNER" in deploy
+    assert "OMEGA_GCP_GHCR_AUTH_RUNNER" not in deploy
+    assert "ghcr-release-bundles/${DEPLOY_REF}" in deploy
+    assert "install-ghcr-release-bundle.py" in deploy
+    assert '"$AUTH_RUNNER" "$BUNDLE_PREFLIGHT"' in deploy
+    assert "${SHARED_ROOT}/bin/ghcr-auth-run" not in deploy
     assert 'OMEGA_GHCR_PULL_SECRET_VERSION="$GHCR_SECRET_VERSION"' in deploy
+    assert (
+        'OMEGA_RELEASE_ANNOTATED_TAG_OBJECT_FILE="$ANNOTATED_TAG_OBJECT_FILE"' in deploy
+    )
     assert "pull.log" not in deploy
     assert "15/15 tag=${TARGET_TAG}" in deploy
     assert '"schema_version": 2' in deploy
@@ -358,7 +581,8 @@ def test_deploy_fails_closed_and_promotes_only_after_all_gates() -> None:
         in deploy
     )
     assert "named volume identity changed" in deploy
-    assert "scripts/apply_db_migrations.sh" in deploy
+    assert "scripts/run_db_migrations.py" in deploy
+    assert 'OMEGA_MIGRATION_RELEASE_ATTESTATION="$RELEASE_MARKER"' in deploy
     assert "/readyz?require_data=1" in deploy
     assert "--scheduler stopped --one-shots" in deploy
     assert "--scheduler required --one-shots" in deploy
@@ -379,7 +603,7 @@ def test_deploy_fails_closed_and_promotes_only_after_all_gates() -> None:
 
     pull = deploy.index("private GHCR release pull")
     fence = deploy.index('"${COMPOSE[@]}" stop --timeout 60')
-    migrate = deploy.index("scripts/apply_db_migrations.sh")
+    migrate = deploy.index("scripts/run_db_migrations.py")
     readiness = deploy.index("candidate data readiness")
     exact_runtime = deploy.index("exact pre-scheduler runtime")
     scheduler = deploy.index("up -d --no-build --pull never airflow-scheduler")
@@ -395,6 +619,72 @@ def test_deploy_fails_closed_and_promotes_only_after_all_gates() -> None:
         < scheduler
         < promotion
     )
+
+
+def test_immutable_artifact_captures_exact_gcloud_generation_and_checksums(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_module()
+    archive = tmp_path / "repo.tar.gz"
+    archive.write_bytes(b"exact immutable archive bytes")
+    deploy_ref = "a" * 40
+    artifact_sha = module.sha256_file(archive)
+    artifact_md5 = module.md5_base64_file(archive)
+    commands: list[list[str]] = []
+
+    def fake_run(
+        command: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        if "describe" in command:
+            payload = {
+                "generation": "123456789",
+                "metageneration": "1",
+                "size": archive.stat().st_size,
+                "crc32c_hash": "AAAAAA==",
+                "md5_hash": artifact_md5,
+                "custom_fields": {
+                    "omega-artifact-sha256": artifact_sha,
+                    "omega-deploy-ref": deploy_ref,
+                },
+            }
+            return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+        if command[-2].endswith("#123456789"):
+            Path(command[-1]).write_bytes(archive.read_bytes())
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(module, "run", fake_run)
+    result = module.upload_artifact_immutable(
+        archive, "omega-source-bucket", deploy_ref, artifact_sha
+    )
+    assert result.generation == "123456789"
+    assert result.metageneration == "1"
+    assert result.crc32c == "AAAAAA=="
+    assert result.md5 == artifact_md5
+    assert f"--content-md5={artifact_md5}" in commands[0]
+
+
+def test_immutable_artifact_rejects_non_idempotent_upload_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_module()
+    archive = tmp_path / "repo.tar.gz"
+    archive.write_bytes(b"archive")
+    calls = 0
+
+    def fake_run(
+        command: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        nonlocal calls
+        calls += 1
+        return subprocess.CompletedProcess(command, 1, "", "permission denied")
+
+    monkeypatch.setattr(module, "run", fake_run)
+    with pytest.raises(RuntimeError, match="permission denied"):
+        module.upload_artifact_immutable(
+            archive, "omega-source-bucket", "a" * 40, module.sha256_file(archive)
+        )
+    assert calls == 2
 
 
 def test_backup_is_writer_fenced_versioned_and_immutable() -> None:
@@ -535,6 +825,16 @@ def test_day2_consumes_published_sealed_authority_and_lock_byte_for_byte() -> No
     deploy = _read("scripts/gcp/day2-release.sh")
     assert 'PUBLISHED_MANIFEST_SHA256="${18:-}"' in deploy
     assert 'PUBLISHED_TAG_OBJECT_SHA="${19:-}"' in deploy
+    assert 'ARTIFACT_METAGENERATION="${20:-}"' in deploy
+    assert 'ARTIFACT_CRC32C="${21:-}"' in deploy
+    assert 'ARTIFACT_MD5="${22:-}"' in deploy
+    for field in (
+        '"artifact_uri"',
+        '"artifact_metageneration"',
+        '"artifact_crc32c"',
+        '"artifact_md5"',
+    ):
+        assert field in deploy
     assert "OMEGA_GCP_IMAGE_AUTHORITY_MODE=published" in deploy
     assert 'cmp "$PUBLISHED_PREFLIGHT_LOCK" "$NEW_LOCK_ENV"' in deploy
     assert 'cmp "$PUBLISHED_PREFLIGHT_AUTHORITY" "$NEW_IMAGE_AUTHORITY"' in deploy
@@ -1242,6 +1542,8 @@ def test_migration_runner_accepts_only_a_safe_explicit_project_and_env() -> None
         "OMEGA_MIGRATION_BASELINE_MANIFEST_SHA256=",
         "OMEGA_MIGRATION_RELEASE_MANIFEST=",
         "OMEGA_MIGRATION_RELEASE_MANIFEST_SHA256=",
+        'OMEGA_MIGRATION_RELEASE_ATTESTATION="$RELEASE_MARKER"',
+        '/usr/bin/python3 -I "${RELEASE_DIR}/scripts/run_db_migrations.py"',
     ):
         assert binding in deploy
 
@@ -1748,6 +2050,10 @@ def test_authenticated_image_preflight_is_15_of_15_and_server_owned() -> None:
     assert 'image_count":15' in preflight
     assert "ghcr-auth-run.sh" in preflight
     assert "preflight-release-images.sh" in preflight
+    assert "install-ghcr-release-bundle.py" in preflight
+    assert "image-locks/.${TARGET_REF}.tmp.$$" in preflight
+    assert "${WORKDIR}/${HELPER_REF}" in preflight
+    assert "release-authority/${TARGET_REF}" in preflight
     assert "versions/latest" not in preflight
     assert "GHCR_SECRET_VERSION" in preflight
     assert "credential output suppressed" in preflight

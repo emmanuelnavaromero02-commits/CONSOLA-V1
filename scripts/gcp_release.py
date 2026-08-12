@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import argparse
 import base64
+import binascii
+import dataclasses
 import hashlib
 import http.client
 import json
@@ -119,14 +121,24 @@ class ArtifactRef:
     generation: str
     size_bytes: int
     sha256: str
+    metageneration: str = ""
+    crc32c: str = ""
+    md5: str = ""
 
     def as_dict(self) -> dict[str, str | int]:
-        return {
+        value: dict[str, str | int] = {
             "uri": self.uri,
             "generation": self.generation,
             "size_bytes": self.size_bytes,
             "sha256": self.sha256,
         }
+        optional = {
+            "metageneration": self.metageneration,
+            "crc32c": self.crc32c,
+            "md5": self.md5,
+        }
+        value.update({name: item for name, item in optional.items() if item})
+        return value
 
 
 @dataclass(frozen=True)
@@ -134,6 +146,7 @@ class BoundReleaseIdentity:
     version: str
     manifest_digest: str
     tag_object_sha: str
+    tag_object_bytes: bytes = dataclasses.field(default=b"", compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -1118,6 +1131,15 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def md5_base64_file(path: Path) -> str:
+    """Return GCS's base64 MD5 integrity value (not a security identity)."""
+    digest = hashlib.md5(usedforsecurity=False)
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return base64.b64encode(digest.digest()).decode("ascii")
+
+
 def _fsync_directory(path: Path) -> None:
     descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
     try:
@@ -1199,6 +1221,22 @@ def git(*args: str, timeout: int = 120) -> str:
     if result.returncode != 0:
         raise RuntimeError(redact(result.stderr or result.stdout))
     return result.stdout.strip()
+
+
+def git_bytes(*args: str, timeout: int = 120) -> bytes:
+    """Read one Git object without text normalization or trailing-byte loss."""
+    result = subprocess.run(
+        ["git", *args],
+        cwd=REPO,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=timeout,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(redact(result.stderr.decode("utf-8", errors="replace")))
+    return result.stdout
 
 
 def require_canonical_origin() -> str:
@@ -1289,7 +1327,19 @@ def validate_bound_release_identity(
         tag, deploy_ref, require_main=require_main
     )
     tag_object_sha = git("rev-parse", f"refs/tags/{tag}")
-    raw_tag = git("cat-file", "tag", f"refs/tags/{tag}")
+    raw_tag_bytes = git_bytes("cat-file", "tag", f"refs/tags/{tag}")
+    if not 1 <= len(raw_tag_bytes) <= 1024 * 1024:
+        raise ValueError("annotated release tag object has an invalid size")
+    computed_tag_object = hashlib.sha1(  # noqa: S324 - Git object identity is SHA-1.
+        f"tag {len(raw_tag_bytes)}\0".encode("ascii") + raw_tag_bytes,
+        usedforsecurity=False,
+    ).hexdigest()
+    if computed_tag_object != tag_object_sha:
+        raise ValueError("annotated release tag bytes differ from their Git object ID")
+    try:
+        raw_tag = raw_tag_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("annotated release tag is not strict UTF-8") from exc
     raw_headers, separator, message = raw_tag.partition("\n\n")
     if not separator:
         raise ValueError("annotated release tag has no manifest-binding message")
@@ -1314,7 +1364,9 @@ def validate_bound_release_identity(
         raise ValueError(
             "annotated release tag must contain one exact sealed manifest binding"
         )
-    return BoundReleaseIdentity(version, bindings[0], tag_object_sha)
+    return BoundReleaseIdentity(
+        version, bindings[0], tag_object_sha, tag_object_bytes=raw_tag_bytes
+    )
 
 
 def _positive_decimal(value: object, *, field: str) -> str:
@@ -1387,7 +1439,9 @@ def _read_candidate_manifest_artifact(
     try:
         descriptor = os.open(expected, flags)
     except OSError as exc:
-        raise RuntimeError("release-candidate workflow artifact is unavailable") from exc
+        raise RuntimeError(
+            "release-candidate workflow artifact is unavailable"
+        ) from exc
     try:
         info = os.fstat(descriptor)
         if (
@@ -1436,15 +1490,16 @@ def _read_candidate_manifest_artifact(
         or payload.get("registry") != "ghcr.io"
         or payload.get("release_tag") != f"v{version}"
         or payload.get("repository") != CANONICAL_GITHUB_REPOSITORY
-        or payload.get("source")
-        != f"https://github.com/{CANONICAL_GITHUB_REPOSITORY}"
+        or payload.get("source") != f"https://github.com/{CANONICAL_GITHUB_REPOSITORY}"
         or payload.get("source_sha") != source_sha
         or payload.get("version") != version
         or not isinstance(payload.get("images"), list)
         or len(payload["images"]) != 15
     ):
         raise RuntimeError("release-candidate workflow artifact identity differs")
-    canonical = (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    canonical = (
+        json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode()
     if raw != canonical:
         raise RuntimeError("release-candidate workflow artifact is not canonical JSON")
     return raw
@@ -1461,9 +1516,7 @@ def validate_candidate_workflow_authority(
     ):
         raise ValueError("candidate workflow VERSION is invalid")
     run_id = _positive_decimal(run_id, field="candidate workflow run ID")
-    run_attempt = _positive_decimal(
-        run_attempt, field="candidate workflow run attempt"
-    )
+    run_attempt = _positive_decimal(run_attempt, field="candidate workflow run attempt")
     run_payload = _gh_api_json(
         f"/repos/{CANONICAL_GITHUB_REPOSITORY}/actions/runs/{run_id}"
     )
@@ -1527,7 +1580,9 @@ def validate_candidate_workflow_authority(
     ):
         raise RuntimeError("release-candidate workflow artifact metadata differs")
 
-    with tempfile.TemporaryDirectory(prefix="omega-release-candidate-authority-") as temp:
+    with tempfile.TemporaryDirectory(
+        prefix="omega-release-candidate-authority-"
+    ) as temp:
         destination = Path(temp) / "artifact"
         destination.mkdir(mode=0o700)
         downloaded = run(
@@ -1843,11 +1898,25 @@ def create_archive(deploy_ref: str, destination: Path) -> str:
 
 
 def _custom_metadata(payload: dict[str, Any]) -> dict[str, str]:
-    for key in ("metadata", "customMetadata", "custom_metadata"):
+    found: list[dict[str, str]] = []
+    for key in ("custom_fields", "metadata", "customMetadata", "custom_metadata"):
         value = payload.get(key)
         if isinstance(value, dict):
-            return {str(k): str(v) for k, v in value.items()}
-    return {}
+            found.append({str(k): str(v) for k, v in value.items()})
+    if not found:
+        return {}
+    if any(value != found[0] for value in found[1:]):
+        raise RuntimeError("cloud object custom metadata aliases disagree")
+    return found[0]
+
+
+def _cloud_object_value(payload: dict[str, Any], *aliases: str) -> Any:
+    found = [payload[name] for name in aliases if name in payload]
+    if not found:
+        raise KeyError(aliases[0])
+    if any(value != found[0] for value in found[1:]):
+        raise ValueError(f"cloud object metadata aliases disagree: {aliases[0]}")
+    return found[0]
 
 
 def upload_artifact_immutable(
@@ -1857,6 +1926,7 @@ def upload_artifact_immutable(
         raise ValueError("invalid GCS source bucket")
     uri = f"gs://{bucket}/deploy-artifacts/{deploy_ref}/repo.tar.gz"
     metadata = f"omega-artifact-sha256={artifact_sha256},omega-deploy-ref={deploy_ref}"
+    artifact_md5 = md5_base64_file(archive)
     upload = run(
         [
             "gcloud",
@@ -1866,10 +1936,28 @@ def upload_artifact_immutable(
             str(archive),
             uri,
             "--if-generation-match=0",
+            f"--content-md5={artifact_md5}",
             f"--custom-metadata={metadata}",
         ],
         timeout=600,
     )
+    if upload.returncode != 0:
+        # Idempotent retries are allowed only when the exact immutable object
+        # already exists. Every other upload failure remains fail-closed.
+        probe = run(
+            [
+                "gcloud",
+                "--quiet",
+                "storage",
+                "objects",
+                "describe",
+                uri,
+                "--format=json",
+            ],
+            timeout=120,
+        )
+        if probe.returncode != 0:
+            raise RuntimeError(redact(upload.stderr or upload.stdout))
     # Whether this process created the object or hit generation-match=0 on an
     # idempotent retry, trust only the exact stored generation and bytes. Custom
     # metadata remains useful evidence but is never the integrity decision.
@@ -1886,15 +1974,29 @@ def upload_artifact_immutable(
         timeout=120,
     )
     if describe.returncode != 0:
-        raise RuntimeError(redact(upload.stderr or upload.stdout))
+        raise RuntimeError(redact(describe.stderr or describe.stdout))
     try:
         payload = json.loads(describe.stdout)
         generation = str(payload["generation"])
+        metageneration = str(payload["metageneration"])
         size_bytes = int(payload["size"])
+        crc32c = str(_cloud_object_value(payload, "crc32c_hash", "crc32c"))
+        stored_md5 = str(_cloud_object_value(payload, "md5_hash", "md5Hash"))
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise RuntimeError("immutable artifact metadata is malformed") from exc
     if not re.fullmatch(r"[1-9][0-9]*", generation):
         raise RuntimeError("immutable artifact generation is invalid")
+    if not re.fullmatch(r"[1-9][0-9]*", metageneration):
+        raise RuntimeError("immutable artifact metageneration is invalid")
+    try:
+        decoded_crc32c = base64.b64decode(crc32c, validate=True)
+        decoded_md5 = base64.b64decode(stored_md5, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise RuntimeError("immutable artifact GCS checksums are malformed") from exc
+    if len(decoded_crc32c) != 4 or len(decoded_md5) != 16:
+        raise RuntimeError("immutable artifact GCS checksum lengths differ")
+    if stored_md5 != artifact_md5:
+        raise RuntimeError("immutable artifact stored MD5 differs")
     if size_bytes != archive.stat().st_size or size_bytes < 1:
         raise RuntimeError("immutable artifact stored size differs")
     existing = _custom_metadata(payload)
@@ -1916,7 +2018,15 @@ def upload_artifact_immutable(
             or sha256_file(downloaded) != artifact_sha256
         ):
             raise RuntimeError("immutable artifact readback bytes differ")
-    return ArtifactRef(uri, generation, size_bytes, artifact_sha256)
+    return ArtifactRef(
+        uri,
+        generation,
+        size_bytes,
+        artifact_sha256,
+        metageneration,
+        crc32c,
+        stored_md5,
+    )
 
 
 def upload_reconciliation_manifest_immutable(
@@ -2123,6 +2233,7 @@ def remote_script(
     arguments: list[str],
     timeout: int,
     companion_scripts: dict[str, Path] | None = None,
+    companion_files: dict[str, bytes] | None = None,
 ) -> RemoteResult:
     if not script.is_file():
         raise FileNotFoundError(script)
@@ -2136,11 +2247,15 @@ def remote_script(
     script_b64 = base64.b64encode(script_bytes).decode("ascii")
     helper_b64 = base64.b64encode(helper_bytes).decode("ascii")
     companion_lines: list[str] = []
+    companion_names: set[str] = set()
     for name, path in sorted((companion_scripts or {}).items()):
         if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", name) is None:
             raise ValueError("remote companion script name is invalid")
         if not path.is_file() or path.is_symlink():
             raise FileNotFoundError(path)
+        if name in companion_names:
+            raise ValueError("remote companion name is duplicated")
+        companion_names.add(name)
         value = path.read_bytes()
         encoded = base64.b64encode(value).decode("ascii")
         digest = hashlib.sha256(value).hexdigest()
@@ -2148,6 +2263,23 @@ def remote_script(
             (
                 f"printf '%s' '{encoded}' | base64 -d > \"$remote_root/{name}\"",
                 f'chmod 0700 "$remote_root/{name}"',
+                f'test "$(sha256sum "$remote_root/{name}" | awk \'{{print $1}}\')" = "{digest}"',
+            )
+        )
+    for name, value in sorted((companion_files or {}).items()):
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", name) is None:
+            raise ValueError("remote companion file name is invalid")
+        if name in companion_names:
+            raise ValueError("remote companion name is duplicated")
+        if not isinstance(value, bytes) or not 1 <= len(value) <= 1024 * 1024:
+            raise ValueError("remote companion file bytes are invalid")
+        companion_names.add(name)
+        encoded = base64.b64encode(value).decode("ascii")
+        digest = hashlib.sha256(value).hexdigest()
+        companion_lines.extend(
+            (
+                f"printf '%s' '{encoded}' | base64 -d > \"$remote_root/{name}\"",
+                f'chmod 0400 "$remote_root/{name}"',
                 f'test "$(sha256sum "$remote_root/{name}" | awk \'{{print $1}}\')" = "{digest}"',
             )
         )
@@ -4490,10 +4622,17 @@ def command_image_preflight(args: argparse.Namespace) -> int:
         raise SystemExit(
             "image preflight requires --confirm or CONFIRM_GCP_IMAGE_PREFLIGHT=1"
         )
-    if not re.fullmatch(r"[1-9][0-9]*", args.ghcr_secret_version):
-        raise SystemExit("GCP_GHCR_SECRET_VERSION must be an explicit numeric version")
+    if args.ghcr_secret_version and not re.fullmatch(
+        r"[1-9][0-9]*", args.ghcr_secret_version
+    ):
+        raise SystemExit(
+            "GCP_GHCR_SECRET_VERSION, when set, must assert one numeric version"
+        )
     require_canonical_ghcr_owner(args.ghcr_owner)
-    candidate_inputs = (args.candidate_workflow_run_id, args.candidate_workflow_run_attempt)
+    candidate_inputs = (
+        args.candidate_workflow_run_id,
+        args.candidate_workflow_run_attempt,
+    )
     rollback_inputs = (
         args.rollback_runtime_images_uri,
         args.rollback_runtime_images_generation,
@@ -4523,6 +4662,7 @@ def command_image_preflight(args: argparse.Namespace) -> int:
             purpose=args.purpose,
         )
     authority_arguments: list[str]
+    tag_object_bytes: bytes | None = None
     if target_kind == "candidate":
         if any(rollback_inputs):
             raise SystemExit("candidate preflight cannot use rollback image authority")
@@ -4567,13 +4707,9 @@ def command_image_preflight(args: argparse.Namespace) -> int:
                 args.rollback_runtime_images_uri,
             )
             is None
-            or re.fullmatch(
-                r"[1-9][0-9]*", args.rollback_runtime_images_generation
-            )
+            or re.fullmatch(r"[1-9][0-9]*", args.rollback_runtime_images_generation)
             is None
-            or re.fullmatch(
-                r"[1-9][0-9]*", args.rollback_runtime_images_size_bytes
-            )
+            or re.fullmatch(r"[1-9][0-9]*", args.rollback_runtime_images_size_bytes)
             is None
             or SHA256_RE.fullmatch(args.rollback_runtime_images_sha256) is None
             or not args.rollback_backup_manifest_uri.startswith(expected_prefix)
@@ -4582,13 +4718,9 @@ def command_image_preflight(args: argparse.Namespace) -> int:
                 args.rollback_backup_manifest_uri,
             )
             is None
-            or re.fullmatch(
-                r"[1-9][0-9]*", args.rollback_backup_manifest_generation
-            )
+            or re.fullmatch(r"[1-9][0-9]*", args.rollback_backup_manifest_generation)
             is None
-            or re.fullmatch(
-                r"[1-9][0-9]*", args.rollback_backup_manifest_size_bytes
-            )
+            or re.fullmatch(r"[1-9][0-9]*", args.rollback_backup_manifest_size_bytes)
             is None
             or SHA256_RE.fullmatch(args.rollback_backup_manifest_sha256) is None
             or runtime_prefix != manifest_prefix
@@ -4626,6 +4758,7 @@ def command_image_preflight(args: argparse.Namespace) -> int:
             release_identity.manifest_digest,
             release_identity.tag_object_sha,
         ]
+        tag_object_bytes = release_identity.tag_object_bytes
         controller_authority = {
             "mode": "published",
             "manifest_digest": release_identity.manifest_digest,
@@ -4689,6 +4822,11 @@ def command_image_preflight(args: argparse.Namespace) -> int:
             *authority_arguments,
         ],
         timeout=args.timeout_seconds,
+        companion_files=(
+            {"annotated-tag.object": tag_object_bytes}
+            if tag_object_bytes is not None
+            else None
+        ),
     )
     checks, payload = parse_remote(
         result.stdout,
@@ -4816,11 +4954,8 @@ def validate_backup_result_payload(
         or payload.get("backup_bucket") != backup_bucket
         or payload.get("lakehouse_bucket") != lakehouse_bucket
         or SHA256_RE.fullmatch(str(payload.get("manifest_sha256", ""))) is None
-        or SHA256_RE.fullmatch(str(payload.get("runtime_images_sha256", "")))
-        is None
-        or re.fullmatch(
-            r"[1-9][0-9]*", str(payload.get("manifest_generation", ""))
-        )
+        or SHA256_RE.fullmatch(str(payload.get("runtime_images_sha256", ""))) is None
+        or re.fullmatch(r"[1-9][0-9]*", str(payload.get("manifest_generation", "")))
         is None
         or re.fullmatch(
             r"[1-9][0-9]*", str(payload.get("runtime_images_generation", ""))
@@ -5211,8 +5346,12 @@ def command_deploy(args: argparse.Namespace) -> int:
         raise SystemExit("GCP_BACKUP_MANIFEST_GENERATION must be explicit")
     if not re.fullmatch(r"[1-9][0-9]*", args.backup_manifest_size_bytes):
         raise SystemExit("GCP_BACKUP_MANIFEST_SIZE_BYTES must be explicit")
-    if not re.fullmatch(r"[1-9][0-9]*", args.ghcr_secret_version):
-        raise SystemExit("GCP_GHCR_SECRET_VERSION must be an explicit numeric version")
+    if args.ghcr_secret_version and not re.fullmatch(
+        r"[1-9][0-9]*", args.ghcr_secret_version
+    ):
+        raise SystemExit(
+            "GCP_GHCR_SECRET_VERSION, when set, must assert one numeric version"
+        )
     require_canonical_ghcr_owner(args.ghcr_owner)
     release_identity = validate_bound_release_identity(args.tag, args.deploy_ref)
     version = release_identity.version
@@ -5370,8 +5509,14 @@ def command_deploy(args: argparse.Namespace) -> int:
             args.project,
             release_identity.manifest_digest,
             release_identity.tag_object_sha,
+            artifact.metageneration,
+            artifact.crc32c,
+            artifact.md5,
         ],
         timeout=args.timeout_seconds,
+        companion_files={
+            "annotated-tag.object": release_identity.tag_object_bytes,
+        },
     )
     deploy_completed_at = datetime.now(timezone.utc)
     checks, payload = parse_remote(
