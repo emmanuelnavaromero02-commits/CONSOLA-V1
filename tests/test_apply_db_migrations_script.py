@@ -68,6 +68,15 @@ def _migration_script() -> str:
     return (REPO_ROOT / "scripts/apply_db_migrations.sh").read_text()
 
 
+def test_migration_ensures_checksum_column_on_preexisting_ledger():
+    """Older init scripts (esp. init_gold) create schema_migrations WITHOUT the
+    checksum column; CREATE TABLE IF NOT EXISTS then skips it, and the checksum
+    INSERT fails. The runner must ADD COLUMN IF NOT EXISTS for BOTH databases so
+    it is forward-compatible with a pre-existing ledger (release-gate regression)."""
+    script = _migration_script()
+    assert script.count("ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS checksum TEXT;") == 2
+
+
 def test_migration_records_a_checksum_per_applied_file():
     """Every applied migration must persist sha256(file) into the ledger so a
     later run can detect that a historical migration was edited."""

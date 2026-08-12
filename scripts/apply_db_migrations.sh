@@ -92,6 +92,10 @@ assert_no_drift_and_backfill() {
 }
 
 "${PSQL[@]}" -c "CREATE TABLE IF NOT EXISTS schema_migrations (id BIGSERIAL PRIMARY KEY, filename TEXT NOT NULL UNIQUE, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), checksum TEXT);"
+# Older init scripts (esp. init_gold) create schema_migrations WITHOUT checksum;
+# CREATE TABLE IF NOT EXISTS then skips and the checksum INSERT fails. Ensure the
+# column exists regardless of how the table was first created (forward-compatible).
+"${PSQL[@]}" -c "ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS checksum TEXT;"
 
 for sql in "${ROOT_DIR}"/infra/init/[0-9][0-9]*_*.sql; do
   filename="$(basename "${sql}")"
@@ -118,6 +122,8 @@ SQL
 done
 
 "${PSQL_GOLD[@]}" -c "CREATE TABLE IF NOT EXISTS schema_migrations (id BIGSERIAL PRIMARY KEY, filename TEXT NOT NULL UNIQUE, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), checksum TEXT);"
+# Gold init scripts (36_/37_...) create schema_migrations without checksum.
+"${PSQL_GOLD[@]}" -c "ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS checksum TEXT;"
 
 for sql in "${ROOT_DIR}"/infra/init_gold/[0-9][0-9]_*.sql; do
   filename="gold/$(basename "${sql}")"
