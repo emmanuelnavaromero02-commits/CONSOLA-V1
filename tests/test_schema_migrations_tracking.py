@@ -69,12 +69,16 @@ def test_migration_43_creates_table_if_missing():
 def test_runner_registers_every_applied_migration():
     """Regression: the migration runner must INSERT into
     schema_migrations for every NN_*.sql it applies. Otherwise the
-    drift we're backfilling here would just re-accumulate."""
+    drift we're backfilling here would just re-accumulate.
+
+    Checkpoint 5.5: the ledger row now also carries the file's sha256
+    checksum so a later run can detect a historical migration that was
+    edited on disk (drift). The registration guarantee is unchanged."""
     src = RUNNER.read_text(encoding="utf-8")
     # The runner pattern: for each file, BEGIN, \i it, INSERT, COMMIT.
     assert "INSERT INTO schema_migrations" in src
     assert "ON CONFLICT (filename) DO NOTHING" in src
-    assert "VALUES (:'filename', NOW())" in src
+    assert "VALUES (:'filename', :'checksum', NOW())" in src
 
 
 def test_schema_migrations_filename_is_TEXT_UNIQUE():

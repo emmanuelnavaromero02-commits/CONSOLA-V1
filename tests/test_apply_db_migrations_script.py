@@ -55,3 +55,75 @@ def test_migration_46_picked_up_by_runner_glob():
     assert matched.index("45_cascade_to_restrict.sql") < matched.index(
         "46_sap_jobs_permissions.sql"
     )
+
+
+# ── Checkpoint 5.5: migration-release contract (drift + lock + timeouts) ─────
+#
+# main already skips files already in schema_migrations (forward-only) and wraps
+# each apply in a BEGIN/COMMIT with ON_ERROR_STOP (atomic). The 5.5 delta closes
+# two real gaps: the ``checksum`` column was declared but never populated (no
+# drift detection), and there was no lock preventing two concurrent appliers.
+
+def _migration_script() -> str:
+    return (REPO_ROOT / "scripts/apply_db_migrations.sh").read_text()
+
+
+def test_migration_records_a_checksum_per_applied_file():
+    """Every applied migration must persist sha256(file) into the ledger so a
+    later run can detect that a historical migration was edited."""
+    script = _migration_script()
+    # A portable sha256 helper (Linux coreutils or BSD/macOS shasum).
+    assert "sha256sum" in script and "shasum -a 256" in script
+    # The ledger row now carries the checksum on insert.
+    assert "INSERT INTO schema_migrations (filename, checksum, applied_at)" in script
+    assert ":'checksum'" in script
+
+
+def test_migration_detects_and_fails_closed_on_drift():
+    """A file already recorded whose bytes changed on disk is drift; the runner
+    must stop, not silently skip it."""
+    script = _migration_script()
+    assert "assert_no_drift_and_backfill" in script
+    assert "DRIFT" in script
+    # The recorded checksum is compared against the on-disk hash and the run
+    # exits non-zero when they disagree.
+    assert "recorded" in script and "!= \"${disk}\"" in script
+    # A legacy row with a NULL checksum is backfilled, not treated as drift.
+    assert "UPDATE schema_migrations SET checksum" in script
+
+
+def test_migration_is_forward_only_and_idempotent():
+    """Files already in the ledger are skipped: forward-only + idempotent."""
+    script = _migration_script()
+    assert "SELECT 1 FROM schema_migrations WHERE filename" in script
+    assert "skip ${filename}" in script
+
+
+def test_migration_uses_transaction_scoped_advisory_lock():
+    """Split-brain prevention: a second concurrent applier cannot interleave a
+    migration; the advisory lock is transaction-scoped so it releases on commit."""
+    script = _migration_script()
+    assert "pg_advisory_xact_lock" in script
+    # Host-level single-writer guard as defence-in-depth (best-effort; the DB
+    # advisory lock is the real guard where flock is unavailable).
+    assert "flock" in script
+
+
+def test_migration_bounds_statements_with_set_local_timeouts():
+    """A migration must not be able to hang forever holding locks."""
+    script = _migration_script()
+    assert "SET LOCAL lock_timeout" in script
+    assert "SET LOCAL statement_timeout" in script
+    assert "SET LOCAL idle_in_transaction_session_timeout" in script
+
+
+def test_migration_lock_and_advisory_are_inside_the_apply_transaction():
+    """The advisory lock and timeouts must sit between BEGIN and the \\i so they
+    protect the actual apply, not a stray session."""
+    script = _migration_script()
+    # BEGIN ... SET LOCAL ... advisory lock ... \i ... INSERT ... COMMIT ordering.
+    begin = script.index("BEGIN;")
+    lock = script.index("pg_advisory_xact_lock", begin)
+    include = script.index("\\i /docker-entrypoint-initdb.d/${filename}", begin)
+    commit = script.index("COMMIT;", begin)
+    assert begin < lock < include < commit
