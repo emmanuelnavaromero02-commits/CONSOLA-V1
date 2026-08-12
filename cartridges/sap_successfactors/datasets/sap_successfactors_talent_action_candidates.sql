@@ -123,7 +123,9 @@ SELECT
     'Promociones fuera de calibracion' AS title,
     'Revisar promociones observadas contra cajas de alto potencial.' AS recommendation,
     'recommendation_only' AS status,
-    'permutation' AS method,
+    -- Heuristica de conteo SQL, NO un test de permutacion. El test de
+    -- significancia real (motor de plataforma) se conecta en Fase 10/11.
+    'promotion_alignment_heuristic' AS method,
     'server_validated_v1' AS source_validation_status,
     CURRENT_TIMESTAMP AS generated_at
 FROM metrics
@@ -151,7 +153,9 @@ SELECT
     'Movilidad por fit de rol' AS title,
     'Evaluar cambio de rol antes de PIP cuando el ajuste sea bajo.' AS recommendation,
     'recommendation_only' AS status,
-    'assignment' AS method,
+    -- Heuristica de conteo SQL sobre role_fit, NO un optimizador de asignacion.
+    -- El motor OR-Tools real se conecta en Fase 10/11.
+    'role_fit_heuristic' AS method,
     'server_validated_v1' AS source_validation_status,
     CURRENT_TIMESTAMP AS generated_at
 FROM metrics

@@ -259,7 +259,7 @@ SELECT
     'Promociones fuera de calibracion' AS title,
     'Revisar promociones observadas contra cajas de alto potencial.' AS recommendation,
     'recommendation_only' AS status,
-    'permutation' AS method,
+    'promotion_alignment_heuristic' AS method,
     CURRENT_TIMESTAMP AS generated_at
 FROM metrics
 WHERE misaligned_promotion_count > 0
@@ -285,7 +285,7 @@ SELECT
     'Movilidad por fit de rol' AS title,
     'Evaluar cambio de rol antes de PIP cuando el ajuste sea bajo.' AS recommendation,
     'recommendation_only' AS status,
-    'assignment' AS method,
+    'role_fit_heuristic' AS method,
     CURRENT_TIMESTAMP AS generated_at
 FROM metrics
 WHERE role_fit_review_count > 0
