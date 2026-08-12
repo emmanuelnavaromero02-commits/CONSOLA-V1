@@ -20,8 +20,9 @@ jobs:
     outputs:
       python: ${{ steps.detect.outputs.python }}
       frontend: ${{ steps.detect.outputs.frontend }}
+      infra: ${{ steps.detect.outputs.infra }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
       - id: detect
@@ -32,9 +33,9 @@ jobs:
     if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
 
@@ -47,7 +48,13 @@ jobs:
             --output-format=github \
             console workspace vault refinement mcp-infra cartridges airflow \
             scripts/reconcile_pipeline_runs.py \
-            scripts/gcp/runtime_contract.py scripts/gcp/safe_io.py
+            scripts/gcp/generate_release_authority.py \
+            scripts/gcp/iam_revoke_transaction.py \
+            scripts/gcp/runtime_contract.py scripts/gcp/safe_io.py \
+            scripts/gcp/startup_metadata_transaction.py \
+            scripts/gcp/terraform_plan_contract.py \
+            scripts/gcp/terraform_transaction.py \
+            scripts/gcp/verify_edge_tls.py scripts/gcp/verify_terraform_plan.py
 
       - name: ruff format --check (advisory)
         continue-on-error: true
@@ -55,16 +62,22 @@ jobs:
           ruff format --check \
             console workspace vault refinement mcp-infra cartridges airflow \
             scripts/reconcile_pipeline_runs.py \
-            scripts/gcp/runtime_contract.py scripts/gcp/safe_io.py
+            scripts/gcp/generate_release_authority.py \
+            scripts/gcp/iam_revoke_transaction.py \
+            scripts/gcp/runtime_contract.py scripts/gcp/safe_io.py \
+            scripts/gcp/startup_metadata_transaction.py \
+            scripts/gcp/terraform_plan_contract.py \
+            scripts/gcp/terraform_transaction.py \
+            scripts/gcp/verify_edge_tls.py scripts/gcp/verify_terraform_plan.py
 
   console-next:
     needs: changes
     if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
           cache: npm
@@ -79,7 +92,7 @@ jobs:
       - name: Vitest coverage
         run: npm --prefix console-next run test:coverage
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: console-next-coverage
@@ -96,9 +109,119 @@ jobs:
           npm --prefix console-next run export:copy
           git diff --exit-code -- console/app/static/console-next
 
+  gcp-host-foundation:
+    needs: changes
+    if: needs.changes.outputs.infra == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: 1.11.6
+          tofu_wrapper: false
+
+      - name: Validate GCP host shell
+        run: |
+          bash -n scripts/gcp/*.sh
+          bash -n infra/terraform-gcp/templates/startup.sh.tftpl
+          dash -n infra/terraform-gcp/templates/omega-operation-gate
+
+      - name: ShellCheck exact GCP host shell
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck=0.10.0-1
+          test "$(shellcheck --version | awk '/^version:/ {print $2}')" = "0.10.0"
+          shellcheck -x scripts/gcp/*.sh
+          shellcheck -s sh infra/terraform-gcp/templates/omega-operation-gate
+
+      - name: Compile and lint GCP Python contracts
+        run: |
+          python -I -m py_compile \
+            scripts/gcp/generate_release_authority.py \
+            scripts/gcp/iam_revoke_transaction.py \
+            scripts/gcp/runtime_contract.py scripts/gcp/safe_io.py \
+            scripts/gcp/startup_metadata_transaction.py \
+            scripts/gcp/terraform_plan_contract.py \
+            scripts/gcp/terraform_transaction.py \
+            scripts/gcp/verify_edge_tls.py scripts/gcp/verify_terraform_plan.py \
+            scripts/ci_changed_areas.py
+          python -m pip install ruff==0.6.9 pytest==8.3.5 PyYAML==6.0.2
+          ruff check scripts/gcp/generate_release_authority.py \
+            scripts/gcp/iam_revoke_transaction.py \
+            scripts/gcp/runtime_contract.py scripts/gcp/safe_io.py \
+            scripts/gcp/startup_metadata_transaction.py \
+            scripts/gcp/terraform_plan_contract.py \
+            scripts/gcp/terraform_transaction.py \
+            scripts/gcp/verify_edge_tls.py scripts/gcp/verify_terraform_plan.py \
+            scripts/ci_changed_areas.py tests/test_gcp_edge_tls.py \
+            tests/test_gcp_iam_revoke_transaction.py \
+            tests/test_gcp_operation_gate.py \
+            tests/test_gcp_release_authority.py \
+            tests/test_gcp_runtime_contract.py tests/test_gcp_safe_io.py \
+            tests/test_gcp_startup_metadata_transaction.py \
+            tests/test_gcp_terraform_contract.py \
+            tests/test_gcp_terraform_plan.py \
+            tests/test_gcp_terraform_transaction.py \
+            tests/test_ci_changed_areas.py \
+            tests/test_ci_detector_self_protection.py \
+            tests/test_control_room_evidence_keyring_runtime.py \
+            tests/test_lint_gate_contract.py
+          ruff format --check scripts/gcp/generate_release_authority.py \
+            scripts/gcp/iam_revoke_transaction.py \
+            scripts/gcp/runtime_contract.py scripts/gcp/safe_io.py \
+            scripts/gcp/startup_metadata_transaction.py \
+            scripts/gcp/terraform_plan_contract.py \
+            scripts/gcp/terraform_transaction.py \
+            scripts/gcp/verify_edge_tls.py scripts/gcp/verify_terraform_plan.py \
+            scripts/ci_changed_areas.py tests/test_gcp_edge_tls.py \
+            tests/test_gcp_iam_revoke_transaction.py \
+            tests/test_gcp_operation_gate.py \
+            tests/test_gcp_release_authority.py \
+            tests/test_gcp_runtime_contract.py tests/test_gcp_safe_io.py \
+            tests/test_gcp_startup_metadata_transaction.py \
+            tests/test_gcp_terraform_contract.py \
+            tests/test_gcp_terraform_plan.py \
+            tests/test_gcp_terraform_transaction.py \
+            tests/test_ci_changed_areas.py \
+            tests/test_ci_detector_self_protection.py \
+            tests/test_control_room_evidence_keyring_runtime.py \
+            tests/test_lint_gate_contract.py
+
+      - name: GCP host focal contracts
+        run: |
+          python -I -m pytest -q \
+            tests/test_gcp_operation_gate.py \
+            tests/test_gcp_edge_tls.py \
+            tests/test_gcp_ghcr_private_auth.py \
+            tests/test_gcp_iam_revoke_transaction.py \
+            tests/test_gcp_release_authority.py \
+            tests/test_gcp_runtime_contract.py \
+            tests/test_gcp_safe_io.py \
+            tests/test_gcp_startup_metadata_transaction.py \
+            tests/test_gcp_terraform_contract.py \
+            tests/test_gcp_terraform_plan.py \
+            tests/test_gcp_terraform_transaction.py \
+            tests/test_ci_changed_areas.py \
+            tests/test_ci_detector_self_protection.py \
+            tests/test_control_room_evidence_keyring_runtime.py \
+            tests/test_lint_gate_contract.py
+
+      - name: OpenTofu format
+        run: tofu -chdir=infra/terraform-gcp fmt -check -recursive
+
+      - name: OpenTofu validate
+        run: |
+          tofu -chdir=infra/terraform-gcp init -backend=false -lockfile=readonly
+          tofu -chdir=infra/terraform-gcp validate
+
   no-lint-needed:
     needs: changes
-    if: needs.changes.outputs.python == 'false' && needs.changes.outputs.frontend == 'false'
+    if: needs.changes.outputs.python == 'false' && needs.changes.outputs.frontend == 'false' && needs.changes.outputs.infra == 'false'
     runs-on: ubuntu-latest
     steps:
       - run: echo "No Python or console-next files changed; lint jobs skipped."
@@ -109,6 +232,7 @@ jobs:
       - changes
       - ruff
       - console-next
+      - gcp-host-foundation
       - no-lint-needed
     if: ${{ always() }}
     runs-on: ubuntu-latest
@@ -120,8 +244,10 @@ jobs:
           CHANGES_RESULT: ${{ needs.changes.result }}
           PYTHON: ${{ needs.changes.outputs.python }}
           FRONTEND: ${{ needs.changes.outputs.frontend }}
+          INFRA: ${{ needs.changes.outputs.infra }}
           RUFF_RESULT: ${{ needs.ruff.result }}
           CONSOLE_NEXT_RESULT: ${{ needs['console-next'].result }}
+          GCP_HOST_FOUNDATION_RESULT: ${{ needs['gcp-host-foundation'].result }}
           NO_LINT_NEEDED_RESULT: ${{ needs['no-lint-needed'].result }}
         run: |
           set -euo pipefail
@@ -150,14 +276,17 @@ jobs:
           changes_result="${CHANGES_RESULT-}"
           python="${PYTHON-}"
           frontend="${FRONTEND-}"
+          infra="${INFRA-}"
           if [[ "$changes_result" != "success" ]]; then
             fail "changes must be success; got '${changes_result:-<missing>}'"
           fi
           expect_bool "python" "$python"
           expect_bool "frontend" "$frontend"
+          expect_bool "infra" "$infra"
 
           expected_ruff="skipped"
           expected_console_next="skipped"
+          expected_gcp_host_foundation="skipped"
           expected_no_lint="skipped"
           if [[ "$python" == "true" ]]; then
             expected_ruff="success"
@@ -165,10 +294,14 @@ jobs:
           if [[ "$frontend" == "true" ]]; then
             expected_console_next="success"
           fi
-          if [[ "$python" == "false" && "$frontend" == "false" ]]; then
+          if [[ "$infra" == "true" ]]; then
+            expected_gcp_host_foundation="success"
+          fi
+          if [[ "$python" == "false" && "$frontend" == "false" && "$infra" == "false" ]]; then
             expected_no_lint="success"
           fi
 
           expect_result "ruff" "${RUFF_RESULT-}" "$expected_ruff"
           expect_result "console-next" "${CONSOLE_NEXT_RESULT-}" "$expected_console_next"
+          expect_result "gcp-host-foundation" "${GCP_HOST_FOUNDATION_RESULT-}" "$expected_gcp_host_foundation"
           expect_result "no-lint-needed" "${NO_LINT_NEEDED_RESULT-}" "$expected_no_lint"

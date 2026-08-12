@@ -99,6 +99,13 @@ def test_both_bandit_commands_scan_both_detectors() -> None:
         targets = command.split("--severity-level", 1)[0]
         assert "scripts/ci_changed_areas.py" in targets
         assert "scripts/ci_control_room_paths.py" in targets
+        assert "scripts/gcp/generate_release_authority.py" in targets
+        assert "scripts/gcp/iam_revoke_transaction.py" in targets
+        assert "scripts/gcp/startup_metadata_transaction.py" in targets
+        assert "scripts/gcp/terraform_plan_contract.py" in targets
+        assert "scripts/gcp/terraform_transaction.py" in targets
+        assert "scripts/gcp/verify_edge_tls.py" in targets
+        assert "scripts/gcp/verify_terraform_plan.py" in targets
 
 
 def test_changed_path_cannot_inject_github_output(tmp_path: Path) -> None:
@@ -191,3 +198,126 @@ def test_detector_change_fails_closed_when_scanner_does_not_succeed(
 ) -> None:
     env = {**PROTECTED_ENV, scanner: result}
     assert_gate_rejects(run_gate(SECURITY_SCRIPT, env, tmp_path))
+
+
+def test_lint_workflow_runs_pinned_opentofu_validation_for_infra() -> None:
+    changes = load_job("lint.yml", "changes")
+    assert changes["outputs"]["infra"] == "${{ steps.detect.outputs.infra }}"
+    assert changes["steps"][0]["uses"] == (
+        "actions/checkout@" "11bd71901bbe5b1630ceea73d27597364c9af683"
+    )
+
+    job = load_job("lint.yml", "gcp-host-foundation")
+    assert job["needs"] == "changes"
+    assert job["if"] == "needs.changes.outputs.infra == 'true'"
+    assert job["runs-on"] == "ubuntu-latest"
+    checkout = next(
+        step
+        for step in job["steps"]
+        if str(step.get("uses", "")).startswith("actions/checkout@")
+    )
+    assert checkout["uses"] == (
+        "actions/checkout@" "11bd71901bbe5b1630ceea73d27597364c9af683"
+    )
+    setup = next(
+        step
+        for step in job["steps"]
+        if str(step.get("uses", "")).startswith("opentofu/setup-opentofu@")
+    )
+    assert setup["uses"] == (
+        "opentofu/setup-opentofu@" "a1320f892987e89d278cc92dc5adc984fb93aca4"
+    )
+    assert setup["with"] == {
+        "tofu_version": "1.11.6",
+        "tofu_wrapper": False,
+    }
+    commands = "\n".join(step.get("run", "") for step in job["steps"] if "run" in step)
+    assert "bash -n scripts/gcp/*.sh" in commands
+    assert "dash -n infra/terraform-gcp/templates/omega-operation-gate" in commands
+    assert "shellcheck=0.10.0-1" in commands
+    assert "tests/test_gcp_edge_tls.py" in commands
+    assert "tests/test_gcp_ghcr_private_auth.py" in commands
+    assert "tests/test_gcp_iam_revoke_transaction.py" in commands
+    assert "tests/test_gcp_release_authority.py" in commands
+    assert "tests/test_gcp_startup_metadata_transaction.py" in commands
+    assert "tests/test_gcp_terraform_plan.py" in commands
+    assert "tests/test_gcp_terraform_transaction.py" in commands
+    assert "tests/test_lint_gate_contract.py" in commands
+    assert "scripts/gcp/generate_release_authority.py" in commands
+    assert "scripts/gcp/iam_revoke_transaction.py" in commands
+    assert "scripts/gcp/startup_metadata_transaction.py" in commands
+    assert "scripts/gcp/terraform_plan_contract.py" in commands
+    assert "scripts/gcp/terraform_transaction.py" in commands
+    assert "scripts/gcp/verify_terraform_plan.py" in commands
+    assert "ruff format --check" in commands
+    assert "tofu -chdir=infra/terraform-gcp fmt -check -recursive" in commands
+    assert (
+        "tofu -chdir=infra/terraform-gcp init -backend=false -lockfile=readonly"
+        in commands
+    )
+    assert "tofu -chdir=infra/terraform-gcp validate" in commands
+
+
+def test_foundation_operator_surfaces_are_self_protected_by_change_detector() -> None:
+    detector = DETECTOR.read_text(encoding="utf-8")
+    for path in (
+        'r"^Makefile$"',
+        'r"^docs/runbook/16_gcp_canonical_day2_release[.]md$"',
+    ):
+        assert detector.count(path) >= 2
+    for contract in (
+        "tests/test_gcp_startup_metadata_transaction.py",
+        "tests/test_gcp_terraform_transaction.py",
+    ):
+        assert contract in detector
+
+
+def _lint_gate_env(**overrides: str) -> dict[str, str]:
+    values = {
+        "CHANGES_RESULT": "success",
+        "PYTHON": "false",
+        "FRONTEND": "false",
+        "INFRA": "true",
+        "RUFF_RESULT": "skipped",
+        "CONSOLE_NEXT_RESULT": "skipped",
+        "GCP_HOST_FOUNDATION_RESULT": "success",
+        "NO_LINT_NEEDED_RESULT": "skipped",
+    }
+    values.update(overrides)
+    return values
+
+
+def test_lint_gate_requires_successful_gcp_host_validation(tmp_path: Path) -> None:
+    gate = load_job("lint.yml", "lint-gate")
+    assert "gcp-host-foundation" in gate["needs"]
+    step = gate["steps"][0]
+    assert step["env"]["INFRA"] == "${{ needs.changes.outputs.infra }}"
+    assert step["env"]["GCP_HOST_FOUNDATION_RESULT"] == (
+        "${{ needs['gcp-host-foundation'].result }}"
+    )
+    result = run_gate(step["run"], _lint_gate_env(), tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("result", ["skipped", "failure", "cancelled", ""])
+def test_lint_gate_fails_closed_when_gcp_host_validation_is_not_success(
+    result: str,
+    tmp_path: Path,
+) -> None:
+    script = load_job("lint.yml", "lint-gate")["steps"][0]["run"]
+    actual = run_gate(
+        script,
+        _lint_gate_env(GCP_HOST_FOUNDATION_RESULT=result),
+        tmp_path,
+    )
+    assert_gate_rejects(actual)
+
+
+@pytest.mark.parametrize("infra", ["", "yes", "TRUE", "0"])
+def test_lint_gate_rejects_non_boolean_infra_output(
+    infra: str,
+    tmp_path: Path,
+) -> None:
+    script = load_job("lint.yml", "lint-gate")["steps"][0]["run"]
+    actual = run_gate(script, _lint_gate_env(INFRA=infra), tmp_path)
+    assert_gate_rejects(actual)

@@ -5,10 +5,52 @@ billing_account_id = "01A3E0-B708F4-6EA299"
 region      = "us-central1"
 zone        = "us-central1-a"
 environment = "staging"
+canonical_writer      = true
+# Foundation apply retains the legacy project-wide grant. A separate guarded
+# IAM transaction changes this to true only after exact per-secret preproof.
+revoke_project_secret_accessor = false
+# Preserve the canonical writer in place: pin exactly the live boot disk's
+# sourceImage self-link. Any other value can force VM replacement and is a
+# release blocker. Never use ubuntu-2204-lts or another mutable family here.
+boot_image = "projects/ubuntu-os-cloud/global/images/ubuntu-2204-jammy-v20260702"
+
+# Resolve every literal version against the reviewed immutable boot image.
+# Docker's five packages must come from download.docker.com jammy stable.
+host_package_versions = {
+  ca_certificates       = "<exact-apt-version>"
+  curl                  = "<exact-apt-version>"
+  gnupg                 = "<exact-apt-version>"
+  iptables              = "<exact-apt-version>"
+  jq                    = "<exact-apt-version>"
+  lsof                  = "<exact-apt-version>"
+  openssl               = "<exact-apt-version>"
+  python3               = "<exact-apt-version>"
+  docker_ce             = "<exact-apt-version>"
+  docker_ce_cli         = "<exact-apt-version>"
+  containerd_io         = "<exact-apt-version>"
+  docker_buildx_plugin  = "<exact-apt-version>"
+  docker_compose_plugin = "<exact-apt-version>"
+}
+
+# Provision values server-side first, then review and pin their numeric
+# versions here. Empty required entries fail validation; HMAC stays paired.
+secret_versions = {
+  control_room_evidence_signing_key_id        = "<numeric-version>"
+  control_room_evidence_signing_key           = "<numeric-version>"
+  control_room_evidence_signing_previous_keys = "<numeric-version>"
+  gcs_hmac_access_key_id                      = ""
+  gcs_hmac_secret_access_key                  = ""
+}
 
 source_bucket = "omega-gcp-source-project-dd5ba7fa-374c-4554-ae6"
 source_object         = "deploy-artifacts/<sha>/repo.tar.gz"
 source_sha            = "<sha>"
+# Reviewed commit that owns the embedded bootstrap/controller helpers. It may
+# intentionally differ from source_sha when recovering the current live release.
+controller_ref        = "<controller-sha>"
+# Set only in a later reviewed controller plan when consuming the exact PR1
+# foundation receipt. Never infer these values from the live marker.
+foundation_predecessor = null
 source_generation     = "<positive-gcs-generation>"
 source_size_bytes     = 1
 source_archive_sha256 = "<64-lowercase-hex>"
@@ -18,11 +60,12 @@ boot_disk_size_gb = 60
 data_disk_size_gb = 150
 admin_email       = "emmanuelromero060601@gmail.com"
 
-# Leave empty for technical HTTP/IP mode. Set both domains to enable managed
-# HTTPS, host rules, and HTTP -> HTTPS redirect on the main public IP.
-public_console_domain   = ""
-public_workspace_domain = ""
-enable_https            = true
+# Canonical runtime domains and the pre-existing shared Certificate Manager
+# map. The failed legacy Compute certificate is intentionally quarantined.
+public_console_domain         = "console.7businesssolutions.com"
+public_workspace_domain       = "workspace.7businesssolutions.com"
+enable_https                  = true
+certificate_manager_map_name = "sevenbs-production-map"
 
 # GCP lakehouse is exposed to the app through the GCS S3-compatible XML API.
 lakehouse_endpoint    = "storage.googleapis.com"

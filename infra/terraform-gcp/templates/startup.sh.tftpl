@@ -1,7 +1,16 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
 set -Eeuo pipefail
 set +x
 umask 077
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+unset BASH_ENV ENV CDPATH GLOBIGNORE
+unset PYTHONPATH PYTHONHOME PYTHONSTARTUP PYTHONINSPECT PYTHONUSERBASE \
+  PYTHONWARNINGS PYTHONBREAKPOINT PYTHONSAFEPATH
+unset SSL_CERT_FILE SSL_CERT_DIR REQUESTS_CA_BUNDLE CURL_CA_BUNDLE SSLKEYLOGFILE
+unset DOCKER_CONTEXT DOCKER_TLS DOCKER_TLS_VERIFY DOCKER_CERT_PATH \
+  DOCKER_API_VERSION DOCKER_CONFIG DOCKER_AUTH_CONFIG COMPOSE_FILE \
+  COMPOSE_PATH_SEPARATOR COMPOSE_PROFILES COMPOSE_PROJECT_NAME
+export DOCKER_HOST=unix:///run/docker.sock
 
 # No Terraform value is interpolated as shell syntax. The only data boundary is
 # one base64 JSON document validated by omega-safe-io before any scalar is used.
@@ -10,6 +19,9 @@ RUNTIME_BASE64='${bootstrap_runtime_base64}'
 SAFE_IO_BASE64='${safe_io_base64}'
 METADATA_FIREWALL_BASE64='${metadata_firewall_base64}'
 OPERATION_GUARD_BASE64='${operation_guard_base64}'
+OPERATION_WATCHDOG_BASE64='${operation_watchdog_base64}'
+REBOOT_RUNTIME_BASE64='${reboot_runtime_base64}'
+RUNTIME_CONTRACT_BASE64='${runtime_contract_base64}'
 RUNTIME_ROOT="$(mktemp -d /run/omega-gcp-bootstrap.XXXXXX)"
 
 cleanup() {
@@ -22,20 +34,267 @@ cleanup() {
   exit "$status"
 }
 trap cleanup EXIT
-
-# Fence Docker before decoding configuration or running the bootstrap engine.
-systemctl stop docker.service docker.socket containerd.service >/dev/null 2>&1 || true
-systemctl mask --runtime docker.service docker.socket containerd.service >/dev/null 2>&1 || true
-
-printf '%s' "$RUNTIME_BASE64" | base64 -d > "$RUNTIME_ROOT/bootstrap-runtime.sh"
-printf '%s' "$SAFE_IO_BASE64" | base64 -d > "$RUNTIME_ROOT/safe_io.py"
-printf '%s' "$METADATA_FIREWALL_BASE64" | base64 -d > "$RUNTIME_ROOT/metadata-firewall.sh"
-printf '%s' "$OPERATION_GUARD_BASE64" | base64 -d > "$RUNTIME_ROOT/omega-operation-gate"
+# Each reviewed helper is independently compressed with byte identity intact.
+printf '%s' "$RUNTIME_BASE64" | base64 -d | gzip -d > "$RUNTIME_ROOT/bootstrap-runtime.sh"
+printf '%s' "$SAFE_IO_BASE64" | base64 -d | gzip -d > "$RUNTIME_ROOT/safe_io.py"
+printf '%s' "$METADATA_FIREWALL_BASE64" | base64 -d | gzip -d > "$RUNTIME_ROOT/metadata-firewall.sh"
+printf '%s' "$OPERATION_GUARD_BASE64" | base64 -d | gzip -d > "$RUNTIME_ROOT/omega-operation-gate"
+printf '%s' "$OPERATION_WATCHDOG_BASE64" | base64 -d | gzip -d > "$RUNTIME_ROOT/operation-watchdog.sh"
+printf '%s' "$REBOOT_RUNTIME_BASE64" | base64 -d | gzip -d > "$RUNTIME_ROOT/reboot-runtime.sh"
+printf '%s' "$RUNTIME_CONTRACT_BASE64" | base64 -d | gzip -d > "$RUNTIME_ROOT/runtime_contract.py"
+printf '%s' "$STARTUP_CONFIG_BASE64" > "$RUNTIME_ROOT/startup-config.base64"
 chmod 0700 "$RUNTIME_ROOT/bootstrap-runtime.sh" "$RUNTIME_ROOT/safe_io.py" \
-  "$RUNTIME_ROOT/metadata-firewall.sh" "$RUNTIME_ROOT/omega-operation-gate"
+  "$RUNTIME_ROOT/metadata-firewall.sh" "$RUNTIME_ROOT/omega-operation-gate" \
+  "$RUNTIME_ROOT/operation-watchdog.sh" "$RUNTIME_ROOT/reboot-runtime.sh" \
+  "$RUNTIME_ROOT/runtime_contract.py"
+chmod 0600 "$RUNTIME_ROOT/startup-config.base64"
+"$RUNTIME_ROOT/safe_io.py" evidence-root || {
+  echo "[omega-startup] canonical evidence root validation failed" >&2
+  exit 10
+}
+TERMINAL_RECEIPT="$RUNTIME_ROOT/terminal-state.json"
+STARTUP_CONTRACT_SHA256="$(/usr/bin/sha256sum "$RUNTIME_ROOT/startup-config.base64" | /usr/bin/cut -d' ' -f1)"
+printf '%s' "$STARTUP_CONFIG_BASE64" | \
+  "$RUNTIME_ROOT/safe_io.py" startup-config \
+    --output "$RUNTIME_ROOT/startup-contract.json" || {
+  echo "[omega-startup] startup contract validation failed" >&2
+  exit 10
+}
+"$RUNTIME_ROOT/safe_io.py" host-identity-install --startup-contract "$RUNTIME_ROOT/startup-contract.json" --output /etc/omega/gcp-host-identity.json >/dev/null || { echo "[omega-startup] server-owned GCP host identity publication failed" >&2; exit 10; }
+STARTUP_IDENTITIES="$("$RUNTIME_ROOT/safe_io.py" startup-identities \
+  --path "$RUNTIME_ROOT/startup-contract.json")" || {
+  echo "[omega-startup] startup identity extraction failed" >&2
+  exit 10
+}
+IFS=$'\t' read -r SOURCE_SHA CONTROLLER_REF <<<"$STARTUP_IDENTITIES"
+if [[ ! "$STARTUP_CONTRACT_SHA256" =~ ^[0-9a-f]{64}$ || \
+      ! "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ || \
+      ! "$CONTROLLER_REF" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "[omega-startup] startup identity extraction failed" >&2
+  exit 10
+fi
+STARTUP_PREDECESSOR="$("$RUNTIME_ROOT/safe_io.py" startup-predecessor \
+  --path "$RUNTIME_ROOT/startup-contract.json")" || {
+  echo "[omega-startup] startup predecessor extraction failed" >&2
+  exit 10
+}
+EXPECTED_FOUNDATION_MARKER_SHA256=""
+EXPECTED_FOUNDATION_WATCHDOG_STATE_SHA256=""
+EXPECTED_FOUNDATION_DEPLOY_REF=""
+EXPECTED_FOUNDATION_HELPER_REF=""
+EXPECTED_FOUNDATION_STARTUP_SHA256=""
+if [[ "$STARTUP_PREDECESSOR" != "none" ]]; then
+  IFS=$'\t' read -r EXPECTED_FOUNDATION_MARKER_SHA256 \
+    EXPECTED_FOUNDATION_WATCHDOG_STATE_SHA256 EXPECTED_FOUNDATION_DEPLOY_REF EXPECTED_FOUNDATION_HELPER_REF \
+    EXPECTED_FOUNDATION_STARTUP_SHA256 <<<"$STARTUP_PREDECESSOR"
+  if [[ ! "$EXPECTED_FOUNDATION_MARKER_SHA256" =~ ^[0-9a-f]{64}$ || \
+        ! "$EXPECTED_FOUNDATION_WATCHDOG_STATE_SHA256" =~ ^[0-9a-f]{64}$ || \
+        ! "$EXPECTED_FOUNDATION_DEPLOY_REF" =~ ^[0-9a-f]{40}$ || \
+        ! "$EXPECTED_FOUNDATION_HELPER_REF" =~ ^[0-9a-f]{40}$ || \
+        ! "$EXPECTED_FOUNDATION_STARTUP_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "[omega-startup] startup predecessor extraction failed" >&2
+    exit 10
+  fi
+fi
 
-export OMEGA_GCP_STARTUP_CONFIG_BASE64="$STARTUP_CONFIG_BASE64"
-export OMEGA_GCP_SAFE_IO_SOURCE="$RUNTIME_ROOT/safe_io.py"
-export OMEGA_GCP_METADATA_FIREWALL_SOURCE="$RUNTIME_ROOT/metadata-firewall.sh"
-export OMEGA_GCP_OPERATION_GUARD_SOURCE="$RUNTIME_ROOT/omega-operation-gate"
-"$RUNTIME_ROOT/bootstrap-runtime.sh"
+# Existing runtimes stop only after every mutator restart policy is durably fenced.
+APP_ROOT=/opt/modecissions
+STATE_LINK="$APP_ROOT/shared/runtime-state"
+OPERATION_MARKER="$APP_ROOT/shared/operation-state.json"
+RESTART_POLICY_STATE="$APP_ROOT/shared/restart-policy-fence.json"
+early_fail_closed() {
+  local reason="$1" fence_rc
+  echo "[omega-startup] $reason; hard-fencing runtime" >&2
+  set +e
+  OMEGA_GCP_SAFE_IO="$RUNTIME_ROOT/safe_io.py" \
+    "$RUNTIME_ROOT/operation-watchdog.sh" fence-external 1 \
+    "$OPERATION_MARKER"
+  fence_rc=$?
+  set -e
+  if [[ "$fence_rc" != "0" ]]; then
+    echo "[omega-startup] early hard fence did not complete" >&2
+    exit 90
+  fi
+  exit 92
+}
+runtime_unit_active() {
+  local unit
+  for unit in docker.service docker.socket containerd.service; do
+    if timeout --signal=TERM --kill-after=2s 10s \
+        systemctl is-active --quiet "$unit"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+if [[ -e "$STATE_LINK" || -L "$STATE_LINK" ]]; then
+  if timeout --signal=TERM --kill-after=2s 10s \
+      systemctl is-active --quiet docker.service; then
+    "$RUNTIME_ROOT/safe_io.py" docker-runtime verify-socket >/dev/null || \
+      early_fail_closed "live Docker socket/data-root is not local before pre-fence"
+    OMEGA_GCP_APP_ROOT="$APP_ROOT" OMEGA_GCP_LEGACY_PROVENANCE_UPGRADE=1 \
+      "$RUNTIME_ROOT/omega-operation-gate" >/dev/null || \
+      early_fail_closed "live runtime state is not exact before pre-fence"
+    "$RUNTIME_ROOT/runtime_contract.py" adopt-provenance \
+      --app-root "$APP_ROOT" --compose-project infra >/dev/null || \
+      early_fail_closed "legacy runtime provenance could not be adopted exactly"
+    OMEGA_GCP_APP_ROOT="$APP_ROOT" \
+      "$RUNTIME_ROOT/omega-operation-gate" >/dev/null || \
+      early_fail_closed "adopted runtime provenance failed the canonical gate"
+    "$RUNTIME_ROOT/runtime_contract.py" live-state \
+      --app-root "$APP_ROOT" --compose-project infra >/dev/null || \
+      early_fail_closed "live runtime inventory is not exact before pre-fence"
+    "$RUNTIME_ROOT/runtime_contract.py" restart-policy prepare \
+      --app-root "$APP_ROOT" --compose-project infra \
+      --state "$RESTART_POLICY_STATE" >/dev/null || \
+      early_fail_closed "mutator restart policies could not be fenced"
+  else
+    "$RUNTIME_ROOT/runtime_contract.py" restart-policy verify-fenced \
+      --app-root "$APP_ROOT" --compose-project infra \
+      --state "$RESTART_POLICY_STATE" >/dev/null || \
+      early_fail_closed "inactive runtime lacks an exact pre-stop policy fence"
+  fi
+elif runtime_unit_active; then
+  early_fail_closed "uninitialized host has an active legacy container runtime"
+fi
+
+# With policies durably fenced (or on a genuinely fresh inactive host), make a
+# bounded best-effort unit stop before the mandatory cgroup-v2 fence.
+PRE_FENCE_INCOMPLETE=0
+timeout --signal=TERM --kill-after=2s 10s \
+  systemctl stop docker.service docker.socket containerd.service \
+  >/dev/null 2>&1 || PRE_FENCE_INCOMPLETE=1
+timeout --signal=TERM --kill-after=2s 10s \
+  systemctl mask --runtime docker.service docker.socket containerd.service \
+  >/dev/null 2>&1 || PRE_FENCE_INCOMPLETE=1
+
+# A clean daemon stop is not proof when Docker live-restore is enabled.  The
+# embedded candidate must prove the exact moby cgroups empty before bootstrap.
+OMEGA_GCP_SAFE_IO="$RUNTIME_ROOT/safe_io.py" \
+  "$RUNTIME_ROOT/operation-watchdog.sh" fence-prestart 1 \
+  "$OPERATION_MARKER"
+runtime_units_hard_fenced() {
+  local unit load_state active substate main_pid control_pid enabled enabled_rc
+  for unit in docker.service docker.socket containerd.service; do
+    load_state="$(timeout --signal=TERM --kill-after=2s 10s systemctl show \
+      "$unit" --property=LoadState --value 2>/dev/null)" || return 1
+    # A genuinely fresh host has no unit files yet. The mandatory moby-fence
+    # immediately above already proved that no Docker cgroup can survive.
+    [[ "$load_state" == "not-found" ]] && continue
+    active="$(timeout --signal=TERM --kill-after=2s 10s systemctl show \
+      "$unit" --property=ActiveState --value 2>/dev/null)" || return 1
+    substate="$(timeout --signal=TERM --kill-after=2s 10s systemctl show \
+      "$unit" --property=SubState --value 2>/dev/null)" || return 1
+    main_pid="$(timeout --signal=TERM --kill-after=2s 10s systemctl show \
+      "$unit" --property=MainPID --value 2>/dev/null)" || return 1
+    control_pid="$(timeout --signal=TERM --kill-after=2s 10s systemctl show \
+      "$unit" --property=ControlPID --value 2>/dev/null)" || return 1
+    case "$active:$substate:$main_pid:$control_pid" in
+      inactive:dead:0:0|failed:failed:0:0|failed:dead:0:0) ;;
+      *) return 1 ;;
+    esac
+    enabled_rc=0
+    enabled="$(timeout --signal=TERM --kill-after=2s 10s systemctl is-enabled \
+      "$unit" 2>/dev/null)" || enabled_rc=$?
+    case "$enabled:$enabled_rc" in
+      masked:1|masked-runtime:1) ;;
+      *) return 1 ;;
+    esac
+  done
+}
+runtime_units_hard_fenced || \
+  early_fail_closed "container runtime units or activation sockets remain available"
+if [[ "$PRE_FENCE_INCOMPLETE" == "1" ]]; then
+  echo "[omega-startup] bounded pre-fence was incomplete; hard fence recovered"
+fi
+
+set +e
+/usr/bin/timeout --signal=TERM --kill-after=60s 10920s \
+  systemd-run --quiet --wait --pipe --collect --unit=omega-gcp-operation \
+  --property=RuntimeMaxSec=10800s \
+  --property=Type=exec \
+  --property=KillMode=control-group \
+  --property=SendSIGKILL=yes \
+  --property=TimeoutStopSec=5s \
+  --setenv="OMEGA_GCP_STARTUP_CONFIG_FILE=$RUNTIME_ROOT/startup-config.base64" \
+  --setenv="OMEGA_GCP_SAFE_IO_SOURCE=$RUNTIME_ROOT/safe_io.py" \
+  --setenv="OMEGA_GCP_METADATA_FIREWALL_SOURCE=$RUNTIME_ROOT/metadata-firewall.sh" \
+  --setenv="OMEGA_GCP_OPERATION_GUARD_SOURCE=$RUNTIME_ROOT/omega-operation-gate" \
+  --setenv="OMEGA_GCP_OPERATION_WATCHDOG_SOURCE=$RUNTIME_ROOT/operation-watchdog.sh" \
+  --setenv="OMEGA_GCP_REBOOT_RUNTIME_SOURCE=$RUNTIME_ROOT/reboot-runtime.sh" \
+  --setenv="OMEGA_GCP_RUNTIME_CONTRACT_SOURCE=$RUNTIME_ROOT/runtime_contract.py" \
+  --setenv="OMEGA_GCP_STARTUP_TERMINAL_RECEIPT=$TERMINAL_RECEIPT" \
+  --setenv="OMEGA_GCP_STARTUP_CONTRACT_SHA256=$STARTUP_CONTRACT_SHA256" \
+  --setenv="OMEGA_GCP_CONTROLLER_REF=$CONTROLLER_REF" \
+  --setenv="OMEGA_GCP_EXPECTED_FOUNDATION_MARKER_SHA256=$EXPECTED_FOUNDATION_MARKER_SHA256" \
+  --setenv="OMEGA_GCP_EXPECTED_FOUNDATION_WATCHDOG_STATE_SHA256=$EXPECTED_FOUNDATION_WATCHDOG_STATE_SHA256" \
+  --setenv="OMEGA_GCP_EXPECTED_FOUNDATION_DEPLOY_REF=$EXPECTED_FOUNDATION_DEPLOY_REF" \
+  --setenv="OMEGA_GCP_EXPECTED_FOUNDATION_HELPER_REF=$EXPECTED_FOUNDATION_HELPER_REF" \
+  --setenv="OMEGA_GCP_EXPECTED_FOUNDATION_STARTUP_SHA256=$EXPECTED_FOUNDATION_STARTUP_SHA256" \
+  -- "$RUNTIME_ROOT/bootstrap-runtime.sh"
+OWNER_RC=$?
+set -e
+owner_unit_empty() {
+  "$RUNTIME_ROOT/safe_io.py" owner-unit-empty
+}
+if [[ "$OWNER_RC" == "0" ]]; then
+  OWNER_EMPTY=0
+  for _ in $(seq 1 50); do
+    if owner_unit_empty; then OWNER_EMPTY=1; break; fi
+    sleep 0.1
+  done
+  [[ "$OWNER_EMPTY" == "1" ]] || OWNER_RC=91
+fi
+if [[ "$OWNER_RC" != "0" ]]; then
+  # A fixed-unit collision can leave the earlier owner able to reauthorize the
+  # runtime. Kill and verify the complete owner cgroup before returning.
+  OMEGA_GCP_SAFE_IO="$RUNTIME_ROOT/safe_io.py" \
+    "$RUNTIME_ROOT/operation-watchdog.sh" fence-external 1 \
+    /opt/modecissions/shared/operation-state.json
+  exit "$OWNER_RC"
+fi
+
+# Trust no exit code without the exclusive receipt published by the owner.
+TERMINAL_EVIDENCE="$("$RUNTIME_ROOT/safe_io.py" terminal-receipt \
+  --path "$TERMINAL_RECEIPT" --deploy-ref "$SOURCE_SHA" \
+  --helper-ref "$CONTROLLER_REF" \
+  --startup-contract-sha256 "$STARTUP_CONTRACT_SHA256")" || \
+  early_fail_closed "owner returned without an exact terminal receipt"
+TERMINAL_STATE=""
+TERMINAL_MARKER_SHA256=""
+TERMINAL_WATCHDOG_STATE_SHA256=""
+IFS=$'\t' read -r TERMINAL_STATE TERMINAL_MARKER_SHA256 \
+  TERMINAL_WATCHDOG_STATE_SHA256 <<<"$TERMINAL_EVIDENCE"
+
+case "$TERMINAL_STATE" in
+  foundation-fenced)
+    FOUNDATION_EVIDENCE="$(OMEGA_GCP_SAFE_IO="$RUNTIME_ROOT/safe_io.py" \
+      "$RUNTIME_ROOT/operation-watchdog.sh" foundation-evidence 0 \
+      "$OPERATION_MARKER")" || \
+      early_fail_closed "foundation receipt has no exact watchdog evidence"
+    IFS=$'\t' read -r ACTUAL_MARKER_SHA ACTUAL_STATE_SHA _ \
+      <<<"$FOUNDATION_EVIDENCE"
+    [[ "$ACTUAL_MARKER_SHA" == "$TERMINAL_MARKER_SHA256" && \
+       "$ACTUAL_STATE_SHA" == "$TERMINAL_WATCHDOG_STATE_SHA256" ]] || \
+      early_fail_closed "foundation marker/watchdog state changed after receipt"
+    runtime_units_hard_fenced || \
+      early_fail_closed "foundation handoff returned with runtime units available"
+    "$RUNTIME_ROOT/safe_io.py" foundation-receipt-publish \
+      --terminal-receipt "$TERMINAL_RECEIPT" --operation-marker "$OPERATION_MARKER" \
+      --deploy-ref "$SOURCE_SHA" --helper-ref "$CONTROLLER_REF" \
+      --startup-contract-sha256 "$STARTUP_CONTRACT_SHA256" >/dev/null || \
+      early_fail_closed "durable foundation receipt publication failed"
+    ;;
+  live-recovered|live-bootstrapped)
+    "$RUNTIME_ROOT/safe_io.py" docker-runtime verify-live >/dev/null || \
+      early_fail_closed "live terminal returned without exact local Docker"
+    OMEGA_GCP_APP_ROOT="$APP_ROOT" \
+      "$RUNTIME_ROOT/omega-operation-gate" >/dev/null || \
+      early_fail_closed "live terminal returned without exact runtime state"
+    "$RUNTIME_ROOT/runtime_contract.py" live-state \
+      --app-root "$APP_ROOT" --compose-project infra >/dev/null || \
+      early_fail_closed "live terminal returned without exact runtime inventory/scheduler"
+    ;;
+  *) early_fail_closed "owner terminal state is unsupported" ;;
+esac

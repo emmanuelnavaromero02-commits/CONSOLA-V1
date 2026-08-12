@@ -8,8 +8,22 @@ locals {
     managed_by = "terraform"
   }
 
+  app_project_roles = toset(concat(
+    [
+      "roles/artifactregistry.reader",
+      "roles/logging.logWriter",
+      "roles/monitoring.metricWriter",
+    ],
+    var.revoke_project_secret_accessor ? [] : ["roles/secretmanager.secretAccessor"],
+  ))
+
   public_domains_configured = var.public_console_domain != "" && var.public_workspace_domain != ""
   public_https_enabled      = var.enable_https && local.public_domains_configured
+  certificate_manager_map_uri = (
+    local.public_https_enabled
+    ? "//certificatemanager.googleapis.com/projects/${var.project_id}/locations/global/certificateMaps/${var.certificate_manager_map_name}"
+    : ""
+  )
 
   public_domains = distinct([
     for domain in [
@@ -18,33 +32,40 @@ locals {
     ] : domain if domain != ""
   ])
 
-  technical_console_url   = "http://${google_compute_global_address.public.address}"
-  technical_workspace_url = "http://${google_compute_global_address.workspace.address}"
+  technical_console_url   = ""
+  technical_workspace_url = ""
 
   console_public_url = (
-    local.public_https_enabled
-    ? "https://${var.public_console_domain}"
-    : local.technical_console_url
+    "https://${var.public_console_domain}"
   )
 
   workspace_public_url = (
-    local.public_https_enabled
-    ? "https://${var.public_workspace_domain}"
-    : local.technical_workspace_url
+    "https://${var.public_workspace_domain}"
   )
 
-  airflow_public_url = "${local.console_public_url}/airflow"
-  lakehouse_bucket   = var.lakehouse_bucket_name != "" ? var.lakehouse_bucket_name : google_storage_bucket.lakehouse.name
+  airflow_public_url    = "${local.console_public_url}/airflow"
+  lakehouse_bucket      = var.lakehouse_bucket_name != "" ? var.lakehouse_bucket_name : google_storage_bucket.lakehouse.name
   release_backup_bucket = google_storage_bucket.release_backups.name
 
   # Version the effective reboot/bootstrap controller. The provider's
-  # metadata_startup_script field is ForceNew, so scripts/gcp_release.py
-  # reconciles these exact rendered bytes in place with metadata fingerprint
-  # CAS and verifies this hash by read-back without replacing the writer VM.
+  # metadata_startup_script field is ForceNew, so the day-2 controller must
+  # reconcile these exact rendered bytes in place with metadata fingerprint
+  # CAS and verify this hash by read-back without replacing the writer VM.
   startup_contract = {
-    schema_version = 1
-    project_id     = var.project_id
-    environment    = var.environment
+    schema_version         = 1
+    project_id             = var.project_id
+    environment            = var.environment
+    controller_ref         = var.controller_ref
+    foundation_predecessor = var.foundation_predecessor
+    # The startup controller revalidates all five values against the GCE
+    # metadata server before publishing the root-owned host identity contract.
+    host_identity = {
+      project_id            = var.project_id
+      instance_id           = "4767392334132429161"
+      instance_name         = "${local.name_prefix}-app"
+      zone                  = var.zone
+      service_account_email = google_service_account.app.email
+    }
     source = {
       bucket         = var.source_bucket
       object         = var.source_object
@@ -63,20 +84,30 @@ locals {
     admin_email              = var.admin_email
     cookie_secure            = local.public_https_enabled
     data_disk_size_bytes     = var.data_disk_size_gb * 1073741824
+    host_package_versions    = var.host_package_versions
+    secret_versions          = var.secret_versions
     lakehouse_bucket         = local.lakehouse_bucket
     release_backup_bucket    = local.release_backup_bucket
     lakehouse_endpoint       = var.lakehouse_endpoint
+    canonical_writer         = var.canonical_writer
     enable_airflow_scheduler = var.enable_airflow_scheduler
-    secret_prefix            = "omega-${var.environment}-"
-    compose_override         = templatefile("${path.module}/templates/docker-compose.gcp.yml.tftpl", {})
+    # PR1 intentionally cannot bootstrap any application runtime. A later
+    # foundation PR may change this only together with exact digest authority,
+    # pre-pull/local-ID proof and pull_policy=never for all 26 services.
+    exact_runtime_contract_ready = false
+    secret_prefix                = "omega-${var.environment}-"
+    compose_override             = templatefile("${path.module}/templates/docker-compose.gcp.yml.tftpl", {})
   }
 
   startup_script = templatefile("${path.module}/templates/startup.sh.tftpl", {
-    startup_config_base64    = base64encode(jsonencode(local.startup_contract))
-    bootstrap_runtime_base64 = base64encode(file("${path.module}/../../scripts/gcp/bootstrap-runtime.sh"))
-    metadata_firewall_base64 = base64encode(file("${path.module}/../../scripts/gcp/metadata-firewall.sh"))
-    operation_guard_base64   = base64encode(file("${path.module}/templates/omega-operation-gate"))
-    safe_io_base64           = base64encode(file("${path.module}/../../scripts/gcp/safe_io.py"))
+    startup_config_base64     = base64encode(jsonencode(local.startup_contract))
+    bootstrap_runtime_base64  = base64gzip(file("${path.module}/../../scripts/gcp/bootstrap-runtime.sh"))
+    metadata_firewall_base64  = base64gzip(file("${path.module}/../../scripts/gcp/metadata-firewall.sh"))
+    operation_guard_base64    = base64gzip(file("${path.module}/templates/omega-operation-gate"))
+    operation_watchdog_base64 = base64gzip(file("${path.module}/../../scripts/gcp/operation-watchdog.sh"))
+    reboot_runtime_base64     = base64gzip(file("${path.module}/../../scripts/gcp/reboot-runtime.sh"))
+    runtime_contract_base64   = base64gzip(file("${path.module}/../../scripts/gcp/runtime_contract.py"))
+    safe_io_base64            = base64gzip(file("${path.module}/../../scripts/gcp/safe_io.py"))
   })
 
   required_services = toset([

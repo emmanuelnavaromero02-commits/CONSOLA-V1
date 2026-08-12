@@ -157,10 +157,13 @@ resource "google_compute_url_map" "public" {
   name            = "${local.name_prefix}-url-map"
   default_service = google_compute_backend_service.console.id
 
+  # Preserve the currently served legacy workspace alias declaratively until
+  # its separately reviewed DNS/traffic cleanup. Removing it here would make
+  # the post-apply exact-inventory gate contradict this module.
   dynamic "host_rule" {
     for_each = local.public_domains_configured ? [1] : []
     content {
-      hosts        = [var.public_workspace_domain]
+      hosts        = ["gcp-workspace.7businesssolutions.com"]
       path_matcher = "workspace"
     }
   }
@@ -168,6 +171,14 @@ resource "google_compute_url_map" "public" {
   host_rule {
     hosts        = ["*"]
     path_matcher = "console"
+  }
+
+  dynamic "host_rule" {
+    for_each = local.public_domains_configured ? [1] : []
+    content {
+      hosts        = [var.public_workspace_domain]
+      path_matcher = "workspace"
+    }
   }
 
   path_matcher {
@@ -200,73 +211,9 @@ resource "google_compute_url_map" "http_redirect" {
   }
 }
 
+# Keep the legacy technical workspace map owned in state, but make it
+# unreachable from every forwarding rule. Deletion is a separate operation.
 resource "google_compute_url_map" "workspace" {
   name            = "${local.name_prefix}-workspace-url-map"
   default_service = google_compute_backend_service.workspace.id
-}
-
-resource "google_compute_managed_ssl_certificate" "public" {
-  count = local.public_https_enabled ? 1 : 0
-  name  = "${local.name_prefix}-public-cert"
-
-  managed {
-    domains = local.public_domains
-  }
-}
-
-resource "google_compute_target_http_proxy" "public" {
-  name    = "${local.name_prefix}-http-proxy"
-  url_map = google_compute_url_map.public.id
-}
-
-resource "google_compute_target_http_proxy" "public_redirect" {
-  count   = local.public_https_enabled ? 1 : 0
-  name    = "${local.name_prefix}-http-redirect-proxy"
-  url_map = google_compute_url_map.http_redirect[0].id
-}
-
-resource "google_compute_target_https_proxy" "public" {
-  count            = local.public_https_enabled ? 1 : 0
-  name             = "${local.name_prefix}-https-proxy"
-  url_map          = google_compute_url_map.public.id
-  ssl_certificates = [google_compute_managed_ssl_certificate.public[0].id]
-}
-
-resource "google_compute_target_http_proxy" "workspace" {
-  name    = "${local.name_prefix}-workspace-http-proxy"
-  url_map = google_compute_url_map.workspace.id
-}
-
-resource "google_compute_global_forwarding_rule" "http" {
-  name                  = "${local.name_prefix}-http"
-  ip_address            = google_compute_global_address.public.id
-  port_range            = "80"
-  target                = google_compute_target_http_proxy.public.id
-  load_balancing_scheme = "EXTERNAL_MANAGED"
-}
-
-resource "google_compute_global_forwarding_rule" "http_redirect" {
-  count                 = local.public_https_enabled ? 1 : 0
-  name                  = "${local.name_prefix}-http-redirect"
-  ip_address            = google_compute_global_address.public_https[0].id
-  port_range            = "80"
-  target                = google_compute_target_http_proxy.public_redirect[0].id
-  load_balancing_scheme = "EXTERNAL_MANAGED"
-}
-
-resource "google_compute_global_forwarding_rule" "https" {
-  count                 = local.public_https_enabled ? 1 : 0
-  name                  = "${local.name_prefix}-https"
-  ip_address            = google_compute_global_address.public_https[0].id
-  port_range            = "443"
-  target                = google_compute_target_https_proxy.public[0].id
-  load_balancing_scheme = "EXTERNAL_MANAGED"
-}
-
-resource "google_compute_global_forwarding_rule" "workspace_http" {
-  name                  = "${local.name_prefix}-workspace-http"
-  ip_address            = google_compute_global_address.workspace.id
-  port_range            = "80"
-  target                = google_compute_target_http_proxy.workspace.id
-  load_balancing_scheme = "EXTERNAL_MANAGED"
 }

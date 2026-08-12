@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-import re
 import os
+import re
 import subprocess
 from pathlib import Path
 
 
 REPO = Path(__file__).resolve().parents[1]
-GCP_STARTUP = REPO / "infra/terraform-gcp/templates/startup.sh.tftpl"
+GCP_BOOTSTRAP_RUNTIME = REPO / "scripts/gcp/bootstrap-runtime.sh"
 AWS_ENTRYPOINT = REPO / "scripts/aws-entrypoint.sh"
 AWS_DEPLOY = REPO / "infra/terraform/deploy"
 BOOTSTRAP_KEYS = REPO / "infra/bootstrap-keys.sh"
@@ -28,15 +28,19 @@ def _array_body(source: str, name: str) -> str:
 
 
 def test_gcp_loads_complete_evidence_keyring_before_local_bootstrap():
-    source = GCP_STARTUP.read_text(encoding="utf-8")
+    source = GCP_BOOTSTRAP_RUNTIME.read_text(encoding="utf-8")
     declared = (REPO / "infra/terraform-gcp/locals.tf").read_text(encoding="utf-8")
-    bootstrap_at = source.index("bash infra/bootstrap-keys.sh infra/.env")
+    bootstrap_at = source.index("/bin/bash -p infra/bootstrap-keys.sh infra/.env")
 
     for secret_name, env_name in KEYRING.items():
         assert f'"{secret_name}"' in declared
-        load = f"load_required_secret {secret_name} {env_name}"
-        assert load in source
-        assert source.index(load) < bootstrap_at
+        load = re.search(
+            rf"load_required_secret\s+{re.escape(secret_name)}\s+"
+            rf"(?:\\\s*)?{re.escape(env_name)}",
+            source,
+        )
+        assert load
+        assert load.start() < bootstrap_at
 
     helper = re.search(r"load_required_secret\(\) \{(?P<body>[\s\S]*?)\n\}", source)
     assert helper
@@ -46,7 +50,7 @@ def test_gcp_loads_complete_evidence_keyring_before_local_bootstrap():
     assert "export" in body
 
     for env_name in KEYRING.values():
-        persisted = f'set_env {env_name} "$${{{env_name}}}"'
+        persisted = f'set_env {env_name} "${{{env_name}}}"'
         assert persisted in source
         assert source.index(persisted) < bootstrap_at
 

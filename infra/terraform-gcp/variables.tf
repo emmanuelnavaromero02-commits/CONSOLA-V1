@@ -50,9 +50,25 @@ variable "environment" {
   description = "Deployment environment label."
   default     = "staging"
   validation {
-    condition     = can(regex("^[a-z][a-z0-9-]{0,29}$", var.environment))
+    condition     = can(regex("^[a-z]([a-z0-9-]{0,18}[a-z0-9])?$", var.environment))
     error_message = "environment is invalid."
   }
+}
+
+variable "canonical_writer" {
+  type        = bool
+  description = "Declare that this stack is the single canonical production writer."
+  default     = true
+  validation {
+    condition     = var.canonical_writer
+    error_message = "this module is canonical-writer-only; standby/technical stacks require a separate reviewed module."
+  }
+}
+
+variable "revoke_project_secret_accessor" {
+  type        = bool
+  description = "Second-phase only: remove the legacy project-wide Secret Manager grant after the exact per-secret access transaction passes."
+  default     = false
 }
 
 variable "source_bucket" {
@@ -82,6 +98,39 @@ variable "source_sha" {
   }
 }
 
+variable "controller_ref" {
+  type        = string
+  description = "Full reviewed Git SHA whose metadata-embedded bootstrap/controller helper bytes are rendered into startup_script. This is independent of the live source release SHA."
+  validation {
+    condition     = can(regex("^[0-9a-f]{40}$", var.controller_ref))
+    error_message = "controller_ref must be one full lowercase Git SHA."
+  }
+}
+
+variable "foundation_predecessor" {
+  description = "Exact reviewed PR1 foundation receipt consumed by a later controller; null for the initial/same-controller handoff."
+  type = object({
+    marker_sha256         = string
+    watchdog_state_sha256 = string
+    deploy_ref            = string
+    helper_ref            = string
+    startup_config_sha256 = string
+  })
+  default  = null
+  nullable = true
+
+  validation {
+    condition = var.foundation_predecessor == null || (
+      can(regex("^[0-9a-f]{64}$", var.foundation_predecessor.marker_sha256)) &&
+      can(regex("^[0-9a-f]{64}$", var.foundation_predecessor.watchdog_state_sha256)) &&
+      can(regex("^[0-9a-f]{40}$", var.foundation_predecessor.deploy_ref)) &&
+      can(regex("^[0-9a-f]{40}$", var.foundation_predecessor.helper_ref)) &&
+      can(regex("^[0-9a-f]{64}$", var.foundation_predecessor.startup_config_sha256))
+    )
+    error_message = "foundation_predecessor must be null or one exact reviewed foundation receipt identity."
+  }
+}
+
 variable "source_generation" {
   type        = string
   description = "Exact immutable GCS generation of source_object."
@@ -95,8 +144,8 @@ variable "source_size_bytes" {
   type        = number
   description = "Exact byte size of source_object."
   validation {
-    condition     = var.source_size_bytes > 0 && floor(var.source_size_bytes) == var.source_size_bytes
-    error_message = "source_size_bytes must be a positive integer."
+    condition     = var.source_size_bytes > 0 && var.source_size_bytes <= 2147483648 && floor(var.source_size_bytes) == var.source_size_bytes
+    error_message = "source_size_bytes must be a positive integer no larger than 2 GiB."
   }
 }
 
@@ -119,164 +168,11 @@ variable "app_machine_type" {
   }
 }
 
-variable "boot_disk_size_gb" {
-  type        = number
-  description = "Boot disk size in GB."
-  default     = 30
-  validation {
-    condition     = var.boot_disk_size_gb >= 30 && var.boot_disk_size_gb <= 2048 && floor(var.boot_disk_size_gb) == var.boot_disk_size_gb
-    error_message = "boot_disk_size_gb must be an integer from 30 through 2048."
-  }
-}
-
-variable "data_disk_size_gb" {
-  type        = number
-  description = "Persistent Docker data disk size in GB."
-  default     = 150
-  validation {
-    condition     = var.data_disk_size_gb >= 10 && var.data_disk_size_gb <= 65536 && floor(var.data_disk_size_gb) == var.data_disk_size_gb
-    error_message = "data_disk_size_gb must be a bounded positive integer."
-  }
-}
-
-variable "admin_email" {
+variable "boot_image" {
   type        = string
-  description = "Bootstrap admin email created after first boot."
-  default     = "emmanuelromero060601@gmail.com"
+  description = "Reviewed immutable Ubuntu 22.04 GCE image self-link; image families are forbidden."
   validation {
-    condition     = can(regex("^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$", var.admin_email)) && length(var.admin_email) <= 254
-    error_message = "admin_email is invalid."
-  }
-}
-
-variable "public_console_domain" {
-  type        = string
-  description = "Optional HTTPS console domain for the public load balancer."
-  default     = ""
-  validation {
-    condition     = var.public_console_domain == "" || can(regex("^[a-z0-9]([a-z0-9-]{0,62}\\.)+[a-z]{2,63}$", var.public_console_domain))
-    error_message = "public_console_domain is invalid."
-  }
-}
-
-variable "public_workspace_domain" {
-  type        = string
-  description = "Optional HTTPS workspace domain for the public load balancer host rule."
-  default     = ""
-  validation {
-    condition     = var.public_workspace_domain == "" || can(regex("^[a-z0-9]([a-z0-9-]{0,62}\\.)+[a-z]{2,63}$", var.public_workspace_domain))
-    error_message = "public_workspace_domain is invalid."
-  }
-}
-
-variable "enable_https" {
-  type        = bool
-  description = "Enable managed certificate, HTTPS proxy, and HTTP redirect when public domains are configured."
-  default     = true
-}
-
-variable "enable_lb_logging" {
-  type        = bool
-  description = "Enable request logging on public backend services."
-  default     = true
-}
-
-variable "lb_log_sample_rate" {
-  type        = number
-  description = "Load balancer backend log sample rate from 0.0 to 1.0."
-  default     = 1.0
-  validation {
-    condition     = var.lb_log_sample_rate >= 0 && var.lb_log_sample_rate <= 1
-    error_message = "lb_log_sample_rate must be from 0 through 1."
-  }
-}
-
-variable "enable_airflow_scheduler" {
-  type        = bool
-  description = "Keep the Airflow scheduler running on this GCP node."
-  default     = true
-}
-
-variable "lakehouse_bucket_name" {
-  type        = string
-  description = "Optional existing GCS bucket name to use as the lakehouse. Defaults to this stack's bucket."
-  default     = ""
-  validation {
-    condition     = var.lakehouse_bucket_name == "" || can(regex("^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$", var.lakehouse_bucket_name))
-    error_message = "lakehouse_bucket_name is invalid."
-  }
-}
-
-variable "lakehouse_endpoint" {
-  type        = string
-  description = "S3-compatible endpoint used by DuckDB/MinIO clients for the GCS lakehouse."
-  default     = "storage.googleapis.com"
-  validation {
-    condition     = can(regex("^[a-z0-9]([a-z0-9-]{0,62}\\.)+[a-z]{2,63}$", var.lakehouse_endpoint))
-    error_message = "lakehouse_endpoint must be a hostname without scheme or path."
-  }
-}
-
-check "source_object_matches_sha" {
-  assert {
-    condition     = var.source_object == "deploy-artifacts/${var.source_sha}/repo.tar.gz"
-    error_message = "source_object must be derived from source_sha exactly."
-  }
-}
-
-check "zone_matches_region" {
-  assert {
-    condition     = startswith(var.zone, "${var.region}-")
-    error_message = "zone must belong to region."
-  }
-}
-
-check "public_domain_pair" {
-  assert {
-    condition     = (var.public_console_domain == "") == (var.public_workspace_domain == "")
-    error_message = "public domains must be configured or omitted as a pair."
-  }
-}
-
-check "canonical_scheduler" {
-  assert {
-    condition     = var.enable_airflow_scheduler
-    error_message = "the canonical GCP writer must keep exactly one scheduler enabled."
-  }
-}
-
-variable "enable_budget" {
-  type        = bool
-  description = "Create a monthly billing budget guardrail."
-  default     = true
-}
-
-variable "monthly_budget_limit_usd" {
-  type        = number
-  description = "Monthly budget alert limit in monthly_budget_currency."
-  default     = 100
-  validation {
-    condition     = var.monthly_budget_limit_usd > 0 && var.monthly_budget_limit_usd <= 1000000
-    error_message = "monthly_budget_limit_usd is outside the reviewed bound."
-  }
-}
-
-variable "monthly_budget_currency" {
-  type        = string
-  description = "Currency code for the monthly budget. Must match the billing account currency."
-  default     = "USD"
-  validation {
-    condition     = can(regex("^[A-Z]{3}$", var.monthly_budget_currency))
-    error_message = "monthly_budget_currency must be an ISO-style uppercase code."
-  }
-}
-
-variable "cloud_armor_rate_limit_count" {
-  type        = number
-  description = "Requests per IP per minute before Cloud Armor rate limiting."
-  default     = 300
-  validation {
-    condition     = var.cloud_armor_rate_limit_count >= 1 && var.cloud_armor_rate_limit_count <= 100000 && floor(var.cloud_armor_rate_limit_count) == var.cloud_armor_rate_limit_count
-    error_message = "cloud_armor_rate_limit_count is outside the reviewed bound."
+    condition     = can(regex("^projects/ubuntu-os-cloud/global/images/ubuntu-2204-jammy-v[0-9]{8}$", var.boot_image))
+    error_message = "boot_image must be one immutable ubuntu-2204-jammy-vYYYYMMDD image self-link."
   }
 }

@@ -20,6 +20,11 @@ x-gcp-lakehouse-env: &gcp-lakehouse-env
   AWS_REGION: $${AWS_REGION:-auto}
 
 services:
+  minio:
+    volumes:
+      - type: volume
+        source: minio_data
+        target: /data
   console:
     environment:
       <<: *gcp-lakehouse-env
@@ -79,6 +84,11 @@ services:
     mem_limit: $${MCP_INFRA_MEM_LIMIT:-1536m}
     cpus: $${MCP_INFRA_CPUS:-2.0}
     pids_limit: $${MCP_INFRA_PIDS_LIMIT:-128}
+    volumes:
+      - type: bind
+        source: ../airflow/dags
+        target: /opt/airflow/dags
+        read_only: true
   airflow:
     environment:
       <<: *gcp-lakehouse-env
@@ -95,6 +105,18 @@ services:
       AIRFLOW_VAR_MINIO_SECRET_KEY: $${MINIO_SECRET_KEY:-}
       AIRFLOW_VAR_MINIO_SECURE: $${MINIO_SECURE:-true}
       SEC_EDGAR_URL: $${SEC_EDGAR_URL:-http://sec-edgar:8217}
+    volumes:
+      - type: bind
+        source: ../airflow/dags
+        target: /opt/airflow/dags
+        read_only: true
+      - type: volume
+        source: airflow_logs
+        target: /opt/airflow/logs
+      - type: bind
+        source: ../airflow/plugins
+        target: /opt/airflow/plugins
+        read_only: true
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://127.0.0.1:8080$${AIRFLOW_HEALTH_PATH:-/health} || exit 1"]
       interval: 30s
@@ -132,3 +154,19 @@ services:
       AIRFLOW_VAR_MINIO_SECRET_KEY: $${MINIO_SECRET_KEY:-}
       AIRFLOW_VAR_MINIO_SECURE: $${MINIO_SECURE:-true}
       SEC_EDGAR_URL: $${SEC_EDGAR_URL:-http://sec-edgar:8217}
+    volumes:
+      - type: bind
+        source: ../airflow/dags
+        target: /opt/airflow/dags
+        read_only: true
+      - type: volume
+        source: airflow_logs
+        target: /opt/airflow/logs
+      - type: bind
+        source: ../airflow/plugins
+        target: /opt/airflow/plugins
+        read_only: true
+
+volumes:
+  airflow_logs:
+  minio_data:

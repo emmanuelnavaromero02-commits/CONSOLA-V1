@@ -20,11 +20,14 @@ resource "google_compute_instance" "app" {
   labels       = local.labels
 
   allow_stopping_for_update = true
+  # Match the exact live VM until boot/deletion hardening receives its own
+  # reviewed maintenance window. Changing either value can stop the writer.
+  deletion_protection = false
 
   boot_disk {
     auto_delete = true
     initialize_params {
-      image = "ubuntu-os-cloud/ubuntu-2204-lts"
+      image = var.boot_image
       size  = var.boot_disk_size_gb
       type  = "pd-balanced"
     }
@@ -48,11 +51,18 @@ resource "google_compute_instance" "app" {
 
   # The provider marks metadata_startup_script ForceNew. Replacing the
   # canonical writer VM merely to refresh reboot metadata is forbidden.
-  # scripts/gcp_release.py performs the reviewed startup-script update in
-  # place through Compute setMetadata with the live fingerprint as a CAS.
+  # A reviewed day-2 controller performs startup-script updates in place
+  # through Compute setMetadata with the live fingerprint as a CAS.
   lifecycle {
-    ignore_changes = [metadata_startup_script]
+    ignore_changes  = [metadata_startup_script]
     prevent_destroy = true
+
+    precondition {
+      # GCE metadata values are limited to 256 KiB. Base64 length is used so
+      # the check measures UTF-8 bytes, not Terraform Unicode characters.
+      condition     = length(base64encode(local.startup_script)) <= 349524
+      error_message = "Rendered startup-script must remain below the 262144-byte GCE metadata limit."
+    }
   }
 
   service_account {

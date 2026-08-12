@@ -1,8 +1,17 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
 # Keep the VM metadata identity host-only; Docker bridge traffic is denied.
 set -Eeuo pipefail
 set +x
 umask 077
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+unset BASH_ENV ENV CDPATH GLOBIGNORE
+unset PYTHONPATH PYTHONHOME PYTHONSTARTUP PYTHONINSPECT PYTHONUSERBASE \
+  PYTHONWARNINGS PYTHONBREAKPOINT PYTHONSAFEPATH
+unset SSL_CERT_FILE SSL_CERT_DIR REQUESTS_CA_BUNDLE CURL_CA_BUNDLE SSLKEYLOGFILE
+unset DOCKER_CONTEXT DOCKER_TLS DOCKER_TLS_VERIFY DOCKER_CERT_PATH \
+  DOCKER_API_VERSION DOCKER_CONFIG DOCKER_AUTH_CONFIG COMPOSE_FILE \
+  COMPOSE_PATH_SEPARATOR COMPOSE_PROFILES COMPOSE_PROJECT_NAME
+export DOCKER_HOST=unix:///run/docker.sock
 
 ACTION="${1:-}"
 CANONICAL="/usr/local/sbin/omega-metadata-firewall"
@@ -16,7 +25,7 @@ if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
 fi
 
 fsync_paths() {
-  python3 - "$@" <<'PY'
+  /usr/bin/python3 -I - "$@" <<'PY'
 import os
 import pathlib
 import sys
@@ -32,7 +41,7 @@ PY
 }
 
 ensure_family() {
-  local binary="$1" destination="$2"
+  local binary="$1" destination="$2" reject_with="$3"
   "$binary" -w 10 -N DOCKER-USER >/dev/null 2>&1 || :
   local first_forward
   first_forward="$("$binary" -w 10 -S FORWARD | awk '$1 == "-A" {print; exit}')"
@@ -41,41 +50,42 @@ ensure_family() {
   fi
   local first_user
   first_user="$("$binary" -w 10 -S DOCKER-USER | awk '$1 == "-A" {print; exit}')"
-  if [[ "$first_user" != *"-d ${destination} "* || \
-        "$first_user" != *"--comment ${COMMENT} "* || \
-        "$first_user" != *"-j REJECT" ]]; then
+  if [[ "$first_user" != "$(canonical_rule "$destination" "$reject_with")" ]]; then
     "$binary" -w 10 -I DOCKER-USER 1 -d "$destination" \
-      -m comment --comment "$COMMENT" -j REJECT
+      -m comment --comment "$COMMENT" -j REJECT --reject-with "$reject_with"
   fi
 }
 
+canonical_rule() {
+  printf '%s\n' \
+    "-A DOCKER-USER -d $1 -m comment --comment ${COMMENT} -j REJECT --reject-with $2"
+}
+
 verify_family() {
-  local binary="$1" destination="$2" first_forward first_user
+  local binary="$1" destination="$2" reject_with="$3" first_forward first_user
   first_forward="$("$binary" -w 10 -S FORWARD | awk '$1 == "-A" {print; exit}')"
   first_user="$("$binary" -w 10 -S DOCKER-USER | awk '$1 == "-A" {print; exit}')"
   [[ "$first_forward" == "-A FORWARD -j DOCKER-USER" ]]
-  [[ "$first_user" == *"-d ${destination} "* ]]
-  [[ "$first_user" == *"--comment ${COMMENT} "* ]]
-  [[ "$first_user" == *"-j REJECT" ]]
+  [[ "$first_user" == "$(canonical_rule "$destination" "$reject_with")" ]]
 }
 
 enforce() {
   command -v iptables >/dev/null
   command -v ip6tables >/dev/null
-  ensure_family iptables "169.254.169.254/32"
-  ensure_family ip6tables "fd20:ce::254/128"
-  verify_family iptables "169.254.169.254/32"
-  verify_family ip6tables "fd20:ce::254/128"
+  ensure_family iptables "169.254.169.254/32" icmp-port-unreachable
+  ensure_family ip6tables "fd20:ce::254/128" icmp6-port-unreachable
+  verify_family iptables "169.254.169.254/32" icmp-port-unreachable
+  verify_family ip6tables "fd20:ce::254/128" icmp6-port-unreachable
 }
 
 verify_host_metadata() {
   local status
-  status="$(curl --fail --silent --output /dev/null --write-out '%{http_code}' \
+  status="$(curl -q --fail --silent --output /dev/null --write-out '%{http_code}' \
     --max-time 5 --noproxy '*' -H 'Metadata-Flavor: Google' \
     'http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/email')"
   [[ "$status" == "200" ]]
   if ip -6 route get fd20:ce::254 >/dev/null 2>&1; then
-    status="$(curl --fail --silent --output /dev/null --write-out '%{http_code}' \
+    status="$(curl -q --fail --silent --output /dev/null --write-out '%{http_code}' \
       --max-time 5 --noproxy '*' -g -H 'Metadata-Flavor: Google' \
       'http://[fd20:ce::254]/computeMetadata/v1/instance/service-accounts/default/email')"
     [[ "$status" == "200" ]]
@@ -116,6 +126,7 @@ install_host() {
 }
 
 verify_container() {
+  verify_installation
   enforce
   verify_host_metadata
   if [[ "$(docker inspect mode_console --format '{{.State.Running}}' 2>/dev/null)" != "true" ]]; then
@@ -126,7 +137,16 @@ verify_container() {
 import urllib.error
 import urllib.request
 
-opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+class RejectRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, message, headers, new_url):
+        del request, fp, code, message, headers, new_url
+        raise SystemExit("container reached VM metadata and received a redirect")
+
+
+opener = urllib.request.build_opener(
+    urllib.request.ProxyHandler({}),
+    RejectRedirects(),
+)
 for url in (
     "http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token",
     "http://[fd20:ce::254]/computeMetadata/v1/instance/service-accounts/default/token",

@@ -14,13 +14,13 @@ output "public_workspace_url" {
 }
 
 output "technical_console_url" {
-  description = "Technical HTTP IP URL for the console fallback."
-  value       = local.technical_console_url
+  description = "Technical HTTP console URL only in explicit domainless staging mode."
+  value       = local.technical_console_url != "" ? local.technical_console_url : null
 }
 
 output "technical_workspace_url" {
-  description = "Technical HTTP IP URL for the workspace fallback."
-  value       = local.technical_workspace_url
+  description = "Technical HTTP workspace URL only in explicit domainless staging mode."
+  value       = local.technical_workspace_url != "" ? local.technical_workspace_url : null
 }
 
 output "public_https_ip" {
@@ -32,8 +32,12 @@ output "public_https_enabled" {
   value = local.public_https_enabled
 }
 
-output "managed_certificate_name" {
-  value = local.public_https_enabled ? google_compute_managed_ssl_certificate.public[0].name : null
+output "legacy_compute_certificate_name" {
+  value = local.public_https_enabled ? "${local.name_prefix}-public-cert" : null
+}
+
+output "certificate_manager_map_uri" {
+  value = local.public_https_enabled ? local.certificate_manager_map_uri : null
 }
 
 output "app_instance_name" {
@@ -79,6 +83,12 @@ output "source_object" {
 output "startup_script_sha256" {
   description = "Expected SHA-256 of the reviewed startup render; adopt with metadata CAS and verify by live read-back."
   value       = sha256(local.startup_script)
+}
+
+output "startup_script_base64" {
+  description = "Exact reviewed startup bytes consumed only by the sealed metadata-CAS transaction."
+  value       = base64encode(local.startup_script)
+  sensitive   = true
 }
 
 output "admin_credentials_path_on_vm" {

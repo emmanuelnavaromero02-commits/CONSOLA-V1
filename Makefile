@@ -19,7 +19,7 @@ WORKLOAD ?= sap_successfactors
 PROFILE ?= beta-safe
 
 .PHONY: help bootstrap-env up up-core down nuke repair-local-stack logs ps test baseline-smoke smoke beta-smoke beta-smoke-aws stress stress-smoke stress-beta stress-spike stress-breakpoint stress-soak-24h stress-write-heavy multiuser-simulation tenant-ab-local tenant-ab-aws live-cartridge-tests monitor-check production-readiness v1-live-readiness production-readiness-aws v1-ga-lite-local v1-ga-lite-aws v1-ga-max-aws v1-ga-cleanup v1-ga-report data-integrity-audit copilot-redteam cartridge-resilience chaos-local chaos-aws enterprise-readiness sap-successfactors-aws-live-max dr-rehearsal backup-aws dr-rehearsal-aws rollback-aws rollback-rehearsal rollback-rehearsal-aws deploy-main-aws aws-full-regression aws-observability-report aws-tls-status aws-superset-probe superset-tenant-probe superset-tenant-probe-aws monte-carlo-aws-probe bayesian-calibration-aws-probe bayesian-loop-probe bayesian-loop-probe-aws control-room-gold-engine-aws-probe control-room-mock-volume-aws-probe control-room-mock-volume-aws-cleanup cartridge-kb-scope-aws-probe action-framework-aws-probe decision-orchestrator-aws-probe decision-orchestrator-execution-aws-probe migrate rotate-keys e2e acceptance preflight demo-check security-scan verify-release verify-v1-public seed-intelligence-gold seed-replicon-beta-gold seed-replicon-beta-gold-aws run-intelligence-scheduled-local run-intelligence-scheduled-aws decision-backtest-local decision-backtest-aws
-.PHONY: test-hermetic reconcile-db-passwords
+.PHONY: test-hermetic reconcile-db-passwords verify-gcp-edge-tls gcp-release-authority-generate gcp-release-authority-verify gcp-terraform-plan gcp-terraform-apply gcp-terraform-status gcp-terraform-recover gcp-foundation-plan gcp-foundation-apply gcp-foundation-status gcp-foundation-recover gcp-iam-revoke-plan gcp-iam-revoke-apply gcp-iam-revoke-recover
 
 help:
 	@echo "MODecissionsPaaS — targets:"
@@ -504,3 +504,150 @@ rotate-keys:
 	@echo "  1. Run: make down && make up"
 	@echo "  2. All sessions will be invalidated — users must re-login."
 	@echo "  3. Once verified, delete infra/.env.save"
+
+# Read-only canonical GCP edge gate. The operator identity/config are explicit;
+# ambient gcloud/network overrides are rejected by the verifier.
+verify-gcp-edge-tls:
+	@test -n "$(GCP_OPERATOR_ACCOUNT)" || { echo "GCP_OPERATOR_ACCOUNT is required"; exit 2; }
+	@test -n "$(GH_CONFIG_DIR)" || { echo "GH_CONFIG_DIR is required"; exit 2; }
+	@test -n "$(GCP_CONFIG_DIR)" || { echo "GCP_CONFIG_DIR is required"; exit 2; }
+	@/usr/bin/python3 -I scripts/gcp/verify_edge_tls.py \
+		--project-id project-dd5ba7fa-374c-4554-ae6 \
+		--project-number 894064513501 --environment staging \
+		--expected-ip 34.144.248.147 \
+		--legacy-console-ip 136.68.67.95 \
+		--legacy-workspace-ip 8.233.29.138 \
+		--edge-mode "$(or $(GCP_EDGE_MODE),post-transition)" \
+		--expected-account "$(GCP_OPERATOR_ACCOUNT)" \
+		--gcloud-config "$(GCP_CONFIG_DIR)"
+
+verify-gcp-release-backup-permissions:
+	@test -n "$(GCP_RELEASE_BACKUP_BUCKET)" || { echo "GCP_RELEASE_BACKUP_BUCKET is required"; exit 2; }
+	@test -n "$(GCP_APP_SERVICE_ACCOUNT)" || { echo "GCP_APP_SERVICE_ACCOUNT is required"; exit 2; }
+	@sudo /usr/local/sbin/omega-safe-io gcs-release-backup-permissions \
+		--bucket "$(GCP_RELEASE_BACKUP_BUCKET)" \
+		--expected-service-account "$(GCP_APP_SERVICE_ACCOUNT)"
+
+# The transaction owns plan generation, same-FD JSON derivation, validation,
+# and application. Standalone JSON/hash verification is deliberately absent.
+gcp-release-authority-generate:
+	@test -n "$(GCP_RELEASE_AUTHORITY)" || { echo "GCP_RELEASE_AUTHORITY output path is required"; exit 2; }
+	@test -n "$(GCP_SOURCE_REF)" || { echo "GCP_SOURCE_REF exact approved main SHA is required"; exit 2; }
+	@test -n "$(GCP_CONTROLLER_REF)" || { echo "GCP_CONTROLLER_REF exact clean controller SHA is required"; exit 2; }
+	@test -n "$(GH_CONFIG_DIR)" || { echo "GH_CONFIG_DIR is required"; exit 2; }
+	@test -n "$(GCP_CONFIG_DIR)" || { echo "GCP_CONFIG_DIR is required"; exit 2; }
+	@/usr/bin/python3 -I scripts/gcp/generate_release_authority.py generate \
+		--output "$(GCP_RELEASE_AUTHORITY)" --source-ref "$(GCP_SOURCE_REF)" \
+		--controller-ref "$(GCP_CONTROLLER_REF)" \
+		--gh-config "$(GH_CONFIG_DIR)" --gcloud-config "$(GCP_CONFIG_DIR)"
+
+gcp-release-authority-verify:
+	@test -n "$(GCP_RELEASE_AUTHORITY)" || { echo "GCP_RELEASE_AUTHORITY is required"; exit 2; }
+	@test -n "$(GH_CONFIG_DIR)" || { echo "GH_CONFIG_DIR is required"; exit 2; }
+	@test -n "$(GCP_CONFIG_DIR)" || { echo "GCP_CONFIG_DIR is required"; exit 2; }
+	@/usr/bin/python3 -I scripts/gcp/generate_release_authority.py verify \
+		--authority "$(GCP_RELEASE_AUTHORITY)" \
+		--gh-config "$(GH_CONFIG_DIR)" --gcloud-config "$(GCP_CONFIG_DIR)"
+
+gcp-terraform-plan:
+	@test -n "$(GCP_TRANSACTION_DIR)" || { echo "GCP_TRANSACTION_DIR is required"; exit 2; }
+	@test -n "$(GCP_TFVARS)" || { echo "GCP_TFVARS is required"; exit 2; }
+	@test -n "$(GCP_RELEASE_AUTHORITY)" || { echo "GCP_RELEASE_AUTHORITY is required"; exit 2; }
+	@test -n "$(TOFU)" || { echo "TOFU must point to the verified official OpenTofu 1.11.6 binary"; exit 2; }
+	@test -n "$(GCP_OPERATOR_ACCOUNT)" || { echo "GCP_OPERATOR_ACCOUNT is required"; exit 2; }
+	@test -n "$(GH_CONFIG_DIR)" || { echo "GH_CONFIG_DIR is required"; exit 2; }
+	@test -n "$(GCP_CONFIG_DIR)" || { echo "GCP_CONFIG_DIR is required"; exit 2; }
+	@test "$(or $(GCP_TERRAFORM_PROFILE),foundation)" != "iam-revoke" || { echo "use gcp-iam-revoke-plan for reversible IAM removal"; exit 2; }
+	@/usr/bin/python3 -I scripts/gcp/terraform_transaction.py plan \
+		--profile "$(or $(GCP_TERRAFORM_PROFILE),foundation)" \
+		--transaction "$(GCP_TRANSACTION_DIR)" --tfvars "$(GCP_TFVARS)" \
+		--release-authority "$(GCP_RELEASE_AUTHORITY)" \
+		--tofu "$(TOFU)" \
+		--gh-config "$(GH_CONFIG_DIR)" \
+		--gcloud-config "$(GCP_CONFIG_DIR)" \
+		--expected-account "$(GCP_OPERATOR_ACCOUNT)"
+
+gcp-terraform-apply:
+	@test -n "$(GCP_TRANSACTION_DIR)" || { echo "GCP_TRANSACTION_DIR is required"; exit 2; }
+	@test -n "$(GCP_TFVARS)" || { echo "GCP_TFVARS is required"; exit 2; }
+	@test -n "$(TOFU)" || { echo "TOFU must point to the verified official OpenTofu 1.11.6 binary"; exit 2; }
+	@test -n "$(GCP_OPERATOR_ACCOUNT)" || { echo "GCP_OPERATOR_ACCOUNT is required"; exit 2; }
+	@test -n "$(GH_CONFIG_DIR)" || { echo "GH_CONFIG_DIR is required"; exit 2; }
+	@test -n "$(GCP_CONFIG_DIR)" || { echo "GCP_CONFIG_DIR is required"; exit 2; }
+	@test "$(or $(GCP_TERRAFORM_PROFILE),foundation)" != "iam-revoke" || { echo "use gcp-iam-revoke-apply for reversible IAM removal"; exit 2; }
+	@/usr/bin/python3 -I scripts/gcp/terraform_transaction.py apply \
+		--profile "$(or $(GCP_TERRAFORM_PROFILE),foundation)" \
+		--transaction "$(GCP_TRANSACTION_DIR)" --tfvars "$(GCP_TFVARS)" \
+		--tofu "$(TOFU)" \
+		--gh-config "$(GH_CONFIG_DIR)" \
+		--gcloud-config "$(GCP_CONFIG_DIR)" \
+		--expected-account "$(GCP_OPERATOR_ACCOUNT)"
+
+gcp-terraform-status:
+	@test -n "$(GCP_TRANSACTION_DIR)" || { echo "GCP_TRANSACTION_DIR is required"; exit 2; }
+	@/usr/bin/python3 -I scripts/gcp/terraform_transaction.py status \
+		--profile "$(or $(GCP_TERRAFORM_PROFILE),foundation)" \
+		--transaction "$(GCP_TRANSACTION_DIR)"
+
+gcp-terraform-recover:
+	@test -n "$(GCP_TRANSACTION_DIR)" || { echo "GCP_TRANSACTION_DIR is required"; exit 2; }
+	@test -n "$(GCP_OPERATOR_ACCOUNT)" || { echo "GCP_OPERATOR_ACCOUNT is required"; exit 2; }
+	@test -n "$(GH_CONFIG_DIR)" || { echo "GH_CONFIG_DIR is required"; exit 2; }
+	@test -n "$(GCP_CONFIG_DIR)" || { echo "GCP_CONFIG_DIR is required"; exit 2; }
+	@test "$(or $(GCP_TERRAFORM_PROFILE),foundation)" != "iam-revoke" || { echo "use gcp-iam-revoke-recover for reversible IAM recovery"; exit 2; }
+	@/usr/bin/python3 -I scripts/gcp/terraform_transaction.py recover \
+		--profile "$(or $(GCP_TERRAFORM_PROFILE),foundation)" \
+		--transaction "$(GCP_TRANSACTION_DIR)" \
+		--gh-config "$(GH_CONFIG_DIR)" --gcloud-config "$(GCP_CONFIG_DIR)" \
+		--expected-account "$(GCP_OPERATOR_ACCOUNT)"
+
+# Explicit canonical foundation entry points. The Terraform transaction is
+# also the sole startup-metadata/reset/handoff authority; never invoke its
+# embedded startup_metadata_transaction.py helper out of band.
+gcp-foundation-plan:
+	@$(MAKE) --no-print-directory gcp-terraform-plan GCP_TERRAFORM_PROFILE=foundation
+
+gcp-foundation-apply:
+	@$(MAKE) --no-print-directory gcp-terraform-apply GCP_TERRAFORM_PROFILE=foundation
+
+gcp-foundation-status:
+	@$(MAKE) --no-print-directory gcp-terraform-status GCP_TERRAFORM_PROFILE=foundation
+
+gcp-foundation-recover:
+	@$(MAKE) --no-print-directory gcp-terraform-recover GCP_TERRAFORM_PROFILE=foundation
+
+gcp-iam-revoke-plan:
+	@test -n "$(GCP_IAM_TRANSACTION_DIR)" || { echo "GCP_IAM_TRANSACTION_DIR is required and must be an empty mode-0700 directory"; exit 2; }
+	@test -n "$(GCP_TFVARS)" || { echo "GCP_TFVARS is required"; exit 2; }
+	@test -n "$(GCP_RELEASE_AUTHORITY)" || { echo "GCP_RELEASE_AUTHORITY is required"; exit 2; }
+	@test -n "$(TOFU)" || { echo "TOFU must point to the verified official OpenTofu 1.11.6 binary"; exit 2; }
+	@test -n "$(GCP_OPERATOR_ACCOUNT)" || { echo "GCP_OPERATOR_ACCOUNT is required"; exit 2; }
+	@test -n "$(GH_CONFIG_DIR)" || { echo "GH_CONFIG_DIR is required"; exit 2; }
+	@test -n "$(GCP_CONFIG_DIR)" || { echo "GCP_CONFIG_DIR is required"; exit 2; }
+	@/usr/bin/python3 -I scripts/gcp/iam_revoke_transaction.py plan \
+		--transaction "$(GCP_IAM_TRANSACTION_DIR)" --tfvars "$(GCP_TFVARS)" \
+		--release-authority "$(GCP_RELEASE_AUTHORITY)" --tofu "$(TOFU)" \
+		--gh-config "$(GH_CONFIG_DIR)" --gcloud-config "$(GCP_CONFIG_DIR)" \
+		--expected-account "$(GCP_OPERATOR_ACCOUNT)"
+
+gcp-iam-revoke-apply:
+	@test -n "$(GCP_IAM_TRANSACTION_DIR)" || { echo "GCP_IAM_TRANSACTION_DIR is required"; exit 2; }
+	@test -n "$(GCP_TFVARS)" || { echo "GCP_TFVARS is required"; exit 2; }
+	@test -n "$(TOFU)" || { echo "TOFU must point to the verified official OpenTofu 1.11.6 binary"; exit 2; }
+	@test -n "$(GCP_OPERATOR_ACCOUNT)" || { echo "GCP_OPERATOR_ACCOUNT is required"; exit 2; }
+	@test -n "$(GH_CONFIG_DIR)" || { echo "GH_CONFIG_DIR is required"; exit 2; }
+	@test -n "$(GCP_CONFIG_DIR)" || { echo "GCP_CONFIG_DIR is required"; exit 2; }
+	@/usr/bin/python3 -I scripts/gcp/iam_revoke_transaction.py apply \
+		--transaction "$(GCP_IAM_TRANSACTION_DIR)" --tfvars "$(GCP_TFVARS)" \
+		--tofu "$(TOFU)" --gh-config "$(GH_CONFIG_DIR)" \
+		--gcloud-config "$(GCP_CONFIG_DIR)" \
+		--expected-account "$(GCP_OPERATOR_ACCOUNT)"
+
+gcp-iam-revoke-recover:
+	@test -n "$(GCP_IAM_TRANSACTION_DIR)" || { echo "GCP_IAM_TRANSACTION_DIR is required"; exit 2; }
+	@test -n "$(GCP_OPERATOR_ACCOUNT)" || { echo "GCP_OPERATOR_ACCOUNT is required"; exit 2; }
+	@test -n "$(GCP_CONFIG_DIR)" || { echo "GCP_CONFIG_DIR is required"; exit 2; }
+	@/usr/bin/python3 -I scripts/gcp/iam_revoke_transaction.py recover \
+		--transaction "$(GCP_IAM_TRANSACTION_DIR)" \
+		--gcloud-config "$(GCP_CONFIG_DIR)" \
+		--expected-account "$(GCP_OPERATOR_ACCOUNT)"

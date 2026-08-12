@@ -6,6 +6,10 @@ resource "google_storage_bucket" "lakehouse" {
   force_destroy               = false
   labels                      = local.labels
 
+  lifecycle {
+    prevent_destroy = true
+  }
+
   versioning {
     enabled = true
   }
@@ -58,7 +62,7 @@ resource "google_storage_bucket" "release_backups" {
 
   retention_policy {
     retention_period = 604800
-    is_locked         = false
+    is_locked        = false
   }
 
   depends_on = [google_project_service.required]

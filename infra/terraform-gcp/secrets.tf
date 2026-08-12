@@ -4,6 +4,10 @@ resource "google_secret_manager_secret" "runtime" {
   secret_id = "omega-${var.environment}-${each.value}"
   labels    = local.labels
 
+  lifecycle {
+    prevent_destroy = true
+  }
+
   replication {
     auto {}
   }
@@ -17,6 +21,10 @@ resource "google_secret_manager_secret" "runtime" {
 resource "google_secret_manager_secret" "ghcr_pull_credentials" {
   secret_id = "omega-${var.environment}-ghcr_pull_credentials"
   labels    = local.labels
+
+  lifecycle {
+    prevent_destroy = true
+  }
 
   replication {
     auto {}

@@ -4,6 +4,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
+
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "ci_changed_areas.py"
 SPEC = importlib.util.spec_from_file_location("ci_changed_areas", SCRIPT)
@@ -31,8 +33,14 @@ def test_dataset_sql_changes_skip_runtime_and_full_stack_gates():
     assert flags["release_full_stack"] is False
     assert flags["has_build_matrix"] is False
     assert flags["root_test_targets"] == "tests/test_sap_successfactors_datasets.py"
-    assert flags["cartridge_test_targets"] == "cartridges/sap_successfactors/tests/test_airflow_dag_contract.py"
-    assert flags["cartridge_requirement_paths"] == "cartridges/sap_successfactors/requirements.txt"
+    assert (
+        flags["cartridge_test_targets"]
+        == "cartridges/sap_successfactors/tests/test_airflow_dag_contract.py"
+    )
+    assert (
+        flags["cartridge_requirement_paths"]
+        == "cartridges/sap_successfactors/requirements.txt"
+    )
 
 
 def test_console_frontend_and_compose_changes_trigger_heavier_surfaces():
@@ -68,7 +76,9 @@ def test_cartridge_runtime_change_builds_only_that_cartridge():
             }
         ]
     }
-    assert "tests/test_sap_successfactors_airflow_runtime.py" in str(flags["root_test_targets"])
+    assert "tests/test_sap_successfactors_airflow_runtime.py" in str(
+        flags["root_test_targets"]
+    )
     assert flags["cartridge_test_targets"] == "cartridges/sap_successfactors/tests"
 
 
@@ -78,7 +88,9 @@ def test_banxico_runtime_change_builds_with_cartridge_tests():
     assert flags["python_runtime"] is True
     assert flags["cartridge_tests"] is True
     matrix = json.loads(str(flags["build_matrix"]))
-    assert {"service": "banxico", "context": "./cartridges/banxico"} in matrix["include"]
+    assert {"service": "banxico", "context": "./cartridges/banxico"} in matrix[
+        "include"
+    ]
     assert flags["cartridge_test_targets"] == "cartridges/banxico/tests"
 
 
@@ -98,7 +110,9 @@ def test_sec_edgar_runtime_change_builds_with_cartridge_tests():
     assert flags["python_runtime"] is True
     assert flags["cartridge_tests"] is True
     matrix = json.loads(str(flags["build_matrix"]))
-    assert {"service": "sec_edgar", "context": "./cartridges/sec_edgar"} in matrix["include"]
+    assert {"service": "sec_edgar", "context": "./cartridges/sec_edgar"} in matrix[
+        "include"
+    ]
     assert flags["cartridge_test_targets"] == "cartridges/sec_edgar/tests"
 
 
@@ -116,6 +130,44 @@ def test_pipeline_reconciler_is_a_security_scanned_python_runtime():
     assert flags["python"] is True
     assert flags["python_runtime"] is True
     assert flags["control_room"] is True
+
+
+def test_gcp_host_helpers_trigger_infra_validation_and_all_focal_contracts():
+    flags = _flags("scripts/gcp/operation-watchdog.sh")
+
+    assert flags["infra"] is True
+    assert flags["python_runtime"] is False
+    assert flags["root_tests"] is True
+    targets = str(flags["root_test_targets"]).split()
+    assert targets == sorted(
+        {
+            "tests/test_gcp_operation_gate.py",
+            "tests/test_gcp_edge_tls.py",
+            "tests/test_gcp_ghcr_private_auth.py",
+            "tests/test_gcp_iam_revoke_transaction.py",
+            "tests/test_gcp_release_authority.py",
+            "tests/test_gcp_runtime_contract.py",
+            "tests/test_gcp_safe_io.py",
+            "tests/test_gcp_startup_metadata_transaction.py",
+            "tests/test_gcp_terraform_contract.py",
+            "tests/test_gcp_terraform_plan.py",
+            "tests/test_gcp_terraform_transaction.py",
+            "tests/test_lint_gate_contract.py",
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["Makefile", "docs/runbook/16_gcp_canonical_day2_release.md"],
+)
+def test_gcp_operator_surfaces_cannot_bypass_foundation_detectors(path: str) -> None:
+    flags = _flags(path)
+    targets = str(flags["root_test_targets"])
+    assert flags["infra"] is True
+    assert "tests/test_gcp_startup_metadata_transaction.py" in targets
+    assert "tests/test_gcp_terraform_transaction.py" in targets
+    assert "tests/test_ci_detector_self_protection.py" not in targets
 
 
 def test_mcp_infra_pdf_changes_run_functional_security_tests():

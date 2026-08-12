@@ -1,298 +1,61 @@
-#!/bin/sh
+#!/bin/sh -p
 # Docker ExecStartPre gate for the canonical GCP runtime.
 set -eu
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+unset ENV PYTHONPATH PYTHONHOME PYTHONSTARTUP PYTHONINSPECT PYTHONUSERBASE \
+  PYTHONWARNINGS PYTHONBREAKPOINT PYTHONSAFEPATH SSL_CERT_FILE SSL_CERT_DIR \
+  REQUESTS_CA_BUNDLE CURL_CA_BUNDLE SSLKEYLOGFILE DOCKER_CONTEXT DOCKER_TLS \
+  DOCKER_TLS_VERIFY DOCKER_CERT_PATH DOCKER_API_VERSION DOCKER_CONFIG \
+  DOCKER_AUTH_CONFIG COMPOSE_FILE COMPOSE_PATH_SEPARATOR COMPOSE_PROFILES \
+  COMPOSE_PROJECT_NAME
+DOCKER_HOST=unix:///run/docker.sock
+export DOCKER_HOST
 
 app_root="${OMEGA_GCP_APP_ROOT:-/opt/modecissions}"
 shared_root="${app_root}/shared"
 operation_marker="${shared_root}/operation-state.json"
 state_link="${OMEGA_GCP_STATE_LINK_OVERRIDE:-${shared_root}/runtime-state}"
+mode="${1:-verify}"
+if [ "$mode" = "authorize-start" ] && [ "${OMEGA_GCP_RUNTIME_START_AUTHORIZED:-0}" != "1" ]; then
+  echo "omega: volatile runtime-start authorization is missing; Docker remains fenced" >&2
+  exit 74
+fi
 
+if [ -L "$operation_marker" ]; then echo "omega: durable operation marker is a link; Docker remains fenced" >&2; exit 75; fi
 if [ -e "$operation_marker" ] && [ "${OMEGA_GCP_ALLOW_OPERATION_MARKER:-0}" != "1" ]; then
-  echo "omega: durable canonical operation is incomplete; Docker remains fenced" >&2
-  exit 75
+  echo "omega: durable canonical operation is incomplete; Docker remains fenced" >&2; exit 75
 fi
-
-# Missing runtime state is never an implicit success. First boot receives a
-# volatile systemd authorization and must already have a durable bootstrap
-# marker; a reboot loses that authorization and fences a partial bootstrap.
-if [ ! -e "$state_link" ] && [ ! -L "$state_link" ]; then
-  [ "${1:-verify}" = "print-helpers" ] && exit 76
-  if [ "${OMEGA_GCP_INITIAL_BOOTSTRAP:-0}" != "1" ]; then
-    echo "omega: canonical runtime-state is missing; Docker remains fenced" >&2
-    exit 76
+if [ -e "$operation_marker" ] && [ "${OMEGA_GCP_ALLOW_OPERATION_MARKER:-0}" = "1" ]; then
+  watchdog="${OMEGA_GCP_OPERATION_WATCHDOG:-/usr/local/sbin/omega-operation-watchdog}"
+  timeout_bin="${OMEGA_GCP_TIMEOUT:-/usr/bin/timeout}"
+  if [ "$(id -u)" = "0" ]; then
+    if [ "$watchdog" != /usr/local/sbin/omega-operation-watchdog ] || \
+       [ "$timeout_bin" != /usr/bin/timeout ]; then
+      echo "omega: operation watchdog path is unconfined; Docker remains fenced" >&2
+      exit 75
+    fi
   fi
-  python3 - "$app_root" "$operation_marker" <<'PY'
-import json
-import pathlib
-import sys
-
-app_root = pathlib.Path(sys.argv[1])
-marker = pathlib.Path(sys.argv[2])
-try:
-    payload = json.loads(marker.read_text(encoding="utf-8"))
-except (OSError, json.JSONDecodeError):
-    raise SystemExit(76)
-if (
-    payload.get("schema_version") != 1
-    or payload.get("operation") != "bootstrap"
-    or payload.get("state") != "initializing"
-):
-    raise SystemExit(76)
-shared = app_root / "shared"
-for path in (
-    app_root / "current",
-    app_root / "previous",
-    shared / "runtime-state",
-    shared / "day2-initialized.json",
-    shared / "infra.env",
-    shared / "docker-compose.gcp.yml",
-    shared / "bootstrap-state.json",
-    shared / "runtime-provenance.json",
-):
-    if path.exists() or path.is_symlink():
-        raise SystemExit(76)
-for root in (app_root / "releases", shared / "state-bundles"):
-    if root.exists() and any(root.iterdir()):
-        raise SystemExit(76)
-PY
-  exit $?
+  if [ ! -x "$watchdog" ] || [ ! -x "$timeout_bin" ] || \
+      ! "$timeout_bin" --signal=TERM --kill-after=2s 15s \
+        "$watchdog" marker-check 0 \
+        "$operation_marker"; then
+    echo "omega: durable operation marker contract differs; Docker remains fenced" >&2
+    exit 75
+  fi
 fi
 
-python3 - "$app_root" "$state_link" "${1:-verify}" <<'PY'
-import hashlib
-import json
-import os
-import pathlib
-import re
-import stat
-import sys
-
-
-app_root = pathlib.Path(sys.argv[1])
-state_link = pathlib.Path(sys.argv[2])
-mode = sys.argv[3]
-shared_root = app_root / "shared"
-bundles_root = shared_root / "state-bundles"
-current_link = pathlib.Path(os.environ.get("OMEGA_GCP_CURRENT_LINK_OVERRIDE", app_root / "current"))
-
-
-def fail(message: str) -> None:
-    print(f"omega: {message}; Docker remains fenced", file=sys.stderr)
-    raise SystemExit(76)
-
-
-def sha256(path: pathlib.Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-if mode not in {"verify", "print-helpers"}:
-    fail("unsupported operation-gate mode")
-if not state_link.is_symlink():
-    fail("canonical runtime-state is not an atomic symlink")
-try:
-    state_dir = state_link.resolve(strict=True)
-    state_dir.relative_to(bundles_root.resolve(strict=True))
-except (FileNotFoundError, ValueError, RuntimeError):
-    fail("canonical runtime-state target is missing or unconfined")
-if not state_dir.is_dir():
-    fail("canonical runtime-state target is not a directory")
-
-bootstrap_path = state_dir / "bootstrap-state.json"
-provenance_path = state_dir / "runtime-provenance.json"
-if not bootstrap_path.is_file() or not provenance_path.is_file():
-    fail("canonical runtime-state pair is incomplete")
-try:
-    bootstrap = json.loads(bootstrap_path.read_text(encoding="utf-8"))
-    provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
-except (OSError, json.JSONDecodeError):
-    fail("canonical runtime-state pair is unreadable")
-
-deploy_ref = bootstrap.get("deploy_ref")
-version = bootstrap.get("version")
-if (
-    bootstrap.get("schema_version") != 2
-    or bootstrap.get("state") != "complete"
-    or not isinstance(deploy_ref, str)
-    or re.fullmatch(r"[0-9a-f]{40}", deploy_ref) is None
-    or not isinstance(version, str)
-    or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", version) is None
-):
-    fail("bootstrap state identity is invalid")
-if bootstrap.get("runtime_provenance_sha256") != sha256(provenance_path):
-    fail("runtime provenance checksum differs from bootstrap state")
-for key, expected in (
-    ("schema_version", 1),
-    ("deploy_ref", deploy_ref),
-    ("version", version),
-):
-    if provenance.get(key) != expected:
-        fail(f"runtime provenance identity differs: {key}")
-
-if not current_link.is_symlink():
-    fail("current release link is missing")
-try:
-    current_release = current_link.resolve(strict=True)
-    current_release.relative_to((app_root / "releases").resolve(strict=True))
-except (FileNotFoundError, ValueError, RuntimeError):
-    fail("current release is missing or unconfined")
-if current_release.name != deploy_ref:
-    fail("current release ref differs from bootstrap state")
-try:
-    current_version = (current_release / "VERSION").read_text(encoding="utf-8").strip()
-except OSError:
-    fail("current VERSION is unreadable")
-if current_version != version:
-    fail("current VERSION differs from bootstrap state")
-
-legacy_artifact_upgrade = os.environ.get("OMEGA_GCP_LEGACY_ARTIFACT_UPGRADE") == "1"
-runtime_inputs = provenance.get("runtime_input_sha256")
-if runtime_inputs is None and legacy_artifact_upgrade:
-    # The compatibility invocation is read-only and precedes publication of
-    # the durable adoption marker.  Normal ExecStartPre never sets this flag,
-    # so a reboot remains fenced until exact input hashes are published.
-    pass
-else:
-    if not isinstance(runtime_inputs, dict) or not all(
-        isinstance(key, str)
-        and isinstance(value, str)
-        and re.fullmatch(r"[0-9a-f]{64}", value) is not None
-        for key, value in runtime_inputs.items()
-    ):
-        fail("runtime input checksum inventory is invalid")
-    mode_name = provenance.get("mode")
-    base_keys = {"shared_env", "base_compose", "gcp_compose"}
-    if mode_name == "day2":
-        expected_input_keys = base_keys | {"release_compose"}
-    elif mode_name == "bootstrap":
-        expected_input_keys = set(base_keys)
-        if "legacy_image_compose" in runtime_inputs:
-            expected_input_keys.add("legacy_image_compose")
-    else:
-        fail("runtime provenance mode is invalid")
-    if set(runtime_inputs) != expected_input_keys:
-        fail("runtime input checksum inventory is not exact")
-    runtime_paths = {
-        "shared_env": shared_root / "infra.env",
-        "base_compose": current_release / "infra" / "docker-compose.yml",
-        "gcp_compose": shared_root / "docker-compose.gcp.yml",
-        "legacy_image_compose": shared_root
-        / "docker-compose.legacy-images.gcp.yml",
-        "release_compose": current_release
-        / "infra"
-        / "terraform-gcp"
-        / "release"
-        / "docker-compose.release.yml",
-    }
-    for key in sorted(expected_input_keys):
-        path = runtime_paths[key]
-        try:
-            info = path.lstat()
-        except OSError:
-            fail(f"runtime input is missing: {key}")
-        if (
-            not stat.S_ISREG(info.st_mode)
-            or path.is_symlink()
-            or sha256(path) != runtime_inputs[key]
-        ):
-            fail(f"runtime input checksum differs: {key}")
-
-helper = bootstrap.get("reboot_helper")
-if not isinstance(helper, dict):
-    fail("reboot helper provenance is missing")
-helper_mode = helper.get("mode")
-source_ref = helper.get("source_ref")
-if not isinstance(source_ref, str) or re.fullmatch(r"[0-9a-f]{40}", source_ref) is None:
-    fail("reboot helper source ref is invalid")
-base_helper_keys = {
-    "mode",
-    "source_ref",
-    "source_artifact_uri",
-    "reboot_runtime_sha256",
-    "runtime_contract_sha256",
-}
-normal_helper_keys = base_helper_keys | {
-    "source_artifact_generation",
-    "source_artifact_size_bytes",
-    "source_artifact_sha256",
-    "safe_io_sha256",
-}
-legacy_helper_keys = (
-    base_helper_keys
-    if helper_mode == "current"
-    else base_helper_keys | {"source_artifact_sha256"}
-)
-expected_helper_keys = legacy_helper_keys if legacy_artifact_upgrade else normal_helper_keys
-if set(helper) != expected_helper_keys:
-    fail("reboot helper provenance keys differ from the reviewed shape")
-artifact_uri = helper.get("source_artifact_uri")
-artifact_generation = helper.get("source_artifact_generation")
-artifact_size = helper.get("source_artifact_size_bytes")
-artifact_sha = helper.get("source_artifact_sha256")
-safe_io_sha = helper.get("safe_io_sha256")
-if (
-    not isinstance(artifact_uri, str)
-    or re.fullmatch(
-        rf"gs://[^/]+/deploy-artifacts/{re.escape(source_ref)}/repo\.tar\.gz",
-        artifact_uri,
-    ) is None
-):
-    fail("reboot helper artifact provenance is invalid")
-if legacy_artifact_upgrade:
-    if helper_mode == "shared" and (
-        not isinstance(artifact_sha, str)
-        or re.fullmatch(r"[0-9a-f]{64}", artifact_sha) is None
-    ):
-        fail("legacy shared helper artifact SHA-256 is invalid")
-else:
-    if (
-        not isinstance(artifact_generation, str)
-        or re.fullmatch(r"[1-9][0-9]*", artifact_generation) is None
-        or type(artifact_size) is not int
-        or artifact_size < 1
-        or not isinstance(artifact_sha, str)
-        or re.fullmatch(r"[0-9a-f]{64}", artifact_sha) is None
-        or not isinstance(safe_io_sha, str)
-        or re.fullmatch(r"[0-9a-f]{64}", safe_io_sha) is None
-    ):
-        fail("reboot helper artifact byte identity is incomplete")
-if helper_mode == "current":
-    if source_ref != deploy_ref:
-        fail("current reboot helper ref differs from current release")
-    helper_root = current_release / "scripts" / "gcp"
-elif helper_mode == "shared":
-    helper_root = shared_root / "bin" / source_ref
-    try:
-        helper_root.resolve(strict=True).relative_to(
-            (shared_root / "bin").resolve(strict=True)
-        )
-    except (FileNotFoundError, ValueError, RuntimeError):
-        fail("shared reboot helper directory is missing or unconfined")
-else:
-    fail("reboot helper mode is invalid")
-
-reboot_helper = helper_root / "reboot-runtime.sh"
-runtime_helper = helper_root / "runtime_contract.py"
-safe_io_helper = helper_root / "safe_io.py"
-for path, field in (
-    (reboot_helper, "reboot_runtime_sha256"),
-    (runtime_helper, "runtime_contract_sha256"),
-    (safe_io_helper, "safe_io_sha256"),
-):
-    if legacy_artifact_upgrade and field == "safe_io_sha256":
-        continue
-    expected = helper.get(field)
-    if (
-        not path.is_file()
-        or not isinstance(expected, str)
-        or re.fullmatch(r"[0-9a-f]{64}", expected) is None
-        or sha256(path) != expected
-    ):
-        fail(f"reboot helper checksum differs: {path.name}")
-
-if mode == "print-helpers":
-    print(f"{reboot_helper}\t{runtime_helper}\t{safe_io_helper}")
-PY
+safe_io="${OMEGA_GCP_SAFE_IO:-/usr/local/sbin/omega-safe-io}"
+if [ "$(id -u)" = "0" ]; then
+  case "$safe_io" in
+    /usr/local/sbin/omega-safe-io|/run/omega-gcp-bootstrap.*/safe_io.py) ;;
+    *) echo "omega: safe I/O helper path is unconfined; Docker remains fenced" >&2; exit 76 ;;
+  esac
+fi
+if [ ! -x "$safe_io" ]; then
+  echo "omega: safe I/O helper is missing; Docker remains fenced" >&2
+  exit 76
+fi
+exec "$safe_io" operation-gate --app-root "$app_root" \
+  --state-link "$state_link" --operation-marker "$operation_marker" \
+  --mode "$mode"
