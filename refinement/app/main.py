@@ -2658,11 +2658,22 @@ def _discover_relationships(
         # profiling columns not present yet — nothing to infer from
         return {"candidates": []}
 
+    # Workspace/tenant scoping alone is not enough: like every other catalog
+    # read, re-filter through _dataset_allowed so a caller never sees another
+    # user's datasets or cartridges they are not allowed (per-user + cartridge
+    # boundaries the DB RLS policy does not enforce).
     row_counts: dict = {}
+    allowed_datasets: set[str] = set()
     for ds in store.list_datasets(**store_scope):
         name = str(ds.get("name") or "")
-        if name:
-            row_counts[name] = ds.get("row_count")
+        if not name:
+            continue
+        if security_context and not _dataset_allowed(security_context, ds):
+            continue
+        allowed_datasets.add(name)
+        row_counts[name] = ds.get("row_count")
+
+    rows = [row for row in rows if str(row.get("dataset") or "") in allowed_datasets]
 
     candidates = discover_relationship_candidates(rows, row_counts)
     return {"candidates": candidates}
