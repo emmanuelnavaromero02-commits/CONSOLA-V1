@@ -1095,9 +1095,9 @@ def _candidate_status(
     return item
 
 
-def _empty_talent_summary() -> dict[str, int]:
-    required_total = sum(1 for item in _TALENT_CPA_REQUIREMENTS if item.get("required"))
-    optional_total = sum(1 for item in _TALENT_CPA_REQUIREMENTS if not item.get("required"))
+def _empty_summary(requirements: tuple[dict[str, Any], ...]) -> dict[str, int]:
+    required_total = sum(1 for item in requirements if item.get("required"))
+    optional_total = sum(1 for item in requirements if not item.get("required"))
     return {
         "required_ready": 0,
         "required_total": required_total,
@@ -1106,17 +1106,22 @@ def _empty_talent_summary() -> dict[str, int]:
     }
 
 
-def talent_metadata_readiness(
+def _entity_metadata_readiness(
     *,
+    requirements: tuple[dict[str, Any], ...],
     conn_id: str | None = None,
     security_context: dict[str, Any] | str | None = None,
     sample: bool = True,
+    use_aliases: bool = True,
 ) -> dict[str, Any]:
-    """Live SuccessFactors C/P/A metadata preflight for WB-TALENTO.
+    """Live SuccessFactors metadata + read preflight over a requirement set.
 
-    This answers the product question "can we calculate real C/P/A and 9-box
-    from this tenant yet?" without inventing scores. Entity/field availability
-    comes from live ``$metadata``; optional sample reads validate permission.
+    Generic engine shared by the talent C/P/A preflight and the people-master
+    preflight. Entity/field availability comes from live ``$metadata``; optional
+    sample reads (page_size=1) validate OData read permission per entity — a
+    401/403 surfaces as ``permission_blocked`` without inventing anything.
+    ``use_aliases`` enables the talent-only custom-entity alias discovery; it is
+    off for standard-named entities (people master).
     """
     sap_status = check_sap(conn_id=conn_id, security_context=security_context)
     if not sap_status.get("configured"):
@@ -1125,7 +1130,7 @@ def talent_metadata_readiness(
             "configured": False,
             "connection_id": conn_id,
             "components": [],
-            "summary": _empty_talent_summary(),
+            "summary": _empty_summary(requirements),
             "blockers": [
                 {
                     "component": "sap",
@@ -1147,7 +1152,7 @@ def talent_metadata_readiness(
             "configured": True,
             "connection_id": conn_id,
             "components": [],
-            "summary": _empty_talent_summary(),
+            "summary": _empty_summary(requirements),
             "blockers": [
                 {
                     "component": "metadata",
@@ -1157,15 +1162,20 @@ def talent_metadata_readiness(
             ],
         }
 
-    configured_aliases_by_component = _load_talent_alias_candidates(security_context=security_context)
-    discovered_aliases_by_component = _discover_talent_alias_candidates(metadata_entities)
-    aliases_by_component = _merge_talent_alias_candidates(
-        configured_aliases_by_component,
-        discovered_aliases_by_component,
-    )
+    if use_aliases:
+        configured_aliases_by_component = _load_talent_alias_candidates(security_context=security_context)
+        discovered_aliases_by_component = _discover_talent_alias_candidates(metadata_entities)
+        aliases_by_component = _merge_talent_alias_candidates(
+            configured_aliases_by_component,
+            discovered_aliases_by_component,
+        )
+    else:
+        configured_aliases_by_component = {}
+        discovered_aliases_by_component = {}
+        aliases_by_component = {}
     components: list[dict[str, Any]] = []
     blockers: list[dict[str, Any]] = []
-    for requirement in _TALENT_CPA_REQUIREMENTS:
+    for requirement in requirements:
         candidate_definitions = _requirement_candidates_with_aliases(requirement, aliases_by_component)
         candidates = [
             _candidate_status(
@@ -1302,3 +1312,198 @@ def talent_metadata_readiness(
             "sample_values_returned": False,
         },
     }
+
+
+# People-master / Employee Central foundation entities. These feed employee_360
+# (silver EmpEmployment/EmpJob/PerPersonal -> gold) and therefore the Employee
+# Central anomaly signal and the whole talent 9-box. They are standard-named
+# OData entities (no alias discovery needed). fields_required are the join/key
+# fields the downstream silver/gold actually depends on; the rest are optional.
+# User/EmpEmployment/EmpJob are the required linchpin the SAP admin must grant
+# OData read on; PerPersonal/PerPerson/FOJobCode/Position enrich but do not block.
+_PEOPLE_MASTER_REQUIREMENTS: tuple[dict[str, Any], ...] = (
+    {
+        "id": "user",
+        "label": "User (maestro de usuarios)",
+        "component": "PM",
+        "required": True,
+        "required_groups": ("user",),
+        "candidates": (
+            {
+                "entity": "User",
+                "extract_entity": "User",
+                "group": "user",
+                "scope": "standard_ec",
+                "fields_required": ("userId", "lastModifiedDateTime"),
+                "fields_optional": (
+                    "username", "email", "status", "firstName", "lastName",
+                    "department", "division", "location", "manager", "hireDate",
+                ),
+            },
+        ),
+    },
+    {
+        "id": "emp_employment",
+        "label": "EmpEmployment (empleo / puente persona-usuario)",
+        "component": "PM",
+        "required": True,
+        "required_groups": ("emp_employment",),
+        "candidates": (
+            {
+                "entity": "EmpEmployment",
+                "extract_entity": "EmpEmployment",
+                "group": "emp_employment",
+                "scope": "standard_ec",
+                "fields_required": ("personIdExternal", "userId", "lastModifiedDateTime"),
+                "fields_optional": ("startDate", "endDate", "assignmentClass", "originalStartDate"),
+            },
+        ),
+    },
+    {
+        "id": "emp_job",
+        "label": "EmpJob (puesto / organización)",
+        "component": "PM",
+        "required": True,
+        "required_groups": ("emp_job",),
+        "candidates": (
+            {
+                "entity": "EmpJob",
+                "extract_entity": "EmpJob",
+                "group": "emp_job",
+                "scope": "standard_ec",
+                "fields_required": ("userId", "jobCode", "lastModifiedDateTime"),
+                "fields_optional": (
+                    "startDate", "endDate", "position", "department", "division",
+                    "location", "businessUnit", "company", "costCenter",
+                    "managerId", "eventReason",
+                ),
+            },
+        ),
+    },
+    {
+        "id": "per_personal",
+        "label": "PerPersonal (datos personales efectivos)",
+        "component": "PM",
+        "required": False,
+        "required_groups": ("per_personal",),
+        "candidates": (
+            {
+                "entity": "PerPersonal",
+                "extract_entity": "PerPersonal",
+                "group": "per_personal",
+                "scope": "standard_ec",
+                "fields_required": ("personIdExternal", "startDate"),
+                "fields_optional": (
+                    "endDate", "firstName", "middleName", "lastName", "gender",
+                    "maritalStatus", "nationality", "lastModifiedDateTime",
+                ),
+            },
+        ),
+    },
+    {
+        "id": "per_person",
+        "label": "PerPerson (persona core)",
+        "component": "PM",
+        "required": False,
+        "required_groups": ("per_person",),
+        "candidates": (
+            {
+                "entity": "PerPerson",
+                "extract_entity": "PerPerson",
+                "group": "per_person",
+                "scope": "standard_ec",
+                "fields_required": ("personIdExternal",),
+                "fields_optional": (
+                    "personId", "dateOfBirth", "countryOfBirth",
+                    "createdDateTime", "lastModifiedDateTime",
+                ),
+            },
+        ),
+    },
+    {
+        "id": "fo_jobcode",
+        "label": "FOJobCode (catálogo de puestos)",
+        "component": "PM",
+        "required": False,
+        "required_groups": ("fo_jobcode",),
+        "candidates": (
+            {
+                "entity": "FOJobCode",
+                "extract_entity": "FOJobCode",
+                "group": "fo_jobcode",
+                "scope": "standard_ec",
+                "fields_required": ("externalCode",),
+                "fields_optional": (
+                    "name_defaultValue", "status", "startDate", "endDate",
+                    "lastModifiedDateTime",
+                ),
+            },
+        ),
+    },
+    {
+        "id": "position",
+        "label": "Position (posiciones)",
+        "component": "PM",
+        "required": False,
+        "required_groups": ("position",),
+        "candidates": (
+            {
+                "entity": "Position",
+                "extract_entity": "Position",
+                "group": "position",
+                "scope": "standard_ec",
+                "fields_required": ("code",),
+                "fields_optional": (
+                    "externalName_defaultValue", "department", "location",
+                    "costCenter", "lastModifiedDateTime",
+                ),
+            },
+        ),
+    },
+)
+
+
+def talent_metadata_readiness(
+    *,
+    conn_id: str | None = None,
+    security_context: dict[str, Any] | str | None = None,
+    sample: bool = True,
+) -> dict[str, Any]:
+    """Live SuccessFactors C/P/A metadata preflight for WB-TALENTO.
+
+    Answers "can we calculate real C/P/A and 9-box from this tenant yet?"
+    without inventing scores. Delegates to the generic engine over the talent
+    requirement set (with custom-entity alias discovery enabled).
+    """
+    return _entity_metadata_readiness(
+        requirements=_TALENT_CPA_REQUIREMENTS,
+        conn_id=conn_id,
+        security_context=security_context,
+        sample=sample,
+        use_aliases=True,
+    )
+
+
+def people_master_readiness(
+    *,
+    conn_id: str | None = None,
+    security_context: dict[str, Any] | str | None = None,
+    sample: bool = True,
+) -> dict[str, Any]:
+    """Live people-master (Employee Central foundation) permission preflight.
+
+    Read-only. For each people-master entity (User/EmpEmployment/EmpJob required;
+    PerPersonal/PerPerson/FOJobCode/Position optional) it checks live ``$metadata``
+    field availability and does a page_size=1 sample read to prove OData read
+    permission. A 401/403 surfaces as ``permission_blocked`` per entity, giving
+    the owner an exact, per-entity checklist to hand the SAP admin BEFORE any
+    extraction runs. This is the switch that flips the SF path from blocked to
+    ready the instant the people-master grant lands.
+    """
+    return _entity_metadata_readiness(
+        requirements=_PEOPLE_MASTER_REQUIREMENTS,
+        conn_id=conn_id,
+        security_context=security_context,
+        sample=sample,
+        use_aliases=False,
+    )
