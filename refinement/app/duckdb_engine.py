@@ -1894,6 +1894,29 @@ class DuckDBEngine:
             except Exception:
                 schema_fields = []
 
+            # ── Phase 7: per-column profile (best-effort, P2 log+continue) ──────
+            # One SUMMARIZE pass over the landed data (silver parquet / attached
+            # gold Postgres) yields null_rate/distinct_count/min/max per column.
+            # Wrapped so a profiling failure NEVER breaks materialization or the
+            # row_count/schema path; it just leaves the stats unset (NULL).
+            if schema_fields:
+                try:
+                    relation_expr = (
+                        f"read_parquet('{storage_uri}')"
+                        if layer == "silver"
+                        else f"pggold.gold_{name}"
+                    )
+                    column_stats = self._profile_columns(con, relation_expr)
+                    for field in schema_fields:
+                        stat = column_stats.get(field["name"])
+                        if stat:
+                            field["null_rate"] = stat["null_rate"]
+                            field["distinct_count"] = stat["distinct_count"]
+                            field["min_value"] = stat["min"]
+                            field["max_value"] = stat["max"]
+                except Exception:
+                    pass
+
         # ── Write lineage ────────────────────────────────────────────────────
         source_entity = (sources or [""])[0]
         latest_date = (
@@ -1937,6 +1960,53 @@ class DuckDBEngine:
             "storage_uri": storage_uri,
         }
 
+    def _profile_columns(self, con, relation_expr: str) -> dict[str, dict]:
+        """Best-effort per-column profile via a single DuckDB SUMMARIZE pass.
+
+        ``relation_expr`` is a ``read_parquet('...')`` expression for silver, or
+        the attached ``pggold.gold_<name>`` table for gold. Returns
+        ``{column_name: {"null_rate", "distinct_count", "min", "max"}}``. Never
+        raises: any failure yields ``{}`` so the caller degrades to NULL stats
+        (Phase-7 profiling is P2 — it must never break the materialization).
+        """
+        try:
+            rows = con.execute(f"SUMMARIZE SELECT * FROM {relation_expr}").fetchall()
+            cols = [d[0] for d in con.description]
+        except Exception:
+            return {}
+        idx = {name: i for i, name in enumerate(cols)}
+
+        def _cell(row, key):
+            i = idx.get(key)
+            return row[i] if i is not None and i < len(row) else None
+
+        def _num(value, cast):
+            if value is None:
+                return None
+            try:
+                return cast(value)
+            except (TypeError, ValueError):
+                return None
+
+        def _text(value):
+            return None if value is None else str(value)[:512]
+
+        stats: dict[str, dict] = {}
+        for row in rows:
+            col = _cell(row, "column_name")
+            if col is None:
+                continue
+            null_pct = _num(_cell(row, "null_percentage"), float)
+            stats[str(col)] = {
+                # SUMMARIZE reports null_percentage as 0-100; store a 0-1 rate.
+                "null_rate": None if null_pct is None else round(null_pct / 100.0, 6),
+                # approx_unique counts distinct NON-NULL values (HyperLogLog).
+                "distinct_count": _num(_cell(row, "approx_unique"), int),
+                "min": _text(_cell(row, "min")),
+                "max": _text(_cell(row, "max")),
+            }
+        return stats
+
     def _update_catalog(
         self,
         name: str,
@@ -1961,12 +2031,23 @@ class DuckDBEngine:
                 for field in schema_fields:
                     col = field["name"]
                     desc = column_mapping.get(col, "")
+                    null_rate = field.get("null_rate")
+                    distinct_count = field.get("distinct_count")
+                    min_value = field.get("min_value")
+                    max_value = field.get("max_value")
+                    has_stats = any(
+                        k in field
+                        for k in ("null_rate", "distinct_count", "min_value", "max_value")
+                    )
                     cur.execute(
                         """
                         INSERT INTO data_catalog
                             (dataset, layer, cartridge, column_name, data_type, description,
+                             null_rate, distinct_count, min_value, max_value, profiled_at,
                              tenant_id, workspace_id, scope_status, updated_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s::uuid, %s::uuid, 'scoped', NOW())
+                        VALUES (%s, %s, %s, %s, %s, %s,
+                                %s, %s, %s, %s, CASE WHEN %s THEN NOW() ELSE NULL END,
+                                %s::uuid, %s::uuid, 'scoped', NOW())
                         ON CONFLICT (workspace_id, dataset, column_name) WHERE workspace_id IS NOT NULL
                         DO UPDATE
                             SET data_type   = EXCLUDED.data_type,
@@ -1976,6 +2057,12 @@ class DuckDBEngine:
                                     WHEN EXCLUDED.description != '' THEN EXCLUDED.description
                                     ELSE data_catalog.description
                                 END,
+                                -- keep prior stats when this run did not profile
+                                null_rate      = CASE WHEN EXCLUDED.profiled_at IS NOT NULL THEN EXCLUDED.null_rate      ELSE data_catalog.null_rate      END,
+                                distinct_count = CASE WHEN EXCLUDED.profiled_at IS NOT NULL THEN EXCLUDED.distinct_count ELSE data_catalog.distinct_count END,
+                                min_value      = CASE WHEN EXCLUDED.profiled_at IS NOT NULL THEN EXCLUDED.min_value      ELSE data_catalog.min_value      END,
+                                max_value      = CASE WHEN EXCLUDED.profiled_at IS NOT NULL THEN EXCLUDED.max_value      ELSE data_catalog.max_value      END,
+                                profiled_at    = CASE WHEN EXCLUDED.profiled_at IS NOT NULL THEN EXCLUDED.profiled_at    ELSE data_catalog.profiled_at    END,
                                 tenant_id   = EXCLUDED.tenant_id,
                                 scope_status = 'scoped',
                                 updated_at  = NOW()
@@ -1987,6 +2074,11 @@ class DuckDBEngine:
                             col,
                             field["type"],
                             desc,
+                            null_rate,
+                            distinct_count,
+                            min_value,
+                            max_value,
+                            has_stats,
                             tenant_id or None,
                             workspace_id,
                         ),
