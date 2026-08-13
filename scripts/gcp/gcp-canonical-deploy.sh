@@ -104,6 +104,10 @@ trap 'rm -f -- "${overlay}"' EXIT
       "${svc}" "${OMEGA_GHCR_OWNER}" "${image}" "${TARGET_TAG}"
     # airflow image backs three services
     if [[ "${image}" == "airflow" ]]; then
+      # airflow serves under the /airflow base path; some release compose files
+      # curl /health (404) in the container healthcheck, so it never goes healthy
+      # and `up -d` aborts. Pin the correct /airflow/health path here.
+      printf '    healthcheck:\n      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8080/airflow/health || exit 1"]\n'
       printf '  airflow-init:\n    image: ghcr.io/%s/airflow:%s\n    pull_policy: never\n' "${OMEGA_GHCR_OWNER}" "${TARGET_TAG}"
       printf '  airflow-scheduler:\n    image: ghcr.io/%s/airflow:%s\n    pull_policy: never\n' "${OMEGA_GHCR_OWNER}" "${TARGET_TAG}"
     fi

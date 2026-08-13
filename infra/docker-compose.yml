@@ -1312,7 +1312,7 @@ services:
     # Sprint v1.41.1: Airflow webserver exposes /health on port 8080.
     # start_period covers the slow first boot while plugins/dags load.
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8080/health || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8080/airflow/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
