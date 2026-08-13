@@ -1798,6 +1798,31 @@ async def mcp_tools():
                 },
             },
             {
+                "name": "validate_relationship",
+                "description": (
+                    "Valida un candidato de relación por CONTENCIÓN de valores sobre el dato "
+                    "gold (RLS-scoped): confirma que cada valor no-nulo de from_column existe "
+                    "en to_column. Solo datasets gold. Devuelve child_distinct, orphan_values, "
+                    "coverage y un veredicto 'contained'. Promueve un candidato de "
+                    "discover_relationships a confirmado antes de register_relationship."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "from_dataset": {"type": "string"},
+                        "from_column": {"type": "string"},
+                        "to_dataset": {"type": "string"},
+                        "to_column": {"type": "string"},
+                    },
+                    "required": [
+                        "from_dataset",
+                        "from_column",
+                        "to_dataset",
+                        "to_column",
+                    ],
+                },
+            },
+            {
                 "name": "get_data_catalog",
                 "description": (
                     "Devuelve el catálogo semántico completo: schema con descripciones de negocio "
@@ -2447,6 +2472,29 @@ def _mcp_invoke_sync(body: dict):
         return _discover_relationships(
             security_context=sec,
             cartridge=args.get("cartridge"),
+        )
+
+    if tool == "validate_relationship":
+        sec = _require_security_permission(body, "datasets.read")
+        store_scope = _dataset_store_scope(sec)
+        for name in (args["from_dataset"], args["to_dataset"]):
+            ds = store.get_dataset(name, **store_scope)
+            if not ds:
+                raise HTTPException(404, f"Dataset '{name}' not found")
+            _require_dataset_scope(body, ds)
+            if str(ds.get("layer") or "") != "gold":
+                return {
+                    "error": (
+                        f"validate_relationship solo soporta datasets gold; "
+                        f"'{name}' es {ds.get('layer') or 'desconocido'}"
+                    )
+                }
+        return engine.validate_containment(
+            args["from_dataset"],
+            args["from_column"],
+            args["to_dataset"],
+            args["to_column"],
+            _trusted_user_context(body, args),
         )
 
     if tool == "upsert_catalog_entries":

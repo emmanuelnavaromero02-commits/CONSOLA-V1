@@ -1,7 +1,20 @@
 """Fase 7 — relationship (FK) candidate discovery from profiler stats."""
 from __future__ import annotations
 
+import duckdb
+import pytest
+
+from refinement.app.duckdb_engine import DuckDBEngine
 from refinement.app.relationship_discovery import discover_relationship_candidates
+
+
+def _engine_over(con):
+    """A DuckDBEngine whose connection is a ready in-memory DuckDB with a pggold
+    schema, and whose pggold attach is a no-op (tables already present)."""
+    eng = DuckDBEngine()
+    eng._con = con
+    eng._pg_gold_attach = lambda c, uc=None: "pggold"
+    return eng
 
 
 def _col(dataset, name, dtype, distinct, null_rate=0.0):
@@ -107,3 +120,72 @@ def test_unprofiled_columns_produce_no_candidates():
     ]
     row_counts = {"gold_users": 10, "gold_orders": 25}
     assert discover_relationship_candidates(columns, row_counts) == []
+
+
+def test_validate_containment_confirms_full_containment():
+    con = duckdb.connect()
+    con.execute("CREATE SCHEMA pggold")
+    con.execute(
+        "CREATE TABLE pggold.gold_customers AS "
+        "SELECT * FROM (VALUES ('c1'),('c2'),('c3')) v(customer_id)"
+    )
+    con.execute(
+        "CREATE TABLE pggold.gold_invoices AS "
+        "SELECT * FROM (VALUES ('c1'),('c1'),('c2')) v(customer_id)"
+    )
+    eng = _engine_over(con)
+    out = eng.validate_containment("invoices", "customer_id", "customers", "customer_id")
+    assert out["contained"] is True
+    assert out["orphan_values"] == 0
+    assert out["child_distinct"] == 2  # distinct non-null child values c1,c2
+    assert out["coverage"] == 1.0
+    con.close()
+
+
+def test_validate_containment_flags_orphans():
+    con = duckdb.connect()
+    con.execute("CREATE SCHEMA pggold")
+    con.execute(
+        "CREATE TABLE pggold.gold_customers AS "
+        "SELECT * FROM (VALUES ('c1'),('c2')) v(customer_id)"
+    )
+    con.execute(
+        "CREATE TABLE pggold.gold_invoices AS "
+        "SELECT * FROM (VALUES ('c1'),('c2'),('c9')) v(customer_id)"
+    )
+    eng = _engine_over(con)
+    out = eng.validate_containment("invoices", "customer_id", "customers", "customer_id")
+    assert out["contained"] is False
+    assert out["orphan_values"] == 1  # c9 not in customers
+    assert out["child_distinct"] == 3
+    assert out["coverage"] == round(2 / 3, 4)
+    con.close()
+
+
+def test_validate_containment_ignores_nulls_on_both_sides():
+    con = duckdb.connect()
+    con.execute("CREATE SCHEMA pggold")
+    con.execute(
+        "CREATE TABLE pggold.gold_customers AS "
+        "SELECT * FROM (VALUES ('c1'),(NULL)) v(customer_id)"
+    )
+    con.execute(
+        "CREATE TABLE pggold.gold_invoices AS "
+        "SELECT * FROM (VALUES ('c1'),(NULL),(NULL)) v(customer_id)"
+    )
+    eng = _engine_over(con)
+    out = eng.validate_containment("invoices", "customer_id", "customers", "customer_id")
+    assert out["contained"] is True
+    assert out["child_distinct"] == 1  # nulls excluded
+    assert out["orphan_values"] == 0
+    con.close()
+
+
+def test_validate_containment_rejects_unsafe_identifier():
+    con = duckdb.connect()
+    con.execute("CREATE SCHEMA pggold")
+    con.execute("CREATE TABLE pggold.gold_a AS SELECT 1 AS x")
+    eng = _engine_over(con)
+    with pytest.raises(Exception):
+        eng.validate_containment("a", 'x"; DROP TABLE pggold.gold_a; --', "a", "x")
+    con.close()

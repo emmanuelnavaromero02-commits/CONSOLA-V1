@@ -2007,6 +2007,66 @@ class DuckDBEngine:
             }
         return stats
 
+    def validate_containment(
+        self,
+        from_dataset: str,
+        from_column: str,
+        to_dataset: str,
+        to_column: str,
+        user_context: dict | None = None,
+    ) -> dict:
+        """Data-validate a foreign-key candidate by value containment on gold.
+
+        Confirms that every non-null value of ``from_dataset.from_column`` exists
+        in ``to_dataset.to_column`` over the RLS-scoped gold tables: the pggold
+        attach carries the tenant/workspace GUCs, so the DB itself restricts both
+        tables to the caller's rows. Identifiers are validated to block injection;
+        both datasets must be gold (the caller enforces that). Returns
+        child_distinct, orphan_values, coverage and a boolean ``contained``.
+        """
+        for label, ident in (
+            ("from_dataset", from_dataset),
+            ("to_dataset", to_dataset),
+            ("from_column", from_column),
+            ("to_column", to_column),
+        ):
+            validate_safe_identifier(str(ident or ""), label)
+        from_tbl = f"pggold.gold_{from_dataset}"
+        to_tbl = f"pggold.gold_{to_dataset}"
+        query = (
+            f'WITH child AS ('
+            f'  SELECT DISTINCT "{from_column}" AS v FROM {from_tbl} '
+            f'  WHERE "{from_column}" IS NOT NULL'
+            f'), parent AS ('
+            f'  SELECT DISTINCT "{to_column}" AS k FROM {to_tbl} '
+            f'  WHERE "{to_column}" IS NOT NULL'
+            f') SELECT '
+            f'  (SELECT count(*) FROM child), '
+            f'  (SELECT count(*) FROM child c LEFT JOIN parent p ON c.v = p.k WHERE p.k IS NULL)'
+        )
+        with self._duckdb_lock:
+            con = self._conn()
+            self._pg_gold_attach(con, user_context)
+            row = con.execute(query).fetchone()
+        child_distinct = int(row[0]) if row and row[0] is not None else 0
+        orphan_values = int(row[1]) if row and row[1] is not None else 0
+        contained = child_distinct > 0 and orphan_values == 0
+        coverage = (
+            None
+            if child_distinct == 0
+            else round((child_distinct - orphan_values) / child_distinct, 4)
+        )
+        return {
+            "from_dataset": from_dataset,
+            "from_column": from_column,
+            "to_dataset": to_dataset,
+            "to_column": to_column,
+            "child_distinct": child_distinct,
+            "orphan_values": orphan_values,
+            "coverage": coverage,
+            "contained": bool(contained),
+        }
+
     def _update_catalog(
         self,
         name: str,
