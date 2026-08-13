@@ -39,7 +39,11 @@ from app.core.request_context import SecurityContextError, reset_security_contex
 from app.core.sap_client import SAPClientError, SapSfClient
 from app.services.catalog_service import get_all_entities, get_entity_config, get_extract_all_plan
 from app.services.extraction_service import run_entity
-from app.services.preflight import preflight_for_extract, talent_metadata_readiness
+from app.services.preflight import (
+    people_master_readiness,
+    preflight_for_extract,
+    talent_metadata_readiness,
+)
 from app.services.runlog_service import get_last_run_status
 from app.services.watermark_service import list_watermarks
 
@@ -153,6 +157,25 @@ def talent_metadata_readiness_probe(
 ) -> dict:
     """Validate live SuccessFactors metadata/permission readiness for WB-TALENTO C/P/A."""
     return talent_metadata_readiness(
+        conn_id=conn_id,
+        security_context=_header_security_context(request),
+        sample=sample,
+    )
+
+
+@router.get("/foundation/metadata-readiness")
+def foundation_metadata_readiness_probe(
+    request: Request,
+    conn_id: str | None = Query(default=None, max_length=128),
+    sample: bool = Query(default=True),
+) -> dict:
+    """Read-only people-master (Employee Central) OData permission checklist.
+
+    Per-entity verdict (User/EmpEmployment/EmpJob required; PerPersonal/PerPerson/
+    FOJobCode/Position optional) so the owner knows exactly which OData read grants
+    to request from the SAP admin to unblock the SF golden path.
+    """
+    return people_master_readiness(
         conn_id=conn_id,
         security_context=_header_security_context(request),
         sample=sample,
