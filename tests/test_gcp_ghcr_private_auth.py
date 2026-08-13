@@ -151,7 +151,7 @@ elif [[ "$args" == *"versions/7:access"* ]]; then
     fi
     previous="$arg"
   done
-  printf '%s' '{{"name":"projects/omega-test-project/secrets/omega-staging-ghcr_pull_credentials/versions/7","payload":{{"data":"{payload}"}}}}'
+  printf '%s' '{{"name":"projects/123456789012/secrets/omega-staging-ghcr_pull_credentials/versions/7","payload":{{"data":"{payload}"}}}}'
 else
   exit 12
 fi
