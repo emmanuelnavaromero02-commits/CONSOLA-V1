@@ -249,7 +249,7 @@ def calculate_item_impact(
     if cartridge == "sap_successfactors" and anomaly_type in {
         "missing_manager",
         "missing_department",
-        "missing_job_code",
+        "invalid_job_code",
     }:
         affected = (
             number(details.get("affected_employees"))
