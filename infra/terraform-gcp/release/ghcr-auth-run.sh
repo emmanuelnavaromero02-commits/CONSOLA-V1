@@ -131,7 +131,10 @@ if ! secret_response="$(
 fi
 rm -f -- "$curl_config"
 
-expected_version="projects/${project_id}/secrets/${secret_id}/versions/${secret_version}"
+# Secret Manager returns the resource name with the numeric project id, not the
+# project-id string from metadata, so match the stable suffix (secret + version)
+# instead of the full project-prefixed name.
+expected_version="/secrets/${secret_id}/versions/${secret_version}"
 if ! credentials="$(
   printf '%s' "$secret_response" | python3 -c '
 import base64
@@ -143,7 +146,7 @@ import sys
 expected = sys.argv[1]
 try:
     response = json.load(sys.stdin)
-    if response.get("name") != expected:
+    if not str(response.get("name") or "").endswith(expected):
         raise ValueError
     encoded = response["payload"]["data"]
     decoded = base64.b64decode(encoded, validate=True).decode("utf-8")
