@@ -119,6 +119,57 @@ def test_dataset_allowed_filters_owned_datasets_for_workspace_employees(
     assert refinement_main._dataset_allowed(wildcard_admin_sec, other_employee_dataset)
 
 
+def test_discover_relationships_excludes_datasets_the_caller_cannot_see(
+    refinement_main, monkeypatch
+):
+    # A viewer must not learn about a coworker's dataset via FK discovery — the
+    # tool must re-filter through _dataset_allowed, not just workspace/tenant.
+    base_sec = {
+        "trusted": True,
+        "source": "console",
+        "role": "user",
+        "workspace_role": "viewer",
+        "user_id": 10,
+        "tenant_id": "tenant-a",
+        "workspace_id": "workspace-a",
+        "allowed_cartridges": ["hubspot"],
+    }
+    catalog_rows = [
+        # caller-owned key + child -> a legitimate candidate
+        {"dataset": "gold_customers", "column_name": "customer_id", "data_type": "VARCHAR", "distinct_count": 10, "null_rate": 0.0},
+        {"dataset": "gold_invoices", "column_name": "customer_id", "data_type": "VARCHAR", "distinct_count": 4, "null_rate": 0.0},
+        # a coworker's dataset (created_by 11) that would also match by name/type
+        {"dataset": "gold_secret", "column_name": "customer_id", "data_type": "VARCHAR", "distinct_count": 3, "null_rate": 0.0},
+    ]
+    datasets = [
+        {"name": "gold_customers", "layer": "gold", "cartridge": "hubspot", "workspace_id": "workspace-a", "created_by_id": 10, "row_count": 10},
+        {"name": "gold_invoices", "layer": "gold", "cartridge": "hubspot", "workspace_id": "workspace-a", "created_by_id": 10, "row_count": 40},
+        {"name": "gold_secret", "layer": "gold", "cartridge": "hubspot", "workspace_id": "workspace-a", "created_by_id": 11, "row_count": 20},
+    ]
+    monkeypatch.setattr(refinement_main, "_pg_exec", lambda *a, **k: list(catalog_rows))
+    monkeypatch.setattr(
+        refinement_main,
+        "store",
+        types.SimpleNamespace(
+            list_datasets=lambda **k: list(datasets),
+            get_dataset=lambda *a, **k: None,
+        ),
+    )
+
+    out = refinement_main._discover_relationships(security_context=base_sec)
+    candidates = out["candidates"]
+    involved = {c["from_dataset"] for c in candidates} | {
+        c["to_dataset"] for c in candidates
+    }
+    # the coworker's dataset is never exposed
+    assert "gold_secret" not in involved
+    # the caller's own datasets still produce the legitimate candidate
+    assert any(
+        c["from_dataset"] == "gold_invoices" and c["to_dataset"] == "gold_customers"
+        for c in candidates
+    )
+
+
 def test_published_dataset_listing_fails_closed_without_scope(refinement_main):
     assert refinement_main._published_datasets_for_scope({}) == {"datasets": []}
 

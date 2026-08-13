@@ -47,6 +47,7 @@ from app.publication_public import (
     published_lineage,
 )
 from app.publication_snapshot import PublicationSnapshotResolver
+from app.relationship_discovery import discover_relationship_candidates
 from app.security import get_internal_api_key
 from app.sql_table_function_policy import (
     TableFunctionPolicyError,
@@ -1779,6 +1780,24 @@ async def mcp_tools():
             },
             # ── Semantic catalog ──────────────────────────────────────────────────
             {
+                "name": "discover_relationships",
+                "description": (
+                    "Propone candidatos de llave foránea (relaciones entre datasets) a partir "
+                    "de las estadísticas del perfilador: llaves únicas + coincidencia de "
+                    "nombre/tipo + factibilidad de cardinalidad. Solo sugiere (no escribe); "
+                    "confirma cada candidato con register_relationship."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "cartridge": {
+                            "type": "string",
+                            "description": "Filtrar por cartucho, e.g. 'sap_successfactors'",
+                        },
+                    },
+                },
+            },
+            {
                 "name": "get_data_catalog",
                 "description": (
                     "Devuelve el catálogo semántico completo: schema con descripciones de negocio "
@@ -2423,6 +2442,13 @@ def _mcp_invoke_sync(body: dict):
             security_context=sec,
         )
 
+    if tool == "discover_relationships":
+        sec = _require_security_permission(body, "datasets.read")
+        return _discover_relationships(
+            security_context=sec,
+            cartridge=args.get("cartridge"),
+        )
+
     if tool == "upsert_catalog_entries":
         sec = _require_security_permission(body, "datasets.write")
         store_scope = _dataset_store_scope(sec)
@@ -2585,6 +2611,72 @@ def _ensure_semantic_catalog_tables() -> None:
     catch up. Keeping a no-op preserves the API surface while removing
     the unsafe DDL."""
     return None
+
+
+def _discover_relationships(
+    security_context: dict | None = None,
+    cartridge: str | None = None,
+) -> dict:
+    """Propose foreign-key candidates from the profiler stats in data_catalog.
+
+    Read-only. Returns suggestions only (never writes) so a human confirms them
+    through register_relationship. Degrades to an empty list when the profiling
+    columns are not present yet (migration not applied).
+    """
+    store_scope = _dataset_store_scope(security_context) if security_context else {}
+    conditions = ["c.distinct_count IS NOT NULL"]
+    params: list = []
+    if cartridge:
+        conditions.append("c.cartridge = %s")
+        params.append(cartridge)
+    if security_context and not _is_unscoped_admin_security_context(security_context):
+        workspace_id = str(security_context.get("workspace_id") or "").strip()
+        if not workspace_id:
+            return {"candidates": []}
+        conditions.append("c.scope_status = 'scoped'")
+        conditions.append("c.workspace_id = %s")
+        params.append(workspace_id)
+        tenant_id = str(security_context.get("tenant_id") or "").strip()
+        if tenant_id:
+            conditions.append("c.tenant_id = %s")
+            params.append(tenant_id)
+    where = " AND ".join(conditions)
+    try:
+        rows = (
+            _pg_exec(
+                f"""SELECT c.dataset, c.column_name, c.data_type,
+                       c.distinct_count, c.null_rate
+                FROM data_catalog c
+                WHERE {where}""",
+                params,
+                fetch=True,
+                security_context=security_context,
+            )
+            or []
+        )
+    except Exception:
+        # profiling columns not present yet — nothing to infer from
+        return {"candidates": []}
+
+    # Workspace/tenant scoping alone is not enough: like every other catalog
+    # read, re-filter through _dataset_allowed so a caller never sees another
+    # user's datasets or cartridges they are not allowed (per-user + cartridge
+    # boundaries the DB RLS policy does not enforce).
+    row_counts: dict = {}
+    allowed_datasets: set[str] = set()
+    for ds in store.list_datasets(**store_scope):
+        name = str(ds.get("name") or "")
+        if not name:
+            continue
+        if security_context and not _dataset_allowed(security_context, ds):
+            continue
+        allowed_datasets.add(name)
+        row_counts[name] = ds.get("row_count")
+
+    rows = [row for row in rows if str(row.get("dataset") or "") in allowed_datasets]
+
+    candidates = discover_relationship_candidates(rows, row_counts)
+    return {"candidates": candidates}
 
 
 def _get_data_catalog(
