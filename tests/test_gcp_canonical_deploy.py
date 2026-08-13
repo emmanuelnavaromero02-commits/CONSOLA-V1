@@ -46,14 +46,31 @@ def test_driver_never_targets_aws():
 
 def test_remote_backs_up_both_dbs_before_mutation():
     text = REMOTE.read_text(encoding="utf-8")
-    # Backup (step 1) precedes migrations (step 4) and the pull, textually.
+    # Backup (step 1) precedes the databases recreate (step 4) and migrations.
     backup = text.index("step 1 backup")
-    migrations = text.index("step 4 migrations")
-    assert backup < migrations
+    databases = text.index("step 4 databases")
+    migrations = text.index("step 5 migrations")
+    assert backup < databases < migrations
     assert "modecissions" in text and "modecissions_gold" in text
     assert "pg_dump" in text and "SHA256SUMS" in text
     # An empty dump is refused (never a false safety net).
     assert "backup dump is empty" in text
+
+
+def test_remote_recreates_db_then_migrates_then_full_stack():
+    """Deploy order fixes two real bugs found running it live: (1) recreate the
+    DBs from the new release so migrations see the new init mount; (2) migrate
+    BEFORE the app/airflow start so they come up against a ready schema."""
+    text = REMOTE.read_text(encoding="utf-8")
+    databases = text.index("step 4 databases")
+    migrations = text.index("step 5 migrations")
+    full = text.index("step 5b deploy")
+    assert databases < migrations < full
+    # airflow runs as uid 50000 and writes logs; its dirs must be chowned or it
+    # crash-loops ("Unable to configure handler 'processor'").
+    assert "chown -R 50000:0" in text and "airflow/logs" in text
+    # A slow-booting service is retried rather than aborting the whole deploy.
+    assert "compose up attempt" in text
 
 
 def test_remote_is_fail_closed_with_verified_restore():
@@ -82,11 +99,11 @@ def test_remote_compose_runs_from_release_root_not_infra():
 def test_dryrun_stops_before_any_db_or_service_mutation():
     text = REMOTE.read_text(encoding="utf-8")
     dry = text.index('DEPLOY_MODE:-apply}" == "dryrun"')
-    migrations = text.index("step 4 migrations")
-    up = text.index("step 5 deploy")
-    # The dry-run exit sits before migrations and compose up.
-    assert dry < migrations < up
-    # MUTATED is only armed at/after migrations, so a dry-run leaves nothing to roll back.
+    databases = text.index("step 4 databases")
+    up = text.index("step 5b deploy")
+    # The dry-run exit sits before the first mutation (DB recreate) and compose up.
+    assert dry < databases < up
+    # MUTATED is only armed after the dry-run exit, so a dry-run leaves nothing to roll back.
     assert text.index("MUTATED=1") > dry
 
 

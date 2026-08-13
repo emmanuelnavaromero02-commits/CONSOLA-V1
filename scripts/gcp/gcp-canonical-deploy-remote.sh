@@ -89,6 +89,15 @@ rollback() {
 on_err() {
   local rc=$?; trap - ERR EXIT
   [[ "${PROMOTED}" -eq 1 ]] && exit "${rc}"
+  if [[ "${MUTATED:-0}" -eq 1 ]]; then
+    log "diagnostics: airflow healthcheck log + container state before rollback"
+    docker inspect -f 'airflow health={{.State.Health.Status}} running={{.State.Running}} restarts={{.RestartCount}} exit={{.State.ExitCode}}' mode_airflow 2>&1 | sed 's/^/[diag] /' || true
+    # The actual healthcheck attempts (curl output + exit code) — the definitive reason.
+    docker inspect --format '{{json .State.Health}}' mode_airflow 2>/dev/null | python3 -m json.tool 2>/dev/null | sed 's/^/[health-log] /' | tail -30 || true
+    # Is /airflow/health actually answering from inside the container right now?
+    docker exec mode_airflow sh -lc 'curl -s -o /dev/null -w "in-container /airflow/health = %{http_code}\n" --max-time 5 http://127.0.0.1:8080/airflow/health' 2>&1 | sed 's/^/[probe] /' || true
+    docker logs --tail 15 mode_airflow 2>&1 | sed 's/^/[airflow] /' || true
+  fi
   [[ "${BACKUP_DONE}" -eq 1 ]] && rollback || log "aborted before any mutation; nothing to roll back"
   exit "${rc}"
 }
@@ -137,6 +146,14 @@ if [[ "$(readlink -f "${RELEASE_DIR}")" != "${PREV_TARGET}" ]]; then
   cp -f "${SHARED_ENV}" "${RELEASE_DIR}/infra/.env"
   chmod 600 "${RELEASE_DIR}/infra/.env"
   cp -f "${IMAGES_OVERLAY}" "${RELEASE_DIR}/infra/docker-compose.aws-images.gcp.yml"
+  # Replicate the host-side dir setup the Terraform startup script performs:
+  # airflow runs as uid 50000 and its 'processor' logging handler writes under
+  # airflow/logs, so these dirs must be owned by 50000 or airflow crash-loops on
+  # startup ("Unable to configure handler 'processor'").
+  mkdir -p "${RELEASE_DIR}/data/lakehouse"
+  mkdir -p "${RELEASE_DIR}/airflow/dags" "${RELEASE_DIR}/airflow/logs/scheduler" "${RELEASE_DIR}/airflow/plugins"
+  chown -R 50000:0 "${RELEASE_DIR}/airflow/dags" "${RELEASE_DIR}/airflow/logs" "${RELEASE_DIR}/airflow/plugins"
+  chmod -R 775 "${RELEASE_DIR}/airflow/dags" "${RELEASE_DIR}/airflow/logs" "${RELEASE_DIR}/airflow/plugins"
 else
   log "step 2 stage: target ref is the live release; leaving its tree untouched"
 fi
@@ -160,16 +177,56 @@ if [[ "${DEPLOY_MODE:-apply}" == "dryrun" ]]; then
   exit 0
 fi
 
-# ── 4. Forward-only migrations with drift guard (Checkpoint 5.5) ─────────────
-MUTATED=1   # from here the DB/runtime change and a failure triggers rollback
-log "step 4 migrations: forward-only ledger + drift guard"
+# ── 4. Deploy the candidate release (compose up by pinned tag) ──────────────
+# Bring the NEW release up BEFORE migrating: postgres bind-mounts ./init and
+# ./init_gold RELATIVE to the release dir, so a plain up -d from the new release
+# recreates the DB containers with the new migration files under
+# /docker-entrypoint-initdb.d/. Migrating first (against the old release's mount)
+# fails `\i` with "No such file" on any newly-added migration. cwd MUST be the
+# release ROOT (compose_up uses infra/-relative -f paths).
+MUTATED=1   # from here the DB/runtime changes and a failure triggers rollback
+
+wait_db_healthy() {
+  local c="$1" i
+  for i in $(seq 1 60); do
+    [[ "$(docker inspect -f '{{.State.Health.Status}}' "$c" 2>/dev/null || true)" == "healthy" ]] && return 0
+    sleep 3
+  done
+  return 1
+}
+
+# ── 4. Recreate ONLY the databases with the new release mount ───────────────
+# Bring up just postgres/postgres_gold first (they bind-mount ./init and
+# ./init_gold relative to the release dir, so this recreates them with the new
+# migration files). Migrating BEFORE the app/airflow come up means the schema is
+# ready when they start — otherwise app containers fail their healthchecks and
+# `up -d` aborts on the service_healthy dependency.
+log "step 4 databases: recreate postgres with the new init mount"
+( cd "${RELEASE_DIR}" && docker compose --env-file infra/.env \
+    -f infra/docker-compose.yml -f infra/docker-compose.gcp.yml \
+    -f infra/docker-compose.aws-images.gcp.yml --profile sap \
+    up -d --no-deps postgres postgres_gold )
+wait_db_healthy "${main_pg}" || die "main postgres did not become healthy after recreate."
+wait_db_healthy "${gold_pg}" || die "gold postgres did not become healthy after recreate."
+
+# ── 5. Forward-only migrations with drift guard (Checkpoint 5.5) ─────────────
+log "step 5 migrations: forward-only ledger + drift guard"
 ( cd "${RELEASE_DIR}" && bash scripts/apply_db_migrations.sh )
 
-# ── 5. Deploy the candidate (compose up by pinned tag) ──────────────────────
-# compose_up uses infra/-relative -f paths, so cwd MUST be the release ROOT
-# (matches the live startup: cd <release>; docker compose -f infra/...).
-log "step 5 deploy: compose up ${TARGET_TAG}"
-( cd "${RELEASE_DIR}" && compose_up )
+# ── 5b. Deploy the full candidate stack (schema now migrated) ───────────────
+# Some 209 images (notably airflow) boot slower than their healthcheck start
+# window, so `up -d` can transiently abort on a `depends_on: service_healthy`
+# edge even though the service reaches health seconds later. Retry: aborted
+# `up -d` leaves the slow service running, so on the next pass it is healthy and
+# compose converges. Each failed attempt already waited out a healthcheck cycle.
+log "step 5b deploy: compose up full stack ${TARGET_TAG}"
+up_ok=0
+for attempt in 1 2 3 4 5; do
+  if ( cd "${RELEASE_DIR}" && compose_up ); then up_ok=1; break; fi
+  log "step 5b: compose up attempt ${attempt} did not settle (slow-booting service); waiting 30s and retrying"
+  sleep 30
+done
+[[ "${up_ok}" -eq 1 ]] || die "compose up did not settle after retries."
 
 # ── 6. Health gate: version + app_env + readiness ───────────────────────────
 log "step 6 health: /healthz version+app_env and /readyz"
