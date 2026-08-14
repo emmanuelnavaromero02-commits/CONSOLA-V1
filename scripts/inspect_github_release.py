@@ -76,15 +76,28 @@ def inspect_release(
     except Exception as exc:
         raise ReleaseInspectionError("GitHub Release API lookup failed") from exc
     if status == 404:
-        return {"schema_version": 1, "state": "absent", "tag": tag, "assets": []}
+        return {
+            "schema_version": 1,
+            "state": "absent",
+            "tag": tag,
+            "immutable": None,
+            "title": None,
+            "body": None,
+            "prerelease": None,
+            "target": None,
+            "assets": [],
+        }
     if status != 200:
         raise ReleaseInspectionError(f"GitHub Release API returned HTTP {status}")
     if not isinstance(payload, dict) or payload.get("tag_name") != tag:
         raise ReleaseInspectionError("GitHub Release API identity mismatch")
-    if payload.get("draft") is not False:
+    draft = payload.get("draft")
+    if not isinstance(draft, bool):
         raise ReleaseInspectionError(
-            "GitHub Release is draft or has no authoritative publication state"
+            "GitHub Release has no authoritative publication state"
         )
+    if not draft and payload.get("immutable") is not True:
+        raise ReleaseInspectionError("GitHub Release is not immutable")
     assets = payload.get("assets")
     if not isinstance(assets, list):
         raise ReleaseInspectionError("GitHub Release API assets are invalid")
@@ -100,7 +113,29 @@ def inspect_release(
         ):
             raise ReleaseInspectionError("GitHub Release API asset name is invalid")
         names.append(asset_name)
-    return {"schema_version": 1, "state": "present", "tag": tag, "assets": names}
+    title = payload.get("name")
+    body = payload.get("body")
+    prerelease = payload.get("prerelease")
+    target = payload.get("target_commitish")
+    if (
+        not isinstance(title, str)
+        or not isinstance(body, str)
+        or not isinstance(prerelease, bool)
+        or not isinstance(target, str)
+        or not target
+    ):
+        raise ReleaseInspectionError("GitHub Release metadata is invalid")
+    return {
+        "schema_version": 1,
+        "state": "draft" if draft else "present",
+        "tag": tag,
+        "immutable": False if draft else True,
+        "title": title,
+        "body": body,
+        "prerelease": prerelease,
+        "target": target,
+        "assets": names,
+    }
 
 
 def main(argv: list[str] | None = None) -> int:

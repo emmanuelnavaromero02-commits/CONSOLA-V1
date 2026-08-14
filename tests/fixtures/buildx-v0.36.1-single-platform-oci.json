@@ -1,0 +1,22 @@
+{
+  "buildkit_image": "moby/buildkit@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8",
+  "buildx_version": "v0.36.1",
+  "options": {
+    "annotation_syntax": "manifest:<key>=<value>",
+    "oci_mediatypes": true,
+    "platform": "linux/amd64",
+    "provenance": false
+  },
+  "observed": {
+    "config_media_type": "application/vnd.oci.image.config.v1+json",
+    "layer_count": 1,
+    "manifest_annotations": {
+      "io.omega.release.run-id": "99123",
+      "io.omega.release.service": "probe",
+      "org.opencontainers.image.revision": "0123456789abcdef0123456789abcdef01234567"
+    },
+    "root_descriptor_media_type": "application/vnd.oci.image.manifest.v1+json",
+    "root_manifest_media_type": "application/vnd.oci.image.manifest.v1+json"
+  },
+  "probe": "local Docker Buildx exporter capture; manifest[linux/amd64]: omitted the annotations, manifest: attached them"
+}

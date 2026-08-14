@@ -154,6 +154,7 @@ async def test_authority_migrations_upgrade_exact_historical_tree_and_rerun(
     container = f"pr555-historical-upgrade-{uuid.uuid4().hex[:12]}"
     result = _docker(
         "run",
+        "--pull=never",
         "-d",
         "--name",
         container,

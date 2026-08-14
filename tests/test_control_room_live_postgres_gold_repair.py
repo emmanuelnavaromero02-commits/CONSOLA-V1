@@ -51,6 +51,7 @@ COMPOSE = """
 services:
   postgres:
     image: postgres:15.18
+    pull_policy: never
     environment:
       POSTGRES_DB: modecissions
       POSTGRES_HOST_AUTH_METHOD: trust
@@ -58,6 +59,7 @@ services:
       - ./init:/docker-entrypoint-initdb.d
   postgres_gold:
     image: postgres:15.18
+    pull_policy: never
     command: ["postgres", "-p", "5433"]
     environment:
       POSTGRES_DB: modecissions_gold
@@ -182,7 +184,16 @@ def test_real_main_and_gold_runner_repair_is_complete_and_idempotent(
     ) as sandbox:
         root = _prepare(Path(sandbox), include_repair=mode == "fresh")
         try:
-            _run(root, "up", "-d", "postgres", "postgres_gold")
+            _run(
+                root,
+                "up",
+                "-d",
+                "--no-build",
+                "--pull",
+                "never",
+                "postgres",
+                "postgres_gold",
+            )
             _wait(root, include_repair=mode == "fresh")
             if mode == "upgrade":
                 shutil.copy2(MIGRATION, root / "infra/init_gold" / MIGRATION_NAME)

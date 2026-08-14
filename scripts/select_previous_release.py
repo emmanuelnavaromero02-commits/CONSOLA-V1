@@ -178,7 +178,13 @@ def _manifest_is_canonical(
         manifest = json.loads(raw.decode("utf-8"))
     except (UnicodeError, json.JSONDecodeError):
         return False
-    if not isinstance(manifest, dict) or set(manifest) != {
+    if not isinstance(manifest, dict):
+        return False
+    if manifest.get("schema_version") == 2:
+        return _manifest_v2_is_canonical(
+            manifest=manifest, repository=repository, tag=tag, commit=commit
+        )
+    if set(manifest) != {
         "schema_version",
         "repository",
         "release_tag",
@@ -229,6 +235,76 @@ def _manifest_is_canonical(
     return True
 
 
+def _manifest_v2_is_canonical(
+    *, manifest: dict[str, Any], repository: str, tag: str, commit: str
+) -> bool:
+    if set(manifest) != {
+        "schema_version",
+        "kind",
+        "repository",
+        "release_tag",
+        "source_sha",
+        "build_run_id",
+        "images",
+    }:
+        return False
+    run_id = manifest.get("build_run_id")
+    if (
+        manifest.get("schema_version") != 2
+        or manifest.get("kind") != "omega-release-manifest"
+        or manifest.get("repository") != repository
+        or manifest.get("release_tag") != tag
+        or manifest.get("source_sha") != commit
+        or not isinstance(run_id, int)
+        or isinstance(run_id, bool)
+        or run_id <= 0
+    ):
+        return False
+    images = manifest.get("images")
+    if not isinstance(images, list) or len(images) != len(CANONICAL_SERVICES):
+        return False
+    owner = repository.split("/", 1)[0]
+    for service, entry in zip(CANONICAL_SERVICES, images, strict=True):
+        if not isinstance(entry, dict) or set(entry) != {
+            "schema_version",
+            "service",
+            "image",
+            "release_tag",
+            "source_sha",
+            "build_run_id",
+            "digest",
+            "digest_reference",
+            "manifest_media_type",
+            "manifest_size",
+        }:
+            return False
+        image = f"ghcr.io/{owner}/{service}"
+        digest = entry.get("digest")
+        size = entry.get("manifest_size")
+        if (
+            not isinstance(digest, str)
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None
+            or not isinstance(size, int)
+            or isinstance(size, bool)
+            or size <= 0
+            or entry
+            != {
+                "schema_version": 2,
+                "service": service,
+                "image": image,
+                "release_tag": tag,
+                "source_sha": commit,
+                "build_run_id": run_id,
+                "digest": digest,
+                "digest_reference": f"{image}@{digest}",
+                "manifest_media_type": "application/vnd.oci.image.manifest.v1+json",
+                "manifest_size": size,
+            }
+        ):
+            return False
+    return True
+
+
 def verify_github_release_manifest(
     *,
     repository: str,
@@ -266,7 +342,11 @@ def verify_github_release_manifest(
     if status != 200:
         raise ReleaseTrustError(f"GitHub Release API returned HTTP {status}")
     release = _json_object(raw, label="GitHub Release response")
-    if release.get("tag_name") != tag or release.get("draft") is not False:
+    if (
+        release.get("tag_name") != tag
+        or release.get("draft") is not False
+        or release.get("immutable") is not True
+    ):
         return False
     assets = release.get("assets")
     if not isinstance(assets, list):

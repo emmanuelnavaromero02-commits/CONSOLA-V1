@@ -65,10 +65,12 @@ CANONICAL_SERVICES = (
     "sap_successfactors",
     "salesforce",
 )
-# The Airflow Dockerfile inherits these reviewed labels from the pinned
+# The Airflow Dockerfile inherits these reviewed labels from its version-selected
 # ``apache/airflow:2.10.5`` base.  Every other release image currently inherits
 # no labels from ``python:3.12-slim``.  Managed release identity keys below
 # overwrite the base source/revision/version values and are checked separately.
+# F2 binds and tests the resulting artifact digest; it does not claim a
+# bit-for-bit rebuild. Base digest pinning, SBOM and provenance belong to F17.
 EXPECTED_INHERITED_LABELS: dict[str, dict[str, str]] = {
     "airflow": {
         "org.apache.airflow.component": "airflow",
@@ -513,6 +515,65 @@ class RegistryClient:
         if len(body) != descriptor["size"] or _sha256(body) != digest:
             raise PromotionError("GHCR blob bytes do not match OCI descriptor")
         return body
+
+    def head_blob(self, service: str, descriptor: Mapping[str, Any]) -> None:
+        """Prove that one layer blob is present without loading it into memory."""
+
+        descriptor = _validate_descriptor(descriptor, label="OCI layer descriptor")
+        digest = descriptor["digest"]
+        repository = (
+            f"{quote(self.identity.owner, safe='')}/{quote(service, safe='')}"
+        )
+        url = f"{GHCR_ORIGIN}/v2/{repository}/blobs/{quote(digest, safe=':')}"
+        result = self.transport(
+            "HEAD",
+            url,
+            {
+                "Accept": "application/octet-stream",
+                "Authorization": f"Bearer {self._token(service, 'pull')}",
+                "User-Agent": "omega-release-promotion/2",
+            },
+            None,
+            self.timeout,
+            0,
+        )
+        authoritative_digest = _header(result.headers, "Docker-Content-Digest")
+        if result.status in {302, 307}:
+            location = _header(result.headers, "Location")
+            parts = urlsplit(location)
+            if (
+                parts.scheme != "https"
+                or parts.hostname != "pkg-containers.githubusercontent.com"
+                or parts.username is not None
+                or parts.password is not None
+                or parts.fragment
+            ):
+                raise PromotionError("GHCR layer redirect target is not trusted")
+            result = self.transport(
+                "HEAD",
+                location,
+                {
+                    "Accept": "application/octet-stream",
+                    "User-Agent": "omega-release-promotion/2",
+                },
+                None,
+                self.timeout,
+                0,
+            )
+            redirected_digest = _header(result.headers, "Docker-Content-Digest")
+            if redirected_digest:
+                authoritative_digest = redirected_digest
+        if result.status != 200:
+            raise PromotionError(f"GHCR layer HEAD returned HTTP {result.status}")
+        raw_length = _header(result.headers, "Content-Length")
+        try:
+            length = int(raw_length)
+        except (TypeError, ValueError) as exc:
+            raise PromotionError("GHCR layer HEAD has invalid Content-Length") from exc
+        if length != descriptor["size"]:
+            raise PromotionError("GHCR layer HEAD size does not match descriptor")
+        if authoritative_digest != digest:
+            raise PromotionError("GHCR layer HEAD digest does not match descriptor")
 
     def put_manifest(
         self,
@@ -1319,72 +1380,13 @@ def _add_identity(parser: argparse.ArgumentParser) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser()
-    subparsers = parser.add_subparsers(dest="command", required=True)
-    candidate = subparsers.add_parser("candidate-state")
-    _add_identity(candidate)
-    candidate.add_argument("--service", required=True)
-    candidate.add_argument("--receipt", required=True, type=Path)
-    candidate.add_argument("--github-output")
-    write_receipt = subparsers.add_parser("write-receipt")
-    _add_identity(write_receipt)
-    write_receipt.add_argument("--service", required=True)
-    write_receipt.add_argument("--digest", required=True)
-    write_receipt.add_argument("--receipt", required=True, type=Path)
-    prepare = subparsers.add_parser("prepare-intent")
-    _add_identity(prepare)
-    prepare.add_argument("--intent", required=True, type=Path)
-    prepare.add_argument("--fragments-dir", required=True, type=Path)
-    prepare.add_argument("--github-output")
-    promotion = subparsers.add_parser("promote")
-    _add_identity(promotion)
-    promotion.add_argument("--intent", required=True, type=Path)
-    final = subparsers.add_parser("verify-final")
-    _add_identity(final)
-    final.add_argument("--intent", required=True, type=Path)
-    args = parser.parse_args(argv)
-    try:
-        artifacts, registry = _clients(args)
-        if args.command == "candidate-state":
-            receipt = load_receipt(artifacts, registry, service=args.service)
-            if receipt is None:
-                action = "build"
-            else:
-                args.receipt.write_bytes(_json_bytes(receipt))
-                action = "reuse"
-            _write_output(args.github_output, action=action)
-            print(f"CANDIDATE {args.service}: {action.upper()}")
-        elif args.command == "write-receipt":
-            receipt = verify_candidate(
-                registry, service=args.service, digest=args.digest
-            )
-            args.receipt.write_bytes(_json_bytes(receipt))
-            print(f"CANDIDATE {args.service}: VERIFIED")
-        elif args.command == "prepare-intent":
-            action = prepare_intent(
-                artifacts,
-                registry,
-                intent_path=args.intent,
-                fragments_dir=args.fragments_dir,
-            )
-            _write_output(args.github_output, action=action)
-            print(f"PROMOTION INTENT: {action.upper()} (15/15 VERIFIED)")
-        elif args.command == "promote":
-            intent = _read_canonical(args.intent, label="local promotion intent")
-            confirm_intent(artifacts, registry, local_intent=intent)
-            puts = promote(registry, intent=intent)
-            print(f"RECOVERABLE PROMOTION: 30/30 VERIFIED ({puts} PUTS)")
-        elif args.command == "verify-final":
-            intent = _read_canonical(args.intent, label="local promotion intent")
-            confirm_intent(artifacts, registry, local_intent=intent)
-            verify_final(registry, intent=intent)
-            print("FINAL RELEASE REFERENCES: 30/30 VERIFIED")
-        else:  # pragma: no cover
-            raise PromotionError("unknown command")
-    except PromotionError as exc:
-        print(f"RELEASE IMAGE PROMOTION BLOCKED: {exc}", file=sys.stderr)
-        return 1
-    return 0
+    del argv
+    print(
+        "LEGACY RELEASE IMAGE PROMOTION DISABLED: use the tagless "
+        "scripts/release_digest_chain.py authority",
+        file=sys.stderr,
+    )
+    return 2
 
 
 if __name__ == "__main__":

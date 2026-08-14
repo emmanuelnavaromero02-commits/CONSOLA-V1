@@ -43,6 +43,7 @@ def staged_publication_live_stack() -> LiveStack:
     minio = f"omega-staged-minio-{suffix}"
     _docker(
         "run",
+        "--pull=never",
         "-d",
         "--rm",
         "--name",
@@ -64,6 +65,7 @@ def staged_publication_live_stack() -> LiveStack:
     )
     _docker(
         "run",
+        "--pull=never",
         "-d",
         "--rm",
         "--name",

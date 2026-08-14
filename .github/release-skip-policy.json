@@ -2,45 +2,6 @@
   "schema_version": 1,
   "policies": [
     {
-      "id": "full-stack-release-metadata-only",
-      "gate": "full-stack-release-gate",
-      "owner": "release-engineering",
-      "reason": "Only the release version and non-executable Markdown documentation changed; runtime, build, migration, infrastructure, and test inputs are unchanged.",
-      "scope": {
-        "tag_regex": "^v[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?$",
-        "all_changed_paths_match": [
-          "^VERSION$",
-          "^CHANGELOG(?:\\.md)?$",
-          "^docs/.*\\.md$"
-        ],
-        "at_least_one_changed_path_match": [
-          "^VERSION$"
-        ]
-      }
-    },
-    {
-      "id": "full-stack-release-contract-tests-only",
-      "gate": "full-stack-release-gate",
-      "owner": "release-engineering",
-      "reason": "The delta contains only release metadata and root or cartridge contract tests that validate-release resolves and executes explicitly; no runtime input changed.",
-      "scope": {
-        "tag_regex": "^v[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?$",
-        "all_changed_paths_match": [
-          "^VERSION$",
-          "^CHANGELOG(?:\\.md)?$",
-          "^docs/.*\\.md$",
-          "^tests/test[^/]*\\.py$",
-          "^cartridges/[^/]+/tests/.*\\.py$"
-        ],
-        "at_least_one_changed_path_match": [
-          "^tests/test[^/]*\\.py$",
-          "^cartridges/[^/]+/tests/.*\\.py$"
-        ],
-        "forbid_deleted_paths": true,
-        "requires_detected_test_targets": true
-      }
-    },
-    {
       "id": "production-readiness-stress-beta",
       "gate": "production-readiness-stress",
       "owner": "release-engineering",

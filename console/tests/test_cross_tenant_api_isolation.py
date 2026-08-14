@@ -75,6 +75,10 @@ def _ensure_postgres_image() -> None:
     inspect = _docker("image", "inspect", POSTGRES_IMAGE, check=False)
     if inspect.returncode == 0:
         return
+    if os.getenv("OMEGA_RELEASE_DIGEST_STACK") == "1":
+        pytest.fail(
+            f"release digest gate did not pre-pull required test image {POSTGRES_IMAGE}"
+        )
 
     last: subprocess.CompletedProcess[str] | None = None
     for attempt in range(1, max(1, POSTGRES_PULL_ATTEMPTS) + 1):
@@ -175,6 +179,7 @@ def postgres_with_real_init_schema() -> str:
     _ensure_postgres_image()
     result = _docker(
         "run",
+        "--pull=never",
         "-d",
         "--rm",
         "--name",

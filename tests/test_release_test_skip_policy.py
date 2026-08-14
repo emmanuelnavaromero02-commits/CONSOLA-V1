@@ -353,6 +353,7 @@ def test_alias_bypasses_inside_an_authorized_file_are_rejected(tmp_path: Path) -
         '__import__("pytest").skip("bypass")',
         'getattr(pytest, "".join(["s", "kip"]))("bypass")',
         'vars(pytest)["skip"]("bypass")',
+        'pytest.__dict__["skip"]("bypass")',
     ],
 )
 def test_recognizable_dynamic_pytest_skip_access_is_blocked(

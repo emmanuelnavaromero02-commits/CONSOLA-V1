@@ -20,6 +20,11 @@ def test_structured_http_404_is_the_only_absence_signal() -> None:
         "schema_version": 1,
         "state": "absent",
         "tag": "v1.45.210-beta",
+        "immutable": None,
+        "title": None,
+        "body": None,
+        "prerelease": None,
+        "target": None,
         "assets": [],
     }
 
@@ -43,6 +48,11 @@ def test_present_release_exports_only_validated_asset_names() -> None:
         return 200, {
             "tag_name": "v1.45.210-beta",
             "draft": False,
+            "immutable": True,
+            "name": "v1.45.210-beta",
+            "body": "canonical",
+            "prerelease": True,
+            "target_commitish": "a" * 40,
             "assets": [{"name": "manifest.json"}, {"name": "manifest.json.sha256"}],
         }
 
@@ -54,29 +64,58 @@ def test_present_release_exports_only_validated_asset_names() -> None:
     )
 
     assert result["state"] == "present"
+    assert result["immutable"] is True
     assert result["assets"] == ["manifest.json", "manifest.json.sha256"]
     assert "secret" not in calls[0][0]
     assert calls[0][1]["Authorization"] == "Bearer secret"
 
 
-@pytest.mark.parametrize("draft", [True, None])
-def test_draft_or_missing_publication_state_cannot_finish_a_release(
-    draft: bool | None,
-) -> None:
+def test_missing_publication_state_is_ambiguous() -> None:
     payload: dict[str, Any] = {
         "tag_name": "v1.45.210-beta",
         "assets": [],
     }
-    if draft is not None:
-        payload["draft"] = draft
 
-    with pytest.raises(ReleaseInspectionError, match="draft"):
+    with pytest.raises(ReleaseInspectionError, match="publication state"):
         inspect_release(
             repository="omega-owner/omega",
             tag="v1.45.210-beta",
             token="secret",
             fetcher=lambda _url, _headers: (200, payload),
         )
+
+
+def test_draft_release_is_explicit_recoverable_non_authority() -> None:
+    result = inspect_release(
+        repository="omega-owner/omega",
+        tag="v1.45.210-beta",
+        token="secret",
+        fetcher=lambda _url, _headers: (
+            200,
+            {
+                "tag_name": "v1.45.210-beta",
+                "draft": True,
+                "immutable": False,
+                "name": "v1.45.210-beta",
+                "body": "canonical",
+                "prerelease": True,
+                "target_commitish": "a" * 40,
+                "assets": [{"name": "manifest.json"}],
+            },
+        ),
+    )
+
+    assert result == {
+        "schema_version": 1,
+        "state": "draft",
+        "tag": "v1.45.210-beta",
+        "immutable": False,
+        "title": "v1.45.210-beta",
+        "body": "canonical",
+        "prerelease": True,
+        "target": "a" * 40,
+        "assets": ["manifest.json"],
+    }
 
 
 def test_transport_and_malformed_payloads_fail_closed() -> None:
@@ -95,5 +134,33 @@ def test_transport_and_malformed_payloads_fail_closed() -> None:
             repository="omega-owner/omega",
             tag="v1.45.210-beta",
             token="secret",
-            fetcher=lambda _url, _headers: (200, {"tag_name": "v9.9.9", "assets": []}),
+            fetcher=lambda _url, _headers: (
+                200,
+                {"tag_name": "v9.9.9", "assets": []},
+            ),
+        )
+
+
+@pytest.mark.parametrize("immutable", [False, None])
+def test_mutable_or_unknown_release_cannot_be_authority(
+    immutable: bool | None,
+) -> None:
+    payload: dict[str, Any] = {
+        "tag_name": "v1.45.210-beta",
+        "draft": False,
+        "name": "v1.45.210-beta",
+        "body": "canonical",
+        "prerelease": True,
+        "target_commitish": "a" * 40,
+        "assets": [],
+    }
+    if immutable is not None:
+        payload["immutable"] = immutable
+
+    with pytest.raises(ReleaseInspectionError, match="not immutable"):
+        inspect_release(
+            repository="omega-owner/omega",
+            tag="v1.45.210-beta",
+            token="secret",
+            fetcher=lambda _url, _headers: (200, payload),
         )

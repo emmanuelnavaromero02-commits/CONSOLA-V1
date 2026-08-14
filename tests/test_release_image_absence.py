@@ -281,15 +281,16 @@ def test_real_buildx_not_found_prose_is_not_used_as_absence_evidence() -> None:
         for item in workflow["jobs"]["build-and-push"]["steps"]
         if item.get("name") == "Resolve exact candidate receipt for this run"
     )
-    prepare = next(
+    remote = next(
         item
         for item in workflow["jobs"]["publish-release-manifest"]["steps"]
-        if item.get("name") == "Prepare canonical recoverable promotion intent"
+        if item.get("name") == "Re-verify tested digest graphs before publication"
     )
-    source = candidate["run"] + prepare["run"]
+    source = candidate["run"] + remote["run"]
 
     assert real_buildx_output.endswith(": not found")
     assert "docker buildx imagetools inspect" not in source
     assert "not found" not in source.lower()
     assert "manifest unknown" not in source.lower()
-    assert "scripts/release_image_promotion.py" in source
+    assert "scripts/release_digest_chain.py" in source
+    assert "scripts/verify_release_digest_remote.py" in source

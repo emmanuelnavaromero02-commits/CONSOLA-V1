@@ -49,6 +49,7 @@ def _historical_gold_upgrade(stack, migrations, old_names) -> None:
             bundle.extractall(temp, filter="data")
         _docker(
             "run",
+            "--pull=never",
             "-d",
             "--rm",
             "--name",

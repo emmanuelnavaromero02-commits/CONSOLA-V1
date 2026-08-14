@@ -178,6 +178,20 @@ def _python_declarations(path: Path, relative: str) -> list[Declaration]:
     declarations: list[Declaration] = []
     call_functions: set[int] = set()
     for node in ast.walk(tree):
+        if isinstance(node, ast.Subscript):
+            target = _resolve_python_name(node.value, aliases)
+            if target in {"pytest", "unittest", "pytest.__dict__", "unittest.__dict__"}:
+                raise SkipPolicyError(
+                    f"dynamic skip-capable API subscription is forbidden: "
+                    f"{relative}:{node.lineno}"
+                )
+        if isinstance(node, ast.Attribute) and node.attr == "__dict__":
+            target = _resolve_python_name(node.value, aliases)
+            if target in {"pytest", "unittest"}:
+                raise SkipPolicyError(
+                    f"dynamic skip-capable API introspection is forbidden: "
+                    f"{relative}:{node.lineno}"
+                )
         if not isinstance(node, ast.Call):
             continue
         kind = _resolve_python_name(node.func, aliases)
@@ -210,6 +224,23 @@ def _python_declarations(path: Path, relative: str) -> list[Declaration]:
                     f"dynamic skip-capable API introspection is forbidden: "
                     f"{relative}:{node.lineno}"
                 )
+        if kind == "object.__getattribute__" and node.args:
+            target = _resolve_python_name(node.args[0], aliases)
+            if target in {"pytest", "unittest"}:
+                raise SkipPolicyError(
+                    f"dynamic skip-capable API introspection is forbidden: "
+                    f"{relative}:{node.lineno}"
+                )
+        if kind in {"eval", "exec"} and any(
+            isinstance(argument, ast.Constant)
+            and isinstance(argument.value, str)
+            and re.search(r"\b(?:pytest|unittest)\b", argument.value)
+            for argument in node.args
+        ):
+            raise SkipPolicyError(
+                f"dynamic skip-capable code execution is forbidden: "
+                f"{relative}:{node.lineno}"
+            )
         if kind not in PYTEST_CALLS:
             continue
         call_functions.add(id(node.func))
@@ -857,6 +888,10 @@ def pytest_configure(config: Any) -> None:
         pytest.exit(f"RELEASE TEST SKIP POLICY BLOCKED: {exc}", returncode=4)
     config._omega_release_skip_state = state
     config._omega_release_skip_errors = []
+    config._omega_release_selected = []
+    config._omega_release_deselected = []
+    config._omega_release_collection_skips = []
+    config._omega_release_runtest_reports = []
     _ACTIVE_PYTEST_CONFIG = config
 
 
@@ -916,23 +951,89 @@ def _check_pytest_report(report: Any, config: Any) -> None:
 
 def pytest_runtest_logreport(report: Any) -> None:
     if _ACTIVE_PYTEST_CONFIG is not None:
+        phase = str(getattr(report, "when", ""))
+        outcome = str(getattr(report, "outcome", ""))
+        nodeid = str(getattr(report, "nodeid", ""))
+        if phase in {"setup", "call", "teardown"} and outcome in {
+            "passed",
+            "failed",
+            "skipped",
+        } and nodeid:
+            _ACTIVE_PYTEST_CONFIG._omega_release_runtest_reports.append(
+                {
+                    "nodeid": nodeid,
+                    "phase": phase,
+                    "outcome": outcome,
+                    "xfail": isinstance(getattr(report, "wasxfail", None), str),
+                }
+            )
         _check_pytest_report(report, _ACTIVE_PYTEST_CONFIG)
 
 
 def pytest_collectreport(report: Any) -> None:
     if _ACTIVE_PYTEST_CONFIG is not None:
+        if getattr(report, "skipped", False):
+            _ACTIVE_PYTEST_CONFIG._omega_release_collection_skips.append(
+                str(getattr(report, "nodeid", ""))
+            )
         _check_pytest_report(report, _ACTIVE_PYTEST_CONFIG)
+
+
+def pytest_collection_finish(session: Any) -> None:
+    session.config._omega_release_selected = sorted(
+        str(item.nodeid) for item in session.items
+    )
+
+
+def pytest_deselected(items: list[Any]) -> None:
+    if _ACTIVE_PYTEST_CONFIG is not None:
+        _ACTIVE_PYTEST_CONFIG._omega_release_deselected.extend(
+            str(item.nodeid) for item in items
+        )
 
 
 def pytest_sessionfinish(session: Any, exitstatus: int) -> None:
     errors = getattr(session.config, "_omega_release_skip_errors", [])
-    if not errors:
-        return
-    for error in sorted(set(errors)):
-        print(f"RELEASE TEST SKIP POLICY BLOCKED: {error}", file=sys.stderr)
-    import pytest
+    report_path = os.environ.get("OMEGA_RELEASE_PYTEST_REPORT")
+    nonce = os.environ.get("OMEGA_RELEASE_PYTEST_NONCE")
+    mode = os.environ.get("OMEGA_RELEASE_PYTEST_MODE")
+    if report_path or nonce or mode:
+        if (
+            not report_path
+            or not nonce
+            or not re.fullmatch(r"[0-9a-f]{64}", nonce)
+            or mode not in {"collect", "execute"}
+        ):
+            errors.append("external pytest report environment is incomplete")
+        else:
+            payload = {
+                "schema_version": 1,
+                "kind": "omega-release-pytest-report",
+                "nonce": nonce,
+                "mode": mode,
+                "blocked": bool(errors),
+                "errors": sorted(set(errors)),
+                "selected": sorted(session.config._omega_release_selected),
+                "deselected": sorted(session.config._omega_release_deselected),
+                "collection_skips": sorted(
+                    session.config._omega_release_collection_skips
+                ),
+                "reports": sorted(
+                    session.config._omega_release_runtest_reports,
+                    key=lambda item: (item["nodeid"], item["phase"]),
+                ),
+            }
+            try:
+                with Path(report_path).open("x", encoding="utf-8") as handle:
+                    handle.write(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
+            except OSError:
+                errors.append("external pytest report could not be created exclusively")
+    if errors:
+        for error in sorted(set(errors)):
+            print(f"RELEASE TEST SKIP POLICY BLOCKED: {error}", file=sys.stderr)
+        import pytest
 
-    session.exitstatus = pytest.ExitCode.TESTS_FAILED
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
 
 def main(argv: list[str] | None = None) -> int:

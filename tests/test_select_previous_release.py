@@ -127,6 +127,45 @@ def _manifest(repository: str, tag: str, commit: str) -> bytes:
     ).encode()
 
 
+def _manifest_v2(repository: str, tag: str, commit: str) -> bytes:
+    owner = repository.split("/", 1)[0]
+    run_id = 987654
+    images = []
+    for index, service in enumerate(CANONICAL_SERVICES, start=1):
+        image = f"ghcr.io/{owner}/{service}"
+        digest = f"sha256:{index:064x}"
+        images.append(
+            {
+                "schema_version": 2,
+                "service": service,
+                "image": image,
+                "release_tag": tag,
+                "source_sha": commit,
+                "build_run_id": run_id,
+                "digest": digest,
+                "digest_reference": f"{image}@{digest}",
+                "manifest_media_type": "application/vnd.oci.image.manifest.v1+json",
+                "manifest_size": 512 + index,
+            }
+        )
+    return (
+        json.dumps(
+            {
+                "schema_version": 2,
+                "kind": "omega-release-manifest",
+                "repository": repository,
+                "release_tag": tag,
+                "source_sha": commit,
+                "build_run_id": run_id,
+                "images": images,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode()
+
+
 def test_previous_release_requires_checksum_valid_manifest_bound_to_tag_and_sha() -> (
     None
 ):
@@ -139,6 +178,7 @@ def test_previous_release_requires_checksum_valid_manifest_bound_to_tag_and_sha(
         {
             "tag_name": tag,
             "draft": False,
+            "immutable": True,
             "assets": [
                 {"id": 1, "name": f"omega-release-manifest-{tag}.json"},
                 {"id": 2, "name": f"omega-release-manifest-{tag}.json.sha256"},
@@ -171,6 +211,45 @@ def test_previous_release_requires_checksum_valid_manifest_bound_to_tag_and_sha(
     )
 
 
+@pytest.mark.parametrize("manifest_factory", [_manifest, _manifest_v2])
+def test_previous_release_accepts_legacy_v1_and_tagless_v2_chain(
+    manifest_factory: object,
+) -> None:
+    repository = "owner/repo"
+    tag = "v1.45.210-beta"
+    commit = "a" * 40
+    assert callable(manifest_factory)
+    manifest = manifest_factory(repository, tag, commit)
+    checksum = (
+        f"{hashlib.sha256(manifest).hexdigest()}  "
+        f"omega-release-manifest-{tag}.json\n"
+    ).encode()
+    release = json.dumps(
+        {
+            "tag_name": tag,
+            "draft": False,
+            "immutable": True,
+            "assets": [
+                {"id": 1, "name": f"omega-release-manifest-{tag}.json"},
+                {"id": 2, "name": f"omega-release-manifest-{tag}.json.sha256"},
+            ],
+        }
+    ).encode()
+
+    def fetch(url: str, _headers: object) -> tuple[int, bytes, dict[str, str]]:
+        if "/releases/tags/" in url:
+            return 200, release, {}
+        return (200, manifest, {}) if url.endswith("/1") else (200, checksum, {})
+
+    assert verify_github_release_manifest(
+        repository=repository,
+        tag=tag,
+        commit=commit,
+        token="token",
+        fetcher=fetch,
+    )
+
+
 def test_previous_release_lookup_treats_only_structural_404_as_untrusted() -> None:
     kwargs = {
         "repository": "owner/repo",
@@ -189,6 +268,34 @@ def test_previous_release_lookup_treats_only_structural_404_as_untrusted() -> No
         )
 
 
+@pytest.mark.parametrize("immutable", [False, None])
+def test_previous_release_rejects_mutable_or_unknown_release_authority(
+    immutable: bool | None,
+) -> None:
+    repository = "owner/repo"
+    tag = "v1.45.210-beta"
+    commit = "a" * 40
+    payload: dict[str, object] = {
+        "tag_name": tag,
+        "draft": False,
+        "assets": [],
+    }
+    if immutable is not None:
+        payload["immutable"] = immutable
+
+    assert not verify_github_release_manifest(
+        repository=repository,
+        tag=tag,
+        commit=commit,
+        token="token",
+        fetcher=lambda _url, _headers: (
+            200,
+            json.dumps(payload).encode(),
+            {},
+        ),
+    )
+
+
 def test_release_asset_redirect_never_forwards_bearer_token() -> None:
     repository = "owner/repo"
     tag = "v1.45.210-beta"
@@ -202,6 +309,7 @@ def test_release_asset_redirect_never_forwards_bearer_token() -> None:
         {
             "tag_name": tag,
             "draft": False,
+            "immutable": True,
             "assets": [
                 {"id": 1, "name": f"omega-release-manifest-{tag}.json"},
                 {"id": 2, "name": f"omega-release-manifest-{tag}.json.sha256"},
