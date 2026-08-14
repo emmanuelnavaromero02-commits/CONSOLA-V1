@@ -45,20 +45,21 @@ jobs:
           fi
 
       - name: Bind exact remote recovery tag authority
-        if: github.ref_name == 'v1.45.212-beta'
+        if: github.ref_name == 'v1.45.213-beta'
         shell: bash
         run: |
           set -euo pipefail
-          authority=refs/omega-release-authority/v1.45.212-beta
-          for name in current failed-0 failed-1 base; do
+          authority=refs/omega-release-authority/v1.45.213-beta
+          for name in current failed-0 failed-1 failed-2 base; do
             git update-ref -d "${authority}/${name}"
           done
           git fetch --no-tags --force --atomic origin \
-            "+refs/tags/v1.45.212-beta:${authority}/current" \
+            "+refs/tags/v1.45.213-beta:${authority}/current" \
             "+refs/tags/v1.45.210-beta:${authority}/failed-0" \
             "+refs/tags/v1.45.211-beta:${authority}/failed-1" \
+            "+refs/tags/v1.45.212-beta:${authority}/failed-2" \
             "+refs/tags/v1.45.209-beta:${authority}/base"
-          for name in current failed-0 failed-1 base; do
+          for name in current failed-0 failed-1 failed-2 base; do
             git show-ref --verify --quiet "${authority}/${name}"
           done
 
@@ -785,6 +786,9 @@ jobs:
           sudo /bin/cp -a \
             "${RUNNER_TEMP}/omega-playwright-browsers.install/." \
             /opt/omega-release-runtime/browsers/
+          sudo /usr/bin/python3 -I \
+            scripts/normalize_release_runtime_permissions.py \
+            /opt/omega-release-runtime/browsers
           /usr/bin/install -d -m 0700 \
             tests-e2e/playwright-report tests-e2e/test-results
           /usr/bin/install -m 0600 /dev/null tests-e2e/.env
@@ -792,8 +796,7 @@ jobs:
           runner_gid="$(id -g)"
           sudo /bin/chown -R root:root \
             tests-e2e /opt/omega-release-runtime
-          sudo /bin/chmod -R a-w \
-            tests-e2e /opt/omega-release-runtime
+          sudo /bin/chmod -R a-w tests-e2e
           sudo /bin/chmod 0555 tests-e2e
           sudo /bin/chown -R "${runner_uid}:${runner_gid}" \
             tests-e2e/playwright-report tests-e2e/test-results

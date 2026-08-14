@@ -1,8 +1,8 @@
 # OMEGA F2 — digest release gate
 
-Status: **PREPARED** for forward recovery as `v1.45.212-beta`; F2 is not closed.
-The immutable `v1.45.210-beta` and `v1.45.211-beta` attempts are retained as
-failed evidence, and no tag is moved or reused.
+Status: **PREPARED** for forward recovery as `v1.45.213-beta`; F2 is not closed.
+The immutable `v1.45.210-beta`, `v1.45.211-beta`, and `v1.45.212-beta`
+attempts are retained as failed evidence, and no tag is moved or reused.
 
 ## Failed live attempt retained
 
@@ -23,13 +23,30 @@ failed evidence, and no tag is moved or reused.
   no preflight, image build, manifest, digest gate, or release assets ran.
 - Published outputs for each attempt were zero: workflow artifacts `0`, GHCR
   candidates `0`, and canonical GitHub Release `0`.
-- The forward-only recovery target is `v1.45.212-beta`. Its previous-release
-  selector may bridge to exact `v1.45.209-beta` only when both failed annotated
-  tag objects and peeled SHAs remain exact, the `.210 -> .211 -> .212` direct
-  parent chain remains exact, and neither failed marker has canonical release
-  evidence. Exact remote tag refs are rebound into a dedicated authority
-  namespace before selection; a missing, moved, lightweight, swapped,
-  ambiguous, or unexpectedly trusted failed marker blocks recovery.
+- Workflow run `31823738299` for `v1.45.212-beta` passed validation, package
+  privacy preflight, all 15 image builds, and canonical manifest assembly. It
+  then failed closed in `digest-full-stack-gate`, at
+  `Freeze trusted Playwright and Docker gate runtimes`: preserved private mode bits made
+  `/opt/omega-release-runtime/browsers/chromium-1223/chrome-linux64/deb.deps`
+  unreadable after root ownership, and the runtime hash raised
+  `PermissionError`.
+- The `.212` annotated tag object is
+  `5e3bbc3d1475486bbc0ddabb57b440210ac0782c`; it peels to source SHA
+  `dd882bc08bb445d1446f9cbbe313448b24827720`, whose sole parent is the
+  `.211` source SHA.
+- The `.212` run retained exactly 16 workflow artifacts: 15 image-candidate
+  receipts plus `omega-release-manifest-31823738299-1`. Manifest binding,
+  all 15 digest pulls, stack startup, final gates, and publication were skipped;
+  `publish-release-manifest` was skipped and the tag-addressable GitHub Release
+  endpoint remained `404`, with zero Release assets.
+- The forward-only recovery target is `v1.45.213-beta`. Its previous-release
+  selector may bridge to exact `v1.45.209-beta` only when all three failed
+  annotated tag objects and peeled SHAs remain exact, the
+  `.210 -> .211 -> .212 -> .213` direct parent chain remains exact, and none of
+  the failed markers has canonical release evidence. Exact remote tag refs are
+  rebound atomically into a dedicated authority namespace before selection; a
+  missing, moved, lightweight, swapped, ambiguous, or unexpectedly trusted
+  failed marker blocks recovery.
 
 ## Retained `.210` prepared authority
 
@@ -74,6 +91,17 @@ failed evidence, and no tag is moved or reused.
 - Live read-only checks confirmed run `31809737977` also has zero artifacts,
   zero new versions across all 15 GHCR packages, all downstream publication
   jobs skipped, and no listed or tag-addressable `.211` Release.
+- The `.213` recovery normalizes the copied Playwright runtime before hashing:
+  directories become traversable read-only (`0555`), regular files become
+  readable read-only (`0444`), and only files that were executable retain
+  execute permission (`0555`). The normalizer does not follow symlinks and
+  blocks escaping symlinks or special files before changing any mode.
+- The `.213` selector plus release/runtime permission contracts passed `95/95`
+  focused tests. The expanded release, GitHub Release, Control Room CI,
+  Refinement, selector, and permission regression passed `505/505` tests.
+- The regenerated `.213` harness seals `1,341` files with SHA-256
+  `48944574b1ed55041b553f70cea9ea32207553b7ef7650a15aa5ceda96f6bce7`;
+  the skip inventory remains exactly 61 pytest and 27 Playwright declarations.
 
 ## F2 contract
 
@@ -97,9 +125,9 @@ harness is an authority boundary, not a sandbox against deliberately malicious
 same-UID or privileged code.
 
 To close F2, record the recovery merge SHA and require the live release workflow
-for `v1.45.212-beta` to prove:
+for `v1.45.213-beta` to prove:
 
-1. the immutable Git tag equals that merge SHA and `VERSION=1.45.212-beta`;
+1. the immutable Git tag equals that merge SHA and `VERSION=1.45.213-beta`;
 2. all 15 GHCR packages remain private and every manifest/config/layer exists;
 3. the mandatory digest stack gate passes for the exact manifest bytes;
 4. the final GitHub Release is non-draft and immutable, with exactly the

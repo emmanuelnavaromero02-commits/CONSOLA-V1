@@ -6,7 +6,7 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "sha256": "337a10b1e77497f301fc01dc26d1df70bfe19d7ebe829277b12179a0da4cef7a"
+      "sha256": "31570541ab6b4b69a52adb226888ccd4559ab501dcd1a428b03c9e101926e588"
     },
     {
       "path": "Makefile",
@@ -2973,6 +2973,10 @@
       "sha256": "e7a1ee5862ecdfa57deec6f6da8c27c4f65b9abd3f5d7cd90550a5cf8254ec1d"
     },
     {
+      "path": "scripts/normalize_release_runtime_permissions.py",
+      "sha256": "08c4ff079574a3641aecc3bc28cd210ccac425ff3400ce5e84e62d3f435508b6"
+    },
+    {
       "path": "scripts/prepare_refinement_duckdb_ci.sh",
       "sha256": "84a5dbe744528544fcddab8f80183f6f957c4c6cf3ca3e74ee008b573aea57cb"
     },
@@ -3054,7 +3058,7 @@
     },
     {
       "path": "scripts/verify_release_test_harness.py",
-      "sha256": "f7c417438c2c75d7963cb5f4d70281fb94258fb0d0c807d2f81ddb9fd419c834"
+      "sha256": "66ddbc58771d7fc1ce54e20f42222e44e5a5796afb9767fd2f68cc90b299ddea"
     },
     {
       "path": "scripts/verify_test_skip_policy.py",
@@ -4449,6 +4453,10 @@
       "sha256": "7ef8f23c2fa265c702b8424d8aed199ea3b31145728920220cd4ae5749822b63"
     },
     {
+      "path": "tests/test_normalize_release_runtime_permissions.py",
+      "sha256": "d7828b0a96f5e2eff8177e7c62a445102e28b16aeef891d1faace9df9dec3994"
+    },
+    {
       "path": "tests/test_observability_plan.py",
       "sha256": "2db61b952e0eebf9072cceed9caa224e3b581bc53d4007d8c98008968b46e6e3"
     },
@@ -4674,7 +4682,7 @@
     },
     {
       "path": "tests/test_release_ci_fail_closed.py",
-      "sha256": "4df56dd9e6b29c4aa1124848633a84663f8e08852d1d99d9dba61f5bd1e38c4b"
+      "sha256": "d896a3f6b81dbbe63bf2e7efcc11f48e6f6f5ad19ec0e1522cdb7c11e39b9f0b"
     },
     {
       "path": "tests/test_release_compose_env_contract.py",
@@ -5010,7 +5018,7 @@
     },
     {
       "path": "tests/test_select_previous_release.py",
-      "sha256": "be6ce8633a2cfe990aa1b8399cf79139ed892193e81e26d5c22aadb199d228b5"
+      "sha256": "ef0c69ceedd5e59d3c5e3f797f545bc3726c96c92611c99fc64d1e3946f63ff2"
     },
     {
       "path": "tests/test_service_urls.py",
