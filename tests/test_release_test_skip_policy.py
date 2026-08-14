@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,6 +16,8 @@ from scripts.verify_test_skip_policy import (
     SkipPolicyError,
     _file_inventory,
     _inventory_digest,
+    _pytest_skip_category,
+    _pytest_skip_reason,
     authorize_runtime_skip,
     load_policy,
     main,
@@ -36,53 +39,71 @@ def test_current_exact_source_inventory_is_sealed() -> None:
 
 def test_changed_declaration_digest_fails_closed() -> None:
     policy = copy.deepcopy(load_policy())
-    policy["source_scopes"][0]["scope"]["files"][0][
-        "declarations_sha256"
-    ] = "0" * 64
+    policy["source_scopes"][0]["scope"]["files"][0]["declarations_sha256"] = "0" * 64
 
     with pytest.raises(SkipPolicyError, match="exact per-file"):
         verify_source_policy(policy)
 
 
-def test_runtime_skip_requires_an_exact_reviewed_path_and_reason() -> None:
-    policy = load_policy()
+def test_runtime_skip_requires_exact_nodeid_phase_category_and_reason() -> None:
+    policy = copy.deepcopy(load_policy())
+    observation = {
+        "nodeid": "tests/test_e2e_full_flow.py::test_e2e_01_admin_can_login",
+        "phase": "call",
+        "category": "skip",
+        "reason": "Stack not running",
+    }
+    pytest_scope = next(
+        scope for scope in policy["runtime_scopes"] if scope["runner"] == "pytest"
+    )
+    pytest_scope["scope"]["authorizations"] = [observation]
     authorize_runtime_skip(
         policy=policy,
         runner="pytest",
         environment="release",
-        test_path="tests/test_e2e_full_flow.py::test_e2e_01_admin_can_login",
-        reason="Stack not running",
+        observation={**observation, "reason": "  Stack   not running  "},
     )
 
-    with pytest.raises(SkipPolicyError, match="outside authorized scope"):
-        authorize_runtime_skip(
-            policy=policy,
-            runner="pytest",
-            environment="release",
-            test_path="tests/test_required_release_gate.py::test_required",
-            reason="dependency vanished",
-        )
-    with pytest.raises(SkipPolicyError, match="no explicit reason"):
-        authorize_runtime_skip(
-            policy=policy,
-            runner="pytest",
-            environment="release",
-            test_path="tests/test_e2e_full_flow.py::test_e2e_01_admin_can_login",
-            reason="",
-        )
+    for field, value in (
+        ("nodeid", "tests/test_e2e_full_flow.py::test_different"),
+        ("phase", "setup"),
+        ("category", "xfail"),
+        ("reason", "dependency vanished"),
+    ):
+        with pytest.raises(SkipPolicyError, match="runtime skip identity"):
+            authorize_runtime_skip(
+                policy=policy,
+                runner="pytest",
+                environment="release",
+                observation={**observation, field: value},
+            )
 
 
-def _playwright_report(path: str, *, annotated: bool) -> dict[str, object]:
-    annotations = [{"type": "skip", "description": "optional upstream"}] if annotated else []
+def _playwright_report(
+    authorization: dict[str, str], *, annotated: bool
+) -> dict[str, object]:
+    annotations = (
+        [
+            {
+                "type": authorization["category"],
+                "description": authorization["reason"],
+            }
+        ]
+        if annotated
+        else []
+    )
     return {
         "suites": [
             {
                 "specs": [
                     {
-                        "file": path,
+                        "file": authorization["spec_file"],
+                        "id": authorization["test_id"],
+                        "title": authorization["spec_title"],
                         "tests": [
                             {
                                 "status": "skipped",
+                                "projectName": authorization["project"],
                                 "annotations": annotations,
                             }
                         ],
@@ -97,30 +118,45 @@ def _playwright_report(path: str, *, annotated: bool) -> dict[str, object]:
 
 def test_playwright_report_accepts_only_explicit_reviewed_skips(tmp_path: Path) -> None:
     policy = load_policy()
+    playwright_scope = next(
+        scope for scope in policy["runtime_scopes"] if scope["runner"] == "playwright"
+    )
+    authorization = playwright_scope["scope"]["authorizations"][0]
     report = tmp_path / "results.json"
     report.write_text(
-        json.dumps(_playwright_report("01-login.spec.ts", annotated=True)),
+        json.dumps(_playwright_report(authorization, annotated=True)),
         encoding="utf-8",
     )
 
     assert verify_playwright_report(report, policy, environment="release") == 1
 
-    report.write_text(
-        json.dumps(_playwright_report("12-control-room.spec.ts", annotated=True)),
-        encoding="utf-8",
-    )
-    with pytest.raises(SkipPolicyError, match="outside authorized scope"):
-        verify_playwright_report(report, policy, environment="release")
+    for field, value in (
+        ("project", "mobile-chromium"),
+        ("spec_file", "tests-e2e/specs/12-control-room.spec.ts"),
+        ("spec_title", "different title"),
+        ("test_id", "0" * 20 + "-" + "1" * 20),
+        ("category", "fixme"),
+        ("reason", "different reason"),
+    ):
+        changed = {**authorization, field: value}
+        report.write_text(
+            json.dumps(_playwright_report(changed, annotated=True)),
+            encoding="utf-8",
+        )
+        with pytest.raises(SkipPolicyError, match="runtime skip identity"):
+            verify_playwright_report(report, policy, environment="release")
 
     report.write_text(
-        json.dumps(_playwright_report("01-login.spec.ts", annotated=False)),
+        json.dumps(_playwright_report(authorization, annotated=False)),
         encoding="utf-8",
     )
-    with pytest.raises(SkipPolicyError, match="without explicit annotation"):
+    with pytest.raises(SkipPolicyError, match="exactly one explicit annotation"):
         verify_playwright_report(report, policy, environment="release")
 
 
-def test_pytest_plugin_blocks_runtime_skip_outside_reviewed_scope(tmp_path: Path) -> None:
+def test_pytest_plugin_blocks_runtime_skip_outside_reviewed_scope(
+    tmp_path: Path,
+) -> None:
     test_file = tmp_path / "test_unexpected_release_skip.py"
     test_file.write_text(
         "import pytest\n\ndef test_required_gate():\n    pytest.skip('unexpected')\n",
@@ -146,6 +182,72 @@ def test_pytest_plugin_blocks_runtime_skip_outside_reviewed_scope(tmp_path: Path
     assert "RELEASE TEST SKIP POLICY BLOCKED" in result.stdout + result.stderr
 
 
+def test_pytest_plugin_blocks_undeclared_xpass_as_observed_xfail(
+    tmp_path: Path,
+) -> None:
+    test_file = tmp_path / "test_undeclared_release_xfail.py"
+    test_file.write_text(
+        "import pytest\n\n@pytest.mark.xfail(reason='undeclared known defect')\n"
+        "def test_required_gate():\n    assert True\n",
+        encoding="utf-8",
+    )
+    env = {
+        **os.environ,
+        "PYTEST_PLUGINS": "scripts.verify_test_skip_policy",
+        "OMEGA_RELEASE_TEST_SKIP_POLICY": str(DEFAULT_POLICY),
+        "OMEGA_RELEASE_TEST_SKIP_ENVIRONMENT": "release",
+    }
+
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", str(test_file)],
+        cwd=REPO,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "RELEASE TEST SKIP POLICY BLOCKED" in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    ("longrepr", "wasxfail", "category", "reason"),
+    [
+        (
+            ("test_gate.py", 4, "Skipped: optional dependency"),
+            None,
+            "skip",
+            "optional dependency",
+        ),
+        (
+            ("test_gate.py", 4, "Skipped: could not import 'duckdb'"),
+            None,
+            "importorskip",
+            "could not import 'duckdb'",
+        ),
+        (
+            ("test_gate.py", 4, "ignored"),
+            "reason: known defect",
+            "xfail",
+            "known defect",
+        ),
+    ],
+)
+def test_pytest_runtime_categories_and_reasons_are_canonical(
+    longrepr: object,
+    wasxfail: str | None,
+    category: str,
+    reason: str,
+) -> None:
+    report = SimpleNamespace(longrepr=longrepr, wasxfail=wasxfail)
+
+    observed_reason = _pytest_skip_reason(report)
+
+    assert observed_reason == reason
+    assert _pytest_skip_category(report, observed_reason) == category
+
+
 def test_cli_reports_exact_static_inventory(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--policy", str(DEFAULT_POLICY)]) == 0
     output = capsys.readouterr()
@@ -167,7 +269,6 @@ def _policy_for_repo(repo: Path) -> dict[str, object]:
     runtime_scopes = []
     for runner in ("pytest", "playwright"):
         declarations = scanned[runner]
-        paths = sorted({declaration.path for declaration in declarations})
         source_scopes.append(
             {
                 "id": f"{runner}-source",
@@ -186,7 +287,7 @@ def _policy_for_repo(repo: Path) -> dict[str, object]:
                 "runner": runner,
                 "owner": "release-engineering",
                 "reason": "test fixture runtime scope",
-                "scope": {"environment": "release", "paths": paths},
+                "scope": {"environment": "release", "authorizations": []},
             }
         )
     return {
@@ -244,3 +345,80 @@ def test_alias_bypasses_inside_an_authorized_file_are_rejected(tmp_path: Path) -
     )
     with pytest.raises(SkipPolicyError, match="indirect Playwright"):
         scan_declarations(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        '__import__("pytest").skip("bypass")',
+        'getattr(pytest, "".join(["s", "kip"]))("bypass")',
+        'vars(pytest)["skip"]("bypass")',
+    ],
+)
+def test_recognizable_dynamic_pytest_skip_access_is_blocked(
+    tmp_path: Path, source: str
+) -> None:
+    test_file = tmp_path / "tests" / "test_dynamic.py"
+    test_file.parent.mkdir(parents=True)
+    test_file.write_text(
+        f"import pytest\n\ndef test_required():\n    {source}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SkipPolicyError, match="dynamic skip"):
+        scan_declarations(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "test['skip'](true, 'bypass');",
+        "testInfo.skip(true, 'bypass');",
+        "const { skip } = test; skip(true, 'bypass');",
+    ],
+)
+def test_recognizable_dynamic_playwright_skip_access_is_blocked(
+    tmp_path: Path, source: str
+) -> None:
+    spec = tmp_path / "tests-e2e" / "specs" / "dynamic.spec.ts"
+    spec.parent.mkdir(parents=True)
+    spec.write_text(
+        "import { test } from '@playwright/test';\n"
+        f"test('required', async ({{ testInfo }}) => {{ {source} }});\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SkipPolicyError, match="indirect Playwright"):
+        scan_declarations(tmp_path)
+
+
+def test_dynamic_skip_in_an_authorized_file_cannot_inherit_path_authority() -> None:
+    policy = load_policy()
+
+    with pytest.raises(SkipPolicyError, match="runtime skip identity"):
+        authorize_runtime_skip(
+            policy=policy,
+            runner="pytest",
+            environment="release",
+            observation={
+                "nodeid": "tests/test_health_and_auth.py::test_health_endpoints_and_auth",
+                "phase": "call",
+                "category": "skip",
+                "reason": "red-team dynamic bypass",
+            },
+        )
+
+    with pytest.raises(SkipPolicyError, match="runtime skip identity"):
+        authorize_runtime_skip(
+            policy=policy,
+            runner="playwright",
+            environment="release",
+            observation={
+                "project": "desktop-chromium",
+                "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
+                "spec_title": "renders cartridge selector dropdown",
+                "test_id": "44fa61789b32b3cf8820-1d43117300198f5117b0",
+                "category": "skip",
+                "reason": "red-team dynamic bypass",
+            },
+        )

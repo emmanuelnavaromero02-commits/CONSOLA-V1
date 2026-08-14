@@ -42,6 +42,7 @@ def test_present_release_exports_only_validated_asset_names() -> None:
         calls.append((url, headers))
         return 200, {
             "tag_name": "v1.45.210-beta",
+            "draft": False,
             "assets": [{"name": "manifest.json"}, {"name": "manifest.json.sha256"}],
         }
 
@@ -56,6 +57,26 @@ def test_present_release_exports_only_validated_asset_names() -> None:
     assert result["assets"] == ["manifest.json", "manifest.json.sha256"]
     assert "secret" not in calls[0][0]
     assert calls[0][1]["Authorization"] == "Bearer secret"
+
+
+@pytest.mark.parametrize("draft", [True, None])
+def test_draft_or_missing_publication_state_cannot_finish_a_release(
+    draft: bool | None,
+) -> None:
+    payload: dict[str, Any] = {
+        "tag_name": "v1.45.210-beta",
+        "assets": [],
+    }
+    if draft is not None:
+        payload["draft"] = draft
+
+    with pytest.raises(ReleaseInspectionError, match="draft"):
+        inspect_release(
+            repository="omega-owner/omega",
+            tag="v1.45.210-beta",
+            token="secret",
+            fetcher=lambda _url, _headers: (200, payload),
+        )
 
 
 def test_transport_and_malformed_payloads_fail_closed() -> None:

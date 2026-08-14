@@ -14,7 +14,6 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-
 API_URL = "https://api.github.com"
 API_VERSION = "2022-11-28"
 MAX_RESPONSE_BYTES = 1_048_576
@@ -28,7 +27,7 @@ class ReleaseInspectionError(RuntimeError):
 def _fetch_json(url: str, headers: Mapping[str, str]) -> tuple[int, Any]:
     request = Request(url, headers=dict(headers), method="GET")
     try:
-        with urlopen(request, timeout=15.0) as response:  # noqa: S310
+        with urlopen(request, timeout=15.0) as response:
             status = int(response.status)
             raw = response.read(MAX_RESPONSE_BYTES + 1)
     except HTTPError as exc:
@@ -40,7 +39,9 @@ def _fetch_json(url: str, headers: Mapping[str, str]) -> tuple[int, Any]:
     try:
         return status, json.loads(raw.decode("utf-8"))
     except (UnicodeError, json.JSONDecodeError) as exc:
-        raise ReleaseInspectionError("GitHub Release API response is invalid JSON") from exc
+        raise ReleaseInspectionError(
+            "GitHub Release API response is invalid JSON"
+        ) from exc
 
 
 def inspect_release(
@@ -80,6 +81,10 @@ def inspect_release(
         raise ReleaseInspectionError(f"GitHub Release API returned HTTP {status}")
     if not isinstance(payload, dict) or payload.get("tag_name") != tag:
         raise ReleaseInspectionError("GitHub Release API identity mismatch")
+    if payload.get("draft") is not False:
+        raise ReleaseInspectionError(
+            "GitHub Release is draft or has no authoritative publication state"
+        )
     assets = payload.get("assets")
     if not isinstance(assets, list):
         raise ReleaseInspectionError("GitHub Release API assets are invalid")

@@ -240,6 +240,34 @@ prepare_local_browser_e2e_env() {
   export SAP_S4_URL="${OMEGA_E2E_SAP_S4_URL:-http://127.0.0.1:8204}"
 }
 
+prepare_local_release_test_env() {
+  local encoded_password
+  export E2E_REQUIRE_STACK=1
+  export OMEGA_ENABLE_E2E_SMOKE=1
+  export OMEGA_ENABLE_LIVE_STACK_TESTS=1
+  export E2E_ADMIN_EMAIL="${E2E_ADMIN_EMAIL:-${TEST_EMAIL:-admin@example.com}}"
+  export E2E_ADMIN_PASSWORD="${E2E_ADMIN_PASSWORD:-${TEST_PASSWORD:-${BOOTSTRAP_ADMIN_PASSWORD:-${ADMIN_PASSWORD:-}}}}"
+  if [[ -z "${E2E_ADMIN_PASSWORD}" ]]; then
+    log "E2E_ADMIN_PASSWORD/TEST_PASSWORD/bootstrap admin password is required"
+    exit 2
+  fi
+  if [[ -z "${OMEGA_TEST_GRANTS_DSN:-}" ]]; then
+    if [[ -z "${POSTGRES_PASSWORD:-}" ]]; then
+      log "POSTGRES_PASSWORD is required for the analytic grant release tests"
+      exit 2
+    fi
+    encoded_password="$(
+      POSTGRES_PASSWORD="${POSTGRES_PASSWORD}" "${PYTHON_BIN}" - <<'PY'
+import os
+from urllib.parse import quote
+
+print(quote(os.environ["POSTGRES_PASSWORD"], safe=""))
+PY
+    )"
+    export OMEGA_TEST_GRANTS_DSN="postgresql://postgres:${encoded_password}@127.0.0.1:15432/modecissions"
+  fi
+}
+
 run_remote_e2e_if_required() {
   if [[ "${OMEGA_PRODUCTION_READINESS_REMOTE_RUN_E2E:-0}" != "1" ]]; then
     log "remote Playwright E2E skipped; set OMEGA_PRODUCTION_READINESS_REMOTE_RUN_E2E=1 to require it"
@@ -300,6 +328,8 @@ run_gate() {
 
   log "waiting for healthy stack"
   bash scripts/wait_for_health.sh
+
+  prepare_local_release_test_env
 
   log "running full-stack acceptance to warm Bronze/Silver/Gold data"
   make acceptance

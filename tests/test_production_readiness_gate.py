@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 REPO = Path(__file__).resolve().parents[1]
 
 
@@ -15,9 +14,15 @@ def test_makefile_exposes_production_readiness_and_dr_rehearsal_targets():
     assert "production-readiness:" in makefile
     assert "bash scripts/production_readiness.sh" in makefile
     assert "v1-live-readiness:" in makefile
-    assert "OMEGA_PRODUCTION_READINESS_V1=1 bash scripts/production_readiness.sh" in makefile
+    assert (
+        "OMEGA_PRODUCTION_READINESS_V1=1 bash scripts/production_readiness.sh"
+        in makefile
+    )
     assert "production-readiness-aws:" in makefile
-    assert "OMEGA_PRODUCTION_READINESS_REMOTE=1 bash scripts/production_readiness.sh" in makefile
+    assert (
+        "OMEGA_PRODUCTION_READINESS_REMOTE=1 bash scripts/production_readiness.sh"
+        in makefile
+    )
     assert "dr-rehearsal:" in makefile
     assert "bash scripts/run_dr_rehearsal.sh" in makefile
     assert "multiuser-simulation:" in makefile
@@ -33,6 +38,10 @@ def test_production_readiness_gate_checks_real_runtime_surfaces():
         "/readyz?require_data=1",
         "/api/v1/security/login",
         "make test",
+        "prepare_local_release_test_env",
+        "OMEGA_TEST_GRANTS_DSN",
+        "OMEGA_ENABLE_E2E_SMOKE=1",
+        "OMEGA_ENABLE_LIVE_STACK_TESTS=1",
         "make smoke",
         "prepare_local_browser_e2e_env",
         "OPEN_REPORT=0 make e2e",
@@ -50,23 +59,28 @@ def test_production_readiness_gate_checks_real_runtime_surfaces():
     assert "OMEGA_REQUIRE_LIVE_LLM=1" in script
     assert "ANTHROPIC_API_KEY is required" in script
     assert "gemini" not in script.lower()
-    local_gate = script[script.index('if [[ "${REMOTE_MODE}" == "1" ]]'):]
+    local_gate = script[script.index('if [[ "${REMOTE_MODE}" == "1" ]]') :]
+    assert local_gate.index("prepare_local_release_test_env") < local_gate.index(
+        "make test"
+    )
     assert local_gate.index("make acceptance") < local_gate.index("check_readyz_data")
-    assert local_gate.index("prepare_local_browser_e2e_env") < local_gate.index("OPEN_REPORT=0 make e2e")
+    assert local_gate.index("prepare_local_browser_e2e_env") < local_gate.index(
+        "OPEN_REPORT=0 make e2e"
+    )
 
 
 def test_production_readiness_e2e_uses_host_published_service_urls():
     script = _read("scripts/production_readiness.sh")
     for needle in (
-        "AIRFLOW_URL=\"${OMEGA_E2E_AIRFLOW_URL:-http://127.0.0.1:8082}\"",
-        "SUPERSET_URL=\"${OMEGA_E2E_SUPERSET_URL:-http://127.0.0.1:8088}\"",
-        "MINIO_CONSOLE_URL=\"${OMEGA_E2E_MINIO_CONSOLE_URL:-http://127.0.0.1:9001}\"",
-        "MAILHOG_URL=\"${OMEGA_E2E_MAILHOG_URL:-http://127.0.0.1:8025}\"",
-        "HUBSPOT_URL=\"${OMEGA_E2E_HUBSPOT_URL:-http://127.0.0.1:8210}\"",
-        "REPLICON_URL=\"${OMEGA_E2E_REPLICON_URL:-http://127.0.0.1:8201}\"",
-        "SAP_HCM_URL=\"${OMEGA_E2E_SAP_HCM_URL:-http://127.0.0.1:8202}\"",
-        "SAP_SF_URL=\"${OMEGA_E2E_SAP_SF_URL:-http://127.0.0.1:8203}\"",
-        "SAP_S4_URL=\"${OMEGA_E2E_SAP_S4_URL:-http://127.0.0.1:8204}\"",
+        'AIRFLOW_URL="${OMEGA_E2E_AIRFLOW_URL:-http://127.0.0.1:8082}"',
+        'SUPERSET_URL="${OMEGA_E2E_SUPERSET_URL:-http://127.0.0.1:8088}"',
+        'MINIO_CONSOLE_URL="${OMEGA_E2E_MINIO_CONSOLE_URL:-http://127.0.0.1:9001}"',
+        'MAILHOG_URL="${OMEGA_E2E_MAILHOG_URL:-http://127.0.0.1:8025}"',
+        'HUBSPOT_URL="${OMEGA_E2E_HUBSPOT_URL:-http://127.0.0.1:8210}"',
+        'REPLICON_URL="${OMEGA_E2E_REPLICON_URL:-http://127.0.0.1:8201}"',
+        'SAP_HCM_URL="${OMEGA_E2E_SAP_HCM_URL:-http://127.0.0.1:8202}"',
+        'SAP_SF_URL="${OMEGA_E2E_SAP_SF_URL:-http://127.0.0.1:8203}"',
+        'SAP_S4_URL="${OMEGA_E2E_SAP_S4_URL:-http://127.0.0.1:8204}"',
     ):
         assert needle in script
 
@@ -104,7 +118,9 @@ def test_production_readiness_gate_has_remote_aws_mode():
         assert needle in script
     remote_index = script.index('if [[ "${REMOTE_MODE}" == "1" ]]')
     docker_index = script.index("require_command docker")
-    assert remote_index < docker_index, "remote AWS readiness must not require local Docker"
+    assert remote_index < docker_index, (
+        "remote AWS readiness must not require local Docker"
+    )
 
 
 def test_stress_runner_has_beta_and_production_profiles_with_isolation_probe():

@@ -13,7 +13,6 @@ from pathlib import Path
 
 import yaml
 
-
 REPO = Path(__file__).resolve().parents[1]
 WORKFLOW = REPO / ".github/workflows/release.yml"
 POLICY = REPO / ".github/release-skip-policy.json"
@@ -181,84 +180,8 @@ def _run_manifest_step(
             checksum_path = Path(values["checksum_path"])
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             checksum = checksum_path.read_text(encoding="utf-8")
-        summary_text = (
-            summary.read_text(encoding="utf-8") if summary.exists() else ""
-        )
+        summary_text = summary.read_text(encoding="utf-8") if summary.exists() else ""
     return result, manifest, checksum, summary_text
-
-
-def _run_fresh_image_preflight(
-    *, sha_mode: str, release_mode: str
-) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
-    source = _named_step(
-        _jobs()["build-and-push"], "Refuse pre-existing image tags"
-    )["run"]
-    image = "ghcr.io/omega-owner/console"
-    with tempfile.TemporaryDirectory() as temp_dir:
-        root = Path(temp_dir)
-        fake_bin = root / "bin"
-        fake_bin.mkdir()
-        log = root / "docker.log"
-        docker = fake_bin / "docker"
-        docker.write_text(
-            """#!/usr/bin/env python3
-import json
-import os
-import sys
-from pathlib import Path
-
-args = sys.argv[1:]
-with Path(os.environ["FAKE_DOCKER_LOG"]).open("a", encoding="utf-8") as fh:
-    fh.write(json.dumps(args) + "\\n")
-reference = args[3]
-mode = (
-    os.environ["FAKE_SHA_MODE"]
-    if ":sha-" in reference
-    else os.environ["FAKE_RELEASE_MODE"]
-)
-if mode == "absent":
-    print(f"{reference}: manifest unknown", file=sys.stderr)
-    raise SystemExit(1)
-if mode == "builder-phrase":
-    print("builder instance manifest unknown", file=sys.stderr)
-    raise SystemExit(1)
-if mode == "generic-not-found":
-    print("repository not found", file=sys.stderr)
-    raise SystemExit(1)
-if mode == "transport":
-    print("connection reset", file=sys.stderr)
-    raise SystemExit(1)
-print(json.dumps({"digest": "sha256:" + "b" * 64}))
-raise SystemExit(0)
-""",
-            encoding="utf-8",
-        )
-        docker.chmod(0o755)
-        env = {
-            **os.environ,
-            "PATH": f"{fake_bin}:{os.environ['PATH']}",
-            "RUNNER_TEMP": str(root),
-            "IMAGE": image,
-            "RELEASE_TAG": "v1.45.210-beta",
-            "SERVICE": "console",
-            "SOURCE_SHA": "a" * 40,
-            "FAKE_DOCKER_LOG": str(log),
-            "FAKE_SHA_MODE": sha_mode,
-            "FAKE_RELEASE_MODE": release_mode,
-        }
-        result = subprocess.run(
-            ["bash", "-c", source],
-            cwd=REPO,
-            env=env,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        invocations = [
-            json.loads(line)
-            for line in log.read_text(encoding="utf-8").splitlines()
-        ]
-    return result, invocations
 
 
 def _run_release_asset_step(
@@ -615,11 +538,18 @@ def test_each_image_is_tagged_by_release_and_sha_and_exports_its_digest():
         "group": "release-images-${{ github.sha }}",
         "cancel-in-progress": False,
     }
-    assert "docker buildx imagetools inspect" in preexisting["run"]
-    assert "manifest unknown" in preexisting["run"]
-    assert "manifest unknown|not found" not in preexisting["run"]
-    assert "registry lookup failed ambiguously" in preexisting["run"]
-    assert "pre-existing release image tag is forbidden" in preexisting["run"]
+    assert preexisting["env"] == {
+        "GITHUB_TOKEN": "${{ github.token }}",
+        "GHCR_OWNER": "${{ github.repository_owner }}",
+        "GHCR_USERNAME": "${{ github.actor }}",
+        "RELEASE_TAG": "${{ github.ref_name }}",
+        "SERVICE": "${{ matrix.service }}",
+        "SOURCE_SHA": "${{ github.sha }}",
+    }
+    assert "scripts/verify_release_image_absence.py" in preexisting["run"]
+    assert "docker buildx imagetools inspect" not in preexisting["run"]
+    assert "manifest unknown" not in preexisting["run"].lower()
+    assert "not found" not in preexisting["run"].lower()
     assert build["id"] == "build"
     assert "if" not in build
     tags = build["with"]["tags"]
@@ -645,47 +575,6 @@ def test_each_image_is_tagged_by_release_and_sha_and_exports_its_digest():
     assert upload["with"]["name"] == "release-image-digest-${{ matrix.service }}"
     assert upload["with"]["if-no-files-found"] == "error"
     assert upload["with"]["overwrite"] is True
-
-
-def test_existing_sha_image_blocks_fresh_release_before_build():
-    result, calls = _run_fresh_image_preflight(
-        sha_mode="present", release_mode="absent"
-    )
-
-    assert result.returncode != 0
-    assert "pre-existing release image tag is forbidden" in result.stdout + result.stderr
-    assert len(calls) == 1
-
-
-def test_structurally_absent_tags_authorize_exactly_one_fresh_build_path():
-    result, calls = _run_fresh_image_preflight(
-        sha_mode="absent", release_mode="absent"
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert "fresh build is required" in result.stdout
-    assert len(calls) == 2
-
-
-def test_absent_sha_never_overwrites_an_existing_release_tag():
-    result, calls = _run_fresh_image_preflight(
-        sha_mode="absent", release_mode="present"
-    )
-
-    assert result.returncode != 0
-    assert "pre-existing release image tag is forbidden" in result.stdout + result.stderr
-    assert len(calls) == 2
-
-
-def test_ambiguous_or_generic_not_found_never_falls_back_to_a_build():
-    for mode in ("transport", "generic-not-found", "builder-phrase"):
-        result, calls = _run_fresh_image_preflight(
-            sha_mode=mode, release_mode="absent"
-        )
-
-        assert result.returncode != 0
-        assert "lookup failed ambiguously" in result.stdout + result.stderr
-        assert len(calls) == 1
 
 
 def test_manifest_job_is_bound_to_successful_build_and_exact_inventory():
@@ -718,9 +607,7 @@ def test_manifest_job_is_bound_to_successful_build_and_exact_inventory():
     assert "set(by_service) != set(expected)" in assemble["run"]
     assert "release tag mismatch" in assemble["run"]
     assert "source SHA mismatch" in assemble["run"]
-    assert upload["with"]["name"] == (
-        "omega-release-manifest-${{ github.ref_name }}"
-    )
+    assert upload["with"]["name"] == ("omega-release-manifest-${{ github.ref_name }}")
     assert upload["with"]["if-no-files-found"] == "error"
     assert upload["with"]["overwrite"] is True
 
@@ -733,12 +620,10 @@ def test_manifest_runtime_accepts_exactly_fifteen_bound_digest_fragments():
     assert manifest["repository"] == "omega-owner/omega"
     assert manifest["release_tag"] == "v1.45.210-beta"
     assert manifest["source_sha"] == "a" * 40
-    assert [image["service"] for image in manifest["images"]] == (
-        _canonical_services()
+    assert [image["service"] for image in manifest["images"]] == (_canonical_services())
+    manifest_bytes = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode(
+        "utf-8"
     )
-    manifest_bytes = (
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n"
-    ).encode("utf-8")
     expected_hash = hashlib.sha256(manifest_bytes).hexdigest()
     assert checksum == (
         f"{expected_hash}  omega-release-manifest-v1.45.210-beta.json\n"
@@ -913,14 +798,16 @@ def test_previous_release_selection_requires_canonical_release_evidence():
     assert "git describe" not in step["run"]
 
 
-def test_every_build_is_fresh_and_only_manifest_unknown_means_absent():
+def test_every_build_is_fresh_and_absence_uses_structured_oci_evidence():
     build = _jobs()["build-and-push"]
     preexisting = _named_step(build, "Refuse pre-existing image tags")
     source = preexisting["run"]
     image_build = _named_step(build, "Build and push ${{ matrix.service }}")
 
-    assert "manifest unknown" in source
-    assert "|not found" not in source
+    assert "scripts/verify_release_image_absence.py" in source
+    assert "imagetools inspect" not in source
+    assert "not found" not in source.lower()
+    assert "manifest unknown" not in source.lower()
     assert "reused" not in source
     assert "Resolve immutable SHA image" not in [
         step.get("name") for step in build["steps"]
@@ -958,6 +845,30 @@ def test_release_test_skips_are_versioned_and_enforced_for_pytest_and_playwright
         assert scope["reason"].strip()
         assert scope["scope"]
 
+    runtime_by_runner = {scope["runner"]: scope for scope in registry["runtime_scopes"]}
+    assert set(runtime_by_runner) == {"pytest", "playwright"}
+    for runner, scope in runtime_by_runner.items():
+        assert set(scope["scope"]) == {"environment", "authorizations"}
+        assert scope["scope"]["environment"] == "release"
+        assert isinstance(scope["scope"]["authorizations"], list)
+        assert "paths" not in scope["scope"]
+        expected = (
+            {"nodeid", "phase", "category", "reason"}
+            if runner == "pytest"
+            else {
+                "project",
+                "spec_file",
+                "spec_title",
+                "test_id",
+                "category",
+                "reason",
+            }
+        )
+        assert all(
+            set(authorization) == expected
+            for authorization in scope["scope"]["authorizations"]
+        )
+
     validate = _jobs()["validate-release"]
     full_stack = _jobs()["full-stack-release-gate"]
     for job in (validate, full_stack):
@@ -968,6 +879,12 @@ def test_release_test_skips_are_versioned_and_enforced_for_pytest_and_playwright
     assert _named_step(validate, "Verify declared release test skips")
     assert _named_step(full_stack, "Verify declared release test skips")
     assert _named_step(full_stack, "Verify Playwright skip report")
+    for key in (
+        "E2E_REQUIRE_STACK",
+        "OMEGA_ENABLE_E2E_SMOKE",
+        "OMEGA_ENABLE_LIVE_STACK_TESTS",
+    ):
+        assert full_stack["env"][key] == "1"
 
 
 def test_test_only_full_stack_skip_requires_targets_and_forbids_deletions():
@@ -994,9 +911,7 @@ def test_test_only_full_stack_skip_requires_targets_and_forbids_deletions():
         {},
         {"deleted_files": [existing], "root_test_targets": [existing]},
     ):
-        result, values, _summary = _run_policy_step(
-            ["VERSION", existing], **kwargs
-        )
+        result, values, _summary = _run_policy_step(["VERSION", existing], **kwargs)
         assert result.returncode == 0, result.stderr
         assert values["full_stack_action"] == "run"
 

@@ -2,9 +2,9 @@
 """Fail-closed release policy for pytest and Playwright skips.
 
 The source inventory records every skip declaration, not merely a count.  In
-release CI this module is also loaded as a pytest plugin and turns a runtime
-skip outside the reviewed path scope into a failing test session.  Playwright's
-JSON report is checked separately after each browser gate.
+release CI this module is also loaded as a pytest plugin and turns every
+runtime skip without an exact reviewed identity into a failing test session.
+Playwright's JSON report is checked separately after each browser gate.
 """
 
 from __future__ import annotations
@@ -16,10 +16,11 @@ import json
 import os
 import re
 import sys
+import unicodedata
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, Iterable
-
+from typing import Any
 
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_POLICY = REPO / ".github" / "release-test-skip-policy.json"
@@ -108,7 +109,9 @@ def _python_aliases(tree: ast.AST) -> dict[str, str]:
         elif isinstance(node, ast.ImportFrom) and node.module in {"pytest", "unittest"}:
             for imported in node.names:
                 if imported.name == "*":
-                    raise SkipPolicyError("wildcard imports from skip-capable test APIs are forbidden")
+                    raise SkipPolicyError(
+                        "wildcard imports from skip-capable test APIs are forbidden"
+                    )
                 aliases[imported.asname or imported.name] = (
                     f"{node.module}.{imported.name}"
                 )
@@ -178,33 +181,56 @@ def _python_declarations(path: Path, relative: str) -> list[Declaration]:
         if not isinstance(node, ast.Call):
             continue
         kind = _resolve_python_name(node.func, aliases)
+        if kind == "__import__" and node.args:
+            imported_name = node.args[0]
+            if isinstance(imported_name, ast.Constant) and imported_name.value in {
+                "pytest",
+                "unittest",
+            }:
+                raise SkipPolicyError(
+                    f"dynamic skip-capable module import is forbidden: "
+                    f"{relative}:{node.lineno}"
+                )
+        if kind == "getattr" and node.args:
+            target = _resolve_python_name(node.args[0], aliases)
+            attribute = node.args[1] if len(node.args) >= 2 else None
+            if target in {"pytest", "unittest"} and (
+                not isinstance(attribute, ast.Constant)
+                or not isinstance(attribute.value, str)
+                or attribute.value
+                in {"skip", "skipif", "skipUnless", "importorskip", "xfail"}
+            ):
+                raise SkipPolicyError(
+                    f"dynamic skip API access is forbidden: {relative}:{node.lineno}"
+                )
+        if kind == "vars" and node.args:
+            target = _resolve_python_name(node.args[0], aliases)
+            if target in {"pytest", "unittest"}:
+                raise SkipPolicyError(
+                    f"dynamic skip-capable API introspection is forbidden: "
+                    f"{relative}:{node.lineno}"
+                )
         if kind not in PYTEST_CALLS:
-            if kind == "getattr" and len(node.args) >= 2:
-                target = _resolve_python_name(node.args[0], aliases)
-                attribute = node.args[1]
-                if (
-                    target in {"pytest", "unittest"}
-                    and isinstance(attribute, ast.Constant)
-                    and isinstance(attribute.value, str)
-                    and attribute.value in {"skip", "skipif", "importorskip", "xfail"}
-                ):
-                    raise SkipPolicyError(
-                        f"dynamic skip API access is forbidden: {relative}:{node.lineno}"
-                    )
             continue
         call_functions.add(id(node.func))
         declarations.append(
             _python_declaration(text=text, relative=relative, node=node, kind=kind)
         )
     for node in ast.walk(tree):
-        if not isinstance(node, (ast.Name, ast.Attribute)) or id(node) in call_functions:
+        if (
+            not isinstance(node, (ast.Name, ast.Attribute))
+            or id(node) in call_functions
+        ):
             continue
         kind = _resolve_python_name(node, aliases)
         if kind in PYTEST_CALLS:
             parent = parents.get(id(node))
-            is_decorator = isinstance(
-                parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
-            ) and node in parent.decorator_list
+            is_decorator = (
+                isinstance(
+                    parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+                )
+                and node in parent.decorator_list
+            )
             if not is_decorator:
                 raise SkipPolicyError(
                     f"indirect skip API references are forbidden: {relative}:{node.lineno}"
@@ -220,7 +246,7 @@ def _python_declarations(path: Path, relative: str) -> list[Declaration]:
     return declarations
 
 
-def _mask_typescript_non_code(text: str) -> str:
+def _mask_typescript_non_code(text: str, *, preserve_strings: bool = False) -> str:
     chars = list(text)
     index = 0
     state = "code"
@@ -241,7 +267,8 @@ def _mask_typescript_non_code(text: str) -> str:
                 continue
             if char in {"'", '"', "`"}:
                 quote = char
-                chars[index] = " "
+                if not preserve_strings:
+                    chars[index] = " "
                 index += 1
                 state = "string"
                 continue
@@ -264,18 +291,20 @@ def _mask_typescript_non_code(text: str) -> str:
             continue
         else:
             if char == "\\":
-                chars[index] = " "
+                if not preserve_strings:
+                    chars[index] = " "
                 if index + 1 < len(chars):
-                    if chars[index + 1] != "\n":
+                    if not preserve_strings and chars[index + 1] != "\n":
                         chars[index + 1] = " "
                     index += 2
                     continue
             if char == quote:
-                chars[index] = " "
+                if not preserve_strings:
+                    chars[index] = " "
                 index += 1
                 state = "code"
                 continue
-            if char != "\n":
+            if not preserve_strings and char != "\n":
                 chars[index] = " "
             index += 1
             continue
@@ -300,8 +329,11 @@ def _playwright_declarations(path: Path, relative: str) -> list[Declaration]:
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
-        raise SkipPolicyError(f"cannot read Playwright test source: {relative}") from exc
+        raise SkipPolicyError(
+            f"cannot read Playwright test source: {relative}"
+        ) from exc
     masked = _mask_typescript_non_code(text)
+    comments_masked = _mask_typescript_non_code(text, preserve_strings=True)
     aliases = {"test"}
     for imported in re.finditer(
         r"import\s*\{(?P<names>[^}]*)\}\s*from\s*['\"]@playwright/test['\"]",
@@ -314,7 +346,33 @@ def _playwright_declarations(path: Path, relative: str) -> list[Declaration]:
             )
             if match:
                 aliases.add(match.group("alias") or "test")
-    alias_pattern = "|".join(re.escape(alias) for alias in sorted(aliases, key=len, reverse=True))
+    alias_pattern = "|".join(
+        re.escape(alias) for alias in sorted(aliases, key=len, reverse=True)
+    )
+    bracket_pattern = re.compile(
+        rf"(?<![A-Za-z0-9_$\.])(?:{alias_pattern}|testInfo)"
+        r"(?:\.describe)?\s*\[\s*['\"](?:skip|fixme)['\"]\s*\]"
+    )
+    indirect_patterns = (
+        re.compile(r"(?<![A-Za-z0-9_$\.])testInfo\.(?:skip|fixme)\b"),
+        re.compile(
+            rf"\b(?:const|let|var)\s*\{{[^}}]*\b(?:skip|fixme)\b[^}}]*\}}"
+            rf"\s*=\s*(?:{alias_pattern})\b"
+        ),
+    )
+    indirect = bracket_pattern.search(comments_masked)
+    if indirect is not None:
+        raise SkipPolicyError(
+            f"indirect Playwright skip API references are forbidden: "
+            f"{relative}:{text.count(chr(10), 0, indirect.start()) + 1}"
+        )
+    for pattern in indirect_patterns:
+        indirect = pattern.search(masked)
+        if indirect is not None:
+            raise SkipPolicyError(
+                f"indirect Playwright skip API references are forbidden: "
+                f"{relative}:{text.count(chr(10), 0, indirect.start()) + 1}"
+            )
     declarations: list[Declaration] = []
     api_pattern = re.compile(
         rf"(?<![A-Za-z0-9_$\.])(?P<alias>{alias_pattern})"
@@ -334,7 +392,7 @@ def _playwright_declarations(path: Path, relative: str) -> list[Declaration]:
         line = text.count("\n", 0, match.start()) + 1
         previous_newline = text.rfind("\n", 0, match.start())
         column = match.start() - previous_newline
-        segment = text[match.start():end]
+        segment = text[match.start() : end]
         canonical_api = match.group("api").removeprefix(".")
         declarations.append(
             Declaration(
@@ -355,7 +413,9 @@ def scan_declarations(repo: Path = REPO) -> dict[str, list[Declaration]]:
         if not root.exists():
             continue
         for path in sorted(root.rglob("*.py")):
-            if any(part.startswith(".") or part == "__pycache__" for part in path.parts):
+            if any(
+                part.startswith(".") or part == "__pycache__" for part in path.parts
+            ):
                 continue
             relative = path.relative_to(repo).as_posix()
             # Only test modules and their conftest files are in release scope.
@@ -424,7 +484,12 @@ def _validate_common_scope(scope: Any, *, expected_keys: set[str]) -> None:
         raise SkipPolicyError("release test skip scope has an invalid schema")
     for field in ("id", "runner", "owner", "reason"):
         value = scope.get(field)
-        if not isinstance(value, str) or not value.strip() or "\n" in value or "\r" in value:
+        if (
+            not isinstance(value, str)
+            or not value.strip()
+            or "\n" in value
+            or "\r" in value
+        ):
             raise SkipPolicyError(f"release test skip scope has invalid {field}")
     if scope["runner"] not in {"pytest", "playwright"}:
         raise SkipPolicyError("release test skip scope has an unknown runner")
@@ -437,11 +502,15 @@ def verify_source_policy(
 ) -> dict[str, list[Declaration]]:
     scanned = scan_declarations(repo)
     scopes = policy["source_scopes"]
-    if len(scopes) != 2 or {scope.get("runner") for scope in scopes if isinstance(scope, dict)} != {
+    if len(scopes) != 2 or {
+        scope.get("runner") for scope in scopes if isinstance(scope, dict)
+    } != {
         "pytest",
         "playwright",
     }:
-        raise SkipPolicyError("source policy must declare pytest and Playwright exactly once")
+        raise SkipPolicyError(
+            "source policy must declare pytest and Playwright exactly once"
+        )
     seen_ids: set[str] = set()
     for scope in scopes:
         _validate_common_scope(
@@ -458,16 +527,13 @@ def verify_source_policy(
         current_files = _file_inventory(declarations)
         declared_files = details["files"]
         digest = details["inventory_sha256"]
-        if (
-            not isinstance(declared_files, list)
-            or any(
-                not isinstance(item, dict)
-                or set(item) != {"path", "declarations_sha256"}
-                or not isinstance(item["path"], str)
-                or not isinstance(item["declarations_sha256"], str)
-                or not re.fullmatch(r"[0-9a-f]{64}", item["declarations_sha256"])
-                for item in declared_files
-            )
+        if not isinstance(declared_files, list) or any(
+            not isinstance(item, dict)
+            or set(item) != {"path", "declarations_sha256"}
+            or not isinstance(item["path"], str)
+            or not isinstance(item["declarations_sha256"], str)
+            or not re.fullmatch(r"[0-9a-f]{64}", item["declarations_sha256"])
+            for item in declared_files
         ):
             raise SkipPolicyError("source skip file inventory is invalid")
         declared_paths = [item["path"] for item in declared_files]
@@ -486,7 +552,124 @@ def verify_source_policy(
     return scanned
 
 
-def _runtime_paths(
+def _normalize_text(raw: str, *, label: str) -> str:
+    if not isinstance(raw, str):
+        raise SkipPolicyError(f"{label} must be text")
+    normalized = " ".join(unicodedata.normalize("NFC", raw).split())
+    if not normalized or len(normalized) > 2_048:
+        raise SkipPolicyError(f"{label} is empty or oversized")
+    return normalized
+
+
+def _normalize_nodeid(raw: str, repo: Path = REPO) -> str:
+    if not isinstance(raw, str) or not raw:
+        raise SkipPolicyError("pytest skip has no nodeid")
+    path, *parts = raw.replace("\\", "/").split("::")
+    candidate = Path(path)
+    if candidate.is_absolute():
+        try:
+            path = candidate.resolve().relative_to(repo.resolve()).as_posix()
+        except ValueError as exc:
+            raise SkipPolicyError("runtime skip points outside the repository") from exc
+    normalized_path = _safe_relative_path(path)
+    if any(
+        not part or len(part) > 1_024 or "\n" in part or "\r" in part for part in parts
+    ):
+        raise SkipPolicyError("pytest skip nodeid is invalid")
+    return "::".join((normalized_path, *parts))
+
+
+def _normalize_runtime_authorization(runner: str, authorization: Any) -> dict[str, str]:
+    if not isinstance(authorization, dict):
+        raise SkipPolicyError("runtime skip authorization must be an object")
+    if runner == "pytest":
+        expected = {"nodeid", "phase", "category", "reason"}
+        if set(authorization) != expected:
+            raise SkipPolicyError("pytest runtime authorization schema is invalid")
+        phase = authorization["phase"]
+        category = authorization["category"]
+        if phase not in {"collect", "setup", "call", "teardown"}:
+            raise SkipPolicyError("pytest runtime authorization phase is invalid")
+        if category not in {"skip", "xfail", "importorskip"}:
+            raise SkipPolicyError("pytest runtime authorization category is invalid")
+        return {
+            "nodeid": _normalize_nodeid(authorization["nodeid"]),
+            "phase": phase,
+            "category": category,
+            "reason": _normalize_text(
+                authorization["reason"], label="pytest skip reason"
+            ),
+        }
+    expected = {
+        "project",
+        "spec_file",
+        "spec_title",
+        "test_id",
+        "category",
+        "reason",
+    }
+    if set(authorization) != expected:
+        raise SkipPolicyError("Playwright runtime authorization schema is invalid")
+    project = authorization["project"]
+    test_id = authorization["test_id"]
+    category = authorization["category"]
+    if (
+        not isinstance(project, str)
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", project) is None
+    ):
+        raise SkipPolicyError("Playwright project identity is invalid")
+    if (
+        not isinstance(test_id, str)
+        or re.fullmatch(r"[0-9a-f]{20}-[0-9a-f]{20}", test_id) is None
+    ):
+        raise SkipPolicyError("Playwright test id is invalid")
+    if category not in {"skip", "fixme"}:
+        raise SkipPolicyError("Playwright runtime authorization category is invalid")
+    spec_file = _normalize_runtime_path(authorization["spec_file"])
+    if not spec_file.startswith(f"{PLAYWRIGHT_ROOT}/"):
+        raise SkipPolicyError("Playwright spec is outside the release test root")
+    return {
+        "project": project,
+        "spec_file": spec_file,
+        "spec_title": _normalize_text(
+            authorization["spec_title"], label="Playwright spec title"
+        ),
+        "test_id": test_id,
+        "category": category,
+        "reason": _normalize_text(
+            authorization["reason"], label="Playwright skip reason"
+        ),
+    }
+
+
+def _authorization_key(authorization: Mapping[str, str]) -> str:
+    return json.dumps(
+        dict(authorization),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
+
+
+def _authorization_sort_key(
+    runner: str, authorization: Mapping[str, str]
+) -> tuple[str, ...]:
+    fields = (
+        ("nodeid", "phase", "category", "reason")
+        if runner == "pytest"
+        else (
+            "project",
+            "spec_file",
+            "spec_title",
+            "test_id",
+            "category",
+            "reason",
+        )
+    )
+    return tuple(authorization[field] for field in fields)
+
+
+def _runtime_authorizations(
     policy: dict[str, Any], runner: str, environment: str
 ) -> set[str]:
     matches: list[set[str]] = []
@@ -500,18 +683,32 @@ def _runtime_paths(
             raise SkipPolicyError("release test skip policy has duplicate runtime ids")
         seen_ids.add(scope["id"])
         details = scope["scope"]
-        if set(details) != {"environment", "paths"}:
+        if set(details) != {"environment", "authorizations"}:
             raise SkipPolicyError("runtime skip scope has an invalid schema")
-        paths = details["paths"]
+        declared = details["authorizations"]
         if (
-            not isinstance(paths, list)
-            or paths != sorted(set(paths))
-            or any(not isinstance(path, str) for path in paths)
+            not isinstance(details["environment"], str)
+            or not details["environment"].strip()
+            or not isinstance(declared, list)
         ):
-            raise SkipPolicyError("runtime skip paths must be a sorted unique list")
-        normalized = {_safe_relative_path(path) for path in paths}
+            raise SkipPolicyError("runtime skip authorizations are invalid")
+        normalized_items = [
+            _normalize_runtime_authorization(scope["runner"], item) for item in declared
+        ]
+        keys = [_authorization_key(item) for item in normalized_items]
+        if len(keys) != len(set(keys)) or normalized_items != sorted(
+            normalized_items,
+            key=lambda item: _authorization_sort_key(scope["runner"], item),
+        ):
+            raise SkipPolicyError(
+                "runtime skip authorizations must be canonical, sorted, and unique"
+            )
+        if declared != normalized_items:
+            raise SkipPolicyError(
+                "runtime skip authorizations are not canonically normalized"
+            )
         if scope["runner"] == runner and details["environment"] == environment:
-            matches.append(normalized)
+            matches.append(set(keys))
     if len(matches) != 1:
         raise SkipPolicyError(
             f"runtime policy must match {runner}/{environment} exactly once"
@@ -520,7 +717,9 @@ def _runtime_paths(
 
 
 def _normalize_runtime_path(raw: str, repo: Path = REPO) -> str:
-    path = raw.split("::", 1)[0].replace("\\", "/")
+    if not isinstance(raw, str):
+        raise SkipPolicyError("runtime skip path must be text")
+    path = raw.replace("\\", "/")
     candidate = Path(path)
     if candidate.is_absolute():
         try:
@@ -535,17 +734,16 @@ def authorize_runtime_skip(
     policy: dict[str, Any],
     runner: str,
     environment: str,
-    test_path: str,
-    reason: str,
+    observation: Mapping[str, str],
 ) -> None:
-    normalized_path = _normalize_runtime_path(test_path)
-    if not reason.strip():
-        raise SkipPolicyError(f"{runner} skip has no explicit reason: {normalized_path}")
-    allowed = _runtime_paths(policy, runner, environment)
-    if normalized_path not in allowed:
-        raise SkipPolicyError(
-            f"unexpected {runner} skip outside authorized scope: {normalized_path}"
+    normalized = _normalize_runtime_authorization(runner, dict(observation))
+    allowed = _runtime_authorizations(policy, runner, environment)
+    if _authorization_key(normalized) not in allowed:
+        identity = normalized.get("nodeid") or (
+            f"{normalized.get('project')}/{normalized.get('spec_file')}/"
+            f"{normalized.get('test_id')}"
         )
+        raise SkipPolicyError(f"unexpected {runner} runtime skip identity: {identity}")
 
 
 def _iter_playwright_specs(suites: Any) -> Iterable[dict[str, Any]]:
@@ -579,8 +777,15 @@ def verify_playwright_report(
     skipped = 0
     for spec in _iter_playwright_specs(report.get("suites")):
         path = spec.get("file")
+        spec_id = spec.get("id")
+        spec_title = spec.get("title")
         tests = spec.get("tests")
-        if not isinstance(path, str) or not isinstance(tests, list):
+        if (
+            not isinstance(path, str)
+            or not isinstance(spec_id, str)
+            or not isinstance(spec_title, str)
+            or not isinstance(tests, list)
+        ):
             raise SkipPolicyError("Playwright report test identity is invalid")
         if not path.startswith(f"{PLAYWRIGHT_ROOT}/"):
             path = f"{PLAYWRIGHT_ROOT}/{path}"
@@ -593,24 +798,34 @@ def verify_playwright_report(
             annotations = test.get("annotations")
             if not isinstance(annotations, list):
                 raise SkipPolicyError("Playwright skipped test has no annotations")
-            reasons = [
-                annotation.get("description")
+            skip_annotations = [
+                annotation
                 for annotation in annotations
                 if isinstance(annotation, dict)
                 and annotation.get("type") in {"skip", "fixme"}
                 and isinstance(annotation.get("description"), str)
                 and annotation["description"].strip()
             ]
-            if not reasons:
+            if len(skip_annotations) != 1:
                 raise SkipPolicyError(
-                    f"unexpected Playwright skip without explicit annotation: {path}"
+                    f"Playwright skip must have exactly one explicit annotation: {path}"
                 )
+            annotation = skip_annotations[0]
+            project = test.get("projectName")
+            if not isinstance(project, str):
+                raise SkipPolicyError("Playwright skipped test has no project identity")
             authorize_runtime_skip(
                 policy=policy,
                 runner="playwright",
                 environment=environment,
-                test_path=path,
-                reason="; ".join(reasons),
+                observation={
+                    "project": project,
+                    "spec_file": path,
+                    "spec_title": spec_title,
+                    "test_id": spec_id,
+                    "category": annotation["type"],
+                    "reason": annotation["description"],
+                },
             )
     declared_total = report["stats"].get("skipped")
     if not isinstance(declared_total, int) or declared_total != skipped:
@@ -627,7 +842,7 @@ def _policy_from_environment() -> tuple[dict[str, Any], str] | None:
         raise SkipPolicyError("pytest release skip guard environment is incomplete")
     policy = load_policy(Path(raw_path))
     verify_source_policy(policy)
-    _runtime_paths(policy, "pytest", environment)
+    _runtime_authorizations(policy, "pytest", environment)
     return policy, environment
 
 
@@ -640,27 +855,63 @@ def pytest_configure(config: Any) -> None:
         import pytest
 
         pytest.exit(f"RELEASE TEST SKIP POLICY BLOCKED: {exc}", returncode=4)
-    setattr(config, "_omega_release_skip_state", state)
-    setattr(config, "_omega_release_skip_errors", [])
+    config._omega_release_skip_state = state
+    config._omega_release_skip_errors = []
     _ACTIVE_PYTEST_CONFIG = config
+
+
+def _pytest_skip_reason(report: Any) -> str:
+    was_xfail = getattr(report, "wasxfail", None)
+    if isinstance(was_xfail, str) and was_xfail.strip():
+        raw = was_xfail
+        if raw.startswith("reason: "):
+            raw = raw.removeprefix("reason: ")
+        return _normalize_text(raw, label="pytest xfail reason")
+    longrepr = getattr(report, "longrepr", "")
+    if isinstance(longrepr, tuple) and len(longrepr) >= 3:
+        raw = str(longrepr[2])
+    else:
+        reprcrash = getattr(longrepr, "reprcrash", None)
+        message = getattr(reprcrash, "message", None)
+        raw = str(message if message is not None else longrepr)
+    if raw.startswith("Skipped: "):
+        raw = raw.removeprefix("Skipped: ")
+    return _normalize_text(raw, label="pytest skip reason")
+
+
+def _pytest_skip_category(report: Any, reason: str) -> str:
+    if isinstance(getattr(report, "wasxfail", None), str):
+        return "xfail"
+    if reason.startswith("could not import "):
+        return "importorskip"
+    return "skip"
 
 
 def _check_pytest_report(report: Any, config: Any) -> None:
     state = getattr(config, "_omega_release_skip_state", None)
-    if state is None or not getattr(report, "skipped", False):
+    observed_xfail = isinstance(getattr(report, "wasxfail", None), str)
+    if state is None or not (getattr(report, "skipped", False) or observed_xfail):
         return
     policy, environment = state
-    reason = str(getattr(report, "longrepr", ""))
     try:
+        reason = _pytest_skip_reason(report)
+        category = _pytest_skip_category(report, reason)
+        phase = str(getattr(report, "when", "collect"))
+        if phase not in {"setup", "call", "teardown"}:
+            phase = "collect"
         authorize_runtime_skip(
             policy=policy,
             runner="pytest",
             environment=environment,
-            test_path=str(getattr(report, "nodeid", "")),
-            reason=reason,
+            observation={
+                "nodeid": str(getattr(report, "nodeid", "")),
+                "phase": phase,
+                "category": category,
+                "reason": reason,
+            },
         )
     except SkipPolicyError as exc:
-        getattr(config, "_omega_release_skip_errors").append(str(exc))
+        config._omega_release_skip_errors.append(str(exc))
 
 
 def pytest_runtest_logreport(report: Any) -> None:

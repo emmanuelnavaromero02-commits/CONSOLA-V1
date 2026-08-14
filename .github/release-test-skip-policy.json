@@ -8,45 +8,162 @@
       "reason": "Optional dependency, live-environment, and explicitly gated integration tests may skip only within this cryptographically sealed source inventory.",
       "scope": {
         "files": [
-          {"path": "cartridges/sap_successfactors/tests/test_saml_bearer_auth.py", "declarations_sha256": "96d41ae5b57328bd3e4f1bc89ed893aac1fadedb762ba7b01ee9456017aabe18"},
-          {"path": "console/tests/test_cross_tenant_api_isolation.py", "declarations_sha256": "9564a67f3889f811e2561d6e025a7b3399f6d6720034cacc606d2b95414da648"},
-          {"path": "refinement/tests/test_sql_timeout.py", "declarations_sha256": "b1649a3c352537f0d4c1d70ab62a4b90c882355d8aeb99c1474993faca071b1f"},
-          {"path": "tests/e2e/conftest.py", "declarations_sha256": "2f4711cd9cefe564e6bfac9e27f9eb686cb42463cec4c7242fff9bdfbeb37f07"},
-          {"path": "tests/e2e/test_console_full_stack_acceptance.py", "declarations_sha256": "354a98e36bc781598702ba5119ffce209441d1c8a497e381e4c377eaf56a02e2"},
-          {"path": "tests/e2e/test_full_extraction_flow.py", "declarations_sha256": "f283b506ae90afa5f204a426bc047d8f3220f60b2d4654cab56a880e079f0ad8"},
-          {"path": "tests/operational_truth_e2e/test_runtime_pipeline.py", "declarations_sha256": "66b0e01187b356d9ee693ebb0182e077edd005b32d113ffa8746adb3c956eb8e"},
-          {"path": "tests/test_analytic_app_dataset_grants.py", "declarations_sha256": "81f46752b1bcccf9f36484fafda0069017ec62caa0c9f47444ee7cd6bca2a300"},
-          {"path": "tests/test_aws_evidence_compose_isolation.py", "declarations_sha256": "a713158cf26dda06bf4296bb033b339fe9e4ef25dba10948f6cf687a8edb0ee2"},
-          {"path": "tests/test_compose_images_pinned.py", "declarations_sha256": "0d596b485e3e20b785c66e9b996ea0c4e7024859e42922229f0fec420c83a693"},
-          {"path": "tests/test_e2e_full_flow.py", "declarations_sha256": "6173ad5fa80f844dfb5e92c0204e82d866ffa9873a46f4c030a49b2088cb63ee"},
-          {"path": "tests/test_e2e_smoke.py", "declarations_sha256": "a7a825b8e34404e15a214e7cb35e82911e4be9faf22b91ba25a0e793acb10485"},
-          {"path": "tests/test_gold_native_rls_contract.py", "declarations_sha256": "ad2ed33757ab97cf363909b2e8086ce0b45c22042f53f52e3422f41d7ecdf633"},
-          {"path": "tests/test_health_and_auth.py", "declarations_sha256": "96a49bcfd3a58fdb2393c2b437e1d04949ad9d8e548bbbd8d551379b71588ac3"},
-          {"path": "tests/test_mcp_cartridge_get_schema.py", "declarations_sha256": "21f797bf5cd992ada9fa49386d939d0c2681b48a1c0d700900f021360f22a52a"},
-          {"path": "tests/test_mcp_servers_tool_count_column.py", "declarations_sha256": "84f66f0e36faedda6c75eef0ca391e57e5b730cfcb7b46e9be678151a860c92b"},
-          {"path": "tests/test_operational_rls_console_refinement.py", "declarations_sha256": "b2aa9beafea54234d72f77da076e8b932ec0d545757eb6da2bbf88501bcc3f0d"},
-          {"path": "tests/test_sap_alignment.py", "declarations_sha256": "a07a61032c77402d9019dc779f7e51a79d5bb81a6e40bb2859936a843b9f3b76"},
-          {"path": "tests/test_sap_entities_seeded.py", "declarations_sha256": "0f62829e784e2385b59a763e8541e7e6dc9e2cd550e8603001f308dc27fa05b6"},
-          {"path": "tests/test_sap_hcm_apps.py", "declarations_sha256": "7a6774db1ff59eb4b6a791d61f2f251456b0d008c8360dcb97370fb1541f9f53"},
-          {"path": "tests/test_sap_hcm_datasets.py", "declarations_sha256": "78b591d1c8c258ea69dd9665b02bae9c7c52f8681539291a0644cb84e5af5321"},
-          {"path": "tests/test_sap_hcm_hints_agents.py", "declarations_sha256": "cfdecc11837b434c3f4699184cfcbdec897f7eeb5467f01fde2711b1e3570b18"},
-          {"path": "tests/test_sap_hcm_kbs.py", "declarations_sha256": "dddd2341d365e9e7a26d207fe1c437f2158c6f77aabd1fd6d2615b17aa04aec7"},
-          {"path": "tests/test_sap_retry.py", "declarations_sha256": "e2647fa32f2838c7bba56bb1d3aa93d4580ab5f79ff525fe7db3b0bad973b9e6"},
-          {"path": "tests/test_sap_s4hana_apps.py", "declarations_sha256": "3a38160ba5f7351b1c6f0c314c586b33db39abda9b71c1fbce14a6cc0a6ee317"},
-          {"path": "tests/test_sap_s4hana_datasets.py", "declarations_sha256": "a78a2edbdfc38655627ffdcc41b4bcfdcdfca1563e8c74259f3936a2baacf28d"},
-          {"path": "tests/test_sap_s4hana_hints_agents.py", "declarations_sha256": "d82dac70071a70f5ce4e6ec7402a08784412df824d3ee827a5214300f47aa135"},
-          {"path": "tests/test_sap_s4hana_kbs.py", "declarations_sha256": "34623a521bd0b689db0bbe792f5c1232e2156ee416caca7248d3b499ab5da6dd"},
-          {"path": "tests/test_sap_successfactors_apps.py", "declarations_sha256": "3a123602b35147d4805d71011f796c0c8128bddd876b0d9b0be3c8452705a5cd"},
-          {"path": "tests/test_sap_successfactors_cpa_blockers.py", "declarations_sha256": "dee219f480a5c3f694ee8406b7e122de2ce446fa6b9accea81c73f2898c7dda2"},
-          {"path": "tests/test_sap_successfactors_datasets.py", "declarations_sha256": "58bb41c4b47be8f655a5664847d11a81ec76a698f5dfc34b672e7634836f32b4"},
-          {"path": "tests/test_sap_successfactors_gold_foundation_schedule.py", "declarations_sha256": "099bdeaa222ce35af125cc42527fa1a787383b2c1fc96a2cfff35eff45a2144a"},
-          {"path": "tests/test_sap_successfactors_hints_agents.py", "declarations_sha256": "73068f02e16d2616bde646514ec17941d083094ef4951af21ef885611a7bfa97"},
-          {"path": "tests/test_sap_successfactors_kbs.py", "declarations_sha256": "8f355d2fb4d2e019eb4b9892765b7c34aa878d495f7647899e7d0b24c02a76cd"},
-          {"path": "tests/test_sap_successfactors_seed_completion.py", "declarations_sha256": "e82732d12e52cfb23a8112e8a131bfc1cc2fd3e34bb48b81a6b9c92d5e556de4"},
-          {"path": "tests/test_sap_successfactors_silver_schedule.py", "declarations_sha256": "b947fdb76f19dde5afc083d25468ef697a16f746e4a715cdb55f934d9497f869"},
-          {"path": "tests/test_security_negative_v141.py", "declarations_sha256": "b891cdf9bbeb17a03939ce680e2ac66203aca1ee88d0c8f17724af566438926c"},
-          {"path": "tests/test_smoke_script.py", "declarations_sha256": "ca1e97ac56211d8278e3ac29935a9644bc6cd0f6d144e2721d18f20f31357e19"},
-          {"path": "tests/test_staged_publication_live.py", "declarations_sha256": "7f63bbeadb52ab6552f122a63081db675912b46d43f7f93a33752b7ac4279da3"}
+          {
+            "path": "cartridges/sap_successfactors/tests/test_saml_bearer_auth.py",
+            "declarations_sha256": "96d41ae5b57328bd3e4f1bc89ed893aac1fadedb762ba7b01ee9456017aabe18"
+          },
+          {
+            "path": "console/tests/test_cross_tenant_api_isolation.py",
+            "declarations_sha256": "9564a67f3889f811e2561d6e025a7b3399f6d6720034cacc606d2b95414da648"
+          },
+          {
+            "path": "refinement/tests/test_sql_timeout.py",
+            "declarations_sha256": "b1649a3c352537f0d4c1d70ab62a4b90c882355d8aeb99c1474993faca071b1f"
+          },
+          {
+            "path": "tests/e2e/conftest.py",
+            "declarations_sha256": "2f4711cd9cefe564e6bfac9e27f9eb686cb42463cec4c7242fff9bdfbeb37f07"
+          },
+          {
+            "path": "tests/e2e/test_console_full_stack_acceptance.py",
+            "declarations_sha256": "354a98e36bc781598702ba5119ffce209441d1c8a497e381e4c377eaf56a02e2"
+          },
+          {
+            "path": "tests/e2e/test_full_extraction_flow.py",
+            "declarations_sha256": "f283b506ae90afa5f204a426bc047d8f3220f60b2d4654cab56a880e079f0ad8"
+          },
+          {
+            "path": "tests/operational_truth_e2e/test_runtime_pipeline.py",
+            "declarations_sha256": "66b0e01187b356d9ee693ebb0182e077edd005b32d113ffa8746adb3c956eb8e"
+          },
+          {
+            "path": "tests/test_analytic_app_dataset_grants.py",
+            "declarations_sha256": "81f46752b1bcccf9f36484fafda0069017ec62caa0c9f47444ee7cd6bca2a300"
+          },
+          {
+            "path": "tests/test_aws_evidence_compose_isolation.py",
+            "declarations_sha256": "a713158cf26dda06bf4296bb033b339fe9e4ef25dba10948f6cf687a8edb0ee2"
+          },
+          {
+            "path": "tests/test_compose_images_pinned.py",
+            "declarations_sha256": "0d596b485e3e20b785c66e9b996ea0c4e7024859e42922229f0fec420c83a693"
+          },
+          {
+            "path": "tests/test_e2e_full_flow.py",
+            "declarations_sha256": "6173ad5fa80f844dfb5e92c0204e82d866ffa9873a46f4c030a49b2088cb63ee"
+          },
+          {
+            "path": "tests/test_e2e_smoke.py",
+            "declarations_sha256": "a7a825b8e34404e15a214e7cb35e82911e4be9faf22b91ba25a0e793acb10485"
+          },
+          {
+            "path": "tests/test_gold_native_rls_contract.py",
+            "declarations_sha256": "ad2ed33757ab97cf363909b2e8086ce0b45c22042f53f52e3422f41d7ecdf633"
+          },
+          {
+            "path": "tests/test_health_and_auth.py",
+            "declarations_sha256": "96a49bcfd3a58fdb2393c2b437e1d04949ad9d8e548bbbd8d551379b71588ac3"
+          },
+          {
+            "path": "tests/test_mcp_cartridge_get_schema.py",
+            "declarations_sha256": "21f797bf5cd992ada9fa49386d939d0c2681b48a1c0d700900f021360f22a52a"
+          },
+          {
+            "path": "tests/test_mcp_servers_tool_count_column.py",
+            "declarations_sha256": "84f66f0e36faedda6c75eef0ca391e57e5b730cfcb7b46e9be678151a860c92b"
+          },
+          {
+            "path": "tests/test_operational_rls_console_refinement.py",
+            "declarations_sha256": "b2aa9beafea54234d72f77da076e8b932ec0d545757eb6da2bbf88501bcc3f0d"
+          },
+          {
+            "path": "tests/test_sap_alignment.py",
+            "declarations_sha256": "a07a61032c77402d9019dc779f7e51a79d5bb81a6e40bb2859936a843b9f3b76"
+          },
+          {
+            "path": "tests/test_sap_entities_seeded.py",
+            "declarations_sha256": "0f62829e784e2385b59a763e8541e7e6dc9e2cd550e8603001f308dc27fa05b6"
+          },
+          {
+            "path": "tests/test_sap_hcm_apps.py",
+            "declarations_sha256": "7a6774db1ff59eb4b6a791d61f2f251456b0d008c8360dcb97370fb1541f9f53"
+          },
+          {
+            "path": "tests/test_sap_hcm_datasets.py",
+            "declarations_sha256": "78b591d1c8c258ea69dd9665b02bae9c7c52f8681539291a0644cb84e5af5321"
+          },
+          {
+            "path": "tests/test_sap_hcm_hints_agents.py",
+            "declarations_sha256": "cfdecc11837b434c3f4699184cfcbdec897f7eeb5467f01fde2711b1e3570b18"
+          },
+          {
+            "path": "tests/test_sap_hcm_kbs.py",
+            "declarations_sha256": "dddd2341d365e9e7a26d207fe1c437f2158c6f77aabd1fd6d2615b17aa04aec7"
+          },
+          {
+            "path": "tests/test_sap_retry.py",
+            "declarations_sha256": "e2647fa32f2838c7bba56bb1d3aa93d4580ab5f79ff525fe7db3b0bad973b9e6"
+          },
+          {
+            "path": "tests/test_sap_s4hana_apps.py",
+            "declarations_sha256": "3a38160ba5f7351b1c6f0c314c586b33db39abda9b71c1fbce14a6cc0a6ee317"
+          },
+          {
+            "path": "tests/test_sap_s4hana_datasets.py",
+            "declarations_sha256": "a78a2edbdfc38655627ffdcc41b4bcfdcdfca1563e8c74259f3936a2baacf28d"
+          },
+          {
+            "path": "tests/test_sap_s4hana_hints_agents.py",
+            "declarations_sha256": "d82dac70071a70f5ce4e6ec7402a08784412df824d3ee827a5214300f47aa135"
+          },
+          {
+            "path": "tests/test_sap_s4hana_kbs.py",
+            "declarations_sha256": "34623a521bd0b689db0bbe792f5c1232e2156ee416caca7248d3b499ab5da6dd"
+          },
+          {
+            "path": "tests/test_sap_successfactors_apps.py",
+            "declarations_sha256": "3a123602b35147d4805d71011f796c0c8128bddd876b0d9b0be3c8452705a5cd"
+          },
+          {
+            "path": "tests/test_sap_successfactors_cpa_blockers.py",
+            "declarations_sha256": "dee219f480a5c3f694ee8406b7e122de2ce446fa6b9accea81c73f2898c7dda2"
+          },
+          {
+            "path": "tests/test_sap_successfactors_datasets.py",
+            "declarations_sha256": "58bb41c4b47be8f655a5664847d11a81ec76a698f5dfc34b672e7634836f32b4"
+          },
+          {
+            "path": "tests/test_sap_successfactors_gold_foundation_schedule.py",
+            "declarations_sha256": "099bdeaa222ce35af125cc42527fa1a787383b2c1fc96a2cfff35eff45a2144a"
+          },
+          {
+            "path": "tests/test_sap_successfactors_hints_agents.py",
+            "declarations_sha256": "73068f02e16d2616bde646514ec17941d083094ef4951af21ef885611a7bfa97"
+          },
+          {
+            "path": "tests/test_sap_successfactors_kbs.py",
+            "declarations_sha256": "8f355d2fb4d2e019eb4b9892765b7c34aa878d495f7647899e7d0b24c02a76cd"
+          },
+          {
+            "path": "tests/test_sap_successfactors_seed_completion.py",
+            "declarations_sha256": "e82732d12e52cfb23a8112e8a131bfc1cc2fd3e34bb48b81a6b9c92d5e556de4"
+          },
+          {
+            "path": "tests/test_sap_successfactors_silver_schedule.py",
+            "declarations_sha256": "b947fdb76f19dde5afc083d25468ef697a16f746e4a715cdb55f934d9497f869"
+          },
+          {
+            "path": "tests/test_security_negative_v141.py",
+            "declarations_sha256": "b891cdf9bbeb17a03939ce680e2ac66203aca1ee88d0c8f17724af566438926c"
+          },
+          {
+            "path": "tests/test_smoke_script.py",
+            "declarations_sha256": "ca1e97ac56211d8278e3ac29935a9644bc6cd0f6d144e2721d18f20f31357e19"
+          },
+          {
+            "path": "tests/test_staged_publication_live.py",
+            "declarations_sha256": "7f63bbeadb52ab6552f122a63081db675912b46d43f7f93a33752b7ac4279da3"
+          }
         ],
         "inventory_sha256": "22b93141fd9b180970f4103ad6bd401b8a8a8a5836ccdafeb8c0c578fe32867c"
       }
@@ -58,13 +175,34 @@
       "reason": "Conditional external-service and optional-surface browser checks may skip only within this cryptographically sealed source inventory.",
       "scope": {
         "files": [
-          {"path": "tests-e2e/specs/01-login.spec.ts", "declarations_sha256": "2e2d52674381e0eae40ae355958af8ee8b1bdee1d7ada8a4c498094f2b87a03b"},
-          {"path": "tests-e2e/specs/03-cartridges-deep.spec.ts", "declarations_sha256": "1fdbe20cf2f6a7adbcf3ebde09e83ebbc1dceda17c589ed86d96724ec95d0773"},
-          {"path": "tests-e2e/specs/05-studio-deep.spec.ts", "declarations_sha256": "7085955f82396e85f7dde7e14113637eefe83c1450736a4898f59a8d6ae4bda0"},
-          {"path": "tests-e2e/specs/07-apis-deep.spec.ts", "declarations_sha256": "95001dcb5ac641c541a07f9e87586087200e9015d08a908e622290ea0c6a80ec"},
-          {"path": "tests-e2e/specs/08-external-services.spec.ts", "declarations_sha256": "2b081b12dac0e168a1d3439a8c4d1fb05d7b4e8cea6aeabb38b55688c3bfcc7f"},
-          {"path": "tests-e2e/specs/10-mcp-cartridges.spec.ts", "declarations_sha256": "cee8fdafb6a7ac2f637a19dcafd0cd45d7f759f508e6623ae2e43d87d2cff459"},
-          {"path": "tests-e2e/specs/11-copilot-deep.spec.ts", "declarations_sha256": "90fe0b6845af2c2b1de9e0c75401e09a69ef47b209196509c9ecae4a0cc3bbdb"}
+          {
+            "path": "tests-e2e/specs/01-login.spec.ts",
+            "declarations_sha256": "2e2d52674381e0eae40ae355958af8ee8b1bdee1d7ada8a4c498094f2b87a03b"
+          },
+          {
+            "path": "tests-e2e/specs/03-cartridges-deep.spec.ts",
+            "declarations_sha256": "1fdbe20cf2f6a7adbcf3ebde09e83ebbc1dceda17c589ed86d96724ec95d0773"
+          },
+          {
+            "path": "tests-e2e/specs/05-studio-deep.spec.ts",
+            "declarations_sha256": "7085955f82396e85f7dde7e14113637eefe83c1450736a4898f59a8d6ae4bda0"
+          },
+          {
+            "path": "tests-e2e/specs/07-apis-deep.spec.ts",
+            "declarations_sha256": "95001dcb5ac641c541a07f9e87586087200e9015d08a908e622290ea0c6a80ec"
+          },
+          {
+            "path": "tests-e2e/specs/08-external-services.spec.ts",
+            "declarations_sha256": "2b081b12dac0e168a1d3439a8c4d1fb05d7b4e8cea6aeabb38b55688c3bfcc7f"
+          },
+          {
+            "path": "tests-e2e/specs/10-mcp-cartridges.spec.ts",
+            "declarations_sha256": "cee8fdafb6a7ac2f637a19dcafd0cd45d7f759f508e6623ae2e43d87d2cff459"
+          },
+          {
+            "path": "tests-e2e/specs/11-copilot-deep.spec.ts",
+            "declarations_sha256": "90fe0b6845af2c2b1de9e0c75401e09a69ef47b209196509c9ecae4a0cc3bbdb"
+          }
         ],
         "inventory_sha256": "1ae753d80f9bc64c923c5f4cd07d48db3515f3521c97b05f9f9937b9cdbdd10b"
       }
@@ -75,49 +213,34 @@
       "id": "pytest-release-runtime-skips",
       "runner": "pytest",
       "owner": "release-engineering",
-      "reason": "A release pytest skip is legitimate only in a test file whose exact skip declarations are sealed above and only when pytest emits a non-empty reason.",
+      "reason": "Only the exact versioned pytest nodeid, phase, category, and normalized-reason tuples below are authorized for the release environment by release-engineering.",
       "scope": {
         "environment": "release",
-        "paths": [
-          "cartridges/sap_successfactors/tests/test_saml_bearer_auth.py",
-          "console/tests/test_cross_tenant_api_isolation.py",
-          "refinement/tests/test_sql_timeout.py",
-          "tests/e2e/conftest.py",
-          "tests/e2e/test_console_full_stack_acceptance.py",
-          "tests/e2e/test_full_extraction_flow.py",
-          "tests/operational_truth_e2e/test_runtime_pipeline.py",
-          "tests/test_analytic_app_dataset_grants.py",
-          "tests/test_aws_evidence_compose_isolation.py",
-          "tests/test_compose_images_pinned.py",
-          "tests/test_e2e_full_flow.py",
-          "tests/test_e2e_smoke.py",
-          "tests/test_gold_native_rls_contract.py",
-          "tests/test_health_and_auth.py",
-          "tests/test_mcp_cartridge_get_schema.py",
-          "tests/test_mcp_servers_tool_count_column.py",
-          "tests/test_operational_rls_console_refinement.py",
-          "tests/test_sap_alignment.py",
-          "tests/test_sap_entities_seeded.py",
-          "tests/test_sap_hcm_apps.py",
-          "tests/test_sap_hcm_datasets.py",
-          "tests/test_sap_hcm_hints_agents.py",
-          "tests/test_sap_hcm_kbs.py",
-          "tests/test_sap_retry.py",
-          "tests/test_sap_s4hana_apps.py",
-          "tests/test_sap_s4hana_datasets.py",
-          "tests/test_sap_s4hana_hints_agents.py",
-          "tests/test_sap_s4hana_kbs.py",
-          "tests/test_sap_successfactors_apps.py",
-          "tests/test_sap_successfactors_cpa_blockers.py",
-          "tests/test_sap_successfactors_datasets.py",
-          "tests/test_sap_successfactors_gold_foundation_schedule.py",
-          "tests/test_sap_successfactors_hints_agents.py",
-          "tests/test_sap_successfactors_kbs.py",
-          "tests/test_sap_successfactors_seed_completion.py",
-          "tests/test_sap_successfactors_silver_schedule.py",
-          "tests/test_security_negative_v141.py",
-          "tests/test_smoke_script.py",
-          "tests/test_staged_publication_live.py"
+        "authorizations": [
+          {
+            "nodeid": "cartridges/sap_successfactors/tests/test_saml_bearer_auth.py::test_live_saml_bearer_test_connection_against_configured_successfactors",
+            "phase": "call",
+            "category": "skip",
+            "reason": "set OMEGA_ENABLE_LIVE_SF_SAML_TEST=1 with real SF SAML credentials"
+          },
+          {
+            "nodeid": "tests/e2e/test_console_full_stack_acceptance.py",
+            "phase": "collect",
+            "category": "skip",
+            "reason": "full-stack acceptance is opt-in"
+          },
+          {
+            "nodeid": "tests/operational_truth_e2e/test_runtime_pipeline.py",
+            "phase": "collect",
+            "category": "skip",
+            "reason": "operational truth E2E runs only through its isolated compose gate"
+          },
+          {
+            "nodeid": "tests/test_compose_images_pinned.py::test_minio_local_and_aws_use_same_release",
+            "phase": "call",
+            "category": "skip",
+            "reason": "AWS compose doesn't ship its own minio service"
+          }
         ]
       }
     },
@@ -125,17 +248,242 @@
       "id": "playwright-release-runtime-skips",
       "runner": "playwright",
       "owner": "release-engineering",
-      "reason": "A release browser skip is legitimate only in a spec whose exact test.skip declarations are sealed above and only with an explicit skip annotation.",
+      "reason": "Only the exact versioned project/spec/title/test-id/category/reason tuples below may skip in release browser gates.",
       "scope": {
         "environment": "release",
-        "paths": [
-          "tests-e2e/specs/01-login.spec.ts",
-          "tests-e2e/specs/03-cartridges-deep.spec.ts",
-          "tests-e2e/specs/05-studio-deep.spec.ts",
-          "tests-e2e/specs/07-apis-deep.spec.ts",
-          "tests-e2e/specs/08-external-services.spec.ts",
-          "tests-e2e/specs/10-mcp-cartridges.spec.ts",
-          "tests-e2e/specs/11-copilot-deep.spec.ts"
+        "authorizations": [
+          {
+            "project": "desktop-chromium",
+            "category": "skip",
+            "spec_file": "tests-e2e/specs/03-cartridges-deep.spec.ts",
+            "spec_title": "password field has eye toggle that flips aria-label",
+            "test_id": "7be8adb387c6abdf8a19-11dd9e0fab2b833355f4",
+            "reason": "replicon schema has no password field"
+          },
+          {
+            "project": "desktop-chromium",
+            "category": "skip",
+            "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
+            "spec_title": "'Abrir Superset' button navigates / opens external",
+            "test_id": "44fa61789b32b3cf8820-2992c04f37c388eecbcf",
+            "reason": "'Abrir Superset' button not present"
+          },
+          {
+            "project": "desktop-chromium",
+            "category": "skip",
+            "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
+            "spec_title": "'Copiar' button (if present) is clickable",
+            "test_id": "44fa61789b32b3cf8820-4c2df3412dde8918e734",
+            "reason": "'Copiar' button not surfaced — tracked in E2E findings"
+          },
+          {
+            "project": "desktop-chromium",
+            "category": "skip",
+            "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
+            "spec_title": "'Eliminar' button opens a confirmation",
+            "test_id": "44fa61789b32b3cf8820-55041b2e9212ecdb7755",
+            "reason": "'Eliminar' button not present"
+          },
+          {
+            "project": "desktop-chromium",
+            "category": "skip",
+            "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
+            "spec_title": "'Renombrar' button opens an input field",
+            "test_id": "44fa61789b32b3cf8820-12bb2a2be7bc32bc1bc2",
+            "reason": "'Renombrar' button not present"
+          },
+          {
+            "project": "desktop-chromium",
+            "category": "skip",
+            "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
+            "spec_title": "'Ver SQL' button surfaces the SQL",
+            "test_id": "44fa61789b32b3cf8820-8650e91af571c1cd3133",
+            "reason": "'Ver SQL' button not present"
+          },
+          {
+            "project": "desktop-chromium",
+            "category": "skip",
+            "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
+            "spec_title": "DAG editor area (code mirror / textarea) exists",
+            "test_id": "44fa61789b32b3cf8820-7da5d7744910d2ecfd49",
+            "reason": "no code editor on /studio DAGs tab — tracked in E2E findings"
+          },
+          {
+            "project": "desktop-chromium",
+            "category": "skip",
+            "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
+            "spec_title": "Plantillas sidebar lists templates",
+            "test_id": "44fa61789b32b3cf8820-b13bfc99dc5359b65db7",
+            "reason": "Templates sidebar not surfaced — tracked in E2E findings"
+          },
+          {
+            "project": "desktop-chromium",
+            "category": "skip",
+            "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
+            "spec_title": "Refinar > Bronze subtab clicks render content",
+            "test_id": "44fa61789b32b3cf8820-34a0f7d7d43b6d1956bb",
+            "reason": "Bronze subtab not present"
+          },
+          {
+            "project": "desktop-chromium",
+            "category": "skip",
+            "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
+            "spec_title": "Refinar > Gold subtab clicks render content",
+            "test_id": "44fa61789b32b3cf8820-852d6c67ed7fbb42ab56",
+            "reason": "Gold subtab not present"
+          },
+          {
+            "project": "desktop-chromium",
+            "category": "skip",
+            "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
+            "spec_title": "Refinar > Silver subtab clicks render content",
+            "test_id": "44fa61789b32b3cf8820-69ee0d29c18091db4676",
+            "reason": "Silver subtab not present"
+          },
+          {
+            "project": "desktop-chromium",
+            "category": "skip",
+            "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
+            "spec_title": "Silver 'Ejecutar' button fires a query",
+            "test_id": "44fa61789b32b3cf8820-4d1c29b2312903bd4ea7",
+            "reason": "'Ejecutar' button missing on Silver"
+          },
+          {
+            "project": "desktop-chromium",
+            "category": "skip",
+            "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
+            "spec_title": "Silver 'Ejecutar' button fires a query",
+            "test_id": "44fa61789b32b3cf8820-4d1c29b2312903bd4ea7",
+            "reason": "Silver subtab missing"
+          },
+          {
+            "project": "desktop-chromium",
+            "category": "skip",
+            "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
+            "spec_title": "Silver query editor is editable",
+            "test_id": "44fa61789b32b3cf8820-05f0c6b4af7d801cdb53",
+            "reason": "Silver pane has no editable query field"
+          },
+          {
+            "project": "desktop-chromium",
+            "category": "skip",
+            "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
+            "spec_title": "Silver query editor is editable",
+            "test_id": "44fa61789b32b3cf8820-05f0c6b4af7d801cdb53",
+            "reason": "Silver subtab missing"
+          },
+          {
+            "project": "desktop-chromium",
+            "category": "skip",
+            "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
+            "spec_title": "entity 'Extraer' button issues a POST",
+            "test_id": "44fa61789b32b3cf8820-ee54b96dcdf660211c9d",
+            "reason": "'Extraer' button not present"
+          },
+          {
+            "project": "desktop-chromium",
+            "category": "skip",
+            "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
+            "spec_title": "mode dropdown has full + incremental options",
+            "test_id": "44fa61789b32b3cf8820-0961a992685ea3e8a057",
+            "reason": "mode dropdown not surfaced"
+          },
+          {
+            "project": "desktop-chromium",
+            "category": "skip",
+            "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
+            "spec_title": "renders cartridge selector dropdown",
+            "test_id": "44fa61789b32b3cf8820-1d43117300198f5117b0",
+            "reason": "cartridge selector dropdown not surfaced"
+          },
+          {
+            "project": "desktop-chromium",
+            "category": "skip",
+            "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
+            "spec_title": "switching cartridge refreshes the summary",
+            "test_id": "44fa61789b32b3cf8820-ad6cd348f5c4e85f1fc5",
+            "reason": "cartridge picker not present — skip switching test"
+          },
+          {
+            "project": "desktop-chromium",
+            "category": "skip",
+            "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
+            "spec_title": "switching cartridge refreshes the summary",
+            "test_id": "44fa61789b32b3cf8820-ad6cd348f5c4e85f1fc5",
+            "reason": "only one cartridge in dropdown — can't test switch"
+          },
+          {
+            "project": "desktop-chromium",
+            "category": "skip",
+            "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
+            "spec_title": "tab 'Analytics' renders SOMETHING when clicked",
+            "test_id": "44fa61789b32b3cf8820-e4b8ca991f65e8f67196",
+            "reason": "tab Analytics not present"
+          },
+          {
+            "project": "desktop-chromium",
+            "category": "skip",
+            "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
+            "spec_title": "tab 'DAGs' renders SOMETHING when clicked",
+            "test_id": "44fa61789b32b3cf8820-ccdd8214ba737c66346d",
+            "reason": "tab DAGs not present"
+          },
+          {
+            "project": "desktop-chromium",
+            "category": "skip",
+            "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
+            "spec_title": "tab 'Entidades' renders SOMETHING when clicked",
+            "test_id": "44fa61789b32b3cf8820-1110fac1bfa15a8aa6de",
+            "reason": "tab Entidades not present"
+          },
+          {
+            "project": "desktop-chromium",
+            "category": "skip",
+            "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
+            "spec_title": "tab 'IA( Semántica)?' renders SOMETHING when clicked",
+            "test_id": "44fa61789b32b3cf8820-7d17620d48a014fb0b9d",
+            "reason": "tab IA( Semántica)? not present"
+          },
+          {
+            "project": "desktop-chromium",
+            "category": "skip",
+            "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
+            "spec_title": "tab 'RAG' renders SOMETHING when clicked",
+            "test_id": "44fa61789b32b3cf8820-5f88a8741392bcd088d2",
+            "reason": "tab RAG not present"
+          },
+          {
+            "project": "desktop-chromium",
+            "category": "skip",
+            "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
+            "spec_title": "tab 'Refinar' renders SOMETHING when clicked",
+            "test_id": "44fa61789b32b3cf8820-d545de0882ac7da28afe",
+            "reason": "tab Refinar not present"
+          },
+          {
+            "project": "desktop-chromium",
+            "category": "skip",
+            "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
+            "spec_title": "tab 'Resumen' renders SOMETHING when clicked",
+            "test_id": "44fa61789b32b3cf8820-ef04fdff7468acb9d638",
+            "reason": "tab Resumen not present"
+          },
+          {
+            "project": "desktop-chromium",
+            "category": "skip",
+            "spec_file": "tests-e2e/specs/11-copilot-deep.spec.ts",
+            "spec_title": "/copilot streaming renders tokens incrementally",
+            "test_id": "f48ae5f43fb6387120cc-67dfbaa1689959558d61",
+            "reason": "E2E_LIVE_LLM=1 plus ANTHROPIC_API_KEY required for live streaming probe"
+          },
+          {
+            "project": "desktop-chromium",
+            "category": "skip",
+            "spec_file": "tests-e2e/specs/11-copilot-deep.spec.ts",
+            "spec_title": "POST /drafts/generate calls the LLM end-to-end",
+            "test_id": "f48ae5f43fb6387120cc-bf33e24ddc41da23fdc8",
+            "reason": "E2E_LIVE_LLM=1 plus ANTHROPIC_API_KEY required for live LLM probe"
+          }
         ]
       }
     }

@@ -467,7 +467,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
+      E2E_ADMIN_EMAIL: emmanuel@local.ai
+      E2E_ADMIN_PASSWORD: Admin123!
+      E2E_REQUIRE_STACK: "1"
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      OMEGA_ENABLE_E2E_SMOKE: "1"
+      OMEGA_ENABLE_LIVE_STACK_TESTS: "1"
       OMEGA_RELEASE_TEST_SKIP_ENVIRONMENT: release
       OMEGA_RELEASE_TEST_SKIP_POLICY: ${{ github.workspace }}/.github/release-test-skip-policy.json
       OPEN_REPORT: "0"
@@ -742,61 +747,20 @@ jobs:
 
       - name: Refuse pre-existing image tags
         env:
-          IMAGE: ${{ steps.meta.outputs.image }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GHCR_OWNER: ${{ github.repository_owner }}
+          GHCR_USERNAME: ${{ github.actor }}
           RELEASE_TAG: ${{ github.ref_name }}
           SERVICE: ${{ matrix.service }}
           SOURCE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          umask 077
-          state_dir="${RUNNER_TEMP}/omega-release-${SERVICE}-${SOURCE_SHA}"
-          mkdir -p "${state_dir}"
-
-          require_absent() {
-            local reference="$1"
-            local error_path="$2"
-            if docker buildx imagetools inspect "${reference}" \
-              --format '{{json .Manifest}}' >"${state_dir}/inspect.out" 2>"${error_path}"; then
-              echo "::error::pre-existing release image tag is forbidden for a fresh F2 build: ${reference}"
-              exit 1
-            fi
-            # Docker/registry absence is accepted only for the canonical OCI
-            # error token. Generic "not found" text also represents auth,
-            # routing, transport, and API failures and must remain ambiguous.
-            if ! ERROR_PATH="${error_path}" REFERENCE="${reference}" python3 - <<'PY'
-          import os
-          from pathlib import Path
-
-          error_path = Path(os.environ["ERROR_PATH"])
-          reference = os.environ["REFERENCE"]
-          try:
-              raw = error_path.read_bytes()
-              if len(raw) > 65536:
-                  raise ValueError("registry error output is oversized")
-              lines = raw.decode("utf-8").splitlines()
-          except (OSError, UnicodeError, ValueError) as exc:
-              raise SystemExit("registry error output is invalid") from exc
-          accepted = {
-              f"{reference}: manifest unknown",
-              f"ERROR: {reference}: manifest unknown",
-          }
-          meaningful = [line.strip() for line in lines if line.strip()]
-          if len(meaningful) != 1 or meaningful[0] not in accepted:
-              raise SystemExit("registry did not return exact manifest absence")
-          PY
-            then
-              echo "::error::registry lookup failed ambiguously for ${reference}"
-              exit 1
-            fi
-          }
-
-          require_absent \
-            "${IMAGE}:sha-${SOURCE_SHA}" \
-            "${state_dir}/sha-inspect.err"
-          require_absent \
-            "${IMAGE}:${RELEASE_TAG}" \
-            "${state_dir}/release-inspect.err"
-          echo "Both release tags are structurally absent; a fresh build is required for ${SERVICE}."
+          python3 scripts/verify_release_image_absence.py \
+            --owner "${GHCR_OWNER}" \
+            --service "${SERVICE}" \
+            --username "${GHCR_USERNAME}" \
+            --source-sha "${SOURCE_SHA}" \
+            --release-tag "${RELEASE_TAG}"
 
       - name: Build and push ${{ matrix.service }}
         id: build
