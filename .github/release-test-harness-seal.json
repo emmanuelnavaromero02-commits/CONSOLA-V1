@@ -2986,7 +2986,7 @@
     },
     {
       "path": "scripts/prepare_release_runner_disk.py",
-      "sha256": "b7864b99b7b6e896638aadc98afd4f4f6e7fb5808569317b893256a2ebd36337"
+      "sha256": "cabbefd357bd3c943f62afc6375653aaa6e9c3c87040c38e1fe9ba524b878a39"
     },
     {
       "path": "scripts/production_readiness.sh",
@@ -4598,7 +4598,7 @@
     },
     {
       "path": "tests/test_prepare_release_runner_disk.py",
-      "sha256": "78c9955e3c75db85b123c74b2aed56dec69b9e71c8d359ed70766f212db13e24"
+      "sha256": "7d64509d3142628662542f9a8058305c257859d007a0a106b05ff81f91700e02"
     },
     {
       "path": "tests/test_priority_cartridges_exist.py",

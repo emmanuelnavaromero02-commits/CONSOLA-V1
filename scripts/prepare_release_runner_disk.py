@@ -22,6 +22,7 @@ import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Final
 
 
@@ -722,6 +723,7 @@ def _remove_inventory(inventory: _TargetInventory, *, disk_device: int) -> None:
         )
 
     expected = {entry.relative_path: entry for entry in inventory.entries}
+    expected_children = _index_expected_children(expected)
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
         root_fd = os.open(inventory.target.path, flags)
@@ -736,6 +738,7 @@ def _remove_inventory(inventory: _TargetInventory, *, disk_device: int) -> None:
             relative_prefix="",
             display_path=inventory.target.path,
             expected=expected,
+            expected_children=expected_children,
             disk_device=disk_device,
         )
     finally:
@@ -756,12 +759,31 @@ def _remove_inventory(inventory: _TargetInventory, *, disk_device: int) -> None:
         ) from exc
 
 
+def _index_expected_children(
+    expected: Mapping[str, _EntryIdentity],
+) -> Mapping[str, frozenset[str]]:
+    """Index each inventoried directory's direct children exactly once."""
+
+    children: dict[str, set[str]] = {}
+    for relative, identity in expected.items():
+        if identity.kind == "directory":
+            children.setdefault("" if relative == "." else relative, set())
+        if relative == ".":
+            continue
+        parent, _separator, name = relative.rpartition("/")
+        children.setdefault(parent, set()).add(name)
+    return MappingProxyType(
+        {parent: frozenset(names) for parent, names in children.items()}
+    )
+
+
 def _delete_directory_contents(
     directory_fd: int,
     *,
     relative_prefix: str,
     display_path: Path,
     expected: Mapping[str, _EntryIdentity],
+    expected_children: Mapping[str, frozenset[str]],
     disk_device: int,
 ) -> None:
     try:
@@ -771,13 +793,13 @@ def _delete_directory_contents(
             f"cannot list cleanup directory {display_path}: {exc}"
         ) from exc
 
-    expected_names = {
-        relative.split("/")[-1]
-        for relative in expected
-        if relative != "."
-        and (relative.rsplit("/", 1)[0] if "/" in relative else "") == relative_prefix
-    }
-    if set(names) != expected_names:
+    try:
+        expected_names = expected_children[relative_prefix]
+    except KeyError as exc:
+        raise RunnerDiskError(
+            f"cleanup child index is missing directory {display_path}"
+        ) from exc
+    if frozenset(names) != expected_names:
         raise RunnerDiskError(
             f"cleanup directory changed after inventory: {display_path}"
         )
@@ -813,6 +835,7 @@ def _delete_directory_contents(
                     relative_prefix=relative,
                     display_path=child_display,
                     expected=expected,
+                    expected_children=expected_children,
                     disk_device=disk_device,
                 )
             finally:

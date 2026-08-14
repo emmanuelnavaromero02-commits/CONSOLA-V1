@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 
 import pytest
@@ -291,6 +292,140 @@ def test_nested_hardlink_is_unlinked_without_mutating_external_inode(
     assert not cleanup.path.exists()
     assert outside.read_bytes() == b"preserve"
     assert outside.stat().st_nlink == 1
+
+
+def test_reclaim_builds_one_child_index_for_a_wide_nested_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    disk = tmp_path / "docker"
+    disk.mkdir()
+    cleanup = _target("cleanup", tmp_path / "cleanup")
+    for index in range(64):
+        leaf = cleanup.path / f"sdk-{index:03d}" / "nested"
+        leaf.mkdir(parents=True)
+        (leaf / "payload.bin").write_bytes(b"payload")
+
+    index_calls: list[int] = []
+    real_index = runner_disk._index_expected_children
+
+    def count_index_calls(
+        expected: Mapping[str, runner_disk._EntryIdentity],
+    ) -> Mapping[str, frozenset[str]]:
+        index_calls.append(len(expected))
+        return real_index(expected)
+
+    monkeypatch.setattr(runner_disk, "_index_expected_children", count_index_calls)
+    report = _reclaim(
+        tmp_path,
+        minimum_free_bytes=150,
+        cache_targets=(cleanup,),
+        snapshotter=_snapshotter(disk, {cleanup.path: 50}),
+    )
+
+    assert report.removed == ("cleanup",)
+    assert not cleanup.path.exists()
+    assert index_calls == [1 + 1 + 64 * 3]
+
+
+def test_delete_uses_immutable_child_index_with_bounded_point_lookups(
+    tmp_path: Path,
+) -> None:
+    cleanup_path = tmp_path / "cleanup"
+    cleanup_path.mkdir()
+    (cleanup_path / "empty").mkdir()
+    (cleanup_path / "root-file").write_bytes(b"payload")
+    outside = tmp_path / "outside"
+    outside.write_bytes(b"preserve")
+    (cleanup_path / "outside-link").symlink_to(outside)
+    for index in range(32):
+        leaf = cleanup_path / f"tool-{index:03d}" / "bin"
+        leaf.mkdir(parents=True)
+        (leaf / "executable").write_bytes(b"payload")
+
+    target = CleanupTarget("cleanup", cleanup_path)
+    disk_device = os.lstat(tmp_path).st_dev
+    inventory = runner_disk._inventory_target(target, disk_device=disk_device)
+    identities = {entry.relative_path: entry for entry in inventory.entries}
+    indexed_children = runner_disk._index_expected_children(identities)
+
+    assert indexed_children[""] == frozenset(
+        {
+            "empty",
+            "outside-link",
+            "root-file",
+            *(f"tool-{index:03d}" for index in range(32)),
+        }
+    )
+    assert indexed_children["empty"] == frozenset()
+    with pytest.raises(TypeError):
+        indexed_children[""] = frozenset()
+
+    class PointLookupOnly(Mapping[str, object]):
+        def __init__(self, values: Mapping[str, object]) -> None:
+            self.values = values
+            self.lookups = 0
+
+        def __getitem__(self, key: str) -> object:
+            self.lookups += 1
+            return self.values[key]
+
+        def __iter__(self) -> Iterator[str]:
+            raise AssertionError("deletion must not rescan a global mapping")
+
+        def __len__(self) -> int:
+            return len(self.values)
+
+    point_identities = PointLookupOnly(identities)
+    point_children = PointLookupOnly(indexed_children)
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    root_fd = os.open(cleanup_path, flags)
+    try:
+        runner_disk._delete_directory_contents(
+            root_fd,
+            relative_prefix="",
+            display_path=cleanup_path,
+            expected=point_identities,
+            expected_children=point_children,
+            disk_device=disk_device,
+        )
+    finally:
+        os.close(root_fd)
+
+    directory_count = sum(entry.kind == "directory" for entry in inventory.entries)
+    assert point_identities.lookups == len(inventory.entries) - 1
+    assert point_children.lookups == directory_count
+    assert not any(cleanup_path.iterdir())
+    assert outside.read_bytes() == b"preserve"
+
+
+def test_delete_fails_closed_if_child_index_omits_an_empty_directory(
+    tmp_path: Path,
+) -> None:
+    cleanup_path = tmp_path / "cleanup"
+    empty = cleanup_path / "empty"
+    empty.mkdir(parents=True)
+    target = CleanupTarget("cleanup", cleanup_path)
+    disk_device = os.lstat(tmp_path).st_dev
+    inventory = runner_disk._inventory_target(target, disk_device=disk_device)
+    identities = {entry.relative_path: entry for entry in inventory.entries}
+    indexed_children = dict(runner_disk._index_expected_children(identities))
+    del indexed_children["empty"]
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    root_fd = os.open(cleanup_path, flags)
+    try:
+        with pytest.raises(RunnerDiskError, match="child index is missing"):
+            runner_disk._delete_directory_contents(
+                root_fd,
+                relative_prefix="",
+                display_path=cleanup_path,
+                expected=identities,
+                expected_children=indexed_children,
+                disk_device=disk_device,
+            )
+    finally:
+        os.close(root_fd)
+
+    assert empty.is_dir()
 
 
 def test_mount_boundary_is_rejected_during_preinventory(
