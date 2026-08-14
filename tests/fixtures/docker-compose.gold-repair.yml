@@ -1,0 +1,18 @@
+services:
+  postgres:
+    image: postgres:15.18
+    pull_policy: never
+    environment:
+      POSTGRES_DB: modecissions
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - ./init:/docker-entrypoint-initdb.d:ro
+  postgres_gold:
+    image: postgres:15.18
+    pull_policy: never
+    command: ["postgres", "-p", "5433"]
+    environment:
+      POSTGRES_DB: modecissions_gold
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - ./init_gold:/docker-entrypoint-initdb.d:ro

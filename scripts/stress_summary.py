@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import os
 import sys
 from dataclasses import dataclass
@@ -19,6 +20,18 @@ class Thresholds:
     max_error_rate: float
 
 
+PROFILE_DEFAULT_USERS = {
+    "smoke": 25,
+    "local": 10,
+    "beta": 100,
+    "spike": 1000,
+    "breakpoint": 2000,
+    "soak-24h": 250,
+    "write-heavy": 100,
+    "production": 500,
+}
+
+
 def _float(value: object, default: float = 0.0) -> float:
     try:
         if value in (None, ""):
@@ -26,6 +39,39 @@ def _float(value: object, default: float = 0.0) -> float:
         return float(str(value).strip())
     except (TypeError, ValueError):
         return default
+
+
+def _required_finite_number(row: dict[str, str], key: str) -> float:
+    raw = row.get(key)
+    if raw in (None, ""):
+        raise ValueError(f"Locust aggregate {key!r} is missing")
+    try:
+        value = float(str(raw).strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Locust aggregate {key!r} is not numeric") from exc
+    if not math.isfinite(value):
+        raise ValueError(f"Locust aggregate {key!r} is not finite")
+    return value
+
+
+def _required_count(row: dict[str, str], key: str) -> int:
+    value = _required_finite_number(row, key)
+    if value < 0 or not value.is_integer():
+        raise ValueError(f"Locust aggregate {key!r} is not a non-negative integer")
+    return int(value)
+
+
+def _minimum_request_count(profile: str) -> int:
+    configured = os.environ.get("OMEGA_STRESS_USERS")
+    if configured not in (None, ""):
+        try:
+            users = int(configured)
+        except ValueError as exc:
+            raise ValueError("OMEGA_STRESS_USERS must be a positive integer") from exc
+        if users <= 0:
+            raise ValueError("OMEGA_STRESS_USERS must be a positive integer")
+        return users
+    return PROFILE_DEFAULT_USERS.get(profile, 1)
 
 
 def _read_stats(path: Path) -> dict[str, str]:
@@ -87,15 +133,48 @@ def _blocked_by_public_waf(path: Path, *, failures: int) -> bool:
     return saw_healthz and (waf_occurrences / total_occurrences) >= 0.9
 
 
-def summarize(path: Path, *, profile: str, workload: str, thresholds: Thresholds) -> dict[str, object]:
+def summarize(
+    path: Path,
+    *,
+    profile: str,
+    workload: str,
+    thresholds: Thresholds,
+    minimum_requests: int | None = None,
+) -> dict[str, object]:
     row = _read_stats(path)
-    requests = int(_float(row.get("Request Count")))
-    failures = int(_float(row.get("Failure Count")))
-    p95 = _float(row.get("95%"))
-    p99 = _float(row.get("99%"))
-    rps = _float(row.get("Requests/s"))
-    error_rate = (failures / requests) if requests else 0.0
+    requests = _required_count(row, "Request Count")
+    failures = _required_count(row, "Failure Count")
+    p95 = _required_finite_number(row, "95%")
+    p99 = _required_finite_number(row, "99%")
+    rps = _required_finite_number(row, "Requests/s")
+    if requests <= 0:
+        raise ValueError("Locust aggregate contains zero requests")
+    if failures > requests:
+        raise ValueError("Locust aggregate failures exceed requests")
+    if rps <= 0:
+        raise ValueError("Locust aggregate Requests/s must be greater than zero")
+    if p95 <= 0 or p99 <= 0:
+        raise ValueError("Locust aggregate percentiles must be greater than zero")
+    if (
+        not math.isfinite(thresholds.p95_ms)
+        or not math.isfinite(thresholds.p99_ms)
+        or not math.isfinite(thresholds.max_error_rate)
+        or thresholds.p95_ms <= 0
+        or thresholds.p99_ms <= 0
+        or not 0 <= thresholds.max_error_rate <= 1
+    ):
+        raise ValueError("stress thresholds are invalid")
+    required_requests = (
+        _minimum_request_count(profile)
+        if minimum_requests is None
+        else minimum_requests
+    )
+    if required_requests <= 0:
+        raise ValueError("minimum request count must be positive")
+    error_rate = failures / requests
     violations: list[str] = []
+    if requests < required_requests:
+        violations.append(f"request_count {requests} < {required_requests}")
     if p95 > thresholds.p95_ms:
         violations.append(f"p95 {p95:.1f}ms > {thresholds.p95_ms:.1f}ms")
     if p99 > thresholds.p99_ms:
@@ -118,6 +197,7 @@ def summarize(path: Path, *, profile: str, workload: str, thresholds: Thresholds
         "profile": profile,
         "workload": workload,
         "request_count": requests,
+        "minimum_request_count": required_requests,
         "failure_count": failures,
         "error_rate": round(error_rate, 6),
         "requests_per_second": round(rps, 3),

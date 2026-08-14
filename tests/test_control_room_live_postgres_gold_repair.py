@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MIGRATION_NAME = "37_sap_successfactors_talent_operational_truth_repair.sql"
 MIGRATION = ROOT / "infra/init_gold" / MIGRATION_NAME
 RUNNER = ROOT / "scripts/apply_db_migrations.sh"
+COMPOSE_FIXTURE = ROOT / "tests/fixtures/docker-compose.gold-repair.yml"
 
 LEGACY_FIXTURE = """
 CREATE TABLE schema_migrations (
@@ -46,26 +47,6 @@ CREATE TABLE gold_sap_successfactors_talent_9box (
 INSERT INTO gold_sap_successfactors_talent_9box
 VALUES ('benchmark_internal', 'ready', 70, 70, 70, 70, 'high', 'high');
 """
-
-COMPOSE = """
-services:
-  postgres:
-    image: postgres:15.18
-    environment:
-      POSTGRES_DB: modecissions
-      POSTGRES_HOST_AUTH_METHOD: trust
-    volumes:
-      - ./init:/docker-entrypoint-initdb.d
-  postgres_gold:
-    image: postgres:15.18
-    command: ["postgres", "-p", "5433"]
-    environment:
-      POSTGRES_DB: modecissions_gold
-      POSTGRES_HOST_AUTH_METHOD: trust
-    volumes:
-      - ./init_gold:/docker-entrypoint-initdb.d
-"""
-
 
 def _compose_env(root: Path) -> dict[str, str]:
     return {**os.environ, "COMPOSE_PROJECT_NAME": root.name}
@@ -111,7 +92,7 @@ def _prepare(tmp_path: Path, *, include_repair: bool) -> Path:
     root = tmp_path / f"gold-{uuid.uuid4().hex[:8]}"
     for relative in ("infra/init", "infra/init_gold", "scripts"):
         (root / relative).mkdir(parents=True, exist_ok=True)
-    (root / "infra/docker-compose.yml").write_text(COMPOSE, encoding="utf-8")
+    shutil.copy2(COMPOSE_FIXTURE, root / "infra/docker-compose.yml")
     (root / "infra/init/00_noop.sql").write_text("SELECT 1;", encoding="utf-8")
     (root / "infra/init_gold/00_noop.sql").write_text("SELECT 1;", encoding="utf-8")
     (root / "infra/init_gold/36_legacy_fixture.sql").write_text(
@@ -137,6 +118,11 @@ def _wait(root: Path, *, include_repair: bool) -> None:
             f"WHERE filename='{filename}'",
             check=False,
         )
+        if ready.returncode == 97:
+            raise AssertionError(
+                "release Docker lock rejected the Gold readiness probe:\n"
+                f"{ready.stderr}"
+            )
         if ready.returncode == 0 and ready.stdout.strip() == "modecissions_gold":
             return
         time.sleep(1)
@@ -182,7 +168,16 @@ def test_real_main_and_gold_runner_repair_is_complete_and_idempotent(
     ) as sandbox:
         root = _prepare(Path(sandbox), include_repair=mode == "fresh")
         try:
-            _run(root, "up", "-d", "postgres", "postgres_gold")
+            _run(
+                root,
+                "up",
+                "-d",
+                "--no-build",
+                "--pull",
+                "never",
+                "postgres",
+                "postgres_gold",
+            )
             _wait(root, include_repair=mode == "fresh")
             if mode == "upgrade":
                 shutil.copy2(MIGRATION, root / "infra/init_gold" / MIGRATION_NAME)

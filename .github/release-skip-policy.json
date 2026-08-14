@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "policies": [
+    {
+      "id": "production-readiness-stress-beta",
+      "gate": "production-readiness-stress",
+      "owner": "release-engineering",
+      "reason": "Stress is optional for explicitly versioned beta tags; production and release-candidate tags must execute it.",
+      "scope": {
+        "tag_regex": "^v[0-9]+\\.[0-9]+\\.[0-9]+-beta(?:\\.[0-9A-Za-z][0-9A-Za-z.-]*)?$"
+      }
+    }
+  ]
+}

@@ -165,7 +165,10 @@ def test_userdata_sets_browser_urls_to_https_public_domains():
 
 def test_release_gate_validates_terraform_and_public_closure_tests():
     workflow = _read(REPO / ".github/workflows/release.yml")
-    assert "hashicorp/setup-terraform@v3" in workflow
+    assert (
+        "hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3"
+        in workflow
+    )
     assert "terraform -chdir=infra/terraform/infra fmt -check" in workflow
     assert "terraform -chdir=infra/terraform/infra init -backend=false" in workflow
     assert "terraform -chdir=infra/terraform/infra validate" in workflow

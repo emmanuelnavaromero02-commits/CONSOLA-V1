@@ -101,6 +101,7 @@ def postgres_gold_with_native_rls() -> str:
     init_dir = REPO_ROOT / "infra" / "init_gold"
     result = _docker(
         "run",
+        "--pull=never",
         "-d",
         "--rm",
         "--name",

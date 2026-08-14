@@ -7,7 +7,10 @@ on:
 
 permissions:
   contents: read
-  packages: write
+
+concurrency:
+  group: release-images-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   detect-release-changes:
@@ -16,47 +19,215 @@ jobs:
       dataset: ${{ steps.detect.outputs.dataset }}
       root_tests: ${{ steps.detect.outputs.root_tests }}
       cartridge_tests: ${{ steps.detect.outputs.cartridge_tests }}
+      root_test_targets: ${{ steps.detect.outputs.root_test_targets }}
+      cartridge_test_targets: ${{ steps.detect.outputs.cartridge_test_targets }}
+      cartridge_requirement_paths: ${{ steps.detect.outputs.cartridge_requirement_paths }}
       release_full_stack: ${{ steps.detect.outputs.release_full_stack }}
       changed_files: ${{ steps.detect.outputs.changed_files }}
+      deleted_files: ${{ steps.detect.outputs.deleted_files }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
-      - id: previous
+      - name: Verify release tag is exact canonical main
         shell: bash
         run: |
           set -euo pipefail
-          previous="$(git describe --tags --abbrev=0 "${GITHUB_SHA}^" 2>/dev/null || true)"
-          if [[ -z "$previous" ]]; then
-            previous="$(git rev-list --max-parents=0 HEAD)"
+          git fetch --force --prune --tags origin \
+            +refs/heads/main:refs/remotes/origin/main
+          main_commit="$(git rev-parse 'refs/remotes/origin/main^{commit}')"
+          tag_commit="$(git rev-parse "refs/tags/${GITHUB_REF_NAME}^{commit}")"
+          event_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          if [[ "${tag_commit}" != "${event_commit}" || "${tag_commit}" != "${main_commit}" ]]; then
+            echo "::error::release tag is not exact origin/main: tag=${tag_commit} event=${event_commit} main=${main_commit}"
+            exit 1
           fi
-          echo "base=$previous" >> "$GITHUB_OUTPUT"
+
+      - id: previous
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          python3 scripts/select_previous_release.py \
+            --head "${GITHUB_SHA}" \
+            --current-tag "${GITHUB_REF_NAME}" \
+            --repository "${SOURCE_REPOSITORY}" \
+            --github-output "${GITHUB_OUTPUT}"
 
       - id: detect
         run: python3 scripts/ci_changed_areas.py --base "${{ steps.previous.outputs.base }}" --head "${{ github.sha }}"
 
+  authorize-release-gate-skips:
+    needs: detect-release-changes
+    runs-on: ubuntu-latest
+    outputs:
+      production_readiness_stress_action: ${{ steps.policy.outputs.production_readiness_stress_action }}
+      production_readiness_stress_skip_authorized: ${{ steps.policy.outputs.production_readiness_stress_skip_authorized }}
+      production_readiness_stress_policy_id: ${{ steps.policy.outputs.production_readiness_stress_policy_id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Authorize applicable release gate skips
+        id: policy
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_SKIP_POLICY: .github/release-skip-policy.json
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          release_tag = os.environ["RELEASE_TAG"]
+          version = Path("VERSION").read_text(encoding="utf-8").strip()
+          if release_tag != f"v{version}":
+              raise SystemExit(
+                  f"release tag/version mismatch: tag={release_tag!r} VERSION={version!r}"
+              )
+          registry = json.loads(
+              Path(os.environ["RELEASE_SKIP_POLICY"]).read_text(encoding="utf-8")
+          )
+          if set(registry) != {"schema_version", "policies"} or registry.get(
+              "schema_version"
+          ) != 1:
+              raise SystemExit("release skip policy schema is invalid")
+          policies = registry.get("policies")
+          if not isinstance(policies, list) or len(policies) != 1:
+              raise SystemExit("release policy must contain exactly the stress policy")
+          policy = policies[0]
+          expected_owner = "release-engineering"
+          expected_reason = (
+              "Stress is optional for explicitly versioned beta tags; production "
+              "and release-candidate tags must execute it."
+          )
+          expected_tag_regex = (
+              r"^v[0-9]+\.[0-9]+\.[0-9]+-beta"
+              r"(?:\.[0-9A-Za-z][0-9A-Za-z.-]*)?$"
+          )
+          if (
+              not isinstance(policy, dict)
+              or set(policy) != {"id", "gate", "owner", "reason", "scope"}
+              or policy.get("id") != "production-readiness-stress-beta"
+              or policy.get("gate") != "production-readiness-stress"
+              or policy.get("owner") != expected_owner
+              or policy.get("reason") != expected_reason
+              or not isinstance(policy.get("scope"), dict)
+              or set(policy["scope"]) != {"tag_regex"}
+          ):
+              raise SystemExit("stress skip policy identity is invalid")
+          tag_regex = policy["scope"]["tag_regex"]
+          if tag_regex != expected_tag_regex:
+              raise SystemExit("stress skip tag regex is not the reviewed beta scope")
+          try:
+              matched = re.fullmatch(tag_regex, release_tag) is not None
+          except re.error as exc:
+              raise SystemExit(f"stress skip tag regex is invalid: {exc}")
+          action = "skip" if matched else "run"
+          output = Path(os.environ["GITHUB_OUTPUT"])
+          output.write_text(
+              "\n".join(
+                  (
+                      f"production_readiness_stress_action={action}",
+                      "production_readiness_stress_skip_authorized="
+                      + ("true" if matched else "false"),
+                      "production_readiness_stress_policy_id="
+                      + (policy["id"] if matched else "none"),
+                  )
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          summary = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          if matched:
+              decision = (
+                  f"AUTHORIZED SKIP via `{policy['id']}`; "
+                  f"owner=`{policy['owner']}`; reason={policy['reason']}"
+              )
+          else:
+              decision = "RUN (default fail-closed)"
+          summary.write_text(
+              "## Release gate policy\n\n"
+              f"- Tag: `{release_tag}` (`VERSION={version}`)\n"
+              f"- `production-readiness-stress`: **{decision}**\n"
+              "- `digest-full-stack-gate`: **RUN (unskippable)**\n",
+              encoding="utf-8",
+          )
+          PY
+
   validate-release:
     needs: detect-release-changes
     runs-on: ubuntu-latest
+    env:
+      OMEGA_RELEASE_TEST_SKIP_ENVIRONMENT: release
+      OMEGA_RELEASE_TEST_SKIP_POLICY: ${{ github.workspace }}/.github/release-test-skip-policy.json
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-python@v5
+      - name: Bind release test harness seal to source SHA
+        id: harness_authority
+        run: |
+          set -euo pipefail
+          seal_path=.github/release-test-harness-seal.json
+          verifier_path=scripts/verify_release_test_harness.py
+          secure_output_path=scripts/secure_release_output.py
+          docker_lock_path=scripts/release_docker_lock.py
+          committed_seal="$(mktemp)"
+          committed_verifier="$(mktemp)"
+          committed_secure_output="$(mktemp)"
+          committed_docker_lock="$(mktemp)"
+          trap 'rm -f -- "${committed_seal}" "${committed_verifier}" "${committed_secure_output}" "${committed_docker_lock}"' EXIT
+          git show "${GITHUB_SHA}:${seal_path}" > "${committed_seal}"
+          git show "${GITHUB_SHA}:${verifier_path}" > "${committed_verifier}"
+          git show "${GITHUB_SHA}:${secure_output_path}" > "${committed_secure_output}"
+          git show "${GITHUB_SHA}:${docker_lock_path}" > "${committed_docker_lock}"
+          cmp --silent "${committed_seal}" "${seal_path}" || {
+            echo "::error::release test harness seal differs from source SHA"
+            exit 1
+          }
+          cmp --silent "${committed_verifier}" "${verifier_path}" || {
+            echo "::error::release test harness verifier differs from source SHA"
+            exit 1
+          }
+          cmp --silent "${committed_secure_output}" "${secure_output_path}" || {
+            echo "::error::secure release output helper differs from source SHA"
+            exit 1
+          }
+          cmp --silent "${committed_docker_lock}" "${docker_lock_path}" || {
+            echo "::error::release Docker lock differs from source SHA"
+            exit 1
+          }
+          seal_sha256="$(sha256sum "${committed_seal}" | awk '{print $1}')"
+          verifier_sha256="$(sha256sum "${committed_verifier}" | awk '{print $1}')"
+          secure_output_sha256="$(sha256sum "${committed_secure_output}" | awk '{print $1}')"
+          docker_lock_sha256="$(sha256sum "${committed_docker_lock}" | awk '{print $1}')"
+          [[ "${seal_sha256}" =~ ^[0-9a-f]{64}$ && "${verifier_sha256}" =~ ^[0-9a-f]{64}$ && "${secure_output_sha256}" =~ ^[0-9a-f]{64}$ && "${docker_lock_sha256}" =~ ^[0-9a-f]{64}$ ]]
+          echo "sha256=${seal_sha256}" >> "${GITHUB_OUTPUT}"
+          echo "verifier_sha256=${verifier_sha256}" >> "${GITHUB_OUTPUT}"
+          echo "secure_output_sha256=${secure_output_sha256}" >> "${GITHUB_OUTPUT}"
+          echo "docker_lock_sha256=${docker_lock_sha256}" >> "${GITHUB_OUTPUT}"
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: console-next/package-lock.json
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
           terraform_version: "1.6.6"
 
       - name: Install validation dependencies
+        env:
+          CARTRIDGE_REQUIREMENT_PATHS: ${{ needs.detect-release-changes.outputs.cartridge_requirement_paths }}
         run: |
           python -m pip install --upgrade pip
           python -m pip install \
@@ -64,25 +235,61 @@ jobs:
             -r console/requirements.txt \
             -r vault/requirements.txt \
             -r mcp-infra/requirements.txt
+          for req in ${CARTRIDGE_REQUIREMENT_PATHS}; do
+            python -m pip install -r "$req"
+          done
           npm --prefix console-next ci
 
+      - name: Verify declared release test skips
+        run: python3 scripts/verify_test_skip_policy.py
+
       - name: Static release tests
+        env:
+          OMEGA_RELEASE_TEST_HARNESS_SHA256: ${{ steps.harness_authority.outputs.sha256 }}
+          OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256: ${{ steps.harness_authority.outputs.verifier_sha256 }}
         run: |
-          python -m pytest -q \
+          [[ "$(sha256sum scripts/verify_release_test_harness.py | awk '{print $1}')" == "${OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256}" ]]
+          python3 -I scripts/verify_release_test_harness.py
+          python3 -I scripts/run_release_pytest.py -q \
             tests/test_aws_compose_consistency.py \
             tests/test_aws_secrets_manager_config.py \
             tests/test_app_env_safe_default.py \
             tests/test_mcp_data_scope_source.py \
             tests/test_v1_public_https_closure.py
 
-      - name: Changed cartridge dataset contracts
-        if: needs.detect-release-changes.outputs.dataset == 'true' || needs.detect-release-changes.outputs.root_tests == 'true'
+      - name: Run detected root tests
+        if: needs.detect-release-changes.outputs.root_tests == 'true'
+        env:
+          OMEGA_RELEASE_TEST_HARNESS_SHA256: ${{ steps.harness_authority.outputs.sha256 }}
+          OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256: ${{ steps.harness_authority.outputs.verifier_sha256 }}
+          ROOT_TEST_TARGETS: ${{ needs.detect-release-changes.outputs.root_test_targets }}
         run: |
-          python -m pytest -q \
-            tests/test_sap_hcm_datasets.py \
-            tests/test_sap_s4hana_datasets.py \
-            tests/test_sap_successfactors_datasets.py \
-            cartridges/sap_successfactors/tests/test_airflow_dag_contract.py
+          set -euo pipefail
+          [[ "$(sha256sum scripts/verify_release_test_harness.py | awk '{print $1}')" == "${OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256}" ]]
+          [[ -n "${ROOT_TEST_TARGETS}" ]] || {
+            echo "::error::root_tests=true but no root test targets were resolved"
+            exit 1
+          }
+          read -r -a targets <<< "${ROOT_TEST_TARGETS}"
+          python3 -I scripts/verify_release_test_harness.py
+          python3 -I scripts/run_release_pytest.py -q "${targets[@]}"
+
+      - name: Run detected cartridge tests
+        if: needs.detect-release-changes.outputs.cartridge_tests == 'true'
+        env:
+          CARTRIDGE_TEST_TARGETS: ${{ needs.detect-release-changes.outputs.cartridge_test_targets }}
+          OMEGA_RELEASE_TEST_HARNESS_SHA256: ${{ steps.harness_authority.outputs.sha256 }}
+          OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256: ${{ steps.harness_authority.outputs.verifier_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$(sha256sum scripts/verify_release_test_harness.py | awk '{print $1}')" == "${OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256}" ]]
+          [[ -n "${CARTRIDGE_TEST_TARGETS}" ]] || {
+            echo "::error::cartridge_tests=true but no cartridge test targets were resolved"
+            exit 1
+          }
+          read -r -a targets <<< "${CARTRIDGE_TEST_TARGETS}"
+          python3 -I scripts/verify_release_test_harness.py
+          python3 -I scripts/run_release_pytest.py -q "${targets[@]}"
 
       - name: Terraform validation
         run: |
@@ -124,141 +331,45 @@ jobs:
           npm --prefix console-next run export:copy
           git diff --exit-code -- console/app/static/console-next
 
-  full-stack-release-gate:
-    needs: [detect-release-changes, validate-release]
-    if: needs.detect-release-changes.outputs.release_full_stack == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      OPEN_REPORT: "0"
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: tests-e2e/package-lock.json
-
-      - name: Install full-stack gate dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install \
-            -r tests/requirements.txt \
-            -r console/requirements.txt \
-            -r refinement/requirements.txt \
-            -r vault/requirements.txt \
-            -r workspace/requirements.txt \
-            -r mcp-infra/requirements.txt \
-            -r tests/stress/requirements.txt
-          for req in cartridges/*/requirements.txt; do
-            python -m pip install -r "$req"
-          done
-          npm --prefix tests-e2e ci
-          npx --prefix tests-e2e playwright install --with-deps chromium
-
-      - name: Bootstrap local release stack
-        run: |
-          bash infra/bootstrap.sh
-          bash infra/bootstrap-keys.sh infra/.env
-          sed -i 's/^APP_ENV=.*/APP_ENV=development/' infra/.env || true
-          sed -i 's/^ALLOW_RCE_TOOLS=.*/ALLOW_RCE_TOOLS=true/' infra/.env || true
-          sed -i 's/^AIRFLOW_DAGS_ARE_PAUSED_AT_CREATION=.*/AIRFLOW_DAGS_ARE_PAUSED_AT_CREATION=true/' infra/.env || true
-          grep -q '^APP_ENV=' infra/.env || echo 'APP_ENV=development' >> infra/.env
-          grep -q '^ALLOW_RCE_TOOLS=' infra/.env || echo 'ALLOW_RCE_TOOLS=true' >> infra/.env
-          grep -q '^AIRFLOW_DAGS_ARE_PAUSED_AT_CREATION=' infra/.env || echo 'AIRFLOW_DAGS_ARE_PAUSED_AT_CREATION=true' >> infra/.env
-          mkdir -p data/lakehouse
-          mkdir -p airflow/logs/scheduler airflow/logs/dag_processor airflow/logs/webserver
-          chmod -R 777 airflow/logs
-          {
-            echo "TEST_EMAIL=emmanuel@local.ai"
-            echo "TEST_PASSWORD=Admin123!"
-            echo "BASE_URL=http://127.0.0.1:8000"
-            echo "LEGACY_URL=http://127.0.0.1:8000"
-            echo "BACKEND_URL=http://127.0.0.1:8000"
-            echo "CONTROL_ROOM_URL=http://127.0.0.1:8000/control-room"
-            echo "AIRFLOW_URL=http://127.0.0.1:8082"
-            echo "SUPERSET_URL=http://127.0.0.1:8088"
-            echo "MINIO_CONSOLE_URL=http://127.0.0.1:9001"
-            echo "MAILHOG_URL=http://127.0.0.1:8025"
-            echo "HUBSPOT_URL=http://127.0.0.1:8210"
-            echo "REPLICON_URL=http://127.0.0.1:8201"
-            echo "SAP_HCM_URL=http://127.0.0.1:8202"
-            echo "SAP_SF_URL=http://127.0.0.1:8203"
-            echo "SAP_S4_URL=http://127.0.0.1:8204"
-            echo "OPEN_REPORT=0"
-          } > tests-e2e/.env
-
-      - name: Build and start full stack
-        run: |
-          APP_ENV=development ALLOW_RCE_TOOLS=true \
-            docker compose --env-file infra/.env \
-              -f infra/docker-compose.yml \
-              -f infra/docker-compose.dev.yml \
-              --profile sap \
-              up -d --build
-
-      - name: Wait for healthy stack
-        run: bash scripts/wait_for_health.sh
-
-      - name: Full-stack smoke
-        run: make smoke
-
-      - name: Browser E2E
-        run: make e2e
-
-      - name: Full-stack acceptance
-        run: make acceptance
-
-      - name: Production-readiness gate
-        run: |
-          if [[ "${GITHUB_REF_NAME}" == *"beta"* ]]; then
-            echo "Beta tag detected; stress is skipped with explicit evidence."
-            OMEGA_PRODUCTION_READINESS_SKIP_STRESS=1 make production-readiness
-          else
-            make production-readiness
-          fi
-
-      - name: Docker logs on failure
-        if: failure()
-        run: |
-          docker compose --env-file infra/.env -f infra/docker-compose.yml -f infra/docker-compose.dev.yml --profile sap ps || true
-          docker logs mode_postgres --tail 220 2>&1 || true
-          docker logs mode_postgres_gold --tail 220 2>&1 || true
-          docker logs mode_minio --tail 160 2>&1 || true
-          docker logs mode_refinement --tail 180 2>&1 || true
-          docker logs mode_vault --tail 180 2>&1 || true
-          docker logs mode_workspace --tail 180 2>&1 || true
-          docker logs mode_mcp_infra --tail 180 2>&1 || true
-          docker logs mode_airflow_init --tail 220 2>&1 || true
-          docker logs mode_superset_init --tail 180 2>&1 || true
-          docker logs mode_console --tail 160 2>&1 || true
-          docker logs mode_airflow --tail 180 2>&1 || true
-          docker logs mode_airflow_scheduler --tail 180 2>&1 || true
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: release-playwright-report
-          path: tests-e2e/playwright-report
-          if-no-files-found: ignore
-
-  build-and-push:
-    needs: [detect-release-changes, validate-release, full-stack-release-gate]
+  preflight-release-packages:
+    needs: [detect-release-changes, authorize-release-gate-skips, validate-release]
     if: |
       always() &&
       needs.validate-release.result == 'success' &&
       needs.detect-release-changes.result == 'success' &&
-      (
-        needs.detect-release-changes.outputs.release_full_stack != 'true' ||
-        needs.full-stack-release-gate.result == 'success'
-      )
+      needs.authorize-release-gate-skips.result == 'success'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Verify canonical release packages are private
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GHCR_OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_release_package_visibility.py \
+            --owner "${GHCR_OWNER}" \
+            --owner-kind user
+
+  build-and-push:
+    needs: [detect-release-changes, authorize-release-gate-skips, validate-release, preflight-release-packages]
+    if: |
+      always() &&
+      needs.validate-release.result == 'success' &&
+      needs.detect-release-changes.result == 'success' &&
+      needs.authorize-release-gate-skips.result == 'success' &&
+      needs.preflight-release-packages.result == 'success'
+    runs-on: ubuntu-latest
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: "false"
+    permissions:
+      actions: read
+      contents: read
+      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -301,29 +412,1173 @@ jobs:
             context: ./cartridges/salesforce
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set image metadata
         id: meta
         run: |
-          echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ matrix.service }}" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve exact candidate receipt for this run
+        id: candidate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release_digest_chain.py candidate-state \
+            --repository "${GITHUB_REPOSITORY}" \
+            --owner "${GITHUB_REPOSITORY_OWNER}" \
+            --source-sha "${GITHUB_SHA}" \
+            --release-tag "${GITHUB_REF_NAME}" \
+            --run-id "${GITHUB_RUN_ID}" \
+            --username "${GITHUB_ACTOR}" \
+            --service "${{ matrix.service }}" \
+            --receipt "${{ matrix.service }}.release-candidate.json" \
+            --github-output "${GITHUB_OUTPUT}"
+
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        if: steps.candidate.outputs.action == 'build'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        if: steps.candidate.outputs.action == 'build'
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        with:
+          version: v0.36.1
+          driver-opts: image=moby/buildkit@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
 
-      - name: Build and push ${{ matrix.service }}
-        uses: docker/build-push-action@v6
+      - name: Build and push untagged candidate for ${{ matrix.service }}
+        id: build
+        if: steps.candidate.outputs.action == 'build'
+        # F2 guarantees the exact tested digest mapping. It does not claim a
+        # bit-identical rebuild; dependency provenance and SBOM are F17 scope.
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile || format('{0}/Dockerfile', matrix.context) }}
-          push: true
-          tags: |
-            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+          labels: |
+            io.omega.release.service=${{ matrix.service }}
+            io.omega.release.run-id=${{ github.run_id }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+          annotations: |
+            manifest:io.omega.release.service=${{ matrix.service }}
+            manifest:io.omega.release.run-id=${{ github.run_id }}
+            manifest:org.opencontainers.image.revision=${{ github.sha }}
+            manifest:org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            manifest:org.opencontainers.image.version=${{ github.ref_name }}
+          outputs: type=image,name=${{ steps.meta.outputs.image }},push-by-digest=true,name-canonical=true,push=true,oci-mediatypes=true
+          platforms: linux/amd64
+          provenance: false
+
+      - name: Verify candidate and write canonical receipt
+        if: steps.candidate.outputs.action == 'build'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release_digest_chain.py write-receipt \
+            --repository "${GITHUB_REPOSITORY}" \
+            --owner "${GITHUB_REPOSITORY_OWNER}" \
+            --source-sha "${GITHUB_SHA}" \
+            --release-tag "${GITHUB_REF_NAME}" \
+            --run-id "${GITHUB_RUN_ID}" \
+            --username "${GITHUB_ACTOR}" \
+            --service "${{ matrix.service }}" \
+            --digest "${{ steps.build.outputs.digest }}" \
+            --receipt "${{ matrix.service }}.release-candidate.json"
+
+      # This is deliberately the final matrix step.  A rerun first downloads
+      # and fully validates an already-persisted receipt for this exact run_id.
+      - name: Upload immutable candidate receipt last
+        if: steps.candidate.outputs.action == 'build'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-image-candidate-${{ matrix.service }}
+          path: ${{ matrix.service }}.release-candidate.json
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 90
+
+  assemble-release-manifest:
+    needs: [build-and-push]
+    if: always() && needs.build-and-push.result == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      artifact_name: ${{ steps.artifact.outputs.name }}
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Assemble exact candidate manifest once
+        id: manifest
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release_digest_chain.py write-manifest \
+            --repository "${GITHUB_REPOSITORY}" \
+            --owner "${GITHUB_REPOSITORY_OWNER}" \
+            --source-sha "${GITHUB_SHA}" \
+            --release-tag "${GITHUB_REF_NAME}" \
+            --run-id "${GITHUB_RUN_ID}" \
+            --username "${GITHUB_ACTOR}" \
+            --output-dir candidate-release-manifest \
+            --github-output "${GITHUB_OUTPUT}"
+
+      - name: Bind immutable manifest artifact identity
+        id: artifact
+        run: echo "name=omega-release-manifest-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload canonical candidate manifest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: |
+            ${{ steps.manifest.outputs.manifest_path }}
+            ${{ steps.manifest.outputs.checksum_path }}
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 90
+
+  digest-full-stack-gate:
+    needs: [authorize-release-gate-skips, build-and-push, assemble-release-manifest]
+    if: |
+      always() &&
+      needs.build-and-push.result == 'success' &&
+      needs.assemble-release-manifest.result == 'success' &&
+      needs.authorize-release-gate-skips.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+    env:
+      E2E_ADMIN_EMAIL: emmanuel@local.ai
+      E2E_ADMIN_PASSWORD: Admin123!
+      E2E_REQUIRE_STACK: "1"
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      OMEGA_ENABLE_E2E_SMOKE: "1"
+      OMEGA_ENABLE_LIVE_STACK_TESTS: "1"
+      OMEGA_RELEASE_DIGEST_STACK: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      OMEGA_RELEASE_TEST_SKIP_ENVIRONMENT: release
+      OMEGA_RELEASE_TEST_SKIP_POLICY: ${{ github.workspace }}/.github/release-test-skip-policy.json
+      OPEN_REPORT: "0"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Bind release test harness seal to source SHA
+        id: harness_authority
+        run: |
+          set -euo pipefail
+          seal_path=.github/release-test-harness-seal.json
+          verifier_path=scripts/verify_release_test_harness.py
+          secure_output_path=scripts/secure_release_output.py
+          docker_lock_path=scripts/release_docker_lock.py
+          committed_seal="$(mktemp)"
+          committed_verifier="$(mktemp)"
+          committed_secure_output="$(mktemp)"
+          committed_docker_lock="$(mktemp)"
+          trap 'rm -f -- "${committed_seal}" "${committed_verifier}" "${committed_secure_output}" "${committed_docker_lock}"' EXIT
+          git show "${GITHUB_SHA}:${seal_path}" > "${committed_seal}"
+          git show "${GITHUB_SHA}:${verifier_path}" > "${committed_verifier}"
+          git show "${GITHUB_SHA}:${secure_output_path}" > "${committed_secure_output}"
+          git show "${GITHUB_SHA}:${docker_lock_path}" > "${committed_docker_lock}"
+          cmp --silent "${committed_seal}" "${seal_path}" || {
+            echo "::error::release test harness seal differs from source SHA"
+            exit 1
+          }
+          cmp --silent "${committed_verifier}" "${verifier_path}" || {
+            echo "::error::release test harness verifier differs from source SHA"
+            exit 1
+          }
+          cmp --silent "${committed_secure_output}" "${secure_output_path}" || {
+            echo "::error::secure release output helper differs from source SHA"
+            exit 1
+          }
+          cmp --silent "${committed_docker_lock}" "${docker_lock_path}" || {
+            echo "::error::release Docker lock differs from source SHA"
+            exit 1
+          }
+          seal_sha256="$(sha256sum "${committed_seal}" | awk '{print $1}')"
+          verifier_sha256="$(sha256sum "${committed_verifier}" | awk '{print $1}')"
+          secure_output_sha256="$(sha256sum "${committed_secure_output}" | awk '{print $1}')"
+          docker_lock_sha256="$(sha256sum "${committed_docker_lock}" | awk '{print $1}')"
+          [[ "${seal_sha256}" =~ ^[0-9a-f]{64}$ && "${verifier_sha256}" =~ ^[0-9a-f]{64}$ && "${secure_output_sha256}" =~ ^[0-9a-f]{64}$ && "${docker_lock_sha256}" =~ ^[0-9a-f]{64}$ ]]
+          echo "sha256=${seal_sha256}" >> "${GITHUB_OUTPUT}"
+          echo "verifier_sha256=${verifier_sha256}" >> "${GITHUB_OUTPUT}"
+          echo "secure_output_sha256=${secure_output_sha256}" >> "${GITHUB_OUTPUT}"
+          echo "docker_lock_sha256=${docker_lock_sha256}" >> "${GITHUB_OUTPUT}"
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: tests-e2e/package-lock.json
+
+      - name: Install digest-stack gate dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install \
+            -r tests/requirements.txt \
+            -r console/requirements.txt \
+            -r refinement/requirements.txt \
+            -r vault/requirements.txt \
+            -r workspace/requirements.txt \
+            -r mcp-infra/requirements.txt \
+            -r tests/stress/requirements.txt
+          for req in cartridges/*/requirements.txt; do
+            python -m pip install -r "$req"
+          done
+          npm --prefix tests-e2e ci
+          PLAYWRIGHT_BROWSERS_PATH="${RUNNER_TEMP}/omega-playwright-browsers.install" \
+            tests-e2e/node_modules/.bin/playwright install --with-deps chromium
+
+      - name: Freeze trusted Playwright and Docker gate runtimes
+        id: gate_runtime_authority
+        env:
+          OMEGA_RELEASE_DOCKER_LOCK_SHA256: ${{ steps.harness_authority.outputs.docker_lock_sha256 }}
+          OMEGA_RELEASE_TEST_HARNESS_SHA256: ${{ steps.harness_authority.outputs.sha256 }}
+          OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256: ${{ steps.harness_authority.outputs.verifier_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$(/usr/bin/sha256sum scripts/verify_release_test_harness.py | /usr/bin/awk '{print $1}')" == "${OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256}" ]]
+          [[ "$(/usr/bin/sha256sum scripts/release_docker_lock.py | /usr/bin/awk '{print $1}')" == "${OMEGA_RELEASE_DOCKER_LOCK_SHA256}" ]]
+          /usr/bin/python3 -I scripts/verify_release_test_harness.py
+          real_docker="$(command -v docker)"
+          real_node="$(command -v node)"
+          [[ "${real_docker}" == /* && "${real_node}" == /* ]]
+          sudo /usr/bin/install -d -o root -g root -m 0555 \
+            /opt/omega-release-runtime \
+            /opt/omega-release-runtime/bin \
+            /opt/omega-release-runtime/browsers \
+            /opt/omega-release-runtime/docker-config
+          sudo /usr/bin/install -o root -g root -m 0555 \
+            "${real_node}" /opt/omega-release-runtime/bin/node
+          sudo /usr/bin/install -o root -g root -m 0444 \
+            scripts/release_docker_lock.py \
+            /opt/omega-release-runtime/release_docker_lock.py
+          sudo /bin/cp -a \
+            "${RUNNER_TEMP}/omega-playwright-browsers.install/." \
+            /opt/omega-release-runtime/browsers/
+          /usr/bin/install -d -m 0700 \
+            tests-e2e/playwright-report tests-e2e/test-results
+          /usr/bin/install -m 0600 /dev/null tests-e2e/.env
+          runner_uid="$(id -u)"
+          runner_gid="$(id -g)"
+          sudo /bin/chown -R root:root \
+            tests-e2e /opt/omega-release-runtime
+          sudo /bin/chmod -R a-w \
+            tests-e2e /opt/omega-release-runtime
+          sudo /bin/chmod 0555 tests-e2e
+          sudo /bin/chown -R "${runner_uid}:${runner_gid}" \
+            tests-e2e/playwright-report tests-e2e/test-results
+          sudo /bin/chmod 0700 \
+            tests-e2e/playwright-report tests-e2e/test-results
+          sudo /bin/chown "${runner_uid}:${runner_gid}" tests-e2e/.env
+          sudo /bin/chmod 0600 tests-e2e/.env
+          wrapper="$(mktemp)"
+          trap 'rm -f -- "${wrapper}"' EXIT
+          printf '#!/bin/bash\nexec /usr/bin/python3 -I %q --workspace %q --real %q --trusted-config %q -- "$@"\n' \
+            /opt/omega-release-runtime/release_docker_lock.py \
+            "${GITHUB_WORKSPACE}" "${real_docker}" \
+            /opt/omega-release-runtime/docker-config > "${wrapper}"
+          sudo /usr/bin/install -o root -g root -m 0555 \
+            "${wrapper}" /opt/omega-release-runtime/bin/docker
+          playwright_sha256="$(
+            OMEGA_RELEASE_PLAYWRIGHT_NODE=/opt/omega-release-runtime/bin/node \
+            PLAYWRIGHT_BROWSERS_PATH=/opt/omega-release-runtime/browsers \
+            /usr/bin/python3 -I scripts/run_release_playwright.py \
+              --print-runtime-sha256
+          )"
+          [[ "${playwright_sha256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$(/usr/bin/sha256sum /opt/omega-release-runtime/release_docker_lock.py | /usr/bin/awk '{print $1}')" == "${OMEGA_RELEASE_DOCKER_LOCK_SHA256}" ]]
+          echo "playwright_sha256=${playwright_sha256}" >> "${GITHUB_OUTPUT}"
+          echo "trusted_path=/opt/omega-release-runtime/bin:${PATH}" >> "${GITHUB_OUTPUT}"
+
+      - name: Verify sealed release test harness
+        env:
+          OMEGA_RELEASE_TEST_HARNESS_SHA256: ${{ steps.harness_authority.outputs.sha256 }}
+          OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256: ${{ steps.harness_authority.outputs.verifier_sha256 }}
+        run: |
+          [[ "$(sha256sum scripts/verify_release_test_harness.py | awk '{print $1}')" == "${OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256}" ]]
+          python3 -I scripts/verify_release_test_harness.py
+          python3 scripts/verify_test_skip_policy.py
+
+      - name: Bootstrap digest release stack
+        id: bootstrap
+        run: |
+          bash infra/bootstrap.sh
+          bash infra/bootstrap-keys.sh infra/.env
+          sed -i 's/^APP_ENV=.*/APP_ENV=development/' infra/.env || true
+          sed -i 's/^ALLOW_RCE_TOOLS=.*/ALLOW_RCE_TOOLS=true/' infra/.env || true
+          sed -i 's/^AIRFLOW_DAGS_ARE_PAUSED_AT_CREATION=.*/AIRFLOW_DAGS_ARE_PAUSED_AT_CREATION=true/' infra/.env || true
+          grep -q '^APP_ENV=' infra/.env || echo 'APP_ENV=development' >> infra/.env
+          grep -q '^ALLOW_RCE_TOOLS=' infra/.env || echo 'ALLOW_RCE_TOOLS=true' >> infra/.env
+          grep -q '^AIRFLOW_DAGS_ARE_PAUSED_AT_CREATION=' infra/.env || echo 'AIRFLOW_DAGS_ARE_PAUSED_AT_CREATION=true' >> infra/.env
+          mkdir -p data/lakehouse
+          mkdir -p airflow/logs/scheduler airflow/logs/dag_processor airflow/logs/webserver
+          chmod -R 777 airflow/logs
+          {
+            echo "TEST_EMAIL=emmanuel@local.ai"
+            echo "TEST_PASSWORD=Admin123!"
+            echo "BASE_URL=http://127.0.0.1:8000"
+            echo "LEGACY_URL=http://127.0.0.1:8000"
+            echo "BACKEND_URL=http://127.0.0.1:8000"
+            echo "CONTROL_ROOM_URL=http://127.0.0.1:8000/control-room"
+            echo "AIRFLOW_URL=http://127.0.0.1:8082"
+            echo "SUPERSET_URL=http://127.0.0.1:8088"
+            echo "MINIO_CONSOLE_URL=http://127.0.0.1:9001"
+            echo "MAILHOG_URL=http://127.0.0.1:8025"
+            echo "HUBSPOT_URL=http://127.0.0.1:8210"
+            echo "REPLICON_URL=http://127.0.0.1:8201"
+            echo "SAP_HCM_URL=http://127.0.0.1:8202"
+            echo "SAP_SF_URL=http://127.0.0.1:8203"
+            echo "SAP_S4_URL=http://127.0.0.1:8204"
+            echo "OPEN_REPORT=0"
+          } > tests-e2e/.env
+          e2e_env_sha256="$(sha256sum "${GITHUB_WORKSPACE}/tests-e2e/.env" | awk '{print $1}')"
+          [[ "${e2e_env_sha256}" =~ ^[0-9a-f]{64}$ ]]
+          echo "e2e_env_sha256=${e2e_env_sha256}" >> "${GITHUB_OUTPUT}"
+
+      - name: Download the canonical candidate manifest
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ needs.assemble-release-manifest.outputs.artifact_name }}
+          path: digest-gate-manifest
+
+      - name: Bind and validate the exact candidate manifest
+        id: manifest
+        run: |
+          set -euo pipefail
+          manifest_path="digest-gate-manifest/omega-release-manifest-${GITHUB_REF_NAME}.json"
+          checksum_path="${manifest_path}.sha256"
+          python3 scripts/release_digest_env.py \
+            --manifest "${manifest_path}" \
+            --checksum "${checksum_path}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --release-tag "${GITHUB_REF_NAME}" \
+            --source-sha "${GITHUB_SHA}" \
+            --build-run-id "${GITHUB_RUN_ID}" >/dev/null
+          echo "manifest_path=${manifest_path}" >> "${GITHUB_OUTPUT}"
+          echo "checksum_path=${checksum_path}" >> "${GITHUB_OUTPUT}"
+          echo "manifest_sha256=$(sha256sum "${manifest_path}" | awk '{print $1}')" >> "${GITHUB_OUTPUT}"
+          echo "checksum_sha256=$(sha256sum "${checksum_path}" | awk '{print $1}')" >> "${GITHUB_OUTPUT}"
+
+      - name: Validate manifest authority and export exact digest lock
+        env:
+          MANIFEST_PATH: ${{ steps.manifest.outputs.manifest_path }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release_digest_env.py \
+            --manifest "${MANIFEST_PATH}" \
+            --checksum "${{ steps.manifest.outputs.checksum_path }}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --release-tag "${GITHUB_REF_NAME}" \
+            --source-sha "${GITHUB_SHA}" \
+            --build-run-id "${GITHUB_RUN_ID}" \
+            --github-env "${GITHUB_ENV}"
+
+      - name: Log in to private GHCR for exact digest pulls
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull and verify all 15 exact digest references
+        env:
+          MANIFEST_PATH: ${{ steps.manifest.outputs.manifest_path }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' > "${RUNNER_TEMP}/omega-release-digest-refs.txt"
+          import json
+          import os
+
+          manifest = json.load(open(os.environ["MANIFEST_PATH"], encoding="utf-8"))
+          for image in manifest["images"]:
+              print(image["digest_reference"])
+          PY
+          [[ "$(wc -l < "${RUNNER_TEMP}/omega-release-digest-refs.txt")" -eq 15 ]]
+          while IFS= read -r ref; do
+            docker pull "${ref}"
+            repo_digests="$(docker image inspect "${ref}" --format '{{json .RepoDigests}}')"
+            REF="${ref}" REPO_DIGESTS="${repo_digests}" python3 - <<'PY'
+          import json
+          import os
+
+          values = json.loads(os.environ["REPO_DIGESTS"])
+          if os.environ["REF"] not in values:
+              raise SystemExit("local image RepoDigests does not contain exact pulled reference")
+          PY
+          done < "${RUNNER_TEMP}/omega-release-digest-refs.txt"
+
+      - name: Render and start hybrid digest/source release stack
+        id: runtime_lock
+        env:
+          MANIFEST_PATH: ${{ steps.manifest.outputs.manifest_path }}
+        run: |
+          set -euo pipefail
+          compose=(
+            docker compose --env-file infra/.env
+            -f infra/docker-compose.yml
+            -f infra/docker-compose.dev.yml
+            -f infra/terraform-gcp/release/docker-compose.release.yml
+            --profile sap
+          )
+          "${compose[@]}" config --format json > "${RUNNER_TEMP}/omega-release-compose.json"
+          python3 scripts/release_digest_env.py \
+            --manifest "${MANIFEST_PATH}" \
+            --checksum "${{ steps.manifest.outputs.checksum_path }}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --release-tag "${GITHUB_REF_NAME}" \
+            --source-sha "${GITHUB_SHA}" \
+            --build-run-id "${GITHUB_RUN_ID}" \
+            --compose-config "${RUNNER_TEMP}/omega-release-compose.json"
+          python3 scripts/verify_release_source_checkout.py \
+            --source-sha "${GITHUB_SHA}" \
+            --compose-config "${RUNNER_TEMP}/omega-release-compose.json"
+          COMPOSE_CONFIG="${RUNNER_TEMP}/omega-release-compose.json" \
+            python3 - <<'PY' > "${RUNNER_TEMP}/omega-release-infra-refs.txt"
+          import json
+          import os
+
+          expected = {
+              "console", "workspace", "refinement", "vault", "mcp-infra",
+              "airflow-init", "airflow", "airflow-scheduler", "replicon",
+              "hubspot", "banxico", "inegi", "sec-edgar", "sap-hcm",
+              "sap-s4hana", "sap-successfactors", "salesforce",
+          }
+          compose = json.load(open(os.environ["COMPOSE_CONFIG"], encoding="utf-8"))
+          references = sorted({
+              service["image"]
+              for name, service in compose["services"].items()
+              if name not in expected and isinstance(service.get("image"), str)
+          })
+          if not references:
+              raise SystemExit("no infrastructure image references were resolved")
+          print("\n".join(references))
+          PY
+          while IFS= read -r ref; do
+            docker pull "${ref}"
+            docker image inspect "${ref}" >/dev/null
+          done < "${RUNNER_TEMP}/omega-release-infra-refs.txt"
+          for ref in postgres:15 postgres:15.18; do
+            docker pull "${ref}"
+            docker image inspect "${ref}" >/dev/null
+          done
+          docker image ls --no-trunc --digests \
+            --format '{{.Repository}}\t{{.Tag}}\t{{.Digest}}\t{{.ID}}' \
+            | LC_ALL=C sort > "${RUNNER_TEMP}/omega-release-image-inventory.lock"
+          echo "compose_sha256=$(sha256sum "${RUNNER_TEMP}/omega-release-compose.json" | awk '{print $1}')" >> "${GITHUB_OUTPUT}"
+          echo "image_inventory_sha256=$(sha256sum "${RUNNER_TEMP}/omega-release-image-inventory.lock" | awk '{print $1}')" >> "${GITHUB_OUTPUT}"
+          [[ "$(/usr/bin/sha256sum /opt/omega-release-runtime/release_docker_lock.py | /usr/bin/awk '{print $1}')" == "${{ steps.harness_authority.outputs.docker_lock_sha256 }}" ]]
+          compose[0]=/opt/omega-release-runtime/bin/docker
+          "${compose[@]}" up -d --no-build --pull never
+
+      - name: Wait for exact digest stack basic readiness
+        env:
+          BASH_ENV: /dev/null
+          COMPOSE_FILE: ""
+          COMPOSE_PROFILES: ""
+          COMPOSE_PROJECT_NAME: ""
+          DOCKER_CONTEXT: ""
+          DOCKER_HOST: ""
+          ENV: /dev/null
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          LD_PRELOAD: ""
+          PATH: /opt/omega-release-runtime/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          PYTHONHOME: ""
+          PYTHONPATH: ""
+        run: |
+          set -euo pipefail
+          bash scripts/wait_for_health.sh
+          docker image ls --no-trunc --digests \
+            --format '{{.Repository}}\t{{.Tag}}\t{{.Digest}}\t{{.ID}}' \
+            | sort > "${RUNNER_TEMP}/omega-release-image-inventory.final"
+          cmp --silent \
+            "${RUNNER_TEMP}/omega-release-image-inventory.lock" \
+            "${RUNNER_TEMP}/omega-release-image-inventory.final" || {
+              echo "::error::Docker image inventory changed after the release lock"
+              exit 1
+            }
+
+      - name: Run all final gates against exact digest stack
+        env:
+          BASH_ENV: /dev/null
+          COMPOSE_FILE: ""
+          COMPOSE_PROFILES: ""
+          COMPOSE_PROJECT_NAME: ""
+          DOCKER_CONTEXT: ""
+          DOCKER_HOST: ""
+          ENV: /dev/null
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          LD_PRELOAD: ""
+          GNUMAKEFLAGS: ""
+          MAKEFLAGS: ""
+          MAKEOVERRIDES: ""
+          MFLAGS: ""
+          NODE_OPTIONS: ""
+          OMEGA_RELEASE_E2E_ENV_SHA256: ${{ steps.bootstrap.outputs.e2e_env_sha256 }}
+          OMEGA_RELEASE_DIGEST_STACK: "1"
+          OMEGA_RELEASE_PLAYWRIGHT_NODE: /opt/omega-release-runtime/bin/node
+          OMEGA_RELEASE_PLAYWRIGHT_RUNTIME_SHA256: ${{ steps.gate_runtime_authority.outputs.playwright_sha256 }}
+          OMEGA_RELEASE_TEST_HARNESS_SHA256: ${{ steps.harness_authority.outputs.sha256 }}
+          OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256: ${{ steps.harness_authority.outputs.verifier_sha256 }}
+          OMEGA_RELEASE_TEST_SKIP_ENVIRONMENT: release
+          OMEGA_RELEASE_TEST_SKIP_POLICY: ${{ github.workspace }}/.github/release-test-skip-policy.json
+          PATH: ${{ steps.gate_runtime_authority.outputs.trusted_path }}
+          PLAYWRIGHT_BROWSERS_PATH: /opt/omega-release-runtime/browsers
+          PYTHONHOME: ""
+          PYTHONPATH: ""
+          STRESS_ACTION: ${{ needs.authorize-release-gate-skips.outputs.production_readiness_stress_action }}
+          STRESS_SKIP_AUTHORIZED: ${{ needs.authorize-release-gate-skips.outputs.production_readiness_stress_skip_authorized }}
+          STRESS_POLICY_ID: ${{ needs.authorize-release-gate-skips.outputs.production_readiness_stress_policy_id }}
+        run: |
+          set -euo pipefail
+          [[ "$(/usr/bin/sha256sum scripts/verify_release_test_harness.py | /usr/bin/awk '{print $1}')" == "${OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256}" ]]
+          /usr/bin/python3 -I scripts/verify_release_test_harness.py
+          [[ "$(/usr/bin/sha256sum /opt/omega-release-runtime/release_docker_lock.py | /usr/bin/awk '{print $1}')" == "${{ steps.harness_authority.outputs.docker_lock_sha256 }}" ]]
+          file_command_stamp() {
+            local path="$1"
+            [[ -f "${path}" && ! -L "${path}" ]] || return 1
+            /usr/bin/stat -Lc '%d:%i:%f:%u:%g' -- "${path}"
+            /usr/bin/sha256sum -- "${path}" | /usr/bin/awk '{print $1}'
+          }
+          gate_env_stamp="$(file_command_stamp "${GITHUB_ENV}")"
+          gate_path_stamp="$(file_command_stamp "${GITHUB_PATH}")"
+          verify_gate_file_commands() {
+            local rc=$?
+            trap - EXIT
+            if [[ "$(file_command_stamp "${GITHUB_ENV}" 2>/dev/null || true)" != "${gate_env_stamp}" ||
+                  "$(file_command_stamp "${GITHUB_PATH}" 2>/dev/null || true)" != "${gate_path_stamp}" ]]; then
+              echo "::error::release gate modified a GitHub environment file command"
+              rc=98
+            fi
+            exit "${rc}"
+          }
+          trap verify_gate_file_commands EXIT
+          release_make() {
+            /usr/bin/env \
+              -u GITHUB_ENV -u GITHUB_PATH \
+              -u PYTHONHOME -u PYTHONPATH -u PYTHONSTARTUP \
+              -u PYTHONINSPECT -u PYTHONWARNINGS -u PYTHONBREAKPOINT \
+              -u LD_PRELOAD -u LD_AUDIT -u LD_LIBRARY_PATH \
+              BASH_ENV=/dev/null ENV=/dev/null PATH="${PATH}" \
+              /usr/bin/make "$@"
+          }
+          case "${STRESS_ACTION}" in
+            run)
+              release_make production-readiness
+              ;;
+            skip)
+              [[ "${STRESS_SKIP_AUTHORIZED}" == "true" && "${STRESS_POLICY_ID}" != "none" ]] || {
+                echo "::error::production-readiness stress skip is not authorized"
+                exit 1
+              }
+              echo "Authorized stress skip policy: ${STRESS_POLICY_ID}"
+              OMEGA_PRODUCTION_READINESS_SKIP_STRESS=1 \
+                release_make production-readiness
+              ;;
+            *)
+              echo "::error::unknown production-readiness stress action: ${STRESS_ACTION}"
+              exit 1
+              ;;
+          esac
+
+      - name: Re-verify runtime digests and real-data readiness after all gates
+        env:
+          BASH_ENV: /dev/null
+          COMPOSE_FILE: ""
+          COMPOSE_PROFILES: ""
+          COMPOSE_PROJECT_NAME: ""
+          DOCKER_CONTEXT: ""
+          DOCKER_HOST: ""
+          ENV: /dev/null
+          EXPECTED_CHECKSUM_SHA256: ${{ steps.manifest.outputs.checksum_sha256 }}
+          EXPECTED_COMPOSE_SHA256: ${{ steps.runtime_lock.outputs.compose_sha256 }}
+          EXPECTED_IMAGE_INVENTORY_SHA256: ${{ steps.runtime_lock.outputs.image_inventory_sha256 }}
+          EXPECTED_MANIFEST_SHA256: ${{ steps.manifest.outputs.manifest_sha256 }}
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          LD_PRELOAD: ""
+          GNUMAKEFLAGS: ""
+          MAKEFLAGS: ""
+          MAKEOVERRIDES: ""
+          MFLAGS: ""
+          MANIFEST_PATH: ${{ steps.manifest.outputs.manifest_path }}
+          OMEGA_RELEASE_DIGEST_STACK: "1"
+          OMEGA_RELEASE_PLAYWRIGHT_NODE: /opt/omega-release-runtime/bin/node
+          OMEGA_RELEASE_PLAYWRIGHT_RUNTIME_SHA256: ${{ steps.gate_runtime_authority.outputs.playwright_sha256 }}
+          OMEGA_RELEASE_SECURE_OUTPUT_SHA256: ${{ steps.harness_authority.outputs.secure_output_sha256 }}
+          OMEGA_RELEASE_TEST_HARNESS_SHA256: ${{ steps.harness_authority.outputs.sha256 }}
+          OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256: ${{ steps.harness_authority.outputs.verifier_sha256 }}
+          OMEGA_RELEASE_TEST_SKIP_ENVIRONMENT: release
+          OMEGA_RELEASE_TEST_SKIP_POLICY: ${{ github.workspace }}/.github/release-test-skip-policy.json
+          NODE_OPTIONS: ""
+          PATH: /opt/omega-release-runtime/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          PLAYWRIGHT_BROWSERS_PATH: /opt/omega-release-runtime/browsers
+          PYTHONHOME: ""
+          PYTHONPATH: ""
+        run: |
+          set -euo pipefail
+          [[ "$(/usr/bin/sha256sum scripts/verify_release_test_harness.py | /usr/bin/awk '{print $1}')" == "${OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256}" ]]
+          /usr/bin/python3 -I scripts/verify_release_test_harness.py
+          /usr/bin/python3 -I scripts/run_release_playwright.py --verify-runtime-only
+          [[ "$(/usr/bin/sha256sum scripts/secure_release_output.py | /usr/bin/awk '{print $1}')" == "${OMEGA_RELEASE_SECURE_OUTPUT_SHA256}" ]]
+          verify_authority_sha256() {
+            local label="$1" expected="$2" path="$3" actual
+            [[ "${expected}" =~ ^[0-9a-f]{64}$ ]] || {
+              echo "::error::${label} authority SHA-256 is invalid"
+              exit 1
+            }
+            actual="$(/usr/bin/sha256sum "${path}" | /usr/bin/awk '{print $1}')"
+            [[ "${actual}" == "${expected}" ]] || {
+              echo "::error::${label} authority bytes changed during release gates"
+              exit 1
+            }
+          }
+          verify_authority_sha256 manifest "${EXPECTED_MANIFEST_SHA256}" "${MANIFEST_PATH}"
+          verify_authority_sha256 checksum "${EXPECTED_CHECKSUM_SHA256}" "${{ steps.manifest.outputs.checksum_path }}"
+          verify_authority_sha256 compose "${EXPECTED_COMPOSE_SHA256}" "${RUNNER_TEMP}/omega-release-compose.json"
+          verify_authority_sha256 image-inventory "${EXPECTED_IMAGE_INVENTORY_SHA256}" "${RUNNER_TEMP}/omega-release-image-inventory.lock"
+          /usr/bin/bash scripts/wait_for_health.sh
+          FINAL_OUTPUT_DIR="$(/usr/bin/mktemp -d "${RUNNER_TEMP}/omega-release-final.XXXXXX")"
+          /bin/chmod 0700 "${FINAL_OUTPUT_DIR}"
+          FINAL_COMPOSE="${FINAL_OUTPUT_DIR}/compose.json"
+          FINAL_IMAGE_INVENTORY="${FINAL_OUTPUT_DIR}/image-inventory.lock"
+          docker compose --env-file infra/.env \
+            -f infra/docker-compose.yml \
+            -f infra/docker-compose.dev.yml \
+            -f infra/terraform-gcp/release/docker-compose.release.yml \
+            --profile sap config --format json \
+            | /usr/bin/python3 -I scripts/secure_release_output.py \
+                --output "${FINAL_COMPOSE}" \
+                --baseline "${RUNNER_TEMP}/omega-release-compose.json" \
+                --expected-sha256 "${EXPECTED_COMPOSE_SHA256}"
+          docker image ls --no-trunc --digests \
+            --format '{{.Repository}}\t{{.Tag}}\t{{.Digest}}\t{{.ID}}' \
+            | LC_ALL=C /usr/bin/sort \
+            | /usr/bin/python3 -I scripts/secure_release_output.py \
+                --output "${FINAL_IMAGE_INVENTORY}" \
+                --baseline "${RUNNER_TEMP}/omega-release-image-inventory.lock" \
+                --expected-sha256 "${EXPECTED_IMAGE_INVENTORY_SHA256}"
+          /usr/bin/python3 -I scripts/release_digest_env.py \
+            --manifest "${MANIFEST_PATH}" \
+            --checksum "${{ steps.manifest.outputs.checksum_path }}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --release-tag "${GITHUB_REF_NAME}" \
+            --source-sha "${GITHUB_SHA}" \
+            --build-run-id "${GITHUB_RUN_ID}" \
+            --compose-config "${FINAL_COMPOSE}"
+          /usr/bin/python3 -I scripts/verify_release_source_checkout.py \
+            --source-sha "${GITHUB_SHA}" \
+            --compose-config "${FINAL_COMPOSE}"
+          /usr/bin/python3 -I scripts/verify_release_digest_runtime.py \
+            --manifest "${MANIFEST_PATH}" \
+            --checksum "${{ steps.manifest.outputs.checksum_path }}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --release-tag "${GITHUB_REF_NAME}" \
+            --source-sha "${GITHUB_SHA}" \
+            --build-run-id "${GITHUB_RUN_ID}"
+          /usr/bin/python3 -I - <<'PY'
+          import json
+          import urllib.request
+
+          with urllib.request.urlopen(
+              "http://127.0.0.1:8000/readyz?require_data=1", timeout=10
+          ) as response:
+              payload = json.load(response)
+          if payload.get("ok") is not True:
+              raise SystemExit("digest stack require_data readiness is not true")
+          PY
+
+      - name: Verify harness seal immediately after final gates
+        env:
+          BASH_ENV: /dev/null
+          COMPOSE_FILE: ""
+          COMPOSE_PROFILES: ""
+          COMPOSE_PROJECT_NAME: ""
+          DOCKER_CONTEXT: ""
+          DOCKER_HOST: ""
+          ENV: /dev/null
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          LD_PRELOAD: ""
+          OMEGA_RELEASE_TEST_HARNESS_SHA256: ${{ steps.harness_authority.outputs.sha256 }}
+          OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256: ${{ steps.harness_authority.outputs.verifier_sha256 }}
+          NODE_OPTIONS: ""
+          PATH: /opt/omega-release-runtime/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          PYTHONHOME: ""
+          PYTHONPATH: ""
+        run: |
+          [[ "$(/usr/bin/sha256sum scripts/verify_release_test_harness.py | /usr/bin/awk '{print $1}')" == "${OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256}" ]]
+          /usr/bin/python3 -I scripts/verify_release_test_harness.py
+
+      - name: Digest-stack logs on failure
+        if: failure()
+        env:
+          BASH_ENV: /dev/null
+          COMPOSE_FILE: ""
+          COMPOSE_PROFILES: ""
+          COMPOSE_PROJECT_NAME: ""
+          DOCKER_CONTEXT: ""
+          DOCKER_HOST: ""
+          ENV: /dev/null
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          LD_PRELOAD: ""
+          NODE_OPTIONS: ""
+          PATH: /opt/omega-release-runtime/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          PYTHONHOME: ""
+          PYTHONPATH: ""
+        run: |
+          docker compose --env-file infra/.env \
+            -f infra/docker-compose.yml \
+            -f infra/docker-compose.dev.yml \
+            -f infra/terraform-gcp/release/docker-compose.release.yml \
+            --profile sap ps || true
+          docker ps -aq | xargs -r docker logs --tail 120 2>&1 || true
+
+      - name: Stop digest stack
+        if: always()
+        env:
+          BASH_ENV: /dev/null
+          COMPOSE_FILE: ""
+          COMPOSE_PROFILES: ""
+          COMPOSE_PROJECT_NAME: ""
+          DOCKER_CONTEXT: ""
+          DOCKER_HOST: ""
+          ENV: /dev/null
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          LD_PRELOAD: ""
+          NODE_OPTIONS: ""
+          PATH: /opt/omega-release-runtime/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          PYTHONHOME: ""
+          PYTHONPATH: ""
+        run: |
+          docker compose --env-file infra/.env \
+            -f infra/docker-compose.yml \
+            -f infra/docker-compose.dev.yml \
+            -f infra/terraform-gcp/release/docker-compose.release.yml \
+            --profile sap down -v --remove-orphans || true
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: digest-release-playwright-report-${{ github.run_attempt }}
+          path: tests-e2e/playwright-report
+          if-no-files-found: ignore
+
+  publish-release-manifest:
+    needs: [detect-release-changes, authorize-release-gate-skips, validate-release, build-and-push, assemble-release-manifest, digest-full-stack-gate]
+    if: |
+      always() &&
+      needs.assemble-release-manifest.result == 'success' &&
+      needs.authorize-release-gate-skips.result == 'success' &&
+      needs.digest-full-stack-gate.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+      packages: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Download the exact canonical candidate manifest
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ needs.assemble-release-manifest.outputs.artifact_name }}
+          path: release-manifest-output
+
+      - name: Verify tested manifest bytes and bind publication paths
+        id: manifest
+        run: |
+          set -euo pipefail
+          manifest_path="release-manifest-output/omega-release-manifest-${GITHUB_REF_NAME}.json"
+          checksum_path="${manifest_path}.sha256"
+          python3 scripts/release_digest_env.py \
+            --manifest "${manifest_path}" \
+            --checksum "${checksum_path}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --release-tag "${GITHUB_REF_NAME}" \
+            --source-sha "${GITHUB_SHA}" \
+            --build-run-id "${GITHUB_RUN_ID}" >/dev/null
+          echo "manifest_path=${manifest_path}" >> "${GITHUB_OUTPUT}"
+          echo "checksum_path=${checksum_path}" >> "${GITHUB_OUTPUT}"
+
+      - name: Verify canonical release packages remain private
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GHCR_OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_release_package_visibility.py \
+            --owner "${GHCR_OWNER}" \
+            --owner-kind user
+
+      - name: Re-verify tested digest graphs before publication
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_release_digest_remote.py \
+            --manifest "${{ steps.manifest.outputs.manifest_path }}" \
+            --checksum "${{ steps.manifest.outputs.checksum_path }}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --owner "${GITHUB_REPOSITORY_OWNER}" \
+            --release-tag "${GITHUB_REF_NAME}" \
+            --source-sha "${GITHUB_SHA}" \
+            --build-run-id "${GITHUB_RUN_ID}" \
+            --username "${GITHUB_ACTOR}"
+
+      - name: Attach manifest to GitHub Release
+        env:
+          CHECKSUM_PATH: ${{ steps.manifest.outputs.checksum_path }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GHCR_OWNER: ${{ github.repository_owner }}
+          MANIFEST_PATH: ${{ steps.manifest.outputs.manifest_path }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if ! release_state_json="$(
+            python3 scripts/inspect_github_release.py \
+              --repository "${SOURCE_REPOSITORY}" \
+              --tag "${RELEASE_TAG}"
+          )"; then
+            echo "::error::GitHub Release lookup failed ambiguously"
+            exit 1
+          fi
+          release_state="$(RELEASE_STATE_JSON="${release_state_json}" python3 - <<'PY'
+          import json
+          import os
+
+          try:
+              payload = json.loads(os.environ["RELEASE_STATE_JSON"])
+          except (json.JSONDecodeError, UnicodeError) as exc:
+              raise SystemExit("GitHub Release inspection is invalid JSON") from exc
+          if not isinstance(payload, dict) or set(payload) != {
+              "schema_version", "state", "tag", "immutable", "title", "body",
+              "prerelease", "target", "assets"
+          }:
+              raise SystemExit("GitHub Release inspection schema is invalid")
+          if payload["schema_version"] != 1 or payload["state"] not in {
+              "present", "draft", "absent"
+          }:
+              raise SystemExit("GitHub Release inspection state is invalid")
+          if payload["state"] == "present" and payload["immutable"] is not True:
+              raise SystemExit("published GitHub Release is mutable")
+          if payload["state"] == "absent" and payload["immutable"] is not None:
+              raise SystemExit("absent GitHub Release has invalid immutability state")
+          if payload["state"] == "draft" and payload["immutable"] is not False:
+              raise SystemExit("draft GitHub Release has invalid immutability state")
+          expected_body = (
+              "Automated OMEGA release manifest: 15 images bound to "
+              f"{os.environ['GITHUB_SHA']} and tested with exact source checkout "
+              "bind mounts."
+          )
+          if payload["state"] in {"present", "draft"} and (
+              payload["title"] != os.environ["RELEASE_TAG"]
+              or payload["body"] != expected_body
+              or payload["prerelease"] != ("-" in os.environ["RELEASE_TAG"])
+              or payload["target"] != os.environ["GITHUB_SHA"]
+          ):
+              raise SystemExit("GitHub Release metadata is not canonical")
+          if payload["state"] == "absent" and any(
+              payload[key] is not None
+              for key in ("title", "body", "prerelease", "target")
+          ):
+              raise SystemExit("absent GitHub Release has metadata")
+          print(payload["state"])
+          PY
+          )"
+          if [[ "${release_state}" == "present" || "${release_state}" == "draft" ]]; then
+            asset_dir="$(mktemp -d "${RUNNER_TEMP}/omega-release-assets.XXXXXX")"
+            ASSETS_JSON="${release_state_json}" \
+              MANIFEST_NAME="$(basename -- "${MANIFEST_PATH}")" \
+              CHECKSUM_NAME="$(basename -- "${CHECKSUM_PATH}")" python3 - <<'PY'
+          import json
+          import os
+
+          payload = json.loads(os.environ["ASSETS_JSON"])
+          assets = payload.get("assets") if isinstance(payload, dict) else None
+          allowed = {os.environ["MANIFEST_NAME"], os.environ["CHECKSUM_NAME"]}
+          if not isinstance(assets, list) or any(name not in allowed for name in assets):
+              raise SystemExit("GitHub Release contains a non-canonical asset")
+          PY
+            missing_assets=()
+            for local_path in "${MANIFEST_PATH}" "${CHECKSUM_PATH}"; do
+              asset_name="$(basename -- "${local_path}")"
+              asset_count="$(ASSETS_JSON="${release_state_json}" ASSET_NAME="${asset_name}" python3 - <<'PY'
+          import json
+          import os
+
+          try:
+              payload = json.loads(os.environ["ASSETS_JSON"])
+          except (json.JSONDecodeError, UnicodeError) as exc:
+              raise SystemExit("GitHub Release asset response is invalid JSON") from exc
+          assets = payload.get("assets") if isinstance(payload, dict) else None
+          if not isinstance(assets, list) or not all(
+              isinstance(asset, str) for asset in assets
+          ):
+              raise SystemExit("GitHub Release asset response has no assets list")
+          name = os.environ["ASSET_NAME"]
+          count = sum(1 for asset in assets if asset == name)
+          print(count)
+          PY
+              )"
+              case "${asset_count}" in
+                0)
+                  missing_assets+=("${local_path}")
+                  ;;
+                1)
+                  gh release download "${RELEASE_TAG}" \
+                    --pattern "${asset_name}" \
+                    --dir "${asset_dir}"
+                  cmp --silent "${local_path}" "${asset_dir}/${asset_name}" || {
+                    echo "::error::GitHub Release asset differs: ${asset_name}"
+                    exit 1
+                  }
+                  ;;
+                *)
+                  echo "::error::duplicate canonical GitHub Release asset: ${asset_name}"
+                  exit 1
+                  ;;
+              esac
+            done
+            if [[ "${#missing_assets[@]}" -gt 0 ]]; then
+              if [[ "${release_state}" == "draft" ]]; then
+                gh release upload "${RELEASE_TAG}" "${missing_assets[@]}"
+              else
+                echo "::error::published immutable GitHub Release is missing a canonical asset"
+                exit 1
+              fi
+            else
+              echo "Canonical GitHub Release assets already exist and are byte-identical."
+            fi
+          elif [[ "${release_state}" == "absent" ]]; then
+            args=(
+              "${RELEASE_TAG}"
+              "${MANIFEST_PATH}"
+              "${CHECKSUM_PATH}"
+              --draft
+              --verify-tag
+              --target "${GITHUB_SHA}"
+              --title "${RELEASE_TAG}"
+              --notes "Automated OMEGA release manifest: 15 images bound to ${GITHUB_SHA} and tested with exact source checkout bind mounts."
+            )
+            if [[ "${RELEASE_TAG}" == *-* ]]; then
+              args+=(--prerelease)
+            fi
+            gh release create "${args[@]}"
+            release_state="draft"
+          else
+            echo "::error::unknown structured GitHub Release state"
+            exit 1
+          fi
+          if [[ "${release_state}" == "draft" ]]; then
+            draft_dir="$(mktemp -d "${RUNNER_TEMP}/omega-release-draft.XXXXXX")"
+            for local_path in "${MANIFEST_PATH}" "${CHECKSUM_PATH}"; do
+              asset_name="$(basename -- "${local_path}")"
+              gh release download "${RELEASE_TAG}" \
+                --pattern "${asset_name}" \
+                --dir "${draft_dir}"
+              cmp --silent "${local_path}" "${draft_dir}/${asset_name}" || {
+                echo "::error::draft GitHub Release asset differs: ${asset_name}"
+                exit 1
+              }
+            done
+            python3 scripts/verify_release_digest_remote.py \
+              --manifest "${MANIFEST_PATH}" \
+              --checksum "${CHECKSUM_PATH}" \
+              --repository "${GITHUB_REPOSITORY}" \
+              --owner "${GITHUB_REPOSITORY_OWNER}" \
+              --release-tag "${GITHUB_REF_NAME}" \
+              --source-sha "${GITHUB_SHA}" \
+              --build-run-id "${GITHUB_RUN_ID}" \
+              --username "${GITHUB_ACTOR}"
+            python3 scripts/verify_release_package_visibility.py \
+              --owner "${GHCR_OWNER}" \
+              --owner-kind user
+            draft_ready=false
+            for attempt in 1 2 3 4 5 6; do
+              if ! draft_state_json="$(
+                python3 scripts/inspect_github_release.py \
+                  --repository "${SOURCE_REPOSITORY}" \
+                  --tag "${RELEASE_TAG}"
+              )"; then
+                echo "::error::GitHub draft Release lookup failed ambiguously"
+                exit 1
+              fi
+              draft_state="$(DRAFT_STATE_JSON="${draft_state_json}" python3 - <<'PY'
+          import json
+          import os
+
+          try:
+              payload = json.loads(os.environ["DRAFT_STATE_JSON"])
+          except (json.JSONDecodeError, UnicodeError) as exc:
+              raise SystemExit("GitHub draft Release inspection is invalid JSON") from exc
+          state = payload.get("state") if isinstance(payload, dict) else None
+          if state not in {"absent", "draft", "present"}:
+              raise SystemExit("GitHub draft Release inspection state is invalid")
+          print(state)
+          PY
+              )"
+              case "${draft_state}" in
+                draft)
+                  printf '%s' "${draft_state_json}" \
+                    | python3 scripts/validate_github_release_state.py \
+                        --state draft \
+                        --tag "${RELEASE_TAG}" \
+                        --source-sha "${GITHUB_SHA}"
+                  draft_ready=true
+                  break
+                  ;;
+                absent)
+                  if [[ "${attempt}" -lt 6 ]]; then
+                    sleep 2
+                  fi
+                  ;;
+                *)
+                  echo "::error::GitHub draft Release changed publication state"
+                  exit 1
+                  ;;
+              esac
+            done
+            [[ "${draft_ready}" == "true" ]] || {
+              echo "::error::GitHub draft Release did not become discoverable"
+              exit 1
+            }
+            tag_check_ref="refs/remotes/origin/omega-release-tag-check-${GITHUB_RUN_ID}"
+            git fetch --force --no-tags origin \
+              "+refs/tags/${RELEASE_TAG}:${tag_check_ref}"
+            remote_tag_sha="$(git rev-parse "${tag_check_ref}^{commit}")"
+            [[ "${remote_tag_sha}" == "${GITHUB_SHA}" ]] || {
+              echo "::error::release tag moved before immutable publication"
+              exit 1
+            }
+            gh release edit "${RELEASE_TAG}" --draft=false
+            immutable_ready=false
+            for attempt in 1 2 3 4 5 6; do
+              if published_state="$(
+                python3 scripts/inspect_github_release.py \
+                  --repository "${SOURCE_REPOSITORY}" \
+                  --tag "${RELEASE_TAG}"
+              )" && printf '%s' "${published_state}" \
+                | python3 scripts/validate_github_release_state.py \
+                    --state present \
+                    --tag "${RELEASE_TAG}" \
+                    --source-sha "${GITHUB_SHA}"; then
+                immutable_ready=true
+                break
+              fi
+              if [[ "${attempt}" -lt 6 ]]; then
+                sleep 2
+              fi
+            done
+            [[ "${immutable_ready}" == "true" ]] || {
+              echo "::error::published Release did not become immutable and canonical"
+              exit 1
+            }
+          fi
+
+      - name: Verify GitHub Release is published
+        env:
+          CHECKSUM_PATH: ${{ steps.manifest.outputs.checksum_path }}
+          GH_TOKEN: ${{ github.token }}
+          MANIFEST_PATH: ${{ steps.manifest.outputs.manifest_path }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          release_state_json="$(
+            python3 scripts/inspect_github_release.py \
+              --repository "${SOURCE_REPOSITORY}" \
+              --tag "${RELEASE_TAG}"
+          )"
+          verified_dir="$(mktemp -d "${RUNNER_TEMP}/omega-release-final.XXXXXX")"
+          for local_path in "${MANIFEST_PATH}" "${CHECKSUM_PATH}"; do
+            asset_name="$(basename -- "${local_path}")"
+            gh release download "${RELEASE_TAG}" \
+              --pattern "${asset_name}" \
+              --dir "${verified_dir}"
+            cmp --silent "${local_path}" "${verified_dir}/${asset_name}" || {
+              echo "::error::published GitHub Release asset differs: ${asset_name}"
+              exit 1
+            }
+          done
+          RELEASE_STATE_JSON="${release_state_json}" python3 - <<'PY'
+          import json
+          import os
+
+          payload = json.loads(os.environ["RELEASE_STATE_JSON"])
+          manifest = f"omega-release-manifest-{os.environ['RELEASE_TAG']}.json"
+          expected_assets = {manifest, f"{manifest}.sha256"}
+          assets = payload.get("assets") if isinstance(payload, dict) else None
+          if (
+              not isinstance(payload, dict)
+              or payload.get("state") != "present"
+              or payload.get("tag") != os.environ["RELEASE_TAG"]
+              or payload.get("immutable") is not True
+              or not isinstance(assets, list)
+              or sorted(assets) != sorted(expected_assets)
+          ):
+              raise SystemExit(
+                  "GitHub Release or its canonical assets are not published"
+              )
+          print("GITHUB RELEASE: draft=false VERIFIED")
+          PY
+          printf '%s' "${release_state_json}" \
+            | python3 scripts/validate_github_release_state.py \
+                --state present \
+                --tag "${RELEASE_TAG}" \
+                --source-sha "${GITHUB_SHA}"
+          tag_check_ref="refs/remotes/origin/omega-release-tag-check-${GITHUB_RUN_ID}"
+          git fetch --force --no-tags origin \
+            "+refs/tags/${RELEASE_TAG}:${tag_check_ref}"
+          remote_tag_sha="$(git rev-parse "${tag_check_ref}^{commit}")"
+          [[ "${remote_tag_sha}" == "${GITHUB_SHA}" ]] || {
+            echo "::error::immutable release tag does not match source SHA"
+            exit 1
+          }
+          gh release verify "${RELEASE_TAG}"
+          gh release verify-asset "${RELEASE_TAG}" "${MANIFEST_PATH}"
+          gh release verify-asset "${RELEASE_TAG}" "${CHECKSUM_PATH}"
+
+      - name: Final private and reachable release evidence
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GHCR_OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_release_digest_remote.py \
+            --manifest "${{ steps.manifest.outputs.manifest_path }}" \
+            --checksum "${{ steps.manifest.outputs.checksum_path }}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --owner "${GITHUB_REPOSITORY_OWNER}" \
+            --release-tag "${GITHUB_REF_NAME}" \
+            --source-sha "${GITHUB_SHA}" \
+            --build-run-id "${GITHUB_RUN_ID}" \
+            --username "${GITHUB_ACTOR}"
+          python3 scripts/verify_release_package_visibility.py \
+            --owner "${GHCR_OWNER}" \
+            --owner-kind user

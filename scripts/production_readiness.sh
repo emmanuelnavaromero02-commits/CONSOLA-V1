@@ -31,6 +31,31 @@ require_command() {
   fi
 }
 
+release_pytest() {
+  if [[ "${OMEGA_RELEASE_DIGEST_STACK:-0}" == "1" ]]; then
+    "${PYTHON_BIN}" -I scripts/run_release_pytest.py "$@"
+  else
+    "${PYTHON_BIN}" -m pytest "$@"
+  fi
+}
+
+verify_release_harness() {
+  if [[ "${OMEGA_RELEASE_DIGEST_STACK:-0}" == "1" ]]; then
+    local observed_verifier_sha256
+    observed_verifier_sha256="$(
+      "${PYTHON_BIN}" -I -c \
+        'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' \
+        scripts/verify_release_test_harness.py
+    )"
+    if [[ ! "${OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256:-}" =~ ^[0-9a-f]{64}$ ||
+          "${observed_verifier_sha256}" != "${OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256}" ]]; then
+      log "BLOCKED: release harness verifier differs from action-bound authority"
+      exit 2
+    fi
+    "${PYTHON_BIN}" -I scripts/verify_release_test_harness.py
+  fi
+}
+
 json_ok_field() {
   "${PYTHON_BIN}" - "$1" <<'PY'
 import json
@@ -44,10 +69,58 @@ PY
 
 source_env() {
   if [[ -f infra/.env ]]; then
-    set -a
-    # shellcheck disable=SC1091
-    source infra/.env
-    set +a
+    if [[ "${OMEGA_RELEASE_DIGEST_STACK:-0}" == "1" ]]; then
+      if [[ "${OMEGA_RELEASE_TEST_SKIP_ENVIRONMENT:-}" != "release" ||
+            "${OMEGA_RELEASE_TEST_SKIP_POLICY:-}" != "${PWD}/.github/release-test-skip-policy.json" ]]; then
+        log "BLOCKED: release digest stack requires the exact release skip policy"
+        exit 2
+      fi
+      while IFS= read -r dotenv_line || [[ -n "${dotenv_line}" ]]; do
+        [[ "${dotenv_line}" =~ ^[[:space:]]*($|#) ]] && continue
+        if [[ ! "${dotenv_line}" =~ ^[[:space:]]*(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*= ]] ||
+           [[ "${dotenv_line}" == *'$('* || "${dotenv_line}" == *'`'* ||
+              "${dotenv_line}" == *';'* || "${dotenv_line}" == *'&&'* ||
+              "${dotenv_line}" == *'||'* || "${dotenv_line}" == *'<('* ||
+              "${dotenv_line}" == *'>('* ]]; then
+          log "BLOCKED: infra/.env is not a passive dotenv assignment file"
+          exit 2
+        fi
+      done < infra/.env
+      local reserved_pattern='^[[:space:]]*(export[[:space:]]+)?(OMEGA_RELEASE_[A-Za-z0-9_]*|OMEGA_STRESS_[A-Za-z0-9_]*|OMEGA_PRODUCTION_READINESS_SKIP_STRESS|PYTHON_BIN|PYTHONOPTIMIZE|PYTHONPATH|PYTHONHOME|PYTHONSTARTUP|PYTEST_[A-Za-z0-9_]*|PLAYWRIGHT_[A-Za-z0-9_]*|PATH|DOCKER_[A-Za-z0-9_]*|COMPOSE_[A-Za-z0-9_]*|GITHUB_[A-Za-z0-9_]*|GIT_[A-Za-z0-9_]*|RUNNER_[A-Za-z0-9_]*|NPM_CONFIG_[A-Za-z0-9_]*|npm_config_[A-Za-z0-9_]*|CI|MAKEFLAGS|GNUMAKEFLAGS|MAKEOVERRIDES|MFLAGS|MAKELEVEL|BASH_ENV|BASHOPTS|SHELLOPTS|ENV|SHELL|NODE_OPTIONS|NODE_PATH|LD_[A-Za-z0-9_]*|DYLD_[A-Za-z0-9_]*|CDPATH|GLOBIGNORE|IFS)='
+      if grep -Eq "${reserved_pattern}" infra/.env; then
+        log "BLOCKED: infra/.env attempts to override a release-gate control"
+        exit 2
+      fi
+    fi
+    local -r expected_digest_stack="${OMEGA_RELEASE_DIGEST_STACK-__UNSET__}"
+    local -r expected_skip_environment="${OMEGA_RELEASE_TEST_SKIP_ENVIRONMENT-__UNSET__}"
+    local -r expected_skip_policy="${OMEGA_RELEASE_TEST_SKIP_POLICY-__UNSET__}"
+    local -r expected_stress_skip="${OMEGA_PRODUCTION_READINESS_SKIP_STRESS-__UNSET__}"
+    local -r expected_python_bin="${PYTHON_BIN-__UNSET__}"
+    local -r expected_path="${PATH-__UNSET__}"
+    local -r expected_docker_host="${DOCKER_HOST-__UNSET__}"
+    local -r expected_docker_context="${DOCKER_CONTEXT-__UNSET__}"
+    local release_env_file
+    release_env_file="$(mktemp)"
+    "${PYTHON_BIN}" -I scripts/load_release_dotenv.py \
+      --input infra/.env --output "${release_env_file}"
+    while IFS= read -r -d '' release_key && IFS= read -r -d '' release_value; do
+      export "${release_key}=${release_value}"
+    done < "${release_env_file}"
+    rm -f "${release_env_file}"
+    if [[ "${expected_digest_stack}" == "1" ]] && {
+      [[ "${OMEGA_RELEASE_DIGEST_STACK-__UNSET__}" != "${expected_digest_stack}" ]] ||
+      [[ "${OMEGA_RELEASE_TEST_SKIP_ENVIRONMENT-__UNSET__}" != "${expected_skip_environment}" ]] ||
+      [[ "${OMEGA_RELEASE_TEST_SKIP_POLICY-__UNSET__}" != "${expected_skip_policy}" ]] ||
+      [[ "${OMEGA_PRODUCTION_READINESS_SKIP_STRESS-__UNSET__}" != "${expected_stress_skip}" ]] ||
+      [[ "${PYTHON_BIN-__UNSET__}" != "${expected_python_bin}" ]] ||
+      [[ "${PATH-__UNSET__}" != "${expected_path}" ]] ||
+      [[ "${DOCKER_HOST-__UNSET__}" != "${expected_docker_host}" ]] ||
+      [[ "${DOCKER_CONTEXT-__UNSET__}" != "${expected_docker_context}" ]];
+    }; then
+      log "BLOCKED: infra/.env changed a release-gate control"
+      exit 2
+    fi
   fi
   if [[ -n "${EXPLICIT_CONSOLE_URL}" ]]; then
     CONSOLE_URL="${EXPLICIT_CONSOLE_URL}"
@@ -195,7 +268,7 @@ PY
 
 run_scope_regression_tests() {
   log "running scoped Vault, pipeline, RLS, ownership, and API-v1 regression tests"
-  PYTHONPATH=console "${PYTHON_BIN}" -m pytest -q \
+  PYTHONPATH=console release_pytest -q \
     console/tests/test_security_context_scope.py \
     tests/test_llm_client_config.py \
     tests/test_intelligence_engine_contract.py \
@@ -204,7 +277,7 @@ run_scope_regression_tests() {
     tests/test_workspace_decisions_workspace_filter.py \
     console/tests/test_vault_reveal_pair_keys.py
 
-  PYTHONPATH=vault "${PYTHON_BIN}" -m pytest -q \
+  PYTHONPATH=vault release_pytest -q \
     vault/tests/test_vault_workspace_scope.py \
     vault/tests/test_vault_connections.py \
     vault/tests/test_internal_key_per_pair_vault.py
@@ -224,7 +297,7 @@ run_multiuser_simulation_if_required() {
 }
 
 prepare_local_browser_e2e_env() {
-  # production_readiness sources infra/.env for service credentials. That file
+  # production_readiness loads infra/.env as passive data for service credentials. That file
   # intentionally uses Docker-internal service names (hubspot, airflow, etc.)
   # for container-to-container calls, but Playwright runs on the host runner.
   # Pin browser probes to the host-published ports so CI does not inherit
@@ -238,6 +311,34 @@ prepare_local_browser_e2e_env() {
   export SAP_HCM_URL="${OMEGA_E2E_SAP_HCM_URL:-http://127.0.0.1:8202}"
   export SAP_SF_URL="${OMEGA_E2E_SAP_SF_URL:-http://127.0.0.1:8203}"
   export SAP_S4_URL="${OMEGA_E2E_SAP_S4_URL:-http://127.0.0.1:8204}"
+}
+
+prepare_local_release_test_env() {
+  local encoded_password
+  export E2E_REQUIRE_STACK=1
+  export OMEGA_ENABLE_E2E_SMOKE=1
+  export OMEGA_ENABLE_LIVE_STACK_TESTS=1
+  export E2E_ADMIN_EMAIL="${E2E_ADMIN_EMAIL:-${TEST_EMAIL:-admin@example.com}}"
+  export E2E_ADMIN_PASSWORD="${E2E_ADMIN_PASSWORD:-${TEST_PASSWORD:-${BOOTSTRAP_ADMIN_PASSWORD:-${ADMIN_PASSWORD:-}}}}"
+  if [[ -z "${E2E_ADMIN_PASSWORD}" ]]; then
+    log "E2E_ADMIN_PASSWORD/TEST_PASSWORD/bootstrap admin password is required"
+    exit 2
+  fi
+  if [[ -z "${OMEGA_TEST_GRANTS_DSN:-}" ]]; then
+    if [[ -z "${POSTGRES_PASSWORD:-}" ]]; then
+      log "POSTGRES_PASSWORD is required for the analytic grant release tests"
+      exit 2
+    fi
+    encoded_password="$(
+      POSTGRES_PASSWORD="${POSTGRES_PASSWORD}" "${PYTHON_BIN}" - <<'PY'
+import os
+from urllib.parse import quote
+
+print(quote(os.environ["POSTGRES_PASSWORD"], safe=""))
+PY
+    )"
+    export OMEGA_TEST_GRANTS_DSN="postgresql://postgres:${encoded_password}@127.0.0.1:15432/modecissions"
+  fi
 }
 
 run_remote_e2e_if_required() {
@@ -285,6 +386,7 @@ run_remote_gate() {
 run_gate() {
   require_command curl
   source_env
+  verify_release_harness
   apply_v1_live_defaults
   require_v1_live_inputs
 
@@ -296,10 +398,20 @@ run_gate() {
   require_command docker
 
   log "validating docker compose config"
-  docker compose --env-file infra/.env -f infra/docker-compose.yml --profile sap config -q
+  if [[ "${OMEGA_RELEASE_DIGEST_STACK:-0}" == "1" ]]; then
+    docker compose --env-file infra/.env \
+      -f infra/docker-compose.yml \
+      -f infra/docker-compose.dev.yml \
+      -f infra/terraform-gcp/release/docker-compose.release.yml \
+      --profile sap config -q
+  else
+    docker compose --env-file infra/.env -f infra/docker-compose.yml --profile sap config -q
+  fi
 
   log "waiting for healthy stack"
   bash scripts/wait_for_health.sh
+
+  prepare_local_release_test_env
 
   log "running full-stack acceptance to warm Bronze/Silver/Gold data"
   make acceptance
@@ -311,7 +423,11 @@ run_gate() {
   run_multiuser_simulation_if_required
 
   log "running backend, cartridge, RLS, and security tests"
-  make test
+  if [[ "${OMEGA_RELEASE_DIGEST_STACK:-0}" == "1" ]]; then
+    make PYTEST="${PYTHON_BIN} -I scripts/run_release_pytest.py" test
+  else
+    make test
+  fi
 
   log "running smoke"
   make smoke

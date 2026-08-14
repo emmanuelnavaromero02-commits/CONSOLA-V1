@@ -10,7 +10,16 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-COMPOSE=(docker compose --env-file infra/.env -f infra/docker-compose.yml --profile sap)
+COMPOSE=(docker compose --env-file infra/.env -f infra/docker-compose.yml)
+UP_LOCK_ARGS=()
+if [[ "${OMEGA_RELEASE_DIGEST_STACK:-0}" == "1" ]]; then
+  [[ -f infra/docker-compose.dev.yml ]] || { echo "[stress] release dev overlay is missing"; exit 2; }
+  [[ -f infra/terraform-gcp/release/docker-compose.release.yml ]] || { echo "[stress] release digest overlay is missing"; exit 2; }
+  COMPOSE+=(-f infra/docker-compose.dev.yml)
+  COMPOSE+=(-f infra/terraform-gcp/release/docker-compose.release.yml)
+  UP_LOCK_ARGS=(--no-build --pull never)
+fi
+COMPOSE+=(--profile sap)
 PYTHON_BIN="${PYTHON_BIN:-.venv/bin/python}"
 if [[ ! -x "$PYTHON_BIN" ]]; then
   PYTHON_BIN="python3"
@@ -232,7 +241,11 @@ if ! curl -fsS "${STRESS_HOST}/healthz" >/dev/null 2>&1; then
     echo "[stress] stack not reachable; starting full local stack"
     bash infra/bootstrap.sh
     bash infra/bootstrap-keys.sh infra/.env
-    "${COMPOSE[@]}" up -d --build
+    if [[ "${OMEGA_RELEASE_DIGEST_STACK:-0}" == "1" ]]; then
+      "${COMPOSE[@]}" up -d "${UP_LOCK_ARGS[@]}"
+    else
+      "${COMPOSE[@]}" up -d --build
+    fi
   else
     echo "[stress] ${STRESS_HOST}/healthz is not reachable."
     echo "[stress] Start the stack first with: make up"
@@ -253,7 +266,11 @@ cleanup() {
   fi
   if [[ "${FAKE_WAS_STARTED:-0}" == "1" ]]; then
     echo "[stress] restoring HubSpot container without fake upstream env"
-    "${COMPOSE[@]}" up -d --force-recreate --no-deps hubspot >/dev/null 2>&1 || true
+    restore_status=0
+    "${COMPOSE[@]}" up -d "${UP_LOCK_ARGS[@]}" --force-recreate --no-deps hubspot >/dev/null 2>&1 || restore_status=$?
+    if [[ "${status}" -eq 0 && "${restore_status}" -ne 0 ]]; then
+      status="${restore_status}"
+    fi
   fi
   echo "[stress] artifacts: ${STRESS_ARTIFACT_DIR}"
   exit "$status"
@@ -296,7 +313,7 @@ if [[ "$STRESS_WORKLOAD" == "hubspot" && "${OMEGA_STRESS_FAKE_HUBSPOT:-1}" == "1
 
   echo "[stress] pointing HubSpot cartridge at ${FAKE_BASE_URL}"
   HUBSPOT_BASE_URL="$FAKE_BASE_URL" HUBSPOT_API_TOKEN="$FAKE_TOKEN" \
-    "${COMPOSE[@]}" up -d --force-recreate --no-deps hubspot
+    "${COMPOSE[@]}" up -d "${UP_LOCK_ARGS[@]}" --force-recreate --no-deps hubspot
 
   for _ in $(seq 1 45); do
     if curl -fsS http://127.0.0.1:8210/health >/dev/null; then
@@ -374,7 +391,8 @@ docker stats --no-stream --format 'table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\
   | grep -E '(^NAME|mode_)' >"${STRESS_ARTIFACT_DIR}/docker_stats_final.txt" || true
 
 set +e
-"$PYTHON_BIN" scripts/stress_summary.py "$STRESS_ARTIFACT_DIR" --profile "$STRESS_PROFILE" --workload "$STRESS_WORKLOAD"
+OMEGA_STRESS_USERS="${STRESS_USERS}" \
+  "$PYTHON_BIN" scripts/stress_summary.py "$STRESS_ARTIFACT_DIR" --profile "$STRESS_PROFILE" --workload "$STRESS_WORKLOAD"
 SUMMARY_CODE=$?
 set -e
 

@@ -179,15 +179,38 @@ def test_update_script_uses_cartridge_overlay_for_service_updates():
 def test_release_workflow_validates_before_publishing_images():
     src = RELEASE_WORKFLOW.read_text(encoding="utf-8")
     assert "detect-release-changes:" in src
+    assert "authorize-release-gate-skips:" in src
     assert "validate-release:" in src
-    assert "full-stack-release-gate:" in src
+    assert "digest-full-stack-gate:" in src
+    assert "preflight-release-packages:" in src
+    assert "build-and-push:" in src
     assert "needs: detect-release-changes" in src
-    assert "needs: [detect-release-changes, validate-release]" in src
-    assert "needs: [detect-release-changes, validate-release, full-stack-release-gate]" in src
-    for gate in ("make smoke", "make e2e", "make acceptance", "make production-readiness"):
-        assert gate in src
+    assert (
+        "needs: [detect-release-changes, authorize-release-gate-skips, "
+        "validate-release]" in src
+    )
+    assert (
+        "needs: [detect-release-changes, authorize-release-gate-skips, "
+        "validate-release, preflight-release-packages]" in src
+    )
+    assert (
+        "needs: [authorize-release-gate-skips, build-and-push, "
+        "assemble-release-manifest]"
+        in src
+    )
+    assert "needs.digest-full-stack-gate.result == 'success'" in src
+    assert "needs.preflight-release-packages.result == 'success'" in src
+    assert "make production-readiness" in src
+    readiness = (REPO / "scripts/production_readiness.sh").read_text(encoding="utf-8")
+    for gate in ("make smoke", "make e2e", "make acceptance"):
+        assert gate in readiness
     assert "OMEGA_PRODUCTION_READINESS_SKIP_STRESS=1" in src
-    assert 'GITHUB_REF_NAME}" == *"beta"*' in src
+    # Beta no longer gets an implicit branch in the workflow. Any optional
+    # stress skip must come from the reviewed, versioned policy job.
+    assert "production_readiness_stress_action" in src
+    assert "production_readiness_stress_skip_authorized" in src
+    assert "production_readiness_stress_policy_id" in src
+    assert 'GITHUB_REF_NAME}" == *"beta"*' not in src
     for requirements in (
         "tests/requirements.txt",
         "console/requirements.txt",
@@ -196,15 +219,21 @@ def test_release_workflow_validates_before_publishing_images():
         "tests/stress/requirements.txt",
     ):
         assert f"-r {requirements}" in src
-    assert "python -m pytest -q" in src
+    assert "python3 -I scripts/run_release_pytest.py -q" in src
     assert "docker compose --env-file infra/.env.example" in src
     assert "docker-compose.cartridges.yml" in src
     assert "npm --prefix console-next run typecheck" in src
     assert "npm --prefix console-next run export:copy" in src
+    digest_gate = src.split("  digest-full-stack-gate:", 1)[1].split(
+        "  publish-release-manifest:", 1
+    )[0]
+    assert "Render and start hybrid digest/source release stack" in digest_gate
+    assert "--no-build --pull never" in digest_gate
+    assert "OMEGA_RELEASE_DIGEST_STACK: \"1\"" in digest_gate
 
 
 def test_release_gate_pauses_scheduled_airflow_dags_in_ci():
-    """The full-stack release gate uses dummy local credentials for external
+    """The digest full-stack release gate uses dummy local credentials for external
     connectors. It must import DAGs and allow manual tests, but it must not let
     Airflow auto-schedule external-ingest DAGs such as Replicon SES while the
     release gate is running.
@@ -215,8 +244,8 @@ def test_release_gate_pauses_scheduled_airflow_dags_in_ci():
     assert "AIRFLOW_DAGS_ARE_PAUSED_AT_CREATION=true" in workflow
     assert "AIRFLOW_DAGS_ARE_PAUSED_AT_CREATION" in dev_override
     assert "AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION" in dev_override
-    release_stack = workflow.split("Bootstrap local release stack", 1)[1].split(
-        "Build and start full stack", 1
+    release_stack = workflow.split("Bootstrap digest release stack", 1)[1].split(
+        "Download the canonical candidate manifest", 1
     )[0]
     assert "AIRFLOW_DAGS_ARE_PAUSED_AT_CREATION=true" in release_stack
 
@@ -230,8 +259,8 @@ def test_release_gate_writes_host_urls_for_playwright_e2e():
     hubspot/airflow and fail with getaddrinfo on GitHub-hosted runners.
     """
     workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
-    release_stack = workflow.split("Bootstrap local release stack", 1)[1].split(
-        "Build and start full stack", 1
+    release_stack = workflow.split("Bootstrap digest release stack", 1)[1].split(
+        "Download the canonical candidate manifest", 1
     )[0]
     for env_line in (
         "AIRFLOW_URL=http://127.0.0.1:8082",

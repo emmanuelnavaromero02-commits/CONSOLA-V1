@@ -1,0 +1,362 @@
+{
+  "mounts": [
+    {
+      "read_only": false,
+      "service": "airflow",
+      "source": "airflow/dags",
+      "target": "/opt/airflow/dags",
+      "type": "bind"
+    },
+    {
+      "read_only": false,
+      "service": "airflow",
+      "source": "airflow/logs",
+      "target": "/opt/airflow/logs",
+      "type": "bind"
+    },
+    {
+      "read_only": false,
+      "service": "airflow",
+      "source": "airflow/plugins",
+      "target": "/opt/airflow/plugins",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow",
+      "source": "cartridges",
+      "target": "/registry/cartridges",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow",
+      "source": "cartridges/sap_successfactors/dags",
+      "target": "/opt/airflow/dags/sap_successfactors",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow",
+      "source": "cartridges/sap_hcm/dags",
+      "target": "/opt/airflow/dags/sap_hcm",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow",
+      "source": "cartridges/sap_s4hana/dags",
+      "target": "/opt/airflow/dags/sap_s4hana",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow",
+      "source": "cartridges/replicon/dags",
+      "target": "/opt/airflow/dags/replicon",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow",
+      "source": "cartridges/hubspot/dags",
+      "target": "/opt/airflow/dags/hubspot",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow",
+      "source": "cartridges/salesforce/dags",
+      "target": "/opt/airflow/dags/salesforce",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow",
+      "source": "cartridges/banxico/dags",
+      "target": "/opt/airflow/dags/banxico",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow",
+      "source": "cartridges/inegi/dags",
+      "target": "/opt/airflow/dags/inegi",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow",
+      "source": "cartridges/sec_edgar/dags",
+      "target": "/opt/airflow/dags/sec_edgar",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow-init",
+      "source": "cartridges/sap_successfactors/dags",
+      "target": "/opt/airflow/dags/sap_successfactors",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow-init",
+      "source": "cartridges/sap_hcm/dags",
+      "target": "/opt/airflow/dags/sap_hcm",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow-init",
+      "source": "cartridges/sap_s4hana/dags",
+      "target": "/opt/airflow/dags/sap_s4hana",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow-init",
+      "source": "cartridges/replicon/dags",
+      "target": "/opt/airflow/dags/replicon",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow-init",
+      "source": "cartridges/hubspot/dags",
+      "target": "/opt/airflow/dags/hubspot",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow-init",
+      "source": "cartridges/salesforce/dags",
+      "target": "/opt/airflow/dags/salesforce",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow-init",
+      "source": "cartridges/banxico/dags",
+      "target": "/opt/airflow/dags/banxico",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow-init",
+      "source": "cartridges/inegi/dags",
+      "target": "/opt/airflow/dags/inegi",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow-init",
+      "source": "cartridges/sec_edgar/dags",
+      "target": "/opt/airflow/dags/sec_edgar",
+      "type": "bind"
+    },
+    {
+      "read_only": false,
+      "service": "airflow-scheduler",
+      "source": "airflow/dags",
+      "target": "/opt/airflow/dags",
+      "type": "bind"
+    },
+    {
+      "read_only": false,
+      "service": "airflow-scheduler",
+      "source": "airflow/logs",
+      "target": "/opt/airflow/logs",
+      "type": "bind"
+    },
+    {
+      "read_only": false,
+      "service": "airflow-scheduler",
+      "source": "airflow/plugins",
+      "target": "/opt/airflow/plugins",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow-scheduler",
+      "source": "cartridges",
+      "target": "/registry/cartridges",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow-scheduler",
+      "source": "cartridges/sap_successfactors/dags",
+      "target": "/opt/airflow/dags/sap_successfactors",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow-scheduler",
+      "source": "cartridges/sap_hcm/dags",
+      "target": "/opt/airflow/dags/sap_hcm",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow-scheduler",
+      "source": "cartridges/sap_s4hana/dags",
+      "target": "/opt/airflow/dags/sap_s4hana",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow-scheduler",
+      "source": "cartridges/replicon/dags",
+      "target": "/opt/airflow/dags/replicon",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow-scheduler",
+      "source": "cartridges/hubspot/dags",
+      "target": "/opt/airflow/dags/hubspot",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow-scheduler",
+      "source": "cartridges/salesforce/dags",
+      "target": "/opt/airflow/dags/salesforce",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow-scheduler",
+      "source": "cartridges/banxico/dags",
+      "target": "/opt/airflow/dags/banxico",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow-scheduler",
+      "source": "cartridges/inegi/dags",
+      "target": "/opt/airflow/dags/inegi",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow-scheduler",
+      "source": "cartridges/sec_edgar/dags",
+      "target": "/opt/airflow/dags/sec_edgar",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "console",
+      "source": "cartridges",
+      "target": "/registry/cartridges",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "console",
+      "source": "airflow/dags",
+      "target": "/opt/airflow/dags",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "console",
+      "source": "console/app/static",
+      "target": "/app/app/static",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "console",
+      "source": "VERSION",
+      "target": "/app/VERSION",
+      "type": "bind"
+    },
+    {
+      "read_only": false,
+      "service": "mcp-infra",
+      "source": "airflow/dags",
+      "target": "/opt/airflow/dags",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "mcp-infra",
+      "source": "cartridges",
+      "target": "/registry/cartridges",
+      "type": "bind"
+    },
+    {
+      "read_only": false,
+      "service": "minio",
+      "source": "data/lakehouse",
+      "target": "/data",
+      "type": "bind"
+    },
+    {
+      "read_only": false,
+      "service": "postgres",
+      "source": "postgres_data",
+      "target": "/var/lib/postgresql/data",
+      "type": "volume"
+    },
+    {
+      "read_only": false,
+      "service": "postgres",
+      "source": "infra/init",
+      "target": "/docker-entrypoint-initdb.d",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "postgres_dev_seed",
+      "source": "infra/init_dev",
+      "target": "/dev-seeds",
+      "type": "bind"
+    },
+    {
+      "read_only": false,
+      "service": "postgres_gold",
+      "source": "postgres_gold_data",
+      "target": "/var/lib/postgresql/data",
+      "type": "volume"
+    },
+    {
+      "read_only": false,
+      "service": "postgres_gold",
+      "source": "infra/init_gold",
+      "target": "/docker-entrypoint-initdb.d",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "refinement",
+      "source": "infra/.secrets/gold_verifier_database_url",
+      "target": "/run/secrets/gold_verifier_database_url",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "sap-successfactors",
+      "source": "/dev/null",
+      "target": "/run/secrets/sf_epiuse_iaappliance_connector.pem",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "superset",
+      "source": "infra/terraform/deploy/superset_config/superset_config.py",
+      "target": "/app/pythonpath/superset_config.py",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "superset-init",
+      "source": "infra/terraform/deploy/superset_config/superset_config.py",
+      "target": "/app/pythonpath/superset_config.py",
+      "type": "bind"
+    }
+  ],
+  "schema_version": 1
+}
