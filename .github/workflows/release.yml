@@ -45,21 +45,22 @@ jobs:
           fi
 
       - name: Bind exact remote recovery tag authority
-        if: github.ref_name == 'v1.45.213-beta'
+        if: github.ref_name == 'v1.45.214-beta'
         shell: bash
         run: |
           set -euo pipefail
-          authority=refs/omega-release-authority/v1.45.213-beta
-          for name in current failed-0 failed-1 failed-2 base; do
+          authority=refs/omega-release-authority/v1.45.214-beta
+          for name in current failed-0 failed-1 failed-2 failed-3 base; do
             git update-ref -d "${authority}/${name}"
           done
           git fetch --no-tags --force --atomic origin \
-            "+refs/tags/v1.45.213-beta:${authority}/current" \
+            "+refs/tags/v1.45.214-beta:${authority}/current" \
             "+refs/tags/v1.45.210-beta:${authority}/failed-0" \
             "+refs/tags/v1.45.211-beta:${authority}/failed-1" \
             "+refs/tags/v1.45.212-beta:${authority}/failed-2" \
+            "+refs/tags/v1.45.213-beta:${authority}/failed-3" \
             "+refs/tags/v1.45.209-beta:${authority}/base"
-          for name in current failed-0 failed-1 failed-2 base; do
+          for name in current failed-0 failed-1 failed-2 failed-3 base; do
             git show-ref --verify --quiet "${authority}/${name}"
           done
 
@@ -667,7 +668,7 @@ jobs:
       needs.build-and-push.result == 'success' &&
       needs.assemble-release-manifest.result == 'success' &&
       needs.authorize-release-gate-skips.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
       actions: read
@@ -696,15 +697,18 @@ jobs:
           verifier_path=scripts/verify_release_test_harness.py
           secure_output_path=scripts/secure_release_output.py
           docker_lock_path=scripts/release_docker_lock.py
+          runner_disk_path=scripts/prepare_release_runner_disk.py
           committed_seal="$(mktemp)"
           committed_verifier="$(mktemp)"
           committed_secure_output="$(mktemp)"
           committed_docker_lock="$(mktemp)"
-          trap 'rm -f -- "${committed_seal}" "${committed_verifier}" "${committed_secure_output}" "${committed_docker_lock}"' EXIT
+          committed_runner_disk="$(mktemp)"
+          trap 'rm -f -- "${committed_seal}" "${committed_verifier}" "${committed_secure_output}" "${committed_docker_lock}" "${committed_runner_disk}"' EXIT
           git show "${GITHUB_SHA}:${seal_path}" > "${committed_seal}"
           git show "${GITHUB_SHA}:${verifier_path}" > "${committed_verifier}"
           git show "${GITHUB_SHA}:${secure_output_path}" > "${committed_secure_output}"
           git show "${GITHUB_SHA}:${docker_lock_path}" > "${committed_docker_lock}"
+          git show "${GITHUB_SHA}:${runner_disk_path}" > "${committed_runner_disk}"
           cmp --silent "${committed_seal}" "${seal_path}" || {
             echo "::error::release test harness seal differs from source SHA"
             exit 1
@@ -721,15 +725,21 @@ jobs:
             echo "::error::release Docker lock differs from source SHA"
             exit 1
           }
+          cmp --silent "${committed_runner_disk}" "${runner_disk_path}" || {
+            echo "::error::release runner disk helper differs from source SHA"
+            exit 1
+          }
           seal_sha256="$(sha256sum "${committed_seal}" | awk '{print $1}')"
           verifier_sha256="$(sha256sum "${committed_verifier}" | awk '{print $1}')"
           secure_output_sha256="$(sha256sum "${committed_secure_output}" | awk '{print $1}')"
           docker_lock_sha256="$(sha256sum "${committed_docker_lock}" | awk '{print $1}')"
-          [[ "${seal_sha256}" =~ ^[0-9a-f]{64}$ && "${verifier_sha256}" =~ ^[0-9a-f]{64}$ && "${secure_output_sha256}" =~ ^[0-9a-f]{64}$ && "${docker_lock_sha256}" =~ ^[0-9a-f]{64}$ ]]
+          runner_disk_sha256="$(sha256sum "${committed_runner_disk}" | awk '{print $1}')"
+          [[ "${seal_sha256}" =~ ^[0-9a-f]{64}$ && "${verifier_sha256}" =~ ^[0-9a-f]{64}$ && "${secure_output_sha256}" =~ ^[0-9a-f]{64}$ && "${docker_lock_sha256}" =~ ^[0-9a-f]{64}$ && "${runner_disk_sha256}" =~ ^[0-9a-f]{64}$ ]]
           echo "sha256=${seal_sha256}" >> "${GITHUB_OUTPUT}"
           echo "verifier_sha256=${verifier_sha256}" >> "${GITHUB_OUTPUT}"
           echo "secure_output_sha256=${secure_output_sha256}" >> "${GITHUB_OUTPUT}"
           echo "docker_lock_sha256=${docker_lock_sha256}" >> "${GITHUB_OUTPUT}"
+          echo "runner_disk_sha256=${runner_disk_sha256}" >> "${GITHUB_OUTPUT}"
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
@@ -763,12 +773,14 @@ jobs:
         id: gate_runtime_authority
         env:
           OMEGA_RELEASE_DOCKER_LOCK_SHA256: ${{ steps.harness_authority.outputs.docker_lock_sha256 }}
+          OMEGA_RELEASE_RUNNER_DISK_SHA256: ${{ steps.harness_authority.outputs.runner_disk_sha256 }}
           OMEGA_RELEASE_TEST_HARNESS_SHA256: ${{ steps.harness_authority.outputs.sha256 }}
           OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256: ${{ steps.harness_authority.outputs.verifier_sha256 }}
         run: |
           set -euo pipefail
           [[ "$(/usr/bin/sha256sum scripts/verify_release_test_harness.py | /usr/bin/awk '{print $1}')" == "${OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256}" ]]
           [[ "$(/usr/bin/sha256sum scripts/release_docker_lock.py | /usr/bin/awk '{print $1}')" == "${OMEGA_RELEASE_DOCKER_LOCK_SHA256}" ]]
+          [[ "$(/usr/bin/sha256sum scripts/prepare_release_runner_disk.py | /usr/bin/awk '{print $1}')" == "${OMEGA_RELEASE_RUNNER_DISK_SHA256}" ]]
           /usr/bin/python3 -I scripts/verify_release_test_harness.py
           real_docker="$(command -v docker)"
           real_node="$(command -v node)"
@@ -783,6 +795,9 @@ jobs:
           sudo /usr/bin/install -o root -g root -m 0444 \
             scripts/release_docker_lock.py \
             /opt/omega-release-runtime/release_docker_lock.py
+          sudo /usr/bin/install -o root -g root -m 0444 \
+            scripts/prepare_release_runner_disk.py \
+            /opt/omega-release-runtime/prepare_release_runner_disk.py
           sudo /bin/cp -a \
             "${RUNNER_TEMP}/omega-playwright-browsers.install/." \
             /opt/omega-release-runtime/browsers/
@@ -820,8 +835,41 @@ jobs:
           )"
           [[ "${playwright_sha256}" =~ ^[0-9a-f]{64}$ ]]
           [[ "$(/usr/bin/sha256sum /opt/omega-release-runtime/release_docker_lock.py | /usr/bin/awk '{print $1}')" == "${OMEGA_RELEASE_DOCKER_LOCK_SHA256}" ]]
+          [[ "$(/usr/bin/sha256sum /opt/omega-release-runtime/prepare_release_runner_disk.py | /usr/bin/awk '{print $1}')" == "${OMEGA_RELEASE_RUNNER_DISK_SHA256}" ]]
           echo "playwright_sha256=${playwright_sha256}" >> "${GITHUB_OUTPUT}"
           echo "trusted_path=/opt/omega-release-runtime/bin:${PATH}" >> "${GITHUB_OUTPUT}"
+
+      - name: Prepare GitHub-hosted release disk budget
+        env:
+          BASH_ENV: /dev/null
+          COMPOSE_FILE: ""
+          COMPOSE_PROFILES: ""
+          COMPOSE_PROJECT_NAME: ""
+          DOCKER_CONFIG: ""
+          DOCKER_CONTEXT: ""
+          DOCKER_HOST: ""
+          DOCKER_TLS_VERIFY: ""
+          ENV: /dev/null
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          LD_PRELOAD: ""
+          OMEGA_RELEASE_RUNNER_DISK_SHA256: ${{ steps.harness_authority.outputs.runner_disk_sha256 }}
+          PYTHONHOME: ""
+          PYTHONPATH: ""
+        run: |
+          set -euo pipefail
+          helper=/opt/omega-release-runtime/prepare_release_runner_disk.py
+          [[ "$(/usr/bin/sha256sum "${helper}" | /usr/bin/awk '{print $1}')" == "${OMEGA_RELEASE_RUNNER_DISK_SHA256}" ]]
+          [[ "$(/usr/bin/docker --config /opt/omega-release-runtime/docker-config info --format '{{.DockerRootDir}}')" == "/var/lib/docker" ]]
+          /usr/bin/sudo /usr/bin/env -i \
+            GITHUB_ACTIONS="${GITHUB_ACTIONS}" \
+            GITHUB_WORKSPACE="${GITHUB_WORKSPACE}" \
+            ImageOS="${ImageOS}" \
+            RUNNER_ENVIRONMENT="${RUNNER_ENVIRONMENT}" \
+            RUNNER_OS="${RUNNER_OS}" \
+            RUNNER_TEMP="${RUNNER_TEMP}" \
+            /usr/bin/python3 -I "${helper}" reclaim
+          [[ "$(/usr/bin/sha256sum "${helper}" | /usr/bin/awk '{print $1}')" == "${OMEGA_RELEASE_RUNNER_DISK_SHA256}" ]]
 
       - name: Verify sealed release test harness
         env:
@@ -913,6 +961,29 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Verify disk budget before application pulls
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          LD_PRELOAD: ""
+          OMEGA_RELEASE_RUNNER_DISK_SHA256: ${{ steps.harness_authority.outputs.runner_disk_sha256 }}
+          PYTHONHOME: ""
+          PYTHONPATH: ""
+        run: |
+          set -euo pipefail
+          helper=/opt/omega-release-runtime/prepare_release_runner_disk.py
+          [[ "$(/usr/bin/sha256sum "${helper}" | /usr/bin/awk '{print $1}')" == "${OMEGA_RELEASE_RUNNER_DISK_SHA256}" ]]
+          /usr/bin/env -i \
+            GITHUB_ACTIONS="${GITHUB_ACTIONS}" \
+            GITHUB_WORKSPACE="${GITHUB_WORKSPACE}" \
+            ImageOS="${ImageOS}" \
+            RUNNER_ENVIRONMENT="${RUNNER_ENVIRONMENT}" \
+            RUNNER_OS="${RUNNER_OS}" \
+            RUNNER_TEMP="${RUNNER_TEMP}" \
+            /usr/bin/python3 -I "${helper}" check --phase pre-pull
+
       - name: Pull and verify all 15 exact digest references
         env:
           MANIFEST_PATH: ${{ steps.manifest.outputs.manifest_path }}
@@ -939,6 +1010,29 @@ jobs:
               raise SystemExit("local image RepoDigests does not contain exact pulled reference")
           PY
           done < "${RUNNER_TEMP}/omega-release-digest-refs.txt"
+
+      - name: Verify disk budget before infrastructure pulls
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          LD_PRELOAD: ""
+          OMEGA_RELEASE_RUNNER_DISK_SHA256: ${{ steps.harness_authority.outputs.runner_disk_sha256 }}
+          PYTHONHOME: ""
+          PYTHONPATH: ""
+        run: |
+          set -euo pipefail
+          helper=/opt/omega-release-runtime/prepare_release_runner_disk.py
+          [[ "$(/usr/bin/sha256sum "${helper}" | /usr/bin/awk '{print $1}')" == "${OMEGA_RELEASE_RUNNER_DISK_SHA256}" ]]
+          /usr/bin/env -i \
+            GITHUB_ACTIONS="${GITHUB_ACTIONS}" \
+            GITHUB_WORKSPACE="${GITHUB_WORKSPACE}" \
+            ImageOS="${ImageOS}" \
+            RUNNER_ENVIRONMENT="${RUNNER_ENVIRONMENT}" \
+            RUNNER_OS="${RUNNER_OS}" \
+            RUNNER_TEMP="${RUNNER_TEMP}" \
+            /usr/bin/python3 -I "${helper}" check --phase pre-infra
 
       - name: Render and start hybrid digest/source release stack
         id: runtime_lock
@@ -994,6 +1088,16 @@ jobs:
             docker pull "${ref}"
             docker image inspect "${ref}" >/dev/null
           done
+          helper=/opt/omega-release-runtime/prepare_release_runner_disk.py
+          [[ "$(/usr/bin/sha256sum "${helper}" | /usr/bin/awk '{print $1}')" == "${{ steps.harness_authority.outputs.runner_disk_sha256 }}" ]]
+          /usr/bin/env -i \
+            GITHUB_ACTIONS="${GITHUB_ACTIONS}" \
+            GITHUB_WORKSPACE="${GITHUB_WORKSPACE}" \
+            ImageOS="${ImageOS}" \
+            RUNNER_ENVIRONMENT="${RUNNER_ENVIRONMENT}" \
+            RUNNER_OS="${RUNNER_OS}" \
+            RUNNER_TEMP="${RUNNER_TEMP}" \
+            /usr/bin/python3 -I "${helper}" check --phase pre-compose
           docker image ls --no-trunc --digests \
             --format '{{.Repository}}\t{{.Tag}}\t{{.Digest}}\t{{.ID}}' \
             | LC_ALL=C sort > "${RUNNER_TEMP}/omega-release-image-inventory.lock"

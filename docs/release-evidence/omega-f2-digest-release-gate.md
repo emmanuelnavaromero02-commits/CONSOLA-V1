@@ -1,8 +1,8 @@
 # OMEGA F2 — digest release gate
 
-Status: **PREPARED** for forward recovery as `v1.45.213-beta`; F2 is not closed.
-The immutable `v1.45.210-beta`, `v1.45.211-beta`, and `v1.45.212-beta`
-attempts are retained as failed evidence, and no tag is moved or reused.
+Status: **PREPARED** for forward recovery as `v1.45.214-beta`; F2 is not closed.
+The immutable `v1.45.210-beta` through `v1.45.213-beta` attempts are retained
+as failed evidence, and no tag is moved or reused.
 
 ## Failed live attempt retained
 
@@ -26,7 +26,8 @@ attempts are retained as failed evidence, and no tag is moved or reused.
 - Workflow run `31823738299` for `v1.45.212-beta` passed validation, package
   privacy preflight, all 15 image builds, and canonical manifest assembly. It
   then failed closed in `digest-full-stack-gate`, at
-  `Freeze trusted Playwright and Docker gate runtimes`: preserved private mode bits made
+  `Freeze trusted Playwright and Docker gate runtimes`: preserved private mode
+  bits made
   `/opt/omega-release-runtime/browsers/chromium-1223/chrome-linux64/deb.deps`
   unreadable after root ownership, and the runtime hash raised
   `PermissionError`.
@@ -39,14 +40,27 @@ attempts are retained as failed evidence, and no tag is moved or reused.
   all 15 digest pulls, stack startup, final gates, and publication were skipped;
   `publish-release-manifest` was skipped and the tag-addressable GitHub Release
   endpoint remained `404`, with zero Release assets.
-- The forward-only recovery target is `v1.45.213-beta`. Its previous-release
-  selector may bridge to exact `v1.45.209-beta` only when all three failed
+- Workflow run `31831837077` for `v1.45.213-beta` proved the `.212` permission
+  repair in Linux: validation, package preflight, all 15 builds, manifest
+  assembly, the trusted runtime freeze, and all 15 exact digest pulls passed.
+  It then failed closed while pulling auxiliary infrastructure because the
+  standard runner exhausted disk space after Superset, while registering a
+  MailHog layer: `no space left on device`.
+- The `.213` annotated tag object is
+  `926330d8e1e2067e4e56429fb91e4585ffa4eb43`; it peels to source SHA
+  `4bcfda1811d4cbe0511624e0d5cd9c1f5205926b`, whose sole parent is the
+  `.212` source SHA.
+- The `.213` run retained 15 private tagless candidate receipts plus one
+  canonical manifest. The digest stack never started, all final gates and the
+  publisher were skipped, and the GitHub Release remained absent.
+- The forward-only recovery target is `v1.45.214-beta`. Its previous-release
+  selector may bridge to exact `v1.45.209-beta` only when all four failed
   annotated tag objects and peeled SHAs remain exact, the
-  `.210 -> .211 -> .212 -> .213` direct parent chain remains exact, and none of
-  the failed markers has canonical release evidence. Exact remote tag refs are
-  rebound atomically into a dedicated authority namespace before selection; a
-  missing, moved, lightweight, swapped, ambiguous, or unexpectedly trusted
-  failed marker blocks recovery.
+  `.210 -> .211 -> .212 -> .213 -> .214` direct parent chain remains exact, and
+  none of the failed markers has canonical release evidence. Exact remote tag
+  refs are rebound atomically into a dedicated authority namespace before
+  selection; a missing, moved, lightweight, swapped, ambiguous, or unexpectedly
+  trusted failed marker blocks recovery.
 
 ## Retained `.210` prepared authority
 
@@ -102,6 +116,21 @@ attempts are retained as failed evidence, and no tag is moved or reused.
 - The regenerated `.213` harness seals `1,341` files with SHA-256
   `48944574b1ed55041b553f70cea9ea32207553b7ef7650a15aa5ceda96f6bce7`;
   the skip inventory remains exactly 61 pytest and 27 Playwright declarations.
+- The prepared `.214` harness seals `1,344` files with SHA-256
+  `c548c0fe5077ffc05a47132b75d961beb4f0b2d76bc645dddc900ad2e483d075`.
+- The `.214` runner-disk contract is based on the actual `linux/amd64` OCI
+  footprint: 12.468 GiB extracted and 4.004 GiB compressed after layer
+  deduplication. It requires 17 GiB free before the 15 application pulls,
+  5 GiB before auxiliary infrastructure, and 2 GiB before Compose startup;
+  every boundary also requires at least 100,000 free inodes. Cleanup is
+  adaptive and limited to the copied Playwright installer, pip/npm caches,
+  Android, and CodeQL on a digest gate pinned to GitHub-hosted Ubuntu 24.04.
+  It never prunes Docker or removes Python, Node, or Docker.
+- `.github/workflows/release-runner-capacity.yml` reproduces the dependency and
+  Chromium footprint on the same pinned runner, then executes the source-bound
+  cleanup helper. Its PR and post-merge runs must pass before the immutable
+  `.214` tag is created; this proves the 17-GiB boundary on the live image
+  rather than assuming capacity from runner documentation.
 
 ## F2 contract
 
@@ -125,9 +154,9 @@ harness is an authority boundary, not a sandbox against deliberately malicious
 same-UID or privileged code.
 
 To close F2, record the recovery merge SHA and require the live release workflow
-for `v1.45.213-beta` to prove:
+for `v1.45.214-beta` to prove:
 
-1. the immutable Git tag equals that merge SHA and `VERSION=1.45.213-beta`;
+1. the immutable Git tag equals that merge SHA and `VERSION=1.45.214-beta`;
 2. all 15 GHCR packages remain private and every manifest/config/layer exists;
 3. the mandatory digest stack gate passes for the exact manifest bytes;
 4. the final GitHub Release is non-draft and immutable, with exactly the

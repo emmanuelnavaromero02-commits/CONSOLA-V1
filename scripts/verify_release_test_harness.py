@@ -47,6 +47,7 @@ FORBIDDEN_IMPORT_SHADOWS = (
 )
 FIXED_FILES = {
     ".github/workflows/release.yml",
+    ".github/workflows/release-runner-capacity.yml",
     ".github/release-test-skip-policy.json",
     "infra/docker-compose.yml",
     "infra/docker-compose.dev.yml",
@@ -57,6 +58,7 @@ FIXED_FILES = {
     "pyproject.toml",
     "pytest.ini",
     "scripts/production_readiness.sh",
+    "scripts/prepare_release_runner_disk.py",
     "scripts/prepare_refinement_duckdb_ci.sh",
     "scripts/apply_db_migrations.sh",
     "scripts/load_release_dotenv.py",
@@ -140,8 +142,7 @@ def discover(repo: Path = REPO) -> list[str]:
                     path.relative_to(repo).as_posix()
                     for path in root.rglob(config_name)
                     if not any(
-                        part.startswith(".")
-                        for part in path.relative_to(repo).parts
+                        part.startswith(".") for part in path.relative_to(repo).parts
                     )
                 )
     playwright = repo / "tests-e2e"
@@ -213,7 +214,9 @@ def verify(
     if seal.get("schema_version") != 1 or not isinstance(seal.get("files"), list):
         raise HarnessSealError("release harness seal identity is invalid")
     if seal["files"] != inventory(repo):
-        raise HarnessSealError("release harness full-file seal differs from the checkout")
+        raise HarnessSealError(
+            "release harness full-file seal differs from the checkout"
+        )
 
 
 def main() -> int:

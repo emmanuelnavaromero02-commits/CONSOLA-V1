@@ -1,0 +1,144 @@
+name: Release Runner Capacity
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - .github/workflows/release-runner-capacity.yml
+      - scripts/prepare_release_runner_disk.py
+      - scripts/normalize_release_runtime_permissions.py
+      - tests-e2e/package-lock.json
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/release.yml
+      - .github/workflows/release-runner-capacity.yml
+      - scripts/prepare_release_runner_disk.py
+      - scripts/normalize_release_runtime_permissions.py
+      - tests-e2e/package-lock.json
+
+permissions:
+  contents: read
+
+jobs:
+  release-runner-capacity:
+    name: release-runner-capacity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: tests-e2e/package-lock.json
+
+      - name: Reproduce digest-gate dependency footprint
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install \
+            -r tests/requirements.txt \
+            -r console/requirements.txt \
+            -r refinement/requirements.txt \
+            -r vault/requirements.txt \
+            -r workspace/requirements.txt \
+            -r mcp-infra/requirements.txt \
+            -r tests/stress/requirements.txt
+          for req in cartridges/*/requirements.txt; do
+            python -m pip install -r "${req}"
+          done
+          npm --prefix tests-e2e ci
+          PLAYWRIGHT_BROWSERS_PATH="${RUNNER_TEMP}/omega-playwright-browsers.install" \
+            tests-e2e/node_modules/.bin/playwright install --with-deps chromium
+
+      - name: Freeze source-bound capacity authority and browser copy
+        id: authority
+        run: |
+          set -euo pipefail
+          helper_path=scripts/prepare_release_runner_disk.py
+          normalizer_path=scripts/normalize_release_runtime_permissions.py
+          committed_helper="$(mktemp)"
+          committed_normalizer="$(mktemp)"
+          wrapper="$(mktemp)"
+          trap 'rm -f -- "${committed_helper}" "${committed_normalizer}" "${wrapper}"' EXIT
+          /usr/bin/git show "${GITHUB_SHA}:${helper_path}" > "${committed_helper}"
+          /usr/bin/git show "${GITHUB_SHA}:${normalizer_path}" > "${committed_normalizer}"
+          /usr/bin/cmp --silent "${committed_helper}" "${helper_path}"
+          /usr/bin/cmp --silent "${committed_normalizer}" "${normalizer_path}"
+          helper_sha256="$(/usr/bin/sha256sum "${committed_helper}" | /usr/bin/awk '{print $1}')"
+          normalizer_sha256="$(/usr/bin/sha256sum "${committed_normalizer}" | /usr/bin/awk '{print $1}')"
+          [[ "${helper_sha256}" =~ ^[0-9a-f]{64}$ && "${normalizer_sha256}" =~ ^[0-9a-f]{64}$ ]]
+          real_node="$(command -v node)"
+          [[ "${real_node}" == /* ]]
+          /usr/bin/sudo /usr/bin/install -d -o root -g root -m 0555 \
+            /opt/omega-release-runtime \
+            /opt/omega-release-runtime/bin \
+            /opt/omega-release-runtime/browsers \
+            /opt/omega-release-runtime/docker-config
+          /usr/bin/sudo /usr/bin/install -o root -g root -m 0555 \
+            "${real_node}" /opt/omega-release-runtime/bin/node
+          /usr/bin/sudo /usr/bin/install -o root -g root -m 0444 \
+            "${committed_helper}" \
+            /opt/omega-release-runtime/prepare_release_runner_disk.py
+          /usr/bin/sudo /usr/bin/install -o root -g root -m 0444 \
+            "${committed_normalizer}" \
+            /opt/omega-release-runtime/normalize_release_runtime_permissions.py
+          /usr/bin/sudo /bin/cp -a \
+            "${RUNNER_TEMP}/omega-playwright-browsers.install/." \
+            /opt/omega-release-runtime/browsers/
+          /usr/bin/sudo /usr/bin/python3 -I \
+            /opt/omega-release-runtime/normalize_release_runtime_permissions.py \
+            /opt/omega-release-runtime/browsers
+          printf '#!/bin/bash\nexec /usr/bin/docker "$@"\n' > "${wrapper}"
+          /usr/bin/sudo /usr/bin/install -o root -g root -m 0555 \
+            "${wrapper}" /opt/omega-release-runtime/bin/docker
+          /usr/bin/sudo /bin/chown -R root:root /opt/omega-release-runtime
+          [[ "$(/usr/bin/sha256sum /opt/omega-release-runtime/prepare_release_runner_disk.py | /usr/bin/awk '{print $1}')" == "${helper_sha256}" ]]
+          [[ "$(/usr/bin/sha256sum /opt/omega-release-runtime/normalize_release_runtime_permissions.py | /usr/bin/awk '{print $1}')" == "${normalizer_sha256}" ]]
+          echo "helper_sha256=${helper_sha256}" >> "${GITHUB_OUTPUT}"
+
+      - name: Prove exact post-install reclaim budget
+        env:
+          BASH_ENV: /dev/null
+          COMPOSE_FILE: ""
+          COMPOSE_PROFILES: ""
+          COMPOSE_PROJECT_NAME: ""
+          DOCKER_CONFIG: ""
+          DOCKER_CONTEXT: ""
+          DOCKER_HOST: ""
+          DOCKER_TLS_VERIFY: ""
+          ENV: /dev/null
+          EXPECTED_HELPER_SHA256: ${{ steps.authority.outputs.helper_sha256 }}
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          LD_PRELOAD: ""
+          PYTHONHOME: ""
+          PYTHONPATH: ""
+        run: |
+          set -euo pipefail
+          helper=/opt/omega-release-runtime/prepare_release_runner_disk.py
+          [[ "$(/usr/bin/sha256sum "${helper}" | /usr/bin/awk '{print $1}')" == "${EXPECTED_HELPER_SHA256}" ]]
+          [[ "$(/usr/bin/docker --config /opt/omega-release-runtime/docker-config info --format '{{.DockerRootDir}}')" == "/var/lib/docker" ]]
+          /usr/bin/sudo /usr/bin/env -i \
+            GITHUB_ACTIONS="${GITHUB_ACTIONS}" \
+            GITHUB_WORKSPACE="${GITHUB_WORKSPACE}" \
+            ImageOS="${ImageOS}" \
+            RUNNER_ENVIRONMENT="${RUNNER_ENVIRONMENT}" \
+            RUNNER_OS="${RUNNER_OS}" \
+            RUNNER_TEMP="${RUNNER_TEMP}" \
+            /usr/bin/python3 -I "${helper}" reclaim
+          /usr/bin/env -i \
+            GITHUB_ACTIONS="${GITHUB_ACTIONS}" \
+            GITHUB_WORKSPACE="${GITHUB_WORKSPACE}" \
+            ImageOS="${ImageOS}" \
+            RUNNER_ENVIRONMENT="${RUNNER_ENVIRONMENT}" \
+            RUNNER_OS="${RUNNER_OS}" \
+            RUNNER_TEMP="${RUNNER_TEMP}" \
+            /usr/bin/python3 -I "${helper}" check --phase pre-pull
+          [[ "$(/usr/bin/sha256sum "${helper}" | /usr/bin/awk '{print $1}')" == "${EXPECTED_HELPER_SHA256}" ]]

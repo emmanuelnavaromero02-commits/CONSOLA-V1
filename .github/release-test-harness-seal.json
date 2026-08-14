@@ -5,8 +5,12 @@
       "sha256": "4679d9db81a37a2007f58ffd2f7f81dd0ec140cb082fb055ef8b3b89b6a28010"
     },
     {
+      "path": ".github/workflows/release-runner-capacity.yml",
+      "sha256": "0eb4c15bca964db94bbced769d67ca6b551668d9f84cea6ce9c505c57ce8e9d2"
+    },
+    {
       "path": ".github/workflows/release.yml",
-      "sha256": "31570541ab6b4b69a52adb226888ccd4559ab501dcd1a428b03c9e101926e588"
+      "sha256": "39d2f1414e79f6b3d0412b2896014754a1878d19de75a8f4902b1f0431df50bc"
     },
     {
       "path": "Makefile",
@@ -2981,6 +2985,10 @@
       "sha256": "84a5dbe744528544fcddab8f80183f6f957c4c6cf3ca3e74ee008b573aea57cb"
     },
     {
+      "path": "scripts/prepare_release_runner_disk.py",
+      "sha256": "f61df3d733f3b916c41e22731fd387fbcec5cf6d6e29d3534dcd48c1e33bbfdb"
+    },
+    {
       "path": "scripts/production_readiness.sh",
       "sha256": "fa83a1ade04ae75c936f04e701a8476b7a68230f5f37ecdfbc65e37773a9815b"
     },
@@ -3058,7 +3066,7 @@
     },
     {
       "path": "scripts/verify_release_test_harness.py",
-      "sha256": "66ddbc58771d7fc1ce54e20f42222e44e5a5796afb9767fd2f68cc90b299ddea"
+      "sha256": "49d0d4811db1ce11c01cc5cea0cbae8403e9a27a6b4b5cfce54f0c621363f24b"
     },
     {
       "path": "scripts/verify_test_skip_policy.py",
@@ -4589,6 +4597,10 @@
       "sha256": "e2890b925bcb5ce5260491699a6248d9e26c17607b77be702437a212a3aa9df5"
     },
     {
+      "path": "tests/test_prepare_release_runner_disk.py",
+      "sha256": "fd3a824e9122ec28790889432980ba8858923dfa8bc463edcd0c31124940a27e"
+    },
+    {
       "path": "tests/test_priority_cartridges_exist.py",
       "sha256": "7faf04b8e54411afcc3ba87f6a7d22a5854df766c418f62c485634f70d283d21"
     },
@@ -4682,7 +4694,7 @@
     },
     {
       "path": "tests/test_release_ci_fail_closed.py",
-      "sha256": "d896a3f6b81dbbe63bf2e7efcc11f48e6f6f5ad19ec0e1522cdb7c11e39b9f0b"
+      "sha256": "1bc8caf16390618e3acb033ff6f8e5c5f01ad486994f4f9ce4ad00aa621ba727"
     },
     {
       "path": "tests/test_release_compose_env_contract.py",
@@ -5018,7 +5030,7 @@
     },
     {
       "path": "tests/test_select_previous_release.py",
-      "sha256": "ef0c69ceedd5e59d3c5e3f797f545bc3726c96c92611c99fc64d1e3946f63ff2"
+      "sha256": "64173e27ddffe48cb985c4c4923dab1b1e732cef72ef68982fdd16ab59259b6a"
     },
     {
       "path": "tests/test_service_urls.py",
