@@ -27,6 +27,55 @@ from scripts.verify_test_skip_policy import (
 )
 
 
+NESTED_PYTEST_BOOTSTRAP = """
+import sys
+from pathlib import Path
+
+import pytest
+
+repo = Path(sys.argv.pop(1)).resolve(strict=True)
+sys.path.insert(0, str(repo))
+raise SystemExit(pytest.console_main())
+"""
+NESTED_RELEASE_PYTHON_VARIABLES = {
+    "OMEGA_RELEASE_PYTEST_REPORT",
+    "OMEGA_RELEASE_PYTEST_NONCE",
+    "OMEGA_RELEASE_PYTEST_MODE",
+    "OMEGA_RELEASE_PYTEST_OWNER_PID",
+    "PYTHONPATH",
+}
+
+
+def _run_nested_pytest(
+    test_file: Path, *, extra_env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    env = {
+        **os.environ,
+        "PYTEST_PLUGINS": "scripts.verify_test_skip_policy",
+        "OMEGA_RELEASE_TEST_SKIP_POLICY": str(DEFAULT_POLICY),
+        "OMEGA_RELEASE_TEST_SKIP_ENVIRONMENT": "release",
+        **(extra_env or {}),
+    }
+    for variable in NESTED_RELEASE_PYTHON_VARIABLES:
+        env.pop(variable, None)
+    return subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            NESTED_PYTEST_BOOTSTRAP,
+            str(REPO),
+            "-q",
+            str(test_file),
+        ],
+        cwd=REPO,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
 def test_current_exact_source_inventory_is_sealed() -> None:
     policy = load_policy()
     scanned = verify_source_policy(policy)
@@ -162,21 +211,7 @@ def test_pytest_plugin_blocks_runtime_skip_outside_reviewed_scope(
         "import pytest\n\ndef test_required_gate():\n    pytest.skip('unexpected')\n",
         encoding="utf-8",
     )
-    env = {
-        **os.environ,
-        "PYTEST_PLUGINS": "scripts.verify_test_skip_policy",
-        "OMEGA_RELEASE_TEST_SKIP_POLICY": str(DEFAULT_POLICY),
-        "OMEGA_RELEASE_TEST_SKIP_ENVIRONMENT": "release",
-    }
-
-    result = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", str(test_file)],
-        cwd=REPO,
-        env=env,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    result = _run_nested_pytest(test_file)
 
     assert result.returncode != 0
     assert "RELEASE TEST SKIP POLICY BLOCKED" in result.stdout + result.stderr
@@ -191,24 +226,41 @@ def test_pytest_plugin_blocks_undeclared_xpass_as_observed_xfail(
         "def test_required_gate():\n    assert True\n",
         encoding="utf-8",
     )
-    env = {
-        **os.environ,
-        "PYTEST_PLUGINS": "scripts.verify_test_skip_policy",
-        "OMEGA_RELEASE_TEST_SKIP_POLICY": str(DEFAULT_POLICY),
-        "OMEGA_RELEASE_TEST_SKIP_ENVIRONMENT": "release",
-    }
-
-    result = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", str(test_file)],
-        cwd=REPO,
-        env=env,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    result = _run_nested_pytest(test_file)
 
     assert result.returncode != 0
     assert "RELEASE TEST SKIP POLICY BLOCKED" in result.stdout + result.stderr
+
+
+def test_nested_pytest_never_executes_repo_sitecustomize(tmp_path: Path) -> None:
+    test_file = tmp_path / "test_nested_pass.py"
+    test_file.write_text("def test_nested_pass():\n    assert True\n", encoding="utf-8")
+    sentinel = tmp_path / "sitecustomize-executed"
+    shadow = REPO / "sitecustomize.py"
+    assert not shadow.exists()
+    shadow.write_text(
+        "import os\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['REPO_SITECUSTOMIZE_SENTINEL']).write_text('executed')\n",
+        encoding="utf-8",
+    )
+    try:
+        result = _run_nested_pytest(
+            test_file,
+            extra_env={
+                "PYTHONPATH": str(REPO),
+                "OMEGA_RELEASE_PYTEST_REPORT": str(tmp_path / "outer-report.json"),
+                "OMEGA_RELEASE_PYTEST_NONCE": "b" * 64,
+                "OMEGA_RELEASE_PYTEST_MODE": "execute",
+                "OMEGA_RELEASE_PYTEST_OWNER_PID": "1",
+                "REPO_SITECUSTOMIZE_SENTINEL": str(sentinel),
+            },
+        )
+    finally:
+        shadow.unlink(missing_ok=True)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not sentinel.exists()
 
 
 @pytest.mark.parametrize(

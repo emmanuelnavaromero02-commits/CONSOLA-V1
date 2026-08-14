@@ -44,6 +44,23 @@ jobs:
             exit 1
           fi
 
+      - name: Bind exact remote recovery tag authority
+        if: github.ref_name == 'v1.45.211-beta'
+        shell: bash
+        run: |
+          set -euo pipefail
+          authority=refs/omega-release-authority/v1.45.211-beta
+          for name in current failed base; do
+            git update-ref -d "${authority}/${name}"
+          done
+          git fetch --no-tags --force origin \
+            "+refs/tags/v1.45.211-beta:${authority}/current" \
+            "+refs/tags/v1.45.210-beta:${authority}/failed" \
+            "+refs/tags/v1.45.209-beta:${authority}/base"
+          for name in current failed base; do
+            git show-ref --verify --quiet "${authority}/${name}"
+          done
+
       - id: previous
         shell: bash
         env:
@@ -167,6 +184,8 @@ jobs:
       OMEGA_RELEASE_TEST_SKIP_POLICY: ${{ github.workspace }}/.github/release-test-skip-policy.json
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
 
       - name: Bind release test harness seal to source SHA
         id: harness_authority
@@ -239,6 +258,14 @@ jobs:
             python -m pip install -r "$req"
           done
           npm --prefix console-next ci
+
+      - name: Preload PostgreSQL images for pull-never release tests
+        run: |
+          set -euo pipefail
+          for ref in postgres:15 postgres:15.18; do
+            docker pull "${ref}"
+            docker image inspect "${ref}" >/dev/null
+          done
 
       - name: Verify declared release test skips
         run: python3 scripts/verify_test_skip_policy.py
