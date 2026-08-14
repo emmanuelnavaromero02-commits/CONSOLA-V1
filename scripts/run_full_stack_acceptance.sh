@@ -26,7 +26,7 @@ fi
 COMPOSE+=(--profile sap)
 if [[ "${OMEGA_RELEASE_TEST_SKIP_ENVIRONMENT:-}" == "release" ]]; then
   PYTHON_BIN="${PYTHON_BIN:-python3}"
-  PYTEST_CMD=("${PYTHON_BIN}" scripts/run_release_pytest.py)
+  PYTEST_CMD=("${PYTHON_BIN}" -I scripts/run_release_pytest.py)
 else
   PYTEST_BIN="${PYTEST:-.venv/bin/pytest}"
   if [[ ! -x "${PYTEST_BIN}" ]]; then

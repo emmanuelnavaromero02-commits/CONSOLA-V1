@@ -391,7 +391,8 @@ docker stats --no-stream --format 'table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\
   | grep -E '(^NAME|mode_)' >"${STRESS_ARTIFACT_DIR}/docker_stats_final.txt" || true
 
 set +e
-"$PYTHON_BIN" scripts/stress_summary.py "$STRESS_ARTIFACT_DIR" --profile "$STRESS_PROFILE" --workload "$STRESS_WORKLOAD"
+OMEGA_STRESS_USERS="${STRESS_USERS}" \
+  "$PYTHON_BIN" scripts/stress_summary.py "$STRESS_ARTIFACT_DIR" --profile "$STRESS_PROFILE" --workload "$STRESS_WORKLOAD"
 SUMMARY_CODE=$?
 set -e
 

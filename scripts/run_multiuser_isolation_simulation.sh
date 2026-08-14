@@ -13,11 +13,27 @@ if [[ ! -x "${PYTHON_BIN}" ]]; then
   PYTHON_BIN="python3"
 fi
 
+load_passive_dotenv() {
+  local input_path="$1" output_path key value
+  output_path="$(mktemp "${TMPDIR:-/tmp}/omega-release-dotenv.XXXXXX")"
+  chmod 0600 "${output_path}"
+  if ! python3 -I scripts/load_release_dotenv.py \
+      --input "${input_path}" --output "${output_path}"; then
+    rm -f -- "${output_path}"
+    return 2
+  fi
+  while IFS= read -r -d '' key && IFS= read -r -d '' value; do
+    if ! export "${key}=${value}"; then
+      rm -f -- "${output_path}"
+      echo "[multiuser-sim] passive dotenv import failed for ${key}" >&2
+      return 2
+    fi
+  done < "${output_path}"
+  rm -f -- "${output_path}"
+}
+
 if [[ -f infra/.env ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source infra/.env
-  set +a
+  load_passive_dotenv infra/.env
 fi
 
 if [[ -n "${OMEGA_MULTIUSER_SIM_DB_ADMIN_URL:-}" ]]; then

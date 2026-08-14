@@ -5,12 +5,22 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from pathlib import Path
 
 
 class DockerLockError(RuntimeError):
     pass
+
+
+REPO = Path(__file__).resolve().parents[1]
+RELEASE_COMPOSE_FILES = (
+    "infra/docker-compose.yml",
+    "infra/docker-compose.dev.yml",
+    "infra/terraform-gcp/release/docker-compose.release.yml",
+)
+RELEASE_ENV_FILES = ("infra/.env",)
 
 
 DENIED_DOCKER_COMMANDS = {
@@ -49,6 +59,7 @@ COMPOSE_COMMANDS = {
     "kill",
     "logs",
     "pause",
+    "port",
     "ps",
     "pull",
     "restart",
@@ -64,10 +75,12 @@ COMPOSE_COMMANDS = {
 }
 SAFE_COMPOSE_COMMANDS = COMPOSE_COMMANDS - {"build", "create", "pull", "run"}
 COMPOSE_GLOBAL_VALUE_OPTIONS = {
-    "--ansi", "--env-file", "--file", "--parallel", "--profile",
-    "--progress", "--project-directory", "--project-name", "-f", "-p",
+    "--env-file",
+    "--file",
+    "--profile",
+    "--project-directory",
+    "-f",
 }
-COMPOSE_GLOBAL_FLAG_OPTIONS = {"--all-resources", "--compatibility", "--dry-run"}
 COMPOSE_UP_VALUE_OPTIONS = {
     "--attach", "--exit-code-from", "--no-attach", "--pull", "--scale",
     "--timeout", "--wait-timeout",
@@ -110,20 +123,87 @@ DOCKER_RUN_FLAG_OPTIONS = {
 }
 
 
-def _compose_command(args: list[str]) -> tuple[str, list[str]]:
+def _exact_release_path(value: str, workspace: Path, allowed: tuple[str, ...]) -> str:
+    candidate = Path(value)
+    if not candidate.is_absolute():
+        candidate = Path.cwd() / candidate
+    try:
+        resolved = candidate.resolve(strict=True)
+    except OSError as exc:
+        raise DockerLockError(f"Docker Compose path cannot be resolved: {value}") from exc
+    expected = {
+        (workspace / relative).resolve(strict=True): relative for relative in allowed
+    }
+    if resolved not in expected:
+        raise DockerLockError(f"Docker Compose path is not release-authorized: {value}")
+    return expected[resolved]
+
+
+def _compose_command(
+    args: list[str], *, workspace: Path
+) -> tuple[str, list[str], list[str]]:
     index = 0
+    compose_files: list[str] = []
+    env_files: list[str] = []
+    project_directories: list[str] = []
+    profiles: list[str] = []
     while index < len(args) and args[index].startswith("-"):
         option = args[index]
         key = option.split("=", 1)[0]
         if key in COMPOSE_GLOBAL_VALUE_OPTIONS:
-            index += 1 if "=" in option else 2
-        elif option in COMPOSE_GLOBAL_FLAG_OPTIONS:
-            index += 1
+            if "=" in option:
+                value = option.split("=", 1)[1]
+                index += 1
+            else:
+                if index + 1 >= len(args):
+                    raise DockerLockError(
+                        f"Docker Compose global option has no value: {option}"
+                    )
+                value = args[index + 1]
+                index += 2
+            if not value or value.startswith("-"):
+                raise DockerLockError(
+                    f"Docker Compose global option has invalid value: {option}"
+                )
+            if key in {"--file", "-f"}:
+                compose_files.append(
+                    _exact_release_path(value, workspace, RELEASE_COMPOSE_FILES)
+                )
+            elif key == "--env-file":
+                env_files.append(
+                    _exact_release_path(value, workspace, RELEASE_ENV_FILES)
+                )
+            elif key == "--project-directory":
+                candidate = Path(value)
+                if not candidate.is_absolute():
+                    candidate = Path.cwd() / candidate
+                try:
+                    resolved = candidate.resolve(strict=True)
+                except OSError as exc:
+                    raise DockerLockError(
+                        "Docker Compose project directory cannot be resolved"
+                    ) from exc
+                if resolved != workspace.resolve(strict=True):
+                    raise DockerLockError(
+                        "Docker Compose project directory is not release-authorized"
+                    )
+                project_directories.append(str(resolved))
+            elif key == "--profile":
+                if value != "sap":
+                    raise DockerLockError("Docker Compose profile is not authorized")
+                profiles.append(value)
         else:
             raise DockerLockError(f"unreviewed Docker Compose global option: {option}")
     if index >= len(args) or args[index] not in COMPOSE_COMMANDS:
         raise DockerLockError("unknown Docker Compose command after release lock")
-    return args[index], args[index + 1 :]
+    if len(compose_files) != len(set(compose_files)):
+        raise DockerLockError("duplicate Docker Compose release file")
+    expected_prefix = list(RELEASE_COMPOSE_FILES[: len(compose_files)])
+    if compose_files and compose_files != expected_prefix:
+        raise DockerLockError("Docker Compose release files are out of canonical order")
+    if len(env_files) > 1 or len(project_directories) > 1 or len(profiles) > 1:
+        raise DockerLockError("duplicate Docker Compose release authority option")
+    return args[index], args[index + 1 :], compose_files
 
 
 def _has_pull_never(args: list[str]) -> bool:
@@ -207,36 +287,58 @@ def _reject_daemon_mounts(args: list[str]) -> None:
         key = value.split("=", 1)[0]
         if key == "--volumes-from":
             raise DockerLockError("docker run --volumes-from is forbidden")
+        if key == "--volume-driver":
+            raise DockerLockError("docker run volume drivers are forbidden")
         if key in {"-v", "--volume"}:
             mount = value.split("=", 1)[1] if "=" in value else (
                 args[index + 1] if index + 1 < len(args) else ""
             )
-            sources.append(mount.split(":", 1)[0])
+            source = mount.split(":", 1)[0]
+            if not Path(source).is_absolute():
+                raise DockerLockError("docker run named volumes are forbidden")
+            sources.append(source)
         elif key == "--mount":
             mount = value.split("=", 1)[1] if "=" in value else (
                 args[index + 1] if index + 1 < len(args) else ""
             )
-            fields = dict(
-                part.split("=", 1) for part in mount.split(",") if "=" in part
-            )
+            fields: dict[str, str] = {}
+            for part in mount.split(","):
+                field, separator, field_value = part.partition("=")
+                if not separator or not field or field in fields:
+                    raise DockerLockError("docker run mount syntax is not canonical")
+                fields[field] = field_value
+            mount_type = fields.get("type")
+            if (
+                mount_type == "volume"
+                or "volume-driver" in fields
+                or "volume-opt" in fields
+            ):
+                raise DockerLockError("docker run volume mounts are forbidden")
+            if mount_type not in {"bind", "tmpfs"}:
+                raise DockerLockError("docker run mount type is not authorized")
             source = fields.get("src", fields.get("source"))
+            if mount_type == "bind" and not source:
+                raise DockerLockError("docker run bind mount has no source")
             if source:
                 sources.append(source)
         index += 1
     for source in sources:
-        raw = source.rstrip("/")
-        resolved = str(Path(source).resolve(strict=False)).rstrip("/")
+        raw = os.path.normpath(source)
+        resolved = os.path.normpath(str(Path(source).resolve(strict=False)))
+        candidates = (raw, resolved)
         if any(
-            candidate == prefix
-            or candidate.startswith(prefix + "/")
-            or prefix.startswith(candidate + "/")
-            for candidate in (raw, resolved)
-            for prefix in ("/run", "/var/run")
+            candidate == "/"
+            or candidate in {"/run", "/var/run", "/proc", "/sys", "/dev"}
+            or candidate.startswith(("/run/", "/var/run/", "/proc/", "/sys/", "/dev/"))
+            for candidate in candidates
+        ) or any(
+            re.fullmatch(r"/proc/(?:self|[0-9]+)/root(?:/.*)?", candidate)
+            for candidate in candidates
         ):
             raise DockerLockError("docker run daemon/runtime bind mount is forbidden")
 
 
-def validate(args: list[str]) -> None:
+def validate(args: list[str], *, workspace: Path = REPO) -> None:
     if not args or args[0].startswith("-"):
         raise DockerLockError("Docker global options are forbidden after release lock")
     command = args[0]
@@ -265,8 +367,16 @@ def validate(args: list[str]) -> None:
         _validate_docker_run(remainder)
         return
     if command == "compose":
-        compose_command, compose_args = _compose_command(remainder)
+        compose_command, compose_args, compose_files = _compose_command(
+            remainder, workspace=workspace
+        )
+        if compose_command != "version" and not compose_files:
+            raise DockerLockError("Docker Compose release file is required")
         if compose_command == "up":
+            if compose_files != list(RELEASE_COMPOSE_FILES):
+                raise DockerLockError(
+                    "docker compose up requires the exact release Compose chain"
+                )
             option_prefix, services = _compose_up_option_prefix(compose_args)
             if (
                 "--build" in option_prefix
@@ -292,8 +402,21 @@ def validate(args: list[str]) -> None:
         raise DockerLockError(f"unknown docker command after release lock: {command}")
 
 
+def _validate_control_environment(environment: dict[str, str]) -> None:
+    poisoned = sorted(
+        key
+        for key, value in environment.items()
+        if value and key.startswith(("COMPOSE_", "DOCKER_"))
+    )
+    if poisoned:
+        raise DockerLockError(
+            f"Docker control environment is forbidden after release lock: {poisoned[0]}"
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--workspace", type=Path, default=REPO)
     parser.add_argument("--real", required=True)
     parser.add_argument("docker_args", nargs=argparse.REMAINDER)
     parsed = parser.parse_args(argv)
@@ -301,7 +424,8 @@ def main(argv: list[str] | None = None) -> int:
     if args[:1] == ["--"]:
         args = args[1:]
     try:
-        validate(args)
+        _validate_control_environment(dict(os.environ))
+        validate(args, workspace=parsed.workspace.resolve(strict=True))
     except DockerLockError as exc:
         print(f"RELEASE DOCKER LOCK BLOCKED: {exc}", file=sys.stderr)
         return 97

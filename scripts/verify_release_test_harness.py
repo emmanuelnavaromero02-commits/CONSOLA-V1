@@ -5,16 +5,46 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from scripts.verify_test_skip_policy import DEFAULT_POLICY, PYTEST_ROOTS, REPO
-
+REPO = REPO_ROOT
+DEFAULT_POLICY = REPO / ".github" / "release-test-skip-policy.json"
+PYTEST_ROOTS = (
+    "tests",
+    "console/tests",
+    "workspace/tests",
+    "vault/tests",
+    "refinement/tests",
+    "mcp-infra/tests",
+    "cartridges",
+    "airflow",
+)
 DEFAULT_SEAL = REPO / ".github" / "release-test-harness-seal.json"
+EXPECTED_SEAL_SHA256_ENV = "OMEGA_RELEASE_TEST_HARNESS_SHA256"
+SHA256 = re.compile(r"[0-9a-f]{64}")
+IMPORT_HOOK_ROOTS = (
+    ".",
+    "console",
+    "refinement",
+    "vault",
+    "workspace",
+    "mcp-infra",
+)
+FORBIDDEN_IMPORT_SHADOWS = (
+    "sitecustomize.py",
+    "usercustomize.py",
+    "pytest.py",
+    "pytest",
+    "pytest_asyncio.py",
+    "pytest_asyncio",
+    "anyio.py",
+    "anyio",
+)
 FIXED_FILES = {
     ".github/workflows/release.yml",
     ".github/release-test-skip-policy.json",
@@ -32,6 +62,7 @@ FIXED_FILES = {
     "scripts/release_digest_chain.py",
     "scripts/release_digest_env.py",
     "scripts/release_docker_lock.py",
+    "scripts/release_image_promotion.py",
     "scripts/run-e2e.sh",
     "scripts/run_full_stack_acceptance.sh",
     "scripts/run_multiuser_isolation_simulation.sh",
@@ -39,6 +70,7 @@ FIXED_FILES = {
     "scripts/stress_summary.py",
     "scripts/run_release_playwright.py",
     "scripts/run_release_pytest.py",
+    "scripts/secure_release_output.py",
     "scripts/verify_release_test_harness.py",
     "scripts/verify_release_digest_runtime.py",
     "scripts/verify_release_digest_remote.py",
@@ -136,10 +168,41 @@ def inventory(repo: Path = REPO) -> list[dict[str, str]]:
     ]
 
 
-def verify(seal_path: Path = DEFAULT_SEAL, repo: Path = REPO) -> None:
+def verify(
+    seal_path: Path = DEFAULT_SEAL,
+    repo: Path = REPO,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> None:
+    environment = os.environ if environ is None else environ
+    for root in IMPORT_HOOK_ROOTS:
+        for name in FORBIDDEN_IMPORT_SHADOWS:
+            if (repo / root / name).exists():
+                raise HarnessSealError(
+                    f"unreviewed Python import hook or runner shadow is present: {root}/{name}"
+                )
     try:
-        seal = json.loads(seal_path.read_text("utf-8"))
+        seal_bytes = seal_path.read_bytes()
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise HarnessSealError("release harness seal cannot be read") from exc
+    if (
+        environment.get("OMEGA_RELEASE_DIGEST_STACK") == "1"
+        or environment.get("OMEGA_RELEASE_TEST_SKIP_ENVIRONMENT") == "release"
+        or EXPECTED_SEAL_SHA256_ENV in environment
+    ):
+        expected_sha256 = environment.get(EXPECTED_SEAL_SHA256_ENV, "")
+        if SHA256.fullmatch(expected_sha256) is None:
+            raise HarnessSealError(
+                "release harness authority SHA-256 is missing or invalid"
+            )
+        actual_sha256 = hashlib.sha256(seal_bytes).hexdigest()
+        if actual_sha256 != expected_sha256:
+            raise HarnessSealError(
+                "release harness seal differs from the source-bound authority SHA-256"
+            )
+    try:
+        seal = json.loads(seal_bytes.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
         raise HarnessSealError("release harness seal cannot be read") from exc
     if not isinstance(seal, dict) or set(seal) != {"schema_version", "files"}:
         raise HarnessSealError("release harness seal schema is invalid")

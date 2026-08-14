@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import secrets
@@ -13,11 +14,31 @@ from pathlib import Path
 from typing import Any
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+def _load_harness_verifier():
+    path = REPO / "scripts" / "verify_release_test_harness.py"
+    spec = importlib.util.spec_from_file_location("_omega_harness_verifier", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("release harness verifier cannot be loaded")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_HARNESS = _load_harness_verifier()
+HarnessSealError = _HARNESS.HarnessSealError
+verify = _HARNESS.verify
+try:
+    verify()
+except HarnessSealError as exc:
+    print(f"RELEASE PYTEST BLOCKED: {exc}", file=sys.stderr)
+    raise SystemExit(1) from exc
+
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-from scripts.verify_release_test_harness import HarnessSealError, verify
-from scripts.verify_test_skip_policy import DEFAULT_POLICY, PYTEST_ROOTS
+from scripts.verify_test_skip_policy import DEFAULT_POLICY, PYTEST_ROOTS  # noqa: E402
 
 FORBIDDEN_ARGUMENTS = {
     "-k",
@@ -73,10 +94,57 @@ REPORT_KEYS = {
 }
 REPORT_ENTRY_KEYS = {"nodeid", "phase", "outcome", "xfail"}
 ALLOWED_OPTIONS = {"-q", "-v", "-vv", "-ra", "--import-mode=importlib"}
+ALLOWED_PARENT_PYTHONPATHS = {"", ".", "console", ".:console", "refinement", "vault", "workspace"}
+CHILD_BOOTSTRAP = """
+import json
+import sys
+from pathlib import Path
+
+import pytest
+import anyio.pytest_plugin
+import pytest_asyncio.plugin
+
+roots = json.loads(sys.argv.pop(1))
+if not isinstance(roots, list) or not roots:
+    raise SystemExit("release pytest import roots are invalid")
+for raw in reversed(roots):
+    root = Path(raw).resolve(strict=True)
+    sys.path.insert(0, str(root))
+raise SystemExit(pytest.console_main())
+"""
+PYTHON_CONTROL_VARIABLES = {
+    "PYTHONBREAKPOINT",
+    "PYTHONHOME",
+    "PYTHONINSPECT",
+    "PYTHONSTARTUP",
+    "PYTHONUSERBASE",
+    "PYTHONWARNINGS",
+}
 
 
 class ReleasePytestError(RuntimeError):
     pass
+
+
+def _import_roots(args: list[str]) -> list[Path]:
+    families: set[Path] = set()
+    for argument in args:
+        if argument.startswith("-"):
+            continue
+        relative = (REPO / argument.split("::", 1)[0]).resolve().relative_to(REPO)
+        parts = relative.parts
+        if not parts or parts[0] in {"tests", "airflow"}:
+            continue
+        if parts[0] == "cartridges" and len(parts) >= 2:
+            families.add(REPO / "cartridges" / parts[1])
+        elif parts[0] in {"console", "refinement", "vault", "workspace", "mcp-infra"}:
+            families.add(REPO / parts[0])
+    if len(families) > 1:
+        joined = ", ".join(sorted(path.relative_to(REPO).as_posix() for path in families))
+        raise ReleasePytestError(
+            f"incompatible component import roots must run separately: {joined}"
+        )
+    return [REPO, *sorted(families)]
 
 
 def _validate_arguments(args: list[str]) -> None:
@@ -146,10 +214,20 @@ def _load_report(path: Path, *, nonce: str, mode: str) -> dict[str, Any]:
 
 
 def _run(
-    *, args: list[str], config: Path, report: Path, mode: str
+    *,
+    args: list[str],
+    config: Path,
+    report: Path,
+    mode: str,
+    import_roots: list[Path],
 ) -> tuple[subprocess.CompletedProcess[bytes], dict[str, Any]]:
     nonce = secrets.token_hex(32)
     environment = dict(os.environ)
+    for key in PYTHON_CONTROL_VARIABLES:
+        environment.pop(key, None)
+    environment.pop("PYTHONPATH", None)
+    environment["PYTHONNOUSERSITE"] = "1"
+    environment["PYTHONSAFEPATH"] = "1"
     environment.pop("PYTEST_ADDOPTS", None)
     environment.pop("PYTEST_PLUGINS", None)
     environment["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
@@ -160,8 +238,10 @@ def _run(
     environment["OMEGA_RELEASE_TEST_SKIP_POLICY"] = str(DEFAULT_POLICY)
     command = [
         sys.executable,
-        "-m",
-        "pytest",
+        "-I",
+        "-c",
+        CHILD_BOOTSTRAP,
+        json.dumps([str(path) for path in import_roots]),
         "-c",
         str(config),
         "--rootdir",
@@ -221,12 +301,16 @@ def main(argv: list[str] | None = None) -> int:
         if not args:
             raise ReleasePytestError("no test targets")
         _validate_arguments(args)
+        import_roots = _import_roots(args)
         configured_environment = os.environ.get("OMEGA_RELEASE_TEST_SKIP_ENVIRONMENT")
         if configured_environment not in {None, "release"}:
             raise ReleasePytestError("release skip environment override is forbidden")
         configured_policy = os.environ.get("OMEGA_RELEASE_TEST_SKIP_POLICY")
         if configured_policy is not None and Path(configured_policy).resolve() != DEFAULT_POLICY.resolve():
             raise ReleasePytestError("release skip policy override is forbidden")
+        configured_pythonpath = os.environ.get("PYTHONPATH", "")
+        if configured_pythonpath not in ALLOWED_PARENT_PYTHONPATHS:
+            raise ReleasePytestError("unreviewed parent PYTHONPATH is forbidden")
         verify()
         with tempfile.TemporaryDirectory(prefix="omega-release-pytest-") as directory:
             root = Path(directory)
@@ -237,6 +321,7 @@ def main(argv: list[str] | None = None) -> int:
                 config=config,
                 report=root / "collection.json",
                 mode="collect",
+                import_roots=import_roots,
             )
             verify()
             _, execution = _run(
@@ -244,6 +329,7 @@ def main(argv: list[str] | None = None) -> int:
                 config=config,
                 report=root / "execution.json",
                 mode="execute",
+                import_roots=import_roots,
             )
             verify()
             _reconcile(collection, execution)

@@ -219,7 +219,7 @@ def test_release_workflow_validates_before_publishing_images():
         "tests/stress/requirements.txt",
     ):
         assert f"-r {requirements}" in src
-    assert "python3 scripts/run_release_pytest.py -q" in src
+    assert "python3 -I scripts/run_release_pytest.py -q" in src
     assert "docker compose --env-file infra/.env.example" in src
     assert "docker-compose.cartridges.yml" in src
     assert "npm --prefix console-next run typecheck" in src

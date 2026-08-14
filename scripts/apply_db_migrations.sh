@@ -40,11 +40,27 @@ if command -v flock >/dev/null 2>&1; then
   fi
 fi
 
+load_passive_dotenv() {
+  local input_path="$1" output_path key value
+  output_path="$(mktemp "${TMPDIR:-/tmp}/omega-release-dotenv.XXXXXX")"
+  chmod 0600 "${output_path}"
+  if ! python3 -I "${ROOT_DIR}/scripts/load_release_dotenv.py" \
+      --input "${input_path}" --output "${output_path}"; then
+    rm -f -- "${output_path}"
+    return 2
+  fi
+  while IFS= read -r -d '' key && IFS= read -r -d '' value; do
+    if ! export "${key}=${value}"; then
+      rm -f -- "${output_path}"
+      echo "[migrate] passive dotenv import failed for ${key}" >&2
+      return 2
+    fi
+  done < "${output_path}"
+  rm -f -- "${output_path}"
+}
+
 if [[ -f "${ENV_FILE}" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "${ENV_FILE}"
-  set +a
+  load_passive_dotenv "${ENV_FILE}"
 fi
 
 # Portable sha256 of a file's bytes (Linux coreutils or BSD/macOS shasum).

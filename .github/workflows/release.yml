@@ -168,6 +168,49 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      - name: Bind release test harness seal to source SHA
+        id: harness_authority
+        run: |
+          set -euo pipefail
+          seal_path=.github/release-test-harness-seal.json
+          verifier_path=scripts/verify_release_test_harness.py
+          secure_output_path=scripts/secure_release_output.py
+          docker_lock_path=scripts/release_docker_lock.py
+          committed_seal="$(mktemp)"
+          committed_verifier="$(mktemp)"
+          committed_secure_output="$(mktemp)"
+          committed_docker_lock="$(mktemp)"
+          trap 'rm -f -- "${committed_seal}" "${committed_verifier}" "${committed_secure_output}" "${committed_docker_lock}"' EXIT
+          git show "${GITHUB_SHA}:${seal_path}" > "${committed_seal}"
+          git show "${GITHUB_SHA}:${verifier_path}" > "${committed_verifier}"
+          git show "${GITHUB_SHA}:${secure_output_path}" > "${committed_secure_output}"
+          git show "${GITHUB_SHA}:${docker_lock_path}" > "${committed_docker_lock}"
+          cmp --silent "${committed_seal}" "${seal_path}" || {
+            echo "::error::release test harness seal differs from source SHA"
+            exit 1
+          }
+          cmp --silent "${committed_verifier}" "${verifier_path}" || {
+            echo "::error::release test harness verifier differs from source SHA"
+            exit 1
+          }
+          cmp --silent "${committed_secure_output}" "${secure_output_path}" || {
+            echo "::error::secure release output helper differs from source SHA"
+            exit 1
+          }
+          cmp --silent "${committed_docker_lock}" "${docker_lock_path}" || {
+            echo "::error::release Docker lock differs from source SHA"
+            exit 1
+          }
+          seal_sha256="$(sha256sum "${committed_seal}" | awk '{print $1}')"
+          verifier_sha256="$(sha256sum "${committed_verifier}" | awk '{print $1}')"
+          secure_output_sha256="$(sha256sum "${committed_secure_output}" | awk '{print $1}')"
+          docker_lock_sha256="$(sha256sum "${committed_docker_lock}" | awk '{print $1}')"
+          [[ "${seal_sha256}" =~ ^[0-9a-f]{64}$ && "${verifier_sha256}" =~ ^[0-9a-f]{64}$ && "${secure_output_sha256}" =~ ^[0-9a-f]{64}$ && "${docker_lock_sha256}" =~ ^[0-9a-f]{64}$ ]]
+          echo "sha256=${seal_sha256}" >> "${GITHUB_OUTPUT}"
+          echo "verifier_sha256=${verifier_sha256}" >> "${GITHUB_OUTPUT}"
+          echo "secure_output_sha256=${secure_output_sha256}" >> "${GITHUB_OUTPUT}"
+          echo "docker_lock_sha256=${docker_lock_sha256}" >> "${GITHUB_OUTPUT}"
+
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
@@ -201,8 +244,13 @@ jobs:
         run: python3 scripts/verify_test_skip_policy.py
 
       - name: Static release tests
+        env:
+          OMEGA_RELEASE_TEST_HARNESS_SHA256: ${{ steps.harness_authority.outputs.sha256 }}
+          OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256: ${{ steps.harness_authority.outputs.verifier_sha256 }}
         run: |
-          python3 scripts/run_release_pytest.py -q \
+          [[ "$(sha256sum scripts/verify_release_test_harness.py | awk '{print $1}')" == "${OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256}" ]]
+          python3 -I scripts/verify_release_test_harness.py
+          python3 -I scripts/run_release_pytest.py -q \
             tests/test_aws_compose_consistency.py \
             tests/test_aws_secrets_manager_config.py \
             tests/test_app_env_safe_default.py \
@@ -212,28 +260,36 @@ jobs:
       - name: Run detected root tests
         if: needs.detect-release-changes.outputs.root_tests == 'true'
         env:
+          OMEGA_RELEASE_TEST_HARNESS_SHA256: ${{ steps.harness_authority.outputs.sha256 }}
+          OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256: ${{ steps.harness_authority.outputs.verifier_sha256 }}
           ROOT_TEST_TARGETS: ${{ needs.detect-release-changes.outputs.root_test_targets }}
         run: |
           set -euo pipefail
+          [[ "$(sha256sum scripts/verify_release_test_harness.py | awk '{print $1}')" == "${OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256}" ]]
           [[ -n "${ROOT_TEST_TARGETS}" ]] || {
             echo "::error::root_tests=true but no root test targets were resolved"
             exit 1
           }
           read -r -a targets <<< "${ROOT_TEST_TARGETS}"
-          python3 scripts/run_release_pytest.py -q "${targets[@]}"
+          python3 -I scripts/verify_release_test_harness.py
+          python3 -I scripts/run_release_pytest.py -q "${targets[@]}"
 
       - name: Run detected cartridge tests
         if: needs.detect-release-changes.outputs.cartridge_tests == 'true'
         env:
           CARTRIDGE_TEST_TARGETS: ${{ needs.detect-release-changes.outputs.cartridge_test_targets }}
+          OMEGA_RELEASE_TEST_HARNESS_SHA256: ${{ steps.harness_authority.outputs.sha256 }}
+          OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256: ${{ steps.harness_authority.outputs.verifier_sha256 }}
         run: |
           set -euo pipefail
+          [[ "$(sha256sum scripts/verify_release_test_harness.py | awk '{print $1}')" == "${OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256}" ]]
           [[ -n "${CARTRIDGE_TEST_TARGETS}" ]] || {
             echo "::error::cartridge_tests=true but no cartridge test targets were resolved"
             exit 1
           }
           read -r -a targets <<< "${CARTRIDGE_TEST_TARGETS}"
-          python3 scripts/run_release_pytest.py -q "${targets[@]}"
+          python3 -I scripts/verify_release_test_harness.py
+          python3 -I scripts/run_release_pytest.py -q "${targets[@]}"
 
       - name: Terraform validation
         run: |
@@ -521,6 +577,49 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      - name: Bind release test harness seal to source SHA
+        id: harness_authority
+        run: |
+          set -euo pipefail
+          seal_path=.github/release-test-harness-seal.json
+          verifier_path=scripts/verify_release_test_harness.py
+          secure_output_path=scripts/secure_release_output.py
+          docker_lock_path=scripts/release_docker_lock.py
+          committed_seal="$(mktemp)"
+          committed_verifier="$(mktemp)"
+          committed_secure_output="$(mktemp)"
+          committed_docker_lock="$(mktemp)"
+          trap 'rm -f -- "${committed_seal}" "${committed_verifier}" "${committed_secure_output}" "${committed_docker_lock}"' EXIT
+          git show "${GITHUB_SHA}:${seal_path}" > "${committed_seal}"
+          git show "${GITHUB_SHA}:${verifier_path}" > "${committed_verifier}"
+          git show "${GITHUB_SHA}:${secure_output_path}" > "${committed_secure_output}"
+          git show "${GITHUB_SHA}:${docker_lock_path}" > "${committed_docker_lock}"
+          cmp --silent "${committed_seal}" "${seal_path}" || {
+            echo "::error::release test harness seal differs from source SHA"
+            exit 1
+          }
+          cmp --silent "${committed_verifier}" "${verifier_path}" || {
+            echo "::error::release test harness verifier differs from source SHA"
+            exit 1
+          }
+          cmp --silent "${committed_secure_output}" "${secure_output_path}" || {
+            echo "::error::secure release output helper differs from source SHA"
+            exit 1
+          }
+          cmp --silent "${committed_docker_lock}" "${docker_lock_path}" || {
+            echo "::error::release Docker lock differs from source SHA"
+            exit 1
+          }
+          seal_sha256="$(sha256sum "${committed_seal}" | awk '{print $1}')"
+          verifier_sha256="$(sha256sum "${committed_verifier}" | awk '{print $1}')"
+          secure_output_sha256="$(sha256sum "${committed_secure_output}" | awk '{print $1}')"
+          docker_lock_sha256="$(sha256sum "${committed_docker_lock}" | awk '{print $1}')"
+          [[ "${seal_sha256}" =~ ^[0-9a-f]{64}$ && "${verifier_sha256}" =~ ^[0-9a-f]{64}$ && "${secure_output_sha256}" =~ ^[0-9a-f]{64}$ && "${docker_lock_sha256}" =~ ^[0-9a-f]{64}$ ]]
+          echo "sha256=${seal_sha256}" >> "${GITHUB_OUTPUT}"
+          echo "verifier_sha256=${verifier_sha256}" >> "${GITHUB_OUTPUT}"
+          echo "secure_output_sha256=${secure_output_sha256}" >> "${GITHUB_OUTPUT}"
+          echo "docker_lock_sha256=${docker_lock_sha256}" >> "${GITHUB_OUTPUT}"
+
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
@@ -546,11 +645,76 @@ jobs:
             python -m pip install -r "$req"
           done
           npm --prefix tests-e2e ci
-          tests-e2e/node_modules/.bin/playwright install --with-deps chromium
+          PLAYWRIGHT_BROWSERS_PATH="${RUNNER_TEMP}/omega-playwright-browsers.install" \
+            tests-e2e/node_modules/.bin/playwright install --with-deps chromium
+
+      - name: Freeze trusted Playwright and Docker gate runtimes
+        id: gate_runtime_authority
+        env:
+          OMEGA_RELEASE_DOCKER_LOCK_SHA256: ${{ steps.harness_authority.outputs.docker_lock_sha256 }}
+          OMEGA_RELEASE_TEST_HARNESS_SHA256: ${{ steps.harness_authority.outputs.sha256 }}
+          OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256: ${{ steps.harness_authority.outputs.verifier_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$(/usr/bin/sha256sum scripts/verify_release_test_harness.py | /usr/bin/awk '{print $1}')" == "${OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256}" ]]
+          [[ "$(/usr/bin/sha256sum scripts/release_docker_lock.py | /usr/bin/awk '{print $1}')" == "${OMEGA_RELEASE_DOCKER_LOCK_SHA256}" ]]
+          /usr/bin/python3 -I scripts/verify_release_test_harness.py
+          real_docker="$(command -v docker)"
+          real_node="$(command -v node)"
+          [[ "${real_docker}" == /* && "${real_node}" == /* ]]
+          sudo /usr/bin/install -d -o root -g root -m 0555 \
+            /opt/omega-release-runtime \
+            /opt/omega-release-runtime/bin \
+            /opt/omega-release-runtime/browsers
+          sudo /usr/bin/install -o root -g root -m 0555 \
+            "${real_node}" /opt/omega-release-runtime/bin/node
+          sudo /usr/bin/install -o root -g root -m 0444 \
+            scripts/release_docker_lock.py \
+            /opt/omega-release-runtime/release_docker_lock.py
+          sudo /bin/cp -a \
+            "${RUNNER_TEMP}/omega-playwright-browsers.install/." \
+            /opt/omega-release-runtime/browsers/
+          /usr/bin/install -d -m 0700 \
+            tests-e2e/playwright-report tests-e2e/test-results
+          /usr/bin/install -m 0600 /dev/null tests-e2e/.env
+          runner_uid="$(id -u)"
+          runner_gid="$(id -g)"
+          sudo /bin/chown -R root:root \
+            tests-e2e /opt/omega-release-runtime
+          sudo /bin/chmod -R a-w \
+            tests-e2e /opt/omega-release-runtime
+          sudo /bin/chmod 0555 tests-e2e
+          sudo /bin/chown -R "${runner_uid}:${runner_gid}" \
+            tests-e2e/playwright-report tests-e2e/test-results
+          sudo /bin/chmod 0700 \
+            tests-e2e/playwright-report tests-e2e/test-results
+          sudo /bin/chown "${runner_uid}:${runner_gid}" tests-e2e/.env
+          sudo /bin/chmod 0600 tests-e2e/.env
+          wrapper="$(mktemp)"
+          trap 'rm -f -- "${wrapper}"' EXIT
+          printf '#!/bin/bash\nexec /usr/bin/python3 -I %q --workspace %q --real %q -- "$@"\n' \
+            /opt/omega-release-runtime/release_docker_lock.py \
+            "${GITHUB_WORKSPACE}" "${real_docker}" > "${wrapper}"
+          sudo /usr/bin/install -o root -g root -m 0555 \
+            "${wrapper}" /opt/omega-release-runtime/bin/docker
+          playwright_sha256="$(
+            OMEGA_RELEASE_PLAYWRIGHT_NODE=/opt/omega-release-runtime/bin/node \
+            PLAYWRIGHT_BROWSERS_PATH=/opt/omega-release-runtime/browsers \
+            /usr/bin/python3 -I scripts/run_release_playwright.py \
+              --print-runtime-sha256
+          )"
+          [[ "${playwright_sha256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$(/usr/bin/sha256sum /opt/omega-release-runtime/release_docker_lock.py | /usr/bin/awk '{print $1}')" == "${OMEGA_RELEASE_DOCKER_LOCK_SHA256}" ]]
+          echo "playwright_sha256=${playwright_sha256}" >> "${GITHUB_OUTPUT}"
+          echo "trusted_path=/opt/omega-release-runtime/bin:${PATH}" >> "${GITHUB_OUTPUT}"
 
       - name: Verify sealed release test harness
+        env:
+          OMEGA_RELEASE_TEST_HARNESS_SHA256: ${{ steps.harness_authority.outputs.sha256 }}
+          OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256: ${{ steps.harness_authority.outputs.verifier_sha256 }}
         run: |
-          python3 scripts/verify_release_test_harness.py
+          [[ "$(sha256sum scripts/verify_release_test_harness.py | awk '{print $1}')" == "${OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256}" ]]
+          python3 -I scripts/verify_release_test_harness.py
           python3 scripts/verify_test_skip_policy.py
 
       - name: Bootstrap digest release stack
@@ -717,31 +881,28 @@ jobs:
           done
           docker image ls --no-trunc --digests \
             --format '{{.Repository}}\t{{.Tag}}\t{{.Digest}}\t{{.ID}}' \
-            | sort > "${RUNNER_TEMP}/omega-release-image-inventory.lock"
+            | LC_ALL=C sort > "${RUNNER_TEMP}/omega-release-image-inventory.lock"
           echo "compose_sha256=$(sha256sum "${RUNNER_TEMP}/omega-release-compose.json" | awk '{print $1}')" >> "${GITHUB_OUTPUT}"
           echo "image_inventory_sha256=$(sha256sum "${RUNNER_TEMP}/omega-release-image-inventory.lock" | awk '{print $1}')" >> "${GITHUB_OUTPUT}"
-          real_docker="$(command -v docker)"
-          mkdir -p "${RUNNER_TEMP}/omega-release-docker-lock"
-          REAL_DOCKER="${real_docker}" python3 - <<'PY'
-          import os
-          import shlex
-          from pathlib import Path
-
-          wrapper = Path(os.environ["RUNNER_TEMP"]) / "omega-release-docker-lock/docker"
-          real = shlex.quote(os.environ["REAL_DOCKER"])
-          wrapper.write_text(
-              "#!/bin/bash\n"
-              "set -euo pipefail\n"
-              "exec python3 \"${GITHUB_WORKSPACE}/scripts/release_docker_lock.py\" "
-              f"--real {real} -- \"$@\"\n",
-              encoding="utf-8",
-          )
-          wrapper.chmod(0o755)
-          PY
-          echo "${RUNNER_TEMP}/omega-release-docker-lock" >> "${GITHUB_PATH}"
+          [[ "$(/usr/bin/sha256sum /opt/omega-release-runtime/release_docker_lock.py | /usr/bin/awk '{print $1}')" == "${{ steps.harness_authority.outputs.docker_lock_sha256 }}" ]]
+          compose[0]=/opt/omega-release-runtime/bin/docker
           "${compose[@]}" up -d --no-build --pull never
 
       - name: Wait for exact digest stack basic readiness
+        env:
+          BASH_ENV: /dev/null
+          COMPOSE_FILE: ""
+          COMPOSE_PROFILES: ""
+          COMPOSE_PROJECT_NAME: ""
+          DOCKER_CONTEXT: ""
+          DOCKER_HOST: ""
+          ENV: /dev/null
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          LD_PRELOAD: ""
+          PATH: /opt/omega-release-runtime/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          PYTHONHOME: ""
+          PYTHONPATH: ""
         run: |
           set -euo pipefail
           bash scripts/wait_for_health.sh
@@ -757,15 +918,72 @@ jobs:
 
       - name: Run all final gates against exact digest stack
         env:
+          BASH_ENV: /dev/null
+          COMPOSE_FILE: ""
+          COMPOSE_PROFILES: ""
+          COMPOSE_PROJECT_NAME: ""
+          DOCKER_CONTEXT: ""
+          DOCKER_HOST: ""
+          ENV: /dev/null
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          LD_PRELOAD: ""
+          GNUMAKEFLAGS: ""
+          MAKEFLAGS: ""
+          MAKEOVERRIDES: ""
+          MFLAGS: ""
+          NODE_OPTIONS: ""
           OMEGA_RELEASE_E2E_ENV_SHA256: ${{ steps.bootstrap.outputs.e2e_env_sha256 }}
+          OMEGA_RELEASE_DIGEST_STACK: "1"
+          OMEGA_RELEASE_PLAYWRIGHT_NODE: /opt/omega-release-runtime/bin/node
+          OMEGA_RELEASE_PLAYWRIGHT_RUNTIME_SHA256: ${{ steps.gate_runtime_authority.outputs.playwright_sha256 }}
+          OMEGA_RELEASE_TEST_HARNESS_SHA256: ${{ steps.harness_authority.outputs.sha256 }}
+          OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256: ${{ steps.harness_authority.outputs.verifier_sha256 }}
+          OMEGA_RELEASE_TEST_SKIP_ENVIRONMENT: release
+          OMEGA_RELEASE_TEST_SKIP_POLICY: ${{ github.workspace }}/.github/release-test-skip-policy.json
+          PATH: ${{ steps.gate_runtime_authority.outputs.trusted_path }}
+          PLAYWRIGHT_BROWSERS_PATH: /opt/omega-release-runtime/browsers
+          PYTHONHOME: ""
+          PYTHONPATH: ""
           STRESS_ACTION: ${{ needs.authorize-release-gate-skips.outputs.production_readiness_stress_action }}
           STRESS_SKIP_AUTHORIZED: ${{ needs.authorize-release-gate-skips.outputs.production_readiness_stress_skip_authorized }}
           STRESS_POLICY_ID: ${{ needs.authorize-release-gate-skips.outputs.production_readiness_stress_policy_id }}
         run: |
           set -euo pipefail
+          [[ "$(/usr/bin/sha256sum scripts/verify_release_test_harness.py | /usr/bin/awk '{print $1}')" == "${OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256}" ]]
+          /usr/bin/python3 -I scripts/verify_release_test_harness.py
+          [[ "$(/usr/bin/sha256sum /opt/omega-release-runtime/release_docker_lock.py | /usr/bin/awk '{print $1}')" == "${{ steps.harness_authority.outputs.docker_lock_sha256 }}" ]]
+          file_command_stamp() {
+            local path="$1"
+            [[ -f "${path}" && ! -L "${path}" ]] || return 1
+            /usr/bin/stat -Lc '%d:%i:%f:%u:%g' -- "${path}"
+            /usr/bin/sha256sum -- "${path}" | /usr/bin/awk '{print $1}'
+          }
+          gate_env_stamp="$(file_command_stamp "${GITHUB_ENV}")"
+          gate_path_stamp="$(file_command_stamp "${GITHUB_PATH}")"
+          verify_gate_file_commands() {
+            local rc=$?
+            trap - EXIT
+            if [[ "$(file_command_stamp "${GITHUB_ENV}" 2>/dev/null || true)" != "${gate_env_stamp}" ||
+                  "$(file_command_stamp "${GITHUB_PATH}" 2>/dev/null || true)" != "${gate_path_stamp}" ]]; then
+              echo "::error::release gate modified a GitHub environment file command"
+              rc=98
+            fi
+            exit "${rc}"
+          }
+          trap verify_gate_file_commands EXIT
+          release_make() {
+            /usr/bin/env \
+              -u GITHUB_ENV -u GITHUB_PATH \
+              -u PYTHONHOME -u PYTHONPATH -u PYTHONSTARTUP \
+              -u PYTHONINSPECT -u PYTHONWARNINGS -u PYTHONBREAKPOINT \
+              -u LD_PRELOAD -u LD_AUDIT -u LD_LIBRARY_PATH \
+              BASH_ENV=/dev/null ENV=/dev/null PATH="${PATH}" \
+              /usr/bin/make "$@"
+          }
           case "${STRESS_ACTION}" in
             run)
-              make production-readiness
+              release_make production-readiness
               ;;
             skip)
               [[ "${STRESS_SKIP_AUTHORIZED}" == "true" && "${STRESS_POLICY_ID}" != "none" ]] || {
@@ -773,7 +991,8 @@ jobs:
                 exit 1
               }
               echo "Authorized stress skip policy: ${STRESS_POLICY_ID}"
-              OMEGA_PRODUCTION_READINESS_SKIP_STRESS=1 make production-readiness
+              OMEGA_PRODUCTION_READINESS_SKIP_STRESS=1 \
+                release_make production-readiness
               ;;
             *)
               echo "::error::unknown production-readiness stress action: ${STRESS_ACTION}"
@@ -783,20 +1002,51 @@ jobs:
 
       - name: Re-verify runtime digests and real-data readiness after all gates
         env:
+          BASH_ENV: /dev/null
+          COMPOSE_FILE: ""
+          COMPOSE_PROFILES: ""
+          COMPOSE_PROJECT_NAME: ""
+          DOCKER_CONTEXT: ""
+          DOCKER_HOST: ""
+          ENV: /dev/null
           EXPECTED_CHECKSUM_SHA256: ${{ steps.manifest.outputs.checksum_sha256 }}
           EXPECTED_COMPOSE_SHA256: ${{ steps.runtime_lock.outputs.compose_sha256 }}
           EXPECTED_IMAGE_INVENTORY_SHA256: ${{ steps.runtime_lock.outputs.image_inventory_sha256 }}
           EXPECTED_MANIFEST_SHA256: ${{ steps.manifest.outputs.manifest_sha256 }}
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          LD_PRELOAD: ""
+          GNUMAKEFLAGS: ""
+          MAKEFLAGS: ""
+          MAKEOVERRIDES: ""
+          MFLAGS: ""
           MANIFEST_PATH: ${{ steps.manifest.outputs.manifest_path }}
+          OMEGA_RELEASE_DIGEST_STACK: "1"
+          OMEGA_RELEASE_PLAYWRIGHT_NODE: /opt/omega-release-runtime/bin/node
+          OMEGA_RELEASE_PLAYWRIGHT_RUNTIME_SHA256: ${{ steps.gate_runtime_authority.outputs.playwright_sha256 }}
+          OMEGA_RELEASE_SECURE_OUTPUT_SHA256: ${{ steps.harness_authority.outputs.secure_output_sha256 }}
+          OMEGA_RELEASE_TEST_HARNESS_SHA256: ${{ steps.harness_authority.outputs.sha256 }}
+          OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256: ${{ steps.harness_authority.outputs.verifier_sha256 }}
+          OMEGA_RELEASE_TEST_SKIP_ENVIRONMENT: release
+          OMEGA_RELEASE_TEST_SKIP_POLICY: ${{ github.workspace }}/.github/release-test-skip-policy.json
+          NODE_OPTIONS: ""
+          PATH: /opt/omega-release-runtime/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          PLAYWRIGHT_BROWSERS_PATH: /opt/omega-release-runtime/browsers
+          PYTHONHOME: ""
+          PYTHONPATH: ""
         run: |
           set -euo pipefail
+          [[ "$(/usr/bin/sha256sum scripts/verify_release_test_harness.py | /usr/bin/awk '{print $1}')" == "${OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256}" ]]
+          /usr/bin/python3 -I scripts/verify_release_test_harness.py
+          /usr/bin/python3 -I scripts/run_release_playwright.py --verify-runtime-only
+          [[ "$(/usr/bin/sha256sum scripts/secure_release_output.py | /usr/bin/awk '{print $1}')" == "${OMEGA_RELEASE_SECURE_OUTPUT_SHA256}" ]]
           verify_authority_sha256() {
             local label="$1" expected="$2" path="$3" actual
             [[ "${expected}" =~ ^[0-9a-f]{64}$ ]] || {
               echo "::error::${label} authority SHA-256 is invalid"
               exit 1
             }
-            actual="$(sha256sum "${path}" | awk '{print $1}')"
+            actual="$(/usr/bin/sha256sum "${path}" | /usr/bin/awk '{print $1}')"
             [[ "${actual}" == "${expected}" ]] || {
               echo "::error::${label} authority bytes changed during release gates"
               exit 1
@@ -806,47 +1056,46 @@ jobs:
           verify_authority_sha256 checksum "${EXPECTED_CHECKSUM_SHA256}" "${{ steps.manifest.outputs.checksum_path }}"
           verify_authority_sha256 compose "${EXPECTED_COMPOSE_SHA256}" "${RUNNER_TEMP}/omega-release-compose.json"
           verify_authority_sha256 image-inventory "${EXPECTED_IMAGE_INVENTORY_SHA256}" "${RUNNER_TEMP}/omega-release-image-inventory.lock"
-          bash scripts/wait_for_health.sh
+          /usr/bin/bash scripts/wait_for_health.sh
+          FINAL_OUTPUT_DIR="$(/usr/bin/mktemp -d "${RUNNER_TEMP}/omega-release-final.XXXXXX")"
+          /bin/chmod 0700 "${FINAL_OUTPUT_DIR}"
+          FINAL_COMPOSE="${FINAL_OUTPUT_DIR}/compose.json"
+          FINAL_IMAGE_INVENTORY="${FINAL_OUTPUT_DIR}/image-inventory.lock"
           docker compose --env-file infra/.env \
             -f infra/docker-compose.yml \
             -f infra/docker-compose.dev.yml \
             -f infra/terraform-gcp/release/docker-compose.release.yml \
             --profile sap config --format json \
-            > "${RUNNER_TEMP}/omega-release-compose-final.json"
-          cmp --silent \
-            "${RUNNER_TEMP}/omega-release-compose.json" \
-            "${RUNNER_TEMP}/omega-release-compose-final.json" || {
-              echo "::error::canonical Docker Compose model changed during release gates"
-              exit 1
-            }
+            | /usr/bin/python3 -I scripts/secure_release_output.py \
+                --output "${FINAL_COMPOSE}" \
+                --baseline "${RUNNER_TEMP}/omega-release-compose.json" \
+                --expected-sha256 "${EXPECTED_COMPOSE_SHA256}"
           docker image ls --no-trunc --digests \
             --format '{{.Repository}}\t{{.Tag}}\t{{.Digest}}\t{{.ID}}' \
-            | sort > "${RUNNER_TEMP}/omega-release-image-inventory.post-gates"
-          cmp --silent \
-            "${RUNNER_TEMP}/omega-release-image-inventory.lock" \
-            "${RUNNER_TEMP}/omega-release-image-inventory.post-gates" || {
-              echo "::error::Docker image inventory changed during final release gates"
-              exit 1
-            }
-          python3 scripts/release_digest_env.py \
+            | LC_ALL=C /usr/bin/sort \
+            | /usr/bin/python3 -I scripts/secure_release_output.py \
+                --output "${FINAL_IMAGE_INVENTORY}" \
+                --baseline "${RUNNER_TEMP}/omega-release-image-inventory.lock" \
+                --expected-sha256 "${EXPECTED_IMAGE_INVENTORY_SHA256}"
+          /usr/bin/python3 -I scripts/release_digest_env.py \
             --manifest "${MANIFEST_PATH}" \
             --checksum "${{ steps.manifest.outputs.checksum_path }}" \
             --repository "${GITHUB_REPOSITORY}" \
             --release-tag "${GITHUB_REF_NAME}" \
             --source-sha "${GITHUB_SHA}" \
             --build-run-id "${GITHUB_RUN_ID}" \
-            --compose-config "${RUNNER_TEMP}/omega-release-compose-final.json"
-          python3 scripts/verify_release_source_checkout.py \
+            --compose-config "${FINAL_COMPOSE}"
+          /usr/bin/python3 -I scripts/verify_release_source_checkout.py \
             --source-sha "${GITHUB_SHA}" \
-            --compose-config "${RUNNER_TEMP}/omega-release-compose-final.json"
-          python3 scripts/verify_release_digest_runtime.py \
+            --compose-config "${FINAL_COMPOSE}"
+          /usr/bin/python3 -I scripts/verify_release_digest_runtime.py \
             --manifest "${MANIFEST_PATH}" \
             --checksum "${{ steps.manifest.outputs.checksum_path }}" \
             --repository "${GITHUB_REPOSITORY}" \
             --release-tag "${GITHUB_REF_NAME}" \
             --source-sha "${GITHUB_SHA}" \
             --build-run-id "${GITHUB_RUN_ID}"
-          python3 - <<'PY'
+          /usr/bin/python3 -I - <<'PY'
           import json
           import urllib.request
 
@@ -859,10 +1108,44 @@ jobs:
           PY
 
       - name: Verify harness seal immediately after final gates
-        run: python3 scripts/verify_release_test_harness.py
+        env:
+          BASH_ENV: /dev/null
+          COMPOSE_FILE: ""
+          COMPOSE_PROFILES: ""
+          COMPOSE_PROJECT_NAME: ""
+          DOCKER_CONTEXT: ""
+          DOCKER_HOST: ""
+          ENV: /dev/null
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          LD_PRELOAD: ""
+          OMEGA_RELEASE_TEST_HARNESS_SHA256: ${{ steps.harness_authority.outputs.sha256 }}
+          OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256: ${{ steps.harness_authority.outputs.verifier_sha256 }}
+          NODE_OPTIONS: ""
+          PATH: /opt/omega-release-runtime/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          PYTHONHOME: ""
+          PYTHONPATH: ""
+        run: |
+          [[ "$(/usr/bin/sha256sum scripts/verify_release_test_harness.py | /usr/bin/awk '{print $1}')" == "${OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256}" ]]
+          /usr/bin/python3 -I scripts/verify_release_test_harness.py
 
       - name: Digest-stack logs on failure
         if: failure()
+        env:
+          BASH_ENV: /dev/null
+          COMPOSE_FILE: ""
+          COMPOSE_PROFILES: ""
+          COMPOSE_PROJECT_NAME: ""
+          DOCKER_CONTEXT: ""
+          DOCKER_HOST: ""
+          ENV: /dev/null
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          LD_PRELOAD: ""
+          NODE_OPTIONS: ""
+          PATH: /opt/omega-release-runtime/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          PYTHONHOME: ""
+          PYTHONPATH: ""
         run: |
           docker compose --env-file infra/.env \
             -f infra/docker-compose.yml \
@@ -873,6 +1156,21 @@ jobs:
 
       - name: Stop digest stack
         if: always()
+        env:
+          BASH_ENV: /dev/null
+          COMPOSE_FILE: ""
+          COMPOSE_PROFILES: ""
+          COMPOSE_PROJECT_NAME: ""
+          DOCKER_CONTEXT: ""
+          DOCKER_HOST: ""
+          ENV: /dev/null
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          LD_PRELOAD: ""
+          NODE_OPTIONS: ""
+          PATH: /opt/omega-release-runtime/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          PYTHONHOME: ""
+          PYTHONPATH: ""
         run: |
           docker compose --env-file infra/.env \
             -f infra/docker-compose.yml \

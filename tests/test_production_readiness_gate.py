@@ -35,6 +35,8 @@ def test_release_gate_rejects_poisoned_reserved_env_file(tmp_path: Path) -> None
         "MAKEFLAGS=--just-print\n",
         "PYTHONOPTIMIZE=1\n",
         "LD_PRELOAD=/attacker.so\n",
+        "LD_AUDIT=/attacker-audit.so\n",
+        "LD_FUTURE_CONTROL=/attacker-future.so\n",
     ):
         (infra_dir / ".env").write_text(poison, encoding="utf-8")
         result = subprocess.run(

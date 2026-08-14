@@ -10,10 +10,60 @@ import sys
 from pathlib import Path
 
 KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+RESERVED_EXACT = frozenset(
+    {
+        "BASHOPTS",
+        "BASH_ENV",
+        "CDPATH",
+        "CI",
+        "ENV",
+        "E2E_REQUIRE_STACK",
+        "GLOBIGNORE",
+        "GNUMAKEFLAGS",
+        "IFS",
+        "MAKEFLAGS",
+        "MAKELEVEL",
+        "MAKEOVERRIDES",
+        "MFLAGS",
+        "NODE_PATH",
+        "NODE_OPTIONS",
+        "OMEGA_PRODUCTION_READINESS_SKIP_STRESS",
+        "OMEGA_WAIT_FULL_STACK",
+        "PATH",
+        "PROMPT_COMMAND",
+        "PS4",
+        "SHELL",
+        "SHELLOPTS",
+    }
+)
+RESERVED_PREFIXES = (
+    "COMPOSE_",
+    "DOCKER_",
+    "DYLD_",
+    "GIT_",
+    "GITHUB_",
+    "LD_",
+    "NPM_CONFIG_",
+    "OMEGA_ENABLE_",
+    "OMEGA_GCP_IMAGE_",
+    "OMEGA_PRODUCTION_READINESS_",
+    "OMEGA_RELEASE_",
+    "OMEGA_REQUIRE_",
+    "OMEGA_STRESS_",
+    "PLAYWRIGHT_",
+    "PYTEST_",
+    "PYTHON",
+    "RUNNER_",
+    "npm_config_",
+)
 
 
 class DotenvError(RuntimeError):
     pass
+
+
+def _is_reserved(key: str) -> bool:
+    return key in RESERVED_EXACT or key.startswith(RESERVED_PREFIXES)
 
 
 def parse(text: str) -> dict[str, str]:
@@ -27,6 +77,8 @@ def parse(text: str) -> dict[str, str]:
         key, separator, raw_value = line.partition("=")
         if not separator or KEY.fullmatch(key) is None or key in values:
             raise DotenvError(f"invalid or duplicate dotenv assignment at line {number}")
+        if _is_reserved(key):
+            raise DotenvError(f"reserved dotenv variable {key} at line {number}")
         try:
             lexer = shlex.shlex(raw_value, posix=True)
             lexer.whitespace_split = True

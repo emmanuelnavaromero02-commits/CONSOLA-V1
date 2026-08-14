@@ -43,6 +43,8 @@ MAX_BLOB_BYTES = 64 * 1024 * 1024
 MAX_ARTIFACT_BYTES = 2 * 1024 * 1024
 OCI_INDEX = "application/vnd.oci.image.index.v1+json"
 OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json"
+DOCKER_MANIFEST = "application/vnd.docker.distribution.manifest.v2+json"
+DOCKER_MANIFEST_LIST = "application/vnd.docker.distribution.manifest.list.v2+json"
 OCI_CONFIG = "application/vnd.oci.image.config.v1+json"
 OCI_EMPTY = "application/vnd.oci.empty.v1+json"
 OCI_ATTESTATION = "application/vnd.docker.attestation.manifest.v1+json"
@@ -420,13 +422,26 @@ class RegistryClient:
         reference: str,
         *,
         allow_absent: bool = False,
+        accepted_media_types: frozenset[str] | None = None,
     ) -> HttpResult | None:
         _validate_service(service)
+        media_types = (
+            frozenset({OCI_INDEX, OCI_MANIFEST})
+            if accepted_media_types is None
+            else accepted_media_types
+        )
+        if not media_types or not media_types <= {
+            OCI_INDEX,
+            OCI_MANIFEST,
+            DOCKER_MANIFEST,
+            DOCKER_MANIFEST_LIST,
+        }:
+            raise PromotionError("GHCR accepted manifest media types are invalid")
         result = self.transport(
             "GET",
             self._manifest_url(service, reference),
             {
-                "Accept": OCI_ACCEPT,
+                "Accept": ", ".join(sorted(media_types)),
                 "Authorization": f"Bearer {self._token(service, 'pull')}",
                 "User-Agent": "omega-release-promotion/1",
             },
@@ -455,7 +470,7 @@ class RegistryClient:
                 f"GHCR manifest lookup returned HTTP {result.status}"
             )
         content_type = _header(result.headers, "Content-Type").split(";", 1)[0]
-        if content_type.strip().lower() not in {OCI_INDEX, OCI_MANIFEST}:
+        if content_type.strip().lower() not in media_types:
             raise PromotionError("GHCR manifest has an invalid content type")
         digest = _validate_digest(
             _header(result.headers, "Docker-Content-Digest"),

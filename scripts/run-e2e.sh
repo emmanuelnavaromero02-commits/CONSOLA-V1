@@ -53,7 +53,7 @@ if [ ! -f .env ]; then
     fi
 fi
 
-# Source the .env so the shell-level reachability checks below see
+# Load .env as passive data so the shell-level reachability checks below see
 # the configured BASE_URL / LEGACY_URL overrides.
 if [ "${RELEASE_MODE}" = "1" ]; then
     while IFS= read -r dotenv_line || [ -n "${dotenv_line}" ]; do
@@ -67,7 +67,7 @@ if [ "${RELEASE_MODE}" = "1" ]; then
             exit 2
         fi
     done < .env
-    reserved_pattern='^[[:space:]]*(export[[:space:]]+)?(OMEGA_RELEASE_[A-Za-z0-9_]*|OMEGA_STRESS_[A-Za-z0-9_]*|PATH|PYTHONOPTIMIZE|PYTHONPATH|PYTHONHOME|PYTHONSTARTUP|PYTEST_[A-Za-z0-9_]*|NODE_OPTIONS|PLAYWRIGHT_[A-Za-z0-9_]*|DOCKER_[A-Za-z0-9_]*|COMPOSE_[A-Za-z0-9_]*|GITHUB_[A-Za-z0-9_]*|RUNNER_[A-Za-z0-9_]*|NPM_CONFIG_[A-Za-z0-9_]*|npm_config_[A-Za-z0-9_]*|CI|MAKEFLAGS|GNUMAKEFLAGS|MAKEOVERRIDES|MFLAGS|MAKELEVEL|BASH_ENV|BASHOPTS|SHELLOPTS|ENV|SHELL|LD_PRELOAD|LD_LIBRARY_PATH|CDPATH|GLOBIGNORE|IFS)='
+    reserved_pattern='^[[:space:]]*(export[[:space:]]+)?(OMEGA_RELEASE_[A-Za-z0-9_]*|OMEGA_STRESS_[A-Za-z0-9_]*|PATH|PYTHONOPTIMIZE|PYTHONPATH|PYTHONHOME|PYTHONSTARTUP|PYTEST_[A-Za-z0-9_]*|NODE_OPTIONS|NODE_PATH|PLAYWRIGHT_[A-Za-z0-9_]*|DOCKER_[A-Za-z0-9_]*|COMPOSE_[A-Za-z0-9_]*|GITHUB_[A-Za-z0-9_]*|GIT_[A-Za-z0-9_]*|RUNNER_[A-Za-z0-9_]*|NPM_CONFIG_[A-Za-z0-9_]*|npm_config_[A-Za-z0-9_]*|CI|MAKEFLAGS|GNUMAKEFLAGS|MAKEOVERRIDES|MFLAGS|MAKELEVEL|BASH_ENV|BASHOPTS|SHELLOPTS|ENV|SHELL|LD_[A-Za-z0-9_]*|DYLD_[A-Za-z0-9_]*|CDPATH|GLOBIGNORE|IFS)='
     if grep -Eq "${reserved_pattern}" .env; then
         echo "❌ tests-e2e/.env attempts to override a release-gate control"
         exit 2
@@ -83,7 +83,7 @@ if [ "${RELEASE_MODE}" = "1" ]; then
         release_node_options
 fi
 release_env_file="$(mktemp)"
-python3 "${ROOT}/scripts/load_release_dotenv.py" \
+python3 -I "${ROOT}/scripts/load_release_dotenv.py" \
     --input .env --output "${release_env_file}"
 while IFS= read -r -d '' release_key && IFS= read -r -d '' release_value; do
     export "${release_key}=${release_value}"
@@ -99,6 +99,20 @@ if [ "${RELEASE_MODE}" = "1" ] && {
 }; then
     echo "❌ tests-e2e/.env changed a release-gate control"
     exit 2
+fi
+if [ "${RELEASE_MODE}" = "1" ]; then
+    observed_verifier_sha256="$(
+        python3 -I -c \
+          'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' \
+          "${ROOT}/scripts/verify_release_test_harness.py"
+    )"
+    if [[ ! "${OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] ||
+       [ "${observed_verifier_sha256}" != "${OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256}" ]; then
+        echo "❌ Release harness verifier differs from action-bound authority"
+        exit 2
+    fi
+    python3 -I "${ROOT}/scripts/verify_release_test_harness.py"
+    python3 -I "${ROOT}/scripts/run_release_playwright.py" --verify-runtime-only
 fi
 
 # Some deep cartridge probes identify as X-Internal-Service: console,
@@ -177,7 +191,7 @@ echo ""
 EXIT=0
 if [ "${RELEASE_MODE}" = "1" ]; then
     cd "${ROOT}"
-    python3 scripts/run_release_playwright.py || EXIT=$?
+    python3 -I scripts/run_release_playwright.py || EXIT=$?
     cd "${E2E_DIR}"
 else
     # Interactive runs retain the HTML/list reporters from the checked-in config.

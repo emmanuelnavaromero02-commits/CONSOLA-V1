@@ -15,6 +15,8 @@ import pytest
 from scripts.release_image_promotion import (
     ArtifactClient,
     CANONICAL_SERVICES,
+    DOCKER_MANIFEST,
+    DOCKER_MANIFEST_LIST,
     EXPECTED_INHERITED_LABELS,
     GHCR_ORIGIN,
     GITHUB_API,
@@ -487,6 +489,28 @@ def test_actual_buildx_not_found_prose_has_zero_release_authority(release_system
     assert registry.get_manifest(
         "console", registry.identity.release_tag, allow_absent=True
     ) is None
+
+
+@pytest.mark.parametrize("media_type", [DOCKER_MANIFEST, DOCKER_MANIFEST_LIST])
+def test_registry_admits_historical_docker_media_only_when_explicitly_requested(
+    release_system, media_type
+):
+    fake, registry, _artifacts = release_system
+    body = _json({"schemaVersion": 2, "mediaType": media_type})
+    digest = _digest(body)
+    fake.manifests[("console", digest)] = (body, media_type)
+
+    with pytest.raises(PromotionError, match="invalid content type"):
+        registry.get_manifest("console", digest)
+
+    result = registry.get_manifest(
+        "console",
+        digest,
+        accepted_media_types=frozenset(
+            {DOCKER_MANIFEST, DOCKER_MANIFEST_LIST, OCI_INDEX, OCI_MANIFEST}
+        ),
+    )
+    assert result is not None and result.body == body
 
 
 def test_matrix_candidate_operations_cannot_create_release_or_sha_tags(

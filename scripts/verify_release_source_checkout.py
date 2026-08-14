@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -27,9 +28,22 @@ class SourceCheckoutError(RuntimeError):
     pass
 
 
+def _git_environment() -> dict[str, str]:
+    environment = {
+        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+    }
+    environment["GIT_NO_REPLACE_OBJECTS"] = "1"
+    return environment
+
+
 def _git(*args: str) -> str:
     result = subprocess.run(
-        ["git", *args], cwd=REPO, text=True, capture_output=True, check=False
+        ["git", *args],
+        cwd=REPO,
+        env=_git_environment(),
+        text=True,
+        capture_output=True,
+        check=False,
     )
     if result.returncode != 0:
         raise SourceCheckoutError(f"git {' '.join(args)} failed")
@@ -57,14 +71,24 @@ def _normalize_mount(service: str, mount: object) -> dict[str, object]:
 def verify(*, source_sha: str, compose_path: Path) -> None:
     if _git("rev-parse", "HEAD").strip() != source_sha:
         raise SourceCheckoutError("checkout HEAD differs from the release source SHA")
+    flagged = [
+        line
+        for line in _git("ls-files", "-v").splitlines()
+        if not line.startswith("H ")
+    ]
+    if flagged:
+        raise SourceCheckoutError(
+            f"tracked release checkout has unsafe index flags: {flagged[0]}"
+        )
     for staged in (False, True):
-        args = ["diff", "--quiet"]
+        args = ["diff", "--quiet", "--no-ext-diff", "--no-textconv"]
         if staged:
             args.append("--cached")
-        args.extend(["--", *SOURCE_ROOTS])
-        result = subprocess.run(["git", *args], cwd=REPO, check=False)
+        result = subprocess.run(
+            ["git", *args], cwd=REPO, env=_git_environment(), check=False
+        )
         if result.returncode != 0:
-            raise SourceCheckoutError("tracked release bind source differs from HEAD")
+            raise SourceCheckoutError("tracked release checkout differs from HEAD")
     untracked = set(
         _git("ls-files", "--others", "--exclude-standard", "--", *SOURCE_ROOTS).splitlines()
     )

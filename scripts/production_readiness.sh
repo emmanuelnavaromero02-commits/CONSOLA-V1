@@ -33,9 +33,26 @@ require_command() {
 
 release_pytest() {
   if [[ "${OMEGA_RELEASE_DIGEST_STACK:-0}" == "1" ]]; then
-    "${PYTHON_BIN}" scripts/run_release_pytest.py "$@"
+    "${PYTHON_BIN}" -I scripts/run_release_pytest.py "$@"
   else
     "${PYTHON_BIN}" -m pytest "$@"
+  fi
+}
+
+verify_release_harness() {
+  if [[ "${OMEGA_RELEASE_DIGEST_STACK:-0}" == "1" ]]; then
+    local observed_verifier_sha256
+    observed_verifier_sha256="$(
+      "${PYTHON_BIN}" -I -c \
+        'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' \
+        scripts/verify_release_test_harness.py
+    )"
+    if [[ ! "${OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256:-}" =~ ^[0-9a-f]{64}$ ||
+          "${observed_verifier_sha256}" != "${OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256}" ]]; then
+      log "BLOCKED: release harness verifier differs from action-bound authority"
+      exit 2
+    fi
+    "${PYTHON_BIN}" -I scripts/verify_release_test_harness.py
   fi
 }
 
@@ -69,7 +86,7 @@ source_env() {
           exit 2
         fi
       done < infra/.env
-      local reserved_pattern='^[[:space:]]*(export[[:space:]]+)?(OMEGA_RELEASE_[A-Za-z0-9_]*|OMEGA_STRESS_[A-Za-z0-9_]*|OMEGA_PRODUCTION_READINESS_SKIP_STRESS|PYTHON_BIN|PYTHONOPTIMIZE|PYTHONPATH|PYTHONHOME|PYTHONSTARTUP|PYTEST_[A-Za-z0-9_]*|PLAYWRIGHT_[A-Za-z0-9_]*|PATH|DOCKER_[A-Za-z0-9_]*|COMPOSE_[A-Za-z0-9_]*|GITHUB_[A-Za-z0-9_]*|RUNNER_[A-Za-z0-9_]*|NPM_CONFIG_[A-Za-z0-9_]*|npm_config_[A-Za-z0-9_]*|CI|MAKEFLAGS|GNUMAKEFLAGS|MAKEOVERRIDES|MFLAGS|MAKELEVEL|BASH_ENV|BASHOPTS|SHELLOPTS|ENV|SHELL|NODE_OPTIONS|LD_PRELOAD|LD_LIBRARY_PATH|CDPATH|GLOBIGNORE|IFS)='
+      local reserved_pattern='^[[:space:]]*(export[[:space:]]+)?(OMEGA_RELEASE_[A-Za-z0-9_]*|OMEGA_STRESS_[A-Za-z0-9_]*|OMEGA_PRODUCTION_READINESS_SKIP_STRESS|PYTHON_BIN|PYTHONOPTIMIZE|PYTHONPATH|PYTHONHOME|PYTHONSTARTUP|PYTEST_[A-Za-z0-9_]*|PLAYWRIGHT_[A-Za-z0-9_]*|PATH|DOCKER_[A-Za-z0-9_]*|COMPOSE_[A-Za-z0-9_]*|GITHUB_[A-Za-z0-9_]*|GIT_[A-Za-z0-9_]*|RUNNER_[A-Za-z0-9_]*|NPM_CONFIG_[A-Za-z0-9_]*|npm_config_[A-Za-z0-9_]*|CI|MAKEFLAGS|GNUMAKEFLAGS|MAKEOVERRIDES|MFLAGS|MAKELEVEL|BASH_ENV|BASHOPTS|SHELLOPTS|ENV|SHELL|NODE_OPTIONS|NODE_PATH|LD_[A-Za-z0-9_]*|DYLD_[A-Za-z0-9_]*|CDPATH|GLOBIGNORE|IFS)='
       if grep -Eq "${reserved_pattern}" infra/.env; then
         log "BLOCKED: infra/.env attempts to override a release-gate control"
         exit 2
@@ -85,7 +102,7 @@ source_env() {
     local -r expected_docker_context="${DOCKER_CONTEXT-__UNSET__}"
     local release_env_file
     release_env_file="$(mktemp)"
-    "${PYTHON_BIN}" scripts/load_release_dotenv.py \
+    "${PYTHON_BIN}" -I scripts/load_release_dotenv.py \
       --input infra/.env --output "${release_env_file}"
     while IFS= read -r -d '' release_key && IFS= read -r -d '' release_value; do
       export "${release_key}=${release_value}"
@@ -280,7 +297,7 @@ run_multiuser_simulation_if_required() {
 }
 
 prepare_local_browser_e2e_env() {
-  # production_readiness sources infra/.env for service credentials. That file
+  # production_readiness loads infra/.env as passive data for service credentials. That file
   # intentionally uses Docker-internal service names (hubspot, airflow, etc.)
   # for container-to-container calls, but Playwright runs on the host runner.
   # Pin browser probes to the host-published ports so CI does not inherit
@@ -369,6 +386,7 @@ run_remote_gate() {
 run_gate() {
   require_command curl
   source_env
+  verify_release_harness
   apply_v1_live_defaults
   require_v1_live_inputs
 
@@ -406,7 +424,7 @@ run_gate() {
 
   log "running backend, cartridge, RLS, and security tests"
   if [[ "${OMEGA_RELEASE_DIGEST_STACK:-0}" == "1" ]]; then
-    make PYTEST="${PYTHON_BIN} scripts/run_release_pytest.py" test
+    make PYTEST="${PYTHON_BIN} -I scripts/run_release_pytest.py" test
   else
     make test
   fi

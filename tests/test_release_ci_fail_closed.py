@@ -910,6 +910,227 @@ def test_release_test_skips_are_versioned_and_enforced_for_pytest_and_playwright
         assert full_stack["env"][key] == "1"
 
 
+def test_release_harness_authority_is_bound_to_the_source_sha_and_propagated():
+    jobs = _jobs()
+    full_stack = jobs["digest-full-stack-gate"]
+    steps = full_stack["steps"]
+    checkout_index = next(
+        index
+        for index, step in enumerate(steps)
+        if str(step.get("uses", "")).startswith("actions/checkout@")
+    )
+    authority = _named_step(full_stack, "Bind release test harness seal to source SHA")
+    assert steps[checkout_index + 1] == authority
+    assert authority["id"] == "harness_authority"
+    for needle in (
+        'git show "${GITHUB_SHA}:${seal_path}"',
+        'git show "${GITHUB_SHA}:${verifier_path}"',
+        'git show "${GITHUB_SHA}:${secure_output_path}"',
+        'git show "${GITHUB_SHA}:${docker_lock_path}"',
+        'cmp --silent "${committed_seal}" "${seal_path}"',
+        'cmp --silent "${committed_verifier}" "${verifier_path}"',
+        'cmp --silent "${committed_secure_output}" "${secure_output_path}"',
+        'cmp --silent "${committed_docker_lock}" "${docker_lock_path}"',
+        'echo "sha256=${seal_sha256}" >> "${GITHUB_OUTPUT}"',
+        'echo "verifier_sha256=${verifier_sha256}" >> "${GITHUB_OUTPUT}"',
+        'echo "secure_output_sha256=${secure_output_sha256}" >> "${GITHUB_OUTPUT}"',
+        'echo "docker_lock_sha256=${docker_lock_sha256}" >> "${GITHUB_OUTPUT}"',
+    ):
+        assert needle in authority["run"]
+    assert "GITHUB_ENV" not in authority["run"]
+
+    expected = "${{ steps.harness_authority.outputs.sha256 }}"
+    expected_verifier = (
+        "${{ steps.harness_authority.outputs.verifier_sha256 }}"
+    )
+    for step_name in (
+        "Verify sealed release test harness",
+        "Run all final gates against exact digest stack",
+        "Verify harness seal immediately after final gates",
+    ):
+        step = _named_step(full_stack, step_name)
+        assert step["env"][
+            "OMEGA_RELEASE_TEST_HARNESS_SHA256"
+        ] == expected
+        assert step["env"][
+            "OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256"
+        ] == expected_verifier
+        assert "sha256sum scripts/verify_release_test_harness.py" in step["run"]
+
+    validate = jobs["validate-release"]
+    validate_steps = validate["steps"]
+    validate_checkout = next(
+        index
+        for index, step in enumerate(validate_steps)
+        if str(step.get("uses", "")).startswith("actions/checkout@")
+    )
+    assert validate_steps[validate_checkout + 1]["name"] == (
+        "Bind release test harness seal to source SHA"
+    )
+    for step_name in (
+        "Static release tests",
+        "Run detected root tests",
+        "Run detected cartridge tests",
+    ):
+        step = _named_step(validate, step_name)
+        assert step["env"][
+            "OMEGA_RELEASE_TEST_HARNESS_SHA256"
+        ] == expected
+        assert step["env"][
+            "OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256"
+        ] == expected_verifier
+        assert "sha256sum scripts/verify_release_test_harness.py" in step["run"]
+
+    production_readiness = (
+        REPO / "scripts/production_readiness.sh"
+    ).read_text(encoding="utf-8")
+    assert "verify_release_harness" in production_readiness
+    assert "scripts/verify_release_test_harness.py" in production_readiness
+
+
+def test_final_release_outputs_are_exclusive_and_compared_to_action_hashes():
+    job = _jobs()["digest-full-stack-gate"]
+    gates = _named_step(job, "Run all final gates against exact digest stack")
+    final = _named_step(
+        job, "Re-verify runtime digests and real-data readiness after all gates"
+    )
+    assert job["steps"].index(gates) < job["steps"].index(final)
+    assert final["env"]["OMEGA_RELEASE_SECURE_OUTPUT_SHA256"] == (
+        "${{ steps.harness_authority.outputs.secure_output_sha256 }}"
+    )
+    source = final["run"]
+    for needle in (
+        'mktemp -d "${RUNNER_TEMP}/omega-release-final.XXXXXX"',
+        'chmod 0700 "${FINAL_OUTPUT_DIR}"',
+        "/usr/bin/python3 -I scripts/secure_release_output.py",
+        '--expected-sha256 "${EXPECTED_COMPOSE_SHA256}"',
+        '--expected-sha256 "${EXPECTED_IMAGE_INVENTORY_SHA256}"',
+        '--baseline "${RUNNER_TEMP}/omega-release-compose.json"',
+        '--baseline "${RUNNER_TEMP}/omega-release-image-inventory.lock"',
+        '--compose-config "${FINAL_COMPOSE}"',
+    ):
+        assert needle in source
+    assert "omega-release-compose-final.json" not in source
+    assert "omega-release-image-inventory.post-gates" not in source
+
+
+def test_digest_gate_uses_immutable_docker_and_playwright_authorities() -> None:
+    job = _jobs()["digest-full-stack-gate"]
+    runtime = _named_step(job, "Freeze trusted Playwright and Docker gate runtimes")
+    render = _named_step(job, "Render and start hybrid digest/source release stack")
+    gate = _named_step(job, "Run all final gates against exact digest stack")
+    assert runtime["id"] == "gate_runtime_authority"
+    for needle in (
+        "/opt/omega-release-runtime/release_docker_lock.py",
+        "/opt/omega-release-runtime/bin/docker",
+        "sudo /bin/chown -R root:root",
+        "sudo /bin/chmod -R a-w",
+        "--print-runtime-sha256",
+        'echo "playwright_sha256=${playwright_sha256}"',
+        'echo "trusted_path=/opt/omega-release-runtime/bin:${PATH}"',
+    ):
+        assert needle in runtime["run"]
+    assert "GITHUB_PATH" not in render["run"]
+    assert "compose[0]=/opt/omega-release-runtime/bin/docker" in render["run"]
+    assert gate["env"]["OMEGA_RELEASE_PLAYWRIGHT_RUNTIME_SHA256"] == (
+        "${{ steps.gate_runtime_authority.outputs.playwright_sha256 }}"
+    )
+    assert gate["env"]["PATH"] == (
+        "${{ steps.gate_runtime_authority.outputs.trusted_path }}"
+    )
+
+
+def test_untrusted_gate_cannot_persist_file_command_or_shell_poison() -> None:
+    job = _jobs()["digest-full-stack-gate"]
+    gate = _named_step(job, "Run all final gates against exact digest stack")
+    final = _named_step(
+        job, "Re-verify runtime digests and real-data readiness after all gates"
+    )
+    for step in (gate, final):
+        assert step["env"]["BASH_ENV"] == "/dev/null"
+        assert step["env"]["ENV"] == "/dev/null"
+        assert step["env"]["PYTHONPATH"] == ""
+        assert step["env"]["PYTHONHOME"] == ""
+        assert step["env"]["LD_PRELOAD"] == ""
+        assert step["env"]["LD_AUDIT"] == ""
+    assert gate["env"]["PATH"] == (
+        "${{ steps.gate_runtime_authority.outputs.trusted_path }}"
+    )
+    assert final["env"]["PATH"] == (
+        "/opt/omega-release-runtime/bin:/usr/local/sbin:/usr/local/bin:"
+        "/usr/sbin:/usr/bin:/sbin:/bin"
+    )
+    for needle in (
+        'gate_env_stamp="$(file_command_stamp "${GITHUB_ENV}")"',
+        'gate_path_stamp="$(file_command_stamp "${GITHUB_PATH}")"',
+        "trap verify_gate_file_commands EXIT",
+        "-u GITHUB_ENV -u GITHUB_PATH",
+        "-u PYTHONHOME -u PYTHONPATH -u PYTHONSTARTUP",
+        "-u LD_PRELOAD -u LD_AUDIT -u LD_LIBRARY_PATH",
+    ):
+        assert needle in gate["run"]
+    verifier = "/usr/bin/python3 -I scripts/verify_release_test_harness.py"
+    assert verifier in final["run"]
+    assert final["run"].index(verifier) < final["run"].index(
+        "scripts/secure_release_output.py"
+    )
+
+
+def test_gate_file_command_trap_rejects_a_bash_env_poison_write(
+    tmp_path: Path,
+) -> None:
+    gate = _named_step(
+        _jobs()["digest-full-stack-gate"],
+        "Run all final gates against exact digest stack",
+    )
+    source = gate["run"]
+    start = source.index("file_command_stamp() {")
+    end = source.index("release_make() {")
+    trap_source = source[start:end]
+    if sys.platform == "darwin":
+        trap_source = trap_source.replace(
+            "/usr/bin/stat -Lc '%d:%i:%f:%u:%g' --",
+            "/usr/bin/stat -f '%d:%i:%p:%u:%g' --",
+        ).replace(
+            "/usr/bin/sha256sum --",
+            "/usr/bin/shasum -a 256 --",
+        )
+    github_env = tmp_path / "github-env"
+    github_path = tmp_path / "github-path"
+    github_env.write_bytes(b"")
+    github_path.write_bytes(b"")
+    poison = tmp_path / "exit-zero"
+    sentinel = tmp_path / "poison-executed"
+    poison.write_text(
+        f"#!/bin/bash\nprintf executed >{sentinel!s}\nexit 0\n",
+        encoding="utf-8",
+    )
+    poison.chmod(0o755)
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            trap_source
+            + f"printf '%s\\n' 'BASH_ENV={poison!s}' >> \"${{GITHUB_ENV}}\"\n",
+        ],
+        cwd=REPO,
+        env={
+            **os.environ,
+            "BASH_ENV": "/dev/null",
+            "ENV": "/dev/null",
+            "GITHUB_ENV": str(github_env),
+            "GITHUB_PATH": str(github_path),
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 98, result.stdout + result.stderr
+    assert "modified a GitHub environment file command" in result.stdout
+    assert not sentinel.exists()
+
+
 def test_dead_full_stack_skip_outputs_are_absent() -> None:
     policy = _jobs()["authorize-release-gate-skips"]
     assert all(not key.startswith("full_stack") for key in policy["outputs"])

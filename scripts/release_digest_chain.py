@@ -21,10 +21,13 @@ if str(REPO) not in sys.path:
 
 from scripts.release_image_promotion import (
     CANONICAL_SERVICES,
+    DOCKER_MANIFEST,
+    DOCKER_MANIFEST_LIST,
     GITHUB_API,
     GITHUB_API_VERSION,
     MAX_ARTIFACT_BYTES,
     OCI_CONFIG,
+    OCI_INDEX,
     OCI_MANIFEST,
     ArtifactClient,
     PromotionError,
@@ -89,6 +92,9 @@ LAYER_MEDIA_TYPES = {
     "application/vnd.oci.image.layer.v1.tar+gzip",
     "application/vnd.oci.image.layer.v1.tar+zstd",
 }
+RECOVERY_MANIFEST_MEDIA_TYPES = frozenset(
+    {DOCKER_MANIFEST, DOCKER_MANIFEST_LIST, OCI_INDEX, OCI_MANIFEST}
+)
 
 
 def artifact_name(service: str) -> str:
@@ -318,11 +324,17 @@ class PackageVersionClient:
                     or DIGEST_RE.fullmatch(digest) is None
                 ):
                     continue
-                result = registry.get_manifest(service, digest)
-                if result is None:  # pragma: no cover
+                result = registry.get_manifest(
+                    service,
+                    digest,
+                    allow_absent=True,
+                    accepted_media_types=RECOVERY_MANIFEST_MEDIA_TYPES,
+                )
+                if result is None:
                     continue
                 content_type = _header(result.headers, "Content-Type").split(";", 1)[0]
-                if content_type.strip().lower() != OCI_MANIFEST:
+                content_type = content_type.strip().lower()
+                if content_type != OCI_MANIFEST:
                     continue
                 candidate = _parse_json_object(
                     result.body, label="recoverable candidate manifest"

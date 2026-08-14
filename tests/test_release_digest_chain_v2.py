@@ -26,8 +26,11 @@ from scripts.release_digest_chain import (
 from scripts.release_digest_env import EXPECTED_COMPOSE, ManifestError, load_manifest
 from scripts.release_image_promotion import (
     CANONICAL_SERVICES,
+    DOCKER_MANIFEST,
+    DOCKER_MANIFEST_LIST,
     HttpResult,
     OCI_CONFIG,
+    OCI_INDEX,
     OCI_MANIFEST,
     PromotionError,
     RegistryClient,
@@ -78,6 +81,7 @@ class CandidateRegistry:
         self.configs: dict[str, bytes] = {}
         self.layers: dict[str, bytes] = {}
         self.heads: list[tuple[str, str]] = []
+        self.recovery_lookups: list[tuple[bool, frozenset[str] | None]] = []
         for service in CANONICAL_SERVICES:
             self.add(service)
 
@@ -133,8 +137,22 @@ class CandidateRegistry:
         assert len(matches) == 1
         return matches[0]
 
-    def get_manifest(self, _service: str, digest: str) -> HttpResult:
-        return self.manifests[digest]
+    def get_manifest(
+        self,
+        _service: str,
+        digest: str,
+        *,
+        allow_absent: bool = False,
+        accepted_media_types: frozenset[str] | None = None,
+    ) -> HttpResult | None:
+        if allow_absent or accepted_media_types is not None:
+            self.recovery_lookups.append((allow_absent, accepted_media_types))
+        result = self.manifests.get(digest)
+        if result is None and allow_absent:
+            return None
+        if result is None:
+            raise PromotionError("candidate digest is absent")
+        return result
 
     def get_blob(self, _service: str, descriptor: dict[str, object]) -> bytes:
         return self.configs[str(descriptor["digest"])]
@@ -515,6 +533,51 @@ def test_package_recovery_pages_and_requires_unique_exact_run_candidate(
     assert recovered is not None and recovered["digest"] == digest
 
 
+def test_package_recovery_skips_all_valid_historical_types_and_structured_absence(
+    identity: ReleaseIdentity,
+) -> None:
+    registry = CandidateRegistry(identity)
+    candidate_digest = registry.digest("console")
+    historical_digests: list[str] = []
+    for index, media_type in enumerate(
+        (DOCKER_MANIFEST, DOCKER_MANIFEST_LIST, OCI_INDEX), start=1
+    ):
+        historical = _compact(
+            {"schemaVersion": 2, "mediaType": media_type, "legacy": index}
+        )
+        historical_digest = _digest(historical)
+        historical_digests.append(historical_digest)
+        registry.manifests[historical_digest] = HttpResult(
+            200,
+            historical,
+            {
+                "Content-Type": media_type,
+                "Docker-Content-Digest": historical_digest,
+            },
+        )
+    absent_digest = "sha256:" + "f" * 64
+    client = PackageVersionClient(identity=identity, github_token="token")
+    client._list_page = lambda _service, page: (  # type: ignore[method-assign]
+        [
+            *({"name": digest} for digest in historical_digests),
+            {"name": absent_digest},
+            {"name": candidate_digest},
+        ]
+        if page == 1
+        else []
+    )
+
+    recovered = client.recover(registry, service="console")
+
+    assert recovered is not None
+    assert recovered["digest"] == candidate_digest
+    assert all(allow_absent for allow_absent, _media in registry.recovery_lookups)
+    assert all(
+        media == digest_chain.RECOVERY_MANIFEST_MEDIA_TYPES
+        for _allow_absent, media in registry.recovery_lookups
+    )
+
+
 def test_tagged_exact_identity_candidate_cannot_hide_an_orphan(
     identity: ReleaseIdentity, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -723,7 +786,9 @@ def test_release_workflow_is_tagless_pinned_and_digest_gate_authoritative() -> N
     assert "for ref in postgres:15 postgres:15.18" in source
     assert "release_docker_lock.py" in source
     assert "omega-release-image-inventory.lock" in source
-    assert "omega-release-image-inventory.post-gates" in source
+    assert "omega-release-image-inventory.post-gates" not in source
+    assert "scripts/secure_release_output.py" in source
+    assert 'FINAL_OUTPUT_DIR="$(/usr/bin/mktemp -d' in source
     assert "{{.Repository}}\\t{{.Tag}}\\t{{.Digest}}\\t{{.ID}}" in source
     assert "{{json .}}" not in source
     assert "OMEGA_RELEASE_E2E_ENV_SHA256" in source
@@ -735,8 +800,11 @@ def test_release_workflow_is_tagless_pinned_and_digest_gate_authoritative() -> N
     assert "steps.runtime_lock.outputs.image_inventory_sha256" in source
     assert "verify_authority_sha256 manifest" in source
     assert "authority bytes changed during release gates" in source
-    assert "canonical Docker Compose model changed during release gates" in source
-    assert "omega-release-compose-final.json" in source
+    assert "final release output differs from its Actions authority" in (
+        REPO / "scripts/secure_release_output.py"
+    ).read_text(encoding="utf-8")
+    assert "omega-release-compose-final.json" not in source
+    assert '--compose-config "${FINAL_COMPOSE}"' in source
     assert "published Release did not become immutable and canonical" in source
     assert source.count("+refs/tags/${RELEASE_TAG}:${tag_check_ref}") == 2
     assert "git fetch --force --tags origin" not in source
@@ -795,7 +863,7 @@ def test_release_pytest_launcher_rejects_authority_and_selection_overrides(
     argument: str,
 ) -> None:
     result = subprocess.run(
-        [sys.executable, "scripts/run_release_pytest.py", argument, "tests/test_select_previous_release.py"],
+        [sys.executable, "-I", "scripts/run_release_pytest.py", argument, "tests/test_select_previous_release.py"],
         cwd=REPO,
         capture_output=True,
         text=True,
@@ -811,7 +879,7 @@ def test_release_pytest_launcher_rejects_environment_and_policy_overrides() -> N
         ("OMEGA_RELEASE_TEST_SKIP_POLICY", "/tmp/attacker.json"),
     ):
         result = subprocess.run(
-            [sys.executable, "scripts/run_release_pytest.py", "tests/test_select_previous_release.py"],
+            [sys.executable, "-I", "scripts/run_release_pytest.py", "tests/test_select_previous_release.py"],
             cwd=REPO,
             env={**os.environ, key: value},
             capture_output=True,
