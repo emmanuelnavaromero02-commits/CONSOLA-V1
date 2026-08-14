@@ -65,7 +65,7 @@ def _test_commit(repo: Path, message: str) -> str:
 
 def _recovery_remote(
     tmp_path: Path,
-) -> tuple[Path, Path, Path, str, str]:
+) -> tuple[Path, Path, Path, str, str, str, str]:
     remote = tmp_path / "remote.git"
     seed = tmp_path / "seed"
     checkout = tmp_path / "checkout"
@@ -76,15 +76,23 @@ def _recovery_remote(
     assert _test_git(seed, "config", "user.name", "CI").returncode == 0
     _test_commit(seed, "base")
     assert _test_git(seed, "tag", "v1.45.209-beta").returncode == 0
-    failed = _test_commit(seed, "failed")
-    assert _test_git(
-        seed, "tag", "-a", "v1.45.210-beta", "-m", "failed"
-    ).returncode == 0
-    failed_object = _test_git_output(seed, "rev-parse", "refs/tags/v1.45.210-beta")
-    _test_commit(seed, "recovery")
-    assert _test_git(
-        seed, "tag", "-a", "v1.45.211-beta", "-m", "recovery"
-    ).returncode == 0
+    failed_210 = _test_commit(seed, "failed .210")
+    assert (
+        _test_git(seed, "tag", "-a", "v1.45.210-beta", "-m", "failed .210").returncode
+        == 0
+    )
+    failed_210_object = _test_git_output(seed, "rev-parse", "refs/tags/v1.45.210-beta")
+    failed_211 = _test_commit(seed, "failed .211")
+    assert (
+        _test_git(seed, "tag", "-a", "v1.45.211-beta", "-m", "failed .211").returncode
+        == 0
+    )
+    failed_211_object = _test_git_output(seed, "rev-parse", "refs/tags/v1.45.211-beta")
+    _test_commit(seed, "recovery .212")
+    assert (
+        _test_git(seed, "tag", "-a", "v1.45.212-beta", "-m", "recovery .212").returncode
+        == 0
+    )
     assert _test_git(seed, "remote", "add", "origin", str(remote)).returncode == 0
     push = _test_git(seed, "push", "origin", "HEAD:refs/heads/main", "--tags")
     assert push.returncode == 0, push.stderr
@@ -93,12 +101,20 @@ def _recovery_remote(
         "clone",
         "-q",
         "--branch",
-        "v1.45.211-beta",
+        "v1.45.212-beta",
         str(remote),
         str(checkout),
     )
     assert clone.returncode == 0, clone.stderr
-    return remote, seed, checkout, failed, failed_object
+    return (
+        remote,
+        seed,
+        checkout,
+        failed_210,
+        failed_210_object,
+        failed_211,
+        failed_211_object,
+    )
 
 
 def _run_recovery_remote_binding(checkout: Path) -> subprocess.CompletedProcess[str]:
@@ -433,7 +449,7 @@ exec "${REAL_PYTHON}" "$@"
             "#!/bin/bash\n"
             "set -euo pipefail\n"
             "if [[ ${1:-} == fetch ]]; then exit 0; fi\n"
-            "if [[ ${1:-} == rev-parse ]]; then echo \"${GITHUB_SHA}\"; exit 0; fi\n"
+            'if [[ ${1:-} == rev-parse ]]; then echo "${GITHUB_SHA}"; exit 0; fi\n'
             "exit 2\n",
             encoding="utf-8",
         )
@@ -526,9 +542,7 @@ def test_release_skip_registry_is_explicit_bounded_and_unambiguous():
     assert set(registry) == {"schema_version", "policies"}
 
     policies = registry["policies"]
-    assert {policy["id"] for policy in policies} == {
-        "production-readiness-stress-beta"
-    }
+    assert {policy["id"] for policy in policies} == {"production-readiness-stress-beta"}
     assert len({policy["id"] for policy in policies}) == len(policies)
     for policy in policies:
         assert set(policy) == {"id", "gate", "owner", "reason", "scope"}
@@ -712,13 +726,13 @@ def test_matrix_builds_only_untagged_candidates_and_seals_receipts_last():
     assert ":${{ github.ref_name }}" not in str(build)
     assert ":sha-${{ github.sha }}" not in str(build)
     assert ":latest" not in str(build)
-    assert "io.omega.release.service=${{ matrix.service }}" in build["with"][
-        "labels"
-    ]
+    assert "io.omega.release.service=${{ matrix.service }}" in build["with"]["labels"]
     assert "manifest:io.omega.release.service=" in build["with"]["annotations"]
     assert "manifest[" not in build["with"]["annotations"]
     assert "index:" not in build["with"]["annotations"]
-    assert "io.omega.release.run-id=${{ github.run_id }}" in build["with"]["annotations"]
+    assert (
+        "io.omega.release.run-id=${{ github.run_id }}" in build["with"]["annotations"]
+    )
     assert receipt["if"] == "steps.candidate.outputs.action == 'build'"
     assert '--digest "${{ steps.build.outputs.digest }}"' in receipt["run"]
     assert "release_digest_chain.py write-receipt" in receipt["run"]
@@ -732,7 +746,11 @@ def test_manifest_job_is_bound_to_successful_build_and_exact_inventory():
     job = _jobs()["publish-release-manifest"]
     privacy = _named_step(job, "Verify canonical release packages remain private")
     remote = _named_step(job, "Re-verify tested digest graphs before publication")
-    download = next(step for step in job["steps"] if str(step.get("uses", "")).startswith("actions/download-artifact@"))
+    download = next(
+        step
+        for step in job["steps"]
+        if str(step.get("uses", "")).startswith("actions/download-artifact@")
+    )
 
     assert "digest-full-stack-gate" in job["needs"]
     assert "needs.digest-full-stack-gate.result == 'success'" in job["if"]
@@ -745,7 +763,10 @@ def test_manifest_job_is_bound_to_successful_build_and_exact_inventory():
     assert '--owner "${GHCR_OWNER}"' in privacy["run"]
     assert "--owner-kind user" in privacy["run"]
     assert "gh api" not in privacy["run"]
-    assert download["with"]["name"] == "${{ needs.assemble-release-manifest.outputs.artifact_name }}"
+    assert (
+        download["with"]["name"]
+        == "${{ needs.assemble-release-manifest.outputs.artifact_name }}"
+    )
     assert "verify_release_digest_remote.py" in remote["run"]
     assert "release_image_promotion.py" not in WORKFLOW.read_text(encoding="utf-8")
 
@@ -960,7 +981,9 @@ def test_package_privacy_gate_precedes_every_manifest_publication_step():
     before_index = names.index("Verify canonical release packages remain private")
     attach_index = names.index("Attach manifest to GitHub Release")
     final_index = names.index("Final private and reachable release evidence")
-    assert before_index < names.index("Re-verify tested digest graphs before publication")
+    assert before_index < names.index(
+        "Re-verify tested digest graphs before publication"
+    )
     assert before_index < attach_index < final_index
 
 
@@ -1018,17 +1041,14 @@ def test_release_tag_must_point_to_the_exact_canonical_main_commit():
 def test_previous_release_selection_requires_canonical_release_evidence():
     job = _jobs()["detect-release-changes"]
     binding = _named_step(job, "Bind exact remote recovery tag authority")
-    step = next(
-        step
-        for step in job["steps"]
-        if step.get("id") == "previous"
-    )
+    step = next(step for step in job["steps"] if step.get("id") == "previous")
     assert job["steps"].index(binding) < job["steps"].index(step)
-    assert binding["if"] == "github.ref_name == 'v1.45.211-beta'"
+    assert binding["if"] == "github.ref_name == 'v1.45.212-beta'"
     for needle in (
-        "git fetch --no-tags --force origin",
-        "+refs/tags/v1.45.211-beta:${authority}/current",
-        "+refs/tags/v1.45.210-beta:${authority}/failed",
+        "git fetch --no-tags --force --atomic origin",
+        "+refs/tags/v1.45.212-beta:${authority}/current",
+        "+refs/tags/v1.45.210-beta:${authority}/failed-0",
+        "+refs/tags/v1.45.211-beta:${authority}/failed-1",
         "+refs/tags/v1.45.209-beta:${authority}/base",
         'git update-ref -d "${authority}/${name}"',
         'git show-ref --verify --quiet "${authority}/${name}"',
@@ -1044,72 +1064,106 @@ def test_previous_release_selection_requires_canonical_release_evidence():
 def test_remote_recovery_binding_rejects_deleted_tag_despite_stale_checkout(
     tmp_path: Path,
 ) -> None:
-    remote, _seed, checkout, _failed, failed_object = _recovery_remote(tmp_path)
+    (
+        remote,
+        _seed,
+        checkout,
+        _failed_210,
+        failed_210_object,
+        _failed_211,
+        _failed_211_object,
+    ) = _recovery_remote(tmp_path)
     assert _test_git_output(checkout, "rev-parse", "refs/tags/v1.45.210-beta") == (
-        failed_object
+        failed_210_object
     )
-    assert _test_git(remote, "update-ref", "-d", "refs/tags/v1.45.210-beta").returncode == 0
+    assert (
+        _test_git(remote, "update-ref", "-d", "refs/tags/v1.45.210-beta").returncode
+        == 0
+    )
 
     result = _run_recovery_remote_binding(checkout)
 
     assert result.returncode != 0
     assert _test_git_output(checkout, "rev-parse", "refs/tags/v1.45.210-beta") == (
-        failed_object
+        failed_210_object
     )
-    assert _test_git(
-        checkout,
-        "show-ref",
-        "--verify",
-        "refs/omega-release-authority/v1.45.211-beta/failed",
-    ).returncode != 0
+    for name in ("current", "failed-0", "failed-1", "base"):
+        assert (
+            _test_git(
+                checkout,
+                "show-ref",
+                "--verify",
+                f"refs/omega-release-authority/v1.45.212-beta/{name}",
+            ).returncode
+            != 0
+        )
 
 
 def test_remote_recovery_binding_replaces_stale_checkout_with_moved_tag(
     tmp_path: Path,
 ) -> None:
-    remote, seed, checkout, _failed, failed_object = _recovery_remote(tmp_path)
-    assert _test_git(seed, "tag", "-d", "v1.45.210-beta").returncode == 0
-    assert _test_git(
+    (
+        remote,
         seed,
-        "tag",
-        "-a",
-        "v1.45.210-beta",
-        "-m",
-        "moved",
-        "HEAD",
-    ).returncode == 0
+        checkout,
+        _failed_210,
+        failed_210_object,
+        _failed_211,
+        _failed_211_object,
+    ) = _recovery_remote(tmp_path)
+    assert _test_git(seed, "tag", "-d", "v1.45.210-beta").returncode == 0
+    assert (
+        _test_git(
+            seed,
+            "tag",
+            "-a",
+            "v1.45.210-beta",
+            "-m",
+            "moved",
+            "HEAD",
+        ).returncode
+        == 0
+    )
     push = _test_git(seed, "push", "--force", "origin", "refs/tags/v1.45.210-beta")
     assert push.returncode == 0, push.stderr
     moved_object = _test_git_output(remote, "rev-parse", "refs/tags/v1.45.210-beta")
-    assert moved_object != failed_object
+    assert moved_object != failed_210_object
 
     result = _run_recovery_remote_binding(checkout)
 
     assert result.returncode == 0, result.stderr
-    authority = "refs/omega-release-authority/v1.45.211-beta/failed"
+    authority = "refs/omega-release-authority/v1.45.212-beta/failed-0"
     assert _test_git_output(checkout, "rev-parse", authority) == moved_object
     assert _test_git_output(checkout, "rev-parse", "refs/tags/v1.45.210-beta") == (
-        failed_object
+        failed_210_object
     )
 
 
 def test_remote_recovery_binding_preserves_lightweight_remote_identity(
     tmp_path: Path,
 ) -> None:
-    _remote, seed, checkout, failed, failed_object = _recovery_remote(tmp_path)
+    (
+        _remote,
+        seed,
+        checkout,
+        failed_210,
+        failed_210_object,
+        _failed_211,
+        _failed_211_object,
+    ) = _recovery_remote(tmp_path)
     assert _test_git(seed, "tag", "-d", "v1.45.210-beta").returncode == 0
-    assert _test_git(seed, "tag", "v1.45.210-beta", failed).returncode == 0
+    assert _test_git(seed, "tag", "v1.45.210-beta", failed_210).returncode == 0
     push = _test_git(seed, "push", "--force", "origin", "refs/tags/v1.45.210-beta")
     assert push.returncode == 0, push.stderr
 
     result = _run_recovery_remote_binding(checkout)
 
     assert result.returncode == 0, result.stderr
-    authority = "refs/omega-release-authority/v1.45.211-beta/failed"
-    assert _test_git_output(checkout, "rev-parse", authority) == failed
+    authority = "refs/omega-release-authority/v1.45.212-beta/failed-0"
+    assert _test_git_output(checkout, "rev-parse", authority) == failed_210
     assert _test_git_output(checkout, "cat-file", "-t", authority) == "commit"
     assert _test_git_output(checkout, "rev-parse", "refs/tags/v1.45.210-beta") == (
-        failed_object
+        failed_210_object
     )
 
 
@@ -1191,7 +1245,9 @@ def test_release_test_skips_are_versioned_and_enforced_for_pytest_and_playwright
     assert "run_release_playwright.py" in (REPO / "scripts/run-e2e.sh").read_text(
         encoding="utf-8"
     )
-    assert _named_step(_jobs()["digest-full-stack-gate"], "Verify sealed release test harness")
+    assert _named_step(
+        _jobs()["digest-full-stack-gate"], "Verify sealed release test harness"
+    )
     for key in (
         "E2E_REQUIRE_STACK",
         "OMEGA_ENABLE_E2E_SMOKE",
@@ -1230,21 +1286,18 @@ def test_release_harness_authority_is_bound_to_the_source_sha_and_propagated():
     assert "GITHUB_ENV" not in authority["run"]
 
     expected = "${{ steps.harness_authority.outputs.sha256 }}"
-    expected_verifier = (
-        "${{ steps.harness_authority.outputs.verifier_sha256 }}"
-    )
+    expected_verifier = "${{ steps.harness_authority.outputs.verifier_sha256 }}"
     for step_name in (
         "Verify sealed release test harness",
         "Run all final gates against exact digest stack",
         "Verify harness seal immediately after final gates",
     ):
         step = _named_step(full_stack, step_name)
-        assert step["env"][
-            "OMEGA_RELEASE_TEST_HARNESS_SHA256"
-        ] == expected
-        assert step["env"][
-            "OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256"
-        ] == expected_verifier
+        assert step["env"]["OMEGA_RELEASE_TEST_HARNESS_SHA256"] == expected
+        assert (
+            step["env"]["OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256"]
+            == expected_verifier
+        )
         assert "sha256sum scripts/verify_release_test_harness.py" in step["run"]
 
     validate = jobs["validate-release"]
@@ -1263,22 +1316,21 @@ def test_release_harness_authority_is_bound_to_the_source_sha_and_propagated():
         "Run detected cartridge tests",
     ):
         step = _named_step(validate, step_name)
-        assert step["env"][
-            "OMEGA_RELEASE_TEST_HARNESS_SHA256"
-        ] == expected
-        assert step["env"][
-            "OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256"
-        ] == expected_verifier
+        assert step["env"]["OMEGA_RELEASE_TEST_HARNESS_SHA256"] == expected
+        assert (
+            step["env"]["OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256"]
+            == expected_verifier
+        )
         assert "sha256sum scripts/verify_release_test_harness.py" in step["run"]
 
-    production_readiness = (
-        REPO / "scripts/production_readiness.sh"
-    ).read_text(encoding="utf-8")
+    production_readiness = (REPO / "scripts/production_readiness.sh").read_text(
+        encoding="utf-8"
+    )
     assert "verify_release_harness" in production_readiness
     assert "scripts/verify_release_test_harness.py" in production_readiness
 
 
-def test_validate_release_has_history_and_preloads_pull_never_postgres_images():
+def test_validate_release_has_history_and_prepares_pull_never_root_runtime():
     validate = _jobs()["validate-release"]
     steps = validate["steps"]
     checkout = next(
@@ -1288,33 +1340,242 @@ def test_validate_release_has_history_and_preloads_pull_never_postgres_images():
     )
     assert checkout["with"]["fetch-depth"] == 0
 
-    preload = _named_step(
+    postgres = _named_step(
         validate, "Preload PostgreSQL images for pull-never release tests"
     )
-    assert "set -euo pipefail" in preload["run"]
-    assert "for ref in postgres:15 postgres:15.18" in preload["run"]
-    assert 'docker pull "${ref}"' in preload["run"]
-    assert 'docker image inspect "${ref}" >/dev/null' in preload["run"]
-    assert steps.index(preload) < steps.index(_named_step(validate, "Static release tests"))
-    assert steps.index(preload) < steps.index(
-        _named_step(validate, "Run detected root tests")
+    minio = _named_step(
+        validate, "Preload exact MinIO image for pull-never release tests"
     )
+    assert "for ref in postgres:15 postgres:15.18" in postgres["run"]
+    assert 'docker pull "${ref}"' in postgres["run"]
+    assert 'docker image inspect "${ref}" >/dev/null' in postgres["run"]
+    minio_source = minio["run"]
+    assert 'docker pull "${minio_ref}"' in minio_source
+    assert 'docker tag "${minio_ref}" "${minio_tag}"' in minio_source
+    assert (
+        "sha256:1dce27c494a16bae114774f1cec295493f3613142713130c2d22dd5696be6ad3"
+        in minio_source
+    )
+    assert "RepoDigests" in minio_source
+    assert minio_source.count("docker image inspect") >= 3
+    assert "|| true" not in minio_source
+
+    prepare = _named_step(
+        validate, "Prepare hermetic DuckDB extension cache for detected root tests"
+    )
+    assert prepare["if"] == (
+        "needs.detect-release-changes.outputs.root_tests == 'true'"
+    )
+    assert prepare["id"] == "root_duckdb_cache"
+    assert prepare["env"]["PYTHON_BIN"] == "python"
+    assert prepare["env"]["REFINEMENT_IMAGE"] == (
+        "refinement:release-validation-${{ github.sha }}"
+    )
+    assert prepare["shell"] == "bash"
+    prepare_source = prepare["run"]
+    for needle in (
+        'mktemp -d "${RUNNER_TEMP}/omega-release-duckdb.XXXXXX"',
+        'DUCKDB_TEST_HOME="${cache_root}/home"',
+        'DUCKDB_CACHE_MANIFEST="${cache_root}/extensions.sha256"',
+        "scripts/prepare_refinement_duckdb_ci.sh",
+        'chmod -R a-w "${DUCKDB_TEST_HOME}/.duckdb"',
+        'chmod a-w "${DUCKDB_CACHE_MANIFEST}"',
+        "manifest_sha256=",
+        "home=%s",
+        "manifest=%s",
+        "manifest_sha256=%s",
+    ):
+        assert needle in prepare_source
+    assert "/tmp/refinement-duckdb-home" not in prepare_source
+
+    early_harness = _named_step(
+        validate, "Verify release test harness before runtime preparation"
+    )
+    assert early_harness["env"]["OMEGA_RELEASE_TEST_HARNESS_SHA256"] == (
+        "${{ steps.harness_authority.outputs.sha256 }}"
+    )
+    assert "python3 -I scripts/verify_release_test_harness.py" in early_harness["run"]
+
+    root_tests = _named_step(validate, "Run detected root tests")
+    assert root_tests["env"]["HOME"] == ("${{ steps.root_duckdb_cache.outputs.home }}")
+    for name in (
+        "Static release tests",
+        "Run detected root tests",
+        "Run detected cartridge tests",
+    ):
+        assert "env -u GITHUB_ENV -u GITHUB_PATH" in _named_step(validate, name)["run"]
+    verify = _named_step(
+        validate, "Verify hermetic DuckDB extension cache after root tests"
+    )
+    assert verify["if"] == (
+        "always() && needs.detect-release-changes.outputs.root_tests == 'true'"
+    )
+    assert verify["env"]["HOME"] == "${{ steps.root_duckdb_cache.outputs.home }}"
+    assert verify["env"]["DUCKDB_CACHE_MANIFEST"] == (
+        "${{ steps.root_duckdb_cache.outputs.manifest }}"
+    )
+    assert verify["env"]["EXPECTED_MANIFEST_SHA256"] == (
+        "${{ steps.root_duckdb_cache.outputs.manifest_sha256 }}"
+    )
+    assert (
+        verify["env"]
+        | {
+            "BASH_ENV": "/dev/null",
+            "ENV": "/dev/null",
+            "LD_AUDIT": "",
+            "LD_LIBRARY_PATH": "",
+            "LD_PRELOAD": "",
+            "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        }
+        == verify["env"]
+    )
+    for needle in (
+        'test -s "${DUCKDB_CACHE_MANIFEST}"',
+        'test ! -L "${DUCKDB_CACHE_MANIFEST}"',
+        "EXPECTED_MANIFEST_SHA256",
+        'find "${HOME}/.duckdb" ! -type d ! -type f',
+        'find "${HOME}/.duckdb" -type f -print0',
+        "LC_ALL=C sort -z",
+        "xargs -0 sha256sum",
+        'cmp --silent "${DUCKDB_CACHE_MANIFEST}" "${actual_manifest}"',
+    ):
+        assert needle in verify["run"]
+
+    assert steps.index(early_harness) < steps.index(postgres)
+    assert steps.index(postgres) < steps.index(minio) < steps.index(prepare)
+    assert steps.index(minio) < steps.index(
+        _named_step(validate, "Static release tests")
+    )
+    assert steps.index(prepare) < steps.index(root_tests)
+    assert steps.index(root_tests) < steps.index(verify)
 
 
-def test_failed_210_release_is_preserved_and_recovery_version_moves_forward():
-    assert (REPO / "VERSION").read_text(encoding="utf-8").strip() == (
-        "1.45.211-beta"
+def test_exact_minio_preload_blocks_digest_or_tag_substitution(tmp_path: Path) -> None:
+    source = _named_step(
+        _jobs()["validate-release"],
+        "Preload exact MinIO image for pull-never release tests",
+    )["run"]
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake = fake_bin / "docker"
+    fake.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+tag='minio/minio:RELEASE.2024-12-18T13-15-44Z'
+digest='sha256:1dce27c494a16bae114774f1cec295493f3613142713130c2d22dd5696be6ad3'
+ref="${tag}@${digest}"
+case "${1:-}" in
+  pull) [[ "${2:-}" == "${ref}" ]] ;;
+  tag) [[ "${2:-}" == "${ref}" && "${3:-}" == "${tag}" ]] ;;
+  image)
+    [[ "${2:-}" == inspect ]]
+    if [[ "$*" == *RepoDigests* ]]; then
+      if [[ "${FAKE_BAD_DIGEST:-0}" == 1 ]]; then
+        printf '["minio/minio@sha256:%064d"]\n' 0
+      else
+        printf '["minio/minio@%s"]\n' "${digest}"
+      fi
+    elif [[ "$*" == *'.Id'* ]]; then
+      if [[ "$*" == *"${tag}"* && "$*" != *"${ref}"* && "${FAKE_BAD_TAG:-0}" == 1 ]]; then
+        printf 'sha256:substituted\n'
+      else
+        printf 'sha256:exact\n'
+      fi
+    fi
+    ;;
+  *) exit 91 ;;
+esac
+""",
+        encoding="utf-8",
     )
+    fake.chmod(0o755)
+    base_env = {**os.environ, "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}"}
+
+    def run(**extra: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bash", "-c", source],
+            cwd=REPO,
+            env={**base_env, **extra},
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    assert run().returncode == 0
+    assert run(FAKE_BAD_DIGEST="1").returncode != 0
+    assert run(FAKE_BAD_TAG="1").returncode != 0
+
+
+def test_duckdb_cache_verifier_blocks_manifest_content_and_topology_drift(
+    tmp_path: Path,
+) -> None:
+    verify = _named_step(
+        _jobs()["validate-release"],
+        "Verify hermetic DuckDB extension cache after root tests",
+    )
+    cache_home = tmp_path / "home"
+    extension_dir = cache_home / ".duckdb/extensions/v1.2.2/linux_amd64_gcc4"
+    extension_dir.mkdir(parents=True)
+    extension = extension_dir / "httpfs.duckdb_extension"
+    extension.write_bytes(b"reviewed")
+    manifest = tmp_path / "extensions.sha256"
+    manifest.write_text(
+        f"{hashlib.sha256(extension.read_bytes()).hexdigest()}  {extension}\n",
+        encoding="utf-8",
+    )
+    expected = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    env = {
+        **os.environ,
+        "BASH_ENV": verify["env"]["BASH_ENV"],
+        "ENV": verify["env"]["ENV"],
+        "HOME": str(cache_home),
+        "LD_AUDIT": verify["env"]["LD_AUDIT"],
+        "LD_LIBRARY_PATH": verify["env"]["LD_LIBRARY_PATH"],
+        "LD_PRELOAD": verify["env"]["LD_PRELOAD"],
+        "DUCKDB_CACHE_MANIFEST": str(manifest),
+        "EXPECTED_MANIFEST_SHA256": expected,
+        "PATH": verify["env"]["PATH"],
+        "RUNNER_TEMP": str(tmp_path),
+    }
+
+    def run() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bash", "-c", verify["run"]],
+            cwd=REPO,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    assert run().returncode == 0
+    extension.write_bytes(b"mutated")
+    assert run().returncode != 0
+    extension.write_bytes(b"reviewed")
+    (extension_dir / "unexpected.duckdb_extension").write_bytes(b"extra")
+    assert run().returncode != 0
+    (extension_dir / "unexpected.duckdb_extension").unlink()
+    (extension_dir / "alias.duckdb_extension").symlink_to(extension)
+    assert run().returncode != 0
+
+
+def test_failed_210_and_211_releases_are_preserved_and_version_moves_forward():
+    assert (REPO / "VERSION").read_text(encoding="utf-8").strip() == ("1.45.212-beta")
     evidence = (
         REPO / "docs/release-evidence/omega-f2-digest-release-gate.md"
     ).read_text(encoding="utf-8")
     for needle in (
+        "v1.45.212-beta",
         "v1.45.211-beta",
         "v1.45.210-beta",
         "31801477645",
+        "31809737977",
         "6c70e0067eb44dd991d355b3e5cab663300c790b",
         "2429e9a2bdab13ff00740fe318009fd5b101850d",
+        "cadf0b28b771257bc6cb9129cf8b4cd72ef5adff",
+        "cc0873e4d86bb5bd2f183a003d43ff8a0970df8c",
         "13 failed, 689 passed, 18 errors",
+        "1 failed, 720 passed, 16 errors",
         "no preflight, image build, manifest, digest gate, or release assets ran",
     ):
         assert needle in evidence

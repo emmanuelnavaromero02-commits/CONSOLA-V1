@@ -52,20 +52,30 @@ CANONICAL_SERVICES = (
     "salesforce",
 )
 # The release chain predates canonical manifests.  This sole recovery bridge
-# skips the known failed .210 run only while its annotated tag object, peeled
-# commit, direct-parent position, and lack of canonical evidence all match.
-# Every later base must carry a checksum-valid canonical manifest.
+# skips the known failed .210 and .211 runs only while the exact annotated tag
+# objects, peeled commits, direct-parent chain, and lack of canonical evidence
+# all match.  Every later base must carry a checksum-valid canonical manifest.
 TRANSITION_RELEASES = {
-    "v1.45.211-beta": (
+    "v1.45.212-beta": (
         "v1.45.209-beta",
+        "713b2801a43c725eab68a31db858c1b5ec10e5cc",
         "21b6274ec6e416d2d808efe30cda19ce8176611f",
-        "v1.45.210-beta",
-        "6c70e0067eb44dd991d355b3e5cab663300c790b",
-        "2429e9a2bdab13ff00740fe318009fd5b101850d",
+        (
+            (
+                "v1.45.210-beta",
+                "6c70e0067eb44dd991d355b3e5cab663300c790b",
+                "2429e9a2bdab13ff00740fe318009fd5b101850d",
+            ),
+            (
+                "v1.45.211-beta",
+                "cadf0b28b771257bc6cb9129cf8b4cd72ef5adff",
+                "cc0873e4d86bb5bd2f183a003d43ff8a0970df8c",
+            ),
+        ),
     ),
 }
 TRANSITION_AUTHORITY_ROOTS = {
-    "v1.45.211-beta": "refs/omega-release-authority/v1.45.211-beta",
+    "v1.45.212-beta": "refs/omega-release-authority/v1.45.212-beta",
 }
 
 RawFetcher = Callable[[str, Mapping[str, str]], tuple[int, bytes, Mapping[str, str]]]
@@ -470,6 +480,11 @@ def select_previous_release(
     trust_verifier: TrustVerifier | None = None,
 ) -> tuple[str, str]:
     repo = repo or Path.cwd()
+    shallow = _git(repo, "rev-parse", "--is-shallow-repository", check=False)
+    if shallow.returncode != 0 or shallow.stdout.strip() != "false":
+        raise ReleaseTrustError(
+            "previous-release selection requires a complete non-shallow history"
+        )
     head_commit = _git(repo, "rev-parse", f"{head}^{{commit}}").stdout.strip()
     parents = _git(repo, "rev-list", "--parents", "-n", "1", head_commit).stdout.split()
     transition = TRANSITION_RELEASES.get(current_tag or "")
@@ -489,83 +504,172 @@ def select_previous_release(
             )
         (
             base_tag,
+            base_tag_object,
             base_commit,
-            failed_tag,
-            failed_tag_object,
-            failed_commit,
+            failed_markers,
         ) = transition
+        if len(failed_markers) != 2:
+            raise ReleaseTrustError(
+                "transition release must have exactly two failed markers"
+            )
+        current_ref = f"{authority_root}/current"
+        current_object = _git(
+            repo,
+            "rev-parse",
+            "--verify",
+            f"{current_ref}^{{object}}",
+            check=False,
+        )
+        if current_object.returncode != 0:
+            raise ReleaseTrustError("transition release current tag is missing")
+        current_type = _git(
+            repo,
+            "cat-file",
+            "-t",
+            current_object.stdout.strip(),
+            check=False,
+        )
+        if current_type.returncode != 0 or current_type.stdout.strip() != "tag":
+            raise ReleaseTrustError(
+                "transition release current marker is not an annotated tag"
+            )
+        current_payload = _git(
+            repo,
+            "cat-file",
+            "-p",
+            current_object.stdout.strip(),
+            check=False,
+        )
+        expected_headers = [
+            f"object {head_commit}",
+            "type commit",
+            f"tag {current_tag}",
+        ]
+        if (
+            current_payload.returncode != 0
+            or current_payload.stdout.splitlines()[:3] != expected_headers
+        ):
+            raise ReleaseTrustError(
+                "transition release current annotated tag identity is invalid"
+            )
         current = _git(
             repo,
             "rev-parse",
             "--verify",
-            f"{authority_root}/current^{{commit}}",
+            f"{current_ref}^{{commit}}",
             check=False,
         )
         if current.returncode != 0 or current.stdout.strip() != head_commit:
             raise ReleaseTrustError(
                 "transition release current tag does not resolve to head"
             )
-        if parents[1] != failed_commit:
-            raise ReleaseTrustError(
-                "transition release head is not directly atop the failed release"
+
+        resolved_failed: list[tuple[str, str]] = []
+        for index, (failed_tag, failed_tag_object, failed_commit) in enumerate(
+            failed_markers
+        ):
+            failed_ref = f"{authority_root}/failed-{index}"
+            failed_object = _git(
+                repo,
+                "rev-parse",
+                "--verify",
+                f"{failed_ref}^{{object}}",
+                check=False,
             )
-        failed_object = _git(
+            if failed_object.returncode != 0:
+                raise ReleaseTrustError(
+                    f"transition failed release marker is missing: {failed_tag}"
+                )
+            if failed_object.stdout.strip() != failed_tag_object:
+                raise ReleaseTrustError(
+                    "transition failed release tag object differs from the ledger: "
+                    f"{failed_tag}"
+                )
+            failed_type = _git(repo, "cat-file", "-t", failed_tag_object, check=False)
+            if failed_type.returncode != 0 or failed_type.stdout.strip() != "tag":
+                raise ReleaseTrustError(
+                    "transition failed release marker is not the annotated tag "
+                    f"object: {failed_tag}"
+                )
+            failed_peeled = _git(
+                repo,
+                "rev-parse",
+                "--verify",
+                f"{failed_ref}^{{commit}}",
+                check=False,
+            )
+            if (
+                failed_peeled.returncode != 0
+                or failed_peeled.stdout.strip() != failed_commit
+            ):
+                raise ReleaseTrustError(
+                    "transition failed release peeled commit differs from the "
+                    f"ledger: {failed_tag}"
+                )
+            resolved_failed.append((failed_tag, failed_commit))
+
+        base_object = _git(
             repo,
             "rev-parse",
             "--verify",
-            f"{authority_root}/failed^{{object}}",
+            f"{authority_root}/base^{{object}}",
             check=False,
         )
-        if failed_object.returncode != 0:
-            raise ReleaseTrustError("transition failed release marker is missing")
-        if failed_object.stdout.strip() != failed_tag_object:
+        if base_object.returncode != 0:
+            raise ReleaseTrustError("transition base tag marker is missing")
+        if base_object.stdout.strip() != base_tag_object:
             raise ReleaseTrustError(
-                "transition failed release tag object differs from the ledger"
+                "transition base tag object differs from the ledger"
             )
-        failed_type = _git(
-            repo, "cat-file", "-t", failed_tag_object, check=False
-        )
-        if failed_type.returncode != 0 or failed_type.stdout.strip() != "tag":
+        base_type = _git(repo, "cat-file", "-t", base_tag_object, check=False)
+        if base_type.returncode != 0 or base_type.stdout.strip() != "tag":
             raise ReleaseTrustError(
-                "transition failed release marker is not the annotated tag object"
+                "transition base marker is not the annotated tag object"
             )
-        failed_peeled = _git(
-            repo,
-            "rev-parse",
-            "--verify",
-            f"{authority_root}/failed^{{commit}}",
-            check=False,
-        )
-        if failed_peeled.returncode != 0 or failed_peeled.stdout.strip() != failed_commit:
-            raise ReleaseTrustError(
-                "transition failed release peeled commit differs from the ledger"
-            )
-        if trust_verifier(failed_tag, failed_commit):
-            raise ReleaseTrustError(
-                "known failed release has contradictory canonical evidence"
-            )
-        base = _git(
+        base_peeled = _git(
             repo,
             "rev-parse",
             "--verify",
             f"{authority_root}/base^{{commit}}",
             check=False,
         )
-        if base.returncode != 0 or base.stdout.strip() != base_commit:
+        if base_peeled.returncode != 0 or base_peeled.stdout.strip() != base_commit:
             raise ReleaseTrustError(
-                "transition base tag does not match the exact ledger commit"
+                "transition base tag peeled commit differs from the ledger"
             )
+
+        if parents[1] != resolved_failed[-1][1]:
+            raise ReleaseTrustError(
+                "transition release head is not directly atop the latest failed "
+                "release"
+            )
+        for (_older_tag, older_commit), (newer_tag, newer_commit) in zip(
+            resolved_failed[:-1], resolved_failed[1:], strict=True
+        ):
+            newer_parents = _git(
+                repo, "rev-list", "--parents", "-n", "1", newer_commit
+            ).stdout.split()
+            if len(newer_parents) != 2 or newer_parents[1] != older_commit:
+                raise ReleaseTrustError(
+                    f"transition failed release chain is not direct at {newer_tag}"
+                )
         if _git(
             repo,
             "merge-base",
             "--is-ancestor",
             base_commit,
-            failed_commit,
+            resolved_failed[0][1],
             check=False,
         ).returncode:
             raise ReleaseTrustError(
                 "transition base is not an ancestor of the failed release"
             )
+        for failed_tag, failed_commit in resolved_failed:
+            if trust_verifier(failed_tag, failed_commit):
+                raise ReleaseTrustError(
+                    "known failed release has contradictory canonical evidence: "
+                    f"{failed_tag}"
+                )
         return base_commit, base_tag
     if len(parents) == 1:
         return head_commit, "none"

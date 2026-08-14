@@ -60,12 +60,42 @@ jobs:
             -r mcp-infra/requirements.txt
           python -m pip check
 
+      - name: Preload exact offline smoke images
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull postgres:15
+          docker image inspect postgres:15 >/dev/null
+          minio_tag="minio/minio:RELEASE.2024-12-18T13-15-44Z"
+          minio_digest="sha256:1dce27c494a16bae114774f1cec295493f3613142713130c2d22dd5696be6ad3"
+          minio_ref="${minio_tag}@${minio_digest}"
+          docker pull "${minio_ref}"
+          docker tag "${minio_ref}" "${minio_tag}"
+          digest_id="$(docker image inspect --format '{{.Id}}' "${minio_ref}")"
+          tag_id="$(docker image inspect --format '{{.Id}}' "${minio_tag}")"
+          [[ -n "${digest_id}" && "${digest_id}" == "${tag_id}" ]]
+
       - name: Prepare hermetic Refinement DuckDB artifact
+        id: duckdb_cache
         shell: bash
         env:
-          DUCKDB_TEST_HOME: /tmp/refinement-duckdb-home
+          PYTHON_BIN: python
           REFINEMENT_IMAGE: refinement:offline-smoke
-        run: scripts/prepare_refinement_duckdb_ci.sh
+        run: |
+          set -euo pipefail
+          cache_root="$(mktemp -d "${RUNNER_TEMP}/omega-control-room-duckdb.XXXXXX")"
+          DUCKDB_TEST_HOME="${cache_root}/home"
+          DUCKDB_CACHE_MANIFEST="${cache_root}/extensions.sha256"
+          export DUCKDB_TEST_HOME DUCKDB_CACHE_MANIFEST
+          scripts/prepare_refinement_duckdb_ci.sh
+          chmod -R a-w "${DUCKDB_TEST_HOME}/.duckdb"
+          chmod a-w "${DUCKDB_CACHE_MANIFEST}"
+          manifest_sha256="$(sha256sum "${DUCKDB_CACHE_MANIFEST}" | awk '{print $1}')"
+          {
+            printf 'home=%s\n' "${DUCKDB_TEST_HOME}"
+            printf 'manifest=%s\n' "${DUCKDB_CACHE_MANIFEST}"
+            printf 'manifest_sha256=%s\n' "${manifest_sha256}"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Build and smoke Replicon DuckDB/httpfs image
         shell: bash
@@ -81,7 +111,7 @@ jobs:
       - name: Run focal Control Room tests
         continue-on-error: true
         env:
-          HOME: /tmp/refinement-duckdb-home
+          HOME: ${{ steps.duckdb_cache.outputs.home }}
           DOCKER_HOST: unix:///var/run/docker.sock
           PYTHONPATH: .:console
           PUBLIC_SQL_POSTGRES_DB: sql_oracle
@@ -89,7 +119,8 @@ jobs:
           PUBLIC_SQL_POSTGRES_PORT: "55432"
           PUBLIC_SQL_POSTGRES_USER: postgres
         run: |
-          pytest -ra --junitxml=/tmp/control-room-focal.xml \
+          env -u GITHUB_ENV -u GITHUB_PATH \
+            pytest -ra --junitxml=/tmp/control-room-focal.xml \
             console/tests/control_room_public_sql_parse_oracle_gate.py \
             console/tests/test_audit_service_transactional.py \
             console/tests/test_control_room*.py \
@@ -182,7 +213,7 @@ jobs:
         env:
           PYTHONPATH: cartridges/sap_successfactors
         run: |
-          pytest -ra \
+          env -u GITHUB_ENV -u GITHUB_PATH pytest -ra \
             cartridges/sap_successfactors/tests/test_operational_persistence_contract.py
 
       - name: Provision the app-grant database
@@ -222,11 +253,12 @@ jobs:
         continue-on-error: true
         env:
           OMEGA_TEST_GRANTS_DSN: postgresql://postgres:postgres@127.0.0.1:55432/app_grants
-          HOME: /tmp/refinement-duckdb-home
+          HOME: ${{ steps.duckdb_cache.outputs.home }}
           DOCKER_HOST: unix:///var/run/docker.sock
           PYTHONPATH: .:console
         run: |
-          pytest -ra --junitxml=/tmp/control-room-postgres-rls.xml \
+          env -u GITHUB_ENV -u GITHUB_PATH \
+            pytest -ra --junitxml=/tmp/control-room-postgres-rls.xml \
             tests/test_analytic_app_dataset_grants.py \
             tests/test_operational_rls_console_refinement.py \
             tests/test_operational_rls_policy_guard.py \
@@ -256,20 +288,44 @@ jobs:
         if: always()
         shell: bash
         env:
-          DUCKDB_TEST_HOME: /tmp/refinement-duckdb-home
+          BASH_ENV: /dev/null
+          HOME: ${{ steps.duckdb_cache.outputs.home }}
+          DUCKDB_CACHE_MANIFEST: ${{ steps.duckdb_cache.outputs.manifest }}
+          ENV: /dev/null
+          EXPECTED_MANIFEST_SHA256: ${{ steps.duckdb_cache.outputs.manifest_sha256 }}
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          LD_PRELOAD: ""
+          PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
         run: |
           set -euo pipefail
-          test -s /tmp/refinement-duckdb-extensions.before
-          find "$DUCKDB_TEST_HOME/.duckdb" -type f -print0 \
+          [[ "${EXPECTED_MANIFEST_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          test -s "${DUCKDB_CACHE_MANIFEST}"
+          test -f "${DUCKDB_CACHE_MANIFEST}"
+          test ! -L "${DUCKDB_CACHE_MANIFEST}"
+          [[ "$(sha256sum "${DUCKDB_CACHE_MANIFEST}" | awk '{print $1}')" == "${EXPECTED_MANIFEST_SHA256}" ]]
+          if find "${HOME}/.duckdb" ! -type d ! -type f -print -quit | grep -q .; then
+            echo "::error::DuckDB extension cache contains a non-regular entry"
+            exit 1
+          fi
+          actual_manifest="$(mktemp "${RUNNER_TEMP}/omega-control-room-duckdb-after.XXXXXX")"
+          trap 'rm -f "${actual_manifest}"' EXIT
+          find "${HOME}/.duckdb" -type f -print0 \
             | LC_ALL=C sort -z | xargs -0 sha256sum \
-            > /tmp/refinement-duckdb-extensions.after
-          cmp /tmp/refinement-duckdb-extensions.before \
-            /tmp/refinement-duckdb-extensions.after
+            > "${actual_manifest}"
+          cmp --silent "${DUCKDB_CACHE_MANIFEST}" "${actual_manifest}"
 
       - name: Verify focal and live PostgreSQL/RLS reports
         if: always()
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          LD_PRELOAD: ""
+          PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
         run: |
-          python - <<'PY'
+          /usr/bin/python3 - <<'PY'
           import xml.etree.ElementTree as ET
           from pathlib import Path
 

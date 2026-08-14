@@ -6,7 +6,7 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "sha256": "f8ea50da4f93e0644b797ccc25858427bbb61dd37fdd0cef8bf3d813e06a8b76"
+      "sha256": "337a10b1e77497f301fc01dc26d1df70bfe19d7ebe829277b12179a0da4cef7a"
     },
     {
       "path": "Makefile",
@@ -2973,6 +2973,10 @@
       "sha256": "e7a1ee5862ecdfa57deec6f6da8c27c4f65b9abd3f5d7cd90550a5cf8254ec1d"
     },
     {
+      "path": "scripts/prepare_refinement_duckdb_ci.sh",
+      "sha256": "84a5dbe744528544fcddab8f80183f6f957c4c6cf3ca3e74ee008b573aea57cb"
+    },
+    {
       "path": "scripts/production_readiness.sh",
       "sha256": "fa83a1ade04ae75c936f04e701a8476b7a68230f5f37ecdfbc65e37773a9815b"
     },
@@ -3003,6 +3007,10 @@
     {
       "path": "scripts/run_multiuser_isolation_simulation.sh",
       "sha256": "3d799b3d44455eb40657db58e64c85e2266d0a6d2e656d06ee10e5280145dc5d"
+    },
+    {
+      "path": "scripts/run_refinement_duckdb_offline_smoke.sh",
+      "sha256": "30809c6c0c02d123187110279f435bc082ca50298b69e570fe4a424fe528ddb2"
     },
     {
       "path": "scripts/run_release_playwright.py",
@@ -3046,7 +3054,7 @@
     },
     {
       "path": "scripts/verify_release_test_harness.py",
-      "sha256": "6bba6317a94aeacc2c5c04bdf32e4d4e299e0213b47818251f4d563ab7556736"
+      "sha256": "f7c417438c2c75d7963cb5f4d70281fb94258fb0d0c807d2f81ddb9fd419c834"
     },
     {
       "path": "scripts/verify_test_skip_policy.py",
@@ -3626,7 +3634,7 @@
     },
     {
       "path": "tests/test_control_room_ci_contract.py",
-      "sha256": "ad369bb89390ebc388cb4252e44cc1a03f60d20d14c2c9e0124d6155f3c38696"
+      "sha256": "08c640e94bd1b6423d3ea1bd0d57e948627037967cca2fa5a1e7bb61369cc64d"
     },
     {
       "path": "tests/test_control_room_data_readiness_contract.py",
@@ -4646,7 +4654,7 @@
     },
     {
       "path": "tests/test_refinement_duckdb_extensions.py",
-      "sha256": "67a0eadf717733532dc77a85acdda0c1f41737fa5791f1a2b656c8c0bb4452ba"
+      "sha256": "9848d10d0982f018b13f22afcf49a33ac0263ea2f7953deea4dd4ddfc23a9cf1"
     },
     {
       "path": "tests/test_refinement_healthz_real.py",
@@ -4666,7 +4674,7 @@
     },
     {
       "path": "tests/test_release_ci_fail_closed.py",
-      "sha256": "9277b5c0279acddb829fa954f293192be068705efca254a8d0ac0c92fbb7eab5"
+      "sha256": "4df56dd9e6b29c4aa1124848633a84663f8e08852d1d99d9dba61f5bd1e38c4b"
     },
     {
       "path": "tests/test_release_compose_env_contract.py",
@@ -5002,7 +5010,7 @@
     },
     {
       "path": "tests/test_select_previous_release.py",
-      "sha256": "507bdc104a69988b783fd2d4a33d0532419720dc0aa83f258ae01ce4ec5b6873"
+      "sha256": "be6ce8633a2cfe990aa1b8399cf79139ed892193e81e26d5c22aadb199d228b5"
     },
     {
       "path": "tests/test_service_urls.py",
