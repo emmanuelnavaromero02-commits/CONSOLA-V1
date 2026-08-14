@@ -52,11 +52,12 @@ CANONICAL_SERVICES = (
     "salesforce",
 )
 # The release chain predates canonical manifests.  This sole recovery bridge
-# skips the known failed .210, .211, and .212 runs only while the exact annotated tag
-# objects, peeled commits, direct-parent chain, and lack of canonical evidence
-# all match.  Every later base must carry a checksum-valid canonical manifest.
+# skips the known failed .210 through .213 runs only while their exact annotated
+# tag objects, peeled commits, direct-parent chain, and lack of canonical
+# evidence all match. Every later base must carry a checksum-valid canonical
+# manifest.
 TRANSITION_RELEASES = {
-    "v1.45.213-beta": (
+    "v1.45.214-beta": (
         "v1.45.209-beta",
         "713b2801a43c725eab68a31db858c1b5ec10e5cc",
         "21b6274ec6e416d2d808efe30cda19ce8176611f",
@@ -76,11 +77,16 @@ TRANSITION_RELEASES = {
                 "5e3bbc3d1475486bbc0ddabb57b440210ac0782c",
                 "dd882bc08bb445d1446f9cbbe313448b24827720",
             ),
+            (
+                "v1.45.213-beta",
+                "926330d8e1e2067e4e56429fb91e4585ffa4eb43",
+                "4bcfda1811d4cbe0511624e0d5cd9c1f5205926b",
+            ),
         ),
     ),
 }
 TRANSITION_AUTHORITY_ROOTS = {
-    "v1.45.213-beta": "refs/omega-release-authority/v1.45.213-beta",
+    "v1.45.214-beta": "refs/omega-release-authority/v1.45.214-beta",
 }
 
 RawFetcher = Callable[[str, Mapping[str, str]], tuple[int, bytes, Mapping[str, str]]]
@@ -513,9 +519,9 @@ def select_previous_release(
             base_commit,
             failed_markers,
         ) = transition
-        if len(failed_markers) != 3:
+        if len(failed_markers) != 4:
             raise ReleaseTrustError(
-                "transition release must have exactly three failed markers"
+                "transition release must have exactly four failed markers"
             )
         current_ref = f"{authority_root}/current"
         current_object = _git(

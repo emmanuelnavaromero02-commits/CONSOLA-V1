@@ -15,6 +15,7 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[1]
 WORKFLOW = REPO / ".github/workflows/release.yml"
+CAPACITY_WORKFLOW = REPO / ".github/workflows/release-runner-capacity.yml"
 POLICY = REPO / ".github/release-skip-policy.json"
 TEST_SKIP_POLICY = REPO / ".github/release-test-skip-policy.json"
 NESTED_RELEASE_PYTHON_VARIABLES = {
@@ -29,6 +30,11 @@ NESTED_RELEASE_PYTHON_VARIABLES = {
 def _jobs() -> dict[str, object]:
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     return workflow["jobs"]
+
+
+def _capacity_job() -> dict[str, object]:
+    workflow = yaml.safe_load(CAPACITY_WORKFLOW.read_text(encoding="utf-8"))
+    return workflow["jobs"]["release-runner-capacity"]
 
 
 def _named_step(job: dict[str, object], name: str) -> dict[str, object]:
@@ -65,7 +71,7 @@ def _test_commit(repo: Path, message: str) -> str:
 
 def _recovery_remote(
     tmp_path: Path,
-) -> tuple[Path, Path, Path, str, str, str, str, str, str]:
+) -> tuple[Path, Path, Path, str, str, str, str, str, str, str, str]:
     remote = tmp_path / "remote.git"
     seed = tmp_path / "seed"
     checkout = tmp_path / "checkout"
@@ -94,9 +100,15 @@ def _recovery_remote(
         == 0
     )
     failed_212_object = _test_git_output(seed, "rev-parse", "refs/tags/v1.45.212-beta")
-    _test_commit(seed, "recovery .213")
+    failed_213 = _test_commit(seed, "failed .213")
     assert (
-        _test_git(seed, "tag", "-a", "v1.45.213-beta", "-m", "recovery .213").returncode
+        _test_git(seed, "tag", "-a", "v1.45.213-beta", "-m", "failed .213").returncode
+        == 0
+    )
+    failed_213_object = _test_git_output(seed, "rev-parse", "refs/tags/v1.45.213-beta")
+    _test_commit(seed, "recovery .214")
+    assert (
+        _test_git(seed, "tag", "-a", "v1.45.214-beta", "-m", "recovery .214").returncode
         == 0
     )
     assert _test_git(seed, "remote", "add", "origin", str(remote)).returncode == 0
@@ -107,7 +119,7 @@ def _recovery_remote(
         "clone",
         "-q",
         "--branch",
-        "v1.45.213-beta",
+        "v1.45.214-beta",
         str(remote),
         str(checkout),
     )
@@ -122,6 +134,8 @@ def _recovery_remote(
         failed_211_object,
         failed_212,
         failed_212_object,
+        failed_213,
+        failed_213_object,
     )
 
 
@@ -1051,13 +1065,14 @@ def test_previous_release_selection_requires_canonical_release_evidence():
     binding = _named_step(job, "Bind exact remote recovery tag authority")
     step = next(step for step in job["steps"] if step.get("id") == "previous")
     assert job["steps"].index(binding) < job["steps"].index(step)
-    assert binding["if"] == "github.ref_name == 'v1.45.213-beta'"
+    assert binding["if"] == "github.ref_name == 'v1.45.214-beta'"
     for needle in (
         "git fetch --no-tags --force --atomic origin",
-        "+refs/tags/v1.45.213-beta:${authority}/current",
+        "+refs/tags/v1.45.214-beta:${authority}/current",
         "+refs/tags/v1.45.210-beta:${authority}/failed-0",
         "+refs/tags/v1.45.211-beta:${authority}/failed-1",
         "+refs/tags/v1.45.212-beta:${authority}/failed-2",
+        "+refs/tags/v1.45.213-beta:${authority}/failed-3",
         "+refs/tags/v1.45.209-beta:${authority}/base",
         'git update-ref -d "${authority}/${name}"',
         'git show-ref --verify --quiet "${authority}/${name}"',
@@ -1083,6 +1098,8 @@ def test_remote_recovery_binding_rejects_deleted_tag_despite_stale_checkout(
         _failed_211_object,
         _failed_212,
         _failed_212_object,
+        _failed_213,
+        _failed_213_object,
     ) = _recovery_remote(tmp_path)
     assert _test_git_output(checkout, "rev-parse", "refs/tags/v1.45.210-beta") == (
         failed_210_object
@@ -1098,13 +1115,20 @@ def test_remote_recovery_binding_rejects_deleted_tag_despite_stale_checkout(
     assert _test_git_output(checkout, "rev-parse", "refs/tags/v1.45.210-beta") == (
         failed_210_object
     )
-    for name in ("current", "failed-0", "failed-1", "failed-2", "base"):
+    for name in (
+        "current",
+        "failed-0",
+        "failed-1",
+        "failed-2",
+        "failed-3",
+        "base",
+    ):
         assert (
             _test_git(
                 checkout,
                 "show-ref",
                 "--verify",
-                f"refs/omega-release-authority/v1.45.213-beta/{name}",
+                f"refs/omega-release-authority/v1.45.214-beta/{name}",
             ).returncode
             != 0
         )
@@ -1123,6 +1147,8 @@ def test_remote_recovery_binding_replaces_stale_checkout_with_moved_tag(
         _failed_211_object,
         _failed_212,
         _failed_212_object,
+        _failed_213,
+        _failed_213_object,
     ) = _recovery_remote(tmp_path)
     assert _test_git(seed, "tag", "-d", "v1.45.210-beta").returncode == 0
     assert (
@@ -1145,7 +1171,7 @@ def test_remote_recovery_binding_replaces_stale_checkout_with_moved_tag(
     result = _run_recovery_remote_binding(checkout)
 
     assert result.returncode == 0, result.stderr
-    authority = "refs/omega-release-authority/v1.45.213-beta/failed-0"
+    authority = "refs/omega-release-authority/v1.45.214-beta/failed-0"
     assert _test_git_output(checkout, "rev-parse", authority) == moved_object
     assert _test_git_output(checkout, "rev-parse", "refs/tags/v1.45.210-beta") == (
         failed_210_object
@@ -1165,6 +1191,8 @@ def test_remote_recovery_binding_preserves_lightweight_remote_identity(
         _failed_211_object,
         _failed_212,
         _failed_212_object,
+        _failed_213,
+        _failed_213_object,
     ) = _recovery_remote(tmp_path)
     assert _test_git(seed, "tag", "-d", "v1.45.210-beta").returncode == 0
     assert _test_git(seed, "tag", "v1.45.210-beta", failed_210).returncode == 0
@@ -1174,7 +1202,7 @@ def test_remote_recovery_binding_preserves_lightweight_remote_identity(
     result = _run_recovery_remote_binding(checkout)
 
     assert result.returncode == 0, result.stderr
-    authority = "refs/omega-release-authority/v1.45.213-beta/failed-0"
+    authority = "refs/omega-release-authority/v1.45.214-beta/failed-0"
     assert _test_git_output(checkout, "rev-parse", authority) == failed_210
     assert _test_git_output(checkout, "cat-file", "-t", authority) == "commit"
     assert _test_git_output(checkout, "rev-parse", "refs/tags/v1.45.210-beta") == (
@@ -1288,14 +1316,17 @@ def test_release_harness_authority_is_bound_to_the_source_sha_and_propagated():
         'git show "${GITHUB_SHA}:${verifier_path}"',
         'git show "${GITHUB_SHA}:${secure_output_path}"',
         'git show "${GITHUB_SHA}:${docker_lock_path}"',
+        'git show "${GITHUB_SHA}:${runner_disk_path}"',
         'cmp --silent "${committed_seal}" "${seal_path}"',
         'cmp --silent "${committed_verifier}" "${verifier_path}"',
         'cmp --silent "${committed_secure_output}" "${secure_output_path}"',
         'cmp --silent "${committed_docker_lock}" "${docker_lock_path}"',
+        'cmp --silent "${committed_runner_disk}" "${runner_disk_path}"',
         'echo "sha256=${seal_sha256}" >> "${GITHUB_OUTPUT}"',
         'echo "verifier_sha256=${verifier_sha256}" >> "${GITHUB_OUTPUT}"',
         'echo "secure_output_sha256=${secure_output_sha256}" >> "${GITHUB_OUTPUT}"',
         'echo "docker_lock_sha256=${docker_lock_sha256}" >> "${GITHUB_OUTPUT}"',
+        'echo "runner_disk_sha256=${runner_disk_sha256}" >> "${GITHUB_OUTPUT}"',
     ):
         assert needle in authority["run"]
     assert "GITHUB_ENV" not in authority["run"]
@@ -1574,29 +1605,34 @@ def test_duckdb_cache_verifier_blocks_manifest_content_and_topology_drift(
     assert run().returncode != 0
 
 
-def test_failed_210_through_212_releases_are_preserved_and_version_moves_forward():
-    assert (REPO / "VERSION").read_text(encoding="utf-8").strip() == ("1.45.213-beta")
+def test_failed_210_through_213_releases_are_preserved_and_version_moves_forward():
+    assert (REPO / "VERSION").read_text(encoding="utf-8").strip() == ("1.45.214-beta")
     evidence = (
         REPO / "docs/release-evidence/omega-f2-digest-release-gate.md"
     ).read_text(encoding="utf-8")
     for needle in (
         "v1.45.212-beta",
         "v1.45.213-beta",
+        "v1.45.214-beta",
         "v1.45.211-beta",
         "v1.45.210-beta",
         "31801477645",
         "31809737977",
         "31823738299",
+        "31831837077",
         "6c70e0067eb44dd991d355b3e5cab663300c790b",
         "2429e9a2bdab13ff00740fe318009fd5b101850d",
         "cadf0b28b771257bc6cb9129cf8b4cd72ef5adff",
         "cc0873e4d86bb5bd2f183a003d43ff8a0970df8c",
         "5e3bbc3d1475486bbc0ddabb57b440210ac0782c",
         "dd882bc08bb445d1446f9cbbe313448b24827720",
+        "926330d8e1e2067e4e56429fb91e4585ffa4eb43",
+        "4bcfda1811d4cbe0511624e0d5cd9c1f5205926b",
         "13 failed, 689 passed, 18 errors",
         "1 failed, 720 passed, 16 errors",
         "Freeze trusted Playwright and Docker gate runtimes",
         "PermissionError",
+        "no space left on device",
         "no preflight, image build, manifest, digest gate, or release assets ran",
     ):
         assert needle in evidence
@@ -1670,6 +1706,130 @@ def test_digest_gate_uses_immutable_docker_and_playwright_authorities() -> None:
     assert gate["env"]["PATH"] == (
         "${{ steps.gate_runtime_authority.outputs.trusted_path }}"
     )
+
+
+def test_digest_gate_prepares_and_rechecks_bounded_runner_disk_budget() -> None:
+    job = _jobs()["digest-full-stack-gate"]
+    assert job["runs-on"] == "ubuntu-24.04"
+    steps = job["steps"]
+    names = [step.get("name") for step in steps]
+    freeze_name = "Freeze trusted Playwright and Docker gate runtimes"
+    reclaim_name = "Prepare GitHub-hosted release disk budget"
+    app_budget_name = "Verify disk budget before application pulls"
+    pull_name = "Pull and verify all 15 exact digest references"
+    infra_budget_name = "Verify disk budget before infrastructure pulls"
+    render_name = "Render and start hybrid digest/source release stack"
+    assert (
+        names.index(freeze_name)
+        < names.index(reclaim_name)
+        < names.index(app_budget_name)
+    )
+    assert names.index(app_budget_name) + 1 == names.index(pull_name)
+    assert (
+        names.index(pull_name)
+        < names.index(infra_budget_name)
+        < names.index(render_name)
+    )
+
+    runtime = _named_step(job, freeze_name)
+    for needle in (
+        "scripts/prepare_release_runner_disk.py",
+        "/opt/omega-release-runtime/prepare_release_runner_disk.py",
+        "${OMEGA_RELEASE_RUNNER_DISK_SHA256}",
+        "-o root -g root -m 0444",
+    ):
+        assert needle in runtime["run"]
+    assert runtime["env"]["OMEGA_RELEASE_RUNNER_DISK_SHA256"] == (
+        "${{ steps.harness_authority.outputs.runner_disk_sha256 }}"
+    )
+
+    reclaim = _named_step(job, reclaim_name)
+    assert reclaim["env"]["BASH_ENV"] == "/dev/null"
+    assert reclaim["env"]["ENV"] == "/dev/null"
+    assert reclaim["env"]["PYTHONPATH"] == ""
+    assert reclaim["env"]["LD_PRELOAD"] == ""
+    reclaim_source = reclaim["run"]
+    for needle in (
+        "/opt/omega-release-runtime/prepare_release_runner_disk.py",
+        "/usr/bin/docker --config /opt/omega-release-runtime/docker-config info",
+        "{{.DockerRootDir}}",
+        '== "/var/lib/docker"',
+        "/usr/bin/sudo /usr/bin/env -i",
+        '/usr/bin/python3 -I "${helper}" reclaim',
+    ):
+        assert needle in reclaim_source
+    for forbidden in ("docker system prune", "docker builder prune", "rm -rf"):
+        assert forbidden not in reclaim_source
+
+    app_budget = _named_step(job, app_budget_name)
+    assert "check --phase pre-pull" in app_budget["run"]
+    assert "/usr/bin/env -i" in app_budget["run"]
+    assert "scripts/prepare_release_runner_disk.py" not in app_budget["run"]
+
+    infra_budget = _named_step(job, infra_budget_name)
+    assert "check --phase pre-infra" in infra_budget["run"]
+    assert "/usr/bin/env -i" in infra_budget["run"]
+    assert "scripts/prepare_release_runner_disk.py" not in infra_budget["run"]
+
+    render = _named_step(job, render_name)["run"]
+    pre_compose = render.index("check --phase pre-compose")
+    assert render.rindex('docker pull "${ref}"') < pre_compose
+    assert pre_compose < render.index("docker image ls --no-trunc --digests")
+    assert pre_compose < render.index('"${compose[@]}" up -d --no-build --pull never')
+
+
+def test_release_runner_capacity_canary_reproduces_post_install_budget() -> None:
+    job = _capacity_job()
+    assert job["runs-on"] == "ubuntu-24.04"
+    assert job["timeout-minutes"] == 45
+    install = _named_step(job, "Reproduce digest-gate dependency footprint")["run"]
+    release_install = _named_step(
+        _jobs()["digest-full-stack-gate"],
+        "Install digest-stack gate dependencies",
+    )["run"]
+    for needle in (
+        "-r tests/requirements.txt",
+        "-r console/requirements.txt",
+        "-r refinement/requirements.txt",
+        "-r vault/requirements.txt",
+        "-r workspace/requirements.txt",
+        "-r mcp-infra/requirements.txt",
+        "-r tests/stress/requirements.txt",
+        "for req in cartridges/*/requirements.txt",
+        "npm --prefix tests-e2e ci",
+        "playwright install --with-deps chromium",
+    ):
+        assert needle in install
+        assert needle in release_install
+
+    authority = _named_step(
+        job, "Freeze source-bound capacity authority and browser copy"
+    )["run"]
+    for needle in (
+        'git show "${GITHUB_SHA}:${helper_path}"',
+        'git show "${GITHUB_SHA}:${normalizer_path}"',
+        'cmp --silent "${committed_helper}" "${helper_path}"',
+        'cmp --silent "${committed_normalizer}" "${normalizer_path}"',
+        "/opt/omega-release-runtime/prepare_release_runner_disk.py",
+        "/opt/omega-release-runtime/normalize_release_runtime_permissions.py",
+        "-o root -g root -m 0444",
+        '"${RUNNER_TEMP}/omega-playwright-browsers.install/."',
+    ):
+        assert needle in authority
+
+    proof = _named_step(job, "Prove exact post-install reclaim budget")
+    assert proof["env"]["BASH_ENV"] == "/dev/null"
+    assert proof["env"]["PYTHONPATH"] == ""
+    for needle in (
+        "/usr/bin/docker --config /opt/omega-release-runtime/docker-config info",
+        '== "/var/lib/docker"',
+        "/usr/bin/sudo /usr/bin/env -i",
+        '/usr/bin/python3 -I "${helper}" reclaim',
+        "check --phase pre-pull",
+    ):
+        assert needle in proof["run"]
+    for forbidden in ("docker system prune", "docker builder prune", "rm -rf"):
+        assert forbidden not in CAPACITY_WORKFLOW.read_text(encoding="utf-8")
 
 
 def test_untrusted_gate_cannot_persist_file_command_or_shell_poison() -> None:
