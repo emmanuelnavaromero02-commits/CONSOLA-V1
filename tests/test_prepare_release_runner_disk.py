@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 from collections.abc import Iterator, Mapping
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -292,6 +293,100 @@ def test_nested_hardlink_is_unlinked_without_mutating_external_inode(
     assert not cleanup.path.exists()
     assert outside.read_bytes() == b"preserve"
     assert outside.stat().st_nlink == 1
+
+
+def test_reclaim_treats_st_blocks_as_telemetry_not_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    disk = tmp_path / "docker"
+    disk.mkdir()
+    cleanup = _target("cleanup", tmp_path / "cleanup")
+    real_inventory = runner_disk._inventory_target
+    inventory_calls = 0
+
+    def inventory_with_settled_allocation(
+        target: CleanupTarget, *, disk_device: int
+    ) -> runner_disk._TargetInventory:
+        nonlocal inventory_calls
+        inventory_calls += 1
+        inventory = real_inventory(target, disk_device=disk_device)
+        if inventory_calls != 2:
+            return inventory
+        entries = tuple(
+            replace(entry, allocated_bytes=entry.allocated_bytes + 4096)
+            for entry in inventory.entries
+        )
+        return replace(
+            inventory,
+            entries=entries,
+            allocated_bytes=inventory.allocated_bytes + 4096 * len(entries),
+        )
+
+    monkeypatch.setattr(
+        runner_disk, "_inventory_target", inventory_with_settled_allocation
+    )
+    report = _reclaim(
+        tmp_path,
+        minimum_free_bytes=150,
+        cache_targets=(cleanup,),
+        snapshotter=_snapshotter(disk, {cleanup.path: 50}),
+    )
+
+    assert inventory_calls == 2
+    assert report.removed == ("cleanup",)
+    assert not cleanup.path.exists()
+
+
+@pytest.mark.parametrize("field", ["kind", "device", "inode", "mode"])
+def test_reclaim_still_rejects_security_identity_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str
+) -> None:
+    disk = tmp_path / "docker"
+    disk.mkdir()
+    cleanup = _target("cleanup", tmp_path / "cleanup")
+    real_inventory = runner_disk._inventory_target
+    inventory_calls = 0
+
+    def inventory_with_changed_identity(
+        target: CleanupTarget, *, disk_device: int
+    ) -> runner_disk._TargetInventory:
+        nonlocal inventory_calls
+        inventory_calls += 1
+        inventory = real_inventory(target, disk_device=disk_device)
+        if inventory_calls != 2:
+            return inventory
+        payload = next(
+            entry for entry in inventory.entries if entry.relative_path == "payload.bin"
+        )
+        replacements: dict[str, object] = {
+            "kind": "symlink",
+            "device": payload.device + 1,
+            "inode": payload.inode + 1,
+            "mode": payload.mode ^ 0o100,
+        }
+        changed_entry = replace(payload, **{field: replacements[field]})
+        return replace(
+            inventory,
+            entries=tuple(
+                changed_entry if entry is payload else entry
+                for entry in inventory.entries
+            ),
+        )
+
+    monkeypatch.setattr(
+        runner_disk, "_inventory_target", inventory_with_changed_identity
+    )
+    with pytest.raises(RunnerDiskError, match="changed after inventory"):
+        _reclaim(
+            tmp_path,
+            minimum_free_bytes=150,
+            cache_targets=(cleanup,),
+            snapshotter=_snapshotter(disk, {cleanup.path: 50}),
+        )
+
+    assert inventory_calls == 2
+    assert cleanup.path.is_dir()
+    assert (cleanup.path / "payload.bin").is_file()
 
 
 def test_reclaim_builds_one_child_index_for_a_wide_nested_tree(

@@ -20,7 +20,7 @@ import os
 import stat
 import sys
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import Final
@@ -108,7 +108,10 @@ class _EntryIdentity:
     device: int
     inode: int
     mode: int
-    allocated_bytes: int
+    # st_blocks is capacity telemetry, not object identity.  Freshly written
+    # files can gain allocated blocks during background writeback while their
+    # path, type, device, inode, and mode remain unchanged.
+    allocated_bytes: int = field(compare=False)
 
 
 @dataclass(frozen=True)
@@ -116,7 +119,9 @@ class _TargetInventory:
     target: CleanupTarget
     exists: bool
     entries: tuple[_EntryIdentity, ...]
-    allocated_bytes: int
+    # Derived solely from per-entry st_blocks; keep it visible in the audit
+    # log without letting asynchronous allocation invalidate a safe tree.
+    allocated_bytes: int = field(compare=False)
 
 
 @dataclass(frozen=True)
