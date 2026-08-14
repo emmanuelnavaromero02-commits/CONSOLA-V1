@@ -46,11 +46,15 @@ jobs:
 
       - id: previous
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
           python3 scripts/select_previous_release.py \
             --head "${GITHUB_SHA}" \
             --current-tag "${GITHUB_REF_NAME}" \
+            --repository "${SOURCE_REPOSITORY}" \
             --github-output "${GITHUB_OUTPUT}"
 
       - id: detect

@@ -900,13 +900,16 @@ def test_release_tag_must_point_to_the_exact_canonical_main_commit():
     assert "release tag is not exact origin/main" in source
 
 
-def test_previous_release_selection_ignores_non_semver_tags():
+def test_previous_release_selection_requires_canonical_release_evidence():
     step = next(
         step
         for step in _jobs()["detect-release-changes"]["steps"]
         if step.get("id") == "previous"
     )
     assert "scripts/select_previous_release.py" in step["run"]
+    assert '--repository "${SOURCE_REPOSITORY}"' in step["run"]
+    assert step["env"]["GITHUB_TOKEN"] == "${{ github.token }}"
+    assert step["env"]["SOURCE_REPOSITORY"] == "${{ github.repository }}"
     assert "git describe" not in step["run"]
 
 

@@ -1,20 +1,27 @@
 #!/usr/bin/env python3
-"""Select the nearest ancestral strict-SemVer release tag.
+"""Select the nearest trusted ancestral strict-SemVer release.
 
-Auxiliary tags are ignored completely.  The selected tag must resolve to a
-commit reachable from the parent of the release commit, so the current tag can
-never accidentally become its own comparison base.
+Names and ancestry are only candidate filters.  Authority comes from a
+checksum-valid canonical GitHub Release manifest bound to the tag/SHA, apart
+from one exact current-tag-bound transition ledger entry.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 import re
 import subprocess
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import total_ordering
 from pathlib import Path
+from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 SEMVER_RE = re.compile(
@@ -23,6 +30,282 @@ SEMVER_RE = re.compile(
     r"(?P<patch>0|[1-9][0-9]*)"
     r"(?:-(?P<pre>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
 )
+
+GITHUB_API_URL = "https://api.github.com"
+GITHUB_API_VERSION = "2022-11-28"
+MAX_EVIDENCE_BYTES = 2_097_152
+CANONICAL_SERVICES = (
+    "console",
+    "workspace",
+    "refinement",
+    "vault",
+    "mcp-infra",
+    "airflow",
+    "replicon",
+    "hubspot",
+    "banxico",
+    "inegi",
+    "sec_edgar",
+    "sap_hcm",
+    "sap_s4hana",
+    "sap_successfactors",
+    "salesforce",
+)
+# The release chain predates canonical manifests.  This one exact, versioned
+# bridge is the only tag allowed without GitHub Release evidence.  Every later
+# base must carry a checksum-valid canonical manifest bound to its tag and SHA.
+TRANSITION_RELEASES = {
+    "v1.45.210-beta": (
+        "v1.45.209-beta",
+        "21b6274ec6e416d2d808efe30cda19ce8176611f",
+    ),
+}
+
+RawFetcher = Callable[[str, Mapping[str, str]], tuple[int, bytes, Mapping[str, str]]]
+TrustVerifier = Callable[[str, str], bool]
+
+
+class ReleaseTrustError(RuntimeError):
+    """Previous-release evidence is unavailable or ambiguous."""
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(
+        self,
+        req: Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        return None
+
+
+def _fetch_bytes(
+    url: str, headers: Mapping[str, str]
+) -> tuple[int, bytes, Mapping[str, str]]:
+    request = Request(url, headers=dict(headers), method="GET")
+    try:
+        with build_opener(_NoRedirect).open(request, timeout=15.0) as response:  # noqa: S310
+            status = int(response.status)
+            raw = response.read(MAX_EVIDENCE_BYTES + 1)
+    except HTTPError as exc:
+        return int(exc.code), b"", dict(exc.headers.items())
+    except (URLError, TimeoutError, OSError) as exc:
+        raise ReleaseTrustError("GitHub release evidence transport failed") from exc
+    if len(raw) > MAX_EVIDENCE_BYTES:
+        raise ReleaseTrustError("GitHub release evidence is oversized")
+    return status, raw, dict(response.headers.items())
+
+
+def _strict_repository(repository: str) -> tuple[str, str]:
+    if not re.fullmatch(
+        r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9_.-]{1,100}",
+        repository,
+    ):
+        raise ReleaseTrustError("GitHub repository identity is invalid")
+    return tuple(repository.split("/", 1))  # type: ignore[return-value]
+
+
+def _json_object(raw: bytes, *, label: str) -> dict[str, Any]:
+    try:
+        value = json.loads(raw.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ReleaseTrustError(f"{label} is not valid JSON") from exc
+    if not isinstance(value, dict):
+        raise ReleaseTrustError(f"{label} must be a JSON object")
+    return value
+
+
+def _asset_bytes(
+    *,
+    repository: str,
+    asset: Any,
+    headers: Mapping[str, str],
+    fetcher: RawFetcher,
+) -> bytes | None:
+    if not isinstance(asset, dict):
+        return None
+    asset_id = asset.get("id")
+    if not isinstance(asset_id, int) or isinstance(asset_id, bool) or asset_id <= 0:
+        return None
+    owner, name = _strict_repository(repository)
+    url = (
+        f"{GITHUB_API_URL}/repos/{quote(owner, safe='')}/{quote(name, safe='')}"
+        f"/releases/assets/{asset_id}"
+    )
+    download_headers = {**headers, "Accept": "application/octet-stream"}
+    status, raw, response_headers = fetcher(url, download_headers)
+    if status in {301, 302, 303, 307, 308}:
+        location = response_headers.get("Location") or response_headers.get("location")
+        parsed = urlsplit(location) if isinstance(location, str) else None
+        if (
+            parsed is None
+            or parsed.scheme != "https"
+            or parsed.hostname
+            not in {
+                "objects.githubusercontent.com",
+                "release-assets.githubusercontent.com",
+            }
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.fragment
+        ):
+            raise ReleaseTrustError("GitHub release asset redirect is unsafe")
+        # GitHub's API may redirect an authenticated asset request to a signed
+        # CDN URL.  Never forward the bearer token across that host boundary.
+        status, raw, _response_headers = fetcher(
+            location,
+            {
+                "Accept": "application/octet-stream",
+                "User-Agent": "omega-previous-release-selector/1",
+            },
+        )
+    if status == 404:
+        return None
+    if status != 200:
+        raise ReleaseTrustError(f"GitHub release asset returned HTTP {status}")
+    if len(raw) > MAX_EVIDENCE_BYTES:
+        raise ReleaseTrustError("GitHub release asset is oversized")
+    return raw
+
+
+def _manifest_is_canonical(
+    *, repository: str, tag: str, commit: str, raw: bytes
+) -> bool:
+    try:
+        manifest = json.loads(raw.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(manifest, dict) or set(manifest) != {
+        "schema_version",
+        "repository",
+        "release_tag",
+        "source_sha",
+        "images",
+    }:
+        return False
+    if (
+        manifest["schema_version"] != 1
+        or manifest["repository"] != repository
+        or manifest["release_tag"] != tag
+        or manifest["source_sha"] != commit
+    ):
+        return False
+    images = manifest["images"]
+    if not isinstance(images, list) or len(images) != len(CANONICAL_SERVICES):
+        return False
+    owner = repository.split("/", 1)[0]
+    for service, image_entry in zip(CANONICAL_SERVICES, images, strict=True):
+        if not isinstance(image_entry, dict) or set(image_entry) != {
+            "schema_version",
+            "service",
+            "image",
+            "release_tag",
+            "source_sha",
+            "digest",
+            "release_reference",
+            "sha_reference",
+        }:
+            return False
+        image = f"ghcr.io/{owner}/{service}"
+        digest = image_entry["digest"]
+        if not isinstance(digest, str) or not re.fullmatch(
+            r"sha256:[0-9a-f]{64}", digest
+        ):
+            return False
+        if image_entry != {
+            "schema_version": 1,
+            "service": service,
+            "image": image,
+            "release_tag": tag,
+            "source_sha": commit,
+            "digest": digest,
+            "release_reference": f"{image}:{tag}@{digest}",
+            "sha_reference": f"{image}:sha-{commit}@{digest}",
+        }:
+            return False
+    return True
+
+
+def verify_github_release_manifest(
+    *,
+    repository: str,
+    tag: str,
+    commit: str,
+    token: str,
+    fetcher: RawFetcher = _fetch_bytes,
+) -> bool:
+    """Return true only for a release with checksum-valid canonical evidence.
+
+    A structural 404 or invalid/missing canonical asset marks only that tag as
+    untrusted.  Authentication, transport, and other HTTP failures are
+    ambiguous and abort selection instead of silently shortening the delta.
+    """
+
+    owner, name = _strict_repository(repository)
+    if SemVer.parse(tag) is None or not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise ReleaseTrustError("release evidence identity is invalid")
+    token = token.strip()
+    if not token:
+        raise ReleaseTrustError("GitHub token is missing")
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {token}",
+        "X-GitHub-Api-Version": GITHUB_API_VERSION,
+        "User-Agent": "omega-previous-release-selector/1",
+    }
+    release_url = (
+        f"{GITHUB_API_URL}/repos/{quote(owner, safe='')}/{quote(name, safe='')}"
+        f"/releases/tags/{quote(tag, safe='')}"
+    )
+    status, raw, _response_headers = fetcher(release_url, headers)
+    if status == 404:
+        return False
+    if status != 200:
+        raise ReleaseTrustError(f"GitHub Release API returned HTTP {status}")
+    release = _json_object(raw, label="GitHub Release response")
+    if release.get("tag_name") != tag or release.get("draft") is not False:
+        return False
+    assets = release.get("assets")
+    if not isinstance(assets, list):
+        raise ReleaseTrustError("GitHub Release assets are invalid")
+    manifest_name = f"omega-release-manifest-{tag}.json"
+    checksum_name = f"{manifest_name}.sha256"
+    by_name: dict[str, list[Any]] = {manifest_name: [], checksum_name: []}
+    for asset in assets:
+        if isinstance(asset, dict) and asset.get("name") in by_name:
+            by_name[asset["name"]].append(asset)
+    if any(len(matches) != 1 for matches in by_name.values()):
+        return False
+    manifest_raw = _asset_bytes(
+        repository=repository,
+        asset=by_name[manifest_name][0],
+        headers=headers,
+        fetcher=fetcher,
+    )
+    checksum_raw = _asset_bytes(
+        repository=repository,
+        asset=by_name[checksum_name][0],
+        headers=headers,
+        fetcher=fetcher,
+    )
+    if manifest_raw is None or checksum_raw is None:
+        return False
+    try:
+        checksum_text = checksum_raw.decode("ascii")
+    except UnicodeError:
+        return False
+    expected_checksum = hashlib.sha256(manifest_raw).hexdigest()
+    if checksum_text != f"{expected_checksum}  {manifest_name}\n":
+        return False
+    return _manifest_is_canonical(
+        repository=repository,
+        tag=tag,
+        commit=commit,
+        raw=manifest_raw,
+    )
 
 
 def _git(
@@ -52,9 +335,7 @@ class SemVer:
             return None
         prerelease = match.group("pre")
         if prerelease is not None and any(
-            identifier.isdigit()
-            and len(identifier) > 1
-            and identifier.startswith("0")
+            identifier.isdigit() and len(identifier) > 1 and identifier.startswith("0")
             for identifier in prerelease.split(".")
         ):
             return None
@@ -95,7 +376,11 @@ class SemVer:
 
 
 def select_previous_release(
-    head: str, current_tag: str | None = None, *, repo: Path | None = None
+    head: str,
+    current_tag: str | None = None,
+    *,
+    repo: Path | None = None,
+    trust_verifier: TrustVerifier | None = None,
 ) -> tuple[str, str]:
     repo = repo or Path.cwd()
     head_commit = _git(repo, "rev-parse", f"{head}^{{commit}}").stdout.strip()
@@ -113,21 +398,31 @@ def select_previous_release(
         if resolved.returncode != 0:
             continue
         commit = resolved.stdout.strip()
-        if _git(repo, "merge-base", "--is-ancestor", commit, parent, check=False).returncode:
+        if _git(
+            repo, "merge-base", "--is-ancestor", commit, parent, check=False
+        ).returncode:
             continue
-        distance_text = _git(repo, "rev-list", "--count", f"{commit}..{parent}").stdout.strip()
+        distance_text = _git(
+            repo, "rev-list", "--count", f"{commit}..{parent}"
+        ).stdout.strip()
         candidates.append((int(distance_text), version, tag, commit))
 
-    if not candidates:
-        roots = _git(repo, "rev-list", "--max-parents=0", head_commit).stdout.splitlines()
-        if len(roots) != 1:
-            raise RuntimeError("release history must have exactly one root commit")
-        return roots[0], "none"
-
-    nearest_distance = min(candidate[0] for candidate in candidates)
-    nearest = [candidate for candidate in candidates if candidate[0] == nearest_distance]
-    _distance, _version, tag, commit = max(nearest, key=lambda item: item[1])
-    return commit, tag
+    # Check nearest commits first, and the highest SemVer only as a deterministic
+    # tie-breaker.  A newly injected SemVer tag has no authority by itself: it
+    # is ignored unless it has canonical release evidence or is the one pinned
+    # transition release.
+    for distance in sorted({candidate[0] for candidate in candidates}):
+        at_distance = sorted(
+            (candidate for candidate in candidates if candidate[0] == distance),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+        for _distance, _version, tag, commit in at_distance:
+            if TRANSITION_RELEASES.get(current_tag or "") == (tag, commit):
+                return commit, tag
+            if trust_verifier is not None and trust_verifier(tag, commit):
+                return commit, tag
+    raise ReleaseTrustError("no trusted previous release manifest or ledger entry")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -135,9 +430,29 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--head", required=True)
     parser.add_argument("--current-tag")
     parser.add_argument("--github-output", type=Path)
+    parser.add_argument("--repository")
+    parser.add_argument("--token-env", default="GITHUB_TOKEN")
     args = parser.parse_args(argv)
 
-    commit, tag = select_previous_release(args.head, args.current_tag)
+    repository = args.repository or os.environ.get("GITHUB_REPOSITORY", "")
+    token = os.environ.get(args.token_env, "")
+
+    def trust(tag: str, commit: str) -> bool:
+        return verify_github_release_manifest(
+            repository=repository,
+            tag=tag,
+            commit=commit,
+            token=token,
+        )
+
+    try:
+        commit, tag = select_previous_release(
+            args.head,
+            args.current_tag,
+            trust_verifier=trust,
+        )
+    except (ReleaseTrustError, RuntimeError) as exc:
+        parser.exit(2, f"PREVIOUS_RELEASE_SELECTION BLOCKED: {exc}\n")
     rendered = f"base={commit}\ntag={tag}\n"
     output_path = args.github_output
     if output_path is None and os.environ.get("GITHUB_OUTPUT"):
