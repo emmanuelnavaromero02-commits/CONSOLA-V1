@@ -35,6 +35,18 @@ def test_dataset_sql_changes_skip_runtime_and_full_stack_gates():
     assert flags["cartridge_requirement_paths"] == "cartridges/sap_successfactors/requirements.txt"
 
 
+def test_deleted_release_test_is_reported_and_cannot_disappear_from_targets(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        ci_changed_areas,
+        "_run_diff_paths",
+        lambda *_args, **_kwargs: ["cartridges/retired_connector/tests/test_contract.py"],
+    )
+
+    assert ci_changed_areas._deleted_files("base", "head") == [
+        "cartridges/retired_connector/tests/test_contract.py"
+    ]
+
+
 def test_console_frontend_and_compose_changes_trigger_heavier_surfaces():
     flags = _flags(
         "console/app/main.py",

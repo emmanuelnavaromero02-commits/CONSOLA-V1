@@ -7,7 +7,10 @@ on:
 
 permissions:
   contents: read
-  packages: write
+
+concurrency:
+  group: release-images-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   detect-release-changes:
@@ -16,29 +19,334 @@ jobs:
       dataset: ${{ steps.detect.outputs.dataset }}
       root_tests: ${{ steps.detect.outputs.root_tests }}
       cartridge_tests: ${{ steps.detect.outputs.cartridge_tests }}
+      root_test_targets: ${{ steps.detect.outputs.root_test_targets }}
+      cartridge_test_targets: ${{ steps.detect.outputs.cartridge_test_targets }}
+      cartridge_requirement_paths: ${{ steps.detect.outputs.cartridge_requirement_paths }}
       release_full_stack: ${{ steps.detect.outputs.release_full_stack }}
       changed_files: ${{ steps.detect.outputs.changed_files }}
+      deleted_files: ${{ steps.detect.outputs.deleted_files }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      - name: Verify release tag is exact canonical main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --prune --tags origin \
+            +refs/heads/main:refs/remotes/origin/main
+          main_commit="$(git rev-parse 'refs/remotes/origin/main^{commit}')"
+          tag_commit="$(git rev-parse "refs/tags/${GITHUB_REF_NAME}^{commit}")"
+          event_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          if [[ "${tag_commit}" != "${event_commit}" || "${tag_commit}" != "${main_commit}" ]]; then
+            echo "::error::release tag is not exact origin/main: tag=${tag_commit} event=${event_commit} main=${main_commit}"
+            exit 1
+          fi
+
       - id: previous
         shell: bash
         run: |
           set -euo pipefail
-          previous="$(git describe --tags --abbrev=0 "${GITHUB_SHA}^" 2>/dev/null || true)"
-          if [[ -z "$previous" ]]; then
-            previous="$(git rev-list --max-parents=0 HEAD)"
-          fi
-          echo "base=$previous" >> "$GITHUB_OUTPUT"
+          python3 scripts/select_previous_release.py \
+            --head "${GITHUB_SHA}" \
+            --current-tag "${GITHUB_REF_NAME}" \
+            --github-output "${GITHUB_OUTPUT}"
 
       - id: detect
         run: python3 scripts/ci_changed_areas.py --base "${{ steps.previous.outputs.base }}" --head "${{ github.sha }}"
 
+  authorize-release-gate-skips:
+    needs: detect-release-changes
+    runs-on: ubuntu-latest
+    outputs:
+      full_stack_action: ${{ steps.policy.outputs.full_stack_action }}
+      full_stack_skip_authorized: ${{ steps.policy.outputs.full_stack_skip_authorized }}
+      full_stack_policy_id: ${{ steps.policy.outputs.full_stack_policy_id }}
+      production_readiness_stress_action: ${{ steps.policy.outputs.production_readiness_stress_action }}
+      production_readiness_stress_skip_authorized: ${{ steps.policy.outputs.production_readiness_stress_skip_authorized }}
+      production_readiness_stress_policy_id: ${{ steps.policy.outputs.production_readiness_stress_policy_id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authorize applicable release gate skips
+        id: policy
+        env:
+          CARTRIDGE_TEST_TARGETS: ${{ needs.detect-release-changes.outputs.cartridge_test_targets }}
+          CHANGED_FILES_JSON: ${{ needs.detect-release-changes.outputs.changed_files }}
+          DELETED_FILES_JSON: ${{ needs.detect-release-changes.outputs.deleted_files }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_SKIP_POLICY: .github/release-skip-policy.json
+          ROOT_TEST_TARGETS: ${{ needs.detect-release-changes.outputs.root_test_targets }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path, PurePosixPath
+
+          policy_path = Path(os.environ["RELEASE_SKIP_POLICY"])
+          release_tag = os.environ["RELEASE_TAG"]
+          changed_files = json.loads(os.environ["CHANGED_FILES_JSON"])
+          deleted_files = json.loads(os.environ["DELETED_FILES_JSON"])
+          root_test_targets = os.environ["ROOT_TEST_TARGETS"].split()
+          cartridge_test_targets = os.environ["CARTRIDGE_TEST_TARGETS"].split()
+          version = Path("VERSION").read_text(encoding="utf-8").strip()
+          output_path = Path(os.environ["GITHUB_OUTPUT"])
+          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
+
+          strict_tag = re.compile(
+              r"^v(?:0|[1-9][0-9]*)\."
+              r"(?:0|[1-9][0-9]*)\."
+              r"(?:0|[1-9][0-9]*)"
+              r"(?:-(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
+              r"(?:\.(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?$"
+          )
+          if not strict_tag.fullmatch(release_tag):
+              raise SystemExit(f"release tag is not strict semver: {release_tag!r}")
+          if release_tag != f"v{version}":
+              raise SystemExit(
+                  f"release tag/version mismatch: tag={release_tag!r} VERSION={version!r}"
+              )
+          def validate_paths(name, paths):
+              if not isinstance(paths, list) or not all(
+                  isinstance(path, str) and path for path in paths
+              ):
+                  raise SystemExit(f"{name} must be a JSON list of non-empty paths")
+              if len(paths) != len(set(paths)):
+                  raise SystemExit(f"{name} contains duplicate paths")
+              for path in paths:
+                  candidate = PurePosixPath(path)
+                  if (
+                      candidate.is_absolute()
+                      or ".." in candidate.parts
+                      or "\n" in path
+                      or "\r" in path
+                  ):
+                      raise SystemExit(f"{name} contains an unsafe path: {path!r}")
+
+          validate_paths("changed_files", changed_files)
+          validate_paths("deleted_files", deleted_files)
+          if not set(deleted_files).issubset(changed_files):
+              raise SystemExit("deleted_files must be a subset of changed_files")
+          safe_target = re.compile(r"^[A-Za-z0-9_./-]+$")
+          if not all(safe_target.fullmatch(target) for target in (
+              root_test_targets + cartridge_test_targets
+          )):
+              raise SystemExit("detected test targets contain an unsafe path")
+
+          registry = json.loads(policy_path.read_text(encoding="utf-8"))
+          if registry.get("schema_version") != 1:
+              raise SystemExit("release skip policy schema_version must be 1")
+          policies = registry.get("policies")
+          if not isinstance(policies, list):
+              raise SystemExit("release skip policy policies must be a list")
+
+          allowed_gates = {
+              "full-stack-release-gate",
+              "production-readiness-stress",
+          }
+          allowed_scope_keys = {
+              "tag_regex",
+              "all_changed_paths_match",
+              "at_least_one_changed_path_match",
+              "forbid_deleted_paths",
+              "requires_detected_test_targets",
+          }
+          seen_ids = set()
+          compiled = []
+          for policy in policies:
+              if not isinstance(policy, dict):
+                  raise SystemExit("each release skip policy must be an object")
+              required = {"id", "gate", "owner", "reason", "scope"}
+              if set(policy) != required:
+                  raise SystemExit(
+                      f"policy keys must be exactly {sorted(required)}: {policy!r}"
+                  )
+              policy_id = policy["id"]
+              if not isinstance(policy_id, str) or not re.fullmatch(
+                  r"[a-z0-9][a-z0-9-]*", policy_id
+              ):
+                  raise SystemExit(f"invalid policy id: {policy_id!r}")
+              if policy_id in seen_ids:
+                  raise SystemExit(f"duplicate policy id: {policy_id}")
+              seen_ids.add(policy_id)
+              if policy["gate"] not in allowed_gates:
+                  raise SystemExit(f"unknown release gate: {policy['gate']!r}")
+              for field in ("owner", "reason"):
+                  value = policy[field]
+                  if (
+                      not isinstance(value, str)
+                      or not value.strip()
+                      or "\n" in value
+                      or "\r" in value
+                  ):
+                      raise SystemExit(f"policy {policy_id} has invalid {field}")
+              scope = policy["scope"]
+              if not isinstance(scope, dict) or not scope:
+                  raise SystemExit(f"policy {policy_id} must declare a scope")
+              if not set(scope).issubset(allowed_scope_keys):
+                  raise SystemExit(f"policy {policy_id} has unknown scope keys")
+              tag_regex = scope.get("tag_regex")
+              if (
+                  not isinstance(tag_regex, str)
+                  or not tag_regex.startswith("^")
+                  or not tag_regex.endswith("$")
+              ):
+                  raise SystemExit(f"policy {policy_id} must anchor tag_regex")
+              try:
+                  tag_pattern = re.compile(tag_regex)
+              except re.error as exc:
+                  raise SystemExit(f"policy {policy_id} has invalid tag_regex: {exc}")
+
+              path_groups = {}
+              for key in (
+                  "all_changed_paths_match",
+                  "at_least_one_changed_path_match",
+              ):
+                  values = scope.get(key, [])
+                  if not isinstance(values, list) or not all(
+                      isinstance(value, str)
+                      and value.startswith("^")
+                      and value.endswith("$")
+                      for value in values
+                  ):
+                      raise SystemExit(
+                          f"policy {policy_id} scope {key} must contain anchored regexes"
+                      )
+                  try:
+                      path_groups[key] = [re.compile(value) for value in values]
+                  except re.error as exc:
+                      raise SystemExit(
+                          f"policy {policy_id} scope {key} has invalid regex: {exc}"
+                      )
+              for key in ("forbid_deleted_paths", "requires_detected_test_targets"):
+                  value = scope.get(key, False)
+                  if not isinstance(value, bool):
+                      raise SystemExit(f"policy {policy_id} scope {key} must be boolean")
+                  path_groups[key] = value
+              if policy["gate"] == "full-stack-release-gate" and (
+                  not path_groups["all_changed_paths_match"]
+                  or not path_groups["at_least_one_changed_path_match"]
+              ):
+                  raise SystemExit(
+                      f"full-stack policy {policy_id} must bound all paths and require one"
+                  )
+              compiled.append((policy, tag_pattern, path_groups))
+
+          def matching(gate):
+              matches = []
+              for policy, tag_pattern, path_groups in compiled:
+                  if policy["gate"] != gate or not tag_pattern.fullmatch(release_tag):
+                      continue
+                  all_patterns = path_groups["all_changed_paths_match"]
+                  any_patterns = path_groups["at_least_one_changed_path_match"]
+                  if all_patterns and not changed_files:
+                      continue
+                  if all_patterns and not all(
+                      any(pattern.fullmatch(path) for pattern in all_patterns)
+                      for path in changed_files
+                  ):
+                      continue
+                  if any_patterns and not any(
+                      pattern.fullmatch(path)
+                      for pattern in any_patterns
+                      for path in changed_files
+                  ):
+                      continue
+                  if path_groups["forbid_deleted_paths"] and deleted_files:
+                      continue
+                  if path_groups["requires_detected_test_targets"]:
+                      target_set = set(root_test_targets + cartridge_test_targets)
+                      if not target_set:
+                          continue
+                      changed_test_paths = [
+                          path
+                          for path in changed_files
+                          if re.fullmatch(r"tests/test[^/]*\.py", path)
+                          or re.fullmatch(r"cartridges/[^/]+/tests/.*\.py", path)
+                      ]
+                      mapped = True
+                      for path in changed_test_paths:
+                          if path.startswith("tests/"):
+                              if path not in target_set and "tests" not in target_set:
+                                  mapped = False
+                                  break
+                          else:
+                              cartridge = path.split("/", 2)[1]
+                              if f"cartridges/{cartridge}/tests" not in target_set:
+                                  mapped = False
+                                  break
+                      if not changed_test_paths or not mapped:
+                          continue
+                  matches.append(policy)
+              if len(matches) > 1:
+                  ids = ", ".join(policy["id"] for policy in matches)
+                  raise SystemExit(f"ambiguous skip policies for {gate}: {ids}")
+              return matches[0] if matches else None
+
+          decisions = {}
+          for gate, prefix in (
+              ("full-stack-release-gate", "full_stack"),
+              ("production-readiness-stress", "production_readiness_stress"),
+          ):
+              policy = matching(gate)
+              action = "skip" if policy else "run"
+              decisions[gate] = {
+                  "action": action,
+                  "policy": policy,
+                  "prefix": prefix,
+              }
+
+          # Stress is implemented inside the full-stack job.  Therefore a
+          # required RC/GA stress gate requires the enclosing full-stack gate;
+          # it can never be hidden by a metadata-only full-stack skip.
+          if (
+              decisions["production-readiness-stress"]["action"] == "run"
+              and decisions["full-stack-release-gate"]["action"] == "skip"
+          ):
+              decisions["full-stack-release-gate"] = {
+                  "action": "run",
+                  "policy": None,
+                  "prefix": "full_stack",
+              }
+
+          for decision in decisions.values():
+              action = decision["action"]
+              policy = decision["policy"]
+              prefix = decision["prefix"]
+              with output_path.open("a", encoding="utf-8") as output:
+                  output.write(f"{prefix}_action={action}\n")
+                  output.write(
+                      f"{prefix}_skip_authorized={'true' if policy else 'false'}\n"
+                  )
+                  output.write(
+                      f"{prefix}_policy_id={policy['id'] if policy else 'none'}\n"
+                  )
+
+          with summary_path.open("a", encoding="utf-8") as summary:
+              summary.write("## Release gate policy\n\n")
+              summary.write(f"- Tag: `{release_tag}` (`VERSION={version}`)\n")
+              summary.write(f"- Changed files: `{len(changed_files)}`\n")
+              for gate, decision in decisions.items():
+                  policy = decision["policy"]
+                  if policy:
+                      summary.write(
+                          f"- `{gate}`: **AUTHORIZED SKIP** via `{policy['id']}`; "
+                          f"owner=`{policy['owner']}`; reason={policy['reason']}\n"
+                      )
+                  else:
+                      summary.write(f"- `{gate}`: **RUN** (default fail-closed)\n")
+          PY
+
   validate-release:
     needs: detect-release-changes
     runs-on: ubuntu-latest
+    env:
+      OMEGA_RELEASE_TEST_SKIP_ENVIRONMENT: release
+      OMEGA_RELEASE_TEST_SKIP_POLICY: ${{ github.workspace }}/.github/release-test-skip-policy.json
+      PYTEST_PLUGINS: scripts.verify_test_skip_policy
     steps:
       - uses: actions/checkout@v4
 
@@ -57,6 +365,8 @@ jobs:
           terraform_version: "1.6.6"
 
       - name: Install validation dependencies
+        env:
+          CARTRIDGE_REQUIREMENT_PATHS: ${{ needs.detect-release-changes.outputs.cartridge_requirement_paths }}
         run: |
           python -m pip install --upgrade pip
           python -m pip install \
@@ -64,7 +374,13 @@ jobs:
             -r console/requirements.txt \
             -r vault/requirements.txt \
             -r mcp-infra/requirements.txt
+          for req in ${CARTRIDGE_REQUIREMENT_PATHS}; do
+            python -m pip install -r "$req"
+          done
           npm --prefix console-next ci
+
+      - name: Verify declared release test skips
+        run: python3 scripts/verify_test_skip_policy.py
 
       - name: Static release tests
         run: |
@@ -75,14 +391,31 @@ jobs:
             tests/test_mcp_data_scope_source.py \
             tests/test_v1_public_https_closure.py
 
-      - name: Changed cartridge dataset contracts
-        if: needs.detect-release-changes.outputs.dataset == 'true' || needs.detect-release-changes.outputs.root_tests == 'true'
+      - name: Run detected root tests
+        if: needs.detect-release-changes.outputs.root_tests == 'true'
+        env:
+          ROOT_TEST_TARGETS: ${{ needs.detect-release-changes.outputs.root_test_targets }}
         run: |
-          python -m pytest -q \
-            tests/test_sap_hcm_datasets.py \
-            tests/test_sap_s4hana_datasets.py \
-            tests/test_sap_successfactors_datasets.py \
-            cartridges/sap_successfactors/tests/test_airflow_dag_contract.py
+          set -euo pipefail
+          [[ -n "${ROOT_TEST_TARGETS}" ]] || {
+            echo "::error::root_tests=true but no root test targets were resolved"
+            exit 1
+          }
+          read -r -a targets <<< "${ROOT_TEST_TARGETS}"
+          python -m pytest -q "${targets[@]}"
+
+      - name: Run detected cartridge tests
+        if: needs.detect-release-changes.outputs.cartridge_tests == 'true'
+        env:
+          CARTRIDGE_TEST_TARGETS: ${{ needs.detect-release-changes.outputs.cartridge_test_targets }}
+        run: |
+          set -euo pipefail
+          [[ -n "${CARTRIDGE_TEST_TARGETS}" ]] || {
+            echo "::error::cartridge_tests=true but no cartridge test targets were resolved"
+            exit 1
+          }
+          read -r -a targets <<< "${CARTRIDGE_TEST_TARGETS}"
+          python -m pytest -q "${targets[@]}"
 
       - name: Terraform validation
         run: |
@@ -125,13 +458,16 @@ jobs:
           git diff --exit-code -- console/app/static/console-next
 
   full-stack-release-gate:
-    needs: [detect-release-changes, validate-release]
-    if: needs.detect-release-changes.outputs.release_full_stack == 'true'
+    needs: [detect-release-changes, authorize-release-gate-skips, validate-release]
+    if: needs.authorize-release-gate-skips.outputs.full_stack_action == 'run'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      OMEGA_RELEASE_TEST_SKIP_ENVIRONMENT: release
+      OMEGA_RELEASE_TEST_SKIP_POLICY: ${{ github.workspace }}/.github/release-test-skip-policy.json
       OPEN_REPORT: "0"
+      PYTEST_PLUGINS: scripts.verify_test_skip_policy
     steps:
       - uses: actions/checkout@v4
 
@@ -161,6 +497,9 @@ jobs:
           done
           npm --prefix tests-e2e ci
           npx --prefix tests-e2e playwright install --with-deps chromium
+
+      - name: Verify declared release test skips
+        run: python3 scripts/verify_test_skip_policy.py
 
       - name: Bootstrap local release stack
         run: |
@@ -212,17 +551,40 @@ jobs:
       - name: Browser E2E
         run: make e2e
 
+      - name: Verify Playwright skip report
+        run: |
+          python3 scripts/verify_test_skip_policy.py \
+            --playwright-report tests-e2e/playwright-report/results.json
+
       - name: Full-stack acceptance
         run: make acceptance
 
       - name: Production-readiness gate
+        env:
+          STRESS_ACTION: ${{ needs.authorize-release-gate-skips.outputs.production_readiness_stress_action }}
+          STRESS_SKIP_AUTHORIZED: ${{ needs.authorize-release-gate-skips.outputs.production_readiness_stress_skip_authorized }}
+          STRESS_POLICY_ID: ${{ needs.authorize-release-gate-skips.outputs.production_readiness_stress_policy_id }}
         run: |
-          if [[ "${GITHUB_REF_NAME}" == *"beta"* ]]; then
-            echo "Beta tag detected; stress is skipped with explicit evidence."
-            OMEGA_PRODUCTION_READINESS_SKIP_STRESS=1 make production-readiness
-          else
-            make production-readiness
-          fi
+          set -euo pipefail
+          case "${STRESS_ACTION}" in
+            run)
+              make production-readiness
+              ;;
+            skip)
+              [[ "${STRESS_SKIP_AUTHORIZED}" == "true" && "${STRESS_POLICY_ID}" != "none" ]] || {
+                echo "::error::production-readiness stress skip is not authorized"
+                exit 1
+              }
+              echo "Authorized stress skip policy: ${STRESS_POLICY_ID}"
+              OMEGA_PRODUCTION_READINESS_SKIP_STRESS=1 make production-readiness
+              ;;
+            *)
+              echo "::error::unknown production-readiness stress action: ${STRESS_ACTION}"
+              exit 1
+              ;;
+          esac
+          python3 scripts/verify_test_skip_policy.py \
+            --playwright-report tests-e2e/playwright-report/results.json
 
       - name: Docker logs on failure
         if: failure()
@@ -248,17 +610,72 @@ jobs:
           path: tests-e2e/playwright-report
           if-no-files-found: ignore
 
-  build-and-push:
-    needs: [detect-release-changes, validate-release, full-stack-release-gate]
+  preflight-release-packages:
+    needs: [detect-release-changes, authorize-release-gate-skips, validate-release, full-stack-release-gate]
     if: |
       always() &&
       needs.validate-release.result == 'success' &&
       needs.detect-release-changes.result == 'success' &&
+      needs.authorize-release-gate-skips.result == 'success' &&
       (
-        needs.detect-release-changes.outputs.release_full_stack != 'true' ||
-        needs.full-stack-release-gate.result == 'success'
+        (
+          needs.authorize-release-gate-skips.outputs.full_stack_action == 'run' &&
+          needs.full-stack-release-gate.result == 'success'
+        ) ||
+        (
+          needs.authorize-release-gate-skips.outputs.full_stack_action == 'skip' &&
+          needs.authorize-release-gate-skips.outputs.full_stack_skip_authorized == 'true' &&
+          needs.authorize-release-gate-skips.outputs.full_stack_policy_id != 'none' &&
+          needs.authorize-release-gate-skips.outputs.production_readiness_stress_action == 'skip' &&
+          needs.authorize-release-gate-skips.outputs.production_readiness_stress_skip_authorized == 'true' &&
+          needs.authorize-release-gate-skips.outputs.production_readiness_stress_policy_id != 'none' &&
+          needs.full-stack-release-gate.result == 'skipped'
+        )
       )
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify canonical release packages are private
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GHCR_OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_release_package_visibility.py \
+            --owner "${GHCR_OWNER}" \
+            --owner-kind user
+
+  build-and-push:
+    needs: [detect-release-changes, authorize-release-gate-skips, validate-release, full-stack-release-gate, preflight-release-packages]
+    if: |
+      always() &&
+      needs.validate-release.result == 'success' &&
+      needs.detect-release-changes.result == 'success' &&
+      needs.authorize-release-gate-skips.result == 'success' &&
+      needs.preflight-release-packages.result == 'success' &&
+      (
+        (
+          needs.authorize-release-gate-skips.outputs.full_stack_action == 'run' &&
+          needs.full-stack-release-gate.result == 'success'
+        ) ||
+        (
+          needs.authorize-release-gate-skips.outputs.full_stack_action == 'skip' &&
+          needs.authorize-release-gate-skips.outputs.full_stack_skip_authorized == 'true' &&
+          needs.authorize-release-gate-skips.outputs.full_stack_policy_id != 'none' &&
+          needs.authorize-release-gate-skips.outputs.production_readiness_stress_action == 'skip' &&
+          needs.authorize-release-gate-skips.outputs.production_readiness_stress_skip_authorized == 'true' &&
+          needs.authorize-release-gate-skips.outputs.production_readiness_stress_policy_id != 'none' &&
+          needs.full-stack-release-gate.result == 'skipped'
+        )
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -319,7 +736,66 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Refuse pre-existing image tags
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          SERVICE: ${{ matrix.service }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          umask 077
+          state_dir="${RUNNER_TEMP}/omega-release-${SERVICE}-${SOURCE_SHA}"
+          mkdir -p "${state_dir}"
+
+          require_absent() {
+            local reference="$1"
+            local error_path="$2"
+            if docker buildx imagetools inspect "${reference}" \
+              --format '{{json .Manifest}}' >"${state_dir}/inspect.out" 2>"${error_path}"; then
+              echo "::error::pre-existing release image tag is forbidden for a fresh F2 build: ${reference}"
+              exit 1
+            fi
+            # Docker/registry absence is accepted only for the canonical OCI
+            # error token. Generic "not found" text also represents auth,
+            # routing, transport, and API failures and must remain ambiguous.
+            if ! ERROR_PATH="${error_path}" REFERENCE="${reference}" python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          error_path = Path(os.environ["ERROR_PATH"])
+          reference = os.environ["REFERENCE"]
+          try:
+              raw = error_path.read_bytes()
+              if len(raw) > 65536:
+                  raise ValueError("registry error output is oversized")
+              lines = raw.decode("utf-8").splitlines()
+          except (OSError, UnicodeError, ValueError) as exc:
+              raise SystemExit("registry error output is invalid") from exc
+          accepted = {
+              f"{reference}: manifest unknown",
+              f"ERROR: {reference}: manifest unknown",
+          }
+          meaningful = [line.strip() for line in lines if line.strip()]
+          if len(meaningful) != 1 or meaningful[0] not in accepted:
+              raise SystemExit("registry did not return exact manifest absence")
+          PY
+            then
+              echo "::error::registry lookup failed ambiguously for ${reference}"
+              exit 1
+            fi
+          }
+
+          require_absent \
+            "${IMAGE}:sha-${SOURCE_SHA}" \
+            "${state_dir}/sha-inspect.err"
+          require_absent \
+            "${IMAGE}:${RELEASE_TAG}" \
+            "${state_dir}/release-inspect.err"
+          echo "Both release tags are structurally absent; a fresh build is required for ${SERVICE}."
+
       - name: Build and push ${{ matrix.service }}
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
@@ -327,3 +803,397 @@ jobs:
           push: true
           tags: |
             ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+            ${{ steps.meta.outputs.image }}:sha-${{ github.sha }}
+
+      - name: Resolve and verify final image digest
+        id: resolved_image
+        env:
+          BUILT_DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: ${{ steps.meta.outputs.image }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          SERVICE: ${{ matrix.service }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          digest="${BUILT_DIGEST}"
+          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "::error::fresh build returned a malformed digest for ${SERVICE}"
+            exit 1
+          }
+
+          inspect_digest() {
+            local reference="$1"
+            local manifest_json
+            manifest_json="$(
+              docker buildx imagetools inspect "${reference}" \
+                --format '{{json .Manifest}}'
+            )" || return 1
+            MANIFEST_JSON="${manifest_json}" python3 - <<'PY'
+          import json
+          import os
+          import re
+
+          try:
+              manifest = json.loads(os.environ["MANIFEST_JSON"])
+          except (json.JSONDecodeError, UnicodeError) as exc:
+              raise SystemExit("registry manifest descriptor is not valid JSON") from exc
+          digest = manifest.get("digest") if isinstance(manifest, dict) else None
+          if not isinstance(digest, str) or not re.fullmatch(
+              r"sha256:[0-9a-f]{64}", digest
+          ):
+              raise SystemExit("registry manifest descriptor has no valid digest")
+          print(digest)
+          PY
+          }
+
+          sha_digest="$(inspect_digest "${IMAGE}:sha-${SOURCE_SHA}")" || {
+            echo "::error::final SHA tag cannot be resolved for ${SERVICE}"
+            exit 1
+          }
+          release_digest="$(inspect_digest "${IMAGE}:${RELEASE_TAG}")" || {
+            echo "::error::final release tag cannot be resolved for ${SERVICE}"
+            exit 1
+          }
+          [[ "${sha_digest}" == "${digest}" ]] || {
+            echo "::error::final SHA tag digest mismatch for ${SERVICE}"
+            exit 1
+          }
+          [[ "${release_digest}" == "${digest}" ]] || {
+            echo "::error::final release tag digest mismatch for ${SERVICE}"
+            exit 1
+          }
+          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+
+      - name: Write image digest fragment
+        env:
+          DIGEST: ${{ steps.resolved_image.outputs.digest }}
+          IMAGE: ${{ steps.meta.outputs.image }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          SERVICE: ${{ matrix.service }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          service = os.environ["SERVICE"]
+          image = os.environ["IMAGE"]
+          release_tag = os.environ["RELEASE_TAG"]
+          source_sha = os.environ["SOURCE_SHA"]
+          digest = os.environ["DIGEST"]
+          if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", service):
+              raise SystemExit(f"invalid release service: {service!r}")
+          if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+              raise SystemExit(f"invalid build digest for {service}: {digest!r}")
+          if not re.fullmatch(r"[0-9a-f]{40}", source_sha):
+              raise SystemExit(f"invalid source SHA: {source_sha!r}")
+          expected_image = f"ghcr.io/{os.environ['GITHUB_REPOSITORY_OWNER']}/{service}"
+          if image != expected_image:
+              raise SystemExit(
+                  f"unexpected image repository for {service}: {image!r}"
+              )
+
+          fragment = {
+              "schema_version": 1,
+              "service": service,
+              "image": image,
+              "release_tag": release_tag,
+              "source_sha": source_sha,
+              "digest": digest,
+              "release_reference": f"{image}:{release_tag}@{digest}",
+              "sha_reference": f"{image}:sha-{source_sha}@{digest}",
+          }
+          path = Path(f"{service}.release-digest.json")
+          path.write_text(
+              json.dumps(fragment, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Upload image digest fragment
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-image-digest-${{ matrix.service }}
+          path: ${{ matrix.service }}.release-digest.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 90
+
+  publish-release-manifest:
+    needs: [detect-release-changes, authorize-release-gate-skips, validate-release, full-stack-release-gate, build-and-push]
+    if: always() && needs.build-and-push.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Re-verify canonical release packages are private
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GHCR_OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_release_package_visibility.py \
+            --owner "${GHCR_OWNER}" \
+            --owner-kind user
+
+      - name: Download image digest fragments
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-image-digest-*
+          path: release-manifest-input
+          merge-multiple: true
+
+      - name: Assemble and validate release manifest
+        id: manifest
+        env:
+          DIGEST_FRAGMENTS_DIR: release-manifest-input
+          EXPECTED_SERVICES_JSON: '["console","workspace","refinement","vault","mcp-infra","airflow","replicon","hubspot","banxico","inegi","sec_edgar","sap_hcm","sap_s4hana","sap_successfactors","salesforce"]'
+          GHCR_OWNER: ${{ github.repository_owner }}
+          RELEASE_MANIFEST_DIR: release-manifest-output
+          RELEASE_TAG: ${{ github.ref_name }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          fragments_dir = Path(os.environ["DIGEST_FRAGMENTS_DIR"])
+          output_dir = Path(os.environ["RELEASE_MANIFEST_DIR"])
+          expected = json.loads(os.environ["EXPECTED_SERVICES_JSON"])
+          owner = os.environ["GHCR_OWNER"]
+          release_tag = os.environ["RELEASE_TAG"]
+          repository = os.environ["SOURCE_REPOSITORY"]
+          source_sha = os.environ["SOURCE_SHA"]
+
+          if (
+              not isinstance(expected, list)
+              or len(expected) != 15
+              or len(set(expected)) != 15
+              or not all(
+                  isinstance(service, str)
+                  and re.fullmatch(r"[a-z0-9][a-z0-9_-]*", service)
+                  for service in expected
+              )
+          ):
+              raise SystemExit("expected release inventory must contain 15 unique services")
+          if not re.fullmatch(r"[0-9a-f]{40}", source_sha):
+              raise SystemExit(f"invalid source SHA: {source_sha!r}")
+          if not re.fullmatch(
+              r"v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?",
+              release_tag,
+          ):
+              raise SystemExit(f"invalid release tag: {release_tag!r}")
+
+          paths = sorted(fragments_dir.glob("*.release-digest.json"))
+          if len(paths) != 15:
+              raise SystemExit(
+                  f"release digest fragment count must be exactly 15, got {len(paths)}"
+              )
+          required_keys = {
+              "schema_version",
+              "service",
+              "image",
+              "release_tag",
+              "source_sha",
+              "digest",
+              "release_reference",
+              "sha_reference",
+          }
+          by_service = {}
+          for path in paths:
+              fragment = json.loads(path.read_text(encoding="utf-8"))
+              if not isinstance(fragment, dict) or set(fragment) != required_keys:
+                  raise SystemExit(f"invalid release digest fragment schema: {path}")
+              service = fragment["service"]
+              if service not in expected:
+                  raise SystemExit(f"unexpected release service: {service!r}")
+              if service in by_service:
+                  raise SystemExit(f"duplicate release service: {service}")
+              if path.name != f"{service}.release-digest.json":
+                  raise SystemExit(f"fragment filename/service mismatch: {path}")
+              image = f"ghcr.io/{owner}/{service}"
+              digest = fragment["digest"]
+              if fragment["schema_version"] != 1:
+                  raise SystemExit(f"unsupported fragment schema for {service}")
+              if fragment["image"] != image:
+                  raise SystemExit(f"image mismatch for {service}")
+              if fragment["release_tag"] != release_tag:
+                  raise SystemExit(f"release tag mismatch for {service}")
+              if fragment["source_sha"] != source_sha:
+                  raise SystemExit(f"source SHA mismatch for {service}")
+              if not isinstance(digest, str) or not re.fullmatch(
+                  r"sha256:[0-9a-f]{64}", digest
+              ):
+                  raise SystemExit(f"invalid digest for {service}: {digest!r}")
+              if fragment["release_reference"] != (
+                  f"{image}:{release_tag}@{digest}"
+              ):
+                  raise SystemExit(f"release reference mismatch for {service}")
+              if fragment["sha_reference"] != (
+                  f"{image}:sha-{source_sha}@{digest}"
+              ):
+                  raise SystemExit(f"SHA reference mismatch for {service}")
+              by_service[service] = fragment
+
+          if set(by_service) != set(expected):
+              missing = sorted(set(expected) - set(by_service))
+              extra = sorted(set(by_service) - set(expected))
+              raise SystemExit(
+                  f"release inventory mismatch: missing={missing} extra={extra}"
+              )
+          manifest = {
+              "schema_version": 1,
+              "repository": repository,
+              "release_tag": release_tag,
+              "source_sha": source_sha,
+              "images": [by_service[service] for service in expected],
+          }
+          output_dir.mkdir(parents=True, exist_ok=False)
+          manifest_path = output_dir / f"omega-release-manifest-{release_tag}.json"
+          manifest_bytes = (
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+          ).encode("utf-8")
+          manifest_path.write_bytes(manifest_bytes)
+          checksum_path = manifest_path.with_suffix(".json.sha256")
+          checksum_path.write_text(
+              f"{hashlib.sha256(manifest_bytes).hexdigest()}  {manifest_path.name}\n",
+              encoding="utf-8",
+          )
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"manifest_path={manifest_path}\n")
+              output.write(f"checksum_path={checksum_path}\n")
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open(
+              "a", encoding="utf-8"
+          ) as summary:
+              summary.write("## Release image manifest\n\n")
+              summary.write(f"- Tag: `{release_tag}`\n")
+              summary.write(f"- Source SHA: `{source_sha}`\n")
+              summary.write("- Images: **15/15 VERIFIED**\n")
+              summary.write(
+                  f"- SHA-256: `{hashlib.sha256(manifest_bytes).hexdigest()}`\n"
+              )
+          PY
+
+      - name: Upload canonical release manifest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: omega-release-manifest-${{ github.ref_name }}
+          path: |
+            ${{ steps.manifest.outputs.manifest_path }}
+            ${{ steps.manifest.outputs.checksum_path }}
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 90
+
+      - name: Attach manifest to GitHub Release
+        env:
+          CHECKSUM_PATH: ${{ steps.manifest.outputs.checksum_path }}
+          GH_TOKEN: ${{ github.token }}
+          MANIFEST_PATH: ${{ steps.manifest.outputs.manifest_path }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if ! release_state_json="$(
+            python3 scripts/inspect_github_release.py \
+              --repository "${SOURCE_REPOSITORY}" \
+              --tag "${RELEASE_TAG}"
+          )"; then
+            echo "::error::GitHub Release lookup failed ambiguously"
+            exit 1
+          fi
+          release_state="$(RELEASE_STATE_JSON="${release_state_json}" python3 - <<'PY'
+          import json
+          import os
+
+          try:
+              payload = json.loads(os.environ["RELEASE_STATE_JSON"])
+          except (json.JSONDecodeError, UnicodeError) as exc:
+              raise SystemExit("GitHub Release inspection is invalid JSON") from exc
+          if not isinstance(payload, dict) or set(payload) != {
+              "schema_version", "state", "tag", "assets"
+          }:
+              raise SystemExit("GitHub Release inspection schema is invalid")
+          if payload["schema_version"] != 1 or payload["state"] not in {
+              "present", "absent"
+          }:
+              raise SystemExit("GitHub Release inspection state is invalid")
+          print(payload["state"])
+          PY
+          )"
+          if [[ "${release_state}" == "present" ]]; then
+            asset_dir="$(mktemp -d "${RUNNER_TEMP}/omega-release-assets.XXXXXX")"
+            missing_assets=()
+            for local_path in "${MANIFEST_PATH}" "${CHECKSUM_PATH}"; do
+              asset_name="$(basename -- "${local_path}")"
+              asset_count="$(ASSETS_JSON="${release_state_json}" ASSET_NAME="${asset_name}" python3 - <<'PY'
+          import json
+          import os
+
+          try:
+              payload = json.loads(os.environ["ASSETS_JSON"])
+          except (json.JSONDecodeError, UnicodeError) as exc:
+              raise SystemExit("GitHub Release asset response is invalid JSON") from exc
+          assets = payload.get("assets") if isinstance(payload, dict) else None
+          if not isinstance(assets, list) or not all(
+              isinstance(asset, str) for asset in assets
+          ):
+              raise SystemExit("GitHub Release asset response has no assets list")
+          name = os.environ["ASSET_NAME"]
+          count = sum(1 for asset in assets if asset == name)
+          print(count)
+          PY
+              )"
+              case "${asset_count}" in
+                0)
+                  missing_assets+=("${local_path}")
+                  ;;
+                1)
+                  gh release download "${RELEASE_TAG}" \
+                    --pattern "${asset_name}" \
+                    --dir "${asset_dir}"
+                  cmp --silent "${local_path}" "${asset_dir}/${asset_name}" || {
+                    echo "::error::immutable GitHub Release asset differs: ${asset_name}"
+                    exit 1
+                  }
+                  ;;
+                *)
+                  echo "::error::duplicate canonical GitHub Release asset: ${asset_name}"
+                  exit 1
+                  ;;
+              esac
+            done
+            if [[ "${#missing_assets[@]}" -gt 0 ]]; then
+              gh release upload "${RELEASE_TAG}" "${missing_assets[@]}"
+            else
+              echo "Canonical GitHub Release assets already exist and are byte-identical."
+            fi
+          elif [[ "${release_state}" == "absent" ]]; then
+            args=(
+              "${RELEASE_TAG}"
+              "${MANIFEST_PATH}"
+              "${CHECKSUM_PATH}"
+              --verify-tag
+              --title "${RELEASE_TAG}"
+              --notes "Automated OMEGA release manifest: 15 images bound to ${GITHUB_SHA}."
+            )
+            if [[ "${RELEASE_TAG}" == *-* ]]; then
+              args+=(--prerelease)
+            fi
+            gh release create "${args[@]}"
+          else
+            echo "::error::unknown structured GitHub Release state"
+            exit 1
+          fi

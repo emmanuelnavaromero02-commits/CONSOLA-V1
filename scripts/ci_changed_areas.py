@@ -116,14 +116,30 @@ def _default_base_head() -> tuple[str, str]:
     return _run(["git", "rev-parse", f"{head}^"]), head
 
 
-def _changed_files(base: str, head: str) -> list[str]:
-    output = subprocess.check_output(["git", "diff", "--name-only", "--no-renames", "-z", f"{base}...{head}", "--"])
+def _run_diff_paths(
+    base: str, head: str, *, diff_filter: str | None = None
+) -> list[str]:
+    command = ["git", "diff", "--name-only", "--no-renames", "-z"]
+    if diff_filter is not None:
+        command.append(f"--diff-filter={diff_filter}")
+    command.extend((f"{base}...{head}", "--"))
+    output = subprocess.check_output(command)
     parts = output.split(b"\0")
     if parts[-1] != b"":
         raise RuntimeError("git diff did not return a NUL-terminated path list")
     if any(not path for path in parts[:-1]):
         raise RuntimeError("git diff returned an empty path")
     return [os.fsdecode(path) for path in parts[:-1]]
+
+
+def _changed_files(base: str, head: str) -> list[str]:
+    return _run_diff_paths(base, head)
+
+
+def _deleted_files(base: str, head: str) -> list[str]:
+    """Return deletions separately so a removed test cannot authorize a skip."""
+
+    return _run_diff_paths(base, head, diff_filter="D")
 
 
 def _any(files: list[str], *patterns: str) -> bool:
@@ -352,9 +368,14 @@ def _flags(files: list[str]) -> dict[str, bool | str]:
     return flags
 
 
-def _write_outputs(flags: dict[str, bool | str], files: list[str]) -> None:
+def _write_outputs(
+    flags: dict[str, bool | str], files: list[str], deleted_files: list[str]
+) -> None:
     output_path = os.environ.get("GITHUB_OUTPUT")
-    lines = [f"changed_files={json.dumps(files, separators=(',', ':'))}"]
+    lines = [
+        f"changed_files={json.dumps(files, separators=(',', ':'))}",
+        f"deleted_files={json.dumps(deleted_files, separators=(',', ':'))}",
+    ]
     for key, value in flags.items():
         if isinstance(value, bool):
             rendered = "true" if value else "false"
@@ -385,10 +406,12 @@ def main() -> int:
         parser.error("--base and --head must be provided together")
     if args.files is not None:
         files = args.files
+        deleted_files: list[str] = []
     else:
         base, head = (args.base, args.head) if args.base and args.head else _default_base_head()
         files = _changed_files(base, head)
-    _write_outputs(_flags(files), files)
+        deleted_files = _deleted_files(base, head)
+    _write_outputs(_flags(files), files, deleted_files)
     return 0
 
 
