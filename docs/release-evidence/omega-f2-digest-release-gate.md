@@ -1,7 +1,7 @@
 # OMEGA F2 — digest release gate
 
-Status: **PREPARED** for forward recovery as `v1.45.214-beta`; F2 is not closed.
-The immutable `v1.45.210-beta` through `v1.45.213-beta` attempts are retained
+Status: **PREPARED** for forward recovery as `v1.45.215-beta`; F2 is not closed.
+The immutable `v1.45.210-beta` through `v1.45.214-beta` attempts are retained
 as failed evidence, and no tag is moved or reused.
 
 ## Failed live attempt retained
@@ -53,14 +53,27 @@ as failed evidence, and no tag is moved or reused.
 - The `.213` run retained 15 private tagless candidate receipts plus one
   canonical manifest. The digest stack never started, all final gates and the
   publisher were skipped, and the GitHub Release remained absent.
-- The forward-only recovery target is `v1.45.214-beta`. Its previous-release
-  selector may bridge to exact `v1.45.209-beta` only when all four failed
+- Workflow run `31843803006` for `v1.45.214-beta` passed validation, the package
+  privacy preflight, all 15 image builds, canonical manifest assembly, the
+  trusted runtime freeze, all 15 exact digest pulls, and the runner disk
+  boundaries. It then failed closed during stack startup with
+  `dependency failed to start: container mode_airflow is unhealthy`.
+- The `.214` annotated tag object is
+  `cea2ec51314248daf26710cfe8a94a483d7287eb`; it peels to source SHA
+  `325170ff109e88860df857c8615f05b059698fec`, whose sole parent is the
+  `.213` source SHA.
+- The `.214` run retained exactly 16 workflow artifacts: 15 private tagless
+  candidate receipts plus the canonical manifest. The publisher
+  `publish-release-manifest` was skipped; there was no GitHub Release and no
+  canonical `.214` GHCR tag.
+- The forward-only recovery target is `v1.45.215-beta`. Its previous-release
+  selector may bridge to exact `v1.45.209-beta` only when all five failed
   annotated tag objects and peeled SHAs remain exact, the
-  `.210 -> .211 -> .212 -> .213 -> .214` direct parent chain remains exact, and
-  none of the failed markers has canonical release evidence. Exact remote tag
-  refs are rebound atomically into a dedicated authority namespace before
-  selection; a missing, moved, lightweight, swapped, ambiguous, or unexpectedly
-  trusted failed marker blocks recovery.
+  `.210 -> .211 -> .212 -> .213 -> .214 -> .215` direct parent chain remains
+  exact, and none of the failed markers has canonical release evidence. Exact
+  remote tag refs are rebound atomically into a dedicated authority namespace
+  before selection; a missing, moved, lightweight, swapped, ambiguous, or
+  unexpectedly trusted failed marker blocks recovery.
 
 ## Retained `.210` prepared authority
 
@@ -116,8 +129,10 @@ as failed evidence, and no tag is moved or reused.
 - The regenerated `.213` harness seals `1,341` files with SHA-256
   `48944574b1ed55041b553f70cea9ea32207553b7ef7650a15aa5ceda96f6bce7`;
   the skip inventory remains exactly 61 pytest and 27 Playwright declarations.
-- The prepared `.214` harness seals `1,344` files with SHA-256
-  `c548c0fe5077ffc05a47132b75d961beb4f0b2d76bc645dddc900ad2e483d075`.
+- The final `.214` harness seals `1,344` files with SHA-256
+  `16d023b879be6c7d22a6273859c37f306a88083359d1c853e6c03abac859b6e8`.
+- The prepared `.215` harness seals `1,345` files with SHA-256
+  `cbe7dd5128a22cc6dbbf7deaa529b104840f405b4065d1f1bfdc4050ebe8f8c4`.
 - The `.214` runner-disk contract is based on the actual `linux/amd64` OCI
   footprint: 12.468 GiB extracted and 4.004 GiB compressed after layer
   deduplication. It requires 17 GiB free before the 15 application pulls,
@@ -154,9 +169,9 @@ harness is an authority boundary, not a sandbox against deliberately malicious
 same-UID or privileged code.
 
 To close F2, record the recovery merge SHA and require the live release workflow
-for `v1.45.214-beta` to prove:
+for `v1.45.215-beta` to prove:
 
-1. the immutable Git tag equals that merge SHA and `VERSION=1.45.214-beta`;
+1. the immutable Git tag equals that merge SHA and `VERSION=1.45.215-beta`;
 2. all 15 GHCR packages remain private and every manifest/config/layer exists;
 3. the mandatory digest stack gate passes for the exact manifest bytes;
 4. the final GitHub Release is non-draft and immutable, with exactly the

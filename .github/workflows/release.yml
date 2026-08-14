@@ -45,22 +45,23 @@ jobs:
           fi
 
       - name: Bind exact remote recovery tag authority
-        if: github.ref_name == 'v1.45.214-beta'
+        if: github.ref_name == 'v1.45.215-beta'
         shell: bash
         run: |
           set -euo pipefail
-          authority=refs/omega-release-authority/v1.45.214-beta
-          for name in current failed-0 failed-1 failed-2 failed-3 base; do
+          authority=refs/omega-release-authority/v1.45.215-beta
+          for name in current failed-0 failed-1 failed-2 failed-3 failed-4 base; do
             git update-ref -d "${authority}/${name}"
           done
           git fetch --no-tags --force --atomic origin \
-            "+refs/tags/v1.45.214-beta:${authority}/current" \
+            "+refs/tags/v1.45.215-beta:${authority}/current" \
             "+refs/tags/v1.45.210-beta:${authority}/failed-0" \
             "+refs/tags/v1.45.211-beta:${authority}/failed-1" \
             "+refs/tags/v1.45.212-beta:${authority}/failed-2" \
             "+refs/tags/v1.45.213-beta:${authority}/failed-3" \
+            "+refs/tags/v1.45.214-beta:${authority}/failed-4" \
             "+refs/tags/v1.45.209-beta:${authority}/base"
-          for name in current failed-0 failed-1 failed-2 failed-3 base; do
+          for name in current failed-0 failed-1 failed-2 failed-3 failed-4 base; do
             git show-ref --verify --quiet "${authority}/${name}"
           done
 
@@ -1366,12 +1367,30 @@ jobs:
           PYTHONHOME: ""
           PYTHONPATH: ""
         run: |
-          docker compose --env-file infra/.env \
-            -f infra/docker-compose.yml \
-            -f infra/docker-compose.dev.yml \
-            -f infra/terraform-gcp/release/docker-compose.release.yml \
-            --profile sap ps || true
-          docker ps -aq | xargs -r docker logs --tail 120 2>&1 || true
+          # This is a diagnostic step after an already-failed gate. Keep it
+          # successful even when an individual container disappears while the
+          # stack is being inspected, so the original failure remains primary.
+          set +e
+          compose=(
+            docker compose --env-file infra/.env
+            -f infra/docker-compose.yml
+            -f infra/docker-compose.dev.yml
+            -f infra/terraform-gcp/release/docker-compose.release.yml
+            --profile sap
+          )
+          "${compose[@]}" ps --all --no-trunc 2>&1 || true
+          "${compose[@]}" ps -aq \
+            | LC_ALL=C sort -u \
+            | while IFS= read -r container_id; do
+                [[ -n "${container_id}" ]] || continue
+                echo "::group::release container diagnostics ${container_id}"
+                docker inspect --type container \
+                  --format '{{json .State.Health}}' \
+                  "${container_id}" 2>&1 || true
+                docker logs --tail 120 "${container_id}" 2>&1 || true
+                echo "::endgroup::"
+              done
+          exit 0
 
       - name: Stop digest stack
         if: always()

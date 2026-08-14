@@ -10,7 +10,7 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "sha256": "39d2f1414e79f6b3d0412b2896014754a1878d19de75a8f4902b1f0431df50bc"
+      "sha256": "ebcd5335aa7996fccdee211b1ac0f3f5f5f6ad2a3a7acf7163268a2f3279a89e"
     },
     {
       "path": "Makefile",
@@ -2814,7 +2814,7 @@
     },
     {
       "path": "infra/docker-compose.yml",
-      "sha256": "0fd1aeff22975a54fbd4ac0beb2b676e670075f8d0cf015b99d0c95dc67b5125"
+      "sha256": "43ede898ca415b4318391719b9cf77448531a02e0f8b7acad11c39012b1af929"
     },
     {
       "path": "infra/terraform-gcp/release/docker-compose.release.yml",
@@ -3383,6 +3383,10 @@
     {
       "path": "tests/test_airflow_create_dag_disabled_in_prod.py",
       "sha256": "890218b384fe24b1415afe8d5665f3c556fe120b1e020f9cf2d1bd5d5d304a85"
+    },
+    {
+      "path": "tests/test_airflow_release_contract.py",
+      "sha256": "6eec85312e87b16e556850baad793f7929a4634fbf229b9c38e8c89164b44eef"
     },
     {
       "path": "tests/test_airflow_version.py",
@@ -4694,7 +4698,7 @@
     },
     {
       "path": "tests/test_release_ci_fail_closed.py",
-      "sha256": "1bc8caf16390618e3acb033ff6f8e5c5f01ad486994f4f9ce4ad00aa621ba727"
+      "sha256": "b7adc8800929ac980c2f99a9757de012ca50438fce93409b02635f06482ffe9c"
     },
     {
       "path": "tests/test_release_compose_env_contract.py",
@@ -5030,7 +5034,7 @@
     },
     {
       "path": "tests/test_select_previous_release.py",
-      "sha256": "64173e27ddffe48cb985c4c4923dab1b1e732cef72ef68982fdd16ab59259b6a"
+      "sha256": "877fb9ad5ec935f4ecfaa1c4bfaeb295e77b2fbe472ba89ef875f9a87cf935d1"
     },
     {
       "path": "tests/test_service_urls.py",
