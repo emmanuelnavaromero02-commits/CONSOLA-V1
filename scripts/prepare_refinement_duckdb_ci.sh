@@ -2,6 +2,7 @@
 set -euo pipefail
 
 duckdb_home="${DUCKDB_TEST_HOME:?DUCKDB_TEST_HOME is required}"
+manifest="${DUCKDB_CACHE_MANIFEST:?DUCKDB_CACHE_MANIFEST is required}"
 image="${REFINEMENT_IMAGE:?REFINEMENT_IMAGE is required}"
 if [[ -n "${PYTHON_BIN:-}" ]]; then
   python_bin="$PYTHON_BIN"
@@ -11,7 +12,15 @@ else
   python_bin=python
 fi
 command -v "$python_bin" >/dev/null
+[[ "$duckdb_home" == /* ]]
+[[ "$manifest" == /* ]]
 test ! -e "$duckdb_home"
+test ! -L "$duckdb_home"
+test ! -e "$manifest"
+test ! -L "$manifest"
+manifest_parent="$(dirname -- "$manifest")"
+test -d "$manifest_parent"
+test ! -L "$manifest_parent"
 
 docker build . -f refinement/Dockerfile -t "$image"
 docker run --rm -i --network none --read-only \
@@ -58,6 +67,41 @@ for extension in httpfs postgres_scanner; do
   find "$duckdb_home/.duckdb" -type f -name "$extension.duckdb_extension" \
     | grep -q .
 done
+if find "$duckdb_home/.duckdb" ! -type d ! -type f -print -quit | grep -q .; then
+  echo "DuckDB extension cache contains a non-regular entry" >&2
+  exit 1
+fi
+"$python_bin" - "$duckdb_home" <<'PY'
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1]) / ".duckdb"
+version = root / "extensions" / "v1.2.2"
+platforms = [path for path in version.iterdir() if path.is_dir()]
+if len(platforms) != 1 or platforms[0].name not in {
+    "linux_amd64_gcc4",
+    "linux_arm64",
+}:
+    raise SystemExit("DuckDB extension cache platform topology is invalid")
+platform = platforms[0].name
+expected = {
+    Path("extensions"),
+    Path("extensions/v1.2.2"),
+    Path("extensions/v1.2.2") / platform,
+}
+for extension in ("httpfs", "postgres_scanner"):
+    expected.add(
+        Path("extensions/v1.2.2") / platform / f"{extension}.duckdb_extension"
+    )
+    expected.add(
+        Path("extensions/v1.2.2")
+        / platform
+        / f"{extension}.duckdb_extension.info"
+    )
+actual = {path.relative_to(root) for path in root.rglob("*")}
+if actual != expected:
+    raise SystemExit("DuckDB extension cache file topology is invalid")
+PY
 if [[ "$(uname -s)" == "Darwin" ]]; then
   docker run --rm -i --network none --read-only \
     --tmpfs /tmp:rw,nosuid,noexec,size=64m \
@@ -87,4 +131,5 @@ PY
 fi
 find "$duckdb_home/.duckdb" -type f -print0 \
   | LC_ALL=C sort -z | xargs -0 sha256sum \
-  > /tmp/refinement-duckdb-extensions.before
+  > "$manifest"
+test -s "$manifest"

@@ -234,7 +234,8 @@ def _focal_pytest_argv() -> list[str]:
         .split("- name: Run live", 1)[0]
     )
     command = focal_step.split("run: |", 1)[1].replace("\\\n", " ")
-    return shlex.split(command)
+    argv = shlex.split(command)
+    return argv[argv.index("pytest") :]
 
 
 def test_operational_truth_suites_are_pytest_arguments_in_focal_gate():
@@ -281,7 +282,7 @@ def test_postgres_junit_guard_requires_current_minimum_and_zero_bad_results():
 def test_both_junit_reports_fail_closed_on_missing_or_bad_results():
     text = _workflow_text()
     prepare_script = PREPARE_SCRIPT.read_text(encoding="utf-8")
-    verifier = text.split("python - <<'PY'", 1)[1]
+    verifier = text.split("/usr/bin/python3 - <<'PY'", 1)[1]
     for field in ("skipped", "failures", "errors"):
         assert field in verifier
     assert "report missing" in verifier.lower()
@@ -291,27 +292,43 @@ def test_both_junit_reports_fail_closed_on_missing_or_bad_results():
     live = text.index("- name: Run live PostgreSQL/RLS tests")
     assert prepare < text.index("pytest", prepare) == text.index("pytest")
     assert prepare < focal < live
-    assert "run: scripts/prepare_refinement_duckdb_ci.sh" in text[prepare:focal]
+    assert "scripts/prepare_refinement_duckdb_ci.sh" in text[prepare:focal]
     assert "docker build . -f refinement/Dockerfile" in prepare_script
     assert "run_refinement_duckdb_offline_smoke.sh" in prepare_script
     assert "docker cp" in prepare_script
-    assert "DUCKDB_TEST_HOME: /tmp/refinement-duckdb-home" in text
+    assert "id: duckdb_cache" in text[prepare:focal]
+    assert 'mktemp -d "${RUNNER_TEMP}/omega-control-room-duckdb.XXXXXX"' in text
+    assert "Preload exact offline smoke images" in text
+    assert "docker pull postgres:15" in text
+    assert 'minio_ref="${minio_tag}@${minio_digest}"' in text
     assert 'test ! -e "$duckdb_home"' in prepare_script
     scoped_home_lines = [
         line for line in text.splitlines() if line.strip().startswith("HOME:")
     ]
     assert scoped_home_lines == [
-        "          HOME: /tmp/refinement-duckdb-home",
-        "          HOME: /tmp/refinement-duckdb-home",
+        "          HOME: ${{ steps.duckdb_cache.outputs.home }}",
+        "          HOME: ${{ steps.duckdb_cache.outputs.home }}",
+        "          HOME: ${{ steps.duckdb_cache.outputs.home }}",
     ]
     assert text.count("DOCKER_HOST: unix:///var/run/docker.sock") == 2
     assert "INSTALL httpfs" not in text
     assert "INSTALL postgres" not in text
     assert '"autoinstall_known_extensions": "false"' in prepare_script
     assert '"autoload_known_extensions": "false"' in prepare_script
-    assert "refinement-duckdb-extensions.before" in text
-    assert "refinement-duckdb-extensions.after" in text
-    assert "cmp /tmp/refinement-duckdb-extensions.before" in text
+    assert "EXPECTED_MANIFEST_SHA256" in text
+    assert 'find "${HOME}/.duckdb" ! -type d ! -type f' in text
+    assert 'cmp --silent "${DUCKDB_CACHE_MANIFEST}" "${actual_manifest}"' in text
+    assert text.count("env -u GITHUB_ENV -u GITHUB_PATH") == 3
+    for safe_control in (
+        "BASH_ENV: /dev/null",
+        "ENV: /dev/null",
+        'LD_AUDIT: ""',
+        'LD_LIBRARY_PATH: ""',
+        'LD_PRELOAD: ""',
+        "PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "/usr/bin/python3 - <<'PY'",
+    ):
+        assert safe_control in text
 
 
 def test_focal_gate_installs_and_checks_the_real_mcp_dependencies_first():

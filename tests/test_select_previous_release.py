@@ -345,44 +345,76 @@ def test_release_asset_redirect_never_forwards_bearer_token() -> None:
 
 def test_transition_ledger_is_exact_and_has_one_bridge() -> None:
     assert TRANSITION_RELEASES == {
-        "v1.45.211-beta": (
+        "v1.45.212-beta": (
             "v1.45.209-beta",
+            "713b2801a43c725eab68a31db858c1b5ec10e5cc",
             "21b6274ec6e416d2d808efe30cda19ce8176611f",
-            "v1.45.210-beta",
-            "6c70e0067eb44dd991d355b3e5cab663300c790b",
-            "2429e9a2bdab13ff00740fe318009fd5b101850d",
+            (
+                (
+                    "v1.45.210-beta",
+                    "6c70e0067eb44dd991d355b3e5cab663300c790b",
+                    "2429e9a2bdab13ff00740fe318009fd5b101850d",
+                ),
+                (
+                    "v1.45.211-beta",
+                    "cadf0b28b771257bc6cb9129cf8b4cd72ef5adff",
+                    "cc0873e4d86bb5bd2f183a003d43ff8a0970df8c",
+                ),
+            ),
         )
     }
     assert TRANSITION_AUTHORITY_ROOTS == {
-        "v1.45.211-beta": "refs/omega-release-authority/v1.45.211-beta"
+        "v1.45.212-beta": "refs/omega-release-authority/v1.45.212-beta"
     }
 
 
 def _transition_history(
-    repo: Path, monkeypatch: pytest.MonkeyPatch
-) -> tuple[str, str, str, str]:
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    gap_between_failed_markers: bool = False,
+) -> dict[str, str]:
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
     subprocess.run(
         ["git", "config", "user.email", "ci@example.com"], cwd=repo, check=True
     )
     subprocess.run(["git", "config", "user.name", "CI"], cwd=repo, check=True)
     base = _commit(repo, "trusted base")
-    subprocess.run(["git", "tag", "v1.45.209-beta"], cwd=repo, check=True)
-    _commit(repo, "intervening source")
-    failed = _commit(repo, "failed release")
     subprocess.run(
-        ["git", "tag", "-a", "v1.45.210-beta", "-m", "failed release"],
+        ["git", "tag", "-a", "v1.45.209-beta", "-m", "trusted base"],
         cwd=repo,
         check=True,
     )
-    failed_object = _git(repo, "rev-parse", "refs/tags/v1.45.210-beta")
-    recovery = _commit(repo, "recovery release")
-    subprocess.run(["git", "tag", "v1.45.211-beta"], cwd=repo, check=True)
-    authority = TRANSITION_AUTHORITY_ROOTS["v1.45.211-beta"]
+    base_object = _git(repo, "rev-parse", "refs/tags/v1.45.209-beta")
+    _commit(repo, "intervening source")
+    failed_0 = _commit(repo, "failed release .210")
+    subprocess.run(
+        ["git", "tag", "-a", "v1.45.210-beta", "-m", "failed release .210"],
+        cwd=repo,
+        check=True,
+    )
+    failed_0_object = _git(repo, "rev-parse", "refs/tags/v1.45.210-beta")
+    if gap_between_failed_markers:
+        _commit(repo, "unexpected gap between failed releases")
+    failed_1 = _commit(repo, "failed release .211")
+    subprocess.run(
+        ["git", "tag", "-a", "v1.45.211-beta", "-m", "failed release .211"],
+        cwd=repo,
+        check=True,
+    )
+    failed_1_object = _git(repo, "rev-parse", "refs/tags/v1.45.211-beta")
+    recovery = _commit(repo, "recovery release .212")
+    subprocess.run(
+        ["git", "tag", "-a", "v1.45.212-beta", "-m", "recovery release .212"],
+        cwd=repo,
+        check=True,
+    )
+    authority = TRANSITION_AUTHORITY_ROOTS["v1.45.212-beta"]
     for name, tag in (
         ("base", "v1.45.209-beta"),
-        ("failed", "v1.45.210-beta"),
-        ("current", "v1.45.211-beta"),
+        ("failed-0", "v1.45.210-beta"),
+        ("failed-1", "v1.45.211-beta"),
+        ("current", "v1.45.212-beta"),
     ):
         subprocess.run(
             ["git", "update-ref", f"{authority}/{name}", f"refs/tags/{tag}"],
@@ -393,24 +425,33 @@ def _transition_history(
         selector,
         "TRANSITION_RELEASES",
         {
-            "v1.45.211-beta": (
+            "v1.45.212-beta": (
                 "v1.45.209-beta",
+                base_object,
                 base,
-                "v1.45.210-beta",
-                failed_object,
-                failed,
+                (
+                    ("v1.45.210-beta", failed_0_object, failed_0),
+                    ("v1.45.211-beta", failed_1_object, failed_1),
+                ),
             )
         },
     )
-    return base, failed, failed_object, recovery
+    return {
+        "authority": authority,
+        "base": base,
+        "base_object": base_object,
+        "failed_0": failed_0,
+        "failed_0_object": failed_0_object,
+        "failed_1": failed_1,
+        "failed_1_object": failed_1_object,
+        "recovery": recovery,
+    }
 
 
-def test_transition_bridge_requires_exact_failed_marker_without_evidence(
+def test_transition_bridge_requires_both_exact_failed_markers_without_evidence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    base, failed, _failed_object, recovery = _transition_history(
-        tmp_path, monkeypatch
-    )
+    history = _transition_history(tmp_path, monkeypatch)
     checked: list[tuple[str, str]] = []
 
     def trust(tag: str, commit: str) -> bool:
@@ -418,56 +459,63 @@ def test_transition_bridge_requires_exact_failed_marker_without_evidence(
         return False
 
     assert select_previous_release(
-        recovery,
-        "v1.45.211-beta",
+        history["recovery"],
+        "v1.45.212-beta",
         repo=tmp_path,
         trust_verifier=trust,
-    ) == (base, "v1.45.209-beta")
-    assert checked == [("v1.45.210-beta", failed)]
+    ) == (history["base"], "v1.45.209-beta")
+    assert checked == [
+        ("v1.45.210-beta", history["failed_0"]),
+        ("v1.45.211-beta", history["failed_1"]),
+    ]
 
 
+@pytest.mark.parametrize("marker_index", [0, 1])
 def test_transition_bridge_blocks_a_missing_failed_marker(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    marker_index: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _base, _failed, _failed_object, recovery = _transition_history(
-        tmp_path, monkeypatch
-    )
-    authority = TRANSITION_AUTHORITY_ROOTS["v1.45.211-beta"]
+    history = _transition_history(tmp_path, monkeypatch)
     subprocess.run(
-        ["git", "update-ref", "-d", f"{authority}/failed"],
+        [
+            "git",
+            "update-ref",
+            "-d",
+            f"{history['authority']}/failed-{marker_index}",
+        ],
         cwd=tmp_path,
         check=True,
     )
 
     with pytest.raises(ReleaseTrustError, match="failed release marker is missing"):
         select_previous_release(
-            recovery,
-            "v1.45.211-beta",
+            history["recovery"],
+            "v1.45.212-beta",
             repo=tmp_path,
             trust_verifier=lambda _tag, _commit: False,
         )
 
 
+@pytest.mark.parametrize("marker_index", [0, 1])
 def test_transition_bridge_blocks_a_recreated_annotated_marker(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    marker_index: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _base, failed, failed_object, recovery = _transition_history(
-        tmp_path, monkeypatch
-    )
-    subprocess.run(["git", "tag", "-d", "v1.45.210-beta"], cwd=tmp_path, check=True)
+    history = _transition_history(tmp_path, monkeypatch)
+    tag = f"v1.45.21{marker_index}-beta"
+    failed = history[f"failed_{marker_index}"]
+    failed_object = history[f"failed_{marker_index}_object"]
+    subprocess.run(["git", "tag", "-d", tag], cwd=tmp_path, check=True)
     subprocess.run(
-        ["git", "tag", "-a", "v1.45.210-beta", "-m", "recreated", failed],
+        ["git", "tag", "-a", tag, "-m", "recreated", failed],
         cwd=tmp_path,
         check=True,
     )
-    assert _git(tmp_path, "rev-parse", "refs/tags/v1.45.210-beta") != failed_object
-    authority = TRANSITION_AUTHORITY_ROOTS["v1.45.211-beta"]
+    assert _git(tmp_path, "rev-parse", f"refs/tags/{tag}") != failed_object
     subprocess.run(
         [
             "git",
             "update-ref",
-            f"{authority}/failed",
-            "refs/tags/v1.45.210-beta",
+            f"{history['authority']}/failed-{marker_index}",
+            f"refs/tags/{tag}",
         ],
         cwd=tmp_path,
         check=True,
@@ -475,30 +523,33 @@ def test_transition_bridge_blocks_a_recreated_annotated_marker(
 
     with pytest.raises(ReleaseTrustError, match="tag object differs"):
         select_previous_release(
-            recovery,
-            "v1.45.211-beta",
+            history["recovery"],
+            "v1.45.212-beta",
             repo=tmp_path,
             trust_verifier=lambda _tag, _commit: False,
         )
 
 
+@pytest.mark.parametrize("marker_index", [0, 1])
 def test_transition_bridge_blocks_a_lightweight_failed_marker(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    marker_index: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _base, failed, _failed_object, recovery = _transition_history(
-        tmp_path, monkeypatch
-    )
-    authority = TRANSITION_AUTHORITY_ROOTS["v1.45.211-beta"]
+    history = _transition_history(tmp_path, monkeypatch)
     subprocess.run(
-        ["git", "update-ref", f"{authority}/failed", failed],
+        [
+            "git",
+            "update-ref",
+            f"{history['authority']}/failed-{marker_index}",
+            history[f"failed_{marker_index}"],
+        ],
         cwd=tmp_path,
         check=True,
     )
 
     with pytest.raises(ReleaseTrustError, match="tag object differs"):
         select_previous_release(
-            recovery,
-            "v1.45.211-beta",
+            history["recovery"],
+            "v1.45.212-beta",
             repo=tmp_path,
             trust_verifier=lambda _tag, _commit: False,
         )
@@ -507,55 +558,64 @@ def test_transition_bridge_blocks_a_lightweight_failed_marker(
 def test_transition_bridge_ignores_stale_checkout_tags_after_remote_binding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    base, _failed, _failed_object, recovery = _transition_history(
-        tmp_path, monkeypatch
-    )
+    history = _transition_history(tmp_path, monkeypatch)
     subprocess.run(
-        ["git", "tag", "-d", "v1.45.209-beta", "v1.45.210-beta"],
+        [
+            "git",
+            "tag",
+            "-d",
+            "v1.45.209-beta",
+            "v1.45.210-beta",
+            "v1.45.211-beta",
+            "v1.45.212-beta",
+        ],
         cwd=tmp_path,
         check=True,
     )
 
     assert select_previous_release(
-        recovery,
-        "v1.45.211-beta",
+        history["recovery"],
+        "v1.45.212-beta",
         repo=tmp_path,
         trust_verifier=lambda _tag, _commit: False,
-    ) == (base, "v1.45.209-beta")
+    ) == (history["base"], "v1.45.209-beta")
 
 
-def test_transition_bridge_blocks_trusted_evidence_for_the_known_failed_marker(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("marker_index", [0, 1])
+def test_transition_bridge_blocks_trusted_evidence_for_each_failed_marker(
+    marker_index: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _base, failed, _failed_object, recovery = _transition_history(
-        tmp_path, monkeypatch
-    )
+    history = _transition_history(tmp_path, monkeypatch)
+    failed_tag = f"v1.45.21{marker_index}-beta"
+    failed_commit = history[f"failed_{marker_index}"]
 
     with pytest.raises(ReleaseTrustError, match="contradictory canonical evidence"):
         select_previous_release(
-            recovery,
-            "v1.45.211-beta",
+            history["recovery"],
+            "v1.45.212-beta",
             repo=tmp_path,
             trust_verifier=lambda tag, commit: (
-                tag == "v1.45.210-beta" and commit == failed
+                tag == failed_tag and commit == failed_commit
             ),
         )
 
 
+@pytest.mark.parametrize("marker_index", [0, 1])
 def test_transition_bridge_blocks_ambiguous_failed_marker_evidence(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    marker_index: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _base, _failed, _failed_object, recovery = _transition_history(
-        tmp_path, monkeypatch
-    )
+    history = _transition_history(tmp_path, monkeypatch)
+    ambiguous_tag = f"v1.45.21{marker_index}-beta"
 
-    def ambiguous(_tag: str, _commit: str) -> bool:
-        raise ReleaseTrustError("failed marker evidence is ambiguous")
+    def ambiguous(tag: str, _commit: str) -> bool:
+        if tag == ambiguous_tag:
+            raise ReleaseTrustError("failed marker evidence is ambiguous")
+        return False
 
     with pytest.raises(ReleaseTrustError, match="ambiguous"):
         select_previous_release(
-            recovery,
-            "v1.45.211-beta",
+            history["recovery"],
+            "v1.45.212-beta",
             repo=tmp_path,
             trust_verifier=ambiguous,
         )
@@ -564,35 +624,188 @@ def test_transition_bridge_blocks_ambiguous_failed_marker_evidence(
 def test_transition_bridge_requires_current_tag_to_resolve_to_head(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    base, _failed, _failed_object, recovery = _transition_history(
-        tmp_path, monkeypatch
-    )
-    authority = TRANSITION_AUTHORITY_ROOTS["v1.45.211-beta"]
+    history = _transition_history(tmp_path, monkeypatch)
     subprocess.run(
-        ["git", "update-ref", f"{authority}/current", base],
+        [
+            "git",
+            "update-ref",
+            f"{history['authority']}/current",
+            "refs/tags/v1.45.209-beta",
+        ],
         cwd=tmp_path,
         check=True,
     )
 
-    with pytest.raises(ReleaseTrustError, match="current tag does not resolve to head"):
+    with pytest.raises(ReleaseTrustError, match="annotated tag identity is invalid"):
         select_previous_release(
-            recovery,
-            "v1.45.211-beta",
+            history["recovery"],
+            "v1.45.212-beta",
             repo=tmp_path,
             trust_verifier=lambda _tag, _commit: False,
         )
 
 
-def test_transition_bridge_requires_failed_marker_as_the_direct_parent(
+def test_transition_bridge_rejects_lightweight_current_marker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _base, _failed, _failed_object, _recovery = _transition_history(
-        tmp_path, monkeypatch
-    )
-    non_direct = _commit(tmp_path, "non-direct recovery")
-    authority = TRANSITION_AUTHORITY_ROOTS["v1.45.211-beta"]
+    history = _transition_history(tmp_path, monkeypatch)
     subprocess.run(
-        ["git", "update-ref", f"{authority}/current", non_direct],
+        [
+            "git",
+            "update-ref",
+            f"{history['authority']}/current",
+            history["recovery"],
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+
+    with pytest.raises(ReleaseTrustError, match="not an annotated tag"):
+        select_previous_release(
+            history["recovery"],
+            "v1.45.212-beta",
+            repo=tmp_path,
+            trust_verifier=lambda _tag, _commit: False,
+        )
+
+
+def test_transition_bridge_rejects_wrong_embedded_current_tag_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    history = _transition_history(tmp_path, monkeypatch)
+    subprocess.run(
+        [
+            "git",
+            "tag",
+            "-a",
+            "v9.9.9-beta",
+            "-m",
+            "wrong embedded identity",
+            history["recovery"],
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "update-ref",
+            f"{history['authority']}/current",
+            "refs/tags/v9.9.9-beta",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+
+    with pytest.raises(ReleaseTrustError, match="annotated tag identity is invalid"):
+        select_previous_release(
+            history["recovery"],
+            "v1.45.212-beta",
+            repo=tmp_path,
+            trust_verifier=lambda _tag, _commit: False,
+        )
+
+
+def test_transition_bridge_rejects_current_tag_targeting_another_tag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    history = _transition_history(tmp_path, monkeypatch)
+    subprocess.run(
+        [
+            "git",
+            "tag",
+            "-a",
+            "v1.45.212-nested-source",
+            "-m",
+            "nested target",
+            history["recovery"],
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    nested_object = subprocess.run(
+        [
+            "git",
+            "mktag",
+        ],
+        cwd=tmp_path,
+        input=(
+            "object "
+            + _git(tmp_path, "rev-parse", "refs/tags/v1.45.212-nested-source")
+            + "\n"
+            "type tag\n"
+            "tag v1.45.212-beta\n"
+            "tagger CI <ci@example.com> 1 +0000\n\n"
+            "nested current marker\n"
+        ),
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.strip()
+    subprocess.run(
+        [
+            "git",
+            "update-ref",
+            f"{history['authority']}/current",
+            nested_object,
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+
+    with pytest.raises(ReleaseTrustError, match="annotated tag identity is invalid"):
+        select_previous_release(
+            history["recovery"],
+            "v1.45.212-beta",
+            repo=tmp_path,
+            trust_verifier=lambda _tag, _commit: False,
+        )
+
+
+def test_transition_bridge_rejects_shallow_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    history = _transition_history(tmp_path, monkeypatch)
+    shallow_path = Path(_git(tmp_path, "rev-parse", "--git-path", "shallow"))
+    if not shallow_path.is_absolute():
+        shallow_path = tmp_path / shallow_path
+    shallow_path.write_text(f"{history['base']}\n", encoding="utf-8")
+
+    with pytest.raises(ReleaseTrustError, match="complete non-shallow history"):
+        select_previous_release(
+            history["recovery"],
+            "v1.45.212-beta",
+            repo=tmp_path,
+            trust_verifier=lambda _tag, _commit: False,
+        )
+
+
+def test_transition_bridge_requires_latest_failed_marker_as_the_direct_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    history = _transition_history(tmp_path, monkeypatch)
+    non_direct = _commit(tmp_path, "non-direct recovery")
+    subprocess.run(
+        [
+            "git",
+            "tag",
+            "-f",
+            "-a",
+            "v1.45.212-beta",
+            "-m",
+            "non-direct recovery",
+            non_direct,
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "update-ref",
+            f"{history['authority']}/current",
+            "refs/tags/v1.45.212-beta",
+        ],
         cwd=tmp_path,
         check=True,
     )
@@ -600,29 +813,254 @@ def test_transition_bridge_requires_failed_marker_as_the_direct_parent(
     with pytest.raises(ReleaseTrustError, match="not directly atop"):
         select_previous_release(
             non_direct,
-            "v1.45.211-beta",
+            "v1.45.212-beta",
             repo=tmp_path,
             trust_verifier=lambda _tag, _commit: False,
         )
 
 
-def test_transition_bridge_requires_the_exact_ancestral_base_tag(
+def test_transition_bridge_requires_direct_ordered_failed_chain(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _base, failed, _failed_object, recovery = _transition_history(
-        tmp_path, monkeypatch
+    history = _transition_history(
+        tmp_path, monkeypatch, gap_between_failed_markers=True
     )
-    authority = TRANSITION_AUTHORITY_ROOTS["v1.45.211-beta"]
+
+    with pytest.raises(ReleaseTrustError, match="failed release chain is not direct"):
+        select_previous_release(
+            history["recovery"],
+            "v1.45.212-beta",
+            repo=tmp_path,
+            trust_verifier=lambda _tag, _commit: False,
+        )
+
+
+def test_transition_bridge_blocks_swapped_failed_authorities(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    history = _transition_history(tmp_path, monkeypatch)
     subprocess.run(
-        ["git", "update-ref", f"{authority}/base", failed],
+        [
+            "git",
+            "update-ref",
+            f"{history['authority']}/failed-0",
+            "refs/tags/v1.45.211-beta",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "update-ref",
+            f"{history['authority']}/failed-1",
+            "refs/tags/v1.45.210-beta",
+        ],
         cwd=tmp_path,
         check=True,
     )
 
-    with pytest.raises(ReleaseTrustError, match="exact ledger commit"):
+    with pytest.raises(ReleaseTrustError, match="tag object differs"):
         select_previous_release(
-            recovery,
-            "v1.45.211-beta",
+            history["recovery"],
+            "v1.45.212-beta",
+            repo=tmp_path,
+            trust_verifier=lambda _tag, _commit: False,
+        )
+
+
+def test_transition_bridge_requires_exact_annotated_base_object(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    history = _transition_history(tmp_path, monkeypatch)
+    subprocess.run(["git", "tag", "-d", "v1.45.209-beta"], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "tag",
+            "-a",
+            "v1.45.209-beta",
+            "-m",
+            "recreated base",
+            history["base"],
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "update-ref",
+            f"{history['authority']}/base",
+            "refs/tags/v1.45.209-beta",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+
+    with pytest.raises(ReleaseTrustError, match="base tag object differs"):
+        select_previous_release(
+            history["recovery"],
+            "v1.45.212-beta",
+            repo=tmp_path,
+            trust_verifier=lambda _tag, _commit: False,
+        )
+
+
+@pytest.mark.parametrize("marker_index", [0, 1])
+def test_transition_bridge_requires_exact_failed_peeled_commits(
+    marker_index: int,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    history = _transition_history(tmp_path, monkeypatch)
+    base_tag, base_object, base_commit, markers = selector.TRANSITION_RELEASES[
+        "v1.45.212-beta"
+    ]
+    altered = list(markers)
+    tag, tag_object, _commit_hash = altered[marker_index]
+    altered[marker_index] = (tag, tag_object, base_commit)
+    monkeypatch.setattr(
+        selector,
+        "TRANSITION_RELEASES",
+        {
+            "v1.45.212-beta": (
+                base_tag,
+                base_object,
+                base_commit,
+                tuple(altered),
+            )
+        },
+    )
+
+    with pytest.raises(ReleaseTrustError, match="peeled commit differs"):
+        select_previous_release(
+            history["recovery"],
+            "v1.45.212-beta",
+            repo=tmp_path,
+            trust_verifier=lambda _tag, _commit: False,
+        )
+
+
+def test_transition_bridge_requires_exact_base_peeled_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    history = _transition_history(tmp_path, monkeypatch)
+    base_tag, base_object, _base_commit, markers = selector.TRANSITION_RELEASES[
+        "v1.45.212-beta"
+    ]
+    monkeypatch.setattr(
+        selector,
+        "TRANSITION_RELEASES",
+        {
+            "v1.45.212-beta": (
+                base_tag,
+                base_object,
+                history["failed_0"],
+                markers,
+            )
+        },
+    )
+
+    with pytest.raises(ReleaseTrustError, match="base tag peeled commit differs"):
+        select_previous_release(
+            history["recovery"],
+            "v1.45.212-beta",
+            repo=tmp_path,
+            trust_verifier=lambda _tag, _commit: False,
+        )
+
+
+def test_transition_bridge_requires_base_to_ancestor_first_failed_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    history = _transition_history(tmp_path, monkeypatch)
+    tree = _git(tmp_path, "rev-parse", f"{history['base']}^{{tree}}")
+    unrelated_base = subprocess.check_output(
+        ["git", "commit-tree", tree, "-m", "unrelated base"],
+        cwd=tmp_path,
+        text=True,
+    ).strip()
+    subprocess.run(["git", "tag", "-d", "v1.45.209-beta"], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "tag",
+            "-a",
+            "v1.45.209-beta",
+            "-m",
+            "unrelated base",
+            unrelated_base,
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    unrelated_base_object = _git(tmp_path, "rev-parse", "refs/tags/v1.45.209-beta")
+    subprocess.run(
+        [
+            "git",
+            "update-ref",
+            f"{history['authority']}/base",
+            "refs/tags/v1.45.209-beta",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    _base_tag, _base_object, _base_commit, markers = selector.TRANSITION_RELEASES[
+        "v1.45.212-beta"
+    ]
+    monkeypatch.setattr(
+        selector,
+        "TRANSITION_RELEASES",
+        {
+            "v1.45.212-beta": (
+                "v1.45.209-beta",
+                unrelated_base_object,
+                unrelated_base,
+                markers,
+            )
+        },
+    )
+
+    with pytest.raises(ReleaseTrustError, match="base is not an ancestor"):
+        select_previous_release(
+            history["recovery"],
+            "v1.45.212-beta",
+            repo=tmp_path,
+            trust_verifier=lambda _tag, _commit: False,
+        )
+
+
+def test_transition_bridge_requires_a_single_parent_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    history = _transition_history(tmp_path, monkeypatch)
+    tree = _git(tmp_path, "rev-parse", f"{history['recovery']}^{{tree}}")
+    merge_head = subprocess.check_output(
+        [
+            "git",
+            "commit-tree",
+            tree,
+            "-p",
+            history["recovery"],
+            "-p",
+            history["failed_0"],
+            "-m",
+            "merge-shaped recovery",
+        ],
+        cwd=tmp_path,
+        text=True,
+    ).strip()
+    subprocess.run(
+        ["git", "update-ref", f"{history['authority']}/current", merge_head],
+        cwd=tmp_path,
+        check=True,
+    )
+
+    with pytest.raises(ReleaseTrustError, match="must have exactly one parent"):
+        select_previous_release(
+            merge_head,
+            "v1.45.212-beta",
             repo=tmp_path,
             trust_verifier=lambda _tag, _commit: False,
         )

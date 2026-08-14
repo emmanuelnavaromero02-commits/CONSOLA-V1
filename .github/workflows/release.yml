@@ -45,19 +45,20 @@ jobs:
           fi
 
       - name: Bind exact remote recovery tag authority
-        if: github.ref_name == 'v1.45.211-beta'
+        if: github.ref_name == 'v1.45.212-beta'
         shell: bash
         run: |
           set -euo pipefail
-          authority=refs/omega-release-authority/v1.45.211-beta
-          for name in current failed base; do
+          authority=refs/omega-release-authority/v1.45.212-beta
+          for name in current failed-0 failed-1 base; do
             git update-ref -d "${authority}/${name}"
           done
-          git fetch --no-tags --force origin \
-            "+refs/tags/v1.45.211-beta:${authority}/current" \
-            "+refs/tags/v1.45.210-beta:${authority}/failed" \
+          git fetch --no-tags --force --atomic origin \
+            "+refs/tags/v1.45.212-beta:${authority}/current" \
+            "+refs/tags/v1.45.210-beta:${authority}/failed-0" \
+            "+refs/tags/v1.45.211-beta:${authority}/failed-1" \
             "+refs/tags/v1.45.209-beta:${authority}/base"
-          for name in current failed base; do
+          for name in current failed-0 failed-1 base; do
             git show-ref --verify --quiet "${authority}/${name}"
           done
 
@@ -259,6 +260,15 @@ jobs:
           done
           npm --prefix console-next ci
 
+      - name: Verify release test harness before runtime preparation
+        env:
+          OMEGA_RELEASE_TEST_HARNESS_SHA256: ${{ steps.harness_authority.outputs.sha256 }}
+          OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256: ${{ steps.harness_authority.outputs.verifier_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$(sha256sum scripts/verify_release_test_harness.py | awk '{print $1}')" == "${OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256}" ]]
+          python3 -I scripts/verify_release_test_harness.py
+
       - name: Preload PostgreSQL images for pull-never release tests
         run: |
           set -euo pipefail
@@ -266,6 +276,44 @@ jobs:
             docker pull "${ref}"
             docker image inspect "${ref}" >/dev/null
           done
+
+      - name: Preload exact MinIO image for pull-never release tests
+        run: |
+          set -euo pipefail
+          minio_tag="minio/minio:RELEASE.2024-12-18T13-15-44Z"
+          minio_digest="sha256:1dce27c494a16bae114774f1cec295493f3613142713130c2d22dd5696be6ad3"
+          minio_ref="${minio_tag}@${minio_digest}"
+          minio_repo_digest="minio/minio@${minio_digest}"
+          docker pull "${minio_ref}"
+          docker tag "${minio_ref}" "${minio_tag}"
+          docker image inspect --format '{{json .RepoDigests}}' "${minio_ref}" \
+            | grep -Fq "\"${minio_repo_digest}\""
+          digest_id="$(docker image inspect --format '{{.Id}}' "${minio_ref}")"
+          tag_id="$(docker image inspect --format '{{.Id}}' "${minio_tag}")"
+          [[ -n "${digest_id}" && "${digest_id}" == "${tag_id}" ]]
+
+      - name: Prepare hermetic DuckDB extension cache for detected root tests
+        id: root_duckdb_cache
+        if: needs.detect-release-changes.outputs.root_tests == 'true'
+        shell: bash
+        env:
+          PYTHON_BIN: python
+          REFINEMENT_IMAGE: refinement:release-validation-${{ github.sha }}
+        run: |
+          set -euo pipefail
+          cache_root="$(mktemp -d "${RUNNER_TEMP}/omega-release-duckdb.XXXXXX")"
+          DUCKDB_TEST_HOME="${cache_root}/home"
+          DUCKDB_CACHE_MANIFEST="${cache_root}/extensions.sha256"
+          export DUCKDB_TEST_HOME DUCKDB_CACHE_MANIFEST
+          scripts/prepare_refinement_duckdb_ci.sh
+          chmod -R a-w "${DUCKDB_TEST_HOME}/.duckdb"
+          chmod a-w "${DUCKDB_CACHE_MANIFEST}"
+          manifest_sha256="$(sha256sum "${DUCKDB_CACHE_MANIFEST}" | awk '{print $1}')"
+          {
+            printf 'home=%s\n' "${DUCKDB_TEST_HOME}"
+            printf 'manifest=%s\n' "${DUCKDB_CACHE_MANIFEST}"
+            printf 'manifest_sha256=%s\n' "${manifest_sha256}"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Verify declared release test skips
         run: python3 scripts/verify_test_skip_policy.py
@@ -277,7 +325,7 @@ jobs:
         run: |
           [[ "$(sha256sum scripts/verify_release_test_harness.py | awk '{print $1}')" == "${OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256}" ]]
           python3 -I scripts/verify_release_test_harness.py
-          python3 -I scripts/run_release_pytest.py -q \
+          env -u GITHUB_ENV -u GITHUB_PATH python3 -I scripts/run_release_pytest.py -q \
             tests/test_aws_compose_consistency.py \
             tests/test_aws_secrets_manager_config.py \
             tests/test_app_env_safe_default.py \
@@ -287,6 +335,7 @@ jobs:
       - name: Run detected root tests
         if: needs.detect-release-changes.outputs.root_tests == 'true'
         env:
+          HOME: ${{ steps.root_duckdb_cache.outputs.home }}
           OMEGA_RELEASE_TEST_HARNESS_SHA256: ${{ steps.harness_authority.outputs.sha256 }}
           OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256: ${{ steps.harness_authority.outputs.verifier_sha256 }}
           ROOT_TEST_TARGETS: ${{ needs.detect-release-changes.outputs.root_test_targets }}
@@ -299,7 +348,40 @@ jobs:
           }
           read -r -a targets <<< "${ROOT_TEST_TARGETS}"
           python3 -I scripts/verify_release_test_harness.py
-          python3 -I scripts/run_release_pytest.py -q "${targets[@]}"
+          env -u GITHUB_ENV -u GITHUB_PATH \
+            python3 -I scripts/run_release_pytest.py -q "${targets[@]}"
+
+      - name: Verify hermetic DuckDB extension cache after root tests
+        if: always() && needs.detect-release-changes.outputs.root_tests == 'true'
+        shell: bash
+        env:
+          BASH_ENV: /dev/null
+          HOME: ${{ steps.root_duckdb_cache.outputs.home }}
+          DUCKDB_CACHE_MANIFEST: ${{ steps.root_duckdb_cache.outputs.manifest }}
+          ENV: /dev/null
+          EXPECTED_MANIFEST_SHA256: ${{ steps.root_duckdb_cache.outputs.manifest_sha256 }}
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          LD_PRELOAD: ""
+          PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+        run: |
+          set -euo pipefail
+          [[ "${EXPECTED_MANIFEST_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          test -s "${DUCKDB_CACHE_MANIFEST}"
+          test -f "${DUCKDB_CACHE_MANIFEST}"
+          test ! -L "${DUCKDB_CACHE_MANIFEST}"
+          [[ "$(sha256sum "${DUCKDB_CACHE_MANIFEST}" | awk '{print $1}')" == "${EXPECTED_MANIFEST_SHA256}" ]]
+          test -d "${HOME}/.duckdb"
+          if find "${HOME}/.duckdb" ! -type d ! -type f -print -quit | grep -q .; then
+            echo "::error::DuckDB extension cache contains a non-regular entry"
+            exit 1
+          fi
+          actual_manifest="$(mktemp "${RUNNER_TEMP}/omega-duckdb-cache-after.XXXXXX")"
+          trap 'rm -f "${actual_manifest}"' EXIT
+          find "${HOME}/.duckdb" -type f -print0 \
+            | LC_ALL=C sort -z | xargs -0 sha256sum \
+            > "${actual_manifest}"
+          cmp --silent "${DUCKDB_CACHE_MANIFEST}" "${actual_manifest}"
 
       - name: Run detected cartridge tests
         if: needs.detect-release-changes.outputs.cartridge_tests == 'true'
@@ -316,7 +398,8 @@ jobs:
           }
           read -r -a targets <<< "${CARTRIDGE_TEST_TARGETS}"
           python3 -I scripts/verify_release_test_harness.py
-          python3 -I scripts/run_release_pytest.py -q "${targets[@]}"
+          env -u GITHUB_ENV -u GITHUB_PATH \
+            python3 -I scripts/run_release_pytest.py -q "${targets[@]}"
 
       - name: Terraform validation
         run: |

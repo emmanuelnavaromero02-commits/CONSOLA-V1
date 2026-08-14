@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -57,6 +60,97 @@ def test_readiness_and_ci_enforce_offline_extensions() -> None:
     assert "--network none" in runner and "network create --internal" in runner
     assert 'test "$(id -u)" -ne 0' in runner
     assert "python -m scripts.duckdb_offline_smoke" in runner
+
+
+def test_release_root_cache_is_fresh_frozen_and_network_independent() -> None:
+    preparation = _text("scripts/prepare_refinement_duckdb_ci.sh")
+    runner = _text("scripts/run_refinement_duckdb_offline_smoke.sh")
+    exact_minio = (
+        "minio/minio:RELEASE.2024-12-18T13-15-44Z@"
+        "sha256:1dce27c494a16bae114774f1cec295493f3613142713130c2d22dd5696be6ad3"
+    )
+
+    assert 'manifest="${DUCKDB_CACHE_MANIFEST:?' in preparation
+    assert 'test ! -e "$duckdb_home"' in preparation
+    assert 'test ! -e "$manifest"' in preparation
+    assert 'test ! -L "$duckdb_home"' in preparation
+    assert '> "$manifest"' in preparation
+    assert "/tmp/refinement-duckdb-extensions.before" not in preparation
+    assert "for extension in httpfs postgres_scanner" in preparation
+    assert '"$extension.duckdb_extension"' in preparation
+    assert 'f"{extension}.duckdb_extension.info"' in preparation
+    assert "actual != expected" in preparation
+
+    assert exact_minio in runner
+    assert "docker pull" not in runner
+    assert runner.count("--pull never") == runner.count("docker run")
+    assert "--network none" in runner
+    assert "network create --internal" in runner
+
+    harness = _text("scripts/verify_release_test_harness.py")
+    assert '"scripts/prepare_refinement_duckdb_ci.sh"' in harness
+    assert '"scripts/run_refinement_duckdb_offline_smoke.sh"' in harness
+
+
+def test_cache_preparation_rejects_regular_file_outside_exact_topology(
+    tmp_path: Path,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  build|run|rm|network) exit 0 ;;
+  create) printf 'fake-container\n' ;;
+  cp)
+    destination="${@: -1}"
+    target="${destination%/}/extensions/v1.2.2/linux_arm64"
+    mkdir -p "${target}"
+    for extension in httpfs postgres_scanner; do
+      printf '%s' "${extension}" > "${target}/${extension}.duckdb_extension"
+      printf '%s-info' "${extension}" > "${target}/${extension}.duckdb_extension.info"
+    done
+    if [[ "${FAKE_EXTRA_FILE:-0}" == 1 ]]; then
+      printf 'extra' > "${target}/unexpected.duckdb_extension"
+    fi
+    ;;
+  *) exit 97 ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    fake_uname = fake_bin / "uname"
+    fake_uname.write_text("#!/usr/bin/env bash\nprintf 'Darwin\\n'\n", encoding="utf-8")
+    fake_uname.chmod(0o755)
+
+    def run(name: str, *, extra: bool) -> subprocess.CompletedProcess[str]:
+        state = tmp_path / name
+        state.mkdir()
+        return subprocess.run(
+            ["bash", "scripts/prepare_refinement_duckdb_ci.sh"],
+            cwd=ROOT,
+            env={
+                **os.environ,
+                "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+                "DUCKDB_TEST_HOME": str(state / "home"),
+                "DUCKDB_CACHE_MANIFEST": str(state / "extensions.sha256"),
+                "REFINEMENT_IMAGE": "refinement:test-only",
+                "PYTHON_BIN": sys.executable,
+                "FAKE_EXTRA_FILE": "1" if extra else "0",
+            },
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    accepted = run("exact", extra=False)
+    assert accepted.returncode == 0, accepted.stderr
+    rejected = run("extra", extra=True)
+    assert rejected.returncode != 0
+    assert "file topology is invalid" in rejected.stderr
 
 
 def test_missing_extension_fails_closed_with_sanitized_error(monkeypatch) -> None:

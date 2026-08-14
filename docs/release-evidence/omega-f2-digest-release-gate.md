@@ -1,8 +1,8 @@
 # OMEGA F2 — digest release gate
 
-Status: **PREPARED** for forward recovery as `v1.45.211-beta`; F2 is not closed.
-The immutable `v1.45.210-beta` attempt is retained as failed evidence, and no
-tag is moved or reused.
+Status: **PREPARED** for forward recovery as `v1.45.212-beta`; F2 is not closed.
+The immutable `v1.45.210-beta` and `v1.45.211-beta` attempts are retained as
+failed evidence, and no tag is moved or reused.
 
 ## Failed live attempt retained
 
@@ -11,16 +11,25 @@ tag is moved or reused.
 - The annotated tag object remains
   `6c70e0067eb44dd991d355b3e5cab663300c790b`; it peels to source SHA
   `2429e9a2bdab13ff00740fe318009fd5b101850d`.
-- The job failed before publication fan-out: downstream jobs were skipped and
+- Workflow run `31809737977` for `v1.45.211-beta` also failed in
+  `validate-release` with `1 failed, 720 passed, 16 errors`:
+  MinIO was not precached for pull-never staged-publication tests and the
+  Refinement DuckDB extension cache was not prepared for the live Gold test.
+- The `.211` annotated tag object remains
+  `cadf0b28b771257bc6cb9129cf8b4cd72ef5adff`; it peels to source SHA
+  `cc0873e4d86bb5bd2f183a003d43ff8a0970df8c`, whose sole parent is the
+  `.210` source SHA.
+- Both jobs failed before publication fan-out: downstream jobs were skipped and
   no preflight, image build, manifest, digest gate, or release assets ran.
-- Published outputs for this attempt were zero: workflow artifacts `0`, GHCR
+- Published outputs for each attempt were zero: workflow artifacts `0`, GHCR
   candidates `0`, and canonical GitHub Release `0`.
-- The forward-only recovery target is `v1.45.211-beta`. Its previous-release
-  selector may bridge to exact `v1.45.209-beta` only when the `.210` annotated
-  object and peeled SHA remain exact and `.210` still lacks canonical release
+- The forward-only recovery target is `v1.45.212-beta`. Its previous-release
+  selector may bridge to exact `v1.45.209-beta` only when both failed annotated
+  tag objects and peeled SHAs remain exact, the `.210 -> .211 -> .212` direct
+  parent chain remains exact, and neither failed marker has canonical release
   evidence. Exact remote tag refs are rebound into a dedicated authority
-  namespace before selection; a missing, moved, lightweight, ambiguous, or
-  unexpectedly trusted `.210` marker blocks recovery.
+  namespace before selection; a missing, moved, lightweight, swapped,
+  ambiguous, or unexpectedly trusted failed marker blocks recovery.
 
 ## Retained `.210` prepared authority
 
@@ -46,18 +55,25 @@ tag is moved or reused.
 - Two independent adversarial reviews reported zero P0/P1 findings on the
   audited freeze.
 
-## Recovery patch verification
+## Forward-recovery patch verification
 
-- The isolated release-launcher regression reconciled `102/102` tests, including
-  nested Python imports, standalone skip-policy subprocesses, exact transition
-  ledger behavior, and release workflow contracts.
-- The expanded release regression passed `484/484` tests.
-- The regenerated harness seals `1,337` files with SHA-256
-  `122c44b4d5eb79ca128af39ff08036fd9e8827b48a4b6cc3032a8b205ba41b44`;
+- The focused `.212` selector, workflow, Control Room, and DuckDB cache matrix
+  passed `102/102` tests. The expanded release/control regression passed
+  `458/458` tests.
+- Real DuckDB 1.2.2 image probes on both Linux architectures produced the exact
+  sealed cache topology: `httpfs` and `postgres_scanner`, each with its `.info`
+  file, under `linux_arm64` or `linux_amd64_gcc4`; no extra file or symlink was
+  present. The MinIO preload was also checked by exact tag-at-digest and image
+  identity.
+- The regenerated harness seals `1,339` files with SHA-256
+  `716c68f45a84f0e93646281270c4a4757858faafd25424f75fba394c63f638b8`;
   the skip inventory remains exactly 61 pytest and 27 Playwright declarations.
 - Live read-only checks confirmed run `31801477645` has zero artifacts, all
-  downstream publication jobs were skipped, the `.210` Release endpoint is
-  `404`, and remote tag `v1.45.211-beta` is absent before recovery publication.
+  downstream publication jobs were skipped, and the `.210` Release endpoint is
+  `404`.
+- Live read-only checks confirmed run `31809737977` also has zero artifacts,
+  zero new versions across all 15 GHCR packages, all downstream publication
+  jobs skipped, and no listed or tag-addressable `.211` Release.
 
 ## F2 contract
 
@@ -81,9 +97,9 @@ harness is an authority boundary, not a sandbox against deliberately malicious
 same-UID or privileged code.
 
 To close F2, record the recovery merge SHA and require the live release workflow
-for `v1.45.211-beta` to prove:
+for `v1.45.212-beta` to prove:
 
-1. the immutable Git tag equals that merge SHA and `VERSION=1.45.211-beta`;
+1. the immutable Git tag equals that merge SHA and `VERSION=1.45.212-beta`;
 2. all 15 GHCR packages remain private and every manifest/config/layer exists;
 3. the mandatory digest stack gate passes for the exact manifest bytes;
 4. the final GitHub Release is non-draft and immutable, with exactly the
