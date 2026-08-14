@@ -6,7 +6,7 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "sha256": "1d4574656d5331c102b6f27c430def30f090b4df6e9ba906780e45ee4f3e3221"
+      "sha256": "34a3c76ad9c4cb5865eca30a464f9937b40bd411c48e966e60c960617b59e48c"
     },
     {
       "path": "Makefile",
@@ -2986,7 +2986,7 @@
     },
     {
       "path": "scripts/release_docker_lock.py",
-      "sha256": "b18d2111b8dddf007af801ebe53f36d201ce822d1aa39e85d0a0aac225b2d9b3"
+      "sha256": "65079702fb9cf58d66c23ad4561e0abac276e4998051ff02fc31dee402642c84"
     },
     {
       "path": "scripts/release_image_promotion.py",
@@ -3046,7 +3046,7 @@
     },
     {
       "path": "scripts/verify_release_test_harness.py",
-      "sha256": "023d31c08cd037322644b8a1bca4013514de84d7c61d01a7c8fd063ebd235b01"
+      "sha256": "6bba6317a94aeacc2c5c04bdf32e4d4e299e0213b47818251f4d563ab7556736"
     },
     {
       "path": "scripts/verify_test_skip_policy.py",
@@ -3243,6 +3243,10 @@
     {
       "path": "tests/e2e/test_full_extraction_flow.py",
       "sha256": "43f154851b72b81a28eb14efed8a2b40a2c6d0ac030b5513f78070b4a7a76e54"
+    },
+    {
+      "path": "tests/fixtures/docker-compose.gold-repair.yml",
+      "sha256": "a484352a24ad207185d2c3abc546460ef31c6f0a70de8edd6126c1b0078b2b4b"
     },
     {
       "path": "tests/fixtures/fake_hubspot_api.py",
@@ -3758,7 +3762,7 @@
     },
     {
       "path": "tests/test_control_room_live_postgres_gold_repair.py",
-      "sha256": "08974348e9b1a93c422d2965e08385be9386ca88d4440153083448be4e14c578"
+      "sha256": "ccd53ed6215bc98a637a84ff2624acd778a70f6fecba68551a18418789c147d3"
     },
     {
       "path": "tests/test_control_room_live_postgres_implicit_approval.py",
@@ -4158,7 +4162,7 @@
     },
     {
       "path": "tests/test_github_release_inspection.py",
-      "sha256": "e56a44e000b3e8020f02d071ab7b908ce91473f4ff7db01622e6cc7b0e4a20df"
+      "sha256": "ad4a300e809a9d0ea46e7f4e8b3b77d86e528e7dbf60f8ba2bae2fda150ae3b5"
     },
     {
       "path": "tests/test_gold_native_rls_contract.py",
@@ -4662,7 +4666,7 @@
     },
     {
       "path": "tests/test_release_ci_fail_closed.py",
-      "sha256": "ab67b218466e9d5651155e774dbf77c3b8958eb7a2c61f7e684f2fc2f0a5b627"
+      "sha256": "9657c5a6618a196f219e84d03ba32b08ba6341382fa5f15a8f1025755bc96bc6"
     },
     {
       "path": "tests/test_release_compose_env_contract.py",
@@ -4678,7 +4682,7 @@
     },
     {
       "path": "tests/test_release_docker_lock.py",
-      "sha256": "4441d8a6458b7821d6ccc045a420163d24d2fbf0b0f5beee06a6d3d6ed313bc6"
+      "sha256": "e14c9a740d234f8138281622f7854b2cde1a2cc7ec6b84536f4310160c1f656b"
     },
     {
       "path": "tests/test_release_dotenv.py",

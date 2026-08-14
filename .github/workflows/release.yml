@@ -665,7 +665,8 @@ jobs:
           sudo /usr/bin/install -d -o root -g root -m 0555 \
             /opt/omega-release-runtime \
             /opt/omega-release-runtime/bin \
-            /opt/omega-release-runtime/browsers
+            /opt/omega-release-runtime/browsers \
+            /opt/omega-release-runtime/docker-config
           sudo /usr/bin/install -o root -g root -m 0555 \
             "${real_node}" /opt/omega-release-runtime/bin/node
           sudo /usr/bin/install -o root -g root -m 0444 \
@@ -692,9 +693,10 @@ jobs:
           sudo /bin/chmod 0600 tests-e2e/.env
           wrapper="$(mktemp)"
           trap 'rm -f -- "${wrapper}"' EXIT
-          printf '#!/bin/bash\nexec /usr/bin/python3 -I %q --workspace %q --real %q -- "$@"\n' \
+          printf '#!/bin/bash\nexec /usr/bin/python3 -I %q --workspace %q --real %q --trusted-config %q -- "$@"\n' \
             /opt/omega-release-runtime/release_docker_lock.py \
-            "${GITHUB_WORKSPACE}" "${real_docker}" > "${wrapper}"
+            "${GITHUB_WORKSPACE}" "${real_docker}" \
+            /opt/omega-release-runtime/docker-config > "${wrapper}"
           sudo /usr/bin/install -o root -g root -m 0555 \
             "${wrapper}" /opt/omega-release-runtime/bin/docker
           playwright_sha256="$(
@@ -1417,13 +1419,55 @@ jobs:
             python3 scripts/verify_release_package_visibility.py \
               --owner "${GHCR_OWNER}" \
               --owner-kind user
-            python3 scripts/inspect_github_release.py \
-              --repository "${SOURCE_REPOSITORY}" \
-              --tag "${RELEASE_TAG}" \
-              | python3 scripts/validate_github_release_state.py \
-                  --state draft \
-                  --tag "${RELEASE_TAG}" \
-                  --source-sha "${GITHUB_SHA}"
+            draft_ready=false
+            for attempt in 1 2 3 4 5 6; do
+              if ! draft_state_json="$(
+                python3 scripts/inspect_github_release.py \
+                  --repository "${SOURCE_REPOSITORY}" \
+                  --tag "${RELEASE_TAG}"
+              )"; then
+                echo "::error::GitHub draft Release lookup failed ambiguously"
+                exit 1
+              fi
+              draft_state="$(DRAFT_STATE_JSON="${draft_state_json}" python3 - <<'PY'
+          import json
+          import os
+
+          try:
+              payload = json.loads(os.environ["DRAFT_STATE_JSON"])
+          except (json.JSONDecodeError, UnicodeError) as exc:
+              raise SystemExit("GitHub draft Release inspection is invalid JSON") from exc
+          state = payload.get("state") if isinstance(payload, dict) else None
+          if state not in {"absent", "draft", "present"}:
+              raise SystemExit("GitHub draft Release inspection state is invalid")
+          print(state)
+          PY
+              )"
+              case "${draft_state}" in
+                draft)
+                  printf '%s' "${draft_state_json}" \
+                    | python3 scripts/validate_github_release_state.py \
+                        --state draft \
+                        --tag "${RELEASE_TAG}" \
+                        --source-sha "${GITHUB_SHA}"
+                  draft_ready=true
+                  break
+                  ;;
+                absent)
+                  if [[ "${attempt}" -lt 6 ]]; then
+                    sleep 2
+                  fi
+                  ;;
+                *)
+                  echo "::error::GitHub draft Release changed publication state"
+                  exit 1
+                  ;;
+              esac
+            done
+            [[ "${draft_ready}" == "true" ]] || {
+              echo "::error::GitHub draft Release did not become discoverable"
+              exit 1
+            }
             tag_check_ref="refs/remotes/origin/omega-release-tag-check-${GITHUB_RUN_ID}"
             git fetch --force --no-tags origin \
               "+refs/tags/${RELEASE_TAG}:${tag_check_ref}"

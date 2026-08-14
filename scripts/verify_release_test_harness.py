@@ -83,6 +83,7 @@ FIXED_FILES = {
     "tests-e2e/package-lock.json",
     "tests-e2e/package.json",
     "tests-e2e/playwright.config.ts",
+    "tests/fixtures/docker-compose.gold-repair.yml",
     "tests/fixtures/release-compose-mount-allowlist.json",
 }
 

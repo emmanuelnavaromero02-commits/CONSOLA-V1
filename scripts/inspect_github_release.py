@@ -17,6 +17,8 @@ from urllib.request import Request, urlopen
 API_URL = "https://api.github.com"
 API_VERSION = "2022-11-28"
 MAX_RESPONSE_BYTES = 1_048_576
+RELEASE_PAGE_SIZE = 100
+MAX_RELEASE_PAGES = 100
 Fetcher = Callable[[str, Mapping[str, str]], tuple[int, Any]]
 
 
@@ -44,6 +46,140 @@ def _fetch_json(url: str, headers: Mapping[str, str]) -> tuple[int, Any]:
         ) from exc
 
 
+def _fetch(
+    fetcher: Fetcher, url: str, headers: Mapping[str, str]
+) -> tuple[int, Any]:
+    try:
+        response = fetcher(url, headers)
+    except Exception as exc:
+        raise ReleaseInspectionError("GitHub Release API lookup failed") from exc
+    if not isinstance(response, tuple) or len(response) != 2:
+        raise ReleaseInspectionError("GitHub Release API response shape is invalid")
+    status, payload = response
+    if not isinstance(status, int) or isinstance(status, bool):
+        raise ReleaseInspectionError("GitHub Release API response status is invalid")
+    return status, payload
+
+
+def _release_id(payload: object, *, context: str = "") -> int:
+    release_id = payload.get("id") if isinstance(payload, dict) else None
+    if (
+        not isinstance(release_id, int)
+        or isinstance(release_id, bool)
+        or release_id <= 0
+    ):
+        raise ReleaseInspectionError(
+            f"GitHub Release API {context}release id is invalid"
+        )
+    return release_id
+
+
+def _normalize_release(
+    payload: object, *, expected_tag: str, expected_draft: bool
+) -> tuple[int, dict[str, object]]:
+    if not isinstance(payload, dict) or payload.get("tag_name") != expected_tag:
+        raise ReleaseInspectionError("GitHub Release API identity mismatch")
+    release_id = _release_id(payload)
+    draft = payload.get("draft")
+    if not isinstance(draft, bool):
+        raise ReleaseInspectionError(
+            "GitHub Release has no authoritative publication state"
+        )
+    if draft is not expected_draft:
+        raise ReleaseInspectionError(
+            "GitHub Release API publication state is inconsistent"
+        )
+    immutable = payload.get("immutable")
+    if draft:
+        if immutable is not False:
+            raise ReleaseInspectionError("GitHub Release draft is immutable or unknown")
+    elif immutable is not True:
+        raise ReleaseInspectionError("GitHub Release is not immutable")
+    assets = payload.get("assets")
+    if not isinstance(assets, list):
+        raise ReleaseInspectionError("GitHub Release API assets are invalid")
+    names: list[str] = []
+    for asset in assets:
+        asset_name = asset.get("name") if isinstance(asset, dict) else None
+        if (
+            not isinstance(asset_name, str)
+            or not asset_name
+            or len(asset_name) > 255
+            or "\n" in asset_name
+            or "\r" in asset_name
+        ):
+            raise ReleaseInspectionError("GitHub Release API asset name is invalid")
+        names.append(asset_name)
+    names.sort()
+    title = payload.get("name")
+    body = payload.get("body")
+    prerelease = payload.get("prerelease")
+    target = payload.get("target_commitish")
+    if (
+        not isinstance(title, str)
+        or not isinstance(body, str)
+        or not isinstance(prerelease, bool)
+        or not isinstance(target, str)
+        or not target
+    ):
+        raise ReleaseInspectionError("GitHub Release metadata is invalid")
+    return release_id, {
+        "schema_version": 1,
+        "state": "draft" if draft else "present",
+        "tag": expected_tag,
+        "immutable": False if draft else True,
+        "title": title,
+        "body": body,
+        "prerelease": prerelease,
+        "target": target,
+        "assets": names,
+    }
+
+
+def _absent_release(tag: str) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "state": "absent",
+        "tag": tag,
+        "immutable": None,
+        "title": None,
+        "body": None,
+        "prerelease": None,
+        "target": None,
+        "assets": [],
+    }
+
+
+def _validate_list_entry(payload: object) -> tuple[int, str, bool]:
+    if not isinstance(payload, dict):
+        raise ReleaseInspectionError(
+            "GitHub Release API release list entry is invalid"
+        )
+    release_id = _release_id(payload, context="release list ")
+    tag_name = payload.get("tag_name")
+    if (
+        not isinstance(tag_name, str)
+        or not tag_name
+        or len(tag_name) > 255
+        or "\n" in tag_name
+        or "\r" in tag_name
+    ):
+        raise ReleaseInspectionError(
+            "GitHub Release API release list tag is invalid"
+        )
+    draft = payload.get("draft")
+    if not isinstance(draft, bool):
+        raise ReleaseInspectionError(
+            "GitHub Release API release list publication state is invalid"
+        )
+    return release_id, tag_name, draft
+
+
+def _same_metadata(left: dict[str, object], right: dict[str, object]) -> bool:
+    keys = ("tag", "title", "body", "prerelease", "target", "assets")
+    return all(left[key] == right[key] for key in keys)
+
+
 def inspect_release(
     *, repository: str, tag: str, token: str, fetcher: Fetcher = _fetch_json
 ) -> dict[str, object]:
@@ -61,81 +197,114 @@ def inspect_release(
     if not token:
         raise ReleaseInspectionError("GitHub token is missing")
     owner, name = repository.split("/", 1)
-    url = (
+    repository_url = (
         f"{API_URL}/repos/{quote(owner, safe='')}/{quote(name, safe='')}"
-        f"/releases/tags/{quote(tag, safe='')}"
     )
+    tag_url = f"{repository_url}/releases/tags/{quote(tag, safe='')}"
     headers = {
         "Accept": "application/vnd.github+json",
         "Authorization": f"Bearer {token}",
         "X-GitHub-Api-Version": API_VERSION,
         "User-Agent": "omega-release-inspector/1",
     }
-    try:
-        status, payload = fetcher(url, headers)
-    except Exception as exc:
-        raise ReleaseInspectionError("GitHub Release API lookup failed") from exc
-    if status == 404:
-        return {
-            "schema_version": 1,
-            "state": "absent",
-            "tag": tag,
-            "immutable": None,
-            "title": None,
-            "body": None,
-            "prerelease": None,
-            "target": None,
-            "assets": [],
-        }
+    status, payload = _fetch(fetcher, tag_url, headers)
+    if status == 200:
+        if isinstance(payload, dict) and payload.get("draft") is True:
+            raise ReleaseInspectionError(
+                "GitHub Release published endpoint returned a draft"
+            )
+        return _normalize_release(
+            payload, expected_tag=tag, expected_draft=False
+        )[1]
     if status != 200:
-        raise ReleaseInspectionError(f"GitHub Release API returned HTTP {status}")
-    if not isinstance(payload, dict) or payload.get("tag_name") != tag:
-        raise ReleaseInspectionError("GitHub Release API identity mismatch")
-    draft = payload.get("draft")
-    if not isinstance(draft, bool):
-        raise ReleaseInspectionError(
-            "GitHub Release has no authoritative publication state"
+        if status != 404:
+            raise ReleaseInspectionError(
+                f"GitHub Release API returned HTTP {status}"
+            )
+
+    seen_ids: set[int] = set()
+    exact_matches: list[tuple[int, bool, dict[str, Any]]] = []
+    terminal_page = False
+    for page_number in range(1, MAX_RELEASE_PAGES + 1):
+        list_url = (
+            f"{repository_url}/releases?per_page={RELEASE_PAGE_SIZE}"
+            f"&page={page_number}"
         )
-    if not draft and payload.get("immutable") is not True:
-        raise ReleaseInspectionError("GitHub Release is not immutable")
-    assets = payload.get("assets")
-    if not isinstance(assets, list):
-        raise ReleaseInspectionError("GitHub Release API assets are invalid")
-    names: list[str] = []
-    for asset in assets:
-        asset_name = asset.get("name") if isinstance(asset, dict) else None
+        list_status, page = _fetch(fetcher, list_url, headers)
+        if list_status != 200:
+            raise ReleaseInspectionError(
+                f"GitHub Release API returned HTTP {list_status} for release list"
+            )
+        if not isinstance(page, list):
+            raise ReleaseInspectionError("GitHub Release API release list is invalid")
+        if len(page) > RELEASE_PAGE_SIZE:
+            raise ReleaseInspectionError(
+                "GitHub Release API release list page size is invalid"
+            )
+        for entry in page:
+            release_id, tag_name, draft = _validate_list_entry(entry)
+            if release_id in seen_ids:
+                raise ReleaseInspectionError(
+                    "GitHub Release API release list did not advance"
+                )
+            seen_ids.add(release_id)
+            if tag_name == tag:
+                exact_matches.append((release_id, draft, entry))
+        if len(page) < RELEASE_PAGE_SIZE:
+            terminal_page = True
+            break
+    if not terminal_page:
+        raise ReleaseInspectionError(
+            "GitHub Release API release list reached the pagination cap"
+        )
+    if len(exact_matches) > 1:
+        raise ReleaseInspectionError(
+            "GitHub Release API returned multiple releases for the exact tag"
+        )
+
+    listed_id: int | None = None
+    listed_draft: bool | None = None
+    listed_release: dict[str, object] | None = None
+    if exact_matches:
+        listed_id, listed_draft, listed_payload = exact_matches[0]
+        normalized_id, listed_release = _normalize_release(
+            listed_payload, expected_tag=tag, expected_draft=listed_draft
+        )
+        if normalized_id != listed_id:
+            raise ReleaseInspectionError("GitHub Release API identity changed")
+
+    # A release can be published while the draft-inclusive list is being read.
+    # Re-query the published-only endpoint before declaring draft or absence.
+    settled_status, settled_payload = _fetch(fetcher, tag_url, headers)
+    if settled_status == 200:
         if (
-            not isinstance(asset_name, str)
-            or not asset_name
-            or len(asset_name) > 255
-            or "\n" in asset_name
-            or "\r" in asset_name
+            isinstance(settled_payload, dict)
+            and settled_payload.get("draft") is True
         ):
-            raise ReleaseInspectionError("GitHub Release API asset name is invalid")
-        names.append(asset_name)
-    title = payload.get("name")
-    body = payload.get("body")
-    prerelease = payload.get("prerelease")
-    target = payload.get("target_commitish")
-    if (
-        not isinstance(title, str)
-        or not isinstance(body, str)
-        or not isinstance(prerelease, bool)
-        or not isinstance(target, str)
-        or not target
-    ):
-        raise ReleaseInspectionError("GitHub Release metadata is invalid")
-    return {
-        "schema_version": 1,
-        "state": "draft" if draft else "present",
-        "tag": tag,
-        "immutable": False if draft else True,
-        "title": title,
-        "body": body,
-        "prerelease": prerelease,
-        "target": target,
-        "assets": names,
-    }
+            raise ReleaseInspectionError(
+                "GitHub Release published endpoint returned a draft"
+            )
+        settled_id, settled_release = _normalize_release(
+            settled_payload, expected_tag=tag, expected_draft=False
+        )
+        if listed_id is not None and settled_id != listed_id:
+            raise ReleaseInspectionError("GitHub Release API identity changed")
+        if listed_release is not None and not _same_metadata(
+            listed_release, settled_release
+        ):
+            raise ReleaseInspectionError("GitHub Release API metadata changed")
+        return settled_release
+    if settled_status != 404:
+        raise ReleaseInspectionError(
+            f"GitHub Release API returned HTTP {settled_status}"
+        )
+    if listed_release is None:
+        return _absent_release(tag)
+    if listed_draft is not True:
+        raise ReleaseInspectionError(
+            "GitHub Release API publication state is inconsistent"
+        )
+    return listed_release
 
 
 def main(argv: list[str] | None = None) -> int:

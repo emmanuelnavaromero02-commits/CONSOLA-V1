@@ -193,6 +193,8 @@ def _run_release_asset_step(
     remote_assets: dict[str, bytes] | None,
     *,
     draft: bool = False,
+    draft_settle_delays: int = 0,
+    created_state: str = "draft",
     lookup_error: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
     source = _named_step(
@@ -242,7 +244,9 @@ if args[:2] == ["release", "create"]:
             break
         path = Path(raw)
         shutil.copyfile(path, remote / path.name)
-    Path(os.environ["FAKE_RELEASE_STATE_FILE"]).write_text("draft", encoding="utf-8")
+    Path(os.environ["FAKE_RELEASE_STATE_FILE"]).write_text(
+        os.environ["FAKE_CREATED_RELEASE_STATE"], encoding="utf-8"
+    )
     raise SystemExit(0)
 if args[:2] == ["release", "edit"]:
     Path(os.environ["FAKE_RELEASE_STATE_FILE"]).write_text("present", encoding="utf-8")
@@ -257,34 +261,74 @@ raise SystemExit(2)
             """#!/bin/bash
 set -euo pipefail
 if [[ "${1:-}" == "scripts/inspect_github_release.py" ]]; then
-  mode="${FAKE_RELEASE_INSPECTION_MODE}"
-  if [[ -s "${FAKE_RELEASE_STATE_FILE}" ]]; then
-    mode="$(< "${FAKE_RELEASE_STATE_FILE}")"
-  fi
-  case "${mode}" in
-    present)
-      exec "${REAL_PYTHON}" -c '
-import json, os
-print(json.dumps({"schema_version": 1, "state": "present", "tag": os.environ["RELEASE_TAG"], "immutable": True, "title": os.environ["RELEASE_TAG"], "body": "Automated OMEGA release manifest: 15 images bound to {} and tested with exact source checkout bind mounts.".format(os.environ["GITHUB_SHA"]), "prerelease": "-" in os.environ["RELEASE_TAG"], "target": os.environ["GITHUB_SHA"], "assets": sorted(os.listdir(os.environ["FAKE_GH_REMOTE"]))}, separators=(",", ":")))
+  exec "${REAL_PYTHON}" -c '
+import json
+import os
+from pathlib import Path
+
+from scripts.inspect_github_release import inspect_release
+
+tag = os.environ["RELEASE_TAG"]
+source_sha = os.environ["GITHUB_SHA"]
+state_file = Path(os.environ["FAKE_RELEASE_STATE_FILE"])
+mode = (
+    state_file.read_text(encoding="utf-8").strip()
+    if state_file.is_file() and state_file.stat().st_size
+    else os.environ["FAKE_RELEASE_INSPECTION_MODE"]
+)
+delay_file = Path(os.environ["FAKE_DRAFT_SETTLE_DELAY_FILE"])
+draft_visible = True
+if mode == "draft" and delay_file.is_file():
+    remaining = int(delay_file.read_text(encoding="utf-8"))
+    if remaining > 0:
+        delay_file.write_text(str(remaining - 1), encoding="utf-8")
+        draft_visible = False
+
+def release(draft):
+    return {
+        "id": 99123,
+        "tag_name": tag,
+        "draft": draft,
+        "immutable": not draft,
+        "name": tag,
+        "body": (
+            "Automated OMEGA release manifest: 15 images bound to "
+            f"{source_sha} and tested with exact source "
+            "checkout bind mounts."
+        ),
+        "prerelease": "-" in tag,
+        "target_commitish": source_sha,
+        "assets": [
+            {"name": name}
+            for name in sorted(os.listdir(os.environ["FAKE_GH_REMOTE"]))
+        ],
+    }
+
+def fetch(url, _headers):
+    if mode == "error":
+        raise RuntimeError("structured lookup transport failure")
+    if "/releases/tags/" in url:
+        return (200, release(False)) if mode == "present" else (404, None)
+    if url.endswith("/releases?per_page=100&page=1"):
+        return (
+            (200, [release(True)])
+            if mode == "draft" and draft_visible
+            else (200, [])
+        )
+    raise RuntimeError(f"unexpected fake GitHub API URL: {url}")
+
+print(
+    json.dumps(
+        inspect_release(
+            repository=os.environ["SOURCE_REPOSITORY"],
+            tag=tag,
+            token=os.environ["GH_TOKEN"],
+            fetcher=fetch,
+        ),
+        separators=(",", ":"),
+    )
+)
 '
-      ;;
-    draft)
-      exec "${REAL_PYTHON}" -c '
-import json, os
-print(json.dumps({"schema_version": 1, "state": "draft", "tag": os.environ["RELEASE_TAG"], "immutable": False, "title": os.environ["RELEASE_TAG"], "body": "Automated OMEGA release manifest: 15 images bound to {} and tested with exact source checkout bind mounts.".format(os.environ["GITHUB_SHA"]), "prerelease": "-" in os.environ["RELEASE_TAG"], "target": os.environ["GITHUB_SHA"], "assets": sorted(os.listdir(os.environ["FAKE_GH_REMOTE"]))}, separators=(",", ":")))
-'
-      ;;
-    absent)
-      exec "${REAL_PYTHON}" -c '
-import json, os
-print(json.dumps({"schema_version": 1, "state": "absent", "tag": os.environ["RELEASE_TAG"], "immutable": None, "title": None, "body": None, "prerelease": None, "target": None, "assets": []}, separators=(",", ":")))
-'
-      ;;
-    error)
-      echo "structured lookup transport failure" >&2
-      exit 1
-      ;;
-  esac
 fi
 if [[ "${1:-}" == "scripts/verify_release_digest_remote.py" || "${1:-}" == "scripts/verify_release_package_visibility.py" ]]; then
   exit 0
@@ -294,6 +338,9 @@ exec "${REAL_PYTHON}" "$@"
             encoding="utf-8",
         )
         python_wrapper.chmod(0o755)
+        sleep = fake_bin / "sleep"
+        sleep.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        sleep.chmod(0o755)
         git = fake_bin / "git"
         git.write_text(
             "#!/bin/bash\n"
@@ -324,6 +371,8 @@ exec "${REAL_PYTHON}" "$@"
             "FULL_STACK_POLICY_ID": "none",
             "FAKE_GH_LOG": str(log),
             "FAKE_GH_REMOTE": str(remote),
+            "FAKE_CREATED_RELEASE_STATE": created_state,
+            "FAKE_DRAFT_SETTLE_DELAY_FILE": str(root / "draft-settle-delay"),
             "FAKE_RELEASE_STATE_FILE": str(root / "release-state"),
             "FAKE_RELEASE_ASSETS": json.dumps(
                 sorted(remote_assets) if remote_assets is not None else []
@@ -341,6 +390,10 @@ exec "${REAL_PYTHON}" "$@"
         }
         if draft:
             (root / "release-state").write_text("draft", encoding="utf-8")
+        if draft_settle_delays:
+            (root / "draft-settle-delay").write_text(
+                str(draft_settle_delays), encoding="utf-8"
+            )
         result = subprocess.run(
             ["bash", "-c", source],
             cwd=REPO,
@@ -712,8 +765,8 @@ def test_published_immutable_release_missing_assets_blocks_without_mutation():
     assert not any(call[:2] == ["release", "upload"] for call in calls)
 
 
-def test_absent_release_is_created_without_overwrite_flags():
-    result, calls = _run_release_asset_step(None)
+def test_actual_inspector_settles_absent_to_created_draft_then_publishes():
+    result, calls = _run_release_asset_step(None, draft_settle_delays=2)
 
     assert result.returncode == 0, result.stderr
     creates = [call for call in calls if call[:2] == ["release", "create"]]
@@ -723,6 +776,32 @@ def test_absent_release_is_created_without_overwrite_flags():
     assert "--clobber" not in creates[0]
     edits = [call for call in calls if call[:2] == ["release", "edit"]]
     assert edits == [["release", "edit", "v1.45.210-beta", "--draft=false"]]
+
+
+def test_post_create_ambiguous_lookup_blocks_without_publication_or_retry():
+    result, calls = _run_release_asset_step(None, created_state="error")
+
+    assert result.returncode != 0
+    assert "lookup failed ambiguously" in result.stdout + result.stderr
+    assert not any(call[:2] == ["release", "edit"] for call in calls)
+
+
+def test_post_create_perpetual_absence_exhausts_without_duplicate_create():
+    result, calls = _run_release_asset_step(None, created_state="absent")
+
+    assert result.returncode != 0
+    assert "did not become discoverable" in result.stdout + result.stderr
+    assert sum(call[:2] == ["release", "create"] for call in calls) == 1
+    assert not any(call[:2] == ["release", "edit"] for call in calls)
+
+
+def test_post_create_present_race_blocks_without_editing_again():
+    result, calls = _run_release_asset_step(None, created_state="present")
+
+    assert result.returncode != 0
+    assert "changed publication state" in result.stdout + result.stderr
+    assert sum(call[:2] == ["release", "create"] for call in calls) == 1
+    assert not any(call[:2] == ["release", "edit"] for call in calls)
 
 
 def test_partial_draft_is_recovered_without_clobber_then_published():
@@ -1023,6 +1102,8 @@ def test_digest_gate_uses_immutable_docker_and_playwright_authorities() -> None:
     for needle in (
         "/opt/omega-release-runtime/release_docker_lock.py",
         "/opt/omega-release-runtime/bin/docker",
+        "/opt/omega-release-runtime/docker-config",
+        "--trusted-config %q",
         "sudo /bin/chown -R root:root",
         "sudo /bin/chmod -R a-w",
         "--print-runtime-sha256",
