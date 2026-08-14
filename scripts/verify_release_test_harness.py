@@ -71,6 +71,7 @@ FIXED_FILES = {
     "scripts/run_stress.sh",
     "scripts/stress_summary.py",
     "scripts/run_release_playwright.py",
+    "scripts/normalize_release_runtime_permissions.py",
     "scripts/run_release_pytest.py",
     "scripts/secure_release_output.py",
     "scripts/verify_release_test_harness.py",

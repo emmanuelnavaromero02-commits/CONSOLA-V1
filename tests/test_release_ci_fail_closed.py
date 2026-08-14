@@ -65,7 +65,7 @@ def _test_commit(repo: Path, message: str) -> str:
 
 def _recovery_remote(
     tmp_path: Path,
-) -> tuple[Path, Path, Path, str, str, str, str]:
+) -> tuple[Path, Path, Path, str, str, str, str, str, str]:
     remote = tmp_path / "remote.git"
     seed = tmp_path / "seed"
     checkout = tmp_path / "checkout"
@@ -88,9 +88,15 @@ def _recovery_remote(
         == 0
     )
     failed_211_object = _test_git_output(seed, "rev-parse", "refs/tags/v1.45.211-beta")
-    _test_commit(seed, "recovery .212")
+    failed_212 = _test_commit(seed, "failed .212")
     assert (
-        _test_git(seed, "tag", "-a", "v1.45.212-beta", "-m", "recovery .212").returncode
+        _test_git(seed, "tag", "-a", "v1.45.212-beta", "-m", "failed .212").returncode
+        == 0
+    )
+    failed_212_object = _test_git_output(seed, "rev-parse", "refs/tags/v1.45.212-beta")
+    _test_commit(seed, "recovery .213")
+    assert (
+        _test_git(seed, "tag", "-a", "v1.45.213-beta", "-m", "recovery .213").returncode
         == 0
     )
     assert _test_git(seed, "remote", "add", "origin", str(remote)).returncode == 0
@@ -101,7 +107,7 @@ def _recovery_remote(
         "clone",
         "-q",
         "--branch",
-        "v1.45.212-beta",
+        "v1.45.213-beta",
         str(remote),
         str(checkout),
     )
@@ -114,6 +120,8 @@ def _recovery_remote(
         failed_210_object,
         failed_211,
         failed_211_object,
+        failed_212,
+        failed_212_object,
     )
 
 
@@ -1043,12 +1051,13 @@ def test_previous_release_selection_requires_canonical_release_evidence():
     binding = _named_step(job, "Bind exact remote recovery tag authority")
     step = next(step for step in job["steps"] if step.get("id") == "previous")
     assert job["steps"].index(binding) < job["steps"].index(step)
-    assert binding["if"] == "github.ref_name == 'v1.45.212-beta'"
+    assert binding["if"] == "github.ref_name == 'v1.45.213-beta'"
     for needle in (
         "git fetch --no-tags --force --atomic origin",
-        "+refs/tags/v1.45.212-beta:${authority}/current",
+        "+refs/tags/v1.45.213-beta:${authority}/current",
         "+refs/tags/v1.45.210-beta:${authority}/failed-0",
         "+refs/tags/v1.45.211-beta:${authority}/failed-1",
+        "+refs/tags/v1.45.212-beta:${authority}/failed-2",
         "+refs/tags/v1.45.209-beta:${authority}/base",
         'git update-ref -d "${authority}/${name}"',
         'git show-ref --verify --quiet "${authority}/${name}"',
@@ -1072,6 +1081,8 @@ def test_remote_recovery_binding_rejects_deleted_tag_despite_stale_checkout(
         failed_210_object,
         _failed_211,
         _failed_211_object,
+        _failed_212,
+        _failed_212_object,
     ) = _recovery_remote(tmp_path)
     assert _test_git_output(checkout, "rev-parse", "refs/tags/v1.45.210-beta") == (
         failed_210_object
@@ -1087,13 +1098,13 @@ def test_remote_recovery_binding_rejects_deleted_tag_despite_stale_checkout(
     assert _test_git_output(checkout, "rev-parse", "refs/tags/v1.45.210-beta") == (
         failed_210_object
     )
-    for name in ("current", "failed-0", "failed-1", "base"):
+    for name in ("current", "failed-0", "failed-1", "failed-2", "base"):
         assert (
             _test_git(
                 checkout,
                 "show-ref",
                 "--verify",
-                f"refs/omega-release-authority/v1.45.212-beta/{name}",
+                f"refs/omega-release-authority/v1.45.213-beta/{name}",
             ).returncode
             != 0
         )
@@ -1110,6 +1121,8 @@ def test_remote_recovery_binding_replaces_stale_checkout_with_moved_tag(
         failed_210_object,
         _failed_211,
         _failed_211_object,
+        _failed_212,
+        _failed_212_object,
     ) = _recovery_remote(tmp_path)
     assert _test_git(seed, "tag", "-d", "v1.45.210-beta").returncode == 0
     assert (
@@ -1132,7 +1145,7 @@ def test_remote_recovery_binding_replaces_stale_checkout_with_moved_tag(
     result = _run_recovery_remote_binding(checkout)
 
     assert result.returncode == 0, result.stderr
-    authority = "refs/omega-release-authority/v1.45.212-beta/failed-0"
+    authority = "refs/omega-release-authority/v1.45.213-beta/failed-0"
     assert _test_git_output(checkout, "rev-parse", authority) == moved_object
     assert _test_git_output(checkout, "rev-parse", "refs/tags/v1.45.210-beta") == (
         failed_210_object
@@ -1150,6 +1163,8 @@ def test_remote_recovery_binding_preserves_lightweight_remote_identity(
         failed_210_object,
         _failed_211,
         _failed_211_object,
+        _failed_212,
+        _failed_212_object,
     ) = _recovery_remote(tmp_path)
     assert _test_git(seed, "tag", "-d", "v1.45.210-beta").returncode == 0
     assert _test_git(seed, "tag", "v1.45.210-beta", failed_210).returncode == 0
@@ -1159,7 +1174,7 @@ def test_remote_recovery_binding_preserves_lightweight_remote_identity(
     result = _run_recovery_remote_binding(checkout)
 
     assert result.returncode == 0, result.stderr
-    authority = "refs/omega-release-authority/v1.45.212-beta/failed-0"
+    authority = "refs/omega-release-authority/v1.45.213-beta/failed-0"
     assert _test_git_output(checkout, "rev-parse", authority) == failed_210
     assert _test_git_output(checkout, "cat-file", "-t", authority) == "commit"
     assert _test_git_output(checkout, "rev-parse", "refs/tags/v1.45.210-beta") == (
@@ -1559,23 +1574,29 @@ def test_duckdb_cache_verifier_blocks_manifest_content_and_topology_drift(
     assert run().returncode != 0
 
 
-def test_failed_210_and_211_releases_are_preserved_and_version_moves_forward():
-    assert (REPO / "VERSION").read_text(encoding="utf-8").strip() == ("1.45.212-beta")
+def test_failed_210_through_212_releases_are_preserved_and_version_moves_forward():
+    assert (REPO / "VERSION").read_text(encoding="utf-8").strip() == ("1.45.213-beta")
     evidence = (
         REPO / "docs/release-evidence/omega-f2-digest-release-gate.md"
     ).read_text(encoding="utf-8")
     for needle in (
         "v1.45.212-beta",
+        "v1.45.213-beta",
         "v1.45.211-beta",
         "v1.45.210-beta",
         "31801477645",
         "31809737977",
+        "31823738299",
         "6c70e0067eb44dd991d355b3e5cab663300c790b",
         "2429e9a2bdab13ff00740fe318009fd5b101850d",
         "cadf0b28b771257bc6cb9129cf8b4cd72ef5adff",
         "cc0873e4d86bb5bd2f183a003d43ff8a0970df8c",
+        "5e3bbc3d1475486bbc0ddabb57b440210ac0782c",
+        "dd882bc08bb445d1446f9cbbe313448b24827720",
         "13 failed, 689 passed, 18 errors",
         "1 failed, 720 passed, 16 errors",
+        "Freeze trusted Playwright and Docker gate runtimes",
+        "PermissionError",
         "no preflight, image build, manifest, digest gate, or release assets ran",
     ):
         assert needle in evidence
@@ -1617,14 +1638,30 @@ def test_digest_gate_uses_immutable_docker_and_playwright_authorities() -> None:
         "/opt/omega-release-runtime/release_docker_lock.py",
         "/opt/omega-release-runtime/bin/docker",
         "/opt/omega-release-runtime/docker-config",
+        "scripts/normalize_release_runtime_permissions.py",
+        "/opt/omega-release-runtime/browsers",
         "--trusted-config %q",
         "sudo /bin/chown -R root:root",
-        "sudo /bin/chmod -R a-w",
+        "sudo /bin/chmod -R a-w tests-e2e",
         "--print-runtime-sha256",
         'echo "playwright_sha256=${playwright_sha256}"',
         'echo "trusted_path=/opt/omega-release-runtime/bin:${PATH}"',
     ):
         assert needle in runtime["run"]
+    source = runtime["run"]
+    assert source.index("sudo /bin/cp -a") < source.index(
+        "scripts/normalize_release_runtime_permissions.py"
+    )
+    assert source.index("scripts/normalize_release_runtime_permissions.py") < (
+        source.index("sudo /bin/chown -R root:root")
+    )
+    assert source.index("sudo /bin/chown -R root:root") < source.index(
+        "--print-runtime-sha256"
+    )
+    assert (
+        "chmod -R a-w \\\n            tests-e2e /opt/omega-release-runtime"
+        not in source
+    )
     assert "GITHUB_PATH" not in render["run"]
     assert "compose[0]=/opt/omega-release-runtime/bin/docker" in render["run"]
     assert gate["env"]["OMEGA_RELEASE_PLAYWRIGHT_RUNTIME_SHA256"] == (
