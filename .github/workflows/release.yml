@@ -610,6 +610,8 @@ jobs:
             --build-run-id "${GITHUB_RUN_ID}" >/dev/null
           echo "manifest_path=${manifest_path}" >> "${GITHUB_OUTPUT}"
           echo "checksum_path=${checksum_path}" >> "${GITHUB_OUTPUT}"
+          echo "manifest_sha256=$(sha256sum "${manifest_path}" | awk '{print $1}')" >> "${GITHUB_OUTPUT}"
+          echo "checksum_sha256=$(sha256sum "${checksum_path}" | awk '{print $1}')" >> "${GITHUB_OUTPUT}"
 
       - name: Validate manifest authority and export exact digest lock
         env:
@@ -660,6 +662,7 @@ jobs:
           done < "${RUNNER_TEMP}/omega-release-digest-refs.txt"
 
       - name: Render and start hybrid digest/source release stack
+        id: runtime_lock
         env:
           MANIFEST_PATH: ${{ steps.manifest.outputs.manifest_path }}
         run: |
@@ -715,6 +718,8 @@ jobs:
           docker image ls --no-trunc --digests \
             --format '{{.Repository}}\t{{.Tag}}\t{{.Digest}}\t{{.ID}}' \
             | sort > "${RUNNER_TEMP}/omega-release-image-inventory.lock"
+          echo "compose_sha256=$(sha256sum "${RUNNER_TEMP}/omega-release-compose.json" | awk '{print $1}')" >> "${GITHUB_OUTPUT}"
+          echo "image_inventory_sha256=$(sha256sum "${RUNNER_TEMP}/omega-release-image-inventory.lock" | awk '{print $1}')" >> "${GITHUB_OUTPUT}"
           real_docker="$(command -v docker)"
           mkdir -p "${RUNNER_TEMP}/omega-release-docker-lock"
           REAL_DOCKER="${real_docker}" python3 - <<'PY'
@@ -778,9 +783,29 @@ jobs:
 
       - name: Re-verify runtime digests and real-data readiness after all gates
         env:
+          EXPECTED_CHECKSUM_SHA256: ${{ steps.manifest.outputs.checksum_sha256 }}
+          EXPECTED_COMPOSE_SHA256: ${{ steps.runtime_lock.outputs.compose_sha256 }}
+          EXPECTED_IMAGE_INVENTORY_SHA256: ${{ steps.runtime_lock.outputs.image_inventory_sha256 }}
+          EXPECTED_MANIFEST_SHA256: ${{ steps.manifest.outputs.manifest_sha256 }}
           MANIFEST_PATH: ${{ steps.manifest.outputs.manifest_path }}
         run: |
           set -euo pipefail
+          verify_authority_sha256() {
+            local label="$1" expected="$2" path="$3" actual
+            [[ "${expected}" =~ ^[0-9a-f]{64}$ ]] || {
+              echo "::error::${label} authority SHA-256 is invalid"
+              exit 1
+            }
+            actual="$(sha256sum "${path}" | awk '{print $1}')"
+            [[ "${actual}" == "${expected}" ]] || {
+              echo "::error::${label} authority bytes changed during release gates"
+              exit 1
+            }
+          }
+          verify_authority_sha256 manifest "${EXPECTED_MANIFEST_SHA256}" "${MANIFEST_PATH}"
+          verify_authority_sha256 checksum "${EXPECTED_CHECKSUM_SHA256}" "${{ steps.manifest.outputs.checksum_path }}"
+          verify_authority_sha256 compose "${EXPECTED_COMPOSE_SHA256}" "${RUNNER_TEMP}/omega-release-compose.json"
+          verify_authority_sha256 image-inventory "${EXPECTED_IMAGE_INVENTORY_SHA256}" "${RUNNER_TEMP}/omega-release-image-inventory.lock"
           bash scripts/wait_for_health.sh
           docker compose --env-file infra/.env \
             -f infra/docker-compose.yml \

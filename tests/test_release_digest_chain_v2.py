@@ -729,6 +729,12 @@ def test_release_workflow_is_tagless_pinned_and_digest_gate_authoritative() -> N
     assert "OMEGA_RELEASE_E2E_ENV_SHA256" in source
     assert "steps.bootstrap.outputs.e2e_env_sha256" in source
     assert "OMEGA_RELEASE_E2E_ENV_SHA256=" not in source
+    assert "steps.manifest.outputs.manifest_sha256" in source
+    assert "steps.manifest.outputs.checksum_sha256" in source
+    assert "steps.runtime_lock.outputs.compose_sha256" in source
+    assert "steps.runtime_lock.outputs.image_inventory_sha256" in source
+    assert "verify_authority_sha256 manifest" in source
+    assert "authority bytes changed during release gates" in source
     assert "canonical Docker Compose model changed during release gates" in source
     assert "omega-release-compose-final.json" in source
     assert "published Release did not become immutable and canonical" in source

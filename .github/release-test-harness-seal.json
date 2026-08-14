@@ -6,7 +6,7 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "sha256": "7f2f68665c6b2c452e3db919d8f3d36ebf4948e6da573da9a56d6c2d9b76f28a"
+      "sha256": "8ddbb6476d8a2ea6aa3e37f0ebfb600584917844621019deb6a2c7a1817f2040"
     },
     {
       "path": "Makefile",
@@ -3390,7 +3390,7 @@
     },
     {
       "path": "tests/test_aws_compose_consistency.py",
-      "sha256": "a50cc960db7b7bbd7d4a3e68cd46bf477e2b7b9eacc5879202463853e61ebe9d"
+      "sha256": "45e99cdc7ca2024ffa4eeedbff4b9ddd60ad2308ac3468158b0aa9f7f16648bb"
     },
     {
       "path": "tests/test_aws_compose_uses_omega_roles.py",
@@ -4662,7 +4662,7 @@
     },
     {
       "path": "tests/test_release_digest_chain_v2.py",
-      "sha256": "539f748d85bc13ee95ebca9da14cb90ee474cb0e6fdfeb25c687c90b8744b478"
+      "sha256": "798dcbdfb681af1e8ce94f385298d39b104568bcbb1b84d39ba017a8443839da"
     },
     {
       "path": "tests/test_release_digest_runtime.py",
@@ -5230,7 +5230,7 @@
     },
     {
       "path": "tests/test_v1_public_https_closure.py",
-      "sha256": "4d4c054d37a946ae2f51a17f1db5aa5198d87440d49f10199542461fbaffb45c"
+      "sha256": "4b1482e6735c737a7b27e7f8f12a31bdd6893ec5bfacd95ef64a6201da26f0d5"
     },
     {
       "path": "tests/test_v1_release_checklist.py",
