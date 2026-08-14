@@ -51,14 +51,21 @@ CANONICAL_SERVICES = (
     "sap_successfactors",
     "salesforce",
 )
-# The release chain predates canonical manifests.  This one exact, versioned
-# bridge is the only tag allowed without GitHub Release evidence.  Every later
-# base must carry a checksum-valid canonical manifest bound to its tag and SHA.
+# The release chain predates canonical manifests.  This sole recovery bridge
+# skips the known failed .210 run only while its annotated tag object, peeled
+# commit, direct-parent position, and lack of canonical evidence all match.
+# Every later base must carry a checksum-valid canonical manifest.
 TRANSITION_RELEASES = {
-    "v1.45.210-beta": (
+    "v1.45.211-beta": (
         "v1.45.209-beta",
         "21b6274ec6e416d2d808efe30cda19ce8176611f",
+        "v1.45.210-beta",
+        "6c70e0067eb44dd991d355b3e5cab663300c790b",
+        "2429e9a2bdab13ff00740fe318009fd5b101850d",
     ),
+}
+TRANSITION_AUTHORITY_ROOTS = {
+    "v1.45.211-beta": "refs/omega-release-authority/v1.45.211-beta",
 }
 
 RawFetcher = Callable[[str, Mapping[str, str]], tuple[int, bytes, Mapping[str, str]]]
@@ -465,6 +472,101 @@ def select_previous_release(
     repo = repo or Path.cwd()
     head_commit = _git(repo, "rev-parse", f"{head}^{{commit}}").stdout.strip()
     parents = _git(repo, "rev-list", "--parents", "-n", "1", head_commit).stdout.split()
+    transition = TRANSITION_RELEASES.get(current_tag or "")
+    if transition is not None:
+        authority_root = TRANSITION_AUTHORITY_ROOTS.get(current_tag or "")
+        if authority_root is None:
+            raise ReleaseTrustError(
+                "transition release has no remote authority namespace"
+            )
+        if len(parents) != 2:
+            raise ReleaseTrustError(
+                "transition release head must have exactly one parent"
+            )
+        if trust_verifier is None:
+            raise ReleaseTrustError(
+                "transition release requires failed-marker evidence verification"
+            )
+        (
+            base_tag,
+            base_commit,
+            failed_tag,
+            failed_tag_object,
+            failed_commit,
+        ) = transition
+        current = _git(
+            repo,
+            "rev-parse",
+            "--verify",
+            f"{authority_root}/current^{{commit}}",
+            check=False,
+        )
+        if current.returncode != 0 or current.stdout.strip() != head_commit:
+            raise ReleaseTrustError(
+                "transition release current tag does not resolve to head"
+            )
+        if parents[1] != failed_commit:
+            raise ReleaseTrustError(
+                "transition release head is not directly atop the failed release"
+            )
+        failed_object = _git(
+            repo,
+            "rev-parse",
+            "--verify",
+            f"{authority_root}/failed^{{object}}",
+            check=False,
+        )
+        if failed_object.returncode != 0:
+            raise ReleaseTrustError("transition failed release marker is missing")
+        if failed_object.stdout.strip() != failed_tag_object:
+            raise ReleaseTrustError(
+                "transition failed release tag object differs from the ledger"
+            )
+        failed_type = _git(
+            repo, "cat-file", "-t", failed_tag_object, check=False
+        )
+        if failed_type.returncode != 0 or failed_type.stdout.strip() != "tag":
+            raise ReleaseTrustError(
+                "transition failed release marker is not the annotated tag object"
+            )
+        failed_peeled = _git(
+            repo,
+            "rev-parse",
+            "--verify",
+            f"{authority_root}/failed^{{commit}}",
+            check=False,
+        )
+        if failed_peeled.returncode != 0 or failed_peeled.stdout.strip() != failed_commit:
+            raise ReleaseTrustError(
+                "transition failed release peeled commit differs from the ledger"
+            )
+        if trust_verifier(failed_tag, failed_commit):
+            raise ReleaseTrustError(
+                "known failed release has contradictory canonical evidence"
+            )
+        base = _git(
+            repo,
+            "rev-parse",
+            "--verify",
+            f"{authority_root}/base^{{commit}}",
+            check=False,
+        )
+        if base.returncode != 0 or base.stdout.strip() != base_commit:
+            raise ReleaseTrustError(
+                "transition base tag does not match the exact ledger commit"
+            )
+        if _git(
+            repo,
+            "merge-base",
+            "--is-ancestor",
+            base_commit,
+            failed_commit,
+            check=False,
+        ).returncode:
+            raise ReleaseTrustError(
+                "transition base is not an ancestor of the failed release"
+            )
+        return base_commit, base_tag
     if len(parents) == 1:
         return head_commit, "none"
     parent = parents[1]
@@ -489,8 +591,8 @@ def select_previous_release(
 
     # Check nearest commits first, and the highest SemVer only as a deterministic
     # tie-breaker.  A newly injected SemVer tag has no authority by itself: it
-    # is ignored unless it has canonical release evidence or is the one pinned
-    # transition release.
+    # is ignored unless it has canonical release evidence.  The sole pinned
+    # transition was validated and returned above.
     for distance in sorted({candidate[0] for candidate in candidates}):
         at_distance = sorted(
             (candidate for candidate in candidates if candidate[0] == distance),
@@ -498,8 +600,6 @@ def select_previous_release(
             reverse=True,
         )
         for _distance, _version, tag, commit in at_distance:
-            if TRANSITION_RELEASES.get(current_tag or "") == (tag, commit):
-                return commit, tag
             if trust_verifier is not None and trust_verifier(tag, commit):
                 return commit, tag
     raise ReleaseTrustError("no trusted previous release manifest or ledger entry")

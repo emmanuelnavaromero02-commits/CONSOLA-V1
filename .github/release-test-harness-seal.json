@@ -6,7 +6,7 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "sha256": "34a3c76ad9c4cb5865eca30a464f9937b40bd411c48e966e60c960617b59e48c"
+      "sha256": "f8ea50da4f93e0644b797ccc25858427bbb61dd37fdd0cef8bf3d813e06a8b76"
     },
     {
       "path": "Makefile",
@@ -4666,7 +4666,7 @@
     },
     {
       "path": "tests/test_release_ci_fail_closed.py",
-      "sha256": "9657c5a6618a196f219e84d03ba32b08ba6341382fa5f15a8f1025755bc96bc6"
+      "sha256": "9277b5c0279acddb829fa954f293192be068705efca254a8d0ac0c92fbb7eab5"
     },
     {
       "path": "tests/test_release_compose_env_contract.py",
@@ -4710,7 +4710,7 @@
     },
     {
       "path": "tests/test_release_test_skip_policy.py",
-      "sha256": "85612ed7d63740d6ea4681d747c9206af8567cdb57288668c2787a76d1bc2282"
+      "sha256": "1635afc8a28a29280d25aef8d93fe7da980bfa36ab925d650246589e1d760ea0"
     },
     {
       "path": "tests/test_remaining_operational_rls_sweep.py",
@@ -5002,7 +5002,7 @@
     },
     {
       "path": "tests/test_select_previous_release.py",
-      "sha256": "4aa47596c2687df8863493674d27cc3c978f243e41ab913e69dfd643c0fd77e8"
+      "sha256": "507bdc104a69988b783fd2d4a33d0532419720dc0aa83f258ae01ce4ec5b6873"
     },
     {
       "path": "tests/test_service_urls.py",

@@ -17,6 +17,13 @@ REPO = Path(__file__).resolve().parents[1]
 WORKFLOW = REPO / ".github/workflows/release.yml"
 POLICY = REPO / ".github/release-skip-policy.json"
 TEST_SKIP_POLICY = REPO / ".github/release-test-skip-policy.json"
+NESTED_RELEASE_PYTHON_VARIABLES = {
+    "OMEGA_RELEASE_PYTEST_REPORT",
+    "OMEGA_RELEASE_PYTEST_NONCE",
+    "OMEGA_RELEASE_PYTEST_MODE",
+    "OMEGA_RELEASE_PYTEST_OWNER_PID",
+    "PYTHONPATH",
+}
 
 
 def _jobs() -> dict[str, object]:
@@ -30,6 +37,82 @@ def _named_step(job: dict[str, object], name: str) -> dict[str, object]:
 
 def _policy() -> dict[str, object]:
     return json.loads(POLICY.read_text(encoding="utf-8"))
+
+
+def _test_git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def _test_git_output(repo: Path, *args: str) -> str:
+    result = _test_git(repo, *args)
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
+
+
+def _test_commit(repo: Path, message: str) -> str:
+    (repo / "history.txt").write_text(message, encoding="utf-8")
+    assert _test_git(repo, "add", "history.txt").returncode == 0
+    result = _test_git(repo, "commit", "-m", message)
+    assert result.returncode == 0, result.stderr
+    return _test_git_output(repo, "rev-parse", "HEAD")
+
+
+def _recovery_remote(
+    tmp_path: Path,
+) -> tuple[Path, Path, Path, str, str]:
+    remote = tmp_path / "remote.git"
+    seed = tmp_path / "seed"
+    checkout = tmp_path / "checkout"
+    seed.mkdir()
+    assert _test_git(tmp_path, "init", "--bare", str(remote)).returncode == 0
+    assert _test_git(seed, "init", "-q").returncode == 0
+    assert _test_git(seed, "config", "user.email", "ci@example.com").returncode == 0
+    assert _test_git(seed, "config", "user.name", "CI").returncode == 0
+    _test_commit(seed, "base")
+    assert _test_git(seed, "tag", "v1.45.209-beta").returncode == 0
+    failed = _test_commit(seed, "failed")
+    assert _test_git(
+        seed, "tag", "-a", "v1.45.210-beta", "-m", "failed"
+    ).returncode == 0
+    failed_object = _test_git_output(seed, "rev-parse", "refs/tags/v1.45.210-beta")
+    _test_commit(seed, "recovery")
+    assert _test_git(
+        seed, "tag", "-a", "v1.45.211-beta", "-m", "recovery"
+    ).returncode == 0
+    assert _test_git(seed, "remote", "add", "origin", str(remote)).returncode == 0
+    push = _test_git(seed, "push", "origin", "HEAD:refs/heads/main", "--tags")
+    assert push.returncode == 0, push.stderr
+    clone = _test_git(
+        tmp_path,
+        "clone",
+        "-q",
+        "--branch",
+        "v1.45.211-beta",
+        str(remote),
+        str(checkout),
+    )
+    assert clone.returncode == 0, clone.stderr
+    return remote, seed, checkout, failed, failed_object
+
+
+def _run_recovery_remote_binding(checkout: Path) -> subprocess.CompletedProcess[str]:
+    source = _named_step(
+        _jobs()["detect-release-changes"],
+        "Bind exact remote recovery tag authority",
+    )["run"]
+    return subprocess.run(
+        ["bash", "-c", source],
+        cwd=checkout,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
 
 
 def _matching_full_stack_policies(tag: str, changed_files: list[str]) -> list[str]:
@@ -196,6 +279,7 @@ def _run_release_asset_step(
     draft_settle_delays: int = 0,
     created_state: str = "draft",
     lookup_error: bool = False,
+    extra_env: dict[str, str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
     source = _named_step(
         _jobs()["publish-release-manifest"], "Attach manifest to GitHub Release"
@@ -261,11 +345,14 @@ raise SystemExit(2)
             """#!/bin/bash
 set -euo pipefail
 if [[ "${1:-}" == "scripts/inspect_github_release.py" ]]; then
-  exec "${REAL_PYTHON}" -c '
+  exec "${REAL_PYTHON}" -I -c '
 import json
 import os
+import sys
 from pathlib import Path
 
+repo = Path(os.environ["FAKE_RELEASE_REPO_ROOT"]).resolve(strict=True)
+sys.path.insert(0, str(repo))
 from scripts.inspect_github_release import inspect_release
 
 tag = os.environ["RELEASE_TAG"]
@@ -371,6 +458,7 @@ exec "${REAL_PYTHON}" "$@"
             "FULL_STACK_POLICY_ID": "none",
             "FAKE_GH_LOG": str(log),
             "FAKE_GH_REMOTE": str(remote),
+            "FAKE_RELEASE_REPO_ROOT": str(REPO),
             "FAKE_CREATED_RELEASE_STATE": created_state,
             "FAKE_DRAFT_SETTLE_DELAY_FILE": str(root / "draft-settle-delay"),
             "FAKE_RELEASE_STATE_FILE": str(root / "release-state"),
@@ -388,6 +476,9 @@ exec "${REAL_PYTHON}" "$@"
             ),
             "REAL_PYTHON": sys.executable,
         }
+        env.update(extra_env or {})
+        for variable in NESTED_RELEASE_PYTHON_VARIABLES:
+            env.pop(variable, None)
         if draft:
             (root / "release-state").write_text("draft", encoding="utf-8")
         if draft_settle_delays:
@@ -725,6 +816,41 @@ def test_identical_existing_release_assets_are_compared_without_mutation():
     assert not any(call[:2] == ["release", "create"] for call in calls)
 
 
+def test_release_asset_fixture_never_executes_repo_sitecustomize(
+    tmp_path: Path,
+) -> None:
+    sentinel = tmp_path / "sitecustomize-executed"
+    shadow = REPO / "sitecustomize.py"
+    assert not shadow.exists()
+    shadow.write_text(
+        "import os\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['REPO_SITECUSTOMIZE_SENTINEL']).write_text('executed')\n",
+        encoding="utf-8",
+    )
+    manifest_name = "omega-release-manifest-v1.45.210-beta.json"
+    try:
+        result, _calls = _run_release_asset_step(
+            {
+                manifest_name: b"canonical-manifest\n",
+                f"{manifest_name}.sha256": b"canonical-checksum\n",
+            },
+            extra_env={
+                "PYTHONPATH": str(REPO),
+                "OMEGA_RELEASE_PYTEST_REPORT": str(tmp_path / "outer-report.json"),
+                "OMEGA_RELEASE_PYTEST_NONCE": "a" * 64,
+                "OMEGA_RELEASE_PYTEST_MODE": "execute",
+                "OMEGA_RELEASE_PYTEST_OWNER_PID": "1",
+                "REPO_SITECUSTOMIZE_SENTINEL": str(sentinel),
+            },
+        )
+    finally:
+        shadow.unlink(missing_ok=True)
+
+    assert result.returncode == 0, result.stderr
+    assert not sentinel.exists()
+
+
 def test_mismatched_existing_release_asset_fails_without_overwrite():
     manifest_name = "omega-release-manifest-v1.45.210-beta.json"
     checksum_name = f"{manifest_name}.sha256"
@@ -890,16 +1016,101 @@ def test_release_tag_must_point_to_the_exact_canonical_main_commit():
 
 
 def test_previous_release_selection_requires_canonical_release_evidence():
+    job = _jobs()["detect-release-changes"]
+    binding = _named_step(job, "Bind exact remote recovery tag authority")
     step = next(
         step
-        for step in _jobs()["detect-release-changes"]["steps"]
+        for step in job["steps"]
         if step.get("id") == "previous"
     )
+    assert job["steps"].index(binding) < job["steps"].index(step)
+    assert binding["if"] == "github.ref_name == 'v1.45.211-beta'"
+    for needle in (
+        "git fetch --no-tags --force origin",
+        "+refs/tags/v1.45.211-beta:${authority}/current",
+        "+refs/tags/v1.45.210-beta:${authority}/failed",
+        "+refs/tags/v1.45.209-beta:${authority}/base",
+        'git update-ref -d "${authority}/${name}"',
+        'git show-ref --verify --quiet "${authority}/${name}"',
+    ):
+        assert needle in binding["run"]
     assert "scripts/select_previous_release.py" in step["run"]
     assert '--repository "${SOURCE_REPOSITORY}"' in step["run"]
     assert step["env"]["GITHUB_TOKEN"] == "${{ github.token }}"
     assert step["env"]["SOURCE_REPOSITORY"] == "${{ github.repository }}"
     assert "git describe" not in step["run"]
+
+
+def test_remote_recovery_binding_rejects_deleted_tag_despite_stale_checkout(
+    tmp_path: Path,
+) -> None:
+    remote, _seed, checkout, _failed, failed_object = _recovery_remote(tmp_path)
+    assert _test_git_output(checkout, "rev-parse", "refs/tags/v1.45.210-beta") == (
+        failed_object
+    )
+    assert _test_git(remote, "update-ref", "-d", "refs/tags/v1.45.210-beta").returncode == 0
+
+    result = _run_recovery_remote_binding(checkout)
+
+    assert result.returncode != 0
+    assert _test_git_output(checkout, "rev-parse", "refs/tags/v1.45.210-beta") == (
+        failed_object
+    )
+    assert _test_git(
+        checkout,
+        "show-ref",
+        "--verify",
+        "refs/omega-release-authority/v1.45.211-beta/failed",
+    ).returncode != 0
+
+
+def test_remote_recovery_binding_replaces_stale_checkout_with_moved_tag(
+    tmp_path: Path,
+) -> None:
+    remote, seed, checkout, _failed, failed_object = _recovery_remote(tmp_path)
+    assert _test_git(seed, "tag", "-d", "v1.45.210-beta").returncode == 0
+    assert _test_git(
+        seed,
+        "tag",
+        "-a",
+        "v1.45.210-beta",
+        "-m",
+        "moved",
+        "HEAD",
+    ).returncode == 0
+    push = _test_git(seed, "push", "--force", "origin", "refs/tags/v1.45.210-beta")
+    assert push.returncode == 0, push.stderr
+    moved_object = _test_git_output(remote, "rev-parse", "refs/tags/v1.45.210-beta")
+    assert moved_object != failed_object
+
+    result = _run_recovery_remote_binding(checkout)
+
+    assert result.returncode == 0, result.stderr
+    authority = "refs/omega-release-authority/v1.45.211-beta/failed"
+    assert _test_git_output(checkout, "rev-parse", authority) == moved_object
+    assert _test_git_output(checkout, "rev-parse", "refs/tags/v1.45.210-beta") == (
+        failed_object
+    )
+
+
+def test_remote_recovery_binding_preserves_lightweight_remote_identity(
+    tmp_path: Path,
+) -> None:
+    _remote, seed, checkout, failed, failed_object = _recovery_remote(tmp_path)
+    assert _test_git(seed, "tag", "-d", "v1.45.210-beta").returncode == 0
+    assert _test_git(seed, "tag", "v1.45.210-beta", failed).returncode == 0
+    push = _test_git(seed, "push", "--force", "origin", "refs/tags/v1.45.210-beta")
+    assert push.returncode == 0, push.stderr
+
+    result = _run_recovery_remote_binding(checkout)
+
+    assert result.returncode == 0, result.stderr
+    authority = "refs/omega-release-authority/v1.45.211-beta/failed"
+    assert _test_git_output(checkout, "rev-parse", authority) == failed
+    assert _test_git_output(checkout, "cat-file", "-t", authority) == "commit"
+    assert _test_git_output(checkout, "rev-parse", "refs/tags/v1.45.210-beta") == (
+        failed_object
+    )
 
 
 def test_candidate_recovery_uses_structured_oci_and_never_buildx_prose():
@@ -1065,6 +1276,48 @@ def test_release_harness_authority_is_bound_to_the_source_sha_and_propagated():
     ).read_text(encoding="utf-8")
     assert "verify_release_harness" in production_readiness
     assert "scripts/verify_release_test_harness.py" in production_readiness
+
+
+def test_validate_release_has_history_and_preloads_pull_never_postgres_images():
+    validate = _jobs()["validate-release"]
+    steps = validate["steps"]
+    checkout = next(
+        step
+        for step in steps
+        if str(step.get("uses", "")).startswith("actions/checkout@")
+    )
+    assert checkout["with"]["fetch-depth"] == 0
+
+    preload = _named_step(
+        validate, "Preload PostgreSQL images for pull-never release tests"
+    )
+    assert "set -euo pipefail" in preload["run"]
+    assert "for ref in postgres:15 postgres:15.18" in preload["run"]
+    assert 'docker pull "${ref}"' in preload["run"]
+    assert 'docker image inspect "${ref}" >/dev/null' in preload["run"]
+    assert steps.index(preload) < steps.index(_named_step(validate, "Static release tests"))
+    assert steps.index(preload) < steps.index(
+        _named_step(validate, "Run detected root tests")
+    )
+
+
+def test_failed_210_release_is_preserved_and_recovery_version_moves_forward():
+    assert (REPO / "VERSION").read_text(encoding="utf-8").strip() == (
+        "1.45.211-beta"
+    )
+    evidence = (
+        REPO / "docs/release-evidence/omega-f2-digest-release-gate.md"
+    ).read_text(encoding="utf-8")
+    for needle in (
+        "v1.45.211-beta",
+        "v1.45.210-beta",
+        "31801477645",
+        "6c70e0067eb44dd991d355b3e5cab663300c790b",
+        "2429e9a2bdab13ff00740fe318009fd5b101850d",
+        "13 failed, 689 passed, 18 errors",
+        "no preflight, image build, manifest, digest gate, or release assets ran",
+    ):
+        assert needle in evidence
 
 
 def test_final_release_outputs_are_exclusive_and_compared_to_action_hashes():

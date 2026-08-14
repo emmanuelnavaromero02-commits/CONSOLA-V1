@@ -1,10 +1,28 @@
 # OMEGA F2 — digest release gate
 
-Status: **PREPARED**. F2 remains open until the GitHub workflow completes on the
-merge SHA, all 15 private image digests are verified, and the immutable GitHub
-Release for `v1.45.210-beta` is published and re-attested.
+Status: **PREPARED** for forward recovery as `v1.45.211-beta`; F2 is not closed.
+The immutable `v1.45.210-beta` attempt is retained as failed evidence, and no
+tag is moved or reused.
 
-## Audited local authority
+## Failed live attempt retained
+
+- Workflow run `31801477645` for `v1.45.210-beta` failed in
+  `validate-release` with `13 failed, 689 passed, 18 errors`.
+- The annotated tag object remains
+  `6c70e0067eb44dd991d355b3e5cab663300c790b`; it peels to source SHA
+  `2429e9a2bdab13ff00740fe318009fd5b101850d`.
+- The job failed before publication fan-out: downstream jobs were skipped and
+  no preflight, image build, manifest, digest gate, or release assets ran.
+- Published outputs for this attempt were zero: workflow artifacts `0`, GHCR
+  candidates `0`, and canonical GitHub Release `0`.
+- The forward-only recovery target is `v1.45.211-beta`. Its previous-release
+  selector may bridge to exact `v1.45.209-beta` only when the `.210` annotated
+  object and peeled SHA remain exact and `.210` still lacks canonical release
+  evidence. Exact remote tag refs are rebound into a dedicated authority
+  namespace before selection; a missing, moved, lightweight, ambiguous, or
+  unexpectedly trusted `.210` marker blocks recovery.
+
+## Retained `.210` prepared authority
 
 - Source baseline: `48d29731c0dd488d84dac5d2efc2c7b45ed2b977`.
 - Audited F2 freeze: `82a064a43f7ac00573affaf5b196ac255985a46e`.
@@ -28,6 +46,19 @@ Release for `v1.45.210-beta` is published and re-attested.
 - Two independent adversarial reviews reported zero P0/P1 findings on the
   audited freeze.
 
+## Recovery patch verification
+
+- The isolated release-launcher regression reconciled `102/102` tests, including
+  nested Python imports, standalone skip-policy subprocesses, exact transition
+  ledger behavior, and release workflow contracts.
+- The expanded release regression passed `484/484` tests.
+- The regenerated harness seals `1,337` files with SHA-256
+  `122c44b4d5eb79ca128af39ff08036fd9e8827b48a4b6cc3032a8b205ba41b44`;
+  the skip inventory remains exactly 61 pytest and 27 Playwright declarations.
+- Live read-only checks confirmed run `31801477645` has zero artifacts, all
+  downstream publication jobs were skipped, the `.210` Release endpoint is
+  `404`, and remote tag `v1.45.211-beta` is absent before recovery publication.
+
 ## F2 contract
 
 - Builds produce 15 private, untagged GHCR candidates addressed only by digest.
@@ -49,9 +80,10 @@ or signed provenance; those remain later-phase work. The sealed, reviewed test
 harness is an authority boundary, not a sandbox against deliberately malicious
 same-UID or privileged code.
 
-To close F2, record the merge SHA and require the live release workflow to prove:
+To close F2, record the recovery merge SHA and require the live release workflow
+for `v1.45.211-beta` to prove:
 
-1. the immutable Git tag equals that merge SHA and `VERSION=1.45.210-beta`;
+1. the immutable Git tag equals that merge SHA and `VERSION=1.45.211-beta`;
 2. all 15 GHCR packages remain private and every manifest/config/layer exists;
 3. the mandatory digest stack gate passes for the exact manifest bytes;
 4. the final GitHub Release is non-draft and immutable, with exactly the
