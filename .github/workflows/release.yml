@@ -682,7 +682,10 @@ jobs:
         )
       )
     runs-on: ubuntu-latest
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: "false"
     permissions:
+      actions: read
       contents: read
       packages: write
     strategy:
@@ -732,10 +735,27 @@ jobs:
       - name: Set image metadata
         id: meta
         run: |
-          echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ matrix.service }}" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve exact candidate receipt for this run
+        id: candidate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release_image_promotion.py candidate-state \
+            --repository "${GITHUB_REPOSITORY}" \
+            --owner "${GITHUB_REPOSITORY_OWNER}" \
+            --source-sha "${GITHUB_SHA}" \
+            --release-tag "${GITHUB_REF_NAME}" \
+            --run-id "${GITHUB_RUN_ID}" \
+            --username "${GITHUB_ACTOR}" \
+            --service "${{ matrix.service }}" \
+            --receipt "${{ matrix.service }}.release-candidate.json" \
+            --github-output "${GITHUB_OUTPUT}"
+
       - name: Log in to GHCR
+        if: steps.candidate.outputs.action == 'build'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -743,151 +763,65 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
+        if: steps.candidate.outputs.action == 'build'
         uses: docker/setup-buildx-action@v3
 
-      - name: Refuse pre-existing image tags
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          GHCR_OWNER: ${{ github.repository_owner }}
-          GHCR_USERNAME: ${{ github.actor }}
-          RELEASE_TAG: ${{ github.ref_name }}
-          SERVICE: ${{ matrix.service }}
-          SOURCE_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          python3 scripts/verify_release_image_absence.py \
-            --owner "${GHCR_OWNER}" \
-            --service "${SERVICE}" \
-            --username "${GHCR_USERNAME}" \
-            --source-sha "${SOURCE_SHA}" \
-            --release-tag "${RELEASE_TAG}"
-
-      - name: Build and push ${{ matrix.service }}
+      - name: Build and push untagged candidate for ${{ matrix.service }}
         id: build
+        if: steps.candidate.outputs.action == 'build'
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile || format('{0}/Dockerfile', matrix.context) }}
-          push: true
-          tags: |
-            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
-            ${{ steps.meta.outputs.image }}:sha-${{ github.sha }}
+          labels: |
+            io.omega.release.service=${{ matrix.service }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+          annotations: |
+            index:io.omega.release.service=${{ matrix.service }}
+            index:org.opencontainers.image.revision=${{ github.sha }}
+            index:org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            index:org.opencontainers.image.version=${{ github.ref_name }}
+            manifest[linux/amd64]:io.omega.release.service=${{ matrix.service }}
+            manifest[linux/amd64]:org.opencontainers.image.revision=${{ github.sha }}
+            manifest[linux/amd64]:org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            manifest[linux/amd64]:org.opencontainers.image.version=${{ github.ref_name }}
+            manifest-descriptor[linux/amd64]:io.omega.release.service=${{ matrix.service }}
+            manifest-descriptor[linux/amd64]:org.opencontainers.image.revision=${{ github.sha }}
+            manifest-descriptor[linux/amd64]:org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            manifest-descriptor[linux/amd64]:org.opencontainers.image.version=${{ github.ref_name }}
+          outputs: type=image,name=${{ steps.meta.outputs.image }},push-by-digest=true,name-canonical=true,push=true,oci-mediatypes=true
+          platforms: linux/amd64
+          provenance: mode=min
 
-      - name: Resolve and verify final image digest
-        id: resolved_image
+      - name: Verify candidate and write canonical receipt
+        if: steps.candidate.outputs.action == 'build'
         env:
-          BUILT_DIGEST: ${{ steps.build.outputs.digest }}
-          IMAGE: ${{ steps.meta.outputs.image }}
-          RELEASE_TAG: ${{ github.ref_name }}
-          SERVICE: ${{ matrix.service }}
-          SOURCE_SHA: ${{ github.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          digest="${BUILT_DIGEST}"
-          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || {
-            echo "::error::fresh build returned a malformed digest for ${SERVICE}"
-            exit 1
-          }
+          python3 scripts/release_image_promotion.py write-receipt \
+            --repository "${GITHUB_REPOSITORY}" \
+            --owner "${GITHUB_REPOSITORY_OWNER}" \
+            --source-sha "${GITHUB_SHA}" \
+            --release-tag "${GITHUB_REF_NAME}" \
+            --run-id "${GITHUB_RUN_ID}" \
+            --username "${GITHUB_ACTOR}" \
+            --service "${{ matrix.service }}" \
+            --digest "${{ steps.build.outputs.digest }}" \
+            --receipt "${{ matrix.service }}.release-candidate.json"
 
-          inspect_digest() {
-            local reference="$1"
-            local manifest_json
-            manifest_json="$(
-              docker buildx imagetools inspect "${reference}" \
-                --format '{{json .Manifest}}'
-            )" || return 1
-            MANIFEST_JSON="${manifest_json}" python3 - <<'PY'
-          import json
-          import os
-          import re
-
-          try:
-              manifest = json.loads(os.environ["MANIFEST_JSON"])
-          except (json.JSONDecodeError, UnicodeError) as exc:
-              raise SystemExit("registry manifest descriptor is not valid JSON") from exc
-          digest = manifest.get("digest") if isinstance(manifest, dict) else None
-          if not isinstance(digest, str) or not re.fullmatch(
-              r"sha256:[0-9a-f]{64}", digest
-          ):
-              raise SystemExit("registry manifest descriptor has no valid digest")
-          print(digest)
-          PY
-          }
-
-          sha_digest="$(inspect_digest "${IMAGE}:sha-${SOURCE_SHA}")" || {
-            echo "::error::final SHA tag cannot be resolved for ${SERVICE}"
-            exit 1
-          }
-          release_digest="$(inspect_digest "${IMAGE}:${RELEASE_TAG}")" || {
-            echo "::error::final release tag cannot be resolved for ${SERVICE}"
-            exit 1
-          }
-          [[ "${sha_digest}" == "${digest}" ]] || {
-            echo "::error::final SHA tag digest mismatch for ${SERVICE}"
-            exit 1
-          }
-          [[ "${release_digest}" == "${digest}" ]] || {
-            echo "::error::final release tag digest mismatch for ${SERVICE}"
-            exit 1
-          }
-          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
-
-      - name: Write image digest fragment
-        env:
-          DIGEST: ${{ steps.resolved_image.outputs.digest }}
-          IMAGE: ${{ steps.meta.outputs.image }}
-          RELEASE_TAG: ${{ github.ref_name }}
-          SERVICE: ${{ matrix.service }}
-          SOURCE_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import json
-          import os
-          import re
-          from pathlib import Path
-
-          service = os.environ["SERVICE"]
-          image = os.environ["IMAGE"]
-          release_tag = os.environ["RELEASE_TAG"]
-          source_sha = os.environ["SOURCE_SHA"]
-          digest = os.environ["DIGEST"]
-          if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", service):
-              raise SystemExit(f"invalid release service: {service!r}")
-          if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
-              raise SystemExit(f"invalid build digest for {service}: {digest!r}")
-          if not re.fullmatch(r"[0-9a-f]{40}", source_sha):
-              raise SystemExit(f"invalid source SHA: {source_sha!r}")
-          expected_image = f"ghcr.io/{os.environ['GITHUB_REPOSITORY_OWNER']}/{service}"
-          if image != expected_image:
-              raise SystemExit(
-                  f"unexpected image repository for {service}: {image!r}"
-              )
-
-          fragment = {
-              "schema_version": 1,
-              "service": service,
-              "image": image,
-              "release_tag": release_tag,
-              "source_sha": source_sha,
-              "digest": digest,
-              "release_reference": f"{image}:{release_tag}@{digest}",
-              "sha_reference": f"{image}:sha-{source_sha}@{digest}",
-          }
-          path = Path(f"{service}.release-digest.json")
-          path.write_text(
-              json.dumps(fragment, indent=2, sort_keys=True) + "\n",
-              encoding="utf-8",
-          )
-          PY
-
-      - name: Upload image digest fragment
+      # This is deliberately the final matrix step.  A rerun first downloads
+      # and fully validates an already-persisted receipt for this exact run_id.
+      - name: Upload immutable candidate receipt last
+        if: steps.candidate.outputs.action == 'build'
         uses: actions/upload-artifact@v4
         with:
-          name: release-image-digest-${{ matrix.service }}
-          path: ${{ matrix.service }}.release-digest.json
+          name: release-image-candidate-${{ matrix.service }}
+          path: ${{ matrix.service }}.release-candidate.json
           if-no-files-found: error
-          overwrite: true
+          overwrite: false
           retention-days: 90
 
   publish-release-manifest:
@@ -897,7 +831,7 @@ jobs:
     permissions:
       actions: read
       contents: write
-      packages: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
 
@@ -911,12 +845,70 @@ jobs:
             --owner "${GHCR_OWNER}" \
             --owner-kind user
 
-      - name: Download image digest fragments
-        uses: actions/download-artifact@v4
+      - name: Prepare canonical recoverable promotion intent
+        id: intent
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release_image_promotion.py prepare-intent \
+            --repository "${GITHUB_REPOSITORY}" \
+            --owner "${GITHUB_REPOSITORY_OWNER}" \
+            --source-sha "${GITHUB_SHA}" \
+            --release-tag "${GITHUB_REF_NAME}" \
+            --run-id "${GITHUB_RUN_ID}" \
+            --username "${GITHUB_ACTOR}" \
+            --intent omega-release-promotion-intent.json \
+            --fragments-dir release-manifest-input \
+            --github-output "${GITHUB_OUTPUT}"
+
+      - name: Seal immutable promotion intent before registry mutation
+        if: steps.intent.outputs.action == 'upload'
+        uses: actions/upload-artifact@v4
         with:
-          pattern: release-image-digest-*
-          path: release-manifest-input
-          merge-multiple: true
+          name: omega-release-promotion-intent
+          path: omega-release-promotion-intent.json
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 90
+
+      - name: Promote exact candidate manifests recoverably
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release_image_promotion.py promote \
+            --repository "${GITHUB_REPOSITORY}" \
+            --owner "${GITHUB_REPOSITORY_OWNER}" \
+            --source-sha "${GITHUB_SHA}" \
+            --release-tag "${GITHUB_REF_NAME}" \
+            --run-id "${GITHUB_RUN_ID}" \
+            --username "${GITHUB_ACTOR}" \
+            --intent omega-release-promotion-intent.json
+
+      - name: Verify canonical release packages remain private
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GHCR_OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_release_package_visibility.py \
+            --owner "${GHCR_OWNER}" \
+            --owner-kind user
+
+      - name: Verify all final release references
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release_image_promotion.py verify-final \
+            --repository "${GITHUB_REPOSITORY}" \
+            --owner "${GITHUB_REPOSITORY_OWNER}" \
+            --source-sha "${GITHUB_SHA}" \
+            --release-tag "${GITHUB_REF_NAME}" \
+            --run-id "${GITHUB_RUN_ID}" \
+            --username "${GITHUB_ACTOR}" \
+            --intent omega-release-promotion-intent.json
 
       - name: Assemble and validate release manifest
         id: manifest
@@ -1165,3 +1157,36 @@ jobs:
             echo "::error::unknown structured GitHub Release state"
             exit 1
           fi
+
+      - name: Verify GitHub Release is published
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          release_state_json="$(
+            python3 scripts/inspect_github_release.py \
+              --repository "${SOURCE_REPOSITORY}" \
+              --tag "${RELEASE_TAG}"
+          )"
+          RELEASE_STATE_JSON="${release_state_json}" python3 - <<'PY'
+          import json
+          import os
+
+          payload = json.loads(os.environ["RELEASE_STATE_JSON"])
+          manifest = f"omega-release-manifest-{os.environ['RELEASE_TAG']}.json"
+          expected_assets = {manifest, f"{manifest}.sha256"}
+          assets = payload.get("assets") if isinstance(payload, dict) else None
+          if (
+              not isinstance(payload, dict)
+              or payload.get("state") != "present"
+              or payload.get("tag") != os.environ["RELEASE_TAG"]
+              or not isinstance(assets, list)
+              or any(assets.count(name) != 1 for name in expected_assets)
+          ):
+              raise SystemExit(
+                  "GitHub Release or its canonical assets are not published"
+              )
+          print("GITHUB RELEASE: draft=false VERIFIED")
+          PY

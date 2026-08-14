@@ -525,62 +525,61 @@ def test_release_image_inventory_is_exactly_the_canonical_fifteen():
     assert len(services) == len(set(services)) == 15
 
 
-def test_each_image_is_tagged_by_release_and_sha_and_exports_its_digest():
+def test_matrix_builds_only_untagged_candidates_and_seals_receipts_last():
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     build_job = _jobs()["build-and-push"]
-    preexisting = _named_step(build_job, "Refuse pre-existing image tags")
-    build = _named_step(build_job, "Build and push ${{ matrix.service }}")
-    resolved = _named_step(build_job, "Resolve and verify final image digest")
-    fragment = _named_step(build_job, "Write image digest fragment")
-    upload = _named_step(build_job, "Upload image digest fragment")
+    candidate = _named_step(build_job, "Resolve exact candidate receipt for this run")
+    build = _named_step(
+        build_job, "Build and push untagged candidate for ${{ matrix.service }}"
+    )
+    receipt = _named_step(build_job, "Verify candidate and write canonical receipt")
+    upload = _named_step(build_job, "Upload immutable candidate receipt last")
 
     assert workflow["concurrency"] == {
         "group": "release-images-${{ github.sha }}",
         "cancel-in-progress": False,
     }
-    assert preexisting["env"] == {
-        "GITHUB_TOKEN": "${{ github.token }}",
-        "GHCR_OWNER": "${{ github.repository_owner }}",
-        "GHCR_USERNAME": "${{ github.actor }}",
-        "RELEASE_TAG": "${{ github.ref_name }}",
-        "SERVICE": "${{ matrix.service }}",
-        "SOURCE_SHA": "${{ github.sha }}",
-    }
-    assert "scripts/verify_release_image_absence.py" in preexisting["run"]
-    assert "docker buildx imagetools inspect" not in preexisting["run"]
-    assert "manifest unknown" not in preexisting["run"].lower()
-    assert "not found" not in preexisting["run"].lower()
+    assert candidate["env"] == {"GITHUB_TOKEN": "${{ github.token }}"}
+    assert "release_image_promotion.py candidate-state" in candidate["run"]
+    assert '--run-id "${GITHUB_RUN_ID}"' in candidate["run"]
+    assert "GITHUB_RUN_ATTEMPT" not in candidate["run"]
     assert build["id"] == "build"
-    assert "if" not in build
-    tags = build["with"]["tags"]
-    assert "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}" in tags
-    assert "${{ steps.meta.outputs.image }}:sha-${{ github.sha }}" in tags
-    assert resolved["id"] == "resolved_image"
-    assert resolved["env"]["BUILT_DIGEST"] == "${{ steps.build.outputs.digest }}"
-    assert "REUSED" not in resolved["env"]
-    assert "REUSED_DIGEST" not in resolved["env"]
-    assert "final SHA tag digest mismatch" in resolved["run"]
-    assert "final release tag digest mismatch" in resolved["run"]
-    assert fragment["env"] == {
-        "DIGEST": "${{ steps.resolved_image.outputs.digest }}",
-        "IMAGE": "${{ steps.meta.outputs.image }}",
-        "RELEASE_TAG": "${{ github.ref_name }}",
-        "SERVICE": "${{ matrix.service }}",
-        "SOURCE_SHA": "${{ github.sha }}",
-    }
-    assert 're.fullmatch(r"sha256:[0-9a-f]{64}", digest)' in fragment["run"]
-    assert 're.fullmatch(r"[0-9a-f]{40}", source_sha)' in fragment["run"]
-    assert "release_reference" in fragment["run"]
-    assert "sha_reference" in fragment["run"]
-    assert upload["with"]["name"] == "release-image-digest-${{ matrix.service }}"
+    assert build["if"] == "steps.candidate.outputs.action == 'build'"
+    assert "tags" not in build["with"]
+    assert build["with"]["outputs"] == (
+        "type=image,name=${{ steps.meta.outputs.image }},push-by-digest=true,"
+        "name-canonical=true,push=true,oci-mediatypes=true"
+    )
+    assert build["with"]["provenance"] == "mode=min"
+    assert build["with"]["platforms"] == "linux/amd64"
+    assert ":${{ github.ref_name }}" not in str(build)
+    assert ":sha-${{ github.sha }}" not in str(build)
+    assert ":latest" not in str(build)
+    assert "io.omega.release.service=${{ matrix.service }}" in build["with"][
+        "labels"
+    ]
+    for annotation_level in (
+        "index:",
+        "manifest[linux/amd64]:",
+        "manifest-descriptor[linux/amd64]:",
+    ):
+        assert annotation_level in build["with"]["annotations"]
+    assert receipt["if"] == "steps.candidate.outputs.action == 'build'"
+    assert '--digest "${{ steps.build.outputs.digest }}"' in receipt["run"]
+    assert "release_image_promotion.py write-receipt" in receipt["run"]
+    assert upload["with"]["name"] == "release-image-candidate-${{ matrix.service }}"
     assert upload["with"]["if-no-files-found"] == "error"
-    assert upload["with"]["overwrite"] is True
+    assert upload["with"]["overwrite"] is False
+    assert build_job["steps"][-1] == upload
 
 
 def test_manifest_job_is_bound_to_successful_build_and_exact_inventory():
     job = _jobs()["publish-release-manifest"]
     privacy = _named_step(job, "Re-verify canonical release packages are private")
-    download = _named_step(job, "Download image digest fragments")
+    prepare = _named_step(job, "Prepare canonical recoverable promotion intent")
+    seal = _named_step(job, "Seal immutable promotion intent before registry mutation")
+    promote = _named_step(job, "Promote exact candidate manifests recoverably")
+    verify = _named_step(job, "Verify all final release references")
     assemble = _named_step(job, "Assemble and validate release manifest")
     upload = _named_step(job, "Upload canonical release manifest artifact")
 
@@ -594,11 +593,13 @@ def test_manifest_job_is_bound_to_successful_build_and_exact_inventory():
     assert '--owner "${GHCR_OWNER}"' in privacy["run"]
     assert "--owner-kind user" in privacy["run"]
     assert "gh api" not in privacy["run"]
-    assert download["with"] == {
-        "pattern": "release-image-digest-*",
-        "path": "release-manifest-input",
-        "merge-multiple": True,
-    }
+    assert "release_image_promotion.py prepare-intent" in prepare["run"]
+    assert '--run-id "${GITHUB_RUN_ID}"' in prepare["run"]
+    assert seal["if"] == "steps.intent.outputs.action == 'upload'"
+    assert seal["with"]["name"] == "omega-release-promotion-intent"
+    assert seal["with"]["overwrite"] is False
+    assert "release_image_promotion.py promote" in promote["run"]
+    assert "release_image_promotion.py verify-final" in verify["run"]
     assert json.loads(assemble["env"]["EXPECTED_SERVICES_JSON"]) == (
         _canonical_services()
     )
@@ -646,11 +647,12 @@ def test_manifest_runtime_fails_closed_when_any_image_is_missing():
 def test_validated_manifest_is_uploaded_and_attached_to_a_github_release():
     job = _jobs()["publish-release-manifest"]
     release = _named_step(job, "Attach manifest to GitHub Release")
+    published = _named_step(job, "Verify GitHub Release is published")
 
     assert job["permissions"] == {
         "actions": "read",
         "contents": "write",
-        "packages": "read",
+        "packages": "write",
     }
     assert release["env"]["GH_TOKEN"] == "${{ github.token }}"
     assert release["env"]["SOURCE_REPOSITORY"] == "${{ github.repository }}"
@@ -666,6 +668,13 @@ def test_validated_manifest_is_uploaded_and_attached_to_a_github_release():
     assert "gh release create" in source
     assert "--verify-tag" in source
     assert "--prerelease" in source
+    assert "scripts/inspect_github_release.py" in published["run"]
+    assert 'payload.get("state") != "present"' in published["run"]
+    assert "draft=false VERIFIED" in published["run"]
+    names = [step.get("name") for step in job["steps"]]
+    assert names.index("Attach manifest to GitHub Release") < names.index(
+        "Verify GitHub Release is published"
+    )
 
 
 def test_identical_existing_release_assets_are_compared_without_mutation():
@@ -731,15 +740,24 @@ def test_ambiguous_release_lookup_never_falls_back_to_create():
 def test_package_privacy_gate_precedes_every_manifest_publication_step():
     job = _jobs()["publish-release-manifest"]
     names = [step.get("name") for step in job["steps"]]
-    privacy_index = names.index("Re-verify canonical release packages are private")
+    before_index = names.index("Re-verify canonical release packages are private")
+    promote_index = names.index("Promote exact candidate manifests recoverably")
+    after_index = names.index("Verify canonical release packages remain private")
 
     for guarded_step in (
-        "Download image digest fragments",
+        "Prepare canonical recoverable promotion intent",
+        "Seal immutable promotion intent before registry mutation",
+        "Promote exact candidate manifests recoverably",
+    ):
+        assert before_index < names.index(guarded_step)
+    assert promote_index < after_index
+    for guarded_step in (
+        "Verify all final release references",
         "Assemble and validate release manifest",
         "Upload canonical release manifest artifact",
         "Attach manifest to GitHub Release",
     ):
-        assert privacy_index < names.index(guarded_step)
+        assert after_index < names.index(guarded_step)
 
 
 def test_registry_privacy_is_proved_before_any_registry_mutation_and_after_build():
@@ -753,6 +771,7 @@ def test_registry_privacy_is_proved_before_any_registry_mutation_and_after_build
     assert "needs.preflight-release-packages.result == 'success'" in build["if"]
     assert _named_step(preflight, "Verify canonical release packages are private")
     assert _named_step(publish, "Re-verify canonical release packages are private")
+    assert _named_step(publish, "Verify canonical release packages remain private")
 
 
 def test_release_jobs_use_least_privilege_for_package_writes():
@@ -761,7 +780,13 @@ def test_release_jobs_use_least_privilege_for_package_writes():
 
     assert workflow["permissions"] == {"contents": "read"}
     assert jobs["build-and-push"]["permissions"] == {
+        "actions": "read",
         "contents": "read",
+        "packages": "write",
+    }
+    assert jobs["publish-release-manifest"]["permissions"] == {
+        "actions": "read",
+        "contents": "write",
         "packages": "write",
     }
     for name in (
@@ -798,21 +823,19 @@ def test_previous_release_selection_requires_canonical_release_evidence():
     assert "git describe" not in step["run"]
 
 
-def test_every_build_is_fresh_and_absence_uses_structured_oci_evidence():
+def test_candidate_recovery_uses_structured_oci_and_never_buildx_prose():
     build = _jobs()["build-and-push"]
-    preexisting = _named_step(build, "Refuse pre-existing image tags")
-    source = preexisting["run"]
-    image_build = _named_step(build, "Build and push ${{ matrix.service }}")
+    candidate = _named_step(build, "Resolve exact candidate receipt for this run")
+    image_build = _named_step(
+        build, "Build and push untagged candidate for ${{ matrix.service }}"
+    )
+    source = candidate["run"]
 
-    assert "scripts/verify_release_image_absence.py" in source
+    assert "release_image_promotion.py candidate-state" in source
     assert "imagetools inspect" not in source
     assert "not found" not in source.lower()
     assert "manifest unknown" not in source.lower()
-    assert "reused" not in source
-    assert "Resolve immutable SHA image" not in [
-        step.get("name") for step in build["steps"]
-    ]
-    assert "if" not in image_build
+    assert image_build["if"] == "steps.candidate.outputs.action == 'build'"
 
 
 def test_rc_and_ga_stress_can_never_be_hidden_inside_a_skipped_full_stack_job():

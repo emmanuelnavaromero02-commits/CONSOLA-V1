@@ -276,15 +276,20 @@ def test_real_buildx_not_found_prose_is_not_used_as_absence_evidence() -> None:
         "omega-redteam-definitely-absent-20260814: not found"
     )
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-    step = next(
+    candidate = next(
         item
         for item in workflow["jobs"]["build-and-push"]["steps"]
-        if item.get("name") == "Refuse pre-existing image tags"
+        if item.get("name") == "Resolve exact candidate receipt for this run"
     )
-    source = step["run"]
+    prepare = next(
+        item
+        for item in workflow["jobs"]["publish-release-manifest"]["steps"]
+        if item.get("name") == "Prepare canonical recoverable promotion intent"
+    )
+    source = candidate["run"] + prepare["run"]
 
     assert real_buildx_output.endswith(": not found")
     assert "docker buildx imagetools inspect" not in source
     assert "not found" not in source.lower()
     assert "manifest unknown" not in source.lower()
-    assert "scripts/verify_release_image_absence.py" in source
+    assert "scripts/release_image_promotion.py" in source
