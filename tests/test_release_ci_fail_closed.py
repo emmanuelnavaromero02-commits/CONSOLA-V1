@@ -11,6 +11,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO = Path(__file__).resolve().parents[1]
@@ -71,7 +72,21 @@ def _test_commit(repo: Path, message: str) -> str:
 
 def _recovery_remote(
     tmp_path: Path,
-) -> tuple[Path, Path, Path, str, str, str, str, str, str, str, str]:
+) -> tuple[
+    Path,
+    Path,
+    Path,
+    str,
+    str,
+    str,
+    str,
+    str,
+    str,
+    str,
+    str,
+    str,
+    str,
+]:
     remote = tmp_path / "remote.git"
     seed = tmp_path / "seed"
     checkout = tmp_path / "checkout"
@@ -106,9 +121,15 @@ def _recovery_remote(
         == 0
     )
     failed_213_object = _test_git_output(seed, "rev-parse", "refs/tags/v1.45.213-beta")
-    _test_commit(seed, "recovery .214")
+    failed_214 = _test_commit(seed, "failed .214")
     assert (
-        _test_git(seed, "tag", "-a", "v1.45.214-beta", "-m", "recovery .214").returncode
+        _test_git(seed, "tag", "-a", "v1.45.214-beta", "-m", "failed .214").returncode
+        == 0
+    )
+    failed_214_object = _test_git_output(seed, "rev-parse", "refs/tags/v1.45.214-beta")
+    _test_commit(seed, "recovery .215")
+    assert (
+        _test_git(seed, "tag", "-a", "v1.45.215-beta", "-m", "recovery .215").returncode
         == 0
     )
     assert _test_git(seed, "remote", "add", "origin", str(remote)).returncode == 0
@@ -119,7 +140,7 @@ def _recovery_remote(
         "clone",
         "-q",
         "--branch",
-        "v1.45.214-beta",
+        "v1.45.215-beta",
         str(remote),
         str(checkout),
     )
@@ -136,6 +157,8 @@ def _recovery_remote(
         failed_212_object,
         failed_213,
         failed_213_object,
+        failed_214,
+        failed_214_object,
     )
 
 
@@ -1065,19 +1088,28 @@ def test_previous_release_selection_requires_canonical_release_evidence():
     binding = _named_step(job, "Bind exact remote recovery tag authority")
     step = next(step for step in job["steps"] if step.get("id") == "previous")
     assert job["steps"].index(binding) < job["steps"].index(step)
-    assert binding["if"] == "github.ref_name == 'v1.45.214-beta'"
+    assert binding["if"] == "github.ref_name == 'v1.45.215-beta'"
     for needle in (
         "git fetch --no-tags --force --atomic origin",
-        "+refs/tags/v1.45.214-beta:${authority}/current",
+        "+refs/tags/v1.45.215-beta:${authority}/current",
         "+refs/tags/v1.45.210-beta:${authority}/failed-0",
         "+refs/tags/v1.45.211-beta:${authority}/failed-1",
         "+refs/tags/v1.45.212-beta:${authority}/failed-2",
         "+refs/tags/v1.45.213-beta:${authority}/failed-3",
+        "+refs/tags/v1.45.214-beta:${authority}/failed-4",
         "+refs/tags/v1.45.209-beta:${authority}/base",
         'git update-ref -d "${authority}/${name}"',
         'git show-ref --verify --quiet "${authority}/${name}"',
     ):
         assert needle in binding["run"]
+    assert binding["run"].count("git fetch --no-tags --force --atomic origin") == 1
+    assert binding["run"].count("+refs/tags/") == 7
+    assert (
+        binding["run"].count(
+            "for name in current failed-0 failed-1 failed-2 failed-3 failed-4 base; do"
+        )
+        == 2
+    )
     assert "scripts/select_previous_release.py" in step["run"]
     assert '--repository "${SOURCE_REPOSITORY}"' in step["run"]
     assert step["env"]["GITHUB_TOKEN"] == "${{ github.token }}"
@@ -1085,7 +1117,20 @@ def test_previous_release_selection_requires_canonical_release_evidence():
     assert "git describe" not in step["run"]
 
 
-def test_remote_recovery_binding_rejects_deleted_tag_despite_stale_checkout(
+@pytest.mark.parametrize(
+    "deleted_tag",
+    [
+        "v1.45.209-beta",
+        "v1.45.210-beta",
+        "v1.45.211-beta",
+        "v1.45.212-beta",
+        "v1.45.213-beta",
+        "v1.45.214-beta",
+        "v1.45.215-beta",
+    ],
+)
+def test_remote_recovery_binding_rejects_any_deleted_tag_atomically(
+    deleted_tag: str,
     tmp_path: Path,
 ) -> None:
     (
@@ -1093,27 +1138,28 @@ def test_remote_recovery_binding_rejects_deleted_tag_despite_stale_checkout(
         _seed,
         checkout,
         _failed_210,
-        failed_210_object,
+        _failed_210_object,
         _failed_211,
         _failed_211_object,
         _failed_212,
         _failed_212_object,
         _failed_213,
         _failed_213_object,
+        _failed_214,
+        _failed_214_object,
     ) = _recovery_remote(tmp_path)
-    assert _test_git_output(checkout, "rev-parse", "refs/tags/v1.45.210-beta") == (
-        failed_210_object
-    )
+    stale_object = _test_git_output(checkout, "rev-parse", f"refs/tags/{deleted_tag}")
     assert (
-        _test_git(remote, "update-ref", "-d", "refs/tags/v1.45.210-beta").returncode
+        _test_git(remote, "update-ref", "-d", f"refs/tags/{deleted_tag}").returncode
         == 0
     )
 
     result = _run_recovery_remote_binding(checkout)
 
     assert result.returncode != 0
-    assert _test_git_output(checkout, "rev-parse", "refs/tags/v1.45.210-beta") == (
-        failed_210_object
+    assert (
+        _test_git_output(checkout, "rev-parse", f"refs/tags/{deleted_tag}")
+        == stale_object
     )
     for name in (
         "current",
@@ -1121,6 +1167,7 @@ def test_remote_recovery_binding_rejects_deleted_tag_despite_stale_checkout(
         "failed-1",
         "failed-2",
         "failed-3",
+        "failed-4",
         "base",
     ):
         assert (
@@ -1128,7 +1175,7 @@ def test_remote_recovery_binding_rejects_deleted_tag_despite_stale_checkout(
                 checkout,
                 "show-ref",
                 "--verify",
-                f"refs/omega-release-authority/v1.45.214-beta/{name}",
+                f"refs/omega-release-authority/v1.45.215-beta/{name}",
             ).returncode
             != 0
         )
@@ -1149,6 +1196,8 @@ def test_remote_recovery_binding_replaces_stale_checkout_with_moved_tag(
         _failed_212_object,
         _failed_213,
         _failed_213_object,
+        _failed_214,
+        _failed_214_object,
     ) = _recovery_remote(tmp_path)
     assert _test_git(seed, "tag", "-d", "v1.45.210-beta").returncode == 0
     assert (
@@ -1171,7 +1220,7 @@ def test_remote_recovery_binding_replaces_stale_checkout_with_moved_tag(
     result = _run_recovery_remote_binding(checkout)
 
     assert result.returncode == 0, result.stderr
-    authority = "refs/omega-release-authority/v1.45.214-beta/failed-0"
+    authority = "refs/omega-release-authority/v1.45.215-beta/failed-0"
     assert _test_git_output(checkout, "rev-parse", authority) == moved_object
     assert _test_git_output(checkout, "rev-parse", "refs/tags/v1.45.210-beta") == (
         failed_210_object
@@ -1193,6 +1242,8 @@ def test_remote_recovery_binding_preserves_lightweight_remote_identity(
         _failed_212_object,
         _failed_213,
         _failed_213_object,
+        _failed_214,
+        _failed_214_object,
     ) = _recovery_remote(tmp_path)
     assert _test_git(seed, "tag", "-d", "v1.45.210-beta").returncode == 0
     assert _test_git(seed, "tag", "v1.45.210-beta", failed_210).returncode == 0
@@ -1202,7 +1253,7 @@ def test_remote_recovery_binding_preserves_lightweight_remote_identity(
     result = _run_recovery_remote_binding(checkout)
 
     assert result.returncode == 0, result.stderr
-    authority = "refs/omega-release-authority/v1.45.214-beta/failed-0"
+    authority = "refs/omega-release-authority/v1.45.215-beta/failed-0"
     assert _test_git_output(checkout, "rev-parse", authority) == failed_210
     assert _test_git_output(checkout, "cat-file", "-t", authority) == "commit"
     assert _test_git_output(checkout, "rev-parse", "refs/tags/v1.45.210-beta") == (
@@ -1605,8 +1656,8 @@ def test_duckdb_cache_verifier_blocks_manifest_content_and_topology_drift(
     assert run().returncode != 0
 
 
-def test_failed_210_through_213_releases_are_preserved_and_version_moves_forward():
-    assert (REPO / "VERSION").read_text(encoding="utf-8").strip() == ("1.45.214-beta")
+def test_failed_210_through_214_releases_are_preserved_and_version_moves_forward():
+    assert (REPO / "VERSION").read_text(encoding="utf-8").strip() == ("1.45.215-beta")
     evidence = (
         REPO / "docs/release-evidence/omega-f2-digest-release-gate.md"
     ).read_text(encoding="utf-8")
@@ -1614,6 +1665,7 @@ def test_failed_210_through_213_releases_are_preserved_and_version_moves_forward
         "v1.45.212-beta",
         "v1.45.213-beta",
         "v1.45.214-beta",
+        "v1.45.215-beta",
         "v1.45.211-beta",
         "v1.45.210-beta",
         "31801477645",
@@ -1636,6 +1688,21 @@ def test_failed_210_through_213_releases_are_preserved_and_version_moves_forward
         "no preflight, image build, manifest, digest gate, or release assets ran",
     ):
         assert needle in evidence
+
+    failed_214_offset = evidence.index("31843803006")
+    failed_214_context = evidence[
+        max(0, failed_214_offset - 500) : failed_214_offset + 2_500
+    ]
+    for needle in (
+        "v1.45.214-beta",
+        "cea2ec51314248daf26710cfe8a94a483d7287eb",
+        "325170ff109e88860df857c8615f05b059698fec",
+        "dependency failed to start: container mode_airflow is unhealthy",
+        "publish-release-manifest",
+        "was skipped",
+        "no GitHub Release",
+    ):
+        assert needle in failed_214_context
 
 
 def test_final_release_outputs_are_exclusive_and_compared_to_action_hashes():
@@ -1776,6 +1843,155 @@ def test_digest_gate_prepares_and_rechecks_bounded_runner_disk_budget() -> None:
     assert render.rindex('docker pull "${ref}"') < pre_compose
     assert pre_compose < render.index("docker image ls --no-trunc --digests")
     assert pre_compose < render.index('"${compose[@]}" up -d --no-build --pull never')
+
+
+def test_digest_failure_diagnostics_capture_each_container_without_masking(
+    tmp_path: Path,
+) -> None:
+    step = _named_step(
+        _jobs()["digest-full-stack-gate"], "Digest-stack logs on failure"
+    )
+    assert step["if"] == "failure()"
+    source = step["run"]
+    assert "xargs" not in source
+    assert "docker compose" in source and "ps --all" in source and "ps -aq" in source
+    assert "docker ps" not in source
+    assert "docker inspect --type container" in source
+    assert "--format '{{json .State.Health}}'" in source
+    assert ".Config.Env" not in source
+    assert 'docker logs --tail 120 "${container_id}"' in source
+    assert "LC_ALL=C sort -u" in source
+    assert "set +e" in source
+    assert source.rstrip().endswith("exit 0")
+
+    workspace = tmp_path / "checkout"
+    for relative in (
+        "infra/docker-compose.yml",
+        "infra/docker-compose.dev.yml",
+        "infra/terraform-gcp/release/docker-compose.release.yml",
+    ):
+        target = workspace / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((REPO / relative).read_bytes())
+    (workspace / "infra/.env").write_text("TEST_ONLY=1\n", encoding="utf-8")
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    calls = tmp_path / "docker.calls"
+    real_docker = tmp_path / "docker-real"
+    real_docker.write_text(
+        """#!/usr/bin/env bash
+set -u
+if [[ "${1:-}" == "--config" ]]; then
+  [[ "$#" -ge 3 ]] || exit 69
+  shift 2
+fi
+printf 'command=%s argc=%s last=%s\n' "${1:-}" "$#" "${!#:-}" >> "${FAKE_DOCKER_CALLS}"
+case "${1:-}" in
+  compose)
+    if [[ " $* " == *" ps -aq "* ]]; then
+      printf '%s' "${FAKE_COMPOSE_IDS:-}"
+    elif [[ " $* " == *" ps --all --no-trunc "* ]]; then
+      printf 'compose diagnostics\n'
+    else
+      exit 70
+    fi
+    ;;
+  inspect)
+    [[ "$#" -eq 6 ]] || exit 72
+    printf 'health for %s\n' "${!#}"
+    ;;
+  logs)
+    [[ "$#" -eq 4 ]] || exit 73
+    printf 'logs for %s\n' "${!#}"
+    [[ "${!#}" != "container-a" ]] || exit 74
+    ;;
+  *)
+    exit 75
+    ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    real_docker.chmod(0o755)
+    trusted_config = tmp_path / "trusted-docker-config"
+    trusted_config.mkdir()
+    trusted_config.chmod(0o555)
+    locked_docker = fake_bin / "docker"
+    locked_docker.write_text(
+        """#!/usr/bin/env bash
+exec "${LOCK_TEST_PYTHON}" "${LOCK_TEST_SCRIPT}" \
+  --workspace "${LOCK_TEST_WORKSPACE}" \
+  --real "${LOCK_TEST_REAL_DOCKER}" \
+  --trusted-config "${LOCK_TEST_DOCKER_CONFIG}" -- "$@"
+""",
+        encoding="utf-8",
+    )
+    locked_docker.chmod(0o755)
+    clean_env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("COMPOSE_", "DOCKER_"))
+    }
+    runtime_env = {
+        **clean_env,
+        "FAKE_COMPOSE_IDS": "container-b\ncontainer-a\ncontainer-b\n",
+        "FAKE_DOCKER_CALLS": str(calls),
+        "LOCK_TEST_DOCKER_CONFIG": str(trusted_config),
+        "LOCK_TEST_PYTHON": sys.executable,
+        "LOCK_TEST_REAL_DOCKER": str(real_docker),
+        "LOCK_TEST_SCRIPT": str(REPO / "scripts/release_docker_lock.py"),
+        "LOCK_TEST_WORKSPACE": str(workspace),
+        "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+    }
+    result = subprocess.run(
+        ["bash", "-c", source],
+        cwd=workspace,
+        env=runtime_env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    recorded = calls.read_text(encoding="utf-8").splitlines()
+    compose_calls = [line for line in recorded if line.startswith("command=compose ")]
+    inspect_calls = [line for line in recorded if line.startswith("command=inspect ")]
+    log_calls = [line for line in recorded if line.startswith("command=logs ")]
+    assert len(compose_calls) == 2
+    assert not any(line.startswith("command=ps ") for line in recorded)
+    assert inspect_calls == [
+        "command=inspect argc=6 last=container-a",
+        "command=inspect argc=6 last=container-b",
+    ]
+    assert log_calls == [
+        "command=logs argc=4 last=container-a",
+        "command=logs argc=4 last=container-b",
+    ]
+    assert "health for container-a" in result.stdout
+    assert "health for container-b" in result.stdout
+    assert "logs for container-a" in result.stdout
+    assert "logs for container-b" in result.stdout
+
+    calls.unlink()
+    empty_result = subprocess.run(
+        ["bash", "-c", source],
+        cwd=workspace,
+        env={**runtime_env, "FAKE_COMPOSE_IDS": ""},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert empty_result.returncode == 0, empty_result.stderr
+    empty_recorded = calls.read_text(encoding="utf-8").splitlines()
+    assert (
+        len([line for line in empty_recorded if line.startswith("command=compose ")])
+        == 2
+    )
+    assert not any(
+        line.startswith(("command=inspect ", "command=logs "))
+        for line in empty_recorded
+    )
 
 
 def test_release_runner_capacity_canary_reproduces_post_install_budget() -> None:
