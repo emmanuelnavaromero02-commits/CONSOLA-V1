@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -54,6 +55,11 @@ def run_entity(
     watermark_field = config.get("watermark_field")
     date_field = config.get("date_field") or watermark_field
     security_context = config.get("security_context")
+    serialized_security_context = (
+        json.dumps(security_context, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if isinstance(security_context, dict)
+        else None
+    )
 
     if from_date or to_date:
         mode = "historical"
@@ -69,7 +75,7 @@ def run_entity(
     )
 
     try:
-        client = HubSpotClient()
+        client = HubSpotClient(security_context=serialized_security_context)
 
         watermark: str | None = None
         if mode == "incremental" and watermark_field:
