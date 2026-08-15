@@ -345,7 +345,7 @@ def test_release_asset_redirect_never_forwards_bearer_token() -> None:
 
 def test_transition_ledger_is_exact_and_has_one_bridge() -> None:
     assert TRANSITION_RELEASES == {
-        "v1.45.219-beta": (
+        "v1.45.220-beta": (
             "v1.45.209-beta",
             "713b2801a43c725eab68a31db858c1b5ec10e5cc",
             "21b6274ec6e416d2d808efe30cda19ce8176611f",
@@ -395,11 +395,16 @@ def test_transition_ledger_is_exact_and_has_one_bridge() -> None:
                     "51bf1b642f8c0312c5a9c7eaf29ce68f568ff5f8",
                     "019e4d279dbc3c97db7b00a55df98cb3ba6740c4",
                 ),
+                (
+                    "v1.45.219-beta",
+                    "3fda18d1457126af8e129bd92a3f6868b690b393",
+                    "aca61ae0b871099f4d502abf46d315407b928acc",
+                ),
             ),
         )
     }
     assert TRANSITION_AUTHORITY_ROOTS == {
-        "v1.45.219-beta": "refs/omega-release-authority/v1.45.219-beta"
+        "v1.45.220-beta": "refs/omega-release-authority/v1.45.220-beta"
     }
 
 
@@ -487,13 +492,20 @@ def _transition_history(
         check=True,
     )
     failed_8_object = _git(repo, "rev-parse", "refs/tags/v1.45.218-beta")
-    recovery = _commit(repo, "recovery release .219")
+    failed_9 = _commit(repo, "failed release .219")
     subprocess.run(
-        ["git", "tag", "-a", "v1.45.219-beta", "-m", "recovery release .219"],
+        ["git", "tag", "-a", "v1.45.219-beta", "-m", "failed release .219"],
         cwd=repo,
         check=True,
     )
-    authority = "refs/omega-release-authority/v1.45.219-beta"
+    failed_9_object = _git(repo, "rev-parse", "refs/tags/v1.45.219-beta")
+    recovery = _commit(repo, "recovery release .220")
+    subprocess.run(
+        ["git", "tag", "-a", "v1.45.220-beta", "-m", "recovery release .220"],
+        cwd=repo,
+        check=True,
+    )
+    authority = "refs/omega-release-authority/v1.45.220-beta"
     for name, tag in (
         ("base", "v1.45.209-beta"),
         ("failed-0", "v1.45.210-beta"),
@@ -505,7 +517,8 @@ def _transition_history(
         ("failed-6", "v1.45.216-beta"),
         ("failed-7", "v1.45.217-beta"),
         ("failed-8", "v1.45.218-beta"),
-        ("current", "v1.45.219-beta"),
+        ("failed-9", "v1.45.219-beta"),
+        ("current", "v1.45.220-beta"),
     ):
         subprocess.run(
             ["git", "update-ref", f"{authority}/{name}", f"refs/tags/{tag}"],
@@ -516,7 +529,7 @@ def _transition_history(
         selector,
         "TRANSITION_RELEASES",
         {
-            "v1.45.219-beta": (
+            "v1.45.220-beta": (
                 "v1.45.209-beta",
                 base_object,
                 base,
@@ -530,6 +543,7 @@ def _transition_history(
                     ("v1.45.216-beta", failed_6_object, failed_6),
                     ("v1.45.217-beta", failed_7_object, failed_7),
                     ("v1.45.218-beta", failed_8_object, failed_8),
+                    ("v1.45.219-beta", failed_9_object, failed_9),
                 ),
             )
         },
@@ -537,7 +551,7 @@ def _transition_history(
     monkeypatch.setattr(
         selector,
         "TRANSITION_AUTHORITY_ROOTS",
-        {"v1.45.219-beta": authority},
+        {"v1.45.220-beta": authority},
     )
     return {
         "authority": authority,
@@ -561,11 +575,13 @@ def _transition_history(
         "failed_7_object": failed_7_object,
         "failed_8": failed_8,
         "failed_8_object": failed_8_object,
+        "failed_9": failed_9,
+        "failed_9_object": failed_9_object,
         "recovery": recovery,
     }
 
 
-def test_transition_bridge_requires_all_nine_exact_failed_markers_without_evidence(
+def test_transition_bridge_requires_all_ten_exact_failed_markers_without_evidence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     history = _transition_history(tmp_path, monkeypatch)
@@ -577,7 +593,7 @@ def test_transition_bridge_requires_all_nine_exact_failed_markers_without_eviden
 
     assert select_previous_release(
         history["recovery"],
-        "v1.45.219-beta",
+        "v1.45.220-beta",
         repo=tmp_path,
         trust_verifier=trust,
     ) == (history["base"], "v1.45.209-beta")
@@ -591,10 +607,11 @@ def test_transition_bridge_requires_all_nine_exact_failed_markers_without_eviden
         ("v1.45.216-beta", history["failed_6"]),
         ("v1.45.217-beta", history["failed_7"]),
         ("v1.45.218-beta", history["failed_8"]),
+        ("v1.45.219-beta", history["failed_9"]),
     ]
 
 
-@pytest.mark.parametrize("marker_index", [0, 1, 2, 3, 4, 5, 6, 7, 8])
+@pytest.mark.parametrize("marker_index", [0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
 def test_transition_bridge_blocks_a_missing_failed_marker(
     marker_index: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -613,13 +630,13 @@ def test_transition_bridge_blocks_a_missing_failed_marker(
     with pytest.raises(ReleaseTrustError, match="failed release marker is missing"):
         select_previous_release(
             history["recovery"],
-            "v1.45.219-beta",
+            "v1.45.220-beta",
             repo=tmp_path,
             trust_verifier=lambda _tag, _commit: False,
         )
 
 
-@pytest.mark.parametrize("marker_index", [0, 1, 2, 3, 4, 5, 6, 7, 8])
+@pytest.mark.parametrize("marker_index", [0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
 def test_transition_bridge_blocks_a_recreated_annotated_marker(
     marker_index: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -648,13 +665,13 @@ def test_transition_bridge_blocks_a_recreated_annotated_marker(
     with pytest.raises(ReleaseTrustError, match="tag object differs"):
         select_previous_release(
             history["recovery"],
-            "v1.45.219-beta",
+            "v1.45.220-beta",
             repo=tmp_path,
             trust_verifier=lambda _tag, _commit: False,
         )
 
 
-@pytest.mark.parametrize("marker_index", [0, 1, 2, 3, 4, 5, 6, 7, 8])
+@pytest.mark.parametrize("marker_index", [0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
 def test_transition_bridge_blocks_a_lightweight_failed_marker(
     marker_index: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -673,7 +690,7 @@ def test_transition_bridge_blocks_a_lightweight_failed_marker(
     with pytest.raises(ReleaseTrustError, match="tag object differs"):
         select_previous_release(
             history["recovery"],
-            "v1.45.219-beta",
+            "v1.45.220-beta",
             repo=tmp_path,
             trust_verifier=lambda _tag, _commit: False,
         )
@@ -699,6 +716,7 @@ def test_transition_bridge_ignores_stale_checkout_tags_after_remote_binding(
             "v1.45.217-beta",
             "v1.45.218-beta",
             "v1.45.219-beta",
+            "v1.45.220-beta",
         ],
         cwd=tmp_path,
         check=True,
@@ -706,13 +724,13 @@ def test_transition_bridge_ignores_stale_checkout_tags_after_remote_binding(
 
     assert select_previous_release(
         history["recovery"],
-        "v1.45.219-beta",
+        "v1.45.220-beta",
         repo=tmp_path,
         trust_verifier=lambda _tag, _commit: False,
     ) == (history["base"], "v1.45.209-beta")
 
 
-@pytest.mark.parametrize("marker_index", [0, 1, 2, 3, 4, 5, 6, 7, 8])
+@pytest.mark.parametrize("marker_index", [0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
 def test_transition_bridge_blocks_trusted_evidence_for_each_failed_marker(
     marker_index: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -723,7 +741,7 @@ def test_transition_bridge_blocks_trusted_evidence_for_each_failed_marker(
     with pytest.raises(ReleaseTrustError, match="contradictory canonical evidence"):
         select_previous_release(
             history["recovery"],
-            "v1.45.219-beta",
+            "v1.45.220-beta",
             repo=tmp_path,
             trust_verifier=lambda tag, commit: (
                 tag == failed_tag and commit == failed_commit
@@ -731,7 +749,7 @@ def test_transition_bridge_blocks_trusted_evidence_for_each_failed_marker(
         )
 
 
-@pytest.mark.parametrize("marker_index", [0, 1, 2, 3, 4, 5, 6, 7, 8])
+@pytest.mark.parametrize("marker_index", [0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
 def test_transition_bridge_blocks_ambiguous_failed_marker_evidence(
     marker_index: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -746,7 +764,7 @@ def test_transition_bridge_blocks_ambiguous_failed_marker_evidence(
     with pytest.raises(ReleaseTrustError, match="ambiguous"):
         select_previous_release(
             history["recovery"],
-            "v1.45.219-beta",
+            "v1.45.220-beta",
             repo=tmp_path,
             trust_verifier=ambiguous,
         )
@@ -770,7 +788,7 @@ def test_transition_bridge_requires_current_tag_to_resolve_to_head(
     with pytest.raises(ReleaseTrustError, match="annotated tag identity is invalid"):
         select_previous_release(
             history["recovery"],
-            "v1.45.219-beta",
+            "v1.45.220-beta",
             repo=tmp_path,
             trust_verifier=lambda _tag, _commit: False,
         )
@@ -794,7 +812,7 @@ def test_transition_bridge_rejects_lightweight_current_marker(
     with pytest.raises(ReleaseTrustError, match="not an annotated tag"):
         select_previous_release(
             history["recovery"],
-            "v1.45.219-beta",
+            "v1.45.220-beta",
             repo=tmp_path,
             trust_verifier=lambda _tag, _commit: False,
         )
@@ -831,7 +849,7 @@ def test_transition_bridge_rejects_wrong_embedded_current_tag_name(
     with pytest.raises(ReleaseTrustError, match="annotated tag identity is invalid"):
         select_previous_release(
             history["recovery"],
-            "v1.45.219-beta",
+            "v1.45.220-beta",
             repo=tmp_path,
             trust_verifier=lambda _tag, _commit: False,
         )
@@ -865,7 +883,7 @@ def test_transition_bridge_rejects_current_tag_targeting_another_tag(
             + _git(tmp_path, "rev-parse", "refs/tags/v1.45.216-nested-source")
             + "\n"
             "type tag\n"
-            "tag v1.45.219-beta\n"
+            "tag v1.45.220-beta\n"
             "tagger CI <ci@example.com> 1 +0000\n\n"
             "nested current marker\n"
         ),
@@ -887,7 +905,7 @@ def test_transition_bridge_rejects_current_tag_targeting_another_tag(
     with pytest.raises(ReleaseTrustError, match="annotated tag identity is invalid"):
         select_previous_release(
             history["recovery"],
-            "v1.45.219-beta",
+            "v1.45.220-beta",
             repo=tmp_path,
             trust_verifier=lambda _tag, _commit: False,
         )
@@ -905,7 +923,7 @@ def test_transition_bridge_rejects_shallow_repository(
     with pytest.raises(ReleaseTrustError, match="complete non-shallow history"):
         select_previous_release(
             history["recovery"],
-            "v1.45.219-beta",
+            "v1.45.220-beta",
             repo=tmp_path,
             trust_verifier=lambda _tag, _commit: False,
         )
@@ -922,7 +940,7 @@ def test_transition_bridge_requires_latest_failed_marker_as_the_direct_parent(
             "tag",
             "-f",
             "-a",
-            "v1.45.219-beta",
+            "v1.45.220-beta",
             "-m",
             "non-direct recovery",
             non_direct,
@@ -935,7 +953,7 @@ def test_transition_bridge_requires_latest_failed_marker_as_the_direct_parent(
             "git",
             "update-ref",
             f"{history['authority']}/current",
-            "refs/tags/v1.45.219-beta",
+            "refs/tags/v1.45.220-beta",
         ],
         cwd=tmp_path,
         check=True,
@@ -944,7 +962,7 @@ def test_transition_bridge_requires_latest_failed_marker_as_the_direct_parent(
     with pytest.raises(ReleaseTrustError, match="not directly atop"):
         select_previous_release(
             non_direct,
-            "v1.45.219-beta",
+            "v1.45.220-beta",
             repo=tmp_path,
             trust_verifier=lambda _tag, _commit: False,
         )
@@ -960,7 +978,7 @@ def test_transition_bridge_requires_direct_ordered_failed_chain(
     with pytest.raises(ReleaseTrustError, match="failed release chain is not direct"):
         select_previous_release(
             history["recovery"],
-            "v1.45.219-beta",
+            "v1.45.220-beta",
             repo=tmp_path,
             trust_verifier=lambda _tag, _commit: False,
         )
@@ -994,7 +1012,7 @@ def test_transition_bridge_blocks_swapped_failed_authorities(
     with pytest.raises(ReleaseTrustError, match="tag object differs"):
         select_previous_release(
             history["recovery"],
-            "v1.45.219-beta",
+            "v1.45.220-beta",
             repo=tmp_path,
             trust_verifier=lambda _tag, _commit: False,
         )
@@ -1032,13 +1050,13 @@ def test_transition_bridge_requires_exact_annotated_base_object(
     with pytest.raises(ReleaseTrustError, match="base tag object differs"):
         select_previous_release(
             history["recovery"],
-            "v1.45.219-beta",
+            "v1.45.220-beta",
             repo=tmp_path,
             trust_verifier=lambda _tag, _commit: False,
         )
 
 
-@pytest.mark.parametrize("marker_index", [0, 1, 2, 3, 4, 5, 6, 7, 8])
+@pytest.mark.parametrize("marker_index", [0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
 def test_transition_bridge_requires_exact_failed_peeled_commits(
     marker_index: int,
     tmp_path: Path,
@@ -1046,7 +1064,7 @@ def test_transition_bridge_requires_exact_failed_peeled_commits(
 ) -> None:
     history = _transition_history(tmp_path, monkeypatch)
     base_tag, base_object, base_commit, markers = selector.TRANSITION_RELEASES[
-        "v1.45.219-beta"
+        "v1.45.220-beta"
     ]
     altered = list(markers)
     tag, tag_object, _commit_hash = altered[marker_index]
@@ -1055,7 +1073,7 @@ def test_transition_bridge_requires_exact_failed_peeled_commits(
         selector,
         "TRANSITION_RELEASES",
         {
-            "v1.45.219-beta": (
+            "v1.45.220-beta": (
                 base_tag,
                 base_object,
                 base_commit,
@@ -1067,7 +1085,7 @@ def test_transition_bridge_requires_exact_failed_peeled_commits(
     with pytest.raises(ReleaseTrustError, match="peeled commit differs"):
         select_previous_release(
             history["recovery"],
-            "v1.45.219-beta",
+            "v1.45.220-beta",
             repo=tmp_path,
             trust_verifier=lambda _tag, _commit: False,
         )
@@ -1078,13 +1096,13 @@ def test_transition_bridge_requires_exact_base_peeled_commit(
 ) -> None:
     history = _transition_history(tmp_path, monkeypatch)
     base_tag, base_object, _base_commit, markers = selector.TRANSITION_RELEASES[
-        "v1.45.219-beta"
+        "v1.45.220-beta"
     ]
     monkeypatch.setattr(
         selector,
         "TRANSITION_RELEASES",
         {
-            "v1.45.219-beta": (
+            "v1.45.220-beta": (
                 base_tag,
                 base_object,
                 history["failed_0"],
@@ -1096,28 +1114,28 @@ def test_transition_bridge_requires_exact_base_peeled_commit(
     with pytest.raises(ReleaseTrustError, match="base tag peeled commit differs"):
         select_previous_release(
             history["recovery"],
-            "v1.45.219-beta",
+            "v1.45.220-beta",
             repo=tmp_path,
             trust_verifier=lambda _tag, _commit: False,
         )
 
 
-@pytest.mark.parametrize("marker_count", [8, 10])
-def test_transition_bridge_rejects_any_non_nine_marker_cardinality(
+@pytest.mark.parametrize("marker_count", [9, 11])
+def test_transition_bridge_rejects_any_non_ten_marker_cardinality(
     marker_count: int,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     history = _transition_history(tmp_path, monkeypatch)
     base_tag, base_object, base_commit, markers = selector.TRANSITION_RELEASES[
-        "v1.45.219-beta"
+        "v1.45.220-beta"
     ]
-    altered = markers[:-1] if marker_count == 8 else (*markers, markers[-1])
+    altered = markers[:-1] if marker_count == 9 else (*markers, markers[-1])
     monkeypatch.setattr(
         selector,
         "TRANSITION_RELEASES",
         {
-            "v1.45.219-beta": (
+            "v1.45.220-beta": (
                 base_tag,
                 base_object,
                 base_commit,
@@ -1126,10 +1144,10 @@ def test_transition_bridge_rejects_any_non_nine_marker_cardinality(
         },
     )
 
-    with pytest.raises(ReleaseTrustError, match="exactly nine failed markers"):
+    with pytest.raises(ReleaseTrustError, match="exactly ten failed markers"):
         select_previous_release(
             history["recovery"],
-            "v1.45.219-beta",
+            "v1.45.220-beta",
             repo=tmp_path,
             trust_verifier=lambda _tag, _commit: False,
         )
@@ -1171,13 +1189,13 @@ def test_transition_bridge_requires_base_to_ancestor_first_failed_marker(
         check=True,
     )
     _base_tag, _base_object, _base_commit, markers = selector.TRANSITION_RELEASES[
-        "v1.45.219-beta"
+        "v1.45.220-beta"
     ]
     monkeypatch.setattr(
         selector,
         "TRANSITION_RELEASES",
         {
-            "v1.45.219-beta": (
+            "v1.45.220-beta": (
                 "v1.45.209-beta",
                 unrelated_base_object,
                 unrelated_base,
@@ -1189,7 +1207,7 @@ def test_transition_bridge_requires_base_to_ancestor_first_failed_marker(
     with pytest.raises(ReleaseTrustError, match="base is not an ancestor"):
         select_previous_release(
             history["recovery"],
-            "v1.45.219-beta",
+            "v1.45.220-beta",
             repo=tmp_path,
             trust_verifier=lambda _tag, _commit: False,
         )
@@ -1224,7 +1242,7 @@ def test_transition_bridge_requires_a_single_parent_head(
     with pytest.raises(ReleaseTrustError, match="must have exactly one parent"):
         select_previous_release(
             merge_head,
-            "v1.45.219-beta",
+            "v1.45.220-beta",
             repo=tmp_path,
             trust_verifier=lambda _tag, _commit: False,
         )

@@ -95,6 +95,8 @@ def _recovery_remote(
     str,
     str,
     str,
+    str,
+    str,
 ]:
     remote = tmp_path / "remote.git"
     seed = tmp_path / "seed"
@@ -160,9 +162,15 @@ def _recovery_remote(
         == 0
     )
     failed_218_object = _test_git_output(seed, "rev-parse", "refs/tags/v1.45.218-beta")
-    _test_commit(seed, "recovery .219")
+    failed_219 = _test_commit(seed, "failed .219")
     assert (
-        _test_git(seed, "tag", "-a", "v1.45.219-beta", "-m", "recovery .219").returncode
+        _test_git(seed, "tag", "-a", "v1.45.219-beta", "-m", "failed .219").returncode
+        == 0
+    )
+    failed_219_object = _test_git_output(seed, "rev-parse", "refs/tags/v1.45.219-beta")
+    _test_commit(seed, "recovery .220")
+    assert (
+        _test_git(seed, "tag", "-a", "v1.45.220-beta", "-m", "recovery .220").returncode
         == 0
     )
     assert _test_git(seed, "remote", "add", "origin", str(remote)).returncode == 0
@@ -173,7 +181,7 @@ def _recovery_remote(
         "clone",
         "-q",
         "--branch",
-        "v1.45.219-beta",
+        "v1.45.220-beta",
         str(remote),
         str(checkout),
     )
@@ -200,6 +208,8 @@ def _recovery_remote(
         failed_217_object,
         failed_218,
         failed_218_object,
+        failed_219,
+        failed_219_object,
     )
 
 
@@ -1128,10 +1138,10 @@ def test_previous_release_selection_requires_canonical_release_evidence():
     binding = _named_step(job, "Bind exact remote recovery tag authority")
     step = next(step for step in job["steps"] if step.get("id") == "previous")
     assert job["steps"].index(binding) < job["steps"].index(step)
-    assert binding["if"] == "github.ref_name == 'v1.45.219-beta'"
+    assert binding["if"] == "github.ref_name == 'v1.45.220-beta'"
     for needle in (
         "git fetch --no-tags --force --atomic origin",
-        "+refs/tags/v1.45.219-beta:${authority}/current",
+        "+refs/tags/v1.45.220-beta:${authority}/current",
         "+refs/tags/v1.45.210-beta:${authority}/failed-0",
         "+refs/tags/v1.45.211-beta:${authority}/failed-1",
         "+refs/tags/v1.45.212-beta:${authority}/failed-2",
@@ -1141,16 +1151,17 @@ def test_previous_release_selection_requires_canonical_release_evidence():
         "+refs/tags/v1.45.216-beta:${authority}/failed-6",
         "+refs/tags/v1.45.217-beta:${authority}/failed-7",
         "+refs/tags/v1.45.218-beta:${authority}/failed-8",
+        "+refs/tags/v1.45.219-beta:${authority}/failed-9",
         "+refs/tags/v1.45.209-beta:${authority}/base",
         'git update-ref -d "${authority}/${name}"',
         'git show-ref --verify --quiet "${authority}/${name}"',
     ):
         assert needle in binding["run"]
     assert binding["run"].count("git fetch --no-tags --force --atomic origin") == 1
-    assert binding["run"].count("+refs/tags/") == 11
+    assert binding["run"].count("+refs/tags/") == 12
     assert (
         binding["run"].count(
-            "for name in current failed-0 failed-1 failed-2 failed-3 failed-4 failed-5 failed-6 failed-7 failed-8 base; do"
+            "for name in current failed-0 failed-1 failed-2 failed-3 failed-4 failed-5 failed-6 failed-7 failed-8 failed-9 base; do"
         )
         == 2
     )
@@ -1175,6 +1186,7 @@ def test_previous_release_selection_requires_canonical_release_evidence():
         "v1.45.217-beta",
         "v1.45.218-beta",
         "v1.45.219-beta",
+        "v1.45.220-beta",
     ],
 )
 def test_remote_recovery_binding_rejects_any_deleted_tag_atomically(
@@ -1203,6 +1215,8 @@ def test_remote_recovery_binding_rejects_any_deleted_tag_atomically(
         _failed_217_object,
         _failed_218,
         _failed_218_object,
+        _failed_219,
+        _failed_219_object,
     ) = _recovery_remote(tmp_path)
     stale_object = _test_git_output(checkout, "rev-parse", f"refs/tags/{deleted_tag}")
     assert (
@@ -1228,6 +1242,7 @@ def test_remote_recovery_binding_rejects_any_deleted_tag_atomically(
         "failed-6",
         "failed-7",
         "failed-8",
+        "failed-9",
         "base",
     ):
         assert (
@@ -1235,7 +1250,7 @@ def test_remote_recovery_binding_rejects_any_deleted_tag_atomically(
                 checkout,
                 "show-ref",
                 "--verify",
-                f"refs/omega-release-authority/v1.45.219-beta/{name}",
+                f"refs/omega-release-authority/v1.45.220-beta/{name}",
             ).returncode
             != 0
         )
@@ -1266,6 +1281,8 @@ def test_remote_recovery_binding_replaces_stale_checkout_with_moved_tag(
         _failed_217_object,
         _failed_218,
         _failed_218_object,
+        _failed_219,
+        _failed_219_object,
     ) = _recovery_remote(tmp_path)
     assert _test_git(seed, "tag", "-d", "v1.45.210-beta").returncode == 0
     assert (
@@ -1288,7 +1305,7 @@ def test_remote_recovery_binding_replaces_stale_checkout_with_moved_tag(
     result = _run_recovery_remote_binding(checkout)
 
     assert result.returncode == 0, result.stderr
-    authority = "refs/omega-release-authority/v1.45.219-beta/failed-0"
+    authority = "refs/omega-release-authority/v1.45.220-beta/failed-0"
     assert _test_git_output(checkout, "rev-parse", authority) == moved_object
     assert _test_git_output(checkout, "rev-parse", "refs/tags/v1.45.210-beta") == (
         failed_210_object
@@ -1320,6 +1337,8 @@ def test_remote_recovery_binding_preserves_lightweight_remote_identity(
         _failed_217_object,
         _failed_218,
         _failed_218_object,
+        _failed_219,
+        _failed_219_object,
     ) = _recovery_remote(tmp_path)
     assert _test_git(seed, "tag", "-d", "v1.45.210-beta").returncode == 0
     assert _test_git(seed, "tag", "v1.45.210-beta", failed_210).returncode == 0
@@ -1329,7 +1348,7 @@ def test_remote_recovery_binding_preserves_lightweight_remote_identity(
     result = _run_recovery_remote_binding(checkout)
 
     assert result.returncode == 0, result.stderr
-    authority = "refs/omega-release-authority/v1.45.219-beta/failed-0"
+    authority = "refs/omega-release-authority/v1.45.220-beta/failed-0"
     assert _test_git_output(checkout, "rev-parse", authority) == failed_210
     assert _test_git_output(checkout, "cat-file", "-t", authority) == "commit"
     assert _test_git_output(checkout, "rev-parse", "refs/tags/v1.45.210-beta") == (
@@ -1737,8 +1756,8 @@ def test_duckdb_cache_verifier_blocks_manifest_content_and_topology_drift(
     assert run().returncode != 0
 
 
-def test_failed_210_through_218_releases_are_preserved_and_version_moves_forward():
-    assert (REPO / "VERSION").read_text(encoding="utf-8").strip() == ("1.45.219-beta")
+def test_failed_210_through_219_releases_are_preserved_and_version_moves_forward():
+    assert (REPO / "VERSION").read_text(encoding="utf-8").strip() == ("1.45.220-beta")
     evidence = (
         REPO / "docs/release-evidence/omega-f2-digest-release-gate.md"
     ).read_text(encoding="utf-8")
