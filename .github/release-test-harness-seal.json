@@ -11,7 +11,7 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "sha256": "06ac58e3200079e78e1921dc52f43647505126c05ab3f202ec50ee826c2ec419"
+      "sha256": "ae065277b083cb7f496bff18a01530d91d8493c7be1e420ddf4d86e9e63732df"
     },
     {
       "path": "Makefile",
@@ -4179,7 +4179,7 @@
     },
     {
       "path": "tests/test_f217_release_evidence_red.py",
-      "sha256": "499a4e1e10175c331e26470aa894b1d969a40ff96a4970409f7b1f62604c7cab"
+      "sha256": "d2b881b6b67b17217d6117bc87ff7559491136138fcb01600c94bf5d005b0808"
     },
     {
       "path": "tests/test_f217_transition_bridge_red.py",
@@ -4719,7 +4719,7 @@
     },
     {
       "path": "tests/test_release_ci_fail_closed.py",
-      "sha256": "223aa625f76945e03637e455a40be94bff97c007934a596e02fb546f621ec618"
+      "sha256": "5132e9de30353236fb007ca337260144a47632b767c889420b3fbca4cfc62fd8"
     },
     {
       "path": "tests/test_release_compose_env_contract.py",

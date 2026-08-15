@@ -919,6 +919,7 @@ def test_validated_manifest_is_uploaded_and_attached_to_a_github_release():
     assert "scripts/inspect_github_release.py" in published["run"]
     assert 'payload.get("state") != "present"' in published["run"]
     assert "draft=false VERIFIED" in published["run"]
+    assert "gh release verify" not in published["run"]
     names = [step.get("name") for step in job["steps"]]
     assert names.index("Attach manifest to GitHub Release") < names.index(
         "Verify GitHub Release is published"
@@ -1776,7 +1777,7 @@ def test_duckdb_cache_verifier_blocks_manifest_content_and_topology_drift(
 
 
 def test_failed_210_through_220_releases_are_preserved_and_version_moves_forward():
-    assert (REPO / "VERSION").read_text(encoding="utf-8").strip() == ("1.45.221-beta")
+    assert (REPO / "VERSION").read_text(encoding="utf-8").strip() == ("1.45.222-beta")
     evidence = (
         REPO / "docs/release-evidence/omega-f2-digest-release-gate.md"
     ).read_text(encoding="utf-8")
