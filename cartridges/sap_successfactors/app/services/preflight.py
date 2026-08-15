@@ -809,6 +809,14 @@ def _load_talent_alias_candidates(
     try:
         engine = _get_alias_engine()
         with engine.connect() as conn:
+            conn.execute(
+                text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
+                {"tenant_id": tenant_id},
+            )
+            conn.execute(
+                text("SELECT set_config('app.workspace_id', :workspace_id, true)"),
+                {"workspace_id": workspace_id},
+            )
             exists = conn.execute(
                 text("SELECT to_regclass('public.sap_successfactors_tenant_entity_aliases')")
             ).scalar()
@@ -836,8 +844,8 @@ def _load_talent_alias_candidates(
                     WHERE cartridge_id = 'sap_successfactors'
                       AND enabled = TRUE
                       AND approved = TRUE
-                      AND (tenant_id IS NULL OR tenant_id::TEXT = :tenant_id OR :tenant_id = '')
-                      AND (workspace_id IS NULL OR workspace_id::TEXT = :workspace_id OR :workspace_id = '')
+                      AND (tenant_id IS NULL OR tenant_id::TEXT = :tenant_id)
+                      AND (workspace_id IS NULL OR workspace_id::TEXT = :workspace_id)
                     ORDER BY
                       CASE WHEN workspace_id::TEXT = :workspace_id THEN 0 ELSE 1 END,
                       CASE WHEN tenant_id::TEXT = :tenant_id THEN 0 ELSE 1 END,
