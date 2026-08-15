@@ -420,8 +420,11 @@ run_gate() {
   check_superset_login
 
   if [[ "${PUBLISH_MODE}" == "1" ]]; then
-    log "running publication smoke"
-    make smoke
+    # Acceptance already exercises the live stack after applying migrations.
+    # The release workflow performs its exact-digest and data readiness
+    # verification immediately after this command returns, so repeating the
+    # broad smoke target here only races services recreated by acceptance.
+    log "publication acceptance complete; deferring runtime verification to the post-gate checks"
     log "PASS"
     return
   fi

@@ -11,7 +11,7 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "sha256": "3b25bd857ccc09c399280119c7fbe81490e4052655fdac059c09d3aeca7f6deb"
+      "sha256": "9ebe2a9f5c39922dbc56ea25e9b2c201522dd3e7b65a48ce16ab9596880325da"
     },
     {
       "path": "Makefile",
@@ -2991,7 +2991,7 @@
     },
     {
       "path": "scripts/production_readiness.sh",
-      "sha256": "746155d3b78deed3b1610f032e356ebd5f45557e9f37401e74a012156621e138"
+      "sha256": "da43ff5a09f59f0b916846f7a04e636a6bc44a061d63553099cac3060ebe0583"
     },
     {
       "path": "scripts/release_digest_chain.py",
@@ -4171,7 +4171,7 @@
     },
     {
       "path": "tests/test_f216_transition_bridge_red.py",
-      "sha256": "13a164f941c6a865f89800b5d3fe01531c45f5d5abab98f10d63d8317feff0bd"
+      "sha256": "3d12cbd4ce182be1afe5ccf4b33cf527abb9c3edad08a765803d49aff822858a"
     },
     {
       "path": "tests/test_f217_migration_lock_red.py",
@@ -4179,11 +4179,11 @@
     },
     {
       "path": "tests/test_f217_release_evidence_red.py",
-      "sha256": "f2972f4f14378ef79e821211fc30460f1cc97c81cf78e03bcb1f716dab819a94"
+      "sha256": "bb717fcffad9c7487fe7bf44cef5b8cd4f68cb69c8bde16f227258f520b6628c"
     },
     {
       "path": "tests/test_f217_transition_bridge_red.py",
-      "sha256": "9b403cc4fcb5fe5e551f14b60c0a6864d9cc856a3a75f044657778f5b0313f41"
+      "sha256": "63e75daeeff1642a1b895a2fbf50da3cb49e01e111b0b56a92ee025ee245eb73"
     },
     {
       "path": "tests/test_freshness_endpoint.py",
@@ -4635,7 +4635,7 @@
     },
     {
       "path": "tests/test_production_readiness_gate.py",
-      "sha256": "3b1fecc043e78338343fff9aef571bf1bb3dbfea681e44e3caec779581511568"
+      "sha256": "fa457207991a9e0ab2bc9b953dd20f9feb98c24d76f49c2f842b2f76a8ff2fd6"
     },
     {
       "path": "tests/test_proxy_cookie_attributes.py",
@@ -4719,7 +4719,7 @@
     },
     {
       "path": "tests/test_release_ci_fail_closed.py",
-      "sha256": "76744684351839e8e300c4a2079675df51f98978437bbc9fbcd12afdff33d01e"
+      "sha256": "d9de7231f0d40dd7bc37b8a18521d2ad2ead10a7d34ee233bfe498befa68736d"
     },
     {
       "path": "tests/test_release_compose_env_contract.py",
@@ -5055,7 +5055,7 @@
     },
     {
       "path": "tests/test_select_previous_release.py",
-      "sha256": "982174e9ad1cf28968b2dcb21620810a36a02c3915f23a1b66f8529646e422c7"
+      "sha256": "0189dfdf01eabde3803b99ca93302b598207104626014619e07b79f29c7da4f3"
     },
     {
       "path": "tests/test_service_urls.py",

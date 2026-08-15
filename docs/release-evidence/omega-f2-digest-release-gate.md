@@ -1,7 +1,7 @@
 # OMEGA F2 — digest release gate
 
-Status: **PREPARED** for forward recovery as `v1.45.219-beta`; F2 is not closed.
-The immutable `v1.45.210-beta` through `v1.45.218-beta` attempts are retained
+Status: **PREPARED** for forward recovery as `v1.45.220-beta`; F2 is not closed.
+The immutable `v1.45.210-beta` through `v1.45.219-beta` attempts are retained
 as failed evidence, and no tag is moved or reused.
 
 ## Failed live attempt retained
@@ -177,14 +177,35 @@ as failed evidence, and no tag is moved or reused.
 - The `.218` failure happened before package preflight, builds, manifest,
   digest stack, or publisher. All five downstream jobs were skipped, artifacts
   were exactly zero, and the tag-addressable GitHub Release remained absent.
-- The prepared `.219` harness seals 1,350 files with SHA-256
+- Workflow run `31873736738` for `v1.45.219-beta` was exact push/tag/head,
+  attempt 1. Annotated tag object
+  `3fda18d1457126af8e129bd92a3f6868b690b393` peels to source SHA
+  `aca61ae0b871099f4d502abf46d315407b928acc`. Validation, package preflight,
+  all 15 private tagless builds, manifest assembly, exact-digest pulls, stack
+  startup, readiness, migrations, and the four full-stack acceptance cases all
+  passed. Manifest JSON SHA-256 was
+  `92e750c512230d0b5daa08dd81afe7c0ac5756b187c06ce82072d8b198ef9d5d`;
+  artifact `9244344629` had ZIP SHA-256
+  `4169ed49ef0fb24568df652003c898bd8bad8f086984e0d8a60e18082f3a9e5f`.
+- The publication-only profile then redundantly ran `make smoke` immediately
+  after acceptance cleanup recreated HubSpot. Smoke began while that container
+  was `health: starting`; HubSpot became ready seconds later. The result was
+  43/47 checks passed, with all four failures caused by the same transient
+  HubSpot connection gap. Post-gate verification and the publisher were
+  skipped, no GitHub Release was created, and all 15 candidates remained
+  private and tagless. Forward recovery removes this redundant smoke invocation;
+  acceptance remains mandatory and the existing post-gate digest/data checks
+  remain the runtime publication authority.
+- The prepared `.219` harness sealed 1,350 files with SHA-256
   `1436f60de04a029d29fd22d8ef4d1b9b8840e621cda50c3c4801821284138726`.
-- The forward-only recovery target is `v1.45.219-beta`. Its previous-release
-  selector may bridge to exact `v1.45.209-beta` only when all nine failed
+- The prepared `.220` harness seals 1,350 files with SHA-256
+  `2850173e3f9d9866022b71b159255cbe06b966f57293a1c542829821bf72ea42`.
+- The forward-only recovery target is `v1.45.220-beta`. Its previous-release
+  selector may bridge to exact `v1.45.209-beta` only when all ten failed
   annotated tag objects and peeled SHAs remain exact, the
-  `.210 -> .211 -> .212 -> .213 -> .214 -> .215 -> .216 -> .217 -> .218 -> .219` direct parent
-  chain remains exact, and none of the failed markers has canonical release
-  evidence. Exactly eleven remote tag refs—the current tag, nine failed markers,
+  `.210 -> .211 -> .212 -> .213 -> .214 -> .215 -> .216 -> .217 -> .218 -> .219 -> .220`
+  direct parent chain remains exact, and none of the failed markers has canonical
+  release evidence. Exactly twelve remote tag refs—the current tag, ten failed markers,
   and base—are rebound in one atomic fetch into a dedicated authority namespace
   before selection; a missing, moved, lightweight, swapped, ambiguous, or
   unexpectedly trusted failed marker blocks recovery.
@@ -322,9 +343,9 @@ harness is an authority boundary, not a sandbox against deliberately malicious
 same-UID or privileged code.
 
 To close F2, record the recovery merge SHA and require the live release workflow
-for `v1.45.219-beta` to prove:
+for `v1.45.220-beta` to prove:
 
-1. the immutable Git tag equals that merge SHA and `VERSION=1.45.219-beta`;
+1. the immutable Git tag equals that merge SHA and `VERSION=1.45.220-beta`;
 2. all 15 GHCR packages remain private and every manifest/config/layer exists;
 3. the mandatory digest stack gate passes for the exact manifest bytes;
 4. the final GitHub Release is non-draft and immutable, with exactly the
