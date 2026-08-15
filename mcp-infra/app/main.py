@@ -69,8 +69,46 @@ from contextlib import asynccontextmanager
 from app.rag.store import get_pool as _rag_get_pool
 
 
+def _assert_pg_role_not_privileged() -> None:
+    """Refuse to serve if the main PG role can bypass RLS.
+
+    The whole tenancy model rides on row level security; a superuser or
+    BYPASSRLS role (the old config default was ``postgres``) silently voids
+    every policy. Unreachable DB is tolerated — the guard only decides when
+    the role can actually be resolved.
+    """
+    import psycopg2
+
+    try:
+        conn = psycopg2.connect(
+            host=settings.pg_host,
+            port=settings.pg_port,
+            dbname=settings.pg_db,
+            user=settings.pg_user,
+            password=settings.pg_password,
+            connect_timeout=5,
+        )
+    except Exception:
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user"
+            )
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    if row and row[0]:
+        raise RuntimeError(
+            f"mcp-infra PG role '{settings.pg_user}' is superuser or BYPASSRLS; "
+            "RLS tenant isolation would be silently bypassed. "
+            "Configure a scoped service role (see infra/docker-compose.yml)."
+        )
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    _assert_pg_role_not_privileged()
     try:
         await _rag_get_pool()
     except Exception:
