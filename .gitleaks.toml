@@ -1,0 +1,25 @@
+# Gitleaks configuration for the CI secret-scanning gate
+# (.github/workflows/secret-scan.yml). Extends the default ruleset.
+#
+# The allowlist is deliberately narrow: test fixtures (dummy keys, fake SAML
+# certs, canary JWTs) plus two documented non-secrets. Anything else that
+# looks like a credential fails the gate.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test fixtures and documented public/CI-only values"
+paths = [
+    # pytest / vitest fixtures: dummy keys, fake private keys, canary tokens
+    '''(^|/)tests?/''',
+    '''\.test\.tsx$''',
+]
+regexes = [
+    # CI-only Fernet-shaped dummy required by `docker compose config`
+    # interpolation (.github/workflows/docker-image.yml, Sprint v1.33 note).
+    '''d7to_DkrHVKV5_jOzwCNV-wOl4r6gGCY7Usccczm9dk=''',
+    # Public catalog token embedded by INEGI's own query builder
+    # (cartridges/inegi/app/core/inegi_client.py — public by design).
+    '''96fbd1bf-21e6-28e3-6e64-2b15999d2c89''',
+]

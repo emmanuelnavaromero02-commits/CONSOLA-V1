@@ -21,7 +21,10 @@ class Settings(BaseSettings):
     pg_host:     str = "postgres"
     pg_port:     int = 5432
     pg_db:       str = "modecissions"
-    pg_user:     str = "postgres"
+    # Least-privilege default matching infra/docker-compose.yml; a superuser
+    # or BYPASSRLS role here would void the RLS tenancy model (startup also
+    # fail-fasts on that — see _assert_pg_role_not_privileged in app.main).
+    pg_user:     str = "omega_mcp_infra"
     pg_password: str = Field(..., min_length=1)
 
     # ── PostgreSQL gold ────────────────────────────────────────────────────────

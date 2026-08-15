@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from omega_lakehouse import storage_from_env
 
 from app.api.deps import verify_api_key
+from app.security import SecurityContextError, resolve_signed_scope
 from app.services.bronze_retention import build_retention_dry_run
 from app.services.config_loader import load_company_configs
 from app.services.extraction_service import run_company_facts
@@ -82,11 +83,15 @@ def run_full_load(
 
 
 @router.post("/retention/sec_bronze_dry_run")
-def sec_bronze_dry_run(body: dict[str, Any] | None = Body(None)) -> dict:
+def sec_bronze_dry_run(
+    body: dict[str, Any] | None = Body(None),
+    x_security_context: str | None = Header(default=None, alias="X-Security-Context"),
+) -> dict:
     payload = body or {}
-    ctx = payload.get("security_context") if isinstance(payload.get("security_context"), dict) else {}
-    tenant_id = str(payload.get("tenant_id") or ctx.get("tenant_id") or "")
-    workspace_id = str(payload.get("workspace_id") or ctx.get("workspace_id") or "")
+    try:
+        tenant_id, workspace_id = resolve_signed_scope(x_security_context, payload)
+    except SecurityContextError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     try:
         return build_retention_dry_run(
             storage_from_env(),
@@ -109,9 +114,10 @@ def _run(
 ) -> dict:
     if entity != "company_facts":
         raise HTTPException(status_code=404, detail=f"Entity not found: {entity}")
-    ctx = body.get("security_context") if isinstance(body.get("security_context"), dict) else {}
-    tenant_id = str(body.get("tenant_id") or ctx.get("tenant_id") or "")
-    workspace_id = str(body.get("workspace_id") or ctx.get("workspace_id") or "")
+    try:
+        tenant_id, workspace_id = resolve_signed_scope(security_context, body)
+    except SecurityContextError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     try:
         return run_company_facts(
             tenant_id=tenant_id,

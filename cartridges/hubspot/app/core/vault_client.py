@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import hashlib
+import json
 from typing import Any
 
 import requests
@@ -69,7 +70,17 @@ def _context_cache_key(security_context: str | None) -> str:
     value = (security_context or "").strip()
     if not value:
         return ""
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+    tenant_id = ""
+    workspace_id = ""
+    try:
+        ctx = json.loads(value)
+    except ValueError:
+        ctx = None
+    if isinstance(ctx, dict):
+        tenant_id = str(ctx.get("tenant_id") or "").strip()
+        workspace_id = str(ctx.get("workspace_id") or "").strip()
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
+    return f"tenant_id={tenant_id}/workspace_id={workspace_id}/{digest}"
 
 
 def _fetch_connection(service_name: str, security_context: str | None = None) -> dict[str, Any]:

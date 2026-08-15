@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -69,6 +70,11 @@ def run_entity(
     else:
         mode = config.get("mode", "full")
     security_context = config.get("security_context")
+    serialized_security_context = (
+        json.dumps(security_context, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if isinstance(security_context, dict)
+        else None
+    )
     expected_columns = list(dict.fromkeys([
         *(select_fields or []),
         *([watermark_field] if watermark_field else []),
@@ -84,7 +90,7 @@ def run_entity(
     )
 
     try:
-        client = SapS4Client()
+        client = SapS4Client(security_context=serialized_security_context)
 
         watermark: str | None = None
         if mode == "incremental" and watermark_field:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -60,6 +61,11 @@ def run_entity(
     page_size = config.get("page_size", 200)
     raw_select_fields = config.get("select_fields", [])
     security_context = config.get("security_context")
+    serialized_security_context = (
+        json.dumps(security_context, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if isinstance(security_context, dict)
+        else None
+    )
     if isinstance(raw_select_fields, (list, tuple)):
         select_fields = list(raw_select_fields)
     elif isinstance(raw_select_fields, str) and raw_select_fields:
@@ -88,7 +94,7 @@ def run_entity(
     _logger.info("extraction started entity=%s mode=%s run_id=%s", entity, mode, run_id)
 
     try:
-        client = SalesforceClient()
+        client = SalesforceClient(security_context=serialized_security_context)
 
         watermark: str | None = None
         if mode == "incremental" and watermark_field:

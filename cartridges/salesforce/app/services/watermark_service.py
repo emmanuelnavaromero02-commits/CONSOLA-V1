@@ -3,11 +3,15 @@ from __future__ import annotations
 import os
 
 from app.core.pg_client import get_connection
+from app.core.request_context import scope_values
 
 _CARTRIDGE_ID = "salesforce"
 
 
 def _scope_ids() -> tuple[str | None, str | None]:
+    scoped_tenant_id, scoped_workspace_id = scope_values()
+    if scoped_tenant_id and scoped_workspace_id:
+        return scoped_tenant_id, scoped_workspace_id
     tenant_id = (os.environ.get("OMEGA_TENANT_ID") or os.environ.get("TENANT_ID") or "").strip()
     workspace_id = (os.environ.get("OMEGA_WORKSPACE_ID") or os.environ.get("WORKSPACE_ID") or "").strip()
     return tenant_id or None, workspace_id or None
