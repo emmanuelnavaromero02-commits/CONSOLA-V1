@@ -1,7 +1,7 @@
 # OMEGA F2 — digest release gate
 
-Status: **PREPARED** for forward recovery as `v1.45.216-beta`; F2 is not closed.
-The immutable `v1.45.210-beta` through `v1.45.215-beta` attempts are retained
+Status: **PREPARED** for forward recovery as `v1.45.217-beta`; F2 is not closed.
+The immutable `v1.45.210-beta` through `v1.45.216-beta` attempts are retained
 as failed evidence, and no tag is moved or reused.
 
 ## Failed live attempt retained
@@ -90,12 +90,53 @@ as failed evidence, and no tag is moved or reused.
   15 packages. Final readiness/E2E/stress, digest re-verification, and the final
   harness check were skipped; `publish-release-manifest` was skipped and the
   tag-addressable GitHub Release remained `404`.
-- The forward-only recovery target is `v1.45.216-beta`. Its previous-release
-  selector may bridge to exact `v1.45.209-beta` only when all six failed
+- Workflow run `31858396322` for `v1.45.216-beta` was exact `push`/tag/head,
+  attempt 1. Its annotated tag object is
+  `0f47139b7c3e8ba2b907804d0b2a3673da3a000c`; it peels to source SHA
+  `1544f511cb49375120e75d04e6f8b18c7564f3e7`, whose sole parent is the
+  `.215` source SHA `82a7e45adff10b4877b1bfb0e6acab4206744c60`.
+- Validation job `94947261037`, package-privacy preflight `94948205496`, all
+  15/15 image builds, and canonical manifest assembly job `94948953067` passed.
+  The manifest JSON SHA-256 was
+  `973748408592f6df5b55cab1b75dcef72c46ca1fcffff147788be75cd0fd0fb1`;
+  its sidecar SHA-256 was
+  `5e3f9874f1bd3ed7d343c49b4a97536440282e86c1a1488e588eed07e9f5a79d`.
+  Manifest artifact `omega-release-manifest-31858396322-1` (`9239950258`) had
+  Actions ZIP digest
+  `00615a2030a6873ed37729782fe08f6495332ce410f3367b824a15ba33c33aca`.
+- Digest gate job `94949122196` froze and sealed 1,347 runtime files. Disk
+  reclaim increased free space from `12,502,409,216` to `24,816,611,328`
+  bytes and free inodes from `8,600,682` to `8,886,732`, reclaiming
+  `12,314,202,112` bytes and `286,050` inodes. The three fail-closed capacity
+  checks passed with exact margins: pre-pull `6,562,721,792` bytes
+  (`24,816,332,800` free vs `18,253,611,008` required), pre-infrastructure
+  `8,759,758,848` bytes (`14,128,467,968` vs `5,368,709,120`), and
+  pre-Compose `8,568,311,808` bytes (`10,715,795,456` vs `2,147,483,648`).
+- All 15 exact digest pulls, auxiliary infrastructure pulls, Compose startup,
+  and basic readiness passed. Every named service was healthy, API/core and
+  external readiness each reported `1`, and no container was restarting.
+- `Run all final gates against exact digest stack` then failed closed while
+  applying pending DB migrations.
+  The workflow exported `COMPOSE_FILE=""`; `apply_db_migrations.sh` assigned its
+  internal compose path to that same exported shell name, turning the empty
+  inheritance into a non-empty Docker control value. The real release lock
+  correctly returned exit 97 with `Docker control environment is forbidden after
+  release lock: COMPOSE_FILE`; acceptance returned Make error 97 and
+  production-readiness returned error 2. Post-gate digest/runtime
+  re-verification and the final seal were skipped.
+- The `.216` run retained exactly 16 workflow artifacts: 15 image-candidate receipts
+  plus the canonical manifest. All 15/15 packages remained private
+  and tagless (`tags: []`), the exhaustive package audit found zero canonical
+  `v1.45.216-beta` tags, publisher job `publish-release-manifest`
+  (`94950457075`) was skipped, and the GitHub Release, including drafts, was
+  absent (`404`) with no Release assets.
+- The forward-only recovery target is `v1.45.217-beta`. Its previous-release
+  selector may bridge to exact `v1.45.209-beta` only when all seven failed
   annotated tag objects and peeled SHAs remain exact, the
-  `.210 -> .211 -> .212 -> .213 -> .214 -> .215 -> .216` direct parent chain remains
-  exact, and none of the failed markers has canonical release evidence. Exact
-  remote tag refs are rebound atomically into a dedicated authority namespace
+  `.210 -> .211 -> .212 -> .213 -> .214 -> .215 -> .216 -> .217` direct parent
+  chain remains exact, and none of the failed markers has canonical release
+  evidence. Exactly nine remote tag refs—the current tag, seven failed markers,
+  and base—are rebound in one atomic fetch into a dedicated authority namespace
   before selection; a missing, moved, lightweight, swapped, ambiguous, or
   unexpectedly trusted failed marker blocks recovery.
 
@@ -169,6 +210,21 @@ as failed evidence, and no tag is moved or reused.
   also passed.
 - The prepared `.216` harness seals `1,347` files with SHA-256
   `ee0a442505a6532bcf2853d73ce7cccef83119382b29d4647ebc26b47baedb9c`.
+- The `.217` migration recovery keeps the compose path in the non-control local
+  `MIGRATION_COMPOSE_PATH` and unsets only inherited, exported-empty
+  `COMPOSE_FILE`. Non-empty Docker/Compose controls remain visible to the real
+  release lock and return exit 97 before daemon access. The causal tests drive
+  the real lock into a fake daemon, assert canonical migration Compose argv,
+  and cover `COMPOSE_FILE`, `COMPOSE_PROFILES`, `COMPOSE_PROJECT_NAME`,
+  `DOCKER_HOST`, and `DOCKER_CONTEXT` poison.
+- The prepared `.217` harness seals 1,350 files with SHA-256
+  `010317dc8b0a897e97358ffe761aaa8b4c22aa785c56d327b0cbd047ff030607`.
+- The final `.217` focused migration, transition, selector, release-CI,
+  readiness, Docker-lock, dotenv, and production-readiness matrix passed
+  `317/317`. The expanded release, Compose, AWS, Control Room contract, runner,
+  publisher, image, runtime, and authority matrix passed `997/997`; one
+  environment-inapplicable assertion was explicitly skipped because the AWS
+  Compose model does not ship its own MinIO service.
 - The `.214` runner-disk contract is based on the actual `linux/amd64` OCI
   footprint: 12.468 GiB extracted and 4.004 GiB compressed after layer
   deduplication. It requires 17 GiB free before the 15 application pulls,
@@ -205,9 +261,9 @@ harness is an authority boundary, not a sandbox against deliberately malicious
 same-UID or privileged code.
 
 To close F2, record the recovery merge SHA and require the live release workflow
-for `v1.45.216-beta` to prove:
+for `v1.45.217-beta` to prove:
 
-1. the immutable Git tag equals that merge SHA and `VERSION=1.45.216-beta`;
+1. the immutable Git tag equals that merge SHA and `VERSION=1.45.217-beta`;
 2. all 15 GHCR packages remain private and every manifest/config/layer exists;
 3. the mandatory digest stack gate passes for the exact manifest bytes;
 4. the final GitHub Release is non-draft and immutable, with exactly the
