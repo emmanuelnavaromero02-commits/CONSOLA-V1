@@ -17,6 +17,7 @@ import yaml
 REPO = Path(__file__).resolve().parents[1]
 WORKFLOW = REPO / ".github/workflows/release.yml"
 CAPACITY_WORKFLOW = REPO / ".github/workflows/release-runner-capacity.yml"
+WAIT_FOR_HEALTH = REPO / "scripts/wait_for_health.sh"
 POLICY = REPO / ".github/release-skip-policy.json"
 TEST_SKIP_POLICY = REPO / ".github/release-test-skip-policy.json"
 NESTED_RELEASE_PYTHON_VARIABLES = {
@@ -86,6 +87,8 @@ def _recovery_remote(
     str,
     str,
     str,
+    str,
+    str,
 ]:
     remote = tmp_path / "remote.git"
     seed = tmp_path / "seed"
@@ -127,9 +130,15 @@ def _recovery_remote(
         == 0
     )
     failed_214_object = _test_git_output(seed, "rev-parse", "refs/tags/v1.45.214-beta")
-    _test_commit(seed, "recovery .215")
+    failed_215 = _test_commit(seed, "failed .215")
     assert (
-        _test_git(seed, "tag", "-a", "v1.45.215-beta", "-m", "recovery .215").returncode
+        _test_git(seed, "tag", "-a", "v1.45.215-beta", "-m", "failed .215").returncode
+        == 0
+    )
+    failed_215_object = _test_git_output(seed, "rev-parse", "refs/tags/v1.45.215-beta")
+    _test_commit(seed, "recovery .216")
+    assert (
+        _test_git(seed, "tag", "-a", "v1.45.216-beta", "-m", "recovery .216").returncode
         == 0
     )
     assert _test_git(seed, "remote", "add", "origin", str(remote)).returncode == 0
@@ -140,7 +149,7 @@ def _recovery_remote(
         "clone",
         "-q",
         "--branch",
-        "v1.45.215-beta",
+        "v1.45.216-beta",
         str(remote),
         str(checkout),
     )
@@ -159,6 +168,8 @@ def _recovery_remote(
         failed_213_object,
         failed_214,
         failed_214_object,
+        failed_215,
+        failed_215_object,
     )
 
 
@@ -1088,25 +1099,26 @@ def test_previous_release_selection_requires_canonical_release_evidence():
     binding = _named_step(job, "Bind exact remote recovery tag authority")
     step = next(step for step in job["steps"] if step.get("id") == "previous")
     assert job["steps"].index(binding) < job["steps"].index(step)
-    assert binding["if"] == "github.ref_name == 'v1.45.215-beta'"
+    assert binding["if"] == "github.ref_name == 'v1.45.216-beta'"
     for needle in (
         "git fetch --no-tags --force --atomic origin",
-        "+refs/tags/v1.45.215-beta:${authority}/current",
+        "+refs/tags/v1.45.216-beta:${authority}/current",
         "+refs/tags/v1.45.210-beta:${authority}/failed-0",
         "+refs/tags/v1.45.211-beta:${authority}/failed-1",
         "+refs/tags/v1.45.212-beta:${authority}/failed-2",
         "+refs/tags/v1.45.213-beta:${authority}/failed-3",
         "+refs/tags/v1.45.214-beta:${authority}/failed-4",
+        "+refs/tags/v1.45.215-beta:${authority}/failed-5",
         "+refs/tags/v1.45.209-beta:${authority}/base",
         'git update-ref -d "${authority}/${name}"',
         'git show-ref --verify --quiet "${authority}/${name}"',
     ):
         assert needle in binding["run"]
     assert binding["run"].count("git fetch --no-tags --force --atomic origin") == 1
-    assert binding["run"].count("+refs/tags/") == 7
+    assert binding["run"].count("+refs/tags/") == 8
     assert (
         binding["run"].count(
-            "for name in current failed-0 failed-1 failed-2 failed-3 failed-4 base; do"
+            "for name in current failed-0 failed-1 failed-2 failed-3 failed-4 failed-5 base; do"
         )
         == 2
     )
@@ -1127,6 +1139,7 @@ def test_previous_release_selection_requires_canonical_release_evidence():
         "v1.45.213-beta",
         "v1.45.214-beta",
         "v1.45.215-beta",
+        "v1.45.216-beta",
     ],
 )
 def test_remote_recovery_binding_rejects_any_deleted_tag_atomically(
@@ -1147,6 +1160,8 @@ def test_remote_recovery_binding_rejects_any_deleted_tag_atomically(
         _failed_213_object,
         _failed_214,
         _failed_214_object,
+        _failed_215,
+        _failed_215_object,
     ) = _recovery_remote(tmp_path)
     stale_object = _test_git_output(checkout, "rev-parse", f"refs/tags/{deleted_tag}")
     assert (
@@ -1168,6 +1183,7 @@ def test_remote_recovery_binding_rejects_any_deleted_tag_atomically(
         "failed-2",
         "failed-3",
         "failed-4",
+        "failed-5",
         "base",
     ):
         assert (
@@ -1175,7 +1191,7 @@ def test_remote_recovery_binding_rejects_any_deleted_tag_atomically(
                 checkout,
                 "show-ref",
                 "--verify",
-                f"refs/omega-release-authority/v1.45.215-beta/{name}",
+                f"refs/omega-release-authority/v1.45.216-beta/{name}",
             ).returncode
             != 0
         )
@@ -1198,6 +1214,8 @@ def test_remote_recovery_binding_replaces_stale_checkout_with_moved_tag(
         _failed_213_object,
         _failed_214,
         _failed_214_object,
+        _failed_215,
+        _failed_215_object,
     ) = _recovery_remote(tmp_path)
     assert _test_git(seed, "tag", "-d", "v1.45.210-beta").returncode == 0
     assert (
@@ -1220,7 +1238,7 @@ def test_remote_recovery_binding_replaces_stale_checkout_with_moved_tag(
     result = _run_recovery_remote_binding(checkout)
 
     assert result.returncode == 0, result.stderr
-    authority = "refs/omega-release-authority/v1.45.215-beta/failed-0"
+    authority = "refs/omega-release-authority/v1.45.216-beta/failed-0"
     assert _test_git_output(checkout, "rev-parse", authority) == moved_object
     assert _test_git_output(checkout, "rev-parse", "refs/tags/v1.45.210-beta") == (
         failed_210_object
@@ -1244,6 +1262,8 @@ def test_remote_recovery_binding_preserves_lightweight_remote_identity(
         _failed_213_object,
         _failed_214,
         _failed_214_object,
+        _failed_215,
+        _failed_215_object,
     ) = _recovery_remote(tmp_path)
     assert _test_git(seed, "tag", "-d", "v1.45.210-beta").returncode == 0
     assert _test_git(seed, "tag", "v1.45.210-beta", failed_210).returncode == 0
@@ -1253,7 +1273,7 @@ def test_remote_recovery_binding_preserves_lightweight_remote_identity(
     result = _run_recovery_remote_binding(checkout)
 
     assert result.returncode == 0, result.stderr
-    authority = "refs/omega-release-authority/v1.45.215-beta/failed-0"
+    authority = "refs/omega-release-authority/v1.45.216-beta/failed-0"
     assert _test_git_output(checkout, "rev-parse", authority) == failed_210
     assert _test_git_output(checkout, "cat-file", "-t", authority) == "commit"
     assert _test_git_output(checkout, "rev-parse", "refs/tags/v1.45.210-beta") == (
@@ -1656,16 +1676,22 @@ def test_duckdb_cache_verifier_blocks_manifest_content_and_topology_drift(
     assert run().returncode != 0
 
 
-def test_failed_210_through_214_releases_are_preserved_and_version_moves_forward():
-    assert (REPO / "VERSION").read_text(encoding="utf-8").strip() == ("1.45.215-beta")
+def test_failed_210_through_215_releases_are_preserved_and_version_moves_forward():
+    assert (REPO / "VERSION").read_text(encoding="utf-8").strip() == ("1.45.216-beta")
     evidence = (
         REPO / "docs/release-evidence/omega-f2-digest-release-gate.md"
     ).read_text(encoding="utf-8")
+    flattened_evidence = " ".join(evidence.split())
+    current_seal_sha256 = hashlib.sha256(
+        (REPO / ".github/release-test-harness-seal.json").read_bytes()
+    ).hexdigest()
+    assert current_seal_sha256 in flattened_evidence
     for needle in (
         "v1.45.212-beta",
         "v1.45.213-beta",
         "v1.45.214-beta",
         "v1.45.215-beta",
+        "v1.45.216-beta",
         "v1.45.211-beta",
         "v1.45.210-beta",
         "31801477645",
@@ -1680,6 +1706,10 @@ def test_failed_210_through_214_releases_are_preserved_and_version_moves_forward
         "dd882bc08bb445d1446f9cbbe313448b24827720",
         "926330d8e1e2067e4e56429fb91e4585ffa4eb43",
         "4bcfda1811d4cbe0511624e0d5cd9c1f5205926b",
+        "31851541639",
+        "f40a3ab516689343514411806318cffd4f67c3bd",
+        "82a7e45adff10b4877b1bfb0e6acab4206744c60",
+        "Docker control environment is forbidden after release lock: COMPOSE_FILE",
         "13 failed, 689 passed, 18 errors",
         "1 failed, 720 passed, 16 errors",
         "Freeze trusted Playwright and Docker gate runtimes",
@@ -1687,7 +1717,7 @@ def test_failed_210_through_214_releases_are_preserved_and_version_moves_forward
         "no space left on device",
         "no preflight, image build, manifest, digest gate, or release assets ran",
     ):
-        assert needle in evidence
+        assert needle in flattened_evidence
 
     failed_214_offset = evidence.index("31843803006")
     failed_214_context = evidence[
@@ -1703,6 +1733,29 @@ def test_failed_210_through_214_releases_are_preserved_and_version_moves_forward
         "no GitHub Release",
     ):
         assert needle in failed_214_context
+
+    failed_215_offset = flattened_evidence.index("31851541639")
+    failed_215_context = flattened_evidence[
+        max(0, failed_215_offset - 500) : failed_215_offset + 3_500
+    ]
+    for needle in (
+        "v1.45.215-beta",
+        "f40a3ab516689343514411806318cffd4f67c3bd",
+        "82a7e45adff10b4877b1bfb0e6acab4206744c60",
+        "Wait for exact digest stack basic readiness",
+        "240 seconds",
+        "exit 97",
+        "Docker control environment is forbidden after release lock: COMPOSE_FILE",
+        "false `starting` states",
+        "Airflow webserver and scheduler were healthy",
+        "3259df40b06c312b39ad4d8ad0c1731e98b2f2f986165b850d7e766c3ff54393",
+        "all 15 candidate images remained private and tagless (`tags: []`)",
+        "zero canonical `v1.45.215-beta` tags across the 15 packages",
+        "publish-release-manifest",
+        "was skipped",
+        "GitHub Release remained `404`",
+    ):
+        assert needle in failed_215_context
 
 
 def test_final_release_outputs_are_exclusive_and_compared_to_action_hashes():
@@ -1992,6 +2045,110 @@ exec "${LOCK_TEST_PYTHON}" "${LOCK_TEST_SCRIPT}" \
         line.startswith(("command=inspect ", "command=logs "))
         for line in empty_recorded
     )
+
+
+def _run_wait_for_health_with_release_lock(
+    tmp_path: Path, *, compose_file: str
+) -> subprocess.CompletedProcess[str]:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    real_docker = tmp_path / "docker-real"
+    real_docker.write_text(
+        """#!/usr/bin/env bash
+set -u
+if [[ "${1:-}" == "--config" ]]; then
+  [[ "$#" -ge 3 ]] || exit 96
+  shift 2
+fi
+case "${1:-}" in
+  inspect)
+    printf 'healthy\n'
+    ;;
+  ps)
+    ;;
+  compose)
+    printf 'compose diagnostics\n'
+    ;;
+  logs)
+    printf 'container diagnostics\n'
+    ;;
+  *)
+    exit 98
+    ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    real_docker.chmod(0o755)
+    trusted_config = tmp_path / "trusted-docker-config"
+    trusted_config.mkdir()
+    trusted_config.chmod(0o555)
+    docker = fake_bin / "docker"
+    docker.write_text(
+        """#!/usr/bin/env bash
+exec "${LOCK_TEST_PYTHON}" "${LOCK_TEST_SCRIPT}" \
+  --workspace "${LOCK_TEST_WORKSPACE}" \
+  --real "${LOCK_TEST_REAL_DOCKER}" \
+  --trusted-config "${LOCK_TEST_DOCKER_CONFIG}" -- "$@"
+""",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    curl = fake_bin / "curl"
+    curl.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    curl.chmod(0o755)
+    clean_env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("COMPOSE_", "DOCKER_"))
+    }
+    return subprocess.run(
+        ["bash", str(WAIT_FOR_HEALTH)],
+        cwd=REPO,
+        env={
+            **clean_env,
+            "COMPOSE_FILE": compose_file,
+            "LOCK_TEST_DOCKER_CONFIG": str(trusted_config),
+            "LOCK_TEST_PYTHON": sys.executable,
+            "LOCK_TEST_REAL_DOCKER": str(real_docker),
+            "LOCK_TEST_SCRIPT": str(REPO / "scripts/release_docker_lock.py"),
+            "LOCK_TEST_WORKSPACE": str(REPO),
+            "OMEGA_WAIT_FULL_STACK": "1",
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+            "WAIT_READY_STREAK": "1",
+            "WAIT_SLEEP_SECONDS": "1",
+            "WAIT_TIMEOUT_SECONDS": "1",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def test_wait_for_health_does_not_turn_exported_empty_compose_file_into_poison(
+    tmp_path: Path,
+) -> None:
+    result = _run_wait_for_health_with_release_lock(tmp_path, compose_file="")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "[wait_for_health] Stack ready." in result.stdout
+    assert "console=starting" not in result.stdout
+    assert "RELEASE DOCKER LOCK BLOCKED" not in result.stdout + result.stderr
+
+
+def test_wait_for_health_preserves_nonempty_compose_file_as_lock_poison(
+    tmp_path: Path,
+) -> None:
+    result = _run_wait_for_health_with_release_lock(
+        tmp_path,
+        compose_file="/tmp/attacker-compose.yml",
+    )
+
+    assert result.returncode == 97
+    assert "=starting" not in result.stdout
+    assert "[wait_for_health] Waiting" in result.stdout
+    assert "[wait_for_health] ERROR" not in result.stdout
+    assert "RELEASE DOCKER LOCK BLOCKED" in result.stdout + result.stderr
 
 
 def test_release_runner_capacity_canary_reproduces_post_install_budget() -> None:

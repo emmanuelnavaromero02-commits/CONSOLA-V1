@@ -1,7 +1,7 @@
 # OMEGA F2 — digest release gate
 
-Status: **PREPARED** for forward recovery as `v1.45.215-beta`; F2 is not closed.
-The immutable `v1.45.210-beta` through `v1.45.214-beta` attempts are retained
+Status: **PREPARED** for forward recovery as `v1.45.216-beta`; F2 is not closed.
+The immutable `v1.45.210-beta` through `v1.45.215-beta` attempts are retained
 as failed evidence, and no tag is moved or reused.
 
 ## Failed live attempt retained
@@ -66,10 +66,34 @@ as failed evidence, and no tag is moved or reused.
   candidate receipts plus the canonical manifest. The publisher
   `publish-release-manifest` was skipped; there was no GitHub Release and no
   canonical `.214` GHCR tag.
-- The forward-only recovery target is `v1.45.215-beta`. Its previous-release
-  selector may bridge to exact `v1.45.209-beta` only when all five failed
+- Workflow run `31851541639` for `v1.45.215-beta` passed validation, package
+  privacy preflight, all 15 image builds, canonical manifest assembly, the
+  trusted runtime freeze, runner-disk reclaim and all three disk budgets, all
+  15 exact digest pulls, auxiliary infrastructure pulls, and Compose startup.
+  Both Airflow webserver and scheduler were healthy in the final container
+  diagnostics.
+- The `.215` run then failed closed in `Wait for exact digest stack basic
+  readiness` after 240 seconds. The job exported `COMPOSE_FILE=""`, while
+  `wait_for_health.sh` replaced that empty exported value with its default
+  path. The post-lock Docker guard therefore returned exit 97 for every
+  health inspection with `Docker control environment is forbidden after
+  release lock: COMPOSE_FILE`; suppressed inspection errors were reported as
+  false `starting` states even though the stack was healthy.
+- The `.215` annotated tag object is
+  `f40a3ab516689343514411806318cffd4f67c3bd`; it peels to source SHA
+  `82a7e45adff10b4877b1bfb0e6acab4206744c60`, whose sole parent is the
+  `.214` source SHA. The run retained exactly 16 workflow artifacts. Its
+  canonical manifest SHA-256 was
+  `3259df40b06c312b39ad4d8ad0c1731e98b2f2f986165b850d7e766c3ff54393`;
+  all 15 candidate images remained private and tagless (`tags: []`), and an
+  exhaustive GHCR audit found zero canonical `v1.45.215-beta` tags across the
+  15 packages. Final readiness/E2E/stress, digest re-verification, and the final
+  harness check were skipped; `publish-release-manifest` was skipped and the
+  tag-addressable GitHub Release remained `404`.
+- The forward-only recovery target is `v1.45.216-beta`. Its previous-release
+  selector may bridge to exact `v1.45.209-beta` only when all six failed
   annotated tag objects and peeled SHAs remain exact, the
-  `.210 -> .211 -> .212 -> .213 -> .214 -> .215` direct parent chain remains
+  `.210 -> .211 -> .212 -> .213 -> .214 -> .215 -> .216` direct parent chain remains
   exact, and none of the failed markers has canonical release evidence. Exact
   remote tag refs are rebound atomically into a dedicated authority namespace
   before selection; a missing, moved, lightweight, swapped, ambiguous, or
@@ -133,6 +157,18 @@ as failed evidence, and no tag is moved or reused.
   `16d023b879be6c7d22a6273859c37f306a88083359d1c853e6c03abac859b6e8`.
 - The prepared `.215` harness seals `1,345` files with SHA-256
   `cbe7dd5128a22cc6dbbf7deaa529b104840f405b4065d1f1bfdc4050ebe8f8c4`.
+- The `.216` repair keeps the fallback Compose path in a non-exported local
+  variable and unsets only an exported empty `COMPOSE_FILE` before the first
+  Docker inspection. A genuinely non-empty control value remains poisoned and
+  now propagates the lock's exit 97 immediately, without a readiness timeout or
+  false `starting` state.
+- The `.216` focused selector, CI, and independent adversarial acceptance
+  matrix passed `135/135`; the pre-seal expanded release matrix passed
+  `539/539`. Ruff, Python compilation, workflow YAML, all 50 Bash run blocks,
+  the standalone shell syntax check, diff checks, and the skip-policy verifier
+  also passed.
+- The prepared `.216` harness seals `1,347` files with SHA-256
+  `ee0a442505a6532bcf2853d73ce7cccef83119382b29d4647ebc26b47baedb9c`.
 - The `.214` runner-disk contract is based on the actual `linux/amd64` OCI
   footprint: 12.468 GiB extracted and 4.004 GiB compressed after layer
   deduplication. It requires 17 GiB free before the 15 application pulls,
@@ -169,9 +205,9 @@ harness is an authority boundary, not a sandbox against deliberately malicious
 same-UID or privileged code.
 
 To close F2, record the recovery merge SHA and require the live release workflow
-for `v1.45.215-beta` to prove:
+for `v1.45.216-beta` to prove:
 
-1. the immutable Git tag equals that merge SHA and `VERSION=1.45.215-beta`;
+1. the immutable Git tag equals that merge SHA and `VERSION=1.45.216-beta`;
 2. all 15 GHCR packages remain private and every manifest/config/layer exists;
 3. the mandatory digest stack gate passes for the exact manifest bytes;
 4. the final GitHub Release is non-draft and immutable, with exactly the

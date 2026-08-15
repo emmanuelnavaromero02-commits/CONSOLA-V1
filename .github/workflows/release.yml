@@ -45,23 +45,24 @@ jobs:
           fi
 
       - name: Bind exact remote recovery tag authority
-        if: github.ref_name == 'v1.45.215-beta'
+        if: github.ref_name == 'v1.45.216-beta'
         shell: bash
         run: |
           set -euo pipefail
-          authority=refs/omega-release-authority/v1.45.215-beta
-          for name in current failed-0 failed-1 failed-2 failed-3 failed-4 base; do
+          authority=refs/omega-release-authority/v1.45.216-beta
+          for name in current failed-0 failed-1 failed-2 failed-3 failed-4 failed-5 base; do
             git update-ref -d "${authority}/${name}"
           done
           git fetch --no-tags --force --atomic origin \
-            "+refs/tags/v1.45.215-beta:${authority}/current" \
+            "+refs/tags/v1.45.216-beta:${authority}/current" \
             "+refs/tags/v1.45.210-beta:${authority}/failed-0" \
             "+refs/tags/v1.45.211-beta:${authority}/failed-1" \
             "+refs/tags/v1.45.212-beta:${authority}/failed-2" \
             "+refs/tags/v1.45.213-beta:${authority}/failed-3" \
             "+refs/tags/v1.45.214-beta:${authority}/failed-4" \
+            "+refs/tags/v1.45.215-beta:${authority}/failed-5" \
             "+refs/tags/v1.45.209-beta:${authority}/base"
-          for name in current failed-0 failed-1 failed-2 failed-3 failed-4 base; do
+          for name in current failed-0 failed-1 failed-2 failed-3 failed-4 failed-5 base; do
             git show-ref --verify --quiet "${authority}/${name}"
           done
 

@@ -6,7 +6,15 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-COMPOSE_FILE="${COMPOSE_FILE:-${ROOT}/infra/docker-compose.yml}"
+compose_file_path="${COMPOSE_FILE:-${ROOT}/infra/docker-compose.yml}"
+# The release job deliberately exports an empty COMPOSE_FILE as a poison
+# boundary. Do not turn that empty value into an exported non-empty path: the
+# post-lock Docker guard would reject every otherwise safe inspect. A genuinely
+# non-empty control value remains exported so the guard still fails closed.
+if [[ "${COMPOSE_FILE+x}" == "x" ]] && [[ -z "${COMPOSE_FILE}" ]]; then
+    unset COMPOSE_FILE
+fi
+readonly compose_file_path
 TIMEOUT_SECONDS="${WAIT_TIMEOUT_SECONDS:-240}"
 SLEEP_SECONDS="${WAIT_SLEEP_SECONDS:-5}"
 
@@ -18,7 +26,23 @@ FULL_STACK="${OMEGA_WAIT_FULL_STACK:-1}"
 
 container_health() {
     local name="$1"
-    docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$name" 2>/dev/null || echo starting
+    local output
+    local rc
+    if output="$(
+        docker inspect \
+            --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
+            "$name" 2>&1
+    )"; then
+        printf '%s\n' "${output}"
+        return 0
+    else
+        rc=$?
+    fi
+    if [[ "${rc}" -eq 97 ]]; then
+        printf '%s\n' "${output}" >&2
+        return "${rc}"
+    fi
+    printf 'starting\n'
 }
 
 http_ok() {
@@ -95,7 +119,7 @@ while [ "${SECONDS}" -lt "${deadline}" ]; do
 done
 
 echo "[wait_for_health] ERROR: stack did not become healthy in time."
-docker compose -f "${COMPOSE_FILE}" --profile sap ps || true
+docker compose -f "${compose_file_path}" --profile sap ps || true
 echo "[wait_for_health] mode_console recent logs:"
 docker logs mode_console --tail 80 2>&1 || true
 echo "[wait_for_health] mode_superset recent logs:"
