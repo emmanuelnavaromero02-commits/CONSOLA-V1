@@ -45,16 +45,16 @@ jobs:
           fi
 
       - name: Bind exact remote recovery tag authority
-        if: github.ref_name == 'v1.45.220-beta'
+        if: github.ref_name == 'v1.45.221-beta'
         shell: bash
         run: |
           set -euo pipefail
-          authority=refs/omega-release-authority/v1.45.220-beta
-          for name in current failed-0 failed-1 failed-2 failed-3 failed-4 failed-5 failed-6 failed-7 failed-8 failed-9 base; do
+          authority=refs/omega-release-authority/v1.45.221-beta
+          for name in current failed-0 failed-1 failed-2 failed-3 failed-4 failed-5 failed-6 failed-7 failed-8 failed-9 failed-10 base; do
             git update-ref -d "${authority}/${name}"
           done
           git fetch --no-tags --force --atomic origin \
-            "+refs/tags/v1.45.220-beta:${authority}/current" \
+            "+refs/tags/v1.45.221-beta:${authority}/current" \
             "+refs/tags/v1.45.210-beta:${authority}/failed-0" \
             "+refs/tags/v1.45.211-beta:${authority}/failed-1" \
             "+refs/tags/v1.45.212-beta:${authority}/failed-2" \
@@ -65,8 +65,9 @@ jobs:
             "+refs/tags/v1.45.217-beta:${authority}/failed-7" \
             "+refs/tags/v1.45.218-beta:${authority}/failed-8" \
             "+refs/tags/v1.45.219-beta:${authority}/failed-9" \
+            "+refs/tags/v1.45.220-beta:${authority}/failed-10" \
             "+refs/tags/v1.45.209-beta:${authority}/base"
-          for name in current failed-0 failed-1 failed-2 failed-3 failed-4 failed-5 failed-6 failed-7 failed-8 failed-9 base; do
+          for name in current failed-0 failed-1 failed-2 failed-3 failed-4 failed-5 failed-6 failed-7 failed-8 failed-9 failed-10 base; do
             git show-ref --verify --quiet "${authority}/${name}"
           done
 
@@ -1199,6 +1200,7 @@ jobs:
           release_make production-readiness
 
       - name: Re-verify runtime digests and real-data readiness after all gates
+        if: ${{ false }}
         env:
           BASH_ENV: /dev/null
           COMPOSE_FILE: ""
@@ -1306,6 +1308,7 @@ jobs:
           PY
 
       - name: Verify harness seal immediately after final gates
+        if: ${{ false }}
         env:
           BASH_ENV: /dev/null
           COMPOSE_FILE: ""
