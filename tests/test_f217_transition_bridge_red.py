@@ -12,10 +12,13 @@ import yaml
 import scripts.select_previous_release as selector
 from scripts.select_previous_release import ReleaseTrustError
 
+
 REPO = Path(__file__).resolve().parents[1]
 WORKFLOW = REPO / ".github/workflows/release.yml"
 CURRENT_TAG = "v1.45.217-beta"
 BASE_TAG = "v1.45.209-beta"
+BASE_OBJECT = "713b2801a43c725eab68a31db858c1b5ec10e5cc"
+BASE_COMMIT = "21b6274ec6e416d2d808efe30cda19ce8176611f"
 AUTHORITY = "refs/omega-release-authority/v1.45.217-beta"
 EXPECTED_MARKERS = (
     (
@@ -93,6 +96,8 @@ def _annotated_tag(repo: Path, tag: str, message: str, commit: str) -> str:
 def _transition_history(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    *,
+    interpose_before_recovery: bool = False,
 ) -> TransitionHistory:
     _git(tmp_path, "init", "-q")
     _git(tmp_path, "config", "user.email", "ci@example.com")
@@ -106,6 +111,8 @@ def _transition_history(
         commit = _commit(tmp_path, f"failed release .{patch}")
         tag_object = _annotated_tag(tmp_path, tag, f"failed release .{patch}", commit)
         markers.append((tag, tag_object, commit))
+    if interpose_before_recovery:
+        _commit(tmp_path, "untrusted commit between .216 and .217")
     recovery = _commit(tmp_path, "recovery release .217")
     _annotated_tag(tmp_path, CURRENT_TAG, "recovery release .217", recovery)
 
@@ -149,14 +156,10 @@ def _named_step(job: dict[str, object], name: str) -> dict[str, object]:
 
 def test_f217_ledger_has_seven_exact_failed_markers_and_exact_f216_pin() -> None:
     assert selector.TRANSITION_RELEASES == {
-        CURRENT_TAG: (
-            BASE_TAG,
-            "713b2801a43c725eab68a31db858c1b5ec10e5cc",
-            "21b6274ec6e416d2d808efe30cda19ce8176611f",
-            EXPECTED_MARKERS,
-        )
+        CURRENT_TAG: (BASE_TAG, BASE_OBJECT, BASE_COMMIT, EXPECTED_MARKERS)
     }
     assert selector.TRANSITION_AUTHORITY_ROOTS == {CURRENT_TAG: AUTHORITY}
+    assert len(EXPECTED_MARKERS) == 7
     assert EXPECTED_MARKERS[-1] == (
         "v1.45.216-beta",
         "0f47139b7c3e8ba2b907804d0b2a3673da3a000c",
@@ -185,16 +188,14 @@ def test_f217_workflow_binds_all_nine_remote_refs_in_one_atomic_fetch() -> None:
     assert all(refspec in source for refspec in expected_refspecs)
     assert source.count("git fetch --no-tags --force --atomic origin") == 1
     assert source.count("+refs/tags/") == 9
-    assert (
-        source.count(
-            "for name in current failed-0 failed-1 failed-2 failed-3 "
-            "failed-4 failed-5 failed-6 base; do"
-        )
-        == 2
+    names = (
+        "for name in current failed-0 failed-1 failed-2 failed-3 failed-4 "
+        "failed-5 failed-6 base; do"
     )
+    assert source.count(names) == 2
 
 
-def test_f217_bridge_accepts_exact_seven_marker_chain_without_evidence(
+def test_f217_bridge_accepts_exact_seven_marker_direct_chain_without_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -214,6 +215,25 @@ def test_f217_bridge_accepts_exact_seven_marker_chain_without_evidence(
     assert checked == [(tag, commit) for tag, _object, commit in history.markers]
 
 
+def test_f217_bridge_requires_recovery_directly_atop_f216(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    history = _transition_history(
+        tmp_path,
+        monkeypatch,
+        interpose_before_recovery=True,
+    )
+
+    with pytest.raises(ReleaseTrustError, match="not directly atop"):
+        selector.select_previous_release(
+            history.recovery,
+            CURRENT_TAG,
+            repo=history.repo,
+            trust_verifier=lambda _tag, _commit: False,
+        )
+
+
 def test_f217_bridge_fails_closed_when_f216_authority_is_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -230,7 +250,7 @@ def test_f217_bridge_fails_closed_when_f216_authority_is_missing(
         )
 
 
-def test_f217_bridge_fails_closed_when_f216_annotated_tag_is_recreated(
+def test_f217_bridge_fails_closed_when_f216_annotated_tag_is_moved(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -261,12 +281,7 @@ def test_f217_bridge_fails_closed_when_f216_marker_is_lightweight(
 ) -> None:
     history = _transition_history(tmp_path, monkeypatch)
     _tag, _object, commit = history.markers[-1]
-    _git(
-        history.repo,
-        "update-ref",
-        f"{history.authority}/failed-6",
-        commit,
-    )
+    _git(history.repo, "update-ref", f"{history.authority}/failed-6", commit)
 
     with pytest.raises(ReleaseTrustError, match="tag object differs"):
         selector.select_previous_release(

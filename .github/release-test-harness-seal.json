@@ -10,7 +10,7 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "sha256": "ae91917c211f717b70edecbc8b948127f633fd78f85f126d08508b395a669617"
+      "sha256": "053591869ef15946c0d6a84f7e1a802baada7b68bb9ec7ceb88fad559a420538"
     },
     {
       "path": "Makefile",
@@ -2970,7 +2970,7 @@
     },
     {
       "path": "scripts/apply_db_migrations.sh",
-      "sha256": "41e89bef640408c910e86035d80f53440e995647d3d9978dd887d5038b6800c0"
+      "sha256": "efff35970816ee13655e3f7c44434a6a3bf49887c55ba9853dcaffc7286ad5d0"
     },
     {
       "path": "scripts/load_release_dotenv.py",
@@ -4170,7 +4170,19 @@
     },
     {
       "path": "tests/test_f216_transition_bridge_red.py",
-      "sha256": "9e7df94d82b4c730170a2a87f0a263719863cfc3878481990c8b5eee07fe1552"
+      "sha256": "151d528bdc2ebc09ff46394a07397a831c6c10990677a90e7d93303a21327690"
+    },
+    {
+      "path": "tests/test_f217_migration_lock_red.py",
+      "sha256": "82734794232bf7f58526449c8dc510098de4ce77b8945282e1eb9daab6316d80"
+    },
+    {
+      "path": "tests/test_f217_release_evidence_red.py",
+      "sha256": "a28df5d038c021c9772a443174b137b02f48ed10c52220b937c010a8630d8c92"
+    },
+    {
+      "path": "tests/test_f217_transition_bridge_red.py",
+      "sha256": "bc3645c9a0e0619469ba53f006b2ed77dcfc9d5279ccb60020eea2fcfb89395b"
     },
     {
       "path": "tests/test_freshness_endpoint.py",
@@ -4706,7 +4718,7 @@
     },
     {
       "path": "tests/test_release_ci_fail_closed.py",
-      "sha256": "e21c31e947cc00a1fe5fa0fba7903848d53fc559b8414a2f1c1bc18de6e2ffa2"
+      "sha256": "76f85a787cb3cacb1e3202f5c2b66c7ec8e7acbe089708a2c0ca5fae46c386ca"
     },
     {
       "path": "tests/test_release_compose_env_contract.py",
@@ -5042,7 +5054,7 @@
     },
     {
       "path": "tests/test_select_previous_release.py",
-      "sha256": "43241f9bdc2bd84e7cd45e3126ba4a8d508579be56c11f4692287f45c312940c"
+      "sha256": "ad5e6d5fd764defcf1ed52b2071699235073de0f103e4c9c06b0612a271544d3"
     },
     {
       "path": "tests/test_service_urls.py",
