@@ -1,7 +1,7 @@
 # OMEGA F2 — digest release gate
 
-Status: **PREPARED** for forward recovery as `v1.45.217-beta`; F2 is not closed.
-The immutable `v1.45.210-beta` through `v1.45.216-beta` attempts are retained
+Status: **PREPARED** for forward recovery as `v1.45.218-beta`; F2 is not closed.
+The immutable `v1.45.210-beta` through `v1.45.217-beta` attempts are retained
 as failed evidence, and no tag is moved or reused.
 
 ## Failed live attempt retained
@@ -130,12 +130,48 @@ as failed evidence, and no tag is moved or reused.
   `v1.45.216-beta` tags, publisher job `publish-release-manifest`
   (`94950457075`) was skipped, and the GitHub Release, including drafts, was
   absent (`404`) with no Release assets.
-- The forward-only recovery target is `v1.45.217-beta`. Its previous-release
-  selector may bridge to exact `v1.45.209-beta` only when all seven failed
+- Workflow run `31864136626` for `v1.45.217-beta` was exact `push`/tag/head,
+  attempt 1. Its annotated tag object is
+  `58e0958e5b1609fa3f3184ae7ccc33994516c7a3`; it peels to source SHA
+  `ea3bf6b13c2af884c621310047be43e4a4132362`, whose sole parent is the
+  `.216` source SHA `1544f511cb49375120e75d04e6f8b18c7564f3e7`.
+- Validation job `94962390632`, package-privacy preflight `94963326524`, all
+  15/15 image builds, and manifest assembly job `94964097221` passed. Manifest
+  artifact `omega-release-manifest-31864136626-1` (`9241696590`) had Actions
+  ZIP digest
+  `e23e4e6a79b2f71e945c377a7cd788b3c9b9498308cc3c85ecee5463b7b925f9`.
+  The manifest JSON SHA-256 was
+  `bfd1cb619e1fdd26bff9ad773c578164eed0fd35c1b2c357b453f6b16181d586`;
+  its sidecar file SHA-256 was
+  `b2218d48c57c9ddc001f2d37ad9820c5ca63e808bbc0a95c275f7bf192748d88`.
+- Digest gate job `94964239243` passed the trusted runtime freeze, runner-disk
+  reclaim and all three disk budgets, all 15 exact application pulls,
+  auxiliary infrastructure pulls, Compose startup, and basic readiness. It
+  failed closed at `Run all final gates against exact digest stack` with
+  `156 failed, 4914 passed, 4 skipped` after 1,795.05 seconds.
+- The failures had independent causal families: the changed-area subprocess
+  could not import its reviewed `ci_control_room_paths` sibling under
+  `PYTHONSAFEPATH=1`/`-I`; the final gate had no host DuckDB extension cache;
+  analytic-app grants ran against the canonical database without their seeded
+  installation fixture; the shallow checkout lacked historical commit
+  `c680f0ddbd91f114797e70d0d26c5245d3cdc2db`; and globally exported
+  `E2E_REQUIRE_STACK=1` forced a live LLM flow whose provider returned 502.
+  The release skip-policy verifier also rejected an unreviewed runtime skip in
+  `tests/test_e2e_full_flow.py::test_e2e_08_audit_events_capture_ip`; that test
+  called stale path `/api/admin/audit` although the shipped endpoint is
+  `/security/audit`.
+- The `.217` migration-lock repair itself passed 11/11 tests in the live full
+  suite. The failed run retained exactly 16 workflow artifacts: 15 private,
+  tagless candidate receipts plus the canonical manifest. No candidate was
+  promoted to a canonical release tag; publisher job
+  `publish-release-manifest` (`94969408412`) was skipped and no GitHub Release
+  was created.
+- The forward-only recovery target is `v1.45.218-beta`. Its previous-release
+  selector may bridge to exact `v1.45.209-beta` only when all eight failed
   annotated tag objects and peeled SHAs remain exact, the
-  `.210 -> .211 -> .212 -> .213 -> .214 -> .215 -> .216 -> .217` direct parent
+  `.210 -> .211 -> .212 -> .213 -> .214 -> .215 -> .216 -> .217 -> .218` direct parent
   chain remains exact, and none of the failed markers has canonical release
-  evidence. Exactly nine remote tag refs—the current tag, seven failed markers,
+  evidence. Exactly ten remote tag refs—the current tag, eight failed markers,
   and base—are rebound in one atomic fetch into a dedicated authority namespace
   before selection; a missing, moved, lightweight, swapped, ambiguous, or
   unexpectedly trusted failed marker blocks recovery.
@@ -225,6 +261,18 @@ as failed evidence, and no tag is moved or reused.
   publisher, image, runtime, and authority matrix passed `997/997`; one
   environment-inapplicable assertion was explicitly skipped because the AWS
   Compose model does not ship its own MinIO service.
+- The `.218` recovery makes the digest gate a publication gate rather than a
+  second full CI environment. It keeps exact-digest startup, health, database
+  migrations, full-stack acceptance, data readiness, Superset login, smoke,
+  post-gate digest verification, and the source-bound harness seal. It does not
+  repeat the repository-wide pytest, browser, live-LLM, or stress matrices that
+  already ran on the protected PR and `main` commit.
+- The final publication gate uses the normal runner `HOME`, network, and Docker
+  client. The pre-pull image lock still prevents candidate drift and the
+  post-gate inventory comparison remains fail-closed, but the Docker wrapper no
+  longer intercepts migration/database commands inside production readiness.
+- The prepared `.218` harness seals 1,350 files with SHA-256
+  `08ccf584f126e85422b4584e944442536e6b88e276f73791cd54647c061273ec`.
 - The `.214` runner-disk contract is based on the actual `linux/amd64` OCI
   footprint: 12.468 GiB extracted and 4.004 GiB compressed after layer
   deduplication. It requires 17 GiB free before the 15 application pulls,
@@ -261,9 +309,9 @@ harness is an authority boundary, not a sandbox against deliberately malicious
 same-UID or privileged code.
 
 To close F2, record the recovery merge SHA and require the live release workflow
-for `v1.45.217-beta` to prove:
+for `v1.45.218-beta` to prove:
 
-1. the immutable Git tag equals that merge SHA and `VERSION=1.45.217-beta`;
+1. the immutable Git tag equals that merge SHA and `VERSION=1.45.218-beta`;
 2. all 15 GHCR packages remain private and every manifest/config/layer exists;
 3. the mandatory digest stack gate passes for the exact manifest bytes;
 4. the final GitHub Release is non-draft and immutable, with exactly the
