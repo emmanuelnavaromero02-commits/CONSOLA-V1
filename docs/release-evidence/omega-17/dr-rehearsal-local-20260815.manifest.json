@@ -1,0 +1,41 @@
+{
+  "backup_id": "dr-rehearsal-local-20260815",
+  "generated_at": "2026-08-15T20:10:07Z",
+  "created_at": "2026-08-15T20:10:07Z",
+  "deploy_ref": "",
+  "image_tag": "",
+  "version": "1.45.222-beta",
+  "repo_head": "b6c63738d8bbd2cd5e432f06e4757cdaed027b50",
+  "storage_backend": "local",
+  "gcs_bucket": "",
+  "local_dir": "/Users/emmanuel/.f4-dr-rehearsal/backups-out",
+  "aws_region": "",
+  "s3_bucket": "",
+  "artifacts": {
+    "postgres": {
+      "s3_key": "backups/dr-rehearsal-local-20260815/postgres.sql.gz",
+      "sha256": "d4b7962cf35c67f91bbd0fe31de3493895ee9b66929b825bff1289e4e86b7c0c",
+      "size_bytes": 175149
+    },
+    "postgres_gold": {
+      "s3_key": "backups/dr-rehearsal-local-20260815/postgres_gold.sql.gz",
+      "sha256": "17749f07016a9a1ce54d0fa299b79d55441414f2af0c11de3e95a51d746de0be",
+      "size_bytes": 16529
+    },
+    "lakehouse_manifest": {
+      "s3_key": "backups/dr-rehearsal-local-20260815/lakehouse_objects.tsv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "object_count": 0
+    },
+    "config_manifest": {
+      "s3_key": "backups/dr-rehearsal-local-20260815/config_manifest.json",
+      "sha256": "b826c6c8a70b46d5b66295ccba051674f1f948a023f7a92545cb70515d34e9d1",
+      "secrets_redacted": true
+    }
+  },
+  "excluded": [
+    {"scope": "runtime docker image layers", "reason": "reproducible from immutable GHCR IMAGE_TAG"},
+    {"scope": "raw secret values", "reason": "never written to backup evidence; config manifest records keys only"}
+  ],
+  "restore_hint": "Run BACKUP_ID=dr-rehearsal-local-20260815 make dr-rehearsal-aws for safe isolated restore verification before any destructive restore."
+}
