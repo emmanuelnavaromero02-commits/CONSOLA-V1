@@ -6,6 +6,7 @@ from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
 
 from app.api.deps import verify_api_key
+from app.security import SecurityContextError, resolve_signed_scope
 from app.services.config_loader import load_series_configs
 from app.services.extraction_service import run_series_observations
 from app.services.preflight_service import validate_metadata
@@ -77,9 +78,10 @@ def _run(
 ) -> dict:
     if entity != "series_observations":
         raise HTTPException(status_code=404, detail=f"Entity not found: {entity}")
-    ctx = body.get("security_context") if isinstance(body.get("security_context"), dict) else {}
-    tenant_id = str(body.get("tenant_id") or ctx.get("tenant_id") or "")
-    workspace_id = str(body.get("workspace_id") or ctx.get("workspace_id") or "")
+    try:
+        tenant_id, workspace_id = resolve_signed_scope(security_context, body)
+    except SecurityContextError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     try:
         return run_series_observations(
             tenant_id=tenant_id,
