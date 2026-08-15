@@ -11,14 +11,18 @@ REPO_DIR="${REPO_DIR:-/opt/modecissions}"
 DEPLOY_DIR="${DEPLOY_DIR:-${REPO_DIR}/infra/terraform/deploy}"
 cd "${DEPLOY_DIR}"
 
-if [ ! -f .env ]; then
-  echo "ERROR: .env no existe en ${DEPLOY_DIR}. Ejecuta ${REPO_DIR}/scripts/aws-entrypoint.sh." >&2
+# BACKUP_ENV_FILE / BACKUP_COMPOSE_FILES let the same script run on the
+# canonical GCP host layout (env at infra/.env, compose infra/docker-compose.yml
+# + infra/docker-compose.gcp.yml). Defaults preserve the AWS deploy layout.
+BACKUP_ENV_FILE="${BACKUP_ENV_FILE:-.env}"
+if [ ! -f "${BACKUP_ENV_FILE}" ]; then
+  echo "ERROR: ${BACKUP_ENV_FILE} no existe en ${DEPLOY_DIR}. Ejecuta el entrypoint del host (scripts/aws-entrypoint.sh en AWS; provisioning terraform-gcp en GCP)." >&2
   exit 1
 fi
 
 set -a
 # shellcheck disable=SC1091
-source .env
+source "${BACKUP_ENV_FILE}"
 set +a
 
 # Storage backend: explicit BACKUP_STORAGE_BACKEND wins; otherwise inferred —
@@ -76,9 +80,15 @@ storage_cp() {
   esac
 }
 
-COMPOSE_FILES=(-f docker-compose.aws.yml)
-if [[ "${DEPLOY_CARTRIDGES_SAME_HOST:-true}" == "true" ]]; then
-  COMPOSE_FILES+=(-f docker-compose.cartridges.yml)
+if [[ -n "${BACKUP_COMPOSE_FILES:-}" ]]; then
+  # Verbatim compose args for non-AWS host layouts (e.g. the GCP cron sets
+  # "--env-file infra/.env -f infra/docker-compose.yml -f infra/docker-compose.gcp.yml").
+  read -r -a COMPOSE_FILES <<< "${BACKUP_COMPOSE_FILES}"
+else
+  COMPOSE_FILES=(-f docker-compose.aws.yml)
+  if [[ "${DEPLOY_CARTRIDGES_SAME_HOST:-true}" == "true" ]]; then
+    COMPOSE_FILES+=(-f docker-compose.cartridges.yml)
+  fi
 fi
 
 BACKUP_ID="${BACKUP_ID:-$(date -u +%Y%m%dT%H%M%SZ)-${IMAGE_TAG:-unknown}}"

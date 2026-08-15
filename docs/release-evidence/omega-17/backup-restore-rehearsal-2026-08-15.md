@@ -54,14 +54,24 @@ Además: las **7 políticas RLS** de `entity_watermarks` + `sap_successfactors_t
 
 Hallazgos aplicados: (1) `restore.sh` era S3-only — sin simetría de backend un backup GCS/local era irrestaurable por los scripts del repo → generalizado; (2) el filtro del rol bootstrap corría sobre todo el stream (riesgo teórico de descartar filas `COPY` byte-idénticas a las sentencias) → acotado al preámbulo global; (3) el manifest S3 dejaba de ser byte-idéntico → campos nuevos gated a no-S3; (4) el inventario S3 (`grep -v '/backups/'`) nunca excluía el prefijo top-level `backups/` — bug preexistente — → ancla `^backups/`; (5) parsing del `gcloud storage du` robusto a espacios/tamaños grandes (index/substr, sin regex sobre el prefijo); (6) errores de `gcloud` ya no se silencian con `2>/dev/null`; (7) `OMEGA_BACKUP_MANIFEST` se construye con asignación para que `set -e` capture fallos de canonicalización.
 
+## F4-2 — Backup programado (mecanismo commiteado)
+
+- **Cron versionado**: [`infra/terraform-gcp/files/omega-backup.cron`](../../../infra/terraform-gcp/files/omega-backup.cron) — diario 03:10 UTC como root, `BACKUP_STORAGE_BACKEND=gcs` pineado (una variable S3 ambiental no puede desviar el destino), log a `/var/log/omega-backup.log`.
+- **Cableado en provisioning**: `startup.sh.tftpl` instala el cron (`install -m 0644` → `/etc/cron.d/omega-backup`) en cada VM aprovisionada — el mecanismo viaja con el release.
+- **Soporte de layout GCP en `backup.sh`**: `BACKUP_ENV_FILE` (el host GCP tiene el env en `infra/.env`) y `BACKUP_COMPOSE_FILES` (compose `infra/docker-compose.yml` + overlay gcp) — defaults intactos para AWS.
+- **Validación local**: contrato estático `tests/test_gcp_backup_cron_contract.py` (5 passed: forma del archivo, schedule diario válido, comando con backend gcs + logging, provisioning instala el cron, backup.sh soporta la invocación) + corrida E2E real de `backup.sh` con la **forma exacta de invocación del cron** (overrides de env/compose, layout GCP emulado) contra Postgres efímero → backup completo con los 5 artefactos.
+- **Nota (diferido a F6)**: la unificación del migrador AWS al endurecido queda para F6 (decomisión de AWS); el camino canónico GCP ya usa el migrador endurecido, así que "migrador único guardado" está cubierto para producción.
+
 ## BLOCKED — requiere acceso GCP del owner (NO hecho)
 
 La programación del backup en el GCP vivo y el restore de producción real quedan pendientes del owner:
 
-1. **Programar el backup en la VM GCP** (una vez, como root en la VM):
+1. **Activar el cron en la VM GCP ya aprovisionada** (una vez; las VMs nuevas lo reciben del provisioning):
    ```bash
    gcloud compute ssh <VM_NAME> --tunnel-through-iap --project <PROJECT>   # nombres: terraform -chdir=infra/terraform-gcp output
-   echo '0 3 * * * root BACKUP_STORAGE_BACKEND=gcs GCS_BUCKET=<LAKEHOUSE_BUCKET> REPO_DIR=/opt/modecissions bash /opt/modecissions/infra/terraform/deploy/backup.sh >> /var/log/omega-backup.log 2>&1' | sudo tee /etc/cron.d/omega-backup
+   sudo install -m 0644 -o root -g root \
+     /opt/modecissions/current/infra/terraform-gcp/files/omega-backup.cron \
+     /etc/cron.d/omega-backup
    ```
 2. **Primera corrida manual + verificación**: ejecutar el mismo comando sin cron y comprobar `gcloud storage ls gs://<LAKEHOUSE_BUCKET>/backups/` + el `OMEGA_BACKUP_MANIFEST` del log.
 3. **Rehearsal de restore contra datos reales**: en staging desechable (nunca prod directo), `OMEGA_DR_REHEARSAL_EXECUTE=1 make dr-rehearsal` con el `BACKUP_ID` recién creado.
