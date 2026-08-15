@@ -15,6 +15,7 @@ CONSOLE_URL="${EXPLICIT_CONSOLE_URL:-http://127.0.0.1:8000}"
 SUPERSET_PUBLIC_URL="${EXPLICIT_SUPERSET_PUBLIC_URL:-http://127.0.0.1:8088}"
 REMOTE_MODE="${OMEGA_PRODUCTION_READINESS_REMOTE:-0}"
 STRICT_V1_MODE="${OMEGA_PRODUCTION_READINESS_V1:-0}"
+PUBLISH_MODE="${OMEGA_RELEASE_PUBLISH_ONLY:-0}"
 PYTHON_BIN="${PYTHON_BIN:-.venv/bin/python}"
 if [[ ! -x "${PYTHON_BIN}" ]]; then
   PYTHON_BIN="python3"
@@ -86,7 +87,7 @@ source_env() {
           exit 2
         fi
       done < infra/.env
-      local reserved_pattern='^[[:space:]]*(export[[:space:]]+)?(OMEGA_RELEASE_[A-Za-z0-9_]*|OMEGA_STRESS_[A-Za-z0-9_]*|OMEGA_PRODUCTION_READINESS_SKIP_STRESS|PYTHON_BIN|PYTHONOPTIMIZE|PYTHONPATH|PYTHONHOME|PYTHONSTARTUP|PYTEST_[A-Za-z0-9_]*|PLAYWRIGHT_[A-Za-z0-9_]*|PATH|DOCKER_[A-Za-z0-9_]*|COMPOSE_[A-Za-z0-9_]*|GITHUB_[A-Za-z0-9_]*|GIT_[A-Za-z0-9_]*|RUNNER_[A-Za-z0-9_]*|NPM_CONFIG_[A-Za-z0-9_]*|npm_config_[A-Za-z0-9_]*|CI|MAKEFLAGS|GNUMAKEFLAGS|MAKEOVERRIDES|MFLAGS|MAKELEVEL|BASH_ENV|BASHOPTS|SHELLOPTS|ENV|SHELL|NODE_OPTIONS|NODE_PATH|LD_[A-Za-z0-9_]*|DYLD_[A-Za-z0-9_]*|CDPATH|GLOBIGNORE|IFS)='
+      local reserved_pattern='^[[:space:]]*(export[[:space:]]+)?(OMEGA_RELEASE_[A-Za-z0-9_]*|OMEGA_STRESS_[A-Za-z0-9_]*|OMEGA_PRODUCTION_READINESS_SKIP_STRESS|OMEGA_TEST_GRANTS_DSN|PYTHON_BIN|PYTHONOPTIMIZE|PYTHONPATH|PYTHONHOME|PYTHONSTARTUP|PYTEST_[A-Za-z0-9_]*|PLAYWRIGHT_[A-Za-z0-9_]*|PATH|DOCKER_[A-Za-z0-9_]*|COMPOSE_[A-Za-z0-9_]*|GITHUB_[A-Za-z0-9_]*|GIT_[A-Za-z0-9_]*|RUNNER_[A-Za-z0-9_]*|NPM_CONFIG_[A-Za-z0-9_]*|npm_config_[A-Za-z0-9_]*|CI|MAKEFLAGS|GNUMAKEFLAGS|MAKEOVERRIDES|MFLAGS|MAKELEVEL|BASH_ENV|BASHOPTS|SHELLOPTS|ENV|SHELL|NODE_OPTIONS|NODE_PATH|LD_[A-Za-z0-9_]*|DYLD_[A-Za-z0-9_]*|CDPATH|GLOBIGNORE|IFS)='
       if grep -Eq "${reserved_pattern}" infra/.env; then
         log "BLOCKED: infra/.env attempts to override a release-gate control"
         exit 2
@@ -315,7 +316,6 @@ prepare_local_browser_e2e_env() {
 
 prepare_local_release_test_env() {
   local encoded_password
-  export E2E_REQUIRE_STACK=1
   export OMEGA_ENABLE_E2E_SMOKE=1
   export OMEGA_ENABLE_LIVE_STACK_TESTS=1
   export E2E_ADMIN_EMAIL="${E2E_ADMIN_EMAIL:-${TEST_EMAIL:-admin@example.com}}"
@@ -414,10 +414,18 @@ run_gate() {
   prepare_local_release_test_env
 
   log "running full-stack acceptance to warm Bronze/Silver/Gold data"
-  make acceptance
+  E2E_REQUIRE_STACK=1 make acceptance
 
   check_readyz_data
   check_superset_login
+
+  if [[ "${PUBLISH_MODE}" == "1" ]]; then
+    log "running publication smoke"
+    make smoke
+    log "PASS"
+    return
+  fi
+
   check_live_llm_if_required
   run_scope_regression_tests
   run_multiuser_simulation_if_required

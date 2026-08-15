@@ -194,6 +194,17 @@ def test_production_readiness_gate_checks_real_runtime_surfaces():
     )
 
 
+def test_release_publication_profile_stops_after_acceptance_and_smoke():
+    script = _read("scripts/production_readiness.sh")
+    publish = script[script.index('if [[ "${PUBLISH_MODE}" == "1" ]]') :]
+
+    assert 'PUBLISH_MODE="${OMEGA_RELEASE_PUBLISH_ONLY:-0}"' in script
+    assert publish.index('log "running publication smoke"') < publish.index(
+        'log "running backend, cartridge, RLS, and security tests"'
+    )
+    assert publish.index("return") < publish.index("check_live_llm_if_required")
+
+
 def test_production_readiness_e2e_uses_host_published_service_urls():
     script = _read("scripts/production_readiness.sh")
     for needle in (

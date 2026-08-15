@@ -91,6 +91,8 @@ def _recovery_remote(
     str,
     str,
     str,
+    str,
+    str,
 ]:
     remote = tmp_path / "remote.git"
     seed = tmp_path / "seed"
@@ -144,9 +146,15 @@ def _recovery_remote(
         == 0
     )
     failed_216_object = _test_git_output(seed, "rev-parse", "refs/tags/v1.45.216-beta")
-    _test_commit(seed, "recovery .217")
+    failed_217 = _test_commit(seed, "failed .217")
     assert (
-        _test_git(seed, "tag", "-a", "v1.45.217-beta", "-m", "recovery .217").returncode
+        _test_git(seed, "tag", "-a", "v1.45.217-beta", "-m", "failed .217").returncode
+        == 0
+    )
+    failed_217_object = _test_git_output(seed, "rev-parse", "refs/tags/v1.45.217-beta")
+    _test_commit(seed, "recovery .218")
+    assert (
+        _test_git(seed, "tag", "-a", "v1.45.218-beta", "-m", "recovery .218").returncode
         == 0
     )
     assert _test_git(seed, "remote", "add", "origin", str(remote)).returncode == 0
@@ -157,7 +165,7 @@ def _recovery_remote(
         "clone",
         "-q",
         "--branch",
-        "v1.45.217-beta",
+        "v1.45.218-beta",
         str(remote),
         str(checkout),
     )
@@ -180,6 +188,8 @@ def _recovery_remote(
         failed_215_object,
         failed_216,
         failed_216_object,
+        failed_217,
+        failed_217_object,
     )
 
 
@@ -687,7 +697,7 @@ def test_stress_skip_policy_identity_and_beta_scope_are_exact() -> None:
         assert summary == ""
 
 
-def test_beta_stress_skip_comes_from_the_policy_not_tag_substring_logic():
+def test_publication_gate_uses_the_lean_profile_instead_of_repeating_stress():
     jobs = _jobs()
     policy_job = jobs["authorize-release-gate-skips"]
     full_stack = jobs["digest-full-stack-gate"]
@@ -696,14 +706,13 @@ def test_beta_stress_skip_comes_from_the_policy_not_tag_substring_logic():
     assert policy_job["outputs"]["production_readiness_stress_action"] == (
         "${{ steps.policy.outputs.production_readiness_stress_action }}"
     )
-    assert step["env"]["STRESS_ACTION"] == (
-        "${{ needs.authorize-release-gate-skips.outputs.production_readiness_stress_action }}"
-    )
-    assert "STRESS_SKIP_AUTHORIZED" in step["env"]
-    assert "STRESS_POLICY_ID" in step["env"]
+    assert step["env"]["OMEGA_RELEASE_PUBLISH_ONLY"] == "1"
+    assert "STRESS_ACTION" not in step["env"]
+    assert "STRESS_SKIP_AUTHORIZED" not in step["env"]
+    assert "STRESS_POLICY_ID" not in step["env"]
     assert '== *"beta"*' not in step["run"]
-    assert "OMEGA_PRODUCTION_READINESS_SKIP_STRESS=1" in step["run"]
-    assert "production-readiness stress skip is not authorized" in step["run"]
+    assert "OMEGA_PRODUCTION_READINESS_SKIP_STRESS=1" not in step["run"]
+    assert "release_make production-readiness" in step["run"]
 
 
 def test_validate_release_runs_every_test_target_resolved_by_detector():
@@ -1109,10 +1118,10 @@ def test_previous_release_selection_requires_canonical_release_evidence():
     binding = _named_step(job, "Bind exact remote recovery tag authority")
     step = next(step for step in job["steps"] if step.get("id") == "previous")
     assert job["steps"].index(binding) < job["steps"].index(step)
-    assert binding["if"] == "github.ref_name == 'v1.45.217-beta'"
+    assert binding["if"] == "github.ref_name == 'v1.45.218-beta'"
     for needle in (
         "git fetch --no-tags --force --atomic origin",
-        "+refs/tags/v1.45.217-beta:${authority}/current",
+        "+refs/tags/v1.45.218-beta:${authority}/current",
         "+refs/tags/v1.45.210-beta:${authority}/failed-0",
         "+refs/tags/v1.45.211-beta:${authority}/failed-1",
         "+refs/tags/v1.45.212-beta:${authority}/failed-2",
@@ -1120,16 +1129,17 @@ def test_previous_release_selection_requires_canonical_release_evidence():
         "+refs/tags/v1.45.214-beta:${authority}/failed-4",
         "+refs/tags/v1.45.215-beta:${authority}/failed-5",
         "+refs/tags/v1.45.216-beta:${authority}/failed-6",
+        "+refs/tags/v1.45.217-beta:${authority}/failed-7",
         "+refs/tags/v1.45.209-beta:${authority}/base",
         'git update-ref -d "${authority}/${name}"',
         'git show-ref --verify --quiet "${authority}/${name}"',
     ):
         assert needle in binding["run"]
     assert binding["run"].count("git fetch --no-tags --force --atomic origin") == 1
-    assert binding["run"].count("+refs/tags/") == 9
+    assert binding["run"].count("+refs/tags/") == 10
     assert (
         binding["run"].count(
-            "for name in current failed-0 failed-1 failed-2 failed-3 failed-4 failed-5 failed-6 base; do"
+            "for name in current failed-0 failed-1 failed-2 failed-3 failed-4 failed-5 failed-6 failed-7 base; do"
         )
         == 2
     )
@@ -1152,6 +1162,7 @@ def test_previous_release_selection_requires_canonical_release_evidence():
         "v1.45.215-beta",
         "v1.45.216-beta",
         "v1.45.217-beta",
+        "v1.45.218-beta",
     ],
 )
 def test_remote_recovery_binding_rejects_any_deleted_tag_atomically(
@@ -1176,6 +1187,8 @@ def test_remote_recovery_binding_rejects_any_deleted_tag_atomically(
         _failed_215_object,
         _failed_216,
         _failed_216_object,
+        _failed_217,
+        _failed_217_object,
     ) = _recovery_remote(tmp_path)
     stale_object = _test_git_output(checkout, "rev-parse", f"refs/tags/{deleted_tag}")
     assert (
@@ -1199,6 +1212,7 @@ def test_remote_recovery_binding_rejects_any_deleted_tag_atomically(
         "failed-4",
         "failed-5",
         "failed-6",
+        "failed-7",
         "base",
     ):
         assert (
@@ -1206,7 +1220,7 @@ def test_remote_recovery_binding_rejects_any_deleted_tag_atomically(
                 checkout,
                 "show-ref",
                 "--verify",
-                f"refs/omega-release-authority/v1.45.217-beta/{name}",
+                f"refs/omega-release-authority/v1.45.218-beta/{name}",
             ).returncode
             != 0
         )
@@ -1233,6 +1247,8 @@ def test_remote_recovery_binding_replaces_stale_checkout_with_moved_tag(
         _failed_215_object,
         _failed_216,
         _failed_216_object,
+        _failed_217,
+        _failed_217_object,
     ) = _recovery_remote(tmp_path)
     assert _test_git(seed, "tag", "-d", "v1.45.210-beta").returncode == 0
     assert (
@@ -1255,7 +1271,7 @@ def test_remote_recovery_binding_replaces_stale_checkout_with_moved_tag(
     result = _run_recovery_remote_binding(checkout)
 
     assert result.returncode == 0, result.stderr
-    authority = "refs/omega-release-authority/v1.45.217-beta/failed-0"
+    authority = "refs/omega-release-authority/v1.45.218-beta/failed-0"
     assert _test_git_output(checkout, "rev-parse", authority) == moved_object
     assert _test_git_output(checkout, "rev-parse", "refs/tags/v1.45.210-beta") == (
         failed_210_object
@@ -1283,6 +1299,8 @@ def test_remote_recovery_binding_preserves_lightweight_remote_identity(
         _failed_215_object,
         _failed_216,
         _failed_216_object,
+        _failed_217,
+        _failed_217_object,
     ) = _recovery_remote(tmp_path)
     assert _test_git(seed, "tag", "-d", "v1.45.210-beta").returncode == 0
     assert _test_git(seed, "tag", "v1.45.210-beta", failed_210).returncode == 0
@@ -1292,7 +1310,7 @@ def test_remote_recovery_binding_preserves_lightweight_remote_identity(
     result = _run_recovery_remote_binding(checkout)
 
     assert result.returncode == 0, result.stderr
-    authority = "refs/omega-release-authority/v1.45.217-beta/failed-0"
+    authority = "refs/omega-release-authority/v1.45.218-beta/failed-0"
     assert _test_git_output(checkout, "rev-parse", authority) == failed_210
     assert _test_git_output(checkout, "cat-file", "-t", authority) == "commit"
     assert _test_git_output(checkout, "rev-parse", "refs/tags/v1.45.210-beta") == (
@@ -1382,11 +1400,16 @@ def test_release_test_skips_are_versioned_and_enforced_for_pytest_and_playwright
         _jobs()["digest-full-stack-gate"], "Verify sealed release test harness"
     )
     for key in (
-        "E2E_REQUIRE_STACK",
         "OMEGA_ENABLE_E2E_SMOKE",
         "OMEGA_ENABLE_LIVE_STACK_TESTS",
     ):
         assert full_stack["env"][key] == "1"
+    assert "E2E_REQUIRE_STACK" not in full_stack["env"]
+    readiness = (REPO / "scripts/production_readiness.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "E2E_REQUIRE_STACK=1 make acceptance" in readiness
+    assert "export E2E_REQUIRE_STACK=1" not in readiness
 
 
 def test_release_harness_authority_is_bound_to_the_source_sha_and_propagated():
@@ -1695,8 +1718,8 @@ def test_duckdb_cache_verifier_blocks_manifest_content_and_topology_drift(
     assert run().returncode != 0
 
 
-def test_failed_210_through_216_releases_are_preserved_and_version_moves_forward():
-    assert (REPO / "VERSION").read_text(encoding="utf-8").strip() == ("1.45.217-beta")
+def test_failed_210_through_217_releases_are_preserved_and_version_moves_forward():
+    assert (REPO / "VERSION").read_text(encoding="utf-8").strip() == ("1.45.218-beta")
     evidence = (
         REPO / "docs/release-evidence/omega-f2-digest-release-gate.md"
     ).read_text(encoding="utf-8")
@@ -1712,6 +1735,7 @@ def test_failed_210_through_216_releases_are_preserved_and_version_moves_forward
         "v1.45.215-beta",
         "v1.45.216-beta",
         "v1.45.217-beta",
+        "v1.45.218-beta",
         "v1.45.211-beta",
         "v1.45.210-beta",
         "31801477645",
@@ -1867,8 +1891,10 @@ def test_digest_gate_uses_immutable_docker_and_playwright_authorities() -> None:
         "${{ steps.gate_runtime_authority.outputs.playwright_sha256 }}"
     )
     assert gate["env"]["PATH"] == (
-        "${{ steps.gate_runtime_authority.outputs.trusted_path }}"
+        "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
     )
+    assert "release_docker_lock.py" not in gate["run"]
+    assert gate["env"]["OMEGA_RELEASE_PUBLISH_ONLY"] == "1"
 
 
 def test_digest_gate_prepares_and_rechecks_bounded_runner_disk_budget() -> None:
@@ -2262,7 +2288,7 @@ def test_untrusted_gate_cannot_persist_file_command_or_shell_poison() -> None:
         assert step["env"]["LD_PRELOAD"] == ""
         assert step["env"]["LD_AUDIT"] == ""
     assert gate["env"]["PATH"] == (
-        "${{ steps.gate_runtime_authority.outputs.trusted_path }}"
+        "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
     )
     assert final["env"]["PATH"] == (
         "/opt/omega-release-runtime/bin:/usr/local/sbin:/usr/local/bin:"
@@ -2272,9 +2298,7 @@ def test_untrusted_gate_cannot_persist_file_command_or_shell_poison() -> None:
         'gate_env_stamp="$(file_command_stamp "${GITHUB_ENV}")"',
         'gate_path_stamp="$(file_command_stamp "${GITHUB_PATH}")"',
         "trap verify_gate_file_commands EXIT",
-        "-u GITHUB_ENV -u GITHUB_PATH",
-        "-u PYTHONHOME -u PYTHONPATH -u PYTHONSTARTUP",
-        "-u LD_PRELOAD -u LD_AUDIT -u LD_LIBRARY_PATH",
+        '/usr/bin/make "$@"',
     ):
         assert needle in gate["run"]
     verifier = "/usr/bin/python3 -I scripts/verify_release_test_harness.py"

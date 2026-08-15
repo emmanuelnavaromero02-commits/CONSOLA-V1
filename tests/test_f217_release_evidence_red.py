@@ -1,4 +1,4 @@
-"""RED documentary and seal contracts for the v1.45.217 recovery."""
+"""Documentary and seal contracts carried into the v1.45.218 recovery."""
 
 from __future__ import annotations
 
@@ -31,13 +31,13 @@ def _f216_run_evidence() -> str:
     return document.split(marker, 1)[1].split("\n## ", 1)[0]
 
 
-def test_f217_version_and_forward_recovery_target_are_exact() -> None:
-    assert (REPO / "VERSION").read_text(encoding="utf-8").strip() == ("1.45.217-beta")
+def test_f218_version_and_forward_recovery_target_are_exact() -> None:
+    assert (REPO / "VERSION").read_text(encoding="utf-8").strip() == ("1.45.218-beta")
     document = _evidence()
     compact = " ".join(document.split())
-    assert "forward recovery as `v1.45.217-beta`" in compact
-    assert "v1.45.210-beta` through `v1.45.216-beta`" in compact
-    assert ".210 -> .211 -> .212 -> .213 -> .214 -> .215 -> .216 -> .217" in compact
+    assert "forward recovery as `v1.45.218-beta`" in compact
+    assert "v1.45.210-beta` through `v1.45.217-beta`" in compact
+    assert ".210 -> .211 -> .212 -> .213 -> .214 -> .215 -> .216 -> .217 -> .218" in compact
 
 
 def test_f216_failed_run_identity_and_lock_cause_are_retained() -> None:

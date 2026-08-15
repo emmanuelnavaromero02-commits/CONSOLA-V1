@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "files": [
     {
       "path": ".github/release-test-skip-policy.json",
@@ -10,7 +11,7 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "sha256": "053591869ef15946c0d6a84f7e1a802baada7b68bb9ec7ceb88fad559a420538"
+      "sha256": "e5771a4bd56be6f4651046c91ed080662e9de500102af584e08969ccaac09b82"
     },
     {
       "path": "Makefile",
@@ -2990,7 +2991,7 @@
     },
     {
       "path": "scripts/production_readiness.sh",
-      "sha256": "fa83a1ade04ae75c936f04e701a8476b7a68230f5f37ecdfbc65e37773a9815b"
+      "sha256": "746155d3b78deed3b1610f032e356ebd5f45557e9f37401e74a012156621e138"
     },
     {
       "path": "scripts/release_digest_chain.py",
@@ -4170,7 +4171,7 @@
     },
     {
       "path": "tests/test_f216_transition_bridge_red.py",
-      "sha256": "151d528bdc2ebc09ff46394a07397a831c6c10990677a90e7d93303a21327690"
+      "sha256": "ba243e62fa41b60b887843e1604d5329e2e78b156fa52f4f3544dad22106e1ca"
     },
     {
       "path": "tests/test_f217_migration_lock_red.py",
@@ -4178,11 +4179,11 @@
     },
     {
       "path": "tests/test_f217_release_evidence_red.py",
-      "sha256": "a28df5d038c021c9772a443174b137b02f48ed10c52220b937c010a8630d8c92"
+      "sha256": "8371a858b031d088e1bfa41b7b96a9a28799deaa9973862db6b425dacd96a111"
     },
     {
       "path": "tests/test_f217_transition_bridge_red.py",
-      "sha256": "bc3645c9a0e0619469ba53f006b2ed77dcfc9d5279ccb60020eea2fcfb89395b"
+      "sha256": "3c5a94a16d2289e2bcc141e9fbde7ebad59f5071816fe3813a14e051e0bfe6b9"
     },
     {
       "path": "tests/test_freshness_endpoint.py",
@@ -4634,7 +4635,7 @@
     },
     {
       "path": "tests/test_production_readiness_gate.py",
-      "sha256": "df2c552e1803f4e0fc48cfc78df9d85e0b0759a9e224d423c2c5ecd33d4a1fda"
+      "sha256": "3b1fecc043e78338343fff9aef571bf1bb3dbfea681e44e3caec779581511568"
     },
     {
       "path": "tests/test_proxy_cookie_attributes.py",
@@ -4718,7 +4719,7 @@
     },
     {
       "path": "tests/test_release_ci_fail_closed.py",
-      "sha256": "76f85a787cb3cacb1e3202f5c2b66c7ec8e7acbe089708a2c0ca5fae46c386ca"
+      "sha256": "3f6a44bba65d30974258beee03c87d8cdd8e8281413a9cc01ba92a62b58ebfc1"
     },
     {
       "path": "tests/test_release_compose_env_contract.py",
@@ -5054,7 +5055,7 @@
     },
     {
       "path": "tests/test_select_previous_release.py",
-      "sha256": "ad5e6d5fd764defcf1ed52b2071699235073de0f103e4c9c06b0612a271544d3"
+      "sha256": "65740eaddae696da58bdf7627e275e41d1f4ef6fbcc9743bcb54a549aa92fcfa"
     },
     {
       "path": "tests/test_service_urls.py",
@@ -5400,6 +5401,5 @@
       "path": "workspace/tests/test_xss_renderMarkdown.py",
       "sha256": "afc64af4586b23acb4a096fd3273992a8236d24a7e2db4d1b6e76204407d0cc7"
     }
-  ],
-  "schema_version": 1
+  ]
 }

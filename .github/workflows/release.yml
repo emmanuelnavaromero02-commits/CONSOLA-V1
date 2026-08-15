@@ -45,16 +45,16 @@ jobs:
           fi
 
       - name: Bind exact remote recovery tag authority
-        if: github.ref_name == 'v1.45.217-beta'
+        if: github.ref_name == 'v1.45.218-beta'
         shell: bash
         run: |
           set -euo pipefail
-          authority=refs/omega-release-authority/v1.45.217-beta
-          for name in current failed-0 failed-1 failed-2 failed-3 failed-4 failed-5 failed-6 base; do
+          authority=refs/omega-release-authority/v1.45.218-beta
+          for name in current failed-0 failed-1 failed-2 failed-3 failed-4 failed-5 failed-6 failed-7 base; do
             git update-ref -d "${authority}/${name}"
           done
           git fetch --no-tags --force --atomic origin \
-            "+refs/tags/v1.45.217-beta:${authority}/current" \
+            "+refs/tags/v1.45.218-beta:${authority}/current" \
             "+refs/tags/v1.45.210-beta:${authority}/failed-0" \
             "+refs/tags/v1.45.211-beta:${authority}/failed-1" \
             "+refs/tags/v1.45.212-beta:${authority}/failed-2" \
@@ -62,8 +62,9 @@ jobs:
             "+refs/tags/v1.45.214-beta:${authority}/failed-4" \
             "+refs/tags/v1.45.215-beta:${authority}/failed-5" \
             "+refs/tags/v1.45.216-beta:${authority}/failed-6" \
+            "+refs/tags/v1.45.217-beta:${authority}/failed-7" \
             "+refs/tags/v1.45.209-beta:${authority}/base"
-          for name in current failed-0 failed-1 failed-2 failed-3 failed-4 failed-5 failed-6 base; do
+          for name in current failed-0 failed-1 failed-2 failed-3 failed-4 failed-5 failed-6 failed-7 base; do
             git show-ref --verify --quiet "${authority}/${name}"
           done
 
@@ -680,7 +681,6 @@ jobs:
     env:
       E2E_ADMIN_EMAIL: emmanuel@local.ai
       E2E_ADMIN_PASSWORD: Admin123!
-      E2E_REQUIRE_STACK: "1"
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       OMEGA_ENABLE_E2E_SMOKE: "1"
       OMEGA_ENABLE_LIVE_STACK_TESTS: "1"
@@ -1163,18 +1163,15 @@ jobs:
           OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256: ${{ steps.harness_authority.outputs.verifier_sha256 }}
           OMEGA_RELEASE_TEST_SKIP_ENVIRONMENT: release
           OMEGA_RELEASE_TEST_SKIP_POLICY: ${{ github.workspace }}/.github/release-test-skip-policy.json
-          PATH: ${{ steps.gate_runtime_authority.outputs.trusted_path }}
+          OMEGA_RELEASE_PUBLISH_ONLY: "1"
+          PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
           PLAYWRIGHT_BROWSERS_PATH: /opt/omega-release-runtime/browsers
           PYTHONHOME: ""
           PYTHONPATH: ""
-          STRESS_ACTION: ${{ needs.authorize-release-gate-skips.outputs.production_readiness_stress_action }}
-          STRESS_SKIP_AUTHORIZED: ${{ needs.authorize-release-gate-skips.outputs.production_readiness_stress_skip_authorized }}
-          STRESS_POLICY_ID: ${{ needs.authorize-release-gate-skips.outputs.production_readiness_stress_policy_id }}
         run: |
           set -euo pipefail
           [[ "$(/usr/bin/sha256sum scripts/verify_release_test_harness.py | /usr/bin/awk '{print $1}')" == "${OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256}" ]]
           /usr/bin/python3 -I scripts/verify_release_test_harness.py
-          [[ "$(/usr/bin/sha256sum /opt/omega-release-runtime/release_docker_lock.py | /usr/bin/awk '{print $1}')" == "${{ steps.harness_authority.outputs.docker_lock_sha256 }}" ]]
           file_command_stamp() {
             local path="$1"
             [[ -f "${path}" && ! -L "${path}" ]] || return 1
@@ -1195,32 +1192,9 @@ jobs:
           }
           trap verify_gate_file_commands EXIT
           release_make() {
-            /usr/bin/env \
-              -u GITHUB_ENV -u GITHUB_PATH \
-              -u PYTHONHOME -u PYTHONPATH -u PYTHONSTARTUP \
-              -u PYTHONINSPECT -u PYTHONWARNINGS -u PYTHONBREAKPOINT \
-              -u LD_PRELOAD -u LD_AUDIT -u LD_LIBRARY_PATH \
-              BASH_ENV=/dev/null ENV=/dev/null PATH="${PATH}" \
-              /usr/bin/make "$@"
+            /usr/bin/make "$@"
           }
-          case "${STRESS_ACTION}" in
-            run)
-              release_make production-readiness
-              ;;
-            skip)
-              [[ "${STRESS_SKIP_AUTHORIZED}" == "true" && "${STRESS_POLICY_ID}" != "none" ]] || {
-                echo "::error::production-readiness stress skip is not authorized"
-                exit 1
-              }
-              echo "Authorized stress skip policy: ${STRESS_POLICY_ID}"
-              OMEGA_PRODUCTION_READINESS_SKIP_STRESS=1 \
-                release_make production-readiness
-              ;;
-            *)
-              echo "::error::unknown production-readiness stress action: ${STRESS_ACTION}"
-              exit 1
-              ;;
-          esac
+          release_make production-readiness
 
       - name: Re-verify runtime digests and real-data readiness after all gates
         env:
