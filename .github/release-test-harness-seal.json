@@ -11,7 +11,7 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "sha256": "e5771a4bd56be6f4651046c91ed080662e9de500102af584e08969ccaac09b82"
+      "sha256": "3b25bd857ccc09c399280119c7fbe81490e4052655fdac059c09d3aeca7f6deb"
     },
     {
       "path": "Makefile",
@@ -3427,7 +3427,7 @@
     },
     {
       "path": "tests/test_aws_compose_consistency.py",
-      "sha256": "cbb723709ffb9f7ca837de6bef8059b2f91d4c4a9c9dd52ffd6731cfaf20f9be"
+      "sha256": "d0332d1e1d3dd5a8ee60293b9167180d90fd1b80ab28b0ff90d866f1afc9d35d"
     },
     {
       "path": "tests/test_aws_compose_uses_omega_roles.py",
@@ -4171,7 +4171,7 @@
     },
     {
       "path": "tests/test_f216_transition_bridge_red.py",
-      "sha256": "ba243e62fa41b60b887843e1604d5329e2e78b156fa52f4f3544dad22106e1ca"
+      "sha256": "13a164f941c6a865f89800b5d3fe01531c45f5d5abab98f10d63d8317feff0bd"
     },
     {
       "path": "tests/test_f217_migration_lock_red.py",
@@ -4179,11 +4179,11 @@
     },
     {
       "path": "tests/test_f217_release_evidence_red.py",
-      "sha256": "8371a858b031d088e1bfa41b7b96a9a28799deaa9973862db6b425dacd96a111"
+      "sha256": "f2972f4f14378ef79e821211fc30460f1cc97c81cf78e03bcb1f716dab819a94"
     },
     {
       "path": "tests/test_f217_transition_bridge_red.py",
-      "sha256": "3c5a94a16d2289e2bcc141e9fbde7ebad59f5071816fe3813a14e051e0bfe6b9"
+      "sha256": "9b403cc4fcb5fe5e551f14b60c0a6864d9cc856a3a75f044657778f5b0313f41"
     },
     {
       "path": "tests/test_freshness_endpoint.py",
@@ -4719,7 +4719,7 @@
     },
     {
       "path": "tests/test_release_ci_fail_closed.py",
-      "sha256": "3f6a44bba65d30974258beee03c87d8cdd8e8281413a9cc01ba92a62b58ebfc1"
+      "sha256": "76744684351839e8e300c4a2079675df51f98978437bbc9fbcd12afdff33d01e"
     },
     {
       "path": "tests/test_release_compose_env_contract.py",
@@ -5055,7 +5055,7 @@
     },
     {
       "path": "tests/test_select_previous_release.py",
-      "sha256": "65740eaddae696da58bdf7627e275e41d1f4ef6fbcc9743bcb54a549aa92fcfa"
+      "sha256": "982174e9ad1cf28968b2dcb21620810a36a02c3915f23a1b66f8529646e422c7"
     },
     {
       "path": "tests/test_service_urls.py",
