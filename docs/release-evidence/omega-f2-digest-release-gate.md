@@ -1,6 +1,6 @@
 # OMEGA F2 — digest release gate
 
-Status: **PREPARED** for forward recovery as `v1.45.221-beta`; F2 is not closed.
+Status: **PREPARED** for canonical successor `v1.45.222-beta`; F2 is not closed.
 The immutable `v1.45.210-beta` through `v1.45.220-beta` attempts are retained
 as failed evidence, and no tag is moved or reused.
 
@@ -229,6 +229,34 @@ as failed evidence, and no tag is moved or reused.
   and base—are rebound in one atomic fetch into a dedicated authority namespace
   before selection; a missing, moved, lightweight, swapped, ambiguous, or
   unexpectedly trusted failed marker blocks recovery.
+- Workflow run `31880870330` for `v1.45.221-beta` was exact push/tag/head,
+  attempt 1. Annotated tag object
+  `b7f7d738a7c4b85db83efb24a67c5d0fb14b5369` peels to source SHA
+  `5aadf0799ce45ae4715a01b9d951b344db432380`. Validation, package preflight,
+  all 15 private tagless builds, manifest assembly, exact-digest pulls, stack
+  startup/readiness, migrations, and all four acceptance cases passed. The two
+  deliberately disabled post-gate duplicate checks were skipped, and the
+  publisher created a non-draft prerelease with exactly the canonical manifest
+  and checksum assets. Manifest JSON SHA-256 is
+  `d52b22f93ea1a6b85425b2c5795a2a9813e092571e44c05956691405667f8917`;
+  the sidecar-file SHA-256 is
+  `243fb917b7bba7f9afe22121c8f2d3f2f89995967705d10137ae6c1a2a430b4d`,
+  and its checksum verifies the manifest bytes.
+- The publisher then failed only because `gh release verify` required a signed
+  GitHub Release attestation that this project does not generate: `no
+  attestations for tag v1.45.221-beta`. The Release itself remained published
+  as ID `371033451`. The `.222` successor removes all three attestation-only
+  `gh release verify*` commands while retaining the existing asset byte
+  comparisons, Release-state validation, manifest checks, and remote digest
+  verification.
+- The `.221` recovery bridge is not extended. `v1.45.222-beta` must select the
+  published `.221` manifest/checksum through the normal canonical previous-
+  release path; `.221` is not a failed marker. The real selector accepted the
+  published `.221` evidence and resolved its exact source SHA as the `.222`
+  base. All 15 referenced GHCR packages remain private and reachable, and their
+  exact candidate versions remain tagless.
+- The prepared `.222` harness seals 1,350 files with SHA-256
+  `b5df83f02180163751dd1fb592af19b2388028deb4f8a5ee6bdd2fd5ce667e82`.
 
 ## Retained `.210` prepared authority
 
@@ -362,10 +390,10 @@ or signed provenance; those remain later-phase work. The sealed, reviewed test
 harness is an authority boundary, not a sandbox against deliberately malicious
 same-UID or privileged code.
 
-To close F2, record the recovery merge SHA and require the live release workflow
-for `v1.45.221-beta` to prove:
+To close F2, record the successor merge SHA and require the live release workflow
+for `v1.45.222-beta` to prove:
 
-1. the immutable Git tag equals that merge SHA and `VERSION=1.45.221-beta`;
+1. the immutable Git tag equals that merge SHA and `VERSION=1.45.222-beta`;
 2. all 15 GHCR packages remain private and every manifest/config/layer exists;
 3. the mandatory digest stack gate passes for the exact manifest bytes;
 4. the final GitHub Release is non-draft and immutable, with exactly the

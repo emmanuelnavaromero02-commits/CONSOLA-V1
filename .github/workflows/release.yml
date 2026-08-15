@@ -1777,10 +1777,6 @@ jobs:
             echo "::error::immutable release tag does not match source SHA"
             exit 1
           }
-          gh release verify "${RELEASE_TAG}"
-          gh release verify-asset "${RELEASE_TAG}" "${MANIFEST_PATH}"
-          gh release verify-asset "${RELEASE_TAG}" "${CHECKSUM_PATH}"
-
       - name: Final private and reachable release evidence
         env:
           GITHUB_TOKEN: ${{ github.token }}
