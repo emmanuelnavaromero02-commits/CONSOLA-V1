@@ -1398,6 +1398,8 @@ def _enforce_data_scope(
         ctx = _require_context_permission(req, "datasets.read", internal_service)
     elif tool in _MARKET_CONTEXT_READ_TOOLS:
         ctx = _require_context_permission(req, "datasets.read", internal_service)
+    elif tool == "request_admin_help":
+        ctx = _require_context_permission(req, "datasets.read", internal_service)
     elif tool.startswith("cartridge_"):
         raise HTTPException(403, detail="cartridge tool lacks tenancy metadata")
     else:
