@@ -1,7 +1,7 @@
 # OMEGA F2 — digest release gate
 
-Status: **PREPARED** for forward recovery as `v1.45.218-beta`; F2 is not closed.
-The immutable `v1.45.210-beta` through `v1.45.217-beta` attempts are retained
+Status: **PREPARED** for forward recovery as `v1.45.219-beta`; F2 is not closed.
+The immutable `v1.45.210-beta` through `v1.45.218-beta` attempts are retained
 as failed evidence, and no tag is moved or reused.
 
 ## Failed live attempt retained
@@ -166,12 +166,25 @@ as failed evidence, and no tag is moved or reused.
   promoted to a canonical release tag; publisher job
   `publish-release-manifest` (`94969408412`) was skipped and no GitHub Release
   was created.
-- The forward-only recovery target is `v1.45.218-beta`. Its previous-release
-  selector may bridge to exact `v1.45.209-beta` only when all eight failed
+- Workflow run `31871160372` for `v1.45.218-beta` was exact push/tag/head,
+  attempt 1. Annotated tag object
+  `51bf1b642f8c0312c5a9c7eaf29ce68f568ff5f8` peels to source SHA
+  `019e4d279dbc3c97db7b00a55df98cb3ba6740c4`. The recovery selector and
+  skip authority passed, but validate job `94979907909` failed in the static
+  release tests because `tests/test_aws_compose_consistency.py` still required
+  the removed `OMEGA_PRODUCTION_READINESS_SKIP_STRESS=1` literal instead of the
+  new publication-only profile. The result was 1 failed and 86 passed.
+- The `.218` failure happened before package preflight, builds, manifest,
+  digest stack, or publisher. All five downstream jobs were skipped, artifacts
+  were exactly zero, and the tag-addressable GitHub Release remained absent.
+- The prepared `.219` harness seals 1,350 files with SHA-256
+  `1436f60de04a029d29fd22d8ef4d1b9b8840e621cda50c3c4801821284138726`.
+- The forward-only recovery target is `v1.45.219-beta`. Its previous-release
+  selector may bridge to exact `v1.45.209-beta` only when all nine failed
   annotated tag objects and peeled SHAs remain exact, the
-  `.210 -> .211 -> .212 -> .213 -> .214 -> .215 -> .216 -> .217 -> .218` direct parent
+  `.210 -> .211 -> .212 -> .213 -> .214 -> .215 -> .216 -> .217 -> .218 -> .219` direct parent
   chain remains exact, and none of the failed markers has canonical release
-  evidence. Exactly ten remote tag refs—the current tag, eight failed markers,
+  evidence. Exactly eleven remote tag refs—the current tag, nine failed markers,
   and base—are rebound in one atomic fetch into a dedicated authority namespace
   before selection; a missing, moved, lightweight, swapped, ambiguous, or
   unexpectedly trusted failed marker blocks recovery.
@@ -309,9 +322,9 @@ harness is an authority boundary, not a sandbox against deliberately malicious
 same-UID or privileged code.
 
 To close F2, record the recovery merge SHA and require the live release workflow
-for `v1.45.218-beta` to prove:
+for `v1.45.219-beta` to prove:
 
-1. the immutable Git tag equals that merge SHA and `VERSION=1.45.218-beta`;
+1. the immutable Git tag equals that merge SHA and `VERSION=1.45.219-beta`;
 2. all 15 GHCR packages remain private and every manifest/config/layer exists;
 3. the mandatory digest stack gate passes for the exact manifest bytes;
 4. the final GitHub Release is non-draft and immutable, with exactly the

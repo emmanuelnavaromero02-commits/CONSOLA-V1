@@ -204,7 +204,8 @@ def test_release_workflow_validates_before_publishing_images():
     readiness = (REPO / "scripts/production_readiness.sh").read_text(encoding="utf-8")
     for gate in ("make smoke", "make e2e", "make acceptance"):
         assert gate in readiness
-    assert "OMEGA_PRODUCTION_READINESS_SKIP_STRESS=1" in src
+    assert 'OMEGA_RELEASE_PUBLISH_ONLY: "1"' in src
+    assert "OMEGA_PRODUCTION_READINESS_SKIP_STRESS=1" not in src
     # Beta no longer gets an implicit branch in the workflow. Any optional
     # stress skip must come from the reviewed, versioned policy job.
     assert "production_readiness_stress_action" in src
