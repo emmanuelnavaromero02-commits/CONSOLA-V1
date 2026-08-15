@@ -1,4 +1,4 @@
-"""RED acceptance contracts for the v1.45.220 transition bridge."""
+"""RED acceptance contracts for the v1.45.221 transition bridge."""
 
 from __future__ import annotations
 
@@ -15,11 +15,11 @@ from scripts.select_previous_release import ReleaseTrustError
 
 REPO = Path(__file__).resolve().parents[1]
 WORKFLOW = REPO / ".github/workflows/release.yml"
-CURRENT_TAG = "v1.45.220-beta"
+CURRENT_TAG = "v1.45.221-beta"
 BASE_TAG = "v1.45.209-beta"
 BASE_OBJECT = "713b2801a43c725eab68a31db858c1b5ec10e5cc"
 BASE_COMMIT = "21b6274ec6e416d2d808efe30cda19ce8176611f"
-AUTHORITY = "refs/omega-release-authority/v1.45.220-beta"
+AUTHORITY = "refs/omega-release-authority/v1.45.221-beta"
 EXPECTED_MARKERS = (
     (
         "v1.45.210-beta",
@@ -71,6 +71,11 @@ EXPECTED_MARKERS = (
         "3fda18d1457126af8e129bd92a3f6868b690b393",
         "aca61ae0b871099f4d502abf46d315407b928acc",
     ),
+    (
+        "v1.45.220-beta",
+        "6e2ad804f18e027602a88999d0b790f7bfcf2a9b",
+        "c67ce6c21ee49ec57dc815895d9f7b458d5f1d16",
+    ),
 )
 
 
@@ -121,15 +126,15 @@ def _transition_history(
     base = _commit(tmp_path, "trusted base .209")
     base_object = _annotated_tag(tmp_path, BASE_TAG, "trusted base .209", base)
     markers: list[tuple[str, str, str]] = []
-    for patch in range(210, 220):
+    for patch in range(210, 221):
         tag = f"v1.45.{patch}-beta"
         commit = _commit(tmp_path, f"failed release .{patch}")
         tag_object = _annotated_tag(tmp_path, tag, f"failed release .{patch}", commit)
         markers.append((tag, tag_object, commit))
     if interpose_before_recovery:
-        _commit(tmp_path, "untrusted commit between .219 and .220")
-    recovery = _commit(tmp_path, "recovery release .220")
-    _annotated_tag(tmp_path, CURRENT_TAG, "recovery release .220", recovery)
+        _commit(tmp_path, "untrusted commit between .220 and .221")
+    recovery = _commit(tmp_path, "recovery release .221")
+    _annotated_tag(tmp_path, CURRENT_TAG, "recovery release .221", recovery)
 
     refs = [
         ("base", BASE_TAG),
@@ -169,28 +174,28 @@ def _named_step(job: dict[str, object], name: str) -> dict[str, object]:
     return next(step for step in job["steps"] if step.get("name") == name)
 
 
-def test_f220_ledger_has_ten_exact_failed_markers_and_exact_f219_pin() -> None:
+def test_f221_ledger_has_eleven_exact_failed_markers_and_exact_f220_pin() -> None:
     assert selector.TRANSITION_RELEASES == {
         CURRENT_TAG: (BASE_TAG, BASE_OBJECT, BASE_COMMIT, EXPECTED_MARKERS)
     }
     assert selector.TRANSITION_AUTHORITY_ROOTS == {CURRENT_TAG: AUTHORITY}
-    assert len(EXPECTED_MARKERS) == 10
+    assert len(EXPECTED_MARKERS) == 11
     assert EXPECTED_MARKERS[-1] == (
-        "v1.45.219-beta",
-        "3fda18d1457126af8e129bd92a3f6868b690b393",
-        "aca61ae0b871099f4d502abf46d315407b928acc",
+        "v1.45.220-beta",
+        "6e2ad804f18e027602a88999d0b790f7bfcf2a9b",
+        "c67ce6c21ee49ec57dc815895d9f7b458d5f1d16",
     )
 
 
-def test_f220_workflow_binds_all_twelve_remote_refs_in_one_atomic_fetch() -> None:
+def test_f221_workflow_binds_all_thirteen_remote_refs_in_one_atomic_fetch() -> None:
     job = _release_jobs()["detect-release-changes"]
     binding = _named_step(job, "Bind exact remote recovery tag authority")
     source = binding["run"]
 
-    assert binding["if"] == "github.ref_name == 'v1.45.220-beta'"
+    assert binding["if"] == "github.ref_name == 'v1.45.221-beta'"
     assert f"authority={AUTHORITY}" in source
     expected_refspecs = (
-        "+refs/tags/v1.45.220-beta:${authority}/current",
+        "+refs/tags/v1.45.221-beta:${authority}/current",
         "+refs/tags/v1.45.210-beta:${authority}/failed-0",
         "+refs/tags/v1.45.211-beta:${authority}/failed-1",
         "+refs/tags/v1.45.212-beta:${authority}/failed-2",
@@ -201,19 +206,20 @@ def test_f220_workflow_binds_all_twelve_remote_refs_in_one_atomic_fetch() -> Non
         "+refs/tags/v1.45.217-beta:${authority}/failed-7",
         "+refs/tags/v1.45.218-beta:${authority}/failed-8",
         "+refs/tags/v1.45.219-beta:${authority}/failed-9",
+        "+refs/tags/v1.45.220-beta:${authority}/failed-10",
         "+refs/tags/v1.45.209-beta:${authority}/base",
     )
     assert all(refspec in source for refspec in expected_refspecs)
     assert source.count("git fetch --no-tags --force --atomic origin") == 1
-    assert source.count("+refs/tags/") == 12
+    assert source.count("+refs/tags/") == 13
     names = (
         "for name in current failed-0 failed-1 failed-2 failed-3 failed-4 "
-        "failed-5 failed-6 failed-7 failed-8 failed-9 base; do"
+        "failed-5 failed-6 failed-7 failed-8 failed-9 failed-10 base; do"
     )
     assert source.count(names) == 2
 
 
-def test_f220_bridge_accepts_exact_ten_marker_direct_chain_without_evidence(
+def test_f221_bridge_accepts_exact_eleven_marker_direct_chain_without_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -233,7 +239,7 @@ def test_f220_bridge_accepts_exact_ten_marker_direct_chain_without_evidence(
     assert checked == [(tag, commit) for tag, _object, commit in history.markers]
 
 
-def test_f220_bridge_requires_recovery_directly_atop_f219(
+def test_f221_bridge_requires_recovery_directly_atop_f220(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -252,12 +258,12 @@ def test_f220_bridge_requires_recovery_directly_atop_f219(
         )
 
 
-def test_f220_bridge_fails_closed_when_f219_authority_is_missing(
+def test_f221_bridge_fails_closed_when_f220_authority_is_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     history = _transition_history(tmp_path, monkeypatch)
-    _git(history.repo, "update-ref", "-d", f"{history.authority}/failed-9")
+    _git(history.repo, "update-ref", "-d", f"{history.authority}/failed-10")
 
     with pytest.raises(ReleaseTrustError, match="failed release marker is missing"):
         selector.select_previous_release(
@@ -268,19 +274,19 @@ def test_f220_bridge_fails_closed_when_f219_authority_is_missing(
         )
 
 
-def test_f220_bridge_fails_closed_when_f219_annotated_tag_is_moved(
+def test_f221_bridge_fails_closed_when_f220_annotated_tag_is_moved(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     history = _transition_history(tmp_path, monkeypatch)
     tag, original_object, commit = history.markers[-1]
     _git(history.repo, "tag", "-d", tag)
-    recreated = _annotated_tag(history.repo, tag, "attacker-recreated .219", commit)
+    recreated = _annotated_tag(history.repo, tag, "attacker-recreated .220", commit)
     assert recreated != original_object
     _git(
         history.repo,
         "update-ref",
-        f"{history.authority}/failed-9",
+        f"{history.authority}/failed-10",
         f"refs/tags/{tag}",
     )
 
@@ -293,13 +299,13 @@ def test_f220_bridge_fails_closed_when_f219_annotated_tag_is_moved(
         )
 
 
-def test_f220_bridge_fails_closed_when_f219_marker_is_lightweight(
+def test_f221_bridge_fails_closed_when_f220_marker_is_lightweight(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     history = _transition_history(tmp_path, monkeypatch)
     _tag, _object, commit = history.markers[-1]
-    _git(history.repo, "update-ref", f"{history.authority}/failed-9", commit)
+    _git(history.repo, "update-ref", f"{history.authority}/failed-10", commit)
 
     with pytest.raises(ReleaseTrustError, match="tag object differs"):
         selector.select_previous_release(
@@ -310,12 +316,12 @@ def test_f220_bridge_fails_closed_when_f219_marker_is_lightweight(
         )
 
 
-def test_f220_bridge_fails_closed_on_f219_canonical_evidence_contradiction(
+def test_f221_bridge_fails_closed_on_f220_canonical_evidence_contradiction(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     history = _transition_history(tmp_path, monkeypatch)
-    f219_tag, _f219_object, f219_commit = history.markers[-1]
+    f220_tag, _f220_object, f220_commit = history.markers[-1]
 
     with pytest.raises(ReleaseTrustError, match="contradictory canonical evidence"):
         selector.select_previous_release(
@@ -323,6 +329,6 @@ def test_f220_bridge_fails_closed_on_f219_canonical_evidence_contradiction(
             CURRENT_TAG,
             repo=history.repo,
             trust_verifier=lambda tag, commit: (
-                tag == f219_tag and commit == f219_commit
+                tag == f220_tag and commit == f220_commit
             ),
         )

@@ -11,7 +11,7 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "sha256": "9ebe2a9f5c39922dbc56ea25e9b2c201522dd3e7b65a48ce16ab9596880325da"
+      "sha256": "06ac58e3200079e78e1921dc52f43647505126c05ab3f202ec50ee826c2ec419"
     },
     {
       "path": "Makefile",
@@ -4171,7 +4171,7 @@
     },
     {
       "path": "tests/test_f216_transition_bridge_red.py",
-      "sha256": "3d12cbd4ce182be1afe5ccf4b33cf527abb9c3edad08a765803d49aff822858a"
+      "sha256": "bdaafdc0a52c7f98f2f027f030306f7cc9b7252103eac7bff798461e649fd9a5"
     },
     {
       "path": "tests/test_f217_migration_lock_red.py",
@@ -4179,11 +4179,11 @@
     },
     {
       "path": "tests/test_f217_release_evidence_red.py",
-      "sha256": "bb717fcffad9c7487fe7bf44cef5b8cd4f68cb69c8bde16f227258f520b6628c"
+      "sha256": "499a4e1e10175c331e26470aa894b1d969a40ff96a4970409f7b1f62604c7cab"
     },
     {
       "path": "tests/test_f217_transition_bridge_red.py",
-      "sha256": "63e75daeeff1642a1b895a2fbf50da3cb49e01e111b0b56a92ee025ee245eb73"
+      "sha256": "38656032fa8183df3cc7c65f50fed57c21055f197013e7e3f15adca54709e149"
     },
     {
       "path": "tests/test_freshness_endpoint.py",
@@ -4719,7 +4719,7 @@
     },
     {
       "path": "tests/test_release_ci_fail_closed.py",
-      "sha256": "d9de7231f0d40dd7bc37b8a18521d2ad2ead10a7d34ee233bfe498befa68736d"
+      "sha256": "223aa625f76945e03637e455a40be94bff97c007934a596e02fb546f621ec618"
     },
     {
       "path": "tests/test_release_compose_env_contract.py",
@@ -5055,7 +5055,7 @@
     },
     {
       "path": "tests/test_select_previous_release.py",
-      "sha256": "0189dfdf01eabde3803b99ca93302b598207104626014619e07b79f29c7da4f3"
+      "sha256": "f216a4ba5f00fa1c238a12d007772b8febbda6a3ba228c1719930115bfe70f3e"
     },
     {
       "path": "tests/test_service_urls.py",
