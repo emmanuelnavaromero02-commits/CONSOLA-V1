@@ -20,6 +20,7 @@ _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 _AIRFLOW_RUNTIME_IMPORTS = {
     "airflow",
     "minio",
+    "outbound_egress_guard",
     "pandas",
     "pyarrow",
     "requests",
@@ -500,7 +501,7 @@ def _render_code(constants: dict[str, Any]) -> str:
     from airflow.decorators import dag, task
     from airflow.models import Variable
     from minio import Minio
-    from requests.adapters import HTTPAdapter
+    from outbound_egress_guard import guarded_session
     from runtime_security_context import build_pipeline_run_context
     from urllib3.util.retry import Retry
 
@@ -527,11 +528,7 @@ def _render_code(constants: dict[str, Any]) -> str:
             status_forcelist=(429, 500, 502, 503, 504),
             allowed_methods=frozenset(["GET", "POST"]),
         )
-        adapter = HTTPAdapter(max_retries=retry)
-        session = requests.Session()
-        session.mount("http://", adapter)
-        session.mount("https://", adapter)
-        return session
+        return guarded_session(retries=retry)
 
 
     def _base_url() -> str:

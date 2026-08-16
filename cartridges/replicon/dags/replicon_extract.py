@@ -25,6 +25,7 @@ from pathlib import Path
 
 from airflow.decorators import dag, task
 from airflow.models import Variable
+from outbound_egress_guard import guarded_session
 
 try:
     from app.core.auth_factory import auth_trace, build_auth_headers
@@ -387,9 +388,7 @@ class _RepliconClient:
         poll_interval: float = 2.0,
         poll_timeout: int = 300,
     ):
-        import requests as _req
-
-        self._s = _req.Session()
+        self._s = guarded_session()
         headers, method, auth_headers = build_auth_headers(
             connection,
             default_method="bearer_token",
@@ -399,7 +398,7 @@ class _RepliconClient:
                 "Accept": "application/json",
             },
         )
-        self._s.headers.update(headers)
+        self._request_headers = headers
         self._auth_method = method
         self._auth_headers = auth_headers
         self.base = base_url.rstrip("/")
@@ -423,7 +422,7 @@ class _RepliconClient:
         for _ in range(self.RETRY):
             try:
                 logger.warning("Replicon outbound GET %s", url)
-                r = self._s.get(url, timeout=60)
+                r = self._s.get(url, headers=self._request_headers, timeout=60)
                 self._log_auth(r.status_code)
             except (_req.ConnectionError, _req.Timeout):
                 time.sleep(delay)
@@ -444,7 +443,9 @@ class _RepliconClient:
         for _ in range(self.RETRY):
             try:
                 logger.warning("Replicon outbound POST %s", url)
-                r = self._s.post(url, json=body, timeout=60)
+                r = self._s.post(
+                    url, headers=self._request_headers, json=body, timeout=60
+                )
                 self._log_auth(r.status_code)
             except (_req.ConnectionError, _req.Timeout):
                 time.sleep(delay)
@@ -459,7 +460,7 @@ class _RepliconClient:
         raise RuntimeError(f"POST {url} failed after {self.RETRY} attempts")
 
     def extract_table(self, entity: str) -> "pd.DataFrame":
-        import io as _io, requests as _req
+        import io as _io
         import pandas as pd
 
         extract_id = self._post(
@@ -485,7 +486,9 @@ class _RepliconClient:
 
         frames = []
         for url in (data.get("dataUrls") or {}).values():
-            r = _req.get(url, timeout=120)
+            # Pre-signed downloads must not receive Replicon credentials. The
+            # guarded session still validates and pins each response-provided URL.
+            r = self._s.get(url, timeout=120)
             r.raise_for_status()
             frames.append(pd.read_csv(_io.StringIO(r.text), low_memory=False))
 
