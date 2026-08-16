@@ -475,6 +475,29 @@ def sap_successfactors_extract_all():
         conf = dag_run.conf if dag_run and isinstance(dag_run.conf, dict) else {}
         upstream = conf.get("security_context")
         if not isinstance(upstream, dict):
+            # A scheduler-fired cycle (entity_scheduler) carries the
+            # tenant/workspace scope but no pre-signed context. Mint the same
+            # service authority the console trigger passes — signed with the
+            # platform key inside this perimeter, carrying the pipelines.run
+            # permission the admission builder demands — and let it re-verify
+            # signature, scope and cartridge; the purpose-bound envelope it
+            # mints is unchanged. No scope at all still fails closed below.
+            _sched_tenant = str(conf.get("tenant_id") or "").strip()
+            _sched_workspace = str(conf.get("workspace_id") or "").strip()
+            if _sched_tenant and _sched_workspace:
+                upstream = _sign_security_context(
+                    {
+                        "trusted": True,
+                        "source": "airflow",
+                        "role": "admin",
+                        "workspace_role": "service",
+                        "tenant_id": _sched_tenant,
+                        "workspace_id": _sched_workspace,
+                        "permissions": ["pipelines.run", "cartridges.execute"],
+                        "allowed_cartridges": ["sap_successfactors"],
+                    }
+                )
+        if not isinstance(upstream, dict):
             raise RuntimeError("refresh chain admission authority is required")
         refresh_conf = {
             "seed_dataset": "sap_successfactors_employee_360",

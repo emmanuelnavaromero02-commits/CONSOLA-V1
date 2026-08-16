@@ -94,6 +94,26 @@ def test_cycle_transitions_land_in_pipeline_runs():
     )
 
 
+def test_scheduler_fired_cycle_builds_signed_admission_context():
+    """entity_scheduler conf carries scope but no pre-signed context; the
+    admission task must self-sign from conf (same path extraction uses)
+    instead of refusing every scheduler-fired run. Absent scope must still
+    fail closed."""
+    src = EXTRACT_ALL.read_text(encoding="utf-8")
+    fn = re.search(
+        r"def authorize_refresh_chain\(.*?\n(?=\s*@task)", src, re.DOTALL
+    )
+    assert fn, "authorize_refresh_chain not found"
+    body = fn.group(0)
+    assert "_sign_security_context(" in body, "fallback must be signed"
+    assert '"pipelines.run"' in body, (
+        "admission demands the pipelines.run permission"
+    )
+    assert body.index("_sign_security_context(") < body.index(
+        "refresh chain admission authority is required"
+    ), "fallback must run before the fail-closed check"
+
+
 def test_control_room_shows_freshness():
     presenter = PRESENTER.read_text(encoding="utf-8")
     assert "latestObservedAt" in presenter
