@@ -12,11 +12,23 @@ def test_get_dataset_returns_catalog_refresh_metadata():
     assert '"row_count":' in get_dataset_section
 
 
-def test_data_catalog_falls_back_to_registered_dataset_metadata():
+def test_data_catalog_surfaces_refresh_metadata_from_the_live_reader():
+    """F8: the legacy in-function reader after the return was dead code that
+    this test used to pin. The LIVE reader is published_catalog, which takes
+    row_count/last_refresh from the publication head (stronger than the old
+    registered-metadata fallback) and applies the tags filter."""
     source = Path("refinement/app/main.py").read_text()
-    catalog_section = source.split("def _get_data_catalog", 1)[1].split("def _upsert_catalog_entries", 1)[0]
-
+    catalog_section = source.split("def _get_data_catalog", 1)[1].split(
+        "def _upsert_catalog_entries", 1
+    )[0]
     assert "store.list_datasets(**store_scope)" in catalog_section
-    assert "not tags" in catalog_section
-    assert '"row_count":    ds_meta.get("row_count")' in catalog_section
-    assert '"last_refresh": ds_meta.get("last_refresh")' in catalog_section
+    assert "return published_catalog(" in catalog_section
+    assert "import json as _json" not in catalog_section, (
+        "the unreachable legacy reader must stay deleted"
+    )
+
+    live = Path("refinement/app/publication_public.py").read_text()
+    catalog_fn = live.split("def published_catalog", 1)[1]
+    assert '"row_count": head.get("row_count")' in catalog_fn
+    assert 'head["published_at"].isoformat()' in catalog_fn
+    assert "if tags and not columns:" in catalog_fn

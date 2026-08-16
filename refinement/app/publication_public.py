@@ -169,7 +169,13 @@ def public_dataset_projection(
         name = _public_text(value.get("name"))
         data_type = _public_text(value.get("type"))
         if name and data_type:
-            fields.append({"name": name, "type": data_type})
+            field = {"name": name, "type": data_type}
+            # F8: surface the per-column quality profile persisted with the
+            # published evidence (absent keys mean the run did not profile).
+            for key in ("null_rate", "distinct_count", "min_value", "max_value"):
+                if key in value:
+                    field[key] = value[key]
+            fields.append(field)
     return {
         "name": str(ds.get("name") or ""),
         "layer": str(ds.get("layer") or "silver"),
@@ -248,6 +254,10 @@ def published_catalog(
                 "is_metric": bool(field.get("is_metric")),
                 "example_values": _public_examples(field.get("example_values")),
             }
+            # F8: quality profile for catalog consumers.
+            for key in ("null_rate", "distinct_count", "min_value", "max_value"):
+                if key in field:
+                    column[key] = field[key]
             columns.append(column)
         if tags and not columns:
             continue

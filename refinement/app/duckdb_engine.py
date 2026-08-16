@@ -1316,12 +1316,68 @@ class DuckDBEngine:
                     f"DESCRIBE SELECT * FROM ({effective_sql}) _q LIMIT 0",
                     rls_params,
                 ).fetchall()
+            fields = [{"name": r[0], "type": r[1]} for r in rows]
+            # F8: enrich with the persisted per-column profile (best-effort —
+            # a stats read failure must never break schema resolution).
+            try:
+                stats = self._catalog_profile_stats(ds["name"], user_context)
+                for field in fields:
+                    extra = stats.get(field["name"])
+                    if extra:
+                        field.update(extra)
+            except Exception:
+                pass
             return {
                 "name": ds["name"],
-                "fields": [{"name": r[0], "type": r[1]} for r in rows],
+                "fields": fields,
             }
         except Exception as exc:
             return {"name": ds.get("name"), "error": str(exc)}
+
+    def _catalog_profile_stats(
+        self, dataset: str, user_context: dict | None = None
+    ) -> dict[str, dict]:
+        """Read persisted column quality stats from data_catalog, scoped."""
+        tenant_id, workspace_id = self._scope_values(user_context)
+        if not workspace_id:
+            return {}
+        conn = self._pg_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT set_config('app.tenant_id', %s, true),"
+                    " set_config('app.workspace_id', %s, true)",
+                    (tenant_id or "", workspace_id),
+                )
+                cur.execute(
+                    """
+                    SELECT column_name, null_rate, distinct_count,
+                           min_value, max_value
+                      FROM data_catalog
+                     WHERE dataset = %s AND workspace_id = %s::uuid
+                       AND profiled_at IS NOT NULL
+                    """,
+                    (dataset, workspace_id),
+                )
+                stats: dict[str, dict] = {}
+                for name, null_rate, distinct_count, min_value, max_value in (
+                    cur.fetchall()
+                ):
+                    stats[str(name)] = {
+                        "null_rate": (
+                            float(null_rate) if null_rate is not None else None
+                        ),
+                        "distinct_count": (
+                            int(distinct_count)
+                            if distinct_count is not None
+                            else None
+                        ),
+                        "min_value": min_value,
+                        "max_value": max_value,
+                    }
+                return stats
+        finally:
+            conn.close()
 
     def _managed_materialized_sql(
         self, ds: dict, user_context: dict | None = None
