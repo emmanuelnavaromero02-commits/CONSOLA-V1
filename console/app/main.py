@@ -1696,25 +1696,12 @@ async def auth_refresh(request: Request):
     # spamming attempts without writing the secret material to Redis keys.
     subject = (refresh_token or "")[:16]
     await _rate_limit(request, "/auth/refresh", subject)
-    rotate_refresh_token = getattr(_auth, "rotate_refresh_token", None)
-    if callable(rotate_refresh_token):
-        rotated = await rotate_refresh_token(refresh_token)
-        if not rotated:
-            resp = JSONResponse({"detail": "invalid refresh token"}, status_code=401)
-            resp.delete_cookie(_auth.REFRESH_COOKIE_NAME, path="/")
-            return resp
-        user, new_refresh_token, refresh_expires = rotated
-    else:
-        # Compatibility for unit-test doubles that predate atomic rotation.
-        user = await _auth.get_refresh_token_user(refresh_token)
-        if not user:
-            resp = JSONResponse({"detail": "invalid refresh token"}, status_code=401)
-            resp.delete_cookie(_auth.REFRESH_COOKIE_NAME, path="/")
-            return resp
-        await _auth.revoke_refresh_token(refresh_token)
-        new_refresh_token, refresh_expires = await _auth.create_refresh_token(
-            user["id"]
-        )
+    rotated = await _auth.rotate_refresh_token(refresh_token)
+    if not rotated:
+        resp = JSONResponse({"detail": "invalid refresh token"}, status_code=401)
+        resp.delete_cookie(_auth.REFRESH_COOKIE_NAME, path="/")
+        return resp
+    user, new_refresh_token, refresh_expires = rotated
 
     if not user:
         resp = JSONResponse({"detail": "invalid refresh token"}, status_code=401)
