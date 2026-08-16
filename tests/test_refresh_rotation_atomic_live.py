@@ -9,8 +9,6 @@ from datetime import datetime, timedelta, timezone
 import asyncpg
 import httpx
 import pytest
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
 
 from app.services import auth
 from tests.test_identity_session_boundary_live import _seed_identity
@@ -44,21 +42,53 @@ async def test_concurrent_refresh_consumes_exactly_once(
                 old_hash,
                 expires,
             )
-        monkeypatch.setattr(auth, "pool", real_pool)
+        monkeypatch.setenv("APP_ENV", "test")
+        monkeypatch.setenv("RATE_LIMIT_ENABLED", "false")
+        monkeypatch.setenv(
+            "JWT_SECRET_KEY", "refresh-race-signing-key-" + "x" * 32
+        )
+        monkeypatch.setenv("JWT_ALGORITHM", "HS256")
+        monkeypatch.setenv(
+            "INTERNAL_API_KEY", "refresh-race-internal-key-" + "y" * 32
+        )
 
-        race_app = FastAPI()
+        # The root test harness deliberately evicts ``app.*`` between tests.
+        # Patch the exact auth module retained by the production route rather
+        # than the collection-time module reference above.
+        from app import main as console_main
 
-        @race_app.post("/auth/refresh")
-        async def refresh(request: Request):
-            rotated = await auth.rotate_refresh_token(
-                request.cookies.get(auth.REFRESH_COOKIE_NAME)
-            )
-            if not rotated:
-                return JSONResponse({"detail": "invalid refresh token"}, status_code=401)
-            return JSONResponse({"token_type": "bearer"}, status_code=200)
-
+        route_auth = console_main._auth
+        monkeypatch.setattr(route_auth, "pool", real_pool)
         attempts = 16
-        transport = httpx.ASGITransport(app=race_app)
+        callers_ready = 0
+        callers_lock = asyncio.Lock()
+        release_callers = asyncio.Event()
+        real_rotate = route_auth.rotate_refresh_token
+
+        async def synchronized_rotate(token: str | None):
+            nonlocal callers_ready
+            async with callers_lock:
+                callers_ready += 1
+                if callers_ready == attempts:
+                    release_callers.set()
+            await asyncio.wait_for(release_callers.wait(), timeout=10)
+            return await real_rotate(token)
+
+        monkeypatch.setattr(
+            route_auth, "rotate_refresh_token", synchronized_rotate
+        )
+
+        # Exercise the production route, including CSRF, cookie extraction and
+        # the invalid-token-to-401 mapping.
+        transport = httpx.ASGITransport(app=console_main.app)
+        csrf_token = "refresh-race-csrf"
+        headers = {
+            "X-CSRF-Token": csrf_token,
+            "Cookie": (
+                f"{route_auth.REFRESH_COOKIE_NAME}={raw_refresh}; "
+                f"csrf_token={csrf_token}"
+            ),
+        }
         async with httpx.AsyncClient(
             transport=transport, base_url="http://fseg.invalid"
         ) as client:
@@ -66,11 +96,12 @@ async def test_concurrent_refresh_consumes_exactly_once(
                 *(
                     client.post(
                         "/auth/refresh",
-                        cookies={auth.REFRESH_COOKIE_NAME: raw_refresh},
+                        headers=headers,
                     )
                     for _ in range(attempts)
                 )
             )
+        assert callers_ready == attempts
         statuses = [response.status_code for response in responses]
         assert statuses.count(200) == 1
         assert statuses.count(401) == attempts - 1

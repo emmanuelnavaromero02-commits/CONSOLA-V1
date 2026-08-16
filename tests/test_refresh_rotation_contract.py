@@ -21,3 +21,14 @@ def test_refresh_route_has_no_non_atomic_fallback() -> None:
         assert "get_refresh_token_user" not in body
         assert "create_refresh_token" not in body
         assert "revoke_refresh_token" not in body
+
+
+def test_live_race_targets_real_route_behind_a_start_barrier() -> None:
+    source = (
+        REPO / "tests" / "test_refresh_rotation_atomic_live.py"
+    ).read_text(encoding="utf-8")
+    assert "asyncio.Event()" in source
+    assert "callers_ready == attempts" in source
+    assert "ASGITransport(app=console_main.app)" in source
+    assert 'client.post(\n                        "/auth/refresh"' in source
+    assert "FastAPI()" not in source
