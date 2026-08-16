@@ -1515,6 +1515,20 @@ async def _decision_action_replay(
 
 
 async def _dec_load(decision_id: int, user: dict) -> dict | None:
+    ws_id = _current_workspace_id(user)
+    if not ws_id:
+        return None
+    async with _decision_pg(user) as conn:
+        return await _dec_load_on_conn(conn, decision_id, user, for_update=False)
+
+
+async def _dec_load_on_conn(
+    conn,
+    decision_id: int,
+    user: dict,
+    *,
+    for_update: bool,
+) -> dict | None:
     is_admin = user.get("role") == "admin"
     ws_id = _current_workspace_id(user)
     if not ws_id:
@@ -1525,8 +1539,9 @@ async def _dec_load(decision_id: int, user: dict) -> dict | None:
         params.append(user["id"])
         sql += (f" AND (visibility = 'shared' OR created_by_id = ${len(params)} "
                 f"OR assignee_id = ${len(params)})")
-    async with _decision_pg(user) as conn:
-        row = await conn.fetchrow(sql, *params)
+    if for_update:
+        sql += " FOR UPDATE"
+    row = await conn.fetchrow(sql, *params)
     return dict(row) if row else None
 
 
@@ -1635,11 +1650,6 @@ async def api_decisions_get(request: Request, decision_id: int):
 )
 async def api_decisions_update(request: Request, decision_id: int, body: dict):
     user = require_user(request)
-    existing = await _dec_load(decision_id, user)
-    if not existing:
-        raise HTTPException(404, f"Decision {decision_id} not found")
-    if not _dec_can_edit(existing, user):
-        raise HTTPException(403, "you can only edit decisions you created or are assigned to")
     allowed = {
         "title", "description", "commitment_date", "kpis",
         "status", "outcome", "closed_at", "follow_up_decision_id",
@@ -1671,20 +1681,30 @@ async def api_decisions_update(request: Request, decision_id: int, body: dict):
         raise HTTPException(400, "no updatable fields supplied")
     if normalized_body.get("status") == "closed" and "closed_at" not in normalized_body:
         sets.append("closed_at = COALESCE(closed_at, NOW())")
-    params.append(decision_id)
-    decision_ref = f"${len(params)}"
-    params.append(existing["workspace_id"])
-    workspace_ref = f"${len(params)}"
-    sql = (
-        f"UPDATE decisions SET {', '.join(sets)} "
-        f"WHERE id = {decision_ref} AND workspace_id = {workspace_ref} RETURNING *"
-    )
     async with _decision_pg(user) as conn:
+        existing = await _dec_load_on_conn(
+            conn,
+            decision_id,
+            user,
+            for_update=True,
+        )
+        if not existing:
+            raise HTTPException(404, f"Decision {decision_id} not found")
+        if not _dec_can_edit(existing, user):
+            raise HTTPException(403, "you can only edit decisions you created or are assigned to")
         await _validate_decision_references(
             conn,
             user,
             assignee_id=normalized_body.get("assignee_id"),
             follow_up_decision_id=normalized_body.get("follow_up_decision_id"),
+        )
+        params.append(decision_id)
+        decision_ref = f"${len(params)}"
+        params.append(existing["workspace_id"])
+        workspace_ref = f"${len(params)}"
+        sql = (
+            f"UPDATE decisions SET {', '.join(sets)} "
+            f"WHERE id = {decision_ref} AND workspace_id = {workspace_ref} RETURNING *"
         )
         row = await conn.fetchrow(sql, *params)
     return _dec_row_to_dict(row)
@@ -1699,12 +1719,17 @@ async def api_decisions_update(request: Request, decision_id: int, body: dict):
 )
 async def api_decisions_delete(request: Request, decision_id: int):
     user = require_user(request)
-    existing = await _dec_load(decision_id, user)
-    if not existing:
-        raise HTTPException(404, f"Decision {decision_id} not found")
-    if not _dec_can_delete(existing, user):
-        raise HTTPException(403, "only the creator or an admin can delete a decision")
     async with _decision_pg(user) as conn:
+        existing = await _dec_load_on_conn(
+            conn,
+            decision_id,
+            user,
+            for_update=True,
+        )
+        if not existing:
+            raise HTTPException(404, f"Decision {decision_id} not found")
+        if not _dec_can_delete(existing, user):
+            raise HTTPException(403, "only the creator or an admin can delete a decision")
         await conn.execute(
             "DELETE FROM decisions WHERE id = $1 AND workspace_id = $2",
             decision_id,
@@ -1732,11 +1757,6 @@ async def api_decisions_add_action(request: Request, decision_id: int, body: dic
     note = body.get("note")
     if note is not None and not isinstance(note, str):
         raise HTTPException(400, "note must be a string or null")
-    existing = await _dec_load(decision_id, user)
-    if not existing:
-        raise HTTPException(404, f"Decision {decision_id} not found")
-    if not _dec_can_edit(existing, user):
-        raise HTTPException(403, "only creator/assignee/admin can add to bitácora")
     tenant_id = _current_tenant_id(user)
     workspace_id = _current_workspace_id(user)
     if not tenant_id or not workspace_id:
@@ -1744,6 +1764,16 @@ async def api_decisions_add_action(request: Request, decision_id: int, body: dic
     operation = f"decision.action.create:{decision_id}"
     request_fingerprint = _decision_action_fingerprint(action_text, note)
     async with _decision_pg(user) as conn:
+        existing = await _dec_load_on_conn(
+            conn,
+            decision_id,
+            user,
+            for_update=True,
+        )
+        if not existing:
+            raise HTTPException(404, f"Decision {decision_id} not found")
+        if not _dec_can_edit(existing, user):
+            raise HTTPException(403, "only creator/assignee/admin can add to bitácora")
         reservation_id = await conn.fetchval(
             """INSERT INTO workspace_decision_idempotency (
                    tenant_id, workspace_id, actor_user_id, operation,

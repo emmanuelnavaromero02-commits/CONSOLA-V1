@@ -511,3 +511,7 @@ def test_decision_idempotency_migration_is_durable_and_actor_scoped():
     assert "GRANT DELETE ON decisions TO omega_workspace" in migration
     assert "ALTER FUNCTION soft_delete_audit_trigger() SECURITY DEFINER" in migration
     assert "SET search_path = pg_catalog, public, pg_temp" in migration
+    assert "CREATE OR REPLACE FUNCTION enforce_decision_reference_scope()" in migration
+    assert "CREATE TRIGGER trg_decisions_reference_scope" in migration
+    assert "FOR SHARE OF u, uwr" in migration
+    assert "FOR SHARE OF followed" in migration

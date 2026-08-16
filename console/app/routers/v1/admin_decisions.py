@@ -70,8 +70,15 @@ async def api_decisions_create(body: dict, user: dict = Depends(require_permissi
     workspace_id = _current_workspace_id(user)
     if not workspace_id:
         raise HTTPException(400, "active workspace is required to create a decision")
+    assignee_id = _decision_reference_id(body.get("assignee_id"), "assignee_id")
     pool = await _dec_pool()
-    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+    async with scoped_db_for_user(pool, user) as (conn, tenant_id, _workspace_id):
+        await _validate_decision_references(
+            conn,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            assignee_id=assignee_id,
+        )
         row = await conn.fetchrow(
             """INSERT INTO decisions
                   (title, description, commitment_date, kpis, created_by_id, assignee_id, visibility, workspace_id)
@@ -82,7 +89,7 @@ async def api_decisions_create(body: dict, user: dict = Depends(require_permissi
             _coerce_date(body.get("commitment_date")),
             _json_dec.dumps(body.get("kpis") or []),
             user["id"],
-            body.get("assignee_id"),
+            assignee_id,
             body.get("visibility") if body.get("visibility") in ("private", "shared") else "private",
             workspace_id,
         )
@@ -113,29 +120,45 @@ async def api_decisions_get(decision_id: int, user: dict = Depends(require_permi
 async def api_decisions_update(decision_id: int, body: dict, user: dict = Depends(require_permission("control_room.write"))):
     """Patch any subset of: title, description, commitment_date, kpis, status, outcome,
     closed_at, follow_up_decision_id, assignee_id, visibility."""
-    existing = await _dec_load_with_visibility(decision_id, user)
-    if not existing:
-        raise HTTPException(404, f"Decision {decision_id} not found")
-    if not _dec_can_edit(existing, user):
-        raise HTTPException(403, "you can only edit decisions you created or are assigned to")
-
-    sets, params = _decision_update_assignments(body)
-    if not sets:
-        raise HTTPException(400, "no updatable fields supplied")
-    # Sprint v1.37: pin UPDATE to (id, workspace_id) — defense-in-depth
-    # against a future code path that loads ``existing`` from a
-    # different source. ``existing`` already came from
-    # ``_dec_load_with_visibility`` which itself filters by workspace,
-    # so ``existing["workspace_id"]`` is the active workspace by
-    # construction.
-    sql, params = _decision_update_sql_and_params(
-        sets=sets,
-        params=params,
-        decision_id=decision_id,
-        existing=existing,
-    )
+    normalized_body = dict(body)
+    for field in ("assignee_id", "follow_up_decision_id"):
+        if field in normalized_body:
+            normalized_body[field] = _decision_reference_id(
+                normalized_body[field], field
+            )
+    workspace_id = _current_workspace_id(user)
+    if not workspace_id:
+        raise HTTPException(403, "active workspace is required")
     pool = await _dec_pool()
-    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+    async with scoped_db_for_user(pool, user) as (conn, tenant_id, _workspace_id):
+        existing = await _dec_load_on_conn(
+            conn,
+            decision_id=decision_id,
+            user=user,
+            workspace_id=workspace_id,
+            tenant_id=tenant_id,
+            for_update=True,
+        )
+        if not existing:
+            raise HTTPException(404, f"Decision {decision_id} not found")
+        if not _dec_can_edit(existing, user):
+            raise HTTPException(403, "you can only edit decisions you created or are assigned to")
+        await _validate_decision_references(
+            conn,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            assignee_id=normalized_body.get("assignee_id"),
+            follow_up_decision_id=normalized_body.get("follow_up_decision_id"),
+        )
+        sets, params = _decision_update_assignments(normalized_body)
+        if not sets:
+            raise HTTPException(400, "no updatable fields supplied")
+        sql, params = _decision_update_sql_and_params(
+            sets=sets,
+            params=params,
+            decision_id=decision_id,
+            existing=existing,
+        )
         row = await conn.fetchrow(sql, *params)
     if not row:
         # The visibility check passed but the row vanished between
@@ -149,16 +172,26 @@ async def api_decisions_update(decision_id: int, body: dict, user: dict = Depend
 @router.delete("/api/decisions/{decision_id}", dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))])
 @_bind_to_main
 async def api_decisions_delete(decision_id: int, user: dict = Depends(require_permission("control_room.write"))):
-    existing = await _dec_load_with_visibility(decision_id, user)
-    if not existing:
-        raise HTTPException(404, f"Decision {decision_id} not found")
-    if not _dec_can_delete(existing, user):
-        raise HTTPException(403, "only the creator or an admin can delete a decision")
+    workspace_id = _current_workspace_id(user)
+    if not workspace_id:
+        raise HTTPException(403, "active workspace is required")
     pool = await _dec_pool()
     # Sprint v1.37: pin DELETE to (id, workspace_id) — same rationale
-    # as the UPDATE above. ``existing["workspace_id"]`` came from
-    # ``_dec_load_with_visibility`` which is already workspace-scoped.
-    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+    # as the UPDATE above. ``existing["workspace_id"]`` comes from the
+    # workspace-scoped SELECT FOR UPDATE in this same transaction.
+    async with scoped_db_for_user(pool, user) as (conn, tenant_id, _workspace_id):
+        existing = await _dec_load_on_conn(
+            conn,
+            decision_id=decision_id,
+            user=user,
+            workspace_id=workspace_id,
+            tenant_id=tenant_id,
+            for_update=True,
+        )
+        if not existing:
+            raise HTTPException(404, f"Decision {decision_id} not found")
+        if not _dec_can_delete(existing, user):
+            raise HTTPException(403, "only the creator or an admin can delete a decision")
         await conn.execute(
             "DELETE FROM decisions WHERE id = $1 AND workspace_id = $2",
             decision_id,
@@ -170,17 +203,27 @@ async def api_decisions_delete(decision_id: int, user: dict = Depends(require_pe
 @router.post("/api/decisions/{decision_id}/actions", dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))])
 @_bind_to_main
 async def api_decisions_add_action(decision_id: int, body: dict, user: dict = Depends(require_permission("control_room.write"))):
-    existing = await _dec_load_with_visibility(decision_id, user)
-    if not existing:
-        raise HTTPException(404, f"Decision {decision_id} not found")
-    if not _dec_can_edit(existing, user):
-        raise HTTPException(403, "only creator/assignee/admin can add to bitácora")
     action_text = (body.get("action_text") or "").strip()
     if not action_text:
         raise HTTPException(400, "action_text is required")
     pool = await _dec_pool()
     actor = user.get("email") or "user"
-    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+    workspace_id = _current_workspace_id(user)
+    if not workspace_id:
+        raise HTTPException(403, "active workspace is required")
+    async with scoped_db_for_user(pool, user) as (conn, tenant_id, _workspace_id):
+        existing = await _dec_load_on_conn(
+            conn,
+            decision_id=decision_id,
+            user=user,
+            workspace_id=workspace_id,
+            tenant_id=tenant_id,
+            for_update=True,
+        )
+        if not existing:
+            raise HTTPException(404, f"Decision {decision_id} not found")
+        if not _dec_can_edit(existing, user):
+            raise HTTPException(403, "only creator/assignee/admin can add to bitácora")
         row = await conn.fetchrow(
             """INSERT INTO decision_actions (decision_id, action_text, note, actor)
                VALUES ($1, $2, $3, $4)

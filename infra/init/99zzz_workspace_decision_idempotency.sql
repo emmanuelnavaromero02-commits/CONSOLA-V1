@@ -71,6 +71,86 @@ GRANT DELETE ON decisions TO omega_workspace;
 ALTER FUNCTION soft_delete_audit_trigger() SECURITY DEFINER;
 ALTER FUNCTION soft_delete_audit_trigger()
     SET search_path = pg_catalog, public, pg_temp;
+
+-- Cross-scope references are a database invariant, not an API convention.
+-- Existing rows are intentionally not scanned or rewritten. The trigger runs
+-- for new rows and only when a reference/scope column is changed, so unrelated
+-- updates to historical data keep working.
+CREATE OR REPLACE FUNCTION enforce_decision_reference_scope()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $decision_scope$
+DECLARE
+    scoped_tenant UUID;
+BEGIN
+    IF TG_OP = 'UPDATE'
+       AND NEW.workspace_id IS NOT DISTINCT FROM OLD.workspace_id
+       AND NEW.assignee_id IS NOT DISTINCT FROM OLD.assignee_id
+       AND NEW.follow_up_decision_id IS NOT DISTINCT FROM OLD.follow_up_decision_id THEN
+        RETURN NEW;
+    END IF;
+
+    IF NEW.assignee_id IS NULL AND NEW.follow_up_decision_id IS NULL THEN
+        RETURN NEW;
+    END IF;
+    IF NEW.workspace_id IS NULL THEN
+        RAISE EXCEPTION 'decision references require a workspace'
+            USING ERRCODE = '23514',
+                  CONSTRAINT = 'decisions_reference_scope_check';
+    END IF;
+
+    SELECT w.tenant_id
+      INTO scoped_tenant
+      FROM public.workspaces AS w
+     WHERE w.id = NEW.workspace_id
+     FOR SHARE;
+    IF scoped_tenant IS NULL THEN
+        RAISE EXCEPTION 'decision workspace is invalid'
+            USING ERRCODE = '23514',
+                  CONSTRAINT = 'decisions_reference_scope_check';
+    END IF;
+
+    IF NEW.assignee_id IS NOT NULL THEN
+        PERFORM 1
+          FROM public.users AS u
+          JOIN public.user_workspace_roles AS uwr ON uwr.user_id = u.id
+         WHERE u.id = NEW.assignee_id
+           AND u.tenant_id = scoped_tenant
+           AND u.is_active = TRUE
+           AND uwr.workspace_id = NEW.workspace_id
+         LIMIT 1
+         FOR SHARE OF u, uwr;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'decision assignee is outside the active scope'
+                USING ERRCODE = '23514',
+                      CONSTRAINT = 'decisions_assignee_scope_check';
+        END IF;
+    END IF;
+
+    IF NEW.follow_up_decision_id IS NOT NULL THEN
+        PERFORM 1
+          FROM public.decisions AS followed
+         WHERE followed.id = NEW.follow_up_decision_id
+           AND followed.workspace_id = NEW.workspace_id
+         FOR SHARE OF followed;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'follow-up decision is outside the active scope'
+                USING ERRCODE = '23514',
+                      CONSTRAINT = 'decisions_follow_up_scope_check';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$decision_scope$;
+
+REVOKE ALL ON FUNCTION enforce_decision_reference_scope() FROM PUBLIC;
+DROP TRIGGER IF EXISTS trg_decisions_reference_scope ON decisions;
+CREATE TRIGGER trg_decisions_reference_scope
+BEFORE INSERT OR UPDATE ON decisions
+FOR EACH ROW EXECUTE FUNCTION enforce_decision_reference_scope();
+
 REVOKE ALL ON SEQUENCE workspace_decision_idempotency_id_seq FROM PUBLIC;
 GRANT USAGE, SELECT ON SEQUENCE workspace_decision_idempotency_id_seq
     TO omega_workspace;

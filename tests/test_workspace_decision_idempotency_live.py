@@ -203,3 +203,83 @@ async def test_workspace_admin_can_delete_scoped_decision_with_service_role(
     finally:
         await check.close()
     assert remaining == 0
+
+
+@pytest.mark.asyncio
+async def test_decision_reference_trigger_rejects_cross_scope_and_closes_race(
+    postgres_with_real_init_schema: str,
+) -> None:
+    scope_a = await _seed(postgres_with_real_init_schema)
+    scope_b = await _seed(postgres_with_real_init_schema)
+    admin = await asyncpg.connect(postgres_with_real_init_schema)
+    try:
+        with pytest.raises(asyncpg.CheckViolationError) as assignee_error:
+            await admin.execute(
+                """INSERT INTO decisions (
+                       title, description, created_by_id, assignee_id,
+                       visibility, workspace_id
+                   ) VALUES ('cross-assignee-canary', '', $1, $2, 'private', $3)""",
+                scope_a["user_id"],
+                scope_b["user_id"],
+                scope_a["workspace_id"],
+            )
+        assert assignee_error.value.constraint_name == "decisions_assignee_scope_check"
+
+        with pytest.raises(asyncpg.CheckViolationError) as follow_error:
+            await admin.execute(
+                """UPDATE decisions SET follow_up_decision_id = $1
+                    WHERE id = $2""",
+                scope_b["decision_id"],
+                scope_a["decision_id"],
+            )
+        assert follow_error.value.constraint_name == "decisions_follow_up_scope_check"
+
+        await admin.execute("ALTER TABLE decisions DISABLE TRIGGER trg_decisions_reference_scope")
+        legacy_id = await admin.fetchval(
+            """INSERT INTO decisions (
+                   title, description, created_by_id, assignee_id,
+                   visibility, workspace_id
+               ) VALUES ('legacy-cross-scope', '', $1, $2, 'private', $3)
+               RETURNING id""",
+            scope_a["user_id"],
+            scope_b["user_id"],
+            scope_a["workspace_id"],
+        )
+        await admin.execute("ALTER TABLE decisions ENABLE TRIGGER trg_decisions_reference_scope")
+        await admin.execute(
+            "UPDATE decisions SET title = 'legacy-unrelated-update' WHERE id = $1",
+            legacy_id,
+        )
+    finally:
+        await admin.close()
+
+    writer = await asyncpg.connect(postgres_with_real_init_schema)
+    concurrent = await asyncpg.connect(postgres_with_real_init_schema)
+    writer_tx = writer.transaction()
+    concurrent_tx = concurrent.transaction()
+    try:
+        await writer_tx.start()
+        await writer.execute(
+            """INSERT INTO decisions (
+                   title, description, created_by_id, assignee_id,
+                   visibility, workspace_id
+               ) VALUES ('membership-lock-canary', '', $1, $1, 'private', $2)""",
+            scope_a["user_id"],
+            scope_a["workspace_id"],
+        )
+        await concurrent_tx.start()
+        await concurrent.execute("SET LOCAL lock_timeout = '250ms'")
+        with pytest.raises(asyncpg.LockNotAvailableError):
+            await concurrent.execute(
+                """DELETE FROM user_workspace_roles
+                    WHERE user_id = $1 AND workspace_id = $2""",
+                scope_a["user_id"],
+                scope_a["workspace_id"],
+            )
+        await concurrent_tx.rollback()
+        await writer_tx.commit()
+    finally:
+        if not concurrent.is_closed():
+            await concurrent.close()
+        if not writer.is_closed():
+            await writer.close()

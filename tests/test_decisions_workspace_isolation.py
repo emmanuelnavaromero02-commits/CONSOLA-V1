@@ -410,6 +410,62 @@ async def test_create_decision_inserts_active_workspace_id(console_main, monkeyp
     assert params[7] == "workspace-A"
 
 
+@pytest.mark.asyncio
+async def test_console_create_rejects_cross_workspace_assignee_before_insert(
+    console_main, monkeypatch
+):
+    from fastapi import HTTPException
+
+    class _CrossScopePool(_FakePool):
+        async def fetchval(self, sql, *params):
+            self.calls.append(("fetchval", sql, params))
+            return None
+
+        async def fetchrow(self, sql, *params):
+            if "INSERT INTO decisions" in sql:
+                raise AssertionError("cross-workspace assignee reached INSERT")
+            return await super().fetchrow(sql, *params)
+
+    fake = _CrossScopePool()
+
+    async def _factory():
+        return fake
+
+    monkeypatch.setattr(console_main, "_dec_pool", _factory)
+    user = {
+        "id": 7,
+        "role": "workspace_admin",
+        "workspace_role": "workspace_admin",
+        "active_tenant_id": "00000000-0000-0000-0000-0000000000a1",
+        "active_workspace_id": "00000000-0000-0000-0000-0000000000a2",
+    }
+
+    with pytest.raises(HTTPException) as exc_info:
+        await console_main.api_decisions_create(
+            body={"title": "cross-scope-canary", "assignee_id": 8001},
+            user=user,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "assignee_id is not valid for the active workspace"
+    validation = next(call for call in fake.calls if call[0] == "fetchval")
+    assert "u.tenant_id = $3" in validation[1]
+    assert "uwr.workspace_id = $2" in validation[1]
+
+
+def test_console_main_and_v1_router_validate_decision_references():
+    main_source = CONSOLE_MAIN.read_text(encoding="utf-8")
+    router_source = (
+        REPO_ROOT / "console" / "app" / "routers" / "v1" / "admin_decisions.py"
+    ).read_text(encoding="utf-8")
+
+    for source in (main_source, router_source):
+        assert "assignee_id = _decision_reference_id" in source
+        assert "await _validate_decision_references(" in source
+        assert 'follow_up_decision_id=normalized_body.get("follow_up_decision_id")' in source
+        assert "for_update=True" in source
+
+
 # ── Happy paths (reviewer #2): cross-workspace -> 404 was already covered;
 # verify same-workspace -> 200 so a regression that returns None for every
 # row would also fail the suite, not just the negative tests. ──────────────
