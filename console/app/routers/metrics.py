@@ -30,14 +30,20 @@ router = APIRouter(
 )
 
 
-def _int(value: object) -> int:
+def _int(value: object) -> int | None:
+    # F11: None means the backing query FAILED (see _safe_fetchval) — coercing
+    # it to 0 would report "0 failures" on an error. Keep it None.
+    if value is None:
+        return None
     try:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
 
 
-def _float(value: object) -> float:
+def _float(value: object) -> float | None:
+    if value is None:
+        return None
     try:
         return float(value or 0)
     except (TypeError, ValueError):
@@ -71,18 +77,42 @@ def _scoped_where(user: dict | None, table_alias: str = "", *, metadata: bool = 
     return f" AND {prefix}workspace_id = $1::uuid", (workspace_id,)
 
 
-async def _safe_fetchval(conn, query: str, *args, default: object = 0) -> object:
+async def _safe_fetchval(
+    conn,
+    degraded: list[str] | None,
+    metric: str,
+    query: str,
+    *args,
+    default: object = 0,
+) -> object:
+    """F11: a failed query must NEVER read as a real 0.
+
+    On exception the metric is reported as degraded (None in the payload,
+    listed in degraded_metrics) — mirroring the honest unavailable pattern of
+    successfactors_gold_headcount/business_impact_rules. ``default`` only
+    covers a SUCCESSFUL query returning NULL (e.g. AVG over zero rows).
+    """
     try:
         value = await conn.fetchval(query, *args)
     except Exception:
-        return default
+        if degraded is not None:
+            degraded.append(metric or "unknown_metric")
+        return None
     return default if value is None else value
 
 
-async def _safe_fetch(conn, query: str, *args) -> list[dict]:
+async def _safe_fetch(
+    conn,
+    degraded: list[str] | None,
+    metric: str,
+    query: str,
+    *args,
+) -> list[dict]:
     try:
         rows = await conn.fetch(query, *args)
     except Exception:
+        if degraded is not None:
+            degraded.append(metric or "unknown_metric")
         return []
     return [dict(r) for r in rows]
 
@@ -109,11 +139,12 @@ def _backup_status() -> dict:
 @router.get("/operational")
 async def operational_metrics(user: dict = Depends(require_operations_read)) -> dict:
     pool = await auth.pool()
+    degraded: list[str] = []
     async with pool.acquire() as conn:
         platform = _is_platform_admin(user)
         if platform:
             run_where, run_args = _scoped_where(user)
-            extractions_24h = await _safe_fetchval(conn,
+            extractions_24h = await _safe_fetchval(conn, degraded, "extractions_24h",
                 f"""
                 SELECT COUNT(*) FROM extraction_runs
                 WHERE started_at >= now() - INTERVAL '24 hours'
@@ -121,7 +152,7 @@ async def operational_metrics(user: dict = Depends(require_operations_read)) -> 
                 """,
                 *run_args,
             )
-            errors_24h = await _safe_fetchval(conn,
+            errors_24h = await _safe_fetchval(conn, degraded, "errors_24h",
                 f"""
                 SELECT COUNT(*) FROM extraction_runs
                 WHERE started_at >= now() - INTERVAL '24 hours'
@@ -130,7 +161,7 @@ async def operational_metrics(user: dict = Depends(require_operations_read)) -> 
                 """,
                 *run_args,
             )
-            avg_duration_sec = await _safe_fetchval(conn,
+            avg_duration_sec = await _safe_fetchval(conn, degraded, "avg_duration_sec",
                 f"""
                 SELECT AVG(EXTRACT(EPOCH FROM (finished_at - started_at)))
                 FROM extraction_runs
@@ -141,7 +172,7 @@ async def operational_metrics(user: dict = Depends(require_operations_read)) -> 
                 """,
                 *run_args,
             )
-            slowest = await _safe_fetch(conn,
+            slowest = await _safe_fetch(conn, degraded, "slowest",
                 f"""
                 SELECT cartridge_id, entity_name,
                        AVG(EXTRACT(EPOCH FROM (finished_at - started_at))) AS avg_sec
@@ -160,7 +191,7 @@ async def operational_metrics(user: dict = Depends(require_operations_read)) -> 
             extractions_24h = errors_24h = avg_duration_sec = 0
             slowest = []
         audit_where, audit_args = _scoped_where(user, "a", metadata=True)
-        audit_count_24h = await _safe_fetchval(conn,
+        audit_count_24h = await _safe_fetchval(conn, degraded, "audit_count_24h",
             f"""
             SELECT COUNT(*) FROM audit_events a
             WHERE a.created_at >= now() - INTERVAL '24 hours'
@@ -169,7 +200,7 @@ async def operational_metrics(user: dict = Depends(require_operations_read)) -> 
             *audit_args,
         )
         cr_where, cr_args = _scoped_where(user)
-        action_executions_24h = await _safe_fetchval(conn,
+        action_executions_24h = await _safe_fetchval(conn, degraded, "action_executions_24h",
             f"""
             SELECT COUNT(*) FROM control_room_action_executions
             WHERE created_at >= now() - INTERVAL '24 hours'
@@ -177,7 +208,7 @@ async def operational_metrics(user: dict = Depends(require_operations_read)) -> 
             """,
             *cr_args,
         )
-        external_writebacks_24h = await _safe_fetchval(conn,
+        external_writebacks_24h = await _safe_fetchval(conn, degraded, "external_writebacks_24h",
             f"""
             SELECT COUNT(*) FROM control_room_action_executions
             WHERE created_at >= now() - INTERVAL '24 hours'
@@ -187,7 +218,7 @@ async def operational_metrics(user: dict = Depends(require_operations_read)) -> 
             """,
             *cr_args,
         )
-        writeback_failures_24h = await _safe_fetchval(conn,
+        writeback_failures_24h = await _safe_fetchval(conn, degraded, "writeback_failures_24h",
             f"""
             SELECT COUNT(*) FROM control_room_action_executions
             WHERE created_at >= now() - INTERVAL '24 hours'
@@ -199,7 +230,7 @@ async def operational_metrics(user: dict = Depends(require_operations_read)) -> 
         )
         if platform:
             job_where, job_args = _scoped_where(user)
-            jobs_24h = await _safe_fetchval(conn,
+            jobs_24h = await _safe_fetchval(conn, degraded, "jobs_24h",
                 f"""
                 SELECT COUNT(*) FROM jobs
                 WHERE created_at >= now() - INTERVAL '24 hours'
@@ -207,7 +238,7 @@ async def operational_metrics(user: dict = Depends(require_operations_read)) -> 
                 """,
                 *job_args,
             )
-            failed_jobs_24h = await _safe_fetchval(conn,
+            failed_jobs_24h = await _safe_fetchval(conn, degraded, "failed_jobs_24h",
                 f"""
                 SELECT COUNT(*) FROM jobs
                 WHERE created_at >= now() - INTERVAL '24 hours'
@@ -219,7 +250,7 @@ async def operational_metrics(user: dict = Depends(require_operations_read)) -> 
         else:
             jobs_24h = failed_jobs_24h = 0
         token_where, token_args = _scoped_where(user)
-        llm_tokens_24h = await _safe_fetchval(conn,
+        llm_tokens_24h = await _safe_fetchval(conn, degraded, "llm_tokens_24h",
             f"""
             SELECT COALESCE(SUM(input_tokens + output_tokens), 0)
             FROM token_usage
@@ -228,7 +259,7 @@ async def operational_metrics(user: dict = Depends(require_operations_read)) -> 
             """,
             *token_args,
         )
-        llm_errors_24h = await _safe_fetchval(conn,
+        llm_errors_24h = await _safe_fetchval(conn, degraded, "llm_errors_24h",
             f"""
             SELECT COUNT(*) FROM audit_events a
             WHERE a.created_at >= now() - INTERVAL '24 hours'
@@ -239,7 +270,7 @@ async def operational_metrics(user: dict = Depends(require_operations_read)) -> 
             *audit_args,
         )
         intelligence_where, intelligence_args = _scoped_where(user)
-        intelligence_open = await _safe_fetchval(conn,
+        intelligence_open = await _safe_fetchval(conn, degraded, "intelligence_open",
             f"""
             SELECT COUNT(*) FROM intelligence_signals
             WHERE status = 'open'
@@ -247,7 +278,7 @@ async def operational_metrics(user: dict = Depends(require_operations_read)) -> 
             """,
             *intelligence_args,
         )
-        intelligence_high_open = await _safe_fetchval(conn,
+        intelligence_high_open = await _safe_fetchval(conn, degraded, "intelligence_high_open",
             f"""
             SELECT COUNT(*) FROM intelligence_signals
             WHERE status = 'open'
@@ -256,7 +287,7 @@ async def operational_metrics(user: dict = Depends(require_operations_read)) -> 
             """,
             *intelligence_args,
         )
-        intelligence_predictive_open = await _safe_fetchval(conn,
+        intelligence_predictive_open = await _safe_fetchval(conn, degraded, "intelligence_predictive_open",
             f"""
             SELECT COUNT(*) FROM intelligence_signals
             WHERE status = 'open'
@@ -268,7 +299,7 @@ async def operational_metrics(user: dict = Depends(require_operations_read)) -> 
             """,
             *intelligence_args,
         )
-        intelligence_generated_24h = await _safe_fetchval(conn,
+        intelligence_generated_24h = await _safe_fetchval(conn, degraded, "intelligence_generated_24h",
             f"""
             SELECT COUNT(*) FROM intelligence_signals
             WHERE created_at >= now() - INTERVAL '24 hours'
@@ -276,7 +307,7 @@ async def operational_metrics(user: dict = Depends(require_operations_read)) -> 
             """,
             *intelligence_args,
         )
-        intelligence_outcomes_24h = await _safe_fetchval(conn,
+        intelligence_outcomes_24h = await _safe_fetchval(conn, degraded, "intelligence_outcomes_24h",
             f"""
             SELECT COUNT(*) FROM prediction_outcomes
             WHERE created_at >= now() - INTERVAL '24 hours'
@@ -284,7 +315,7 @@ async def operational_metrics(user: dict = Depends(require_operations_read)) -> 
             """,
             *intelligence_args,
         )
-        intelligence_options_selected_24h = await _safe_fetchval(conn,
+        intelligence_options_selected_24h = await _safe_fetchval(conn, degraded, "intelligence_options_selected_24h",
             f"""
             SELECT COUNT(*) FROM decision_options
             WHERE selected = TRUE
@@ -293,7 +324,7 @@ async def operational_metrics(user: dict = Depends(require_operations_read)) -> 
             """,
             *intelligence_args,
         )
-        intelligence_external_errors_24h = await _safe_fetchval(conn,
+        intelligence_external_errors_24h = await _safe_fetchval(conn, degraded, "intelligence_external_errors_24h",
             f"""
             SELECT COUNT(*) FROM external_intelligence_sources
             WHERE last_run_at >= now() - INTERVAL '24 hours'
@@ -302,7 +333,7 @@ async def operational_metrics(user: dict = Depends(require_operations_read)) -> 
             """,
             *intelligence_args,
         )
-        intelligence_external_cache_active = await _safe_fetchval(conn,
+        intelligence_external_cache_active = await _safe_fetchval(conn, degraded, "intelligence_external_cache_active",
             f"""
             SELECT COUNT(*) FROM external_evidence_cache
             WHERE expires_at > now()
@@ -310,7 +341,7 @@ async def operational_metrics(user: dict = Depends(require_operations_read)) -> 
             """,
             *intelligence_args,
         )
-        intelligence_run_count_24h = await _safe_fetchval(conn,
+        intelligence_run_count_24h = await _safe_fetchval(conn, degraded, "intelligence_run_count_24h",
             f"""
             SELECT COUNT(*) FROM audit_events a
             WHERE a.created_at >= now() - INTERVAL '24 hours'
@@ -319,7 +350,7 @@ async def operational_metrics(user: dict = Depends(require_operations_read)) -> 
             """,
             *audit_args,
         )
-        intelligence_run_errors_24h = await _safe_fetchval(conn,
+        intelligence_run_errors_24h = await _safe_fetchval(conn, degraded, "intelligence_run_errors_24h",
             f"""
             SELECT COUNT(*) FROM audit_events a
             WHERE a.created_at >= now() - INTERVAL '24 hours'
@@ -329,7 +360,7 @@ async def operational_metrics(user: dict = Depends(require_operations_read)) -> 
             """,
             *audit_args,
         )
-        intelligence_avg_run_ms = await _safe_fetchval(conn,
+        intelligence_avg_run_ms = await _safe_fetchval(conn, degraded, "intelligence_avg_run_ms",
             f"""
             SELECT AVG((a.metadata->>'duration_ms')::numeric)
             FROM audit_events a
@@ -340,7 +371,7 @@ async def operational_metrics(user: dict = Depends(require_operations_read)) -> 
             """,
             *audit_args,
         )
-        intelligence_avg_signals_per_run = await _safe_fetchval(conn,
+        intelligence_avg_signals_per_run = await _safe_fetchval(conn, degraded, "intelligence_avg_signals_per_run",
             f"""
             SELECT AVG((a.metadata->>'signals')::numeric)
             FROM audit_events a
@@ -351,7 +382,7 @@ async def operational_metrics(user: dict = Depends(require_operations_read)) -> 
             """,
             *audit_args,
         )
-        intelligence_measured_outcomes_30d = await _safe_fetchval(conn,
+        intelligence_measured_outcomes_30d = await _safe_fetchval(conn, degraded, "intelligence_measured_outcomes_30d",
             f"""
             SELECT COUNT(*) FROM prediction_outcomes
             WHERE created_at >= now() - INTERVAL '30 days'
@@ -361,7 +392,7 @@ async def operational_metrics(user: dict = Depends(require_operations_read)) -> 
             """,
             *intelligence_args,
         )
-        intelligence_accurate_outcomes_30d = await _safe_fetchval(conn,
+        intelligence_accurate_outcomes_30d = await _safe_fetchval(conn, degraded, "intelligence_accurate_outcomes_30d",
             f"""
             SELECT COUNT(*) FROM prediction_outcomes
             WHERE created_at >= now() - INTERVAL '30 days'
@@ -417,4 +448,8 @@ async def operational_metrics(user: dict = Depends(require_operations_read)) -> 
                 "external_cache_active_items": _int(intelligence_external_cache_active),
             },
             "backup": _backup_status(),
+            # F11: a query failure surfaces here (and as null in its metric)
+            # instead of masquerading as a real zero.
+            "status": "degraded" if degraded else "ok",
+            "degraded_metrics": sorted(set(degraded)),
         }
