@@ -645,6 +645,71 @@ def sap_successfactors_extract_all():
                     "success",
                     "ok",
                 }
+                # Cycle transitions land in pipeline_runs — the ledger every
+                # DAG already writes — so the run leaves a queryable timeline:
+                # per-entity 'extracted' rows above, then Gold, then the
+                # anomaly signal the Control Room surfaces.
+                gold_results = [
+                    item
+                    for item in (gold_refresh or {}).get("results") or []
+                    if isinstance(item, dict)
+                ]
+                _pipeline_run_save(
+                    context=context,
+                    conf=conf,
+                    entity="gold_foundation",
+                    status=(
+                        "success" if gold_status in {"success", "ok"} else gold_status or "failed"
+                    ),
+                    started_at=started_at,
+                    record_count=sum(
+                        int(item.get("row_count") or 0) for item in gold_results
+                    ),
+                    extra={
+                        "transition": "gold_materialized",
+                        "target": target,
+                        "materialized": (gold_refresh or {}).get("materialized"),
+                        "total": (gold_refresh or {}).get("total"),
+                        "silver_status": (gold_refresh or {}).get("silver_status"),
+                        "datasets": {
+                            str(item.get("name") or ""): item.get("row_count")
+                            for item in gold_results
+                        },
+                    },
+                )
+                anomalies_item = next(
+                    (
+                        item
+                        for item in gold_results
+                        if str(item.get("name") or "").endswith("employees_anomalies")
+                    ),
+                    None,
+                )
+                if anomalies_item is not None:
+                    anomalies_ok = anomalies_item.get("status") == "ok"
+                    _pipeline_run_save(
+                        context=context,
+                        conf=conf,
+                        entity="employee_central_anomalies",
+                        status="success" if anomalies_ok else "failed",
+                        started_at=started_at,
+                        record_count=(
+                            int(anomalies_item.get("row_count") or 0)
+                            if anomalies_ok
+                            else None
+                        ),
+                        error_message=(
+                            None
+                            if anomalies_ok
+                            else str(anomalies_item.get("error") or "")[:500] or None
+                        ),
+                        extra={
+                            "transition": "anomalies_detected",
+                            "surface": "control_room.employee_central",
+                            "surface_ready": anomalies_ok,
+                            "anomalies": anomalies_item.get("row_count"),
+                        },
+                    )
             hard_failed = False
             blocked_or_failed = any(
                 summary[key]

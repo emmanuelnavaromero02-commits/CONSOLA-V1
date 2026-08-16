@@ -1,5 +1,6 @@
 import { isApiError } from "@/lib/api";
 import type {
+  ControlRoomExperienceV2,
   ExperienceDecision,
   ExperienceMetric,
 } from "@/lib/control-room/experience-contract";
@@ -20,6 +21,35 @@ export function experienceErrorKind(error: unknown): ExperienceErrorKind {
 
 export function decisionLabel(decision: ExperienceDecision): string {
   return decisionLabels[decision.status];
+}
+
+export function latestObservedAt(
+  experience: ControlRoomExperienceV2,
+): string | null {
+  let latest: string | null = null;
+  let latestMs = Number.NEGATIVE_INFINITY;
+  for (const section of experience.sections) {
+    for (const fact of section.facts) {
+      const ms = Date.parse(fact.observed_at);
+      if (!Number.isNaN(ms) && ms > latestMs) {
+        latestMs = ms;
+        latest = fact.observed_at;
+      }
+    }
+  }
+  return latest;
+}
+
+export function formatRelativeFromNow(value: string): string {
+  const then = Date.parse(value);
+  if (Number.isNaN(then)) return "";
+  const rtf = new Intl.RelativeTimeFormat("es-MX", { numeric: "auto" });
+  const minutes = Math.round((Date.now() - then) / 60_000);
+  if (minutes < 1) return "hace un momento";
+  if (minutes < 60) return rtf.format(-minutes, "minute");
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return rtf.format(-hours, "hour");
+  return rtf.format(-Math.round(hours / 24), "day");
 }
 
 export function formatObservedAt(value: string): string {

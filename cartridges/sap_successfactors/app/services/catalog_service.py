@@ -649,6 +649,10 @@ def get_extract_all_plan(
         entity = str(config.get("entity") or "").strip()
         if not entity:
             continue
+        if entity.startswith("__"):
+            # Pseudo entries ('__talent_cpa__' outcomes, the '__foundation_cycle__'
+            # scheduler marker) are not extractable OData entities.
+            continue
         configured_entities.add(entity)
 
         if target_entities is not None and entity not in target_entities:
