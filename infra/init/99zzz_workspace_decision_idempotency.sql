@@ -1,4 +1,4 @@
--- F-SEG MAX-05: durable, actor-scoped idempotency for Workspace decision actions.
+-- F-SEG MAX-05: durable, actor-scoped idempotency for Workspace and Console decision actions.
 -- Raw caller keys are never stored; only SHA-256 digests reach this ledger.
 
 CREATE TABLE IF NOT EXISTS workspace_decision_idempotency (
@@ -45,7 +45,7 @@ DROP POLICY IF EXISTS workspace_decision_idempotency_actor_scope
     ON workspace_decision_idempotency;
 CREATE POLICY workspace_decision_idempotency_actor_scope
     ON workspace_decision_idempotency
-    FOR ALL TO omega_workspace
+    FOR ALL TO omega_workspace, omega_console
     USING (
         omega_rls_workspace_matches(tenant_id, workspace_id)
         AND actor_user_id = NULLIF(current_setting('app.user_id', TRUE), '')::BIGINT
@@ -56,8 +56,10 @@ CREATE POLICY workspace_decision_idempotency_actor_scope
     );
 
 REVOKE ALL ON workspace_decision_idempotency FROM PUBLIC;
-REVOKE DELETE, TRUNCATE ON workspace_decision_idempotency FROM omega_workspace;
-GRANT SELECT, INSERT, UPDATE ON workspace_decision_idempotency TO omega_workspace;
+REVOKE DELETE, TRUNCATE ON workspace_decision_idempotency
+    FROM omega_workspace, omega_console;
+GRANT SELECT, INSERT, UPDATE ON workspace_decision_idempotency
+    TO omega_workspace, omega_console;
 -- Workspace already owns scoped decision-action writes, but the legacy grant
 -- omitted SELECT; INSERT ... RETURNING and replay lookup therefore failed 42501.
 GRANT SELECT, INSERT, UPDATE ON decision_actions TO omega_workspace;
@@ -153,7 +155,7 @@ FOR EACH ROW EXECUTE FUNCTION enforce_decision_reference_scope();
 
 REVOKE ALL ON SEQUENCE workspace_decision_idempotency_id_seq FROM PUBLIC;
 GRANT USAGE, SELECT ON SEQUENCE workspace_decision_idempotency_id_seq
-    TO omega_workspace;
+    TO omega_workspace, omega_console;
 
 INSERT INTO schema_migrations (filename, applied_at)
 VALUES ('99zzz_workspace_decision_idempotency.sql', NOW())

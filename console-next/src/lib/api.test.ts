@@ -108,6 +108,25 @@ describe("apiFetch", () => {
 });
 
 describe("api", () => {
+  it("preserves caller headers for idempotent mutations", async () => {
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(
+        JSON.stringify({ ok: true }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.post("/api/decisions/42/actions", { action_text: "canary" }, {
+      headers: { "Idempotency-Key": "synthetic-client-canary" },
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Headers;
+    expect(headers.get("Idempotency-Key")).toBe("synthetic-client-canary");
+    expect(headers.get("X-Request-ID")).toBeTruthy();
+  });
+
   it("parses JSON success payloads and preserves backend request id", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(
       JSON.stringify({ users: [1, 2] }),

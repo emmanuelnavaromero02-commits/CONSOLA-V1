@@ -215,6 +215,26 @@ def test_x_csrf_token_in_allow_headers(client):
     assert "x-csrf-token" in allow_headers
 
 
+def test_decision_action_preflight_allows_idempotency_header(client):
+    r = client.options(
+        "/api/decisions/900030/actions",
+        headers={
+            "Origin": "http://localhost:8001",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": (
+                "Content-Type,Idempotency-Key,X-CSRF-Token"
+            ),
+        },
+    )
+    assert r.status_code == 200
+    allowed = {
+        value.strip().lower()
+        for value in r.headers.get("access-control-allow-headers", "").split(",")
+    }
+    assert {"content-type", "idempotency-key", "x-csrf-token"} <= allowed
+    assert r.headers.get("access-control-allow-origin") == "http://localhost:8001"
+
+
 def test_expose_headers_includes_set_cookie_and_csrf(client):
     """expose_headers lets the browser READ Set-Cookie + X-CSRF-Token
     from credentialed cross-origin responses. Without it the

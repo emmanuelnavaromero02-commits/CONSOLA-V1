@@ -355,8 +355,12 @@ export async function deleteDecision(id: number): Promise<void> {
 }
 
 export async function addDecisionAction(id: number, actionText: string): Promise<DecisionAction> {
+  const idempotencyKey = globalThis.crypto?.randomUUID?.()
+    ?? `decision-action-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const { data } = await api.post<DecisionAction>(`/api/decisions/${id}/actions`, {
     action_text: actionText,
+  }, {
+    headers: { "Idempotency-Key": idempotencyKey },
   });
   return data;
 }

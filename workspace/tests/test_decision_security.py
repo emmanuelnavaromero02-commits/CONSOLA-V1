@@ -515,3 +515,5 @@ def test_decision_idempotency_migration_is_durable_and_actor_scoped():
     assert "CREATE TRIGGER trg_decisions_reference_scope" in migration
     assert "FOR SHARE OF u, uwr" in migration
     assert "FOR SHARE OF followed" in migration
+    assert "FOR ALL TO omega_workspace, omega_console" in migration
+    assert "TO omega_workspace, omega_console" in migration

@@ -202,16 +202,29 @@ async def api_decisions_delete(decision_id: int, user: dict = Depends(require_pe
 # /api/decisions/{decision_id}/actions
 @router.post("/api/decisions/{decision_id}/actions", dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))])
 @_bind_to_main
-async def api_decisions_add_action(decision_id: int, body: dict, user: dict = Depends(require_permission("control_room.write"))):
-    action_text = (body.get("action_text") or "").strip()
+async def api_decisions_add_action(
+    decision_id: int,
+    body: dict,
+    request: Request,
+    user: dict = Depends(require_permission("control_room.write")),
+):
+    key_hash = _decision_idempotency_key(request)
+    raw_action_text = body.get("action_text")
+    if not isinstance(raw_action_text, str):
+        raise HTTPException(400, "action_text must be a string")
+    action_text = raw_action_text.strip()
     if not action_text:
         raise HTTPException(400, "action_text is required")
+    note = body.get("note")
+    if note is not None and not isinstance(note, str):
+        raise HTTPException(400, "note must be a string or null")
     pool = await _dec_pool()
-    actor = user.get("email") or "user"
     workspace_id = _current_workspace_id(user)
     if not workspace_id:
         raise HTTPException(403, "active workspace is required")
     async with scoped_db_for_user(pool, user) as (conn, tenant_id, _workspace_id):
+        if not tenant_id:
+            raise HTTPException(403, "active tenant and workspace are required")
         existing = await _dec_load_on_conn(
             conn,
             decision_id=decision_id,
@@ -224,13 +237,16 @@ async def api_decisions_add_action(decision_id: int, body: dict, user: dict = De
             raise HTTPException(404, f"Decision {decision_id} not found")
         if not _dec_can_edit(existing, user):
             raise HTTPException(403, "only creator/assignee/admin can add to bitácora")
-        row = await conn.fetchrow(
-            """INSERT INTO decision_actions (decision_id, action_text, note, actor)
-               VALUES ($1, $2, $3, $4)
-               RETURNING *""",
-            decision_id, action_text, body.get("note"), actor,
+        return await _create_decision_action_idempotently(
+            conn,
+            decision_id=decision_id,
+            user=user,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            action_text=action_text,
+            note=note,
+            key_hash=key_hash,
         )
-    return {**dict(row), "ts": row["ts"].isoformat() if row["ts"] else None}
 
 # /api/users
 @router.get("/api/users")

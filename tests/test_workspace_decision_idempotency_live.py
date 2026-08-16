@@ -12,6 +12,7 @@ import asyncpg
 import pytest
 
 from tests.test_operational_rls_console_refinement import (
+    omega_console_live_dsn,
     postgres_with_real_init_schema,
 )
 
@@ -37,6 +38,26 @@ def _load_workspace_main(monkeypatch):
         "INTERNAL_API_KEY",
         "workspace_live_fseg_key_with_more_than_32_chars",
     )
+    return importlib.import_module("app.main")
+
+
+def _load_console_main(monkeypatch):
+    for name in list(sys.modules):
+        if name == "app" or name.startswith("app."):
+            del sys.modules[name]
+    repo = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(repo / "console"))
+    console_env = {
+        "APP_ENV": "test",
+        "INTERNAL_API_KEY": "console_live_fseg_key_with_more_than_32_chars",
+        "JWT_SECRET_KEY": "console_live_fseg_jwt_with_more_than_32_chars",
+        "MINIO_SECRET_KEY": "synthetic-minio-canary",
+        "POSTGRES_PASSWORD": "synthetic-postgres-canary",
+        "ADMIN_EMAIL": "admin@invalid.example",
+        "ADMIN_PASSWORD": "synthetic-admin-canary",
+    }
+    for name, value in console_env.items():
+        monkeypatch.setenv(name, value)
     return importlib.import_module("app.main")
 
 
@@ -131,6 +152,73 @@ async def test_ten_simultaneous_posts_same_key_create_exactly_one_action(
     finally:
         await pool.close()
         main._PG_POOL = None
+
+    action_ids = {result["id"] for result in results}
+    assert len(action_ids) == 1
+
+    check = await asyncpg.connect(postgres_with_real_init_schema)
+    try:
+        action_count = await check.fetchval(
+            "SELECT COUNT(*) FROM decision_actions WHERE decision_id = $1",
+            scope["decision_id"],
+        )
+        ledger = await check.fetch(
+            """SELECT actor_user_id, workspace_id::text AS workspace_id,
+                      operation, idempotency_key_hash, status, action_id
+                 FROM workspace_decision_idempotency
+                WHERE actor_user_id = $1 AND workspace_id = $2""",
+            scope["user_id"],
+            scope["workspace_id"],
+        )
+    finally:
+        await check.close()
+
+    assert action_count == 1
+    assert len(ledger) == 1
+    assert ledger[0]["operation"] == f"decision.action.create:{scope['decision_id']}"
+    assert ledger[0]["status"] == "completed"
+    assert ledger[0]["action_id"] in action_ids
+    assert ledger[0]["idempotency_key_hash"] != canary_key
+    assert len(ledger[0]["idempotency_key_hash"]) == 64
+
+
+@pytest.mark.asyncio
+async def test_console_ten_simultaneous_posts_same_key_create_exactly_one_action(
+    postgres_with_real_init_schema: str,
+    omega_console_live_dsn: str,
+    monkeypatch,
+) -> None:
+    scope = await _seed(postgres_with_real_init_schema)
+    main = _load_console_main(monkeypatch)
+    pool = await asyncpg.create_pool(
+        omega_console_live_dsn,
+        min_size=2,
+        max_size=12,
+    )
+    monkeypatch.setattr(main, "_DEC_POOL", pool)
+    user = {
+        "id": scope["user_id"],
+        "email": scope["email"],
+        "role": "workspace_admin",
+        "workspace_role": "workspace_admin",
+        "active_tenant_id": scope["tenant_id"],
+        "active_workspace_id": scope["workspace_id"],
+    }
+    canary_key = f"synthetic-console-race-{uuid.uuid4().hex}"
+
+    async def post_once():
+        return await main.api_decisions_add_action(
+            decision_id=scope["decision_id"],
+            body={"action_text": "synthetic-console-race-action"},
+            request=SimpleNamespace(headers={"Idempotency-Key": canary_key}),
+            user=dict(user),
+        )
+
+    try:
+        results = await asyncio.gather(*(post_once() for _ in range(10)))
+    finally:
+        await pool.close()
+        main._DEC_POOL = None
 
     action_ids = {result["id"] for result in results}
     assert len(action_ids) == 1

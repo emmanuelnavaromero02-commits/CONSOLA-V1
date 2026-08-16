@@ -18,6 +18,10 @@ export interface ApiError extends Error {
 
 type JsonBody = unknown;
 
+export interface ApiRequestOptions {
+  headers?: HeadersInit;
+}
+
 export type ApiFetchInit = Omit<RequestInit, "body"> & {
   body?: BodyInit | null;
   json?: JsonBody;
@@ -178,11 +182,14 @@ async function request<T>(
   method: string,
   path: string,
   body?: JsonBody,
+  options: ApiRequestOptions = {},
 ): Promise<ApiResponse<T>> {
-  const requestId = makeRequestId();
+  const headers = new Headers(options.headers);
+  const requestId = headers.get("X-Request-ID") || makeRequestId();
+  if (!headers.has("X-Request-ID")) headers.set("X-Request-ID", requestId);
   let response: Response;
   try {
-    response = await apiFetch(path, { method, headers: { "X-Request-ID": requestId }, json: body });
+    response = await apiFetch(path, { method, headers, json: body });
   } catch (error) {
     if (isApiError(error)) throw error;
     throw toApiError(
@@ -208,11 +215,11 @@ async function request<T>(
 }
 
 export const api = {
-  get: <T = unknown>(path: string) => request<T>("GET", path),
-  post: <T = unknown>(path: string, body?: JsonBody) => request<T>("POST", path, body),
-  put: <T = unknown>(path: string, body?: JsonBody) => request<T>("PUT", path, body),
-  patch: <T = unknown>(path: string, body?: JsonBody) => request<T>("PATCH", path, body),
-  delete: <T = unknown>(path: string, body?: JsonBody) => request<T>("DELETE", path, body),
+  get: <T = unknown>(path: string, options?: ApiRequestOptions) => request<T>("GET", path, undefined, options),
+  post: <T = unknown>(path: string, body?: JsonBody, options?: ApiRequestOptions) => request<T>("POST", path, body, options),
+  put: <T = unknown>(path: string, body?: JsonBody, options?: ApiRequestOptions) => request<T>("PUT", path, body, options),
+  patch: <T = unknown>(path: string, body?: JsonBody, options?: ApiRequestOptions) => request<T>("PATCH", path, body, options),
+  delete: <T = unknown>(path: string, body?: JsonBody, options?: ApiRequestOptions) => request<T>("DELETE", path, body, options),
 };
 
 export function isApiError(value: unknown): value is ApiError {

@@ -119,6 +119,38 @@ def test_decisions_workspace_id_migration_still_exists():
     assert "idx_decisions_workspace_id" in src
 
 
+def test_all_console_decision_action_surfaces_use_durable_idempotency():
+    main_source = CONSOLE_MAIN.read_text(encoding="utf-8")
+    router_source = (
+        CONSOLE_DIR / "app" / "routers" / "v1" / "admin_decisions.py"
+    ).read_text(encoding="utf-8")
+    for source in (main_source, router_source):
+        action_route = source.split(
+            '"/api/decisions/{decision_id}/actions"', 1
+        )[1]
+        assert "_decision_idempotency_key(request)" in action_route
+        assert "_create_decision_action_idempotently(" in action_route
+
+    migration = (
+        REPO_ROOT / "infra" / "init" / "99zzz_workspace_decision_idempotency.sql"
+    ).read_text(encoding="utf-8")
+    assert "FOR ALL TO omega_workspace, omega_console" in migration
+    assert "GRANT SELECT, INSERT, UPDATE ON workspace_decision_idempotency" in migration
+    assert "TO omega_workspace, omega_console" in migration
+
+
+def test_all_console_decision_clients_send_fresh_idempotency_key():
+    client_sources = (
+        CONSOLE_DIR / "app" / "static" / "js" / "decisions.js",
+        CONSOLE_DIR / "app" / "static" / "js" / "workspace.js",
+        REPO_ROOT / "console-next" / "src" / "lib" / "admin-surfaces.ts",
+    )
+    for path in client_sources:
+        source = path.read_text(encoding="utf-8")
+        assert "randomUUID" in source, path
+        assert "Idempotency-Key" in source, path
+
+
 # ── Behavioral tests on console.app.main ────────────────────────────────────
 
 # Minimal env so importing console.app.main doesn't blow up. We use
@@ -572,12 +604,18 @@ async def test_add_action_404_when_cross_workspace(console_main, monkeypatch):
         return fake
 
     monkeypatch.setattr(console_main, "_dec_pool", _factory)
-    user = {"id": 7, "role": "user", "active_workspace_id": "workspace-A"}
+    user = {
+        "id": 7,
+        "role": "user",
+        "active_tenant_id": "tenant-A",
+        "active_workspace_id": "workspace-A",
+    }
 
     with pytest.raises(HTTPException) as exc_info:
         await console_main.api_decisions_add_action(
             decision_id=42,
             body={"action_text": "tried to leak across workspaces"},
+            request=SimpleNamespace(headers={"Idempotency-Key": "cross-scope-canary"}),
             user=user,
         )
     assert exc_info.value.status_code == 404
@@ -600,10 +638,19 @@ async def test_add_action_happy_path_same_workspace(console_main, monkeypatch):
         def __init__(self, results):
             super().__init__()
             self._results = list(results)
+            self._reservation_id = 101
 
         async def fetchrow(self, sql, *params):
             self.calls.append(("fetchrow", sql, params))
             return self._results.pop(0)
+
+        async def fetchval(self, sql, *params):
+            self.calls.append(("fetchval", sql, params))
+            if sql.startswith("INSERT INTO workspace_decision_idempotency"):
+                return self._reservation_id
+            if sql.startswith("UPDATE workspace_decision_idempotency"):
+                return self._reservation_id
+            raise AssertionError(f"unexpected fetchval: {sql}")
 
     fake = _MultiResultPool([existing, action_row])
 
@@ -611,10 +658,19 @@ async def test_add_action_happy_path_same_workspace(console_main, monkeypatch):
         return fake
 
     monkeypatch.setattr(console_main, "_dec_pool", _factory)
-    user = {"id": 7, "role": "user", "email": "u@test", "active_workspace_id": "workspace-A"}
+    user = {
+        "id": 7,
+        "role": "user",
+        "email": "u@test",
+        "active_tenant_id": "tenant-A",
+        "active_workspace_id": "workspace-A",
+    }
 
     out = await console_main.api_decisions_add_action(
-        decision_id=1, body={"action_text": "note"}, user=user
+        decision_id=1,
+        body={"action_text": "note"},
+        request=SimpleNamespace(headers={"Idempotency-Key": "same-scope-canary"}),
+        user=user,
     )
     assert out["action_text"] == "note"
 
@@ -623,6 +679,33 @@ async def test_add_action_happy_path_same_workspace(console_main, monkeypatch):
     _, load_sql, load_params = _non_scope_calls(fake)[0]
     assert "workspace_id = $2" in load_sql
     assert load_params[1] == "workspace-A"
+
+
+@pytest.mark.asyncio
+async def test_add_action_requires_idempotency_key_before_db(console_main, monkeypatch):
+    from fastapi import HTTPException
+
+    async def _forbidden_pool():
+        raise AssertionError("missing idempotency key reached database")
+
+    monkeypatch.setattr(console_main, "_dec_pool", _forbidden_pool)
+    user = {
+        "id": 7,
+        "role": "user",
+        "active_tenant_id": "tenant-A",
+        "active_workspace_id": "workspace-A",
+    }
+
+    with pytest.raises(HTTPException) as exc_info:
+        await console_main.api_decisions_add_action(
+            decision_id=1,
+            body={"action_text": "note"},
+            request=SimpleNamespace(headers={}),
+            user=user,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Idempotency-Key header is required"
 
 
 # ── Edge case: active_workspace_id="" (empty string, not None). The

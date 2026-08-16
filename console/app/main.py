@@ -9,6 +9,7 @@ from __future__ import annotations
 # fmt: off
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -7034,6 +7035,131 @@ def _decision_reference_id(value: object, field: str) -> int | None:
     return reference_id
 
 
+def _decision_idempotency_key(request: Request) -> str:
+    raw = request.headers.get("Idempotency-Key")
+    if raw is None or not raw.strip():
+        raise HTTPException(400, "Idempotency-Key header is required")
+    if raw != raw.strip() or len(raw.encode("utf-8")) > 200:
+        raise HTTPException(400, "Idempotency-Key header is invalid")
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in raw):
+        raise HTTPException(400, "Idempotency-Key header is invalid")
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _decision_action_fingerprint(action_text: str, note: str | None) -> str:
+    canonical = json.dumps(
+        {"action_text": action_text, "note": note},
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _decision_action_to_dict(row) -> dict:
+    action = dict(row)
+    action["ts"] = action["ts"].isoformat() if action.get("ts") else None
+    return action
+
+
+async def _create_decision_action_idempotently(
+    conn,
+    *,
+    decision_id: int,
+    user: dict,
+    tenant_id: str,
+    workspace_id: str,
+    action_text: str,
+    note: str | None,
+    key_hash: str,
+) -> dict:
+    """Reserve and complete one action in the caller's scoped transaction."""
+    operation = f"decision.action.create:{decision_id}"
+    request_fingerprint = _decision_action_fingerprint(action_text, note)
+    # The ledger policy binds rows to the authenticated actor in addition to
+    # the tenant/workspace GUCs installed by scoped_db_for_user().
+    await conn.execute(
+        "SELECT set_config('app.user_id', $1, true)",
+        str(user["id"]),
+    )
+    reservation_id = await conn.fetchval(
+        """INSERT INTO workspace_decision_idempotency (
+               tenant_id, workspace_id, actor_user_id, operation,
+               idempotency_key_hash, request_fingerprint
+           )
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (
+               actor_user_id, workspace_id, operation, idempotency_key_hash
+           ) DO NOTHING
+           RETURNING id""",
+        tenant_id,
+        workspace_id,
+        user["id"],
+        operation,
+        key_hash,
+        request_fingerprint,
+    )
+    if reservation_id is None:
+        reservation = await conn.fetchrow(
+            """SELECT request_fingerprint, status, action_id
+                 FROM workspace_decision_idempotency
+                WHERE actor_user_id = $1
+                  AND tenant_id = $2
+                  AND workspace_id = $3
+                  AND operation = $4
+                  AND idempotency_key_hash = $5""",
+            user["id"],
+            tenant_id,
+            workspace_id,
+            operation,
+            key_hash,
+        )
+        if not reservation:
+            raise HTTPException(409, "idempotency reservation is unavailable")
+        if reservation["request_fingerprint"] != request_fingerprint:
+            raise HTTPException(
+                409, "Idempotency-Key was already used for another payload"
+            )
+        if reservation["status"] != "completed" or reservation["action_id"] is None:
+            raise HTTPException(409, "idempotent operation is not complete")
+        action = await conn.fetchrow(
+            """SELECT * FROM decision_actions
+                WHERE id = $1 AND decision_id = $2""",
+            reservation["action_id"],
+            decision_id,
+        )
+        if not action:
+            raise HTTPException(409, "idempotent action is no longer available")
+        return _decision_action_to_dict(action)
+
+    row = await conn.fetchrow(
+        """INSERT INTO decision_actions (decision_id, action_text, note, actor)
+           VALUES ($1, $2, $3, $4)
+           RETURNING *""",
+        decision_id,
+        action_text,
+        note,
+        user.get("email") or "user",
+    )
+    completed_id = await conn.fetchval(
+        """UPDATE workspace_decision_idempotency
+              SET status = 'completed', action_id = $2,
+                  completed_at = clock_timestamp()
+            WHERE id = $1
+              AND actor_user_id = $3
+              AND workspace_id = $4
+              AND status = 'in_progress'
+            RETURNING id""",
+        reservation_id,
+        row["id"],
+        user["id"],
+        workspace_id,
+    )
+    if completed_id is None:
+        raise RuntimeError("decision idempotency reservation completion failed")
+    return _decision_action_to_dict(row)
+
+
 async def _validate_decision_references(
     conn,
     *,
@@ -7406,17 +7532,28 @@ async def api_decisions_delete(
     dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
 )
 async def api_decisions_add_action(
-    decision_id: int, body: dict, user: dict = Depends(require_permission("control_room.write"))
+    decision_id: int,
+    body: dict,
+    request: Request,
+    user: dict = Depends(require_permission("control_room.write")),
 ):
-    action_text = (body.get("action_text") or "").strip()
+    key_hash = _decision_idempotency_key(request)
+    raw_action_text = body.get("action_text")
+    if not isinstance(raw_action_text, str):
+        raise HTTPException(400, "action_text must be a string")
+    action_text = raw_action_text.strip()
     if not action_text:
         raise HTTPException(400, "action_text is required")
+    note = body.get("note")
+    if note is not None and not isinstance(note, str):
+        raise HTTPException(400, "note must be a string or null")
     pool = await _dec_pool()
-    actor = user.get("email") or "user"
     workspace_id = _current_workspace_id(user)
     if not workspace_id:
         raise HTTPException(403, "active workspace is required")
     async with scoped_db_for_user(pool, user) as (conn, tenant_id, _workspace_id):
+        if not tenant_id:
+            raise HTTPException(403, "active tenant and workspace are required")
         existing = await _dec_load_on_conn(
             conn,
             decision_id=decision_id,
@@ -7429,16 +7566,16 @@ async def api_decisions_add_action(
             raise HTTPException(404, f"Decision {decision_id} not found")
         if not _dec_can_edit(existing, user):
             raise HTTPException(403, "only creator/assignee/admin can add to bitácora")
-        row = await conn.fetchrow(
-            """INSERT INTO decision_actions (decision_id, action_text, note, actor)
-               VALUES ($1, $2, $3, $4)
-               RETURNING *""",
-            decision_id,
-            action_text,
-            body.get("note"),
-            actor,
+        return await _create_decision_action_idempotently(
+            conn,
+            decision_id=decision_id,
+            user=user,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            action_text=action_text,
+            note=note,
+            key_hash=key_hash,
         )
-    return {**dict(row), "ts": row["ts"].isoformat() if row["ts"] else None}
 
 
 # ── Users (assignee picker, all logged-in users) ────────────────────────────
@@ -7928,6 +8065,7 @@ app.add_middleware(
         "x-api-key",
         "x-internal-service",
         "X-CSRF-Token",
+        "Idempotency-Key",
         "X-Requested-With",
         "Accept",
         "Cookie",
