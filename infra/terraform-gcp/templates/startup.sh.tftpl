@@ -200,6 +200,16 @@ fi
 
 printf '%s\n' "$${COMPOSE_OVERRIDE}" > infra/docker-compose.gcp.yml
 
+# Daily scheduled backup (F4-2): the versioned cron.d file rides in the
+# release; installing it here keeps the mechanism reproducible per VM.
+if [[ -f "$${RELEASE_DIR}/infra/terraform-gcp/files/omega-backup.cron" ]]; then
+  install -m 0644 -o root -g root \
+    "$${RELEASE_DIR}/infra/terraform-gcp/files/omega-backup.cron" /etc/cron.d/omega-backup
+  touch /var/log/omega-backup.log
+  chmod 0640 /var/log/omega-backup.log
+  echo "[omega-startup] installed /etc/cron.d/omega-backup"
+fi
+
 COMPOSE=(docker compose --env-file infra/.env -f infra/docker-compose.yml -f infra/docker-compose.gcp.yml --profile sap)
 "$${COMPOSE[@]}" config -q
 "$${COMPOSE[@]}" up --build -d

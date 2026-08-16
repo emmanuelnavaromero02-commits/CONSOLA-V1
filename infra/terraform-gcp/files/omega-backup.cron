@@ -1,0 +1,17 @@
+# /etc/cron.d/omega-backup — daily OMEGA backup on the canonical GCP host.
+#
+# Versioned source of truth: infra/terraform-gcp/files/omega-backup.cron.
+# Fresh VMs get it installed by the terraform-gcp startup provisioning.
+# Already-provisioned VMs need the owner to install it once (see
+# docs/release-evidence/omega-17/backup-restore-rehearsal-2026-08-15.md):
+#   sudo install -m 0644 -o root -g root \
+#     /opt/modecissions/current/infra/terraform-gcp/files/omega-backup.cron \
+#     /etc/cron.d/omega-backup
+#
+# 03:10 UTC daily — after the nightly pipeline window, before MX business
+# hours. GCS_BUCKET comes from infra/.env (provisioning sets it from
+# LAKEHOUSE_BUCKET); BACKUP_STORAGE_BACKEND=gcs is pinned so an ambient
+# S3 variable can never divert the destination.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+10 3 * * * root REPO_DIR=/opt/modecissions/current DEPLOY_DIR=/opt/modecissions/current BACKUP_ENV_FILE=infra/.env BACKUP_COMPOSE_FILES="--env-file infra/.env -f infra/docker-compose.yml -f infra/docker-compose.gcp.yml" BACKUP_STORAGE_BACKEND=gcs bash /opt/modecissions/current/infra/terraform/deploy/backup.sh >> /var/log/omega-backup.log 2>&1
