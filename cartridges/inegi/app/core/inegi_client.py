@@ -7,6 +7,7 @@ from typing import Any
 
 import requests
 
+from app.core.egress_guard import guarded_session
 from app.core.rate_limit import WindowRateLimiter
 from app.core.source_security import BASE_URL, sanitize_source_url, validate_url
 from app.core.vault_client import resolve_inegi_token
@@ -41,7 +42,7 @@ class INEGIClient:
         sleep=time.sleep,
     ) -> None:
         self._token = token or _resolved_token(conn_id=conn_id, security_context=security_context)
-        self._session = session or requests.Session()
+        self._session = session or guarded_session()
         self._sleep = sleep
         self._cache: dict[tuple[str, tuple[tuple[str, str], ...]], dict[str, Any]] = {}
         self._metadata_limiter = WindowRateLimiter(max_calls=20, window_seconds=60)

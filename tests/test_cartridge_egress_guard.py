@@ -1,4 +1,4 @@
-"""No-network SSRF regression probes for all priority cartridges."""
+"""No-network SSRF regression probes for every packaged cartridge."""
 
 from __future__ import annotations
 
@@ -11,13 +11,16 @@ import pytest
 import requests
 
 REPO = Path(__file__).resolve().parents[1]
-PRIORITY_CARTRIDGES = (
+PACKAGED_CARTRIDGES = (
+    "banxico",
     "hubspot",
+    "inegi",
     "salesforce",
     "replicon",
     "sap_hcm",
     "sap_s4hana",
     "sap_successfactors",
+    "sec_edgar",
 )
 
 
@@ -43,7 +46,7 @@ def _dns(*addresses: str):
     return resolve
 
 
-@pytest.mark.parametrize("cartridge", PRIORITY_CARTRIDGES)
+@pytest.mark.parametrize("cartridge", PACKAGED_CARTRIDGES)
 @pytest.mark.parametrize(
     "url",
     [
@@ -57,7 +60,7 @@ def _dns(*addresses: str):
         "https://synthetic:canary@public.example/",
     ],
 )
-def test_priority_cartridges_block_literal_loopback_imds_and_schemes(
+def test_all_cartridges_block_literal_loopback_imds_and_schemes(
     cartridge, url
 ):
     guard = _load_guard(cartridge)
@@ -65,11 +68,11 @@ def test_priority_cartridges_block_literal_loopback_imds_and_schemes(
         guard.resolve_public_url(url)
 
 
-@pytest.mark.parametrize("cartridge", PRIORITY_CARTRIDGES)
+@pytest.mark.parametrize("cartridge", PACKAGED_CARTRIDGES)
 @pytest.mark.parametrize(
     "addresses", [("10.0.0.8",), ("192.168.1.10",), ("93.184.216.34", "10.1.2.3")]
 )
-def test_priority_cartridges_fail_closed_on_private_or_mixed_dns(
+def test_all_cartridges_fail_closed_on_private_or_mixed_dns(
     cartridge, addresses, monkeypatch
 ):
     guard = _load_guard(cartridge)
@@ -79,8 +82,8 @@ def test_priority_cartridges_fail_closed_on_private_or_mixed_dns(
         guard.resolve_public_url("http://console:8000/api/health")
 
 
-@pytest.mark.parametrize("cartridge", PRIORITY_CARTRIDGES)
-def test_priority_cartridges_pin_validated_dns_and_tls_identity(cartridge, monkeypatch):
+@pytest.mark.parametrize("cartridge", PACKAGED_CARTRIDGES)
+def test_all_cartridges_pin_validated_dns_and_tls_identity(cartridge, monkeypatch):
     guard = _load_guard(cartridge)
     monkeypatch.setattr(
         guard.socket, "getaddrinfo", _dns("93.184.216.34", "93.184.216.35")
@@ -108,8 +111,8 @@ def test_priority_cartridges_pin_validated_dns_and_tls_identity(cartridge, monke
     assert request.headers["Host"] == "api.vendor.example:8443"
 
 
-@pytest.mark.parametrize("cartridge", PRIORITY_CARTRIDGES)
-def test_priority_cartridges_block_redirects_without_following(
+@pytest.mark.parametrize("cartridge", PACKAGED_CARTRIDGES)
+def test_all_cartridges_block_redirects_without_following(
     cartridge, monkeypatch
 ):
     guard = _load_guard(cartridge)
@@ -129,8 +132,8 @@ def test_priority_cartridges_block_redirects_without_following(
         guard.guarded_session().get("https://api.vendor.example/start")
 
 
-@pytest.mark.parametrize("cartridge", PRIORITY_CARTRIDGES)
-def test_priority_cartridges_reject_proxy_bypass(cartridge):
+@pytest.mark.parametrize("cartridge", PACKAGED_CARTRIDGES)
+def test_all_cartridges_reject_proxy_bypass(cartridge):
     guard = _load_guard(cartridge)
     adapter = guard.PinnedHTTPAdapter()
     request = requests.Request("GET", "https://api.vendor.example/v1").prepare()
@@ -144,12 +147,15 @@ def test_priority_cartridges_reject_proxy_bypass(cartridge):
 @pytest.mark.parametrize(
     ("cartridge", "client"),
     [
+        ("banxico", "banxico_client.py"),
         ("hubspot", "hubspot_client.py"),
+        ("inegi", "inegi_client.py"),
         ("salesforce", "salesforce_client.py"),
         ("replicon", "replicon_client.py"),
         ("sap_hcm", "sap_client.py"),
         ("sap_s4hana", "sap_client.py"),
         ("sap_successfactors", "sap_client.py"),
+        ("sec_edgar", "sec_client.py"),
     ],
 )
 def test_test_connection_and_extraction_clients_use_guarded_transport(
