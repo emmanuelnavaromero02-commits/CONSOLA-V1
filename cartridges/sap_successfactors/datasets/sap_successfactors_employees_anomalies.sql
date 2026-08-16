@@ -1,5 +1,5 @@
 -- sap_successfactors_employees_anomalies  (gold)  cartridge: sap_successfactors
--- sources: ["raw/sap_successfactors/EmpEmployment", "raw/sap_successfactors/EmpJob", "raw/sap_successfactors/PerPersonal", "raw/sap_successfactors/FOJobCode"]
+-- sources: ["gold/sap_successfactors/sap_successfactors_employee_360", "silver/sap_successfactors/sap_successfactors_fojobcode_latest"]
 -- description: Detección automática de irregularidades en empleados activos (preparación Fase 3). UNION de varios casos con tipo, severidad y detalle.
 
 -- Mejora propia (estilo HCM/S4). Casos hoy: sin departamento, sin manager,
