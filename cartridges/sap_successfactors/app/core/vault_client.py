@@ -120,6 +120,7 @@ def _fetch_connection(
                 response.raise_for_status()
                 payload = response.json()
                 if isinstance(payload, dict):
+                    payload = _flatten_connection_fields(payload)
                     payload.setdefault("conn_id", candidate_conn_id)
                     payload.setdefault("id", candidate_conn_id)
                     _CONNECTION_CACHE[cache_key] = payload
@@ -127,6 +128,26 @@ def _fetch_connection(
             except Exception as exc:
                 logger.debug("Vault reveal failed for %s/%s: %s", service, candidate_conn_id, exc)
     return {}
+
+
+def _flatten_connection_fields(payload: dict[str, Any]) -> dict[str, Any]:
+    """Lift a nested ``fields`` mapping to the top level of the payload.
+
+    The Console reveal endpoint returns credentials under ``fields``; every
+    consumer here (``_candidate_fields`` lookups in SapSfClient and
+    ``get_secret_for_worker``) reads the payload flat. With an explicit
+    conn_id the client is vault-only — no env fallback — so the nesting
+    left the effective configuration empty and the cycle failed
+    CONFIG_INCOMPLETE even though the reveal succeeded. Top-level keys win
+    on collision: they identify the connection, never the credentials.
+    """
+    nested = payload.get("fields")
+    if not isinstance(nested, dict):
+        return payload
+    flattened = dict(payload)
+    for key, value in nested.items():
+        flattened.setdefault(str(key), value)
+    return flattened
 
 
 def _candidate_fields(env_var_name: str) -> tuple[str, ...]:

@@ -134,6 +134,35 @@ def test_scheduler_fired_cycle_builds_signed_admission_context():
     ), "fallback must run before the fail-closed check"
 
 
+def test_vault_reveal_fields_are_flattened():
+    """Third live finding: the Console reveal nests credentials under
+    'fields' while every consumer reads the payload flat; with an explicit
+    conn_id there is no env fallback, so extraction failed CONFIG_INCOMPLETE
+    despite a successful reveal. The client must lift 'fields' to the top
+    level, with top-level identity keys winning on collision."""
+    import sys
+
+    sys.path.insert(
+        0, str(REPO_ROOT / "cartridges" / "sap_successfactors")
+    )
+    try:
+        from app.core.vault_client import _flatten_connection_fields
+    finally:
+        sys.path.pop(0)
+
+    flat = _flatten_connection_fields(
+        {
+            "conn_id": "default",
+            "fields": {"base_url": "https://sf", "auth_method": "saml", "conn_id": "evil"},
+        }
+    )
+    assert flat["base_url"] == "https://sf"
+    assert flat["auth_method"] == "saml"
+    assert flat["conn_id"] == "default", "identity keys must win on collision"
+    untouched = {"conn_id": "x", "base_url": "flat"}
+    assert _flatten_connection_fields(dict(untouched)) == untouched
+
+
 def test_control_room_shows_freshness():
     presenter = PRESENTER.read_text(encoding="utf-8")
     assert "latestObservedAt" in presenter
