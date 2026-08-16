@@ -161,7 +161,7 @@ def purge_postgres() -> str:
             conn.close()
         yield dsn
     finally:
-        _docker("rm", "-f", name, check=False)
+        _docker("rm", "-f", "-v", name, check=False)
 
 
 @pytest.mark.asyncio
