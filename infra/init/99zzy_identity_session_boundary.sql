@@ -331,6 +331,43 @@ BEGIN
 END
 $$;
 
+CREATE OR REPLACE FUNCTION public.omega_auth_logout(
+    p_session_token_hash text,
+    p_refresh_token_hash text
+) RETURNS TABLE (
+    session_deleted boolean,
+    refresh_revoked boolean
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+    affected integer;
+BEGIN
+    session_deleted := false;
+    refresh_revoked := false;
+
+    IF p_session_token_hash ~ '^[0-9a-f]{64}$' THEN
+        DELETE FROM public.user_sessions
+         WHERE token_hash = p_session_token_hash;
+        GET DIAGNOSTICS affected = ROW_COUNT;
+        session_deleted := affected = 1;
+    END IF;
+
+    IF p_refresh_token_hash ~ '^[0-9a-f]{64}$' THEN
+        UPDATE public.refresh_tokens
+           SET revoked_at = clock_timestamp()
+         WHERE token_hash = p_refresh_token_hash
+           AND revoked_at IS NULL;
+        GET DIAGNOSTICS affected = ROW_COUNT;
+        refresh_revoked := affected = 1;
+    END IF;
+
+    RETURN NEXT;
+END
+$$;
+
 CREATE OR REPLACE FUNCTION public.omega_auth_cleanup_sessions()
 RETURNS integer
 LANGUAGE plpgsql
@@ -554,6 +591,7 @@ ALTER FUNCTION public.omega_auth_create_session(text, bigint, timestamptz, text)
 ALTER FUNCTION public.omega_auth_resolve_session(text) OWNER TO omega_auth;
 ALTER FUNCTION public.omega_auth_resolve_workspace_session(text, uuid) OWNER TO omega_auth;
 ALTER FUNCTION public.omega_auth_destroy_session(text) OWNER TO omega_auth;
+ALTER FUNCTION public.omega_auth_logout(text, text) OWNER TO omega_auth;
 ALTER FUNCTION public.omega_auth_cleanup_sessions() OWNER TO omega_auth;
 ALTER FUNCTION public.omega_auth_revoke_user_tokens(bigint) OWNER TO omega_auth;
 ALTER FUNCTION public.omega_auth_list_sessions(bigint, boolean, uuid[]) OWNER TO omega_auth;
@@ -567,6 +605,7 @@ REVOKE ALL ON FUNCTION public.omega_auth_create_session(text, bigint, timestampt
 REVOKE ALL ON FUNCTION public.omega_auth_resolve_session(text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.omega_auth_resolve_workspace_session(text, uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.omega_auth_destroy_session(text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.omega_auth_logout(text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.omega_auth_cleanup_sessions() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.omega_auth_revoke_user_tokens(bigint) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.omega_auth_list_sessions(bigint, boolean, uuid[]) FROM PUBLIC;
@@ -580,6 +619,7 @@ GRANT EXECUTE ON FUNCTION public.omega_auth_create_session(text, bigint, timesta
 GRANT EXECUTE ON FUNCTION public.omega_auth_resolve_session(text) TO omega_console;
 GRANT EXECUTE ON FUNCTION public.omega_auth_resolve_workspace_session(text, uuid) TO omega_workspace;
 GRANT EXECUTE ON FUNCTION public.omega_auth_destroy_session(text) TO omega_console, omega_workspace;
+GRANT EXECUTE ON FUNCTION public.omega_auth_logout(text, text) TO omega_console, omega_workspace;
 GRANT EXECUTE ON FUNCTION public.omega_auth_cleanup_sessions() TO omega_console;
 GRANT EXECUTE ON FUNCTION public.omega_auth_revoke_user_tokens(bigint) TO omega_console;
 GRANT EXECUTE ON FUNCTION public.omega_auth_list_sessions(bigint, boolean, uuid[]) TO omega_console;

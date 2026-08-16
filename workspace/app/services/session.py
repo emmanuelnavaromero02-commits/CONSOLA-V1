@@ -14,6 +14,7 @@ from datetime import timedelta
 import asyncpg
 
 COOKIE_NAME      = "mod_session"
+REFRESH_COOKIE_NAME = "refresh_token"
 SESSION_LIFETIME = timedelta(days=7)
 SESSION_SLIDE    = timedelta(days=1)
 MAX_SESSION_LIFETIME = timedelta(hours=12)
@@ -39,6 +40,10 @@ async def pool() -> asyncpg.Pool:
 
 
 def hash_session_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def hash_refresh_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
@@ -186,3 +191,16 @@ async def destroy_session(token: str) -> None:
     await p.fetchval(
         "SELECT omega_auth_destroy_session($1)", hash_session_token(token)
     )
+
+
+async def logout_tokens(
+    session_token: str | None, refresh_token: str | None
+) -> tuple[bool, bool]:
+    """Atomically invalidate both browser credentials, if present."""
+    p = await pool()
+    row = await p.fetchrow(
+        "SELECT * FROM omega_auth_logout($1, $2)",
+        hash_session_token(session_token) if session_token else None,
+        hash_refresh_token(refresh_token) if refresh_token else None,
+    )
+    return bool(row and row["session_deleted"]), bool(row and row["refresh_revoked"])

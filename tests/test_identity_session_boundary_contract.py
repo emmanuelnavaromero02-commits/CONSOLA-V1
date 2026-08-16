@@ -24,6 +24,8 @@ def test_identity_boundary_is_forward_only_and_hash_only() -> None:
         assert attribute in sql
     assert "omega_auth_resolve_session(text)" in sql
     assert "omega_auth_resolve_workspace_session(text, uuid)" in sql
+    assert "omega_auth_logout(text, text)" in sql
+    assert "TO omega_console, omega_workspace" in sql
     assert "policy_now + interval '7 days'" in sql
     assert "policy_expires_at - interval '1 day'" in sql
     assert "policy_now - interval '12 hours'" in sql

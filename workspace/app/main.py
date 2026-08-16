@@ -32,7 +32,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 
 from app.services import session as _session, consumer_assistant as _ca
-from app.services.csrf import require_csrf
+from app.services.csrf import clear_csrf_cookie, require_csrf
 from app.services.rate_limiter import get_rate_limiter
 from app.services.security_context import sign_security_context
 from app.security import get_internal_api_key
@@ -684,6 +684,12 @@ def _is_api(path: str, accept: str) -> bool:
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
+    # Logout must remain reachable when the session is expired/revoked, the
+    # selected workspace is stale or malformed, or password change is forced.
+    # The route still enforces double-submit CSRF before touching auth state.
+    if path == "/auth/logout":
+        request.state.user = None
+        return await call_next(request)
     # Always resolve the session if a cookie is present so soft-auth endpoints
     # like /auth/me can introspect it.
     token = request.cookies.get(_session.COOKIE_NAME)
@@ -761,10 +767,12 @@ async def api_config(request: Request):
 @app.post("/auth/logout", dependencies=[Depends(require_csrf)])
 async def auth_logout(request: Request):
     token = request.cookies.get(_session.COOKIE_NAME)
-    if token:
-        await _session.destroy_session(token)
+    refresh_token = request.cookies.get(_session.REFRESH_COOKIE_NAME)
+    await _session.logout_tokens(token, refresh_token)
     resp = JSONResponse({"logged_out": True})
     resp.delete_cookie(_session.COOKIE_NAME, path="/")
+    resp.delete_cookie(_session.REFRESH_COOKIE_NAME, path="/")
+    clear_csrf_cookie(resp)
     return resp
 
 

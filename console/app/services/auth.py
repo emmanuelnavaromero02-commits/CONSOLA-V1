@@ -572,6 +572,19 @@ async def destroy_session(token: str) -> None:
     )
 
 
+async def logout_tokens(
+    session_token: str | None, refresh_token: str | None
+) -> tuple[bool, bool]:
+    """Atomically invalidate both browser credentials, if present."""
+    p = await pool()
+    row = await p.fetchrow(
+        "SELECT * FROM omega_auth_logout($1, $2)",
+        hash_session_token(session_token) if session_token else None,
+        hash_refresh_token(refresh_token) if refresh_token else None,
+    )
+    return bool(row and row["session_deleted"]), bool(row and row["refresh_revoked"])
+
+
 async def cleanup_expired_sessions() -> int:
     p = await pool()
     return int(await p.fetchval("SELECT omega_auth_cleanup_sessions()") or 0)

@@ -1717,11 +1717,8 @@ async def auth_refresh(request: Request):
 @app.post("/auth/logout", dependencies=[Depends(require_csrf)])
 async def auth_logout(request: Request):
     token = request.cookies.get(_auth.COOKIE_NAME)
-    if token:
-        await _auth.destroy_session(token)
     refresh_token = request.cookies.get(_auth.REFRESH_COOKIE_NAME)
-    if refresh_token:
-        await _auth.revoke_refresh_token(refresh_token)
+    await _auth.logout_tokens(token, refresh_token)
 
     # Sprint v1.10 — blacklist the bearer access token's jti so a stolen
     # JWT can't keep authenticating up to its exp. Silent if the caller

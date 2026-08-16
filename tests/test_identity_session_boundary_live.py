@@ -237,6 +237,55 @@ async def test_workspace_cannot_read_secrets_or_forge_admin_session(
             "SELECT count(*) FROM user_sessions WHERE token_hash = $1", stale_digest
         ) == 0
 
+        logout_session_raw = secrets.token_hex(32)
+        logout_refresh_raw = secrets.token_urlsafe(32)
+        logout_session_digest = hashlib.sha256(
+            logout_session_raw.encode("utf-8")
+        ).hexdigest()
+        logout_refresh_digest = hashlib.sha256(
+            logout_refresh_raw.encode("utf-8")
+        ).hexdigest()
+        await console.fetchval(
+            "SELECT omega_auth_create_session($1, $2, $3, $4)",
+            logout_session_digest,
+            scope["user_a"],
+            datetime.now(timezone.utc) + timedelta(hours=1),
+            None,
+        )
+        await console.fetchval(
+            "SELECT omega_auth_create_refresh_token($1, $2, $3)",
+            scope["user_a"],
+            logout_refresh_digest,
+            datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+        logout_result = await workspace.fetchrow(
+            "SELECT * FROM omega_auth_logout($1, $2)",
+            logout_session_digest,
+            logout_refresh_digest,
+        )
+        assert dict(logout_result) == {
+            "session_deleted": True,
+            "refresh_revoked": True,
+        }
+        assert await admin.fetchval(
+            "SELECT count(*) FROM user_sessions WHERE token_hash = $1",
+            logout_session_digest,
+        ) == 0
+        assert await admin.fetchval(
+            """SELECT count(*) FROM refresh_tokens
+                WHERE token_hash = $1 AND revoked_at IS NULL""",
+            logout_refresh_digest,
+        ) == 0
+        second_logout = await workspace.fetchrow(
+            "SELECT * FROM omega_auth_logout($1, $2)",
+            logout_session_digest,
+            logout_refresh_digest,
+        )
+        assert dict(second_logout) == {
+            "session_deleted": False,
+            "refresh_revoked": False,
+        }
+
         assert await workspace.fetchval(
             "SELECT omega_auth_destroy_session($1)", digest
         ) is True
