@@ -1,5 +1,3 @@
-import hashlib
-import hmac
 import json
 import os
 
@@ -59,10 +57,6 @@ async def _visible_workspace_user_ids(conn, workspace_ids: list[str]) -> list[in
         sorted(_PLATFORM_ROLES),
     )
     return [int(row["user_id"]) for row in rows if row["user_id"] is not None]
-
-
-def _session_id(token: str) -> str:
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 async def _table_exists(conn, table_name: str) -> bool:
@@ -146,40 +140,16 @@ async def get_sessions(user: dict = Depends(require_permission("security.session
 async def _get_sessions_for_connection(p, user: dict):
     if not await _table_exists(p, "user_sessions"):
         return []
-    session_columns = await _columns(p, "user_sessions")
-    select_parts = [
-        "s.token",
-        "s.user_id",
-        "u.email AS user_email",
-        _select_column(session_columns, "ip", "NULL::text"),
-        _select_column(session_columns, "last_seen", "NULL::timestamptz"),
-        _select_column(session_columns, "user_agent", "NULL::text"),
-        _select_column(session_columns, "created_at", "NULL::timestamptz"),
-        _select_column(session_columns, "expires_at", "NULL::timestamptz"),
-    ]
-    order_expr = "s.last_seen DESC NULLS LAST" if "last_seen" in session_columns else "s.created_at DESC NULLS LAST"
-    args: list = []
-    where_clause = ""
-    if not _is_platform_admin(user):
-        visible_user_ids = await _visible_workspace_user_ids(p, _workspace_ids(user))
-        if not visible_user_ids:
-            return []
-        args.append(visible_user_ids)
-        where_clause = f"WHERE s.user_id = ANY(${len(args)}::bigint[])"
     rows = await p.fetch(
-        f"""SELECT {", ".join(select_parts)}
-           FROM user_sessions s
-           JOIN users u ON u.id = s.user_id
-           {where_clause}
-           ORDER BY {order_expr}""",
-        *args,
+        "SELECT * FROM omega_auth_list_sessions($1, $2, $3::uuid[])",
+        int(user["id"]),
+        _is_platform_admin(user),
+        _workspace_ids(user),
     )
     res = []
     for r in rows:
         d = dict(r)
-        token = d.pop("token")
-        d["session_id"] = _session_id(token)
-        d["token_preview"] = token[:8] + "..." if token and len(token) > 8 else "***"
+        d["token_preview"] = "***"
         res.append(d)
     return res
 
@@ -202,48 +172,14 @@ async def revoke_session(token: str, request: Request, user: dict = Depends(requ
 
 
 async def _revoke_session_for_connection(p, token: str, user: dict) -> str:
-    args: list = [token]
-    scope_clause = ""
-    if not _is_platform_admin(user):
-        visible_user_ids = await _visible_workspace_user_ids(p, _workspace_ids(user))
-        if not visible_user_ids:
-            return "DELETE 0"
-        args.append(visible_user_ids)
-        scope_clause = f" AND user_id = ANY(${len(args)}::bigint[])"
-    res = await p.execute(
-        f"DELETE FROM user_sessions WHERE token = $1{scope_clause}",
-        *args,
+    deleted = await p.fetchval(
+        "SELECT omega_auth_revoke_session_by_id($1, $2, $3, $4::uuid[])",
+        token,
+        int(user["id"]),
+        _is_platform_admin(user),
+        _workspace_ids(user),
     )
-    if res == "DELETE 0" and len(token) == 64:
-        args = []
-        where_clause = ""
-        if not _is_platform_admin(user):
-            visible_user_ids = await _visible_workspace_user_ids(p, _workspace_ids(user))
-            if not visible_user_ids:
-                return "DELETE 0"
-            args.append(visible_user_ids)
-            where_clause = f"WHERE user_id = ANY(${len(args)}::bigint[])"
-        rows = await p.fetch(f"SELECT token FROM user_sessions {where_clause}", *args)
-        matched = next(
-            (
-                r["token"]
-                for r in rows
-                if hmac.compare_digest(_session_id(r["token"]), token)
-            ),
-            None,
-        )
-        if matched:
-            args = [matched]
-            scope_clause = ""
-            if not _is_platform_admin(user):
-                visible_user_ids = await _visible_workspace_user_ids(p, _workspace_ids(user))
-                args.append(visible_user_ids)
-                scope_clause = f" AND user_id = ANY(${len(args)}::bigint[])"
-            res = await p.execute(
-                f"DELETE FROM user_sessions WHERE token = $1{scope_clause}",
-                *args,
-            )
-    return res
+    return "DELETE 1" if deleted else "DELETE 0"
 
 @router.get("/audit")
 async def get_audit_events(user: dict = Depends(require_permission("security.audit.read"))):

@@ -1,14 +1,14 @@
 """
-Session reader for the workspace container.
+Token-bound session reader for the workspace container.
 
-Workspace doesn't own login — that lives in the console. This module just reads
-the shared `user_sessions` table (Postgres) so cookies set by console are
-recognized here as well. Cookies are scoped by domain only (not port), so on
-localhost (and behind any reverse proxy in prod) the cookie flows naturally.
+Workspace doesn't own login or auth tables. It can only execute the narrow
+``omega_auth_resolve_workspace_session`` / ``omega_auth_destroy_session``
+functions, passing a SHA-256 digest of the cookie. Raw tokens are never stored.
 """
 from __future__ import annotations
 
 import os
+import hashlib
 from datetime import datetime, timedelta, timezone
 
 import asyncpg
@@ -38,22 +38,8 @@ async def pool() -> asyncpg.Pool:
     return _POOL
 
 
-async def _workspace_memberships(p: asyncpg.Pool, user_id: int) -> list[dict]:
-    rows = await p.fetch(
-        """SELECT w.id::text AS workspace_id,
-                  w.name AS workspace_name,
-                  t.id::text AS tenant_id,
-                  t.name AS tenant_name,
-                  r.name AS workspace_role
-             FROM user_workspace_roles uwr
-             JOIN workspaces w ON w.id = uwr.workspace_id
-             JOIN tenants t ON t.id = w.tenant_id
-             JOIN roles r ON r.id = uwr.role_id
-            WHERE uwr.user_id = $1
-            ORDER BY w.created_at ASC, w.name ASC, r.name ASC""",
-        user_id,
-    )
-    return [dict(row) for row in rows]
+def hash_session_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 async def _set_db_scope(conn: asyncpg.Connection, tenant_id: str | None, workspace_id: str | None) -> None:
@@ -141,52 +127,59 @@ async def get_session_user(token: str, requested_workspace_id: str | None = None
     if not token:
         return None
     p = await pool()
-    row = await p.fetchrow(
-        """SELECT s.token, s.expires_at, s.created_at,
-                  u.id, u.email, u.name, u.role, u.is_active, u.must_change_password
-             FROM user_sessions s
-             JOIN users u ON u.id = s.user_id
-            WHERE s.token = $1 AND s.expires_at > NOW() AND u.is_active = TRUE""",
-        token,
-    )
-    if not row:
-        return None
     now = datetime.now(timezone.utc)
-    if row["created_at"] is not None and (now - row["created_at"]) > MAX_SESSION_LIFETIME:
-        await p.execute("DELETE FROM user_sessions WHERE token = $1", token)
+    query = """SELECT * FROM omega_auth_resolve_workspace_session(
+                   $1, $2::uuid, $3, $4, $5
+               )"""
+    args = (
+        hash_session_token(token),
+        requested_workspace_id,
+        now + SESSION_LIFETIME,
+        now + SESSION_LIFETIME - SESSION_SLIDE,
+        now - MAX_SESSION_LIFETIME,
+    )
+    rows = await p.fetch(query, *args)
+    if not rows and requested_workspace_id:
+        # Distinguish an invalid session (401) from a valid caller asking for a
+        # workspace outside its memberships (403). The second lookup remains
+        # token-bound and returns no data for an expired/revoked session.
+        membership_rows = await p.fetch(query, args[0], None, *args[2:])
+        if membership_rows:
+            raise PermissionError("workspace access forbidden")
+    if not rows:
         return None
-    # Sliding window
-    new_exp = now + SESSION_LIFETIME
-    if (row["expires_at"] - now) < (SESSION_LIFETIME - SESSION_SLIDE):
-        await p.execute("UPDATE user_sessions SET expires_at = $1 WHERE token = $2",
-                        new_exp, token)
+    row = rows[0]
     user = {
-        "id":                   row["id"],
+        "id":                   row["user_id"],
         "email":                row["email"],
         "name":                 row["name"],
         "role":                 row["role"],
         "is_active":            row["is_active"],
         "must_change_password": row["must_change_password"],
     }
-    workspaces = await _workspace_memberships(p, row["id"])
-    if workspaces:
-        active = workspaces[0]
-        if requested_workspace_id:
-            active = next((w for w in workspaces if w["workspace_id"] == requested_workspace_id), None)
-            if not active:
-                raise PermissionError("workspace access forbidden")
-        user.update({
-            "active_workspace_id": active["workspace_id"],
-            "active_tenant_id": active["tenant_id"],
-            "workspace_role": active["workspace_role"],
-            "workspaces": workspaces,
-            "allowed_cartridges": await _workspace_cartridges(
-                p,
-                active["workspace_id"],
-                user_id=row["id"],
-                tenant_id=active["tenant_id"],
-            ),
-        })
+    workspaces = [
+        {
+            "workspace_id": str(item["workspace_id"]),
+            "workspace_name": item["workspace_name"],
+            "tenant_id": str(item["tenant_id"]),
+            "tenant_name": item["tenant_name"],
+            "workspace_role": item["workspace_role"],
+        }
+        for item in rows
+    ]
+    active = workspaces[0]
+    user.update({
+        "active_workspace_id": active["workspace_id"],
+        "active_tenant_id": active["tenant_id"],
+        "workspace_role": active["workspace_role"],
+        "workspaces": workspaces,
+        "allowed_cartridges": await _workspace_cartridges(
+            p,
+            active["workspace_id"],
+            user_id=row["user_id"],
+            tenant_id=active["tenant_id"],
+        ),
+    })
     return user
 
 
@@ -194,4 +187,6 @@ async def destroy_session(token: str) -> None:
     if not token:
         return
     p = await pool()
-    await p.execute("DELETE FROM user_sessions WHERE token = $1", token)
+    await p.fetchval(
+        "SELECT omega_auth_destroy_session($1)", hash_session_token(token)
+    )

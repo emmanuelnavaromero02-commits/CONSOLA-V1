@@ -26,6 +26,7 @@ import yaml
 REPO_ROOT  = Path(__file__).resolve().parents[1]
 MIGRATION  = REPO_ROOT / "infra" / "init" / "25_service_roles.sql"
 MARKETPLACE_MIGRATION = REPO_ROOT / "infra" / "init" / "73_marketplace_installations.sql"
+IDENTITY_BOUNDARY_MIGRATION = REPO_ROOT / "infra" / "init" / "99zzy_identity_session_boundary.sql"
 COMPOSE    = REPO_ROOT / "infra" / "docker-compose.yml"
 BOOTSTRAP  = REPO_ROOT / "infra" / "bootstrap.sh"
 ENV_EXAMPLE = REPO_ROOT / "infra" / ".env.example"
@@ -283,15 +284,13 @@ def test_omega_refinement_has_data_catalog():
     )
 
 
-def test_omega_workspace_has_user_sessions():
-    """v1.20 audit: workspace identifies the caller from the session
-    cookie (user_sessions) and slides the session on each authenticated
-    request. v1.19 didn't grant it."""
-    section = _role_section(MIGRATION.read_text(encoding="utf-8"), "omega_workspace")
-    assert "user_sessions" in section, (
-        "omega_workspace section is missing user_sessions. Workspace "
-        "reads + slides this table on every authenticated request."
-    )
+def test_omega_workspace_session_access_is_replaced_by_auth_boundary():
+    """The forward-only F-SEG migration supersedes the v1.20 direct grant."""
+    sql = IDENTITY_BOUNDARY_MIGRATION.read_text(encoding="utf-8")
+    assert "REVOKE ALL ON public.user_sessions, public.refresh_tokens" in sql
+    assert "FROM PUBLIC, omega_console, omega_workspace" in sql
+    assert "omega_auth_resolve_workspace_session" in sql
+    assert "TO omega_workspace" in sql
 
 
 def test_omega_workspace_has_user_workspace_roles():

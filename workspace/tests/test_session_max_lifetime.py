@@ -16,15 +16,19 @@ from app.services import session
 
 def _session_row(**overrides):
     row = {
-        "token": "tok-1",
-        "expires_at": datetime.now(timezone.utc) + session.SESSION_LIFETIME,
-        "created_at": datetime.now(timezone.utc) - timedelta(minutes=5),
-        "id": 42,
+        "session_expires_at": datetime.now(timezone.utc) + session.SESSION_LIFETIME,
+        "session_created_at": datetime.now(timezone.utc) - timedelta(minutes=5),
+        "user_id": 42,
         "email": "alice@example.com",
         "name": "Alice",
         "role": "user",
         "is_active": True,
         "must_change_password": False,
+        "workspace_id": "11111111-1111-1111-1111-111111111111",
+        "workspace_name": "Main",
+        "tenant_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "tenant_name": "Tenant",
+        "workspace_role": "viewer",
     }
     row.update(overrides)
     return row
@@ -33,51 +37,41 @@ def _session_row(**overrides):
 @pytest.mark.asyncio
 async def test_workspace_session_within_absolute_cap_is_returned():
     mock_pool = AsyncMock()
-    mock_pool.fetchrow.return_value = _session_row()
+    mock_pool.fetch.return_value = [_session_row()]
     with (
         patch.object(session, "pool", return_value=mock_pool),
-        patch.object(session, "_workspace_memberships", new=AsyncMock(return_value=[])),
+        patch.object(session, "_workspace_cartridges", new=AsyncMock(return_value=[])),
     ):
         user = await session.get_session_user("tok-1")
 
     assert user is not None
     assert user["id"] == 42
     assert user["email"] == "alice@example.com"
-    delete_calls = [
-        call for call in mock_pool.execute.call_args_list
-        if call.args and "DELETE FROM user_sessions" in call.args[0]
-    ]
-    assert not delete_calls
+    query, digest, _workspace, _new_expiry, _slide_before, _created_after = mock_pool.fetch.await_args.args
+    assert "omega_auth_resolve_workspace_session" in query
+    assert digest == session.hash_session_token("tok-1")
 
 
 @pytest.mark.asyncio
 async def test_workspace_session_older_than_cap_is_invalidated():
     mock_pool = AsyncMock()
-    mock_pool.fetchrow.return_value = _session_row(
-        created_at=datetime.now(timezone.utc) - timedelta(hours=13),
-    )
+    mock_pool.fetch.return_value = []
     with (
         patch.object(session, "pool", return_value=mock_pool),
-        patch.object(session, "_workspace_memberships", new=AsyncMock(return_value=[])),
     ):
         user = await session.get_session_user("tok-1")
 
     assert user is None
-    delete_calls = [
-        call for call in mock_pool.execute.call_args_list
-        if call.args and "DELETE FROM user_sessions" in call.args[0]
-    ]
-    assert delete_calls
-    assert delete_calls[0].args[1] == "tok-1"
+    assert mock_pool.fetch.await_args.args[5] <= datetime.now(timezone.utc) - session.MAX_SESSION_LIFETIME
 
 
 @pytest.mark.asyncio
 async def test_workspace_legacy_session_without_created_at_still_works():
     mock_pool = AsyncMock()
-    mock_pool.fetchrow.return_value = _session_row(created_at=None)
+    mock_pool.fetch.return_value = [_session_row(session_created_at=None)]
     with (
         patch.object(session, "pool", return_value=mock_pool),
-        patch.object(session, "_workspace_memberships", new=AsyncMock(return_value=[])),
+        patch.object(session, "_workspace_cartridges", new=AsyncMock(return_value=[])),
     ):
         user = await session.get_session_user("tok-1")
 
@@ -87,21 +81,16 @@ async def test_workspace_legacy_session_without_created_at_still_works():
 @pytest.mark.asyncio
 async def test_workspace_sliding_window_still_extends_under_cap():
     mock_pool = AsyncMock()
-    mock_pool.fetchrow.return_value = _session_row(
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
-    )
+    mock_pool.fetch.return_value = [_session_row()]
     with (
         patch.object(session, "pool", return_value=mock_pool),
-        patch.object(session, "_workspace_memberships", new=AsyncMock(return_value=[])),
+        patch.object(session, "_workspace_cartridges", new=AsyncMock(return_value=[])),
     ):
         user = await session.get_session_user("tok-1")
 
     assert user is not None
-    update_calls = [
-        call for call in mock_pool.execute.call_args_list
-        if call.args and "UPDATE user_sessions SET expires_at" in call.args[0]
-    ]
-    assert update_calls
+    args = mock_pool.fetch.await_args.args
+    assert args[3] - args[4] == session.SESSION_SLIDE
 
 
 def test_workspace_max_session_lifetime_constant_is_reasonable():

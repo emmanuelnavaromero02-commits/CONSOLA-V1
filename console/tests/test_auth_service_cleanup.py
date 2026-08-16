@@ -106,7 +106,9 @@ async def test_delete_user_removes_workspace_memberships_before_user(auth_module
 
         async def fetchval(self, query, user_id):
             self.statements.append(query)
-            return True
+            if "SELECT EXISTS" in query:
+                return True
+            return 0
 
         async def execute(self, query, user_id):
             self.statements.append(query)
@@ -132,8 +134,7 @@ async def test_delete_user_removes_workspace_memberships_before_user(auth_module
     assert conn.statements.index("DELETE FROM user_workspace_roles WHERE user_id = $1") < conn.statements.index(
         "DELETE FROM users WHERE id = $1"
     )
-    assert "DELETE FROM user_sessions WHERE user_id = $1" in conn.statements
-    assert "DELETE FROM refresh_tokens WHERE user_id = $1" in conn.statements
+    assert "SELECT omega_auth_revoke_user_tokens($1)" in conn.statements
 
 
 @pytest.mark.anyio
