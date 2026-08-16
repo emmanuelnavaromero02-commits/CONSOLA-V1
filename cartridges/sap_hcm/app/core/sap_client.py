@@ -17,11 +17,11 @@ import logging
 from typing import Any
 
 import requests
-from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from app.core.auth_factory import auth_trace, build_auth_headers, normalize_auth_method
 from app.core.config import settings
+from app.core.egress_guard import guarded_session
 from app.core.vault_client import get_connection_for_worker, get_secret_for_worker
 
 logger = logging.getLogger(__name__)
@@ -56,11 +56,7 @@ def _make_retry_session(max_retries: int = 3, backoff_factor: float = 2.0) -> re
         respect_retry_after_header=True,
         raise_on_status=False,
     )
-    adapter = HTTPAdapter(max_retries=retry)
-    session = requests.Session()
-    session.mount("https://", adapter)
-    session.mount("http://", adapter)
-    return session
+    return guarded_session(retries=retry)
 
 
 

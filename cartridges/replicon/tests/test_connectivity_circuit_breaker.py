@@ -18,6 +18,11 @@ def _import_client():
 
     replicon_client._RETRY_ATTEMPTS = 1
     replicon_client._RETRY_BASE_DELAY = 0
+    # These tests exercise circuit-breaker behavior against an intentional
+    # loopback fixture. Egress denial itself has separate no-network tests.
+    replicon_client.guarded_session = lambda *args, **kwargs: __import__(
+        "requests"
+    ).Session()
     return replicon_client
 
 

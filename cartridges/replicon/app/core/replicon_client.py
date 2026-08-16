@@ -10,6 +10,7 @@ import pandas as pd
 import requests
 
 from app.core.config import settings
+from app.core.egress_guard import guarded_session
 from app.core.auth_factory import auth_trace, build_auth_headers
 from app.core.vault_client import get_replicon_connection
 
@@ -75,6 +76,7 @@ class RepliconClient:
         self._auth_connection = connection
         self._conn_id = (conn_id or "").strip()
         self._auth_method = str(connection.get("auth_method") or "").strip().lower()
+        self._session = guarded_session()
 
         if not self.base_url:
             raise EnvironmentError("Replicon base_url is required (set env or Vault connection)")
@@ -119,7 +121,9 @@ class RepliconClient:
         for _ in range(_RETRY_ATTEMPTS):
             try:
                 logger.warning("Replicon outbound GET %s", url)
-                resp = requests.get(url, headers=self._auth_headers, timeout=timeout)
+                resp = self._session.get(
+                    url, headers=self._auth_headers, timeout=timeout
+                )
                 self._log_auth(resp.status_code)
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
                 last_exc = exc
@@ -157,7 +161,9 @@ class RepliconClient:
         for _ in range(_RETRY_ATTEMPTS):
             try:
                 logger.warning("Replicon outbound POST %s", url)
-                resp = requests.post(url, headers=self._auth_headers, json=body, timeout=timeout)
+                resp = self._session.post(
+                    url, headers=self._auth_headers, json=body, timeout=timeout
+                )
                 self._log_auth(resp.status_code)
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
                 last_exc = exc
@@ -236,7 +242,7 @@ class RepliconClient:
             try:
                 # S3 pre-signed URLs must NOT include the Authorization header
                 logger.warning("Replicon outbound CSV download %s", url.split("?", 1)[0])
-                resp = requests.get(url, timeout=120)
+                resp = self._session.get(url, timeout=120)
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
                 last_exc = exc
                 time.sleep(delay); delay *= 2
@@ -362,7 +368,11 @@ def _safe_host(url: str) -> str | None:
 def _request_error_message(exc: requests.RequestException, base_url: str) -> str:
     text = str(exc)
     lowered = text.lower()
-    if "name resolution" in lowered or "nodename nor servname provided" in lowered:
+    if (
+        "name resolution" in lowered
+        or "nodename nor servname provided" in lowered
+        or "could not be resolved" in lowered
+    ):
         host = _safe_host(base_url) or "configured host"
         return f"Replicon host could not be resolved by DNS: {host}"
     return text
