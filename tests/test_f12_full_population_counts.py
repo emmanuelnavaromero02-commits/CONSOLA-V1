@@ -122,7 +122,11 @@ def test_population_totals_fall_back_when_sql_unavailable():
     assert metrics["nine_box_available"] == 120
 
 
-def test_nine_box_surface_prefers_the_materialized_aggregate():
+def test_nine_box_cells_rebuild_from_full_detail_in_sql():
+    """Cells/totals come from the cap-free SQL rebuild of the VALIDATED
+    detail — never from the materialized aggregate (fail-closed doctrine:
+    a stale ready_count cannot manufacture readiness) and never from len()
+    over the capped read (which is only the fallback)."""
     src = API.read_text(encoding="utf-8")
     fn = re.search(
         r"async def sap_successfactors_talent_9box\(.*?\n(?=@_bind_to_core)",
@@ -131,11 +135,15 @@ def test_nine_box_surface_prefers_the_materialized_aggregate():
     )
     assert fn, "talent 9box surface not found"
     body = fn.group(0)
-    assert "aggregate_rows or _sf_talent_9box_operational_rows_from_detail" in body, (
-        "matrix cells must come from the SQL-summed aggregate; the capped "
-        "detail re-count is only the fallback"
+    assert "_sf_talent_nine_box_cell_counts(user)" in body
+    assert "population_totals_source" in body
+    assert '"sql_population"' in body and '"detail_capped"' in body
+    assert "_sf_talent_9box_operational_rows_from_detail(raw_detail_rows)" in body, (
+        "the capped detail rebuild must stay as the fallback"
     )
-    assert '"population_totals_source"' in body or "population_totals_source" in body
+    assert "aggregate_rows or " not in body, (
+        "the materialized aggregate must stay display-only evidence"
+    )
     assert "_sf_talent_desempeno_cohort_counts(user)" in body, (
         "cohort count/bands must come from full-population SQL"
     )

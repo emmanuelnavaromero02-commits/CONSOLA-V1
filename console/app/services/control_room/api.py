@@ -1248,6 +1248,18 @@ async def _sf_talent_nine_box_box_count(user: dict | None, box_id: str) -> dict[
 
 
 @_bind_to_core
+async def _sf_talent_nine_box_cell_counts(user: dict | None) -> dict[str, Any]:
+    from app.services.intelligence.successfactors_talent_population import (
+        query_nine_box_cell_counts,
+    )
+
+    try:
+        return dict(await query_nine_box_cell_counts(user))
+    except Exception:  # noqa: BLE001
+        return {"status": "unavailable"}
+
+
+@_bind_to_core
 async def _sf_talent_gold_result(
     dataset: str, user: dict | None, limit: int
 ) -> dict[str, Any]:
@@ -1714,22 +1726,28 @@ async def sap_successfactors_talent_9box(user: dict | None) -> dict[str, Any]:
         "sap_successfactors_talent_9box", user, 5000
     )
     raw_detail_rows = detail_result["rows"]
-    # F12: matrix totals come from the materialized aggregate, whose
-    # employee_count is SQL-summed over the FULL population and which passes
-    # through the same projection guard as the detail (unapproved benchmark
-    # claims degrade to ready_count=0 before reaching this code). The capped
-    # 5,000-row detail read stays only as roster/evidence and as fallback for
-    # workspaces whose aggregate has not materialized yet.
+    # F12: matrix cells/totals are rebuilt from the FULL detail population by
+    # SQL aggregation (query_nine_box_cell_counts) instead of len() over the
+    # capped 5,000-row read. The fail-closed doctrine is unchanged — the
+    # materialized aggregate stays display-only evidence and is still
+    # deliberately discarded (test_talent_nine_box_fail_closed): a stale or
+    # poisoned ready_count can never manufacture public readiness, because
+    # the SQL rebuild applies the same score-validity and ledger-authority
+    # predicates the row-by-row rebuild applies. The capped Python rebuild
+    # remains only as fallback when the SQL path is unavailable.
     known_boxes = {item["box_id"] for item in _sf_talent_box_definitions()}
-    aggregate_rows = [
+    cell_counts = await _sf_talent_nine_box_cell_counts(user)
+    sql_cell_rows = [
         row
-        for row in operational_result["rows"]
+        for row in (cell_counts.get("rows") or [])
         if str(row.get("box_key") or "").strip() in known_boxes
     ]
-    population_totals_source = "aggregate" if aggregate_rows else "detail_capped"
-    detail_rows = aggregate_rows or _sf_talent_9box_operational_rows_from_detail(
-        raw_detail_rows
-    )
+    if cell_counts.get("status") == "ready" and sql_cell_rows:
+        population_totals_source = "sql_population"
+        detail_rows = sql_cell_rows
+    else:
+        population_totals_source = "detail_capped"
+        detail_rows = _sf_talent_9box_operational_rows_from_detail(raw_detail_rows)
     cells = _sf_talent_9box_cells(detail_rows)
     totals = _sf_talent_9box_totals(cells)
     result = detail_result if raw_detail_rows else operational_result

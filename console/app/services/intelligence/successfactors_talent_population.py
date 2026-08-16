@@ -404,6 +404,112 @@ async def query_desempeno_cohort_counts(user: dict | None) -> DesempenoCohortCou
     }
 
 
+class NineBoxCellCounts(TypedDict):
+    rows: list[dict[str, Any]]
+    status: str
+    error: str | None
+
+
+async def query_nine_box_cell_counts(user: dict | None) -> NineBoxCellCounts:
+    """Rebuild the 9-box cells from the FULL detail population in SQL.
+
+    This is the fail-closed doctrine (test_talent_nine_box_fail_closed) made
+    cap-free: public ready counts are always rebuilt from the validated
+    detail — a stale/poisoned aggregate ready_count can never manufacture
+    readiness — but the rebuild aggregates in SQL over every row instead of
+    len() over the capped preview. Garbage scores (negative, NaN, Infinity,
+    out-of-range) fail the range predicates exactly as they fail
+    _sf_talent_score, and rows whose benchmark claim the ledger does not
+    corroborate are excluded like the projection guard excludes them (their
+    classification — box_key included — is degraded away).
+    """
+
+    def _unavailable(status: str, error: str | None) -> NineBoxCellCounts:
+        return {"rows": [], "status": status, "error": error}
+
+    try:
+        conn, tenant_id, workspace_id = await _scoped_connection(user)
+    except HTTPException as exc:
+        return _unavailable(_http_status(exc), str(exc.detail))
+    try:
+        async with conn.transaction(isolation="repeatable_read", readonly=True):
+            await conn.execute(
+                "SELECT set_config('app.tenant_id', $1, true),"
+                " set_config('app.workspace_id', $2, true)",
+                tenant_id,
+                workspace_id,
+            )
+            authority_valid, benchmark_head = await _benchmark_verdict(
+                conn, tenant_id, workspace_id
+            )
+            relation, columns = await _relation_and_columns(
+                conn, tenant_id, workspace_id, NINE_BOX_DATASET
+            )
+            if not _NINE_BOX_REQUIRED.issubset(columns):
+                return _unavailable(
+                    "invalid_schema",
+                    "nine-box relation misses population count columns",
+                )
+            ready_pred = (
+                "invalid_score_input IS FALSE"
+                f" AND {_score_ok('performance_score')}"
+                f" AND {_score_ok('potential_score')}"
+                " AND LOWER(COALESCE(box_status, '')) = 'ready'"
+            )
+            benchmark_pred = (
+                f"{ready_pred} AND source_mode = 'benchmark_internal'"
+                if "source_mode" in columns
+                else "FALSE"
+            )
+            cells_sql = f"""
+                SELECT box_key,
+                       COUNT(*)::bigint AS employee_count,
+                       COUNT(*) FILTER (WHERE {ready_pred})::bigint AS ready_count,
+                       COUNT(*) FILTER (WHERE {benchmark_pred})::bigint AS benchmark_count
+                  FROM {relation.sql}
+                 WHERE workspace_id::text = $3 AND tenant_id::text = $4
+                   AND box_key IS NOT NULL
+                   AND {_not_degraded_sql(columns)}
+                 GROUP BY box_key
+            """
+            rows = await conn.fetch(
+                cells_sql,
+                authority_valid,
+                benchmark_head,
+                workspace_id,
+                tenant_id,
+            )
+    except HTTPException as exc:
+        return _unavailable(_http_status(exc), str(exc.detail))
+    except (asyncpg.PostgresError, OSError) as exc:
+        return _unavailable("unavailable", str(exc))
+    finally:
+        await conn.close()
+
+    cells: list[dict[str, Any]] = []
+    for row in rows:
+        employee_count = int(row["employee_count"])
+        ready_count = int(row["ready_count"])
+        benchmark_count = int(row["benchmark_count"])
+        cells.append(
+            {
+                "box_key": str(row["box_key"]),
+                "employee_count": employee_count,
+                "ready_count": ready_count,
+                "benchmark_count": benchmark_count,
+                "blocked_count": max(employee_count - ready_count, 0),
+                "box_status": (
+                    "benchmark_internal"
+                    if benchmark_count and ready_count
+                    else "ready"
+                    if ready_count
+                    else "blocked"
+                ),
+            }
+        )
+    return {"rows": cells, "status": "ready", "error": None}
+
+
 async def query_nine_box_box_count(user: dict | None, box_id: str) -> NineBoxBoxCount:
     """COUNT the full population of one 9-box cell (roster stays capped)."""
 
@@ -465,8 +571,10 @@ async def query_nine_box_box_count(user: dict | None, box_id: str) -> NineBoxBox
 __all__ = (
     "DesempenoCohortCounts",
     "NineBoxBoxCount",
+    "NineBoxCellCounts",
     "TalentPopulationCounts",
     "query_desempeno_cohort_counts",
     "query_nine_box_box_count",
+    "query_nine_box_cell_counts",
     "query_talent_population_counts",
 )

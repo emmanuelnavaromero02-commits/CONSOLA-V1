@@ -15,6 +15,7 @@ import pytest
 from app.services.intelligence.successfactors_talent_population import (
     query_desempeno_cohort_counts,
     query_nine_box_box_count,
+    query_nine_box_cell_counts,
     query_talent_population_counts,
 )
 from tests.test_gold_native_rls_contract import (
@@ -176,6 +177,16 @@ async def test_population_counts_cover_all_rows_beyond_the_preview_cap(
     box = await query_nine_box_box_count(_user(TENANT_A, WORKSPACE_A), "star")
     assert box["status"] == "ready", box["error"]
     assert box["count"] == POPULATION
+
+    cells = await query_nine_box_cell_counts(_user(TENANT_A, WORKSPACE_A))
+    assert cells["status"] == "ready", cells["error"]
+    by_box = {row["box_key"]: row for row in cells["rows"]}
+    assert by_box["star"]["employee_count"] == POPULATION
+    assert by_box["star"]["ready_count"] == POPULATION
+    assert by_box["star"]["box_status"] == "ready"
+    assert by_box["core"]["employee_count"] == INSUFFICIENT
+    assert by_box["core"]["ready_count"] == 0
+    assert by_box["core"]["box_status"] == "blocked"
 
     isolated = await query_talent_population_counts(_user(TENANT_B, WORKSPACE_B))
     assert isolated["status"] == "ready", isolated["error"]
