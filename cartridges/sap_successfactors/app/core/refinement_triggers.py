@@ -45,6 +45,33 @@ def _refinement_security_context_for_service(
 async def trigger_silver_refresh(entity: str, security_context: dict | None = None) -> dict[str, Any]:
     source = f"raw/sap_successfactors/{entity}"
     api_key, internal_service = _refinement_auth()
+    if internal_service == "airflow":
+        # Same reason as the gold loop below: refinement only accepts the
+        # purpose-bound runtime envelope from the airflow perimeter, so the
+        # entity's conventional silver is materialized through /mcp/invoke
+        # instead of /refresh-by-source.
+        name = f"sap_successfactors_{entity.strip().lower()}_latest"
+        async with httpx.AsyncClient(timeout=300) as client:
+            response = await _runtime_materialize_request(
+                client, name, api_key=api_key, security_context=security_context
+            )
+        try:
+            payload = response.json()
+        except Exception:  # noqa: BLE001
+            payload = {"text": response.text[:300]}
+        if response.status_code >= 400:
+            return {
+                "status": "partial",
+                "source": source,
+                "refreshed": 0,
+                "results": [{"name": name, "status": "error", "error": payload}],
+            }
+        return {
+            "status": "success",
+            "source": source,
+            "refreshed": 1,
+            "results": [{"name": name, "status": "ok", **payload}],
+        }
     async with httpx.AsyncClient(timeout=300) as client:
         response = await client.post(
             f"{REFINEMENT_URL}/refresh-by-source",
@@ -90,6 +117,42 @@ def successfactors_curated_silver_datasets_for_target(target: str = "all") -> li
     return list(SUCCESSFACTORS_SILVER_TALENT_CURATED_ORDER)
 
 
+def _runtime_materialize_request(
+    client: "httpx.AsyncClient",
+    name: str,
+    *,
+    api_key: str,
+    security_context: dict | None,
+):
+    """Materialize one dataset through the refinement runtime (v2) route.
+
+    Refinement routes every trusted ``source=airflow`` context through the
+    purpose-bound hmac-v2 runtime validation, so the plain signed-context
+    ``/datasets/{name}/refresh`` call the cartridge container uses is
+    rejected there. From the Airflow workers we take the same route the
+    dataset_refresh_chain already takes: an ``/mcp/invoke`` materialize
+    with the envelope minted by runtime_security_context (importable only
+    inside the Airflow container, hence the local import).
+    """
+    import secrets as _secrets
+
+    from runtime_security_context import build_materialize_context
+
+    scoped = security_context or {}
+    ctx = build_materialize_context(
+        tenant_id=str(scoped.get("tenant_id") or ""),
+        workspace_id=str(scoped.get("workspace_id") or ""),
+        cartridge_id="sap_successfactors",
+        dataset_name=name,
+        run_id=_secrets.token_hex(16),
+    )
+    return client.post(
+        f"{REFINEMENT_URL}/mcp/invoke",
+        headers={"x-api-key": api_key, "x-internal-service": "airflow"},
+        json={"tool": "materialize", "args": {"name": name}, "security_context": ctx},
+    )
+
+
 async def trigger_successfactors_gold_refresh(
     target: str = "all",
     security_context: dict | None = None,
@@ -97,6 +160,7 @@ async def trigger_successfactors_gold_refresh(
     silver_datasets = successfactors_curated_silver_datasets_for_target(target)
     datasets = successfactors_gold_datasets_for_target(target)
     api_key, internal_service = _refinement_auth()
+    use_runtime_route = internal_service == "airflow"
     headers = {
         "x-api-key": api_key,
         "x-internal-service": internal_service,
@@ -113,10 +177,15 @@ async def trigger_successfactors_gold_refresh(
     async with httpx.AsyncClient(timeout=600) as client:
         for name in silver_datasets:
             try:
-                response = await client.post(
-                    f"{REFINEMENT_URL}/datasets/{quote(name, safe='')}/refresh",
-                    headers=headers,
-                )
+                if use_runtime_route:
+                    response = await _runtime_materialize_request(
+                        client, name, api_key=api_key, security_context=security_context
+                    )
+                else:
+                    response = await client.post(
+                        f"{REFINEMENT_URL}/datasets/{quote(name, safe='')}/refresh",
+                        headers=headers,
+                    )
                 try:
                     payload = response.json()
                 except Exception:
@@ -149,10 +218,15 @@ async def trigger_successfactors_gold_refresh(
                 )
         for name in datasets:
             try:
-                response = await client.post(
-                    f"{REFINEMENT_URL}/datasets/{quote(name, safe='')}/refresh",
-                    headers=headers,
-                )
+                if use_runtime_route:
+                    response = await _runtime_materialize_request(
+                        client, name, api_key=api_key, security_context=security_context
+                    )
+                else:
+                    response = await client.post(
+                        f"{REFINEMENT_URL}/datasets/{quote(name, safe='')}/refresh",
+                        headers=headers,
+                    )
                 try:
                     payload = response.json()
                 except Exception:

@@ -106,3 +106,16 @@ ON CONFLICT (workspace_id, cartridge_id) DO UPDATE
       END,
       ready_at = COALESCE(cartridge_installations.ready_at, NOW()),
       updated_at = NOW();
+
+-- ── A1: autonomous SF foundation cycle ────────────────────────────────────────
+-- The seeding function ships in infra/init/99zzzz (runs before any workspace
+-- exists on a fresh install, so its own call no-ops there). Re-run it here,
+-- after the dev workspace and installations above exist, so the cycle marker
+-- row lands scoped on every fresh dev install.
+DO $$
+BEGIN
+    IF to_regproc('public.seed_sap_successfactors_cycle_schedule()') IS NOT NULL THEN
+        PERFORM public.seed_sap_successfactors_cycle_schedule();
+    END IF;
+END
+$$;

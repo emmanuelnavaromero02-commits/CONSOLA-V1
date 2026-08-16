@@ -3,7 +3,11 @@
 import { AlertTriangle, RefreshCcw } from "lucide-react";
 
 import type { ControlRoomExperienceV2 } from "@/lib/control-room/experience-contract";
-import { experienceErrorKind } from "@/lib/control-room/experience-presenter";
+import {
+  experienceErrorKind,
+  formatRelativeFromNow,
+  latestObservedAt,
+} from "@/lib/control-room/experience-presenter";
 import { useControlRoomExperience } from "@/lib/control-room/use-control-room-experience";
 import {
   type OpenExperiencePreview,
@@ -29,6 +33,7 @@ export function ControlRoomExperienceContent({
   onPreviewAction: OpenExperiencePreview;
 }) {
   const sections = experience.sections.filter((section) => section.facts.length > 0);
+  const lastUpdated = latestObservedAt(experience);
 
   return (
     <>
@@ -36,6 +41,13 @@ export function ControlRoomExperienceContent({
         <div>
           <p className="text-sm font-medium text-primary">Control Room</p>
           <h1 className="mt-1 text-2xl font-semibold text-foreground">Experiencia empresarial</h1>
+          {lastUpdated ? (
+            <p className="mt-1 text-xs text-muted-foreground">
+              <time dateTime={lastUpdated} title={lastUpdated}>
+                Datos actualizados {formatRelativeFromNow(lastUpdated)}
+              </time>
+            </p>
+          ) : null}
         </div>
         <button
           type="button"
