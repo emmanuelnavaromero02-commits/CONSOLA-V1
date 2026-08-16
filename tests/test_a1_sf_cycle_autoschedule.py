@@ -58,6 +58,26 @@ def test_migration_resolves_scope_from_server_state_never_hardcoded():
     assert "RETURN 0" in sql
 
 
+def test_foundation_templates_bound_only_under_local_convention():
+    """The live run showed the plan skipping every foundation entity with
+    'scope_mismatch': templates carry a production connection id and no
+    scope. The repair binds them to the local scope + 'default' connection,
+    but ONLY when the resolved workspace is the dev bootstrap convention —
+    a production install keeps its rows untouched."""
+    sql = MIGRATION.read_text(encoding="utf-8")
+    guard = sql.find("IF COALESCE(local_scope, FALSE) THEN")
+    update = sql.find("SET connection_id = 'default'")
+    assert guard != -1 and update != -1 and guard < update, (
+        "per-entity retarget must sit behind the local-convention guard"
+    )
+    for entity in ("PerPerson", "EmpJob", "FOCompany", "Position"):
+        assert f"'{entity}'" in sql
+    update_block = sql[update:sql.index("END IF;", update)]
+    assert "trigger_type" not in update_block, (
+        "per-entity rows stay manual; only the cycle marker schedules"
+    )
+
+
 def test_dev_bootstrap_reseeds_after_workspace_exists():
     """On a fresh install infra/init runs before any workspace exists, so the
     bootstrap (which creates the dev workspace + installations) must re-run

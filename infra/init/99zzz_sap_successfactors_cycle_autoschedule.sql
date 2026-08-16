@@ -35,6 +35,7 @@ AS $$
 DECLARE
     scope_tenant UUID;
     scope_workspace UUID;
+    local_scope BOOLEAN := FALSE;
 BEGIN
     SELECT ci.tenant_id, ci.workspace_id
       INTO scope_tenant, scope_workspace
@@ -56,6 +57,40 @@ BEGIN
 
     IF scope_tenant IS NULL OR scope_workspace IS NULL THEN
         RETURN 0;
+    END IF;
+
+    -- Is the resolved scope the local bootstrap convention? Only then may the
+    -- per-entity templates be retargeted below; a production install (FEMSA)
+    -- resolves to its own workspace name and keeps its rows untouched.
+    SELECT TRUE
+      INTO local_scope
+      FROM public.tenants t
+      JOIN public.workspaces w ON w.tenant_id = t.id
+     WHERE t.name = 'Default Tenant'
+       AND w.name = 'Main Workspace'
+       AND t.id = scope_tenant
+       AND w.id = scope_workspace;
+
+    IF COALESCE(local_scope, FALSE) THEN
+        -- The cartridge seed leaves the foundation entity templates with a
+        -- production connection id (femsa_sf via 99k/99l follow-ups) and no
+        -- scope; under a conn_id=default cycle the plan skips every one of
+        -- them fail-closed ('scope_mismatch'). Bind them to the local scope
+        -- and the 'default' Vault connection so the scheduled cycle can
+        -- actually extract. trigger_type stays as seeded: the cycle marker
+        -- row is the only scheduler entry point.
+        UPDATE public.entity_config ec
+           SET connection_id = 'default',
+               tenant_id     = scope_tenant,
+               workspace_id  = scope_workspace
+         WHERE ec.cartridge_id = 'sap_successfactors'
+           AND ec.entity IN ('User', 'PerPerson', 'PerPersonal', 'EmpEmployment',
+                             'EmpJob', 'FOCompany', 'FODepartment', 'FODivision',
+                             'FOLocation', 'FOBusinessUnit', 'FOCostCenter',
+                             'FOJobCode', 'FOPayGrade', 'Position')
+           AND (ec.connection_id IS DISTINCT FROM 'default'
+                OR ec.tenant_id IS DISTINCT FROM scope_tenant
+                OR ec.workspace_id IS DISTINCT FROM scope_workspace);
     END IF;
 
     INSERT INTO public.entity_config
