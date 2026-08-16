@@ -54,7 +54,7 @@ async def auth_refresh(request: Request):
     refresh_token = request.cookies.get(_auth.REFRESH_COOKIE_NAME)
     # Hash a prefix of the token into the subject so per-token buckets isolate
     # spamming attempts without writing the secret material to Redis keys.
-    subject = (refresh_token or "")[:16]
+    subject = _auth.hash_refresh_token(refresh_token or "")[:16]
     await _rate_limit(request, "/auth/refresh", subject)
     rotated = await _auth.rotate_refresh_token(refresh_token)
     if not rotated:
