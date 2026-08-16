@@ -125,6 +125,12 @@ async def query_gold_dataset_rows(
         raise HTTPException(
             403, "gold dataset requires complete tenant/workspace scope"
         )
+    # F12: this cap protects PREVIEW/ROSTER row reads only — it must never be
+    # the source of a population total. Counts and totals aggregate in SQL via
+    # successfactors_talent_population / successfactors_active_headcount /
+    # successfactors_gold_headcount, which are cap-free by construction.
+    # Raising this number is a band-aid that trades silent under-counting for
+    # unbounded memory; add an aggregate instead.
     safe_limit = max(1, min(int(limit or 5000), 5000))
     conn = await asyncpg.connect(dsn, command_timeout=10)
     try:

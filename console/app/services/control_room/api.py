@@ -494,6 +494,7 @@ def _sf_talent_first_int(row: dict[str, Any], *keys: str) -> int:
 def _sf_talent_kpi_metrics(
     rows: dict[str, Any],
     results: dict[str, dict[str, Any]],
+    population_counts: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     profile_rows = rows["profile_rows"]
     role_rows = rows["role_rows"]
@@ -502,6 +503,16 @@ def _sf_talent_kpi_metrics(
     nine_box_rows = rows["nine_box_rows"]
     operational_row = rows["operational_row"]
     readiness_counts = _sf_talent_readiness_counts(operational_row, readiness_rows)
+    # F12: population totals come from full COUNT(*) aggregation in SQL
+    # (successfactors_talent_population), never from len() over the capped
+    # 5,000-row preview read. The row-derived counts above remain only the
+    # fallback when the SQL aggregation is unavailable.
+    population = population_counts or {}
+    if population.get("status") == "ready":
+        readiness_counts = {
+            "readiness_calculable": int(population["readiness_calculable"]),
+            "readiness_insufficient": int(population["readiness_insufficient"]),
+        }
     source_mode = _sf_talent_source_mode(operational_row, readiness_rows)
     metrics = {
         "profiled_employees": _sf_talent_profiled_count(operational_row, profile_rows),
@@ -511,9 +522,13 @@ def _sf_talent_kpi_metrics(
         ),
         "readiness_calculable": readiness_counts["readiness_calculable"],
         "readiness_insufficient": readiness_counts["readiness_insufficient"],
-        "nine_box_available": _sf_talent_nine_box_available_count(
-            operational_row,
-            nine_box_rows,
+        "nine_box_available": (
+            int(population["nine_box_available"])
+            if population.get("status") == "ready"
+            else _sf_talent_nine_box_available_count(
+                operational_row,
+                nine_box_rows,
+            )
         ),
         "roles_without_requirements": (
             _sf_talent_int(operational_row.get("roles_without_requirements"))
@@ -1037,7 +1052,8 @@ async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
     results = await _sf_talent_kpi_results(datasets, user)
     latest_simulation = await _sf_talent_latest_simulation_result(user)
     rows = _sf_talent_kpi_rows(results)
-    metrics = _sf_talent_kpi_metrics(rows, results)
+    population_counts = await _sf_talent_population_counts(user)
+    metrics = _sf_talent_kpi_metrics(rows, results, population_counts)
     metrics["readiness_status"] = _sf_talent_status(
         rows["operational_row"].get("readiness_status")
         or (
@@ -1191,6 +1207,56 @@ def _sf_talent_json_list(value: Any) -> list[str]:
     if isinstance(parsed, str) and parsed.strip():
         return [parsed.strip()]
     return []
+
+
+@_bind_to_core
+@_bind_to_core
+async def _sf_talent_population_counts(user: dict | None) -> dict[str, Any]:
+    """Full-population COUNT(*) totals; failure degrades to the row fallback."""
+    from app.services.intelligence.successfactors_talent_population import (
+        query_talent_population_counts,
+    )
+
+    try:
+        return dict(await query_talent_population_counts(user))
+    except Exception:  # noqa: BLE001 — totals fall back to capped-row counts
+        return {"status": "unavailable"}
+
+
+@_bind_to_core
+async def _sf_talent_desempeno_cohort_counts(user: dict | None) -> dict[str, Any]:
+    from app.services.intelligence.successfactors_talent_population import (
+        query_desempeno_cohort_counts,
+    )
+
+    try:
+        return dict(await query_desempeno_cohort_counts(user))
+    except Exception:  # noqa: BLE001
+        return {"status": "unavailable"}
+
+
+@_bind_to_core
+async def _sf_talent_nine_box_box_count(user: dict | None, box_id: str) -> dict[str, Any]:
+    from app.services.intelligence.successfactors_talent_population import (
+        query_nine_box_box_count,
+    )
+
+    try:
+        return dict(await query_nine_box_box_count(user, box_id))
+    except Exception:  # noqa: BLE001
+        return {"status": "unavailable"}
+
+
+@_bind_to_core
+async def _sf_talent_nine_box_cell_counts(user: dict | None) -> dict[str, Any]:
+    from app.services.intelligence.successfactors_talent_population import (
+        query_nine_box_cell_counts,
+    )
+
+    try:
+        return dict(await query_nine_box_cell_counts(user))
+    except Exception:  # noqa: BLE001
+        return {"status": "unavailable"}
 
 
 @_bind_to_core
@@ -1660,15 +1726,44 @@ async def sap_successfactors_talent_9box(user: dict | None) -> dict[str, Any]:
         "sap_successfactors_talent_9box", user, 5000
     )
     raw_detail_rows = detail_result["rows"]
-    detail_rows = _sf_talent_9box_operational_rows_from_detail(raw_detail_rows)
+    # F12: matrix cells/totals are rebuilt from the FULL detail population by
+    # SQL aggregation (query_nine_box_cell_counts) instead of len() over the
+    # capped 5,000-row read. The fail-closed doctrine is unchanged — the
+    # materialized aggregate stays display-only evidence and is still
+    # deliberately discarded (test_talent_nine_box_fail_closed): a stale or
+    # poisoned ready_count can never manufacture public readiness, because
+    # the SQL rebuild applies the same score-validity and ledger-authority
+    # predicates the row-by-row rebuild applies. The capped Python rebuild
+    # remains only as fallback when the SQL path is unavailable.
+    known_boxes = {item["box_id"] for item in _sf_talent_box_definitions()}
+    cell_counts = await _sf_talent_nine_box_cell_counts(user)
+    sql_cell_rows = [
+        row
+        for row in (cell_counts.get("rows") or [])
+        if str(row.get("box_key") or "").strip() in known_boxes
+    ]
+    if cell_counts.get("status") == "ready" and sql_cell_rows:
+        population_totals_source = "sql_population"
+        detail_rows = sql_cell_rows
+    else:
+        population_totals_source = "detail_capped"
+        detail_rows = _sf_talent_9box_operational_rows_from_detail(raw_detail_rows)
     cells = _sf_talent_9box_cells(detail_rows)
     totals = _sf_talent_9box_totals(cells)
     result = detail_result if raw_detail_rows else operational_result
     blockers = _sf_talent_9box_blockers(result, total_ready=totals["ready"])
 
-    # The aggregate is display-only evidence. Public readiness is always rebuilt
-    # from the validated detail, so a stale ready_count cannot overrule scores.
+    # Cohort roster stays masked and capped; its COUNT and band histogram come
+    # from full-population SQL aggregation, falling back to the capped rows
+    # only when that path is unavailable.
     desempeno_disponible = _sf_talent_desempeno_cohort(raw_detail_rows)
+    cohort_counts = await _sf_talent_desempeno_cohort_counts(user)
+    if cohort_counts.get("status") == "ready":
+        desempeno_disponible["count"] = int(cohort_counts["count"])
+        desempeno_disponible["band_counts"] = dict(cohort_counts["band_counts"])
+        desempeno_disponible["roster_truncated"] = int(
+            cohort_counts["count"]
+        ) > len(desempeno_disponible["roster"])
 
     tenant_id, workspace_id = _workspace_scope(user)
     return {
@@ -1679,6 +1774,7 @@ async def sap_successfactors_talent_9box(user: dict | None) -> dict[str, Any]:
         "dataset": dataset,
         "status": "ready" if totals["ready"] else result["status"] if result["status"] != "ready" else "blocked",
         "totals": totals,
+        "population_totals_source": population_totals_source,
         "cells": cells,
         "desempeno_disponible": desempeno_disponible,
         "blockers": blockers,
@@ -1706,6 +1802,12 @@ async def sap_successfactors_talent_9box_box(
         and _sf_talent_nine_box_scores_valid(row)
     ]
     roster = [_sf_talent_masked_roster_row(row) for row in rows[:100]]
+    # F12: the cell total is a full-population COUNT(*); the masked roster
+    # stays capped at 100 with an honest truncation flag.
+    count = len(rows)
+    box_population = await _sf_talent_nine_box_box_count(user, box_id)
+    if box_population.get("status") == "ready":
+        count = int(box_population["count"])
     raw_blockers: set[str] = set()
     for row in rows:
         raw_blockers.update(_sf_talent_json_list(row.get("blockers")))
@@ -1731,8 +1833,9 @@ async def sap_successfactors_talent_9box_box(
         "dataset": dataset,
         "box": definitions[box_id],
         "status": result["status"] if roster else "empty" if result["status"] == "ready" else result["status"],
-        "count": len(rows),
+        "count": count,
         "roster": roster,
+        "roster_truncated": count > len(roster),
         "blockers": blockers,
         "privacy": {
             "masked": True,
