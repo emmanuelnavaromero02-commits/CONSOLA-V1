@@ -9,14 +9,17 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'omega_auth') THEN
-        CREATE ROLE omega_auth NOLOGIN NOBYPASSRLS;
+        CREATE ROLE omega_auth
+            NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
+            NOREPLICATION NOINHERIT NOBYPASSRLS;
     END IF;
 END $$;
 
 -- Idempotent hardening: an operator-created role may predate this migration
--- with unsafe LOGIN/BYPASSRLS attributes. Creation guards alone do not repair
--- that drift.
-ALTER ROLE omega_auth NOLOGIN NOBYPASSRLS;
+-- with unsafe attributes. Creation guards alone do not repair that drift.
+ALTER ROLE omega_auth
+    NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
+    NOREPLICATION NOINHERIT NOBYPASSRLS;
 
 ALTER TABLE public.user_sessions
     ADD COLUMN IF NOT EXISTS token_hash varchar(64);
@@ -172,11 +175,17 @@ BEGIN
 END
 $$;
 
+-- Remove the checkpoint-era signatures before installing the final boundary.
+-- Session policy timestamps must never be supplied by an application role.
+DROP FUNCTION IF EXISTS public.omega_auth_resolve_session(
+    text, timestamptz, timestamptz, timestamptz
+);
+DROP FUNCTION IF EXISTS public.omega_auth_resolve_workspace_session(
+    text, uuid, timestamptz, timestamptz, timestamptz
+);
+
 CREATE OR REPLACE FUNCTION public.omega_auth_resolve_session(
-    p_token_hash text,
-    p_new_expires_at timestamptz,
-    p_slide_before timestamptz,
-    p_created_after timestamptz
+    p_token_hash text
 ) RETURNS TABLE (
     user_id bigint,
     email text,
@@ -192,6 +201,11 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = pg_catalog, public
 AS $$
+DECLARE
+    policy_now constant timestamptz := clock_timestamp();
+    policy_expires_at constant timestamptz := policy_now + interval '7 days';
+    policy_slide_before constant timestamptz := policy_expires_at - interval '1 day';
+    policy_created_after constant timestamptz := policy_now - interval '12 hours';
 BEGIN
     IF p_token_hash !~ '^[0-9a-f]{64}$' THEN
         RETURN;
@@ -200,8 +214,8 @@ BEGIN
     DELETE FROM public.user_sessions s
      WHERE s.token_hash = p_token_hash
        AND (
-           s.expires_at <= clock_timestamp()
-           OR s.created_at < p_created_after
+           s.expires_at <= policy_now
+           OR s.created_at < policy_created_after
            OR NOT EXISTS (
                SELECT 1 FROM public.users u
                 WHERE u.id = s.user_id AND u.is_active = true
@@ -211,15 +225,15 @@ BEGIN
     RETURN QUERY
     UPDATE public.user_sessions s
        SET expires_at = CASE
-               WHEN s.expires_at < p_slide_before THEN p_new_expires_at
+               WHEN s.expires_at < policy_slide_before THEN policy_expires_at
                ELSE s.expires_at
            END,
            last_seen = clock_timestamp()
       FROM public.users u
      WHERE s.token_hash = p_token_hash
        AND s.user_id = u.id
-       AND s.expires_at > clock_timestamp()
-       AND s.created_at >= p_created_after
+       AND s.expires_at > policy_now
+       AND s.created_at >= policy_created_after
        AND u.is_active = true
     RETURNING s.user_id, u.email, u.name, u.role, u.is_active,
               u.must_change_password, u.tenant_id, s.created_at, s.expires_at;
@@ -228,10 +242,7 @@ $$;
 
 CREATE OR REPLACE FUNCTION public.omega_auth_resolve_workspace_session(
     p_token_hash text,
-    p_requested_workspace_id uuid,
-    p_new_expires_at timestamptz,
-    p_slide_before timestamptz,
-    p_created_after timestamptz
+    p_requested_workspace_id uuid
 ) RETURNS TABLE (
     user_id bigint,
     email text,
@@ -251,6 +262,11 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = pg_catalog, public
 AS $$
+DECLARE
+    policy_now constant timestamptz := clock_timestamp();
+    policy_expires_at constant timestamptz := policy_now + interval '7 days';
+    policy_slide_before constant timestamptz := policy_expires_at - interval '1 day';
+    policy_created_after constant timestamptz := policy_now - interval '12 hours';
 BEGIN
     IF p_token_hash !~ '^[0-9a-f]{64}$' THEN
         RETURN;
@@ -259,8 +275,8 @@ BEGIN
     DELETE FROM public.user_sessions s
      WHERE s.token_hash = p_token_hash
        AND (
-           s.expires_at <= clock_timestamp()
-           OR s.created_at < p_created_after
+           s.expires_at <= policy_now
+           OR s.created_at < policy_created_after
            OR NOT EXISTS (
                SELECT 1 FROM public.users u
                 WHERE u.id = s.user_id AND u.is_active = true
@@ -271,15 +287,15 @@ BEGIN
     WITH valid_session AS (
         UPDATE public.user_sessions s
            SET expires_at = CASE
-                   WHEN s.expires_at < p_slide_before THEN p_new_expires_at
+                   WHEN s.expires_at < policy_slide_before THEN policy_expires_at
                    ELSE s.expires_at
                END,
                last_seen = clock_timestamp()
           FROM public.users u
          WHERE s.token_hash = p_token_hash
            AND s.user_id = u.id
-           AND s.expires_at > clock_timestamp()
-           AND s.created_at >= p_created_after
+           AND s.expires_at > policy_now
+           AND s.created_at >= policy_created_after
            AND u.is_active = true
         RETURNING s.user_id, u.email, u.name, u.role, u.is_active,
                   u.must_change_password, s.created_at, s.expires_at
@@ -535,8 +551,8 @@ AS $$
 $$;
 
 ALTER FUNCTION public.omega_auth_create_session(text, bigint, timestamptz, text) OWNER TO omega_auth;
-ALTER FUNCTION public.omega_auth_resolve_session(text, timestamptz, timestamptz, timestamptz) OWNER TO omega_auth;
-ALTER FUNCTION public.omega_auth_resolve_workspace_session(text, uuid, timestamptz, timestamptz, timestamptz) OWNER TO omega_auth;
+ALTER FUNCTION public.omega_auth_resolve_session(text) OWNER TO omega_auth;
+ALTER FUNCTION public.omega_auth_resolve_workspace_session(text, uuid) OWNER TO omega_auth;
 ALTER FUNCTION public.omega_auth_destroy_session(text) OWNER TO omega_auth;
 ALTER FUNCTION public.omega_auth_cleanup_sessions() OWNER TO omega_auth;
 ALTER FUNCTION public.omega_auth_revoke_user_tokens(bigint) OWNER TO omega_auth;
@@ -548,8 +564,8 @@ ALTER FUNCTION public.omega_auth_revoke_refresh_token(text) OWNER TO omega_auth;
 ALTER FUNCTION public.omega_auth_rotate_refresh_token(text, text, timestamptz) OWNER TO omega_auth;
 
 REVOKE ALL ON FUNCTION public.omega_auth_create_session(text, bigint, timestamptz, text) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.omega_auth_resolve_session(text, timestamptz, timestamptz, timestamptz) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.omega_auth_resolve_workspace_session(text, uuid, timestamptz, timestamptz, timestamptz) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.omega_auth_resolve_session(text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.omega_auth_resolve_workspace_session(text, uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.omega_auth_destroy_session(text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.omega_auth_cleanup_sessions() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.omega_auth_revoke_user_tokens(bigint) FROM PUBLIC;
@@ -561,8 +577,8 @@ REVOKE ALL ON FUNCTION public.omega_auth_revoke_refresh_token(text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.omega_auth_rotate_refresh_token(text, text, timestamptz) FROM PUBLIC;
 
 GRANT EXECUTE ON FUNCTION public.omega_auth_create_session(text, bigint, timestamptz, text) TO omega_console;
-GRANT EXECUTE ON FUNCTION public.omega_auth_resolve_session(text, timestamptz, timestamptz, timestamptz) TO omega_console;
-GRANT EXECUTE ON FUNCTION public.omega_auth_resolve_workspace_session(text, uuid, timestamptz, timestamptz, timestamptz) TO omega_workspace;
+GRANT EXECUTE ON FUNCTION public.omega_auth_resolve_session(text) TO omega_console;
+GRANT EXECUTE ON FUNCTION public.omega_auth_resolve_workspace_session(text, uuid) TO omega_workspace;
 GRANT EXECUTE ON FUNCTION public.omega_auth_destroy_session(text) TO omega_console, omega_workspace;
 GRANT EXECUTE ON FUNCTION public.omega_auth_cleanup_sessions() TO omega_console;
 GRANT EXECUTE ON FUNCTION public.omega_auth_revoke_user_tokens(bigint) TO omega_console;

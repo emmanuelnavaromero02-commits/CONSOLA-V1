@@ -544,13 +544,9 @@ async def get_session_user(token: str) -> dict | None:
     if not token:
         return None
     p = await pool()
-    now = datetime.now(timezone.utc)
     row = await p.fetchrow(
-        """SELECT * FROM omega_auth_resolve_session($1, $2, $3, $4)""",
+        "SELECT * FROM omega_auth_resolve_session($1)",
         hash_session_token(token),
-        now + SESSION_LIFETIME,
-        now + SESSION_LIFETIME - SESSION_SLIDE,
-        now - MAX_SESSION_LIFETIME,
     )
     if not row:
         return None

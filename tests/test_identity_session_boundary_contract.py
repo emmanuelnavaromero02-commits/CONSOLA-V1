@@ -11,8 +11,22 @@ MIGRATION = REPO / "infra" / "init" / "99zzy_identity_session_boundary.sql"
 def test_identity_boundary_is_forward_only_and_hash_only() -> None:
     sql = MIGRATION.read_text(encoding="utf-8")
     assert MIGRATION.name == "99zzy_identity_session_boundary.sql"
-    assert "CREATE ROLE omega_auth NOLOGIN NOBYPASSRLS" in sql
-    assert "ALTER ROLE omega_auth NOLOGIN NOBYPASSRLS;" in sql
+    assert "CREATE ROLE omega_auth" in sql
+    for attribute in (
+        "NOLOGIN",
+        "NOSUPERUSER",
+        "NOCREATEDB",
+        "NOCREATEROLE",
+        "NOREPLICATION",
+        "NOINHERIT",
+        "NOBYPASSRLS",
+    ):
+        assert attribute in sql
+    assert "omega_auth_resolve_session(text)" in sql
+    assert "omega_auth_resolve_workspace_session(text, uuid)" in sql
+    assert "policy_now + interval '7 days'" in sql
+    assert "policy_expires_at - interval '1 day'" in sql
+    assert "policy_now - interval '12 hours'" in sql
     assert "DROP COLUMN IF EXISTS token" in sql
     assert "PRIMARY KEY (token_hash)" in sql
     assert "FORCE ROW LEVEL SECURITY" in sql

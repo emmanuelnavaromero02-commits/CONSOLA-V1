@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 import hashlib
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 import asyncpg
 
@@ -127,23 +127,19 @@ async def get_session_user(token: str, requested_workspace_id: str | None = None
     if not token:
         return None
     p = await pool()
-    now = datetime.now(timezone.utc)
     query = """SELECT * FROM omega_auth_resolve_workspace_session(
-                   $1, $2::uuid, $3, $4, $5
+                   $1, $2::uuid
                )"""
     args = (
         hash_session_token(token),
         requested_workspace_id,
-        now + SESSION_LIFETIME,
-        now + SESSION_LIFETIME - SESSION_SLIDE,
-        now - MAX_SESSION_LIFETIME,
     )
     rows = await p.fetch(query, *args)
     if not rows and requested_workspace_id:
         # Distinguish an invalid session (401) from a valid caller asking for a
         # workspace outside its memberships (403). The second lookup remains
         # token-bound and returns no data for an expired/revoked session.
-        membership_rows = await p.fetch(query, args[0], None, *args[2:])
+        membership_rows = await p.fetch(query, args[0], None)
         if membership_rows:
             raise PermissionError("workspace access forbidden")
     if not rows:

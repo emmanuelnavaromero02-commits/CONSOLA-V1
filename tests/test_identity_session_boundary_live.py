@@ -113,6 +113,25 @@ async def test_workspace_cannot_read_secrets_or_forge_admin_session(
             "session_insert": False,
             "session_update": False,
         }
+        auth_role = await admin.fetchrow(
+            """SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole,
+                      rolreplication, rolinherit, rolbypassrls
+                 FROM pg_roles WHERE rolname = 'omega_auth'"""
+        )
+        assert dict(auth_role) == {
+            "rolcanlogin": False,
+            "rolsuper": False,
+            "rolcreatedb": False,
+            "rolcreaterole": False,
+            "rolreplication": False,
+            "rolinherit": False,
+            "rolbypassrls": False,
+        }
+        assert await admin.fetchval(
+            """SELECT to_regprocedure(
+                    'public.omega_auth_resolve_workspace_session(text,uuid,timestamptz,timestamptz,timestamptz)'
+                ) IS NULL"""
+        ) is True
 
         with pytest.raises(asyncpg.InsufficientPrivilegeError):
             await workspace.fetchval("SELECT password_hash FROM users LIMIT 1")
@@ -164,30 +183,59 @@ async def test_workspace_cannot_read_secrets_or_forge_admin_session(
 
         resolved = await workspace.fetch(
             """SELECT user_id, workspace_id, tenant_id
-                 FROM omega_auth_resolve_workspace_session(
-                    $1, $2, $3, $4, $5
-                 )""",
+                 FROM omega_auth_resolve_workspace_session($1, $2)""",
             digest,
             scope["workspace_a"],
-            datetime.now(timezone.utc) + timedelta(hours=1),
-            datetime.now(timezone.utc) + timedelta(minutes=30),
-            datetime.now(timezone.utc) - timedelta(hours=12),
         )
         assert [(r["user_id"], r["workspace_id"], r["tenant_id"]) for r in resolved] == [
             (scope["user_a"], scope["workspace_a"], scope["tenant_a"])
         ]
         denied_workspace = await workspace.fetch(
             """SELECT user_id
-                 FROM omega_auth_resolve_workspace_session(
-                    $1, $2, $3, $4, $5
-                 )""",
+                 FROM omega_auth_resolve_workspace_session($1, $2)""",
             digest,
             scope["workspace_b"],
-            datetime.now(timezone.utc) + timedelta(hours=1),
-            datetime.now(timezone.utc) + timedelta(minutes=30),
-            datetime.now(timezone.utc) - timedelta(hours=12),
         )
         assert denied_workspace == []
+
+        # A compromised Workspace role can no longer choose its own clock,
+        # sliding threshold, or absolute-lifetime cutoff.
+        with pytest.raises(asyncpg.UndefinedFunctionError):
+            await workspace.fetch(
+                """SELECT * FROM omega_auth_resolve_workspace_session(
+                       $1, $2, $3, $4, $5
+                   )""",
+                digest,
+                scope["workspace_a"],
+                datetime.now(timezone.utc) + timedelta(days=3650),
+                datetime.now(timezone.utc) + timedelta(days=3650),
+                datetime.now(timezone.utc) - timedelta(days=3650),
+            )
+
+        stale_raw = secrets.token_hex(32)
+        stale_digest = hashlib.sha256(stale_raw.encode("utf-8")).hexdigest()
+        await console.fetchval(
+            "SELECT omega_auth_create_session($1, $2, $3, $4)",
+            stale_digest,
+            scope["user_a"],
+            datetime.now(timezone.utc) + timedelta(days=30),
+            None,
+        )
+        await admin.execute(
+            """UPDATE user_sessions
+                  SET created_at = NOW() - interval '13 hours',
+                      expires_at = NOW() + interval '30 days'
+                WHERE token_hash = $1""",
+            stale_digest,
+        )
+        assert await workspace.fetch(
+            "SELECT * FROM omega_auth_resolve_workspace_session($1, $2)",
+            stale_digest,
+            scope["workspace_a"],
+        ) == []
+        assert await admin.fetchval(
+            "SELECT count(*) FROM user_sessions WHERE token_hash = $1", stale_digest
+        ) == 0
 
         assert await workspace.fetchval(
             "SELECT omega_auth_destroy_session($1)", digest

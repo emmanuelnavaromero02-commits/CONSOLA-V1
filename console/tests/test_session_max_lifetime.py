@@ -44,7 +44,7 @@ async def test_session_within_absolute_cap_is_returned():
     assert user is not None
     assert user["id"] == 42
     assert user["email"] == "alice@example.com"
-    query, digest, _new_expiry, _slide_before, _created_after = mock_pool.fetchrow.await_args.args
+    query, digest = mock_pool.fetchrow.await_args.args
     assert "omega_auth_resolve_session" in query
     assert digest == auth.hash_session_token("tok-1")
 
@@ -57,8 +57,10 @@ async def test_session_older_than_cap_is_invalidated():
     with patch.object(auth, "pool", return_value=mock_pool):
         user = await auth.get_session_user("tok-1")
     assert user is None, "stale session must return None"
-    args = mock_pool.fetchrow.await_args.args
-    assert args[4] <= datetime.now(timezone.utc) - auth.MAX_SESSION_LIFETIME
+    assert mock_pool.fetchrow.await_args.args == (
+        "SELECT * FROM omega_auth_resolve_session($1)",
+        auth.hash_session_token("tok-1"),
+    )
 
 
 @pytest.mark.asyncio
@@ -90,8 +92,7 @@ async def test_session_sliding_window_still_extends_under_cap():
     with patch.object(auth, "pool", return_value=mock_pool):
         user = await auth.get_session_user("tok-1")
     assert user is not None
-    args = mock_pool.fetchrow.await_args.args
-    assert args[2] - args[3] == auth.SESSION_SLIDE
+    assert len(mock_pool.fetchrow.await_args.args) == 2
 
 
 def test_max_session_lifetime_constant_is_reasonable():
