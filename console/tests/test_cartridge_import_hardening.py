@@ -20,6 +20,11 @@ def test_import_zip_rejects_path_traversal():
         _validate_import_zip_members(["../evil.py"])
 
 
+def test_import_zip_rejects_backslash_path_alias():
+    with pytest.raises(ValueError, match="unsafe ZIP path"):
+        _validate_import_zip_members([r"dags\escape.py"])
+
+
 def test_import_zip_rejects_unknown_root():
     with pytest.raises(ValueError, match="unexpected ZIP member"):
         _validate_import_zip_members(["tmp/payload.py"])

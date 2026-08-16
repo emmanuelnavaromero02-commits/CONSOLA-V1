@@ -114,7 +114,7 @@ def test_priority_cartridges_block_redirects_without_following(
 ):
     guard = _load_guard(cartridge)
     response = requests.Response()
-    response.status_code = 302
+    response.status_code = 300
     response.headers["Location"] = "http://169.254.169.254/latest/meta-data"
     response._content = b""
     response._content_consumed = True

@@ -128,7 +128,7 @@ class EgressSession(requests.Session):
     def request(self, method: str, url: str, **kwargs: Any) -> requests.Response:
         kwargs["allow_redirects"] = False
         response = super().request(method, url, **kwargs)
-        if response.is_redirect or response.is_permanent_redirect:
+        if 300 <= response.status_code < 400:
             response.close()
             raise EgressGuardError("outbound redirects are blocked")
         return response

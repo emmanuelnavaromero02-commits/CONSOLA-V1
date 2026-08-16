@@ -1086,13 +1086,13 @@ async def export_cartridge(cartridge_id: str) -> bytes:
         if not base.exists():
             continue
         for fp in base.glob("*.py"):
-            _validate_dag_filename(fp.name)
+            safe_fp = _resolve_dag_file(base, fp.name)
             if fp.name in seen_dag_files:
                 continue
             # only pick up DAGs that look like they belong to this cartridge
             if base.name == "dags" and not fp.name.startswith(f"{cartridge_id}_"):
                 continue
-            files[f"dags/{fp.name}"] = fp.read_bytes()
+            files[f"dags/{fp.name}"] = safe_fp.read_bytes()
             seen_dag_files.add(fp.name)
 
     # ── Specs and other supplementary files from MinIO ────────────────────
@@ -1241,6 +1241,8 @@ def _validate_import_zip_members(members: list[object]) -> None:
         name = getattr(member, "filename", str(member))
         size = int(getattr(member, "file_size", 0) or 0)
         normalized = name.replace("\\", "/")
+        if normalized != name:
+            raise ValueError(f"unsafe ZIP path: {name}")
         if normalized in seen:
             raise ValueError(f"duplicate ZIP member: {name}")
         seen.add(normalized)
@@ -1318,12 +1320,16 @@ def _validate_upsert(
     action = str(conflict.args.get("action") or "").upper()
     if action not in {"DO NOTHING", "DO UPDATE"}:
         raise ValueError("seed.sql conflict action is not allowed")
+    if conflict.args.get("constraint") or conflict.args.get("duplicate"):
+        raise ValueError("seed.sql conflict constraint is not allowed")
     for key in conflict.args.get("conflict_keys") or []:
         if _identifier_name(key) not in inserted_columns:
             raise ValueError("seed.sql conflict key is not inserted")
     assignments = conflict.args.get("expressions") or []
     if action == "DO NOTHING" and assignments:
         raise ValueError("seed.sql DO NOTHING cannot update columns")
+    if action == "DO UPDATE" and not conflict.args.get("conflict_keys"):
+        raise ValueError("seed.sql DO UPDATE requires explicit conflict keys")
     for assignment in assignments:
         if not isinstance(assignment, exp.EQ) or not isinstance(
             assignment.this, exp.Column
@@ -1366,6 +1372,20 @@ def _validate_seed_sql(sql: str) -> str:
     for statement in statements:
         if not isinstance(statement, exp.Insert) or statement.args.get("returning"):
             raise ValueError("seed.sql permits only INSERT/UPSERT statements")
+        unsupported_options = (
+            "hint",
+            "stored",
+            "by_name",
+            "exists",
+            "where",
+            "partition",
+            "settings",
+            "overwrite",
+            "alternative",
+            "ignore",
+        )
+        if any(statement.args.get(option) for option in unsupported_options):
+            raise ValueError("seed.sql INSERT modifier is not allowed")
         target = statement.this
         if not isinstance(target, exp.Schema) or not isinstance(target.this, exp.Table):
             raise ValueError("seed.sql INSERT must declare a table and columns")
