@@ -508,3 +508,6 @@ def test_decision_idempotency_migration_is_durable_and_actor_scoped():
     assert "FORCE ROW LEVEL SECURITY" in migration
     assert "current_setting('app.user_id', TRUE)" in migration
     assert "idempotency_key TEXT" not in migration
+    assert "GRANT DELETE ON decisions TO omega_workspace" in migration
+    assert "ALTER FUNCTION soft_delete_audit_trigger() SECURITY DEFINER" in migration
+    assert "SET search_path = pg_catalog, public, pg_temp" in migration

@@ -61,6 +61,16 @@ GRANT SELECT, INSERT, UPDATE ON workspace_decision_idempotency TO omega_workspac
 -- Workspace already owns scoped decision-action writes, but the legacy grant
 -- omitted SELECT; INSERT ... RETURNING and replay lookup therefore failed 42501.
 GRANT SELECT, INSERT, UPDATE ON decision_actions TO omega_workspace;
+-- DELETE is still authorization-gated by control_room.write in Workspace and
+-- tenant/workspace-scoped by native RLS; the service role needs the matching
+-- table privilege for an authorized administrator to complete the operation.
+GRANT DELETE ON decisions TO omega_workspace;
+-- The decisions BEFORE DELETE audit trigger must be able to append its
+-- sanitized tombstone without granting the Workspace role a forgeable INSERT
+-- capability on the forensic ledger itself.
+ALTER FUNCTION soft_delete_audit_trigger() SECURITY DEFINER;
+ALTER FUNCTION soft_delete_audit_trigger()
+    SET search_path = pg_catalog, public, pg_temp;
 REVOKE ALL ON SEQUENCE workspace_decision_idempotency_id_seq FROM PUBLIC;
 GRANT USAGE, SELECT ON SEQUENCE workspace_decision_idempotency_id_seq
     TO omega_workspace;

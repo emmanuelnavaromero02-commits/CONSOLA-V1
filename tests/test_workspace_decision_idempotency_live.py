@@ -159,3 +159,47 @@ async def test_ten_simultaneous_posts_same_key_create_exactly_one_action(
     assert ledger[0]["action_id"] in action_ids
     assert ledger[0]["idempotency_key_hash"] != canary_key
     assert len(ledger[0]["idempotency_key_hash"]) == 64
+
+
+@pytest.mark.asyncio
+async def test_workspace_admin_can_delete_scoped_decision_with_service_role(
+    postgres_with_real_init_schema: str,
+    monkeypatch,
+) -> None:
+    scope = await _seed(postgres_with_real_init_schema)
+    main = _load_workspace_main(monkeypatch)
+    pool = await asyncpg.create_pool(
+        _workspace_dsn(postgres_with_real_init_schema),
+        min_size=1,
+        max_size=3,
+    )
+    monkeypatch.setattr(main, "_PG_POOL", pool)
+    request = SimpleNamespace(
+        state=SimpleNamespace(
+            user={
+                "id": scope["user_id"],
+                "email": scope["email"],
+                "role": "workspace_admin",
+                "workspace_role": "workspace_admin",
+                "active_tenant_id": scope["tenant_id"],
+                "active_workspace_id": scope["workspace_id"],
+            }
+        )
+    )
+
+    try:
+        response = await main.api_decisions_delete(request, scope["decision_id"])
+    finally:
+        await pool.close()
+        main._PG_POOL = None
+
+    assert response == {"deleted": True, "id": scope["decision_id"]}
+    check = await asyncpg.connect(postgres_with_real_init_schema)
+    try:
+        remaining = await check.fetchval(
+            "SELECT COUNT(*) FROM decisions WHERE id = $1",
+            scope["decision_id"],
+        )
+    finally:
+        await check.close()
+    assert remaining == 0
