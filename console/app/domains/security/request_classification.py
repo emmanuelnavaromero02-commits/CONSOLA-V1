@@ -18,6 +18,26 @@ def uses_rbac_dependency(path: str, prefixes: tuple[str, ...]) -> bool:
     return any(path == prefix or path.startswith(prefix + "/") for prefix in prefixes)
 
 
+def is_app_content_capability_path(path: str) -> bool:
+    """True only for ``/apps/{name}/content`` — the route the capability guards.
+
+    The viewer's inner frame is credentialless, so this request carries no
+    session cookie by design; the capability minted by ``/apps/{name}/embed``
+    is the authorisation, re-validated by the route against current server
+    state (fail-closed 403). Bouncing the cookie-less request to ``/login``
+    instead lands the frame on a page that refuses framing, which the browser
+    surfaces as a connection error inside the viewer.
+    """
+    parts = path.split("/")
+    return (
+        len(parts) == 4
+        and parts[0] == ""
+        and parts[1] == "apps"
+        and bool(parts[2])
+        and parts[3] == "content"
+    )
+
+
 def is_agent_runner_request(
     path: str,
     *,

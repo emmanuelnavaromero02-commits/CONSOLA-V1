@@ -337,6 +337,7 @@ from app.domains.data_platform.table_metadata import (
 from app.domains.security.request_classification import (
     is_agent_runner_request as _is_agent_runner_request_impl,
     is_api_like as _is_api_like_impl,
+    is_app_content_capability_path as _is_app_content_capability_path_impl,
     is_direct_static_html_request as _is_direct_static_html_request_impl,
     uses_rbac_dependency as _uses_rbac_dependency_impl,
 )
@@ -1292,6 +1293,10 @@ def _uses_rbac_dependency(path: str) -> bool:
     return _uses_rbac_dependency_impl(path, _RBAC_DEPENDENCY_PREFIXES)
 
 
+def _is_app_content_capability_path(path: str) -> bool:
+    return _is_app_content_capability_path_impl(path)
+
+
 def _is_agent_runner_request(request: Request) -> bool:
     return _is_agent_runner_request_impl(
         request.url.path,
@@ -1561,7 +1566,11 @@ async def auth_middleware(request: Request, call_next):
     except HTTPException as exc:
         return _auth_middleware_error_response(exc.detail, exc.status_code, path)
 
-    if not user and not is_public and _uses_rbac_dependency(path):
+    if (
+        not user
+        and not is_public
+        and (_uses_rbac_dependency(path) or _is_app_content_capability_path(path))
+    ):
         return await call_next(request)
 
     response = _unauthenticated_middleware_response(
@@ -2990,7 +2999,7 @@ async def _resolve_capability_subject(claims: dict) -> dict | None:
         return None
     if row is None:
         return None
-    return {
+    resolved = {
         "id": int(row["id"]),
         "role": row["role"],
         "tenant_id": str(row["tenant_id"]),
@@ -2998,6 +3007,19 @@ async def _resolve_capability_subject(claims: dict) -> dict | None:
         "active_tenant_id": str(row["tenant_id"]),
         "active_workspace_id": str(row["workspace_id"]),
     }
+    # The session path carries the workspace's entitled cartridges on the user
+    # (auth middleware enrichment); this subject is rebuilt from the capability
+    # alone, so derive the same list from the server's own ledger or the
+    # downstream cartridge-visibility check refuses an entitled app. Empty on
+    # failure: an unreadable ledger entitles nothing.
+    try:
+        resolved["allowed_cartridges"] = await _workspace_cartridges(
+            resolved["workspace_id"], user_id=resolved["id"]
+        )
+    except Exception:
+        logger.warning("[app-content] entitlement lookup failed", exc_info=True)
+        resolved["allowed_cartridges"] = []
+    return resolved
 
 
 async def _active_manifest_digest(
@@ -3152,14 +3174,20 @@ async def _app_grant_context(
         try:
             pool = await _get_db_pool()
             async with pool.acquire() as conn:
-                await _set_rls_scope(conn, tenant_id, workspace_id)
-                granted = await _granted_datasets(
-                    conn,
-                    tenant_id=tenant_id,
-                    workspace_id=workspace_id,
-                    app_name=name,
-                    manifest_digest=digest,
-                )
+                # In-transaction on purpose: the scope GUCs are set
+                # transaction-local (`set_config(..., true)`), and outside an
+                # explicit transaction asyncpg's per-statement autocommit
+                # discards them before the next statement — the ledger read
+                # then sees no scope and answers with no grants.
+                async with conn.transaction():
+                    await _set_rls_scope(conn, tenant_id, workspace_id)
+                    granted = await _granted_datasets(
+                        conn,
+                        tenant_id=tenant_id,
+                        workspace_id=workspace_id,
+                        app_name=name,
+                        manifest_digest=digest,
+                    )
         except Exception:
             # Fail closed: an unreachable ledger grants nothing.
             logger.warning("[app-grants] grant lookup failed for %s", name, exc_info=True)
