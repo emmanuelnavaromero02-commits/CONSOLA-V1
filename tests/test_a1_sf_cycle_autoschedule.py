@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-MIGRATION = REPO_ROOT / "infra" / "init" / "99zzz_sap_successfactors_cycle_autoschedule.sql"
+MIGRATION = REPO_ROOT / "infra" / "init" / "99zzzz_sap_successfactors_cycle_autoschedule.sql"
 BOOTSTRAP = REPO_ROOT / "infra" / "init_dev" / "15_local_dev_bootstrap.sql"
 EXTRACT_ALL = (
     REPO_ROOT / "cartridges" / "sap_successfactors" / "dags"
@@ -41,8 +41,11 @@ def test_migration_schedules_the_cycle_dag_not_per_entity_extract():
     assert "'scheduled'" in sql
     assert "'*/15 * * * *'" in sql
     assert '{"target": "foundation"}' in sql
-    assert "99zzz_sap_successfactors_cycle_autoschedule.sql" in sql
+    assert "99zzzz_sap_successfactors_cycle_autoschedule.sql" in sql
     assert "INSERT INTO schema_migrations" in sql
+    assert MIGRATION.name > "99zzz_workspace_decision_idempotency.sql", (
+        "must sort after F-SEG's 99zzz migration on fresh installs"
+    )
 
 
 def test_migration_resolves_scope_from_server_state_never_hardcoded():

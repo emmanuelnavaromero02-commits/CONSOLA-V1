@@ -1,4 +1,4 @@
--- 99zzz_sap_successfactors_cycle_autoschedule.sql
+-- 99zzzz_sap_successfactors_cycle_autoschedule.sql
 --
 -- A1: make the SuccessFactors cycle autonomous on any install, not just FEMSA.
 --
@@ -121,5 +121,5 @@ $$;
 SELECT public.seed_sap_successfactors_cycle_schedule();
 
 INSERT INTO schema_migrations (filename, applied_at)
-VALUES ('99zzz_sap_successfactors_cycle_autoschedule.sql', NOW())
+VALUES ('99zzzz_sap_successfactors_cycle_autoschedule.sql', NOW())
 ON CONFLICT (filename) DO NOTHING;
