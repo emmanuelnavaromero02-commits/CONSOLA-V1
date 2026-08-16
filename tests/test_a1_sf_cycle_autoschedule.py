@@ -140,15 +140,20 @@ def test_vault_reveal_fields_are_flattened():
     conn_id there is no env fallback, so extraction failed CONFIG_INCOMPLETE
     despite a successful reveal. The client must lift 'fields' to the top
     level, with top-level identity keys winning on collision."""
-    import sys
-
-    sys.path.insert(
-        0, str(REPO_ROOT / "cartridges" / "sap_successfactors")
+    # Executed from source: importing the cartridge's vault_client pulls its
+    # settings (DATABASE_URL) and collides with the console 'app' package on
+    # sys.path, so the pure function is isolated instead.
+    src = (
+        REPO_ROOT / "cartridges" / "sap_successfactors" / "app" / "core"
+        / "vault_client.py"
+    ).read_text(encoding="utf-8")
+    fn_src = re.search(
+        r"def _flatten_connection_fields\(.*?\n(?=\ndef )", src, re.DOTALL
     )
-    try:
-        from app.core.vault_client import _flatten_connection_fields
-    finally:
-        sys.path.pop(0)
+    assert fn_src, "_flatten_connection_fields not found"
+    namespace: dict = {}
+    exec(fn_src.group(0), {"Any": object}, namespace)  # noqa: S102
+    _flatten_connection_fields = namespace["_flatten_connection_fields"]
 
     flat = _flatten_connection_fields(
         {
@@ -161,6 +166,29 @@ def test_vault_reveal_fields_are_flattened():
     assert flat["conn_id"] == "default", "identity keys must win on collision"
     untouched = {"conn_id": "x", "base_url": "flat"}
     assert _flatten_connection_fields(dict(untouched)) == untouched
+
+
+def test_airflow_materializes_via_runtime_envelope():
+    """Refinement only admits source=airflow contexts through the
+    purpose-bound hmac-v2 runtime validation, so both the per-entity silver
+    refresh and the gold sweep must take the /mcp/invoke materialize route
+    (build_materialize_context) when running under the airflow key; the
+    cartridge-container v1 path stays as-is."""
+    src = (
+        REPO_ROOT / "cartridges" / "sap_successfactors" / "app" / "core"
+        / "refinement_triggers.py"
+    ).read_text(encoding="utf-8")
+    assert "def _runtime_materialize_request(" in src
+    assert "build_materialize_context" in src
+    call_sites = src.count("await _runtime_materialize_request(")
+    assert call_sites >= 3, (
+        "silver refresh plus both gold-sweep loops must use the runtime "
+        f"route under airflow (found {call_sites})"
+    )
+    assert 'internal_service == "airflow"' in src
+    assert "/refresh-by-source" in src and "/datasets/" in src, (
+        "the cartridge-container v1 paths must survive"
+    )
 
 
 def test_control_room_shows_freshness():
