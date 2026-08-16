@@ -28,6 +28,7 @@ bcrypt==4.1.3
 # vulnerable ECDSA transitive dependency.
 PyJWT>=2.13.0
 redis==5.0.8
+sqlglot==25.16.1
 # Test-only: fakeredis backs console/tests/test_jwt_blacklist.py. Listed here
 # (not in a separate requirements-dev.txt) so the CI workflow — which only
 # installs console/requirements.txt before running console/tests/ — sees it.

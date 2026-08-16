@@ -624,8 +624,7 @@ async def issue_tenant_admin_temporary_password(
                 user_id,
                 tenant_id,
             )
-            await conn.execute("DELETE FROM refresh_tokens WHERE user_id = $1", user_id)
-            await conn.execute("DELETE FROM user_sessions WHERE user_id = $1", user_id)
+            await conn.fetchval("SELECT omega_auth_revoke_user_tokens($1)", user_id)
 
     await _record(
         request,

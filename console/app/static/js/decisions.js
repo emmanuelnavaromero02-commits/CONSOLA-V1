@@ -430,8 +430,13 @@ async function saveKpis(id){
 async function addAction(id){
   const txt = document.getElementById('ac-text').value.trim();
   if (!txt) return;
+  const idempotencyKey = globalThis.crypto?.randomUUID?.() ||
+    `decision-action-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const r = await fetch('/api/decisions/' + id + '/actions', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
+    method: 'POST', headers: {
+      'Content-Type':'application/json',
+      'Idempotency-Key': idempotencyKey,
+    },
     body: JSON.stringify({ action_text: txt })
   });
   if (!r.ok) { alert('Error: ' + r.statusText); return; }

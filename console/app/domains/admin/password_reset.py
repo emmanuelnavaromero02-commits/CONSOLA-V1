@@ -42,8 +42,7 @@ async def replace_user_password_for_reset(
             )
             if not updated:
                 raise HTTPException(404, "user not found or inactive")
-            await conn.execute("DELETE FROM refresh_tokens WHERE user_id = $1", user_id)
-            await conn.execute("DELETE FROM user_sessions WHERE user_id = $1", user_id)
+            await conn.fetchval("SELECT omega_auth_revoke_user_tokens($1)", user_id)
 
 
 async def send_admin_reset_email(

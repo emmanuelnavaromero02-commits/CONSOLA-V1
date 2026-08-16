@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import importlib
 import sys
 import types
@@ -38,8 +39,12 @@ def console_main(monkeypatch):
     auth_stub.COOKIE_NAME = "mod_session"
     auth_stub.REFRESH_COOKIE_NAME = "refresh_token"
     auth_stub.cookie_secure = lambda: False
+    auth_stub.hash_refresh_token = lambda token: hashlib.sha256(
+        token.encode("utf-8")
+    ).hexdigest()
     auth_stub.revoked_refresh_tokens = []
     auth_stub.created_refresh_tokens = []
+    auth_stub.destroyed_session_tokens = []
     auth_stub.user = {
         "id": 42,
         "email": "analyst@example.com",
@@ -117,6 +122,13 @@ def console_main(monkeypatch):
     async def destroy_session(token):
         return None
 
+    async def logout_tokens(session_token, refresh_token):
+        if session_token:
+            auth_stub.destroyed_session_tokens.append(session_token)
+        if refresh_token:
+            auth_stub.revoked_refresh_tokens.append(refresh_token)
+        return bool(session_token), bool(refresh_token)
+
     async def list_users(active_only=True):
         return [dict(auth_stub.user)]
 
@@ -184,6 +196,7 @@ def console_main(monkeypatch):
     auth_stub.get_user_by_id = get_user_by_id
     auth_stub.pool = pool
     auth_stub.destroy_session = destroy_session
+    auth_stub.logout_tokens = logout_tokens
     auth_stub.list_users = list_users
     auth_stub.get_user_by_email = get_user_by_email
     auth_stub.create_user = create_user
@@ -1069,6 +1082,7 @@ def test_logout_revokes_refresh_token(console_main):
     response = client.post("/auth/logout", headers={"X-CSRF-Token": "test-csrf"})
 
     assert response.status_code == 200
+    assert "legacy-session-token" in console_main._auth.destroyed_session_tokens
     assert "valid-refresh-token" in console_main._auth.revoked_refresh_tokens
     set_cookie = response.headers.get("set-cookie", "")
     assert "mod_session=" in set_cookie

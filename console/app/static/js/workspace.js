@@ -767,8 +767,12 @@ window.saveDecisionOverview = async function(id) {
 window.addDecisionAction = async function(id) {
   const txt = document.getElementById('ac-text').value.trim();
   if (!txt) return;
+  const idempotencyKey = globalThis.crypto?.randomUUID?.() ||
+    `decision-action-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const r = await fetch('/api/decisions/' + id + '/actions', {
-    method: 'POST', headers: jsonHeaders(),
+    method: 'POST', headers: jsonHeaders({
+      'Idempotency-Key': idempotencyKey,
+    }),
     body: JSON.stringify({ action_text: txt })
   });
   if (!r.ok) { alert('Error: ' + r.statusText); return; }

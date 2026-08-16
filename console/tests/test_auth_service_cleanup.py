@@ -86,6 +86,34 @@ async def test_close_pool_closes_and_resets_global_pool(auth_module):
 
 
 @pytest.mark.anyio
+async def test_logout_hashes_both_credentials_in_one_database_call(
+    auth_module, monkeypatch
+):
+    class FakePool:
+        def __init__(self):
+            self.call = None
+
+        async def fetchrow(self, query, session_hash, refresh_hash):
+            self.call = (query, session_hash, refresh_hash)
+            return {"session_deleted": True, "refresh_revoked": True}
+
+    fake_pool = FakePool()
+
+    async def pool():
+        return fake_pool
+
+    monkeypatch.setattr(auth_module, "pool", pool)
+    result = await auth_module.logout_tokens("session-raw", "refresh-raw")
+
+    assert result == (True, True)
+    assert fake_pool.call == (
+        "SELECT * FROM omega_auth_logout($1, $2)",
+        auth_module.hash_session_token("session-raw"),
+        auth_module.hash_refresh_token("refresh-raw"),
+    )
+
+
+@pytest.mark.anyio
 async def test_delete_user_removes_workspace_memberships_before_user(auth_module, monkeypatch):
     class Ctx:
         def __init__(self, value):
@@ -106,7 +134,9 @@ async def test_delete_user_removes_workspace_memberships_before_user(auth_module
 
         async def fetchval(self, query, user_id):
             self.statements.append(query)
-            return True
+            if "SELECT EXISTS" in query:
+                return True
+            return 0
 
         async def execute(self, query, user_id):
             self.statements.append(query)
@@ -132,8 +162,7 @@ async def test_delete_user_removes_workspace_memberships_before_user(auth_module
     assert conn.statements.index("DELETE FROM user_workspace_roles WHERE user_id = $1") < conn.statements.index(
         "DELETE FROM users WHERE id = $1"
     )
-    assert "DELETE FROM user_sessions WHERE user_id = $1" in conn.statements
-    assert "DELETE FROM refresh_tokens WHERE user_id = $1" in conn.statements
+    assert "SELECT omega_auth_revoke_user_tokens($1)" in conn.statements
 
 
 @pytest.mark.anyio

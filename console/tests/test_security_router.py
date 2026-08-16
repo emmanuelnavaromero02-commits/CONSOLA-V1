@@ -46,7 +46,7 @@ def _make_fetch_side_effect(data_rows):
             # _columns() expects rows with "column_name" key
             table_name = args[0] if args else ""
             if table_name == "user_sessions":
-                return [{"column_name": "token"}, {"column_name": "user_id"},
+                return [{"column_name": "token_hash"}, {"column_name": "user_id"},
                         {"column_name": "last_seen"}, {"column_name": "user_agent"},
                         {"column_name": "created_at"}, {"column_name": "expires_at"},
                         {"column_name": "ip"}]
@@ -67,7 +67,7 @@ def test_get_sessions(mock_pool):
     mock_pool.return_value = mock_conn
     mock_conn.fetchval = AsyncMock(return_value=True)  # _table_exists → True
     mock_conn.fetch.side_effect = _make_fetch_side_effect(
-        [{"token": "abc123456789", "user_id": 1, "user_email": "a@b.com",
+        [{"session_id": "a" * 64, "user_id": 1, "user_email": "a@b.com",
           "ip": None, "last_seen": None, "user_agent": None,
           "created_at": None, "expires_at": None}]
     )
@@ -85,9 +85,9 @@ def test_get_sessions(mock_pool):
 def test_revoke_session(mock_pool):
     mock_conn = AsyncMock()
     mock_pool.return_value = mock_conn
-    mock_conn.execute.return_value = "DELETE 1"
+    mock_conn.fetchval.return_value = True
 
-    response = client.delete("/security/sessions/abc", headers=_csrf_headers())
+    response = client.delete("/security/sessions/" + "a" * 64, headers=_csrf_headers())
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
 

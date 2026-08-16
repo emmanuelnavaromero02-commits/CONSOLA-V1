@@ -2,7 +2,7 @@
 Local authentication & session management for the console.
 
 - Passwords hashed with bcrypt.
-- Sessions are server-side (random token in user_sessions table) + HttpOnly cookie.
+- Sessions are server-side (SHA-256 token digest in user_sessions) + HttpOnly cookie.
 - Sessions slide on each authenticated request (renewed by SESSION_SLIDE_DAYS).
 """
 
@@ -448,8 +448,7 @@ async def delete_user(user_id: int) -> bool:
             await conn.execute(
                 "DELETE FROM user_workspace_roles WHERE user_id = $1", user_id
             )
-            await conn.execute("DELETE FROM user_sessions WHERE user_id = $1", user_id)
-            await conn.execute("DELETE FROM refresh_tokens WHERE user_id = $1", user_id)
+            await conn.fetchval("SELECT omega_auth_revoke_user_tokens($1)", user_id)
             try:
                 res = await conn.execute("DELETE FROM users WHERE id = $1", user_id)
             except asyncpg.ForeignKeyViolationError as exc:
@@ -522,9 +521,9 @@ async def create_session(user_id: int, ip: str | None = None) -> tuple[str, date
     token = secrets.token_hex(32)
     expires = datetime.now(timezone.utc) + SESSION_LIFETIME
     p = await pool()
-    await p.execute(
-        "INSERT INTO user_sessions (token, user_id, expires_at, ip) VALUES ($1, $2, $3, $4)",
-        token,
+    await p.fetchval(
+        "SELECT omega_auth_create_session($1, $2, $3, $4)",
+        hash_session_token(token),
         user_id,
         expires,
         ip,
@@ -546,32 +545,11 @@ async def get_session_user(token: str) -> dict | None:
         return None
     p = await pool()
     row = await p.fetchrow(
-        """SELECT s.token, s.user_id, s.expires_at, s.created_at,
-                  u.id, u.email, u.name, u.role, u.is_active, u.must_change_password, u.tenant_id
-             FROM user_sessions s
-             JOIN users u ON u.id = s.user_id
-            WHERE s.token = $1 AND s.expires_at > NOW() AND u.is_active = TRUE""",
-        token,
+        "SELECT * FROM omega_auth_resolve_session($1)",
+        hash_session_token(token),
     )
     if not row:
         return None
-    # Absolute lifetime cap: if the session is older than MAX_SESSION_LIFETIME,
-    # destroy it server-side and refuse the request. Doing this BEFORE the
-    # sliding extension prevents the same request from both invalidating and
-    # extending the session.
-    now = datetime.now(timezone.utc)
-    if (
-        row["created_at"] is not None
-        and (now - row["created_at"]) > MAX_SESSION_LIFETIME
-    ):
-        await p.execute("DELETE FROM user_sessions WHERE token = $1", token)
-        return None
-    # Sliding window: if older than SESSION_SLIDE remaining, push expiry forward
-    new_exp = now + SESSION_LIFETIME
-    if (row["expires_at"] - now) < (SESSION_LIFETIME - SESSION_SLIDE):
-        await p.execute(
-            "UPDATE user_sessions SET expires_at = $1 WHERE token = $2", new_exp, token
-        )
     row_data = dict(row)
     tenant_id = row_data.get("tenant_id")
     return {
@@ -589,16 +567,27 @@ async def destroy_session(token: str) -> None:
     if not token:
         return
     p = await pool()
-    await p.execute("DELETE FROM user_sessions WHERE token = $1", token)
+    await p.fetchval(
+        "SELECT omega_auth_destroy_session($1)", hash_session_token(token)
+    )
+
+
+async def logout_tokens(
+    session_token: str | None, refresh_token: str | None
+) -> tuple[bool, bool]:
+    """Atomically invalidate both browser credentials, if present."""
+    p = await pool()
+    row = await p.fetchrow(
+        "SELECT * FROM omega_auth_logout($1, $2)",
+        hash_session_token(session_token) if session_token else None,
+        hash_refresh_token(refresh_token) if refresh_token else None,
+    )
+    return bool(row and row["session_deleted"]), bool(row and row["refresh_revoked"])
 
 
 async def cleanup_expired_sessions() -> int:
     p = await pool()
-    res = await p.execute("DELETE FROM user_sessions WHERE expires_at < NOW()")
-    try:
-        return int(res.split()[-1])
-    except Exception:
-        return 0
+    return int(await p.fetchval("SELECT omega_auth_cleanup_sessions()") or 0)
 
 
 # ── Refresh token management ────────────────────────────────────────────────
@@ -612,12 +601,16 @@ def hash_refresh_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def hash_session_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
 async def create_refresh_token(user_id: int) -> tuple[str, datetime]:
     token = generate_refresh_token()
     expires = datetime.now(timezone.utc) + REFRESH_TOKEN_LIFETIME
     p = await pool()
-    await p.execute(
-        "INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, $3)",
+    await p.fetchval(
+        "SELECT omega_auth_create_refresh_token($1, $2, $3)",
         user_id,
         hash_refresh_token(token),
         expires,
@@ -630,14 +623,7 @@ async def get_refresh_token_user(token: str) -> dict | None:
         return None
     p = await pool()
     row = await p.fetchrow(
-        """SELECT rt.id AS refresh_token_id, rt.user_id, rt.expires_at,
-                  u.id, u.email, u.name, u.role, u.is_active, u.must_change_password, u.tenant_id
-             FROM refresh_tokens rt
-             JOIN users u ON u.id = rt.user_id
-            WHERE rt.token_hash = $1
-              AND rt.revoked_at IS NULL
-              AND rt.expires_at > NOW()
-              AND u.is_active = TRUE""",
+        "SELECT * FROM omega_auth_get_refresh_user($1)",
         hash_refresh_token(token),
     )
     if not row:
@@ -659,10 +645,45 @@ async def revoke_refresh_token(token: str) -> None:
     if not token:
         return
     p = await pool()
-    await p.execute(
-        "UPDATE refresh_tokens SET revoked_at = NOW() WHERE token_hash = $1 AND revoked_at IS NULL",
-        hash_refresh_token(token),
+    await p.fetchval(
+        "SELECT omega_auth_revoke_refresh_token($1)", hash_refresh_token(token)
     )
+
+
+async def rotate_refresh_token(
+    token: str | None,
+) -> tuple[dict, str, datetime] | None:
+    """Consume one refresh token exactly once and create its successor.
+
+    The database function performs the guarded UPDATE and successor INSERT in
+    one statement. Concurrent callers therefore observe exactly one consumed
+    row; there is intentionally no read/revoke/create fallback.
+    """
+    if not token:
+        return None
+    new_token = generate_refresh_token()
+    expires = datetime.now(timezone.utc) + REFRESH_TOKEN_LIFETIME
+    p = await pool()
+    row = await p.fetchrow(
+        "SELECT * FROM omega_auth_rotate_refresh_token($1, $2, $3)",
+        hash_refresh_token(token),
+        hash_refresh_token(new_token),
+        expires,
+    )
+    if not row:
+        return None
+    row_data = dict(row)
+    tenant_id = row_data.get("tenant_id")
+    user = {
+        "id": row["user_id"],
+        "email": row["email"],
+        "name": row["name"],
+        "role": row["role"],
+        "is_active": row["is_active"],
+        "must_change_password": row["must_change_password"],
+        "tenant_id": str(tenant_id) if tenant_id else None,
+    }
+    return user, new_token, expires
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────

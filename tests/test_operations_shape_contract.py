@@ -151,8 +151,7 @@ def test_admin_reset_returns_one_time_temporary_password():
     assert '"temporary_password": temporary_password' in reset_domain
     assert '"password_delivery": "one_time_response"' in reset_domain
     assert "must_change_password = TRUE" in reset_domain
-    assert "DELETE FROM refresh_tokens" in reset_domain
-    assert "DELETE FROM user_sessions" in reset_domain
+    assert "omega_auth_revoke_user_tokens" in reset_domain
     assert "temporary_password_issued" in reset_domain
 
 

@@ -17,16 +17,21 @@ from __future__ import annotations
 
 import io
 import os
+import pathlib
 import re
 import textwrap
+import unicodedata
 import zipfile
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import asyncpg
+import sqlglot
 
 from app.security import get_internal_api_key
 from app.services.s3_client import get_minio_client
 from app.services.security_context import build_security_context
+from sqlglot import exp
 
 _DATABASE_URL = (
     os.environ.get("DATABASE_URL", "")
@@ -46,24 +51,99 @@ _MAX_IMPORT_MEMBER_BYTES = int(
     os.environ.get("CARTRIDGE_IMPORT_MAX_MEMBER_BYTES", str(10 * 1024 * 1024))
 )
 _MAX_IMPORT_MEMBERS = int(os.environ.get("CARTRIDGE_IMPORT_MAX_MEMBERS", "500"))
-_ALLOWED_SEED_TABLES = {
-    "cartridges",
-    "cartridge_connections",
-    "cartridge_dags",
-    "entity_config",
-    "datasets",
-    "semantic_terms",
-    "kb_config",
-    "mcp_custom_tools",
-    "analytic_apps",
-    "agents",
+
+
+@dataclass(frozen=True)
+class _SeedTablePolicy:
+    scope_column: str
+    insert_columns: frozenset[str]
+    update_columns: frozenset[str]
+
+
+def _columns(value: str) -> frozenset[str]:
+    return frozenset(value.split())
+
+
+# Declarative import grammar. Connection credentials, DAG source code and every
+# identity/session table are absent from this policy on purpose.
+_SEED_TABLE_POLICIES = {
+    "cartridges": _SeedTablePolicy(
+        "id",
+        _columns(
+            "id name version description pattern category bronze_path assistant_hints"
+        ),
+        _columns(
+            "name version description pattern category bronze_path assistant_hints updated_at"
+        ),
+    ),
+    "cartridge_connections": _SeedTablePolicy(
+        "cartridge_id",
+        _columns("cartridge_id conn_id description auth_type poll_strategy"),
+        _columns("description auth_type poll_strategy"),
+    ),
+    "cartridge_dags": _SeedTablePolicy(
+        "cartridge_id",
+        _columns(
+            "cartridge_id dag_id file description trigger params dag_params_example"
+        ),
+        _columns("file description trigger params dag_params_example updated_at"),
+    ),
+    "entity_config": _SeedTablePolicy(
+        "cartridge_id",
+        _columns(
+            "cartridge_id entity display_name mode primary_key dag_id trigger_type "
+            "cron_expression description enabled dag_params odata_entity select_fields "
+            "expand_fields watermark_field watermark_format date_field page_size"
+        ),
+        _columns(
+            "display_name mode primary_key dag_id trigger_type cron_expression description "
+            "enabled dag_params odata_entity select_fields expand_fields watermark_field "
+            "watermark_format date_field page_size updated_at"
+        ),
+    ),
+    "datasets": _SeedTablePolicy(
+        "cartridge",
+        _columns(
+            "name layer cartridge sources sql_def description column_mapping schedule updated_at"
+        ),
+        _columns(
+            "layer sources sql_def description column_mapping schedule updated_at"
+        ),
+    ),
+    "semantic_terms": _SeedTablePolicy(
+        "cartridge_id",
+        _columns("cartridge_id term definition maps_to"),
+        _columns("definition maps_to updated_at"),
+    ),
+    "kb_config": _SeedTablePolicy(
+        "cartridge_id",
+        _columns(
+            "cartridge_id kb_id name description sql pg_table output_path enabled"
+        ),
+        _columns("name description sql pg_table output_path enabled updated_at"),
+    ),
+    "mcp_custom_tools": _SeedTablePolicy(
+        "cartridge_id",
+        _columns("cartridge_id name description tool_type config enabled"),
+        _columns("description tool_type config enabled updated_at"),
+    ),
+    "analytic_apps": _SeedTablePolicy(
+        "cartridge_id",
+        _columns("name title html description cartridge_id updated_at"),
+        _columns("title html description updated_at"),
+    ),
+    "agents": _SeedTablePolicy(
+        "cartridge_id",
+        _columns(
+            "cartridge_id slug name description instructions personality allowed_tools "
+            "rag_filter extra model max_tokens temperature is_active"
+        ),
+        _columns(
+            "name description instructions personality allowed_tools rag_filter extra model "
+            "max_tokens temperature is_active updated_at"
+        ),
+    ),
 }
-_FORBIDDEN_SEED_SQL = re.compile(
-    r"\b(drop|truncate|delete|copy|create\s+extension|create\s+function|"
-    r"create\s+procedure|do\s+\$|grant|revoke|alter\s+system|attach|dblink|"
-    r"foreign\s+server|foreign\s+table)\b|\\",
-    re.IGNORECASE,
-)
 # Opening (or closing) delimiter of a PostgreSQL dollar-quoted string: ``$$`` or
 # ``$tag$`` with an alphanumeric tag. The splitter uses this to treat ``;``
 # inside a dollar-quoted literal as data, not a statement boundary.
@@ -92,6 +172,38 @@ def _validate_plain_filename(value: str) -> str:
     if not _SAFE_FILENAME_RE.fullmatch(value):
         raise ValueError("invalid filename")
     return value
+
+
+def _validate_dag_filename(value: str) -> str:
+    """Return a canonical DAG basename or fail before filesystem access."""
+    value = (value or "").strip()
+    if (
+        not value
+        or not value.isascii()
+        or unicodedata.normalize("NFKC", value) != value
+        or pathlib.PurePosixPath(value).is_absolute()
+        or pathlib.PureWindowsPath(value).is_absolute()
+        or pathlib.PurePosixPath(value).name != value
+        or pathlib.PureWindowsPath(value).name != value
+        or not _SAFE_FILENAME_RE.fullmatch(value)
+        or not value.endswith(".py")
+    ):
+        raise ValueError("invalid DAG filename")
+    return value
+
+
+def _resolve_dag_file(root: pathlib.Path, filename: str) -> pathlib.Path:
+    """Resolve a DAG basename under an operator-approved root, following links."""
+    safe_name = _validate_dag_filename(filename)
+    approved_root = root.resolve(strict=False)
+    candidate = (approved_root / safe_name).resolve(strict=False)
+    try:
+        candidate.relative_to(approved_root)
+    except ValueError as exc:
+        raise ValueError("DAG file escapes approved root") from exc
+    if candidate.parent != approved_root:
+        raise ValueError("DAG file must be directly under approved root")
+    return candidate
 
 
 def _mcp_infra_headers() -> dict[str, str]:
@@ -423,7 +535,9 @@ def _normalize_full_cartridge_manifest(payload: dict) -> tuple[dict, str]:
         dags.append(
             {
                 "dag_id": dag_id,
-                "file": str(item.get("file") or f"{dag_id}.py"),
+                "file": _validate_dag_filename(
+                    str(item.get("file") or f"{dag_id}.py")
+                ),
                 "description": str(item.get("description") or ""),
                 "trigger": str(item.get("trigger") or "on-demand"),
                 "params": item.get("params") or "[]",
@@ -942,32 +1056,29 @@ async def export_cartridge(cartridge_id: str) -> bytes:
         files[f"agents/{slug}.yaml"] = _agent_to_yaml(a).encode("utf-8")
 
     def _disk_dag_bytes(fname: str) -> bytes | None:
-        import pathlib
-
-        for candidate in (
-            pathlib.Path(f"/registry/cartridges/{cartridge_id}/dags") / fname,
-            pathlib.Path("/opt/airflow/dags") / cartridge_id / fname,
-            pathlib.Path("/opt/airflow/dags") / fname,
+        for root in (
+            pathlib.Path(f"/registry/cartridges/{cartridge_id}/dags"),
+            pathlib.Path("/opt/airflow/dags") / cartridge_id,
+            pathlib.Path("/opt/airflow/dags"),
         ):
             try:
+                candidate = _resolve_dag_file(root, fname)
                 if candidate.is_file():
                     return candidate.read_bytes()
-            except OSError:
+            except (OSError, ValueError):
                 continue
         return None
 
     # ── DAG sources: disk is canonical; DB is only a mirror ────────────────
     seen_dag_files: set[str] = set()
     for r in dag_rows:
-        fname = r["file"] or f"{r['dag_id']}.py"
+        fname = _validate_dag_filename(r["file"] or f"{r['dag_id']}.py")
         files[f"dags/{fname}"] = _disk_dag_bytes(fname) or r["source_code"].encode(
             "utf-8"
         )
         seen_dag_files.add(fname)
 
     # ── Fallback: filesystem (any DAG not already captured from DB) ───────
-    import pathlib
-
     for base in (
         pathlib.Path(f"/registry/cartridges/{cartridge_id}/dags"),
         pathlib.Path("/opt/airflow/dags"),
@@ -975,12 +1086,13 @@ async def export_cartridge(cartridge_id: str) -> bytes:
         if not base.exists():
             continue
         for fp in base.glob("*.py"):
+            safe_fp = _resolve_dag_file(base, fp.name)
             if fp.name in seen_dag_files:
                 continue
             # only pick up DAGs that look like they belong to this cartridge
             if base.name == "dags" and not fp.name.startswith(f"{cartridge_id}_"):
                 continue
-            files[f"dags/{fp.name}"] = fp.read_bytes()
+            files[f"dags/{fp.name}"] = safe_fp.read_bytes()
             seen_dag_files.add(fp.name)
 
     # ── Specs and other supplementary files from MinIO ────────────────────
@@ -1010,8 +1122,6 @@ async def import_cartridge(zip_bytes: bytes, actor_user: dict | None = None) -> 
       2. Write dags/*.py to /opt/airflow/dags/ so Airflow picks them up
       3. Upload specs/* and other extras to MinIO under cartridges/{id}/
     """
-    import pathlib
-
     if len(zip_bytes or b"") > _MAX_IMPORT_ZIP_BYTES:
         raise ValueError(f"ZIP too large (max {_MAX_IMPORT_ZIP_BYTES} bytes)")
 
@@ -1023,24 +1133,21 @@ async def import_cartridge(zip_bytes: bytes, actor_user: dict | None = None) -> 
             raise ValueError("ZIP must contain config/seed.sql")
 
         sql = z.read("config/seed.sql").decode("utf-8")
-        _validate_seed_sql(sql)
-
-        m = re.search(
-            r"INSERT INTO cartridges[^V]*VALUES\s*\(\s*'([^']+)'", sql, re.DOTALL
-        )
-        cartridge_id = m.group(1) if m else None
-        if not cartridge_id:
-            raise ValueError("Could not parse cartridge_id from seed.sql")
-        cartridge_id = _validate_cartridge_id(cartridge_id)
+        cartridge_id = _validate_seed_sql(sql)
 
         allow_dag_import = os.environ.get(
             "ALLOW_CARTRIDGE_DAG_IMPORT", ""
         ).strip().lower() in {"1", "true", "yes"} or os.environ.get(
             "APP_ENV", "production"
         ).strip().lower() not in {"production", "prod"}
-        dag_names = [
-            name for name in names if name.startswith("dags/") and name.endswith(".py")
-        ]
+        dag_names = []
+        for name in names:
+            if not name.startswith("dags/") or not name.endswith(".py"):
+                continue
+            fname = _validate_dag_filename(name.removeprefix("dags/"))
+            if name != f"dags/{fname}":
+                raise ValueError(f"unsafe DAG path: {name}")
+            dag_names.append(name)
         if dag_names and not allow_dag_import:
             raise ValueError("DAG import is disabled in production")
 
@@ -1086,7 +1193,7 @@ async def import_cartridge(zip_bytes: bytes, actor_user: dict | None = None) -> 
                     headers=_mcp_infra_headers(), timeout=30
                 ) as client:
                     for name in dag_names:
-                        fname = pathlib.Path(name).name
+                        fname = _validate_dag_filename(name.removeprefix("dags/"))
                         dag_id = fname[:-3]
                         code = z.read(name).decode("utf-8")
                         r = await client.post(
@@ -1134,6 +1241,8 @@ def _validate_import_zip_members(members: list[object]) -> None:
         name = getattr(member, "filename", str(member))
         size = int(getattr(member, "file_size", 0) or 0)
         normalized = name.replace("\\", "/")
+        if normalized != name:
+            raise ValueError(f"unsafe ZIP path: {name}")
         if normalized in seen:
             raise ValueError(f"duplicate ZIP member: {name}")
         seen.add(normalized)
@@ -1165,45 +1274,188 @@ def _validate_import_zip_members(members: list[object]) -> None:
             raise ValueError(f"unexpected ZIP member: {name}")
 
 
-def _validate_seed_sql(sql: str) -> None:
-    if "\x00" in sql or _FORBIDDEN_SEED_SQL.search(sql or ""):
-        raise ValueError("seed.sql contains forbidden SQL")
-    # Fail-closed: a block comment can hide a ';' that breaks statement
-    # splitting. No legitimate cartridge seed.sql uses them, so reject outright.
-    comment_masked = _SINGLE_QUOTED_SQL_RE.sub("''", sql or "")
+def _identifier_name(node: exp.Expression) -> str:
+    if not isinstance(node, exp.Identifier) or node.args.get("quoted"):
+        raise ValueError("seed.sql identifiers must be unquoted ASCII names")
+    name = node.name
+    if not name.isascii() or not re.fullmatch(r"[a-z_][a-z0-9_]*", name):
+        raise ValueError("seed.sql contains an invalid identifier")
+    return name
+
+
+def _literal_value(node: exp.Expression) -> str | None:
+    if isinstance(node, (exp.Literal, exp.RawString)):
+        return str(node.this)
+    return None
+
+
+def _validate_seed_value(node: exp.Expression, *, column: str) -> None:
+    if isinstance(node, (exp.Literal, exp.RawString, exp.Boolean, exp.Null)):
+        return
+    if isinstance(node, exp.CurrentTimestamp) and column == "updated_at":
+        return
+    if isinstance(node, exp.Neg) and isinstance(node.this, exp.Literal):
+        return
+    if isinstance(node, exp.Cast):
+        target = node.args.get("to")
+        if str(target).upper() != "JSONB":
+            raise ValueError("seed.sql casts are limited to JSONB literals")
+        if not isinstance(node.this, (exp.Literal, exp.RawString)):
+            raise ValueError("seed.sql JSONB casts require a literal")
+        return
+    # This rejects every function (query_to_xml/dblink included), expression,
+    # predicate and subquery. CURRENT_TIMESTAMP above is the sole safe clock.
+    raise ValueError(f"seed.sql contains non-declarative value: {type(node).__name__}")
+
+
+def _validate_upsert(
+    conflict: exp.Expression | None,
+    policy: _SeedTablePolicy,
+    inserted_columns: set[str],
+) -> None:
+    if conflict is None:
+        return
+    if not isinstance(conflict, exp.OnConflict):
+        raise ValueError("seed.sql contains an unsupported conflict clause")
+    action = str(conflict.args.get("action") or "").upper()
+    if action not in {"DO NOTHING", "DO UPDATE"}:
+        raise ValueError("seed.sql conflict action is not allowed")
+    if conflict.args.get("constraint") or conflict.args.get("duplicate"):
+        raise ValueError("seed.sql conflict constraint is not allowed")
+    conflict_keys = [
+        _identifier_name(key) for key in conflict.args.get("conflict_keys") or []
+    ]
+    for key in conflict_keys:
+        if key not in inserted_columns:
+            raise ValueError("seed.sql conflict key is not inserted")
+    assignments = conflict.args.get("expressions") or []
+    if action == "DO NOTHING" and assignments:
+        raise ValueError("seed.sql DO NOTHING cannot update columns")
+    if action == "DO UPDATE" and not conflict_keys:
+        raise ValueError("seed.sql DO UPDATE requires explicit conflict keys")
+    if action == "DO UPDATE" and policy.scope_column not in conflict_keys:
+        raise ValueError("seed.sql DO UPDATE conflict target must include cartridge scope")
+    for assignment in assignments:
+        if not isinstance(assignment, exp.EQ) or not isinstance(
+            assignment.this, exp.Column
+        ):
+            raise ValueError("seed.sql upsert assignment is not allowed")
+        column = _identifier_name(assignment.this.this)
+        if column == policy.scope_column:
+            raise ValueError("seed.sql cannot update cartridge scope")
+        if assignment.this.table or column not in policy.update_columns:
+            raise ValueError(f"seed.sql cannot update column {column}")
+        rhs = assignment.expression
+        if isinstance(rhs, exp.CurrentTimestamp) and column == "updated_at":
+            continue
+        if not isinstance(rhs, exp.Column) or rhs.table.upper() != "EXCLUDED":
+            raise ValueError("seed.sql upserts may only copy EXCLUDED values")
+        if _identifier_name(rhs.this) != column:
+            raise ValueError("seed.sql upsert columns must match EXCLUDED")
+
+
+def _validate_seed_sql(sql: str) -> str:
+    """Validate one cartridge seed as a literal-only INSERT/UPSERT program."""
+    if not sql or "\x00" in sql:
+        raise ValueError("seed.sql is empty or contains NUL")
+    comment_masked = _SINGLE_QUOTED_SQL_RE.sub("''", sql)
     if "/*" in comment_masked or "*/" in comment_masked:
         raise ValueError("seed.sql cannot contain block comments")
-    cleaned = "\n".join(
-        line for line in (sql or "").splitlines() if not line.lstrip().startswith("--")
-    )
-    statements = _split_sql_statements(cleaned)
+    try:
+        statements = [
+            statement
+            for statement in sqlglot.parse(
+                sql, read="postgres", error_level=sqlglot.ErrorLevel.RAISE
+            )
+            if statement is not None
+        ]
+    except (sqlglot.errors.ParseError, sqlglot.errors.TokenError) as exc:
+        raise ValueError("seed.sql could not be parsed") from exc
+    if not statements:
+        raise ValueError("seed.sql contains no statements")
+
+    parsed_tables: list[str] = []
+    cartridge_ids: set[str] = set()
     for statement in statements:
-        normalized = re.sub(r"\s+", " ", statement).strip()
-        lower = _SINGLE_QUOTED_SQL_RE.sub("''", normalized).lower()
-        insert_match = re.match(r"insert\s+into\s+([a-z_][a-z0-9_]*)\b", lower)
-        if insert_match:
-            table = insert_match.group(1)
-            if table not in _ALLOWED_SEED_TABLES:
-                raise ValueError(f"seed.sql cannot insert into {table}")
-            if re.search(r"\bselect\b", lower):
-                raise ValueError("seed.sql INSERT must use literal VALUES, not SELECT")
-            continue
-        if re.match(r"update\s+cartridges\s+set\s+assistant_hints\s*=", lower):
-            if not re.search(r"\bwhere\s+id\s*=", lower):
-                raise ValueError(
-                    "assistant_hints update must target a single cartridge id"
-                )
-            continue
-        if re.match(
-            r"alter\s+table\s+analytic_apps\s+add\s+column\s+if\s+not\s+exists\s+cartridge_id\s+text$",
-            lower,
-        ):
-            continue
-        if lower.startswith("on conflict") or lower.startswith("values"):
-            # These should be part of an INSERT statement; if our simple
-            # splitter sees them alone, fail closed rather than guessing.
-            raise ValueError("seed.sql has malformed statement boundary")
-        raise ValueError("seed.sql contains unsupported statement")
+        if not isinstance(statement, exp.Insert) or statement.args.get("returning"):
+            raise ValueError("seed.sql permits only INSERT/UPSERT statements")
+        unsupported_options = (
+            "hint",
+            "stored",
+            "by_name",
+            "exists",
+            "where",
+            "partition",
+            "settings",
+            "overwrite",
+            "alternative",
+            "ignore",
+        )
+        if any(statement.args.get(option) for option in unsupported_options):
+            raise ValueError("seed.sql INSERT modifier is not allowed")
+        target = statement.this
+        if not isinstance(target, exp.Schema) or not isinstance(target.this, exp.Table):
+            raise ValueError("seed.sql INSERT must declare a table and columns")
+        table_node = target.this
+        if table_node.db or table_node.catalog:
+            raise ValueError("seed.sql cannot use schema-qualified tables")
+        table = _identifier_name(table_node.this)
+        policy = _SEED_TABLE_POLICIES.get(table)
+        if policy is None:
+            raise ValueError(f"seed.sql cannot insert into {table}")
+        columns = [_identifier_name(column) for column in target.expressions]
+        if not columns or len(columns) != len(set(columns)):
+            raise ValueError("seed.sql columns are missing or duplicated")
+        unexpected = set(columns) - policy.insert_columns
+        if unexpected:
+            raise ValueError(
+                f"seed.sql cannot insert column {min(unexpected)} into {table}"
+            )
+        if policy.scope_column not in columns:
+            raise ValueError(f"seed.sql {table} rows require {policy.scope_column}")
+        values = statement.expression
+        if not isinstance(values, exp.Values) or not values.expressions:
+            raise ValueError("seed.sql INSERT must use literal VALUES")
+        rows: list[exp.Tuple] = []
+        for row in values.expressions:
+            if not isinstance(row, exp.Tuple) or len(row.expressions) != len(columns):
+                raise ValueError("seed.sql VALUES do not match declared columns")
+            for column, value in zip(columns, row.expressions, strict=True):
+                _validate_seed_value(value, column=column)
+            rows.append(row)
+        _validate_upsert(statement.args.get("conflict"), policy, set(columns))
+
+        # A declarative VALUES/UPSERT tree has exactly its target table and no
+        # read source. This independently rejects subqueries and external reads.
+        tables = list(statement.find_all(exp.Table))
+        if len(tables) != 1 or tables[0] is not table_node:
+            raise ValueError("seed.sql cannot read from tables")
+        for forbidden_type in (exp.Select, exp.Subquery, exp.Where, exp.Or):
+            if statement.find(forbidden_type):
+                raise ValueError("seed.sql cannot contain queries or predicates")
+
+        scope_index = columns.index(policy.scope_column)
+        for row in rows:
+            scope = _literal_value(row.expressions[scope_index])
+            if scope is None:
+                raise ValueError("seed.sql cartridge scope must be a literal")
+            cartridge_ids.add(scope)
+        if table == "cartridges" and len(rows) != 1:
+            raise ValueError("seed.sql must declare exactly one cartridge")
+        if table == "cartridge_dags":
+            if "file" not in columns:
+                raise ValueError("seed.sql cartridge_dags rows require file")
+            file_index = columns.index("file")
+            for row in rows:
+                filename = _literal_value(row.expressions[file_index])
+                if filename is None:
+                    raise ValueError("seed.sql DAG filename must be a literal")
+                _validate_dag_filename(filename)
+        parsed_tables.append(table)
+
+    if parsed_tables.count("cartridges") != 1 or len(cartridge_ids) != 1:
+        raise ValueError("seed.sql must remain within one cartridge_id")
+    return _validate_cartridge_id(next(iter(cartridge_ids)))
 
 
 def _split_sql_statements(sql: str) -> list[str]:
@@ -1370,7 +1622,7 @@ def _generate_seed_sql(manifest: dict) -> str:
         f"-- Safe to re-run: all inserts use ON CONFLICT DO NOTHING / DO UPDATE.",
         "",
         "-- ── Cartridge header ──────────────────────────────────────────────────────────",
-        "INSERT INTO cartridges (id, name, version, description, pattern, category, bronze_path)",
+        "INSERT INTO cartridges (id, name, version, description, pattern, category, bronze_path, assistant_hints)",
         "VALUES (",
         f"    {_q(cid)},",
         f"    {_q(manifest['name'])},",
@@ -1378,21 +1630,16 @@ def _generate_seed_sql(manifest: dict) -> str:
         f"    {_q(manifest['description'])},",
         f"    {_q(manifest['pattern'])},",
         f"    {_q(manifest['category'])},",
-        f"    {_q(manifest['bronze_path'])}",
+        f"    {_q(manifest['bronze_path'])},",
+        f"    {_q(manifest.get('assistant_hints') or '')}",
         ")",
         "ON CONFLICT (id) DO UPDATE",
         "    SET name=EXCLUDED.name, version=EXCLUDED.version,",
-        "        description=EXCLUDED.description, updated_at=NOW();",
+        "        description=EXCLUDED.description, pattern=EXCLUDED.pattern,",
+        "        category=EXCLUDED.category, bronze_path=EXCLUDED.bronze_path,",
+        "        assistant_hints=EXCLUDED.assistant_hints, updated_at=NOW();",
         "",
     ]
-
-    hints = (manifest.get("assistant_hints") or "").strip()
-    if hints:
-        lines += [
-            "-- ── Assistant hints ─────────────────────────────────────────────────────────",
-            f"UPDATE cartridges SET assistant_hints = {_q(hints)} WHERE id = {_q(cid)};",
-            "",
-        ]
 
     if manifest.get("connections"):
         lines += [
@@ -1424,7 +1671,8 @@ def _generate_seed_sql(manifest: dict) -> str:
                 d.get("dag_params_example") or {}, ensure_ascii=False
             )
             lines.append(
-                f"    ({_q(cid)}, {_q(d['dag_id'])}, {_q(d.get('file'))}, "
+                f"    ({_q(cid)}, {_q(d['dag_id'])}, "
+                f"{_q(_validate_dag_filename(d.get('file') or (d['dag_id'] + '.py')))}, "
                 f"{_q(d.get('description'))}, {_q(d.get('trigger','on-demand'))}, "
                 f"'{params.replace(chr(39), chr(39)+chr(39))}', "
                 f"{_q(dag_params_example)}::jsonb){sep}"
@@ -1486,11 +1734,7 @@ def _generate_seed_sql(manifest: dict) -> str:
                 f"{_q(column_mapping)}::jsonb, {_q(d.get('schedule'))}, NOW()){sep}"
             )
         lines += [
-            "ON CONFLICT (name) DO UPDATE",
-            "    SET layer=EXCLUDED.layer, cartridge=EXCLUDED.cartridge,",
-            "        sources=EXCLUDED.sources, sql_def=EXCLUDED.sql_def,",
-            "        description=EXCLUDED.description, column_mapping=EXCLUDED.column_mapping,",
-            "        schedule=EXCLUDED.schedule, updated_at=NOW();",
+            "ON CONFLICT DO NOTHING;",
             "",
         ]
 
@@ -1547,9 +1791,6 @@ def _generate_seed_sql(manifest: dict) -> str:
     if manifest.get("analytic_apps"):
         lines += [
             "-- ── Analytic Apps (HTML dashboards) ─────────────────────────────────────────",
-            "-- ensure column exists before insert (safe on fresh installs)",
-            "ALTER TABLE analytic_apps ADD COLUMN IF NOT EXISTS cartridge_id TEXT;",
-            "",
             "INSERT INTO analytic_apps (name, title, html, description, cartridge_id, updated_at)",
             "VALUES",
         ]
@@ -1561,10 +1802,7 @@ def _generate_seed_sql(manifest: dict) -> str:
                 f"{_q(a.get('description'))}, {_q(cid)}, NOW()){sep}"
             )
         lines += [
-            "ON CONFLICT (name) DO UPDATE",
-            "    SET title=EXCLUDED.title, html=EXCLUDED.html,",
-            "        description=EXCLUDED.description, cartridge_id=EXCLUDED.cartridge_id,",
-            "        updated_at=NOW();",
+            "ON CONFLICT DO NOTHING;",
             "",
         ]
 

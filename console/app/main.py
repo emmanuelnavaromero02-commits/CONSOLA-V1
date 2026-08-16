@@ -9,6 +9,7 @@ from __future__ import annotations
 # fmt: off
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -1694,27 +1695,14 @@ async def auth_refresh(request: Request):
     refresh_token = request.cookies.get(_auth.REFRESH_COOKIE_NAME)
     # Hash a prefix of the token into the subject so per-token buckets isolate
     # spamming attempts without writing the secret material to Redis keys.
-    subject = (refresh_token or "")[:16]
+    subject = _auth.hash_refresh_token(refresh_token or "")[:16]
     await _rate_limit(request, "/auth/refresh", subject)
-    rotate_refresh_token = getattr(_auth, "rotate_refresh_token", None)
-    if callable(rotate_refresh_token):
-        rotated = await rotate_refresh_token(refresh_token)
-        if not rotated:
-            resp = JSONResponse({"detail": "invalid refresh token"}, status_code=401)
-            resp.delete_cookie(_auth.REFRESH_COOKIE_NAME, path="/")
-            return resp
-        user, new_refresh_token, refresh_expires = rotated
-    else:
-        # Compatibility for unit-test doubles that predate atomic rotation.
-        user = await _auth.get_refresh_token_user(refresh_token)
-        if not user:
-            resp = JSONResponse({"detail": "invalid refresh token"}, status_code=401)
-            resp.delete_cookie(_auth.REFRESH_COOKIE_NAME, path="/")
-            return resp
-        await _auth.revoke_refresh_token(refresh_token)
-        new_refresh_token, refresh_expires = await _auth.create_refresh_token(
-            user["id"]
-        )
+    rotated = await _auth.rotate_refresh_token(refresh_token)
+    if not rotated:
+        resp = JSONResponse({"detail": "invalid refresh token"}, status_code=401)
+        resp.delete_cookie(_auth.REFRESH_COOKIE_NAME, path="/")
+        return resp
+    user, new_refresh_token, refresh_expires = rotated
 
     if not user:
         resp = JSONResponse({"detail": "invalid refresh token"}, status_code=401)
@@ -1730,11 +1718,8 @@ async def auth_refresh(request: Request):
 @app.post("/auth/logout", dependencies=[Depends(require_csrf)])
 async def auth_logout(request: Request):
     token = request.cookies.get(_auth.COOKIE_NAME)
-    if token:
-        await _auth.destroy_session(token)
     refresh_token = request.cookies.get(_auth.REFRESH_COOKIE_NAME)
-    if refresh_token:
-        await _auth.revoke_refresh_token(refresh_token)
+    await _auth.logout_tokens(token, refresh_token)
 
     # Sprint v1.10 — blacklist the bearer access token's jti so a stolen
     # JWT can't keep authenticating up to its exp. Silent if the caller
@@ -7036,6 +7021,188 @@ def _current_workspace_id(user: dict) -> str | None:
     return _current_workspace_id_impl(user)
 
 
+def _decision_reference_id(value: object, field: str) -> int | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        raise HTTPException(400, f"{field} must be a positive integer or null")
+    try:
+        reference_id = int(value)
+    except (TypeError, ValueError):
+        raise HTTPException(400, f"{field} must be a positive integer or null") from None
+    if reference_id <= 0 or str(value).strip() != str(reference_id):
+        raise HTTPException(400, f"{field} must be a positive integer or null")
+    return reference_id
+
+
+def _decision_idempotency_key(request: Request) -> str:
+    raw = request.headers.get("Idempotency-Key")
+    if raw is None or not raw.strip():
+        raise HTTPException(400, "Idempotency-Key header is required")
+    if raw != raw.strip() or len(raw.encode("utf-8")) > 200:
+        raise HTTPException(400, "Idempotency-Key header is invalid")
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in raw):
+        raise HTTPException(400, "Idempotency-Key header is invalid")
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _decision_action_fingerprint(action_text: str, note: str | None) -> str:
+    canonical = json.dumps(
+        {"action_text": action_text, "note": note},
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _decision_action_to_dict(row) -> dict:
+    action = dict(row)
+    action["ts"] = action["ts"].isoformat() if action.get("ts") else None
+    return action
+
+
+async def _create_decision_action_idempotently(
+    conn,
+    *,
+    decision_id: int,
+    user: dict,
+    tenant_id: str,
+    workspace_id: str,
+    action_text: str,
+    note: str | None,
+    key_hash: str,
+) -> dict:
+    """Reserve and complete one action in the caller's scoped transaction."""
+    operation = f"decision.action.create:{decision_id}"
+    request_fingerprint = _decision_action_fingerprint(action_text, note)
+    # The ledger policy binds rows to the authenticated actor in addition to
+    # the tenant/workspace GUCs installed by scoped_db_for_user().
+    await conn.execute(
+        "SELECT set_config('app.user_id', $1, true)",
+        str(user["id"]),
+    )
+    reservation_id = await conn.fetchval(
+        """INSERT INTO workspace_decision_idempotency (
+               tenant_id, workspace_id, actor_user_id, operation,
+               idempotency_key_hash, request_fingerprint
+           )
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (
+               actor_user_id, workspace_id, operation, idempotency_key_hash
+           ) DO NOTHING
+           RETURNING id""",
+        tenant_id,
+        workspace_id,
+        user["id"],
+        operation,
+        key_hash,
+        request_fingerprint,
+    )
+    if reservation_id is None:
+        reservation = await conn.fetchrow(
+            """SELECT request_fingerprint, status, action_id
+                 FROM workspace_decision_idempotency
+                WHERE actor_user_id = $1
+                  AND tenant_id = $2
+                  AND workspace_id = $3
+                  AND operation = $4
+                  AND idempotency_key_hash = $5""",
+            user["id"],
+            tenant_id,
+            workspace_id,
+            operation,
+            key_hash,
+        )
+        if not reservation:
+            raise HTTPException(409, "idempotency reservation is unavailable")
+        if reservation["request_fingerprint"] != request_fingerprint:
+            raise HTTPException(
+                409, "Idempotency-Key was already used for another payload"
+            )
+        if reservation["status"] != "completed" or reservation["action_id"] is None:
+            raise HTTPException(409, "idempotent operation is not complete")
+        action = await conn.fetchrow(
+            """SELECT * FROM decision_actions
+                WHERE id = $1 AND decision_id = $2""",
+            reservation["action_id"],
+            decision_id,
+        )
+        if not action:
+            raise HTTPException(409, "idempotent action is no longer available")
+        return _decision_action_to_dict(action)
+
+    row = await conn.fetchrow(
+        """INSERT INTO decision_actions (decision_id, action_text, note, actor)
+           VALUES ($1, $2, $3, $4)
+           RETURNING *""",
+        decision_id,
+        action_text,
+        note,
+        user.get("email") or "user",
+    )
+    completed_id = await conn.fetchval(
+        """UPDATE workspace_decision_idempotency
+              SET status = 'completed', action_id = $2,
+                  completed_at = clock_timestamp()
+            WHERE id = $1
+              AND actor_user_id = $3
+              AND workspace_id = $4
+              AND status = 'in_progress'
+            RETURNING id""",
+        reservation_id,
+        row["id"],
+        user["id"],
+        workspace_id,
+    )
+    if completed_id is None:
+        raise RuntimeError("decision idempotency reservation completion failed")
+    return _decision_action_to_dict(row)
+
+
+async def _validate_decision_references(
+    conn,
+    *,
+    tenant_id: str | None,
+    workspace_id: str,
+    assignee_id: int | None = None,
+    follow_up_decision_id: int | None = None,
+) -> None:
+    if assignee_id is None and follow_up_decision_id is None:
+        return
+    if not tenant_id or not workspace_id:
+        raise HTTPException(403, "active tenant and workspace are required")
+    if assignee_id is not None:
+        assigned = await conn.fetchval(
+            """SELECT uwr.user_id
+                 FROM users AS u
+                 JOIN user_workspace_roles AS uwr ON uwr.user_id = u.id
+                WHERE u.id = $1
+                  AND u.tenant_id = $3
+                  AND u.is_active = TRUE
+                  AND uwr.workspace_id = $2
+                LIMIT 1""",
+            assignee_id,
+            workspace_id,
+            tenant_id,
+        )
+        if assigned is None:
+            raise HTTPException(400, "assignee_id is not valid for the active workspace")
+    if follow_up_decision_id is not None:
+        followed = await conn.fetchval(
+            """SELECT id FROM decisions
+                WHERE id = $1 AND workspace_id = $2
+                LIMIT 1""",
+            follow_up_decision_id,
+            workspace_id,
+        )
+        if followed is None:
+            raise HTTPException(
+                400,
+                "follow_up_decision_id is not valid for the active workspace",
+            )
+
+
 def _dec_visible_clause(
     uid: int, is_admin: bool, params: list, workspace_id: str | None = None
 ) -> str:
@@ -7091,18 +7258,38 @@ async def _dec_load_with_visibility(decision_id: int, user: dict) -> dict | None
         return None
     # Scope-regression compatibility: _dec_load_query keeps the legacy guard
     # SELECT * FROM decisions WHERE id = $1 AND workspace_id = $2.
-    sql, params = _dec_load_query(decision_id, user, workspace_id)
     pool = await _dec_pool()
     async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
-        row = await conn.fetchrow(sql, *params)
-        if not row:
-            return None
-        visible = await _filter_decision_rows(
+        return await _dec_load_on_conn(
             conn,
+            decision_id=decision_id,
+            user=user,
             workspace_id=workspace_id,
-            rows=[row],
             tenant_id=_tenant_id,
         )
+
+
+async def _dec_load_on_conn(
+    conn,
+    *,
+    decision_id: int,
+    user: dict,
+    workspace_id: str,
+    tenant_id: str | None,
+    for_update: bool = False,
+) -> dict | None:
+    sql, params = _dec_load_query(decision_id, user, workspace_id)
+    if for_update:
+        sql += " FOR UPDATE"
+    row = await conn.fetchrow(sql, *params)
+    if not row:
+        return None
+    visible = await _filter_decision_rows(
+        conn,
+        workspace_id=workspace_id,
+        rows=[row],
+        tenant_id=tenant_id,
+    )
     return visible[0] if visible else None
 
 
@@ -7163,8 +7350,15 @@ async def api_decisions_create(body: dict, user: dict = Depends(require_permissi
     workspace_id = _current_workspace_id(user)
     if not workspace_id:
         raise HTTPException(400, "active workspace is required to create a decision")
+    assignee_id = _decision_reference_id(body.get("assignee_id"), "assignee_id")
     pool = await _dec_pool()
-    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+    async with scoped_db_for_user(pool, user) as (conn, tenant_id, _workspace_id):
+        await _validate_decision_references(
+            conn,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            assignee_id=assignee_id,
+        )
         row = await conn.fetchrow(
             """INSERT INTO decisions
                   (title, description, commitment_date, kpis, created_by_id, assignee_id, visibility, workspace_id)
@@ -7177,7 +7371,7 @@ async def api_decisions_create(body: dict, user: dict = Depends(require_permissi
                 _decision_kpis_with_provenance(body.get("kpis"), "manual")
             ),
             user["id"],
-            body.get("assignee_id"),
+            assignee_id,
             body.get("visibility")
             if body.get("visibility") in ("private", "shared")
             else "private",
@@ -7231,17 +7425,6 @@ def _decision_update_sql_and_params(
     )
 
 
-async def _execute_decision_update(
-    *,
-    sql: str,
-    params: list[Any],
-    user: dict,
-) -> Any:
-    pool = await _dec_pool()
-    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
-        return await conn.fetchrow(sql, *params)
-
-
 @app.patch(
     "/api/decisions/{decision_id}",
     dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
@@ -7251,35 +7434,55 @@ async def api_decisions_update(
 ):
     """Patch any subset of: title, description, commitment_date, kpis, status, outcome,
     closed_at, follow_up_decision_id, assignee_id, visibility."""
-    existing = await _dec_load_with_visibility(decision_id, user)
-    if not existing:
-        raise HTTPException(404, f"Decision {decision_id} not found")
-    if not _dec_can_edit(existing, user):
-        raise HTTPException(
-            403, "you can only edit decisions you created or are assigned to"
+    normalized_body = dict(body)
+    for field in ("assignee_id", "follow_up_decision_id"):
+        if field in normalized_body:
+            normalized_body[field] = _decision_reference_id(
+                normalized_body[field], field
+            )
+    workspace_id = _current_workspace_id(user)
+    if not workspace_id:
+        raise HTTPException(403, "active workspace is required")
+    pool = await _dec_pool()
+    async with scoped_db_for_user(pool, user) as (conn, tenant_id, _workspace_id):
+        existing = await _dec_load_on_conn(
+            conn,
+            decision_id=decision_id,
+            user=user,
+            workspace_id=workspace_id,
+            tenant_id=tenant_id,
+            for_update=True,
         )
-
-    if "kpis" in body:
-        body = {
-            **body,
-            "kpis": _preserve_control_room_provenance(
-                existing.get("kpis"), body.get("kpis")
-            ),
-        }
-    sets, params = _decision_update_assignments(body)
-    if not sets:
-        raise HTTPException(400, "no updatable fields supplied")
-    sql, params = _decision_update_sql_and_params(
-        sets=sets,
-        params=params,
-        decision_id=decision_id,
-        existing=existing,
-    )
-    row = await _execute_decision_update(
-        sql=sql,
-        params=params,
-        user=user,
-    )
+        if not existing:
+            raise HTTPException(404, f"Decision {decision_id} not found")
+        if not _dec_can_edit(existing, user):
+            raise HTTPException(
+                403, "you can only edit decisions you created or are assigned to"
+            )
+        if "kpis" in normalized_body:
+            normalized_body = {
+                **normalized_body,
+                "kpis": _preserve_control_room_provenance(
+                    existing.get("kpis"), normalized_body.get("kpis")
+                ),
+            }
+        await _validate_decision_references(
+            conn,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            assignee_id=normalized_body.get("assignee_id"),
+            follow_up_decision_id=normalized_body.get("follow_up_decision_id"),
+        )
+        sets, params = _decision_update_assignments(normalized_body)
+        if not sets:
+            raise HTTPException(400, "no updatable fields supplied")
+        sql, params = _decision_update_sql_and_params(
+            sets=sets,
+            params=params,
+            decision_id=decision_id,
+            existing=existing,
+        )
+        row = await conn.fetchrow(sql, *params)
     if not row:
         # The visibility check passed but the row vanished between
         # SELECT and UPDATE (e.g. a concurrent delete, or the row was
@@ -7296,16 +7499,26 @@ async def api_decisions_update(
 async def api_decisions_delete(
     decision_id: int, user: dict = Depends(require_permission("control_room.write"))
 ):
-    existing = await _dec_load_with_visibility(decision_id, user)
-    if not existing:
-        raise HTTPException(404, f"Decision {decision_id} not found")
-    if not _dec_can_delete(existing, user):
-        raise HTTPException(403, "only the creator or an admin can delete a decision")
+    workspace_id = _current_workspace_id(user)
+    if not workspace_id:
+        raise HTTPException(403, "active workspace is required")
     pool = await _dec_pool()
     # Sprint v1.37: pin DELETE to (id, workspace_id) — same rationale
-    # as the UPDATE above. ``existing["workspace_id"]`` came from
-    # ``_dec_load_with_visibility`` which is already workspace-scoped.
-    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+    # as the UPDATE above. ``existing["workspace_id"]`` comes from the
+    # workspace-scoped SELECT FOR UPDATE in this same transaction.
+    async with scoped_db_for_user(pool, user) as (conn, tenant_id, _workspace_id):
+        existing = await _dec_load_on_conn(
+            conn,
+            decision_id=decision_id,
+            user=user,
+            workspace_id=workspace_id,
+            tenant_id=tenant_id,
+            for_update=True,
+        )
+        if not existing:
+            raise HTTPException(404, f"Decision {decision_id} not found")
+        if not _dec_can_delete(existing, user):
+            raise HTTPException(403, "only the creator or an admin can delete a decision")
         await conn.execute(
             "DELETE FROM decisions WHERE id = $1 AND workspace_id = $2",
             decision_id,
@@ -7319,29 +7532,50 @@ async def api_decisions_delete(
     dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
 )
 async def api_decisions_add_action(
-    decision_id: int, body: dict, user: dict = Depends(require_permission("control_room.write"))
+    decision_id: int,
+    body: dict,
+    request: Request,
+    user: dict = Depends(require_permission("control_room.write")),
 ):
-    existing = await _dec_load_with_visibility(decision_id, user)
-    if not existing:
-        raise HTTPException(404, f"Decision {decision_id} not found")
-    if not _dec_can_edit(existing, user):
-        raise HTTPException(403, "only creator/assignee/admin can add to bitácora")
-    action_text = (body.get("action_text") or "").strip()
+    key_hash = _decision_idempotency_key(request)
+    raw_action_text = body.get("action_text")
+    if not isinstance(raw_action_text, str):
+        raise HTTPException(400, "action_text must be a string")
+    action_text = raw_action_text.strip()
     if not action_text:
         raise HTTPException(400, "action_text is required")
+    note = body.get("note")
+    if note is not None and not isinstance(note, str):
+        raise HTTPException(400, "note must be a string or null")
     pool = await _dec_pool()
-    actor = user.get("email") or "user"
-    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
-        row = await conn.fetchrow(
-            """INSERT INTO decision_actions (decision_id, action_text, note, actor)
-               VALUES ($1, $2, $3, $4)
-               RETURNING *""",
-            decision_id,
-            action_text,
-            body.get("note"),
-            actor,
+    workspace_id = _current_workspace_id(user)
+    if not workspace_id:
+        raise HTTPException(403, "active workspace is required")
+    async with scoped_db_for_user(pool, user) as (conn, tenant_id, _workspace_id):
+        if not tenant_id:
+            raise HTTPException(403, "active tenant and workspace are required")
+        existing = await _dec_load_on_conn(
+            conn,
+            decision_id=decision_id,
+            user=user,
+            workspace_id=workspace_id,
+            tenant_id=tenant_id,
+            for_update=True,
         )
-    return {**dict(row), "ts": row["ts"].isoformat() if row["ts"] else None}
+        if not existing:
+            raise HTTPException(404, f"Decision {decision_id} not found")
+        if not _dec_can_edit(existing, user):
+            raise HTTPException(403, "only creator/assignee/admin can add to bitácora")
+        return await _create_decision_action_idempotently(
+            conn,
+            decision_id=decision_id,
+            user=user,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            action_text=action_text,
+            note=note,
+            key_hash=key_hash,
+        )
 
 
 # ── Users (assignee picker, all logged-in users) ────────────────────────────
@@ -7831,6 +8065,7 @@ app.add_middleware(
         "x-api-key",
         "x-internal-service",
         "X-CSRF-Token",
+        "Idempotency-Key",
         "X-Requested-With",
         "Accept",
         "Cookie",

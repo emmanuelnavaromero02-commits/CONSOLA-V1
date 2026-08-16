@@ -72,6 +72,7 @@ cd "$DEPLOY_DIR"
 postgres_password="$(env_value POSTGRES_PASSWORD)"
 console_probe="$(docker compose $(compose_files) exec -T -e POSTGRES_PASSWORD="$postgres_password" console python - <<'PY' 2>&1 || true
 import asyncio
+import hashlib
 import json
 import os
 import uuid
@@ -225,9 +226,11 @@ async def create_scope(conn, suffix, label):
         workspace_id,
         await role_id(conn, "viewer"),
     )
-    await conn.execute(
-        "INSERT INTO user_sessions (token, user_id, expires_at, ip) VALUES ($1, $2, NOW() + INTERVAL '2 hours', $3)",
-        uuid.uuid4().hex + uuid.uuid4().hex,
+    session_material = uuid.uuid4().hex + uuid.uuid4().hex
+    session_digest = hashlib.sha256(session_material.encode("utf-8")).hexdigest()
+    await conn.fetchval(
+        "SELECT omega_auth_create_session($1, $2, NOW() + INTERVAL '2 hours', $3)",
+        session_digest,
         user_id,
         f"10.20.{1 if label == 'A' else 2}.20",
     )
