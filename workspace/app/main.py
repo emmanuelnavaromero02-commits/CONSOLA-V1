@@ -1360,6 +1360,79 @@ def _current_workspace_id(user: dict) -> str | None:
     return user.get("active_workspace_id") or user.get("workspace_id")
 
 
+def _current_tenant_id(user: dict) -> str | None:
+    return user.get("active_tenant_id") or user.get("tenant_id")
+
+
+def _decision_reference_id(value: object, field: str) -> int | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        raise HTTPException(400, f"{field} must be a positive integer or null")
+    try:
+        reference_id = int(value)
+    except (TypeError, ValueError):
+        raise HTTPException(400, f"{field} must be a positive integer or null") from None
+    if reference_id <= 0 or str(value).strip() != str(reference_id):
+        raise HTTPException(400, f"{field} must be a positive integer or null")
+    return reference_id
+
+
+async def _validate_decision_references(
+    conn,
+    user: dict,
+    *,
+    assignee_id: int | None = None,
+    follow_up_decision_id: int | None = None,
+) -> None:
+    """Validate mutable references inside the same transaction as the write."""
+
+    if assignee_id is None and follow_up_decision_id is None:
+        return
+    tenant_id = _current_tenant_id(user)
+    workspace_id = _current_workspace_id(user)
+    if not tenant_id or not workspace_id:
+        raise HTTPException(403, "active tenant and workspace are required")
+
+    if assignee_id is not None:
+        assigned = await conn.fetchval(
+            """SELECT uwr.user_id
+                 FROM users AS u
+                 JOIN user_workspace_roles AS uwr ON uwr.user_id = u.id
+                 JOIN workspaces AS w ON w.id = uwr.workspace_id
+                WHERE u.id = $1
+                  AND u.tenant_id = $3
+                  AND u.is_active = TRUE
+                  AND uwr.workspace_id = $2
+                  AND w.tenant_id = $3
+                LIMIT 1""",
+            assignee_id,
+            workspace_id,
+            tenant_id,
+        )
+        if assigned is None:
+            raise HTTPException(400, "assignee_id is not valid for the active workspace")
+
+    if follow_up_decision_id is not None:
+        followed = await conn.fetchval(
+            """SELECT d.id
+                 FROM decisions AS d
+                 JOIN workspaces AS w ON w.id = d.workspace_id
+                WHERE d.id = $1
+                  AND d.workspace_id = $2
+                  AND w.tenant_id = $3
+                LIMIT 1""",
+            follow_up_decision_id,
+            workspace_id,
+            tenant_id,
+        )
+        if followed is None:
+            raise HTTPException(
+                400,
+                "follow_up_decision_id is not valid for the active workspace",
+            )
+
+
 async def _dec_load(decision_id: int, user: dict) -> dict | None:
     is_admin = user.get("role") == "admin"
     ws_id = _current_workspace_id(user)
@@ -1432,7 +1505,13 @@ async def api_decisions_create(request: Request, body: dict):
     ws_id = _current_workspace_id(user)
     if not ws_id:
         raise HTTPException(400, "workspace_id is required")
+    assignee_id = _decision_reference_id(body.get("assignee_id"), "assignee_id")
     async with _decision_pg(user) as conn:
+        await _validate_decision_references(
+            conn,
+            user,
+            assignee_id=assignee_id,
+        )
         row = await conn.fetchrow(
             """INSERT INTO decisions
                   (title, description, commitment_date, kpis, created_by_id, assignee_id, visibility, workspace_id)
@@ -1443,7 +1522,7 @@ async def api_decisions_create(request: Request, body: dict):
             _coerce_date(body.get("commitment_date")),
             json.dumps(body.get("kpis") or []),
             user["id"],
-            body.get("assignee_id"),
+            assignee_id,
             body.get("visibility") if body.get("visibility") in ("private", "shared") else "private",
             ws_id,
         )
@@ -1487,8 +1566,14 @@ async def api_decisions_update(request: Request, decision_id: int, body: dict):
         "status", "outcome", "closed_at", "follow_up_decision_id",
         "assignee_id", "visibility",
     }
+    normalized_body = dict(body)
+    for field in ("assignee_id", "follow_up_decision_id"):
+        if field in normalized_body:
+            normalized_body[field] = _decision_reference_id(
+                normalized_body[field], field
+            )
     sets, params = [], []
-    for k, v in body.items():
+    for k, v in normalized_body.items():
         if k not in allowed:
             continue
         if k == "kpis":
@@ -1505,7 +1590,7 @@ async def api_decisions_update(request: Request, decision_id: int, body: dict):
         sets.append(f"{k} = ${len(params)}")
     if not sets:
         raise HTTPException(400, "no updatable fields supplied")
-    if body.get("status") == "closed" and "closed_at" not in body:
+    if normalized_body.get("status") == "closed" and "closed_at" not in normalized_body:
         sets.append("closed_at = COALESCE(closed_at, NOW())")
     params.append(decision_id)
     decision_ref = f"${len(params)}"
@@ -1516,6 +1601,12 @@ async def api_decisions_update(request: Request, decision_id: int, body: dict):
         f"WHERE id = {decision_ref} AND workspace_id = {workspace_ref} RETURNING *"
     )
     async with _decision_pg(user) as conn:
+        await _validate_decision_references(
+            conn,
+            user,
+            assignee_id=normalized_body.get("assignee_id"),
+            follow_up_decision_id=normalized_body.get("follow_up_decision_id"),
+        )
         row = await conn.fetchrow(sql, *params)
     return _dec_row_to_dict(row)
 
