@@ -107,13 +107,35 @@ ON CONFLICT (workspace_id, cartridge_id) DO UPDATE
       ready_at = COALESCE(cartridge_installations.ready_at, NOW()),
       updated_at = NOW();
 
--- ── A1: autonomous SF foundation cycle ────────────────────────────────────────
--- The seeding function ships in infra/init/99zzzz (runs before any workspace
--- exists on a fresh install, so its own call no-ops there). Re-run it here,
--- after the dev workspace and installations above exist, so the cycle marker
--- row lands scoped on every fresh dev install.
+-- ── A1/A2: autonomous SF foundation cycle ─────────────────────────────────────
+-- A2: the cycle is managed by cartridge_cycle_config. Seed the dev config row
+-- (Default Tenant / Main Workspace, connection 'default', quarter-hourly,
+-- foundation target) and re-run the reconciler — it ships in infra/init
+-- (99zzzza), which on a fresh install runs before any workspace exists, so
+-- its own call no-ops there. After this block a fresh dev install
+-- self-schedules exactly like A1 did.
 DO $$
 BEGIN
+    IF to_regclass('public.cartridge_cycle_config') IS NOT NULL THEN
+        INSERT INTO public.cartridge_cycle_config
+            (tenant_id, workspace_id, cartridge_id, connection_id,
+             cron_expression, target, enabled)
+        SELECT t.id, w.id, 'sap_successfactors', 'default',
+               '*/15 * * * *', 'foundation', TRUE
+          FROM public.tenants t
+          JOIN public.workspaces w ON w.tenant_id = t.id
+         WHERE t.name = 'Default Tenant'
+           AND w.name = 'Main Workspace'
+           -- Never fight an already-active cycle config (single-active
+           -- partial unique index) and never re-enable a deliberately
+           -- disabled dev row (ON CONFLICT DO NOTHING below).
+           AND NOT EXISTS (
+               SELECT 1 FROM public.cartridge_cycle_config c
+                WHERE c.cartridge_id = 'sap_successfactors' AND c.enabled
+           )
+         LIMIT 1
+        ON CONFLICT (tenant_id, workspace_id, cartridge_id) DO NOTHING;
+    END IF;
     IF to_regproc('public.seed_sap_successfactors_cycle_schedule()') IS NOT NULL THEN
         PERFORM public.seed_sap_successfactors_cycle_schedule();
     END IF;

@@ -14,6 +14,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MIGRATION = REPO_ROOT / "infra" / "init" / "99zzzz_sap_successfactors_cycle_autoschedule.sql"
+A2_MIGRATION = (
+    REPO_ROOT / "infra" / "init" / "99zzzza_sap_successfactors_cycle_config.sql"
+)
 BOOTSTRAP = REPO_ROOT / "infra" / "init_dev" / "15_local_dev_bootstrap.sql"
 EXTRACT_ALL = (
     REPO_ROOT / "cartridges" / "sap_successfactors" / "dags"
@@ -201,3 +204,120 @@ def test_control_room_shows_freshness():
     page = PAGE.read_text(encoding="utf-8")
     assert "Datos actualizados" in page
     assert "latestObservedAt(experience)" in page
+
+
+# ── A2: per-client connection + cadence ──────────────────────────────────────
+
+
+def _a2_sql() -> str:
+    return A2_MIGRATION.read_text(encoding="utf-8")
+
+
+def _reconciler_body(sql: str) -> str:
+    start = sql.index("CREATE OR REPLACE FUNCTION public.seed_sap_successfactors_cycle_schedule")
+    return sql[start:sql.index("$$;", start)]
+
+
+def test_a2_marker_and_templates_bound_to_config_connection():
+    """(a) The marker and the 14 foundation templates take connection, cron,
+    target and scope from the ACTIVE cartridge_cycle_config row — no
+    hardcoded 'default' anywhere in the binding paths."""
+    body = _reconciler_body(_a2_sql())
+    bind = body[body.index("UPDATE public.entity_config"):]
+    assert "connection_id = cfg.connection_id" in bind
+    assert "tenant_id     = cfg.tenant_id" in bind
+    assert "cfg.cron_expression" in bind
+    assert "jsonb_build_object('target', cfg.target)" in bind
+    assert "'default'" not in bind, "binding paths must never hardcode a connection"
+    for entity in ("User", "PerPerson", "EmpJob", "FOCompany", "Position"):
+        assert f"'{entity}'" in bind
+
+
+def test_a2_missing_credential_disables_the_cycle():
+    """(b) A config whose credential is absent from vault_entries seeds the
+    marker DISABLED and returns before binding any template — never an
+    empty scheduled run."""
+    body = _reconciler_body(_a2_sql())
+    gate = body.index("IF NOT has_credential")
+    disabled = body.index("esperando credencial")
+    ret = body.index("RETURN 2")
+    bind = body.index("UPDATE public.entity_config")
+    assert gate < disabled < ret < bind, (
+        "credential gate must disable and return before the template binding"
+    )
+    assert "enabled         = FALSE" in body[gate:ret]
+    assert "vault_entries" in body
+    assert "v.scope = 'connections'" in body
+    assert "v.key = cfg.connection_id" in body
+
+
+def test_a2_cadence_comes_from_config_not_a_literal():
+    """(c) The marker upsert honours cartridge_cycle_config.cron_expression;
+    the only '*/15' literals are the column default and the dev fallback."""
+    sql = _a2_sql()
+    body = _reconciler_body(sql)
+    marker = body[body.index("'__foundation_cycle__'"):]
+    assert "cfg.cron_expression" in marker
+    dev_fallback = body[body.index("No managed cycle"):body.index("SELECT TRUE INTO dev_scope")]
+    allowed = dev_fallback.count("'*/15 * * * *'")
+    assert body.count("'*/15 * * * *'") == allowed, (
+        "cron literals outside the dev fallback would override the config"
+    )
+
+
+def test_a2_dev_path_unchanged():
+    """(d) Default Tenant / Main Workspace with connection 'default' keeps
+    A1's behaviour: bootstrap seeds the config row, the reconciler skips the
+    credential gate there (a fresh install has no credential yet), and the
+    production 'any ready install' auto-activation is gone."""
+    sql = _a2_sql()
+    body = _reconciler_body(sql)
+    assert "'Default Tenant'" in body and "'Main Workspace'" in body
+    assert "cfg.connection_id = 'default'" in body, "dev carve-out must be explicit"
+    assert "cartridge_installations" not in body, (
+        "the A1 'any ready installation -> default cycle' path must be gone"
+    )
+    boot = BOOTSTRAP.read_text(encoding="utf-8")
+    assert "cartridge_cycle_config" in boot
+    insert = boot.index("INSERT INTO public.cartridge_cycle_config")
+    perform = boot.index("PERFORM public.seed_sap_successfactors_cycle_schedule()")
+    assert insert < perform, "bootstrap must seed the config row before reconciling"
+    assert "NOT EXISTS" in boot[insert:perform], (
+        "bootstrap must never fight an already-active cycle config"
+    )
+
+
+def test_a2_only_foundation_templates_are_rebound():
+    """(e) The rebind touches exactly the 14 foundation entities; FEMSA's
+    other scheduled rows (PerEmail, PaymentInformationDetailV3,
+    EmpEmploymentTermination) are outside the list and stay untouched."""
+    body = _reconciler_body(_a2_sql())
+    bind = body[body.index("UPDATE public.entity_config"):]
+    for femsa_only in ("PerEmail", "PaymentInformationDetailV3", "EmpEmploymentTermination"):
+        assert f"'{femsa_only}'" not in bind
+    assert bind.count("UPDATE public.entity_config") == 1
+    assert "trigger_type" not in bind[:bind.index("INSERT INTO public.entity_config")], (
+        "per-entity rows stay manual; only the marker schedules"
+    )
+
+
+def test_a2_single_active_cycle_is_a_hard_constraint():
+    sql = _a2_sql()
+    assert "CREATE UNIQUE INDEX IF NOT EXISTS cartridge_cycle_config_single_active" in sql
+    assert "WHERE enabled" in sql
+
+
+def test_a2_rls_matches_house_boundaries():
+    sql = _a2_sql()
+    assert "FORCE ROW LEVEL SECURITY" in sql
+    assert "omega_rls_workspace_matches(tenant_id, workspace_id)" in sql
+    assert "REVOKE ALL ON public.cartridge_cycle_config FROM PUBLIC" in sql
+
+
+def test_a2_migration_sorts_after_a1():
+    """(f) 99zzzza must apply strictly after 99zzzz on fresh installs."""
+    assert A2_MIGRATION.name > MIGRATION.name
+    assert A2_MIGRATION.name > "99zzz_workspace_decision_idempotency.sql"
+    sql = _a2_sql()
+    assert "99zzzza_sap_successfactors_cycle_config.sql" in sql
+    assert "INSERT INTO schema_migrations" in sql
