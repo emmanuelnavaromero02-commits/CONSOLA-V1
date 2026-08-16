@@ -87,8 +87,12 @@ def test_tagged_dollar_quote_with_semicolon_validates(cartridge_service):
 def test_quote_and_semicolon_inside_dollar_quote_stay_literal(cartridge_service):
     # A naive splitter would toggle its single-quote state on the apostrophe in
     # "it's" and then mis-handle the ';'. The dollar-quote-aware splitter does not.
-    sql = "INSERT INTO agents (slug, instructions) VALUES ('a', $$it's a ; trap$$);"
-    assert len(cartridge_service._split_sql_statements(sql)) == 1
+    sql = (
+        "INSERT INTO cartridges (id, name) VALUES ('x', 'X');"
+        "INSERT INTO agents (cartridge_id, slug, instructions) "
+        "VALUES ('x', 'a', $$it's a ; trap$$);"
+    )
+    assert len(cartridge_service._split_sql_statements(sql)) == 2
     cartridge_service._validate_seed_sql(sql)  # must not raise
 
 
