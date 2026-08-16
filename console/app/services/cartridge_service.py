@@ -107,7 +107,7 @@ _SEED_TABLE_POLICIES = {
             "name layer cartridge sources sql_def description column_mapping schedule updated_at"
         ),
         _columns(
-            "layer cartridge sources sql_def description column_mapping schedule updated_at"
+            "layer sources sql_def description column_mapping schedule updated_at"
         ),
     ),
     "semantic_terms": _SeedTablePolicy(
@@ -130,7 +130,7 @@ _SEED_TABLE_POLICIES = {
     "analytic_apps": _SeedTablePolicy(
         "cartridge_id",
         _columns("name title html description cartridge_id updated_at"),
-        _columns("title html description cartridge_id updated_at"),
+        _columns("title html description updated_at"),
     ),
     "agents": _SeedTablePolicy(
         "cartridge_id",
@@ -1322,20 +1322,27 @@ def _validate_upsert(
         raise ValueError("seed.sql conflict action is not allowed")
     if conflict.args.get("constraint") or conflict.args.get("duplicate"):
         raise ValueError("seed.sql conflict constraint is not allowed")
-    for key in conflict.args.get("conflict_keys") or []:
-        if _identifier_name(key) not in inserted_columns:
+    conflict_keys = [
+        _identifier_name(key) for key in conflict.args.get("conflict_keys") or []
+    ]
+    for key in conflict_keys:
+        if key not in inserted_columns:
             raise ValueError("seed.sql conflict key is not inserted")
     assignments = conflict.args.get("expressions") or []
     if action == "DO NOTHING" and assignments:
         raise ValueError("seed.sql DO NOTHING cannot update columns")
-    if action == "DO UPDATE" and not conflict.args.get("conflict_keys"):
+    if action == "DO UPDATE" and not conflict_keys:
         raise ValueError("seed.sql DO UPDATE requires explicit conflict keys")
+    if action == "DO UPDATE" and policy.scope_column not in conflict_keys:
+        raise ValueError("seed.sql DO UPDATE conflict target must include cartridge scope")
     for assignment in assignments:
         if not isinstance(assignment, exp.EQ) or not isinstance(
             assignment.this, exp.Column
         ):
             raise ValueError("seed.sql upsert assignment is not allowed")
         column = _identifier_name(assignment.this.this)
+        if column == policy.scope_column:
+            raise ValueError("seed.sql cannot update cartridge scope")
         if assignment.this.table or column not in policy.update_columns:
             raise ValueError(f"seed.sql cannot update column {column}")
         rhs = assignment.expression
@@ -1727,11 +1734,7 @@ def _generate_seed_sql(manifest: dict) -> str:
                 f"{_q(column_mapping)}::jsonb, {_q(d.get('schedule'))}, NOW()){sep}"
             )
         lines += [
-            "ON CONFLICT (name) DO UPDATE",
-            "    SET layer=EXCLUDED.layer, cartridge=EXCLUDED.cartridge,",
-            "        sources=EXCLUDED.sources, sql_def=EXCLUDED.sql_def,",
-            "        description=EXCLUDED.description, column_mapping=EXCLUDED.column_mapping,",
-            "        schedule=EXCLUDED.schedule, updated_at=NOW();",
+            "ON CONFLICT DO NOTHING;",
             "",
         ]
 
@@ -1799,10 +1802,7 @@ def _generate_seed_sql(manifest: dict) -> str:
                 f"{_q(a.get('description'))}, {_q(cid)}, NOW()){sep}"
             )
         lines += [
-            "ON CONFLICT (name) DO UPDATE",
-            "    SET title=EXCLUDED.title, html=EXCLUDED.html,",
-            "        description=EXCLUDED.description, cartridge_id=EXCLUDED.cartridge_id,",
-            "        updated_at=NOW();",
+            "ON CONFLICT DO NOTHING;",
             "",
         ]
 

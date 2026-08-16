@@ -186,6 +186,9 @@ def test_generated_full_seed_round_trips_through_ast_validator():
     assert _validate_seed_sql(sql) == "canary"
     assert "ALTER TABLE" not in sql
     assert "UPDATE cartridges" not in sql
+    assert "ON CONFLICT (name) DO UPDATE" not in sql
+    assert "INSERT INTO datasets" in sql
+    assert "INSERT INTO analytic_apps" in sql
 
 
 def test_seed_sql_rejects_insert_select_exfiltration():
@@ -227,6 +230,49 @@ def test_seed_sql_rejects_multiple_cartridge_ids():
             "INSERT INTO cartridges (id, name) VALUES ('alpha', 'Alpha');"
             "INSERT INTO entity_config (cartridge_id, entity) "
             "VALUES ('beta', 'CrossTenantCanary');"
+        )
+
+
+@pytest.mark.parametrize(
+    ("table", "columns", "values", "assignment"),
+    [
+        (
+            "analytic_apps",
+            "cartridge_id, name, title, html",
+            "'canary', 'existing_global_app', 'Canary', '<p>synthetic</p>'",
+            "title=EXCLUDED.title, html=EXCLUDED.html, "
+            "cartridge_id=EXCLUDED.cartridge_id",
+        ),
+        (
+            "datasets",
+            "cartridge, name, layer, sql_def",
+            "'canary', 'existing_global_dataset', 'silver', 'SELECT 1'",
+            "layer=EXCLUDED.layer, sql_def=EXCLUDED.sql_def, "
+            "cartridge=EXCLUDED.cartridge",
+        ),
+    ],
+)
+def test_seed_sql_rejects_global_name_upsert_that_overwrites_other_cartridge(
+    table, columns, values, assignment
+):
+    sql = (
+        "INSERT INTO cartridges (id, name) VALUES ('canary', 'Canary');"
+        f"INSERT INTO {table} ({columns}) VALUES ({values}) "
+        f"ON CONFLICT (name) DO UPDATE SET {assignment};"
+    )
+
+    with pytest.raises(ValueError, match="conflict target must include cartridge scope"):
+        _validate_seed_sql(sql)
+
+
+def test_seed_sql_never_allows_scope_column_update():
+    with pytest.raises(ValueError, match="cannot update cartridge scope"):
+        _validate_seed_sql(
+            "INSERT INTO cartridges (id, name) VALUES ('canary', 'Canary');"
+            "INSERT INTO analytic_apps (cartridge_id, name, title, html) "
+            "VALUES ('canary', 'app', 'Canary', '<p>synthetic</p>') "
+            "ON CONFLICT (cartridge_id, name) DO UPDATE "
+            "SET cartridge_id=EXCLUDED.cartridge_id;"
         )
 
 
