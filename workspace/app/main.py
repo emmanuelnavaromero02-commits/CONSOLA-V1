@@ -1814,7 +1814,8 @@ app.add_middleware(RequestIDMiddleware)
 # so the LAST add_middleware call ends up outermost (mirrors the console
 # CORS-ordering hotfix). PATCH is listed because /api/decisions/{id} is a
 # PATCH mutation; X-CSRF-Token because require_csrf reads the double-submit
-# token from that header on cross-origin mutations.
+# token from that header on cross-origin mutations; Idempotency-Key because
+# decision-action POSTs require it before they touch the database.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins(),
@@ -1825,5 +1826,6 @@ app.add_middleware(
         "Authorization",
         "X-Internal-Api-Key", "x-api-key", "x-internal-service",
         "X-CSRF-Token",
+        "Idempotency-Key",
     ],
 )

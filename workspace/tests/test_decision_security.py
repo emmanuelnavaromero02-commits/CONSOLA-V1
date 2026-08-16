@@ -472,6 +472,28 @@ def test_workspace_ui_sends_fresh_decision_action_idempotency_key():
     assert "'Idempotency-Key': idempotencyKey" in source
 
 
+def test_decision_action_preflight_allows_idempotency_header(workspace_main):
+    with TestClient(workspace_main.app) as client:
+        response = client.options(
+            "/api/decisions/900030/actions",
+            headers={
+                "Origin": "http://localhost:8000",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": (
+                    "content-type, idempotency-key, x-csrf-token"
+                ),
+            },
+        )
+
+    assert response.status_code == 200
+    allowed_headers = {
+        value.strip().lower()
+        for value in response.headers["access-control-allow-headers"].split(",")
+    }
+    assert {"content-type", "idempotency-key", "x-csrf-token"} <= allowed_headers
+    assert response.headers["access-control-allow-origin"] == "http://localhost:8000"
+
+
 def test_decision_idempotency_migration_is_durable_and_actor_scoped():
     migration = (
         WORKSPACE_ROOT.parent
