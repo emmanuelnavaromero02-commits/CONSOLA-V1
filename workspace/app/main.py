@@ -33,6 +33,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.services import session as _session, consumer_assistant as _ca
 from app.services.csrf import clear_csrf_cookie, require_csrf
+from app.services.permissions import require_permission
 from app.services.rate_limiter import get_rate_limiter
 from app.services.security_context import sign_security_context
 from app.security import get_internal_api_key
@@ -666,6 +667,27 @@ async def scoped_pg(user: dict | None):
         async with conn.transaction():
             await _set_db_scope(conn, user)
             yield conn
+
+
+def _is_db_permission_denied(exc: BaseException) -> bool:
+    """Recognize PostgreSQL insufficient-privilege without leaking details."""
+
+    return isinstance(exc, asyncpg.InsufficientPrivilegeError) or (
+        getattr(exc, "sqlstate", None) == "42501"
+    )
+
+
+@asynccontextmanager
+async def _decision_pg(user: dict | None):
+    """Decision DB scope that converts privilege failures to fail-closed 403."""
+
+    try:
+        async with scoped_pg(user) as conn:
+            yield conn
+    except Exception as exc:
+        if _is_db_permission_denied(exc):
+            raise HTTPException(403, "decision operation forbidden") from None
+        raise
 
 
 # ── Auth middleware ────────────────────────────────────────────────────────
@@ -1349,7 +1371,7 @@ async def _dec_load(decision_id: int, user: dict) -> dict | None:
         params.append(user["id"])
         sql += (f" AND (visibility = 'shared' OR created_by_id = ${len(params)} "
                 f"OR assignee_id = ${len(params)})")
-    async with scoped_pg(user) as conn:
+    async with _decision_pg(user) as conn:
         row = await conn.fetchrow(sql, *params)
     return dict(row) if row else None
 
@@ -1390,12 +1412,18 @@ async def api_decisions_list(request: Request, status: str = "", overdue: str = 
                      "AND commitment_date < CURRENT_DATE")
     sql = "SELECT * FROM decisions WHERE " + " AND ".join(where)
     sql += " ORDER BY created_at DESC LIMIT 500"
-    async with scoped_pg(user) as conn:
+    async with _decision_pg(user) as conn:
         rows = await conn.fetch(sql, *params)
     return {"decisions": [_dec_row_to_dict(r) for r in rows]}
 
 
-@app.post("/api/decisions", dependencies=[Depends(require_csrf)])
+@app.post(
+    "/api/decisions",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
+)
 async def api_decisions_create(request: Request, body: dict):
     user = require_user(request)
     title = (body.get("title") or "").strip()
@@ -1404,7 +1432,7 @@ async def api_decisions_create(request: Request, body: dict):
     ws_id = _current_workspace_id(user)
     if not ws_id:
         raise HTTPException(400, "workspace_id is required")
-    async with scoped_pg(user) as conn:
+    async with _decision_pg(user) as conn:
         row = await conn.fetchrow(
             """INSERT INTO decisions
                   (title, description, commitment_date, kpis, created_by_id, assignee_id, visibility, workspace_id)
@@ -1428,7 +1456,7 @@ async def api_decisions_get(request: Request, decision_id: int):
     row = await _dec_load(decision_id, user)
     if not row:
         raise HTTPException(404, f"Decision {decision_id} not found")
-    async with scoped_pg(user) as conn:
+    async with _decision_pg(user) as conn:
         actions = await conn.fetch(
             "SELECT * FROM decision_actions WHERE decision_id = $1 ORDER BY ts DESC",
             decision_id,
@@ -1440,7 +1468,13 @@ async def api_decisions_get(request: Request, decision_id: int):
     return out
 
 
-@app.patch("/api/decisions/{decision_id}", dependencies=[Depends(require_csrf)])
+@app.patch(
+    "/api/decisions/{decision_id}",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
+)
 async def api_decisions_update(request: Request, decision_id: int, body: dict):
     user = require_user(request)
     existing = await _dec_load(decision_id, user)
@@ -1481,12 +1515,18 @@ async def api_decisions_update(request: Request, decision_id: int, body: dict):
         f"UPDATE decisions SET {', '.join(sets)} "
         f"WHERE id = {decision_ref} AND workspace_id = {workspace_ref} RETURNING *"
     )
-    async with scoped_pg(user) as conn:
+    async with _decision_pg(user) as conn:
         row = await conn.fetchrow(sql, *params)
     return _dec_row_to_dict(row)
 
 
-@app.delete("/api/decisions/{decision_id}", dependencies=[Depends(require_csrf)])
+@app.delete(
+    "/api/decisions/{decision_id}",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
+)
 async def api_decisions_delete(request: Request, decision_id: int):
     user = require_user(request)
     existing = await _dec_load(decision_id, user)
@@ -1494,7 +1534,7 @@ async def api_decisions_delete(request: Request, decision_id: int):
         raise HTTPException(404, f"Decision {decision_id} not found")
     if not _dec_can_delete(existing, user):
         raise HTTPException(403, "only the creator or an admin can delete a decision")
-    async with scoped_pg(user) as conn:
+    async with _decision_pg(user) as conn:
         await conn.execute(
             "DELETE FROM decisions WHERE id = $1 AND workspace_id = $2",
             decision_id,
@@ -1503,7 +1543,13 @@ async def api_decisions_delete(request: Request, decision_id: int):
     return {"deleted": True, "id": decision_id}
 
 
-@app.post("/api/decisions/{decision_id}/actions", dependencies=[Depends(require_csrf)])
+@app.post(
+    "/api/decisions/{decision_id}/actions",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
+)
 async def api_decisions_add_action(request: Request, decision_id: int, body: dict):
     user = require_user(request)
     existing = await _dec_load(decision_id, user)
@@ -1514,7 +1560,7 @@ async def api_decisions_add_action(request: Request, decision_id: int, body: dic
     action_text = (body.get("action_text") or "").strip()
     if not action_text:
         raise HTTPException(400, "action_text is required")
-    async with scoped_pg(user) as conn:
+    async with _decision_pg(user) as conn:
         row = await conn.fetchrow(
             """INSERT INTO decision_actions (decision_id, action_text, note, actor)
                VALUES ($1, $2, $3, $4)
