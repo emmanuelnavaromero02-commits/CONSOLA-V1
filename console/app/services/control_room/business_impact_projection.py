@@ -9,7 +9,7 @@ def build_impact_payload(
     item: Mapping[str, Any],
     estimate: float | None,
     status: str,
-    confidence: float,
+    confidence: float | None,
     drivers: list[dict[str, Any]],
     formula: str,
     explanation: str,
@@ -18,6 +18,9 @@ def build_impact_payload(
 ) -> dict[str, Any]:
     estimate_value = round(float(estimate or 0), 2) if estimate is not None else None
     severity_weight = severity_weights.get(str(item.get("severity") or "medium"), 2)
+    # F11: None means no real confidence exists — it contributes nothing to
+    # priority and surfaces as null ("sin dato"), never as an invented score.
+    confidence_points = 0 if confidence is None else int(confidence * 20)
     impact_points = (
         0 if estimate_value is None else min(42, int(abs(estimate_value) / 10_000))
     )
@@ -29,7 +32,7 @@ def build_impact_payload(
             0,
             severity_weight * 14
             + impact_points
-            + int(confidence * 20)
+            + confidence_points
             + threshold_points,
         ),
     )
@@ -38,7 +41,9 @@ def build_impact_payload(
         "status": status,
         "estimate": estimate_value,
         "currency": currency,
-        "confidence": round(max(0.0, min(1.0, confidence)), 2),
+        "confidence": (
+            None if confidence is None else round(max(0.0, min(1.0, confidence)), 2)
+        ),
         "priority_score": priority_score,
         "drivers": drivers,
         "formula": formula,

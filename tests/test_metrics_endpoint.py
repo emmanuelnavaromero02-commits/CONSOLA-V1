@@ -145,3 +145,58 @@ def test_metrics_requires_operations_read_permission(metrics_module):
     src = Path(metrics_module.__file__).read_text(encoding="utf-8")
     assert 'require_permission("operations.read")' in src
     assert "Depends(require_authenticated)" not in src
+
+
+def test_failed_query_reports_unavailable_never_zero(metrics_module):
+    """F11: a query failure must surface as null + degraded_metrics — a
+    KPI like errors_24h reporting 0 on an exception is a lie."""
+
+    class _ExplodingConn:
+        async def fetchval(self, *_a, **_kw):
+            raise RuntimeError("relation does not exist")
+
+        async def fetch(self, *_a, **_kw):
+            raise RuntimeError("relation does not exist")
+
+    class _Acquire:
+        async def __aenter__(self):
+            return _ExplodingConn()
+
+        async def __aexit__(self, *_):
+            return False
+
+    class _FakePool:
+        def acquire(self):
+            return _Acquire()
+
+    metrics_module.auth.pool = AsyncMock(return_value=_FakePool())
+    api = FastAPI()
+    api.include_router(metrics_module.router)
+    api.dependency_overrides[metrics_module.require_operations_read] = lambda: {
+        "id": 1,
+        "email": "admin@example.com",
+        "role": "admin",
+    }
+    r = TestClient(api).get("/api/metrics/operational")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["errors_24h"] is None, "a failed query must never read as 0"
+    assert body["extractions_24h"] is None
+    assert body["jobs"]["failed_24h"] is None
+    assert body["control_room"]["writeback_failures_24h"] is None
+    assert body["status"] == "degraded"
+    assert "errors_24h" in body["degraded_metrics"]
+    assert "failed_jobs_24h" in body["degraded_metrics"]
+    assert "writeback_failures_24h" in body["degraded_metrics"]
+
+
+def test_healthy_queries_still_report_real_zero(metrics_module):
+    """A real 0 (query succeeded, zero rows matched) stays 0 — only
+    exceptions degrade."""
+    app = _make_app(metrics_module, [0] * 30, [])
+    r = TestClient(app).get("/api/metrics/operational")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["errors_24h"] == 0
+    assert body["status"] == "ok"
+    assert body["degraded_metrics"] == []
