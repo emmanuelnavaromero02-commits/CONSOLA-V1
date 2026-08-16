@@ -6,6 +6,7 @@ import hashlib
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import asyncpg
 import pytest
@@ -19,6 +20,12 @@ from tests.test_operational_rls_console_refinement import (
 
 
 WORKSPACE_PASSWORD = "test_omega_workspace_password"
+MIGRATION = (
+    Path(__file__).resolve().parents[1]
+    / "infra"
+    / "init"
+    / "99zzy_identity_session_boundary.sql"
+)
 
 
 def _role_dsn(admin_dsn: str, role: str, password: str) -> str:
@@ -295,4 +302,45 @@ async def test_workspace_cannot_read_secrets_or_forge_admin_session(
     finally:
         await console.close()
         await workspace.close()
+        await admin.close()
+
+
+@pytest.mark.asyncio
+async def test_identity_boundary_migration_survives_two_replays(
+    postgres_with_real_init_schema: str,
+    omega_console_live_dsn: str,
+) -> None:
+    scope = await _seed_identity(postgres_with_real_init_schema)
+    admin = await asyncpg.connect(postgres_with_real_init_schema)
+    console = await asyncpg.connect(omega_console_live_dsn)
+    raw_session = secrets.token_hex(32)
+    digest = hashlib.sha256(raw_session.encode("utf-8")).hexdigest()
+    try:
+        await console.fetchval(
+            "SELECT omega_auth_create_session($1, $2, $3, $4)",
+            digest,
+            scope["user_a"],
+            datetime.now(timezone.utc) + timedelta(hours=1),
+            None,
+        )
+        migration_sql = MIGRATION.read_text(encoding="utf-8")
+        for _replay in range(2):
+            await admin.execute(migration_sql)
+            assert await admin.fetchval(
+                "SELECT count(*) FROM user_sessions WHERE token_hash = $1", digest
+            ) == 1
+            assert await admin.fetchval(
+                """SELECT NOT has_table_privilege(
+                           'omega_workspace', 'user_sessions', 'INSERT'
+                       )"""
+            ) is True
+            assert await admin.fetchval(
+                """SELECT has_function_privilege(
+                           'omega_workspace',
+                           'omega_auth_logout(text,text)',
+                           'EXECUTE'
+                       )"""
+            ) is True
+    finally:
+        await console.close()
         await admin.close()

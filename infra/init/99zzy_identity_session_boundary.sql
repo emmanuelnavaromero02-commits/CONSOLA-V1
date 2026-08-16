@@ -56,6 +56,8 @@ ALTER TABLE public.user_sessions
 ALTER TABLE public.user_sessions
     ADD CONSTRAINT user_sessions_pkey PRIMARY KEY (token_hash);
 ALTER TABLE public.user_sessions
+    DROP CONSTRAINT IF EXISTS user_sessions_token_hash_shape;
+ALTER TABLE public.user_sessions
     ADD CONSTRAINT user_sessions_token_hash_shape
     CHECK (token_hash ~ '^[0-9a-f]{64}$') NOT VALID;
 ALTER TABLE public.user_sessions
