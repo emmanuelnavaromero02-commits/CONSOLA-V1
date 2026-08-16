@@ -1184,6 +1184,10 @@ services:
       - ../cartridges/banxico/dags:/opt/airflow/dags/banxico:ro
       - ../cartridges/inegi/dags:/opt/airflow/dags/inegi:ro
       - ../cartridges/sec_edgar/dags:/opt/airflow/dags/sec_edgar:ro
+      # A1: scheduled SF extraction runs inside the Airflow workers, which
+      # resolve the Vault connection whose private_key_path points here —
+      # same optional mount the sap_successfactors service carries.
+      - ${SF_PRIVATE_KEY_HOST_PATH:-/dev/null}:${SF_PRIVATE_KEY_PATH:-/run/secrets/sf_epiuse_iaappliance_connector.pem}:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -1297,6 +1301,10 @@ services:
       - ../cartridges/banxico/dags:/opt/airflow/dags/banxico:ro
       - ../cartridges/inegi/dags:/opt/airflow/dags/inegi:ro
       - ../cartridges/sec_edgar/dags:/opt/airflow/dags/sec_edgar:ro
+      # A1: scheduled SF extraction runs inside the Airflow workers, which
+      # resolve the Vault connection whose private_key_path points here —
+      # same optional mount the sap_successfactors service carries.
+      - ${SF_PRIVATE_KEY_HOST_PATH:-/dev/null}:${SF_PRIVATE_KEY_PATH:-/run/secrets/sf_epiuse_iaappliance_connector.pem}:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -1401,6 +1409,10 @@ services:
       - ../cartridges/banxico/dags:/opt/airflow/dags/banxico:ro
       - ../cartridges/inegi/dags:/opt/airflow/dags/inegi:ro
       - ../cartridges/sec_edgar/dags:/opt/airflow/dags/sec_edgar:ro
+      # A1: scheduled SF extraction runs inside the Airflow workers, which
+      # resolve the Vault connection whose private_key_path points here —
+      # same optional mount the sap_successfactors service carries.
+      - ${SF_PRIVATE_KEY_HOST_PATH:-/dev/null}:${SF_PRIVATE_KEY_PATH:-/run/secrets/sf_epiuse_iaappliance_connector.pem}:ro
     depends_on:
       postgres:
         condition: service_healthy
