@@ -13,6 +13,11 @@ BEGIN
     END IF;
 END $$;
 
+-- Idempotent hardening: an operator-created role may predate this migration
+-- with unsafe LOGIN/BYPASSRLS attributes. Creation guards alone do not repair
+-- that drift.
+ALTER ROLE omega_auth NOLOGIN NOBYPASSRLS;
+
 ALTER TABLE public.user_sessions
     ADD COLUMN IF NOT EXISTS token_hash varchar(64);
 

@@ -12,6 +12,7 @@ def test_identity_boundary_is_forward_only_and_hash_only() -> None:
     sql = MIGRATION.read_text(encoding="utf-8")
     assert MIGRATION.name == "99zzy_identity_session_boundary.sql"
     assert "CREATE ROLE omega_auth NOLOGIN NOBYPASSRLS" in sql
+    assert "ALTER ROLE omega_auth NOLOGIN NOBYPASSRLS;" in sql
     assert "DROP COLUMN IF EXISTS token" in sql
     assert "PRIMARY KEY (token_hash)" in sql
     assert "FORCE ROW LEVEL SECURITY" in sql
