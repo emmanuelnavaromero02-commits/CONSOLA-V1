@@ -322,3 +322,167 @@ async def test_reference_validation_fails_closed_without_active_tenant(
 
     assert exc_info.value.status_code == 403
     assert exc_info.value.detail == "active tenant and workspace are required"
+
+
+def _action_request(idempotency_key: str | None = "synthetic-idempotency-canary"):
+    request = _writer_request()
+    request.headers = (
+        {"Idempotency-Key": idempotency_key} if idempotency_key is not None else {}
+    )
+    return request
+
+
+@pytest.mark.asyncio
+async def test_decision_action_requires_idempotency_key_before_db(workspace_main):
+    with pytest.raises(HTTPException) as exc_info:
+        await workspace_main.api_decisions_add_action(
+            _action_request(None),
+            900030,
+            {"action_text": "synthetic-canary"},
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Idempotency-Key header is required"
+
+
+class _IdempotencyPool:
+    def __init__(self):
+        self.reservation = None
+        self.action_insert_count = 0
+        self.all_params = []
+        self.existing = {
+            "id": 900030,
+            "title": "synthetic-canary",
+            "description": "",
+            "created_at": None,
+            "commitment_date": None,
+            "closed_at": None,
+            "kpis": [],
+            "status": "open",
+            "outcome": None,
+            "follow_up_decision_id": None,
+            "created_by_id": 900010,
+            "assignee_id": None,
+            "visibility": "private",
+            "workspace_id": "00000000-0000-0000-0000-000000000911",
+        }
+        self.action = {
+            "id": 900040,
+            "decision_id": 900030,
+            "action_text": "synthetic-canary",
+            "note": None,
+            "actor": "writer.invalid",
+            "ts": None,
+        }
+
+    async def execute(self, _sql, *params):
+        self.all_params.extend(params)
+
+    async def fetchval(self, sql, *params):
+        self.all_params.extend(params)
+        if sql.startswith("INSERT INTO workspace_decision_idempotency"):
+            if self.reservation is not None:
+                return None
+            self.reservation = {
+                "id": 900050,
+                "request_fingerprint": params[5],
+                "status": "in_progress",
+                "action_id": None,
+            }
+            return 900050
+        if sql.startswith("UPDATE workspace_decision_idempotency"):
+            self.reservation["status"] = "completed"
+            self.reservation["action_id"] = params[1]
+            return self.reservation["id"]
+        raise AssertionError(f"unexpected fetchval: {sql}")
+
+    async def fetchrow(self, sql, *params):
+        self.all_params.extend(params)
+        if sql.startswith("SELECT * FROM decisions"):
+            return self.existing
+        if sql.startswith("INSERT INTO decision_actions"):
+            self.action_insert_count += 1
+            return self.action
+        if sql.startswith("SELECT request_fingerprint"):
+            return self.reservation
+        if sql.startswith("SELECT * FROM decision_actions"):
+            return self.action
+        raise AssertionError(f"unexpected fetchrow: {sql}")
+
+
+@pytest.mark.asyncio
+async def test_same_idempotency_key_replays_exactly_one_action(
+    workspace_main, monkeypatch
+):
+    fake = _IdempotencyPool()
+
+    async def pool():
+        return fake
+
+    monkeypatch.setattr(workspace_main, "pg", pool)
+    request = _action_request()
+    first = await workspace_main.api_decisions_add_action(
+        request,
+        900030,
+        {"action_text": "synthetic-canary"},
+    )
+    replay = await workspace_main.api_decisions_add_action(
+        request,
+        900030,
+        {"action_text": "synthetic-canary"},
+    )
+
+    assert first == replay
+    assert first["id"] == 900040
+    assert fake.action_insert_count == 1
+    assert "synthetic-idempotency-canary" not in fake.all_params
+    assert len(fake.reservation["request_fingerprint"]) == 64
+
+
+@pytest.mark.asyncio
+async def test_same_key_with_changed_payload_is_409(workspace_main, monkeypatch):
+    fake = _IdempotencyPool()
+
+    async def pool():
+        return fake
+
+    monkeypatch.setattr(workspace_main, "pg", pool)
+    request = _action_request()
+    await workspace_main.api_decisions_add_action(
+        request,
+        900030,
+        {"action_text": "synthetic-canary"},
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        await workspace_main.api_decisions_add_action(
+            request,
+            900030,
+            {"action_text": "changed-canary"},
+        )
+
+    assert exc_info.value.status_code == 409
+    assert fake.action_insert_count == 1
+
+
+def test_workspace_ui_sends_fresh_decision_action_idempotency_key():
+    source = (WORKSPACE_ROOT / "app" / "static" / "js" / "workspace.js").read_text(
+        encoding="utf-8"
+    )
+    assert "globalThis.crypto?.randomUUID?.()" in source
+    assert "'Idempotency-Key': idempotencyKey" in source
+
+
+def test_decision_idempotency_migration_is_durable_and_actor_scoped():
+    migration = (
+        WORKSPACE_ROOT.parent
+        / "infra"
+        / "init"
+        / "99zzz_workspace_decision_idempotency.sql"
+    ).read_text(encoding="utf-8")
+    assert "CREATE TABLE IF NOT EXISTS workspace_decision_idempotency" in migration
+    assert "UNIQUE (actor_user_id, workspace_id, operation, idempotency_key_hash)" in migration
+    assert "request_fingerprint" in migration
+    assert "ENABLE ROW LEVEL SECURITY" in migration
+    assert "FORCE ROW LEVEL SECURITY" in migration
+    assert "current_setting('app.user_id', TRUE)" in migration
+    assert "idempotency_key TEXT" not in migration
