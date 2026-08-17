@@ -59,6 +59,7 @@ from app.staged_publication_engine import StagedPublicationEngine
 from app.successfactors_fallbacks import (
     annotate_operational_fallback,
     fallback_dataset_for_successfactors,
+    readfree_empty_dataset_for_successfactors,
 )
 
 DATASETS_DIR = Path("/app/datasets")
@@ -197,14 +198,54 @@ def _published_datasets_for_scope(
     return {"datasets": datasets}
 
 
+def _materialize_readfree_empty(
+    ds: dict, user_context: dict, cause: Exception
+) -> dict | None:
+    """E1.1 — ultimo nivel: proyeccion vacia sin lecturas con esquema fiel.
+
+    Solo para errores de dependencia faltante (404/no files) en datasets de
+    talento registrados; cualquier otro error debe seguir tronando (jamas
+    degradar una caida real de infra a un gold vacio).
+    """
+    readfree = readfree_empty_dataset_for_successfactors(ds, cause)
+    if not readfree:
+        return None
+    result = engine.materialize(readfree, user_context)
+    annotated = annotate_operational_fallback(
+        str(ds.get("name") or ""), result, str(cause)
+    )
+    annotated["degraded_reason"] = "source_entities_absent_readfree_empty"
+    logger.warning(
+        "successfactors readfree empty projection: dataset=%s reason=%s "
+        "(el tenant no expone las fuentes de talento; esquema fiel, cero filas)",
+        ds.get("name"),
+        annotated.get("degraded_reason"),
+    )
+    return annotated
+
+
 def _materialize_with_operational_fallback(ds: dict, user_context: dict) -> dict:
     try:
         return engine.materialize(ds, user_context)
     except Exception as exc:
         fallback = fallback_dataset_for_successfactors(ds, exc)
         if not fallback:
+            # Sin fallback de primer nivel: un dataset de talento con fuentes
+            # ausentes (404) aun puede degradar a su proyeccion read-free.
+            readfree = _materialize_readfree_empty(ds, user_context, exc)
+            if readfree is not None:
+                return readfree
             raise
-        result = engine.materialize(fallback, user_context)
+        try:
+            result = engine.materialize(fallback, user_context)
+        except Exception as fb_exc:
+            # E1.1: el fallback de primer nivel tambien lee fuentes que el
+            # tenant no expone y se cayo con el mismo 404 — antes esta segunda
+            # excepcion volaba sin red (ciclo 03:05: 8 datasets failed).
+            readfree = _materialize_readfree_empty(ds, user_context, fb_exc)
+            if readfree is not None:
+                return readfree
+            raise
         annotated = annotate_operational_fallback(
             str(ds.get("name") or ""), result, str(exc)
         )

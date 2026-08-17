@@ -6,6 +6,7 @@ from typing import Any
 from .successfactors_foundation_fallbacks import FOUNDATION_GOLD_FALLBACK_SQL
 from .successfactors_talent_core_fallbacks import TALENT_CORE_FALLBACK_SQL
 from .successfactors_talent_empty_fallbacks import TALENT_EMPTY_FALLBACK_SQL
+from .successfactors_talent_readfree_fallbacks import TALENT_READFREE_EMPTY_SQL
 from .successfactors_talent_runtime_fallbacks import TALENT_RUNTIME_FALLBACK_SQL
 
 
@@ -91,6 +92,35 @@ def fallback_dataset_for_successfactors(
         "description": (
             str(ds.get("description") or "").strip()
             + " Fallback operativo: dependencia SuccessFactors no materializada."
+        ).strip(),
+    }
+
+
+def readfree_empty_dataset_for_successfactors(
+    ds: dict[str, Any], exc: Exception | Any
+) -> dict[str, Any] | None:
+    """E1.1 — ultimo nivel de degradacion, SIN lecturas.
+
+    Engancha solo cuando (a) el dataset tiene proyeccion read-free registrada
+    y (b) el error es de dependencia faltante (404 / no files). El fallback de
+    primer nivel de la cadena de talento lee fuentes que un tenant sin modulos
+    de talento no expone: cuando ese fallback tambien se cae con 404, esta
+    proyeccion emite el esquema FIEL del dataset con cero filas para que el
+    SQL real downstream ligue y produzca su propio vacio honesto. Cualquier
+    otro error (MinIO caido, Binder por drift real de esquema) NO engancha:
+    esos deben tronar fuerte.
+    """
+    name = str(ds.get("name") or "")
+    sql = TALENT_READFREE_EMPTY_SQL.get(name)
+    if not sql or not is_missing_successfactors_dependency_error(exc):
+        return None
+    return {
+        **ds,
+        "sql_def": sql.strip(),
+        "sources": [],
+        "description": (
+            str(ds.get("description") or "").strip()
+            + " Proyeccion vacia read-free: el tenant no expone las fuentes de talento."
         ).strip(),
     }
 
