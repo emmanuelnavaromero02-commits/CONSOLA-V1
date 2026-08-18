@@ -321,3 +321,114 @@ def test_a2_migration_sorts_after_a1():
     sql = _a2_sql()
     assert "99zzzza_sap_successfactors_cycle_config.sql" in sql
     assert "INSERT INTO schema_migrations" in sql
+
+
+# ── E1 (Nine Box come): el ciclo corre el recorrido completo ────────────────
+
+E1_MIGRATION = (
+    REPO_ROOT / "infra" / "init" / "99zzzzc_sap_successfactors_cycle_target_all.sql"
+)
+TRIGGERS = (
+    REPO_ROOT / "cartridges" / "sap_successfactors" / "app" / "core"
+    / "refinement_triggers.py"
+)
+ORDERS = (
+    REPO_ROOT / "cartridges" / "sap_successfactors" / "app" / "config"
+    / "gold_dataset_orders.json"
+)
+
+
+def _e1_sql() -> str:
+    return E1_MIGRATION.read_text(encoding="utf-8")
+
+
+def test_e1_cycle_target_defaults_to_all():
+    """New configs are born running the FULL journey, not just foundation."""
+    sql = _e1_sql()
+    assert "ALTER COLUMN target SET DEFAULT 'all'" in sql
+    # The dev self-seed inside the replaced reconciler is born 'all' too.
+    assert "'*/15 * * * *', 'all', TRUE" in sql
+
+
+def test_e1_existing_foundation_configs_promoted_but_explicit_targets_kept():
+    """Rows seeded as 'foundation' before this migration are promoted; a
+    deliberately different target ('talent', or a future explicit choice)
+    is never clobbered."""
+    sql = _e1_sql()
+    update = sql[sql.index("UPDATE public.cartridge_cycle_config"):]
+    update = update[: update.index(";")]
+    assert "SET target = 'all'" in update
+    assert "cartridge_id = 'sap_successfactors'" in update
+    assert "target = 'foundation'" in update, (
+        "the promotion must be guarded to rows still on the old default"
+    )
+
+
+def test_e1_reconciler_replaced_and_rerun_forward_only():
+    """99zzzz/99zzzza stay sealed: the change lands as a CREATE OR REPLACE in
+    a NEW migration that re-runs the reconciler to propagate dag_params."""
+    sql = _e1_sql()
+    assert "CREATE OR REPLACE FUNCTION public.seed_sap_successfactors_cycle_schedule()" in sql
+    assert "SELECT public.seed_sap_successfactors_cycle_schedule();" in sql
+    assert "jsonb_build_object('target', cfg.target)" in sql, (
+        "the marker keeps taking its target from config, never a literal"
+    )
+    assert E1_MIGRATION.name > "99zzzzb_control_room_lessons_honest_confidence.sql"
+    assert "99zzzzc_sap_successfactors_cycle_target_all.sql" in sql
+    assert "INSERT INTO schema_migrations" in sql
+
+
+def test_e1_credential_gate_and_scope_resolution_survive_the_replace():
+    """The A2 invariants must remain byte-alive in the replaced body: missing
+    credential -> DISABLED marker (RETURN 2), scope from server state, only
+    the 14 foundation templates rebound."""
+    sql = _e1_sql()
+    assert "RETURN 2" in sql
+    assert "vault_entries" in sql
+    assert "'Default Tenant'" in sql and "'Main Workspace'" in sql
+    assert not re.search(
+        r"'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'", sql
+    ), "no hardcoded tenant/workspace UUIDs"
+    for entity in ("'User'", "'PerPerson'", "'FOCompany'", "'Position'"):
+        assert entity in sql
+
+
+def test_e1_target_all_reaches_the_talent_cascade():
+    """target=all must route foundation + the WB-TALENTO gold order (the
+    9-box chain) plus the curated talent silver — wired in refinement_triggers
+    from the single source of truth (gold_dataset_orders.json)."""
+    import json as _json
+
+    src = TRIGGERS.read_text(encoding="utf-8")
+    assert "SUCCESSFACTORS_GOLD_FOUNDATION_ORDER) + list(SUCCESSFACTORS_GOLD_TALENT_ORDER)" in src
+    assert "SUCCESSFACTORS_SILVER_TALENT_CURATED_ORDER" in src
+
+    orders = _json.loads(ORDERS.read_text(encoding="utf-8"))
+    talent = orders["talent_order"]
+    for needed in (
+        "sap_successfactors_talent_cpa_scores",
+        "sap_successfactors_talent_readiness",
+        "sap_successfactors_talent_9box",
+        "sap_successfactors_talent_9box_operational",
+        "sap_successfactors_talent_retention_risk",
+    ):
+        assert needed in talent, f"{needed} must be part of the autonomous cycle"
+    assert orders["silver_talent_curated_order"], (
+        "curated talent silver must not be empty for target=all"
+    )
+
+
+def test_e1_nine_box_stays_fail_closed_no_proxies():
+    """The cycle now feeds the 9-box, but the doctrine is untouched: without
+    observed performance/competency/aspiration the chain keeps
+    insufficient_data — it never fabricates proxies."""
+    nine = (
+        REPO_ROOT / "cartridges" / "sap_successfactors" / "datasets"
+        / "sap_successfactors_talent_9box.sql"
+    ).read_text(encoding="utf-8")
+    assert "no fabrica proxies" in nine or "insufficient_data" in nine
+    cpa = (
+        REPO_ROOT / "cartridges" / "sap_successfactors" / "datasets"
+        / "sap_successfactors_talent_cpa_scores.sql"
+    ).read_text(encoding="utf-8")
+    assert "insufficient_data" in cpa
