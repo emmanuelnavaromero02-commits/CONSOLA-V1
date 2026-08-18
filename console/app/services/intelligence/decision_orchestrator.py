@@ -73,14 +73,14 @@ ENGINE_ROUTES: dict[str, EngineRoute] = {
         ("Use existing forecast evidence; Monte Carlo and Bayes are recommended but not executed in 19A.",),
     ),
     "resource_allocation": EngineRoute(
-        ("decision_intelligence", "monte_carlo"),
+        ("decision_intelligence", "monte_carlo", "minimax_allocation"),
         ("constrained_optimizer_candidate",),
-        ("Requires constrained optimizer for allocation decisions; candidate is advisory only.",),
+        ("E4: minimax exacto (top-K regret) es ejecutable para asignacion acotada; el candidato general sigue advisory.",),
     ),
     "budget_optimization": EngineRoute(
-        ("decision_intelligence", "monte_carlo"),
+        ("decision_intelligence", "monte_carlo", "minimax_allocation"),
         ("constrained_optimizer_candidate",),
-        ("Requires constrained optimizer for budget trade-offs; candidate is advisory only.",),
+        ("E4: minimax exacto (top-K regret) es ejecutable para trade-offs acotados; el candidato general sigue advisory.",),
     ),
     "capacity_planning": EngineRoute(
         ("decision_intelligence", "monte_carlo"),
@@ -108,9 +108,9 @@ ENGINE_ROUTES: dict[str, EngineRoute] = {
         ("External action framework can propose sandbox actions requiring human approval.",),
     ),
     "data_quality": EngineRoute(
-        ("decision_intelligence", "agent_monitor"),
+        ("decision_intelligence", "agent_monitor", "permutation_test"),
         (),
-        ("Use Control Room and Agent Monitor evidence; no external action is executed.",),
+        ("E4: el test de permutacion (azar o patron) es ejecutable para concentracion/sesgo; sin accion externa.",),
     ),
     "insufficient_data": EngineRoute(
         ("decision_intelligence",),

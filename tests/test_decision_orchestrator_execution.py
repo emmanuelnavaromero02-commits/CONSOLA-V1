@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -582,3 +584,184 @@ async def test_resource_allocation_runs_only_monte_carlo_and_optimizer_candidate
         {"engine": "constrained_optimizer_candidate", "status": "candidate_only"}
     ]
     assert all(row["engine_name"] != "bayesian_calibration" for row in db.executions)
+
+
+# ── E4: los motores del Decide cableados (permutación + minimax) ─────────────
+
+
+@pytest.mark.asyncio
+async def test_e4_minimax_executes_for_resource_allocation_with_inputs(
+    execution_mod, monkeypatch
+):
+    """resource_allocation con inputs de minimax: el hueco del optimizador
+    declarado 'not yet implemented' ejecuta su forma acotada exacta."""
+    db = FakeExecutionDB()
+    db.add_run(
+        orchestration_id="orch-minimax",
+        problem_type="resource_allocation",
+        candidate_engines=[
+            {"name": "constrained_optimizer_candidate", "status": "not_implemented"}
+        ],
+    )
+    _patch_pool(execution_mod, monkeypatch, db)
+    monkeypatch.setattr(
+        execution_mod.monte_carlo_service,
+        "run_simulation",
+        AsyncMock(
+            return_value={
+                "simulation": {
+                    "simulation_id": "mc-minimax",
+                    "source_type": "signal",
+                    "source_id": "sig-9",
+                    "distribution_summary": {},
+                    "reproducibility_hash": "hash",
+                }
+            }
+        ),
+    )
+    result = await execution_mod.execute_engines(
+        _user(),
+        "orch-minimax",
+        {
+            "engine_inputs": {
+                "monte_carlo": {
+                    "source_type": "signal",
+                    "source_id": "sig-9",
+                    "input_variables": {
+                        "baseline_value": {"type": "fixed", "value": 10}
+                    },
+                },
+                "minimax_allocation": {
+                    "capacity": 2,
+                    "candidates": [
+                        {"id": "valeria", "risk": 0.9, "impact_weight": 3.0},
+                        {"id": "joaquin", "risk": 0.8, "impact_weight": 3.0},
+                        {"id": "emilio", "risk": 0.5, "impact_weight": 0.6},
+                    ],
+                },
+            }
+        },
+    )
+    assert result["aggregate"]["executed_engines"] == [
+        "monte_carlo",
+        "minimax_allocation",
+    ]
+    row = next(
+        r for r in db.executions if r["engine_name"] == "minimax_allocation"
+    )
+    assert row["execution_status"] == "succeeded"
+    summary = json.loads(row["result_summary"]) if isinstance(row["result_summary"], str) else row["result_summary"]
+    assert summary["selected"] == ["valeria", "joaquin"]
+    assert summary["method"] == "exact_top_k_regret"
+    # El candidato general sigue declarado, no lo pisa el ejecutable.
+    assert result["aggregate"]["candidate_engines"] == [
+        {"engine": "constrained_optimizer_candidate", "status": "candidate_only"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_e4_minimax_without_inputs_skips_never_invents(
+    execution_mod, monkeypatch
+):
+    db = FakeExecutionDB()
+    db.add_run(orchestration_id="orch-noinput", problem_type="resource_allocation")
+    _patch_pool(execution_mod, monkeypatch, db)
+    monkeypatch.setattr(
+        execution_mod.monte_carlo_service,
+        "run_simulation",
+        AsyncMock(
+            return_value={
+                "simulation": {
+                    "simulation_id": "mc-x",
+                    "source_type": "signal",
+                    "source_id": "sig-1",
+                    "distribution_summary": {},
+                    "reproducibility_hash": "hash",
+                }
+            }
+        ),
+    )
+    result = await execution_mod.execute_engines(
+        _user(),
+        "orch-noinput",
+        {
+            "engine_inputs": {
+                "monte_carlo": {
+                    "source_type": "signal",
+                    "source_id": "sig-1",
+                    "input_variables": {
+                        "baseline_value": {"type": "fixed", "value": 1}
+                    },
+                }
+            }
+        },
+    )
+    assert result["aggregate"]["executed_engines"] == ["monte_carlo"]
+    assert {"engine": "minimax_allocation", "reason": "engine_input_missing"} in [
+        {"engine": s.get("engine"), "reason": s.get("reason")}
+        for s in result["aggregate"]["skipped_engines"]
+    ]
+
+
+@pytest.mark.asyncio
+async def test_e4_permutation_executes_for_data_quality(execution_mod, monkeypatch):
+    """data_quality con inputs de permutación: veredicto matemático con
+    evidencia determinista; el caso de la demo (8/11 en Apizaco) da patrón."""
+    db = FakeExecutionDB()
+    db.add_run(orchestration_id="orch-perm", problem_type="data_quality")
+    _patch_pool(execution_mod, monkeypatch, db)
+    result = await execution_mod.execute_engines(
+        _user(),
+        "orch-perm",
+        {
+            "engine_inputs": {
+                "permutation_test": {
+                    "categories": [
+                        {"key": "toluca", "weight": 140},
+                        {"key": "apizaco", "weight": 95},
+                        {"key": "cedis_mty", "weight": 130},
+                        {"key": "brasil", "weight": 120},
+                    ],
+                    "draws": 11,
+                    "focus_key": "apizaco",
+                    "observed": 8,
+                    "seed": 2026,
+                }
+            }
+        },
+    )
+    assert result["aggregate"]["executed_engines"] == ["permutation_test"]
+    row = next(r for r in db.executions if r["engine_name"] == "permutation_test")
+    assert row["execution_status"] == "succeeded"
+    summary = json.loads(row["result_summary"]) if isinstance(row["result_summary"], str) else row["result_summary"]
+    assert summary["verdict"] == "systemic_pattern"
+    refs = row["evidence_refs"]
+    refs = json.loads(refs) if isinstance(refs, str) else refs
+    assert any(ref.get("type") == "deterministic_engine" for ref in refs)
+
+
+@pytest.mark.asyncio
+async def test_e4_invalid_engine_input_skips_with_detail(execution_mod, monkeypatch):
+    db = FakeExecutionDB()
+    db.add_run(orchestration_id="orch-bad", problem_type="data_quality")
+    _patch_pool(execution_mod, monkeypatch, db)
+    result = await execution_mod.execute_engines(
+        _user(),
+        "orch-bad",
+        {
+            "engine_inputs": {
+                "permutation_test": {
+                    "categories": [{"key": "a", "weight": 1}],
+                    "draws": 10,
+                    "focus_key": "zzz",
+                    "observed": 3,
+                }
+            }
+        },
+    )
+    assert result["aggregate"]["executed_engines"] == []
+    skipped = [
+        s for s in result["aggregate"]["skipped_engines"]
+        if s.get("engine") == "permutation_test"
+    ]
+    assert skipped and skipped[0].get("reason") == "invalid_engine_input"
