@@ -11,7 +11,10 @@ from app.services.intelligence import calibration, calibration_service
 from app.services.intelligence.baseline import build_metric_artifacts
 from app.services.intelligence.contracts import load_contracts
 from app.services.intelligence.external import list_sources, patch_source, run_sources
-from app.services.intelligence.gold_fetcher import query_intelligence_dataset_rows
+from app.services.intelligence.gold_fetcher import (
+    query_gold_dataset_population,
+    query_intelligence_dataset_rows,
+)
 from app.services.intelligence.gold_control_room import (
     RULESET_VERSION,
     build_generic_gold_artifacts,
@@ -183,6 +186,48 @@ async def run_intelligence(
         requested_run_ref = ""
     horizons = _requested_horizons(body)
     fetch = fetcher or query_intelligence_dataset_rows
+    population_manifests: list[dict[str, Any]] = []
+
+    async def _fetch_population(dataset: str) -> list[dict[str, Any]]:
+        """E3 — ruta certificada sin cap: poblacion completa + manifiesto exacto.
+
+        Con fetcher inyectado (tests/llamadores legacy) se conserva su contrato
+        de 3 argumentos y el manifiesto declara la fuente; la ruta real lee la
+        poblacion entera por cursor con COUNT en el mismo snapshot. Si el techo
+        operativo corta la lectura, el run queda PARCIAL declarado via skipped
+        (population_truncated) — jamas truncamiento silencioso.
+        """
+        if fetcher is not None:
+            rows = await fetch(dataset, user, DEFAULT_LIMIT)
+            population_manifests.append(
+                {
+                    "dataset": dataset,
+                    "population_total": len(rows),
+                    "rows_fetched": len(rows),
+                    "complete": True,
+                    "source": "injected_fetcher",
+                }
+            )
+            return rows
+        rows, manifest = await query_gold_dataset_population(dataset, user)
+        population_manifests.append(manifest)
+        if not manifest.get("complete"):
+            skipped.append(
+                {
+                    "cartridge_id": None,
+                    "dataset": dataset,
+                    "metric": None,
+                    "status": "population_truncated",
+                    "reason": (
+                        f"lectura poblacional cortada por techo operativo: "
+                        f"{manifest.get('rows_fetched')}/{manifest.get('population_total')} filas "
+                        f"(INTELLIGENCE_POPULATION_MAX_ROWS={manifest.get('ceiling')}); "
+                        "run parcial declarado"
+                    ),
+                }
+            )
+        return rows
+
     calibration_states = await _load_live_calibration_states(
         user, contracts, metric_filter
     )
@@ -297,7 +342,7 @@ async def run_intelligence(
             if dataset_filter and dataset not in dataset_filter:
                 continue
             try:
-                rows = await fetch(dataset, user, DEFAULT_LIMIT)
+                rows = await _fetch_population(dataset)
             except Exception as exc:
                 skipped.append(
                     {
@@ -323,7 +368,7 @@ async def run_intelligence(
             skipped.extend(metric_skipped)
     for dataset in missing_contract_datasets:
         try:
-            rows = await fetch(dataset, user, DEFAULT_LIMIT)
+            rows = await _fetch_population(dataset)
         except Exception as exc:
             skipped.append(
                 {
@@ -504,6 +549,14 @@ async def run_intelligence(
         "signals": [artifact["signal"] for artifact in artifacts],
         "artifacts": artifacts,
         "skipped": skipped,
+        # E3 — manifiesto poblacional: un registro exacto por dataset leido en
+        # la ruta certificada (population_total via COUNT en el mismo snapshot,
+        # rows_fetched, complete). population_complete=False solo cuando algun
+        # dataset quedo declarado parcial (population_truncated en skipped).
+        "population": population_manifests,
+        "population_complete": all(
+            bool(item.get("complete")) for item in population_manifests
+        ),
         "contracts": [
             {
                 "cartridge": contract.get("cartridge"),
