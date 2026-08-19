@@ -95,6 +95,7 @@ from app.services.control_room.business_action_handle import (
 from app.services.csrf import require_csrf
 from app.services.intelligence import history as intelligence_history
 from app.services.intelligence import market_decision_validation
+from app.services.control_room import cycle_blackboard
 from app.services.permissions import require_permission
 from app.services.security_context import build_security_context, verify_signed_security_context
 from app.routers.control_room_surfaces import router as surfaces_router
@@ -372,6 +373,20 @@ async def control_room_summary(user: dict = Depends(require_authenticated)):
             "summary", user, lambda: control_room_service.summary(user)
         ),
     )
+
+
+@router.get(
+    "/blackboard",
+    dependencies=[Depends(require_permission("operations.read"))],
+)
+async def control_room_blackboard(
+    limit: int = Query(default=20, ge=1, le=100),
+    user: dict = Depends(require_authenticated),
+):
+    """E5b — la pizarra del ciclo: que corrio, que encontro, que aprendio y
+    como se movieron las creencias (una sola lectura scoped; secciones sin
+    filas = listas vacias, jamas relleno)."""
+    return await cycle_blackboard.read_blackboard(user, limit=limit)
 
 
 @router.get(
