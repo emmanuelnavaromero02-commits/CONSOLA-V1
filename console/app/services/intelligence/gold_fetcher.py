@@ -213,6 +213,130 @@ async def query_gold_dataset_rows(
         await conn.close()
 
 
+def _population_max_rows() -> int:
+    """Techo operativo de lectura poblacional (E3). No es un cap de negocio:
+    cuando se alcanza, el run se declara PARCIAL con los conteos exactos —
+    jamas truncamiento silencioso. Subirlo es una decision de capacidad de
+    memoria del nodo, no de correccion."""
+    import os
+
+    try:
+        value = int(os.environ.get("INTELLIGENCE_POPULATION_MAX_ROWS", "") or 250_000)
+    except (TypeError, ValueError):
+        value = 250_000
+    return max(1_000, value)
+
+
+async def query_gold_dataset_population(
+    dataset: str, user: dict | None
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """E3 — lectura poblacional COMPLETA con manifiesto exacto (sin cap de 5.000).
+
+    A diferencia de query_gold_dataset_rows (preview, cap 5.000 por doctrina
+    F12), esta ruta es la CERTIFICADA para el motor de senales: cuenta la
+    poblacion total en SQL dentro del MISMO snapshot (repeatable_read) y lee
+    todas las filas por lotes via cursor. Devuelve (rows, manifest) donde el
+    manifiesto declara la cuadratura: population_total exacto, rows_fetched,
+    complete, y el techo operativo si aplico. Fail-closed: si la lectura
+    completa no cuadra con el COUNT del mismo snapshot, truena — jamas un
+    parcial disfrazado de completo.
+    """
+    dsn = _gold_dsn()
+    if not dsn:
+        raise HTTPException(503, "gold database unavailable")
+    _gold_table(dataset)
+    tenant_id, workspace_id = workspace_scope(user)
+    if not tenant_id:
+        raise HTTPException(
+            403, "gold dataset requires complete tenant/workspace scope"
+        )
+    ceiling = _population_max_rows()
+    conn = await asyncpg.connect(dsn, command_timeout=60)
+    try:
+        async with conn.transaction(isolation="repeatable_read", readonly=True):
+            await conn.execute(
+                "SELECT set_config('app.tenant_id', $1, true), set_config('app.workspace_id', $2, true)",
+                tenant_id or "",
+                workspace_id,
+            )
+            relation = await resolve_published_gold_relation(
+                conn, tenant_id, workspace_id, dataset
+            )
+            benchmark_head = ""
+            authority: dict[tuple[str, str], dict[str, Any]] = {}
+            if dataset in BENCHMARK_AUTHORITY_DATASETS:
+                if dataset == BENCHMARK_DATASET:
+                    benchmark_head = relation.run_id
+                else:
+                    try:
+                        benchmark_relation = await resolve_published_gold_relation(
+                            conn, tenant_id, workspace_id, BENCHMARK_DATASET
+                        )
+                        benchmark_head = benchmark_relation.run_id
+                    except HTTPException:
+                        benchmark_head = ""
+                authority = await resolve_benchmark_approval_authority(
+                    tenant_id, workspace_id, benchmark_head
+                )
+            record_publication_read(dataset, relation)
+            exists = bool(await conn.fetchval("SELECT to_regclass($1)", relation.sql))
+            if not exists:
+                raise HTTPException(404, f"dataset unavailable: {dataset}")
+            columns = await published_relation_columns(conn, relation)
+            if "workspace_id" not in columns:
+                raise HTTPException(403, f"dataset is not workspace scoped: {dataset}")
+            if "tenant_id" not in columns:
+                raise HTTPException(403, f"dataset is not tenant scoped: {dataset}")
+            population_total = int(
+                await conn.fetchval(
+                    f"SELECT COUNT(*) FROM {relation.sql} WHERE workspace_id::text = $1 AND tenant_id::text = $2",
+                    workspace_id,
+                    tenant_id,
+                )
+                or 0
+            )
+            rows: list[dict[str, Any]] = []
+            truncated = False
+            cursor = await conn.cursor(
+                f"SELECT * FROM {relation.sql} WHERE workspace_id::text = $1 AND tenant_id::text = $2",
+                workspace_id,
+                tenant_id,
+            )
+            while True:
+                batch = await cursor.fetch(10_000)
+                if not batch:
+                    break
+                remaining = ceiling - len(rows)
+                if len(batch) > remaining:
+                    rows.extend(dict(record) for record in batch[:remaining])
+                    truncated = True
+                    break
+                rows.extend(dict(record) for record in batch)
+            if not truncated and len(rows) != population_total:
+                # Mismo snapshot: esto solo puede ser un bug de cuadratura.
+                raise HTTPException(
+                    500,
+                    f"population accounting mismatch for {dataset}: "
+                    f"fetched {len(rows)} != counted {population_total}",
+                )
+            projected = _project_operational_truth_rows(
+                dataset, rows, authority, benchmark_head=benchmark_head
+            )
+            manifest = {
+                "dataset": dataset,
+                "population_total": population_total,
+                "rows_fetched": len(projected),
+                "complete": not truncated,
+                "ceiling": ceiling if truncated else None,
+                "head_run_id": relation.run_id,
+                "head_generation": relation.generation,
+                "source": "gold_population_cursor",
+            }
+            return projected, manifest
+    finally:
+        await conn.close()
+
+
 async def query_intelligence_dataset_rows(
     dataset: str, user: dict | None, limit: int = 5000
 ) -> list[dict[str, Any]]:
