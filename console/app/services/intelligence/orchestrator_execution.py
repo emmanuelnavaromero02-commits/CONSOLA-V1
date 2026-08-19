@@ -17,11 +17,24 @@ from app.services.intelligence import (
     monte_carlo_service,
     orchestrator_execution_truth as truth,
 )
+from app.services.intelligence.minimax_allocation import (
+    MinimaxValidationError,
+    solve_minimax_allocation,
+)
+from app.services.intelligence.permutation_test import (
+    PermutationValidationError,
+    run_permutation_test,
+)
 from app.services.intelligence.utils import json_default, json_dumps, public_json
 
 FORBIDDEN_SCOPE_KEYS = {"tenant_id", "workspace_id", "security_context"}
 TERMINAL_STATUSES = {"succeeded", "skipped", "failed", "candidate_only"}
-EXECUTABLE_ENGINES = {"monte_carlo", "bayesian_calibration"}
+EXECUTABLE_ENGINES = {
+    "monte_carlo",
+    "bayesian_calibration",
+    "permutation_test",
+    "minimax_allocation",
+}
 CANDIDATE_ENGINES = {
     "constrained_optimizer_candidate",
     "mpc_candidate",
@@ -70,6 +83,30 @@ ENGINE_REGISTRY: dict[str, EngineContract] = {
         },
         output_contract={
             "evidence": ["posterior_mean", "sample_count", "confidence_score"]
+        },
+        timeout_ms=5_000,
+        retries=0,
+        deterministic=True,
+        side_effects="none",
+        requires_approval=False,
+    ),
+    "permutation_test": EngineContract(
+        engine_name="permutation_test",
+        status="allowlisted",
+        input_contract={"required": ["engine_inputs.permutation_test"]},
+        output_contract={"evidence": ["p_value", "verdict", "input_digest"]},
+        timeout_ms=5_000,
+        retries=0,
+        deterministic=True,
+        side_effects="none",
+        requires_approval=False,
+    ),
+    "minimax_allocation": EngineContract(
+        engine_name="minimax_allocation",
+        status="allowlisted",
+        input_contract={"required": ["engine_inputs.minimax_allocation"]},
+        output_contract={
+            "evidence": ["selected", "worst_unmitigated_regret", "input_digest"]
         },
         timeout_ms=5_000,
         retries=0,
@@ -236,8 +273,14 @@ def _engine_names_from_descriptors(items: Any) -> list[str]:
 def _executable_engines_for_problem(problem_type: str) -> list[str]:
     if problem_type in {"risk_forecast", "temporal_control"}:
         return ["monte_carlo", "bayesian_calibration"]
-    if problem_type == "resource_allocation":
-        return ["monte_carlo"]
+    if problem_type in {"resource_allocation", "budget_optimization"}:
+        # E4: el hueco 'constrained_optimizer_candidate — not yet implemented'
+        # tiene ya su forma acotada y EXACTA: minimax top-K de regret. El
+        # candidato general sigue declarado para lo que el minimax no cubre.
+        return ["monte_carlo", "minimax_allocation"]
+    if problem_type == "data_quality":
+        # E4: concentracion/sesgo — ¿azar o patron? — con test de permutacion.
+        return ["permutation_test"]
     return []
 
 
@@ -632,6 +675,80 @@ async def _run_bayesian_lookup(
     return "succeeded", summary, evidence_refs, None, None
 
 
+def _run_permutation(
+    *, engine_inputs: dict[str, Any]
+) -> tuple[str, dict[str, Any], list[dict[str, Any]], str | None, str | None]:
+    """E4 — motor puro y determinista; sin inputs no corre (jamas inventa)."""
+    payload = engine_inputs.get("permutation_test")
+    if not isinstance(payload, dict) or not payload:
+        return (
+            "skipped",
+            {"status": "skipped", "reason": "engine_input_missing"},
+            [],
+            "engine_input_missing",
+            None,
+        )
+    try:
+        summary = run_permutation_test(
+            categories=payload.get("categories") or [],
+            draws=payload.get("draws"),
+            focus_key=str(payload.get("focus_key") or ""),
+            observed=payload.get("observed"),
+            iterations=payload.get("iterations"),
+            seed=payload.get("seed", 0),
+        )
+    except PermutationValidationError as exc:
+        return (
+            "skipped",
+            {"status": "skipped", "reason": "invalid_engine_input", "detail": str(exc)},
+            [],
+            "invalid_engine_input",
+            str(exc),
+        )
+    evidence_refs = [
+        {
+            "type": "deterministic_engine",
+            "id": f"permutation:{summary['input_digest'][:16]}",
+        }
+    ]
+    return "succeeded", summary, evidence_refs, None, None
+
+
+def _run_minimax(
+    *, engine_inputs: dict[str, Any]
+) -> tuple[str, dict[str, Any], list[dict[str, Any]], str | None, str | None]:
+    """E4 — asignacion minimax exacta; sin inputs no corre (jamas inventa)."""
+    payload = engine_inputs.get("minimax_allocation")
+    if not isinstance(payload, dict) or not payload:
+        return (
+            "skipped",
+            {"status": "skipped", "reason": "engine_input_missing"},
+            [],
+            "engine_input_missing",
+            None,
+        )
+    try:
+        summary = solve_minimax_allocation(
+            candidates=payload.get("candidates") or [],
+            capacity=payload.get("capacity"),
+        )
+    except MinimaxValidationError as exc:
+        return (
+            "skipped",
+            {"status": "skipped", "reason": "invalid_engine_input", "detail": str(exc)},
+            [],
+            "invalid_engine_input",
+            str(exc),
+        )
+    evidence_refs = [
+        {
+            "type": "deterministic_engine",
+            "id": f"minimax:{summary['input_digest'][:16]}",
+        }
+    ]
+    return "succeeded", summary, evidence_refs, None, None
+
+
 async def _execute_engine(
     user: dict,
     *,
@@ -668,6 +785,10 @@ async def _execute_engine(
         )
     if engine_name == "monte_carlo":
         return await _run_monte_carlo(user, run=run, engine_inputs=engine_inputs)
+    if engine_name == "permutation_test":
+        return _run_permutation(engine_inputs=engine_inputs)
+    if engine_name == "minimax_allocation":
+        return _run_minimax(engine_inputs=engine_inputs)
     if engine_name == "bayesian_calibration":
         return await _run_bayesian_lookup(
             conn,
