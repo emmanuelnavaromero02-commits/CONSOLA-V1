@@ -300,6 +300,34 @@ _SENSITIVE_ARG_FRAGMENTS = (
 _APPROVAL_DECISION_TOOLS = {"approve_goal_step", "reject_goal_step"}
 _REFINE_DIRECT_ADMIN_TOOLS = {"save_dataset", "materialize"}
 _ENTITY_DIRECT_ADMIN_TOOLS = {"create_entity"}
+# publish_app exige intencion EXPLICITA en el mensaje actual del usuario
+# (canal confiable). Antes caia al 'write' generico, asi que contenido no
+# confiable en tool results/hints podia inducir la publicacion pese a un "NO
+# publiques" — el vector de prompt injection del red-team (14/14). Mismo patron
+# ya usado para create_entity. (delete_app NO va aqui: ya esta en
+# _STUDIO_DIRECT_ADMIN_BLOCKED_TOOLS, nunca es escritura directa.)
+_PUBLISH_DIRECT_ADMIN_TOOLS = {"publish_app"}
+_PUBLISH_INTENT_PHRASES = (
+    "publica",
+    "publicar",
+    "publish",
+    "genera la app",
+    "generar la app",
+    "crea la app",
+    "crear la app",
+    "crea la aplicación",
+    "nueva app",
+    "actualiza la app",
+    "actualizar la app",
+    "elimina la app",
+    "eliminar la app",
+    "borra la app",
+)
+
+
+def _is_explicit_publish_request(message: str) -> bool:
+    text = (message or "").casefold()
+    return any(phrase in text for phrase in _PUBLISH_INTENT_PHRASES)
 _STUDIO_DIRECT_ADMIN_BLOCKED_TOOLS = {
     "airflow_delete_dag",
     "delete_app",
@@ -432,6 +460,10 @@ def _admin_direct_write_allowed(
         return step == 4 and refine_preview_ok
     if bare_name in _ENTITY_DIRECT_ADMIN_TOOLS:
         return step == 3 and _is_explicit_entity_create_request(message)
+    if bare_name in _PUBLISH_DIRECT_ADMIN_TOOLS:
+        # La escritura de app solo procede si el USUARIO la pidio en su mensaje
+        # actual; el contenido no confiable no puede inducirla.
+        return _is_explicit_publish_request(message)
     return risk_meta.get("risk_level") == "write"
 
 
