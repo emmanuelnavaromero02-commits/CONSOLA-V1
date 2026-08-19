@@ -74,6 +74,7 @@ def update_watermark(
                     tenant_id = EXCLUDED.tenant_id,
                     workspace_id = EXCLUDED.workspace_id,
                     updated_at = NOW()
+                WHERE COALESCE(entity_watermarks.last_watermark_value, '') <= EXCLUDED.last_watermark_value
                 """,
                 (_CARTRIDGE_ID, entity_name, watermark_field, last_watermark_value, last_run_id, tenant_id, workspace_id, scope),
             )
