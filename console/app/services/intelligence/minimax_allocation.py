@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from typing import Any
 
 MINIMAX_RULESET_VERSION = "minimax_topk_v1"
@@ -30,6 +31,21 @@ MAX_CANDIDATES = 100_000
 
 class MinimaxValidationError(ValueError):
     pass
+
+
+def _finite_number(value: object, *, field: str) -> float:
+    """Numero real finito y NO booleano (rechaza NaN, +/-Infinity y bool):
+    NaN burlaba los rangos por comparacion (NaN<=x es False) e Infinity pasaba
+    cualquier cota, dejando pasar un regret NaN no serializable."""
+    if isinstance(value, bool):
+        raise MinimaxValidationError(f"{field} must be a number, not a boolean")
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise MinimaxValidationError(f"{field} must be numeric") from exc
+    if not math.isfinite(number):
+        raise MinimaxValidationError(f"{field} must be finite (no NaN/Infinity)")
+    return number
 
 
 def _clean_candidates(raw: Any) -> list[dict[str, Any]]:
@@ -48,22 +64,15 @@ def _clean_candidates(raw: Any) -> list[dict[str, Any]]:
         if candidate_id in seen:
             raise MinimaxValidationError(f"duplicate candidate id: {candidate_id}")
         seen.add(candidate_id)
-        try:
-            risk = float(item.get("risk"))
-        except (TypeError, ValueError) as exc:
-            raise MinimaxValidationError(
-                f"candidate risk must be numeric: {candidate_id}"
-            ) from exc
+        risk = _finite_number(item.get("risk"), field=f"candidate risk ({candidate_id})")
         if not 0.0 <= risk <= 1.0:
             raise MinimaxValidationError(
                 f"candidate risk must be in [0, 1]: {candidate_id}"
             )
-        try:
-            impact = float(item.get("impact_weight", 1.0))
-        except (TypeError, ValueError) as exc:
-            raise MinimaxValidationError(
-                f"candidate impact_weight must be numeric: {candidate_id}"
-            ) from exc
+        impact = _finite_number(
+            item.get("impact_weight", 1.0),
+            field=f"candidate impact_weight ({candidate_id})",
+        )
         if impact <= 0:
             raise MinimaxValidationError(
                 f"candidate impact_weight must be > 0: {candidate_id}"
@@ -94,6 +103,8 @@ def solve_minimax_allocation(
     """Selecciona hasta `capacity` candidatos minimizando el máximo regret de
     los NO seleccionados. Exacto y determinista; sin azar, sin semilla."""
     cleaned = _clean_candidates(candidates)
+    if isinstance(capacity, bool):
+        raise MinimaxValidationError("capacity must be an integer, not a boolean")
     try:
         capacity_value = int(capacity)
     except (TypeError, ValueError) as exc:
