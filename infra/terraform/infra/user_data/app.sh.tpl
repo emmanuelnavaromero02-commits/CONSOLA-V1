@@ -92,6 +92,16 @@ chmod 600 /etc/modecissions/aws-entrypoint.env
 bash /opt/modecissions/scripts/aws-entrypoint.sh
 echo "[userdata] secrets injected: $(date -Iseconds)"
 
+# T2e: daily scheduled backup — the versioned cron.d file rides in the repo
+# (mirror of the GCP host provisioning; backup.sh backend pinned to s3).
+if [[ -f /opt/modecissions/infra/terraform/files/omega-backup-aws.cron ]]; then
+  install -m 0644 -o root -g root \
+    /opt/modecissions/infra/terraform/files/omega-backup-aws.cron /etc/cron.d/omega-backup
+  touch /var/log/omega-backup.log
+  chmod 0640 /var/log/omega-backup.log
+  echo "[userdata] installed /etc/cron.d/omega-backup"
+fi
+
 date -Iseconds > /opt/modecissions/READY
 chown ubuntu:ubuntu /opt/modecissions/READY
 

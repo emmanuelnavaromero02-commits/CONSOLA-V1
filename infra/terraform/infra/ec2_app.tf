@@ -12,6 +12,12 @@ resource "aws_instance" "app" {
     http_put_response_hop_limit = 2
   }
 
+  # T2e: toda la base (Postgres en contenedores) vive en este host — una
+  # terminacion accidental la destruye. El candado exige un paso deliberado
+  # (desactivarlo) antes de terminate/destroy; los respaldos diarios a S3
+  # (cron omega-backup) son la red de fondo.
+  disable_api_termination = true
+
   root_block_device {
     volume_type           = "gp3"
     volume_size           = 150
