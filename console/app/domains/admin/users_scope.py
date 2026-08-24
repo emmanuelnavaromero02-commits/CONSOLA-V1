@@ -142,10 +142,14 @@ async def visible_user_ids_for_admin(
     workspace_scope_db_unavailable: Callable[[BaseException], bool],
     is_global_iam_admin: Callable[[dict | None], bool],
     session_workspace_ids: Callable[[dict | None], set[str]],
+    admin_workspace_ids: Callable[[dict | None], set[str]] | None = None,
 ) -> set[int]:
     if is_global_iam_admin(admin_user):
         return {int(u["id"]) for u in users if u.get("id") is not None}
-    workspace_ids = sorted(session_workspace_ids(admin_user))
+    # Scope del ADMIN: solo los workspaces donde tiene rol IAM-admin (cierra el
+    # leak horizontal). El candidato se sigue resolviendo con session_ids amplio.
+    admin_scope = admin_workspace_ids or session_workspace_ids
+    workspace_ids = sorted(admin_scope(admin_user))
     if not workspace_ids:
         return set()
     user_by_id = {int(u["id"]): u for u in users if u.get("id") is not None}
@@ -242,10 +246,15 @@ async def assert_can_manage_target_user(
     is_global_iam_admin: Callable[[dict | None], bool],
     session_workspace_ids: Callable[[dict | None], set[str]],
     target_workspace_ids: Callable[[int], Awaitable[set[str]]],
+    admin_workspace_ids: Callable[[dict | None], set[str]] | None = None,
 ) -> None:
     if is_global_iam_admin(admin_user):
         return
-    memberships = session_workspace_ids(admin_user)
+    # Solo cuenta como "membresia" para GESTIONAR a un usuario objetivo el
+    # workspace donde el actor es IAM-admin; ser viewer en el workspace
+    # compartido no habilita PATCH/DELETE (cierre del leak horizontal a write).
+    admin_scope = admin_workspace_ids or session_workspace_ids
+    memberships = admin_scope(admin_user)
     if not memberships:
         raise HTTPException(403, "workspace access forbidden")
     target = await auth_get_user_by_id(target_user_id)

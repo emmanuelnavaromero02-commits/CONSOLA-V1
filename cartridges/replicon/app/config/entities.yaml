@@ -9,6 +9,20 @@ entities:
     watermark_field: last_modified
     page_size: 1000
     description: "Replicon users with cost and billing rates"
+    # T2d: identidad de contacto protegida en bronze (estandar de la casa:
+    # mismo vocabulario masked/shadowed que salesforce/hubspot/sap_*).
+    # NOTA deliberada: username queda PLANO por ahora — es la llave de join
+    # (UserSkills."User Name", ResourceAllocation/TimeEntry.username) y el
+    # display de los tableros de consultores; cambiarlo a shadowed es una
+    # decision de producto del dueno (rompe la vista diaria). Las tarifas
+    # (currenthourly*) permanecen numericas: alimentan costo_consultor_mensual;
+    # con nombres/email enmascarados quedan pseudonimizadas.
+    protection:
+      firstname: masked
+      lastname: masked
+      email: masked
+      loginname: masked
+      externalid: shadowed
 
   - entity: Client
     mode: full

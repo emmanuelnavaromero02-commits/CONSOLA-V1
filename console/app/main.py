@@ -191,6 +191,7 @@ from app.domains.iam.roles import (
     WORKSPACE_ASSIGNABLE_ROLES as _IAM_WORKSPACE_ASSIGNABLE_ROLES,
     assignable_role as _assignable_role_impl,
     is_global_iam_admin as _is_global_iam_admin_impl,
+    iam_admin_workspace_ids as _iam_admin_workspace_ids_impl,
     session_workspace_ids as _session_workspace_ids_impl,
     workspace_scope_db_unavailable as _workspace_scope_db_unavailable_impl,
 )
@@ -7628,6 +7629,10 @@ def _session_workspace_ids(user: dict | None) -> set[str]:
     return _session_workspace_ids_impl(user)
 
 
+def _iam_admin_workspace_ids(user: dict | None) -> set[str]:
+    return _iam_admin_workspace_ids_impl(user)
+
+
 def _workspace_scope_db_unavailable(exc: BaseException) -> bool:
     return _workspace_scope_db_unavailable_impl(exc)
 
@@ -7669,6 +7674,7 @@ async def _visible_user_ids_for_admin(admin_user: dict, users: list[dict]) -> se
         workspace_scope_db_unavailable=_workspace_scope_db_unavailable,
         is_global_iam_admin=_is_global_iam_admin,
         session_workspace_ids=_session_workspace_ids,
+        admin_workspace_ids=_iam_admin_workspace_ids,
     )
 
 
@@ -7700,6 +7706,7 @@ async def _assert_can_manage_target_user(admin_user: dict, target_user_id: int) 
         is_global_iam_admin=_is_global_iam_admin,
         session_workspace_ids=_session_workspace_ids,
         target_workspace_ids=_target_user_workspace_ids,
+        admin_workspace_ids=_iam_admin_workspace_ids,
     )
 
 

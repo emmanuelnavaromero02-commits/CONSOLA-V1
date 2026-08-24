@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.core.sap_client import SapHcmClient
 from app.services.parquet_service import write_parquet_and_upload
 from app.services.runlog_service import create_run, fail_run, finish_run
+from app.services.watermark_filters import (
+    normalized_watermark,
+    odata_datetime_literal,
+    parse_watermark_datetime,
+)
 from app.services.watermark_service import get_watermark, update_watermark
+
+
+logger = logging.getLogger(__name__)
 
 # Flush a parquet file every BATCH_SIZE rows. Buffer is drained after every
 # OData page is appended, so memory stays bounded regardless of total volume —
@@ -18,10 +27,20 @@ CARTRIDGE_ID = "sap_hcm"
 
 
 def _max_watermark(rows: list[dict[str, Any]], watermark_field: str | None) -> str | None:
+    """T2b: maximo por datetime PARSEADO (soporta /Date(ms)/, epoch e ISO
+    mezclados) y salida ISO canonica — jamas un max() de strings de formatos
+    distintos, jamas persistir un crudo."""
     if not rows or not watermark_field:
         return None
-    values = [r[watermark_field] for r in rows if r.get(watermark_field) is not None]
-    return max(values) if values else None
+    parsed = [
+        parse_watermark_datetime(r.get(watermark_field))
+        for r in rows
+        if r.get(watermark_field) is not None
+    ]
+    parsed = [value for value in parsed if value is not None]
+    if not parsed:
+        return None
+    return max(parsed).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _apply_watermark_filter(
@@ -29,7 +48,19 @@ def _apply_watermark_filter(
     watermark_field: str,
     watermark_value: str,
 ) -> list[dict[str, Any]]:
-    return [r for r in rows if str(r.get(watermark_field, "")) > watermark_value]
+    """T2b: filtro cliente por datetime parseado. Una fila cuyo valor no
+    parsea se CONSERVA (mejor un duplicado que el silver deduplica, que una
+    fila perdida en silencio); un watermark no parseable desactiva el filtro
+    cliente completo por la misma razon."""
+    boundary = parse_watermark_datetime(watermark_value)
+    if boundary is None:
+        return rows
+    kept: list[dict[str, Any]] = []
+    for row in rows:
+        value = parse_watermark_datetime(row.get(watermark_field))
+        if value is None or value > boundary:
+            kept.append(row)
+    return kept
 
 
 def _apply_date_range_filter(
@@ -128,7 +159,13 @@ def run_entity(
         while True:
             clauses: list[str] = []
             if mode == "incremental" and watermark and watermark_field:
-                clauses.append(f"{watermark_field} gt '{watermark}'")
+                # T2b: literal Edm.DateTime tipado (soporta /Date(ms)/, epoch
+                # e ISO); si el watermark no parsea, NO se manda filtro de
+                # servidor (full snapshot seguro) en vez de un 400 o un
+                # filtro-texto que pierde filas. Sin interpolacion cruda.
+                literal = odata_datetime_literal(watermark)
+                if literal is not None:
+                    clauses.append(f"{watermark_field} gt {literal}")
             if odata_filter:
                 clauses.append(f"({odata_filter})")
             filter_expr = " and ".join(clauses) if clauses else None
@@ -166,17 +203,20 @@ def run_entity(
             _flush_buffer(allow_empty=total_records == 0)
 
         if mode == "incremental" and watermark_field and max_wm:
-            safe_watermark = max_wm
-            try:
-                dt = datetime.fromisoformat(
-                    max_wm.replace("Z", "+00:00").replace(" ", "T")
+            # T2b: persistir SOLO ISO canonico con el retroceso aplicado.
+            # _max_watermark ya normaliza, asi que esto siempre parsea; el
+            # guard queda por si llega un crudo por otra via — en ese caso se
+            # conserva el watermark anterior (no envenenar la tabla).
+            safe_watermark = normalized_watermark(
+                max_wm, backoff_minutes=WATERMARK_BUFFER_MINUTES
+            )
+            if safe_watermark is None:
+                logger.warning(
+                    "watermark no parseable para %s (%r): se conserva el anterior",
+                    entity,
+                    max_wm,
                 )
-                safe_watermark = (
-                    dt - timedelta(minutes=WATERMARK_BUFFER_MINUTES)
-                ).strftime("%Y-%m-%dT%H:%M:%SZ")
-            except Exception:
-                pass
-
+        if mode == "incremental" and watermark_field and max_wm and safe_watermark:
             update_watermark(
                 entity_name=entity,
                 watermark_field=watermark_field,

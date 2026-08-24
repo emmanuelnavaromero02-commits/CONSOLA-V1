@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import re
 import secrets
+import unicodedata
 from collections.abc import Mapping
 from typing import Pattern
 
@@ -17,10 +18,17 @@ def normalize_email_or_400(
     email_re: Pattern[str],
     required_message: str = "email is required",
 ) -> str:
-    email = str(value or "").strip().lower()
+    # Choke-point de IDENTIDAD: normalizar a NFKC colapsa equivalentes NFC/NFD
+    # visualmente iguales; rechazar caracteres de formato/control (Cf/Cc:
+    # zero-width, BiDi, controles) que ocultan homografos; y exigir ASCII cierra
+    # los homoglifos cirilicos/griegos en la fuente (una cuenta = un email).
+    raw = unicodedata.normalize("NFKC", str(value or "")).strip()
+    if any(unicodedata.category(ch) in {"Cf", "Cc"} for ch in raw):
+        raise HTTPException(400, "invalid email")
+    email = raw.lower()
     if not email:
         raise HTTPException(400, required_message)
-    if len(email) > 254 or not email_re.fullmatch(email):
+    if not email.isascii() or len(email) > 254 or not email_re.fullmatch(email):
         raise HTTPException(400, "invalid email")
     return email
 

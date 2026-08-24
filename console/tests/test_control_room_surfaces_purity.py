@@ -99,7 +99,7 @@ async def test_surface_collection_uses_pure_projector_not_business_builders():
     dashboard_builder.assert_not_called()
 
 
-def test_legacy_get_matrix_remains_exactly_29_routes():
+def test_legacy_get_matrix_remains_exactly_30_routes():
     from test_control_room_all_get_purity import GET_PATHS
 
     legacy_paths = {
@@ -107,5 +107,5 @@ def test_legacy_get_matrix_remains_exactly_29_routes():
         for route in routes.router.routes
         if "GET" in (route.methods or set()) and route.path in GET_PATHS
     }
-    assert len(GET_PATHS) == 29
+    assert len(GET_PATHS) == 30
     assert legacy_paths == set(GET_PATHS)

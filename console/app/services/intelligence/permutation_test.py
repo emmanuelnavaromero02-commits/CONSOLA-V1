@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import random
 from typing import Any
 
@@ -27,6 +28,34 @@ MIN_ITERATIONS = 1_000
 MAX_ITERATIONS = 100_000
 DEFAULT_ITERATIONS = 10_000
 MIN_DRAWS = 5
+# Techos de complejidad (anti-DoS): el trabajo es draws * iterations *
+# categorias por corrida; sin tope, un cliente podia pedir millones de sorteos.
+MAX_DRAWS = 10_000
+MAX_CATEGORIES = 1_000
+
+
+def _finite_number(value: object, *, field: str) -> float:
+    """Numero real finito y NO booleano. Rechaza NaN, +/-Infinity y bool
+    (True/False colandose como 1/0) — los tres burlaban las validaciones por
+    comparacion, porque NaN<0 es False e inf pasa cualquier cota superior."""
+    if isinstance(value, bool):
+        raise PermutationValidationError(f"{field} must be a number, not a boolean")
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise PermutationValidationError(f"{field} must be numeric") from exc
+    if not math.isfinite(number):
+        raise PermutationValidationError(f"{field} must be finite (no NaN/Infinity)")
+    return number
+
+
+def _finite_int(value: object, *, field: str) -> int:
+    if isinstance(value, bool):
+        raise PermutationValidationError(f"{field} must be an integer, not a boolean")
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise PermutationValidationError(f"{field} must be an integer") from exc
 
 # Umbrales del veredicto (cola superior). Fijos y versionados: cambiarlos es
 # cambiar el contrato del motor, no un ajuste de estilo.
@@ -52,10 +81,9 @@ def _clean_seed(value: Any) -> int:
 
 
 def _clean_iterations(value: Any) -> int:
-    try:
-        iterations = int(value if value is not None else DEFAULT_ITERATIONS)
-    except (TypeError, ValueError) as exc:
-        raise PermutationValidationError("iterations must be an integer") from exc
+    iterations = _finite_int(
+        DEFAULT_ITERATIONS if value is None else value, field="iterations"
+    )
     if not MIN_ITERATIONS <= iterations <= MAX_ITERATIONS:
         raise PermutationValidationError(
             f"iterations must be between {MIN_ITERATIONS} and {MAX_ITERATIONS}"
@@ -66,6 +94,8 @@ def _clean_iterations(value: Any) -> int:
 def _clean_categories(raw: Any) -> list[tuple[str, float]]:
     if not isinstance(raw, list) or not raw:
         raise PermutationValidationError("categories must be a non-empty list")
+    if len(raw) > MAX_CATEGORIES:
+        raise PermutationValidationError(f"too many categories (> {MAX_CATEGORIES})")
     cleaned: list[tuple[str, float]] = []
     seen: set[str] = set()
     for item in raw:
@@ -77,12 +107,7 @@ def _clean_categories(raw: Any) -> list[tuple[str, float]]:
         if key in seen:
             raise PermutationValidationError(f"duplicate category key: {key}")
         seen.add(key)
-        try:
-            weight = float(item.get("weight"))
-        except (TypeError, ValueError) as exc:
-            raise PermutationValidationError(
-                f"category weight must be numeric: {key}"
-            ) from exc
+        weight = _finite_number(item.get("weight"), field=f"category weight ({key})")
         if weight < 0:
             raise PermutationValidationError(f"category weight must be >= 0: {key}")
         cleaned.append((key, weight))
@@ -116,13 +141,12 @@ def run_permutation_test(
     keys = [key for key, _ in cleaned]
     if focus not in keys:
         raise PermutationValidationError(f"focus_key not in categories: {focus}")
-    try:
-        draw_count = int(draws)
-        observed_count = int(observed)
-    except (TypeError, ValueError) as exc:
-        raise PermutationValidationError("draws and observed must be integers") from exc
+    draw_count = _finite_int(draws, field="draws")
+    observed_count = _finite_int(observed, field="observed")
     if observed_count < 0 or draw_count < 0:
         raise PermutationValidationError("draws and observed must be >= 0")
+    if draw_count > MAX_DRAWS:
+        raise PermutationValidationError(f"draws exceeds the cap ({MAX_DRAWS})")
     if observed_count > draw_count:
         raise PermutationValidationError("observed cannot exceed draws")
 

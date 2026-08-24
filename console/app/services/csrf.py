@@ -22,6 +22,7 @@ from typing import Optional
 from fastapi import HTTPException, Request, Response
 
 from app.security import get_internal_api_key
+from app.services.auth import COOKIE_NAME as SESSION_COOKIE_NAME
 from app.services.auth import cookie_secure
 
 CSRF_COOKIE_NAME = "csrf_token"
@@ -125,10 +126,17 @@ async def require_csrf(request: Request) -> None:
     silently logging the victim in as the attacker.
     """
     auth_header = request.headers.get("authorization", "")
-    if auth_header.lower().startswith("bearer "):
-        # Bearer-authed request — CSRF doesn't apply. The bearer token
-        # itself is the auth credential; downstream `require_authenticated`
-        # validates it (and the per-user JWT blacklist).
+    if auth_header.lower().startswith("bearer ") and (
+        SESSION_COOKIE_NAME not in request.cookies
+    ):
+        # Bearer-authed request WITHOUT a session cookie — CSRF doesn't apply.
+        # The bearer token itself is the auth credential; downstream
+        # `require_authenticated` validates it (and the per-user JWT blacklist).
+        # Guard: CSRF only matters when the browser auto-attaches the session
+        # cookie, so a request that also carries mod_session must NOT be exempted
+        # just for prefixing a (possibly bogus) "Bearer " header — that was the
+        # bypass the red-team found. With a session cookie present, fall through
+        # to the full CSRF check below.
         return
 
     if _valid_internal_service_request(request):

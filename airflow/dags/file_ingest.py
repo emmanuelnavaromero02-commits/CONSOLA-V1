@@ -23,8 +23,11 @@ la entidad destino y los detalles de parseo (csv/excel/encoding/sheet).
     }
 
 ## Resultado por archivo
-1. `s3://<bucket>/raw/<cartridge>/<entity>/load_date=<today>/data.parquet`
-   (sobrescribe el día — múltiples archivos del mismo día se concatenan)
+1. `s3://<bucket>/raw/<cartridge>/<entity>/load_date=<today>/data-<hash>.parquet`
+   — un objeto POR archivo fuente (hash del nombre): archivos nuevos del día
+   se ACUMULAN, y reintento/corrección del mismo archivo sobrescribe SOLO su
+   objeto. Nada borra lo ya ingestado (T2c: antes, la segunda corrida del día
+   barría el prefijo y truncaba el bronze al último lote).
 2. Mueve el original a `uploads/<cartridge>/bak/<ts>_<filename>`
 3. Registra el run en `pipeline_runs` (vía mcp-infra)
 """
@@ -32,6 +35,7 @@ la entidad destino y los detalles de parseo (csv/excel/encoding/sheet).
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import io
 import os
 import re
@@ -447,21 +451,41 @@ def file_ingest():
             f"[file_ingest] {cartridge_id}.{entity} → {len(df)} filas de {len(files)} archivo(s)"
         )
 
-        # Wipe day's prefix (so re-runs are idempotent for the same day)
-        for obj in client.list_objects(bucket, prefix=out_pref, recursive=True):
-            client.remove_object(bucket, obj.object_name)
-
-        # Write parquet
-        table = pa.Table.from_pandas(df)
-        buf = io.BytesIO()
-        pq.write_table(table, buf)
-        buf.seek(0)
-        size = buf.getbuffer().nbytes
-        out_key = f"{out_pref}data.parquet"
-        client.put_object(
-            bucket, out_key, buf, size, content_type="application/octet-stream"
-        )
-        storage_uri = f"s3://{bucket}/{out_key}"
+        # T2c: un parquet POR archivo fuente, nombrado por hash del nombre.
+        # Idempotencia real sin destruir el dia: el reintento (o una
+        # correccion re-subida con el mismo nombre) sobrescribe SOLO su
+        # objeto; archivos nuevos del mismo dia se ACUMULAN y el lector
+        # (**/*.parquet, union_by_name) los concatena. El barrido del prefijo
+        # que vivia aqui truncaba el bronze al ultimo lote del dia: como los
+        # originales se archivan a bak/ tras cada corrida, lo de las 9:00
+        # desaparecia cuando llegaba lo de las 14:00.
+        size = 0
+        for f, frame in zip(files, frames):
+            if tenant_id:
+                frame["tenant_id"] = str(tenant_id)
+            if workspace_id:
+                frame["workspace_id"] = str(workspace_id)
+            table = pa.Table.from_pandas(frame)
+            buf = io.BytesIO()
+            pq.write_table(table, buf)
+            buf.seek(0)
+            part_size = buf.getbuffer().nbytes
+            digest = hashlib.sha256(f["name"].encode("utf-8")).hexdigest()[:12]
+            out_key = f"{out_pref}data-{digest}.parquet"
+            client.put_object(
+                bucket, out_key, buf, part_size,
+                content_type="application/octet-stream",
+            )
+            size += part_size
+        # Transicion: el data.parquet monolitico del patron viejo (si este
+        # dia ya tenia uno) se retira para no duplicar contra los objetos
+        # por-archivo. SOLO ese nombre exacto; jamas un barrido del prefijo.
+        legacy_key = f"{out_pref}data.parquet"
+        try:
+            client.remove_object(bucket, legacy_key)
+        except Exception:  # noqa: BLE001
+            pass
+        storage_uri = f"s3://{bucket}/{out_pref}"
 
         # Move originals to bak/
         ts = started.strftime("%Y%m%d_%H%M%S")

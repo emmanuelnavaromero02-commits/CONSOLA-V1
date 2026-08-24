@@ -215,3 +215,67 @@ def test_minimax_is_deterministic():
     second = solve_minimax_allocation(candidates=list(reversed(_stars())), capacity=3)
     assert first["selected"] == second["selected"], "el orden de entrada no importa"
     assert first["input_digest"] != "", "digest de reproducibilidad presente"
+
+
+# ── E4-SEC: endurecimiento contra el red-team (NaN/Infinity/bool + DoS) ──────
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_permutation_rejects_non_finite_weights(bad):
+    with pytest.raises(PermutationValidationError):
+        run_permutation_test(
+            categories=[{"key": "a", "weight": bad}, {"key": "b", "weight": 1}],
+            draws=10, focus_key="a", observed=5, seed=1,
+        )
+
+
+def test_permutation_rejects_boolean_numbers():
+    for kwargs in (
+        dict(draws=True, observed=1),
+        dict(draws=10, observed=True),
+    ):
+        with pytest.raises(PermutationValidationError):
+            run_permutation_test(
+                categories=[{"key": "a", "weight": 1}, {"key": "b", "weight": 1}],
+                focus_key="a", seed=1, **kwargs,
+            )
+    with pytest.raises(PermutationValidationError):
+        run_permutation_test(
+            categories=[{"key": "a", "weight": True}, {"key": "b", "weight": 1}],
+            draws=10, focus_key="a", observed=1, seed=1,
+        )
+
+
+def test_permutation_caps_complexity():
+    with pytest.raises(PermutationValidationError):
+        run_permutation_test(
+            categories=[{"key": "a", "weight": 1}, {"key": "b", "weight": 1}],
+            draws=10_001, focus_key="a", observed=1, seed=1,
+        )
+    with pytest.raises(PermutationValidationError):
+        run_permutation_test(
+            categories=[{"key": f"k{i}", "weight": 1} for i in range(1001)],
+            draws=10, focus_key="k0", observed=1, seed=1,
+        )
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_minimax_rejects_non_finite(bad):
+    with pytest.raises(MinimaxValidationError):
+        solve_minimax_allocation(
+            candidates=[{"id": "x", "risk": 0.5, "impact_weight": bad}], capacity=1
+        )
+    with pytest.raises(MinimaxValidationError):
+        solve_minimax_allocation(
+            candidates=[{"id": "x", "risk": bad, "impact_weight": 1.0}], capacity=1
+        )
+
+
+def test_minimax_rejects_boolean_inputs():
+    with pytest.raises(MinimaxValidationError):
+        solve_minimax_allocation(
+            candidates=[{"id": "x", "risk": 0.5, "impact_weight": 1.0}], capacity=True
+        )
+    with pytest.raises(MinimaxValidationError):
+        solve_minimax_allocation(
+            candidates=[{"id": "x", "risk": True, "impact_weight": 1.0}], capacity=1
+        )

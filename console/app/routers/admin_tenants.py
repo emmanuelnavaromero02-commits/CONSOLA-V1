@@ -41,8 +41,18 @@ def _normalize_name(value: Any, field: str) -> str:
 
 
 def _normalize_email(value: Any) -> str:
-    email = str(value or "").strip().lower()
-    if not email or len(email) > MAX_EMAIL or not EMAIL_RE.fullmatch(email):
+    # Mismo endurecimiento de identidad que accounts.lifecycle (gemelo): NFKC +
+    # rechazo de Cf/Cc + ASCII cierra homografos, zero-width y NFC/NFD.
+    raw = unicodedata.normalize("NFKC", str(value or "")).strip()
+    if any(unicodedata.category(ch) in {"Cf", "Cc"} for ch in raw):
+        raise HTTPException(400, "valid email is required")
+    email = raw.lower()
+    if (
+        not email
+        or not email.isascii()
+        or len(email) > MAX_EMAIL
+        or not EMAIL_RE.fullmatch(email)
+    ):
         raise HTTPException(400, "valid email is required")
     return email
 

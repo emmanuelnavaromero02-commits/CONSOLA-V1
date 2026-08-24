@@ -2,6 +2,7 @@ services:
   # ── Infrastructure ────────────────────────────────────────────────────────────
 
   postgres:
+    security_opt: ["no-new-privileges:true"]
     image: pgvector/pgvector:pg15
     container_name: mode_postgres
     environment:
@@ -33,6 +34,7 @@ services:
       retries: 20
 
   postgres_dev_seed:
+    security_opt: ["no-new-privileges:true"]
     image: postgres:15
     container_name: mode_postgres_dev_seed
     depends_on:
@@ -53,6 +55,7 @@ services:
     restart: "no"
 
   postgres_gold:
+    security_opt: ["no-new-privileges:true"]
     image: postgres:15
     container_name: mode_postgres_gold
     environment:
@@ -82,6 +85,7 @@ services:
       retries: 20
 
   redis:
+    security_opt: ["no-new-privileges:true"]
     image: redis:7-alpine
     container_name: mode_redis
     # Shared rate-limit backend for the console (see console/app/services/
@@ -95,6 +99,7 @@ services:
       retries: 5
 
   minio:
+    security_opt: ["no-new-privileges:true"]
     # v1.43.2 (Claude B7): pin MinIO to a specific RELEASE tag.
     # ``:latest`` silently shipped breaking changes between deploys;
     # pinning here gives reproducible local + staging behaviour. Bump
@@ -124,6 +129,7 @@ services:
       start_period: 10s
 
   minio-init:
+    security_opt: ["no-new-privileges:true"]
     image: minio/mc:RELEASE.2024-11-21T17-21-54Z
     depends_on:
       minio:
@@ -149,6 +155,7 @@ services:
   # ── Application services ──────────────────────────────────────────────────────
 
   console:
+    security_opt: ["no-new-privileges:true"]
     build:
       context: ..
       dockerfile: console/Dockerfile
@@ -292,6 +299,7 @@ services:
     restart: unless-stopped
 
   workspace:
+    security_opt: ["no-new-privileges:true"]
     build:
       context: ../workspace
       dockerfile: Dockerfile
@@ -346,6 +354,7 @@ services:
     restart: unless-stopped
 
   refinement:
+    security_opt: ["no-new-privileges:true"]
     build:
       context: ..
       dockerfile: refinement/Dockerfile
@@ -414,6 +423,7 @@ services:
 
 
   vault:
+    security_opt: ["no-new-privileges:true"]
     build:
       context: ../vault
       dockerfile: Dockerfile
@@ -467,6 +477,7 @@ services:
     restart: unless-stopped
 
   mailhog:
+    security_opt: ["no-new-privileges:true"]
     image: mailhog/mailhog:v1.0.1
     container_name: mode_mailhog
     ports:
@@ -490,6 +501,7 @@ services:
   # data feeding the pipeline, and dev hits Replicon's sandbox URL
   # configured per-environment from Vault.
   replicon:
+    security_opt: ["no-new-privileges:true"]
     build:
       context: ../cartridges/replicon
       dockerfile: Dockerfile
@@ -539,6 +551,7 @@ services:
         condition: service_healthy
 
   salesforce:
+    security_opt: ["no-new-privileges:true"]
     build:
       context: ../cartridges/salesforce
       dockerfile: Dockerfile
@@ -593,6 +606,7 @@ services:
   # HubSpot CRM cartridge follows the Replicon runtime contract: internal
   # microservice, dedicated DB role, Vault-backed credentials, and Airflow DAGs.
   hubspot:
+    security_opt: ["no-new-privileges:true"]
     build:
       context: ../cartridges/hubspot
       dockerfile: Dockerfile
@@ -641,6 +655,7 @@ services:
 
   # Banxico SIE cartridge (PR 2A): Bronze-only, manual DAG, no MCP/refresh.
   banxico:
+    security_opt: ["no-new-privileges:true"]
     build:
       context: ..
       dockerfile: cartridges/banxico/Dockerfile
@@ -676,6 +691,7 @@ services:
 
   # INEGI Banco de Indicadores cartridge: Bronze + governed market context.
   inegi:
+    security_opt: ["no-new-privileges:true"]
     build:
       context: ..
       dockerfile: cartridges/inegi/Dockerfile
@@ -711,6 +727,7 @@ services:
 
   # SEC EDGAR cartridge: Bronze + governed company context.
   sec-edgar:
+    security_opt: ["no-new-privileges:true"]
     build:
       context: ..
       dockerfile: cartridges/sec_edgar/Dockerfile
@@ -751,6 +768,7 @@ services:
   # ``sap`` profile so the default ``docker compose up`` is unchanged.
 
   sap-successfactors:
+    security_opt: ["no-new-privileges:true"]
     profiles: ["sap"]
     build:
       context: ../cartridges/sap_successfactors
@@ -812,6 +830,7 @@ services:
       start_period: 30s
 
   sap-hcm:
+    security_opt: ["no-new-privileges:true"]
     profiles: ["sap"]
     build:
       context: ../cartridges/sap_hcm
@@ -859,6 +878,7 @@ services:
       start_period: 30s
 
   sap-s4hana:
+    security_opt: ["no-new-privileges:true"]
     profiles: ["sap"]
     build:
       context: ../cartridges/sap_s4hana
@@ -909,6 +929,7 @@ services:
   # ── MCP Infrastructure (incluye RAG) ─────────────────────────────────────────
 
   mcp-infra:
+    security_opt: ["no-new-privileges:true"]
     build:
       context: ..
       dockerfile: mcp-infra/Dockerfile
@@ -998,6 +1019,7 @@ services:
   # ── Superset ──────────────────────────────────────────────────────────────────
 
   superset-init:
+    security_opt: ["no-new-privileges:true"]
     # One-shot bootstrap: creates the ``superset`` DB on first boot
     # and runs ``superset db upgrade`` to populate it. Connects as
     # the postgres superuser BY DESIGN — at this point the metastore
@@ -1086,6 +1108,7 @@ services:
     restart: "no"
 
   superset:
+    security_opt: ["no-new-privileges:true"]
     image: apache/superset:3.1.3
     container_name: mode_superset
     environment:
@@ -1136,6 +1159,7 @@ services:
   # volumes where /docker-entrypoint-initdb.d no longer runs.
 
   airflow-init:
+    security_opt: ["no-new-privileges:true"]
     build:
       context: ./airflow
       dockerfile: Dockerfile
@@ -1200,6 +1224,7 @@ services:
     restart: "no"
 
   airflow:
+    security_opt: ["no-new-privileges:true"]
     build:
       context: ./airflow
       dockerfile: Dockerfile
@@ -1327,6 +1352,7 @@ services:
       start_period: 60s
 
   airflow-scheduler:
+    security_opt: ["no-new-privileges:true"]
     build:
       context: ./airflow
       dockerfile: Dockerfile

@@ -7,7 +7,12 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.services import audit_service
-from app.services.intelligence import calibration, calibration_service
+from app.services.intelligence import (
+    calibration,
+    calibration_autopilot,
+    calibration_service,
+    talent_retention_simulation,
+)
 from app.services.intelligence.baseline import build_metric_artifacts
 from app.services.intelligence.contracts import load_contracts
 from app.services.intelligence.external import list_sources, patch_source, run_sources
@@ -545,7 +550,24 @@ async def run_intelligence(
                 "duration_ms": duration_ms,
             },
         )
+    # E5a — el ciclo Evoluciona: tras un gold_refresh persistido, el
+    # autopiloto observa los outcomes evaluados pendientes por la ruta
+    # autoritativa (best-effort: jamas tumba el run; el resumen viaja en el
+    # resultado para que el ciclo quede auditable de punta a punta).
+    calibration_autopilot_summary = None
+    retention_simulation_summary = None
+    if should_persist and run_mode == "gold_refresh":
+        calibration_autopilot_summary = await calibration_autopilot.run_best_effort(
+            user
+        )
+        # E2a — cada ciclo refresca la simulación WB-TALENTO desde los
+        # insumos preparados por el propio gold (best-effort, fail-closed).
+        retention_simulation_summary = (
+            await talent_retention_simulation.run_best_effort(user)
+        )
     return {
+        "calibration_autopilot": calibration_autopilot_summary,
+        "talent_retention_simulation": retention_simulation_summary,
         "signals": [artifact["signal"] for artifact in artifacts],
         "artifacts": artifacts,
         "skipped": skipped,
