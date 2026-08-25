@@ -432,3 +432,56 @@ def test_e1_nine_box_stays_fail_closed_no_proxies():
         / "sap_successfactors_talent_cpa_scores.sql"
     ).read_text(encoding="utf-8")
     assert "insufficient_data" in cpa
+
+
+# ── E2 (9-box con datos): el ciclo reata tambien las entidades de talento C/P/A
+
+E2_MIGRATION = (
+    REPO_ROOT / "infra" / "init"
+    / "99zzzzd_sap_successfactors_cycle_talent_rebind.sql"
+)
+
+
+def _e2_sql() -> str:
+    return E2_MIGRATION.read_text(encoding="utf-8")
+
+
+def test_e2_reconciler_rebinds_talent_cpa_entities_to_active_config():
+    """Las 6 entidades fuente de C/P/A se reatan a la conexion ACTIVA (igual
+    que fundacion), para que el ciclo deje de saltarlas con scope_mismatch y
+    el 9-box pueda pintar cuando el tenant expone calificaciones."""
+    sql = _e2_sql()
+    # Segundo UPDATE de entity_config (ademas del de fundacion), con el set C/P/A.
+    assert sql.count("UPDATE public.entity_config ec") == 2
+    for entity in (
+        "'PerformanceReview'", "'UserSkill'", "'CompetencyEntity'",
+        "'DevGoal'", "'SkillProfile'", "'WorkerCompetencyAssessment'",
+    ):
+        assert entity in sql, entity
+    # Se atan a la MISMA conexion activa que fundacion (cfg.connection_id).
+    talent_block = sql.split("'PerformanceReview'", 1)[0].rsplit(
+        "UPDATE public.entity_config ec", 1
+    )[1] + sql.split("'PerformanceReview'", 1)[1].split(";", 1)[0]
+    assert "SET connection_id = cfg.connection_id" in sql
+
+
+def test_e2_does_not_touch_other_client_entities():
+    """Acotado: NO reata compensacion/terminacion/sucesion/aprendizaje —
+    solo las 6 que alimentan el 9-box."""
+    sql = _e2_sql()
+    for forbidden in (
+        "'EmpCompensation'", "'EmpEmploymentTermination'", "'SuccessionNomination'",
+        "'LearningAssignment'", "'PaymentInformationDetailV3'",
+    ):
+        assert forbidden not in sql, f"no debe reatar {forbidden}"
+
+
+def test_e2_forward_only_and_registers():
+    sql = _e2_sql()
+    assert "CREATE OR REPLACE FUNCTION public.seed_sap_successfactors_cycle_schedule()" in sql
+    assert "SELECT public.seed_sap_successfactors_cycle_schedule();" in sql
+    assert E2_MIGRATION.name > "99zzzzc_sap_successfactors_cycle_target_all.sql"
+    assert "99zzzzd_sap_successfactors_cycle_talent_rebind.sql" in sql
+    assert "INSERT INTO schema_migrations" in sql
+    # Invariantes A2 vivos en la funcion reemplazada.
+    assert "RETURN 2" in sql and "vault_entries" in sql
