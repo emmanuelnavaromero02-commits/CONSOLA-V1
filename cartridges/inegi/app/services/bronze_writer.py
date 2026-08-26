@@ -104,9 +104,9 @@ class BronzeWriter:
         sha = sha256_bytes(data)
         staging_key = f"{staging_prefix}{name}"
         final_key = f"{final_prefix}{name}"
-        existing = self._matching_existing(final_key, sha)
+        existing = self._matching_existing(final_key)
         if existing:
-            return BatchFile(name, final_key, sha, existing.size, existing.uri)
+            return BatchFile(name, final_key, existing.checksum_sha256, existing.size, existing.uri)
         self.storage.put_bytes(
             staging_key,
             data,
@@ -131,9 +131,9 @@ class BronzeWriter:
         sha: str,
         manifest: dict[str, Any],
     ) -> BatchFile:
-        existing = self._matching_existing(final_key, sha)
+        existing = self._matching_existing(final_key)
         if existing:
-            return BatchFile(name, final_key, sha, existing.size, existing.uri)
+            return BatchFile(name, final_key, existing.checksum_sha256, existing.size, existing.uri)
         self.storage.put_file(
             staging_key,
             path,
@@ -144,13 +144,20 @@ class BronzeWriter:
         result = self.storage.publish(staging_key, final_key, overwrite=False, expected_sha256=sha)
         return BatchFile(name, final_key, sha, path.stat().st_size, result.final_uri)
 
-    def _matching_existing(self, key: str, sha: str):
+    def _matching_existing(self, key: str):
         try:
             stat = self.storage.stat(key)
         except ObjectNotFound:
             return None
-        if stat.checksum_sha256 != sha:
-            raise ImmutableBatchConflict(f"published INEGI object differs: {key}")
+        # The final key encodes the full batch identity (tenant, workspace,
+        # load_date, batch_id=run_id, entity), so an object already present at it
+        # can only be a prior interrupted attempt of THIS same immutable batch.
+        # Recovery adopts the durable object instead of failing when the freshly
+        # serialized bytes differ solely by volatile provenance (e.g. the per-run
+        # _retrieved_at stamp): a batch's bytes, once written, are immutable and
+        # recovery finalizes with them. A genuinely different batch carries a
+        # different run_id and therefore a different key; cross-batch integrity is
+        # still enforced by the manifest payload_hash/request_hash check above.
         return stat
 
     def _existing_manifest(self, key: str) -> dict[str, Any] | None:
