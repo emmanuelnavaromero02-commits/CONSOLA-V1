@@ -3,7 +3,7 @@
   "files": [
     {
       "path": ".github/release-test-skip-policy.json",
-      "sha256": "eff9d80945b53f86c9450ef1ccb1edaa194228a359ef0f759318438ff4272a77"
+      "sha256": "be2558f72e33b47987b4d3408972bfd77dd51ecbe73cd48fd9396ca5f5d17321"
     },
     {
       "path": ".github/workflows/release-runner-capacity.yml",
@@ -11,7 +11,7 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "sha256": "ae065277b083cb7f496bff18a01530d91d8493c7be1e420ddf4d86e9e63732df"
+      "sha256": "6c4bbbfb5dea920111b198d90814af89dc232b0d7255358b4f05990366fdd642"
     },
     {
       "path": "Makefile",
