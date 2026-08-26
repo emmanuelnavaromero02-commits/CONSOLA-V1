@@ -280,6 +280,18 @@
             "phase": "call",
             "category": "skip",
             "reason": "AWS compose doesn't ship its own minio service"
+          },
+          {
+            "nodeid": "tests/test_mcp_pg_role_guard.py::test_guard_accepts_scoped_service_role",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "requires a reachable Postgres with the platform schema (DATABASE_URL)"
+          },
+          {
+            "nodeid": "tests/test_mcp_pg_role_guard.py::test_guard_fails_fast_on_superuser_role",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "requires a reachable Postgres with the platform schema (DATABASE_URL)"
           }
         ]
       }

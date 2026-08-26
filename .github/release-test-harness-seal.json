@@ -3,7 +3,7 @@
   "files": [
     {
       "path": ".github/release-test-skip-policy.json",
-      "sha256": "78e404b1f172a811ec442fe2e84317ee7cbe8122ec9c31a58c58da180fd33502"
+      "sha256": "eff9d80945b53f86c9450ef1ccb1edaa194228a359ef0f759318438ff4272a77"
     },
     {
       "path": ".github/workflows/release-runner-capacity.yml",
