@@ -368,10 +368,18 @@ def _safe_host(url: str) -> str | None:
 def _request_error_message(exc: requests.RequestException, base_url: str) -> str:
     text = str(exc)
     lowered = text.lower()
+    # DNS-resolution failures surface with platform-specific wording: glibc
+    # getaddrinfo on Linux ("name or service not known", "temporary failure in
+    # name resolution"), BSD/macOS ("nodename nor servname provided"), and
+    # urllib3's own wrapper ("NameResolutionError"/"failed to resolve"). Match
+    # them all so operators get the same friendly message regardless of host OS.
     if (
         "name resolution" in lowered
         or "nodename nor servname provided" in lowered
         or "could not be resolved" in lowered
+        or "name or service not known" in lowered
+        or "failed to resolve" in lowered
+        or "nameresolutionerror" in lowered
     ):
         host = _safe_host(base_url) or "configured host"
         return f"Replicon host could not be resolved by DNS: {host}"

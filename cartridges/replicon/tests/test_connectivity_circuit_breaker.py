@@ -6,6 +6,8 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import pytest
+
 
 def _import_client():
     root = str(Path(__file__).resolve().parents[1])
@@ -185,7 +187,30 @@ def test_replicon_seeded_gold_extract_is_data_only_without_network(monkeypatch):
     assert result == []
 
 
-def test_replicon_dns_failure_reports_configured_host(monkeypatch):
+# Real DNS-resolution failures reach the client with platform-specific wording.
+# The test must recognise the friendly message for every one of them, so it is
+# parametrised over the glibc (Linux), BSD/macOS, and urllib3 phrasings. Using
+# the exact CI-observed urllib3 wrapper here guards against the regression where
+# the Linux message leaked raw because only the macOS phrasing was matched.
+_DNS_FAILURE_TEXTS = [
+    pytest.param("[Errno -3] Temporary failure in name resolution", id="glibc-eai-again"),
+    pytest.param("[Errno -2] Name or service not known", id="glibc-eai-noname"),
+    pytest.param(
+        "nodename nor servname provided, or not known", id="bsd-macos-getaddrinfo"
+    ),
+    pytest.param(
+        "HTTPSConnectionPool(host='bad-replicon-host.invalid', port=443): "
+        "Max retries exceeded with url: /tables (Caused by "
+        "NameResolutionError(\"<urllib3.connection.HTTPSConnection object>: "
+        "Failed to resolve 'bad-replicon-host.invalid' "
+        "([Errno -2] Name or service not known)\"))",
+        id="urllib3-nameresolutionerror",
+    ),
+]
+
+
+@pytest.mark.parametrize("dns_error_text", _DNS_FAILURE_TEXTS)
+def test_replicon_dns_failure_reports_configured_host(monkeypatch, dns_error_text):
     replicon_client = _import_client()
     RepliconClient = replicon_client.RepliconClient
 
@@ -199,13 +224,18 @@ def test_replicon_dns_failure_reports_configured_host(monkeypatch):
         },
     )
 
-    def fail_dns(*_args, **_kwargs):
-        raise replicon_client.requests.exceptions.ConnectionError(
-            "[Errno -3] Temporary failure in name resolution"
-        )
+    client = RepliconClient(conn_id="seeded_gold")
 
-    monkeypatch.setattr(replicon_client.requests, "get", fail_dns)
-    result = RepliconClient(conn_id="seeded_gold").test_connection()
+    def fail_dns(*_args, **_kwargs):
+        raise replicon_client.requests.exceptions.ConnectionError(dns_error_text)
+
+    # The client issues requests through its guarded session, so patch the
+    # session instance. Patching module-level ``requests.get`` would be a no-op
+    # and let the test hit real DNS — the source of the earlier macOS/Linux
+    # divergence.
+    monkeypatch.setattr(client._session, "get", fail_dns)
+
+    result = client.test_connection()
 
     assert result["status"] == "error"
     assert result["reachable"] is False
