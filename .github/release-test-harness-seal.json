@@ -543,7 +543,7 @@
     },
     {
       "path": "cartridges/replicon/app/core/replicon_client.py",
-      "sha256": "5e43c9be63a5bc6c89135cadf2a4c2200a6d7324abda2e7700aaa22b8fd44c11"
+      "sha256": "077960f61d94c1fb8c8bc15770960c5dc38738c41198d91e871f2d40dac2410b"
     },
     {
       "path": "cartridges/replicon/app/core/request_context.py",
@@ -639,7 +639,7 @@
     },
     {
       "path": "cartridges/replicon/tests/test_connectivity_circuit_breaker.py",
-      "sha256": "e193c42b18380d4437927c10216606adc893cfa2f57850995c69d855c171b1e4"
+      "sha256": "2c5e98ac84a73b1bb1b1e0b38ec44a10c99091b65d2f8a4490f89a36cbdf070d"
     },
     {
       "path": "cartridges/replicon/tests/test_extraction_scoped_connection_replicon.py",
