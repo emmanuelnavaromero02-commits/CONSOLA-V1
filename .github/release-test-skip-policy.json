@@ -258,10 +258,88 @@
         "environment": "release",
         "authorizations": [
           {
+            "nodeid": "cartridges/hubspot/tests/test_watermark_scope_isolation_hubspot.py::test_incremental_watermarks_are_isolated_per_tenant",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "requires a reachable Postgres with the platform schema (DATABASE_URL)"
+          },
+          {
+            "nodeid": "cartridges/replicon/tests/test_watermark_scope_isolation_replicon.py::test_incremental_watermarks_are_isolated_per_tenant",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "requires a reachable Postgres with the platform schema (DATABASE_URL)"
+          },
+          {
+            "nodeid": "cartridges/salesforce/tests/test_watermark_scope_isolation_salesforce.py::test_incremental_watermarks_are_isolated_per_tenant",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "requires a reachable Postgres with the platform schema (DATABASE_URL)"
+          },
+          {
+            "nodeid": "cartridges/sap_hcm/tests/test_watermark_scope_isolation_sap_hcm.py::test_incremental_watermarks_are_isolated_per_tenant",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "requires a reachable Postgres with the platform schema (DATABASE_URL)"
+          },
+          {
+            "nodeid": "cartridges/sap_s4hana/tests/test_watermark_scope_isolation_sap_s4hana.py::test_incremental_watermarks_are_isolated_per_tenant",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "requires a reachable Postgres with the platform schema (DATABASE_URL)"
+          },
+          {
+            "nodeid": "cartridges/sap_successfactors/tests/test_runlog_scope_fresh_install.py::test_migration_policies_cover_both_sap_roles",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "requires a reachable Postgres with the platform schema (DATABASE_URL)"
+          },
+          {
+            "nodeid": "cartridges/sap_successfactors/tests/test_runlog_scope_fresh_install.py::test_runlog_service_records_and_mirrors_end_to_end",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "requires a reachable Postgres with the platform schema (DATABASE_URL)"
+          },
+          {
+            "nodeid": "cartridges/sap_successfactors/tests/test_runlog_scope_fresh_install.py::test_sap_roles_can_record_runs_on_fresh_install[omega_cartridge_sap_s4-sap_s4hana]",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "requires a reachable Postgres with the platform schema (DATABASE_URL)"
+          },
+          {
+            "nodeid": "cartridges/sap_successfactors/tests/test_runlog_scope_fresh_install.py::test_sap_roles_can_record_runs_on_fresh_install[omega_cartridge_sap_sf-sap_successfactors]",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "requires a reachable Postgres with the platform schema (DATABASE_URL)"
+          },
+          {
+            "nodeid": "cartridges/sap_successfactors/tests/test_runlog_scope_fresh_install.py::test_sf_role_can_mirror_into_pipeline_runs",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "requires a reachable Postgres with the platform schema (DATABASE_URL)"
+          },
+          {
             "nodeid": "cartridges/sap_successfactors/tests/test_saml_bearer_auth.py::test_live_saml_bearer_test_connection_against_configured_successfactors",
             "phase": "call",
             "category": "skip",
             "reason": "set OMEGA_ENABLE_LIVE_SF_SAML_TEST=1 with real SF SAML credentials"
+          },
+          {
+            "nodeid": "cartridges/sap_successfactors/tests/test_tenant_alias_rls_isolation.py::test_preflight_reader_is_scoped_end_to_end",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "requires a reachable Postgres with the platform schema (DATABASE_URL)"
+          },
+          {
+            "nodeid": "cartridges/sap_successfactors/tests/test_tenant_alias_rls_isolation.py::test_rls_empty_scope_sees_nothing",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "requires a reachable Postgres with the platform schema (DATABASE_URL)"
+          },
+          {
+            "nodeid": "cartridges/sap_successfactors/tests/test_tenant_alias_rls_isolation.py::test_rls_isolates_alias_rows_per_tenant",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "requires a reachable Postgres with the platform schema (DATABASE_URL)"
           },
           {
             "nodeid": "tests/e2e/test_console_full_stack_acceptance.py",

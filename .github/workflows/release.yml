@@ -406,9 +406,37 @@ jobs:
             exit 1
           }
           read -r -a targets <<< "${CARTRIDGE_TEST_TARGETS}"
+          # Partition targets by cartridge import-root family so every
+          # run_release_pytest.py invocation carries exactly one component
+          # family, satisfying scripts/run_release_pytest.py:_import_roots()
+          # (len(families) <= 1). CARTRIDGE_TEST_TARGETS is cartridges/<family>/...
+          # only, by construction in scripts/ci_changed_areas.py:_cartridge_test_targets;
+          # any other prefix is contract drift and must block the release.
+          families=()
+          for target in "${targets[@]}"; do
+            path="${target%%::*}"
+            IFS='/' read -r top family _rest <<< "${path}"
+            if [[ "${top}" != "cartridges" || -z "${family}" ]]; then
+              echo "::error::cartridge test target outside cartridges/<family>/: ${target}"
+              exit 1
+            fi
+            families+=("cartridges/${family}")
+          done
+          unique_families="$(printf '%s\n' "${families[@]}" | LC_ALL=C sort -u)"
           python3 -I scripts/verify_release_test_harness.py
-          env -u GITHUB_ENV -u GITHUB_PATH \
-            python3 -I scripts/run_release_pytest.py -q "${targets[@]}"
+          while IFS= read -r family; do
+            [[ -n "${family}" ]] || continue
+            group=()
+            for target in "${targets[@]}"; do
+              path="${target%%::*}"
+              if [[ "${path}" == "${family}/"* || "${path}" == "${family}" ]]; then
+                group+=("${target}")
+              fi
+            done
+            echo "Running detected cartridge tests for ${family} (${#group[@]} target(s))"
+            env -u GITHUB_ENV -u GITHUB_PATH \
+              python3 -I scripts/run_release_pytest.py -q "${group[@]}"
+          done <<< "${unique_families}"
 
       - name: Terraform validation
         run: |
