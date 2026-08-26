@@ -3431,7 +3431,7 @@
     },
     {
       "path": "tests/fixtures/release-compose-mount-allowlist.json",
-      "sha256": "fd324a4338efbc1328c0d790845364ec05734f020bfe8c7c673a8d0240fbcdb0"
+      "sha256": "bf0d0ac8e386c8fbf94202f428f75a24a3eaa4d610a1089521b8ba389d9e82e6"
     },
     {
       "path": "tests/lakehouse/test_storage_contract.py",

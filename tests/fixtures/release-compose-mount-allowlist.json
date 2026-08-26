@@ -93,6 +93,13 @@
     },
     {
       "read_only": true,
+      "service": "airflow",
+      "source": "/dev/null",
+      "target": "/run/secrets/sf_epiuse_iaappliance_connector.pem",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
       "service": "airflow-init",
       "source": "cartridges/sap_successfactors/dags",
       "target": "/opt/airflow/dags/sap_successfactors",
@@ -152,6 +159,13 @@
       "service": "airflow-init",
       "source": "cartridges/sec_edgar/dags",
       "target": "/opt/airflow/dags/sec_edgar",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow-init",
+      "source": "/dev/null",
+      "target": "/run/secrets/sf_epiuse_iaappliance_connector.pem",
       "type": "bind"
     },
     {
@@ -243,6 +257,13 @@
       "service": "airflow-scheduler",
       "source": "cartridges/sec_edgar/dags",
       "target": "/opt/airflow/dags/sec_edgar",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow-scheduler",
+      "source": "/dev/null",
+      "target": "/run/secrets/sf_epiuse_iaappliance_connector.pem",
       "type": "bind"
     },
     {
