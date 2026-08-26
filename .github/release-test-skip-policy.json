@@ -9,12 +9,44 @@
       "scope": {
         "files": [
           {
+            "path": "cartridges/hubspot/tests/test_watermark_scope_isolation_hubspot.py",
+            "declarations_sha256": "720d606f29ea01b66f6668d4843a927b1273abd0838a5140dd448057f7312b8e"
+          },
+          {
+            "path": "cartridges/replicon/tests/test_watermark_scope_isolation_replicon.py",
+            "declarations_sha256": "a641cc829ebcfa02ac186844b8d961bb85b6235ffc9d60bc2e788b58e32259b3"
+          },
+          {
+            "path": "cartridges/salesforce/tests/test_watermark_scope_isolation_salesforce.py",
+            "declarations_sha256": "4aa2a9643acb102ae03b911897e25e4c775c33e4e3059373f3cdef8a383521a0"
+          },
+          {
+            "path": "cartridges/sap_hcm/tests/test_watermark_scope_isolation_sap_hcm.py",
+            "declarations_sha256": "f5ec1affd7e8f70c4caefb2f96894a2b30bc1586cf0fee9be8d8a76197f249ea"
+          },
+          {
+            "path": "cartridges/sap_s4hana/tests/test_watermark_scope_isolation_sap_s4hana.py",
+            "declarations_sha256": "e110d172ddb6a75387621793dc8dea51eb55f0bfb27ae0b7d80194230e47ee46"
+          },
+          {
+            "path": "cartridges/sap_successfactors/tests/test_runlog_scope_fresh_install.py",
+            "declarations_sha256": "52407fc2d434a3d29aa2bd25666fa259d2a89cbadcee5ca0476a409df6f2387c"
+          },
+          {
             "path": "cartridges/sap_successfactors/tests/test_saml_bearer_auth.py",
             "declarations_sha256": "96d41ae5b57328bd3e4f1bc89ed893aac1fadedb762ba7b01ee9456017aabe18"
           },
           {
+            "path": "cartridges/sap_successfactors/tests/test_tenant_alias_rls_isolation.py",
+            "declarations_sha256": "3ad25ea6f4978f1b23725f6983cc7bdd422f1701dc20bee0dbb858e771ffa587"
+          },
+          {
             "path": "console/tests/test_cross_tenant_api_isolation.py",
             "declarations_sha256": "9564a67f3889f811e2561d6e025a7b3399f6d6720034cacc606d2b95414da648"
+          },
+          {
+            "path": "refinement/tests/test_e11_talent_readfree_fallbacks.py",
+            "declarations_sha256": "19c94597b1e9419f8838b4dd0def28ae1283585d14878c5f18ab88b89d8da4fc"
           },
           {
             "path": "refinement/tests/test_sql_timeout.py",
@@ -67,6 +99,10 @@
           {
             "path": "tests/test_mcp_cartridge_get_schema.py",
             "declarations_sha256": "21f797bf5cd992ada9fa49386d939d0c2681b48a1c0d700900f021360f22a52a"
+          },
+          {
+            "path": "tests/test_mcp_pg_role_guard.py",
+            "declarations_sha256": "cd0ff7b3ef79c0ea5228e0191897ea4a49225f50a58693e6a22ae4cf213fb87f"
           },
           {
             "path": "tests/test_mcp_servers_tool_count_column.py",
@@ -163,9 +199,13 @@
           {
             "path": "tests/test_staged_publication_live.py",
             "declarations_sha256": "7f63bbeadb52ab6552f122a63081db675912b46d43f7f93a33752b7ac4279da3"
+          },
+          {
+            "path": "tests/test_stale_generic_signal_purge.py",
+            "declarations_sha256": "fe98517b8fbaab00c4a1a5cbb56109ea74a148b947f3b8e79f6e6d5110e47953"
           }
         ],
-        "inventory_sha256": "22b93141fd9b180970f4103ad6bd401b8a8a8a5836ccdafeb8c0c578fe32867c"
+        "inventory_sha256": "b5093ae02c93c307c09a54d84f6194de4a16f917e2e59d43a1d947e3fd354f03"
       }
     },
     {
@@ -274,7 +314,7 @@
             "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
             "spec_title": "'Copiar' button (if present) is clickable",
             "test_id": "44fa61789b32b3cf8820-4c2df3412dde8918e734",
-            "reason": "'Copiar' button not surfaced — tracked in E2E findings"
+            "reason": "'Copiar' button not surfaced \u2014 tracked in E2E findings"
           },
           {
             "project": "desktop-chromium",
@@ -306,7 +346,7 @@
             "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
             "spec_title": "DAG editor area (code mirror / textarea) exists",
             "test_id": "44fa61789b32b3cf8820-7da5d7744910d2ecfd49",
-            "reason": "no code editor on /studio DAGs tab — tracked in E2E findings"
+            "reason": "no code editor on /studio DAGs tab \u2014 tracked in E2E findings"
           },
           {
             "project": "desktop-chromium",
@@ -314,7 +354,7 @@
             "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
             "spec_title": "Plantillas sidebar lists templates",
             "test_id": "44fa61789b32b3cf8820-b13bfc99dc5359b65db7",
-            "reason": "Templates sidebar not surfaced — tracked in E2E findings"
+            "reason": "Templates sidebar not surfaced \u2014 tracked in E2E findings"
           },
           {
             "project": "desktop-chromium",
@@ -402,7 +442,7 @@
             "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
             "spec_title": "switching cartridge refreshes the summary",
             "test_id": "44fa61789b32b3cf8820-ad6cd348f5c4e85f1fc5",
-            "reason": "cartridge picker not present — skip switching test"
+            "reason": "cartridge picker not present \u2014 skip switching test"
           },
           {
             "project": "desktop-chromium",
@@ -410,7 +450,7 @@
             "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
             "spec_title": "switching cartridge refreshes the summary",
             "test_id": "44fa61789b32b3cf8820-ad6cd348f5c4e85f1fc5",
-            "reason": "only one cartridge in dropdown — can't test switch"
+            "reason": "only one cartridge in dropdown \u2014 can't test switch"
           },
           {
             "project": "desktop-chromium",
@@ -440,9 +480,9 @@
             "project": "desktop-chromium",
             "category": "skip",
             "spec_file": "tests-e2e/specs/05-studio-deep.spec.ts",
-            "spec_title": "tab 'IA( Semántica)?' renders SOMETHING when clicked",
+            "spec_title": "tab 'IA( Sem\u00e1ntica)?' renders SOMETHING when clicked",
             "test_id": "44fa61789b32b3cf8820-7d17620d48a014fb0b9d",
-            "reason": "tab IA( Semántica)? not present"
+            "reason": "tab IA( Sem\u00e1ntica)? not present"
           },
           {
             "project": "desktop-chromium",
