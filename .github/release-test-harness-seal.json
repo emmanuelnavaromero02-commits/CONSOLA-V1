@@ -171,7 +171,7 @@
     },
     {
       "path": "cartridges/banxico/app/services/bronze_writer.py",
-      "sha256": "16363246cca704952b18095d71acee261a36c3a33397b69cd9eecbf149010fa2"
+      "sha256": "dd0a27fbc6fb67cd7b32e86606563329ea8bf65020ff0ef9477c3099bf9fd132"
     },
     {
       "path": "cartridges/banxico/app/services/config_loader.py",
@@ -211,7 +211,7 @@
     },
     {
       "path": "cartridges/banxico/tests/test_bronze_pipeline.py",
-      "sha256": "7e299e8ec64c96bb833f24bade16a0b9988a74c554c99140b7bee96da396c132"
+      "sha256": "dc8150a5585db486eafbf221b60ecfb8f170c97c81ff1b41b2a2cedc00734094"
     },
     {
       "path": "cartridges/banxico/tests/test_dag_contract.py",
@@ -443,7 +443,7 @@
     },
     {
       "path": "cartridges/inegi/app/services/bronze_writer.py",
-      "sha256": "4b5cd9e10fc190f4be9dd67579dba5272b9731c92db287f262d5b5a3d887c3ed"
+      "sha256": "164fc168894f0d5345fa599d090f34d61c96895fd5d5a5b8b720b0fd67ec347c"
     },
     {
       "path": "cartridges/inegi/app/services/config_loader.py",
@@ -479,7 +479,7 @@
     },
     {
       "path": "cartridges/inegi/tests/test_bronze_pipeline.py",
-      "sha256": "9385a60a4355f73357078b021fbc05a2594e820a9ab8ee16e15ed024df7aedc5"
+      "sha256": "ff97b23d3c083f97bddfd3ab4dd627a77d6507ac6f28108349c5f73a8e0761b8"
     },
     {
       "path": "cartridges/inegi/tests/test_dag_contract.py",
@@ -1451,7 +1451,7 @@
     },
     {
       "path": "cartridges/sec_edgar/app/services/bronze_writer.py",
-      "sha256": "0be6f2686eac624e0fc8cfb5f44225c3a4f9b87e00ea330eda2c27394271f684"
+      "sha256": "fe76af4e04e3863435fa50eb3e39847d327b0c7e7a71f53dff056470cdfb2ebf"
     },
     {
       "path": "cartridges/sec_edgar/app/services/config_loader.py",
@@ -1487,7 +1487,7 @@
     },
     {
       "path": "cartridges/sec_edgar/tests/test_bronze_pipeline.py",
-      "sha256": "a3b6e8c9b8db1bd2b9e4aa42cfbb07073820f4e72aadcba51965a43b1828fdf0"
+      "sha256": "172ac43924ac4e77f50c846090d6490155a2ccd95819ffa277b4525cfbea2363"
     },
     {
       "path": "cartridges/sec_edgar/tests/test_bronze_retention.py",

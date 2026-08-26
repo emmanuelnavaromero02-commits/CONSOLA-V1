@@ -115,7 +115,27 @@ def test_bronze_layout_manifest_provenance_and_watermark():
     assert watermarks.updated
 
 
-def test_recovery_after_parquet_before_manifest_does_not_advance_watermark_first():
+def test_recovery_after_parquet_before_manifest_does_not_advance_watermark_first(monkeypatch):
+    # Force the wall clock to advance between the interrupted write and the
+    # recovery so the per-run _retrieved_at stamp differs, deterministically
+    # exercising the immutable-batch recovery/adopt path (a same-second run would
+    # pass by luck and hide a regression).
+    import itertools
+
+    from app.services import bronze_records, extraction_service
+
+    _clock = itertools.count()
+    monkeypatch.setattr(
+        bronze_records,
+        "utc_now_iso",
+        lambda: f"2026-08-26T00:00:{next(_clock):02d}Z",
+    )
+    monkeypatch.setattr(
+        extraction_service,
+        "utc_now_iso",
+        lambda: f"2026-08-26T00:00:{next(_clock):02d}Z",
+    )
+
     storage = MemoryStorage()
     storage.fail_manifest_once = True
     watermarks = FakeWatermarks()
