@@ -158,12 +158,19 @@ else
   log "step 2 stage: target ref is the live release; leaving its tree untouched"
 fi
 
-# ── 3. Authenticated pull of the 15 images at the tag (server-owned) ─────────
-log "step 3 images: authenticated pull of 15 images at ${TARGET_TAG}"
-IMAGES=(airflow banxico console hubspot inegi mcp-infra refinement replicon salesforce sap_hcm sap_s4hana sap_successfactors sec_edgar vault workspace)
-pull_all() { for image in "${IMAGES[@]}"; do docker pull --quiet "ghcr.io/${GHCR_OWNER}/${image}:${TARGET_TAG}" >/dev/null || return 1; done; }
+# ── 3. Authenticated pull of the 15 release digests (server-owned) ───────────
+# Publish-only releases push by immutable digest only, so pull the exact digests
+# the operator pinned into the images overlay (single source of truth), not a
+# vX.Y.Z tag that GHCR never received.
+log "step 3 images: authenticated pull of the 15 release digests"
+DIGEST_REFS=()
+while IFS= read -r _ref; do
+  [[ -n "${_ref}" ]] && DIGEST_REFS+=("${_ref}")
+done < <(grep -oE 'ghcr\.io/[^[:space:]"]+@sha256:[0-9a-f]{64}' "${IMAGES_OVERLAY}" | sort -u)
+[[ "${#DIGEST_REFS[@]}" -eq 15 ]] || die "expected 15 image digests in the overlay, found ${#DIGEST_REFS[@]}."
+pull_all() { for ref in "${DIGEST_REFS[@]}"; do docker pull --quiet "${ref}" >/dev/null || return 1; done; }
 OMEGA_GCP_ENVIRONMENT="${ENVIRONMENT}" OMEGA_GHCR_PULL_SECRET_VERSION="${GHCR_SECRET_VERSION}" \
-  bash "${RELEASE_DIR}/infra/terraform-gcp/release/ghcr-auth-run.sh" bash -c "$(declare -f pull_all); IMAGES=(${IMAGES[*]}); GHCR_OWNER='${GHCR_OWNER}'; TARGET_TAG='${TARGET_TAG}'; pull_all" \
+  bash "${RELEASE_DIR}/infra/terraform-gcp/release/ghcr-auth-run.sh" bash -c "$(declare -f pull_all); DIGEST_REFS=(${DIGEST_REFS[*]}); pull_all" \
   || die "authenticated image pull failed (15/15 required)."
 
 # Dry-run stops here: everything so far (backup, stage, pull) is non-destructive
