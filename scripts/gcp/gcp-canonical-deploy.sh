@@ -54,6 +54,33 @@ ENVIRONMENT="${OMEGA_GCP_ENVIRONMENT:-staging}"
 DEPLOY_MODE="${OMEGA_DEPLOY_MODE:-apply}"   # apply | dryrun
 [[ "${DEPLOY_MODE}" == "apply" || "${DEPLOY_MODE}" == "dryrun" ]] || die "OMEGA_DEPLOY_MODE must be apply or dryrun."
 
+# Publish-only releases push the 15 images by immutable digest only (never by the
+# vX.Y.Z tag), so the deploy pins every service to the digest recorded in the
+# canonical release manifest. Provide it with:
+#   gh release download <tag> --pattern 'omega-release-manifest-*.json'
+MANIFEST="${OMEGA_RELEASE_MANIFEST:-}"
+[[ -n "${MANIFEST}" && -f "${MANIFEST}" ]] \
+  || die "OMEGA_RELEASE_MANIFEST must point at the release manifest json for ${TARGET_TAG}."
+python3 - "${MANIFEST}" "${TARGET_TAG}" "${DEPLOY_REF}" <<'PY' \
+  || die "release manifest does not bind ${TARGET_TAG} / ${DEPLOY_REF}."
+import json, sys
+d = json.load(open(sys.argv[1]))
+sys.exit(0 if d.get("release_tag") == sys.argv[2] and d.get("source_sha") == sys.argv[3] else 1)
+PY
+digest_ref_for() {
+  python3 - "${MANIFEST}" "$1" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+want = sys.argv[2]
+for it in d.get("images", []):
+    if it.get("image", "").rsplit("/", 1)[-1] == want:
+        print(it["digest_reference"])
+        break
+else:
+    sys.exit(1)
+PY
+}
+
 # ghcr-auth-run.sh requires an explicit NUMERIC secret version. Resolve the
 # highest enabled version of the pull credential unless the operator pinned one.
 GHCR_SECRET_VERSION="${OMEGA_GHCR_PULL_SECRET_VERSION:-}"
@@ -100,16 +127,16 @@ trap 'rm -f -- "${overlay}"' EXIT
   # compose service name uses "-" where the image name uses "_"
   for image in "${IMAGES[@]}"; do
     svc="${image//_/-}"
-    printf '  %s:\n    image: ghcr.io/%s/%s:%s\n    pull_policy: never\n' \
-      "${svc}" "${OMEGA_GHCR_OWNER}" "${image}" "${TARGET_TAG}"
+    ref="$(digest_ref_for "${image}")" || die "no digest for ${image} in the release manifest."
+    printf '  %s:\n    image: %s\n    pull_policy: never\n' "${svc}" "${ref}"
     # airflow image backs three services
     if [[ "${image}" == "airflow" ]]; then
       # airflow serves under the /airflow base path; some release compose files
       # curl /health (404) in the container healthcheck, so it never goes healthy
       # and `up -d` aborts. Pin the correct /airflow/health path here.
       printf '    healthcheck:\n      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8080/airflow/health || exit 1"]\n'
-      printf '  airflow-init:\n    image: ghcr.io/%s/airflow:%s\n    pull_policy: never\n' "${OMEGA_GHCR_OWNER}" "${TARGET_TAG}"
-      printf '  airflow-scheduler:\n    image: ghcr.io/%s/airflow:%s\n    pull_policy: never\n' "${OMEGA_GHCR_OWNER}" "${TARGET_TAG}"
+      printf '  airflow-init:\n    image: %s\n    pull_policy: never\n' "${ref}"
+      printf '  airflow-scheduler:\n    image: %s\n    pull_policy: never\n' "${ref}"
     fi
   done
 } > "${overlay}"
