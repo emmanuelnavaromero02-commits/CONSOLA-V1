@@ -629,6 +629,9 @@ services:
       REFINEMENT_URL: http://refinement:8500
       HUBSPOT_BASE_URL: ${HUBSPOT_BASE_URL:-https://api.hubapi.com}
       HUBSPOT_API_TOKEN: ${HUBSPOT_API_TOKEN:-}
+      # Empty in production (full SSRF protection); non-prod acceptance sets this
+      # to the fake HubSpot upstream host so the egress guard can reach the mock.
+      OMEGA_EGRESS_ALLOWED_HOSTS: ${OMEGA_EGRESS_ALLOWED_HOSTS:-}
       DATABASE_URL: "postgresql+psycopg2://omega_cartridge_hubspot:${OMEGA_CARTRIDGE_HUBSPOT_PASSWORD:?OMEGA_CARTRIDGE_HUBSPOT_PASSWORD is required}@postgres:5432/modecissions"
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: minio

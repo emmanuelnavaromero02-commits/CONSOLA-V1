@@ -168,3 +168,51 @@ def test_test_connection_and_extraction_clients_use_guarded_transport(
     assert "guarded_session" in source
     assert "requests.get(" not in source
     assert "requests.post(" not in source
+
+
+def test_hubspot_egress_allowlist_is_opt_in_and_defaults_closed(monkeypatch):
+    # The hubspot cartridge gained an opt-in, default-empty egress allowlist
+    # (OMEGA_EGRESS_ALLOWED_HOSTS) so the release acceptance run can reach its
+    # fake HubSpot upstream on host.docker.internal. Unset -> production is
+    # unchanged (full SSRF protection); set -> only the named host is reachable.
+    guard = _load_guard("hubspot")
+    monkeypatch.setattr(guard.socket, "getaddrinfo", _dns("192.168.65.2"))
+    mock_url = "http://host.docker.internal:18030/crm/v3/owners"
+
+    monkeypatch.delenv("OMEGA_EGRESS_ALLOWED_HOSTS", raising=False)
+    with pytest.raises(guard.EgressGuardError, match="non-public"):
+        guard.resolve_public_url(mock_url)
+
+    monkeypatch.setenv("OMEGA_EGRESS_ALLOWED_HOSTS", "host.docker.internal")
+    target = guard.resolve_public_url(mock_url)
+    assert target.host == "host.docker.internal"
+    assert target.address == "192.168.65.2"
+    assert target.port == 18030
+
+
+def test_hubspot_egress_allowlist_never_relaxes_metadata_or_localhost(monkeypatch):
+    guard = _load_guard("hubspot")
+    monkeypatch.setenv(
+        "OMEGA_EGRESS_ALLOWED_HOSTS",
+        "169.254.169.254,localhost,metadata.google.internal",
+    )
+    for url in (
+        "http://169.254.169.254/latest/meta-data",
+        "http://localhost:8000/",
+        "http://metadata.google.internal/computeMetadata/v1/",
+    ):
+        with pytest.raises(guard.EgressGuardError):
+            guard.resolve_public_url(url)
+
+
+@pytest.mark.parametrize(
+    "cartridge", [c for c in PACKAGED_CARTRIDGES if c != "hubspot"]
+)
+def test_egress_allowlist_escape_hatch_is_scoped_to_hubspot(cartridge, monkeypatch):
+    # The escape hatch is deliberately hubspot-only; the other guards ignore the
+    # env var and keep blocking private destinations.
+    guard = _load_guard(cartridge)
+    monkeypatch.setattr(guard.socket, "getaddrinfo", _dns("192.168.65.2"))
+    monkeypatch.setenv("OMEGA_EGRESS_ALLOWED_HOSTS", "host.docker.internal")
+    with pytest.raises(guard.EgressGuardError, match="non-public"):
+        guard.resolve_public_url("http://host.docker.internal:18030/crm/v3/owners")

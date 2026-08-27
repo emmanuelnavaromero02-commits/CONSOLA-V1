@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import os
 import socket
 from dataclasses import dataclass
 from typing import Any
@@ -46,6 +47,22 @@ def _blocked_address(address: str) -> bool:
     return not ip.is_global or ip in _SHARED_ADDRESS_SPACE
 
 
+def _allowlisted_hosts() -> frozenset[str]:
+    """Opt-in, default-empty escape hatch for controlled test/dev stacks.
+
+    ``OMEGA_EGRESS_ALLOWED_HOSTS`` (comma-separated hostnames) lets a reviewed
+    non-production stack — e.g. the release acceptance run whose fake HubSpot
+    upstream is served on ``host.docker.internal`` — reach a specific internal
+    host. It is unset in production, so the public-address requirement in
+    ``resolve_public_url`` is unchanged there, and it never relaxes the
+    metadata/localhost hard-block below.
+    """
+    raw = os.environ.get("OMEGA_EGRESS_ALLOWED_HOSTS", "")
+    return frozenset(
+        part.strip().rstrip(".").lower() for part in raw.split(",") if part.strip()
+    )
+
+
 def resolve_public_url(url: str, *, label: str = "outbound URL") -> ResolvedTarget:
     """Resolve once and return the public address that the adapter must use."""
     try:
@@ -65,12 +82,16 @@ def resolve_public_url(url: str, *, label: str = "outbound URL") -> ResolvedTarg
         (".localhost", ".local")
     ):
         raise EgressGuardError(f"{label} host is blocked")
+    # An explicitly allowlisted host (test/dev only; empty in production) may use
+    # a private address. The metadata/localhost hard-block above is never
+    # relaxed, so cloud metadata and loopback stay unreachable regardless.
+    allowlisted = host in _allowlisted_hosts()
     try:
         direct_ip = ipaddress.ip_address(host)
     except ValueError:
         direct_ip = None
     if direct_ip is not None:
-        if _blocked_address(str(direct_ip)):
+        if _blocked_address(str(direct_ip)) and not allowlisted:
             raise EgressGuardError(f"{label} resolved to a non-public address")
         return ResolvedTarget(scheme, host, port, str(direct_ip))
     try:
@@ -82,7 +103,7 @@ def resolve_public_url(url: str, *, label: str = "outbound URL") -> ResolvedTarg
         raise EgressGuardError(f"{label} host could not be resolved")
     # Mixed public/private DNS answers fail closed; selecting only the public
     # member would leave rebinding and resolver-order bypasses.
-    if any(_blocked_address(address) for address in addresses):
+    if not allowlisted and any(_blocked_address(address) for address in addresses):
         raise EgressGuardError(f"{label} resolved to a non-public address")
     return ResolvedTarget(scheme, host, port, addresses[0])
 

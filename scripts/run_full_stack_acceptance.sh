@@ -111,6 +111,7 @@ sleep 1
 
 echo "[acceptance] pointing HubSpot cartridge at ${FAKE_BASE_URL}"
 HUBSPOT_BASE_URL="$FAKE_BASE_URL" HUBSPOT_API_TOKEN="$FAKE_TOKEN" \
+  OMEGA_EGRESS_ALLOWED_HOSTS="host.docker.internal" \
   "${COMPOSE[@]}" up -d "${UP_LOCK_ARGS[@]}" --force-recreate --no-deps hubspot
 
 echo "[acceptance] waiting for HubSpot health"

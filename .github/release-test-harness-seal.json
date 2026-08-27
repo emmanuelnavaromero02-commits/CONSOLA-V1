@@ -263,7 +263,7 @@
     },
     {
       "path": "cartridges/hubspot/app/core/egress_guard.py",
-      "sha256": "2a4d95cd9df695b3ea9e37e9d90d8c453501eb64a7a1c7955f33a818fdd5a661"
+      "sha256": "5edc2e656726cd048f943c7c07ea22ec19b3748b51081c6eb8ae342fc9ed5198"
     },
     {
       "path": "cartridges/hubspot/app/core/hubspot_client.py",
@@ -2967,7 +2967,7 @@
     },
     {
       "path": "infra/docker-compose.yml",
-      "sha256": "4fb433fd805dba6d3ae590d45fb8a27f88c456a12c5e1e0edb5eb8f52d267dae"
+      "sha256": "42f2f89a1491507cf9f6a2cfa52bff7f0793c3e1416ac83612f118f6c576d4ab"
     },
     {
       "path": "infra/terraform-gcp/release/docker-compose.release.yml",
@@ -3171,7 +3171,7 @@
     },
     {
       "path": "scripts/run_full_stack_acceptance.sh",
-      "sha256": "7ad851be04b8b7baccbb87404595bf2b5e9f2372171a8f0958e13cc47603a3b8"
+      "sha256": "c6319be4f1cea1ca4fd49d9198be6ae82227b3675dfcd568cf4a2b1c5d0c2725"
     },
     {
       "path": "scripts/run_multiuser_isolation_simulation.sh",
@@ -3711,7 +3711,7 @@
     },
     {
       "path": "tests/test_cartridge_egress_guard.py",
-      "sha256": "74cb6ee7122eaf13507a4473d75a938fd48e3b1d3f8f8e421df8c447ede16565"
+      "sha256": "0ee4c1f1ea4f75c260379238b864237b18e67f975da59cf678f8f5739379f6f1"
     },
     {
       "path": "tests/test_cartridge_kb_scope.py",
