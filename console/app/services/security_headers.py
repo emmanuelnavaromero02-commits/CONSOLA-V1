@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from fastapi import Response
 
+from app.domains.security.request_classification import (
+    is_app_content_capability_path,
+)
+
 
 # NOTE: script-src is intentionally strict on shell/auth/control-room paths.
 # style-src still has a documented inline-style exception for legacy static
@@ -163,12 +167,17 @@ def is_app_embed_path(path: str) -> bool:
     return path.startswith("/apps/") and path.endswith("/embed")
 
 
+def is_app_frame_path(path: str) -> bool:
+    """Routes intentionally rendered inside the same-origin app viewer."""
+    return is_app_embed_path(path) or is_app_content_capability_path(path)
+
+
 def is_control_room_path(path: str) -> bool:
     return path == "/control-room" or path.startswith("/control-room/")
 
 
 def apply_security_headers(response: Response, path: str = "") -> Response:
-    if is_app_embed_path(path):
+    if is_app_frame_path(path):
         headers = APP_EMBED_SECURITY_HEADERS
     elif is_control_room_path(path):
         headers = CONTROL_ROOM_SECURITY_HEADERS

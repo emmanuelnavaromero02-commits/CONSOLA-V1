@@ -83,6 +83,71 @@ def issue_content_capability(
     return f"{_b64url(payload)}.{signature}"
 
 
+def _signed_claims(token: str) -> dict[str, Any] | None:
+    """Parse claims only after authenticating the capability envelope."""
+    if not token or not isinstance(token, str) or token.count(".") != 1:
+        return None
+    encoded, signature = token.split(".", 1)
+    try:
+        payload = _unb64url(encoded)
+        claims = json.loads(payload.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if not isinstance(claims, dict):
+        return None
+
+    # Constant-time, and over the exact bytes that were signed.
+    if len(signature) != 64 or any(
+        char not in "0123456789abcdef" for char in signature
+    ):
+        return None
+    try:
+        expected = sign_server_payload(_canonical(claims), purpose=CAPABILITY_PURPOSE)
+    except (RuntimeError, ValueError):
+        return None
+    if not hmac.compare_digest(str(signature), expected):
+        return None
+    return claims
+
+
+def verify_content_capability_envelope(
+    token: str,
+    *,
+    app_name: str,
+    now: int | None = None,
+) -> dict[str, Any] | None:
+    """Authenticate the cheap, server-signed envelope before any database work."""
+    claims = _signed_claims(token)
+    if claims is None:
+        return None
+
+    if claims.get("v") != CAPABILITY_VERSION:
+        return None
+    if claims.get("purpose") != CAPABILITY_PURPOSE:
+        return None
+    if str(claims.get("app") or "") != str(app_name):
+        return None
+    if any(
+        not str(claims.get(field) or "")
+        for field in ("cartridge", "tenant", "workspace", "user", "digest")
+    ):
+        return None
+
+    current = int(now if now is not None else time.time())
+    try:
+        issued_at = int(claims.get("iat"))
+        expires_at = int(claims.get("exp"))
+    except (TypeError, ValueError):
+        return None
+    if expires_at <= current or issued_at > current + _MAX_CLOCK_SKEW_SECONDS:
+        return None
+    if expires_at - issued_at > CAPABILITY_TTL_SECONDS:
+        return None
+    if not str(claims.get("jti") or ""):
+        return None
+    return claims
+
+
 def verify_content_capability(
     token: str,
     *,
@@ -101,30 +166,12 @@ def verify_content_capability(
     another user or an older revision fails here, which is what stops a leaked
     URL from being useful anywhere but where it was minted.
     """
-    if not token or not isinstance(token, str) or token.count(".") != 1:
-        return None
-    encoded, signature = token.split(".", 1)
-    try:
-        payload = _unb64url(encoded)
-        claims = json.loads(payload.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError):
-        return None
-    if not isinstance(claims, dict):
-        return None
-
-    # Constant-time, and over the exact bytes that were signed.
-    try:
-        expected = sign_server_payload(_canonical(claims), purpose=CAPABILITY_PURPOSE)
-    except (RuntimeError, ValueError):
-        return None
-    if not hmac.compare_digest(str(signature), expected):
-        return None
-
-    if claims.get("v") != CAPABILITY_VERSION:
-        return None
-    if claims.get("purpose") != CAPABILITY_PURPOSE:
-        return None
-    if str(claims.get("app") or "") != str(app_name):
+    claims = verify_content_capability_envelope(
+        token,
+        app_name=app_name,
+        now=now,
+    )
+    if claims is None:
         return None
     if str(claims.get("tenant") or "") != str(tenant_id or ""):
         return None
@@ -133,19 +180,6 @@ def verify_content_capability(
     if str(claims.get("user") or "") != str(user_id):
         return None
     if not manifest_digest or str(claims.get("digest") or "") != str(manifest_digest):
-        return None
-
-    current = int(now if now is not None else time.time())
-    try:
-        issued_at = int(claims.get("iat"))
-        expires_at = int(claims.get("exp"))
-    except (TypeError, ValueError):
-        return None
-    if expires_at <= current or issued_at > current + _MAX_CLOCK_SKEW_SECONDS:
-        return None
-    if expires_at - issued_at > CAPABILITY_TTL_SECONDS:
-        return None
-    if not str(claims.get("jti") or ""):
         return None
     return claims
 

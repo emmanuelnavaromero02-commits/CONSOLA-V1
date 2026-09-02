@@ -8,9 +8,14 @@ INSERT INTO workspaces(id,tenant_id,name) VALUES
  ('aaaaaaaa-0000-0000-0000-000000000001','11111111-1111-1111-1111-111111111111','wsA'),
  ('aaaaaaaa-0000-0000-0000-000000000002','11111111-1111-1111-1111-111111111111','wsB'),
  ('bbbbbbbb-0000-0000-0000-000000000002','22222222-2222-2222-2222-222222222222','wsB') ON CONFLICT DO NOTHING;
-INSERT INTO analytic_apps(name,title,html,cartridge_id) VALUES
- ('sap_successfactors_talent_health','TH','<html></html>','sap_successfactors'),
- ('custom_user_app','CU','<html></html>','sap_successfactors') ON CONFLICT DO NOTHING;
+INSERT INTO analytic_apps
+  (name,title,html,cartridge_id,created_by_id,tenant_id,workspace_id,scope_status)
+VALUES
+ ('sap_successfactors_talent_health','TH','<html></html>','sap_successfactors',NULL,NULL,NULL,'platform_template'),
+ ('custom_user_app','CU','<html></html>','sap_successfactors',1,
+  '11111111-1111-1111-1111-111111111111',
+  'aaaaaaaa-0000-0000-0000-000000000001','scoped')
+ON CONFLICT DO NOTHING;
 -- same dataset NAME in three different scopes: the isolation must be by scope, not name.
 INSERT INTO datasets(name,layer,cartridge,tenant_id,workspace_id) VALUES
  ('sap_successfactors_employees_anomalies','gold','sap_successfactors','11111111-1111-1111-1111-111111111111','aaaaaaaa-0000-0000-0000-000000000001'),

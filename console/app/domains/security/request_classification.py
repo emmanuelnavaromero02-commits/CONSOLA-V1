@@ -18,6 +18,24 @@ def uses_rbac_dependency(path: str, prefixes: tuple[str, ...]) -> bool:
     return any(path == prefix or path.startswith(prefix + "/") for prefix in prefixes)
 
 
+def is_app_content_capability_path(path: str) -> bool:
+    """Return whether *path* is exactly the capability-guarded app content route.
+
+    The viewer's inner frame is credentialless, so the request intentionally has
+    no session cookie.  Its short-lived capability is validated by the route
+    itself; redirecting this request to ``/login`` makes the browser reject the
+    framed login page before that validation can run.
+    """
+    parts = path.split("/")
+    return (
+        len(parts) == 4
+        and parts[0] == ""
+        and parts[1] == "apps"
+        and bool(parts[2])
+        and parts[3] == "content"
+    )
+
+
 def is_agent_runner_request(
     path: str,
     *,

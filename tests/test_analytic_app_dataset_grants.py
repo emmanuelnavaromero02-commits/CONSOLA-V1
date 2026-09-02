@@ -38,6 +38,9 @@ from app.domains.apps.manifests import (  # noqa: E402
     manifest_digest,
     served_digest,
 )
+from app.services.reconcile_packaged_app_grants import (  # noqa: E402
+    reconcile_packaged_app_grants,
+)
 
 DSN = os.environ.get("OMEGA_TEST_GRANTS_DSN", "")
 pytestmark = [
@@ -192,6 +195,98 @@ async def test_the_owner_role_cannot_log_in_or_escalate(conn):
     assert not any(row.values())
 
 
+async def test_the_owner_has_only_scoped_source_read_policies(conn):
+    rows = await conn.fetch(
+        """SELECT tablename, policyname, cmd, roles, qual
+             FROM pg_policies
+            WHERE schemaname = 'public'
+              AND policyname LIKE '%app_grants_owner_read'
+            ORDER BY tablename"""
+    )
+    assert {row["tablename"] for row in rows} == {
+        "analytic_apps",
+        "cartridge_installations",
+        "datasets",
+    }
+    for row in rows:
+        assert row["cmd"] == "SELECT"
+        assert row["roles"] == ["omega_app_grants_owner"]
+        assert "omega_rls_workspace_matches" in row["qual"] or (
+            row["tablename"] == "analytic_apps"
+            and "analytic_app_manifests" in row["qual"]
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "UPDATE public.analytic_apps SET created_by_id = 1 WHERE name = $1",
+        "UPDATE public.analytic_apps SET cartridge_id = 'replicon' "
+        "WHERE name = $1",
+        "UPDATE public.analytic_apps SET scope_status = 'scoped' "
+        "WHERE name = $1",
+        f"UPDATE public.analytic_apps SET tenant_id = '{TENANT_B}'::uuid "
+        "WHERE name = $1",
+        f"UPDATE public.analytic_apps SET workspace_id = '{WS_B2}'::uuid "
+        "WHERE name = $1",
+        f"UPDATE public.analytic_apps SET created_by_id = 1, "
+        f"tenant_id = '{TENANT_B}'::uuid, "
+        f"workspace_id = '{WS_B2}'::uuid, scope_status = 'scoped' "
+        "WHERE name = $1",
+    ),
+    ids=(
+        "owned",
+        "wrong_cartridge",
+        "wrong_scope_status",
+        "tenant_bound",
+        "workspace_bound",
+        "other_scope_collision",
+    ),
+)
+async def test_every_packaged_app_identity_mismatch_is_rejected(app_conn, mutation):
+    await app_conn.execute("RESET ROLE")
+    transaction = app_conn.transaction()
+    await transaction.start()
+    try:
+        await app_conn.execute(mutation, APP)
+        await app_conn.execute("SET LOCAL ROLE omega_console")
+        await _scoped(app_conn, TENANT_A, WS_A1)
+        with pytest.raises(asyncpg.PostgresError, match="app is not packaged"):
+            await _reconcile(app_conn)
+    finally:
+        await transaction.rollback()
+
+    assert await app_conn.fetchval(
+        "SELECT count(*) FROM public.analytic_app_dataset_grants"
+    ) == 0
+    await app_conn.execute("SET ROLE omega_console")
+
+
+async def test_missing_packaged_app_row_is_distinguished_and_rejected(app_conn):
+    await app_conn.execute("RESET ROLE")
+    transaction = app_conn.transaction()
+    await transaction.start()
+    try:
+        await app_conn.execute(
+            "DELETE FROM public.analytic_apps WHERE name = $1",
+            APP,
+        )
+        await app_conn.execute("SET LOCAL ROLE omega_console")
+        await _scoped(app_conn, TENANT_A, WS_A1)
+        with pytest.raises(
+            asyncpg.PostgresError,
+            match="packaged app is not registered",
+        ):
+            await _reconcile(app_conn)
+    finally:
+        await transaction.rollback()
+
+    assert await app_conn.fetchval(
+        "SELECT count(*) FROM public.analytic_app_dataset_grants"
+    ) == 0
+    await app_conn.execute("SET ROLE omega_console")
+
+
 async def test_no_application_role_may_write_the_ledger_or_the_registry(app_conn):
     await _scoped(app_conn, TENANT_A, WS_A1)
     for statement in (
@@ -246,6 +341,34 @@ async def test_cross_cartridge_dataset_is_never_granted(conn):
     assert OTHER_CARTRIDGE not in granted
 
 
+async def test_legacy_unscoped_dataset_is_never_granted(conn):
+    await conn.execute(
+        """UPDATE public.datasets
+              SET scope_status = 'legacy_unscoped'
+            WHERE tenant_id = $1::uuid
+              AND workspace_id = $2::uuid
+              AND name = $3""",
+        TENANT_A,
+        WS_A1,
+        APPROVED,
+    )
+    try:
+        await _scoped(conn, TENANT_A, WS_A1)
+        granted = [row["dataset_name"] for row in await _reconcile(conn)]
+        assert APPROVED not in granted
+    finally:
+        await conn.execute(
+            """UPDATE public.datasets
+                  SET scope_status = 'scoped'
+                WHERE tenant_id = $1::uuid
+                  AND workspace_id = $2::uuid
+                  AND name = $3""",
+            TENANT_A,
+            WS_A1,
+            APPROVED,
+        )
+
+
 async def test_a_custom_app_gets_nothing(conn):
     await _scoped(conn, TENANT_A, WS_A1)
     assert await _reconcile(conn, app=CUSTOM_APP) == []
@@ -292,6 +415,60 @@ async def test_reconciliation_is_idempotent(conn):
     assert first > 0
     assert await _reconcile(conn) == []
     assert await _reconcile(conn) == []
+
+
+async def test_startup_reconciles_ready_installations_idempotently(conn):
+    """The post-seed startup pass repairs installations already marked ready."""
+    assert await conn.fetchval(
+        "SELECT count(*) FROM public.analytic_app_dataset_grants"
+    ) == 0
+    # Startup reconciles every manifest in an installed cartridge. Mirror the
+    # runtime app seed for the second SuccessFactors app omitted by this fixture.
+    supplemental_app = await conn.fetchval(
+        """INSERT INTO public.analytic_apps
+                  (name, title, html, cartridge_id, created_by_id, visibility,
+                   tenant_id, workspace_id, scope_status)
+           VALUES ('sap_successfactors_workforce_overview', 'Workforce',
+                   '<html></html>', 'sap_successfactors', NULL, 'shared',
+                   NULL, NULL, 'platform_template')
+           ON CONFLICT (name) DO NOTHING
+           RETURNING name"""
+    )
+
+    async def initialize(connection):
+        await connection.execute("SET ROLE omega_console")
+
+    pool = await asyncpg.create_pool(DSN, min_size=1, max_size=1, setup=initialize)
+    try:
+        await reconcile_packaged_app_grants(pool)
+        first_grants = await conn.fetchval(
+            "SELECT count(*) FROM public.analytic_app_dataset_grants "
+            "WHERE revoked_at IS NULL"
+        )
+        first_events = await conn.fetchval(
+            "SELECT count(*) FROM public.analytic_app_dataset_grant_events "
+            "WHERE event = 'granted'"
+        )
+        await reconcile_packaged_app_grants(pool)
+        second_grants = await conn.fetchval(
+            "SELECT count(*) FROM public.analytic_app_dataset_grants "
+            "WHERE revoked_at IS NULL"
+        )
+        second_events = await conn.fetchval(
+            "SELECT count(*) FROM public.analytic_app_dataset_grant_events "
+            "WHERE event = 'granted'"
+        )
+    finally:
+        await pool.close()
+        if supplemental_app:
+            await conn.execute(
+                "DELETE FROM public.analytic_apps WHERE name = $1",
+                supplemental_app,
+            )
+
+    assert first_grants > 0
+    assert second_grants == first_grants
+    assert second_events == first_events
 
 
 # --- lifecycle --------------------------------------------------------------

@@ -85,6 +85,7 @@ from app.domains.apps.capability import (
     frame_fetch_metadata_ok as _frame_fetch_metadata_ok,
     issue_content_capability as _issue_content_capability,
     verify_content_capability as _verify_content_capability,
+    verify_content_capability_envelope as _verify_content_capability_envelope,
 )
 from app.domains.agentops.successfactors_talent_monitor import (
     SUCCESSFACTORS_TALENT_MONITOR_SLUG as _SUCCESSFACTORS_TALENT_MONITOR_SLUG,
@@ -339,6 +340,7 @@ from app.domains.data_platform.table_metadata import (
 from app.domains.security.request_classification import (
     is_agent_runner_request as _is_agent_runner_request_impl,
     is_api_like as _is_api_like_impl,
+    is_app_content_capability_path as _is_app_content_capability_path_impl,
     is_direct_static_html_request as _is_direct_static_html_request_impl,
     uses_rbac_dependency as _uses_rbac_dependency_impl,
 )
@@ -1294,6 +1296,10 @@ def _uses_rbac_dependency(path: str) -> bool:
     return _uses_rbac_dependency_impl(path, _RBAC_DEPENDENCY_PREFIXES)
 
 
+def _is_app_content_capability_path(path: str) -> bool:
+    return _is_app_content_capability_path_impl(path)
+
+
 def _is_agent_runner_request(request: Request) -> bool:
     return _is_agent_runner_request_impl(
         request.url.path,
@@ -1547,6 +1553,14 @@ async def auth_middleware(request: Request, call_next):
     response = await _auth_preflight_response(request, call_next, path=path)
     if response is not None:
         return response
+
+    # This exact iframe route intentionally has no session identity. Its only
+    # authority is the signed, short-lived capability checked by the route.
+    # Ignore ambient Cookie/Authorization headers before they can trigger a DB
+    # lookup or make a valid capability depend on unrelated browser state.
+    if _is_app_content_capability_path(path):
+        request.state.user = None
+        return await call_next(request)
 
     is_public = _is_auth_public_path(path)
     user, response = await _middleware_authenticated_user(
@@ -2901,6 +2915,8 @@ async def _proxy_workspace_app(
         _require_cartridge_visible(runtime_user, cartridge)
         active = await _active_scoped_connection_cartridges(runtime_user, {cartridge})
         if cartridge not in active:
+            if content:
+                raise HTTPException(403, "app content is not available")
             return RedirectResponse(url="/apps-gallery", status_code=303)
     html_text, _app = await _refinement_app_html(name, runtime_user)
     # Server-owned, one per response: the app's inline bootstrap runs under a
@@ -2916,27 +2932,6 @@ async def _proxy_workspace_app(
         content=html_text,
         headers=_app_content_headers(nonce),
     )
-
-
-def _peek_content_capability(cap: str) -> dict | None:
-    """Read the claims without trusting them, to learn which subject to load.
-
-    The signature is verified afterwards against the values the server resolves
-    independently, so nothing here is an authorisation decision — it only says
-    which user and workspace to go and look up.
-    """
-    import base64
-    import json as _json
-
-    if not cap or not isinstance(cap, str) or cap.count(".") != 1:
-        return None
-    encoded = cap.split(".", 1)[0]
-    try:
-        padding = "=" * (-len(encoded) % 4)
-        claims = _json.loads(base64.urlsafe_b64decode(encoded + padding))
-    except Exception:
-        return None
-    return claims if isinstance(claims, dict) else None
 
 
 async def _resolve_capability_subject(claims: dict) -> dict | None:
@@ -2959,14 +2954,30 @@ async def _resolve_capability_subject(claims: dict) -> dict | None:
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                SELECT u.id, u.role, w.tenant_id, w.id AS workspace_id
+                SELECT u.id,
+                       u.role,
+                       w.tenant_id,
+                       w.id AS workspace_id,
+                       CASE
+                         WHEN u.role IN ('admin', 'owner', 'super_admin')
+                           THEN 'workspace_admin'
+                         ELSE r.name
+                       END AS workspace_role
                   FROM public.users u
-                  JOIN public.user_workspace_roles uwr ON uwr.user_id = u.id
-                  JOIN public.workspaces w ON w.id = uwr.workspace_id
+                  JOIN public.workspaces w
+                    ON w.id = $2::uuid
+                   AND w.tenant_id = $3::uuid
+                  LEFT JOIN public.user_workspace_roles uwr
+                    ON uwr.user_id = u.id
+                   AND uwr.workspace_id = w.id
+                  LEFT JOIN public.roles r ON r.id = uwr.role_id
                  WHERE u.id = $1
                    AND u.is_active = TRUE
-                   AND w.id = $2::uuid
-                   AND w.tenant_id = $3::uuid
+                   AND (
+                     u.role IN ('admin', 'owner', 'super_admin')
+                     OR uwr.user_id IS NOT NULL
+                   )
+                 ORDER BY r.name ASC NULLS LAST
                  LIMIT 1
                 """,
                 user_id, workspace_id, tenant_id,
@@ -2976,14 +2987,27 @@ async def _resolve_capability_subject(claims: dict) -> dict | None:
         return None
     if row is None:
         return None
-    return {
+    resolved = {
         "id": int(row["id"]),
         "role": row["role"],
         "tenant_id": str(row["tenant_id"]),
         "workspace_id": str(row["workspace_id"]),
         "active_tenant_id": str(row["tenant_id"]),
         "active_workspace_id": str(row["workspace_id"]),
+        "workspace_role": row["workspace_role"],
     }
+    # Session-authenticated requests receive this entitlement list during
+    # middleware enrichment.  Capability requests have no cookie, so rebuild
+    # the same server-owned context before cartridge visibility is enforced.
+    # Failure grants nothing.
+    try:
+        resolved["allowed_cartridges"] = await _workspace_cartridges(
+            resolved["workspace_id"], user_id=resolved["id"]
+        )
+    except Exception:
+        logger.warning("[app-content] entitlement lookup failed", exc_info=True)
+        resolved["allowed_cartridges"] = []
+    return resolved
 
 
 async def _active_manifest_digest(
@@ -3022,9 +3046,13 @@ async def _require_app_content_capability(
     """
     denied = HTTPException(403, "app content is not available")
     _validate_dataset_name(name)
-    claims = _peek_content_capability(cap)
+    claims = _verify_content_capability_envelope(cap, app_name=name)
     if claims is None or not _frame_fetch_metadata_ok(request.headers):
         raise denied
+    await _request_rate_limits.rate_limit_app_content_capability(
+        claims,
+        limiter_factory=get_rate_limiter,
+    )
 
     resolved = await _resolve_capability_subject(claims)
     if resolved is None:
@@ -3138,14 +3166,18 @@ async def _app_grant_context(
         try:
             pool = await _get_db_pool()
             async with pool.acquire() as conn:
-                await _set_rls_scope(conn, tenant_id, workspace_id)
-                granted = await _granted_datasets(
-                    conn,
-                    tenant_id=tenant_id,
-                    workspace_id=workspace_id,
-                    app_name=name,
-                    manifest_digest=digest,
-                )
+                # set_config(..., true) is transaction-local.  Without this
+                # transaction asyncpg autocommit clears the RLS scope before
+                # the grant query and every app appears to have zero grants.
+                async with conn.transaction():
+                    await _set_rls_scope(conn, tenant_id, workspace_id)
+                    granted = await _granted_datasets(
+                        conn,
+                        tenant_id=tenant_id,
+                        workspace_id=workspace_id,
+                        app_name=name,
+                        manifest_digest=digest,
+                    )
         except Exception:
             # Fail closed: an unreachable ledger grants nothing.
             logger.warning("[app-grants] grant lookup failed for %s", name, exc_info=True)

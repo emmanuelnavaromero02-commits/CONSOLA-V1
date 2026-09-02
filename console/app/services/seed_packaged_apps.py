@@ -92,7 +92,8 @@ async def seed_packaged_apps(pool: asyncpg.Pool) -> None:
                               tenant_id = NULL,
                               workspace_id = NULL,
                               scope_status = 'platform_template',
-                              updated_at = NOW()""",
+                              updated_at = NOW()
+                        WHERE analytic_apps.created_by_id IS NULL""",
                     name, title, html, description, cartridge_id, datasets_used,
                 )
                 names.append(name)

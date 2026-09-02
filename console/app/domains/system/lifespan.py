@@ -13,12 +13,16 @@ def _default_startup_seeds() -> tuple[StartupSeed, ...]:
     from app.services.seed_packaged_apps import seed_packaged_apps
     from app.services.seed_packaged_datasets import seed_packaged_datasets
     from app.services.seed_packaged_hints import seed_packaged_hints
+    from app.services.reconcile_packaged_app_grants import (
+        reconcile_packaged_app_grants,
+    )
 
     return (
         ("seed_missing_dag_sources", seed_missing_dag_sources),
         ("seed_packaged_datasets", seed_packaged_datasets),
         ("seed_packaged_hints", seed_packaged_hints),
         ("seed_packaged_apps", seed_packaged_apps),
+        ("reconcile_packaged_app_grants", reconcile_packaged_app_grants),
     )
 
 

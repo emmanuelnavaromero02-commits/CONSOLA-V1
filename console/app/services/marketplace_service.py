@@ -1189,6 +1189,10 @@ async def _reconcile_packaged_app_grants(
         return
     from app.domains.apps import grants as app_grants
 
+    await app_grants.lock_workspace_reconciliation(
+        conn,
+        workspace_id=str(workspace_id),
+    )
     await conn.execute(
         "SELECT set_config('app.tenant_id', $1, true), "
         "set_config('app.workspace_id', $2, true)",
