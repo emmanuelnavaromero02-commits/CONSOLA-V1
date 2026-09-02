@@ -4879,7 +4879,7 @@
     },
     {
       "path": "tests/test_pypdf_security.py",
-      "sha256": "2c0739bfb7b4962375512016c46610c64e833781019ef4ff553e574b692b89dc"
+      "sha256": "640a45c5f842a81ab0e8834ae64ddd22616692b0f22a9bc50c4b7cec2bf855c0"
     },
     {
       "path": "tests/test_python_runtime_contract.py",

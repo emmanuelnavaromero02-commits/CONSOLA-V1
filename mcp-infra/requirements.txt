@@ -17,7 +17,9 @@ duckdb==1.2.2
 sqlalchemy==2.0.34
 asyncpg==0.29.0
 pgvector==0.3.2
-# v1.43.2 (DevOps R1 follow-up): pypdf 4.3.1 had 13+ CVEs (parser DoS,
+# v1.45.225: pypdf 6.16.1 also closes GHSA-jp53-mhqp-8xcg,
+# GHSA-23w6-3w8w-8484 and GHSA-763m-79hh-57f2 discovered after 6.15.0.
+# The earlier pypdf 4.3.1 line had 13+ CVEs (parser DoS,
 # loop bombs, unbounded recursion). 6.15.0 includes the prior parser
 # fixes: CVE-2026-59938/GHSA-5qjq-93h5-hrgp and
 # CVE-2026-59937/GHSA-55h5-xmcq-c37v (6.14.0),
@@ -27,7 +29,7 @@ pgvector==0.3.2
 # CVE-2026-71870/GHSA-fp3f-mc75-235c (6.15.0).
 # Public API used by mcp-infra (PdfReader, page extraction) is
 # unchanged across the 4 -> 6 major bump per pypdf's stability policy.
-pypdf==6.15.0
+pypdf==6.16.1
 sqlglot==25.16.1
 boto3>=1.34.0
 google-cloud-storage>=2.18.0,<4
