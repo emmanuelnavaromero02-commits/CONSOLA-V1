@@ -70,7 +70,7 @@
           },
           {
             "path": "tests/test_analytic_app_dataset_grants.py",
-            "declarations_sha256": "81f46752b1bcccf9f36484fafda0069017ec62caa0c9f47444ee7cd6bca2a300"
+            "declarations_sha256": "04233e74b361998c816b8ca9b2be7abc91bd83e754d16ba9bfa8cae053740397"
           },
           {
             "path": "tests/test_aws_evidence_compose_isolation.py",
@@ -205,7 +205,7 @@
             "declarations_sha256": "fe98517b8fbaab00c4a1a5cbb56109ea74a148b947f3b8e79f6e6d5110e47953"
           }
         ],
-        "inventory_sha256": "b5093ae02c93c307c09a54d84f6194de4a16f917e2e59d43a1d947e3fd354f03"
+        "inventory_sha256": "b21e573e154ffd12fe42bd22852092e93fa4f32690d687f12a22dedbb8a18785"
       }
     },
     {

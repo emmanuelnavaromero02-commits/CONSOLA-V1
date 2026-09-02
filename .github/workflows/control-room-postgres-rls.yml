@@ -232,16 +232,38 @@ jobs:
           for f in tests/fixtures/app_grants_schema.sql \
                    infra/init/99zzt_analytic_app_dataset_grants.sql \
                    infra/init/99zzu_analytic_app_manifest_registry.sql \
-                   tests/fixtures/app_grants_seed.sql; do
+                   infra/init/99zzy_analytic_app_grants_owner_rls_repair.sql \
+                   tests/fixtures/app_grants_seed.sql \
+                   infra/init/99zzzzf_analytic_app_grant_convergence.sql; do
             echo "[app-grants] applying $f"
             psql -h 127.0.0.1 -p 55432 -U postgres -d app_grants \
               -v ON_ERROR_STOP=1 -q -f "$f"
           done
+          grants_before="$(psql -h 127.0.0.1 -p 55432 -U postgres -d app_grants \
+            -v ON_ERROR_STOP=1 -Atc \
+            "SELECT count(*) FROM public.analytic_app_dataset_grants")"
+          events_before="$(psql -h 127.0.0.1 -p 55432 -U postgres -d app_grants \
+            -v ON_ERROR_STOP=1 -Atc \
+            "SELECT count(*) FROM public.analytic_app_dataset_grant_events")"
+          test "${grants_before}" -gt 0
+          test "${events_before}" -gt 0
           # Applying twice proves the migration is idempotent on every run.
           psql -h 127.0.0.1 -p 55432 -U postgres -d app_grants -v ON_ERROR_STOP=1 -q \
             -f infra/init/99zzt_analytic_app_dataset_grants.sql
           psql -h 127.0.0.1 -p 55432 -U postgres -d app_grants -v ON_ERROR_STOP=1 -q \
             -f infra/init/99zzu_analytic_app_manifest_registry.sql
+          psql -h 127.0.0.1 -p 55432 -U postgres -d app_grants -v ON_ERROR_STOP=1 -q \
+            -f infra/init/99zzy_analytic_app_grants_owner_rls_repair.sql
+          psql -h 127.0.0.1 -p 55432 -U postgres -d app_grants -v ON_ERROR_STOP=1 -q \
+            -f infra/init/99zzzzf_analytic_app_grant_convergence.sql
+          grants_after="$(psql -h 127.0.0.1 -p 55432 -U postgres -d app_grants \
+            -v ON_ERROR_STOP=1 -Atc \
+            "SELECT count(*) FROM public.analytic_app_dataset_grants")"
+          events_after="$(psql -h 127.0.0.1 -p 55432 -U postgres -d app_grants \
+            -v ON_ERROR_STOP=1 -Atc \
+            "SELECT count(*) FROM public.analytic_app_dataset_grant_events")"
+          test "${grants_after}" = "${grants_before}"
+          test "${events_after}" = "${events_before}"
 
       - name: Manifest registry is regenerable and unchanged
         env:

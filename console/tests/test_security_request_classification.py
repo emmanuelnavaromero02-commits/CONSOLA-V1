@@ -1,6 +1,7 @@
 from app.domains.security.request_classification import (
     is_agent_runner_request,
     is_api_like,
+    is_app_content_capability_path,
     is_direct_static_html_request,
     uses_rbac_dependency,
 )
@@ -28,6 +29,19 @@ def test_uses_rbac_dependency_avoids_false_prefix_matches():
     assert uses_rbac_dependency("/jobs/job-1", prefixes) is True
     assert uses_rbac_dependency("/jobsX", prefixes) is False
     assert uses_rbac_dependency("/api/datafoo", prefixes) is False
+
+
+def test_app_content_capability_path_matches_only_the_exact_route_shape():
+    assert is_app_content_capability_path("/apps/skill_gaps_heatmap/content") is True
+
+    for path in (
+        "/apps/skill_gaps_heatmap/embed",
+        "/apps/skill_gaps_heatmap/content/",
+        "/apps/skill/gaps/content",
+        "/apps//content",
+        "/api/apps/skill_gaps_heatmap/content",
+    ):
+        assert is_app_content_capability_path(path) is False
 
 
 def test_is_agent_runner_request_requires_scheduled_route_and_token():

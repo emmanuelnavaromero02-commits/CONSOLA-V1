@@ -25,6 +25,9 @@ RATE_LIMITS = {
     "/api/mcp": (80, 60),
     "/studio/import": (10, RATE_LIMIT_WINDOW_SECONDS),
     "/api/explorer": (180, 60),
+    # Credentialless iframe route: the capability is the authentication, but a
+    # forged envelope must not become an unbounded anonymous database workload.
+    "/apps/content": (60, 60),
 }
 API_RATE_LIMIT_PREFIXES = (
     "/api/copilot",
@@ -110,7 +113,8 @@ async def rate_limit(
     #   1) per (ip, subject) — keeps a noisy single user from drowning others
     #   2) per ip — prevents subject-rotation bypass.
     limiter = limiter_factory()
-    for key in (f"{action}:{ip}:{subject_key}", f"{action}:{ip}:-"):
+    keys = dict.fromkeys((f"{action}:{ip}:{subject_key}", f"{action}:{ip}:-"))
+    for key in keys:
         if not await limiter.check(key, limit, window, sensitive=True):
             raise HTTPException(status_code=429, detail="too many requests")
 
@@ -132,6 +136,34 @@ async def rate_limit_api_surface(
     ip = client_ip(request, trusted_proxies=trusted_proxies)
     user_key = str((user or {}).get("id") or (user or {}).get("email") or "-")
     limiter = limiter_factory()
-    for key in (f"{matched}:{ip}:{user_key}", f"{matched}:{ip}:-"):
+    keys = dict.fromkeys((f"{matched}:{ip}:{user_key}", f"{matched}:{ip}:-"))
+    for key in keys:
         if not await limiter.check(key, limit, window, sensitive=True):
             raise HTTPException(status_code=429, detail="too many requests")
+
+
+async def rate_limit_app_content_capability(
+    claims: Mapping[str, Any],
+    *,
+    limiter_factory: Callable[[], Any] = get_rate_limiter,
+) -> None:
+    """Limit expensive content checks by the authenticated capability user.
+
+    The credentialless frame is anonymous to session middleware and production
+    proxy addresses are not a reliable end-user identity. This runs only after
+    the HMAC envelope is valid, so one user's reloads cannot throttle everyone.
+    """
+    if rate_limit_disabled():
+        return
+    user_key = str(claims.get("user") or "")
+    if not user_key:
+        raise HTTPException(status_code=403, detail="app content is not available")
+    limit, window = RATE_LIMITS["/apps/content"]
+    limiter = limiter_factory()
+    if not await limiter.check(
+        f"/apps/content:user:{user_key}",
+        limit,
+        window,
+        sensitive=True,
+    ):
+        raise HTTPException(status_code=429, detail="too many requests")

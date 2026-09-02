@@ -20,12 +20,22 @@ from app.domains.apps.manifests import (
 
 logger = logging.getLogger(__name__)
 
+_RECONCILIATION_LOCK_PREFIX = "omega:app-grants:"
+
 # One authoritative call. Reading the grant here and checking the installation
 # separately would leave a TOCTOU window: a cartridge can stop being ready
 # between the two statements, and the read would still be served. The SQL
 # function joins grant, active manifest, ready installation and the workspace's
 # own dataset row in a single query.
 _SELECT_GRANTS = "SELECT dataset_name FROM public.analytic_app_granted_datasets($1, $2)"
+
+
+async def lock_workspace_reconciliation(conn: Any, *, workspace_id: str) -> None:
+    """Serialize every grant reconcile/revoke path for one workspace."""
+    await conn.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        _RECONCILIATION_LOCK_PREFIX + str(workspace_id),
+    )
 
 
 async def granted_datasets(

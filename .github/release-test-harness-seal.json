@@ -3,7 +3,7 @@
   "files": [
     {
       "path": ".github/release-test-skip-policy.json",
-      "sha256": "be2558f72e33b47987b4d3408972bfd77dd51ecbe73cd48fd9396ca5f5d17321"
+      "sha256": "c8625e6231e5565f6c08614d0da0f523c0db5bf4d32a43fcdcb82f8e6a24c403"
     },
     {
       "path": ".github/workflows/release-runner-capacity.yml",
@@ -1622,6 +1622,10 @@
       "sha256": "5e7acb19a94c57f05ba7c3fa868312abf9eac154dbd4a179ebd821c4d2a7d289"
     },
     {
+      "path": "console/tests/test_app_content_capability_flow.py",
+      "sha256": "ae7e4cff363e8fcb84c172e69bbaf50be54d9d502b794e17e1470bcc668fb06e"
+    },
+    {
       "path": "console/tests/test_apps_embed.py",
       "sha256": "4ec4ab45b7c5a3a8fb574676db76a683bafbdde4683f59738ff919560208ee2a"
     },
@@ -2275,7 +2279,7 @@
     },
     {
       "path": "console/tests/test_control_room_packaged_dataset_refresh.py",
-      "sha256": "dd52061a56dad5aabfe2646aa84ce5697a0dbc37949d8a9ea66779aff807a8e1"
+      "sha256": "fa068c1e976d66de35762ab9acdb50e429bec28226f7abcb7c482b4ae99a2472"
     },
     {
       "path": "console/tests/test_control_room_page_permissions.py",
@@ -2762,6 +2766,10 @@
       "sha256": "22c72ea0585e99f0d97809ba4a841a3cbdf94237f3b97f1f2424406900a94b7a"
     },
     {
+      "path": "console/tests/test_reconcile_packaged_app_grants.py",
+      "sha256": "e44c847f3d03a39fa1c461f3e23cc038a7e70f63f4e69f6dc75151a8fc219a7b"
+    },
+    {
       "path": "console/tests/test_refinement_error_semantics.py",
       "sha256": "c8d730d0962768d06212eb595dae15ded116c73a6e345dfde01771d10ec652ac"
     },
@@ -2799,7 +2807,7 @@
     },
     {
       "path": "console/tests/test_security_request_classification.py",
-      "sha256": "6f6612bc2c54b63742782ef1312be61aa14c00ff7802e21afac24a8ce0a7a787"
+      "sha256": "b11561588b4eaafb0d693a7efd0664a99853efce31793bde91921bbd40257f25"
     },
     {
       "path": "console/tests/test_security_router.py",
@@ -3555,7 +3563,7 @@
     },
     {
       "path": "tests/test_analytic_app_dataset_grants.py",
-      "sha256": "72b338142877a19f0aec6f1d3b584ccf115c5b1870c40e0311cbd6206425cab5"
+      "sha256": "9a8d0c9f777765c47207d3cc3f261a1505694413daac39c6e88c9d4ef8012405"
     },
     {
       "path": "tests/test_app_env_safe_default.py",
@@ -4871,7 +4879,7 @@
     },
     {
       "path": "tests/test_pypdf_security.py",
-      "sha256": "2c0739bfb7b4962375512016c46610c64e833781019ef4ff553e574b692b89dc"
+      "sha256": "640a45c5f842a81ab0e8834ae64ddd22616692b0f22a9bc50c4b7cec2bf855c0"
     },
     {
       "path": "tests/test_python_runtime_contract.py",
@@ -5055,7 +5063,7 @@
     },
     {
       "path": "tests/test_request_rate_limits.py",
-      "sha256": "34340c0c14f65d496b87a8503428262f0ebf4d6a432eca7811307a138f48583c"
+      "sha256": "351ed5f83a2258ec92e01f17b0516f50ec26dc89f8158e0c3c23aa9488dfeadf"
     },
     {
       "path": "tests/test_rls_real_duckdb.py",
@@ -5267,7 +5275,7 @@
     },
     {
       "path": "tests/test_security_headers.py",
-      "sha256": "7491b43893b9308f495dc50cc3c84b24daaa66f3536b13fc47bef72994018dbf"
+      "sha256": "994b8eccb9dab5461e9c929ff70946ff18628548323d7ae0e9095af865b6dd39"
     },
     {
       "path": "tests/test_security_negative_v141.py",
@@ -5279,7 +5287,7 @@
     },
     {
       "path": "tests/test_seed_packaged_apps_contract.py",
-      "sha256": "8132001e69cdb04fcbfdc0d73b3bbac8f64205eb1b8fec46e476f8dd363fa9ea"
+      "sha256": "8dc0fee01f4e54016b9fdb935a55f440a0efd06eefd0e1d1a51bbb77c4209b7c"
     },
     {
       "path": "tests/test_seed_packaged_datasets_logging.py",

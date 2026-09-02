@@ -11,6 +11,8 @@ from app.services.request_rate_limits import (
     api_rate_limit_action,
     client_ip,
     rate_limit,
+    rate_limit_api_surface,
+    rate_limit_app_content_capability,
     rate_limit_disabled,
     trusted_proxy_ips,
 )
@@ -51,6 +53,8 @@ def test_api_rate_limit_action_matches_registered_prefixes():
     assert api_rate_limit_action("/api/copilot/chat") == "/api/copilot"
     assert api_rate_limit_action("/studio/import") == "/studio/import"
     assert api_rate_limit_action("/studio/import/foo") == "/studio/import"
+    assert api_rate_limit_action("/apps/demo/content") is None
+    assert api_rate_limit_action("/apps/demo/content/") is None
     assert api_rate_limit_action("/healthz") is None
 
 
@@ -75,3 +79,44 @@ def test_rate_limit_raises_429_when_backend_rejects(monkeypatch):
         )
 
     assert exc.value.status_code == 429
+
+
+def test_anonymous_api_surface_deduplicates_the_shared_ip_bucket(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    calls: list[str] = []
+
+    class Limiter:
+        async def check(self, key, *_args, **_kwargs):
+            calls.append(key)
+            return True
+
+    asyncio.run(
+        rate_limit_api_surface(
+            _request(),
+            "/api/copilot/chat",
+            None,
+            limiter_factory=Limiter,
+            trusted_proxies=frozenset(),
+        )
+    )
+
+    assert calls == ["/api/copilot:10.0.0.10:-"]
+
+
+def test_app_content_limit_uses_the_authenticated_capability_user(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    calls: list[str] = []
+
+    class Limiter:
+        async def check(self, key, *_args, **_kwargs):
+            calls.append(key)
+            return True
+
+    asyncio.run(
+        rate_limit_app_content_capability(
+            {"user": "42", "jti": "signed-nonce"},
+            limiter_factory=Limiter,
+        )
+    )
+
+    assert calls == ["/apps/content:user:42"]

@@ -42,6 +42,23 @@ def test_app_embeds_keep_sameorigin_frame_headers():
     assert "frame-ancestors 'self'" in response.headers["content-security-policy"]
 
 
+def test_app_content_errors_remain_visible_inside_the_sameorigin_wrapper():
+    response = HTMLResponse("")
+
+    apply_security_headers(response, "/apps/demo/content")
+
+    assert response.headers["x-frame-options"] == "SAMEORIGIN"
+    assert "frame-ancestors 'self'" in response.headers["content-security-policy"]
+
+
+def test_app_content_lookalikes_keep_default_anti_frame_headers():
+    for path in ("/apps/demo/content/", "/apps/demo/nested/content"):
+        response = HTMLResponse("")
+        apply_security_headers(response, path)
+        assert response.headers["x-frame-options"] == "DENY"
+        assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+
+
 def test_published_app_theme_injection_is_idempotent():
     html = "<html><head><title>x</title></head><body><main></main></body></html>"
 

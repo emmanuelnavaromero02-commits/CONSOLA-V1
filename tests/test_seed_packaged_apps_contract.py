@@ -26,3 +26,12 @@ def test_hubspot_pipeline_forecast_declares_gold_dataset():
 
     assert '"datasets_used": ["forecast_mensual"]' in meta
     assert "/api/data/forecast_mensual" in html
+
+
+def test_packaged_seed_never_overwrites_a_user_created_name_collision():
+    source = (REPO / "console/app/services/seed_packaged_apps.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "ON CONFLICT (name) DO UPDATE" in source
+    assert "WHERE analytic_apps.created_by_id IS NULL" in source

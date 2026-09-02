@@ -60,6 +60,17 @@ def test_startup_registers_the_general_dataset_seed_exactly_once():
     assert "refresh_successfactors_headcount_definitions" not in components
 
 
+def test_startup_reconciles_app_grants_after_datasets_and_apps_are_seeded():
+    components = [component for component, _seed in _default_startup_seeds()]
+
+    assert components.index("seed_packaged_datasets") < components.index(
+        "seed_packaged_apps"
+    )
+    assert components.index("seed_packaged_apps") < components.index(
+        "reconcile_packaged_app_grants"
+    )
+
+
 @pytest.mark.asyncio
 async def test_general_seed_refreshes_obsolete_definition_idempotently(
     monkeypatch,
