@@ -1225,6 +1225,12 @@ _AUTH_PUBLIC_EXACT = {
     "/readyz",
 }
 _AUTH_PUBLIC_PREFIX = ("/static/", "/vpn-config/")
+# Published-app content (/apps/{name}/content) is fetched credentialless from the
+# sandboxed viewer iframe, so it never carries a session cookie and would
+# otherwise be bounced to /login by the auth middleware — breaking every embedded
+# app. It authenticates on the signed capability in the query string instead, and
+# the route re-verifies that capability in full before serving.
+_APP_CONTENT_PATH_RE = re.compile(r"^/apps/[^/]+/content$")
 _AUTH_API_LIKE_PREFIX = (
     "/api/",
     "/mcp/",
@@ -1515,6 +1521,17 @@ async def _auth_preflight_response(
         return _apply_security_headers(
             JSONResponse({"detail": "not found"}, status_code=404), path
         )
+
+    # Published-app content is reached credentialless from the sandboxed viewer
+    # iframe, so it carries no session cookie and authenticates on the signed
+    # capability in the query string. Let it reach the route, which re-verifies
+    # the capability in full (signature, scope, active manifest digest, frame
+    # metadata and a ready installation) before serving. Without this, the auth
+    # middleware bounces every app iframe to /login and the viewer shows a
+    # "refused to connect" frame. The embed wrapper that mints the capability
+    # stays session-gated.
+    if _APP_CONTENT_PATH_RE.fullmatch(path) and request.query_params.get("cap"):
+        return await call_next(request)
 
     # Internal routes (server-to-server) bypass session auth.
     # Their own router-level dependency (verify_internal_api_key) handles auth via header.
