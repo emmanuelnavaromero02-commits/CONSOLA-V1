@@ -286,6 +286,87 @@ jobs:
             docker image inspect "${ref}" >/dev/null
           done
 
+      - name: Provision app-grant PostgreSQL for detected root tests
+        id: app_grants_postgres
+        if: needs.detect-release-changes.outputs.root_tests == 'true' && contains(format(' {0} ', needs.detect-release-changes.outputs.root_test_targets), ' tests/test_analytic_app_dataset_grants.py ')
+        env:
+          APP_GRANTS_POSTGRES_CONTAINER: omega-release-app-grants-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          docker run --pull=never --detach --rm \
+            --name "${APP_GRANTS_POSTGRES_CONTAINER}" \
+            --env POSTGRES_DB=app_grants \
+            --env POSTGRES_PASSWORD=postgres \
+            --env POSTGRES_USER=postgres \
+            --publish 127.0.0.1:55432:5432 \
+            postgres:15.18 >/dev/null
+
+          ready=0
+          for _attempt in $(seq 1 60); do
+            if docker exec "${APP_GRANTS_POSTGRES_CONTAINER}" \
+              psql -U postgres -d app_grants -v ON_ERROR_STOP=1 -Atc \
+              "SELECT 1" >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            state="$(docker inspect --format '{{.State.Status}}' \
+              "${APP_GRANTS_POSTGRES_CONTAINER}")"
+            if [[ "${state}" == "exited" || "${state}" == "dead" ]]; then
+              docker logs "${APP_GRANTS_POSTGRES_CONTAINER}"
+              exit 1
+            fi
+            sleep 1
+          done
+          if [[ "${ready}" != "1" ]]; then
+            docker logs "${APP_GRANTS_POSTGRES_CONTAINER}"
+            echo "::error::app-grant PostgreSQL did not become ready"
+            exit 1
+          fi
+
+          apply_sql() {
+            local file="$1"
+            test -f "${file}"
+            docker exec -i "${APP_GRANTS_POSTGRES_CONTAINER}" \
+              psql -U postgres -d app_grants -v ON_ERROR_STOP=1 -q \
+              < "${file}"
+          }
+          for file in tests/fixtures/app_grants_schema.sql \
+                      infra/init/99zzt_analytic_app_dataset_grants.sql \
+                      infra/init/99zzu_analytic_app_manifest_registry.sql \
+                      infra/init/99zzy_analytic_app_grants_owner_rls_repair.sql \
+                      tests/fixtures/app_grants_seed.sql \
+                      infra/init/99zzzzf_analytic_app_grant_convergence.sql; do
+            apply_sql "${file}"
+          done
+
+          grants_before="$(docker exec "${APP_GRANTS_POSTGRES_CONTAINER}" \
+            psql -U postgres -d app_grants -v ON_ERROR_STOP=1 -Atc \
+            "SELECT count(*) FROM public.analytic_app_dataset_grants")"
+          events_before="$(docker exec "${APP_GRANTS_POSTGRES_CONTAINER}" \
+            psql -U postgres -d app_grants -v ON_ERROR_STOP=1 -Atc \
+            "SELECT count(*) FROM public.analytic_app_dataset_grant_events")"
+          test "${grants_before}" -gt 0
+          test "${events_before}" -gt 0
+
+          for file in infra/init/99zzt_analytic_app_dataset_grants.sql \
+                      infra/init/99zzu_analytic_app_manifest_registry.sql \
+                      infra/init/99zzy_analytic_app_grants_owner_rls_repair.sql \
+                      infra/init/99zzzzf_analytic_app_grant_convergence.sql; do
+            apply_sql "${file}"
+          done
+
+          grants_after="$(docker exec "${APP_GRANTS_POSTGRES_CONTAINER}" \
+            psql -U postgres -d app_grants -v ON_ERROR_STOP=1 -Atc \
+            "SELECT count(*) FROM public.analytic_app_dataset_grants")"
+          events_after="$(docker exec "${APP_GRANTS_POSTGRES_CONTAINER}" \
+            psql -U postgres -d app_grants -v ON_ERROR_STOP=1 -Atc \
+            "SELECT count(*) FROM public.analytic_app_dataset_grant_events")"
+          test "${grants_after}" = "${grants_before}"
+          test "${events_after}" = "${events_before}"
+          printf '%s\n' \
+            'dsn=postgresql://postgres:postgres@127.0.0.1:55432/app_grants' \
+            >> "${GITHUB_OUTPUT}"
+
       - name: Preload exact MinIO image for pull-never release tests
         run: |
           set -euo pipefail
@@ -344,6 +425,7 @@ jobs:
       - name: Run detected root tests
         if: needs.detect-release-changes.outputs.root_tests == 'true'
         env:
+          APP_GRANTS_DSN: ${{ steps.app_grants_postgres.outputs.dsn }}
           HOME: ${{ steps.root_duckdb_cache.outputs.home }}
           OMEGA_RELEASE_TEST_HARNESS_SHA256: ${{ steps.harness_authority.outputs.sha256 }}
           OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256: ${{ steps.harness_authority.outputs.verifier_sha256 }}
@@ -356,9 +438,25 @@ jobs:
             exit 1
           }
           read -r -a targets <<< "${ROOT_TEST_TARGETS}"
+          if [[ -n "${APP_GRANTS_DSN}" ]]; then
+            export OMEGA_TEST_GRANTS_DSN="${APP_GRANTS_DSN}"
+          else
+            unset OMEGA_TEST_GRANTS_DSN
+          fi
           python3 -I scripts/verify_release_test_harness.py
           env -u GITHUB_ENV -u GITHUB_PATH \
             python3 -I scripts/run_release_pytest.py -q "${targets[@]}"
+
+      - name: Remove app-grant PostgreSQL
+        if: always() && steps.app_grants_postgres.outcome != 'skipped'
+        env:
+          APP_GRANTS_POSTGRES_CONTAINER: omega-release-app-grants-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          if docker container inspect "${APP_GRANTS_POSTGRES_CONTAINER}" \
+            >/dev/null 2>&1; then
+            docker rm --force --volumes "${APP_GRANTS_POSTGRES_CONTAINER}"
+          fi
 
       - name: Verify hermetic DuckDB extension cache after root tests
         if: always() && needs.detect-release-changes.outputs.root_tests == 'true'

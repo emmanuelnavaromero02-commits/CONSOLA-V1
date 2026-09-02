@@ -11,7 +11,7 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "sha256": "6c4bbbfb5dea920111b198d90814af89dc232b0d7255358b4f05990366fdd642"
+      "sha256": "74f0eb5bdfbbd7cfef4fb8dfd3181b97b02ba47d7e682dd550616b5ad6ca2206"
     },
     {
       "path": "Makefile",
@@ -2978,6 +2978,22 @@
       "sha256": "42f2f89a1491507cf9f6a2cfa52bff7f0793c3e1416ac83612f118f6c576d4ab"
     },
     {
+      "path": "infra/init/99zzt_analytic_app_dataset_grants.sql",
+      "sha256": "99f87377bf875474ae0be08ce69dac28a84a4951fab7f49655ac229cfd4e975f"
+    },
+    {
+      "path": "infra/init/99zzu_analytic_app_manifest_registry.sql",
+      "sha256": "adad0c9f710ce80aa5ec46dad16b919233f1f0f20ad8fd6d9af7984197577123"
+    },
+    {
+      "path": "infra/init/99zzy_analytic_app_grants_owner_rls_repair.sql",
+      "sha256": "f423fd8572c51715b7635ca8079d48a3e1ceb30850f7004a63cc8efbf2550fd5"
+    },
+    {
+      "path": "infra/init/99zzzzf_analytic_app_grant_convergence.sql",
+      "sha256": "9f7d3b5ea6474bb70569033251af01ba0a49a1c4b5a631ffe032063017926366"
+    },
+    {
       "path": "infra/terraform-gcp/release/docker-compose.release.yml",
       "sha256": "b2e2bafc03d3511299aadf300533571d66253da59becc0ca8a74dbfbdb840da2"
     },
@@ -3231,7 +3247,7 @@
     },
     {
       "path": "scripts/verify_release_test_harness.py",
-      "sha256": "49d0d4811db1ce11c01cc5cea0cbae8403e9a27a6b4b5cfce54f0c621363f24b"
+      "sha256": "6afe62c6f6473ced89a20beef33221e5356ba8aeda0e03884547cc974b4dd30b"
     },
     {
       "path": "scripts/verify_test_skip_policy.py",
@@ -3428,6 +3444,14 @@
     {
       "path": "tests/e2e/test_full_extraction_flow.py",
       "sha256": "43f154851b72b81a28eb14efed8a2b40a2c6d0ac030b5513f78070b4a7a76e54"
+    },
+    {
+      "path": "tests/fixtures/app_grants_schema.sql",
+      "sha256": "5afd4e93583f6b4fbc3166558c9e7d4855e3e1118a97ad4e278a9a384cf66275"
+    },
+    {
+      "path": "tests/fixtures/app_grants_seed.sql",
+      "sha256": "a3768fd993a569e50b074f3a1b70c080e9d43491af0c0091779184f00548623c"
     },
     {
       "path": "tests/fixtures/docker-compose.gold-repair.yml",
@@ -4956,6 +4980,10 @@
     {
       "path": "tests/test_refresh_rotation_contract.py",
       "sha256": "085471a2ab0b7b076bb6650a571c5165f71541069343165bf869dc0685d26fb0"
+    },
+    {
+      "path": "tests/test_release_app_grants_postgres_gate.py",
+      "sha256": "bcce6f98e2f2cf6fd69824bbe656cd8ea2a7b30d495b17c139b431591d46aa6a"
     },
     {
       "path": "tests/test_release_ci_fail_closed.py",
