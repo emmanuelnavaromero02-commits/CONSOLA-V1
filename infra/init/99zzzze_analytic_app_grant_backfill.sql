@@ -27,7 +27,7 @@ WITH ins AS (
   SELECT DISTINCT
          ci.tenant_id, ci.workspace_id, m.app_name, m.cartridge_id,
          d.dataset_name, m.manifest_digest, 'packaged_manifest',
-         'server:grant_backfill_99zzzze'
+         'server:packaged_manifest'
     FROM public.cartridge_installations ci
     JOIN public.analytic_app_manifests m
       ON m.cartridge_id = ci.cartridge_id
@@ -58,7 +58,7 @@ WITH ins AS (
 INSERT INTO public.analytic_app_dataset_grant_events
     (grant_id, tenant_id, workspace_id, event, actor, detail)
 SELECT id, tenant_id, workspace_id, 'granted',
-       'server:grant_backfill_99zzzze', manifest_digest
+       'server:packaged_manifest', manifest_digest
   FROM ins;
 
 INSERT INTO schema_migrations (filename, applied_at)
