@@ -95,6 +95,18 @@ def _is_production() -> bool:
     }
 
 
+def _ses_inbox_enabled() -> bool:
+    raw = os.environ.get("REPLICON_SES_INBOX_ENABLED")
+    if raw is None:
+        raw = Variable.get("replicon_ses_inbox_enabled", default_var="false")
+    return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _require_ses_inbox_enabled() -> None:
+    if not _ses_inbox_enabled():
+        raise RuntimeError("ses_inbox_disabled")
+
+
 def _internal_key(env_name: str) -> str:
     key = os.environ.get(env_name, "")
     if key:
@@ -128,7 +140,7 @@ dag = DAG(
     dag_id="replicon_ses_inbox_import",
     default_args=default_args,
     description="Pull SES inbound emails from S3, extract attachments, land in uploads/replicon/in/",
-    schedule_interval="*/15 * * * *",
+    schedule_interval="*/15 * * * *" if _ses_inbox_enabled() else None,
     start_date=datetime(2026, 5, 7),
     tags=["replicon", "ses", "ingest", "inbound"],
     catchup=False,
@@ -140,39 +152,108 @@ dag = DAG(
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
-def _s3():
-    endpoint = os.environ.get("S3_ENDPOINT_URL")
-    if not endpoint:
-        minio_endpoint = os.environ.get("MINIO_ENDPOINT") or Variable.get(
-            "minio_endpoint", default_var=""
-        )
-        if minio_endpoint:
-            secure = (
-                os.environ.get("MINIO_SECURE")
-                or Variable.get("minio_secure", default_var="false")
-            ).lower() == "true"
-            endpoint = f"{'https' if secure else 'http'}://{minio_endpoint}"
-    kwargs = {
-        "region_name": os.environ.get("AWS_REGION")
+def _endpoint_url(value: str) -> str:
+    endpoint = str(value or "").strip()
+    if not endpoint or "://" in endpoint:
+        return endpoint
+    return f"https://{endpoint}"
+
+
+def _client_with_pair(*, endpoint: str, region: str, access: str, secret: str):
+    if bool(access) != bool(secret):
+        raise RuntimeError("complete object-storage credential pair is required")
+    kwargs = {"region_name": region}
+    if endpoint:
+        kwargs["endpoint_url"] = _endpoint_url(endpoint)
+    if access and secret:
+        kwargs["aws_access_key_id"] = access
+        kwargs["aws_secret_access_key"] = secret
+    return boto3.client("s3", **kwargs)
+
+
+def _inbox_s3():
+    """Return the native AWS/SES client, never the GCS lakehouse client."""
+
+    _require_ses_inbox_enabled()
+    region = (
+        os.environ.get("SES_INBOX_AWS_REGION")
+        or os.environ.get("AWS_REGION")
         or os.environ.get("AWS_DEFAULT_REGION")
         or "us-east-1"
-    }
-    if endpoint:
-        kwargs["endpoint_url"] = endpoint
-    access_key = (
-        os.environ.get("AWS_ACCESS_KEY_ID")
-        or os.environ.get("MINIO_ACCESS_KEY")
-        or Variable.get("minio_access_key", default_var="")
     )
-    secret_key = (
-        os.environ.get("AWS_SECRET_ACCESS_KEY")
-        or os.environ.get("MINIO_SECRET_KEY")
-        or Variable.get("minio_secret_key", default_var="")
+    if region.strip().lower() == "auto":
+        region = "us-east-1"
+    endpoint = os.environ.get("SES_INBOX_S3_ENDPOINT_URL", "").strip()
+    if not endpoint and not _is_production():
+        endpoint = os.environ.get("MINIO_ENDPOINT") or Variable.get(
+            "minio_endpoint", default_var=""
+        )
+    dedicated_access = os.environ.get("SES_INBOX_AWS_ACCESS_KEY_ID", "").strip()
+    dedicated_secret = os.environ.get("SES_INBOX_AWS_SECRET_ACCESS_KEY", "").strip()
+    if bool(dedicated_access) != bool(dedicated_secret):
+        raise RuntimeError("ses_inbox_credentials_missing")
+    provider = os.environ.get("LAKEHOUSE_PROVIDER", "").strip().lower()
+    if provider == "gcs" and not (dedicated_access and dedicated_secret):
+        # A GCP runtime has no AWS instance role. Never borrow GCS or generic
+        # lakehouse credentials for the separate SES inbox.
+        raise RuntimeError("ses_inbox_credentials_missing")
+    access = dedicated_access
+    secret = dedicated_secret
+    if provider != "gcs" and not access:
+        # Native AWS deployments may keep their existing static pair or use
+        # the boto workload identity chain when both values are absent.
+        access = os.environ.get("AWS_ACCESS_KEY_ID", "").strip()
+        secret = os.environ.get("AWS_SECRET_ACCESS_KEY", "").strip()
+    return _client_with_pair(
+        endpoint=endpoint,
+        region=region,
+        access=access,
+        secret=secret,
     )
-    if access_key and secret_key:
-        kwargs["aws_access_key_id"] = access_key
-        kwargs["aws_secret_access_key"] = secret_key
-    return boto3.client("s3", **kwargs)
+
+
+def _lakehouse_s3():
+    """Return the active lakehouse client with provider-native credentials."""
+
+    provider = os.environ.get("LAKEHOUSE_PROVIDER", "").strip().lower()
+    endpoint = os.environ.get("LAKEHOUSE_ENDPOINT", "").strip()
+    if provider == "gcs" or "storage.googleapis.com" in endpoint.lower():
+        gcs_access = os.environ.get("GCS_ACCESS_KEY_ID", "").strip()
+        gcs_secret = os.environ.get("GCS_SECRET_ACCESS_KEY", "").strip()
+        if not gcs_access or not gcs_secret:
+            raise RuntimeError("complete GCS lakehouse credentials are required")
+        return _client_with_pair(
+            endpoint=endpoint or "storage.googleapis.com",
+            region="auto",
+            access=gcs_access,
+            secret=gcs_secret,
+        )
+    minio_endpoint = os.environ.get("MINIO_ENDPOINT") or Variable.get(
+        "minio_endpoint", default_var=""
+    )
+    secure = (
+        os.environ.get("MINIO_SECURE")
+        or Variable.get("minio_secure", default_var="false")
+    ).lower() == "true"
+    return _client_with_pair(
+        endpoint=(f"{'https' if secure else 'http'}://{minio_endpoint}" if minio_endpoint else ""),
+        region=os.environ.get("AWS_REGION")
+        or os.environ.get("AWS_DEFAULT_REGION")
+        or "us-east-1",
+        access=os.environ.get("MINIO_ACCESS_KEY")
+        or Variable.get("minio_access_key", default_var=""),
+        secret=os.environ.get("MINIO_SECRET_KEY")
+        or Variable.get("minio_secret_key", default_var=""),
+    )
+
+
+def _lakehouse_bucket() -> str:
+    return (
+        os.environ.get("GCS_BUCKET")
+        or os.environ.get("LAKEHOUSE_BUCKET")
+        or os.environ.get("MINIO_BUCKET")
+        or LAKE_BUCKET
+    )
 
 
 def _safe_name(name: str) -> str:
@@ -318,10 +399,10 @@ def list_inbox(**context) -> dict:
         mode="full",
         tenant_id=tenant_id,
         workspace_id=workspace_id,
-        storage_uri=f"s3://{LAKE_BUCKET}/{upload_prefix}",
+        storage_uri=f"s3://{_lakehouse_bucket()}/{upload_prefix}",
     )
 
-    s3 = _s3()
+    s3 = _inbox_s3()
     paginator = s3.get_paginator("list_objects_v2")
     keys: list[str] = []
     for page in paginator.paginate(Bucket=INBOX_BUCKET, Prefix=INBOX_PREFIX):
@@ -360,7 +441,9 @@ def extract_attachments(**context) -> dict:
         tenant_id, workspace_id = _scope_values(context)
         upload_prefix = _scoped_uploads_prefix(tenant_id, workspace_id)
 
-    s3 = _s3()
+    inbox_s3 = _inbox_s3()
+    lakehouse_s3 = _lakehouse_s3()
+    lakehouse_bucket = _lakehouse_bucket()
     succeeded: list[str] = []
     failed: list[dict] = []
     landed_total = 0
@@ -368,7 +451,7 @@ def extract_attachments(**context) -> dict:
 
     for key in keys:
         try:
-            raw = s3.get_object(Bucket=INBOX_BUCKET, Key=key)["Body"].read()
+            raw = inbox_s3.get_object(Bucket=INBOX_BUCKET, Key=key)["Body"].read()
             msg: Message = email.message_from_bytes(raw)
             print(
                 f"\n📩 {key}\n   From: {msg.get('From', '?')}\n   Subject: {msg.get('Subject', '?')}"
@@ -397,13 +480,13 @@ def extract_attachments(**context) -> dict:
                                     continue
                                 inner = zf.read(member)
                                 target_key = f"{upload_prefix}{inner_name}"
-                                s3.put_object(
-                                    Bucket=LAKE_BUCKET, Key=target_key, Body=inner
+                                lakehouse_s3.put_object(
+                                    Bucket=lakehouse_bucket, Key=target_key, Body=inner
                                 )
                                 landed_total += 1
                                 bytes_total += len(inner)
                                 print(
-                                    f"   ✓ {inner_name} ({len(inner)} bytes) → s3://{LAKE_BUCKET}/{target_key}"
+                                    f"   ✓ {inner_name} ({len(inner)} bytes) → s3://{lakehouse_bucket}/{target_key}"
                                 )
                     except zipfile.BadZipFile as exc:
                         print(f"   ✗ corrupt zip {name}: {exc}")
@@ -416,11 +499,13 @@ def extract_attachments(**context) -> dict:
                     continue
 
                 target_key = f"{upload_prefix}{name}"
-                s3.put_object(Bucket=LAKE_BUCKET, Key=target_key, Body=payload)
+                lakehouse_s3.put_object(
+                    Bucket=lakehouse_bucket, Key=target_key, Body=payload
+                )
                 landed_total += 1
                 bytes_total += len(payload)
                 print(
-                    f"   ✓ {name} ({len(payload)} bytes) → s3://{LAKE_BUCKET}/{target_key}"
+                    f"   ✓ {name} ({len(payload)} bytes) → s3://{lakehouse_bucket}/{target_key}"
                 )
 
             succeeded.append(key)
@@ -451,7 +536,7 @@ def archive_processed(**context) -> dict:
     ti = context["task_instance"]
     succeeded = ti.xcom_pull(task_ids="extract_attachments", key="succeeded") or []
 
-    s3 = _s3()
+    s3 = _inbox_s3()
     moved = 0
     for key in succeeded:
         done_key = key.replace(INBOX_PREFIX, DONE_PREFIX, 1)
@@ -518,7 +603,7 @@ def record_run(**context) -> dict:
         duration_seconds=duration,
         record_count=landed,
         bytes_written=written,
-        storage_uri=f"s3://{LAKE_BUCKET}/{upload_prefix}",
+        storage_uri=f"s3://{_lakehouse_bucket()}/{upload_prefix}",
         tenant_id=tenant_id,
         workspace_id=workspace_id,
         error_message=error_msg,

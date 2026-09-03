@@ -1866,7 +1866,7 @@ def _rest_security_context(
             "source": "refinement",
             "role": "admin",
             "permissions": ["datasets.read", "datasets.write", "cartridges.read"],
-            "allowed_buckets": [os.environ.get("MINIO_BUCKET", "lakehouse")],
+            "allowed_buckets": [settings.minio_bucket],
             "allowed_prefixes": ["raw/", "silver/", "gold/", "cartridges/"],
         }
     fake_req = InvokeRequest(
@@ -2130,54 +2130,16 @@ def _cartridge_of(dataset_name: str, ctx: dict[str, Any] | None = None) -> str |
         return None
 
 
-def _duckdb_s3_settings(con, endpoint: str, region: str) -> None:
-    import os
+def _duckdb_s3_settings(con, endpoint: str = "", region: str = "") -> None:
+    """Compatibility wrapper around the provider-aware lakehouse resolver."""
 
-    url_style = "vhost" if "amazonaws.com" in endpoint else "path"
-    secure = os.environ.get("MINIO_SECURE", "false").lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-    access_key = (
-        os.environ.get("MINIO_ACCESS_KEY") or os.environ.get("AWS_ACCESS_KEY_ID") or ""
-    )
-    secret_key = (
-        os.environ.get("MINIO_SECRET_KEY")
-        or os.environ.get("AWS_SECRET_ACCESS_KEY")
-        or ""
-    )
-    session_token = os.environ.get("AWS_SESSION_TOKEN") or ""
-    if access_key and secret_key:
-        con.execute(f"""
-            SET s3_access_key_id='{access_key}';
-            SET s3_secret_access_key='{secret_key}';
-        """)
-        if session_token:
-            con.execute(f"SET s3_session_token='{session_token}';")
-    else:
-        try:
-            con.execute("CALL load_aws_credentials();")
-        except Exception as load_exc:  # noqa: BLE001
-            try:
-                con.execute(f"""
-                    CREATE OR REPLACE SECRET omega_s3 (
-                        TYPE S3,
-                        PROVIDER CREDENTIAL_CHAIN,
-                        REGION '{region}'
-                    );
-                """)
-            except Exception as secret_exc:  # noqa: BLE001
-                raise RuntimeError(
-                    "DuckDB S3 credentials unavailable; configure MINIO/AWS credentials or IAM role"
-                ) from (secret_exc or load_exc)
-    con.execute(f"""
-        SET s3_endpoint='{endpoint}';
-        SET s3_url_style='{url_style}';
-        SET s3_use_ssl={'true' if secure else 'false'};
-        SET s3_region='{region}';
-    """)
+    # ``endpoint`` and ``region`` remain accepted for old internal callers, but
+    # environment-derived values are deliberately ignored here: only the
+    # active provider's resolved configuration may supply credentials/settings.
+    del endpoint, region
+    from app.lakehouse_runtime import configure_duckdb_s3
+
+    configure_duckdb_s3(con)
 
 
 async def _rebuild_semantic_doc(
@@ -2191,10 +2153,8 @@ async def _rebuild_semantic_doc(
     from app.config import settings as s
     from app.publication_heads import publication_epoch, published_heads
 
-    bucket = os.environ.get("MINIO_BUCKET", "")
+    bucket = settings.minio_bucket
     cartridge = _safe_rag_segment(cartridge, "cartridge")
-    endpoint = os.environ.get("MINIO_ENDPOINT", "")
-    region = os.environ.get("AWS_REGION", "us-east-1")
     ctx = ctx or {}
     try:
         heads = published_heads(ctx)
@@ -2268,7 +2228,7 @@ async def _rebuild_semantic_doc(
     from app.duckdb_runtime import connect_duckdb_runtime
 
     con = connect_duckdb_runtime()
-    _duckdb_s3_settings(con, endpoint, region)
+    _duckdb_s3_settings(con)
     out: list[str] = [
         f"# Modelo Semántico — Cartucho `{cartridge}`\n",
         "_Generado automáticamente desde `data_catalog` + schemas reales._\n",
@@ -2387,11 +2347,9 @@ def _build_raw_doc(
 ) -> str:
     import os
 
-    bucket = os.environ.get("MINIO_BUCKET", "")
+    bucket = settings.minio_bucket
     cartridge = _safe_rag_segment(cartridge, "cartridge")
     entity = _safe_rag_segment(entity, "entity")
-    endpoint = os.environ.get("MINIO_ENDPOINT", "")
-    region = os.environ.get("AWS_REGION", "us-east-1")
     ctx = ctx or {}
     # When the caller is scoped to a tenant/workspace, read ONLY the partition
     # that belongs to that tenant. Otherwise the RAG document would index raw
@@ -2410,7 +2368,7 @@ def _build_raw_doc(
     from app.duckdb_runtime import connect_duckdb_runtime
 
     con = connect_duckdb_runtime()
-    _duckdb_s3_settings(con, endpoint, region)
+    _duckdb_s3_settings(con)
     try:
         rows = con.execute(
             f"DESCRIBE SELECT * FROM read_parquet('{path}', hive_partitioning=true, union_by_name=true) LIMIT 0"

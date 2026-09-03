@@ -131,23 +131,81 @@ def _scoped_path(base: str, tenant_id: str, workspace_id: str, suffix: str = "")
 
 
 def _minio_settings() -> dict:
+    provider = os.environ.get("LAKEHOUSE_PROVIDER", "").strip().lower()
+    endpoint = os.environ.get("LAKEHOUSE_ENDPOINT", "").strip()
+    if provider == "gcs" or "storage.googleapis.com" in endpoint.lower():
+        settings = {
+            "provider": "gcs",
+            "endpoint": endpoint or "storage.googleapis.com",
+            "access_key": os.environ.get("GCS_ACCESS_KEY_ID", "").strip(),
+            "secret_key": os.environ.get("GCS_SECRET_ACCESS_KEY", "").strip(),
+            "bucket": (
+                os.environ.get("GCS_BUCKET")
+                or os.environ.get("LAKEHOUSE_BUCKET")
+                or ""
+            ).strip(),
+            "secure": True,
+            "region": "auto",
+        }
+        if not all(settings[key] for key in ("access_key", "secret_key", "bucket")):
+            raise ValueError("complete GCS lakehouse credentials are required")
+        return settings
+    if provider == "s3" or "amazonaws.com" in endpoint.lower():
+        access_key = os.environ.get("AWS_ACCESS_KEY_ID", "").strip()
+        secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY", "").strip()
+        if bool(access_key) != bool(secret_key):
+            raise ValueError("complete AWS lakehouse credential pair is required")
+        bucket = (
+            os.environ.get("S3_BUCKET_NAME")
+            or os.environ.get("LAKEHOUSE_BUCKET")
+            or ""
+        ).strip()
+        if not bucket:
+            raise ValueError("AWS lakehouse bucket is required")
+        return {
+            "provider": "s3",
+            "endpoint": (
+                os.environ.get("S3_ENDPOINT_URL")
+                or endpoint
+                or "s3.amazonaws.com"
+            ).removeprefix("https://").removeprefix("http://").rstrip("/"),
+            "access_key": access_key,
+            "secret_key": secret_key,
+            "bucket": bucket,
+            "secure": True,
+            "region": os.environ.get("AWS_REGION")
+            or os.environ.get("AWS_DEFAULT_REGION")
+            or "us-east-1",
+        }
     return {
+        "provider": "minio",
         "endpoint": _required_variable("minio_endpoint"),
         "access_key": _required_variable("minio_access_key"),
         "secret_key": _required_variable("minio_secret_key"),
         "bucket": _required_variable("minio_bucket"),
         "secure": Variable.get("minio_secure", default_var="false").strip().lower()
         in {"true", "1", "yes", "on"},
+        "region": None,
     }
 
 
 def _minio_client() -> Minio:
     settings = _minio_settings()
+    if settings["provider"] == "s3" and not settings["access_key"]:
+        from minio.credentials.providers import IamAwsProvider
+
+        return Minio(
+            settings["endpoint"],
+            credentials=IamAwsProvider(region=settings["region"]),
+            secure=True,
+            region=settings["region"],
+        )
     return Minio(
         settings["endpoint"],
         access_key=settings["access_key"],
         secret_key=settings["secret_key"],
         secure=settings["secure"],
+        region=settings["region"],
     )
 
 
@@ -170,7 +228,7 @@ def _ensure_bucket() -> str:
     settings = _minio_settings()
     client = _minio_client()
     bucket = settings["bucket"]
-    if not client.bucket_exists(bucket):
+    if settings["provider"] == "minio" and not client.bucket_exists(bucket):
         client.make_bucket(bucket)
     return bucket
 

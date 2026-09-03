@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -94,6 +95,51 @@ CARTRIDGE_META = {
 }
 
 _engine = None
+_SAFE_METADATA_FAILURE_CODES = frozenset(
+    {
+        "metadata_access_denied",
+        "metadata_not_found",
+        "metadata_query_invalid",
+        "metadata_rate_limited",
+        "metadata_upstream_unavailable",
+    }
+)
+
+
+def _safe_metadata_failure_code(exc: Exception) -> str:
+    """Classify a metadata failure without returning its URL/body/token text."""
+
+    current: BaseException | None = exc
+    status: int | None = None
+    for _ in range(4):
+        if current is None:
+            break
+        response = getattr(current, "response", None)
+        candidate = getattr(response, "status_code", None) or getattr(
+            current, "status_code", None
+        )
+        try:
+            parsed = int(candidate)
+        except (TypeError, ValueError):
+            parsed = None
+        if parsed in {400, 401, 403, 404, 408, 429, 500, 502, 503, 504}:
+            status = parsed
+            break
+        current = current.__cause__ or current.__context__
+    if status is None:
+        match = re.search(
+            r"\b(400|401|403|404|408|429|500|502|503|504)\b", str(exc)
+        )
+        status = int(match.group(1)) if match else None
+    if status in {401, 403}:
+        return "metadata_access_denied"
+    if status == 404:
+        return "metadata_not_found"
+    if status == 400:
+        return "metadata_query_invalid"
+    if status == 429:
+        return "metadata_rate_limited"
+    return "metadata_upstream_unavailable"
 
 
 def _get_engine():
@@ -210,8 +256,13 @@ def _seed_if_empty() -> None:
                     "desc": e.get("description", ""),
                 })
 
-    except Exception:
-        logger.exception("Failed to seed SAP SuccessFactors catalog from YAML")
+    except Exception as exc:
+        # Driver exceptions can embed a DSN or signed request details. The
+        # startup health surface needs only a stable component failure code.
+        logger.error(
+            "Failed to seed SAP SuccessFactors catalog from YAML error_type=%s",
+            type(exc).__name__,
+        )
         raise
 
     try:
@@ -239,7 +290,10 @@ def _seed_if_empty() -> None:
                         "out": kb.get("output_path", ""),
                     })
     except Exception as exc:  # noqa: BLE001 - KB seed must not poison entity extraction.
-        logger.warning("Skipping SAP SuccessFactors KB seed; kb_config unavailable: %s", exc)
+        logger.warning(
+            "Skipping SAP SuccessFactors KB seed; kb_config unavailable error_type=%s",
+            type(exc).__name__,
+        )
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -306,12 +360,23 @@ def _metadata_entities_for_connection(
             ).metadata_entities(),
             None,
         )
-    except Exception as exc:  # noqa: BLE001 - metadata preflight should explain, not crash planning.
+    except Exception as exc:  # noqa: BLE001 - metadata preflight is fail-closed.
+        # Do not copy the upstream exception into API/job payloads: depending on
+        # the HTTP client it may contain a URL, query string or credential
+        # diagnostics.  Operators still get the exception class in server logs
+        # while callers receive only the stable, allowlisted blocker below.
+        logger.warning(
+            "SuccessFactors metadata preflight failed conn_id=%s error_type=%s",
+            conn_id,
+            type(exc).__name__,
+        )
         return None, {
             "entity": "__metadata__",
-            "status": "skipped",
+            "status": "blocked",
             "reason": "metadata_unavailable",
-            "error": str(exc)[:240],
+            "code": "SUCCESSFACTORS_METADATA_BLOCKED",
+            "metadata_status": "metadata_unavailable",
+            "failure_code": _safe_metadata_failure_code(exc),
         }
 
 
@@ -335,14 +400,21 @@ def _metadata_block(
     reason: str,
     odata_entity: str,
     fields_missing: list[str] | None = None,
+    failure_code: str | None = None,
 ) -> dict[str, Any]:
+    safe_failure_code = (
+        failure_code
+        if failure_code in _SAFE_METADATA_FAILURE_CODES
+        else None
+    )
     return {
         "entity": config.get("entity"),
         "odata_entity": odata_entity,
-        "status": "blocked",
+        "status": "skipped_explicit",
         "reason": _normalize_plan_reason(reason),
         "code": "SUCCESSFACTORS_METADATA_BLOCKED",
         "metadata_status": reason,
+        **({"failure_code": safe_failure_code} if safe_failure_code else {}),
         **({"fields_missing": fields_missing} if fields_missing else {}),
     }
 
@@ -352,6 +424,7 @@ def _normalize_plan_reason(reason: str | None) -> str:
     return {
         "metadata_entity_missing": "entity_not_exposed_in_sap",
         "metadata_select_fields_missing": "invalid_select_field",
+        "metadata_required_fields_missing": "invalid_required_field",
         "metadata_preflight_failed": "missing_metadata",
         "metadata_unavailable": "missing_metadata",
         "talent_metadata_not_ready": "missing_metadata",
@@ -393,6 +466,15 @@ def _plan_outcome(
 def _required_config_outcome(config: dict[str, Any]) -> dict[str, Any] | None:
     entity = str(config.get("entity") or "").strip()
     odata_entity = str(config.get("odata_entity") or entity).strip()
+    conn_id = str(config.get("conn_id") or config.get("connection_id") or "").strip()
+    if not conn_id:
+        return _plan_outcome(
+            entity=entity,
+            status="blocked",
+            reason="missing_connection",
+            odata_entity=odata_entity or None,
+            config=config,
+        )
     if not odata_entity:
         return _plan_outcome(
             entity=entity,
@@ -409,6 +491,11 @@ def _required_config_outcome(config: dict[str, Any]) -> dict[str, Any] | None:
             config=config,
         )
     return None
+
+
+def required_entity_config_block(config: dict[str, Any]) -> dict[str, Any] | None:
+    """Public fail-closed validation shared by single and batch extraction paths."""
+    return _required_config_outcome(config)
 
 
 def _prepare_config_with_metadata_fields(
@@ -431,12 +518,60 @@ def _prepare_config_with_metadata_fields(
             fields_missing=missing_select_fields,
         )
 
+    field_aliases = config.get("metadata_field_aliases") or config.get("field_aliases") or {}
+    if isinstance(field_aliases, str):
+        try:
+            field_aliases = json.loads(field_aliases)
+        except json.JSONDecodeError:
+            field_aliases = {}
+    if not isinstance(field_aliases, dict):
+        field_aliases = {}
+
+    required_fields = _list_fields(config.get("metadata_required_fields"))
+    primary_key = str(config.get("primary_key") or "").strip()
+    if primary_key:
+        required_fields.append(primary_key)
+    required_fields = list(dict.fromkeys(required_fields))
+    missing_required_fields = [
+        field
+        for field in required_fields
+        if field not in metadata_fields
+        and str(field_aliases.get(field) or "").strip() not in metadata_fields
+    ]
+    if missing_required_fields:
+        return None, _metadata_block(
+            config,
+            reason="metadata_required_fields_missing",
+            odata_entity=odata_entity,
+            fields_missing=missing_required_fields,
+        )
+
+    # A configured $select is corrected to the live schema.  Operationally
+    # required fields are appended when they exist so a stale catalog cannot
+    # accidentally omit the key/watermark/date needed downstream.  The
+    # expected schema below remains based on the original catalog declaration.
+    implicit_fields = [
+        primary_key,
+        str(config.get("watermark_field") or "").strip(),
+        str(config.get("date_field") or "").strip(),
+    ]
+    for field in implicit_fields:
+        actual_field = str(field_aliases.get(field) or field).strip()
+        if (
+            select_fields
+            and actual_field
+            and actual_field in metadata_fields
+            and actual_field not in present_select_fields
+        ):
+            present_select_fields.append(actual_field)
+
     prepared = dict(config)
     if select_fields:
         prepared["select_fields"] = present_select_fields
-        prepared["expected_select_fields"] = _list_fields(
-            config.get("expected_select_fields")
-        ) or select_fields
+        configured_expected = _list_fields(config.get("expected_select_fields")) or select_fields
+        prepared["expected_select_fields"] = list(
+            dict.fromkeys([*configured_expected, *required_fields])
+        )
     if missing_select_fields:
         prepared["metadata_status"] = "select_pruned"
         prepared["metadata_pruned_fields"] = missing_select_fields
@@ -482,12 +617,18 @@ def prepare_entity_config_for_metadata(
             security_context=security_context,
         )
         if metadata_error:
-            prepared = dict(config)
-            prepared["metadata_status"] = "unavailable"
-            prepared["metadata_error"] = metadata_error.get("error")
-            return prepared, None
+            return None, _metadata_block(
+                config,
+                reason="metadata_unavailable",
+                odata_entity=odata_entity,
+                failure_code=str(metadata_error.get("failure_code") or ""),
+            )
     if metadata_entities is None:
-        return dict(config), None
+        return None, _metadata_block(
+            config,
+            reason="metadata_unavailable",
+            odata_entity=odata_entity,
+        )
     return _prepare_config_with_metadata_fields(config, metadata_entities.get(odata_entity))
 
 
@@ -527,12 +668,16 @@ def _talent_extract_target_entities(
             sample=True,
         )
     except Exception as exc:  # noqa: BLE001 - live metadata is a blocker, not a product crash.
+        logger.warning(
+            "Talent metadata preflight failed error_type=%s",
+            type(exc).__name__,
+        )
         return set(TALENT_EXTRACT_ALL_ENTITIES), [
             _plan_outcome(
                 entity="__talent_metadata__",
                 status="blocked",
                 reason="metadata_preflight_failed",
-                error=str(exc)[:240],
+                failure_code=_safe_metadata_failure_code(exc),
             )
         ], {}, {}
 
@@ -636,8 +781,9 @@ def get_extract_all_plan(
         security_context=security_context,
     )
     metadata_entities: dict[str, set[str]] | None = None
+    metadata_skip: dict[str, Any] | None = None
     if selected_conn_id:
-        metadata_entities, _metadata_skip = _metadata_entities_for_connection(
+        metadata_entities, metadata_skip = _metadata_entities_for_connection(
             conn_id=selected_conn_id,
             security_context=security_context,
         )
@@ -715,6 +861,20 @@ def get_extract_all_plan(
         required_block = _required_config_outcome(config)
         if required_block:
             skipped.append(required_block)
+            continue
+
+        if metadata_skip is not None:
+            skipped.append(
+                {
+                    **_metadata_block(
+                        config,
+                        reason="metadata_unavailable",
+                        odata_entity=str(config.get("odata_entity") or entity),
+                        failure_code=str(metadata_skip.get("failure_code") or ""),
+                    ),
+                    "status": "skipped_explicit",
+                }
+            )
             continue
 
         if normalized_target == "talent" and entity in target_fields:

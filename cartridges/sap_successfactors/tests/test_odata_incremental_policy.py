@@ -4,14 +4,16 @@ import os
 from datetime import datetime, timezone
 
 import pytest
+import requests
 
 os.environ.setdefault("FIELD_ENCRYPTION_KEY", "ZVi4nlltq1NSkJjp17QoaHhaRB2RDQRsNTW7I4yf8GE=")
 
-from app.core.sap_client import SAPClientError
+from app.core.sap_client import ODataRequestError, SAPClientError, SapSfClient
 from app.services import extraction_service
 
 
 def _stub_run(monkeypatch, *, run_id: str = "run-odata-policy") -> None:
+    monkeypatch.setattr(extraction_service, "require_storage_access", lambda: None)
     monkeypatch.setattr(extraction_service, "create_run", lambda **_kwargs: run_id)
     monkeypatch.setattr(extraction_service, "finish_run", lambda **_kwargs: None)
     monkeypatch.setattr(extraction_service, "fail_run", lambda **_kwargs: None)
@@ -49,6 +51,33 @@ def test_incremental_filter_falls_back_when_watermark_is_future() -> None:
     assert plan["fallback_reason"] == "future_or_unparseable_watermark"
 
 
+def test_incremental_rejection_requires_typed_400_with_filter() -> None:
+    assert extraction_service._is_incremental_filter_rejected(
+        ODataRequestError(
+            entity="PerPerson",
+            status_code=400,
+            filter_applied=True,
+        )
+    )
+    assert not extraction_service._is_incremental_filter_rejected(
+        ODataRequestError(
+            entity="PerPerson",
+            status_code=400,
+            filter_applied=False,
+        )
+    )
+    assert not extraction_service._is_incremental_filter_rejected(
+        ODataRequestError(
+            entity="PerPerson",
+            status_code=404,
+            filter_applied=True,
+        )
+    )
+    assert not extraction_service._is_incremental_filter_rejected(
+        SAPClientError("GET $filter failed: 400 SENTINEL-PII")
+    )
+
+
 def test_client_side_watermark_filter_compares_sap_dates() -> None:
     rows = [
         {"id": "old", "lastModifiedDateTime": "/Date(1767225599000+0000)/"},
@@ -66,26 +95,42 @@ def test_client_side_watermark_filter_compares_sap_dates() -> None:
 
 def test_run_entity_retries_full_snapshot_when_incremental_filter_is_rejected(monkeypatch) -> None:
     calls: list[dict] = []
+    rejected = requests.Response()
+    rejected.status_code = 400
+    rejected.url = (
+        "https://tenant.example/odata/v2/PerPerson"
+        "?$filter=personIdExternal%20eq%20SENTINEL-PII"
+    )
+    rejected._content = (
+        b'{"error":{"message":"SENTINEL-PII","access_token":"SENTINEL-TOKEN"}}'
+    )
+    rejected.request = requests.Request(
+        "GET",
+        rejected.url,
+        headers={"Authorization": "Bearer SENTINEL-TOKEN"},
+    ).prepare()
+    accepted = requests.Response()
+    accepted.status_code = 200
+    accepted._content = (
+        b'{"d":{"results":[{"personIdExternal":"1",'
+        b'"lastModifiedDateTime":"/Date(1767225601000+0000)/"}]}}'
+    )
 
-    class FakeSapSfClient:
-        def __init__(self, conn_id=None, security_context=None):
-            assert conn_id == "femsa_sf"
+    class ResponseSession:
+        def get(self, _url, **kwargs):
+            calls.append(dict(kwargs["params"]))
+            return rejected if "$filter" in kwargs["params"] else accepted
 
-        def fetch_entity(self, **kwargs):
-            calls.append(kwargs)
-            if kwargs["skip"]:
-                return []
-            if kwargs["filter_expr"]:
-                raise SAPClientError("GET https://example/PerPerson failed: 400 Client Error: Bad Request")
-            return [
-                {
-                    "personIdExternal": "1",
-                    "lastModifiedDateTime": "/Date(1767225601000+0000)/",
-                }
-            ]
+    client = SapSfClient.__new__(SapSfClient)
+    client.base_url = "https://tenant.example/odata/v2"
+    client._conn_id = "femsa_sf"
+    client._session = ResponseSession()
+    monkeypatch.setattr(client, "_require_configured", lambda: None)
+    monkeypatch.setattr(client, "_headers", lambda: {"Authorization": "Bearer SENTINEL-TOKEN"})
+    monkeypatch.setattr(client, "_log_auth", lambda _status_code: None)
 
     _stub_run(monkeypatch)
-    monkeypatch.setattr(extraction_service, "SapSfClient", FakeSapSfClient)
+    monkeypatch.setattr(extraction_service, "SapSfClient", lambda **_kwargs: client)
     monkeypatch.setattr(extraction_service, "get_watermark", lambda _entity: "/Date(1767225600000+0000)/")
     updated: dict = {}
     monkeypatch.setattr(extraction_service, "update_watermark", lambda **kwargs: updated.update(kwargs))
@@ -100,13 +145,16 @@ def test_run_entity_retries_full_snapshot_when_incremental_filter_is_rejected(mo
         }
     )
 
-    assert calls[0]["filter_expr"] == "lastModifiedDateTime gt datetime'2026-01-01T00:00:00'"
-    assert calls[1]["filter_expr"] is None
+    assert calls[0]["$filter"] == "lastModifiedDateTime gt datetime'2026-01-01T00:00:00'"
+    assert "$filter" not in calls[1]
     assert result["status"] == "success"
     assert result["record_count"] == 1
     assert result["retried_as_full_snapshot"] is True
     assert result["incremental_fallback_reason"] == "incremental_filter_rejected_full_snapshot"
     assert updated["last_watermark_value"] == "2025-12-31T23:55:01Z"
+    assert "SENTINEL-PII" not in repr(result)
+    assert "SENTINEL-TOKEN" not in repr(result)
+    assert "tenant.example" not in repr(result)
 
 
 def test_run_entity_preserves_expected_columns_after_metadata_select_pruning(monkeypatch) -> None:
@@ -216,7 +264,11 @@ def test_token_400_is_not_treated_as_incremental_filter_rejection(monkeypatch) -
 
         def fetch_entity(self, **kwargs):
             calls.append(kwargs)
-            raise SAPClientError("SAML bearer token request failed: 400 Client Error for url: https://api68sales.successfactors.com/oauth/token")
+            raise SAPClientError(
+                "SAML bearer token request failed: 400 Client Error "
+                "url=https://tenant.example/oauth/token?access_token=SENTINEL-TOKEN "
+                "body={employee:SENTINEL-PII}"
+            )
 
     _stub_run(monkeypatch)
     monkeypatch.setattr(extraction_service, "SapSfClient", FakeSapSfClient)
@@ -235,7 +287,9 @@ def test_token_400_is_not_treated_as_incremental_filter_rejection(monkeypatch) -
             }
         )
 
-    assert "oauth/token" in failures["error_message"]
+    assert failures["error_message"] == "successfactors_auth_failed"
+    assert "SENTINEL" not in repr(failures)
+    assert "tenant.example" not in repr(failures)
     assert len(calls) == 1
 
 

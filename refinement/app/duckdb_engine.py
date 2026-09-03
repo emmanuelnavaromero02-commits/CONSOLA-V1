@@ -272,28 +272,22 @@ class DuckDBEngine:
         return provider == "gcs"
 
     def _gcs_hmac_credentials(self) -> tuple[str, str]:
-        key_id = (
-            os.environ.get("GCS_ACCESS_KEY_ID")
-            or os.environ.get("GOOGLE_HMAC_ACCESS_KEY_ID")
-            or os.environ.get("LAKEHOUSE_ACCESS_KEY")
-            or ""
-        ).strip()
-        secret = (
-            os.environ.get("GCS_SECRET_ACCESS_KEY")
-            or os.environ.get("GOOGLE_HMAC_SECRET_ACCESS_KEY")
-            or os.environ.get("LAKEHOUSE_SECRET_KEY")
-            or ""
-        ).strip()
+        # Never construct a credential pair from generic/AWS/MinIO aliases.
+        # GCP deployment hydrates these two names as one atomic unit.
+        key_id = (os.environ.get("GCS_ACCESS_KEY_ID") or "").strip()
+        secret = (os.environ.get("GCS_SECRET_ACCESS_KEY") or "").strip()
         if not key_id or not secret:
             raise ValueError(
                 "GCS lakehouse refinement reads require HMAC credentials "
-                "via GCS_ACCESS_KEY_ID/GCS_SECRET_ACCESS_KEY or LAKEHOUSE_ACCESS_KEY/LAKEHOUSE_SECRET_KEY"
+                "via GCS_ACCESS_KEY_ID/GCS_SECRET_ACCESS_KEY"
             )
         return key_id, secret
 
     def _configure_duckdb_gcs(self, con: duckdb.DuckDBPyConnection) -> None:
         key_id, secret = self._gcs_hmac_credentials()
         try:
+            # GCS's S3-compatible signature scope requires the special region.
+            con.execute("SET s3_region='auto';")
             con.execute(
                 "CREATE OR REPLACE SECRET omega_gcs ("
                 "TYPE gcs, "
@@ -335,6 +329,10 @@ class DuckDBEngine:
                         or os.environ.get("AWS_DEFAULT_REGION")
                         or "us-east-1"
                     )
+                    # ``credential_chain`` is supplied by DuckDB's aws
+                    # extension. It is installed into the image/cache ahead of
+                    # time and loaded only for native S3 role credentials.
+                    self._con.execute("LOAD aws;")
                     self._con.execute(
                         "CREATE OR REPLACE SECRET omega_s3_role ("
                         "TYPE S3, PROVIDER credential_chain, "

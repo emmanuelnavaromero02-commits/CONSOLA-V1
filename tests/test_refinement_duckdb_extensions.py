@@ -26,7 +26,7 @@ def test_duckdb_version_and_build_extensions_are_pinned() -> None:
     )
     installer = _text("refinement/scripts/install_duckdb_extensions.py")
     assert 'VERSION = "1.2.2"' in installer
-    assert 'EXTENSIONS = ("httpfs", "postgres")' in installer
+    assert 'EXTENSIONS = ("httpfs", "postgres", "aws")' in installer
 
 
 def test_refinement_declares_parquet_authority_runtime_dependency() -> None:
@@ -76,7 +76,7 @@ def test_release_root_cache_is_fresh_frozen_and_network_independent() -> None:
     assert 'test ! -L "$duckdb_home"' in preparation
     assert '> "$manifest"' in preparation
     assert "/tmp/refinement-duckdb-extensions.before" not in preparation
-    assert "for extension in httpfs postgres_scanner" in preparation
+    assert "for extension in httpfs postgres_scanner aws" in preparation
     assert '"$extension.duckdb_extension"' in preparation
     assert 'f"{extension}.duckdb_extension.info"' in preparation
     assert "actual != expected" in preparation
@@ -108,7 +108,7 @@ case "${1:-}" in
     destination="${@: -1}"
     target="${destination%/}/extensions/v1.2.2/linux_arm64"
     mkdir -p "${target}"
-    for extension in httpfs postgres_scanner; do
+    for extension in httpfs postgres_scanner aws; do
       printf '%s' "${extension}" > "${target}/${extension}.duckdb_extension"
       printf '%s-info' "${extension}" > "${target}/${extension}.duckdb_extension.info"
     done

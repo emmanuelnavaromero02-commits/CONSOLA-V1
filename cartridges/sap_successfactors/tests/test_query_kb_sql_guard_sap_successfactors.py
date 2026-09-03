@@ -124,7 +124,7 @@ def test_query_kb_rejects_invalid_limit_before_duckdb(monkeypatch):
     monkeypatch.setattr(mcp_server, "_get_duckdb_connection", fail_get_connection)
     result = mcp_server.query_kb("SELECT 1 AS ok", limit=-1)
     assert result["error"] == "invalid_limit"
-    assert "positive integer" in result["reason"]
+    assert result["reason"] == "invalid_limit"
 
 
 def test_query_kb_caps_huge_limit_argument(monkeypatch, signed_scope):

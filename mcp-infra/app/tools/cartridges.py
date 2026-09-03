@@ -26,6 +26,11 @@ from sqlalchemy import create_engine, text
 
 from app.config import settings
 from app.duckdb_runtime import connect_duckdb_runtime
+from app.lakehouse_runtime import (
+    configure_duckdb_s3,
+    ensure_local_bucket,
+    minio_compatible_client,
+)
 from app.middleware.request_id import request_id_var
 from app.operational_truth import replicon_generic_query_block_reason
 from app.publication_heads import published_dataset_names, scoped_semantic_source_name
@@ -47,11 +52,7 @@ _SAFE_SCOPE_SEGMENT = re.compile(r"[A-Za-z0-9_.:-]+")
 
 def _duckdb() -> duckdb.DuckDBPyConnection:
     conn = connect_duckdb_runtime()
-    conn.execute(f"SET s3_endpoint='{settings.minio_endpoint}';")
-    conn.execute(f"SET s3_access_key_id='{settings.minio_access_key}';")
-    conn.execute(f"SET s3_secret_access_key='{settings.minio_secret_key}';")
-    conn.execute(f"SET s3_use_ssl={'true' if settings.minio_secure else 'false'};")
-    conn.execute("SET s3_url_style='path';")
+    configure_duckdb_s3(conn)
     return conn
 
 
@@ -1336,20 +1337,18 @@ def cartridge_run_kb(
             df: pd.DataFrame = conn.execute(sql).df()
         finally:
             conn.close()
-    except Exception as exc:
-        return {"kb_id": kb_id, "status": "failed", "error": str(exc)}
+    except Exception:
+        return {
+            "kb_id": kb_id,
+            "status": "failed",
+            "error": "lakehouse_query_failed",
+        }
 
     storage_uri = None
     if output_path:
         try:
-            from minio import Minio
-
-            mc = Minio(
-                settings.minio_endpoint,
-                access_key=settings.minio_access_key,
-                secret_key=settings.minio_secret_key,
-                secure=settings.minio_secure,
-            )
+            mc = minio_compatible_client()
+            bucket = ensure_local_bucket(mc)
             load_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             scoped_output_path = _scoped_object_prefix(
                 output_path,
@@ -1361,13 +1360,13 @@ def cartridge_run_kb(
                 df.to_parquet(
                     local, index=False, engine="pyarrow", compression="snappy"
                 )
-                mc.fput_object(settings.minio_bucket, key, str(local))
-            storage_uri = f"s3://{settings.minio_bucket}/{key}"
-        except Exception as exc:
+                mc.fput_object(bucket, key, str(local))
+            storage_uri = f"s3://{bucket}/{key}"
+        except Exception:
             return {
                 "kb_id": kb_id,
                 "status": "partial",
-                "error": f"DuckDB ok but MinIO write failed: {exc}",
+                "error": "lakehouse_write_failed",
                 "rows": len(df),
             }
 

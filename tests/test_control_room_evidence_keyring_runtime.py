@@ -8,6 +8,9 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 GCP_STARTUP = REPO / "infra/terraform-gcp/templates/startup.sh.tftpl"
+GCP_SECRET_HYDRATOR = (
+    REPO / "infra/terraform-gcp/release/hydrate-runtime-secrets.sh"
+)
 AWS_ENTRYPOINT = REPO / "scripts/aws-entrypoint.sh"
 AWS_DEPLOY = REPO / "infra/terraform/deploy"
 BOOTSTRAP_KEYS = REPO / "infra/bootstrap-keys.sh"
@@ -27,28 +30,34 @@ def _array_body(source: str, name: str) -> str:
     return match.group("body")
 
 
-def test_gcp_loads_complete_evidence_keyring_before_local_bootstrap():
+def test_gcp_hydrates_complete_evidence_keyring_before_runtime_launch():
     source = GCP_STARTUP.read_text(encoding="utf-8")
+    hydrator = GCP_SECRET_HYDRATOR.read_text(encoding="utf-8")
     declared = (REPO / "infra/terraform-gcp/locals.tf").read_text(encoding="utf-8")
-    bootstrap_at = source.index("bash infra/bootstrap-keys.sh infra/.env")
+    hydrate_at = source.index("hydrate-runtime-secrets.sh")
+    shared_env_at = source.index("sync_env_atomic infra/.env")
+    compose_at = source.index('"$${COMPOSE[@]}" config -q')
+    hydrated_locals = {
+        "control_room_evidence_signing_key_id": "control_room_key_id",
+        "control_room_evidence_signing_key": "control_room_key",
+        "control_room_evidence_signing_previous_keys": "control_room_previous_keys",
+    }
 
     for secret_name, env_name in KEYRING.items():
         assert f'"{secret_name}"' in declared
-        load = f"load_required_secret {secret_name} {env_name}"
-        assert load in source
-        assert source.index(load) < bootstrap_at
+        local_name = hydrated_locals[secret_name]
+        assert f"load_required_secret {secret_name} {local_name}" in hydrator
+        assert f'append_update {env_name} "${{{local_name}}}"' in hydrator
 
-    helper = re.search(r"load_required_secret\(\) \{(?P<body>[\s\S]*?)\n\}", source)
+    helper = re.search(
+        r"load_required_secret\(\) \{(?P<body>[\s\S]*?)\n\}", hydrator
+    )
     assert helper
     body = helper.group("body")
     assert "secret_value" in body
-    assert "exit 1" in body
-    assert "export" in body
-
-    for env_name in KEYRING.values():
-        persisted = f'set_env {env_name} "$${{{env_name}}}"'
-        assert persisted in source
-        assert source.index(persisted) < bootstrap_at
+    assert "die" in body
+    assert hydrate_at < shared_env_at < compose_at
+    assert "os.replace(temporary_name, target)" in hydrator
 
     bootstrap = (REPO / "infra/bootstrap.sh").read_text(encoding="utf-8")
     assert "${CONTROL_ROOM_EVIDENCE_SIGNING_KEY_ID:-evidence-" in bootstrap

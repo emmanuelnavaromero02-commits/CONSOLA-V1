@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.deps import verify_api_key
 from app.core.sap_client import SapSfClient
+from app.core.startup_status import MCP_PROBE_FAILED, safe_startup_errors
 from app.mcp_server import mcp
 
 router = APIRouter(prefix="/health", tags=["health"])
@@ -17,7 +18,7 @@ async def health(request: Request):
     # v1.43.2 (Codex P1-5): mirror real startup state.
     state = request.app.state
     ok = getattr(state, "startup_ok", False)
-    errors = list(getattr(state, "startup_errors", []) or [])
+    errors = safe_startup_errors(getattr(state, "startup_errors", []))
     if not ok:
         return JSONResponse(
             {
@@ -33,13 +34,13 @@ async def health(request: Request):
     # cartridges/sap_hcm/app/api/routes_health.py for full rationale.
     try:
         tools = await mcp.list_tools()
-    except Exception as exc:  # pragma: no cover — defensive
+    except Exception:  # pragma: no cover — defensive
         return JSONResponse(
             {
                 "ok": False,
                 "service": _SERVICE,
                 "reason": "mcp_unreachable",
-                "error": str(exc),
+                "error": MCP_PROBE_FAILED,
             },
             status_code=503,
         )

@@ -27,6 +27,7 @@ from app.api.deps import verify_api_key
 from app.core.extraction_status import (
     classify_extraction_exception,
     classify_successful_extraction,
+    public_failure_message,
     summarize_extraction_results,
 )
 from app.core.job_runner import (
@@ -38,7 +39,10 @@ from app.core.job_runner import (
 from app.core.request_context import SecurityContextError, reset_security_context, set_security_context
 from app.core.sap_client import SAPClientError, SapSfClient
 from app.services.catalog_service import get_all_entities, get_entity_config, get_extract_all_plan
-from app.services.extraction_service import run_entity
+from app.services.extraction_service import (
+    is_metadata_skip_result,
+    run_entity_with_metadata_guard as run_entity,
+)
 from app.services.preflight import (
     people_master_readiness,
     preflight_for_extract,
@@ -93,8 +97,8 @@ def _security_context(body: dict[str, Any] | None) -> dict[str, Any] | None:
 def _set_security_context(ctx: dict[str, Any] | None):
     try:
         return set_security_context(ctx)
-    except SecurityContextError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except SecurityContextError:
+        raise HTTPException(status_code=403, detail="security_context_denied") from None
 
 
 def _scoped_config(config: dict[str, Any], ctx: dict[str, Any] | None) -> dict[str, Any]:
@@ -198,17 +202,17 @@ def entity_preview(
 
     try:
         from app.mcp_server import preview as _preview_tool  # FastMCP @tool
-    except Exception as exc:                                   # noqa: BLE001
+    except Exception:                                          # noqa: BLE001
         return _degraded_503({
             "status": "degraded",
-            "error": f"preview unavailable: {exc}",
+            "error": "preview_unavailable",
         })
     try:
         return _preview_tool(entity=entity_id, limit=limit)
-    except Exception as exc:                                   # noqa: BLE001
+    except Exception:                                          # noqa: BLE001
         return _degraded_503({
             "status": "degraded",
-            "error": f"preview failed: {exc}",
+            "error": "preview_failed",
         })
 
 
@@ -256,19 +260,23 @@ def entity_extract(
             from_date=from_date,
             to_date=to_date,
         )
+        if is_metadata_skip_result(result):
+            _mark_external_job(finish_external_job, job_id, result)
+            return result
         _mark_external_job(_trigger_silver_refresh, entity_id, ctx)
         _mark_external_job(finish_external_job, job_id, result)
         return result
-    except SAPClientError as exc:
-        _mark_external_job(fail_external_job, job_id, str(exc))
-        return _degraded_503({
-            "status": "degraded",
-            "configured": True,
-            "error": str(exc),
-        })
-    except Exception as exc:
-        _mark_external_job(fail_external_job, job_id, str(exc))
-        raise
+    except Exception as exc:  # noqa: BLE001 - expose only the stable classifier.
+        classified = classify_extraction_exception(entity_id, exc)
+        failure_message = public_failure_message(classified)
+        _mark_external_job(fail_external_job, job_id, failure_message)
+        return _degraded_503(
+            {
+                "status": "degraded",
+                "configured": True,
+                **classified,
+            }
+        )
     finally:
         reset_security_context(token)
 
@@ -319,6 +327,9 @@ def extract_all(
                 result = run_entity(
                     _with_optional_conn(_scoped_config(run_config, ctx), conn_id)
                 )
+                if is_metadata_skip_result(result):
+                    results.append(result)
+                    continue
                 _mark_external_job(_trigger_silver_refresh, config.get("entity"), ctx)
                 results.append(classify_successful_extraction(result))
             except SAPClientError as exc:

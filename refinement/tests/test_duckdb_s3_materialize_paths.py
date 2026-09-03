@@ -141,6 +141,7 @@ def test_aws_s3_without_static_keys_uses_credential_chain(monkeypatch):
     engine._conn()
 
     combined = "\n".join(statements)
+    assert "LOAD aws;" in combined
     assert "PROVIDER credential_chain" in combined
     assert "s3_url_style='vhost'" in combined
     assert "s3_access_key_id=''" not in combined
@@ -174,6 +175,7 @@ def test_gcs_lakehouse_configures_duckdb_gcs_secret(monkeypatch):
     assert "TYPE gcs" in combined
     assert "KEY_ID 'gcs-key'" in combined
     assert "SECRET " in combined
+    assert "s3_region='auto'" in combined
     assert "s3_endpoint" not in combined
     assert "gcs_fuse" not in combined
 
@@ -226,6 +228,27 @@ def test_gcs_lakehouse_requires_hmac_for_duckdb_reads(monkeypatch):
         ValueError, match="GCS lakehouse refinement reads require HMAC credentials"
     ):
         engine._conn()
+
+
+def test_gcs_lakehouse_does_not_mix_provider_credential_names(monkeypatch):
+    class FakeConn:
+        def execute(self, _sql):
+            return self
+
+    monkeypatch.setenv("LAKEHOUSE_PROVIDER", "gcs")
+    monkeypatch.setenv("GCS_BUCKET", "modecissions-gcs-lakehouse")
+    monkeypatch.setenv("GCS_ACCESS_KEY_ID", "gcs-key")
+    monkeypatch.delenv("GCS_SECRET_ACCESS_KEY", raising=False)
+    monkeypatch.setenv("LAKEHOUSE_SECRET_KEY", "must-not-complete-gcs-pair")
+    monkeypatch.setenv("MINIO_SECRET_KEY", "must-not-complete-gcs-pair")
+    monkeypatch.setattr(
+        "refinement.app.duckdb_engine.duckdb.connect", lambda: FakeConn()
+    )
+
+    with pytest.raises(
+        ValueError, match="GCS lakehouse refinement reads require HMAC credentials"
+    ):
+        DuckDBEngine()._conn()
 
 
 def test_minio_uses_path_style(monkeypatch):

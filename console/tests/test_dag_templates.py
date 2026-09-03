@@ -167,6 +167,40 @@ def test_template_has_no_leftover_placeholder_braces(template_id):
     )
 
 
+@pytest.mark.parametrize("template_id", EXPECTED_TEMPLATE_IDS)
+def test_template_storage_is_provider_aware_and_never_creates_cloud_bucket(template_id):
+    mod = _load_module()
+    code = mod.get_code(template_id, cartridge="replicon", entity="TimeEntry")
+
+    assert 'provider == "gcs"' in code
+    assert 'os.environ.get("GCS_ACCESS_KEY_ID")' in code
+    assert 'os.environ.get("GCS_SECRET_ACCESS_KEY")' in code
+    assert 'secure, region = True, "auto"' in code
+    assert 'storage["provider"] == "minio" and not client.bucket_exists(bucket)' in code
+    assert 'storage["provider"] == "s3" and not storage["access_key"]' in code
+
+
+def test_template_endpoint_parser_preserves_local_minio_host_and_port():
+    import ast
+
+    mod = _load_module()
+    code = mod.get_code("rest_full", cartridge="replicon", entity="TimeEntry")
+    tree = ast.parse(code)
+    helper = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_storage_endpoint_host"
+    )
+    helper_source = ast.get_source_segment(code, helper)
+
+    # Keep this as a structural assertion over the generated, trusted source.
+    # Executing a dynamically compiled AST would make this security regression
+    # test itself indistinguishable from an unsafe exec() to Bandit.
+    assert helper_source is not None
+    assert 'urlsplit(raw if "://" in raw else "//" + raw)' in helper_source
+    assert "return parsed.netloc or parsed.path" in helper_source
+
+
 # ── Error / unknown-id handling ─────────────────────────────────────
 
 

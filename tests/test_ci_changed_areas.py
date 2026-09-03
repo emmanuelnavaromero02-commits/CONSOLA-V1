@@ -16,6 +16,10 @@ def _flags(*files: str) -> dict[str, object]:
     return ci_changed_areas._flags(list(files))
 
 
+def _root_targets(flags: dict[str, object]) -> set[str]:
+    return set(str(flags["root_test_targets"]).split())
+
+
 def test_dataset_sql_changes_skip_runtime_and_full_stack_gates():
     flags = _flags(
         "cartridges/sap_successfactors/datasets/sap_successfactors_user_latest.sql",
@@ -63,6 +67,183 @@ def test_console_frontend_and_compose_changes_trigger_heavier_surfaces():
     assert flags["release_full_stack"] is True
     matrix = json.loads(str(flags["build_matrix"]))
     assert {"service": "console", "context": "./console"} in matrix["include"]
+
+
+def test_changed_console_tests_are_release_root_targets():
+    flags = _flags(
+        "console/app/main.py",
+        "console/tests/test_agent_runner_scheduler_auth.py",
+        "console/tests/test_ops_summary_and_version.py",
+    )
+
+    assert flags["root_tests"] is True
+    targets = str(flags["root_test_targets"]).split()
+    assert targets == [
+        "console/tests/test_agent_runner_scheduler_auth.py",
+        "console/tests/test_ops_summary_and_version.py",
+    ]
+
+
+def test_agent_runner_runtime_only_changes_select_exact_console_regressions():
+    flags = _flags(
+        "console/app/main.py",
+        "console/app/routers/operations.py",
+        "console/app/services/scheduled_runtime.py",
+    )
+
+    targets = set(str(flags["root_test_targets"]).split())
+    assert "console/tests/test_agent_runner_scheduler_auth.py" in targets
+    assert "tests/test_operational_truth_runtime_red.py" in targets
+
+
+def test_main_auth_contract_is_not_masked_by_an_unrelated_changed_test():
+    flags = _flags(
+        "console/app/main.py",
+        "tests/test_ci_changed_areas.py",
+    )
+
+    targets = set(str(flags["root_test_targets"]).split())
+    assert "tests/test_ci_changed_areas.py" in targets
+    assert "console/tests/test_agent_runner_scheduler_auth.py" in targets
+
+
+def test_successfactors_health_runtime_selects_secret_sentinel_contract():
+    for changed_file in (
+        "cartridges/sap_successfactors/app/main.py",
+        "cartridges/sap_successfactors/app/api/routes_health.py",
+        "cartridges/sap_successfactors/app/core/startup_status.py",
+        "cartridges/sap_successfactors/app/services/catalog_service.py",
+    ):
+        targets = set(str(_flags(changed_file)["root_test_targets"]).split())
+        assert "tests/test_cartridge_startup_fail_fast.py" in targets
+
+
+def test_gcp_secret_and_day2_runtime_changes_select_fail_closed_contracts():
+    for changed_file in (
+        "infra/terraform-gcp/release/hydrate-runtime-secrets.sh",
+        "scripts/gcp/gcp-canonical-deploy.sh",
+        "scripts/gcp/gcp-canonical-deploy-remote.sh",
+    ):
+        flags = _flags(changed_file)
+        targets = set(str(flags["root_test_targets"]).split())
+        assert "tests/test_gcp_runtime_secret_hydration.py" in targets
+        if changed_file.startswith("scripts/gcp/"):
+            assert "tests/test_gcp_canonical_deploy.py" in targets
+        assert flags["release_full_stack"] is True
+
+
+def test_file_ingest_runtime_change_selects_accumulation_and_gcs_contract():
+    flags = _flags("airflow/dags/file_ingest.py")
+
+    assert "tests/test_t2_file_ingest_accumulates.py" in _root_targets(flags)
+
+
+def test_console_storage_generators_select_their_exact_regressions():
+    expected = {
+        "console/app/services/s3_client.py": "console/tests/test_console_s3_iam_client.py",
+        "console/app/services/cartridge_service.py": "console/tests/test_cartridge_service_storage_provider.py",
+        "console/app/services/dag_templates.py": "console/tests/test_dag_templates.py",
+        "console/app/services/dag_code_generator.py": "tests/test_dag_codegen_security.py",
+    }
+    for changed_file, target in expected.items():
+        flags = _flags(changed_file)
+        assert target in set(str(flags["root_test_targets"]).split())
+
+
+def test_provider_runtime_only_changes_select_cross_provider_contracts():
+    for changed_file in (
+        "cartridges/hubspot/app/core/config.py",
+        "cartridges/replicon/app/core/minio_client.py",
+        "cartridges/salesforce/app/services/duckdb_service.py",
+        "cartridges/sap_hcm/app/core/config.py",
+        "cartridges/sap_s4hana/app/services/duckdb_service.py",
+        "mcp-infra/app/lakehouse_runtime.py",
+    ):
+        targets = set(str(_flags(changed_file)["root_test_targets"]).split())
+        assert "tests/test_phase0_provider_safe_storage.py" in targets
+        if "/core/" in changed_file:
+            assert "tests/test_gcp_runtime_secret_hydration.py" in targets
+
+    overlay_targets = set(
+        str(
+            _flags("infra/terraform-gcp/templates/docker-compose.gcp.yml.tftpl")[
+                "root_test_targets"
+            ]
+        ).split()
+    )
+    assert {
+        "tests/test_phase0_provider_safe_storage.py",
+        "tests/test_gcp_runtime_secret_hydration.py",
+        "tests/test_gcp_canonical_deploy.py",
+        "tests/test_replicon_ses_upload_scope.py",
+    } <= overlay_targets
+
+    renderer_targets = _root_targets(
+        _flags("scripts/gcp/render_gcp_compose_override.py")
+    )
+    assert "tests/test_gcp_canonical_deploy.py" in renderer_targets
+    assert _flags("scripts/gcp/render_gcp_compose_override.py")[
+        "release_full_stack"
+    ] is True
+
+
+def test_offline_aws_extension_runtime_changes_select_preload_contracts():
+    for changed_file in (
+        "cartridges/hubspot/Dockerfile",
+        "cartridges/replicon/Dockerfile",
+        "cartridges/salesforce/Dockerfile",
+        "cartridges/sap_hcm/Dockerfile",
+        "cartridges/sap_s4hana/Dockerfile",
+        "cartridges/sap_successfactors/Dockerfile",
+        "mcp-infra/app/lakehouse_runtime.py",
+        "mcp-infra/scripts/install_duckdb_extensions.py",
+        "mcp-infra/scripts/duckdb_offline_smoke.py",
+    ):
+        targets = set(str(_flags(changed_file)["root_test_targets"]).split())
+        assert {
+            "tests/test_duckdb_p0_guard.py",
+            "tests/test_phase0_provider_safe_storage.py",
+        } <= targets
+
+    for changed_file in (
+        "refinement/app/duckdb_engine.py",
+        "refinement/scripts/install_duckdb_extensions.py",
+        "refinement/scripts/duckdb_offline_smoke.py",
+        "scripts/prepare_refinement_duckdb_ci.sh",
+    ):
+        targets = set(str(_flags(changed_file)["root_test_targets"]).split())
+        assert {
+            "refinement/tests/test_duckdb_s3_materialize_paths.py",
+            "tests/test_refinement_duckdb_extensions.py",
+        } <= targets
+
+
+def test_phase0_selects_console_and_refinement_release_targets_together():
+    targets = _root_targets(
+        _flags(
+            "console/app/main.py",
+            "refinement/app/duckdb_engine.py",
+        )
+    )
+
+    assert "console/tests/test_agent_runner_scheduler_auth.py" in targets
+    assert "refinement/tests/test_duckdb_s3_materialize_paths.py" in targets
+    assert "tests/test_refinement_duckdb_extensions.py" in targets
+
+
+def test_release_partition_and_migration_runner_select_exact_contracts():
+    for changed_file in (
+        ".github/workflows/release.yml",
+        "scripts/run_release_pytest.py",
+    ):
+        targets = _root_targets(_flags(changed_file))
+        assert "tests/test_release_root_target_partition.py" in targets
+
+    migration_targets = _root_targets(_flags("scripts/apply_db_migrations.sh"))
+    assert {
+        "tests/test_apply_db_migrations_script.py",
+        "tests/test_schema_migrations_tracking.py",
+    } <= migration_targets
 
 
 def test_cartridge_runtime_change_builds_only_that_cartridge():
@@ -191,7 +372,10 @@ def test_console_status_page_helper_refactor_does_not_trigger_full_stack_release
     assert flags["root_tests"] is True
     assert flags["e2e"] is True
     assert flags["release_full_stack"] is False
-    assert flags["root_test_targets"] == "tests/test_status_pages.py"
+    assert _root_targets(flags) == {
+        "console/tests/test_agent_runner_scheduler_auth.py",
+        "tests/test_status_pages.py",
+    }
 
 
 def test_console_security_header_helper_refactor_does_not_trigger_full_stack_release_gate():
@@ -206,7 +390,10 @@ def test_console_security_header_helper_refactor_does_not_trigger_full_stack_rel
     assert flags["root_tests"] is True
     assert flags["e2e"] is True
     assert flags["release_full_stack"] is False
-    assert flags["root_test_targets"] == "tests/test_security_headers.py"
+    assert _root_targets(flags) == {
+        "console/tests/test_agent_runner_scheduler_auth.py",
+        "tests/test_security_headers.py",
+    }
 
 
 def test_console_request_rate_limit_helper_refactor_does_not_trigger_full_stack_release_gate():
@@ -221,7 +408,10 @@ def test_console_request_rate_limit_helper_refactor_does_not_trigger_full_stack_
     assert flags["root_tests"] is True
     assert flags["e2e"] is True
     assert flags["release_full_stack"] is False
-    assert flags["root_test_targets"] == "tests/test_request_rate_limits.py"
+    assert _root_targets(flags) == {
+        "console/tests/test_agent_runner_scheduler_auth.py",
+        "tests/test_request_rate_limits.py",
+    }
 
 
 def test_console_mcp_payload_helper_refactor_does_not_trigger_full_stack_release_gate():
@@ -236,7 +426,10 @@ def test_console_mcp_payload_helper_refactor_does_not_trigger_full_stack_release
     assert flags["root_tests"] is True
     assert flags["e2e"] is True
     assert flags["release_full_stack"] is False
-    assert flags["root_test_targets"] == "tests/test_mcp_payloads.py"
+    assert _root_targets(flags) == {
+        "console/tests/test_agent_runner_scheduler_auth.py",
+        "tests/test_mcp_payloads.py",
+    }
 
 
 def test_console_db_pool_helper_refactor_does_not_trigger_full_stack_release_gate():
@@ -251,7 +444,10 @@ def test_console_db_pool_helper_refactor_does_not_trigger_full_stack_release_gat
     assert flags["root_tests"] is True
     assert flags["e2e"] is True
     assert flags["release_full_stack"] is False
-    assert flags["root_test_targets"] == "tests/test_db_pool.py"
+    assert _root_targets(flags) == {
+        "console/tests/test_agent_runner_scheduler_auth.py",
+        "tests/test_db_pool.py",
+    }
 
 
 def test_console_startup_readiness_helper_refactor_does_not_trigger_full_stack_release_gate():
@@ -266,7 +462,10 @@ def test_console_startup_readiness_helper_refactor_does_not_trigger_full_stack_r
     assert flags["root_tests"] is True
     assert flags["e2e"] is True
     assert flags["release_full_stack"] is False
-    assert flags["root_test_targets"] == "tests/test_startup_readiness.py"
+    assert _root_targets(flags) == {
+        "console/tests/test_agent_runner_scheduler_auth.py",
+        "tests/test_startup_readiness.py",
+    }
 
 
 def test_console_runtime_call_helper_refactor_does_not_trigger_full_stack_release_gate():
@@ -281,7 +480,10 @@ def test_console_runtime_call_helper_refactor_does_not_trigger_full_stack_releas
     assert flags["root_tests"] is True
     assert flags["e2e"] is True
     assert flags["release_full_stack"] is False
-    assert flags["root_test_targets"] == "tests/test_runtime_calls.py"
+    assert _root_targets(flags) == {
+        "console/tests/test_agent_runner_scheduler_auth.py",
+        "tests/test_runtime_calls.py",
+    }
 
 
 def test_console_readyz_dependency_helper_refactor_does_not_trigger_full_stack_release_gate():
@@ -296,7 +498,10 @@ def test_console_readyz_dependency_helper_refactor_does_not_trigger_full_stack_r
     assert flags["root_tests"] is True
     assert flags["e2e"] is True
     assert flags["release_full_stack"] is False
-    assert flags["root_test_targets"] == "tests/test_readyz_dependencies.py"
+    assert _root_targets(flags) == {
+        "console/tests/test_agent_runner_scheduler_auth.py",
+        "tests/test_readyz_dependencies.py",
+    }
 
 
 def test_console_readyz_data_helper_refactor_does_not_trigger_full_stack_release_gate():
@@ -311,7 +516,10 @@ def test_console_readyz_data_helper_refactor_does_not_trigger_full_stack_release
     assert flags["root_tests"] is True
     assert flags["e2e"] is True
     assert flags["release_full_stack"] is False
-    assert flags["root_test_targets"] == "tests/test_readyz_data.py"
+    assert _root_targets(flags) == {
+        "console/tests/test_agent_runner_scheduler_auth.py",
+        "tests/test_readyz_data.py",
+    }
 
 
 def test_console_sync_progress_helper_refactor_does_not_trigger_full_stack_release_gate():
@@ -326,7 +534,10 @@ def test_console_sync_progress_helper_refactor_does_not_trigger_full_stack_relea
     assert flags["root_tests"] is True
     assert flags["e2e"] is True
     assert flags["release_full_stack"] is False
-    assert flags["root_test_targets"] == "tests/test_sync_progress.py"
+    assert _root_targets(flags) == {
+        "console/tests/test_agent_runner_scheduler_auth.py",
+        "tests/test_sync_progress.py",
+    }
 
 
 def test_console_sync_agentops_helper_refactor_does_not_trigger_full_stack_release_gate():
@@ -341,7 +552,10 @@ def test_console_sync_agentops_helper_refactor_does_not_trigger_full_stack_relea
     assert flags["root_tests"] is True
     assert flags["e2e"] is True
     assert flags["release_full_stack"] is False
-    assert flags["root_test_targets"] == "tests/test_sync_agentops.py"
+    assert _root_targets(flags) == {
+        "console/tests/test_agent_runner_scheduler_auth.py",
+        "tests/test_sync_agentops.py",
+    }
 
 
 def test_console_sync_control_room_helper_refactor_does_not_trigger_full_stack_release_gate():
@@ -356,4 +570,7 @@ def test_console_sync_control_room_helper_refactor_does_not_trigger_full_stack_r
     assert flags["root_tests"] is True
     assert flags["e2e"] is True
     assert flags["release_full_stack"] is False
-    assert flags["root_test_targets"] == "tests/test_sync_control_room.py"
+    assert _root_targets(flags) == {
+        "console/tests/test_agent_runner_scheduler_auth.py",
+        "tests/test_sync_control_room.py",
+    }

@@ -108,11 +108,13 @@ async def scheduled_agent_fanout(
     if internal_service != "airflow":
         raise HTTPException(403, "only airflow can discover scheduled agents")
     try:
-        return await scheduled_runtime.find_due_agents(
-            await auth.pool(),
+        pool = await auth.pool()
+        result = await scheduled_runtime.find_due_agents(
+            pool,
             window_start=body.window_start,
             window_end=body.window_end,
         )
+        return result
     except ValueError as exc:
         raise HTTPException(422, "invalid scheduler window") from exc
 

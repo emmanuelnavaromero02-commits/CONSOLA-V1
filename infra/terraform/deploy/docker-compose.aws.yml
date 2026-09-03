@@ -104,6 +104,9 @@ services:
       DATABASE_URL:        "postgresql+psycopg2://omega_console:${OMEGA_CONSOLE_PASSWORD:?OMEGA_CONSOLE_PASSWORD is required}@postgres:5432/modecissions"
       GOLD_DATABASE_URL:   "postgresql+psycopg2://omega_refinement_gold:${OMEGA_REFINEMENT_GOLD_PASSWORD:?OMEGA_REFINEMENT_GOLD_PASSWORD is required}@postgres_gold:5433/modecissions_gold"
       OUTCOME_BINDER_DATABASE_URL: "postgresql+psycopg2://omega_outcome_binder:${OMEGA_OUTCOME_BINDER_PASSWORD:?OMEGA_OUTCOME_BINDER_PASSWORD is required}@postgres:5432/modecissions"
+      LAKEHOUSE_PROVIDER:  "s3"
+      LAKEHOUSE_ENDPOINT:  "s3.${AWS_REGION:?AWS_REGION is required}.amazonaws.com"
+      LAKEHOUSE_BUCKET:    ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
       MINIO_BUCKET:        ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
       MINIO_ENDPOINT:      "s3.${AWS_REGION:?AWS_REGION is required}.amazonaws.com"
       MINIO_ACCESS_KEY:    ${AWS_ACCESS_KEY_ID:-}
@@ -245,6 +248,9 @@ services:
       GOLD_DATABASE_URL:  "postgresql+psycopg2://omega_refinement_gold:${OMEGA_REFINEMENT_GOLD_PASSWORD:?OMEGA_REFINEMENT_GOLD_PASSWORD is required}@postgres_gold:5433/modecissions_gold"
       GOLD_PUBLISHER_DATABASE_URL: "postgresql+psycopg2://omega_gold_publisher:${OMEGA_GOLD_PUBLISHER_PASSWORD:?OMEGA_GOLD_PUBLISHER_PASSWORD is required}@postgres_gold:5433/modecissions_gold"
       GOLD_VERIFIER_DATABASE_URL_FILE: /run/secrets/gold_verifier_database_url
+      LAKEHOUSE_PROVIDER: "s3"
+      LAKEHOUSE_ENDPOINT: "s3.${AWS_REGION:?AWS_REGION is required}.amazonaws.com"
+      LAKEHOUSE_BUCKET:   ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
       MINIO_BUCKET:       ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
       MINIO_ENDPOINT:     "s3.${AWS_REGION:?AWS_REGION is required}.amazonaws.com"
       MINIO_ACCESS_KEY:   ${AWS_ACCESS_KEY_ID:-}
@@ -344,6 +350,9 @@ services:
       INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT: ${INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT:-}
       CONSOLE_URL: http://console:8000
       DATABASE_URL: "postgresql+psycopg2://omega_cartridge_sap_sf:${OMEGA_CARTRIDGE_SAP_SF_PASSWORD:?OMEGA_CARTRIDGE_SAP_SF_PASSWORD is required}@postgres:5432/modecissions"
+      LAKEHOUSE_PROVIDER: "s3"
+      LAKEHOUSE_ENDPOINT: "s3.${AWS_REGION:?AWS_REGION is required}.amazonaws.com"
+      LAKEHOUSE_BUCKET: ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
       MINIO_ENDPOINT: "s3.${AWS_REGION:?AWS_REGION is required}.amazonaws.com"
       MINIO_ACCESS_KEY: ${AWS_ACCESS_KEY_ID:-}
       MINIO_SECRET_KEY: ${AWS_SECRET_ACCESS_KEY:-}
@@ -407,6 +416,9 @@ services:
       AIRFLOW_USER:      ${AIRFLOW_ADMIN_USER:?AIRFLOW_ADMIN_USER is required}
       AIRFLOW_PASSWORD:  ${AIRFLOW_ADMIN_PASSWORD:?AIRFLOW_ADMIN_PASSWORD is required}
       AIRFLOW_DAGS_PATH: /opt/airflow/dags
+      LAKEHOUSE_PROVIDER: "s3"
+      LAKEHOUSE_ENDPOINT: "s3.${AWS_REGION:?AWS_REGION is required}.amazonaws.com"
+      LAKEHOUSE_BUCKET: ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
       MINIO_BUCKET:      ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
       MINIO_ENDPOINT:    "s3.${AWS_REGION:?AWS_REGION is required}.amazonaws.com"
       MINIO_ACCESS_KEY:  ${AWS_ACCESS_KEY_ID:-}
@@ -722,6 +734,12 @@ services:
       # Sprint v1.38: scoped operational role; see local compose comment.
       AIRFLOW_VAR_POSTGRES_CONN:            "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
       DATABASE_URL:                         "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
+      LAKEHOUSE_PROVIDER:                   "s3"
+      LAKEHOUSE_ENDPOINT:                   "s3.${AWS_REGION:?AWS_REGION is required}.amazonaws.com"
+      LAKEHOUSE_BUCKET:                     ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
+      AIRFLOW_VAR_LAKEHOUSE_PROVIDER:       "s3"
+      AIRFLOW_VAR_LAKEHOUSE_ENDPOINT:       "s3.${AWS_REGION:?AWS_REGION is required}.amazonaws.com"
+      AIRFLOW_VAR_LAKEHOUSE_BUCKET:         ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
       AIRFLOW_VAR_S3_BUCKET:                ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
       AIRFLOW_VAR_MINIO_BUCKET:             ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
       AIRFLOW_VAR_MINIO_ENDPOINT:           "s3.${AWS_REGION:?AWS_REGION is required}.amazonaws.com"
@@ -815,6 +833,12 @@ services:
       # Sprint v1.38: scoped operational role; see local compose comment.
       AIRFLOW_VAR_POSTGRES_CONN:            "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
       DATABASE_URL:                         "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
+      LAKEHOUSE_PROVIDER:                   "s3"
+      LAKEHOUSE_ENDPOINT:                   "s3.${AWS_REGION:?AWS_REGION is required}.amazonaws.com"
+      LAKEHOUSE_BUCKET:                     ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
+      AIRFLOW_VAR_LAKEHOUSE_PROVIDER:       "s3"
+      AIRFLOW_VAR_LAKEHOUSE_ENDPOINT:       "s3.${AWS_REGION:?AWS_REGION is required}.amazonaws.com"
+      AIRFLOW_VAR_LAKEHOUSE_BUCKET:         ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
       AIRFLOW_VAR_S3_BUCKET:                ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
       AIRFLOW_VAR_MINIO_BUCKET:             ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
       AIRFLOW_VAR_MINIO_ENDPOINT:           "s3.${AWS_REGION:?AWS_REGION is required}.amazonaws.com"

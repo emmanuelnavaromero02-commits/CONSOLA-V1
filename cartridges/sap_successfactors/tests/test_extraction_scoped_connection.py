@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 
+import pytest
+
 os.environ.setdefault("FIELD_ENCRYPTION_KEY", "ZVi4nlltq1NSkJjp17QoaHhaRB2RDQRsNTW7I4yf8GE=")
 os.environ.setdefault("INTERNAL_API_KEY", "test-secret-key-not-default")
 os.environ.setdefault("SECURITY_CONTEXT_SIGNING_KEY", "test-security-context-signing-key-12345")
@@ -12,6 +14,11 @@ from app.core import minio_client
 from app.services import parquet_service
 from app.services import preflight
 from app.services import extraction_service
+
+
+@pytest.fixture(autouse=True)
+def _authenticated_storage_ready(monkeypatch):
+    monkeypatch.setattr(extraction_service, "require_storage_access", lambda: None)
 
 
 def _signed_ctx() -> dict:
@@ -231,6 +238,11 @@ def test_preflight_uses_scoped_vault_connection(monkeypatch):
     monkeypatch.setattr(preflight.settings, "minio_bucket", "lakehouse")
     monkeypatch.setattr(preflight.settings, "minio_access_key", "")
     monkeypatch.setattr(preflight.settings, "minio_secret_key", "")
+    monkeypatch.setattr(
+        preflight,
+        "check_storage_access",
+        lambda: {"component": "minio", "configured": True, "missing": []},
+    )
 
     report = preflight.preflight_for_extract(conn_id="femsa_sf", security_context=ctx)
 
@@ -240,8 +252,11 @@ def test_preflight_uses_scoped_vault_connection(monkeypatch):
 
 
 def test_preflight_allows_aws_s3_iam_role_without_static_minio_keys(monkeypatch):
-    monkeypatch.setattr(preflight.settings, "minio_endpoint", "s3.us-east-1.amazonaws.com")
-    monkeypatch.setattr(preflight.settings, "minio_bucket", "modecissions-lakehouse")
+    monkeypatch.setattr(preflight.settings, "lakehouse_provider", "s3")
+    monkeypatch.setattr(
+        preflight.settings, "lakehouse_endpoint", "s3.us-east-1.amazonaws.com"
+    )
+    monkeypatch.setattr(preflight.settings, "s3_bucket_name", "modecissions-lakehouse")
     monkeypatch.setattr(preflight.settings, "minio_access_key", "")
     monkeypatch.setattr(preflight.settings, "minio_secret_key", "")
 
@@ -258,7 +273,13 @@ def test_minio_client_uses_iam_provider_for_aws_s3_without_static_keys(monkeypat
         return object()
 
     monkeypatch.setattr(minio_client, "Minio", fake_minio)
-    monkeypatch.setattr(minio_client.settings, "minio_endpoint", "s3.us-east-1.amazonaws.com")
+    monkeypatch.setattr(minio_client.settings, "lakehouse_provider", "s3")
+    monkeypatch.setattr(
+        minio_client.settings, "lakehouse_endpoint", "s3.us-east-1.amazonaws.com"
+    )
+    monkeypatch.setattr(
+        minio_client.settings, "s3_bucket_name", "modecissions-lakehouse"
+    )
     monkeypatch.setattr(minio_client.settings, "minio_access_key", "")
     monkeypatch.setattr(minio_client.settings, "minio_secret_key", "")
     monkeypatch.setattr(minio_client.settings, "minio_secure", True)
@@ -279,7 +300,11 @@ def test_parquet_storage_uri_uses_configured_bucket(monkeypatch):
         uploaded["local_path"] = local_path
         uploaded["object_name"] = object_name
 
-    monkeypatch.setattr(parquet_service.settings, "minio_bucket", "modecissions-lakehouse-783792")
+    monkeypatch.setattr(
+        parquet_service,
+        "active_storage_bucket",
+        lambda: "modecissions-lakehouse-783792",
+    )
     monkeypatch.setattr(parquet_service, "upload_file_to_minio", fake_upload_file_to_minio)
 
     uri = parquet_service.write_parquet_and_upload(

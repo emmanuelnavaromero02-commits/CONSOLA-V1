@@ -97,6 +97,39 @@ def test_aws_compose_passes_cartridge_url_env_vars_to_airflow():
         )
 
 
+def test_aws_storage_provider_is_explicit_and_allows_instance_roles():
+    """AWS must not be inferred as MinIO when EC2 supplies credentials by role."""
+    core = _doc().get("services", {})
+    cartridges = _cartridge_doc().get("services", {})
+
+    for service in ("console", "refinement", "mcp-infra", "sap-successfactors"):
+        env = core[service]["environment"]
+        assert env["LAKEHOUSE_PROVIDER"] == "s3"
+        assert "amazonaws.com" in env["LAKEHOUSE_ENDPOINT"]
+        # Empty static keys are intentional: the runtime must select IMDSv2.
+        assert env["MINIO_ACCESS_KEY"] == "${AWS_ACCESS_KEY_ID:-}"
+        assert env["MINIO_SECRET_KEY"] == "${AWS_SECRET_ACCESS_KEY:-}"
+
+    for service in ("airflow", "airflow-scheduler"):
+        env = core[service]["environment"]
+        assert env["LAKEHOUSE_PROVIDER"] == "s3"
+        assert env["AIRFLOW_VAR_LAKEHOUSE_PROVIDER"] == "s3"
+        assert env["MINIO_ACCESS_KEY"] == "${AWS_ACCESS_KEY_ID:-}"
+        assert env["MINIO_SECRET_KEY"] == "${AWS_SECRET_ACCESS_KEY:-}"
+
+    for service, definition in cartridges.items():
+        env = definition.get("environment", {})
+        if "MINIO_ENDPOINT" not in env:
+            continue
+        assert env["LAKEHOUSE_PROVIDER"] == "s3", service
+        assert "amazonaws.com" in env["LAKEHOUSE_ENDPOINT"], service
+        assert env["MINIO_ACCESS_KEY"] == "${AWS_ACCESS_KEY_ID:-}", service
+        assert env["MINIO_SECRET_KEY"] == "${AWS_SECRET_ACCESS_KEY:-}", service
+        assert env["AWS_ACCESS_KEY_ID"] == "${AWS_ACCESS_KEY_ID:-}", service
+        assert env["AWS_SECRET_ACCESS_KEY"] == "${AWS_SECRET_ACCESS_KEY:-}", service
+        assert env["AWS_SESSION_TOKEN"] == "${AWS_SESSION_TOKEN:-}", service
+
+
 def test_aws_compose_validates_as_yaml():
     """The compose YAML must parse (catches the silly typo case)."""
     doc = _doc()

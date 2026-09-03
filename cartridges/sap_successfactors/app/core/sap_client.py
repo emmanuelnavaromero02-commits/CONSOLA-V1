@@ -166,6 +166,39 @@ class SAPClientError(RuntimeError):
     pass
 
 
+class ODataRequestError(SAPClientError):
+    """Safe, typed failure for one OData entity request.
+
+    Only the status and whether the rejected request carried ``$filter`` are
+    retained for downstream policy decisions.  The response body, request URL,
+    query values, connection id and direct identifiers are intentionally not
+    attributes of this exception.
+    """
+
+    def __init__(
+        self,
+        *,
+        entity: str,
+        status_code: int,
+        filter_applied: bool,
+    ) -> None:
+        safe_entity = (
+            entity
+            if isinstance(entity, str)
+            and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]{0,127}", entity)
+            else "unknown"
+        )
+        safe_status = int(status_code)
+        if safe_status < 100 or safe_status > 599:
+            safe_status = 0
+        self.status_code = safe_status
+        self.filter_applied = bool(filter_applied)
+        super().__init__(
+            f"SuccessFactors rechazo solicitud OData (HTTP {safe_status}) "
+            f"para entity={safe_entity} (successfactors_metadata_invalid)."
+        )
+
+
 def _token_rejected_message(auth_label: str, exc: requests.HTTPError) -> str:
     response = exc.response
     status = response.status_code if response is not None else "unknown"
@@ -176,23 +209,6 @@ def _token_rejected_message(auth_label: str, exc: requests.HTTPError) -> str:
     )
 
 
-def _response_error_snippet(response: requests.Response, *, limit: int = 500) -> str:
-    text = (response.text or "").strip()
-    if not text:
-        return ""
-    text = re.sub(r"\s+", " ", text)
-    for marker in ("access_token", "assertion", "private_key", "Authorization", "authorization"):
-        text = re.sub(
-            rf'("{re.escape(marker)}"\s*:\s*")[^"]+(")',
-            rf"\1***REDACTED***\2",
-            text,
-            flags=re.IGNORECASE,
-        )
-    if len(text) > limit:
-        return text[:limit] + "...[truncated]"
-    return text
-
-
 def _odata_access_rejected_message(
     *,
     entity: str,
@@ -201,47 +217,11 @@ def _odata_access_rejected_message(
     conn_id: str | None,
     response: requests.Response,
 ) -> str:
+    del url, params, conn_id
     status = response.status_code
-    select = str(params.get("$select") or "").strip()
-    selected = f"select_fields={select}" if select else "select_fields=ALL"
-    detail = _response_error_snippet(response)
-    suffix = f" Respuesta SAP: {detail}" if detail else ""
-    conn = conn_id or "default"
     return (
         f"SuccessFactors rechazo acceso OData (HTTP {status}) para entity={entity} "
-        f"conn_id={conn} url={url} {selected}. "
-        "Revisa permisos OData en SAP SuccessFactors para el API user/client "
-        "sobre esa entidad y esos campos; el DAG ya esta llamando directo a SuccessFactors."
-        f"{suffix}"
-    )
-
-
-def _odata_request_failed_message(
-    *,
-    entity: str,
-    url: str,
-    params: dict[str, Any],
-    conn_id: str | None,
-    response: requests.Response,
-) -> str:
-    status = response.status_code
-    select = str(params.get("$select") or "").strip()
-    selected = f"select_fields={select}" if select else "select_fields=ALL"
-    filter_expr = str(params.get("$filter") or "").strip()
-    filter_part = f" filter={filter_expr}" if filter_expr else ""
-    detail = _response_error_snippet(response)
-    suffix = f" Respuesta SAP: {detail}" if detail else ""
-    conn = conn_id or "default"
-    hint = (
-        " Revisa nombres de campos, permisos de visibilidad OData y filtros "
-        "en SuccessFactors para esa entidad."
-        if status == 400
-        else ""
-    )
-    return (
-        f"SuccessFactors rechazo solicitud OData (HTTP {status}) para entity={entity} "
-        f"conn_id={conn} url={url} {selected}{filter_part}.{hint}"
-        f"{suffix}"
+        "(successfactors_access_denied)."
     )
 
 
@@ -700,11 +680,13 @@ class SapSfClient:
                         exc,
                     )
                 ) from exc
-            raise SAPClientError(f"OAuth token request failed: {exc}") from exc
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            suffix = f" HTTP {status}" if status else ""
+            raise SAPClientError(f"successfactors_auth_failed{suffix}") from exc
 
         token = payload.get("access_token")
         if not token:
-            raise SAPClientError(f"OAuth response missing access_token: {payload}")
+            raise SAPClientError("successfactors_auth_response_invalid")
         expires_in = int(payload.get("expires_in", 3600))
         self._token = token
         self._token_expires_at = time.time() + expires_in - 60
@@ -770,11 +752,13 @@ class SapSfClient:
                         exc,
                     )
                 ) from exc
-            raise SAPClientError(f"SAML bearer token request failed: {exc}") from exc
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            suffix = f" HTTP {status}" if status else ""
+            raise SAPClientError(f"successfactors_auth_failed{suffix}") from exc
 
         token = payload.get("access_token")
         if not token:
-            raise SAPClientError(f"SAML bearer response missing access_token: {payload}")
+            raise SAPClientError("successfactors_auth_response_invalid")
         expires_in = int(payload.get("expires_in", 3600))
         self._token = token
         self._token_expires_at = time.time() + expires_in - 60
@@ -788,7 +772,7 @@ class SapSfClient:
             path = Path(self.private_key_path)
             return path.read_text(encoding="utf-8")
         except OSError as exc:
-            raise SAPClientError(f"SAML bearer private key is not readable at {path}") from exc
+            raise SAPClientError("successfactors_private_key_unavailable") from exc
 
     def _request_saml_assertion_from_successfactors(self) -> str:
         private_key = _successfactors_idp_private_key_payload(self._load_saml_private_key_text())
@@ -806,15 +790,9 @@ class SapSfClient:
             timeout=30,
         )
         if not resp.ok:
-            headers = dict(resp.headers)
-            for sensitive_header in ("set-cookie", "Set-Cookie", "authorization", "Authorization"):
-                if sensitive_header in headers:
-                    headers[sensitive_header] = "***REDACTED***"
             logger.error(
-                "SAP SuccessFactors /oauth/idp non-2xx status=%s headers=%s body=%s",
+                "SAP SuccessFactors /oauth/idp non-2xx status=%s",
                 resp.status_code,
-                headers,
-                resp.text,
             )
         if resp.status_code in {401, 403}:
             CartridgeCircuitBreaker.record_success()
@@ -892,8 +870,8 @@ class SapSfClient:
                     "status": "auth_error",
                     "reachable": True,
                     "configured": True,
-                    "base_url": self.base_url,
                     "http_status": resp.status_code,
+                    "failure_code": "successfactors_access_denied",
                     "circuit_breaker": CartridgeCircuitBreaker.snapshot(),
                 }
             if resp.status_code >= 500 or resp.status_code == 429:
@@ -913,29 +891,42 @@ class SapSfClient:
                 "status": "unhealthy",
                 "reachable": False,
                 "configured": True,
-                "base_url": self.base_url,
-                "error": str(exc),
+                "failure_code": "successfactors_circuit_open",
                 "circuit_breaker": CartridgeCircuitBreaker.snapshot(),
             }
         except SAPClientError as exc:
-            text = str(exc)
-            auth_error = "401" in text or "403" in text
+            from app.core.extraction_status import classify_extraction_exception
+
+            classified = classify_extraction_exception(None, exc)
+            auth_error = classified.get("http_status") in {401, 403}
             return {
                 "status": "auth_error" if auth_error else "error",
                 "reachable": auth_error,
                 "configured": True,
-                "base_url": self.base_url,
-                "error": text,
+                "failure_code": classified["failure_code"],
+                **(
+                    {"http_status": classified["http_status"]}
+                    if classified.get("http_status")
+                    else {}
+                ),
                 "circuit_breaker": CartridgeCircuitBreaker.snapshot(),
             }
         except requests.RequestException as exc:
             if not isinstance(exc, requests.HTTPError):
                 CartridgeCircuitBreaker.record_failure()
+            from app.core.extraction_status import classify_extraction_exception
+
+            classified = classify_extraction_exception(None, exc)
             return {
                 "status": "error",
                 "reachable": False,
                 "configured": True,
-                "error": str(exc),
+                "failure_code": classified["failure_code"],
+                **(
+                    {"http_status": classified["http_status"]}
+                    if classified.get("http_status")
+                    else {}
+                ),
                 "circuit_breaker": CartridgeCircuitBreaker.snapshot(),
             }
 
@@ -969,7 +960,9 @@ class SapSfClient:
         except requests.RequestException as exc:
             if not isinstance(exc, requests.HTTPError):
                 CartridgeCircuitBreaker.record_failure()
-            raise SAPClientError(f"GET {self.base_url}/$metadata failed: {exc}") from exc
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            suffix = f" HTTP {status}" if status else ""
+            raise SAPClientError(f"successfactors_metadata_unavailable{suffix}") from exc
 
     @staticmethod
     def parse_metadata_entities(metadata_xml: str) -> dict[str, set[str]]:
@@ -1059,6 +1052,7 @@ class SapSfClient:
             params["toDate"] = to_date
 
         url = f"{self.base_url}/{entity}"
+        safe_request_error: ODataRequestError | None = None
         try:
             CartridgeCircuitBreaker.before_request()
             logger.warning("SAP SuccessFactors outbound GET %s", url)
@@ -1087,16 +1081,21 @@ class SapSfClient:
             if not isinstance(exc, requests.HTTPError):
                 CartridgeCircuitBreaker.record_failure()
             if isinstance(exc, requests.HTTPError) and exc.response is not None:
-                raise SAPClientError(
-                    _odata_request_failed_message(
-                        entity=entity,
-                        url=url,
-                        params=params,
-                        conn_id=self._conn_id,
-                        response=exc.response,
-                    )
-                ) from exc
-            raise SAPClientError(f"GET {url} failed: {exc}") from exc
+                safe_request_error = ODataRequestError(
+                    entity=entity,
+                    status_code=exc.response.status_code,
+                    filter_applied="$filter" in params,
+                )
+            else:
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+                suffix = f" HTTP {status}" if status else ""
+                raise SAPClientError(f"successfactors_request_failed{suffix}") from exc
+
+        # Raise outside the requests exception handler so the safe typed error
+        # does not retain the HTTPError/Response as cause or context. Those
+        # objects may contain the full URL, query, response body and auth data.
+        if safe_request_error is not None:
+            raise safe_request_error
 
         if isinstance(payload, dict) and "d" in payload:
             inner = payload["d"]
