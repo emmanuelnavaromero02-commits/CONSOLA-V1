@@ -3083,7 +3083,7 @@
     },
     {
       "path": "refinement/tests/test_duckdb_s3_materialize_paths.py",
-      "sha256": "1a37723aa5ffdec7e79c2318ea19a2d860e4a8f46cba32f79ab1f533460f9431"
+      "sha256": "1e8a76bf08db5cb40c0ed95e44ec98015f2d421a6fd4c1f6e86e7491f1859b69"
     },
     {
       "path": "refinement/tests/test_e11_talent_readfree_fallbacks.py",
@@ -3579,7 +3579,7 @@
     },
     {
       "path": "tests/test_agent_runtime_guardrails.py",
-      "sha256": "074bcbd3bcaf3ca8691854bcf45cb26efb769a4f085a7be20fbb73d4bceda85e"
+      "sha256": "2c08de3f530dd6d632d9074ad70a00ad45d20a2b4dc051da9c15b8d052e02484"
     },
     {
       "path": "tests/test_agent_runtime_hints_hardening.py",

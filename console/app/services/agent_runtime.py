@@ -1592,7 +1592,8 @@ async def _record_scheduled_audit(
                 workspace_id,
                 agent.id,
             )
-            await audit_service.record_event(**values, connection=conn, critical=True)
+            audit_values = {**values, "connection": conn, "critical": True}
+            await audit_service.record_event(**audit_values)
 
 
 # ── Public entry ────────────────────────────────────────────────────────────

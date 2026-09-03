@@ -426,6 +426,7 @@ class DuckDBEngine:
             raise ValueError("Invalid bronze source")
 
         if source.startswith(("s3://", "gs://")):
+            source = self._canonical_storage_uri(source)
             expected_prefix = f"{self._storage_scheme()}://{self.minio_bucket}/raw/"
             if not source.startswith(expected_prefix):
                 raise ValueError("Invalid bronze source")
@@ -467,7 +468,7 @@ class DuckDBEngine:
 
     def _bronze_path(self, source: str, user_context: dict | None = None) -> str:
         source = self._validate_bronze_source(source)
-        if source.startswith("s3://"):
+        if source.startswith(("s3://", "gs://")):
             return source
         tenant, workspace = self._scope_values(user_context)
         if tenant and workspace:
@@ -613,24 +614,23 @@ class DuckDBEngine:
             layer: str, cartridge: str, name: str, replacement: str
         ) -> None:
             nonlocal out
-            base = self._storage_uri(f"{layer}/{cartridge}/{name}")
-            for pattern in (
+            base = f"{layer}/{cartridge}/{name}"
+            for key in (
                 f"{base}/data.parquet",
                 f"{base}/*.parquet",
                 f"{base}/**/*.parquet",
             ):
-                out = out.replace(pattern, replacement)
+                for pattern in self._storage_uri_variants(key):
+                    out = out.replace(pattern, replacement)
 
         for source in sources or []:
             src = str(source or "").strip()
             if src.startswith("raw/"):
                 try:
                     scoped = self._bronze_path(src, user_context)
-                    legacy = self._storage_uri(f"{src}/**/*.parquet")
-                    out = out.replace(legacy, scoped)
-                    out = out.replace(
-                        legacy.replace("**/*.parquet", "*.parquet"), scoped
-                    )
+                    for suffix in ("**/*.parquet", "*.parquet"):
+                        for legacy in self._storage_uri_variants(f"{src}/{suffix}"):
+                            out = out.replace(legacy, scoped)
                 except Exception:
                     continue
             elif tenant and workspace and src.startswith(("silver/", "gold/")):
@@ -673,11 +673,12 @@ class DuckDBEngine:
                 raise ValueError("S3 path is outside the caller tenant/workspace scope")
 
     def _s3_object_key(self, uri: str) -> str | None:
-        prefix = self._storage_uri("")
-        if not str(uri or "").startswith(prefix):
-            return None
-        key = str(uri)[len(prefix) :].strip("/")
-        return key or None
+        value = str(uri or "")
+        for prefix in self._storage_uri_variants(""):
+            if value.startswith(prefix):
+                key = value[len(prefix) :].strip("/")
+                return key or None
+        return None
 
     def _storage_scheme(self) -> str:
         provider = getattr(getattr(self.storage, "config", None), "provider", "s3")
@@ -687,6 +688,28 @@ class DuckDBEngine:
         clean = str(key or "").strip("/")
         base = f"{self._storage_scheme()}://{self.minio_bucket}"
         return f"{base}/{clean}" if clean else f"{base}/"
+
+    def _storage_uri_variants(self, key: str) -> tuple[str, ...]:
+        """Return exact-current-bucket URIs for both supported SQL schemes.
+
+        Dataset definitions are portable artifacts and older definitions use
+        ``s3://`` even when the active lakehouse provider is GCS.  Keeping the
+        variants bound to the configured bucket lets the scoping rewrite
+        recognize either spelling without accepting another bucket or path.
+        """
+        clean = str(key or "").strip("/")
+        suffix = f"/{clean}" if clean else "/"
+        active = self._storage_scheme()
+        schemes = (active, "gs" if active == "s3" else "s3")
+        return tuple(f"{scheme}://{self.minio_bucket}{suffix}" for scheme in schemes)
+
+    def _canonical_storage_uri(self, uri: str) -> str:
+        """Normalize an exact-current-bucket URI to the active provider scheme."""
+        value = str(uri or "")
+        for prefix in self._storage_uri_variants(""):
+            if value.startswith(prefix):
+                return f"{self._storage_uri('')}{value[len(prefix) :]}"
+        return value
 
     def _delete_s3_prefix(self, uri: str) -> None:
         """Delete an existing MinIO/S3 object or prefix before DuckDB rewrites it.
@@ -903,7 +926,7 @@ class DuckDBEngine:
                 con = self._conn()
                 rows = con.execute(f"""
                     SELECT file
-                    FROM glob('s3://{self.minio_bucket}/raw/**/*.parquet')
+                    FROM glob('{self._storage_uri("raw/**/*.parquet")}')
                 """).fetchall()
             return sorted(
                 {
@@ -1086,8 +1109,10 @@ class DuckDBEngine:
             raise ValueError("SQL contains a blocked local file path")
         for match in self._READ_PARQUET_RE.finditer(policy_sql):
             path = match.group(2).strip()
-            if not path.startswith("s3://"):
-                raise ValueError("read_parquet is only allowed for s3:// sources")
+            if not path.startswith(("s3://", "gs://")):
+                raise ValueError(
+                    "read_parquet is only allowed for s3:// or gs:// sources"
+                )
 
     def _validate_effective_sql(
         self,
