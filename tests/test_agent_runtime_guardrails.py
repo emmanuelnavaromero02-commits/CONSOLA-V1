@@ -27,6 +27,7 @@ def agent_runtime(monkeypatch):
     import importlib
 
     mod = importlib.import_module("app.services.agent_runtime")
+    real_scheduled_audit = mod._record_scheduled_audit
 
     async def noop_record_event(*_args, **_kwargs):
         return None
@@ -36,7 +37,90 @@ def agent_runtime(monkeypatch):
 
     monkeypatch.setattr(mod.audit_service, "record_event", noop_record_event)
     monkeypatch.setattr(mod, "_record_scheduled_audit", noop_scheduled_audit)
+    mod._real_scheduled_audit_for_test = real_scheduled_audit
     return mod
+
+
+@pytest.mark.asyncio
+async def test_scheduled_tool_audit_forces_one_critical_scoped_write(
+    agent_runtime, monkeypatch
+):
+    events: list[tuple] = []
+
+    class Transaction:
+        async def __aenter__(self):
+            events.append(("transaction_enter",))
+            return self
+
+        async def __aexit__(self, *_args):
+            events.append(("transaction_exit",))
+            return None
+
+    class Connection:
+        def transaction(self):
+            return Transaction()
+
+        async def execute(self, query, *args):
+            operation = (
+                "effect_fence"
+                if "assert_scheduled_effect_authority" in query
+                else "set_scope"
+            )
+            events.append((operation, args))
+            return "SELECT 1"
+
+    connection = Connection()
+
+    class Acquire:
+        async def __aenter__(self):
+            return connection
+
+        async def __aexit__(self, *_args):
+            return None
+
+    class Pool:
+        def acquire(self):
+            return Acquire()
+
+    async def get_pool():
+        return Pool()
+
+    async def record_event(**values):
+        events.append(("audit", values))
+
+    monkeypatch.setattr(agent_runtime, "_get_pool", get_pool)
+    monkeypatch.setattr(agent_runtime.audit_service, "record_event", record_event)
+    agent = _scoped_agent(agent_runtime, [])
+
+    await agent_runtime._real_scheduled_audit_for_test(
+        agent,
+        17,
+        9,
+        action="agent.tool.test",
+        critical=False,
+        connection=object(),
+    )
+
+    event_names = [event[0] for event in events]
+    assert event_names.index("set_scope") < event_names.index("effect_fence")
+    assert event_names.index("effect_fence") < event_names.index("audit")
+    audit_values = next(event[1] for event in events if event[0] == "audit")
+    assert audit_values["critical"] is True
+    assert audit_values["connection"] is connection
+    assert audit_values["action"] == "agent.tool.test"
+
+    async def fail_record_event(**_values):
+        raise RuntimeError("critical audit unavailable")
+
+    monkeypatch.setattr(agent_runtime.audit_service, "record_event", fail_record_event)
+    with pytest.raises(RuntimeError, match="critical audit unavailable"):
+        await agent_runtime._real_scheduled_audit_for_test(
+            agent,
+            17,
+            9,
+            action="agent.tool.test",
+            critical=True,
+        )
 
 
 def _agent(mod, allowed_tools: list[str]):

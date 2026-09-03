@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -7,6 +9,18 @@ import pytest
 
 from omega_lakehouse import ObjectAlreadyExists
 from refinement.app.duckdb_engine import DuckDBEngine
+from refinement.app.staged_publication_engine import StagedPublicationEngine
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _engine_for_provider(provider: str, bucket: str = "omega-lakehouse") -> DuckDBEngine:
+    engine = object.__new__(DuckDBEngine)
+    engine.minio_bucket = bucket
+    engine.storage = SimpleNamespace(config=SimpleNamespace(provider=provider))
+    engine._duckdb_lock = threading.RLock()
+    return engine
 
 
 def test_unscoped_bronze_path_stays_on_legacy_partition_layout():
@@ -178,6 +192,204 @@ def test_gcs_lakehouse_configures_duckdb_gcs_secret(monkeypatch):
     assert "s3_region='auto'" in combined
     assert "s3_endpoint" not in combined
     assert "gcs_fuse" not in combined
+
+
+def test_gcs_focompany_materialization_rewrites_packaged_s3_reader(monkeypatch):
+    sql = (
+        REPO_ROOT
+        / "cartridges/sap_successfactors/datasets/"
+        "sap_successfactors_focompany_latest.sql"
+    ).read_text(encoding="utf-8")
+    context = {"tenant_id": "tenant-a", "workspace_id": "workspace-a"}
+    engine = _engine_for_provider("gcs", "omega-gcs")
+    executed: list[str] = []
+    copied: dict[str, str] = {}
+
+    class FakeConnection:
+        description = []
+
+        def execute(self, statement, _params=None):
+            executed.append(statement)
+            if statement.startswith("SUMMARIZE"):
+                raise RuntimeError("profiling disabled in materialization canary")
+            return self
+
+        def fetchone(self):
+            return (52,)
+
+        def fetchall(self):
+            return [
+                ("company_id", "VARCHAR"),
+                ("company_name", "VARCHAR"),
+                ("country", "VARCHAR"),
+                ("load_date", "DATE"),
+            ]
+
+    connection = FakeConnection()
+    engine._conn = lambda: connection
+    engine._copy_to_parquet = lambda _con, query, target: (
+        copied.update(query=query, target=target) or target
+    )
+    engine._resolve_latest_date = lambda *_args: "2026-09-03"
+    engine._write_lineage = MagicMock()
+    engine._update_catalog = MagicMock()
+    engine._prune_snapshots = MagicMock()
+
+    result = engine.materialize(
+        {
+            "name": "sap_successfactors_focompany_latest",
+            "layer": "silver",
+            "cartridge": "sap_successfactors",
+            "sql_def": sql,
+            "sources": ["raw/sap_successfactors/FOCompany"],
+        },
+        context,
+    )
+
+    scoped_reader = (
+        "gs://omega-gcs/raw/sap_successfactors/FOCompany/"
+        "tenant_id=tenant-a/workspace_id=workspace-a/**/*.parquet"
+    )
+    assert result["row_count"] == 52
+    assert result["storage_uri"].startswith(
+        "gs://omega-gcs/silver/sap_successfactors/"
+        "sap_successfactors_focompany_latest/tenant_id=tenant-a/"
+        "workspace_id=workspace-a/_snapshots/"
+    )
+    assert scoped_reader in copied["query"]
+    assert "s3://" not in copied["query"]
+    assert copied["target"] == result["storage_uri"]
+    assert any(scoped_reader in statement for statement in executed)
+    engine._write_lineage.assert_called_once()
+
+
+def test_gcs_staged_binding_pins_rewritten_focompany_reader_to_exact_objects():
+    engine = object.__new__(StagedPublicationEngine)
+    engine.minio_bucket = "omega-gcs"
+    engine.storage = SimpleNamespace(config=SimpleNamespace(provider="gcs"))
+    engine._publication_local = threading.local()
+    source = "raw/sap_successfactors/FOCompany"
+    object_key = (
+        f"{source}/tenant_id=tenant-a/workspace_id=workspace-a/"
+        "load_date=2026-09-03/batch_id=run-1/FOCompany.parquet"
+    )
+    engine._publication_local.state = {
+        "input_state": [{"source": source, "objects": [{"key": object_key}]}]
+    }
+    sql = (
+        "SELECT * FROM read_parquet("
+        "'s3://omega-gcs/raw/sap_successfactors/FOCompany/**/*.parquet')"
+    )
+    context = {"tenant_id": "tenant-a", "workspace_id": "workspace-a"}
+
+    effective = engine._scope_storage_sql(sql, [source], context)
+
+    assert effective == (
+        "SELECT * FROM read_parquet("
+        f"['gs://omega-gcs/{object_key}'])"
+    )
+    engine._validate_scoped_storage_sql(effective, context)
+    engine._validate_effective_sql(effective, allow_server_resolved_path_list=True)
+
+
+@pytest.mark.parametrize(
+    ("provider", "definition_scheme", "active_scheme"),
+    [("gcs", "s3", "gs"), ("s3", "gs", "s3")],
+)
+@pytest.mark.parametrize("layer", ["raw", "silver", "gold"])
+def test_scope_storage_sql_normalizes_declared_source_scheme(
+    monkeypatch, provider, definition_scheme, active_scheme, layer
+):
+    engine = _engine_for_provider(provider)
+    context = {"tenant_id": "tenant-a", "workspace_id": "workspace-a"}
+
+    if layer == "raw":
+        source = "raw/sap_successfactors/FOCompany"
+        path = f"{definition_scheme}://omega-lakehouse/{source}/**/*.parquet"
+        expected = (
+            f"{active_scheme}://omega-lakehouse/{source}/"
+            "tenant_id=tenant-a/workspace_id=workspace-a/**/*.parquet"
+        )
+    else:
+        source = f"{layer}/sap_successfactors/upstream"
+        path = f"{definition_scheme}://omega-lakehouse/{source}/**/*.parquet"
+        expected = (
+            f"{active_scheme}://omega-lakehouse/{source}/"
+            "tenant_id=tenant-a/workspace_id=workspace-a/_snapshots/run.parquet"
+        )
+        monkeypatch.setattr(
+            engine,
+            "_latest_materialized_uri",
+            lambda *_args, **_kwargs: expected,
+        )
+
+    definition_sql = f"SELECT * FROM read_parquet('{path}')"
+    engine._validate_safe_sql(definition_sql)
+    rewritten = engine._scope_storage_sql(definition_sql, [source], context)
+
+    assert expected in rewritten
+    assert f"{definition_scheme}://" not in rewritten
+    engine._validate_scoped_storage_sql(rewritten, context)
+    engine._validate_effective_sql(rewritten)
+
+
+def test_gcs_scheme_normalization_does_not_widen_bucket_or_scope():
+    engine = _engine_for_provider("gcs", "omega-gcs")
+    context = {"tenant_id": "tenant-a", "workspace_id": "workspace-a"}
+    source = "raw/sap_successfactors/FOCompany"
+    cross_bucket = (
+        "SELECT * FROM read_parquet("
+        "'s3://other-bucket/raw/sap_successfactors/FOCompany/**/*.parquet')"
+    )
+    cross_scope = (
+        "SELECT * FROM read_parquet("
+        "'gs://omega-gcs/raw/sap_successfactors/FOCompany/"
+        "tenant_id=tenant-b/workspace_id=workspace-b/**/*.parquet')"
+    )
+
+    rewritten_bucket = engine._scope_storage_sql(cross_bucket, [source], context)
+    rewritten_scope = engine._scope_storage_sql(cross_scope, [source], context)
+
+    assert "s3://other-bucket/" in rewritten_bucket
+    with pytest.raises(ValueError, match="unapproved bucket"):
+        engine._validate_scoped_storage_sql(rewritten_bucket, context)
+    with pytest.raises(ValueError, match="outside the caller tenant/workspace scope"):
+        engine._validate_scoped_storage_sql(rewritten_scope, context)
+
+
+def test_gcs_path_helpers_normalize_only_the_configured_bucket():
+    engine = _engine_for_provider("gcs", "omega-gcs")
+
+    assert engine._bronze_path(
+        "s3://omega-gcs/raw/sap_successfactors/FOCompany"
+    ) == "gs://omega-gcs/raw/sap_successfactors/FOCompany"
+    assert engine._s3_object_key("s3://omega-gcs/raw/source/data.parquet") == (
+        "raw/source/data.parquet"
+    )
+    assert engine._s3_object_key("gs://omega-gcs/raw/source/data.parquet") == (
+        "raw/source/data.parquet"
+    )
+    assert engine._s3_object_key("s3://other-bucket/raw/source/data.parquet") is None
+    with pytest.raises(ValueError, match="Invalid bronze source"):
+        engine._bronze_path("s3://other-bucket/raw/sap_successfactors/FOCompany")
+
+
+def test_gcs_source_discovery_fallback_uses_active_scheme():
+    engine = _engine_for_provider("gcs", "omega-gcs")
+    statements: list[str] = []
+
+    class FakeConnection:
+        def execute(self, statement):
+            statements.append(statement)
+            return self
+
+        def fetchall(self):
+            return []
+
+    engine._conn = lambda: FakeConnection()
+
+    assert engine._list_sources_from_duckdb_glob() == []
+    assert "FROM glob('gs://omega-gcs/raw/**/*.parquet')" in statements[0]
 
 
 def test_gcs_lakehouse_sanitizes_duckdb_secret_setup_errors(monkeypatch):
