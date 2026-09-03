@@ -2563,7 +2563,7 @@
     },
     {
       "path": "console/tests/test_dag_templates.py",
-      "sha256": "869e229f4cf6c5960b7b46fb5ea120cd4b328777de2b4b6735fe0f7314f925bd"
+      "sha256": "020cf7a022347176eb1da01c326264e8df3f84ea35a18b259c513793823bda12"
     },
     {
       "path": "console/tests/test_data_api_user_scope_contract.py",

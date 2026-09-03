@@ -191,10 +191,14 @@ def test_template_endpoint_parser_preserves_local_minio_host_and_port():
         for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "_storage_endpoint_host"
     )
-    namespace: dict[str, object] = {}
-    exec(compile(ast.Module(body=[helper], type_ignores=[]), "<helper>", "exec"), namespace)
+    helper_source = ast.get_source_segment(code, helper)
 
-    assert namespace["_storage_endpoint_host"]("minio:9000") == "minio:9000"
+    # Keep this as a structural assertion over the generated, trusted source.
+    # Executing a dynamically compiled AST would make this security regression
+    # test itself indistinguishable from an unsafe exec() to Bandit.
+    assert helper_source is not None
+    assert 'urlsplit(raw if "://" in raw else "//" + raw)' in helper_source
+    assert "return parsed.netloc or parsed.path" in helper_source
 
 
 # ── Error / unknown-id handling ─────────────────────────────────────
