@@ -4,6 +4,8 @@ import asyncio
 import json
 import os
 
+import pytest
+
 os.environ.setdefault("FIELD_ENCRYPTION_KEY", "ZVi4nlltq1NSkJjp17QoaHhaRB2RDQRsNTW7I4yf8GE=")
 os.environ.setdefault("INTERNAL_API_KEY", "test-secret-key-not-default")
 os.environ.setdefault("SECURITY_CONTEXT_SIGNING_KEY", "test-security-context-signing-key-12345")
@@ -76,10 +78,36 @@ def _ctx() -> dict:
     )
 
 
+def _allow_live_metadata(monkeypatch, catalog_service, rows: list[dict]) -> None:
+    metadata = {}
+    for row in rows:
+        entity = str(row.get("odata_entity") or row.get("entity") or "")
+        fields = {
+            str(value)
+            for value in (
+                row.get("primary_key"),
+                row.get("watermark_field"),
+                row.get("date_field"),
+            )
+            if value
+        }
+        fields.update(
+            str(value) for value in (row.get("select_fields") or []) if value
+        )
+        metadata[entity] = fields
+    monkeypatch.setattr(
+        catalog_service,
+        "_metadata_entities_for_connection",
+        lambda **_kwargs: (metadata, None),
+    )
+
+
 def test_extract_all_plan_reuses_selected_connection_even_with_stale_scope(monkeypatch):
     from app.services import catalog_service
 
-    monkeypatch.setattr(catalog_service, "get_all_entities", lambda: _rows())
+    rows = _rows()
+    monkeypatch.setattr(catalog_service, "get_all_entities", lambda: rows)
+    _allow_live_metadata(monkeypatch, catalog_service, rows)
 
     entities, skipped = catalog_service.get_extract_all_plan(
         conn_id="femsa_sf",
@@ -112,6 +140,7 @@ def test_extract_all_target_all_includes_former_external_scope_entities(monkeypa
         }
     ]
     monkeypatch.setattr(catalog_service, "get_all_entities", lambda: rows)
+    _allow_live_metadata(monkeypatch, catalog_service, rows)
 
     entities, skipped = catalog_service.get_extract_all_plan(
         conn_id="femsa_sf",
@@ -137,6 +166,7 @@ def test_extract_all_plan_treats_cartridge_connection_as_selected_placeholder(mo
         }
     ]
     monkeypatch.setattr(catalog_service, "get_all_entities", lambda: rows)
+    _allow_live_metadata(monkeypatch, catalog_service, rows)
 
     entities, skipped = catalog_service.get_extract_all_plan(
         conn_id="femsa_sf",
@@ -164,6 +194,7 @@ def test_extract_all_default_does_not_silently_skip_known_talent_entities(monkey
         for entity in ("PerPerson", "Candidate", "GoalPlan", "LearningItem")
     ]
     monkeypatch.setattr(catalog_service, "get_all_entities", lambda: rows)
+    _allow_live_metadata(monkeypatch, catalog_service, rows)
 
     entities, skipped = catalog_service.get_extract_all_plan(
         conn_id="femsa_sf",
@@ -220,7 +251,7 @@ def test_prepare_entity_config_skips_missing_odata_entity():
     assert block == {
         "entity": "CareerInterest",
         "odata_entity": "CareerInterest",
-        "status": "blocked",
+        "status": "skipped_explicit",
         "reason": "entity_not_exposed_in_sap",
         "code": "SUCCESSFACTORS_METADATA_BLOCKED",
         "metadata_status": "metadata_entity_missing",
@@ -290,7 +321,10 @@ def test_extract_all_plan_talent_target_uses_live_metadata_targets(monkeypatch):
     assert "PerformanceReview" in [row["entity"] for row in entities]
     assert "Position" in [row["entity"] for row in entities]
     assert any(row["entity"] == "Candidate" and row["status"] == "skipped_explicit" for row in skipped)
-    assert any(row["entity"] == "CompetencyEntity" and row["status"] == "blocked" for row in skipped)
+    assert any(
+        row["entity"] == "CompetencyEntity" and row["status"] == "blocked"
+        for row in skipped
+    )
 
 
 def test_extract_all_plan_talent_target_applies_live_odata_alias(monkeypatch):
@@ -371,7 +405,9 @@ def test_extract_all_plan_talent_target_applies_live_odata_alias(monkeypatch):
 def test_extract_all_plan_talent_target_reports_metadata_blocker(monkeypatch):
     from app.services import catalog_service, preflight
 
-    monkeypatch.setattr(catalog_service, "get_all_entities", lambda: _rows())
+    rows = _rows()
+    monkeypatch.setattr(catalog_service, "get_all_entities", lambda: rows)
+    _allow_live_metadata(monkeypatch, catalog_service, rows)
     monkeypatch.setattr(
         preflight,
         "talent_metadata_readiness",
@@ -548,6 +584,7 @@ def test_skills_extract_all_routes_use_scoped_plan(monkeypatch):
     from app.api import routes_skills
 
     captured: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(routes_skills, "require_storage_access", lambda: None)
     monkeypatch.setattr(
         routes_skills,
         "get_extract_all_plan",
@@ -575,7 +612,7 @@ def test_skills_extract_all_routes_use_scoped_plan(monkeypatch):
 
 
 def test_async_extract_all_job_is_serial_for_scoped_connection_and_preserves_skips(monkeypatch):
-    from app.core import job_runner
+    from app.core import job_runner, minio_client
     from app.services import catalog_service, extraction_service
 
     updates: list[dict] = []
@@ -583,6 +620,7 @@ def test_async_extract_all_job_is_serial_for_scoped_connection_and_preserves_ski
     captured_plan_kwargs: dict = {}
 
     monkeypatch.delenv("SAP_SUCCESSFACTORS_EXTRACT_ALL_CONCURRENCY", raising=False)
+    monkeypatch.setattr(minio_client, "require_storage_access", lambda: None)
     def fake_plan(**kwargs):
         captured_plan_kwargs.update(kwargs)
         return (
@@ -593,7 +631,7 @@ def test_async_extract_all_job_is_serial_for_scoped_connection_and_preserves_ski
     monkeypatch.setattr(catalog_service, "get_extract_all_plan", fake_plan)
     monkeypatch.setattr(
         extraction_service,
-        "run_entity",
+        "run_entity_with_metadata_guard",
         lambda config: {"entity": config["entity"], "status": "success", "record_count": 5},
     )
 
@@ -635,3 +673,70 @@ def test_async_extract_all_job_is_serial_for_scoped_connection_and_preserves_ski
         {"entity": "Position", "status": "skipped_explicit", "reason": "not_scoped_for_connection"}
     ]
     assert json.dumps(logs, ensure_ascii=True).find("not_scoped_for_connection") != -1
+
+
+def test_async_batch_storage_failure_happens_before_metadata_plan(monkeypatch):
+    from app.core import job_runner, minio_client
+    from app.services import catalog_service
+
+    plan_called = False
+
+    def unexpected_plan(**_kwargs):
+        nonlocal plan_called
+        plan_called = True
+        raise AssertionError("metadata plan must not run without storage")
+
+    monkeypatch.setattr(catalog_service, "get_extract_all_plan", unexpected_plan)
+    monkeypatch.setattr(
+        minio_client,
+        "require_storage_access",
+        lambda: (_ for _ in ()).throw(
+            minio_client.StoragePreflightError("storage_signature_invalid")
+        ),
+    )
+    updates: list[dict] = []
+    logs: list[dict] = []
+
+    async def fake_update(job_id, status, message=None, result=None, error=None):
+        updates.append(
+            {
+                "job_id": job_id,
+                "status": status,
+                "message": message,
+                "result": result,
+                "error": error,
+            }
+        )
+
+    async def fake_log(job_id, entity, level, message, detail=None):
+        logs.append(
+            {
+                "job_id": job_id,
+                "entity": entity,
+                "level": level,
+                "message": message,
+                "detail": detail,
+            }
+        )
+
+    monkeypatch.setattr(job_runner, "_update", fake_update)
+    monkeypatch.setattr(job_runner, "_log", fake_log)
+
+    asyncio.run(
+        job_runner._run_extract_all(
+            "job-1", "incremental", _ctx(), "femsa_sf", "talent"
+        )
+    )
+
+    assert plan_called is False
+    assert updates[-1]["status"] == "failed"
+    assert updates[-1]["error"] == "storage_signature_invalid"
+    assert updates[-1]["result"]["entities"] == [
+        {
+            "entity": "__extract_all__",
+            "status": "blocked",
+            "code": "storage_signature_invalid",
+            "failure_code": "storage_signature_invalid",
+        }
+    ]
+    assert "storage_signature_invalid" in repr(logs)

@@ -297,7 +297,10 @@ def test_talent_metadata_readiness_blocks_when_metadata_unavailable(monkeypatch)
         def metadata_entities(self):
             from app.core.sap_client import SAPClientError
 
-            raise SAPClientError("metadata HTTP 403")
+            raise SAPClientError(
+                "metadata HTTP 403 https://tenant.example/odata/v2/$metadata "
+                "access_token=sentinel-secret body=sentinel-body"
+            )
 
     monkeypatch.setattr(preflight, "SapSfClient", FakeSapSfClient)
 
@@ -305,3 +308,9 @@ def test_talent_metadata_readiness_blocks_when_metadata_unavailable(monkeypatch)
 
     assert payload["status"] == "blocked"
     assert payload["blockers"][0]["reason"] == "metadata_unavailable"
+    assert payload["blockers"][0]["failure_code"] == "metadata_access_denied"
+    assert "error" not in payload["blockers"][0]
+    rendered = repr(payload)
+    assert "tenant.example" not in rendered
+    assert "sentinel-secret" not in rendered
+    assert "sentinel-body" not in rendered

@@ -141,7 +141,8 @@ SELECT pg_advisory_xact_lock(${MIGRATION_ADVISORY_LOCK_KEY});
 \\i /docker-entrypoint-initdb.d/${filename}
 INSERT INTO schema_migrations (filename, checksum, applied_at)
 VALUES (:'filename', :'checksum', NOW())
-ON CONFLICT (filename) DO NOTHING;
+ON CONFLICT (filename) DO UPDATE
+SET checksum = COALESCE(schema_migrations.checksum, EXCLUDED.checksum);
 COMMIT;
 SQL
 done
@@ -169,7 +170,8 @@ SELECT pg_advisory_xact_lock(${MIGRATION_ADVISORY_LOCK_KEY});
 \\i /docker-entrypoint-initdb.d/$(basename "${sql}")
 INSERT INTO schema_migrations (filename, checksum, applied_at)
 VALUES (:'filename', :'checksum', NOW())
-ON CONFLICT (filename) DO NOTHING;
+ON CONFLICT (filename) DO UPDATE
+SET checksum = COALESCE(schema_migrations.checksum, EXCLUDED.checksum);
 COMMIT;
 SQL
 done

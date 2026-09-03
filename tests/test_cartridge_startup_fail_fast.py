@@ -235,9 +235,20 @@ def test_mcp_rpc_503_body_is_valid_json_with_apostrophe_error(
     # must survive.
     body = _json.loads(r.text)
     assert body["error"] == "cartridge_not_ready"
-    assert any("can't connect" in e for e in body["startup_errors"]), body
-    assert any("C:\\db" in e for e in body["startup_errors"]), body
-    assert any("tëst" in e for e in body["startup_errors"]), body
+    if cartridge == "sap_successfactors":
+        assert "job_runner_failed" in body["startup_errors"]
+        assert set(body["startup_errors"]) <= {
+            "job_runner_failed",
+            "catalog_seed_failed",
+            "startup_component_failed",
+        }
+        assert "can't connect" not in r.text
+        assert "C:\\db" not in r.text
+        assert "tëst" not in r.text
+    else:
+        assert any("can't connect" in e for e in body["startup_errors"]), body
+        assert any("C:\\db" in e for e in body["startup_errors"]), body
+        assert any("tëst" in e for e in body["startup_errors"]), body
 
 
 # ── v1.43.4 (Codex C2): /health reflects MCP contract state ───────────────
@@ -365,4 +376,64 @@ def test_health_returns_503_when_mcp_list_tools_raises(
     )
     body = r.json()
     assert body["reason"] == "mcp_unreachable", body
-    assert "list_tools" in body["error"], body
+    if cartridge == "sap_successfactors":
+        assert body["error"] == "mcp_probe_failed", body
+        assert "list_tools" not in r.text
+    else:
+        assert "list_tools" in body["error"], body
+
+
+def test_successfactors_startup_and_health_never_echo_exception_text(
+    env_for_cartridges, monkeypatch, caplog,
+):
+    from fastapi.testclient import TestClient
+
+    sentinel = "SECRET_SENTINEL access=AKIA_TEST dsn=postgresql://user:pass@db"
+    main_mod = _isolated_cartridge("sap_successfactors")
+
+    async def _boom():
+        raise RuntimeError(sentinel)
+
+    monkeypatch.setattr(main_mod.job_runner, "ensure_schema", _boom)
+    monkeypatch.setattr(main_mod.catalog_service, "_seed_if_empty", lambda: None)
+
+    with TestClient(main_mod.app) as client:
+        health_response = client.get("/health")
+        rpc_response = client.post("/mcp/rpc", json={})
+
+    assert main_mod.app.state.startup_errors == ["job_runner_failed"]
+    assert health_response.status_code == 503
+    assert health_response.json()["startup_errors"] == ["job_runner_failed"]
+    assert rpc_response.status_code == 503
+    assert rpc_response.json()["startup_errors"] == ["job_runner_failed"]
+    assert sentinel not in health_response.text
+    assert sentinel not in rpc_response.text
+    assert sentinel not in caplog.text
+
+
+def test_successfactors_mcp_health_probe_never_echoes_exception_text(
+    env_for_cartridges, monkeypatch,
+):
+    from fastapi.testclient import TestClient
+
+    sentinel = "SECRET_SENTINEL signed_url=https://storage.invalid/?signature=secret"
+    main_mod = _isolated_cartridge("sap_successfactors")
+
+    async def _ok():
+        return None
+
+    async def _boom():
+        raise RuntimeError(sentinel)
+
+    monkeypatch.setattr(main_mod.job_runner, "ensure_schema", _ok)
+    monkeypatch.setattr(main_mod.job_runner, "cleanup_stale", _ok)
+    monkeypatch.setattr(main_mod.catalog_service, "_seed_if_empty", lambda: None)
+    routes_health = importlib.import_module("app.api.routes_health")
+    monkeypatch.setattr(routes_health.mcp, "list_tools", _boom)
+
+    with TestClient(main_mod.app) as client:
+        response = client.get("/health")
+
+    assert response.status_code == 503
+    assert response.json()["error"] == "mcp_probe_failed"
+    assert sentinel not in response.text

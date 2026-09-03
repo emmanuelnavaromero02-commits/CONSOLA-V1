@@ -77,7 +77,8 @@ def test_runner_registers_every_applied_migration():
     src = RUNNER.read_text(encoding="utf-8")
     # The runner pattern: for each file, BEGIN, \i it, INSERT, COMMIT.
     assert "INSERT INTO schema_migrations" in src
-    assert "ON CONFLICT (filename) DO NOTHING" in src
+    assert "ON CONFLICT (filename) DO UPDATE" in src
+    assert "COALESCE(schema_migrations.checksum, EXCLUDED.checksum)" in src
     assert "VALUES (:'filename', :'checksum', NOW())" in src
 
 

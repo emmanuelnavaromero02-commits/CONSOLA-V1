@@ -14,6 +14,21 @@ assert duckdb.__version__ == "1.2.2"
 connection = connect_duckdb_runtime()
 try:
     require_loaded_extensions(connection)
+    installed = dict(
+        connection.execute(
+            "SELECT extension_name, installed FROM duckdb_extensions() "
+            "WHERE extension_name IN ('httpfs','aws')"
+        ).fetchall()
+    )
+    assert installed == {"aws": True, "httpfs": True}
+    # Native AWS support is preloaded in the image but remains unloaded for
+    # local MinIO/GCS/static-key runtimes.
+    assert "aws" not in {
+        str(row[0])
+        for row in connection.execute(
+            "SELECT extension_name FROM duckdb_extensions() WHERE loaded"
+        ).fetchall()
+    }
     settings = dict(
         connection.execute(
             "SELECT name, value FROM duckdb_settings() "

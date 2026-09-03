@@ -70,3 +70,15 @@ Cualquier cambio en schema de raw o en SQL de un dataset gold debe re-indexarse:
 - **Manual desde Studio**: botón **↻ RAG** en cada entidad (Step 2) o dataset (Step 4).
 - **Automático**: al `materialize` un dataset, el endpoint dispara
   `/rag/rebuild-semantic` para refrescar `_semantic_replicon`.
+
+## Importación opcional desde SES
+
+El DAG `replicon_ses_inbox_import` queda sin horario mientras
+`REPLICON_SES_INBOX_ENABLED` (o la Variable Airflow
+`replicon_ses_inbox_enabled`) no sea `true`. En GCP no se reutilizan las
+credenciales de interoperabilidad de GCS ni las variables genéricas `AWS_*`:
+para habilitarlo se deben hidratar por separado
+`SES_INBOX_AWS_ACCESS_KEY_ID`, `SES_INBOX_AWS_SECRET_ACCESS_KEY` y, si aplica,
+`SES_INBOX_AWS_REGION`. El despliegue canónico de GCP no aprovisiona estos
+secretos; por tanto SES permanece deshabilitado hasta un release explícito que
+los incorpore con permisos mínimos sobre el bucket de entrada.

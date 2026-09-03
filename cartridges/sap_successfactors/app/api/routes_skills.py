@@ -6,9 +6,11 @@ from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
 
 from app.api.deps import verify_api_key
+from app.core.extraction_status import classify_extraction_exception
 from app.core.request_context import SecurityContextError, reset_security_context, set_security_context
+from app.core.minio_client import require_storage_access
 from app.services.catalog_service import get_all_entities, get_entity_config, get_extract_all_plan
-from app.services.extraction_service import run_entity
+from app.services.extraction_service import run_entity_with_metadata_guard as run_entity
 from app.services.kb_service import (
     get_all_knowledge_bits,
     get_kb_config,
@@ -39,8 +41,8 @@ def _security_context(body: dict[str, Any] | None) -> dict[str, Any] | None:
 def _set_security_context(ctx: dict[str, Any] | None):
     try:
         return set_security_context(ctx)
-    except SecurityContextError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except SecurityContextError:
+        raise HTTPException(status_code=403, detail="security_context_denied") from None
 
 
 def _run_entity_with_context(
@@ -83,6 +85,7 @@ def _extract_all_plan_with_context(
     conn_id: str | None,
     target: str = "all",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    require_storage_access()
     return get_extract_all_plan(
         conn_id=conn_id,
         security_context=_security_context(body),
@@ -91,17 +94,7 @@ def _extract_all_plan_with_context(
 
 
 def _external_failure(exc: Exception, entity: str | None = None) -> JSONResponse:
-    response = getattr(exc, "response", None)
-    upstream_status = getattr(response, "status_code", None)
-    payload = {
-        "status": "failed",
-        "error": "external_request_failed",
-        "message": "SAP SuccessFactors upstream request failed.",
-    }
-    if entity:
-        payload["entity"] = entity
-    if upstream_status:
-        payload["upstream_status"] = upstream_status
+    payload = classify_extraction_exception(entity, exc)
     return JSONResponse(status_code=502, content=payload)
 
 
@@ -205,7 +198,7 @@ def test_connection(
 
         return SapSfClient(conn_id=conn_id, security_context=x_security_context).test_connection()
     except Exception as exc:
-        return {"status": "error", "message": str(exc)[:200]}
+        return classify_extraction_exception(None, exc)
 
 
 # ── Catalogue ─────────────────────────────────────────────────────────────────
@@ -261,13 +254,7 @@ def run_full_load_all(
         try:
             results.append(_run_entity_with_context({**config, "mode": "full"}, body, conn_id=conn_id))
         except Exception as exc:
-            results.append(
-                {
-                    "entity": config.get("entity"),
-                    "status": "failed",
-                    "error": str(exc),
-                }
-            )
+            results.append(classify_extraction_exception(config.get("entity"), exc))
     return _batch_response(target=target, entities=entities, results=results, outcomes=skipped)
 
 
@@ -284,13 +271,7 @@ def run_incremental_all(
         try:
             results.append(_run_entity_with_context({**config, "mode": mode}, body, conn_id=conn_id))
         except Exception as exc:
-            results.append(
-                {
-                    "entity": config.get("entity"),
-                    "status": "failed",
-                    "error": str(exc),
-                }
-            )
+            results.append(classify_extraction_exception(config.get("entity"), exc))
     return _batch_response(target=target, entities=entities, results=results, outcomes=skipped)
 
 
@@ -346,13 +327,7 @@ def run_historical_load_all(
                 )
             )
         except Exception as exc:
-            results.append(
-                {
-                    "entity": config.get("entity"),
-                    "status": "failed",
-                    "error": str(exc),
-                }
-            )
+            results.append(classify_extraction_exception(config.get("entity"), exc))
     return _batch_response(target=target, entities=entities, results=results, outcomes=skipped)
 
 

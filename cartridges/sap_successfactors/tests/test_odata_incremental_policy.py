@@ -12,6 +12,7 @@ from app.services import extraction_service
 
 
 def _stub_run(monkeypatch, *, run_id: str = "run-odata-policy") -> None:
+    monkeypatch.setattr(extraction_service, "require_storage_access", lambda: None)
     monkeypatch.setattr(extraction_service, "create_run", lambda **_kwargs: run_id)
     monkeypatch.setattr(extraction_service, "finish_run", lambda **_kwargs: None)
     monkeypatch.setattr(extraction_service, "fail_run", lambda **_kwargs: None)
@@ -216,7 +217,11 @@ def test_token_400_is_not_treated_as_incremental_filter_rejection(monkeypatch) -
 
         def fetch_entity(self, **kwargs):
             calls.append(kwargs)
-            raise SAPClientError("SAML bearer token request failed: 400 Client Error for url: https://api68sales.successfactors.com/oauth/token")
+            raise SAPClientError(
+                "SAML bearer token request failed: 400 Client Error "
+                "url=https://tenant.example/oauth/token?access_token=SENTINEL-TOKEN "
+                "body={employee:SENTINEL-PII}"
+            )
 
     _stub_run(monkeypatch)
     monkeypatch.setattr(extraction_service, "SapSfClient", FakeSapSfClient)
@@ -235,7 +240,9 @@ def test_token_400_is_not_treated_as_incremental_filter_rejection(monkeypatch) -
             }
         )
 
-    assert "oauth/token" in failures["error_message"]
+    assert failures["error_message"] == "successfactors_auth_failed"
+    assert "SENTINEL" not in repr(failures)
+    assert "tenant.example" not in repr(failures)
     assert len(calls) == 1
 
 

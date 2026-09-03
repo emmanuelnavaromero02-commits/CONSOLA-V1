@@ -88,6 +88,28 @@ def test_migration_records_a_checksum_per_applied_file():
     assert ":'checksum'" in script
 
 
+def test_self_registering_migration_supports_fresh_init_and_immediate_runner():
+    """A direct Docker init must leave a ledger row.  On the immediate runner
+    pass that NULL checksum is backfilled; when the runner itself first applies
+    the migration, its post-include UPSERT fills it in the same transaction."""
+    script = _migration_script()
+    migration = (
+        REPO_ROOT / "infra/init/99zzzzf_analytic_app_grant_convergence.sql"
+    ).read_text()
+
+    assert "INSERT INTO schema_migrations" in migration
+    assert "'99zzzzf_analytic_app_grant_convergence.sql'" in migration
+    assert "ON CONFLICT (filename) DO NOTHING" in migration
+    assert "UPDATE schema_migrations SET checksum" in script
+    include = script.index("\\i /docker-entrypoint-initdb.d/${filename}")
+    checksum_upsert = script.index("ON CONFLICT (filename) DO UPDATE", include)
+    assert include < checksum_upsert
+    assert script.count("ON CONFLICT (filename) DO UPDATE") == 2
+    assert script.count(
+        "SET checksum = COALESCE(schema_migrations.checksum, EXCLUDED.checksum);"
+    ) == 2
+
+
 def test_migration_detects_and_fails_closed_on_drift():
     """A file already recorded whose bytes changed on disk is drift; the runner
     must stop, not silently skip it."""

@@ -29,3 +29,26 @@ def test_classifies_successfactors_missing_odata_entity_as_metadata_blocked():
     assert result["entity"] == "GoalPlan"
     assert result["status"] == "permission-blocked"
     assert result["code"] == "SUCCESSFACTORS_METADATA_BLOCKED"
+    assert result["failure_code"] == "successfactors_metadata_invalid"
+    assert result["http_status"] == 404
+    assert "error" not in result
+
+
+def test_real_extraction_error_payload_never_contains_url_query_body_or_token():
+    sentinel = (
+        "SuccessFactors rechazo solicitud OData (HTTP 400) "
+        "url=https://tenant.example/odata/v2/User?$filter=email%20eq%20'a@b.test' "
+        "body={access_token:SENTINEL-TOKEN,employee:SENTINEL-PII}"
+    )
+
+    result = classify_extraction_exception("User", RuntimeError(sentinel))
+
+    assert result == {
+        "entity": "User",
+        "status": "permission-blocked",
+        "code": "SUCCESSFACTORS_METADATA_BLOCKED",
+        "failure_code": "successfactors_metadata_invalid",
+        "http_status": 400,
+    }
+    assert "SENTINEL" not in repr(result)
+    assert "tenant.example" not in repr(result)

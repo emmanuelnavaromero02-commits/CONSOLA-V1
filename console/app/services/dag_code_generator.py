@@ -494,7 +494,7 @@ def _render_code(constants: dict[str, Any]) -> str:
     import time
     import uuid
     from datetime import datetime, timedelta, timezone
-    from urllib.parse import urljoin
+    from urllib.parse import urljoin, urlsplit
 
     import pandas as pd
     import requests
@@ -509,7 +509,119 @@ def _render_code(constants: dict[str, Any]) -> str:
     {const_block}
     MCP_INFRA_URL = os.environ.get("MCP_INFRA_URL", "http://mcp-infra:8010")
     REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
-    MINIO_BUCKET = os.environ.get("MINIO_BUCKET", "lakehouse")
+
+
+    def _airflow_variable(name: str, default: str = "") -> str:
+        return str(Variable.get(name, default_var=default) or "").strip()
+
+
+    def _endpoint_host(value: str) -> str:
+        raw = str(value or "").strip().rstrip("/")
+        parsed = urlsplit(raw if "://" in raw else f"//{{raw}}")
+        return parsed.netloc or parsed.path
+
+
+    def _storage_config() -> dict:
+        endpoint_hint = (
+            os.environ.get("LAKEHOUSE_ENDPOINT")
+            or _airflow_variable("lakehouse_endpoint")
+            or os.environ.get("MINIO_ENDPOINT")
+            or _airflow_variable("minio_endpoint")
+        )
+        provider = (
+            os.environ.get("LAKEHOUSE_PROVIDER")
+            or _airflow_variable("lakehouse_provider")
+            or ("gcs" if "storage.googleapis.com" in endpoint_hint.lower() else "minio")
+        ).strip().lower()
+        if provider == "gcs":
+            access_key = str(os.environ.get("GCS_ACCESS_KEY_ID") or "").strip()
+            secret_key = str(os.environ.get("GCS_SECRET_ACCESS_KEY") or "").strip()
+            bucket = str(
+                os.environ.get("GCS_BUCKET")
+                or os.environ.get("LAKEHOUSE_BUCKET")
+                or _airflow_variable("gcs_bucket")
+                or _airflow_variable("lakehouse_bucket")
+                or ""
+            ).strip()
+            if not access_key or not secret_key:
+                raise RuntimeError("storage_credentials_missing")
+            if not bucket:
+                raise RuntimeError("storage_bucket_missing")
+            return {{
+                "provider": "gcs",
+                "endpoint": _endpoint_host(
+                    os.environ.get("LAKEHOUSE_ENDPOINT")
+                    or _airflow_variable("lakehouse_endpoint")
+                    or "storage.googleapis.com"
+                ),
+                "access_key": access_key,
+                "secret_key": secret_key,
+                "bucket": bucket,
+                "secure": True,
+                "region": "auto",
+            }}
+        if provider == "s3":
+            access_key = str(os.environ.get("AWS_ACCESS_KEY_ID") or "").strip()
+            secret_key = str(os.environ.get("AWS_SECRET_ACCESS_KEY") or "").strip()
+            bucket = str(
+                os.environ.get("S3_BUCKET_NAME")
+                or os.environ.get("LAKEHOUSE_BUCKET")
+                or _airflow_variable("s3_bucket")
+                or _airflow_variable("lakehouse_bucket")
+                or ""
+            ).strip()
+            # No pair means the AWS workload/instance identity chain. A
+            # partial pair is never accepted.
+            if bool(access_key) != bool(secret_key):
+                raise RuntimeError("storage_credentials_missing")
+            if not bucket:
+                raise RuntimeError("storage_bucket_missing")
+            return {{
+                "provider": "s3",
+                "endpoint": _endpoint_host(
+                    os.environ.get("S3_ENDPOINT_URL")
+                    or os.environ.get("LAKEHOUSE_ENDPOINT")
+                    or "s3.amazonaws.com"
+                ),
+                "access_key": access_key,
+                "secret_key": secret_key,
+                "bucket": bucket,
+                "secure": True,
+                "region": str(
+                    os.environ.get("AWS_REGION")
+                    or os.environ.get("AWS_DEFAULT_REGION")
+                    or "us-east-1"
+                ),
+            }}
+        access_key = _airflow_variable("minio_access_key") or str(
+            os.environ.get("MINIO_ACCESS_KEY") or ""
+        ).strip()
+        secret_key = _airflow_variable("minio_secret_key") or str(
+            os.environ.get("MINIO_SECRET_KEY") or ""
+        ).strip()
+        bucket = _airflow_variable("minio_bucket") or str(
+            os.environ.get("MINIO_BUCKET") or ""
+        ).strip()
+        if not access_key or not secret_key:
+            raise RuntimeError("storage_credentials_missing")
+        if not bucket:
+            raise RuntimeError("storage_bucket_missing")
+        return {{
+            "provider": "minio",
+            "endpoint": _endpoint_host(
+                _airflow_variable("minio_endpoint")
+                or os.environ.get("MINIO_ENDPOINT")
+                or "minio:9000"
+            ),
+            "access_key": access_key,
+            "secret_key": secret_key,
+            "bucket": bucket,
+            "secure": (
+                _airflow_variable("minio_secure", "false").lower()
+                in {{"1", "true", "yes", "on"}}
+            ),
+            "region": None,
+        }}
 
 
     def _internal_key(env_name: str) -> str:
@@ -654,6 +766,31 @@ def _render_code(constants: dict[str, Any]) -> str:
         response.raise_for_status()
 
 
+    def _public_failure_code(exc: Exception) -> str:
+        code = str(exc).strip().lower()
+        if code in {{
+            "storage_credentials_missing",
+            "storage_signature_invalid",
+            "storage_access_denied",
+            "storage_bucket_missing",
+        }}:
+            return code
+        response = getattr(exc, "response", None)
+        try:
+            status = int(getattr(response, "status_code", None))
+        except (TypeError, ValueError):
+            status = None
+        if status in {{401, 403}}:
+            return "upstream_access_denied"
+        if status in {{400, 404}}:
+            return "upstream_query_invalid"
+        if status == 429:
+            return "upstream_rate_limited"
+        if status in {{408, 500, 502, 503, 504}}:
+            return "upstream_unavailable"
+        return "extraction_failed"
+
+
     def _upload_parquet(rows: list[dict], run_id: str) -> tuple[str | None, int]:
         if not rows:
             return None, 0
@@ -664,16 +801,28 @@ def _render_code(constants: dict[str, Any]) -> str:
         df.to_parquet(buffer, index=False)
         buffer.seek(0)
         size = buffer.getbuffer().nbytes
-        client = Minio(
-            os.environ.get("MINIO_ENDPOINT", Variable.get("minio_endpoint")),
-            access_key=os.environ.get("MINIO_ACCESS_KEY", Variable.get("minio_access_key")),
-            secret_key=os.environ.get("MINIO_SECRET_KEY", Variable.get("minio_secret_key")),
-            secure=os.environ.get("MINIO_SECURE", "false").lower() == "true",
-        )
-        if not client.bucket_exists(MINIO_BUCKET):
-            client.make_bucket(MINIO_BUCKET)
-        client.put_object(MINIO_BUCKET, object_name, buffer, size, content_type="application/octet-stream")
-        return f"s3://{{MINIO_BUCKET}}/{{object_name}}", len(rows)
+        storage = _storage_config()
+        if storage["provider"] == "s3" and not storage["access_key"]:
+            from minio.credentials.providers import IamAwsProvider
+            client = Minio(
+                storage["endpoint"],
+                credentials=IamAwsProvider(region=storage["region"]),
+                secure=True,
+                region=storage["region"],
+            )
+        else:
+            client = Minio(
+                storage["endpoint"],
+                access_key=storage["access_key"],
+                secret_key=storage["secret_key"],
+                secure=storage["secure"],
+                region=storage["region"],
+            )
+        bucket = storage["bucket"]
+        if storage["provider"] == "minio" and not client.bucket_exists(bucket):
+            client.make_bucket(bucket)
+        client.put_object(bucket, object_name, buffer, size, content_type="application/octet-stream")
+        return f"s3://{{bucket}}/{{object_name}}", len(rows)
 
 
     def _max_watermark(rows: list[dict]) -> str | None:
@@ -807,8 +956,9 @@ def _render_code(constants: dict[str, Any]) -> str:
                 _pipeline_run_save(run_id, "success", count, path)
                 return {{"run_id": run_id, "record_count": count, "bronze_path": path, "watermark": new_watermark}}
             except Exception as exc:
-                _pipeline_run_save(run_id, "failed", 0, None, str(exc))
-                raise
+                failure_code = _public_failure_code(exc)
+                _pipeline_run_save(run_id, "failed", 0, None, failure_code)
+                raise RuntimeError(failure_code) from None
 
         extract()
 

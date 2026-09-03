@@ -194,20 +194,20 @@ def _load_runtime() -> SimpleNamespace:
         sys.path.insert(0, root_text)
     _clear_conflicting_app_modules(root)
     refinement_triggers = importlib.import_module("app.core.refinement_triggers")
+    extraction_service = importlib.import_module("app.services.extraction_service")
     _RUNTIME = SimpleNamespace(
         get_entity_config=importlib.import_module(
             "app.services.catalog_service"
         ).get_entity_config,
-        prepare_entity_config_for_metadata=importlib.import_module(
-            "app.services.catalog_service"
-        ).prepare_entity_config_for_metadata,
-        run_entity=importlib.import_module(
-            "app.services.extraction_service"
-        ).run_entity,
+        run_entity=extraction_service.run_entity_with_metadata_guard,
+        is_metadata_skip_result=extraction_service.is_metadata_skip_result,
         trigger_silver_refresh=refinement_triggers.trigger_silver_refresh,
         classify_extraction_exception=importlib.import_module(
             "app.core.extraction_status"
         ).classify_extraction_exception,
+        public_failure_message=importlib.import_module(
+            "app.core.extraction_status"
+        ).public_failure_message,
         set_security_context=importlib.import_module(
             "app.core.request_context"
         ).set_security_context,
@@ -286,12 +286,9 @@ def _try_silver_refresh(
                 payload if payload.get("status") else {"status": "success", **payload}
             )
         return {"status": "success"}
-    except Exception as exc:  # noqa: BLE001 - Bronze extraction must remain the source of DAG success.
-        message = f"{type(exc).__name__}: {exc}"
-        print(
-            f"[sap_successfactors_extract] silver refresh failed for {entity}: {message}"
-        )
-        return {"status": "failed", "error": message}
+    except Exception:  # noqa: BLE001 - Bronze extraction must remain the source of DAG success.
+        print(f"[sap_successfactors_extract] silver refresh failed for {entity}")
+        return {"status": "failed", "failure_code": "silver_refresh_failed"}
 
 
 def _downstream_status(payload: dict[str, Any], key: str) -> str:
@@ -432,8 +429,8 @@ def _pipeline_run_save(
                 f"[sap_successfactors_extract] pipeline_run_save -> {response.status_code}: {response.text[:200]}"
             )
             response.raise_for_status()
-    except Exception as exc:  # noqa: BLE001
-        print(f"[sap_successfactors_extract] pipeline_run_save failed: {exc}")
+    except Exception:  # noqa: BLE001
+        print("[sap_successfactors_extract] pipeline_run_save failed")
 
 
 @dag(schedule=None, catchup=False, default_args=default_args, max_active_runs=1)
@@ -464,7 +461,7 @@ def sap_successfactors_extract():
                 entity=str(entity),
                 status="failed",
                 started_at=started_at,
-                error_message=str(exc),
+                error_message="configuration_incomplete",
                 extra={
                     "classification": {
                         "status": "auth-blocked",
@@ -472,7 +469,7 @@ def sap_successfactors_extract():
                     },
                 },
             )
-            raise AirflowFailException(str(exc)) from exc
+            raise AirflowFailException("configuration_incomplete") from None
         conf = {**conf, "conn_id": conn_id}
         security_context = _security_context_from_conf(conf)
         run_config: dict[str, Any] = {
@@ -486,34 +483,6 @@ def sap_successfactors_extract():
         if security_context:
             run_config["security_context"] = security_context
 
-        prepared_config, metadata_block = runtime.prepare_entity_config_for_metadata(
-            run_config,
-            conn_id=conn_id,
-            security_context=security_context,
-        )
-        if metadata_block:
-            payload = {
-                **metadata_block,
-                "entity": str(entity),
-                "status": "skipped",
-                "metadata_status": "blocked",
-            }
-            _pipeline_run_save(
-                context=context,
-                conf=conf,
-                entity=str(entity),
-                status="partial",
-                started_at=started_at,
-                error_message=str(metadata_block.get("reason") or metadata_block),
-                extra={
-                    "classification": payload,
-                    "conn_id": conn_id,
-                    "job_id": str(conf.get("job_id") or "").strip() or None,
-                },
-            )
-            return payload
-        run_config = prepared_config or run_config
-
         token = runtime.set_security_context(security_context)
         try:
             payload = runtime.run_entity(
@@ -521,6 +490,21 @@ def sap_successfactors_extract():
                 from_date=conf.get("from_date") or None,
                 to_date=conf.get("to_date") or None,
             )
+            if runtime.is_metadata_skip_result(payload):
+                _pipeline_run_save(
+                    context=context,
+                    conf=conf,
+                    entity=str(entity),
+                    status="partial",
+                    started_at=started_at,
+                    error_message=str(payload.get("reason") or "missing_metadata"),
+                    extra={
+                        "classification": payload,
+                        "conn_id": conn_id,
+                        "job_id": str(conf.get("job_id") or "").strip() or None,
+                    },
+                )
+                return payload
             silver_refresh = _try_silver_refresh(runtime, str(entity), security_context)
             payload = {**payload, "silver_refresh": silver_refresh}
             _pipeline_run_save(
@@ -547,6 +531,7 @@ def sap_successfactors_extract():
             return payload
         except Exception as exc:
             classified = runtime.classify_extraction_exception(str(entity), exc)
+            failure_message = runtime.public_failure_message(classified)
             if _is_nonfatal_successfactors_block(classified):
                 _pipeline_run_save(
                     context=context,
@@ -554,7 +539,7 @@ def sap_successfactors_extract():
                     entity=str(entity),
                     status="partial",
                     started_at=started_at,
-                    error_message=str(exc),
+                    error_message=failure_message,
                     extra={
                         "classification": classified,
                         "conn_id": conn_id,
@@ -568,11 +553,12 @@ def sap_successfactors_extract():
                 entity=str(entity),
                 status="failed",
                 started_at=started_at,
-                error_message=str(exc),
+                error_message=failure_message,
+                extra={"classification": classified},
             )
             if _is_non_retryable_successfactors_error(exc):
-                raise AirflowFailException(str(exc)) from exc
-            raise
+                raise AirflowFailException(failure_message) from None
+            raise RuntimeError(failure_message) from None
         finally:
             runtime.reset_security_context(token)
 

@@ -31,21 +31,40 @@ def _path_has_scope(path: str, scope: str) -> bool:
 
 
 def _get_duckdb_connection() -> duckdb.DuckDBPyConnection:
+    storage = settings.resolved_minio
     conn = duckdb.connect()
     conn.execute("SET autoinstall_known_extensions=false;")
     conn.execute("SET autoload_known_extensions=false;")
     conn.execute("LOAD httpfs;")
-    conn.execute(f"SET s3_endpoint='{settings.minio_endpoint}';")
-    conn.execute(f"SET s3_access_key_id='{settings.minio_access_key}';")
-    conn.execute(f"SET s3_secret_access_key='{settings.minio_secret_key}';")
-    conn.execute(f"SET s3_use_ssl={'true' if settings.minio_secure else 'false'};")
-    conn.execute("SET s3_url_style='path';")
+    try:
+        conn.execute("SET s3_endpoint=?;", [storage["endpoint"]])
+        conn.execute("SET s3_region=?;", [storage["region"] or "us-east-1"])
+        if storage["access_key"] and storage["secret_key"]:
+            conn.execute("SET s3_access_key_id=?;", [storage["access_key"]])
+            conn.execute("SET s3_secret_access_key=?;", [storage["secret_key"]])
+            if storage["session_token"]:
+                conn.execute("SET s3_session_token=?;", [storage["session_token"]])
+        elif storage["provider"] == "s3":
+            conn.execute("LOAD aws;")
+            conn.execute(
+                "CREATE OR REPLACE SECRET omega_s3_role "
+                "(TYPE S3, PROVIDER credential_chain);"
+            )
+        conn.execute(
+            f"SET s3_use_ssl={'true' if storage['secure'] else 'false'};"
+        )
+        conn.execute(
+            f"SET s3_url_style='{'vhost' if storage['provider'] == 's3' else 'path'}';"
+        )
+    except Exception:  # noqa: BLE001 - never echo a credential-bearing setup error.
+        conn.close()
+        raise RuntimeError("storage_access_denied") from None
     conn.execute("SET lock_configuration=true;")
     return conn
 
 
 def run_kb_sql(sql: str) -> pd.DataFrame:
-    resolved = sql.replace("{bucket}", settings.minio_bucket)
+    resolved = sql.replace("{bucket}", settings.resolved_minio["bucket"])
     conn = _get_duckdb_connection()
     try:
         return conn.execute(resolved).df()
@@ -78,7 +97,7 @@ def write_kb_parquet(
         df.to_parquet(local_path, index=False, engine="pyarrow", compression="snappy")
         upload_file_to_minio(local_path=str(local_path), object_name=object_name)
 
-    return f"s3://{settings.minio_bucket}/{object_name}"
+    return f"s3://{settings.resolved_minio['bucket']}/{object_name}"
 
 
 def write_kb_to_postgres(

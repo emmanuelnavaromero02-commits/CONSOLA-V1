@@ -7,6 +7,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from app.core.minio_client import require_storage_access
 from app.core.sap_client import SAPClientError, SapSfClient
 from app.services.parquet_service import write_parquet_and_upload
 from app.services.runlog_service import create_run, fail_run, finish_run
@@ -22,6 +23,128 @@ DEFAULT_EFFECTIVE_FROM_DATE = "1900-01-01"
 DEFAULT_EFFECTIVE_TO_DATE = "9999-12-31"
 SAP_DATE_RE = re.compile(r"^/Date\((-?\d+)(?:[+-]\d+)?\)/$")
 logger = logging.getLogger(__name__)
+_STORAGE_PREFLIGHT_VERIFIED = object()
+_SAFE_METADATA_FAILURE_CODES = frozenset(
+    {
+        "metadata_access_denied",
+        "metadata_not_found",
+        "metadata_query_invalid",
+        "metadata_rate_limited",
+        "metadata_upstream_unavailable",
+    }
+)
+
+
+def _metadata_skip_result(block: dict[str, Any]) -> dict[str, Any]:
+    """Return the only public shape used for metadata-gated extractions.
+
+    The nested blocker is deliberately assembled from allowlisted fields.  In
+    particular, no upstream exception text is returned to MCP, Airflow or UI
+    callers.
+    """
+    failure_code = str(block.get("failure_code") or "").strip()
+    if failure_code not in _SAFE_METADATA_FAILURE_CODES:
+        failure_code = ""
+    safe_blocker = {
+        key: block.get(key)
+        for key in (
+            "code",
+            "reason",
+            "metadata_status",
+            "odata_entity",
+            "fields_missing",
+        )
+        if block.get(key) not in (None, "", [])
+    }
+    if failure_code:
+        safe_blocker["failure_code"] = failure_code
+    return {
+        "entity": block.get("entity"),
+        "odata_entity": block.get("odata_entity"),
+        "status": "skipped_explicit",
+        "code": block.get("code") or "SUCCESSFACTORS_METADATA_BLOCKED",
+        "reason": block.get("reason") or "missing_metadata",
+        "metadata_status": block.get("metadata_status") or "metadata_unavailable",
+        "fields_missing": list(block.get("fields_missing") or []),
+        **({"failure_code": failure_code} if failure_code else {}),
+        "record_count": 0,
+        "metadata_verified": False,
+        "blocker": safe_blocker,
+    }
+
+
+def is_metadata_skip_result(result: Any) -> bool:
+    return bool(
+        isinstance(result, dict)
+        and result.get("status") == "skipped_explicit"
+        and result.get("code") == "SUCCESSFACTORS_METADATA_BLOCKED"
+    )
+
+
+def run_entity_with_metadata_guard(
+    config: dict[str, Any],
+    from_date: str | None = None,
+    to_date: str | None = None,
+) -> dict[str, Any]:
+    """Validate live ``$metadata`` immediately before extracting one entity.
+
+    Every external extraction entry point calls this wrapper.  An unavailable
+    metadata document, missing EntitySet or invalid required field is returned
+    as an explicit, safe skip and the unguarded extractor is never invoked.
+    Optional stale ``$select`` fields are pruned by the shared catalog helper,
+    while ``expected_select_fields`` preserves the Bronze schema.
+    """
+    from app.services.catalog_service import (
+        prepare_entity_config_for_metadata,
+        required_entity_config_block,
+    )
+
+    security_context = config.get("security_context")
+    conn_id = (
+        str(config.get("conn_id") or config.get("connection_id") or "").strip()
+        or None
+    )
+    # Storage is a prerequisite for every extraction outcome. Prove it before
+    # doing config/metadata planning so a batch or single run cannot contact
+    # SuccessFactors when Bronze is unavailable.
+    require_storage_access()
+    config_block = required_entity_config_block(config)
+    if config_block is not None:
+        return _metadata_skip_result(
+            {
+                **config_block,
+                "code": "SUCCESSFACTORS_METADATA_BLOCKED",
+                "metadata_status": str(config_block.get("reason") or "missing_metadata"),
+            }
+        )
+    prepared, block = prepare_entity_config_for_metadata(
+        config,
+        conn_id=conn_id,
+        security_context=security_context if isinstance(security_context, dict) else None,
+    )
+    if block is not None:
+        return _metadata_skip_result(block)
+
+    prepared_config = prepared or dict(config)
+    prepared_config["_storage_preflight_token"] = _STORAGE_PREFLIGHT_VERIFIED
+    if (
+        (from_date or to_date)
+        and config.get("date_field")
+        and not prepared_config.get("date_field")
+    ):
+        return _metadata_skip_result(
+            {
+                "entity": config.get("entity"),
+                "odata_entity": config.get("odata_entity") or config.get("entity"),
+                "status": "blocked",
+                "reason": "invalid_required_field",
+                "code": "SUCCESSFACTORS_METADATA_BLOCKED",
+                "metadata_status": "metadata_required_fields_missing",
+                "fields_missing": [str(config.get("date_field"))],
+            }
+        )
+    result = run_entity(prepared_config, from_date=from_date, to_date=to_date)
+    return {**result, "metadata_verified": True}
 
 
 def _watermark_value_type(value: Any) -> str:
@@ -291,6 +414,11 @@ def run_entity(
             f"SAP SuccessFactors entity {entity} requires entity_config.connection_id "
             "or an explicit conn_id; no environment/default credential fallback is allowed."
         )
+    # Enforce the authenticated storage preflight for every entry point,
+    # including Airflow and MCP paths that do not pass through routes_console.
+    # StoragePreflightError exposes only an allowlisted, non-sensitive code.
+    if config.get("_storage_preflight_token") is not _STORAGE_PREFLIGHT_VERIFIED:
+        require_storage_access()
     raw_expected_select_fields = config.get("expected_select_fields") or select_fields
     expected_select_fields = (
         list(raw_expected_select_fields)
@@ -505,9 +633,17 @@ def run_entity(
         }
 
     except Exception as exc:
+        from app.core.extraction_status import (
+            classify_extraction_exception,
+            public_failure_message,
+        )
+
+        public_error = public_failure_message(
+            classify_extraction_exception(entity, exc)
+        )
         fail_run(
             run_id=run_id,
-            error_message=str(exc),
+            error_message=public_error,
             finished_at=datetime.now(timezone.utc),
         )
         raise

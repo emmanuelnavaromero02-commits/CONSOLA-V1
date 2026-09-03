@@ -63,7 +63,7 @@ def _client_factory(preflight, *, metadata, deny=(), empty=()):
             assert select
             if entity in deny:
                 raise SAPClientError(
-                    f"SuccessFactors rechazó acceso OData a {entity}. Revisa permisos OData."
+                    f"SuccessFactors HTTP 403 para {entity}; sentinel-body-must-not-leak"
                 )
             if entity in empty:
                 return []
@@ -120,10 +120,12 @@ def test_people_master_permission_blocked_surfaces_per_entity_checklist(monkeypa
     statuses = {s["entity"]: s for s in emp_job_blocker["candidate_statuses"]}
     assert statuses["EmpJob"]["status"] == "permission_blocked"
     assert statuses["EmpJob"]["reason"] == "permission_denied"
-    # the SAP-admin remediation string is carried for the operator
+    # Only a stable code is exposed; upstream URL/body/token text stays server-side.
     emp_job_component = next(c for c in payload["components"] if c["id"] == "emp_job")
     denied = next(c for c in emp_job_component["candidates"] if c["entity"] == "EmpJob")
-    assert "permisos OData" in denied.get("error", "")
+    assert denied["failure_code"] == "metadata_access_denied"
+    assert "error" not in denied
+    assert "sentinel-body-must-not-leak" not in repr(payload)
 
 
 def test_people_master_missing_entity_reported(monkeypatch):

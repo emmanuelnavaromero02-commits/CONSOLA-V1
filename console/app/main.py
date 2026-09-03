@@ -1240,6 +1240,15 @@ _AUTH_API_LIKE_PREFIX = (
     "/auth/",
 )
 _AUTH_INTERNAL_SERVICE_PREFIX = ("/monitoring/mcp/", "/studio_ops/mcp/")
+# Exact API-prefixed server-to-server requests whose route dependency owns
+# authentication.  These are deliberately separate from ``_AUTH_PUBLIC_*``:
+# the middleware only yields to FastAPI so ``verify_internal_api_key`` can
+# fail closed with the caller/service pair policy.
+_AUTH_INTERNAL_DEPENDENCY_REQUESTS = frozenset(
+    {
+        ("POST", "/api/operations/internal/agent-runner/due"),
+    }
+)
 
 # Routes a user is allowed to hit while in must_change_password=true state.
 _AUTH_FORCED_CHANGE_ALLOW_EXACT = {
@@ -1524,7 +1533,9 @@ async def _auth_preflight_response(
 
     # Internal routes (server-to-server) bypass session auth.
     # Their own router-level dependency (verify_internal_api_key) handles auth via header.
-    if path.startswith("/internal/"):
+    if path.startswith("/internal/") or (
+        request.method.upper(), path
+    ) in _AUTH_INTERNAL_DEPENDENCY_REQUESTS:
         return await call_next(request)
 
     if path.startswith(_AUTH_INTERNAL_SERVICE_PREFIX) and _is_internal_request(request):

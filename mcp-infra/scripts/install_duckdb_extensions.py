@@ -8,6 +8,7 @@ if duckdb.__version__ != "1.2.2":
 
 connection = duckdb.connect()
 try:
-    connection.execute("INSTALL httpfs")
+    for extension in ("httpfs", "aws"):
+        connection.execute(f"INSTALL {extension}")
 finally:
     connection.close()

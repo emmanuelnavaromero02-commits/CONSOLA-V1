@@ -31,10 +31,26 @@ if BaseSettings is not None:
         # Database
         database_url: str = Field(default_factory=lambda: os.environ["DATABASE_URL"])
 
-        # MinIO
+        # Lakehouse storage.  MINIO_* is intentionally limited to local
+        # MinIO; GCS and AWS use their provider-native credential names.
+        lakehouse_provider: str = ""
+        lakehouse_endpoint: str = ""
+        lakehouse_bucket: str = ""
+        gcs_bucket: str = ""
+        gcs_access_key_id: str = ""
+        gcs_secret_access_key: str = ""
+        s3_bucket_name: str = ""
+        aws_access_key_id: str = ""
+        aws_secret_access_key: str = ""
+        aws_session_token: str = ""
+        aws_region: str = ""
+        aws_default_region: str = ""
+
+        # Local MinIO compatibility names.  These cannot be required at model
+        # construction time because production GCS/AWS deliberately omit them.
         minio_endpoint: str = ""
-        minio_access_key: str = Field(default_factory=lambda: os.environ["MINIO_ACCESS_KEY"])
-        minio_secret_key: str = Field(default_factory=lambda: os.environ["MINIO_SECRET_KEY"])
+        minio_access_key: str = ""
+        minio_secret_key: str = ""
         minio_bucket: str = "lakehouse"
         minio_secure: bool = False
 
@@ -82,6 +98,19 @@ else:
         sf_admin_user: str = _env("SF_ADMIN_USER")
 
         database_url: str = _env("DATABASE_URL")
+
+        lakehouse_provider: str = _env("LAKEHOUSE_PROVIDER")
+        lakehouse_endpoint: str = _env("LAKEHOUSE_ENDPOINT")
+        lakehouse_bucket: str = _env("LAKEHOUSE_BUCKET")
+        gcs_bucket: str = _env("GCS_BUCKET")
+        gcs_access_key_id: str = _env("GCS_ACCESS_KEY_ID")
+        gcs_secret_access_key: str = _env("GCS_SECRET_ACCESS_KEY")
+        s3_bucket_name: str = _env("S3_BUCKET_NAME")
+        aws_access_key_id: str = _env("AWS_ACCESS_KEY_ID")
+        aws_secret_access_key: str = _env("AWS_SECRET_ACCESS_KEY")
+        aws_session_token: str = _env("AWS_SESSION_TOKEN")
+        aws_region: str = _env("AWS_REGION")
+        aws_default_region: str = _env("AWS_DEFAULT_REGION")
 
         minio_endpoint: str = _env("MINIO_ENDPOINT")
         minio_access_key: str = _env("MINIO_ACCESS_KEY")

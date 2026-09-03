@@ -69,6 +69,22 @@ def main() -> None:
     engine = DuckDBEngine()
     connection = engine._conn()
     require_loaded_extensions(connection)
+    installed = dict(
+        connection.execute(
+            "SELECT extension_name, installed FROM duckdb_extensions() "
+            "WHERE extension_name IN ('httpfs','postgres_scanner','aws')"
+        ).fetchall()
+    )
+    if installed != {"aws": True, "httpfs": True, "postgres_scanner": True}:
+        raise RuntimeError("offline DuckDB extension preload is incomplete")
+    loaded = {
+        str(row[0])
+        for row in connection.execute(
+            "SELECT extension_name FROM duckdb_extensions() WHERE loaded"
+        ).fetchall()
+    }
+    if "aws" in loaded:
+        raise RuntimeError("AWS extension must be lazy-loaded only for role credentials")
     engine._pg_attach(connection)
     pg_value = connection.execute(
         "SELECT value FROM pgdb.offline_extension_probe"

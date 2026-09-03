@@ -438,14 +438,82 @@ jobs:
             exit 1
           }
           read -r -a targets <<< "${ROOT_TEST_TARGETS}"
-          if [[ -n "${APP_GRANTS_DSN}" ]]; then
-            export OMEGA_TEST_GRANTS_DSN="${APP_GRANTS_DSN}"
-          else
-            unset OMEGA_TEST_GRANTS_DSN
-          fi
           python3 -I scripts/verify_release_test_harness.py
-          env -u GITHUB_ENV -u GITHUB_PATH \
-            python3 -I scripts/run_release_pytest.py -q "${targets[@]}"
+
+          # run_release_pytest deliberately accepts at most one component
+          # import root per invocation. Keep every detected target, but split
+          # root/Console/Refinement/etc. into import-compatible executions.
+          root_targets=()
+          console_targets=()
+          refinement_targets=()
+          vault_targets=()
+          workspace_targets=()
+          mcp_infra_targets=()
+          for target in "${targets[@]}"; do
+            path="${target%%::*}"
+            case "${path}" in
+              tests/*|airflow/*) root_targets+=("${target}") ;;
+              console/*) console_targets+=("${target}") ;;
+              refinement/*) refinement_targets+=("${target}") ;;
+              vault/*) vault_targets+=("${target}") ;;
+              workspace/*) workspace_targets+=("${target}") ;;
+              mcp-infra/*) mcp_infra_targets+=("${target}") ;;
+              *)
+                echo "::error::detected root test target has no reviewed import family: ${target}" >&2
+                exit 1
+                ;;
+            esac
+          done
+
+          executed_targets=0
+          run_compatible_group() {
+            local family="$1" target path needs_app_grants=0
+            shift
+            local group=("$@")
+            [[ "${#group[@]}" -gt 0 ]] || return 0
+            for target in "${group[@]}"; do
+              path="${target%%::*}"
+              if [[ "${path}" == "tests/test_analytic_app_dataset_grants.py" ]]; then
+                needs_app_grants=1
+              fi
+            done
+            if [[ "${needs_app_grants}" -eq 1 ]]; then
+              [[ -n "${APP_GRANTS_DSN}" ]] || {
+                echo "::error::app-grant tests were selected without their PostgreSQL DSN" >&2
+                return 1
+              }
+              export OMEGA_TEST_GRANTS_DSN="${APP_GRANTS_DSN}"
+            else
+              unset OMEGA_TEST_GRANTS_DSN
+            fi
+            echo "Running detected root tests for ${family} (${#group[@]} target(s))"
+            env -u GITHUB_ENV -u GITHUB_PATH \
+              python3 -I scripts/run_release_pytest.py -q "${group[@]}"
+            executed_targets=$((executed_targets + ${#group[@]}))
+          }
+
+          if [[ "${#root_targets[@]}" -gt 0 ]]; then
+            run_compatible_group root "${root_targets[@]}"
+          fi
+          if [[ "${#console_targets[@]}" -gt 0 ]]; then
+            run_compatible_group console "${console_targets[@]}"
+          fi
+          if [[ "${#refinement_targets[@]}" -gt 0 ]]; then
+            run_compatible_group refinement "${refinement_targets[@]}"
+          fi
+          if [[ "${#vault_targets[@]}" -gt 0 ]]; then
+            run_compatible_group vault "${vault_targets[@]}"
+          fi
+          if [[ "${#workspace_targets[@]}" -gt 0 ]]; then
+            run_compatible_group workspace "${workspace_targets[@]}"
+          fi
+          if [[ "${#mcp_infra_targets[@]}" -gt 0 ]]; then
+            run_compatible_group mcp-infra "${mcp_infra_targets[@]}"
+          fi
+          [[ "${executed_targets}" -eq "${#targets[@]}" ]] || {
+            echo "::error::detected root test partition omitted or duplicated a target" >&2
+            exit 1
+          }
 
       - name: Remove app-grant PostgreSQL
         if: always() && steps.app_grants_postgres.outcome != 'skipped'

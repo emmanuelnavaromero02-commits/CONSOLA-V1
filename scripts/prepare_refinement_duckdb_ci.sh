@@ -63,7 +63,7 @@ docker cp "$container_id:/home/refinement-app/.duckdb/." "$duckdb_home/.duckdb/"
 docker rm "$container_id" >/dev/null
 trap - EXIT
 
-for extension in httpfs postgres_scanner; do
+for extension in httpfs postgres_scanner aws; do
   find "$duckdb_home/.duckdb" -type f -name "$extension.duckdb_extension" \
     | grep -q .
 done
@@ -89,7 +89,7 @@ expected = {
     Path("extensions/v1.2.2"),
     Path("extensions/v1.2.2") / platform,
 }
-for extension in ("httpfs", "postgres_scanner"):
+for extension in ("httpfs", "postgres_scanner", "aws"):
     expected.add(
         Path("extensions/v1.2.2") / platform / f"{extension}.duckdb_extension"
     )

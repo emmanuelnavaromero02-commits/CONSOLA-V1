@@ -155,9 +155,27 @@ Storage / infra (shared across cartridges):
 | --- | --- |
 | `INTERNAL_API_KEY` | Required for every authenticated route |
 | `DATABASE_URL` | `postgresql+psycopg2://user:pass@host:5432/db` |
-| `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY` | MinIO / lakehouse |
-| `MINIO_BUCKET` | default `lakehouse` |
-| `MINIO_SECURE` | `true`/`false` |
+| `LAKEHOUSE_PROVIDER`, `LAKEHOUSE_ENDPOINT`, `LAKEHOUSE_BUCKET` | Active provider and lakehouse location |
+| `GCS_ACCESS_KEY_ID`, `GCS_SECRET_ACCESS_KEY`, `GCS_BUCKET` | Complete GCS HMAC pair; GCS S3-compatible signing always uses region `auto` |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `S3_BUCKET_NAME`, `AWS_REGION` | Optional complete AWS pair; when absent on AWS, the EC2 IMDSv2 role is used |
+| `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_BUCKET` | Local MinIO only (bucket defaults to `lakehouse`) |
+| `MINIO_SECURE` | Local MinIO `true`/`false` |
+
+The extraction performs an authenticated bucket preflight before reading from
+SuccessFactors. Remote GCS/S3 buckets are never created by the cartridge;
+failures are reduced to `storage_credentials_missing`,
+`storage_signature_invalid`, `storage_access_denied`, or
+`storage_bucket_missing` so signed request details cannot leak.
+
+After a deployment, the operator can run the reversible storage gate inside
+the cartridge container:
+
+```bash
+python -c 'from app.core.minio_client import run_storage_canary; print(run_storage_canary())'
+```
+
+It creates one random non-PII object, verifies its size and SHA-256 metadata,
+then deletes it; success requires all three operations.
 
 Optional:
 

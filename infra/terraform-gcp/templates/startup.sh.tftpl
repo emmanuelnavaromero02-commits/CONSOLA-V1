@@ -69,30 +69,12 @@ PY
     -o /tmp/omega-source.tgz
 }
 
-access_token() {
-  curl -fsS -H 'Metadata-Flavor: Google' \
-    'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token' \
-    | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])'
-}
-
-secret_value() {
-  local name token response
-  name="$1"
-  token="$(access_token)"
-  response="$(curl -fsS \
-    -H "Authorization: Bearer $${token}" \
-    "https://secretmanager.googleapis.com/v1/projects/$${PROJECT_ID}/secrets/$${SECRET_PREFIX}$${name}/versions/latest:access" \
-    2>/dev/null || true)"
-  if [[ -z "$${response}" ]]; then
-    return 1
-  fi
-  python3 -c 'import base64,json,sys; payload=json.load(sys.stdin).get("payload",{}).get("data",""); sys.exit(1) if not payload else print(base64.b64decode(payload).decode())' <<<"$${response}"
-}
-
 set_env() {
   python3 - "$1" "$2" infra/.env <<'PY'
+import os
 import pathlib
 import sys
+import tempfile
 
 key, value, path = sys.argv[1], sys.argv[2], pathlib.Path(sys.argv[3])
 lines = path.read_text().splitlines() if path.exists() else []
@@ -103,20 +85,34 @@ for i, line in enumerate(lines):
         break
 else:
     lines.append(f"{key}={value}")
-path.write_text("\n".join(lines) + "\n")
+path.parent.mkdir(parents=True, exist_ok=True)
+fd, temporary_name = tempfile.mkstemp(prefix=".omega-env.", dir=path.parent)
+try:
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        fd = -1
+        handle.write("\n".join(lines) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary_name, path)
+finally:
+    if fd >= 0:
+        os.close(fd)
+    try:
+        os.unlink(temporary_name)
+    except FileNotFoundError:
+        pass
 PY
 }
 
-load_required_secret() {
-  local secret_name="$1"
-  local env_name="$2"
-  local value
-  if ! value="$(secret_value "$${secret_name}")"; then
-    echo "[omega-startup] required Secret Manager value unavailable: $${secret_name}" >&2
-    exit 1
-  fi
-  printf -v "$${env_name}" '%s' "$${value}"
-  export "$${env_name}"
+sync_env_atomic() {
+  local source="$1" target="$2" target_dir temporary
+  target_dir="$(dirname -- "$${target}")"
+  mkdir -p -- "$${target_dir}"
+  temporary="$(mktemp "$${target_dir}/.omega-shared-env.XXXXXX")"
+  cp -- "$${source}" "$${temporary}"
+  chmod 600 "$${temporary}"
+  mv -f -- "$${temporary}" "$${target}"
 }
 
 mkdir -p "$${APP_ROOT}/releases"
@@ -140,20 +136,10 @@ if [[ -n "$${EXISTING_ENV}" ]]; then
   cp "$${EXISTING_ENV}" infra/.env
 fi
 
-load_required_secret control_room_evidence_signing_key_id CONTROL_ROOM_EVIDENCE_SIGNING_KEY_ID
-load_required_secret control_room_evidence_signing_key CONTROL_ROOM_EVIDENCE_SIGNING_KEY
-load_required_secret control_room_evidence_signing_previous_keys CONTROL_ROOM_EVIDENCE_SIGNING_PREVIOUS_KEYS
-
 if [[ ! -f infra/.env ]]; then
   bash infra/bootstrap.sh
 fi
-set_env CONTROL_ROOM_EVIDENCE_SIGNING_KEY_ID "$${CONTROL_ROOM_EVIDENCE_SIGNING_KEY_ID}"
-set_env CONTROL_ROOM_EVIDENCE_SIGNING_KEY "$${CONTROL_ROOM_EVIDENCE_SIGNING_KEY}"
-set_env CONTROL_ROOM_EVIDENCE_SIGNING_PREVIOUS_KEYS "$${CONTROL_ROOM_EVIDENCE_SIGNING_PREVIOUS_KEYS}"
 bash infra/bootstrap-keys.sh infra/.env
-chmod 600 infra/.env
-cp infra/.env "$${SHARED_ENV}"
-chmod 600 "$${SHARED_ENV}"
 mkdir -p data/lakehouse
 mkdir -p airflow/dags airflow/logs/scheduler airflow/plugins
 chown -R 50000:0 airflow/dags airflow/logs airflow/plugins
@@ -179,24 +165,25 @@ set_env S3_BUCKET_NAME "$${LAKEHOUSE_BUCKET}"
 set_env MINIO_BUCKET "$${LAKEHOUSE_BUCKET}"
 set_env MINIO_ENDPOINT "$${LAKEHOUSE_ENDPOINT}"
 set_env MINIO_SECURE true
+# Keep the bootstrap-generated MINIO_* pair for the isolated local MinIO
+# service referenced by the base Compose file. The GCP override passes empty
+# literals to every application container, so GCS workloads cannot consume it.
 set_env AWS_ACCESS_KEY_ID ""
 set_env AWS_SECRET_ACCESS_KEY ""
 set_env AWS_DEFAULT_REGION auto
 set_env AWS_REGION auto
 set_env S3_ENDPOINT_URL "https://$${LAKEHOUSE_ENDPOINT}"
+set_env LAKEHOUSE_ACCESS_KEY ""
+set_env LAKEHOUSE_SECRET_KEY ""
 
-if hmac_access_key="$(secret_value gcs_hmac_access_key_id)"; then
-  set_env AWS_ACCESS_KEY_ID "$${hmac_access_key}"
-  set_env MINIO_ACCESS_KEY "$${hmac_access_key}"
-  set_env GCS_ACCESS_KEY_ID "$${hmac_access_key}"
-  set_env LAKEHOUSE_ACCESS_KEY "$${hmac_access_key}"
-fi
-if hmac_secret_key="$(secret_value gcs_hmac_secret_access_key)"; then
-  set_env AWS_SECRET_ACCESS_KEY "$${hmac_secret_key}"
-  set_env MINIO_SECRET_KEY "$${hmac_secret_key}"
-  set_env GCS_SECRET_ACCESS_KEY "$${hmac_secret_key}"
-  set_env LAKEHOUSE_SECRET_KEY "$${hmac_secret_key}"
-fi
+# One shared implementation is used here and by canonical day-2 deploys.  It
+# fetches the complete GCS HMAC pair before atomically replacing infra/.env.
+OMEGA_GCP_PROJECT_ID="$${PROJECT_ID}" \
+OMEGA_GCP_SECRET_PREFIX="$${SECRET_PREFIX}" \
+OMEGA_ENV_FILE="$${RELEASE_DIR}/infra/.env" \
+  bash "$${RELEASE_DIR}/infra/terraform-gcp/release/hydrate-runtime-secrets.sh"
+chmod 600 infra/.env
+sync_env_atomic infra/.env "$${SHARED_ENV}"
 
 printf '%s\n' "$${COMPOSE_OVERRIDE}" > infra/docker-compose.gcp.yml
 

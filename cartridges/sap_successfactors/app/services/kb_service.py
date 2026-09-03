@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from app.core.config import settings
+from app.core.minio_client import active_storage_bucket
 from app.core.pg_client import get_connection
 from app.core.request_context import (
     SecurityContextError,
@@ -29,7 +29,7 @@ _SQL_STORAGE_PATH_RE = re.compile(
 
 def _scope_kb_sql(sql: str, security_context: dict[str, Any] | None = None) -> str:
     security_context = require_tenant_workspace_scope(security_context)
-    resolved = str(sql or "").replace("{bucket}", settings.minio_bucket)
+    resolved = str(sql or "").replace("{bucket}", active_storage_bucket())
     scope = scoped_prefix(security_context)
 
     def _scope_path(match: re.Match[str]) -> str:
@@ -49,7 +49,7 @@ def _scope_kb_sql(sql: str, security_context: dict[str, Any] | None = None) -> s
 
 
 def _kb_allowed_prefixes() -> tuple[str, str, str]:
-    bucket = settings.minio_bucket
+    bucket = active_storage_bucket()
     return (
         f"s3://{bucket}/raw/{CARTRIDGE_ID}/",
         f"s3://{bucket}/silver/{CARTRIDGE_ID}/",

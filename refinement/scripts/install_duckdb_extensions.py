@@ -4,7 +4,7 @@ from __future__ import annotations
 import duckdb
 
 VERSION = "1.2.2"
-EXTENSIONS = ("httpfs", "postgres")
+EXTENSIONS = ("httpfs", "postgres", "aws")
 
 
 def main() -> None:

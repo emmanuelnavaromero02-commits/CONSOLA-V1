@@ -60,7 +60,7 @@ def _query_limit(value: int | str | None, default: int = 100) -> int:
 
 
 def _sf_allowed_kb_prefixes() -> tuple[str, str, str]:
-    bucket = settings.minio_bucket
+    bucket = active_storage_bucket()
     return (
         f"s3://{bucket}/raw/sap_successfactors/",
         f"s3://{bucket}/silver/sap_successfactors/",
@@ -68,8 +68,9 @@ def _sf_allowed_kb_prefixes() -> tuple[str, str, str]:
     )
 
 
-from app.core.config import settings
 from app.core import job_runner
+from app.core.extraction_status import classify_extraction_exception
+from app.core.minio_client import active_storage_bucket
 from app.core.request_context import (
     SecurityContextError,
     require_tenant_workspace_scope,
@@ -80,9 +81,9 @@ from app.services.catalog_service import (
     get_all_kbs,
     get_entity_config,
 )
-from app.services.duckdb_service import run_kb_sql, _get_duckdb_connection
-from app.services.extraction_service import run_entity
-from app.services.kb_service import _scope_kb_sql, run_knowledge_bit, get_kb_runs
+from app.services.duckdb_service import _get_duckdb_connection
+from app.services.extraction_service import run_entity_with_metadata_guard as run_entity
+from app.services.kb_service import _scope_kb_sql, run_knowledge_bit
 from app.services.watermark_service import get_watermark
 
 mcp = FastMCP(
@@ -168,11 +169,16 @@ def preview(entity: str, limit: int = 20) -> dict[str, Any]:
     # and inject a second read_parquet() call.
     entity = _validate_identifier(entity, "entity")
     limit = _validate_bounded_int(limit, "limit", lo=1, hi=200)
-    bucket = settings.minio_bucket
+    bucket = active_storage_bucket()
     try:
         ctx = require_tenant_workspace_scope()
-    except SecurityContextError as exc:
-        return {"error": "security_context_denied", "reason": str(exc), "rows": [], "columns": []}
+    except SecurityContextError:
+        return {
+            "error": "security_context_denied",
+            "reason": "security_context_denied",
+            "rows": [],
+            "columns": [],
+        }
     scope = scoped_prefix(ctx)
     path = f"s3://{bucket}/raw/sap_successfactors/{entity}/{scope}load_date=*/batch_id=*/*.parquet"
     sql = f"SELECT * FROM read_parquet('{path}', hive_partitioning=true) LIMIT {limit}"
@@ -190,8 +196,13 @@ def preview(entity: str, limit: int = 20) -> dict[str, Any]:
             "rows": [dict(zip(columns, r)) for r in rows],
             "count": len(rows),
         }
-    except Exception as exc:
-        return {"entity": entity, "error": str(exc), "rows": [], "columns": []}
+    except Exception:
+        return {
+            "entity": entity,
+            "error": "preview_failed",
+            "rows": [],
+            "columns": [],
+        }
 
 
 # ── Tool 4: extract (BATCH — returns immediately) ─────────────────────────────
@@ -365,8 +376,12 @@ def run_kb(kb_id: str) -> dict[str, Any]:
     """
     try:
         return run_knowledge_bit(kb_id)
-    except Exception as exc:
-        return {"kb_id": kb_id, "status": "failed", "error": str(exc)}
+    except Exception:
+        return {
+            "kb_id": kb_id,
+            "status": "failed",
+            "error": "knowledge_bit_failed",
+        }
 
 
 # ── Tool 8: query_kb ─────────────────────────────────────────────────────────
@@ -388,14 +403,17 @@ def query_kb(sql: str, limit: int = 100) -> dict[str, Any]:
 
     try:
         limit = _query_limit(limit)
-    except ValueError as exc:
-        return {"error": "invalid_limit", "reason": str(exc)}
+    except ValueError:
+        return {"error": "invalid_limit", "reason": "invalid_limit"}
 
     try:
         ctx = require_tenant_workspace_scope()
         resolved = _scope_kb_sql(str(sql or ""), ctx)
-    except SecurityContextError as exc:
-        return {"error": "security_context_denied", "reason": str(exc)}
+    except SecurityContextError:
+        return {
+            "error": "security_context_denied",
+            "reason": "security_context_denied",
+        }
     ok, err = validate_kb_sql(
         resolved,
         _sf_allowed_kb_prefixes(),
@@ -429,7 +447,7 @@ def _make_sql_tool(name: str, description: str, sql: str) -> None:
     """Register a SQL-query custom tool on the mcp instance."""
     from app.core.sql_guard import validate_kb_sql
 
-    resolved_sql = sql.replace("{bucket}", settings.minio_bucket)
+    resolved_sql = sql.replace("{bucket}", active_storage_bucket())
     ok, err = validate_kb_sql(resolved_sql, _sf_allowed_kb_prefixes())
     if not ok:
 
@@ -445,8 +463,11 @@ def _make_sql_tool(name: str, description: str, sql: str) -> None:
         try:
             ctx = require_tenant_workspace_scope()
             resolved_sql = _scope_kb_sql(sql, ctx)
-        except SecurityContextError as exc:
-            return {"error": "security_context_denied", "reason": str(exc)}
+        except SecurityContextError:
+            return {
+                "error": "security_context_denied",
+                "reason": "security_context_denied",
+            }
         ok, err = validate_kb_sql(
             resolved_sql,
             _sf_allowed_kb_prefixes(),
@@ -487,7 +508,7 @@ def _make_extract_tool(name: str, description: str, entity: str, mode: str) -> N
         try:
             return run_entity(overridden)
         except Exception as exc:
-            return {"entity": entity, "status": "failed", "error": str(exc)}
+            return classify_extraction_exception(entity, exc)
 
     _tool_fn.__name__ = name
     _tool_fn.__doc__ = description or f"Extract {entity} ({mode})"
@@ -500,8 +521,12 @@ def _make_kb_tool(name: str, description: str, kb_id: str) -> None:
     def _tool_fn() -> dict[str, Any]:
         try:
             return run_knowledge_bit(kb_id)
-        except Exception as exc:
-            return {"kb_id": kb_id, "status": "failed", "error": str(exc)}
+        except Exception:
+            return {
+                "kb_id": kb_id,
+                "status": "failed",
+                "error": "knowledge_bit_failed",
+            }
 
     _tool_fn.__name__ = name
     _tool_fn.__doc__ = description or f"Run Knowledge Bit: {kb_id}"

@@ -11,7 +11,12 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 
 from app.core.config import settings
-from app.core.minio_client import upload_file_to_minio
+from app.core.minio_client import (
+    StoragePreflightError,
+    active_storage_bucket,
+    resolve_storage_config,
+    upload_file_to_minio,
+)
 from app.core.request_context import (
     SecurityContextError,
     require_tenant_workspace_scope,
@@ -31,21 +36,43 @@ def _path_has_scope(path: str, scope: str) -> bool:
 
 
 def _get_duckdb_connection() -> duckdb.DuckDBPyConnection:
+    storage = resolve_storage_config()
     conn = duckdb.connect()
     conn.execute("SET autoinstall_known_extensions=false;")
     conn.execute("SET autoload_known_extensions=false;")
     conn.execute("LOAD httpfs;")
-    conn.execute(f"SET s3_endpoint='{settings.minio_endpoint}';")
-    conn.execute(f"SET s3_access_key_id='{settings.minio_access_key}';")
-    conn.execute(f"SET s3_secret_access_key='{settings.minio_secret_key}';")
-    conn.execute(f"SET s3_use_ssl={'true' if settings.minio_secure else 'false'};")
-    conn.execute("SET s3_url_style='path';")
+    try:
+        # All values come from the provider-atomic resolver.  In particular,
+        # GCS never falls back to MINIO_* and signs with region ``auto``.
+        conn.execute("SET s3_endpoint=?;", [storage.endpoint])
+        conn.execute("SET s3_region=?;", [storage.region or "us-east-1"])
+        if storage.access_key and storage.secret_key:
+            conn.execute("SET s3_access_key_id=?;", [storage.access_key])
+            conn.execute("SET s3_secret_access_key=?;", [storage.secret_key])
+            if storage.session_token:
+                conn.execute("SET s3_session_token=?;", [storage.session_token])
+        elif storage.provider == "s3":
+            # The credential-chain provider lives in DuckDB's separately
+            # preinstalled aws extension. Autoload stays disabled, so load it
+            # explicitly only for native S3 role credentials.
+            conn.execute("LOAD aws;")
+            conn.execute(
+                "CREATE OR REPLACE SECRET omega_s3_role "
+                "(TYPE S3, PROVIDER credential_chain);"
+            )
+        conn.execute(f"SET s3_use_ssl={'true' if storage.secure else 'false'};")
+        conn.execute(
+            f"SET s3_url_style='{'vhost' if storage.provider == 's3' else 'path'}';"
+        )
+    except Exception:
+        getattr(conn, "close", lambda: None)()
+        raise StoragePreflightError("storage_access_denied") from None
     conn.execute("SET lock_configuration=true;")
     return conn
 
 
 def run_kb_sql(sql: str) -> pd.DataFrame:
-    resolved = sql.replace("{bucket}", settings.minio_bucket)
+    resolved = sql.replace("{bucket}", active_storage_bucket())
     conn = _get_duckdb_connection()
     try:
         return conn.execute(resolved).df()
@@ -78,7 +105,7 @@ def write_kb_parquet(
         df.to_parquet(local_path, index=False, engine="pyarrow", compression="snappy")
         upload_file_to_minio(local_path=str(local_path), object_name=object_name)
 
-    return f"s3://{settings.minio_bucket}/{object_name}"
+    return f"s3://{active_storage_bucket()}/{object_name}"
 
 
 def write_kb_to_postgres(
