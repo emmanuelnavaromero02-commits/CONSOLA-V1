@@ -15,12 +15,55 @@ jamás un barrido).
 from __future__ import annotations
 
 import hashlib
+import importlib.util
+import sys
+import types
 from pathlib import Path
 
 import duckdb
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DAG = REPO_ROOT / "airflow" / "dags" / "file_ingest.py"
+
+
+def _load_dag_module(monkeypatch):
+    airflow = types.ModuleType("airflow")
+    decorators = types.ModuleType("airflow.decorators")
+    models = types.ModuleType("airflow.models")
+
+    def dag(**_kwargs):
+        return lambda function: function
+
+    def task(function):
+        def deferred(*_args, **_kwargs):
+            return {"task": function.__name__}
+
+        return deferred
+
+    class ForbiddenVariable:
+        @staticmethod
+        def get(*_args, **_kwargs):
+            raise AssertionError("GCS runtime must not read local MinIO Variables")
+
+    decorators.dag = dag
+    decorators.task = task
+    models.Variable = ForbiddenVariable
+    runtime_context = types.ModuleType("runtime_security_context")
+    runtime_context.build_pipeline_run_context = lambda value: value
+    refresh = types.ModuleType("dataset_refresh_admission")
+    refresh.build_dataset_refresh_trigger = lambda **kwargs: kwargs
+    monkeypatch.setitem(sys.modules, "airflow", airflow)
+    monkeypatch.setitem(sys.modules, "airflow.decorators", decorators)
+    monkeypatch.setitem(sys.modules, "airflow.models", models)
+    monkeypatch.setitem(sys.modules, "runtime_security_context", runtime_context)
+    monkeypatch.setitem(sys.modules, "dataset_refresh_admission", refresh)
+
+    spec = importlib.util.spec_from_file_location("file_ingest_gcs_contract", DAG)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_contract_no_prefix_wipe_and_per_file_objects():
@@ -73,3 +116,53 @@ def test_reader_unions_per_file_objects(tmp_path):
     ).fetchone()
     assert total == 3, "las filas de la mañana sobreviven a la tarde"
     assert fuentes == 2
+
+
+def test_gcs_runtime_uses_only_complete_gcs_hmac_pair(monkeypatch):
+    module = _load_dag_module(monkeypatch)
+    for key in (
+        "MINIO_ACCESS_KEY",
+        "MINIO_SECRET_KEY",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+    ):
+        monkeypatch.setenv(key, f"STALE-{key}")
+    monkeypatch.setenv("LAKEHOUSE_PROVIDER", "gcs")
+    monkeypatch.setenv("LAKEHOUSE_ENDPOINT", "storage.googleapis.com")
+    monkeypatch.setenv("GCS_ACCESS_KEY_ID", "gcs-access")
+    monkeypatch.setenv("GCS_SECRET_ACCESS_KEY", "gcs-secret")
+    monkeypatch.setenv("GCS_BUCKET", "omega-bronze")
+
+    captured: dict = {}
+
+    class FakeMinio:
+        def __init__(self, endpoint, **kwargs):
+            captured.update(endpoint=endpoint, **kwargs)
+
+    minio = types.ModuleType("minio")
+    minio.Minio = FakeMinio
+    monkeypatch.setitem(sys.modules, "minio", minio)
+
+    cfg = module._minio_cfg()
+    module._minio_client()
+
+    assert cfg == {
+        "endpoint": "storage.googleapis.com",
+        "access_key": "gcs-access",
+        "secret_key": "gcs-secret",
+        "bucket": "omega-bronze",
+        "secure": True,
+        "region": "auto",
+    }
+    assert captured == {
+        "endpoint": "storage.googleapis.com",
+        "access_key": "gcs-access",
+        "secret_key": "gcs-secret",
+        "secure": True,
+        "region": "auto",
+    }
+
+    monkeypatch.setenv("GCS_SECRET_ACCESS_KEY", "")
+    with pytest.raises(RuntimeError, match="complete GCS lakehouse credentials"):
+        module._minio_cfg()

@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.core.minio_client import require_storage_access
-from app.core.sap_client import SAPClientError, SapSfClient
+from app.core.sap_client import ODataRequestError, SapSfClient
 from app.services.parquet_service import write_parquet_and_upload
 from app.services.runlog_service import create_run, fail_run, finish_run
 from app.services.watermark_service import get_watermark, touch_watermark_attempt, update_watermark
@@ -235,15 +235,10 @@ def _build_incremental_filter(
 
 
 def _is_incremental_filter_rejected(exc: Exception) -> bool:
-    if not isinstance(exc, SAPClientError):
-        return False
-    text = str(exc).lower()
-    if "oauth/token" in text or "token request" in text or "saml bearer" in text:
-        return False
-    return ("400" in text or "bad request" in text) and (
-        "$filter" in text
-        or "filter" in text
-        or "get " in text
+    return (
+        isinstance(exc, ODataRequestError)
+        and exc.status_code == 400
+        and exc.filter_applied
     )
 
 

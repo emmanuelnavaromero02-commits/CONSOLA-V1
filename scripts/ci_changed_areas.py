@@ -269,6 +269,12 @@ def _root_test_targets(files: list[str]) -> str:
             "tests/test_gcp_canonical_deploy.py",
             "tests/test_gcp_runtime_secret_hydration.py",
         },
+        "scripts/gcp/render_gcp_compose_override.py": {
+            "tests/test_gcp_canonical_deploy.py",
+        },
+        "airflow/dags/file_ingest.py": {
+            "tests/test_t2_file_ingest_accumulates.py",
+        },
         ".github/workflows/release.yml": {
             "tests/test_release_root_target_partition.py",
         },
@@ -351,6 +357,7 @@ def _root_test_targets(files: list[str]) -> str:
             for target in {
                 "tests/test_phase0_provider_safe_storage.py",
                 "tests/test_gcp_runtime_secret_hydration.py",
+                "tests/test_gcp_canonical_deploy.py",
                 "tests/test_replicon_ses_upload_scope.py",
             }
             if Path(target).exists()
@@ -459,7 +466,7 @@ def _flags(files: list[str]) -> dict[str, bool | str]:
         r"^cartridges/[^/]+/(app|dags|Dockerfile)",
         r"^infra/airflow/",
         r"^scripts/(production|v1_stress|acceptance|smoke|run-e2e)",
-        r"^scripts/gcp/gcp-canonical-deploy(?:-remote)?\.sh$",
+        r"^scripts/gcp/(?:gcp-canonical-deploy(?:-remote)?\.sh|render_gcp_compose_override\.py)$",
         r"^infra/terraform-gcp/release/hydrate-runtime-secrets\.sh$",
         r"^\.github/workflows/(release|deploy-aws|docker-image|e2e)\.yml$",
     )

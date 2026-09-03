@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.sap_client import SAPClientError, SapSfClient
+from app.core.sap_client import ODataRequestError, SAPClientError, SapSfClient
 
 
 class _Response:
@@ -18,20 +18,6 @@ class _Response:
 class _ForbiddenResponse:
     status_code = 403
     text = '{"error":"Not authorized for Candidate","access_token":"secret-token"}'
-
-
-class _BadRequestResponse:
-    status_code = 400
-    text = (
-        '{"error":{"code":"COE_PROPERTY_NOT_FOUND","message":{"value":'
-        '"Invalid property names: EmpEmploymentTermination/eventReasonExternalCode"}},'
-        '"access_token":"secret-token"}'
-    )
-
-    def raise_for_status(self) -> None:
-        import requests
-
-        raise requests.HTTPError("400 Client Error", response=self)
 
 
 def test_fetch_entity_includes_effective_dated_from_to_params(monkeypatch):
@@ -104,7 +90,24 @@ def test_fetch_entity_403_uses_safe_permission_error(monkeypatch):
 
 
 def test_fetch_entity_400_does_not_report_sap_body_query_or_url(monkeypatch):
+    import requests
+
     captured: dict = {}
+    response = requests.Response()
+    response.status_code = 400
+    response.url = (
+        "https://api68sales.successfactors.com/odata/v2/EmpEmploymentTermination"
+        "?$filter=personIdExternal%20eq%20SENTINEL-PII"
+    )
+    response._content = (
+        b'{"error":{"code":"COE_PROPERTY_NOT_FOUND","message":{"value":'
+        b'"Invalid property names for SENTINEL-PII"}},"access_token":"secret-token"}'
+    )
+    response.request = requests.Request(
+        "GET",
+        response.url,
+        headers={"Authorization": "Bearer secret-token"},
+    ).prepare()
     client = SapSfClient.__new__(SapSfClient)
     client.base_url = "https://api68sales.successfactors.com/odata/v2"
     client._conn_id = "femsa_sf"
@@ -112,20 +115,28 @@ def test_fetch_entity_400_does_not_report_sap_body_query_or_url(monkeypatch):
         "Session",
         (),
         {
-            "get": lambda _self, url, **kwargs: captured.update({"url": url, **kwargs}) or _BadRequestResponse(),
+            "get": lambda _self, url, **kwargs: captured.update({"url": url, **kwargs}) or response,
         },
     )()
     monkeypatch.setattr(client, "_require_configured", lambda: None)
     monkeypatch.setattr(client, "_headers", lambda: {"Authorization": "Bearer token"})
     monkeypatch.setattr(client, "_log_auth", lambda _status_code: None)
 
-    with pytest.raises(SAPClientError) as exc_info:
+    with pytest.raises(ODataRequestError) as exc_info:
         client.fetch_entity(
             "EmpEmploymentTermination",
             select=["userId", "endDate", "eventReasonExternalCode", "lastModifiedDateTime"],
+            filter_expr="personIdExternal eq 'SENTINEL-PII'",
         )
 
-    message = str(exc_info.value)
+    error = exc_info.value
+    message = str(error)
+    assert error.status_code == 400
+    assert error.filter_applied is True
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    assert not hasattr(error, "response")
+    assert not hasattr(error, "request")
     assert "SuccessFactors rechazo solicitud OData (HTTP 400)" in message
     assert "entity=EmpEmploymentTermination" in message
     assert "conn_id=" not in message
@@ -134,3 +145,14 @@ def test_fetch_entity_400_does_not_report_sap_body_query_or_url(monkeypatch):
     assert "COE_PROPERTY_NOT_FOUND" not in message
     assert "Invalid property names" not in message
     assert "secret-token" not in message
+    assert "SENTINEL-PII" not in repr(error)
+    assert "api68sales" not in repr(vars(error))
+    assert "secret-token" not in repr(vars(error))
+
+    unsafe_entity = ODataRequestError(
+        entity="PerPerson/SENTINEL-PII",
+        status_code=400,
+        filter_applied=True,
+    )
+    assert "entity=unknown" in str(unsafe_entity)
+    assert "SENTINEL-PII" not in str(unsafe_entity)

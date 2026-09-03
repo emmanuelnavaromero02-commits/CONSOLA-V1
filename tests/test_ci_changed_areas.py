@@ -132,6 +132,12 @@ def test_gcp_secret_and_day2_runtime_changes_select_fail_closed_contracts():
         assert flags["release_full_stack"] is True
 
 
+def test_file_ingest_runtime_change_selects_accumulation_and_gcs_contract():
+    flags = _flags("airflow/dags/file_ingest.py")
+
+    assert "tests/test_t2_file_ingest_accumulates.py" in _root_targets(flags)
+
+
 def test_console_storage_generators_select_their_exact_regressions():
     expected = {
         "console/app/services/s3_client.py": "console/tests/test_console_s3_iam_client.py",
@@ -168,8 +174,17 @@ def test_provider_runtime_only_changes_select_cross_provider_contracts():
     assert {
         "tests/test_phase0_provider_safe_storage.py",
         "tests/test_gcp_runtime_secret_hydration.py",
+        "tests/test_gcp_canonical_deploy.py",
         "tests/test_replicon_ses_upload_scope.py",
     } <= overlay_targets
+
+    renderer_targets = _root_targets(
+        _flags("scripts/gcp/render_gcp_compose_override.py")
+    )
+    assert "tests/test_gcp_canonical_deploy.py" in renderer_targets
+    assert _flags("scripts/gcp/render_gcp_compose_override.py")[
+        "release_full_stack"
+    ] is True
 
 
 def test_offline_aws_extension_runtime_changes_select_preload_contracts():

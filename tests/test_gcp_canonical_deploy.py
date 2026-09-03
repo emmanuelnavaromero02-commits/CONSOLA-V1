@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import shlex
 import subprocess
 from pathlib import Path
@@ -18,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from scripts.release_image_promotion import CANONICAL_SERVICES, OCI_MANIFEST
+from scripts.gcp.render_gcp_compose_override import RenderError, render_file
 
 REPO = Path(__file__).resolve().parents[1]
 LOCAL = REPO / "scripts" / "gcp" / "gcp-canonical-deploy.sh"
@@ -83,6 +85,7 @@ def _run_local_manifest_preflight(
     checksum: Path,
     *,
     owner: str = "omega-owner",
+    image_pull_min_free_gib: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     env = {
         **os.environ,
@@ -95,6 +98,8 @@ def _run_local_manifest_preflight(
         "OMEGA_SOURCE_BUCKET": "omega-source-bucket",
         "OMEGA_ZONE": "us-central1-a",
     }
+    if image_pull_min_free_gib is not None:
+        env["OMEGA_IMAGE_PULL_MIN_FREE_GIB"] = image_pull_min_free_gib
     return subprocess.run(
         ["bash", str(LOCAL), TAG, SOURCE_SHA],
         cwd=REPO,
@@ -121,6 +126,8 @@ def test_runbook_documents_the_mechanism():
         assert token in text
     assert "before the maintenance window" in text
     assert "day2-release.sh` is intentionally disabled" in text
+    assert "Day-2 never copies this overlay from the" in text
+    assert "dry-run cached 15/15" in text
 
 
 def test_driver_never_targets_aws():
@@ -396,6 +403,25 @@ def test_local_rejects_shell_syntax_in_owner_before_any_tool_call(
     assert "OMEGA_GHCR_OWNER" in result.stderr
 
 
+@pytest.mark.parametrize(
+    "margin", ["0", "4", "08", "010", "1025", "20GiB", "$(id)"]
+)
+def test_local_rejects_unsafe_image_pull_free_space_margin(
+    tmp_path: Path, margin: str
+):
+    manifest, checksum, _value = _release_assets(tmp_path)
+
+    result = _run_local_manifest_preflight(
+        tmp_path,
+        manifest,
+        checksum,
+        image_pull_min_free_gib=margin,
+    )
+
+    assert result.returncode != 0
+    assert "OMEGA_IMAGE_PULL_MIN_FREE_GIB" in result.stderr
+
+
 def test_source_archive_is_bound_to_checksum_and_immutable_gcs_generation():
     local = LOCAL.read_text(encoding="utf-8")
     remote = REMOTE.read_text(encoding="utf-8")
@@ -441,12 +467,51 @@ def test_remote_snapshots_mutable_overlay_and_verifies_the_exact_compose_copy():
     assert 'chmod 0400 "${TRUSTED_IMAGES_OVERLAY}"' in text
 
 
+def test_day2_renders_exact_release_gcp_template_atomically(tmp_path: Path):
+    remote = REMOTE.read_text(encoding="utf-8")
+    assert 'cp -f "${CURRENT}/infra/docker-compose.gcp.yml"' not in remote
+    assert 'GCP_OVERLAY_TEMPLATE="${RELEASE_DIR}/infra/terraform-gcp/templates/' in remote
+    assert 'python3 -I "${GCP_OVERLAY_RENDERER}"' in remote
+    assert '"${GCP_OVERLAY_TEMPLATE}" "${CANDIDATE_GCP_OVERLAY}"' in remote
+    assert "config --quiet --no-interpolate" in remote
+
+    source_template = REPO / "infra/terraform-gcp/templates/docker-compose.gcp.yml.tftpl"
+    changed_template = tmp_path / "docker-compose.gcp.yml.tftpl"
+    marker = "# candidate-template-change-reached-day2"
+    changed_template.write_text(
+        source_template.read_text(encoding="utf-8") + marker + "\n",
+        encoding="utf-8",
+    )
+    candidate = tmp_path / "candidate" / "docker-compose.gcp.yml"
+    render_file(changed_template, candidate)
+
+    rendered = candidate.read_text(encoding="utf-8")
+    assert rendered == changed_template.read_text(encoding="utf-8").replace(
+        "$${", "${"
+    )
+    assert marker in rendered
+    assert "$${" not in rendered
+    assert "%{" not in rendered
+    assert "${LAKEHOUSE_PROVIDER:-gcs}" in rendered
+    assert candidate.stat().st_mode & 0o777 == 0o600
+
+    before = candidate.read_bytes()
+    invalid = tmp_path / "invalid.tftpl"
+    invalid.write_text(
+        source_template.read_text(encoding="utf-8") + "${terraform_expression}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(RenderError, match="Terraform syntax"):
+        render_file(invalid, candidate)
+    assert candidate.read_bytes() == before
+
+
 def test_remote_pull_keeps_validated_digests_as_quoted_positional_arguments():
     text = REMOTE.read_text(encoding="utf-8")
     assert 'awk \'$1 == "image:" && NF == 2 { print $2 }\'' in text
     assert '"${ref#${prefix}}" =~ ^[0-9a-f]{64}$' in text
     assert 'for ref in "$@"' in text
-    assert 'omega-image-pull "${DIGEST_REFS[@]}"' in text
+    assert 'omega-image-pull "${MISSING_DIGEST_REFS[@]}"' in text
     assert "declare -f pull_all" not in text
     assert "DIGEST_REFS=(${DIGEST_REFS[*]})" not in text
 
@@ -492,8 +557,151 @@ def test_remote_pull_body_does_not_execute_shell_syntax_in_arguments(tmp_path: P
 
 def test_remote_command_serializes_each_environment_assignment_as_argv():
     text = LOCAL.read_text(encoding="utf-8")
-    assert "remote_argv=(sudo env" in text
+    assert "remote_argv=(sudo bash -c" in text
+    assert "git show \"${DEPLOY_REF}:scripts/gcp/gcp-canonical-deploy-remote.sh\"" in text
+    assert 'REMOTE_DEPLOYER_SHA256="$(sha256_file "${remote_deployer}")"' in text
+    assert "REMOTE_BOOTSTRAP=\"$(cat <<'OMEGA_REMOTE_BOOTSTRAP'" in text
+    assert 'env "$@" bash "${trusted_deployer}"' in text
+    assert 'chown root:root "${trusted_deployer}"' in text
+    assert 'chmod 0500 "${trusted_deployer}"' in text
+    assert "${STAGE_NONCE}" in text
     assert "printf -v remote_command '%q '" in text
     assert 'SOURCE_SHA256=${SOURCE_SHA256}' in text
     assert 'SOURCE_GENERATION=${SOURCE_GENERATION}' in text
     assert 'IMAGES_OVERLAY_SHA256=${IMAGES_OVERLAY_SHA256}' in text
+    assert 'REMOTE_STAGE_PATHS=("${REMOTE_OVERLAY_STAGED}" "${REMOTE_DEPLOYER_STAGED}")' in text
+
+
+def _remote_bootstrap() -> str:
+    match = re.search(
+        r"REMOTE_BOOTSTRAP=\"\$\(cat <<'OMEGA_REMOTE_BOOTSTRAP'\n"
+        r"(?P<body>.*?)\nOMEGA_REMOTE_BOOTSTRAP\n\)\"",
+        LOCAL.read_text(encoding="utf-8"),
+        flags=re.DOTALL,
+    )
+    assert match is not None
+    return match.group("body")
+
+
+def _bootstrap_paths() -> tuple[Path, Path]:
+    identity = f"{'a' * 40}-{secrets.token_hex(16)}"
+    return (
+        Path(f"/tmp/gcp-canonical-deploy-remote-{identity}.sh"),
+        Path(f"/tmp/omega-images-{identity}.yml"),
+    )
+
+
+def _bootstrap_test_env(tmp_path: Path, *, racing_cp: bool) -> dict[str, str]:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir(exist_ok=True)
+    chown = fake_bin / "chown"
+    chown.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    chown.chmod(0o755)
+    if racing_cp:
+        cp = fake_bin / "cp"
+        cp.write_text(
+            "#!/bin/sh\n"
+            '"$REAL_CP" "$@"\n'
+            "printf '%s\\n' '#!/bin/sh' 'touch \"$MALICIOUS_SENTINEL\"' > \"$RACE_SOURCE\"\n",
+            encoding="utf-8",
+        )
+        cp.chmod(0o755)
+    else:
+        (fake_bin / "cp").unlink(missing_ok=True)
+    return {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "REAL_CP": "/bin/cp",
+    }
+
+
+def test_sudo_bootstrap_snapshots_before_race_and_rejects_bad_checksum(tmp_path: Path):
+    trusted_root = tmp_path / "root"
+    trusted_root.mkdir()
+    bootstrap = _remote_bootstrap().replace("/opt/modecissions", str(trusted_root))
+
+    staged, overlay = _bootstrap_paths()
+    good_sentinel = tmp_path / "trusted-ran"
+    malicious_sentinel = tmp_path / "raced-source-ran"
+    payload = '#!/bin/sh\ntouch "$TEST_SENTINEL"\nprintf "%s" "$UNTRUSTED_VALUE" > "$VALUE_CAPTURE"\n'
+    staged.write_text(payload, encoding="utf-8")
+    overlay.write_text("services: {}\n", encoding="utf-8")
+    expected_sha = hashlib.sha256(payload.encode()).hexdigest()
+    env = _bootstrap_test_env(tmp_path, racing_cp=True)
+    env.update(
+        {
+            "RACE_SOURCE": str(staged),
+            "MALICIOUS_SENTINEL": str(malicious_sentinel),
+        }
+    )
+    capture = tmp_path / "value"
+    attack = f"$(touch {tmp_path / 'interpolation-ran'})"
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            bootstrap,
+            "omega-remote-bootstrap",
+            str(staged),
+            expected_sha,
+            str(overlay),
+            f"TEST_SENTINEL={good_sentinel}",
+            f"VALUE_CAPTURE={capture}",
+            f"UNTRUSTED_VALUE={attack}",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert good_sentinel.exists()
+    assert not malicious_sentinel.exists()
+    assert capture.read_text(encoding="utf-8") == attack
+    assert not (tmp_path / "interpolation-ran").exists()
+    assert not staged.exists() and not overlay.exists()
+
+    staged, overlay = _bootstrap_paths()
+    rejected_sentinel = tmp_path / "bad-checksum-ran"
+    staged.write_text(
+        f"#!/bin/sh\ntouch {shlex.quote(str(rejected_sentinel))}\n",
+        encoding="utf-8",
+    )
+    overlay.write_text("services: {}\n", encoding="utf-8")
+    bad = subprocess.run(
+        [
+            "bash",
+            "-c",
+            bootstrap,
+            "omega-remote-bootstrap",
+            str(staged),
+            expected_sha,
+            str(overlay),
+        ],
+        env=_bootstrap_test_env(tmp_path, racing_cp=False),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert bad.returncode == 75
+    assert not rejected_sentinel.exists()
+    assert not staged.exists() and not overlay.exists()
+
+
+def test_image_pull_disk_gate_precedes_pull_and_quiesce_and_skips_when_cached():
+    text = REMOTE.read_text(encoding="utf-8")
+    missing = text.index('if [[ "${#MISSING_DIGEST_REFS[@]}" -gt 0 ]]')
+    disk = text.index('log "preflight disk:', missing)
+    pull = text.index('docker pull --quiet "$ref"', disk)
+    cached = text.index("15/15 immutable digests already cached", pull)
+    branch_end = text.index("\nfi", cached)
+    quiesce = text.index('log "step 1 quiesce', branch_end)
+
+    assert missing < disk < pull < cached < branch_end < quiesce
+    assert "findmnt -n -T /var/lib/containerd -o TARGET" in text[missing:disk]
+    assert "IMAGE_PULL_MIN_FREE_GIB:-20" in text
+    assert 'omega-image-pull "${MISSING_DIGEST_REFS[@]}"' in text[missing:cached]
+    # The cached else branch contains neither a disk query nor a pull.
+    cached_branch = text[cached:branch_end]
+    assert "findmnt" not in cached_branch
+    assert "docker pull" not in cached_branch

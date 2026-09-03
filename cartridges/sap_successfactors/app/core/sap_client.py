@@ -166,6 +166,39 @@ class SAPClientError(RuntimeError):
     pass
 
 
+class ODataRequestError(SAPClientError):
+    """Safe, typed failure for one OData entity request.
+
+    Only the status and whether the rejected request carried ``$filter`` are
+    retained for downstream policy decisions.  The response body, request URL,
+    query values, connection id and direct identifiers are intentionally not
+    attributes of this exception.
+    """
+
+    def __init__(
+        self,
+        *,
+        entity: str,
+        status_code: int,
+        filter_applied: bool,
+    ) -> None:
+        safe_entity = (
+            entity
+            if isinstance(entity, str)
+            and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]{0,127}", entity)
+            else "unknown"
+        )
+        safe_status = int(status_code)
+        if safe_status < 100 or safe_status > 599:
+            safe_status = 0
+        self.status_code = safe_status
+        self.filter_applied = bool(filter_applied)
+        super().__init__(
+            f"SuccessFactors rechazo solicitud OData (HTTP {safe_status}) "
+            f"para entity={safe_entity} (successfactors_metadata_invalid)."
+        )
+
+
 def _token_rejected_message(auth_label: str, exc: requests.HTTPError) -> str:
     response = exc.response
     status = response.status_code if response is not None else "unknown"
@@ -189,22 +222,6 @@ def _odata_access_rejected_message(
     return (
         f"SuccessFactors rechazo acceso OData (HTTP {status}) para entity={entity} "
         "(successfactors_access_denied)."
-    )
-
-
-def _odata_request_failed_message(
-    *,
-    entity: str,
-    url: str,
-    params: dict[str, Any],
-    conn_id: str | None,
-    response: requests.Response,
-) -> str:
-    del url, params, conn_id
-    status = response.status_code
-    return (
-        f"SuccessFactors rechazo solicitud OData (HTTP {status}) para entity={entity} "
-        "(successfactors_metadata_invalid)."
     )
 
 
@@ -1035,6 +1052,7 @@ class SapSfClient:
             params["toDate"] = to_date
 
         url = f"{self.base_url}/{entity}"
+        safe_request_error: ODataRequestError | None = None
         try:
             CartridgeCircuitBreaker.before_request()
             logger.warning("SAP SuccessFactors outbound GET %s", url)
@@ -1063,18 +1081,21 @@ class SapSfClient:
             if not isinstance(exc, requests.HTTPError):
                 CartridgeCircuitBreaker.record_failure()
             if isinstance(exc, requests.HTTPError) and exc.response is not None:
-                raise SAPClientError(
-                    _odata_request_failed_message(
-                        entity=entity,
-                        url=url,
-                        params=params,
-                        conn_id=self._conn_id,
-                        response=exc.response,
-                    )
-                ) from exc
-            status = getattr(getattr(exc, "response", None), "status_code", None)
-            suffix = f" HTTP {status}" if status else ""
-            raise SAPClientError(f"successfactors_request_failed{suffix}") from exc
+                safe_request_error = ODataRequestError(
+                    entity=entity,
+                    status_code=exc.response.status_code,
+                    filter_applied="$filter" in params,
+                )
+            else:
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+                suffix = f" HTTP {status}" if status else ""
+                raise SAPClientError(f"successfactors_request_failed{suffix}") from exc
+
+        # Raise outside the requests exception handler so the safe typed error
+        # does not retain the HTTPError/Response as cause or context. Those
+        # objects may contain the full URL, query, response body and auth data.
+        if safe_request_error is not None:
+            raise safe_request_error
 
         if isinstance(payload, dict) and "d" in payload:
             inner = payload["d"]

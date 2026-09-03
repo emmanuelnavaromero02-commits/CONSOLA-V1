@@ -53,7 +53,12 @@ die() { printf '[remote-deploy] ERROR: %s\n' "$*" >&2; exit 1; }
 DEPLOY_MODE="${DEPLOY_MODE:-apply}"
 [[ "${DEPLOY_MODE}" == "apply" || "${DEPLOY_MODE}" == "dryrun" ]] \
   || die "deploy mode is invalid."
-[[ "${IMAGES_OVERLAY}" == "/tmp/omega-images-${DEPLOY_REF}.yml" ]] \
+IMAGE_PULL_MIN_FREE_GIB="${IMAGE_PULL_MIN_FREE_GIB:-20}"
+[[ "${IMAGE_PULL_MIN_FREE_GIB}" =~ ^[1-9][0-9]*$ \
+      && "${IMAGE_PULL_MIN_FREE_GIB}" -ge 5 \
+      && "${IMAGE_PULL_MIN_FREE_GIB}" -le 1024 ]] \
+  || die "image pull free-space margin must be an integer from 5 through 1024 GiB."
+[[ "${IMAGES_OVERLAY}" =~ ^/tmp/omega-images-${DEPLOY_REF}-[0-9a-f]{32}\.yml$ ]] \
   || die "image overlay path is invalid."
 [[ -f "${IMAGES_OVERLAY}" && ! -L "${IMAGES_OVERLAY}" ]] \
   || die "image overlay is missing or is not a regular staged file."
@@ -112,6 +117,7 @@ CANDIDATE_ENV_BACKUP=""
 SHARED_ENV_BACKUP=""
 SOURCE_ARCHIVE_TMP=""
 RELEASE_STAGE_TMP=""
+RENDERED_GCP_OVERLAY_TMP=""
 
 cleanup_preflight_artifacts() {
   if [[ -n "${TRUSTED_IMAGES_OVERLAY}" \
@@ -128,6 +134,11 @@ cleanup_preflight_artifacts() {
         && "${RELEASE_STAGE_TMP}" == "${APP_ROOT}/releases/.${DEPLOY_REF}.stage."* ]]; then
     rm -rf -- "${RELEASE_STAGE_TMP}"
     RELEASE_STAGE_TMP=""
+  fi
+  if [[ -n "${RENDERED_GCP_OVERLAY_TMP}" \
+        && "${RENDERED_GCP_OVERLAY_TMP}" == "${APP_ROOT}/.docker-compose.gcp.${DEPLOY_REF}."* ]]; then
+    rm -f -- "${RENDERED_GCP_OVERLAY_TMP}"
+    RENDERED_GCP_OVERLAY_TMP=""
   fi
 }
 
@@ -480,13 +491,21 @@ PY
   SOURCE_ARCHIVE_TMP=""
   source_receipt_matches || die "source artifact receipt verification failed after stage."
 fi
-# Carry the environment overlay + shared env + digest-pinned image overlay into the
-# NEW release dir. Do not copy overlays over the currently-live release tree.
+# Generate the GCP overlay from the exact template in the verified source
+# archive.  This is the day-2 equivalent of Terraform templatefile(path, {}) and
+# deliberately never carries the live release's potentially stale overlay.
 CANDIDATE_IMAGES_OVERLAY="${RELEASE_DIR}/infra/docker-compose.aws-images.gcp.yml"
+CANDIDATE_GCP_OVERLAY="${RELEASE_DIR}/infra/docker-compose.gcp.yml"
+GCP_OVERLAY_TEMPLATE="${RELEASE_DIR}/infra/terraform-gcp/templates/docker-compose.gcp.yml.tftpl"
+GCP_OVERLAY_RENDERER="${RELEASE_DIR}/scripts/gcp/render_gcp_compose_override.py"
+[[ -f "${GCP_OVERLAY_RENDERER}" && ! -L "${GCP_OVERLAY_RENDERER}" ]] \
+  || die "verified release is missing the GCP overlay renderer."
 if [[ "$(readlink -f "${RELEASE_DIR}")" != "${PREV_TARGET}" ]]; then
-  cp -f "${CURRENT}/infra/docker-compose.gcp.yml" "${RELEASE_DIR}/infra/docker-compose.gcp.yml"
   cp -f "${SHARED_ENV}" "${RELEASE_DIR}/infra/.env"
   chmod 600 "${RELEASE_DIR}/infra/.env"
+  python3 -I "${GCP_OVERLAY_RENDERER}" \
+    "${GCP_OVERLAY_TEMPLATE}" "${CANDIDATE_GCP_OVERLAY}" \
+    || die "candidate GCP overlay render failed."
   replace_file_verified \
     "${TRUSTED_IMAGES_OVERLAY}" \
     "${CANDIDATE_IMAGES_OVERLAY}" \
@@ -501,13 +520,33 @@ if [[ "$(readlink -f "${RELEASE_DIR}")" != "${PREV_TARGET}" ]]; then
   chown -R 50000:0 "${RELEASE_DIR}/airflow/dags" "${RELEASE_DIR}/airflow/logs" "${RELEASE_DIR}/airflow/plugins"
   chmod -R 775 "${RELEASE_DIR}/airflow/dags" "${RELEASE_DIR}/airflow/logs" "${RELEASE_DIR}/airflow/plugins"
 else
-  log "preflight stage: target ref is the live release; leaving its tree untouched"
+  RENDERED_GCP_OVERLAY_TMP="$(mktemp "${APP_ROOT}/.docker-compose.gcp.${DEPLOY_REF}.XXXXXX")"
+  python3 -I "${GCP_OVERLAY_RENDERER}" \
+    "${GCP_OVERLAY_TEMPLATE}" "${RENDERED_GCP_OVERLAY_TMP}" \
+    || die "live-ref GCP overlay verification render failed."
+  cmp -s "${RENDERED_GCP_OVERLAY_TMP}" "${CANDIDATE_GCP_OVERLAY}" \
+    || die "live release GCP overlay differs from its verified source template."
+  rm -f -- "${RENDERED_GCP_OVERLAY_TMP}"
+  RENDERED_GCP_OVERLAY_TMP=""
+  log "preflight stage: target ref is live and its generated GCP overlay is exact"
 fi
+[[ -f "${CANDIDATE_GCP_OVERLAY}" && ! -L "${CANDIDATE_GCP_OVERLAY}" ]] \
+  || die "candidate GCP overlay is missing or is not a regular file."
 [[ -f "${CANDIDATE_IMAGES_OVERLAY}" && ! -L "${CANDIDATE_IMAGES_OVERLAY}" \
       && "$(sha256_of "${CANDIDATE_IMAGES_OVERLAY}")" == "${IMAGES_OVERLAY_SHA256}" ]] \
   || die "the image overlay actually used by Compose is not the operator-verified digest lock."
 rm -f -- "${TRUSTED_IMAGES_OVERLAY}"
 TRUSTED_IMAGES_OVERLAY=""
+
+# Parse/merge the exact candidate files without evaluating Compose variable
+# interpolation. The renderer above independently rejects any Terraform
+# interpolation/directive that should have been consumed before this point.
+( cd "${RELEASE_DIR}" && docker compose --env-file infra/.env \
+    -f infra/docker-compose.yml \
+    -f infra/docker-compose.gcp.yml \
+    -f infra/docker-compose.aws-images.gcp.yml \
+    --profile sap config --quiet --no-interpolate ) \
+  || die "candidate Compose configuration is invalid."
 
 # Refresh runtime secrets on every canonical deploy, including a release that
 # was staged previously.  The helper validates all values (especially both
@@ -535,7 +574,7 @@ fi
 # Publish-only releases push by immutable digest only, so pull the exact digests
 # the operator pinned into the images overlay (single source of truth), not a
 # vX.Y.Z tag that GHCR never received.
-log "preflight images: authenticated pull of the 15 release digests"
+log "preflight images: verify/cache the 15 release digests"
 EXPECTED_IMAGES=(airflow banxico console hubspot inegi mcp-infra refinement replicon
   salesforce sap_hcm sap_s4hana sap_successfactors sec_edgar vault workspace)
 DIGEST_REFS=()
@@ -559,21 +598,53 @@ for image in "${EXPECTED_IMAGES[@]}"; do
     || die "image overlay is not an exact owner-scoped 15-service digest lock."
 done
 
+# Pulling missing image layers can exhaust the filesystem that actually backs
+# containerd. Check that filesystem before network I/O or quiescence. A prior
+# dry-run may already have cached all 15 digests; in that case apply neither
+# repeats the pull nor rejects the release based on space consumed by that pull.
+MISSING_DIGEST_REFS=()
+for ref in "${DIGEST_REFS[@]}"; do
+  docker image inspect "${ref}" >/dev/null 2>&1 || MISSING_DIGEST_REFS+=("${ref}")
+done
+if [[ "${#MISSING_DIGEST_REFS[@]}" -gt 0 ]]; then
+  [[ -d /var/lib/containerd ]] || die "/var/lib/containerd is missing."
+  command -v findmnt >/dev/null 2>&1 || die "findmnt is required for the image pull disk gate."
+  CONTAINERD_MOUNT="$(findmnt -n -T /var/lib/containerd -o TARGET | head -n 1)"
+  CONTAINERD_SOURCE="$(findmnt -n -T /var/lib/containerd -o SOURCE | head -n 1)"
+  CONTAINERD_FSTYPE="$(findmnt -n -T /var/lib/containerd -o FSTYPE | head -n 1)"
+  [[ "${CONTAINERD_MOUNT}" == /* && -n "${CONTAINERD_SOURCE}" && -n "${CONTAINERD_FSTYPE}" ]] \
+    || die "could not identify the filesystem backing /var/lib/containerd."
+  CONTAINERD_FREE_BYTES="$(df --block-size=1 --output=avail "${CONTAINERD_MOUNT}" \
+    | awk 'NR == 2 { gsub(/[[:space:]]/, "", $0); print $0 }')"
+  [[ "${CONTAINERD_FREE_BYTES}" =~ ^[0-9]+$ ]] \
+    || die "could not measure free bytes on the containerd filesystem."
+  IMAGE_PULL_MIN_FREE_BYTES=$((IMAGE_PULL_MIN_FREE_GIB * 1024 * 1024 * 1024))
+  log "preflight disk: containerd mount=${CONTAINERD_MOUNT} source=${CONTAINERD_SOURCE} fstype=${CONTAINERD_FSTYPE} missing=${#MISSING_DIGEST_REFS[@]} margin_gib=${IMAGE_PULL_MIN_FREE_GIB}"
+  [[ "${CONTAINERD_FREE_BYTES}" -ge "${IMAGE_PULL_MIN_FREE_BYTES}" ]] \
+    || die "containerd filesystem lacks the configured pre-pull free-space margin."
+
 # The command body is static and each digest remains one quoted positional
 # argument. Do not serialize an array/function back into shell source: that
 # would turn a future parser regression into command execution as root.
-OMEGA_GCP_ENVIRONMENT="${ENVIRONMENT}" OMEGA_GHCR_PULL_SECRET_VERSION="${GHCR_SECRET_VERSION}" \
-  bash "${RELEASE_DIR}/infra/terraform-gcp/release/ghcr-auth-run.sh" \
-    bash -c 'set -Eeuo pipefail; for ref in "$@"; do docker pull --quiet "$ref" >/dev/null; done' \
-    omega-image-pull "${DIGEST_REFS[@]}" \
-  || die "authenticated image pull failed (15/15 required)."
+  OMEGA_GCP_ENVIRONMENT="${ENVIRONMENT}" OMEGA_GHCR_PULL_SECRET_VERSION="${GHCR_SECRET_VERSION}" \
+    bash "${RELEASE_DIR}/infra/terraform-gcp/release/ghcr-auth-run.sh" \
+      bash -c 'set -Eeuo pipefail; for ref in "$@"; do docker pull --quiet "$ref" >/dev/null; done' \
+      omega-image-pull "${MISSING_DIGEST_REFS[@]}" \
+    || die "authenticated image pull failed (all missing digests required)."
+else
+  log "preflight images: 15/15 immutable digests already cached; disk gate and pull skipped"
+fi
+for ref in "${DIGEST_REFS[@]}"; do
+  docker image inspect "${ref}" >/dev/null 2>&1 \
+    || die "image cache verification failed after authenticated pull."
+done
 
 # Dry-run ends before the maintenance window: no writer stop, database fence,
 # dump, migration or compose mutation is allowed. Secret hydration is exercised
 # against the staged candidate and then restored before success is reported.
 if [[ "${DEPLOY_MODE:-apply}" == "dryrun" ]]; then
   trap - ERR EXIT
-  log "DRY-RUN OK: release staged, secrets/config validated read-only and 15/15 images pulled. No DB/service/env mutation."
+  log "DRY-RUN OK: release staged, secrets/config validated read-only and 15/15 image digests available locally. No DB/service/env mutation."
   printf 'REMOTE_DEPLOY\tDRYRUN_PASS\ttag=%s\tref=%s\n' "${TARGET_TAG}" "${DEPLOY_REF}"
   exit 0
 fi

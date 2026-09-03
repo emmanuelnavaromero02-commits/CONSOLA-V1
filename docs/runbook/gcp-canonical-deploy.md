@@ -27,8 +27,11 @@ docker compose --env-file infra/.env \
 ```
 
 - `docker-compose.aws-images.gcp.yml` simply pins each of the 15 proprietary
-  services to `ghcr.io/<owner>/<image>:<tag>` with `pull_policy: never`. Generating
-  it for a new release is a **tag substitution** — nothing opaque.
+  services to the immutable manifest digest with `pull_policy: never`.
+- `docker-compose.gcp.yml` is rendered deterministically and atomically from
+  `infra/terraform-gcp/templates/docker-compose.gcp.yml.tftpl` inside the
+  checksum-verified source archive. Day-2 never copies this overlay from the
+  running release.
 - The persistent data disk is mounted at `/var/lib/docker`; the boot disk is
   ephemeral, so backups/state live under `/var/lib/docker/...`.
 - The Terraform startup script (`infra/terraform-gcp/templates/startup.sh.tftpl`)
@@ -39,13 +42,18 @@ docker compose --env-file infra/.env \
 
 - `scripts/gcp/gcp-canonical-deploy.sh` — operator side (needs gcloud Owner + IAP):
   provenance check (tag→ref) → build+upload the exact source tarball → generate the
-  tag-pinned image overlay → ship the remote deployer + overlay → run it → confirm.
+  digest-pinned image overlay → stage both files at one random per-run path → run
+  a static sudo bootstrap that snapshots the exact-ref remote deployer as a
+  root-owned file and verifies its local SHA-256 → execute → confirm.
 - `scripts/gcp/gcp-canonical-deploy-remote.sh` — on-VM, fail-closed:
   1. stage `releases/<ref>/` and atomically hydrate the complete GCS HMAC and
      evidence-signing secret sets with
      `infra/terraform-gcp/release/hydrate-runtime-secrets.sh`;
-  2. **authenticated pull** of 15 images at the tag (VM service account reads the
-     GHCR pull credential from Secret Manager — nothing secret crosses the wire);
+  2. inspect the filesystem that really backs `/var/lib/containerd`, require the
+     configured free-space margin (20 GiB by default) whenever a digest is
+     missing, then **authenticated pull** those missing immutable digests (VM
+     service account reads the GHCR credential from Secret Manager). If a prior
+     dry-run cached 15/15, apply skips both this disk gate and the repeated pull;
   3. start a short maintenance window: stop every `mode_*`/`omega_*` writer,
      fence both databases at `CONNECTION LIMIT 0`, terminate old sessions and
      prove that no competing sessions remain;
@@ -88,9 +96,10 @@ It is not a second production path; use the canonical operator-side driver.
    the canonical release helper. It rebuilds the source archive from the exact
    commit and verifies the bytes at one immutable GCS generation; the VM fetches
    that same generation, checks SHA-256 before extraction and records a receipt.
-   The remote deploy atomically hydrates runtime secrets. Rollback restores
-   the prior environment file. This is the day-2 path for existing VMs;
-   startup-script changes are intentionally ignored by Terraform.
+   The remote deploy renders the exact release's GCP Compose template and
+   atomically hydrates runtime secrets. Rollback restores the prior environment
+   file. This is the day-2 path for existing VMs; startup-script changes are
+   intentionally ignored by Terraform.
 3. **Dry-run** validates container discovery, tarball fetch, every required
    Secret Manager value in read-only `check` mode and the
    authenticated 15/15 pull. It exits before the maintenance window: it
@@ -112,8 +121,6 @@ perform manual recovery from
 
 ## Known gaps (P2 / follow-up)
 
-- `docker-compose.gcp.yml` is carried from the running release; if a release needs
-  a changed base overlay, regenerate it from Terraform `compose_override`.
 - `--profile sap` and the `mode_*` container names are matched to the live host;
   a future compose refactor must update the driver's discovery in lock-step.
 - Gold materialization (`readyz?require_data=1`) is a separate operational step
