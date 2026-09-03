@@ -13,6 +13,11 @@ from app.services.intelligence import monte_carlo
 REPO = Path(__file__).resolve().parents[1]
 
 
+@pytest.fixture(autouse=True)
+def _enable_engine_under_test(monkeypatch):
+    monkeypatch.setenv("INTELLIGENCE_MATH_ENGINES_ENABLED", "true")
+
+
 class _FakeConnection:
     def __init__(self):
         self.calls: list[tuple[str, str, tuple]] = []

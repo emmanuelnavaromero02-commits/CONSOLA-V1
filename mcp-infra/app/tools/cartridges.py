@@ -438,7 +438,9 @@ async def cartridge_sync_semantic_to_rag(
 
     from app.rag.store import list_sources, delete_source
 
-    for s in await list_sources():
+    for s in await list_sources(
+        cartridges=[cartridge_id], scope=security_context
+    ):
         if s.get("name") == source_name:
             await delete_source(s["id"])
             break
@@ -450,6 +452,8 @@ async def cartridge_sync_semantic_to_rag(
         content=content,
         description=f"Auto-synced semantic model for cartridge {cartridge_id}",
         mime_type="text/plain",
+        cartridge_id=cartridge_id,
+        security_context=security_context,
     )
     return {
         "cartridge_id": cartridge_id,
@@ -546,10 +550,16 @@ async def cartridge_search_term(
         from app.rag.store import list_sources
         from app.tools.rag import _do_search
 
-        for s in await list_sources():
+        for s in await list_sources(
+            cartridges=[cartridge_id], scope=security_context
+        ):
             if s.get("name") == target_name:
                 rag_results = await _do_search(
-                    query=query, top_k=5, source_ids=[s["id"]]
+                    query=query,
+                    top_k=5,
+                    source_ids=[s["id"]],
+                    cartridges=[cartridge_id],
+                    security_context=security_context,
                 )
                 break
     except Exception as exc:
@@ -561,16 +571,29 @@ async def cartridge_search_term(
         "matches_in_data_catalog": columns,
         "matches_in_rag": rag_results,
         "rag_synced": any(
-            s.get("name") == target_name for s in (await _safe_list_rag_sources())
+            s.get("name") == target_name
+            for s in (
+                await _safe_list_rag_sources(
+                    cartridge_id=cartridge_id,
+                    security_context=security_context,
+                )
+            )
         ),
     }
 
 
-async def _safe_list_rag_sources() -> list[dict]:
+async def _safe_list_rag_sources(
+    *,
+    cartridge_id: str | None = None,
+    security_context: dict[str, Any] | None = None,
+) -> list[dict]:
     try:
         from app.rag.store import list_sources
 
-        return await list_sources()
+        return await list_sources(
+            cartridges=[cartridge_id] if cartridge_id else None,
+            scope=security_context,
+        )
     except Exception:
         return []
 

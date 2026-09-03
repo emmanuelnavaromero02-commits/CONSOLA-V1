@@ -10,6 +10,11 @@ from app.services.intelligence import calibration_service
 from app.services.intelligence.calibration_recompute_batch import load_complete_batch
 
 
+@pytest.fixture(autouse=True)
+def _enable_engine_under_test(monkeypatch):
+    monkeypatch.setenv("INTELLIGENCE_MATH_ENGINES_ENABLED", "true")
+
+
 def _row(row_id: int, *, actual_status: str = "hit") -> dict:
     return {
         "id": row_id,

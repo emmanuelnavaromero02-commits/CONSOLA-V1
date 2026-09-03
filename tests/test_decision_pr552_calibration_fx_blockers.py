@@ -16,6 +16,11 @@ from app.services.intelligence.calibration_recompute_service import recompute
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.fixture(autouse=True)
+def _enable_engine_under_test(monkeypatch):
+    monkeypatch.setenv("INTELLIGENCE_MATH_ENGINES_ENABLED", "true")
+
+
 def _text(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 

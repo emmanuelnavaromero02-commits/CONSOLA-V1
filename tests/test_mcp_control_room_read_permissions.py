@@ -70,3 +70,53 @@ async def test_business_tool_retains_dataset_read_permission(monkeypatch):
 
     assert result["data"]["total_anomalies"] == 0
     call.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_talent_nine_box_tool_never_returns_roster_or_person_fields(monkeypatch):
+    module = _module(monkeypatch)
+    call = AsyncMock(
+        return_value={
+            "data": {
+                "status": "ready",
+                "totals": {"employees": 10, "ready": 8, "blocked": 2, "cells": 9},
+                "cells": [
+                    {
+                        "box_id": "estrella",
+                        "employee_count": 8,
+                        "movement_action": "promote",
+                    }
+                ],
+                "desempeno_disponible": {
+                    "count": 10,
+                    "band_counts": {"high": 8, "medium": 2, "low": 0},
+                    "roster": [
+                        {
+                            "employee_key": "tal_abcdef123456",
+                            "display_name": "Colaborador 01",
+                            "role": "Director",
+                            "unit": "People",
+                        }
+                    ],
+                },
+            }
+        }
+    )
+    monkeypatch.setattr(module, "_call_console", call)
+
+    result = await module.control_room__talent_9box_read(
+        security_context=_context("datasets.read")
+    )
+
+    serialized = repr(result["data"])
+    assert result["data"]["totals"]["employees"] == 10
+    assert result["data"]["desempeno_disponible"]["count"] == 10
+    assert "roster" not in result["data"]["desempeno_disponible"]
+    for forbidden in (
+        "employee_key",
+        "display_name",
+        "Director",
+        "People",
+        "movement_action",
+    ):
+        assert forbidden not in serialized

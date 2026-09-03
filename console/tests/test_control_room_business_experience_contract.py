@@ -19,7 +19,13 @@ def test_control_room_persists_intelligence_behind_business_experience():
 
     assert "async def _persisted_business_items" in service
     assert "_persisted_intelligence_items" in service
-    assert '"intelligence_signal", "agent_alert"' in service
+    assert 'kinds=("intelligence_signal",)' in service
+    assert "Legacy agent_alert rows" in service
+    runtime_projection = read(
+        "console/app/services/control_room/business_runtime_projection.py"
+    )
+    assert '== "agent_alert"' in runtime_projection
+    assert "quarantined from summaries and AgentOps projections" in runtime_projection
     assert "build_omega_projection(" in state
     assert '"decision_intelligence": decision_intelligence' in omega_projection
     assert '"omega":' in omega_projection

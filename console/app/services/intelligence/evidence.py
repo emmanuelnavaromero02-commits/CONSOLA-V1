@@ -37,7 +37,9 @@ def dataset_evidence_pack(
     }
     items = [
         {
-            "source_type": "dataset",
+            # This collector reads the server-resolved published Gold relation;
+            # it is not a generic/user supplied dataset citation.
+            "source_type": "gold",
             "source_ref": dataset,
             "query_text": (
                 f"SELECT {time_field}, {id_field}, {value_field} "

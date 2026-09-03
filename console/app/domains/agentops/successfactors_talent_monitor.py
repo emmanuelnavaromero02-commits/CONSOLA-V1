@@ -70,15 +70,16 @@ def successfactors_talent_monitor_contract() -> (
 ):
     allowed_tools = [
         "mcp-infra__wisdom_bits__run",
-        "mcp-infra__control_room__raise_analysis_alert",
         "mcp-infra__decision__orchestrate",
-        "mcp-infra__simulation__monte_carlo_run",
-        "mcp-infra__market_context_read",
-        "mcp-infra__calibration__bayesian_state",
-        "refinement__query_dataset",
+        "mcp-infra__control_room__talent_kpis_read",
+        "mcp-infra__control_room__talent_overview_read",
+        "mcp-infra__control_room__talent_9box_read",
+        "mcp-infra__control_room__talent_metadata_readiness_read",
+        "mcp-infra__search_rag",
+        "mcp-infra__list_rag_sources",
         "refinement__get_schema",
     ]
-    rag_filter = {"cartridges": ["sap_successfactors"], "kinds": ["document", "schema"]}
+    rag_filter = {"cartridges": ["sap_successfactors"], "kinds": ["schema"]}
     extra = {
         "role": "monitor",
         "category": "control_room",
@@ -104,10 +105,12 @@ def successfactors_talent_monitor_contract() -> (
             "recommended_action": "Revisar blockers C/P/A y priorizar acciones supervisadas en Control Room.",
             "recommendation_only": True,
             "writeback_enabled": False,
+            "paused_engines": ["monte_carlo", "bayesian_calibration", "minimax"],
             "engines": [
                 {
                     "name": "monte_carlo",
-                    "enabled": True,
+                    "enabled": False,
+                    "reason": "paused_by_policy",
                     "source_type": "wisdom_bit",
                     "source_id": "WB-TALENTO",
                     "horizon_days": 30,
@@ -132,7 +135,8 @@ def successfactors_talent_monitor_contract() -> (
                 },
                 {
                     "name": "bayesian_calibration",
-                    "enabled": True,
+                    "enabled": False,
+                    "reason": "paused_by_policy",
                     "calibration_group": "sap_successfactors:talent_readiness",
                     "limit": 10,
                     "assumptions": {
@@ -166,7 +170,7 @@ def successfactors_talent_monitor_contract() -> (
                         "no_pii": True,
                     },
                     "evidence_refs": [{"type": "wisdom_bit", "id": "WB-TALENTO"}],
-                    "execute_engines": True,
+                    "execute_engines": False,
                     "engine_inputs": {
                         "monte_carlo": {
                             "source_type": "wisdom_bit",
@@ -227,7 +231,20 @@ def successfactors_talent_monitor_needs_runtime_repair(agent: Any) -> bool:
     if not isinstance(extra, dict):
         return True
     role = str(extra.get("role") or "").strip().lower()
-    return role != "monitor" or not has_operational_monitor_contract(agent)
+    expected_tools, expected_rag_filter, expected_extra = (
+        successfactors_talent_monitor_contract()
+    )
+    monitor = extra.get("monitor")
+    return any(
+        (
+            role != "monitor",
+            not isinstance(monitor, dict),
+            monitor != expected_extra["monitor"],
+            agent.get("allowed_tools") != expected_tools,
+            agent.get("rag_filter") != expected_rag_filter,
+            float(agent.get("temperature") or 0.0) != 0.0,
+        )
+    )
 
 
 def merge_agent_tools(primary: list[str], secondary: Any) -> list[str]:
@@ -263,7 +280,7 @@ def coerce_successfactors_talent_monitor_payload(body: dict) -> dict:
     incoming_extra = (
         patched.get("extra") if isinstance(patched.get("extra"), dict) else {}
     )
-    merged_extra = {**contract_extra, **incoming_extra}
+    merged_extra = {**incoming_extra, **contract_extra}
     merged_extra["role"] = "monitor"
     merged_extra["category"] = str(merged_extra.get("category") or "control_room")
     merged_extra["scope"] = str(merged_extra.get("scope") or "workspace")
@@ -272,34 +289,21 @@ def coerce_successfactors_talent_monitor_payload(body: dict) -> dict:
     if not isinstance(schedule, dict) or not schedule.get("cron"):
         merged_extra["schedule"] = contract_extra.get("schedule")
 
-    monitor = merged_extra.get("monitor")
-    if isinstance(monitor, dict) and monitor:
-        merged_monitor = {**contract_extra.get("monitor", {}), **monitor}
-        if not isinstance(
-            merged_monitor.get("engines"), list
-        ) or not merged_monitor.get("engines"):
-            merged_monitor["engines"] = contract_extra.get("monitor", {}).get(
-                "engines", []
-            )
-        merged_extra["monitor"] = merged_monitor
-    else:
-        merged_extra["monitor"] = contract_extra.get("monitor")
+    # The model/client cannot re-enable probabilistic engines or raw dataset
+    # access by sending an older monitor contract.
+    merged_extra["monitor"] = contract_extra.get("monitor")
 
     if not isinstance(merged_extra.get("variables"), dict):
         merged_extra["variables"] = {}
 
     patched["extra"] = merged_extra
     patched["role"] = "monitor"
-    patched["allowed_tools"] = merge_agent_tools(
-        allowed_tools, patched.get("allowed_tools")
-    )
-    if not isinstance(patched.get("rag_filter"), dict) or not patched.get("rag_filter"):
-        patched["rag_filter"] = rag_filter
-    patched["model"] = str(patched.get("model") or "claude-sonnet-4-6")
+    patched["allowed_tools"] = allowed_tools
+    patched["rag_filter"] = rag_filter
+    patched["model"] = "claude-sonnet-4-6"
     if patched.get("max_tokens") in (None, ""):
         patched["max_tokens"] = 2400
-    if patched.get("temperature") in (None, ""):
-        patched["temperature"] = 0.2
+    patched["temperature"] = 0.0
     return patched
 
 
@@ -347,7 +351,7 @@ async def ensure_successfactors_talent_monitor(
                            rag_filter = $8::jsonb,
                            model = 'claude-sonnet-4-6',
                            max_tokens = 2400,
-                           temperature = 0.2,
+                           temperature = 0.0,
                            extra = $9::jsonb,
                            is_active = TRUE,
                            updated_at = NOW()
@@ -379,7 +383,7 @@ async def ensure_successfactors_talent_monitor(
                             'sap_successfactors_talent_monitor',
                             'Talent AgentOps Monitor',
                             $3, $4, $5, $6::jsonb, $7::jsonb,
-                            'claude-sonnet-4-6', 2400, 0.2, $8::jsonb, TRUE
+                            'claude-sonnet-4-6', 2400, 0.0, $8::jsonb, TRUE
                         WHERE NOT EXISTS (
                             SELECT 1
                               FROM agents

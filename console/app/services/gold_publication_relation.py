@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime
 
 from fastapi import HTTPException
 
@@ -23,6 +24,8 @@ class PublishedGoldRelation:
     object_uri: str | None = None
     object_version: str | None = None
     schema_digest: str | None = None
+    row_count: int | None = None
+    published_at: datetime | None = None
 
     @property
     def sql(self) -> str:
@@ -38,7 +41,7 @@ async def resolve_published_gold_relation(
         """SELECT h.materialization_run_id::text AS run_id, h.generation,
                   r.status, r.gold_table, rec.receipt_id::text,
                   r.object_checksum, r.evidence_digest,r.object_uri,
-                  r.object_version,r.schema_digest
+                  r.object_version,r.schema_digest,r.row_count,h.published_at
              FROM omega_publication.dataset_publication_heads h
              JOIN omega_publication.materialization_runs r
                ON r.materialization_run_id=h.materialization_run_id
@@ -71,6 +74,8 @@ async def resolve_published_gold_relation(
         object_uri=str(row["object_uri"]) if row["object_uri"] else None,
         object_version=str(row["object_version"]) if row["object_version"] else None,
         schema_digest=str(row["schema_digest"]) if row["schema_digest"] else None,
+        row_count=int(row["row_count"]) if row["row_count"] is not None else None,
+        published_at=row["published_at"],
     )
 
 

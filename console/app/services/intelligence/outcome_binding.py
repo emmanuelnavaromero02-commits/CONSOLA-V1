@@ -91,6 +91,7 @@ async def _validate_exact_gold(
                    AND r.object_uri=$7 AND r.object_version=$8
                    AND r.object_checksum=$9 AND r.schema_digest=$10
                    AND r.evidence_digest=$11
+                   AND r.row_count=$12
                    AND e.object_uri=r.object_uri AND e.object_version=r.object_version
                    AND e.object_checksum=r.object_checksum
                    AND e.schema_digest=r.schema_digest
@@ -106,6 +107,7 @@ async def _validate_exact_gold(
                 binding["object_checksum"],
                 binding["schema_digest"],
                 binding["evidence_digest"],
+                binding["row_count"],
             )
     finally:
         await conn.close()
@@ -168,8 +170,8 @@ async def persist_gold_refresh_binding(
     publication_trace: dict[str, Any],
     expected_datasets: list[str],
 ) -> str:
-    del publication_trace, expected_datasets
     tenant_id, workspace_id = workspace_scope(user)
+    bindings = exact_bindings(publication_trace, expected_datasets)
     try:
         intelligence_run_id = int(intelligence_result["intelligence_run_id"])
     except (KeyError, TypeError, ValueError) as exc:
@@ -182,6 +184,26 @@ async def persist_gold_refresh_binding(
             expected_run_ref,
             intelligence_run_id,
         )
+        from app.services.control_room.grounded_analysis import (
+            seal_talent_evidence_packs,
+        )
+
+        seal_result = await seal_talent_evidence_packs(
+            conn,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            intelligence_run_id=intelligence_run_id,
+            publication_bindings=[
+                {
+                    **binding,
+                    "pipeline_run_id": expected_run_id,
+                    "outcome_digest": str(value or ""),
+                }
+                for binding in bindings
+            ],
+        )
+        if seal_result["blocked"]:
+            raise RuntimeError("Talent evidence collector could not seal every pack")
     digest = str(value or "")
     if len(digest) != 64:
         raise RuntimeError("operational outcome binding was not persisted")

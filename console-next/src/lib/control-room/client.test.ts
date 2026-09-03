@@ -6,9 +6,11 @@ import {
   getControlRoomActivity,
   getControlRoomDashboard,
   getControlRoomImpact,
+  getControlRoomItemAnalysis,
   getControlRoomLessons,
   getControlRoomThresholds,
   getMarketDecisionValidation,
+  requestControlRoomItemAnalysis,
   runMarketDecisionValidation,
   getSuccessFactorsDecisionModel,
   getSuccessFactorsGoldKpis,
@@ -59,6 +61,18 @@ describe("control-room client", () => {
 
     expect(apiMock.get).toHaveBeenNthCalledWith(1, "/api/control-room/items/item%201%2Ffemsa/activity");
     expect(apiMock.get).toHaveBeenNthCalledWith(2, "/api/control-room/items/item%201%2Ffemsa/impact");
+  });
+
+  it("uses one encoded item-scoped endpoint for grounded analysis reads and requests", async () => {
+    apiMock.get.mockResolvedValue({ data: {}, status: 200, headers: new Headers(), requestId: "r" });
+    apiMock.post.mockResolvedValue({ data: {}, status: 202, headers: new Headers(), requestId: "r" });
+
+    await getControlRoomItemAnalysis("signal 7/talent");
+    await requestControlRoomItemAnalysis("signal 7/talent");
+
+    const path = "/api/control-room/items/signal%207%2Ftalent/analysis";
+    expect(apiMock.get).toHaveBeenCalledWith(path);
+    expect(apiMock.post).toHaveBeenCalledWith(path);
   });
 
   it("keeps optional cartridge scope on lessons without exposing data preview routes", async () => {

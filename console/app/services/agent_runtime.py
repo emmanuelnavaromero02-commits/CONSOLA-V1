@@ -33,6 +33,7 @@ from app.services.security_context import (
     sign_security_context,
 )
 from app.services import tool_policy
+from app.services.intelligence import engine_policy
 from app.services.db_scope import scoped_db
 from app.services.gold_publication_relation import (
     published_relation_columns,
@@ -437,6 +438,13 @@ def _agent_monitor_role(agent: Agent) -> str:
 
 def _is_monitor_agent(agent: Agent) -> bool:
     return _agent_monitor_role(agent) == "monitor"
+
+
+def _is_successfactors_talent_monitor(agent: Agent) -> bool:
+    return (
+        agent.cartridge_id == "sap_successfactors"
+        and agent.slug == "sap_successfactors_talent_monitor"
+    )
 
 
 def _agent_context_metadata(agent: Agent, run_id: int | None) -> dict[str, Any]:
@@ -1117,7 +1125,7 @@ def _make_invoke(
     async def invoke(server_id: str, tool: str, args: dict) -> Any:
         nonlocal tool_call_count
         full_name = f"{server_id}__{tool}"
-        raw_args = args or {}
+        raw_args = dict(args or {})
         catalog_entry = catalog.get(full_name) or {}
         meta = tool_policy.classify(tool)
         risk = meta["risk_level"]
@@ -1153,6 +1161,19 @@ def _make_invoke(
                 out["required_permission"] = required_permission
             return out
 
+        if (
+            user is not None
+            and _is_successfactors_talent_monitor(agent)
+            and tool == "decision__orchestrate"
+        ):
+            # The model-facing/manual Talent path cannot create decision
+            # orchestrations.  Only the fenced deterministic scheduler below
+            # may use that tool with server-owned arguments.
+            return await deny(
+                "denied",
+                "manual Talent decision orchestration is paused by server policy",
+            )
+
         if full_name not in allowed_full:
             return await deny(
                 "denied", f"tool not allowlisted for this agent: {full_name}"
@@ -1166,6 +1187,16 @@ def _make_invoke(
             return await deny(
                 "scope_required",
                 "scheduled agents require tenant_id and workspace_id scope",
+            )
+
+        if (
+            user is not None
+            and _is_successfactors_talent_monitor(agent)
+            and tool in {"control_room__raise_alert", "control_room__raise_analysis_alert"}
+        ):
+            return await deny(
+                "grounded_handoff_required",
+                "Talent analysis alerts may only be published by the server-owned verified flow",
             )
 
         tool_call_count += 1
@@ -1265,12 +1296,40 @@ def _make_invoke(
                 "_agent_tool_status": "pending_approval",
             }
 
-        # Apply RAG filter defaults if the agent didn't override per-call.
-        # Only `kinds` is supported by the current search_rag MCP tool; a
-        # `cartridges` filter would need a future tool change to take effect.
+        # RAG constraints are server-owned ceilings, not model-controlled
+        # defaults.  Intersect any requested scope and fail closed when the
+        # model asks outside the configured cartridge/kind boundary.
         if tool in ("search_rag", "list_rag_sources"):
-            if "kinds" in rf and "kinds" not in args:
-                args = {**args, "kinds": rf["kinds"]}
+            for filter_name in ("kinds", "cartridges"):
+                configured = {
+                    str(value).strip()
+                    for value in (rf.get(filter_name) or [])
+                    if str(value).strip()
+                }
+                if not configured:
+                    continue
+                requested = {
+                    str(value).strip()
+                    for value in (args.get(filter_name) or [])
+                    if str(value).strip()
+                }
+                effective = configured & requested if requested else configured
+                if not effective:
+                    return await deny(
+                        "scope_denied",
+                        f"RAG {filter_name} request is outside the agent scope",
+                    )
+                args = {**args, filter_name: sorted(effective)}
+            if _is_successfactors_talent_monitor(agent):
+                # User documents remain outside the Talent model until a
+                # deterministic PII-review workflow can attest them as safe.
+                # These prefixes are produced only by server-owned reindexing.
+                args = {
+                    **args,
+                    "kinds": ["schema"],
+                    "cartridges": ["sap_successfactors"],
+                    "source_prefixes": ["dataset:", "raw:", "_semantic_"],
+                }
         if server_id == "refinement" and tool in (
             "query_dataset",
             "preview_sql",
@@ -1875,6 +1934,23 @@ async def run_scheduled_monitor(
             engine = _monitor_engine_name(spec)
             if not engine:
                 continue
+            if not engine_policy.math_engines_enabled() and engine in {
+                "monte_carlo",
+                "simulation__monte_carlo_run",
+                "bayesian_calibration",
+                "calibration__bayesian_state",
+                "bayes",
+                "minimax",
+                "game_theory__minimax",
+            }:
+                engine_results.append(
+                    {
+                        "engine": engine,
+                        "status": "skipped",
+                        "reason": engine_policy.PAUSED_REASON,
+                    }
+                )
+                continue
             if spec.get("enabled") is False:
                 engine_results.append(
                     {
@@ -2129,8 +2205,19 @@ async def run_scheduled_monitor(
                             "evidence_refs": spec.get("evidence_refs")
                             if isinstance(spec.get("evidence_refs"), list)
                             else [],
-                            "execute_engines": bool(spec.get("execute_engines", True)),
-                            "engine_inputs": decision_engine_inputs,
+                            "execute_engines": bool(
+                                engine_policy.math_engines_enabled()
+                                and not _is_successfactors_talent_monitor(agent)
+                                and spec.get("execute_engines", False)
+                            ),
+                            "engine_inputs": (
+                                {}
+                                if (
+                                    _is_successfactors_talent_monitor(agent)
+                                    or not engine_policy.math_engines_enabled()
+                                )
+                                else decision_engine_inputs
+                            ),
                         }
                     ),
                 )
@@ -2168,23 +2255,14 @@ async def run_scheduled_monitor(
             "workspace_id": str(agent.workspace_id),
         }
         should_alert = _monitor_should_alert(contract, payload_with_engines)
+        # Direct model-authored alert tools are intentionally absent from the
+        # live MCP catalog. A monitor signal remains successful and durable,
+        # while publication is delegated to the evidence-pack/verifier flow.
+        # Apply this to every monitor so no legacy agent can publish arbitrary
+        # prose or numbers as a Control Room fact.
+        alert_state = "grounded_required" if should_alert else "not_required"
         alert_result = None
-        if should_alert:
-            alert_result = await _call(
-                "mcp-infra__control_room__raise_analysis_alert",
-                _monitor_alert_args(
-                    agent=agent,
-                    run_id=run_id,
-                    contract=contract,
-                    payload=payload_with_engines,
-                    scheduled_fire_at=scheduled_fire_at,
-                    engine_results=engine_results,
-                ),
-            )
-            if isinstance(alert_result, dict) and alert_result.get("error"):
-                raise RuntimeError(
-                    str(alert_result.get("message") or alert_result.get("error"))
-                )
+        grounded_handoff_required = bool(should_alert)
 
         signal_count = _monitor_signal_count(payload_with_engines)
         blocker_count = len(_monitor_blockers(payload_with_engines))
@@ -2192,7 +2270,7 @@ async def run_scheduled_monitor(
         reply = (
             f"Monitor {agent.slug} ejecuto {wisdom_bit_id}: status={status}, "
             f"signals={signal_count}, blockers={blocker_count}, "
-            f"engines={len(engine_results)}, alert={'yes' if alert_result else 'no'}."
+            f"engines={len(engine_results)}, alert={alert_state}."
         )
         if lease_guard is not None:
             await lease_guard()
@@ -2221,6 +2299,7 @@ async def run_scheduled_monitor(
                 "tool_calls": len(tool_calls_log),
                 "deterministic_monitor": True,
                 "alert_created": bool(alert_result),
+                "grounded_handoff_required": grounded_handoff_required,
                 "engine_results": engine_results,
             },
             conversation_id=None,
@@ -2239,6 +2318,7 @@ async def run_scheduled_monitor(
                 "blockers": blocker_count,
                 "engines": engine_results,
                 "alerted": bool(alert_result),
+                "grounded_handoff_required": grounded_handoff_required,
             },
             "alert": alert_result,
         }

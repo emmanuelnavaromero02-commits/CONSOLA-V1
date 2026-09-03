@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any, Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.control_room_public_projection import (
@@ -116,6 +118,8 @@ class PublicBusinessItem(PublicProjectionModel):
     domain: str | None = None
     module: str | None = None
     cartridge: str | None = None
+    source_dataset: str | None = None
+    evidence_pack_id: int | None = None
     entity_label: str | None = None
     contractor_count: int | None = None
     risk_factor: float | int | None = None
@@ -273,6 +277,64 @@ class ControlRoomLegacyAnomaliesResponse(PublicProjectionModel):
 
 class ControlRoomLegacyItemResponse(PublicBusinessItem):
     pass
+
+
+class ControlRoomAnalysisEvidenceRef(_StrictGoldModel):
+    evidence_item_id: int
+    path: str
+
+
+class ControlRoomAnalysisClaim(_StrictGoldModel):
+    claim_id: str
+    claim_type: Literal["observed", "computed", "hypothesis"]
+    statement: str
+    value: str | int | float | bool | None = None
+    unit: str | None = None
+    population: int | None = None
+    as_of: str | None = None
+    completeness: Literal["complete", "partial", "unknown"] = "unknown"
+    evidence_refs: list[ControlRoomAnalysisEvidenceRef] = Field(default_factory=list)
+    evidence_item_ids: list[int] = Field(default_factory=list)
+    evidence_paths: list[str] = Field(default_factory=list)
+    verification_status: Literal[
+        "pending", "verified", "rejected", "insufficient_data"
+    ]
+    verification_reason: str | None = None
+
+
+class ControlRoomAnalysisOption(_StrictGoldModel):
+    label: str
+    rationale: str
+    evidence_refs: list[ControlRoomAnalysisEvidenceRef] = Field(default_factory=list)
+    evidence_item_ids: list[int] = Field(default_factory=list)
+    evidence_paths: list[str] = Field(default_factory=list)
+
+
+class ControlRoomAnalysisAssumption(_StrictGoldModel):
+    statement: str
+    evidence_refs: list[ControlRoomAnalysisEvidenceRef] = Field(default_factory=list)
+    evidence_item_ids: list[int] = Field(default_factory=list)
+    evidence_paths: list[str] = Field(default_factory=list)
+
+
+class ControlRoomAnalysisResponse(_StrictGoldModel):
+    analysis_run_id: str
+    status: str
+    evidence_pack_id: int | None = None
+    as_of: str | None = None
+    grounding_status: Literal[
+        "pending", "verified", "rejected", "insufficient_data"
+    ]
+    claims: list[ControlRoomAnalysisClaim] = Field(default_factory=list)
+    hypotheses: list[str] = Field(default_factory=list)
+    options: list[ControlRoomAnalysisOption] = Field(default_factory=list)
+    assumptions: list[ControlRoomAnalysisAssumption] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    expires_at: str | None = None
+    model: str | None = None
+    ruleset_version: str | None = None
+    recommendation_only: Literal[True] = True
+    no_writeback: Literal[True] = True
 
 
 __all__ = tuple(name for name in globals() if name.startswith("ControlRoom"))

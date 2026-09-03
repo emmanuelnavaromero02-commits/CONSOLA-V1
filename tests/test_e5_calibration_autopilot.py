@@ -19,6 +19,11 @@ from app.services.intelligence import calibration_autopilot as ap
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.fixture(autouse=True)
+def _enable_engine_under_test(monkeypatch):
+    monkeypatch.setenv("INTELLIGENCE_MATH_ENGINES_ENABLED", "true")
+
+
 class _FakeConn:
     def __init__(self, rows):
         self._rows = rows

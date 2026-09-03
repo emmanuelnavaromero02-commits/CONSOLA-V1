@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from app.services import auth
 from app.services.db_scope import scoped_db_for_user
 from app.services.intelligence import calibration
+from app.services.intelligence import engine_policy
 from app.services.intelligence.calibration_lock import lock_calibration_group
 from app.services.intelligence.calibration_recompute_batch import (
     BatchFailure,
@@ -48,6 +49,8 @@ def _observation_from_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 async def recompute(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
+    if not engine_policy.math_engines_enabled():
+        raise HTTPException(403, engine_policy.PAUSED_REASON)
     clean = dict(payload or {})
     if "model_version" in clean:
         raise HTTPException(422, "model_version is server-owned")

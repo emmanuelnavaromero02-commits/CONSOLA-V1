@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Request, Response
 
 from app.dependencies import require_authenticated
 from app.schemas.control_room_action_requests import (
@@ -44,6 +44,9 @@ from app.schemas.control_room_legacy_responses import (
     ControlRoomTalentWorkforceTrendsResponse,
     ControlRoomThresholdsResponse,
     project_public_control_room_response,
+)
+from app.schemas.control_room_business_responses import (
+    ControlRoomAnalysisResponse,
 )
 from app.schemas.control_room_state_mutation_requests import (
     ControlRoomApprovalRequest,
@@ -96,6 +99,7 @@ from app.services.csrf import require_csrf
 from app.services.intelligence import history as intelligence_history
 from app.services.intelligence import market_decision_validation
 from app.services.control_room import cycle_blackboard
+from app.services.control_room import grounded_analysis
 from app.services.permissions import require_permission
 from app.services.security_context import build_security_context, verify_signed_security_context
 from app.routers.control_room_surfaces import router as surfaces_router
@@ -863,6 +867,41 @@ async def control_room_item_detail(item_id: str, user: dict = Depends(require_au
         ControlRoomLegacyItemResponse,
         await control_room_service.get_item(item_id, user),
     )
+
+
+@router.post(
+    "/items/{item_id}/analysis",
+    response_model=ControlRoomAnalysisResponse,
+    status_code=202,
+    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+)
+async def control_room_create_item_analysis(
+    item_id: str,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(require_authenticated),
+):
+    envelope = await grounded_analysis.create_item_analysis(item_id, user)
+    background_tasks.add_task(
+        grounded_analysis.process_item_analysis,
+        envelope["analysis_run_id"],
+        grounded_analysis.analysis_worker_context(user),
+    )
+    return envelope
+
+
+@router.get(
+    "/items/{item_id}/analysis",
+    response_model=ControlRoomAnalysisResponse,
+    dependencies=[Depends(require_permission("operations.read"))],
+)
+async def control_room_get_item_analysis(
+    item_id: str,
+    user: dict = Depends(require_authenticated),
+):
+    # GET is deliberately side-effect free. Durable recovery belongs to the
+    # authenticated Agent Runner cadence, while POST is the only user action
+    # that may enqueue work.
+    return await grounded_analysis.get_item_analysis(item_id, user)
 
 
 @router.get(

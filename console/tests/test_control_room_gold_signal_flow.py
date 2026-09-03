@@ -26,6 +26,11 @@ WORKSPACE_A = "22222222-2222-2222-2222-222222222222"
 TENANT_B = "33333333-3333-3333-3333-333333333333"
 WORKSPACE_B = "44444444-4444-4444-4444-444444444444"
 
+
+@pytest.fixture(autouse=True)
+def _enable_engine_under_test(monkeypatch):
+    monkeypatch.setenv("INTELLIGENCE_MATH_ENGINES_ENABLED", "true")
+
 REPLICON_USER = {
     "id": 7,
     "email": "ops@example.com",
@@ -596,7 +601,7 @@ async def test_control_room_lists_persisted_gold_signal_with_source_evidence_and
     sql, workspace_arg, kinds, tenant_arg, page_size = conn.fetch.await_args.args
     assert "tenant_id::text" in sql
     assert workspace_arg == WORKSPACE_A
-    assert kinds == ["intelligence_signal", "agent_alert"]
+    assert kinds == ["intelligence_signal"]
     assert tenant_arg == TENANT_A
     assert page_size == 200
     assert len(items) == 1
@@ -634,7 +639,7 @@ async def test_control_room_persisted_signal_read_is_scoped_by_tenant_and_worksp
         assert "workspace_id = $1" in query
         assert "item_kind = ANY($2::text[])" in query
         assert "tenant_id::text = $3" in query
-        assert kinds == ["intelligence_signal", "agent_alert"]
+        assert kinds == ["intelligence_signal"]
         if workspace_id == WORKSPACE_A and tenant_id == TENANT_A:
             return [
                 {
@@ -677,13 +682,13 @@ async def test_control_room_persisted_signal_read_is_scoped_by_tenant_and_worksp
     )
     assert conn.fetch.await_args_list[0].args[1:] == (
         WORKSPACE_A,
-        ["intelligence_signal", "agent_alert"],
+        ["intelligence_signal"],
         TENANT_A,
         200,
     )
     assert conn.fetch.await_args_list[1].args[1:] == (
         WORKSPACE_B,
-        ["intelligence_signal", "agent_alert"],
+        ["intelligence_signal"],
         TENANT_B,
         200,
     )
@@ -703,7 +708,7 @@ async def test_control_room_persisted_signal_read_is_owner_scoped_for_non_admin(
         assert "item_kind = ANY($2::text[])" in query
         assert "tenant_id::text = $3" in query
         assert "owner_user_id = $4" in query
-        assert kinds == ["intelligence_signal", "agent_alert"]
+        assert kinds == ["intelligence_signal"]
         assert workspace_id == WORKSPACE_A
         assert tenant_id == TENANT_A
         assert owner_id == 11
@@ -738,7 +743,7 @@ async def test_control_room_persisted_signal_read_is_owner_scoped_for_non_admin(
     _assert_scope_call(conn)
     assert conn.fetch.await_args.args[1:] == (
         WORKSPACE_A,
-        ["intelligence_signal", "agent_alert"],
+        ["intelligence_signal"],
         TENANT_A,
         11,
         200,

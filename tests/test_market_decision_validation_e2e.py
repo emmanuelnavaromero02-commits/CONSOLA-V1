@@ -17,6 +17,11 @@ USER = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _enable_engine_under_test(monkeypatch):
+    monkeypatch.setenv("INTELLIGENCE_MATH_ENGINES_ENABLED", "true")
+
+
 def _source(*, status: str = "ready") -> dict:
     return {
         "source_id": "WB-TALENTO",

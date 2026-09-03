@@ -66,7 +66,7 @@ async def test_dashboard_merge_does_not_revive_ordinary_historical_items():
             set(),
         )
 
-    assert {item["id"] for item in result} == {"current", "signal-1", "alert-1"}
+    assert {item["id"] for item in result} == {"current", "signal-1"}
 
 
 class QueryRecordingPool:

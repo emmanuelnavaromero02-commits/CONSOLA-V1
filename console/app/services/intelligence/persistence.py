@@ -305,6 +305,15 @@ async def persist_evidence(
                 else None,
                 "intelligence_run_id": signal.get("intelligence_run_id"),
                 "run_ref": signal.get("run_ref"),
+                "readiness_status": pack.get("readiness_status"),
+                "materialized_at": pack.get("materialized_at"),
+                "source_row_count": pack.get("source_row_count"),
+                "completeness": (
+                    "complete"
+                    if str(pack.get("readiness_status") or "").lower()
+                    in {"ready", "gold_ready", "materialized", "complete"}
+                    else "partial"
+                ),
             }
         ),
     )

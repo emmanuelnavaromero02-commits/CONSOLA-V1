@@ -93,6 +93,7 @@ def test_agent_runner_runtime_only_changes_select_exact_console_regressions():
 
     targets = set(str(flags["root_test_targets"]).split())
     assert "console/tests/test_agent_runner_scheduler_auth.py" in targets
+    assert "console/tests/test_control_room_grounded_analysis.py" in targets
     assert "tests/test_operational_truth_runtime_red.py" in targets
 
 
@@ -116,6 +117,37 @@ def test_successfactors_health_runtime_selects_secret_sentinel_contract():
     ):
         targets = set(str(_flags(changed_file)["root_test_targets"]).split())
         assert "tests/test_cartridge_startup_fail_fast.py" in targets
+
+
+def test_grounded_runtime_only_change_selects_unit_and_live_rls_regressions():
+    flags = _flags("console/app/services/control_room/grounded_analysis.py")
+
+    assert set(str(flags["root_test_targets"]).split()) == {
+        "console/tests/test_control_room_grounded_analysis.py",
+        "tests/test_grounded_analysis_rls_live.py",
+    }
+
+
+def test_grounded_schema_and_migration_changes_select_fail_closed_regressions():
+    for changed_file in (
+        "console/app/routers/control_room.py",
+        "console/app/schemas/control_room_business_responses.py",
+        "infra/init/99zzzzg_control_room_grounded_analysis.sql",
+    ):
+        targets = _root_targets(_flags(changed_file))
+        assert "console/tests/test_control_room_grounded_analysis.py" in targets
+    migration_targets = _root_targets(
+        _flags("infra/init/99zzzzg_control_room_grounded_analysis.sql")
+    )
+    assert "tests/test_grounded_analysis_rls_live.py" in migration_targets
+
+    talent_targets = _root_targets(
+        _flags("console/app/domains/agentops/successfactors_talent_monitor.py")
+    )
+    assert {
+        "tests/test_agent_runtime_guardrails.py",
+        "tests/test_agentops_successfactors_monitor_module.py",
+    } <= talent_targets
 
 
 def test_gcp_secret_and_day2_runtime_changes_select_fail_closed_contracts():
@@ -229,6 +261,48 @@ def test_release_partition_and_migration_runner_select_exact_contracts():
         "tests/test_apply_db_migrations_script.py",
         "tests/test_schema_migrations_tracking.py",
     } <= migration_targets
+
+
+def test_rag_and_math_policy_runtime_changes_select_security_contracts():
+    for changed_file in (
+        "mcp-infra/app/main.py",
+        "mcp-infra/app/rag/store.py",
+        "mcp-infra/app/tools/rag.py",
+    ):
+        rag_targets = set(str(_flags(changed_file)["root_test_targets"]).split())
+        assert "tests/test_rag_viewer_scoped_hardening.py" in rag_targets
+
+    for changed_file in (
+        "console/app/services/agent_runtime.py",
+        "console/app/routers/intelligence.py",
+        "console/app/services/intelligence/engine.py",
+        "console/app/services/intelligence/decision_intelligence.py",
+        "console/app/services/intelligence/engine_policy.py",
+        "console/app/services/intelligence/gold_control_room.py",
+        "console/app/services/intelligence/monte_carlo_service.py",
+        "console/app/services/intelligence/calibration_observation_service.py",
+        "console/app/services/intelligence/calibration_recompute_service.py",
+        "console/app/services/intelligence/orchestrator_execution.py",
+        "console/app/services/intelligence/calibration_autopilot.py",
+        "console/app/services/intelligence/talent_retention_simulation.py",
+    ):
+        targets = set(str(_flags(changed_file)["root_test_targets"]).split())
+        assert "tests/test_intelligence_math_engines_paused.py" in targets
+
+
+def test_mcp_talent_tool_changes_select_all_fail_closed_contracts():
+    expected = {
+        "tests/test_mcp_tool_policy.py",
+        "tests/test_mcp_control_room_read_permissions.py",
+        "tests/test_intelligence_math_engines_paused.py",
+        "tests/test_rag_viewer_scoped_hardening.py",
+    }
+    for changed_file in (
+        "mcp-infra/app/tools/control_room.py",
+        "mcp-infra/app/tools/cartridges.py",
+    ):
+        targets = set(str(_flags(changed_file)["root_test_targets"]).split())
+        assert expected <= targets
 
 
 def test_cartridge_runtime_change_builds_only_that_cartridge():

@@ -450,9 +450,11 @@ export interface SfTalentRosterPayload {
 
 export interface SfTalentAnomaly {
   id?: string | null;
+  analysis_item_id?: string | null;
+  evidence_pack_id?: number | null;
   severity?: Severity | string | null;
   title?: string | null;
-  affected_count: number;
+  affected_count?: number;
   recommendation?: string | null;
   status?: string | null;
 }
@@ -467,6 +469,76 @@ export interface SfTalentAnomaliesPayload {
   };
   items?: SfTalentAnomaly[];
   blockers?: SfTalentBlocker[];
+}
+
+export type AnalysisGroundingStatus =
+  | "pending"
+  | "verified"
+  | "rejected"
+  | "insufficient_data";
+
+export type AnalysisClaimType = "observed" | "computed" | "hypothesis";
+
+export type AnalysisCompleteness = "complete" | "partial" | "unknown";
+
+export type AnalysisVerificationStatus = AnalysisGroundingStatus;
+
+export interface AnalysisEvidenceRef {
+  evidence_item_id: number;
+  path: string;
+}
+
+export interface AnalysisClaim {
+  claim_id: string;
+  claim_type: AnalysisClaimType;
+  statement: string;
+  value: unknown | null;
+  unit: string | null;
+  population: number | null;
+  as_of: string | null;
+  completeness: AnalysisCompleteness;
+  evidence_refs: AnalysisEvidenceRef[];
+  evidence_item_ids: number[];
+  evidence_paths: string[];
+  verification_status: AnalysisVerificationStatus;
+  verification_reason: string | null;
+}
+
+export interface AnalysisOption {
+  label: string;
+  rationale: string;
+  evidence_refs: AnalysisEvidenceRef[];
+  evidence_item_ids: number[];
+  evidence_paths: string[];
+}
+
+export interface AnalysisAssumption {
+  statement: string;
+  evidence_refs: AnalysisEvidenceRef[];
+  evidence_item_ids: number[];
+  evidence_paths: string[];
+}
+
+/**
+ * Public, PII-free result produced by the grounded Control Room pipeline.
+ * The UI must only publish claims when `grounding_status` is `verified`.
+ */
+export interface AnalysisEnvelope {
+  analysis_run_id: string;
+  status: string;
+  evidence_pack_id: number | null;
+  as_of: string | null;
+  grounding_status: AnalysisGroundingStatus;
+  claims: AnalysisClaim[];
+  hypotheses: string[];
+  options: AnalysisOption[];
+  assumptions: AnalysisAssumption[];
+  blockers: string[];
+  expires_at: string | null;
+  model: string | null;
+  ruleset_version: string | null;
+  recommendation_only: true;
+  no_writeback: true;
 }
 
 export interface SfTalentDiagnosticComponent {
@@ -865,6 +937,8 @@ export interface ControlItem {
   domain?: string | null;
   module?: string | null;
   cartridge?: string | null;
+  source_dataset?: string | null;
+  evidence_pack_id?: number | null;
   entity_label?: string | null;
   contractor_count?: number | null;
   risk_factor?: number | null;

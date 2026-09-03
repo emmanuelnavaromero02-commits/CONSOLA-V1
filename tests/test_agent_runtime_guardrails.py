@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -88,6 +89,63 @@ def _tool(full: str, *, required: list[str] | None = None):
 
 
 @pytest.mark.asyncio
+async def test_scheduled_monitor_defers_publication_without_calling_removed_alert_tool(
+    agent_runtime, monkeypatch
+):
+    agent = _monitor_agent(
+        agent_runtime,
+        ["mcp-infra__wisdom_bits__run"],
+    )
+    agent.extra = {
+        "role": "monitor",
+        "monitor": {
+            "wisdom_bit_id": "WB-SAFE",
+            "threshold": {"min_signal_count": 1},
+            "engines": [],
+        },
+    }
+    calls: list[str] = []
+
+    async def invoke(server_id: str, tool: str, _args: dict):
+        calls.append(f"{server_id}__{tool}")
+        return {
+            "result": {
+                "status": "ready",
+                "data_sufficient": True,
+                "tenant_id": agent.tenant_id,
+                "workspace_id": agent.workspace_id,
+                "signals": {"count": 1, "items": [{"signal": "ready"}]},
+                "blockers": [],
+            }
+        }
+
+    monkeypatch.setattr(
+        agent_runtime,
+        "_discover_agent_tools",
+        AsyncMock(return_value=([], {})),
+    )
+    monkeypatch.setattr(agent_runtime, "_start_run", AsyncMock(return_value=501))
+    finish = AsyncMock()
+    monkeypatch.setattr(agent_runtime, "_finish_run", finish)
+    monkeypatch.setattr(agent_runtime, "_make_invoke", lambda *_args, **_kwargs: invoke)
+
+    result = await agent_runtime.run_scheduled_monitor(
+        agent,
+        "run",
+        schedule_run_id=41,
+        fencing_token=7,
+    )
+
+    assert calls == ["mcp-infra__wisdom_bits__run"]
+    assert result["alert"] is None
+    assert result["monitor"]["alerted"] is False
+    assert result["monitor"]["grounded_handoff_required"] is True
+    assert "alert=grounded_required" in result["reply"]
+    finish.assert_awaited_once()
+    assert finish.await_args.kwargs["status"] == "ok"
+
+
+@pytest.mark.asyncio
 async def test_manual_agent_write_tool_requires_approval(agent_runtime):
     full = "mcp-infra__airflow_trigger_dag"
     agent = _agent(agent_runtime, [full])
@@ -105,6 +163,110 @@ async def test_manual_agent_write_tool_requires_approval(agent_runtime):
     assert result["error"] == "approval_required"
     assert result["risk_level"] == "write"
     assert result["_agent_tool_status"] == "pending_approval"
+
+
+@pytest.mark.asyncio
+async def test_talent_monitor_cannot_manually_orchestrate_decisions(
+    agent_runtime, monkeypatch
+):
+    full = "mcp-infra__decision__orchestrate"
+    agent = _monitor_agent(agent_runtime, [full])
+    agent.cartridge_id = "sap_successfactors"
+    agent.slug = "sap_successfactors_talent_monitor"
+    captured: dict = {}
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("INTERNAL_API_KEY", "transport-key-" + "x" * 40)
+    monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", "signing-key-" + "y" * 40)
+
+    class Response:
+        status_code = 200
+        text = "{}"
+
+        def json(self):
+            return {"result": {"ok": True}}
+
+    class Client:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, _url, json):
+            captured["payload"] = json
+            return Response()
+
+    monkeypatch.setattr(agent_runtime.httpx, "AsyncClient", Client)
+    invoke = agent_runtime._make_invoke(
+        agent,
+        user={"id": 1, "email": "admin@example.com", "role": "admin"},
+        tools=[
+            {
+                "name": full,
+                "_server": "mcp-infra",
+                "_bare_name": "decision__orchestrate",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "execute_engines": {"type": "boolean"},
+                        "engine_inputs": {"type": "object"},
+                    },
+                },
+            }
+        ],
+        run_id=105,
+    )
+
+    result = await invoke(
+        "mcp-infra",
+        "decision__orchestrate",
+        {
+            "execute_engines": True,
+            "engine_inputs": {"monte_carlo": {"iterations": 1_000}},
+        },
+    )
+
+    assert result["error"] == "denied"
+    assert result["_agent_tool_status"] == "denied"
+    assert result["message"] == (
+        "manual Talent decision orchestration is paused by server policy"
+    )
+    assert captured == {}
+
+
+@pytest.mark.asyncio
+async def test_talent_monitor_cannot_publish_model_authored_alert_directly(
+    agent_runtime,
+):
+    full = "mcp-infra__control_room__raise_analysis_alert"
+    agent = _monitor_agent(agent_runtime, [full])
+    agent.cartridge_id = "sap_successfactors"
+    agent.slug = "sap_successfactors_talent_monitor"
+    invoke = agent_runtime._make_invoke(
+        agent,
+        user={"id": 1, "email": "admin@example.com", "role": "admin"},
+        tools=[
+            {
+                "name": full,
+                "_server": "mcp-infra",
+                "_bare_name": "control_room__raise_analysis_alert",
+                "input_schema": {"type": "object", "properties": {}},
+            }
+        ],
+        run_id=106,
+    )
+
+    result = await invoke(
+        "mcp-infra",
+        "control_room__raise_analysis_alert",
+        {"message": "Inventé 99 personas sin evidencia"},
+    )
+
+    assert result["error"] == "grounded_handoff_required"
+    assert "verified flow" in result["message"]
 
 
 @pytest.mark.asyncio
@@ -468,3 +630,103 @@ async def test_agent_tool_must_be_allowlisted_and_live(agent_runtime):
 
     assert result["error"] == "denied"
     assert "not allowlisted" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_rag_filter_cartridge_is_server_enforced(agent_runtime, monkeypatch):
+    full = "mcp-infra__search_rag"
+    agent = _scoped_agent(agent_runtime, [full])
+    agent.rag_filter = {
+        "cartridges": ["sap_successfactors"],
+        "kinds": ["document", "schema"],
+    }
+    captured: dict = {}
+
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("INTERNAL_API_KEY", "transport-key-" + "x" * 40)
+    monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", "signing-key-" + "y" * 40)
+
+    class Response:
+        status_code = 200
+        text = "{}"
+
+        def json(self):
+            return {"result": {"results": []}}
+
+    class Client:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, _url, json):
+            captured["payload"] = json
+            return Response()
+
+    monkeypatch.setattr(agent_runtime.httpx, "AsyncClient", Client)
+    invoke = agent_runtime._make_invoke(
+        agent,
+        user=None,
+        tools=[
+            {
+                "name": full,
+                "_server": "mcp-infra",
+                "_bare_name": "search_rag",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "kinds": {"type": "array", "items": {"type": "string"}},
+                        "cartridges": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["query"],
+                },
+            }
+        ],
+        run_id=109,
+    )
+
+    result = await invoke("mcp-infra", "search_rag", {"query": "readiness"})
+
+    assert result == {"results": []}
+    assert captured["payload"]["args"]["cartridges"] == ["sap_successfactors"]
+    assert captured["payload"]["args"]["kinds"] == ["document", "schema"]
+
+
+@pytest.mark.asyncio
+async def test_rag_filter_rejects_out_of_scope_cartridge(agent_runtime):
+    full = "mcp-infra__search_rag"
+    agent = _scoped_agent(agent_runtime, [full])
+    agent.rag_filter = {"cartridges": ["sap_successfactors"]}
+    invoke = agent_runtime._make_invoke(
+        agent,
+        user=None,
+        tools=[
+            {
+                "name": full,
+                "_server": "mcp-infra",
+                "_bare_name": "search_rag",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "cartridges": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["query"],
+                },
+            }
+        ],
+        run_id=110,
+    )
+
+    result = await invoke(
+        "mcp-infra",
+        "search_rag",
+        {"query": "finance", "cartridges": ["sap_s4hana"]},
+    )
+
+    assert result["error"] == "scope_denied"

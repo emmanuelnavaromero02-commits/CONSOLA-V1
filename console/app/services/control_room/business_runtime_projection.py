@@ -25,6 +25,12 @@ async def persisted_business_projection(
     *,
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
+    """Return business items whose narrative has a trusted publication path.
+
+    Historical ``agent_alert`` rows accepted model-authored prose and metrics
+    before grounded handoffs existed.  They remain in the ledger for audit,
+    but are quarantined from summaries and AgentOps projections.
+    """
     tenant_id, workspace_id = workspace_scope(user)
     owner_id = owner_scope_id(user)
     if not can_read_workspace_wide(user) and owner_id is None:
@@ -42,6 +48,7 @@ async def persisted_business_projection(
             owner_id=owner_id,
             kinds=(),
             row_to_item=normalize_persisted_business_item,
+            discard=lambda row: str(row.get("item_kind") or "") == "agent_alert",
             limit=limit,
             page_size=250,
         )

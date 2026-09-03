@@ -6,12 +6,13 @@ from datetime import datetime
 from urllib.parse import quote
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
 
 from app.dependencies import ROLE_ADMIN
 from app.security import get_internal_api_key
 from app.services import auth, operations_service, scheduled_runtime
+from app.services.control_room import grounded_analysis
 from app.services.auth import verify_internal_api_key
 from app.services.permissions import canonical_role, require_permission
 from app.services.security_context import build_security_context
@@ -103,6 +104,7 @@ class _AgentRunnerWindow(BaseModel):
 @router.post("/internal/agent-runner/due")
 async def scheduled_agent_fanout(
     body: _AgentRunnerWindow,
+    background_tasks: BackgroundTasks,
     internal_service: str = Depends(verify_internal_api_key),
 ):
     if internal_service != "airflow":
@@ -114,6 +116,10 @@ async def scheduled_agent_fanout(
             window_start=body.window_start,
             window_end=body.window_end,
         )
+        # The same authenticated five-minute cadence is the durable consumer
+        # for grounded handoffs. It does not broaden this endpoint: only the
+        # Airflow pair key reaches the router dependency above.
+        background_tasks.add_task(grounded_analysis.process_pending_analyses)
         return result
     except ValueError as exc:
         raise HTTPException(422, "invalid scheduler window") from exc

@@ -35,6 +35,64 @@ def _scope_values(scope: dict | None) -> tuple[str | None, str | None, bool]:
     return tenant_id or None, workspace_id or None, platform_admin
 
 
+def _cartridge_filter(
+    requested: list[str] | None,
+    scope: dict | None,
+) -> list[str] | None:
+    # Internal maintenance callers predate scoped capability contexts.  Keep
+    # those calls working, while treating an explicitly supplied scope with no
+    # cartridge entitlement as deny-all.
+    if scope is None:
+        wanted = {
+            str(value).strip() for value in (requested or []) if str(value).strip()
+        }
+        return sorted(wanted) if wanted else None
+    scope = scope if isinstance(scope, dict) else {}
+    allowed = {
+        str(value).strip()
+        for value in (scope.get("allowed_cartridges") or [])
+        if str(value).strip()
+    }
+    wanted = {
+        str(value).strip() for value in (requested or []) if str(value).strip()
+    }
+    if "*" in allowed:
+        return sorted(wanted) if wanted else None
+    if not allowed:
+        return ["__no_authorized_cartridge__"]
+    effective = allowed & wanted if wanted else allowed
+    return sorted(effective) if effective else ["__no_authorized_cartridge__"]
+
+
+def _cartridge_read_filter(
+    requested: list[str] | None,
+    scope: dict | None,
+) -> tuple[list[str] | None, bool]:
+    """Return the entitled cartridge filter and whether workspace docs are included.
+
+    An explicit cartridge request is strict (used by agent ``rag_filter``) and
+    never includes unclassified documents.  A normal workspace listing/search
+    includes its own documents plus cartridge sources the caller may access.
+    """
+    explicit = bool(
+        [value for value in (requested or []) if str(value).strip()]
+    )
+    filtered = _cartridge_filter(requested, scope)
+    if explicit:
+        return filtered, False
+    if scope is None:
+        return filtered, False
+    scope = scope if isinstance(scope, dict) else {}
+    allowed = {
+        str(value).strip()
+        for value in (scope.get("allowed_cartridges") or [])
+        if str(value).strip()
+    }
+    if "*" in allowed:
+        return None, True
+    return (sorted(allowed) if allowed else []), True
+
+
 async def _set_rls_context(conn: asyncpg.Connection, scope: dict | None) -> tuple[str | None, str | None, bool]:
     tenant_id, workspace_id, platform_admin = _scope_values(scope)
     await conn.execute("SELECT set_config('app.tenant_id', $1, true)", tenant_id or "")
@@ -71,7 +129,15 @@ def _bind_scope_placeholders(sql: str, params: list, scope_params: list[str]) ->
     return sql
 
 
-async def list_sources(kinds: list[str] | None = None, scope: dict | None = None) -> list[dict]:
+async def list_sources(
+    kinds: list[str] | None = None,
+    cartridges: list[str] | None = None,
+    source_prefixes: list[str] | None = None,
+    scope: dict | None = None,
+) -> list[dict]:
+    cartridges, include_workspace_documents = _cartridge_read_filter(
+        cartridges, scope
+    )
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -88,9 +154,31 @@ async def list_sources(kinds: list[str] | None = None, scope: dict | None = None
             if kinds:
                 params.append(kinds)
                 where += f" AND s.kind = ANY(${len(params)})"
+            literal_prefixes = [
+                str(value) for value in (source_prefixes or []) if str(value)
+            ]
+            if literal_prefixes:
+                params.append(literal_prefixes)
+                where += (
+                    " AND EXISTS (SELECT 1 "
+                    f"FROM unnest(${len(params)}::text[]) AS prefix(value) "
+                    "WHERE starts_with(s.name, prefix.value))"
+                )
+            if cartridges and include_workspace_documents:
+                params.append(cartridges)
+                where += (
+                    f" AND (s.cartridge_id = ANY(${len(params)}) "
+                    "OR s.cartridge_id IS NULL)"
+                )
+            elif cartridges:
+                params.append(cartridges)
+                where += f" AND s.cartridge_id = ANY(${len(params)})"
+            elif include_workspace_documents:
+                where += " AND s.cartridge_id IS NULL"
             sql = (
                 "SELECT id, name, description, mime_type, size_chars, chunk_count, kind, "
-                "tenant_id::text AS tenant_id, workspace_id::text AS workspace_id, visibility, created_at "
+                "tenant_id::text AS tenant_id, workspace_id::text AS workspace_id, "
+                "cartridge_id, visibility, created_at "
                 f"FROM rag_sources s {where} ORDER BY created_at DESC"
             )
             sql = _bind_scope_placeholders(sql, params, scope_params)
@@ -101,7 +189,9 @@ async def list_sources(kinds: list[str] | None = None, scope: dict | None = None
     ]
 
 
-async def delete_source(source_id: int, scope: dict | None = None) -> bool:
+async def get_source(source_id: int, scope: dict | None = None) -> dict | None:
+    """Load one source under exact tenant/workspace RLS for authorization."""
+
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -111,9 +201,52 @@ async def delete_source(source_id: int, scope: dict | None = None) -> bool:
                 tenant_id=tenant_id,
                 workspace_id=workspace_id,
                 platform_admin=platform_admin,
+                alias="s",
+            )
+            sql = (
+                "SELECT id, name, kind, cartridge_id, visibility, "
+                "tenant_id::text AS tenant_id, workspace_id::text AS workspace_id "
+                "FROM rag_sources s WHERE id = $1" + scope_sql
+            )
+            sql = _bind_scope_placeholders(sql, params, scope_params)
+            row = await conn.fetchrow(sql, *params)
+    return dict(row) if row else None
+
+
+async def delete_source(
+    source_id: int,
+    scope: dict | None = None,
+    *,
+    user_owned_document_only: bool = False,
+) -> bool:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            tenant_id, workspace_id, platform_admin = await _set_rls_context(conn, scope)
+            if user_owned_document_only and (
+                not tenant_id or not workspace_id or platform_admin
+            ):
+                return False
+            params: list = [source_id]
+            scope_sql, scope_params = _scope_where(
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+                platform_admin=platform_admin,
                 alias="rag_sources",
             )
             sql = "DELETE FROM rag_sources WHERE id = $1" + scope_sql
+            if user_owned_document_only:
+                # Repeat the endpoint provenance check in the atomic DELETE so
+                # a concurrent re-index cannot turn a checked document into a
+                # protected server-managed source between SELECT and DELETE.
+                sql += (
+                    " AND kind = 'document'"
+                    " AND cartridge_id IS NULL"
+                    " AND visibility = 'workspace'"
+                    " AND NOT starts_with(name, 'raw:')"
+                    " AND NOT starts_with(name, 'dataset:')"
+                    " AND NOT starts_with(name, '_semantic_')"
+                )
             sql = _bind_scope_placeholders(sql, params, scope_params)
             result = await conn.execute(sql, *params)
     return result == "DELETE 1"
@@ -127,8 +260,12 @@ async def ingest_chunks(
     chunks: list[TextChunk],
     embeddings: dict[int, list[float]],   # child_index → vector
     kind: str = "document",
+    cartridge_id: str | None = None,
     scope: dict | None = None,
 ) -> dict:
+    allowed = _cartridge_filter([cartridge_id] if cartridge_id else None, scope)
+    if cartridge_id and allowed == ["__no_authorized_cartridge__"]:
+        raise PermissionError("RAG cartridge is outside caller scope")
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -136,19 +273,22 @@ async def ingest_chunks(
             visibility = "platform" if platform_admin else "workspace"
             source_id: int = await conn.fetchval("""
                 INSERT INTO rag_sources
-                    (name, description, mime_type, size_chars, kind, tenant_id, workspace_id, visibility)
-                VALUES ($1, $2, $3, $4, $5, $6::uuid, $7::uuid, $8)
+                    (name, description, mime_type, size_chars, kind, cartridge_id,
+                     tenant_id, workspace_id, visibility)
+                VALUES ($1, $2, $3, $4, $5, $6, $7::uuid, $8::uuid, $9)
                 ON CONFLICT (name) DO UPDATE SET
                     description = EXCLUDED.description,
                     mime_type   = EXCLUDED.mime_type,
                     size_chars  = EXCLUDED.size_chars,
                     kind        = EXCLUDED.kind,
+                    cartridge_id = EXCLUDED.cartridge_id,
                     tenant_id   = EXCLUDED.tenant_id,
                     workspace_id = EXCLUDED.workspace_id,
                     visibility  = EXCLUDED.visibility,
                     updated_at  = NOW()
                 RETURNING id
-            """, source_name, source_desc, mime_type, size_chars, kind, tenant_id, workspace_id, visibility)
+            """, source_name, source_desc, mime_type, size_chars, kind,
+                cartridge_id, tenant_id, workspace_id, visibility)
 
             await conn.execute("DELETE FROM rag_chunks WHERE source_id = $1", source_id)
 
@@ -192,8 +332,13 @@ async def search(
     top_k: int = 5,
     source_ids: list[int] | None = None,
     kinds: list[str] | None = None,
+    cartridges: list[str] | None = None,
+    source_prefixes: list[str] | None = None,
     scope: dict | None = None,
 ) -> list[dict]:
+    cartridges, include_workspace_documents = _cartridge_read_filter(
+        cartridges, scope
+    )
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -213,6 +358,27 @@ async def search(
             if kinds:
                 params.append(kinds)
                 extras.append(f"AND s.kind = ANY(${len(params)})")
+            literal_prefixes = [
+                str(value) for value in (source_prefixes or []) if str(value)
+            ]
+            if literal_prefixes:
+                params.append(literal_prefixes)
+                extras.append(
+                    "AND EXISTS (SELECT 1 "
+                    f"FROM unnest(${len(params)}::text[]) AS prefix(value) "
+                    "WHERE starts_with(s.name, prefix.value))"
+                )
+            if cartridges and include_workspace_documents:
+                params.append(cartridges)
+                extras.append(
+                    f"AND (s.cartridge_id = ANY(${len(params)}) "
+                    "OR s.cartridge_id IS NULL)"
+                )
+            elif cartridges:
+                params.append(cartridges)
+                extras.append(f"AND s.cartridge_id = ANY(${len(params)})")
+            elif include_workspace_documents:
+                extras.append("AND s.cartridge_id IS NULL")
             extra = (" " + " ".join(e for e in extras if e)) if extras else ""
             sql = f"""
                 SELECT
@@ -221,6 +387,7 @@ async def search(
                     s.name        AS source_name,
                     s.id          AS source_id,
                     s.kind        AS source_kind,
+                    s.cartridge_id AS cartridge_id,
                     s.tenant_id::text AS tenant_id,
                     s.workspace_id::text AS workspace_id,
                     c.content     AS child_content,
@@ -246,6 +413,7 @@ async def search(
                 "source_id":   r["source_id"],
                 "source_name": r["source_name"],
                 "source_kind": r["source_kind"],
+                "cartridge_id": r["cartridge_id"],
                 "context":     r["context"],
                 "child_content": r["child_content"],
                 "similarity":  float(r["similarity"]),

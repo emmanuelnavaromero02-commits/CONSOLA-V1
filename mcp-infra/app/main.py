@@ -418,10 +418,7 @@ _VAULT_DESTRUCTIVE_TOOLS = {"vault_delete_connection"}
 _AGENT_READ_TOOLS = {"agent_list", "agent_get"}
 _AGENT_WRITE_TOOLS = {"agent_create", "agent_update"}
 _AGENT_DESTRUCTIVE_TOOLS = {"agent_delete"}
-_CONTROL_ROOM_ALERT_TOOLS = {
-    "control_room__raise_alert",
-    "control_room__raise_analysis_alert",
-}
+_CONTROL_ROOM_ALERT_TOOLS: set[str] = set()
 _CONTROL_ROOM_ANALYSIS_TOOLS = {
     "simulation__monte_carlo_run",
     "decision__orchestrate",
@@ -1241,6 +1238,37 @@ def _rag_is_reserved_source_name(name: str) -> bool:
     return name.startswith(("raw:", "dataset:", "_semantic_"))
 
 
+def _rag_user_owned_document_allowed(ctx: dict[str, Any], row: Any) -> bool:
+    """Return whether a RAG row is a deletable user-owned workspace document.
+
+    ``_rag_source_allowed`` is a read-authorization helper for server-managed
+    raw/dataset/semantic sources.  Reusing it for DELETE inverted the intended
+    policy: it rejected normal documents and admitted protected sources.  The
+    destructive boundary deliberately uses the persisted provenance columns
+    and an exact workspace match instead of inferring ownership from a name.
+    """
+
+    if not isinstance(row, dict) or not _has_tenant_workspace_scope(ctx):
+        return False
+    if str(row.get("kind") or "").strip().lower() != "document":
+        return False
+    if str(row.get("cartridge_id") or "").strip():
+        return False
+    if str(row.get("visibility") or "").strip().lower() != "workspace":
+        return False
+    if str(row.get("tenant_id") or "").strip() != str(
+        ctx.get("tenant_id") or ""
+    ).strip():
+        return False
+    if str(row.get("workspace_id") or "").strip() != str(
+        ctx.get("workspace_id") or ""
+    ).strip():
+        return False
+    name = str(row.get("name") or "").strip()
+    base_name, scope_ok = _rag_base_name_for_context(ctx, name)
+    return bool(base_name and scope_ok and not _rag_is_reserved_source_name(base_name))
+
+
 def _scoped_rag_document_name(ctx: dict[str, Any], name: str) -> str:
     name = str(name or "").strip()
     if _is_unscoped_admin_context(ctx) or not _has_tenant_workspace_scope(ctx):
@@ -1263,10 +1291,21 @@ def _rag_row_allowed(ctx: dict[str, Any], row: Any) -> bool:
     row_tenant = str(row.get("tenant_id") or "").strip()
     row_workspace = str(row.get("workspace_id") or "").strip()
     if row_tenant or row_workspace:
-        return (
+        scope_matches = (
             row_tenant == str(ctx.get("tenant_id") or "").strip()
             and row_workspace == str(ctx.get("workspace_id") or "").strip()
         )
+        if not scope_matches:
+            return False
+        cartridge_id = str(row.get("cartridge_id") or "").strip()
+        if not cartridge_id:
+            return True
+        allowed = {
+            str(value).strip()
+            for value in (ctx.get("allowed_cartridges") or [])
+            if str(value).strip()
+        }
+        return "*" in allowed or cartridge_id in allowed
     return _rag_source_allowed(
         ctx, str(row.get("name") or row.get("source_name") or "")
     )
@@ -1458,12 +1497,23 @@ def _enforce_data_scope(
             if not source_name:
                 raise HTTPException(400, detail="RAG source name is required")
             if _rag_is_reserved_source_name(source_name):
-                if not _rag_source_allowed(ctx, source_name):
-                    raise HTTPException(
-                        403, detail="RAG source is outside caller scope"
-                    )
-            else:
-                args["name"] = _scoped_rag_document_name(ctx, source_name)
+                raise HTTPException(
+                    403, detail="reserved RAG sources are server-managed"
+                )
+            if str(args.get("kind") or "document").strip().lower() != "document":
+                raise HTTPException(
+                    403, detail="RAG schema sources are server-managed"
+                )
+            if str(args.get("cartridge_id") or "").strip():
+                raise HTTPException(
+                    403, detail="RAG cartridge sources are server-managed"
+                )
+            args["name"] = _scoped_rag_document_name(ctx, source_name)
+            # User/agent ingestion cannot forge the schema/cartridge identity
+            # consumed by cartridge-bound agents. Those sources are created
+            # only by the server-owned /rag/reindex path below.
+            args["kind"] = "document"
+            args["cartridge_id"] = None
         args["security_context"] = ctx
 
     if tool in _AIRFLOW_WRITE_TOOLS | _PIPELINE_WRITE_TOOLS:
@@ -1834,6 +1884,7 @@ def health():
 
 from app.rag.store import (
     list_sources as _rag_list_sources,
+    get_source as _rag_get_source,
     delete_source as _rag_delete_source,
 )
 from app.tools.rag import _do_ingest as _rag_do_ingest, _do_search as _rag_do_search
@@ -1880,13 +1931,25 @@ def _rest_security_context(
 @app.get("/rag/sources")
 async def rag_rest_list_sources(
     kinds: str | None = None,
+    cartridges: str | None = None,
     x_security_context: str | None = Header(None, alias="x-security-context"),
     internal_service: str = Depends(verify_api_key),
 ):
     ctx = _rest_security_context(internal_service, header_value=x_security_context)
     _require_rag_context_scope(ctx)
     kind_list = [k.strip() for k in kinds.split(",") if k.strip()] if kinds else None
-    sources = await _rag_list_sources(kinds=kind_list, scope=ctx)
+    cartridge_list = (
+        [value.strip() for value in cartridges.split(",") if value.strip()]
+        if cartridges
+        else None
+    )
+    for cartridge in cartridge_list or []:
+        _require_cartridge_scope(ctx, cartridge)
+    sources = await _rag_list_sources(
+        kinds=kind_list,
+        cartridges=cartridge_list,
+        scope=ctx,
+    )
     return _filter_rag_payload({"sources": sources}, ctx)
 
 
@@ -1905,13 +1968,16 @@ async def rag_rest_delete_source(
     )
     ctx = _require_context_permission(fake_req, "datasets.write", internal_service)
     _require_rag_context_scope(ctx)
-    sources = await _rag_list_sources(scope=ctx)
-    source = next((s for s in sources if int(s.get("id") or 0) == source_id), None)
+    source = await _rag_get_source(source_id, scope=ctx)
     if not source:
         raise HTTPException(404, "Source not found")
-    if not _rag_source_allowed(ctx, str(source.get("name") or "")):
-        raise HTTPException(403, "RAG source is outside caller scope")
-    ok = await _rag_delete_source(source_id, scope=ctx)
+    if not _rag_user_owned_document_allowed(ctx, source):
+        raise HTTPException(403, "Only workspace-owned RAG documents can be deleted")
+    ok = await _rag_delete_source(
+        source_id,
+        scope=ctx,
+        user_owned_document_only=True,
+    )
     if not ok:
         raise HTTPException(404, "Source not found")
     return {"deleted": True, "source_id": source_id}
@@ -1921,6 +1987,13 @@ async def rag_rest_delete_source(
 async def rag_rest_search(body: dict, internal_service: str = Depends(verify_api_key)):
     ctx = _rest_security_context(internal_service, body)
     _require_rag_context_scope(ctx)
+    cartridges = [
+        str(value).strip()
+        for value in (body.get("cartridges") or [])
+        if str(value).strip()
+    ]
+    for cartridge in cartridges:
+        _require_cartridge_scope(ctx, cartridge)
     try:
         result = {
             "results": await _rag_do_search(
@@ -1928,6 +2001,7 @@ async def rag_rest_search(body: dict, internal_service: str = Depends(verify_api
                 top_k=body.get("top_k", 5),
                 source_ids=body.get("source_ids"),
                 kinds=body.get("kinds"),
+                cartridges=cartridges or None,
                 security_context=ctx,
             )
         }
@@ -1954,12 +2028,13 @@ async def rag_rest_ingest(
     source_name = str(body.get("name") or "").strip()
     if not source_name:
         raise HTTPException(400, "RAG source name is required")
-    if _rag_is_reserved_source_name(source_name) and not _rag_source_allowed(
-        ctx, source_name
-    ):
-        raise HTTPException(403, "RAG source is outside caller scope")
-    if not _rag_is_reserved_source_name(source_name):
-        source_name = _scoped_rag_document_name(ctx, source_name)
+    if _rag_is_reserved_source_name(source_name):
+        raise HTTPException(403, "reserved RAG sources are server-managed")
+    source_name = _scoped_rag_document_name(ctx, source_name)
+    if str(body.get("kind") or "document").strip().lower() != "document":
+        raise HTTPException(403, "RAG schema sources are server-managed")
+    if str(body.get("cartridge_id") or "").strip():
+        raise HTTPException(403, "RAG cartridge sources are server-managed")
     content = body.get("content", "")
     if body.get("mime_type") == "application/pdf":
         try:
@@ -1979,7 +2054,8 @@ async def rag_rest_ingest(
             content=content,
             description=body.get("description", ""),
             mime_type=body.get("mime_type", "text/plain"),
-            kind=body.get("kind", "document"),
+            kind="document",
+            cartridge_id=None,
             security_context=ctx,
         )
     except EmbeddingProviderError as exc:
@@ -2036,6 +2112,7 @@ async def rag_rest_reindex(body: dict, internal_service: str = Depends(verify_ap
             description=desc,
             mime_type="text/plain",
             kind="schema",
+            cartridge_id=cartridge if kind == "raw" else cartridge_for_dataset,
             security_context=ctx,
         )
     except EmbeddingProviderError as exc:
@@ -2330,6 +2407,7 @@ async def _rebuild_semantic_doc(
         description=f"Modelo semántico consolidado del cartucho {cartridge}",
         mime_type="text/plain",
         kind="document",
+        cartridge_id=cartridge,
         security_context=ctx,
     )
     return {

@@ -26,7 +26,7 @@ from typing import Any
 
 from app.services import auth
 from app.services.db_scope import scoped_db_for_user
-from app.services.intelligence import calibration_observation_service
+from app.services.intelligence import calibration_observation_service, engine_policy
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,8 @@ async def observe_pending_outcomes(
 
     Devuelve un resumen exacto (contados, observados, fallidos con razón) —
     cero error silencioso. Nunca lanza: el llamador (el ciclo) sigue vivo."""
+    if not engine_policy.math_engines_enabled():
+        return {"status": "paused", "reason": engine_policy.PAUSED_REASON}
     limit = max(1, min(int(limit or MAX_OUTCOMES_PER_SWEEP), 200))
     summary: dict[str, Any] = {
         "pending_found": 0,

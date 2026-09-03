@@ -10,6 +10,7 @@ import time
 import zlib
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -93,6 +94,28 @@ def _signed_context(
 
 def _headers() -> dict[str, str]:
     return {"x-api-key": PAIR_KEY, "x-internal-service": "console"}
+
+
+def _delete_headers() -> dict[str, str]:
+    return {
+        **_headers(),
+        "x-security-context": json.dumps(_signed_context(), separators=(",", ":")),
+    }
+
+
+def _rag_source(**overrides: Any) -> dict[str, Any]:
+    tenant_id = "11111111-1111-1111-1111-111111111111"
+    workspace_id = "22222222-2222-2222-2222-222222222222"
+    return {
+        "id": 7,
+        "name": f"policy:tenant:{tenant_id}:workspace:{workspace_id}",
+        "kind": "document",
+        "cartridge_id": None,
+        "visibility": "workspace",
+        "tenant_id": tenant_id,
+        "workspace_id": workspace_id,
+        **overrides,
+    }
 
 
 def _pdf_with_stream(stream: bytes, *, filter_name: bytes = b"") -> bytes:
@@ -272,3 +295,91 @@ def test_foreign_scope_suffix_is_rejected(monkeypatch) -> None:
 
     assert response.status_code == 403
     assert response.json() == {"detail": "RAG source is outside caller scope"}
+
+
+@pytest.mark.parametrize(
+    ("override", "detail"),
+    [
+        ({"kind": "schema"}, "RAG schema sources are server-managed"),
+        (
+            {"cartridge_id": "sap_successfactors"},
+            "RAG cartridge sources are server-managed",
+        ),
+    ],
+)
+def test_user_ingest_cannot_forge_server_managed_rag_provenance(
+    monkeypatch, override: dict[str, str], detail: str
+) -> None:
+    main = _load_main(monkeypatch)
+    called = False
+
+    async def fake_ingest(**_kwargs):
+        nonlocal called
+        called = True
+        return {"source_id": 7}
+
+    monkeypatch.setattr(main, "_rag_do_ingest", fake_ingest)
+    client = TestClient(main.app, raise_server_exceptions=False)
+
+    response = client.post(
+        "/rag/ingest",
+        json=_body(
+            base64.b64encode(_pdf_with_text("do not trust me")).decode(),
+            **override,
+        ),
+        headers=_headers(),
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": detail}
+    assert called is False
+
+
+def test_delete_allows_only_owned_workspace_document(monkeypatch) -> None:
+    main = _load_main(monkeypatch)
+    delete = AsyncMock(return_value=True)
+    monkeypatch.setattr(main, "_rag_get_source", AsyncMock(return_value=_rag_source()))
+    monkeypatch.setattr(main, "_rag_delete_source", delete)
+    client = TestClient(main.app, raise_server_exceptions=False)
+
+    response = client.delete("/rag/sources/7", headers=_delete_headers())
+
+    assert response.status_code == 200
+    assert response.json() == {"deleted": True, "source_id": 7}
+    delete.assert_awaited_once()
+    assert delete.await_args.args == (7,)
+    assert delete.await_args.kwargs["user_owned_document_only"] is True
+    assert delete.await_args.kwargs["scope"]["workspace_id"] == _rag_source()[
+        "workspace_id"
+    ]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        _rag_source(kind="schema"),
+        _rag_source(cartridge_id="sap_successfactors"),
+        _rag_source(visibility="platform"),
+        _rag_source(name="raw:sap_successfactors:FOCompany"),
+        _rag_source(name="dataset:sap_successfactors_talent_9box"),
+        _rag_source(name="_semantic_sap_successfactors"),
+        _rag_source(tenant_id="99999999-9999-9999-9999-999999999999"),
+        _rag_source(workspace_id="99999999-9999-9999-9999-999999999999"),
+    ],
+)
+def test_delete_rejects_server_managed_or_foreign_rag_source(
+    monkeypatch, source: dict[str, Any]
+) -> None:
+    main = _load_main(monkeypatch)
+    delete = AsyncMock(return_value=True)
+    monkeypatch.setattr(main, "_rag_get_source", AsyncMock(return_value=source))
+    monkeypatch.setattr(main, "_rag_delete_source", delete)
+    client = TestClient(main.app, raise_server_exceptions=False)
+
+    response = client.delete("/rag/sources/7", headers=_delete_headers())
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "detail": "Only workspace-owned RAG documents can be deleted"
+    }
+    delete.assert_not_awaited()

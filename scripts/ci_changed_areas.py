@@ -232,7 +232,7 @@ def _root_test_targets(files: list[str]) -> str:
         and Path(path).exists()
     }
     # Runtime-only edits must still select the fail-closed regressions that
-    # protect scheduler authentication and storage/release boundaries.  A
+    # protect internal scheduler authentication and grounded analysis.  A
     # release tag may contain only the implementation file, so relying on the
     # corresponding test file also being changed would silently skip them.
     console_runtime_contracts = {
@@ -241,10 +241,29 @@ def _root_test_targets(files: list[str]) -> str:
         },
         "console/app/routers/operations.py": {
             "console/tests/test_agent_runner_scheduler_auth.py",
+            "console/tests/test_control_room_grounded_analysis.py",
+        },
+        "console/app/routers/control_room.py": {
+            "console/tests/test_control_room_grounded_analysis.py",
+        },
+        "console/app/schemas/control_room_business_responses.py": {
+            "console/tests/test_control_room_grounded_analysis.py",
+        },
+        "console/app/services/agent_runtime.py": {
+            "tests/test_agent_runtime_guardrails.py",
+            "tests/test_intelligence_math_engines_paused.py",
+        },
+        "console/app/domains/agentops/successfactors_talent_monitor.py": {
+            "tests/test_agent_runtime_guardrails.py",
+            "tests/test_agentops_successfactors_monitor_module.py",
         },
         "console/app/services/scheduled_runtime.py": {
             "console/tests/test_agent_runner_scheduler_auth.py",
             "tests/test_operational_truth_runtime_red.py",
+        },
+        "console/app/services/control_room/grounded_analysis.py": {
+            "console/tests/test_control_room_grounded_analysis.py",
+            "tests/test_grounded_analysis_rls_live.py",
         },
         "console/app/services/s3_client.py": {
             "console/tests/test_console_s3_iam_client.py",
@@ -257,6 +276,43 @@ def _root_test_targets(files: list[str]) -> str:
         },
         "console/app/services/dag_code_generator.py": {
             "tests/test_dag_codegen_security.py",
+        },
+        "console/app/routers/intelligence.py": {
+            "tests/test_intelligence_math_engines_paused.py",
+        },
+        "console/app/services/intelligence/engine_policy.py": {
+            "tests/test_intelligence_math_engines_paused.py",
+        },
+        "console/app/services/intelligence/engine.py": {
+            "tests/test_intelligence_math_engines_paused.py",
+        },
+        "console/app/services/intelligence/decision_intelligence.py": {
+            "tests/test_intelligence_math_engines_paused.py",
+        },
+        "console/app/services/intelligence/gold_control_room.py": {
+            "tests/test_intelligence_math_engines_paused.py",
+        },
+        "console/app/services/intelligence/monte_carlo_service.py": {
+            "tests/test_intelligence_math_engines_paused.py",
+        },
+        "console/app/services/intelligence/calibration_observation_service.py": {
+            "tests/test_intelligence_math_engines_paused.py",
+        },
+        "console/app/services/intelligence/calibration_recompute_service.py": {
+            "tests/test_intelligence_math_engines_paused.py",
+        },
+        "console/app/services/intelligence/orchestrator_execution.py": {
+            "tests/test_intelligence_math_engines_paused.py",
+        },
+        "console/app/services/intelligence/calibration_autopilot.py": {
+            "tests/test_intelligence_math_engines_paused.py",
+        },
+        "console/app/services/intelligence/talent_retention_simulation.py": {
+            "tests/test_intelligence_math_engines_paused.py",
+        },
+        "infra/init/99zzzzg_control_room_grounded_analysis.sql": {
+            "console/tests/test_control_room_grounded_analysis.py",
+            "tests/test_grounded_analysis_rls_live.py",
         },
         "infra/terraform-gcp/release/hydrate-runtime-secrets.sh": {
             "tests/test_gcp_runtime_secret_hydration.py",
@@ -278,6 +334,27 @@ def _root_test_targets(files: list[str]) -> str:
         "scripts/apply_db_migrations.sh": {
             "tests/test_apply_db_migrations_script.py",
             "tests/test_schema_migrations_tracking.py",
+        },
+        "mcp-infra/app/rag/store.py": {
+            "tests/test_rag_viewer_scoped_hardening.py",
+        },
+        "mcp-infra/app/main.py": {
+            "tests/test_rag_viewer_scoped_hardening.py",
+        },
+        "mcp-infra/app/tools/rag.py": {
+            "tests/test_rag_viewer_scoped_hardening.py",
+        },
+        "mcp-infra/app/tools/control_room.py": {
+            "tests/test_mcp_tool_policy.py",
+            "tests/test_mcp_control_room_read_permissions.py",
+            "tests/test_intelligence_math_engines_paused.py",
+            "tests/test_rag_viewer_scoped_hardening.py",
+        },
+        "mcp-infra/app/tools/cartridges.py": {
+            "tests/test_mcp_tool_policy.py",
+            "tests/test_mcp_control_room_read_permissions.py",
+            "tests/test_intelligence_math_engines_paused.py",
+            "tests/test_rag_viewer_scoped_hardening.py",
         },
         "cartridges/sap_successfactors/app/main.py": {
             "tests/test_cartridge_startup_fail_fast.py",

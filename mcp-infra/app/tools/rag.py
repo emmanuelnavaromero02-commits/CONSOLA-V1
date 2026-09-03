@@ -34,6 +34,9 @@ from app.rag.store import (
                            "description": "Filter by source IDs (optional)"},
             "kinds":      {"type": "array", "items": {"type": "string"},
                            "description": "Filter by source kind: 'schema' or 'document'. Omit for all."},
+            "cartridges": {"type": "array", "items": {"type": "string"},
+                           "description": "Required cartridge scope for cartridge-bound agents."},
+            "source_prefixes": {"type": "array", "items": {"type": "string"}},
         },
         "required": ["query"],
     },
@@ -43,6 +46,8 @@ async def search_rag(
     top_k: int = 5,
     source_ids: list[int] | None = None,
     kinds: list[str] | None = None,
+    cartridges: list[str] | None = None,
+    source_prefixes: list[str] | None = None,
     security_context: dict | None = None,
 ) -> dict:
     query_vec = await embed_query(query)
@@ -51,6 +56,8 @@ async def search_rag(
         top_k=top_k,
         source_ids=source_ids,
         kinds=kinds,
+        cartridges=cartridges,
+        source_prefixes=source_prefixes,
         scope=security_context,
     )
     return {"results": results}
@@ -61,10 +68,30 @@ async def search_rag(
 @tool(
     name="list_rag_sources",
     description="List all documents currently ingested in the RAG knowledge base.",
-    input_schema={"type": "object", "properties": {}, "required": []},
+    input_schema={
+        "type": "object",
+        "properties": {
+            "kinds": {"type": "array", "items": {"type": "string"}},
+            "cartridges": {"type": "array", "items": {"type": "string"}},
+            "source_prefixes": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": [],
+    },
 )
-async def list_rag_sources(security_context: dict | None = None) -> dict:
-    return {"sources": await _list_sources(scope=security_context)}
+async def list_rag_sources(
+    kinds: list[str] | None = None,
+    cartridges: list[str] | None = None,
+    source_prefixes: list[str] | None = None,
+    security_context: dict | None = None,
+) -> dict:
+    return {
+        "sources": await _list_sources(
+            kinds=kinds,
+            cartridges=cartridges,
+            source_prefixes=source_prefixes,
+            scope=security_context,
+        )
+    }
 
 
 # ── Tool 3 · ingest_document ──────────────────────────────────────────────────
@@ -81,7 +108,6 @@ async def list_rag_sources(security_context: dict | None = None) -> dict:
             "name":        {"type": "string", "description": "Unique document name"},
             "content":     {"type": "string", "description": "Full text content"},
             "description": {"type": "string", "description": "Optional description"},
-            "kind":        {"type": "string", "description": "'document' (default) or 'schema'", "default": "document"},
         },
         "required": ["name", "content"],
     },
@@ -91,14 +117,20 @@ async def ingest_document(
     content: str,
     description: str = "",
     kind: str = "document",
+    cartridge_id: str | None = None,
     security_context: dict | None = None,
 ) -> dict:
+    if str(kind or "document").strip().lower() != "document" or str(
+        cartridge_id or ""
+    ).strip():
+        raise ValueError("RAG schema and cartridge sources are server-managed")
     return await _do_ingest(
         name=name,
         content=content,
         description=description,
         mime_type="text/plain",
-        kind=kind,
+        kind="document",
+        cartridge_id=None,
         security_context=security_context,
     )
 
@@ -111,6 +143,7 @@ async def _do_ingest(
     description: str = "",
     mime_type: str = "text/plain",
     kind: str = "document",
+    cartridge_id: str | None = None,
     security_context: dict | None = None,
 ) -> dict:
     chunks = chunk_document(
@@ -135,6 +168,7 @@ async def _do_ingest(
         chunks=chunks,
         embeddings=embeddings,
         kind=kind,
+        cartridge_id=cartridge_id,
         scope=security_context,
     )
 
@@ -144,6 +178,8 @@ async def _do_search(
     top_k: int = 5,
     source_ids: list[int] | None = None,
     kinds: list[str] | None = None,
+    cartridges: list[str] | None = None,
+    source_prefixes: list[str] | None = None,
     security_context: dict | None = None,
 ) -> list[dict]:
     query_vec = await embed_query(query)
@@ -152,5 +188,7 @@ async def _do_search(
         top_k=top_k,
         source_ids=source_ids,
         kinds=kinds,
+        cartridges=cartridges,
+        source_prefixes=source_prefixes,
         scope=security_context,
     )

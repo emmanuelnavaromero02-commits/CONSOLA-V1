@@ -337,6 +337,68 @@ def _trusted_read_scope(
     }
 
 
+def _talent_9box_aggregate_projection(value: Any) -> dict[str, Any]:
+    """Return only aggregate 9-box fields that are safe for an LLM tool."""
+
+    data = value if isinstance(value, dict) else {}
+    totals = data.get("totals") if isinstance(data.get("totals"), dict) else {}
+    cohort = (
+        data.get("desempeno_disponible")
+        if isinstance(data.get("desempeno_disponible"), dict)
+        else {}
+    )
+    band_counts = (
+        cohort.get("band_counts") if isinstance(cohort.get("band_counts"), dict) else {}
+    )
+    cells: list[dict[str, Any]] = []
+    cell_fields = (
+        "box_id",
+        "box_label",
+        "potential_band",
+        "performance_band",
+        "display_order",
+        "employee_count",
+        "ready_count",
+        "cpa_real_count",
+        "reference_count",
+        "blocked_count",
+        "status",
+    )
+    for candidate in data.get("cells") or []:
+        if isinstance(candidate, dict):
+            cells.append({key: candidate.get(key) for key in cell_fields if key in candidate})
+    blockers: list[dict[str, Any]] = []
+    for candidate in data.get("blockers") or []:
+        if isinstance(candidate, dict):
+            blockers.append(
+                {
+                    key: candidate.get(key)
+                    for key in ("id", "slug", "status")
+                    if key in candidate
+                }
+            )
+    return {
+        "generated_at": data.get("generated_at"),
+        "status": data.get("status"),
+        "totals": {
+            key: totals.get(key)
+            for key in ("employees", "ready", "reference", "blocked", "cells")
+            if key in totals
+        },
+        "cells": cells,
+        "desempeno_disponible": {
+            "count": cohort.get("count"),
+            "band_counts": {
+                key: band_counts.get(key)
+                for key in ("high", "medium", "low")
+                if key in band_counts
+            },
+            "roster_truncated": cohort.get("roster_truncated"),
+        },
+        "blockers": blockers,
+    }
+
+
 async def _read_control_room_view(
     view: str,
     security_context: dict[str, Any] | None,
@@ -354,12 +416,15 @@ async def _read_control_room_view(
         },
         timeout=45.0,
     )
+    data = result.get("data")
+    if view == "sap_successfactors_talent_9box":
+        data = _talent_9box_aggregate_projection(data)
     return {
         "ok": True,
         "view": view,
         "tenant_id": scope["tenant_id"],
         "workspace_id": scope["workspace_id"],
-        "data": result.get("data"),
+        "data": data,
     }
 
 
@@ -775,7 +840,7 @@ async def decision__orchestrate(
     time_horizon: str | None = None,
     constraints: dict[str, Any] | None = None,
     evidence_refs: list[dict[str, Any]] | None = None,
-    execute_engines: bool = True,
+    execute_engines: bool = False,
     engine_inputs: dict[str, Any] | None = None,
     effect_authority: dict[str, Any] | None = None,
     security_context: dict[str, Any] | None = None,
@@ -857,50 +922,6 @@ async def wisdom_bits__run(
     }
 
 
-@tool(
-    name="control_room__raise_alert",
-    description=(
-        "Create or update an advisory Control Room alert for the active "
-        "tenant/workspace. Scope is taken from the signed security_context; "
-        "the tool cannot execute actions or write back externally."
-    ),
-    input_schema={
-        "type": "object",
-        "properties": {
-            "alert_type": {"type": "string"},
-            "cartridge_id": {"type": "string"},
-            "domain": {"type": "string"},
-            "source_dataset": {"type": "string"},
-            "entity_key": {"type": "string"},
-            "entity_label": {"type": "string"},
-            "title": {"type": "string"},
-            "message": {"type": "string"},
-            "severity": {
-                "type": "string",
-                "enum": ["low", "medium", "high", "critical"],
-            },
-            "confidence": {"type": "number"},
-            "recommendation": {"type": "string"},
-            "impact_estimate": {"type": "number"},
-            "impact_currency": {"type": "string"},
-            "evidence_refs": {"type": "array"},
-            "hypothesis": {"type": "string"},
-            "expected_outcome": {"type": "string"},
-        },
-        "required": [
-            "alert_type",
-            "cartridge_id",
-            "domain",
-            "source_dataset",
-            "entity_key",
-            "title",
-            "message",
-            "severity",
-            "confidence",
-        ],
-        "additionalProperties": False,
-    },
-)
 def control_room__raise_alert(
     alert_type: str,
     cartridge_id: str,
@@ -925,6 +946,12 @@ def control_room__raise_alert(
     _server_event_metadata: dict[str, Any] | None = None,
     **extra: Any,
 ) -> dict[str, Any]:
+    """Legacy direct-call helper; deliberately absent from the MCP catalog.
+
+    Operational and generative Control Room publications now originate from
+    server-owned deterministic collectors or verified grounded handoffs, not
+    model-supplied alert fields.
+    """
     unexpected = sorted(set(extra) | (set(extra) & _FORBIDDEN_ARGS))
     if unexpected:
         raise HTTPException(400, f"unsupported alert args: {', '.join(unexpected)}")
@@ -1108,71 +1135,6 @@ def control_room__raise_alert(
     }
 
 
-@tool(
-    name="control_room__raise_analysis_alert",
-    description=(
-        "Create or update an advisory Control Room alert backed by structured "
-        "analysis evidence from Monte Carlo, Bayesian calibration, a WisdomBit "
-        "or the Decision Orchestrator. It never executes actions or write-back."
-    ),
-    input_schema={
-        "type": "object",
-        "properties": {
-            "analysis_type": {"type": "string"},
-            "engine": {
-                "type": "string",
-                "enum": [
-                    "monte_carlo",
-                    "bayesian_calibration",
-                    "wisdom_bit",
-                    "decision_orchestrator",
-                ],
-            },
-            "engine_run_id": {"type": "string"},
-            "alert_type": {"type": "string"},
-            "cartridge_id": {"type": "string"},
-            "domain": {"type": "string"},
-            "source_dataset": {"type": "string"},
-            "entity_key": {"type": "string"},
-            "entity_label": {"type": "string"},
-            "title": {"type": "string"},
-            "message": {"type": "string"},
-            "severity": {
-                "type": "string",
-                "enum": ["low", "medium", "high", "critical"],
-            },
-            "confidence": {"type": "number"},
-            "recommendation": {"type": "string"},
-            "impact_estimate": {"type": "number"},
-            "impact_currency": {"type": "string"},
-            "evidence_refs": {"type": "array"},
-            "hypothesis": {"type": "string"},
-            "expected_outcome": {"type": "string"},
-            "p10": {"type": ["number", "string", "null"]},
-            "p50": {"type": ["number", "string", "null"]},
-            "p90": {"type": ["number", "string", "null"]},
-            "recommended_option": {"type": "object"},
-            "metrics": {"type": "object"},
-            "blockers": {"type": "array"},
-            "distribution": {"type": "object"},
-        },
-        "required": [
-            "analysis_type",
-            "engine",
-            "engine_run_id",
-            "alert_type",
-            "cartridge_id",
-            "domain",
-            "source_dataset",
-            "entity_key",
-            "title",
-            "message",
-            "severity",
-            "confidence",
-        ],
-        "additionalProperties": False,
-    },
-)
 def control_room__raise_analysis_alert(
     analysis_type: str,
     engine: str,
@@ -1204,6 +1166,12 @@ def control_room__raise_analysis_alert(
     security_context: dict[str, Any] | None = None,
     **extra: Any,
 ) -> dict[str, Any]:
+    """Legacy direct-call helper; deliberately not registered as an MCP tool.
+
+    Model-authored analysis is published only through the Console grounded
+    handoff/verifier flow.  Keeping the helper private preserves migration and
+    rollback readability without advertising an unverified write surface.
+    """
     unexpected = sorted(set(extra) | (set(extra) & _FORBIDDEN_ARGS))
     if unexpected:
         raise HTTPException(

@@ -6,6 +6,7 @@ from statistics import median
 from typing import Any
 
 from app.services.intelligence import monte_carlo
+from app.services.intelligence import engine_policy
 from app.services.intelligence.utils import num, sample_hash, time_key
 
 
@@ -473,6 +474,12 @@ def _monte_carlo_for_artifact(
     decision: dict[str, Any],
     metric: dict[str, Any],
 ) -> dict[str, Any]:
+    if not engine_policy.math_engines_enabled():
+        return {
+            "status": "paused",
+            "mode": "server_policy",
+            "reason": engine_policy.PAUSED_REASON,
+        }
     template = metric.get("simulation_template")
     if isinstance(template, dict):
         payload = _payload_from_template(

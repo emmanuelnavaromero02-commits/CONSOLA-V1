@@ -51,7 +51,8 @@ def test_agent_runtime_scheduled_monitor_is_deterministic_and_auditable():
     )
     section = source.split("async def run_scheduled_monitor", 1)[1]
     assert '"mcp-infra__wisdom_bits__run"' in section
-    assert '"mcp-infra__control_room__raise_analysis_alert"' in section
+    assert 'alert_state = "grounded_required" if should_alert else "not_required"' in section
+    assert '"mcp-infra__control_room__raise_analysis_alert"' not in section
     assert '"mcp-infra__simulation__monte_carlo_run"' in section
     assert '"mcp-infra__calibration__bayesian_state"' in section
     assert '"mcp-infra__decision__orchestrate"' in section
@@ -70,7 +71,9 @@ def test_agent_runtime_scheduled_monitor_is_deterministic_and_auditable():
     assert "async def _get_gold_pool()" in source
     assert 'os.environ.get("GOLD_DATABASE_URL")' in source
     assert "async def _monitor_resolve_decision_engine_inputs" in source
-    assert '"engine_inputs": decision_engine_inputs' in section
+    assert "if not engine_policy.math_engines_enabled() and engine in" in section
+    assert '"reason": engine_policy.PAUSED_REASON' in section
+    assert "else decision_engine_inputs" in section
     load_agent_section = source.split("async def load_agent(", 1)[1].split(
         "async def load_agent_by_slug", 1
     )[0]
@@ -183,10 +186,9 @@ def test_successfactors_monitor_runtime_repair_before_agent_reads():
     monitor_source = MONITOR_SOURCE.read_text(encoding="utf-8")
     assert "def _successfactors_talent_monitor_needs_runtime_repair" in source
     assert '"sap_successfactors_talent_monitor"' in monitor_source
-    assert (
-        'role != "monitor" or not has_operational_monitor_contract(agent)'
-        in monitor_source
-    )
+    assert 'role != "monitor"' in monitor_source
+    assert 'monitor != expected_extra["monitor"]' in monitor_source
+    assert "agent.get(\"allowed_tools\") != expected_tools" in monitor_source
     list_section = source.split("async def api_agents_list", 1)[1].split(
         "async def api_agents_tool_catalog",
         1,
@@ -215,7 +217,7 @@ def test_successfactors_monitor_runtime_repair_before_agent_reads():
     assert "slug != SUCCESSFACTORS_TALENT_MONITOR_SLUG" in coerce_section
     assert 'patched["extra"] = merged_extra' in coerce_section
     assert 'patched["role"] = "monitor"' in coerce_section
-    assert 'patched["allowed_tools"] = merge_agent_tools' in coerce_section
+    assert 'patched["allowed_tools"] = allowed_tools' in coerce_section
 
     v1_source = (ROOT / "console/app/routers/v1/agents.py").read_text(encoding="utf-8")
     v1_list_section = v1_source.split("async def api_agents_list", 1)[1].split(

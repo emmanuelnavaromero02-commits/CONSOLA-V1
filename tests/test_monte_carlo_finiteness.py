@@ -11,6 +11,11 @@ from app.routers import intelligence as intelligence_router
 from app.services.intelligence import monte_carlo, monte_carlo_service
 
 
+@pytest.fixture(autouse=True)
+def _enable_engine_under_test(monkeypatch):
+    monkeypatch.setenv("INTELLIGENCE_MATH_ENGINES_ENABLED", "true")
+
+
 def _payload(value: float, *, options: list[dict] | None = None) -> dict:
     payload = {
         "source_type": "signal",

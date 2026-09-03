@@ -213,6 +213,7 @@ async def test_all_30_get_routes_are_asgi_pure_repeatable_and_concurrent():
         "/api/control-room/experience",
         "/api/control-room/experience/v2",
         "/api/control-room/diagnostics",
+        "/api/control-room/items/{item_id}/analysis",
     }
 
     sentinel = MutationSentinel()

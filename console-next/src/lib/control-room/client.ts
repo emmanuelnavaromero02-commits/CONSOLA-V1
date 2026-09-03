@@ -2,6 +2,7 @@ import { api } from "@/lib/api";
 
 import type {
   ActivityPayload,
+  AnalysisEnvelope,
   ControlRoomAgentsOpsPayload,
   Dashboard,
   ImpactPayload,
@@ -50,6 +51,20 @@ export async function getControlRoomImpact(itemId: string): Promise<ImpactPayloa
   const response = await api.get<ImpactPayload>(
     `/api/control-room/items/${encodeURIComponent(itemId)}/impact`,
   );
+  return response.data;
+}
+
+function itemAnalysisPath(itemId: string): string {
+  return `/api/control-room/items/${encodeURIComponent(itemId)}/analysis`;
+}
+
+export async function getControlRoomItemAnalysis(itemId: string): Promise<AnalysisEnvelope> {
+  const response = await api.get<AnalysisEnvelope>(itemAnalysisPath(itemId));
+  return response.data;
+}
+
+export async function requestControlRoomItemAnalysis(itemId: string): Promise<AnalysisEnvelope> {
+  const response = await api.post<AnalysisEnvelope>(itemAnalysisPath(itemId));
   return response.data;
 }
 

@@ -68,7 +68,7 @@ SELECT
     'low' AS severity,
     employees_with_mobility_count AS affected_count,
     'Movilidad observada disponible' AS title,
-    'Usar historial EmpJob como proxy temporal mientras aspiracion declarada queda pendiente.' AS recommendation,
+    'Conservar la movilidad como hecho observado; no usarla como proxy de aspiracion.' AS recommendation,
     'recommendation_only' AS status,
     'server_validated_v1' AS source_validation_status,
     CURRENT_TIMESTAMP AS generated_at,

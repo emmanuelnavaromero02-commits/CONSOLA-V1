@@ -16,6 +16,11 @@ from app.routers import intelligence as intelligence_router
 FORGED_VERSION = "client.forged.v999"
 
 
+@pytest.fixture(autouse=True)
+def _enable_engine_under_test(monkeypatch):
+    monkeypatch.setenv("INTELLIGENCE_MATH_ENGINES_ENABLED", "true")
+
+
 def _observation_payload() -> dict:
     return {
         "source_type": "prediction_outcome",

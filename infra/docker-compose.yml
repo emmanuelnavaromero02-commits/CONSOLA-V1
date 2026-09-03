@@ -202,6 +202,10 @@ services:
       INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE: ${INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE:-}
       INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE: ${INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE:-}
       INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT: ${INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT:-}
+      # Monte Carlo, Bayesian recompute and optimizer execution remain paused
+      # by default. 9-Box classification is a deterministic data contract and
+      # is intentionally independent from this kill switch.
+      INTELLIGENCE_MATH_ENGINES_ENABLED: ${INTELLIGENCE_MATH_ENGINES_ENABLED:-false}
       # Sprint v1.19: per-service Postgres role (least-privilege).
       # The omega_console role can read/write every operational table
       # except vault_entries (locked to omega_vault).

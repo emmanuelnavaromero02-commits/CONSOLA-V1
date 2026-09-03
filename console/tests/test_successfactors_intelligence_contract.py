@@ -21,6 +21,11 @@ _CONTRACT_PATH = (
     / "cartridges/sap_successfactors/app/config/intelligence.yaml"
 )
 
+
+@pytest.fixture(autouse=True)
+def _enable_engine_under_test(monkeypatch):
+    monkeypatch.setenv("INTELLIGENCE_MATH_ENGINES_ENABLED", "true")
+
 USER = {
     "id": 0,
     "email": "test@omega.local",

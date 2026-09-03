@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
+  AnalysisEnvelope,
   SfTalentAnomaliesPayload,
   SfTalentAnomaly,
   SfTalentNineBoxPayload,
@@ -15,17 +16,23 @@ import type {
 import { TalentControlRoom } from "./TalentControlRoom";
 
 const clientBoundary = vi.hoisted(() => ({
+  dashboard: vi.fn(),
   overview: vi.fn(),
   nineBox: vi.fn(),
   anomalies: vi.fn(),
   boxRoster: vi.fn(),
+  analysis: vi.fn(),
+  requestAnalysis: vi.fn(),
 }));
 
 vi.mock("@/lib/control-room/client", () => ({
+  getControlRoomDashboard: clientBoundary.dashboard,
   getSuccessFactorsTalentOverview: clientBoundary.overview,
   getSuccessFactorsTalentNineBox: clientBoundary.nineBox,
   getSuccessFactorsTalentAnomalies: clientBoundary.anomalies,
   getSuccessFactorsTalentBoxRoster: clientBoundary.boxRoster,
+  getControlRoomItemAnalysis: clientBoundary.analysis,
+  requestControlRoomItemAnalysis: clientBoundary.requestAnalysis,
 }));
 
 const overviewPayload: SfTalentOverviewPayload = {
@@ -88,6 +95,40 @@ const rosterPayload: SfTalentRosterPayload = {
   blockers: [],
 };
 
+const analysisEnvelope: AnalysisEnvelope = {
+  analysis_run_id: "analysis-1",
+  status: "verified",
+  evidence_pack_id: 42,
+  as_of: "2026-07-29T18:05:00Z",
+  grounding_status: "verified",
+  claims: [
+    {
+      claim_id: "claim-1",
+      claim_type: "observed",
+      statement: "Se observaron 120 perfiles en el corte.",
+      value: 120,
+      unit: "personas",
+      population: 120,
+      as_of: "2026-07-29T18:05:00Z",
+      completeness: "complete",
+      evidence_refs: [{ evidence_item_id: 7, path: "data.source_row_count" }],
+      evidence_item_ids: [7],
+      evidence_paths: ["data.source_row_count"],
+      verification_status: "verified",
+      verification_reason: null,
+    },
+  ],
+  hypotheses: [],
+  options: [],
+  assumptions: [],
+  blockers: [],
+  expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+  model: "claude-sonnet-4-6",
+  ruleset_version: "control-room-grounding-v1",
+  recommendation_only: true,
+  no_writeback: true,
+};
+
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let container: HTMLDivElement;
@@ -119,10 +160,29 @@ function alerts() {
 }
 
 beforeEach(() => {
+  clientBoundary.dashboard.mockReset().mockResolvedValue({
+    items: [
+      {
+        id: "persisted-talent-1",
+        kind: "intelligence_signal",
+        cartridge: "sap_successfactors",
+        source_dataset: "sap_successfactors_talent_headcount_by_cohort_month",
+        evidence_pack_id: 42,
+        severity: "high",
+        title: "Cambio de plantilla verificado",
+        recommendation: "Investigar la evidencia agregada.",
+        status: "open",
+      },
+    ],
+  });
   clientBoundary.overview.mockReset().mockResolvedValue(overviewPayload);
   clientBoundary.nineBox.mockReset().mockResolvedValue(nineBoxPayload);
   clientBoundary.anomalies.mockReset().mockResolvedValue(anomaliesPayload);
   clientBoundary.boxRoster.mockReset().mockResolvedValue(rosterPayload);
+  clientBoundary.analysis.mockReset().mockRejectedValue(
+    Object.assign(new Error("Recurso no encontrado."), { status: 404 }),
+  );
+  clientBoundary.requestAnalysis.mockReset();
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -266,5 +326,45 @@ describe("TalentControlRoom ausencia de datos (sin ceros fabricados)", () => {
     resolveRoster(rosterPayload);
     await flush();
     expect(container.textContent).toContain("Colaborador 6789");
+  });
+});
+
+describe("TalentControlRoom análisis fundamentado", () => {
+  it("consulta el análisis de la señal seleccionada y publica solo el envelope verificado", async () => {
+    clientBoundary.analysis.mockResolvedValue(analysisEnvelope);
+    await renderPage();
+
+    expect(clientBoundary.analysis).toHaveBeenCalledWith("persisted-talent-1");
+    expect(container.textContent).toContain("Análisis con evidencia");
+    expect(container.textContent).toContain("Hecho observado");
+    expect(container.textContent).toContain("Decisión humana");
+    expect(container.textContent).toContain("Se observaron 120 perfiles en el corte.");
+  });
+
+  it("solicita un análisis sin preview ni write-back", async () => {
+    clientBoundary.requestAnalysis.mockResolvedValue(analysisEnvelope);
+    await renderPage();
+
+    await act(async () => button("Analizar con evidencia")?.click());
+    await flush();
+
+    expect(clientBoundary.requestAnalysis).toHaveBeenCalledWith("persisted-talent-1");
+    expect(container.textContent).toContain("Verificado contra evidencia");
+    expect(container.textContent).toContain("Solo agregados sin PII");
+  });
+
+  it("nunca envía el id crudo de un action candidate al endpoint generativo", async () => {
+    await renderPage();
+    const rawAction = [...container.querySelectorAll("button")].find((candidate) =>
+      candidate.textContent?.includes("Cobertura de sucesión incompleta"),
+    );
+    expect(rawAction).toBeDefined();
+
+    await act(async () => rawAction?.click());
+    await flush();
+
+    expect(clientBoundary.analysis).not.toHaveBeenCalledWith("a1");
+    expect(container.textContent).toContain("regla determinista de Gold");
+    expect(button("Analizar con evidencia")?.hasAttribute("disabled")).toBe(true);
   });
 });

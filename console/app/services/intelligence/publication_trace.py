@@ -34,8 +34,19 @@ def record_publication_read(dataset: str, relation: Any) -> None:
         "object_uri": str(relation.object_uri or ""),
         "object_version": str(relation.object_version or ""),
         "schema_digest": str(relation.schema_digest or ""),
+        "row_count": relation.row_count,
+        "published_at": (
+            relation.published_at.isoformat() if relation.published_at else ""
+        ),
     }
-    if not all(binding.values()):
+    row_count = binding["row_count"]
+    required = {key: value for key, value in binding.items() if key != "row_count"}
+    if (
+        not all(required.values())
+        or isinstance(row_count, bool)
+        or not isinstance(row_count, int)
+        or row_count < 0
+    ):
         raise RuntimeError("published Gold authority is incomplete")
     previous = trace.get(str(dataset))
     if previous is not None and previous != binding:

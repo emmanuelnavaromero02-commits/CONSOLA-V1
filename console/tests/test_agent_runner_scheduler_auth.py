@@ -56,12 +56,24 @@ def scheduler_http(monkeypatch: pytest.MonkeyPatch):
     )
     monkeypatch.setattr(operations.auth, "pool", AsyncMock(return_value=pool))
     monkeypatch.setattr(operations.scheduled_runtime, "find_due_agents", find_due)
+    process_pending = AsyncMock(return_value={"status": "ready", "dispatched": 0})
+    monkeypatch.setattr(
+        operations.grounded_analysis,
+        "process_pending_analyses",
+        process_pending,
+    )
 
-    return TestClient(main.app, raise_server_exceptions=False), pool, find_due, main
+    return (
+        TestClient(main.app, raise_server_exceptions=False),
+        pool,
+        find_due,
+        process_pending,
+        main,
+    )
 
 
 def test_airflow_pair_key_reaches_agent_runner_router(scheduler_http):
-    client, pool, find_due, _ = scheduler_http
+    client, pool, find_due, process_pending, _ = scheduler_http
 
     response = client.post(
         _PATH,
@@ -76,6 +88,7 @@ def test_airflow_pair_key_reaches_agent_runner_router(scheduler_http):
     assert response.json()["status"] == "ready"
     find_due.assert_awaited_once()
     assert find_due.await_args.args == (pool,)
+    process_pending.assert_awaited_once_with()
 
 
 @pytest.mark.parametrize(
@@ -94,18 +107,19 @@ def test_agent_runner_rejects_every_non_airflow_authority(
     scheduler_http,
     headers: dict[str, str],
 ):
-    client, _, find_due, _ = scheduler_http
+    client, _, find_due, process_pending, _ = scheduler_http
 
     response = client.post(_PATH, headers=headers, json=_WINDOW)
 
     assert response.status_code == 403, response.text
     find_due.assert_not_awaited()
+    process_pending.assert_not_awaited()
 
 
 def test_agent_runner_route_is_not_public_and_operations_health_stays_private(
     scheduler_http,
 ):
-    client, _, _, main = scheduler_http
+    client, _, _, _, main = scheduler_http
 
     assert not main._is_auth_public_path(_PATH)
     response = client.get("/api/operations/health")

@@ -19,12 +19,14 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
+  getControlRoomDashboard,
   getSuccessFactorsTalentAnomalies,
   getSuccessFactorsTalentBoxRoster,
   getSuccessFactorsTalentNineBox,
   getSuccessFactorsTalentOverview,
 } from "@/lib/control-room/client";
 import type {
+  ControlItem,
   SfTalentAnomaliesPayload,
   SfTalentAnomaly,
   SfTalentBlocker,
@@ -39,6 +41,7 @@ import { cn } from "@/lib/utils";
 
 import { CommandMetric, MiniBar, OperationalNotice, ReadinessBadge } from "../StatusBadge";
 import type { ControlRoomStatus } from "../StatusBadge";
+import { GroundedAnalysisPanel } from "./GroundedAnalysisPanel";
 import { normalizeReadinessStatus, TalentPayloadMeta } from "./TalentPayloadMeta";
 
 type Collar = "confianza" | "sindicalizado";
@@ -64,6 +67,28 @@ function apiMessage(error: unknown): string {
   if (isApiError(error)) return error.message;
   if (error instanceof Error) return error.message;
   return "No se pudo completar la consulta.";
+}
+
+function groundedTalentSignals(items: ControlItem[]): SfTalentAnomaly[] {
+  return items
+    .filter(
+      (item) =>
+        item.kind === "intelligence_signal" &&
+        item.cartridge === "sap_successfactors" &&
+        item.source_dataset?.startsWith("sap_successfactors_talent_") &&
+        Number.isInteger(item.evidence_pack_id) &&
+        Number(item.evidence_pack_id) > 0,
+    )
+    .map((item) => ({
+      id: `grounded:${item.id}`,
+      analysis_item_id: item.id,
+      evidence_pack_id: item.evidence_pack_id,
+      severity: item.severity,
+      title: item.title || "Señal Talent con evidencia",
+      recommendation:
+        item.recommendation || "Investigar el paquete firmado antes de decidir.",
+      status: item.status,
+    }));
 }
 
 function cellTone(cell: SfTalentNineBoxCell): string {
@@ -395,9 +420,12 @@ export function TalentAnomalyList({
               </span>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">{item.recommendation || "Revisar la señal antes de decidir."}</p>
-            <p className="mt-2 text-xs font-medium text-amber-700 dark:text-amber-300">
-              {formatCount(item.affected_count)} afectados · solo lectura
-            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs font-medium text-amber-700 dark:text-amber-300">
+              <span>{formatCount(item.affected_count)} afectados · solo lectura</span>
+              <span className="rounded-full border border-amber-500/30 px-2 py-0.5">
+                {item.analysis_item_id ? "Paquete firmado" : "Regla determinista"}
+              </span>
+            </div>
           </button>
         ))}
         {!anomalies.length ? (
@@ -650,6 +678,7 @@ export function TalentControlRoom() {
   const [overview, setOverview] = useState<SfTalentOverviewPayload | null>(null);
   const [nineBox, setNineBox] = useState<SfTalentNineBoxPayload | null>(null);
   const [anomalies, setAnomalies] = useState<SfTalentAnomaliesPayload | null>(null);
+  const [groundedSignals, setGroundedSignals] = useState<SfTalentAnomaly[]>([]);
   const [roster, setRoster] = useState<SfTalentRosterPayload | null>(null);
   const [selectedBox, setSelectedBox] = useState<string | null>(null);
   const [collar, setCollar] = useState<Collar>("confianza");
@@ -667,20 +696,29 @@ export function TalentControlRoom() {
     setLoading(true);
     setError("");
     try {
-      const [overviewPayload, matrixPayload, anomalyPayload] = await Promise.all([
+      const [overviewPayload, matrixPayload, anomalyPayload, dashboardPayload] = await Promise.all([
         getSuccessFactorsTalentOverview(),
         getSuccessFactorsTalentNineBox(),
         getSuccessFactorsTalentAnomalies(),
+        // Analysis is optional to the deterministic 9-box surface. A failure
+        // here must not disguise valid Gold data as unavailable.
+        getControlRoomDashboard().catch(() => null),
       ]);
       setOverview(overviewPayload);
       setNineBox(matrixPayload);
       setAnomalies(anomalyPayload);
+      const availableGroundedSignals = groundedTalentSignals(dashboardPayload?.items ?? []);
+      setGroundedSignals(availableGroundedSignals);
       const initialBox = new URLSearchParams(window.location.search).get("box");
       if (!selectedBox) {
         const matrixCells = matrixPayload.cells ?? [];
         setSelectedBox(initialBox || matrixCells[4]?.box_id || matrixCells[0]?.box_id || null);
       }
-      if (!selectedAnomaly) setSelectedAnomaly((anomalyPayload.items ?? [])[0] || null);
+      if (!selectedAnomaly) {
+        setSelectedAnomaly(
+          availableGroundedSignals[0] || (anomalyPayload.items ?? [])[0] || null,
+        );
+      }
     } catch (err) {
       setError(apiMessage(err));
     } finally {
@@ -734,7 +772,13 @@ export function TalentControlRoom() {
   }, [collar, selectedBox, rosterAttempt]);
 
   const cells = useMemo(() => nineBox?.cells ?? overview?.nine_box?.cells ?? [], [nineBox, overview]);
-  const anomalyItems = anomalies?.items ?? overview?.anomalies?.items ?? [];
+  const anomalyItems = useMemo(
+    () => [
+      ...groundedSignals,
+      ...(anomalies?.items ?? overview?.anomalies?.items ?? []),
+    ],
+    [anomalies?.items, groundedSignals, overview?.anomalies?.items],
+  );
 
   return (
     <main className="min-h-screen bg-background text-foreground dark:bg-[#050b14]">
@@ -807,6 +851,7 @@ export function TalentControlRoom() {
             blockers={anomalies?.blockers}
             generatedAt={anomalies?.generated_at}
           />
+          <GroundedAnalysisPanel key={selectedAnomaly?.id || "no-signal"} anomaly={selectedAnomaly} />
         </div>
 
         <section className="grid gap-4">

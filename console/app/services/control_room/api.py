@@ -3050,6 +3050,11 @@ def _sf_talent_signal_evidence_pack(
         {
             "source_type": "gold",
             "source_ref": f"{source.dataset}:signal:{signal_id}",
+            "data": {
+                "affected_count": affected_count,
+                "source_row_count": source_row_count,
+                "readiness_status": readiness_status,
+            },
             "supports_hypothesis": (
                 f"{affected_count} registro(s) afectados en la senal {signal_id}."
             ),
@@ -3063,6 +3068,7 @@ def _sf_talent_signal_evidence_pack(
         {
             "source_type": "readiness",
             "source_ref": f"readiness:WB-TALENTO:{signal_id}",
+            "data": {"readiness_status": readiness_status},
             "supports_hypothesis": f"Estado de datos: {readiness_status}.",
             "strength": 0.7 if readiness_status in {"ready", "gold_ready", "materialized"} else 0.42,
         },
@@ -4286,7 +4292,11 @@ async def _persisted_business_items(user: dict | None) -> list[dict[str, Any]]:
                 workspace_id=workspace_id,
                 tenant_id=tenant_id,
                 owner_id=owner_id,
-                kinds=("intelligence_signal", "agent_alert"),
+                # Legacy agent_alert rows accepted model-authored narrative and
+                # metrics without a verified handoff. Keep them quarantined
+                # from every public Control Room projection; grounded analysis
+                # is attached to the underlying intelligence_signal instead.
+                kinds=("intelligence_signal",),
                 row_to_item=_persisted_intelligence_payload,
                 discard=lambda row: is_stale_generic_signal(
                     row.get("anomaly_type"),
@@ -4308,7 +4318,7 @@ async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any
     return [
         item
         for item in await _persisted_business_items(user)
-        if item.get("kind") in {"intelligence_signal", "agent_alert"}
+        if item.get("kind") == "intelligence_signal"
     ]
 
 
@@ -4830,7 +4840,7 @@ async def _dashboard_items_with_persisted(
 ) -> list[dict[str, Any]]:
     known_ids = {str(item.get("id")) for item in items}
     for item in await _persisted_business_items(user):
-        if not item_kinds(item) & {"intelligence_signal", "agent_alert"}:
+        if "intelligence_signal" not in item_kinds(item):
             continue
         item_cartridge = str(item.get("cartridge") or "").strip()
         if item_cartridge != "platform" and item_cartridge not in active_cartridges:
