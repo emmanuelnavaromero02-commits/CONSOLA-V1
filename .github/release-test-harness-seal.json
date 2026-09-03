@@ -3875,7 +3875,7 @@
     },
     {
       "path": "tests/test_control_room_evidence_keyring_runtime.py",
-      "sha256": "966074e6549996a7074eb8d2c68badf8dd8d0dd4d48d6d77b4406bdf72e23a31"
+      "sha256": "ef9157fa280fee525bfbfe93e3d98fbde6d3aac2b7b9cdf2309470981ca4028e"
     },
     {
       "path": "tests/test_control_room_evidence_signing_wiring.py",
