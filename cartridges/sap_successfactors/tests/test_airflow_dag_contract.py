@@ -44,6 +44,18 @@ def test_extract_all_dag_uses_runtime_plan_and_target():
     assert 'target = str(conf.get("target") or "all").strip().lower()' in source
 
 
+def test_extract_all_dag_checks_storage_before_metadata_plan():
+    source = (ROOT / "dags" / "sap_successfactors_extract_all.py").read_text(
+        encoding="utf-8"
+    )
+    task = source[source.index("def trigger_extract_all") :]
+
+    assert "runtime.require_storage_access()" in task
+    assert task.index("runtime.require_storage_access()") < task.index(
+        "runtime.get_extract_all_plan("
+    )
+
+
 def test_extract_all_dag_forwards_sync_idempotency_key_to_runtime():
     source = (ROOT / "dags" / "sap_successfactors_extract_all.py").read_text(encoding="utf-8")
 
@@ -65,7 +77,8 @@ def test_single_entity_dag_records_missing_connection_without_retry():
 
     assert "conn_id = _required_conn_id(conf, config)" in source
     assert '"code": "CONFIG_INCOMPLETE"' in source
-    assert "raise AirflowFailException(str(exc)) from exc" in source
+    assert 'raise AirflowFailException("configuration_incomplete") from None' in source
+    assert "raise AirflowFailException(str(exc)) from exc" not in source
 
 
 def test_extract_all_dag_classifies_missing_entity_connections_per_entity():
@@ -106,8 +119,8 @@ def test_extract_all_dag_records_successfactors_metadata_blocks_as_partial():
 def test_single_entity_dag_preflights_metadata_and_returns_partial_blocks():
     source = (ROOT / "dags" / "sap_successfactors_extract.py").read_text(encoding="utf-8")
 
-    assert "prepare_entity_config_for_metadata" in source
-    assert "metadata_block" in source
+    assert "run_entity_with_metadata_guard" in source
+    assert "is_metadata_skip_result" in source
     assert 'status=\"partial\"' in source
     assert "runtime.classify_extraction_exception(str(entity), exc)" in source
 

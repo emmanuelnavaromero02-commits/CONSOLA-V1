@@ -22,6 +22,11 @@
 #   OMEGA_INSTANCE        e.g. omega-staging-app
 #   OMEGA_GHCR_OWNER      lowercase GHCR owner hosting the 15 packages
 #   OMEGA_SOURCE_BUCKET   e.g. omega-gcp-source-project-dd5ba7fa-374c-4554-ae6
+#   OMEGA_RELEASE_MANIFEST
+#                         downloaded canonical v2 release manifest asset
+#   OMEGA_RELEASE_MANIFEST_CHECKSUM
+#                         downloaded sibling .json.sha256 asset (defaults to
+#                         ${OMEGA_RELEASE_MANIFEST}.sha256)
 # Optional:
 #   OMEGA_GHCR_PULL_SECRET_VERSION (default: latest)
 set -Eeuo pipefail
@@ -35,6 +40,32 @@ DEPLOY_REF="${2:-}"
 
 die() { printf '[deploy] ERROR: %s\n' "$*" >&2; exit 1; }
 log() { printf '[deploy] %s\n' "$*"; }
+
+# Keep local staging artifacts private and remove them on every exit. A single
+# trap avoids silently replacing the cleanup for an earlier temporary file.
+TEMP_FILES=()
+cleanup() {
+  local path
+  for path in "${TEMP_FILES[@]}"; do
+    [[ -n "${path}" ]] && rm -f -- "${path}"
+  done
+}
+trap cleanup EXIT
+
+new_temp_file() {
+  local variable="$1" template="$2" result
+  result="$(mktemp -t "${template}")"
+  TEMP_FILES+=("${result}")
+  printf -v "${variable}" '%s' "${result}"
+}
+
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum -- "$1" | awk '{print $1}'
+  else
+    shasum -a 256 -- "$1" | awk '{print $1}'
+  fi
+}
 
 # The exact 15 proprietary images (single source of truth = release preflight).
 IMAGES=(airflow banxico console hubspot inegi mcp-infra refinement replicon
@@ -50,35 +81,73 @@ IMAGES=(airflow banxico console hubspot inegi mcp-infra refinement replicon
 for v in OMEGA_PROJECT_ID OMEGA_ZONE OMEGA_INSTANCE OMEGA_GHCR_OWNER OMEGA_SOURCE_BUCKET; do
   [[ -n "${!v:-}" ]] || die "${v} is required (derive it from the Terraform stack)."
 done
+[[ "${OMEGA_PROJECT_ID}" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]] \
+  || die "OMEGA_PROJECT_ID is not a valid GCP project id."
+[[ "${OMEGA_ZONE}" =~ ^[a-z][a-z0-9-]{1,30}-[a-z]$ ]] \
+  || die "OMEGA_ZONE is not a valid GCP zone."
+[[ "${OMEGA_INSTANCE}" =~ ^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$ ]] \
+  || die "OMEGA_INSTANCE is not a valid GCE instance name."
+[[ "${OMEGA_GHCR_OWNER}" =~ ^[a-z0-9]([a-z0-9-]{0,37}[a-z0-9])?$ ]] \
+  || die "OMEGA_GHCR_OWNER must be one lowercase GitHub owner (no shell metacharacters)."
+[[ "${OMEGA_SOURCE_BUCKET}" =~ ^[a-z0-9][a-z0-9._-]{1,220}[a-z0-9]$ ]] \
+  || die "OMEGA_SOURCE_BUCKET is not a valid GCS bucket name."
 ENVIRONMENT="${OMEGA_GCP_ENVIRONMENT:-staging}"
 DEPLOY_MODE="${OMEGA_DEPLOY_MODE:-apply}"   # apply | dryrun
 [[ "${DEPLOY_MODE}" == "apply" || "${DEPLOY_MODE}" == "dryrun" ]] || die "OMEGA_DEPLOY_MODE must be apply or dryrun."
+[[ "${ENVIRONMENT}" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] \
+  || die "OMEGA_GCP_ENVIRONMENT contains unsupported characters."
 
 # Publish-only releases push the 15 images by immutable digest only (never by the
 # vX.Y.Z tag), so the deploy pins every service to the digest recorded in the
 # canonical release manifest. Provide it with:
-#   gh release download <tag> --pattern 'omega-release-manifest-*.json'
+#   gh release download <tag> --pattern 'omega-release-manifest-*.json*'
 MANIFEST="${OMEGA_RELEASE_MANIFEST:-}"
 [[ -n "${MANIFEST}" && -f "${MANIFEST}" ]] \
   || die "OMEGA_RELEASE_MANIFEST must point at the release manifest json for ${TARGET_TAG}."
-python3 - "${MANIFEST}" "${TARGET_TAG}" "${DEPLOY_REF}" <<'PY' \
-  || die "release manifest does not bind ${TARGET_TAG} / ${DEPLOY_REF}."
-import json, sys
-d = json.load(open(sys.argv[1]))
-sys.exit(0 if d.get("release_tag") == sys.argv[2] and d.get("source_sha") == sys.argv[3] else 1)
+MANIFEST_CHECKSUM="${OMEGA_RELEASE_MANIFEST_CHECKSUM:-${MANIFEST}.sha256}"
+[[ -f "${MANIFEST_CHECKSUM}" ]] \
+  || die "OMEGA_RELEASE_MANIFEST_CHECKSUM must point at the canonical sibling checksum asset."
+MANIFEST_VALIDATOR="${SCRIPT_DIR}/../release_digest_env.py"
+[[ -f "${MANIFEST_VALIDATOR}" ]] || die "missing canonical release manifest validator."
+
+# The run id is an identity input to the canonical validator. Reading this one
+# scalar is not validation: release_digest_env.py below re-parses strict JSON,
+# requires canonical bytes and exact schema/filename/checksum/repository/tag/
+# source/run bindings, and verifies all 15 owner-scoped digest references.
+BUILD_RUN_ID="$(python3 -I - "${MANIFEST}" <<'PY'
+import json
+import sys
+
+try:
+    value = json.loads(open(sys.argv[1], "rb").read())
+    run_id = value.get("build_run_id") if isinstance(value, dict) else None
+except (OSError, UnicodeError, json.JSONDecodeError):
+    raise SystemExit(1)
+if not isinstance(run_id, int) or isinstance(run_id, bool) or run_id <= 0:
+    raise SystemExit(1)
+print(run_id)
 PY
+)" || die "release manifest build identity is invalid."
+new_temp_file MANIFEST_LOCK omega-manifest-lock.XXXXXX
+python3 -I "${MANIFEST_VALIDATOR}" \
+  --manifest "${MANIFEST}" \
+  --checksum "${MANIFEST_CHECKSUM}" \
+  --repository "${OMEGA_GHCR_OWNER}/CONSOLA-V1" \
+  --release-tag "${TARGET_TAG}" \
+  --source-sha "${DEPLOY_REF}" \
+  --build-run-id "${BUILD_RUN_ID}" \
+  --github-env "${MANIFEST_LOCK}" >/dev/null \
+  || die "canonical release manifest/checksum/schema/owner/digest validation failed."
+[[ "$(wc -l < "${MANIFEST_LOCK}" | tr -d '[:space:]')" == "15" ]] \
+  || die "canonical release manifest did not produce an exact 15-image lock."
+
 digest_ref_for() {
-  python3 - "${MANIFEST}" "$1" <<'PY'
-import json, sys
-d = json.load(open(sys.argv[1]))
-want = sys.argv[2]
-for it in d.get("images", []):
-    if it.get("image", "").rsplit("/", 1)[-1] == want:
-        print(it["digest_reference"])
-        break
-else:
-    sys.exit(1)
-PY
+  local image="$1" key
+  key="OMEGA_GCP_IMAGE_$(printf '%s' "${image}" | tr '[:lower:]-' '[:upper:]_')"
+  awk -F= -v key="${key}" '
+    $1 == key { if (++count > 1) exit 2; value = substr($0, length(key) + 2) }
+    END { if (count != 1) exit 3; print value }
+  ' "${MANIFEST_LOCK}"
 }
 
 # ghcr-auth-run.sh requires an explicit NUMERIC secret version. Resolve the
@@ -105,22 +174,43 @@ committed_version="$(git show "${DEPLOY_REF}:VERSION" 2>/dev/null | tr -d '[:spa
 
 # ── 2. Source artifact: build + upload the exact tarball (idempotent) ────────
 SOURCE_OBJECT="CONSOLA-V1-${DEPLOY_REF}.tar.gz"
+SOURCE_URI="gs://${OMEGA_SOURCE_BUCKET}/${SOURCE_OBJECT}"
 log "step 2/6 source: ${SOURCE_OBJECT} -> gs://${OMEGA_SOURCE_BUCKET}"
-if gcloud storage ls "gs://${OMEGA_SOURCE_BUCKET}/${SOURCE_OBJECT}" --project "${OMEGA_PROJECT_ID}" >/dev/null 2>&1; then
-  log "source tarball already present; reusing (immutable by ref)"
+new_temp_file tmp_tar omega-source.XXXXXX.tar.gz
+# Archive the EXACT committed tree at the ref — no working-tree contamination.
+git archive --format=tar.gz --prefix="modecissions/" -o "${tmp_tar}" "${DEPLOY_REF}"
+SOURCE_SHA256="$(sha256_file "${tmp_tar}")"
+[[ "${SOURCE_SHA256}" =~ ^[0-9a-f]{64}$ ]] || die "could not hash the exact source archive."
+
+SOURCE_GENERATION="$(gcloud storage objects describe "${SOURCE_URI}" \
+  --project "${OMEGA_PROJECT_ID}" --format='value(generation)' 2>/dev/null || true)"
+if [[ -z "${SOURCE_GENERATION}" ]]; then
+  # Generation-match zero makes first publication atomic. If another operator
+  # won the race, the describe+exact-generation download below decides whether
+  # their bytes are identical; an overwrite is never attempted.
+  if ! gcloud storage cp "${tmp_tar}" "${SOURCE_URI}" \
+      --project "${OMEGA_PROJECT_ID}" --if-generation-match=0; then
+    log "source publication raced or failed; verifying the immutable object now present"
+  fi
+  SOURCE_GENERATION="$(gcloud storage objects describe "${SOURCE_URI}" \
+    --project "${OMEGA_PROJECT_ID}" --format='value(generation)')"
 else
-  tmp_tar="$(mktemp -t omega-source.XXXXXX.tar.gz)"
-  trap 'rm -f -- "${tmp_tar}"' EXIT
-  # Archive the EXACT committed tree at the ref — no working-tree contamination.
-  git archive --format=tar.gz --prefix="modecissions/" -o "${tmp_tar}" "${DEPLOY_REF}"
-  gcloud storage cp "${tmp_tar}" "gs://${OMEGA_SOURCE_BUCKET}/${SOURCE_OBJECT}" --project "${OMEGA_PROJECT_ID}"
-  rm -f -- "${tmp_tar}"; trap - EXIT
+  log "source tarball already present; verifying its exact generation and bytes"
 fi
+[[ "${SOURCE_GENERATION}" =~ ^[1-9][0-9]*$ ]] \
+  || die "source object has no usable immutable GCS generation."
+
+new_temp_file verified_tar omega-source-verify.XXXXXX.tar.gz
+# A generation-qualified source URL reads those immutable bytes even if a
+# different live generation appears between describe and download.
+gcloud storage cp "${SOURCE_URI}#${SOURCE_GENERATION}" "${verified_tar}" \
+  --project "${OMEGA_PROJECT_ID}"
+[[ "$(sha256_file "${verified_tar}")" == "${SOURCE_SHA256}" ]] \
+  || die "source object checksum differs from git archive; refusing to reuse or overwrite it."
 
 # ── 3. Image overlay: pin all 15 services to the tag (tag substitution) ─────
 log "step 3/6 overlay: pin 15 images to ${TARGET_TAG}"
-overlay="$(mktemp -t omega-images.XXXXXX.yml)"
-trap 'rm -f -- "${overlay}"' EXIT
+new_temp_file overlay omega-images.XXXXXX.yml
 {
   printf '# Generated by gcp-canonical-deploy.sh — pins the release images by tag.\n'
   printf 'services:\n'
@@ -140,6 +230,9 @@ trap 'rm -f -- "${overlay}"' EXIT
     fi
   done
 } > "${overlay}"
+IMAGES_OVERLAY_SHA256="$(sha256_file "${overlay}")"
+[[ "${IMAGES_OVERLAY_SHA256}" =~ ^[0-9a-f]{64}$ ]] \
+  || die "could not hash the canonical image overlay."
 
 # ── 4. Ship the remote deployer + overlay to the VM ─────────────────────────
 log "step 4/6 stage: copy overlay + remote deployer to the VM"
@@ -151,16 +244,29 @@ SCP=(gcloud compute scp --zone "${OMEGA_ZONE}" --project "${OMEGA_PROJECT_ID}" -
 
 "${SCP[@]}" "${overlay}" "${OMEGA_INSTANCE}:/tmp/omega-images-${DEPLOY_REF}.yml"
 "${SCP[@]}" "${remote_deployer}" "${OMEGA_INSTANCE}:/tmp/gcp-canonical-deploy-remote.sh"
-rm -f -- "${overlay}"; trap - EXIT
 
 # ── 5. Run the fail-closed remote deploy (backup -> migrate -> up -> health) ─
 log "step 5/6 deploy: running fail-closed remote deploy on ${OMEGA_INSTANCE}"
-"${SSH[@]}" --command "sudo TARGET_TAG='${TARGET_TAG}' DEPLOY_REF='${DEPLOY_REF}' \
-  OMEGA_PROJECT_ID='${OMEGA_PROJECT_ID}' ENVIRONMENT='${ENVIRONMENT}' \
-  GHCR_OWNER='${OMEGA_GHCR_OWNER}' GHCR_SECRET_VERSION='${GHCR_SECRET_VERSION}' \
-  SOURCE_BUCKET='${OMEGA_SOURCE_BUCKET}' SOURCE_OBJECT='${SOURCE_OBJECT}' \
-  IMAGES_OVERLAY='/tmp/omega-images-${DEPLOY_REF}.yml' DEPLOY_MODE='${DEPLOY_MODE}' \
-  bash /tmp/gcp-canonical-deploy-remote.sh"
+remote_argv=(sudo env
+  "TARGET_TAG=${TARGET_TAG}"
+  "DEPLOY_REF=${DEPLOY_REF}"
+  "OMEGA_PROJECT_ID=${OMEGA_PROJECT_ID}"
+  "ENVIRONMENT=${ENVIRONMENT}"
+  "GHCR_OWNER=${OMEGA_GHCR_OWNER}"
+  "GHCR_SECRET_VERSION=${GHCR_SECRET_VERSION}"
+  "SOURCE_BUCKET=${OMEGA_SOURCE_BUCKET}"
+  "SOURCE_OBJECT=${SOURCE_OBJECT}"
+  "SOURCE_SHA256=${SOURCE_SHA256}"
+  "SOURCE_GENERATION=${SOURCE_GENERATION}"
+  "IMAGES_OVERLAY_SHA256=${IMAGES_OVERLAY_SHA256}"
+  "IMAGES_OVERLAY=/tmp/omega-images-${DEPLOY_REF}.yml"
+  "DEPLOY_MODE=${DEPLOY_MODE}"
+  bash /tmp/gcp-canonical-deploy-remote.sh)
+# gcloud's --command is necessarily one remote shell string. Serialize each
+# already-validated argv element with Bash's shell escaping instead of
+# interpolating values into executable syntax.
+printf -v remote_command '%q ' "${remote_argv[@]}"
+"${SSH[@]}" --command "${remote_command% }"
 
 if [[ "${DEPLOY_MODE}" == "dryrun" ]]; then
   log "DRY-RUN complete for ${TARGET_TAG} (${DEPLOY_REF}); no database or service was mutated."

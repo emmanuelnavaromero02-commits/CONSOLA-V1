@@ -29,7 +29,7 @@ import asyncpg
 import sqlglot
 
 from app.security import get_internal_api_key
-from app.services.s3_client import get_minio_client
+from app.services.s3_client import get_minio_client, resolve_storage_config
 from app.services.security_context import build_security_context
 from sqlglot import exp
 
@@ -40,7 +40,6 @@ _DATABASE_URL = (
 )
 _POOL: asyncpg.Pool | None = None
 
-_MINIO_BUCKET = os.environ.get("MINIO_BUCKET", "lakehouse")
 _MAX_IMPORT_ZIP_BYTES = int(
     os.environ.get("CARTRIDGE_IMPORT_MAX_BYTES", str(25 * 1024 * 1024))
 )
@@ -276,9 +275,18 @@ def _minio():
     return get_minio_client()
 
 
-def _ensure_bucket(c) -> None:
-    if not c.bucket_exists(_MINIO_BUCKET):
-        c.make_bucket(_MINIO_BUCKET)
+def _ensure_bucket(c) -> str:
+    storage = resolve_storage_config()
+    storage.validate()
+    if storage.provider == "minio" and not c.bucket_exists(storage.bucket):
+        c.make_bucket(storage.bucket)
+    return storage.bucket
+
+
+def _lakehouse_bucket() -> str:
+    storage = resolve_storage_config()
+    storage.validate()
+    return storage.bucket
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -947,33 +955,30 @@ def upload_spec(cartridge_id: str, filename: str, content: str) -> str:
     cartridge_id = _validate_cartridge_id(cartridge_id)
     filename = _validate_plain_filename(filename)
     c = _minio()
-    _ensure_bucket(c)
+    bucket = _ensure_bucket(c)
     key = f"cartridges/{cartridge_id}/specs/{filename}"
     raw = content.encode("utf-8")
     if len(raw) > _MAX_IMPORT_MEMBER_BYTES:
         raise ValueError("spec upload too large")
-    c.put_object(
-        _MINIO_BUCKET, key, io.BytesIO(raw), len(raw), content_type="text/plain"
-    )
+    c.put_object(bucket, key, io.BytesIO(raw), len(raw), content_type="text/plain")
     return key
 
 
 def upload_code(cartridge_id: str, filename: str, content: str) -> str:
     c = _minio()
-    _ensure_bucket(c)
+    bucket = _ensure_bucket(c)
     key = f"cartridges/{cartridge_id}/{filename}"
     raw = content.encode("utf-8")
-    c.put_object(
-        _MINIO_BUCKET, key, io.BytesIO(raw), len(raw), content_type="text/plain"
-    )
+    c.put_object(bucket, key, io.BytesIO(raw), len(raw), content_type="text/plain")
     return key
 
 
 def list_specs(cartridge_id: str) -> list[str]:
     c = _minio()
+    bucket = _lakehouse_bucket()
     prefix = f"cartridges/{cartridge_id}/specs/"
     try:
-        objs = c.list_objects(_MINIO_BUCKET, prefix=prefix, recursive=True)
+        objs = c.list_objects(bucket, prefix=prefix, recursive=True)
         return [o.object_name.replace(prefix, "") for o in objs]
     except Exception:
         return []
@@ -1098,12 +1103,13 @@ async def export_cartridge(cartridge_id: str) -> bytes:
     # ── Specs and other supplementary files from MinIO ────────────────────
     try:
         c = _minio()
+        bucket = _lakehouse_bucket()
         prefix = f"cartridges/{cartridge_id}/"
-        for obj in c.list_objects(_MINIO_BUCKET, prefix=prefix, recursive=True):
+        for obj in c.list_objects(bucket, prefix=prefix, recursive=True):
             name = obj.object_name.replace(prefix, "")
             if name.startswith("dags/") or name.endswith("seed.sql"):
                 continue
-            files[name] = c.get_object(_MINIO_BUCKET, obj.object_name).read()
+            files[name] = c.get_object(bucket, obj.object_name).read()
     except Exception:
         pass
 
@@ -1178,11 +1184,11 @@ async def import_cartridge(zip_bytes: bytes, actor_user: dict | None = None) -> 
                 # 2 · Supplementary files (specs etc.) → MinIO under cartridges/{id}/
                 if extra_names:
                     c = _minio()
-                    _ensure_bucket(c)
+                    bucket = _ensure_bucket(c)
                     for name in extra_names:
                         raw = z.read(name)
                         key = f"cartridges/{cartridge_id}/{name}"
-                        c.put_object(_MINIO_BUCKET, key, io.BytesIO(raw), len(raw))
+                        c.put_object(bucket, key, io.BytesIO(raw), len(raw))
                         spec_files_written.append(name)
 
                 # 3 · DAG files → Airflow dags directory (via mcp-infra, which has the mount)

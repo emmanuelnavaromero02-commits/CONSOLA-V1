@@ -81,12 +81,31 @@ def _mcp_headers() -> dict[str, str]:
 
 
 def _minio_cfg() -> dict:
+    provider = os.environ.get("LAKEHOUSE_PROVIDER", "").strip().lower()
+    endpoint = os.environ.get("LAKEHOUSE_ENDPOINT", "").strip()
+    if provider == "gcs" or "storage.googleapis.com" in endpoint.lower():
+        config = {
+            "endpoint": endpoint or "storage.googleapis.com",
+            "access_key": os.environ.get("GCS_ACCESS_KEY_ID", "").strip(),
+            "secret_key": os.environ.get("GCS_SECRET_ACCESS_KEY", "").strip(),
+            "bucket": (
+                os.environ.get("GCS_BUCKET")
+                or os.environ.get("LAKEHOUSE_BUCKET")
+                or ""
+            ).strip(),
+            "secure": True,
+            "region": "auto",
+        }
+        if not all(config[key] for key in ("access_key", "secret_key", "bucket")):
+            raise RuntimeError("complete GCS lakehouse credentials are required")
+        return config
     return {
         "endpoint": Variable.get("minio_endpoint"),
         "access_key": Variable.get("minio_access_key"),
         "secret_key": Variable.get("minio_secret_key"),
         "bucket": Variable.get("minio_bucket"),
         "secure": Variable.get("minio_secure", default_var="false").lower() == "true",
+        "region": None,
     }
 
 
@@ -99,6 +118,7 @@ def _minio_client():
         access_key=cfg["access_key"],
         secret_key=cfg["secret_key"],
         secure=cfg["secure"],
+        region=cfg["region"],
     )
 
 

@@ -194,18 +194,21 @@ def _load_runtime() -> SimpleNamespace:
     _clear_conflicting_app_modules(root)
     refinement_triggers = importlib.import_module("app.core.refinement_triggers")
     extraction_status = importlib.import_module("app.core.extraction_status")
+    extraction_service = importlib.import_module("app.services.extraction_service")
+    minio_client = importlib.import_module("app.core.minio_client")
     _RUNTIME = SimpleNamespace(
         get_extract_all_plan=importlib.import_module(
             "app.services.catalog_service"
         ).get_extract_all_plan,
-        run_entity=importlib.import_module(
-            "app.services.extraction_service"
-        ).run_entity,
+        run_entity=extraction_service.run_entity_with_metadata_guard,
+        is_metadata_skip_result=extraction_service.is_metadata_skip_result,
         trigger_silver_refresh=refinement_triggers.trigger_silver_refresh,
         trigger_successfactors_gold_refresh=refinement_triggers.trigger_successfactors_gold_refresh,
         classify_successful_extraction=extraction_status.classify_successful_extraction,
         classify_extraction_exception=extraction_status.classify_extraction_exception,
+        public_failure_message=extraction_status.public_failure_message,
         summarize_extraction_results=extraction_status.summarize_extraction_results,
+        require_storage_access=minio_client.require_storage_access,
         set_security_context=importlib.import_module(
             "app.core.request_context"
         ).set_security_context,
@@ -263,12 +266,9 @@ def _try_silver_refresh(
                 payload if payload.get("status") else {"status": "success", **payload}
             )
         return {"status": "success"}
-    except Exception as exc:  # noqa: BLE001 - one Silver refresh must not hide a successful Bronze extract.
-        message = f"{type(exc).__name__}: {exc}"
-        print(
-            f"[sap_successfactors_extract_all] silver refresh failed for {entity}: {message}"
-        )
-        return {"status": "failed", "error": message}
+    except Exception:  # noqa: BLE001 - one Silver refresh must not hide a successful Bronze extract.
+        print(f"[sap_successfactors_extract_all] silver refresh failed for {entity}")
+        return {"status": "failed", "failure_code": "silver_refresh_failed"}
 
 
 def _downstream_status(payload: dict[str, Any], key: str) -> str:
@@ -461,8 +461,8 @@ def _pipeline_run_save(
                 f"[sap_successfactors_extract_all] pipeline_run_save -> {response.status_code}: {response.text[:200]}"
             )
             response.raise_for_status()
-    except Exception as exc:  # noqa: BLE001
-        print(f"[sap_successfactors_extract_all] pipeline_run_save failed: {exc}")
+    except Exception:  # noqa: BLE001
+        print("[sap_successfactors_extract_all] pipeline_run_save failed")
 
 
 @dag(schedule=None, catchup=False, default_args=default_args, max_active_runs=1)
@@ -537,6 +537,9 @@ def sap_successfactors_extract_all():
         token = runtime.set_security_context(security_context)
         aggregate_saved = False
         try:
+            # Fail before catalog metadata discovery: downloading $metadata is
+            # pointless when Bronze cannot be authenticated or written.
+            runtime.require_storage_access()
             entities, skipped = runtime.get_extract_all_plan(
                 conn_id=selected_conn_id,
                 security_context=security_context,
@@ -595,6 +598,25 @@ def sap_successfactors_extract_all():
                     if security_context:
                         run_config["security_context"] = security_context
                     result = runtime.run_entity(run_config)
+                    if runtime.is_metadata_skip_result(result):
+                        results.append(result)
+                        _pipeline_run_save(
+                            context=context,
+                            conf=conf,
+                            entity=entity,
+                            status="partial",
+                            started_at=started_at,
+                            error_message=str(
+                                result.get("reason") or "missing_metadata"
+                            ),
+                            extra=_pipeline_extra_from_result(
+                                result,
+                                classified=result,
+                                entity_idempotency_key=entity_idempotency_key,
+                            ),
+                        )
+                        downstream_partial = True
+                        continue
                     silver_refresh = _try_silver_refresh(
                         runtime, entity, security_context
                     )
@@ -631,6 +653,7 @@ def sap_successfactors_extract_all():
                     )
                 except Exception as exc:  # noqa: BLE001
                     classified = runtime.classify_extraction_exception(entity, exc)
+                    failure_message = runtime.public_failure_message(classified)
                     results.append(classified)
                     entity_pipeline_status = (
                         "partial"
@@ -643,7 +666,7 @@ def sap_successfactors_extract_all():
                         entity=entity,
                         status=entity_pipeline_status,
                         started_at=started_at,
-                        error_message=str(exc),
+                        error_message=failure_message,
                         extra={
                             "classification": classified,
                             "entity_idempotency_key": entity_idempotency_key,
@@ -811,6 +834,10 @@ def sap_successfactors_extract_all():
             return payload
         except Exception as exc:
             if not aggregate_saved:
+                classified = runtime.classify_extraction_exception(
+                    "__extract_all__", exc
+                )
+                failure_message = runtime.public_failure_message(classified)
                 _pipeline_run_save(
                     context=context,
                     conf=conf,
@@ -818,8 +845,9 @@ def sap_successfactors_extract_all():
                     status="failed",
                     started_at=started_at,
                     run_id_override=context.get("run_id"),
-                    error_message=str(exc),
+                    error_message=failure_message,
                     extra={
+                        "classification": classified,
                         "target": target,
                         "mode": mode,
                         "idempotency_key": str(
@@ -828,7 +856,11 @@ def sap_successfactors_extract_all():
                         or None,
                     },
                 )
-            raise
+            raise RuntimeError(
+                runtime.public_failure_message(
+                    runtime.classify_extraction_exception("__extract_all__", exc)
+                )
+            ) from None
         finally:
             runtime.reset_security_context(token)
 

@@ -19,6 +19,12 @@ x-cartridge-env: &cartridge-env
   CONSOLE_URL: http://console:8000
   MCP_INFRA_URL: http://mcp-infra:8010
   REFINEMENT_URL: http://refinement:8500
+  # Provider is explicit so an EC2 role-only deployment never interprets the
+  # AWS endpoint as local MinIO when static AWS credentials are intentionally
+  # absent.
+  LAKEHOUSE_PROVIDER: "s3"
+  LAKEHOUSE_ENDPOINT: s3.${AWS_REGION:?AWS_REGION is required}.amazonaws.com
+  LAKEHOUSE_BUCKET: ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
   MINIO_ENDPOINT: s3.${AWS_REGION:?AWS_REGION is required}.amazonaws.com
   MINIO_ACCESS_KEY: ${AWS_ACCESS_KEY_ID:-}
   MINIO_SECRET_KEY: ${AWS_SECRET_ACCESS_KEY:-}
@@ -26,6 +32,9 @@ x-cartridge-env: &cartridge-env
   MINIO_SECURE: "true"
   AWS_REGION: ${AWS_REGION:?AWS_REGION is required}
   AWS_DEFAULT_REGION: ${AWS_REGION:?AWS_REGION is required}
+  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+  AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
   S3_BUCKET_NAME: ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
 
 services:

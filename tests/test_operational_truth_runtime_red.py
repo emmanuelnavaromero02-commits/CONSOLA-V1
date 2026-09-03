@@ -30,6 +30,8 @@ class _Connection:
 
     async def fetch(self, sql, *args):
         self.calls.append((sql, args))
+        if "FROM agent_schedule_runs" in sql:
+            return []
         return self.rows
 
 
@@ -103,7 +105,8 @@ async def test_due_fanout_enumerates_server_owned_scopes_and_sets_fresh_gucs():
     for scope, conn in zip(scopes, pool.connections, strict=True):
         assert "set_config('app.tenant_id'" in conn.calls[0][0]
         assert conn.calls[0][1] == (scope["tenant_id"], scope["workspace_id"])
-        query, params = conn.calls[1]
+        assert "FROM agent_schedule_runs" in conn.calls[1][0]
+        query, params = conn.calls[2]
         assert "tenant_id = $1::uuid" in query
         assert "workspace_id = $2::uuid" in query
         assert params == (scope["tenant_id"], scope["workspace_id"])
@@ -122,7 +125,46 @@ async def test_due_fanout_reports_no_eligible_workspaces_without_false_success()
         "due": [],
         "workspaces": 0,
         "failures": [],
+        "reconciled_expired_runs": 0,
     }
+
+
+@pytest.mark.asyncio
+async def test_expired_schedule_runs_are_terminalized_with_linked_agent_run():
+    class Connection:
+        def __init__(self):
+            self.executed = []
+            self.retired = [
+                {"agent_run_id": 41},
+                {"agent_run_id": None},
+            ]
+
+        async def fetch(self, sql, *args):
+            assert "lease_expires_at <= clock_timestamp() - INTERVAL '1 hour'" in sql
+            assert args == ("tenant-a", "workspace-a")
+            return [{"id": 7}, {"id": 8}]
+
+        async def fetchrow(self, sql, *args):
+            assert "UPDATE agent_schedule_runs" in sql
+            assert args[1:] == ("tenant-a", "workspace-a")
+            return self.retired.pop(0)
+
+        async def execute(self, sql, *args):
+            self.executed.append((sql, args))
+            return "UPDATE 1"
+
+    conn = Connection()
+    count = await scheduled_runtime.reconcile_expired_runs(
+        conn,
+        tenant_id="tenant-a",
+        workspace_id="workspace-a",
+    )
+
+    assert count == 2
+    assert "agent_schedule_effect:7" in conn.executed[0][1]
+    assert "agent_schedule_effect:8" in conn.executed[1][1]
+    assert "UPDATE agent_runs" in conn.executed[2][0]
+    assert conn.executed[2][1] == ("tenant-a", "workspace-a", [41])
 
 
 def test_due_row_accepts_asyncpg_jsonb_text_without_losing_schedule():

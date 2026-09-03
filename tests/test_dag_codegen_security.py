@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import importlib.util
+import ast
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -100,6 +102,107 @@ def test_generated_dag_uses_guard_for_all_external_url_sources():
     assert "session.get(status_url" in rendered
     assert "session.get(download_url" in rendered
     assert gen.validate_dag_code(rendered)["valid"] is True
+
+
+def test_generated_dag_is_gcs_provider_aware_and_cloud_bucket_safe():
+    rendered = gen.generate_dag_code(
+        "synthetic",
+        "Orders",
+        {"connector": {"api": {}, "auth": {"type": "bearer_token"}}},
+    )["code"]
+
+    assert 'provider == "gcs"' in rendered
+    assert 'os.environ.get("GCS_ACCESS_KEY_ID")' in rendered
+    assert 'os.environ.get("GCS_SECRET_ACCESS_KEY")' in rendered
+    assert '"region": "auto"' in rendered
+    assert 'storage["provider"] == "minio"' in rendered
+    assert 'storage["provider"] == "s3" and not storage["access_key"]' in rendered
+    assert "IamAwsProvider" in rendered
+    assert "MINIO_BUCKET =" not in rendered
+    assert "_pipeline_run_save(run_id, \"failed\", 0, None, str(exc))" not in rendered
+    assert "raise RuntimeError(failure_code) from None" in rendered
+    assert gen.validate_dag_code(rendered)["valid"] is True
+
+
+def test_generated_endpoint_parser_preserves_local_minio_host_and_port():
+    rendered = gen.generate_dag_code(
+        "synthetic",
+        "Orders",
+        {"connector": {"api": {}, "auth": {"type": "bearer_token"}}},
+    )["code"]
+    tree = ast.parse(rendered)
+    helper = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_endpoint_host"
+    )
+    namespace = {"urlsplit": urlsplit}
+    exec(compile(ast.Module(body=[helper], type_ignores=[]), "<helper>", "exec"), namespace)
+
+    assert namespace["_endpoint_host"]("minio:9000") == "minio:9000"
+
+
+def test_generated_storage_requires_gcs_pair_but_allows_s3_identity(monkeypatch):
+    import os
+
+    rendered = gen.generate_dag_code(
+        "synthetic",
+        "Orders",
+        {"connector": {"api": {}, "auth": {"type": "bearer_token"}}},
+    )["code"]
+    tree = ast.parse(rendered)
+    wanted = {"_airflow_variable", "_endpoint_host", "_storage_config"}
+    helpers = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in wanted
+    ]
+
+    class FakeVariable:
+        @staticmethod
+        def get(_name, default_var=""):
+            return default_var
+
+    namespace = {"os": os, "urlsplit": urlsplit, "Variable": FakeVariable}
+    exec(compile(ast.Module(body=helpers, type_ignores=[]), "<helpers>", "exec"), namespace)
+
+    monkeypatch.setenv("LAKEHOUSE_PROVIDER", "gcs")
+    monkeypatch.setenv("GCS_BUCKET", "omega-gcs")
+    monkeypatch.delenv("GCS_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("GCS_SECRET_ACCESS_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="^storage_credentials_missing$"):
+        namespace["_storage_config"]()
+
+    monkeypatch.setenv("LAKEHOUSE_PROVIDER", "s3")
+    monkeypatch.setenv("S3_BUCKET_NAME", "omega-s3")
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+    storage = namespace["_storage_config"]()
+    assert storage["provider"] == "s3"
+    assert storage["access_key"] == ""
+    assert storage["secret_key"] == ""
+
+
+def test_generated_public_failure_code_drops_secret_url_and_body():
+    rendered = gen.generate_dag_code(
+        "synthetic",
+        "Orders",
+        {"connector": {"api": {}, "auth": {"type": "bearer_token"}}},
+    )["code"]
+    tree = ast.parse(rendered)
+    helper = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_public_failure_code"
+    )
+    namespace: dict[str, object] = {}
+    exec(compile(ast.Module(body=[helper], type_ignores=[]), "<helper>", "exec"), namespace)
+    sentinel = "SECRET-TOKEN https://private.example/odata body=employee@example.com"
+
+    code = namespace["_public_failure_code"](RuntimeError(sentinel))
+
+    assert code == "extraction_failed"
+    assert "SECRET" not in code
 
 
 def test_packaged_replicon_dag_guards_base_and_secondary_downloads():

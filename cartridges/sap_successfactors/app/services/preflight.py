@@ -2,22 +2,87 @@
 Pre-flight configuration checks for the sap_successfactors cartridge.
 
 Validates the three environments the cartridge depends on (SAP, Postgres,
-MinIO) and returns a structured ``degraded`` report when any of them is
-incomplete. The checks are cheap (env / settings only — no network
-calls) so they run before every extract / preview.
+object storage) and returns a structured ``degraded`` report when any of them
+is incomplete.  Storage is checked with an authenticated bucket request before
+an extraction is allowed to contact SuccessFactors.
 """
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from sqlalchemy import create_engine, text
 
 from app.core.config import settings
-from app.core.sap_client import SAPClientError, SapSfClient
+from app.core.minio_client import check_storage_access, resolve_storage_config
+from app.core.sap_client import SapSfClient
 
 _PG_REQUIRED = ("database_url",)
 _ALIAS_ENGINE = None
+
+_SAFE_METADATA_FAILURE_CODES = frozenset(
+    {
+        "metadata_access_denied",
+        "metadata_not_found",
+        "metadata_query_invalid",
+        "metadata_rate_limited",
+        "metadata_upstream_unavailable",
+    }
+)
+
+
+def _metadata_http_status(exc: Exception) -> int | None:
+    """Extract only an allowlisted HTTP status; never return exception text."""
+
+    current: BaseException | None = exc
+    for _ in range(4):
+        if current is None:
+            break
+        response = getattr(current, "response", None)
+        candidate = getattr(response, "status_code", None) or getattr(
+            current, "status_code", None
+        )
+        try:
+            status = int(candidate)
+        except (TypeError, ValueError):
+            status = None
+        if status in {400, 401, 403, 404, 408, 429, 500, 502, 503, 504}:
+            return status
+        current = current.__cause__ or current.__context__
+
+    # SAPClientError currently wraps RequestException without typed fields.
+    # Inspecting the message is only for classification; it is never emitted.
+    match = re.search(r"\b(400|401|403|404|408|429|500|502|503|504)\b", str(exc))
+    return int(match.group(1)) if match else None
+
+
+def _safe_metadata_failure_code(exc: Exception) -> str:
+    status = _metadata_http_status(exc)
+    if status in {401, 403}:
+        return "metadata_access_denied"
+    if status == 404:
+        return "metadata_not_found"
+    if status == 400:
+        return "metadata_query_invalid"
+    if status == 429:
+        return "metadata_rate_limited"
+    return "metadata_upstream_unavailable"
+
+
+def _safe_candidate_failure(exc: Exception) -> tuple[str, str, str]:
+    code = _safe_metadata_failure_code(exc)
+    status, reason = {
+        "metadata_access_denied": ("permission_blocked", "permission_denied"),
+        "metadata_not_found": ("missing", "entity_not_exposed_in_sap"),
+        "metadata_query_invalid": ("query_blocked", "invalid_query"),
+        "metadata_rate_limited": ("upstream_blocked", "upstream_unavailable"),
+        "metadata_upstream_unavailable": (
+            "upstream_blocked",
+            "upstream_unavailable",
+        ),
+    }[code]
+    return status, reason, code
 
 _TALENT_CPA_REQUIREMENTS: tuple[dict[str, Any], ...] = (
     {
@@ -910,6 +975,10 @@ def _candidate_blocker_reason(candidates: list[dict[str, Any]]) -> str:
         return "permission_denied"
     if "field_blocked" in statuses or "invalid_select_field" in reasons:
         return "invalid_select_field"
+    if "query_blocked" in statuses or "invalid_query" in reasons:
+        return "invalid_query"
+    if "upstream_blocked" in statuses or "upstream_unavailable" in reasons:
+        return "upstream_unavailable"
     if "metadata_ready" in statuses or "ready" in statuses:
         return "missing_required_group"
     if "missing" in statuses or "entity_not_exposed_in_sap" in reasons:
@@ -920,7 +989,7 @@ def _candidate_blocker_reason(candidates: list[dict[str, Any]]) -> str:
 def _candidate_blocker_detail(candidates: list[dict[str, Any]]) -> dict[str, Any]:
     fields_missing: list[str] = []
     missing_entities: list[str] = []
-    permission_errors: list[str] = []
+    failure_codes: list[str] = []
     invalid_field_entities: list[str] = []
     for item in candidates:
         entity = str(item.get("odata_entity") or item.get("entity") or "").strip()
@@ -928,8 +997,9 @@ def _candidate_blocker_detail(candidates: list[dict[str, Any]]) -> dict[str, Any
             missing_entities.append(entity)
         if str(item.get("status") or "") == "field_blocked" and entity:
             invalid_field_entities.append(entity)
-        if str(item.get("status") or "") == "permission_blocked":
-            permission_errors.append(str(item.get("error") or entity or "permission_denied")[:240])
+        failure_code = str(item.get("failure_code") or "").strip()
+        if failure_code in _SAFE_METADATA_FAILURE_CODES:
+            failure_codes.append(failure_code)
         for field in item.get("fields_missing") or []:
             field_value = str(field or "").strip()
             if field_value and field_value not in fields_missing:
@@ -938,7 +1008,7 @@ def _candidate_blocker_detail(candidates: list[dict[str, Any]]) -> dict[str, Any
         "fields_missing": fields_missing,
         "missing_entities": sorted(set(missing_entities)),
         "invalid_field_entities": sorted(set(invalid_field_entities)),
-        "permission_errors": permission_errors,
+        "failure_codes": sorted(set(failure_codes)),
     }
 
 
@@ -972,17 +1042,26 @@ def check_postgres() -> dict[str, Any]:
 
 
 def check_minio() -> dict[str, Any]:
-    missing = _missing("minio_endpoint", "minio_bucket")
-    endpoint = str(getattr(settings, "minio_endpoint", "") or "").lower()
-    access_key = str(getattr(settings, "minio_access_key", "") or "").strip()
-    secret_key = str(getattr(settings, "minio_secret_key", "") or "").strip()
-    uses_aws_iam_provider = "amazonaws.com" in endpoint and not (access_key or secret_key)
-    if not uses_aws_iam_provider:
-        if not access_key:
-            missing.append("MINIO_ACCESS_KEY")
-        if not secret_key:
-            missing.append("MINIO_SECRET_KEY")
-    return {"component": "minio", "configured": not missing, "missing": missing}
+    """Configuration-only compatibility check; no provider error is exposed."""
+
+    try:
+        resolve_storage_config()
+    except Exception as exc:  # StoragePreflightError string is an allowlisted code.
+        code = str(exc)
+        if code not in {
+            "storage_credentials_missing",
+            "storage_signature_invalid",
+            "storage_access_denied",
+            "storage_bucket_missing",
+        }:
+            code = "storage_credentials_missing"
+        return {
+            "component": "minio",
+            "configured": False,
+            "missing": [],
+            "code": code,
+        }
+    return {"component": "minio", "configured": True, "missing": []}
 
 
 def preflight_for_extract(
@@ -999,15 +1078,20 @@ def preflight_for_extract(
     components = [
         check_sap(conn_id=conn_id, security_context=security_context),
         check_postgres(),
-        check_minio(),
+        # This is an authenticated object-list probe for cloud storage (bucket
+        # creation remains local-MinIO-only). It runs before any OData download.
+        check_storage_access(),
     ]
     failing = [c for c in components if not c.get("configured", True)]
     if not failing:
         return None
+    codes = [str(c["code"]) for c in failing if c.get("code")]
     return {
         "status": "degraded",
         "configured": False,
         "missing": [m for c in failing for m in (c.get("missing") or [])],
+        **({"code": codes[0]} if len(codes) == 1 else {}),
+        "codes": codes,
         "components": components,
     }
 
@@ -1095,11 +1179,12 @@ def _candidate_status(
             item["status"] = "ready"
             item["reason"] = "ready"
     except Exception as exc:  # noqa: BLE001 - upstream/permission errors are blockers, not crashes.
-        item["status"] = "permission_blocked"
+        status, reason, code = _safe_candidate_failure(exc)
+        item["status"] = status
         item["available"] = False
         item["sample_status"] = "blocked"
-        item["reason"] = "permission_denied"
-        item["error"] = str(exc)[:240]
+        item["reason"] = reason
+        item["failure_code"] = code
     return item
 
 
@@ -1154,7 +1239,8 @@ def _entity_metadata_readiness(
     )
     try:
         metadata_entities = client.metadata_entities()
-    except SAPClientError as exc:
+    except Exception as exc:  # noqa: BLE001 - metadata failures are stable blockers.
+        failure_code = _safe_metadata_failure_code(exc)
         return {
             "status": "blocked",
             "configured": True,
@@ -1165,7 +1251,7 @@ def _entity_metadata_readiness(
                 {
                     "component": "metadata",
                     "reason": "metadata_unavailable",
-                    "error": str(exc)[:240],
+                    "failure_code": failure_code,
                 }
             ],
         }

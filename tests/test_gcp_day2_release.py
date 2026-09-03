@@ -1,11 +1,10 @@
-"""Checkpoint 5.5 — canonical GCP day-two release controller.
+"""Checkpoint 5.5 — GCP release support-script contracts.
 
 These scripts run against the live GCP VM, so the executable path is an external
 wall we cannot cross in CI. What we CAN pin here is the safety contract of the
-scripts as artifacts: they are syntactically valid, they refuse to run without an
-explicit canonical target, they never read secret values, the day-two sequence
-is ordered and fail-closed, rollback is never a blind N-1, and the whole thing
-reuses main's already-audited release scripts instead of re-implementing them.
+scripts as artifacts: helpers are syntactically valid and never read secret
+values, while the retired day2 controller is a fail-closed stub that directs
+operators to the single canonical deployment path.
 """
 from __future__ import annotations
 
@@ -127,87 +126,43 @@ def test_backup_refuses_to_overwrite_an_existing_restore_point():
     assert "refusing to overwrite" in script
 
 
-# ── day2-release: ordered, fail-closed, reuses main, no blind N-1 ───────────
+# ── day2-release: deprecated; canonical deploy is the only mutation path ────
 
-def test_day2_requires_explicit_release_identity():
+def test_day2_is_a_fail_closed_deprecation_stub():
     script = _text("day2-release")
-    for var in (
-        "TARGET_TAG",
-        "DEPLOY_REF",
-        "GHCR_OWNER",
-        "EXPECTED_PROJECT_ID",
-        "EXPECTED_INSTANCE_NAME",
-        "EXPECTED_ZONE",
-        "EXPECTED_SERVICE_ACCOUNT",
+    assert "gcp-canonical-deploy.sh <target-tag> <deploy-ref-40hex>" in script
+    assert "disabled and performs no action" in script
+    assert "exit 64" in script
+
+    # The retired entrypoint must not retain any mutation primitive. This makes
+    # it impossible for an operator to accidentally use the stale rollback and
+    # secret-hydration path.
+    for forbidden in (
+        "docker compose",
+        "pg_dump",
+        "backup-restore.sh",
+        "apply_db_migrations.sh",
+        "ghcr-auth-run.sh",
+        "gcloud",
+        "curl",
     ):
-        assert f"require {var}" in script or var in script
-    # DEPLOY_REF is pinned to a full commit SHA (no floating ref).
-    assert "^[0-9a-f]{40}$" in script
+        assert forbidden not in script
 
 
-def test_day2_runs_the_eight_steps_in_order():
-    script = _text("day2-release")
-    order = [
-        "step 1/8 preflight",
-        "step 2/8 backup",
-        "step 3/8 images",
-        "step 4/8 migrations",
-        "step 5/8 deploy",
-        "step 6/8 health",
-        "step 7/8 regression",
-        "step 8/8 promote",
-    ]
-    positions = []
-    for marker in order:
-        assert marker in script, f"missing day-two step: {marker}"
-        positions.append(script.index(marker))
-    assert positions == sorted(positions), "day-two steps are out of order"
-
-
-def test_day2_reuses_mains_audited_release_scripts():
-    """5.5 reduces, it does not re-implement. The image pull + digest lock come
-    from main's ghcr-auth-run.sh / preflight-release-images.sh / overlay."""
-    script = _text("day2-release")
-    assert "ghcr-auth-run.sh" in script
-    assert "preflight-release-images.sh" in script
-    assert "docker-compose.release.yml" in script
-    assert "apply_db_migrations.sh" in script
-
-
-def test_day2_health_gate_requires_data_and_pins_version():
-    script = _text("day2-release")
-    assert "/healthz" in script
-    assert "/readyz?require_data=1" in script
-    assert "app_env" in script and "production" in script
-    assert "EXPECTED_VERSION" in script
-
-
-def test_day2_promotes_only_after_all_gates_and_atomically():
-    script = _text("day2-release")
-    # Promotion is the final step and flips a durable pointer via atomic rename.
-    promote = script.index("step 8/8 promote")
-    health = script.index("step 6/8 health")
-    regression = script.index("step 7/8 regression")
-    assert health < promote and regression < promote
-    assert "mv -f" in script[promote:]
-    assert "PROMOTED=1" in script
-
-
-def test_day2_rollback_is_never_a_blind_n_minus_one():
-    script = _text("day2-release")
-    # Rollback re-pins the EXACT previous digest set and restores the captured
-    # backup — it must not fabricate a ":previous"/":latest" image tag.
-    assert "PREVIOUS_LOCK" in script
-    assert "backup-restore.sh" in script and "restore" in script
-    assert ":previous" not in script
-    assert ":latest" not in script
-
-
-def test_day2_is_fail_closed_on_error_after_mutation():
-    script = _text("day2-release")
-    assert "trap on_error ERR" in script
-    assert "rollback" in script
-    assert "BACKUP_CAPTURED" in script
+def test_day2_exits_before_accepting_or_using_release_identity():
+    result = subprocess.run(
+        ["bash", str(SCRIPTS["day2-release"])],
+        capture_output=True,
+        text=True,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "TARGET_TAG": "v999.999.999",
+            "DEPLOY_REF": "f" * 40,
+        },
+    )
+    assert result.returncode == 64
+    assert "gcp-canonical-deploy.sh" in result.stderr
+    assert result.stdout == ""
 
 
 def test_release_overlay_still_covers_exactly_15_images():

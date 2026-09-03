@@ -162,18 +162,147 @@ def _pipeline_run_save(dag_id: str, entity: str, cartridge_id: str = "{cartridge
 '''
 
 _MINIO_BLOCK = '''\
-def _upload_parquet(df, cartridge_id: str, entity: str) -> tuple[str, int]:
+def _airflow_storage_variable(name: str, default: str = "") -> str:
+    from airflow.models import Variable
+    return str(Variable.get(name, default_var=default) or "").strip()
+
+
+def _storage_endpoint_host(value: str) -> str:
+    from urllib.parse import urlsplit
+    raw = str(value or "").strip().rstrip("/")
+    parsed = urlsplit(raw if "://" in raw else "//" + raw)
+    return parsed.netloc or parsed.path
+
+
+def _storage_config() -> dict:
+    import os
+
+    endpoint_hint = (
+        os.environ.get("LAKEHOUSE_ENDPOINT")
+        or _airflow_storage_variable("lakehouse_endpoint")
+        or os.environ.get("MINIO_ENDPOINT")
+        or _airflow_storage_variable("minio_endpoint")
+        or ""
+    )
+    provider = str(
+        os.environ.get("LAKEHOUSE_PROVIDER")
+        or _airflow_storage_variable("lakehouse_provider")
+        or ("gcs" if "storage.googleapis.com" in endpoint_hint.lower() else "minio")
+    ).strip().lower()
+
+    if provider == "gcs":
+        # GCS interoperability credentials are deliberately exact: never
+        # borrow AWS/SES or local MINIO_* keys.
+        access_key = str(os.environ.get("GCS_ACCESS_KEY_ID") or "").strip()
+        secret_key = str(os.environ.get("GCS_SECRET_ACCESS_KEY") or "").strip()
+        bucket = str(
+            os.environ.get("GCS_BUCKET")
+            or os.environ.get("LAKEHOUSE_BUCKET")
+            or _airflow_storage_variable("gcs_bucket")
+            or _airflow_storage_variable("lakehouse_bucket")
+            or ""
+        ).strip()
+        endpoint = _storage_endpoint_host(
+            os.environ.get("LAKEHOUSE_ENDPOINT")
+            or _airflow_storage_variable("lakehouse_endpoint")
+            or "storage.googleapis.com"
+        )
+        secure, region = True, "auto"
+    elif provider == "s3":
+        access_key = str(os.environ.get("AWS_ACCESS_KEY_ID") or "").strip()
+        secret_key = str(os.environ.get("AWS_SECRET_ACCESS_KEY") or "").strip()
+        # A partial pair is never valid; an entirely absent pair uses the AWS
+        # workload/instance identity provider in _storage_client().
+        if bool(access_key) != bool(secret_key):
+            raise RuntimeError("storage_credentials_missing")
+        bucket = str(
+            os.environ.get("S3_BUCKET_NAME")
+            or os.environ.get("LAKEHOUSE_BUCKET")
+            or _airflow_storage_variable("s3_bucket")
+            or _airflow_storage_variable("lakehouse_bucket")
+            or ""
+        ).strip()
+        endpoint = _storage_endpoint_host(
+            os.environ.get("S3_ENDPOINT_URL")
+            or os.environ.get("LAKEHOUSE_ENDPOINT")
+            or "s3.amazonaws.com"
+        )
+        secure = True
+        region = str(
+            os.environ.get("AWS_REGION")
+            or os.environ.get("AWS_DEFAULT_REGION")
+            or "us-east-1"
+        ).strip()
+    else:
+        provider = "minio"
+        access_key = (
+            _airflow_storage_variable("minio_access_key")
+            or str(os.environ.get("MINIO_ACCESS_KEY") or "").strip()
+        )
+        secret_key = (
+            _airflow_storage_variable("minio_secret_key")
+            or str(os.environ.get("MINIO_SECRET_KEY") or "").strip()
+        )
+        bucket = (
+            _airflow_storage_variable("minio_bucket")
+            or str(os.environ.get("MINIO_BUCKET") or "").strip()
+        )
+        endpoint = _storage_endpoint_host(
+            _airflow_storage_variable("minio_endpoint")
+            or os.environ.get("MINIO_ENDPOINT")
+            or "minio:9000"
+        )
+        secure = _airflow_storage_variable("minio_secure", "false").lower() in {
+            "1", "true", "yes", "on"
+        }
+        region = None
+
+    if provider in {"gcs", "minio"} and not (access_key and secret_key):
+        raise RuntimeError("storage_credentials_missing")
+    if not bucket:
+        raise RuntimeError("storage_bucket_missing")
+    return {
+        "provider": provider,
+        "endpoint": endpoint,
+        "access_key": access_key,
+        "secret_key": secret_key,
+        "bucket": bucket,
+        "secure": secure,
+        "region": region,
+    }
+
+
+def _storage_client(storage: dict):
+    from minio import Minio
+
+    if storage["provider"] == "s3" and not storage["access_key"]:
+        from minio.credentials.providers import IamAwsProvider
+        return Minio(
+            storage["endpoint"],
+            credentials=IamAwsProvider(region=storage["region"]),
+            secure=True,
+            region=storage["region"],
+        )
+    return Minio(
+        storage["endpoint"],
+        access_key=storage["access_key"],
+        secret_key=storage["secret_key"],
+        secure=storage["secure"],
+        region=storage["region"],
+    )
+
+
+def _upload_parquet(df, cartridge_id: str, entity_name: str) -> tuple[str, int]:
     """Sube df como Parquet a Bronze. Sobreescribe la partición de hoy."""
     import io as _io
     import pyarrow as pa, pyarrow.parquet as pq
-    from minio import Minio
-    from airflow.models import Variable
     from datetime import datetime, timezone
 
-    bucket = Variable.get("minio_bucket")
+    storage = _storage_config()
+    bucket = storage["bucket"]
     today  = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    prefix = f"raw/{{cartridge_id}}/{{entity}}/load_date={{today}}/"
-    key    = f"{{prefix}}data.parquet"
+    prefix = "raw/" + cartridge_id + "/" + entity_name + "/load_date=" + today + "/"
+    key    = prefix + "data.parquet"
 
     table  = pa.Table.from_pandas(df)
     buf    = _io.BytesIO()
@@ -181,15 +310,13 @@ def _upload_parquet(df, cartridge_id: str, entity: str) -> tuple[str, int]:
     buf.seek(0)
     size   = buf.getbuffer().nbytes
 
-    client = Minio(Variable.get("minio_endpoint"),
-                   access_key=Variable.get("minio_access_key"),
-                   secret_key=Variable.get("minio_secret_key"), secure=False)
-    if not client.bucket_exists(bucket):
+    client = _storage_client(storage)
+    if storage["provider"] == "minio" and not client.bucket_exists(bucket):
         client.make_bucket(bucket)
     for obj in client.list_objects(bucket, prefix=prefix, recursive=True):
         client.remove_object(bucket, obj.object_name)
     client.put_object(bucket, key, buf, size, content_type="application/octet-stream")
-    return f"s3://{{bucket}}/{{key}}", size
+    return "s3://" + bucket + "/" + key, size
 
 '''
 

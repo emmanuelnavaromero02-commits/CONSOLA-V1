@@ -185,7 +185,8 @@ def test_replicon_ses_extract_lands_attachment_under_scoped_upload_prefix(monkey
             self.puts.append(kwargs)
 
     fake_s3 = FakeS3()
-    monkeypatch.setattr(mod, "_s3", lambda: fake_s3)
+    monkeypatch.setattr(mod, "_inbox_s3", lambda: fake_s3)
+    monkeypatch.setattr(mod, "_lakehouse_s3", lambda: fake_s3)
 
     class FakeTI:
         def xcom_pull(self, task_ids: str, key: str):
@@ -206,6 +207,78 @@ def test_replicon_ses_extract_lands_attachment_under_scoped_upload_prefix(monkey
     assert fake_s3.puts[0]["Key"] == (
         "uploads/replicon/tenant_id=tenant-a/workspace_id=workspace-a/in/hours.csv"
     )
+
+
+def test_replicon_ses_separates_aws_inbox_from_gcs_lakehouse(monkeypatch):
+    monkeypatch.setenv("REPLICON_SES_INBOX_ENABLED", "true")
+    mod = _load_ses_dag(monkeypatch)
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("LAKEHOUSE_PROVIDER", "gcs")
+    monkeypatch.setenv("LAKEHOUSE_ENDPOINT", "storage.googleapis.com")
+    monkeypatch.setenv("S3_ENDPOINT_URL", "https://storage.googleapis.com")
+    monkeypatch.setenv("GCS_ACCESS_KEY_ID", "gcs-access")
+    monkeypatch.setenv("GCS_SECRET_ACCESS_KEY", "gcs-secret")
+    monkeypatch.setenv("SES_INBOX_AWS_ACCESS_KEY_ID", "ses-access")
+    monkeypatch.setenv("SES_INBOX_AWS_SECRET_ACCESS_KEY", "ses-secret")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "unrelated-lakehouse-access")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "unrelated-lakehouse-secret")
+    monkeypatch.setenv("AWS_REGION", "auto")
+    monkeypatch.delenv("SES_INBOX_S3_ENDPOINT_URL", raising=False)
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        mod.boto3,
+        "client",
+        lambda service, **kwargs: calls.append({"service": service, **kwargs})
+        or object(),
+    )
+
+    mod._inbox_s3()
+    mod._lakehouse_s3()
+
+    assert calls[0] == {
+        "service": "s3",
+        "region_name": "us-east-1",
+        "aws_access_key_id": "ses-access",
+        "aws_secret_access_key": "ses-secret",
+    }
+    assert calls[1] == {
+        "service": "s3",
+        "region_name": "auto",
+        "endpoint_url": "https://storage.googleapis.com",
+        "aws_access_key_id": "gcs-access",
+        "aws_secret_access_key": "gcs-secret",
+    }
+
+
+def test_replicon_ses_is_unscheduled_until_explicitly_enabled(monkeypatch):
+    monkeypatch.delenv("REPLICON_SES_INBOX_ENABLED", raising=False)
+    mod = _load_ses_dag(monkeypatch)
+
+    assert mod.dag.kwargs["schedule_interval"] is None
+    with pytest.raises(RuntimeError, match="^ses_inbox_disabled$"):
+        mod._inbox_s3()
+
+
+def test_replicon_ses_gcp_requires_dedicated_aws_pair(monkeypatch):
+    monkeypatch.setenv("REPLICON_SES_INBOX_ENABLED", "true")
+    monkeypatch.setenv("LAKEHOUSE_PROVIDER", "gcs")
+    monkeypatch.setenv("GCS_ACCESS_KEY_ID", "gcs-access")
+    monkeypatch.setenv("GCS_SECRET_ACCESS_KEY", "gcs-secret")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "must-not-be-borrowed")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "must-not-be-borrowed")
+    monkeypatch.delenv("SES_INBOX_AWS_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("SES_INBOX_AWS_SECRET_ACCESS_KEY", raising=False)
+    mod = _load_ses_dag(monkeypatch)
+    monkeypatch.setattr(
+        mod.boto3,
+        "client",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("boto must not run without dedicated SES credentials")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="^ses_inbox_credentials_missing$"):
+        mod._inbox_s3()
 
 
 def test_replicon_ses_record_run_persists_scope_and_scoped_storage(monkeypatch):
@@ -296,6 +369,46 @@ def test_replicon_outlook_requires_scope_in_production(monkeypatch):
         )
     }
     assert mod._scope_values(ctx) == ("tenant-a", "workspace-a")
+
+
+def test_replicon_outlook_never_probes_or_creates_gcs_bucket(monkeypatch):
+    mod = _load_outlook_dag(monkeypatch)
+    monkeypatch.setenv("LAKEHOUSE_PROVIDER", "gcs")
+    monkeypatch.setenv("LAKEHOUSE_ENDPOINT", "storage.googleapis.com")
+    monkeypatch.setenv("GCS_BUCKET", "omega-gcs")
+    monkeypatch.setenv("GCS_ACCESS_KEY_ID", "gcs-access")
+    monkeypatch.setenv("GCS_SECRET_ACCESS_KEY", "gcs-secret")
+
+    class FakeClient:
+        def bucket_exists(self, _bucket):
+            raise AssertionError("GCS bucket existence must not be probed")
+
+        def make_bucket(self, _bucket):
+            raise AssertionError("GCS bucket must never be created")
+
+    monkeypatch.setattr(mod, "_minio_client", lambda: FakeClient())
+
+    assert mod._ensure_bucket() == "omega-gcs"
+
+
+def test_replicon_outlook_never_probes_or_creates_s3_bucket(monkeypatch):
+    mod = _load_outlook_dag(monkeypatch)
+    monkeypatch.setenv("LAKEHOUSE_PROVIDER", "s3")
+    monkeypatch.setenv("LAKEHOUSE_ENDPOINT", "s3.us-east-1.amazonaws.com")
+    monkeypatch.setenv("S3_BUCKET_NAME", "omega-s3")
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+
+    class FakeClient:
+        def bucket_exists(self, _bucket):
+            raise AssertionError("S3 bucket existence must not be probed")
+
+        def make_bucket(self, _bucket):
+            raise AssertionError("S3 bucket must never be created")
+
+    monkeypatch.setattr(mod, "_minio_client", lambda: FakeClient())
+
+    assert mod._ensure_bucket() == "omega-s3"
 
 
 def test_replicon_outlook_upload_and_backup_use_scoped_paths(monkeypatch, tmp_path):

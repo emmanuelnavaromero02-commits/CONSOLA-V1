@@ -228,8 +228,133 @@ def _root_test_targets(files: list[str]) -> str:
     targets = {
         path
         for path in files
-        if re.match(r"^tests/test.*\.py$", path) and Path(path).exists()
+        if re.match(r"^(?:tests|console/tests)/test.*\.py$", path)
+        and Path(path).exists()
     }
+    # Runtime-only edits must still select the fail-closed regressions that
+    # protect scheduler authentication and storage/release boundaries.  A
+    # release tag may contain only the implementation file, so relying on the
+    # corresponding test file also being changed would silently skip them.
+    console_runtime_contracts = {
+        "console/app/main.py": {
+            "console/tests/test_agent_runner_scheduler_auth.py",
+        },
+        "console/app/routers/operations.py": {
+            "console/tests/test_agent_runner_scheduler_auth.py",
+        },
+        "console/app/services/scheduled_runtime.py": {
+            "console/tests/test_agent_runner_scheduler_auth.py",
+            "tests/test_operational_truth_runtime_red.py",
+        },
+        "console/app/services/s3_client.py": {
+            "console/tests/test_console_s3_iam_client.py",
+        },
+        "console/app/services/cartridge_service.py": {
+            "console/tests/test_cartridge_service_storage_provider.py",
+        },
+        "console/app/services/dag_templates.py": {
+            "console/tests/test_dag_templates.py",
+        },
+        "console/app/services/dag_code_generator.py": {
+            "tests/test_dag_codegen_security.py",
+        },
+        "infra/terraform-gcp/release/hydrate-runtime-secrets.sh": {
+            "tests/test_gcp_runtime_secret_hydration.py",
+        },
+        "scripts/gcp/gcp-canonical-deploy.sh": {
+            "tests/test_gcp_canonical_deploy.py",
+            "tests/test_gcp_runtime_secret_hydration.py",
+        },
+        "scripts/gcp/gcp-canonical-deploy-remote.sh": {
+            "tests/test_gcp_canonical_deploy.py",
+            "tests/test_gcp_runtime_secret_hydration.py",
+        },
+        ".github/workflows/release.yml": {
+            "tests/test_release_root_target_partition.py",
+        },
+        "scripts/run_release_pytest.py": {
+            "tests/test_release_root_target_partition.py",
+        },
+        "scripts/apply_db_migrations.sh": {
+            "tests/test_apply_db_migrations_script.py",
+            "tests/test_schema_migrations_tracking.py",
+        },
+        "cartridges/sap_successfactors/app/main.py": {
+            "tests/test_cartridge_startup_fail_fast.py",
+        },
+        "cartridges/sap_successfactors/app/api/routes_health.py": {
+            "tests/test_cartridge_startup_fail_fast.py",
+        },
+        "cartridges/sap_successfactors/app/core/startup_status.py": {
+            "tests/test_cartridge_startup_fail_fast.py",
+        },
+        "cartridges/sap_successfactors/app/services/catalog_service.py": {
+            "tests/test_cartridge_startup_fail_fast.py",
+        },
+    }
+    for runtime_path, contract_targets in console_runtime_contracts.items():
+        if runtime_path in files:
+            targets.update(
+                target for target in contract_targets if Path(target).exists()
+            )
+    if _any(
+        files,
+        r"^cartridges/(?:hubspot|replicon|salesforce|sap_hcm|sap_s4hana)/app/core/(?:config|minio_client)\.py$",
+    ):
+        targets.update(
+            target
+            for target in {
+                "tests/test_phase0_provider_safe_storage.py",
+                "tests/test_gcp_runtime_secret_hydration.py",
+            }
+            if Path(target).exists()
+        )
+    if _any(
+        files,
+        r"^cartridges/(?:hubspot|replicon|salesforce|sap_hcm|sap_s4hana)/app/services/duckdb_service\.py$",
+        r"^mcp-infra/app/lakehouse_runtime\.py$",
+    ):
+        targets.update(
+            target
+            for target in {"tests/test_phase0_provider_safe_storage.py"}
+            if Path(target).exists()
+        )
+    if _any(
+        files,
+        r"^cartridges/(?:hubspot|replicon|salesforce|sap_hcm|sap_s4hana|sap_successfactors)/Dockerfile$",
+        r"^mcp-infra/(?:app/lakehouse_runtime\.py|scripts/(?:install_duckdb_extensions|duckdb_offline_smoke)\.py)$",
+    ):
+        targets.update(
+            target
+            for target in {
+                "tests/test_duckdb_p0_guard.py",
+                "tests/test_phase0_provider_safe_storage.py",
+            }
+            if Path(target).exists()
+        )
+    if _any(
+        files,
+        r"^refinement/(?:app/duckdb_engine\.py|scripts/(?:install_duckdb_extensions|duckdb_offline_smoke)\.py)$",
+        r"^scripts/prepare_refinement_duckdb_ci\.sh$",
+    ):
+        targets.update(
+            target
+            for target in {
+                "refinement/tests/test_duckdb_s3_materialize_paths.py",
+                "tests/test_refinement_duckdb_extensions.py",
+            }
+            if Path(target).exists()
+        )
+    if _any(files, r"^infra/terraform-gcp/templates/docker-compose\.gcp\.yml\.tftpl$"):
+        targets.update(
+            target
+            for target in {
+                "tests/test_phase0_provider_safe_storage.py",
+                "tests/test_gcp_runtime_secret_hydration.py",
+                "tests/test_replicon_ses_upload_scope.py",
+            }
+            if Path(target).exists()
+        )
     if _any(
         files,
         r"^mcp-infra/requirements\.txt$",
@@ -334,6 +459,8 @@ def _flags(files: list[str]) -> dict[str, bool | str]:
         r"^cartridges/[^/]+/(app|dags|Dockerfile)",
         r"^infra/airflow/",
         r"^scripts/(production|v1_stress|acceptance|smoke|run-e2e)",
+        r"^scripts/gcp/gcp-canonical-deploy(?:-remote)?\.sh$",
+        r"^infra/terraform-gcp/release/hydrate-runtime-secrets\.sh$",
         r"^\.github/workflows/(release|deploy-aws|docker-image|e2e)\.yml$",
     )
 

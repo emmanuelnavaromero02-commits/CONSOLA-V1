@@ -16,6 +16,11 @@ from app.api.routes_console import router as console_router
 from app.api.routes_skills import router as skills_router
 from app.core import job_runner
 from app.core.request_context import SecurityContextError, require_tenant_workspace_scope, reset_security_context, set_security_context
+from app.core.startup_status import (
+    CATALOG_SEED_FAILED,
+    JOB_RUNNER_FAILED,
+    safe_startup_errors,
+)
 from app.mcp_server import load_custom_tools, mcp
 from app.security import InternalApiKeyASGIGuard, get_internal_api_key
 from app.services import catalog_service
@@ -42,15 +47,23 @@ async def lifespan(app: FastAPI):
     try:
         await job_runner.ensure_schema()
         await job_runner.cleanup_stale()
-    except Exception as e:
-        app.state.startup_errors.append(f"job_runner: {type(e).__name__}: {e}")
+    except Exception as exc:
+        app.state.startup_errors.append(JOB_RUNNER_FAILED)
+        logger.error(
+            "sap_successfactors startup failed component=job_runner error_type=%s",
+            type(exc).__name__,
+        )
 
     try:
         # Register cartridge header + entities so Studio's dropdown lists
         # this source even if no client has hit /entities yet.
         catalog_service._seed_if_empty()
-    except Exception as e:
-        app.state.startup_errors.append(f"catalog_seed: {type(e).__name__}: {e}")
+    except Exception as exc:
+        app.state.startup_errors.append(CATALOG_SEED_FAILED)
+        logger.error(
+            "sap_successfactors startup failed component=catalog_seed error_type=%s",
+            type(exc).__name__,
+        )
 
     if not app.state.startup_errors:
         app.state.startup_ok = True
@@ -72,11 +85,14 @@ def _internal_error_request_id(request: Request | None = None) -> str:
 
 def _log_internal_error(exc: Exception, message: str, request: Request | None = None) -> str:
     request_id = _internal_error_request_id(request)
-    logger.exception(
-        "%s request_id=%s",
+    # Exception tracebacks include ``str(exc)`` and may contain an upstream
+    # signed URL, DSN or access-key ID. Keep only a correlation ID and type.
+    logger.error(
+        "%s request_id=%s exception_type=%s",
         message,
         request_id,
-        extra={"request_id": request_id, "exception_type": type(exc).__name__},
+        type(exc).__name__,
+        extra={"request_id": request_id},
     )
     return request_id
 
@@ -123,7 +139,9 @@ class _MCPStartupGuard:
             self._app.state, "startup_ok", False,
         ):
             import json as _json
-            errors = list(getattr(self._app.state, "startup_errors", []) or [])
+            errors = safe_startup_errors(
+                getattr(self._app.state, "startup_errors", [])
+            )
             body = _json.dumps({
                 "error": "cartridge_not_ready",
                 "startup_errors": errors,
@@ -186,7 +204,9 @@ app.mount("/mcp/rpc", _MCPStartupGuard(InternalApiKeyASGIGuard(_MCPSecurityConte
 def _require_startup_ok(request: "Request") -> None:
     from fastapi import HTTPException
     if not getattr(request.app.state, "startup_ok", False):
-        errors = list(getattr(request.app.state, "startup_errors", []) or [])
+        errors = safe_startup_errors(
+            getattr(request.app.state, "startup_errors", [])
+        )
         raise HTTPException(
             status_code=503,
             detail={"error": "cartridge_not_ready", "startup_errors": errors},

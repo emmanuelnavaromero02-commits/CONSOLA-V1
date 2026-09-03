@@ -46,7 +46,11 @@ def test_mcp_infra_httpfs_is_prebuilt_and_runtime_is_load_only():
     assert "require_loaded_extensions(connection)" in runtime
     assert 'RuntimeError("DuckDB required extensions are unavailable")' in runtime
 
-    assert 'connection.execute("INSTALL httpfs")' in installer
+    assert 'for extension in ("httpfs", "aws")' in installer
+    assert 'connection.execute(f"INSTALL {extension}")' in installer
+    assert 'connection.execute("LOAD aws;")' in (
+        ROOT / "mcp-infra/app/lakehouse_runtime.py"
+    ).read_text(encoding="utf-8")
     assert "connect_duckdb_runtime()" in smoke
     assert '"autoinstall_known_extensions": "false"' in smoke
     assert '"autoload_known_extensions": "false"' in smoke

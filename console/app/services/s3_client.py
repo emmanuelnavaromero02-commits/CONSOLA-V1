@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from urllib import request
 from urllib.parse import urlsplit
@@ -18,42 +19,128 @@ def _env(name: str, default: str = "") -> str:
     return (os.environ.get(name) or default).strip()
 
 
+@dataclass(frozen=True, repr=False)
+class ResolvedStorageConfig:
+    provider: str
+    endpoint: str
+    endpoint_url: str | None
+    access_key: str
+    secret_key: str
+    bucket: str
+    secure: bool
+    region: str
+
+    def __repr__(self) -> str:
+        return (
+            "ResolvedStorageConfig("
+            f"provider={self.provider!r}, endpoint={self.endpoint!r}, "
+            f"bucket={self.bucket!r}, secure={self.secure!r}, "
+            f"region={self.region!r}, access_key=********, secret_key=********)"
+        )
+
+    def validate(self) -> None:
+        if not self.bucket:
+            raise RuntimeError("storage_bucket_missing")
+        if self.provider in {"gcs", "minio"} and not (
+            self.access_key and self.secret_key
+        ):
+            raise RuntimeError("storage_credentials_missing")
+        if bool(self.access_key) != bool(self.secret_key):
+            raise RuntimeError("storage_credentials_missing")
+
+
+def _endpoint_host(raw: str) -> str:
+    value = str(raw or "").strip().rstrip("/")
+    parsed = urlsplit(value if "://" in value else f"//{value}")
+    return parsed.netloc or parsed.path
+
+
+def _endpoint_url(raw: str, *, secure: bool) -> str:
+    value = str(raw or "").strip().rstrip("/")
+    parsed = urlsplit(value)
+    if parsed.scheme and parsed.netloc:
+        return value
+    return f"{'https' if secure else 'http'}://{value}"
+
+
+def resolve_storage_config(*, bucket: str | None = None) -> ResolvedStorageConfig:
+    """Resolve storage while keeping GCS, AWS and local MinIO keys isolated."""
+
+    endpoint_hint = _env("LAKEHOUSE_ENDPOINT")
+    provider = _env("LAKEHOUSE_PROVIDER").lower()
+    if provider not in {"gcs", "s3", "minio"}:
+        if _env("GCS_BUCKET") or "storage.googleapis.com" in endpoint_hint.lower():
+            provider = "gcs"
+        elif _env("S3_BUCKET_NAME") or _is_aws_endpoint(endpoint_hint):
+            provider = "s3"
+        else:
+            provider = "minio"
+
+    if provider == "gcs":
+        endpoint = _endpoint_host(
+            _env("LAKEHOUSE_ENDPOINT", "storage.googleapis.com")
+        )
+        return ResolvedStorageConfig(
+            provider="gcs",
+            endpoint=endpoint,
+            endpoint_url=_endpoint_url(endpoint, secure=True),
+            # Exact GCS interoperability pair; never AWS/SES or MINIO aliases.
+            access_key=_env("GCS_ACCESS_KEY_ID"),
+            secret_key=_env("GCS_SECRET_ACCESS_KEY"),
+            bucket=(bucket or _env("GCS_BUCKET") or _env("LAKEHOUSE_BUCKET")).strip(),
+            secure=True,
+            region="auto",
+        )
+
+    if provider == "s3":
+        aws_access_key = _env("AWS_ACCESS_KEY_ID")
+        aws_secret_key = _env("AWS_SECRET_ACCESS_KEY")
+        if bool(aws_access_key) != bool(aws_secret_key):
+            raise RuntimeError("storage_credentials_missing")
+        if not aws_access_key:
+            aws_access_key = ""
+            aws_secret_key = ""
+        endpoint_raw = (
+            _env("S3_ENDPOINT_URL")
+            or _env("AWS_S3_ENDPOINT_URL")
+            or _env("LAKEHOUSE_ENDPOINT")
+            or "s3.amazonaws.com"
+        )
+        return ResolvedStorageConfig(
+            provider="s3",
+            endpoint=_endpoint_host(endpoint_raw),
+            endpoint_url=_endpoint_url(endpoint_raw, secure=True),
+            access_key=aws_access_key,
+            secret_key=aws_secret_key,
+            bucket=(
+                bucket
+                or _env("S3_BUCKET_NAME")
+                or _env("LAKEHOUSE_BUCKET")
+            ).strip(),
+            secure=True,
+            region=_env("AWS_REGION") or _env("AWS_DEFAULT_REGION") or "us-east-1",
+        )
+
+    endpoint_raw = _env("MINIO_ENDPOINT", "minio:9000")
+    secure = _secure_from_env()
+    return ResolvedStorageConfig(
+        provider="minio",
+        endpoint=_endpoint_host(endpoint_raw),
+        endpoint_url=_endpoint_url(endpoint_raw, secure=secure),
+        access_key=_env("MINIO_ACCESS_KEY"),
+        secret_key=_env("MINIO_SECRET_KEY"),
+        bucket=(bucket or _env("MINIO_BUCKET", "lakehouse")).strip(),
+        secure=secure,
+        region="us-east-1",
+    )
+
+
 def _is_aws_endpoint(endpoint: str | None) -> bool:
     return _AWS_S3_HOST_MARKER in (endpoint or "").lower()
 
 
 def _secure_from_env() -> bool:
     return _env("MINIO_SECURE", "false").lower() == "true"
-
-
-def _minio_endpoint_from_env() -> str:
-    raw = _env("MINIO_ENDPOINT", "minio:9000")
-    parsed = urlsplit(raw)
-    if parsed.scheme and parsed.netloc:
-        return parsed.netloc
-    return raw
-
-
-def _boto_endpoint_from_env() -> str | None:
-    endpoint_url = _env("S3_ENDPOINT_URL") or _env("AWS_S3_ENDPOINT_URL")
-    if endpoint_url:
-        return endpoint_url
-    minio_endpoint = _env("MINIO_ENDPOINT")
-    if not minio_endpoint:
-        return None
-    parsed = urlsplit(minio_endpoint)
-    if parsed.scheme and parsed.netloc:
-        return minio_endpoint
-    scheme = "https" if _secure_from_env() else "http"
-    return f"{scheme}://{minio_endpoint}"
-
-
-def _static_access_key() -> str:
-    return _env("AWS_ACCESS_KEY_ID") or _env("MINIO_ACCESS_KEY")
-
-
-def _static_secret_key() -> str:
-    return _env("AWS_SECRET_ACCESS_KEY") or _env("MINIO_SECRET_KEY")
 
 
 class Ec2ImdsV2Provider(Provider):
@@ -103,20 +190,23 @@ class Ec2ImdsV2Provider(Provider):
 
 
 def get_minio_client() -> Minio:
-    endpoint = _minio_endpoint_from_env()
-    access_key = _static_access_key()
-    secret_key = _static_secret_key()
-    if _is_aws_endpoint(endpoint) and not (access_key and secret_key):
+    storage = resolve_storage_config()
+    storage.validate()
+    if storage.provider == "s3" and not (
+        storage.access_key and storage.secret_key
+    ):
         return Minio(
-            endpoint=endpoint,
+            endpoint=storage.endpoint,
             credentials=Ec2ImdsV2Provider(),
             secure=True,
+            region=storage.region,
         )
     return Minio(
-        endpoint,
-        access_key=access_key,
-        secret_key=secret_key,
-        secure=_secure_from_env(),
+        storage.endpoint,
+        access_key=storage.access_key,
+        secret_key=storage.secret_key,
+        secure=storage.secure,
+        region=storage.region,
     )
 
 
@@ -124,22 +214,21 @@ def get_boto3_s3_client():
     import boto3
     from botocore.config import Config
 
-    endpoint_url = _boto_endpoint_from_env()
+    storage = resolve_storage_config()
+    storage.validate()
     kwargs: dict = {
-        "region_name": _env("AWS_REGION") or _env("AWS_DEFAULT_REGION") or "us-east-1",
+        "region_name": storage.region,
         "config": Config(
             connect_timeout=2,
             read_timeout=10,
             retries={"max_attempts": 3, "mode": "standard"},
         ),
     }
-    if endpoint_url:
-        kwargs["endpoint_url"] = endpoint_url
-    access_key = _static_access_key()
-    secret_key = _static_secret_key()
-    if access_key and secret_key:
-        kwargs["aws_access_key_id"] = access_key
-        kwargs["aws_secret_access_key"] = secret_key
+    if storage.endpoint_url:
+        kwargs["endpoint_url"] = storage.endpoint_url
+    if storage.access_key and storage.secret_key:
+        kwargs["aws_access_key_id"] = storage.access_key
+        kwargs["aws_secret_access_key"] = storage.secret_key
     return boto3.client("s3", **kwargs)
 
 
@@ -147,7 +236,9 @@ class LakehouseExplorerClient:
     """Boto3-shaped adapter used by the console object explorer."""
 
     def _storage(self, bucket: str):
-        return storage_from_env(bucket=bucket)
+        storage = resolve_storage_config(bucket=bucket)
+        storage.validate()
+        return storage_from_env(bucket=storage.bucket)
 
     def list_objects_v2(self, **kwargs) -> dict:
         bucket = kwargs["Bucket"]

@@ -15,6 +15,89 @@ _MAX_WINDOW = timedelta(minutes=15)
 _PAGE_SIZE = 200
 
 
+async def reconcile_expired_runs(
+    conn: Any,
+    *,
+    tenant_id: str,
+    workspace_id: str,
+) -> int:
+    """Retire abandoned executions after the normal reclaim window.
+
+    The same per-run advisory lock used by effect, reclaim and completion paths
+    serializes the retirement.  A recently expired run remains reclaimable by
+    an Airflow retry; only a run stale for an additional hour is terminalized.
+    """
+
+    candidates = await conn.fetch(
+        """
+        SELECT id
+          FROM agent_schedule_runs
+         WHERE tenant_id = $1::uuid
+           AND workspace_id = $2::uuid
+           AND status = 'running'
+           AND (
+               lease_expires_at <= clock_timestamp() - INTERVAL '1 hour'
+               OR (lease_expires_at IS NULL
+                   AND started_at <= clock_timestamp() - INTERVAL '2 hours')
+           )
+         ORDER BY id
+        """,
+        tenant_id,
+        workspace_id,
+    )
+    expired: list[Any] = []
+    for candidate in candidates:
+        run_id = candidate["id"]
+        await conn.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
+            f"agent_schedule_effect:{run_id}",
+        )
+        retired = await conn.fetchrow(
+            """
+            UPDATE agent_schedule_runs
+               SET status = 'error',
+                   finished_at = clock_timestamp(),
+                   lease_expires_at = NULL,
+                   error_message = 'scheduled-run lease expired',
+                   metadata = COALESCE(metadata, '{}'::jsonb)
+                       || '{"reconciliation":"lease_expired"}'::jsonb
+             WHERE id = $1
+               AND tenant_id = $2::uuid
+               AND workspace_id = $3::uuid
+               AND status = 'running'
+               AND (
+                   lease_expires_at <= clock_timestamp() - INTERVAL '1 hour'
+                   OR (lease_expires_at IS NULL
+                       AND started_at <= clock_timestamp() - INTERVAL '2 hours')
+               )
+            RETURNING agent_run_id
+            """,
+            run_id,
+            tenant_id,
+            workspace_id,
+        )
+        if retired is not None:
+            expired.append(retired)
+    run_ids = [int(row["agent_run_id"]) for row in expired if row["agent_run_id"]]
+    if run_ids:
+        await conn.execute(
+            """
+            UPDATE agent_runs
+               SET status = 'error',
+                   finished_at = COALESCE(finished_at, clock_timestamp()),
+                   error_message = COALESCE(error_message, 'scheduled-run lease expired')
+             WHERE tenant_id = $1::uuid
+               AND workspace_id = $2::uuid
+               AND id = ANY($3::bigint[])
+               AND status = 'running'
+            """,
+            tenant_id,
+            workspace_id,
+            run_ids,
+        )
+    return len(expired)
+
+
 def validate_window(start: datetime, end: datetime) -> tuple[datetime, datetime]:
     if start.tzinfo is None or end.tzinfo is None:
         raise ValueError("runtime window must be timezone-aware")
@@ -136,14 +219,21 @@ async def find_due_agents(
             "due": [],
             "workspaces": 0,
             "failures": [],
+            "reconciled_expired_runs": 0,
         }
     due: list[dict[str, Any]] = []
     failures: list[dict[str, str]] = []
+    reconciled_expired_runs = 0
     for scope in scopes:
         tenant_id = scope["tenant_id"]
         workspace_id = scope["workspace_id"]
         try:
             async with scoped_db(pool, tenant_id, workspace_id) as conn:
+                reconciled_expired_runs += await reconcile_expired_runs(
+                    conn,
+                    tenant_id=tenant_id,
+                    workspace_id=workspace_id,
+                )
                 rows = await conn.fetch(
                     """
                     SELECT id, cartridge_id, slug, name, extra
@@ -176,4 +266,5 @@ async def find_due_agents(
         "due": due,
         "workspaces": len(scopes),
         "failures": failures,
+        "reconciled_expired_runs": reconciled_expired_runs,
     }

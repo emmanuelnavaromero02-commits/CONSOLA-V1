@@ -8,9 +8,8 @@ from typing import Any
 
 import pandas as pd
 
-from app.core.config import settings
 from app.core.request_context import scoped_prefix
-from app.core.minio_client import upload_file_to_minio
+from app.core.minio_client import active_storage_bucket, upload_file_to_minio
 from app.services.protection_service import apply_protection_for_entity
 
 
@@ -96,4 +95,4 @@ def write_parquet_and_upload(
         )
         upload_file_to_minio(local_path=str(local_path), object_name=object_name)
 
-    return f"s3://{settings.minio_bucket}/{object_name}"
+    return f"s3://{active_storage_bucket()}/{object_name}"

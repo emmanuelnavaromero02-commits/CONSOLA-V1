@@ -72,7 +72,7 @@ def test_fetch_entity_includes_effective_dated_from_to_params(monkeypatch):
     }
 
 
-def test_fetch_entity_403_reports_direct_odata_permission_and_select(monkeypatch):
+def test_fetch_entity_403_uses_safe_permission_error(monkeypatch):
     captured: dict = {}
     client = SapSfClient.__new__(SapSfClient)
     client.base_url = "https://api68sales.successfactors.com/odata/v2"
@@ -97,13 +97,13 @@ def test_fetch_entity_403_reports_direct_odata_permission_and_select(monkeypatch
     message = str(exc_info.value)
     assert "SuccessFactors rechazo acceso OData (HTTP 403)" in message
     assert "entity=Candidate" in message
-    assert "conn_id=femsa_sf" in message
-    assert "select_fields=candidateId,firstName,lastName,lastModifiedDateTime" in message
-    assert "llamando directo a SuccessFactors" in message
+    assert "conn_id=" not in message
+    assert "select_fields=" not in message
+    assert "api68sales" not in message
     assert "secret-token" not in message
 
 
-def test_fetch_entity_400_reports_sap_body_and_select(monkeypatch):
+def test_fetch_entity_400_does_not_report_sap_body_query_or_url(monkeypatch):
     captured: dict = {}
     client = SapSfClient.__new__(SapSfClient)
     client.base_url = "https://api68sales.successfactors.com/odata/v2"
@@ -128,8 +128,9 @@ def test_fetch_entity_400_reports_sap_body_and_select(monkeypatch):
     message = str(exc_info.value)
     assert "SuccessFactors rechazo solicitud OData (HTTP 400)" in message
     assert "entity=EmpEmploymentTermination" in message
-    assert "conn_id=femsa_sf" in message
-    assert "select_fields=userId,endDate,eventReasonExternalCode,lastModifiedDateTime" in message
-    assert "COE_PROPERTY_NOT_FOUND" in message
-    assert "Invalid property names: EmpEmploymentTermination/eventReasonExternalCode" in message
+    assert "conn_id=" not in message
+    assert "select_fields=" not in message
+    assert "api68sales" not in message
+    assert "COE_PROPERTY_NOT_FOUND" not in message
+    assert "Invalid property names" not in message
     assert "secret-token" not in message

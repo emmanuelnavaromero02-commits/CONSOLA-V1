@@ -27,6 +27,7 @@ from app.core.config import settings
 from app.core.extraction_status import (
     classify_extraction_exception,
     classify_successful_extraction,
+    public_failure_message,
     summarize_extraction_results,
 )
 from app.core.request_context import get_security_context, refinement_security_context
@@ -394,7 +395,7 @@ async def _trigger_successfactors_gold_refresh(
                             "name": name,
                             "status": "error",
                             "status_code": response.status_code,
-                            "error": payload,
+                            "failure_code": "downstream_refresh_failed",
                         }
                     )
                     continue
@@ -406,12 +407,12 @@ async def _trigger_successfactors_gold_refresh(
                         "storage_uri": payload.get("storage_uri"),
                     }
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception:  # noqa: BLE001
                 silver_results.append(
                     {
                         "name": name,
                         "status": "error",
-                        "error": f"{type(exc).__name__}: {exc}",
+                        "failure_code": "downstream_refresh_failed",
                     }
                 )
         for name in datasets:
@@ -430,7 +431,7 @@ async def _trigger_successfactors_gold_refresh(
                             "name": name,
                             "status": "error",
                             "status_code": response.status_code,
-                            "error": payload,
+                            "failure_code": "downstream_refresh_failed",
                         }
                     )
                     continue
@@ -442,12 +443,12 @@ async def _trigger_successfactors_gold_refresh(
                         "storage_uri": payload.get("storage_uri"),
                     }
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception:  # noqa: BLE001
                 results.append(
                     {
                         "name": name,
                         "status": "error",
-                        "error": f"{type(exc).__name__}: {exc}",
+                        "failure_code": "downstream_refresh_failed",
                     }
                 )
     ok = sum(1 for item in results if item.get("status") == "ok")
@@ -524,17 +525,45 @@ async def _run_extract_all(
     conn_id: str | None = None,
     target: str = "all",
 ) -> None:
+    from app.core.minio_client import require_storage_access
     from app.services.catalog_service import get_extract_all_plan
-    from app.services.extraction_service import run_entity
-
-    entities, skipped = get_extract_all_plan(
-        conn_id=conn_id,
-        security_context=security_context,
-        target=target,
+    from app.services.extraction_service import (
+        is_metadata_skip_result,
+        run_entity_with_metadata_guard,
     )
+
+    # Batch planning performs live $metadata discovery, so prove the Bronze
+    # destination first and avoid contacting SAP on a doomed run.
+    try:
+        require_storage_access()
+        entities, skipped = get_extract_all_plan(
+            conn_id=conn_id,
+            security_context=security_context,
+            target=target,
+        )
+    except Exception as exc:  # noqa: BLE001 - persist a terminal, redacted state.
+        classified = classify_extraction_exception("__extract_all__", exc)
+        failure_message = public_failure_message(classified)
+        await _update(
+            job_id,
+            "failed",
+            message="Batch blocked before extraction",
+            result={"entities": [classified], "target": target},
+            error=failure_message,
+        )
+        await _log(
+            job_id,
+            None,
+            "ERROR",
+            "Batch blocked before extraction",
+            {"classification": classified},
+        )
+        _tasks.pop(job_id, None)
+        return
     total = len(entities)
     completed = 0
     failed = 0
+    metadata_blocked = 0
     skipped_results = [
         {
             **item,
@@ -570,7 +599,7 @@ async def _run_extract_all(
     loop = asyncio.get_event_loop()
 
     async def _one(config: dict) -> None:
-        nonlocal completed, failed
+        nonlocal completed, failed, metadata_blocked
         entity = config.get("entity", "?")
         async with sem:
             await _log(job_id, entity, "INFO", "Iniciando extracción")
@@ -583,28 +612,55 @@ async def _run_extract_all(
                     overridden["security_context"] = security_context
                 run_context = contextvars.copy_context()
                 result = await loop.run_in_executor(
-                    None, lambda c=overridden, ctx=run_context: ctx.run(run_entity, c)
+                    None,
+                    lambda c=overridden, ctx=run_context: ctx.run(
+                        run_entity_with_metadata_guard, c
+                    ),
                 )
-                count = result.get("record_count", 0)
-                await _trigger_silver_refresh(entity, security_context)
-                completed += 1
-                await _log(
-                    job_id, entity, "INFO",
-                    f"Completado — {count:,} registros y refresh downstream",
-                    {"record_count": count, "storage_uri": result.get("storage_uri")},
-                )
-                results.append(classify_successful_extraction({
-                    "entity": entity,
-                    "record_count": count,
-                    "storage_uri": result.get("storage_uri"),
-                }))
+                if is_metadata_skip_result(result):
+                    metadata_blocked += 1
+                    results.append(result)
+                    await _log(
+                        job_id,
+                        entity,
+                        "WARN",
+                        "Omitida explícitamente por validación de $metadata",
+                        {"blocker": result.get("blocker")},
+                    )
+                else:
+                    count = result.get("record_count", 0)
+                    await _trigger_silver_refresh(entity, security_context)
+                    completed += 1
+                    await _log(
+                        job_id, entity, "INFO",
+                        f"Completado — {count:,} registros y refresh downstream",
+                        {
+                            "record_count": count,
+                            "storage_uri": result.get("storage_uri"),
+                        },
+                    )
+                    results.append(
+                        classify_successful_extraction(
+                            {
+                                "entity": entity,
+                                "record_count": count,
+                                "storage_uri": result.get("storage_uri"),
+                            }
+                        )
+                    )
             except Exception as exc:
                 failed += 1
-                await _log(job_id, entity, "ERROR", f"Error: {exc}",
-                           {"error": str(exc)})
-                results.append(classify_extraction_exception(entity, exc))
+                classified = classify_extraction_exception(entity, exc)
+                await _log(
+                    job_id,
+                    entity,
+                    "ERROR",
+                    "Extraction failed",
+                    {"classification": classified},
+                )
+                results.append(classified)
 
-            done = completed + failed
+            done = completed + failed + metadata_blocked
             await _update(
                 job_id, "running",
                 f"Progreso {done}/{total} — {completed} OK, {failed} errores",
@@ -657,7 +713,10 @@ async def _run_extract(
     from_date: str | None,
     to_date: str | None,
 ) -> None:
-    from app.services.extraction_service import run_entity
+    from app.services.extraction_service import (
+        is_metadata_skip_result,
+        run_entity_with_metadata_guard,
+    )
 
     entity = config.get("entity", "?")
     try:
@@ -666,8 +725,21 @@ async def _run_extract(
         run_context = contextvars.copy_context()
         result = await loop.run_in_executor(
             None,
-            lambda: run_context.run(run_entity, config, from_date=from_date, to_date=to_date),
+            lambda: run_context.run(
+                run_entity_with_metadata_guard,
+                config,
+                from_date=from_date,
+                to_date=to_date,
+            ),
         )
+        if is_metadata_skip_result(result):
+            await _update(
+                job_id,
+                "done",
+                message="Skipped explicitly — SuccessFactors metadata blocker",
+                result=result,
+            )
+            return
         await _trigger_silver_refresh(entity, config.get("security_context"))
         count = result.get("record_count", 0)
         await _update(
@@ -676,10 +748,12 @@ async def _run_extract(
             result=result,
         )
     except Exception as exc:
+        classified = classify_extraction_exception(entity, exc)
         await _update(
             job_id, "failed",
-            message=f"Failed: {exc}",
-            error=str(exc),
+            message="Extraction failed",
+            result=classified,
+            error=public_failure_message(classified),
         )
     finally:
         _tasks.pop(job_id, None)
