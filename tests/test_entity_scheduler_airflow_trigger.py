@@ -92,3 +92,16 @@ def test_aws_airflow_runtime_has_the_verified_internal_api_base():
             compose["services"][service]["environment"]["AIRFLOW_URL"]
             == "http://airflow:8080/airflow"
         )
+
+
+def test_gcp_scheduler_has_the_verified_internal_api_base():
+    compose = yaml.safe_load(
+        (REPO / "infra/terraform-gcp/templates/docker-compose.gcp.yml.tftpl")
+        .read_text()
+        .replace("$${", "${")
+    )
+
+    assert (
+        compose["services"]["airflow-scheduler"]["environment"]["AIRFLOW_URL"]
+        == "${AIRFLOW_URL:-http://airflow:8080/airflow}"
+    )

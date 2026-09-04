@@ -1394,7 +1394,7 @@ jobs:
           release_make production-readiness
 
       - name: Re-verify runtime digests and real-data readiness after all gates
-        if: ${{ false }}
+        if: ${{ success() }}
         env:
           BASH_ENV: /dev/null
           COMPOSE_FILE: ""
@@ -1502,7 +1502,7 @@ jobs:
           PY
 
       - name: Verify harness seal immediately after final gates
-        if: ${{ false }}
+        if: ${{ success() }}
         env:
           BASH_ENV: /dev/null
           COMPOSE_FILE: ""
@@ -1521,6 +1521,7 @@ jobs:
           PYTHONHOME: ""
           PYTHONPATH: ""
         run: |
+          set -euo pipefail
           [[ "$(/usr/bin/sha256sum scripts/verify_release_test_harness.py | /usr/bin/awk '{print $1}')" == "${OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256}" ]]
           /usr/bin/python3 -I scripts/verify_release_test_harness.py
 

@@ -202,6 +202,9 @@ services:
       INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE: ${INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE:-}
       INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE: ${INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE:-}
       INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT: ${INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT:-}
+      # Probabilistic and optimization engines remain paused by default.
+      # The deterministic 9-Box classifier is not governed by this flag.
+      INTELLIGENCE_MATH_ENGINES_ENABLED: ${INTELLIGENCE_MATH_ENGINES_ENABLED:-false}
       # Sprint v1.19: per-service Postgres role (least-privilege).
       # The omega_console role can read/write every operational table
       # except vault_entries (locked to omega_vault).

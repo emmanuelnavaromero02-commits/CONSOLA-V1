@@ -351,6 +351,27 @@ def _root_test_targets(files: list[str]) -> str:
             }
             if Path(target).exists()
         )
+    if _any(
+        files,
+        r"^cartridges/sap_successfactors/datasets/sap_successfactors_candidate_latest\.sql$",
+        r"^console/app/services/seed_packaged_datasets\.py$",
+        r"^refinement/tests/test_successfactors_candidate_contract\.py$",
+    ):
+        targets.update(
+            target
+            for target in {
+                "console/tests/test_control_room_packaged_dataset_refresh.py",
+                "refinement/tests/test_successfactors_candidate_contract.py",
+            }
+            if Path(target).exists()
+        )
+    if _any(
+        files,
+        r"^console/app/(?:domains/agentops/successfactors_talent_monitor\.py|routers/intelligence\.py|services/agent_runtime\.py|services/intelligence/(?:engine_policy|engine|decision_intelligence|gold_control_room|monte_carlo_service|calibration_(?:autopilot|observation_service|recompute_service)|orchestrator_execution|talent_retention_simulation)\.py)$",
+        r"^mcp-infra/app/tools/control_room\.py$",
+        r"^infra/docker-compose\.yml$",
+    ):
+        targets.add("tests/test_phase0_math_engines_paused.py")
     if _any(files, r"^infra/terraform-gcp/templates/docker-compose\.gcp\.yml\.tftpl$"):
         targets.update(
             target
@@ -358,6 +379,7 @@ def _root_test_targets(files: list[str]) -> str:
                 "tests/test_phase0_provider_safe_storage.py",
                 "tests/test_gcp_runtime_secret_hydration.py",
                 "tests/test_gcp_canonical_deploy.py",
+                "tests/test_entity_scheduler_airflow_trigger.py",
                 "tests/test_replicon_ses_upload_scope.py",
             }
             if Path(target).exists()

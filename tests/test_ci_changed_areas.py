@@ -175,6 +175,7 @@ def test_provider_runtime_only_changes_select_cross_provider_contracts():
         "tests/test_phase0_provider_safe_storage.py",
         "tests/test_gcp_runtime_secret_hydration.py",
         "tests/test_gcp_canonical_deploy.py",
+        "tests/test_entity_scheduler_airflow_trigger.py",
         "tests/test_replicon_ses_upload_scope.py",
     } <= overlay_targets
 
@@ -185,6 +186,34 @@ def test_provider_runtime_only_changes_select_cross_provider_contracts():
     assert _flags("scripts/gcp/render_gcp_compose_override.py")[
         "release_full_stack"
     ] is True
+
+
+def test_math_engine_runtime_changes_select_pause_contract():
+    for changed_file in (
+        "console/app/services/agent_runtime.py",
+        "console/app/domains/agentops/successfactors_talent_monitor.py",
+        "console/app/services/intelligence/engine_policy.py",
+        "console/app/services/intelligence/monte_carlo_service.py",
+        "console/app/services/intelligence/calibration_recompute_service.py",
+        "mcp-infra/app/tools/control_room.py",
+        "infra/docker-compose.yml",
+    ):
+        assert "tests/test_phase0_math_engines_paused.py" in _root_targets(
+            _flags(changed_file)
+        )
+
+
+def test_candidate_sql_and_catalog_changes_select_exact_silver_contract():
+    expected = {
+        "console/tests/test_control_room_packaged_dataset_refresh.py",
+        "refinement/tests/test_successfactors_candidate_contract.py",
+    }
+    for changed_file in (
+        "cartridges/sap_successfactors/datasets/sap_successfactors_candidate_latest.sql",
+        "console/app/services/seed_packaged_datasets.py",
+        "refinement/tests/test_successfactors_candidate_contract.py",
+    ):
+        assert expected <= _root_targets(_flags(changed_file))
 
 
 def test_offline_aws_extension_runtime_changes_select_preload_contracts():

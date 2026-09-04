@@ -33,6 +33,7 @@ from app.services.security_context import (
     sign_security_context,
 )
 from app.services import tool_policy
+from app.services.intelligence import engine_policy
 from app.services.db_scope import scoped_db
 from app.services.gold_publication_relation import (
     published_relation_columns,
@@ -1876,6 +1877,26 @@ async def run_scheduled_monitor(
             engine = _monitor_engine_name(spec)
             if not engine:
                 continue
+            if not engine_policy.math_engines_enabled() and engine in {
+                "monte_carlo",
+                "simulation__monte_carlo_run",
+                "bayesian_calibration",
+                "calibration__bayesian_state",
+                "bayes",
+                "minimax",
+                "game_theory__minimax",
+                "decision_orchestrator",
+                "decision__orchestrate",
+                "orchestrator",
+            }:
+                engine_results.append(
+                    {
+                        "engine": engine,
+                        "status": "skipped",
+                        "reason": engine_policy.PAUSED_REASON,
+                    }
+                )
+                continue
             if spec.get("enabled") is False:
                 engine_results.append(
                     {
@@ -1960,7 +1981,6 @@ async def run_scheduled_monitor(
                             "horizon_days": int(spec.get("horizon_days") or 30),
                             "iterations": int(spec.get("iterations") or 1000),
                             "seed": int(spec.get("seed")),
-                            "model_version": spec.get("model_version"),
                             "input_variables": input_variables,
                             "assumptions": spec.get("assumptions")
                             if isinstance(spec.get("assumptions"), dict)
@@ -2130,8 +2150,15 @@ async def run_scheduled_monitor(
                             "evidence_refs": spec.get("evidence_refs")
                             if isinstance(spec.get("evidence_refs"), list)
                             else [],
-                            "execute_engines": bool(spec.get("execute_engines", True)),
-                            "engine_inputs": decision_engine_inputs,
+                            "execute_engines": bool(
+                                engine_policy.math_engines_enabled()
+                                and spec.get("execute_engines", False)
+                            ),
+                            "engine_inputs": (
+                                decision_engine_inputs
+                                if engine_policy.math_engines_enabled()
+                                else {}
+                            ),
                         }
                     ),
                 )

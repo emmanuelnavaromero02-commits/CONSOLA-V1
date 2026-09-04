@@ -14,6 +14,7 @@ from app.services import auth
 from app.services.db_scope import scoped_db_for_user
 from app.services.intelligence import (
     calibration,
+    engine_policy,
     monte_carlo_service,
     orchestrator_execution_truth as truth,
 )
@@ -997,6 +998,8 @@ async def execute_engines(
     orchestration_id: str,
     payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if not engine_policy.math_engines_enabled():
+        raise OrchestratorExecutionError(403, engine_policy.PAUSED_REASON)
     body = _clean_payload(payload)
     engine_inputs = body["engine_inputs"]
     created_by = _actor_id(user)

@@ -26,6 +26,12 @@ WORKSPACE_A = "22222222-2222-2222-2222-222222222222"
 TENANT_B = "33333333-3333-3333-3333-333333333333"
 WORKSPACE_B = "44444444-4444-4444-4444-444444444444"
 
+
+@pytest.fixture(autouse=True)
+def _enable_engine_under_test(monkeypatch):
+    monkeypatch.setenv("INTELLIGENCE_MATH_ENGINES_ENABLED", "true")
+
+
 REPLICON_USER = {
     "id": 7,
     "email": "ops@example.com",

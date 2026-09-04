@@ -107,13 +107,13 @@ def successfactors_talent_monitor_contract() -> (
             "engines": [
                 {
                     "name": "monte_carlo",
-                    "enabled": True,
+                    "enabled": False,
+                    "reason": "paused_by_server_policy",
                     "source_type": "wisdom_bit",
                     "source_id": "WB-TALENTO",
                     "horizon_days": 30,
                     "iterations": 1000,
                     "seed": 45120,
-                    "model_version": "wb-talento.monitor.v2",
                     "output_metric": "delta",
                     "breach_threshold": -5,
                     "breach_direction": "below",
@@ -132,7 +132,8 @@ def successfactors_talent_monitor_contract() -> (
                 },
                 {
                     "name": "bayesian_calibration",
-                    "enabled": True,
+                    "enabled": False,
+                    "reason": "paused_by_server_policy",
                     "calibration_group": "sap_successfactors:talent_readiness",
                     "limit": 10,
                     "assumptions": {
@@ -149,7 +150,8 @@ def successfactors_talent_monitor_contract() -> (
                 },
                 {
                     "name": "decision_orchestrator",
-                    "enabled": True,
+                    "enabled": False,
+                    "reason": "paused_by_server_policy",
                     "source_type": "wisdom_bit",
                     "source_id": "WB-TALENTO",
                     "title": "Decision operativa WB-TALENTO",
@@ -166,7 +168,7 @@ def successfactors_talent_monitor_contract() -> (
                         "no_pii": True,
                     },
                     "evidence_refs": [{"type": "wisdom_bit", "id": "WB-TALENTO"}],
-                    "execute_engines": True,
+                    "execute_engines": False,
                     "engine_inputs": {
                         "monte_carlo": {
                             "source_type": "wisdom_bit",
@@ -174,7 +176,6 @@ def successfactors_talent_monitor_contract() -> (
                             "horizon_days": 30,
                             "iterations": 1000,
                             "seed": 45120,
-                            "model_version": "wb-talento.monitor.v2",
                             "input_dataset": "sap_successfactors_talent_simulation_inputs",
                             "input_variables_field": "input_variables_json",
                             "assumptions_field": "assumptions_json",

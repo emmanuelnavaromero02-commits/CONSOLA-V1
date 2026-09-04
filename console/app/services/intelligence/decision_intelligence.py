@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.services.intelligence import calibration
+from app.services.intelligence import calibration, engine_policy
 from app.services.intelligence.time_series import TimeSeriesResult
 from app.services.intelligence.utils import num
 
@@ -577,6 +577,42 @@ def _calibration_for_probability(
 ) -> dict[str, Any]:
     if raw_probability is None:
         raise calibration.CalibrationValidationError("raw_probability is required")
+    if not engine_policy.math_engines_enabled():
+        if (
+            isinstance(raw_probability, bool)
+            or not isinstance(raw_probability, (int, float))
+            or not isfinite(float(raw_probability))
+            or not 0.0 <= float(raw_probability) <= 1.0
+        ):
+            raise calibration.CalibrationValidationError(
+                "raw_probability must be between 0 and 1"
+            )
+        raw = round(float(raw_probability), 6)
+        return {
+            "raw_probability": raw,
+            "calibrated_probability": raw,
+            "calibration_applied": False,
+            "calibration_reason": engine_policy.PAUSED_REASON,
+            "calibration_group": calibration_group,
+            "calibration_source": "raw_heuristic",
+            "sample_count": 0,
+            "posterior_mean": None,
+            "posterior_alpha": None,
+            "posterior_beta": None,
+            "confidence_score": 0.0,
+            "weight": 0.0,
+            "max_adjustment": round(
+                abs(float(calibration.DEFAULT_MAX_ADJUSTMENT)), 6
+            ),
+            "partial_pooling_applied": False,
+            "parent_calibration_group": None,
+            "parent_sample_count": 0,
+            "prior_source": "fixed",
+            "disclaimer": (
+                f"{calibration.RAW_HEURISTIC_DISCLAIMER}; "
+                f"{engine_policy.PAUSED_REASON}"
+            ),
+        }
     return calibration.apply_calibration_to_probability(
         raw_probability,
         calibration_state,
