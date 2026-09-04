@@ -87,6 +87,9 @@ services:
   airflow:
     environment:
       <<: *gcp-lakehouse-env
+      # Cartridge DAG tasks execute in this worker and must call the same
+      # reverse-proxy-prefixed Airflow REST API as the scheduler.
+      AIRFLOW_URL: $${AIRFLOW_URL:-http://airflow:8080/airflow}
       REPLICON_SES_INBOX_ENABLED: $${REPLICON_SES_INBOX_ENABLED:-false}
       SES_INBOX_AWS_ACCESS_KEY_ID: $${SES_INBOX_AWS_ACCESS_KEY_ID:-}
       SES_INBOX_AWS_SECRET_ACCESS_KEY: $${SES_INBOX_AWS_SECRET_ACCESS_KEY:-}

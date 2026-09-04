@@ -101,7 +101,8 @@ def test_gcp_scheduler_has_the_verified_internal_api_base():
         .replace("$${", "${")
     )
 
-    assert (
-        compose["services"]["airflow-scheduler"]["environment"]["AIRFLOW_URL"]
-        == "${AIRFLOW_URL:-http://airflow:8080/airflow}"
-    )
+    for service in ("airflow", "airflow-scheduler"):
+        assert (
+            compose["services"][service]["environment"]["AIRFLOW_URL"]
+            == "${AIRFLOW_URL:-http://airflow:8080/airflow}"
+        )
