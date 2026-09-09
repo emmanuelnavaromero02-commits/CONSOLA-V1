@@ -7,11 +7,11 @@
     },
     {
       "path": ".github/workflows/release-runner-capacity.yml",
-      "sha256": "0eb4c15bca964db94bbced769d67ca6b551668d9f84cea6ce9c505c57ce8e9d2"
+      "sha256": "e338408e2905ed857ebd432b2caa2b2c71a6a904f2dbeff1f4af677588d0a95c"
     },
     {
       "path": ".github/workflows/release.yml",
-      "sha256": "fef6a6eb3d24bcb03e0f94d8c2492b51b37c053c60fdc6403486536d04fdf85f"
+      "sha256": "587f5591c8a40a5f5a4d00a99cff89b0f6cc662791b4dde549122229760dee12"
     },
     {
       "path": "Makefile",
@@ -1723,7 +1723,7 @@
     },
     {
       "path": "console/tests/test_console_lakehouse_explorer_client.py",
-      "sha256": "99938b543bb2d26292d029004586eb95f347db153d6b3eb80763a6d093f19448"
+      "sha256": "17428798c6bc1a4ec84ffbfe594c2a6ca77615e94b670bd18ebe33d5fc6209b3"
     },
     {
       "path": "console/tests/test_console_s3_iam_client.py",
@@ -2155,7 +2155,7 @@
     },
     {
       "path": "console/tests/test_control_room_gold_signal_flow.py",
-      "sha256": "95d55ba2150e7653957f7ed9d83848e144de542b5f83ed23d1e10c815b8aed40"
+      "sha256": "79dffa4f2fd55fec38eb9350e8ffffff8ff1ca81c51f958741ddfcde00bc7547"
     },
     {
       "path": "console/tests/test_control_room_gold_terminal_factory.py",
@@ -2667,7 +2667,7 @@
     },
     {
       "path": "console/tests/test_intelligence_engine.py",
-      "sha256": "268bad6fba20b4cb1654a859d8fc07eae72f720b18dd2e64cd397fdb69546e31"
+      "sha256": "c1b21312c182747337493eed5d92f52053d805751e26d4ed260831fc41781804"
     },
     {
       "path": "console/tests/test_intelligence_evidence_refs_attestation.py",
@@ -2935,7 +2935,7 @@
     },
     {
       "path": "console/tests/test_successfactors_intelligence_contract.py",
-      "sha256": "4e4036a006241bab10501daaa1ecf22036da75375e681882f4d3092898e195cc"
+      "sha256": "001e51010c5141ceba9d13167e6c482cf0f771389c8fd3af216b0350cee09638"
     },
     {
       "path": "console/tests/test_system_lifespan.py",
@@ -2995,7 +2995,7 @@
     },
     {
       "path": "infra/docker-compose.yml",
-      "sha256": "42f2f89a1491507cf9f6a2cfa52bff7f0793c3e1416ac83612f118f6c576d4ab"
+      "sha256": "1ff1db35f259a27bd61494cd747a519c74a6cc4d5ed8ad6b8e0407cc48aae1e4"
     },
     {
       "path": "infra/init/99zzt_analytic_app_dataset_grants.sql",
@@ -3160,6 +3160,10 @@
     {
       "path": "refinement/tests/test_sql_timeout.py",
       "sha256": "a50066992563ab4403cab538595e08af5fc72df2a747bca430781d232c56a338"
+    },
+    {
+      "path": "refinement/tests/test_successfactors_candidate_contract.py",
+      "sha256": "112b5bacb6ba84b2cd60fbdf7b858a83cda98a33ae1db474e2fde1ed5d13ab9e"
     },
     {
       "path": "refinement/tests/test_successfactors_gold_dataset_orders_single_source.py",
@@ -3587,7 +3591,7 @@
     },
     {
       "path": "tests/test_agentops_scheduled_monitor_contract.py",
-      "sha256": "1d8d71453c2f6352d1ea3eedb11a4f51d7ba82e1b57337a1eacd20024704837f"
+      "sha256": "8455d653d30ac7dd51ebda9256b7904b15402b6f13743cdc304135c8c2c70a90"
     },
     {
       "path": "tests/test_agentops_successfactors_monitor_module.py",
@@ -3703,7 +3707,7 @@
     },
     {
       "path": "tests/test_bayesian_calibration_api_contract.py",
-      "sha256": "49c3565c0bccc99cfb252b453e894f9ab691dcf48b338f6d724f126fe0d7192d"
+      "sha256": "dae11a6fdc6e55c942b1595505981bfe025932bbbe195f0b8cfc44f055aea2e9"
     },
     {
       "path": "tests/test_bayesian_calibration_engine.py",
@@ -3711,7 +3715,7 @@
     },
     {
       "path": "tests/test_bayesian_calibration_recompute_policy.py",
-      "sha256": "15b27bf43c56f4264eec7b3e521cf5aaa96b831dac208eea4a92b7c92d2e87b2"
+      "sha256": "e2e05c16f43e536abb6ba1fef110bd2765ab2f309ae9c2f059f848679bbe60b9"
     },
     {
       "path": "tests/test_beta_smoke.py",
@@ -3743,11 +3747,11 @@
     },
     {
       "path": "tests/test_calibration_observe_idempotency.py",
-      "sha256": "c25618a5e366625f03e093fcf577e1664e3fa4d38e4075610b5b2c4ea5086366"
+      "sha256": "8d65c5b12ae0efb7b092b6b09b802276c06f835569698d7b5cc0d11f8f220ec5"
     },
     {
       "path": "tests/test_calibration_recompute_complete_batch.py",
-      "sha256": "d67070d31d9e43d84c3f0b4e6044c3b0e629b3f7acb35d95f893f86bdbb23ca0"
+      "sha256": "7640e211f6f42be86a5d3627f49ae075133528b06d9effff28cdc5171924f4e0"
     },
     {
       "path": "tests/test_calibration_reconstructible_authority.py",
@@ -3815,7 +3819,7 @@
     },
     {
       "path": "tests/test_ci_changed_areas.py",
-      "sha256": "464440b3d43aca2a930a47bbc88b53937de468d3f8ece4357dacd23aa8b76b68"
+      "sha256": "b79655633fc22851777ccbebcf47352c9989be279595fac8d2749fc6785c8aa3"
     },
     {
       "path": "tests/test_ci_detector_self_protection.py",
@@ -3971,7 +3975,7 @@
     },
     {
       "path": "tests/test_control_room_live_postgres_calibration_idempotency.py",
-      "sha256": "03a8a199b7daa2c0d9057b8cbaf49d48ceb69b343de0128d9339bccc705c70e8"
+      "sha256": "5f6c737fb9491df1bb7d93542555e1ce1ac8b8e1d096849df2a71ccf638b1041"
     },
     {
       "path": "tests/test_control_room_live_postgres_calibration_reconciliation.py",
@@ -4263,7 +4267,7 @@
     },
     {
       "path": "tests/test_decision_bayesian_server_owned_final_canaries.py",
-      "sha256": "709f6820584755b345163373f64d0c786a0536fbde20a1db663a9aa705e712b4"
+      "sha256": "6a078571e83c7ca0964e427d2ebbf807a453c59054721454df9c3081cbd85809"
     },
     {
       "path": "tests/test_decision_intelligence_provenance_final_canaries.py",
@@ -4291,7 +4295,7 @@
     },
     {
       "path": "tests/test_decision_orchestrator_execution.py",
-      "sha256": "d9b1ee9ec816320303ce195229da792ef7c002928bb1ac30948968839afdb45b"
+      "sha256": "3c64a2bd1d82e6c8714b0e6264c300f86c4a2c467c67015425b74736dff9dba4"
     },
     {
       "path": "tests/test_decision_orchestrator_execution_provenance.py",
@@ -4299,7 +4303,7 @@
     },
     {
       "path": "tests/test_decision_pr552_calibration_fx_blockers.py",
-      "sha256": "db6c5d20928380ecb461638b6cdef48e1ea3862fd254bb3df54f873dacecc48a"
+      "sha256": "2d5ed06ac9fbb3f16e3ffa550291e37bb39703a84f64964c0c59c5f8e4ca9805"
     },
     {
       "path": "tests/test_decision_pr552_financial_truth.py",
@@ -4343,7 +4347,7 @@
     },
     {
       "path": "tests/test_e2_talent_retention_simulation.py",
-      "sha256": "8c691ba402af32a572f583dfba236745d828d448ecf346cd7caf1058614b95b2"
+      "sha256": "58ed5d7ca32efeeeeb7db69c350f5b7ad8de35c2a315e42dae037c0340e30582"
     },
     {
       "path": "tests/test_e2e_force_in_ci_v1434.py",
@@ -4367,7 +4371,7 @@
     },
     {
       "path": "tests/test_e5_calibration_autopilot.py",
-      "sha256": "2378213f49d50001e883aeccbfccf38bd1ada4437b959560a0a07f1a07a6f907"
+      "sha256": "569d4168377e8fc7a4ec697f9634910fa0224c4f433fcfc33a32c3b251dbccd5"
     },
     {
       "path": "tests/test_e5_cycle_blackboard.py",
@@ -4383,7 +4387,7 @@
     },
     {
       "path": "tests/test_entity_scheduler_airflow_trigger.py",
-      "sha256": "2cf9bca941c012d03ee46fa5bdebb81fee2cbb84978163a2544480378f9440a5"
+      "sha256": "bb2ecbcaad196b8829f17826576add7beddcc2118198d932602b565c7bd3709d"
     },
     {
       "path": "tests/test_env_example_and_runbooks_v1434.py",
@@ -4559,7 +4563,7 @@
     },
     {
       "path": "tests/test_market_decision_validation_e2e.py",
-      "sha256": "ecfaafe8fb01c32ca477aa7922d4c31643105c8afe831d19b7f1d37df3e6d55a"
+      "sha256": "60adaba3deb634c8387dccb4e46a7e2b390d7e1bc87b7d9bb2bd5c1897943f6e"
     },
     {
       "path": "tests/test_market_scheduler_security_context.py",
@@ -4711,7 +4715,7 @@
     },
     {
       "path": "tests/test_monte_carlo_discrete_weight_normalization.py",
-      "sha256": "c118cc939e48fc3e8051f88348b634d2a961cd85ad72d88b775976455ceee71f"
+      "sha256": "10c303f7dec0dca33f613b6723acb22075d56106c7989a2bb28ebf3069d6ee8b"
     },
     {
       "path": "tests/test_monte_carlo_engine.py",
@@ -4719,7 +4723,7 @@
     },
     {
       "path": "tests/test_monte_carlo_finiteness.py",
-      "sha256": "267f81f98e06e89917a4d7e89ee0ab290f7ba0fde797e06f00a4e9f13bd751c6"
+      "sha256": "4b37170a631a493d27b1d45c46a6c5b0fe580b540584447ca6a251f3cf6d51e6"
     },
     {
       "path": "tests/test_monte_carlo_operational_truth.py",
@@ -4727,7 +4731,7 @@
     },
     {
       "path": "tests/test_monte_carlo_persistence_contract.py",
-      "sha256": "e457dc7bc8254c37e4aa074da60fc96740cdbe94c6e3d26f53233ec16230c990"
+      "sha256": "2294a695887f8229ae6df7f9ee81b73b8dc74cd2c9094be14fa63b2395191d55"
     },
     {
       "path": "tests/test_nextjs_proxy.py",
@@ -4828,6 +4832,10 @@
     {
       "path": "tests/test_operations_shape_contract.py",
       "sha256": "55c822fa987dae699978348a18a0ec5bc48b87c2dc73417ce06c0a5e52417c59"
+    },
+    {
+      "path": "tests/test_phase0_math_engines_paused.py",
+      "sha256": "8f1a728c29dc801254a0145646d0f415187a55c15f38843208f98148e46edc2b"
     },
     {
       "path": "tests/test_phase0_provider_safe_storage.py",
@@ -5015,7 +5023,7 @@
     },
     {
       "path": "tests/test_release_ci_fail_closed.py",
-      "sha256": "57cc4d5e41f8814656f4c771a215804074cffcfae01fd5d362a5a3ed851d4c56"
+      "sha256": "8e9c14ea3c36683d853565aeb4ad6db5dae572585e772512bda4cb0ab94c7402"
     },
     {
       "path": "tests/test_release_compose_env_contract.py",

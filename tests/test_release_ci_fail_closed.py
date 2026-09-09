@@ -1899,13 +1899,25 @@ def test_failed_210_through_220_releases_are_preserved_and_version_moves_forward
         assert needle in failed_216_context
 
 
-def test_publication_stops_after_acceptance_without_duplicate_post_gate_checks():
+def test_publication_runs_post_gate_runtime_and_harness_verification_fail_closed():
     job = _jobs()["digest-full-stack-gate"]
-    for step_name in (
-        "Re-verify runtime digests and real-data readiness after all gates",
-        "Verify harness seal immediately after final gates",
-    ):
-        assert _named_step(job, step_name)["if"] == "${{ false }}"
+    gates = _named_step(job, "Run all final gates against exact digest stack")
+    runtime = _named_step(
+        job, "Re-verify runtime digests and real-data readiness after all gates"
+    )
+    harness = _named_step(job, "Verify harness seal immediately after final gates")
+
+    assert runtime["if"] == "${{ success() }}"
+    assert harness["if"] == "${{ success() }}"
+    assert not runtime.get("continue-on-error", False)
+    assert not harness.get("continue-on-error", False)
+    assert job["steps"].index(gates) < job["steps"].index(runtime)
+    assert job["steps"].index(runtime) < job["steps"].index(harness)
+    assert runtime["run"].lstrip().startswith("set -euo pipefail")
+    assert harness["run"].lstrip().startswith("set -euo pipefail")
+    assert "scripts/verify_release_digest_runtime.py" in runtime["run"]
+    assert "/readyz?require_data=1" in runtime["run"]
+    assert "/usr/bin/python3 -I scripts/verify_release_test_harness.py" in harness["run"]
 
 
 def test_final_release_outputs_are_exclusive_and_compared_to_action_hashes():
@@ -2326,6 +2338,16 @@ def test_release_runner_capacity_canary_reproduces_post_install_budget() -> None
     ):
         assert needle in install
         assert needle in release_install
+
+    # A transient Chrome APT index mismatch must not skip the browser gate.
+    # Both the PR capacity canary and the tagged release retry the external
+    # fetch a bounded number of times, then fail closed.
+    for retrying_install in (install, release_install):
+        assert "for attempt in 1 2 3" in retrying_install
+        assert 'if [[ "${attempt}" == "3" ]]' in retrying_install
+        assert "apt-get clean" in retrying_install
+        assert "find /var/lib/apt/lists" in retrying_install
+        assert "exit 1" in retrying_install
 
     authority = _named_step(
         job, "Freeze source-bound capacity authority and browser copy"

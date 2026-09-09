@@ -20,6 +20,11 @@ from tests.test_operational_rls_console_refinement import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _enable_engine_under_test(monkeypatch):
+    monkeypatch.setenv("INTELLIGENCE_MATH_ENGINES_ENABLED", "true")
+
+
 def _payload(outcome_id: str) -> dict:
     return {
         "source_type": "prediction_outcome",

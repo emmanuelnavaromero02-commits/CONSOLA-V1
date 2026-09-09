@@ -26,6 +26,11 @@ USER = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _enable_engine_under_test(monkeypatch):
+    monkeypatch.setenv("INTELLIGENCE_MATH_ENGINES_ENABLED", "true")
+
+
 def _outcome_metadata(outcome_id: str, value: float) -> dict[str, Any]:
     observed_at = datetime(2026, 7, 31, int(outcome_id) - 40, tzinfo=timezone.utc)
     observed = {

@@ -54,8 +54,23 @@ jobs:
             python -m pip install -r "${req}"
           done
           npm --prefix tests-e2e ci
-          PLAYWRIGHT_BROWSERS_PATH="${RUNNER_TEMP}/omega-playwright-browsers.install" \
-            tests-e2e/node_modules/.bin/playwright install --with-deps chromium
+          # Chrome's APT mirror can briefly publish an index and its Packages
+          # payload out of sync.  Retry only that external fetch, clearing
+          # ephemeral package-list metadata between attempts.  Browser setup
+          # remains mandatory and the job still fails closed after attempt 3.
+          for attempt in 1 2 3; do
+            if PLAYWRIGHT_BROWSERS_PATH="${RUNNER_TEMP}/omega-playwright-browsers.install" \
+              tests-e2e/node_modules/.bin/playwright install --with-deps chromium; then
+              break
+            fi
+            if [[ "${attempt}" == "3" ]]; then
+              exit 1
+            fi
+            /usr/bin/sudo /usr/bin/apt-get clean
+            /usr/bin/sudo /usr/bin/find /var/lib/apt/lists \
+              -mindepth 1 -maxdepth 1 -type f -delete
+            /usr/bin/sleep "$((attempt * 5))"
+          done
 
       - name: Freeze source-bound capacity authority and browser copy
         id: authority

@@ -775,7 +775,7 @@ async def decision__orchestrate(
     time_horizon: str | None = None,
     constraints: dict[str, Any] | None = None,
     evidence_refs: list[dict[str, Any]] | None = None,
-    execute_engines: bool = True,
+    execute_engines: bool = False,
     engine_inputs: dict[str, Any] | None = None,
     effect_authority: dict[str, Any] | None = None,
     security_context: dict[str, Any] | None = None,

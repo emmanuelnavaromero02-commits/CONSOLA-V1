@@ -24,6 +24,7 @@ def execution_mod(monkeypatch):
     from app.services.intelligence import orchestrator_execution as mod
 
     monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("INTELLIGENCE_MATH_ENGINES_ENABLED", "true")
     monkeypatch.setattr(
         mod.truth, "execution_source_trusted", AsyncMock(return_value=True)
     )

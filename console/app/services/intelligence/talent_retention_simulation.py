@@ -29,7 +29,7 @@ import json
 import logging
 from typing import Any
 
-from app.services.intelligence import monte_carlo_service
+from app.services.intelligence import engine_policy, monte_carlo_service
 from app.services.intelligence.gold_fetcher import query_gold_dataset_population
 from app.services.intelligence.monte_carlo import MAX_SEED
 
@@ -73,6 +73,8 @@ async def run_for_workspace(user: dict) -> dict[str, Any]:
     """Corre (y persiste) la simulación WB-TALENTO del workspace desde los
     insumos preparados. Devuelve un resumen exacto del resultado o de la
     razón por la que NO corrió — jamás una simulación fabricada."""
+    if not engine_policy.math_engines_enabled():
+        return {"status": "paused", "reason": engine_policy.PAUSED_REASON}
     rows, manifest = await query_gold_dataset_population(
         SIMULATION_INPUTS_DATASET, user
     )

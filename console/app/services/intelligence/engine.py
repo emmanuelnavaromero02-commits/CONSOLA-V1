@@ -11,6 +11,7 @@ from app.services.intelligence import (
     calibration,
     calibration_autopilot,
     calibration_service,
+    engine_policy,
     talent_retention_simulation,
 )
 from app.services.intelligence.baseline import build_metric_artifacts
@@ -120,6 +121,10 @@ async def _load_live_calibration_states(
     contracts: list[dict[str, Any]],
     metric_filter: set[str],
 ) -> dict[str, dict[str, Any]]:
+    # Historical calibration must have no influence while the server-owned
+    # policy is paused. Avoid reading the ledger at all in that state.
+    if not engine_policy.math_engines_enabled():
+        return {}
     groups = _requested_calibration_groups(contracts, metric_filter)
     if not groups:
         return {}

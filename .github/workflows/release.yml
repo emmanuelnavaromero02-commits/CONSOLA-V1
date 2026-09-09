@@ -966,8 +966,22 @@ jobs:
             python -m pip install -r "$req"
           done
           npm --prefix tests-e2e ci
-          PLAYWRIGHT_BROWSERS_PATH="${RUNNER_TEMP}/omega-playwright-browsers.install" \
-            tests-e2e/node_modules/.bin/playwright install --with-deps chromium
+          # Chrome's APT mirror can briefly publish an index and its Packages
+          # payload out of sync.  Browser setup remains mandatory; retry only
+          # that external fetch and fail closed after the third attempt.
+          for attempt in 1 2 3; do
+            if PLAYWRIGHT_BROWSERS_PATH="${RUNNER_TEMP}/omega-playwright-browsers.install" \
+              tests-e2e/node_modules/.bin/playwright install --with-deps chromium; then
+              break
+            fi
+            if [[ "${attempt}" == "3" ]]; then
+              exit 1
+            fi
+            sudo /usr/bin/apt-get clean
+            sudo /usr/bin/find /var/lib/apt/lists \
+              -mindepth 1 -maxdepth 1 -type f -delete
+            sleep "$((attempt * 5))"
+          done
 
       - name: Freeze trusted Playwright and Docker gate runtimes
         id: gate_runtime_authority
@@ -1394,7 +1408,7 @@ jobs:
           release_make production-readiness
 
       - name: Re-verify runtime digests and real-data readiness after all gates
-        if: ${{ false }}
+        if: ${{ success() }}
         env:
           BASH_ENV: /dev/null
           COMPOSE_FILE: ""
@@ -1502,7 +1516,7 @@ jobs:
           PY
 
       - name: Verify harness seal immediately after final gates
-        if: ${{ false }}
+        if: ${{ success() }}
         env:
           BASH_ENV: /dev/null
           COMPOSE_FILE: ""
@@ -1521,6 +1535,7 @@ jobs:
           PYTHONHOME: ""
           PYTHONPATH: ""
         run: |
+          set -euo pipefail
           [[ "$(/usr/bin/sha256sum scripts/verify_release_test_harness.py | /usr/bin/awk '{print $1}')" == "${OMEGA_RELEASE_TEST_HARNESS_VERIFIER_SHA256}" ]]
           /usr/bin/python3 -I scripts/verify_release_test_harness.py
 

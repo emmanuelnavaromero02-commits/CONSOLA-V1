@@ -11,6 +11,11 @@ from app.services.intelligence import calibration, calibration_service
 NONLOCAL_ENVS = [None, "", "production", "unknown"]
 
 
+@pytest.fixture(autouse=True)
+def _enable_engine_under_test(monkeypatch):
+    monkeypatch.setenv("INTELLIGENCE_MATH_ENGINES_ENABLED", "true")
+
+
 def _set_app_env(monkeypatch, value: str | None) -> None:
     if value is None:
         monkeypatch.delenv("APP_ENV", raising=False)

@@ -6,7 +6,12 @@ from fastapi import HTTPException
 
 from app.services import auth
 from app.services.db_scope import scoped_db_for_user
-from app.services.intelligence import market_context, monte_carlo, monte_carlo_finite
+from app.services.intelligence import (
+    engine_policy,
+    market_context,
+    monte_carlo,
+    monte_carlo_finite,
+)
 from app.services.intelligence.monte_carlo_operational_truth import (
     _source_exists,
     bind_selected_result,
@@ -119,6 +124,8 @@ def _validate_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 async def run_simulation(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
+    if not engine_policy.math_engines_enabled():
+        raise HTTPException(403, engine_policy.PAUSED_REASON)
     clean = _validate_payload(payload)
     pool = await auth.pool()
     async with scoped_db_for_user(pool, user) as (conn, tenant_id, workspace_id):

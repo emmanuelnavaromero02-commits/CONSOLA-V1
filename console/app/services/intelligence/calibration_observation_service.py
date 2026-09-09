@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from app.services import auth
 from app.services.db_scope import scoped_db_for_user
 from app.services.intelligence import calibration
+from app.services.intelligence import engine_policy
 from app.services.intelligence.calibration_authoritative_evidence import (
     resolve_authoritative_observation,
 )
@@ -29,6 +30,8 @@ from app.services.intelligence.utils import json_dumps, public_json
 
 
 async def observe(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
+    if not engine_policy.math_engines_enabled():
+        raise HTTPException(403, engine_policy.PAUSED_REASON)
     client_claims = _validate_payload(payload)
     pool = await auth.pool()
     async with scoped_db_for_user(pool, user) as (conn, tenant_id, workspace_id):

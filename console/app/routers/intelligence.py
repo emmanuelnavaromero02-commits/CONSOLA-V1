@@ -22,6 +22,7 @@ from app.services.auth import verify_internal_api_key
 from app.services.intelligence import backtesting as intelligence_backtesting
 from app.services.intelligence import calibration_service
 from app.services.intelligence import decision_orchestrator
+from app.services.intelligence import engine_policy
 from app.services.intelligence import history as intelligence_history
 from app.services.intelligence import monte_carlo
 from app.services.intelligence import monte_carlo_service
@@ -44,6 +45,11 @@ internal_router = APIRouter(
     prefix="/internal/intelligence", tags=["Intelligence (internal)"]
 )
 DATASETS_READ_DEPENDENCY = [Depends(require_permission("datasets.read"))]
+
+
+def _require_math_engines_enabled() -> None:
+    if not engine_policy.math_engines_enabled():
+        raise HTTPException(status_code=403, detail=engine_policy.PAUSED_REASON)
 
 
 class _StrictModel(BaseModel):
@@ -664,6 +670,7 @@ async def intelligence_monte_carlo_run_internal(
     body: InternalMcpRequest,
     internal_service: str = Depends(verify_internal_api_key),
 ):
+    _require_math_engines_enabled()
     user = _internal_mcp_user(body, internal_service)
     request = MonteCarloRunRequest.model_validate(body.payload)
     async with _scheduled_effect_guard(
@@ -677,6 +684,8 @@ async def intelligence_orchestrate_internal(
     body: InternalMcpDecisionRequest,
     internal_service: str = Depends(verify_internal_api_key),
 ):
+    if body.execute_engines:
+        _require_math_engines_enabled()
     user = _internal_mcp_user(body, internal_service)
     request = OrchestrationRequest.model_validate(body.payload)
     try:
@@ -863,6 +872,7 @@ async def intelligence_orchestration_execute_engines(
     body: OrchestrationExecuteEnginesRequest | None = Body(default=None),
     user: dict = Depends(require_authenticated),
 ):
+    _require_math_engines_enabled()
     try:
         return await orchestrator_execution.execute_engines(
             user,
@@ -987,6 +997,7 @@ async def intelligence_calibration_observe(
     body: CalibrationObservationRequest,
     user: dict = Depends(require_authenticated),
 ):
+    _require_math_engines_enabled()
     return await calibration_service.observe(user, _payload(body))
 
 
@@ -1008,6 +1019,7 @@ async def intelligence_calibration_recompute(
     body: CalibrationRecomputeRequest,
     user: dict = Depends(require_authenticated),
 ):
+    _require_math_engines_enabled()
     return await calibration_service.recompute(user, _payload(body))
 
 
@@ -1151,6 +1163,7 @@ async def intelligence_monte_carlo_run(
     body: MonteCarloRunRequest,
     user: dict = Depends(require_authenticated),
 ):
+    _require_math_engines_enabled()
     return await monte_carlo_service.run_simulation(user, _payload(body))
 
 

@@ -70,7 +70,8 @@ def test_agent_runtime_scheduled_monitor_is_deterministic_and_auditable():
     assert "async def _get_gold_pool()" in source
     assert 'os.environ.get("GOLD_DATABASE_URL")' in source
     assert "async def _monitor_resolve_decision_engine_inputs" in source
-    assert '"engine_inputs": decision_engine_inputs' in section
+    assert '"engine_inputs": (' in section
+    assert "decision_engine_inputs" in section
     load_agent_section = source.split("async def load_agent(", 1)[1].split(
         "async def load_agent_by_slug", 1
     )[0]
@@ -94,6 +95,7 @@ def test_agent_runtime_keeps_wisdombit_as_decision_source_after_simulation():
         for node in ast.walk(tree)
         if isinstance(node, ast.If)
         and "decision_orchestrator" in (ast.get_source_segment(source, node.test) or "")
+        and 'source_type = "wisdom_bit"' in (ast.get_source_segment(source, node) or "")
     )
     section = ast.get_source_segment(source, decision_if) or ""
 

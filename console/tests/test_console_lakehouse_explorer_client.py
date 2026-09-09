@@ -30,6 +30,13 @@ class FakeStorage:
 def test_console_explorer_client_uses_lakehouse_storage(monkeypatch):
     fake = FakeStorage()
     monkeypatch.setattr(s3_client, "storage_from_env", lambda *, bucket=None: fake)
+    # The explorer validates the resolved provider before it asks the adapter
+    # for objects. Keep this unit test independent of a developer's shell.
+    monkeypatch.setenv("LAKEHOUSE_PROVIDER", "minio")
+    monkeypatch.setenv("MINIO_ENDPOINT", "minio:9000")
+    monkeypatch.setenv("MINIO_ACCESS_KEY", "test-access")
+    monkeypatch.setenv("MINIO_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("MINIO_BUCKET", "lakehouse")
 
     client = s3_client.get_lakehouse_explorer_client()
     listed = client.list_objects_v2(Bucket="lakehouse", Prefix="raw/", MaxKeys=50, Delimiter="/")
