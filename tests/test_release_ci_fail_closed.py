@@ -2339,6 +2339,16 @@ def test_release_runner_capacity_canary_reproduces_post_install_budget() -> None
         assert needle in install
         assert needle in release_install
 
+    # A transient Chrome APT index mismatch must not skip the browser gate.
+    # Both the PR capacity canary and the tagged release retry the external
+    # fetch a bounded number of times, then fail closed.
+    for retrying_install in (install, release_install):
+        assert "for attempt in 1 2 3" in retrying_install
+        assert 'if [[ "${attempt}" == "3" ]]' in retrying_install
+        assert "apt-get clean" in retrying_install
+        assert "find /var/lib/apt/lists" in retrying_install
+        assert "exit 1" in retrying_install
+
     authority = _named_step(
         job, "Freeze source-bound capacity authority and browser copy"
     )["run"]

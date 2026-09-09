@@ -7,11 +7,11 @@
     },
     {
       "path": ".github/workflows/release-runner-capacity.yml",
-      "sha256": "0eb4c15bca964db94bbced769d67ca6b551668d9f84cea6ce9c505c57ce8e9d2"
+      "sha256": "e338408e2905ed857ebd432b2caa2b2c71a6a904f2dbeff1f4af677588d0a95c"
     },
     {
       "path": ".github/workflows/release.yml",
-      "sha256": "8ec83d2370b3f86ff7077ec769341e811f6fa245df3dd7f601df5b2d53b5a6b1"
+      "sha256": "587f5591c8a40a5f5a4d00a99cff89b0f6cc662791b4dde549122229760dee12"
     },
     {
       "path": "Makefile",
@@ -5023,7 +5023,7 @@
     },
     {
       "path": "tests/test_release_ci_fail_closed.py",
-      "sha256": "8ab2ab5be90a479f9359a1953f1b1eb39ddbae31ff7dc1e71dda03ceffe48f3c"
+      "sha256": "8e9c14ea3c36683d853565aeb4ad6db5dae572585e772512bda4cb0ab94c7402"
     },
     {
       "path": "tests/test_release_compose_env_contract.py",
