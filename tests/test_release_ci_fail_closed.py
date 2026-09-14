@@ -1692,7 +1692,7 @@ def test_exact_minio_preload_blocks_digest_or_tag_substitution(tmp_path: Path) -
     fake.write_text(
         """#!/usr/bin/env bash
 set -euo pipefail
-tag='minio/minio:RELEASE.2024-12-18T13-15-44Z'
+tag='quay.io/minio/minio:RELEASE.2024-12-18T13-15-44Z'
 digest='sha256:1dce27c494a16bae114774f1cec295493f3613142713130c2d22dd5696be6ad3'
 ref="${tag}@${digest}"
 case "${1:-}" in
@@ -1702,9 +1702,9 @@ case "${1:-}" in
     [[ "${2:-}" == inspect ]]
     if [[ "$*" == *RepoDigests* ]]; then
       if [[ "${FAKE_BAD_DIGEST:-0}" == 1 ]]; then
-        printf '["minio/minio@sha256:%064d"]\n' 0
+        printf '["quay.io/minio/minio@sha256:%064d"]\n' 0
       else
-        printf '["minio/minio@%s"]\n' "${digest}"
+        printf '["quay.io/minio/minio@%s"]\n' "${digest}"
       fi
     elif [[ "$*" == *'.Id'* ]]; then
       if [[ "$*" == *"${tag}"* && "$*" != *"${ref}"* && "${FAKE_BAD_TAG:-0}" == 1 ]]; then

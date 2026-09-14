@@ -37,7 +37,7 @@ Tamaño esperado tras compresión: ~50 MB para 1M filas operacionales.
 docker run --rm \
   --network=infra_default \
   -v /var/backups/omega/$(date +%F)/minio:/dump \
-  minio/mc:RELEASE.2025-01-17T16-25-43Z sh -c "
+  quay.io/minio/mc:RELEASE.2025-01-17T16-25-43Z sh -c "
     mc alias set src http://minio:9000 minio \$MINIO_SECRET_KEY &&
     mc mirror --overwrite src /dump
   "
@@ -74,7 +74,7 @@ docker compose -f infra/docker-compose.yml up -d minio
 sleep 5
 docker run --rm --network=infra_default \
   -v /var/backups/omega/<FECHA>/minio:/dump \
-  minio/mc:RELEASE.2025-01-17T16-25-43Z sh -c "
+  quay.io/minio/mc:RELEASE.2025-01-17T16-25-43Z sh -c "
     mc alias set tgt http://minio:9000 minio \$MINIO_SECRET_KEY &&
     mc mirror --overwrite /dump tgt
   "
@@ -156,7 +156,7 @@ combinación verificada por el smoke test.
 
 ```yaml
 # infra/docker-compose.yml — TEMPORAL, revertir después de exportar
-image: minio/minio:RELEASE.2025-XX-XX...
+image: quay.io/minio/minio:RELEASE.2025-XX-XX...
 ```
 
 Mientras la versión temporal está corriendo, exporta los buckets a

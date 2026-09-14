@@ -75,7 +75,7 @@ def staged_publication_live_stack() -> LiveStack:
         "-e",
         "MINIO_ROOT_PASSWORD=minio-secret",
         "-P",
-        "minio/minio:RELEASE.2024-12-18T13-15-44Z",
+        "quay.io/minio/minio:RELEASE.2024-12-18T13-15-44Z",
         "server",
         "/data",
     )
