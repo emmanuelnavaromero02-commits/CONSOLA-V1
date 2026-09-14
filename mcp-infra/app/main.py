@@ -435,6 +435,10 @@ _CONTROL_ROOM_READ_TOOLS = {
     "control_room__talent_overview_read",
     "control_room__talent_9box_read",
     "control_room__talent_metadata_readiness_read",
+    # Mission 2: domain KPI reads (datasets.read; security_context injected)
+    "control_room__finance_kpis_read",
+    "control_room__operations_kpis_read",
+    "control_room__risk_kpis_read",
 }
 _CONTROL_ROOM_OPERATIONAL_READ_TOOLS = {
     "control_room__dashboard_read",

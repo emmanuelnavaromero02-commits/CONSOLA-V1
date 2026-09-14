@@ -36,6 +36,7 @@ from app.services.intelligence.domain_aggregate_support import (
     as_float,
     as_int,
     as_of_date,
+    clamp_named_rows,
     clamp_top_n,
     gold_evidence,
     invalid_schema_error,
@@ -57,6 +58,8 @@ RETENTION_ACTION_ID = "talent_retention_risk"
 # Bound as a date parameter so the comparison stays date < date in Postgres.
 EMPLOYMENT_END_SENTINEL_DATE = date(2030, 1, 1)
 EXPIRY_WINDOWS_DAYS = (30, 60, 90)
+# Bound for GROUP BY breakdowns (stages, risk reasons) in deal_slippage.
+BREAKDOWN_ROWS = 20
 
 _RETENTION_REQUIRED = frozenset({"risk_band"})
 # Only columns the SQL below actually uses: a missing optional column must mean
@@ -377,16 +380,26 @@ class DealSlippage(AggregateResult):
     buckets: dict[str, dict[str, Any]] = field(default_factory=dict)
     by_stage: list[dict[str, Any]] = field(default_factory=list)
     by_reason: list[dict[str, Any]] = field(default_factory=list)
+    # Named deals: only when top_n > 0 (controlled exception, max 10 rows).
+    top_deals: list[dict[str, Any]] = field(default_factory=list)
 
 
 async def query_deal_slippage(
     user: dict | None,
     *,
-    top_n: int = DEFAULT_TOP_N,
+    top_n: int = 0,
     as_of: date | None = None,
 ) -> DealSlippage:
-    """Open Salesforce deals whose close_date is already in the past."""
-    top_n = clamp_top_n(top_n)
+    """Open Salesforce deals whose close_date is already in the past.
+
+    Totals, overdue buckets, stages and risk reasons are aggregates. ``top_n``
+    is a CONTROLLED EXCEPTION to the aggregates-only principle (Mission 2
+    product decision): the default 0 returns aggregates only; a value above 0
+    additionally returns up to ``MAX_NAMED_ROWS`` (10) named deals (opportunity
+    name, stage, amount, days overdue). The seller (``vendedor``) is never
+    returned.
+    """
+    top_n = clamp_named_rows(top_n)
     today = as_of_date(as_of)
     base = {"as_of": today}
 
@@ -456,7 +469,9 @@ async def query_deal_slippage(
                  ORDER BY {"amount" if has_amount else "deals"} DESC NULLS LAST, stage_name
                  LIMIT $4
             """
-            rows = await scope.conn.fetch(stage_sql, *scope.scope_args, today, top_n)
+            rows = await scope.conn.fetch(
+                stage_sql, *scope.scope_args, today, BREAKDOWN_ROWS
+            )
             by_stage = [
                 {
                     "stage_name": row["stage_name"],
@@ -468,8 +483,8 @@ async def query_deal_slippage(
         else:
             notes.append("stage_name ausente: sin desglose por etapa")
 
-        # No per-deal rows leave this function (owner rule: aggregates only);
-        # the slippage story is told by buckets, stages and risk reasons.
+        # Aggregates tell the slippage story (buckets, stages, risk reasons);
+        # named deals below are opt-in only (top_n > 0).
         by_reason: list[dict[str, Any]] = []
         if rel.has("motivo_riesgo"):
             reason_sql = f"""
@@ -485,7 +500,9 @@ async def query_deal_slippage(
                  ORDER BY {"amount" if has_amount else "deals"} DESC NULLS LAST, risk_reason
                  LIMIT $4
             """
-            rows = await scope.conn.fetch(reason_sql, *scope.scope_args, today, top_n)
+            rows = await scope.conn.fetch(
+                reason_sql, *scope.scope_args, today, BREAKDOWN_ROWS
+            )
             by_reason = [
                 {
                     "risk_reason": row["risk_reason"],
@@ -497,6 +514,38 @@ async def query_deal_slippage(
             ]
         else:
             notes.append("motivo_riesgo ausente: sin desglose por motivo de riesgo")
+
+        top_deals: list[dict[str, Any]] = []
+        if top_n:
+            top_sql = f"""
+                -- omega-aggregate: risk.deal_slippage.top_deals
+                SELECT {rel.expr("opportunity_name", "opportunity_name", "NULL::text")} AS opportunity_name,
+                       {rel.expr("stage_name", "stage_name", "NULL::text")} AS stage_name,
+                       {rel.expr("amount", "amount::float8", "NULL::float8")} AS amount,
+                       close_date::date AS close_date,
+                       {overdue_days}::int AS days_overdue,
+                       {rel.expr("motivo_riesgo", "motivo_riesgo", "NULL::text")} AS risk_reason
+                  FROM {rel.sql}
+                 WHERE {GOLD_SCOPE_PREDICATE}
+                   AND close_date::date < $3::date
+                 ORDER BY {"amount DESC NULLS LAST, days_overdue DESC" if has_amount else "days_overdue DESC"}
+                 LIMIT $4
+            """
+            top_rows = await scope.conn.fetch(top_sql, *scope.scope_args, today, top_n)
+            top_deals = [
+                {
+                    "opportunity_name": row["opportunity_name"],
+                    "stage_name": row["stage_name"],
+                    "amount": as_float(row["amount"]),
+                    "close_date": row["close_date"],
+                    "days_overdue": as_int(row["days_overdue"]),
+                    "risk_reason": row["risk_reason"],
+                }
+                for row in top_rows
+            ]
+            notes.append(
+                f"top_deals: {len(top_deals)} deals nombrados a peticion explicita (top_n)"
+            )
         return DealSlippage(
             status=status_for(rel),
             evidence_refs=[
@@ -506,6 +555,7 @@ async def query_deal_slippage(
                         "as_of": today,
                         "predicate": "close_date < as_of (dataset already excludes closed deals)",
                         "top_n": top_n,
+                        "breakdown_limit": BREAKDOWN_ROWS,
                     },
                 )
             ],
@@ -529,6 +579,7 @@ async def query_deal_slippage(
             },
             by_stage=by_stage,
             by_reason=by_reason,
+            top_deals=top_deals,
             **base,
         )
 

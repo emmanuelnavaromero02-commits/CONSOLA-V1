@@ -65,6 +65,10 @@ READ_ONLY_TOOLS = {
     "control_room__talent_9box_read",
     "control_room__talent_metadata_readiness_read",
     "control_room__decision_intelligence_runs_read",
+    # Mission 2: Finance / Operations / Risk KPI reads
+    "control_room__finance_kpis_read",
+    "control_room__operations_kpis_read",
+    "control_room__risk_kpis_read",
     "market_context_read",
 
     # pipeline metadata read-only

@@ -15,7 +15,10 @@ import asyncpg
 import pytest
 
 from app.services.intelligence import finance_aggregates as fin
-from app.services.intelligence.domain_aggregate_support import MAX_GROUP_ROWS
+from app.services.intelligence.domain_aggregate_support import (
+    MAX_GROUP_ROWS,
+    MAX_NAMED_ROWS,
+)
 from tests.domain_aggregate_fakes import (
     TENANT_A,
     WORKSPACE_A,
@@ -113,7 +116,9 @@ async def test_billable_hours_logged_ready_follows_talent_pattern(monkeypatch):
     )
     connects = install_gold_connect(monkeypatch, conn)
 
-    result = await fin.query_billable_hours_logged(user_for(), months=2, as_of=AS_OF)
+    result = await fin.query_billable_hours_logged(
+        user_for(), months=2, top_n=5, as_of=AS_OF
+    )
 
     assert result.status == "ready"
     assert result.supported is True
@@ -182,7 +187,7 @@ async def test_billable_hours_logged_degrades_without_rate_column(monkeypatch):
     )
     install_gold_connect(monkeypatch, conn)
 
-    result = await fin.query_billable_hours_logged(user_for(), as_of=AS_OF)
+    result = await fin.query_billable_hours_logged(user_for(), top_n=5, as_of=AS_OF)
 
     assert result.status == "degraded"
     assert result.billable_amount_usd is None
@@ -295,10 +300,29 @@ async def test_billable_hours_logged_bounds_top_n_and_months(monkeypatch):
 
     assert result.months == 24
     assert result.window_start == date(2024, 10, 1)
+    # Named rows are the controlled exception: clamped to MAX_NAMED_ROWS (10).
     assert (
         conn.args_for("finance.billable_hours_logged.top_projects")[-1]
-        == MAX_GROUP_ROWS
+        == MAX_NAMED_ROWS
     )
+
+
+@pytest.mark.asyncio
+async def test_billable_hours_logged_is_aggregates_only_by_default(monkeypatch):
+    conn = FakeConn(
+        datasets={
+            "consultor_mensual": _dataset("consultor_mensual", CONSULTOR_COLUMNS)
+        },
+        answers=_billable_answers(),
+    )
+    install_gold_connect(monkeypatch, conn)
+
+    result = await fin.query_billable_hours_logged(user_for(), as_of=AS_OF)
+
+    assert result.status == "ready"
+    assert result.billable_hours == 120.5
+    assert result.top_projects == []
+    assert "finance.billable_hours_logged.top_projects" not in conn.markers()
 
 
 @pytest.mark.asyncio

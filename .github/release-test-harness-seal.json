@@ -3878,6 +3878,10 @@
       "sha256": "6c03749248ac3adda5b9eff7e8f75f13801fcdaf565fe9ca8e9cf9daa78691f0"
     },
     {
+      "path": "tests/test_control_room_domain_kpis.py",
+      "sha256": "5ff7eddd33e7cb3f8f32e442018c0bfaa3219169b3cb21fb080506fe6a371735"
+    },
+    {
       "path": "tests/test_control_room_evidence_keyring_runtime.py",
       "sha256": "ef9157fa280fee525bfbfe93e3d98fbde6d3aac2b7b9cdf2309470981ca4028e"
     },
@@ -4343,7 +4347,7 @@
     },
     {
       "path": "tests/test_domain_aggregates_live_postgres.py",
-      "sha256": "6d90f6202c50c7727c6695632eb38a7f023cb68210f1372f60897766784de71a"
+      "sha256": "2675e6b24f992e036b4a5d9d44472082e32fd03ad0abafab9820e638857d4c82"
     },
     {
       "path": "tests/test_draft_sender.py",
@@ -4451,7 +4455,7 @@
     },
     {
       "path": "tests/test_finance_aggregates.py",
-      "sha256": "8a81a316101ce5c0dd247f66f55c7ed485b4956d6e4e534f3114d46af1b54883"
+      "sha256": "cab6e65d774eb8a709611e194d0c0d8d16fdebd6b872564251e6f796f63412d8"
     },
     {
       "path": "tests/test_freshness_endpoint.py",
@@ -4614,6 +4618,10 @@
       "sha256": "cae379c1aa65317fe52b52b8257797c9c96f3446db79af52545ed2f5858e682f"
     },
     {
+      "path": "tests/test_mcp_domain_kpi_tools.py",
+      "sha256": "4eec2e3dc2b77dc2111dacffade15fb40236ccc80164db1fd9ed9af6ee262a49"
+    },
+    {
       "path": "tests/test_mcp_infra_pdf_capacity.py",
       "sha256": "bb6690f0361eb364662d5c897e1c36a1c2ce691ee594b4a8878c8d580f0c7b21"
     },
@@ -4667,7 +4675,7 @@
     },
     {
       "path": "tests/test_mcp_tool_policy.py",
-      "sha256": "e3fb9c1e76c032766f9d9991ba66d62d2794153ffab519fa1c61eff5904fa4fd"
+      "sha256": "9d03ddd5225f8b7b92604410fa1e7f3b3cc706c02fbee50010116c562a5a29ad"
     },
     {
       "path": "tests/test_me_access_panel_contract.py",
@@ -5151,7 +5159,7 @@
     },
     {
       "path": "tests/test_risk_aggregates.py",
-      "sha256": "de4e3ff733cde950cc538b0684bc5104ed725b65d4a2768cfbb338a4ab3e4585"
+      "sha256": "9d4c7145c4bd4061f629e62ca80838214d5a309a171b2db8f0241cdc21e8bd67"
     },
     {
       "path": "tests/test_rls_real_duckdb.py",

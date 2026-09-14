@@ -484,7 +484,7 @@ async def test_deal_slippage_ready(monkeypatch):
             "max_days_overdue": 45,
         }
     ]
-    assert not hasattr(result, "top_deals")  # aggregates only, never deal rows
+    assert result.top_deals == []  # default top_n=0: aggregates only
     assert any("sin conversion de moneda" in note for note in result.notes)
 
     totals_sql = conn.sql_for("risk.deal_slippage.totals")
@@ -499,8 +499,10 @@ async def test_deal_slippage_ready(monkeypatch):
         WORKSPACE_A,
         TENANT_A,
         AS_OF,
-        5,
+        risk.BREAKDOWN_ROWS,
     )
+    assert result.top_deals == []  # default top_n=0: aggregates only
+    assert "risk.deal_slippage.top_deals" not in conn.markers()
     reason_sql = conn.sql_for("risk.deal_slippage.by_reason")
     assert "GROUP BY motivo_riesgo" in reason_sql
     assert "ORDER BY amount DESC NULLS LAST" in reason_sql
@@ -533,7 +535,7 @@ async def test_deal_slippage_degrades_without_amount_and_stage(monkeypatch):
     )
     install_gold_connect(monkeypatch, conn)
 
-    result = await risk.query_deal_slippage(user_for(), top_n=999, as_of=AS_OF)
+    result = await risk.query_deal_slippage(user_for(), as_of=AS_OF)
 
     assert result.status == "degraded"
     assert result.deals == 6010
@@ -551,8 +553,58 @@ async def test_deal_slippage_degrades_without_amount_and_stage(monkeypatch):
     reason_sql = conn.sql_for("risk.deal_slippage.by_reason")
     assert "ORDER BY deals DESC NULLS LAST" in reason_sql
     assert "NULL::float8 AS amount" in reason_sql
-    assert conn.args_for("risk.deal_slippage.by_reason")[-1] == MAX_GROUP_ROWS
+    assert conn.args_for("risk.deal_slippage.by_reason")[-1] == risk.BREAKDOWN_ROWS
     assert result.by_reason[0]["amount"] is None
+
+
+@pytest.mark.asyncio
+async def test_deal_slippage_named_rows_are_a_controlled_exception(monkeypatch):
+    answers = _slippage_answers()
+    answers["risk.deal_slippage.top_deals"] = [
+        {
+            "opportunity_name": "Big One",
+            "stage_name": "Negotiation",
+            "amount": Decimal("250000"),
+            "close_date": AS_OF - timedelta(days=12),
+            "days_overdue": 12,
+            "risk_reason": "cierre vencido",
+        }
+    ]
+    conn = FakeConn(
+        datasets={
+            risk.DEALS_AT_RISK_DATASET: FakeGoldDataset(
+                risk.DEALS_AT_RISK_DATASET, DEALS_COLUMNS
+            )
+        },
+        answers=answers,
+    )
+    install_gold_connect(monkeypatch, conn)
+
+    result = await risk.query_deal_slippage(user_for(), top_n=999, as_of=AS_OF)
+
+    assert result.status == "ready"
+    assert result.top_deals == [
+        {
+            "opportunity_name": "Big One",
+            "stage_name": "Negotiation",
+            "amount": 250000.0,
+            "close_date": AS_OF - timedelta(days=12),
+            "days_overdue": 12,
+            "risk_reason": "cierre vencido",
+        }
+    ]
+    # Clamped to MAX_NAMED_ROWS (10), never the 50-row breakdown bound.
+    assert conn.args_for("risk.deal_slippage.top_deals") == (
+        WORKSPACE_A,
+        TENANT_A,
+        AS_OF,
+        10,
+    )
+    top_sql = conn.sql_for("risk.deal_slippage.top_deals")
+    assert "ORDER BY amount DESC NULLS LAST" in top_sql
+    assert "vendedor" not in top_sql and "opportunity_id" not in top_sql
+    assert any("a peticion explicita" in note for note in result.notes)
+    assert result.evidence_refs[0]["filters"]["top_n"] == 10
 
 
 @pytest.mark.asyncio

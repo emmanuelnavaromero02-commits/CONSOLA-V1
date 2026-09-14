@@ -10,6 +10,11 @@ from app.dependencies import require_authenticated
 from app.schemas.control_room_action_requests import (
     ControlRoomActionHandleRequest,
 )
+from app.schemas.control_room_domain_kpi_responses import (
+    ControlRoomFinanceKpisResponse,
+    ControlRoomOperationsKpisResponse,
+    ControlRoomRiskKpisResponse,
+)
 from app.schemas.control_room_experience_actions import ExperienceActionPreviewResponse
 from app.schemas.control_room_alert_mutation_responses import (
     ControlRoomAlertMutationResponse,
@@ -249,6 +254,36 @@ async def _control_room_internal_view(
                 "sap-successfactors-talent-kpis",
                 user,
                 lambda: control_room_service.sap_successfactors_talent_kpis(user),
+            ),
+        )
+    if view == "finance_kpis":
+        # Mission 2: top_n (0..10) is the controlled named-rows exception.
+        top_n = _bounded_int(params.get("top_n"), 0, lower=0, upper=10)
+        return project_public_control_room_response(
+            ControlRoomFinanceKpisResponse,
+            await _control_room_cache_get_or_set(
+                f"finance-kpis-{top_n}",
+                user,
+                lambda: control_room_service.finance_kpis(user, top_n=top_n),
+            ),
+        )
+    if view == "operations_kpis":
+        return project_public_control_room_response(
+            ControlRoomOperationsKpisResponse,
+            await _control_room_cache_get_or_set(
+                "operations-kpis",
+                user,
+                lambda: control_room_service.operations_kpis(user),
+            ),
+        )
+    if view == "risk_kpis":
+        top_n = _bounded_int(params.get("top_n"), 0, lower=0, upper=10)
+        return project_public_control_room_response(
+            ControlRoomRiskKpisResponse,
+            await _control_room_cache_get_or_set(
+                f"risk-kpis-{top_n}",
+                user,
+                lambda: control_room_service.risk_kpis(user, top_n=top_n),
             ),
         )
     if view == "sap_successfactors_workforce_trends":

@@ -84,6 +84,9 @@ def test_control_room_read_tools_are_readonly_without_approval():
         "control_room__talent_9box_read",
         "control_room__talent_metadata_readiness_read",
         "control_room__decision_intelligence_runs_read",
+        "control_room__finance_kpis_read",
+        "control_room__operations_kpis_read",
+        "control_room__risk_kpis_read",
     ):
         meta = manifest.classify_tool(name)
         assert meta["risk_level"] == "read", name
