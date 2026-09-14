@@ -40,6 +40,7 @@ from app.services.intelligence.domain_aggregate_support import (
     as_int,
     as_of_date,
     clamp_months,
+    clamp_named_rows,
     clamp_top_n,
     gold_evidence,
     invalid_schema_error,
@@ -435,12 +436,19 @@ async def query_project_margin(
     user: dict | None,
     *,
     months: int = 1,
-    top_n: int = DEFAULT_TOP_N,
+    top_n: int = 0,
     as_of: date | None = None,
 ) -> ProjectMargin:
-    """Margin per project (revenue base - direct - sunk cost) with top/bottom N."""
+    """Margin per project (revenue base - direct - sunk cost).
+
+    ``top_n`` is a CONTROLLED EXCEPTION to the aggregates-only principle
+    (Mission 2 product decision): the default 0 returns totals only; a value
+    above 0 additionally returns up to ``MAX_NAMED_ROWS`` (10) best and worst
+    projects by margin, each named (project code/name/client) with amounts.
+    Rows are still GROUP BY project aggregates, never timesheet lines.
+    """
     months = clamp_months(months)
-    top_n = clamp_top_n(top_n)
+    top_n = clamp_named_rows(top_n)
     window_start, window_end = _window(as_of, months)
     base = {
         "proxy_note": PROJECT_MARGIN_PROXY_NOTE,
@@ -540,12 +548,15 @@ async def query_project_margin(
              ORDER BY margin ASC NULLS LAST, proyecto
              LIMIT $5
         """
-        top_rows = await scope.conn.fetch(
-            top_sql, *scope.scope_args, window_start, window_end, top_n
-        )
-        bottom_rows = await scope.conn.fetch(
-            bottom_sql, *scope.scope_args, window_start, window_end, top_n
-        )
+        top_rows: list[Any] = []
+        bottom_rows: list[Any] = []
+        if top_n:
+            top_rows = await scope.conn.fetch(
+                top_sql, *scope.scope_args, window_start, window_end, top_n
+            )
+            bottom_rows = await scope.conn.fetch(
+                bottom_sql, *scope.scope_args, window_start, window_end, top_n
+            )
         currencies = [
             str(item)
             for item in (totals["original_currencies"] or [])

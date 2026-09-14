@@ -52,6 +52,10 @@ STATUSES = frozenset({STATUS_READY, STATUS_DEGRADED, STATUS_UNAVAILABLE})
 # they always come from a separate un-limited aggregate query.
 MAX_GROUP_ROWS = 50
 DEFAULT_TOP_N = 5
+# Controlled exception to the aggregates-only rule (Mission 2, product decision):
+# a caller may ask for up to this many NAMED rows (project / deal + amount).
+# 0 means aggregates only and is the default everywhere.
+MAX_NAMED_ROWS = 10
 GOLD_COMMAND_TIMEOUT_SECONDS = 10
 
 # Same GUC statement as successfactors_talent_population / db_scope.SET_SCOPE_SQL.
@@ -154,6 +158,11 @@ def clamp_top_n(
 
 def clamp_months(value: Any, *, default: int = 1, upper: int = 24) -> int:
     return max(1, min(_as_bounded_int(value, default), upper))
+
+
+def clamp_named_rows(value: Any, *, upper: int = MAX_NAMED_ROWS) -> int:
+    """Bound a named-rows request to [0, MAX_NAMED_ROWS]; 0 = aggregates only."""
+    return max(0, min(_as_bounded_int(value, 0), upper))
 
 
 # ── Calendar helpers (windows are computed in Python and bound as $n) ────────

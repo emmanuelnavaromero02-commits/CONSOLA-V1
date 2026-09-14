@@ -534,6 +534,111 @@ async def control_room__talent_metadata_readiness_read(
     )
 
 
+# ── Mission 2: domain KPI read tools (Finance / Operations / Risk) ──────────
+# Same bridge as control_room__talent_kpis_read: mcp-infra never touches the
+# databases; console resolves the scope from the signed security_context and
+# runs the cap-free aggregates. Descriptions are in Spanish for the LLM.
+_TOP_N_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "top_n": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10,
+            "description": (
+                "Opcional. 0 (por defecto) devuelve solo agregados; un valor de 1 a "
+                "10 agrega ademas hasta ese numero de filas nombradas con monto "
+                "(excepcion controlada al principio de cero filas)."
+            ),
+        }
+    },
+    "additionalProperties": False,
+}
+
+
+def _named_rows(top_n: Any) -> int:
+    try:
+        number = int(top_n or 0)
+    except (TypeError, ValueError, OverflowError):
+        number = 0
+    return max(0, min(number, 10))
+
+
+@tool(
+    name="control_room__finance_kpis_read",
+    description=(
+        "KPIs financieros agregados del workspace activo: horas facturables "
+        "registradas por proyecto (valoradas a tarifa), costo laboral estimado "
+        "por departamento del ultimo mes cerrado y margen por proyecto sobre "
+        "montos en moneda base. Usala para preguntas de finanzas, rentabilidad o "
+        "carga facturable. Cada metrica trae status (ready, degraded, "
+        "unavailable), proxy_note con lo que mide y lo que NO mide, y "
+        "evidence_refs. NO mide horas aprobadas ni pendientes de facturar, NO es "
+        "nomina y NO convierte moneda. Solo agregados; top_n (0-10) devuelve "
+        "ademas hasta 10 proyectos nombrados con montos. Solo lectura."
+    ),
+    input_schema=_TOP_N_SCHEMA,
+)
+async def control_room__finance_kpis_read(
+    top_n: int = 0,
+    security_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return await _read_control_room_view(
+        "finance_kpis",
+        security_context,
+        params={"top_n": _named_rows(top_n)},
+    )
+
+
+@tool(
+    name="control_room__operations_kpis_read",
+    description=(
+        "KPIs operativos agregados del workspace activo: salud de pipelines "
+        "(corridas fallidas y exitosas por cartucho en 24 horas y 7 dias, "
+        "entidades que mas fallan), frescura de datos por cartucho frente a un "
+        "umbral de horas, y tasa de ausentismo por tipo a nivel empresa del "
+        "ultimo mes cerrado. Usala para preguntas de operacion de datos o "
+        "ausentismo. NO expone texto de errores ni corridas individuales, NO "
+        "mide un SLA de negocio (el umbral es parametro) y NO desglosa "
+        "ausentismo por unidad organizativa. Solo lectura."
+    ),
+    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+)
+async def control_room__operations_kpis_read(
+    security_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return await _read_control_room_view(
+        "operations_kpis",
+        security_context,
+    )
+
+
+@tool(
+    name="control_room__risk_kpis_read",
+    description=(
+        "KPIs de riesgo agregados del workspace activo: poblacion por banda de "
+        "riesgo de salida segun el modelo de Talento (con la cifra oficial de "
+        "Talento cuando existe), fines de empleo en 30, 60 y 90 dias, y deals de "
+        "Salesforce con fecha de cierre vencida (tramos, etapas y motivos). "
+        "Usala para preguntas de retencion, vencimientos de empleo o pipeline "
+        "comercial en riesgo. NO recalcula el riesgo, NO usa compensacion, NO lee "
+        "contratos SAP y NO convierte moneda. Solo agregados; top_n (0-10) "
+        "devuelve ademas hasta 10 deals nombrados con monto, nunca el vendedor. "
+        "Solo lectura."
+    ),
+    input_schema=_TOP_N_SCHEMA,
+)
+async def control_room__risk_kpis_read(
+    top_n: int = 0,
+    security_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return await _read_control_room_view(
+        "risk_kpis",
+        security_context,
+        params={"top_n": _named_rows(top_n)},
+    )
+
+
 @tool(
     name="control_room__decision_intelligence_runs_read",
     description=(

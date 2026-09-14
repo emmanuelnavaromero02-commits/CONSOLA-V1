@@ -633,6 +633,15 @@ async def test_deal_slippage_counts_all_rows_beyond_the_preview_cap(gold_dsn):
             "max_days_overdue": 45,
         }
     ]
+    # Mission 2 controlled exception: top_n=3 returns three named deals by amount.
+    assert [row["amount"] for row in result.top_deals] == [1000.0, 1000.0, 1000.0]
+    assert result.top_deals[0]["days_overdue"] == 45
+    assert result.top_deals[0]["opportunity_name"].startswith("Late ")
+    assert "vendedor" not in result.top_deals[0]
+    aggregates_only = await query_deal_slippage(
+        _user(TENANT_A, WORKSPACE_A), as_of=AS_OF
+    )
+    assert aggregates_only.top_deals == []
     assert (
         result.evidence_refs[0]["relation"]
         == '"public"."gold_salesforce_deals_en_riesgo"'

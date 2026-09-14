@@ -6159,7 +6159,37 @@ async def list_alerts(
     }
 
 
+# Mission 2: domain KPI views (Finance / Operations / Risk). Thin wrappers so
+# control_room_service.<name> keeps the historical import/monkeypatch surface;
+# the implementation lives in app.services.control_room.domain_kpis.
+@_bind_to_core
+async def finance_kpis(user: dict | None, *, top_n: int = 0) -> dict[str, Any]:
+    """Finance KPIs for the active tenant/workspace (see domain_kpis.finance_kpis)."""
+    from app.services.control_room import domain_kpis
+
+    return await domain_kpis.finance_kpis(user, top_n=top_n)
+
+
+@_bind_to_core
+async def operations_kpis(user: dict | None) -> dict[str, Any]:
+    """Operations KPIs for the active tenant/workspace (see domain_kpis.operations_kpis)."""
+    from app.services.control_room import domain_kpis
+
+    return await domain_kpis.operations_kpis(user)
+
+
+@_bind_to_core
+async def risk_kpis(user: dict | None, *, top_n: int = 0) -> dict[str, Any]:
+    """Risk KPIs for the active tenant/workspace (see domain_kpis.risk_kpis)."""
+    from app.services.control_room import domain_kpis
+
+    return await domain_kpis.risk_kpis(user, top_n=top_n)
+
+
 __all__ = (
+    "finance_kpis",
+    "operations_kpis",
+    "risk_kpis",
     "_ITEM_STATUSES",
     "_ITEM_SEVERITIES",
     "_is_production_env",
