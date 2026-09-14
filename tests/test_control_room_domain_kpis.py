@@ -237,6 +237,35 @@ def test_public_error_keeps_the_reason_and_drops_the_technical_tail(raw, expecte
     assert domain_kpis.public_error(None) is None
 
 
+def test_public_evidence_sanitises_filter_values():
+    """Filter VALUES are published too: the aggregates put prose in some of
+    them (base_currency carries the dataset and column that were NULL)."""
+    refs = domain_kpis.public_evidence(
+        "project_margin",
+        [
+            _gold_ref(
+                "pnl_mensual",
+                base_currency="unverified (pnl_mensual.base_currency is NULL)",
+                original_currencies=["MXN", "USD"],
+                months=2,
+                sla_source="param",
+            )
+        ],
+    )
+    filters = refs[0]["filters"]
+    assert filters["base_currency"] == "sin verificar en el origen"
+    assert filters["original_currencies"] == ["MXN", "USD"]
+    assert filters["months"] == 2
+    assert filters["sla_source"] == "param"
+    for value in filters.values():
+        if isinstance(value, str):
+            assert _safe_text(value, field="base_currency") == value
+    assert "pnl_mensual" not in json.dumps(refs, ensure_ascii=False)
+    # An unknown technical value is dropped rather than published verbatim.
+    assert domain_kpis.public_filter_value("gold_consultor_mensual snapshot") is None
+    assert domain_kpis.public_filter_value("param") == "param"
+
+
 def test_public_evidence_uses_labels_and_scalar_filters():
     refs = domain_kpis.public_evidence(
         "billable_hours_logged",

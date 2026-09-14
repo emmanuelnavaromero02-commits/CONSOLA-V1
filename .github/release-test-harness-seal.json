@@ -3879,7 +3879,7 @@
     },
     {
       "path": "tests/test_control_room_domain_kpis.py",
-      "sha256": "45ef2fe31bd040ffef8a6e9b109b6df70fad2b59a2af70c7cea822b58f8a54a6"
+      "sha256": "5ff7eddd33e7cb3f8f32e442018c0bfaa3219169b3cb21fb080506fe6a371735"
     },
     {
       "path": "tests/test_control_room_evidence_keyring_runtime.py",

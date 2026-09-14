@@ -304,6 +304,32 @@ def public_note(note: Any) -> str | None:
     return text if not contains_public_technical_copy(text) else _GENERIC_NOTE
 
 
+# Filter VALUES are published too, so they need the same treatment as notes:
+# the aggregates put explanatory prose in some of them (base_currency carries
+# "unverified (<dataset>.<column> is NULL)"), which would hand the model a
+# dataset and a column name.
+PUBLIC_FILTER_VALUES: dict[str, str] = {
+    "unverified (pnl_mensual.base_currency is NULL)": "sin verificar en el origen",
+}
+
+
+def public_filter_value(value: Any) -> Any:
+    """Public form of one evidence filter value, or None to drop the key."""
+    if isinstance(value, str):
+        mapped = PUBLIC_FILTER_VALUES.get(value)
+        if mapped is not None:
+            return mapped
+        return None if contains_public_technical_copy(value) else value
+    if isinstance(value, (list, tuple)):
+        items = [
+            item
+            for item in value
+            if not (isinstance(item, str) and contains_public_technical_copy(item))
+        ]
+        return items
+    return value
+
+
 def public_source_label(ref: dict[str, Any]) -> str | None:
     key = ref.get("dataset") or ref.get("table")
     if key is None:
@@ -345,9 +371,10 @@ def public_evidence(metric: str, refs: list[dict[str, Any]]) -> list[dict[str, A
                     # key; generation + published_at identify the snapshot.
                     "partial_source": bool(ref.get("missing_optional_columns")),
                     "filters": {
-                        key: filters[key]
+                        key: public
                         for key in _EVIDENCE_FILTER_KEYS
                         if key in filters
+                        and (public := public_filter_value(filters[key])) is not None
                     },
                 }
             )
@@ -505,6 +532,7 @@ __all__ = [
     "operations_kpis",
     "public_evidence",
     "public_error",
+    "public_filter_value",
     "public_note",
     "public_notes",
     "public_source_label",
