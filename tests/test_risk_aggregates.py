@@ -315,8 +315,18 @@ def _expiry_answers() -> dict:
             "within_90": 15,
         },
         "risk.employment_end_expiry.departments": [
-            {"department_name": "Soporte", "within_30": 3, "within_90": 8},
-            {"department_name": "Ventas", "within_30": 1, "within_90": 7},
+            {
+                "department_name": "Soporte",
+                "within_30": 3,
+                "within_60": 5,
+                "within_90": 8,
+            },
+            {
+                "department_name": "Ventas",
+                "within_30": 1,
+                "within_60": 4,
+                "within_90": 7,
+            },
         ],
     }
 
@@ -340,14 +350,15 @@ async def test_employment_end_expiry_ready(monkeypatch):
     assert "NO un elemento contractual" in result.proxy_note
     assert (result.within_30, result.within_60, result.within_90) == (4, 9, 15)
     assert result.active_filter_applied is True
-    assert result.sentinel_year_excluded == 2030
+    assert result.sentinel_excluded_from == date(2030, 1, 1)
     assert [item["department_name"] for item in result.departments_top] == [
         "Soporte",
         "Ventas",
     ]
 
     windows_sql = conn.sql_for("risk.employment_end_expiry.windows")
-    assert "EXTRACT(YEAR FROM end_date::date) < $7" in windows_sql
+    assert "end_date::date < $7::date" in windows_sql
+    assert "EXTRACT(" not in windows_sql
     assert "AND is_active IS TRUE" in windows_sql
     assert "end_date::date > $3::date" in windows_sql
     assert "end_date::date <= $6::date" in windows_sql
@@ -358,7 +369,7 @@ async def test_employment_end_expiry_ready(monkeypatch):
         AS_OF + timedelta(days=30),
         AS_OF + timedelta(days=60),
         AS_OF + timedelta(days=90),
-        2030,
+        date(2030, 1, 1),
     )
     assert conn.args_for("risk.employment_end_expiry.departments")[-1] == 10
     assert "LIMIT $8" in conn.sql_for("risk.employment_end_expiry.departments")

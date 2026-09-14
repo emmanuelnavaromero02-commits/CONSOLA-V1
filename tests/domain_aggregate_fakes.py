@@ -29,6 +29,7 @@ TENANT_B = "22222222-2222-4222-8222-222222222222"
 WORKSPACE_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 
 MARKER_RE = re.compile(r"--\s*omega-aggregate:\s*([A-Za-z0-9_.]+)")
+PARAM_RE = re.compile(r"\$(\d+)")
 
 
 def marker_of(sql: str) -> str | None:
@@ -202,12 +203,27 @@ class FakeConn:
             )
         if marker not in self.answers:
             raise AssertionError(f"no fake answer registered for marker {marker!r}")
+        self._check_parameters(marker, sql, args)
         value = self.answers[marker]
         if isinstance(value, Exception):
             raise value
         if callable(value):
             return value(sql, args)
         return value
+
+    @staticmethod
+    def _check_parameters(marker: str, sql: str, args: tuple[Any, ...]) -> None:
+        """Emulate Postgres' prepare-time checks: every bound argument must be
+        referenced by exactly one ``$n`` family (unused parameters raise
+        ``could not determine data type of parameter $n``) and no ``$n`` may
+        exceed the number of arguments."""
+        referenced = {int(number) for number in PARAM_RE.findall(sql)}
+        expected = set(range(1, len(args) + 1))
+        if referenced != expected:
+            raise AssertionError(
+                f"{marker}: SQL references ${sorted(referenced)} but "
+                f"{len(args)} argument(s) were bound (expected ${sorted(expected)})"
+            )
 
     def sql_for(self, marker: str) -> str:
         for _method, sql, _args in self.calls:

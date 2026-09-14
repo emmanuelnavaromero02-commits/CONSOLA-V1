@@ -54,7 +54,8 @@ DEALS_AT_RISK_DATASET = "salesforce_deals_en_riesgo"
 RETENTION_ACTION_ID = "talent_retention_risk"
 # employee_360.end_date uses a far-future sentinel (2030+) for open-ended
 # employment (see sap_successfactors_talent_attrition_by_cohort_month.sql).
-EMPLOYMENT_END_SENTINEL_YEAR = 2030
+# Bound as a date parameter so the comparison stays date < date in Postgres.
+EMPLOYMENT_END_SENTINEL_DATE = date(2030, 1, 1)
 EXPIRY_WINDOWS_DAYS = (30, 60, 90)
 
 _RETENTION_REQUIRED = frozenset({"risk_band"})
@@ -254,7 +255,7 @@ class EmploymentEndExpiry(AggregateResult):
     within_60: int | None = None
     within_90: int | None = None
     active_filter_applied: bool = False
-    sentinel_year_excluded: int = EMPLOYMENT_END_SENTINEL_YEAR
+    sentinel_excluded_from: date = EMPLOYMENT_END_SENTINEL_DATE
     departments_top: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -288,11 +289,11 @@ async def query_employment_end_expiry(
                 **base,
             )
         active_filter = rel.expr("is_active", "AND is_active IS TRUE", "")
-        # $3 as_of, $4 +30d, $5 +60d, $6 +90d, $7 sentinel year
+        # $3 as_of, $4 +30d, $5 +60d, $6 +90d, $7 sentinel date (excluded from)
         population_predicate = f"""
                {GOLD_SCOPE_PREDICATE}
                AND end_date IS NOT NULL
-               AND EXTRACT(YEAR FROM end_date::date) < $7
+               AND end_date::date < $7::date
                AND end_date::date > $3::date
                AND end_date::date <= $6::date
                {active_filter}
@@ -305,7 +306,7 @@ async def query_employment_end_expiry(
               FROM {rel.sql}
              WHERE {population_predicate}
         """
-        args = (*scope.scope_args, today, d30, d60, d90, EMPLOYMENT_END_SENTINEL_YEAR)
+        args = (*scope.scope_args, today, d30, d60, d90, EMPLOYMENT_END_SENTINEL_DATE)
         windows = await scope.conn.fetchrow(windows_sql, *args)
         departments: list[dict[str, Any]] = []
         notes: list[str] = []
@@ -314,6 +315,7 @@ async def query_employment_end_expiry(
                 -- omega-aggregate: risk.employment_end_expiry.departments
                 SELECT department_name,
                        COUNT(*) FILTER (WHERE end_date::date <= $4::date)::bigint AS within_30,
+                       COUNT(*) FILTER (WHERE end_date::date <= $5::date)::bigint AS within_60,
                        COUNT(*)::bigint AS within_90
                   FROM {rel.sql}
                  WHERE {population_predicate}
@@ -326,6 +328,7 @@ async def query_employment_end_expiry(
                 {
                     "department_name": row["department_name"],
                     "within_30": as_int(row["within_30"]),
+                    "within_60": as_int(row["within_60"]),
                     "within_90": as_int(row["within_90"]),
                 }
                 for row in rows
@@ -344,7 +347,7 @@ async def query_employment_end_expiry(
                     filters={
                         "as_of": today,
                         "windows_days": list(EXPIRY_WINDOWS_DAYS),
-                        "sentinel_year_excluded": EMPLOYMENT_END_SENTINEL_YEAR,
+                        "sentinel_excluded_from": EMPLOYMENT_END_SENTINEL_DATE,
                         "active_only": rel.has("is_active"),
                         "top_n": top_n,
                     },
@@ -539,7 +542,7 @@ __all__ = [
     "DealSlippage",
     "EMPLOYEE_360_DATASET",
     "EMPLOYMENT_END_PROXY_NOTE",
-    "EMPLOYMENT_END_SENTINEL_YEAR",
+    "EMPLOYMENT_END_SENTINEL_DATE",
     "EmploymentEndExpiry",
     "RETENTION_RISK_DATASET",
     "query_attrition_risk_population",
