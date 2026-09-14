@@ -42,10 +42,9 @@ class KpiEvidenceRef(PublicProjectionModel):
     metric: str | None = None
     type: str | None = None
     source: str | None = None
-    published_run: str | None = None
     generation: int | None = None
     published_at: str | None = None
-    missing_optional_columns: list[str] = Field(default_factory=list)
+    partial_source: bool | None = None
     filters: KpiEvidenceFilters = Field(default_factory=KpiEvidenceFilters)
 
 
@@ -55,7 +54,6 @@ class KpiMetricBase(PublicProjectionModel):
     proxy_note: str | None = None
     error: str | None = None
     evidence_refs: list[KpiEvidenceRef] = Field(default_factory=list)
-    missing_columns: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
 
 

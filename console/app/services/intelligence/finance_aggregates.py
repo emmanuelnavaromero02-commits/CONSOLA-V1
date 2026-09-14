@@ -137,12 +137,19 @@ async def query_billable_hours_logged(
     user: dict | None,
     *,
     months: int = 1,
-    top_n: int = DEFAULT_TOP_N,
+    top_n: int = 0,
     as_of: date | None = None,
 ) -> BillableHoursLogged:
-    """SUM of billable hours (and hours x rate) per project over the window."""
+    """SUM of billable hours (and hours x rate) over the window.
+
+    ``top_n`` follows the same controlled exception as ``query_project_margin``
+    (Mission 2 product decision): the default 0 returns totals only; a value
+    above 0 additionally returns up to ``MAX_NAMED_ROWS`` (10) named projects
+    with hours and amount, so ``named_rows=0`` means "no named rows anywhere"
+    across the whole Finance payload.
+    """
     months = clamp_months(months)
-    top_n = clamp_top_n(top_n)
+    top_n = clamp_named_rows(top_n)
     window_start, window_end = _window(as_of, months)
     base = {
         "proxy_note": BILLABLE_HOURS_PROXY_NOTE,
@@ -206,9 +213,11 @@ async def query_billable_hours_logged(
              ORDER BY {order_by} DESC NULLS LAST, proyecto
              LIMIT $5
         """
-        top_rows = await scope.conn.fetch(
-            top_sql, *scope.scope_args, window_start, window_end, top_n
-        )
+        top_rows: list[Any] = []
+        if top_n:
+            top_rows = await scope.conn.fetch(
+                top_sql, *scope.scope_args, window_start, window_end, top_n
+            )
         notes: list[str] = []
         if not rel.has("billing_rate_usd"):
             notes.append(

@@ -13,10 +13,14 @@ and column identifiers, tier-qualified table names, UUIDs. Therefore:
 * every metric carries a PUBLIC proxy note (plain business Spanish, no
   identifiers) that states what the number measures and what it does NOT;
   the developer-facing ``proxy_note`` of the aggregate result is not exposed;
+* ``error`` becomes a stable reason code plus a fixed Spanish phrase, so the
+  LLM learns WHY a metric is missing without receiving dataset or column
+  identifiers (and without a Postgres error text that would be redacted);
+* every developer note is translated to a public equivalent: a degraded metric
+  must always say why, so notes are mapped, never silently dropped;
 * evidence references expose a business ``source`` label instead of the
-  physical relation, plus published run / generation / snapshot and scalar
-  filters (``run_id``/``dataset`` are forbidden public keys in this codebase);
-* free-form notes are kept only when they are not technical copy;
+  physical relation, plus generation and snapshot timestamp (``run_id``,
+  ``dataset`` and column lists are internal and never published);
 * cartridge ids are complemented with a business label.
 
 Global status per domain: ``ready`` when every metric is ready, ``unavailable``
@@ -114,11 +118,11 @@ PUBLIC_PROXY_NOTES: dict[str, str] = {
         "consultables desde la capa analitica."
     ),
     "deal_slippage": (
-        "Oportunidades abiertas de Salesforce cuya fecha de cierre ya paso: total, "
-        "monto, tramos de dias vencidos, desglose por etapa y por motivo de riesgo. "
-        "Los montos NO estan convertidos de moneda y el corte corresponde a la "
-        "ultima publicacion. Los nombres de deals solo aparecen a peticion "
-        "explicita y nunca el vendedor."
+        "Oportunidades abiertas de Salesforce con fecha de cierre ya vencida: "
+        "total, monto, tramos de dias vencidos y desglose por etapa. El desglose "
+        "por motivo repite el mismo filtro, asi que NO distingue causas. Los "
+        "montos NO estan convertidos de moneda. Los nombres de deals solo "
+        "aparecen a peticion explicita y nunca el vendedor."
     ),
 }
 
@@ -199,6 +203,107 @@ def public_text(value: Any) -> str | None:
     return None if contains_public_technical_copy(text) else text
 
 
+# Stable reason codes for a metric that could not be computed. The prefix is
+# the machine-readable half of the aggregate error (see
+# domain_aggregate_support._HTTP_REASONS and invalid_schema_error); the tail is
+# a fixed phrase, because the aggregate tail carries dataset/column names or a
+# driver error text the public projection would redact.
+PUBLIC_ERROR_REASONS: dict[str, str] = {
+    "missing": "el origen no esta publicado para este workspace",
+    "invalid_schema": "el origen publicado no tiene la forma esperada",
+    "no_permission": "sin permiso de lectura o sin workspace activo",
+    "invalid_scope": "sin workspace activo",
+    "unavailable": "el origen de datos no esta disponible",
+}
+_DEFAULT_ERROR_REASON = "el origen de datos no esta disponible"
+
+# Developer notes -> public equivalents. Ordered: the first marker contained in
+# the note wins. A note with no rule is kept when it is public-safe, and
+# otherwise reported as a generic limitation, never dropped in silence.
+PUBLIC_NOTE_RULES: tuple[tuple[str, str], ...] = (
+    (
+        "billing_rate_usd ausente",
+        "sin tarifa publicada: no se puede calcular el monto facturable",
+    ),
+    (
+        "headcount_by_department sin filas",
+        "la plantilla no tiene filas para este workspace: no se puede calcular "
+        "la tasa, solo los dias de ausencia",
+    ),
+    (
+        "headcount_by_department no disponible",
+        "la plantilla no esta disponible: no se puede calcular la tasa, solo "
+        "los dias de ausencia",
+    ),
+    (
+        "talent_action_candidates no emite",
+        "Talento reporta cero empleados en riesgo alto",
+    ),
+    (
+        "talent_action_candidates no disponible",
+        "sin cifra oficial de Talento: el catalogo de acciones no esta publicado",
+    ),
+    ("department_name ausente", "sin desglose por departamento"),
+    ("stage_name ausente", "sin desglose por etapa"),
+    ("motivo_riesgo ausente", "sin desglose por motivo de riesgo"),
+    (
+        "amount ausente",
+        "sin monto publicado: los desgloses se ordenan por numero de deals",
+    ),
+    (
+        "is_active ausente",
+        "sin marca de empleado activo: se cuentan todos los registros con fin "
+        "de empleo futuro",
+    ),
+    ("sin meses cerrados con datos", "sin meses cerrados con datos"),
+    (
+        "retention_risk_score",
+        "las bandas de riesgo las calcula el modelo de Talento; aqui no se "
+        "recalculan",
+    ),
+    (
+        "recommendation_only",
+        "solo recomendacion: riesgo de salida sin datos de compensacion",
+    ),
+    (
+        "ya excluye oportunidades cerradas",
+        "el origen ya excluye oportunidades cerradas; el corte corresponde a la "
+        "ultima publicacion",
+    ),
+    (
+        "sin conversion de moneda",
+        "los montos vienen de Salesforce sin conversion de moneda",
+    ),
+    (
+        "deals nombrados a peticion explicita",
+        "la lista de deals nombrados se devuelve solo a peticion explicita",
+    ),
+)
+_GENERIC_NOTE = "el detalle de esta limitacion es interno; ver status y proxy_note"
+
+
+def public_error(error: Any) -> str | None:
+    """Stable reason code + fixed phrase, never the aggregate's technical tail."""
+    text = str(error or "").strip()
+    if not text:
+        return None
+    reason = text.split(":", 1)[0].strip()
+    if reason not in PUBLIC_ERROR_REASONS:
+        return f"unavailable: {_DEFAULT_ERROR_REASON}"
+    return f"{reason}: {PUBLIC_ERROR_REASONS[reason]}"
+
+
+def public_note(note: Any) -> str | None:
+    """Translate one developer note into public copy (never silently dropped)."""
+    text = str(note or "").strip()
+    if not text:
+        return None
+    for marker, replacement in PUBLIC_NOTE_RULES:
+        if marker in text:
+            return replacement
+    return text if not contains_public_technical_copy(text) else _GENERIC_NOTE
+
+
 def public_source_label(ref: dict[str, Any]) -> str | None:
     key = ref.get("dataset") or ref.get("table")
     if key is None:
@@ -213,11 +318,11 @@ def cartridge_label(cartridge_id: Any) -> str | None:
 
 
 def public_notes(notes: list[Any]) -> list[str]:
-    """Keep only notes that the public projection would show verbatim."""
+    """Translate every note to public copy, preserving order and dropping dups."""
     out: list[str] = []
     for note in notes or []:
-        text = str(note or "").strip()
-        if text and not contains_public_technical_copy(text):
+        text = public_note(note)
+        if text and text not in out:
             out.append(text)
     return out
 
@@ -234,12 +339,11 @@ def public_evidence(metric: str, refs: list[dict[str, Any]]) -> list[dict[str, A
                         str(ref.get("type")), public_text(ref.get("type"))
                     ),
                     "source": public_source_label(ref),
-                    "published_run": ref.get("run_id"),
                     "generation": ref.get("generation"),
                     "published_at": ref.get("published_at"),
-                    "missing_optional_columns": list(
-                        ref.get("missing_optional_columns") or []
-                    ),
+                    # The publication run id is a UUID and a forbidden public
+                    # key; generation + published_at identify the snapshot.
+                    "partial_source": bool(ref.get("missing_optional_columns")),
                     "filters": {
                         key: filters[key]
                         for key in _EVIDENCE_FILTER_KEYS
@@ -274,6 +378,9 @@ def _bucket_rows(buckets: dict[str, Any]) -> list[dict[str, Any]]:
 def metric_payload(metric: str, result: AggregateResult) -> dict[str, Any]:
     payload = result.to_dict()
     payload["proxy_note"] = PUBLIC_PROXY_NOTES.get(metric)
+    payload["error"] = public_error(payload.get("error"))
+    # Column allowlists are internal; the public signal is status + notes.
+    payload.pop("missing_columns", None)
     payload["notes"] = public_notes(payload.get("notes") or [])
     payload["evidence_refs"] = public_evidence(
         metric, payload.get("evidence_refs") or []
@@ -299,7 +406,9 @@ def domain_payload(
     statuses = [result.status for result in results.values()]
     return {
         "domain": domain,
-        "generated_at": datetime.now(UTC).isoformat(),
+        # Second precision on purpose: a microsecond ISO stamp is redacted as
+        # technical copy by the public projection.
+        "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
         "status": combine_status(statuses),
         "named_rows": named_rows,
         "metrics": metrics,
@@ -331,7 +440,7 @@ async def finance_kpis(user: dict | None, *, top_n: int = 0) -> dict[str, Any]:
     named_rows = clamp_named_rows(top_n)
     results: dict[str, AggregateResult] = {
         "billable_hours_logged": await finance_aggregates.query_billable_hours_logged(
-            user
+            user, top_n=named_rows
         ),
         "labor_cost_by_department": await finance_aggregates.query_labor_cost_by_department(
             user
@@ -395,6 +504,8 @@ __all__ = [
     "metric_payload",
     "operations_kpis",
     "public_evidence",
+    "public_error",
+    "public_note",
     "public_notes",
     "public_source_label",
     "public_text",

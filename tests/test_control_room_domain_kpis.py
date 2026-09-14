@@ -10,6 +10,7 @@ wires the three views with permission checks and bounded params.
 
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timezone
 
 import pytest
@@ -187,16 +188,53 @@ def test_public_notes_and_labels_survive_projection():
     )
 
 
-def test_public_notes_drop_technical_copy():
+def test_public_notes_translate_instead_of_dropping():
+    """A degraded metric must always say why, in copy the projection keeps."""
     kept = domain_kpis.public_notes(
         [
-            "sin meses cerrados con datos",
+            "sin meses cerrados con datos en costo_consultor_mensual",
             "headcount_by_department sin filas para el scope: absence_rate no calculable",
+            "sap_successfactors_talent_action_candidates no disponible: sin cifra oficial",
+            "un detalle tecnico nuevo sobre gold_consultor_mensual",
+            "sin meses cerrados con datos en absence_by_type_and_month",  # duplicate
             "",
             None,
         ]
     )
-    assert kept == ["sin meses cerrados con datos"]
+    assert kept == [
+        "sin meses cerrados con datos",
+        "la plantilla no tiene filas para este workspace: no se puede calcular la tasa, "
+        "solo los dias de ausencia",
+        "sin cifra oficial de Talento: el catalogo de acciones no esta publicado",
+        domain_kpis._GENERIC_NOTE,
+    ]
+    for note in kept:
+        assert _safe_text(note, field="notes") == note
+        assert not contains_public_technical_copy(note)
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("missing: dataset unavailable: pnl_mensual", "missing"),
+        (
+            "invalid_schema: consultor_mensual misses required columns mes",
+            "invalid_schema",
+        ),
+        ("no_permission: gold dataset requires complete scope", "no_permission"),
+        ("invalid_scope: active workspace is required", "invalid_scope"),
+        ('unavailable: relation "gold_x" does not exist', "unavailable"),
+        ("driver exploded", "unavailable"),
+    ],
+)
+def test_public_error_keeps_the_reason_and_drops_the_technical_tail(raw, expected):
+    public = domain_kpis.public_error(raw)
+    assert public.split(":", 1)[0] == expected
+    assert public == f"{expected}: {domain_kpis.PUBLIC_ERROR_REASONS[expected]}"
+    assert _safe_text(public, field="error") == public
+    for identifier in ("pnl_mensual", "consultor_mensual", "gold_x", "relation"):
+        assert identifier not in public
+    assert domain_kpis.public_error(None) is None
 
 
 def test_public_evidence_uses_labels_and_scalar_filters():
@@ -219,11 +257,21 @@ def test_public_evidence_uses_labels_and_scalar_filters():
     assert refs[0]["metric"] == "billable_hours_logged"
     assert refs[0]["type"] == "published_dataset"
     assert refs[0]["source"] == domain_kpis.PUBLIC_SOURCE_LABELS["consultor_mensual"]
-    assert refs[0]["published_run"] == "run-consultor_mensual"
-    assert "run_id" not in refs[0] and "dataset" not in refs[0]
     assert refs[0]["published_at"] == "2026-09-01T00:00:00+00:00"
+    assert refs[0]["generation"] == 3
+    assert refs[0]["partial_source"] is False
     assert refs[0]["filters"] == {"window_start": "2026-08-01", "months": 2}
-    assert "relation" not in refs[0]
+    # The publication run id is a UUID and a forbidden public key; neither it
+    # nor the relation, dataset or column names are published.
+    for forbidden in (
+        "run_id",
+        "published_run",
+        "dataset",
+        "relation",
+        "missing_optional_columns",
+        "workspace_id",
+    ):
+        assert forbidden not in refs[0], forbidden
     assert refs[1]["type"] == "run_log"
     assert refs[1]["source"] == domain_kpis.PUBLIC_SOURCE_LABELS["pipeline_runs"]
     assert refs[1]["filters"] == {"as_of": NOW.isoformat()}
@@ -252,7 +300,9 @@ async def test_finance_kpis_folds_results_and_forwards_named_rows(monkeypatch):
     assert payload["status"] == "degraded"
     assert payload["named_rows"] == 10  # clamped to MAX_NAMED_ROWS
     assert margin.calls == [(user, {"top_n": 10})]
-    assert billable.calls[0][0] is user and labor.calls[0][0] is user
+    # named_rows drives every named list of the domain, not only the margin one.
+    assert billable.calls == [(user, {"top_n": 10})]
+    assert labor.calls == [(user, {})]
     assert payload["unavailable_metrics"] == ["project_margin"]
     assert payload["degraded_metrics"] == ["labor_cost_by_department"]
     metric = payload["metrics"]["billable_hours_logged"]
@@ -260,10 +310,11 @@ async def test_finance_kpis_folds_results_and_forwards_named_rows(monkeypatch):
         metric["proxy_note"] == domain_kpis.PUBLIC_PROXY_NOTES["billable_hours_logged"]
     )
     assert "billing_rate_usd" not in metric["proxy_note"]
-    # Column-name notes pass the public copy filter; they stay verbatim.
+    # Developer notes are translated to public copy, never dropped in silence.
     assert metric["notes"] == [
-        "billing_rate_usd ausente: billable_amount_usd no calculable"
+        "sin tarifa publicada: no se puede calcular el monto facturable"
     ]
+    assert "missing_columns" not in metric
     assert (
         metric["evidence_refs"][0]["source"]
         == domain_kpis.PUBLIC_SOURCE_LABELS["consultor_mensual"]
@@ -272,14 +323,17 @@ async def test_finance_kpis_folds_results_and_forwards_named_rows(monkeypatch):
         "sin meses cerrados con datos"
     ]
     assert payload["notes"] == [
-        "billable_hours_logged: billing_rate_usd ausente: billable_amount_usd no calculable",
+        "billable_hours_logged: sin tarifa publicada: no se puede calcular el monto facturable",
         "labor_cost_by_department: sin meses cerrados con datos",
     ]
     assert [ref["metric"] for ref in payload["evidence_refs"]] == [
         "billable_hours_logged",
         "labor_cost_by_department",
     ]
-    assert payload["metrics"]["project_margin"]["error"].startswith("missing:")
+    # The reason code survives; the dataset name in the aggregate text does not.
+    assert payload["metrics"]["project_margin"]["error"] == (
+        "missing: el origen no esta publicado para este workspace"
+    )
 
     projected = ControlRoomFinanceKpisResponse.project(payload)
     out = projected.model_dump()
@@ -297,15 +351,33 @@ async def test_finance_kpis_folds_results_and_forwards_named_rows(monkeypatch):
     assert out["metrics"]["project_margin"]["original_currencies"] == ["MXN", "USD"]
     assert out["evidence_refs"][0]["published_at"] == "2026-09-01T00:00:00+00:00"
     assert out["unavailable_metrics"] == ["project_margin"]
+    # What the LLM actually reads for the broken metric, after projection.
+    assert out["metrics"]["project_margin"]["error"] == (
+        "missing: el origen no esta publicado para este workspace"
+    )
+    assert out["generated_at"] == payload["generated_at"]  # not redacted
+    assert out["metrics"]["billable_hours_logged"]["notes"] == metric["notes"]
+    dumped = json.dumps(out, ensure_ascii=False)
+    for identifier in (
+        "pnl_mensual",
+        "consultor_mensual",
+        "costo_consultor_mensual",
+        "billing_rate_usd",
+        "revenue_base_amount",
+        "gold_",
+        "run-",
+    ):
+        assert identifier not in dumped, identifier
 
 
 @pytest.mark.asyncio
 async def test_finance_kpis_default_is_aggregates_only(monkeypatch):
     margin = _Recorder(_margin())
+    billable = _Recorder(_billable())
     monkeypatch.setattr(
         domain_kpis.finance_aggregates,
         "query_billable_hours_logged",
-        _Recorder(_billable()),
+        billable,
     )
     monkeypatch.setattr(
         domain_kpis.finance_aggregates,
@@ -319,6 +391,7 @@ async def test_finance_kpis_default_is_aggregates_only(monkeypatch):
     assert payload["status"] == "ready"
     assert payload["named_rows"] == 0
     assert margin.calls[0][1] == {"top_n": 0}
+    assert billable.calls[0][1] == {"top_n": 0}
 
 
 # ── operations view ─────────────────────────────────────────────────────────
@@ -563,6 +636,11 @@ async def test_risk_kpis_named_rows_and_projection(monkeypatch):
                 "close_date": date(2026, 9, 1),
                 "days_overdue": 12,
                 "risk_reason": "cierre vencido",
+                # Present on purpose: the allowlist must strip them, so the
+                # assertion below proves the projection and not the fixture.
+                "vendedor": "Juan Perez",
+                "owner_email": "juan@example.com",
+                "opportunity_id": "006ABC",
             }
         ],
         evidence_refs=[
@@ -616,8 +694,9 @@ async def test_risk_kpis_named_rows_and_projection(monkeypatch):
             "risk_reason": "cierre vencido",
         }
     ]
-    assert all("vendedor" not in row for row in deal["top_deals"])
-    assert "vendedor" not in str(deal["top_deals"])
+    for stripped in ("vendedor", "owner_email", "opportunity_id"):
+        assert stripped not in deal["top_deals"][0], stripped
+    assert "Juan Perez" not in json.dumps(out, ensure_ascii=False)
 
 
 # ── control_room_service surface + router dispatcher ────────────────────────
@@ -722,3 +801,89 @@ async def test_internal_view_dispatcher_wires_domain_views(monkeypatch):
     assert exc.value.status_code == 403
     assert "datasets.read" in str(exc.value.detail)
     assert "finance_kpis" not in router._INTERNAL_OPERATIONAL_VIEWS
+
+
+# ── cache identity and all-unavailable payloads ─────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_named_rows_do_not_share_a_cache_entry(monkeypatch):
+    """A top_n=5 answer must never be served to a later aggregates-only call."""
+    monkeypatch.setenv("OMEGA_CONTROL_ROOM_CACHE_TTL_SECONDS", "60")
+    from app.routers import control_room as router
+    from app.services.control_room import authorization_cache
+    from app.services import control_room_service
+
+    async def fake_epoch(user):
+        return "epoch-1"
+
+    monkeypatch.setattr(authorization_cache, "publication_epoch", fake_epoch)
+    authorization_cache.READ_CACHE.clear()
+    calls: list[int] = []
+
+    async def fake_finance(user, *, top_n=0):
+        calls.append(top_n)
+        return {
+            "domain": "finance",
+            "status": "ready",
+            "named_rows": top_n,
+            "metrics": {},
+        }
+
+    monkeypatch.setattr(control_room_service, "finance_kpis", fake_finance)
+    user = _user(_effective_permissions=["datasets.read"])
+
+    named = await router._control_room_internal_view("finance_kpis", user, {"top_n": 5})
+    plain = await router._control_room_internal_view("finance_kpis", user, {})
+    again = await router._control_room_internal_view("finance_kpis", user, {"top_n": 5})
+
+    assert named.named_rows == 5
+    assert plain.named_rows == 0  # not the cached named-rows payload
+    assert again.named_rows == 5
+    assert calls == [5, 0]  # the third call was served from the cache
+    namespaces = {key[0] for key in authorization_cache.READ_CACHE}
+    assert {"finance-kpis-5", "finance-kpis-0"} <= namespaces
+    authorization_cache.READ_CACHE.clear()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "domain, view, model",
+    [
+        ("finance", "finance_kpis", ControlRoomFinanceKpisResponse),
+        ("operations", "operations_kpis", ControlRoomOperationsKpisResponse),
+        ("risk", "risk_kpis", ControlRoomRiskKpisResponse),
+    ],
+)
+async def test_all_metrics_unavailable_reaches_the_llm_as_reason_codes(
+    monkeypatch, domain, view, model
+):
+    metrics = {
+        "finance": domain_kpis.FINANCE_METRICS,
+        "operations": domain_kpis.OPERATIONS_METRICS,
+        "risk": domain_kpis.RISK_METRICS,
+    }[domain]
+    results = {
+        name: BillableHoursLogged(
+            status="unavailable",
+            error=f"invalid_schema: some_dataset misses required columns col_{index}",
+            missing_columns=[f"col_{index}"],
+        )
+        for index, name in enumerate(metrics)
+    }
+
+    payload = domain_kpis.domain_payload(domain, results)
+    out = model.project(payload).model_dump()
+
+    assert out["status"] == "unavailable"
+    assert out["unavailable_metrics"] == list(metrics)
+    for name in metrics:
+        metric = out["metrics"][name]
+        assert metric["status"] == "unavailable"
+        assert metric["error"] == (
+            "invalid_schema: el origen publicado no tiene la forma esperada"
+        )
+        assert metric["proxy_note"] == domain_kpis.PUBLIC_PROXY_NOTES[name]
+        assert "missing_columns" not in metric
+    dumped = json.dumps(out, ensure_ascii=False)
+    assert "some_dataset" not in dumped and "col_0" not in dumped

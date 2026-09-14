@@ -188,13 +188,22 @@ def test_domain_kpi_tools_are_console_read_only_without_approval():
         assert meta["requires_approval"] is False, name
 
 
-def test_console_arg_validation_accepts_bounded_top_n_only():
-    tool_policy = _load_console_module("app.services.tool_policy")
-    schema = {
-        "type": "object",
-        "properties": {"top_n": {"type": "integer", "minimum": 0, "maximum": 10}},
-        "additionalProperties": False,
+def test_console_arg_validation_accepts_bounded_top_n_only(monkeypatch):
+    # The schema console validates against is the one the catalog advertises,
+    # and the server-side clamp is what actually bounds the answer.
+    _load_mcp_module(monkeypatch, "app.main")
+    registry = importlib.import_module("app.registry")
+    control_room = importlib.import_module("app.tools.control_room")
+    schema = {tool["name"]: tool["input_schema"] for tool in registry.list_tools()}[
+        "control_room__risk_kpis_read"
+    ]
+    assert schema["properties"]["top_n"]["maximum"] == 10
+    clamps = {
+        value: control_room._named_rows(value) for value in (11, -3, None, "x", 4)
     }
+    assert clamps == {11: 10, -3: 0, None: 0, "x": 0, 4: 4}
+
+    tool_policy = _load_console_module("app.services.tool_policy")
     assert tool_policy.validate_tool_args(
         "control_room__risk_kpis_read", {"top_n": 5}, schema, risk_level="read"
     ) == {"top_n": 5}
@@ -215,6 +224,11 @@ def test_console_arg_validation_accepts_bounded_top_n_only():
             schema,
             risk_level="read",
         )
+    # console does not enforce minimum/maximum: out-of-range args pass here and
+    # are bounded server-side (clamps above), never by the LLM's request.
+    assert tool_policy.validate_tool_args(
+        "control_room__risk_kpis_read", {"top_n": 11}, schema, risk_level="read"
+    ) == {"top_n": 11}
 
 
 # ── invocation through the scope gate ───────────────────────────────────────
@@ -254,6 +268,9 @@ def test_invoke_requires_datasets_read_and_scope(monkeypatch, tool):
     with pytest.raises(HTTPException) as exc:
         main._enforce_data_scope(req, "console")
     assert exc.value.status_code == 403
+    # Pin the detail: a broken re-sign would also raise 403 ("Invalid signed
+    # security_context") and hide that the scope branch is no longer reached.
+    assert "tenant/workspace scope" in str(exc.value.detail)
 
     req = main.InvokeRequest(
         tool=tool, args={"security_context": {"trusted": True}}, security_context=_ctx()

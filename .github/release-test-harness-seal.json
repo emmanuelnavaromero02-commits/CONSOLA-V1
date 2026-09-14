@@ -3879,7 +3879,7 @@
     },
     {
       "path": "tests/test_control_room_domain_kpis.py",
-      "sha256": "83c3cfe5cea9df257e3b285273c3e775851049da3e625e9d0e9ac3217b279aa0"
+      "sha256": "45ef2fe31bd040ffef8a6e9b109b6df70fad2b59a2af70c7cea822b58f8a54a6"
     },
     {
       "path": "tests/test_control_room_evidence_keyring_runtime.py",
@@ -4455,7 +4455,7 @@
     },
     {
       "path": "tests/test_finance_aggregates.py",
-      "sha256": "8a81a316101ce5c0dd247f66f55c7ed485b4956d6e4e534f3114d46af1b54883"
+      "sha256": "cab6e65d774eb8a709611e194d0c0d8d16fdebd6b872564251e6f796f63412d8"
     },
     {
       "path": "tests/test_freshness_endpoint.py",
@@ -4619,7 +4619,7 @@
     },
     {
       "path": "tests/test_mcp_domain_kpi_tools.py",
-      "sha256": "efcd72e7b28cbf93ea6eb1981ffc50ddeafc9f5d36e1a348df527f9f484c30df"
+      "sha256": "4eec2e3dc2b77dc2111dacffade15fb40236ccc80164db1fd9ed9af6ee262a49"
     },
     {
       "path": "tests/test_mcp_infra_pdf_capacity.py",
