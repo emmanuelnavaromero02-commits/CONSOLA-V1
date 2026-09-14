@@ -134,23 +134,26 @@ def as_int(value: Any) -> int | None:
         return None
 
 
+def _as_bounded_int(value: Any, default: int) -> int:
+    """Sanitize an untrusted numeric input: bool, NaN, inf, text and None all
+    fall back to ``default`` instead of raising (int(inf) raises OverflowError)."""
+    if isinstance(value, bool):
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
 def clamp_top_n(
     value: Any, *, default: int = DEFAULT_TOP_N, upper: int = MAX_GROUP_ROWS
 ) -> int:
     """Bound every top-N request to [1, MAX_GROUP_ROWS]."""
-    try:
-        number = int(value)
-    except (TypeError, ValueError):
-        number = default
-    return max(1, min(number, upper))
+    return max(1, min(_as_bounded_int(value, default), upper))
 
 
 def clamp_months(value: Any, *, default: int = 1, upper: int = 24) -> int:
-    try:
-        number = int(value)
-    except (TypeError, ValueError):
-        number = default
-    return max(1, min(number, upper))
+    return max(1, min(_as_bounded_int(value, default), upper))
 
 
 # ── Calendar helpers (windows are computed in Python and bound as $n) ────────

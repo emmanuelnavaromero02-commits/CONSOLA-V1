@@ -91,9 +91,16 @@ FRESHNESS_PROXY_NOTE = (
     "calculadas sobre extraction_runs y pipeline_runs de la base de console. "
     "NO mide cumplimiento de un SLA de negocio: OMEGA no tiene un SLA de "
     "frescura configurado y el umbral sla_hours es un parametro (o la variable "
-    "OPERATIONS_FRESHNESS_SLA_HOURS). Solo SuccessFactors espeja sus corridas "
-    "en pipeline_runs; los demas cartuchos registran en extraction_runs. Los "
+    "OPERATIONS_FRESHNESS_SLA_HOURS). Solo SuccessFactors espeja extraction_runs "
+    "en pipeline_runs y Replicon (DAG SES inbox) escribe pipeline_runs "
+    "directamente; los demas cartuchos registran solo en extraction_runs. Los "
     "cartuchos sin ninguna corrida exitosa visible NO aparecen en la lista."
+)
+
+RUN_LOG_SOURCES_NOTE = (
+    "solo SuccessFactors espeja extraction_runs en pipeline_runs y Replicon (DAG "
+    "SES inbox) escribe pipeline_runs directamente; los conteos suman ambas "
+    "tablas por cartucho"
 )
 
 ABSENCE_RATE_PROXY_NOTE = (
@@ -176,8 +183,9 @@ class PipelineHealth(AggregateResult):
     window_7d_start: datetime | None = None
     cartridges: list[dict[str, Any]] = field(default_factory=list)
     totals: dict[str, int] = field(default_factory=dict)
+    cartridges_count: int | None = None
     cartridges_with_failures_24h: int | None = None
-    recent_failures: list[dict[str, Any]] = field(default_factory=list)
+    failing_entities: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _health_sql(table: str) -> str:
@@ -199,28 +207,94 @@ def _health_sql(table: str) -> str:
     """
 
 
-_RECENT_FAILURES_SQL = {
+# Workspace-wide totals come from ONE un-limited aggregate over both run logs;
+# the per-cartridge breakdown above is the only LIMITed statement.
+_HEALTH_TOTALS_SQL = f"""
+    -- omega-aggregate: operations.pipeline_health.totals
+    SELECT COUNT(*) FILTER (WHERE status = 'failed'  AND started_at >= $3)::bigint AS failed_24h,
+           COUNT(*) FILTER (WHERE status = 'success' AND started_at >= $3)::bigint AS success_24h,
+           COUNT(*) FILTER (WHERE status = 'failed')::bigint  AS failed_7d,
+           COUNT(*) FILTER (WHERE status = 'success')::bigint AS success_7d,
+           COUNT(*) FILTER (WHERE status = 'partial')::bigint AS partial_7d,
+           COUNT(DISTINCT cartridge_id)::bigint AS cartridges_count,
+           COUNT(DISTINCT cartridge_id) FILTER (WHERE status = 'failed' AND started_at >= $3)::bigint
+               AS cartridges_with_failures_24h
+      FROM (
+           SELECT cartridge_id, status, started_at FROM pipeline_runs
+            WHERE {CONSOLE_SCOPE_PREDICATE} AND started_at >= $4
+           UNION ALL
+           SELECT cartridge_id, status, started_at FROM extraction_runs
+            WHERE {CONSOLE_SCOPE_PREDICATE} AND started_at >= $4
+      ) runs
+"""
+
+# Failures aggregated by (cartridge, entity): counts and last failure time only.
+# No run rows and no error_message text (free text from extractors may embed
+# URLs, tokens or record identifiers) ever reach the caller.
+_FAILING_ENTITIES_SQL = {
     PIPELINE_RUNS_TABLE: f"""
-        -- omega-aggregate: operations.pipeline_health.recent_failures.pipeline_runs
-        SELECT cartridge_id, dag_id AS source_ref, entity, finished_at, started_at,
-               LEFT(error_message, 200) AS error_message
+        -- omega-aggregate: operations.pipeline_health.failing_entities.pipeline_runs
+        SELECT cartridge_id, entity,
+               COUNT(*)::bigint AS failures_7d,
+               COUNT(*) FILTER (WHERE started_at >= $3)::bigint AS failures_24h,
+               MAX(COALESCE(finished_at, started_at)) AS last_failed_at
           FROM pipeline_runs
          WHERE {CONSOLE_SCOPE_PREDICATE}
-           AND status = 'failed' AND started_at >= $3
-         ORDER BY COALESCE(finished_at, started_at) DESC
-         LIMIT $4
+           AND status = 'failed' AND started_at >= $4
+         GROUP BY cartridge_id, entity
+         ORDER BY failures_7d DESC, last_failed_at DESC, cartridge_id, entity
+         LIMIT $5
     """,
     EXTRACTION_RUNS_TABLE: f"""
-        -- omega-aggregate: operations.pipeline_health.recent_failures.extraction_runs
-        SELECT cartridge_id, run_type AS source_ref, entity_name AS entity, finished_at, started_at,
-               LEFT(error_message, 200) AS error_message
+        -- omega-aggregate: operations.pipeline_health.failing_entities.extraction_runs
+        SELECT cartridge_id, entity_name AS entity,
+               COUNT(*)::bigint AS failures_7d,
+               COUNT(*) FILTER (WHERE started_at >= $3)::bigint AS failures_24h,
+               MAX(COALESCE(finished_at, started_at)) AS last_failed_at
           FROM extraction_runs
          WHERE {CONSOLE_SCOPE_PREDICATE}
-           AND status = 'failed' AND started_at >= $3
-         ORDER BY COALESCE(finished_at, started_at) DESC
-         LIMIT $4
+           AND status = 'failed' AND started_at >= $4
+         GROUP BY cartridge_id, entity_name
+         ORDER BY failures_7d DESC, last_failed_at DESC, cartridge_id, entity
+         LIMIT $5
     """,
 }
+
+
+def _merge_failing_entities(per_table: dict[str, list[Any]]) -> list[dict[str, Any]]:
+    merged: dict[tuple[str, str], dict[str, Any]] = {}
+    for table, rows in per_table.items():
+        for row in rows:
+            key = (str(row["cartridge_id"]), str(row["entity"] or ""))
+            item = merged.setdefault(
+                key,
+                {
+                    "cartridge_id": key[0],
+                    "entity": key[1],
+                    "failures_7d": 0,
+                    "failures_24h": 0,
+                    "last_failed_at": None,
+                    "sources": [],
+                },
+            )
+            item["failures_7d"] += as_int(row["failures_7d"]) or 0
+            item["failures_24h"] += as_int(row["failures_24h"]) or 0
+            last = row["last_failed_at"]
+            if last is not None and (
+                item["last_failed_at"] is None or last > item["last_failed_at"]
+            ):
+                item["last_failed_at"] = last
+            item["sources"].append(table)
+    out = list(merged.values())
+    out.sort(
+        key=lambda item: (
+            -item["failures_7d"],
+            -(item["last_failed_at"].timestamp() if item["last_failed_at"] else 0.0),
+            item["cartridge_id"],
+            item["entity"],
+        )
+    )
+    return out
 
 
 def _merge_health_rows(per_table: dict[str, list[Any]]) -> list[dict[str, Any]]:
@@ -270,19 +344,28 @@ async def query_pipeline_health(
     user: dict | None,
     *,
     as_of: datetime | None = None,
-    recent_failures: int = RECENT_FAILURES_LIMIT,
+    failing_entities_top_n: int = RECENT_FAILURES_LIMIT,
 ) -> PipelineHealth:
-    """Failed/successful runs per cartridge in the last 24h and 7d."""
+    """Failed/successful runs per cartridge in the last 24h and 7d.
+
+    ``totals`` / ``cartridges_count`` / ``cartridges_with_failures_24h`` come
+    from one un-limited aggregate over both run logs; ``cartridges`` (per
+    cartridge) and ``failing_entities`` (per cartridge+entity) are bounded
+    breakdowns.
+    """
     now = as_of_datetime(as_of)
     start_24h = now - timedelta(hours=24)
     start_7d = now - timedelta(days=7)
-    recent_limit = clamp_top_n(recent_failures, default=RECENT_FAILURES_LIMIT)
+    entities_limit = clamp_top_n(failing_entities_top_n, default=RECENT_FAILURES_LIMIT)
     base = {"as_of": now, "window_24h_start": start_24h, "window_7d_start": start_7d}
 
     def _unavailable(error: str) -> PipelineHealth:
         return PipelineHealth(status=STATUS_UNAVAILABLE, error=error, **base)
 
     async def _compute(scope: ConsoleScope) -> PipelineHealth:
+        totals_row = await scope.conn.fetchrow(
+            _HEALTH_TOTALS_SQL, *scope.scope_args, start_24h, start_7d
+        )
         per_table: dict[str, list[Any]] = {}
         for table in (PIPELINE_RUNS_TABLE, EXTRACTION_RUNS_TABLE):
             per_table[table] = await scope.conn.fetch(
@@ -293,25 +376,14 @@ async def query_pipeline_health(
                 MAX_GROUP_ROWS,
             )
         cartridges = _merge_health_rows(per_table)
-        failures: list[dict[str, Any]] = []
-        for table, sql in _RECENT_FAILURES_SQL.items():
-            rows = await scope.conn.fetch(
-                sql, *scope.scope_args, start_7d, recent_limit
+        entities_per_table: dict[str, list[Any]] = {}
+        for table, sql in _FAILING_ENTITIES_SQL.items():
+            entities_per_table[table] = await scope.conn.fetch(
+                sql, *scope.scope_args, start_24h, start_7d, entities_limit
             )
-            failures.extend(
-                {
-                    "source": table,
-                    "cartridge_id": row["cartridge_id"],
-                    "source_ref": row["source_ref"],
-                    "entity": row["entity"],
-                    "finished_at": row["finished_at"] or row["started_at"],
-                    "error_message": row["error_message"],
-                }
-                for row in rows
-            )
-        failures.sort(key=lambda item: item["finished_at"] or now, reverse=True)
+        failing_entities = _merge_failing_entities(entities_per_table)[:entities_limit]
         totals = {
-            key: sum(item[key] for item in cartridges)
+            key: as_int(totals_row[key]) or 0
             for key in (
                 "failed_24h",
                 "success_24h",
@@ -320,12 +392,21 @@ async def query_pipeline_health(
                 "partial_7d",
             )
         }
+        cartridges_count = as_int(totals_row["cartridges_count"]) or 0
+        notes = [RUN_LOG_SOURCES_NOTE]
+        if cartridges_count > len(cartridges):
+            notes.append(
+                f"cartridges muestra {len(cartridges)} de {cartridges_count} cartuchos "
+                "(mayor numero de fallos primero); los totales cubren todos"
+            )
         filters = {
-            "window_24h_start": now - timedelta(hours=24),
+            "window_24h_start": start_24h,
             "window_7d_start": start_7d,
             "as_of": now,
             "workspace_id": scope.workspace_id,
             "tenant_id": scope.tenant_id,
+            "breakdown_limit": MAX_GROUP_ROWS,
+            "failing_entities_top_n": entities_limit,
         }
         return PipelineHealth(
             status=STATUS_READY,
@@ -333,16 +414,15 @@ async def query_pipeline_health(
                 _console_evidence(PIPELINE_RUNS_TABLE, filters=filters),
                 _console_evidence(EXTRACTION_RUNS_TABLE, filters=filters),
             ],
-            notes=[
-                "solo SuccessFactors espeja extraction_runs en pipeline_runs; "
-                "los conteos suman ambas tablas por cartucho"
-            ],
+            notes=notes,
             cartridges=cartridges,
             totals=totals,
-            cartridges_with_failures_24h=sum(
-                1 for item in cartridges if item["failed_24h"] > 0
-            ),
-            recent_failures=failures[:recent_limit],
+            cartridges_count=cartridges_count,
+            cartridges_with_failures_24h=as_int(
+                totals_row["cartridges_with_failures_24h"]
+            )
+            or 0,
+            failing_entities=failing_entities,
             **base,
         )
 
@@ -383,6 +463,7 @@ def resolve_sla_hours(sla_hours: float | None) -> tuple[float, str]:
 
 
 def _freshness_sql(table: str) -> str:
+    """Per-cartridge breakdown, stalest first, bounded by MAX_GROUP_ROWS."""
     return f"""
         -- omega-aggregate: operations.data_freshness.{table}
         SELECT cartridge_id,
@@ -392,9 +473,29 @@ def _freshness_sql(table: str) -> str:
          WHERE {CONSOLE_SCOPE_PREDICATE}
            AND status = 'success'
          GROUP BY cartridge_id
-         ORDER BY cartridge_id
+         ORDER BY last_success_at ASC NULLS FIRST, cartridge_id
          LIMIT $3
     """
+
+
+# Un-limited totals: how many cartridges have a visible success and how many of
+# them are older than the SLA threshold ($3 = as_of - sla_hours).
+_FRESHNESS_TOTALS_SQL = f"""
+    -- omega-aggregate: operations.data_freshness.totals
+    SELECT COUNT(*)::bigint AS cartridges_count,
+           COUNT(*) FILTER (WHERE last_success_at < $3)::bigint AS exceeding_sla
+      FROM (
+           SELECT cartridge_id, MAX(finished_at) AS last_success_at
+             FROM (
+                  SELECT cartridge_id, finished_at FROM extraction_runs
+                   WHERE {CONSOLE_SCOPE_PREDICATE} AND status = 'success'
+                  UNION ALL
+                  SELECT cartridge_id, finished_at FROM pipeline_runs
+                   WHERE {CONSOLE_SCOPE_PREDICATE} AND status = 'success'
+             ) runs
+            GROUP BY cartridge_id
+      ) per_cartridge
+"""
 
 
 async def query_data_freshness_by_cartridge(
@@ -417,6 +518,10 @@ async def query_data_freshness_by_cartridge(
         return DataFreshnessByCartridge(status=STATUS_UNAVAILABLE, error=error, **base)
 
     async def _compute(scope: ConsoleScope) -> DataFreshnessByCartridge:
+        sla_threshold = now - timedelta(hours=sla_value)
+        totals_row = await scope.conn.fetchrow(
+            _FRESHNESS_TOTALS_SQL, *scope.scope_args, sla_threshold
+        )
         merged: dict[str, dict[str, Any]] = {}
         for table in (EXTRACTION_RUNS_TABLE, PIPELINE_RUNS_TABLE):
             rows = await scope.conn.fetch(
@@ -455,13 +560,24 @@ async def query_data_freshness_by_cartridge(
                 item["cartridge_id"],
             )
         )
+        cartridges_count = as_int(totals_row["cartridges_count"]) or 0
+        notes = [RUN_LOG_SOURCES_NOTE]
+        if sla_source == "default":
+            notes.append("sla_hours no configurado: se usa el default de 24h")
+        if cartridges_count > len(cartridges):
+            notes.append(
+                f"cartridges muestra {len(cartridges)} de {cartridges_count} cartuchos "
+                "(mas desactualizados primero); exceeding_sla cubre todos"
+            )
         filters = {
             "status": "success",
             "as_of": now,
             "sla_hours": sla_value,
             "sla_source": sla_source,
+            "sla_threshold": sla_threshold,
             "workspace_id": scope.workspace_id,
             "tenant_id": scope.tenant_id,
+            "breakdown_limit": MAX_GROUP_ROWS,
         }
         return DataFreshnessByCartridge(
             status=STATUS_DEGRADED if sla_source == "default" else STATUS_READY,
@@ -469,14 +585,10 @@ async def query_data_freshness_by_cartridge(
                 _console_evidence(EXTRACTION_RUNS_TABLE, filters=filters),
                 _console_evidence(PIPELINE_RUNS_TABLE, filters=filters),
             ],
-            notes=(
-                ["sla_hours no configurado: se usa el default de 24h"]
-                if sla_source == "default"
-                else []
-            ),
+            notes=notes,
             cartridges=cartridges,
-            cartridges_count=len(cartridges),
-            exceeding_sla=sum(1 for item in cartridges if item["exceeds_sla"]),
+            cartridges_count=cartridges_count,
+            exceeding_sla=as_int(totals_row["exceeding_sla"]) or 0,
             **base,
         )
 
@@ -606,6 +718,11 @@ async def query_absence_rate_company_by_type(
             evidence.append(
                 gold_evidence(headcount_rel, filters={"snapshot": "current"})
             )
+            if not headcount:
+                notes.append(
+                    "headcount_by_department sin filas para el scope: absence_rate "
+                    "no calculable, solo dias de ausencia"
+                )
 
         working_days = business_days_in_month(period)
         total_days = as_float(totals["total_days_workable"]) or 0.0
@@ -624,9 +741,7 @@ async def query_absence_rate_company_by_type(
                 }
             )
         status = status_for(absence)
-        if headcount is None or (
-            headcount_rel is not None and headcount_rel.missing_required
-        ):
+        if not headcount:  # missing relation, missing column or zero rows
             status = STATUS_DEGRADED
         return AbsenceRateCompanyByType(
             status=status,

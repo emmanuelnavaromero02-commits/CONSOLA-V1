@@ -440,15 +440,12 @@ def _slippage_answers() -> dict:
             {"stage_name": "Negotiation", "deals": 4000, "amount": Decimal("900000")},
             {"stage_name": "Proposal", "deals": 2010, "amount": Decimal("334567.89")},
         ],
-        "risk.deal_slippage.top_deals": [
+        "risk.deal_slippage.by_reason": [
             {
-                "opportunity_name": "Big One",
-                "stage_name": "Negotiation",
-                "amount": Decimal("250000"),
-                "close_date": AS_OF - timedelta(days=12),
-                "days_overdue": 12,
-                "days_without_activity": 20,
                 "risk_reason": "cierre vencido",
+                "deals": 6010,
+                "amount": Decimal("1234567.89"),
+                "max_days_overdue": 45,
             }
         ],
     }
@@ -479,9 +476,15 @@ async def test_deal_slippage_ready(monkeypatch):
         "Negotiation",
         "Proposal",
     ]
-    assert result.top_deals[0]["opportunity_name"] == "Big One"
-    assert result.top_deals[0]["days_overdue"] == 12
-    assert "vendedor" not in result.top_deals[0]
+    assert result.by_reason == [
+        {
+            "risk_reason": "cierre vencido",
+            "deals": 6010,
+            "amount": 1234567.89,
+            "max_days_overdue": 45,
+        }
+    ]
+    assert not hasattr(result, "top_deals")  # aggregates only, never deal rows
     assert any("sin conversion de moneda" in note for note in result.notes)
 
     totals_sql = conn.sql_for("risk.deal_slippage.totals")
@@ -492,22 +495,24 @@ async def test_deal_slippage_ready(monkeypatch):
         in totals_sql
     )
     assert conn.args_for("risk.deal_slippage.totals") == (WORKSPACE_A, TENANT_A, AS_OF)
-    assert conn.args_for("risk.deal_slippage.top_deals") == (
+    assert conn.args_for("risk.deal_slippage.by_reason") == (
         WORKSPACE_A,
         TENANT_A,
         AS_OF,
         5,
     )
-    assert "ORDER BY amount DESC NULLS LAST" in conn.sql_for(
-        "risk.deal_slippage.top_deals"
+    reason_sql = conn.sql_for("risk.deal_slippage.by_reason")
+    assert "GROUP BY motivo_riesgo" in reason_sql
+    assert "ORDER BY amount DESC NULLS LAST" in reason_sql
+    executed = _all_sql(conn)
+    assert "vendedor" not in executed  # seller name never selected
+    assert "opportunity_name" not in executed  # no per-deal rows
+    assert "is_closed" not in executed  # dataset already filters it
+    assert all(
+        "GROUP BY" in conn.sql_for(m) for m in conn.markers() if "totals" not in m
     )
-    assert "vendedor" not in _all_sql(conn)  # seller name never selected
-    assert "is_closed" not in _all_sql(conn)  # dataset already filters it
     assert result.evidence_refs[0]["dataset"] == risk.DEALS_AT_RISK_DATASET
-    assert (
-        result.to_dict()["top_deals"][0]["close_date"]
-        == (AS_OF - timedelta(days=12)).isoformat()
-    )
+    assert result.to_dict()["as_of"] == AS_OF.isoformat()
 
 
 @pytest.mark.asyncio
@@ -516,8 +521,7 @@ async def test_deal_slippage_degrades_without_amount_and_stage(monkeypatch):
     totals = answers["risk.deal_slippage.totals"]
     for key in ("amount_total", "amount_1_30", "amount_31_60", "amount_over_60"):
         totals[key] = None
-    answers["risk.deal_slippage.top_deals"][0]["amount"] = None
-    answers["risk.deal_slippage.top_deals"][0]["stage_name"] = None
+    answers["risk.deal_slippage.by_reason"][0]["amount"] = None
     conn = FakeConn(
         datasets={
             risk.DEALS_AT_RISK_DATASET: FakeGoldDataset(
@@ -544,8 +548,11 @@ async def test_deal_slippage_degrades_without_amount_and_stage(monkeypatch):
     totals_sql = conn.sql_for("risk.deal_slippage.totals")
     assert "NULL::float8 AS amount_total" in totals_sql
     assert "SUM(amount)" not in totals_sql
-    assert "ORDER BY days_overdue DESC" in conn.sql_for("risk.deal_slippage.top_deals")
-    assert conn.args_for("risk.deal_slippage.top_deals")[-1] == MAX_GROUP_ROWS
+    reason_sql = conn.sql_for("risk.deal_slippage.by_reason")
+    assert "ORDER BY deals DESC NULLS LAST" in reason_sql
+    assert "NULL::float8 AS amount" in reason_sql
+    assert conn.args_for("risk.deal_slippage.by_reason")[-1] == MAX_GROUP_ROWS
+    assert result.by_reason[0]["amount"] is None
 
 
 @pytest.mark.asyncio

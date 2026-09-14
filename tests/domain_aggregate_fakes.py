@@ -62,8 +62,14 @@ class FakeGoldDataset:
         published_at: Any = None,
         regclass: bool = True,
         head: bool = True,
+        tenant_id: str = TENANT_A,
+        workspace_id: str = WORKSPACE_A,
     ) -> None:
         self.name = name
+        # A head is keyed by (tenant, workspace, dataset, layer): the fake only
+        # answers for its own scope, like the real ledger.
+        self.tenant_id = tenant_id
+        self.workspace_id = workspace_id
         if isinstance(columns, dict):
             self.columns = dict(columns)
         else:
@@ -160,11 +166,22 @@ class FakeConn:
     async def fetchrow(self, sql: str, *args: Any) -> Any:
         self.calls.append(("fetchrow", sql, args))
         if "dataset_publication_heads" in sql and "materialization_runs" in sql:
-            dataset = self.datasets.get(str(args[2]))
-            if dataset is None or not dataset.head:
-                return None
-            return dataset.heads_row()
+            dataset = self._head_for(args)
+            return dataset.heads_row() if dataset is not None else None
         return self._answer(sql, args)
+
+    def _head_for(self, args: tuple[Any, ...]) -> FakeGoldDataset | None:
+        """Resolve a head exactly like the ledger: (tenant_id, workspace_id, dataset)."""
+        tenant_id, workspace_id, dataset_name = args[0], args[1], args[2]
+        dataset = self.datasets.get(str(dataset_name))
+        if dataset is None or not dataset.head:
+            return None
+        if (dataset.tenant_id, dataset.workspace_id) != (
+            str(tenant_id),
+            str(workspace_id),
+        ):
+            return None
+        return dataset
 
     async def fetchval(self, sql: str, *args: Any) -> Any:
         self.calls.append(("fetchval", sql, args))
@@ -174,8 +191,8 @@ class FakeConn:
                     return dataset.relation_sql if dataset.regclass else None
             return None
         if "published_at" in sql and "dataset_publication_heads" in sql:
-            dataset = self.datasets.get(str(args[2]))
-            return dataset.published_at if dataset else None
+            dataset = self._head_for(args)
+            return dataset.published_at if dataset is not None else None
         return self._answer(sql, args)
 
     async def fetch(self, sql: str, *args: Any) -> Any:

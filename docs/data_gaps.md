@@ -54,9 +54,13 @@ el mismo `CASE`.
   quedan `scope_status='legacy_unscoped'` e invisibles para sesiones con
   workspace activo; `operations.pipeline_health` y `data_freshness` no las ven.
 - Solo el cartucho SuccessFactors espeja `extraction_runs` en `pipeline_runs`
-  (`runlog_service.py` + `infra/init/99zzw`); los demás escriben únicamente en
-  `extraction_runs`. Los agregados de Operations leen ambas tablas por eso.
-- Los datasets snapshot (`absence_by_type_and_month`, `headcount_by_*`,
-  `workforce_cost_monthly`) se calculan con `CURRENT_DATE` en la
-  materialización; la ventana "último mes" depende del `published_at` del head
-  y viaja en `evidence_refs`.
+  (`runlog_service.py` + `infra/init/99zzw`); Replicon escribe `pipeline_runs`
+  directamente vía mcp-infra desde el DAG `replicon_ses_inbox_import.py`; los
+  demás cartuchos escriben únicamente en `extraction_runs`. Los agregados de
+  Operations leen ambas tablas por eso.
+- `headcount_by_department` y `workforce_cost_monthly` son snapshots
+  calculados con `CURRENT_DATE` en la materialización (el denominador de
+  `absence_rate_company_by_type` es el headcount actual, no el del mes
+  analizado); `absence_by_type_and_month` sí es un histórico mensual completo.
+  La fecha del snapshot depende del `published_at` del head y viaja en
+  `evidence_refs`.

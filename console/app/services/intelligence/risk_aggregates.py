@@ -59,9 +59,9 @@ EMPLOYMENT_END_SENTINEL_DATE = date(2030, 1, 1)
 EXPIRY_WINDOWS_DAYS = (30, 60, 90)
 
 _RETENTION_REQUIRED = frozenset({"risk_band"})
-_RETENTION_OPTIONAL = frozenset(
-    {"retention_risk_score", "invalid_score_input", "department_name", "status"}
-)
+# Only columns the SQL below actually uses: a missing optional column must mean
+# the metric really lost something (avg score, department breakdown).
+_RETENTION_OPTIONAL = frozenset({"retention_risk_score", "department_name"})
 _ACTION_REQUIRED = frozenset({"action_id", "affected_count"})
 _ACTION_OPTIONAL = frozenset({"severity"})
 
@@ -376,7 +376,7 @@ class DealSlippage(AggregateResult):
     amount_total: float | None = None
     buckets: dict[str, dict[str, Any]] = field(default_factory=dict)
     by_stage: list[dict[str, Any]] = field(default_factory=list)
-    top_deals: list[dict[str, Any]] = field(default_factory=list)
+    by_reason: list[dict[str, Any]] = field(default_factory=list)
 
 
 async def query_deal_slippage(
@@ -439,7 +439,7 @@ async def query_deal_slippage(
         notes = list(DEAL_SLIPPAGE_NOTES)
         if not has_amount:
             notes.append(
-                "amount ausente: montos no calculables, top_deals ordenado por dias vencidos"
+                "amount ausente: montos no calculables, desgloses ordenados por numero de deals"
             )
 
         by_stage: list[dict[str, Any]] = []
@@ -468,22 +468,35 @@ async def query_deal_slippage(
         else:
             notes.append("stage_name ausente: sin desglose por etapa")
 
-        top_sql = f"""
-            -- omega-aggregate: risk.deal_slippage.top_deals
-            SELECT {rel.expr("opportunity_name", "opportunity_name", "NULL::text")} AS opportunity_name,
-                   {rel.expr("stage_name", "stage_name", "NULL::text")} AS stage_name,
-                   {rel.expr("amount", "amount::float8", "NULL::float8")} AS amount,
-                   close_date::date AS close_date,
-                   {overdue_days}::int AS days_overdue,
-                   {rel.expr("dias_sin_actividad", "dias_sin_actividad::int", "NULL::int")} AS days_without_activity,
-                   {rel.expr("motivo_riesgo", "motivo_riesgo", "NULL::text")} AS risk_reason
-              FROM {rel.sql}
-             WHERE {GOLD_SCOPE_PREDICATE}
-               AND close_date::date < $3::date
-             ORDER BY {"amount DESC NULLS LAST, days_overdue DESC" if has_amount else "days_overdue DESC"}
-             LIMIT $4
-        """
-        top_rows = await scope.conn.fetch(top_sql, *scope.scope_args, today, top_n)
+        # No per-deal rows leave this function (owner rule: aggregates only);
+        # the slippage story is told by buckets, stages and risk reasons.
+        by_reason: list[dict[str, Any]] = []
+        if rel.has("motivo_riesgo"):
+            reason_sql = f"""
+                -- omega-aggregate: risk.deal_slippage.by_reason
+                SELECT motivo_riesgo AS risk_reason,
+                       COUNT(*)::bigint AS deals,
+                       {amount_sum} AS amount,
+                       MAX({overdue_days})::int AS max_days_overdue
+                  FROM {rel.sql}
+                 WHERE {GOLD_SCOPE_PREDICATE}
+                   AND close_date::date < $3::date
+                 GROUP BY motivo_riesgo
+                 ORDER BY {"amount" if has_amount else "deals"} DESC NULLS LAST, risk_reason
+                 LIMIT $4
+            """
+            rows = await scope.conn.fetch(reason_sql, *scope.scope_args, today, top_n)
+            by_reason = [
+                {
+                    "risk_reason": row["risk_reason"],
+                    "deals": as_int(row["deals"]),
+                    "amount": as_float(row["amount"]),
+                    "max_days_overdue": as_int(row["max_days_overdue"]),
+                }
+                for row in rows
+            ]
+        else:
+            notes.append("motivo_riesgo ausente: sin desglose por motivo de riesgo")
         return DealSlippage(
             status=status_for(rel),
             evidence_refs=[
@@ -515,18 +528,7 @@ async def query_deal_slippage(
                 },
             },
             by_stage=by_stage,
-            top_deals=[
-                {
-                    "opportunity_name": row["opportunity_name"],
-                    "stage_name": row["stage_name"],
-                    "amount": as_float(row["amount"]),
-                    "close_date": row["close_date"],
-                    "days_overdue": as_int(row["days_overdue"]),
-                    "days_without_activity": as_int(row["days_without_activity"]),
-                    "risk_reason": row["risk_reason"],
-                }
-                for row in top_rows
-            ],
+            by_reason=by_reason,
             **base,
         )
 

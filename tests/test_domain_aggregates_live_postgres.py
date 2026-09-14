@@ -625,9 +625,14 @@ async def test_deal_slippage_counts_all_rows_beyond_the_preview_cap(gold_dsn):
         "Negotiation": POPULATION,
         "Proposal": EXTRA,
     }
-    assert len(result.top_deals) == 3
-    assert result.top_deals[0]["amount"] == 1000.0
-    assert "vendedor" not in result.top_deals[0]
+    assert result.by_reason == [
+        {
+            "risk_reason": "cierre vencido",
+            "deals": POPULATION + EXTRA,
+            "amount": float(POPULATION * 100 + EXTRA * 1000),
+            "max_days_overdue": 45,
+        }
+    ]
     assert (
         result.evidence_refs[0]["relation"]
         == '"public"."gold_salesforce_deals_en_riesgo"'
@@ -826,15 +831,28 @@ async def test_pipeline_health_over_console_run_logs(console_pool):
     assert hcm["failed_24h"] == 2
     assert hcm["success_24h"] == 1
     assert "salesforce" not in by_cartridge  # unscoped rows are invisible
-    assert result.totals["failed_24h"] == 4
+    assert result.totals == {
+        "failed_24h": 4,
+        "success_24h": 3,  # p3, e3, e4
+        "failed_7d": 5,  # p1, p2, p4, e1, e2
+        "success_7d": 5,  # p3, p5, p7, e3, e4
+        "partial_7d": 0,
+    }
+    assert result.cartridges_count == 3
     assert result.cartridges_with_failures_24h == 2
-    assert result.recent_failures[0]["cartridge_id"] == "sap_hcm"
-    assert result.recent_failures[0]["error_message"] == "401"
-    assert all(
-        row["cartridge_id"] != "sap_successfactors"
-        or row["error_message"] != "other tenant"
-        for row in result.recent_failures
-    )
+    # Aggregated by (cartridge, entity); PA0001 and EmpJob both failed twice,
+    # PA0001 more recently. No error text, no run rows, no other tenant.
+    assert [
+        (row["cartridge_id"], row["entity"]) for row in result.failing_entities
+    ] == [
+        ("sap_hcm", "PA0001"),
+        ("sap_successfactors", "EmpJob"),
+        ("sap_successfactors", "PerPerson"),
+    ]
+    assert result.failing_entities[0]["failures_7d"] == 2
+    assert result.failing_entities[0]["failures_24h"] == 2
+    assert result.failing_entities[2]["failures_24h"] == 0
+    assert all("error_message" not in row for row in result.failing_entities)
 
     isolated = await query_pipeline_health(_user(TENANT_B, WORKSPACE_B), as_of=NOW)
     assert isolated.status == "ready", isolated.error
@@ -860,7 +878,11 @@ async def test_data_freshness_by_cartridge_over_console_run_logs(console_pool):
     assert by_cartridge["sap_hcm"]["hours_since_success"] == 1.0
     assert by_cartridge["replicon"]["hours_since_success"] == 30.0
     assert by_cartridge["replicon"]["exceeds_sla"] is True
-    assert result.exceeding_sla == 1
+    assert result.exceeding_sla == 1  # from the un-limited totals query
+    assert result.cartridges_count == 3
+    assert [row["cartridge_id"] for row in result.cartridges][
+        0
+    ] == "replicon"  # stalest first
     assert "salesforce" not in by_cartridge
 
     unscoped = await query_data_freshness_by_cartridge(

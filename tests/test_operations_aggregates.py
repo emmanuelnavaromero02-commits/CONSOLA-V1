@@ -88,25 +88,40 @@ def _health_answers() -> dict:
                 "last_failed_at": NOW - timedelta(hours=2),
             },
         ],
-        "operations.pipeline_health.recent_failures.pipeline_runs": [
+        # Un-limited totals (UNION ALL over both tables) drive the headline numbers.
+        "operations.pipeline_health.totals": {
+            "failed_24h": 6,
+            "success_24h": 11,
+            "failed_7d": 12,
+            "success_7d": 69,
+            "partial_7d": 1,
+            "cartridges_count": 3,
+            "cartridges_with_failures_24h": 2,
+        },
+        "operations.pipeline_health.failing_entities.pipeline_runs": [
             {
                 "cartridge_id": "sap_successfactors",
-                "source_ref": "sf_extract",
                 "entity": "EmpJob",
-                "finished_at": NOW - timedelta(hours=3),
-                "started_at": NOW - timedelta(hours=4),
-                "error_message": "timeout",
+                "failures_7d": 4,
+                "failures_24h": 2,
+                "last_failed_at": NOW - timedelta(hours=3),
             }
         ],
-        "operations.pipeline_health.recent_failures.extraction_runs": [
+        "operations.pipeline_health.failing_entities.extraction_runs": [
             {
                 "cartridge_id": "sap_hcm",
-                "source_ref": "incremental",
                 "entity": "PA0001",
-                "finished_at": None,
-                "started_at": NOW - timedelta(hours=2),
-                "error_message": "401 unauthorized",
-            }
+                "failures_7d": 6,
+                "failures_24h": 3,
+                "last_failed_at": NOW - timedelta(hours=2),
+            },
+            {
+                "cartridge_id": "sap_successfactors",
+                "entity": "EmpJob",
+                "failures_7d": 2,
+                "failures_24h": 1,
+                "last_failed_at": NOW - timedelta(hours=1),
+            },
         ],
     }
 
@@ -139,6 +154,7 @@ async def test_pipeline_health_merges_both_run_tables(monkeypatch):
         "sap_hcm",
         "sap_successfactors",
     ]
+    # Headline numbers come from the un-limited totals row, not from the breakdown.
     assert result.totals == {
         "failed_24h": 6,
         "success_24h": 11,
@@ -146,12 +162,44 @@ async def test_pipeline_health_merges_both_run_tables(monkeypatch):
         "success_7d": 69,
         "partial_7d": 1,
     }
+    assert result.cartridges_count == 3
     assert result.cartridges_with_failures_24h == 2
-    assert [item["cartridge_id"] for item in result.recent_failures] == [
-        "sap_hcm",
-        "sap_successfactors",
+    totals_sql = conn.sql_for("operations.pipeline_health.totals")
+    assert "UNION ALL" in totals_sql
+    assert "COUNT(DISTINCT cartridge_id)" in totals_sql
+    assert "LIMIT" not in totals_sql
+    assert conn.args_for("operations.pipeline_health.totals") == (
+        WORKSPACE_A,
+        TENANT_A,
+        NOW - timedelta(hours=24),
+        NOW - timedelta(days=7),
+    )
+    # Failing entities are merged across tables and aggregated (no run rows, no error text).
+    assert [
+        (item["cartridge_id"], item["entity"]) for item in result.failing_entities
+    ] == [
+        ("sap_successfactors", "EmpJob"),
+        ("sap_hcm", "PA0001"),
     ]
-    assert result.recent_failures[0]["finished_at"] == NOW - timedelta(hours=2)
+    assert result.failing_entities[0]["failures_7d"] == 6
+    assert result.failing_entities[0]["failures_24h"] == 3
+    assert result.failing_entities[0]["last_failed_at"] == NOW - timedelta(hours=1)
+    assert result.failing_entities[0]["sources"] == ["pipeline_runs", "extraction_runs"]
+    assert "error_message" not in result.failing_entities[0]
+    entities_sql = conn.sql_for(
+        "operations.pipeline_health.failing_entities.extraction_runs"
+    )
+    assert "GROUP BY cartridge_id, entity_name" in entities_sql
+    assert "error_message" not in entities_sql
+    assert conn.args_for(
+        "operations.pipeline_health.failing_entities.extraction_runs"
+    ) == (
+        WORKSPACE_A,
+        TENANT_A,
+        NOW - timedelta(hours=24),
+        NOW - timedelta(days=7),
+        10,
+    )
 
     # console scope: pool, repeatable_read readonly, GUCs via scoped_db, uuid predicate
     assert pool.acquired == 1
@@ -169,10 +217,6 @@ async def test_pipeline_health_merges_both_run_tables(monkeypatch):
         NOW - timedelta(hours=24),
         NOW - timedelta(days=7),
         MAX_GROUP_ROWS,
-    )
-    assert (
-        conn.args_for("operations.pipeline_health.recent_failures.extraction_runs")[-1]
-        == 10
     )
     assert {ref["table"] for ref in result.evidence_refs} == {
         "pipeline_runs",
@@ -265,6 +309,8 @@ def _freshness_answers() -> dict:
                 "success_runs": 12,
             },
         ],
+        # Un-limited totals: cartridges with a success and those older than the SLA.
+        "operations.data_freshness.totals": {"cartridges_count": 3, "exceeding_sla": 2},
     }
 
 
@@ -295,7 +341,16 @@ async def test_data_freshness_by_cartridge_with_param_sla(monkeypatch):
     ]
     assert result.exceeding_sla == 2
     assert result.cartridges_count == 3
+    totals_sql = conn.sql_for("operations.data_freshness.totals")
+    assert "UNION ALL" in totals_sql and "LIMIT" not in totals_sql
+    assert "last_success_at < $3" in totals_sql
+    assert conn.args_for("operations.data_freshness.totals") == (
+        WORKSPACE_A,
+        TENANT_A,
+        NOW - timedelta(hours=24),
+    )
     sql = conn.sql_for("operations.data_freshness.extraction_runs")
+    assert "ORDER BY last_success_at ASC NULLS FIRST" in sql
     assert "status = 'success'" in sql
     assert (
         "workspace_id = $1::uuid AND ($2::uuid IS NULL OR tenant_id = $2::uuid)" in sql
@@ -320,13 +375,24 @@ async def test_data_freshness_default_sla_is_degraded_and_env_wins(monkeypatch):
     assert any("default de 24h" in note for note in result.notes)
 
     monkeypatch.setenv(ops.FRESHNESS_SLA_ENV, "72")
-    conn = FakeConn(answers=_freshness_answers())
+    answers = _freshness_answers()
+    answers["operations.data_freshness.totals"] = {
+        "cartridges_count": 3,
+        "exceeding_sla": 1,
+    }
+    conn = FakeConn(answers=answers)
     install_console_pool(monkeypatch, ops, conn)
     result = await ops.query_data_freshness_by_cartridge(user_for(), as_of=NOW)
     assert result.status == "ready"
     assert result.sla_source == "env"
     assert result.sla_hours == 72.0
     assert result.exceeding_sla == 1  # only sap_successfactors (100h)
+    assert conn.args_for("operations.data_freshness.totals")[-1] == NOW - timedelta(
+        hours=72
+    )
+    by_cartridge = {item["cartridge_id"]: item for item in result.cartridges}
+    assert by_cartridge["replicon"]["exceeds_sla"] is False
+    assert by_cartridge["sap_successfactors"]["exceeds_sla"] is True
 
 
 # ── O3 absence rate (Gold) ──────────────────────────────────────────────────
@@ -431,6 +497,35 @@ async def test_absence_rate_degrades_without_headcount_dataset(monkeypatch):
     assert result.by_type[0]["rate"] is None
     assert any("headcount_by_department no disponible" in note for note in result.notes)
     assert "operations.absence_rate.headcount" not in conn.markers()
+
+
+@pytest.mark.asyncio
+async def test_absence_rate_degrades_when_headcount_is_zero(monkeypatch):
+    answers = _absence_answers()
+    answers["operations.absence_rate.headcount"] = (
+        0  # relation published, no rows in scope
+    )
+    conn = FakeConn(
+        datasets={
+            "absence_by_type_and_month": FakeGoldDataset(
+                "absence_by_type_and_month", ABSENCE_COLUMNS
+            ),
+            "headcount_by_department": FakeGoldDataset(
+                "headcount_by_department", HEADCOUNT_COLUMNS
+            ),
+        },
+        answers=answers,
+    )
+    install_gold_connect(monkeypatch, conn)
+
+    result = await ops.query_absence_rate_company_by_type(user_for(), as_of=AS_OF)
+
+    assert result.status == "degraded"
+    assert result.headcount == 0
+    assert result.absence_rate is None
+    assert result.total_days_workable == 210.0
+    assert result.by_type[0]["rate"] is None
+    assert any("sin filas para el scope" in note for note in result.notes)
 
 
 @pytest.mark.asyncio
