@@ -370,10 +370,10 @@ jobs:
       - name: Preload exact MinIO image for pull-never release tests
         run: |
           set -euo pipefail
-          minio_tag="minio/minio:RELEASE.2024-12-18T13-15-44Z"
+          minio_tag="quay.io/minio/minio:RELEASE.2024-12-18T13-15-44Z"
           minio_digest="sha256:1dce27c494a16bae114774f1cec295493f3613142713130c2d22dd5696be6ad3"
           minio_ref="${minio_tag}@${minio_digest}"
-          minio_repo_digest="minio/minio@${minio_digest}"
+          minio_repo_digest="quay.io/minio/minio@${minio_digest}"
           docker pull "${minio_ref}"
           docker tag "${minio_ref}" "${minio_tag}"
           docker image inspect --format '{{json .RepoDigests}}' "${minio_ref}" \

@@ -66,7 +66,7 @@ jobs:
           set -euo pipefail
           docker pull postgres:15
           docker image inspect postgres:15 >/dev/null
-          minio_tag="minio/minio:RELEASE.2024-12-18T13-15-44Z"
+          minio_tag="quay.io/minio/minio:RELEASE.2024-12-18T13-15-44Z"
           minio_digest="sha256:1dce27c494a16bae114774f1cec295493f3613142713130c2d22dd5696be6ad3"
           minio_ref="${minio_tag}@${minio_digest}"
           docker pull "${minio_ref}"
