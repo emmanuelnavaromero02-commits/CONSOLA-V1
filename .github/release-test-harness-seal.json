@@ -3450,6 +3450,10 @@
       "sha256": "034e0515d2e4251526eea912e76d7e81461fa2ccc95a24426740dd607e9adc99"
     },
     {
+      "path": "tests/domain_aggregate_fakes.py",
+      "sha256": "0e739a34588ff619c20e9ecccfc8f699fbb52ccb5ee3d7749ca8bf86e1e1b89f"
+    },
+    {
       "path": "tests/e2e/__init__.py",
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
@@ -4330,6 +4334,18 @@
       "sha256": "4bd350cb2eb65ae063c9f880e281412341f5adff495be5d50e87bc6c79a6ec1d"
     },
     {
+      "path": "tests/test_domain_aggregates_common_paths.py",
+      "sha256": "3fb76733e9eb24f2924e1839a9cd21a53f243b2cafd58944de34a5911102ca47"
+    },
+    {
+      "path": "tests/test_domain_aggregates_contract.py",
+      "sha256": "df66eb019abf5bfd7a3f3484a3902b5724c0f5db44e2bc19ccbf75a175f53f4a"
+    },
+    {
+      "path": "tests/test_domain_aggregates_live_postgres.py",
+      "sha256": "6d90f6202c50c7727c6695632eb38a7f023cb68210f1372f60897766784de71a"
+    },
+    {
       "path": "tests/test_draft_sender.py",
       "sha256": "39a430558219fdf147bce2a27727a0a31a83a491bd967c675df2c28eb850ebe0"
     },
@@ -4432,6 +4448,10 @@
     {
       "path": "tests/test_f217_transition_bridge_red.py",
       "sha256": "38656032fa8183df3cc7c65f50fed57c21055f197013e7e3f15adca54709e149"
+    },
+    {
+      "path": "tests/test_finance_aggregates.py",
+      "sha256": "8a81a316101ce5c0dd247f66f55c7ed485b4956d6e4e534f3114d46af1b54883"
     },
     {
       "path": "tests/test_freshness_endpoint.py",
@@ -4826,6 +4846,10 @@
       "sha256": "6b709d5632fe1a789de0101f42a3822a956491a26c5b3e099e2cb8a9dd886daf"
     },
     {
+      "path": "tests/test_operations_aggregates.py",
+      "sha256": "f109400aace1392653b3e6e75099ff7f1d75e1dbd97b2fe3f582777728715404"
+    },
+    {
       "path": "tests/test_operations_shape_contract.py",
       "sha256": "55c822fa987dae699978348a18a0ec5bc48b87c2dc73417ce06c0a5e52417c59"
     },
@@ -5124,6 +5148,10 @@
     {
       "path": "tests/test_request_rate_limits.py",
       "sha256": "351ed5f83a2258ec92e01f17b0516f50ec26dc89f8158e0c3c23aa9488dfeadf"
+    },
+    {
+      "path": "tests/test_risk_aggregates.py",
+      "sha256": "de4e3ff733cde950cc538b0684bc5104ed725b65d4a2768cfbb338a4ab3e4585"
     },
     {
       "path": "tests/test_rls_real_duckdb.py",
