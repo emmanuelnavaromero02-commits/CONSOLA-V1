@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from app.domains.agentops import domain_monitors
+from app.domains.agentops import domain_monitor_support, domain_monitors
 from app.services import sync_progress
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def run_sync_agentops_monitors(
@@ -27,6 +30,29 @@ async def run_sync_agentops_monitors(
     schedule_key = sync_agentops.sync_agentops_schedule_key(sync_run_id)
     if cartridge == "sap_successfactors":
         await ensure_successfactors_talent_monitor(user)
+    # Mission 4: the same repair Talent gets, for the three domain monitors. Their
+    # rows come from a one-shot infra/init seed, so a workspace created after that
+    # migration ran would otherwise have no monitor row at all and nothing would
+    # ever create one. Imported here rather than injected because, unlike Talent's,
+    # this helper has no test seam that needs to replace it.
+    domain_specs = [
+        spec
+        for spec in domain_monitors.DOMAIN_MONITOR_SPECS
+        if spec.cartridge_id == cartridge
+    ]
+    if domain_specs:
+        from app.services import auth as _auth
+        from app.services.security_context import (
+            build_security_context as _build_security_context,
+        )
+    for spec in domain_specs:
+        await domain_monitor_support.ensure_domain_monitor(
+            user,
+            spec,
+            get_db_pool=_auth.pool,
+            build_security_context=_build_security_context,
+            logger=_LOGGER,
+        )
     agents = await list_agents(
         cartridge_id=cartridge,
         include_inactive=False,

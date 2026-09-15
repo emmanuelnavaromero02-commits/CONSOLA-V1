@@ -16,8 +16,11 @@ the SQL as text rather than running it.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
+
+import pytest
 
 from app.domains.agentops.domain_monitors import DOMAIN_MONITOR_SPECS
 from app.domains.agentops.domain_monitor_support import build_contract
@@ -203,3 +206,170 @@ def test_memory_table_migration_is_append_only_and_scoped() -> None:
     assert "omega_mcp_infra" in sql
     # The finding_type vocabulary is a database invariant, not a convention.
     assert "'data_gap', 'error', 'insight', 'warning'" in sql
+
+
+# ── runtime provisioning, and the two allowlists a new domain must join ──────
+
+
+class _RecordingConn:
+    """Records the SQL ensure_domain_monitor issues, in order."""
+
+    def __init__(self, *, update_rows: int) -> None:
+        self.update_rows = update_rows
+        self.statements: list[str] = []
+
+    async def execute(self, sql: str, *args):
+        self.statements.append(sql)
+        if "UPDATE agents" in sql:
+            return f"UPDATE {self.update_rows}"
+        return "INSERT 0 1"
+
+    def transaction(self, **kwargs):
+        return _NullCtx()
+
+
+class _NullCtx:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _Pool:
+    def __init__(self, conn: _RecordingConn) -> None:
+        self._conn = conn
+
+    def acquire(self):
+        return _Acquire(self._conn)
+
+
+class _Acquire:
+    def __init__(self, conn: _RecordingConn) -> None:
+        self._conn = conn
+
+    async def __aenter__(self):
+        return self._conn
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+def _ctx(tenant: str | None = "11111111-1111-4111-8111-111111111111",
+         workspace: str | None = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"):
+    def build(_user):
+        return {"tenant_id": tenant, "workspace_id": workspace}
+
+    return build
+
+
+@pytest.mark.asyncio
+async def test_ensure_updates_an_existing_row_without_inserting() -> None:
+    from app.domains.agentops.domain_monitor_support import ensure_domain_monitor
+
+    conn = _RecordingConn(update_rows=1)
+
+    async def pool():
+        return _Pool(conn)
+
+    await ensure_domain_monitor(
+        {}, DOMAIN_MONITOR_SPECS[0],
+        get_db_pool=pool, build_security_context=_ctx(), logger=logging.getLogger(),
+    )
+    # The RLS GUCs are set inside the transaction, before touching agents.
+    assert "set_config('app.tenant_id'" in conn.statements[0]
+    assert any("UPDATE agents" in sql for sql in conn.statements)
+    assert not any("INSERT INTO agents" in sql for sql in conn.statements)
+
+
+@pytest.mark.asyncio
+async def test_ensure_inserts_when_the_row_is_missing() -> None:
+    from app.domains.agentops.domain_monitor_support import ensure_domain_monitor
+
+    conn = _RecordingConn(update_rows=0)
+
+    async def pool():
+        return _Pool(conn)
+
+    await ensure_domain_monitor(
+        {}, DOMAIN_MONITOR_SPECS[0],
+        get_db_pool=pool, build_security_context=_ctx(), logger=logging.getLogger(),
+    )
+    assert any("INSERT INTO agents" in sql for sql in conn.statements)
+    # The INSERT guards itself, so two concurrent callers cannot both insert.
+    insert = next(sql for sql in conn.statements if "INSERT INTO agents" in sql)
+    assert "WHERE NOT EXISTS" in insert
+
+
+@pytest.mark.asyncio
+async def test_ensure_is_a_no_op_without_workspace_scope() -> None:
+    from app.domains.agentops.domain_monitor_support import ensure_domain_monitor
+
+    conn = _RecordingConn(update_rows=1)
+
+    async def pool():  # pragma: no cover - must never be reached
+        raise AssertionError("the pool must not be opened without scope")
+
+    await ensure_domain_monitor(
+        {}, DOMAIN_MONITOR_SPECS[0],
+        get_db_pool=pool, build_security_context=_ctx(workspace=None),
+        logger=logging.getLogger(),
+    )
+    assert conn.statements == []
+
+
+@pytest.mark.asyncio
+async def test_ensure_fails_open_and_logs() -> None:
+    from app.domains.agentops.domain_monitor_support import ensure_domain_monitor
+
+    class _Logger:
+        def __init__(self) -> None:
+            self.warnings: list[tuple] = []
+
+        def warning(self, *args, **kwargs) -> None:
+            self.warnings.append(args)
+
+    async def pool():
+        raise RuntimeError("database is gone")
+
+    logger = _Logger()
+    # A broken database must leave the row unrepaired and log, never break the
+    # caller: this runs inside a sync that is doing other useful work.
+    await ensure_domain_monitor(
+        {}, DOMAIN_MONITOR_SPECS[0],
+        get_db_pool=pool, build_security_context=_ctx(), logger=logger,
+    )
+    assert logger.warnings
+
+
+def test_sync_now_repairs_the_domain_monitors_for_its_cartridge() -> None:
+    source = (ROOT / "console/app/domains/pipeline/agentops_refresh.py").read_text(
+        encoding="utf-8"
+    )
+    # The rows come from a one-shot migration, so a workspace created later needs
+    # this call or its monitors never fire.
+    assert "ensure_domain_monitor(" in source
+    assert "spec.cartridge_id == cartridge" in source
+    # And the AgentOps step must no longer be gated on the SuccessFactors literal.
+    assert "AGENTOPS_MONITOR_CARTRIDGES" in source
+    assert 'if cartridge == "sap_successfactors":\n        can_run_agentops' not in source
+
+
+def test_every_monitor_domain_is_in_the_control_room_label_allowlist() -> None:
+    from app.schemas.control_room_summary_responses import _DOMAIN_LABELS
+
+    # _count_breakdown drops any key that is not in this map, so a domain missing
+    # here means the monitor's alerts are counted and then vanish from the summary.
+    for spec in DOMAIN_MONITOR_SPECS:
+        assert spec.domain.lower() in _DOMAIN_LABELS, spec.domain
+        assert _DOMAIN_LABELS[spec.domain.lower()] == spec.domain
+
+
+def test_the_write_tool_returns_a_name_not_a_slug() -> None:
+    source = (ROOT / "mcp-infra/app/tools/control_room.py").read_text(encoding="utf-8")
+    body = source.split("async def control_room__agent_memory_write(", 1)[1].split(
+        "\n@tool(", 1
+    )[0]
+    # Attribution travels as a display name on both sides of the boundary.
+    assert '"agent_name": scope["agent_name"] or None' in body
+    assert 'scope["agent_slug"]' not in body

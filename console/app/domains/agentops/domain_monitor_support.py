@@ -34,6 +34,7 @@ Three runtime facts shaped the defaults below, all of them verified in
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -381,6 +382,123 @@ def needs_runtime_repair(agent: Any, spec: DomainMonitorSpec) -> bool:
     return not (isinstance(schedule, dict) and str(schedule.get("cron") or "").strip())
 
 
+
+
+# ── runtime provisioning ─────────────────────────────────────────────────────
+
+# Same SQL shape as ensure_successfactors_talent_monitor: UPDATE the row if it is
+# there, INSERT it if the UPDATE touched nothing. The INSERT is guarded by its own
+# NOT EXISTS so two concurrent callers cannot both insert.
+_UPDATE_SQL = """
+    UPDATE agents
+       SET name = $4,
+           description = $5,
+           instructions = $6,
+           personality = $7,
+           allowed_tools = $8::jsonb,
+           rag_filter = $9::jsonb,
+           model = $10,
+           max_tokens = $11,
+           temperature = $12,
+           extra = $13::jsonb,
+           is_active = TRUE,
+           updated_at = NOW()
+     WHERE tenant_id = $1::uuid
+       AND workspace_id = $2::uuid
+       AND cartridge_id = $14
+       AND slug = $3
+"""
+
+_INSERT_SQL = """
+    INSERT INTO agents (
+        tenant_id, workspace_id, cartridge_id, slug, name, description,
+        instructions, personality, allowed_tools, rag_filter, model,
+        max_tokens, temperature, extra, is_active
+    )
+    SELECT
+        $1::uuid, $2::uuid, $14, $3, $4, $5,
+        $6, $7, $8::jsonb, $9::jsonb, $10,
+        $11, $12, $13::jsonb, TRUE
+    WHERE NOT EXISTS (
+        SELECT 1
+          FROM agents
+         WHERE workspace_id = $2::uuid
+           AND cartridge_id = $14
+           AND slug = $3
+    )
+"""
+
+
+async def ensure_domain_monitor(
+    user: dict | None,
+    spec: DomainMonitorSpec,
+    *,
+    get_db_pool: Any,
+    build_security_context: Any,
+    logger: Any,
+) -> None:
+    """Create or refresh one domain monitor row for the caller's workspace.
+
+    ``infra/init/99zzzzh_domain_agentops_monitors.sql`` seeds these rows once per
+    database, which covers the workspaces that existed when the migration ran and
+    no others. A workspace provisioned later would have the global conversational
+    templates but no monitor row, so its monitors would never fire and the shared
+    memory would have no author to attribute a finding to. Talent solves this with
+    ``ensure_successfactors_talent_monitor``; this is the same idea for the three
+    domains, reading the same contract the seed was generated from.
+
+    Fail-open like Talent's: a broken database leaves the row unrepaired and logs,
+    it never breaks the caller. Returns early when the caller has no workspace
+    scope, because a monitor row without one is invisible to the scheduler anyway.
+    """
+    ctx = build_security_context(user)
+    tenant_id = str(ctx.get("tenant_id") or "").strip()
+    workspace_id = str(ctx.get("workspace_id") or "").strip()
+    if not tenant_id or not workspace_id:
+        return
+
+    allowed_tools, rag_filter, extra = build_contract(spec)
+    args = (
+        tenant_id,
+        workspace_id,
+        spec.slug,
+        spec.name,
+        spec.description,
+        spec.instructions,
+        spec.personality,
+        json.dumps(allowed_tools, ensure_ascii=False),
+        json.dumps(rag_filter, ensure_ascii=False),
+        spec.model,
+        spec.max_tokens,
+        spec.temperature,
+        json.dumps(extra, ensure_ascii=False, sort_keys=True),
+        spec.cartridge_id,
+    )
+    try:
+        # Inside the try on purpose: a pool that cannot be opened is exactly the
+        # failure this helper must absorb. (Talent's equivalent acquires it
+        # outside, so a dead pool propagates there.)
+        pool = await get_db_pool()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT set_config('app.tenant_id', $1, true), "
+                    "set_config('app.workspace_id', $2, true)",
+                    tenant_id,
+                    workspace_id,
+                )
+                updated = await conn.execute(_UPDATE_SQL, *args)
+                if str(updated).endswith(" 0"):
+                    await conn.execute(_INSERT_SQL, *args)
+    except Exception:
+        logger.warning(
+            "Could not ensure the %s AgentOps monitor for workspace=%s",
+            spec.key,
+            workspace_id,
+            exc_info=True,
+        )
+
+
 __all__ = (
     "ANALYSIS_TOOLS",
     "BAYESIAN_DISABLED_REASON",
@@ -397,6 +515,7 @@ __all__ = (
     "REFINEMENT_TOOLS",
     "allowed_tools_for",
     "build_contract",
+    "ensure_domain_monitor",
     "extra_for",
     "has_monitor_contract",
     "is_domain_monitor_row",

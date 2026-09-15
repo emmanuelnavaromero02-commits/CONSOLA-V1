@@ -10,18 +10,21 @@ Talent is deliberately NOT in this registry. Its contract, its runtime repair an
 its wisdom bit predate the shared shape, and folding it in would mean rewriting
 ``successfactors_talent_monitor`` — which Mission 4 rules out.
 
-KNOWN LIMITATION, stated here rather than discovered later: the three monitor rows
-are created only by ``infra/init/99zzzzh_domain_agentops_monitors.sql``, and an
-infra/init migration runs once per database. A workspace provisioned AFTER that
-migration ran gets the global conversational templates (they are
-``workspace_id IS NULL``) but no monitor row, so its monitors never fire. Talent
-solves this with ``ensure_successfactors_talent_monitor``, called from the agent
-routes in ``console/app/main.py`` on every list/get/invoke. Giving the three
-domains the same treatment means editing those route bodies, which the standing
+PROVISIONING, and the one gap that remains. The three monitor rows are seeded by
+``infra/init/99zzzzh_domain_agentops_monitors.sql``, and an infra/init migration
+runs once per database: a workspace provisioned AFTER it ran would get the global
+conversational templates (they are ``workspace_id IS NULL``) but no monitor row,
+so its monitors would never fire and shared memory would have no author to
+attribute a finding to. ``domain_monitor_support.ensure_domain_monitor`` closes
+that, and the sync-now path calls it for every spec matching the cartridge, the
+same way that path already repairs Talent.
+
+What is still not covered: a workspace that is never synced from the UI. Talent is
+additionally repaired from the agent routes in ``console/app/main.py`` on every
+list/get/invoke; matching that means editing those route bodies, which the standing
 rule for this repository reserves ("do not touch main.py except to add
-include_router"), so it is left as the next step rather than done here.
-``build_contract`` is deliberately shaped to be the single source such a helper
-would read.
+include_router"), so it is left as the next step. ``ensure_domain_monitor`` is
+ready for that call site as it stands.
 """
 
 from __future__ import annotations

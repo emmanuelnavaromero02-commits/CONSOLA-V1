@@ -903,7 +903,9 @@ async def control_room__agent_memory_write(
         "subject": clean_subject,
         "finding_type": clean_type,
         "severity": clean_severity,
-        "agent_name": scope["agent_slug"] or scope["agent_name"],
+        # The display name only. The slug is an identifier, and the whole point of
+        # the attribution contract is that identifiers do not travel to a model.
+        "agent_name": scope["agent_name"] or None,
         "created_at": (row[1].isoformat() if row and row[1] else None),
         "expires_at": (row[2].isoformat() if row and row[2] else None),
         "note": (

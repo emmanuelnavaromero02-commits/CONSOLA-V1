@@ -237,12 +237,14 @@ def _normalise_expiry(value: Any, *, now: datetime) -> datetime | None:
     datetime is read as UTC.
 
     A value that is unparseable, or that is not in the future, is REFUSED rather
-    than coerced. The table's ``agent_shared_findings_expiry_check`` requires
-    ``expires_at > created_at``, so an already-past expiry would otherwise reach
-    Postgres and come back as a CheckViolation — caught, logged with a stack
-    trace and reported as a generic write failure, which hides a caller bug
-    behind what looks like an infrastructure problem. Recording a finding that
-    is dead on arrival is a caller mistake, and it is named as one.
+    than coerced — and this is the ONLY place that rule lives. The table
+    deliberately carries no ``expires_at > created_at`` constraint, because with
+    DELETE revoked from every service role, setting ``expires_at`` into the past is
+    the only way to retire a finding that turned out to be wrong; a constraint on
+    that ordering would forbid exactly that UPDATE. So the database accepts a past
+    expiry on purpose, and refusing one at INSERT time is a judgement about the
+    caller: a finding that is dead on arrival is a caller mistake, and it is named
+    as one instead of being stored where no reader will ever see it.
     """
     if value in (None, ""):
         return None

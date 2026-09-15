@@ -4355,7 +4355,7 @@
     },
     {
       "path": "tests/test_domain_monitor_seed.py",
-      "sha256": "74c41891bde578f0d830b9638e807516ac02866c937a9213a3fb5b02a32edfd3"
+      "sha256": "bf26c0c4ceadd681eff27247a84e231b47dced04fb9c674811e7fb15714f80c7"
     },
     {
       "path": "tests/test_draft_sender.py",
