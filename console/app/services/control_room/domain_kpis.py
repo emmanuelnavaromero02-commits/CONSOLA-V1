@@ -32,6 +32,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from app.services.intelligence import domain_memory_hooks
 from app.services.intelligence import (
     finance_aggregates,
     operations_aggregates,
@@ -476,6 +477,14 @@ async def finance_kpis(user: dict | None, *, top_n: int = 0) -> dict[str, Any]:
             user, top_n=named_rows
         ),
     }
+    # NOTE Mission 4: the cost-centre budget gap is NOT recorded here. This
+    # function is the body of control_room__finance_kpis_read, which is classified
+    # read-only and approval-free and gated only on datasets.read, so an INSERT on
+    # this path would be a persistent write hiding behind a read classification —
+    # reachable by any caller with datasets.read and never covered by the
+    # scheduled-effect fence. The write lives on the wisdom-bit path instead
+    # (control_room.domain_wisdom_bits), which is already classified as an
+    # advisory write and requires control_room.write.
     return domain_payload(FINANCE_DOMAIN, results, named_rows=named_rows)
 
 
@@ -511,7 +520,14 @@ async def risk_kpis(user: dict | None, *, top_n: int = 0) -> dict[str, Any]:
             user, top_n=named_rows
         ),
     }
-    return domain_payload(RISK_DOMAIN, results, named_rows=named_rows)
+    payload = domain_payload(RISK_DOMAIN, results, named_rows=named_rows)
+    # Mission 4. Risk cannot compute cost-centre overrun for the same reason
+    # Finance cannot compute budget-vs-actual. Rather than rediscovering it, Risk
+    # reads the shared memory and cites whoever recorded it.
+    note = await domain_memory_hooks.cost_center_overrun_note(user)
+    if note:
+        payload["notes"] = [*payload["notes"], note]
+    return payload
 
 
 __all__ = [

@@ -439,6 +439,17 @@ _CONTROL_ROOM_READ_TOOLS = {
     "control_room__finance_kpis_read",
     "control_room__operations_kpis_read",
     "control_room__risk_kpis_read",
+    # Mission 4: shared agent memory, read side (datasets.read, same bridge)
+    "control_room__agent_memory_read",
+}
+# Mission 4. Its own set rather than a line inside _CONTROL_ROOM_ALERT_TOOLS or
+# _CONTROL_ROOM_ANALYSIS_TOOLS: it needs their treatment (control_room.write,
+# injected security_context, tenant/workspace scope, and effect authority when
+# the caller is the agent runner) but it is neither an alert nor an analysis, and
+# _CONTROL_ROOM_ALERT_TOOLS additionally demands a cartridge_id argument that a
+# memory write does not carry.
+_CONTROL_ROOM_MEMORY_WRITE_TOOLS = {
+    "control_room__agent_memory_write",
 }
 _CONTROL_ROOM_OPERATIONAL_READ_TOOLS = {
     "control_room__dashboard_read",
@@ -1432,7 +1443,12 @@ def _enforce_data_scope(
         ctx = _require_context_permission(req, "studio.write", internal_service)
     elif tool in _AGENT_DESTRUCTIVE_TOOLS:
         ctx = _require_context_permission(req, "copilot.execute", internal_service)
-    elif tool in _CONTROL_ROOM_ALERT_TOOLS | _CONTROL_ROOM_ANALYSIS_TOOLS:
+    elif (
+        tool
+        in _CONTROL_ROOM_ALERT_TOOLS
+        | _CONTROL_ROOM_ANALYSIS_TOOLS
+        | _CONTROL_ROOM_MEMORY_WRITE_TOOLS
+    ):
         ctx = _require_context_permission(req, "control_room.write", internal_service)
     elif tool in _CONTROL_ROOM_OPERATIONAL_READ_TOOLS:
         ctx = _require_context_permission(req, "operations.read", internal_service)
@@ -1531,6 +1547,7 @@ def _enforce_data_scope(
     if tool in (
         _CONTROL_ROOM_ALERT_TOOLS
         | _CONTROL_ROOM_ANALYSIS_TOOLS
+        | _CONTROL_ROOM_MEMORY_WRITE_TOOLS
         | _CONTROL_ROOM_READ_TOOLS
         | _CONTROL_ROOM_OPERATIONAL_READ_TOOLS
     ):
@@ -1556,7 +1573,12 @@ def _enforce_data_scope(
         effect_authority = args.get("effect_authority")
         if (
             str(ctx.get("source") or "") == "agent_runner"
-            and tool in (_CONTROL_ROOM_ALERT_TOOLS | _CONTROL_ROOM_ANALYSIS_TOOLS)
+            and tool
+            in (
+                _CONTROL_ROOM_ALERT_TOOLS
+                | _CONTROL_ROOM_ANALYSIS_TOOLS
+                | _CONTROL_ROOM_MEMORY_WRITE_TOOLS
+            )
             and effect_authority is None
         ):
             raise HTTPException(403, detail="scheduled effect authority is required")

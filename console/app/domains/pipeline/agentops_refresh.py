@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from app.domains.agentops import domain_monitor_support, domain_monitors
 from app.services import sync_progress
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def run_sync_agentops_monitors(
@@ -26,6 +30,29 @@ async def run_sync_agentops_monitors(
     schedule_key = sync_agentops.sync_agentops_schedule_key(sync_run_id)
     if cartridge == "sap_successfactors":
         await ensure_successfactors_talent_monitor(user)
+    # Mission 4: the same repair Talent gets, for the three domain monitors. Their
+    # rows come from a one-shot infra/init seed, so a workspace created after that
+    # migration ran would otherwise have no monitor row at all and nothing would
+    # ever create one. Imported here rather than injected because, unlike Talent's,
+    # this helper has no test seam that needs to replace it.
+    domain_specs = [
+        spec
+        for spec in domain_monitors.DOMAIN_MONITOR_SPECS
+        if spec.cartridge_id == cartridge
+    ]
+    if domain_specs:
+        from app.services import auth as _auth
+        from app.services.security_context import (
+            build_security_context as _build_security_context,
+        )
+    for spec in domain_specs:
+        await domain_monitor_support.ensure_domain_monitor(
+            user,
+            spec,
+            get_db_pool=_auth.pool,
+            build_security_context=_build_security_context,
+            logger=_LOGGER,
+        )
     agents = await list_agents(
         cartridge_id=cartridge,
         include_inactive=False,
@@ -146,7 +173,12 @@ async def run_sync_agentops_status(
     sync_agentops_is_terminal: Any,
     logger_warning: Any | None = None,
 ) -> dict[str, Any]:
-    if cartridge == "sap_successfactors":
+    # Mission 4: any cartridge that HAS a monitor, not just SuccessFactors. The
+    # old literal check rendered this step as "skipped — Monitores especificos no
+    # aplican para este cartucho" for sap_s4hana and salesforce, which is now
+    # false: both have scheduled monitors. Cartridges with no monitor at all still
+    # take the applies=False branch.
+    if cartridge in domain_monitors.AGENTOPS_MONITOR_CARTRIDGES:
         can_run_agentops = (
             not running_children
             and str(control_room_update.get("status") or "") in {"success", "partial"}

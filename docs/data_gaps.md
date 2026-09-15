@@ -64,3 +64,29 @@ el mismo `CASE`.
   analizado); `absence_by_type_and_month` sí es un histórico mensual completo.
   La fecha del snapshot depende del `published_at` del head y viaja en
   `evidence_refs`.
+
+## Brechas detectadas en Misión 4 (monitores AgentOps de Finance / Operations / Risk)
+
+Verificado sobre `main` a2f0b824 el 2026-09-15. Los tres monitores nuevos corren
+la cadena determinista completa (wisdom bit → umbral → alerta advisory), pero sus
+tres motores de análisis se entregan **deshabilitados con la razón explícita en el
+contrato**, no habilitados y fallando. Un motor `blocked` o `error` hace que
+`monitor_alert_policy.monitor_should_alert` devuelva `False`, así que dejarlos
+encendidos silenciaría por completo la alerta que el monitor existe para emitir.
+
+| Motor | Qué falta | Qué habría que construir |
+|---|---|---|
+| `monte_carlo` en los 3 dominios | No existe dataset de inputs de simulación por dominio. Talent alimenta el suyo desde `sap_successfactors_talent_simulation_inputs`, un dataset gold que **deriva** las distribuciones (`baseline_value`, `expected_delta`, `delay_days`, `cost_per_day`, `probability_of_delay`) de agregados vivos. `agent_runtime._monitor_monte_carlo_tool_args` exige un `input_variables` dict no vacío o marca el motor `blocked`. | Un dataset gold `<dominio>_simulation_inputs` por dominio con el mismo contrato de columnas (`input_variables_json`, `assumptions_json`, `evidence_refs_json`, `input_status`), construido sobre los agregados de Misión 1: margen por proyecto para Finanzas, tasa de fallo de corridas para Operación, monto vencido por etapa para Riesgo. Poner parámetros de distribución fijos en el contrato sería inventar datos, y por eso no se hizo. |
+| `bayesian_calibration` en los 3 dominios | No hay historial de calibración para los grupos nuevos (`sap_s4hana:finance_margin`, `salesforce:operations_health`, `salesforce:deal_slippage`). Con cero estados el runtime marca el motor `blocked` con `missing_calibration_state`. | Resultados observados registrados contra cada grupo. Se habilita solo, editando `enabled` en el contrato, cuando el grupo tenga observaciones. |
+| `decision_orchestrator` en los 3 dominios | `wisdom_source.durable_wisdom_exists` devuelve `False` en su primera línea para cualquier `source_id` distinto de `WB-TALENTO`, así que `decision__orchestrate` responde 409 `source_provenance_untrusted`. Además exige una fila previa de `control_room_items` con `item_kind='agent_alert'` y origen `wisdom_bit`, que solo existe **después** de una primera alerta: en un dominio nuevo eso es un deadlock. | Reconocer los ids nuevos como procedencia durable **y** resolver el arranque en frío. Es una frontera de confianza deliberada (una decisión solo se orquesta desde evidencia ya publicada de forma durable), así que se respeta en lugar de aflojarla. |
+
+### Memoria compartida entre agentes
+
+`agent_shared_findings` (migración `99zzzzg`) existe para que un agente no
+redescubra lo que otro ya encontró. El caso real que la motiva son las dos
+primeras filas de la tabla de arriba: `finance.budget_vs_actual_by_cost_center` y
+`risk.cost_center_overrun` faltan por el mismo motivo. El enganche de Finanzas
+**verifica** la brecha en vez de afirmarla: cuenta filas y gastos no nulos en
+`cost_center_expense` y registra el hallazgo solo si la columna sigue vacía, con
+esos conteos como evidencia. Cuando alguien materialice el gasto real, el
+enganche deja de registrar y el hallazgo viejo se retira poniéndole `expires_at`.

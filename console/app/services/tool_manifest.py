@@ -69,6 +69,8 @@ READ_ONLY_TOOLS = {
     "control_room__finance_kpis_read",
     "control_room__operations_kpis_read",
     "control_room__risk_kpis_read",
+    # Mission 4: shared memory between agents (read side)
+    "control_room__agent_memory_read",
     "market_context_read",
 
     # pipeline metadata read-only
@@ -114,6 +116,18 @@ ADVISORY_WRITE_TOOLS = {
     "simulation__monte_carlo_run",
     "decision__orchestrate",
     "wisdom_bits__run",
+    # Mission 4: shared memory between agents (write side). It appends an
+    # advisory note to agent_shared_findings inside the caller's own
+    # tenant/workspace and can do nothing else: no approval, no execution, no
+    # external write-back, and DELETE is revoked from every service role at the
+    # table. requires_approval is therefore False, which is not a convenience —
+    # a scheduled monitor runs on cron with no human in the loop, so an
+    # approval-gated memory write would simply never happen and the shared
+    # memory would stay empty. The write is still risk_level "write", so it
+    # needs copilot.write and its arguments go through
+    # tool_policy._reject_prompt_injection, which matters because the summary is
+    # free text authored by an LLM.
+    "control_room__agent_memory_write",
 }
 
 DEFAULT_FRESHNESS_MINUTES = 60
