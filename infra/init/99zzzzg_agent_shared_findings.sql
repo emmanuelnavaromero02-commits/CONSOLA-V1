@@ -43,8 +43,12 @@ CREATE TABLE IF NOT EXISTS agent_shared_findings (
         CHECK (severity IN ('critical', 'high', 'medium', 'low')),
     CONSTRAINT agent_shared_findings_subject_check
         CHECK (subject = btrim(subject) AND length(subject) BETWEEN 1 AND 200),
+    -- 600, not 1000: the public projection replaces any string longer than 64
+    -- word tokens with "[REDACTED]", so a longer summary would be stored
+    -- successfully and then reach every reader as nothing at all. The service
+    -- bounds words as well (agent_memory.SUMMARY_MAX_WORDS).
     CONSTRAINT agent_shared_findings_summary_check
-        CHECK (length(btrim(summary)) BETWEEN 1 AND 1000),
+        CHECK (length(btrim(summary)) BETWEEN 1 AND 600),
     CONSTRAINT agent_shared_findings_detail_check
         CHECK (jsonb_typeof(detail) = 'object')
     -- Deliberately NO "expires_at > created_at" constraint. Because DELETE is

@@ -719,3 +719,118 @@ def test_the_internal_read_bridge_exposes_the_memory_view_uncached() -> None:
     # Deliberately NOT cached: one agent writes, the next agent must see it now.
     assert "_control_room_cache_get_or_set" not in branch
     assert "control_room_service.agent_memory_read(" in branch
+
+
+# ── what the adversarial review caught, pinned so it cannot come back ────────
+
+
+def test_error_is_a_code_from_a_closed_set_never_driver_text(monkeypatch) -> None:
+    memory = _fresh_memory()
+    # Mission 2 established this the hard way: an interpolated exception reaches
+    # the model either as driver text or, once long enough, as "[REDACTED]".
+    assert set(memory.ERROR_REASONS) == {
+        "missing",
+        "invalid_scope",
+        "invalid_subject",
+        "unavailable",
+    }
+    for phrase in memory.ERROR_REASONS.values():
+        assert phrase == phrase.strip() and phrase
+        assert len(phrase.split()) < 64
+
+
+@pytest.mark.asyncio
+async def test_a_postgres_error_becomes_a_code_and_a_note(monkeypatch) -> None:
+    memory = _fresh_memory()
+
+    class _Exploding(_FakeConn):
+        async def fetch(self, sql: str, *args, **kwargs):
+            raise asyncpg.PostgresError('relation "agent_shared_findings" is broken')
+
+    _install_fake_pool(monkeypatch, _Exploding())
+    result = await memory.read_shared_findings(_user(), subject="cost_center_budget")
+    assert result.status == memory.STATUS_UNAVAILABLE
+    assert result.error == "unavailable"
+    # The driver's sentence must not travel.
+    assert "relation" not in (result.error or "")
+    assert result.notes == [memory.ERROR_REASONS["unavailable"]]
+
+
+def test_summary_is_bounded_by_the_projection_budget_not_the_column() -> None:
+    memory = _fresh_memory()
+    from app.services.intelligence.agent_memory import _normalise_summary
+
+    # 600 chars, not 1000: a summary over 64 word tokens is stored fine and then
+    # reaches every reader as "[REDACTED]", and record-once makes it permanent.
+    assert memory.SUMMARY_MAX_CHARS == 600
+    assert memory.SUMMARY_MAX_WORDS == 60
+    assert _normalise_summary("palabra " * memory.SUMMARY_MAX_WORDS) is not None
+    assert _normalise_summary("palabra " * (memory.SUMMARY_MAX_WORDS + 5)) is None
+    # And the bound really is below the projection's limit.
+    from app.schemas.control_room_public_projection import _safe_text
+
+    longest = " ".join(["palabra"] * memory.SUMMARY_MAX_WORDS)
+    assert _safe_text(longest, field="summary") == longest
+
+
+@pytest.mark.asyncio
+async def test_author_falls_back_to_the_next_candidate_slug(monkeypatch) -> None:
+    memory = _fresh_memory()
+    tried: list[str] = []
+
+    class _Resolver(_FakeConn):
+        async def fetchval(self, sql: str, *args, **kwargs):
+            if "to_regclass" in sql:
+                return "agent_shared_findings"
+            if "FROM agents" in sql:
+                tried.append(args[3])
+                # Only the conversational template exists in this workspace.
+                return "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" if args[3] == "conv" else None
+            return 1
+
+    _install_fake_pool(monkeypatch, _Resolver())
+    wrote = await memory.record_finding(
+        _user(),
+        subject="cost_center_budget",
+        finding_type="data_gap",
+        summary="algo",
+        agent_cartridge_id="sap_s4hana",
+        agent_slug=("monitor", "conv"),
+    )
+    assert wrote is True
+    # The monitor row is tried first, the template second.
+    assert tried == ["monitor", "conv"]
+
+
+def test_the_finance_read_tool_does_not_write() -> None:
+    # control_room__finance_kpis_read is classified read-only, approval-free and
+    # gated on datasets.read. A persistent write on that path would be a write
+    # hiding behind a read classification, and would skip the scheduled-effect
+    # fence the dedicated write tool requires. The recorder lives on the
+    # wisdom-bit path instead, which requires control_room.write.
+    view_source = _source("console/app/services/control_room/domain_kpis.py")
+    finance = view_source.split("async def finance_kpis(", 1)[1].split("async def", 1)[0]
+    assert "record_cost_center_budget_gap" not in finance
+    # Risk only READS shared memory, which is fine on a read tool.
+    risk = view_source.split("async def risk_kpis(", 1)[1].split("async def", 1)[0]
+    assert "cost_center_overrun_note" in risk
+    assert "record_" not in risk
+
+    wisdom = _source("console/app/services/control_room/domain_wisdom_bits.py")
+    assert "record_cost_center_budget_gap" in wisdom
+
+
+def test_the_gap_summary_does_not_claim_what_it_did_not_verify() -> None:
+    from app.services.intelligence import domain_memory_hooks
+
+    verified = domain_memory_hooks.COST_CENTER_BUDGET_SUMMARY
+    unverified = domain_memory_hooks.COST_CENTER_BUDGET_SUMMARY_UNVERIFIED
+    assert verified != unverified
+    # Only the branch that actually counted non-null expenses may say the expense
+    # column is empty.
+    assert "llega vacio" in verified
+    assert "llega vacio" not in unverified
+    assert "no se pudo verificar" in unverified
+    # Both stay inside the projection budget.
+    for text in (verified, unverified):
+        assert len(text.split()) < 60

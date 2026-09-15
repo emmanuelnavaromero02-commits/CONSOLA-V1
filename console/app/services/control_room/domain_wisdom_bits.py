@@ -35,7 +35,10 @@ from app.domains.agentops.domain_monitor_support import DomainMonitorSpec
 METRIC_LABELS: dict[str, str] = {
     # finance
     "billable_hours_logged": "horas facturables registradas",
-    "labor_cost_by_department": "costo de nomina por departamento",
+    # NOT "costo de nomina": Mission 2's public note says so in as many words
+    # ("NO es nomina: la nomina de SAP no esta extraida"). It is Replicon
+    # executed hours times an hourly cost rate.
+    "labor_cost_by_department": "costo laboral estimado de consultores",
     "project_margin": "margen por proyecto",
     # operations
     "pipeline_health": "salud de las corridas de datos",
@@ -43,7 +46,10 @@ METRIC_LABELS: dict[str, str] = {
     "absence_rate_company_by_type": "tasa de ausentismo por tipo",
     # risk
     "attrition_risk_population": "poblacion en riesgo de rotacion",
-    "employment_end_expiry": "fin de contrato proximo",
+    # NOT "fin de contrato": the aggregate reads employee_360.end_date, and the
+    # public note says "Es el fin del registro de empleo en SuccessFactors, NO un
+    # elemento contractual".
+    "employment_end_expiry": "fin de registro de empleo proximo",
     "deal_slippage": "deals con cierre vencido",
 }
 
@@ -187,7 +193,19 @@ async def domain_wisdom_bit(
     if not view_name:
         raise KeyError(f"no domain KPI view for monitor {spec.key!r}")
     view = await getattr(control_room_service, view_name)(user)
-    return build_payload(spec, view if isinstance(view, dict) else {})
+    payload = build_payload(spec, view if isinstance(view, dict) else {})
+
+    # Mission 4 part B4. The shared-memory write hangs off THIS path and not off
+    # the domain KPI view, because the view is the body of a tool classified
+    # read-only and gated on datasets.read, while this route already requires
+    # control_room.write and wisdom_bits__run is an advisory write. Fire and
+    # forget: the recorder never raises, and it writes at most once while an
+    # unexpired finding exists.
+    if spec.key == "finance":
+        from app.services.intelligence import domain_memory_hooks
+
+        await domain_memory_hooks.record_cost_center_budget_gap(user)
+    return payload
 
 
 __all__ = (

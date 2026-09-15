@@ -39,6 +39,9 @@ from app.domains.agentops.finance_monitor import (
     FINANCE_MONITOR_CARTRIDGE,
     FINANCE_MONITOR_SLUG,
 )
+
+# The global conversational template, seeded by infra/init/86_sap_s4hana_agents_seed.sql.
+FINANCE_CONVERSATIONAL_SLUG = "sap_s4hana_controller_financiero"
 from app.services.intelligence import agent_memory
 from app.services.intelligence.domain_aggregate_support import (
     GOLD_SCOPE_PREDICATE,
@@ -55,11 +58,18 @@ COST_CENTER_BUDGET_SUBJECT = "cost_center_budget"
 COST_CENTER_EXPENSE_DATASET = "cost_center_expense"
 _EXPENSE_REQUIRED = frozenset({"cost_center", "total_expense"})
 
+# Two summaries, because only one branch actually proves the second half. Writing
+# one constant for both would have the finding assert as fact something the code
+# never checked — the exact over-promising this repository is built to avoid.
 COST_CENTER_BUDGET_SUMMARY = (
     "No hay presupuesto por centro de costo en ningun cartucho, y el gasto real "
-    "por centro de costo tampoco esta cargado: la columna de gasto llega vacia. "
-    "Cualquier comparacion de presupuesto contra real, o de sobregiro, no se "
-    "puede calcular con los datos actuales."
+    "por centro de costo llega vacio en el origen. Comparar presupuesto contra "
+    "real, o medir sobregiro, no se puede calcular con los datos actuales."
+)
+COST_CENTER_BUDGET_SUMMARY_UNVERIFIED = (
+    "No hay presupuesto por centro de costo en ningun cartucho, asi que comparar "
+    "presupuesto contra real, o medir sobregiro, no se puede calcular. El estado "
+    "del gasto real no se pudo verificar en esta corrida."
 )
 
 
@@ -107,13 +117,16 @@ async def record_cost_center_budget_gap(user: dict | None) -> bool:
     otherwise to the global Controller Financiero template, because the
     conversational agent is what answered the question that surfaced the gap.
     """
+    verified = True
     try:
         gap_is_real, evidence = await _expense_column_is_empty(user)
     except HTTPException as exc:
-        # No published head, no scope, no permission: the gap is real in the sense
-        # that the metric still cannot be computed, but we cannot prove WHY, so we
-        # say that instead of claiming a count we do not have.
-        gap_is_real, evidence = True, {"reason": "dataset_unavailable", "detail": exc.detail}
+        # No published head, no scope, no permission. The metric still cannot be
+        # computed, so the gap is real, but the expense column was NOT inspected —
+        # so the finding must not claim it was.
+        verified = False
+        gap_is_real = True
+        evidence = {"reason": "dataset_unavailable", "detail": exc.detail}
     except (asyncpg.PostgresError, OSError) as exc:
         logger.warning(
             "agent memory hook: could not check the cost-centre expense dataset: %s",
@@ -128,9 +141,16 @@ async def record_cost_center_budget_gap(user: dict | None) -> bool:
         user,
         subject=COST_CENTER_BUDGET_SUBJECT,
         finding_type="data_gap",
-        summary=COST_CENTER_BUDGET_SUMMARY,
+        summary=(
+            COST_CENTER_BUDGET_SUMMARY
+            if verified
+            else COST_CENTER_BUDGET_SUMMARY_UNVERIFIED
+        ),
         agent_cartridge_id=FINANCE_MONITOR_CARTRIDGE,
-        agent_slug=FINANCE_MONITOR_SLUG,
+        # The monitor row first, then the conversational template. The template is
+        # a global seed row so it always exists; without it the write would be
+        # silently dropped in any workspace the monitor seed never reached.
+        agent_slug=(FINANCE_MONITOR_SLUG, FINANCE_CONVERSATIONAL_SLUG),
         severity="high",
         detail={
             "affected_metrics": [
@@ -169,6 +189,8 @@ async def cost_center_overrun_note(user: dict | None) -> str | None:
 __all__ = (
     "COST_CENTER_BUDGET_SUBJECT",
     "COST_CENTER_BUDGET_SUMMARY",
+    "COST_CENTER_BUDGET_SUMMARY_UNVERIFIED",
+    "FINANCE_CONVERSATIONAL_SLUG",
     "COST_CENTER_EXPENSE_DATASET",
     "cost_center_overrun_note",
     "record_cost_center_budget_gap",

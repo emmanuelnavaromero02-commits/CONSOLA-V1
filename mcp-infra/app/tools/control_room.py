@@ -642,7 +642,11 @@ async def control_room__risk_kpis_read(
 _AGENT_MEMORY_FINDING_TYPES = ("data_gap", "error", "insight", "warning")
 _AGENT_MEMORY_SEVERITIES = ("critical", "high", "medium", "low")
 _AGENT_MEMORY_SUBJECT_MAX = 200
-_AGENT_MEMORY_SUMMARY_MAX = 1000
+# Bounded by what the public projection carries, not by what the column accepts: a
+# string over 64 word tokens reaches every reader as "[REDACTED]", and because the
+# write is record-once-while-active, that useless finding is the one that sticks.
+_AGENT_MEMORY_SUMMARY_MAX = 600
+_AGENT_MEMORY_SUMMARY_MAX_WORDS = 60
 _AGENT_MEMORY_MAX_EXPIRY_HOURS = 8760
 
 
@@ -662,6 +666,13 @@ def _agent_memory_summary(value: Any) -> str:
         raise HTTPException(
             400,
             f"summary must be 1 to {_AGENT_MEMORY_SUMMARY_MAX} characters",
+        )
+    if len(text.split()) > _AGENT_MEMORY_SUMMARY_MAX_WORDS:
+        raise HTTPException(
+            400,
+            "summary must be at most "
+            f"{_AGENT_MEMORY_SUMMARY_MAX_WORDS} words so it survives the public "
+            "projection; write one or two sentences",
         )
     return text
 
@@ -772,7 +783,9 @@ async def control_room__agent_memory_read(
                 "type": "string",
                 "maxLength": _AGENT_MEMORY_SUMMARY_MAX,
                 "description": (
-                    "Que encontraste, en una o dos frases de espanol de negocio."
+                    "Que encontraste, en una o dos frases de espanol de negocio. "
+                    "Maximo 60 palabras: un resumen mas largo se descarta al "
+                    "cruzar a otro agente."
                 ),
             },
             "severity": {

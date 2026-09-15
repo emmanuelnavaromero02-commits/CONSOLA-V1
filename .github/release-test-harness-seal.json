@@ -3575,7 +3575,7 @@
     },
     {
       "path": "tests/test_agent_memory.py",
-      "sha256": "4f560fe734abeeca3632807e18739d841eab4a96d1a5753ade0bb808d4ca906d"
+      "sha256": "10e4c96b6705c71ed5b33b6b996e19ce9a30ddae5e76fe0cbaf2aa77eb252cfb"
     },
     {
       "path": "tests/test_agent_monitor_control_room_alerts.py",
@@ -4467,7 +4467,7 @@
     },
     {
       "path": "tests/test_finance_monitor.py",
-      "sha256": "8c3caa6ededaeba1e46fcc6b7a8bf4796ed2adf08baeeae9f7af7a7ac5223856"
+      "sha256": "6aeeb59d63d8a2a5344c37cd10f8f117b9758762f11eb6414d537931d181410a"
     },
     {
       "path": "tests/test_freshness_endpoint.py",
@@ -4871,7 +4871,7 @@
     },
     {
       "path": "tests/test_operations_monitor.py",
-      "sha256": "31099cf545843836ed0642a3c26f4d162fd88f573fc62b17a2ee5ae22d521a2f"
+      "sha256": "9a20e40d0ffde0e75cae31cc116f5c1ab759e07aaa642b564007de135ec19d78"
     },
     {
       "path": "tests/test_operations_shape_contract.py",
@@ -5179,7 +5179,7 @@
     },
     {
       "path": "tests/test_risk_monitor.py",
-      "sha256": "110f42adbd603ad77b19dbf99e22b35a87abeca8e1a36587b0f08237b48c3ef2"
+      "sha256": "09733c76c791e48bf5bf4a67295f7bb8041108a2b93594ad61a3bd487a0085af"
     },
     {
       "path": "tests/test_rls_real_duckdb.py",

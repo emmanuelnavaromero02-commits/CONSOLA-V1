@@ -9,6 +9,19 @@ reads this list instead of repeating literals.
 Talent is deliberately NOT in this registry. Its contract, its runtime repair and
 its wisdom bit predate the shared shape, and folding it in would mean rewriting
 ``successfactors_talent_monitor`` — which Mission 4 rules out.
+
+KNOWN LIMITATION, stated here rather than discovered later: the three monitor rows
+are created only by ``infra/init/99zzzzh_domain_agentops_monitors.sql``, and an
+infra/init migration runs once per database. A workspace provisioned AFTER that
+migration ran gets the global conversational templates (they are
+``workspace_id IS NULL``) but no monitor row, so its monitors never fire. Talent
+solves this with ``ensure_successfactors_talent_monitor``, called from the agent
+routes in ``console/app/main.py`` on every list/get/invoke. Giving the three
+domains the same treatment means editing those route bodies, which the standing
+rule for this repository reserves ("do not touch main.py except to add
+include_router"), so it is left as the next step rather than done here.
+``build_contract`` is deliberately shaped to be the single source such a helper
+would read.
 """
 
 from __future__ import annotations

@@ -477,13 +477,15 @@ async def finance_kpis(user: dict | None, *, top_n: int = 0) -> dict[str, Any]:
             user, top_n=named_rows
         ),
     }
-    payload = domain_payload(FINANCE_DOMAIN, results, named_rows=named_rows)
-    # Mission 4. Finance is the agent that hits the cost-centre budget gap, so it
-    # is the one that records it for the others. Fire-and-forget by construction:
-    # record_cost_center_budget_gap never raises and never blocks this answer, and
-    # it writes at most once while an unexpired finding exists.
-    await domain_memory_hooks.record_cost_center_budget_gap(user)
-    return payload
+    # NOTE Mission 4: the cost-centre budget gap is NOT recorded here. This
+    # function is the body of control_room__finance_kpis_read, which is classified
+    # read-only and approval-free and gated only on datasets.read, so an INSERT on
+    # this path would be a persistent write hiding behind a read classification —
+    # reachable by any caller with datasets.read and never covered by the
+    # scheduled-effect fence. The write lives on the wisdom-bit path instead
+    # (control_room.domain_wisdom_bits), which is already classified as an
+    # advisory write and requires control_room.write.
+    return domain_payload(FINANCE_DOMAIN, results, named_rows=named_rows)
 
 
 async def operations_kpis(user: dict | None) -> dict[str, Any]:
