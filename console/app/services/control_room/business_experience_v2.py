@@ -21,6 +21,9 @@ from app.services.control_room.business_experience_copy import (
     structural_identity_is_safe,
     visible_business_copy,
 )
+from app.services.control_room.business_experience_narrative import (
+    project_experience_narrative,
+)
 from app.services.control_room.business_projection import filter_business_items
 from app.services.control_room.business_surface_identity import (
     BusinessSurfaceIdentity,
@@ -70,6 +73,9 @@ def build_business_experience_v2(
             {
                 **fact.model_dump(),
                 "actions": actions,
+                "narrative": project_experience_narrative(
+                    snapshot.narratives.get(item_id), item, identity
+                ),
             }
         )
         titles, facts = grouped.setdefault(identity, (set(), []))

@@ -1570,6 +1570,14 @@ def _enforce_data_scope(
             raise HTTPException(
                 403, detail=f"backend-owned arg is not allowed: {', '.join(supplied)}"
             )
+        # Mission 5: underscore-prefixed parameters are server-only by
+        # convention (e.g. the alert metadata patch). The registry dispatches
+        # with fn(**args), so they must never arrive from a caller.
+        server_only = sorted(key for key in args if str(key).startswith("_"))
+        if server_only:
+            raise HTTPException(
+                403, detail=f"server-only arg is not allowed: {', '.join(server_only)}"
+            )
         effect_authority = args.get("effect_authority")
         if (
             str(ctx.get("source") or "") == "agent_runner"

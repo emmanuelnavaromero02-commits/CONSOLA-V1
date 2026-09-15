@@ -91,6 +91,28 @@ const experienceActionSchema = z
     }
   });
 
+// The backend (Pydantic) bounds text by characters (code points), while
+// `string.length` counts UTF-16 units: an emoji would count twice and a
+// valid narrative would make the whole screen fail parsing.
+const narrativeTextSchema = (min: number, max: number) =>
+  z.string().refine((value) => {
+    const length = Array.from(value).length;
+    return length >= min && length <= max;
+  }, `Expected between ${min} and ${max} characters`);
+
+export const experienceNarrativeSchema = z
+  .object({
+    status: z.enum(["ready", "template"]),
+    explanation: narrativeTextSchema(1, 600),
+    recommendation: narrativeTextSchema(1, 600),
+    confidence_label: z.enum(["alta", "media", "baja"]),
+    confidence_reason: narrativeTextSchema(0, 600).optional(),
+    basis_note: narrativeTextSchema(1, 240),
+    evidence_note: narrativeTextSchema(1, 240).optional(),
+    limitations: z.array(narrativeTextSchema(1, 240)).max(4),
+  })
+  .strict();
+
 const experienceFactV2Schema = z
   .object({
     kind: z.enum(["anomaly", "signal", "alert", "kpi"]),
@@ -102,6 +124,7 @@ const experienceFactV2Schema = z
     metric: metricSchema.optional(),
     decision: decisionSchema.optional(),
     actions: z.array(experienceActionSchema).max(8),
+    narrative: experienceNarrativeSchema.optional(),
   })
   .strict()
   .superRefine((fact, context) => {
@@ -138,6 +161,7 @@ export const experienceActionPreviewResponseSchema = z
 export type ControlRoomExperienceV2 = z.infer<typeof controlRoomExperienceV2Schema>;
 export type ExperienceSectionV2 = z.infer<typeof experienceSectionV2Schema>;
 export type ExperienceFactV2 = z.infer<typeof experienceFactV2Schema>;
+export type ExperienceNarrative = z.infer<typeof experienceNarrativeSchema>;
 export type ExperienceAction = z.infer<typeof experienceActionSchema>;
 export type ExperienceActionPreviewResponse = z.infer<
   typeof experienceActionPreviewResponseSchema

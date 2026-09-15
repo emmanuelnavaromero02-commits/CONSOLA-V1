@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -44,6 +44,25 @@ class ExperienceActionPreviewResponse(_StrictModel):
     )
 
 
+class ExperienceNarrative(_StrictModel):
+    """Mission 5: business narrative of an attested monitor alert.
+
+    Advisory only. Every field is sanitized public copy; the recommendation,
+    confidence, basis and limitations are fixed vocabulary, never model text.
+    """
+
+    status: Literal["ready", "template"]
+    explanation: str = Field(min_length=1, max_length=600)
+    recommendation: str = Field(min_length=1, max_length=600)
+    confidence_label: Literal["alta", "media", "baja"]
+    confidence_reason: str | None = Field(default=None, max_length=600)
+    basis_note: str = Field(min_length=1, max_length=240)
+    evidence_note: str | None = Field(default=None, min_length=1, max_length=240)
+    limitations: list[Annotated[str, Field(min_length=1, max_length=240)]] = Field(
+        default_factory=list, max_length=4
+    )
+
+
 class ExperienceFactV2(_StrictModel):
     kind: Literal["anomaly", "signal", "alert", "kpi"]
     title: str
@@ -54,6 +73,7 @@ class ExperienceFactV2(_StrictModel):
     metric: ExperienceMetric | None = None
     decision: ExperienceDecision | None = None
     actions: list[ExperienceAction] = Field(default_factory=list, max_length=8)
+    narrative: ExperienceNarrative | None = None
 
     @model_validator(mode="after")
     def validate_item_binding(self) -> Self:
@@ -80,5 +100,6 @@ __all__ = (
     "ExperienceAction",
     "ExperienceActionPreviewResponse",
     "ExperienceFactV2",
+    "ExperienceNarrative",
     "ExperienceSectionV2",
 )
