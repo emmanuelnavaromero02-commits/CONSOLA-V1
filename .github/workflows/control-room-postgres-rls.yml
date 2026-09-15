@@ -140,6 +140,11 @@ jobs:
             tests/test_studio_airflow_source_sync.py \
             tests/test_scheduled_monitor_execution.py \
             tests/test_agentops_scheduled_monitor_contract.py \
+            tests/test_finance_monitor.py \
+            tests/test_operations_monitor.py \
+            tests/test_risk_monitor.py \
+            tests/test_domain_monitor_seed.py \
+            tests/test_agent_memory.py \
             tests/test_agent_runner_http_outcome.py \
             tests/test_dataset_refresh_chain_fail_closed.py \
             tests/test_operational_truth_e2e_gate_contract.py \

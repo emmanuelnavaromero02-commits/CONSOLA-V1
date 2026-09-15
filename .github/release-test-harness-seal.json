@@ -3574,6 +3574,10 @@
       "sha256": "47b9ce7753c75e3585d1f2822fd72afa811e74710d980d5e2a6f7b4f66308c1f"
     },
     {
+      "path": "tests/test_agent_memory.py",
+      "sha256": "4f560fe734abeeca3632807e18739d841eab4a96d1a5753ade0bb808d4ca906d"
+    },
+    {
       "path": "tests/test_agent_monitor_control_room_alerts.py",
       "sha256": "2989ef977818cbc5c179820dfdcad6b55dd55d13ecc9e7aa6f40bb91a69ecf21"
     },
@@ -4350,6 +4354,10 @@
       "sha256": "2675e6b24f992e036b4a5d9d44472082e32fd03ad0abafab9820e638857d4c82"
     },
     {
+      "path": "tests/test_domain_monitor_seed.py",
+      "sha256": "74c41891bde578f0d830b9638e807516ac02866c937a9213a3fb5b02a32edfd3"
+    },
+    {
       "path": "tests/test_draft_sender.py",
       "sha256": "39a430558219fdf147bce2a27727a0a31a83a491bd967c675df2c28eb850ebe0"
     },
@@ -4456,6 +4464,10 @@
     {
       "path": "tests/test_finance_aggregates.py",
       "sha256": "cab6e65d774eb8a709611e194d0c0d8d16fdebd6b872564251e6f796f63412d8"
+    },
+    {
+      "path": "tests/test_finance_monitor.py",
+      "sha256": "8c3caa6ededaeba1e46fcc6b7a8bf4796ed2adf08baeeae9f7af7a7ac5223856"
     },
     {
       "path": "tests/test_freshness_endpoint.py",
@@ -4858,6 +4870,10 @@
       "sha256": "f109400aace1392653b3e6e75099ff7f1d75e1dbd97b2fe3f582777728715404"
     },
     {
+      "path": "tests/test_operations_monitor.py",
+      "sha256": "31099cf545843836ed0642a3c26f4d162fd88f573fc62b17a2ee5ae22d521a2f"
+    },
+    {
       "path": "tests/test_operations_shape_contract.py",
       "sha256": "55c822fa987dae699978348a18a0ec5bc48b87c2dc73417ce06c0a5e52417c59"
     },
@@ -5160,6 +5176,10 @@
     {
       "path": "tests/test_risk_aggregates.py",
       "sha256": "9d4c7145c4bd4061f629e62ca80838214d5a309a171b2db8f0241cdc21e8bd67"
+    },
+    {
+      "path": "tests/test_risk_monitor.py",
+      "sha256": "110f42adbd603ad77b19dbf99e22b35a87abeca8e1a36587b0f08237b48c3ef2"
     },
     {
       "path": "tests/test_rls_real_duckdb.py",

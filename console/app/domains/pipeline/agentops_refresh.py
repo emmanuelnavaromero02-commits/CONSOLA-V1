@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from app.domains.agentops import domain_monitors
 from app.services import sync_progress
 
 
@@ -146,7 +147,12 @@ async def run_sync_agentops_status(
     sync_agentops_is_terminal: Any,
     logger_warning: Any | None = None,
 ) -> dict[str, Any]:
-    if cartridge == "sap_successfactors":
+    # Mission 4: any cartridge that HAS a monitor, not just SuccessFactors. The
+    # old literal check rendered this step as "skipped — Monitores especificos no
+    # aplican para este cartucho" for sap_s4hana and salesforce, which is now
+    # false: both have scheduled monitors. Cartridges with no monitor at all still
+    # take the applies=False branch.
+    if cartridge in domain_monitors.AGENTOPS_MONITOR_CARTRIDGES:
         can_run_agentops = (
             not running_children
             and str(control_room_update.get("status") or "") in {"success", "partial"}

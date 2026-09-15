@@ -13,12 +13,14 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.dependencies import require_authenticated
+from app.domains.agentops import domain_monitors
 from app.schemas.control_room_talent_responses import (
     ControlRoomTalentAnomaliesResponse,
     ControlRoomTalentOverviewResponse,
 )
 from app.services import auth, intelligence_engine
 from app.services.auth import verify_internal_api_key
+from app.services.control_room import domain_wisdom_bits
 from app.services.intelligence import backtesting as intelligence_backtesting
 from app.services.intelligence import calibration_service
 from app.services.intelligence import decision_orchestrator
@@ -720,6 +722,28 @@ async def intelligence_wisdom_bits_run_internal(
 ):
     user = _internal_mcp_user(body, internal_service)
     wisdom_bit_id = body.wisdom_bit_id.strip().upper()
+
+    # Mission 4: the Finance / Operations / Risk monitors are wisdom bits built
+    # from the Mission 2 domain KPI views. Before this the route accepted only
+    # WB-TALENTO, which is what stopped the other three domains from ever running
+    # the deterministic monitor chain: run_scheduled_monitor always calls
+    # wisdom_bits__run first, so a 404 here ended every run.
+    domain_spec = domain_monitors.spec_for_wisdom_bit(wisdom_bit_id)
+    if domain_spec is not None:
+        # Accept the hyphen spelling too, matching how the Talent branch below
+        # tolerates "sap-successfactors".
+        requested_cartridge = str(body.cartridge_id or "").strip().replace("-", "_")
+        if requested_cartridge != domain_spec.cartridge_id:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{wisdom_bit_id} belongs to {domain_spec.cartridge_id}",
+            )
+        from app.services import control_room_service
+
+        return await domain_wisdom_bits.domain_wisdom_bit(
+            user, domain_spec, control_room_service=control_room_service
+        )
+
     if wisdom_bit_id != "WB-TALENTO":
         raise HTTPException(status_code=404, detail="wisdom_bit_id is not available")
     if body.cartridge_id not in {"sap_successfactors", "sap-successfactors"}:

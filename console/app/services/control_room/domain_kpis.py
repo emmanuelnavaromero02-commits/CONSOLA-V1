@@ -32,6 +32,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from app.services.intelligence import domain_memory_hooks
 from app.services.intelligence import (
     finance_aggregates,
     operations_aggregates,
@@ -476,7 +477,13 @@ async def finance_kpis(user: dict | None, *, top_n: int = 0) -> dict[str, Any]:
             user, top_n=named_rows
         ),
     }
-    return domain_payload(FINANCE_DOMAIN, results, named_rows=named_rows)
+    payload = domain_payload(FINANCE_DOMAIN, results, named_rows=named_rows)
+    # Mission 4. Finance is the agent that hits the cost-centre budget gap, so it
+    # is the one that records it for the others. Fire-and-forget by construction:
+    # record_cost_center_budget_gap never raises and never blocks this answer, and
+    # it writes at most once while an unexpired finding exists.
+    await domain_memory_hooks.record_cost_center_budget_gap(user)
+    return payload
 
 
 async def operations_kpis(user: dict | None) -> dict[str, Any]:
@@ -511,7 +518,14 @@ async def risk_kpis(user: dict | None, *, top_n: int = 0) -> dict[str, Any]:
             user, top_n=named_rows
         ),
     }
-    return domain_payload(RISK_DOMAIN, results, named_rows=named_rows)
+    payload = domain_payload(RISK_DOMAIN, results, named_rows=named_rows)
+    # Mission 4. Risk cannot compute cost-centre overrun for the same reason
+    # Finance cannot compute budget-vs-actual. Rather than rediscovering it, Risk
+    # reads the shared memory and cites whoever recorded it.
+    note = await domain_memory_hooks.cost_center_overrun_note(user)
+    if note:
+        payload["notes"] = [*payload["notes"], note]
+    return payload
 
 
 __all__ = [
