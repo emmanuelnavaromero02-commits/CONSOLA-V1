@@ -6186,7 +6186,23 @@ async def risk_kpis(user: dict | None, *, top_n: int = 0) -> dict[str, Any]:
     return await domain_kpis.risk_kpis(user, top_n=top_n)
 
 
+@_bind_to_core
+async def agent_memory_read(
+    user: dict | None, *, subject: str | None = None, limit: int = 10
+) -> dict[str, Any]:
+    """Shared agent memory for the active tenant/workspace.
+
+    See ``control_room.agent_memory_view.agent_memory_read``. Mission 4.
+    """
+    from app.services.control_room import agent_memory_view
+
+    return await agent_memory_view.agent_memory_read(
+        user, subject=subject, limit=limit
+    )
+
+
 __all__ = (
+    "agent_memory_read",
     "finance_kpis",
     "operations_kpis",
     "risk_kpis",

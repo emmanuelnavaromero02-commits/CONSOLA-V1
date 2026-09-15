@@ -10,6 +10,9 @@ from app.dependencies import require_authenticated
 from app.schemas.control_room_action_requests import (
     ControlRoomActionHandleRequest,
 )
+from app.schemas.control_room_agent_memory_responses import (
+    ControlRoomAgentMemoryResponse,
+)
 from app.schemas.control_room_domain_kpi_responses import (
     ControlRoomFinanceKpisResponse,
     ControlRoomOperationsKpisResponse,
@@ -284,6 +287,23 @@ async def _control_room_internal_view(
                 f"risk-kpis-{top_n}",
                 user,
                 lambda: control_room_service.risk_kpis(user, top_n=top_n),
+            ),
+        )
+    if view == "agent_memory":
+        # Mission 4. Deliberately NOT cached: the point of shared memory is that
+        # one agent records a finding and the next agent sees it on its very next
+        # call. A TTL here would hand back a snapshot from before the write and
+        # the two agents would silently disagree.
+        subject = params.get("subject")
+        subject_text = str(subject).strip() if subject not in (None, "") else None
+        if subject_text is not None and len(subject_text) > 200:
+            raise HTTPException(status_code=400, detail="subject is too long")
+        return project_public_control_room_response(
+            ControlRoomAgentMemoryResponse,
+            await control_room_service.agent_memory_read(
+                user,
+                subject=subject_text,
+                limit=_bounded_int(params.get("limit"), 10, lower=1, upper=20),
             ),
         )
     if view == "sap_successfactors_workforce_trends":

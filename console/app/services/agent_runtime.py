@@ -68,8 +68,18 @@ _DEFAULT_SCHEDULED_MAX_TOOL_CALLS = 5
 _CONTROL_ROOM_ADVISORY_TOOLS = {
     "mcp-infra__control_room__raise_alert",
     "mcp-infra__control_room__raise_analysis_alert",
+    # Mission 4: appending a note to the shared agent memory is an advisory
+    # internal write with the same ceiling as raising an alert — it cannot
+    # approve, execute or write back externally. Listing it here is what lets a
+    # SCHEDULED monitor perform it: _make_invoke denies every non-read tool for a
+    # scheduled agent unless its full name is in _SCHEDULED_MONITOR_WRITE_TOOLS
+    # (this set unioned with _AGENTOPS_COMPUTE_TOOLS), and membership also earns
+    # control_room.write in _scheduled_permissions. Both server aliases are
+    # required because allowed_tools entries are matched on their full name.
+    "mcp-infra__control_room__agent_memory_write",
     "infra__control_room__raise_alert",
     "infra__control_room__raise_analysis_alert",
+    "infra__control_room__agent_memory_write",
 }
 _AGENTOPS_COMPUTE_TOOLS = {
     "mcp-infra__calibration__bayesian_state",

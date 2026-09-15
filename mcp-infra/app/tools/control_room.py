@@ -639,6 +639,268 @@ async def control_room__risk_kpis_read(
     )
 
 
+_AGENT_MEMORY_FINDING_TYPES = ("data_gap", "error", "insight", "warning")
+_AGENT_MEMORY_SEVERITIES = ("critical", "high", "medium", "low")
+_AGENT_MEMORY_SUBJECT_MAX = 200
+_AGENT_MEMORY_SUMMARY_MAX = 1000
+_AGENT_MEMORY_MAX_EXPIRY_HOURS = 8760
+
+
+def _agent_memory_subject(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text or len(text) > _AGENT_MEMORY_SUBJECT_MAX:
+        raise HTTPException(
+            400,
+            f"subject must be 1 to {_AGENT_MEMORY_SUBJECT_MAX} characters",
+        )
+    return text
+
+
+def _agent_memory_summary(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text or len(text) > _AGENT_MEMORY_SUMMARY_MAX:
+        raise HTTPException(
+            400,
+            f"summary must be 1 to {_AGENT_MEMORY_SUMMARY_MAX} characters",
+        )
+    return text
+
+
+def _agent_memory_choice(value: Any, allowed: tuple[str, ...], field: str) -> str:
+    text = str(value or "").strip().lower()
+    if text not in allowed:
+        raise HTTPException(400, f"{field} must be one of {', '.join(allowed)}")
+    return text
+
+
+def _agent_memory_expiry_hours(value: Any) -> int | None:
+    """Bound the caller's TTL. The advertised schema minimum/maximum is advice.
+
+    tool_policy does not enforce JSON-Schema bounds, so the clamp has to happen
+    here. Hours rather than a timestamp on purpose: the model has no clock, and
+    letting it send one invites both format errors and expiries in the past.
+    """
+    if value in (None, ""):
+        return None
+    try:
+        hours = int(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise HTTPException(400, "expires_in_hours must be an integer") from exc
+    if hours < 1 or hours > _AGENT_MEMORY_MAX_EXPIRY_HOURS:
+        raise HTTPException(
+            400,
+            f"expires_in_hours must be between 1 and {_AGENT_MEMORY_MAX_EXPIRY_HOURS}",
+        )
+    return hours
+
+
+@tool(
+    name="control_room__agent_memory_read",
+    description=(
+        "Memoria compartida entre agentes del workspace activo: hallazgos que "
+        "otros agentes registraron sobre un tema (un dataset, una columna, una "
+        "metrica o una entidad). Usala ANTES de reportar una limitacion de datos "
+        "o un problema, para citar lo que ya se sabe en lugar de repetirlo como "
+        "nuevo. Cada hallazgo trae el tipo (data_gap, error, insight, warning), "
+        "la severidad, el resumen en espanol, cuando se registro, cuando caduca y "
+        "el nombre del agente que lo registro. Los hallazgos caducados NO se "
+        "devuelven. Es memoria advisory, NO una verdad verificada del origen. "
+        "Solo lectura."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "subject": {
+                "type": "string",
+                "maxLength": _AGENT_MEMORY_SUBJECT_MAX,
+                "description": (
+                    "Opcional. El tema exacto a consultar, por ejemplo "
+                    "cost_center_budget. Sin este parametro devuelve los "
+                    "hallazgos activos mas recientes de cualquier tema."
+                ),
+            },
+            "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+        },
+        "additionalProperties": False,
+    },
+)
+async def control_room__agent_memory_read(
+    subject: str | None = None,
+    limit: int = 10,
+    security_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    params: dict[str, Any] = {"limit": max(1, min(int(limit or 10), 20))}
+    if subject not in (None, ""):
+        params["subject"] = _agent_memory_subject(subject)
+    return await _read_control_room_view(
+        "agent_memory",
+        security_context,
+        params=params,
+    )
+
+
+@tool(
+    name="control_room__agent_memory_write",
+    description=(
+        "Registra un hallazgo en la memoria compartida entre agentes del "
+        "workspace activo, para que otro agente lo encuentre antes de trabajar "
+        "sobre el mismo tema. Usala cuando descubras una limitacion de datos, un "
+        "error reproducible, una advertencia o un insight que otro agente "
+        "necesitaria saber. Escribe una nota advisory y nada mas: no aprueba, no "
+        "ejecuta, no escribe en ningun sistema externo y no puede borrar lo que "
+        "otro agente registro. Si ya existe un hallazgo activo tuyo con el mismo "
+        "tema y tipo, la llamada no duplica nada. Resumen corto, en espanol de "
+        "negocio, sin nombres de personas ni identificadores."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "subject": {
+                "type": "string",
+                "maxLength": _AGENT_MEMORY_SUBJECT_MAX,
+                "description": (
+                    "A que aplica el hallazgo: un dataset, una columna, una "
+                    "metrica o una entidad. Usa siempre el mismo texto para el "
+                    "mismo tema para que otro agente lo encuentre."
+                ),
+            },
+            "finding_type": {
+                "type": "string",
+                "enum": list(_AGENT_MEMORY_FINDING_TYPES),
+            },
+            "summary": {
+                "type": "string",
+                "maxLength": _AGENT_MEMORY_SUMMARY_MAX,
+                "description": (
+                    "Que encontraste, en una o dos frases de espanol de negocio."
+                ),
+            },
+            "severity": {
+                "type": "string",
+                "enum": list(_AGENT_MEMORY_SEVERITIES),
+            },
+            "detail": {
+                "type": "object",
+                "description": (
+                    "Opcional. Contexto estructurado para otro agente, por "
+                    "ejemplo la metrica afectada."
+                ),
+            },
+            "expires_in_hours": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": _AGENT_MEMORY_MAX_EXPIRY_HOURS,
+                "description": (
+                    "Opcional. Cuantas horas sigue vigente el hallazgo. Sin este "
+                    "parametro no caduca por si solo."
+                ),
+            },
+        },
+        "required": ["subject", "finding_type", "summary"],
+        "additionalProperties": False,
+    },
+)
+async def control_room__agent_memory_write(
+    subject: str,
+    finding_type: str,
+    summary: str,
+    severity: str = "medium",
+    detail: dict[str, Any] | None = None,
+    expires_in_hours: int | None = None,
+    security_context: dict[str, Any] | None = None,
+    effect_authority: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Append one advisory finding, or report that an active one already exists.
+
+    Writes Postgres directly, the same way control_room__raise_alert does: the
+    console internal bridge is read-only by construction (it exposes only
+    /internal/read), and adding a write endpoint there would remove that
+    property. Tenancy is enforced twice over — the RLS GUCs are set from the
+    signed context before the statement runs, and the row carries the same
+    tenant/workspace in its own columns, which the table's policy re-checks.
+    """
+    scope = _trusted_agent_scope(security_context)
+    clean_subject = _agent_memory_subject(subject)
+    clean_summary = _agent_memory_summary(summary)
+    clean_type = _agent_memory_choice(
+        finding_type, _AGENT_MEMORY_FINDING_TYPES, "finding_type"
+    )
+    clean_severity = _agent_memory_choice(
+        severity, _AGENT_MEMORY_SEVERITIES, "severity"
+    )
+    hours = _agent_memory_expiry_hours(expires_in_hours)
+    payload_detail = detail if isinstance(detail, dict) else {}
+
+    with _conn() as conn, conn.cursor() as cur:
+        _set_rls_scope(cur, scope["tenant_id"], scope["workspace_id"])
+        if effect_authority is not None:
+            _lock_scheduled_effect(cur, scope, effect_authority)
+        # Record-once-while-active: the NOT EXISTS guard lives inside the same
+        # statement, so a monitor may call this on every run without the table
+        # growing, and a concurrent duplicate is the worst case rather than a
+        # lost finding.
+        cur.execute(
+            """
+            INSERT INTO agent_shared_findings (
+                tenant_id, workspace_id, agent_id, finding_type,
+                subject, summary, detail, severity, expires_at
+            )
+            SELECT %s::uuid, %s::uuid, %s::uuid, %s,
+                   %s, %s, %s::jsonb, %s,
+                   CASE WHEN %s::int IS NULL THEN NULL
+                        ELSE NOW() + (%s::int * INTERVAL '1 hour')
+                   END
+             WHERE NOT EXISTS (
+                SELECT 1
+                  FROM agent_shared_findings f
+                 WHERE f.tenant_id = %s::uuid
+                   AND f.workspace_id = %s::uuid
+                   AND f.agent_id = %s::uuid
+                   AND f.subject = %s
+                   AND f.finding_type = %s
+                   AND (f.expires_at IS NULL OR f.expires_at > NOW())
+             )
+          RETURNING id, created_at, expires_at
+            """,
+            (
+                scope["tenant_id"],
+                scope["workspace_id"],
+                scope["agent_id"],
+                clean_type,
+                clean_subject,
+                clean_summary,
+                Json(payload_detail),
+                clean_severity,
+                hours,
+                hours,
+                scope["tenant_id"],
+                scope["workspace_id"],
+                scope["agent_id"],
+                clean_subject,
+                clean_type,
+            ),
+        )
+        row = cur.fetchone()
+        conn.commit()
+
+    return {
+        "ok": True,
+        "advisory": True,
+        "recorded": row is not None,
+        "subject": clean_subject,
+        "finding_type": clean_type,
+        "severity": clean_severity,
+        "agent_name": scope["agent_slug"] or scope["agent_name"],
+        "created_at": (row[1].isoformat() if row and row[1] else None),
+        "expires_at": (row[2].isoformat() if row and row[2] else None),
+        "note": (
+            "hallazgo registrado"
+            if row is not None
+            else "ya existe un hallazgo activo con el mismo tema y tipo: no se duplico"
+        ),
+    }
+
+
 @tool(
     name="control_room__decision_intelligence_runs_read",
     description=(
