@@ -1,7 +1,10 @@
 import { useId } from "react";
-import { CalendarDays, CheckCircle2, Clock3 } from "lucide-react";
+import { CalendarDays, CheckCircle2, Clock3, Info } from "lucide-react";
 
-import type { ExperienceFactV2 } from "@/lib/control-room/experience-contract";
+import type {
+  ExperienceFactV2,
+  ExperienceNarrative,
+} from "@/lib/control-room/experience-contract";
 import type { OpenExperiencePreview } from "@/lib/control-room/use-control-room-experience-preview";
 import {
   decisionLabel,
@@ -23,6 +26,69 @@ const severityLabel = {
   medium: "Media",
   low: "Baja",
 } as const;
+
+// Lectura de negocio opcional adjunta al dato. Todo llega como texto y se
+// renderiza como nodos de texto (nunca HTML); el bloque no ofrece acciones.
+function FactNarrative({ narrative }: { narrative: ExperienceNarrative }) {
+  const limitationsId = useId();
+  return (
+    <div
+      role="group"
+      aria-label="Lectura de negocio"
+      className="mt-5 space-y-3 border-t pt-4"
+    >
+      <p className="break-words text-sm leading-6 text-card-foreground">
+        {narrative.explanation}
+      </p>
+      <div>
+        <p className="text-xs font-medium text-muted-foreground">Recomendación</p>
+        <p className="mt-1 break-words text-sm leading-6 text-card-foreground">
+          {narrative.recommendation}
+        </p>
+      </div>
+      <div>
+        <p className="break-words text-sm font-medium text-card-foreground">
+          {`Confianza: ${narrative.confidence_label}`}
+        </p>
+        {narrative.confidence_reason ? (
+          <p className="mt-1 break-words text-xs text-muted-foreground">
+            {narrative.confidence_reason}
+          </p>
+        ) : null}
+      </div>
+      <div className="space-y-1 text-xs text-muted-foreground">
+        <p className="break-words">{narrative.basis_note}</p>
+        {narrative.evidence_note ? (
+          <p className="break-words">{narrative.evidence_note}</p>
+        ) : null}
+      </div>
+      {narrative.limitations.length > 0 ? (
+        <div>
+          <p
+            id={limitationsId}
+            className="text-xs font-medium text-muted-foreground"
+          >
+            Limitaciones
+          </p>
+          <ul
+            aria-labelledby={limitationsId}
+            className="mt-1 list-disc space-y-1 pl-4 text-xs text-muted-foreground"
+          >
+            {narrative.limitations.map((limitation, index) => (
+              <li key={index} className="break-words">
+                {limitation}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      <p className="flex items-start gap-1.5 text-xs font-medium text-muted-foreground">
+        <Info aria-hidden className="h-4 w-4 shrink-0" />
+        Solo recomendación: nada se aplica automáticamente.
+      </p>
+    </div>
+  );
+}
 
 export function ExperienceFact({
   fact,
@@ -78,6 +144,8 @@ export function ExperienceFact({
           </p>
         </div>
       ) : null}
+
+      {fact.narrative ? <FactNarrative narrative={fact.narrative} /> : null}
 
       {fact.actions.length > 0 ? (
         <div className="mt-5 space-y-3 border-t pt-4">

@@ -13,6 +13,7 @@ from app.dependencies import ROLE_ADMIN
 from app.security import get_internal_api_key
 from app.services import auth, operations_service, scheduled_runtime
 from app.services.auth import verify_internal_api_key
+from app.services.intelligence import narrative_job
 from app.services.permissions import canonical_role, require_permission
 from app.services.security_context import build_security_context
 
@@ -117,6 +118,17 @@ async def scheduled_agent_fanout(
         return result
     except ValueError as exc:
         raise HTTPException(422, "invalid scheduler window") from exc
+
+
+@router.post("/internal/control-room/narrate-alerts")
+async def narrate_control_room_alerts(
+    internal_service: str = Depends(verify_internal_api_key),
+):
+    """Deferred, advisory narration of open monitor alerts (Airflow only)."""
+    if internal_service != "airflow":
+        raise HTTPException(403, "only airflow can narrate monitor alerts")
+    pool = await auth.pool()
+    return await narrative_job.narrate_pending_alerts(pool)
 
 
 @router.get("/migrations")

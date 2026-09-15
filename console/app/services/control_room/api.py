@@ -4221,8 +4221,16 @@ def _persisted_item_timestamp_fields(public_row: dict[str, Any]) -> dict[str, An
 
 @_bind_to_core
 def _persisted_intelligence_payload(row: Any) -> dict[str, Any]:
+    from app.services.control_room.business_agent_evidence import (
+        without_agent_attestations,
+    )
+
     public_row = _row_to_public(row)
-    metadata = _details(public_row.get("metadata"))
+    # Mission 5: an agent-authored row cannot vouch for itself with a signed
+    # reference it copied from elsewhere.
+    metadata = without_agent_attestations(
+        _details(public_row.get("metadata")), item_id=public_row.get("item_id")
+    )
     severity = _severity(public_row.get("severity"))
     status = str(public_row.get("status") or "open")
     if status not in ITEM_STATUSES:
