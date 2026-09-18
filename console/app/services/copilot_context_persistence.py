@@ -10,6 +10,24 @@ from app.services import audit_service, copilot_context_authority
 from app.services.db_scope import scoped_db, workspace_scope_from_user
 
 
+DEFAULT_RETENTION_DAYS = 14
+
+# Always keeps the newest row of every workspace, whatever its age: that is
+# the only row `latest_snapshot` ever reads, so retention can never leave a
+# workspace without live context.
+_PURGE_SNAPSHOTS_SQL = """
+DELETE FROM copilot_context_snapshots s
+ WHERE s.created_at < NOW() - ($1::int * INTERVAL '1 day')
+   AND s.id <> (
+        SELECT x.id
+          FROM copilot_context_snapshots x
+         WHERE x.workspace_id = s.workspace_id
+         ORDER BY x.created_at DESC
+         LIMIT 1
+   )
+"""
+
+
 def _jsonable(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
@@ -175,3 +193,38 @@ async def persist_refresh(
             },
         )
     return snapshot_id
+
+
+def _deleted_rows(status: Any) -> int:
+    parts = str(status or "").split()
+    if len(parts) >= 2 and parts[0].upper() == "DELETE":
+        try:
+            return int(parts[-1])
+        except ValueError:
+            return 0
+    return 0
+
+
+async def purge_expired_snapshots(
+    pool: Any, *, retention_days: int = DEFAULT_RETENTION_DAYS
+) -> dict[str, Any]:
+    """Drop Copilot snapshots older than the retention window.
+
+    The newest snapshot of every workspace is always kept, so the purge can
+    never empty a workspace. A retention of zero or less disables it.
+    """
+
+    try:
+        days = int(retention_days)
+    except (TypeError, ValueError):
+        days = DEFAULT_RETENTION_DAYS
+    if days < 1:
+        return {"status": "skipped", "reason": "retention_disabled", "deleted": 0}
+    if not await copilot_context_authority.tables_ready(pool):
+        return {"status": "skipped", "reason": "tables_missing", "deleted": 0}
+    status = await pool.execute(_PURGE_SNAPSHOTS_SQL, days)
+    return {
+        "status": "ok",
+        "deleted": _deleted_rows(status),
+        "retention_days": days,
+    }
