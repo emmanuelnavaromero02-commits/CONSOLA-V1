@@ -1247,6 +1247,7 @@ _AUTH_INTERNAL_SERVICE_PREFIX = ("/monitoring/mcp/", "/studio_ops/mcp/")
 _AUTH_INTERNAL_DEPENDENCY_REQUESTS = frozenset(
     {
         ("POST", "/api/operations/internal/agent-runner/due"),
+        ("POST", "/api/operations/internal/control-room/narrate-alerts"),
     }
 )
 

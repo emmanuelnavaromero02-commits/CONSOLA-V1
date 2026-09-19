@@ -2,6 +2,7 @@ from __future__ import annotations
 
 # fmt: off
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
@@ -139,6 +140,9 @@ async def _invalidate_after_write(user: dict, operation: Any) -> Any:
     return result
 
 
+logger = logging.getLogger(__name__)
+
+
 def _client_ip(request: Request) -> str | None:
     return request.client.host if request.client else None
 
@@ -182,6 +186,7 @@ def _control_room_internal_user(
         "agent_id": ctx.get("agent_id"),
         "agent_slug": ctx.get("agent_slug"),
         "agent_run_id": ctx.get("agent_run_id"),
+        "security_context_source": ctx.get("source"),
     }
 
 
@@ -786,6 +791,20 @@ async def control_room_internal_read(
         internal_service,
     )
     view = str(payload.get("view") or "").strip()
+    # Mission 5 audit trail: which service read which view, in which scope, on
+    # behalf of which agent run and context source. There was none before.
+    logger.info(
+        "control_room.internal_read view=%r internal_service=%r"
+        " security_context_source=%r tenant_id=%s workspace_id=%s"
+        " agent_id=%r agent_run_id=%r",
+        view[:64],
+        internal_service,
+        user.get("security_context_source"),
+        user["tenant_id"],
+        user["workspace_id"],
+        user.get("agent_id"),
+        user.get("agent_run_id"),
+    )
     data = await _control_room_internal_view(view, user, params)
     return {
         "ok": True,

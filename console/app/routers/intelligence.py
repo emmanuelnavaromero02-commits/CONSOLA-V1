@@ -20,7 +20,7 @@ from app.schemas.control_room_talent_responses import (
 )
 from app.services import auth, intelligence_engine
 from app.services.auth import verify_internal_api_key
-from app.services.control_room import domain_wisdom_bits
+from app.services.control_room import domain_wisdom_bits, evidence_tickets
 from app.services.intelligence import backtesting as intelligence_backtesting
 from app.services.intelligence import calibration_service
 from app.services.intelligence import decision_orchestrator
@@ -139,6 +139,10 @@ class InternalMcpWisdomBitRequest(_StrictModel):
     wisdom_bit_id: str = Field(min_length=1, max_length=120)
     cartridge_id: str = Field(default="sap_successfactors", max_length=120)
     payload: dict[str, Any] = Field(default_factory=dict)
+    # Mission 5: forwarded by mcp-infra for scheduled monitors so console can
+    # attest the observation it computes. Optional: without it nothing is
+    # attested and the route behaves exactly as before.
+    effect_authority: dict[str, Any] | None = None
 
     @field_validator("payload")
     @classmethod
@@ -570,6 +574,66 @@ async def _scheduled_effect_guard(
         user.pop("_scheduled_effect_authority", None)
 
 
+async def _with_monitor_evidence(
+    user: dict[str, Any],
+    body: InternalMcpWisdomBitRequest,
+    internal_service: str,
+    payload: Any,
+) -> Any:
+    """Mission 5: attest the wisdom-bit observation of a scheduled monitor.
+
+    Additive and fail-open for the monitor: the payload comes back unchanged
+    unless a ticket was minted, in which case it also carries the opaque
+    ``evidence_handle``. A ticket needs all three of: a signed context whose
+    source is ``agent_runner``, a scheduled-effect authority that verifies
+    here, and a lease the database accepts. Everyone else, conversational
+    agents included, stays advisory-only.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    if user.get("security_context_source") != "agent_runner":
+        return payload
+    scope = {
+        "tenant_id": user.get("tenant_id"),
+        "workspace_id": user.get("workspace_id"),
+        "agent_id": user.get("agent_id"),
+    }
+    if body.effect_authority is None:
+        evidence_tickets.record_evidence_event("lease_missing", **scope)
+        return payload
+    try:
+        authority = _verified_effect_authority(
+            user, body.effect_authority, "wisdom_bits__run"
+        )
+    except HTTPException:
+        evidence_tickets.record_evidence_event("lease_invalid", **scope)
+        return payload
+    try:
+        pool = await auth.pool()
+    except Exception as exc:  # noqa: BLE001 - attestation must not break the monitor
+        evidence_tickets.record_evidence_event(
+            "unavailable", error_code=type(exc).__name__, **scope
+        )
+        return payload
+    handle = await evidence_tickets.mint_monitor_evidence_ticket(
+        pool,
+        tenant_id=str(user.get("tenant_id") or ""),
+        workspace_id=str(user.get("workspace_id") or ""),
+        agent_id=authority["agent_id"],
+        agent_run_id=user.get("agent_run_id"),
+        schedule_run_id=authority["schedule_run_id"],
+        fencing_token=authority["fencing_token"],
+        internal_service=internal_service,
+        security_context_source=str(user.get("security_context_source") or ""),
+        requested_wisdom_bit_id=body.wisdom_bit_id,
+        requested_cartridge_id=body.cartridge_id,
+        payload=payload,
+    )
+    if handle is None:
+        return payload
+    return {**payload, "evidence_handle": handle}
+
+
 @internal_router.post("/gold-refresh")
 async def intelligence_gold_refresh_internal(
     body: GoldRefreshIntelligenceRequest,
@@ -740,9 +804,10 @@ async def intelligence_wisdom_bits_run_internal(
             )
         from app.services import control_room_service
 
-        return await domain_wisdom_bits.domain_wisdom_bit(
+        payload = await domain_wisdom_bits.domain_wisdom_bit(
             user, domain_spec, control_room_service=control_room_service
         )
+        return await _with_monitor_evidence(user, body, internal_service, payload)
 
     if wisdom_bit_id != "WB-TALENTO":
         raise HTTPException(status_code=404, detail="wisdom_bit_id is not available")
@@ -766,7 +831,7 @@ async def intelligence_wisdom_bits_run_internal(
     if not isinstance(signal_items, list):
         signal_items = []
     blockers = list(overview.get("blockers") or [])
-    return {
+    payload = {
         "ok": True,
         "wisdom_bit_id": "WB-TALENTO",
         "cartridge_id": "sap_successfactors",
@@ -784,6 +849,7 @@ async def intelligence_wisdom_bits_run_internal(
         },
         "evidence": {"recommendation_only": True},
     }
+    return await _with_monitor_evidence(user, body, internal_service, payload)
 
 
 @internal_router.post("/calibration/state")

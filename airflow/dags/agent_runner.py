@@ -28,6 +28,7 @@ from datetime import datetime, timedelta
 import requests
 from airflow import DAG
 from airflow.operators.python import PythonOperator
+from airflow.utils.trigger_rule import TriggerRule
 
 from agent_runner_outcome import require_scheduled_invocation
 from agent_runner_record import record_agent_runner_run
@@ -79,6 +80,13 @@ RUNNER_TOKEN = os.environ.get("AGENT_RUNNER_TOKEN", "")
 # DAG runs every 5 min. We look back over this same window so a cron that
 # fires anywhere in [previous_run, now) gets dispatched exactly once per fire.
 INTERVAL_MIN = 5
+
+# Deferred alert narration runs after the monitors and must finish well inside
+# the 5-minute schedule. The HTTP timeout sits under the task timeout so a slow
+# Console fails the request (and only this task) before Airflow kills it.
+NARRATE_ALERTS_PATH = "/api/operations/internal/control-room/narrate-alerts"
+NARRATE_HTTP_TIMEOUT_SECONDS = 210
+NARRATE_TASK_TIMEOUT = timedelta(minutes=4)
 
 
 default_args = {
@@ -225,6 +233,51 @@ def record_run(**context):
     )
 
 
+# ── Task 4 · narrate_alerts ──────────────────────────────────────────────────
+
+
+def narrate_alerts(**_context):
+    """Ask Console to narrate open monitor alerts. Advisory; executes nothing.
+
+    Runs after invoke_each with trigger_rule=all_done, so narration still happens
+    when some invocations failed. It is a sibling of record_run rather than its
+    successor: Airflow derives the DAG-run state from the leaf tasks, and a
+    narration leaf that succeeds must not turn a failed record_run into a green
+    run. A failure here fails only this task, never the monitors.
+    """
+    url = f"{CONSOLE_URL.rstrip('/')}{NARRATE_ALERTS_PATH}"
+    try:
+        response = requests.post(
+            url,
+            headers={
+                "X-Api-Key": _internal_key("INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE"),
+                "X-Internal-Service": "airflow",
+                "Content-Type": "application/json",
+            },
+            timeout=NARRATE_HTTP_TIMEOUT_SECONDS,
+        )
+        status_code = int(response.status_code)
+        data = response.json() if 200 <= status_code < 300 else {}
+        if not 200 <= status_code < 300 or not isinstance(data, dict):
+            raise RuntimeError("alert narration rejected")
+    except Exception as exc:
+        raise RuntimeError("alert narration unavailable") from exc
+    counters = (
+        "workspaces",
+        "candidates",
+        "narrated_ready",
+        "narrated_template",
+        "skipped_current",
+        "budget_exhausted",
+        "lost_claim",
+        "deferred",
+    )
+    summary = {name: int(data.get(name) or 0) for name in counters}
+    summary["status"] = str(data.get("status") or "")
+    summary["failures"] = len(data.get("failures") or [])
+    return summary
+
+
 # ── DAG wiring ───────────────────────────────────────────────────────────────
 
 t_find = PythonOperator(
@@ -242,5 +295,13 @@ t_rec = PythonOperator(
     python_callable=record_run,
     dag=dag,
 )
+t_narrate = PythonOperator(
+    task_id="narrate_alerts",
+    python_callable=narrate_alerts,
+    retries=0,
+    trigger_rule=TriggerRule.ALL_DONE,
+    execution_timeout=NARRATE_TASK_TIMEOUT,
+    dag=dag,
+)
 
-t_find >> t_inv >> t_rec
+t_find >> t_inv >> [t_rec, t_narrate]

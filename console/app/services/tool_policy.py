@@ -29,6 +29,8 @@ SECRET_KEYS = frozenset({
 BACKEND_CONTEXT_KEYS = frozenset({
     "security_context", "user_context", "_trusted_admin",
     "_server_trusted_context",
+    # Mission 5: server-only parameters of mcp-infra's alert writer.
+    "_server_metadata_patch", "_server_event_kind", "_server_event_metadata",
 })
 
 MAX_TOOL_ARGS_BYTES = 16_000
