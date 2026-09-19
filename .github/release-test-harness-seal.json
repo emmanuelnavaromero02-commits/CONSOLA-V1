@@ -3710,6 +3710,10 @@
       "sha256": "6faa213f777f20870bdbe9beb737bdf812d0a46210d662f50b724a0dffacc4d1"
     },
     {
+      "path": "tests/test_aws_iam_app_s3_policy.py",
+      "sha256": "bdf5f7202a5b1de4c6516220b626cf3b3a4759bc9866f27523d9a7ffab50ce43"
+    },
+    {
       "path": "tests/test_aws_secrets_manager_config.py",
       "sha256": "2b2b18b9d8d59a44bb9c2f9569416d42a41dfbcd82544961fae56b8a945c1d37"
     },
