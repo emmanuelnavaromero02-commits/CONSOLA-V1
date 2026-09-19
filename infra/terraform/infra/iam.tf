@@ -21,9 +21,15 @@ resource "aws_iam_role_policy_attachment" "app_ssm" {
 }
 
 data "aws_iam_policy_document" "app_s3" {
+  # Bucket level. s3:GetBucketVersioning: the refinement publication verifier
+  # (refinement/app/publication_verifier_worker.py) fails closed unless the
+  # lakehouse bucket reports versioning Status=Enabled, and it runs that check
+  # on every refinement /readyz probe, so without it refinement never becomes
+  # healthy.
   statement {
     actions = [
       "s3:GetBucketLocation",
+      "s3:GetBucketVersioning",
       "s3:ListBucket",
     ]
     resources = [
@@ -31,11 +37,18 @@ data "aws_iam_policy_document" "app_s3" {
     ]
   }
 
+  # Object level. s3:GetObjectVersion: staged publication pins every
+  # Silver/Gold object by VersionId, and HeadObject/GetObject with a VersionId
+  # (omega_lakehouse/s3_storage.py) are authorized by s3:GetObjectVersion, not
+  # s3:GetObject. Version-destroying actions (s3:DeleteObjectVersion,
+  # s3:PutBucketVersioning) stay out on purpose: the app must not be able to
+  # erase a pinned version.
   statement {
     actions = [
       "s3:AbortMultipartUpload",
       "s3:DeleteObject",
       "s3:GetObject",
+      "s3:GetObjectVersion",
       "s3:ListMultipartUploadParts",
       "s3:PutObject",
     ]
