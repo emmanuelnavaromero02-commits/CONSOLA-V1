@@ -5,6 +5,9 @@ from collections import Counter
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from app.services.control_room.business_agent_evidence import (
+    without_agent_attestations,
+)
 from app.services.control_room.business_lineage import (
     item_identity,
     parent_references,
@@ -186,7 +189,7 @@ def normalize_persisted_business_item(row: Mapping[str, Any]) -> dict[str, Any]:
         metadata = parsed if isinstance(parsed, dict) else {}
     elif not isinstance(metadata, Mapping):
         metadata = {}
-    item["metadata"] = dict(metadata)
+    item["metadata"] = without_agent_attestations(metadata, item_id=item.get("item_id"))
     item["id"] = str(item.get("item_id") or "").strip()
     item["kind"] = str(item.get("item_kind") or "").strip()
     for field in ("tenant_id", "workspace_id"):

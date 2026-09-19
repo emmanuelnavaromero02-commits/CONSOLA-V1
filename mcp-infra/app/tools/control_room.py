@@ -218,6 +218,42 @@ def _redact_sensitive(value: Any) -> Any:
     return value
 
 
+# Mission 5. Keys that only console's evidence signer produces. A caller-supplied
+# reference carrying any of them is either a signed reference replayed from
+# somewhere else or an attempt to forge one. Stored, it would sit in
+# control_room_items.metadata exactly where Control Room looks for attested
+# evidence, so it is refused here. Attested evidence for a monitor alert is
+# minted by console itself and never travels through this argument.
+_SERVER_ATTESTATION_KEYS = frozenset(
+    {
+        "server_attestation",
+        "attestation_key_id",
+        "attestation_version",
+        "attestation_purpose",
+        "scope_binding",
+        "business_binding",
+        "source_row_hash",
+    }
+)
+_MAX_ATTESTATION_SCAN_DEPTH = 8
+
+
+def _carries_server_attestation(value: Any, *, depth: int = 0) -> bool:
+    if depth > _MAX_ATTESTATION_SCAN_DEPTH:
+        # Refuse pathological nesting instead of scanning it; entries are capped
+        # at _MAX_EVIDENCE_REF_BYTES, so a legitimate reference never gets here.
+        return True
+    if isinstance(value, dict):
+        if any(str(key).strip().lower() in _SERVER_ATTESTATION_KEYS for key in value):
+            return True
+        return any(
+            _carries_server_attestation(item, depth=depth + 1) for item in value.values()
+        )
+    if isinstance(value, (list, tuple)):
+        return any(_carries_server_attestation(item, depth=depth + 1) for item in value)
+    return False
+
+
 def _evidence_refs(value: Any) -> list[Any]:
     if value is None:
         return []
@@ -228,6 +264,8 @@ def _evidence_refs(value: Any) -> list[Any]:
     refs: list[Any] = []
     total = 0
     for item in value:
+        if _carries_server_attestation(item):
+            raise HTTPException(400, "evidence_refs cannot carry server attestation")
         clean = _redact_sensitive(item)
         raw = json.dumps(clean, sort_keys=True, default=str, ensure_ascii=False)
         if len(raw.encode("utf-8")) > _MAX_EVIDENCE_REF_BYTES:
@@ -263,6 +301,16 @@ def _analysis_evidence(
     blockers: Any = None,
     distribution: Any = None,
 ) -> dict[str, Any]:
+    for label, value in (
+        ("metrics", metrics),
+        ("blockers", blockers),
+        ("distribution", distribution),
+        ("recommended_option", recommended_option),
+    ):
+        # Mission 5: analysis_evidence is stored beside evidence_refs in the
+        # alert metadata, so it gets the same refusal.
+        if _carries_server_attestation(value):
+            raise HTTPException(400, f"{label} cannot carry server attestation")
     engine = _as_safe_key(engine, "engine")
     if engine not in _ANALYSIS_ENGINES:
         raise HTTPException(
@@ -1219,18 +1267,39 @@ async def wisdom_bits__run(
     security_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     scope = _trusted_agent_scope(security_context)
-    result = await _call_console_under_fence(
-        scope,
-        effect_authority,
-        "/internal/intelligence/wisdom-bits/run",
-        {
-            "security_context": security_context,
-            "wisdom_bit_id": wisdom_bit_id,
-            "cartridge_id": cartridge_id,
-            "payload": payload or {},
-        },
-        timeout=45.0,
-    )
+    console_body: dict[str, Any] = {
+        "security_context": security_context,
+        "wisdom_bit_id": wisdom_bit_id,
+        "cartridge_id": cartridge_id,
+        "payload": payload or {},
+    }
+    if effect_authority is not None:
+        # Mission 5: console re-verifies the signed authority and the lease
+        # before it attests the wisdom-bit observation. mcp-infra only forwards
+        # it; it receives an opaque handle back, never a signature.
+        console_body["effect_authority"] = effect_authority
+    try:
+        result = await _call_console_under_fence(
+            scope,
+            effect_authority,
+            "/internal/intelligence/wisdom-bits/run",
+            console_body,
+            timeout=45.0,
+        )
+    except HTTPException as exc:
+        if exc.status_code != 422 or "effect_authority" not in console_body:
+            raise
+        # Rollout safety: a console that predates Mission 5 rejects the extra
+        # field (extra="forbid"). Attestation is optional; the wisdom bit is
+        # not, so the monitor step is retried without it.
+        console_body.pop("effect_authority")
+        result = await _call_console_under_fence(
+            scope,
+            effect_authority,
+            "/internal/intelligence/wisdom-bits/run",
+            console_body,
+            timeout=45.0,
+        )
     return {
         "ok": True,
         "engine": "wisdom_bit",
@@ -1284,6 +1353,57 @@ async def wisdom_bits__run(
     },
 )
 def control_room__raise_alert(
+    alert_type: str,
+    cartridge_id: str,
+    domain: str,
+    source_dataset: str,
+    entity_key: str,
+    title: str,
+    message: str,
+    severity: str,
+    confidence: float,
+    entity_label: str | None = None,
+    recommendation: str | None = None,
+    impact_estimate: float | int | None = None,
+    impact_currency: str | None = None,
+    evidence_refs: list[Any] | None = None,
+    hypothesis: str | None = None,
+    expected_outcome: str | None = None,
+    effect_authority: dict[str, Any] | None = None,
+    security_context: dict[str, Any] | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    # Mission 5: the tool entry point takes no server-only argument. The
+    # registry dispatches with fn(**args), so every parameter named here is
+    # reachable by the caller. The server-owned metadata patch and event names
+    # live on _raise_alert_impl, which only raise_analysis_alert calls; a caller
+    # naming them lands in **extra and is refused.
+    unexpected = sorted(extra)
+    if unexpected:
+        raise HTTPException(400, f"unsupported alert args: {', '.join(unexpected)}")
+    return _raise_alert_impl(
+        alert_type=alert_type,
+        cartridge_id=cartridge_id,
+        domain=domain,
+        source_dataset=source_dataset,
+        entity_key=entity_key,
+        title=title,
+        message=message,
+        severity=severity,
+        confidence=confidence,
+        entity_label=entity_label,
+        recommendation=recommendation,
+        impact_estimate=impact_estimate,
+        impact_currency=impact_currency,
+        evidence_refs=evidence_refs,
+        hypothesis=hypothesis,
+        expected_outcome=expected_outcome,
+        effect_authority=effect_authority,
+        security_context=security_context,
+    )
+
+
+def _raise_alert_impl(
     alert_type: str,
     cartridge_id: str,
     domain: str,
@@ -1618,7 +1738,7 @@ def control_room__raise_analysis_alert(
         "analysis_evidence": analysis,
         "engine_run_id": analysis["engine_run_id"],
     }
-    result = control_room__raise_alert(
+    result = _raise_alert_impl(
         alert_type=alert_type,
         cartridge_id=cartridge_id,
         domain=domain,

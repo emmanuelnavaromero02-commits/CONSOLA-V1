@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from fastapi import HTTPException
 
 from app.services import control_room_service
+from app.services.control_room.attested_monitor_alerts import (
+    load_attested_monitor_alerts,
+)
 from app.services.control_room.business_projection import project_business_item
 
 
@@ -24,6 +27,10 @@ class SurfaceSnapshot:
     diagnostics: tuple[Mapping[str, object], ...]
     sources: tuple[Mapping[str, object], ...]
     installations: tuple[Mapping[str, object], ...]
+    # Mission 5: narratives of attested monitor alerts, keyed by item id. Kept
+    # beside the items rather than inside them, so narrative text can never
+    # take part in an item's eligibility or observation checks.
+    narratives: Mapping[str, Mapping[str, object]] = field(default_factory=dict)
 
 
 def _scope(user: Mapping[str, object]) -> SurfaceScope:
@@ -74,13 +81,30 @@ async def collect_surface_snapshot(
         use_catalog=True,
         item_projector=project_business_item,
     )
+    live_items = _rows(payload.get("items"))
+    # Mission 5: attested scheduled-monitor alerts are not Gold rows, so the
+    # live collection above never produces them. They join the same snapshot
+    # and pass the same scope validation below.
+    monitor_alerts = await load_attested_monitor_alerts(user)
+    live_ids = {str(item.get("id") or "") for item in live_items}
+    monitor_items = tuple(
+        item
+        for item in monitor_alerts.items
+        if str(item.get("id") or "") not in live_ids
+    )
+    kept_ids = {str(item.get("id") or "") for item in monitor_items}
     snapshot = SurfaceSnapshot(
         generated_at=datetime.now(UTC),
         scope=scope,
-        items=_rows(payload.get("items")),
+        items=(*live_items, *monitor_items),
         diagnostics=_rows(payload.get("diagnostics")),
         sources=_rows(payload.get("sources")),
         installations=_rows(payload.get("installations")),
+        narratives={
+            item_id: narrative
+            for item_id, narrative in monitor_alerts.narratives.items()
+            if item_id in kept_ids
+        },
     )
     validate_snapshot_scope(snapshot)
     return snapshot

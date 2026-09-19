@@ -23,7 +23,7 @@
     },
     {
       "path": "airflow/dags/agent_runner.py",
-      "sha256": "6e8aedf573024f1a7e01cbee045e1763e14fd3c167469cf6f08988adf1053b10"
+      "sha256": "5c874a5f45ab09c158ec63fc77cc7b31f3bbc6fab2eed545858ee9c3eaed1594"
     },
     {
       "path": "airflow/dags/agent_runner_outcome.py",
@@ -2722,8 +2722,36 @@
       "sha256": "7d12a595da2499129c461548d904c43e02af88671463f0c3b7f486c9c99c5d7d"
     },
     {
+      "path": "console/tests/test_mission5_agent_evidence_bypass.py",
+      "sha256": "73347378b3a00adb173baa3eaa9ff47c045a1a17a66afa292d33629a511ceed2"
+    },
+    {
+      "path": "console/tests/test_mission5_alert_identity_drift.py",
+      "sha256": "bf7b61e20a565b819d1e0bf2e38f18ab03c6732f519a02f3d14d392394caa515"
+    },
+    {
+      "path": "console/tests/test_mission5_attested_monitor_alerts.py",
+      "sha256": "738b618e4700629bcbe43d2deea3431bde3fca4eaae4cf8b6d5e4a7be801caf0"
+    },
+    {
+      "path": "console/tests/test_mission5_narrative_service.py",
+      "sha256": "7dc86655007f942579a107e5b7516cf2ece191a4ccd68b84101d50a71ac92dca"
+    },
+    {
+      "path": "console/tests/test_mission5_wisdom_bits_evidence_hook.py",
+      "sha256": "46324fbb5128e23242c8a20013c1723b82b5a4f608b282e73ad74b338733ed16"
+    },
+    {
       "path": "console/tests/test_monitor_alert_sufficiency.py",
       "sha256": "d6db83be96e5fe5e4b6fd1b0078c05e84387ce869a899bb0613c6426f74b42ba"
+    },
+    {
+      "path": "console/tests/test_narrate_alerts_route_auth.py",
+      "sha256": "f64bd9cbc433637c527450cfb839c6c47799e9a9e76eabc386866057a1a9f043"
+    },
+    {
+      "path": "console/tests/test_narrative_job.py",
+      "sha256": "807875a623729ffd2ac6f19a78dbdde469b039567d2564ec009bd3b15cbfaef2"
     },
     {
       "path": "console/tests/test_operational_truth_public_projection.py",
@@ -3584,6 +3612,10 @@
     {
       "path": "tests/test_agent_runner_http_outcome.py",
       "sha256": "5c7c7b9aea4b1b00c5dfd0eeeae0eaeb531216336ef6cbc32126c72251e4e134"
+    },
+    {
+      "path": "tests/test_agent_runner_narrate_task.py",
+      "sha256": "8859ed1deeafc317fd1c8f7c7383cb7eeae37e2f4e8c8f6c8db9fa0e9956b262"
     },
     {
       "path": "tests/test_agent_runtime_guardrails.py",
@@ -4740,6 +4772,14 @@
     {
       "path": "tests/test_migration_99p_decision_backtesting.py",
       "sha256": "d0d2c6eb8419b07f93ed0ce622c9e5ce5d517a4562099987db879d02c63de72e"
+    },
+    {
+      "path": "tests/test_mission5_evidence_ticket_contracts.py",
+      "sha256": "31895f463f774451d366cf942b4570b7376185723c085416d34e144c89cac61c"
+    },
+    {
+      "path": "tests/test_mission5_evidence_tickets_live.py",
+      "sha256": "210cb46852776327ac58fcf68292925ac5d91073a098ba79ab8399ea106541cb"
     },
     {
       "path": "tests/test_monitoring_rag_auth.py",

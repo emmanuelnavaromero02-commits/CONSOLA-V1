@@ -5,6 +5,9 @@ from collections.abc import Mapping, Set
 from typing import Any
 from uuid import UUID
 
+from app.services.control_room.business_agent_evidence import (
+    without_agent_attestations,
+)
 from app.services.control_room.business_artifact_overlay import (
     artifact_overlay_allowed,
 )
@@ -60,7 +63,11 @@ def persisted_business_item(
     public = _public(row)
     if str(public.get("item_id") or "") != expected_item_id:
         return None
-    metadata = _metadata(public.get("metadata"))
+    # Mission 5: the command path decides eligibility too, so an agent-authored
+    # row cannot vouch for itself here either.
+    metadata = without_agent_attestations(
+        _metadata(public.get("metadata")), item_id=public.get("item_id")
+    )
     severity = _severity(public.get("severity"), severity_weights)
     status = str(public.get("status") or "open")
     if status not in item_statuses:

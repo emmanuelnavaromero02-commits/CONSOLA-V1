@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   controlRoomExperienceV2Schema,
   experienceActionPreviewResponseSchema,
+  experienceNarrativeSchema,
 } from "./experience-contract";
 
 const handle = "a".repeat(64);
@@ -149,6 +150,134 @@ describe("controlRoomExperienceV2Schema", () => {
           },
         ],
       }),
+    ).toThrow();
+  });
+});
+
+describe("experience fact narrative", () => {
+  const narrative = {
+    status: "ready",
+    explanation: "La cobertura bajó tres puntos frente al mes anterior.",
+    recommendation: "Revisar con el owner de la región las vacantes abiertas.",
+    confidence_label: "media",
+    confidence_reason: "El dato cubre solo dos de las tres regiones.",
+    basis_note: "Basado en el agregado mensual de posiciones críticas.",
+    evidence_note: "Evidencia verificada el 24 de julio.",
+    limitations: ["No incluye contratistas."],
+  };
+
+  function withNarrative(candidate: unknown) {
+    return {
+      ...payload,
+      sections: [
+        { ...payload.sections[0], facts: [{ ...fact, narrative: candidate }] },
+      ],
+    };
+  }
+
+  function omit(key: string) {
+    return Object.fromEntries(
+      Object.entries(narrative).filter(([name]) => name !== key),
+    );
+  }
+
+  it("keeps a fact without narrative valid and adds no narrative key", () => {
+    const parsed = controlRoomExperienceV2Schema.parse(payload);
+    expect(parsed.sections[0].facts[0]).not.toHaveProperty("narrative");
+  });
+
+  it("accepts a fact with the full narrative contract", () => {
+    const candidate = withNarrative(narrative);
+    expect(controlRoomExperienceV2Schema.parse(candidate)).toEqual(candidate);
+  });
+
+  it("accepts a template narrative without optional fields at the exact bounds", () => {
+    const bounded = {
+      status: "template",
+      explanation: "x".repeat(600),
+      recommendation: "x".repeat(600),
+      confidence_label: "baja",
+      basis_note: "x".repeat(240),
+      limitations: Array.from({ length: 4 }, () => "x".repeat(240)),
+    };
+    expect(experienceNarrativeSchema.parse(bounded)).toEqual(bounded);
+    expect(
+      experienceNarrativeSchema.parse({
+        ...bounded,
+        confidence_reason: "x".repeat(600),
+        evidence_note: "x".repeat(240),
+        limitations: [],
+      }),
+    ).toBeTruthy();
+  });
+
+  it("measures text bounds in characters like the backend, not UTF-16 units", () => {
+    expect(
+      experienceNarrativeSchema.parse({ ...narrative, basis_note: "😀".repeat(240) }),
+    ).toBeTruthy();
+    expect(() =>
+      experienceNarrativeSchema.parse({ ...narrative, basis_note: "😀".repeat(241) }),
+    ).toThrow();
+  });
+
+  it.each(["alta", "media", "baja"])("accepts the confidence level %s", (level) => {
+    expect(
+      experienceNarrativeSchema.parse({ ...narrative, confidence_label: level })
+        .confidence_label,
+    ).toBe(level);
+  });
+
+  it.each(["Media", "MEDIA", "high", "muy alta", "alta ", "", "desconocida"])(
+    "rejects the confidence label %j outside alta/media/baja",
+    (label) => {
+      expect(() =>
+        controlRoomExperienceV2Schema.parse(
+          withNarrative({ ...narrative, confidence_label: label }),
+        ),
+      ).toThrow();
+    },
+  );
+
+  it.each(["prompt", "model", "sources", "item_id", "metadata"])(
+    "rejects the unknown narrative field %s",
+    (field) => {
+      expect(() =>
+        controlRoomExperienceV2Schema.parse(
+          withNarrative({ ...narrative, [field]: "private" }),
+        ),
+      ).toThrow();
+    },
+  );
+
+  it("rejects more than four limitations", () => {
+    expect(() =>
+      controlRoomExperienceV2Schema.parse(
+        withNarrative({
+          ...narrative,
+          limitations: Array.from({ length: 5 }, (_, index) => `Limitación ${index}`),
+        }),
+      ),
+    ).toThrow();
+  });
+
+  it.each([
+    ["an unknown status", { ...narrative, status: "draft" }],
+    ["an empty explanation", { ...narrative, explanation: "" }],
+    ["an oversized explanation", { ...narrative, explanation: "x".repeat(601) }],
+    ["an oversized recommendation", { ...narrative, recommendation: "x".repeat(601) }],
+    ["an oversized confidence reason", { ...narrative, confidence_reason: "x".repeat(601) }],
+    ["an empty basis note", { ...narrative, basis_note: "" }],
+    ["an oversized basis note", { ...narrative, basis_note: "x".repeat(241) }],
+    ["an empty evidence note", { ...narrative, evidence_note: "" }],
+    ["an oversized evidence note", { ...narrative, evidence_note: "x".repeat(241) }],
+    ["an empty limitation", { ...narrative, limitations: [""] }],
+    ["an oversized limitation", { ...narrative, limitations: ["x".repeat(241)] }],
+    ["a missing recommendation", omit("recommendation")],
+    ["missing limitations", omit("limitations")],
+    ["a null narrative", null],
+  ])("rejects a narrative with %s", (_name, candidate) => {
+    expect(() =>
+      controlRoomExperienceV2Schema.parse(withNarrative(candidate)),
     ).toThrow();
   });
 });

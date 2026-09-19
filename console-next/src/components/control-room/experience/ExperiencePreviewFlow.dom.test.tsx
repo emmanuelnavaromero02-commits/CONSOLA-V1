@@ -215,6 +215,39 @@ describe("Experience preview confirmation", () => {
     });
   });
 
+  it("keeps the success flow free of approval or execution copy with a narrative", async () => {
+    clientBoundary.preview.mockResolvedValue(success);
+    const withNarrative = structuredClone(experience);
+    withNarrative.sections[0].facts[0].narrative = {
+      status: "ready",
+      explanation: "La cobertura bajó tres puntos frente al mes anterior.",
+      recommendation: "Revisar con el owner de la región las vacantes abiertas.",
+      confidence_label: "media",
+      confidence_reason: "El dato cubre solo dos de las tres regiones.",
+      basis_note: "Basado en el agregado mensual de posiciones críticas.",
+      evidence_note: "Evidencia verificada el 24 de julio.",
+      limitations: ["No incluye contratistas."],
+    };
+    await renderHarness({ currentExperience: withNarrative });
+    expect(container.textContent).toContain(
+      "Revisar con el owner de la región las vacantes abiertas.",
+    );
+    expect(container.textContent).toContain(
+      "Solo recomendación: nada se aplica automáticamente.",
+    );
+
+    await act(async () => button("Generar preview")?.click());
+    expect(container.textContent).not.toMatch(/Aprobar|Ejecutar|Sí, ejecutar/);
+    await act(async () => button("Confirmar preview")?.click());
+    await act(async () => undefined);
+
+    expect(clientBoundary.preview).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('[role="status"]')?.textContent).toContain(
+      success.message,
+    );
+    expect(container.textContent).not.toMatch(/Aprobar|Ejecutar|Sí, ejecutar/);
+  });
+
   it("keeps disabled actions inert and shows the exact server reason", async () => {
     const disabled = structuredClone(experience);
     disabled.sections[0].facts[0].actions[0] = {
