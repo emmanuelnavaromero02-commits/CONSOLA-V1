@@ -1871,7 +1871,7 @@
     },
     {
       "path": "console/tests/test_control_room_copilot_refresh_atomicity.py",
-      "sha256": "1a10d2abc24be8c14943b647be4bb3b961dbbc5cac81da2e415d43148a313f3c"
+      "sha256": "22cf697523a27ac6cccdc6f9333857814facdb65016758e78c791642146acb12"
     },
     {
       "path": "console/tests/test_control_room_dashboard_active_connections.py",
@@ -4027,7 +4027,7 @@
     },
     {
       "path": "tests/test_control_room_live_postgres_copilot_refresh_atomicity.py",
-      "sha256": "8574d3e09d620a31eb74994f06d9cf97efad6c32623ac7b9ed977e518bfef144"
+      "sha256": "07ac67f3da0aa7834d6f83c1be2885eb2aeef616a17ac7b8f77c7b2ca9eb53db"
     },
     {
       "path": "tests/test_control_room_live_postgres_dismiss_reopen_audit.py",

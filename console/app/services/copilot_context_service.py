@@ -50,6 +50,7 @@ SNAPSHOT_TABLE = copilot_context_authority.SNAPSHOT_TABLE
 RECOMMENDATIONS_TABLE = copilot_context_authority.RECOMMENDATIONS_TABLE
 DEFAULT_INTERVAL_SECONDS = 3600
 DEFAULT_WORKSPACE_LIMIT = 200
+DEFAULT_RETENTION_DAYS = copilot_context_persistence.DEFAULT_RETENTION_DAYS
 _SOURCE_LABELS = {
     "database.operational_counts": ("platform_operations", "Operación de plataforma"),
     "control_room.ops_summary": (
@@ -1002,6 +1003,23 @@ async def refresh_all_workspaces(
     }
 
 
+def _retention_days() -> int:
+    raw = os.environ.get("COPILOT_CONTEXT_RETENTION_DAYS")
+    if raw is None or not str(raw).strip():
+        return DEFAULT_RETENTION_DAYS
+    try:
+        return int(str(raw).strip())
+    except ValueError:
+        return DEFAULT_RETENTION_DAYS
+
+
+async def purge_expired_snapshots() -> dict[str, Any]:
+    pool = await auth.pool()
+    return await copilot_context_persistence.purge_expired_snapshots(
+        pool, retention_days=_retention_days()
+    )
+
+
 async def hourly_scheduler(stop_event: asyncio.Event | None = None) -> None:
     raw_interval = os.environ.get("COPILOT_CONTEXT_REFRESH_SECONDS")
     try:
@@ -1028,6 +1046,17 @@ async def hourly_scheduler(stop_event: asyncio.Event | None = None) -> None:
             raise
         except Exception:
             logger.warning("copilot live context scheduler tick failed", exc_info=True)
+
+        # Own try/except: a failed purge must never stop the refreshes, and a
+        # failed refresh must never leave expired snapshots behind.
+        try:
+            purged = await purge_expired_snapshots()
+            if purged.get("deleted") or purged.get("status") != "ok":
+                logger.info("copilot live context purge: %s", purged)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("copilot live context purge failed", exc_info=True)
 
         if stop_event is not None:
             try:

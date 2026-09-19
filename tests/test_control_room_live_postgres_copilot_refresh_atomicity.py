@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from unittest.mock import AsyncMock, patch
 
 import asyncpg
@@ -220,3 +221,135 @@ async def test_real_postgres_refresh_audit_and_state_share_one_transaction(
     finally:
         await _delete_refresh_audits(copilot_scope)
         await pool.close()
+
+
+# Ages in days of the rows seeded for the retention proof. Workspace "fresh" has
+# history on both sides of the 14-day window; workspace "stale" only has rows
+# older than the window, so the purge must keep exactly its newest one.
+_FRESH_AGES = (30, 15, 13, 1, 0)
+_STALE_AGES = (40, 30)
+
+
+async def _seed_retention_workspaces(scope: CopilotScope) -> dict[str, object]:
+    suffix = uuid.uuid4().hex
+    conn = await asyncpg.connect(scope.admin_dsn)
+    try:
+        tenant_id = str(
+            await conn.fetchval(
+                "INSERT INTO tenants (name, slug) VALUES ($1, $2) RETURNING id",
+                f"copilot-retention-{suffix}",
+                f"copilot-retention-{suffix}",
+            )
+        )
+        workspaces: dict[str, str] = {}
+        rows: dict[str, str] = {}
+        for label, ages in (("fresh", _FRESH_AGES), ("stale", _STALE_AGES)):
+            workspace_id = str(
+                await conn.fetchval(
+                    "INSERT INTO workspaces (tenant_id, name) "
+                    "VALUES ($1::uuid, $2) RETURNING id",
+                    tenant_id,
+                    f"Copilot retention {label} {suffix}",
+                )
+            )
+            workspaces[label] = workspace_id
+            for age in ages:
+                # Age 0 is a minute old so it never races the window edge.
+                snapshot_id = await conn.fetchval(
+                    "INSERT INTO copilot_context_snapshots "
+                    "(tenant_id, workspace_id, generated_by, created_at) "
+                    "VALUES ($1::uuid, $2::uuid, 'scheduler', "
+                    "NOW() - ($3::int * INTERVAL '1 day') - INTERVAL '1 minute') "
+                    "RETURNING id::text",
+                    tenant_id,
+                    workspace_id,
+                    age,
+                )
+                rows[snapshot_id] = f"{label}:{age}"
+        by_label = {label: snapshot_id for snapshot_id, label in rows.items()}
+        await conn.executemany(
+            "INSERT INTO copilot_recommendations (tenant_id, workspace_id, "
+            "snapshot_id, fingerprint, severity, category, title, body) "
+            "VALUES ($1::uuid, $2::uuid, $3::uuid, $4, 'info', 'control_room', "
+            "$4, '')",
+            [
+                (tenant_id, workspaces["fresh"], by_label["fresh:30"], "live:expired"),
+                (tenant_id, workspaces["fresh"], by_label["fresh:13"], "live:kept"),
+            ],
+        )
+    finally:
+        await conn.close()
+    return {"tenant_id": tenant_id, "workspaces": workspaces, "rows": rows}
+
+
+async def _retention_state(
+    scope: CopilotScope, seeded: dict[str, object]
+) -> tuple[dict[str, list[str]], dict[str, bool]]:
+    workspaces = seeded["workspaces"]
+    rows = seeded["rows"]
+    conn = await asyncpg.connect(scope.admin_dsn)
+    try:
+        snapshot_rows = await conn.fetch(
+            "SELECT id::text FROM copilot_context_snapshots "
+            "WHERE workspace_id = ANY($1::uuid[])",
+            list(workspaces.values()),
+        )
+        recommendation_rows = await conn.fetch(
+            "SELECT fingerprint, snapshot_id IS NOT NULL AS linked "
+            "FROM copilot_recommendations WHERE workspace_id = $1::uuid",
+            workspaces["fresh"],
+        )
+    finally:
+        await conn.close()
+    kept: dict[str, list[str]] = {"fresh": [], "stale": []}
+    for row in snapshot_rows:
+        label, age = rows[row["id"]].split(":")
+        kept[label].append(age)
+    return (
+        {label: sorted(ages, key=int) for label, ages in kept.items()},
+        {row["fingerprint"]: row["linked"] for row in recommendation_rows},
+    )
+
+
+async def _cleanup_retention_workspaces(
+    scope: CopilotScope, seeded: dict[str, object]
+) -> None:
+    conn = await asyncpg.connect(scope.admin_dsn)
+    try:
+        await conn.execute(
+            "DELETE FROM workspaces WHERE id = ANY($1::uuid[])",
+            list(seeded["workspaces"].values()),
+        )
+        await conn.execute(
+            "DELETE FROM tenants WHERE id = $1::uuid", seeded["tenant_id"]
+        )
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_real_postgres_retention_purge_deletes_exactly_the_expired_history(
+    copilot_scope: CopilotScope,
+) -> None:
+    """The purge runs unscoped as omega_console under FORCE RLS.
+
+    It must delete only rows older than the window, never the newest row of a
+    workspace, and detach recommendations that pointed at a purged snapshot.
+    """
+
+    seeded = await _seed_retention_workspaces(copilot_scope)
+    pool = await asyncpg.create_pool(copilot_scope.console_dsn, min_size=1, max_size=2)
+    try:
+        result = await persistence.purge_expired_snapshots(pool, retention_days=14)
+        kept, linked = await _retention_state(copilot_scope, seeded)
+
+        assert result == {"status": "ok", "deleted": 3, "retention_days": 14}
+        assert kept == {"fresh": ["0", "1", "13"], "stale": ["30"]}
+        assert linked == {"live:expired": False, "live:kept": True}
+
+        again = await persistence.purge_expired_snapshots(pool, retention_days=14)
+        assert again == {"status": "ok", "deleted": 0, "retention_days": 14}
+        assert (await _retention_state(copilot_scope, seeded))[0] == kept
+    finally:
+        await pool.close()
+        await _cleanup_retention_workspaces(copilot_scope, seeded)

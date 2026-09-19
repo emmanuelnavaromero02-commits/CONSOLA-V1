@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, call
 
@@ -125,3 +127,152 @@ async def test_scheduler_keeps_stable_actor_and_optional_forensics(monkeypatch) 
     ]
     assert {user["id"] for user in expected_users} == {0}
     assert {user["email"] for user in expected_users} == {"system:copilot-context"}
+
+
+class _RecordingPool:
+    """Pool that records the purge statement instead of running it."""
+
+    def __init__(self, status: str = "DELETE 12") -> None:
+        self.status = status
+        self.calls: list[tuple] = []
+
+    async def execute(self, sql, *args):
+        self.calls.append((sql, args))
+        return self.status
+
+
+class _FakeStopEvent:
+    """Skips the scheduler's sleeps: raises TimeoutError for `ticks` waits."""
+
+    def __init__(self, ticks: int = 1) -> None:
+        self.ticks = ticks
+        self.calls = 0
+
+    async def wait(self) -> None:
+        self.calls += 1
+        if self.calls <= self.ticks:
+            raise asyncio.TimeoutError
+        return None
+
+
+@pytest.mark.asyncio
+async def test_purge_always_keeps_the_newest_snapshot_of_every_workspace(
+    monkeypatch,
+) -> None:
+    pool = _RecordingPool("DELETE 14142")
+    monkeypatch.setattr(
+        persistence.copilot_context_authority,
+        "tables_ready",
+        AsyncMock(return_value=True),
+    )
+
+    result = await persistence.purge_expired_snapshots(pool, retention_days=14)
+
+    assert result == {"status": "ok", "deleted": 14142, "retention_days": 14}
+    assert len(pool.calls) == 1
+    sql, args = pool.calls[0]
+    assert args == (14,)
+    normalized = " ".join(sql.split())
+    # The guard: never delete the row `latest_snapshot` would read.
+    assert "s.id <> ( SELECT x.id" in normalized
+    assert "WHERE x.workspace_id = s.workspace_id" in normalized
+    assert "ORDER BY x.created_at DESC LIMIT 1" in normalized
+    # The window is a bound parameter, never string-formatted into the SQL.
+    assert "$1::int * INTERVAL '1 day'" in normalized
+    assert "14" not in normalized
+
+
+@pytest.mark.asyncio
+async def test_purge_is_disabled_by_a_non_positive_retention(monkeypatch) -> None:
+    pool = _RecordingPool()
+    tables_ready = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        persistence.copilot_context_authority, "tables_ready", tables_ready
+    )
+
+    for days in (0, -1, "nonsense"):
+        result = await persistence.purge_expired_snapshots(pool, retention_days=days)
+        if days == "nonsense":
+            # Unparseable falls back to the default window, it does not delete
+            # everything.
+            assert result["retention_days"] == persistence.DEFAULT_RETENTION_DAYS
+        else:
+            assert result == {
+                "status": "skipped",
+                "reason": "retention_disabled",
+                "deleted": 0,
+            }
+    assert len(pool.calls) == 1  # only the "nonsense" fallback ran
+
+
+@pytest.mark.asyncio
+async def test_purge_skips_when_tables_are_missing(monkeypatch) -> None:
+    pool = _RecordingPool()
+    monkeypatch.setattr(
+        persistence.copilot_context_authority,
+        "tables_ready",
+        AsyncMock(return_value=False),
+    )
+
+    result = await persistence.purge_expired_snapshots(pool, retention_days=14)
+
+    assert result == {"status": "skipped", "reason": "tables_missing", "deleted": 0}
+    assert pool.calls == []
+
+
+def test_retention_window_reads_the_env_and_falls_back_to_fourteen_days(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("COPILOT_CONTEXT_RETENTION_DAYS", raising=False)
+    assert service._retention_days() == 14
+    monkeypatch.setenv("COPILOT_CONTEXT_RETENTION_DAYS", "30")
+    assert service._retention_days() == 30
+    monkeypatch.setenv("COPILOT_CONTEXT_RETENTION_DAYS", "  ")
+    assert service._retention_days() == 14
+    monkeypatch.setenv("COPILOT_CONTEXT_RETENTION_DAYS", "not-a-number")
+    assert service._retention_days() == 14
+    monkeypatch.setenv("COPILOT_CONTEXT_RETENTION_DAYS", "0")
+    assert service._retention_days() == 0  # explicit opt-out, handled downstream
+
+
+@pytest.mark.asyncio
+async def test_scheduler_tick_purges_even_when_the_refresh_fails(monkeypatch) -> None:
+    refresh = AsyncMock(side_effect=RuntimeError("refresh exploded"))
+    purge = AsyncMock(return_value={"status": "ok", "deleted": 7, "retention_days": 14})
+    monkeypatch.setattr(service, "refresh_all_workspaces", refresh)
+    monkeypatch.setattr(service, "purge_expired_snapshots", purge)
+
+    await service.hourly_scheduler(stop_event=_FakeStopEvent(ticks=1))
+
+    refresh.assert_awaited_once()
+    purge.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_scheduler_survives_a_failing_purge(monkeypatch) -> None:
+    refresh = AsyncMock(return_value={"status": "ok"})
+    purge = AsyncMock(side_effect=RuntimeError("purge exploded"))
+    monkeypatch.setattr(service, "refresh_all_workspaces", refresh)
+    monkeypatch.setattr(service, "purge_expired_snapshots", purge)
+
+    await service.hourly_scheduler(stop_event=_FakeStopEvent(ticks=2))
+
+    assert refresh.await_count == 2
+    assert purge.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_scheduler_purge_uses_the_configured_window(monkeypatch) -> None:
+    pool = _RecordingPool("DELETE 0")
+    monkeypatch.setenv("COPILOT_CONTEXT_RETENTION_DAYS", "21")
+    monkeypatch.setattr(service.auth, "pool", AsyncMock(return_value=pool))
+    monkeypatch.setattr(
+        persistence.copilot_context_authority,
+        "tables_ready",
+        AsyncMock(return_value=True),
+    )
+
+    result = await service.purge_expired_snapshots()
+
+    assert result == {"status": "ok", "deleted": 0, "retention_days": 21}
+    assert pool.calls[0][1] == (21,)
