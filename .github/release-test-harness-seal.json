@@ -5014,6 +5014,10 @@
       "sha256": "e0a7f0802341bf402c291e76ad31fdcd9f28fbf61a637cb452fe82908cd62235"
     },
     {
+      "path": "tests/test_public_repo_has_no_infrastructure_identifiers.py",
+      "sha256": "6f31a3d3285b8f1aa72002d94193841d853007c054078054cbb1dbb53e13eb4b"
+    },
+    {
       "path": "tests/test_public_routes_audit.py",
       "sha256": "66a27afea67b23a9c7b9ba7df18706283fcb4668755bde17cde4f46ca893426a"
     },
@@ -5735,7 +5739,7 @@
     },
     {
       "path": "tests/test_v1_public_https_closure.py",
-      "sha256": "4b1482e6735c737a7b27e7f8f12a31bdd6893ec5bfacd95ef64a6201da26f0d5"
+      "sha256": "3f4554881c5a03efd53eb4a00231bdd5ffe6465fa78f7e4ae6774c189553a1db"
     },
     {
       "path": "tests/test_v1_release_checklist.py",
