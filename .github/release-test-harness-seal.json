@@ -3190,6 +3190,10 @@
       "sha256": "a50066992563ab4403cab538595e08af5fc72df2a747bca430781d232c56a338"
     },
     {
+      "path": "refinement/tests/test_successfactors_candidate_contract.py",
+      "sha256": "6d3f2e5b14fa58a28022f751f37c02d8627034a555750f18111ef16332641bf2"
+    },
+    {
       "path": "refinement/tests/test_successfactors_gold_dataset_orders_single_source.py",
       "sha256": "32766b5091022edb6842c9abaad76d6f8bb11d77885b7589eed2faa53f03a08a"
     },
