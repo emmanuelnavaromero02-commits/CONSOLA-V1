@@ -5426,6 +5426,10 @@
       "sha256": "75992055f47cc711c92e56a4de39e09c69b79a570419d792347def689499c74e"
     },
     {
+      "path": "tests/test_secret_scan_covers_history.py",
+      "sha256": "876b62bf1d9a115c1903403d7498d1a559bc4dacabf30636c88a66aa1a003cce"
+    },
+    {
       "path": "tests/test_secure_release_output.py",
       "sha256": "038107412c9701b5e2d1a498d6fbe70b533f83bca9c74c79fcb0240568ebad8c"
     },
