@@ -6,5 +6,11 @@ minio==7.2.12
 psycopg2-binary==2.9.10
 openpyxl==3.1.5
 boto3==1.36.3
+# Keep these explicit so the shadow DAG never relies on an incidental provider
+# dependency. The Airflow 2.10.5 image's Google provider set is pinned to
+# protobuf 4 / storage 2; storage 3+ would make that environment inconsistent.
+google-auth>=2.38.0,<2.39
+google-cloud-bigquery>=3.20.1,<3.21
+google-cloud-storage>=2.19.0,<2.20
 croniter==3.0.3
 defusedxml==0.7.1

@@ -71,8 +71,8 @@ It is not a second production path; use the canonical operator-side driver.
    `Release Images` workflow (builds + pushes the 15 images at the tag).
 2. Export the target (from Terraform): `OMEGA_PROJECT_ID`, `OMEGA_ZONE`,
    `OMEGA_INSTANCE`, `OMEGA_GHCR_OWNER`, `OMEGA_SOURCE_BUCKET`. Also create the
-   required canonical
-   GitHub Release assets:
+   required non-secret, versioned runtime handoff and download both canonical
+   GitHub Release assets (do this even while the pilot is disabled):
 
    ```bash
    mkdir -p /tmp/omega-release-assets
@@ -81,6 +81,9 @@ It is not a second production path; use the canonical operator-side driver.
      --dir /tmp/omega-release-assets
    export OMEGA_RELEASE_MANIFEST=/tmp/omega-release-assets/omega-release-manifest-vX.Y.Z-beta.json
    export OMEGA_RELEASE_MANIFEST_CHECKSUM="${OMEGA_RELEASE_MANIFEST}.sha256"
+   terraform -chdir=infra/terraform-gcp output -json \
+     bigquery_talent_shadow_runtime_config > /tmp/omega-bigquery-shadow.json
+   export OMEGA_BIGQUERY_SHADOW_CONFIG=/tmp/omega-bigquery-shadow.json
    ```
 
    The local driver verifies the manifest's exact filename, checksum asset, v2
@@ -88,12 +91,13 @@ It is not a second production path; use the canonical operator-side driver.
    the canonical release helper. It rebuilds the source archive from the exact
    commit and verifies the bytes at one immutable GCS generation; the VM fetches
    that same generation, checks SHA-256 before extraction and records a receipt.
-   The remote deploy atomically hydrates runtime secrets. Rollback restores
-   the prior environment file. This is the day-2 path for existing VMs;
-   startup-script changes are intentionally ignored by Terraform.
+   The remote deploy validates and atomically applies the BigQuery document
+   after secret hydration. Rollback restores the prior env file. This is the
+   day-2 path for existing VMs, whose startup-script changes are intentionally
+   ignored by Terraform.
 3. **Dry-run** validates container discovery, tarball fetch, every required
-   Secret Manager value in read-only `check` mode and the
-   authenticated 15/15 pull. It exits before the maintenance window: it
+   Secret Manager value and the BigQuery handoff in read-only `check` mode, plus
+   the authenticated 15/15 pull. It exits before the maintenance window: it
    does not rewrite an env file, stop services, fence or dump a database,
    migrate, or swap releases.
    `OMEGA_DEPLOY_MODE=dryrun scripts/gcp/gcp-canonical-deploy.sh vX.Y.Z-beta <ref>`

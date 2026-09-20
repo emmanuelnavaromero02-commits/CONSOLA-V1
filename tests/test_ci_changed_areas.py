@@ -164,6 +164,49 @@ def test_gcp_secret_and_day2_runtime_changes_select_fail_closed_contracts():
         assert flags["release_full_stack"] is True
 
 
+def test_bigquery_shadow_runtime_only_changes_select_phase2_contracts():
+    runtime_paths = (
+        "airflow/dags/_bigquery_talent_9box_shadow_runtime.py",
+        "airflow/dags/bigquery_talent_9box_shadow.py",
+        "airflow/dags/dataset_refresh_bigquery_shadow.py",
+        "airflow/dags/dataset_refresh_chain.py",
+        "console/app/routers/intelligence.py",
+        "console/app/services/intelligence/bigquery_shadow.py",
+        "console/app/services/intelligence/talent_population_backend.py",
+    )
+    for changed_file in runtime_paths:
+        targets = _root_targets(_flags(changed_file))
+        assert "tests/test_bigquery_talent_9box_shadow.py" in targets
+        assert "tests/test_bigquery_shadow_rls_live.py" in targets
+
+
+def test_bigquery_shadow_infra_and_deploy_changes_select_phase2_contracts():
+    infra_paths = (
+        "infra/terraform-gcp/bigquery_shadow.tf",
+        "infra/terraform-gcp/compute.tf",
+        "infra/terraform-gcp/locals.tf",
+        "infra/terraform-gcp/outputs.tf",
+        "infra/terraform-gcp/variables.tf",
+        "infra/terraform-gcp/templates/startup.sh.tftpl",
+        "infra/terraform-gcp/templates/docker-compose.gcp.yml.tftpl",
+        "infra/docker-compose.yml",
+        "infra/terraform-gcp/release/hydrate-bigquery-shadow-config.sh",
+        "scripts/gcp/gcp-canonical-deploy.sh",
+        "scripts/gcp/gcp-canonical-deploy-remote.sh",
+    )
+    for changed_file in infra_paths:
+        flags = _flags(changed_file)
+        targets = _root_targets(flags)
+        assert "tests/test_bigquery_talent_9box_shadow.py" in targets
+        assert "tests/test_gcp_bigquery_shadow_config_hydration.py" in targets
+    assert _flags(
+        "infra/terraform-gcp/release/hydrate-bigquery-shadow-config.sh"
+    )["release_full_stack"] is True
+    assert "tests/test_bigquery_talent_9box_shadow.py" in _root_targets(
+        _flags("infra/airflow/requirements.txt")
+    )
+
+
 def test_console_storage_generators_select_their_exact_regressions():
     expected = {
         "console/app/services/s3_client.py": "console/tests/test_console_s3_iam_client.py",

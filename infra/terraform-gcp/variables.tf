@@ -118,6 +118,58 @@ variable "lakehouse_endpoint" {
   default     = "storage.googleapis.com"
 }
 
+variable "provision_bigquery_talent_shadow" {
+  type        = bool
+  description = "Provision the isolated BigQuery Talent shadow pilot resources."
+  default     = false
+}
+
+variable "bigquery_talent_shadow_runtime_enabled" {
+  type        = bool
+  description = "Runtime feature flag. Keep false until the canary workspace is explicitly enabled."
+  default     = false
+}
+
+variable "bigquery_shadow_project_id" {
+  type        = string
+  description = "Dedicated GCP project for the project-wide 0.25 TiB/day shadow quota."
+  default     = ""
+}
+
+variable "bigquery_shadow_main_workspace_id" {
+  type        = string
+  description = "Main Workspace UUID allowlisted for the pilot."
+  default     = ""
+}
+
+variable "bigquery_shadow_main_tenant_id" {
+  type        = string
+  description = "Tenant UUID owning the allowlisted Main Workspace; used to scope Gold object IAM."
+  default     = ""
+}
+
+variable "bigquery_shadow_daily_query_quota_mib" {
+  type        = number
+  description = "Dedicated-project BigQuery query usage ceiling per day in MiB (262144 MiB = 0.25 TiB)."
+  default     = 262144
+
+  validation {
+    condition     = var.bigquery_shadow_daily_query_quota_mib > 0 && var.bigquery_shadow_daily_query_quota_mib <= 262144
+    error_message = "The shadow daily query quota cannot exceed 0.25 TiB."
+  }
+}
+
+variable "bigquery_shadow_maximum_bytes_billed" {
+  type        = number
+  description = "Maximum bytes billed for each shadow query job."
+  default     = 10737418240
+
+  validation {
+    condition     = var.bigquery_shadow_maximum_bytes_billed > 0 && var.bigquery_shadow_maximum_bytes_billed <= 10737418240
+    error_message = "A shadow job cannot exceed 10 GiB."
+  }
+}
+
 variable "enable_budget" {
   type        = bool
   description = "Create a monthly billing budget guardrail."

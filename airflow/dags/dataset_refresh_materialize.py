@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any, Callable
 
 import requests
@@ -19,13 +20,20 @@ from runtime_security_context import build_materialize_context
 def _safe_result(
     name: str, payload: dict[str, Any], *, reused: bool = False
 ) -> dict[str, Any]:
-    return {
+    result = {
         "name": name,
         "layer": str(payload.get("layer") or ""),
         "ok": True,
         "reused": reused,
         "row_count": int(payload.get("row_count") or 0),
     }
+    publication_run_id = str(payload.get("publication_run_id") or "").strip()
+    if publication_run_id:
+        try:
+            result["publication_run_id"] = str(uuid.UUID(publication_run_id))
+        except ValueError as exc:
+            raise RuntimeError("materialization publication identity is invalid") from exc
+    return result
 
 
 def _reused_layer(item: dict[str, Any], payload: dict[str, Any]) -> str:

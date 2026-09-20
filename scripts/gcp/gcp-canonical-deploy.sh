@@ -27,6 +27,9 @@
 #   OMEGA_RELEASE_MANIFEST_CHECKSUM
 #                         downloaded sibling .json.sha256 asset (defaults to
 #                         ${OMEGA_RELEASE_MANIFEST}.sha256)
+#   OMEGA_BIGQUERY_SHADOW_CONFIG
+#                         JSON from `terraform output -json
+#                         bigquery_talent_shadow_runtime_config`
 # Optional:
 #   OMEGA_GHCR_PULL_SECRET_VERSION (default: latest)
 set -Eeuo pipefail
@@ -96,6 +99,24 @@ DEPLOY_MODE="${OMEGA_DEPLOY_MODE:-apply}"   # apply | dryrun
 [[ "${DEPLOY_MODE}" == "apply" || "${DEPLOY_MODE}" == "dryrun" ]] || die "OMEGA_DEPLOY_MODE must be apply or dryrun."
 [[ "${ENVIRONMENT}" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] \
   || die "OMEGA_GCP_ENVIRONMENT contains unsupported characters."
+BIGQUERY_SHADOW_CONFIG="${OMEGA_BIGQUERY_SHADOW_CONFIG:-}"
+[[ -n "${BIGQUERY_SHADOW_CONFIG}" && -f "${BIGQUERY_SHADOW_CONFIG}" ]] \
+  || die "OMEGA_BIGQUERY_SHADOW_CONFIG must point at the Terraform runtime-config output (including the disabled config)."
+BIGQUERY_SHADOW_CONFIG_VALIDATOR="${SCRIPT_DIR}/../../infra/terraform-gcp/release/hydrate-bigquery-shadow-config.sh"
+[[ -f "${BIGQUERY_SHADOW_CONFIG_VALIDATOR}" ]] \
+  || die "missing strict BigQuery shadow handoff validator."
+OMEGA_BIGQUERY_SHADOW_CONFIG_FILE="${BIGQUERY_SHADOW_CONFIG}" \
+OMEGA_GCP_PROJECT_ID="${OMEGA_PROJECT_ID}" \
+OMEGA_GCP_ENVIRONMENT="${ENVIRONMENT}" \
+OMEGA_BIGQUERY_SHADOW_CONFIG_MODE=check \
+  bash "${BIGQUERY_SHADOW_CONFIG_VALIDATOR}" \
+  || die "OMEGA_BIGQUERY_SHADOW_CONFIG is not the expected Terraform handoff."
+BIGQUERY_SHADOW_CONFIG_SHA256="$(sha256_file "${BIGQUERY_SHADOW_CONFIG}")"
+[[ "${BIGQUERY_SHADOW_CONFIG_SHA256}" =~ ^[0-9a-f]{64}$ ]] \
+  || die "could not hash the BigQuery shadow runtime config."
+DEPLOY_NONCE="$(python3 -I -c 'import secrets; print(secrets.token_hex(16))')"
+[[ "${DEPLOY_NONCE}" =~ ^[0-9a-f]{32}$ ]] \
+  || die "could not generate a safe deployment nonce."
 
 # Publish-only releases push the 15 images by immutable digest only (never by the
 # vX.Y.Z tag), so the deploy pins every service to the digest recorded in the
@@ -244,6 +265,8 @@ SCP=(gcloud compute scp --zone "${OMEGA_ZONE}" --project "${OMEGA_PROJECT_ID}" -
 
 "${SCP[@]}" "${overlay}" "${OMEGA_INSTANCE}:/tmp/omega-images-${DEPLOY_REF}.yml"
 "${SCP[@]}" "${remote_deployer}" "${OMEGA_INSTANCE}:/tmp/gcp-canonical-deploy-remote.sh"
+"${SCP[@]}" "${BIGQUERY_SHADOW_CONFIG}" \
+  "${OMEGA_INSTANCE}:/tmp/omega-bigquery-shadow-${DEPLOY_REF}-${DEPLOY_NONCE}.json"
 
 # ── 5. Run the fail-closed remote deploy (backup -> migrate -> up -> health) ─
 log "step 5/6 deploy: running fail-closed remote deploy on ${OMEGA_INSTANCE}"
@@ -259,6 +282,9 @@ remote_argv=(sudo env
   "SOURCE_SHA256=${SOURCE_SHA256}"
   "SOURCE_GENERATION=${SOURCE_GENERATION}"
   "IMAGES_OVERLAY_SHA256=${IMAGES_OVERLAY_SHA256}"
+  "DEPLOY_NONCE=${DEPLOY_NONCE}"
+  "BIGQUERY_SHADOW_CONFIG=/tmp/omega-bigquery-shadow-${DEPLOY_REF}-${DEPLOY_NONCE}.json"
+  "BIGQUERY_SHADOW_CONFIG_SHA256=${BIGQUERY_SHADOW_CONFIG_SHA256}"
   "IMAGES_OVERLAY=/tmp/omega-images-${DEPLOY_REF}.yml"
   "DEPLOY_MODE=${DEPLOY_MODE}"
   bash /tmp/gcp-canonical-deploy-remote.sh)

@@ -262,6 +262,41 @@ def record_run(**ctx):
         raise RuntimeError("dataset_refresh_chain recorded a failed run")
 
 
+def trigger_bigquery_shadow(**ctx):
+    """Never fails the source DAG; its return is safe operational metadata."""
+    try:
+        # Keep the optional shadow surface out of DAG-import critical path.
+        from dataset_refresh_bigquery_shadow import trigger_talent_9box_shadow
+
+        conf = _admitted_conf(ctx)
+        raw_invocation, task_state = _materialization_result(ctx)
+        status = materialization_status(raw_invocation, task_state=task_state)
+        invocation = dict(raw_invocation) if isinstance(raw_invocation, dict) else {}
+        tenant_id, workspace_id = _required_scope(conf)
+        cartridge = str(
+            ctx["ti"].xcom_pull(task_ids="resolve_chain", key="cartridge_id")
+            or conf.get("cartridge_id")
+            or ""
+        )
+        raw_results = invocation.get("results")
+        results = raw_results if isinstance(raw_results, list) else []
+        return trigger_talent_9box_shadow(
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            cartridge_id=cartridge,
+            pipeline_run_id=f"dataset_refresh_chain:{ctx['run_id']}",
+            materialization_status=status,
+            results=results,
+        )
+    except Exception as exc:
+        # Shadow orchestration is explicitly best effort. Never let malformed
+        # optional metadata or an Airflow trigger outage fail Gold publication.
+        return {
+            "status": "trigger_failed",
+            "error_code": type(exc).__name__,
+        }
+
+
 t_admit = PythonOperator(
     task_id="admit_dataset_refresh", python_callable=admit_dataset_refresh, dag=dag
 )
@@ -277,5 +312,10 @@ t_rec = PythonOperator(
     trigger_rule=TriggerRule.ALL_DONE,
     dag=dag,
 )
+t_shadow = PythonOperator(
+    task_id="trigger_bigquery_talent_9box_shadow",
+    python_callable=trigger_bigquery_shadow,
+    dag=dag,
+)
 
-t_admit >> t_resolve >> t_mat >> t_rec
+t_admit >> t_resolve >> t_mat >> t_rec >> t_shadow

@@ -278,7 +278,17 @@ def _root_test_targets(files: list[str]) -> str:
             "tests/test_dag_codegen_security.py",
         },
         "console/app/routers/intelligence.py": {
+            "tests/test_bigquery_shadow_rls_live.py",
             "tests/test_intelligence_math_engines_paused.py",
+            "tests/test_bigquery_talent_9box_shadow.py",
+        },
+        "console/app/services/intelligence/bigquery_shadow.py": {
+            "tests/test_bigquery_shadow_rls_live.py",
+            "tests/test_bigquery_talent_9box_shadow.py",
+        },
+        "console/app/services/intelligence/talent_population_backend.py": {
+            "tests/test_bigquery_shadow_rls_live.py",
+            "tests/test_bigquery_talent_9box_shadow.py",
         },
         "console/app/services/intelligence/engine_policy.py": {
             "tests/test_intelligence_math_engines_paused.py",
@@ -317,11 +327,70 @@ def _root_test_targets(files: list[str]) -> str:
         "infra/terraform-gcp/release/hydrate-runtime-secrets.sh": {
             "tests/test_gcp_runtime_secret_hydration.py",
         },
+        "infra/terraform-gcp/release/hydrate-bigquery-shadow-config.sh": {
+            "tests/test_bigquery_talent_9box_shadow.py",
+            "tests/test_gcp_bigquery_shadow_config_hydration.py",
+        },
+        "infra/terraform-gcp/bigquery_shadow.tf": {
+            "tests/test_bigquery_talent_9box_shadow.py",
+            "tests/test_gcp_bigquery_shadow_config_hydration.py",
+        },
+        "infra/terraform-gcp/compute.tf": {
+            "tests/test_bigquery_talent_9box_shadow.py",
+            "tests/test_gcp_bigquery_shadow_config_hydration.py",
+        },
+        "infra/terraform-gcp/locals.tf": {
+            "tests/test_bigquery_talent_9box_shadow.py",
+            "tests/test_gcp_bigquery_shadow_config_hydration.py",
+        },
+        "infra/terraform-gcp/outputs.tf": {
+            "tests/test_bigquery_talent_9box_shadow.py",
+            "tests/test_gcp_bigquery_shadow_config_hydration.py",
+        },
+        "infra/terraform-gcp/variables.tf": {
+            "tests/test_bigquery_talent_9box_shadow.py",
+            "tests/test_gcp_bigquery_shadow_config_hydration.py",
+        },
+        "infra/terraform-gcp/templates/startup.sh.tftpl": {
+            "tests/test_bigquery_talent_9box_shadow.py",
+            "tests/test_gcp_bigquery_shadow_config_hydration.py",
+        },
+        "infra/terraform-gcp/templates/docker-compose.gcp.yml.tftpl": {
+            "tests/test_bigquery_talent_9box_shadow.py",
+            "tests/test_gcp_bigquery_shadow_config_hydration.py",
+        },
+        "infra/airflow/requirements.txt": {
+            "tests/test_bigquery_talent_9box_shadow.py",
+        },
+        "infra/docker-compose.yml": {
+            "tests/test_bigquery_talent_9box_shadow.py",
+            "tests/test_gcp_bigquery_shadow_config_hydration.py",
+        },
+        "airflow/dags/_bigquery_talent_9box_shadow_runtime.py": {
+            "tests/test_bigquery_shadow_rls_live.py",
+            "tests/test_bigquery_talent_9box_shadow.py",
+        },
+        "airflow/dags/bigquery_talent_9box_shadow.py": {
+            "tests/test_bigquery_shadow_rls_live.py",
+            "tests/test_bigquery_talent_9box_shadow.py",
+        },
+        "airflow/dags/dataset_refresh_bigquery_shadow.py": {
+            "tests/test_bigquery_shadow_rls_live.py",
+            "tests/test_bigquery_talent_9box_shadow.py",
+        },
+        "airflow/dags/dataset_refresh_chain.py": {
+            "tests/test_bigquery_shadow_rls_live.py",
+            "tests/test_bigquery_talent_9box_shadow.py",
+        },
         "scripts/gcp/gcp-canonical-deploy.sh": {
+            "tests/test_bigquery_talent_9box_shadow.py",
+            "tests/test_gcp_bigquery_shadow_config_hydration.py",
             "tests/test_gcp_canonical_deploy.py",
             "tests/test_gcp_runtime_secret_hydration.py",
         },
         "scripts/gcp/gcp-canonical-deploy-remote.sh": {
+            "tests/test_bigquery_talent_9box_shadow.py",
+            "tests/test_gcp_bigquery_shadow_config_hydration.py",
             "tests/test_gcp_canonical_deploy.py",
             "tests/test_gcp_runtime_secret_hydration.py",
         },
@@ -538,6 +607,7 @@ def _flags(files: list[str]) -> dict[str, bool | str]:
         r"^scripts/(production|v1_stress|acceptance|smoke|run-e2e)",
         r"^scripts/gcp/gcp-canonical-deploy(?:-remote)?\.sh$",
         r"^infra/terraform-gcp/release/hydrate-runtime-secrets\.sh$",
+        r"^infra/terraform-gcp/release/hydrate-bigquery-shadow-config\.sh$",
         r"^\.github/workflows/(release|deploy-aws|docker-image|e2e)\.yml$",
     )
 

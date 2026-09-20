@@ -24,6 +24,15 @@ enable_https            = true
 lakehouse_endpoint    = "storage.googleapis.com"
 lakehouse_bucket_name = ""
 
+# Phase 2 Talent 9-Box shadow. Use a dedicated project because the BigQuery
+# query quota override is project-wide. Keep runtime false until the exact
+# Main Workspace UUID has been allowlisted and IAM is applied.
+provision_bigquery_talent_shadow       = false
+bigquery_talent_shadow_runtime_enabled = false
+bigquery_shadow_project_id             = ""
+bigquery_shadow_main_tenant_id          = ""
+bigquery_shadow_main_workspace_id      = ""
+
 enable_airflow_scheduler = true
 enable_lb_logging        = true
 lb_log_sample_rate       = 1.0

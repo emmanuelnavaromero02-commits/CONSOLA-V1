@@ -202,6 +202,7 @@ def test_startup_and_day2_deploy_share_hydration_and_rollback_contract():
     assert 'if [[ "${MUTATED:-0}" -eq 1 ]]' in remote
     assert "aborted before service/database mutation; runtime left running" in remote
     assert "OMEGA_SECRET_HYDRATION_MODE=check" in remote
+    assert "OMEGA_BIGQUERY_SHADOW_CONFIG_MODE=check" in remote
 
 
 def test_secret_helper_and_canonical_deploy_parse_as_bash():

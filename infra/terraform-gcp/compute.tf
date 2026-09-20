@@ -41,26 +41,42 @@ resource "google_compute_instance" "app" {
   }
 
   metadata_startup_script = templatefile("${path.module}/templates/startup.sh.tftpl", {
-    project_id               = var.project_id
-    source_bucket            = var.source_bucket
-    source_object            = var.source_object
-    source_sha               = var.source_sha
-    public_console_url       = local.console_public_url
-    public_workspace_url     = local.workspace_public_url
-    public_airflow_url       = local.airflow_public_url
-    technical_console_url    = local.technical_console_url
-    technical_workspace_url  = local.technical_workspace_url
-    admin_email              = var.admin_email
-    cookie_secure            = local.public_https_enabled ? "true" : "false"
-    lakehouse_bucket         = local.lakehouse_bucket
-    lakehouse_endpoint       = var.lakehouse_endpoint
-    enable_airflow_scheduler = var.enable_airflow_scheduler ? "true" : "false"
-    secret_prefix            = "omega-${var.environment}-"
-    compose_override         = templatefile("${path.module}/templates/docker-compose.gcp.yml.tftpl", {})
+    project_id                = var.project_id
+    environment               = var.environment
+    source_bucket             = var.source_bucket
+    source_object             = var.source_object
+    source_sha                = var.source_sha
+    public_console_url        = local.console_public_url
+    public_workspace_url      = local.workspace_public_url
+    public_airflow_url        = local.airflow_public_url
+    technical_console_url     = local.technical_console_url
+    technical_workspace_url   = local.technical_workspace_url
+    admin_email               = var.admin_email
+    cookie_secure             = local.public_https_enabled ? "true" : "false"
+    lakehouse_bucket          = local.lakehouse_bucket
+    lakehouse_endpoint        = var.lakehouse_endpoint
+    bigquery_shadow_enabled   = var.bigquery_talent_shadow_runtime_enabled ? "true" : "false"
+    bigquery_shadow_project   = var.bigquery_shadow_project_id
+    bigquery_shadow_dataset   = local.bigquery_shadow_dataset_id
+    bigquery_shadow_sa        = try(google_service_account.talent_shadow[0].email, "")
+    bigquery_shadow_tenant    = var.bigquery_shadow_main_tenant_id
+    bigquery_shadow_workspace = var.bigquery_shadow_main_workspace_id
+    bigquery_shadow_max_bytes = tostring(var.bigquery_shadow_maximum_bytes_billed)
+    enable_airflow_scheduler  = var.enable_airflow_scheduler ? "true" : "false"
+    secret_prefix             = "omega-${var.environment}-"
+    compose_override          = templatefile("${path.module}/templates/docker-compose.gcp.yml.tftpl", {})
   })
 
   lifecycle {
     ignore_changes = [metadata_startup_script]
+
+    precondition {
+      condition = (
+        !var.bigquery_talent_shadow_runtime_enabled ||
+        var.provision_bigquery_talent_shadow
+      )
+      error_message = "The BigQuery Talent runtime flag requires provision_bigquery_talent_shadow=true."
+    }
   }
 
   service_account {

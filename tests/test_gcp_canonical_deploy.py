@@ -84,8 +84,30 @@ def _run_local_manifest_preflight(
     *,
     owner: str = "omega-owner",
 ) -> subprocess.CompletedProcess[str]:
+    bigquery = tmp_path / "bigquery-shadow.json"
+    bigquery.write_text(
+        json.dumps(
+            {
+                "dataset_id": "",
+                "deployment_project_id": "omega-project",
+                "environment": "staging",
+                "enabled": False,
+                "gold_bucket": "",
+                "location": "us-central1",
+                "maximum_bytes_billed": 10_737_418_240,
+                "population_backend": "postgres_gold",
+                "project_id": "",
+                "schema_version": 2,
+                "service_account": "",
+                "tenant_id": "",
+                "workspace_id": "",
+            }
+        ),
+        encoding="utf-8",
+    )
     env = {
         **os.environ,
+        "OMEGA_BIGQUERY_SHADOW_CONFIG": str(bigquery),
         "OMEGA_GHCR_OWNER": owner,
         "OMEGA_GHCR_PULL_SECRET_VERSION": "1",
         "OMEGA_INSTANCE": "omega-staging-app",
@@ -304,6 +326,7 @@ def test_dryrun_exits_before_quiescence_or_any_db_service_mutation():
     assert text.index("MUTATED=1") > dry
     dry_block = text[dry:quiesce]
     assert "OMEGA_SECRET_HYDRATION_MODE=check" in dry_block
+    assert "OMEGA_BIGQUERY_SHADOW_CONFIG_MODE=check" in dry_block
     assert "restore_environment" not in dry_block
     assert "stop_all_writers" not in dry_block
     assert "fence_databases" not in dry_block
@@ -439,6 +462,52 @@ def test_remote_snapshots_mutable_overlay_and_verifies_the_exact_compose_copy():
     assert text[snapshot:].count('"${IMAGES_OVERLAY}"') == 1
     assert 'mktemp "${APP_ROOT}/.omega-images-${DEPLOY_REF}.' in text
     assert 'chmod 0400 "${TRUSTED_IMAGES_OVERLAY}"' in text
+
+
+def test_bigquery_handoff_is_nonce_staged_and_root_snapshot_checksum_verified():
+    local = LOCAL.read_text(encoding="utf-8")
+    remote = REMOTE.read_text(encoding="utf-8")
+    strict_validation = local.index(
+        'OMEGA_BIGQUERY_SHADOW_CONFIG_MODE=check'
+    )
+    local_hash = local.index('BIGQUERY_SHADOW_CONFIG_SHA256="$(sha256_file')
+    assert strict_validation < local_hash
+    assert "hydrate-bigquery-shadow-config.sh" in local
+    assert 'BIGQUERY_SHADOW_CONFIG_SHA256="$(sha256_file' in local
+    assert "secrets.token_hex(16)" in local
+    assert (
+        '/tmp/omega-bigquery-shadow-${DEPLOY_REF}-${DEPLOY_NONCE}.json'
+        in local
+    )
+    assert '"DEPLOY_NONCE=${DEPLOY_NONCE}"' in local
+    assert '"BIGQUERY_SHADOW_CONFIG_SHA256=${BIGQUERY_SHADOW_CONFIG_SHA256}"' in local
+
+    lock = remote.index("flock -n 8")
+    snapshot = remote.index(
+        'cp -- "${BIGQUERY_SHADOW_CONFIG}" "${TRUSTED_BIGQUERY_SHADOW_CONFIG}"',
+        lock,
+    )
+    ownership = remote.index(
+        'stat -c \'%u:%g:%a\' "${TRUSTED_BIGQUERY_SHADOW_CONFIG}"', snapshot
+    )
+    checksum = remote.index(
+        'sha256_of "${TRUSTED_BIGQUERY_SHADOW_CONFIG}"', ownership
+    )
+    first_hydration = remote.index(
+        'OMEGA_BIGQUERY_SHADOW_CONFIG_FILE="${TRUSTED_BIGQUERY_SHADOW_CONFIG}"',
+        checksum,
+    )
+    assert lock < snapshot < ownership < checksum < first_hydration
+    assert 'chmod 0400 "${TRUSTED_BIGQUERY_SHADOW_CONFIG}"' in remote
+    assert (
+        '"${BIGQUERY_SHADOW_CONFIG}" == '
+        '"/tmp/omega-bigquery-shadow-${DEPLOY_REF}-${DEPLOY_NONCE}.json"'
+        in remote
+    )
+    # After the privileged snapshot, the mutable pathname is only deleted by
+    # cleanup; validation and hydration consume the root-owned copy.
+    tail = remote[snapshot:]
+    assert 'OMEGA_BIGQUERY_SHADOW_CONFIG_FILE="${BIGQUERY_SHADOW_CONFIG}"' not in tail
 
 
 def test_remote_pull_keeps_validated_digests_as_quoted_positional_arguments():

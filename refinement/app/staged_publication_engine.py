@@ -95,6 +95,7 @@ class StagedPublicationEngine(
         if self._state() is not None:
             return super().materialize(ds, user_context)
         self._mark_publication_replayed(False)
+        self._mark_publication_run_id(None)
         input_state = resolve_input_state(self, ds, user_context)
         candidate = PublicationIdentity.build(
             ds,
@@ -108,6 +109,7 @@ class StagedPublicationEngine(
         ):
             self._verify_prepared_object(head)
             self._mark_publication_replayed(True)
+            self._mark_publication_run_id(head["materialization_run_id"])
             return {
                 "name": candidate.scope.dataset,
                 "layer": candidate.scope.layer,
@@ -134,6 +136,7 @@ class StagedPublicationEngine(
         expected_head = current.get("expected_head_run_id")
         if status == "published":
             self._mark_publication_replayed(True)
+            self._mark_publication_run_id(identity.materialization_run_id)
             return {
                 "name": identity.scope.dataset,
                 "layer": identity.scope.layer,
@@ -153,6 +156,7 @@ class StagedPublicationEngine(
                     ) from exc
                 self._recover_prepared(identity, exc)
             current = self._publication_store.run(identity) or {}
+            self._mark_publication_run_id(identity.materialization_run_id)
             return {
                 "name": identity.scope.dataset,
                 "layer": identity.scope.layer,
@@ -179,6 +183,7 @@ class StagedPublicationEngine(
                     "materialization ended without a publication receipt"
                 )
             result.pop("storage_uri", None)
+            self._mark_publication_run_id(identity.materialization_run_id)
             return result
         finally:
             self._publication_local.state = None

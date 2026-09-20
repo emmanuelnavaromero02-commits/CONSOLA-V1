@@ -72,11 +72,17 @@ def test_materialization_http_outcome_accepts_real_refinement_success() -> None:
                 "name": "employees",
                 "layer": "silver",
                 "row_count": 3,
+                "publication_run_id": "c71b39a6-025f-58d4-94b2-61c7976b2bbd",
             }
 
     assert require_successful_materialization_response(
         Response(), expected_name="employees"
-    ) == {"name": "employees", "layer": "silver", "row_count": 3}
+    ) == {
+        "name": "employees",
+        "layer": "silver",
+        "row_count": 3,
+        "publication_run_id": "c71b39a6-025f-58d4-94b2-61c7976b2bbd",
+    }
 
 
 @pytest.mark.parametrize("case", ["unknown_raw", "cycle", "truncated"])

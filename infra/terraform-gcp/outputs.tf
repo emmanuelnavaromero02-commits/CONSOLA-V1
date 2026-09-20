@@ -67,3 +67,32 @@ output "source_sha" {
 output "admin_credentials_path_on_vm" {
   value = "/opt/modecissions/admin_credentials.txt"
 }
+
+output "bigquery_talent_shadow" {
+  description = "Keyless, non-serving Talent shadow runtime coordinates."
+  value = var.provision_bigquery_talent_shadow ? {
+    project_id      = var.bigquery_shadow_project_id
+    dataset_id      = google_bigquery_dataset.talent_shadow[0].dataset_id
+    service_account = google_service_account.talent_shadow[0].email
+    runtime_enabled = var.bigquery_talent_shadow_runtime_enabled
+  } : null
+}
+
+output "bigquery_talent_shadow_runtime_config" {
+  description = "Non-secret, versioned handoff consumed atomically by the canonical deploy and first-boot paths."
+  value = {
+    schema_version        = 2
+    deployment_project_id = var.project_id
+    environment           = var.environment
+    enabled               = var.provision_bigquery_talent_shadow && var.bigquery_talent_shadow_runtime_enabled
+    project_id            = var.provision_bigquery_talent_shadow && var.bigquery_talent_shadow_runtime_enabled ? var.bigquery_shadow_project_id : ""
+    dataset_id            = var.provision_bigquery_talent_shadow && var.bigquery_talent_shadow_runtime_enabled ? local.bigquery_shadow_dataset_id : ""
+    location              = "us-central1"
+    service_account       = var.provision_bigquery_talent_shadow && var.bigquery_talent_shadow_runtime_enabled ? google_service_account.talent_shadow[0].email : ""
+    gold_bucket           = var.provision_bigquery_talent_shadow && var.bigquery_talent_shadow_runtime_enabled ? local.lakehouse_bucket : ""
+    tenant_id             = var.provision_bigquery_talent_shadow && var.bigquery_talent_shadow_runtime_enabled ? lower(var.bigquery_shadow_main_tenant_id) : ""
+    workspace_id          = var.provision_bigquery_talent_shadow && var.bigquery_talent_shadow_runtime_enabled ? lower(var.bigquery_shadow_main_workspace_id) : ""
+    maximum_bytes_billed  = var.bigquery_shadow_maximum_bytes_billed
+    population_backend    = "postgres_gold"
+  }
+}

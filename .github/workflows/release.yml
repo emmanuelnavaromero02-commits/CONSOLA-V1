@@ -609,6 +609,9 @@ jobs:
           terraform -chdir=infra/terraform/infra fmt -check
           terraform -chdir=infra/terraform/infra init -backend=false
           terraform -chdir=infra/terraform/infra validate
+          terraform -chdir=infra/terraform-gcp fmt -check -recursive
+          terraform -chdir=infra/terraform-gcp init -backend=false
+          terraform -chdir=infra/terraform-gcp validate
 
       - name: Compose config validation
         env:

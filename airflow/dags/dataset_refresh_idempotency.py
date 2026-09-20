@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -143,6 +144,18 @@ def finish_materialization(
         if layer not in MATERIALIZATION_LAYERS:
             raise RuntimeError("materialization outcome layer is unavailable")
         safe_result["layer"] = layer
+        publication_run_id = str(
+            (result or {}).get("publication_run_id") or ""
+        ).strip()
+        if publication_run_id:
+            try:
+                safe_result["publication_run_id"] = str(
+                    uuid.UUID(publication_run_id)
+                )
+            except ValueError as exc:
+                raise RuntimeError(
+                    "materialization publication identity is invalid"
+                ) from exc
     with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
         _scope(cur, tenant_id, workspace_id)
         cur.execute(

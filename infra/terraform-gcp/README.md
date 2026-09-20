@@ -22,6 +22,31 @@ OMEGA uses the cloud-neutral `LakehouseStorage` provider with native `gs://`
 URIs on GCP. DuckDB refinement can additionally use GCS HMAC credentials from
 Secret Manager when it needs direct Parquet reads.
 
+The optional Talent 9-Box BigQuery shadow is non-serving and disabled by
+default. It requires a separate pilot project: its 0.25-TiB daily consumer
+quota is project-wide and must never throttle production BigQuery workloads.
+The source lakehouse bucket must use uniform bucket-level access and be in
+`us-central1`. Conditional IAM grants the keyless shadow service account only
+object reads under the immutable `gold/sap_successfactors/
+sap_successfactors_talent_9box/tenant_id=<Main tenant>/workspace_id=<Main
+Workspace>/_snapshots/_pending/` prefix; it
+does not grant bucket writes or broad listing. The detailed Parquet contains
+restricted HR fields, while the DAG emits only aggregate counts and manifest
+digests to logs/XCom. PostgreSQL Gold remains the public backend.
+
+After `terraform apply`, export the versioned, non-secret day-2 handoff before
+running the canonical deploy:
+
+```bash
+terraform output -json bigquery_talent_shadow_runtime_config > /tmp/omega-bigquery-shadow.json
+export OMEGA_BIGQUERY_SHADOW_CONFIG=/tmp/omega-bigquery-shadow.json
+```
+
+The deploy validates and atomically applies the entire document (including an
+explicit disabled document) and restores the previous environment on rollback.
+This is required because the existing VM intentionally ignores startup-script
+changes; Terraform provisioning alone never activates the shadow runtime.
+
 The effective GCP Compose combines `infra/docker-compose.yml` with the
 generated `infra/docker-compose.gcp.yml`. MCP Infra defaults to two concurrent
 PDF workers and container limits of `1536m` memory, `2.0` CPUs, and `128` PIDs.

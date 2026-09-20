@@ -17,7 +17,7 @@ set +x
 umask 077
 
 [[ "${EUID:-$(id -u)}" -eq 0 ]] || { echo "must run as root (via sudo)" >&2; exit 10; }
-for v in TARGET_TAG DEPLOY_REF OMEGA_PROJECT_ID ENVIRONMENT GHCR_OWNER GHCR_SECRET_VERSION SOURCE_BUCKET SOURCE_OBJECT SOURCE_SHA256 SOURCE_GENERATION IMAGES_OVERLAY IMAGES_OVERLAY_SHA256; do
+for v in TARGET_TAG DEPLOY_REF OMEGA_PROJECT_ID ENVIRONMENT GHCR_OWNER GHCR_SECRET_VERSION SOURCE_BUCKET SOURCE_OBJECT SOURCE_SHA256 SOURCE_GENERATION IMAGES_OVERLAY IMAGES_OVERLAY_SHA256 DEPLOY_NONCE BIGQUERY_SHADOW_CONFIG BIGQUERY_SHADOW_CONFIG_SHA256; do
   [[ -n "${!v:-}" ]] || { echo "missing required env ${v}" >&2; exit 11; }
 done
 
@@ -49,14 +49,21 @@ die() { printf '[remote-deploy] ERROR: %s\n' "$*" >&2; exit 1; }
 [[ "${SOURCE_SHA256}" =~ ^[0-9a-f]{64}$ ]] || die "source checksum is invalid."
 [[ "${SOURCE_GENERATION}" =~ ^[1-9][0-9]*$ ]] || die "source generation is invalid."
 [[ "${IMAGES_OVERLAY_SHA256}" =~ ^[0-9a-f]{64}$ ]] || die "image overlay checksum is invalid."
+[[ "${BIGQUERY_SHADOW_CONFIG_SHA256}" =~ ^[0-9a-f]{64}$ ]] \
+  || die "BigQuery handoff checksum is invalid."
+[[ "${DEPLOY_NONCE}" =~ ^[0-9a-f]{32}$ ]] || die "deployment nonce is invalid."
 [[ "${ENVIRONMENT}" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] || die "environment is invalid."
 DEPLOY_MODE="${DEPLOY_MODE:-apply}"
 [[ "${DEPLOY_MODE}" == "apply" || "${DEPLOY_MODE}" == "dryrun" ]] \
   || die "deploy mode is invalid."
 [[ "${IMAGES_OVERLAY}" == "/tmp/omega-images-${DEPLOY_REF}.yml" ]] \
   || die "image overlay path is invalid."
+[[ "${BIGQUERY_SHADOW_CONFIG}" == "/tmp/omega-bigquery-shadow-${DEPLOY_REF}-${DEPLOY_NONCE}.json" ]] \
+  || die "BigQuery handoff path is invalid."
 [[ -f "${IMAGES_OVERLAY}" && ! -L "${IMAGES_OVERLAY}" ]] \
   || die "image overlay is missing or is not a regular staged file."
+[[ -f "${BIGQUERY_SHADOW_CONFIG}" && ! -L "${BIGQUERY_SHADOW_CONFIG}" ]] \
+  || die "BigQuery handoff is missing or is not a regular staged file."
 
 # Only one deploy controller may own the maintenance/restore window. The VM is
 # Linux and flock is mandatory here; silently running without it could let two
@@ -72,12 +79,32 @@ sha256_of() { sha256sum -- "$1" | awk '{print $1}'; }
 # Snapshot the bytes into a unique root-owned file immediately after acquiring
 # the lock, then verify and use only that immutable-for-unprivileged-users copy.
 TRUSTED_IMAGES_OVERLAY=""
-trap '[[ -z "${TRUSTED_IMAGES_OVERLAY:-}" ]] || rm -f -- "${TRUSTED_IMAGES_OVERLAY}"' EXIT
+TRUSTED_BIGQUERY_SHADOW_CONFIG=""
+cleanup_staged_inputs() {
+  [[ -z "${TRUSTED_IMAGES_OVERLAY:-}" ]] || rm -f -- "${TRUSTED_IMAGES_OVERLAY}"
+  [[ -z "${TRUSTED_BIGQUERY_SHADOW_CONFIG:-}" ]] \
+    || rm -f -- "${TRUSTED_BIGQUERY_SHADOW_CONFIG}"
+  if [[ -n "${BIGQUERY_SHADOW_CONFIG:-}" \
+        && "${BIGQUERY_SHADOW_CONFIG}" == "/tmp/omega-bigquery-shadow-${DEPLOY_REF}-${DEPLOY_NONCE}.json" ]]; then
+    rm -f -- "${BIGQUERY_SHADOW_CONFIG}"
+  fi
+}
+trap cleanup_staged_inputs EXIT
 TRUSTED_IMAGES_OVERLAY="$(mktemp "${APP_ROOT}/.omega-images-${DEPLOY_REF}.XXXXXX.yml")"
 cp -- "${IMAGES_OVERLAY}" "${TRUSTED_IMAGES_OVERLAY}"
 chmod 0400 "${TRUSTED_IMAGES_OVERLAY}"
 [[ "$(sha256_of "${TRUSTED_IMAGES_OVERLAY}")" == "${IMAGES_OVERLAY_SHA256}" ]] \
   || die "image overlay checksum differs from the operator-verified digest lock."
+TRUSTED_BIGQUERY_SHADOW_CONFIG="$(mktemp "${APP_ROOT}/.omega-bigquery-shadow-${DEPLOY_REF}.XXXXXX.json")"
+cp -- "${BIGQUERY_SHADOW_CONFIG}" "${TRUSTED_BIGQUERY_SHADOW_CONFIG}"
+chown 0:0 "${TRUSTED_BIGQUERY_SHADOW_CONFIG}"
+chmod 0400 "${TRUSTED_BIGQUERY_SHADOW_CONFIG}"
+[[ "$(stat -c '%u:%g:%a' "${TRUSTED_BIGQUERY_SHADOW_CONFIG}")" == "0:0:400" ]] \
+  || die "trusted BigQuery handoff is not root-owned mode 0400."
+[[ "$(sha256_of "${TRUSTED_BIGQUERY_SHADOW_CONFIG}")" == "${BIGQUERY_SHADOW_CONFIG_SHA256}" ]] \
+  || die "BigQuery handoff checksum differs from the operator-verified digest lock."
+# The caller-writable /tmp file is never consulted again after this point.
+rm -f -- "${BIGQUERY_SHADOW_CONFIG}"
 
 # Resolve the live postgres containers by EXACT name, and require exactly one
 # match each — a wrong or ambiguous match would produce a backup that is trusted
@@ -118,6 +145,11 @@ cleanup_preflight_artifacts() {
         && "${TRUSTED_IMAGES_OVERLAY}" == "${APP_ROOT}/.omega-images-${DEPLOY_REF}."* ]]; then
     rm -f -- "${TRUSTED_IMAGES_OVERLAY}"
     TRUSTED_IMAGES_OVERLAY=""
+  fi
+  if [[ -n "${TRUSTED_BIGQUERY_SHADOW_CONFIG}" \
+        && "${TRUSTED_BIGQUERY_SHADOW_CONFIG}" == "${APP_ROOT}/.omega-bigquery-shadow-${DEPLOY_REF}."* ]]; then
+    rm -f -- "${TRUSTED_BIGQUERY_SHADOW_CONFIG}"
+    TRUSTED_BIGQUERY_SHADOW_CONFIG=""
   fi
   if [[ -n "${SOURCE_ARCHIVE_TMP}" \
         && "${SOURCE_ARCHIVE_TMP}" == "${APP_ROOT}/releases/.omega-source-"* ]]; then
@@ -518,7 +550,12 @@ if [[ "${DEPLOY_MODE:-apply}" == "dryrun" ]]; then
   OMEGA_GCP_SECRET_PREFIX="omega-${ENVIRONMENT}-" \
   OMEGA_SECRET_HYDRATION_MODE=check \
     bash "${RELEASE_DIR}/infra/terraform-gcp/release/hydrate-runtime-secrets.sh"
-  log "preflight config: runtime secrets validated without changing the environment"
+  OMEGA_BIGQUERY_SHADOW_CONFIG_FILE="${TRUSTED_BIGQUERY_SHADOW_CONFIG}" \
+  OMEGA_GCP_PROJECT_ID="${OMEGA_PROJECT_ID}" \
+  OMEGA_GCP_ENVIRONMENT="${ENVIRONMENT}" \
+  OMEGA_BIGQUERY_SHADOW_CONFIG_MODE=check \
+    bash "${RELEASE_DIR}/infra/terraform-gcp/release/hydrate-bigquery-shadow-config.sh"
+  log "preflight config: secrets and BigQuery shadow handoff validated without changing the environment"
 else
   CANDIDATE_ENV_BACKUP="${BACKUP_DIR}/infra.env.candidate.before"
   cp -- "${CANDIDATE_ENV}" "${CANDIDATE_ENV_BACKUP}"
@@ -528,8 +565,15 @@ else
   OMEGA_GCP_SECRET_PREFIX="omega-${ENVIRONMENT}-" \
   OMEGA_ENV_FILE="${CANDIDATE_ENV}" \
     bash "${RELEASE_DIR}/infra/terraform-gcp/release/hydrate-runtime-secrets.sh"
-  log "preflight config: runtime secrets hydrated atomically"
+  OMEGA_BIGQUERY_SHADOW_CONFIG_FILE="${TRUSTED_BIGQUERY_SHADOW_CONFIG}" \
+  OMEGA_GCP_PROJECT_ID="${OMEGA_PROJECT_ID}" \
+  OMEGA_GCP_ENVIRONMENT="${ENVIRONMENT}" \
+  OMEGA_ENV_FILE="${CANDIDATE_ENV}" \
+    bash "${RELEASE_DIR}/infra/terraform-gcp/release/hydrate-bigquery-shadow-config.sh"
+  log "preflight config: secrets and BigQuery shadow handoff hydrated atomically"
 fi
+rm -f -- "${TRUSTED_BIGQUERY_SHADOW_CONFIG}"
+TRUSTED_BIGQUERY_SHADOW_CONFIG=""
 
 # ── 3. Authenticated pull of the 15 release digests (server-owned) ───────────
 # Publish-only releases push by immutable digest only, so pull the exact digests

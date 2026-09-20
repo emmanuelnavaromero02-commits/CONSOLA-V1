@@ -20,6 +20,7 @@ from app.schemas.control_room_talent_responses import (
 from app.services import auth, intelligence_engine
 from app.services.auth import verify_internal_api_key
 from app.services.intelligence import backtesting as intelligence_backtesting
+from app.services.intelligence import bigquery_shadow
 from app.services.intelligence import calibration_service
 from app.services.intelligence import decision_orchestrator
 from app.services.intelligence import engine_policy
@@ -113,6 +114,21 @@ class GoldRefreshIntelligenceRequest(_StrictModel):
             if len(item) > 128 or not item.replace("_", "").replace("-", "").isalnum():
                 raise ValueError("datasets entries must be simple identifiers")
         return sorted(set(cleaned))
+
+
+class BigQueryTalent9BoxBaselineRequest(_StrictModel):
+    tenant_id: str = Field(
+        pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+    )
+    workspace_id: str = Field(
+        pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+    )
+    cartridge_id: Literal["sap_successfactors"]
+    dataset: Literal["sap_successfactors_talent_9box"]
+    pipeline_run_id: str = Field(min_length=1, max_length=512)
+    source_run_id: str = Field(
+        pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+    )
 
 
 class InternalMcpRequest(_StrictModel):
@@ -663,6 +679,21 @@ async def intelligence_gold_refresh_internal(
         "insufficient_history_count": result.get("insufficient_history_count", 0),
         "skipped_counts": result.get("skipped_counts") or {},
     }
+
+
+@internal_router.post("/bigquery-shadow/talent-9box-baseline")
+async def intelligence_bigquery_talent_9box_baseline_internal(
+    body: BigQueryTalent9BoxBaselineRequest,
+    internal_service: str = Depends(verify_internal_api_key),
+):
+    if internal_service != "airflow":
+        raise HTTPException(
+            status_code=403,
+            detail="only airflow can request the BigQuery Talent shadow baseline",
+        )
+    return await bigquery_shadow.build_talent_9box_baseline(
+        **body.model_dump()
+    )
 
 
 @internal_router.post("/monte-carlo/run")

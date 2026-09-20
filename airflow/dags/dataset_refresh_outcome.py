@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Mapping
 from typing import Any
 
@@ -24,7 +25,11 @@ def require_successful_materialization_response(
     response: Any, *, expected_name: str
 ) -> dict[str, Any]:
     payload = _payload(response)
-    if set(payload) != {"name", "layer", "row_count"}:
+    required = {"name", "layer", "row_count"}
+    if frozenset(payload) not in {
+        frozenset(required),
+        frozenset(required | {"publication_run_id"}),
+    }:
         raise RuntimeError("materialization outcome unavailable")
     if str(payload.get("name") or "") != expected_name:
         raise RuntimeError("materialization outcome unavailable")
@@ -33,6 +38,13 @@ def require_successful_materialization_response(
     row_count = payload.get("row_count")
     if isinstance(row_count, bool) or not isinstance(row_count, int) or row_count < 0:
         raise RuntimeError("materialization outcome unavailable")
+    if "publication_run_id" in payload:
+        try:
+            publication_run_id = str(uuid.UUID(str(payload["publication_run_id"])))
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("materialization outcome unavailable") from exc
+        if publication_run_id != str(payload["publication_run_id"]).lower():
+            raise RuntimeError("materialization outcome unavailable")
     return dict(payload)
 
 

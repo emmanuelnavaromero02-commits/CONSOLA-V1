@@ -4,6 +4,7 @@ set -Eeuo pipefail
 exec > >(tee -a /var/log/omega-startup.log) 2>&1
 
 PROJECT_ID="${project_id}"
+ENVIRONMENT="${environment}"
 SOURCE_BUCKET="${source_bucket}"
 SOURCE_OBJECT="${source_object}"
 SOURCE_SHA="${source_sha}"
@@ -16,6 +17,13 @@ ADMIN_EMAIL="${admin_email}"
 COOKIE_SECURE="${cookie_secure}"
 LAKEHOUSE_BUCKET="${lakehouse_bucket}"
 LAKEHOUSE_ENDPOINT="${lakehouse_endpoint}"
+BIGQUERY_SHADOW_ENABLED="${bigquery_shadow_enabled}"
+BIGQUERY_SHADOW_PROJECT="${bigquery_shadow_project}"
+BIGQUERY_SHADOW_DATASET="${bigquery_shadow_dataset}"
+BIGQUERY_SHADOW_SERVICE_ACCOUNT="${bigquery_shadow_sa}"
+BIGQUERY_SHADOW_TENANT="${bigquery_shadow_tenant}"
+BIGQUERY_SHADOW_WORKSPACE="${bigquery_shadow_workspace}"
+BIGQUERY_SHADOW_MAX_BYTES="${bigquery_shadow_max_bytes}"
 ENABLE_AIRFLOW_SCHEDULER="${enable_airflow_scheduler}"
 COMPOSE_OVERRIDE='${compose_override}'
 APP_ROOT="/opt/modecissions"
@@ -175,6 +183,47 @@ set_env AWS_REGION auto
 set_env S3_ENDPOINT_URL "https://$${LAKEHOUSE_ENDPOINT}"
 set_env LAKEHOUSE_ACCESS_KEY ""
 set_env LAKEHOUSE_SECRET_KEY ""
+BIGQUERY_SHADOW_CONFIG_FILE="$(mktemp /tmp/omega-bigquery-shadow.XXXXXX.json)"
+python3 - \
+  "$${PROJECT_ID}" "$${ENVIRONMENT}" \
+  "$${BIGQUERY_SHADOW_ENABLED}" "$${BIGQUERY_SHADOW_PROJECT}" \
+  "$${BIGQUERY_SHADOW_DATASET}" "$${BIGQUERY_SHADOW_SERVICE_ACCOUNT}" \
+  "$${LAKEHOUSE_BUCKET}" "$${BIGQUERY_SHADOW_TENANT}" \
+  "$${BIGQUERY_SHADOW_WORKSPACE}" "$${BIGQUERY_SHADOW_MAX_BYTES}" \
+  > "$${BIGQUERY_SHADOW_CONFIG_FILE}" <<'PY'
+import json
+import sys
+
+deployment_project_id = sys.argv[1]
+environment = sys.argv[2]
+enabled = sys.argv[3].lower() == "true"
+coordinates = sys.argv[4:10] if enabled else [""] * 6
+json.dump(
+    {
+        "schema_version": 2,
+        "deployment_project_id": deployment_project_id,
+        "environment": environment,
+        "enabled": enabled,
+        "project_id": coordinates[0],
+        "dataset_id": coordinates[1],
+        "location": "us-central1",
+        "service_account": coordinates[2],
+        "gold_bucket": coordinates[3],
+        "tenant_id": coordinates[4].lower(),
+        "workspace_id": coordinates[5].lower(),
+        "maximum_bytes_billed": int(sys.argv[10]),
+        "population_backend": "postgres_gold",
+    },
+    sys.stdout,
+    sort_keys=True,
+)
+PY
+OMEGA_BIGQUERY_SHADOW_CONFIG_FILE="$${BIGQUERY_SHADOW_CONFIG_FILE}" \
+OMEGA_GCP_PROJECT_ID="$${PROJECT_ID}" \
+OMEGA_GCP_ENVIRONMENT="$${ENVIRONMENT}" \
+OMEGA_ENV_FILE="$${RELEASE_DIR}/infra/.env" \
+  bash "$${RELEASE_DIR}/infra/terraform-gcp/release/hydrate-bigquery-shadow-config.sh"
+rm -f -- "$${BIGQUERY_SHADOW_CONFIG_FILE}"
 
 # One shared implementation is used here and by canonical day-2 deploys.  It
 # fetches the complete GCS HMAC pair before atomically replacing infra/.env.

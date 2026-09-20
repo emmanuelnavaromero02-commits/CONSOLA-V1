@@ -2353,7 +2353,10 @@ def _mcp_invoke_sync(body: dict):
         if not engine.consume_publication_replay():
             store.update_refresh(args["name"], result["row_count"], **store_scope)
             _reindex_dataset_best_effort(args["name"], body)
-        return result
+        publication_run_id = engine.consume_publication_run_id()
+        if not publication_run_id:
+            raise HTTPException(503, "materialization publication identity unavailable")
+        return {**result, "publication_run_id": publication_run_id}
 
     if tool == "list_datasets":
         sec = _require_security_permission(body, "datasets.read")
