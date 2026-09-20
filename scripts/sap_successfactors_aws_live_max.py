@@ -22,7 +22,11 @@ from typing import Any
 
 
 REPO = Path(__file__).resolve().parents[1]
-DEFAULT_INSTANCE_ID = "i-07a82861245b34481"
+INSTANCE_ID_ENV_VARS = (
+    "OMEGA_AWS_INSTANCE_ID",
+    "AWS_APP_INSTANCE_ID",
+    "OMEGA_AWS_APP_INSTANCE_ID",
+)
 DEFAULT_REGION = "us-east-1"
 DEFAULT_CONSOLE_URL = "https://console.7businesssolutions.com"
 DEFAULT_TENANT_ID = "b95f4d58-c9c8-4fd5-8d07-ddde294c7d78"
@@ -1279,6 +1283,21 @@ def write_summary(ctx: Context, fix_report: Path, final_report: Path) -> None:
     print(json.dumps(summary, indent=2, sort_keys=True))
 
 
+def _resolve_instance_id() -> str:
+    # No baked-in default: a hard-coded instance id is both an infrastructure
+    # identifier in a public repository and a correctness trap, because the
+    # instance it names outlives neither a rebuild nor a region move.
+    for name in INSTANCE_ID_ENV_VARS:
+        value = (os.environ.get(name) or "").strip()
+        if value:
+            return value
+    raise SystemExit(
+        "Set the target instance explicitly: "
+        + " or ".join(INSTANCE_ID_ENV_VARS)
+        + " (no default is assumed)."
+    )
+
+
 def main() -> int:
     timestamp = _timestamp()
     run_id = os.environ.get("OMEGA_SF_LIVE_RUN_ID") or "SF_LIVE_" + timestamp
@@ -1287,7 +1306,7 @@ def main() -> int:
         run_id=run_id,
         timestamp=timestamp,
         evidence_dir=REPO / evidence_root / run_id,
-        instance_id=os.environ.get("OMEGA_AWS_INSTANCE_ID", DEFAULT_INSTANCE_ID),
+        instance_id=_resolve_instance_id(),
         region=os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or DEFAULT_REGION,
         console_url=os.environ.get("PUBLIC_CONSOLE_URL") or os.environ.get("CONSOLE_URL") or DEFAULT_CONSOLE_URL,
         tenant_id=os.environ.get("OMEGA_TENANT_ID", DEFAULT_TENANT_ID),

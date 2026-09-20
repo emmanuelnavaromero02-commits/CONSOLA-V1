@@ -3,7 +3,7 @@
 - status: `PASS`
 - generated_at_utc: `2026-06-23T08:01:58.080133+00:00`
 - ssm_command_id: `3f97d338-ed41-439e-9cfc-44314d5efc35`
-- instance_id: `i-07a82861245b34481`
+- instance_id: `<aws-instance-id>`
 - region: `us-east-1`
 - deploy_ref: `v1.45.120-beta`
 - image_tag: `v1.45.120-beta`

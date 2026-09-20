@@ -30,7 +30,9 @@ SELECT
     candidateId          AS candidate_id,       -- shadowed en bronze (FK)
     firstName            AS first_name,         -- masked en bronze
     lastName             AS last_name,          -- masked en bronze
-    status               AS status,
+    -- Candidate.status is not exposed by the tenant OData metadata. Preserve
+    -- the Silver schema without inferring a recruiting state from other fields.
+    CAST(NULL AS VARCHAR) AS status,
     load_date
 FROM latest
 ORDER BY candidate_id

@@ -2,7 +2,7 @@
 
 - estado final: `YELLOW`
 - fecha/hora UTC: `2026-06-10T22:13:03Z`
-- ambiente AWS: `us-east-1` / `i-07a82861245b34481`
+- ambiente AWS: `us-east-1` / `<aws-instance-id>`
 - console_url: `http://modecissions-public-255609366.us-east-1.elb.amazonaws.com`
 - run_id: `SF_LIVE_20260610T220801Z`
 - tenant_id: `b95f4d58-c9c8-4fd5-8d07-ddde294c7d78`

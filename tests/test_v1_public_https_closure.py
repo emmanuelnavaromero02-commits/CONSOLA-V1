@@ -65,7 +65,7 @@ def test_production_tfvars_pin_domains_certificate_waf_and_ses():
     assert 'public_console_domain   = "console.7businesssolutions.com"' in tfvars
     assert 'public_workspace_domain = "workspace.7businesssolutions.com"' in tfvars
     assert (
-        'public_acm_certificate_arn = "arn:aws:acm:us-east-1:095713296066:certificate/'
+        'public_acm_certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/'
         in tfvars
     )
     assert 'enable_public_alb_waf             = true' in tfvars
