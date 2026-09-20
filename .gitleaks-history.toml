@@ -1,0 +1,50 @@
+# Gitleaks configuration for the FULL-HISTORY secret scan
+# (.github/workflows/secret-scan.yml, job `gitleaks-history`).
+#
+# The tree gate stops new secrets from landing. This one asks a different
+# question: is anything a reader could recover from the published history?
+# Nobody had asked it until 2026-09-20, and the answer was not empty.
+#
+# It extends .gitleaks.toml so both scans share one ruleset. What it adds is
+# an allowlist for findings that already exist in the past, each one written
+# down with why it is accepted. History cannot be edited without rewriting
+# it, so the honest options are: record what is known, and fail on anything
+# new. A silent baseline file would hide the same information.
+
+[extend]
+path = ".gitleaks.toml"
+
+[allowlist]
+description = "Known historical findings, triaged on 2026-09-20"
+
+paths = [
+    # Release manifests pin every migration by SHA-256. The default
+    # `generic-api-key` rule reads a 64-character hex string as a credential.
+    # These are checksums of files that are in the repository anyway: knowing
+    # one grants nothing. 24 of the 25 findings in history were these.
+    '''^infra/migrations/manifests/''',
+]
+
+commits = [
+    # infra/.env.save, committed 2026-05-10 and removed from the tree in #72
+    # (6fabc75b). It remains readable in history and cannot be removed without
+    # rewriting published history.
+    #
+    # Triaged on 2026-09-20, value by value, by comparing SHA-256 fingerprints
+    # against the production .env — no value was ever printed:
+    #   * the dangerous names were EMPTY, so nothing leaked: AWS_ACCESS_KEY_ID,
+    #     AWS_SECRET_ACCESS_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY,
+    #     REPLICON_TOKEN, SMTP_USER, SMTP_PASSWORD;
+    #   * the real credentials had already been rotated: JWT_SECRET_KEY,
+    #     POSTGRES_PASSWORD, INTERNAL_API_KEY, SUPERSET_SECRET_KEY,
+    #     SUPERSET_ADMIN_PASSWORD, AIRFLOW_SECRET_KEY, AIRFLOW_ADMIN_PASSWORD;
+    #   * GEMINI_API_KEY and GOOGLE_API_KEY were live keys, and both are now
+    #     dead — Google answers 400 API_KEY_INVALID, and neither matches any
+    #     key that still exists in the projects;
+    #   * what still matches production are not secrets: AWS_REGION, the token
+    #     TTLs, SMTP_HOST/PORT/USE_TLS and a model name.
+    #
+    # vault/secrets.yaml, removed in the same pull request, leaked nothing:
+    # its seven DSNs used ${VARIABLE} references rather than literals.
+    "fdf1dd73237a7875bb4a49afda5958cc731394f2",
+]

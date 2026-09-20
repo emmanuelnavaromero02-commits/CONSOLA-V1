@@ -92,6 +92,85 @@ async def expect_error(coro, status_code, label):
     raise SystemExit(f"{label}:expected_{status_code}_not_raised")
 
 
+CREATED: dict = {}
+
+
+async def _cleanup():
+    # Undo every write this probe made. These probes run against a REAL
+    # deployment. The sibling calibration probe wraps its writes in
+    # BEGIN/ROLLBACK; that is impossible here because the orchestrator opens its
+    # own pooled connections and would not see uncommitted rows. So the rows are
+    # committed and removed here, and the probe reports whether it left the
+    # database clean.
+    if not CREATED:
+        return
+    pool = await auth.pool()
+    base = CREATED.get("base")
+    items = [value for value in (CREATED.get("items") or []) if value]
+    signal_id = CREATED.get("signal_id")
+    state_id = CREATED.get("calibration_state_id")
+    sources = [value for value in [*items, signal_id] if value]
+    leftovers = []
+    if base and sources:
+        async with scoped_db_for_user(pool, base) as (conn, _tenant_id, _workspace_id):
+            await conn.execute(
+                '''
+                DELETE FROM decision_orchestration_executions
+                 WHERE orchestration_id IN (
+                     SELECT orchestration_id FROM decision_orchestration_runs
+                      WHERE source_id = ANY($1::text[])
+                 )
+                ''',
+                sources,
+            )
+            await conn.execute(
+                'DELETE FROM decision_orchestration_runs WHERE source_id = ANY($1::text[])',
+                sources,
+            )
+            if signal_id:
+                await conn.execute(
+                    'DELETE FROM monte_carlo_simulations WHERE source_id = $1', signal_id
+                )
+                await conn.execute(
+                    'DELETE FROM decision_options WHERE signal_id = $1', signal_id
+                )
+            if state_id:
+                await conn.execute(
+                    'DELETE FROM calibration_states WHERE state_id = $1', state_id
+                )
+            if items:
+                await conn.execute(
+                    'DELETE FROM control_room_items WHERE item_id = ANY($1::text[])',
+                    items,
+                )
+            if signal_id:
+                await conn.execute(
+                    'DELETE FROM intelligence_signals WHERE signal_id = $1', signal_id
+                )
+            if state_id and await conn.fetchval(
+                'SELECT count(*) FROM calibration_states WHERE state_id = $1', state_id
+            ):
+                leftovers.append('calibration_states')
+            if signal_id and await conn.fetchval(
+                'SELECT count(*) FROM intelligence_signals WHERE signal_id = $1',
+                signal_id,
+            ):
+                leftovers.append('intelligence_signals')
+            if items and await conn.fetchval(
+                'SELECT count(*) FROM control_room_items WHERE item_id = ANY($1::text[])',
+                items,
+            ):
+                leftovers.append('control_room_items')
+    async with pool.acquire() as conn:
+        if CREATED.get("workspace_b"):
+            await conn.execute(
+                'DELETE FROM workspaces WHERE id = $1', CREATED["workspace_b"]
+            )
+        if CREATED.get("tenant_b"):
+            await conn.execute('DELETE FROM tenants WHERE id = $1', CREATED["tenant_b"])
+    print("probe_cleanup=" + ("OK" if not leftovers else "INCOMPLETE:" + ",".join(leftovers)))
+
+
 async def main():
     pool = await auth.pool()
     async with pool.acquire() as conn:
@@ -176,6 +255,16 @@ async def main():
     temporal_item = "decision-orchestrator-exec-temporal-" + suffix
     calibration_group = "probe-risk:" + suffix[:8]
     model_version = calibration.MODEL_VERSION
+    CREATED.update(
+        {
+            "base": base,
+            "signal_id": signal_id,
+            "items": [risk_item, temporal_item],
+            "calibration_state_id": "probe-state-" + suffix,
+            "tenant_b": tenant_b,
+            "workspace_b": workspace_b,
+        }
+    )
 
     async with scoped_db_for_user(pool, base) as (conn, tenant_id, workspace_id):
         await conn.execute(
@@ -367,12 +456,27 @@ async def main():
     print("decision_orchestrator_execution=PASS")
 
 
-asyncio.run(main())
+async def _run():
+    try:
+        await main()
+    finally:
+        try:
+            await _cleanup()
+        except Exception as exc:  # noqa: BLE001 - report, never mask the result
+            print("probe_cleanup=FAILED:" + type(exc).__name__)
+
+
+asyncio.run(_run())
 PY
 )"
 echo "$console_probe" | grep -q "decision_orchestrator_execution=PASS" \
   && emit "Console decision orchestrator execution" "PASS" "classification, MC execution, Bayes lookup, candidate-only and tenant isolation verified" \
   || emit "Console decision orchestrator execution" "FAIL" "$console_probe" "Deploy Console image containing Prompt 19B and migration 99v."
+
+
+echo "$console_probe" | grep -q "probe_cleanup=OK" \
+  && emit "Probe left no rows behind" "PASS" "probe_cleanup=OK" \
+  || emit "Probe left no rows behind" "FAIL" "cleanup incomplete" "Delete the leftover probe rows (decision-orchestrator-exec-*) by hand."
 
 psql_main() { docker compose $(compose_files) exec -T postgres psql -U postgres -d modecissions -tAc "$1" 2>&1 | tr -d '\r'; }
 

@@ -3666,6 +3666,10 @@
       "sha256": "ffdfd6f55dfc4203d13082df0cbf5280ed806882e4a386a60fc7db3a0d46efd2"
     },
     {
+      "path": "tests/test_audit_events_append_only_contract.py",
+      "sha256": "f914c811d62b2082a577d765d4889841f98d915ef80555dc8b025456a190fdd6"
+    },
+    {
       "path": "tests/test_audit_events_dedup.py",
       "sha256": "59d4db9336ca45782fbb367a17a072dc9a750f22622bd5096b873134d5ef0936"
     },
@@ -3688,6 +3692,10 @@
     {
       "path": "tests/test_aws_compose_uses_omega_roles.py",
       "sha256": "e95ec0bc3148fbef13e8a7536c6fbe0682abc587374427b51529d46213227a90"
+    },
+    {
+      "path": "tests/test_aws_deploy_migration_ordering.py",
+      "sha256": "f4a166a7d129931e795cbdc778ecf597e956c72b522b5d1ec837f8dec2288e37"
     },
     {
       "path": "tests/test_aws_dr_observability_hardening.py",
@@ -3716,6 +3724,10 @@
     {
       "path": "tests/test_aws_iam_app_s3_policy.py",
       "sha256": "bdf5f7202a5b1de4c6516220b626cf3b3a4759bc9866f27523d9a7ffab50ce43"
+    },
+    {
+      "path": "tests/test_aws_probes_clean_up_after_themselves.py",
+      "sha256": "47ab0be5c044175441e680f52a32308a40a11180b16b939915a9fee00e02aab2"
     },
     {
       "path": "tests/test_aws_secrets_manager_config.py",
@@ -5424,6 +5436,10 @@
     {
       "path": "tests/test_sec_edgar_pr4_contract.py",
       "sha256": "75992055f47cc711c92e56a4de39e09c69b79a570419d792347def689499c74e"
+    },
+    {
+      "path": "tests/test_secret_scan_covers_history.py",
+      "sha256": "876b62bf1d9a115c1903403d7498d1a559bc4dacabf30636c88a66aa1a003cce"
     },
     {
       "path": "tests/test_secure_release_output.py",
