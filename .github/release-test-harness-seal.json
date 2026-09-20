@@ -3023,7 +3023,7 @@
     },
     {
       "path": "infra/docker-compose.yml",
-      "sha256": "3e6ed6eb49fdc1d4d3e08636d18b4babce5e960c086da1007bb22fb7b4f05db5"
+      "sha256": "ec23afb2e03e6934a03920ba1a6e6c6744fd9aed0bc75bb72defb5f86bebf5d5"
     },
     {
       "path": "infra/init/99zzt_analytic_app_dataset_grants.sql",
@@ -3107,7 +3107,7 @@
     },
     {
       "path": "refinement/tests/test_duckdb_resource_limits.py",
-      "sha256": "0fdcd5529ab3b2ed774ae923a409b0d0ce09fee821e82e98a123134e6913bf3b"
+      "sha256": "26fdd66d1dd584f7371a383bb026edac03981c2c8566685e827c316fdbf578a1"
     },
     {
       "path": "refinement/tests/test_duckdb_s3_materialize_paths.py",
