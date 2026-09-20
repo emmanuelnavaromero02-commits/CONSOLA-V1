@@ -9,7 +9,7 @@ make sap-successfactors-aws-live-max
 Variables opcionales:
 
 ```bash
-OMEGA_AWS_INSTANCE_ID=i-07a82861245b34481
+OMEGA_AWS_INSTANCE_ID=<aws-instance-id>
 AWS_REGION=us-east-1
 PUBLIC_CONSOLE_URL=http://modecissions-public-255609366.us-east-1.elb.amazonaws.com
 OMEGA_TENANT_ID=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78
