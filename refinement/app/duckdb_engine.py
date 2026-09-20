@@ -53,6 +53,11 @@ S3_LITERAL_RE = re.compile(
 DUCKDB_MEMORY_LIMIT_RE = re.compile(
     r"^\d+(?:\.\d+)?\s*(?:B|KB|MB|GB|TB|KiB|MiB|GiB|TiB)$", re.IGNORECASE
 )
+# A spill directory has to be an absolute path. DuckDB's own default is the
+# relative ".tmp", which lands wherever the process happens to be running —
+# inside the container's writable layer, not on a volume — and moves if the
+# working directory ever changes.
+DUCKDB_TEMP_DIRECTORY_RE = re.compile(r"^/[^\0'\"\n\r]*$")
 
 
 def _normalize_postgres_dsn(raw: str) -> str:
@@ -102,6 +107,26 @@ def _duckdb_memory_limit_from_env(raw: str | None) -> str:
         return ""
     if not DUCKDB_MEMORY_LIMIT_RE.fullmatch(value):
         raise ValueError("DUCKDB_MEMORY_LIMIT must look like 512MB, 1GB or 1024MiB")
+    return value
+
+
+def _duckdb_temp_directory_from_env(raw: str | None) -> str:
+    value = (raw or "").strip()
+    if not value:
+        return ""
+    if not DUCKDB_TEMP_DIRECTORY_RE.fullmatch(value):
+        raise ValueError("DUCKDB_TEMP_DIRECTORY must be an absolute path")
+    return value
+
+
+def _duckdb_max_temp_directory_size_from_env(raw: str | None) -> str:
+    value = (raw or "").strip()
+    if not value:
+        return ""
+    if not DUCKDB_MEMORY_LIMIT_RE.fullmatch(value):
+        raise ValueError(
+            "DUCKDB_MAX_TEMP_DIRECTORY_SIZE must look like 512MB, 1GB or 1024MiB"
+        )
     return value
 
 
@@ -249,6 +274,16 @@ class DuckDBEngine:
             os.environ.get("DUCKDB_MEMORY_LIMIT")
         )
         self.duckdb_threads = _duckdb_threads_from_env(os.environ.get("DUCKDB_THREADS"))
+        # A bounded memory_limit makes spilling to disk normal rather than
+        # rare, so the spill needs a bound of its own. DuckDB's default cap is
+        # 90% of the filesystem, which on a single-disk host means a runaway
+        # query can starve PostgreSQL instead of failing by itself.
+        self.duckdb_temp_directory = _duckdb_temp_directory_from_env(
+            os.environ.get("DUCKDB_TEMP_DIRECTORY")
+        )
+        self.duckdb_max_temp_directory_size = _duckdb_max_temp_directory_size_from_env(
+            os.environ.get("DUCKDB_MAX_TEMP_DIRECTORY_SIZE")
+        )
         self._con: duckdb.DuckDBPyConnection | None = None
         self._duckdb_lock = threading.RLock()
 
@@ -312,6 +347,27 @@ class DuckDBEngine:
                     )
                 if self.duckdb_threads is not None:
                     self._con.execute(f"SET threads={self.duckdb_threads};")
+                if self.duckdb_temp_directory:
+                    # DuckDB creates a single missing directory but not a
+                    # nested path: with the parent absent it raises
+                    # "Failed to create directory" at spill time, i.e. the
+                    # query that needed to spill is the one that fails. Create
+                    # it up front so a configured path is never a trap.
+                    try:
+                        os.makedirs(self.duckdb_temp_directory, exist_ok=True)
+                    except OSError as exc:
+                        raise RuntimeError(
+                            "DUCKDB_TEMP_DIRECTORY is not creatable: "
+                            f"{self.duckdb_temp_directory}"
+                        ) from exc
+                    self._con.execute(
+                        f"SET temp_directory={_sql_quote(self.duckdb_temp_directory)};"
+                    )
+                if self.duckdb_max_temp_directory_size:
+                    self._con.execute(
+                        "SET max_temp_directory_size="
+                        f"{_sql_quote(self.duckdb_max_temp_directory_size)};"
+                    )
                 if self._uses_gcs_lakehouse():
                     self._configure_duckdb_gcs(self._con)
                 else:
