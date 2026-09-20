@@ -121,3 +121,8 @@ terraform.tfstate.backup
 *.tfvars
 !*.tfvars.example
 .omega-ot-dags.*
+
+# Deploy evidence is generated on the operator's machine and carries
+# infrastructure identifiers (instance, bucket, SSM command ids). It stays
+# local: publish a sanitized summary instead of the raw run.
+docs/release-evidence/deploy-main-aws/
