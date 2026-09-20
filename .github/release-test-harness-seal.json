@@ -3722,6 +3722,10 @@
       "sha256": "bdf5f7202a5b1de4c6516220b626cf3b3a4759bc9866f27523d9a7ffab50ce43"
     },
     {
+      "path": "tests/test_aws_probes_clean_up_after_themselves.py",
+      "sha256": "47ab0be5c044175441e680f52a32308a40a11180b16b939915a9fee00e02aab2"
+    },
+    {
       "path": "tests/test_aws_secrets_manager_config.py",
       "sha256": "2b2b18b9d8d59a44bb9c2f9569416d42a41dfbcd82544961fae56b8a945c1d37"
     },
