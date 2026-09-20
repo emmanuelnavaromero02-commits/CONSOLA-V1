@@ -3686,6 +3686,10 @@
       "sha256": "e95ec0bc3148fbef13e8a7536c6fbe0682abc587374427b51529d46213227a90"
     },
     {
+      "path": "tests/test_aws_deploy_migration_ordering.py",
+      "sha256": "f4a166a7d129931e795cbdc778ecf597e956c72b522b5d1ec837f8dec2288e37"
+    },
+    {
       "path": "tests/test_aws_dr_observability_hardening.py",
       "sha256": "dbc18669734628e06eb68625dd848a0427d11f90904dbf45bceace4c1744d6eb"
     },
