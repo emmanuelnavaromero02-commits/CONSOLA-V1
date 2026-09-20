@@ -26,7 +26,7 @@ route53_zone_id = ""
 manual_acm_validation_complete = false
 
 # If DNS is managed elsewhere, this can point to an already issued ACM cert.
-public_acm_certificate_arn = "arn:aws:acm:us-east-1:095713296066:certificate/fbb0b26c-bac5-4050-a04a-849be0507af8"
+public_acm_certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/00000000-0000-0000-0000-000000000000"
 
 # Public SSH is disabled by default. Prefer SSM:
 # aws ssm start-session --target <instance-id>
