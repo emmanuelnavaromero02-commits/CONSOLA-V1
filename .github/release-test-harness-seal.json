@@ -3667,7 +3667,7 @@
     },
     {
       "path": "tests/test_audit_events_append_only_contract.py",
-      "sha256": "f224494ce90349bf8fa3fb6a05cf7f1b415c2a1722052007226bff04787aa17a"
+      "sha256": "f914c811d62b2082a577d765d4889841f98d915ef80555dc8b025456a190fdd6"
     },
     {
       "path": "tests/test_audit_events_dedup.py",

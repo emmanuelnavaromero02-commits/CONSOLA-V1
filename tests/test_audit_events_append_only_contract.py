@@ -81,12 +81,16 @@ def test_migration_is_idempotent():
     assert "CREATE OR REPLACE FUNCTION audit_events_append_only()" in sql
 
 
-def test_break_glass_path_is_documented_in_the_migration():
-    # Erasing an audit record should be possible for legitimate maintenance,
-    # but only as an explicit, privileged act. If that path is undocumented,
-    # the next operator reaches for something worse.
+def test_owner_is_exempt_so_maintenance_stays_possible():
+    # A session that is already the table owner can DROP the trigger or the
+    # table, so blocking it denies nothing while breaking legitimate work: a
+    # retention purge, the dedup in 44_audit_events_dedup.sql, and the live
+    # test fixtures that clear audit rows between cases.
     sql = _sql()
-    assert "DISABLE TRIGGER audit_events_no_update_delete" in sql
+    assert "session_user = owner_name" in sql
+    assert "pg_get_userbyid" in sql
+    # BEFORE TRUNCATE is statement-level, where NEW and OLD are unassigned.
+    assert "TG_LEVEL = 'STATEMENT'" in sql
 
 
 def test_application_code_never_updates_or_deletes_audit_events():
