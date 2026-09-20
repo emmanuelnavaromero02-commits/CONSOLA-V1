@@ -334,7 +334,7 @@ fi
 
 available_services="$(docker compose $COMPOSE_FILES config --services)"
 services=""
-for service in console workspace refinement vault mcp-infra airflow airflow-scheduler sap-successfactors replicon hubspot salesforce banxico inegi sec-edgar sap-hcm sap-s4hana; do
+for service in console workspace refinement vault mcp-infra airflow sap-successfactors replicon hubspot salesforce banxico inegi sec-edgar sap-hcm sap-s4hana; do
   if printf '%s\\n' "$available_services" | grep -qx "$service"; then
     services="$services $service"
   fi
@@ -345,13 +345,16 @@ if [ ! -f "$AUTH_RUNNER" ]; then
   emit "server-owned GHCR auth" "FAIL" "$AUTH_RUNNER missing"
   exit 25
 fi
-bash "$AUTH_RUNNER" docker compose $COMPOSE_FILES pull $services >/tmp/omega-deploy-pull.out 2>/tmp/omega-deploy-pull.err || {{ emit "pull app images" "FAIL" "$(tail -c 400 /tmp/omega-deploy-pull.err || true)"; exit 25; }}
+OMEGA_GHCR_AUTH_ACTIVE=1 DOCKER_CONFIG=/root/.docker bash "$AUTH_RUNNER" docker compose $COMPOSE_FILES pull $services >/tmp/omega-deploy-pull.out 2>/tmp/omega-deploy-pull.err || {{ emit "pull app images" "FAIL" "$(tail -c 400 /tmp/omega-deploy-pull.err || true)"; exit 25; }}
 emit "pull app images" "PASS" "image_tag=$IMAGE_TAG_NEW"
 
 # Authentication and every immutable image are proven before any schema
 # mutation, so expired/missing private-package credentials fail closed.
+docker compose $COMPOSE_FILES stop $services >/tmp/omega-deploy-stop.out 2>&1 || true
+emit "stop app before migrations" "PASS" "services stopped"
+
 if [ "$RUN_MIGRATIONS" = "1" ] && [ -x "$DEPLOY_DIR/apply_db_migrations.sh" ]; then
-  if bash "$DEPLOY_DIR/apply_db_migrations.sh" >/tmp/omega-deploy-migrations.out 2>/tmp/omega-deploy-migrations.err; then
+  if LC_ALL=C LANG=C bash "$DEPLOY_DIR/apply_db_migrations.sh" >/tmp/omega-deploy-migrations.out 2>/tmp/omega-deploy-migrations.err; then
     emit "db migrations" "PASS" "apply_db_migrations.sh completed"
   else
     emit "db migrations" "FAIL" "$(tail -c 400 /tmp/omega-deploy-migrations.err || true)"
