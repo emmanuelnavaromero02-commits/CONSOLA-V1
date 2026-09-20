@@ -15,8 +15,8 @@ Cuenta `980921755079`, región `us-east-1`. Todo gestionado vía Terraform desde
 
 | Recurso | Tipo / ID | IP | Función |
 |---|---|---|---|
-| **EC2 VPN** (bastion) | `t3.nano` · `i-0ffd81fa030577b11` | EIP pública `34.239.194.46` (subred pública `10.0.1.0/24`) | Corre WireGuard (wg-easy en Docker, puertos 51820/UDP + 51821/TCP). Es la **única puerta de entrada al sistema** — el equipo se conecta vía VPN para alcanzar la App EC2 |
-| **EC2 App** | `m6i.xlarge` (4 vCPU, 16GB RAM) · `i-00b8bd8b069146b8d` | privada `10.0.2.175` (subred privada `10.0.2.0/24`) | Hospeda **todo el stack en Docker**: console, workspace, refinement, mcp-infra, postgres + postgres_gold, superset, airflow, mailhog. Disco gp3 150 GB encriptado |
+| **EC2 VPN** (bastion) | `t3.nano` · `<aws-instance-id>` | EIP pública `<eip-publica>` (subred pública `10.0.1.0/24`) | Corre WireGuard (wg-easy en Docker, puertos 51820/UDP + 51821/TCP). Es la **única puerta de entrada al sistema** — el equipo se conecta vía VPN para alcanzar la App EC2 |
+| **EC2 App** | `m6i.xlarge` (4 vCPU, 16GB RAM) · `<aws-instance-id>` | privada `10.0.2.175` (subred privada `10.0.2.0/24`) | Hospeda **todo el stack en Docker**: console, workspace, refinement, mcp-infra, postgres + postgres_gold, superset, airflow, mailhog. Disco gp3 150 GB encriptado |
 
 **Costo aprox combinado**: ~$140/mes (m6i.xlarge) + $4/mes (t3.nano) = **~$144/mes**
 
@@ -41,7 +41,7 @@ Cuenta `980921755079`, región `us-east-1`. Todo gestionado vía Terraform desde
 
 | Recurso | IP | Asociado a | Función |
 |---|---|---|---|
-| **EIP VPN** | `34.239.194.46` | EC2 VPN | URL pública del wg-easy + endpoint UDP de WireGuard. Sobrevive a recreaciones de la EC2 |
+| **EIP VPN** | `<eip-publica>` | EC2 VPN | URL pública del wg-easy + endpoint UDP de WireGuard. Sobrevive a recreaciones de la EC2 |
 | **EIP NAT** | (variable) | NAT Gateway | Outbound IP de la EC2 App. Persiste para que servicios externos (Replicon, Anthropic, etc.) la vean estable si necesitan whitelisting |
 
 ---
@@ -103,7 +103,7 @@ Cuenta `980921755079`, región `us-east-1`. Todo gestionado vía Terraform desde
 ## Diagrama de arquitectura
 
 ```
-  Internet ── EIP VPN (34.239.194.46) ── EC2 VPN (t3.nano, public subnet)
+  Internet ── EIP VPN (<eip-publica>) ── EC2 VPN (t3.nano, public subnet)
                                               │
                                               │ WireGuard tunnel (UDP 51820)
                                               │
@@ -163,10 +163,10 @@ Costos por hora (us-east-1 on-demand):
 
 ```powershell
 # Apaga ambas EC2 (~$5/día ahorrado)
-aws ec2 stop-instances --instance-ids i-00b8bd8b069146b8d i-0ffd81fa030577b11
+aws ec2 stop-instances --instance-ids <aws-instance-id> <aws-instance-id>
 
 # Reanudar
-aws ec2 start-instances --instance-ids i-00b8bd8b069146b8d i-0ffd81fa030577b11
+aws ec2 start-instances --instance-ids <aws-instance-id> <aws-instance-id>
 # Espera ~2 min — los containers Docker arrancan solos por restart: unless-stopped
 ```
 

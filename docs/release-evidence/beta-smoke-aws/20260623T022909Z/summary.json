@@ -192,7 +192,7 @@
     "golden_path": "replicon",
     "hubspot_required": false,
     "image_tag": "v1.45.116-beta",
-    "instance_id": "i-07a82861245b34481",
+    "instance_id": "<aws-instance-id>",
     "public_url": "http://modecissions-public-255609366.us-east-1.elb.amazonaws.com",
     "region": "us-east-1",
     "rollback_command": "",

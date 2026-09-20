@@ -192,7 +192,7 @@
     "golden_path": "replicon",
     "hubspot_required": false,
     "image_tag": "v1.45.116-beta",
-    "instance_id": "i-07a82861245b34481",
+    "instance_id": "<aws-instance-id>",
     "public_url": "https://console.7businesssolutions.com",
     "region": "us-east-1",
     "rollback_command": "",
