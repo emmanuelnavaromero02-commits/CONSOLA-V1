@@ -117,3 +117,62 @@ def test_application_code_never_updates_or_deletes_audit_events():
         "audit_events is append-only for the application role; these files "
         f"would now fail at runtime: {offenders}"
     )
+
+
+# ── 99zzzzk: hardening on top of 99zzzzj ───────────────────────────────────
+
+HARDENING = "infra/init/99zzzzk_audit_events_append_only_hardening.sql"
+
+
+def _hardening() -> str:
+    return _read(HARDENING)
+
+
+def test_hardening_sorts_after_the_migration_it_fixes():
+    # 99zzzzj is recorded in schema_migrations by filename, so its fixes can
+    # only reach an environment that already applied it through a new file.
+    names = sorted(p.name for p in (ROOT / "infra/init").glob("[0-9][0-9]*_*.sql"))
+    assert names.index(Path(HARDENING).name) > names.index(Path(MIGRATION).name)
+
+
+def test_trigger_function_pins_search_path_with_pg_temp_last():
+    # pg_temp must be named explicitly and last; "pg_catalog, public" is not
+    # equivalent.
+    sql = _hardening()
+    assert "SET search_path = pg_catalog, pg_temp" in sql
+    assert "SET search_path = pg_catalog, public" not in sql
+
+
+def test_owner_is_read_from_the_trigger_relation_and_compared_by_oid():
+    sql = _hardening()
+    assert "WHERE c.oid = TG_RELID" in sql
+    assert "FROM pg_catalog.pg_class c" in sql
+    assert "FROM pg_catalog.pg_roles r" in sql
+    assert "session_role = table_owner" in sql
+    # The owner comes from the trigger's own relation, never a name lookup.
+    assert "relname = 'audit_events'" not in sql
+
+
+def test_trigger_function_ownership_is_pinned():
+    assert (
+        "ALTER FUNCTION public.audit_events_append_only() OWNER TO postgres"
+        in _hardening()
+    )
+
+
+def test_conversation_foreign_key_is_dropped():
+    # Audit evidence must not change when a referenced conversation is deleted.
+    sql = _hardening()
+    assert "a.attname = 'conversation_id'" in sql
+    assert "DROP CONSTRAINT %I" in sql
+
+
+def test_hardening_refuses_to_commit_unless_every_guarantee_holds():
+    sql = _hardening()
+    for message in (
+        "still carries a foreign key",
+        "is not owned by postgres",
+        "does not pin search_path",
+        "not ENABLE ALWAYS",
+    ):
+        assert message in sql
