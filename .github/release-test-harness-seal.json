@@ -3158,6 +3158,14 @@
       "sha256": "d0a45bd564901e03ac6617e4d1c1fc581f3e66e0ee5d16965686091623aa61b9"
     },
     {
+      "path": "refinement/tests/test_publication_verify_by_version.py",
+      "sha256": "fad3cdb7dde29fa1ed9b102194a65132e1d384c7b060c0794cdd46ed79231c84"
+    },
+    {
+      "path": "refinement/tests/test_raw_input_fingerprint.py",
+      "sha256": "00fc25661646040008d3472a596504233e7f084bed51b672879e850abb570354"
+    },
+    {
       "path": "refinement/tests/test_refinement_materialization_errors.py",
       "sha256": "aaa5525ec83edc2b30a8035cba03bb1642706d00b5da7ac30dc11204299b6ec9"
     },
@@ -5123,7 +5131,7 @@
     },
     {
       "path": "tests/test_refinement_resource_quotas.py",
-      "sha256": "8032e65d750998d3a02f565db61bfa06544a04ef2820cb752a6b15c8bd3967e4"
+      "sha256": "adeff5868050eff86b15293a31c2daf8be54c06c2ae8deb127f4e6ac2d6becd2"
     },
     {
       "path": "tests/test_refresh_rotation_atomic_live.py",
@@ -5643,7 +5651,7 @@
     },
     {
       "path": "tests/test_superset_hardening_defaults.py",
-      "sha256": "75c1a0d2138be33006a1abbf0c3020ae2d34e30fef18ebc9d909a28fc130e01d"
+      "sha256": "e3bdde41130b8f472b6c20c5a8eb8da4766f98882f77569593fe15aa00ae7297"
     },
     {
       "path": "tests/test_superset_tenant_context_probe.py",
