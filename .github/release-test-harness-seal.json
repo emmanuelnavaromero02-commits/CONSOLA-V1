@@ -3158,6 +3158,10 @@
       "sha256": "d0a45bd564901e03ac6617e4d1c1fc581f3e66e0ee5d16965686091623aa61b9"
     },
     {
+      "path": "refinement/tests/test_publication_verify_by_version.py",
+      "sha256": "fad3cdb7dde29fa1ed9b102194a65132e1d384c7b060c0794cdd46ed79231c84"
+    },
+    {
       "path": "refinement/tests/test_refinement_materialization_errors.py",
       "sha256": "aaa5525ec83edc2b30a8035cba03bb1642706d00b5da7ac30dc11204299b6ec9"
     },
