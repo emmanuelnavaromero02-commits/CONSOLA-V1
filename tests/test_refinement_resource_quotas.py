@@ -170,6 +170,15 @@ def test_aws_container_is_bounded(aws_refinement: dict) -> None:
     assert mem <= 3 * 1024**3, f"mem_limit {mem} is above the 3 GiB budget"
     assert float(aws_refinement.get("cpus") or 0) > 0, "no cpus ceiling"
 
+    # Without memswap_limit, Docker grants the container mem_limit again in
+    # swap, so the ceiling is really 2x. A refinement that swaps drags the whole
+    # host down -- the exact outcome the ceiling exists to prevent.
+    swap = int(aws_refinement.get("memswap_limit") or 0)
+    assert swap == mem, (
+        f"memswap_limit ({swap}) must equal mem_limit ({mem}) so the container "
+        "gets no swap allowance on top of its RAM ceiling"
+    )
+
 
 def test_aws_duckdb_memory_limit_is_a_fraction_of_the_host(
     aws_refinement: dict,

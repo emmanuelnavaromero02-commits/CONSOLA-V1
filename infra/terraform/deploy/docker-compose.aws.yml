@@ -249,6 +249,11 @@ services:
     # from the shared .env on purpose -- that is how the limit reached production
     # until now, and a re-rendered .env must not be able to remove the ceiling.
     mem_limit: ${REFINEMENT_MEM_LIMIT:-3g}
+    # Equal to mem_limit, which is how Docker expresses "no swap for this
+    # container". Left unset, the container may use mem_limit again in swap on
+    # top of RAM, so the ceiling would not be a ceiling -- and a refinement that
+    # swaps drags the whole host down, which is the outcome being prevented.
+    memswap_limit: ${REFINEMENT_MEM_LIMIT:-3g}
     cpus: ${REFINEMENT_CPUS:-1.5}
     environment:
       DUCKDB_MEMORY_LIMIT:            ${DUCKDB_MEMORY_LIMIT:-1GB}
