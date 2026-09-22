@@ -242,7 +242,32 @@ services:
     env_file:
       - path: ${AWS_ENV_FILE:-.env}
         required: false
+    # Refinement is the only service that can consume the whole host on a single
+    # request: DuckDB sizes itself from host RAM, not from the container. Nothing
+    # here bounded it, so an unbounded materialization took the host down on
+    # 2026-09-20. All four keys are declared by the service rather than inherited
+    # from the shared .env on purpose -- that is how the limit reached production
+    # until now, and a re-rendered .env must not be able to remove the ceiling.
+    mem_limit: ${REFINEMENT_MEM_LIMIT:-3g}
+    # Equal to mem_limit, which is how Docker expresses "no swap for this
+    # container". Left unset, the container may use mem_limit again in swap on
+    # top of RAM, so the ceiling would not be a ceiling -- and a refinement that
+    # swaps drags the whole host down, which is the outcome being prevented.
+    memswap_limit: ${REFINEMENT_MEM_LIMIT:-3g}
+    cpus: ${REFINEMENT_CPUS:-1.5}
     environment:
+      DUCKDB_MEMORY_LIMIT:            ${DUCKDB_MEMORY_LIMIT:-1GB}
+      # DuckDB already spills without these: to the relative path ".tmp", capped
+      # at ~90% of the filesystem -- the same volume as the Postgres data
+      # directories. These two pin the spill somewhere stable and bound it. The
+      # path is absolute (DuckDB rejects relative ones) and lives on the
+      # container's writable layer, which is disk, not tmpfs.
+      #
+      # The engine only reads them from v1.45.230-beta onward (#658, #659). On
+      # an older image they are inert: harmless, but spill stays uncapped.
+      DUCKDB_TEMP_DIRECTORY:          ${DUCKDB_TEMP_DIRECTORY:-/tmp/duckdb-spill}
+      DUCKDB_MAX_TEMP_DIRECTORY_SIZE: ${DUCKDB_MAX_TEMP_DIRECTORY_SIZE:-8GB}
+      DUCKDB_THREADS:                 ${DUCKDB_THREADS:-2}
       APP_ENV:            ${APP_ENV:-production}
       DATABASE_URL:       "postgresql+psycopg2://omega_refinement:${OMEGA_REFINEMENT_PASSWORD:?OMEGA_REFINEMENT_PASSWORD is required}@postgres:5432/modecissions"
       GOLD_DATABASE_URL:  "postgresql+psycopg2://omega_refinement_gold:${OMEGA_REFINEMENT_GOLD_PASSWORD:?OMEGA_REFINEMENT_GOLD_PASSWORD is required}@postgres_gold:5433/modecissions_gold"
