@@ -40,9 +40,6 @@ x-cartridge-env: &cartridge-env
 services:
   replicon:
     image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/replicon:${IMAGE_TAG:?IMAGE_TAG is required}
-    env_file:
-      - path: ${AWS_ENV_FILE:-.env}
-        required: false
     environment:
       <<: *cartridge-env
       INTERNAL_API_KEY_REPLICON_TO_CONSOLE: ${INTERNAL_API_KEY_REPLICON_TO_CONSOLE:?INTERNAL_API_KEY_REPLICON_TO_CONSOLE is required}
@@ -67,9 +64,6 @@ services:
 
   hubspot:
     image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/hubspot:${IMAGE_TAG:?IMAGE_TAG is required}
-    env_file:
-      - path: ${AWS_ENV_FILE:-.env}
-        required: false
     environment:
       <<: *cartridge-env
       INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE: ${INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE:?INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE is required}
@@ -93,9 +87,6 @@ services:
 
   salesforce:
     image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/salesforce:${IMAGE_TAG:?IMAGE_TAG is required}
-    env_file:
-      - path: ${AWS_ENV_FILE:-.env}
-        required: false
     environment:
       <<: *cartridge-env
       INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE: ${INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE:?INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE is required}
@@ -124,9 +115,6 @@ services:
 
   banxico:
     image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/banxico:${IMAGE_TAG:?IMAGE_TAG is required}
-    env_file:
-      - path: ${AWS_ENV_FILE:-.env}
-        required: false
     environment:
       <<: *cartridge-env
       INTERNAL_API_KEY_BANXICO_TO_CONSOLE: ${INTERNAL_API_KEY_BANXICO_TO_CONSOLE:?INTERNAL_API_KEY_BANXICO_TO_CONSOLE is required}
@@ -146,9 +134,6 @@ services:
 
   inegi:
     image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/inegi:${IMAGE_TAG:?IMAGE_TAG is required}
-    env_file:
-      - path: ${AWS_ENV_FILE:-.env}
-        required: false
     environment:
       <<: *cartridge-env
       INTERNAL_API_KEY_INEGI_TO_CONSOLE: ${INTERNAL_API_KEY_INEGI_TO_CONSOLE:?INTERNAL_API_KEY_INEGI_TO_CONSOLE is required}
@@ -168,9 +153,6 @@ services:
 
   sec-edgar:
     image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/sec_edgar:${IMAGE_TAG:?IMAGE_TAG is required}
-    env_file:
-      - path: ${AWS_ENV_FILE:-.env}
-        required: false
     environment:
       <<: *cartridge-env
       INTERNAL_API_KEY_SEC_EDGAR_TO_CONSOLE: ${INTERNAL_API_KEY_SEC_EDGAR_TO_CONSOLE:?INTERNAL_API_KEY_SEC_EDGAR_TO_CONSOLE is required}
@@ -191,9 +173,6 @@ services:
 
   sap-hcm:
     image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/sap_hcm:${IMAGE_TAG:?IMAGE_TAG is required}
-    env_file:
-      - path: ${AWS_ENV_FILE:-.env}
-        required: false
     environment:
       <<: *cartridge-env
       INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE: ${INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE:?INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE is required}
@@ -217,9 +196,6 @@ services:
 
   sap-successfactors:
     image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/sap_successfactors:${IMAGE_TAG:?IMAGE_TAG is required}
-    env_file:
-      - path: ${AWS_ENV_FILE:-.env}
-        required: false
     environment:
       <<: *cartridge-env
       INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE: ${INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE:?INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE is required}
@@ -252,9 +228,6 @@ services:
 
   sap-s4hana:
     image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/sap_s4hana:${IMAGE_TAG:?IMAGE_TAG is required}
-    env_file:
-      - path: ${AWS_ENV_FILE:-.env}
-        required: false
     environment:
       <<: *cartridge-env
       INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE: ${INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE:?INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE is required}

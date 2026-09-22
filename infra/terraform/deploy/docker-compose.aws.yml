@@ -94,11 +94,23 @@ services:
     image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/console:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: mode_console
     env_file:
-      - path: ${AWS_ENV_FILE:-.env}
-        required: true
       - path: ${MODECISSIONS_CONTROL_ROOM_EVIDENCE_ENV_FILE:-${AWS_ENV_FILE:-.env}.control-room-evidence}
         required: true
     environment:
+      ALLOWED_ORIGINS:   ${ALLOWED_ORIGINS:?ALLOWED_ORIGINS is required in production}
+      INTERNAL_API_KEY:  ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
+      INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE: ${INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE:?INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE is required}
+      INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE: ${INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE:?INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE is required}
+      INTERNAL_API_KEY_REPLICON_TO_CONSOLE: ${INTERNAL_API_KEY_REPLICON_TO_CONSOLE:?INTERNAL_API_KEY_REPLICON_TO_CONSOLE is required}
+      INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE: ${INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE:?INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE is required}
+      INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE: ${INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE:?INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE is required}
+      INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE: ${INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE:?INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE is required}
+      INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE: ${INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE:?INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE is required}
+      INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE: ${INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE:?INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE is required}
+      INTERNAL_API_KEY_CONSOLE_TO_VAULT: ${INTERNAL_API_KEY_CONSOLE_TO_VAULT:?INTERNAL_API_KEY_CONSOLE_TO_VAULT is required}
+      INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT: ${INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT:?INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT is required}
+      INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA: ${INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA:?INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA is required}
+      INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE: ${INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE:?INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE is required}
       APP_ENV:             ${APP_ENV:-production}
       COOKIE_SECURE:       ${COOKIE_SECURE:-true}
       DATABASE_URL:        "postgresql+psycopg2://omega_console:${OMEGA_CONSOLE_PASSWORD:?OMEGA_CONSOLE_PASSWORD is required}@postgres:5432/modecissions"
@@ -195,10 +207,11 @@ services:
   workspace:
     image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/workspace:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: mode_workspace
-    env_file:
-      - path: ${AWS_ENV_FILE:-.env}
-        required: false
     environment:
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?ALLOWED_ORIGINS is required}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
+      INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT: ${INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT:?INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT is required}
+      INTERNAL_API_KEY_WORKSPACE_TO_MCP_INFRA: ${INTERNAL_API_KEY_WORKSPACE_TO_MCP_INFRA:?INTERNAL_API_KEY_WORKSPACE_TO_MCP_INFRA is required}
       APP_ENV:              ${APP_ENV:-production}
       COOKIE_SECURE:        ${COOKIE_SECURE:-true}
       DATABASE_URL:         "postgresql+psycopg2://omega_workspace:${OMEGA_WORKSPACE_PASSWORD:?OMEGA_WORKSPACE_PASSWORD is required}@postgres:5432/modecissions"
@@ -239,9 +252,6 @@ services:
   refinement:
     image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/refinement:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: mode_refinement
-    env_file:
-      - path: ${AWS_ENV_FILE:-.env}
-        required: false
     # Refinement is the only service that can consume the whole host on a single
     # request: DuckDB sizes itself from host RAM, not from the container. Nothing
     # here bounded it, so an unbounded materialization took the host down on
@@ -268,6 +278,12 @@ services:
       DUCKDB_TEMP_DIRECTORY:          ${DUCKDB_TEMP_DIRECTORY:-/tmp/duckdb-spill}
       DUCKDB_MAX_TEMP_DIRECTORY_SIZE: ${DUCKDB_MAX_TEMP_DIRECTORY_SIZE:-8GB}
       DUCKDB_THREADS:                 ${DUCKDB_THREADS:-2}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
+      INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT: ${INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT:?INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT is required}
+      INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT: ${INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT:?INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT is required}
+      INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT: ${INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT:?INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT is required}
+      INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT: ${INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT:?INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT is required}
+      INTERNAL_API_KEY_REFINEMENT_TO_MCP_INFRA: ${INTERNAL_API_KEY_REFINEMENT_TO_MCP_INFRA:?INTERNAL_API_KEY_REFINEMENT_TO_MCP_INFRA is required}
       APP_ENV:            ${APP_ENV:-production}
       DATABASE_URL:       "postgresql+psycopg2://omega_refinement:${OMEGA_REFINEMENT_PASSWORD:?OMEGA_REFINEMENT_PASSWORD is required}@postgres:5432/modecissions"
       GOLD_DATABASE_URL:  "postgresql+psycopg2://omega_refinement_gold:${OMEGA_REFINEMENT_GOLD_PASSWORD:?OMEGA_REFINEMENT_GOLD_PASSWORD is required}@postgres_gold:5433/modecissions_gold"
@@ -315,10 +331,8 @@ services:
   vault:
     image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/vault:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: mode_vault
-    env_file:
-      - path: ${AWS_ENV_FILE:-.env}
-        required: false
     environment:
+      VAULT_ENCRYPTION_KEY: ${VAULT_ENCRYPTION_KEY:?VAULT_ENCRYPTION_KEY is required}
       APP_ENV:           ${APP_ENV:-production}
       DATABASE_URL:      "postgresql+psycopg2://omega_vault:${OMEGA_VAULT_PASSWORD:?OMEGA_VAULT_PASSWORD is required}@postgres:5432/modecissions"
       INTERNAL_API_KEY:  ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
@@ -361,9 +375,6 @@ services:
   sap-successfactors:
     image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/sap_successfactors:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: mode_sap_successfactors
-    env_file:
-      - path: ${AWS_ENV_FILE:-.env}
-        required: false
     environment:
       APP_ENV: ${APP_ENV:-production}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
@@ -426,10 +437,17 @@ services:
   mcp-infra:
     image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/mcp-infra:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: mode_mcp_infra
-    env_file:
-      - path: ${AWS_ENV_FILE:-.env}
-        required: false
     environment:
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
+      INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA: ${INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA:?INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA is required}
+      INTERNAL_API_KEY_WORKSPACE_TO_MCP_INFRA: ${INTERNAL_API_KEY_WORKSPACE_TO_MCP_INFRA:?INTERNAL_API_KEY_WORKSPACE_TO_MCP_INFRA is required}
+      INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA: ${INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA:?INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA is required}
+      INTERNAL_API_KEY_REFINEMENT_TO_MCP_INFRA: ${INTERNAL_API_KEY_REFINEMENT_TO_MCP_INFRA:?INTERNAL_API_KEY_REFINEMENT_TO_MCP_INFRA is required}
+      INTERNAL_API_KEY_MCP_INFRA_TO_VAULT: ${INTERNAL_API_KEY_MCP_INFRA_TO_VAULT:?INTERNAL_API_KEY_MCP_INFRA_TO_VAULT is required}
+      SMTP_HOST:         ${SMTP_HOST:-mailhog}
+      SMTP_PORT:         ${SMTP_PORT:-1025}
+      SMTP_USE_TLS:      ${SMTP_USE_TLS:-false}
+      SMTP_FROM:         ${SMTP_FROM:-noreply@modecissions.local}
       APP_ENV:           ${APP_ENV:-production}
       MCP_INFRA_PDF_MAX_WORKERS: ${MCP_INFRA_PDF_MAX_WORKERS:-2}
       SECURITY_CONTEXT_SIGNING_KEY: ${SECURITY_CONTEXT_SIGNING_KEY:?SECURITY_CONTEXT_SIGNING_KEY is required}
@@ -514,9 +532,6 @@ services:
   superset-init:
     image: apache/superset:3.1.3
     container_name: mode_superset_init
-    env_file:
-      - path: ${AWS_ENV_FILE:-.env}
-        required: false
     environment:
       SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:?SUPERSET_SECRET_KEY is required}
       SUPERSET_PREVIOUS_SECRET_KEY: ${SUPERSET_PREVIOUS_SECRET_KEY:-}
@@ -629,13 +644,9 @@ services:
   superset:
     image: apache/superset:3.1.3
     container_name: mode_superset
-    env_file:
-      - path: ${AWS_ENV_FILE:-.env}
-        required: false
     environment:
       SUPERSET_SECRET_KEY:     ${SUPERSET_SECRET_KEY:?SUPERSET_SECRET_KEY is required}
       SUPERSET_PREVIOUS_SECRET_KEY: ${SUPERSET_PREVIOUS_SECRET_KEY:-}
-      POSTGRES_PASSWORD:       ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       SQLALCHEMY_DATABASE_URI: "postgresql+psycopg2://omega_superset_meta:${OMEGA_SUPERSET_META_PASSWORD:?OMEGA_SUPERSET_META_PASSWORD is required}@postgres:5432/superset"
       SUPERSET_TALISMAN_ENABLED: ${SUPERSET_TALISMAN_ENABLED:-true}
       SUPERSET_CSRF_ENABLED: ${SUPERSET_CSRF_ENABLED:-true}
@@ -682,9 +693,6 @@ services:
     # runtime services (next two) can use the dedicated role.
     image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/airflow:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: mode_airflow_init
-    env_file:
-      - path: ${AWS_ENV_FILE:-.env}
-        required: false
     entrypoint: /bin/bash
     command: >
       -c "
@@ -726,9 +734,6 @@ services:
   airflow:
     image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/airflow:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: mode_airflow
-    env_file:
-      - path: ${AWS_ENV_FILE:-.env}
-        required: false
     entrypoint: /bin/bash
     command: -c "rm -f /opt/airflow/airflow-webserver.pid && exec airflow webserver"
     environment:
@@ -832,11 +837,11 @@ services:
   airflow-scheduler:
     image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/airflow:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: mode_airflow_scheduler
-    env_file:
-      - path: ${AWS_ENV_FILE:-.env}
-        required: false
     command: scheduler
     environment:
+      AIRFLOW_ADMIN_USER:     ${AIRFLOW_ADMIN_USER:?AIRFLOW_ADMIN_USER is required}
+      AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?AIRFLOW_ADMIN_PASSWORD is required}
+      AWS_REGION:             ${AWS_REGION:-us-east-1}
       AIRFLOW__CORE__EXECUTOR:              LocalExecutor
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
       # Sprint v1.38 (audit B6 P0.5): runtime services use dedicated
