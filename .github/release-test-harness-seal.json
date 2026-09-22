@@ -5635,7 +5635,7 @@
     },
     {
       "path": "tests/test_superset_hardening_defaults.py",
-      "sha256": "75c1a0d2138be33006a1abbf0c3020ae2d34e30fef18ebc9d909a28fc130e01d"
+      "sha256": "e3bdde41130b8f472b6c20c5a8eb8da4766f98882f77569593fe15aa00ae7297"
     },
     {
       "path": "tests/test_superset_tenant_context_probe.py",
