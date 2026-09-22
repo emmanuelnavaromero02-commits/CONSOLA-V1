@@ -3667,7 +3667,7 @@
     },
     {
       "path": "tests/test_audit_events_append_only_contract.py",
-      "sha256": "f914c811d62b2082a577d765d4889841f98d915ef80555dc8b025456a190fdd6"
+      "sha256": "70257d1498ba3e18029d604c24a1c227eeea919eaf6988e16066509ac3755fa4"
     },
     {
       "path": "tests/test_audit_events_dedup.py",
@@ -4024,6 +4024,10 @@
     {
       "path": "tests/test_control_room_live_postgres_ambiguous_retry.py",
       "sha256": "d28053be2999b4fb87d879249774316278b5281df6140a96540333adab030422"
+    },
+    {
+      "path": "tests/test_control_room_live_postgres_audit_events_append_only.py",
+      "sha256": "94dd53f047ffecab06dd19742dc3a62f139d2cefa3b0df36fa381138f9c2166a"
     },
     {
       "path": "tests/test_control_room_live_postgres_authoritative_lock_order.py",
