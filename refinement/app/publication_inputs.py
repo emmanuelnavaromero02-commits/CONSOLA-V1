@@ -3,9 +3,15 @@ from __future__ import annotations
 from typing import Any
 
 try:
-    from app.publication_snapshot import PublicationSnapshotResolver
+    from app.publication_snapshot import (
+        PublicationSnapshotResolver,
+        _require_pinned_version,
+    )
 except ModuleNotFoundError:
-    from refinement.app.publication_snapshot import PublicationSnapshotResolver
+    from refinement.app.publication_snapshot import (
+        PublicationSnapshotResolver,
+        _require_pinned_version,
+    )
 
 
 def _raw_prefix(engine: Any, source: str, context: dict[str, Any] | None) -> str:
@@ -22,12 +28,14 @@ def _raw_state(
 
     This used to HEAD every object and then stream all of its bytes through
     SHA-256. The prefix sits above the `load_date=` partition, so that was the
-    entity's whole accumulated history, once here and again at finalize. For
-    SuccessFactors EmployeeTime -- 2,321 objects, 14.87 GB, measured
-    2026-09-22 -- the two passes cost more than the caller's entire 300 s
-    budget before DuckDB read a single byte. The entity had been impossible to
-    materialize since 2026-06-23, which is when the accumulated cost crossed
-    that line.
+    entity's whole accumulated history, once here and again at finalize.
+
+    Measured 2026-09-22 on a host identical to production: the SuccessFactors
+    EmployeeTime scope holds 1,462 objects and 14.53 GB, read from S3 at
+    ~30 MB/s. The two passes cost 1,000 s against a 300 s caller budget, before
+    DuckDB read a single byte. Taking identity from the listing instead brings
+    the same two passes to 3.2 s. The entity had been impossible to materialize
+    since 2026-06-23, when the accumulated cost crossed that line.
 
     The digest is a change detector, not a commitment: nothing recomputes it,
     every reader only compares it against a value this same function produced,
@@ -85,7 +93,20 @@ def _published_state(
     if not key:
         raise RuntimeError("published dependency is outside managed storage")
     version = str(head.get("object_version") or "")
-    actual_checksum = engine._object_checksum(key, version)
+    _require_pinned_version(version, "published dependency")
+    # One HEAD against the pinned version, not a full download. A gold dataset
+    # can declare a dozen published dependencies, and this runs twice per
+    # materialization (before the replay check and again at finalize), so the
+    # old _object_checksum call downloaded each dependency four times over.
+    # Version + recorded digest answers the same question; the byte-level proof
+    # lives in publication_verifier_worker.
+    try:
+        current = engine.storage.stat(key, expected_version=version)
+    except Exception as exc:
+        raise RuntimeError("published dependency is unavailable") from exc
+    actual_checksum = current.checksum_sha256 or ""
+    if not actual_checksum:
+        raise RuntimeError("published dependency has no recorded checksum")
     if actual_checksum != str(head.get("object_checksum") or ""):
         raise RuntimeError("published dependency checksum mismatch")
     return {
