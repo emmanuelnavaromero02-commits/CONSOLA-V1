@@ -24,18 +24,55 @@ def _raw_prefix(engine: Any, source: str, context: dict[str, Any] | None) -> str
 def _raw_state(
     engine: Any, source: str, context: dict[str, Any] | None
 ) -> dict[str, Any]:
+    """Fingerprint the raw inputs from the listing alone.
+
+    This used to HEAD every object and then stream all of its bytes through
+    SHA-256. The prefix sits above the `load_date=` partition, so that was the
+    entity's whole accumulated history, once here and again at finalize.
+
+    Measured 2026-09-22 on a host identical to production: the SuccessFactors
+    EmployeeTime scope holds 1,462 objects and 14.53 GB, read from S3 at
+    ~30 MB/s. The two passes cost 1,000 s against a 300 s caller budget, before
+    DuckDB read a single byte. Taking identity from the listing instead brings
+    the same two passes to 3.2 s. The entity had been impossible to materialize
+    since 2026-06-23, when the accumulated cost crossed that line.
+
+    The digest is a change detector, not a commitment: nothing recomputes it,
+    every reader only compares it against a value this same function produced,
+    or copies it into a signed envelope as an opaque field. `size` and `etag`
+    come back free in the listing and detect the same three things the content
+    hash did -- a new object (new key), a removed one (missing key) and a
+    rewritten one (S3 mints a new ETag on overwrite).
+
+    Two fields went, not one. The object's `version` went with the checksum,
+    because ListObjectsV2 does not return a VersionId and keeping it would mean
+    a HEAD per object -- 2,321 of them per pass for EmployeeTime, twice. The
+    only thing it detected on its own was a byte-identical re-upload, which
+    cannot change any query's answer. Note this is not a weakening of a pinned
+    read either: the old call was `_object_checksum(key)` with no version
+    argument, so it hashed whatever storage served at that moment, with the
+    same time-of-check gap against its own listing that the ETag has.
+
+    The listing itself must stay exactly as wide as it is. The same key list is
+    substituted into the SQL (publication_input_binding.py:87-89), and the SAP
+    silver SQL deliberately reads the full history and picks the latest row per
+    key, so narrowing this to the newest partition would change the query's
+    answer -- a correctness bug wearing an optimization's clothes.
+    """
     objects = []
     for listed in engine.storage.iter_list(_raw_prefix(engine, source, context)):
         if not str(listed.key).endswith(".parquet"):
             continue
-        current = engine.storage.stat(listed.key)
+        etag = (listed.etag or "").strip()
+        if not etag:
+            # An empty identity would make every object look identical to
+            # every other, and a changed input look unchanged. Refuse it.
+            raise RuntimeError(f"raw input object has no identity: {listed.key}")
         objects.append(
             {
-                "key": current.key,
-                "size": int(current.size),
-                "etag": current.etag or "",
-                "version": current.version or "",
-                "checksum": engine._object_checksum(current.key),
+                "key": listed.key,
+                "size": int(listed.size),
+                "etag": etag,
             }
         )
     return {"source": source, "objects": sorted(objects, key=lambda item: item["key"])}

@@ -3162,6 +3162,10 @@
       "sha256": "fad3cdb7dde29fa1ed9b102194a65132e1d384c7b060c0794cdd46ed79231c84"
     },
     {
+      "path": "refinement/tests/test_raw_input_fingerprint.py",
+      "sha256": "00fc25661646040008d3472a596504233e7f084bed51b672879e850abb570354"
+    },
+    {
       "path": "refinement/tests/test_refinement_materialization_errors.py",
       "sha256": "aaa5525ec83edc2b30a8035cba03bb1642706d00b5da7ac30dc11204299b6ec9"
     },

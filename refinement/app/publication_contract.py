@@ -75,7 +75,11 @@ class PublicationIdentity:
             "layer": scope.layer,
             "cartridge": dataset.get("cartridge") or "unknown",
             "column_mapping": dataset.get("column_mapping") or {},
-            "publication_contract": "staged-cas/v1",
+            # v2: raw inputs are fingerprinted by {key, size, etag} from the
+            # listing instead of by a SHA-256 of every object's bytes. The
+            # digest is not comparable across the two, so the version is part
+            # of the contract and every dataset re-materializes once.
+            "publication_contract": "staged-cas/v2",
         }
         input_digest = canonical_digest(inputs)
         contract_digest = canonical_digest(contract)
