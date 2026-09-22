@@ -1207,7 +1207,7 @@
     },
     {
       "path": "cartridges/sap_successfactors/app/core/refinement_triggers.py",
-      "sha256": "1d279616cb205552d0eac2476b676e4deba545f939004f2bec35176c25af5a93"
+      "sha256": "b17a1620e7367716ba53865edcd6912cc262f4dbb2dfb7b0a47143e6362232f5"
     },
     {
       "path": "cartridges/sap_successfactors/app/core/request_context.py",
@@ -1332,6 +1332,10 @@
     {
       "path": "cartridges/sap_successfactors/tests/test_extraction_status.py",
       "sha256": "364e38cb071804ac0c8709a1a29a20b2ef1fc3317504ee7f9d6181b0112d5518"
+    },
+    {
+      "path": "cartridges/sap_successfactors/tests/test_materialize_timeout_budget.py",
+      "sha256": "94285ca2a7f93cdfbd95a9ce03747a555ac2fa46d092a067db1ef28e9cfe58ed"
     },
     {
       "path": "cartridges/sap_successfactors/tests/test_metadata_extraction_guard.py",

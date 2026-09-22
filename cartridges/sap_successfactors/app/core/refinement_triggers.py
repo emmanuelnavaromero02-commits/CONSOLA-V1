@@ -17,6 +17,23 @@ from app.core.dataset_orders import (
 )
 
 
+# How long a caller waits for refinement to materialize one dataset.
+#
+# This was 300 s on the two silver paths and 600 s on the gold loop -- which
+# also materializes silver datasets, so the same work had two different budgets
+# depending on which entry point reached it. Nothing in the code justified the
+# split.
+#
+# 300 s is below the floor for a large entity. Measured 2026-09-22 on a host
+# identical to production: SuccessFactors EmployeeTime is 14.53 GB of raw
+# parquet in the materialized scope, read from S3 at ~34 MB/s, so the read
+# alone cannot finish in under ~430 s. The budget was shorter than the work,
+# and the caller recorded "partial" for a materialization the server was still
+# running -- and, being shielded, would go on to complete and publish.
+#
+# One name, one value, the larger of the two that were already in use.
+MATERIALIZE_TIMEOUT_SECONDS = 600
+
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
 
 
@@ -51,7 +68,7 @@ async def trigger_silver_refresh(entity: str, security_context: dict | None = No
         # entity's conventional silver is materialized through /mcp/invoke
         # instead of /refresh-by-source.
         name = f"sap_successfactors_{entity.strip().lower()}_latest"
-        async with httpx.AsyncClient(timeout=300) as client:
+        async with httpx.AsyncClient(timeout=MATERIALIZE_TIMEOUT_SECONDS) as client:
             response = await _runtime_materialize_request(
                 client, name, api_key=api_key, security_context=security_context
             )
@@ -72,7 +89,7 @@ async def trigger_silver_refresh(entity: str, security_context: dict | None = No
             "refreshed": 1,
             "results": [{"name": name, "status": "ok", **payload}],
         }
-    async with httpx.AsyncClient(timeout=300) as client:
+    async with httpx.AsyncClient(timeout=MATERIALIZE_TIMEOUT_SECONDS) as client:
         response = await client.post(
             f"{REFINEMENT_URL}/refresh-by-source",
             headers={
@@ -174,7 +191,7 @@ async def trigger_successfactors_gold_refresh(
     }
     silver_results: list[dict[str, Any]] = []
     results: list[dict[str, Any]] = []
-    async with httpx.AsyncClient(timeout=600) as client:
+    async with httpx.AsyncClient(timeout=MATERIALIZE_TIMEOUT_SECONDS) as client:
         for name in silver_datasets:
             try:
                 if use_runtime_route:
