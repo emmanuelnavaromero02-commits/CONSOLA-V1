@@ -3,9 +3,15 @@ from __future__ import annotations
 from typing import Any
 
 try:
-    from app.publication_snapshot import PublicationSnapshotResolver
+    from app.publication_snapshot import (
+        PublicationSnapshotResolver,
+        _require_pinned_version,
+    )
 except ModuleNotFoundError:
-    from refinement.app.publication_snapshot import PublicationSnapshotResolver
+    from refinement.app.publication_snapshot import (
+        PublicationSnapshotResolver,
+        _require_pinned_version,
+    )
 
 
 def _raw_prefix(engine: Any, source: str, context: dict[str, Any] | None) -> str:
@@ -50,7 +56,20 @@ def _published_state(
     if not key:
         raise RuntimeError("published dependency is outside managed storage")
     version = str(head.get("object_version") or "")
-    actual_checksum = engine._object_checksum(key, version)
+    _require_pinned_version(version, "published dependency")
+    # One HEAD against the pinned version, not a full download. A gold dataset
+    # can declare a dozen published dependencies, and this runs twice per
+    # materialization (before the replay check and again at finalize), so the
+    # old _object_checksum call downloaded each dependency four times over.
+    # Version + recorded digest answers the same question; the byte-level proof
+    # lives in publication_verifier_worker.
+    try:
+        current = engine.storage.stat(key, expected_version=version)
+    except Exception as exc:
+        raise RuntimeError("published dependency is unavailable") from exc
+    actual_checksum = current.checksum_sha256 or ""
+    if not actual_checksum:
+        raise RuntimeError("published dependency has no recorded checksum")
     if actual_checksum != str(head.get("object_checksum") or ""):
         raise RuntimeError("published dependency checksum mismatch")
     return {
