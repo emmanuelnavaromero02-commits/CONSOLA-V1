@@ -5115,7 +5115,7 @@
     },
     {
       "path": "tests/test_refinement_resource_quotas.py",
-      "sha256": "8032e65d750998d3a02f565db61bfa06544a04ef2820cb752a6b15c8bd3967e4"
+      "sha256": "85d6d87c8432a14405397282653dc704092d60f78d685224ded3a6e57acd9b15"
     },
     {
       "path": "tests/test_refresh_rotation_atomic_live.py",

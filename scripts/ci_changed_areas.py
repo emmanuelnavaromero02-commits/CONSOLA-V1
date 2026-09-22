@@ -351,6 +351,26 @@ def _root_test_targets(files: list[str]) -> str:
             }
             if Path(target).exists()
         )
+    # A compose edit is exactly how refinement lost its ceiling: the AWS file
+    # declared no mem_limit and no DUCKDB_* key, and no root test was selected
+    # by a compose-only change, so CI stayed green while production ran
+    # unbounded (2026-09-20). These contracts must run whenever a compose file
+    # or the env template that feeds it moves, not only when the test does.
+    if _any(
+        files,
+        r"^infra/docker-compose\.ya?ml$",
+        r"^infra/terraform/deploy/docker-compose\.(aws|cartridges)\.ya?ml$",
+        r"^infra/terraform/deploy/\.env\.example$",
+        r"^infra/\.env\.example$",
+    ):
+        targets.update(
+            target
+            for target in {
+                "tests/test_refinement_resource_quotas.py",
+                "tests/test_mcp_infra_pdf_compose_capacity.py",
+            }
+            if Path(target).exists()
+        )
     if _any(files, r"^infra/terraform-gcp/templates/docker-compose\.gcp\.yml\.tftpl$"):
         targets.update(
             target
