@@ -3690,6 +3690,14 @@
       "sha256": "d0332d1e1d3dd5a8ee60293b9167180d90fd1b80ab28b0ff90d866f1afc9d35d"
     },
     {
+      "path": "tests/test_aws_compose_required_env.py",
+      "sha256": "5d2f48135e147d868d18cae52966014343516945346106ce59482c33782ae14c"
+    },
+    {
+      "path": "tests/test_aws_compose_secret_scoping.py",
+      "sha256": "445638813c45ef0d91bb9896407ff8e13a35ccc18c4aff9d974eeeda06f1ac50"
+    },
+    {
       "path": "tests/test_aws_compose_uses_omega_roles.py",
       "sha256": "e95ec0bc3148fbef13e8a7536c6fbe0682abc587374427b51529d46213227a90"
     },
@@ -3707,7 +3715,7 @@
     },
     {
       "path": "tests/test_aws_evidence_compose_isolation.py",
-      "sha256": "e36d52b3c20fc14c2304133c6caf7211ca34522135296b3c99dbf586e3d134ca"
+      "sha256": "d6a58c2337dd721873044c256e744aeed8b1927b3caf040d7ca6949ea3e18c11"
     },
     {
       "path": "tests/test_aws_evidence_env_isolation.py",
@@ -3943,7 +3951,7 @@
     },
     {
       "path": "tests/test_control_room_evidence_signing_wiring.py",
-      "sha256": "de65a0128db9a24ea8e24fda71f2aabd9b9b1bdc3afa9d8f546cf39e802d4d68"
+      "sha256": "c4af0b5984bb477beaff2c9fe72e6922d121b1c6eaa56ce06cfd2751a23d2252"
     },
     {
       "path": "tests/test_control_room_gate_contract.py",

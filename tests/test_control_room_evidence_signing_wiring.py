@@ -31,8 +31,10 @@ def test_aws_evidence_env_mounts_only_in_console():
         "${AWS_ENV_FILE:-.env}.control-room-evidence}"
     )
     console_env_files = services["console"]["env_file"]
-    assert [item["required"] for item in console_env_files] == [True, True]
-    assert console_env_files[1]["path"] == private_path
+    # After the per-service env split (2026-09-22) console no longer loads the
+    # shared .env; its only env_file is the private evidence file.
+    assert [item["required"] for item in console_env_files] == [True]
+    assert console_env_files[0]["path"] == private_path
     for name in (CURRENT_ID, CURRENT_KEY, PREVIOUS_KEYS):
         assert name not in services["console"]["environment"]
     for service_name, service in services.items():
