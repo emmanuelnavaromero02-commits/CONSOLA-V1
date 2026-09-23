@@ -5138,6 +5138,10 @@
       "sha256": "adeff5868050eff86b15293a31c2daf8be54c06c2ae8deb127f4e6ac2d6becd2"
     },
     {
+      "path": "tests/test_refinement_spill_is_shared_and_persistent.py",
+      "sha256": "a5141796105706710c8efd0e7a58802d17102a349e6215278942aa06e94434a4"
+    },
+    {
       "path": "tests/test_refresh_rotation_atomic_live.py",
       "sha256": "ccf126b61e43ead562cfb8b9a4d6d35602a0b796800f42db3d43eb1c514f84ae"
     },
