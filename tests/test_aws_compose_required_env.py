@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -62,9 +61,10 @@ REQUIRED = {
 
 
 def _rendered_services() -> dict:
-    docker = shutil.which("docker")
-    if not docker:
-        pytest.skip("docker compose is required to render the compose files")
+    # Deliberately not guarded by a docker skipif, matching
+    # tests/test_mcp_infra_pdf_compose_capacity.py. This is the contract that
+    # keeps the shared .env from reaching ~20 services; one that can skip
+    # itself is how that guarantee goes missing without anyone noticing.
     with tempfile.TemporaryDirectory() as tmp:
         evidence = Path(tmp) / "evidence.env"
         evidence.write_text("", encoding="utf-8")
@@ -73,7 +73,7 @@ def _rendered_services() -> dict:
         env["MODECISSIONS_CONTROL_ROOM_EVIDENCE_ENV_FILE"] = str(evidence)
         result = subprocess.run(
             [
-                docker, "compose",
+                "docker", "compose",
                 "--env-file", str(DEPLOY / ".env.example"),
                 "-f", str(DEPLOY / "docker-compose.aws.yml"),
                 "-f", str(DEPLOY / "docker-compose.cartridges.yml"),

@@ -3699,11 +3699,11 @@
     },
     {
       "path": "tests/test_aws_compose_required_env.py",
-      "sha256": "5d2f48135e147d868d18cae52966014343516945346106ce59482c33782ae14c"
+      "sha256": "aa1e052b5960bfc75b6c7c96091b0f664cebc3e72fb829d713a40de6642562e6"
     },
     {
       "path": "tests/test_aws_compose_secret_scoping.py",
-      "sha256": "445638813c45ef0d91bb9896407ff8e13a35ccc18c4aff9d974eeeda06f1ac50"
+      "sha256": "1ba6d330b1412dd39ecd407b84eb459dca49de428b35d15c649fc4360ed930f0"
     },
     {
       "path": "tests/test_aws_compose_uses_omega_roles.py",
