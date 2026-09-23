@@ -46,7 +46,7 @@
           },
           {
             "path": "refinement/tests/test_e11_talent_readfree_fallbacks.py",
-            "declarations_sha256": "19c94597b1e9419f8838b4dd0def28ae1283585d14878c5f18ab88b89d8da4fc"
+            "declarations_sha256": "1cb98f7642c2f582dfd5c4a13bd1a4dd01555313468f0fcf87ca7eb5cc3956cd"
           },
           {
             "path": "refinement/tests/test_sql_timeout.py",
@@ -205,7 +205,7 @@
             "declarations_sha256": "fe98517b8fbaab00c4a1a5cbb56109ea74a148b947f3b8e79f6e6d5110e47953"
           }
         ],
-        "inventory_sha256": "b21e573e154ffd12fe42bd22852092e93fa4f32690d687f12a22dedbb8a18785"
+        "inventory_sha256": "5061034f335e5c62b659041413c0d6edf33467d28502affdbec7eb67f5d7c9fc"
       }
     },
     {
