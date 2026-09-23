@@ -3714,6 +3714,10 @@
       "sha256": "f4a166a7d129931e795cbdc778ecf597e956c72b522b5d1ec837f8dec2288e37"
     },
     {
+      "path": "tests/test_aws_deploy_pins_release_digests.py",
+      "sha256": "deabb8b56cb574edb7d785abee7dc8fbdb19a41fe1622f2f1c115040b2af4429"
+    },
+    {
       "path": "tests/test_aws_dr_observability_hardening.py",
       "sha256": "dbc18669734628e06eb68625dd848a0427d11f90904dbf45bceace4c1744d6eb"
     },
