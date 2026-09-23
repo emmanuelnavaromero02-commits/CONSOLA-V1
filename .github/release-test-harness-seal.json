@@ -1159,7 +1159,7 @@
     },
     {
       "path": "cartridges/sap_successfactors/app/api/routes_console.py",
-      "sha256": "bd7eeb27828a85d459be9461736b17d1c0846f0c3f21d127e4ff7dc005f0a5dd"
+      "sha256": "5b4f720090dace967471cbc428e072e07d55efcd6acaf710b14b5474af170696"
     },
     {
       "path": "cartridges/sap_successfactors/app/api/routes_health.py",
@@ -1191,11 +1191,11 @@
     },
     {
       "path": "cartridges/sap_successfactors/app/core/extraction_status.py",
-      "sha256": "fa79d8ed455c79071f8a07147d6a6e6b1d6b90534ae8dd021be8b447070c56ad"
+      "sha256": "9082c378c9928ee83888e8416b1e8cbaf137f2ef27ee813264ca4af054c67aab"
     },
     {
       "path": "cartridges/sap_successfactors/app/core/job_runner.py",
-      "sha256": "53b2a5005240879dda53daea8802519a9f47283c3fa10042ffe04ee212d04707"
+      "sha256": "71c699b404a665b4b44d218f9f4866ca389734e664e6588f0de626bf1b4e606e"
     },
     {
       "path": "cartridges/sap_successfactors/app/core/minio_client.py",
@@ -1303,7 +1303,7 @@
     },
     {
       "path": "cartridges/sap_successfactors/dags/sap_successfactors_extract_all.py",
-      "sha256": "4857edfba1634a86c01426106ff05a03debcbe50efd9a7a81bb3f606e72863e6"
+      "sha256": "7aaefff0a2dfa3b2abd01bffd76d19bbd7e07491cf5662590e48ddb38c678bb4"
     },
     {
       "path": "cartridges/sap_successfactors/tests/conftest.py",
@@ -1324,6 +1324,10 @@
     {
       "path": "cartridges/sap_successfactors/tests/test_extract_all_scoped_plan.py",
       "sha256": "c3e1025146b459b05bb32dfa4646a6ad6eb8a900dbebfd6e92d7241cff0216df"
+    },
+    {
+      "path": "cartridges/sap_successfactors/tests/test_extraction_hard_failures.py",
+      "sha256": "e7b6728d14bf2ed29605b1344bee2e50d3fd8444dc9473eaf90f05d01bf6d435"
     },
     {
       "path": "cartridges/sap_successfactors/tests/test_extraction_scoped_connection.py",

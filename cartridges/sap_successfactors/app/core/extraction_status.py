@@ -128,6 +128,86 @@ def public_failure_message(classified: dict[str, Any]) -> str:
     return str(classified.get("failure_code") or "extraction_failed")
 
 
+_METADATA_BLOCKED_CODE = "SUCCESSFACTORS_METADATA_BLOCKED"
+_METADATA_UPSTREAM_CODES = frozenset(
+    {"metadata_upstream_unavailable", "metadata_rate_limited"}
+)
+_METADATA_ACCESS_CODES = frozenset({"metadata_access_denied"})
+
+
+def _metadata_failure_codes(outcomes: list[dict[str, Any]]) -> set[str]:
+    return {
+        str(outcome.get("failure_code") or "")
+        for outcome in outcomes
+        if isinstance(outcome, dict)
+        and outcome.get("code") == _METADATA_BLOCKED_CODE
+        and outcome.get("failure_code")
+    }
+
+
+def hard_failure_code(
+    summary: dict[str, int],
+    results: list[dict[str, Any]],
+    skipped: list[dict[str, Any]],
+    *,
+    attempted: int,
+) -> str | None:
+    """Why a whole extract_all run must be recorded as failed, or None.
+
+    Per entity the classification is already honest: a 401 is
+    ``permission-blocked``, a timeout is ``failed-open``. The aggregate was
+    not: since 9099d16b (2026-06-26) it was a constant ``partial`` for anything
+    short of a clean run, so "every entity died on the network" and "one
+    entity had a pruned select" produced the same row, the same green Airflow
+    task and the same Panel. The rule here is deliberately narrow: a run is
+    failed only when it produced nothing at all, and then by the reason it
+    produced nothing.
+
+    * ``extraction_failed``: an entity failed open (network, storage, an
+      unclassified exception) and nothing was extracted.
+    * ``configuration_incomplete``: the connection itself is not configured.
+    * ``successfactors_metadata_unavailable``: the ``$metadata`` preflight was
+      unreachable or throttled, in the plan or for every attempted entity.
+    * ``successfactors_access_denied``: credentials were rejected, by the
+      preflight or by every attempted entity.
+
+    Everything else stays partial, including a run where most entities
+    extracted and one timed out: gold was refreshed with what arrived and the
+    intelligence cascade must still run. A tenant that lacks permission for
+    some entities, a pruned select and a 404 on one EntitySet stay partial too.
+    """
+    produced = sum(
+        int(summary.get(key) or 0) for key in ("extracted", "empty_valid", "partial")
+    )
+    if produced:
+        return None
+    if int(summary.get("failed_open") or 0) > 0:
+        return "extraction_failed"
+    if any(
+        isinstance(outcome, dict)
+        and (
+            outcome.get("failure_code") == "configuration_incomplete"
+            or outcome.get("code") == "CONFIGURATION_INCOMPLETE"
+        )
+        for outcome in results
+    ):
+        return "configuration_incomplete"
+    # The plan's preflight lands in ``skipped``; the per-entity guard lands in
+    # ``results`` as ``skipped_explicit``. Both carry the same codes.
+    codes = _metadata_failure_codes(results) | _metadata_failure_codes(skipped)
+    if codes & _METADATA_ACCESS_CODES:
+        return "successfactors_access_denied"
+    if codes & _METADATA_UPSTREAM_CODES:
+        return "successfactors_metadata_unavailable"
+    if attempted > 0:
+        rejected = int(summary.get("auth_blocked") or 0) + int(
+            summary.get("permission_blocked") or 0
+        )
+        if rejected >= attempted:
+            return "successfactors_access_denied"
+    return None
+
+
 def summarize_extraction_results(results: list[dict[str, Any]]) -> dict[str, int]:
     counts = {
         "extracted": 0,
