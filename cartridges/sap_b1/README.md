@@ -113,6 +113,24 @@ The database host is normally a private address behind the customer's VPN,
 so the HTTP egress guard used by the OData cartridges does not apply: this
 is a database session to a destination fixed by configuration.
 
+## Conector Windows (alternativa)
+
+Cuando no es posible abrir un túnel o VPN desde la plataforma hasta el
+tenant de HANA, el mismo cartucho se despliega al revés: un agente de
+empuje en un servidor Windows del cliente lee las empresas por SQL y sube
+los parquet de Bronze al bucket por HTTPS saliente, con una clave limitada
+al prefijo `raw/sap_b1/`. Vive en
+[`connect/windows-agent/`](connect/windows-agent/) (`agent.py`, plantillas
+de configuración y de política IAM, `install.ps1`/`run.ps1`/`uninstall.ps1`
+y un README en español para TI del cliente). No es una bifurcación: reutiliza
+`entities.yaml`, `b1_queries` (planes, SQL, marcas de agua, esquema arrow),
+el bucle por empresa de `b1_reader` que también ejecuta `run_entity`, y
+`bronze_parquet` (formato y ruta de los archivos), de modo que los archivos
+tienen el mismo esquema y la misma ruta que los del cartucho. Guarda marcas
+de agua y registro de corridas en un SQLite local y retiene cada lote en
+una cola local hasta que S3 confirma la subida. Se prueba contra el mismo
+banco de pruebas en `tests/test_windows_agent.py`.
+
 ## Running against the test bed
 
 The Business One-shaped Postgres fake in `tests/fixtures/sap_b1` (schema,

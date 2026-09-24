@@ -1,0 +1,61 @@
+# OMEGA - agente SAP Business One (conector Windows)
+#
+# Copie este archivo como agent.toml en el directorio de datos del agente
+# (por defecto C:\ProgramData\OmegaSapB1Agent\agent.toml) y sustituya los
+# valores entre < >. install.ps1 restringe los permisos del archivo a la
+# cuenta de servicio y a los administradores locales.
+#
+# Cualquier valor puede darse tambien como variable de entorno (se indica
+# entre parentesis); la variable de entorno tiene prioridad sobre el archivo.
+# Los valores entre < > son marcadores: el agente los rechaza tal cual.
+
+[agent]
+# Identificadores del espacio de trabajo en OMEGA (los entrega el equipo OMEGA).
+tenant_id = "<TENANT_ID>"          # (OMEGA_TENANT_ID)
+workspace_id = "<WORKSPACE_ID>"    # (OMEGA_WORKSPACE_ID)
+
+# Directorio de estado: base SQLite con marcas de agua y registro de corridas,
+# cola local (spool) y registros (logs). Ruta literal (comillas simples).
+state_dir = 'C:\ProgramData\OmegaSapB1Agent'   # (OMEGA_AGENT_STATE_DIR)
+# spool_dir = 'spool'    # relativo a state_dir
+# log_dir = 'logs'       # relativo a state_dir
+
+# Tablas a leer. Vacio = todas las del catalogo (app/config/entities.yaml).
+entities = []
+# Tablas a omitir, por ejemplo OIBT cuando el cliente confirma que Business
+# One mantiene OBTQ.
+exclude = []
+
+# Si la cola local acumula este numero de archivos sin subir, el agente deja
+# de extraer hasta que las subidas vuelvan a funcionar.
+max_pending_files = 500
+# log_level = "INFO"
+
+[source]
+# Base de datos HANA de SAP Business One. Usuario de solo lectura.
+dialect = "hana"                    # (SAP_B1_DIALECT) hana | postgres (banco de pruebas)
+host = "<HANA_HOST>"                # (SAP_B1_HOST)
+port = 30015                        # (SAP_B1_PORT) puerto SQL del tenant
+user = "<READ_ONLY_USER>"           # (SAP_B1_USER)
+# La contrasena puede vivir aqui (el archivo queda protegido por ACL) o en la
+# variable de entorno SAP_B1_PASSWORD de la cuenta de servicio.
+password = "<HANA_PASSWORD>"        # (SAP_B1_PASSWORD)
+database = ""                       # (SAP_B1_DATABASE) tenant al entrar por SYSTEMDB; vacio si el puerto ya es del tenant
+# Empresas: alias=ESQUEMA separados por coma. El alias (minusculas) es lo que
+# ve OMEGA en la columna _company; el esquema nunca sale de este archivo.
+companies = "empresa_a=<SCHEMA_A>,empresa_b=<SCHEMA_B>"   # (SAP_B1_COMPANIES)
+encrypt = true                      # (SAP_B1_ENCRYPT) TLS hacia HANA
+ssl_validate_certificate = true     # (SAP_B1_SSL_VALIDATE_CERTIFICATE)
+connect_timeout_seconds = 15
+
+[upload]
+# Bucket del lakehouse de OMEGA. La clave de acceso solo puede escribir bajo
+# raw/sap_b1/ (vea iam-policy.template.json).
+bucket = "<BUCKET>"                 # (OMEGA_S3_BUCKET)
+region = "<AWS_REGION>"             # (AWS_REGION)
+access_key_id = "<ACCESS_KEY_ID>"           # (AWS_ACCESS_KEY_ID)
+secret_access_key = "<SECRET_ACCESS_KEY>"   # (AWS_SECRET_ACCESS_KEY)
+# endpoint_url = ""                 # (OMEGA_S3_ENDPOINT_URL) solo para un almacen compatible con S3 que no sea AWS
+max_attempts = 5                    # intentos por archivo antes de dejarlo en la cola local
+# server_side_encryption = "AES256" # o "aws:kms" junto con sse_kms_key_id, si el bucket lo exige
+# sse_kms_key_id = ""

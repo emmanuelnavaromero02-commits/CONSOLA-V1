@@ -839,7 +839,7 @@
     },
     {
       "path": "cartridges/sap_b1/app/core/b1_source.py",
-      "sha256": "56c3abefca56b20edfe79394159b2ae08ff857841ac780974bd23b65d7c049ae"
+      "sha256": "f85371d41d7ce505663e8d2fbd098de4fb23a43f315630c891ea48e67ad8b1ef"
     },
     {
       "path": "cartridges/sap_b1/app/core/config.py",
@@ -906,6 +906,14 @@
       "sha256": "17858444f788efb4000320402ccaefe6c2ae0962da85560743fa0581b1566433"
     },
     {
+      "path": "cartridges/sap_b1/app/services/b1_reader.py",
+      "sha256": "7924e0cffc9db01e48c83c0004eac506d9a7876d8f4e070b4905488db1202865"
+    },
+    {
+      "path": "cartridges/sap_b1/app/services/bronze_parquet.py",
+      "sha256": "cedeeec0c3dbc0aa0dab692099a8227349f594e2b3c4a16f74dbea236bef51d5"
+    },
+    {
       "path": "cartridges/sap_b1/app/services/catalog_service.py",
       "sha256": "72528e45b65971941bbe1e58608454899077d049420438feaace250a319d9c2c"
     },
@@ -915,7 +923,7 @@
     },
     {
       "path": "cartridges/sap_b1/app/services/extraction_service.py",
-      "sha256": "4ec8619c2115150417e6b0f85c20f700510f34a2adef8c07f9b95ab8d2bb3575"
+      "sha256": "125d00b1e808a31452bd56aba97ad2b7be3e07f830071fa8f42d45498d8fa030"
     },
     {
       "path": "cartridges/sap_b1/app/services/kb_service.py",
@@ -923,7 +931,7 @@
     },
     {
       "path": "cartridges/sap_b1/app/services/parquet_service.py",
-      "sha256": "814580257c6946dacdf0993b27a813c69fc3faf7694fa6ec81abd98f307618f2"
+      "sha256": "6b5ecfb087367b535cf133a9f57185eebadfcec11ef46adbe60f38094bc9c520"
     },
     {
       "path": "cartridges/sap_b1/app/services/preflight.py",
@@ -944,6 +952,10 @@
     {
       "path": "cartridges/sap_b1/conftest.py",
       "sha256": "aa462ea635148d89cd7b3835a4c071a1ec58a0aded85269be59ec00cc172ee34"
+    },
+    {
+      "path": "cartridges/sap_b1/connect/windows-agent/agent.py",
+      "sha256": "d4a5a3b2c64262f8930a3c535a6d3346a40788dfc4980f58a656eaccab245f60"
     },
     {
       "path": "cartridges/sap_b1/dags/sap_b1_extract.py",
@@ -972,6 +984,10 @@
     {
       "path": "cartridges/sap_b1/tests/test_routes_contract.py",
       "sha256": "caf940fa1a9b07e9fa90442ba1f82714199a4fca7ff5656e9930328e2adb14f6"
+    },
+    {
+      "path": "cartridges/sap_b1/tests/test_windows_agent.py",
+      "sha256": "a7ab8450434c3880b8a612fd0d79bdf52f4e06813c137c5283801b7f41934116"
     },
     {
       "path": "cartridges/sap_hcm/app/__init__.py",

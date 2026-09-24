@@ -1,0 +1,12 @@
+# Runtime of the OMEGA SAP Business One push agent (Windows connector).
+# Installed by install.ps1 into the agent's own virtual environment.
+#
+# pyarrow is pinned to the same version the platform cartridge uses
+# (cartridges/sap_b1/requirements.txt) so both sides write identical files.
+hdbcli>=2.19,<3.0
+pyarrow==23.0.1
+boto3>=1.35,<2.0
+pyyaml==6.0.2
+# Only the Business One-shaped Postgres test bed needs a Postgres driver; it
+# is never installed on a customer's server:
+#   psycopg2-binary==2.9.9
