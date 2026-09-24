@@ -314,7 +314,7 @@ def loaded_dsn(dataset):
         loader.load(dsn, dataset)
         yield dsn
     finally:
-        _docker("rm", "-f", container, check=False)
+        _docker("rm", "-f", "-v", container, check=False)
 
 
 def _schema(dataset, alias: str) -> str:
