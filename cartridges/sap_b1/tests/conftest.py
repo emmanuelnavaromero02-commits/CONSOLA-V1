@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -82,6 +83,10 @@ def dataset():
 
 
 def _docker(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    if shutil.which("docker") is None:
+        # No docker binary at all: report it like a failed daemon so the
+        # fixtures skip instead of erroring on FileNotFoundError.
+        return subprocess.CompletedProcess(["docker", *args], returncode=127, stdout="", stderr="docker: not found")
     result = subprocess.run(["docker", *args], check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if check and result.returncode != 0:
         raise RuntimeError(f"docker {' '.join(args)} failed:\n{result.stdout}\n{result.stderr}")

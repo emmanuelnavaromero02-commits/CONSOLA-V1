@@ -39,6 +39,17 @@ SAP_B1_ENCRYPT="${SAP_B1_ENCRYPT:-true}"
 SAP_B1_SSL_VALIDATE_CERTIFICATE="${SAP_B1_SSL_VALIDATE_CERTIFICATE:-true}"
 HDB_USERSTORE_KEY="${HDB_USERSTORE_KEY:-}"
 
+# Host and port are interpolated into a /dev/tcp path and an hdbsql argument:
+# accept only a hostname / address and a port number, nothing else.
+if [[ ! "$SAP_B1_HOST" =~ ^[A-Za-z0-9.-]{1,253}$ ]]; then
+    echo "Host no válido: solo letras, dígitos, punto y guion." >&2
+    exit 1
+fi
+if [[ ! "$SAP_B1_PORT" =~ ^[0-9]{1,5}$ ]]; then
+    echo "Puerto no válido: ${SAP_B1_PORT}" >&2
+    exit 1
+fi
+
 # Company schemas: accept alias=SCHEMA pairs or bare names; refuse anything
 # that is not an identifier so nothing odd is ever interpolated into SQL.
 schemas=()
@@ -60,7 +71,25 @@ fi
 
 echo
 echo "== Paso 1: puerto TCP ${SAP_B1_HOST}:${SAP_B1_PORT} =="
-if timeout 5 bash -c "exec 3<>/dev/tcp/${SAP_B1_HOST}/${SAP_B1_PORT}" 2>/dev/null; then
+tcp_port_responds() {
+    # The connect attempt runs in a subshell with the variables quoted, so the
+    # validated values are expanded, never handed to a child shell as code.
+    # The parent bounds the wait to 5 s: an unreachable host would otherwise
+    # block for the kernel's own connect timeout.
+    ( exec 3<>"/dev/tcp/${SAP_B1_HOST}/${SAP_B1_PORT}" ) 2>/dev/null &
+    local pid=$! tenths=0
+    while kill -0 "$pid" 2>/dev/null; do
+        if (( tenths >= 50 )); then
+            kill "$pid" 2>/dev/null
+            wait "$pid" 2>/dev/null || true
+            return 1
+        fi
+        sleep 0.1
+        tenths=$((tenths + 1))
+    done
+    wait "$pid"
+}
+if tcp_port_responds; then
     echo "OK: el puerto responde."
 else
     echo "FALLO: el puerto no responde."
@@ -95,7 +124,11 @@ fi
 
 if python3 -c "import hdbcli" >/dev/null 2>&1; then
     echo "hdbsql no está instalado; se usa python3 + hdbcli (la contraseña se pide en pantalla)."
-    SQL_FILE="$sql_file" python3 - <<'PY'
+    # Values asked on screen are shell variables, not exported: hand them over.
+    SQL_FILE="$sql_file" SAP_B1_HOST="$SAP_B1_HOST" SAP_B1_PORT="$SAP_B1_PORT" \
+        SAP_B1_USER="$SAP_B1_USER" SAP_B1_DATABASE="$SAP_B1_DATABASE" \
+        SAP_B1_ENCRYPT="$SAP_B1_ENCRYPT" SAP_B1_SSL_VALIDATE_CERTIFICATE="$SAP_B1_SSL_VALIDATE_CERTIFICATE" \
+        python3 - <<'PY'
 import getpass, os, sys
 from hdbcli import dbapi
 

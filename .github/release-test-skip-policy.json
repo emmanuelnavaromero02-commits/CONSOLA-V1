@@ -22,7 +22,11 @@
           },
           {
             "path": "cartridges/sap_b1/tests/conftest.py",
-            "declarations_sha256": "38bb1df2502f8299f17941868f284db95f2bf594c2172f1ce4db762ef31bd0ea"
+            "declarations_sha256": "c4fcbf4fc970f72620b6d6d0ba37b4cefecf4318e9edd9cd23c233007ca36bac"
+          },
+          {
+            "path": "cartridges/sap_b1/tests/test_connect_kit.py",
+            "declarations_sha256": "c72a952abf5dd48aec1285ec28ec589809b6e305bce6809f060d729d209be2b1"
           },
           {
             "path": "cartridges/sap_hcm/tests/test_watermark_scope_isolation_sap_hcm.py",
@@ -217,7 +221,7 @@
             "declarations_sha256": "fe98517b8fbaab00c4a1a5cbb56109ea74a148b947f3b8e79f6e6d5110e47953"
           }
         ],
-        "inventory_sha256": "60dd29a3cdc71441a34ba266cf6ca589cccc8950c5c7ad4a9d87ef6a18fa712c"
+        "inventory_sha256": "8498eae171615ee8b3dd964afacf54c666b0aa1ca7ac640040333bf0b25a6f46"
       }
     },
     {

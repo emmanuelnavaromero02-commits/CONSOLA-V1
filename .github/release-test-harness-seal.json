@@ -3,7 +3,7 @@
   "files": [
     {
       "path": ".github/release-test-skip-policy.json",
-      "sha256": "6f79239218fdf3c010bfa696941dc3e339d54bbd04a684777e6a6fa82b0b182f"
+      "sha256": "f104105d917fc7013a1600cc1f7629bde008e0d4920de523fe6ab7852622ad4b"
     },
     {
       "path": ".github/workflows/release-runner-capacity.yml",
@@ -963,7 +963,7 @@
     },
     {
       "path": "cartridges/sap_b1/connect/windows-agent/agent.py",
-      "sha256": "4a265dfa7edb42589a6e09354a90477109ad45350da838cc17c5ec09080e601b"
+      "sha256": "3bb622d0cff960a79497fdb7293b1bece54b5fd2c38474c6602857bdce3ab3a4"
     },
     {
       "path": "cartridges/sap_b1/dags/sap_b1_extract.py",
@@ -975,7 +975,7 @@
     },
     {
       "path": "cartridges/sap_b1/tests/conftest.py",
-      "sha256": "becd6a5a5fb0505045bb4d7a978356f10c3ea1cd951eaa5336bb36c68ba018f4"
+      "sha256": "f1f485ccceb780826b8fad97bc0ad93f648bc75f645ca9a834ce9f27c141a602"
     },
     {
       "path": "cartridges/sap_b1/tests/test_b1_queries.py",
@@ -987,7 +987,7 @@
     },
     {
       "path": "cartridges/sap_b1/tests/test_connect_kit.py",
-      "sha256": "b8f072b5b3197f040893142c0f7d97fbc41aac6d72fd730c5eb6dabc37c84d25"
+      "sha256": "70c6a4f114a2be98dfdc7dc32606f47b743ada960db61e8137eda7c1a711efc8"
     },
     {
       "path": "cartridges/sap_b1/tests/test_extraction_against_fake.py",
@@ -1003,11 +1003,11 @@
     },
     {
       "path": "cartridges/sap_b1/tests/test_silver_gold_against_fake.py",
-      "sha256": "72aae80259b303d4b5f0664723b15b07c096c9c6d343f3f760449a2dc166881f"
+      "sha256": "e8d25b05850b2ab9aa4da65793e164e884e92ae39c0dbd0d861f9fb02d9eb0e7"
     },
     {
       "path": "cartridges/sap_b1/tests/test_windows_agent.py",
-      "sha256": "276dbbeb63cf75e5f5b15ee0ecb7c7c1198b4a793cabb9a3fec31d3767995cb5"
+      "sha256": "b3d02b37211972aa77b19b97d94e6af49b2202fe5fe9559dd32177c9aa1f41f7"
     },
     {
       "path": "cartridges/sap_b1/tools/__init__.py",
@@ -3243,7 +3243,7 @@
     },
     {
       "path": "infra/docker-compose.yml",
-      "sha256": "2b8959eac3ab0196e7da21a09906f771f1a475c215a7def40217b964340f32e1"
+      "sha256": "714483fa3fedceb31008742c4f598661f92e30aa0d5bbca58a74b4cdffbf9468"
     },
     {
       "path": "infra/init/99zzt_analytic_app_dataset_grants.sql",

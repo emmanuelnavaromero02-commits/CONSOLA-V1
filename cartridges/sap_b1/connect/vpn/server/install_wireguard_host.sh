@@ -104,16 +104,28 @@ sysctl -q --system >/dev/null
 # 4. The interface config, rendered below into a temporary file and installed
 #    only when it differs from the one in place.
 #
-#    PostUp / PostDown (undone symmetrically when the interface goes down):
-#      FORWARD 1  only TCP to the customer's tunnel address on the HANA port
-#                 (and ICMP echo for diagnostics) may enter the tunnel; the
-#                 rule is inserted first so it precedes Docker's own FORWARD
-#                 chains on a host that runs Docker (Docker sets the FORWARD
-#                 policy to DROP).
-#      FORWARD 2  replies that belong to those connections may come back.
+#    PostUp / PostDown (undone symmetrically when the interface goes down),
+#    inserted at explicit positions so they read in chain order and all sit
+#    above Docker's own FORWARD chains on a host that runs Docker:
+#      FORWARD 1  replies that belong to connections we opened may come
+#                 back through the tunnel.
+#      FORWARD 2  anything else arriving FROM the tunnel is dropped: a NEW
+#                 connection from the customer's side towards the VPC never
+#                 gets to rely on the chain policy (DROP where Docker set
+#                 it, ACCEPT on a host without Docker).
+#      FORWARD 3  only TCP to the customer's tunnel address on the HANA port
+#                 may enter the tunnel,
+#      FORWARD 4  plus ICMP echo for diagnostics.
+#      INPUT 1-3  the same boundary for the host itself: replies to what the
+#                 host opened (ping, test_connection.sh from here) come in,
+#                 the customer may ping our tunnel address, and any other
+#                 connection from the tunnel to the host is dropped (SSH,
+#                 the team VPN's UI, Docker-published ports).
 #      MASQUERADE the source of forwarded packets becomes our tunnel address:
 #                 the only source the customer's AllowedIPs accepts, and the
 #                 only address their Windows firewall rule allows.
+#    WireGuard's own UDP handshake arrives on the public interface, not on
+#    %i, so none of this touches it.
 #    Routing needs no explicit `ip route`: wg-quick installs a route for each
 #    peer's AllowedIPs (the customer's /32) through the interface.
 #    No Endpoint on the peer: the customer initiates and keeps the tunnel
@@ -126,13 +138,21 @@ chmod 600 "$RENDERED"
     echo "Address = ${WG_SERVER_TUNNEL_IP}/${WG_PREFIX_LEN}"
     echo "ListenPort = ${WG_LISTEN_PORT}"
     echo "PrivateKey = $(cat "$KEY_FILE")"
-    echo "PostUp = iptables -I FORWARD 1 -o %i -d ${CUSTOMER_PEER_TUNNEL_IP}/32 -p tcp --dport ${TENANT_SQL_PORT} -j ACCEPT"
-    echo "PostUp = iptables -I FORWARD 1 -o %i -d ${CUSTOMER_PEER_TUNNEL_IP}/32 -p icmp --icmp-type echo-request -j ACCEPT"
     echo "PostUp = iptables -I FORWARD 1 -i %i -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT"
+    echo "PostUp = iptables -I FORWARD 2 -i %i -j DROP"
+    echo "PostUp = iptables -I FORWARD 3 -o %i -d ${CUSTOMER_PEER_TUNNEL_IP}/32 -p tcp --dport ${TENANT_SQL_PORT} -j ACCEPT"
+    echo "PostUp = iptables -I FORWARD 4 -o %i -d ${CUSTOMER_PEER_TUNNEL_IP}/32 -p icmp --icmp-type echo-request -j ACCEPT"
+    echo "PostUp = iptables -I INPUT 1 -i %i -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT"
+    echo "PostUp = iptables -I INPUT 2 -i %i -s ${CUSTOMER_PEER_TUNNEL_IP}/32 -p icmp --icmp-type echo-request -j ACCEPT"
+    echo "PostUp = iptables -I INPUT 3 -i %i -j DROP"
     echo "PostUp = iptables -t nat -A POSTROUTING -o %i -j MASQUERADE"
+    echo "PostDown = iptables -D FORWARD -i %i -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT"
+    echo "PostDown = iptables -D FORWARD -i %i -j DROP"
     echo "PostDown = iptables -D FORWARD -o %i -d ${CUSTOMER_PEER_TUNNEL_IP}/32 -p tcp --dport ${TENANT_SQL_PORT} -j ACCEPT"
     echo "PostDown = iptables -D FORWARD -o %i -d ${CUSTOMER_PEER_TUNNEL_IP}/32 -p icmp --icmp-type echo-request -j ACCEPT"
-    echo "PostDown = iptables -D FORWARD -i %i -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT"
+    echo "PostDown = iptables -D INPUT -i %i -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT"
+    echo "PostDown = iptables -D INPUT -i %i -s ${CUSTOMER_PEER_TUNNEL_IP}/32 -p icmp --icmp-type echo-request -j ACCEPT"
+    echo "PostDown = iptables -D INPUT -i %i -j DROP"
     echo "PostDown = iptables -t nat -D POSTROUTING -o %i -j MASQUERADE"
     echo ""
     echo "[Peer]"

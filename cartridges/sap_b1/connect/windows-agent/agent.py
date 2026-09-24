@@ -61,9 +61,32 @@ CONFIG_ENV = "OMEGA_SAP_B1_AGENT_CONFIG"
 STATE_DB_NAME = "agent-state.sqlite"
 LOCK_NAME = "agent.lock"
 LOG_NAME = "agent.log"
+QUARANTINE_DIR_NAME = "quarantine"
+# Spool files carry a short opaque name (see ``Spool._target``): the hex
+# prefix of a uuid4, long enough never to collide within one spool.
+SPOOL_NAME_HEX = 20
+# The entity whose prefix ``test-connection`` lists: the IAM policy only
+# allows the agent's own tenant/workspace scope under each entity.
+PROBE_ENTITY = "CINF"
 DEFAULT_MAX_PENDING_FILES = 500
 DEFAULT_UPLOAD_ATTEMPTS = 5
 EXIT_OK, EXIT_FAILED, EXIT_CONFIG = 0, 1, 2
+
+# Every cartridge file the agent needs at run time, relative to the
+# directory that holds ``app/``. install.ps1 copies exactly this list
+# (``$cartridgeFiles``) and a test keeps the two in step with the imports
+# below and their transitive ``app.*`` imports.
+CARTRIDGE_FILES = (
+    "app/__init__.py",
+    "app/core/__init__.py",
+    "app/core/b1_source.py",
+    "app/services/__init__.py",
+    "app/services/b1_queries.py",
+    "app/services/b1_reader.py",
+    "app/services/bronze_parquet.py",
+    "app/services/intercompany_mapping.py",
+    "app/config/entities.yaml",
+)
 
 
 # ── Locate the cartridge code ─────────────────────────────────────────────
@@ -76,7 +99,9 @@ def _locate_cartridge_root() -> Path:
     ``<InstallRoot>/app`` (installed by install.ps1); the repository
     (``cartridges/sap_b1/connect/windows-agent``); a bundle with the
     cartridge copied under ``windows-agent/cartridge``; or an explicit
-    ``OMEGA_SAP_B1_CARTRIDGE_ROOT``.
+    ``OMEGA_SAP_B1_CARTRIDGE_ROOT``. An installed copy missing one of
+    ``CARTRIDGE_FILES`` is refused with the list, not with an ImportError
+    later.
     """
     candidates: list[Path] = []
     override = os.environ.get(CARTRIDGE_ROOT_ENV, "").strip()
@@ -90,6 +115,12 @@ def _locate_cartridge_root() -> Path:
         if (candidate / "app" / "config" / "entities.yaml").is_file() and (
             candidate / "app" / "services" / "b1_reader.py"
         ).is_file():
+            missing = [relative for relative in CARTRIDGE_FILES if not (candidate / relative).is_file()]
+            if missing:
+                raise SystemExit(
+                    f"{AGENT_NAME}: the cartridge copy under {candidate} is incomplete, missing "
+                    f"{', '.join(missing)}; run install.ps1 again"
+                )
             return candidate.resolve()
     raise SystemExit(
         f"{AGENT_NAME}: cannot find the cartridge modules (app/); "
@@ -120,6 +151,15 @@ class ConfigError(AgentError):
 
 class UploadError(AgentError):
     """A file could not be delivered to S3 after the configured attempts."""
+
+
+class UploadRejected(UploadError):
+    """S3 refused the key or the bucket for good (AccessDenied, ExpiredToken,
+    ...): retrying, or trying the next file, cannot help within this cycle."""
+
+    def __init__(self, message: str, code: str) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 # ── Scrubbing ─────────────────────────────────────────────────────────────
@@ -408,13 +448,30 @@ def load_catalogue() -> list[dict[str, Any]]:
     return [dict(entity) for entity in entities if entity.get("entity")]
 
 
-def select_entities(catalogue: Sequence[dict[str, Any]], config: AgentConfig, only: Sequence[str] = ()) -> list[dict[str, Any]]:
+def select_entities(
+    catalogue: Sequence[dict[str, Any]],
+    config: AgentConfig,
+    only: Sequence[str] = (),
+    log: logging.Logger | None = None,
+) -> list[dict[str, Any]]:
+    """The entities a command runs, in catalogue order of the request.
+
+    ``[agent] entities`` restricts ``extract-all`` and ``exclude`` removes
+    from it; an explicit ``--entity`` names exactly what the operator wants
+    and therefore overrides ``exclude`` (said in the log). A name unknown to
+    the catalogue anywhere is a configuration error.
+    """
     by_name = {entity["entity"]: entity for entity in catalogue}
-    wanted = list(only) or list(config.entities) or list(by_name)
-    unknown = [name for name in (*wanted, *config.exclude) if name not in by_name]
+    unknown = [name for name in (*only, *config.entities, *config.exclude) if name not in by_name]
     if unknown:
-        raise ConfigError(f"unknown entities (not in entities.yaml): {', '.join(unknown)}")
+        raise ConfigError(f"unknown entities (not in entities.yaml): {', '.join(dict.fromkeys(unknown))}")
     excluded = set(config.exclude)
+    if only:
+        overridden = [name for name in only if name in excluded]
+        if overridden and log is not None:
+            log.info("--entity %s overrides [agent] exclude for this run", ", ".join(overridden))
+        return [by_name[name] for name in only]
+    wanted = list(config.entities) or list(by_name)
     return [by_name[name] for name in wanted if name not in excluded]
 
 
@@ -451,6 +508,16 @@ CREATE TABLE IF NOT EXISTS spool (
     created_at   TEXT NOT NULL,
     attempts     INTEGER NOT NULL DEFAULT 0,
     last_error   TEXT
+);
+CREATE TABLE IF NOT EXISTS spool_lost (
+    path             TEXT NOT NULL,
+    object_name      TEXT NOT NULL,
+    run_id           TEXT NOT NULL,
+    entity_name      TEXT NOT NULL,
+    created_at       TEXT NOT NULL,
+    lost_at          TEXT NOT NULL,
+    reason           TEXT NOT NULL,
+    quarantine_path  TEXT
 );
 """
 
@@ -575,6 +642,24 @@ class AgentState:
         rows = self.conn.execute("SELECT * FROM spool ORDER BY created_at, rowid").fetchall()
         return [dict(row) for row in rows]
 
+    def spool_lose(self, path: Path, reason: str, quarantine_path: Path | None = None) -> None:
+        """A spooled file that can never be uploaded (missing or unreadable):
+        the ledger row moves to ``spool_lost`` so ``status`` keeps showing
+        the gap while the pending queue stays honest."""
+        self.conn.execute(
+            """
+            INSERT INTO spool_lost (path, object_name, run_id, entity_name, created_at, lost_at, reason, quarantine_path)
+            SELECT path, object_name, run_id, entity_name, created_at, ?, ?, ? FROM spool WHERE path = ?
+            """,
+            (_utc_now_text(), reason[:4000], str(quarantine_path) if quarantine_path else None, str(path)),
+        )
+        self.conn.execute("DELETE FROM spool WHERE path = ?", (str(path),))
+        self.conn.commit()
+
+    def spool_lost(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute("SELECT * FROM spool_lost ORDER BY lost_at, rowid").fetchall()
+        return [dict(row) for row in rows]
+
 
 # ── Upload ────────────────────────────────────────────────────────────────
 
@@ -590,27 +675,47 @@ _NO_RETRY_CODES = {
 }
 
 
+# boto3 wraps a ClientError raised inside a managed transfer into
+# S3UploadFailedError, which carries neither ``.response`` nor a cause: the
+# code then only survives in the message, as "An error occurred (Code) ...".
+_ERROR_CODE_IN_MESSAGE = re.compile(r"An error occurred \(([A-Za-z0-9_.]+)\)")
+
+
+def scoped_prefix(scope: str, entity: str = "*") -> str:
+    """``raw/sap_b1/<entity>/tenant_id=<t>/workspace_id=<w>/``: the only
+    place this agent may write, mirroring ``iam-policy.template.json``."""
+    return f"{bronze_parquet.BRONZE_PREFIX}{entity}/{scope}"
+
+
 class S3Uploader:
-    """boto3 uploads restricted to the ``raw/sap_b1/`` prefix.
+    """boto3 uploads restricted to this tenant and workspace under
+    ``raw/sap_b1/<entity>/``.
 
     The credentials only need ``s3:PutObject`` and
-    ``s3:AbortMultipartUpload`` on that prefix plus ``s3:ListBucket`` on it
-    (see ``iam-policy.template.json``); nothing here reads or deletes.
+    ``s3:AbortMultipartUpload`` on
+    ``raw/sap_b1/*/tenant_id=<t>/workspace_id=<w>/*`` plus ``s3:ListBucket``
+    limited to that prefix (see ``iam-policy.template.json``); nothing here
+    reads or deletes. ``client`` is only injected by the tests.
     """
 
-    def __init__(self, config: UploadConfig, log: logging.Logger) -> None:
+    def __init__(self, config: UploadConfig, log: logging.Logger, *, scope: str, client: Any = None) -> None:
+        self.config = config
+        self.log = log
+        self.scope = scope
+        self.client = client if client is not None else self._build_client(config)
+
+    @staticmethod
+    def _build_client(config: UploadConfig) -> Any:
         import boto3
         from botocore.config import Config
 
-        self.config = config
-        self.log = log
         session = boto3.session.Session(
             aws_access_key_id=config.access_key_id or None,
             aws_secret_access_key=config.secret_access_key or None,
             aws_session_token=config.session_token or None,
             region_name=config.region or None,
         )
-        self.client = session.client(
+        return session.client(
             "s3",
             endpoint_url=config.endpoint_url or None,
             config=Config(
@@ -631,19 +736,42 @@ class S3Uploader:
         return extra
 
     @staticmethod
-    def _error_code(exc: Exception) -> str:
-        response = getattr(exc, "response", None)
-        if isinstance(response, dict):
-            return str((response.get("Error") or {}).get("Code") or "")
-        return ""
+    def _error_code(exc: BaseException) -> str:
+        """The S3 error code of ``exc``: from its ``response``, from the
+        exception it wraps (``__cause__``/``__context__``), or from the
+        message boto3 leaves when it swallows the ClientError."""
+        seen: set[int] = set()
+        current: BaseException | None = exc
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            response = getattr(current, "response", None)
+            if isinstance(response, dict):
+                code = str((response.get("Error") or {}).get("Code") or "")
+                if code:
+                    return code
+            current = current.__cause__ or current.__context__
+        match = _ERROR_CODE_IN_MESSAGE.search(str(exc))
+        return match.group(1) if match else ""
+
+    def check_scope(self, object_name: str) -> None:
+        """Refuse any key outside ``raw/sap_b1/<entity>/<this scope>``."""
+        prefix = bronze_parquet.BRONZE_PREFIX
+        entity, separator, rest = object_name[len(prefix):].partition("/") if object_name.startswith(prefix) else ("", "", "")
+        if (
+            not entity
+            or not separator
+            or entity in (".", "..")
+            or ".." in object_name.split("/")
+            or not rest.startswith(self.scope)
+        ):
+            raise UploadError(f"refusing to upload outside {scoped_prefix(self.scope)}: {object_name}")
 
     def probe(self) -> None:
-        """Prove the key can see the prefix without writing anything."""
-        self.client.list_objects_v2(Bucket=self.config.bucket, Prefix=bronze_parquet.BRONZE_PREFIX, MaxKeys=1)
+        """Prove the key can see its own prefix without writing anything."""
+        self.client.list_objects_v2(Bucket=self.config.bucket, Prefix=scoped_prefix(self.scope, PROBE_ENTITY), MaxKeys=1)
 
     def upload(self, path: Path, object_name: str) -> None:
-        if not object_name.startswith(bronze_parquet.BRONZE_PREFIX):
-            raise UploadError(f"refusing to upload outside {bronze_parquet.BRONZE_PREFIX}: {object_name}")
+        self.check_scope(object_name)
         delay = 2.0
         last: Exception | None = None
         for attempt in range(1, self.config.max_attempts + 1):
@@ -654,8 +782,10 @@ class S3Uploader:
                 last = exc
                 code = self._error_code(exc)
                 if code in _NO_RETRY_CODES:
-                    raise UploadError(
-                        f"upload rejected ({code}); check the access key and the IAM policy for the bucket"
+                    # One attempt is the answer: the key or the bucket is
+                    # wrong for good, and so it is for every other file.
+                    raise UploadRejected(
+                        f"upload rejected ({code}); check the access key and the IAM policy for the bucket", code
                     ) from exc
                 self.log.warning(
                     "upload attempt %d/%d failed for %s: %s: %s",
@@ -676,57 +806,104 @@ class S3Uploader:
 # ── Spool ─────────────────────────────────────────────────────────────────
 
 
+@dataclass
+class DrainResult:
+    uploaded: int = 0
+    pending: int = 0
+    lost: int = 0
+
+
 class Spool:
     """Files wait here until S3 confirms them; nothing is deleted before.
 
     With ``uploader=None`` (``--output-dir``) the directory is the
-    destination itself and the ledger is not used.
+    destination itself, laid out like the bucket, and the ledger is not
+    used. With an uploader the files carry short opaque names and the
+    ledger holds their object names: the Bronze key alone is up to ~170
+    characters and, under ``C:\\ProgramData\\OmegaSapB1Agent\\spool``, would
+    pass the 259 characters Windows allows for a path.
     """
 
-    def __init__(self, root: Path, state: AgentState | None, uploader: S3Uploader | None, log: logging.Logger) -> None:
+    def __init__(
+        self,
+        root: Path,
+        state: AgentState | None,
+        uploader: S3Uploader | None,
+        log: logging.Logger,
+        secrets: Sequence[str] = (),
+    ) -> None:
         self.root = root
         self.state = state
         self.uploader = uploader
         self.log = log
+        self.secrets = tuple(secrets)
+        # Set when S3 rejected the key or the bucket for good: no other
+        # upload is attempted in this cycle, files simply stay spooled.
+        self.rejected: str | None = None
         root.mkdir(parents=True, exist_ok=True)
 
     @property
     def delivers_locally(self) -> bool:
         return self.uploader is None
 
+    @property
+    def quarantine_dir(self) -> Path:
+        return self.root / QUARANTINE_DIR_NAME
+
+    def _target(self, object_name: str) -> Path:
+        if self.delivers_locally:
+            return self.root.joinpath(*object_name.split("/"))
+        return self.root / f"{uuid.uuid4().hex[:SPOOL_NAME_HEX]}.parquet"
+
     def _write(self, table, object_name: str) -> Path:
-        target = self.root.joinpath(*object_name.split("/"))
+        """Write next to the target and rename into place, with the bytes
+        forced to disk first: the watermark moves right after this returns,
+        so a power cut must not leave a truncated file behind the cursor."""
+        target = self._target(object_name)
         target.parent.mkdir(parents=True, exist_ok=True)
         partial = target.with_name(target.name + ".part")
-        bronze_parquet.write_bronze_file(table, partial)
+        with open(partial, "wb") as handle:
+            bronze_parquet.write_bronze_file(table, handle)
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(partial, target)
         return target
 
-    def _prune(self, directory: Path) -> None:
-        current = directory
-        while current != self.root and current.is_relative_to(self.root):
-            try:
-                current.rmdir()
-            except OSError:
-                return
-            current = current.parent
-
-    def _try_upload(self, path: Path, object_name: str) -> bool:
-        assert self.uploader is not None
-        try:
-            self.uploader.upload(path, object_name)
-        except UploadError as exc:
-            if self.state is not None:
-                self.state.spool_attempt(path, str(exc))
-            self.log.error("kept in spool, will retry on the next run: %s (%s)", object_name, exc)
-            return False
+    def _record_failure(self, path: Path, error: str) -> None:
         if self.state is not None:
-            self.state.spool_uploaded(path)
+            self.state.spool_attempt(path, scrub(error, self.secrets))
+
+    def _remove(self, path: Path) -> None:
+        """S3 confirmed the file, so the delivery stands whatever the local
+        cleanup does (on Windows an antivirus may still hold the file);
+        a leftover is swept on the next drain once its ledger row is gone."""
         try:
             path.unlink()
         except FileNotFoundError:
             pass
-        self._prune(path.parent)
+        except OSError as exc:
+            self.log.warning("uploaded file could not be removed yet, swept on the next run: %s (%s)", path.name, exc)
+
+    def _try_upload(self, path: Path, object_name: str) -> bool:
+        assert self.uploader is not None
+        if self.rejected:
+            self._record_failure(path, self.rejected)
+            self.log.warning("kept in spool, uploads are suspended for this cycle: %s", object_name)
+            return False
+        try:
+            self.uploader.upload(path, object_name)
+        except UploadRejected as exc:
+            self.rejected = str(exc)
+            self._record_failure(path, str(exc))
+            self.log.error("%s; no further upload is tried this cycle, files stay in the spool: %s", exc, object_name)
+            return False
+        except UploadError as exc:
+            self._record_failure(path, str(exc))
+            self.log.error("kept in spool, will retry on the next run: %s (%s)", object_name, exc)
+            return False
+        if self.state is not None:
+            self.state.spool_uploaded(path)
+        self._remove(path)
         return True
 
     def deliver(self, table, object_name: str, *, run_id: str, entity: str) -> tuple[Path, bool]:
@@ -742,23 +919,88 @@ class Spool:
             self.state.spool_add(path, object_name, run_id, entity)
         return path, self._try_upload(path, object_name)
 
-    def drain(self) -> tuple[int, int]:
-        """Retry every pending file; returns ``(uploaded, still_pending)``."""
+    @staticmethod
+    def _unreadable(path: Path) -> str | None:
+        """None when ``path`` is a parquet file with a readable footer; the
+        reason otherwise. What drain uploads must be what a reader can open."""
+        import pyarrow.parquet as pq
+
+        try:
+            with pq.ParquetFile(path) as parquet:
+                int(parquet.metadata.num_rows)
+        except Exception as exc:  # noqa: BLE001 - any failure to open it is the answer
+            return f"unreadable parquet file ({type(exc).__name__}: {exc})"
+        return None
+
+    def _quarantine(self, path: Path) -> Path | None:
+        self.quarantine_dir.mkdir(parents=True, exist_ok=True)
+        target = self.quarantine_dir / path.name
+        try:
+            os.replace(path, target)
+        except OSError as exc:
+            self.log.warning("could not move %s to quarantine: %s", path.name, exc)
+            return None
+        return target
+
+    def _lose(self, row: Mapping[str, Any], reason: str, quarantine_path: Path | None) -> None:
+        assert self.state is not None
+        self.state.spool_lose(Path(row["path"]), scrub(reason, self.secrets), quarantine_path)
+        self.log.error(
+            "spool file lost, its rows never reached S3 and the watermark already passed them: %s (%s);"
+            " re-extract the table (--mode full or a date range)",
+            row["object_name"],
+            reason,
+        )
+
+    def sweep(self) -> None:
+        """Delete files in the spool the ledger does not know: uploads whose
+        local delete failed, and partial writes of a run that died before its
+        ledger row existed (its rows are re-read, the watermark never moved)."""
+        assert self.state is not None
+        known = {Path(row["path"]).name for row in self.state.spool_pending()}
+        for candidate in sorted(self.root.iterdir()):
+            if not candidate.is_file() or candidate.name in known or not candidate.name.endswith((".parquet", ".part")):
+                continue
+            try:
+                candidate.unlink()
+            except OSError as exc:
+                self.log.warning("leftover spool file could not be removed: %s (%s)", candidate.name, exc)
+            else:
+                self.log.info("removed leftover spool file: %s", candidate.name)
+
+    def drain(self) -> DrainResult:
+        """Retry every pending file, oldest first.
+
+        A missing or unreadable file is *lost*: its rows are behind the
+        watermark and will never be uploaded, so the cycle fails and
+        ``status`` keeps the gap on record (unreadable files go to
+        ``quarantine/``). A rejection (revoked key) stops every further
+        attempt in this cycle.
+        """
+        result = DrainResult()
         if self.uploader is None or self.state is None:
-            return 0, 0
-        uploaded = pending = 0
+            return result
+        self.sweep()
         for row in self.state.spool_pending():
             path = Path(row["path"])
             if not path.is_file():
-                self.log.error("spooled file is missing, dropping it from the ledger: %s", row["object_name"])
-                self.state.spool_uploaded(path)
+                self._lose(row, "spool file is missing", None)
+                result.lost += 1
+                continue
+            reason = self._unreadable(path)
+            if reason:
+                self._lose(row, reason, self._quarantine(path))
+                result.lost += 1
+                continue
+            if self.rejected:
+                result.pending += 1
                 continue
             if self._try_upload(path, row["object_name"]):
-                uploaded += 1
+                result.uploaded += 1
                 self.log.info("uploaded from spool: %s", row["object_name"])
             else:
-                pending += 1
-        return uploaded, pending
+                result.pending += 1
+        return result
 
 
 # ── Lock ──────────────────────────────────────────────────────────────────
@@ -788,35 +1030,72 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
+def _claim(source: Path, target: Path) -> None:
+    """Make ``source`` appear as ``target`` atomically, failing with
+    FileExistsError when ``target`` exists. On Windows ``os.rename`` never
+    replaces; elsewhere a hard link is the exclusive operation."""
+    if os.name == "nt":
+        os.rename(source, target)
+        return
+    os.link(source, target)
+    source.unlink()
+
+
 class RunLock:
     """One extraction at a time per state directory (a scheduled cycle must
-    not overlap a manual run). A lock left by a dead process is taken over."""
+    not overlap a manual run).
+
+    The lock file is written complete (pid and time) under a temporary name
+    and then claimed atomically, so nobody ever reads it empty. A lock whose
+    pid parses and is provably dead is taken over; one that cannot be parsed
+    is refused and left for the operator, never guessed away.
+    """
 
     def __init__(self, path: Path) -> None:
         self.path = path
         self._held = False
 
+    @staticmethod
+    def _owner(text: str) -> int | None:
+        try:
+            pid = int(text.split()[0])
+        except (ValueError, IndexError):
+            return None
+        return pid if pid > 0 else None
+
+    def _inspect_existing(self) -> None:
+        """Raise when the existing lock must be respected; return when it may
+        be taken over (its holder is dead) or it vanished meanwhile."""
+        try:
+            text = self.path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return
+        owner = self._owner(text)
+        if owner is None:
+            raise AgentError(
+                f"the run lock cannot be read ({self.path}); if no agent is running, delete it and run again"
+            )
+        if owner != os.getpid() and _pid_alive(owner):
+            raise AgentError(f"another agent run is in progress (pid {owner}); lock: {self.path}")
+        try:
+            self.path.unlink()
+        except FileNotFoundError:
+            pass
+
     def __enter__(self) -> "RunLock":
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        for _ in range(2):
+        staging = self.path.with_name(f"{self.path.name}.{os.getpid()}.tmp")
+        for _ in range(3):
+            self._inspect_existing()
+            staging.write_text(f"{os.getpid()} {_utc_now_text()}\n", encoding="utf-8")
             try:
-                fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                _claim(staging, self.path)
             except FileExistsError:
-                try:
-                    owner = int(self.path.read_text(encoding="utf-8").split()[0])
-                except (OSError, ValueError, IndexError):
-                    owner = -1
-                if owner > 0 and _pid_alive(owner) and owner != os.getpid():
-                    raise AgentError(f"another agent run is in progress (pid {owner}); lock: {self.path}")
-                try:
-                    self.path.unlink()
-                except FileNotFoundError:
-                    pass
+                staging.unlink(missing_ok=True)
                 continue
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                handle.write(f"{os.getpid()} {_utc_now_text()}\n")
             self._held = True
             return self
+        staging.unlink(missing_ok=True)
         raise AgentError(f"could not acquire the run lock: {self.path}")
 
     def __exit__(self, *_exc: Any) -> None:
@@ -883,6 +1162,8 @@ def run_extract(
     effective_mode = b1_reader.effective_mode(effective_config, plan, from_date, to_date)
     if effective_mode == "historical" and not plan.date_field:
         raise ConfigError(f"{entity_name}: a date range needs a date_field in the catalogue")
+    if mode == "incremental" and effective_mode == "full":
+        log.info("%s: incremental requested but the table has no update stamp; read whole (full)", entity_name)
     scope = config.scope
     bucket = config.upload.bucket
 
@@ -947,6 +1228,8 @@ def run_extract(
                 f"{len(pending)} batch file(s) could not be uploaded and stay in the spool;"
                 " the rows are safe locally and the next run retries them"
             )
+            if spool.rejected:
+                outcome.error += f" ({spool.rejected})"
         else:
             outcome.status = "success"
     except Exception as exc:  # noqa: BLE001 - every failure becomes a failed run
@@ -1004,6 +1287,8 @@ def run_intercompany(runtime: Runtime) -> RunOutcome:
         else:
             outcome.status = "failed"
             outcome.error = "the mapping file could not be uploaded and stays in the spool; the next run retries it"
+            if spool.rejected:
+                outcome.error += f" ({spool.rejected})"
         log.info("batch 1: %d rows -> %s%s", len(rows), object_name, "" if uploaded else " (pending)")
     except Exception as exc:  # noqa: BLE001 - every failure becomes a failed run
         outcome.status = "failed"
@@ -1025,24 +1310,76 @@ def run_intercompany(runtime: Runtime) -> RunOutcome:
 # ── Logging ───────────────────────────────────────────────────────────────
 
 
-def _setup_logging(config: AgentConfig, quiet: bool = False) -> list[logging.Handler]:
-    config.log_dir.mkdir(parents=True, exist_ok=True)
-    formatter = RedactingFormatter(config.secrets())
+def _setup_logging(
+    log_dir: Path, level: str, secrets: Sequence[str], quiet: bool = False
+) -> list[logging.Handler]:
+    log_dir.mkdir(parents=True, exist_ok=True)
+    formatter = RedactingFormatter(secrets)
     handlers: list[logging.Handler] = [
-        logging.handlers.RotatingFileHandler(
-            config.log_dir / LOG_NAME, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8"
-        )
+        logging.handlers.RotatingFileHandler(log_dir / LOG_NAME, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8")
     ]
     if not quiet:
         handlers.append(logging.StreamHandler(sys.stderr))
     root = logging.getLogger()
-    root.setLevel(getattr(logging, config.log_level, logging.INFO))
+    root.setLevel(getattr(logging, level, logging.INFO))
     for handler in handlers:
         handler.setFormatter(formatter)
         root.addHandler(handler)
     for noisy in ("boto3", "botocore", "urllib3", "s3transfer"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
     return handlers
+
+
+def _bootstrap_log_dir(path: Path | None, env: Mapping[str, str]) -> Path | None:
+    """Where a configuration error is logged when the configuration itself
+    is unusable: the log directory ``load_config`` would have chosen when
+    the file parses, else ``logs/`` next to the file (the installed layout
+    keeps agent.toml in the state directory, so that is the same file)."""
+    if path is None:
+        return None
+    base = path.resolve().parent
+    agent: dict[str, Any] = {}
+    parsed = False
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        parsed = True
+        agent = data.get("agent") if isinstance(data.get("agent"), dict) else {}
+    except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError):
+        pass
+
+    def _plain(value: Any) -> str:
+        text = str(value or "").strip()
+        return "" if _PLACEHOLDER.fullmatch(text) else text
+
+    state_text = _plain(env.get("OMEGA_AGENT_STATE_DIR", "")) or _plain(agent.get("state_dir"))
+    if state_text:
+        state_dir = (base / state_text).resolve()
+    else:
+        state_dir = base / "state" if parsed else base
+    log_text = _plain(agent.get("log_dir"))
+    return (state_dir / log_text).resolve() if log_text else state_dir / "logs"
+
+
+def _env_secrets(env: Mapping[str, str]) -> tuple[str, ...]:
+    names = ("SAP_B1_PASSWORD", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_ACCESS_KEY_ID", "SAP_B1_HOST")
+    return tuple(env.get(name, "").strip() for name in names if env.get(name, "").strip())
+
+
+def _log_config_error(path: Path | None, message: str) -> None:
+    """Best effort: the scheduled task shows nothing but an exit code, so a
+    configuration error also lands in agent.log whenever a log directory
+    can be worked out. stderr already has the message."""
+    log_dir = _bootstrap_log_dir(path, os.environ)
+    if log_dir is None:
+        return
+    try:
+        handlers = _setup_logging(log_dir, "INFO", _env_secrets(os.environ), quiet=True)
+    except OSError:
+        return
+    try:
+        logging.getLogger(AGENT_NAME).error("configuration: %s", message)
+    finally:
+        _teardown_logging(handlers)
 
 
 def _teardown_logging(handlers: Sequence[logging.Handler]) -> None:
@@ -1063,10 +1400,11 @@ def _open_state(config: AgentConfig) -> AgentState:
 def _build_runtime(config: AgentConfig, log: logging.Logger, output_dir: Path | None) -> Runtime:
     state = _open_state(config)
     if output_dir is not None:
-        spool = Spool(output_dir, state=None, uploader=None, log=log)
+        spool = Spool(output_dir, state=None, uploader=None, log=log, secrets=config.secrets())
     else:
         config.require_upload()
-        spool = Spool(config.spool_dir, state=state, uploader=S3Uploader(config.upload, log), log=log)
+        uploader = S3Uploader(config.upload, log, scope=config.scope)
+        spool = Spool(config.spool_dir, state=state, uploader=uploader, log=log, secrets=config.secrets())
     return Runtime(config=config, state=state, spool=spool, log=log)
 
 
@@ -1104,11 +1442,11 @@ def cmd_test_connection(config: AgentConfig, log: logging.Logger, args: argparse
         return EXIT_OK
     config.require_upload()
     try:
-        S3Uploader(config.upload, log).probe()
+        S3Uploader(config.upload, log, scope=config.scope).probe()
     except Exception as exc:  # noqa: BLE001 - reported, never raised past the CLI
         _print(f"upload: bucket {config.upload.bucket} not reachable with this key ({type(exc).__name__}: {exc})", secrets)
         return EXIT_FAILED
-    _print(f"upload: bucket {config.upload.bucket}, prefix {bronze_parquet.BRONZE_PREFIX} reachable", secrets)
+    _print(f"upload: bucket {config.upload.bucket}, prefix {scoped_prefix(config.scope)} reachable", secrets)
     return EXIT_OK
 
 
@@ -1127,17 +1465,20 @@ def _run_entities(
     config.require_source()
     runtime = _build_runtime(config, log, output_dir)
     secrets = config.secrets()
+    outcomes: list[RunOutcome] = []
     try:
         with RunLock(config.state_dir / LOCK_NAME):
-            uploaded, still_pending = runtime.spool.drain()
-            if uploaded:
-                log.info("spool: %d file(s) uploaded from earlier runs", uploaded)
-            if still_pending:
-                log.error("spool: %d file(s) from earlier runs still pending", still_pending)
-            if still_pending >= config.max_pending_files:
+            drained = runtime.spool.drain()
+            if drained.uploaded:
+                log.info("spool: %d file(s) uploaded from earlier runs", drained.uploaded)
+            if drained.pending:
+                log.error("spool: %d file(s) from earlier runs still pending", drained.pending)
+            if drained.lost:
+                log.error("spool: %d file(s) lost (never uploaded); see status", drained.lost)
+            if drained.pending >= config.max_pending_files:
                 log.error(
                     "spool holds %d pending files (limit %d); not extracting more until uploads work again",
-                    still_pending,
+                    drained.pending,
                     config.max_pending_files,
                 )
                 return EXIT_FAILED
@@ -1156,14 +1497,16 @@ def _run_entities(
         if outcome.error:
             line += f" error={outcome.error}"
         _print(line, secrets)
+    if drained.lost:
+        _print(f"spool: {drained.lost} file(s) lost, their rows never reached S3 (see status)", secrets)
     failed = [outcome for outcome in outcomes if not outcome.ok]
-    if failed or still_pending:
+    if failed or drained.pending or drained.lost:
         return EXIT_FAILED
     return EXIT_OK
 
 
 def cmd_extract(config: AgentConfig, log: logging.Logger, args: argparse.Namespace) -> int:
-    entities = select_entities(load_catalogue(), config, only=[args.entity])
+    entities = select_entities(load_catalogue(), config, only=[args.entity], log=log)
     if (args.from_date or args.to_date) and args.mode:
         raise ConfigError("--mode cannot be combined with --from-date/--to-date (a date range is a historical read)")
     return _run_entities(
@@ -1172,7 +1515,7 @@ def cmd_extract(config: AgentConfig, log: logging.Logger, args: argparse.Namespa
 
 
 def cmd_extract_all(config: AgentConfig, log: logging.Logger, args: argparse.Namespace) -> int:
-    entities = select_entities(load_catalogue(), config, only=args.entity or ())
+    entities = select_entities(load_catalogue(), config, only=args.entity or (), log=log)
     return _run_entities(
         config,
         log,
@@ -1198,19 +1541,30 @@ def cmd_status(config: AgentConfig, log: logging.Logger, args: argparse.Namespac
         runs = state.list_runs(args.limit)
         watermarks = state.list_watermarks()
         pending = state.spool_pending()
+        lost = state.spool_lost()
     finally:
         state.close()
     report = {
         "agent_version": AGENT_VERSION,
         "state_dir": str(config.state_dir),
         "spool_pending": len(pending),
+        "spool_lost": len(lost),
+        "pending_files": pending,
+        "lost_files": lost,
         "watermarks": watermarks,
         "runs": runs,
     }
     if args.json:
         _print(json.dumps(report, indent=2, ensure_ascii=True, default=str), secrets)
         return EXIT_OK
-    _print(f"agent {AGENT_VERSION}; state {config.state_dir}; spool pending: {len(pending)}", secrets)
+    _print(f"agent {AGENT_VERSION}; state {config.state_dir}; spool pending: {len(pending)}; lost: {len(lost)}", secrets)
+    for row in pending:
+        line = f"  pending {row['object_name']} attempts={row['attempts']}"
+        if row.get("last_error"):
+            line += f" error={row['last_error']}"
+        _print(line, secrets)
+    for row in lost:
+        _print(f"  LOST {row['object_name']} ({row['reason']}; {row['lost_at']}) - re-extract the table", secrets)
     _print("watermarks:", secrets)
     for row in watermarks or []:
         _print(f"  {row['entity_name']}: {row['last_watermark_value']} (run {row['last_run_id']}, {row['updated_at']})", secrets)
@@ -1291,12 +1645,14 @@ COMMANDS = {
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    config_path = _config_path(args.config)
     try:
-        config = load_config(_config_path(args.config))
+        config = load_config(config_path)
     except ConfigError as exc:
         sys.stderr.write(f"{AGENT_NAME}: {exc}\n")
+        _log_config_error(config_path, str(exc))
         return EXIT_CONFIG
-    handlers = _setup_logging(config, quiet=args.quiet)
+    handlers = _setup_logging(config.log_dir, config.log_level, config.secrets(), quiet=args.quiet)
     log = logging.getLogger(AGENT_NAME)
     try:
         return COMMANDS[args.command](config, log, args)

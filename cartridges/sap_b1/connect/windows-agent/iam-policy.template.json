@@ -2,23 +2,23 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "OmegaSapB1AgentWriteBronze",
+      "Sid": "OmegaSapB1AgentWriteOwnBronzeScope",
       "Effect": "Allow",
       "Action": [
         "s3:PutObject",
         "s3:AbortMultipartUpload"
       ],
-      "Resource": "arn:aws:s3:::<BUCKET>/raw/sap_b1/*"
+      "Resource": "arn:aws:s3:::<BUCKET>/raw/sap_b1/*/tenant_id=<TENANT_ID>/workspace_id=<WORKSPACE_ID>/*"
     },
     {
-      "Sid": "OmegaSapB1AgentListBronzePrefixOnly",
+      "Sid": "OmegaSapB1AgentListOwnBronzeScopeOnly",
       "Effect": "Allow",
       "Action": "s3:ListBucket",
       "Resource": "arn:aws:s3:::<BUCKET>",
       "Condition": {
         "StringLike": {
           "s3:prefix": [
-            "raw/sap_b1/*"
+            "raw/sap_b1/*/tenant_id=<TENANT_ID>/workspace_id=<WORKSPACE_ID>/*"
           ]
         }
       }

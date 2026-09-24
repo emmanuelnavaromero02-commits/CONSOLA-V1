@@ -152,6 +152,7 @@ def world(tmp_path_factory, fake_postgres, dataset):
     import importlib
 
     generator = importlib.import_module("sap_b1_fake.generator")
+    b1 = importlib.import_module("sap_b1_fake.schema")
     monkeypatch = pytest.MonkeyPatch()
     for name, value in (
         ("SAP_B1_DIALECT", "postgres"), ("SAP_B1_HOST", fake_postgres["host"]), ("SAP_B1_PORT", str(fake_postgres["port"])),
@@ -179,11 +180,38 @@ def world(tmp_path_factory, fake_postgres, dataset):
     mfg = _schema(dataset, "mx_mfg")
     later = datetime.combine(dataset.as_of + timedelta(days=3), datetime.min.time()).replace(hour=10)
     edited = [r[0] for r in _pg(dsn, f'SELECT "DocEntry" FROM "{mfg}"."OINV" WHERE "CANCELED" = %s ORDER BY "DocEntry" DESC LIMIT 3', ("N",))]
+    # Same reasoning as the INV1/OITW deletes below: undo this in `finally`
+    # so the session-scoped fake keeps the stamps `dataset` describes.
+    original_oinv_stamps = _pg(
+        dsn,
+        f'SELECT "DocEntry", "Comments", "UpdateDate", "UpdateTS" FROM "{mfg}"."OINV" WHERE "DocEntry" = ANY(%s)',
+        (edited,),
+    )
     _pg_exec(dsn, f'UPDATE "{mfg}"."OINV" SET "Comments" = %s, "UpdateDate" = %s, "UpdateTS" = %s WHERE "DocEntry" = ANY(%s)',
              ("editado tras la carga", later.replace(hour=0), 100000, edited))
     dropped_line = _pg(dsn, f'SELECT "LineNum", "LineTotal" FROM "{mfg}"."INV1" WHERE "DocEntry" = %s ORDER BY "LineNum" DESC LIMIT 1', (edited[0],))[0]
+    # Full rows, in the fake's own column order, so the deletes below can be
+    # undone exactly: `dataset`/`fake_postgres` are session-scoped and shared
+    # with every other cartridge test file (a bare DELETE with no restore
+    # left OITW one row short for the rest of the pytest session, corrupting
+    # any later test — e.g. in test_windows_agent.py — that trusts
+    # `dataset.tables` as the source of truth for row counts).
+    inv1_columns = b1.columns("INV1")
+    dropped_inv1_row = _pg(
+        dsn,
+        f'SELECT {", ".join(b1.quote(c) for c in inv1_columns)} FROM "{mfg}"."INV1" '
+        'WHERE "DocEntry" = %s AND "LineNum" = %s',
+        (edited[0], dropped_line[0]),
+    )[0]
     _pg_exec(dsn, f'DELETE FROM "{mfg}"."INV1" WHERE "DocEntry" = %s AND "LineNum" = %s', (edited[0], dropped_line[0]))
     removed_stock = _pg(dsn, f'SELECT "ItemCode", "WhsCode" FROM "{mfg}"."OITW" WHERE "OnHand" = 0 ORDER BY 1, 2 LIMIT 1')[0]
+    oitw_columns = b1.columns("OITW")
+    removed_oitw_row = _pg(
+        dsn,
+        f'SELECT {", ".join(b1.quote(c) for c in oitw_columns)} FROM "{mfg}"."OITW" '
+        'WHERE "ItemCode" = %s AND "WhsCode" = %s',
+        removed_stock,
+    )[0]
     _pg_exec(dsn, f'DELETE FROM "{mfg}"."OITW" WHERE "ItemCode" = %s AND "WhsCode" = %s', removed_stock)
 
     # Cycle 2: the incremental read of the edited documents and a fresh snapshot.
@@ -199,6 +227,27 @@ def world(tmp_path_factory, fake_postgres, dataset):
         }
     finally:
         con.close()
+        # Undo the deletes and the edit so the session-scoped fake database
+        # is exactly as `dataset` describes it for every test that runs
+        # after this file.
+        for doc_entry, comments, update_date, update_ts in original_oinv_stamps:
+            _pg_exec(
+                dsn,
+                f'UPDATE "{mfg}"."OINV" SET "Comments" = %s, "UpdateDate" = %s, "UpdateTS" = %s WHERE "DocEntry" = %s',
+                (comments, update_date, update_ts, doc_entry),
+            )
+        _pg_exec(
+            dsn,
+            f'INSERT INTO "{mfg}"."INV1" ({", ".join(b1.quote(c) for c in inv1_columns)}) '
+            f'VALUES ({", ".join(["%s"] * len(inv1_columns))})',
+            dropped_inv1_row,
+        )
+        _pg_exec(
+            dsn,
+            f'INSERT INTO "{mfg}"."OITW" ({", ".join(b1.quote(c) for c in oitw_columns)}) '
+            f'VALUES ({", ".join(["%s"] * len(oitw_columns))})',
+            removed_oitw_row,
+        )
         monkeypatch.undo()
 
 
