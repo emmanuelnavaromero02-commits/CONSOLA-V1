@@ -130,6 +130,24 @@ COMMERCIAL_PROFILES: dict[str, dict[str, Any]] = {
         "plan": "ERP Intelligence",
         "price_label": "Cotización por módulo",
     },
+    "sap_b1": {
+        "headline": "ERP PyME: finanzas, ventas, compras e inventario de SAP Business One conectados a ΩMEGA.",
+        "what_it_does": [
+            "Lee las tablas de cada compañía (socios de negocio, documentos de venta y compra, asientos, inventario) directamente de la base de datos.",
+            "Entrega modelos analíticos por compañía para cartera, gasto, margen y existencias.",
+            "Prepara datos Business One para RAG semántico y reportes ejecutivos.",
+        ],
+        "data_domains": ["Socios de negocio", "Ventas", "Compras", "Contabilidad", "Inventario"],
+        "dashboards": ["Finanzas", "Clientes", "Proveedores", "Compras", "Inventario"],
+        "sample_questions": [
+            "¿Qué clientes concentran la cartera vencida por compañía?",
+            "¿Qué proveedores subieron gasto frente al periodo anterior?",
+            "¿Qué artículos llevan más de 90 días sin movimiento?",
+        ],
+        "requirements": ["Acceso SQL a la base HANA de Business One", "Internal API key", "Conectividad desde Airflow"],
+        "plan": "ERP Intelligence",
+        "price_label": "Cotización por compañía",
+    },
 }
 
 

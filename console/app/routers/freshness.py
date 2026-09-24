@@ -22,7 +22,7 @@ from app.services.security_context import build_security_context
 
 
 _KNOWN_CARTRIDGES = frozenset({
-    "replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors",
+    "replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors", "sap_b1",
 })
 
 

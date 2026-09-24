@@ -38,6 +38,10 @@ const META: Record<
     name: "SAP SuccessFactors",
     description: "Talento + performance. Goals, reviews, learning.",
   },
+  sap_b1: {
+    name: "SAP Business One",
+    description: "ERP PyME por compañía. Socios de negocio, ventas, compras, inventario y asientos.",
+  },
 };
 
 /**

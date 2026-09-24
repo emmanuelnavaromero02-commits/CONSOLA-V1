@@ -143,6 +143,7 @@ def forged_cartridge_probe():
         os.environ.get("SAP_SUCCESSFACTORS_URL") or "http://sap-successfactors:8203",
         os.environ.get("SAP_HCM_URL") or "http://sap-hcm:8202",
         os.environ.get("SAP_S4HANA_URL") or "http://sap-s4hana:8204",
+        os.environ.get("SAP_B1_URL") or "http://sap-b1:8206",
         os.environ.get("SALESFORCE_URL") or "http://salesforce:8205",
         os.environ.get("HUBSPOT_URL") or "http://hubspot:8210",
         os.environ.get("REPLICON_URL") or "http://replicon:8201",

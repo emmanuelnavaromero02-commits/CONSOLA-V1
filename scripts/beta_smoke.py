@@ -232,6 +232,7 @@ class BetaSmoke:
             "sap-hcm healthz": "http://127.0.0.1:8202/healthz",
             "sap-successfactors healthz": "http://127.0.0.1:8203/healthz",
             "sap-s4hana healthz": "http://127.0.0.1:8204/healthz",
+            "sap-b1 healthz": "http://127.0.0.1:8206/healthz",
             "airflow health": "http://127.0.0.1:8082/health",
             "superset health": "http://127.0.0.1:8088/health",
         }

@@ -1,9 +1,10 @@
-# 04 — Configurar los cartuchos SAP (HCM / S4 / SuccessFactors)
+# 04 — Configurar los cartuchos SAP (HCM / S4 / SuccessFactors / Business One)
 
 > Audiencia: admin que va a conectar OMEGA a un sistema SAP existente.
-> Aplica a los 3 cartuchos SAP (`sap_hcm`, `sap_s4hana`,
+> Aplica a los 3 cartuchos SAP OData (`sap_hcm`, `sap_s4hana`,
 > `sap_successfactors`); el flujo es idéntico — sólo cambian los
-> nombres de variables y endpoints.
+> nombres de variables y endpoints. SAP Business One (`sap_b1`) lee la
+> base de datos por SQL, no OData: ver la sección al final.
 
 ## Pre-requisitos
 
@@ -91,6 +92,24 @@ ORDER BY started_at DESC LIMIT 10;
 - **Cargas lentas (>30 min)**: SAP corp tiene rate limits agresivos.
   Bajar `page_size` en `entity_config` y/o re-correr en horario
   off-peak.
+
+## SAP Business One (`sap_b1`)
+
+Business One no expone OData: el cartucho lee los esquemas de cada compañía
+por SQL (HANA en producción, `hdbcli`) y sube Bronze por entidad y compañía.
+El flujo de arriba (settings → test connection → entidades → carga) es el
+mismo, pero las variables y el modelo de compañías son distintos.
+
+- Referencia completa del cartucho, variables `SAP_B1_*` y lista de
+  despliegue: [`cartridges/sap_b1/README.md`](../../cartridges/sap_b1/README.md).
+- Guía de conexión al tenant HANA (puerto, usuario de sólo lectura,
+  mapa `alias=SCHEMA` de compañías): [`cartridges/sap_b1/connect/`](../../cartridges/sap_b1/connect/).
+- En AWS el servicio `sap-b1` vive en `docker-compose.cartridges.yml`; exige
+  `INTERNAL_API_KEY_SAP_B1_TO_CONSOLE` y `OMEGA_CARTRIDGE_SAP_B1_PASSWORD`
+  en el `.env` del host (y en Secrets Manager), y el rol
+  `omega_cartridge_sap_b1` lo crea `infra/init/99zzzzl_sap_b1_cartridge_role.sql`
+  sólo cuando esa contraseña ya existe; la migración se puede re-ejecutar.
+- Los valores del cliente (host, esquemas, credenciales) nunca van al repo.
 
 ## SAP SuccessFactors: variantes de OAuth
 

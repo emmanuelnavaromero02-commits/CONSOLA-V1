@@ -22,7 +22,7 @@ def validate(value: object, *, state: str, tag: str, source_sha: str) -> None:
     manifest = f"omega-release-manifest-{tag}.json"
     expected_assets = sorted((manifest, f"{manifest}.sha256"))
     expected_body = (
-        "Automated OMEGA release manifest: 15 images bound to "
+        "Automated OMEGA release manifest: 16 images bound to "
         f"{source_sha} and tested with exact source checkout bind mounts."
     )
     if (

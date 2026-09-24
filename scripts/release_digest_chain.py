@@ -528,7 +528,7 @@ def main(argv: list[str] | None = None) -> int:
                 manifest_path=manifest_path,
                 checksum_path=checksum_path,
             )
-            print("DIGEST RELEASE MANIFEST: 15/15 VERIFIED")
+            print("DIGEST RELEASE MANIFEST: 16/16 VERIFIED")
         else:  # pragma: no cover
             raise PromotionError("unknown command")
     except PromotionError as exc:

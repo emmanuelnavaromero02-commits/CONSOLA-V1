@@ -34,8 +34,8 @@ def test_aws_compose_either_includes_or_documents_cartridges():
     with DAGs that call hosts that don't resolve.
     """
     doc = _doc()
-    cartridges = ("replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors",
-                  "sap-hcm", "sap-s4hana", "sap-successfactors")
+    cartridges = ("replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors", "sap_b1",
+                  "sap-hcm", "sap-s4hana", "sap-successfactors", "sap-b1")
     declared = set(doc.get("services", {}).keys()) & set(cartridges)
 
     runbook_text = RUNBOOK.read_text(encoding="utf-8")

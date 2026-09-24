@@ -726,8 +726,9 @@ def test_partial_promotion_resumes_from_same_intent_without_overwrite(
     assert len(fake.put_calls) == 7
 
     resumed_puts = promote(registry, intent=intent)
-    assert resumed_puts == 23
-    assert len(fake.put_calls) == 30
+    total_puts = 2 * len(CANONICAL_SERVICES)
+    assert resumed_puts == total_puts - 7
+    assert len(fake.put_calls) == total_puts
     assert fake.overwrite_calls == []
     verify_final(registry, intent=intent)
 

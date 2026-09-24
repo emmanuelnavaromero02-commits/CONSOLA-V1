@@ -47,6 +47,7 @@ image_names=(
   refinement
   replicon
   salesforce
+  sap_b1
   sap_hcm
   sap_s4hana
   sap_successfactors
@@ -64,6 +65,7 @@ lock_names=(
   OMEGA_GCP_IMAGE_REFINEMENT
   OMEGA_GCP_IMAGE_REPLICON
   OMEGA_GCP_IMAGE_SALESFORCE
+  OMEGA_GCP_IMAGE_SAP_B1
   OMEGA_GCP_IMAGE_SAP_HCM
   OMEGA_GCP_IMAGE_SAP_S4HANA
   OMEGA_GCP_IMAGE_SAP_SUCCESSFACTORS
@@ -71,8 +73,8 @@ lock_names=(
   OMEGA_GCP_IMAGE_VAULT
   OMEGA_GCP_IMAGE_WORKSPACE
 )
-if [[ "${#image_names[@]}" -ne 15 || "${#lock_names[@]}" -ne 15 ]]; then
-  echo "ERROR: release image inventory must contain exactly 15 images." >&2
+if [[ "${#image_names[@]}" -ne 16 || "${#lock_names[@]}" -ne 16 ]]; then
+  echo "ERROR: release image inventory must contain exactly 16 images." >&2
   exit 7
 fi
 
@@ -99,7 +101,7 @@ for index in "${!image_names[@]}"; do
   reference="${repository}:${image_tag}"
   : > "$pull_error"
   if ! docker pull --quiet "$reference" >/dev/null 2>"$pull_error"; then
-    echo "ERROR: release image pull failed for ${image_name}; inventory is less than 15/15." >&2
+    echo "ERROR: release image pull failed for ${image_name}; inventory is less than 16/16." >&2
     exit 8
   fi
   if ! repo_digests="$(docker image inspect --format '{{json .RepoDigests}}' "$reference" 2>/dev/null)"; then
@@ -139,4 +141,4 @@ done
 chmod 600 "$temp_lock"
 mv -f -- "$temp_lock" "$lock_file"
 temp_lock=""
-printf 'GCP_RELEASE_IMAGES\tPASS\t15/15\ttag=%s\tlock=%s\n' "$image_tag" "$lock_file"
+printf 'GCP_RELEASE_IMAGES\tPASS\t16/16\ttag=%s\tlock=%s\n' "$image_tag" "$lock_file"

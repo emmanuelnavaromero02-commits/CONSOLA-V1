@@ -43,6 +43,7 @@ RELEASE_SERVICES = (
     "sap-hcm",
     "sap-successfactors",
     "sap-s4hana",
+    "sap-b1",
 )
 
 RELEASE_IMAGES = (
@@ -61,6 +62,7 @@ RELEASE_IMAGES = (
     "sap_hcm",
     "sap_successfactors",
     "sap_s4hana",
+    "sap_b1",
 )
 
 
@@ -143,8 +145,8 @@ PYPREFLIGHT
 COMPOSE_FILES=(-f docker-compose.aws.yml -f docker-compose.cartridges.yml)
 RELEASE_SERVICES=({release_services})
 RELEASE_IMAGES=({release_images})
-if [[ "${{#RELEASE_SERVICES[@]}}" -ne 15 || "${{#RELEASE_IMAGES[@]}}" -ne 15 ]]; then
-  emit "rollback release image inventory" "FAIL" "expected exactly 15 services and images"
+if [[ "${{#RELEASE_SERVICES[@]}}" -ne 16 || "${{#RELEASE_IMAGES[@]}}" -ne 16 ]]; then
+  emit "rollback release image inventory" "FAIL" "expected exactly 16 services and images"
   exit 21
 fi
 available_services="$(docker compose --env-file "$preflight_env" "${{COMPOSE_FILES[@]}}" config --services)"
@@ -159,9 +161,9 @@ if OMEGA_DEPLOY_ENV_FILE="$preflight_env" \
     docker compose --env-file "$preflight_env" "${{COMPOSE_FILES[@]}}" \
       pull --quiet "${{RELEASE_SERVICES[@]}}" \
       >"$auth_workdir/pull.out" 2>"$auth_workdir/pull.err"; then
-  emit "rollback release images pull" "PASS" "15/15 tag=$TARGET_TAG images=${{RELEASE_IMAGES[*]}}"
+  emit "rollback release images pull" "PASS" "16/16 tag=$TARGET_TAG images=${{RELEASE_IMAGES[*]}}"
 else
-  emit "rollback release images pull" "FAIL" "less than 15/15 images pullable for tag=$TARGET_TAG"
+  emit "rollback release images pull" "FAIL" "less than 16/16 images pullable for tag=$TARGET_TAG"
   exit 21
 fi
 current_ref="$(env_value DEPLOY_REF)"

@@ -107,6 +107,7 @@ services:
       INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE: ${INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE:?INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE is required}
       INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE: ${INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE:?INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE is required}
       INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE: ${INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE:?INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE is required}
+      INTERNAL_API_KEY_SAP_B1_TO_CONSOLE: ${INTERNAL_API_KEY_SAP_B1_TO_CONSOLE:?INTERNAL_API_KEY_SAP_B1_TO_CONSOLE is required}
       INTERNAL_API_KEY_CONSOLE_TO_VAULT: ${INTERNAL_API_KEY_CONSOLE_TO_VAULT:?INTERNAL_API_KEY_CONSOLE_TO_VAULT is required}
       INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT: ${INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT:?INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT is required}
       INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA: ${INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA:?INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA is required}
@@ -797,6 +798,7 @@ services:
       # works without further env tweaks.
       SAP_HCM_URL:            "${SAP_HCM_URL:-http://sap-hcm:8202}"
       SAP_S4HANA_URL:         "${SAP_S4HANA_URL:-http://sap-s4hana:8204}"
+      SAP_B1_URL:             "${SAP_B1_URL:-http://sap-b1:8206}"
       REPLICON_URL:           "${REPLICON_URL:-http://replicon:8201}"
       SALESFORCE_URL:         "${SALESFORCE_URL:-http://salesforce:8205}"
       HUBSPOT_URL:            "${HUBSPOT_URL:-http://hubspot:8210}"
@@ -816,6 +818,7 @@ services:
       - /opt/modecissions/cartridges/replicon/dags:/opt/airflow/dags/replicon:ro
       - /opt/modecissions/cartridges/hubspot/dags:/opt/airflow/dags/hubspot:ro
       - /opt/modecissions/cartridges/sap_s4hana/dags:/opt/airflow/dags/sap_s4hana:ro
+      - /opt/modecissions/cartridges/sap_b1/dags:/opt/airflow/dags/sap_b1:ro
       # Salesforce DAGs (service may not be provisioned on every AWS
       # target yet; mount is safe — Airflow sees an empty dir if unprovisioned).
       - /opt/modecissions/cartridges/salesforce/dags:/opt/airflow/dags/salesforce:ro
@@ -889,6 +892,7 @@ services:
       # v1.43.1 (Codex P0-4): mirror the webserver's cartridge URL vars.
       SAP_HCM_URL:            "${SAP_HCM_URL:-http://sap-hcm:8202}"
       SAP_S4HANA_URL:         "${SAP_S4HANA_URL:-http://sap-s4hana:8204}"
+      SAP_B1_URL:             "${SAP_B1_URL:-http://sap-b1:8206}"
       REPLICON_URL:           "${REPLICON_URL:-http://replicon:8201}"
       SALESFORCE_URL:         "${SALESFORCE_URL:-http://salesforce:8205}"
       HUBSPOT_URL:            "${HUBSPOT_URL:-http://hubspot:8210}"
@@ -906,6 +910,7 @@ services:
       - /opt/modecissions/cartridges/replicon/dags:/opt/airflow/dags/replicon:ro
       - /opt/modecissions/cartridges/hubspot/dags:/opt/airflow/dags/hubspot:ro
       - /opt/modecissions/cartridges/sap_s4hana/dags:/opt/airflow/dags/sap_s4hana:ro
+      - /opt/modecissions/cartridges/sap_b1/dags:/opt/airflow/dags/sap_b1:ro
       # Salesforce DAGs (service may not be provisioned on every AWS
       # target yet; mount is safe — Airflow sees an empty dir if unprovisioned).
       - /opt/modecissions/cartridges/salesforce/dags:/opt/airflow/dags/salesforce:ro

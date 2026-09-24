@@ -52,6 +52,13 @@
     {
       "read_only": true,
       "service": "airflow",
+      "source": "cartridges/sap_b1/dags",
+      "target": "/opt/airflow/dags/sap_b1",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow",
       "source": "cartridges/replicon/dags",
       "target": "/opt/airflow/dags/replicon",
       "type": "bind"
@@ -117,6 +124,13 @@
       "service": "airflow-init",
       "source": "cartridges/sap_s4hana/dags",
       "target": "/opt/airflow/dags/sap_s4hana",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow-init",
+      "source": "cartridges/sap_b1/dags",
+      "target": "/opt/airflow/dags/sap_b1",
       "type": "bind"
     },
     {
@@ -215,6 +229,13 @@
       "service": "airflow-scheduler",
       "source": "cartridges/sap_s4hana/dags",
       "target": "/opt/airflow/dags/sap_s4hana",
+      "type": "bind"
+    },
+    {
+      "read_only": true,
+      "service": "airflow-scheduler",
+      "source": "cartridges/sap_b1/dags",
+      "target": "/opt/airflow/dags/sap_b1",
       "type": "bind"
     },
     {

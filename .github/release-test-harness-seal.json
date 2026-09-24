@@ -11,7 +11,7 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "sha256": "81dcf8b0d32c6e24b3832d52b3b287d8a0dc0f5c64bf55f220688e9bcdf8abf5"
+      "sha256": "b6b0f379638c51ef3e8db15c200780d1432673cfb849268c01172901abb065d2"
     },
     {
       "path": "Makefile",
@@ -1863,7 +1863,7 @@
     },
     {
       "path": "console/tests/test_cartridge_intent.py",
-      "sha256": "adf0475376bf3577ef3706818853961dc0acfa758fef762802b8c57c40e410e9"
+      "sha256": "20699de6ec1eeced7ec810799e7d68a57099462ae38c036d68010420b1ced863"
     },
     {
       "path": "console/tests/test_cartridge_introspect_router.py",
@@ -2843,7 +2843,7 @@
     },
     {
       "path": "console/tests/test_internal_key_per_pair_console.py",
-      "sha256": "8e60b14a7a82ea1636b3435edc4b2f468b903bb14636405c43a28a83d474d82b"
+      "sha256": "f1ebaa2580d5137e665aa0a5b2ffdbde9f2043c654eedb5d61e5b95f0950819d"
     },
     {
       "path": "console/tests/test_job_service_pipeline_runs.py",
@@ -2927,7 +2927,7 @@
     },
     {
       "path": "console/tests/test_operations_service.py",
-      "sha256": "55928ae30994c06dc1f501bb8dbb550cafc1768f6056d5c2f728f0b39b02969b"
+      "sha256": "921754b4fd2c9442812fab51a8290238e5ac7ab532c91c9fc3e761ca49e70b48"
     },
     {
       "path": "console/tests/test_ops_summary_and_version.py",
@@ -3179,7 +3179,7 @@
     },
     {
       "path": "infra/bootstrap.sh",
-      "sha256": "750a0cd075653786e7b1abd124a8df664277dd01fc392f088225bcbc8073a1cd"
+      "sha256": "d9f61029cf0732649ca1a0e0c611576e02bd7e77ff0da27a680f44d1321c1690"
     },
     {
       "path": "infra/docker-compose.dev.yml",
@@ -3187,7 +3187,7 @@
     },
     {
       "path": "infra/docker-compose.yml",
-      "sha256": "f5df5d0b9fd42897393515edbb193589dc3c5414b2b33b20389b8dfb2e283667"
+      "sha256": "6a389a3c163efd0a24382ee0842a3475fdb693b72dd0ec01198f2117769a540f"
     },
     {
       "path": "infra/init/99zzt_analytic_app_dataset_grants.sql",
@@ -3207,7 +3207,7 @@
     },
     {
       "path": "infra/terraform-gcp/release/docker-compose.release.yml",
-      "sha256": "b2e2bafc03d3511299aadf300533571d66253da59becc0ca8a74dbfbdb840da2"
+      "sha256": "1ac03a9191bd78a7c0e007739358f54a610d27735ce478a99e57bc4f1d40223d"
     },
     {
       "path": "pyproject.toml",
@@ -3399,11 +3399,11 @@
     },
     {
       "path": "scripts/release_digest_chain.py",
-      "sha256": "cfb1b55cbf3e486a4a681a364daabc24633d16a39f2f7b47c09d80d9df440e93"
+      "sha256": "709b3f932eaf36c2025b37ccd3d41e061178149d87884d89f945fc6630397924"
     },
     {
       "path": "scripts/release_digest_env.py",
-      "sha256": "ca74d36c8cff52cefc13caa32313176b6c8ff4aef15a94fa61b1ed13b82adc1f"
+      "sha256": "e8f3901cd3fc4261eab60654c8b0bd9ca20755b545754741b141b691d3fffc70"
     },
     {
       "path": "scripts/release_docker_lock.py",
@@ -3411,7 +3411,7 @@
     },
     {
       "path": "scripts/release_image_promotion.py",
-      "sha256": "68fbc291449d46baf80e42a1bfcd133e9385cc32bbfab746b01c455921f128c7"
+      "sha256": "1b037d70e3631513034c1b6e9e13d3d6937d6857ddd590ee4647836a606fafdb"
     },
     {
       "path": "scripts/run-e2e.sh",
@@ -3447,7 +3447,7 @@
     },
     {
       "path": "scripts/smoke_test.sh",
-      "sha256": "1be809d8e214a7e012b8292880a485cf66898255f124579aeb8f082fc270bb2d"
+      "sha256": "feb8b20a2b24594bd9e3e735faba8d76d97da45c26fd6945d8728ea17efa7bb8"
     },
     {
       "path": "scripts/stress_summary.py",
@@ -3455,11 +3455,11 @@
     },
     {
       "path": "scripts/validate_github_release_state.py",
-      "sha256": "2077316ae608c61a649e71aa3714e51d3aa7e37e807375469e5c37eca72c2639"
+      "sha256": "41e22a6c13ead69f6085da7f026d41732a13a0c261f38fa009158eb1c68050e5"
     },
     {
       "path": "scripts/verify_release_digest_remote.py",
-      "sha256": "4b887ad046787a396ba22fe5b6de9af7fe6077ad292dcd1b7cf2dd343d9b465e"
+      "sha256": "d181499516b623acf76032ec2c62bbe0b71660ce4732546062040dfcfd8f891f"
     },
     {
       "path": "scripts/verify_release_digest_runtime.py",
@@ -3479,7 +3479,7 @@
     },
     {
       "path": "scripts/wait_for_health.sh",
-      "sha256": "6deaabc724286de3a66b851bfefbd86deba72c9043b6b05fadbbcf53cd169417"
+      "sha256": "116b6506204c77a2704584b4b311ba17ff381db80293cc2c986b1e589a8c4742"
     },
     {
       "path": "tests-e2e/fixtures/auth.ts",
@@ -3691,7 +3691,7 @@
     },
     {
       "path": "tests/fixtures/release-compose-mount-allowlist.json",
-      "sha256": "bf0d0ac8e386c8fbf94202f428f75a24a3eaa4d610a1089521b8ba389d9e82e6"
+      "sha256": "d63d1c08a1cf35ae761a25f7e6b02a57b0f27eb005c5b2d7026a8cf93fe7dea5"
     },
     {
       "path": "tests/fixtures/sap_b1/__init__.py",
@@ -3831,7 +3831,7 @@
     },
     {
       "path": "tests/test_airflow_release_contract.py",
-      "sha256": "6eec85312e87b16e556850baad793f7929a4634fbf229b9c38e8c89164b44eef"
+      "sha256": "2e643d94594746fb7749677a7b9f71b7dc0dac92703a3b258e2ace5ac73e3c54"
     },
     {
       "path": "tests/test_airflow_version.py",
@@ -3843,7 +3843,7 @@
     },
     {
       "path": "tests/test_app_env_safe_default.py",
-      "sha256": "521a59e5b9e26af48fed573e9979599912296d3b736397619bd7586f31844af2"
+      "sha256": "e7cdfc8f820a1aa4cc587de269d528de1133c5610426d71bbd598c853798eb72"
     },
     {
       "path": "tests/test_apply_db_migrations_script.py",
@@ -3875,7 +3875,7 @@
     },
     {
       "path": "tests/test_aws_compose_consistency.py",
-      "sha256": "d0332d1e1d3dd5a8ee60293b9167180d90fd1b80ab28b0ff90d866f1afc9d35d"
+      "sha256": "3d9f06b1d263b8b89cd760c181d2a025bd84b6952aaf1581f7b86bd7043cd043"
     },
     {
       "path": "tests/test_aws_compose_required_env.py",
@@ -3919,7 +3919,7 @@
     },
     {
       "path": "tests/test_aws_ghcr_private_auth.py",
-      "sha256": "6faa213f777f20870bdbe9beb737bdf812d0a46210d662f50b724a0dffacc4d1"
+      "sha256": "81b27b8bc3ade4ea517f4d9cec3fc242a72cad5de0965f03aeecaa59f5235430"
     },
     {
       "path": "tests/test_aws_iam_app_s3_policy.py",
@@ -3931,7 +3931,7 @@
     },
     {
       "path": "tests/test_aws_secrets_manager_config.py",
-      "sha256": "2b2b18b9d8d59a44bb9c2f9569416d42a41dfbcd82544961fae56b8a945c1d37"
+      "sha256": "77a61926e87422862a439cf7b30fd4984396d1433cf89c224a994ce498c801df"
     },
     {
       "path": "tests/test_aws_ssm_deploy_workflow.py",
@@ -4083,7 +4083,7 @@
     },
     {
       "path": "tests/test_ci_workflows_present.py",
-      "sha256": "70c6d90b52e18260e30a2e4aa991770ee36ef3f7c901b7b6032672db7aa67fa8"
+      "sha256": "1b80a4fecc0ed73d0de741593b576b1ad05ee6f7ecade0a971aca001592cf7f2"
     },
     {
       "path": "tests/test_company_onboarding_contract.py",
@@ -4091,7 +4091,7 @@
     },
     {
       "path": "tests/test_compose_aws_consistency.py",
-      "sha256": "4ceef7e01c631302801bf655923c79be1f091dae299e69dd64b489e54cb5e8ba"
+      "sha256": "e4e7fd850f01124276a4f183f7e52c1779e11de900b6756ca1504c6730a840fe"
     },
     {
       "path": "tests/test_compose_healthchecks.py",
@@ -4671,7 +4671,7 @@
     },
     {
       "path": "tests/test_env_example_and_runbooks_v1434.py",
-      "sha256": "e5ea2ecd68fef8d280d2f194a7251284292d37e7c544ac8df6fe6240d8a26996"
+      "sha256": "3c6f63255ddf3add5e2d61fefa59fb8f443beae8f219a6968fa6b69953ae6bd4"
     },
     {
       "path": "tests/test_env_never_in_git.py",
@@ -4735,15 +4735,15 @@
     },
     {
       "path": "tests/test_gcp_canonical_deploy.py",
-      "sha256": "91751fda683b7c9077c237116d9b187001c2beb22da7b711b69680b8a1da87c1"
+      "sha256": "3f29099c359a8fc554acbd3207e53807cd871cdae5631be04d99b1f3a95d58a4"
     },
     {
       "path": "tests/test_gcp_day2_release.py",
-      "sha256": "5d3c02d07e5ec3e1586587bd7ee9b56ffc678df416744e04cec243f06cccd747"
+      "sha256": "443162ee63180b66e43dd0e3683108b8b45a6c17719230927881f07b42b7eb18"
     },
     {
       "path": "tests/test_gcp_ghcr_private_auth.py",
-      "sha256": "9354ebf230900ca24bbffb781a36e8d947adc6d044e9ce572dae5c64ea8895e8"
+      "sha256": "3c0d4e4de1c5c968de3bd182473facf0987df17c005a1683ff8e32aeff3d9665"
     },
     {
       "path": "tests/test_gcp_runtime_secret_hydration.py",
@@ -4967,7 +4967,7 @@
     },
     {
       "path": "tests/test_migration_42_cartridges_registry.py",
-      "sha256": "0cdc01e6fb57d0c693fbb3c414d45193eb1ec86cd3d539efb2d47a8aed10b8a0"
+      "sha256": "ad87a92bc5b086d4023c8963cd23b074c7e99c7bbc4a7214fe23c18db42d5ef9"
     },
     {
       "path": "tests/test_migration_46_sap_perms.py",
@@ -5335,7 +5335,7 @@
     },
     {
       "path": "tests/test_release_ci_fail_closed.py",
-      "sha256": "c5c16ceb29f4e2effc494759a726ed1c36a8b9129fd24e7281d427d7ceb06ca9"
+      "sha256": "1152ed2fef273044fea9bdbc107b6a3125964e3857ff06a65d61be32bc158162"
     },
     {
       "path": "tests/test_release_compose_env_contract.py",
@@ -5363,7 +5363,7 @@
     },
     {
       "path": "tests/test_release_image_promotion.py",
-      "sha256": "b3a9cc98ab3b8ec2b42fff1b1045f47706817d96af6adbb2ed5788ba731e523a"
+      "sha256": "e6162ea868426f76d518e938bf1fe70775aa7a7f24a26caec11a989d179f55d0"
     },
     {
       "path": "tests/test_release_launchers_adversarial.py",
@@ -5371,7 +5371,7 @@
     },
     {
       "path": "tests/test_release_package_visibility.py",
-      "sha256": "a4f3a2b4da7cef72d85252edfb60f8bb3cda01655b32cf317b11fdba3a8f5ad3"
+      "sha256": "215d162a1494a9a623fb6da510c2535e7ed0de45080679379d555f3b201ec1d3"
     },
     {
       "path": "tests/test_release_root_target_partition.py",
@@ -5499,7 +5499,7 @@
     },
     {
       "path": "tests/test_sap_dags_deployed.py",
-      "sha256": "281d4acff71505395e4037e1bce06e724db124c718397a35291a351e92233fdb"
+      "sha256": "e679e786d70609a53017ba1a0d34f2365817679a3fae723288ec62df7fd90153"
     },
     {
       "path": "tests/test_sap_entities_seeded.py",
@@ -5695,7 +5695,7 @@
     },
     {
       "path": "tests/test_select_previous_release.py",
-      "sha256": "f216a4ba5f00fa1c238a12d007772b8febbda6a3ba228c1719930115bfe70f3e"
+      "sha256": "30c4f17b1f78e9cb2cae87afb0bcb94f64e38c95ad5a4d5b3097d07dfb010700"
     },
     {
       "path": "tests/test_service_urls.py",
@@ -5703,7 +5703,7 @@
     },
     {
       "path": "tests/test_smoke_script.py",
-      "sha256": "a9bf0d60658462a4aedbc4313d766cd8df7c2f0fbff9769a5e83e16bafcd5ebf"
+      "sha256": "be23d4c7b2df09c7f170dcd682014966b79afb5168b10f0b3c3889b7222adc94"
     },
     {
       "path": "tests/test_sql_guard.py",
@@ -5979,7 +5979,7 @@
     },
     {
       "path": "tests/test_validate_github_release_state.py",
-      "sha256": "0859b472ac31ad52df4ec5b0b8466176b4d0519d64bfd2802276d012f7bbc6b7"
+      "sha256": "8cc8c67b5424d093db2c6fdd44306d351f7c5a16d1a4d0ab2f8b9e20d459112a"
     },
     {
       "path": "tests/test_vault_audit_log.py",

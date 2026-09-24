@@ -247,6 +247,7 @@ SALESFORCE_URL=http://salesforce:8205
 SAP_HCM_URL=http://sap-hcm:8202
 SAP_S4HANA_URL=http://sap-s4hana:8204
 SAP_SUCCESSFACTORS_URL=http://sap-successfactors:8203
+SAP_B1_URL=http://sap-b1:8206
 
 # === Token TTLs ===
 INVITE_TOKEN_TTL_HOURS=72

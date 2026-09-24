@@ -501,7 +501,7 @@ def release(draft):
         "immutable": not draft,
         "name": tag,
         "body": (
-            "Automated OMEGA release manifest: 15 images bound to "
+            "Automated OMEGA release manifest: 16 images bound to "
             f"{source_sha} and tested with exact source "
             "checkout bind mounts."
         ),
@@ -792,7 +792,7 @@ def test_validate_release_runs_every_test_target_resolved_by_detector():
     assert 'scripts/run_release_pytest.py -q "${group[@]}"' in cartridge_tests["run"]
 
 
-def test_release_image_inventory_is_exactly_the_canonical_fifteen():
+def test_release_image_inventory_is_exactly_the_canonical_sixteen():
     services = _canonical_services()
 
     assert services == [
@@ -811,8 +811,9 @@ def test_release_image_inventory_is_exactly_the_canonical_fifteen():
         "sap_s4hana",
         "sap_successfactors",
         "salesforce",
+        "sap_b1",
     ]
-    assert len(services) == len(set(services)) == 15
+    assert len(services) == len(set(services)) == 16
 
 
 def test_matrix_builds_only_untagged_candidates_and_seals_receipts_last():
@@ -890,7 +891,7 @@ def test_manifest_job_is_bound_to_successful_build_and_exact_inventory():
     assert "release_image_promotion.py" not in WORKFLOW.read_text(encoding="utf-8")
 
 
-def test_manifest_runtime_accepts_exactly_fifteen_bound_digest_fragments():
+def test_manifest_runtime_accepts_exactly_sixteen_bound_digest_fragments():
     source = (REPO / "scripts/release_digest_chain.py").read_text(encoding="utf-8")
     assert '"schema_version": 2' in source
     assert '"kind": "omega-release-manifest"' in source
@@ -1988,7 +1989,7 @@ def test_digest_gate_prepares_and_rechecks_bounded_runner_disk_budget() -> None:
     freeze_name = "Freeze trusted Playwright and Docker gate runtimes"
     reclaim_name = "Prepare GitHub-hosted release disk budget"
     app_budget_name = "Verify disk budget before application pulls"
-    pull_name = "Pull and verify all 15 exact digest references"
+    pull_name = "Pull and verify all 16 exact digest references"
     infra_budget_name = "Verify disk budget before infrastructure pulls"
     render_name = "Render and start hybrid digest/source release stack"
     assert (

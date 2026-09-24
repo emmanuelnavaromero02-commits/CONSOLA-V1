@@ -88,6 +88,7 @@ def test_console_auth_is_production_defaults_true(monkeypatch):
         "INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE",
         "INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE",
         "INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE",
+        "INTERNAL_API_KEY_SAP_B1_TO_CONSOLE",
         "INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE",
     ):
         monkeypatch.setenv(env, "x" * 32)
@@ -106,6 +107,7 @@ def test_console_dependencies_default_to_production(monkeypatch):
         "INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE",
         "INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE",
         "INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE",
+        "INTERNAL_API_KEY_SAP_B1_TO_CONSOLE",
         "INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE",
         "INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE",
     ):
@@ -127,6 +129,7 @@ async def test_workspace_cartridge_dataset_fallback_denied_when_env_unset(monkey
         "INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE",
         "INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE",
         "INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE",
+        "INTERNAL_API_KEY_SAP_B1_TO_CONSOLE",
         "INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE",
         "INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE",
     ):

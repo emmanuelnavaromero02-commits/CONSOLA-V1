@@ -67,3 +67,7 @@ services:
     image: ${OMEGA_GCP_IMAGE_SALESFORCE:?run the authenticated GCP image preflight}
     build: !reset null
     pull_policy: never
+  sap-b1:
+    image: ${OMEGA_GCP_IMAGE_SAP_B1:?run the authenticated GCP image preflight}
+    build: !reset null
+    pull_policy: never

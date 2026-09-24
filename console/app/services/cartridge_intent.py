@@ -25,6 +25,11 @@ _SOURCE_ALIASES: dict[str, dict[str, str]] = {
     "salesforce": {"id": "salesforce", "kind": "rest", "domain": "crm"},
     "sf": {"id": "salesforce", "kind": "rest", "domain": "crm"},
     "replicon": {"id": "replicon", "kind": "rest", "domain": "psa"},
+    # Business One aliases sit before the generic "sap" alias: the family veto
+    # keeps the first source seen per vendor, so "sap b1" resolves to sap_b1.
+    "business one": {"id": "sap_b1", "kind": "sql", "domain": "erp"},
+    "sap b1": {"id": "sap_b1", "kind": "sql", "domain": "erp"},
+    "b1": {"id": "sap_b1", "kind": "sql", "domain": "erp"},
     "sap": {"id": "sap_s4hana", "kind": "odata", "domain": "erp"},
     "s4hana": {"id": "sap_s4hana", "kind": "odata", "domain": "erp"},
     "s/4hana": {"id": "sap_s4hana", "kind": "odata", "domain": "erp"},
@@ -42,6 +47,9 @@ _ALIAS_FAMILY: dict[str, str] = {
     "s4hana": "sap",
     "s/4hana": "sap",
     "successfactors": "sap",
+    "business one": "sap",
+    "sap b1": "sap",
+    "b1": "sap",
 }
 
 _OUTPUT_HINTS = {

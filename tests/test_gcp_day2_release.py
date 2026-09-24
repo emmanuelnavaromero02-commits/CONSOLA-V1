@@ -165,7 +165,7 @@ def test_day2_exits_before_accepting_or_using_release_identity():
     assert result.stdout == ""
 
 
-def test_release_overlay_still_covers_exactly_15_images():
+def test_release_overlay_still_covers_exactly_16_images():
     overlay = (REPO_ROOT / "infra/terraform-gcp/release/docker-compose.release.yml").read_text()
     locks = set()
     for line in overlay.splitlines():
@@ -175,9 +175,9 @@ def test_release_overlay_still_covers_exactly_15_images():
             rest = line[start:]
             name = rest.split(":")[0].split("}")[0]
             locks.add(name)
-    assert len(locks) == 15, f"expected 15 distinct release images, got {sorted(locks)}"
+    assert len(locks) == 16, f"expected 16 distinct release images, got {sorted(locks)}"
 
 
-def test_preflight_release_images_enforces_exactly_15():
+def test_preflight_release_images_enforces_exactly_16():
     preflight = (REPO_ROOT / "infra/terraform-gcp/release/preflight-release-images.sh").read_text()
-    assert "-ne 15" in preflight
+    assert "-ne 16" in preflight

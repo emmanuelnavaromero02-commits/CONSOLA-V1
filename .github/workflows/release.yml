@@ -723,6 +723,8 @@ jobs:
             context: ./cartridges/sap_successfactors
           - service: salesforce
             context: ./cartridges/salesforce
+          - service: sap_b1
+            context: ./cartridges/sap_b1
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -1184,7 +1186,7 @@ jobs:
             RUNNER_TEMP="${RUNNER_TEMP}" \
             /usr/bin/python3 -I "${helper}" check --phase pre-pull
 
-      - name: Pull and verify all 15 exact digest references
+      - name: Pull and verify all 16 exact digest references
         env:
           MANIFEST_PATH: ${{ steps.manifest.outputs.manifest_path }}
         run: |
@@ -1197,7 +1199,7 @@ jobs:
           for image in manifest["images"]:
               print(image["digest_reference"])
           PY
-          [[ "$(wc -l < "${RUNNER_TEMP}/omega-release-digest-refs.txt")" -eq 15 ]]
+          [[ "$(wc -l < "${RUNNER_TEMP}/omega-release-digest-refs.txt")" -eq 16 ]]
           while IFS= read -r ref; do
             docker pull "${ref}"
             repo_digests="$(docker image inspect "${ref}" --format '{{json .RepoDigests}}')"
@@ -1268,7 +1270,7 @@ jobs:
               "console", "workspace", "refinement", "vault", "mcp-infra",
               "airflow-init", "airflow", "airflow-scheduler", "replicon",
               "hubspot", "banxico", "inegi", "sec-edgar", "sap-hcm",
-              "sap-s4hana", "sap-successfactors", "salesforce",
+              "sap-s4hana", "sap-successfactors", "salesforce", "sap-b1",
           }
           compose = json.load(open(os.environ["COMPOSE_CONFIG"], encoding="utf-8"))
           references = sorted({
@@ -1703,7 +1705,7 @@ jobs:
           if payload["state"] == "draft" and payload["immutable"] is not False:
               raise SystemExit("draft GitHub Release has invalid immutability state")
           expected_body = (
-              "Automated OMEGA release manifest: 15 images bound to "
+              "Automated OMEGA release manifest: 16 images bound to "
               f"{os.environ['GITHUB_SHA']} and tested with exact source checkout "
               "bind mounts."
           )
@@ -1795,7 +1797,7 @@ jobs:
               --verify-tag
               --target "${GITHUB_SHA}"
               --title "${RELEASE_TAG}"
-              --notes "Automated OMEGA release manifest: 15 images bound to ${GITHUB_SHA} and tested with exact source checkout bind mounts."
+              --notes "Automated OMEGA release manifest: 16 images bound to ${GITHUB_SHA} and tested with exact source checkout bind mounts."
             )
             if [[ "${RELEASE_TAG}" == *-* ]]; then
               args+=(--prerelease)

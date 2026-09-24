@@ -43,6 +43,7 @@ EXPECTED_COMPOSE = {
     "sap-s4hana": "sap_s4hana",
     "sap-successfactors": "sap_successfactors",
     "salesforce": "salesforce",
+    "sap-b1": "sap_b1",
 }
 
 
@@ -117,7 +118,7 @@ def load_manifest(
     owner = repository.split("/", 1)[0].lower()
     images = value.get("images")
     if not isinstance(images, list) or len(images) != len(CANONICAL_SERVICES):
-        raise ManifestError("release manifest image inventory is not 15/15")
+        raise ManifestError("release manifest image inventory is not 16/16")
     by_service = {}
     for expected_service, image in zip(CANONICAL_SERVICES, images, strict=True):
         if not isinstance(image, dict) or set(image) != IMAGE_KEYS:
@@ -193,7 +194,7 @@ def main(argv: list[str] | None = None) -> int:
                 for name, service in EXPECTED_COMPOSE.items()
             }
             if actual != expected:
-                raise ManifestError("Compose release images are not exact 17/15 digest lock")
+                raise ManifestError("Compose release images are not exact 18/16 digest lock")
             expected_references = set(by_service.values())
             for name in EXPECTED_COMPOSE:
                 service = services[name]
@@ -215,7 +216,7 @@ def main(argv: list[str] | None = None) -> int:
     except (ManifestError, OSError, UnicodeError, json.JSONDecodeError) as exc:
         print(f"RELEASE DIGEST ENV BLOCKED: {exc}", file=sys.stderr)
         return 1
-    print("RELEASE DIGEST ENV PASS 17 services / 15 digests")
+    print("RELEASE DIGEST ENV PASS 18 services / 16 digests")
     return 0
 
 

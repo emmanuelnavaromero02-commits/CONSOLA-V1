@@ -43,6 +43,7 @@ CANONICAL_SERVICES = frozenset(
         "refinement",
         "replicon",
         "salesforce",
+        "sap_b1",
         "sap_hcm",
         "sap_s4hana",
         "sap_successfactors",

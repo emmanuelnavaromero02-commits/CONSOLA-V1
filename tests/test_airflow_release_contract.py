@@ -28,6 +28,7 @@ RELEASE_IMAGE_ENV = {
         "sap-s4hana",
         "sap-successfactors",
         "salesforce",
+        "sap-b1",
     )
 }
 

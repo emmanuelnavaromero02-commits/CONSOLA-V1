@@ -484,6 +484,13 @@ async def startup():
             "category":    "cartridge",
             "description": "Connector for SAP S/4HANA modules.",
         },
+        {
+            "id":          "sap_b1",
+            "name":        "SAP Business One",
+            "url":         os.environ.get("SAP_B1_URL", "http://sap-b1:8206"),
+            "category":    "cartridge",
+            "description": "Connector for SAP Business One company databases (SQL).",
+        },
     ]
     for server in builtin:
         url = server["url"].strip()

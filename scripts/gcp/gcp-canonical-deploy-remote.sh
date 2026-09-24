@@ -570,18 +570,18 @@ else
   log "preflight config: runtime secrets hydrated atomically"
 fi
 
-# ── 3. Authenticated pull of the 15 release digests (server-owned) ───────────
+# ── 3. Authenticated pull of the 16 release digests (server-owned) ───────────
 # Publish-only releases push by immutable digest only, so pull the exact digests
 # the operator pinned into the images overlay (single source of truth), not a
 # vX.Y.Z tag that GHCR never received.
-log "preflight images: verify/cache the 15 release digests"
+log "preflight images: verify/cache the 16 release digests"
 EXPECTED_IMAGES=(airflow banxico console hubspot inegi mcp-infra refinement replicon
-  salesforce sap_hcm sap_s4hana sap_successfactors sec_edgar vault workspace)
+  salesforce sap_b1 sap_hcm sap_s4hana sap_successfactors sec_edgar vault workspace)
 DIGEST_REFS=()
 while IFS= read -r _ref; do
   [[ -n "${_ref}" ]] && DIGEST_REFS+=("${_ref}")
 done < <(awk '$1 == "image:" && NF == 2 { print $2 }' "${CANDIDATE_IMAGES_OVERLAY}" | sort -u)
-[[ "${#DIGEST_REFS[@]}" -eq 15 ]] || die "expected 15 image digests in the overlay, found ${#DIGEST_REFS[@]}."
+[[ "${#DIGEST_REFS[@]}" -eq 16 ]] || die "expected 16 image digests in the overlay, found ${#DIGEST_REFS[@]}."
 
 # Validate the complete YAML scalar, exact owner and exact service inventory;
 # never accept a matching substring with a shell suffix. This is defense in
@@ -595,12 +595,12 @@ for image in "${EXPECTED_IMAGES[@]}"; do
     fi
   done
   [[ "${matches}" -eq 1 ]] \
-    || die "image overlay is not an exact owner-scoped 15-service digest lock."
+    || die "image overlay is not an exact owner-scoped 16-service digest lock."
 done
 
 # Pulling missing image layers can exhaust the filesystem that actually backs
 # containerd. Check that filesystem before network I/O or quiescence. A prior
-# dry-run may already have cached all 15 digests; in that case apply neither
+# dry-run may already have cached all 16 digests; in that case apply neither
 # repeats the pull nor rejects the release based on space consumed by that pull.
 MISSING_DIGEST_REFS=()
 for ref in "${DIGEST_REFS[@]}"; do
@@ -632,7 +632,7 @@ if [[ "${#MISSING_DIGEST_REFS[@]}" -gt 0 ]]; then
       omega-image-pull "${MISSING_DIGEST_REFS[@]}" \
     || die "authenticated image pull failed (all missing digests required)."
 else
-  log "preflight images: 15/15 immutable digests already cached; disk gate and pull skipped"
+  log "preflight images: 16/16 immutable digests already cached; disk gate and pull skipped"
 fi
 for ref in "${DIGEST_REFS[@]}"; do
   docker image inspect "${ref}" >/dev/null 2>&1 \
@@ -644,7 +644,7 @@ done
 # against the staged candidate and then restored before success is reported.
 if [[ "${DEPLOY_MODE:-apply}" == "dryrun" ]]; then
   trap - ERR EXIT
-  log "DRY-RUN OK: release staged, secrets/config validated read-only and 15/15 image digests available locally. No DB/service/env mutation."
+  log "DRY-RUN OK: release staged, secrets/config validated read-only and 16/16 image digests available locally. No DB/service/env mutation."
   printf 'REMOTE_DEPLOY\tDRYRUN_PASS\ttag=%s\tref=%s\n' "${TARGET_TAG}" "${DEPLOY_REF}"
   exit 0
 fi

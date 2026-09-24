@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 Highlight = dict[str, Any]
 
 
-_KNOWN_CARTRIDGES = ("replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors")
+_KNOWN_CARTRIDGES = ("replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors", "sap_b1")
 
 
 # ── Severity rank for the final sort. Highest first in the briefing. ─────

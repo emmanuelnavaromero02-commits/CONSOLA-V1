@@ -23,6 +23,7 @@ SAP_HCM_KEY = "sap_hcm_to_console_dedicated_key_64_chars_ccccccccccccccc"
 SAP_S4HANA_KEY = "sap_s4hana_to_console_dedicated_key_64_chars_dddddddddddd"
 SAP_SUCCESSFACTORS_KEY = "sap_successfactors_to_console_dedicated_key_64_chars"
 SALESFORCE_KEY = "salesforce_to_console_dedicated_key_64_chars_zzzzzzzzzzz"
+SAP_B1_KEY = "sap_b1_to_console_dedicated_key_64_chars_eeeeeeeeeeeeeeee"
 
 
 def _module(**attrs):
@@ -43,6 +44,7 @@ def auth_module(monkeypatch):
     monkeypatch.setenv("INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE", SAP_S4HANA_KEY)
     monkeypatch.setenv("INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE", SAP_SUCCESSFACTORS_KEY)
     monkeypatch.setenv("INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE", SALESFORCE_KEY)
+    monkeypatch.setenv("INTERNAL_API_KEY_SAP_B1_TO_CONSOLE", SAP_B1_KEY)
     monkeypatch.setitem(sys.modules, "bcrypt", _module())
     monkeypatch.setitem(sys.modules, "asyncpg", _module())
     import app.services as _svc_pkg
@@ -79,6 +81,8 @@ def test_cartridge_pair_key_accepted_per_cartridge(auth_module):
         "cartridge-sap_successfactors": SAP_SUCCESSFACTORS_KEY,
         "salesforce": SALESFORCE_KEY,
         "cartridge-salesforce": SALESFORCE_KEY,
+        "sap_b1": SAP_B1_KEY,
+        "cartridge-sap_b1": SAP_B1_KEY,
     }
     for service, key in pairs.items():
         auth_module.verify_internal_api_key(x_api_key=key, x_internal_service=service)
@@ -99,6 +103,8 @@ def test_generic_cartridge_key_rejected_for_all_builtin_cartridges(auth_module, 
         "cartridge-sap_successfactors",
         "salesforce",
         "cartridge-salesforce",
+        "sap_b1",
+        "cartridge-sap_b1",
     ):
         with pytest.raises(HTTPException) as exc:
             auth_module.verify_internal_api_key(x_api_key=CART_KEY, x_internal_service=service)

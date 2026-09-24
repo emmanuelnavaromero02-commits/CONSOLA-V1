@@ -832,6 +832,9 @@ _CARTRIDGE_VAULT_REVEAL_KEYS: dict[str, dict[str, tuple[str, ...]]] = {
         ),
         "airflow": ("INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE",),
     },
+    "sap_b1": {
+        "cartridge-sap_b1": ("INTERNAL_API_KEY_SAP_B1_TO_CONSOLE",),
+    },
 }
 
 
@@ -5550,6 +5553,7 @@ _MICROSERVICE_CARTRIDGES = {
     ),
     "sap_hcm": os.environ.get("SAP_HCM_URL", "http://sap-hcm:8202"),
     "sap_s4hana": os.environ.get("SAP_S4HANA_URL", "http://sap-s4hana:8204"),
+    "sap_b1": os.environ.get("SAP_B1_URL", "http://sap-b1:8206"),
 }
 _CREDENTIAL_BOOTSTRAP_CARTRIDGES = {"banxico", "inegi", "sec_edgar"}
 

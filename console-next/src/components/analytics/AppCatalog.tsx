@@ -17,6 +17,7 @@ const CARTRIDGE_LABEL: Record<string, string> = {
   sap_successfactors: "SAP SuccessFactors",
   sap_hcm: "SAP HCM",
   sap_s4hana: "SAP S/4HANA",
+  sap_b1: "SAP Business One",
   salesforce: "Salesforce",
   replicon: "Replicon",
   hubspot: "HubSpot",

@@ -122,3 +122,16 @@ def test_suggest_analytics_crm():
 
 def test_suggest_analytics_unknown_domain_returns_empty():
     assert suggest_analytics("unknown_xyz") == []
+
+
+def test_parse_build_intent_sap_business_one_resolves_to_sap_b1():
+    """'SAP B1' must resolve to the Business One cartridge, not to S/4HANA:
+    the generic 'sap' alias also matches, and the family veto keeps the first
+    source seen, so the B1 aliases are ordered before it on purpose."""
+    for text in ("conecta sap b1 y dame un dashboard", "business one ventas", "b1 inventario"):
+        result = parse_build_intent(text)
+        assert result["primary_source"]["id"] == "sap_b1", text
+        assert result["primary_source"]["kind"] == "sql", text
+        assert len(result["sources"]) == 1, text
+        assert result["cross_source"] is False, text
+    assert parse_build_intent("sap ventas")["primary_source"]["id"] == "sap_s4hana"
