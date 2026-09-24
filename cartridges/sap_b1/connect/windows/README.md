@@ -11,7 +11,7 @@ Un servicio de Windows nuestro, instalado en el servidor Windows del cliente
 con una cuenta de servicio dedicada, que:
 
 1. lee HANA **localmente**, en la red del cliente, con el mismo usuario de
-   solo lectura de `../hana/01_create_readonly_user.sql` y las mismas 43
+   solo lectura de `../hana/01_create_readonly_user.sql` y las mismas 45
    tablas y reglas incrementales del cartucho;
 2. escribe los datos en archivos Parquet (por empresa, entidad y periodo)
    con manifiesto y sumas de verificación;

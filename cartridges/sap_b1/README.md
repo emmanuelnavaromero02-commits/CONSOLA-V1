@@ -19,7 +19,7 @@ Vault, connection `sap_b1/default`).
 
 ## What it reads
 
-43 tables, named as in Business One, in [`app/config/entities.yaml`](app/config/entities.yaml):
+45 tables, named as in Business One, in [`app/config/entities.yaml`](app/config/entities.yaml):
 
 | Group | Tables | Reading rule |
 | --- | --- | --- |
@@ -82,7 +82,7 @@ masters and bills of materials, a periodic full load and a
 ### Initial load
 
 Run the initial load entity by entity (the MCP `extract` job or the
-`sap_b1_extract` DAG), not with `extract-all`: with 43 tables across every
+`sap_b1_extract` DAG), not with `extract-all`: with 45 tables across every
 company a synchronous `extract-all` outlives any HTTP client timeout, and a
 retried DAG task would start a second run of the same entities while the
 first is still reading.
@@ -159,6 +159,7 @@ Datasets are registered in the customer's workspace with
 and `tenant_id`), not by an infra migration, because the workspace is
 created when the connection is set up. The generators live in `tools/`
 and a test fails when a committed file differs from what they produce.
+
 ## Connection kit
 
 [`connect/`](connect/) holds what the customer's IT and the platform team run
@@ -184,6 +185,24 @@ Two facts the runbooks call out: a run reaches the cartridge unscoped unless
 its `security_context` is signed (the thin `sap_b1_extract` DAG forwards
 `tenant_id` / `workspace_id` but does not sign them yet, unlike the
 SuccessFactors DAG), and `historical` runs record no watermark.
+
+## Conector Windows (alternativa)
+
+Cuando no es posible abrir un túnel o VPN desde la plataforma hasta el
+tenant de HANA, el mismo cartucho se despliega al revés: un agente de
+empuje en un servidor Windows del cliente lee las empresas por SQL y sube
+los parquet de Bronze al bucket por HTTPS saliente, con una clave limitada
+al prefijo `raw/sap_b1/`. Vive en
+[`connect/windows-agent/`](connect/windows-agent/) (`agent.py`, plantillas
+de configuración y de política IAM, `install.ps1`/`run.ps1`/`uninstall.ps1`
+y un README en español para TI del cliente). No es una bifurcación: reutiliza
+`entities.yaml`, `b1_queries` (planes, SQL, marcas de agua, esquema arrow),
+el bucle por empresa de `b1_reader` que también ejecuta `run_entity`, y
+`bronze_parquet` (formato y ruta de los archivos), de modo que los archivos
+tienen el mismo esquema y la misma ruta que los del cartucho. Guarda marcas
+de agua y registro de corridas en un SQLite local y retiene cada lote en
+una cola local hasta que S3 confirma la subida. Se prueba contra el mismo
+banco de pruebas en `tests/test_windows_agent.py`.
 
 ## Running against the test bed
 

@@ -21,7 +21,7 @@
 --        -f cartridges/sap_b1/connect/config/schedule_entities_every_2h.sql
 --
 -- Prerequisites, in order:
---   1. The cartridge has started once, so entity_config carries its 43 rows
+--   1. The cartridge has started once, so entity_config carries its 45 rows
 --      (app/services/catalog_service._seed_if_empty). The script aborts otherwise.
 --   2. The initial load is done AND the watermarks are seeded
 --      (initial_load_by_company_month.md). An incremental cycle without a
@@ -45,7 +45,7 @@
 -- a header and its lines share a slot; a header slot never precedes its
 -- lines by more than the same trigger. Counts per slot:
 --   :00  masters and finance (15)      :30  journal (2)
---   :10  sales documents (10)          :40  inventory and batches (6)
+--   :10  sales documents (10)          :40  transfers, inventory and batches (8)
 --   :20  purchase documents (8)        :50  production orders (2)
 -- Odd UTC hours instead: replace '*/2' with '1-23/2' in every expression.
 -- The cartridge answers each run synchronously; sap_b1_extract keeps
@@ -92,7 +92,7 @@ SET trigger_type    = 'scheduled',
             THEN '20 */2 * * *'
         WHEN entity IN ('OJDT','JDT1')
             THEN '30 */2 * * *'
-        WHEN entity IN ('OINM','IBT1','OITW','OBTN','OBTQ','OIBT')
+        WHEN entity IN ('OWTR','WTR1','OINM','IBT1','OITW','OBTN','OBTQ','OIBT')
             THEN '40 */2 * * *'
         WHEN entity IN ('OWOR','WOR1')
             THEN '50 */2 * * *'

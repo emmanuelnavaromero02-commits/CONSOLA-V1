@@ -1,0 +1,27 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "OmegaSapB1AgentWriteBronze",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:AbortMultipartUpload"
+      ],
+      "Resource": "arn:aws:s3:::<BUCKET>/raw/sap_b1/*"
+    },
+    {
+      "Sid": "OmegaSapB1AgentListBronzePrefixOnly",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::<BUCKET>",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": [
+            "raw/sap_b1/*"
+          ]
+        }
+      }
+    }
+  ]
+}

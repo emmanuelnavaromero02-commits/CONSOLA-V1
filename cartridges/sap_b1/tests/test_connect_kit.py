@@ -54,7 +54,8 @@ PLACEHOLDER_FORMAT = re.compile(r"^<[A-Z][A-Z0-9_]*>$")
 
 
 def _kit_files() -> list[Path]:
-    return sorted(p for p in KIT.rglob("*") if p.is_file())
+    # Byte-code the agent tests leave behind is not part of the kit.
+    return sorted(p for p in KIT.rglob("*") if p.is_file() and "__pycache__" not in p.parts)
 
 
 def _read(relative: str) -> str:

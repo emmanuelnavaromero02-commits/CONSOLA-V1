@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import json
 import tempfile
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -11,17 +10,15 @@ import pandas as pd
 
 from app.core.request_context import scoped_prefix
 from app.core.minio_client import upload_file_to_minio
+from app.services.bronze_parquet import (
+    bronze_object_name,
+    coerce_for_schema,
+    enrich_rows,
+    normalize_rows,
+    stamp_now,
+    write_bronze_file,
+)
 from app.services.protection_service import apply_protection_for_entity
-
-
-def _normalize_value(value: Any) -> Any:
-    if isinstance(value, (dict, list)):
-        return json.dumps(value, ensure_ascii=False)
-    return value
-
-
-def _normalize_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [{k: _normalize_value(v) for k, v in row.items()} for row in rows]
 
 
 # Values that pyarrow types on its own: NUMERIC(19,6) amounts arrive as
@@ -68,28 +65,6 @@ def _empty_schema_columns(expected_columns: list[str] | None = None) -> list[str
     return columns
 
 
-def _coerce_for_schema(rows: list[dict[str, Any]], schema) -> list[dict[str, Any]]:
-    """Make driver values fit the declared types: a DATE into a timestamp
-    column, an int or float into a decimal column. Strings stay strings."""
-    import pyarrow as pa
-
-    timestamp_columns = {field.name for field in schema if pa.types.is_timestamp(field.type)}
-    decimal_columns = {field.name for field in schema if pa.types.is_decimal(field.type)}
-    out = []
-    for row in rows:
-        fixed = dict(row)
-        for name in timestamp_columns:
-            value = fixed.get(name)
-            if isinstance(value, date) and not isinstance(value, datetime):
-                fixed[name] = datetime(value.year, value.month, value.day)
-        for name in decimal_columns:
-            value = fixed.get(name)
-            if value is not None and not isinstance(value, Decimal):
-                fixed[name] = Decimal(str(value))
-        out.append(fixed)
-    return out
-
-
 def write_parquet_and_upload(
     entity: str,
     rows: list[dict[str, Any]],
@@ -100,34 +75,29 @@ def write_parquet_and_upload(
     security_context: dict[str, Any] | None = None,
     arrow_schema=None,
 ) -> str:
-    extracted_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    load_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    load_date, extracted_at = stamp_now()
 
     protected_rows = apply_protection_for_entity(entity, rows)
-    normalized_rows = _normalize_rows(protected_rows)
-
-    enriched_rows = []
-    for row in normalized_rows:
-        enriched = dict(row)
-        enriched["_extracted_at"] = extracted_at
-        enriched["_run_id"] = run_id
-        enriched["_source_entity"] = entity
-        enriched["_load_type"] = load_type
-        watermark_value = row.get(watermark_field) if watermark_field else None
-        enriched["_watermark_value"] = str(watermark_value) if watermark_value is not None else None
-        enriched_rows.append(enriched)
+    enriched_rows = enrich_rows(
+        normalize_rows(protected_rows),
+        entity=entity,
+        run_id=run_id,
+        load_type=load_type,
+        watermark_field=watermark_field,
+        extracted_at=extracted_at,
+    )
 
     with tempfile.TemporaryDirectory() as tmpdir:
         local_path = Path(tmpdir) / f"{entity}.parquet"
         if arrow_schema is not None:
             # Every file of an entity carries the same declared schema, so an
             # all-null column or an empty batch never changes the type that
-            # readers see across files.
+            # readers see across files. Same table builder and writer call as
+            # the Windows push agent (app.services.bronze_parquet).
             import pyarrow as pa
-            import pyarrow.parquet as pq
 
-            table = pa.Table.from_pylist(_coerce_for_schema(enriched_rows, arrow_schema), schema=arrow_schema)
-            pq.write_table(table, local_path, compression="snappy")
+            table = pa.Table.from_pylist(coerce_for_schema(enriched_rows, arrow_schema), schema=arrow_schema)
+            write_bronze_file(table, local_path)
         else:
             if enriched_rows:
                 df = _fix_mixed_type_columns(pd.DataFrame(enriched_rows))
@@ -138,11 +108,7 @@ def write_parquet_and_upload(
                 df = pd.DataFrame(columns=_empty_schema_columns(expected_columns))
             df.to_parquet(local_path, index=False, engine="pyarrow", compression="snappy")
 
-        scope = scoped_prefix(security_context)
-        object_name = (
-            f"raw/sap_b1/{entity}/{scope}"
-            f"load_date={load_date}/batch_id={run_id}/{entity}.parquet"
-        )
+        object_name = bronze_object_name(entity, scoped_prefix(security_context), load_date, run_id)
         upload_file_to_minio(local_path=str(local_path), object_name=object_name)
 
     return f"s3://lakehouse/{object_name}"

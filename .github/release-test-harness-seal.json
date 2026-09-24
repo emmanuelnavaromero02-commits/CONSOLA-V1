@@ -839,7 +839,7 @@
     },
     {
       "path": "cartridges/sap_b1/app/core/b1_source.py",
-      "sha256": "56c3abefca56b20edfe79394159b2ae08ff857841ac780974bd23b65d7c049ae"
+      "sha256": "f85371d41d7ce505663e8d2fbd098de4fb23a43f315630c891ea48e67ad8b1ef"
     },
     {
       "path": "cartridges/sap_b1/app/core/config.py",
@@ -906,6 +906,14 @@
       "sha256": "17858444f788efb4000320402ccaefe6c2ae0962da85560743fa0581b1566433"
     },
     {
+      "path": "cartridges/sap_b1/app/services/b1_reader.py",
+      "sha256": "594467a53f1450661ea409c85b77c133337edb11c211eb6aaffee2f87d0bf562"
+    },
+    {
+      "path": "cartridges/sap_b1/app/services/bronze_parquet.py",
+      "sha256": "cedeeec0c3dbc0aa0dab692099a8227349f594e2b3c4a16f74dbea236bef51d5"
+    },
+    {
       "path": "cartridges/sap_b1/app/services/catalog_service.py",
       "sha256": "72528e45b65971941bbe1e58608454899077d049420438feaace250a319d9c2c"
     },
@@ -915,11 +923,15 @@
     },
     {
       "path": "cartridges/sap_b1/app/services/extraction_service.py",
-      "sha256": "118365e525d8221f60fd39429a88a7ce813c4367321a54753acb52625c297320"
+      "sha256": "125d00b1e808a31452bd56aba97ad2b7be3e07f830071fa8f42d45498d8fa030"
     },
     {
       "path": "cartridges/sap_b1/app/services/intercompany.py",
-      "sha256": "b80a0339bcd9724375d94b3ce5ed9e8ee4104234f62d5407c92483cfe1399279"
+      "sha256": "1e9b87270a3dcf111373c063821d786e038dfb67efa77533b350bb802343cb52"
+    },
+    {
+      "path": "cartridges/sap_b1/app/services/intercompany_mapping.py",
+      "sha256": "99563951b31068453e8708cb10767a5c225db1eda1ab1cc493f744bd62166217"
     },
     {
       "path": "cartridges/sap_b1/app/services/kb_service.py",
@@ -927,7 +939,7 @@
     },
     {
       "path": "cartridges/sap_b1/app/services/parquet_service.py",
-      "sha256": "814580257c6946dacdf0993b27a813c69fc3faf7694fa6ec81abd98f307618f2"
+      "sha256": "6b5ecfb087367b535cf133a9f57185eebadfcec11ef46adbe60f38094bc9c520"
     },
     {
       "path": "cartridges/sap_b1/app/services/preflight.py",
@@ -948,6 +960,10 @@
     {
       "path": "cartridges/sap_b1/conftest.py",
       "sha256": "aa462ea635148d89cd7b3835a4c071a1ec58a0aded85269be59ec00cc172ee34"
+    },
+    {
+      "path": "cartridges/sap_b1/connect/windows-agent/agent.py",
+      "sha256": "4a265dfa7edb42589a6e09354a90477109ad45350da838cc17c5ec09080e601b"
     },
     {
       "path": "cartridges/sap_b1/dags/sap_b1_extract.py",
@@ -971,7 +987,7 @@
     },
     {
       "path": "cartridges/sap_b1/tests/test_connect_kit.py",
-      "sha256": "37f9d51c684b954707a3d48eee72a2dfa63f28261bcf54a0eba8b6814ff277fa"
+      "sha256": "b8f072b5b3197f040893142c0f7d97fbc41aac6d72fd730c5eb6dabc37c84d25"
     },
     {
       "path": "cartridges/sap_b1/tests/test_extraction_against_fake.py",
@@ -988,6 +1004,10 @@
     {
       "path": "cartridges/sap_b1/tests/test_silver_gold_against_fake.py",
       "sha256": "72aae80259b303d4b5f0664723b15b07c096c9c6d343f3f760449a2dc166881f"
+    },
+    {
+      "path": "cartridges/sap_b1/tests/test_windows_agent.py",
+      "sha256": "276dbbeb63cf75e5f5b15ee0ecb7c7c1198b4a793cabb9a3fec31d3767995cb5"
     },
     {
       "path": "cartridges/sap_b1/tools/__init__.py",

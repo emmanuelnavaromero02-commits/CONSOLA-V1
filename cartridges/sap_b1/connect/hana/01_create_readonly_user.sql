@@ -47,11 +47,12 @@ GRANT SELECT ON SCHEMA "<COMPANY_DB_3>" TO <OMEGA_B1_READER>;
 -- GRANT SELECT ON SCHEMA "SBOCOMMON" TO <OMEGA_B1_READER>;
 
 -- Alternativa más estricta, a criterio de su TI: en lugar de SELECT sobre el
--- esquema completo, SELECT tabla por tabla. Las 43 tablas que lee la
+-- esquema completo, SELECT tabla por tabla. Las 45 tablas que lee la
 -- plataforma son:
 --   CINF OADM OCRN ORTT OACT OFPR OPRC OCRG OSLP OWHS OITB OITW OBTN OBTQ OIBT
 --   OCRD OITM OITT ITT1 OINV INV1 ORIN RIN1 ODLN DLN1 ORDN RDN1 ORDR RDR1
 --   OPCH PCH1 ORPC RPC1 OPDN PDN1 OPOR POR1 OJDT JDT1 OWOR WOR1 OINM IBT1
+--   OWTR WTR1
 -- Ejemplo de una línea (repetir por tabla y por esquema):
 --   GRANT SELECT ON "<COMPANY_DB_1>"."OINV" TO <OMEGA_B1_READER>;
 -- Con esta variante, cada tabla nueva en el catálogo de la plataforma requiere

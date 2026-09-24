@@ -154,7 +154,7 @@ el piloto, para que no queden como deriva.
   en ese puerto y el cortafuegos de Windows lo limita al origen del túnel.
   Nada más es alcanzable, y su lado puede auditarlo (`netsh interface
   portproxy show v4tov4`, registro del cortafuegos) y cortarlo.
-* **¿Qué datos salen?** Consultas SQL de solo lectura sobre 43 tablas de los
+* **¿Qué datos salen?** Consultas SQL de solo lectura sobre 45 tablas de los
   tres esquemas acordados, cifradas dos veces (TLS de HANA dentro del túnel
   WireGuard). El detalle está en `cartridges/sap_b1/README.md`.
 * **¿Y si la plataforma se cae?** El túnel se queda esperando; no hay
