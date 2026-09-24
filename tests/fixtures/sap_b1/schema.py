@@ -235,6 +235,7 @@ TABLES: Dict[str, List[Column]] = {
         ("Quantity", _NUM + " NOT NULL"),
     ],
     "IBT1": [
+        ("LogEntry", "INTEGER NOT NULL"),  # validate in HANA: IBT1's identity column
         ("ItemCode", "VARCHAR(50) NOT NULL"),
         ("BatchNum", "VARCHAR(36) NOT NULL"),
         ("WhsCode", "VARCHAR(8) NOT NULL"),
@@ -293,10 +294,13 @@ TABLES: Dict[str, List[Column]] = {
         ("wareHouse", "VARCHAR(8)"),  # sic: B1's casing on WOR1
         ("ItemType", "INTEGER"),
     ],
-    # In B1 >= 8.8 OINM is a view over OIVL/IVL1; TransNum is the safe
-    # watermark. ApplObj/AppObjAbs link a movement to its production order.
+    # In B1 >= 8.8 OINM is a view over OIVL/IVL1. One stock transaction (one
+    # document) carries ONE TransNum and one row per line, numbered by
+    # TransSeq: TransNum is the watermark, (TransNum, TransSeq) the key.
+    # ApplObj/AppObjAbs link a movement to its production order.
     "OINM": [
         ("TransNum", "INTEGER NOT NULL"),
+        ("TransSeq", "INTEGER NOT NULL"),
         ("DocDate", _TS + " NOT NULL"),
         ("ItemCode", "VARCHAR(50) NOT NULL"),
         ("Warehouse", "VARCHAR(8) NOT NULL"),
@@ -375,11 +379,12 @@ PRIMARY_KEYS: Dict[str, Tuple[str, ...]] = {
     "OBTN": ("AbsEntry",),
     "OBTQ": ("ItemCode", "SysNumber", "WhsCode"),
     "OIBT": ("ItemCode", "BatchNum", "WhsCode"),
+    "IBT1": ("LogEntry",),
     "OITT": ("Code",),
     "ITT1": ("Father", "ChildNum"),
     "OWOR": ("DocEntry",),
     "WOR1": ("DocEntry", "LineNum"),
-    "OINM": ("TransNum",),
+    "OINM": ("TransNum", "TransSeq"),
     "OJDT": ("TransId",),
     "JDT1": ("TransId", "Line_ID"),
 }

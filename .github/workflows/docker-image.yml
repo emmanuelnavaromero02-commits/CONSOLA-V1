@@ -208,6 +208,7 @@ jobs:
           OMEGA_CARTRIDGE_SAP_HCM_PASSWORD: dummy_cartridge_sap_hcm_password_for_ci_only
           OMEGA_CARTRIDGE_SAP_S4_PASSWORD: dummy_cartridge_sap_s4_password_for_ci_only
           OMEGA_CARTRIDGE_SAP_SF_PASSWORD: dummy_cartridge_sap_sf_password_for_ci_only
+          OMEGA_CARTRIDGE_SAP_B1_PASSWORD: dummy_cartridge_sap_b1_password_for_ci_only
           OMEGA_AIRFLOW_DAG_PASSWORD: dummy_airflow_dag_password_for_ci_only
           OMEGA_AIRFLOW_META_PASSWORD: dummy_airflow_meta_password_for_ci_only
           OMEGA_SUPERSET_META_PASSWORD: dummy_superset_meta_password_for_ci_only
@@ -235,6 +236,7 @@ jobs:
           INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE: dummy_sap_hcm_to_console_key_for_ci_only_32chars_xxxxxxxx
           INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE: dummy_sap_s4hana_to_console_key_for_ci_only_32chars_xxxx
           INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE: dummy_sap_sf_to_console_key_for_ci_only_32chars_xxxxx
+          INTERNAL_API_KEY_SAP_B1_TO_CONSOLE: dummy_sap_b1_to_console_key_for_ci_only_32chars_xxxxxxxxx
         run: docker compose --env-file .env.example config --quiet
 
   no-compose-validation-needed:

@@ -21,6 +21,10 @@
             "declarations_sha256": "4aa2a9643acb102ae03b911897e25e4c775c33e4e3059373f3cdef8a383521a0"
           },
           {
+            "path": "cartridges/sap_b1/tests/conftest.py",
+            "declarations_sha256": "38bb1df2502f8299f17941868f284db95f2bf594c2172f1ce4db762ef31bd0ea"
+          },
+          {
             "path": "cartridges/sap_hcm/tests/test_watermark_scope_isolation_sap_hcm.py",
             "declarations_sha256": "f5ec1affd7e8f70c4caefb2f96894a2b30bc1586cf0fee9be8d8a76197f249ea"
           },
@@ -118,7 +122,7 @@
           },
           {
             "path": "tests/test_sap_b1_fake_schema.py",
-            "declarations_sha256": "5029aad0f6af60b0130816970e5f42c3fab53ab8c66624b6d212698917e11f28"
+            "declarations_sha256": "ac8ba93266eca429442e9383500e02df49389e39cad927dab8ef949091ef46a2"
           },
           {
             "path": "tests/test_sap_entities_seeded.py",
@@ -209,7 +213,7 @@
             "declarations_sha256": "fe98517b8fbaab00c4a1a5cbb56109ea74a148b947f3b8e79f6e6d5110e47953"
           }
         ],
-        "inventory_sha256": "28cdf5968c45b785fe255cd542f22b31075788f71bf36117de3feee829d4a0cc"
+        "inventory_sha256": "441b3bd8367d10740745c3248681f5aef0a4176734de19df0324acc496d6a6f2"
       }
     },
     {

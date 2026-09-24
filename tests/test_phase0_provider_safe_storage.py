@@ -655,6 +655,7 @@ def test_all_role_aware_cartridge_images_preinstall_aws_extension():
         "sap_hcm",
         "sap_s4hana",
         "sap_successfactors",
+        "sap_b1",
     ):
         dockerfile = (ROOT / "cartridges" / cartridge / "Dockerfile").read_text(
             encoding="utf-8"

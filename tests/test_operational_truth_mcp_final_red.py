@@ -93,6 +93,7 @@ def test_cartridge_mcp_duckdb_runtime_is_pinned_and_load_only() -> None:
         "sap_hcm",
         "sap_s4hana",
         "sap_successfactors",
+        "sap_b1",
     )
     for cartridge in cartridges:
         root = ROOT / "cartridges" / cartridge

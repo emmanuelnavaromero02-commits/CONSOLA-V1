@@ -142,7 +142,7 @@ def test_local_compose_no_postgres_superuser_in_runtime_services():
     services = compose.get("services", {}) or {}
 
     runtime_services = (
-        "sap-hcm", "sap-s4hana", "sap-successfactors",
+        "sap-hcm", "sap-s4hana", "sap-successfactors", "sap-b1",
         "superset", "airflow", "airflow-scheduler",
     )
     for name in runtime_services:
@@ -169,6 +169,7 @@ def test_local_compose_sap_cartridges_use_dedicated_roles():
         "sap-hcm": "omega_cartridge_sap_hcm",
         "sap-s4hana": "omega_cartridge_sap_s4",
         "sap-successfactors": "omega_cartridge_sap_sf",
+        "sap-b1": "omega_cartridge_sap_b1",
     }
     for service_name, role in expected.items():
         env = services[service_name]["environment"]

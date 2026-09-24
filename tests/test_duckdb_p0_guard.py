@@ -18,6 +18,7 @@ def test_duckdb_runtime_does_not_install_httpfs_dynamically():
                 "sap_hcm",
                 "sap_s4hana",
                 "sap_successfactors",
+                "sap_b1",
             )
         ),
     ]

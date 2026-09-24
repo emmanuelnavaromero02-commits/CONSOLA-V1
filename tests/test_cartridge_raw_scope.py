@@ -12,6 +12,7 @@ from tests.conftest import load_cartridge_app
         ("sap_hcm", "EmployeeMaster"),
         ("sap_s4hana", "BusinessPartner"),
         ("sap_successfactors", "User"),
+        ("sap_b1", "OINV"),
         ("hubspot", "deals"),
         ("salesforce", "Opportunity"),
     ],

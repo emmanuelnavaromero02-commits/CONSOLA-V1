@@ -19,7 +19,7 @@ services:
       # Sprint v1.38 (audit B5+B6): added six more roles for SAP
       # cartridges, Airflow and Superset (see
       # infra/init/36_cartridge_and_meta_roles.sql).
-      PGOPTIONS: "-c app.omega_console_password=${OMEGA_CONSOLE_PASSWORD:-} -c app.omega_outcome_binder_password=${OMEGA_OUTCOME_BINDER_PASSWORD:-} -c app.omega_refinement_password=${OMEGA_REFINEMENT_PASSWORD:-} -c app.omega_vault_password=${OMEGA_VAULT_PASSWORD:-} -c app.omega_workspace_password=${OMEGA_WORKSPACE_PASSWORD:-} -c app.omega_mcp_infra_password=${OMEGA_MCP_INFRA_PASSWORD:-} -c app.omega_cartridge_sap_hcm_password=${OMEGA_CARTRIDGE_SAP_HCM_PASSWORD:-} -c app.omega_cartridge_sap_s4_password=${OMEGA_CARTRIDGE_SAP_S4_PASSWORD:-} -c app.omega_cartridge_sap_sf_password=${OMEGA_CARTRIDGE_SAP_SF_PASSWORD:-} -c app.omega_airflow_dag_password=${OMEGA_AIRFLOW_DAG_PASSWORD:-} -c app.omega_airflow_meta_password=${OMEGA_AIRFLOW_META_PASSWORD:-} -c app.omega_superset_meta_password=${OMEGA_SUPERSET_META_PASSWORD:-} -c app.omega_cartridge_replicon_password=${OMEGA_CARTRIDGE_REPLICON_PASSWORD:-} -c app.omega_cartridge_salesforce_password=${OMEGA_CARTRIDGE_SALESFORCE_PASSWORD:-} -c app.omega_cartridge_hubspot_password=${OMEGA_CARTRIDGE_HUBSPOT_PASSWORD:-} -c app.omega_cartridge_banxico_password=${OMEGA_CARTRIDGE_BANXICO_PASSWORD:-} -c app.omega_cartridge_inegi_password=${OMEGA_CARTRIDGE_INEGI_PASSWORD:-} -c app.omega_cartridge_sec_edgar_password=${OMEGA_CARTRIDGE_SEC_EDGAR_PASSWORD:-}"
+      PGOPTIONS: "-c app.omega_console_password=${OMEGA_CONSOLE_PASSWORD:-} -c app.omega_outcome_binder_password=${OMEGA_OUTCOME_BINDER_PASSWORD:-} -c app.omega_refinement_password=${OMEGA_REFINEMENT_PASSWORD:-} -c app.omega_vault_password=${OMEGA_VAULT_PASSWORD:-} -c app.omega_workspace_password=${OMEGA_WORKSPACE_PASSWORD:-} -c app.omega_mcp_infra_password=${OMEGA_MCP_INFRA_PASSWORD:-} -c app.omega_cartridge_sap_hcm_password=${OMEGA_CARTRIDGE_SAP_HCM_PASSWORD:-} -c app.omega_cartridge_sap_s4_password=${OMEGA_CARTRIDGE_SAP_S4_PASSWORD:-} -c app.omega_cartridge_sap_sf_password=${OMEGA_CARTRIDGE_SAP_SF_PASSWORD:-} -c app.omega_cartridge_sap_b1_password=${OMEGA_CARTRIDGE_SAP_B1_PASSWORD:-} -c app.omega_airflow_dag_password=${OMEGA_AIRFLOW_DAG_PASSWORD:-} -c app.omega_airflow_meta_password=${OMEGA_AIRFLOW_META_PASSWORD:-} -c app.omega_superset_meta_password=${OMEGA_SUPERSET_META_PASSWORD:-} -c app.omega_cartridge_replicon_password=${OMEGA_CARTRIDGE_REPLICON_PASSWORD:-} -c app.omega_cartridge_salesforce_password=${OMEGA_CARTRIDGE_SALESFORCE_PASSWORD:-} -c app.omega_cartridge_hubspot_password=${OMEGA_CARTRIDGE_HUBSPOT_PASSWORD:-} -c app.omega_cartridge_banxico_password=${OMEGA_CARTRIDGE_BANXICO_PASSWORD:-} -c app.omega_cartridge_inegi_password=${OMEGA_CARTRIDGE_INEGI_PASSWORD:-} -c app.omega_cartridge_sec_edgar_password=${OMEGA_CARTRIDGE_SEC_EDGAR_PASSWORD:-}"
     ports:
       - "15432:5432"
     volumes:
@@ -931,6 +931,59 @@ services:
       retries: 5
       start_period: 30s
 
+  sap-b1:
+    security_opt: ["no-new-privileges:true"]
+    profiles: ["sap"]
+    build:
+      context: ../cartridges/sap_b1
+      dockerfile: Dockerfile
+    container_name: mode_sap_b1
+    environment:
+      # v1.43.2 (Codex P1-2): see console block above.
+      APP_ENV: ${APP_ENV:-production}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
+      SECURITY_CONTEXT_SIGNING_KEY: ${SECURITY_CONTEXT_SIGNING_KEY:?SECURITY_CONTEXT_SIGNING_KEY is required}
+      INTERNAL_API_KEY_SAP_B1_TO_CONSOLE: ${INTERNAL_API_KEY_SAP_B1_TO_CONSOLE:?INTERNAL_API_KEY_SAP_B1_TO_CONSOLE is required}
+      INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE: ${INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE:-}
+      INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE: ${INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE:-}
+      INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE: ${INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE:-}
+      INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT: ${INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT:-}
+      # Least-privilege DB role, same posture as the other SAP cartridges;
+      # created by infra/init/99zzzzl_sap_b1_cartridge_role.sql.
+      DATABASE_URL:     "postgresql+psycopg2://omega_cartridge_sap_b1:${OMEGA_CARTRIDGE_SAP_B1_PASSWORD:?OMEGA_CARTRIDGE_SAP_B1_PASSWORD is required}@postgres:5432/modecissions"
+      MINIO_ENDPOINT:   minio:9000
+      MINIO_ACCESS_KEY: minio
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+      MINIO_BUCKET:     lakehouse
+      MINIO_SECURE:     "false"
+      REFINEMENT_URL:   http://refinement:8500
+      # Business One database (HANA in production, the Postgres test bed
+      # locally). Company schema names are "alias=SCHEMA,..." and never
+      # live in the repository.
+      SAP_B1_DIALECT:    ${SAP_B1_DIALECT:-hana}
+      SAP_B1_HOST:       ${SAP_B1_HOST:-}
+      SAP_B1_PORT:       ${SAP_B1_PORT:-}
+      SAP_B1_USER:       ${SAP_B1_USER:-}
+      SAP_B1_PASSWORD:   ${SAP_B1_PASSWORD:-}
+      SAP_B1_DATABASE:   ${SAP_B1_DATABASE:-}
+      SAP_B1_COMPANIES:  ${SAP_B1_COMPANIES:-}
+      SAP_B1_ENCRYPT:    ${SAP_B1_ENCRYPT:-true}
+      FIELD_ENCRYPTION_KEY:   ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required for SAP cartridges}
+    ports:
+      - "8206:8206"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8206/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
   # ── MCP Infrastructure (incluye RAG) ─────────────────────────────────────────
 
   mcp-infra:
@@ -1204,6 +1257,7 @@ services:
       - ../cartridges/sap_successfactors/dags:/opt/airflow/dags/sap_successfactors:ro
       - ../cartridges/sap_hcm/dags:/opt/airflow/dags/sap_hcm:ro
       - ../cartridges/sap_s4hana/dags:/opt/airflow/dags/sap_s4hana:ro
+      - ../cartridges/sap_b1/dags:/opt/airflow/dags/sap_b1:ro
       # Sprint v1.40: Replicon DAGs ship inside the cartridge.
       - ../cartridges/replicon/dags:/opt/airflow/dags/replicon:ro
       # HubSpot CRM cartridge DAGs ship inside the cartridge (same pattern).
@@ -1295,6 +1349,7 @@ services:
       # local dev continues working unchanged.
       SAP_HCM_URL:            "${SAP_HCM_URL:-http://sap-hcm:8202}"
       SAP_S4HANA_URL:         "${SAP_S4HANA_URL:-http://sap-s4hana:8204}"
+      SAP_B1_URL:             "${SAP_B1_URL:-http://sap-b1:8206}"
       # v1.43.1 R1 Security-F3: mirror docker-compose.aws.yml — even
       # though the Replicon DAG posts back through the console today,
       # keep the var here so a future cartridge-direct DAG works
@@ -1322,6 +1377,7 @@ services:
       - ../cartridges/sap_successfactors/dags:/opt/airflow/dags/sap_successfactors:ro
       - ../cartridges/sap_hcm/dags:/opt/airflow/dags/sap_hcm:ro
       - ../cartridges/sap_s4hana/dags:/opt/airflow/dags/sap_s4hana:ro
+      - ../cartridges/sap_b1/dags:/opt/airflow/dags/sap_b1:ro
       # Sprint v1.40: Replicon DAGs ship inside the cartridge.
       - ../cartridges/replicon/dags:/opt/airflow/dags/replicon:ro
       # HubSpot CRM cartridge DAGs ship inside the cartridge (same pattern).
@@ -1410,6 +1466,7 @@ services:
       # imports them.
       SAP_HCM_URL:            "${SAP_HCM_URL:-http://sap-hcm:8202}"
       SAP_S4HANA_URL:         "${SAP_S4HANA_URL:-http://sap-s4hana:8204}"
+      SAP_B1_URL:             "${SAP_B1_URL:-http://sap-b1:8206}"
       # v1.43.1 R1 Security-F3: mirror docker-compose.aws.yml.
       REPLICON_URL:           "${REPLICON_URL:-http://replicon:8201}"
       HUBSPOT_URL:            "${HUBSPOT_URL:-http://hubspot:8210}"
@@ -1431,6 +1488,7 @@ services:
       - ../cartridges/sap_successfactors/dags:/opt/airflow/dags/sap_successfactors:ro
       - ../cartridges/sap_hcm/dags:/opt/airflow/dags/sap_hcm:ro
       - ../cartridges/sap_s4hana/dags:/opt/airflow/dags/sap_s4hana:ro
+      - ../cartridges/sap_b1/dags:/opt/airflow/dags/sap_b1:ro
       # Sprint v1.40: Replicon DAGs ship inside the cartridge.
       - ../cartridges/replicon/dags:/opt/airflow/dags/replicon:ro
       # HubSpot CRM cartridge DAGs ship inside the cartridge (same pattern).

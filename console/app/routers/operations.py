@@ -45,6 +45,7 @@ _OPERATIONAL_CARTRIDGES = {
     "sap_hcm",
     "sap_s4hana",
     "sap_successfactors",
+    "sap_b1",
 }
 _VAULT_URL = os.environ.get("VAULT_URL", "http://vault:8300").rstrip("/")
 

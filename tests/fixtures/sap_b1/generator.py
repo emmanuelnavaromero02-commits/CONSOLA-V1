@@ -205,7 +205,10 @@ class _Company:
         self.rows: Dict[str, List[tuple]] = {t: [] for t in b1.TABLES}
         self.next_entry: Dict[str, int] = {}
         self.next_trans = 1  # OJDT.TransId
-        self.next_inm = 1  # OINM.TransNum
+        self.next_inm = 1  # OINM.TransNum: one per stock transaction (document)
+        self.inm_group: Optional[Tuple[int, int]] = None  # (TransType, CreatedBy) of the open transaction
+        self.inm_seq = 0
+        self.next_ibt = 1  # IBT1.LogEntry
         self.next_batch_abs = 1
         self.next_sysnumber: Dict[str, int] = {}
         self.stock: Dict[Tuple[str, str], Decimal] = {}
@@ -254,15 +257,23 @@ class _Company:
                    trans_type: int, created_by: int, line: int, production_order: Optional[int] = None) -> None:
         key = (item, whs)
         self.stock[key] = self.stock.get(key, ZERO) + qty_in - qty_out
+        # Every line of one document shares the document's TransNum, as B1 does.
+        group = (trans_type, created_by)
+        if group != self.inm_group:
+            if self.inm_group is not None:
+                self.next_inm += 1
+            self.inm_group = group
+            self.inm_seq = 0
+        else:
+            self.inm_seq += 1
         self.add(
-            "OINM", TransNum=self.next_inm, DocDate=ts(d), ItemCode=item, Warehouse=whs,
+            "OINM", TransNum=self.next_inm, TransSeq=self.inm_seq, DocDate=ts(d), ItemCode=item, Warehouse=whs,
             InQty=q6(qty_in), OutQty=q6(qty_out), Price=q6(price), TransType=trans_type,
             CreatedBy=created_by, BASE_REF=str(created_by), DocLineNum=line,
             Currency=self.p.local_currency, TransValue=q6((qty_in - qty_out) * price),
             CalcPrice=q6(price), ApplObj=APPL_OBJ_PRODUCTION_ORDER if production_order else None,
             AppObjAbs=production_order, CreateDate=ts(d),
         )
-        self.next_inm += 1
 
     def receive_batch(self, d: date, item: str, whs: str, qty: Decimal, dist: str, mnf: date, exp: date,
                       base_type: int, base_entry: int, base_line: int) -> None:
@@ -276,8 +287,9 @@ class _Company:
         self.add("OBTN", AbsEntry=self.next_batch_abs, ItemCode=item, SysNumber=sysno, DistNumber=dist,
                  MnfDate=ts(mnf), ExpDate=ts(exp), InDate=ts(d), Status=0)
         self.next_batch_abs += 1
-        self.add("IBT1", ItemCode=item, BatchNum=dist, WhsCode=whs, BaseType=base_type, BaseEntry=base_entry,
-                 BaseLinNum=base_line, Quantity=q6(qty), Direction=0, DocDate=ts(d))
+        self.add("IBT1", LogEntry=self.next_ibt, ItemCode=item, BatchNum=dist, WhsCode=whs, BaseType=base_type,
+                 BaseEntry=base_entry, BaseLinNum=base_line, Quantity=q6(qty), Direction=0, DocDate=ts(d))
+        self.next_ibt += 1
 
     def consume_batches(self, d: date, item: str, whs: str, qty: Decimal, base_type: int, base_entry: int, base_line: int) -> None:
         remaining = qty
@@ -289,8 +301,9 @@ class _Company:
             take = min(batch[2], remaining)
             batch[2] -= take
             remaining -= take
-            self.add("IBT1", ItemCode=item, BatchNum=batch[1], WhsCode=whs, BaseType=base_type,
+            self.add("IBT1", LogEntry=self.next_ibt, ItemCode=item, BatchNum=batch[1], WhsCode=whs, BaseType=base_type,
                      BaseEntry=base_entry, BaseLinNum=base_line, Quantity=q6(take), Direction=1, DocDate=ts(d))
+            self.next_ibt += 1
         if remaining > ZERO:
             raise RuntimeError(f"{self.p.alias}: batch stock exhausted for {item}@{whs}")
 

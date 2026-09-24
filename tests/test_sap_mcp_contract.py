@@ -36,6 +36,7 @@ CARTRIDGES = (
     "sap_hcm",
     "sap_s4hana",
     "sap_successfactors",
+    "sap_b1",
     "replicon",
     "hubspot",
 )
@@ -89,7 +90,7 @@ def test_all_cartridges_pin_pydantic_compatible_with_fastmcp_3():
     transitively. Don't force a re-pin there — only assert the SAP
     floor.
     """
-    for cart in ("sap_hcm", "sap_s4hana", "sap_successfactors"):
+    for cart in ("sap_hcm", "sap_s4hana", "sap_successfactors", "sap_b1"):
         src = _reqs(cart)
         assert re.search(
             r"^pydantic>=2\.11\.\d+,<3\.0\s*$", src, re.MULTILINE
@@ -99,7 +100,7 @@ def test_all_cartridges_pin_pydantic_compatible_with_fastmcp_3():
 def test_all_cartridges_pin_uvicorn_compatible_with_fastmcp_3_server():
     """fastmcp 3.x's ``[server]`` extra requires uvicorn >= 0.35.
     The 0.30.x pin from v1.43.2 makes pip refuse to resolve."""
-    for cart in ("sap_hcm", "sap_s4hana", "sap_successfactors"):
+    for cart in ("sap_hcm", "sap_s4hana", "sap_successfactors", "sap_b1"):
         src = _reqs(cart)
         assert re.search(
             r"^uvicorn\[standard\]>=0\.3[5-9]\.\d+", src, re.MULTILINE
@@ -113,7 +114,7 @@ def test_sap_cartridges_no_longer_pin_vulnerable_requests():
     of the "cartridge sprint" and used --ignore-vuln to suppress
     the two CVEs (GHSA-9hjg-9r4m-mvj7, GHSA-gc5v-m9x4-r6x2).
     The sprint is this hotfix; the pins move."""
-    for cart in ("sap_hcm", "sap_s4hana", "sap_successfactors"):
+    for cart in ("sap_hcm", "sap_s4hana", "sap_successfactors", "sap_b1"):
         src = _reqs(cart)
         assert "requests==2.32.3" not in src, (
             f"{cart} still pins vulnerable requests 2.32.3"
@@ -128,7 +129,7 @@ def test_sap_cartridges_no_longer_pin_vulnerable_requests():
 def test_sap_cartridges_no_longer_pin_vulnerable_python_dotenv():
     """Same story as requests: v1.43.2 --ignore-vuln'd
     GHSA-mf9w-mj56-hr94 against python-dotenv 1.1.0. 1.2.2 fixes it."""
-    for cart in ("sap_hcm", "sap_s4hana", "sap_successfactors"):
+    for cart in ("sap_hcm", "sap_s4hana", "sap_successfactors", "sap_b1"):
         src = _reqs(cart)
         assert "python-dotenv==1.1.0" not in src
         assert re.search(

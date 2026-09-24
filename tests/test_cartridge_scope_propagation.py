@@ -11,9 +11,10 @@ SCOPED_CARTRIDGES = (
     "sap_hcm",
     "sap_s4hana",
     "sap_successfactors",
+    "sap_b1",
     "salesforce",
 )
-SAP_CARTRIDGES = ("sap_hcm", "sap_s4hana", "sap_successfactors")
+SAP_CARTRIDGES = ("sap_hcm", "sap_s4hana", "sap_successfactors", "sap_b1")
 
 
 def _read(path: str) -> str:
@@ -262,6 +263,7 @@ def test_direct_scoped_cartridge_mcp_invokes_load_forwarded_context():
         "sap_hcm",
         "sap_s4hana",
         "sap_successfactors",
+        "sap_b1",
         "salesforce",
     ):
         source = _read(f"cartridges/{cartridge}/app/main.py")

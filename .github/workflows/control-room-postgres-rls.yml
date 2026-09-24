@@ -288,6 +288,7 @@ jobs:
             pytest -ra --junitxml=/tmp/control-room-postgres-rls.xml \
             tests/test_analytic_app_dataset_grants.py \
             tests/test_sap_b1_fake_schema.py \
+            cartridges/sap_b1/tests/test_extraction_against_fake.py \
             tests/test_operational_rls_console_refinement.py \
             tests/test_operational_rls_policy_guard.py \
             tests/test_control_room_live_postgres*.py \

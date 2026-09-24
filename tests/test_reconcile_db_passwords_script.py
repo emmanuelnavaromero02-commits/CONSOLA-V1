@@ -20,6 +20,7 @@ def test_reconcile_db_passwords_script_rotates_all_service_roles():
         "omega_cartridge_sap_hcm",
         "omega_cartridge_sap_s4",
         "omega_cartridge_sap_sf",
+        "omega_cartridge_sap_b1",
         "omega_airflow_dag",
         "omega_airflow_meta",
         "omega_superset_meta",

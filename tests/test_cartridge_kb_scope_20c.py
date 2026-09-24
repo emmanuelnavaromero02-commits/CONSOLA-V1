@@ -16,6 +16,7 @@ CARTRIDGE_SCOPE_20C = (
     "sap_hcm",
     "sap_s4hana",
     "sap_successfactors",
+    "sap_b1",
 )
 OBSERVABILITY_TABLES = ("jobs", "run_logs", "extraction_runs", "kb_runs")
 

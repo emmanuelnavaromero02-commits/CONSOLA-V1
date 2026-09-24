@@ -32,7 +32,7 @@ from cryptography.fernet import Fernet
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CARTRIDGES_ROOT = REPO_ROOT / "cartridges"
 
-SAP_CARTRIDGES = ("sap_hcm", "sap_s4hana", "sap_successfactors")
+SAP_CARTRIDGES = ("sap_hcm", "sap_s4hana", "sap_successfactors", "sap_b1")
 
 
 def _purge_app_modules() -> None:

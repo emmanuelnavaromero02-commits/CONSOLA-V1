@@ -15,7 +15,7 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CARTRIDGES = ("sap_hcm", "sap_s4hana", "sap_successfactors", "replicon", "hubspot")
+CARTRIDGES = ("sap_hcm", "sap_s4hana", "sap_successfactors", "sap_b1", "replicon", "hubspot")
 
 
 def _config(cartridge: str, name: str) -> dict:

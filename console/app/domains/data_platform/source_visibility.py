@@ -21,6 +21,7 @@ OPERATIONAL_CARTRIDGES = {
     "sap_hcm",
     "sap_s4hana",
     "sap_successfactors",
+    "sap_b1",
 }
 
 TECHNICAL_SOURCE_PREFIXES = ("raw/", "silver/", "gold/", "uploads/", "cartridges/")

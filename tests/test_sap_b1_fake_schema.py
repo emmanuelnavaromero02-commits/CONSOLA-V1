@@ -211,16 +211,40 @@ def test_partner_lines_carry_the_card_code_as_shortname(dataset):
 
 
 def test_stock_never_goes_negative_in_date_order(dataset):
-    """Replaying OINM by (DocDate, TransNum) never dips below zero: no stock
+    """Replaying OINM by (DocDate, TransNum, TransSeq) never dips below zero: no stock
     as-of query can ever see a negative balance."""
     icols = b1.columns("OINM")
     for alias, tables in dataset.tables.items():
         balance = defaultdict(Decimal)
-        rows = sorted(tables["OINM"], key=lambda r: (r[icols.index("DocDate")], r[icols.index("TransNum")]))
+        rows = sorted(tables["OINM"], key=lambda r: (r[icols.index("DocDate")], r[icols.index("TransNum")], r[icols.index("TransSeq")]))
         for row in rows:
             key = (row[icols.index("ItemCode")], row[icols.index("Warehouse")])
             balance[key] += row[icols.index("InQty")] - row[icols.index("OutQty")]
             assert balance[key] >= 0, f"{alias}: {key} negative on {row[icols.index('DocDate')].date()}"
+
+
+def test_stock_transactions_share_a_transnum_per_document(dataset):
+    """B1 numbers one stock transaction per document: its lines share TransNum
+    and are told apart by TransSeq. A cartridge that pages on TransNum alone
+    would drop lines at every page cut; the fake has to make that visible."""
+    icols = b1.columns("OINM")
+    for alias, tables in dataset.tables.items():
+        rows = tables["OINM"]
+        keys = [(row[icols.index("TransNum")], row[icols.index("TransSeq")]) for row in rows]
+        assert len(keys) == len(set(keys)), f"{alias}: (TransNum, TransSeq) must be unique"
+        per_trans = defaultdict(list)
+        for row in rows:
+            per_trans[row[icols.index("TransNum")]].append(row)
+        multi = [t for t, group in per_trans.items() if len(group) > 1]
+        assert multi, f"{alias}: expected multi-line stock transactions"
+        for trans in multi:
+            group = per_trans[trans]
+            assert {(r[icols.index("TransType")], r[icols.index("CreatedBy")]) for r in group} .__len__() == 1
+            assert sorted(r[icols.index("TransSeq")] for r in group) == list(range(len(group)))
+    lcols = b1.columns("IBT1")
+    for alias, tables in dataset.tables.items():
+        entries = [row[lcols.index("LogEntry")] for row in tables["IBT1"]]
+        assert entries == sorted(entries) and len(entries) == len(set(entries)), f"{alias}: IBT1.LogEntry must be a growing identity"
 
 
 def test_intercompany_truth_is_recorded_on_both_sides_month_by_month(dataset):
@@ -242,7 +266,7 @@ def test_invariants_hold_for_other_seeds(seed):
     hcols = b1.columns("OINV")
     for alias, tables in ds.tables.items():
         balance = defaultdict(Decimal)
-        for row in sorted(tables["OINM"], key=lambda r: (r[icols.index("DocDate")], r[icols.index("TransNum")])):
+        for row in sorted(tables["OINM"], key=lambda r: (r[icols.index("DocDate")], r[icols.index("TransNum")], r[icols.index("TransSeq")])):
             key = (row[icols.index("ItemCode")], row[icols.index("Warehouse")])
             balance[key] += row[icols.index("InQty")] - row[icols.index("OutQty")]
             assert balance[key] >= 0, f"seed {seed} {alias}: negative stock for {key}"

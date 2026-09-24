@@ -35,6 +35,7 @@ ALLOWED_MCP_HOSTS = {
     "sap-hcm",
     "sap-s4hana",
     "sap-successfactors",
+    "sap-b1",
     "console",
     "refinement",
 }

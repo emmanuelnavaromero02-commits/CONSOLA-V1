@@ -16,6 +16,7 @@ CARTRIDGES = (
     "sap_hcm",
     "sap_s4hana",
     "sap_successfactors",
+    "sap_b1",
 )
 
 

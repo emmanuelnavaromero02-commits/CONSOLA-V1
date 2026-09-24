@@ -14,6 +14,7 @@ CARTRIDGES = [
     "sap_hcm",
     "sap_s4hana",
     "sap_successfactors",
+    "sap_b1",
     "salesforce",
 ]
 
@@ -23,6 +24,7 @@ PREVIEW_SCOPE_CASES = [
     ("sap_hcm", "EmployeeMaster"),
     ("sap_s4hana", "BusinessPartner"),
     ("sap_successfactors", "User"),
+    ("sap_b1", "OINV"),
     ("salesforce", "Opportunity"),
 ]
 

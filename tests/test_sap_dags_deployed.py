@@ -19,6 +19,8 @@ SAP_DAGS = {
         "sap_successfactors_extract.py",
         "sap_successfactors_extract_all.py",
     ),
+    # Local mounts only until the deploy PR adds the AWS mount.
+    "sap_b1": ("sap_b1_extract.py", "sap_b1_extract_all.py"),
 }
 
 
