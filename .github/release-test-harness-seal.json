@@ -3,7 +3,7 @@
   "files": [
     {
       "path": ".github/release-test-skip-policy.json",
-      "sha256": "c8625e6231e5565f6c08614d0da0f523c0db5bf4d32a43fcdcb82f8e6a24c403"
+      "sha256": "7f295f64161205aba8475983e798c5dfdefa5c6b3121b29b1e78af67447f2900"
     },
     {
       "path": ".github/workflows/release-runner-capacity.yml",
@@ -3530,6 +3530,22 @@
       "sha256": "bf0d0ac8e386c8fbf94202f428f75a24a3eaa4d610a1089521b8ba389d9e82e6"
     },
     {
+      "path": "tests/fixtures/sap_b1/__init__.py",
+      "sha256": "895bb14f399241621c1f682a85ee07eabdf85ef80298cd9b7cbdba17bf81f7a9"
+    },
+    {
+      "path": "tests/fixtures/sap_b1/generator.py",
+      "sha256": "308103e3ba5b4f61044f6936adf7480d7954545a852304aa363ca01562ac806f"
+    },
+    {
+      "path": "tests/fixtures/sap_b1/loader.py",
+      "sha256": "e68a2046abfe856bcac9c583036388a9c8373f75671d6a83eb11aaf76d5f8ef2"
+    },
+    {
+      "path": "tests/fixtures/sap_b1/schema.py",
+      "sha256": "07bbab007b5724c8576ed3ee84a7fbaf927f8c0c607db7a1e5aa28265b32c6ab"
+    },
+    {
       "path": "tests/lakehouse/test_storage_contract.py",
       "sha256": "720b76d208702663942aa1bf1509ca37015dfdb8eab1c56db5bb0b70a8f12657"
     },
@@ -5296,6 +5312,10 @@
     {
       "path": "tests/test_sap_alignment.py",
       "sha256": "b9a6eaf5ee5ed95da8767dd61121f12d4eec996abf5b3d7f6f6300394450fe48"
+    },
+    {
+      "path": "tests/test_sap_b1_fake_schema.py",
+      "sha256": "4801ef17ccabae327d93438190d1e97ab9660bd6fd453b0ef0fa306b373d0d29"
     },
     {
       "path": "tests/test_sap_dag_imports.py",

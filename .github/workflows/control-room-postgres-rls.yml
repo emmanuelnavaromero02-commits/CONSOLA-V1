@@ -287,6 +287,7 @@ jobs:
           env -u GITHUB_ENV -u GITHUB_PATH \
             pytest -ra --junitxml=/tmp/control-room-postgres-rls.xml \
             tests/test_analytic_app_dataset_grants.py \
+            tests/test_sap_b1_fake_schema.py \
             tests/test_operational_rls_console_refinement.py \
             tests/test_operational_rls_policy_guard.py \
             tests/test_control_room_live_postgres*.py \
