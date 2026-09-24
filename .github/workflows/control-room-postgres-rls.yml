@@ -76,7 +76,7 @@ jobs:
           set -euo pipefail
           docker pull postgres:15
           docker image inspect postgres:15 >/dev/null
-          minio_tag="ghcr.io/emmanuelnavaromero02-commits/omega-minio:RELEASE.2024-12-18T13-15-44Z"
+          minio_tag="ghcr.io/emmanuelnavaromero02-commits/minio:RELEASE.2024-12-18T13-15-44Z"
           minio_digest="sha256:bc101c7c3ae7779dff4e39a33637c92fc2d2393899a71d562bf546fd5118eff8"
           minio_ref="${minio_tag}@${minio_digest}"
           docker pull "${minio_ref}"

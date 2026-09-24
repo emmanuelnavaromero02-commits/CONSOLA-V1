@@ -19,7 +19,7 @@ def test_control_room_smoke_reads_real_minio_twice_on_internal_network() -> None
     contract = workflow + script
     required = (
         "docker network create --internal",
-        "ghcr.io/emmanuelnavaromero02-commits/omega-minio:",
+        "ghcr.io/emmanuelnavaromero02-commits/minio:",
         "ci-bucket",
         "data.parquet",
         "run_kb_sql",
