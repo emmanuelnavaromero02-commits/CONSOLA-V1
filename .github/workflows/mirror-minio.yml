@@ -3,8 +3,12 @@ name: Mirror MinIO images
 # MinIO withdrew every community artifact on 2026-09-24 (dl.min.io: 410 Gone;
 # quay.io/minio: 401). This workflow rebuilds the exact releases the platform
 # pins from their archived source tags and publishes them to this
-# repository's GHCR namespace. Run it by hand; the resulting digests are what
-# the composes, scripts and contract tests pin.
+# repository's GHCR namespace as omega-minio and omega-mc. Run it by hand;
+# the resulting index digests are what the composes, scripts and contract
+# tests pin. It must run from this workflow (GITHUB_TOKEN): a package first
+# published that way is linked to the repository, so the CI jobs that pull
+# it read it with their own GITHUB_TOKEN. A package pushed with a personal
+# token is not linked and CI cannot read it.
 
 on:
   workflow_dispatch:
@@ -48,7 +52,7 @@ jobs:
           push: true
           provenance: false
           sbom: false
-          tags: ghcr.io/${{ github.repository_owner }}/minio:${{ env.MINIO_TAG }}
+          tags: ghcr.io/${{ github.repository_owner }}/omega-minio:${{ env.MINIO_TAG }}
 
       - name: Build and push mc
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
@@ -59,15 +63,15 @@ jobs:
           push: true
           provenance: false
           sbom: false
-          tags: ghcr.io/${{ github.repository_owner }}/mc:${{ env.MC_TAG }}
+          tags: ghcr.io/${{ github.repository_owner }}/omega-mc:${{ env.MC_TAG }}
 
       - name: Verify the published images report the pinned releases
         shell: bash
         run: |
           set -euo pipefail
           owner="${{ github.repository_owner }}"
-          minio_ref="ghcr.io/${owner}/minio:${MINIO_TAG}"
-          mc_ref="ghcr.io/${owner}/mc:${MC_TAG}"
+          minio_ref="ghcr.io/${owner}/omega-minio:${MINIO_TAG}"
+          mc_ref="ghcr.io/${owner}/omega-mc:${MC_TAG}"
           docker pull "${minio_ref}"
           docker pull "${mc_ref}"
           minio_version="$(docker run --rm "${minio_ref}" minio --version)"
@@ -78,6 +82,12 @@ jobs:
           grep -F "mc version ${MC_TAG} (commit-id=${MC_COMMIT})" <<<"${mc_version}"
           # The compose healthcheck relies on curl inside the server image.
           docker run --rm --entrypoint /usr/bin/curl "${minio_ref}" --version | head -1
+          echo "## Published index digests" >> "${GITHUB_STEP_SUMMARY}"
+          for ref in "${minio_ref}" "${mc_ref}"; do
+            digest="$(docker buildx imagetools inspect "${ref}" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+            echo "${ref}@${digest}"
+            echo "- \`${ref}@${digest}\`" >> "${GITHUB_STEP_SUMMARY}"
+          done
           docker run --rm --entrypoint /bin/sh "${minio_ref}" -c 'test -x /usr/bin/docker-entrypoint.sh && test -x /usr/bin/mc'
           {
             echo "## Published images"

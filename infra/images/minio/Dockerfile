@@ -13,13 +13,18 @@
 #
 # Runtime contract kept identical to the upstream images (same entrypoint,
 # CMD, ENV, exposed port, volume, binaries under /usr/bin, curl for the
-# compose healthcheck).
+# compose healthcheck). The runtime base is Alpine rather than upstream's
+# ubi-micro: ubi-micro ships no package manager, so its curl would have to
+# be assembled from another image's binary and libraries, and a musl curl
+# copied onto glibc does not start (that is exactly what the first build
+# produced). Alpine installs a working curl for both platforms in one line;
+# the Go binaries are static and do not care.
 #
 #   docker buildx build --target minio --platform linux/amd64,linux/arm64 infra/images/minio
 #   docker buildx build --target mc    --platform linux/amd64,linux/arm64 infra/images/minio
 
-ARG UBI_MICRO=registry.access.redhat.com/ubi9/ubi-micro@sha256:7a0454cbd9bd847e8f6a63b6f0254a6efbeb6e0ed71a5d824a4f6cccbe626650
-ARG CURL_IMAGE=docker.io/curlimages/curl:8.11.1@sha256:c1fe1679c34d9784c1b0d1e5f62ac0a79fca01fb6377cdd33e90473c6f9f9a69
+# Multi-platform index digest of alpine:3.21 (one digest serves amd64 and arm64).
+ARG RUNTIME_BASE=docker.io/library/alpine:3.21@sha256:ce64758a109eb420d874a118f87920e625e12d3634e03b4a5573fd9f6e5d3507
 
 FROM --platform=$BUILDPLATFORM golang:1.23-alpine AS build
 ARG TARGETARCH
@@ -49,9 +54,7 @@ RUN cd mc \
  && GOARCH="${TARGETARCH}" go build -tags kqueue -trimpath -ldflags "${LDFLAGS}" -o /out/mc . \
  && mkdir -p /out/licenses/mc && cp LICENSE CREDITS /out/licenses/mc/
 
-FROM ${CURL_IMAGE} AS curl
-
-FROM ${UBI_MICRO} AS minio
+FROM ${RUNTIME_BASE} AS minio
 ARG MINIO_TAG=RELEASE.2024-12-18T13-15-44Z
 ARG MINIO_COMMIT=16f8cf1c52f0a77eeb8f7565aaf7f7df12454583
 LABEL org.opencontainers.image.source="https://github.com/emmanuelnavaromero02-commits/CONSOLA-V1" \
@@ -68,18 +71,17 @@ ENV MINIO_ACCESS_KEY_FILE=access_key \
     MINIO_UPDATE_MINISIGN_PUBKEY="RWTx5Zr1tiHQLwG9keckT0c45M3AGeHD6IvimQHpyRywVWGbP1aVSGav" \
     MINIO_CONFIG_ENV_FILE=config.env \
     MC_CONFIG_DIR=/tmp/.mc
-COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+RUN apk add -U --no-cache ca-certificates curl bash
 COPY --from=build /out/minio /out/mc /usr/bin/
 COPY --from=build /out/docker-entrypoint.sh /usr/bin/docker-entrypoint.sh
 COPY --from=build /out/licenses/minio/ /licenses/
-COPY --from=curl /usr/bin/curl /usr/bin/curl
-RUN chmod -R 777 /usr/bin
+RUN chmod +x /usr/bin/minio /usr/bin/mc /usr/bin/docker-entrypoint.sh
 EXPOSE 9000
 VOLUME ["/data"]
 ENTRYPOINT ["/usr/bin/docker-entrypoint.sh"]
 CMD ["minio"]
 
-FROM ${UBI_MICRO} AS mc
+FROM ${RUNTIME_BASE} AS mc
 ARG MC_TAG=RELEASE.2024-11-21T17-21-54Z
 ARG MC_COMMIT=1681e4497c09d7438a34e846f76dbde972ab7daf
 LABEL org.opencontainers.image.source="https://github.com/emmanuelnavaromero02-commits/CONSOLA-V1" \
@@ -88,7 +90,7 @@ LABEL org.opencontainers.image.source="https://github.com/emmanuelnavaromero02-c
       org.opencontainers.image.revision="${MC_COMMIT}" \
       org.opencontainers.image.licenses="AGPL-3.0-only" \
       org.opencontainers.image.description="MinIO client ${MC_TAG} rebuilt from the archived upstream source tag; runtime contract identical to quay.io/minio/mc:${MC_TAG}"
-COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+RUN apk add -U --no-cache ca-certificates
 COPY --from=build /out/mc /usr/bin/mc
 COPY --from=build /out/licenses/mc/ /licenses/
 RUN chmod +x /usr/bin/mc
