@@ -23,6 +23,11 @@ intercambian por un canal seguro y nunca se guardan en este repositorio.
   * en nuestro lado, únicamente la dirección de túnel del cliente
     `<CUSTOMER_PEER_TUNNEL_IP>`, y el cortafuegos de nuestro host solo deja
     pasar hacia ella TCP al puerto SQL del tenant `<TENANT_SQL_PORT>`.
+* En sentido contrario **no entra nada**: nuestro host descarta toda
+  conexión iniciada desde el lado del cliente, tanto hacia el propio host
+  como hacia nuestra red en AWS. Por el túnel solo vuelven las respuestas a
+  las sesiones que abrimos nosotros, y un `ping` a nuestra dirección de
+  túnel `<WG_SERVER_TUNNEL_IP>` para que su TI compruebe el túnel.
 * Lo que la plataforma alcanza es **un puerto en un host**: el puerto SQL del
   tenant de HANA, con un usuario de solo lectura limitado a los tres esquemas
   del piloto (`../hana/01_create_readonly_user.sql`).
@@ -118,10 +123,16 @@ IP pública es el bastión de la VPN del equipo. Por eso:
 * en el bastión, `install_wireguard_host.sh` activa `ip_forward` y en
   `PostUp` de la interfaz: `FORWARD` solo para TCP `<TENANT_SQL_PORT>` (e
   ICMP de diagnóstico) hacia `<CUSTOMER_PEER_TUNNEL_IP>` y las respuestas
-  establecidas; `MASQUERADE` al salir por la interfaz, para que el cliente
-  vea como origen nuestra dirección de túnel, la única que su `AllowedIPs`
-  admite. Docker en el host de la plataforma no necesita nada: el
-  contenedor sap-b1 sale por la pasarela del host y sigue la ruta de la VPC.
+  establecidas; **todo lo demás que llegue por la interfaz del túnel se
+  descarta** (`DROP`) tanto en `FORWARD` como en `INPUT`, sin depender de
+  la política de la cadena (Docker la pone en `DROP`; un host sin Docker
+  la tiene en `ACCEPT`): desde el lado del cliente no se puede abrir
+  ninguna conexión ni hacia el bastión ni hacia la VPC, solo responder a
+  las nuestras y hacer `ping` a nuestra dirección de túnel; `MASQUERADE`
+  al salir por la interfaz, para que el cliente vea como origen nuestra
+  dirección de túnel, la única que su `AllowedIPs` admite. Docker en el
+  host de la plataforma no necesita nada: el contenedor sap-b1 sale por la
+  pasarela del host y sigue la ruta de la VPC.
 
 Si algún día la plataforma corre en un host con IP pública propia, el mismo
 script vale allí sin cambios: entonces Docker y WireGuard comparten host y
@@ -154,6 +165,11 @@ el piloto, para que no queden como deriva.
   en ese puerto y el cortafuegos de Windows lo limita al origen del túnel.
   Nada más es alcanzable, y su lado puede auditarlo (`netsh interface
   portproxy show v4tov4`, registro del cortafuegos) y cortarlo.
+* **¿Y desde nuestro servidor hacia la red de ustedes?** Nada: el host
+  donde termina el túnel descarta cualquier conexión que salga de su lado,
+  hacia el propio host o hacia nuestra red. Por el túnel solo pasan las
+  respuestas a las sesiones SQL que abrimos nosotros y el `ping` de
+  diagnóstico a nuestra dirección de túnel.
 * **¿Qué datos salen?** Consultas SQL de solo lectura sobre 45 tablas de los
   tres esquemas acordados, cifradas dos veces (TLS de HANA dentro del túnel
   WireGuard). El detalle está en `cartridges/sap_b1/README.md`.

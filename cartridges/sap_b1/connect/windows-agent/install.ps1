@@ -4,8 +4,10 @@
     Instala el agente OMEGA para SAP Business One (conector Windows).
 
 .DESCRIPTION
-    1. Localiza Python 3.11+ o lo instala desde el instalador oficial de
-       python.org (o desde un instalador ya descargado, -PythonInstaller).
+    1. Localiza un Python 3.11+ instalado para todos los usuarios (bajo
+       Archivos de programa o C:\Python3xx) o lo instala desde el instalador
+       oficial de python.org (o desde uno ya descargado, -PythonInstaller).
+       Un Python instalado por usuario se ignora.
     2. Copia el agente y los modulos del cartucho a -InstallRoot y crea un
        entorno virtual con requirements.txt.
     3. Crea -DataRoot (agent.toml, estado SQLite, cola local y registros) y
@@ -81,7 +83,9 @@ if (-not $cartridgeRoot) {
 }
 
 # Modulos del cartucho que el agente reutiliza: catalogo, planes y SQL,
-# lector por empresa, formato de los archivos. Nada mas del cartucho se copia.
+# lector por empresa, formato de los archivos, mapa intercompania. Nada mas
+# del cartucho se copia. Esta lista es la misma que CARTRIDGE_FILES en
+# agent.py (una prueba las compara y comprueba que cubre todos los imports).
 $cartridgeFiles = @(
     'app\__init__.py',
     'app\core\__init__.py',
@@ -90,6 +94,7 @@ $cartridgeFiles = @(
     'app\services\b1_queries.py',
     'app\services\b1_reader.py',
     'app\services\bronze_parquet.py',
+    'app\services\intercompany_mapping.py',
     'app\config\entities.yaml'
 )
 $agentFiles = @(
@@ -106,6 +111,21 @@ foreach ($relative in $agentFiles) {
 # ---------------------------------------------------------------------------
 # 2. Python
 # ---------------------------------------------------------------------------
+function Test-MachineWidePython([string]$Exe) {
+    # Solo vale un Python instalado para todos los usuarios (Archivos de
+    # programa o C:\Python3xx). Uno instalado por usuario vive bajo un perfil
+    # que la cuenta de servicio no puede leer y desaparece con ese perfil.
+    $resolved = (Resolve-Path -LiteralPath $Exe).Path
+    # El Python de la Microsoft Store vive bajo Archivos de programa\WindowsApps
+    # pero se registra por usuario: tampoco sirve.
+    if ($resolved -match '\\WindowsApps\\') { return $false }
+    $roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, (Join-Path $env:SystemDrive 'Python')) | Where-Object { $_ }
+    foreach ($root in $roots) {
+        if ($resolved.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
+    return $false
+}
+
 function Get-PythonExe {
     $probe = 'import sys; print(sys.executable) if sys.version_info >= (3, 11) else sys.exit(1)'
     $launchers = @(
@@ -118,7 +138,11 @@ function Get-PythonExe {
         if (-not (Get-Command $launcher.Exe -ErrorAction SilentlyContinue)) { continue }
         try {
             $out = & $launcher.Exe @($launcher.Args + @('-c', $probe)) 2>$null
-            if ($LASTEXITCODE -eq 0 -and $out) { return "$out".Trim() }
+            if ($LASTEXITCODE -eq 0 -and $out) {
+                $candidate = "$out".Trim()
+                if (Test-MachineWidePython $candidate) { return $candidate }
+                Write-Host "    Se omite $candidate (instalado por usuario, no sirve para la cuenta de servicio)."
+            }
         } catch { }
     }
     return $null
@@ -156,7 +180,7 @@ function Install-Python {
 
 $python = Get-PythonExe
 if ($python) {
-    Write-Step "Usando el Python ya instalado: $python"
+    Write-Step "Usando el Python ya instalado para todos los usuarios: $python"
 } else {
     $python = Install-Python
 }

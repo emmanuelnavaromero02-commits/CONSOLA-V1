@@ -12,13 +12,14 @@ baja carga del cliente, sin abrir el ciclo incremental hasta el final.
   `POST /entities/{entity}/extract` del cartucho y espera la respuesta
   (timeout de 3 600 s).
 * Con `from_date` o `to_date` el cartucho pasa a modo `historical` sea cual
-  sea `mode` (`extraction_service._effective_mode`). Las dos fechas son ISO y
-  **ambas inclusivas**: `date_field >= from_date` y `date_field < to_date + 1 día`
+  sea `mode` (`b1_reader.effective_mode`, la misma regla que aplica el agente
+  Windows). Las dos fechas son ISO y **ambas inclusivas**:
+  `date_field >= from_date` y `date_field < to_date + 1 día`
   (`b1_queries.select_sql`).
 * La columna de corte es `date_field` de cada entidad (`app/config/entities.yaml`):
-  `DocDate` en documentos de venta y compra, en OINM e IBT1; `RefDate` en
-  OJDT/JDT1; `PostDate` en OWOR/WOR1. Las líneas se filtran por la fecha de su
-  cabecera (se leen con JOIN a ella).
+  `DocDate` en documentos de venta y compra, en los traspasos OWTR/WTR1 y en
+  OINM e IBT1; `RefDate` en OJDT/JDT1; `PostDate` en OWOR/WOR1. Las líneas
+  se filtran por la fecha de su cabecera (se leen con JOIN a ella).
 * Las tablas maestras y los snapshots no tienen `date_field`: se cargan una
   sola vez con `mode=full` y sin fechas. Un `historical` sobre ellas devuelve
   error 400.
@@ -35,8 +36,8 @@ baja carga del cliente, sin abrir el ciclo incremental hasta el final.
 * Cada corrida pide al refinement un refresco silver de la fuente
   (`job_runner._trigger_silver_refresh`, `refresh-by-source`). Mientras no
   haya datasets silver registrados para `sap_b1` no hace nada; cuando los
-  haya, 24 meses × 24 entidades de refrescos es el coste a medir antes de
-  la carga real.
+  haya, 24 meses × 26 entidades con fecha de refrescos es el coste a medir
+  antes de la carga real.
 
 ## Alcance (leer antes de lanzar nada)
 
@@ -70,9 +71,13 @@ El cartucho solo aplica el alcance tenant/workspace si la petición trae un
 3. **Documentos de compra** por mes: `OPCH→PCH1`, `ORPC→RPC1`, `OPDN→PDN1`,
    `OPOR→POR1`.
 4. **Diario** por mes (`RefDate`): `OJDT→JDT1`.
-5. **Inventario** por mes (`DocDate`): `OINM`, `IBT1`. Al final, los snapshots
-   `OITW OBTN OBTQ OIBT` con `mode=full`.
+5. **Inventario** por mes (`DocDate`): `OINM`, `IBT1` y los traspasos de
+   almacén `OWTR→WTR1`. Al final, los snapshots `OITW OBTN OBTQ OIBT` con
+   `mode=full`.
 6. **Producción** por mes (`PostDate`): `OWOR→WOR1`.
+
+Las tres listas del fragmento (`MASTERS`, `DATED`, `SNAPSHOTS_LAST`) cubren
+las 45 entidades de `entities.yaml`; `DATED` son las 26 con `date_field`.
 
 El bucle de abajo recorre mes a mes (del más reciente al más antiguo, para
 que los tableros tengan algo cuanto antes) y, dentro de cada mes, las
@@ -117,7 +122,7 @@ POLL_SECONDS="${POLL_SECONDS:-30}"
 airflow() { docker compose -f "$COMPOSE_FILE" exec -T airflow airflow "$@"; }
 
 MASTERS="CINF OADM OCRN ORTT OACT OFPR OPRC OCRG OSLP OWHS OITB OCRD OITM OITT ITT1"
-DATED="OINV INV1 ORIN RIN1 ODLN DLN1 ORDN RDN1 ORDR RDR1 OPCH PCH1 ORPC RPC1 OPDN PDN1 OPOR POR1 OJDT JDT1 OINM IBT1 OWOR WOR1"
+DATED="OINV INV1 ORIN RIN1 ODLN DLN1 ORDN RDN1 ORDR RDR1 OPCH PCH1 ORPC RPC1 OPDN PDN1 OPOR POR1 OJDT JDT1 OINM IBT1 OWTR WTR1 OWOR WOR1"
 SNAPSHOTS_LAST="OITW OBTN OBTQ OIBT"
 
 touch "$CHECKPOINT"

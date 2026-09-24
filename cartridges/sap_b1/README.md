@@ -11,7 +11,7 @@ configured company in one run and stamps each row with the company alias.
 | **Source** | SAP HANA (`hdbcli`) in production; a Business One-shaped Postgres test bed in CI |
 | **Protocol** | SQL, read-only session, bound parameters only |
 | **Port** | `8206` (matches `Dockerfile` CMD) |
-| **Internal auth** | `X-Internal-Api-Key` header |
+| **Internal auth** | REST routes: `X-Internal-Api-Key` or `X-Api-Key`, plus `X-Internal-Service`; `/mcp/rpc`: `X-Api-Key` plus `X-Internal-Service` (its ASGI guard reads only those two) |
 
 Nothing customer-specific lives in this repository: hosts, schema names,
 users and passwords are runtime configuration (environment or Console
@@ -28,6 +28,7 @@ Vault, connection `sap_b1/default`).
 | Sales documents | `OINV`/`INV1`, `ORIN`/`RIN1`, `ODLN`/`DLN1`, `ORDN`/`RDN1`, `ORDR`/`RDR1` | header stamp; lines through the header |
 | Purchase documents | `OPCH`/`PCH1`, `ORPC`/`RPC1`, `OPDN`/`PDN1`, `OPOR`/`POR1` | header stamp; lines through the header |
 | Journal | `OJDT`/`JDT1` | header stamp; lines through the header |
+| Stock transfers | `OWTR`/`WTR1` | header stamp; lines through the header |
 | Inventory & batches | `OINM` (`TransNum`, paged by `TransNum, TransSeq`), `IBT1` (`LogEntry`); `OITW`, `OBTN`, `OBTQ`, `OIBT` | integer watermark / snapshot |
 | Production | `OWOR`/`WOR1` | header stamp; lines through the header |
 
@@ -178,8 +179,9 @@ schema names and secrets):
 * `vpn/`: the recommended WireGuard tunnel from the customer's server to the
   VPN bastion: runbook (Spanish), server install script, security-group
   script, client config template.
-* `windows/`: the alternative Windows connector, described only; it is built
-  under `connect/windows-agent/` separately.
+* `windows/`: a short summary of the Windows agent alternative and how it
+  differs from the tunnel; the agent itself and its customer-facing README
+  live under `connect/windows-agent/`.
 
 Two facts the runbooks call out: a run reaches the cartridge unscoped unless
 its `security_context` is signed (the thin `sap_b1_extract` DAG forwards
@@ -206,8 +208,9 @@ banco de pruebas en `tests/test_windows_agent.py`.
 
 ## Running against the test bed
 
-The Business One-shaped Postgres fake in `tests/fixtures/sap_b1` (schema,
-deterministic generator, loader) is the reference source. The cartridge
+The Business One-shaped Postgres fake in `tests/fixtures/sap_b1` at the
+repository root (not under this cartridge: schema, deterministic generator,
+loader) is the reference source. The cartridge
 tests start `postgres:15` in Docker, load the fake and read it through
 `extraction_service.run_entity`; they skip without Docker.
 

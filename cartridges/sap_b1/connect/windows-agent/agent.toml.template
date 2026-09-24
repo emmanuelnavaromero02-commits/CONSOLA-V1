@@ -5,8 +5,9 @@
 # valores entre < >. install.ps1 restringe los permisos del archivo a la
 # cuenta de servicio y a los administradores locales.
 #
-# Cualquier valor puede darse tambien como variable de entorno (se indica
-# entre parentesis); la variable de entorno tiene prioridad sobre el archivo.
+# Los valores marcados con (VARIABLE) pueden darse como variable de entorno
+# de la cuenta de servicio; la variable de entorno tiene prioridad sobre el
+# archivo. Los demas solo se leen de este archivo.
 # Los valores entre < > son marcadores: el agente los rechaza tal cual.
 
 [agent]
@@ -29,7 +30,7 @@ exclude = []
 # Si la cola local acumula este numero de archivos sin subir, el agente deja
 # de extraer hasta que las subidas vuelvan a funcionar.
 max_pending_files = 500
-# log_level = "INFO"
+# log_level = "INFO"     # (OMEGA_AGENT_LOG_LEVEL) DEBUG | INFO | WARNING | ERROR
 
 [source]
 # Base de datos HANA de SAP Business One. Usuario de solo lectura.
@@ -53,15 +54,17 @@ companies = "empresa_a=<SCHEMA_A>,empresa_b=<SCHEMA_B>"   # (SAP_B1_COMPANIES)
 intercompany = "empresa_a:<CODIGO_SN_EMPRESA_B>=empresa_b,empresa_b:<CODIGO_SN_EMPRESA_A>=empresa_a"   # (SAP_B1_INTERCOMPANY)
 encrypt = true                      # (SAP_B1_ENCRYPT) TLS hacia HANA
 ssl_validate_certificate = true     # (SAP_B1_SSL_VALIDATE_CERTIFICATE)
-connect_timeout_seconds = 15
+connect_timeout_seconds = 15        # (SAP_B1_CONNECT_TIMEOUT_SECONDS)
 
 [upload]
 # Bucket del lakehouse de OMEGA. La clave de acceso solo puede escribir bajo
-# raw/sap_b1/ (vea iam-policy.template.json).
+# raw/sap_b1/*/tenant_id=<TENANT_ID>/workspace_id=<WORKSPACE_ID>/ (vea
+# iam-policy.template.json).
 bucket = "<BUCKET>"                 # (OMEGA_S3_BUCKET)
-region = "<AWS_REGION>"             # (AWS_REGION)
+region = "<AWS_REGION>"             # (AWS_REGION; si falta, tambien AWS_DEFAULT_REGION)
 access_key_id = "<ACCESS_KEY_ID>"           # (AWS_ACCESS_KEY_ID)
 secret_access_key = "<SECRET_ACCESS_KEY>"   # (AWS_SECRET_ACCESS_KEY)
+# session_token = ""                # (AWS_SESSION_TOKEN) solo con credenciales temporales
 # endpoint_url = ""                 # (OMEGA_S3_ENDPOINT_URL) solo para un almacen compatible con S3 que no sea AWS
 max_attempts = 5                    # intentos por archivo antes de dejarlo en la cola local
 # server_side_encryption = "AES256" # o "aws:kms" junto con sse_kms_key_id, si el bucket lo exige
