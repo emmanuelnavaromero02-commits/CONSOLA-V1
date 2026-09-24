@@ -96,7 +96,7 @@ def test_every_table_is_populated_for_every_company(dataset):
         if not tables.get(table)
         # A distributor neither produces nor buys raw material; a manufacturer
         # has no A/P credit memos or returns in this model.
-        and not (table in ("OWOR", "WOR1", "OITT", "ITT1") and alias != "mx_mfg")
+        and not (table in ("OWOR", "WOR1", "OITT", "ITT1", "OWTR", "WTR1") and alias != "mx_mfg")
         and table not in ("ORPC", "RPC1", "ORDN", "RDN1")
     }
     assert not empty, f"tables with no rows: {sorted(empty)}"
@@ -223,6 +223,39 @@ def test_stock_never_goes_negative_in_date_order(dataset):
             assert balance[key] >= 0, f"{alias}: {key} negative on {row[icols.index('DocDate')].date()}"
 
 
+def test_warehouse_transfers_move_stock_without_money(dataset):
+    """A transfer takes a quantity out of one warehouse and into another in
+    the same stock transaction; over the period every parked quantity comes
+    back, so the second warehouse nets to zero and no journal entry exists."""
+    hcols, lcols, icols = b1.columns("OWTR"), b1.columns("WTR1"), b1.columns("OINM")
+    tables = dataset.tables["mx_mfg"]
+    assert tables["OWTR"] and len(tables["WTR1"]) == len(tables["OWTR"])
+    movements = defaultdict(list)
+    for row in tables["OINM"]:
+        if row[icols.index("TransType")] == generator.TT_TRANSFER:
+            movements[row[icols.index("CreatedBy")]].append(row)
+    for header in tables["OWTR"]:
+        entry = header[hcols.index("DocEntry")]
+        assert header[hcols.index("Filler")] != header[hcols.index("ToWhsCode")]
+        rows = movements[entry]
+        assert len(rows) == 2 and len({r[icols.index("TransNum")] for r in rows}) == 1
+        out = next(r for r in rows if r[icols.index("OutQty")] > 0)
+        inn = next(r for r in rows if r[icols.index("InQty")] > 0)
+        assert out[icols.index("Warehouse")] == header[hcols.index("Filler")]
+        assert inn[icols.index("Warehouse")] == header[hcols.index("ToWhsCode")]
+        assert out[icols.index("OutQty")] == inn[icols.index("InQty")]
+    net_second = defaultdict(Decimal)
+    for row in tables["OINM"]:
+        if row[icols.index("Warehouse")] == generator.WHS_SECOND:
+            net_second[row[icols.index("ItemCode")]] += row[icols.index("InQty")] - row[icols.index("OutQty")]
+    assert all(v == 0 for v in net_second.values()), "parked raw material must come back"
+    assert net_second, "expected transfers through the second warehouse"
+    jcols = b1.columns("OJDT")
+    assert not [r for r in tables["OJDT"] if r[jcols.index("TransType")] == "67"], "transfers post no journal entry"
+    for alias in ("mx_dist_a", "mx_dist_b"):
+        assert not dataset.tables[alias]["OWTR"]
+
+
 def test_stock_transactions_share_a_transnum_per_document(dataset):
     """B1 numbers one stock transaction per document: its lines share TransNum
     and are told apart by TransSeq. A cartridge that pages on TransNum alone
@@ -338,7 +371,7 @@ def loaded_dsn(dataset):
         loader.load(dsn, dataset)
         yield dsn
     finally:
-        _docker("rm", "-f", container, check=False)
+        _docker("rm", "-f", "-v", container, check=False)
 
 
 def _schema(dataset, alias: str) -> str:

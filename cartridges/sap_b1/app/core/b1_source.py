@@ -34,9 +34,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Iterator, Sequence
 
-from app.core.config import settings
-from app.core.vault_client import get_secret_for_worker
-
 logger = logging.getLogger(__name__)
 
 CARTRIDGE_ID = "sap_b1"
@@ -202,6 +199,14 @@ class B1Config:
 
 def resolve_config(security_context: str | None = None) -> B1Config:
     """Resolve the connection settings from env, then Vault, then settings."""
+    # Imported here, not at module level: the platform settings and the
+    # Console Vault client are what ties this module to the cartridge
+    # container. Everything above (identifiers, companies, connections,
+    # sanitised errors) is also used by the Windows push agent in
+    # ``connect/windows-agent``, which runs with neither.
+    from app.core.config import settings
+    from app.core.vault_client import get_secret_for_worker
+
     ctx = (security_context or "").strip() or None
 
     def pick(env_name: str, default: Any = "") -> str:

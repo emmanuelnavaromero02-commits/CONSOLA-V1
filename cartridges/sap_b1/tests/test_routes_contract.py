@@ -37,7 +37,7 @@ def test_liveness_and_skill_discovery(client):
 def test_catalogue_comes_from_entities_yaml_when_postgres_is_absent(client):
     assert client.get("/entities").status_code == 401
     entities = client.get("/entities", headers=AUTH).json()["entities"]
-    assert len(entities) == 43
+    assert len(entities) == 45
     header = client.get("/entities/OINV/schema", headers=AUTH).json()
     assert header["primary_key"] == "DocEntry" and header["watermark_format"] == "b1_update_ts"
     assert header["watermark_ts_field"] == "UpdateTS" and header["parent"] is None

@@ -3,7 +3,7 @@
   "files": [
     {
       "path": ".github/release-test-skip-policy.json",
-      "sha256": "6d24daf8b948a822443cc3116872b15f34f60537153cd15b51c0859fbb90d903"
+      "sha256": "6f79239218fdf3c010bfa696941dc3e339d54bbd04a684777e6a6fa82b0b182f"
     },
     {
       "path": ".github/workflows/release-runner-capacity.yml",
@@ -823,7 +823,7 @@
     },
     {
       "path": "cartridges/sap_b1/app/api/routes_console.py",
-      "sha256": "f174610c188741544c781faf3c8d09d6141c3d7a99245ae84d527abde4c7dd8a"
+      "sha256": "562908992f1f9b7b98ef6568e72f8d817d9b4ccd06e6de00b1d812ebd5d99f8e"
     },
     {
       "path": "cartridges/sap_b1/app/api/routes_health.py",
@@ -839,11 +839,11 @@
     },
     {
       "path": "cartridges/sap_b1/app/core/b1_source.py",
-      "sha256": "56c3abefca56b20edfe79394159b2ae08ff857841ac780974bd23b65d7c049ae"
+      "sha256": "f85371d41d7ce505663e8d2fbd098de4fb23a43f315630c891ea48e67ad8b1ef"
     },
     {
       "path": "cartridges/sap_b1/app/core/config.py",
-      "sha256": "b5e72c885fd6eb8de7e59137d45c3e85936f45ca2b771ae4394bb969d0fc4233"
+      "sha256": "d9de72418f20d564afb78f11ca3d0cf90a6273de6285e1ab01697fde6b1900e0"
     },
     {
       "path": "cartridges/sap_b1/app/core/egress_guard.py",
@@ -875,7 +875,7 @@
     },
     {
       "path": "cartridges/sap_b1/app/core/vault_client.py",
-      "sha256": "ff61a70de04fe1dc47385dc6db9c34ddc00da8b9b2235f4499698b221b77f703"
+      "sha256": "19c84e385e73fcf6e0da6508876f7dd40a54bfb7ac44193350c57a6d6b753ab4"
     },
     {
       "path": "cartridges/sap_b1/app/main.py",
@@ -906,6 +906,14 @@
       "sha256": "17858444f788efb4000320402ccaefe6c2ae0962da85560743fa0581b1566433"
     },
     {
+      "path": "cartridges/sap_b1/app/services/b1_reader.py",
+      "sha256": "594467a53f1450661ea409c85b77c133337edb11c211eb6aaffee2f87d0bf562"
+    },
+    {
+      "path": "cartridges/sap_b1/app/services/bronze_parquet.py",
+      "sha256": "cedeeec0c3dbc0aa0dab692099a8227349f594e2b3c4a16f74dbea236bef51d5"
+    },
+    {
       "path": "cartridges/sap_b1/app/services/catalog_service.py",
       "sha256": "72528e45b65971941bbe1e58608454899077d049420438feaace250a319d9c2c"
     },
@@ -915,7 +923,15 @@
     },
     {
       "path": "cartridges/sap_b1/app/services/extraction_service.py",
-      "sha256": "4ec8619c2115150417e6b0f85c20f700510f34a2adef8c07f9b95ab8d2bb3575"
+      "sha256": "125d00b1e808a31452bd56aba97ad2b7be3e07f830071fa8f42d45498d8fa030"
+    },
+    {
+      "path": "cartridges/sap_b1/app/services/intercompany.py",
+      "sha256": "1e9b87270a3dcf111373c063821d786e038dfb67efa77533b350bb802343cb52"
+    },
+    {
+      "path": "cartridges/sap_b1/app/services/intercompany_mapping.py",
+      "sha256": "99563951b31068453e8708cb10767a5c225db1eda1ab1cc493f744bd62166217"
     },
     {
       "path": "cartridges/sap_b1/app/services/kb_service.py",
@@ -923,7 +939,7 @@
     },
     {
       "path": "cartridges/sap_b1/app/services/parquet_service.py",
-      "sha256": "814580257c6946dacdf0993b27a813c69fc3faf7694fa6ec81abd98f307618f2"
+      "sha256": "6b5ecfb087367b535cf133a9f57185eebadfcec11ef46adbe60f38094bc9c520"
     },
     {
       "path": "cartridges/sap_b1/app/services/preflight.py",
@@ -946,6 +962,10 @@
       "sha256": "aa462ea635148d89cd7b3835a4c071a1ec58a0aded85269be59ec00cc172ee34"
     },
     {
+      "path": "cartridges/sap_b1/connect/windows-agent/agent.py",
+      "sha256": "4a265dfa7edb42589a6e09354a90477109ad45350da838cc17c5ec09080e601b"
+    },
+    {
       "path": "cartridges/sap_b1/dags/sap_b1_extract.py",
       "sha256": "176c87fe9c88f7ab83d67d1053b556278d032e4496965017883e353a1753fada"
     },
@@ -955,7 +975,7 @@
     },
     {
       "path": "cartridges/sap_b1/tests/conftest.py",
-      "sha256": "7d412d8db16f1c690c2d65cef54348388cdab8fe1f3e15810ff8471e6510c016"
+      "sha256": "becd6a5a5fb0505045bb4d7a978356f10c3ea1cd951eaa5336bb36c68ba018f4"
     },
     {
       "path": "cartridges/sap_b1/tests/test_b1_queries.py",
@@ -966,12 +986,48 @@
       "sha256": "5dd1df075c345511d7b50df825faa032b9e775e203fe779eccc74417cec33bf3"
     },
     {
+      "path": "cartridges/sap_b1/tests/test_connect_kit.py",
+      "sha256": "b8f072b5b3197f040893142c0f7d97fbc41aac6d72fd730c5eb6dabc37c84d25"
+    },
+    {
       "path": "cartridges/sap_b1/tests/test_extraction_against_fake.py",
-      "sha256": "eacedd5645f16e3d96b5521830dac16ad208903bfb6dece1f64f48affb9e77f8"
+      "sha256": "0f285c5995035ec91e82a4c953601686faf0b1a36890d6f9b813ba3cf467bd84"
+    },
+    {
+      "path": "cartridges/sap_b1/tests/test_intercompany.py",
+      "sha256": "bae9a529e717028f1ba0ec10972aefebfd0d2c7acd77aca051268798686e0289"
     },
     {
       "path": "cartridges/sap_b1/tests/test_routes_contract.py",
-      "sha256": "caf940fa1a9b07e9fa90442ba1f82714199a4fca7ff5656e9930328e2adb14f6"
+      "sha256": "eff694c0dfcc63d3cf940b3701d5cac77e298640070d9672a1b3b5864624551b"
+    },
+    {
+      "path": "cartridges/sap_b1/tests/test_silver_gold_against_fake.py",
+      "sha256": "72aae80259b303d4b5f0664723b15b07c096c9c6d343f3f760449a2dc166881f"
+    },
+    {
+      "path": "cartridges/sap_b1/tests/test_windows_agent.py",
+      "sha256": "276dbbeb63cf75e5f5b15ee0ecb7c7c1198b4a793cabb9a3fec31d3767995cb5"
+    },
+    {
+      "path": "cartridges/sap_b1/tools/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "cartridges/sap_b1/tools/generate_catalog.py",
+      "sha256": "3e2d751151f2826f7924aa502669fb5c27ffea489e4b38414ca3d368b38560b0"
+    },
+    {
+      "path": "cartridges/sap_b1/tools/generate_document_lines.py",
+      "sha256": "844e886f12bbd68a38ca46c90477ff652b3426859861caf1029fce6460f80828"
+    },
+    {
+      "path": "cartridges/sap_b1/tools/generate_register_datasets.py",
+      "sha256": "5a9a84a79d8099405d1607446256a09761803241bb8a1453e9556661aecf2982"
+    },
+    {
+      "path": "cartridges/sap_b1/tools/generate_silver_latest.py",
+      "sha256": "221d4fe32d87e691139cb6867d69bf2a7af9c00a5c85e74ca3c1091bb58c1c05"
     },
     {
       "path": "cartridges/sap_hcm/app/__init__.py",
@@ -3187,7 +3243,7 @@
     },
     {
       "path": "infra/docker-compose.yml",
-      "sha256": "6a389a3c163efd0a24382ee0842a3475fdb693b72dd0ec01198f2117769a540f"
+      "sha256": "2b8959eac3ab0196e7da21a09906f771f1a475c215a7def40217b964340f32e1"
     },
     {
       "path": "infra/init/99zzt_analytic_app_dataset_grants.sql",
@@ -3699,7 +3755,7 @@
     },
     {
       "path": "tests/fixtures/sap_b1/generator.py",
-      "sha256": "091975a914d9fa39dc91368547ee7cbe9dd7e68c2211a236cda73453982871de"
+      "sha256": "3145c4b007bf14a1895cb3145d8c4b5270989dd7b49b5439a72ec2a6f497d74c"
     },
     {
       "path": "tests/fixtures/sap_b1/loader.py",
@@ -3707,7 +3763,7 @@
     },
     {
       "path": "tests/fixtures/sap_b1/schema.py",
-      "sha256": "21cf324b56406ef1db753dff729109d0ab59c7103ff3d279fe838469803d1c17"
+      "sha256": "a21fcd45979fdd47682b1db3369ed39bf4a8f3f721dccebb3d384b81be7b4d88"
     },
     {
       "path": "tests/lakehouse/test_storage_contract.py",
@@ -5486,8 +5542,12 @@
       "sha256": "b9a6eaf5ee5ed95da8767dd61121f12d4eec996abf5b3d7f6f6300394450fe48"
     },
     {
+      "path": "tests/test_sap_b1_datasets.py",
+      "sha256": "aa26277a09a99a9d9b0ec6f8e7a59168e951972bf711d2b157fdc705f76fbf2e"
+    },
+    {
       "path": "tests/test_sap_b1_fake_schema.py",
-      "sha256": "33a41e3aaffcba47ce46702f2fee06347e22b36b8debcab5699bb8344b296972"
+      "sha256": "3329e342606e906a1bf06a0b88f9a8d6daf711317d62a904f2027a5aba9211c9"
     },
     {
       "path": "tests/test_sap_dag_imports.py",

@@ -19,7 +19,7 @@ Vault, connection `sap_b1/default`).
 
 ## What it reads
 
-43 tables, named as in Business One, in [`app/config/entities.yaml`](app/config/entities.yaml):
+45 tables, named as in Business One, in [`app/config/entities.yaml`](app/config/entities.yaml):
 
 | Group | Tables | Reading rule |
 | --- | --- | --- |
@@ -82,7 +82,7 @@ masters and bills of materials, a periodic full load and a
 ### Initial load
 
 Run the initial load entity by entity (the MCP `extract` job or the
-`sap_b1_extract` DAG), not with `extract-all`: with 43 tables across every
+`sap_b1_extract` DAG), not with `extract-all`: with 45 tables across every
 company a synchronous `extract-all` outlives any HTTP client timeout, and a
 retried DAG task would start a second run of the same entities while the
 first is still reading.
@@ -101,6 +101,7 @@ raises; it is never reported as zero rows.
 | `SAP_B1_USER`, `SAP_B1_PASSWORD` | read-only database user |
 | `SAP_B1_DATABASE` | HANA tenant database when connecting through SYSTEMDB; Postgres database name for the test bed |
 | `SAP_B1_COMPANIES` | `alias=SCHEMA,alias=SCHEMA`; aliases are lowercase identifiers and are what the lakehouse sees |
+| `SAP_B1_INTERCOMPANY` | `company:CARDCODE=counterparty,...`: which business-partner codes are group companies (see below) |
 | `SAP_B1_ENCRYPT`, `SAP_B1_SSL_VALIDATE_CERTIFICATE` | HANA TLS settings (default on) |
 
 The same values can be stored in the Console Vault as connection
@@ -112,6 +113,96 @@ and only the environment variables are used.
 The database host is normally a private address behind the customer's VPN,
 so the HTTP egress guard used by the OData cartridges does not apply: this
 is a database session to a destination fixed by configuration.
+
+## Intercompany partners
+
+Business One has no standard flag for "this customer is one of our own
+distributors". The mapping is configuration (`SAP_B1_INTERCOMPANY`, or the
+Vault field `intercompany`): `mx_mfg:C-IC-DIST-A=mx_dist_a` means that in
+company `mx_mfg` the business partner `C-IC-DIST-A` is the group company
+`mx_dist_a`. Whether the code is a customer or a supplier comes from
+`OCRD.CardType` at join time. The cartridge writes the mapping to Bronze as
+the snapshot entity `IntercompanyPartners` (with every `extract-all`, or
+`POST /intercompany/refresh`), so silver flags every document line and
+journal line as intercompany or external, and gold proves the elimination
+on both sides (`sap_b1_intercompany_reconciliation_month`). Codes never
+live in the repository; the test bed uses its own generated ones.
+
+## Silver and gold
+
+`datasets/` holds 62 silver and 6 gold datasets:
+
+* `sap_b1_<table>_latest` (45, generated from the catalogue): the current
+  state of every table per company. Stamped tables and immutable logs are
+  the whole Bronze history deduplicated by key; line tables keep only the
+  lines that carry their header's latest stamp; snapshots keep the newest
+  run per company, never a mix of two runs.
+* Document lines (9, generated from one template): every line with its
+  header, the three currencies made explicit (`doc_currency`,
+  `local_currency`, `sys_currency` from `OADM`), `amount_doc`,
+  `amount_local`, `amount_sys`, the cost the line carries
+  (`cost_local = StockPrice x Quantity`), Business One's own gross profit
+  and the intercompany flag. `CANCELED` is kept; gold filters it.
+* `sap_b1_company`, `sap_b1_business_partners`, `sap_b1_items`,
+  `sap_b1_journal_lines` (with `OACT.ActType` and the partner code that
+  control-account lines carry), `sap_b1_inventory_movements`,
+  `sap_b1_stock_on_hand`, `sap_b1_transfer_lines`, `sap_b1_production_orders`.
+* Gold: `sap_b1_sales_by_company_month` (external vs intercompany, margin
+  from the invoice lines), `sap_b1_sales_consolidated_month` (intercompany
+  eliminated), `sap_b1_intercompany_reconciliation_month` (sold vs bought
+  per pair and month), `sap_b1_purchases_by_company_month`,
+  `sap_b1_pnl_by_company_month` (the journal view) and
+  `sap_b1_stock_by_company_warehouse`.
+
+Datasets are registered in the customer's workspace with
+`config/register_datasets.sql` (generated; psql variables `workspace_id`
+and `tenant_id`), not by an infra migration, because the workspace is
+created when the connection is set up. The generators live in `tools/`
+and a test fails when a committed file differs from what they produce.
+
+## Connection kit
+
+[`connect/`](connect/) holds what the customer's IT and the platform team run
+to bring a Business One instance online. Every file is publishable
+(placeholders only; `tests/test_connect_kit.py` checks for addresses, hosts,
+schema names and secrets):
+
+* `hana/`: HANA SQL to find the tenant SQL port, create / verify / revoke the
+  read-only user, plus connectivity checks for the customer's Windows server
+  (`test_connection.ps1`) and a Linux host (`test_connection.sh`).
+* `config/`: the `SAP_B1_*` environment template, the Console Vault
+  connection template, the `entity_scheduler` script that puts every entity
+  on a two-hour cadence (psql `:tenant_id` / `:workspace_id`), and the
+  24-month initial-load runbook (one entity-month per run, watermark seeding
+  afterwards).
+* `vpn/`: the recommended WireGuard tunnel from the customer's server to the
+  VPN bastion: runbook (Spanish), server install script, security-group
+  script, client config template.
+* `windows/`: the alternative Windows connector, described only; it is built
+  under `connect/windows-agent/` separately.
+
+Two facts the runbooks call out: a run reaches the cartridge unscoped unless
+its `security_context` is signed (the thin `sap_b1_extract` DAG forwards
+`tenant_id` / `workspace_id` but does not sign them yet, unlike the
+SuccessFactors DAG), and `historical` runs record no watermark.
+
+## Conector Windows (alternativa)
+
+Cuando no es posible abrir un túnel o VPN desde la plataforma hasta el
+tenant de HANA, el mismo cartucho se despliega al revés: un agente de
+empuje en un servidor Windows del cliente lee las empresas por SQL y sube
+los parquet de Bronze al bucket por HTTPS saliente, con una clave limitada
+al prefijo `raw/sap_b1/`. Vive en
+[`connect/windows-agent/`](connect/windows-agent/) (`agent.py`, plantillas
+de configuración y de política IAM, `install.ps1`/`run.ps1`/`uninstall.ps1`
+y un README en español para TI del cliente). No es una bifurcación: reutiliza
+`entities.yaml`, `b1_queries` (planes, SQL, marcas de agua, esquema arrow),
+el bucle por empresa de `b1_reader` que también ejecuta `run_entity`, y
+`bronze_parquet` (formato y ruta de los archivos), de modo que los archivos
+tienen el mismo esquema y la misma ruta que los del cartucho. Guarda marcas
+de agua y registro de corridas en un SQLite local y retiene cada lote en
+una cola local hasta que S3 confirma la subida. Se prueba contra el mismo
+banco de pruebas en `tests/test_windows_agent.py`.
 
 ## Running against the test bed
 

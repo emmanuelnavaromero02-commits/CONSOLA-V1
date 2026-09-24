@@ -79,6 +79,7 @@ TT_GOODS_RECEIPT_PO = 20
 TT_DELIVERY = 15
 TT_PRODUCTION_ISSUE = 60
 TT_PRODUCTION_RECEIPT = 59
+TT_TRANSFER = 67  # inventory transfer OWTR/WTR1: one OINM row out, one in
 APPL_OBJ_PRODUCTION_ORDER = "202"
 
 
@@ -595,6 +596,23 @@ class _Builder:
         if supplier == INTERCOMPANY_SUPPLIER:
             truth.intercompany_purchases_lc += net
 
+    def transfer(self, c: _Company, d: date, item: str, qty: Decimal, from_whs: str, to_whs: str) -> int:
+        """Inventory transfer (ObjType 67): the same document takes the
+        quantity out of one warehouse and into another; no journal entry."""
+        d = c.clamp(d)
+        entry = c.entry("OWTR")
+        price = c.item_cost[item]
+        total = q6(qty * price)
+        c.add("OWTR", DocEntry=entry, DocNum=entry, CANCELED="N", DocStatus="C", ObjType="67", DocDate=ts(d),
+              TaxDate=ts(d), CardCode=None, CardName=None, Filler=from_whs, ToWhsCode=to_whs, Comments="Traslado",
+              TransId=None, Series=1, CreateDate=ts(d), CreateTS=100000, UpdateDate=ts(d), UpdateTS=100000, UserSign=1)
+        c.add("WTR1", DocEntry=entry, LineNum=0, LineStatus="C", ItemCode=item, Dscription=f"Articulo {item}",
+              Quantity=q6(qty), Price=q6(price), Currency=c.p.local_currency, Rate=ZERO, LineTotal=total,
+              TotalSumSy=c.to_sys(total, d), StockPrice=q6(price), FromWhsCod=from_whs, WhsCode=to_whs, ObjType="67", VisOrder=0)
+        c.move_stock(d, item, from_whs, ZERO, qty, price, TT_TRANSFER, entry, 0)
+        c.move_stock(d, item, to_whs, qty, ZERO, price, TT_TRANSFER, entry, 0)
+        return entry
+
     def production(self, c: _Company, d0: date, days: int, last_month: bool) -> None:
         """Production orders start in the second week, after the month's receipts.
 
@@ -724,7 +742,15 @@ class _Builder:
                 items = rng.sample(c.raw_materials, rng.randint(2, 3), counts=weights)
                 lines = [{"item": rm, "name": f"Articulo {rm}", "qty": str(rng.randint(150, 900)), "price": str(c.item_cost[rm]), "whs": WHS_MAIN} for rm in items]
                 self.purchase_chain(c, d0 + timedelta(days=rng.randint(0, 5)), rng.choice(c.suppliers), lines)
+            # Raw material is not batch-managed, so it can move between the two
+            # warehouses without touching batches: out on day 7, back on day 20.
+            parked = rng.choice(c.raw_materials)
+            parked_qty = min(Decimal(rng.randint(40, 120)), c.stock.get((parked, WHS_MAIN), ZERO))
+            if parked_qty > ZERO:
+                self.transfer(c, d0 + timedelta(days=7), parked, parked_qty, WHS_MAIN, WHS_SECOND)
             self.production(c, d0, days, last_month=(m == self.months - 1))
+            if parked_qty > ZERO:
+                self.transfer(c, d0 + timedelta(days=min(20, days - 1)), parked, parked_qty, WHS_SECOND, WHS_MAIN)
             sales: List[Tuple[str, date]] = [(INTERCOMPANY_CUSTOMER[a], sale_day()) for a in sorted(INTERCOMPANY_CUSTOMER) for _ in range(3)]
             sales += [(rng.choice(c.customers), sale_day()) for _ in range(12)]
         else:

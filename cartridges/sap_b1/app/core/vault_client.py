@@ -24,6 +24,7 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "SAP_B1_PASSWORD": ("password", "pass", "sap_b1_password"),
     "SAP_B1_DATABASE": ("database", "database_name", "tenant_database", "sap_b1_database"),
     "SAP_B1_COMPANIES": ("companies", "company_schemas", "sap_b1_companies"),
+    "SAP_B1_INTERCOMPANY": ("intercompany", "intercompany_partners", "sap_b1_intercompany"),
     "SAP_B1_ENCRYPT": ("encrypt", "tls", "sap_b1_encrypt"),
     "SAP_B1_SSL_VALIDATE_CERTIFICATE": ("ssl_validate_certificate", "sap_b1_ssl_validate_certificate"),
 }
