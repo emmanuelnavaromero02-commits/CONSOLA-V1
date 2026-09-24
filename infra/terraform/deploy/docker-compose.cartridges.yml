@@ -267,7 +267,12 @@ services:
       SAP_B1_PASSWORD: ${SAP_B1_PASSWORD:-}
       SAP_B1_DATABASE: ${SAP_B1_DATABASE:-}
       SAP_B1_COMPANIES: ${SAP_B1_COMPANIES:-}
+      # Intercompany partners "alias:CARDCODE=counterparty,..." (customer data,
+      # never in the repository).
+      SAP_B1_INTERCOMPANY: ${SAP_B1_INTERCOMPANY:-}
       SAP_B1_ENCRYPT: ${SAP_B1_ENCRYPT:-true}
+      SAP_B1_SSL_VALIDATE_CERTIFICATE: ${SAP_B1_SSL_VALIDATE_CERTIFICATE:-true}
+      SAP_B1_CONNECT_TIMEOUT_SECONDS: ${SAP_B1_CONNECT_TIMEOUT_SECONDS:-15}
     depends_on:
       postgres:
         condition: service_healthy
