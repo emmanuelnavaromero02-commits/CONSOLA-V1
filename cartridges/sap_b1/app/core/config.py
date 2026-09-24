@@ -67,6 +67,8 @@ class Settings(BaseSettings):
     sap_b1_password: str = ""
     sap_b1_database: str = ""
     sap_b1_companies: str = ""
+    # "company:CARDCODE=counterparty,...": which partner codes are group companies
+    sap_b1_intercompany: str = ""
     sap_b1_encrypt: bool = True
     sap_b1_ssl_validate_certificate: bool = True
     sap_b1_connect_timeout_seconds: int = 15

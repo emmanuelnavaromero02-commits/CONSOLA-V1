@@ -102,6 +102,9 @@ def run_entity(
         storage_uri = ""
         total_records = 0
         companies: dict[str, dict[str, Any]] = {}
+        # An incremental cycle with no stored watermark anywhere is the first
+        # read of the table: a whole-table read, whatever the catalogue says.
+        bootstrap = mode == "incremental"
 
         def _flush_buffer(allow_empty: bool = False) -> None:
             nonlocal buffer, batch_num, storage_uri
@@ -134,6 +137,8 @@ def run_entity(
                 key = watermark_key(entity, company.alias)
                 stored = get_watermark(key) if mode == "incremental" else None
                 watermark = Watermark.parse(plan.watermark_kind, stored) if stored else None
+                if watermark is not None:
+                    bootstrap = False
                 if stored and watermark is None:
                     logger.warning(
                         "watermark for %s is not parseable; reading the whole table for this company",
@@ -193,10 +198,12 @@ def run_entity(
                     "watermark_updated_to": new_text,
                 }
 
-        if total_records == 0 and mode != "incremental":
-            # A whole-table read that found nothing still leaves a zero-row
-            # artifact so consumers can see the schema; an incremental cycle
-            # with no changes leaves nothing, on purpose.
+        if total_records == 0 and (mode == "full" or bootstrap):
+            # A whole-table read that found nothing (a full load, or the first
+            # incremental read of a table that has no rows yet) still leaves a
+            # zero-row artifact, so every silver reading the table finds a
+            # file with the declared schema. A later incremental cycle with
+            # no changes leaves nothing, on purpose.
             _flush_buffer(allow_empty=True)
 
         finish_run(

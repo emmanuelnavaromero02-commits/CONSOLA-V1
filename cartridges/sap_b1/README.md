@@ -101,6 +101,7 @@ raises; it is never reported as zero rows.
 | `SAP_B1_USER`, `SAP_B1_PASSWORD` | read-only database user |
 | `SAP_B1_DATABASE` | HANA tenant database when connecting through SYSTEMDB; Postgres database name for the test bed |
 | `SAP_B1_COMPANIES` | `alias=SCHEMA,alias=SCHEMA`; aliases are lowercase identifiers and are what the lakehouse sees |
+| `SAP_B1_INTERCOMPANY` | `company:CARDCODE=counterparty,...`: which business-partner codes are group companies (see below) |
 | `SAP_B1_ENCRYPT`, `SAP_B1_SSL_VALIDATE_CERTIFICATE` | HANA TLS settings (default on) |
 
 The same values can be stored in the Console Vault as connection
@@ -112,6 +113,52 @@ and only the environment variables are used.
 The database host is normally a private address behind the customer's VPN,
 so the HTTP egress guard used by the OData cartridges does not apply: this
 is a database session to a destination fixed by configuration.
+
+## Intercompany partners
+
+Business One has no standard flag for "this customer is one of our own
+distributors". The mapping is configuration (`SAP_B1_INTERCOMPANY`, or the
+Vault field `intercompany`): `mx_mfg:C-IC-DIST-A=mx_dist_a` means that in
+company `mx_mfg` the business partner `C-IC-DIST-A` is the group company
+`mx_dist_a`. Whether the code is a customer or a supplier comes from
+`OCRD.CardType` at join time. The cartridge writes the mapping to Bronze as
+the snapshot entity `IntercompanyPartners` (with every `extract-all`, or
+`POST /intercompany/refresh`), so silver flags every document line and
+journal line as intercompany or external, and gold proves the elimination
+on both sides (`sap_b1_intercompany_reconciliation_month`). Codes never
+live in the repository; the test bed uses its own generated ones.
+
+## Silver and gold
+
+`datasets/` holds 62 silver and 6 gold datasets:
+
+* `sap_b1_<table>_latest` (45, generated from the catalogue): the current
+  state of every table per company. Stamped tables and immutable logs are
+  the whole Bronze history deduplicated by key; line tables keep only the
+  lines that carry their header's latest stamp; snapshots keep the newest
+  run per company, never a mix of two runs.
+* Document lines (9, generated from one template): every line with its
+  header, the three currencies made explicit (`doc_currency`,
+  `local_currency`, `sys_currency` from `OADM`), `amount_doc`,
+  `amount_local`, `amount_sys`, the cost the line carries
+  (`cost_local = StockPrice x Quantity`), Business One's own gross profit
+  and the intercompany flag. `CANCELED` is kept; gold filters it.
+* `sap_b1_company`, `sap_b1_business_partners`, `sap_b1_items`,
+  `sap_b1_journal_lines` (with `OACT.ActType` and the partner code that
+  control-account lines carry), `sap_b1_inventory_movements`,
+  `sap_b1_stock_on_hand`, `sap_b1_transfer_lines`, `sap_b1_production_orders`.
+* Gold: `sap_b1_sales_by_company_month` (external vs intercompany, margin
+  from the invoice lines), `sap_b1_sales_consolidated_month` (intercompany
+  eliminated), `sap_b1_intercompany_reconciliation_month` (sold vs bought
+  per pair and month), `sap_b1_purchases_by_company_month`,
+  `sap_b1_pnl_by_company_month` (the journal view) and
+  `sap_b1_stock_by_company_warehouse`.
+
+Datasets are registered in the customer's workspace with
+`config/register_datasets.sql` (generated; psql variables `workspace_id`
+and `tenant_id`), not by an infra migration, because the workspace is
+created when the connection is set up. The generators live in `tools/`
+and a test fails when a committed file differs from what they produce.
 
 ## Running against the test bed
 

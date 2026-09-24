@@ -2042,6 +2042,106 @@ entities:
     TransType: string
     ObjType: string
     LineMemo: string
+- entity: OWTR
+  display_name: Inventory transfers (OWTR)
+  description: 'Inventory transfer headers, ObjType 67: source warehouse (Filler) and target warehouse
+    (ToWhsCode); stock moves, money does not.'
+  mode: incremental
+  watermark_field: UpdateDate
+  watermark_ts_field: UpdateTS
+  watermark_format: b1_update_ts
+  primary_key: DocEntry
+  date_field: DocDate
+  page_size: 2000
+  select_fields:
+  - DocEntry
+  - DocNum
+  - CANCELED
+  - DocStatus
+  - ObjType
+  - DocDate
+  - TaxDate
+  - CardCode
+  - CardName
+  - Filler
+  - ToWhsCode
+  - Comments
+  - TransId
+  - Series
+  - CreateDate
+  - CreateTS
+  - UpdateDate
+  - UpdateTS
+  - UserSign
+  protection: {}
+  column_types:
+    DocEntry: int64
+    DocNum: int64
+    CANCELED: string
+    DocStatus: string
+    ObjType: string
+    DocDate: timestamp
+    TaxDate: timestamp
+    CardCode: string
+    CardName: string
+    Filler: string
+    ToWhsCode: string
+    Comments: string
+    TransId: int64
+    Series: int64
+    CreateDate: timestamp
+    CreateTS: int64
+    UpdateDate: timestamp
+    UpdateTS: int64
+    UserSign: int64
+- entity: WTR1
+  display_name: Inventory transfer lines (WTR1)
+  description: 'Inventory transfer lines, read through OWTR: item, quantity, from and to warehouse.'
+  mode: incremental
+  watermark_field: UpdateDate
+  watermark_ts_field: UpdateTS
+  watermark_format: b1_update_ts
+  parent: OWTR
+  parent_key: DocEntry
+  join_key: DocEntry
+  primary_key: DocEntry,LineNum
+  date_field: DocDate
+  page_size: 5000
+  select_fields:
+  - DocEntry
+  - LineNum
+  - LineStatus
+  - ItemCode
+  - Dscription
+  - Quantity
+  - Price
+  - Currency
+  - Rate
+  - LineTotal
+  - TotalSumSy
+  - StockPrice
+  - FromWhsCod
+  - WhsCode
+  - ObjType
+  - VisOrder
+  protection: {}
+  column_types:
+    DocEntry: int64
+    LineNum: int64
+    LineStatus: string
+    ItemCode: string
+    Dscription: string
+    Quantity: decimal(19,6)
+    Price: decimal(19,6)
+    Currency: string
+    Rate: decimal(19,6)
+    LineTotal: decimal(19,6)
+    TotalSumSy: decimal(19,6)
+    StockPrice: decimal(19,6)
+    FromWhsCod: string
+    WhsCode: string
+    ObjType: string
+    VisOrder: int64
 - entity: OWOR
   display_name: Production orders (OWOR)
   description: 'Production order headers: planned, completed and rejected quantities, status and dates.'

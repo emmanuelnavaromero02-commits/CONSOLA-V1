@@ -126,6 +126,24 @@ def test_snapshot_tables_fall_back_to_full_when_asked_for_incremental(b1_env, da
     assert recorder.watermarks == {}
 
 
+def test_the_first_incremental_read_of_an_empty_table_leaves_a_zero_row_artifact(b1_env, dataset, monkeypatch):
+    """A/P credit memos exist in no company of the fake. The first
+    incremental cycle is a whole-table read, so it must leave the typed
+    empty file every silver of that table expects; the second cycle, with
+    watermarks or not, leaves nothing."""
+    assert not any(dataset.tables[c.alias]["RPC1"] for c in dataset.companies)
+    recorder, es = _install(monkeypatch)
+    first = es.run_entity(_config("RPC1", mode="incremental"))
+    assert first["mode"] == "incremental" and first["record_count"] == 0
+    assert len(recorder.uploads) == 1 and recorder.uploads[0]["rows"] == []
+    assert recorder.uploads[0]["arrow_schema"] is not None
+    assert recorder.watermarks == {}, "nothing was read, so no watermark"
+    marks = {f"RPC1@{c.alias}": "2020-01-01T00:00:00" for c in dataset.companies}
+    again, es = _install(monkeypatch, marks)
+    assert es.run_entity(_config("RPC1", mode="incremental"))["record_count"] == 0
+    assert again.uploads == []
+
+
 def test_a_full_load_that_finds_nothing_leaves_a_zero_row_artifact(b1_env, dataset, monkeypatch):
     distributor = next(c for c in dataset.companies if c.alias != "mx_mfg")
     assert not dataset.tables[distributor.alias]["OWOR"]

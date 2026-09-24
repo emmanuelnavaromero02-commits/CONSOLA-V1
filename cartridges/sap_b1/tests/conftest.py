@@ -141,7 +141,7 @@ def fake_postgres(dataset):
             "companies": ",".join(f"{c.alias}={c.schema}" for c in dataset.companies),
         }
     finally:
-        _docker("rm", "-f", container, check=False)
+        _docker("rm", "-f", "-v", container, check=False)
 
 
 @pytest.fixture

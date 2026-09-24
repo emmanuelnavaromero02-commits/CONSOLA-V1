@@ -32,6 +32,7 @@ from app.core.request_context import SecurityContextError, reset_security_contex
 from app.core.b1_source import B1SourceError
 from app.services.catalog_service import get_all_entities, get_entity_config
 from app.services.extraction_service import run_entity
+from app.services.intercompany import refresh_intercompany_partners
 from app.services.preflight import preflight_for_extract
 from app.services.runlog_service import get_last_run_status
 from app.services.watermark_service import list_watermarks
@@ -221,9 +222,35 @@ def extract_all(
                     "status": "failed",
                     "error": str(exc),
                 })
+        # The intercompany mapping is configuration, not a table; it lands in
+        # Bronze with every full cycle so silver can join it.
+        try:
+            result = refresh_intercompany_partners(ctx)
+            _mark_external_job(_trigger_silver_refresh, result["entity"], ctx)
+            results.append(result)
+        except Exception as exc:                           # noqa: BLE001
+            results.append({"entity": "IntercompanyPartners", "status": "failed", "error": str(exc)})
     finally:
         reset_security_context(token)
     return {"results": results}
+
+
+@router.post("/intercompany/refresh")
+def intercompany_refresh(body: dict[str, Any] | None = Body(None)):
+    """Write the configured intercompany partner mapping to Bronze."""
+    report = preflight_for_extract()
+    if report is not None:
+        return _degraded_503(report)
+    ctx = _security_context(body)
+    token = _set_security_context(ctx)
+    try:
+        result = refresh_intercompany_partners(ctx)
+        _mark_external_job(_trigger_silver_refresh, result["entity"], ctx)
+        return result
+    except B1SourceError as exc:
+        return _degraded_503({"status": "degraded", "configured": True, "error": str(exc)})
+    finally:
+        reset_security_context(token)
 
 
 # ── Observability ────────────────────────────────────────────────────────────
