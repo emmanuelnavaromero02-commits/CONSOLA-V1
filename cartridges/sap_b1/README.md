@@ -113,6 +113,32 @@ The database host is normally a private address behind the customer's VPN,
 so the HTTP egress guard used by the OData cartridges does not apply: this
 is a database session to a destination fixed by configuration.
 
+## Connection kit
+
+[`connect/`](connect/) holds what the customer's IT and the platform team run
+to bring a Business One instance online. Every file is publishable
+(placeholders only; `tests/test_connect_kit.py` checks for addresses, hosts,
+schema names and secrets):
+
+* `hana/`: HANA SQL to find the tenant SQL port, create / verify / revoke the
+  read-only user, plus connectivity checks for the customer's Windows server
+  (`test_connection.ps1`) and a Linux host (`test_connection.sh`).
+* `config/`: the `SAP_B1_*` environment template, the Console Vault
+  connection template, the `entity_scheduler` script that puts every entity
+  on a two-hour cadence (psql `:tenant_id` / `:workspace_id`), and the
+  24-month initial-load runbook (one entity-month per run, watermark seeding
+  afterwards).
+* `vpn/`: the recommended WireGuard tunnel from the customer's server to the
+  VPN bastion: runbook (Spanish), server install script, security-group
+  script, client config template.
+* `windows/`: the alternative Windows connector, described only; it is built
+  under `connect/windows-agent/` separately.
+
+Two facts the runbooks call out: a run reaches the cartridge unscoped unless
+its `security_context` is signed (the thin `sap_b1_extract` DAG forwards
+`tenant_id` / `workspace_id` but does not sign them yet, unlike the
+SuccessFactors DAG), and `historical` runs record no watermark.
+
 ## Running against the test bed
 
 The Business One-shaped Postgres fake in `tests/fixtures/sap_b1` (schema,

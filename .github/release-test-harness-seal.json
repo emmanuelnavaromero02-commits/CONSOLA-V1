@@ -966,6 +966,10 @@
       "sha256": "5dd1df075c345511d7b50df825faa032b9e775e203fe779eccc74417cec33bf3"
     },
     {
+      "path": "cartridges/sap_b1/tests/test_connect_kit.py",
+      "sha256": "37f9d51c684b954707a3d48eee72a2dfa63f28261bcf54a0eba8b6814ff277fa"
+    },
+    {
       "path": "cartridges/sap_b1/tests/test_extraction_against_fake.py",
       "sha256": "eacedd5645f16e3d96b5521830dac16ad208903bfb6dece1f64f48affb9e77f8"
     },
