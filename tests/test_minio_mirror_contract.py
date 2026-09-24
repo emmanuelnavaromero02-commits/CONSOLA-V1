@@ -65,11 +65,11 @@ def test_dockerfile_and_mirror_workflow_pin_the_same_releases_and_commits():
     workflow = _yaml(".github/workflows/mirror-minio.yml")
     # PyYAML reads the bare `on:` key as boolean True.
     triggers = workflow.get("on", workflow.get(True))
-    assert set(triggers) == {"workflow_dispatch", "pull_request"}
-    # Publishing must happen from this repository's own workflow run: only a
-    # package first created with its GITHUB_TOKEN is readable by the other
-    # workflows' tokens.
-    assert set(triggers["pull_request"]["paths"]) == {"infra/images/minio/**", ".github/workflows/mirror-minio.yml"}
+    # Manual only. Publishing must happen from a run of this repository's own
+    # workflow: only a package created with its GITHUB_TOKEN is readable by
+    # the other workflows' tokens (the first publication ran from the pull
+    # request that added the file, through a temporary pull_request trigger).
+    assert set(triggers) == {"workflow_dispatch"}
     assert workflow["permissions"] == {"contents": "read", "packages": "write"}
     env = workflow["env"]
     assert (env["MINIO_TAG"], env["MINIO_COMMIT"], env["MC_TAG"], env["MC_COMMIT"]) == (
@@ -86,6 +86,8 @@ def test_dockerfile_and_mirror_workflow_pin_the_same_releases_and_commits():
     assert 'grep -F "minio version ${MINIO_TAG} (commit-id=${MINIO_COMMIT})"' in verify["run"]
     assert 'grep -F "mc version ${MC_TAG} (commit-id=${MC_COMMIT})"' in verify["run"]
     assert "--entrypoint /usr/bin/curl" in verify["run"]
+    # `| head -1` under pipefail kills the step with SIGPIPE after every check passed.
+    assert "| head" not in verify["run"]
 
 
 def test_composes_run_the_mirror_images():

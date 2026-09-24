@@ -7,24 +7,20 @@ name: Mirror MinIO images
 # The resulting index digests (printed at the end of the run and in the job
 # summary) are what the composes, scripts and contract tests pin.
 #
-# Access: the packages MUST be created by this workflow. A package pushed
-# with a personal token is private and, even when linked to the repository
-# through an `org.opencontainers.image.source` annotation, is not readable by
-# the GITHUB_TOKEN of the other workflows ("manifest unknown" / "denied");
-# that is what happened to the first two attempts (packages `minio` and
-# `mc`, now unused). A package first published with this repository's
-# GITHUB_TOKEN gets the repository's access automatically, exactly like the
-# release images.
+# Access: the packages MUST be created by a run of this workflow. A package
+# pushed with a personal token is private and, even when linked to the
+# repository through an `org.opencontainers.image.source` annotation, is not
+# readable by the GITHUB_TOKEN of the other workflows ("manifest unknown" /
+# "denied"); that is what happened to the first two attempts (packages `minio`
+# and `mc`, now unused). A package created with this repository's GITHUB_TOKEN
+# gets the repository's access, exactly like the release images.
+# `workflow_dispatch` only works for a workflow that exists on the default
+# branch, so the very first publication ran from the pull request that added
+# this file (temporary `pull_request` trigger, since removed); bump the
+# releases later with a manual dispatch from `main`.
 
 on:
   workflow_dispatch:
-  # Also on the pull request that changes the build: the run publishes with
-  # this repository's GITHUB_TOKEN, which is what makes the packages readable
-  # by the other workflows of the repository (see Access below).
-  pull_request:
-    paths:
-      - infra/images/minio/**
-      - .github/workflows/mirror-minio.yml
 
 permissions:
   contents: read
@@ -100,13 +96,8 @@ jobs:
           grep -F "minio version ${MINIO_TAG} (commit-id=${MINIO_COMMIT})" <<<"${minio_version}"
           grep -F "mc version ${MC_TAG} (commit-id=${MC_COMMIT})" <<<"${mc_version}"
           # The compose healthcheck relies on curl inside the server image.
-          docker run --rm --entrypoint /usr/bin/curl "${minio_ref}" --version | head -1
-          echo "## Published index digests" >> "${GITHUB_STEP_SUMMARY}"
-          for ref in "${minio_ref}" "${mc_ref}"; do
-            digest="$(docker buildx imagetools inspect "${ref}" --format '{{json .Manifest.Digest}}' | tr -d '"')"
-            echo "${ref}@${digest}"
-            echo "- \`${ref}@${digest}\`" >> "${GITHUB_STEP_SUMMARY}"
-          done
+          curl_version="$(docker run --rm --entrypoint /usr/bin/curl "${minio_ref}" --version)"
+          echo "${curl_version%%$'\n'*}"
           docker run --rm --entrypoint /bin/sh "${minio_ref}" -c 'test -x /usr/bin/docker-entrypoint.sh && test -x /usr/bin/mc'
           {
             echo "## Published images"

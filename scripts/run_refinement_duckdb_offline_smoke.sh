@@ -6,7 +6,7 @@ suffix="${RANDOM}${RANDOM}"
 network="omega-duckdb-offline-${suffix}"
 postgres="omega-duckdb-postgres-${suffix}"
 minio="omega-duckdb-minio-${suffix}"
-minio_image="ghcr.io/emmanuelnavaromero02-commits/omega-minio:RELEASE.2024-12-18T13-15-44Z@sha256:f7e035122f930f0c8e120447513bbc550809fd4e909e4304a203fd6e605b1dad"
+minio_image="ghcr.io/emmanuelnavaromero02-commits/omega-minio:RELEASE.2024-12-18T13-15-44Z@sha256:2385e334b7fdcdafe5feffcad50df622901f57893393c6da267497995037290b"
 
 cleanup() {
   docker rm -f "$postgres" "$minio" >/dev/null 2>&1 || true

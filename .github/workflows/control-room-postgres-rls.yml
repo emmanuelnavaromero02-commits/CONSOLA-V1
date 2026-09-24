@@ -77,7 +77,7 @@ jobs:
           docker pull postgres:15
           docker image inspect postgres:15 >/dev/null
           minio_tag="ghcr.io/emmanuelnavaromero02-commits/omega-minio:RELEASE.2024-12-18T13-15-44Z"
-          minio_digest="sha256:f7e035122f930f0c8e120447513bbc550809fd4e909e4304a203fd6e605b1dad"
+          minio_digest="sha256:2385e334b7fdcdafe5feffcad50df622901f57893393c6da267497995037290b"
           minio_ref="${minio_tag}@${minio_digest}"
           docker pull "${minio_ref}"
           docker tag "${minio_ref}" "${minio_tag}"

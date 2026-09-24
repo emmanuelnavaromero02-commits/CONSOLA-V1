@@ -11,7 +11,7 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "sha256": "ac8025e369dbb66c61a8831d70330b5e5ec3297fc81a0d9f062d4628a1c63008"
+      "sha256": "5a8f5e814fbd569b59a29ceb9b2b99ed2f6a554f45e00320cf873eaac2b409b5"
     },
     {
       "path": "Makefile",
@@ -3263,7 +3263,7 @@
     },
     {
       "path": "scripts/run_refinement_duckdb_offline_smoke.sh",
-      "sha256": "3a1720fe2e445dd88654062a54cee9d3930065fe1c8c4e743560cef294519d86"
+      "sha256": "1e8e426437ef2d89f2e7f11728bdcd56e0e46539a1f6402155c23b7ece211c70"
     },
     {
       "path": "scripts/run_release_playwright.py",
@@ -4819,7 +4819,7 @@
     },
     {
       "path": "tests/test_minio_mirror_contract.py",
-      "sha256": "901b0e8b5c2ebe2d929858d2d15d45b33d2463814aa257487de0acb12c23d10c"
+      "sha256": "033b25ba06c8311cc4bc21a2f916cf526f6c7dbbae102273f810b09db8ecb9ce"
     },
     {
       "path": "tests/test_mission5_evidence_ticket_contracts.py",
@@ -5123,7 +5123,7 @@
     },
     {
       "path": "tests/test_refinement_duckdb_extensions.py",
-      "sha256": "4ab54841b17f8a90ea44d1c22239df988577ddd67d0017db31d360ed72b9cfe4"
+      "sha256": "27d2d734521526b813ec26e0448100936d9ffea6054e8c7107b244cf1b36ca21"
     },
     {
       "path": "tests/test_refinement_healthz_real.py",
@@ -5159,7 +5159,7 @@
     },
     {
       "path": "tests/test_release_ci_fail_closed.py",
-      "sha256": "a0433556f8937787144f0ee6cf96635f700e3fe90e824469eb003b9691d92664"
+      "sha256": "aba007a3e0cf4553a9b07f5860890d7c9db3babb7b4a286e92b9f6fd9b3bc4ec"
     },
     {
       "path": "tests/test_release_compose_env_contract.py",
