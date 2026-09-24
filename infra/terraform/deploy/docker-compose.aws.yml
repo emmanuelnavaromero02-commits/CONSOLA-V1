@@ -275,7 +275,7 @@ services:
       #
       # The engine only reads them from v1.45.230-beta onward (#658, #659). On
       # an older image they are inert: harmless, but spill stays uncapped.
-      DUCKDB_TEMP_DIRECTORY:          ${DUCKDB_TEMP_DIRECTORY:-/tmp/duckdb-spill}
+      DUCKDB_TEMP_DIRECTORY:          ${DUCKDB_TEMP_DIRECTORY:-/var/lib/omega/duckdb-spill}
       DUCKDB_MAX_TEMP_DIRECTORY_SIZE: ${DUCKDB_MAX_TEMP_DIRECTORY_SIZE:-8GB}
       DUCKDB_THREADS:                 ${DUCKDB_THREADS:-2}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
@@ -309,6 +309,10 @@ services:
         source: ${GOLD_VERIFIER_DATABASE_URL_HOST_FILE:?GOLD_VERIFIER_DATABASE_URL_HOST_FILE is required}
         target: /run/secrets/gold_verifier_database_url
         read_only: true
+      # A named volume, not the container's writable layer: a spill in flight
+      # survives a recreate and a host reboot, and cannot be swept by anything
+      # that cleans temporary paths mid-materialization.
+      - refinement_spill:/var/lib/omega/duckdb-spill
     ports:
       - "8500:8500"
     networks:
@@ -925,6 +929,7 @@ services:
       start_period: 90s
 
 volumes:
+  refinement_spill:
   postgres_data:
   postgres_gold_data:
   redis_data:
