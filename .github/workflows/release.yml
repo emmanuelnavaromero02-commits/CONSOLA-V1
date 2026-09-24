@@ -380,10 +380,10 @@ jobs:
       - name: Preload exact MinIO image for pull-never release tests
         run: |
           set -euo pipefail
-          minio_tag="ghcr.io/emmanuelnavaromero02-commits/minio:RELEASE.2024-12-18T13-15-44Z"
+          minio_tag="ghcr.io/emmanuelnavaromero02-commits/omega-minio:RELEASE.2024-12-18T13-15-44Z"
           minio_digest="sha256:f7e035122f930f0c8e120447513bbc550809fd4e909e4304a203fd6e605b1dad"
           minio_ref="${minio_tag}@${minio_digest}"
-          minio_repo_digest="ghcr.io/emmanuelnavaromero02-commits/minio@${minio_digest}"
+          minio_repo_digest="ghcr.io/emmanuelnavaromero02-commits/omega-minio@${minio_digest}"
           docker pull "${minio_ref}"
           docker tag "${minio_ref}" "${minio_tag}"
           docker image inspect --format '{{json .RepoDigests}}' "${minio_ref}" \

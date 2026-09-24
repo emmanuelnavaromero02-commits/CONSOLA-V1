@@ -1692,7 +1692,7 @@ def test_exact_minio_preload_blocks_digest_or_tag_substitution(tmp_path: Path) -
     fake.write_text(
         """#!/usr/bin/env bash
 set -euo pipefail
-tag='ghcr.io/emmanuelnavaromero02-commits/minio:RELEASE.2024-12-18T13-15-44Z'
+tag='ghcr.io/emmanuelnavaromero02-commits/omega-minio:RELEASE.2024-12-18T13-15-44Z'
 digest='sha256:f7e035122f930f0c8e120447513bbc550809fd4e909e4304a203fd6e605b1dad'
 ref="${tag}@${digest}"
 case "${1:-}" in
@@ -1702,9 +1702,9 @@ case "${1:-}" in
     [[ "${2:-}" == inspect ]]
     if [[ "$*" == *RepoDigests* ]]; then
       if [[ "${FAKE_BAD_DIGEST:-0}" == 1 ]]; then
-        printf '["ghcr.io/emmanuelnavaromero02-commits/minio@sha256:%064d"]\n' 0
+        printf '["ghcr.io/emmanuelnavaromero02-commits/omega-minio@sha256:%064d"]\n' 0
       else
-        printf '["ghcr.io/emmanuelnavaromero02-commits/minio@%s"]\n' "${digest}"
+        printf '["ghcr.io/emmanuelnavaromero02-commits/omega-minio@%s"]\n' "${digest}"
       fi
     elif [[ "$*" == *'.Id'* ]]; then
       if [[ "$*" == *"${tag}"* && "$*" != *"${ref}"* && "${FAKE_BAD_TAG:-0}" == 1 ]]; then

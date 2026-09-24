@@ -60,7 +60,7 @@ services:
     restart: "no"
 
   minio:
-    image: ghcr.io/emmanuelnavaromero02-commits/minio:RELEASE.2024-12-18T13-15-44Z
+    image: ghcr.io/emmanuelnavaromero02-commits/omega-minio:RELEASE.2024-12-18T13-15-44Z
     command: server /data --console-address :9001
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?required}
@@ -80,7 +80,7 @@ services:
     restart: "no"
 
   minio-init:
-    image: ghcr.io/emmanuelnavaromero02-commits/mc:RELEASE.2024-11-21T17-21-54Z
+    image: ghcr.io/emmanuelnavaromero02-commits/omega-mc:RELEASE.2024-11-21T17-21-54Z
     depends_on:
       minio: {condition: service_healthy}
     entrypoint: ["/bin/sh", "-c"]

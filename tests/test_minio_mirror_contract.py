@@ -20,8 +20,8 @@ MINIO_TAG = "RELEASE.2024-12-18T13-15-44Z"
 MINIO_COMMIT = "16f8cf1c52f0a77eeb8f7565aaf7f7df12454583"
 MC_TAG = "RELEASE.2024-11-21T17-21-54Z"
 MC_COMMIT = "1681e4497c09d7438a34e846f76dbde972ab7daf"
-MINIO_IMAGE = f"ghcr.io/{OWNER}/minio:{MINIO_TAG}"
-MC_IMAGE = f"ghcr.io/{OWNER}/mc:{MC_TAG}"
+MINIO_IMAGE = f"ghcr.io/{OWNER}/omega-minio:{MINIO_TAG}"
+MC_IMAGE = f"ghcr.io/{OWNER}/omega-mc:{MC_TAG}"
 WITHDRAWN_DIGEST = "sha256:1dce27c494a16bae114774f1cec295493f3613142713130c2d22dd5696be6ad3"
 LOGIN_ACTION = "docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9"
 
@@ -65,7 +65,11 @@ def test_dockerfile_and_mirror_workflow_pin_the_same_releases_and_commits():
     workflow = _yaml(".github/workflows/mirror-minio.yml")
     # PyYAML reads the bare `on:` key as boolean True.
     triggers = workflow.get("on", workflow.get(True))
-    assert triggers == {"workflow_dispatch": None} or "workflow_dispatch" in triggers
+    assert set(triggers) == {"workflow_dispatch", "pull_request"}
+    # Publishing must happen from this repository's own workflow run: only a
+    # package first created with its GITHUB_TOKEN is readable by the other
+    # workflows' tokens.
+    assert set(triggers["pull_request"]["paths"]) == {"infra/images/minio/**", ".github/workflows/mirror-minio.yml"}
     assert workflow["permissions"] == {"contents": "read", "packages": "write"}
     env = workflow["env"]
     assert (env["MINIO_TAG"], env["MINIO_COMMIT"], env["MC_TAG"], env["MC_COMMIT"]) == (
@@ -74,8 +78,8 @@ def test_dockerfile_and_mirror_workflow_pin_the_same_releases_and_commits():
     steps = workflow["jobs"]["build-and-publish"]["steps"]
     pushes = [s for s in steps if str(s.get("uses", "")).startswith("docker/build-push-action@")]
     assert {(s["with"]["target"], s["with"]["tags"]) for s in pushes} == {
-        ("minio", "ghcr.io/${{ github.repository_owner }}/minio:${{ env.MINIO_TAG }}"),
-        ("mc", "ghcr.io/${{ github.repository_owner }}/mc:${{ env.MC_TAG }}"),
+        ("minio", "ghcr.io/${{ github.repository_owner }}/omega-minio:${{ env.MINIO_TAG }}"),
+        ("mc", "ghcr.io/${{ github.repository_owner }}/omega-mc:${{ env.MC_TAG }}"),
     }
     assert all(s["with"]["platforms"] == "linux/amd64,linux/arm64" and s["with"]["push"] is True for s in pushes)
     verify = next(s for s in steps if s.get("name", "").startswith("Verify the published images"))
@@ -103,7 +107,7 @@ def test_every_pull_by_digest_uses_the_same_index_digest():
         assert f'minio_tag="{MINIO_IMAGE}"' in text, workflow
         assert f'minio_digest="{digest}"' in text, workflow
     release = _text(".github/workflows/release.yml")
-    assert f'minio_repo_digest="ghcr.io/{OWNER}/minio@${{minio_digest}}"' in release
+    assert f'minio_repo_digest="ghcr.io/{OWNER}/omega-minio@${{minio_digest}}"' in release
     # The contract tests that pin the digest agree with the workflows.
     assert digest in _text("tests/test_refinement_duckdb_extensions.py")
     assert digest in _text("tests/test_release_ci_fail_closed.py")

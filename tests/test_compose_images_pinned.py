@@ -50,13 +50,13 @@ def test_minio_image_pinned_with_release_format():
     minio = (doc.get("services") or {}).get("minio") or {}
     image = minio.get("image", "")
     assert image, "minio service missing image: directive"
-    assert image.startswith("ghcr.io/emmanuelnavaromero02-commits/minio:RELEASE."), (
+    assert image.startswith("ghcr.io/emmanuelnavaromero02-commits/omega-minio:RELEASE."), (
         f"minio image must use the RELEASE.YYYY-MM-DD… format, got {image!r}"
     )
     # Sanity: the tag matches the upstream format so a typo gets
     # caught here rather than at runtime via image-pull failure.
     assert re.match(
-        r"ghcr\.io/emmanuelnavaromero02-commits/minio:RELEASE\.\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z\b",
+        r"ghcr\.io/emmanuelnavaromero02-commits/omega-minio:RELEASE\.\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z\b",
         image,
     ), f"minio tag does not match RELEASE format: {image!r}"
 

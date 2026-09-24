@@ -11,7 +11,7 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "sha256": "ecd5f94d7fb8aa7af25228f64ac4e1f59b0419efa083a6ef2050197e353f8ceb"
+      "sha256": "ac8025e369dbb66c61a8831d70330b5e5ec3297fc81a0d9f062d4628a1c63008"
     },
     {
       "path": "Makefile",
@@ -3023,7 +3023,7 @@
     },
     {
       "path": "infra/docker-compose.yml",
-      "sha256": "7f81a1b52878835b8c0d90de705acefac7f33997cd2605176402346aef2fb00d"
+      "sha256": "8955deb1a4afd70821795666c4bde29f4c78d6ce74f8663b03a138dd2b486d1f"
     },
     {
       "path": "infra/init/99zzt_analytic_app_dataset_grants.sql",
@@ -3263,7 +3263,7 @@
     },
     {
       "path": "scripts/run_refinement_duckdb_offline_smoke.sh",
-      "sha256": "ac823e577e1d531f61f0bcdf52c9195181b75896d88cf244b1c0ec1e93345d69"
+      "sha256": "3a1720fe2e445dd88654062a54cee9d3930065fe1c8c4e743560cef294519d86"
     },
     {
       "path": "scripts/run_release_playwright.py",
@@ -3911,7 +3911,7 @@
     },
     {
       "path": "tests/test_compose_aws_consistency.py",
-      "sha256": "5264ded8203fa393ac21b8117f15e53118e58bd8b486b0a6099779bc162487d5"
+      "sha256": "66a13c16f89835161bed3706ec05c56a89ec33f55ad2538d28a65ebf88205a06"
     },
     {
       "path": "tests/test_compose_healthchecks.py",
@@ -3919,7 +3919,7 @@
     },
     {
       "path": "tests/test_compose_images_pinned.py",
-      "sha256": "4251648e8655b5ccd9e9d30b8364083e55a5aac43ce31e6c393cb597212af2af"
+      "sha256": "0651110f26f3bf7c12dd2a52c90c1879e637d2efeab03698a2092957b04a0246"
     },
     {
       "path": "tests/test_config_only_cartridge_runtime.py",
@@ -4819,7 +4819,7 @@
     },
     {
       "path": "tests/test_minio_mirror_contract.py",
-      "sha256": "21f65a09e8779b868aabbadd14f7ab25ae012c0668825e7f5501853e185c4285"
+      "sha256": "901b0e8b5c2ebe2d929858d2d15d45b33d2463814aa257487de0acb12c23d10c"
     },
     {
       "path": "tests/test_mission5_evidence_ticket_contracts.py",
@@ -5123,7 +5123,7 @@
     },
     {
       "path": "tests/test_refinement_duckdb_extensions.py",
-      "sha256": "5acf353e21cf708361374785c57acebd24317e3d323e7a4e636d2305b2f6b2df"
+      "sha256": "4ab54841b17f8a90ea44d1c22239df988577ddd67d0017db31d360ed72b9cfe4"
     },
     {
       "path": "tests/test_refinement_healthz_real.py",
@@ -5159,7 +5159,7 @@
     },
     {
       "path": "tests/test_release_ci_fail_closed.py",
-      "sha256": "e6ac1249cf9368b9820b3ada027ea662a61f2b3dd7e685039608b6afbb3314ff"
+      "sha256": "a0433556f8937787144f0ee6cf96635f700e3fe90e824469eb003b9691d92664"
     },
     {
       "path": "tests/test_release_compose_env_contract.py",
@@ -5231,7 +5231,7 @@
     },
     {
       "path": "tests/test_replicon_minio_image_contract.py",
-      "sha256": "94745f96e2dafa8174fe362e43268b1737b9f5d20f2c2d3217d4273ea2e38c55"
+      "sha256": "f705ba396f2ebcf2351cf33239ce587eddc17cc2034fd42446e7f34b5edf060f"
     },
     {
       "path": "tests/test_replicon_mock_under_profile.py",
@@ -5551,7 +5551,7 @@
     },
     {
       "path": "tests/test_staged_publication_live.py",
-      "sha256": "80078a90435d6bda860e375fc632b2d0b890be7d4794066c1a1c9fae5593c8ed"
+      "sha256": "8a97cd26c29f1a2dbc5aec75cf19699748bf02c0365d3f2ccc78556dccf946be"
     },
     {
       "path": "tests/test_staged_publication_public_projection.py",

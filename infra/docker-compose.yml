@@ -106,7 +106,7 @@ services:
     # deliberately via a versioned migration when needed.
     # Built from the archived upstream source tag by .github/workflows/mirror-minio.yml
     # (MinIO withdrew its community images on 2026-09-24; see infra/images/minio).
-    image: ghcr.io/emmanuelnavaromero02-commits/minio:RELEASE.2024-12-18T13-15-44Z
+    image: ghcr.io/emmanuelnavaromero02-commits/omega-minio:RELEASE.2024-12-18T13-15-44Z
     container_name: mode_minio
     command: server /data --console-address ":9001"
     environment:
@@ -132,7 +132,7 @@ services:
 
   minio-init:
     security_opt: ["no-new-privileges:true"]
-    image: ghcr.io/emmanuelnavaromero02-commits/mc:RELEASE.2024-11-21T17-21-54Z
+    image: ghcr.io/emmanuelnavaromero02-commits/omega-mc:RELEASE.2024-11-21T17-21-54Z
     depends_on:
       minio:
         condition: service_healthy

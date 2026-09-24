@@ -3,20 +3,28 @@ name: Mirror MinIO images
 # MinIO withdrew every community artifact on 2026-09-24 (dl.min.io: 410 Gone;
 # quay.io/minio: 401). This workflow rebuilds the exact releases the platform
 # pins from their archived source tags and publishes them to this
-# repository's GHCR namespace (ghcr.io/<owner>/minio and /mc). Run it by
-# hand; the resulting index digests are what the composes, scripts and
-# contract tests pin.
+# repository's GHCR namespace (ghcr.io/<owner>/omega-minio and /omega-mc).
+# The resulting index digests (printed at the end of the run and in the job
+# summary) are what the composes, scripts and contract tests pin.
 #
-# Access: GHCR links a multi-platform image to a repository only through an
-# `org.opencontainers.image.source` annotation on the OCI *index* (the label
-# inside the image config is not enough), which is what the `annotations`
-# input below sets. A linked package inherits the repository's access, so the
-# GITHUB_TOKEN of this repository's workflows can push and pull it. Without
-# the annotation the package is private and unlinked and every CI pull fails
-# with "manifest unknown".
+# Access: the packages MUST be created by this workflow. A package pushed
+# with a personal token is private and, even when linked to the repository
+# through an `org.opencontainers.image.source` annotation, is not readable by
+# the GITHUB_TOKEN of the other workflows ("manifest unknown" / "denied");
+# that is what happened to the first two attempts (packages `minio` and
+# `mc`, now unused). A package first published with this repository's
+# GITHUB_TOKEN gets the repository's access automatically, exactly like the
+# release images.
 
 on:
   workflow_dispatch:
+  # Also on the pull request that changes the build: the run publishes with
+  # this repository's GITHUB_TOKEN, which is what makes the packages readable
+  # by the other workflows of the repository (see Access below).
+  pull_request:
+    paths:
+      - infra/images/minio/**
+      - .github/workflows/mirror-minio.yml
 
 permissions:
   contents: read
@@ -60,7 +68,7 @@ jobs:
           annotations: |
             index:org.opencontainers.image.source=https://github.com/${{ github.repository }}
             index:org.opencontainers.image.licenses=AGPL-3.0-only
-          tags: ghcr.io/${{ github.repository_owner }}/minio:${{ env.MINIO_TAG }}
+          tags: ghcr.io/${{ github.repository_owner }}/omega-minio:${{ env.MINIO_TAG }}
 
       - name: Build and push mc
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
@@ -74,15 +82,15 @@ jobs:
           annotations: |
             index:org.opencontainers.image.source=https://github.com/${{ github.repository }}
             index:org.opencontainers.image.licenses=AGPL-3.0-only
-          tags: ghcr.io/${{ github.repository_owner }}/mc:${{ env.MC_TAG }}
+          tags: ghcr.io/${{ github.repository_owner }}/omega-mc:${{ env.MC_TAG }}
 
       - name: Verify the published images report the pinned releases
         shell: bash
         run: |
           set -euo pipefail
           owner="${{ github.repository_owner }}"
-          minio_ref="ghcr.io/${owner}/minio:${MINIO_TAG}"
-          mc_ref="ghcr.io/${owner}/mc:${MC_TAG}"
+          minio_ref="ghcr.io/${owner}/omega-minio:${MINIO_TAG}"
+          mc_ref="ghcr.io/${owner}/omega-mc:${MC_TAG}"
           docker pull "${minio_ref}"
           docker pull "${mc_ref}"
           minio_version="$(docker run --rm "${minio_ref}" minio --version)"

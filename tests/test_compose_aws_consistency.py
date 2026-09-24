@@ -145,7 +145,7 @@ def test_aws_compose_minio_not_latest_tag():
     services = doc.get("services", {})
     for name, svc in services.items():
         image = (svc or {}).get("image", "")
-        if isinstance(image, str) and image.startswith(("quay.io/minio/minio", "ghcr.io/emmanuelnavaromero02-commits/minio")):
+        if isinstance(image, str) and image.startswith(("quay.io/minio/minio", "ghcr.io/emmanuelnavaromero02-commits/omega-minio")):
             assert ":latest" not in image, (
                 f"service {name} pins a MinIO :latest tag — pin a real RELEASE tag"
             )

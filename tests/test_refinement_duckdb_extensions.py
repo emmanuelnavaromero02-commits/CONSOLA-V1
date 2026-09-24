@@ -66,7 +66,7 @@ def test_release_root_cache_is_fresh_frozen_and_network_independent() -> None:
     preparation = _text("scripts/prepare_refinement_duckdb_ci.sh")
     runner = _text("scripts/run_refinement_duckdb_offline_smoke.sh")
     exact_minio = (
-        "ghcr.io/emmanuelnavaromero02-commits/minio:RELEASE.2024-12-18T13-15-44Z@"
+        "ghcr.io/emmanuelnavaromero02-commits/omega-minio:RELEASE.2024-12-18T13-15-44Z@"
         "sha256:f7e035122f930f0c8e120447513bbc550809fd4e909e4304a203fd6e605b1dad"
     )
 
