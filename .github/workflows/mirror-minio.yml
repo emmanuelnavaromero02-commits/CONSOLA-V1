@@ -1,0 +1,95 @@
+name: Mirror MinIO images
+
+# MinIO withdrew every community artifact on 2026-09-24 (dl.min.io: 410 Gone;
+# quay.io/minio: 401). This workflow rebuilds the exact releases the platform
+# pins from their archived source tags and publishes them to this
+# repository's GHCR namespace. Run it by hand; the resulting digests are what
+# the composes, scripts and contract tests pin.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  MINIO_TAG: RELEASE.2024-12-18T13-15-44Z
+  MINIO_COMMIT: 16f8cf1c52f0a77eeb8f7565aaf7f7df12454583
+  MC_TAG: RELEASE.2024-11-21T17-21-54Z
+  MC_COMMIT: 1681e4497c09d7438a34e846f76dbde972ab7daf
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push minio
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: infra/images/minio
+          target: minio
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          sbom: false
+          tags: ghcr.io/${{ github.repository_owner }}/minio:${{ env.MINIO_TAG }}
+
+      - name: Build and push mc
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: infra/images/minio
+          target: mc
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          sbom: false
+          tags: ghcr.io/${{ github.repository_owner }}/mc:${{ env.MC_TAG }}
+
+      - name: Verify the published images report the pinned releases
+        shell: bash
+        run: |
+          set -euo pipefail
+          owner="${{ github.repository_owner }}"
+          minio_ref="ghcr.io/${owner}/minio:${MINIO_TAG}"
+          mc_ref="ghcr.io/${owner}/mc:${MC_TAG}"
+          docker pull "${minio_ref}"
+          docker pull "${mc_ref}"
+          minio_version="$(docker run --rm "${minio_ref}" minio --version)"
+          mc_version="$(docker run --rm "${mc_ref}" --version)"
+          echo "${minio_version}"
+          echo "${mc_version}"
+          grep -F "minio version ${MINIO_TAG} (commit-id=${MINIO_COMMIT})" <<<"${minio_version}"
+          grep -F "mc version ${MC_TAG} (commit-id=${MC_COMMIT})" <<<"${mc_version}"
+          # The compose healthcheck relies on curl inside the server image.
+          docker run --rm --entrypoint /usr/bin/curl "${minio_ref}" --version | head -1
+          docker run --rm --entrypoint /bin/sh "${minio_ref}" -c 'test -x /usr/bin/docker-entrypoint.sh && test -x /usr/bin/mc'
+          {
+            echo "## Published images"
+            echo
+            echo '```'
+            docker buildx imagetools inspect "${minio_ref}"
+            echo
+            docker buildx imagetools inspect "${mc_ref}"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+          minio_digest="$(docker buildx imagetools inspect "${minio_ref}" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          mc_digest="$(docker buildx imagetools inspect "${mc_ref}" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          echo "minio=${minio_ref}@${minio_digest}"
+          echo "mc=${mc_ref}@${mc_digest}"
+          printf 'minio_digest=%s\nmc_digest=%s\n' "${minio_digest}" "${mc_digest}" >> "${GITHUB_OUTPUT}"
