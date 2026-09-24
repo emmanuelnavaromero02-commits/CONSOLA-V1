@@ -353,6 +353,22 @@ def _root_test_targets(files: list[str]) -> str:
             }
             if Path(target).exists()
         )
+    # The release publishes by digest and the deploy pulls by tag; those two
+    # halves lived in different files and nothing compared them, so CI was green
+    # while production could not pull a single image (2026-09-23). Any edit to
+    # either half must run the contract that ties them together.
+    if _any(
+        files,
+        r"^scripts/deploy_main_aws\.py$",
+        r"^scripts/release_digest_env\.py$",
+        r"^\.github/workflows/release\.yml$",
+        r"^infra/terraform/deploy/docker-compose\.(aws|cartridges)\.ya?ml$",
+    ):
+        targets.update(
+            target
+            for target in {"tests/test_aws_deploy_pins_release_digests.py"}
+            if Path(target).exists()
+        )
     # A compose edit is exactly how refinement lost its ceiling: the AWS file
     # declared no mem_limit and no DUCKDB_* key, and no root test was selected
     # by a compose-only change, so CI stayed green while production ran
