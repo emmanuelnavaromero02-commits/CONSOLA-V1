@@ -1584,7 +1584,7 @@ def test_validate_release_has_history_and_prepares_pull_never_root_runtime():
     assert 'docker pull "${minio_ref}"' in minio_source
     assert 'docker tag "${minio_ref}" "${minio_tag}"' in minio_source
     assert (
-        "sha256:bc101c7c3ae7779dff4e39a33637c92fc2d2393899a71d562bf546fd5118eff8"
+        "sha256:f7e035122f930f0c8e120447513bbc550809fd4e909e4304a203fd6e605b1dad"
         in minio_source
     )
     assert "RepoDigests" in minio_source
@@ -1693,7 +1693,7 @@ def test_exact_minio_preload_blocks_digest_or_tag_substitution(tmp_path: Path) -
         """#!/usr/bin/env bash
 set -euo pipefail
 tag='ghcr.io/emmanuelnavaromero02-commits/minio:RELEASE.2024-12-18T13-15-44Z'
-digest='sha256:bc101c7c3ae7779dff4e39a33637c92fc2d2393899a71d562bf546fd5118eff8'
+digest='sha256:f7e035122f930f0c8e120447513bbc550809fd4e909e4304a203fd6e605b1dad'
 ref="${tag}@${digest}"
 case "${1:-}" in
   pull) [[ "${2:-}" == "${ref}" ]] ;;

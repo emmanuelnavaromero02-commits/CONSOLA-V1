@@ -7,12 +7,13 @@ name: Mirror MinIO images
 # hand; the resulting index digests are what the composes, scripts and
 # contract tests pin.
 #
-# Access: the packages were first published from a workstation (the RLS
-# gate could not run until they existed), so GitHub did not link them to
-# this repository. Both packages must be granted to this repository once,
-# in the package settings ("Manage Actions access": CONSOLA-V1, role
-# Write), or made public. Without that, this workflow's GITHUB_TOKEN cannot
-# push and the CI jobs' GITHUB_TOKEN cannot pull.
+# Access: GHCR links a multi-platform image to a repository only through an
+# `org.opencontainers.image.source` annotation on the OCI *index* (the label
+# inside the image config is not enough), which is what the `annotations`
+# input below sets. A linked package inherits the repository's access, so the
+# GITHUB_TOKEN of this repository's workflows can push and pull it. Without
+# the annotation the package is private and unlinked and every CI pull fails
+# with "manifest unknown".
 
 on:
   workflow_dispatch:
@@ -56,6 +57,9 @@ jobs:
           push: true
           provenance: false
           sbom: false
+          annotations: |
+            index:org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            index:org.opencontainers.image.licenses=AGPL-3.0-only
           tags: ghcr.io/${{ github.repository_owner }}/minio:${{ env.MINIO_TAG }}
 
       - name: Build and push mc
@@ -67,6 +71,9 @@ jobs:
           push: true
           provenance: false
           sbom: false
+          annotations: |
+            index:org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            index:org.opencontainers.image.licenses=AGPL-3.0-only
           tags: ghcr.io/${{ github.repository_owner }}/mc:${{ env.MC_TAG }}
 
       - name: Verify the published images report the pinned releases

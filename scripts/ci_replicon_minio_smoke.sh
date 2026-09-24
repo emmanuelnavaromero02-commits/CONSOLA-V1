@@ -2,7 +2,7 @@
 set -euo pipefail
 
 image="${1:?Replicon image tag is required}"
-minio_image="ghcr.io/emmanuelnavaromero02-commits/minio:RELEASE.2024-12-18T13-15-44Z@sha256:bc101c7c3ae7779dff4e39a33637c92fc2d2393899a71d562bf546fd5118eff8"
+minio_image="ghcr.io/emmanuelnavaromero02-commits/minio:RELEASE.2024-12-18T13-15-44Z@sha256:f7e035122f930f0c8e120447513bbc550809fd4e909e4304a203fd6e605b1dad"
 suffix="${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-$$"
 network="replicon-httpfs-${suffix}"
 minio_name="replicon-minio-${suffix}"
