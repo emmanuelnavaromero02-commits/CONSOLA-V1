@@ -82,7 +82,7 @@ def test_current_exact_source_inventory_is_sealed() -> None:
 
     assert len(scanned["pytest"]) == 80
     assert len(scanned["playwright"]) == 27
-    assert len({declaration.path for declaration in scanned["pytest"]}) == 39
+    assert len({declaration.path for declaration in scanned["pytest"]}) == 53
     assert len({declaration.path for declaration in scanned["playwright"]}) == 7
 
 
