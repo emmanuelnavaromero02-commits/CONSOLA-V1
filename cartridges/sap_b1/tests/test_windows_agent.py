@@ -1528,3 +1528,10 @@ def test_windows_service_install_verifies_winsw_and_never_stores_the_password():
     service_xml = install[install.index("$xml = @(") : install.index("Set-Content -Path (Join-Path $serviceDir")]
     assert "password" not in service_xml.lower() and "serviceaccount" not in service_xml.lower()
     assert "Stop-Service -Name $ServiceName" in uninstall and "& $wrapper uninstall" in uninstall
+
+
+def test_a_configuration_saved_with_a_byte_order_mark_is_read(agent, tmp_path):
+    config = _write_config(tmp_path)
+    config.write_bytes(b"\xef\xbb\xbf" + config.read_bytes())
+    loaded = agent.load_config(config, env={})
+    assert loaded.tenant_id == TENANT and loaded.workspace_id == WORKSPACE

@@ -367,7 +367,7 @@ def load_config(path: Path | None, env: Mapping[str, str] | None = None) -> Agen
     data: dict[str, Any] = {}
     if path is not None:
         try:
-            data = tomllib.loads(path.read_text(encoding="utf-8"))
+            data = tomllib.loads(path.read_text(encoding="utf-8-sig"))
         except FileNotFoundError as exc:
             raise ConfigError(f"configuration file not found: {path}") from exc
         except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
@@ -1248,7 +1248,7 @@ def _bootstrap_log_dir(path: Path | None, env: Mapping[str, str]) -> Path | None
     agent: dict[str, Any] = {}
     parsed = False
     try:
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        data = tomllib.loads(path.read_text(encoding="utf-8-sig"))
         parsed = True
         agent = data.get("agent") if isinstance(data.get("agent"), dict) else {}
     except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError):
