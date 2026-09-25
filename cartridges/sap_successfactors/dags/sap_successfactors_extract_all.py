@@ -25,6 +25,7 @@ from typing import Any
 import httpx
 import requests
 from airflow.decorators import dag, task
+from airflow.exceptions import AirflowFailException
 
 try:
     from runtime_security_context import build_pipeline_run_context
@@ -208,6 +209,7 @@ def _load_runtime() -> SimpleNamespace:
         classify_extraction_exception=extraction_status.classify_extraction_exception,
         public_failure_message=extraction_status.public_failure_message,
         summarize_extraction_results=extraction_status.summarize_extraction_results,
+        hard_failure_code=extraction_status.hard_failure_code,
         require_storage_access=minio_client.require_storage_access,
         set_security_context=importlib.import_module(
             "app.core.request_context"
@@ -386,6 +388,11 @@ def _result_from_plan_outcome(outcome: dict[str, Any]) -> dict[str, Any]:
         "fields_missing": outcome.get("fields_missing") or [],
         "metadata_status": outcome.get("metadata_status"),
         **({"error": outcome.get("error")} if outcome.get("error") else {}),
+        **(
+            {"failure_code": outcome.get("failure_code")}
+            if outcome.get("failure_code")
+            else {}
+        ),
     }
 
 
@@ -756,7 +763,15 @@ def sap_successfactors_extract_all():
                             "anomalies": anomalies_item.get("row_count"),
                         },
                     )
-            hard_failed = False
+            # A run that produced nothing for an infrastructure or credentials
+            # reason is a failed run, not a partial one. This used to be a
+            # constant False: every entity dying on the network still produced
+            # "partial" / "completed_with_blocks" and a green task,
+            # indistinguishable from one entity with a pruned select.
+            hard_failure = runtime.hard_failure_code(
+                summary, results, skipped, attempted=len(entities)
+            )
+            hard_failed = hard_failure is not None
             blocked_or_failed = any(
                 summary[key]
                 for key in (
@@ -776,7 +791,11 @@ def sap_successfactors_extract_all():
                 else "failed"
             )
             status_text = (
-                "success" if aggregate_status == "success" else "completed_with_blocks"
+                "success"
+                if aggregate_status == "success"
+                else "failed"
+                if hard_failed
+                else "completed_with_blocks"
             )
             attempted = [
                 item
@@ -810,6 +829,7 @@ def sap_successfactors_extract_all():
                 "skipped": skipped,
                 "outcomes": skipped,
                 "gold_refresh": gold_refresh,
+                "hard_failure": hard_failure,
             }
             _pipeline_run_save(
                 context=context,
@@ -819,9 +839,11 @@ def sap_successfactors_extract_all():
                 started_at=started_at,
                 run_id_override=context.get("run_id"),
                 record_count=total_records,
+                error_message=hard_failure,
                 extra={
                     "summary": summary,
                     "result_status": status_text,
+                    "hard_failure": hard_failure,
                     "selected": len(entities),
                     "attempted": len(attempted),
                     "skipped": skipped,
@@ -831,8 +853,19 @@ def sap_successfactors_extract_all():
                 },
             )
             aggregate_saved = True
+            if hard_failed:
+                # Recorded first (best effort: _pipeline_run_save never
+                # raises), then raised so Airflow marks the task failed and
+                # the refresh chain does not run on nothing. Deliberately
+                # without an automatic retry: a retry reuses the run_id, and
+                # pipeline_runs only lets a status advance, so a recovered
+                # second attempt could never overwrite this "failed" row. The
+                # next cycle is a new run with its own row.
+                raise AirflowFailException(hard_failure)
             return payload
         except Exception as exc:
+            if isinstance(exc, AirflowFailException):
+                raise
             if not aggregate_saved:
                 classified = runtime.classify_extraction_exception(
                     "__extract_all__", exc
