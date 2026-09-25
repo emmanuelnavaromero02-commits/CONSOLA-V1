@@ -1,5 +1,4 @@
-"""Pin ``import app`` to the SAP Business One cartridge and provide the
-Business One-shaped Postgres test bed to the cartridge tests."""
+"""Pin ``import app`` to the SAP Business One cartridge and provide the Business One-shaped Postgres test bed to the."""
 from __future__ import annotations
 
 import importlib
@@ -27,8 +26,6 @@ os.environ.setdefault("SECURITY_CONTEXT_SIGNING_KEY", "test-security-context-sig
 os.environ.setdefault("DATABASE_URL", "postgresql+psycopg2://test:test@postgres:5432/modecissions")
 os.environ.setdefault("MINIO_ACCESS_KEY", "test-minio-access")
 os.environ.setdefault("MINIO_SECRET_KEY", "test-minio-secret")
-# protection_service requires a valid Fernet key at import time; set it here so
-# every test file in this directory can safely import app.* modules.
 try:
     from cryptography.fernet import Fernet
 
@@ -52,9 +49,6 @@ _use_this_cartridge()
 def _isolate_cartridge_app():
     _use_this_cartridge()
     yield
-
-
-# ── the Business One-shaped fake ───────────────────────────────────────────
 
 
 def load_fixture_package():
@@ -84,8 +78,6 @@ def dataset():
 
 def _docker(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     if shutil.which("docker") is None:
-        # No docker binary at all: report it like a failed daemon so the
-        # fixtures skip instead of erroring on FileNotFoundError.
         return subprocess.CompletedProcess(["docker", *args], returncode=127, stdout="", stderr="docker: not found")
     result = subprocess.run(["docker", *args], check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if check and result.returncode != 0:

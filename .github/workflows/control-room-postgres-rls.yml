@@ -322,10 +322,6 @@ jobs:
             tests/test_staged_publication_verifier_boundary_live.py \
             tests/test_talent_benchmark_publication_authority_live.py
 
-      # The cartridge's conftest pins `import app` to the cartridge (it puts its
-      # directory first on sys.path when it is loaded), which breaks the
-      # collection of every console test that shares the process. It runs in
-      # its own pytest process; its report is verified below like the others.
       - name: Run SAP Business One cartridge tests against the Postgres fake
         if: always()
         continue-on-error: true

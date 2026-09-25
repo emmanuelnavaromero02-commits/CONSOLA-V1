@@ -22,11 +22,11 @@
           },
           {
             "path": "cartridges/sap_b1/tests/conftest.py",
-            "declarations_sha256": "c4fcbf4fc970f72620b6d6d0ba37b4cefecf4318e9edd9cd23c233007ca36bac"
+            "declarations_sha256": "ed5e8d78078ef38bc148f81c71a4b7288d3e168741b3390aa44fa990fffe4400"
           },
           {
             "path": "cartridges/sap_b1/tests/test_connect_kit.py",
-            "declarations_sha256": "86ff7f3327f55ebdd12913a17e39e5533085fa48542495045e77c22407c398a1"
+            "declarations_sha256": "585926896d6cf6360c80084b77ac46d68238f9818bd5573aa2b50577dfdc9a2b"
           },
           {
             "path": "cartridges/sap_hcm/tests/test_watermark_scope_isolation_sap_hcm.py",
@@ -54,7 +54,7 @@
           },
           {
             "path": "refinement/tests/test_e11_talent_readfree_fallbacks.py",
-            "declarations_sha256": "1cb98f7642c2f582dfd5c4a13bd1a4dd01555313468f0fcf87ca7eb5cc3956cd"
+            "declarations_sha256": "4ae6a8b03b3301b759ab3f85e07618f3824294dc70495bb7382223b05160917f"
           },
           {
             "path": "refinement/tests/test_sql_timeout.py",
@@ -126,15 +126,15 @@
           },
           {
             "path": "tests/test_sap_b1_datasets.py",
-            "declarations_sha256": "2f367aed9e2ec776159917b20364e3ecaf1d8d860dc7b2429328f5e4c1ee93ea"
+            "declarations_sha256": "6486421141b75839cde074340e2a42769e5bb1f3540c27d66177b54dda75adea"
           },
           {
             "path": "tests/test_sap_b1_fake_schema.py",
-            "declarations_sha256": "f35c8fb920786854145bec3a3637f8b8ab1224023800b0057ddc898d0228c9f4"
+            "declarations_sha256": "cbabca7ef8bb94c875d4a26760632209f34774f28807e3df337166781d05ed8f"
           },
           {
             "path": "tests/test_sap_entities_seeded.py",
-            "declarations_sha256": "0a258150664d1b83e0d372ef64dda363e6735dea3979058dc795d570c8534cdf"
+            "declarations_sha256": "207ee234019001432a31cf166239bd4b8953f6ed965a02460736de5a71aaeb92"
           },
           {
             "path": "tests/test_sap_hcm_apps.py",
@@ -221,7 +221,7 @@
             "declarations_sha256": "fe98517b8fbaab00c4a1a5cbb56109ea74a148b947f3b8e79f6e6d5110e47953"
           }
         ],
-        "inventory_sha256": "d28c662e2e7901bd2eada8e2b087e7bb2c678a19a7f0a233a4f5ed0254620f44"
+        "inventory_sha256": "7f764c7c381982d55d8fcf1d3c5849a985ff6741736fac0eae448261bb2a9472"
       }
     },
     {

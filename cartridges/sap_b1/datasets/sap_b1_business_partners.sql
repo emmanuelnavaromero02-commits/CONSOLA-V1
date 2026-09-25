@@ -17,7 +17,6 @@ WITH ocrd AS (
     WHERE _rn = 1
 ),
 groups AS (
-    -- Newest run per company (all of its batches), never a mix of two runs.
     SELECT * EXCLUDE (_rn)
     FROM (
         SELECT s.*, ROW_NUMBER() OVER (PARTITION BY s._company, s.GroupCode ORDER BY s._extracted_at DESC) AS _rn
@@ -35,7 +34,6 @@ groups AS (
     WHERE _rn = 1
 ),
 partners AS (
-    -- Newest run per company (all of its batches), never a mix of two runs.
     SELECT _company, CardCode, CounterpartyCompany, MappingSource
     FROM (
         SELECT s.*, ROW_NUMBER() OVER (PARTITION BY s._company, s.CardCode ORDER BY s._extracted_at DESC) AS _rn

@@ -1,18 +1,4 @@
-"""The intercompany mapping itself: parsing, validation and the Bronze shape.
-
-Business One has no standard flag for "this customer is one of our own
-distributors", so the mapping is configuration, in the form
-``company:CARDCODE=counterparty,...`` where ``company`` and
-``counterparty`` are aliases from ``SAP_B1_COMPANIES``. Both producers of
-Bronze write it as the pseudo-entity ``IntercompanyPartners``: the
-cartridge (``app.services.intercompany``, which resolves the value from
-the environment or the Console Vault) and the Windows push agent
-(``connect/windows-agent``, which reads it from ``agent.toml``). This
-module therefore depends on nothing outside ``app.core.b1_source`` and
-``app.services.b1_queries``.
-
-Client-specific codes live in configuration, never in this repository.
-"""
+"""The intercompany mapping itself: parsing, validation and the Bronze shape."""
 from __future__ import annotations
 
 import re
@@ -35,12 +21,7 @@ class IntercompanyPartner:
 
 
 def parse_intercompany(spec: str) -> list[IntercompanyPartner]:
-    """``mx_mfg:C-IC-DIST-A=mx_dist_a,mx_dist_a:V-IC-MFG=mx_mfg`` → partners.
-
-    Each entry says: in company ``mx_mfg``, the business partner
-    ``C-IC-DIST-A`` is the group company ``mx_dist_a``. Whether the code is
-    a customer or a supplier comes from OCRD.CardType at join time.
-    """
+    """``mx_mfg:C-IC-DIST-A=mx_dist_a,mx_dist_a:V-IC-MFG=mx_mfg`` → partners."""
     partners: list[IntercompanyPartner] = []
     seen: set[tuple[str, str]] = set()
     for chunk in (spec or "").replace(";", ",").split(","):
@@ -67,12 +48,7 @@ def parse_intercompany(spec: str) -> list[IntercompanyPartner]:
 
 
 def validate_against_companies(partners: list[IntercompanyPartner], aliases: Iterable[str]) -> None:
-    """Every company named in the mapping must be a configured company.
-
-    With no configured companies at all there is nothing to check against
-    (the connection itself is what is incomplete, and that is reported by
-    the connection settings).
-    """
+    """Every company named in the mapping must be a configured company."""
     known = set(aliases)
     if not known:
         return

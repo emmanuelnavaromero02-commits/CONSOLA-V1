@@ -1,25 +1,4 @@
 #!/usr/bin/env bash
-# Prueba de conectividad a SAP HANA (SAP Business One) desde un host Linux:
-# el host de la plataforma, el bastión de la VPN o el propio servidor de HANA.
-#
-#   Paso 1  El puerto SQL del tenant responde (TCP).
-#   Paso 2  Si hay cliente de HANA (hdbsql, o python3 con hdbcli), abre una
-#           sesión con el usuario de solo lectura y lee "Version" de CINF en
-#           cada empresa: la misma consulta que usa la plataforma.
-#
-# Entradas por variables de entorno (se piden en pantalla si faltan):
-#   SAP_B1_HOST, SAP_B1_PORT (por defecto 30015), SAP_B1_USER,
-#   SAP_B1_DATABASE (solo si el puerto es el de SYSTEMDB, 3NN13),
-#   SAP_B1_COMPANIES ("alias=ESQUEMA,alias=ESQUEMA" o solo "ESQUEMA,ESQUEMA"),
-#   SAP_B1_ENCRYPT (por defecto true), SAP_B1_SSL_VALIDATE_CERTIFICATE (por defecto true),
-#   HDB_USERSTORE_KEY (opcional: clave de hdbuserstore; entonces no se pide contraseña).
-#
-# Ninguna credencial viaja por la línea de comandos: hdbsql pide la contraseña
-# en pantalla y la variante python la lee con getpass. Nunca use -p.
-#
-# Desde el host de la plataforma, la prueba definitiva es la del propio
-# cartucho: POST /skills/test_connection en el servicio sap-b1 (puerto 8206),
-# que usa la configuración real del contenedor.
 set -euo pipefail
 
 ask() {  # ask VAR "prompt": read from the terminal when the variable is empty
@@ -39,8 +18,6 @@ SAP_B1_ENCRYPT="${SAP_B1_ENCRYPT:-true}"
 SAP_B1_SSL_VALIDATE_CERTIFICATE="${SAP_B1_SSL_VALIDATE_CERTIFICATE:-true}"
 HDB_USERSTORE_KEY="${HDB_USERSTORE_KEY:-}"
 
-# Host and port are interpolated into a /dev/tcp path and an hdbsql argument:
-# accept only a hostname / address and a port number, nothing else.
 if [[ ! "$SAP_B1_HOST" =~ ^[A-Za-z0-9.-]{1,253}$ ]]; then
     echo "Host no válido: solo letras, dígitos, punto y guion." >&2
     exit 1
@@ -50,8 +27,6 @@ if [[ ! "$SAP_B1_PORT" =~ ^[0-9]{1,5}$ ]]; then
     exit 1
 fi
 
-# Company schemas: accept alias=SCHEMA pairs or bare names; refuse anything
-# that is not an identifier so nothing odd is ever interpolated into SQL.
 schemas=()
 IFS=',;' read -r -a parts <<< "$SAP_B1_COMPANIES"
 for part in "${parts[@]}"; do
@@ -72,10 +47,6 @@ fi
 echo
 echo "== Paso 1: puerto TCP ${SAP_B1_HOST}:${SAP_B1_PORT} =="
 tcp_port_responds() {
-    # The connect attempt runs in a subshell with the variables quoted, so the
-    # validated values are expanded, never handed to a child shell as code.
-    # The parent bounds the wait to 5 s: an unreachable host would otherwise
-    # block for the kernel's own connect timeout.
     ( exec 3<>"/dev/tcp/${SAP_B1_HOST}/${SAP_B1_PORT}" ) 2>/dev/null &
     local pid=$! tenths=0
     while kill -0 "$pid" 2>/dev/null; do
@@ -124,7 +95,6 @@ fi
 
 if python3 -c "import hdbcli" >/dev/null 2>&1; then
     echo "hdbsql no está instalado; se usa python3 + hdbcli (la contraseña se pide en pantalla)."
-    # Values asked on screen are shell variables, not exported: hand them over.
     SQL_FILE="$sql_file" SAP_B1_HOST="$SAP_B1_HOST" SAP_B1_PORT="$SAP_B1_PORT" \
         SAP_B1_USER="$SAP_B1_USER" SAP_B1_DATABASE="$SAP_B1_DATABASE" \
         SAP_B1_ENCRYPT="$SAP_B1_ENCRYPT" SAP_B1_SSL_VALIDATE_CERTIFICATE="$SAP_B1_SSL_VALIDATE_CERTIFICATE" \

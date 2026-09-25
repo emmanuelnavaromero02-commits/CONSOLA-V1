@@ -52,11 +52,6 @@ CANONICAL_SERVICES = (
     "salesforce",
     "sap_b1",
 )
-# A previous release is only a delta base: it is compared, never deployed.
-# Releases published before sap_b1 joined the inventory carry exactly the
-# fifteen services before it, so their manifests stay trusted bases. The
-# history is a frozen list of exact inventories, not a prefix rule: a manifest
-# is canonical only when it matches one of them in full.
 CANONICAL_INVENTORY_HISTORY: tuple[tuple[str, ...], ...] = (
     CANONICAL_SERVICES[:-1],
     CANONICAL_SERVICES,

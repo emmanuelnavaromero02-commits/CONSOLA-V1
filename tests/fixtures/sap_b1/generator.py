@@ -1,49 +1,4 @@
-"""Deterministic Business One-shaped dataset for N companies over N months.
-
-Everything here is synthetic. Company aliases, partner codes and item codes
-are made up; amounts come from fixed price lists. The point is not realism,
-it is *known answers*: the generator records a ground truth (revenue, credit
-memos, cost of goods, intercompany sales and purchases, closing stock,
-expired batches) so a test can assert exact totals against the loaded schema.
-
-Modelled flows, per company and month:
-
-* purchases of raw material: purchase order -> goods receipt -> A/P invoice,
-  a stock movement per receipt line and a journal entry per A/P invoice.
-  Receipts land in the first week of the month;
-* production (manufacturer only): production orders from a bill of materials
-  starting in the second week, planned against the components on hand at
-  that point, component issue and finished-goods receipt as stock movements,
-  one batch with an expiry date per order;
-* sales: sales order -> delivery -> A/R invoice, a stock movement and a FIFO
-  batch consumption per delivery line, cost of goods posted at delivery and
-  revenue posted at invoice; one service-type credit memo a month to an
-  external customer;
-* cancellations: a few invoices per year are cancelled the B1 way, the
-  original marked CANCELED='Y' and a cancellation document with CANCELED='C'
-  whose lines point at the original, plus a reversing journal entry dated on
-  the cancellation;
-* intercompany: the manufacturer's invoices to a distributor alias are
-  mirrored in that distributor's schema as purchase order -> goods receipt ->
-  A/P invoice on the same document date, same lines, same amounts, so
-  consolidation tests can eliminate them month by month. Batch numbers are
-  not propagated across companies: the distributor receives its own batch
-  per receipt line.
-
-Known limits: batches are consumed FIFO by insertion order, not by date, and
-sales are planned against the month's closing stock; with the default opening
-stock this holds for horizons up to about 36 months (the tests fuzz seeds up to
-that), not for a decade. Stock movements never go negative in date order within
-that horizon.
-
-Currency: every document carries doc, local and system currency amounts.
-Documents are in local currency, so `DocRate`/`Rate` are 0 the way B1
-stores them for a local-currency document; the system-currency amounts
-(`DocTotalSy`, `TotalSumSy`, `SYSDeb`/`SYSCred`) follow the daily rate in
-`ORTT` (constant within a month here). One distributor keeps USD as system
-currency. Journal entries balance in both currencies: the rounding residue
-of the system-currency conversion lands on the last line.
-"""
+"""Deterministic Business One-shaped dataset for N companies over N months."""
 
 from __future__ import annotations
 
@@ -60,7 +15,6 @@ from . import schema as b1
 Q6 = Decimal("0.000001")
 ZERO = Decimal("0")
 
-# Chart of accounts used by every company (synthetic, B1-like codes).
 ACCT_AR = "1200"
 ACCT_INVENTORY = "1300"
 ACCT_VAT_RECEIVABLE = "1400"
@@ -73,7 +27,6 @@ VAT_RATE = Decimal("0.16")
 WHS_MAIN = "01"
 WHS_SECOND = "02"
 
-# OINM / IBT1 transaction types, as B1 uses ObjType numbers for movements.
 TT_OPENING = 59
 TT_GOODS_RECEIPT_PO = 20
 TT_DELIVERY = 15
@@ -118,10 +71,6 @@ DEFAULT_COMPANIES: Tuple[CompanyProfile, ...] = (
     CompanyProfile("mx_dist_b", "SBO_MX_DIST_B", "Distribuidora B (sintetica)", "MX", "MXN", "MXN", "distributor"),
 )
 
-# The manufacturer sells to a distributor under this customer code, and the
-# distributor buys from the manufacturer under this supplier code. A real
-# client keeps this mapping in configuration; here it is the contract the
-# intercompany elimination test relies on.
 INTERCOMPANY_CUSTOMER = {"mx_dist_a": "C-IC-DIST-A", "mx_dist_b": "C-IC-DIST-B"}
 INTERCOMPANY_SUPPLIER = "V-IC-MFG"
 
@@ -136,10 +85,6 @@ class MonthTruth:
     credit_lc: Decimal = ZERO  # non-cancelled A/R credit memo lines
     revenue_net_lc: Decimal = ZERO  # documents: gross minus credit memos, cancelled excluded at invoice month
     revenue_net_sc: Decimal = ZERO
-    # accounting: the revenue account as the journal shows it. A cancellation
-    # reverses on the cancellation date, so a month can differ from the
-    # document view; the period totals are equal. That is the reconciliation
-    # nuance the client will see in B1.
     revenue_account_lc: Decimal = ZERO
     revenue_account_sc: Decimal = ZERO
     cogs_lc: Decimal = ZERO
@@ -224,7 +169,6 @@ class _Company:
         self.finished_goods: List[str] = []
         self.raw_materials: List[str] = []
 
-    # ── helpers ────────────────────────────────────────────────────────────
 
     def entry(self, table: str) -> int:
         value = self.next_entry.get(table, 1)
@@ -258,7 +202,6 @@ class _Company:
                    trans_type: int, created_by: int, line: int, production_order: Optional[int] = None) -> None:
         key = (item, whs)
         self.stock[key] = self.stock.get(key, ZERO) + qty_in - qty_out
-        # Every line of one document shares the document's TransNum, as B1 does.
         group = (trans_type, created_by)
         if group != self.inm_group:
             if self.inm_group is not None:
@@ -313,14 +256,7 @@ class _Company:
 
     def journal(self, d: date, memo: str, obj_type: str, base_ref: int, lines: List[JournalLine],
                 storno_to: Optional[int] = None) -> int:
-        """Post a journal entry balanced in local AND system currency.
-
-        Lines are (account, debit, credit, ShortName). ShortName is the
-        business partner code on a customer or supplier line and the account
-        itself otherwise, as B1 stores it. The system-currency amounts are
-        converted per line and the rounding residue goes to the last line so
-        SYSDeb equals SYSCred per TransId.
-        """
+        """Post a journal entry balanced in local AND system currency."""
         debit = sum((ln[1] for ln in lines), ZERO)
         credit = sum((ln[2] for ln in lines), ZERO)
         if q6(debit) != q6(credit):
@@ -359,12 +295,7 @@ class _Company:
     def marketing_doc(self, header: str, line: str, obj_type: str, d: date, card: str, lines: List[Dict[str, Any]],
                       doc_type: str = "I", base: Optional[Tuple[int, int]] = None, canceled: str = "N",
                       num_at_card: Optional[str] = None, closed: bool = False) -> Tuple[int, Decimal, Decimal]:
-        """Write one header + lines; returns (DocEntry, net total LC, vat LC).
-
-        Documents are in local currency: DocCur == OADM.MainCurncy and, as B1
-        stores it for such documents, DocRate/Rate are 0. The system-currency
-        amounts use the ORTT rate of the day.
-        """
+        """Write one header + lines; returns (DocEntry, net total LC, vat LC)."""
         entry = self.entry(header)
         sys_rate = self.sys_rate(d)
         net = ZERO
@@ -451,7 +382,6 @@ class _Builder:
         self.fg_cost: Dict[str, Decimal] = {}
         self.rm_demand: Dict[str, Decimal] = {}  # units of each raw material per unit of every finished good, summed
 
-    # ── masters ────────────────────────────────────────────────────────────
 
     def build_shared(self) -> None:
         rng = self.rng
@@ -464,8 +394,6 @@ class _Builder:
             for rm, qty in self.bom[fg]:
                 self.rm_demand[rm] = self.rm_demand.get(rm, ZERO) + qty
         usd = Decimal("17.50")
-        # One rate per month from three months before the start (masters and
-        # opening stock are dated there) to one month past the end.
         for m in range(-3, self.months + 1):
             d = month_start(self.start_month, m)
             usd = q6(usd * (Decimal("1") + Decimal(rng.randint(-25, 25)) / Decimal(1000)))
@@ -478,7 +406,6 @@ class _Builder:
         c.add("OADM", Code="1", CompnyName=p.name, MainCurncy=p.local_currency, SysCurrncy=p.sys_currency, Country=p.country)
         c.add("OCRN", CurrCode="MXN", CurrName="Peso mexicano", DocCurrCod="MXN")
         c.add("OCRN", CurrCode="USD", CurrName="US Dollar", DocCurrCod="USD")
-        # ORTT is daily in B1; the fake keeps the rate constant within a month.
         day = self.start_month - timedelta(days=91)
         while day <= self.as_of:
             c.add("ORTT", RateDate=ts(day), Currency="USD", Rate=self.rates[(month_start(day, 0), "USD")])
@@ -564,15 +491,10 @@ class _Builder:
             mnf = d - timedelta(days=60)
             c.receive_batch(d, code, WHS_MAIN, qty, f"{code}-OPEN", mnf, mnf + timedelta(days=365), TT_OPENING, entry, 0)
 
-    # ── monthly flows ──────────────────────────────────────────────────────
 
     def purchase_chain(self, c: _Company, d: date, supplier: str, lines: List[Dict[str, Any]],
                        batch_prefix: Optional[str] = None, same_day: bool = False) -> None:
-        """PO -> goods receipt (stock in, batches) -> A/P invoice (journal).
-
-        A mirrored intercompany chain is dated on the manufacturer's invoice
-        date (same_day), so the two sides agree month by month.
-        """
+        """PO -> goods receipt (stock in, batches) -> A/P invoice (journal)."""
         d = c.clamp(d)
         po, _, _ = c.marketing_doc("OPOR", "POR1", "22", d, supplier, lines, closed=True)
         d_receipt = d if same_day else c.clamp(d + timedelta(days=2))
@@ -597,8 +519,7 @@ class _Builder:
             truth.intercompany_purchases_lc += net
 
     def transfer(self, c: _Company, d: date, item: str, qty: Decimal, from_whs: str, to_whs: str) -> int:
-        """Inventory transfer (ObjType 67): the same document takes the
-        quantity out of one warehouse and into another; no journal entry."""
+        """Inventory transfer (ObjType 67): the same document takes the quantity out of one warehouse and into another."""
         d = c.clamp(d)
         entry = c.entry("OWTR")
         price = c.item_cost[item]
@@ -614,18 +535,11 @@ class _Builder:
         return entry
 
     def production(self, c: _Company, d0: date, days: int, last_month: bool) -> None:
-        """Production orders start in the second week, after the month's receipts.
-
-        In the last month two orders start in the final days, so they are still
-        released (work in progress) at the as-of date: a real B1 always has WIP.
-        """
+        """Production orders start in the second week, after the month's receipts."""
         for n in range(6):
             fg = c.rng.choice(c.finished_goods)
             planned = Decimal(c.rng.randint(100, 400))
             late = last_month and n < 2
-            # Plan against the components on hand: receipts of the month are
-            # all dated before day 8, so in-memory stock equals stock at the
-            # start date and the movements stay non-negative in date order.
             for rm, per_unit in self.bom[fg]:
                 planned = min(planned, (c.stock.get((rm, WHS_MAIN), ZERO) / per_unit).to_integral_value(rounding=ROUND_FLOOR))
             if planned <= ZERO:
@@ -633,8 +547,6 @@ class _Builder:
             entry = c.entry("OWOR")
             start = d0 + timedelta(days=(days - c.rng.randint(1, 2)) if late else c.rng.randint(8, 12))
             close = start + timedelta(days=c.rng.randint(3, 8))
-            # An order due after the as-of date is still released: work in
-            # progress, planned quantity not yet completed, no close date.
             closed = close <= self.as_of
             stamp = c.stamp(start)
             c.add("OWOR", DocEntry=entry, DocNum=entry, ItemCode=fg, Status="L" if closed else "R", Type="S",
@@ -704,8 +616,7 @@ class _Builder:
 
     def cancel_invoice(self, c: _Company, inv: int, net: Decimal, vat: Decimal, customer: str,
                        lines: List[Dict[str, Any]], d_cancel: date, d_inv: date) -> None:
-        """B1 style: original CANCELED='Y', a cancellation document with CANCELED='C'
-        whose lines are based on the original, and a reversing journal."""
+        """B1 style: original CANCELED='Y', a cancellation document with CANCELED='C' whose lines are based on the original."""
         d_cancel = c.clamp(d_cancel)
         c.set_header("OINV", inv, CANCELED="Y", DocStatus="C", UpdateDate=ts(d_cancel), UpdateTS=hhmmss(c.rng))
         cancel_entry, _, _ = c.marketing_doc("OINV", "INV1", "13", d_cancel, customer, lines, canceled="C", base=(13, inv))
@@ -720,7 +631,6 @@ class _Builder:
         truth.revenue_gross_lc -= net
         truth.revenue_net_lc -= net
         truth.revenue_net_sc -= c.to_sys(net, d_inv)
-        # The reversing entry is dated on the cancellation, not on the invoice.
         reversal = c.truth_for(d_cancel)
         reversal.cancellation_docs += 1
         reversal.revenue_account_lc -= net
@@ -735,15 +645,11 @@ class _Builder:
             return d0 + timedelta(days=rng.randint(0, days - 4))
 
         if c.p.role == "manufacturer":
-            # Sized and weighted to match what production consumes, so raw
-            # material neither runs out nor piles up over a 24-36 month horizon.
             weights = [max(1, int(self.rm_demand[rm])) for rm in c.raw_materials]
             for _ in range(12):
                 items = rng.sample(c.raw_materials, rng.randint(2, 3), counts=weights)
                 lines = [{"item": rm, "name": f"Articulo {rm}", "qty": str(rng.randint(150, 900)), "price": str(c.item_cost[rm]), "whs": WHS_MAIN} for rm in items]
                 self.purchase_chain(c, d0 + timedelta(days=rng.randint(0, 5)), rng.choice(c.suppliers), lines)
-            # Raw material is not batch-managed, so it can move between the two
-            # warehouses without touching batches: out on day 7, back on day 20.
             parked = rng.choice(c.raw_materials)
             parked_qty = min(Decimal(rng.randint(40, 120)), c.stock.get((parked, WHS_MAIN), ZERO))
             if parked_qty > ZERO:

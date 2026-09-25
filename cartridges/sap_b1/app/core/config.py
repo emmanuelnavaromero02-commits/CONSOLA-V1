@@ -48,18 +48,6 @@ def _storage_value(gcs_name: str, minio_name: str) -> str:
 class Settings(BaseSettings):
     app_name: str = "sap_b1"
 
-    # SAP Business One company databases, read over SQL.
-    #   SAP_B1_DIALECT    hana (production) | postgres (the B1-shaped test bed)
-    #   SAP_B1_HOST       database host reachable from this container (VPN/tunnel)
-    #   SAP_B1_PORT       tenant SQL port; empty = dialect default (30015 / 5432)
-    #   SAP_B1_USER / SAP_B1_PASSWORD  read-only database user
-    #   SAP_B1_DATABASE   HANA tenant database when connecting through SYSTEMDB,
-    #                     or the Postgres database name of the test bed
-    #   SAP_B1_COMPANIES  "alias=SCHEMA,alias=SCHEMA": one company schema per
-    #                     alias. Aliases are what the lakehouse sees; the schema
-    #                     names never leave the configuration.
-    # Client-specific values live outside the repository (Vault or the host
-    # .env); the repository only knows the variable names.
     sap_b1_dialect: str = "hana"
     sap_b1_host: str = ""
     sap_b1_port: str = ""
@@ -67,16 +55,13 @@ class Settings(BaseSettings):
     sap_b1_password: str = ""
     sap_b1_database: str = ""
     sap_b1_companies: str = ""
-    # "company:CARDCODE=counterparty,...": which partner codes are group companies
     sap_b1_intercompany: str = ""
     sap_b1_encrypt: bool = True
     sap_b1_ssl_validate_certificate: bool = True
     sap_b1_connect_timeout_seconds: int = 15
 
-    # Database
     database_url: str = Field(default_factory=lambda: os.environ["DATABASE_URL"])
 
-    # MinIO
     minio_endpoint: str = Field(
         default_factory=lambda: os.environ.get("LAKEHOUSE_ENDPOINT") or "minio:9000"
     )
@@ -98,13 +83,10 @@ class Settings(BaseSettings):
         default_factory=lambda: os.environ.get("AWS_SESSION_TOKEN", "")
     )
 
-    # Internal API key
     internal_api_key: str = ""
 
-    # Refinement service
     refinement_url: Optional[str] = None
 
-    # Airflow
     airflow_url: Optional[str] = None
     airflow_user: Optional[str] = None
     airflow_password: Optional[str] = None

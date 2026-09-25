@@ -284,9 +284,7 @@ def _release_fetcher(tag: str, manifest: bytes):
 
 
 def test_previous_release_accepts_exactly_the_inventory_before_sap_b1() -> None:
-    """A base is compared, never deployed: releases cut before sap_b1 joined
-    the inventory keep their fifteen-image manifests and must remain trusted
-    bases, or the first sixteen-image release could never select one."""
+    """A base is compared, never deployed: releases cut before sap_b1 joined the inventory keep their fifteen-image."""
     repository = "owner/repo"
     tag = "v1.45.231-beta"
     commit = "a" * 40

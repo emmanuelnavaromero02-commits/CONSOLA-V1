@@ -1,14 +1,4 @@
-"""Tables shaped like SAP Business One 10, rendered as Postgres DDL.
-
-Single source of truth for the fake: the generator emits rows in exactly the
-column order declared here, and the loader renders the DDL from here, so the
-two cannot drift.
-
-Names and types follow B1 on HANA: table names `OINV`, column names such as
-`DocEntry`, `CANCELED`, `UpdateTS`; `INTEGER`, `VARCHAR(n)`, `NUMERIC(19,6)`,
-`CHAR(1)` and `TIMESTAMP(0)` for B1's date columns. Only the columns the
-platform will read are declared, a real B1 table has many more.
-"""
+"""Tables shaped like SAP Business One 10, rendered as Postgres DDL."""
 
 from __future__ import annotations
 
@@ -19,9 +9,6 @@ Column = Tuple[str, str]
 _TS = "TIMESTAMP(0)"
 _NUM = "NUMERIC(19,6)"
 
-# Marketing-document header and line shape, shared by every document pair
-# (invoice, credit memo, delivery, return, order, AP invoice, AP credit memo,
-# goods receipt PO, purchase order). ObjType tells them apart in B1.
 MARKETING_HEADER: List[Column] = [
     ("DocEntry", "INTEGER NOT NULL"),
     ("DocNum", "INTEGER NOT NULL"),
@@ -97,7 +84,6 @@ MARKETING_LINE: List[Column] = [
     ("VisOrder", "INTEGER"),
 ]
 
-# (header table, line table, ObjType)
 MARKETING_PAIRS: List[Tuple[str, str, str]] = [
     ("OINV", "INV1", "13"),  # A/R invoice
     ("ORIN", "RIN1", "14"),  # A/R credit memo
@@ -226,8 +212,6 @@ TABLES: Dict[str, List[Column]] = {
         ("WhsCode", "VARCHAR(8) NOT NULL"),
         ("Quantity", _NUM + " NOT NULL"),
     ],
-    # Batch quantity per warehouse (compatibility table kept by B1 >= 8.8
-    # alongside OBTN/OBTQ) and the batch transactions per document line.
     "OIBT": [
         ("ItemCode", "VARCHAR(50) NOT NULL"),
         ("BatchNum", "VARCHAR(36) NOT NULL"),
@@ -265,9 +249,6 @@ TABLES: Dict[str, List[Column]] = {
         ("IssueMthd", "CHAR(1)"),
         ("PriceList", "INTEGER"),
     ],
-    # Inventory transfers (ObjType 67): the header names the source (Filler)
-    # and target (ToWhsCode) warehouses; each line repeats them as
-    # FromWhsCod / WhsCode. Transfers move stock, never money.
     "OWTR": [
         ("DocEntry", "INTEGER NOT NULL"),
         ("DocNum", "INTEGER NOT NULL"),
@@ -336,10 +317,6 @@ TABLES: Dict[str, List[Column]] = {
         ("wareHouse", "VARCHAR(8)"),  # sic: B1's casing on WOR1
         ("ItemType", "INTEGER"),
     ],
-    # In B1 >= 8.8 OINM is a view over OIVL/IVL1. One stock transaction (one
-    # document) carries ONE TransNum and one row per line, numbered by
-    # TransSeq: TransNum is the watermark, (TransNum, TransSeq) the key.
-    # ApplObj/AppObjAbs link a movement to its production order.
     "OINM": [
         ("TransNum", "INTEGER NOT NULL"),
         ("TransSeq", "INTEGER NOT NULL"),
@@ -436,7 +413,6 @@ for _header, _line, _obj in MARKETING_PAIRS:
     PRIMARY_KEYS[_header] = ("DocEntry",)
     PRIMARY_KEYS[_line] = ("DocEntry", "LineNum")
 
-# B1 keeps UpdateTS as an integer HHMMSS; a real value never exceeds this.
 UPDATE_TS_MAX = 235959
 
 

@@ -1,29 +1,4 @@
-"""SQL access to SAP Business One company databases.
-
-Business One keeps one database (HANA: one schema) per company. This module
-opens that connection and validates everything that ends up inside SQL text:
-table and column names come from the catalogue, schema names from the
-company map, and every value travels as a bound parameter.
-
-Two dialects share the same SQL:
-
-* ``hana`` — production, through the SAP HANA client (``hdbcli``);
-* ``postgres`` — the Business One-shaped test bed in
-  ``tests/fixtures/sap_b1``, through ``psycopg2``.
-
-The database host is normally a private address reached over the client's
-VPN, so the HTTP egress guard used by the OData cartridges does not apply
-here: this is a database session, not an HTTP request, and the destination
-is fixed by configuration.
-
-Environment variables (or the Console Vault connection ``sap_b1/default``):
-    SAP_B1_DIALECT, SAP_B1_HOST, SAP_B1_PORT, SAP_B1_USER, SAP_B1_PASSWORD,
-    SAP_B1_DATABASE, SAP_B1_COMPANIES ("alias=SCHEMA,alias=SCHEMA"),
-    SAP_B1_ENCRYPT, SAP_B1_SSL_VALIDATE_CERTIFICATE.
-
-Client-specific values (hosts, schema names, users) stay outside the
-repository. Error messages never carry the password.
-"""
+"""SQL access to SAP Business One company databases."""
 from __future__ import annotations
 
 import logging
@@ -40,11 +15,7 @@ CARTRIDGE_ID = "sap_b1"
 DIALECTS = ("hana", "postgres")
 DEFAULT_PORTS = {"hana": 30015, "postgres": 5432}
 
-# Same rule as refinement.app.duckdb_engine.SAFE_IDENTIFIER_RE: table and
-# column names are identifiers, never quoted client input.
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
-# Business One company schemas may carry a hyphen (SBO_DEMO-MX); they are
-# always double-quoted.
 _SCHEMA_RE = re.compile(r"^[A-Za-z0-9_$][A-Za-z0-9_$\-]{0,127}$")
 _ALIAS_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 _MAX_ERROR_TEXT = 500
@@ -63,13 +34,7 @@ class CircuitBreakerOpen(B1SourceError):
 
 
 class CartridgeCircuitBreaker:
-    """Trips on repeated connectivity failures only, and recovers on its own.
-
-    Authentication failures and SQL errors never count: the process serves
-    every tenant, so a wrong password typed three times in one workspace
-    must not block extractions for the others. After ``cooldown_seconds``
-    the breaker lets one probe through (half-open); a success closes it.
-    """
+    """Trips on repeated connectivity failures only, and recovers on its own."""
 
     failures = 0
     threshold = 3
@@ -132,12 +97,7 @@ class Company:
 
 
 def parse_companies(spec: str) -> list[Company]:
-    """Parse ``alias=SCHEMA,alias=SCHEMA`` into companies.
-
-    The alias is what the lakehouse records in ``_company``; the schema is
-    only ever used to address the source. Duplicated or malformed entries
-    are configuration errors, not something to guess around.
-    """
+    """Parse ``alias=SCHEMA,alias=SCHEMA`` into companies."""
     companies: list[Company] = []
     seen: set[str] = set()
     for chunk in (spec or "").replace(";", ",").split(","):
@@ -199,11 +159,6 @@ class B1Config:
 
 def resolve_config(security_context: str | None = None) -> B1Config:
     """Resolve the connection settings from env, then Vault, then settings."""
-    # Imported here, not at module level: the platform settings and the
-    # Console Vault client are what ties this module to the cartridge
-    # container. Everything above (identifiers, companies, connections,
-    # sanitised errors) is also used by the Windows push agent in
-    # ``connect/windows-agent``, which runs with neither.
     from app.core.config import settings
     from app.core.vault_client import get_secret_for_worker
 
@@ -277,8 +232,7 @@ def resolve_config(security_context: str | None = None) -> B1Config:
 
 
 def _secrets_of(config: "B1Config") -> tuple[str, ...]:
-    """Values a driver message may quote back and that must not travel:
-    the password first, then host, user, database and the company schemas."""
+    """Values a driver message may quote back and that must not travel."""
     values = [config.password, config.host, config.user, config.database]
     values.extend(company.schema for company in config.companies)
     return tuple(dict.fromkeys(value for value in values if value and len(value) >= 3))
@@ -325,13 +279,7 @@ class Connection:
         return columns, rows
 
     def source_now(self) -> datetime:
-        """The database server's clock, the clock Business One stamps with.
-
-        Read once per run so a watermark never advances past the moment the
-        run started: a document edited behind the cursor while a long run
-        was reading keeps a stamp older than the newest row seen, and the
-        next cycle must still reach it.
-        """
+        """The database server's clock, the clock Business One stamps with."""
         sql = "SELECT CURRENT_TIMESTAMP FROM DUMMY" if self.dialect == "hana" else "SELECT LOCALTIMESTAMP(0)"
         _columns, rows = self.fetch_all(sql)
         value = rows[0][0] if rows and rows[0] else None
@@ -380,7 +328,6 @@ def _open_hana(config: B1Config) -> Connection:
         "autocommit": True,
     }
     if config.database:
-        # Tenant database when the port belongs to SYSTEMDB.
         kwargs["databaseName"] = config.database
     raw = dbapi.connect(**kwargs)
     return Connection(raw, "?", _secrets_of(config), dialect="hana")
@@ -449,17 +396,9 @@ class B1Client:
         with self.connection() as connection:
             return connection.fetch_all(sql, params)
 
-    # ------------------------------------------------------------------
-    # Connectivity
-    # ------------------------------------------------------------------
 
     def test_connection(self) -> dict[str, Any]:
-        """Open a session and read ``CINF.Version`` in every company schema.
-
-        Reports per company whether the schema answered and which Business
-        One version it carries. Never invents data: without configuration it
-        returns ``degraded`` with the missing variable names.
-        """
+        """Open a session and read ``CINF.Version`` in every company schema."""
         status = self.configuration_status()
         if not status["configured"]:
             return {"status": "degraded", **status}
@@ -506,9 +445,6 @@ class B1Client:
             "companies": companies,
         }
 
-    # ------------------------------------------------------------------
-    # Catalogue helpers (mirror the other cartridges' client surface)
-    # ------------------------------------------------------------------
 
     def list_tables(self) -> list[dict[str, Any]]:
         from app.services.catalog_service import get_all_entities

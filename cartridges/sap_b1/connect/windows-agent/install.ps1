@@ -1,46 +1,4 @@
 #Requires -RunAsAdministrator
-<#
-.SYNOPSIS
-    Instala el agente OMEGA para SAP Business One (conector Windows).
-
-.DESCRIPTION
-    1. Localiza un Python 3.11+ instalado para todos los usuarios (bajo
-       Archivos de programa o C:\Python3xx) o lo instala desde el instalador
-       oficial de python.org (o desde uno ya descargado, -PythonInstaller).
-       Un Python instalado por usuario se ignora.
-    2. Copia el agente y los modulos del cartucho a -InstallRoot y crea un
-       entorno virtual con requirements.txt.
-    3. Crea -DataRoot (agent.toml, estado SQLite, cola local y registros) y
-       restringe sus permisos a la cuenta de servicio y a los administradores.
-    4. Registra una tarea programada que ejecuta run.ps1 cada -IntervalHours
-       horas con la cuenta de servicio.
-
-    Este script nunca pide ni guarda la contrasena de HANA ni las claves de
-    S3: esas se escriben en agent.toml (protegido por ACL) despues de instalar.
-    La unica credencial que pide es la de la cuenta de servicio, de forma
-    interactiva, solo para registrar la tarea programada; no se escribe en
-    disco.
-
-.PARAMETER ServiceAccount
-    Cuenta que ejecuta la tarea: '.\svc-omega-b1', 'DOMINIO\svc-omega-b1' o
-    una cuenta de servicio administrada (gMSA) 'DOMINIO\gmsa-omega$' con -Gmsa.
-
-.PARAMETER PythonInstaller
-    Ruta a un instalador oficial python-<version>-amd64.exe ya descargado
-    (servidores sin salida a internet). Si se omite, se descarga de python.org.
-
-.PARAMETER PythonSha256
-    SHA-256 esperado del instalador (publicado en python.org). Recomendado.
-
-.PARAMETER WheelDir
-    Carpeta con las ruedas (wheels) de requirements.txt para instalar sin
-    acceso a PyPI (pip download -r requirements.txt -d <carpeta> en otra maquina).
-
-.EXAMPLE
-    .\install.ps1 -ServiceAccount 'DOMINIO\svc-omega-b1' -PythonSha256 <hash>
-.EXAMPLE
-    .\install.ps1 -ServiceAccount 'DOMINIO\gmsa-omega$' -Gmsa -PythonInstaller C:\temp\python-3.12.10-amd64.exe -WheelDir C:\temp\wheels
-#>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$ServiceAccount,
@@ -61,15 +19,11 @@ $ErrorActionPreference = 'Stop'
 
 function Write-Step([string]$Text) { Write-Host "==> $Text" }
 
-# icacls quiere COMPUTADORA\usuario para cuentas locales escritas como .\usuario
 $aclAccount = $ServiceAccount
 if ($aclAccount.StartsWith('.\')) { $aclAccount = "$env:COMPUTERNAME\" + $aclAccount.Substring(2) }
 $sidSystem = '*S-1-5-18'
 $sidAdministrators = '*S-1-5-32-544'
 
-# ---------------------------------------------------------------------------
-# 1. Que se instala
-# ---------------------------------------------------------------------------
 $sourceDir = $PSScriptRoot
 $cartridgeRoot = $null
 foreach ($candidate in @((Join-Path $sourceDir '..\..'), (Join-Path $sourceDir 'cartridge'))) {
@@ -82,10 +36,6 @@ if (-not $cartridgeRoot) {
     throw "No se encuentra la carpeta app\ del cartucho junto a este script (se esperaba en ..\.. o en .\cartridge)."
 }
 
-# Modulos del cartucho que el agente reutiliza: catalogo, planes y SQL,
-# lector por empresa, formato de los archivos, mapa intercompania. Nada mas
-# del cartucho se copia. Esta lista es la misma que CARTRIDGE_FILES en
-# agent.py (una prueba las compara y comprueba que cubre todos los imports).
 $cartridgeFiles = @(
     'app\__init__.py',
     'app\core\__init__.py',
@@ -99,7 +49,7 @@ $cartridgeFiles = @(
 )
 $agentFiles = @(
     'agent.py', 'run.ps1', 'uninstall.ps1', 'requirements.txt',
-    'agent.toml.template', 'iam-policy.template.json', 'README.md'
+    'agent.toml.template', 'iam-policy.template.json'
 )
 foreach ($relative in $cartridgeFiles) {
     if (-not (Test-Path (Join-Path $cartridgeRoot $relative))) { throw "Falta $relative en $cartridgeRoot" }
@@ -108,16 +58,8 @@ foreach ($relative in $agentFiles) {
     if (-not (Test-Path (Join-Path $sourceDir $relative))) { throw "Falta $relative en $sourceDir" }
 }
 
-# ---------------------------------------------------------------------------
-# 2. Python
-# ---------------------------------------------------------------------------
 function Test-MachineWidePython([string]$Exe) {
-    # Solo vale un Python instalado para todos los usuarios (Archivos de
-    # programa o C:\Python3xx). Uno instalado por usuario vive bajo un perfil
-    # que la cuenta de servicio no puede leer y desaparece con ese perfil.
     $resolved = (Resolve-Path -LiteralPath $Exe).Path
-    # El Python de la Microsoft Store vive bajo Archivos de programa\WindowsApps
-    # pero se registra por usuario: tampoco sirve.
     if ($resolved -match '\\WindowsApps\\') { return $false }
     $roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, (Join-Path $env:SystemDrive 'Python')) | Where-Object { $_ }
     foreach ($root in $roots) {
@@ -185,9 +127,6 @@ if ($python) {
     $python = Install-Python
 }
 
-# ---------------------------------------------------------------------------
-# 3. Archivos del agente y entorno virtual
-# ---------------------------------------------------------------------------
 Write-Step "Copiando el agente a $InstallRoot"
 $agentDir = Join-Path $InstallRoot 'windows-agent'
 New-Item -ItemType Directory -Force -Path $agentDir | Out-Null
@@ -213,12 +152,8 @@ if ($WheelDir) { $pipArgs += @('--no-index', '--find-links', $WheelDir) }
 & $venvPython @pipArgs
 if ($LASTEXITCODE -ne 0) { throw 'pip no pudo instalar las dependencias.' }
 
-# La cuenta de servicio solo necesita leer y ejecutar el codigo.
 & icacls $InstallRoot /grant:r "${aclAccount}:(OI)(CI)RX" | Out-Null
 
-# ---------------------------------------------------------------------------
-# 4. Directorio de datos y permisos
-# ---------------------------------------------------------------------------
 Write-Step "Preparando el directorio de datos $DataRoot"
 foreach ($sub in @('', 'spool', 'logs')) {
     New-Item -ItemType Directory -Force -Path (Join-Path $DataRoot $sub) | Out-Null
@@ -230,14 +165,9 @@ if (-not (Test-Path $configFile)) {
 } else {
     Write-Host '    agent.toml ya existe; no se toca.'
 }
-# SYSTEM y Administradores: control total. Cuenta de servicio: modificar el
-# directorio (estado, cola, registros) pero solo leer la configuracion.
 & icacls $DataRoot /inheritance:r /grant:r "${sidSystem}:(OI)(CI)F" "${sidAdministrators}:(OI)(CI)F" "${aclAccount}:(OI)(CI)M" | Out-Null
 & icacls $configFile /inheritance:r /grant:r "${sidSystem}:F" "${sidAdministrators}:F" "${aclAccount}:R" | Out-Null
 
-# ---------------------------------------------------------------------------
-# 5. Tarea programada
-# ---------------------------------------------------------------------------
 if (-not $NoTask) {
     Write-Step "Registrando la tarea programada '$TaskName' (cada $IntervalHours h) como $ServiceAccount"
     $runScript = Join-Path $agentDir 'run.ps1'

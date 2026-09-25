@@ -1,13 +1,4 @@
-"""An extract_all run that produced nothing for a real reason is a failed run.
-
-Since 9099d16b (2026-06-26) the aggregate status of ``sap_successfactors_extract_all``
-was ``partial`` for anything short of a clean run: ``hard_failed`` was a constant
-``False``. Every entity dying on the network, or every entity rejected with a
-401, produced the same ``completed_with_blocks`` row as one entity with a
-pruned select: a green Airflow task and a Panel that could not tell them apart.
-These tests pin the rule that now separates the cases, in the shared helper,
-in the console route, in the async job and in the DAG source.
-"""
+"""An extract_all run that produced nothing for a real reason is a failed run."""
 
 from __future__ import annotations
 
@@ -17,9 +8,6 @@ from pathlib import Path
 
 import pytest
 
-# Same test-only material as test_extract_all_scoped_plan.py: the cartridge
-# refuses to import without an encryption key, and the console route only
-# accepts a signed security context.
 os.environ.setdefault("FIELD_ENCRYPTION_KEY", "ZVi4nlltq1NSkJjp17QoaHhaRB2RDQRsNTW7I4yf8GE=")
 os.environ.setdefault("INTERNAL_API_KEY", "test-secret-key-not-default")
 os.environ.setdefault("SECURITY_CONTEXT_SIGNING_KEY", "test-security-context-signing-key-12345")
@@ -39,17 +27,13 @@ def _summary(**statuses: int) -> dict[str, int]:
     return summarize_extraction_results(results)
 
 
-# ── the helper ─────────────────────────────────────────────────────────────
-
-
 def test_failed_open_with_nothing_produced_is_a_hard_failure():
     summary = _summary(failed_open=2, permission_blocked=1)
     assert hard_failure_code(summary, [], [], attempted=3) == "extraction_failed"
 
 
 def test_a_mixed_run_stays_partial_so_gold_and_the_cascade_still_run():
-    """24 entities extracted, one timed out: gold was refreshed with the 24 and
-    the intelligence cascade must not be starved by the aggregate."""
+    """24 entities extracted, one timed out: gold was refreshed with the 24 and the intelligence cascade must not be."""
     summary = _summary(extracted=24, failed_open=1)
     assert hard_failure_code(summary, [], [], attempted=25) is None
 
@@ -111,7 +95,6 @@ def test_metadata_not_found_or_invalid_stays_partial():
             {"entity": "X", "code": "SUCCESSFACTORS_METADATA_BLOCKED", "failure_code": code}
         ]
         assert hard_failure_code(summary, [], skipped, attempted=0) is None
-    # Plan outcomes without a metadata code never count either.
     plain = [{"entity": "X", "status": "blocked", "reason": "not_scoped_for_connection"}]
     assert hard_failure_code(summary, [], plain, attempted=0) is None
 
@@ -122,9 +105,6 @@ def test_missing_configuration_is_named_not_mislabelled_as_access_denied():
     ]
     summary = _summary(auth_blocked=1)
     assert hard_failure_code(summary, results, [], attempted=1) == "configuration_incomplete"
-
-
-# ── the console route ──────────────────────────────────────────────────────
 
 
 def _ctx() -> dict:
@@ -226,9 +206,6 @@ def test_console_extract_all_stays_completed_with_blocks_for_a_partial_tenant(mo
     assert response["hard_failure"] is None
 
 
-# ── the DAG source and the async job ───────────────────────────────────────
-
-
 def test_extract_all_dag_records_and_raises_hard_failures():
     source = (ROOT / "dags" / "sap_successfactors_extract_all.py").read_text(encoding="utf-8")
 
@@ -238,17 +215,13 @@ def test_extract_all_dag_records_and_raises_hard_failures():
         source,
     )
     assert "hard_failure_code=extraction_status.hard_failure_code" in source
-    # Saved first, then raised: the row exists before Airflow learns of it.
     saved_at = source.index("aggregate_saved = True")
     raised_at = source.index("raise AirflowFailException(hard_failure)")
     assert saved_at < raised_at
     assert "from airflow.exceptions import AirflowFailException" in source
-    # No automatic retry: a retry would reuse the run_id and the ledger only
-    # lets a status advance, so a recovered attempt could never clear "failed".
     assert "_HardExtractionFailure" not in source
     assert "isinstance(exc, AirflowFailException)" in source
     assert "error_message=hard_failure" in source
-    # Plan outcomes keep their failure_code so the helper can read it.
     assert '{"failure_code": outcome.get("failure_code")}' in source
 
 

@@ -40,8 +40,6 @@ def _get_engine():
     return _engine
 
 
-# ── YAML fallbacks ────────────────────────────────────────────────────────────
-
 def _yaml_entities() -> list[dict[str, Any]]:
     if not ENTITIES_PATH.exists():
         return []
@@ -63,23 +61,18 @@ def _yaml_entity_map() -> dict[str, dict[str, Any]]:
 def _merge_yaml_runtime_fields(row: dict[str, Any]) -> dict[str, Any]:
     data = dict(row)
     yaml_entity = _yaml_entity_map().get(str(data.get("entity"))) or {}
-    # Business One reading rules that entity_config has no column for: they
-    # travel from entities.yaml onto the DB row at read time.
     for key in ("table", "parent", "parent_key", "join_key", "watermark_ts_field", "column_types"):
         if yaml_entity.get(key) and not data.get(key):
             data[key] = yaml_entity[key]
     return data
 
 
-# ── Seed on startup ───────────────────────────────────────────────────────────
-
 def _dag_id_for_entity(entity: dict[str, Any]) -> str:
     return entity.get("dag_id") or f"{CARTRIDGE_ID}_extract"
 
 
 def _seed_if_empty() -> None:
-    """If entity_config has no rows for this cartridge, import from YAML.
-    Also upserts the cartridge header so Studio's dropdown picks it up."""
+    """If entity_config has no rows for this cartridge, import from YAML."""
     try:
         engine = _get_engine()
         with engine.begin() as conn:
@@ -160,8 +153,6 @@ def _seed_if_empty() -> None:
         logger.exception("Failed to seed SAP Business One catalog from YAML")
         raise
 
-
-# ── Public API ────────────────────────────────────────────────────────────────
 
 def get_all_entities() -> list[dict[str, Any]]:
     try:

@@ -1,29 +1,5 @@
 # syntax=docker/dockerfile:1.7
-#
-# MinIO server and mc client rebuilt from the archived upstream source tags.
-#
-# On 2026-09-24 MinIO withdrew every community artifact: dl.min.io answers
-# 410 Gone for all release binaries, quay.io/minio requires authentication,
-# and no public mirror serves the digest this repository pinned
-# (sha256:1dce27c4...). The source tags are still on GitHub, so the platform
-# builds the very same releases itself and hosts them in its own registry.
-# Build identity is verified, not assumed: the clone must land on the exact
-# commit the upstream tag pointed at, and the workflow refuses an image whose
-# `--version` does not report the expected release tag and commit id.
-#
-# Runtime contract kept identical to the upstream images (same entrypoint,
-# CMD, ENV, exposed port, volume, binaries under /usr/bin, curl for the
-# compose healthcheck). The runtime base is Alpine rather than upstream's
-# ubi-micro: ubi-micro ships no package manager, so its curl would have to
-# be assembled from another image's binary and libraries, and a musl curl
-# copied onto glibc does not start (that is exactly what the first build
-# produced). Alpine installs a working curl for both platforms in one line;
-# the Go binaries are static and do not care.
-#
-#   docker buildx build --target minio --platform linux/amd64,linux/arm64 infra/images/minio
-#   docker buildx build --target mc    --platform linux/amd64,linux/arm64 infra/images/minio
 
-# Multi-platform index digest of alpine:3.21 (one digest serves amd64 and arm64).
 ARG RUNTIME_BASE=docker.io/library/alpine:3.21@sha256:ce64758a109eb420d874a118f87920e625e12d3634e03b4a5573fd9f6e5d3507
 
 FROM --platform=$BUILDPLATFORM golang:1.23-alpine AS build
@@ -41,9 +17,6 @@ RUN git clone --quiet --depth 1 --branch "${MINIO_TAG}" https://github.com/minio
  && test "$(git -C minio rev-parse HEAD)" = "${MINIO_COMMIT}"
 RUN git clone --quiet --depth 1 --branch "${MC_TAG}" https://github.com/minio/mc.git mc \
  && test "$(git -C mc rev-parse HEAD)" = "${MC_COMMIT}"
-# Same flags as the upstream Makefile `build` target; the ldflags helper
-# derives ReleaseTag/CommitID from the checkout, with the release prefix
-# the upstream release pipeline sets.
 RUN cd minio \
  && LDFLAGS="$(MINIO_RELEASE=RELEASE go run buildscripts/gen-ldflags.go "${MINIO_VERSION_TIME}")" \
  && GOARCH="${TARGETARCH}" go build -tags kqueue -trimpath -ldflags "${LDFLAGS}" -o /out/minio . \

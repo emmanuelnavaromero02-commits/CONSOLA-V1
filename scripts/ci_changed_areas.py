@@ -353,10 +353,6 @@ def _root_test_targets(files: list[str]) -> str:
             }
             if Path(target).exists()
         )
-    # The release publishes by digest and the deploy pulls by tag; those two
-    # halves lived in different files and nothing compared them, so CI was green
-    # while production could not pull a single image (2026-09-23). Any edit to
-    # either half must run the contract that ties them together.
     if _any(
         files,
         r"^scripts/deploy_main_aws\.py$",

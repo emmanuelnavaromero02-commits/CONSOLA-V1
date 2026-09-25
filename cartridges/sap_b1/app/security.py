@@ -1,11 +1,4 @@
-"""
-Internal API key resolver.
-
-The key is read on every call so that:
-  * test suites can set the env var before importing the app;
-  * a missing or insecure-default key hard-fails instead of returning a
-    sentinel string that could be submitted back as an API key.
-"""
+"""Internal API key resolver."""
 from __future__ import annotations
 
 import os

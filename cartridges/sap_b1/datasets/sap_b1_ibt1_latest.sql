@@ -3,9 +3,6 @@
 -- description: Batch quantities per document line, Direction 0 in / 1 out; rows never change, LogEntry (identity, validate in HANA) is the watermark and page key.
 
 WITH latest AS (
-    -- Las filas nunca cambian en la fuente; el mismo registro puede llegar
-    -- más de una vez (carga completa + incremental), así que se deduplica
-    -- por clave sobre todo el histórico bronze.
     SELECT *
     FROM (
         SELECT *,

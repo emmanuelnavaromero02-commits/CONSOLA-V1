@@ -14,8 +14,6 @@ logger = logging.getLogger(__name__)
 
 _CONNECTION_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
 
-# Console Vault field names that map onto each SAP_B1_* variable. The Vault
-# connection for this cartridge is ``connections/sap_b1/default``.
 _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "SAP_B1_DIALECT": ("dialect", "sap_b1_dialect"),
     "SAP_B1_HOST": ("host", "hostname", "address", "server", "sap_b1_host"),
@@ -86,12 +84,7 @@ def _context_cache_key(security_context: str | None) -> str:
 
 
 def _flatten_connection_fields(payload: dict[str, Any]) -> dict[str, Any]:
-    """Lift a nested ``fields`` mapping to the top level of the payload.
-
-    The Console reveal endpoint returns credentials under ``fields``; every
-    consumer here reads the payload flat. Top-level keys win on collision:
-    they identify the connection, never the credentials.
-    """
+    """Lift a nested ``fields`` mapping to the top level of the payload."""
     nested = payload.get("fields")
     if not isinstance(nested, dict):
         return payload
@@ -167,11 +160,7 @@ def get_connection_for_worker(service_name: str, security_context: str | None = 
 
 
 def get_sap_b1_credentials() -> dict[str, str]:
-    """Return the Business One connection settings from env, Console Vault or settings.
-
-    Raises ``ValueError`` when the host, user or password are missing. Values
-    are returned to the caller only; never log them.
-    """
+    """Return the Business One connection settings from env, Console Vault or settings."""
     resolved = {
         "dialect": get_secret_for_worker("sap_b1", "SAP_B1_DIALECT") or settings.sap_b1_dialect,
         "host": get_secret_for_worker("sap_b1", "SAP_B1_HOST") or settings.sap_b1_host,

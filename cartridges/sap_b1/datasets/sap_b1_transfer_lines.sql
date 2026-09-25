@@ -39,7 +39,6 @@ lines AS (
     WHERE _source_updated_at IS NULL OR _source_updated_at = _header_stamp
 ),
 company AS (
-    -- Newest run per company (all of its batches), never a mix of two runs.
     SELECT _company, MainCurncy AS local_currency, SysCurrncy AS sys_currency
     FROM (
         SELECT s.*, ROW_NUMBER() OVER (PARTITION BY s._company, s.Code ORDER BY s._extracted_at DESC) AS _rn

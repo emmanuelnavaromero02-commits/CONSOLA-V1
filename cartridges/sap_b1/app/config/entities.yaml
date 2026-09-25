@@ -1,26 +1,3 @@
-# SAP Business One tables, read over SQL, one company schema at a time.
-#
-# ``entity`` is the Business One table name; ``select_fields`` is the exact
-# column list the cartridge reads (never SELECT *), kept aligned with the
-# Business One-shaped test bed in tests/fixtures/sap_b1/schema.py and, in
-# production, validated against the customer's HANA schema before the first
-# load. Reading rules:
-#
-#   watermark_format: b1_update_ts  -> (UpdateDate, UpdateTS) pair, re-read
-#                                      with a 5 minute back-off
-#   watermark_format: integer       -> monotonically growing key (OINM.TransNum)
-#   parent / parent_key / join_key  -> line tables read through their header
-#                                      and inherit its stamp
-#   mode: full                      -> snapshot tables without a stamp
-#   date_field                      -> column used by historical (from/to) loads;
-#                                      on line tables it names the header's column
-#   column_types                    -> parquet type per column (int64, decimal(19,6),
-#                                      timestamp, string) so every file of an entity
-#                                      carries the same schema, even an all-null
-#                                      column or an empty file
-#
-# Company schema names are configuration (SAP_B1_COMPANIES), never part of
-# this file: the repository is public.
 entities:
 - entity: CINF
   display_name: Company info (CINF)

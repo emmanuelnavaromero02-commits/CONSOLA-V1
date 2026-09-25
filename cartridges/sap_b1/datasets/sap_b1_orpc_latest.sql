@@ -3,10 +3,6 @@
 -- description: A/P credit memos headers, ObjType 19: totals in document, local and system currency; CANCELED N/Y/C.
 
 WITH latest AS (
-    -- Estado ACTUAL por clave sobre TODO el histórico bronze. La entidad es
-    -- incremental: quedarse con MAX(load_date) colapsaría la población al
-    -- delta del día. Un borrado en la fuente no se refleja hasta una carga
-    -- completa; ver README del cartucho.
     SELECT *
     FROM (
         SELECT *,

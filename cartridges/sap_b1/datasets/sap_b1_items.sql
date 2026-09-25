@@ -17,7 +17,6 @@ WITH oitm AS (
     WHERE _rn = 1
 ),
 groups AS (
-    -- Newest run per company (all of its batches), never a mix of two runs.
     SELECT * EXCLUDE (_rn)
     FROM (
         SELECT s.*, ROW_NUMBER() OVER (PARTITION BY s._company, s.ItmsGrpCod ORDER BY s._extracted_at DESC) AS _rn

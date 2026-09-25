@@ -1,23 +1,4 @@
-"""Every OMEGA image the AWS deploy pulls must be a digest the release signed.
-
-On 2026-09-23 `deploy-main-aws` reached production and died at `pull app
-images`:
-
-    failed to resolve reference "ghcr.io/.../inegi:v1.45.231-beta": not found
-
-The release builds with `push-by-digest=true`, so GHCR never receives the
-`vX.Y.Z` tag, while the compose files ask for `image: ghcr.io/.../console:
-${IMAGE_TAG}`. The two halves asserted opposite things and nothing compared
-them, so CI was green from end to end while the deploy could not pull a single
-image.
-
-GCP hit the identical failure first, on v1.45.224-beta, and #635 fixed it by
-pinning digests from the signed release manifest. AWS was never given the same
-treatment, and there was no dry run to catch it, so it landed in production.
-
-These tests hold the two halves together: the release's publish mode, the
-deploy's image references, and the overlay that bridges them.
-"""
+"""Every OMEGA image the AWS deploy pulls must be a digest the release signed."""
 
 from __future__ import annotations
 
@@ -36,20 +17,13 @@ CARTRIDGES_COMPOSE = REPO / "infra" / "terraform" / "deploy" / "docker-compose.c
 DEPLOY = REPO / "scripts" / "deploy_main_aws.py"
 
 def _deploy_module():
-    """Load the deploy script by path.
-
-    Importing it by name is fragile here: the suite manipulates sys.path, so a
-    module-level insert does not survive collection. Loading from the file is
-    deterministic and keeps the test honest about which file it is asserting on.
-    """
+    """Load the deploy script by path."""
     import importlib.util
 
     if str(REPO / "scripts") not in sys.path:
         sys.path.insert(0, str(REPO / "scripts"))
     spec = importlib.util.spec_from_file_location("_omega_deploy_main_aws", DEPLOY)
     module = importlib.util.module_from_spec(spec)
-    # dataclasses resolves cls.__module__ through sys.modules; without this the
-    # @dataclass definitions in the deploy script raise on exec.
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
@@ -85,9 +59,6 @@ def _manifest_fixture() -> dict:
     return {"release_tag": "v9.9.9-beta", "source_sha": "a" * 40, "by_service": by_service}
 
 
-# ── the gap itself ─────────────────────────────────────────────────────────
-
-
 def test_release_publishes_by_digest_only() -> None:
     """The premise. If this ever stops being true, revisit the whole design."""
     source = RELEASE_WORKFLOW.read_text(encoding="utf-8")
@@ -120,9 +91,6 @@ def test_deploy_requires_the_signed_manifest() -> None:
         resolve_release_manifest(None, None, deploy_ref="a" * 40, image_tag="v9.9.9-beta")
 
     assert "OMEGA_RELEASE_MANIFEST" in str(excinfo.value)
-
-
-# ── the overlay is the bridge ──────────────────────────────────────────────
 
 
 def test_overlay_pins_every_service_the_deploy_recreates() -> None:
@@ -165,12 +133,7 @@ def test_one_airflow_image_backs_its_three_services() -> None:
 
 
 def test_overlay_does_not_disable_the_pull() -> None:
-    """`pull_policy: never` would silently remove the existence proof.
-
-    The pull is what proves every image is present before the deploy stops
-    services and runs migrations; the comment at that step says so. Pinning the
-    digest must make that proof exact, not skip it.
-    """
+    """`pull_policy: never` would silently remove the existence proof."""
     release_manifest_overlay = _deploy_module().release_manifest_overlay
 
     overlay = yaml.safe_load(release_manifest_overlay(_manifest_fixture()))
@@ -193,3 +156,29 @@ def test_remote_script_verifies_and_uses_the_overlay() -> None:
     assert "every OMEGA image is digest-pinned" in source, (
         "the deploy does not assert, after pulling, that no tag reference remains"
     )
+
+
+@pytest.mark.parametrize(
+    ("image", "expected"),
+    [("ghcr.io/o/console@sha256:" + "a" * 64, "0"), ("ghcr.io/o/console:v1", "1")],
+)
+def test_pin_check_survives_pipefail(image: str, expected: str) -> None:
+    import subprocess
+
+    sys.path.insert(0, str(REPO / "scripts"))
+    import deploy_main_aws
+
+    script = deploy_main_aws._remote_deploy_script(
+        artifact_bucket="b", artifact_key="k", artifact_sha256="0" * 64, deploy_ref="a" * 40,
+        image_tag="v0.0.0", version="0.0.0", run_migrations=False,
+        images_overlay_b64="", images_overlay_sha256="0" * 64,
+    )
+    check = next(line for line in script.splitlines() if line.startswith("unpinned="))
+    compose = json.dumps({"services": {"console": {"image": image}}}, indent=2)
+    stub = f"docker() {{ cat <<'JSON'\n{compose}\nJSON\n}}\n"
+    result = subprocess.run(
+        ["bash", "-c", f"set -euo pipefail\nCOMPOSE_FILES=x\n{stub}{check}\nprintf '%s' \"$unpinned\""],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == expected
