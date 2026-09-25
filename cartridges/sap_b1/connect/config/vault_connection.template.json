@@ -7,6 +7,7 @@
   "database": "",
   "companies": "mx_mfg=<COMPANY_DB_1>,mx_dist_a=<COMPANY_DB_2>,mx_dist_b=<COMPANY_DB_3>",
   "intercompany": "mx_mfg:<IC_CARDCODE_DIST_A>=mx_dist_a,mx_mfg:<IC_CARDCODE_DIST_B>=mx_dist_b,mx_dist_a:<IC_CARDCODE_MFG>=mx_mfg,mx_dist_b:<IC_CARDCODE_MFG>=mx_mfg",
+  "business_parameters": "threshold:*:*:margin_min_pct=<MARGEN_MINIMO_PCT>;setting:*:*:reconciliation_tolerance_pct=1",
   "encrypt": "true",
   "ssl_validate_certificate": "true"
 }

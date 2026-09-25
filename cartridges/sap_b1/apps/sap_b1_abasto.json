@@ -1,0 +1,6 @@
+{
+  "name": "sap_b1_abasto",
+  "title": "Abasto · SAP Business One",
+  "description": "Cobertura por artículo con y sin órdenes abiertas, riesgo de quiebre, pedido sugerido y mínimos recalculados contra los de Business One.",
+  "datasets_used": ["sap_b1_item_coverage"]
+}

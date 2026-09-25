@@ -1,5 +1,5 @@
 -- employees_anomalies  (gold)  cartridge: sap_hcm
--- sources: ["raw/sap_hcm/EmployeeMaster", "raw/sap_hcm/PersonalData", "raw/sap_hcm/ContractData", "raw/sap_hcm/EmployeeActions"]
+-- sources: ["raw/sap_hcm/EmployeeMaster", "raw/sap_hcm/PersonalData", "raw/sap_hcm/ContractData", "raw/sap_hcm/EmployeeActions", "silver/sap_hcm/sap_hcm_employee_master_full", "silver/sap_hcm/sap_hcm_employeeactions_latest"]
 -- description: Detección automática de irregularidades operativas sobre empleados activos (preparación Fase 3). UNION de varios casos con tipo, severidad y detalle.
 
 -- Mejora propia (no existe en Replicon): precomputa anomalías para el motor de decisiones.

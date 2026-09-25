@@ -94,9 +94,14 @@ def test_migration_idempotent_and_scoped():
 def test_declared_sources_are_real_s4_entities():
     entities = _s4_entities()
     assert len(entities) == 25
+    silver_datasets = {path.stem for path in _dataset_files() if _parse_header(path)[1] == "silver"}
     for path in _dataset_files():
         _, _, sources, _ = _parse_header(path)
         for src in sources:
+            silver = re.match(r"silver/sap_s4hana/(\w+)$", src)
+            if silver:
+                assert silver.group(1) in silver_datasets, f"{path.name}: source {src!r} not a sap_s4hana silver dataset"
+                continue
             m = re.match(r"raw/sap_s4hana/(\w+)$", src)
             assert m, f"{path.name}: malformed source {src!r}"
             assert m.group(1) in entities, f"{path.name}: source {src!r} not a S/4HANA entity"

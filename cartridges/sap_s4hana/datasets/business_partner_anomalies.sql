@@ -1,5 +1,5 @@
 -- business_partner_anomalies  (gold)  cartridge: sap_s4hana
--- sources: ["raw/sap_s4hana/BusinessPartner", "raw/sap_s4hana/Customer", "raw/sap_s4hana/Supplier", "raw/sap_s4hana/BusinessPartnerAddress"]
+-- sources: ["raw/sap_s4hana/BusinessPartner", "raw/sap_s4hana/Customer", "raw/sap_s4hana/Supplier", "raw/sap_s4hana/BusinessPartnerAddress", "silver/sap_s4hana/sap_s4hana_business_partner_full"]
 -- description: Detección automática de irregularidades en Business Partners (preparación Fase 3). UNION de varios casos con tipo, severidad y detalle.
 
 -- Mejora propia (estilo employees_anomalies de HCM). Casos cubiertos hoy:

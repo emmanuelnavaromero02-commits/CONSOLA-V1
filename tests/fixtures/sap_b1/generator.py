@@ -46,6 +46,12 @@ def ts(d: date) -> datetime:
     return datetime(d.year, d.month, d.day)
 
 
+def min_stock(role: str, item: str) -> Decimal:
+    if not item.startswith("FG-"):
+        return Decimal("400")
+    return Decimal("200") if role == "manufacturer" else Decimal("40")
+
+
 def month_start(anchor: date, offset: int) -> date:
     year = anchor.year + (anchor.month - 1 + offset) // 12
     month = (anchor.month - 1 + offset) % 12 + 1
@@ -72,6 +78,9 @@ DEFAULT_COMPANIES: Tuple[CompanyProfile, ...] = (
 INTERCOMPANY_CUSTOMER = {"mx_dist_a": "C-IC-DIST-A", "mx_dist_b": "C-IC-DIST-B"}
 INTERCOMPANY_SUPPLIER = "V-IC-MFG"
 GENERIC_RFC = "XAXX010101000"
+OPEN_PO_AGE_DAYS = 10
+OPEN_SO_AGE_DAYS = 3
+COMMITTED_COVER_DAYS = (2, 8)
 INVALID_RFC = "RFC-PENDIENTE"
 SHARED_CUSTOMERS = {
     ("mx_mfg", "C-0001"): 1, ("mx_dist_a", "C-0011"): 1,
@@ -205,6 +214,9 @@ class _Company:
         self.suppliers: List[str] = []
         self.finished_goods: List[str] = []
         self.raw_materials: List[str] = []
+        self.open_production: Dict[str, Decimal] = {}
+        self.open_purchases: Dict[str, Decimal] = {}
+        self.committed: Dict[str, Decimal] = {}
 
 
     def entry(self, table: str) -> int:
@@ -586,6 +598,8 @@ class _Builder:
             start = d0 + timedelta(days=(days - c.rng.randint(1, 2)) if late else c.rng.randint(8, 12))
             close = start + timedelta(days=c.rng.randint(3, 8))
             closed = close <= self.as_of
+            if not closed:
+                c.open_production[fg] = c.open_production.get(fg, ZERO) + planned
             stamp = c.stamp(start)
             c.add("OWOR", DocEntry=entry, DocNum=entry, ItemCode=fg, Status="L" if closed else "R", Type="S",
                   PlannedQty=planned, CmpltQty=planned if closed else ZERO, RjctQty=ZERO, PostDate=ts(start),
@@ -729,9 +743,49 @@ class _Builder:
             inv, net, vat, customer, lines, d_inv = rng.choice(external)
             self.cancel_invoice(c, inv, net, vat, customer, lines, d_inv + timedelta(days=rng.randint(1, 7)), d_inv)
 
+    def open_purchase_orders(self, c: _Company) -> None:
+        d = self.as_of - timedelta(days=OPEN_PO_AGE_DAYS)
+        bought = [code for code in c.raw_materials + c.finished_goods if not (code.startswith("FG-") and c.p.role == "manufacturer")]
+
+        def supplier(code: str) -> str:
+            return INTERCOMPANY_SUPPLIER if code.startswith("FG-") else f"S-{int(code[3:]) % 10 + 1:04d}"
+
+        def line(code: str, qty: Decimal) -> Dict[str, Any]:
+            return {"item": code, "name": f"Articulo {code}", "qty": str(qty), "price": str(c.item_cost[code]), "whs": WHS_MAIN}
+
+        for n, code in enumerate(bought[::3]):
+            qty = Decimal(100 + 50 * n)
+            c.marketing_doc("OPOR", "POR1", "22", d, supplier(code), [line(code, qty)])
+            c.open_purchases[code] = c.open_purchases.get(code, ZERO) + qty
+        if bought:
+            c.marketing_doc("OPOR", "POR1", "22", d, supplier(bought[0]), [line(bought[0], Decimal("999"))], canceled="Y")
+
+    def open_sales_orders(self, c: _Company) -> None:
+        d = self.as_of - timedelta(days=OPEN_SO_AGE_DAYS)
+        cols = b1.columns("OINM")
+        start = self.as_of - timedelta(days=90)
+        for code, days_left in zip(c.finished_goods[1::3], COMMITTED_COVER_DAYS):
+            sold = sum((row[cols.index("OutQty")] for row in c.rows["OINM"]
+                        if row[cols.index("ItemCode")] == code and row[cols.index("TransType")] == TT_DELIVERY
+                        and start < row[cols.index("DocDate")].date() <= self.as_of), ZERO)
+            keep = (sold / 90 * days_left).to_integral_value(rounding=ROUND_FLOOR)
+            qty = c.stock.get((code, WHS_MAIN), ZERO) - keep
+            if qty <= ZERO or not c.customers:
+                continue
+            c.marketing_doc("ORDR", "RDR1", "17", d, c.customers[0],
+                            [{"item": code, "name": f"Articulo {code}", "qty": str(qty), "price": str(c.item_price[code]), "whs": WHS_MAIN}])
+            c.committed[code] = c.committed.get(code, ZERO) + qty
+
     def finish(self, c: _Company) -> Tuple[Dict[Tuple[str, str], Decimal], int]:
+        self.open_purchase_orders(c)
+        self.open_sales_orders(c)
         for (item, whs), on_hand in sorted(c.stock.items()):
-            c.add("OITW", ItemCode=item, WhsCode=whs, OnHand=q6(on_hand), IsCommited=ZERO, OnOrder=ZERO, AvgPrice=c.item_cost[item], MinStock=ZERO, MaxStock=ZERO)
+            main = whs == WHS_MAIN
+            on_order = (c.open_purchases.get(item, ZERO) + c.open_production.get(item, ZERO)) if main else ZERO
+            minimum = min_stock(c.p.role, item) if main else ZERO
+            committed = c.committed.get(item, ZERO) if main else ZERO
+            c.add("OITW", ItemCode=item, WhsCode=whs, OnHand=q6(on_hand), IsCommited=q6(committed), OnOrder=q6(on_order),
+                  AvgPrice=c.item_cost[item], MinStock=minimum, MaxStock=minimum * 4)
         expired = 0
         for (item, whs), batches in sorted(c.batches.items()):
             for sysno, dist, qty in batches:

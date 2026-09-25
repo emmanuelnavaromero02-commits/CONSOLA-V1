@@ -328,7 +328,256 @@ __all__ = (
     "ControlRoomFinanceKpisResponse",
     "ControlRoomOperationsKpisResponse",
     "ControlRoomRiskKpisResponse",
+    "ControlRoomSapB1ExpiryKpisResponse",
+    "ControlRoomSapB1MarginKpisResponse",
+    "ControlRoomSapB1SalesKpisResponse",
+    "ControlRoomSapB1SemaforoKpisResponse",
+    "ControlRoomSapB1SupplyKpisResponse",
     "DomainKpisBase",
     "KpiEvidenceRef",
     "KpiMetricBase",
 )
+
+
+class B1KpiMetricBase(KpiMetricBase):
+    period: str | None = None
+    breaches: list[str] = Field(default_factory=list)
+
+
+class GroupMarginKpi(B1KpiMetricBase):
+    currency: str | None = None
+    external_revenue: float | int | None = None
+    external_gross_profit: float | int | None = None
+    consolidated_gross_profit: float | int | None = None
+    external_margin_pct: float | int | None = None
+    consolidated_margin_pct: float | int | None = None
+    unrealized_profit_change: float | int | None = None
+    trailing_margin_pct: float | int | None = None
+    currencies: list[str] = Field(default_factory=list)
+
+
+class CompanyMarginRow(PublicProjectionModel):
+    company: str | None = None
+    revenue: float | int | None = None
+    gross_profit: float | int | None = None
+    margin_pct: float | int | None = None
+    min_margin_pct: float | int | None = None
+
+
+class CompanyMarginKpi(B1KpiMetricBase):
+    companies: list[CompanyMarginRow] = Field(default_factory=list)
+
+
+class CustomerMarginRow(PublicProjectionModel):
+    company: str | None = None
+    customer: str | None = None
+    revenue: float | int | None = None
+    margin_pct: float | int | None = None
+
+
+class CustomerMarginKpi(B1KpiMetricBase):
+    customers: int | None = None
+    customers_below_min: int | None = None
+    customers_negative: int | None = None
+    revenue: float | int | None = None
+    revenue_below_min_pct: float | int | None = None
+    worst_customers: list[CustomerMarginRow] = Field(default_factory=list)
+
+
+class ItemFamilyMarginRow(PublicProjectionModel):
+    family: str | None = None
+    revenue: float | int | None = None
+    gross_profit: float | int | None = None
+    margin_pct: float | int | None = None
+    mix_pct: float | int | None = None
+
+
+class ItemFamilyMarginKpi(B1KpiMetricBase):
+    families: list[ItemFamilyMarginRow] = Field(default_factory=list)
+
+
+class BelowMinSalesKpi(B1KpiMetricBase):
+    revenue: float | int | None = None
+    below_min_revenue: float | int | None = None
+    below_min_pct: float | int | None = None
+    below_cost_revenue: float | int | None = None
+    below_cost_pct: float | int | None = None
+
+
+class ReconciliationRow(PublicProjectionModel):
+    company: str | None = None
+    period: str | None = None
+    revenue_diff_pct: float | int | None = None
+    cogs_diff_pct: float | int | None = None
+    gross_profit_diff_pct: float | int | None = None
+    tolerance_pct: float | int | None = None
+
+
+class ReconciliationKpi(B1KpiMetricBase):
+    months: int | None = None
+    company_months: int | None = None
+    within_tolerance: int | None = None
+    out_of_tolerance: int | None = None
+    without_controls: int | None = None
+    outliers: list[ReconciliationRow] = Field(default_factory=list)
+
+
+class DataQualityRow(PublicProjectionModel):
+    company: str | None = None
+    check: str | None = None
+    group: str | None = None
+    total: int | None = None
+    failing: int | None = None
+    pct_ok: float | int | None = None
+    min_pct: float | int | None = None
+
+
+class DataQualityKpi(B1KpiMetricBase):
+    checks: int | None = None
+    checks_below_min: int | None = None
+    failing: list[DataQualityRow] = Field(default_factory=list)
+
+
+class SapB1MarginMetrics(PublicProjectionModel):
+    group_margin: GroupMarginKpi = Field(default_factory=GroupMarginKpi)
+    company_margin: CompanyMarginKpi = Field(default_factory=CompanyMarginKpi)
+    customer_margin: CustomerMarginKpi = Field(default_factory=CustomerMarginKpi)
+    item_family_margin: ItemFamilyMarginKpi = Field(default_factory=ItemFamilyMarginKpi)
+    below_min_sales: BelowMinSalesKpi = Field(default_factory=BelowMinSalesKpi)
+    reconciliation: ReconciliationKpi = Field(default_factory=ReconciliationKpi)
+    data_quality: DataQualityKpi = Field(default_factory=DataQualityKpi)
+
+
+class ControlRoomSapB1MarginKpisResponse(DomainKpisBase):
+    metrics: SapB1MarginMetrics = Field(default_factory=SapB1MarginMetrics)
+
+
+class DistributorRow(PublicProjectionModel):
+    distributor: str | None = None
+    sell_out_revenue: float | int | None = None
+    sell_out_qty: float | int | None = None
+    sell_in_qty: float | int | None = None
+    growth_mom_pct: float | int | None = None
+    growth_yoy_pct: float | int | None = None
+    sell_through_3m_pct: float | int | None = None
+    channel_days: float | int | None = None
+    margin_pct: float | int | None = None
+    expiry_exposed_pct: float | int | None = None
+    overall_color: str | None = None
+
+
+class DistributorScorecardKpi(B1KpiMetricBase):
+    distributors: list[DistributorRow] = Field(default_factory=list)
+    red: int | None = None
+    yellow: int | None = None
+    green: int | None = None
+    without_thresholds: int | None = None
+    sell_in_qty: float | int | None = None
+    sell_out_qty: float | int | None = None
+
+
+class SapB1SalesMetrics(PublicProjectionModel):
+    distributor_scorecard: DistributorScorecardKpi = Field(default_factory=DistributorScorecardKpi)
+
+
+class ControlRoomSapB1SalesKpisResponse(DomainKpisBase):
+    metrics: SapB1SalesMetrics = Field(default_factory=SapB1SalesMetrics)
+
+
+class ExpiryCompanyRow(PublicProjectionModel):
+    company: str | None = None
+    expired_qty: float | int | None = None
+    expired_value: float | int | None = None
+    horizon_value: float | int | None = None
+    at_risk_value: float | int | None = None
+    transfer_candidates: int | None = None
+
+
+class ExpiryItemRow(PublicProjectionModel):
+    company: str | None = None
+    item: str | None = None
+    at_risk_qty: float | int | None = None
+    at_risk_value: float | int | None = None
+    action: str | None = None
+
+
+class BatchExpiryKpi(B1KpiMetricBase):
+    as_of: str | None = None
+    expired_qty: float | int | None = None
+    expired_value: float | int | None = None
+    horizon_value: float | int | None = None
+    at_risk_value: float | int | None = None
+    transfer_candidates: int | None = None
+    by_company: list[ExpiryCompanyRow] = Field(default_factory=list)
+    top_items: list[ExpiryItemRow] = Field(default_factory=list)
+
+
+class SapB1ExpiryMetrics(PublicProjectionModel):
+    batch_expiry: BatchExpiryKpi = Field(default_factory=BatchExpiryKpi)
+
+
+class ControlRoomSapB1ExpiryKpisResponse(DomainKpisBase):
+    metrics: SapB1ExpiryMetrics = Field(default_factory=SapB1ExpiryMetrics)
+
+
+class CoverageCompanyRow(PublicProjectionModel):
+    company: str | None = None
+    items: int | None = None
+    red: int | None = None
+    yellow: int | None = None
+    green: int | None = None
+    without_consumption: int | None = None
+    suggestions: int | None = None
+    suggested_value: float | int | None = None
+    median_coverage_days: float | int | None = None
+    median_coverage_with_orders_days: float | int | None = None
+    min_stock_outdated: int | None = None
+
+
+class CoverageRiskRow(PublicProjectionModel):
+    company: str | None = None
+    item: str | None = None
+    color: str | None = None
+    coverage_days: float | int | None = None
+    coverage_with_orders_days: float | int | None = None
+    lead_time_days: int | None = None
+    stockout_date: str | None = None
+    suggested_qty: float | int | None = None
+    action: str | None = None
+    order_by: str | None = None
+    suggested_value: float | int | None = None
+
+
+class ItemCoverageKpi(B1KpiMetricBase):
+    as_of: str | None = None
+    items: int | None = None
+    red: int | None = None
+    yellow: int | None = None
+    green: int | None = None
+    without_consumption: int | None = None
+    suggestions: int | None = None
+    suggested_value: float | int | None = None
+    min_stock_outdated: int | None = None
+    by_company: list[CoverageCompanyRow] = Field(default_factory=list)
+    top_risks: list[CoverageRiskRow] = Field(default_factory=list)
+
+
+class SapB1SupplyMetrics(PublicProjectionModel):
+    item_coverage: ItemCoverageKpi = Field(default_factory=ItemCoverageKpi)
+
+
+class ControlRoomSapB1SupplyKpisResponse(DomainKpisBase):
+    metrics: SapB1SupplyMetrics = Field(default_factory=SapB1SupplyMetrics)
+
+
+class SapB1SemaforoMetrics(PublicProjectionModel):
+    group_margin: GroupMarginKpi = Field(default_factory=GroupMarginKpi)
+    company_margin: CompanyMarginKpi = Field(default_factory=CompanyMarginKpi)
+    distributor_scorecard: DistributorScorecardKpi = Field(default_factory=DistributorScorecardKpi)
+    batch_expiry: BatchExpiryKpi = Field(default_factory=BatchExpiryKpi)
+    item_coverage: ItemCoverageKpi = Field(default_factory=ItemCoverageKpi)
+    data_quality: DataQualityKpi = Field(default_factory=DataQualityKpi)
+
+
+class ControlRoomSapB1SemaforoKpisResponse(DomainKpisBase):
+    metrics: SapB1SemaforoMetrics = Field(default_factory=SapB1SemaforoMetrics)

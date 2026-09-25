@@ -1,5 +1,5 @@
 -- manager_hierarchy  (gold)  cartridge: sap_hcm
--- sources: ["raw/sap_hcm/EmployeeMaster", "raw/sap_hcm/PersonalData", "raw/sap_hcm/ContractData"]
+-- sources: ["raw/sap_hcm/EmployeeMaster", "raw/sap_hcm/PersonalData", "raw/sap_hcm/ContractData", "silver/sap_hcm/sap_hcm_employee_master_full"]
 -- description: Árbol de supervisión por empleado. El vínculo manager no está disponible en el bronze actual (PA0001 extraído no incluye Sbrtr y no se extrae HRP1001); se entrega cada empleado activo con manager NULL hasta habilitar esa fuente.
 
 -- TODO: poblar manager_pernr cuando exista la fuente del jefe:

@@ -1,5 +1,5 @@
 -- sap_hcm_employee_master_full  (silver)  cartridge: sap_hcm
--- sources: ["raw/sap_hcm/EmployeeMaster", "raw/sap_hcm/PersonalData", "raw/sap_hcm/ContractData", "raw/sap_hcm/OrgUnit", "raw/sap_hcm/Position", "raw/sap_hcm/CostCenter"]
+-- sources: ["raw/sap_hcm/EmployeeMaster", "raw/sap_hcm/PersonalData", "raw/sap_hcm/ContractData", "raw/sap_hcm/OrgUnit", "raw/sap_hcm/Position", "raw/sap_hcm/CostCenter", "silver/sap_hcm/sap_hcm_contractdata_latest", "silver/sap_hcm/sap_hcm_employeemaster_latest", "silver/sap_hcm/sap_hcm_orgunit_latest", "silver/sap_hcm/sap_hcm_personaldata_latest", "silver/sap_hcm/sap_hcm_position_latest"]
 -- description: Vista 360 del empleado: asignación org (PA0001) + datos personales (PA0002) + contrato (PA0016), enriquecida con nombre de unidad org y posición. Una fila por empleado (registro vigente).
 
 WITH

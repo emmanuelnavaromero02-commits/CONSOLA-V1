@@ -7,7 +7,7 @@ import sys
 import time
 import uuid
 from collections import defaultdict
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -479,8 +479,23 @@ def test_document_chains_are_linked(dataset, loaded_dsn):
         f'WHERE d."TargetType" <> 13 OR i."DocEntry" IS NULL',
     )
     assert unlinked == 0
-    open_lines = loader.scalar(loaded_dsn, f'SELECT COUNT(*) FROM {loader.table_ref(s, "RDR1")} WHERE "LineStatus" <> %s', ("C",))
-    assert open_lines == 0
+    backlog_day = dataset.as_of - timedelta(days=generator.OPEN_SO_AGE_DAYS)
+    stray = loader.scalar(
+        loaded_dsn,
+        f'SELECT COUNT(*) FROM {loader.table_ref(s, "RDR1")} l JOIN {loader.table_ref(s, "ORDR")} o ON o."DocEntry" = l."DocEntry" '
+        f'WHERE l."LineStatus" <> %s AND o."DocDate"::date <> %s',
+        ("C", backlog_day),
+    )
+    assert stray == 0
+    mismatched = loader.scalar(
+        loaded_dsn,
+        f'SELECT COUNT(*) FROM (SELECT "ItemCode", SUM("OpenQty") AS q FROM {loader.table_ref(s, "RDR1")} '
+        f'WHERE "LineStatus" = %s GROUP BY 1) b FULL JOIN (SELECT "ItemCode", SUM("IsCommited") AS q '
+        f'FROM {loader.table_ref(s, "OITW")} WHERE "IsCommited" > 0 GROUP BY 1) w ON w."ItemCode" = b."ItemCode" '
+        f'WHERE b.q IS DISTINCT FROM w.q',
+        ("O",),
+    )
+    assert mismatched == 0
 
 
 def test_expired_batches_exist_for_the_expiry_agent(dataset, loaded_dsn):

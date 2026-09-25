@@ -1,5 +1,5 @@
 -- headcount_by_position_type  (gold)  cartridge: sap_hcm
--- sources: ["raw/sap_hcm/EmployeeMaster", "raw/sap_hcm/PersonalData", "raw/sap_hcm/ContractData"]
+-- sources: ["raw/sap_hcm/EmployeeMaster", "raw/sap_hcm/PersonalData", "raw/sap_hcm/ContractData", "silver/sap_hcm/sap_hcm_employee_master_full"]
 -- description: Distribución de empleados activos por tipo de personal (employee_group / subgroup de PA0001). Proxy de "tipo de posición" hasta que se extraiga la clasificación de puesto.
 
 -- NOTA: PA0001 extraído no trae el código de puesto (Stell); como proxy de tipo

@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import json
+from importlib import import_module
 from unittest.mock import AsyncMock
 
 import pytest
 
-from app.routers import intelligence
-from app.services import control_room_service
 
 
 SECRET = "wisdom-operational-secret"
@@ -63,6 +62,8 @@ async def test_wisdom_bit_uses_public_talent_projections_without_metadata_probe(
         }
     )
     metadata = AsyncMock(side_effect=AssertionError("metadata probe reached"))
+    intelligence = import_module("app.routers.intelligence")
+    control_room_service = import_module("app.services.control_room_service")
     monkeypatch.setattr(intelligence, "_internal_mcp_user", lambda *_args: USER)
     monkeypatch.setattr(
         control_room_service, "sap_successfactors_talent_overview", overview

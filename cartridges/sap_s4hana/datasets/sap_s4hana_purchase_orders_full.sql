@@ -1,5 +1,5 @@
 -- sap_s4hana_purchase_orders_full  (silver)  cartridge: sap_s4hana
--- sources: ["raw/sap_s4hana/PurchaseOrder", "raw/sap_s4hana/PurchaseOrderItem"]
+-- sources: ["raw/sap_s4hana/PurchaseOrder", "raw/sap_s4hana/PurchaseOrderItem", "silver/sap_s4hana/sap_s4hana_purchaseorder_latest", "silver/sap_s4hana/sap_s4hana_purchaseorderitem_latest"]
 -- description: Órdenes de compra a nivel línea, enriquecidas con la cabecera (proveedor, fecha, sociedad, moneda). Una fila por línea.
 
 -- NOTA de privacidad: PurchaseOrder.supplier va en claro (A_PurchaseOrder no tiene

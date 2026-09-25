@@ -1,4 +1,5 @@
 -- consultor_asignacion  (gold)  cartridge: replicon
+-- sources: ["silver/replicon/empleados_maestro", "silver/replicon/replicon_project_latest", "silver/replicon/replicon_resourceallocation_latest", "silver/replicon/replicon_timeentry_latest", "silver/replicon/replicon_user_latest"]
 -- description: Asignación mensual de consultores por proyecto. Cruza ResourceAllocation (plan) con TimeEntry (ejecución), enriquecida con supervisor, departamento, tipo_empleado y tipo_de_proveedor (proveniente de UserSkills via replicon_user_latest).
 -- exported from AWS postgres on session
 

@@ -1,5 +1,5 @@
 -- workforce_cost_monthly  (gold)  cartridge: sap_hcm
--- sources: ["raw/sap_hcm/EmployeeMaster", "raw/sap_hcm/OrgUnit"]
+-- sources: ["raw/sap_hcm/EmployeeMaster", "raw/sap_hcm/OrgUnit", "silver/sap_hcm/sap_hcm_employee_master_full"]
 -- description: Costo de nómina estimado por mes / unidad org / centro de costo. PENDIENTE: requiere extracción de PA0008 (BasicPay), no habilitada en Bloque A. Hoy entrega la dimensión con headcount y costo en NULL.
 
 -- TODO: requiere extracción de PA0008 (BasicPay) que aún no está habilitada.

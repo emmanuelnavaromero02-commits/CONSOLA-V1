@@ -1,0 +1,6 @@
+{
+  "name": "sap_b1_sellout",
+  "title": "Ventas y caducidad · SAP Business One",
+  "description": "Sell-in y sell-out por distribuidora, semáforo con crecimiento, sell-through, días en canal y margen, y lotes por caducar con su acción.",
+  "datasets_used": ["sap_b1_batch_expiry", "sap_b1_distributor_scorecard_month", "sap_b1_sellin_sellout_month"]
+}

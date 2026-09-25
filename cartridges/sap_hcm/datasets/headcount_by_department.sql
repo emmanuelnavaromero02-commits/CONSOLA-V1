@@ -1,5 +1,5 @@
 -- headcount_by_department  (gold)  cartridge: sap_hcm
--- sources: ["raw/sap_hcm/EmployeeMaster", "raw/sap_hcm/PersonalData", "raw/sap_hcm/ContractData", "raw/sap_hcm/OrgUnit"]
+-- sources: ["raw/sap_hcm/EmployeeMaster", "raw/sap_hcm/PersonalData", "raw/sap_hcm/ContractData", "raw/sap_hcm/OrgUnit", "silver/sap_hcm/sap_hcm_employee_master_full"]
 -- description: Empleados activos por unidad organizacional (snapshot del mes en curso).
 
 WITH emp AS (

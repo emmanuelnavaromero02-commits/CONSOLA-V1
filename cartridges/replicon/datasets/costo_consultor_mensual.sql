@@ -1,5 +1,5 @@
 -- costo_consultor_mensual  (gold)  cartridge: replicon
--- sources: ["raw/replicon/TimeEntry"]
+-- sources: ["raw/replicon/TimeEntry", "silver/replicon/replicon_timeentry_latest", "silver/replicon/replicon_user_latest"]
 -- description: Costo mensual por consultor: ejecutado (horas×rate) y hundido (horas disponibles - ejecutadas)×rate
 
 WITH te AS (

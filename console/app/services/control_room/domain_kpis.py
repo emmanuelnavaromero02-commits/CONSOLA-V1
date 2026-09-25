@@ -8,6 +8,7 @@ from app.services.intelligence import (
     finance_aggregates,
     operations_aggregates,
     risk_aggregates,
+    sap_b1_aggregates,
 )
 from app.services.intelligence.domain_aggregate_support import (
     STATUS_DEGRADED,
@@ -34,6 +35,26 @@ OPERATIONS_METRICS = (
     "absence_rate_company_by_type",
 )
 RISK_METRICS = ("attrition_risk_population", "employment_end_expiry", "deal_slippage")
+SAP_B1_MARGIN_METRICS = (
+    "group_margin",
+    "company_margin",
+    "customer_margin",
+    "item_family_margin",
+    "below_min_sales",
+    "reconciliation",
+    "data_quality",
+)
+SAP_B1_SALES_METRICS = ("distributor_scorecard",)
+SAP_B1_EXPIRY_METRICS = ("batch_expiry",)
+SAP_B1_SUPPLY_METRICS = ("item_coverage",)
+SAP_B1_SEMAFORO_METRICS = (
+    "group_margin",
+    "company_margin",
+    "distributor_scorecard",
+    "batch_expiry",
+    "item_coverage",
+    "data_quality",
+)
 
 PUBLIC_PROXY_NOTES: dict[str, str] = {
     "billable_hours_logged": (
@@ -93,6 +114,60 @@ PUBLIC_PROXY_NOTES: dict[str, str] = {
         "montos NO estan convertidos de moneda. Los nombres de deals solo "
         "aparecen a peticion explicita y nunca el vendedor."
     ),
+    "group_margin": (
+        "Margen bruto del grupo en el ultimo mes cerrado: venta externa de las "
+        "empresas menos el costo del grupo, eliminando la utilidad entre empresas "
+        "que sigue en el inventario de quien compro, comparado con el promedio de "
+        "los tres meses previos. NO convierte monedas."
+    ),
+    "company_margin": (
+        "Margen neto de cada empresa en su venta a clientes externos del ultimo mes "
+        "cerrado, frente a su margen minimo configurado. NO incluye ventas entre "
+        "empresas del grupo."
+    ),
+    "customer_margin": (
+        "Clientes externos del ultimo mes cerrado por debajo del margen minimo o con "
+        "margen negativo, y la parte de la venta que representan. Los nombres solo "
+        "aparecen a peticion explicita. NO une clientes sin un RFC valido."
+    ),
+    "item_family_margin": (
+        "Margen y mezcla de la venta externa por familia de articulo del ultimo mes "
+        "cerrado. NO usa jerarquias de producto fuera de Business One."
+    ),
+    "below_min_sales": (
+        "Parte de la venta externa del ultimo mes cerrado vendida por debajo del "
+        "margen minimo y por debajo del costo. NO evalua notas de credito linea "
+        "por linea."
+    ),
+    "reconciliation": (
+        "Meses cerrados de los ultimos doce comparados con los totales de control "
+        "de finanzas por empresa: dentro de tolerancia, fuera de tolerancia o sin "
+        "totales. NO sustituye el cierre contable."
+    ),
+    "data_quality": (
+        "Revisiones de calidad por empresa que quedaron bajo su minimo: RFC de "
+        "clientes, relaciones entre documentos y maestros, costo en lineas, lotes "
+        "e intercompania. NO corrige datos en Business One."
+    ),
+    "distributor_scorecard": (
+        "Semaforo del ultimo mes cerrado por distribuidora del grupo: sell-in, "
+        "sell-out y su crecimiento, sell-through de tres meses, dias de inventario "
+        "en canal, margen y stock expuesto a caducidad contra sus umbrales. NO "
+        "incluye ventas directas del fabricante a clientes finales."
+    ),
+    "batch_expiry": (
+        "Lotes con existencia al corte del inventario: vencidos, dentro del "
+        "horizonte y unidades que se venceran sin venderse al ritmo actual, con "
+        "accion sugerida por articulo. NO considera promociones ni traspasos en "
+        "camino."
+    ),
+    "item_coverage": (
+        "Cobertura por articulo al corte del inventario: dias que alcanza lo "
+        "disponible al ritmo de consumo de 90 dias, con y sin ordenes de compra y "
+        "de produccion abiertas, frente al tiempo de entrega, y sugerencia de "
+        "pedido redondeada al minimo y multiplo del articulo. Solo recomienda: NO "
+        "escribe en Business One."
+    ),
 }
 
 PUBLIC_SOURCE_LABELS: dict[str, str] = {
@@ -107,12 +182,22 @@ PUBLIC_SOURCE_LABELS: dict[str, str] = {
     risk_aggregates.ACTION_CANDIDATES_DATASET: "Talento: acciones candidatas",
     risk_aggregates.EMPLOYEE_360_DATASET: "Talento: ficha de empleado",
     risk_aggregates.DEALS_AT_RISK_DATASET: "Salesforce: deals en riesgo",
+    sap_b1_aggregates.CONSOLIDATED_DATASET: "SAP Business One: margen del grupo (mensual)",
+    sap_b1_aggregates.CUSTOMER_DATASET: "SAP Business One: margen por cliente (mensual)",
+    sap_b1_aggregates.COMPANY_DATASET: "SAP Business One: margen por empresa (mensual)",
+    sap_b1_aggregates.ITEM_DATASET: "SAP Business One: margen por articulo (mensual)",
+    sap_b1_aggregates.RECONCILIATION_DATASET: "SAP Business One: reconciliacion con finanzas (mensual)",
+    sap_b1_aggregates.DATA_QUALITY_DATASET: "SAP Business One: calidad de datos",
+    sap_b1_aggregates.SCORECARD_DATASET: "SAP Business One: semaforo de distribuidoras (mensual)",
+    sap_b1_aggregates.EXPIRY_DATASET: "SAP Business One: caducidad de lotes",
+    sap_b1_aggregates.COVERAGE_DATASET: "SAP Business One: cobertura y reabasto",
 }
 
 PUBLIC_CARTRIDGE_LABELS: dict[str, str] = {
     "sap_successfactors": "SAP SuccessFactors",
     "sap_hcm": "SAP HCM",
     "sap_s4hana": "SAP S/4HANA",
+    "sap_b1": "SAP Business One",
     "replicon": "Replicon",
     "salesforce": "Salesforce",
     "hubspot": "HubSpot",
@@ -212,6 +297,15 @@ PUBLIC_NOTE_RULES: tuple[tuple[str, str], ...] = (
         "de empleo futuro",
     ),
     ("sin meses cerrados con datos", "sin meses cerrados con datos"),
+    (
+        "finanzas todavia no entrego totales de control",
+        "finanzas todavia no entrego totales de control",
+    ),
+    ("sin lotes con existencia", "sin lotes con existencia"),
+    (
+        "hay varias monedas locales",
+        "hay varias monedas locales: se reporta la de mayor venta",
+    ),
     (
         "retention_risk_score",
         "las bandas de riesgo las calcula el modelo de Talento; aqui no se "
@@ -458,6 +552,11 @@ __all__ = [
     "PUBLIC_SOURCE_LABELS",
     "RISK_DOMAIN",
     "RISK_METRICS",
+    "SAP_B1_EXPIRY_METRICS",
+    "SAP_B1_MARGIN_METRICS",
+    "SAP_B1_SALES_METRICS",
+    "SAP_B1_SEMAFORO_METRICS",
+    "SAP_B1_SUPPLY_METRICS",
     "cartridge_label",
     "combine_status",
     "domain_payload",

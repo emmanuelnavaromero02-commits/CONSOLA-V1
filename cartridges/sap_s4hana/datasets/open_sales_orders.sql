@@ -1,5 +1,5 @@
 -- open_sales_orders  (gold)  cartridge: sap_s4hana
--- sources: ["raw/sap_s4hana/SalesOrder", "raw/sap_s4hana/SalesOrderItem"]
+-- sources: ["raw/sap_s4hana/SalesOrder", "raw/sap_s4hana/SalesOrderItem", "silver/sap_s4hana/sap_s4hana_sales_orders_full"]
 -- description: Backlog de pedidos de venta abiertos (no completados) por cliente: número, valor pendiente y antigüedad del más viejo.
 
 -- OverallSDProcessStatus = 'C' significa completado; abierto = cualquier otro.

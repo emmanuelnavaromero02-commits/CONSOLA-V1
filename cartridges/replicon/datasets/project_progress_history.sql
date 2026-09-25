@@ -13,7 +13,7 @@ WITH src AS (
     ROUND("New Value" - COALESCE("Original Value", 0), 4) AS increment,
     "Modified By"     AS modified_by,
     TRY_STRPTIME("Modified On", '%d/%m/%Y %I:%M:%S %p') AS modified_at
-  FROM read_parquet('s3://{bucket}/raw/replicon/ProjectAudit/load_date=*/data.parquet',
+  FROM read_parquet('s3://{bucket}/raw/replicon/ProjectAudit/**/*.parquet',
     hive_partitioning=true, union_by_name=true)
   WHERE "Field" IN ('% Plan Progress', '% Real Progress')
     AND "New Value" IS NOT NULL

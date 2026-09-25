@@ -45,6 +45,7 @@ READ_ONLY_TOOLS = {
     "control_room__finance_kpis_read",
     "control_room__operations_kpis_read",
     "control_room__risk_kpis_read",
+    "control_room__sap_b1_kpis_read",
     "control_room__agent_memory_read",
     "market_context_read",
 

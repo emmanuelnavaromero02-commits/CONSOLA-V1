@@ -1,5 +1,5 @@
 -- purchase_spend_by_supplier  (gold)  cartridge: sap_s4hana
--- sources: ["raw/sap_s4hana/PurchaseOrder", "raw/sap_s4hana/PurchaseOrderItem"]
+-- sources: ["raw/sap_s4hana/PurchaseOrder", "raw/sap_s4hana/PurchaseOrderItem", "silver/sap_s4hana/sap_s4hana_purchase_orders_full"]
 -- description: Gasto de compras por proveedor y mes (cantidad x precio de línea). Ranking de proveedores por gasto.
 
 WITH po AS (

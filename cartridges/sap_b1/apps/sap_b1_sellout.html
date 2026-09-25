@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<!--
+  app_id: sap_b1_sellout
+  name: Ventas y caducidad SAP Business One
+  cartridge: sap_b1
+  datasets: [sap_b1_distributor_scorecard_month, sap_b1_sellin_sellout_month, sap_b1_batch_expiry]
+-->
+<html lang="es" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ventas y caducidad — SAP Business One</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  :root{--bg:#0d1117;--bg2:#161b22;--border:#30363d;--text1:#e6edf3;--text2:#8b949e;--text3:#6e7681;
+        --blue:#7c9fff;--green:#3fb950;--amber:#d29922;--red:#f85149;--purple:#bc8cff}
+  *{box-sizing:border-box}
+  body{margin:0;padding:22px;background:var(--bg);color:var(--text1);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;font-size:13px}
+  h1{font-size:18px;margin:0 0 2px}
+  .subtitle{color:var(--text2);font-size:11px;margin-bottom:16px}
+  .controls{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+  .controls label{color:var(--text2);font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:600}
+  select{background:var(--bg2);color:var(--text1);border:1px solid var(--border);border-radius:6px;padding:7px 10px;font-size:12px}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:18px}
+  .kpi{background:var(--bg2);border:1px solid var(--border);border-left:3px solid var(--accent,var(--blue));border-radius:8px;padding:14px 16px}
+  .kpi .l{font-size:9px;color:var(--text2);letter-spacing:1.2px;font-weight:600;text-transform:uppercase;margin-bottom:8px}
+  .kpi .v{font-size:22px;font-weight:700}
+  .kpi .s{font-size:10px;color:var(--text3);margin-top:6px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .section{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px}
+  .full{grid-column:1/-1}
+  .title{font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:1px;font-weight:600;margin-bottom:12px}
+  .chart{position:relative;height:280px}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th,td{text-align:left;padding:7px 9px;border-bottom:1px solid var(--border)}
+  th{color:var(--text2);font-size:10px;text-transform:uppercase}
+  td.n{text-align:right;font-variant-numeric:tabular-nums}
+  tr.pick{cursor:pointer}
+  tr.pick:hover td{background:rgba(124,159,255,.06)}
+  .ok{background:rgba(63,185,80,.18)} .warn{background:rgba(210,153,34,.22)} .bad{background:rgba(248,81,73,.25)} .none{color:var(--text3)}
+  .empty{padding:24px;text-align:center;color:var(--text3);font-style:italic}
+  .error{background:rgba(248,81,73,.12);color:var(--red);border:1px solid var(--red);padding:12px;border-radius:6px;margin-bottom:14px}
+  @media(max-width:900px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+  <h1>◆ Ventas y caducidad · SAP Business One</h1>
+  <div class="subtitle">Sell-in del grupo a cada distribuidora · sell-out a clientes externos · semáforo por distribuidora · lotes por caducar</div>
+  <div id="error"></div>
+  <div class="controls">
+    <label for="period">Periodo</label><select id="period"></select>
+    <label for="distributor">Distribuidora</label><select id="distributor"></select>
+  </div>
+  <div class="kpis" id="kpis"></div>
+  <div class="grid">
+    <div class="section full">
+      <div class="title">Semáforo por distribuidora (clic para ver artículos)</div>
+      <div id="scorecard" style="overflow-x:auto"></div>
+    </div>
+    <div class="section">
+      <div class="title">Sell-in contra sell-out (unidades)</div>
+      <div class="chart"><canvas id="flow"></canvas></div>
+    </div>
+    <div class="section">
+      <div class="title" id="drill-title">Artículos</div>
+      <div id="drill" style="max-height:320px;overflow-y:auto"><div class="empty">Elige una distribuidora del semáforo</div></div>
+    </div>
+    <div class="section full">
+      <div class="title">Lotes por caducar</div>
+      <div class="controls"><label for="company">Empresa</label><select id="company"></select></div>
+      <div class="kpis" id="expiry-kpis"></div>
+      <div id="expiry" style="max-height:420px;overflow-y:auto"></div>
+    </div>
+  </div>
+<script>
+const pct = n => n==null ? '—' : Number(n).toLocaleString('es-MX',{minimumFractionDigits:1,maximumFractionDigits:1}) + '%';
+const money = n => n==null ? '—' : '$' + Number(n).toLocaleString('es-MX',{maximumFractionDigits:0});
+const num = n => n==null ? '—' : Number(n).toLocaleString('es-MX',{maximumFractionDigits:0});
+const days = n => n==null ? '—' : Number(n).toLocaleString('es-MX',{maximumFractionDigits:0}) + ' d';
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function showError(msg){ document.getElementById('error').innerHTML = `<div class="error">${esc(msg)}</div>`; }
+async function rows(dataset){
+  const r = await fetch('/api/data/' + dataset + '?limit=5000');
+  if(!r.ok) throw new Error('No se pudo leer ' + dataset + ' (' + r.status + ')');
+  const d = await r.json();
+  return Array.isArray(d) ? d : (d.data || []);
+}
+async function query(dataset, filters, limit){
+  const r = await fetch('/api/data/' + dataset + '/query', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({filters, limit: limit || 2000})});
+  if(!r.ok) throw new Error('No se pudo leer el detalle (' + r.status + ')');
+  const d = await r.json();
+  return Array.isArray(d) ? d : (d.data || []);
+}
+async function options(dataset, column){
+  const r = await fetch('/api/data/' + dataset + '/options?columns=' + encodeURIComponent(column));
+  if(!r.ok) throw new Error('No se pudo leer ' + dataset + ' (' + r.status + ')');
+  const d = await r.json();
+  return Array.isArray(d) ? [] : (d[column] || []);
+}
+
+const COLOR = {rojo:'bad', amarillo:'warn', verde:'ok', sin_umbral:'none'};
+const LABEL = {rojo:'rojo', amarillo:'amarillo', verde:'verde', sin_umbral:'sin umbral'};
+const HORIZON_BUCKETS = ['vencido', '0-30', '31-60', '61-90', '91-180'];
+let CARD = [], chart = null;
+
+function selected(){ return document.getElementById('period').value; }
+function distributor(){ return document.getElementById('distributor').value; }
+function forPeriod(){ return CARD.filter(r=> r.period===selected() && (!distributor() || r.distributor===distributor())); }
+
+function renderKpis(){
+  const list = forPeriod();
+  const red = list.filter(r=> r.overall_color==='rojo').length, yellow = list.filter(r=> r.overall_color==='amarillo').length;
+  const sellIn = list.reduce((s,r)=> s + Number(r.sell_in_qty||0), 0);
+  const sellOut = list.reduce((s,r)=> s + Number(r.sell_out_qty||0), 0);
+  const through = list.map(r=> r.sell_through_3m_pct).filter(v=> v!=null).map(Number);
+  const channel = list.map(r=> r.channel_days).filter(v=> v!=null).map(Number);
+  const latest = CARD.filter(r=> r.expiry_exposed_pct!=null && (!distributor() || r.distributor===distributor())).map(r=> Number(r.expiry_exposed_pct));
+  document.getElementById('kpis').innerHTML = `
+    <div class="kpi" style="--accent:var(--red)"><div class="l">Distribuidoras en rojo</div><div class="v">${num(red)} / ${num(list.length)}</div>
+      <div class="s">${esc(yellow + ' en amarillo')}</div></div>
+    <div class="kpi" style="--accent:var(--blue)"><div class="l">Sell-out (unidades)</div><div class="v">${num(sellOut)}</div>
+      <div class="s">${sellIn ? pct(100*sellOut/sellIn) + ' del sell-in' : 'sin sell-in en el mes'}</div></div>
+    <div class="kpi" style="--accent:var(--purple)"><div class="l">Sell-in (unidades)</div><div class="v">${num(sellIn)}</div>
+      <div class="s">en ${esc(selected())}</div></div>
+    <div class="kpi" style="--accent:var(--green)"><div class="l">Sell-through 3 meses (peor)</div><div class="v">${pct(through.length ? Math.min(...through) : null)}</div>
+      <div class="s">vendido / (vendido + existencia)</div></div>
+    <div class="kpi" style="--accent:var(--amber)"><div class="l">Días en canal (mayor)</div><div class="v">${days(channel.length ? Math.max(...channel) : null)}</div>
+      <div class="s">${latest.length ? pct(Math.max(...latest)) + ' expuesto a caducidad' : 'sin lotes en distribuidoras'}</div></div>`;
+}
+
+function cell(value, color, fmt){ return `<td class="n ${COLOR[color] || 'none'}">${fmt(value)}</td>`; }
+
+function renderScorecard(){
+  const list = forPeriod().sort((a,b)=> String(a.distributor).localeCompare(String(b.distributor)));
+  const el = document.getElementById('scorecard');
+  if(!list.length){ el.innerHTML = '<div class="empty">Sin ventas de distribuidoras en el periodo</div>'; return; }
+  el.innerHTML = `<table><thead><tr><th>Distribuidora</th><th class="n">Sell-in u</th><th class="n">Sell-out u</th><th class="n">Sell-out</th><th class="n">Crec. vs año ant.</th><th class="n">Crec. vs mes ant.</th><th class="n">Sell-through 3m</th><th class="n">Días en canal</th><th class="n">Margen</th><th class="n">Expuesto a caducidad</th><th>Global</th></tr></thead><tbody>${
+    list.map(r=> `<tr class="pick" data-distributor="${esc(r.distributor)}"><td>${esc(r.distributor)}</td><td class="n">${num(r.sell_in_qty)}</td><td class="n">${num(r.sell_out_qty)}</td><td class="n">${money(r.sell_out_revenue_local)} ${esc(r.local_currency)}</td>${
+      cell(r.growth_yoy_pct, r.growth_color, pct)}<td class="n">${pct(r.growth_mom_pct)}</td>${
+      cell(r.sell_through_3m_pct, r.sell_through_color, pct)}${cell(r.channel_days, r.channel_days_color, days)}${
+      cell(r.margin_pct, r.margin_color, pct)}${cell(r.expiry_exposed_pct, r.expiry_color, pct)}<td class="${COLOR[r.overall_color] || 'none'}">${esc(LABEL[r.overall_color] || r.overall_color)}</td></tr>`).join('')
+  }</tbody></table>`;
+  el.querySelectorAll('tr[data-distributor]').forEach(tr=> tr.addEventListener('click', ()=> openDrill(tr.dataset.distributor, selected())));
+}
+
+function renderFlow(){
+  const months = {};
+  CARD.filter(r=> !distributor() || r.distributor===distributor()).forEach(r=>{
+    const m = months[r.period] = months[r.period] || {sellIn:0, sellOut:0};
+    m.sellIn += Number(r.sell_in_qty||0); m.sellOut += Number(r.sell_out_qty||0);
+  });
+  const labels = Object.keys(months).sort().slice(-24);
+  if(chart) chart.destroy();
+  chart = new Chart(document.getElementById('flow'), {type:'bar',
+    data:{labels, datasets:[
+      {type:'bar', label:'Sell-in (grupo → distribuidora)', data:labels.map(p=> months[p].sellIn), backgroundColor:'rgba(188,140,255,.55)'},
+      {type:'line', label:'Sell-out (distribuidora → cliente)', data:labels.map(p=> months[p].sellOut), borderColor:'#7c9fff', tension:.25}]},
+    options:{responsive:true, maintainAspectRatio:false, plugins:{legend:{labels:{color:'#8b949e'}}},
+      scales:{x:{ticks:{color:'#8b949e'},grid:{color:'#21262d'}}, y:{ticks:{color:'#8b949e'},grid:{color:'#21262d'}}}}});
+}
+
+async function openDrill(name, p){
+  document.getElementById('drill-title').textContent = 'Artículos · ' + name + ' · ' + p;
+  const el = document.getElementById('drill');
+  el.innerHTML = '<div class="empty">Cargando…</div>';
+  try{
+    const list = (await query('sap_b1_sellin_sellout_month', {distributor: name, period: p}))
+      .sort((a,b)=> Number(b.sell_out_revenue_local||0) - Number(a.sell_out_revenue_local||0)).slice(0,50);
+    el.innerHTML = list.length ? `<table><thead><tr><th>Artículo</th><th class="n">Sell-in u</th><th class="n">Sell-out u</th><th class="n">Existencia fin de mes</th><th class="n">Sell-out</th><th class="n">Margen</th></tr></thead><tbody>${
+      list.map(r=> `<tr><td>${esc(r.item_key)}</td><td class="n">${num(r.sell_in_qty)}</td><td class="n">${num(r.sell_out_qty)}</td><td class="n">${num(r.stock_end_qty)}</td><td class="n">${money(r.sell_out_revenue_local)}</td><td class="n">${pct(Number(r.sell_out_revenue_local) ? 100*Number(r.sell_out_gross_profit_local||0)/Number(r.sell_out_revenue_local) : null)}</td></tr>`).join('')
+    }</tbody></table>` : '<div class="empty">Sin artículos en el periodo</div>';
+  }catch(e){ el.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+}
+
+function action(r){
+  if(r.bucket === 'vencido') return 'retirar: ya vencido';
+  if(Number(r.at_risk_qty||0) <= 0) return 'se vende a tiempo';
+  return r.transfer_candidate ? 'traspasar a ' + r.transfer_candidate : 'promoción o devolución';
+}
+
+async function renderExpiry(){
+  const company = document.getElementById('company').value;
+  const el = document.getElementById('expiry'), kpis = document.getElementById('expiry-kpis');
+  if(!company){ kpis.innerHTML = ''; el.innerHTML = '<div class="empty">Sin lotes con existencia</div>'; return; }
+  el.innerHTML = '<div class="empty">Cargando…</div>';
+  try{
+    const list = (await query('sap_b1_batch_expiry', {company, bucket: HORIZON_BUCKETS}, 5000)).filter(r=> r.within_horizon===true || r.bucket==='vencido');
+    const expired = list.filter(r=> r.bucket==='vencido'), coming = list.filter(r=> r.bucket!=='vencido');
+    const sum = (xs, k)=> xs.reduce((s,r)=> s + Number(r[k]||0), 0);
+    const currency = (list[0] || {}).local_currency || '';
+    kpis.innerHTML = `
+      <div class="kpi" style="--accent:var(--red)"><div class="l">Vencido en almacén</div><div class="v">${money(sum(expired,'value_local'))}</div>
+        <div class="s">${esc(expired.length + ' lotes · ' + currency)}</div></div>
+      <div class="kpi" style="--accent:var(--amber)"><div class="l">En riesgo de vencer sin venderse</div><div class="v">${money(sum(coming,'at_risk_value_local'))}</div>
+        <div class="s">${esc(coming.filter(r=> Number(r.at_risk_qty||0) > 0).length + ' lotes, primero el que caduca antes')}</div></div>
+      <div class="kpi" style="--accent:var(--blue)"><div class="l">Por caducar en el horizonte</div><div class="v">${money(sum(coming,'value_local'))}</div>
+        <div class="s">${esc(coming.length + ' lotes')}</div></div>`;
+    const top = [...list].sort((a,b)=> Number(b.at_risk_value_local||0) - Number(a.at_risk_value_local||0)).slice(0,100);
+    el.innerHTML = top.length ? `<table><thead><tr><th>Artículo</th><th>Almacén</th><th>Lote</th><th>Caduca</th><th class="n">Días</th><th class="n">Existencia</th><th class="n">Venta diaria</th><th class="n">En riesgo</th><th class="n">Valor en riesgo</th><th>Acción</th></tr></thead><tbody>${
+      top.map(r=> `<tr><td>${esc(r.item_code)}</td><td>${esc(r.warehouse)}</td><td>${esc(r.batch)}</td><td>${esc(String(r.exp_date||'').slice(0,10))}</td><td class="n ${r.bucket==='vencido'?'bad':(Number(r.days_to_expiry)<=30?'warn':'')}">${num(r.days_to_expiry)}</td><td class="n">${num(r.qty)}</td><td class="n">${Number(r.daily_sales_90d||0).toLocaleString('es-MX',{maximumFractionDigits:1})}</td><td class="n">${num(r.at_risk_qty)}</td><td class="n">${money(r.at_risk_value_local)}</td><td>${esc(action(r))}</td></tr>`).join('')
+    }</tbody></table>` : '<div class="empty">Ningún lote caduca dentro del horizonte</div>';
+  }catch(e){ el.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+}
+
+function renderAll(){ renderKpis(); renderScorecard(); renderFlow(); }
+
+async function init(){
+  try{
+    const [card, companies] = await Promise.all([rows('sap_b1_distributor_scorecard_month'), options('sap_b1_batch_expiry', 'company')]);
+    CARD = card;
+    const now = new Date(), current = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
+    const periods = [...new Set(CARD.map(r=> r.period))].sort().reverse();
+    const closed = periods.filter(p=> p < current);
+    document.getElementById('period').innerHTML = periods.map(p=> `<option ${p===(closed[0]||periods[0])?'selected':''}>${esc(p)}</option>`).join('');
+    const names = [...new Set(CARD.map(r=> r.distributor))].sort();
+    document.getElementById('distributor').innerHTML = '<option value="">Todas</option>' + names.map(n=> `<option>${esc(n)}</option>`).join('');
+    document.getElementById('company').innerHTML = companies.map(c=> `<option>${esc(c)}</option>`).join('');
+    document.getElementById('period').addEventListener('change', renderAll);
+    document.getElementById('distributor').addEventListener('change', renderAll);
+    document.getElementById('company').addEventListener('change', renderExpiry);
+    renderExpiry();
+    if(!periods.length){ showError('Todavía no hay ventas de distribuidoras publicadas para este workspace.'); return; }
+    renderAll();
+  }catch(e){ showError(e.message); }
+}
+init();
+</script>
+</body>
+</html>
