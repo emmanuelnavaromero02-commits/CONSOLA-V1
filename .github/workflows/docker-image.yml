@@ -52,7 +52,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install pytest and coverage tooling
-        run: pip install pytest pytest-asyncio coverage==7.6.1
+        run: pip install pytest pytest-asyncio coverage==7.6.1 fakeredis==2.35.1
 
       - name: Install console requirements
         if: needs.changes.outputs.console_tests == 'true'

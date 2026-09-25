@@ -111,9 +111,9 @@ datasets:
   - cartridge: sap_successfactors
     dataset: sap_successfactors_turnover_by_period
     readiness: partial
-    reason: "Turnover by period depends on EmpEmploymentTermination, which is blocked by the FEMSA SuccessFactors OAuth client scope."
+    reason: "Turnover by period depends on EmpEmploymentTermination, which is blocked by the SuccessFactors OAuth client scope."
     blockers:
-      - "Enable EmpEmploymentTermination in the FEMSA SuccessFactors OAuth client before materializing turnover_by_period."
+      - "Enable EmpEmploymentTermination in the SuccessFactors OAuth client before materializing turnover_by_period."
     evidence:
       - cartridges/sap_successfactors/datasets/sap_successfactors_turnover_by_period.sql
       - infra/init/82_sap_successfactors_datasets_seed.sql

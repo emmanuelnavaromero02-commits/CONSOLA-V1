@@ -231,7 +231,7 @@ function buildBusinessFronts(widgets: SfGoldKpisPayload["widgets"], sources: Sou
       terms: ["recruitment", "recruiting", "jobrequisition", "candidate", "application"],
       metric: widgetValue(widgets, ["recruitment", "jobrequisition"]),
       unit: "señales disponibles",
-      decision: "Validar si FEMSA requiere vacantes, requisiciones y embudo de candidatos.",
+      decision: "Validar si la empresa requiere vacantes, requisiciones y embudo de candidatos.",
     },
     {
       id: "desempeno",
@@ -249,7 +249,7 @@ function buildBusinessFronts(widgets: SfGoldKpisPayload["widgets"], sources: Sou
       terms: ["learning", "training", "course", "skill", "competency"],
       metric: widgetValue(widgets, ["learning", "training", "course", "skill"]),
       unit: "registros disponibles",
-      decision: "Activar formación y habilidades cuando el alcance de FEMSA lo confirme.",
+      decision: "Activar formación y habilidades cuando el alcance de la empresa lo confirme.",
     },
     {
       id: "compensacion",
@@ -267,7 +267,7 @@ function buildBusinessFronts(widgets: SfGoldKpisPayload["widgets"], sources: Sou
       terms: ["employeetime", "timeaccount", "workschedule", "time off", "absence", "leave", "vacation", "schedule"],
       metric: widgetValue(widgets, ["employeetime", "timeaccount", "workschedule"]),
       unit: "registros disponibles",
-      decision: "Supervisar ausencias, saldos y horarios cuando el alcance de FEMSA lo habilite.",
+      decision: "Supervisar ausencias, saldos y horarios cuando el alcance de la empresa lo habilite.",
     },
   ];
 
@@ -464,7 +464,7 @@ export function SuccessFactorsGoldPanel({
       <div className="border-b bg-gradient-to-r from-emerald-500/10 via-cyan-500/10 to-transparent p-4 dark:border-emerald-400/20 dark:from-emerald-400/10 dark:via-cyan-400/10">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
           <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300/90">FEMSA · SuccessFactors</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300/90">SuccessFactors</p>
             <h2 className="mt-1 text-xl font-semibold text-foreground dark:text-white">Centro ejecutivo de personal</h2>
             <p className="mt-1 text-sm text-muted-foreground">
               Vista de plantilla, estructura y riesgos organizacionales alimentada por información real del contexto activo.
@@ -679,7 +679,7 @@ export function SuccessFactorsGoldPanel({
               <p className="text-xs font-semibold uppercase tracking-wide text-cyan-700 dark:text-cyan-300/80">Mapa ejecutivo SuccessFactors</p>
               <h3 className="text-lg font-semibold text-foreground dark:text-white">Frentes que importan al negocio</h3>
             </div>
-            <p className="text-sm text-muted-foreground">Cada frente se alimenta de datos reales del cartucho FEMSA.</p>
+            <p className="text-sm text-muted-foreground">Cada frente se alimenta de datos reales del cartucho SuccessFactors.</p>
           </div>
           <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-5">
             {businessFronts.map((front) => (

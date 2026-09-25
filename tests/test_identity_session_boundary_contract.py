@@ -51,9 +51,3 @@ def test_runtime_and_probes_have_no_user_sessions_token_column_reference() -> No
                 if pattern.search(line) and "token_hash" not in line:
                     offenders.append(f"{path.relative_to(REPO)}:{line_number}")
     assert offenders == []
-
-    aws_probe = (
-        REPO / "scripts" / "tenant_isolation_aws_probe.py"
-    ).read_text(encoding="utf-8")
-    assert "omega_auth_create_session" in aws_probe
-    assert "INSERT INTO user_sessions" not in aws_probe

@@ -25,7 +25,7 @@ def external_actions(monkeypatch):
     from app.services import external_actions as mod
 
     monkeypatch.delenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", raising=False)
-    monkeypatch.delenv("EXTERNAL_ACTION_SANDBOX_ENABLED", raising=False)
+    monkeypatch.setenv("EXTERNAL_ACTION_SANDBOX_ENABLED", "true")
     return mod
 
 
@@ -490,3 +490,8 @@ async def test_admin_self_approval_is_explicitly_allowed(external_actions, monke
 
     assert approved["action"]["status"] == "approved"
     assert approved["action"]["approved_by"] == admin["id"]
+
+
+def test_the_sandbox_adapter_is_off_unless_explicitly_enabled(external_actions, monkeypatch):
+    monkeypatch.delenv("EXTERNAL_ACTION_SANDBOX_ENABLED", raising=False)
+    assert external_actions.sandbox_enabled() is False
