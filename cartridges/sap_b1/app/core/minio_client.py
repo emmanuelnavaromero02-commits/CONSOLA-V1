@@ -47,3 +47,20 @@ def object_exists_with_prefix(prefix: str) -> bool:
     for _ in client.list_objects(settings.minio_bucket, prefix=prefix, recursive=True):
         return True
     return False
+
+
+def read_object_bytes(object_name: str, max_bytes: int = 1_000_000) -> bytes | None:
+    from minio.error import S3Error
+
+    client = get_minio_client()
+    try:
+        response = client.get_object(settings.minio_bucket, object_name)
+    except S3Error as exc:
+        if exc.code in {"NoSuchKey", "NoSuchObject", "NoSuchBucket"}:
+            return None
+        raise
+    try:
+        return response.read(max_bytes + 1)
+    finally:
+        response.close()
+        response.release_conn()

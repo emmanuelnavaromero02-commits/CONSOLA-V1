@@ -47,15 +47,17 @@ def _write_source_counts(dataset, dsn) -> None:
                 sql = f'SELECT COUNT(*) FROM {table} WHERE "{entity["date_field"]}" >= %s AND "{entity["date_field"]}" < %s'
                 params = (start, end)
             rows = _pg(dsn, sql, params)[0][0]
-            item = {"entity": name, "dated": bool(entity.get("date_field")), "rows": rows, "error": None}
+            error = None
             if (company.alias, name) == COUNT_SHORTFALL[:2]:
-                item["rows"] = rows + COUNT_SHORTFALL[2]
+                rows += COUNT_SHORTFALL[2]
             if (company.alias, name) == COUNT_FAILED:
-                item.update(rows=None, error="timeout")
-            counts.append(item)
+                rows, error = None, "timeout"
+            counts.append(scm.SourceCount(company=company.alias, entity=name,
+                                          window_start=start if entity.get("date_field") else None,
+                                          window_end=end, source_rows=rows, counted_at=end, error=error))
         write_parquet_and_upload(
             entity=scm.ENTITY,
-            rows=scm.records(company.alias, counts, window_start=start, window_end=end, counted_at=end),
+            rows=scm.records(counts),
             run_id=f"counts-{company.alias}",
             load_type="full",
             expected_columns=[*scm.COLUMNS, "_company", "_source_updated_at"],

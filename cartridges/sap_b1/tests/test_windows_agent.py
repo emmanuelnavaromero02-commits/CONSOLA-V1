@@ -303,7 +303,8 @@ def test_agent_files_match_the_cartridge_writer_byte_for_byte_in_schema(b1_env, 
     agent_file = pq.ParquetFile(agent_files[0])
 
     plan = q.plan_from_config(_entity_config("OINV"))
-    columns, rows = B1Client().fetch_all(*q.select_sql(plan, company.schema, mode="full"))
+    client = B1Client()
+    columns, rows = client.fetch_all(*q.select_sql(plan, company.schema, dialect=client.config.dialect, mode="full"))
     records = q.rows_to_records(plan, company.alias, columns, rows)
     written: list[Path] = []
     monkeypatch.setattr(
@@ -575,29 +576,47 @@ def test_the_agent_needs_nothing_from_the_platform():
     assert "LOADED=\n" in proc.stdout and "ENTITIES=48" in proc.stdout
 
 
-def test_iam_policy_allows_only_the_bronze_prefix():
-    scoped = "raw/sap_b1/*/tenant_id=<TENANT_ID>/workspace_id=<WORKSPACE_ID>/*"
+def test_iam_policy_allows_only_the_bronze_batches_and_the_heartbeat_key():
+    scope = "tenant_id=<TENANT_ID>/workspace_id=<WORKSPACE_ID>/"
+    listed = f"raw/sap_b1/*/{scope}*"
+    batches = f"arn:aws:s3:::<BUCKET>/raw/sap_b1/*/{scope}load_date=*"
+    heartbeat = f"arn:aws:s3:::<BUCKET>/raw/sap_b1/_agent/{scope}heartbeat.json"
     policy = json.loads((AGENT_DIR / "iam-policy.template.json").read_text(encoding="utf-8"))
     assert policy["Version"] == "2012-10-17"
     statements = policy["Statement"]
     assert statements and all(s["Effect"] == "Allow" for s in statements)
     actions = {a for s in statements for a in ([s["Action"]] if isinstance(s["Action"], str) else s["Action"])}
     assert actions == {"s3:PutObject", "s3:AbortMultipartUpload", "s3:ListBucket"}
+    written: dict[str, list[str]] = {}
     for statement in statements:
         acts = [statement["Action"]] if isinstance(statement["Action"], str) else statement["Action"]
         resources = [statement["Resource"]] if isinstance(statement["Resource"], str) else statement["Resource"]
         if "s3:ListBucket" in acts:
             assert acts == ["s3:ListBucket"]
             assert resources == ["arn:aws:s3:::<BUCKET>"]
-            assert statement["Condition"] == {"StringLike": {"s3:prefix": [scoped]}}
-        else:
-            assert resources == [f"arn:aws:s3:::<BUCKET>/{scoped}"]
-            assert "Condition" not in statement or statement["Condition"] == {}
+            assert statement["Condition"] == {"StringLike": {"s3:prefix": [listed]}}
+            continue
+        assert "Condition" not in statement or statement["Condition"] == {}
+        for resource in resources:
+            written[resource] = sorted(acts)
+    assert written == {
+        batches: ["s3:AbortMultipartUpload", "s3:PutObject"],
+        heartbeat: ["s3:PutObject"],
+    }, "the agent writes batch files under load_date= and exactly one heartbeat object, nothing else"
     text = json.dumps(policy)
     assert "GetObject" not in text and "DeleteObject" not in text and '"*"' not in text and "s3:*" not in text
     assert "raw/sap_b1/*\"" not in text, "an unscoped raw/sap_b1/* would let one customer's key write another's data"
     for token in re.findall(r"<[^<>\n]+>", text):
         assert re.fullmatch(r"<[A-Z][A-Z0-9_]*>", token), token
+
+    from app.services import bronze_parquet
+
+    real_scope = bronze_parquet.scope_prefix(TENANT, WORKSPACE)
+    concrete = heartbeat.replace("<BUCKET>/", "").replace(scope, real_scope).removeprefix("arn:aws:s3:::")
+    assert bronze_parquet.heartbeat_object_name(real_scope) == concrete
+    batch = bronze_parquet.bronze_object_name("OINV", real_scope, "2026-09-25", "run-1")
+    assert re.fullmatch(batches.removeprefix("arn:aws:s3:::<BUCKET>/").replace("<TENANT_ID>", TENANT)
+                        .replace("<WORKSPACE_ID>", WORKSPACE).replace("*", ".*"), batch)
 
 
 def test_install_scripts_and_templates_embed_no_credentials():
@@ -1343,6 +1362,15 @@ def test_initial_load_reads_the_window_month_by_month_then_continues_incremental
     assert dict(seen) == expected
     assert sum(v for k, v in steps.items() if k.endswith(":OINV")) == sum(len(v) for v in expected.values())
     assert list(out.rglob("IntercompanyPartners.parquet")), "the completed load ends with the delivery marker"
+    counts = list(out.rglob("SourceCounts.parquet"))
+    assert len(counts) == 1, "a completed initial load leaves the source counts of its window"
+    counted = _read_parquet(counts[0]).to_pylist()
+    assert {(r["entity"], r["_company"]) for r in counted} == {
+        (e, c.alias) for e in ("OADM", "OCRD", "OINV", "INV1", "OINM") for c in dataset.companies
+    }
+    assert all(r["error"] is None for r in counted)
+    assert {r["window_start"] for r in counted if r["entity"] == "OINV"} == {datetime.combine(window_start, datetime.min.time())}
+    assert _meta(config)["source_counts.day"] == counted[0]["counted_at"].date().isoformat()
 
     marks = _watermarks(config)
     trans = _col("OINM", "TransNum")
@@ -1468,8 +1496,12 @@ def test_inventory_counts_every_table_per_company_and_reports_a_missing_column(b
     assert report["window_start"] == _HISTORY_START.date().isoformat() and report["failures"] == 0
     by_entity = {item["entity"]: item for item in report["entities"]}
     doc_date = _col("OINV", "DocDate")
+    window_end = datetime.fromisoformat(report["window_end"]).date()
+    assert window_end == datetime.fromisoformat(report["source_clock"]).date()
     for c in dataset.companies:
-        in_window = sum(1 for row in dataset.tables[c.alias]["OINV"] if _as_date(row[doc_date]) >= _HISTORY_START.date())
+        in_window = sum(
+            1 for row in dataset.tables[c.alias]["OINV"] if _HISTORY_START.date() <= _as_date(row[doc_date]) < window_end
+        )
         assert by_entity["OINV"]["companies"][c.alias] == {"rows": in_window}
         assert by_entity["OADM"]["companies"][c.alias] == {"rows": len(dataset.tables[c.alias]["OADM"])}
         assert by_entity["OITW"]["companies"][c.alias] == {"rows": len(dataset.tables[c.alias]["OITW"])}
@@ -1511,3 +1543,219 @@ def test_a_configuration_saved_with_a_byte_order_mark_is_read(agent, tmp_path):
     config.write_bytes(b"\xef\xbb\xbf" + config.read_bytes())
     loaded = agent.load_config(config, env={})
     assert loaded.tenant_id == TENANT and loaded.workspace_id == WORKSPACE
+
+
+HEARTBEAT_KEYS = {
+    "schema_version", "agent_version", "at", "source_ok", "source_ms", "source_error", "dialect", "companies",
+    "last_cycle", "initial_load", "next_cycle_at",
+}
+
+
+def _heartbeat_file(out: Path) -> Path:
+    return out.joinpath("raw", "sap_b1", "_agent", f"tenant_id={TENANT}", f"workspace_id={WORKSPACE}", "heartbeat.json")
+
+
+def _mark_initial_load_done(agent, config: Path, months: int = 2, cutoff: str = "2026-09-01T00:00:00") -> None:
+    state = agent.AgentState(config.parent / "state" / "agent-state.sqlite")
+    state.set_meta("initial_load.cutoff", cutoff)
+    state.set_meta("initial_load.months", str(months))
+    state.set_meta("initial_load.completed_at", "2026-09-01T06:00:00Z")
+    state.close()
+
+
+def _no_secrets(text: str, b1_env, dataset) -> None:
+    assert b1_env["password"] not in text and str(b1_env["host"]) not in text
+    assert all(c.schema not in text for c in dataset.companies)
+    assert b1_env["database"] not in text
+
+
+def test_serve_writes_a_heartbeat_and_the_source_counts_once_per_source_day(b1_env, dataset, agent, tmp_path, monkeypatch):
+    from app.services import source_counts_mapping
+
+    config = _write_config(tmp_path, extra="entities = ['OADM', 'OINV']\n")
+    _mark_initial_load_done(agent, config)
+    out = tmp_path / "out"
+    monkeypatch.setattr(agent, "_sleep", lambda seconds: None)
+    assert agent.main(["--config", str(config), "--quiet", "serve", "--cycles", "2", "--output-dir", str(out)]) == 0
+
+    beat = json.loads(_heartbeat_file(out).read_text(encoding="utf-8"))
+    assert set(beat) == HEARTBEAT_KEYS
+    assert beat["schema_version"] == 1 and beat["agent_version"] == agent.AGENT_VERSION
+    assert beat["source_ok"] is True and beat["source_error"] is None and isinstance(beat["source_ms"], int)
+    assert beat["companies"] == [c.alias for c in dataset.companies]
+    cycle = beat["last_cycle"]
+    assert set(cycle) == {"started_at", "finished_at", "status", "entities_ok", "entities_failed"}
+    assert cycle["status"] == "success" and cycle["entities_failed"] == 0
+    assert cycle["entities_ok"] == 3, "second cycle: OADM, OINV and the intercompany mapping; counts were already written"
+    assert beat["initial_load"] == {"state": "done", "months_done": 3, "months_total": 3}
+    at = datetime.strptime(beat["at"], "%Y-%m-%dT%H:%M:%SZ")
+    assert datetime.strptime(beat["next_cycle_at"], "%Y-%m-%dT%H:%M:%SZ") > at
+    assert (config.parent / "state" / "heartbeat.json").read_text(encoding="utf-8") == _heartbeat_file(out).read_text(encoding="utf-8")
+    _no_secrets(json.dumps(beat), b1_env, dataset)
+
+    counts = sorted(out.rglob("SourceCounts.parquet"))
+    assert len(counts) == 1, "the counts are written on the first cycle of each source-local day only"
+    table = _read_parquet(counts[0])
+    assert table.schema.equals(source_counts_mapping.arrow_schema(), check_metadata=True)
+    rows = table.to_pylist()
+    assert {(r["entity"], r["_company"]) for r in rows} == {(e, c.alias) for e in ("OADM", "OINV") for c in dataset.companies}
+    clock = rows[0]["counted_at"]
+    window_start, window_end = source_counts_mapping.count_window(clock, 2)
+    doc_date = _col("OINV", "DocDate")
+    for row in rows:
+        assert row["window_end"] == datetime.combine(window_end, datetime.min.time()) and row["error"] is None
+        if row["entity"] == "OADM":
+            assert row["window_start"] is None and row["source_rows"] == len(dataset.tables[row["_company"]]["OADM"])
+        else:
+            assert row["window_start"] == datetime.combine(window_start, datetime.min.time())
+            assert row["source_rows"] == sum(
+                1 for r in dataset.tables[row["_company"]]["OINV"] if window_start <= _as_date(r[doc_date]) < window_end
+            )
+    assert _meta(config)["source_counts.day"] == clock.date().isoformat()
+    runs = [r["entity_name"] for r in _runs(config)]
+    assert runs.count("SourceCounts") == 1 and runs.count("OADM") == 2
+
+
+def test_the_heartbeat_keeps_beating_while_a_long_cycle_runs(b1_env, agent, tmp_path, monkeypatch):
+    import time as clock
+
+    config = _write_config(tmp_path, extra="heartbeat_minutes = 1\n")
+    _mark_initial_load_done(agent, config)
+    monkeypatch.setattr(agent, "HEARTBEAT_UNIT_SECONDS", 0.05)
+    written: list[str] = []
+    real = agent.write_heartbeat
+
+    def counting(*args, **kwargs):
+        written.append(clock.monotonic())
+        return real(*args, **kwargs)
+
+    def long_cycle(current, log, entities, **kwargs):
+        before = len(written)
+        deadline = clock.monotonic() + 20
+        while len(written) < before + 3 and clock.monotonic() < deadline:
+            clock.sleep(0.02)
+        return 0
+
+    monkeypatch.setattr(agent, "write_heartbeat", counting)
+    monkeypatch.setattr(agent, "_run_entities", long_cycle)
+    out = tmp_path / "out"
+    assert agent.main(["--config", str(config), "--quiet", "serve", "--cycles", "1", "--output-dir", str(out)]) == 0
+    assert len(written) >= 5, "a beat at start, at least three while the cycle ran, one after it"
+    assert json.loads(_heartbeat_file(out).read_text(encoding="utf-8"))["last_cycle"]["status"] == "success"
+
+
+def test_the_heartbeat_reports_an_unreachable_source_without_secrets(b1_env, dataset, agent, tmp_path):
+    loaded = agent.load_config(_write_config(tmp_path), env=_clean_env(SAP_B1_PORT="1"))
+    beat = agent.Heartbeat(loaded, logging.getLogger("heartbeat-test"), tmp_path / "out").beat()
+    assert beat is not None and set(beat) == HEARTBEAT_KEYS
+    assert beat["source_ok"] is False and 0 < len(beat["source_error"]) <= 200
+    assert beat["last_cycle"] is None and beat["next_cycle_at"] is None
+    assert beat["initial_load"] == {"state": "none", "months_done": 0, "months_total": 0}
+    _no_secrets(json.dumps(beat), b1_env, dataset)
+    from app.core.b1_source import CartridgeCircuitBreaker
+
+    assert CartridgeCircuitBreaker.snapshot()["failures"] == 0
+
+
+def test_the_heartbeat_is_uploaded_to_its_single_key_in_the_agent_scope(b1_env, agent, tmp_path, fake_uploader):
+    loaded = agent.load_config(_write_config(tmp_path, upload=True), env=_clean_env())
+    assert agent.Heartbeat(loaded, logging.getLogger("heartbeat-test"), None).beat() is not None
+    key = f"raw/sap_b1/_agent/{SCOPE}heartbeat.json"
+    assert _uploads(fake_uploader) == [("heartbeat.json", key)]
+
+
+def test_the_uploader_accepts_the_heartbeat_key_of_its_own_scope_only(agent, tmp_path):
+    loaded = agent.load_config(_write_config(tmp_path, upload=True), env={})
+    guard = agent.S3Uploader(loaded.upload, logging.getLogger("heartbeat-test"), scope=SCOPE, client=object())
+    key = f"raw/sap_b1/_agent/{SCOPE}heartbeat.json"
+    guard.check_scope(key)
+    with pytest.raises(agent.UploadError):
+        guard.check_scope(key.replace(WORKSPACE, "55555555-5555-4555-8555-555555555555"))
+
+
+def test_the_heartbeat_counts_the_months_of_the_initial_load(agent, tmp_path):
+    loaded = agent.load_config(_write_config(tmp_path, extra="entities = ['OADM', 'OINV', 'INV1']\n"), env={})
+    assert agent.initial_load_progress(loaded) == {"state": "none", "months_done": 0, "months_total": 0}
+    state = agent.AgentState(loaded.state_db)
+    state.set_meta("initial_load.cutoff", "2026-09-10T08:00:00")
+    state.set_meta("initial_load.months", "3")
+    labels = [label for label, _start, _end in agent.month_slices(datetime(2026, 9, 10, 8), 3)]
+    for label in labels[:2]:
+        for entity in ("OINV", "INV1"):
+            state.record_step(f"month:{label}:{entity}", "run", 1)
+    state.record_step(f"month:{labels[2]}:OINV", "run", 1)
+    state.record_step("full:OADM", "run", 1)
+    assert agent.initial_load_progress(loaded) == {"state": "running", "months_done": 2, "months_total": 4}
+    state.set_meta("initial_load.completed_at", "2026-09-11T00:00:00Z")
+    state.close()
+    assert agent.initial_load_progress(loaded) == {"state": "done", "months_done": 4, "months_total": 4}
+
+
+def test_heartbeat_minutes_are_validated(agent, tmp_path):
+    for bad in ("0", "61", "x"):
+        with pytest.raises(agent.ConfigError, match="heartbeat_minutes"):
+            agent.load_config(_write_config(tmp_path, extra=f'heartbeat_minutes = "{bad}"\n'), env={})
+    assert agent.load_config(_write_config(tmp_path), env={}).heartbeat_minutes == 5
+
+
+def _companies_env(companies) -> dict[str, str]:
+    return _clean_env(SAP_B1_COMPANIES=",".join(f"{c.alias}={c.schema}" for c in companies))
+
+
+@pytest.mark.parametrize("entity", ["OWOR", "WOR1"])
+def test_a_full_read_of_an_empty_table_writes_one_zero_row_file_with_the_same_schema(b1_env, dataset, tmp_path, entity):
+    from app.services import b1_queries as q
+
+    distributors = [c for c in dataset.companies if c.alias != "mx_mfg"]
+    manufacturer = [c for c in dataset.companies if c.alias == "mx_mfg"]
+    assert all(not dataset.tables[c.alias][entity] for c in distributors) and dataset.tables["mx_mfg"][entity]
+    config = _write_config(tmp_path)
+    empty_out, full_out = tmp_path / "empty", tmp_path / "full"
+    proc = _run(config, "extract", "--entity", entity, "--mode", "full", "--output-dir", str(empty_out), env=_companies_env(distributors))
+    assert proc.returncode == 0, proc.stderr
+    proc = _run(config, "extract", "--entity", entity, "--mode", "full", "--output-dir", str(full_out), env=_companies_env(manufacturer))
+    assert proc.returncode == 0, proc.stderr
+    [empty_file] = list(empty_out.rglob(f"{entity}.parquet"))
+    full_files = list(full_out.rglob(f"{entity}.parquet"))
+    empty = pq_file(empty_file)
+    assert empty.metadata.num_rows == 0
+    assert full_files and all(pq_file(path).metadata.num_rows > 0 for path in full_files)
+    for path in full_files:
+        assert empty.schema_arrow.equals(pq_file(path).schema_arrow, check_metadata=True)
+    assert empty.schema_arrow.equals(q.arrow_schema(q.plan_from_config(_entity_config(entity))))
+
+
+def pq_file(path: Path):
+    import pyarrow.parquet as pq
+
+    return pq.ParquetFile(str(path))
+
+
+def test_an_initial_load_without_rows_leaves_one_zero_row_baseline_and_quiet_cycles_after(b1_env, dataset, agent, tmp_path):
+    from app.services import b1_queries as q
+
+    distributors = [c for c in dataset.companies if c.alias != "mx_mfg"]
+    config = _write_config(tmp_path, extra="entities = ['OADM', 'OWOR', 'WOR1']\n")
+    out = tmp_path / "out"
+    proc = _run(config, "initial-load", "--months", "3", "--output-dir", str(out), env=_companies_env(distributors))
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    steps = _steps(config)
+    reference = tmp_path / "reference"
+    proc = _run(config, "extract", "--entity", "OWOR", "--mode", "full", "--output-dir", str(reference),
+                env=_companies_env([c for c in dataset.companies if c.alias == "mx_mfg"]))
+    assert proc.returncode == 0, proc.stderr
+    for entity in ("OWOR", "WOR1"):
+        files = list(out.rglob(f"{entity}.parquet"))
+        assert len(files) == 1, f"{entity}: one baseline file, not one per empty month"
+        baseline = pq_file(files[0])
+        assert baseline.metadata.num_rows == 0 and f"empty:{entity}" in steps
+        assert baseline.schema_arrow.equals(q.arrow_schema(q.plan_from_config(_entity_config(entity))), check_metadata=True)
+    [non_empty] = [pq_file(p) for p in reference.rglob("OWOR.parquet")]
+    assert non_empty.metadata.num_rows > 0
+    assert pq_file(next(out.rglob("OWOR.parquet"))).schema_arrow.equals(non_empty.schema_arrow, check_metadata=True)
+
+    later = tmp_path / "later"
+    proc = _run(config, "extract-all", "--entity", "OWOR", "--entity", "WOR1", "--skip-intercompany",
+                "--output-dir", str(later), env=_companies_env(distributors))
+    assert proc.returncode == 0, proc.stderr
+    assert not list(later.rglob("*.parquet")), "an incremental cycle that finds nothing writes nothing"

@@ -456,7 +456,7 @@ def test_parquet_keeps_exact_amounts_and_dates(b1_env, dataset, tmp_path, monkey
     plan = q.plan_from_config(_config("OINV", page_size=25))
     client = B1Client()
     company = client.companies[0]
-    columns, rows = client.fetch_all(*q.select_sql(plan, company.schema, mode="full"))
+    columns, rows = client.fetch_all(*q.select_sql(plan, company.schema, dialect=client.config.dialect, mode="full"))
     records = q.rows_to_records(plan, company.alias, columns, rows)
     assert len(records) == 25
 
@@ -492,3 +492,37 @@ def test_parquet_keeps_exact_amounts_and_dates(b1_env, dataset, tmp_path, monkey
     for path in written:
         assert _read_parquet(path).schema.equals(declared), path
     assert _read_parquet(written[1]).num_rows == 0
+
+
+@pytest.mark.parametrize("entity", ["OWOR", "WOR1"])
+def test_a_full_read_of_an_empty_table_writes_a_zero_row_file_with_the_catalogue_schema(b1_env, dataset, tmp_path, monkeypatch, entity):
+    import pyarrow.parquet as pq
+
+    from app.services import b1_queries as q
+    from app.services import extraction_service as es
+    from app.services import parquet_service
+
+    written: list[Path] = []
+
+    def _copy(*, local_path: str, object_name: str) -> None:
+        written.append(Path(shutil.copy(local_path, tmp_path / f"{len(written)}-{Path(object_name).name}")))
+
+    monkeypatch.setattr(parquet_service, "upload_file_to_minio", _copy)
+    monkeypatch.setattr(es, "create_run", lambda **kw: "run-1")
+    monkeypatch.setattr(es, "finish_run", lambda **kw: None)
+    monkeypatch.setattr(es, "fail_run", lambda **kw: None)
+    monkeypatch.setattr(es, "get_watermark", lambda key: None)
+    monkeypatch.setattr(es, "update_watermark", lambda **kw: None)
+
+    distributors = [c for c in dataset.companies if c.alias != "mx_mfg"]
+    assert all(not dataset.tables[c.alias][entity] for c in distributors) and dataset.tables["mx_mfg"][entity]
+    monkeypatch.setenv("SAP_B1_COMPANIES", ",".join(f"{c.alias}={c.schema}" for c in distributors))
+    assert es.run_entity(_config(entity, mode="full"))["record_count"] == 0
+    [empty] = [pq.ParquetFile(path) for path in written]
+    monkeypatch.setenv("SAP_B1_COMPANIES", "mx_mfg=" + next(c.schema for c in dataset.companies if c.alias == "mx_mfg"))
+    assert es.run_entity(_config(entity, mode="full"))["record_count"] > 0
+    full = [pq.ParquetFile(path) for path in written[1:]]
+    assert empty.metadata.num_rows == 0 and full and all(f.metadata.num_rows > 0 for f in full)
+    for other in full:
+        assert empty.schema_arrow.equals(other.schema_arrow, check_metadata=True)
+    assert empty.schema_arrow.equals(q.arrow_schema(q.plan_from_config(_config(entity))))

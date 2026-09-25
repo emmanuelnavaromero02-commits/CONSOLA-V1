@@ -8,16 +8,23 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Iterator, Sequence
 
+from app.core.b1_dialects import (
+    DIALECTS,
+    B1DialectStrategy,
+    DriverUnavailable,
+    get_dialect,
+    quote_ident,
+)
+
 logger = logging.getLogger(__name__)
 
 CARTRIDGE_ID = "sap_b1"
-DIALECTS = ("hana", "postgres")
-DEFAULT_PORTS = {"hana": 30015, "postgres": 5432}
+DEFAULT_DIALECT = "hana"
+DEFAULT_PORTS = {name: get_dialect(name).default_port for name in DIALECTS}
 
-_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
-_SCHEMA_RE = re.compile(r"^[A-Za-z0-9_$][A-Za-z0-9_$\-]{0,127}$")
 _ALIAS_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 _MAX_ERROR_TEXT = 500
+PROBE_ERROR_TEXT = 200
 
 
 class B1SourceError(RuntimeError):
@@ -74,25 +81,14 @@ class CartridgeCircuitBreaker:
         cls.opened_at = None
 
 
-def quote_ident(name: str) -> str:
-    if not isinstance(name, str) or not _IDENT_RE.fullmatch(name):
-        raise ValueError(f"Invalid identifier: {name!r}")
-    return f'"{name}"'
-
-
-def quote_schema(name: str) -> str:
-    if not isinstance(name, str) or not _SCHEMA_RE.fullmatch(name):
-        raise ValueError("Invalid company schema name")
-    return f'"{name}"'
-
-
 @dataclass(frozen=True)
 class Company:
     alias: str
-    schema: str
+    schema: str  # HANA/PostgreSQL schema or SQL Server database of the company
 
 
-def parse_companies(spec: str) -> list[Company]:
+def parse_companies(spec: str, dialect: "str | B1DialectStrategy" = DEFAULT_DIALECT) -> list[Company]:
+    strategy = get_dialect(dialect)
     companies: list[Company] = []
     seen: set[str] = set()
     for chunk in (spec or "").replace(";", ",").split(","):
@@ -106,7 +102,7 @@ def parse_companies(spec: str) -> list[Company]:
         if not _ALIAS_RE.fullmatch(alias):
             raise B1ConfigurationError(f"invalid company alias: {alias!r}")
         try:
-            quote_schema(schema)
+            strategy.validate_company_object(schema)
         except ValueError as exc:
             raise B1ConfigurationError(f"invalid company schema for alias {alias!r}") from exc
         if alias in seen:
@@ -150,6 +146,77 @@ class B1Config:
             "companies": [company.alias for company in self.companies],
         }
 
+    @property
+    def strategy(self) -> B1DialectStrategy:
+        return get_dialect(self.dialect)
+
+
+def build_config(
+    *,
+    dialect: str,
+    host: str,
+    port: str,
+    user: str,
+    password: str,
+    database: str,
+    companies: str,
+    encrypt: bool,
+    ssl_validate_certificate: bool,
+    connect_timeout: int,
+    strict_companies: bool = False,
+) -> B1Config:
+    name = (dialect or DEFAULT_DIALECT).strip().lower()
+    missing: list[str] = []
+    strategy: B1DialectStrategy | None
+    try:
+        strategy = get_dialect(name)
+    except ValueError:
+        strategy = None
+        missing.append("SAP_B1_DIALECT")
+    for env_name, value in (("SAP_B1_HOST", host), ("SAP_B1_USER", user), ("SAP_B1_PASSWORD", password)):
+        if not value:
+            missing.append(env_name)
+    if strategy is not None and strategy.requires_database and not database:
+        missing.append("SAP_B1_DATABASE")
+
+    port_number = strategy.default_port if strategy is not None else 0
+    port_text = str(port or "").strip()
+    if port_text:
+        try:
+            port_number = int(port_text)
+        except ValueError:
+            port_number = 0
+        if not 0 < port_number < 65536:
+            missing.append("SAP_B1_PORT")
+
+    parsed: list[Company] = []
+    if not str(companies or "").strip():
+        missing.append("SAP_B1_COMPANIES")
+    else:
+        try:
+            parsed = parse_companies(companies, strategy or DEFAULT_DIALECT)
+        except B1ConfigurationError as exc:
+            if strict_companies:
+                raise
+            logger.warning("SAP_B1_COMPANIES rejected: %s", exc)
+            missing.append("SAP_B1_COMPANIES")
+        if not parsed and "SAP_B1_COMPANIES" not in missing:
+            missing.append("SAP_B1_COMPANIES")
+
+    return B1Config(
+        dialect=name,
+        host=host,
+        port=port_number,
+        user=user,
+        password=password,
+        database=database,
+        companies=parsed,
+        encrypt=encrypt,
+        ssl_validate_certificate=ssl_validate_certificate,
+        connect_timeout=max(1, int(connect_timeout or 15)),
+        missing=missing,
+    )
+
 
 def resolve_config(security_context: str | None = None) -> B1Config:
     from app.core.config import settings
@@ -163,64 +230,19 @@ def resolve_config(security_context: str | None = None) -> B1Config:
             return str(value)
         return "" if default is None else str(default)
 
-    dialect = (pick("SAP_B1_DIALECT", settings.sap_b1_dialect) or "hana").strip().lower()
-    host = pick("SAP_B1_HOST", settings.sap_b1_host).strip()
-    port_text = pick("SAP_B1_PORT", settings.sap_b1_port).strip()
-    user = pick("SAP_B1_USER", settings.sap_b1_user)
-    password = pick("SAP_B1_PASSWORD", settings.sap_b1_password)
-    database = pick("SAP_B1_DATABASE", settings.sap_b1_database).strip()
-    companies_spec = pick("SAP_B1_COMPANIES", settings.sap_b1_companies)
-    encrypt = _truthy(pick("SAP_B1_ENCRYPT", ""), settings.sap_b1_encrypt)
-    ssl_validate = _truthy(
-        pick("SAP_B1_SSL_VALIDATE_CERTIFICATE", ""), settings.sap_b1_ssl_validate_certificate
-    )
-
-    missing: list[str] = []
-    if dialect not in DIALECTS:
-        missing.append("SAP_B1_DIALECT")
-    for name, value in (
-        ("SAP_B1_HOST", host),
-        ("SAP_B1_USER", user),
-        ("SAP_B1_PASSWORD", password),
-    ):
-        if not value:
-            missing.append(name)
-    if dialect == "postgres" and not database:
-        missing.append("SAP_B1_DATABASE")
-
-    port = DEFAULT_PORTS.get(dialect, 0)
-    if port_text:
-        try:
-            port = int(port_text)
-        except ValueError:
-            port = 0
-        if not 0 < port < 65536:
-            missing.append("SAP_B1_PORT")
-
-    companies: list[Company] = []
-    if not companies_spec.strip():
-        missing.append("SAP_B1_COMPANIES")
-    else:
-        try:
-            companies = parse_companies(companies_spec)
-        except B1ConfigurationError as exc:
-            logger.warning("SAP_B1_COMPANIES rejected: %s", exc)
-            missing.append("SAP_B1_COMPANIES")
-        if not companies and "SAP_B1_COMPANIES" not in missing:
-            missing.append("SAP_B1_COMPANIES")
-
-    return B1Config(
-        dialect=dialect,
-        host=host,
-        port=port,
-        user=user,
-        password=password,
-        database=database,
-        companies=companies,
-        encrypt=encrypt,
-        ssl_validate_certificate=ssl_validate,
-        connect_timeout=max(1, int(settings.sap_b1_connect_timeout_seconds or 15)),
-        missing=missing,
+    return build_config(
+        dialect=pick("SAP_B1_DIALECT", settings.sap_b1_dialect) or DEFAULT_DIALECT,
+        host=pick("SAP_B1_HOST", settings.sap_b1_host).strip(),
+        port=pick("SAP_B1_PORT", settings.sap_b1_port).strip(),
+        user=pick("SAP_B1_USER", settings.sap_b1_user),
+        password=pick("SAP_B1_PASSWORD", settings.sap_b1_password),
+        database=pick("SAP_B1_DATABASE", settings.sap_b1_database).strip(),
+        companies=pick("SAP_B1_COMPANIES", settings.sap_b1_companies),
+        encrypt=_truthy(pick("SAP_B1_ENCRYPT", ""), settings.sap_b1_encrypt),
+        ssl_validate_certificate=_truthy(
+            pick("SAP_B1_SSL_VALIDATE_CERTIFICATE", ""), settings.sap_b1_ssl_validate_certificate
+        ),
+        connect_timeout=settings.sap_b1_connect_timeout_seconds or 15,
     )
 
 
@@ -240,16 +262,13 @@ def _sanitize(text: str, secrets: Sequence[str]) -> str:
 
 class Connection:
 
-    def __init__(self, raw: Any, placeholder: str, secrets: Sequence[str], dialect: str = "postgres") -> None:
+    def __init__(self, raw: Any, dialect: "str | B1DialectStrategy", secrets: Sequence[str] = ()) -> None:
         self._raw = raw
-        self._placeholder = placeholder
+        self.dialect = get_dialect(dialect)
         self._secrets = tuple(secrets)
-        self.dialect = dialect
 
     def render(self, sql: str) -> str:
-        if self._placeholder == "?":
-            return sql
-        return sql.replace("?", self._placeholder)
+        return self.dialect.render(sql)
 
     def fetch_all(self, sql: str, params: Sequence[Any] = ()) -> tuple[list[str], list[tuple]]:
         try:
@@ -269,13 +288,15 @@ class Connection:
         return columns, rows
 
     def source_now(self) -> datetime:
-        sql = "SELECT CURRENT_TIMESTAMP FROM DUMMY" if self.dialect == "hana" else "SELECT LOCALTIMESTAMP(0)"
-        _columns, rows = self.fetch_all(sql)
+        _columns, rows = self.fetch_all(self.dialect.now_sql)
         value = rows[0][0] if rows and rows[0] else None
         if isinstance(value, datetime):
             return value.replace(tzinfo=None, microsecond=0)
         parsed = datetime.fromisoformat(str(value).replace(" ", "T")[:19])
         return parsed.replace(tzinfo=None)
+
+    def ping(self) -> None:
+        self.fetch_all(self.dialect.ping_sql)
 
     def close(self) -> None:
         try:
@@ -284,70 +305,54 @@ class Connection:
             pass
 
 
-def _open_postgres(config: B1Config) -> Connection:
-    import psycopg2
-
-    raw = psycopg2.connect(
-        host=config.host,
-        port=config.port,
-        user=config.user,
-        password=config.password,
-        dbname=config.database,
-        connect_timeout=config.connect_timeout,
-        application_name="omega-sap_b1",
-    )
-    raw.set_session(readonly=True, autocommit=True)
-    return Connection(raw, "%s", _secrets_of(config), dialect="postgres")
-
-
-def _open_hana(config: B1Config) -> Connection:
+def _connect(config: B1Config, *, count_failures: bool) -> Connection:
+    strategy = config.strategy
+    secrets = _secrets_of(config)
     try:
-        from hdbcli import dbapi
-    except ImportError as exc:  # pragma: no cover - depends on the image
-        raise B1SourceError("hdbcli is not installed; the hana dialect needs the SAP HANA client") from exc
-
-    kwargs: dict[str, Any] = {
-        "address": config.host,
-        "port": config.port,
-        "user": config.user,
-        "password": config.password,
-        "encrypt": config.encrypt,
-        "sslValidateCertificate": config.ssl_validate_certificate,
-        "connectTimeout": config.connect_timeout * 1000,
-        "autocommit": True,
-    }
-    if config.database:
-        kwargs["databaseName"] = config.database
-    raw = dbapi.connect(**kwargs)
-    return Connection(raw, "?", _secrets_of(config), dialect="hana")
-
-
-def _looks_like_auth_error(message: str) -> bool:
-    lowered = message.lower()
-    return any(
-        token in lowered
-        for token in ("authentication", "password", "invalid username", "login failed", "code=10")
-    )
+        raw = strategy.connect(config)
+    except DriverUnavailable as exc:
+        raise B1SourceError(str(exc)) from exc
+    except Exception as exc:
+        message = _sanitize(str(exc), secrets)
+        if count_failures and not strategy.is_auth_error(message):
+            CartridgeCircuitBreaker.record_failure()
+        raise B1SourceError(f"connection failed ({type(exc).__name__}): {message}") from exc
+    return Connection(raw, strategy, secrets)
 
 
 def open_connection(config: B1Config) -> Connection:
     if not config.configured:
         raise B1ConfigurationError(f"sap_b1 not configured; missing env: {config.missing}")
     CartridgeCircuitBreaker.before_request()
-    try:
-        if config.dialect == "postgres":
-            connection = _open_postgres(config)
-        else:
-            connection = _open_hana(config)
-    except B1SourceError:
-        raise
-    except Exception as exc:
-        message = _sanitize(str(exc), _secrets_of(config))
-        if not _looks_like_auth_error(message):
-            CartridgeCircuitBreaker.record_failure()
-        raise B1SourceError(f"connection failed ({type(exc).__name__}): {message}") from exc
+    connection = _connect(config, count_failures=True)
     CartridgeCircuitBreaker.record_success()
     return connection
+
+
+def probe_source(config: B1Config) -> dict[str, Any]:
+    # health probe: never trips or resets the circuit breaker
+    started = time.monotonic()
+    error: str | None = None
+    try:
+        if not config.configured:
+            raise B1ConfigurationError(f"sap_b1 not configured; missing: {config.missing}")
+        connection = _connect(config, count_failures=False)
+        try:
+            connection.ping()
+        finally:
+            connection.close()
+    except Exception as exc:  # noqa: BLE001 - the probe reports, never raises
+        text = str(exc) if isinstance(exc, B1SourceError) else f"{type(exc).__name__}: {exc}"
+        error = _sanitize(text, _secrets_of(config))[:PROBE_ERROR_TEXT]
+    elapsed = int(round((time.monotonic() - started) * 1000))
+    return {"ok": error is None, "ms": elapsed, "error": error}
+
+
+def company_version(connection: Connection, company: Company) -> int | None:
+    sql = f"SELECT {quote_ident('Version')} FROM {connection.dialect.table_ref(company.schema, 'CINF')}"
+    _columns, rows = connection.fetch_all(sql)
+    value = rows[0][0] if rows and rows[0] else None
+    return int(value) if value is not None else None
 
 
 class B1Client:
@@ -394,16 +399,11 @@ class B1Client:
         try:
             with self.connection() as connection:
                 for company in self.companies:
-                    sql = (
-                        f'SELECT "Version" FROM {quote_schema(company.schema)}."CINF"'
-                    )
-                    _columns, rows = connection.fetch_all(sql)
-                    version = rows[0][0] if rows and rows[0] else None
                     companies.append(
                         {
                             "alias": company.alias,
                             "reachable": True,
-                            "b1_version": int(version) if version is not None else None,
+                            "b1_version": company_version(connection, company),
                         }
                     )
         except CircuitBreakerOpen as exc:
@@ -417,7 +417,7 @@ class B1Client:
         except B1SourceError as exc:
             message = str(exc)
             return {
-                "status": "auth_error" if _looks_like_auth_error(message) else "error",
+                "status": "auth_error" if self.config.strategy.is_auth_error(message) else "error",
                 "reachable": False,
                 "message": message,
                 "companies": companies,

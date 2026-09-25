@@ -5,6 +5,8 @@ on:
     paths:
       - "cartridges/sap_b1/connect/windows-agent/**"
       - "cartridges/sap_b1/app/core/b1_source.py"
+      - "cartridges/sap_b1/app/core/b1_dialects.py"
+      - "cartridges/sap_b1/app/services/source_counts_mapping.py"
       - "cartridges/sap_b1/app/services/b1_*.py"
       - "cartridges/sap_b1/app/services/bronze_parquet.py"
       - "cartridges/sap_b1/app/services/intercompany_mapping.py"

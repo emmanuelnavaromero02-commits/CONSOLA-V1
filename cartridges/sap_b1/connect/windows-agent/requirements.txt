@@ -1,4 +1,5 @@
 hdbcli>=2.19,<3.0
+pyodbc==5.3.0
 pyarrow==23.0.1
 boto3>=1.35,<2.0
 pyyaml==6.0.2

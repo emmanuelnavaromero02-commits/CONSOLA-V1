@@ -8,18 +8,19 @@ entities = []
 exclude = []
 
 max_pending_files = 500
+heartbeat_minutes = 5               # (OMEGA_AGENT_HEARTBEAT_MINUTES) latido en raw/sap_b1/_agent/..., 1 a 60
 
 [source]
-dialect = "hana"                    # (SAP_B1_DIALECT) hana | postgres (banco de pruebas)
+dialect = "hana"                    # (SAP_B1_DIALECT) hana | mssql (SQL Server) | postgres (banco de pruebas)
 host = "<HANA_HOST>"                # (SAP_B1_HOST)
-port = 30015                        # (SAP_B1_PORT) puerto SQL del tenant
+port = 30015                        # (SAP_B1_PORT) puerto SQL del tenant; 1433 en SQL Server
 user = "<READ_ONLY_USER>"           # (SAP_B1_USER)
 password = "<HANA_PASSWORD>"        # (SAP_B1_PASSWORD)
-database = ""                       # (SAP_B1_DATABASE) tenant al entrar por SYSTEMDB; vacio si el puerto ya es del tenant
-companies = "empresa_a=<SCHEMA_A>,empresa_b=<SCHEMA_B>"   # (SAP_B1_COMPANIES)
+database = ""                       # (SAP_B1_DATABASE) tenant al entrar por SYSTEMDB; vacio si el puerto ya es del tenant (y en SQL Server)
+companies = "empresa_a=<SCHEMA_A>,empresa_b=<SCHEMA_B>"   # (SAP_B1_COMPANIES) esquema en HANA, base de datos en SQL Server
 intercompany = "empresa_a:<CODIGO_SN_EMPRESA_B>=empresa_b,empresa_b:<CODIGO_SN_EMPRESA_A>=empresa_a"   # (SAP_B1_INTERCOMPANY)
-encrypt = true                      # (SAP_B1_ENCRYPT) TLS hacia HANA
-ssl_validate_certificate = true     # (SAP_B1_SSL_VALIDATE_CERTIFICATE)
+encrypt = true                      # (SAP_B1_ENCRYPT) TLS hacia HANA o SQL Server
+ssl_validate_certificate = true     # (SAP_B1_SSL_VALIDATE_CERTIFICATE) false = TrustServerCertificate=yes en SQL Server
 connect_timeout_seconds = 15        # (SAP_B1_CONNECT_TIMEOUT_SECONDS)
 
 [upload]

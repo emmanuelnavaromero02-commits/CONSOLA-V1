@@ -8,7 +8,13 @@
         "s3:PutObject",
         "s3:AbortMultipartUpload"
       ],
-      "Resource": "arn:aws:s3:::<BUCKET>/raw/sap_b1/*/tenant_id=<TENANT_ID>/workspace_id=<WORKSPACE_ID>/*"
+      "Resource": "arn:aws:s3:::<BUCKET>/raw/sap_b1/*/tenant_id=<TENANT_ID>/workspace_id=<WORKSPACE_ID>/load_date=*"
+    },
+    {
+      "Sid": "OmegaSapB1AgentWriteOwnHeartbeat",
+      "Effect": "Allow",
+      "Action": "s3:PutObject",
+      "Resource": "arn:aws:s3:::<BUCKET>/raw/sap_b1/_agent/tenant_id=<TENANT_ID>/workspace_id=<WORKSPACE_ID>/heartbeat.json"
     },
     {
       "Sid": "OmegaSapB1AgentListOwnBronzeScopeOnly",
