@@ -3,9 +3,6 @@
 -- description: Journal lines in local, foreign and system currency; ShortName carries the CardCode on control-account lines.
 
 WITH versions AS (
-    -- Estado ACTUAL por clave sobre TODO el histórico bronze; después solo
-    -- las líneas que llevan la marca más reciente de su cabecera: una línea
-    -- borrada del documento desaparece en cuanto la cabecera se relee.
     SELECT *
     FROM (
         SELECT *,

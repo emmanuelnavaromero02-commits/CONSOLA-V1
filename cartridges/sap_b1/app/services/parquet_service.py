@@ -21,20 +21,11 @@ from app.services.bronze_parquet import (
 from app.services.protection_service import apply_protection_for_entity
 
 
-# Values that pyarrow types on its own: NUMERIC(19,6) amounts arrive as
-# Decimal and are written as decimal128, dates as date32, datetimes as
-# timestamps. Only genuinely mixed columns (str with numbers) fall back to
-# text; casting a Decimal column to text would lose the exact amount the
-# ledger reconciliation depends on.
 _NATIVE_TYPES = (Decimal, date, datetime, bool, int, float)
 
 
 def _fix_mixed_type_columns(df: "pd.DataFrame") -> "pd.DataFrame":
-    """
-    Pyarrow rejects columns that mix str and float (NaN).
-    Cast mixed object columns to string, preserving None for nulls; leave
-    columns whose non-null values share one native type alone.
-    """
+    """Pyarrow rejects columns that mix str and float (NaN)."""
     for col in df.columns:
         if df[col].dtype != object:
             continue
@@ -90,10 +81,6 @@ def write_parquet_and_upload(
     with tempfile.TemporaryDirectory() as tmpdir:
         local_path = Path(tmpdir) / f"{entity}.parquet"
         if arrow_schema is not None:
-            # Every file of an entity carries the same declared schema, so an
-            # all-null column or an empty batch never changes the type that
-            # readers see across files. Same table builder and writer call as
-            # the Windows push agent (app.services.bronze_parquet).
             import pyarrow as pa
 
             table = pa.Table.from_pylist(coerce_for_schema(enriched_rows, arrow_schema), schema=arrow_schema)

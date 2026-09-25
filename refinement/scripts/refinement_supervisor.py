@@ -14,9 +14,6 @@ APP_USER = "refinement-app"
 VERIFIER_USER = "refinement-verifier"
 RUNTIME_GROUP = "omega-refinement"
 SOCKET_PATH = "/run/omega/publication-verifier.sock"
-# DuckDB spills here. It is a mounted volume, not a path in the container's
-# writable layer, so a spill in flight cannot be swept away by the system and a
-# recreated container reuses the same directory.
 SPILL_DIR = os.environ.get("DUCKDB_TEMP_DIRECTORY", "/var/lib/omega/duckdb-spill")
 
 
@@ -118,13 +115,6 @@ def supervise(command: list[str]) -> int:
     # Only the private app/verifier group may traverse and create the IPC socket.
     os.chmod(runtime, 0o770)  # nosec B103
 
-    # Both processes spill here, and a fresh volume arrives root-owned 0755.
-    # The app creates its own spill files and the verifier reads and writes its
-    # own, so the directory belongs to the shared group with setgid, otherwise
-    # whichever process touches it first locks the other one out -- which is
-    # exactly what happened on 2026-09-23, where every materialization failed
-    # with PermissionError from the verifier and reported only "verifier
-    # unavailable".
     spill = Path(SPILL_DIR)
     spill.mkdir(parents=True, exist_ok=True)
     os.chown(spill, app_uid, app_gid)

@@ -1,42 +1,3 @@
-<#
-.SYNOPSIS
-  Prueba de conectividad a SAP HANA (SAP Business One) desde el servidor
-  Windows del cliente.
-
-.DESCRIPTION
-  Paso 1  Comprueba que el puerto SQL del tenant responde (Test-NetConnection).
-  Paso 2  Si el cliente de SAP HANA (hdbsql) está instalado, abre una sesión con
-          el usuario de solo lectura y lee "Version" de la tabla CINF de cada
-          empresa: la misma consulta que usa la plataforma.
-
-  Ninguna credencial viaja por la línea de comandos: hdbsql pide la contraseña
-  en pantalla, o se usa una clave del hdbuserstore (-UserStoreKey). No use -p.
-
-.PARAMETER HanaHost
-  Host de HANA. Por defecto, la variable de entorno SAP_B1_HOST.
-.PARAMETER Port
-  Puerto SQL del tenant (ver 00_find_tenant_sql_port.sql). Por defecto
-  SAP_B1_PORT o 30015.
-.PARAMETER User
-  Usuario técnico de solo lectura. Por defecto SAP_B1_USER.
-.PARAMETER TenantDb
-  Nombre del tenant; solo hace falta si Port es el puerto de SYSTEMDB (3NN13).
-  Por defecto SAP_B1_DATABASE.
-.PARAMETER CompanyDb
-  Esquemas de empresa a probar. Admite también la forma alias=ESQUEMA,... de
-  SAP_B1_COMPANIES (por defecto se lee esa variable).
-.PARAMETER UserStoreKey
-  Clave del hdbuserstore creada con:  hdbuserstore SET <CLAVE> <HANA_HOST>:<PUERTO> <USUARIO>
-  Si se indica, no se pide contraseña.
-.PARAMETER Encrypt
-  TLS entre este servidor y HANA (por defecto activado).
-.PARAMETER SkipCertValidation
-  Confía en el certificado del servidor sin validarlo (instalaciones con
-  certificado autofirmado). Solo para la prueba.
-
-.EXAMPLE
-  .\test_connection.ps1 -HanaHost <HANA_HOST> -Port <TENANT_SQL_PORT> -User <OMEGA_B1_READER> -CompanyDb <COMPANY_DB_1>,<COMPANY_DB_2>,<COMPANY_DB_3>
-#>
 [CmdletBinding()]
 param(
     [string]$HanaHost = $env:SAP_B1_HOST,
@@ -52,13 +13,11 @@ param(
 $ErrorActionPreference = "Stop"
 
 function Read-Required([string]$Value, [string]$Prompt) {
-    # Ask on screen for anything not given as a parameter or env var.
     if ([string]::IsNullOrWhiteSpace($Value)) { return (Read-Host -Prompt $Prompt) }
     return $Value
 }
 
 function Get-CompanySchemas([string[]]$Given) {
-    # Accept plain schema names or the alias=SCHEMA pairs used by SAP_B1_COMPANIES.
     $raw = @()
     if ($Given.Count -gt 0) { $raw = $Given } elseif ($env:SAP_B1_COMPANIES) { $raw = $env:SAP_B1_COMPANIES -split "[,;]" }
     $schemas = @()
@@ -66,7 +25,6 @@ function Get-CompanySchemas([string[]]$Given) {
         $part = $item.Trim()
         if (-not $part) { continue }
         if ($part.Contains("=")) { $part = $part.Split("=", 2)[1].Trim() }
-        # Schema names are identifiers: letters, digits, _ $ and -. Anything else is refused.
         if ($part -notmatch '^[A-Za-z0-9_$][A-Za-z0-9_$\-]{0,127}$') { throw "Nombre de esquema no válido: $part" }
         $schemas += $part
     }
@@ -112,7 +70,6 @@ if (-not $hdbsql) {
     exit 0
 }
 
-# hdbsql runs one input file so the password is asked once for every company.
 $sqlFile = [System.IO.Path]::GetTempFileName()
 try {
     $lines = @()

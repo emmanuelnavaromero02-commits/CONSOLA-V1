@@ -39,7 +39,6 @@ lines AS (
     WHERE _source_updated_at IS NULL OR _source_updated_at = _entry_stamp
 ),
 accounts AS (
-    -- Newest run per company (all of its batches), never a mix of two runs.
     SELECT * EXCLUDE (_rn)
     FROM (
         SELECT s.*, ROW_NUMBER() OVER (PARTITION BY s._company, s.AcctCode ORDER BY s._extracted_at DESC) AS _rn
@@ -57,7 +56,6 @@ accounts AS (
     WHERE _rn = 1
 ),
 company AS (
-    -- Newest run per company (all of its batches), never a mix of two runs.
     SELECT _company, MainCurncy AS local_currency, SysCurrncy AS sys_currency
     FROM (
         SELECT s.*, ROW_NUMBER() OVER (PARTITION BY s._company, s.Code ORDER BY s._extracted_at DESC) AS _rn
@@ -75,7 +73,6 @@ company AS (
     WHERE _rn = 1
 ),
 partners AS (
-    -- Newest run per company (all of its batches), never a mix of two runs.
     SELECT _company, CardCode, CounterpartyCompany
     FROM (
         SELECT s.*, ROW_NUMBER() OVER (PARTITION BY s._company, s.CardCode ORDER BY s._extracted_at DESC) AS _rn

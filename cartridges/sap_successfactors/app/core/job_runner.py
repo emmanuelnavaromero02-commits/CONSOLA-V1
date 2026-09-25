@@ -684,9 +684,6 @@ async def _run_extract_all(
         f"Completado — {completed}/{total} entidades, "
         f"{total_records:,} registros totales, {failed + blocked_count} bloqueadas/fallidas"
     )
-    # Same rule as the DAG and the console route: only a run that produced
-    # nothing for a real reason is "failed"; a mixed run stays "done" with
-    # its blocked entities listed.
     hard_failure = hard_failure_code(
         result_summary, results, skipped_results, attempted=len(entities)
     )

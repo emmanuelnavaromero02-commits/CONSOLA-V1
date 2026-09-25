@@ -1,10 +1,4 @@
-"""
-sap_b1_extract_all DAG
-==========================
-Extrae TODAS las entidades llamando al cartucho SAP Business One.
-
-v1.43.1 (Claude B1 + B2 + B3): see sap_b1_extract.py for rationale.
-"""
+"""sap_b1_extract_all DAG ========================== Extrae TODAS las entidades llamando al cartucho SAP Business One."""
 from __future__ import annotations
 import os
 from datetime import timedelta
@@ -54,8 +48,6 @@ def sap_b1_extract_all():
             if conf.get(key)
         }
 
-        # A Business One initial load reads every company; the cartridge answers
-        # when it is done, so the client waits well beyond the OData default.
         with httpx.Client(timeout=3600) as client:
             res = client.post(
                 f"{CARTRIDGE_URL}/extract-all",

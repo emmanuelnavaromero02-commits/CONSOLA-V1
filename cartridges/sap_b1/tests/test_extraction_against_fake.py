@@ -1,10 +1,4 @@
-"""The cartridge reads the Business One-shaped fake the way it will read HANA.
-
-Every test here runs ``extraction_service.run_entity`` against a real
-Postgres loaded with the deterministic dataset, with the platform side
-(run log, watermarks, parquet upload) recorded in memory. Expected values
-are computed from the generated rows, never from the SQL under test.
-"""
+"""The cartridge reads the Business One-shaped fake the way it will read HANA."""
 from __future__ import annotations
 
 import importlib
@@ -21,13 +15,10 @@ b1 = importlib.import_module("sap_b1_fake.schema")
 pytestmark = pytest.mark.usefixtures("fake_postgres")
 
 def _read_parquet(path):
-    """The file exactly as written. Newer pyarrow infers partition columns
-    (load_date, batch_id, ...) from the hive-style directories when a single
-    file path goes through ``read_table``."""
+    """The file exactly as written. Newer pyarrow infers partition columns (load_date, batch_id, ...) from the hive-style."""
     import pyarrow.parquet as pq
 
     return pq.ParquetFile(str(path)).read()
-
 
 
 class Recorder:
@@ -91,15 +82,10 @@ def _fmt(stamp: datetime) -> str:
 
 
 def _lift_clock_cap(monkeypatch) -> None:
-    """The fake's newest stamps lie after today's date, so the source clock
-    would cap the recorded watermark below them. Tests that assert the exact
-    max stamp lift the cap; the cap has its own test."""
+    """The fake's newest stamps lie after today's date, so the source clock would cap the recorded watermark below them."""
     from app.core import b1_source
 
     monkeypatch.setattr(b1_source.Connection, "source_now", lambda self: datetime(2099, 1, 1))
-
-
-# ── whole-table reads ──────────────────────────────────────────────────────
 
 
 def test_full_load_reads_every_company(b1_env, dataset, monkeypatch):
@@ -119,7 +105,6 @@ def test_full_load_reads_every_company(b1_env, dataset, monkeypatch):
     assert recorder.finished[0]["status"] == "success" and recorder.finished[0]["records_extracted"] == result["record_count"]
     assert recorder.runs[0]["run_type"] == "full" and recorder.runs[0]["entity_name"] == "OINV"
     assert not recorder.failed
-    # A full load records the watermark so the next incremental cycle continues from it.
     for company in dataset.companies:
         latest = max(_stamp("OINV", row) for row in dataset.tables[company.alias]["OINV"])
         assert recorder.watermarks[f"OINV@{company.alias}"] == _fmt(latest)
@@ -136,10 +121,7 @@ def test_snapshot_tables_fall_back_to_full_when_asked_for_incremental(b1_env, da
 
 
 def test_the_first_incremental_read_of_an_empty_table_leaves_a_zero_row_artifact(b1_env, dataset, monkeypatch):
-    """A/P credit memos exist in no company of the fake. The first
-    incremental cycle is a whole-table read, so it must leave the typed
-    empty file every silver of that table expects; the second cycle, with
-    watermarks or not, leaves nothing."""
+    """A/P credit memos exist in no company of the fake."""
     assert not any(dataset.tables[c.alias]["RPC1"] for c in dataset.companies)
     recorder, es = _install(monkeypatch)
     first = es.run_entity(_config("RPC1", mode="incremental"))
@@ -162,9 +144,6 @@ def test_a_full_load_that_finds_nothing_leaves_a_zero_row_artifact(b1_env, datas
     assert result["record_count"] == 0 and result["status"] == "success"
     assert len(recorder.uploads) == 1 and recorder.uploads[0]["rows"] == []
     assert recorder.watermarks == {}
-
-
-# ── incremental reads ──────────────────────────────────────────────────────
 
 
 def _expected_headers(dataset, table: str, since: datetime) -> dict[str, set]:
@@ -281,9 +260,6 @@ def test_integer_watermark_on_inventory_movements(b1_env, dataset, monkeypatch):
     assert result["record_count"] == len(recorder.rows)
 
 
-# ── paging, history, failures ──────────────────────────────────────────────
-
-
 @pytest.mark.parametrize("entity,key", [("OINV", ("DocEntry",)), ("INV1", ("DocEntry", "LineNum")), ("OINM", ("TransNum", "TransSeq"))])
 def test_keyset_paging_is_complete_and_free_of_duplicates(b1_env, dataset, monkeypatch, entity, key):
     _lift_clock_cap(monkeypatch)
@@ -299,7 +275,6 @@ def test_keyset_paging_is_complete_and_free_of_duplicates(b1_env, dataset, monke
     assert len(small) == len(set(small)) == sum(len(dataset.tables[c.alias][entity]) for c in dataset.companies)
     if entity == "OINM":
         return
-    # A full load of a line table records the header stamp as its watermark.
     for company in dataset.companies:
         latest = max(_stamp("OINV", row) for row in dataset.tables[company.alias]["OINV"])
         assert big_recorder.watermarks[f"{entity}@{company.alias}"] == _fmt(latest)
@@ -323,10 +298,7 @@ def test_batch_transactions_are_incremental_by_log_entry(b1_env, dataset, monkey
 
 
 def test_watermark_never_passes_the_source_clock(b1_env, dataset, monkeypatch):
-    """A document edited behind the cursor during a long run keeps a stamp
-    older than the newest row read; the next cycle must still reach it, so
-    the recorded watermark is capped at the clock of the source when the
-    run started."""
+    """A document edited behind the cursor during a long run keeps a stamp older than the newest row read."""
     from app.core import b1_source
 
     latest = max(_stamp("OINV", row) for c in dataset.companies for row in dataset.tables[c.alias]["OINV"])
@@ -341,9 +313,7 @@ def test_watermark_never_passes_the_source_clock(b1_env, dataset, monkeypatch):
 
 
 def test_a_failing_company_keeps_the_others_committed(b1_env, dataset, monkeypatch):
-    """Companies are flushed and committed one by one: a schema that fails
-    never makes the others re-read what they already delivered, and the run
-    is still a failure."""
+    """Companies are flushed and committed one by one."""
     from app.core.b1_source import B1SourceError, CartridgeCircuitBreaker
 
     CartridgeCircuitBreaker.reset()
@@ -366,8 +336,6 @@ def test_batches_flush_every_batch_size_rows(b1_env, dataset, monkeypatch):
     assert result["batches"] == len(recorder.uploads) >= 2
     assert [u["run_id"] for u in recorder.uploads][:2] == ["run-1", "run-1-b1"]
     assert sum(len(u["rows"]) for u in recorder.uploads) == result["record_count"]
-    # The buffer is checked after each page lands, so one batch can hold up to
-    # BATCH_SIZE - 1 + page_size rows.
     assert max(len(u["rows"]) for u in recorder.uploads) < 500 + 300
 
 
@@ -461,9 +429,6 @@ def test_a_missing_configuration_is_a_failed_run(monkeypatch):
     assert len(recorder.failed) == 1 and recorder.uploads == []
 
 
-# ── connectivity and parquet types ─────────────────────────────────────────
-
-
 def test_test_connection_reports_every_company_without_secrets(b1_env, dataset):
     from app.core.b1_source import B1Client
 
@@ -526,8 +491,6 @@ def test_parquet_keeps_exact_amounts_and_dates(b1_env, dataset, tmp_path, monkey
     assert back["_company"] == company.alias and back["_run_id"] == "run-1"
     assert back["_watermark_value"] == str(records[0]["UpdateDate"])
 
-    # An all-null column and an empty batch keep the declared types, so a
-    # DuckDB glob over many files never sees a null-typed column first.
     written.clear()
     nulls = [{**record, "DocTotalFC": None, "Comments": None} for record in records]
     parquet_service.write_parquet_and_upload(entity="OINV", rows=nulls, run_id="run-2", load_type="full", arrow_schema=declared)

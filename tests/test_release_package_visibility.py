@@ -130,7 +130,6 @@ def test_auto_owner_falls_back_from_organization_to_user() -> None:
     )
 
     assert all(check.private and check.owner_kind == "user" for check in checks)
-    # One /orgs/ probe (404) plus one /users/ fallback per canonical package.
     assert len(calls) == 2 * len(CANONICAL_PACKAGE_NAMES)
 
 

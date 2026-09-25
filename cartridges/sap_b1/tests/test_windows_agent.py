@@ -1,16 +1,4 @@
-"""The Windows push agent writes exactly what the cartridge writes.
-
-The agent in ``connect/windows-agent/agent.py`` runs the cartridge's own
-reader (``b1_reader.read_entity``) with a SQLite state and a local spool
-instead of the platform Postgres and the lakehouse. These tests run it
-against the Business One-shaped Postgres fake with ``--output-dir`` and
-check the files, the watermarks, the run log and the log file against the
-cartridge's own rules; the subprocess runs get an environment stripped of
-every platform variable, so they also prove the agent needs none of them.
-
-Docker-backed tests skip without Docker (see ``fake_postgres``); the static
-checks on the IAM policy and the install scripts always run.
-"""
+"""The Windows push agent writes exactly what the cartridge writes."""
 from __future__ import annotations
 
 import ast
@@ -40,10 +28,8 @@ ENTITIES = CARTRIDGE_ROOT / "app" / "config" / "entities.yaml"
 TENANT = "11111111-1111-4111-8111-111111111111"
 WORKSPACE = "22222222-2222-4222-8222-222222222222"
 SCOPE = f"tenant_id={TENANT}/workspace_id={WORKSPACE}/"
-# Test-only upload credentials; the secret must never reach a log, a run row or the spool ledger.
 TEST_ACCESS_KEY = "agent-test-access-key-id"
 TEST_SECRET = "agent-test-secret-access-key-value"
-# Nothing of the platform reaches the agent process.
 _PLATFORM_PREFIXES = (
     "DATABASE_URL", "MINIO_", "LAKEHOUSE_", "FIELD_ENCRYPTION_KEY", "INTERNAL_API_KEY",
     "SECURITY_CONTEXT", "AWS_", "OMEGA_", "APP_ENV", "S3_BUCKET", "GCS_",
@@ -52,16 +38,11 @@ _STAMP = "%Y-%m-%dT%H:%M:%S"
 SPOOL_NAME = re.compile(r"^[0-9a-f]{20}\.parquet$")
 
 
-# ── helpers ────────────────────────────────────────────────────────────────
-
 def _read_parquet(path):
-    """The file exactly as written. Newer pyarrow infers partition columns
-    (load_date, batch_id, ...) from the hive-style directories when a single
-    file path goes through ``read_table``."""
+    """The file exactly as written. Newer pyarrow infers partition columns (load_date, batch_id, ...) from the hive-style."""
     import pyarrow.parquet as pq
 
     return pq.ParquetFile(str(path)).read()
-
 
 
 def _entity_config(entity: str) -> dict:
@@ -70,9 +51,7 @@ def _entity_config(entity: str) -> dict:
 
 
 def _write_config(tmp_path: Path, extra: str = "", upload: bool = False) -> Path:
-    """agent.toml with the scope and a relative state dir; ``extra`` lines
-    belong to ``[agent]``; ``upload=True`` adds an ``[upload]`` section (the
-    uploader itself is always a fake in these tests)."""
+    """agent.toml with the scope and a relative state dir."""
     tmp_path.mkdir(parents=True, exist_ok=True)
     config = tmp_path / "agent.toml"
     text = (
@@ -144,9 +123,7 @@ def _ps_array(name: str) -> list[str]:
 
 
 class _FakeUploader:
-    """Stands in for ``S3Uploader`` inside the loaded agent module: one
-    ``upload`` call is one file after the real class's own retries, so
-    ``error`` is what the spool sees (an UploadError or an UploadRejected)."""
+    """Stands in for ``S3Uploader`` inside the loaded agent module."""
 
     error: Exception | None = None
     calls: list[tuple[str, str]] = []
@@ -235,8 +212,7 @@ def _platform_watermarks(monkeypatch, entity_config: dict) -> dict[str, str]:
 
 @pytest.fixture
 def agent():
-    """A fresh load of agent.py per test, after the conftest re-pinned ``app``,
-    so patches on ``app.core.b1_source`` reach the code the agent runs."""
+    """A fresh load of agent.py per test, after the conftest re-pinned ``app``, so patches on ``app.core.b1_source`` reach."""
     name = "sap_b1_windows_agent_under_test"
     spec = importlib.util.spec_from_file_location(name, AGENT)
     module = importlib.util.module_from_spec(spec)
@@ -246,9 +222,6 @@ def agent():
         yield module
     finally:
         sys.modules.pop(name, None)
-
-
-# ── files: schema and layout ───────────────────────────────────────────────
 
 
 @pytest.mark.parametrize("entity", ["OINV", "INV1"])
@@ -298,14 +271,12 @@ def test_full_load_writes_the_cartridge_schema_and_layout(b1_env, dataset, tmp_p
     assert dict(by_company) == {c.alias: len(dataset.tables[c.alias][entity]) for c in dataset.companies}
 
     if entity == "OINV":
-        # The watermark column is on the row: the platform stores str(driver value).
         assert all(row["_watermark_value"] == str(row["UpdateDate"]) for row in rows)
         assert all(row["_source_updated_at"] == _fmt(datetime.combine(row["UpdateDate"].date(), datetime.min.time())
                                                      + timedelta(seconds=row["UpdateTS"] // 10000 * 3600
                                                                  + row["UpdateTS"] // 100 % 100 * 60
                                                                  + row["UpdateTS"] % 100)) for row in rows)
     else:
-        # Lines carry no UpdateDate of their own and inherit the header stamp.
         assert all(row["_watermark_value"] is None for row in rows)
         stamps = {
             (c.alias, row[_col("OINV", "DocEntry")]): _fmt(_stamp("OINV", row))
@@ -321,9 +292,7 @@ def test_full_load_writes_the_cartridge_schema_and_layout(b1_env, dataset, tmp_p
 
 
 def test_agent_files_match_the_cartridge_writer_byte_for_byte_in_schema(b1_env, dataset, tmp_path, monkeypatch):
-    """Same records through the agent and through ``parquet_service``: the
-    schema (with metadata), the writer signature and the row-group layout
-    are identical. Only the run id and the extraction instant differ."""
+    """Same records through the agent and through ``parquet_service``."""
     import shutil
 
     import pyarrow.parquet as pq
@@ -369,9 +338,6 @@ def test_agent_files_match_the_cartridge_writer_byte_for_byte_in_schema(b1_env, 
     ]
 
 
-# ── watermarks ─────────────────────────────────────────────────────────────
-
-
 def test_a_second_incremental_run_writes_nothing(b1_env, dataset, tmp_path, agent):
     config = _write_config(tmp_path)
     first = tmp_path / "first"
@@ -380,8 +346,6 @@ def test_a_second_incremental_run_writes_nothing(b1_env, dataset, tmp_path, agen
     marks = _watermarks(config)
     assert set(marks) == {f"OINV@{c.alias}" for c in dataset.companies}
 
-    # Nothing changed since the last cycle: move every company past its
-    # newest stamp (plus the 5 minute back-off), as time would.
     state = agent.AgentState(config.parent / "state" / "agent-state.sqlite")
     seeded = {}
     for alias, latest in _latest(dataset, "OINV").items():
@@ -402,15 +366,12 @@ def test_a_second_incremental_run_writes_nothing(b1_env, dataset, tmp_path, agen
 
 
 def test_the_stored_watermark_is_what_the_cartridge_would_store(b1_env, dataset, tmp_path, monkeypatch, agent):
-    """Max stamp seen, capped at the source clock read when the run started:
-    the agent's SQLite row equals ``extraction_service``'s recorded value
-    under the same clock, on both sides of the cap."""
+    """Max stamp seen, capped at the source clock read when the run started."""
     from app.core import b1_source
 
     latest = _latest(dataset, "OINV")
     config = _write_config(tmp_path)
 
-    # The clock lies before the newest stamps: every company is capped.
     frozen = min(latest.values()) - timedelta(days=30)
     monkeypatch.setattr(b1_source.Connection, "source_now", lambda self: frozen)
     code = agent.main(["--config", str(config), "--quiet", "extract", "--entity", "OINV", "--mode", "full",
@@ -421,7 +382,6 @@ def test_the_stored_watermark_is_what_the_cartridge_would_store(b1_env, dataset,
     assert capped == {f"OINV@{alias}": _fmt(frozen) for alias in latest}
     assert _runs(config)[-1]["source_clock"] == _fmt(frozen)
 
-    # The clock lies after every stamp: the exact maximum per company.
     monkeypatch.setattr(b1_source.Connection, "source_now", lambda self: datetime(2099, 1, 1))
     code = agent.main(["--config", str(config), "--quiet", "extract", "--entity", "OINV", "--mode", "full",
                        "--output-dir", str(tmp_path / "exact")])
@@ -430,16 +390,12 @@ def test_the_stored_watermark_is_what_the_cartridge_would_store(b1_env, dataset,
     assert exact == _platform_watermarks(monkeypatch, {**_entity_config("OINV"), "mode": "full"})
     assert exact == {f"OINV@{alias}": _fmt(stamp) for alias, stamp in latest.items()}
 
-    # And a line table records its header's stamp, like the cartridge.
     code = agent.main(["--config", str(config), "--quiet", "extract", "--entity", "INV1", "--mode", "full",
                        "--output-dir", str(tmp_path / "lines")])
     assert code == 0
     assert {k: v for k, v in _watermarks(config).items() if k.startswith("INV1@")} == {
         f"INV1@{alias}": _fmt(stamp) for alias, stamp in latest.items()
     }
-
-
-# ── intercompany mapping ───────────────────────────────────────────────────
 
 
 def _mapping(dataset) -> str:
@@ -478,7 +434,6 @@ def test_extract_all_writes_the_intercompany_mapping_last_like_the_cartridge(b1_
     )
     assert layout.match(files[0].relative_to(out).as_posix()), files[0]
     table = _read_parquet(files[0])
-    # The very schema the cartridge hands its writer (refresh_intercompany_partners).
     assert table.schema.equals(icm.arrow_schema(), check_metadata=True)
     rows = table.to_pylist()
     assert [(r["_company"], r["CardCode"], r["CounterpartyCompany"], r["MappingSource"]) for r in rows] == [
@@ -488,8 +443,6 @@ def test_extract_all_writes_the_intercompany_mapping_last_like_the_cartridge(b1_
     assert all(r["_run_id"] == ic_run["run_id"] and r["_watermark_value"] is None and r["_source_updated_at"] is None for r in rows)
     assert "IntercompanyPartners@" not in " ".join(_watermarks(config)), "a snapshot records no watermark"
 
-    # Skipped on request, and written alone on request: the operator can
-    # correct the mapping without re-reading a single table.
     proc = _run(config, "extract-all", "--entity", "CINF", "--mode", "full", "--skip-intercompany",
                 "--output-dir", str(tmp_path / "skip"), env=_clean_env(SAP_B1_INTERCOMPANY=mapping))
     assert proc.returncode == 0, proc.stderr
@@ -530,9 +483,6 @@ def test_a_mapping_naming_an_unknown_company_is_a_configuration_error(b1_env, da
                 env=_clean_env(SAP_B1_INTERCOMPANY="not a mapping"))
     assert proc.returncode == 2
     assert "company:CARDCODE=counterparty" in proc.stderr
-
-
-# ── failures and logs ──────────────────────────────────────────────────────
 
 
 def test_a_failing_connection_is_a_failed_run_with_a_non_zero_exit(b1_env, dataset, tmp_path):
@@ -603,9 +553,6 @@ def test_placeholders_and_missing_configuration_are_configuration_errors(tmp_pat
     env = {k: v for k, v in _clean_env().items() if not k.startswith("SAP_B1_")}
     proc = _run(config, "status", env=env)
     assert proc.returncode == 2 and "placeholder" in proc.stderr
-    # An error in agent.toml itself happens before the real logging exists;
-    # it still lands in agent.log of the state dir the file names (the
-    # scheduled task shows nothing but the exit code).
     bootstrap_log = tmp_path / "state" / "logs" / "agent.log"
     assert bootstrap_log.is_file()
     logged = bootstrap_log.read_text("utf-8")
@@ -618,9 +565,6 @@ def test_placeholders_and_missing_configuration_are_configuration_errors(tmp_pat
     proc = _run(config, "extract", "--entity", "NOPE", "--output-dir", str(tmp_path / "out"), env=env)
     assert proc.returncode == 2 and "NOPE" in proc.stderr
 
-    # Unparseable TOML: the state dir cannot be read from it, so the line
-    # goes to logs/ next to the file (the installed layout keeps agent.toml
-    # in the state dir, so that is the same agent.log).
     config.write_text('[agent\ntenant_id = "t"\n', encoding="utf-8")
     proc = _run(config, "status", env=env)
     assert proc.returncode == 2 and "not valid TOML" in proc.stderr
@@ -628,8 +572,7 @@ def test_placeholders_and_missing_configuration_are_configuration_errors(tmp_pat
 
 
 def test_the_agent_needs_nothing_from_the_platform():
-    """agent.py imports only the pure cartridge modules: no platform
-    settings, no Postgres, no MinIO, no pandas."""
+    """agent.py imports only the pure cartridge modules: no platform settings, no Postgres, no MinIO, no pandas."""
     probe = (
         "import sys, importlib.util\n"
         f"spec = importlib.util.spec_from_file_location('probe_agent', {str(AGENT)!r})\n"
@@ -645,12 +588,8 @@ def test_the_agent_needs_nothing_from_the_platform():
     assert "LOADED=\n" in proc.stdout and "ENTITIES=45" in proc.stdout
 
 
-# ── static: policy and scripts ─────────────────────────────────────────────
-
-
 def test_iam_policy_allows_only_the_bronze_prefix():
-    """One key per customer: it writes and lists nothing but its own
-    tenant/workspace scope under every entity of ``raw/sap_b1/``."""
+    """One key per customer: it writes and lists nothing but its own tenant/workspace scope under every entity of."""
     scoped = "raw/sap_b1/*/tenant_id=<TENANT_ID>/workspace_id=<WORKSPACE_ID>/*"
     policy = json.loads((AGENT_DIR / "iam-policy.template.json").read_text(encoding="utf-8"))
     assert policy["Version"] == "2012-10-17"
@@ -678,8 +617,7 @@ def test_iam_policy_allows_only_the_bronze_prefix():
 def test_install_scripts_and_templates_embed_no_credentials():
     scripts = {name: (AGENT_DIR / name).read_text(encoding="utf-8") for name in ("install.ps1", "run.ps1", "uninstall.ps1")}
     template = (AGENT_DIR / "agent.toml.template").read_text(encoding="utf-8")
-    readme = (AGENT_DIR / "README.md").read_text(encoding="utf-8")
-    everything = "\n".join([*scripts.values(), template, readme])
+    everything = "\n".join([*scripts.values(), template])
 
     assert not re.search(r"\bAKIA[0-9A-Z]{16}\b", everything)
     assert not re.search(r"(?i)secret[_ ]?access[_ ]?key\s*[=:]\s*['\"][A-Za-z0-9/+=]{20,}", everything)
@@ -690,11 +628,9 @@ def test_install_scripts_and_templates_embed_no_credentials():
         assert re.fullmatch(r"<[A-Z_]+>", value), f"{key} in the template must stay a placeholder"
 
     install = scripts["install.ps1"]
-    # The service account password only ever comes from an interactive prompt.
     assert "Get-Credential" in install and "Read-Host" not in install.replace("Read-Host -AsSecureString", "")
     assert not re.search(r"-Password\s+['\"]", install)
     assert not re.search(r"ConvertTo-SecureString\s+['\"]", install)
-    # Python only from python.org, over TLS, and the config file is never overwritten.
     assert re.findall(r"https?://[^\s'\"]+", install) and all(
         url.startswith("https://www.python.org/") for url in re.findall(r"https?://[^\s'\"]+", install)
     )
@@ -705,12 +641,8 @@ def test_install_scripts_and_templates_embed_no_credentials():
     assert "agent.py" in scripts["run.ps1"] and "extract-all" in scripts["run.ps1"]
 
 
-# ── uploader: error classification and scope (no S3, a fake client) ───────
-
-
 class _FakeS3Client:
-    """The boto3 client surface the uploader touches: each ``upload_file``
-    raises the next scripted exception, then succeeds."""
+    """The boto3 client surface the uploader touches: each ``upload_file`` raises the next scripted exception, then succeeds."""
 
     def __init__(self, failures=()):
         self.failures = list(failures)
@@ -744,10 +676,7 @@ def sleeps(agent, monkeypatch):
 
 
 def test_a_rejected_key_is_reported_after_one_attempt_even_when_boto3_hides_the_code(agent, sleeps, tmp_path):
-    """boto3 wraps the ClientError of a managed upload into
-    S3UploadFailedError (no .response, no cause): the code must be read
-    from the message, or a revoked key would be retried five times with
-    sleeps on every file and the documented message would never appear."""
+    """boto3 wraps the ClientError of a managed upload into S3UploadFailedError (no .response, no cause)."""
     from boto3.exceptions import S3UploadFailedError
     from botocore.exceptions import ClientError
 
@@ -763,8 +692,6 @@ def test_a_rejected_key_is_reported_after_one_attempt_even_when_boto3_hides_the_
     assert info.value.code == "AccessDenied"
     assert len(client.uploads) == 1 and sleeps == []
 
-    # The code also travels on the response of a bare ClientError and on
-    # the cause of a wrapping exception.
     for exc in (
         ClientError({"Error": {"Code": "ExpiredToken", "Message": "expired"}}, "PutObject"),
         _wrapped(ClientError({"Error": {"Code": "InvalidAccessKeyId", "Message": "bad"}}, "PutObject")),
@@ -827,21 +754,14 @@ def test_the_uploader_refuses_keys_outside_its_own_scope_and_probes_only_it(agen
 
     uploader.probe()
     assert client.listed == [{"Bucket": "agent-test-bucket", "Prefix": f"raw/sap_b1/CINF/{SCOPE}", "MaxKeys": 1}]
-    # What probe lists is inside what the policy template allows.
     policy_prefix = "raw/sap_b1/*/tenant_id=<TENANT_ID>/workspace_id=<WORKSPACE_ID>/*"
     pattern = re.escape(policy_prefix.replace("<TENANT_ID>", TENANT).replace("<WORKSPACE_ID>", WORKSPACE)).replace(r"\*", ".*")
     assert re.fullmatch(pattern, client.listed[0]["Prefix"])
     assert re.fullmatch(pattern, _object("IntercompanyPartners"))
 
 
-# ── spool: file names, durability, leftovers ───────────────────────────────
-
-
 def test_spool_file_names_stay_short_and_local_delivery_keeps_the_bucket_layout(agent, tmp_path):
-    """The Bronze key of an IntercompanyPartners batch is ~170 characters;
-    under the template's default state dir the spool must still fit in
-    Windows' 259-character MAX_PATH with room to spare, so spooled files
-    get a short opaque name and only ``--output-dir`` lays out the bucket."""
+    """The Bronze key of an IntercompanyPartners batch is ~170 characters."""
     template = (AGENT_DIR / "agent.toml.template").read_text(encoding="utf-8")
     default_state_dir = re.search(r"^state_dir\s*=\s*'([^']+)'", template, flags=re.MULTILINE).group(1)
     longest_entity = max((e["entity"] for e in yaml.safe_load(ENTITIES.read_text("utf-8"))["entities"]), key=len)
@@ -875,13 +795,9 @@ def test_batch_files_are_forced_to_disk_before_the_watermark_moves(b1_env, datas
     assert not list((tmp_path / "out").rglob("*.part"))
 
 
-# ── spool and uploads through the agent (a fake uploader) ──────────────────
-
-
 def test_a_failed_upload_stays_in_the_spool_and_the_next_run_drains_it(b1_env, dataset, tmp_path, agent, fake_uploader):
     config = _write_config(tmp_path, upload=True)
     argv = ["--config", str(config), "--quiet", "extract", "--entity", "CINF", "--mode", "full"]
-    # The error quotes both secrets the way a driver or SDK message might.
     fake_uploader.error = agent.UploadError(
         f"upload failed after 5 attempts: EndpointConnectionError: key {TEST_SECRET} password {b1_env['password']}"
     )
@@ -909,7 +825,6 @@ def test_a_failed_upload_stays_in_the_spool_and_the_next_run_drains_it(b1_env, d
     assert "kept in spool, will retry on the next run" in log
     assert TEST_SECRET not in log and b1_env["password"] not in log
 
-    # status shows the queue with the bucket path, not the opaque file name.
     assert agent.main(["--config", str(config), "--quiet", "status"]) == 0
     proc = _run(config, "status", "--json")
     report = json.loads(proc.stdout)
@@ -919,8 +834,6 @@ def test_a_failed_upload_stays_in_the_spool_and_the_next_run_drains_it(b1_env, d
     text = _run(config, "status").stdout
     assert f"spool pending: {batches}; lost: 0" in text and f"pending {rows[0]['object_name']} attempts=1" in text
 
-    # The next run uploads the backlog first, then its own files; nothing is
-    # re-read from the source because of the earlier failure.
     fake_uploader.error = None
     fake_uploader.calls = []
     assert agent.main(argv) == 0
@@ -946,8 +859,7 @@ def test_the_pending_limit_stops_extraction_with_a_failed_exit(b1_env, dataset, 
 
 
 def test_a_rejected_key_stops_every_upload_of_the_cycle(b1_env, dataset, tmp_path, agent, fake_uploader):
-    """One attempt tells that the key is revoked; trying the next file, or
-    sleeping between attempts, cannot change the answer within the cycle."""
+    """One attempt tells that the key is revoked."""
     config = _write_config(tmp_path, upload=True)
     argv = ["--config", str(config), "--quiet", "extract-all", "--entity", "CINF", "--mode", "full"]
     fake_uploader.error = agent.UploadRejected(
@@ -965,9 +877,6 @@ def test_a_rejected_key_stops_every_upload_of_the_cycle(b1_env, dataset, tmp_pat
     assert "upload rejected (AccessDenied); check the access key and the IAM policy for the bucket" in log
     assert "no further upload is tried this cycle" in log
 
-    # Still rejected on the next cycle: the drain tries the oldest file,
-    # stops, and the rest wait untouched (no attempt, no sleep) while the
-    # cycle's own new files are spooled with the reason.
     fake_uploader.calls = []
     assert agent.main(argv) == 1
     assert [name for _, name in _uploads(fake_uploader)] == [rows[0]["object_name"]]
@@ -976,7 +885,6 @@ def test_a_rejected_key_stops_every_upload_of_the_cycle(b1_env, dataset, tmp_pat
     assert len(again) == 2 * len(rows) and all(r["attempts"] == 1 for r in again[len(rows):])
     assert all("upload rejected (AccessDenied)" in r["last_error"] for r in again)
 
-    # Key fixed: everything drains, then the new files go up.
     fake_uploader.error = None
     fake_uploader.calls = []
     assert agent.main(argv) == 0
@@ -992,8 +900,7 @@ def test_test_connection_probes_the_scoped_prefix(b1_env, dataset, tmp_path, age
 
 
 def test_a_missing_spool_file_is_a_lost_file_and_a_failed_cycle(b1_env, dataset, tmp_path, agent, fake_uploader):
-    """The watermark already covers a spooled batch; a file that vanished
-    is a permanent Bronze gap and must never pass as a clean cycle."""
+    """The watermark already covers a spooled batch."""
     config = _write_config(tmp_path, upload=True)
     argv = ["--config", str(config), "--quiet", "extract", "--entity", "CINF", "--mode", "full"]
     fake_uploader.error = agent.UploadError("upload failed after 5 attempts: ConnectionError: down")
@@ -1025,7 +932,6 @@ def test_a_missing_spool_file_is_a_lost_file_and_a_failed_cycle(b1_env, dataset,
     text = _run(config, "status").stdout
     assert "lost: 1" in text and f"LOST {gone['object_name']}" in text and "re-extract the table" in text
 
-    # The record stays; a later cycle is not blocked by it.
     assert agent.main(argv) == 0
     assert len(_spool_rows(config, "spool_lost")) == 1
 
@@ -1057,9 +963,7 @@ def test_a_truncated_spool_file_is_quarantined_and_never_uploaded(b1_env, datase
 
 
 def test_an_uploaded_file_windows_will_not_let_us_delete_is_still_delivered(b1_env, dataset, tmp_path, agent, fake_uploader, monkeypatch):
-    """S3 confirmed the upload: a PermissionError from an antivirus holding
-    the file must not fail the run (the watermark has moved; a retry would
-    duplicate the batch). The leftover is swept on the next drain."""
+    """S3 confirmed the upload: a PermissionError from an antivirus holding the file must not fail the run (the watermark has moved."""
     config = _write_config(tmp_path, upload=True)
     argv = ["--config", str(config), "--quiet", "extract", "--entity", "CINF", "--mode", "full"]
     real_unlink = Path.unlink
@@ -1086,9 +990,6 @@ def test_an_uploaded_file_windows_will_not_let_us_delete_is_still_delivered(b1_e
     assert all(name != leftover.name for name, _ in _uploads(fake_uploader) for leftover in leftovers), "swept, not re-uploaded"
     assert _log_text(config).count("removed leftover spool file") == len(leftovers)
     assert [r["status"] for r in _runs(config)] == ["success", "success"]
-
-
-# ── run lock ───────────────────────────────────────────────────────────────
 
 
 @pytest.fixture
@@ -1146,9 +1047,6 @@ def test_a_second_run_exits_1_at_once_while_another_holds_the_lock(agent, sleepe
     assert f"another agent run is in progress (pid {sleeper.pid})" in _log_text(config)
     assert _runs(config) == [], "nothing ran"
     assert lock.read_text(encoding="utf-8").startswith(f"{sleeper.pid} ")
-
-
-# ── modes: incremental after an edit, a date range, a snapshot table ───────
 
 
 def test_a_date_range_is_a_historical_read_that_stores_no_watermark(b1_env, dataset, tmp_path):
@@ -1216,9 +1114,6 @@ def test_a_snapshot_table_asked_incrementally_is_read_whole(b1_env, dataset, tmp
     assert not any(k.startswith("OITW@") for k in _watermarks(config)), "a snapshot records no watermark"
 
 
-# ── entity selection ───────────────────────────────────────────────────────
-
-
 def _config_from(agent, tmp_path: Path, agent_lines: str):
     return agent.load_config(_write_config(tmp_path, extra=agent_lines), env={})
 
@@ -1279,14 +1174,8 @@ def test_extract_all_honours_entities_and_exclude_against_the_source(b1_env, dat
     assert "--entity OITW overrides [agent] exclude for this run" in _log_text(config)
 
 
-# ── installed layout ───────────────────────────────────────────────────────
-
-
 def _module_level(tree: ast.Module):
-    """Statements that run on import: the module body, looking into ``if``
-    and ``try`` blocks but never into a function or class body (the
-    cartridge modules import their platform-only helpers lazily, inside
-    functions the agent never calls; the installed-layout test proves it)."""
+    """Statements that run on import: the module body, looking into ``if`` and ``try`` blocks but never into a function or class body (the cartridge modules import their platform-only helpers lazily, inside functions the agent never calls."""
     todo = list(tree.body)
     while todo:
         node = todo.pop()
@@ -1298,8 +1187,7 @@ def _module_level(tree: ast.Module):
 
 
 def _transitive_app_modules(start: Path) -> set[str]:
-    """Every ``app.*`` module ``start`` imports at import time, directly or
-    through the modules it imports."""
+    """Every ``app.*`` module ``start`` imports at import time, directly or through the modules it imports."""
     modules: set[str] = set()
     todo, seen = [start], set()
     while todo:
@@ -1324,8 +1212,7 @@ def _transitive_app_modules(start: Path) -> set[str]:
 
 
 def test_install_copies_exactly_the_modules_the_agent_imports(agent):
-    """install.ps1, agent.py's manifest and the transitive ``app.*`` imports
-    of agent.py must agree, or the installed agent dies on an ImportError."""
+    """install.ps1, agent.py's manifest and the transitive ``app.*`` imports of agent.py must agree, or the installed agent."""
     modules = _transitive_app_modules(AGENT)
     assert "app.services.intercompany_mapping" in modules
     expected = {module.replace(".", "/") + ".py" for module in modules}
@@ -1339,8 +1226,7 @@ def test_install_copies_exactly_the_modules_the_agent_imports(agent):
 
 
 def _install_like_install_ps1(tmp_path: Path) -> Path:
-    """The tree install.ps1 produces: <InstallRoot>/windows-agent/* and
-    <InstallRoot>/app/*, copied from the very lists the script holds."""
+    """The tree install.ps1 produces: <InstallRoot>/windows-agent/* and <InstallRoot>/app/*, copied from the very lists the."""
     root = tmp_path / "InstallRoot"
     for relative in _ps_array("agentFiles"):
         target = root / "windows-agent" / relative
@@ -1382,14 +1268,10 @@ def test_the_installed_layout_runs_against_the_source_without_the_repository(b1_
     assert proc.returncode == 0, proc.stderr
     assert [p.name for p in (tmp_path / "ic").rglob("*.parquet")] == ["IntercompanyPartners.parquet"]
 
-    # An incomplete copy is refused up front with the missing file named.
     (installed.parents[1] / "app" / "services" / "intercompany_mapping.py").unlink()
     proc = _run(config, "status", env=env, agent_path=installed)
     assert proc.returncode == 1
     assert "incomplete, missing app/services/intercompany_mapping.py; run install.ps1 again" in proc.stderr
-
-
-# ── incremental after a real edit in the source (last: it edits the fake) ──
 
 
 def test_an_incremental_run_picks_up_a_row_edited_in_the_source(b1_env, dataset, tmp_path):

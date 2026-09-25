@@ -1,13 +1,4 @@
-"""Silver and gold reconcile with the Business One fake, end to end.
-
-The real cartridge extracts every table from the Postgres fake into a local
-Bronze tree with the same layout the lakehouse uses; every dataset SQL then
-runs on DuckDB (the engine refinement uses) with the s3 paths pointed at that
-tree, silver outputs materialised like refinement does, and the results are
-compared with queries against the fake itself. Between the two cycles the
-fake is edited (documents changed, a line deleted, a snapshot row removed)
-so the state-current rules are proven, not assumed.
-"""
+"""Silver and gold reconcile with the Business One fake, end to end."""
 from __future__ import annotations
 
 import re
@@ -24,9 +15,6 @@ pytestmark = pytest.mark.usefixtures("fake_postgres")
 CARTRIDGE = Path(__file__).resolve().parents[1]
 DATASETS = CARTRIDGE / "datasets"
 HEADER_RE = re.compile(r"^--\s+(\S+)\s+\((silver|gold)\)\s+cartridge:\s+sap_b1\s*$")
-
-
-# ── the Bronze tree written by the real cartridge ──────────────────────────
 
 
 class Bronze:
@@ -58,7 +46,6 @@ class Bronze:
             monkeypatch.setattr(module, "fail_run", lambda **kw: self.failed.append(kw))
         monkeypatch.setattr(es, "get_watermark", lambda key: self.watermarks.get(key))
         monkeypatch.setattr(es, "update_watermark", lambda **kw: self.watermarks.__setitem__(kw["entity_name"], kw["last_watermark_value"]))
-        # The fake's newest stamps lie after today; the cap has its own test.
         monkeypatch.setattr(b1_source.Connection, "source_now", lambda self: datetime(2099, 1, 1))
 
 
@@ -80,9 +67,6 @@ def _extract(entities: list[str] | None = None, mode: str | None = None) -> None
         es.run_entity(config)
     if entities is None:
         ic.refresh_intercompany_partners()
-
-
-# ── DuckDB, the way refinement runs the datasets ───────────────────────────
 
 
 def _dataset_files() -> list[Path]:
@@ -119,9 +103,6 @@ def _month_map(rows) -> dict[tuple, Decimal]:
 def _cents(value: Decimal) -> Decimal:
     """Round like DuckDB's ROUND(x, 2): halves away from zero."""
     return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-
-
-# ── the fake, queried directly for expectations ────────────────────────────
 
 
 def _pg(dsn: str, sql: str, params=None):
@@ -170,18 +151,13 @@ def world(tmp_path_factory, fake_postgres, dataset):
     bronze.install(monkeypatch)
     dsn = fake_postgres["dsn"]
 
-    # Cycle 1: everything, full.
     _extract()
     assert not bronze.failed
     assert bronze.watermarks, "the full load records watermarks"
 
-    # Edits in the source: three invoices touched, one line dropped from the
-    # first of them, one zero-stock warehouse row removed from the snapshot.
     mfg = _schema(dataset, "mx_mfg")
     later = datetime.combine(dataset.as_of + timedelta(days=3), datetime.min.time()).replace(hour=10)
     edited = [r[0] for r in _pg(dsn, f'SELECT "DocEntry" FROM "{mfg}"."OINV" WHERE "CANCELED" = %s ORDER BY "DocEntry" DESC LIMIT 3', ("N",))]
-    # Same reasoning as the INV1/OITW deletes below: undo this in `finally`
-    # so the session-scoped fake keeps the stamps `dataset` describes.
     original_oinv_stamps = _pg(
         dsn,
         f'SELECT "DocEntry", "Comments", "UpdateDate", "UpdateTS" FROM "{mfg}"."OINV" WHERE "DocEntry" = ANY(%s)',
@@ -190,12 +166,6 @@ def world(tmp_path_factory, fake_postgres, dataset):
     _pg_exec(dsn, f'UPDATE "{mfg}"."OINV" SET "Comments" = %s, "UpdateDate" = %s, "UpdateTS" = %s WHERE "DocEntry" = ANY(%s)',
              ("editado tras la carga", later.replace(hour=0), 100000, edited))
     dropped_line = _pg(dsn, f'SELECT "LineNum", "LineTotal" FROM "{mfg}"."INV1" WHERE "DocEntry" = %s ORDER BY "LineNum" DESC LIMIT 1', (edited[0],))[0]
-    # Full rows, in the fake's own column order, so the deletes below can be
-    # undone exactly: `dataset`/`fake_postgres` are session-scoped and shared
-    # with every other cartridge test file (a bare DELETE with no restore
-    # left OITW one row short for the rest of the pytest session, corrupting
-    # any later test — e.g. in test_windows_agent.py — that trusts
-    # `dataset.tables` as the source of truth for row counts).
     inv1_columns = b1.columns("INV1")
     dropped_inv1_row = _pg(
         dsn,
@@ -214,7 +184,6 @@ def world(tmp_path_factory, fake_postgres, dataset):
     )[0]
     _pg_exec(dsn, f'DELETE FROM "{mfg}"."OITW" WHERE "ItemCode" = %s AND "WhsCode" = %s', removed_stock)
 
-    # Cycle 2: the incremental read of the edited documents and a fresh snapshot.
     _extract(["OINV", "INV1"], mode="incremental")
     _extract(["OITW"], mode="full")
     assert not bronze.failed
@@ -227,9 +196,6 @@ def world(tmp_path_factory, fake_postgres, dataset):
         }
     finally:
         con.close()
-        # Undo the deletes and the edit so the session-scoped fake database
-        # is exactly as `dataset` describes it for every test that runs
-        # after this file.
         for doc_entry, comments, update_date, update_ts in original_oinv_stamps:
             _pg_exec(
                 dsn,
@@ -249,9 +215,6 @@ def world(tmp_path_factory, fake_postgres, dataset):
             removed_oitw_row,
         )
         monkeypatch.undo()
-
-
-# ── state-current rules ────────────────────────────────────────────────────
 
 
 def test_every_latest_matches_the_source_after_the_edits(world, dataset):
@@ -293,9 +256,6 @@ def test_a_snapshot_row_removed_from_the_source_is_not_resurrected(world):
     assert loads[0][0] >= 2, "two snapshot runs exist in bronze"
 
 
-# ── currency contract ──────────────────────────────────────────────────────
-
-
 def test_currency_is_never_null_on_any_amount_row(world):
     con = world["con"]
     for path in _dataset_files():
@@ -310,9 +270,6 @@ def test_currency_is_never_null_on_any_amount_row(world):
     assert _rows(con, "SELECT COUNT(*) FROM sap_b1_ar_invoice_lines WHERE amount_doc <> amount_local") == [(0,)]
     off = _rows(con, "SELECT COUNT(*) FROM sap_b1_ar_invoice_lines WHERE company = 'mx_dist_a' AND amount_sys = amount_local AND amount_local <> 0")
     assert off == [(0,)], "system-currency amounts follow the daily rate for the USD company"
-
-
-# ── sales, cost and margin from the invoice lines ──────────────────────────
 
 
 def test_sales_gold_matches_the_invoice_lines_of_the_source(world, dataset):
@@ -374,9 +331,6 @@ def test_intercompany_is_eliminated_and_reconciles_on_both_sides(world, dataset)
     assert abs(Decimal(str(total_all)) - Decimal(str(total_consolidated)) - Decimal(str(eliminated))) <= Decimal("0.01") * 48, "per-month rounding only"
 
 
-# ── the accounting view ────────────────────────────────────────────────────
-
-
 def test_pnl_gold_matches_the_journal_of_the_source(world, dataset):
     con, dsn, generator = world["con"], world["dsn"], world["generator"]
     for company in dataset.companies:
@@ -395,9 +349,6 @@ def test_pnl_gold_matches_the_journal_of_the_source(world, dataset):
     assert _rows(con, "SELECT COUNT(*) FROM sap_b1_journal_lines WHERE is_intercompany_partner")[0][0] > 0
     usd = _rows(con, "SELECT COUNT(*) FROM sap_b1_pnl_by_company_month WHERE company = 'mx_dist_a' AND revenue_sys = revenue_local AND revenue_local <> 0")
     assert usd == [(0,)]
-
-
-# ── inventory ──────────────────────────────────────────────────────────────
 
 
 def test_inventory_gold_and_movements_agree_with_the_source(world, dataset):

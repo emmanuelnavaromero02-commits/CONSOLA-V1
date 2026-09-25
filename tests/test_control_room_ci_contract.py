@@ -332,12 +332,7 @@ def test_both_junit_reports_fail_closed_on_missing_or_bad_results():
 
 
 def test_the_business_one_cartridge_tests_run_in_their_own_verified_process():
-    """The cartridge's conftest puts its directory first on ``sys.path`` when
-    it is loaded, so any console test collected in the same pytest process
-    imports the cartridge's ``app`` (61 collection errors the first time the
-    two shared a process). The cartridge tests therefore run in a process of
-    their own, after the live step, and their JUnit report is verified with
-    the same fail-closed rules and a floor of its own."""
+    """The cartridge's conftest puts its directory first on ``sys.path`` when it is loaded, so any console test collected in the same pytest process imports the cartridge's ``app`` (61 collection errors the first time the two shared a process)."""
     text = _workflow_text()
     live = text.index("- name: Run live PostgreSQL/RLS tests")
     cartridge = text.index("- name: Run SAP Business One cartridge tests against the Postgres fake")

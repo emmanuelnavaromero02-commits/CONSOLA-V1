@@ -1,23 +1,5 @@
 name: Mirror MinIO images
 
-# MinIO withdrew every community artifact on 2026-09-24 (dl.min.io: 410 Gone;
-# quay.io/minio: 401). This workflow rebuilds the exact releases the platform
-# pins from their archived source tags and publishes them to this
-# repository's GHCR namespace (ghcr.io/<owner>/omega-minio and /omega-mc).
-# The resulting index digests (printed at the end of the run and in the job
-# summary) are what the composes, scripts and contract tests pin.
-#
-# Access: the packages MUST be created by a run of this workflow. A package
-# pushed with a personal token is private and, even when linked to the
-# repository through an `org.opencontainers.image.source` annotation, is not
-# readable by the GITHUB_TOKEN of the other workflows ("manifest unknown" /
-# "denied"); that is what happened to the first two attempts (packages `minio`
-# and `mc`, now unused). A package created with this repository's GITHUB_TOKEN
-# gets the repository's access, exactly like the release images.
-# `workflow_dispatch` only works for a workflow that exists on the default
-# branch, so the very first publication ran from the pull request that added
-# this file (temporary `pull_request` trigger, since removed); bump the
-# releases later with a manual dispatch from `main`.
 
 on:
   workflow_dispatch:

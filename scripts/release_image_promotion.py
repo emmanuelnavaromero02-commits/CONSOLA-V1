@@ -1342,8 +1342,6 @@ def verify_final(
             if result is None or _sha256(result.body) != receipt["digest"]:
                 raise PromotionError("final image reference does not match intent")
             verified += 1
-    # Two final references per canonical image: the release tag and the
-    # source-sha tag (see _final_references).
     expected = 2 * len(CANONICAL_SERVICES)
     if verified != expected:
         raise PromotionError(

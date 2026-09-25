@@ -1,17 +1,4 @@
-"""Generate datasets/sap_b1_<entity>_latest.sql from entities.yaml (run: python cartridges/sap_b1/tools/generate_silver_latest.py).
-
-Three shapes, chosen from the catalogue:
-  * stamped tables (b1_update_ts, no parent): current version per (company, key)
-    over the whole bronze history — never MAX(load_date), incremental deltas
-    would collapse the population;
-  * line tables (parent): current version per (company, key), then only the
-    lines that carry the header's latest stamp — a line dropped from a document
-    disappears the moment the document is re-read;
-  * integer logs (OINM, IBT1): rows never change, dedupe by key over history;
-  * snapshots (mode full, no watermark): the latest load per company, then the
-    latest batch of that load — deduplicating history would resurrect rows that
-    the source deleted.
-"""
+"""Generate datasets/sap_b1_<entity>_latest.sql from entities.yaml (run."""
 from __future__ import annotations
 
 import pathlib
@@ -27,8 +14,6 @@ entities = yaml.safe_load((CART / "app/config/entities.yaml").read_text())["enti
 TYPES = {"int64": "BIGINT", "decimal(19,6)": "DECIMAL(19,6)", "timestamp": "TIMESTAMP", "string": "VARCHAR"}
 
 def snake(name: str) -> str:
-    # DocEntry -> doc_entry, CANCELED -> canceled, UpdateTS -> update_ts, Line_ID -> line_id,
-    # DocTotalSy -> doc_total_sy, BASE_REF -> base_ref, TotalFrgn -> total_frgn
     s = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name)
     s = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", s)
     return re.sub(r"__+", "_", s).lower()
@@ -52,11 +37,7 @@ def render(e: dict) -> str:
     desc = e["description"].replace("\n", " ")
     header = f"-- {name}  (silver)  cartridge: sap_b1\n-- sources: [\"raw/sap_b1/{entity}\"]\n-- description: {desc}\n"
     if stamped and parent:
-        rule = (
-            "    -- Estado ACTUAL por clave sobre TODO el histórico bronze; después solo\n"
-            "    -- las líneas que llevan la marca más reciente de su cabecera: una línea\n"
-            "    -- borrada del documento desaparece en cuanto la cabecera se relee.\n"
-        )
+        rule = ""
         body = (
             "WITH versions AS (\n"
             f"{rule}"
@@ -89,16 +70,7 @@ def render(e: dict) -> str:
             f"ORDER BY company, {', '.join(snake(c) for c in pk)}\n"
         )
     elif stamped or log:
-        rule = (
-            "    -- Estado ACTUAL por clave sobre TODO el histórico bronze. La entidad es\n"
-            "    -- incremental: quedarse con MAX(load_date) colapsaría la población al\n"
-            "    -- delta del día. Un borrado en la fuente no se refleja hasta una carga\n"
-            "    -- completa; ver README del cartucho.\n"
-        ) if stamped else (
-            "    -- Las filas nunca cambian en la fuente; el mismo registro puede llegar\n"
-            "    -- más de una vez (carga completa + incremental), así que se deduplica\n"
-            "    -- por clave sobre todo el histórico bronze.\n"
-        )
+        rule = ""
         order = "_source_updated_at DESC NULLS LAST, load_date DESC, _extracted_at DESC" if stamped else "load_date DESC, _extracted_at DESC"
         body = (
             "WITH latest AS (\n"
@@ -123,12 +95,7 @@ def render(e: dict) -> str:
             f"ORDER BY company, {', '.join(snake(c) for c in pk)}\n"
         )
     else:
-        rule = (
-            "    -- Instantánea sin marca de agua: la corrida más reciente POR EMPRESA\n"
-            "    -- (todos sus lotes) y nada más. Deduplicar el histórico resucitaría\n"
-            "    -- filas que la fuente borró; quedarse con MAX(load_date) mezclaría dos\n"
-            "    -- corridas del mismo día.\n"
-        )
+        rule = ""
         dedupe = (
             f"               ROW_NUMBER() OVER (PARTITION BY s._company, {', '.join('s.' + c for c in pk)} ORDER BY s._extracted_at DESC) AS _rn\n"
             if pk else

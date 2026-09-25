@@ -359,9 +359,6 @@ def extract_all(
             "partial",
         )
     )
-    # Same rule as the DAG and the async job: a run that produced nothing
-    # because SuccessFactors was unreachable or rejected the credentials is
-    # "failed", not "completed_with_blocks".
     status_text = (
         "failed"
         if hard_failure

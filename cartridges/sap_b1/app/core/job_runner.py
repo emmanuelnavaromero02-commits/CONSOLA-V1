@@ -1,12 +1,4 @@
-"""
-SAP Business One Batch Job Runner
-=========================
-Manages async extraction jobs within the cartridge process.
-
-- Jobs are persisted to the shared service DB (jobs table).
-- Each job runs as an asyncio Task; sync extraction code runs in a thread pool.
-- The MCP tools expose create / status / list to the LLM.
-"""
+"""SAP Business One Batch Job Runner ========================= Manages async extraction jobs within the cartridge process."""
 from __future__ import annotations
 
 import asyncio
@@ -42,18 +34,13 @@ async def _apply_scope(conn) -> tuple[str, str]:
 _tasks: dict[str, asyncio.Task] = {}
 
 
-# ── DB pool ───────────────────────────────────────────────────────────────────
-
 async def _get_pool() -> asyncpg.Pool:
     global _pool
     if _pool is None:
-        # asyncpg needs postgresql:// not postgresql+psycopg2://
         dsn = settings.database_url.replace("postgresql+psycopg2://", "postgresql://")
         _pool = await asyncpg.create_pool(dsn, min_size=1, max_size=3)
     return _pool
 
-
-# ── Schema migration ──────────────────────────────────────────────────────────
 
 async def ensure_schema() -> None:
     """Create the jobs table if it doesn't exist (idempotent)."""
@@ -92,8 +79,6 @@ async def cleanup_stale() -> None:
     except Exception:
         pass
 
-
-# ── CRUD helpers ──────────────────────────────────────────────────────────────
 
 async def _insert(job_id: str, tool: str, args: dict) -> None:
     pool = await _get_pool()
@@ -141,8 +126,6 @@ async def fail_external_job(job_id: str | None, error: str) -> None:
         await _update(job_id, "failed", message="Failed in Airflow", error=error)
 
 
-# ── Central log writer ───────────────────────────────────────────────────────
-
 async def _log(
     job_id: str,
     entity: str | None,
@@ -166,19 +149,12 @@ async def _log(
         pass  # logs are best-effort
 
 
-# ── Public API ────────────────────────────────────────────────────────────────
-
 async def create_extract_job(
     config: dict,
     from_date: str | None = None,
     to_date: str | None = None,
 ) -> dict:
-    """
-    Create a background extraction job and return immediately.
-    - Si AIRFLOW_URL está configurado: delega al DAG sap_b1_extract en Airflow.
-    - Si no: corre la extracción inline en un asyncio Task (comportamiento original).
-    The LLM should use get_job_status(job_id) to track progress.
-    """
+    """Create a background extraction job and return immediately."""
     entity = config.get("entity", "unknown")
     mode   = config.get("mode", "full")
     job_id = str(uuid.uuid4())[:8]
@@ -208,10 +184,7 @@ async def create_extract_job(
 
 
 async def create_extract_all_job(mode: str = "incremental") -> dict:
-    """
-    Extract all enabled entities in parallel (max 4 concurrent).
-    Logs progress to run_logs; updates job message after each entity.
-    """
+    """Extract all enabled entities in parallel (max 4 concurrent)."""
     job_id = str(uuid.uuid4())[:8]
     await _insert(job_id, "sap_b1__extract_all", {"mode": mode})
     security_context = get_security_context()
@@ -252,14 +225,8 @@ async def list_jobs(limit: int = 10) -> list[dict]:
     return [_row_to_dict(r) for r in rows]
 
 
-# ── Silver refresh trigger ────────────────────────────────────────────────────
-
 async def _trigger_silver_refresh(entity: str, security_context: dict | None = None) -> None:
-    """
-    Notifica al refinement engine que hay nuevos datos Bronze para esta entidad.
-    El engine re-materializa todos los datasets Silver que dependen de esa fuente.
-    Fail-fast: si refresh-by-source falla, el job debe quedar fallido.
-    """
+    """Notifica al refinement engine que hay nuevos datos Bronze para esta entidad."""
     source = f"raw/sap_b1/{entity}"
     api_key = os.environ.get("INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT", "")
     if not api_key and os.environ.get("APP_ENV", "production").strip().lower() not in {"production", "prod"}:
@@ -284,8 +251,6 @@ async def _trigger_silver_refresh(entity: str, security_context: dict | None = N
     if errors or payload.get("error"):
         raise RuntimeError(f"refresh-by-source failed for {source}: {payload}")
 
-
-# ── Airflow trigger ───────────────────────────────────────────────────────────
 
 async def _trigger_airflow(
     job_id: str,
@@ -322,8 +287,6 @@ async def _trigger_airflow(
         ).raise_for_status(),
     )
 
-
-# ── Background executor ───────────────────────────────────────────────────────
 
 async def _run_extract_all(job_id: str, mode: str, security_context: dict | None = None) -> None:
     from app.services.catalog_service import get_all_entities

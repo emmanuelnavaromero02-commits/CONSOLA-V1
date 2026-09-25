@@ -1,9 +1,4 @@
-"""
-Lazy PostgreSQL connection helpers.
-
-The engine is built on first use so that an empty ``DATABASE_URL`` (e.g. in
-unit tests) does not crash at module import time.
-"""
+"""Lazy PostgreSQL connection helpers."""
 from __future__ import annotations
 
 from urllib.parse import urlparse

@@ -152,30 +152,7 @@ def hard_failure_code(
     *,
     attempted: int,
 ) -> str | None:
-    """Why a whole extract_all run must be recorded as failed, or None.
-
-    Per entity the classification is already honest: a 401 is
-    ``permission-blocked``, a timeout is ``failed-open``. The aggregate was
-    not: since 9099d16b (2026-06-26) it was a constant ``partial`` for anything
-    short of a clean run, so "every entity died on the network" and "one
-    entity had a pruned select" produced the same row, the same green Airflow
-    task and the same Panel. The rule here is deliberately narrow: a run is
-    failed only when it produced nothing at all, and then by the reason it
-    produced nothing.
-
-    * ``extraction_failed``: an entity failed open (network, storage, an
-      unclassified exception) and nothing was extracted.
-    * ``configuration_incomplete``: the connection itself is not configured.
-    * ``successfactors_metadata_unavailable``: the ``$metadata`` preflight was
-      unreachable or throttled, in the plan or for every attempted entity.
-    * ``successfactors_access_denied``: credentials were rejected, by the
-      preflight or by every attempted entity.
-
-    Everything else stays partial, including a run where most entities
-    extracted and one timed out: gold was refreshed with what arrived and the
-    intelligence cascade must still run. A tenant that lacks permission for
-    some entities, a pruned select and a 404 on one EntitySet stay partial too.
-    """
+    """Why a whole extract_all run must be recorded as failed, or None."""
     produced = sum(
         int(summary.get(key) or 0) for key in ("extracted", "empty_valid", "partial")
     )
@@ -192,8 +169,6 @@ def hard_failure_code(
         for outcome in results
     ):
         return "configuration_incomplete"
-    # The plan's preflight lands in ``skipped``; the per-entity guard lands in
-    # ``results`` as ``skipped_explicit``. Both carry the same codes.
     codes = _metadata_failure_codes(results) | _metadata_failure_codes(skipped)
     if codes & _METADATA_ACCESS_CODES:
         return "successfactors_access_denied"

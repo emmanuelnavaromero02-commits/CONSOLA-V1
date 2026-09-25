@@ -1,23 +1,10 @@
-# Túnel WireGuard hacia la plataforma OMEGA, para el servidor del cliente.
-#
-# Sustituir cada marcador entre ángulos. La clave privada la genera la aplicación de
-# WireGuard en este servidor ("Añadir túnel vacío") y no se envía a nadie;
-# la clave pública que muestra la aplicación es la que nos envían.
-# Este archivo contiene la clave privada: guardarlo como cualquier otra
-# credencial del servidor, nunca en correo ni en un repositorio.
 
 [Interface]
 PrivateKey = <CUSTOMER_PRIVATE_KEY_GENERATED_ON_THIS_SERVER>
-# Dirección de este servidor dentro del túnel (la asignamos nosotros).
 Address = <CUSTOMER_PEER_TUNNEL_IP>/32
-# Sin DNS ni MTU especiales: el túnel no cambia nada más del servidor.
 
 [Peer]
-# Plataforma OMEGA. Clave pública y endpoint se entregan por canal seguro.
 PublicKey = <OMEGA_SERVER_PUBLIC_KEY>
 Endpoint = <OMEGA_VPN_PUBLIC_IP>:<WG_LISTEN_PORT>
-# Solo nuestra dirección de túnel viaja por el túnel. Ningún otro tráfico
-# del servidor cambia de ruta. No ampliar este valor.
 AllowedIPs = <WG_SERVER_TUNNEL_IP>/32
-# Mantiene abierta la salida por el cortafuegos/NAT (un paquete cada 25 s).
 PersistentKeepalive = 25
