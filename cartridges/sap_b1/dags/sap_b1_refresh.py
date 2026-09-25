@@ -19,6 +19,7 @@ SILENCE_LIMIT = timedelta(hours=6)
 AIRFLOW_URL = os.environ.get("AIRFLOW_URL", "http://airflow:8080")
 AIRFLOW_USER = os.environ.get("AIRFLOW_USER") or os.environ.get("AIRFLOW_ADMIN_USER") or "admin"
 AIRFLOW_PASSWORD = os.environ.get("AIRFLOW_PASSWORD") or os.environ.get("AIRFLOW_ADMIN_PASSWORD") or "admin"
+CARTRIDGE_URL = os.environ.get("SAP_B1_URL", "http://sap-b1:8206")
 
 _UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 _MARKER_RE = re.compile(
@@ -63,21 +64,9 @@ def latest_delivery(objects: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 
 def upstream_context(tenant_id: str, workspace_id: str) -> dict[str, Any]:
-    from runtime_security_context import sign_runtime_context
+    from sap_b1_security_context import sap_b1_security_context
 
-    return sign_runtime_context(
-        {
-            "trusted": True,
-            "source": "airflow",
-            "user_id": f"airflow:{DAG_ID}",
-            "role": "admin",
-            "workspace_role": "service",
-            "tenant_id": tenant_id,
-            "workspace_id": workspace_id,
-            "permissions": ["pipelines.run"],
-            "allowed_cartridges": [CARTRIDGE_ID],
-        }
-    )
+    return sap_b1_security_context(tenant_id, workspace_id, user_id=f"airflow:{DAG_ID}")
 
 
 def refresh_trigger(tenant_id: str, workspace_id: str, batch_id: str) -> dict[str, Any]:
@@ -130,12 +119,49 @@ def _list(client: Any, bucket: str, prefix: str) -> list[dict[str, Any]]:
     return objects
 
 
+def _internal_key() -> str:
+    key = os.environ.get("INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE", "")
+    if not key:
+        raise RuntimeError("INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE missing")
+    return key
+
+
+def refresh_parameters(tenant_id: str, workspace_id: str) -> None:
+    import requests
+
+    response = requests.post(
+        f"{CARTRIDGE_URL}/business-parameters/refresh",
+        params={"refresh_silver": "false"},
+        json={"security_context": upstream_context(tenant_id, workspace_id)},
+        headers={"X-Api-Key": _internal_key(), "X-Internal-Service": "airflow"},
+        timeout=120,
+    )
+    response.raise_for_status()
+
+
+def chain_run_exists(run_id: str) -> bool:
+    import requests
+    from urllib.parse import quote
+
+    response = requests.get(
+        f"{AIRFLOW_URL.rstrip('/')}/api/v1/dags/dataset_refresh_chain/dagRuns/{quote(run_id, safe='')}",
+        auth=(AIRFLOW_USER, AIRFLOW_PASSWORD),
+        timeout=30,
+    )
+    if response.status_code == 404:
+        return False
+    response.raise_for_status()
+    return True
+
+
 def refresh_scopes(
     scopes: list[tuple[str, str]],
     *,
     now: datetime,
     list_objects: Any,
     trigger: Any,
+    run_exists: Any = lambda run_id: False,
+    parameters: Any = lambda tenant_id, workspace_id: None,
 ) -> dict[str, Any]:
     triggered, already_done, silent, failed = [], [], [], []
     for tenant_id, workspace_id in scopes:
@@ -148,6 +174,10 @@ def refresh_scopes(
             if delivery is None:
                 continue
             admission = refresh_trigger(tenant_id, workspace_id, delivery["batch_id"])
+            if run_exists(admission["dag_run_id"]):
+                already_done.append(label)
+                continue
+            parameters(tenant_id, workspace_id)
             status = trigger(admission["dag_run_id"], admission["conf"])
             (already_done if status == 409 else triggered).append(label)
         except Exception as exc:  # noqa: BLE001
@@ -191,6 +221,8 @@ def sap_b1_refresh():
                 username=AIRFLOW_USER,
                 password=AIRFLOW_PASSWORD,
             ),
+            run_exists=chain_run_exists,
+            parameters=refresh_parameters,
         )
 
     refresh_deliveries()
