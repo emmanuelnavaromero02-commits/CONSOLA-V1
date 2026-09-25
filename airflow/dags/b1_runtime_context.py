@@ -59,14 +59,16 @@ def sap_b1_security_context(tenant_id: Any, workspace_id: Any, *, user_id: str) 
     )
 
 
-def security_context_from_conf(conf: Mapping[str, Any], *, user_id: str) -> dict[str, Any]:
+def security_context_from_conf(
+    conf: Mapping[str, Any], *, user_id: str, admitted_at: int | None = None
+) -> dict[str, Any]:
     supplied = conf.get("security_context")
     tenant_id = conf.get("tenant_id")
     workspace_id = conf.get("workspace_id")
     if supplied is not None:
         if not isinstance(supplied, Mapping) or supplied.get("trusted") is not True:
             raise ValueError("trusted security_context is required when supplied")
-        verify_runtime_signature(supplied)
+        verify_runtime_signature(supplied, now=admitted_at)
         allowed = {str(item) for item in supplied.get("allowed_cartridges") or []}
         if "*" not in allowed and CARTRIDGE_ID not in allowed:
             raise ValueError("sap_b1 is not allowed by the supplied security_context")
@@ -77,4 +79,9 @@ def security_context_from_conf(conf: Mapping[str, Any], *, user_id: str) -> dict
     return sap_b1_security_context(tenant_id, workspace_id, user_id=user_id)
 
 
-__all__ = ["CARTRIDGE_ID", "sap_b1_security_context", "security_context_from_conf"]
+def admission_time(dag_run: Any) -> int | None:
+    moment = getattr(dag_run, "queued_at", None) or getattr(dag_run, "start_date", None)
+    return int(moment.timestamp()) if moment is not None else None
+
+
+__all__ = ["CARTRIDGE_ID", "admission_time", "sap_b1_security_context", "security_context_from_conf"]

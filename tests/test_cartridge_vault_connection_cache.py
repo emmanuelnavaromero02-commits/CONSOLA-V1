@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import threading
 import types
 from collections import OrderedDict
 from pathlib import Path
@@ -27,6 +28,7 @@ def _load(cartridge: str, clock: list[float]):
         "Any": Any,
         "OrderedDict": OrderedDict,
         "time": types.SimpleNamespace(monotonic=lambda: clock[0]),
+        "threading": threading,
         "_MISSING": object(),
     }
     exec(compile(ast.Module(body=[node], type_ignores=[]), cartridge, "exec"), namespace)
@@ -73,3 +75,43 @@ def test_a_failed_refetch_falls_back_to_the_stale_entry_of_that_context(cartridg
     body = source[source.index("def _fetch_connection("):]
     body = body[: body.index("\ndef ", 1)]
     assert body.rstrip().endswith("return _CONNECTION_CACHE.stale(cache_key, {})")
+
+
+@pytest.mark.parametrize("cartridge", CARTRIDGES)
+def test_concurrent_lookups_never_trip_over_pruning(cartridge):
+    import sys
+    import time as real_time
+
+    node, _ = _class_source(cartridge)
+    namespace: dict[str, Any] = {
+        "Any": Any, "OrderedDict": OrderedDict, "time": real_time, "threading": threading, "_MISSING": object()
+    }
+    exec(compile(ast.Module(body=[node], type_ignores=[]), cartridge, "exec"), namespace)
+    cache = namespace["_ConnectionCache"](ttl_seconds=300, max_entries=64)
+    for index in range(8):
+        cache[f"ctx-{index}"] = {"password": str(index)}
+    errors: list[BaseException] = []
+    stop = real_time.monotonic() + 0.4
+
+    def hammer(offset: int) -> None:
+        try:
+            while real_time.monotonic() < stop:
+                for index in range(8):
+                    key = f"ctx-{(index + offset) % 8}"
+                    cache.get(key)
+                    cache.stale(key)
+                    cache[key] = {"password": key}
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    previous = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        threads = [threading.Thread(target=hammer, args=(offset,)) for offset in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+    finally:
+        sys.setswitchinterval(previous)
+    assert errors == []

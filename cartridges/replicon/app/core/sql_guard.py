@@ -25,7 +25,7 @@ _READ_FN_RE = re.compile(
     re.IGNORECASE,
 )
 _FORBIDDEN_FN_RE = re.compile(
-    r"\b(glob|sniff_csv|parquet_[a-z0-9_]+|query_table|query|read_text|read_blob|getenv|"
+    r"\b(sniff_csv|parquet_[a-z0-9_]+|read_text|read_blob|getenv|"
     r"iceberg_[a-z0-9_]+|delta_scan|sqlite_scan|postgres_scan|mysql_scan)\s*\(",
     re.IGNORECASE,
 )
@@ -36,19 +36,6 @@ _PATH_LIKE_RE = re.compile(
 )
 _COMMENT_RE = re.compile(r"(--|/\*)")
 _QUOTED_RE = re.compile(r"('(?:''|[^'])*'|\"(?:\"\"|[^\"])*\")")
-_QUOTED_CALL_RE = re.compile(r"''\s*\(")
-_WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
-_RELATION_KEYWORDS = frozenset(
-    {"FROM", "JOIN", "TABLE", "PIVOT", "UNPIVOT", "PIVOT_WIDER", "PIVOT_LONGER", "SUMMARIZE", "DESCRIBE", "SHOW"}
-)
-_EXPRESSION_KEYWORDS = frozenset(
-    {
-        "SELECT", "WHERE", "GROUP", "HAVING", "QUALIFY", "WINDOW", "ORDER", "BY", "LIMIT", "OFFSET",
-        "UNION", "INTERSECT", "EXCEPT", "VALUES", "ON", "USING", "AS", "WITH", "CASE", "WHEN", "THEN",
-        "ELSE", "END", "IN", "AND", "OR", "NOT", "LIKE", "ILIKE", "GLOB", "SIMILAR", "BETWEEN", "IS",
-        "FILTER", "OVER", "PARTITION", "DISTINCT", "ALL", "ANY", "SOME", "EXISTS", "ESCAPE", "COLLATE",
-    }
-)
 _LIMIT_RE = re.compile(r"\bLIMIT\s+(?P<value>[^\s,)]+)", re.IGNORECASE)
 _TAUTOLOGY_RE = re.compile(
     r"\b(?:OR|AND)\s+(?P<left>\d+)\s*=\s*(?P=left)\b",
@@ -115,53 +102,173 @@ def _validate_limit_clause(masked_sql: str) -> tuple[bool, str | None]:
     return True, None
 
 
-def _mask_keep_length(sql: str) -> str:
-    return _QUOTED_RE.sub(lambda m: m.group(0)[0] + " " * (len(m.group(0)) - 2) + m.group(0)[-1], sql)
+_TABLE_REF_TYPES = frozenset({"BASE_TABLE", "TABLE_FUNCTION", "SUBQUERY", "JOIN", "EMPTY", "EXPRESSION_LIST"})
+_READER_TABLE_FUNCTIONS = frozenset({"read_parquet", "read_csv"})
+_SAFE_TABLE_FUNCTIONS = frozenset({"range", "generate_series", "unnest"})
+_BLOCKED_FUNCTION_PREFIXES = (
+    "read_", "parquet_", "duckdb_", "pragma_", "iceberg_", "delta_", "sqlite_", "postgres_", "mysql_", "st_read",
+)
+_BLOCKED_FUNCTIONS = frozenset(
+    {
+        "glob", "sniff_csv", "query", "query_table", "getenv", "current_setting", "getvariable",
+        "which_secret", "json_serialize_sql", "json_deserialize_sql", "json_execute_serialized_sql",
+        "csv_scan", "csv_auto", "json_scan", "load", "install",
+    }
+)
 
 
-def _relation_position(masked: str, start: int) -> bool:
-    depth = 0
-    i = start - 1
-    while i >= 0:
-        ch = masked[i]
-        if ch in ")]":
-            depth += 1
-            i -= 1
-            continue
-        if ch in "([":
-            if depth:
-                depth -= 1
-                i -= 1
-                continue
-            before = _WORD_RE.findall(masked[:i].rstrip()[-64:])
-            return bool(before) and before[-1].upper() in _RELATION_KEYWORDS
-        if ch.isalnum() or ch in "_$":
-            end = i + 1
-            while i >= 0 and (masked[i].isalnum() or masked[i] in "_$"):
-                i -= 1
-            if depth == 0:
-                word = masked[i + 1 : end].upper()
-                if word in _RELATION_KEYWORDS:
-                    return True
-                if word in _EXPRESSION_KEYWORDS:
-                    return False
-            continue
-        i -= 1
+def _parse_tree(sql: str) -> dict | None:
+    import json
+
+    import duckdb
+
+    conn = duckdb.connect()
+    try:
+        raw = conn.execute("SELECT json_serialize_sql(?::VARCHAR)", [sql]).fetchone()[0]
+    finally:
+        conn.close()
+    tree = json.loads(raw)
+    if not isinstance(tree, dict) or tree.get("error") or len(tree.get("statements") or []) != 1:
+        return None
+    return tree
+
+
+def _cte_names(node: object, names: set[str]) -> set[str]:
+    if isinstance(node, dict):
+        cte_map = node.get("cte_map")
+        if isinstance(cte_map, dict):
+            for entry in cte_map.get("map") or []:
+                if isinstance(entry, dict) and entry.get("key"):
+                    names.add(str(entry["key"]).lower())
+        for value in node.values():
+            _cte_names(value, names)
+    elif isinstance(node, list):
+        for value in node:
+            _cte_names(value, names)
+    return names
+
+
+def _constant_text(node: object) -> str | None:
+    if isinstance(node, dict) and node.get("class") == "COLUMN_REF":
+        names = node.get("column_names") or []
+        return str(names[0]) if len(names) == 1 else None
+    if not isinstance(node, dict) or node.get("class") != "CONSTANT":
+        return None
+    value = node.get("value") or {}
+    if value.get("is_null") or (value.get("type") or {}).get("id") != "VARCHAR":
+        return None
+    return str(value.get("value"))
+
+
+def _reader_paths(function: dict) -> list[str] | None:
+    children = function.get("children") or []
+    if not children:
+        return None
+    first = children[0]
+    text = _constant_text(first)
+    if text is not None:
+        paths = [text]
+    elif isinstance(first, dict) and first.get("class") == "FUNCTION" and first.get("function_name") == "list_value":
+        paths = [_constant_text(child) for child in first.get("children") or []]
+        if not paths or any(path is None for path in paths):
+            return None
+    else:
+        return None
+    for option in children[1:]:
+        if not isinstance(option, dict) or option.get("class") != "COMPARISON":
+            return None
+        if (option.get("left") or {}).get("class") != "COLUMN_REF" or not _is_static(option.get("right")):
+            return None
+    return paths
+
+
+def _is_static(node: object) -> bool:
+    if not isinstance(node, dict):
+        return False
+    kind = node.get("class")
+    if kind == "CONSTANT":
+        return True
+    if kind == "CAST":
+        return _is_static(node.get("child"))
+    if kind == "FUNCTION" and node.get("function_name") in ("struct_pack", "list_value", "row"):
+        return all(_is_static(child) for child in node.get("children") or [])
     return False
 
 
-def _stray_path_literal(sql: str, reader_spans: list[tuple[int, int]]) -> str | None:
-    masked = _mask_keep_length(sql)
-    for literal in _QUOTED_RE.finditer(sql):
-        start, end = literal.span()
-        if any(start >= s and end <= e for s, e in reader_spans):
-            continue
-        if not _relation_position(masked, start):
-            continue
-        body = literal.group(0)[1:-1]
-        if _PATH_LIKE_RE.search(unquote(body).strip()):
-            return body
+def _path_violation(path: str, prefixes: tuple[str, ...], required_scope: str | None) -> str | None:
+    raw_path = _canonical_s3_path(path)
+    if raw_path.lower().startswith(("file:", "/", "../", "~", "http:", "https:")):
+        return "DuckDB readers may only read from the cartridge S3 prefixes"
+    if "/../" in raw_path or raw_path.endswith("/.."):
+        return "DuckDB reader path traversal is not allowed"
+    if not any(raw_path.startswith(prefix) for prefix in prefixes):
+        return f"DuckDB reader path must start with one of {prefixes}"
+    if not _has_exact_scope(raw_path, required_scope):
+        return "DuckDB reader path must stay inside the active tenant/workspace scope"
     return None
+
+
+def _tree_violation(
+    node: object,
+    ctes: set[str],
+    prefixes: tuple[str, ...],
+    required_scope: str | None,
+) -> str | None:
+    if isinstance(node, list):
+        for value in node:
+            found = _tree_violation(value, ctes, prefixes, required_scope)
+            if found:
+                return found
+        return None
+    if not isinstance(node, dict):
+        return None
+    kind = node.get("type")
+    if isinstance(kind, str) and "class" not in node and "query_location" in node and "alias" in node:
+        if kind not in _TABLE_REF_TYPES:
+            return f"Unsupported relation in query_kb: {kind.lower()}"
+        if kind == "BASE_TABLE":
+            if node.get("schema_name") or node.get("catalog_name") or str(node.get("table_name") or "").lower() not in ctes:
+                return "Only CTEs and read_parquet/read_csv sources are allowed in query_kb"
+        if kind == "TABLE_FUNCTION":
+            function = node.get("function") or {}
+            name = str(function.get("function_name") or "").lower()
+            if function.get("schema") not in ("", "main", None):
+                return "Schema-qualified table functions are not allowed in query_kb"
+            if name in _READER_TABLE_FUNCTIONS:
+                paths = _reader_paths(function)
+                if paths is None:
+                    return "DuckDB readers must use direct string literal paths and constant options"
+                for path in paths:
+                    found = _path_violation(path, prefixes, required_scope)
+                    if found:
+                        return found
+            elif name not in _SAFE_TABLE_FUNCTIONS:
+                return f"Forbidden DuckDB table function in query_kb: {name}"
+    if node.get("class") == "FUNCTION":
+        name = str(node.get("function_name") or "").lower()
+        if name in _BLOCKED_FUNCTIONS or name.startswith(_BLOCKED_FUNCTION_PREFIXES):
+            return f"Forbidden DuckDB function in query_kb: {name}"
+    for key, value in node.items():
+        if key == "function" and kind == "TABLE_FUNCTION":
+            for child in (value or {}).get("children") or []:
+                found = _tree_violation(child, ctes, prefixes, required_scope)
+                if found:
+                    return found
+            continue
+        found = _tree_violation(value, ctes, prefixes, required_scope)
+        if found:
+            return found
+    return None
+
+
+def _ast_violation(sql: str, prefixes: tuple[str, ...], required_scope: str | None) -> str | None:
+    try:
+        tree = _parse_tree(sql)
+    except Exception:  # noqa: BLE001
+        return "SQL could not be parsed"
+    if tree is None:
+        return "Only a single SELECT/WITH statement is allowed in query_kb"
+    return _tree_violation(tree["statements"], _cte_names(tree, set()), prefixes, required_scope)
 
 
 def validate_kb_sql(
@@ -203,10 +310,7 @@ def validate_kb_sql(
     if match:
         return False, f"Forbidden DuckDB keyword in query_kb: {match.group(1).upper()}"
 
-    if _QUOTED_CALL_RE.search(masked):
-        return False, "Quoted function names are not allowed in query_kb"
-
-    forbidden_fn = _FORBIDDEN_FN_RE.search(stripped)
+    forbidden_fn = _FORBIDDEN_FN_RE.search(masked)
     if forbidden_fn:
         return False, f"Forbidden DuckDB function in query_kb: {forbidden_fn.group(1).lower()}"
 
@@ -221,10 +325,6 @@ def validate_kb_sql(
     if len(direct_literal_calls) != len(read_calls):
         return False, "DuckDB readers must use a direct string literal path"
 
-    reader_spans = [call.span() for call in _READ_FN_RE.finditer(stripped)]
-    if _stray_path_literal(stripped, reader_spans) is not None:
-        return False, "File paths may only appear as the first argument of read_parquet/read_csv"
-
     normalized_prefixes = _prefixes(allowed_bucket_prefix)
     for fn in _READ_FN_RE.finditer(stripped):
         name = fn.group(1).lower()
@@ -237,5 +337,9 @@ def validate_kb_sql(
             return False, f"{name} path must start with one of {normalized_prefixes}"
         if not _has_exact_scope(raw_path, required_scope):
             return False, f"{name} path must stay inside the active tenant/workspace scope"
+
+    violation = _ast_violation(stripped, normalized_prefixes, required_scope)
+    if violation:
+        return False, violation
 
     return True, None

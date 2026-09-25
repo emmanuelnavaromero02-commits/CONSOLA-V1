@@ -52,7 +52,7 @@ _SQL_FORBIDDEN_RE = re.compile(
 )
 _SQL_COMMENT_RE = re.compile(r"(--|/\*)")
 _SQL_READER_CALL_RE = re.compile(
-    r"\b(read_[a-z0-9_]+|parquet_scan|csv_scan|csv_auto|json_scan|glob|sniff_csv|query_table|query)\s*\(",
+    r"\b(read_parquet|read_csv|read_json|read_ndjson|read_text|read_blob|parquet_scan|csv_scan|csv_auto|json_scan)\s*\(",
     re.IGNORECASE,
 )
 _SCOPED_READER_RE = re.compile(
@@ -66,7 +66,8 @@ _DIRECT_STORAGE_SCAN_RE = re.compile(
 )
 _SINGLE_QUOTED_RE = re.compile(r"'(?:''|[^'])*'", re.DOTALL)
 _SQL_QUOTED_TOKEN_RE = re.compile(r"'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"", re.DOTALL)
-_SQL_QUOTED_CALL_RE = re.compile(r"(?:'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\")\s*\(", re.DOTALL)
+_SQL_UNTOKENIZED_LITERAL_RE = re.compile(r"\$|(?<![A-Za-z0-9_])[Ee]'")
+_SQL_DISTINCT_FROM_RE = re.compile(r"(?<![.\w$])IS\s+(?:NOT\s+)?DISTINCT\s*$", re.IGNORECASE)
 _SQL_PATH_LIKE_RE = re.compile(
     r"^(?:[a-z][a-z0-9+.-]*://|/|~|\.{1,2}[/\\]|[a-z]:[/\\])|\.\.[/\\]|[/\\]\.\."
     r"|\.(?:csv|tsv|parquet|json|jsonl|ndjson|txt|gz|zst|xlsx?|db|duckdb|sqlite|arrow|feather|avro)$",
@@ -378,6 +379,8 @@ def _sql_relation_position(masked: str, start: int) -> bool:
                 i -= 1
             if depth == 0:
                 word = masked[i + 1 : end].upper()
+                if word == "FROM" and _SQL_DISTINCT_FROM_RE.search(masked, 0, i + 1):
+                    return False
                 if word in _SQL_RELATION_KEYWORDS:
                     return True
                 if word in _SQL_EXPRESSION_KEYWORDS:
@@ -396,8 +399,11 @@ def _validate_direct_cartridge_sql(ctx: dict, cartridge_id: str, sql: str) -> No
         raise PermissionError("cartridge SQL contains unsafe statements or comments")
     if _DUCKDB_SCHEMA_RE.search(masked):
         raise PermissionError("cartridge SQL cannot read service database schemas")
-    if _SQL_QUOTED_CALL_RE.search(sql):
-        raise PermissionError("cartridge SQL cannot call quoted function names")
+    kept_length = _SQL_QUOTED_TOKEN_RE.sub(
+        lambda m: m.group(0)[0] + " " * (len(m.group(0)) - 2) + m.group(0)[-1], sql
+    )
+    if _SQL_UNTOKENIZED_LITERAL_RE.search(kept_length):
+        raise PermissionError("cartridge SQL cannot use dollar-quoted or escape string literals")
     reader_calls = list(_SQL_READER_CALL_RE.finditer(sql))
     direct_readers = list(_SCOPED_READER_RE.finditer(sql))
     if not direct_readers or len(reader_calls) != len(direct_readers):
@@ -407,10 +413,10 @@ def _validate_direct_cartridge_sql(ctx: dict, cartridge_id: str, sql: str) -> No
     for match in _SQL_STORAGE_LITERAL_RE.finditer(sql):
         _require_direct_cartridge_sql_path(ctx, cartridge_id, match.group(2))
     for match in _DIRECT_STORAGE_SCAN_RE.finditer(sql):
-        _require_direct_cartridge_sql_path(ctx, cartridge_id, match.group(2))
-    kept_length = _SQL_QUOTED_TOKEN_RE.sub(
-        lambda m: m.group(0)[0] + " " * (len(m.group(0)) - 2) + m.group(0)[-1], sql
-    )
+        if _SQL_DISTINCT_FROM_RE.search(kept_length, 0, match.start()):
+            continue
+        if _SQL_PATH_LIKE_RE.search(match.group(2).strip()):
+            _require_direct_cartridge_sql_path(ctx, cartridge_id, match.group(2))
     reader_spans = [m.span() for m in direct_readers]
     for literal in _SQL_QUOTED_TOKEN_RE.finditer(sql):
         start, end = literal.span()

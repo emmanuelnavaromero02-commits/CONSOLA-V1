@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 import hashlib
 import json
@@ -26,49 +27,57 @@ class _ConnectionCache:
         self._max = max_entries
         self._max_stale = max_stale_seconds
         self._items: OrderedDict[Any, tuple[float, Any]] = OrderedDict()
+        self._lock = threading.RLock()
 
     def _prune(self, now: float) -> None:
-        for key in [k for k, (stored_at, _) in self._items.items() if now - stored_at > self._max_stale]:
+        for key in [k for k, (stored_at, _) in list(self._items.items()) if now - stored_at > self._max_stale]:
             self._items.pop(key, None)
 
     def get(self, key: Any, default: Any = None) -> Any:
-        now = time.monotonic()
-        self._prune(now)
-        item = self._items.get(key)
-        if item is None:
-            return default
-        stored_at, value = item
-        if now - stored_at >= self._ttl:
-            return default
-        self._items.move_to_end(key)
-        return value
+        with self._lock:
+            now = time.monotonic()
+            self._prune(now)
+            item = self._items.get(key)
+            if item is None:
+                return default
+            stored_at, value = item
+            if now - stored_at >= self._ttl:
+                return default
+            self._items.move_to_end(key)
+            return value
 
     def stale(self, key: Any, default: Any = None) -> Any:
-        self._prune(time.monotonic())
-        item = self._items.get(key)
-        return default if item is None else item[1]
+        with self._lock:
+            self._prune(time.monotonic())
+            item = self._items.get(key)
+            return default if item is None else item[1]
 
     def __setitem__(self, key: Any, value: Any) -> None:
-        self._items[key] = (time.monotonic(), value)
-        self._items.move_to_end(key)
-        while len(self._items) > self._max:
-            self._items.popitem(last=False)
+        with self._lock:
+            self._items[key] = (time.monotonic(), value)
+            self._items.move_to_end(key)
+            while len(self._items) > self._max:
+                self._items.popitem(last=False)
 
     def __contains__(self, key: Any) -> bool:
         return self.get(key, _MISSING) is not _MISSING
 
     def __iter__(self):
-        return iter(list(self._items))
+        with self._lock:
+            return iter(list(self._items))
 
     def __len__(self) -> int:
-        return len(self._items)
+        with self._lock:
+            return len(self._items)
 
     def pop(self, key: Any, default: Any = None) -> Any:
-        item = self._items.pop(key, None)
-        return default if item is None else item[1]
+        with self._lock:
+            item = self._items.pop(key, None)
+            return default if item is None else item[1]
 
     def clear(self) -> None:
-        self._items.clear()
+        with self._lock:
+            self._items.clear()
 
 
 _MISSING = object()

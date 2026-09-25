@@ -89,7 +89,7 @@ def test_replicon_and_tests_pin_the_same_duckdb_version() -> None:
     assert _requirement(ROOT / "tests/requirements.txt") == expected
 
 
-def test_local_parquet_is_hermetic_and_process_deterministic(tmp_path: Path) -> None:
+def test_local_parquet_is_denied_hermetically_and_deterministically(tmp_path: Path) -> None:
     parquet = tmp_path / "observed.parquet"
     pd.DataFrame({"value": [7]}).to_parquet(parquet, index=False)
     sql = f"SELECT value FROM read_parquet('{parquet}')"
@@ -98,7 +98,9 @@ def test_local_parquet_is_hermetic_and_process_deterministic(tmp_path: Path) -> 
         home = tmp_path / f"home-{index}"
         results.append(_run_runtime(home, sql))
         assert not (home / ".duckdb/extensions").exists()
-    assert results == [{"status": "ok", "rows": [{"value": 7}]}] * 2
+    assert results[0] == results[1]
+    assert results[0]["status"] == "error"
+    assert "disabled by configuration" in results[0]["message"]
 
 
 def test_connection_disables_extension_install_and_skips_s3_for_local(
@@ -131,7 +133,9 @@ def test_connection_disables_extension_install_and_skips_s3_for_local(
             "autoload_known_extensions": "false",
         }
     ]
-    assert calls == ["SET lock_configuration=true;"]
+    assert "LOAD httpfs;" not in calls
+    assert calls[0].startswith("SET allowed_directories=['s3://")
+    assert calls[1:] == ["SET enable_external_access=false;", "SET lock_configuration=true;"]
     conn.close()
 
 

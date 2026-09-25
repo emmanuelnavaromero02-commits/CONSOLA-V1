@@ -43,10 +43,18 @@ def sap_b1_extract_all():
             "X-Api-Key": _internal_key(),
             "X-Internal-Service": "airflow",
         }
-        from b1_runtime_context import security_context_from_conf
+        from b1_runtime_context import admission_time, sap_b1_security_context, security_context_from_conf
+
+        verified = security_context_from_conf(
+            conf, user_id="airflow:sap_b1_extract_all", admitted_at=admission_time(context.get("dag_run"))
+        )
 
         def skill_body() -> dict:
-            return {"security_context": security_context_from_conf(conf, user_id="airflow:sap_b1_extract_all")}
+            return {
+                "security_context": sap_b1_security_context(
+                    verified["tenant_id"], verified["workspace_id"], user_id="airflow:sap_b1_extract_all"
+                )
+            }
 
         from service_job_client import idempotency_key, run_service_job
 
