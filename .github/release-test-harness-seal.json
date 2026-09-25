@@ -5731,7 +5731,7 @@
     },
     {
       "path": "tests/test_sap_successfactors_wisdombit.py",
-      "sha256": "2c4ec73c30df206781cfb180bef18beed13b64203466168a5c08c6c319802688"
+      "sha256": "c9b6db6a463f96168d944c1c4a3d0d0424deae5cdfe75d3c3b155cfb22af77b8"
     },
     {
       "path": "tests/test_scheduled_effect_authority_live.py",
