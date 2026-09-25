@@ -107,7 +107,7 @@ def _wrap(title: str, body_html: str) -> str:
 <html><body style="font-family:Helvetica,Arial,sans-serif;background:#0d1117;color:#e6edf3;padding:32px;">
   <div style="max-width:520px;margin:0 auto;background:#161b22;border:1px solid #30363d;border-radius:6px;padding:32px;">
     <div style="font-size:18px;font-weight:700;letter-spacing:2px;color:#3fb950;margin-bottom:4px">
-      <span style="color:#d29922">Ω</span>MEGA <span style="color:#6e7681;font-size:11px;letter-spacing:1.5px">BY EPIUSE</span>
+      <span style="color:#d29922">Ω</span>MEGA
     </div>
     <div style="font-size:9px;letter-spacing:2px;color:#6e7681;margin-bottom:24px">
       DECISION INTELLIGENCE PLATFORM
@@ -123,10 +123,10 @@ def _wrap(title: str, body_html: str) -> str:
 
 def render_invitation(name: str | None, email: str, link: str, ttl_hours: int) -> tuple[str, str]:
     greeting = f"Hola {name}," if name else "Hola,"
-    subject = "Invitación a ΩMEGA by EPIUSE"
+    subject = "Invitación a ΩMEGA"
     html = _wrap("BIENVENIDO", f"""
       <p>{greeting}</p>
-      <p>Te han invitado a usar <strong>ΩMEGA by EPIUSE</strong>. Activa tu cuenta y elige tu password en el siguiente link:</p>
+      <p>Te han invitado a usar <strong>ΩMEGA</strong>. Activa tu cuenta y elige tu password en el siguiente link:</p>
       <p style="margin:24px 0;">
         <a href="{link}" style="display:inline-block;background:#d29922;color:#1a1408;text-decoration:none;
                                 padding:12px 22px;border-radius:4px;font-weight:600;letter-spacing:1px;
@@ -150,7 +150,7 @@ def render_invitation_with_vpn(
     vpn_password: str | None = None,
 ) -> tuple[str, str]:
     greeting = f"Hola {name}," if name else "Hola,"
-    subject = "Bienvenida a ΩMEGA by EPIUSE"
+    subject = "Bienvenida a ΩMEGA"
 
     if vpn_password:
         vpn_block = f"""
@@ -191,7 +191,7 @@ def render_invitation_with_vpn(
 
     html = _wrap("BIENVENIDO", f"""
       <p>{greeting}</p>
-      <p>Te han invitado a usar <strong>ΩMEGA by EPIUSE</strong>. La plataforma vive
+      <p>Te han invitado a usar <strong>ΩMEGA</strong>. La plataforma vive
          dentro de una red privada, así que necesitas dos pasos para entrar:</p>
 
       <h3 style="font-size:13px;color:#3fb950;margin:24px 0 8px;letter-spacing:1px">
@@ -250,7 +250,7 @@ def _workspace_block() -> str:
 
 def render_vpn_config(name: str | None, link: str, ttl_hours: int) -> tuple[str, str]:
     greeting = f"Hola {name}," if name else "Hola,"
-    subject = "Acceso VPN — ΩMEGA by EPIUSE"
+    subject = "Acceso VPN — ΩMEGA"
     html = _wrap("ACCESO VPN", f"""
       <p>{greeting}</p>
       <p>Para conectarte a la plataforma desde fuera de la red corporativa necesitas
@@ -276,10 +276,10 @@ def render_vpn_config(name: str | None, link: str, ttl_hours: int) -> tuple[str,
 
 def render_password_reset(name: str | None, link: str, ttl_hours: int) -> tuple[str, str]:
     greeting = f"Hola {name}," if name else "Hola,"
-    subject = "Reestablecer password — ΩMEGA by EPIUSE"
+    subject = "Reestablecer password — ΩMEGA"
     html = _wrap("RESET DE PASSWORD", f"""
       <p>{greeting}</p>
-      <p>Recibimos una solicitud para restablecer tu password en <strong>ΩMEGA by EPIUSE</strong>.
+      <p>Recibimos una solicitud para restablecer tu password en <strong>ΩMEGA</strong>.
          Si fuiste tú, click aquí:</p>
       <p style="margin:24px 0;">
         <a href="{link}" style="display:inline-block;background:#d29922;color:#1a1408;text-decoration:none;

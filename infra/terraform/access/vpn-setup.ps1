@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-  Setup inicial de VPN WireGuard para MODecissions (admin / primer uso).
+  Setup inicial de VPN WireGuard para ΩMEGA (admin / primer uso).
 
 .PARAMETER VpnIp
   IP pÃºblica de la EC2 VPN. Obtener con: terraform output ec2_vpn_public_ip

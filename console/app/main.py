@@ -867,7 +867,7 @@ def _require_effective_permission(user: dict | None, permission: str) -> None:
     )
 
 
-app = FastAPI(title="ΩMEGA by EPIUSE Console", lifespan=lifespan)
+app = FastAPI(title="ΩMEGA Console", lifespan=lifespan)
 
 
 @app.exception_handler(HTTPException)

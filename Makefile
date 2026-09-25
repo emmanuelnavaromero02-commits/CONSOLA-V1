@@ -22,7 +22,7 @@ PROFILE ?= beta-safe
 .PHONY: test-hermetic reconcile-db-passwords
 
 help:
-	@echo "MODecissionsPaaS — targets:"
+	@echo "ΩMEGA — targets:"
 	@echo "  make preflight    check Docker/compose/.env/ports BEFORE 'make up'"
 	@echo "  make bootstrap-env"
 	@echo "                    generate/ensure infra/.env and pair keys"

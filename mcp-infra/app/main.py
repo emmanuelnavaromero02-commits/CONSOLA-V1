@@ -224,7 +224,7 @@ def _safe_rag_segment(value: str, label: str) -> str:
 
 
 app = FastAPI(
-    title="ΩMEGA by EPIUSE MCP Infra",
+    title="ΩMEGA MCP Infra",
     description="MCP tools for Airflow, MinIO, PostgreSQL, Superset, RAG",
     version="1.1.0",
     lifespan=_lifespan,

@@ -382,7 +382,7 @@ CONN_ID      = "default"   # short name; full Airflow conn_id = {cartridge}_defa
         + _CONN_BLOCK
         + _MINIO_BLOCK
         + '''\
-default_args = {{"owner": "modecissions", "retries": 1, "retry_delay": timedelta(minutes=5)}}
+default_args = {{"owner": "omega", "retries": 1, "retry_delay": timedelta(minutes=5)}}
 
 
 @dag(dag_id=DAG_ID, description=f"Extrae {{ENTITY}} (full) → Bronze",
@@ -510,7 +510,7 @@ WATERMARK_PARAM = "modifiedSince"  # EDIT_HERE: query-param que acepta el API pa
         + _CONN_BLOCK
         + _MINIO_BLOCK
         + '''\
-default_args = {{"owner": "modecissions", "retries": 1, "retry_delay": timedelta(minutes=5)}}
+default_args = {{"owner": "omega", "retries": 1, "retry_delay": timedelta(minutes=5)}}
 
 
 @dag(dag_id=DAG_ID, description=f"Extrae {{ENTITY}} (incremental) → Bronze",
@@ -675,7 +675,7 @@ SQL_QUERY = """
         + _CONN_BLOCK
         + _MINIO_BLOCK
         + '''\
-default_args = {{"owner": "modecissions", "retries": 1, "retry_delay": timedelta(minutes=5)}}
+default_args = {{"owner": "omega", "retries": 1, "retry_delay": timedelta(minutes=5)}}
 
 
 @dag(dag_id=DAG_ID, description=f"Extrae {{ENTITY}} desde BD → Bronze",
@@ -818,7 +818,7 @@ POLL_TIMEOUT    = 300                # segundos máximo esperando el extract
         + _CONN_BLOCK
         + _MINIO_BLOCK
         + '''\
-default_args = {{"owner": "modecissions", "retries": 1, "retry_delay": timedelta(minutes=5)}}
+default_args = {{"owner": "omega", "retries": 1, "retry_delay": timedelta(minutes=5)}}
 
 
 @dag(dag_id=DAG_ID, description=f"Extrae {{ENTITY}} de Replicon → Bronze",
