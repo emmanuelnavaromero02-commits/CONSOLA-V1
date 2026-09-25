@@ -21,6 +21,14 @@
             "declarations_sha256": "4aa2a9643acb102ae03b911897e25e4c775c33e4e3059373f3cdef8a383521a0"
           },
           {
+            "path": "cartridges/sap_b1/tests/conftest.py",
+            "declarations_sha256": "c4fcbf4fc970f72620b6d6d0ba37b4cefecf4318e9edd9cd23c233007ca36bac"
+          },
+          {
+            "path": "cartridges/sap_b1/tests/test_connect_kit.py",
+            "declarations_sha256": "c72a952abf5dd48aec1285ec28ec589809b6e305bce6809f060d729d209be2b1"
+          },
+          {
             "path": "cartridges/sap_hcm/tests/test_watermark_scope_isolation_sap_hcm.py",
             "declarations_sha256": "f5ec1affd7e8f70c4caefb2f96894a2b30bc1586cf0fee9be8d8a76197f249ea"
           },
@@ -117,6 +125,14 @@
             "declarations_sha256": "a07a61032c77402d9019dc779f7e51a79d5bb81a6e40bb2859936a843b9f3b76"
           },
           {
+            "path": "tests/test_sap_b1_datasets.py",
+            "declarations_sha256": "2f367aed9e2ec776159917b20364e3ecaf1d8d860dc7b2429328f5e4c1ee93ea"
+          },
+          {
+            "path": "tests/test_sap_b1_fake_schema.py",
+            "declarations_sha256": "f35c8fb920786854145bec3a3637f8b8ab1224023800b0057ddc898d0228c9f4"
+          },
+          {
             "path": "tests/test_sap_entities_seeded.py",
             "declarations_sha256": "0f62829e784e2385b59a763e8541e7e6dc9e2cd550e8603001f308dc27fa05b6"
           },
@@ -205,7 +221,7 @@
             "declarations_sha256": "fe98517b8fbaab00c4a1a5cbb56109ea74a148b947f3b8e79f6e6d5110e47953"
           }
         ],
-        "inventory_sha256": "5061034f335e5c62b659041413c0d6edf33467d28502affdbec7eb67f5d7c9fc"
+        "inventory_sha256": "81d2a37756a2eafcac19059e47d8a05e8f15b339c451eca0f66205571aec43dd"
       }
     },
     {
