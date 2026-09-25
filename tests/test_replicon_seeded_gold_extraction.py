@@ -14,7 +14,7 @@ def test_replicon_airflow_dag_short_circuits_seeded_gold_before_http_client() ->
     assert "no external Replicon API extraction was run" in source
 
     direct_seed_branch = source.index("if _is_seeded_gold_conn_id(conn_id):")
-    vault_reveal = source.index("base_url, connection, resolved_conn_id = _resolve_connection(entity, conn_id)")
+    vault_reveal = source.index("base_url, connection, resolved_conn_id = _resolve_connection(entity, conn_id, security_context)")
     seed_branch = source.index("if _is_seeded_gold_connection(base_url, connection):")
     external_client = source.index("client = _RepliconClient(base_url, connection)")
 

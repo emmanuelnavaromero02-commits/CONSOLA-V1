@@ -138,15 +138,56 @@ def test_same_key_attaches_to_the_running_job_instead_of_running_twice():
     assert len(service.calls) == 1
 
 
-def test_same_key_with_a_different_request_is_a_conflict():
+def test_same_key_for_a_different_target_is_a_conflict():
     service = _Service()
 
     async def scenario():
         async with _client(service) as client:
             await client.post("/entities/Items/extract", json={"a": 1}, headers=ASYNC)
-            return await client.post("/entities/Items/extract", json={"a": 2}, headers=ASYNC)
+            other_entity = await client.post("/entities/Orders/extract", json={"a": 1}, headers=ASYNC)
+            other_query = await client.post(
+                "/entities/Items/extract", params={"mode": "full"}, json={"a": 1}, headers=ASYNC
+            )
+            return other_entity.status_code, other_query.status_code
 
-    assert _run(scenario()).status_code == 409
+    assert _run(scenario()) == (409, 409)
+
+
+def test_a_retry_with_a_re_signed_body_attaches_to_the_running_job():
+    service = _Service()
+    service.release.clear()
+
+    async def scenario():
+        async with _client(service) as client:
+            first = (await client.post("/entities/Items/extract", json={"_signed_at": 1}, headers=ASYNC)).json()
+            second = await client.post("/entities/Items/extract", json={"_signed_at": 301}, headers=ASYNC)
+            service.release.set()
+            await _settle(client, first)
+            return first, second
+
+    first, second = _run(scenario())
+    assert second.status_code == 202
+    assert second.json()["job_id"] == first["job_id"]
+    assert len(service.calls) == 1
+
+
+def test_a_retry_with_a_re_signed_body_after_failure_runs_again():
+    service = _Service()
+
+    async def scenario():
+        async with _client(service) as client:
+            first = await _settle(
+                client,
+                (await client.post("/entities/broken/extract", json={"_signed_at": 1}, headers=ASYNC)).json(),
+            )
+            second = (await client.post("/entities/broken/extract", json={"_signed_at": 301}, headers=ASYNC)).json()
+            await _settle(client, second)
+            return first, second
+
+    first, second = _run(scenario())
+    assert first["status"] == "failed"
+    assert second["job_id"] != first["job_id"]
+    assert [call["body"] for call in service.calls] == [{"_signed_at": 1}, {"_signed_at": 301}]
 
 
 def test_failed_job_is_retried_with_a_fresh_attempt():
@@ -396,9 +437,12 @@ def test_ambient_key_uses_the_airflow_task_environment(monkeypatch):
     monkeypatch.setenv("AIRFLOW_CTX_DAG_ID", "sap_successfactors_extract_all")
     monkeypatch.setenv("AIRFLOW_CTX_DAG_RUN_ID", "scheduled__2026-09-25")
     monkeypatch.setenv("AIRFLOW_CTX_TASK_ID", "trigger_extract_all")
+    monkeypatch.setenv("AIRFLOW_CTX_TRY_NUMBER", "1")
     key = client_module.ambient_idempotency_key("gold", "dataset_a")
     assert key == client_module.ambient_idempotency_key("gold", "dataset_a")
     assert key != client_module.ambient_idempotency_key("curated-silver", "dataset_a")
+    monkeypatch.setenv("AIRFLOW_CTX_TRY_NUMBER", "2")
+    assert key != client_module.ambient_idempotency_key("gold", "dataset_a")
     monkeypatch.delenv("AIRFLOW_CTX_DAG_RUN_ID")
     assert client_module.ambient_idempotency_key("gold", "a") != client_module.ambient_idempotency_key("gold", "a")
     assert jobs.IDEMPOTENCY_KEY.fullmatch(key)
@@ -443,3 +487,10 @@ def test_refresh_materialization_polls_and_keeps_its_lease():
     triggers = (ROOT / "cartridges/sap_successfactors/app/core/refinement_triggers.py").read_text(encoding="utf-8")
     assert "run_service_job_async(" in triggers
     assert "ambient_idempotency_key(" in triggers
+
+
+@pytest.mark.parametrize("path", ["cartridges/sap_b1/dags/sap_b1_extract.py", "cartridges/sap_b1/dags/sap_b1_extract_all.py"])
+def test_sap_b1_dags_sign_a_fresh_context_for_every_submission(path):
+    source = (ROOT / path).read_text(encoding="utf-8")
+    assert "def skill_body() -> dict:" in source
+    assert "json=skill_body," in source

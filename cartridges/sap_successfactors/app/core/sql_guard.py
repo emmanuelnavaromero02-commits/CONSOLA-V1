@@ -36,6 +36,19 @@ _PATH_LIKE_RE = re.compile(
 )
 _COMMENT_RE = re.compile(r"(--|/\*)")
 _QUOTED_RE = re.compile(r"('(?:''|[^'])*'|\"(?:\"\"|[^\"])*\")")
+_QUOTED_CALL_RE = re.compile(r"''\s*\(")
+_WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
+_RELATION_KEYWORDS = frozenset(
+    {"FROM", "JOIN", "TABLE", "PIVOT", "UNPIVOT", "PIVOT_WIDER", "PIVOT_LONGER", "SUMMARIZE", "DESCRIBE", "SHOW"}
+)
+_EXPRESSION_KEYWORDS = frozenset(
+    {
+        "SELECT", "WHERE", "GROUP", "HAVING", "QUALIFY", "WINDOW", "ORDER", "BY", "LIMIT", "OFFSET",
+        "UNION", "INTERSECT", "EXCEPT", "VALUES", "ON", "USING", "AS", "WITH", "CASE", "WHEN", "THEN",
+        "ELSE", "END", "IN", "AND", "OR", "NOT", "LIKE", "ILIKE", "GLOB", "SIMILAR", "BETWEEN", "IS",
+        "FILTER", "OVER", "PARTITION", "DISTINCT", "ALL", "ANY", "SOME", "EXISTS", "ESCAPE", "COLLATE",
+    }
+)
 _LIMIT_RE = re.compile(r"\bLIMIT\s+(?P<value>[^\s,)]+)", re.IGNORECASE)
 _TAUTOLOGY_RE = re.compile(
     r"\b(?:OR|AND)\s+(?P<left>\d+)\s*=\s*(?P=left)\b",
@@ -102,10 +115,48 @@ def _validate_limit_clause(masked_sql: str) -> tuple[bool, str | None]:
     return True, None
 
 
+def _mask_keep_length(sql: str) -> str:
+    return _QUOTED_RE.sub(lambda m: m.group(0)[0] + " " * (len(m.group(0)) - 2) + m.group(0)[-1], sql)
+
+
+def _relation_position(masked: str, start: int) -> bool:
+    depth = 0
+    i = start - 1
+    while i >= 0:
+        ch = masked[i]
+        if ch in ")]":
+            depth += 1
+            i -= 1
+            continue
+        if ch in "([":
+            if depth:
+                depth -= 1
+                i -= 1
+                continue
+            before = _WORD_RE.findall(masked[:i].rstrip()[-64:])
+            return bool(before) and before[-1].upper() in _RELATION_KEYWORDS
+        if ch.isalnum() or ch in "_$":
+            end = i + 1
+            while i >= 0 and (masked[i].isalnum() or masked[i] in "_$"):
+                i -= 1
+            if depth == 0:
+                word = masked[i + 1 : end].upper()
+                if word in _RELATION_KEYWORDS:
+                    return True
+                if word in _EXPRESSION_KEYWORDS:
+                    return False
+            continue
+        i -= 1
+    return False
+
+
 def _stray_path_literal(sql: str, reader_spans: list[tuple[int, int]]) -> str | None:
+    masked = _mask_keep_length(sql)
     for literal in _QUOTED_RE.finditer(sql):
         start, end = literal.span()
         if any(start >= s and end <= e for s, e in reader_spans):
+            continue
+        if not _relation_position(masked, start):
             continue
         body = literal.group(0)[1:-1]
         if _PATH_LIKE_RE.search(unquote(body).strip()):
@@ -151,6 +202,9 @@ def validate_kb_sql(
     match = _FORBIDDEN_RE.search(masked)
     if match:
         return False, f"Forbidden DuckDB keyword in query_kb: {match.group(1).upper()}"
+
+    if _QUOTED_CALL_RE.search(masked):
+        return False, "Quoted function names are not allowed in query_kb"
 
     forbidden_fn = _FORBIDDEN_FN_RE.search(stripped)
     if forbidden_fn:

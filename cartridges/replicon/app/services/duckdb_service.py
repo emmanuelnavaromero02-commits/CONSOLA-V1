@@ -44,6 +44,18 @@ def _path_has_scope(path: str, scope: str) -> bool:
     )
 
 
+_BUCKET_NAME_RE = re.compile(r"[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]")
+
+
+def _restrict_external_access(conn: duckdb.DuckDBPyConnection, bucket: str | None) -> None:
+    if not _BUCKET_NAME_RE.fullmatch(str(bucket or "")):
+        conn.close()
+        raise RuntimeError("storage_access_denied")
+    roots = ", ".join(f"'{scheme}://{bucket}/'" for scheme in ("s3", "gs", "gcs"))
+    conn.execute(f"SET allowed_directories=[{roots}];")
+    conn.execute("SET enable_external_access=false;")
+
+
 def _get_duckdb_connection(resolved_sql: str) -> duckdb.DuckDBPyConnection:
     conn = duckdb.connect(config=_DUCKDB_EXTENSION_CONFIG)
     if _S3_READER_RE.search(resolved_sql):
@@ -70,6 +82,7 @@ def _get_duckdb_connection(resolved_sql: str) -> duckdb.DuckDBPyConnection:
         except duckdb.Error:
             conn.close()
             raise DuckDBHTTPFSUnavailable(_REMOTE_SOURCE_UNAVAILABLE) from None
+    _restrict_external_access(conn, settings.resolved_minio["bucket"])
     conn.execute("SET lock_configuration=true;")
     return conn
 

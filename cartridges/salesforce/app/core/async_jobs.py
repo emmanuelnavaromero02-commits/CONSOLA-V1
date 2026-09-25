@@ -207,12 +207,12 @@ class AsyncJobMiddleware:
                 response = JSONResponse({"detail": "request body too large"}, status_code=413)
         if response is None:
             fingerprint = hashlib.sha256(
-                b"\0".join((scope["path"].encode(), scope.get("query_string", b""), body))
+                b"\0".join((scope["path"].encode(), scope.get("query_string", b"")))
             ).hexdigest()
             try:
                 job, created = self.registry.claim(key, fingerprint)
             except JobConflict:
-                response = JSONResponse({"detail": "Idempotency-Key reused with a different request"}, status_code=409)
+                response = JSONResponse({"detail": "Idempotency-Key reused for a different target"}, status_code=409)
             except JobCapacityExceeded:
                 response = JSONResponse({"detail": "job capacity exhausted"}, status_code=503)
             else:

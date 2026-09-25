@@ -17,6 +17,18 @@ from app.core.request_context import scoped_prefix, scope_values
 _SAFE_IDENT_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]{0,63}$")
 
 
+_BUCKET_NAME_RE = re.compile(r"[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]")
+
+
+def _restrict_external_access(conn: duckdb.DuckDBPyConnection, bucket: str | None) -> None:
+    if not _BUCKET_NAME_RE.fullmatch(str(bucket or "")):
+        conn.close()
+        raise RuntimeError("storage_access_denied")
+    roots = ", ".join(f"'{scheme}://{bucket}/'" for scheme in ("s3", "gs", "gcs"))
+    conn.execute(f"SET allowed_directories=[{roots}];")
+    conn.execute("SET enable_external_access=false;")
+
+
 def _get_duckdb_connection() -> duckdb.DuckDBPyConnection:
     storage = settings.resolved_minio
     conn = duckdb.connect()
@@ -46,6 +58,7 @@ def _get_duckdb_connection() -> duckdb.DuckDBPyConnection:
     except Exception:  # noqa: BLE001 - never echo a credential-bearing setup error.
         conn.close()
         raise RuntimeError("storage_access_denied") from None
+    _restrict_external_access(conn, storage["bucket"])
     conn.execute("SET lock_configuration=true;")
     return conn
 

@@ -47,7 +47,7 @@ def ambient_idempotency_key(*parts: object) -> str:
         os.environ.get("AIRFLOW_CTX_DAG_ID"),
         run_id,
         os.environ.get("AIRFLOW_CTX_TASK_ID"),
-        None,
+        os.environ.get("AIRFLOW_CTX_TRY_NUMBER"),
         *parts,
     )
 
