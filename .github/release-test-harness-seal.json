@@ -3559,7 +3559,7 @@
     },
     {
       "path": "scripts/release_image_promotion.py",
-      "sha256": "851aaae430714a24c084ab418e6cf22016b5538bfcc2acd01a8dac33afbf3008"
+      "sha256": "f437c6c606e0a84c8c82f939c3a43be1797286cbd91cc759d3f82fe78bca1a2f"
     },
     {
       "path": "scripts/run-e2e.sh",
@@ -5511,7 +5511,7 @@
     },
     {
       "path": "tests/test_release_image_promotion.py",
-      "sha256": "a87787b0cbd54eceee71ccfc2f1a8e8fd884468e464562148525b6acb6c6b674"
+      "sha256": "7eeda081594e47475c0043a7a348f05b688425f5c029858ae85072fe87e37222"
     },
     {
       "path": "tests/test_release_launchers_adversarial.py",
