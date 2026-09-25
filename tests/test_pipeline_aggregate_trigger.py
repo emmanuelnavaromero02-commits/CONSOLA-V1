@@ -46,7 +46,7 @@ async def test_aggregate_trigger_records_successful_airflow_run():
         cartridge="sap_successfactors",
         mode="incremental",
         target="all",
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         run_id="sync-now-1",
         user={"sub": "user-1"},
         sync_extract_all_dags={"sap_successfactors": "sf_extract_all"},
@@ -62,7 +62,7 @@ async def test_aggregate_trigger_records_successful_airflow_run():
     assert payload["triggered"][0]["dag_run_id"] == "dag-run-1"
     assert trigger_calls[0][0] == "sf_extract_all"
     assert trigger_calls[0][3] == "sf_extract_all:sync-now-1"
-    assert trigger_calls[0][1]["conn_id"] == "femsa_sf"
+    assert trigger_calls[0][1]["conn_id"] == "tenant_sf"
     assert record_calls == [
         {
             "cartridge": "sap_successfactors",

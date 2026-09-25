@@ -111,7 +111,7 @@ def test_explicit_vault_connection_auth_method_wins_over_container_default(monke
         sap_client,
         "get_connection_for_worker",
         lambda _cart, **_kwargs: {
-            "conn_id": "femsa_sf",
+            "conn_id": "tenant_sf",
             "auth_method": "saml_bearer_assertion",
             "base_url": "https://api68sales.successfactors.com",
             "token_url": "https://api68sales.successfactors.com/oauth/token",
@@ -127,7 +127,7 @@ def test_explicit_vault_connection_auth_method_wins_over_container_default(monke
         lambda _cart, env_var_name, **_kwargs: os.getenv(env_var_name, ""),
     )
 
-    client = sap_client.SapSfClient(conn_id="femsa_sf", security_context='{"trusted":true}')
+    client = sap_client.SapSfClient(conn_id="tenant_sf", security_context='{"trusted":true}')
     status = client.configuration_status()
 
     assert client.auth_method == "saml_bearer_assertion"
@@ -185,7 +185,7 @@ def test_vault_admin_user_wins_over_placeholder_extra_username(monkeypatch):
         sap_client,
         "get_connection_for_worker",
         lambda _cart, **_kwargs: {
-            "conn_id": "femsa_sf",
+            "conn_id": "tenant_sf",
             "auth_method": "saml_bearer_assertion",
             "base_url": "https://api68sales.successfactors.com",
             "token_url": "https://api68sales.successfactors.com/oauth/token",
@@ -202,7 +202,7 @@ def test_vault_admin_user_wins_over_placeholder_extra_username(monkeypatch):
         lambda _cart, env_var_name, **_kwargs: os.getenv(env_var_name, ""),
     )
 
-    client = sap_client.SapSfClient(conn_id="femsa_sf")
+    client = sap_client.SapSfClient(conn_id="tenant_sf")
     diagnostics = client.sanitized_config_diagnostics()
 
     assert client.admin_user == "SFAPI"
@@ -217,7 +217,7 @@ def test_placeholder_extra_username_is_ignored_and_does_not_default_subject(monk
         sap_client,
         "get_connection_for_worker",
         lambda _cart, **_kwargs: {
-            "conn_id": "femsa_sf",
+            "conn_id": "tenant_sf",
             "auth_method": "saml_bearer_assertion",
             "base_url": "https://api68sales.successfactors.com",
             "token_url": "https://api68sales.successfactors.com/oauth/token",
@@ -229,7 +229,7 @@ def test_placeholder_extra_username_is_ignored_and_does_not_default_subject(monk
     )
     monkeypatch.setattr(sap_client, "get_secret_for_worker", lambda *_args, **_kwargs: "")
 
-    client = sap_client.SapSfClient(conn_id="femsa_sf")
+    client = sap_client.SapSfClient(conn_id="tenant_sf")
     status = client.configuration_status()
     diagnostics = client.sanitized_config_diagnostics()
 
@@ -248,7 +248,7 @@ def test_explicit_vault_connection_does_not_mix_missing_fields_from_env(monkeypa
         sap_client,
         "get_connection_for_worker",
         lambda _cart, **_kwargs: {
-            "conn_id": "femsa_sf",
+            "conn_id": "tenant_sf",
             "auth_method": "saml_bearer_assertion",
             "base_url": "https://api68sales.successfactors.com",
             "token_url": "https://api68sales.successfactors.com/oauth/token",
@@ -263,7 +263,7 @@ def test_explicit_vault_connection_does_not_mix_missing_fields_from_env(monkeypa
         lambda _cart, env_var_name, **_kwargs: os.getenv(env_var_name, ""),
     )
 
-    client = sap_client.SapSfClient(conn_id="femsa_sf")
+    client = sap_client.SapSfClient(conn_id="tenant_sf")
     status = client.configuration_status()
 
     assert client.client_id == ""
@@ -279,7 +279,7 @@ def test_explicit_vault_connection_missing_auth_method_does_not_default_to_oauth
         sap_client,
         "get_connection_for_worker",
         lambda _cart, **_kwargs: {
-            "conn_id": "femsa_sf",
+            "conn_id": "tenant_sf",
             "base_url": "https://api68sales.successfactors.com",
             "token_url": "https://api68sales.successfactors.com/oauth/token",
             "client_id": "sf-client-id",
@@ -294,7 +294,7 @@ def test_explicit_vault_connection_missing_auth_method_does_not_default_to_oauth
         lambda _cart, env_var_name, **_kwargs: os.getenv(env_var_name, ""),
     )
 
-    client = sap_client.SapSfClient(conn_id="femsa_sf")
+    client = sap_client.SapSfClient(conn_id="tenant_sf")
     status = client.configuration_status()
     diagnostics = client.sanitized_config_diagnostics()
 
@@ -309,7 +309,7 @@ def test_missing_explicit_vault_connection_reports_vault_missing(monkeypatch):
     monkeypatch.setattr(sap_client, "get_connection_for_worker", lambda _cart, **_kwargs: {})
     monkeypatch.setattr(sap_client, "get_secret_for_worker", lambda *_args, **_kwargs: "")
 
-    client = sap_client.SapSfClient(conn_id="femsa_sf")
+    client = sap_client.SapSfClient(conn_id="tenant_sf")
     diagnostics = client.sanitized_config_diagnostics()
 
     assert diagnostics["effective_source"] == "vault_missing"
@@ -322,7 +322,7 @@ def test_idp_url_is_derived_from_token_url_for_vault_connection(monkeypatch):
         sap_client,
         "get_connection_for_worker",
         lambda _cart, **_kwargs: {
-            "conn_id": "femsa_sf",
+            "conn_id": "tenant_sf",
             "auth_method": "saml_bearer_assertion",
             "base_url": "https://api68sales.successfactors.com",
             "token_url": "https://api68sales.successfactors.com/oauth/token",
@@ -334,7 +334,7 @@ def test_idp_url_is_derived_from_token_url_for_vault_connection(monkeypatch):
     )
     monkeypatch.setattr(sap_client, "get_secret_for_worker", lambda *_args, **_kwargs: "")
 
-    client = sap_client.SapSfClient(conn_id="femsa_sf")
+    client = sap_client.SapSfClient(conn_id="tenant_sf")
 
     assert client.idp_url == "https://api68sales.successfactors.com/oauth/idp"
     assert client.sanitized_config_diagnostics()["private_key_present"] is True

@@ -141,12 +141,12 @@ async def test_cartridge_self_check_uses_scoped_saml_vault_connection(monkeypatc
             if url.endswith("/connections/sap_successfactors/default"):
                 return Response(404, {})
             if url.endswith("/connections/sap_successfactors"):
-                return Response(200, {"connections": [{"conn_id": "femsa_sf", "auth_method": "saml_bearer_assertion"}]})
-            if url.endswith("/connections/sap_successfactors/femsa_sf"):
+                return Response(200, {"connections": [{"conn_id": "tenant_sf", "auth_method": "saml_bearer_assertion"}]})
+            if url.endswith("/connections/sap_successfactors/tenant_sf"):
                 return Response(
                     200,
                     {
-                        "conn_id": "femsa_sf",
+                        "conn_id": "tenant_sf",
                         "auth_method": "saml_bearer_assertion",
                         "base_url": "https://api68sales.successfactors.com",
                     },
@@ -169,7 +169,7 @@ async def test_cartridge_self_check_uses_scoped_saml_vault_connection(monkeypatc
 
     messages = [item["message"] for item in result["warnings"]]
     assert "Conexion Vault scoped no encontrada" not in messages
-    assert result["evidence"]["vault"]["connection_id"] == "femsa_sf"
+    assert result["evidence"]["vault"]["connection_id"] == "tenant_sf"
     assert result["evidence"]["vault"]["auth_method"] == "saml_bearer_assertion"
     assert "password" not in repr(result).lower()
 

@@ -54,11 +54,11 @@ describe("control-room client", () => {
   it("keeps item-scoped activity and impact endpoints encoded", async () => {
     apiMock.get.mockResolvedValue({ data: {}, status: 200, headers: new Headers(), requestId: "r" });
 
-    await getControlRoomActivity("item 1/femsa");
-    await getControlRoomImpact("item 1/femsa");
+    await getControlRoomActivity("item 1/acmeco");
+    await getControlRoomImpact("item 1/acmeco");
 
-    expect(apiMock.get).toHaveBeenNthCalledWith(1, "/api/control-room/items/item%201%2Ffemsa/activity");
-    expect(apiMock.get).toHaveBeenNthCalledWith(2, "/api/control-room/items/item%201%2Ffemsa/impact");
+    expect(apiMock.get).toHaveBeenNthCalledWith(1, "/api/control-room/items/item%201%2Facmeco/activity");
+    expect(apiMock.get).toHaveBeenNthCalledWith(2, "/api/control-room/items/item%201%2Facmeco/impact");
   });
 
   it("keeps optional cartridge scope on lessons without exposing data preview routes", async () => {

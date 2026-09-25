@@ -234,8 +234,8 @@ def test_a2_dev_path_unchanged():
 def test_a2_only_foundation_templates_are_rebound():
     body = _reconciler_body(_a2_sql())
     bind = body[body.index("UPDATE public.entity_config"):]
-    for femsa_only in ("PerEmail", "PaymentInformationDetailV3", "EmpEmploymentTermination"):
-        assert f"'{femsa_only}'" not in bind
+    for acmeco_only in ("PerEmail", "PaymentInformationDetailV3", "EmpEmploymentTermination"):
+        assert f"'{acmeco_only}'" not in bind
     assert bind.count("UPDATE public.entity_config") == 1
     assert "trigger_type" not in bind[:bind.index("INSERT INTO public.entity_config")], (
         "per-entity rows stay manual; only the marker schedules"

@@ -44,16 +44,16 @@ def test_explicit_conn_id_reveals_that_vault_connection(monkeypatch):
 
     def fake_get(url, **kwargs):
         calls.append((url, kwargs))
-        return _Response(200, {"conn_id": "femsa_sf", "auth_method": "saml_bearer_assertion"})
+        return _Response(200, {"conn_id": "tenant_sf", "auth_method": "saml_bearer_assertion"})
 
     monkeypatch.setattr(client.requests, "get", fake_get)
 
-    payload = client.get_connection_for_worker("sap_successfactors", conn_id="femsa_sf")
+    payload = client.get_connection_for_worker("sap_successfactors", conn_id="tenant_sf")
 
-    assert payload["conn_id"] == "femsa_sf"
+    assert payload["conn_id"] == "tenant_sf"
     assert payload["auth_method"] == "saml_bearer_assertion"
     assert len(calls) == 1
-    assert calls[0][0].endswith("/api/vault/connections/sap_successfactors/femsa_sf/reveal")
+    assert calls[0][0].endswith("/api/vault/connections/sap_successfactors/tenant_sf/reveal")
     assert calls[0][1]["headers"] == {
         "x-api-key": "dedicated",
         "x-internal-service": "cartridge-sap_successfactors",
@@ -70,7 +70,7 @@ def test_scoped_security_context_is_forwarded_to_vault_reveal(monkeypatch):
         return _Response(
             200,
             {
-                "conn_id": "femsa_sf",
+                "conn_id": "tenant_sf",
                 "auth_method": "saml_bearer_assertion",
                 "base_url": "https://api68sales.successfactors.com",
                 "client_id": "client",
@@ -84,7 +84,7 @@ def test_scoped_security_context_is_forwarded_to_vault_reveal(monkeypatch):
 
     payload = client.get_connection_for_worker(
         "sap_successfactors",
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         security_context=signed_context,
     )
 
@@ -104,13 +104,13 @@ def test_airflow_key_can_reveal_successfactors_vault_connection(monkeypatch):
 
     def fake_get(url, **kwargs):
         calls.append((url, kwargs))
-        return _Response(200, {"conn_id": "femsa_sf", "base_url": "https://example.invalid"})
+        return _Response(200, {"conn_id": "tenant_sf", "base_url": "https://example.invalid"})
 
     monkeypatch.setattr(client.requests, "get", fake_get)
 
-    payload = client.get_connection_for_worker("sap_successfactors", conn_id="femsa_sf")
+    payload = client.get_connection_for_worker("sap_successfactors", conn_id="tenant_sf")
 
-    assert payload["conn_id"] == "femsa_sf"
+    assert payload["conn_id"] == "tenant_sf"
     assert calls[0][1]["headers"] == {
         "x-api-key": "airflow-key",
         "x-internal-service": "airflow",

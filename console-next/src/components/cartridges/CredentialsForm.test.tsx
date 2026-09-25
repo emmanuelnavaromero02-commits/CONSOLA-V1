@@ -71,7 +71,7 @@ describe("CredentialsForm", () => {
     vaultConnectionsMock.mockReturnValueOnce({
       data: {
         connections: [
-          { conn_id: "femsa_sf", auth_method: "saml_bearer_assertion" },
+          { conn_id: "tenant_sf", auth_method: "saml_bearer_assertion" },
           { conn_id: "default", auth_method: "oauth2_client_credentials" },
         ],
       },
@@ -80,7 +80,7 @@ describe("CredentialsForm", () => {
     const markup = renderCredentials("sap_successfactors", { fields: [] });
 
     expect(markup).toContain("Conexión a probar");
-    expect(markup).toContain('value="femsa_sf"');
+    expect(markup).toContain('value="tenant_sf"');
     expect(markup).toContain('value="default"');
   });
 });

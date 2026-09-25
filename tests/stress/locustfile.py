@@ -45,7 +45,7 @@ ENABLE_SF_REFRESH = os.environ.get("OMEGA_STRESS_ENABLE_SF_REFRESH", "").strip()
     "true",
     "yes",
 }
-SF_CONN_ID = os.environ.get("OMEGA_STRESS_SF_CONN_ID", "femsa_sf")
+SF_CONN_ID = os.environ.get("OMEGA_STRESS_SF_CONN_ID", "tenant_sf")
 SF_BRONZE_SOURCE = os.environ.get("OMEGA_STRESS_SF_BRONZE_SOURCE", "raw/sap_successfactors/PerPerson")
 SF_GOLD_DATASETS = tuple(
     item.strip()

@@ -98,7 +98,7 @@ def test_talent_metadata_readiness_reports_live_cpa_blockers(monkeypatch):
     monkeypatch.setattr(preflight, "SapSfClient", FakeSapSfClient)
 
     payload = preflight.talent_metadata_readiness(
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         security_context={"trusted": True, "tenant_id": "t1", "workspace_id": "w1"},
         sample=True,
     )
@@ -187,7 +187,7 @@ def test_talent_metadata_readiness_uses_approved_tenant_aliases(monkeypatch):
     )
 
     payload = preflight.talent_metadata_readiness(
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         security_context={"tenant_id": "t1", "workspace_id": "w1"},
         sample=True,
     )
@@ -256,7 +256,7 @@ def test_talent_metadata_readiness_discovers_custom_metadata_targets(monkeypatch
     monkeypatch.setattr(preflight, "_load_talent_alias_candidates", lambda **_kwargs: {})
 
     payload = preflight.talent_metadata_readiness(
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         security_context={"tenant_id": "t1", "workspace_id": "w1"},
         sample=True,
     )
@@ -304,7 +304,7 @@ def test_talent_metadata_readiness_blocks_when_metadata_unavailable(monkeypatch)
 
     monkeypatch.setattr(preflight, "SapSfClient", FakeSapSfClient)
 
-    payload = preflight.talent_metadata_readiness(conn_id="femsa_sf")
+    payload = preflight.talent_metadata_readiness(conn_id="tenant_sf")
 
     assert payload["status"] == "blocked"
     assert payload["blockers"][0]["reason"] == "metadata_unavailable"

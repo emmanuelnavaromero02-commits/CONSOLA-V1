@@ -132,7 +132,7 @@ def test_console_extract_all_is_failed_when_every_entity_dies_on_the_network(mon
         monkeypatch, ([{"entity": "FOCompany"}, {"entity": "EmpJob"}], []), fake_run_entity
     )
     response = routes_console.extract_all(
-        mode="incremental", conn_id="femsa_sf", body={"security_context": _ctx()}
+        mode="incremental", conn_id="tenant_sf", body={"security_context": _ctx()}
     )
     assert response["status"] == "failed"
     assert response["hard_failure"] == "extraction_failed"
@@ -152,7 +152,7 @@ def test_console_extract_all_is_failed_when_credentials_are_rejected_everywhere(
         monkeypatch, ([{"entity": "FOCompany"}, {"entity": "EmpJob"}], []), fake_run_entity
     )
     response = routes_console.extract_all(
-        mode="incremental", conn_id="femsa_sf", body={"security_context": _ctx()}
+        mode="incremental", conn_id="tenant_sf", body={"security_context": _ctx()}
     )
     assert response["status"] == "failed"
     assert response["hard_failure"] == "successfactors_access_denied"
@@ -175,7 +175,7 @@ def test_console_extract_all_is_failed_when_metadata_preflight_is_unreachable(mo
     )
     routes_console = _route(monkeypatch, plan, lambda *_a, **_k: pytest.fail("no entity runs"))
     response = routes_console.extract_all(
-        mode="incremental", conn_id="femsa_sf", body={"security_context": _ctx()}
+        mode="incremental", conn_id="tenant_sf", body={"security_context": _ctx()}
     )
     assert response["status"] == "failed"
     assert response["hard_failure"] == "successfactors_metadata_unavailable"
@@ -193,7 +193,7 @@ def test_console_extract_all_stays_completed_with_blocks_for_a_partial_tenant(mo
         monkeypatch, ([{"entity": "FOCompany"}, {"entity": "EmpJob"}], []), fake_run_entity
     )
     response = routes_console.extract_all(
-        mode="incremental", conn_id="femsa_sf", body={"security_context": _ctx()}
+        mode="incremental", conn_id="tenant_sf", body={"security_context": _ctx()}
     )
     assert response["status"] == "completed_with_blocks"
     assert response["hard_failure"] is None

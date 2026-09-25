@@ -122,7 +122,7 @@ async def test_filter_installations_scopes_when_a_connection_exists():
 
     async def connections(cartridge_id: str, _user):
         if cartridge_id == "sap_successfactors":
-            return [{"conn_id": "femsa_sf", "auth_method": "saml_bearer_assertion"}]
+            return [{"conn_id": "tenant_sf", "auth_method": "saml_bearer_assertion"}]
         return []
 
     with patch.object(
@@ -135,7 +135,7 @@ async def test_filter_installations_scopes_when_a_connection_exists():
         )
 
     assert {row["cartridge_id"] for row in result} == {"sap_successfactors"}
-    assert result[0]["connection_id"] == "femsa_sf"
+    assert result[0]["connection_id"] == "tenant_sf"
 
 
 @pytest.mark.asyncio
@@ -160,9 +160,9 @@ async def test_control_room_scoped_dashboard_omits_empty_domains(monkeypatch):
                 {
                     "cartridge_id": "sap_successfactors",
                     "installation_status": "ready",
-                    "connection_id": "femsa_sf",
+                    "connection_id": "tenant_sf",
                     "connection_count": 1,
-                    "active_connection_ids": ["femsa_sf"],
+                    "active_connection_ids": ["tenant_sf"],
                     "auth_method": "saml_bearer_assertion",
                 }
             ]),

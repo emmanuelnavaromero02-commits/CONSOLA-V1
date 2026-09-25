@@ -16,7 +16,7 @@ def _rows() -> list[dict]:
         {
             "entity": "PerPerson",
             "odata_entity": "PerPerson",
-            "connection_id": "femsa_sf",
+            "connection_id": "tenant_sf",
             "primary_key": "personIdExternal",
             "tenant_id": "tenant-a",
             "workspace_id": "workspace-a",
@@ -25,7 +25,7 @@ def _rows() -> list[dict]:
         {
             "entity": "FOCompany",
             "odata_entity": "FOCompany",
-            "connection_id": "femsa_sf",
+            "connection_id": "tenant_sf",
             "primary_key": "externalCode",
             "tenant_id": "tenant-a",
             "workspace_id": "workspace-a",
@@ -49,7 +49,7 @@ def _rows() -> list[dict]:
         {
             "entity": "EmpJob",
             "odata_entity": "EmpJob",
-            "connection_id": "femsa_sf",
+            "connection_id": "tenant_sf",
             "primary_key": "userId",
             "tenant_id": "tenant-b",
             "workspace_id": "workspace-a",
@@ -57,7 +57,7 @@ def _rows() -> list[dict]:
         {
             "entity": "EmpEmploymentTermination",
             "odata_entity": "EmpEmploymentTermination",
-            "connection_id": "femsa_sf",
+            "connection_id": "tenant_sf",
             "primary_key": "userId",
             "tenant_id": "tenant-a",
             "workspace_id": "workspace-a",
@@ -110,7 +110,7 @@ def test_extract_all_plan_reuses_selected_connection_even_with_stale_scope(monke
     _allow_live_metadata(monkeypatch, catalog_service, rows)
 
     entities, skipped = catalog_service.get_extract_all_plan(
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         security_context=_ctx(),
     )
 
@@ -133,7 +133,7 @@ def test_extract_all_target_all_includes_former_external_scope_entities(monkeypa
         {
             "entity": "Candidate",
             "odata_entity": "Candidate",
-            "connection_id": "femsa_sf",
+            "connection_id": "tenant_sf",
             "primary_key": "candidateId",
             "tenant_id": "tenant-a",
             "workspace_id": "workspace-a",
@@ -143,7 +143,7 @@ def test_extract_all_target_all_includes_former_external_scope_entities(monkeypa
     _allow_live_metadata(monkeypatch, catalog_service, rows)
 
     entities, skipped = catalog_service.get_extract_all_plan(
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         security_context=_ctx(),
     )
 
@@ -169,14 +169,14 @@ def test_extract_all_plan_treats_cartridge_connection_as_selected_placeholder(mo
     _allow_live_metadata(monkeypatch, catalog_service, rows)
 
     entities, skipped = catalog_service.get_extract_all_plan(
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         security_context=_ctx(),
     )
 
     assert [row["entity"] for row in entities] == ["User"]
     assert skipped == []
-    assert entities[0]["conn_id"] == "femsa_sf"
-    assert entities[0]["connection_id"] == "femsa_sf"
+    assert entities[0]["conn_id"] == "tenant_sf"
+    assert entities[0]["connection_id"] == "tenant_sf"
 
 
 def test_extract_all_default_does_not_silently_skip_known_talent_entities(monkeypatch):
@@ -186,7 +186,7 @@ def test_extract_all_default_does_not_silently_skip_known_talent_entities(monkey
         {
             "entity": entity,
             "odata_entity": entity,
-            "connection_id": "femsa_sf",
+            "connection_id": "tenant_sf",
             "primary_key": "id",
             "tenant_id": "tenant-a",
             "workspace_id": "workspace-a",
@@ -197,7 +197,7 @@ def test_extract_all_default_does_not_silently_skip_known_talent_entities(monkey
     _allow_live_metadata(monkeypatch, catalog_service, rows)
 
     entities, skipped = catalog_service.get_extract_all_plan(
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         security_context=_ctx(),
     )
 
@@ -266,7 +266,7 @@ def test_extract_all_plan_talent_target_uses_live_metadata_targets(monkeypatch):
         {
             "entity": "PerformanceReview",
             "odata_entity": "FormHeader",
-            "connection_id": "femsa_sf",
+            "connection_id": "tenant_sf",
             "primary_key": "formDataId",
             "tenant_id": "tenant-a",
             "workspace_id": "workspace-a",
@@ -274,7 +274,7 @@ def test_extract_all_plan_talent_target_uses_live_metadata_targets(monkeypatch):
         {
             "entity": "GoalPlan",
             "odata_entity": "Goal",
-            "connection_id": "femsa_sf",
+            "connection_id": "tenant_sf",
             "primary_key": "id",
             "tenant_id": "tenant-a",
             "workspace_id": "workspace-a",
@@ -313,7 +313,7 @@ def test_extract_all_plan_talent_target_uses_live_metadata_targets(monkeypatch):
     )
 
     entities, skipped = catalog_service.get_extract_all_plan(
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         security_context=_ctx(),
         target="talent",
     )
@@ -334,7 +334,7 @@ def test_extract_all_plan_talent_target_applies_live_odata_alias(monkeypatch):
         {
             "entity": "PerformanceReview",
             "odata_entity": "FormHeader",
-            "connection_id": "femsa_sf",
+            "connection_id": "tenant_sf",
             "primary_key": "formDataId",
             "tenant_id": "tenant-a",
             "workspace_id": "workspace-a",
@@ -380,7 +380,7 @@ def test_extract_all_plan_talent_target_applies_live_odata_alias(monkeypatch):
     )
 
     entities, skipped = catalog_service.get_extract_all_plan(
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         security_context=_ctx(),
         target="talent",
     )
@@ -419,7 +419,7 @@ def test_extract_all_plan_talent_target_reports_metadata_blocker(monkeypatch):
     )
 
     entities, skipped = catalog_service.get_extract_all_plan(
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         security_context=_ctx(),
         target="talent",
     )
@@ -458,13 +458,13 @@ def test_console_extract_all_uses_scoped_plan_and_returns_skipped(monkeypatch):
     response = routes_console.extract_all(
         mode="incremental",
         target="talent",
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         idempotency_key="sync_now:sap_successfactors:test",
         body={"security_context": _ctx()},
     )
 
     assert captured == ["PerPerson"]
-    assert captured_plan_kwargs["conn_id"] == "femsa_sf"
+    assert captured_plan_kwargs["conn_id"] == "tenant_sf"
     assert captured_plan_kwargs["target"] == "talent"
     assert response["status"] == "completed_with_blocks"
     assert response["target"] == "talent"
@@ -497,7 +497,7 @@ def test_console_extract_all_passes_entity_idempotency_key(monkeypatch):
 
     routes_console.extract_all(
         mode="incremental",
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         idempotency_key="sync_now:sap_successfactors:test",
         body={"security_context": _ctx()},
     )
@@ -532,7 +532,7 @@ def test_console_extract_all_triggers_gold_refresh_once_after_entities(monkeypat
     response = routes_console.extract_all(
         mode="incremental",
         target="all",
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         body={"security_context": _ctx()},
     )
 
@@ -568,7 +568,7 @@ def test_console_extract_all_classifies_entity_auth_blocks_without_global_502(mo
 
     response = routes_console.extract_all(
         mode="incremental",
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         body={"security_context": _ctx()},
     )
 
@@ -601,11 +601,11 @@ def test_skills_extract_all_routes_use_scoped_plan(monkeypatch):
     monkeypatch.setattr(routes_skills, "_run_entity_with_context", fake_run)
 
     response = routes_skills.run_incremental_all(
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         body={"security_context": _ctx()},
     )
 
-    assert captured == [("PerPerson", "femsa_sf")]
+    assert captured == [("PerPerson", "tenant_sf")]
     assert response["skipped"] == [
         {"entity": "Candidate", "status": "skipped", "reason": "not_scoped_for_connection"}
     ]
@@ -660,7 +660,7 @@ def test_async_extract_all_job_is_serial_for_scoped_connection_and_preserves_ski
     monkeypatch.setattr(job_runner, "_log", fake_log)
     monkeypatch.setattr(job_runner, "_trigger_silver_refresh", fake_refresh)
 
-    asyncio.run(job_runner._run_extract_all("job-1", "incremental", _ctx(), "femsa_sf", "talent"))
+    asyncio.run(job_runner._run_extract_all("job-1", "incremental", _ctx(), "tenant_sf", "talent"))
 
     final = updates[-1]
     assert captured_plan_kwargs["target"] == "talent"
@@ -724,7 +724,7 @@ def test_async_batch_storage_failure_happens_before_metadata_plan(monkeypatch):
 
     asyncio.run(
         job_runner._run_extract_all(
-            "job-1", "incremental", _ctx(), "femsa_sf", "talent"
+            "job-1", "incremental", _ctx(), "tenant_sf", "talent"
         )
     )
 

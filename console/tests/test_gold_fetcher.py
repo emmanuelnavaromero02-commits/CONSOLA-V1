@@ -83,8 +83,8 @@ async def test_gold_fetcher_scopes_text_or_uuid_gold_columns(monkeypatch):
     rows = await gold_fetcher.query_gold_dataset_rows(
         "sap_successfactors_headcount_by_company",
         {
-            "tenant_id": "b95f4d58-c9c8-4fd5-8d07-ddde294c7d78",
-            "workspace_id": "a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4",
+            "tenant_id": "11111111-1111-4111-8111-111111111111",
+            "workspace_id": "22222222-2222-4222-8222-222222222222",
         },
         20,
     )
@@ -94,14 +94,14 @@ async def test_gold_fetcher_scopes_text_or_uuid_gold_columns(monkeypatch):
     assert "tenant_id::text = $2" in data_sql
     assert "::uuid" not in data_sql
     assert data_args == (
-        "a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4",
-        "b95f4d58-c9c8-4fd5-8d07-ddde294c7d78",
+        "22222222-2222-4222-8222-222222222222",
+        "11111111-1111-4111-8111-111111111111",
         20,
     )
     assert rows == [
         {
-            "tenant_id": "b95f4d58-c9c8-4fd5-8d07-ddde294c7d78",
-            "workspace_id": "a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4",
+            "tenant_id": "11111111-1111-4111-8111-111111111111",
+            "workspace_id": "22222222-2222-4222-8222-222222222222",
             "headcount": 1288,
         }
     ]
@@ -169,8 +169,8 @@ async def test_gold_fetcher_cache_is_scoped_by_workspace(monkeypatch):
     monkeypatch.setattr(gold_fetcher.asyncpg, "connect", fake_connect)
 
     base_user = {
-        "tenant_id": "b95f4d58-c9c8-4fd5-8d07-ddde294c7d78",
-        "workspace_id": "a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4",
+        "tenant_id": "11111111-1111-4111-8111-111111111111",
+        "workspace_id": "22222222-2222-4222-8222-222222222222",
     }
     first = await gold_fetcher.query_gold_dataset_rows(
         "sap_successfactors_employee_360", base_user, 20
@@ -232,8 +232,8 @@ async def test_gold_fetcher_singleflights_concurrent_cold_reads(monkeypatch):
 
     monkeypatch.setattr(gold_fetcher.asyncpg, "connect", fake_connect)
     user = {
-        "tenant_id": "b95f4d58-c9c8-4fd5-8d07-ddde294c7d78",
-        "workspace_id": "a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4",
+        "tenant_id": "11111111-1111-4111-8111-111111111111",
+        "workspace_id": "22222222-2222-4222-8222-222222222222",
     }
 
     results = await asyncio.gather(

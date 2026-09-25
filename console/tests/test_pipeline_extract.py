@@ -754,7 +754,7 @@ async def test_fetch_active_sync_run_returns_none_on_lookup_error(
         cartridge="sap_successfactors",
         mode="incremental",
         target="all",
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         user=None,
     )
 
@@ -781,7 +781,7 @@ async def test_active_sync_run_endpoint_returns_inactive_payload_without_404(
         "sap_successfactors",
         mode="incremental",
         target="all",
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         user=user,
     )
 
@@ -789,7 +789,7 @@ async def test_active_sync_run_endpoint_returns_inactive_payload_without_404(
     assert result["status"] == "skipped"
     assert result["reason"] == "no_active_sync_run"
     assert result["run_id"] is None
-    assert result["conn_id"] == "femsa_sf"
+    assert result["conn_id"] == "tenant_sf"
 
 
 @pytest.mark.anyio
@@ -939,7 +939,7 @@ async def test_api_pipeline_extract_all_successfactors_uses_aggregate_dag(
         {
             "mode": "incremental",
             "target": "all",
-            "conn_id": "femsa_sf",
+            "conn_id": "tenant_sf",
             "idempotency_key": "studio-extract-all-1",
         },
         user=user,
@@ -948,7 +948,7 @@ async def test_api_pipeline_extract_all_successfactors_uses_aggregate_dag(
     assert trigger_calls[0]["dag_id"] == "sap_successfactors_extract_all"
     assert trigger_calls[0]["conf"]["mode"] == "incremental"
     assert trigger_calls[0]["conf"]["target"] == "all"
-    assert trigger_calls[0]["conf"]["conn_id"] == "femsa_sf"
+    assert trigger_calls[0]["conf"]["conn_id"] == "tenant_sf"
     assert trigger_calls[0]["conf"]["tenant_id"] == user["active_tenant_id"]
     assert trigger_calls[0]["conf"]["workspace_id"] == user["active_workspace_id"]
     assert records[0]["entity"] == console_main._SYNC_AGGREGATE_ENTITY
@@ -1139,7 +1139,7 @@ async def test_active_sync_run_endpoint_returns_persisted_payload_when_status_bu
         "sap_successfactors",
         mode="incremental",
         target="all",
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         user=user,
     )
 
@@ -1726,7 +1726,7 @@ async def test_successfactors_entity_extract_endpoint_returns_reused_active_run(
             "dag_id": "sap_successfactors_extract",
             "mode": "incremental",
             "enabled": True,
-            "connection_id": "femsa_sf",
+            "connection_id": "tenant_sf",
         }
 
     async def reserve(**_kwargs):

@@ -68,7 +68,7 @@ def test_facts_preflight_fails_when_configured_concept_missing():
         validate_facts_payload(payload, (company,))
 
 
-def test_entities_initial_allowlist_contains_femsa_kof_and_coca_cola():
+def test_entities_initial_allowlist_contains_acmeco_kof_and_coca_cola():
     configs = load_company_configs()
     assert {item.ticker for item in configs} == {"FMX", "KOF", "KO"}
     assert all(item.facts for item in configs)

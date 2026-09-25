@@ -68,7 +68,7 @@ def test_people_master_all_required_ready(monkeypatch):
     )
 
     payload = preflight.people_master_readiness(
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         security_context={"trusted": True, "tenant_id": "t1", "workspace_id": "w1"},
         sample=True,
     )
@@ -94,7 +94,7 @@ def test_people_master_permission_blocked_surfaces_per_entity_checklist(monkeypa
         _client_factory(preflight, metadata=_FULL_METADATA, deny=("EmpJob",)),
     )
 
-    payload = preflight.people_master_readiness(conn_id="femsa_sf", sample=True)
+    payload = preflight.people_master_readiness(conn_id="tenant_sf", sample=True)
 
     assert payload["status"] == "partial"
     assert payload["summary"]["required_ready"] == 2
@@ -119,7 +119,7 @@ def test_people_master_missing_entity_reported(monkeypatch):
         preflight, "SapSfClient", _client_factory(preflight, metadata=metadata)
     )
 
-    payload = preflight.people_master_readiness(conn_id="femsa_sf", sample=True)
+    payload = preflight.people_master_readiness(conn_id="tenant_sf", sample=True)
 
     assert payload["status"] == "partial"
     emp_job = next(c for c in payload["components"] if c["id"] == "emp_job")

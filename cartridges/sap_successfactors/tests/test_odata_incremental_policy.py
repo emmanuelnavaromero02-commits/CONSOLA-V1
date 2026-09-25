@@ -123,7 +123,7 @@ def test_run_entity_retries_full_snapshot_when_incremental_filter_is_rejected(mo
 
     client = SapSfClient.__new__(SapSfClient)
     client.base_url = "https://tenant.example/odata/v2"
-    client._conn_id = "femsa_sf"
+    client._conn_id = "tenant_sf"
     client._session = ResponseSession()
     monkeypatch.setattr(client, "_require_configured", lambda: None)
     monkeypatch.setattr(client, "_headers", lambda: {"Authorization": "Bearer SENTINEL-TOKEN"})
@@ -140,7 +140,7 @@ def test_run_entity_retries_full_snapshot_when_incremental_filter_is_rejected(mo
             "entity": "PerPerson",
             "mode": "incremental",
             "watermark_field": "lastModifiedDateTime",
-            "conn_id": "femsa_sf",
+            "conn_id": "tenant_sf",
             "select_fields": ["personIdExternal", "lastModifiedDateTime"],
         }
     )
@@ -162,7 +162,7 @@ def test_run_entity_preserves_expected_columns_after_metadata_select_pruning(mon
 
     class FakeSapSfClient:
         def __init__(self, conn_id=None, security_context=None):
-            assert conn_id == "femsa_sf"
+            assert conn_id == "tenant_sf"
 
         def fetch_entity(self, **kwargs):
             captured["select"] = kwargs["select"]
@@ -186,7 +186,7 @@ def test_run_entity_preserves_expected_columns_after_metadata_select_pruning(mon
             "entity": "JobRequisition",
             "mode": "incremental",
             "watermark_field": "lastModifiedDateTime",
-            "conn_id": "femsa_sf",
+            "conn_id": "tenant_sf",
             "select_fields": ["jobReqId", "status", "lastModifiedDateTime"],
             "expected_select_fields": ["jobReqId", "jobTitle", "status", "lastModifiedDateTime"],
             "metadata_status": "select_pruned",
@@ -205,7 +205,7 @@ def test_run_entity_copies_metadata_alias_fields_before_parquet_write(monkeypatc
 
     class FakeSapSfClient:
         def __init__(self, conn_id=None, security_context=None):
-            assert conn_id == "femsa_sf"
+            assert conn_id == "tenant_sf"
 
         def fetch_entity(self, **kwargs):
             captured["select"] = kwargs["select"]
@@ -238,7 +238,7 @@ def test_run_entity_copies_metadata_alias_fields_before_parquet_write(monkeypatc
             "odata_entity": "cust_TalentPerformanceReview",
             "mode": "incremental",
             "watermark_field": "lastModifiedDateTime",
-            "conn_id": "femsa_sf",
+            "conn_id": "tenant_sf",
             "select_fields": ["externalCode", "worker", "rating", "lastModifiedDateTime"],
             "metadata_field_aliases": {
                 "formSubjectId": "worker",
@@ -282,7 +282,7 @@ def test_token_400_is_not_treated_as_incremental_filter_rejection(monkeypatch) -
                 "entity": "EmpJob",
                 "mode": "incremental",
                 "watermark_field": "lastModifiedDateTime",
-                "conn_id": "femsa_sf",
+                "conn_id": "tenant_sf",
                 "select_fields": ["userId", "lastModifiedDateTime"],
             }
         )
@@ -314,7 +314,7 @@ def test_saved_watermark_normalizes_sap_payload_date(monkeypatch) -> None:
             "entity": "PerEmail",
             "mode": "incremental",
             "watermark_field": "lastModifiedDateTime",
-            "conn_id": "femsa_sf",
+            "conn_id": "tenant_sf",
         }
     )
 

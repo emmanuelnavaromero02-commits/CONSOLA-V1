@@ -62,7 +62,7 @@ def test_fetch_entity_403_uses_safe_permission_error(monkeypatch):
     captured: dict = {}
     client = SapSfClient.__new__(SapSfClient)
     client.base_url = "https://api68sales.successfactors.com/odata/v2"
-    client._conn_id = "femsa_sf"
+    client._conn_id = "tenant_sf"
     client._session = type(
         "Session",
         (),
@@ -110,7 +110,7 @@ def test_fetch_entity_400_does_not_report_sap_body_query_or_url(monkeypatch):
     ).prepare()
     client = SapSfClient.__new__(SapSfClient)
     client.base_url = "https://api68sales.successfactors.com/odata/v2"
-    client._conn_id = "femsa_sf"
+    client._conn_id = "tenant_sf"
     client._session = type(
         "Session",
         (),

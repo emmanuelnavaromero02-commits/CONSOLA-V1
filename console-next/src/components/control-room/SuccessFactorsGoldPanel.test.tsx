@@ -127,7 +127,7 @@ describe("SuccessFactorsGoldPanel", () => {
       generated_at: "2026-06-22T18:00:00Z",
       profile: {
         industry: "retail",
-        company_profile: "femsa",
+        company_profile: "acmeco",
         decision_mode: "recommendation_only",
         compensation_enabled: false,
         write_back_enabled: false,
@@ -180,7 +180,7 @@ describe("SuccessFactorsGoldPanel", () => {
       generated_at: "2026-07-09T18:00:00Z",
       profile: {
         industry: "retail",
-        company_profile: "femsa",
+        company_profile: "acmeco",
         decision_mode: "recommendation_only",
         compensation_enabled: false,
         write_back_enabled: false,
@@ -233,7 +233,7 @@ describe("SuccessFactorsGoldPanel", () => {
 
   it("hides Workforce Trends when the bundle is absent (honest empty state)", () => {
     const talent: SfTalentKpisPayload = {
-      profile: { industry: "retail", company_profile: "femsa", decision_mode: "recommendation_only", compensation_enabled: false, write_back_enabled: false },
+      profile: { industry: "retail", company_profile: "acmeco", decision_mode: "recommendation_only", compensation_enabled: false, write_back_enabled: false },
       readiness: { ready_min: 80, near_min: 60, profiled_employees: 0, calculable_employees: 0, insufficient_data_employees: 0, nine_box_available: 0, status: "partial" },
       widgets: [],
       signals: [],

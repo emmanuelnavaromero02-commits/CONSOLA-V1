@@ -29,8 +29,8 @@ def test_security_context_is_backend_owned_and_scoped_to_user_cartridges():
 
 
 def test_security_context_allows_configured_aws_s3_bucket(monkeypatch):
-    monkeypatch.setenv("MINIO_BUCKET", "modecissions-lakehouse-783792")
-    monkeypatch.setenv("S3_BUCKET_NAME", "modecissions-lakehouse-783792")
+    monkeypatch.setenv("MINIO_BUCKET", "lakehouse-test")
+    monkeypatch.setenv("S3_BUCKET_NAME", "lakehouse-test")
 
     ctx = build_security_context(
         {
@@ -43,7 +43,7 @@ def test_security_context_allows_configured_aws_s3_bucket(monkeypatch):
         }
     )
 
-    assert ctx["allowed_buckets"] == ["lakehouse", "modecissions-lakehouse-783792"]
+    assert ctx["allowed_buckets"] == ["lakehouse", "lakehouse-test"]
 
 
 def test_security_context_admin_can_traverse_platform_prefixes():

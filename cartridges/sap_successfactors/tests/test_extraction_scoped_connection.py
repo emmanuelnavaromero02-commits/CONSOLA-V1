@@ -56,14 +56,14 @@ def test_console_extract_route_preserves_conn_id_and_scope(monkeypatch):
     result = routes_console.entity_extract(
         "PerPerson",
         mode="incremental",
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         body={"security_context": ctx},
     )
 
     assert result["status"] == "success"
-    assert captured["preflight_conn_id"] == "femsa_sf"
+    assert captured["preflight_conn_id"] == "tenant_sf"
     assert captured["preflight_security_context"] == ctx
-    assert captured["conn_id"] == "femsa_sf"
+    assert captured["conn_id"] == "tenant_sf"
     assert captured["security_context"] == ctx
 
 
@@ -74,7 +74,7 @@ def test_console_extract_route_uses_entity_connection_id_for_preflight(monkeypat
     monkeypatch.setattr(
         routes_console,
         "_get_entity_or_404",
-        lambda _entity: {"entity": "EmpCompensation", "connection_id": "femsa_sf"},
+        lambda _entity: {"entity": "EmpCompensation", "connection_id": "tenant_sf"},
     )
 
     def fake_preflight_for_extract(*, conn_id=None, security_context=None):
@@ -98,9 +98,9 @@ def test_console_extract_route_uses_entity_connection_id_for_preflight(monkeypat
     )
 
     assert result["status"] == "success"
-    assert captured["preflight_conn_id"] == "femsa_sf"
+    assert captured["preflight_conn_id"] == "tenant_sf"
     assert captured["preflight_security_context"] == ctx
-    assert captured["conn_id"] == "femsa_sf"
+    assert captured["conn_id"] == "tenant_sf"
 
 
 def test_extraction_service_passes_conn_id_and_scope_to_sap_client(monkeypatch):
@@ -130,13 +130,13 @@ def test_extraction_service_passes_conn_id_and_scope_to_sap_client(monkeypatch):
 
     result = extraction_service.run_entity({
         "entity": "PerPerson",
-        "conn_id": "femsa_sf",
+        "conn_id": "tenant_sf",
         "security_context": ctx,
         "mode": "full",
     })
 
     assert result["status"] == "success"
-    assert captured["conn_id"] == "femsa_sf"
+    assert captured["conn_id"] == "tenant_sf"
     assert json.loads(captured["security_context"]) == ctx
 
 
@@ -165,7 +165,7 @@ def test_extraction_service_uses_idempotency_key_as_run_id(monkeypatch):
     result = extraction_service.run_entity({
         "entity": "PerPerson",
         "mode": "full",
-        "conn_id": "femsa_sf",
+        "conn_id": "tenant_sf",
         "idempotency_key": "sync_now:sap_successfactors:test:PerPerson",
         "parent_idempotency_key": "sync_now:sap_successfactors:test",
     })
@@ -201,7 +201,7 @@ def test_effective_dated_entity_sends_odata_from_to_date(monkeypatch):
         "mode": "incremental",
         "effective_dated": True,
         "date_field": "startDate",
-        "conn_id": "femsa_sf",
+        "conn_id": "tenant_sf",
     })
 
     assert result["status"] == "success"
@@ -244,10 +244,10 @@ def test_preflight_uses_scoped_vault_connection(monkeypatch):
         lambda: {"component": "minio", "configured": True, "missing": []},
     )
 
-    report = preflight.preflight_for_extract(conn_id="femsa_sf", security_context=ctx)
+    report = preflight.preflight_for_extract(conn_id="tenant_sf", security_context=ctx)
 
     assert report is None
-    assert captured["conn_id"] == "femsa_sf"
+    assert captured["conn_id"] == "tenant_sf"
     assert json.loads(captured["security_context"]) == ctx
 
 
@@ -303,7 +303,7 @@ def test_parquet_storage_uri_uses_configured_bucket(monkeypatch):
     monkeypatch.setattr(
         parquet_service,
         "active_storage_bucket",
-        lambda: "modecissions-lakehouse-783792",
+        lambda: "lakehouse-test",
     )
     monkeypatch.setattr(parquet_service, "upload_file_to_minio", fake_upload_file_to_minio)
 
@@ -316,5 +316,5 @@ def test_parquet_storage_uri_uses_configured_bucket(monkeypatch):
         security_context={"tenant_id": "tenant-a", "workspace_id": "workspace-a"},
     )
 
-    assert uri.startswith("s3://modecissions-lakehouse-783792/")
+    assert uri.startswith("s3://lakehouse-test/")
     assert uploaded["object_name"] in uri
