@@ -376,6 +376,120 @@
             "reason": "AWS compose doesn't ship its own minio service"
           },
           {
+            "nodeid": "tests/test_e2e_full_flow.py::test_e2e_01_admin_can_login",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "Stack not running (ConnectError)"
+          },
+          {
+            "nodeid": "tests/test_e2e_full_flow.py::test_e2e_02_tool_manifest_lists_servers",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "Stack not running (ConnectError)"
+          },
+          {
+            "nodeid": "tests/test_e2e_full_flow.py::test_e2e_03_cartridge_connector_schema_replicon",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "Stack not running (ConnectError)"
+          },
+          {
+            "nodeid": "tests/test_e2e_full_flow.py::test_e2e_04_freshness_endpoint_responds",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "Stack not running (ConnectError)"
+          },
+          {
+            "nodeid": "tests/test_e2e_full_flow.py::test_e2e_05_freshness_summary_responds",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "Stack not running (ConnectError)"
+          },
+          {
+            "nodeid": "tests/test_e2e_full_flow.py::test_e2e_06_response_carries_request_id_header",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "Stack not running (ConnectError)"
+          },
+          {
+            "nodeid": "tests/test_e2e_full_flow.py::test_e2e_07_client_request_id_is_echoed",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "Stack not running (ConnectError)"
+          },
+          {
+            "nodeid": "tests/test_e2e_full_flow.py::test_e2e_08_audit_events_capture_ip",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "Stack not running (ConnectError)"
+          },
+          {
+            "nodeid": "tests/test_e2e_smoke.py::test_e2e_console_healthz_returns_json",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz \u2014 set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
+          },
+          {
+            "nodeid": "tests/test_e2e_smoke.py::test_e2e_console_login_has_baseline_security_headers",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz \u2014 set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
+          },
+          {
+            "nodeid": "tests/test_e2e_smoke.py::test_e2e_console_login_has_strict_csp",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz \u2014 set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
+          },
+          {
+            "nodeid": "tests/test_e2e_smoke.py::test_e2e_mcp_infra_healthz_returns_json",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz \u2014 set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
+          },
+          {
+            "nodeid": "tests/test_e2e_smoke.py::test_e2e_refinement_healthz_returns_json",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz \u2014 set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
+          },
+          {
+            "nodeid": "tests/test_e2e_smoke.py::test_e2e_unauthenticated_get_to_protected_page_redirects_or_401s",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz \u2014 set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
+          },
+          {
+            "nodeid": "tests/test_e2e_smoke.py::test_e2e_unauthenticated_post_to_admin_users_is_rejected",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz \u2014 set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
+          },
+          {
+            "nodeid": "tests/test_e2e_smoke.py::test_e2e_unauthenticated_post_to_monitoring_invoke_is_rejected",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz \u2014 set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
+          },
+          {
+            "nodeid": "tests/test_e2e_smoke.py::test_e2e_vault_healthz_returns_json",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz \u2014 set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
+          },
+          {
+            "nodeid": "tests/test_e2e_smoke.py::test_e2e_workspace_healthz_returns_json",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz \u2014 set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
+          },
+          {
+            "nodeid": "tests/test_e2e_smoke.py::test_e2e_workspace_shell_has_strict_csp",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz \u2014 set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
+          },
+          {
             "nodeid": "tests/test_mcp_pg_role_guard.py::test_guard_accepts_scoped_service_role",
             "phase": "setup",
             "category": "skip",
@@ -388,10 +502,232 @@
             "reason": "requires a reachable Postgres with the platform schema (DATABASE_URL)"
           },
           {
+            "nodeid": "tests/test_mcp_servers_tool_count_column.py::test_live_mcp_servers_tool_count_column_if_stack_is_up",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live postgres stack not reachable: Error response from daemon: No such container: mode_postgres"
+          },
+          {
             "nodeid": "tests/test_sap_entities_seeded.py::test_live_sap_entities_seeded_in_entity_config",
             "phase": "call",
             "category": "skip",
             "reason": "requires a reachable Postgres with the platform schema (DATABASE_URL)"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_403_responses_still_carry_request_id[console-http://localhost:8000-/api/whatever-unauth]",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_403_responses_still_carry_request_id[mcp-infra-http://localhost:8010-/api/whatever-unauth]",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_403_responses_still_carry_request_id[replicon-http://localhost:8201-/mcp/tools]",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_403_responses_still_carry_request_id[sap_hcm-http://localhost:8202-/mcp/tools]",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_403_responses_still_carry_request_id[sap_s4-http://localhost:8204-/mcp/tools]",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_403_responses_still_carry_request_id[sap_sf-http://localhost:8203-/mcp/tools]",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_cartridge_mcp_invoke_unauth_returns_401[replicon-http://localhost:8201-8201]",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_cartridge_mcp_invoke_unauth_returns_401[sap_hcm-http://localhost:8202-8202]",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_cartridge_mcp_invoke_unauth_returns_401[sap_s4-http://localhost:8204-8204]",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_cartridge_mcp_invoke_unauth_returns_401[sap_sf-http://localhost:8203-8203]",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_cartridge_skills_unauth_returns_401[replicon-http://localhost:8201-8201]",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_cartridge_skills_unauth_returns_401[sap_hcm-http://localhost:8202-8202]",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_cartridge_skills_unauth_returns_401[sap_s4-http://localhost:8204-8204]",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_cartridge_skills_unauth_returns_401[sap_sf-http://localhost:8203-8203]",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_cartridge_test_connection_unauth_returns_401[replicon-http://localhost:8201-8201]",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_cartridge_test_connection_unauth_returns_401[sap_hcm-http://localhost:8202-8202]",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_cartridge_test_connection_unauth_returns_401[sap_s4-http://localhost:8204-8204]",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_cartridge_test_connection_unauth_returns_401[sap_sf-http://localhost:8203-8203]",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_console_admin_users_unauth_returns_401_or_403",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_console_cartridge_run_unauth_returns_401_or_403",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_console_freshness_unauth_returns_401",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_console_mcp_invoke_unauth_returns_401_or_403",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_console_settings_reveal_unauth_returns_401_or_403",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_csrf_required_on_mutating_admin_route",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_mcp_infra_invoke_unauth_returns_401",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_mcp_invoke_returns_401_when_auth_headers_missing[http://localhost:8010-8010]",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_mcp_invoke_returns_401_when_auth_headers_missing[http://localhost:8201-8201]",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_mcp_invoke_returns_401_when_auth_headers_missing[http://localhost:8202-8202]",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_mcp_invoke_returns_401_when_auth_headers_missing[http://localhost:8203-8203]",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_mcp_invoke_returns_401_when_auth_headers_missing[http://localhost:8204-8204]",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_unauth_responses_still_carry_request_id[console-http://localhost:8000-/api/whatever-unauth]",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_unauth_responses_still_carry_request_id[mcp-infra-http://localhost:8010-/api/whatever-unauth]",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_unauth_responses_still_carry_request_id[replicon-http://localhost:8201-/mcp/tools]",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_unauth_responses_still_carry_request_id[sap_hcm-http://localhost:8202-/mcp/tools]",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_unauth_responses_still_carry_request_id[sap_s4-http://localhost:8204-/mcp/tools]",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
+          },
+          {
+            "nodeid": "tests/test_security_negative_v141.py::test_unauth_responses_still_carry_request_id[sap_sf-http://localhost:8203-/mcp/tools]",
+            "phase": "call",
+            "category": "skip",
+            "reason": "live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1"
           }
         ]
       }

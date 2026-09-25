@@ -3,7 +3,7 @@
   "files": [
     {
       "path": ".github/release-test-skip-policy.json",
-      "sha256": "413bf4e077170dc2e43c9f242bfad228133e04d7814322dc00e026e9aa125235"
+      "sha256": "4e18e4781e3ffbc6cfd4d559428839dd2fbc1d97ae506de2e49777d83dc52a91"
     },
     {
       "path": ".github/workflows/release-runner-capacity.yml",
@@ -5479,7 +5479,7 @@
     },
     {
       "path": "tests/test_release_test_skip_policy.py",
-      "sha256": "1635afc8a28a29280d25aef8d93fe7da980bfa36ab925d650246589e1d760ea0"
+      "sha256": "1274af8de132d8f2e5ef156bb672a94a79f0d74921184da81bbbdd869a656a16"
     },
     {
       "path": "tests/test_remaining_operational_rls_sweep.py",
