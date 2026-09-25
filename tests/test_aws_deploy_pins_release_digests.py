@@ -156,3 +156,29 @@ def test_remote_script_verifies_and_uses_the_overlay() -> None:
     assert "every OMEGA image is digest-pinned" in source, (
         "the deploy does not assert, after pulling, that no tag reference remains"
     )
+
+
+@pytest.mark.parametrize(
+    ("image", "expected"),
+    [("ghcr.io/o/console@sha256:" + "a" * 64, "0"), ("ghcr.io/o/console:v1", "1")],
+)
+def test_pin_check_survives_pipefail(image: str, expected: str) -> None:
+    import subprocess
+
+    sys.path.insert(0, str(REPO / "scripts"))
+    import deploy_main_aws
+
+    script = deploy_main_aws._remote_deploy_script(
+        artifact_bucket="b", artifact_key="k", artifact_sha256="0" * 64, deploy_ref="a" * 40,
+        image_tag="v0.0.0", version="0.0.0", run_migrations=False,
+        images_overlay_b64="", images_overlay_sha256="0" * 64,
+    )
+    check = next(line for line in script.splitlines() if line.startswith("unpinned="))
+    compose = json.dumps({"services": {"console": {"image": image}}}, indent=2)
+    stub = f"docker() {{ cat <<'JSON'\n{compose}\nJSON\n}}\n"
+    result = subprocess.run(
+        ["bash", "-c", f"set -euo pipefail\nCOMPOSE_FILES=x\n{stub}{check}\nprintf '%s' \"$unpinned\""],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == expected

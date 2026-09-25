@@ -372,7 +372,7 @@ if [ ! -f "$AUTH_RUNNER" ]; then
 fi
 OMEGA_GHCR_AUTH_ACTIVE=1 DOCKER_CONFIG=/root/.docker bash "$AUTH_RUNNER" docker compose $COMPOSE_FILES pull $services >/tmp/omega-deploy-pull.out 2>/tmp/omega-deploy-pull.err || {{ emit "pull app images" "FAIL" "$(tail -c 400 /tmp/omega-deploy-pull.err || true)"; exit 25; }}
 emit "pull app images" "PASS" "image_tag=$IMAGE_TAG_NEW overlay=$IMAGES_OVERLAY_SHA256"
-unpinned="$(docker compose $COMPOSE_FILES config --format json 2>/dev/null | grep -oE '"image": *"ghcr[.]io/[^"]*"' | grep -v '@sha256:' | wc -l | tr -d ' ')"
+unpinned="$(docker compose $COMPOSE_FILES config --format json 2>/dev/null | grep -oE '"image": *"ghcr[.]io/[^"]*"' | {{ grep -v '@sha256:' || true; }} | wc -l | tr -d ' ')"
 if [ "${{unpinned:-1}}" != "0" ]; then
   emit "every OMEGA image is digest-pinned" "FAIL" "$unpinned image(s) still resolve by tag"
   exit 22
