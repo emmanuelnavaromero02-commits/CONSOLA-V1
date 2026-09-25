@@ -991,7 +991,7 @@
     },
     {
       "path": "cartridges/sap_b1/tests/test_extraction_against_fake.py",
-      "sha256": "0f285c5995035ec91e82a4c953601686faf0b1a36890d6f9b813ba3cf467bd84"
+      "sha256": "7cf9bc97ddbebbd3c03f2a08ae57abb9ffbcef75dd72a502cb4e9e88c5840123"
     },
     {
       "path": "cartridges/sap_b1/tests/test_intercompany.py",
@@ -1007,7 +1007,7 @@
     },
     {
       "path": "cartridges/sap_b1/tests/test_windows_agent.py",
-      "sha256": "b3d02b37211972aa77b19b97d94e6af49b2202fe5fe9559dd32177c9aa1f41f7"
+      "sha256": "4b960eb2ac6584f95a4a4e58021b046d3bf24750a120eeb8ced8e858c2d70bf5"
     },
     {
       "path": "cartridges/sap_b1/tools/__init__.py",
@@ -4187,7 +4187,7 @@
     },
     {
       "path": "tests/test_control_room_ci_contract.py",
-      "sha256": "08c640e94bd1b6423d3ea1bd0d57e948627037967cca2fa5a1e7bb61369cc64d"
+      "sha256": "b1c32a168f8f6025cca9cd5c2ea5a226a39e4a0759b3762bebace6846a2a5b3e"
     },
     {
       "path": "tests/test_control_room_data_readiness_contract.py",

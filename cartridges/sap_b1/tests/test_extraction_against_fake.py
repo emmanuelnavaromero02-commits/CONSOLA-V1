@@ -20,6 +20,15 @@ b1 = importlib.import_module("sap_b1_fake.schema")
 
 pytestmark = pytest.mark.usefixtures("fake_postgres")
 
+def _read_parquet(path):
+    """The file exactly as written. Newer pyarrow infers partition columns
+    (load_date, batch_id, ...) from the hive-style directories when a single
+    file path goes through ``read_table``."""
+    import pyarrow.parquet as pq
+
+    return pq.ParquetFile(str(path)).read()
+
+
 
 class Recorder:
     def __init__(self, watermarks: dict[str, str] | None = None) -> None:
@@ -506,7 +515,7 @@ def test_parquet_keeps_exact_amounts_and_dates(b1_env, dataset, tmp_path, monkey
         watermark_field="UpdateDate", expected_columns=list(plan.output_columns), arrow_schema=declared,
     )
     assert uri.startswith("s3://lakehouse/raw/sap_b1/OINV/")
-    table = pq.read_table(written[0])
+    table = _read_parquet(written[0])
     assert table.schema.equals(declared)
     schema = {field.name: str(field.type) for field in table.schema}
     assert schema["DocTotal"] == "decimal128(19, 6)" and schema["DocTotalFC"] == "decimal128(19, 6)"
@@ -524,5 +533,5 @@ def test_parquet_keeps_exact_amounts_and_dates(b1_env, dataset, tmp_path, monkey
     parquet_service.write_parquet_and_upload(entity="OINV", rows=nulls, run_id="run-2", load_type="full", arrow_schema=declared)
     parquet_service.write_parquet_and_upload(entity="OINV", rows=[], run_id="run-3", load_type="full", arrow_schema=declared)
     for path in written:
-        assert pq.read_table(path).schema.equals(declared), path
-    assert pq.read_table(written[1]).num_rows == 0
+        assert _read_parquet(path).schema.equals(declared), path
+    assert _read_parquet(written[1]).num_rows == 0

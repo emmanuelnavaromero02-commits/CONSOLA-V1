@@ -54,6 +54,15 @@ SPOOL_NAME = re.compile(r"^[0-9a-f]{20}\.parquet$")
 
 # ── helpers ────────────────────────────────────────────────────────────────
 
+def _read_parquet(path):
+    """The file exactly as written. Newer pyarrow infers partition columns
+    (load_date, batch_id, ...) from the hive-style directories when a single
+    file path goes through ``read_table``."""
+    import pyarrow.parquet as pq
+
+    return pq.ParquetFile(str(path)).read()
+
+
 
 def _entity_config(entity: str) -> dict:
     with ENTITIES.open(encoding="utf-8") as handle:
@@ -272,7 +281,7 @@ def test_full_load_writes_the_cartridge_schema_and_layout(b1_env, dataset, tmp_p
         match = layout.match(path.relative_to(out).as_posix())
         assert match, path
         batch_ids.append(match.group("batch"))
-        table = pq.read_table(path)
+        table = _read_parquet(path)
         assert table.schema.equals(declared, check_metadata=True), path
         for row in table.to_pylist():
             assert row["_run_id"] == match.group("batch")
@@ -468,7 +477,7 @@ def test_extract_all_writes_the_intercompany_mapping_last_like_the_cartridge(b1_
         rf"load_date=\d{{4}}-\d{{2}}-\d{{2}}/batch_id={re.escape(ic_run['run_id'])}/{icm.ENTITY}\.parquet$"
     )
     assert layout.match(files[0].relative_to(out).as_posix()), files[0]
-    table = pq.read_table(files[0])
+    table = _read_parquet(files[0])
     # The very schema the cartridge hands its writer (refresh_intercompany_partners).
     assert table.schema.equals(icm.arrow_schema(), check_metadata=True)
     rows = table.to_pylist()
@@ -505,7 +514,7 @@ def test_an_empty_mapping_is_a_zero_row_typed_file(b1_env, dataset, tmp_path):
     assert proc.returncode == 0, proc.stderr
     files = list(out.rglob("IntercompanyPartners.parquet"))
     assert len(files) == 1
-    table = pq.read_table(files[0])
+    table = _read_parquet(files[0])
     assert table.num_rows == 0 and table.schema.equals(icm.arrow_schema(), check_metadata=True)
     assert _runs(config)[-1]["records_extracted"] == 0 and _runs(config)[-1]["status"] == "success"
 
@@ -1170,7 +1179,7 @@ def test_a_date_range_is_a_historical_read_that_stores_no_watermark(b1_env, data
     assert _watermarks(config) == {}, "a historical read never moves a watermark"
     seen = defaultdict(set)
     for path in out.rglob("*.parquet"):
-        for row in pq.read_table(path).to_pylist():
+        for row in _read_parquet(path).to_pylist():
             assert row["_load_type"] == "historical"
             assert start <= row["DocDate"].date() <= end, row["DocDate"]
             seen[row["_company"]].add(row["DocEntry"])
@@ -1199,7 +1208,7 @@ def test_a_snapshot_table_asked_incrementally_is_read_whole(b1_env, dataset, tmp
     declared = q.arrow_schema(q.plan_from_config(_entity_config("OITW")))
     total = 0
     for path in files:
-        table = pq.read_table(path)
+        table = _read_parquet(path)
         assert table.schema.equals(declared, check_metadata=True)
         assert all(row["_load_type"] == "full" and row["_watermark_value"] is None for row in table.to_pylist())
         total += table.num_rows
@@ -1402,7 +1411,7 @@ def test_an_incremental_run_picks_up_a_row_edited_in_the_source(b1_env, dataset,
         second = tmp_path / "second"
         proc = _run(config, "extract", "--entity", "OINV", "--mode", "incremental", "--output-dir", str(second))
         assert proc.returncode == 0, proc.stderr
-        rows = [row for path in second.rglob("*.parquet") for row in pq.read_table(path).to_pylist()]
+        rows = [row for path in second.rglob("*.parquet") for row in _read_parquet(path).to_pylist()]
         edited = [row for row in rows if row["_company"] == company.alias and row["DocEntry"] == doc_entry]
         assert len(edited) == 1, "the edited invoice is read exactly once"
         assert edited[0]["_source_updated_at"] == later.replace(hour=10, minute=15).strftime(_STAMP)

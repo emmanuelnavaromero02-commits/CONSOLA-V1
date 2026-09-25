@@ -310,7 +310,7 @@ def test_both_junit_reports_fail_closed_on_missing_or_bad_results():
         "          HOME: ${{ steps.duckdb_cache.outputs.home }}",
         "          HOME: ${{ steps.duckdb_cache.outputs.home }}",
     ]
-    assert text.count("DOCKER_HOST: unix:///var/run/docker.sock") == 2
+    assert text.count("DOCKER_HOST: unix:///var/run/docker.sock") == 3
     assert "INSTALL httpfs" not in text
     assert "INSTALL postgres" not in text
     assert '"autoinstall_known_extensions": "false"' in prepare_script
@@ -318,7 +318,7 @@ def test_both_junit_reports_fail_closed_on_missing_or_bad_results():
     assert "EXPECTED_MANIFEST_SHA256" in text
     assert 'find "${HOME}/.duckdb" ! -type d ! -type f' in text
     assert 'cmp --silent "${DUCKDB_CACHE_MANIFEST}" "${actual_manifest}"' in text
-    assert text.count("env -u GITHUB_ENV -u GITHUB_PATH") == 3
+    assert text.count("env -u GITHUB_ENV -u GITHUB_PATH") == 4
     for safe_control in (
         "BASH_ENV: /dev/null",
         "ENV: /dev/null",
@@ -329,6 +329,32 @@ def test_both_junit_reports_fail_closed_on_missing_or_bad_results():
         "/usr/bin/python3 - <<'PY'",
     ):
         assert safe_control in text
+
+
+def test_the_business_one_cartridge_tests_run_in_their_own_verified_process():
+    """The cartridge's conftest puts its directory first on ``sys.path`` when
+    it is loaded, so any console test collected in the same pytest process
+    imports the cartridge's ``app`` (61 collection errors the first time the
+    two shared a process). The cartridge tests therefore run in a process of
+    their own, after the live step, and their JUnit report is verified with
+    the same fail-closed rules and a floor of its own."""
+    text = _workflow_text()
+    live = text.index("- name: Run live PostgreSQL/RLS tests")
+    cartridge = text.index("- name: Run SAP Business One cartridge tests against the Postgres fake")
+    verify_cache = text.index("- name: Verify hermetic DuckDB extension cache")
+    assert live < cartridge < verify_cache
+    live_step = text[live:cartridge]
+    cartridge_step = text[cartridge:verify_cache]
+    assert "cartridges/sap_b1" not in live_step
+    for target in (
+        "cartridges/sap_b1/tests/test_extraction_against_fake.py",
+        "cartridges/sap_b1/tests/test_windows_agent.py",
+    ):
+        assert target in cartridge_step
+    assert "--junitxml=/tmp/control-room-sap-b1.xml" in cartridge_step
+    assert "if: always()" in cartridge_step and "continue-on-error: true" in cartridge_step
+    assert "PYTHONPATH" not in cartridge_step, "the cartridge must not see the console's import path"
+    assert 'verify_junit("/tmp/control-room-sap-b1.xml", minimum=62, label="SAP Business One cartridge")' in text
 
 
 def test_focal_gate_installs_and_checks_the_real_mcp_dependencies_first():
