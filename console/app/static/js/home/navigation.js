@@ -129,7 +129,7 @@ export function renderTopbar() {
   const top = el('header', 'home-topbar');
   const brand = el('a', 'home-brand');
   brand.href = '/';
-  brand.append(el('span', 'home-mark', 'Ω'), el('span', null, 'OMEGA'), el('small', null, 'by EPI USE'));
+  brand.append(el('span', 'home-mark', 'Ω'), el('span', null, 'OMEGA'));
 
   const services = visibleServices();
   const nav = el('nav', 'home-nav');

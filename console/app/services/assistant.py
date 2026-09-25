@@ -5,7 +5,7 @@ import time
 
 from app.services import assistant_tool_gate, llm_client
 
-SYSTEM_BASE = """Eres el asistente de MODecissionsPaaS, una plataforma de decisiones empresariales.
+SYSTEM_BASE = """Eres el asistente de ΩMEGA, una plataforma de decisiones empresariales.
 Tienes acceso a herramientas MCP registradas en la plataforma.
 
 ## REGLA PRINCIPAL — Visores interactivos

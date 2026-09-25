@@ -15,7 +15,7 @@
     },
     {
       "path": "Makefile",
-      "sha256": "a84bbdf5b681028c0bfe0e4b252bc5d1ac05b23afc0673e810edc3ad54f70cb1"
+      "sha256": "0df8651a3c97eaba629d741ce8629f87d876901dd5ad9395073e4f1e858f3767"
     },
     {
       "path": "airflow/dags/_secrets.py",
@@ -627,7 +627,7 @@
     },
     {
       "path": "cartridges/replicon/dags/replicon_extract.py",
-      "sha256": "86c0efc14e4975388c0f6860c1cf1d55dc5e66cd28dc4b9fb35e1d580c251672"
+      "sha256": "4d586abe64229c9991a4cfc01565b889489e779b36f1bdde3177372dec644336"
     },
     {
       "path": "cartridges/replicon/dags/replicon_ses_inbox_import.py",
@@ -5843,7 +5843,7 @@
     },
     {
       "path": "tests/test_studio_assistant.py",
-      "sha256": "c05880ea1699a9cf5b12c0ef24ecf398c9a559ac293a1c717705de3c7d2540b7"
+      "sha256": "7f834b4a8004f2245c7291fb8c699e2336f9997f49e249dbffb2de5713edcd78"
     },
     {
       "path": "tests/test_studio_dag_graph_parser.py",

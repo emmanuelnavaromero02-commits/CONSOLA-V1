@@ -88,7 +88,7 @@ async def test_studio_assistant_uses_scoped_system_prompt(studio_assistant_modul
     )
 
     assert "Tu ámbito es SOLO Studio" in captured["system"]
-    assert "MODecissions Studio" in captured["system"]
+    assert "ΩMEGA Studio" in captured["system"]
 
 
 @pytest.mark.asyncio

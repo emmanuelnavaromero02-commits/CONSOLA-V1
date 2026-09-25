@@ -2866,7 +2866,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         <div class="step-title">
           <div>
             <h2>Data Catalog &amp; Semántica</h2>
-            <p class="step-desc">Vocabulario de negocio del modelo de datos. Edita descripciones, tags y relaciones para que EPI IA genere SQL preciso.</p>
+            <p class="step-desc">Vocabulario de negocio del modelo de datos. Edita descripciones, tags y relaciones para que ΩMEGA IA genere SQL preciso.</p>
           </div>
           <button class="btn btn-amber" onclick="askSemanticHelp()" title="Pedir al asistente que enriquezca el catálogo">◈ Enriquecer con IA</button>
         </div>

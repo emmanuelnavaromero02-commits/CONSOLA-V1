@@ -1504,7 +1504,7 @@ def _generate_seed_sql(manifest: dict) -> str:
     cid = manifest["id"]
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     lines = [
-        f"-- MODecissions Cartridge: {manifest['name']} — seed configuration",
+        f"-- ΩMEGA Cartridge: {manifest['name']} — seed configuration",
         f"-- Generated: {now}",
         f"-- Safe to re-run: all inserts use ON CONFLICT DO NOTHING / DO UPDATE.",
         "",

@@ -56,7 +56,7 @@ async def request_admin_help(
     requester = f"{user_name} <{user_email}>" if user_name and user_email \
                 else (user_email or user_name or "(usuario desconocido)")
 
-    subject = f"[ΩMEGA by EPIUSE] Solicitud no resuelta — {user_question[:60]}"
+    subject = f"[ΩMEGA] Solicitud no resuelta — {user_question[:60]}"
     requester_html = escape(requester)
     question_html = escape(user_question)
     why_html = escape(why_unanswerable)
@@ -76,7 +76,7 @@ async def request_admin_help(
 <html><body style="font-family:Helvetica,Arial,sans-serif;background:#0d1117;color:#e6edf3;padding:32px">
   <div style="max-width:600px;margin:0 auto;background:#161b22;border:1px solid #30363d;border-radius:6px;padding:28px">
     <div style="font-size:18px;font-weight:700;letter-spacing:2px;color:#3fb950;margin-bottom:4px">
-      <span style="color:#d29922">Ω</span>MEGA <span style="color:#6e7681;font-size:11px;letter-spacing:1.5px">BY EPIUSE</span>
+      <span style="color:#d29922">Ω</span>MEGA
     </div>
     <div style="font-size:9px;letter-spacing:2px;color:#6e7681;margin-bottom:20px">
       ADMIN REQUEST · {timestamp}

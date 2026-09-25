@@ -1299,7 +1299,7 @@ async def verify_api_key_dependency(
     return verify_api_key(x_api_key, x_internal_service)
 
 
-app = FastAPI(title="MODecissionsPaaS Refinement", lifespan=lifespan)
+app = FastAPI(title="ΩMEGA Refinement", lifespan=lifespan)
 
 
 def _internal_error_request_id(request: Request | None = None) -> str:

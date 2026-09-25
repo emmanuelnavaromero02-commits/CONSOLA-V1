@@ -28,7 +28,7 @@ set -a
 source .env
 set +a
 
-echo "=== Pulling MODecissions release images ==="
+echo "=== Pulling ΩMEGA release images ==="
 echo "GHCR_OWNER=${GHCR_OWNER:-emmanuelnavaromero02-commits}"
 if [[ -z "${IMAGE_TAG:-}" || "${IMAGE_TAG:-}" == "latest" ]]; then
   echo "ERROR: IMAGE_TAG must be set to an immutable release tag (not empty/latest)." >&2
