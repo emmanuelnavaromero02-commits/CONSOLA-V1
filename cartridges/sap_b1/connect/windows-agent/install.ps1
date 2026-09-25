@@ -25,6 +25,14 @@ $ErrorActionPreference = 'Stop'
 
 function Write-Step([string]$Text) { Write-Host "==> $Text" }
 
+if (-not $NoTask -and $Mode -eq 'Service') {
+    if (-not $WinswExe -or -not (Test-Path $WinswExe)) { throw 'Indique -WinswExe con la ruta de WinSW-x64.exe (version 2.12).' }
+    if (-not $WinswSha256) { throw 'Indique -WinswSha256; WinSW no se instala sin verificar su hash.' }
+    $winswHash = (Get-FileHash -Algorithm SHA256 -Path $WinswExe).Hash
+    if ($winswHash.ToUpperInvariant() -ne $WinswSha256.ToUpperInvariant()) { throw 'WinSW no coincide con el SHA-256 esperado; no se instala.' }
+    if ($IntervalMinutes -lt 15 -or $IntervalMinutes -gt 1440) { throw '-IntervalMinutes debe estar entre 15 y 1440.' }
+}
+
 $aclAccount = $ServiceAccount
 if ($aclAccount.StartsWith('.\')) { $aclAccount = "$env:COMPUTERNAME\" + $aclAccount.Substring(2) }
 $sidSystem = '*S-1-5-18'
@@ -76,6 +84,12 @@ function Test-MachineWidePython([string]$Exe) {
 
 function Get-PythonExe {
     $probe = 'import sys; print(sys.executable) if sys.version_info >= (3, 11) else sys.exit(1)'
+    $machineWide = Get-ChildItem -Path $env:ProgramFiles -Directory -Filter 'Python3*' -ErrorAction SilentlyContinue |
+        Sort-Object -Property Name -Descending | ForEach-Object { Join-Path $_.FullName 'python.exe' } | Where-Object { Test-Path $_ }
+    foreach ($candidate in $machineWide) {
+        $out = & $candidate -c $probe 2>$null
+        if ($LASTEXITCODE -eq 0 -and $out) { return "$out".Trim() }
+    }
     $launchers = @(
         @{ Exe = 'py'; Args = @('-3.12') },
         @{ Exe = 'py'; Args = @('-3.13') },
@@ -209,12 +223,6 @@ function Grant-ServiceLogonRight([string]$Account) {
 function ConvertTo-XmlText([string]$Value) { return [System.Security.SecurityElement]::Escape($Value) }
 
 function Install-AgentService {
-    if (-not $WinswExe -or -not (Test-Path $WinswExe)) { throw 'Indique -WinswExe con la ruta de WinSW-x64.exe (version 2.12).' }
-    if (-not $WinswSha256) { throw 'Indique -WinswSha256; WinSW no se instala sin verificar su hash.' }
-    $actual = (Get-FileHash -Algorithm SHA256 -Path $WinswExe).Hash
-    if ($actual.ToUpperInvariant() -ne $WinswSha256.ToUpperInvariant()) { throw 'WinSW no coincide con el SHA-256 esperado; no se instala.' }
-    if ($IntervalMinutes -lt 15 -or $IntervalMinutes -gt 1440) { throw '-IntervalMinutes debe estar entre 15 y 1440.' }
-
     $serviceDir = Join-Path $InstallRoot 'service'
     New-Item -ItemType Directory -Force -Path $serviceDir | Out-Null
     $wrapper = Join-Path $serviceDir "$ServiceName.exe"

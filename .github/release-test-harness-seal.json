@@ -1011,7 +1011,7 @@
     },
     {
       "path": "cartridges/sap_b1/tests/test_windows_agent.py",
-      "sha256": "693c058f6bbcbee11d18c31ee757740db41de394b2be318c44c8d928a65e6404"
+      "sha256": "0b4e91cd1b8f79fb261e977cb96882f7e2b743c5e6d566cb8308fa5c0dd6685f"
     },
     {
       "path": "cartridges/sap_b1/tools/__init__.py",

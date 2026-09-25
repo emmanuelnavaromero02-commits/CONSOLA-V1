@@ -35,6 +35,8 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
+          $toolcache = Split-Path -Parent (& py -3.12 -c 'import sys; print(sys.executable)')
+          Copy-Item -Recurse -Path $toolcache -Destination (Join-Path $env:ProgramFiles 'Python312')
           $winsw = Join-Path $env:RUNNER_TEMP 'WinSW-x64.exe'
           Invoke-WebRequest -Uri 'https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW-x64.exe' -OutFile $winsw -UseBasicParsing
           $hash = (Get-FileHash -Algorithm SHA256 -Path $winsw).Hash
@@ -44,7 +46,10 @@ jobs:
           $bad = $false
           try {
             & .\cartridges\sap_b1\connect\windows-agent\install.ps1 -ServiceAccount '.\omegab1svc' -Credential $credential -WinswExe $winsw -WinswSha256 ('0' * 64)
-          } catch { $bad = $true }
+          } catch {
+            if ($_.Exception.Message -notlike '*SHA-256*') { throw }
+            $bad = $true
+          }
           if (-not $bad) { throw 'a WinSW binary with the wrong hash was accepted' }
           & .\cartridges\sap_b1\connect\windows-agent\install.ps1 -ServiceAccount '.\omegab1svc' -Credential $credential -WinswExe $winsw -WinswSha256 $hash -IntervalMinutes 15
           if ((Get-Service -Name 'OmegaSapB1Agent').Status -ne 'Stopped') { throw 'the service must wait for a completed agent.toml' }

@@ -1521,6 +1521,7 @@ def test_windows_service_install_verifies_winsw_and_never_stores_the_password():
     assert "[ValidateSet('Service', 'Task')][string]$Mode = 'Service'" in install
     assert "Get-FileHash -Algorithm SHA256 -Path $WinswExe" in install
     assert "WinSW no se instala sin verificar su hash" in install
+    assert install.index("$winswHash = (Get-FileHash") < install.index("$python = Get-PythonExe")
     assert "serve --interval-minutes $IntervalMinutes" in install
     assert "Invoke-CimMethod -InputObject $service -MethodName Change" in install
     assert "SeServiceLogonRight" in install and "secedit /configure" in install
