@@ -5,6 +5,18 @@ export function csrfToken() {
   return match ? decodeURIComponent(match[1]) : '';
 }
 
+export function safeUrl(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  if (raw.startsWith('/') && !raw.startsWith('//') && !raw.startsWith('/\\')) return raw;
+  try {
+    const url = new URL(raw);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? raw : '';
+  } catch {
+    return '';
+  }
+}
+
 export function apiFetch(url, options = {}) {
   const method = String(options.method || 'GET').toUpperCase();
   const headers = new Headers(options.headers || {});

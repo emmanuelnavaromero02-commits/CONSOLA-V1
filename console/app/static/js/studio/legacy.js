@@ -1,5 +1,5 @@
 import { state } from './legacy-state.js';
-import { apiFetch } from './api.js?v=studio-autopilot-ui6';
+import { apiFetch, safeUrl } from './api.js?v=studio-autopilot-ui6';
 
 	    window.state = state;
 
@@ -18,17 +18,17 @@ import { apiFetch } from './api.js?v=studio-autopilot-ui6';
 	    fetchWithTimeout('/api/config').then(r => r.json())
       .then(d => {
         if (d.s3_bucket) state.S3_BUCKET = d.s3_bucket;
-        if (d.airflow_url) state.AIRFLOW_PUBLIC_URL = d.airflow_url.replace(/\/+$/, '');
-        if (d.superset_url) state.SUPERSET_PUBLIC_URL = d.superset_url.replace(/\/+$/, '');
+        if (d.airflow_url) state.AIRFLOW_PUBLIC_URL = safeUrl(d.airflow_url).replace(/\/+$/, '');
+        if (d.superset_url) state.SUPERSET_PUBLIC_URL = safeUrl(d.superset_url).replace(/\/+$/, '');
         const afLink = document.getElementById('dag-airflow-link');
         if (afLink && state._selectedDag && state._selectedDag !== '__new__') {
-          afLink.setAttribute('href', airflowDagUrl(state._selectedDag));
+          afLink.setAttribute('href', safeUrl(airflowDagUrl(state._selectedDag)) || '#');
         }
         const supersetLink = document.getElementById('analytics-superset-link');
         if (supersetLink) {
-          const url = supersetUrl();
-          supersetLink.setAttribute('href', url);
-          if (!url || url === '#') {
+          const url = safeUrl(supersetUrl());
+          supersetLink.setAttribute('href', url || '#');
+          if (!url) {
             supersetLink.setAttribute('aria-disabled', 'true');
             supersetLink.textContent = 'Superset interno por seguridad';
           }
@@ -318,13 +318,13 @@ import { apiFetch } from './api.js?v=studio-autopilot-ui6';
         ? '.zip,application/zip'
         : '.yaml,.yml,.json,.xml,.wsdl';
       return `
-        <div class="upload-zone" id="${containerId}" data-upload-zone="${containerId}">
-          <input type="file" id="fi-${containerId}" accept="${accept}"
-                 data-upload-input="${containerId}">
+        <div class="upload-zone" id="${esc(containerId)}" data-upload-zone="${esc(containerId)}">
+          <input type="file" id="fi-${esc(containerId)}" accept="${esc(accept)}"
+                 data-upload-input="${esc(containerId)}">
           <div class="uz-icon">↑</div>
           <div class="uz-label">${esc(label)}</div>
           <div class="uz-sub">${esc(sublabel)}</div>
-          <div id="uz-status-${containerId}" style="margin-top:8px;font-size:10px"></div>
+          <div id="uz-status-${esc(containerId)}" style="margin-top:8px;font-size:10px"></div>
         </div>`;
     }
 
@@ -533,7 +533,7 @@ import { apiFetch } from './api.js?v=studio-autopilot-ui6';
     export function cartCard(c) {
       const pattern  = c.pattern || 'dag-based';
       const isDag    = pattern === 'dag-based';
-      const entities = c.entities || 0;
+      const entityCount = Array.isArray(c.entities) ? c.entities.length : Number(c.entities) || 0;
       const version  = c.version  || '—';
       const selected = state._currentCartridge && state._currentCartridge.id === c.id;
       const cls      = selected ? 'ok' : '';
@@ -551,7 +551,7 @@ import { apiFetch } from './api.js?v=studio-autopilot-ui6';
           </div>
           <div class="ic-desc">${esc(c.description || '—')}</div>
           <div class="ic-meta">
-            <span>${entities} entidades</span>
+            <span>${entityCount} entidades</span>
             ${c.connector ? `<span>conector: ${esc(c.connector)}</span>` : ''}
             <span style="color:var(--text3)">${esc(c.source || '')}</span>
           </div>
@@ -1356,7 +1356,7 @@ import { apiFetch } from './api.js?v=studio-autopilot-ui6';
                     onclick="sendLogsToAssistant(${escJsArg(prompt)})">
               ✎ Analizar con Asistente
             </button>
-            <a href="${esc(airflowUrl)}" target="_blank" class="btn btn-sm"
+            <a href="${esc(safeUrl(airflowUrl) || '#')}" target="_blank" class="btn btn-sm"
                style="color:var(--amber);border-color:var(--amber);text-decoration:none">
               ◈ Ver en Airflow
             </a>
@@ -1365,7 +1365,7 @@ import { apiFetch } from './api.js?v=studio-autopilot-ui6';
       } catch(e) {
         panel.innerHTML = `<div class="et-preview-inner">
           <div class="preview-err">No se pudieron cargar los logs: ${esc(e.message)}</div>
-          <a href="${esc(airflowDagUrl(dagId))}" target="_blank"
+          <a href="${esc(safeUrl(airflowDagUrl(dagId)) || '#')}" target="_blank"
              class="btn btn-sm" style="color:var(--amber);border-color:var(--amber);text-decoration:none;margin-top:8px">
             ◈ Ver en Airflow
           </a>
@@ -1420,11 +1420,11 @@ import { apiFetch } from './api.js?v=studio-autopilot-ui6';
         const run      = state._runsByEntity[entity];
         const statsHtml = run ? `
           <div class="preview-stats">
-            <div class="preview-stat">Estado: <span>${run.status === 'success' ? '✓ success' : '✗ '+run.status}</span></div>
-            <div class="preview-stat">Modo: <span>${run.mode || '—'}</span></div>
+            <div class="preview-stat">Estado: <span>${run.status === 'success' ? '✓ success' : '✗ ' + esc(run.status)}</span></div>
+            <div class="preview-stat">Modo: <span>${esc(run.mode || '—')}</span></div>
             <div class="preview-stat">Filas: <span>${run.record_count != null ? Number(run.record_count).toLocaleString('es') : '—'}</span></div>
-            <div class="preview-stat">Duración: <span>${run.duration_seconds ? run.duration_seconds.toFixed(1)+'s' : '—'}</span></div>
-            <div class="preview-stat">Fecha: <span>${(run.finished_at||'').substring(0,16).replace('T',' ')}</span></div>
+            <div class="preview-stat">Duración: <span>${run.duration_seconds ? Number(run.duration_seconds).toFixed(1)+'s' : '—'}</span></div>
+            <div class="preview-stat">Fecha: <span>${esc(String(run.finished_at || '').substring(0,16).replace('T',' '))}</span></div>
             ${run.storage_uri ? `<div class="preview-stat">Path: <span style="font-size:9px">${esc(run.storage_uri.replace(/^s3:\/\/[^/]+\//,''))}</span></div>` : ''}
           </div>` : '';
 
@@ -1574,7 +1574,7 @@ import { apiFetch } from './api.js?v=studio-autopilot-ui6';
                     onclick="sendLogsToAssistant(${escJsArg(prompt)})">
               ✎ Analizar con Asistente
             </button>
-            <a href="${esc(airflowUrl)}" target="_blank" class="btn btn-sm"
+            <a href="${esc(safeUrl(airflowUrl) || '#')}" target="_blank" class="btn btn-sm"
                style="color:var(--amber);border-color:var(--amber);text-decoration:none">
               ◈ Ver en Airflow
             </a>
@@ -1617,7 +1617,7 @@ import { apiFetch } from './api.js?v=studio-autopilot-ui6';
               <div class="tab" onclick="filterDS('silver')">Silver</div>
               <div class="tab" onclick="filterDS('gold')">Gold</div>
             </div>
-            <div id="ds-list-area" class="${state._activeLayer}-content empty-state"
+            <div id="ds-list-area" class="${esc(state._activeLayer)}-content empty-state"
                  style="flex:1;min-height:0;overflow:auto;background:var(--bg2);border-top:1px solid var(--border);padding:14px">
               <div style="color:var(--text3);padding:16px">Cargando datasets reales...</div>
             </div>
@@ -1640,10 +1640,8 @@ import { apiFetch } from './api.js?v=studio-autopilot-ui6';
 
       const _cart = state._currentCartridge?.id || '';
       const _visDS = _cart ? state._allDatasets.filter(d => d.cartridge === _cart) : state._allDatasets;
-      const counts = {
-        silver: _visDS.filter(d => d.layer === 'silver').length,
-        gold:   _visDS.filter(d => d.layer === 'gold').length,
-      };
+      const silverCount = _visDS.filter(d => d.layer === 'silver').length;
+      const goldCount = _visDS.filter(d => d.layer === 'gold').length;
 
       const sc = document.getElementById('step-content');
       sc.style.padding  = '0';
@@ -1664,15 +1662,15 @@ import { apiFetch } from './api.js?v=studio-autopilot-ui6';
           <!-- Tab bar (shrinks to content) -->
           <div class="tab-bar" style="flex-shrink:0;margin:0;display:flex;align-items:center">
             <div class="tab ${state._activeLayer==='bronze'?'active':''}" onclick="filterDS('bronze')">BRONZE <span style="opacity:.6" id="bronze-count"></span></div>
-            <div class="tab ${state._activeLayer==='silver'?'active':''}" onclick="filterDS('silver')">SILVER <span style="opacity:.6">(${counts.silver})</span></div>
-            <div class="tab ${state._activeLayer==='gold'?'active':''}" onclick="filterDS('gold')">GOLD <span style="opacity:.6">(${counts.gold})</span></div>
+            <div class="tab ${state._activeLayer==='silver'?'active':''}" onclick="filterDS('silver')">SILVER <span style="opacity:.6">(${silverCount})</span></div>
+            <div class="tab ${state._activeLayer==='gold'?'active':''}" onclick="filterDS('gold')">GOLD <span style="opacity:.6">(${goldCount})</span></div>
             <button class="btn btn-amber btn-sm" id="btn-new-ds" onclick="toggleNewDS()"
                     style="margin-left:auto;margin-right:8px;${state._activeLayer==='bronze'?'display:none':''}">+ Nuevo</button>
           </div>
 
           <!-- Workspace (fills remaining height) -->
           <div id="ds-list-area"
-               class="${state._activeLayer}-content empty-state"
+               class="${esc(state._activeLayer)}-content empty-state"
                style="flex:1;min-height:0;overflow:hidden;
                       background:var(--bg2);border-top:1px solid var(--border)">
             <div style="color:var(--text3);padding:16px">Cargando...</div>
@@ -1723,7 +1721,7 @@ import { apiFetch } from './api.js?v=studio-autopilot-ui6';
             <div class="ds-row-name" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(d.name)}</div>
             <div class="ds-row-meta" style="font-size:9px">
               ${d.row_count != null ? Number(d.row_count).toLocaleString('es')+' rows' : 'sin datos'}
-              ${d.last_refresh ? ' · '+fmt(d.last_refresh) : ''}
+              ${d.last_refresh ? ' · ' + esc(fmt(d.last_refresh)) : ''}
             </div>
           </div>
         </div>`).join('')
@@ -2393,8 +2391,8 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
     export function renderAnalytics() {
       const cartridge = _dagCartridge();
       const initialSql = analyticsSqlText(cartridge);
-      const supersetHref = supersetUrl();
-      const supersetDisabled = !supersetHref || supersetHref === '#';
+      const supersetHref = safeUrl(supersetUrl());
+      const supersetDisabled = !supersetHref;
       document.getElementById('step-content').innerHTML = `
         <div class="step-title">
           <div>
@@ -2402,7 +2400,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
             <p class="step-desc">Crea datasets, gráficos y dashboards en Apache Superset directamente desde el asistente.
               Superset está disponible solo internamente por seguridad; Solicita acceso interno/VPN para abrir dashboards.</p>
           </div>
-          <a class="btn btn-sm btn-amber" id="analytics-superset-link" role="button" href="${esc(supersetHref || '#')}" target="_blank" rel="noopener" ${supersetDisabled ? 'aria-disabled="true"' : ''}>${supersetDisabled ? 'Superset interno por seguridad' : 'Abrir Superset ↗'}</a>
+          <a class="btn btn-sm btn-amber" id="analytics-superset-link" role="button" href="${esc(safeUrl(supersetHref) || '#')}" target="_blank" rel="noopener" ${supersetDisabled ? 'aria-disabled="true"' : ''}>${supersetDisabled ? 'Superset interno por seguridad' : 'Abrir Superset ↗'}</a>
         </div>
 
         <div class="card">
@@ -2479,9 +2477,9 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       document.getElementById('btn-analytics-sql')?.addEventListener('click', showAnalyticsSql);
       const supersetLink = document.getElementById('analytics-superset-link');
       supersetLink?.addEventListener('click', (event) => {
-        const url = supersetUrl();
-        supersetLink.setAttribute('href', url);
-        if (!url || url === '#') {
+        const url = safeUrl(supersetUrl());
+        supersetLink.setAttribute('href', url || '#');
+        if (!url) {
           event.preventDefault();
           supersetLink.setAttribute('aria-disabled', 'true');
           supersetLink.textContent = 'Superset interno por seguridad';
@@ -2511,7 +2509,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       }
       const supersetLink = target.closest('#analytics-superset-link');
       if (supersetLink) {
-        supersetLink.setAttribute('href', supersetUrl());
+        supersetLink.setAttribute('href', safeUrl(supersetUrl()) || '#');
       }
     });
 
@@ -2771,7 +2769,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
             <div style="white-space:pre-wrap;color:var(--text);line-height:1.5">${esc(answer)}</div>
           </div>`;
         const evidence = res.map((x, i) => {
-          const score = (x.similarity ?? x.score ?? 0);
+          const score = Number(x.similarity ?? x.score ?? 0);
           const body  = x.context || x.parent_content || x.child_content || x.content || '';
           return `
           <div style="border:1px solid var(--border);padding:10px;margin-bottom:8px;border-radius:2px">
@@ -2804,7 +2802,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         const res = d.results || [];
         if (!res.length) { ul.innerHTML = '<div style="color:var(--text2)">Sin resultados.</div>'; return; }
         ul.innerHTML = res.map((r, i) => {
-          const score = (r.similarity ?? r.score ?? 0);
+          const score = Number(r.similarity ?? r.score ?? 0);
           const body  = r.context || r.parent_content || r.child_content || r.content || '';
           return `
           <div style="border:1px solid var(--border);padding:10px;margin-bottom:8px;border-radius:2px">
@@ -2998,7 +2996,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       if (!wrap) return;
 
       const datasets = state._catData.datasets || {};
-      let rows = '';
+      let rowsHtml = '';
       let totalVisible = 0;
 
       for (const [dsName, ds] of Object.entries(datasets)) {
@@ -3010,7 +3008,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         );
         if (!cols.length) continue;
 
-        rows += `<tr class="cat-ds-row">
+        rowsHtml += `<tr class="cat-ds-row">
           <td colspan="7" style="padding:8px 10px">
             <span style="opacity:.5;font-size:9px;margin-right:6px">${esc(ds.layer)}</span>
             ${esc(dsName)}
@@ -3024,12 +3022,12 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
           const isEditing = state._catEditing && state._catEditing.dataset===dsName && state._catEditing.col===col.name;
           const tagsHtml  = (col.tags||[]).map(t=>`<span class="cat-tag">${esc(t)}</span>`).join('');
 
-          rows += `<tr id="cat-row-${CSS.escape(editId)}">
+          rowsHtml += `<tr id="cat-row-${esc(CSS.escape(editId))}">
             <td style="color:var(--text3);font-family:var(--font-mono);font-size:9px;padding-left:18px">${esc(col.name)}</td>
             <td style="color:var(--text3);font-size:9px">${esc(col.type||'')}</td>
-            <td style="max-width:300px;white-space:normal" id="cat-desc-cell-${CSS.escape(editId)}">
+            <td style="max-width:300px;white-space:normal" id="cat-desc-cell-${esc(CSS.escape(editId))}">
               ${isEditing
-                ? `<input class="cat-edit-desc" id="cat-desc-inp-${CSS.escape(editId)}"
+                ? `<input class="cat-edit-desc" id="cat-desc-inp-${esc(CSS.escape(editId))}"
                      value="${esc(col.description||'')}"
                      onblur="catSaveDesc(${escJsArg(dsName)},${escJsArg(col.name)})"
                      onkeydown="if(event.key==='Enter')catSaveDesc(${escJsArg(dsName)},${escJsArg(col.name)});if(event.key==='Escape')catCancelEdit()">`
@@ -3056,7 +3054,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         }
       }
 
-      if (!rows) {
+      if (!rowsHtml) {
         wrap.innerHTML = `<div class="empty-card">Sin columnas${search?' para la búsqueda "'+esc(search)+'"':''}</div>`;
         return;
       }
@@ -3071,7 +3069,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
               <th>COLUMNA</th><th>TIPO</th><th style="min-width:200px">DESCRIPCIÓN</th>
               <th>TAGS</th><th>KEY</th><th>MTR</th><th></th>
             </tr></thead>
-            <tbody>${rows}</tbody>
+            <tbody>${rowsHtml}</tbody>
           </table>
         </div>`;
     }
@@ -3342,7 +3340,8 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         }
         state.aiHistory = saved.messages || [];
         const chat = document.getElementById('ai-chat');
-        (saved.rendered || []).forEach(({ role, html }) => {
+        (saved.rendered || []).forEach(({ role: savedRole, html }) => {
+          const role = savedRole === 'user' ? 'user' : 'assistant';
           const div  = document.createElement('div');
           div.className = `ai-msg ai-${role}`;
           const label = role === 'user' ? 'TÚ' : '◈ MOD·AI';
@@ -3533,7 +3532,10 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
           const cr = await apiFetch(`/studio/cartridges/${encodeURIComponent(state._currentCartridge.id)}`);
           if (cr.ok) { state._currentCartridge = await cr.json(); _updateCartridgeInfo(); }
         }
-        finalUrls.forEach(({ url }) => window.open(url, '_blank'));
+        finalUrls.forEach(({ url } = {}) => {
+          const target = safeUrl(url);
+          if (target) window.open(target, '_blank', 'noopener');
+        });
       } catch(e) {
         trail.container.remove();
         aiAppend('assistant', `⚠ Sin conexión con el servidor — verifica que los servicios estén corriendo.`);
@@ -3739,7 +3741,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       const afLink = document.getElementById('dag-airflow-link');
       if (nameEl) nameEl.textContent = state._selectedDag;
       if (badgeEl) badgeEl.innerHTML = '<span class="dag-badge dag-paused">preview</span>';
-      if (afLink) afLink.href = airflowDagUrl(state._selectedDag);
+      if (afLink) afLink.href = safeUrl(airflowDagUrl(state._selectedDag)) || '#';
       dagSetEditorCode(
         `from airflow import DAG\n` +
         `from airflow.operators.empty import EmptyOperator\n\n` +
@@ -3784,14 +3786,14 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
             ? `<span style="color:#555">● pausado</span>`
             : `<span style="color:var(--green)">● activo</span>`;
           const prefix = dag.dag_id.split('_')[0];
-          const badge = prefix !== dag.dag_id
+          const prefixBadge = prefix !== dag.dag_id
             ? `<span style="font-size:8px;color:var(--text3);margin-left:4px">[${esc(prefix)}]</span>`
             : '';
           return `<div class="dag-sidebar-item ${state._selectedDag === dag.dag_id ? 'selected' : ''}"
                        id="dagitem-${esc(dag.dag_id)}"
                        data-dag-id="${esc(dag.dag_id)}"
                        onclick="selectDag(${escJsArg(dag.dag_id)})">
-            <div class="dag-item-id">${esc(dag.dag_id)}${badge}</div>
+            <div class="dag-item-id">${esc(dag.dag_id)}${prefixBadge}</div>
             <div class="dag-item-meta">${statusDot}</div>
           </div>`;
         }).join('');
@@ -3824,7 +3826,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       if (!textarea || !nameEl) return;
 
       nameEl.textContent = dagId;
-      if (afLink) afLink.href = airflowDagUrl(dagId);
+      if (afLink) afLink.href = safeUrl(airflowDagUrl(dagId)) || '#';
 
       const dag = state._dagsCache.find(d => d.dag_id === dagId);
       if (dag && badgeEl) {
@@ -4091,13 +4093,13 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
               ? `<span style="color:#555">● pausado</span>`
               : `<span style="color:var(--green)">● activo</span>`;
             const prefix = dag.dag_id.split('_')[0];
-            const badge = prefix !== dag.dag_id
+            const prefixBadge = prefix !== dag.dag_id
               ? `<span style="font-size:8px;color:var(--text3);margin-left:4px">[${esc(prefix)}]</span>` : '';
             return `<div class="dag-sidebar-item ${dag.dag_id === newId ? 'selected' : ''}"
                          id="dagitem-${esc(dag.dag_id)}"
                          data-dag-id="${esc(dag.dag_id)}"
                          onclick="selectDag(${escJsArg(dag.dag_id)})">
-              <div class="dag-item-id">${esc(dag.dag_id)}${badge}</div>
+              <div class="dag-item-id">${esc(dag.dag_id)}${prefixBadge}</div>
               <div class="dag-item-meta">${statusDot}</div>
             </div>`;
           }).join('');
@@ -4246,7 +4248,11 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       const count   = (ta.value.match(/\n/g) || []).length + 1;
       const current = ln.querySelectorAll('span').length;
       if (current === count) return;
-      ln.innerHTML = Array.from({length: count}, (_, i) => `<span>${i + 1}</span>`).join('');
+      ln.replaceChildren(...Array.from({length: count}, (_, i) => {
+        const span = document.createElement('span');
+        span.textContent = String(i + 1);
+        return span;
+      }));
     }
 
     export function dagMarkDirty() {
@@ -4495,8 +4501,9 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         return;
       }
 
-      const { pos, svgInnerW, svgH } = _layoutDagGraph(tasks, edges);
-      const svgW = svgInnerW;
+      const { pos, svgInnerW, svgH: layoutH } = _layoutDagGraph(tasks, edges);
+      const graphW = Number(svgInnerW) || 0;
+      const graphH = Number(layoutH) || 0;
 
       const opColor = op => ({
         PythonOperator:   '#1e3a20',
@@ -4512,8 +4519,8 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       edges.forEach(([f, t]) => {
         const fp = pos[f], tp = pos[t];
         if (!fp || !tp) return;
-        const x1 = fp.x + fp.w / 2, y1 = fp.y + fp.h;
-        const x2 = tp.x + tp.w / 2, y2 = tp.y;
+        const x1 = Number(fp.x) + fp.w / 2, y1 = Number(fp.y) + Number(fp.h);
+        const x2 = Number(tp.x) + tp.w / 2, y2 = Number(tp.y);
         const cy = (y1 + y2) / 2;
         edgeSvg += `<path d="M${x1},${y1} C${x1},${cy} ${x2},${cy} ${x2},${y2}" stroke="#555" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>`;
       });
@@ -4524,29 +4531,30 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         if (!p) return;
         const label = t.id.length > 22 ? t.id.slice(0, 20) + '…' : t.id;
         const bg    = opColor(t.op);
+        const boxX = Number(p.x), boxY = Number(p.y), boxW = Number(p.w), boxH = Number(p.h);
 
         let inner = `
-          <rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="4"
-                fill="${bg}" stroke="#444" stroke-width="1"/>
-          <text x="${p.x + p.w/2}" y="${p.y + 14}" text-anchor="middle"
+          <rect x="${boxX}" y="${boxY}" width="${boxW}" height="${boxH}" rx="4"
+                fill="${esc(bg)}" stroke="#444" stroke-width="1"/>
+          <text x="${boxX + boxW / 2}" y="${boxY + 14}" text-anchor="middle"
                 fill="var(--text3)" font-family="var(--font-mono)" font-size="8" letter-spacing=".05em">
             ${esc(opLabel(t.op))}
           </text>
-          <text x="${p.x + p.w/2}" y="${p.y + 30}" text-anchor="middle"
+          <text x="${boxX + boxW / 2}" y="${boxY + 30}" text-anchor="middle"
                 fill="#d4d4d4" font-family="var(--font-mono)" font-size="10" font-weight="600">
             ${esc(label)}
           </text>`;
 
         if (t.calls && t.calls.length) {
-          inner += `<line x1="${p.x + 8}" y1="${p.y + 38}" x2="${p.x + p.w - 8}" y2="${p.y + 38}" stroke="#333" stroke-width="1"/>`;
+          inner += `<line x1="${boxX + 8}" y1="${boxY + 38}" x2="${boxX + boxW - 8}" y2="${boxY + 38}" stroke="#333" stroke-width="1"/>`;
           t.calls.forEach((c, ci) => {
-            const cy = p.y + 52 + ci * 16;
+            const cy = boxY + 52 + ci * 16;
             const fnLabel = c.name.length > 24 ? c.name.slice(0, 22) + '…' : c.name;
             inner += `
               <g onclick="event.stopPropagation();jumpToTaskLine(${Number(c.line) || 0},${escJsArg(t.id)})" style="cursor:pointer">
-                <rect x="${p.x + 4}" y="${cy - 11}" width="${p.w - 8}" height="14" rx="2"
+                <rect x="${boxX + 4}" y="${cy - 11}" width="${boxW - 8}" height="14" rx="2"
                       fill="rgba(255,255,255,.04)" stroke="none"/>
-                <text x="${p.x + 10}" y="${cy}" fill="var(--cyan)"
+                <text x="${boxX + 10}" y="${cy}" fill="var(--cyan)"
                       font-family="var(--font-mono)" font-size="9">
                   ƒ ${esc(fnLabel)}
                 </text>
@@ -4556,12 +4564,12 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
 
         nodeSvg += `<g class="dag-graph-node" id="gnode-${esc(t.id)}"
             onclick="jumpToTaskLine(${Number(t.line) || 0},${escJsArg(t.id)})" style="cursor:pointer"
-            title="${esc(t.id)} — línea ${t.line}">
+            title="${esc(t.id)} — línea ${Number(t.line) || 0}">
           ${inner}
         </g>`;
       });
 
-      panel.innerHTML = `${parseWarning ? `<div style="padding:8px 12px;color:var(--amber);font-size:10px;border-bottom:1px solid var(--border)">${esc(parseWarning)}</div>` : ''}<svg width="${svgW}" height="${svgH}" style="display:block;min-width:${svgW}px">
+      panel.innerHTML = `${parseWarning ? `<div style="padding:8px 12px;color:var(--amber);font-size:10px;border-bottom:1px solid var(--border)">${esc(parseWarning)}</div>` : ''}<svg width="${graphW}" height="${graphH}" style="display:block;min-width:${graphW}px">
         <defs>
           <marker id="arr" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
             <path d="M0,0 L7,3.5 L0,7 z" fill="#555"/>

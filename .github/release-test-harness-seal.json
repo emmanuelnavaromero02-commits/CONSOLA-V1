@@ -5930,6 +5930,10 @@
       "sha256": "4bae2128b8bb06edc0dde3996cafaefc3c83564cc0a9ed4f654cc5535c0f4c7b"
     },
     {
+      "path": "tests/test_studio_html_sinks_escaped.py",
+      "sha256": "90316e5276c54a8dca885d212b63ec743aa23e92585bb9cd73e697de7db1b7a1"
+    },
+    {
       "path": "tests/test_studio_legacy_handler_allowlist.py",
       "sha256": "1b80f9010b7ac9941bd1e490b0c25e51cbcb3744ca356c700e8b48399dee91ae"
     },

@@ -42,15 +42,15 @@
       "skipped_tests": 0
     },
     "_totals": {
-      "CONFIDENCE.HIGH": 9862,
+      "CONFIDENCE.HIGH": 9788,
       "CONFIDENCE.LOW": 343,
       "CONFIDENCE.MEDIUM": 170,
       "CONFIDENCE.UNDEFINED": 0,
       "SEVERITY.HIGH": 0,
-      "SEVERITY.LOW": 9946,
+      "SEVERITY.LOW": 9872,
       "SEVERITY.MEDIUM": 429,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 272025,
+      "loc": 271652,
       "nosec": 0,
       "skipped_tests": 8
     },
@@ -14575,19 +14575,6 @@
       "nosec": 0,
       "skipped_tests": 0
     },
-    "console/tests/test_control_room_home_entrypoint.py": {
-      "CONFIDENCE.HIGH": 10,
-      "CONFIDENCE.LOW": 0,
-      "CONFIDENCE.MEDIUM": 0,
-      "CONFIDENCE.UNDEFINED": 0,
-      "SEVERITY.HIGH": 0,
-      "SEVERITY.LOW": 10,
-      "SEVERITY.MEDIUM": 0,
-      "SEVERITY.UNDEFINED": 0,
-      "loc": 18,
-      "nosec": 0,
-      "skipped_tests": 0
-    },
     "console/tests/test_control_room_http_redaction_boundary.py": {
       "CONFIDENCE.HIGH": 22,
       "CONFIDENCE.LOW": 0,
@@ -17211,45 +17198,6 @@
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
       "loc": 112,
-      "nosec": 0,
-      "skipped_tests": 0
-    },
-    "console/tests/test_ui_admin_users_static.py": {
-      "CONFIDENCE.HIGH": 31,
-      "CONFIDENCE.LOW": 0,
-      "CONFIDENCE.MEDIUM": 0,
-      "CONFIDENCE.UNDEFINED": 0,
-      "SEVERITY.HIGH": 0,
-      "SEVERITY.LOW": 31,
-      "SEVERITY.MEDIUM": 0,
-      "SEVERITY.UNDEFINED": 0,
-      "loc": 165,
-      "nosec": 0,
-      "skipped_tests": 0
-    },
-    "console/tests/test_ui_agents_static.py": {
-      "CONFIDENCE.HIGH": 11,
-      "CONFIDENCE.LOW": 0,
-      "CONFIDENCE.MEDIUM": 0,
-      "CONFIDENCE.UNDEFINED": 0,
-      "SEVERITY.HIGH": 0,
-      "SEVERITY.LOW": 11,
-      "SEVERITY.MEDIUM": 0,
-      "SEVERITY.UNDEFINED": 0,
-      "loc": 45,
-      "nosec": 0,
-      "skipped_tests": 0
-    },
-    "console/tests/test_ui_vault_static.py": {
-      "CONFIDENCE.HIGH": 22,
-      "CONFIDENCE.LOW": 0,
-      "CONFIDENCE.MEDIUM": 0,
-      "CONFIDENCE.UNDEFINED": 0,
-      "SEVERITY.HIGH": 0,
-      "SEVERITY.LOW": 22,
-      "SEVERITY.MEDIUM": 0,
-      "SEVERITY.UNDEFINED": 0,
-      "loc": 145,
       "nosec": 0,
       "skipped_tests": 0
     },
