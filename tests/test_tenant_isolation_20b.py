@@ -84,7 +84,11 @@ def test_dashboard_security_jobs_and_briefing_filter_scope_in_sql():
 
     security = _read(REPO / "console/app/routers/security.py")
     assert "JOIN users u ON lower(u.email) = lower(la.email)" in security
-    assert "s.user_id = ANY" in security
+    assert "omega_auth_list_sessions($1, $2, $3::uuid[])" in security
+    assert "_workspace_ids(user)" in security
+    sessions_sql = _read(REPO / "infra/init/99zzy_identity_session_boundary.sql")
+    assert "WHERE uwr.user_id = s.user_id" in sessions_sql
+    assert "uwr.workspace_id = ANY(COALESCE(p_workspace_ids, ARRAY[]::uuid[]))" in sessions_sql
     assert "scoped_db_for_user" in security
 
     jobs = _read(REPO / "console/app/services/job_service.py")

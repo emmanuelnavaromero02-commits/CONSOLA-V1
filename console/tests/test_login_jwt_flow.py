@@ -813,7 +813,7 @@ def test_visible_user_ids_for_workspace_admin_hides_platform_admin(
     admin = {
         "id": 42,
         "role": "user",
-        "workspaces": [{"workspace_id": workspace_id}],
+        "workspaces": [{"workspace_id": workspace_id, "workspace_role": "admin"}],
     }
     users = [
         {"id": 1, "role": "admin", "workspaces": [{"workspace_id": workspace_id}]},
