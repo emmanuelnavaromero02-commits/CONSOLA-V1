@@ -207,81 +207,62 @@ def test_console_system_info_exposes_dev_mode_flag():
     assert "{\"development\", \"dev\", \"local\", \"test\"}" in runtime
 
 
+STUDIO_NEXT = REPO / "console-next" / "src"
+
+
+def _studio_source(relative: str) -> str:
+    return (STUDIO_NEXT / relative).read_text(encoding="utf-8")
+
+
 def test_studio_airflow_button_stays_visible_and_external():
-    legacy_js = (REPO / "console" / "app" / "static" / "js" / "studio"
-                 / "legacy.js").read_text(encoding="utf-8")
+    client = _studio_source("lib/studio/client.ts")
+    panel = _studio_source("components/studio/DagsPanel.tsx")
 
     airflow_url_fn = re.search(
-        r"function airflowDagUrl\(dagId\)\s*\{(.*?)\n    \}",
-        legacy_js,
+        r"export function airflowDagUrl\([^)]*\)[^{]*\{(.*?)\n\}",
+        client,
         re.DOTALL,
     )
-    assert airflow_url_fn, "Studio legacy.js must define airflowDagUrl"
-    assert "airflowBaseUrl()" in airflow_url_fn.group(1)
+    assert airflow_url_fn, "Studio client must define airflowDagUrl"
+    assert "safeHttpUrl(airflowUrl)" in airflow_url_fn.group(1)
     assert "/dags/${encodeURIComponent(dagId)}/grid" in airflow_url_fn.group(1)
-    assert "/viewer?type=jobs" not in legacy_js
-    assert "AIRFLOW_PUBLIC_URL" in legacy_js
-    assert ":8082" in legacy_js
+    assert "airflow_url" in panel
+    assert "/viewer?type=jobs" not in panel
+    assert ":8082" not in client + panel
 
-    assert 'id="dag-airflow-link"' in legacy_js
-    assert 'href="#"' in legacy_js
-    assert 'target="_blank"' in legacy_js
-    assert 'title="Ver en Airflow UI"' in legacy_js
-    assert ">◈ Airflow</a>" in legacy_js
-    assert "Airflow en consola" not in legacy_js
+    assert 'data-testid="dag-airflow-link"' in panel
+    assert 'target="_blank"' in panel
+    assert 'rel="noopener noreferrer"' in panel
+    assert 'title="Ver en Airflow UI"' in panel
+    assert "Ver en Airflow" in panel
 
 
-def test_legacy_js_gates_every_dev_only_action():
-    js = (REPO / "console" / "app" / "static" / "js" / "studio"
-          / "legacy.js").read_text(encoding="utf-8")
-    assert "/api/system/info" in js
-    for func_name in ("submitDagRename", "confirmDeleteDag", "_setEntitySchedule"):
-        m = re.search(
-            rf"export async function {func_name}\([^)]*\)\s*\{{(.*?)"
-            r"(?=\n    export async function |\Z)",
-            js, re.DOTALL,
-        )
-        assert m, f"function {func_name} not found in legacy.js"
-        body = m.group(1)
-        assert ("_gateDevOnlyAction" in body or "_isDevMode" in body), (
-            f"{func_name} must short-circuit on _isDevMode / "
-            "_gateDevOnlyAction — otherwise it surfaces a raw "
-            "PermissionError in production."
-        )
-    deploy = re.search(
-        r"export async function deployDag\([^)]*\)\s*\{(.*?)"
-        r"(?=\n    export async function |\Z)",
-        js, re.DOTALL,
-    )
-    assert deploy, "function deployDag not found in legacy.js"
-    deploy_body = deploy.group(1)
+def test_studio_gates_every_dev_only_action():
+    client = _studio_source("lib/studio/client.ts")
+    validation = _studio_source("lib/studio/validation.ts")
+    panel = _studio_source("components/studio/DagsPanel.tsx")
+    assert '"/api/system/info"' in client
 
-    m_packaged = re.search(
-        r"if\s*\(_isCartridgeManagedDag\(dagId\)\)\s*\{[^\n]*?\n.*?return;",
-        deploy_body,
-        re.DOTALL,
-    )
-    assert m_packaged, (
-        "deployDag must early-return for cartridge-managed DAGs "
-        "(no backend mutation call)."
-    )
-    assert "DAG empaquetado por el cartucho, ya activo en Airflow" in m_packaged.group(0)
+    gate = re.search(r"export function deployGate\(.*?\n\}", validation, re.DOTALL)
+    assert gate, "deployGate missing from lib/studio/validation.ts"
+    for token in ("dag_deploy_enabled", "dev_mode", "ALLOW_RCE_TOOLS=true"):
+        assert token in gate.group(0)
 
-    assert re.search(
-        r"const hasProductionGate = !\(await _isDagDeployEnabled\(\)\);",
-        deploy_body,
-    )
-    assert re.search(
-        r"apiFetch\('/api/studio/dag-deploy'",
-        deploy_body,
-    )
-    assert "backend owns the production RCE gate" in deploy_body
+    request_deploy = panel.split("function requestDeploy() {", 1)[1].split("\n  }\n", 1)[0]
+    blocked = request_deploy.index("if (deployBlockReason)")
+    assert "return;" in request_deploy[blocked:request_deploy.index("setPendingDeploy(")]
+    assert "deploy.mutate" not in request_deploy
+    assert "PACKAGED_DAG_REASON" in panel.split("const deployBlockReason", 1)[1].split(";", 1)[0]
+    assert "DAG empaquetado por el cartucho" in panel
 
-    packaged_cut = m_packaged.end()
-    first_backend_call = deploy_body.find("apiFetch('/api/studio/dag-deploy'")
-    assert first_backend_call != -1 and first_backend_call > packaged_cut
+    confirm_deploy = panel.split("function confirmDeploy() {", 1)[1].split("\n  }\n", 1)[0]
+    assert "deploy.mutate(request" in confirm_deploy
+    assert "rename.mutate(" in confirm_deploy
 
-    assert "_gateDevOnlyAction" not in deploy_body
+    assert "disabled={Boolean(deployBlockReason) || deploy.isPending}" in panel
+    assert "disabled={!gate.enabled}" in panel
+    assert "<DeployDialog" in panel
+    assert 'testId="delete-dag-dialog"' in panel
 
 
 def test_aws_compose_app_env_defaults_production():

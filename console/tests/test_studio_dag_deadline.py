@@ -87,6 +87,9 @@ async def test_dags_list_preserves_user_and_cartridge_visibility(monkeypatch):
     ]
     assert result["dags"][0]["is_paused"] is True
     assert result["dags"][1]["registered_only"] is True
+    assert result["dags"][1]["is_active"] is False
+    assert result["dags"][1]["is_paused"] is False
+    assert result["dags"][0]["is_active"] is True
     assert result["total"] == 3
 
 

@@ -9,6 +9,7 @@ interface Props {
   placeholder?: string;
   initialValue?: string;
   onSlash?:     () => void;
+  ariaLabel?:   string;
 }
 
 const MAX_MESSAGE_CHARS = 8_000;
@@ -35,6 +36,7 @@ export function MessageInput({
   placeholder,
   initialValue,
   onSlash,
+  ariaLabel,
 }: Props) {
   const [value, dispatchValue] = useReducer(valueReducer, initialValue, trimSeed);
 
@@ -75,7 +77,7 @@ export function MessageInput({
         onKeyDown={handleKey}
         disabled={disabled}
         placeholder={placeholder ?? "Pregunta algo o escribe / para comandos…"}
-        aria-label="Mensaje para el copiloto"
+        aria-label={ariaLabel ?? "Mensaje para el copiloto"}
         maxLength={MAX_MESSAGE_CHARS}
         minRows={1}
         maxRows={8}

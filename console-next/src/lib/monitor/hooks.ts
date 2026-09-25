@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import {
   getDatasetDetail,
+  getEntityRunLogs,
   getDatasetLineage,
   getDatasetPreview,
   getFreshness,
@@ -14,11 +15,34 @@ import {
   getSemantic,
   getSourceSchema,
   listDatasets,
+  listEntityRuns,
   listJobs,
   listSources,
   listVaultConnections,
   listVaultSecrets,
 } from "./client";
+import type { EntityRun } from "./types";
+
+const TERMINAL_RUN_STATUSES = new Set([
+  "success",
+  "partial",
+  "failed",
+  "error",
+  "done",
+  "skipped",
+  "upstream_failed",
+  "cancelled",
+]);
+const MAX_RUN_POLLS = 120;
+
+export function isTerminalRunStatus(status?: string | null): boolean {
+  return TERMINAL_RUN_STATUSES.has(String(status ?? "").toLowerCase());
+}
+
+export function findEntityRun(runs: EntityRun[] | undefined, runId: string | null): EntityRun | undefined {
+  if (!runs?.length || !runId) return undefined;
+  return runs.find((run) => run.dag_run_id === runId || run.run_id === runId);
+}
 
 export function useJobs(limit = 100) {
   return useQuery({
@@ -144,5 +168,32 @@ export function useVaultSecrets(scope: string) {
     queryKey: ["monitor", "vault", "secrets", scope],
     queryFn: () => listVaultSecrets(scope),
     staleTime: 30_000,
+  });
+}
+
+export function useEntityRuns(cartridge: string | null, entity: string | null, runId: string | null) {
+  return useQuery({
+    queryKey: ["monitor", "entity-runs", cartridge, entity, runId],
+    queryFn: () => listEntityRuns(cartridge as string, entity as string, 10),
+    enabled: Boolean(cartridge && entity && runId),
+    refetchInterval: (query) => {
+      if (query.state.dataUpdateCount >= MAX_RUN_POLLS) return false;
+      const run = findEntityRun(query.state.data, runId);
+      return run && isTerminalRunStatus(run.status) ? false : 5_000;
+    },
+  });
+}
+
+export function useEntityRunLogs(
+  cartridge: string | null,
+  entity: string | null,
+  dagRunId: string | null,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: ["monitor", "entity-run-logs", cartridge, entity, dagRunId],
+    queryFn: () => getEntityRunLogs(cartridge as string, entity as string, dagRunId as string),
+    enabled: Boolean(enabled && cartridge && entity && dagRunId),
+    staleTime: 10_000,
   });
 }

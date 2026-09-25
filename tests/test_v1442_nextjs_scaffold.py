@@ -271,7 +271,7 @@ def test_package_has_export_copy_script_for_fastapi_static_mount():
     script = pkg["scripts"]["export:copy"]
     assert "npm run build" in script or "next build" in script
     assert "../console/app/static/console-next" in script
-    assert "rm -rf ../console/app/static/console-next/studio" in script
+    assert "console-next/studio" not in script
 
 
 def test_use_kpis_hook_matches_backend_shape():

@@ -59,11 +59,12 @@ def test_auth_flow_uses_fastapi_paths_without_login_proxy():
     assert "NEXT_PUBLIC_BACKEND_URL" not in src
 
 
-def test_package_copy_script_does_not_publish_generated_studio_route():
+def test_package_copy_script_publishes_the_studio_route():
     pkg = _read(NEXT_ROOT / "package.json")
     assert '"export:copy"' in pkg
     assert "cp -R out ../console/app/static/console-next" in pkg
-    assert "rm -rf ../console/app/static/console-next/studio" in pkg
+    assert "console-next/studio" not in pkg
+    assert (REPO / "console/app/static/console-next/studio/index.html").is_file()
 
 
 def test_fastapi_serves_console_next_pages_with_csrf_and_hashed_csp():
@@ -77,6 +78,7 @@ def test_fastapi_serves_console_next_pages_with_csrf_and_hashed_csp():
         '"/operations/companies"',
         '"/operations/users"',
         '"/operations/audit"',
+        '"/studio"',
     ):
         assert route in src
     assert "_console_next_response" in src

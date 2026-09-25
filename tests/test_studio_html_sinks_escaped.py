@@ -7,17 +7,16 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 JS = REPO / "console" / "app" / "static" / "js"
+NEXT_SRC = REPO / "console-next" / "src"
 SCANNED = (
-    JS / "studio" / "legacy.js",
-    JS / "studio" / "action-bridge.js",
-    JS / "studio" / "sql-runner.js",
-    JS / "studio" / "render.js",
-    JS / "studio" / "modals.js",
-    JS / "studio" / "cartridges.js",
-    JS / "studio" / "api.js",
     JS / "activate.js",
     JS / "forgot_password.js",
     JS / "reset_password.js",
+)
+NEXT_STUDIO_SOURCES = (
+    NEXT_SRC / "app" / "(shell)" / "studio",
+    NEXT_SRC / "components" / "studio",
+    NEXT_SRC / "lib" / "studio",
 )
 
 ESCAPERS = {
@@ -33,11 +32,7 @@ ESCAPERS = {
     "Number",
 }
 
-EXCEPTIONS = {
-    ("legacy.js", "btn.innerHTML"): "restore",
-    ("legacy.js", "String(html || '')"): "inert",
-    ("legacy.js", "i+1"): "index",
-}
+EXCEPTIONS: dict[tuple[str, str], str] = {}
 
 _REGEX_PRECEDERS = set("(,=:[!&|?{};+-*%<>~^")
 _REGEX_KEYWORDS = {"return", "typeof", "case", "in", "of", "delete", "void", "throw", "new", "else", "do"}
@@ -466,9 +461,24 @@ def _unsafe_urls() -> list[str]:
     return findings
 
 
-def test_scanner_sees_the_studio_templates():
-    templates = [t for source in _sources() for t in source.templates if _HTML_RE.search(t[0])]
-    assert len(templates) > 150
+def test_legacy_studio_scripts_are_gone():
+    assert not (JS / "studio").exists()
+    assert all(path.is_file() for path in SCANNED)
+
+
+def test_next_studio_never_renders_server_html():
+    sources = [
+        path
+        for root in NEXT_STUDIO_SOURCES
+        for path in sorted(root.rglob("*.ts*"))
+        if ".test." not in path.name
+    ]
+    assert sources, "console-next Studio sources not found"
+    for path in sources:
+        text = path.read_text(encoding="utf-8")
+        for sink in ("dangerouslySetInnerHTML", "innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"):
+            assert sink not in text, f"{path.relative_to(REPO)} uses {sink}"
+        assert "eval(" not in text and "new Function" not in text, path
 
 
 def test_html_template_interpolations_are_escaped():
@@ -484,9 +494,9 @@ def test_html_sinks_only_receive_escaped_markup():
 def test_url_sinks_accept_only_http_or_same_origin_paths():
     findings = _unsafe_urls()
     assert not findings, "URL sink without safeUrl():\n" + "\n".join(findings)
-    api = (JS / "studio" / "api.js").read_text(encoding="utf-8")
-    assert "url.protocol === 'http:' || url.protocol === 'https:'" in api
-    assert "!raw.startsWith('//')" in api
+    client = (NEXT_SRC / "lib" / "studio" / "client.ts").read_text(encoding="utf-8")
+    assert 'url.protocol !== "http:" && url.protocol !== "https:"' in client
+    assert 'path.startsWith("//")' in client
 
 
 def test_exceptions_are_still_needed():
