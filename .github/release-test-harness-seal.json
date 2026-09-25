@@ -3911,7 +3911,7 @@
     },
     {
       "path": "tests/replicon_wip_live_harness.py",
-      "sha256": "0d87dd3a38eb3a3ecc3f5eca20c63633ad90d257ee92222efc997ca95dff0bbe"
+      "sha256": "ffaebd3fd2f45eeefe3961bca00b6caa70f553a2601c76782f0fe7e9a8b6c04b"
     },
     {
       "path": "tests/staged_publication_canaries.py",
@@ -4491,7 +4491,7 @@
     },
     {
       "path": "tests/test_control_room_live_postgres_replicon_wip_v3.py",
-      "sha256": "798b83099ad2f493b336a6f6638ac67dcebd65252d77c7072e3d006ba6c9a36b"
+      "sha256": "4a15009dc967da031d396a2c98395e0f9579b700745cc03e897fe31b0adf6ae1"
     },
     {
       "path": "tests/test_control_room_live_postgres_reservation_fencing.py",
