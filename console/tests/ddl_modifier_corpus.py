@@ -1,5 +1,3 @@
-"""Generated DDL modifier corpus shared by runtime and parse-only tests."""
-
 from __future__ import annotations
 
 

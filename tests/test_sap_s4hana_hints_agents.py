@@ -1,11 +1,3 @@
-"""Phase 2 Block E2 — SAP S/4HANA assistant hints + specialized agents.
-
-Parallel to tests/test_sap_hcm_hints_agents.py. hints/assistant.md feeds
-cartridges.assistant_hints (injected into the copilot prompt, capped at 8000
-chars). 2 agents are seeded into the `agents` table via migration 86, mirrored in
-config/seed.sql. The table has no workspace_id and no triggers column — triggers
-live in extra; instructions must avoid the P6 seed-hardening blacklist.
-"""
 from __future__ import annotations
 
 import json
@@ -160,7 +152,6 @@ def test_agents_migration_scope():
     assert targets == {"agents", "schema_migrations"}, f"unexpected targets: {targets}"
 
 
-# Holistic S/4HANA inventory (Blocks A-E).
 def test_s4hana_inventory_blocks_a_to_e():
     kb_ids = _kb_ids()
     assert len(kb_ids) == 12, f"expected 12 KBs, got {len(kb_ids)}"

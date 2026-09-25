@@ -191,8 +191,6 @@ def test_startup_and_day2_deploy_share_hydration_and_rollback_contract():
     ):
         assert gcp_compose.count(f'      {airflow_minio_name}: ""') == 3
         assert f"{airflow_minio_name}: $${{" not in gcp_compose
-    # Dedicated SES values are visible only to the three Airflow services;
-    # they are not part of the global GCP lakehouse anchor.
     assert gcp_compose.count("\n      SES_INBOX_AWS_ACCESS_KEY_ID:") == 3
     assert gcp_compose.count("\n      SES_INBOX_AWS_SECRET_ACCESS_KEY:") == 3
     assert "set_env AWS_REGION auto" in startup

@@ -1,27 +1,3 @@
-"""Cap-free SQL aggregates for the FINANCE domain (Mission 1).
-
-Datasets (layer=gold, replicon cartridge, resolved through publication heads):
-
-* ``consultor_mensual``       -> :func:`query_billable_hours_logged`
-  (honest proxy for "unbilled validated hours")
-* ``costo_consultor_mensual`` -> :func:`query_labor_cost_by_department`
-  (honest proxy for "payroll cost by org unit")
-* ``pnl_mensual``             -> :func:`query_project_margin`
-
-Every function returns a dataclass with ``status`` ready|degraded|unavailable,
-the numbers, ``evidence_refs`` (relation, run, generation, snapshot, filters),
-``supported=True`` and a ``proxy_note`` the LLM can quote so it never
-over-promises. Metrics without a Gold relation (budget vs actual by cost
-center) intentionally have no function here.
-
-Pattern (identical to ``successfactors_talent_population``): dedicated asyncpg
-connection to GOLD_DATABASE_URL, repeatable_read read-only transaction,
-``set_config('app.tenant_id'/'app.workspace_id')``, relation resolved via
-``omega_publication.dataset_publication_heads`` + ``to_regclass`` + column
-contract, ``WHERE workspace_id/tenant_id`` explicit in every query, every value
-bound as ``$n``, COUNT/SUM in SQL, top-N bounded by ``MAX_GROUP_ROWS``.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -55,7 +31,6 @@ CONSULTOR_MENSUAL_DATASET = "consultor_mensual"
 COSTO_CONSULTOR_DATASET = "costo_consultor_mensual"
 PNL_MENSUAL_DATASET = "pnl_mensual"
 
-# Column allowlists: the only identifiers that ever reach SQL text.
 _BILLABLE_REQUIRED = frozenset({"mes", "proyecto", "horas_facturables"})
 _BILLABLE_OPTIONAL = frozenset(
     {"billing_rate_usd", "project_name", "cliente", "consultor"}
@@ -110,21 +85,14 @@ PROJECT_MARGIN_PROXY_NOTE = (
 
 
 def _window(as_of: date | None, months: int) -> tuple[date, date]:
-    """Last ``months`` calendar months including the current one.
-
-    Returns (start inclusive, end exclusive) first-of-month dates.
-    """
     current = month_start(as_of_date(as_of))
     return add_months(current, -(months - 1)), add_months(current, 1)
-
-
-# ── F1: billable hours logged (proxy for unbilled validated hours) ───────────
 
 
 @dataclass
 class BillableHoursLogged(AggregateResult):
     window_start: date | None = None
-    window_end: date | None = None  # exclusive
+    window_end: date | None = None
     months: int = 1
     billable_hours: float | None = None
     billable_amount_usd: float | None = None
@@ -140,14 +108,6 @@ async def query_billable_hours_logged(
     top_n: int = 0,
     as_of: date | None = None,
 ) -> BillableHoursLogged:
-    """SUM of billable hours (and hours x rate) over the window.
-
-    ``top_n`` follows the same controlled exception as ``query_project_margin``
-    (Mission 2 product decision): the default 0 returns totals only; a value
-    above 0 additionally returns up to ``MAX_NAMED_ROWS`` (10) named projects
-    with hours and amount, so ``named_rows=0`` means "no named rows anywhere"
-    across the whole Finance payload.
-    """
     months = clamp_months(months)
     top_n = clamp_named_rows(top_n)
     window_start, window_end = _window(as_of, months)
@@ -259,12 +219,9 @@ async def query_billable_hours_logged(
     return await run_gold_aggregate(user, _compute, _unavailable)
 
 
-# ── F3: labor cost by department (proxy for payroll cost by org unit) ────────
-
-
 @dataclass
 class LaborCostByDepartment(AggregateResult):
-    period: date | None = None  # last closed month with data (first day)
+    period: date | None = None
     departments_count: int | None = None
     headcount: int | None = None
     total_hours: float | None = None
@@ -280,8 +237,6 @@ async def query_labor_cost_by_department(
     top_n: int = 20,
     as_of: date | None = None,
 ) -> LaborCostByDepartment:
-    """SUM of executed/sunk labor cost per Replicon department for the last
-    closed month (strictly before the month of ``as_of``) that has rows."""
     top_n = clamp_top_n(top_n, default=20)
     current_month = month_start(as_of_date(as_of))
     base = {"proxy_note": LABOR_COST_PROXY_NOTE}
@@ -406,13 +361,10 @@ async def query_labor_cost_by_department(
     return await run_gold_aggregate(user, _compute, _unavailable)
 
 
-# ── F4: project margin ───────────────────────────────────────────────────────
-
-
 @dataclass
 class ProjectMargin(AggregateResult):
     window_start: date | None = None
-    window_end: date | None = None  # exclusive
+    window_end: date | None = None
     months: int = 1
     projects_count: int | None = None
     total_revenue_base: float | None = None
@@ -448,14 +400,6 @@ async def query_project_margin(
     top_n: int = 0,
     as_of: date | None = None,
 ) -> ProjectMargin:
-    """Margin per project (revenue base - direct - sunk cost).
-
-    ``top_n`` is a CONTROLLED EXCEPTION to the aggregates-only principle
-    (Mission 2 product decision): the default 0 returns totals only; a value
-    above 0 additionally returns up to ``MAX_NAMED_ROWS`` (10) best and worst
-    projects by margin, each named (project code/name/client) with amounts.
-    Rows are still GROUP BY project aggregates, never timesheet lines.
-    """
     months = clamp_months(months)
     top_n = clamp_named_rows(top_n)
     window_start, window_end = _window(as_of, months)

@@ -25,8 +25,6 @@ _DOMAIN_LABELS = {
     "compras": "Compras",
     "ventas": "Ventas",
     "operacion": "Operacion",
-    # Mission 4: the Risk monitor files its alerts under this domain. Without the
-    # entry _count_breakdown drops the key and the alerts vanish from the summary.
     "riesgo": "Riesgo",
 }
 _SOURCE_STATE_FIELDS = (

@@ -1,5 +1,3 @@
-"""Pure request classification rules used by console middleware."""
-
 from __future__ import annotations
 
 
@@ -19,13 +17,6 @@ def uses_rbac_dependency(path: str, prefixes: tuple[str, ...]) -> bool:
 
 
 def is_app_content_capability_path(path: str) -> bool:
-    """Return whether *path* is exactly the capability-guarded app content route.
-
-    The viewer's inner frame is credentialless, so the request intentionally has
-    no session cookie.  Its short-lived capability is validated by the route
-    itself; redirecting this request to ``/login`` makes the browser reject the
-    framed login page before that validation can run.
-    """
     parts = path.split("/")
     return (
         len(parts) == 4

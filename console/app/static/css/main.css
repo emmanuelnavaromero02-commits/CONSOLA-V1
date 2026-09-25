@@ -1,14 +1,10 @@
-/* tokens.css must come first so every legacy color/bg/cyan token
-   reference below resolves to a value (and re-maps in dark mode). */
+
 @import url("./tokens.css");
 
-/* ── RESET ───────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-/* ── DESIGN TOKENS — Dark (default) ─────────────────────────────────────── */
 :root {
-  /* Color tokens are now sourced from tokens.css. Kept here for non-color
-     primitives that legacy rules depend on. */
+
   --font-sans: 'Inter', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
   --radius-sm: 4px;
@@ -17,9 +13,6 @@
   --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
 }
 
-
-
-/* ── BASE ────────────────────────────────────────────────────────────────── */
 html, body {
   min-height: 100vh;
   background: var(--color-bg);
@@ -41,10 +34,8 @@ html, body {
   overflow: hidden;
 }
 
-/* CRT artefacts — removed; kept as invisible for HTML back-compat */
 .crt-overlay, .scanlines { display: none; }
 
-/* ── HEADER ──────────────────────────────────────────────────────────────── */
 .header {
   display: flex;
   align-items: center;
@@ -110,7 +101,6 @@ html, body {
 .status-dot.blink { animation: blink 2s step-end infinite; }
 .status-text { font-size: 11px; color: var(--color-text-secondary); letter-spacing: .04em; }
 
-/* ── LAYOUT ──────────────────────────────────────────────────────────────── */
 .layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(300px, 340px);
@@ -119,7 +109,6 @@ html, body {
   overflow: hidden;
 }
 
-/* ── VIEWER PANEL (bottom split) ─────────────────────────────────────────── */
 .resize-handle {
   height: 4px;
   background: var(--color-border);
@@ -238,7 +227,6 @@ html, body {
   font-size: 11px;
 }
 
-/* Viewer link button (inside chat messages) */
 .viewer-link-btn {
   display: inline-flex;
   align-items: center;
@@ -260,7 +248,6 @@ html, body {
   color: var(--color-bg);
 }
 
-/* ── PANELS ──────────────────────────────────────────────────────────────── */
 .panel {
   border: 1px solid var(--color-border);
   background: var(--color-surface);
@@ -305,7 +292,6 @@ html, body {
   border-radius: 10px;
 }
 
-/* ── CHAT ────────────────────────────────────────────────────────────────── */
 .chat-window {
   flex: 1;
   overflow-y: auto;
@@ -364,7 +350,6 @@ html, body {
 .msg.system .msg-body { border-left-color: var(--color-accent); }
 .msg-body.err { border-left-color: var(--color-error); }
 
-/* Typing indicator */
 .typing-indicator {
   display: flex;
   align-items: center;
@@ -386,7 +371,6 @@ html, body {
 .typing-dot:nth-child(2) { animation-delay: .2s; }
 .typing-dot:nth-child(3) { animation-delay: .4s; }
 
-/* ── INPUT BAR ───────────────────────────────────────────────────────────── */
 .input-bar {
   display: flex;
   align-items: flex-end;
@@ -441,7 +425,6 @@ html, body {
 .btn-exec:hover  { background: var(--color-accent-hover); }
 .btn-exec:active { opacity: .7; transform: scale(.97); }
 
-/* ── SIDEBAR ─────────────────────────────────────────────────────────────── */
 .sidebar {
   display: flex;
   flex-direction: column;
@@ -459,7 +442,6 @@ html, body {
 .panel-log { flex: 1; overflow: hidden; }
 .panel-log .activity-log { flex: 1; overflow-y: auto; }
 
-/* ── MCP SERVERS ─────────────────────────────────────────────────────────── */
 .servers-list {
   padding: 8px;
   display: flex;
@@ -523,7 +505,6 @@ html, body {
   justify-content: space-between;
 }
 
-/* ── QUICK OPS ───────────────────────────────────────────────────────────── */
 .quick-ops {
   padding: 8px;
   display: grid;
@@ -550,7 +531,6 @@ html, body {
   background: var(--primary-soft);
 }
 
-/* ── ACTIVITY LOG ────────────────────────────────────────────────────────── */
 .activity-log {
   padding: 8px;
   display: flex;
@@ -574,7 +554,6 @@ html, body {
 .log-entry.err  { color: var(--color-error); }
 .log-entry.info { color: var(--color-accent); }
 
-/* ── MODAL ───────────────────────────────────────────────────────────────── */
 .modal-overlay {
   position: fixed; inset: 0; z-index: 500;
   background: rgba(0,0,0,.6);
@@ -644,7 +623,6 @@ html[data-theme="light"] .modal-overlay { background: rgba(0,0,0,.35); }
 .dataset-desc { font-size: 11px; color: var(--color-text-secondary); }
 .dataset-meta { font-size: 10px; color: var(--color-text-secondary); text-align: right; }
 
-/* ── BUTTONS ─────────────────────────────────────────────────────────────── */
 .btn-sm {
   background: none;
   border: 1px solid var(--color-border);
@@ -674,7 +652,6 @@ html[data-theme="light"] .modal-overlay { background: rgba(0,0,0,.35); }
 }
 .btn-theme:hover { border-color: var(--color-accent); color: var(--color-accent); }
 
-/* ── UTILITIES ───────────────────────────────────────────────────────────── */
 .accent { color: var(--color-accent); }
 .dim    { color: var(--color-text-secondary); }
 
@@ -691,7 +668,6 @@ html[data-theme="light"] .modal-overlay { background: rgba(0,0,0,.35); }
   100% { content: ''; }
 }
 
-/* ── CODE IN MESSAGES ────────────────────────────────────────────────────── */
 .msg-body code {
   background: var(--color-bg);
   border: 1px solid var(--color-border);
@@ -714,7 +690,6 @@ html[data-theme="light"] .modal-overlay { background: rgba(0,0,0,.35); }
   font-size: 12px;
 }
 
-/* ── JOBS PANEL ──────────────────────────────────────────────────────────── */
 .jobs-list {
   padding: 6px 8px;
   display: flex;
@@ -749,7 +724,6 @@ html[data-theme="light"] .modal-overlay { background: rgba(0,0,0,.35); }
 .job-msg   { color: var(--color-text-secondary); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .job-id    { color: var(--color-text-secondary); font-size: 10px; font-family: var(--font-mono); white-space: nowrap; }
 
-/* ── TOKEN USAGE ─────────────────────────────────────────────────────────── */
 .token-grid { padding: 8px 10px 4px; display: flex; flex-direction: column; gap: 5px; }
 .token-row { display: flex; justify-content: space-between; align-items: baseline; font-size: 11px; }
 .token-label { color: var(--color-text-secondary); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
@@ -759,7 +733,6 @@ html[data-theme="light"] .modal-overlay { background: rgba(0,0,0,.35); }
 .token-model-row { font-size: 10px; color: var(--color-text-secondary); display: flex; justify-content: space-between; }
 .token-model-name { color: var(--color-text-secondary); max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* ── OMEGA MONITOR FRAME ─────────────────────────────────────────────────── */
 .monitor-no-sidebar .ent-topbar {
   min-height: 62px;
   background: color-mix(in srgb, var(--color-surface) 92%, transparent);
@@ -817,7 +790,6 @@ html[data-theme="light"] .modal-overlay { background: rgba(0,0,0,.35); }
   }
 }
 
-/* ── ANIMATIONS ──────────────────────────────────────────────────────────── */
 @keyframes blink {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0; }
@@ -832,13 +804,11 @@ html[data-theme="light"] .modal-overlay { background: rgba(0,0,0,.35); }
 }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
 
-/* ── SCROLLBAR ───────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--color-surface); }
 ::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--color-text-secondary); }
 
-/* ── VERSION BADGE ───────────────────────────────────────────────────────── */
 .version-badge {
   position: absolute;
   top: 12px;

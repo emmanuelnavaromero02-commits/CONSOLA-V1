@@ -1,11 +1,3 @@
-"""
-PostgreSQL MCP tools — schema discovery, read queries, DDL execution.
-
-These tools are intentionally limited to the operational main database.
-Analytical Gold data must go through Refinement, where the sqlglot AST RLS
-guard rewrites pggold queries with tenant/workspace scope.
-"""
-
 from __future__ import annotations
 
 import re
@@ -111,9 +103,6 @@ def _validate_non_destructive_sql(sql: str) -> str:
     )
 
 
-# ── Schema discovery ───────────────────────────────────────────────────────────
-
-
 @tool(
     name="postgres_list_schemas",
     description="List all schemas in the PostgreSQL database.",
@@ -209,9 +198,6 @@ def postgres_get_table_schema(
     return {"table": f"{schema}.{table}", "columns": columns}
 
 
-# ── Query execution ────────────────────────────────────────────────────────────
-
-
 @tool(
     name="postgres_execute_query",
     description=(
@@ -237,18 +223,6 @@ def postgres_execute_query(sql: str, limit: int = 50, gold: bool = False) -> dic
         return {"error": "Only SELECT / WITH queries allowed via this tool"}
     if replicon_artifact_block_reason(sql, postgres=True):
         return {"error": "Noncurrent Replicon WIP artifacts are unavailable"}
-    # Reject multi-statement payloads and comments, mirroring the rule
-    # in ``_validate_non_destructive_sql`` above. ``--`` and ``/*``
-    # comments are also rejected so a hidden ``\n; DROP`` can't slip
-    # through inside a line comment.
-    # Sprint v1.35 rondas 2-3 (reviewers): reject NUL and other control
-    # characters (everything below 0x20 except the printable whitespace
-    # ``\t \n \r``). Even though the semicolon and comment checks below
-    # already block the documented bypass payloads, this is cheap
-    # defense-in-depth: Postgres may treat some control bytes as
-    # whitespace, and a future addition could rely on the input being
-    # plain printable SQL. Matches the NUL rule already in
-    # ``_validate_non_destructive_sql``.
     if any(c != "\t" and c != "\n" and c != "\r" and ord(c) < 0x20 for c in sql):
         return {"error": "Invalid SQL"}
     trimmed = sql.strip()
@@ -258,15 +232,7 @@ def postgres_execute_query(sql: str, limit: int = 50, gold: bool = False) -> dic
         return {"error": "Only one SQL statement is allowed"}
     if "--" in trimmed or "/*" in trimmed or "*/" in trimmed:
         return {"error": "SQL comments are not allowed in postgres_execute_query"}
-    # Sprint v1.35: force ``limit`` to an int in [1, 200] before
-    # interpolating it into the wrapper. The original ``min(limit,
-    # 200)`` silently let strings like "50; DROP TABLE x; --" through
-    # if the caller bypassed the JSON-schema validator.
     limit = validate_bounded_int(limit, "limit", lo=1, hi=200)
-    # Wrap the caller's query so the cap is always enforced — checking for a
-    # "LIMIT" keyword in the raw SQL was bypassable by hiding it inside `--`
-    # or /* */ comments (the comment eats the rest of the line, the check
-    # sees no "limit", and we append one that gets eaten too).
     wrapped_sql = f"SELECT * FROM ({trimmed}) _capped LIMIT {limit}"
     conn = _conn(gold)
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -330,10 +296,6 @@ def postgres_execute_ddl(sql: str, gold: bool = False) -> dict:
 def postgres_get_sample(
     table: str, schema: str = "public", n: int = 10, gold: bool = False
 ) -> dict:
-    # Sprint v1.35 (audit B3 P0): validate schema/table as SQL identifiers
-    # and coerce n to a bounded int before f-stringing them into the
-    # query. The pre-v1.35 version closed the surrounding ``"..."`` with
-    # a payload like ``users"; DROP TABLE users; --`` and executed it.
     schema = validate_identifier(schema, "schema")
     table = validate_identifier(table, "table")
     n = validate_bounded_int(n, "n", lo=1, hi=100)

@@ -29,7 +29,6 @@ import type {
   WorkspaceListResponse,
 } from "./types";
 
-// ── Users ──────────────────────────────────────────────────────────
 
 export async function listUsers(): Promise<AppUser[]> {
   const { data } = await api.get<UsersListResponse>("/api/admin/users");
@@ -64,7 +63,6 @@ export async function sendPasswordReset(userId: number): Promise<SendPasswordRes
   return data;
 }
 
-// ── Companies / tenants ────────────────────────────────────────
 
 export async function listTenants(): Promise<TenantListResponse> {
   const { data } = await api.get<TenantListResponse>("/api/admin/tenants");
@@ -117,7 +115,6 @@ export async function issueTenantAdminTemporaryPassword(
   return data;
 }
 
-// ── Audit ──────────────────────────────────────────────────────────
 
 export async function listAuditEvents(): Promise<AuditEvent[]> {
   const { data } = await api.get<AuditEvent[] | { events: AuditEvent[] }>(
@@ -127,7 +124,6 @@ export async function listAuditEvents(): Promise<AuditEvent[]> {
   return data.events ?? [];
 }
 
-// ── Vault ──────────────────────────────────────────────────────────
 
 export async function listVaultConnections(
   cartridge: string,
@@ -203,7 +199,6 @@ export async function deleteVaultSecret(scope: string, key: string): Promise<voi
   await api.delete(`/api/vault/secrets/${encodeURIComponent(scope)}/${encodeURIComponent(key)}`);
 }
 
-// ── Workflows ──────────────────────────────────────────────────────
 
 export async function listOperationWorkflows(): Promise<OperationWorkflow[]> {
   const { data } = await api.get<OperationWorkflowListResponse>("/api/copilot/workflow");
@@ -220,10 +215,6 @@ export async function getOperationWorkflow(id: string): Promise<OperationWorkflo
   };
 }
 
-/**
- * Preview-only: la consola solo planifica workflows (POST /plan). La
- * ejecución (POST /execute) no se dispara desde esta superficie.
- */
 export async function planOperationWorkflow(workflow: OperationWorkflow): Promise<OperationWorkflowActionResponse> {
   const { data } = await api.post<OperationWorkflowActionResponse>(
     `/api/copilot/workflow/${encodeURIComponent(workflow.id)}/plan`,
@@ -240,7 +231,6 @@ export async function cancelOperationWorkflow(workflowId: string): Promise<Opera
   return data;
 }
 
-// ── Metrics ────────────────────────────────────────────────────────
 
 export async function getOperationalMetrics(): Promise<OperationalMetrics> {
   const { data } = await api.get<OperationalMetrics>("/api/metrics/operational");

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Guarded deploy rollback rehearsal gate."""
 
 from __future__ import annotations
 

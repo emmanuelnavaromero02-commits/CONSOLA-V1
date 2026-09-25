@@ -257,7 +257,6 @@ def _escaped_literal_detection(value: str) -> EscapeDetection:
 
 
 def escaped_security_detection(value: str) -> EscapeDetection:
-    """Return bounded forms after Unicode-aware, detection-only escape handling."""
 
     if len(value) > _MAX_INPUT_LENGTH:
         return EscapeDetection(unsafe=True)

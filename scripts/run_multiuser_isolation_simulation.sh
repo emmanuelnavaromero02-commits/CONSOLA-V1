@@ -1,9 +1,4 @@
 #!/usr/bin/env bash
-# Prod-like multi-user isolation simulation.
-#
-# Seeds one tenant with many workspace admins and employees, exercises API
-# visibility with real JWTs, then verifies direct Postgres RLS through service
-# roles. It is intentionally explicit/guarded because it writes sandbox rows.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

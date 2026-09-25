@@ -1,16 +1,3 @@
-"""Sprint v1.11 phase 2 — strict CSP on /viewer/* pages.
-
-Mirrors the phase-1 test but for the viewer surface: the seven HTMLs
-(pipeline, datasets, dataset, jobs, job, schema, semantic) now have their
-JS extracted into /static/js/viewers/*.js, and VIEWER_SECURITY_HEADERS
-dropped 'unsafe-inline' from script-src.
-
-vault.html was already clean (no inline JS) and stays in the test set so
-its CSP is also covered.
-
-Lazy-imports app.main so this test module's collection doesn't pollute
-sys.modules for peer tests.
-"""
 from __future__ import annotations
 
 import os
@@ -28,7 +15,6 @@ os.environ.setdefault("MINIO_SECRET_KEY",  "test")
 
 
 def _main():
-    """Lazy app.main loader; pops stale MagicMock stubs from peer tests."""
     for _k in ("app.dependencies", "app.services.auth"):
         if isinstance(sys.modules.get(_k), MagicMock):
             sys.modules.pop(_k, None)
@@ -49,8 +35,6 @@ def _csp_for(path: str) -> str:
     return resp.headers.get("content-security-policy", "")
 
 
-# ── CSP per viewer path ──────────────────────────────────────────────
-
 VIEWER_PATHS = [
     "/viewer/pipeline",
     "/viewer/datasets",
@@ -67,40 +51,28 @@ VIEWER_PATHS = [
 def test_every_viewer_path_drops_unsafe_inline_from_script_src():
     for path in VIEWER_PATHS:
         csp = _csp_for(path)
-        # We only check the script-src portion, not style-src.
         script_seg = csp.split("style-src", 1)[0]
         assert "'unsafe-inline'" not in script_seg, (
             f"{path}: script-src still has 'unsafe-inline': {script_seg!r}"
         )
-        # And script-src 'self' must be present in some form.
         assert "script-src 'self'" in script_seg, f"{path}: missing script-src 'self' — {script_seg!r}"
 
 
 def test_viewer_csp_keeps_style_unsafe_inline():
-    # The page <style> blocks are still inline and not in scope for this phase.
     csp = _csp_for("/viewer/pipeline")
     assert "style-src 'self' 'unsafe-inline'" in csp, csp
 
 
 def test_viewer_csp_allows_same_origin_iframe():
-    # Viewers are embedded inside Monitor/Studio iframes; frame-ancestors
-    # 'self' must stay.
     csp = _csp_for("/viewer/pipeline")
     assert "frame-ancestors 'self'" in csp, csp
 
 
 def test_non_viewer_path_also_strict_after_phase3():
-    """After phase 3, the global SECURITY_HEADERS also drops
-    'unsafe-inline' — every root HTML had its JS externalised. The
-    viewer-specific CSP just stays distinct because it keeps
-    frame-ancestors 'self' (viewers are embedded in iframes)."""
     csp = _csp_for("/")
     assert "'unsafe-inline'" not in csp.split("style-src", 1)[0], csp
 
 
-# ── HTML wiring per viewer ───────────────────────────────────────────
-
-# Five files we just refactored + vault (was already clean) + dataset detail.
 REFACTORED_PAGES = {
     "pipeline.html":  "pipeline.js",
     "datasets.html":  "datasets.js",
@@ -159,13 +131,7 @@ def test_every_extracted_js_file_exists_and_wires_listeners():
         )
 
 
-# ── pipeline.html — dynamic delegation hooks ─────────────────────────
-
 def test_pipeline_js_uses_event_delegation_for_dynamic_handlers():
-    """pipeline.js dispatches the three dynamic actions (extract-entity,
-    select-dag, apply-template) via data-action delegation. Verify both
-    the producer (innerHTML emits the attributes) and the consumer (the
-    listener reads them) are present in the file."""
     src = (JS_DIR / "pipeline.js").read_text(encoding="utf-8")
     for action in ("extract-entity", "select-dag", "apply-template"):
         assert f'data-action="{action}"' in src, (
@@ -174,7 +140,6 @@ def test_pipeline_js_uses_event_delegation_for_dynamic_handlers():
         assert f"'{action}'" in src, (
             f"pipeline.js delegation no longer handles {action!r}"
         )
-    # All three callable targets must still be defined.
     for fn in ("extractEntity", "selectDag", "applyTemplate"):
         assert f"function {fn}" in src or f"async function {fn}" in src
 

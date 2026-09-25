@@ -1,5 +1,3 @@
-"""Prompt 20C cartridge KB scope and residual isolation contracts."""
-
 from __future__ import annotations
 
 import re

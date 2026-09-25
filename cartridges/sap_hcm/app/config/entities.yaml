@@ -1,23 +1,4 @@
-# SAP HCM (NetWeaver Gateway OData).
-#
-# Phase-2 alignment: the ``entity:`` key is the BUSINESS name the rest of the
-# platform already uses (entity_config rows, knowledge_bits, the bronze path
-# raw/sap_hcm/<entity>/, semantic_terms). The technical OData path lives in
-# ``odata_entity:`` — extraction_service resolves it via
-# ``config.get("odata_entity", entity)`` and never sees the business name.
-#
-# Point ``SAP_HCM_BASE_URL`` at /sap/opu/odata/sap (NOT one specific service);
-# ``odata_entity`` spells out "<SERVICE>/<EntitySet>" per entity.
-#
-# Organizational Management objects (OrgUnit / Position / JobCode) all live in
-# the same HRP1000Set entity set, distinguished by object type. ``odata_filter``
-# carries the OData ``$filter`` (e.g. "Otype eq 'O'") so they no longer
-# overwrite each other in bronze.
-#
-# Privacy is declared per field under ``protection:`` (plain | masked |
-# shadowed | encrypted) and enforced by protection_service before parquet write.
 entities:
-  # ── Employee master data (PA infotypes) ───────────────────────────────────
   - entity: EmployeeMaster
     odata_entity: HRPA_EE_PA_SRV/PA0001Set
     description: "Organizational assignment (IT0001): org unit, position, cost center."
@@ -133,7 +114,6 @@ entities:
     protection:
       Pernr: shadowed
 
-  # ── Organizational Management (HRP1000, filtered by object type) ───────────
   - entity: OrgUnit
     odata_entity: HRORG_OBJECT_SRV/HRP1000Set
     odata_filter: "Otype eq 'O'"

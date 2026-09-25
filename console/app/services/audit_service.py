@@ -56,16 +56,6 @@ async def record_event(
     request_id: str | None = None,
     metadata: dict[str, Any] | None = None,
     *,
-    # Sprint v1.41.0 (copilot scaffolding): when the future copilot invokes
-    # a tool on behalf of the user, these columns describe which tool was
-    # called, with what args, and what risk class. NULL for non-copilot
-    # events (login, user CRUD, vault reveal, etc.). The matching columns
-    # land in audit_events via infra/init/39_audit_tool_columns.sql.
-    #
-    # SECURITY: tool_args is persisted indefinitely as JSONB and indexed.
-    # Callers MUST strip secrets (passwords, vault tokens, API keys, OAuth
-    # bearer values, anything from /api/vault/secrets/*) before passing the
-    # dict in. Replace sensitive values with "***" or drop the key.
     tool_name: str | None = None,
     tool_args: dict[str, Any] | None = None,
     tool_result_status: str | None = None,
@@ -74,18 +64,6 @@ async def record_event(
     critical: bool = False,
     connection: Any | None = None,
 ) -> None:
-    """Durably record an audit event before returning.
-
-    If the database operation fails, it logs the error without raising an
-    exception for normal UI events. Critical callers (tool calls, approvals,
-    destructive operations) must pass ``critical=True`` so the action fails
-    closed when the audit trail cannot be written.
-
-    ``tool_args`` must contain only non-sensitive parameters: scrub secrets,
-    vault values, and credentials before invoking this function. When
-    ``connection`` is supplied, the insert uses that caller-owned transaction
-    and never commits independently.
-    """
     try:
         db = connection if connection is not None else await _audit_auth_module().pool()
         exists = await db.fetchval("SELECT to_regclass('public.audit_events')")
@@ -105,12 +83,6 @@ async def record_event(
 
         if has_request_id:
             await db.execute(
-                # v1.43.2: ON CONFLICT DO NOTHING swallows
-                # exact-duplicate inserts (same user/action/resource at
-                # the same created_at timestamp) so a retry of the same
-                # admin action no longer inflates the forensic trail.
-                # The constraint audit_events_dedup_uniq is added by
-                # migration 44.
                 """
                 INSERT INTO audit_events
                 (user_id, email, action, resource_type, resource_id,

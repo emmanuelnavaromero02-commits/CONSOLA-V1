@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Enterprise readiness 20x orchestrator for OMEGA."""
 
 from __future__ import annotations
 
@@ -107,12 +106,6 @@ def run(ctx: Context, name: str, command: str, *, env: dict[str, str] | None = N
 
 
 def apply_stress_summary_status(step: Step, artifact_dir: Path) -> Step:
-    """Preserve a load-test FAIL even when the mandatory audit exits BLOCKED.
-
-    Stress targets intentionally run the data-integrity audit after Locust. When
-    the audit lacks DSNs/manifest it exits 2, which is BLOCKED, but that must not
-    hide a real p95/p99/error-rate failure already written by stress_summary.py.
-    """
     summary_path = artifact_dir / "summary.json"
     try:
         summary = json.loads(summary_path.read_text(encoding="utf-8"))

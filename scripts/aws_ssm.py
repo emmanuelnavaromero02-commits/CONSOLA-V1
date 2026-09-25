@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-"""Small AWS SSM helpers for local OMEGA release operations.
-
-These helpers intentionally shell out to the AWS CLI instead of adding a boto3
-runtime dependency to the repo scripts. They also redact command output before
-anything is persisted under docs/release-evidence.
-"""
 
 from __future__ import annotations
 

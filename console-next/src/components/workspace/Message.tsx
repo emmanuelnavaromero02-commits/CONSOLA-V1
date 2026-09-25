@@ -9,16 +9,6 @@ interface Props {
   pending?: boolean;
 }
 
-/**
- * v1.44.4 Task A — single chat message.
- *
- * Renders role-aware bubble + (optionally) citations attached
- * by the backend's run_turn response. Tool calls and tool
- * results are summarised inline as a small "[tool] name" tag
- * so the operator sees what the assistant invoked without
- * clicking into raw JSON. Pending=true renders the
- * "pensando..." placeholder while sendMutation is in flight.
- */
 export function Message({ message, pending }: Props) {
   const isUser      = message.role === "user";
   const isAssistant = message.role === "assistant";

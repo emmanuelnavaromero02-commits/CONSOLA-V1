@@ -5,8 +5,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_console_dag_conf_carries_backend_security_context():
-    # The scoped DAG-conf builder was modularized out of main.py into the
-    # pipeline domain; assert against its current home.
     source = (REPO_ROOT / "console/app/domains/pipeline/extract_config.py").read_text(
         encoding="utf-8"
     )

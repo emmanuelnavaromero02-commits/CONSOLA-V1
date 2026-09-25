@@ -1,5 +1,3 @@
-"""Database metadata helpers for data platform runtime checks."""
-
 from __future__ import annotations
 
 from typing import Any, Awaitable, Callable

@@ -63,8 +63,6 @@ def persisted_business_item(
     public = _public(row)
     if str(public.get("item_id") or "") != expected_item_id:
         return None
-    # Mission 5: the command path decides eligibility too, so an agent-authored
-    # row cannot vouch for itself here either.
     metadata = without_agent_attestations(
         _metadata(public.get("metadata")), item_id=public.get("item_id")
     )

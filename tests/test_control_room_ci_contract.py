@@ -10,10 +10,6 @@ PREPARE_SCRIPT = ROOT / "scripts/prepare_refinement_duckdb_ci.sh"
 MCP_REQUIREMENTS = ROOT / "mcp-infra/requirements.txt"
 MCP_DOCKERFILE = ROOT / "mcp-infra/Dockerfile"
 FOCAL_MINIMUM = 9659
-# Raised 276 -> 296 when the published-app grant suite was wired in. Those
-# tests assert real database behaviour — pg_temp shadowing, function
-# ownership, ACL, RLS, revocation — and had been skipping in CI for want of a
-# DSN, so the floor moves with them to keep that from happening again.
 POSTGRES_MINIMUM = 296
 OPERATIONAL_TRUTH_TESTS = (
     "console/tests/test_operational_truth_statistical_fallbacks.py",
@@ -332,7 +328,6 @@ def test_both_junit_reports_fail_closed_on_missing_or_bad_results():
 
 
 def test_the_business_one_cartridge_tests_run_in_their_own_verified_process():
-    """The cartridge's conftest puts its directory first on ``sys.path`` when it is loaded, so any console test collected in the same pytest process imports the cartridge's ``app`` (61 collection errors the first time the two shared a process)."""
     text = _workflow_text()
     live = text.index("- name: Run live PostgreSQL/RLS tests")
     cartridge = text.index("- name: Run SAP Business One cartridge tests against the Postgres fake")

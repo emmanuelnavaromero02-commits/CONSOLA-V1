@@ -125,7 +125,7 @@ async def ingest_chunks(
     mime_type: str,
     size_chars: int,
     chunks: list[TextChunk],
-    embeddings: dict[int, list[float]],   # child_index → vector
+    embeddings: dict[int, list[float]],
     kind: str = "document",
     scope: dict | None = None,
 ) -> dict:

@@ -1,19 +1,5 @@
-/* ──────────────────────────────────────────────────────────────────────────
-   viewer-modern.css — sprint v1.2-pr3
 
-   Modern visual layer for /viewer/pipeline and /viewer/datasets only.
-   Loaded AFTER viewer.css so its rules can override the legacy retro look
-   without editing viewer.css (which is shared with other viewers).
 
-   Scoping: every rule is prefixed with .viewer-wrap so this file does not
-   leak to any other page.
-
-   Color tokens reused from tokens.css: --primary, --green, --amber, --red,
-   --text/2/3, --border, --border-strong, --bg/2/3, --surface, --surface-soft,
-   --primary-soft, --font-ui, --font-mono.
-   ────────────────────────────────────────────────────────────────────── */
-
-/* ── Local design tokens (scoped) ───────────────────────────────────────── */
 .viewer-wrap {
   --vm-radius-sm: 6px;
   --vm-radius-md: 8px;
@@ -23,10 +9,6 @@
   --vm-transition: all 150ms ease;
 }
 
-/* ── Typography: force modern sans across the page ──────────────────────── */
-/* viewer.css uses --font-ui (Inter system stack) already; we just guarantee
-   nothing pulled in by old retro overrides leaks through. Mono is kept for
-   code-like values via .mono / .ds-name / pre / code. */
 .viewer-wrap,
 .viewer-wrap * {
   font-family: var(--font-ui);
@@ -44,7 +26,6 @@
   font-family: var(--font-mono);
 }
 
-/* ── Header ─────────────────────────────────────────────────────────────── */
 .viewer-wrap .vheader {
   padding-bottom: 12px;
   border-bottom: 1px solid var(--border);
@@ -64,7 +45,6 @@
 }
 .viewer-wrap .vheader a:hover { color: var(--primary); }
 
-/* ── Stat cards (rendered by both viewers via .stat / .stat-val / .stat-lbl) */
 .viewer-wrap .stat-row,
 .viewer-wrap .stats-bar {
   gap: 12px;
@@ -95,7 +75,6 @@
   margin-top: 4px;
 }
 
-/* ── Filter row ─────────────────────────────────────────────────────────── */
 .viewer-wrap .filter-row,
 .viewer-wrap .refresh-bar {
   padding: 12px 14px;
@@ -133,7 +112,6 @@
   box-shadow: 0 0 0 3px var(--primary-soft);
 }
 
-/* ── Cards ──────────────────────────────────────────────────────────────── */
 .viewer-wrap .card {
   border-radius: var(--vm-radius-lg);
   box-shadow: var(--vm-shadow-md);
@@ -141,7 +119,6 @@
   overflow: hidden;
 }
 
-/* ── Tables ─────────────────────────────────────────────────────────────── */
 .viewer-wrap table {
   font-size: 13px;
 }
@@ -165,7 +142,6 @@
 .viewer-wrap tr:hover td { background: var(--surface-soft, var(--bg3)); }
 .viewer-wrap tr:last-child td { border-bottom: none; }
 
-/* ── Layer badges — distinctive colors, pill style ─────────────────────── */
 .viewer-wrap .layer-badge {
   display: inline-flex;
   align-items: center;
@@ -194,7 +170,6 @@
   border-color: rgba(176, 109, 0, 0.30);
 }
 
-/* ── Link buttons ───────────────────────────────────────────────────────── */
 .viewer-wrap .link-btn {
   display: inline-flex;
   align-items: center;
@@ -213,7 +188,6 @@
   border-color: rgba(10, 110, 209, 0.20);
 }
 
-/* ── Empty cells (— or null) ────────────────────────────────────────────── */
 .viewer-wrap .null-val,
 .viewer-wrap .empty-state {
   color: var(--text3);
@@ -226,11 +200,6 @@
   border-radius: var(--vm-radius-md);
 }
 
-/* ════════════════════════════════════════════════════════════════════════
-   Pipeline-specific polish
-   ════════════════════════════════════════════════════════════════════════ */
-
-/* Pipeline tab buttons → pill on top */
 .viewer-wrap .tab-bar {
   gap: 4px;
   padding: 0;
@@ -265,7 +234,6 @@
   border-color: rgba(176, 109, 0, 0.40);
 }
 
-/* Pipeline rows → soft cards */
 .viewer-wrap .pipeline-header,
 .viewer-wrap .pipeline-table {
   border-radius: var(--vm-radius-lg);
@@ -299,7 +267,6 @@
   margin-bottom: 8px;
 }
 
-/* Mode tags → pills */
 .viewer-wrap .mode-tag {
   padding: 3px 9px;
   border-radius: 999px;
@@ -311,7 +278,6 @@
   margin-right: 4px;
 }
 
-/* Extract button (per-entity) → consistent secondary */
 .viewer-wrap .extract-btn {
   padding: 6px 12px;
   border-radius: var(--vm-radius-sm);
@@ -336,7 +302,6 @@
   border-color: var(--border);
 }
 
-/* Bronze cell typography */
 .viewer-wrap .bronze-date {
   font-family: var(--font-mono);
   font-size: 12px;
@@ -347,7 +312,6 @@
 .viewer-wrap .bronze-count { font-size: 11px; color: var(--primary); }
 .viewer-wrap .bronze-src   { font-size: 10px; color: var(--text3); margin-top: 4px; }
 
-/* Dataset nodes inside Silver/Master/Gold cells */
 .viewer-wrap .ds-node {
   padding: 6px 0;
   margin-bottom: 6px;
@@ -363,7 +327,6 @@
 .viewer-wrap .ds-meta { font-size: 10px; color: var(--text3); }
 .viewer-wrap .ds-meta .count { color: var(--primary); font-family: var(--font-mono); font-weight: 600; }
 
-/* Pipeline layer-badge inside ds-node — keep compact */
 .viewer-wrap .ds-node .layer-badge {
   padding: 1px 6px;
   font-size: 9px;
@@ -371,7 +334,6 @@
   letter-spacing: 0.04em;
 }
 
-/* Status dots — keep semantic colors, polish size */
 .viewer-wrap .s-fresh,
 .viewer-wrap .s-stale,
 .viewer-wrap .s-error,
@@ -381,7 +343,6 @@
   font-size: 12px;
 }
 
-/* Legend */
 .viewer-wrap .legend {
   gap: 14px;
   font-size: 11px;
@@ -394,7 +355,6 @@
   border: 1px solid var(--border);
 }
 
-/* DAG rows table */
 .viewer-wrap .dags-header {
   padding: 12px 14px;
   font-size: 12px;

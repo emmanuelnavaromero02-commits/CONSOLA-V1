@@ -1,15 +1,3 @@
-"""Risk AgentOps monitor contract (Centinela de Deals).
-
-Watches the three Mission 1 Risk aggregates through the Mission 2 view
-``control_room__risk_kpis_read``: attrition-risk population, employment-end
-expiry, and deal slippage.
-
-Note what this monitor deliberately does not do. ``risk_kpis`` never returns the
-seller behind a slipping deal, and the attrition metric reuses the Talent
-retention bands instead of recomputing a risk score. Both are Mission 1
-decisions, and the prompt repeats them so the monitor cannot over-promise.
-"""
-
 from __future__ import annotations
 
 from typing import Any
@@ -25,9 +13,6 @@ RISK_MONITOR_CARTRIDGE = "salesforce"
 RISK_MONITOR_SLUG = "salesforce_deal_risk_sentinel_monitor"
 RISK_WISDOM_BIT_ID = "WB-DEALS"
 
-# cost_center_budget is read, not written, by Risk: Finance records that gap and
-# Risk consults it before trying to explain why cost_center_overrun is missing.
-# Business-language keys, not <dataset>.<column> pairs: see finance_monitor.
 RISK_MEMORY_SUBJECTS = (
     "cost_center_budget",
     "motivo_de_riesgo_de_deals",
@@ -75,8 +60,6 @@ RISK_MONITOR_SPEC = DomainMonitorSpec(
         "advisory en Control Room."
     ),
     instructions=RISK_INSTRUCTIONS,
-    # Reused verbatim from the conversational Centinela de Deals seed
-    # (infra/init/94_salesforce_seed.sql).
     personality=(
         "Directo y proactivo. Lista priorizada por monto con dueño y motivo. "
         "Idioma del usuario."
@@ -95,14 +78,12 @@ RISK_MONITOR_SPEC = DomainMonitorSpec(
     ),
     risk_metric="deal_slippage_delta",
     rag_cartridges=("salesforce",),
-    # Deal closings move with macro conditions, so Banxico/INEGI context applies.
     uses_market_context=True,
     memory_subjects=RISK_MEMORY_SUBJECTS,
 )
 
 
 def risk_monitor_contract() -> tuple[list[str], dict[str, Any], dict[str, Any]]:
-    """``(allowed_tools, rag_filter, extra)`` for the Risk monitor."""
     return build_contract(RISK_MONITOR_SPEC)
 
 

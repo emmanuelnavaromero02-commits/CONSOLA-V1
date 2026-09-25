@@ -49,7 +49,6 @@ class StagedPublicationEngine(
     PublicationRecoveryMixin,
     DuckDBEngine,
 ):
-    """Routes every Silver/Gold materialization through one staged CAS."""
 
     def __init__(self) -> None:
         super().__init__()

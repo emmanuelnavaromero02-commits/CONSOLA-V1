@@ -82,7 +82,6 @@ async def ambiguous_unknown_error_response(
     effective_key: str,
     result: Mapping[str, Any],
 ) -> dict[str, Any] | None:
-    """Quarantine an unclassified error once adapter execution may have begun."""
 
     if not remote_attempt_started:
         return None

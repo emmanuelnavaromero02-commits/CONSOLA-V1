@@ -1,4 +1,3 @@
-"""Sprint v1.32 — materialize must use the same SQL safety gate as preview."""
 from __future__ import annotations
 
 from unittest.mock import MagicMock

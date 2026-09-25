@@ -1,4 +1,3 @@
-"""Fail-closed Airflow API client used by ``entity_scheduler``."""
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
@@ -9,7 +8,6 @@ import requests
 
 
 class AirflowTriggerError(RuntimeError):
-    """A sanitized failure while unpausing or triggering a DAG."""
 
     def __init__(self, stage: str, dag_id: str, status_code: int | None = None):
         self.stage = stage
@@ -30,7 +28,6 @@ def trigger_dag_run(
     timeout: int = 30,
     http: Any = requests,
 ) -> int:
-    """Unpause a DAG and trigger one idempotent run, returning HTTP status."""
     dag_url = f"{base_url.rstrip('/')}/api/v1/dags/{quote(dag_id, safe='')}"
     auth = (username, password)
 
@@ -61,7 +58,6 @@ def trigger_dag_run(
 
 
 def require_all_succeeded(results: Sequence[Mapping[str, Any]]) -> None:
-    """Raise after a batch when any scheduled trigger did not succeed."""
     failed = sum(not bool(result.get("ok")) for result in results)
     if failed:
         raise RuntimeError(f"{failed} of {len(results)} scheduled DAG trigger(s) failed")

@@ -1,4 +1,3 @@
-// Sprint v1.11 phase 3 — extracted from apps_gallery.html for strict CSP.
 let _viewerUser = null;
 
 function csrfToken() {
@@ -44,9 +43,6 @@ async function loadApps() {
       return;
     }
 
-    // Sprint v1.11 phase 3: inline onclick="deleteApp(...)" → data-action on the
-    // dynamically-rendered delete button; a single delegated listener at the
-    // bottom dispatches.
     const deleteEnabled = canDeleteApps();
     container.innerHTML = `<div class="apps-grid">${apps.map(app => `
       <div class="app-card" id="card-${escHtml(app.name)}">

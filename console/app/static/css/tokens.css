@@ -1,24 +1,8 @@
-/* ──────────────────────────────────────────────────────────────────────────
-   tokens.css — single source of truth for design tokens (light + dark).
 
-   Why this file exists
-   --------------------
-   The legacy console shipped three CSS files (`theme.css`, `main.css`,
-   `viewer.css`) that each declared their own token names. `viewer.css`
-   consumed names (`--bg2`, `--text3`, `--cyan`, `--amber`) that nobody
-   defined, so on dark mode the viewer pages collapsed to default browser
-   colors → black text over dark blue. This file unifies everything in one
-   place and provides explicit dark-mode overrides for every legacy token
-   the existing HTMLs already reference.
-
-   Load this BEFORE any other stylesheet so per-page CSS can override but
-   the cascade still has every var available.
-   ────────────────────────────────────────────────────────────────────── */
 
 :root {
   color-scheme: light;
 
-  /* ── Surfaces ─────────────────────────────────────────────────────── */
   --bg: #f5f7fa;
   --bg2: #ffffff;
   --bg3: #eef2f7;
@@ -29,37 +13,29 @@
   --input-bg: #ffffff;
   --backdrop: rgba(15, 23, 42, 0.45);
 
-  /* ── Text ─────────────────────────────────────────────────────────── */
   --text: #0f172a;
   --text2: #334155;
   --text3: #64748b;
   --text-muted: #64748b;
   --muted: #64748b;
 
-  /* ── Borders ──────────────────────────────────────────────────────── */
   --border: #d8dee8;
   --border-strong: #b7c1d1;
 
-  /* ── Accents (enterprise: SAP blue, sober greens, low-sat reds) ──── */
-  --primary: #0a6ed1;             /* SAP-style blue */
+  --primary: #0a6ed1;
   --primary-hover: #085caf;
   --primary-dark: #064079;
   --primary-soft: rgba(10, 110, 209, 0.10);
-  /* v1.42: text color for content sitting ON the primary background
-     (buttons, badges). Light theme keeps white; dark theme overrides. */
+
   --on-primary: #ffffff;
 
-  --cyan: #0a6ed1;                /* legacy alias → primary */
-  --amber: #b06d00;               /* sober amber for warnings */
+  --cyan: #0a6ed1;
+  --amber: #b06d00;
   --red:   #b3261e;
   --green: #117a3d;
-  /* v1.42: soft fill for danger callouts (toast / banner backgrounds).
-     Same hue as --danger but at 8% alpha so light/dark themes
-     produce consistent contrast without hardcoded rgba(). */
+
   --danger-soft: rgba(179, 38, 30, 0.08);
-  /* v1.44.1 (R1 frontend review): soft sibling fills for success +
-     warning so badges/alerts get a dark-mode-aware tinted background
-     instead of a hardcoded rgba pinned to the light-mode hue. */
+
   --success-soft: rgba(17, 122, 61, 0.10);
   --warning-soft: rgba(176, 109, 0, 0.12);
 
@@ -67,18 +43,13 @@
   --success:  #117a3d;
   --warning:  #b06d00;
   --danger:   #b3261e;
-  /* v1.44.1: ``on-danger`` is the text colour for content sitting ON
-     a --danger background (btn-danger, danger badges). Stays white
-     across both themes because the danger hue keeps enough contrast
-     against #ffffff. */
+
   --on-danger: #ffffff;
 
-  /* ── Typography ───────────────────────────────────────────────────── */
   --font-ui:   'Inter', system-ui, -apple-system, Segoe UI, sans-serif;
   --font-sans: var(--font-ui);
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
-  /* ── Geometry ─────────────────────────────────────────────────────── */
   --radius-sm: 4px;
   --radius:    6px;
   --radius-md: 8px;
@@ -88,7 +59,6 @@
   --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.10);
   --shadow-lg: 0 12px 32px rgba(15, 23, 42, 0.18);
 
-  /* ── v1.44.1: spacing scale (Tarea A) ────────────────────────────── */
   --space-xs: 4px;
   --space-sm: 8px;
   --space-md: 16px;
@@ -96,14 +66,11 @@
   --space-xl: 32px;
   --space-2xl: 48px;
 
-  /* ── v1.44.1: extended radius scale ──────────────────────────────── */
   --radius-xl:   16px;
   --radius-pill: 9999px;
 
-  /* ── v1.44.1: extended shadow scale ──────────────────────────────── */
   --shadow-xl: 0 24px 48px rgba(15, 23, 42, 0.22);
 
-  /* ── v1.44.1: font-size scale ────────────────────────────────────── */
   --font-size-xs:  11px;
   --font-size-sm:  12px;
   --font-size-md:  14px;
@@ -112,7 +79,6 @@
   --font-size-2xl: 24px;
   --font-size-3xl: 32px;
 
-  /* ── v1.44.1: z-index scale (single source of truth) ─────────────── */
   --z-base:     1;
   --z-dropdown: 100;
   --z-fab:      900;
@@ -120,16 +86,13 @@
   --z-toast:    2000;
   --z-tooltip:  3000;
 
-  /* ── v1.44.1: transitions ────────────────────────────────────────── */
   --transition-fast: 150ms ease;
   --transition-base: 250ms ease;
   --transition-slow: 400ms ease;
 
-  /* ── v1.44.1: info colour (sibling of success/warning/danger) ────── */
   --info:      #0a6ed1;
   --info-soft: rgba(10, 110, 209, 0.10);
 
-  /* ── v1.44.1: semantic aliases used by components.css ────────────── */
   --text-primary:   var(--text);
   --text-secondary: var(--text2);
   --text-inverse:   #ffffff;
@@ -140,15 +103,12 @@
   --border-subtle:  rgba(15, 23, 42, 0.06);
 }
 
-/* ── Dark mode ────────────────────────────────────────────────────────
-   Triggered by theme.js setting data-theme="dark" on <html>. Petroleum /
-   slate palette — never pure black, never saturated blue. ────────── */
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --bg:  #0f1822;                  /* deep petroleum, not black */
-  --bg2: #182331;                  /* slate elevated */
-  --bg3: #1f2c3d;                  /* row hover / table head */
+  --bg:  #0f1822;
+  --bg2: #182331;
+  --bg3: #1f2c3d;
   --surface:          #182331;
   --surface-soft:     #1a2535;
   --surface-elevated: #1f2c3d;
@@ -156,7 +116,7 @@
   --input-bg:         #0f1a26;
   --backdrop: rgba(5, 10, 16, 0.72);
 
-  --text:  #e6edf6;                /* soft white, not #fff */
+  --text:  #e6edf6;
   --text2: #c5cfdc;
   --text3: #8a96a8;
   --text-muted: #8a96a8;
@@ -165,16 +125,15 @@
   --border:        rgba(226, 232, 240, 0.14);
   --border-strong: rgba(226, 232, 240, 0.26);
 
-  --primary:       #4ea3e0;        /* SAP-blue toned for dark surfaces */
+  --primary:       #4ea3e0;
   --primary-hover: #74b8e8;
   --primary-dark:  #1d6fb0;
   --primary-soft:  rgba(78, 163, 224, 0.16);
-  /* v1.42 dark mode: a bit brighter so text on the primary buttons
-     keeps contrast above 4.5:1 against the darker primary. */
+
   --on-primary:    #0f172a;
 
   --cyan:   #4ea3e0;
-  --amber:  #d4a042;               /* low-sat amber, not neon */
+  --amber:  #d4a042;
   --red:    #e0716b;
   --green:  #4cb27b;
 
@@ -182,11 +141,9 @@
   --success:    #4cb27b;
   --warning:    #d4a042;
   --danger:     #e0716b;
-  /* v1.42 dark mode: matching soft danger fill. */
+
   --danger-soft:  rgba(224, 113, 107, 0.14);
-  /* v1.44.1 dark mode: soft sibling fills for success + warning so
-     the dark-tone foreground keeps contrast against a dark-tone
-     tinted background. */
+
   --success-soft: rgba(76, 178, 123, 0.16);
   --warning-soft: rgba(212, 160, 66, 0.18);
   --on-danger:    #ffffff;
@@ -196,7 +153,6 @@
   --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.55);
   --shadow-xl: 0 24px 48px rgba(0, 0, 0, 0.68);
 
-  /* v1.44.1 dark-mode overrides for the new semantic aliases. */
   --text-inverse:   #0f172a;
   --bg-card:        var(--surface);
   --border-subtle:  rgba(226, 232, 240, 0.06);
@@ -205,10 +161,6 @@
   --info-soft: rgba(78, 163, 224, 0.16);
 }
 
-/* ── Legacy aliases ───────────────────────────────────────────────────
-   main.css still uses `--color-*` names. Re-export them from the unified
-   tokens so its existing rules pick up the dark-mode swap automatically
-   without touching every legacy rule. ──────────────────────────────── */
 :root,
 :root[data-theme="dark"],
 :root[data-theme="light"] {
@@ -225,14 +177,10 @@
   --color-error:          var(--danger);
 }
 
-/* ── Defensive baseline ───────────────────────────────────────────────
-   Force foreground on body and form controls so a page that forgets to
-   set `color` cannot end up rendering #000 on a dark surface. ────── */
 html, body { background: var(--bg); color: var(--text); }
 input, select, textarea, button { color: inherit; font-family: inherit; }
 input::placeholder, textarea::placeholder { color: var(--text3); opacity: 1; }
 
-/* ── Shared primitives (light/dark via tokens) ───────────────────── */
 .toast {
   position: fixed;
   right: 16px;

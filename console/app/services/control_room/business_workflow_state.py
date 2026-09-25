@@ -36,10 +36,6 @@ def _option_selected(row: Mapping[str, Any]) -> bool:
 def expected_workflow_stage(
     row: Mapping[str, Any],
 ) -> WorkflowStage | None:
-    """Return the one stage justified by persisted workflow columns.
-
-    Ambiguous, incomplete, and unknown historical combinations fail closed.
-    """
 
     status = _status(row.get("status"), default="open")
     execution_status = _status(

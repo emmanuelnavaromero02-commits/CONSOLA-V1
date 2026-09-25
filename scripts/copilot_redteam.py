@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Adversarial Copilot/MCP live gate with honest BLOCKED semantics."""
 
 from __future__ import annotations
 
@@ -83,8 +82,6 @@ def main(argv: list[str] | None = None) -> int:
         _write_report(args.evidence_dir, "BLOCKED", rows)
         print(json.dumps({"status": "BLOCKED", "evidence_dir": str(args.evidence_dir)}, indent=2))
         return 2
-    # Live execution is intentionally explicit. The route can be conversation,
-    # ask-with-context, or an operator-provided proxy in later iterations.
     rows = [
         {
             "id": "live_execution",

@@ -1,10 +1,3 @@
-"""Smoke test del sprint v1.0 — los endpoints principales rechazan
-correctamente requests no autenticados.
-
-Importa la app real (no construye una FastAPI ad-hoc) para garantizar
-que el middleware, los includes de routers y las dependencias estén
-todos cableados como en producción.
-"""
 from __future__ import annotations
 
 import os
@@ -15,7 +8,6 @@ from unittest.mock import Mock
 
 import pytest
 
-# Stub asyncpg before importing app so module-level imports don't fail.
 sys.modules.setdefault("asyncpg", types.ModuleType("asyncpg"))
 
 os.environ.setdefault("INTERNAL_API_KEY", "smokev1internalkeyaaaaaaaaaaaaaaaaaaaaaaaa")
@@ -64,6 +56,5 @@ def test_operations_health_requires_auth(client):
 
 
 def test_internal_mcp_requires_header(client):
-    """Internal route: sin header → 403 (Fase 3 fix middleware bypass)."""
     r = client.get("/internal/mcp/servers")
     assert r.status_code == 403

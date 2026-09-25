@@ -52,7 +52,6 @@ async function renderPage() {
       </QueryClientProvider>,
     );
   });
-  // Da tiempo a que react-query resuelva las queries iniciales.
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
@@ -89,7 +88,6 @@ describe("SupervisedActionsPage en modo preview-only", () => {
     expect(container.textContent).toContain(
       "La ejecución y la aprobación no están disponibles desde esta consola: las acciones operan en modo supervisado de solo preparación (preview).",
     );
-    // Las mutaciones de preparación siguen disponibles sobre una acción activa.
     expect(findButton("Validar")?.disabled).toBe(false);
   });
 

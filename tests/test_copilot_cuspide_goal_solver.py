@@ -1,9 +1,3 @@
-"""Sprint v1.45 cúspide — goal_solver tests.
-
-Focus on the parser + amount safety + diagnose/conclude orchestration
-with a stubbed LLM. DB calls are stubbed via the same FakePool pattern
-used in the lessons tests.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -27,14 +21,9 @@ def goal_mod():
         if name == "app" or name.startswith("app."):
             del sys.modules[name]
     from app.services import goal_solver as mod
-    # Reset the process-global table-presence cache so cross-file run
-    # order can't leak a cached copilot_goals presence flag.
     from app.services._copilot_helpers import reset_table_cache
     reset_table_cache()
     return mod
-
-
-# ── parse_diagnosis ───────────────────────────────────────────────────
 
 
 def test_parse_diagnosis_minimum_shape(goal_mod):
@@ -84,17 +73,12 @@ def test_parse_diagnosis_rejects_no_json(goal_mod):
 
 
 def test_parse_diagnosis_terminates_on_pathological_input(goal_mod):
-    """Regression guard for the v1.45 ReDoS fix: the parser must
-    survive a multi-kilobyte pathological string of unbalanced braces
-    without catastrophic backtracking. The original
-    ``r'\\{.*\\}'`` regex with re.DOTALL would have hung here."""
     import time
-    pathological = "{" * 5000 + "x" * 5000  # never balanced
+    pathological = "{" * 5000 + "x" * 5000
     start = time.monotonic()
     with pytest.raises(ValueError):
         goal_mod.parse_diagnosis(pathological)
     elapsed = time.monotonic() - start
-    # The bracket-matching scan is O(N); ought to finish in milliseconds.
     assert elapsed < 1.0, f"parse_diagnosis took {elapsed:.2f}s on pathological input"
 
 
@@ -135,9 +119,6 @@ def test_safe_amount_clamps_negatives_and_huge(goal_mod):
     assert goal_mod._safe_amount(-50) == 0.0
     assert goal_mod._safe_amount("not a number") == 0.0
     assert goal_mod._safe_amount(10 ** 14) == 1e12
-
-
-# ── diagnose_goal: integration with stub LLM ──────────────────────────
 
 
 class FakeRecord(dict):
@@ -194,9 +175,7 @@ def test_create_goal_sets_rls_scope_for_workspace(goal_mod, monkeypatch):
 
 def test_diagnose_goal_persists_plan(goal_mod, monkeypatch):
     fake = FakePool()
-    # has_table calls: get_goal → update_goal_status → both check table
     fake._fetchval_queue = ["copilot_goals", "copilot_goals"]
-    # get_goal returns a planning row
     fake._fetchrow_queue = [FakeRecord(
         id=GOAL_ID_VALID, user_id=1, workspace_id=None,
         conversation_id=None, goal_text="Mejora el margen",
@@ -223,7 +202,6 @@ def test_diagnose_goal_persists_plan(goal_mod, monkeypatch):
     )
     assert out["plan_summary"] == "Stub plan"
     assert out["intent_keywords"] == ["margen"]
-    # update_goal_status fired
     assert any("UPDATE copilot_goals" in sql for sql, _ in fake.execs)
 
 
@@ -235,8 +213,6 @@ def test_get_goal_returns_none_on_invalid_uuid(goal_mod, monkeypatch):
     out = asyncio.run(
         goal_mod.get_goal(goal_id="not-a-uuid", user_id=1)
     )
-    # The bad uuid never reaches asyncpg; we short-circuit to None
-    # instead of letting $1::uuid blow up.
     assert out is None
 
 
@@ -255,8 +231,6 @@ def test_update_goal_status_drops_bad_workflow_ids(goal_mod, monkeypatch):
     )
     assert fake.execs, "UPDATE should have been issued"
     args = fake.execs[0][1]
-    # workflow_ids is the 5th positional ($5) — args is the tuple
-    # starting at $1. Pull the safe_workflow_ids back out.
     safe_ids = args[4]
     assert safe_ids == [GOAL_ID_VALID]
 
@@ -292,7 +266,6 @@ def test_conclude_goal_terminal_status_selection(goal_mod, monkeypatch):
     async def fake_llm(system, messages):
         return "Resumen ejecutivo del resultado."
 
-    # one workflow failed → status='failed'
     out = asyncio.run(
         goal_mod.conclude_goal(
             goal_id=GOAL_ID_VALID, user_id=1,
@@ -307,9 +280,6 @@ def test_conclude_goal_terminal_status_selection(goal_mod, monkeypatch):
 
 
 def test_conclude_goal_records_lesson_per_approved_step(goal_mod, monkeypatch):
-    """After conclude_goal, each completed+approved step in the
-    workflow_outcomes should land as a lesson via
-    lessons_service.record_lesson_from_approval."""
     fake = FakePool()
     fake._fetchval_queue = ["copilot_goals", "copilot_goals"]
     fake._fetchrow_queue = [FakeRecord(

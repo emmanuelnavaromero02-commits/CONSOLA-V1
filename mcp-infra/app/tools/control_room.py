@@ -1,5 +1,3 @@
-"""Control Room advisory tools for monitor agents."""
-
 from __future__ import annotations
 
 import hashlib
@@ -218,12 +216,6 @@ def _redact_sensitive(value: Any) -> Any:
     return value
 
 
-# Mission 5. Keys that only console's evidence signer produces. A caller-supplied
-# reference carrying any of them is either a signed reference replayed from
-# somewhere else or an attempt to forge one. Stored, it would sit in
-# control_room_items.metadata exactly where Control Room looks for attested
-# evidence, so it is refused here. Attested evidence for a monitor alert is
-# minted by console itself and never travels through this argument.
 _SERVER_ATTESTATION_KEYS = frozenset(
     {
         "server_attestation",
@@ -240,8 +232,6 @@ _MAX_ATTESTATION_SCAN_DEPTH = 8
 
 def _carries_server_attestation(value: Any, *, depth: int = 0) -> bool:
     if depth > _MAX_ATTESTATION_SCAN_DEPTH:
-        # Refuse pathological nesting instead of scanning it; entries are capped
-        # at _MAX_EVIDENCE_REF_BYTES, so a legitimate reference never gets here.
         return True
     if isinstance(value, dict):
         if any(str(key).strip().lower() in _SERVER_ATTESTATION_KEYS for key in value):
@@ -307,8 +297,6 @@ def _analysis_evidence(
         ("distribution", distribution),
         ("recommended_option", recommended_option),
     ):
-        # Mission 5: analysis_evidence is stored beside evidence_refs in the
-        # alert metadata, so it gets the same refusal.
         if _carries_server_attestation(value):
             raise HTTPException(400, f"{label} cannot carry server attestation")
     engine = _as_safe_key(engine, "engine")
@@ -582,10 +570,6 @@ async def control_room__talent_metadata_readiness_read(
     )
 
 
-# ── Mission 2: domain KPI read tools (Finance / Operations / Risk) ──────────
-# Same bridge as control_room__talent_kpis_read: mcp-infra never touches the
-# databases; console resolves the scope from the signed security_context and
-# runs the cap-free aggregates. Descriptions are in Spanish for the LLM.
 _TOP_N_SCHEMA = {
     "type": "object",
     "properties": {
@@ -690,9 +674,6 @@ async def control_room__risk_kpis_read(
 _AGENT_MEMORY_FINDING_TYPES = ("data_gap", "error", "insight", "warning")
 _AGENT_MEMORY_SEVERITIES = ("critical", "high", "medium", "low")
 _AGENT_MEMORY_SUBJECT_MAX = 200
-# Bounded by what the public projection carries, not by what the column accepts: a
-# string over 64 word tokens reaches every reader as "[REDACTED]", and because the
-# write is record-once-while-active, that useless finding is the one that sticks.
 _AGENT_MEMORY_SUMMARY_MAX = 600
 _AGENT_MEMORY_SUMMARY_MAX_WORDS = 60
 _AGENT_MEMORY_MAX_EXPIRY_HOURS = 8760
@@ -733,12 +714,6 @@ def _agent_memory_choice(value: Any, allowed: tuple[str, ...], field: str) -> st
 
 
 def _agent_memory_expiry_hours(value: Any) -> int | None:
-    """Bound the caller's TTL. The advertised schema minimum/maximum is advice.
-
-    tool_policy does not enforce JSON-Schema bounds, so the clamp has to happen
-    here. Hours rather than a timestamp on purpose: the model has no clock, and
-    letting it send one invites both format errors and expiries in the past.
-    """
     if value in (None, ""):
         return None
     try:
@@ -896,10 +871,6 @@ async def control_room__agent_memory_write(
         _set_rls_scope(cur, scope["tenant_id"], scope["workspace_id"])
         if effect_authority is not None:
             _lock_scheduled_effect(cur, scope, effect_authority)
-        # Record-once-while-active: the NOT EXISTS guard lives inside the same
-        # statement, so a monitor may call this on every run without the table
-        # growing, and a concurrent duplicate is the worst case rather than a
-        # lost finding.
         cur.execute(
             """
             INSERT INTO agent_shared_findings (
@@ -951,8 +922,6 @@ async def control_room__agent_memory_write(
         "subject": clean_subject,
         "finding_type": clean_type,
         "severity": clean_severity,
-        # The display name only. The slug is an identifier, and the whole point of
-        # the attribution contract is that identifiers do not travel to a model.
         "agent_name": scope["agent_name"] or None,
         "created_at": (row[1].isoformat() if row and row[1] else None),
         "expires_at": (row[2].isoformat() if row and row[2] else None),
@@ -1274,9 +1243,6 @@ async def wisdom_bits__run(
         "payload": payload or {},
     }
     if effect_authority is not None:
-        # Mission 5: console re-verifies the signed authority and the lease
-        # before it attests the wisdom-bit observation. mcp-infra only forwards
-        # it; it receives an opaque handle back, never a signature.
         console_body["effect_authority"] = effect_authority
     try:
         result = await _call_console_under_fence(
@@ -1289,9 +1255,6 @@ async def wisdom_bits__run(
     except HTTPException as exc:
         if exc.status_code != 422 or "effect_authority" not in console_body:
             raise
-        # Rollout safety: a console that predates Mission 5 rejects the extra
-        # field (extra="forbid"). Attestation is optional; the wisdom bit is
-        # not, so the monitor step is retried without it.
         console_body.pop("effect_authority")
         result = await _call_console_under_fence(
             scope,
@@ -1373,11 +1336,6 @@ def control_room__raise_alert(
     security_context: dict[str, Any] | None = None,
     **extra: Any,
 ) -> dict[str, Any]:
-    # Mission 5: the tool entry point takes no server-only argument. The
-    # registry dispatches with fn(**args), so every parameter named here is
-    # reachable by the caller. The server-owned metadata patch and event names
-    # live on _raise_alert_impl, which only raise_analysis_alert calls; a caller
-    # naming them lands in **extra and is refused.
     unexpected = sorted(extra)
     if unexpected:
         raise HTTPException(400, f"unsupported alert args: {', '.join(unexpected)}")

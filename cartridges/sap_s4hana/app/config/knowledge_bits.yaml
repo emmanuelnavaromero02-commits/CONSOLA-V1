@@ -62,9 +62,6 @@ knowledge_bits:
     pg_table: kb_gl_balance_by_account
     output_path: silver/sap_s4hana/kb_gl_balance_by_account
 
-  # ── Bloque C: KBs sobre los golds del Bloque B (gold/sap_s4hana/<name>/) ──────
-  # Leen el parquet gold materializado vía read_parquet (DuckDB), no pggold.
-  # Prefijo kb_sap_s4hana_ para id global unico. Columnas = salida real del gold.
   - id: kb_sap_s4hana_revenue_top_customers
     name: "Top clientes por revenue"
     description: "¿Cuáles son mis top 10 clientes por revenue YTD? Ranking de clientes por ingreso del año en curso, desde el gold revenue_by_customer."

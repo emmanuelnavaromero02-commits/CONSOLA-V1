@@ -58,7 +58,6 @@ import type {
   WorkspaceListResponse,
 } from "./types";
 
-// ── Users ──────────────────────────────────────────────────────────
 
 export function useUsers() {
   return useQuery<AppUser[]>({
@@ -98,7 +97,6 @@ export function useSendPasswordReset() {
   });
 }
 
-// ── Companies / tenants ────────────────────────────────────────
 
 export function useTenants() {
   return useQuery<TenantListResponse>({
@@ -158,7 +156,6 @@ export function useIssueTenantAdminTemporaryPassword() {
   });
 }
 
-// ── Audit ──────────────────────────────────────────────────────────
 
 export function useAuditEvents() {
   return useQuery<AuditEvent[]>({
@@ -168,7 +165,6 @@ export function useAuditEvents() {
   });
 }
 
-// ── Vault ──────────────────────────────────────────────────────────
 
 export function useVaultConnections(cartridge: string | null) {
   return useQuery<VaultConnectionsResponse>({
@@ -232,7 +228,6 @@ export function useDeleteVaultSecret() {
   });
 }
 
-// ── Workflows ──────────────────────────────────────────────────────
 
 const ACTIVE_WORKFLOW_STATUSES = new Set(["planning", "running", "waiting_approval"]);
 
@@ -260,7 +255,6 @@ export function useOperationWorkflow(id: string | null) {
   });
 }
 
-// Preview-only: la UI solo puede planificar workflows, nunca ejecutarlos.
 export function usePlanOperationWorkflow() {
   const qc = useQueryClient();
   return useMutation<OperationWorkflowActionResponse, Error, OperationWorkflow>({
@@ -283,7 +277,6 @@ export function useCancelOperationWorkflow() {
   });
 }
 
-// ── Metrics ────────────────────────────────────────────────────────
 
 export function useOperationalMetrics() {
   return useQuery<OperationalMetrics>({

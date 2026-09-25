@@ -1,5 +1,3 @@
-"""SAP Business One MCP Server =========================== Exposes the cartridge tools over Streamable HTTP so that."""
-
 from __future__ import annotations
 
 import re
@@ -74,7 +72,6 @@ from app.services.watermark_service import list_watermarks
 
 
 def _watermarks_by_entity() -> dict[str, dict[str, str]]:
-    """Watermarks are stored per ``Entity@company``; group them by entity."""
     grouped: dict[str, dict[str, str]] = {}
     try:
         rows = list_watermarks()
@@ -382,7 +379,6 @@ def query_kb(sql: str, limit: int = 100) -> dict[str, Any]:
 
 
 def _make_sql_tool(name: str, description: str, sql: str) -> None:
-    """Register a SQL-query custom tool on the mcp instance."""
     from app.core.sql_guard import validate_kb_sql
 
     resolved_sql = sql.replace("{bucket}", settings.minio_bucket)
@@ -432,7 +428,6 @@ def _make_sql_tool(name: str, description: str, sql: str) -> None:
 
 
 def _make_extract_tool(name: str, description: str, entity: str, mode: str) -> None:
-    """Register an entity-extract custom tool on the mcp instance."""
 
     def _tool_fn() -> dict[str, Any]:
         config = get_entity_config(entity)
@@ -451,7 +446,6 @@ def _make_extract_tool(name: str, description: str, entity: str, mode: str) -> N
 
 
 def _make_kb_tool(name: str, description: str, kb_id: str) -> None:
-    """Register a Knowledge Bit runner custom tool on the mcp instance."""
 
     def _tool_fn() -> dict[str, Any]:
         try:
@@ -465,7 +459,6 @@ def _make_kb_tool(name: str, description: str, kb_id: str) -> None:
 
 
 def load_custom_tools() -> int:
-    """Load custom tool definitions from mcp_custom_tools in PostgreSQL and register them on the mcp instance."""
     try:
         from app.core.pg_client import get_connection
 

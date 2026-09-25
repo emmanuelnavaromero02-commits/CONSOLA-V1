@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Re-verify every published digest against private GHCR evidence."""
 
 from __future__ import annotations
 

@@ -115,8 +115,6 @@ class PublicationEvidenceStore:
                 "is_key",
                 "is_metric",
                 "example_values",
-                # F8 (punto D): the per-column profile survives into the
-                # published evidence so catalog readers can surface quality.
                 "null_rate",
                 "distinct_count",
                 "min_value",

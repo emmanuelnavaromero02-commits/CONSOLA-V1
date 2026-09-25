@@ -33,7 +33,6 @@ def _bearer_token(request: Request) -> str | None:
 
 
 def requested_workspace_id_from_request(request: Request) -> str | None:
-    """Resolve the active workspace chosen by Next or legacy Console pages."""
     return (
         request.headers.get("x-workspace-id")
         or request.cookies.get(ACTIVE_WORKSPACE_COOKIE)
@@ -43,9 +42,6 @@ def requested_workspace_id_from_request(request: Request) -> str | None:
 
 async def _user_from_jwt(token: str) -> dict:
     try:
-        # Sprint v1.10: switched from sync decode_access_token to the
-        # async variant so the Redis blacklist check runs on every
-        # JWT-authenticated request. Same exception type.
         claims = await verify_access_token_async(token)
     except JWTAuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc

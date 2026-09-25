@@ -1,5 +1,3 @@
-"""Build fresh, backend-owned security contexts for market extraction DAGs."""
-
 from __future__ import annotations
 
 import os
@@ -9,7 +7,7 @@ from typing import Any
 
 try:
     from runtime_security_context import sign_runtime_context, verify_runtime_signature
-except ModuleNotFoundError:  # package import in repository tests
+except ModuleNotFoundError:
     from airflow.dags.runtime_security_context import (
         sign_runtime_context,
         verify_runtime_signature,
@@ -53,7 +51,6 @@ def _allowed_prefixes(
 def security_context_from_conf(
     conf: Mapping[str, Any], cartridge_id: str
 ) -> dict[str, Any]:
-    """Return a fresh signed context scoped to the extraction run."""
     if (
         not _CARTRIDGE_RE.fullmatch(cartridge_id)
         or cartridge_id not in _MARKET_ENTITIES

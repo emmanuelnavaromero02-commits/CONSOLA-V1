@@ -1,5 +1,3 @@
-"""Technical identifier checks shared by public API copy boundaries."""
-
 from __future__ import annotations
 
 import ast
@@ -228,7 +226,6 @@ def _is_serialized_container(value: str) -> bool:
 
 
 def contains_public_identifier_copy(value: str) -> bool:
-    """Reject machine identifiers while preserving ordinary business names."""
 
     stripped = value.strip()
     return bool(
@@ -262,7 +259,6 @@ def contains_public_identifier_copy(value: str) -> bool:
 
 
 def is_public_technical_structure_key(value: str) -> bool:
-    """Detect explicit or path-shaped technical keys in nested public copy."""
 
     key = _normalized_key(value)
     segments = key.split("_")

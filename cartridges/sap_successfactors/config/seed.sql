@@ -1,12 +1,3 @@
--- ─────────────────────────────────────────────────────────────────────────────
--- MODecissions Cartridge: SAP SuccessFactors HXM — seed configuration
--- Run once to register this cartridge in a new installation.
--- Safe to re-run: agent inserts use target-less ON CONFLICT DO NOTHING so they
--- work with both the original global agents constraint and the later
--- workspace-aware partial indexes.
--- ─────────────────────────────────────────────────────────────────────────────
-
--- ── Cartridge header ──────────────────────────────────────────────────────────
 INSERT INTO cartridges (id, name, version, description, pattern, category, bronze_path)
 VALUES (
     'sap_successfactors',
@@ -23,20 +14,12 @@ ON CONFLICT (id) DO UPDATE
         description = EXCLUDED.description,
         updated_at  = NOW();
 
--- ── DAGs ──────────────────────────────────────────────────────────────────────
 INSERT INTO cartridge_dags (cartridge_id, dag_id, file, description, trigger, params)
 VALUES
     ('sap_successfactors', 'sap_successfactors_extract',     'sap_successfactors_extract.py',     'Extrae una entidad en Bronze MinIO (full o incremental)',  'on-demand', '["entity","mode","from_date","to_date"]'),
     ('sap_successfactors', 'sap_successfactors_extract_all', 'sap_successfactors_extract_all.py', 'Extrae todas las entidades habilitadas en secuencia',       'on-demand', '["mode","entities"]')
 ON CONFLICT (cartridge_id, dag_id) DO NOTHING;
 
--- ── Entities ──────────────────────────────────────────────────────────────────
--- Canonical entities, aligned with infra/init/79_sap_successfactors_alignment.sql
--- and app/config/entities.yaml. Foundation Objects use their FO* names (FODepartment,
--- FODivision, FOLocation, FOCostCenter); talent entities carry odata_entity where the
--- business name differs from the OData entityset (GoalPlan -> Goal, PerformanceReview
--- -> FormHeader, LearningItem -> Item, EmpJob_History -> EmpJobRelationships). Metadata
--- (odata_entity / mode / watermark / page_size) is inherited from entities.yaml.
 INSERT INTO entity_config
     (cartridge_id, entity, odata_entity, display_name, description, mode,
      watermark_field, page_size, primary_key, dag_id, enabled, trigger_type)
@@ -116,7 +99,6 @@ ON CONFLICT (cartridge_id, entity) DO UPDATE
         enabled         = EXCLUDED.enabled,
         trigger_type    = EXCLUDED.trigger_type;
 
--- ── Semantic vocabulary ───────────────────────────────────────────────────────
 INSERT INTO semantic_terms (cartridge_id, term, definition, maps_to)
 VALUES
     ('sap_successfactors', 'headcount activo', 'Número de empleados activos (startDate <= hoy <= endDate)', 'EmpEmployment WHERE isActive = true'),
@@ -124,10 +106,6 @@ VALUES
     ('sap_successfactors', 'evaluación', 'Rating en PerformanceReview', 'PerformanceReview.overallRating')
 ON CONFLICT (cartridge_id, term) DO NOTHING;
 
--- ── Specialized agents ────────────────────────────────────────────────────────
--- Mirrored in infra/init/88_sap_successfactors_agents_seed.sql for fresh DB installs.
--- The agents table has no workspace_id (cartridge-scoped). The platform has no
--- trigger-based routing yet; "triggers" phrases live in extra as intent metadata.
 INSERT INTO agents (cartridge_id, slug, name, description, instructions, personality,
                     allowed_tools, rag_filter, model, max_tokens, temperature, extra)
 VALUES

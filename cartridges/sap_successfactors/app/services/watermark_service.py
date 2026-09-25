@@ -88,7 +88,6 @@ def touch_watermark_attempt(
     watermark_field: str | None,
     last_run_id: str,
 ) -> None:
-    """Record that an entity was attempted without advancing its watermark value."""
     scope, tenant_id, workspace_id = _watermark_scope()
     conn = get_connection()
     try:

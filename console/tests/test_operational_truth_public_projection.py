@@ -29,7 +29,6 @@ def _project(
 
 
 def _ledger(row: dict, **overrides) -> dict:
-    """The server-owned approval entry that corroborates a benchmark row."""
     entry = {
         "tenant_id": row.get("tenant_id", ""),
         "workspace_id": row.get("workspace_id", ""),
@@ -107,7 +106,6 @@ def test_durable_readiness_remains_usable_and_unchanged() -> None:
         }
     )
 
-    # Without the ledger entry the derived row degrades; with it, it survives.
     assert _project(READINESS, deepcopy(durable))["readiness_status"] != "ready"
     assert (
         _project(READINESS, durable, ledger, benchmark_head=BENCHMARK_HEAD) == expected
@@ -234,7 +232,6 @@ def test_benchmark_row_accepts_complete_verified_server_attestation() -> None:
         "workspace_id": "workspace-a",
     }
 
-    # The row shape alone is not enough: the ledger must corroborate it.
     assert _project(BENCHMARK, deepcopy(valid))["approved"] is False
     assert (
         _project(

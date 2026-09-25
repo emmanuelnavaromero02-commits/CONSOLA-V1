@@ -25,11 +25,6 @@ const ICON_FOR_ID: Record<string, LucideIcon> = {
   sap_b1:              Boxes,
 };
 
-/**
- * Single tile on the cartridges grid. Status badge derives from the
- * parent's known state and the primary CTA opens the static viewer
- * via query params so the exported build needs no dynamic route.
- */
 export function CartridgeCard({
   id,
   name,

@@ -7,32 +7,6 @@ import { useBriefing } from "@/lib/copilot/useBriefing";
 
 import { BriefingCard } from "./BriefingCard";
 
-/**
- * v1.44.4 Task B — proactive briefing section.
- *
- * Mounted ABOVE the KPI grid on /dashboard so the operator
- * sees actionable alerts the moment they land. Polling cadence
- * (60 s) lives in the useBriefing hook; this component is the
- * presentation orchestrator (loading / error / empty / list).
- *
- * Round 1 review fixes:
- *   - Skeleton count remembers last-known length instead of
- *     hard-coding 3-up, so a 1-card real state doesn't jump
- *     the grid two columns to the left (UX P1).
- *   - Critical-count badge surfaces in the header when any
- *     critical alert is present (UX P2 promoted to P1 — the
- *     severity signal was getting lost in a sea of muted-grey).
- *
- * Grid responsiveness:
- *   - mobile (< sm): single column
- *   - tablet (≥ sm): 2 columns
- *   - desktop (≥ lg): 3 columns
- *
- * Accessibility:
- *   - section is role="region" with aria-label
- *   - empty / error states use role="status" / role="alert"
- *   - cards carry role="article" implicitly via <article>
- */
 function SkeletonCard() {
   return (
     <div

@@ -70,11 +70,6 @@ def _latest_observation_instant(item: Mapping[str, Any]) -> str:
 
 
 def business_observation_order(item: Mapping[str, Any]) -> str:
-    """Return a total order for convergent refresh persistence.
-
-    The timestamp is authoritative when present. The observation fingerprint is a
-    deterministic tie-breaker for corrected values carrying the same source time.
-    """
     observed_at = _latest_observation_instant(item)
     fingerprint = business_observation_fingerprint(item)
     return f"{OBSERVATION_ORDER_VERSION:04d}|{observed_at}|{fingerprint}"

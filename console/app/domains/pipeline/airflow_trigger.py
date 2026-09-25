@@ -1,5 +1,3 @@
-"""Airflow trigger orchestration helpers for pipeline DAGs."""
-
 from __future__ import annotations
 
 from typing import Any, Awaitable, Callable

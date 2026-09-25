@@ -1,4 +1,3 @@
-"""Make ``import app`` resolve to THIS cartridge when running the suite from the repo root (``pytest cartridges -q``)."""
 from __future__ import annotations
 
 import os

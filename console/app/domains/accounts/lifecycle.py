@@ -1,5 +1,3 @@
-"""Pure helpers for account activation, reset and VPN invite flows."""
-
 from __future__ import annotations
 
 import io
@@ -18,10 +16,6 @@ def normalize_email_or_400(
     email_re: Pattern[str],
     required_message: str = "email is required",
 ) -> str:
-    # Choke-point de IDENTIDAD: normalizar a NFKC colapsa equivalentes NFC/NFD
-    # visualmente iguales; rechazar caracteres de formato/control (Cf/Cc:
-    # zero-width, BiDi, controles) que ocultan homografos; y exigir ASCII cierra
-    # los homoglifos cirilicos/griegos en la fuente (una cuenta = un email).
     raw = unicodedata.normalize("NFKC", str(value or "")).strip()
     if any(unicodedata.category(ch) in {"Cf", "Cc"} for ch in raw):
         raise HTTPException(400, "invalid email")

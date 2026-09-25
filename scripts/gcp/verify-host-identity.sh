@@ -1,20 +1,4 @@
 #!/usr/bin/env bash
-# Verify this host IS the canonical GCP release VM before any mutation.
-#
-# Checkpoint 5.5 blocking category: "risk of running a release against the wrong
-# project / VM / DB". This preflight reads the live instance metadata server and
-# refuses (fail-closed) unless project id, instance name, zone, and the default
-# service-account email match EXACTLY the identity the operator declares.
-#
-# Identity only — it never requests a token or any secret value.
-#
-# Usage:
-#   verify-host-identity.sh <expected-project-id> <expected-instance-name> \
-#                           <expected-zone> <expected-service-account-email>
-# The expected values come from the Terraform stack (name_prefix = omega-${env}):
-#   instance          = ${name_prefix}-app
-#   service account   = ${name_prefix}-app@${project_id}.iam.gserviceaccount.com
-#   zone              = var.zone (e.g. us-central1-a)
 set -Eeuo pipefail
 set +x
 umask 077
@@ -29,7 +13,6 @@ if [[ -z "${expected_project}" || -z "${expected_instance}" || -z "${expected_zo
   echo "       Refusing to run: the canonical target must be declared explicitly." >&2
   exit 2
 fi
-# Shape-check the expected values so a blank/garbled argument can never pass as a match.
 if [[ ! "${expected_project}" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]]; then
   echo "ERROR: expected project id is not a valid GCP project id." >&2
   exit 3
@@ -48,8 +31,6 @@ if [[ ! "${expected_sa}" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a
 fi
 
 metadata_get() {
-  # --noproxy '*' keeps the request off any egress proxy; the metadata server is
-  # link-local and must be reached directly.
   curl --fail --silent --show-error --max-time 5 \
     --noproxy '*' \
     -H 'Metadata-Flavor: Google' \
@@ -73,7 +54,6 @@ if ! live_sa="$(metadata_get instance/service-accounts/default/email)"; then
   exit 4
 fi
 
-# instance/zone is returned fully-qualified: projects/<number>/zones/<zone>.
 live_zone="${live_zone_path##*/}"
 
 fail=0

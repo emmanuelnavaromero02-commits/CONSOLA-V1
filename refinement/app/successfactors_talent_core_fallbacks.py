@@ -1,11 +1,6 @@
 from __future__ import annotations
 
 TALENT_CORE_FALLBACK_SQL: dict[str, str] = {
-    # Performance is DECOUPLED from Competency/Aspiration here: even when the
-    # C/A silvers are absent (tenant does not expose UserSkill/CareerInterest/
-    # CareerWorksheet/SuccessionNomination), real Performance still flows from
-    # performance_cycle -> performance_score. Competency/Aspiration stay NULL and
-    # explicitly blocked; they are a tenant/SAP dependency, never simulated.
     "sap_successfactors_talent_employee_profile": """
 WITH emp AS (
     SELECT *
@@ -87,10 +82,6 @@ FROM emp
 LEFT JOIN performance ON performance.user_id_hash = emp.user_id_hash
 ORDER BY emp.user_id
 """,
-    # Performance cycle degradation: when optional goal sources (GoalPlan,
-    # GoalAchievements, ...) are not exposed by the tenant and their silvers do
-    # not exist, still materialize the cycle from the guaranteed performance
-    # review silver so performance_rating flows. Goal roll-ups degrade to 0.
     "sap_successfactors_performance_cycle": """
 WITH reviews AS (
     SELECT *

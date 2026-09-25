@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""Run Decision Intelligence backtests locally or through AWS SSM.
-
-This is an operational gate: it executes inside the Console container, avoids
-external write-back, and persists redacted evidence under docs/release-evidence.
-"""
 
 from __future__ import annotations
 

@@ -10,34 +10,9 @@ import type { Draft, DraftTone } from "@/lib/copilot/types";
 interface Props {
   open:    boolean;
   onClose: () => void;
-  /** Optional initial ``about`` prompt that seeds the request. */
   seed?:   string;
 }
 
-/**
- * v1.44.4 Task A — draft modal.
- *
- * Wraps POST /api/copilot/drafts/generate. Backend requires
- * ``{kind, about, tone?, audience?, title?, metadata?}`` and
- * returns ``{ok, draft}``. ``kind`` is required; ``about`` is
- * the free-form prompt; ``audience`` is the recipient; ``title``
- * seeds the subject line where relevant.
- *
- * Tone presets match the backend allowlist:
- *   formal | neutral | friendly | urgent
- *
- * "Enviar por email" stays disabled with a "Próximamente"
- * badge — the backend mail-out helper is v1.44.4.1 scope.
- *
- * Accessibility:
- *   - role=dialog + aria-modal.
- *   - Focus lands on the textarea (the action that needs
- *     attention) and returns to the trigger on close.
- *   - Escape closes via onClose.
- *   - Backdrop click closes (separate child div with the
- *     handler so the panel itself can be clicked without
- *     dismissing).
- */
 const KINDS: { id: string; label: string; description: string }[] = [
   { id: "email",   label: "Email",   description: "Correo formal o casual" },
   { id: "memo",    label: "Memo",    description: "Memorando interno breve" },

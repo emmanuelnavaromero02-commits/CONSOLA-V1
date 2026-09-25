@@ -248,7 +248,6 @@ def _retry_materialization(
     plan: list[dict],
     completed: dict[str, dict],
 ) -> tuple[dict, list[str]]:
-    """Re-run ``materialize_in_order`` over slots a previous attempt completed."""
     posts: list[str] = []
 
     def reserve(*_args, **kwargs):

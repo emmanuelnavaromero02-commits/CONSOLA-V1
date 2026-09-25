@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Report AWS public TLS/HTTPS posture without creating paid resources."""
 
 from __future__ import annotations
 

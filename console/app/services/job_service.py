@@ -1,9 +1,3 @@
-"""
-Job service — read-only view of the jobs table.
-
-Job creation and execution is the cartridge's responsibility (e.g. replicon's job_runner).
-This module provides read access for the sidebar and REST endpoints.
-"""
 from __future__ import annotations
 
 import json

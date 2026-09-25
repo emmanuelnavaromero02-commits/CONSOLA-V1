@@ -1,25 +1,3 @@
-"""Cap-free SQL aggregates for the RISK domain (Mission 1).
-
-Datasets (layer=gold, resolved through publication heads):
-
-* ``sap_successfactors_talent_retention_risk`` (+ ``..._talent_action_candidates``)
-  -> :func:`query_attrition_risk_population`  (reuses Talent's score, no recompute)
-* ``sap_successfactors_employee_360``
-  -> :func:`query_employment_end_expiry`       (proxy for contract expiry)
-* ``salesforce_deals_en_riesgo``
-  -> :func:`query_deal_slippage`
-
-Metrics without a Gold relation (cost center overrun: no budget data anywhere)
-intentionally have no function here.
-
-Same pattern as ``successfactors_talent_population``: dedicated asyncpg
-connection to GOLD_DATABASE_URL, repeatable_read read-only transaction,
-``set_config`` GUCs, head resolution + ``to_regclass`` + column contract,
-explicit workspace/tenant predicate, ``$n`` parameters, COUNT/SUM in SQL,
-top-N bounded by ``MAX_GROUP_ROWS``. Person-level datasets are only ever
-aggregated; no user_id, name or seller is returned.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -53,17 +31,11 @@ EMPLOYEE_360_DATASET = "sap_successfactors_employee_360"
 DEALS_AT_RISK_DATASET = "salesforce_deals_en_riesgo"
 
 RETENTION_ACTION_ID = "talent_retention_risk"
-# employee_360.end_date uses a far-future sentinel (2030+) for open-ended
-# employment (see sap_successfactors_talent_attrition_by_cohort_month.sql).
-# Bound as a date parameter so the comparison stays date < date in Postgres.
 EMPLOYMENT_END_SENTINEL_DATE = date(2030, 1, 1)
 EXPIRY_WINDOWS_DAYS = (30, 60, 90)
-# Bound for GROUP BY breakdowns (stages, risk reasons) in deal_slippage.
 BREAKDOWN_ROWS = 20
 
 _RETENTION_REQUIRED = frozenset({"risk_band"})
-# Only columns the SQL below actually uses: a missing optional column must mean
-# the metric really lost something (avg score, department breakdown).
 _RETENTION_OPTIONAL = frozenset({"retention_risk_score", "department_name"})
 _ACTION_REQUIRED = frozenset({"action_id", "affected_count"})
 _ACTION_OPTIONAL = frozenset({"severity"})
@@ -99,9 +71,6 @@ DEAL_SLIPPAGE_NOTES = [
 ]
 
 
-# ── R1: attrition risk population (reuses Talent) ───────────────────────────
-
-
 @dataclass
 class AttritionRiskPopulation(AggregateResult):
     total: int | None = None
@@ -119,7 +88,6 @@ async def query_attrition_risk_population(
     *,
     top_n: int = 10,
 ) -> AttritionRiskPopulation:
-    """COUNT employees per retention risk band; high-risk departments top-N."""
     top_n = clamp_top_n(top_n, default=10)
 
     def _unavailable(error: str) -> AttritionRiskPopulation:
@@ -248,9 +216,6 @@ async def query_attrition_risk_population(
     return await run_gold_aggregate(user, _compute, _unavailable)
 
 
-# ── R3: employment end expiry (proxy for contract expiry) ───────────────────
-
-
 @dataclass
 class EmploymentEndExpiry(AggregateResult):
     as_of: date | None = None
@@ -268,7 +233,6 @@ async def query_employment_end_expiry(
     top_n: int = 10,
     as_of: date | None = None,
 ) -> EmploymentEndExpiry:
-    """COUNT employees whose employment end_date falls within 30/60/90 days."""
     top_n = clamp_top_n(top_n, default=10)
     today = as_of_date(as_of)
     d30, d60, d90 = (today + timedelta(days=days) for days in EXPIRY_WINDOWS_DAYS)
@@ -292,7 +256,6 @@ async def query_employment_end_expiry(
                 **base,
             )
         active_filter = rel.expr("is_active", "AND is_active IS TRUE", "")
-        # $3 as_of, $4 +30d, $5 +60d, $6 +90d, $7 sentinel date (excluded from)
         population_predicate = f"""
                {GOLD_SCOPE_PREDICATE}
                AND end_date IS NOT NULL
@@ -369,9 +332,6 @@ async def query_employment_end_expiry(
     return await run_gold_aggregate(user, _compute, _unavailable)
 
 
-# ── R4: deal slippage ────────────────────────────────────────────────────────
-
-
 @dataclass
 class DealSlippage(AggregateResult):
     as_of: date | None = None
@@ -380,7 +340,6 @@ class DealSlippage(AggregateResult):
     buckets: dict[str, dict[str, Any]] = field(default_factory=dict)
     by_stage: list[dict[str, Any]] = field(default_factory=list)
     by_reason: list[dict[str, Any]] = field(default_factory=list)
-    # Named deals: only when top_n > 0 (controlled exception, max 10 rows).
     top_deals: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -390,15 +349,6 @@ async def query_deal_slippage(
     top_n: int = 0,
     as_of: date | None = None,
 ) -> DealSlippage:
-    """Open Salesforce deals whose close_date is already in the past.
-
-    Totals, overdue buckets, stages and risk reasons are aggregates. ``top_n``
-    is a CONTROLLED EXCEPTION to the aggregates-only principle (Mission 2
-    product decision): the default 0 returns aggregates only; a value above 0
-    additionally returns up to ``MAX_NAMED_ROWS`` (10) named deals (opportunity
-    name, stage, amount, days overdue). The seller (``vendedor``) is never
-    returned.
-    """
     top_n = clamp_named_rows(top_n)
     today = as_of_date(as_of)
     base = {"as_of": today}
@@ -483,8 +433,6 @@ async def query_deal_slippage(
         else:
             notes.append("stage_name ausente: sin desglose por etapa")
 
-        # Aggregates tell the slippage story (buckets, stages, risk reasons);
-        # named deals below are opt-in only (top_n > 0).
         by_reason: list[dict[str, Any]] = []
         if rel.has("motivo_riesgo"):
             reason_sql = f"""

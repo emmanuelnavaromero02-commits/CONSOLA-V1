@@ -1,12 +1,3 @@
-"""Sprint v1.41.1 — /api/freshness wiring tests.
-
-These are *unit* tests against the router in isolation. The endpoint
-needs the asyncpg pool, so we mount it on a bare FastAPI app, override
-require_authenticated to bypass session/JWT setup, and patch
-``auth.pool()`` with a tiny double that mimics the asyncpg interface
-the router uses. A live-stack version of these calls lives in
-tests/test_e2e_full_flow.py.
-"""
 from __future__ import annotations
 
 import sys
@@ -35,7 +26,6 @@ def freshness_module():
 
 
 def _make_app(mod, fetch_rows):
-    """Wrap the router with: require_authenticated bypassed, pool patched."""
     from app.dependencies import require_authenticated
 
     class _FakeConn:
@@ -120,18 +110,13 @@ def test_freshness_summary_all_cartridges(freshness_module):
 
 
 def test_freshness_requires_auth(freshness_module):
-    """When dependency_overrides is NOT installed, require_authenticated
-    must reject the request — confirms the router is gated."""
     api = FastAPI()
     api.include_router(freshness_module.router)
     r = TestClient(api).get("/api/freshness/replicon")
-    # FastAPI raises HTTPException(401) which TestClient surfaces as 401.
-    # Some auth backends return 403 if the cookie is present but invalid.
     assert r.status_code in (401, 403)
 
 
 def test_freshness_router_registered_in_main():
-    """main.py must include the new freshness router."""
     main_src = (Path(__file__).resolve().parents[1]
                 / "console" / "app" / "main.py").read_text(encoding="utf-8")
     assert "freshness_router" in main_src
@@ -139,23 +124,13 @@ def test_freshness_router_registered_in_main():
 
 
 def test_freshness_sql_uses_real_column_names():
-    """Guard rail: the v1.41.1 plan SQL used column names that don't
-    exist in 00_schema.sql (entity_name on entity_config, ended_at on
-    extraction_runs). Pin the corrected names so a future refactor
-    can't silently drift back."""
     import re
     src = (Path(__file__).resolve().parents[1] / "console" / "app"
            / "routers" / "freshness.py").read_text(encoding="utf-8")
-    # entity_config exposes `entity`, not `entity_name`
     assert "ec.entity" in src
-    # extraction_runs uses `finished_at`, not `ended_at`.
-    # Pull each conn.fetch("""…""") block and assert against the SQL only,
-    # so the planning-history docstring doesn't pollute the match.
     sql_blocks = re.findall(r'conn\.fetch\(\s*"""(.+?)"""', src, re.DOTALL)
     assert sql_blocks, "expected SQL fetch() blocks in freshness.py"
     for sql in sql_blocks:
         assert "ended_at" not in sql, f"SQL should not reference ended_at:\n{sql}"
-    # At least one block must hit extraction_runs.finished_at (the per-
-    # entity detail query); the summary block only joins watermarks.
     assert any("finished_at" in sql for sql in sql_blocks), \
         "expected at least one SQL block to use extraction_runs.finished_at"

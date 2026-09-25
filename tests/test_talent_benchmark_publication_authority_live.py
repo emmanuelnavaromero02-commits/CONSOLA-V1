@@ -1,18 +1,3 @@
-"""Benchmark approval authority must survive staged publication.
-
-Rehearses, against the real staged publication stack (Postgres Gold + MinIO +
-CAS), that infra/init_gold/44 keeps the talent benchmark approval rule durable
-on the physical relations the runtime actually reads:
-
-* the initial publication installs the CHECK before any row lands;
-* a republication claiming approval without durable authority fails closed and
-  the head does not advance;
-* a legitimate unreviewed republication succeeds, while even a complete
-  self-attested approval remains forbidden;
-* scopes stay isolated: another tenant publishes into its own relation and the
-  first scope's rows remain untouched.
-"""
-
 from __future__ import annotations
 
 import uuid
@@ -177,8 +162,6 @@ def test_benchmark_approval_survives_publication_and_republication(
     stack = staged_publication_live_stack
     scope_a = (TENANT_A, WORKSPACE_A)
 
-    # Initial publication with the honest unreviewed row succeeds and the CHECK
-    # is already pinned on the freshly created compatibility relation.
     first = uuid.uuid4()
     _publish_benchmark(stack, first, UNREVIEWED, scope=scope_a)
     head = stack.head(DATASET, scope_a)
@@ -192,8 +175,6 @@ def test_benchmark_approval_survives_publication_and_republication(
         names = {row[0] for row in cur.fetchall()}
     assert "talent_benchmark_approval_authority_check" in names
 
-    # A republication whose row claims approval without durable authority must
-    # fail closed, and the head must not advance.
     forged = uuid.uuid4()
     with pytest.raises(psycopg2.Error) as excinfo:
         _publish_benchmark(
@@ -206,8 +187,6 @@ def test_benchmark_approval_survives_publication_and_republication(
     assert after_forgery[1] == 1
     assert _admin_rows(stack, relation) == [(TENANT_A, False, "unreviewed")]
 
-    # Even a complete approval-shaped row cannot self-attest: authority lives
-    # in Console's scoped ledger and is overlaid only while reading this head.
     extended = _COLUMNS + [{"name": "note", "type": "TEXT"}]
     self_attested = uuid.uuid4()
     with pytest.raises(psycopg2.Error) as self_attested_error:
@@ -222,7 +201,6 @@ def test_benchmark_approval_survives_publication_and_republication(
     assert self_attested_error.value.pgcode in {"23514", "P0001"}
     assert stack.head(DATASET, scope_a)[0] == head[0]
 
-    # A legitimate unreviewed republication with a new schema advances.
     republished = uuid.uuid4()
     _publish_benchmark(
         stack,
@@ -236,8 +214,6 @@ def test_benchmark_approval_survives_publication_and_republication(
     assert advanced is not None and advanced[1] == 2
     assert _admin_rows(stack, relation) == [(TENANT_A, False, "unreviewed")]
 
-    # Another tenant publishes into its own physical relation; scope A's rows
-    # stay untouched and both relations remain scope-pure.
     scope_b = (TENANT_B, WORKSPACE_B)
     other = uuid.uuid4()
     _publish_benchmark(stack, other, UNREVIEWED, scope=scope_b)

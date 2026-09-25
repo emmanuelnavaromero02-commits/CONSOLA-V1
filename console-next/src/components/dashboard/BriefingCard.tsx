@@ -25,41 +25,11 @@ interface Props {
   onDismiss: (highlight: BriefingHighlight) => void;
 }
 
-/**
- * v1.44.4 Task B — single briefing card.
- *
- * Real backend shape per proactive_service.py:_make_highlight:
- *   ``{id, severity, title, body, category, cartridge,
- *      action_label, action_href}``
- *
- * Action interpretation (the brief's nested ``primary_action.kind``
- * pattern does NOT exist on the backend — the analyzer emits a
- * single label + href):
- *
- *   - ``action_href`` starts with ``/workspace?prompt=…`` →
- *     route through the Next.js router so the chat page reads
- *     the prompt from the query string. (Defensive: canonicalise
- *     the URL and require ``pathname === '/workspace'`` so a
- *     ``/workspace-admin?prompt=…`` can't slip past the gate.)
- *   - Other same-origin ``/...`` → render as <Link> for
- *     client-side nav. Same canonicalisation guards against
- *     ``..`` traversal segments.
- *   - External ``http(s)://`` → <a target="_blank">
- *     with ``rel="noopener noreferrer"``.
- *   - Missing / unsafe scheme → no action button rendered AND a
- *     ``console.warn`` so QA sees the drop in DOM via
- *     ``data-action-dropped`` (Round 1 review P1).
- *
- * Severity → icon + accent color (the brief asked for
- * info/warn/alert; backend emits info/warning/critical).
- */
 type SeverityVisual = {
   icon:           LucideIcon;
   border:         string;
   iconBg:         string;
   iconFg:         string;
-  /** Tailwind class on the action button so a critical card
-   *  doesn't get an unrelated blue/neutral CTA. */
   actionBg:       string;
   label:          string;
 };
@@ -94,8 +64,6 @@ const SEVERITY_VISUAL: Record<Severity, SeverityVisual> = {
   },
 };
 
-/** Defensive fallback when the backend emits a severity outside
- *  the documented enum — keeps the card rendering. */
 const SEVERITY_FALLBACK: SeverityVisual = SEVERITY_VISUAL.info;
 
 
@@ -105,25 +73,13 @@ type ClassifiedHref =
   | { kind: "external"; href: string };
 
 
-/**
- * Allow-list classifier. Same-origin paths are canonicalised
- * via ``new URL`` so ``..`` traversal segments don't survive,
- * and the prompt-special-case requires the literal pathname to
- * be ``/workspace`` (not just ``startsWith``). External URLs
- * must be ``http(s):``.
- */
 function classifyHref(value: string | null): ClassifiedHref | null {
   if (!value || typeof value !== "string") return null;
   const trimmed = value.trim();
   if (!trimmed) return null;
 
-  // Protocol-relative — reject (would resolve to current scheme
-  // + arbitrary host).
   if (trimmed.startsWith("//")) return null;
 
-  // Same-origin path reference: canonicalise to strip
-  // ``..`` traversal. Use a placeholder base so this works in
-  // both server + client environments.
   if (trimmed.startsWith("/")) {
     let canonical: URL;
     try {
@@ -132,7 +88,6 @@ function classifyHref(value: string | null): ClassifiedHref | null {
       return null;
     }
     const path = canonical.pathname + canonical.search + canonical.hash;
-    // Prompt-prefill shape: pathname MUST equal '/workspace'.
     if (canonical.pathname === "/workspace") {
       const prompt = canonical.searchParams.get("prompt");
       if (prompt) return { kind: "prompt", href: path, prompt };
@@ -140,7 +95,6 @@ function classifyHref(value: string | null): ClassifiedHref | null {
     return { kind: "internal", href: path };
   }
 
-  // External absolute URL — only http(s) allowed.
   try {
     const url = new URL(trimmed);
     if (url.protocol === "http:" || url.protocol === "https:") {
@@ -164,15 +118,10 @@ export function BriefingCard({ highlight, onDismiss }: Props) {
     [highlight.action_href],
   );
 
-  // Log + flag dropped action hrefs so QA can detect them in
-  // the DOM via ``data-action-dropped`` and in the console.
   const actionDropped =
     !action && Boolean(highlight.action_href);
   if (actionDropped) {
     if (typeof window !== "undefined") {
-      // Defensive — runs once per render. The cost is
-      // negligible (a single console.warn) and the alternative
-      // (silent drop) cost us a real briefing-card audit P1.
       console.warn(
         "[BriefingCard] dropping unsafe action_href",
         { id: highlight.id, href: highlight.action_href },
@@ -216,7 +165,6 @@ export function BriefingCard({ highlight, onDismiss }: Props) {
         </Link>
       );
     }
-    // external
     return (
       <a
         href={action.href}
@@ -250,9 +198,6 @@ export function BriefingCard({ highlight, onDismiss }: Props) {
         <X aria-hidden className="h-4 w-4" />
       </button>
 
-      {/* pr-14 (56 px) reserves 44 px tap target + 8 px gap so a
-          long single-word title can't slide under the dismiss
-          button on narrow viewports. */}
       <div className="flex items-start gap-3 pr-14">
         <span
           aria-hidden

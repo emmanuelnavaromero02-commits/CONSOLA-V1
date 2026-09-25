@@ -1,19 +1,9 @@
--- -------------------------------------------------------
--- FX: tasa promedio mensual MXN→USD
--- Frankfurter API via excel_billing cartridge.
--- avg_rate = USD por 1 MXN (e.g. 0.0513)
--- -------------------------------------------------------
 WITH fx AS (
     SELECT
         DATE_TRUNC('month', TRY_CAST(year_month AS DATE)) AS month,
         avg_rate AS mxn_to_usd
     FROM read_parquet('s3://{bucket}/raw/fx_rates/mxn_usd/fx_rates.parquet')
 ),
--- -------------------------------------------------------
--- Rate efectivo en USD por hora, por proyecto/mes.
--- Replicon ya convierte en billableamountbasecurrency (USD).
--- rate_usd = billableamountbasecurrency / billabledurationhours
--- -------------------------------------------------------
 project_rate_monthly AS (
     SELECT
         projectid,
@@ -33,9 +23,6 @@ project_rate_default AS (
     WHERE billabledurationhours > 0
     GROUP BY 1
 ),
--- -------------------------------------------------------
--- Horas trabajadas por mes / proyecto / usuario (TimeEntry)
--- -------------------------------------------------------
 time_worked AS (
     SELECT
         DATE_TRUNC('month', TRY_CAST(entrydate AS DATE))             AS month,
@@ -46,10 +33,6 @@ time_worked AS (
     WHERE entrydate IS NOT NULL
     GROUP BY 1, 2, 3, 4, 5, 6
 ),
--- -------------------------------------------------------
--- Monto facturable trabajado en USD por usuario/proyecto/mes
--- billable_hours × rate_usd (del mes, o histórico del proyecto)
--- -------------------------------------------------------
 billable AS (
     SELECT
         t.month, t.projectid, t.projectname, t.clientname,
@@ -64,11 +47,6 @@ billable AS (
            ON t.projectid = rm.projectid AND t.month = rm.month
     LEFT JOIN project_rate_default rd ON t.projectid = rd.projectid
 ),
--- -------------------------------------------------------
--- Lo facturado al cliente (Excel externo, excluye Canceladas).
--- MXN convertido a USD con tasa promedio del mes.
--- Nivel proyecto/mes (el Excel no tiene desglose por usuario).
--- -------------------------------------------------------
 billed AS (
     SELECT
         DATE_TRUNC('month', TRY_CAST(invoice_date AS DATE))          AS month,
@@ -87,10 +65,6 @@ billed AS (
       AND project_id IS NOT NULL AND project_id != '0'
     GROUP BY 1, 2
 ),
--- -------------------------------------------------------
--- Prorratear billed por usuario según su % de horas billables
--- (el Excel no tiene desglose por usuario)
--- -------------------------------------------------------
 project_billable_totals AS (
     SELECT month, projectid, SUM(billable_hours) AS total_billable
     FROM billable GROUP BY 1, 2

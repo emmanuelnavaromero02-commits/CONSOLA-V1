@@ -77,8 +77,6 @@ describe("controlRoomExperienceSchema", () => {
       ],
     });
 
-    // stale omitido = frescura desconocida (null); nunca "vigente" (false)
-    // por omisión.
     expect(parsed.sections[0].facts[0]).toEqual(
       expect.objectContaining({ stale: null }),
     );

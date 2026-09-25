@@ -1,11 +1,3 @@
-/**
- * v1.44.3.2.1 spec 02-deep — Exhaustive dashboard.
- *
- * 30 tests covering layout, the 4 KPI tiles, the freshness table,
- * navigation links, polling, dark-mode toggle, and the error/retry
- * surface. Pre-mounted storageState from global-setup so each test
- * lands on /dashboard already authenticated.
- */
 import { test, expect } from "../fixtures/auth";
 import type { Page } from "@playwright/test";
 
@@ -39,10 +31,6 @@ test.describe("Dashboard layout", () => {
 
   test("KPI tiles do NOT have stale skeleton placeholders after 15 s",
     async ({ page }) => {
-      // v1.44.3.2.1 R1 Testing F1: was a bare waitForTimeout(15s)
-      // + count. expect(...).toHaveCount(0, {timeout}) auto-resolves
-      // as soon as the skeletons disappear — short-circuits on a
-      // fast backend and still bounds the wait at 15 s.
       await page.goto("/dashboard");
       await expect(page.getByTestId("kpi-card").locator(".animate-pulse")).toHaveCount(0, {
         timeout: 15_000,
@@ -53,8 +41,6 @@ test.describe("Dashboard layout", () => {
   test("displays the current user (emmanuel) somewhere visible",
     async ({ page }) => {
       await page.goto("/dashboard");
-      // The user email or its prefix should appear in any user
-      // affordance — topbar, sidebar dropdown, etc.
       const userVisible = page.getByText(new RegExp(EMAIL.split("@")[0], "i"));
       await expect(userVisible.first()).toBeVisible({ timeout: 10_000 });
     },
@@ -89,7 +75,6 @@ test.describe("Dashboard — KPI tiles", () => {
       if (req.url().includes("/api/dashboard/kpis")) requests++;
     });
     await page.goto("/dashboard");
-    // The hook's refetchInterval is 30 s; allow a 5 s buffer.
     await page.waitForTimeout(35_000);
     expect(requests,
       "dashboard MUST poll /api/dashboard/kpis on its 30 s interval",
@@ -100,9 +85,6 @@ test.describe("Dashboard — KPI tiles", () => {
     await page.setViewportSize({ width: 400, height: 900 });
     await page.goto("/dashboard");
     await page.waitForLoadState("networkidle");
-    // The grid uses md:grid-cols-2 lg:grid-cols-4; at 400 px width
-    // the tiles stack. We assert each tile occupies the full content
-    // width (within tolerance).
     const tile = kpiCard(page, "Cartuchos conectados");
     const box = await tile.boundingBox();
     expect(box?.width,
@@ -182,7 +164,6 @@ test.describe("Dashboard — audit row", () => {
 
 test.describe("Dashboard — error + retry surface", () => {
   test("on backend 500 the page shows a retry button", async ({ page }) => {
-    // Intercept the KPI endpoint with a synthetic 500.
     await page.route("**/api/dashboard/kpis", (route) => {
       route.fulfill({ status: 500, body: '{"detail":"boom"}' });
     });
@@ -256,9 +237,6 @@ test.describe("Dashboard — dark mode (UI only)", () => {
   test("HTML carries the `class` darkMode strategy on the <html>",
     async ({ page }) => {
       await page.goto("/dashboard");
-      // Tailwind config uses darkMode: 'class' — verify the toggle
-      // affordance exists. Either a button with aria-label or a
-      // documented class change on <html>.
       const toggle = page.locator(
         'button[aria-label*="dark" i], button[aria-label*="modo" i], button[aria-label*="theme" i]',
       );

@@ -1,4 +1,3 @@
-"""Sprint v1.32 — pggold RLS must cover every UNION/INTERSECT/EXCEPT branch."""
 from __future__ import annotations
 
 from unittest.mock import MagicMock

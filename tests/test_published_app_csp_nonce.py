@@ -1,10 +1,3 @@
-"""CSP contract for published analytic apps served at /apps/{name}.
-
-Before this, ``script-src`` carried neither a nonce nor 'unsafe-inline', so the
-app's own inline bootstrap was blocked: the page rendered its chrome and nothing
-else, without even an error. The fix is a per-response nonce, not a relaxation.
-"""
-
 from __future__ import annotations
 
 import re
@@ -57,10 +50,6 @@ def test_policy_keeps_the_rest_of_the_surface_closed():
     assert "default-src 'self'" in csp
     assert "object-src 'none'" in csp
     assert "frame-ancestors 'self'" in csp
-    # Tightened after the viewer P0: published app HTML is untrusted, so it
-    # gets no network of its own (the broker carries data over postMessage),
-    # no <base> rewriting and no form submissions. See
-    # tests/test_published_app_isolation.py for the full boundary.
     assert "connect-src 'none'" in csp
     assert "base-uri 'none'" in csp
     assert "form-action 'none'" in csp
@@ -75,7 +64,6 @@ def test_distinct_nonces_produce_distinct_policies():
     "value", ["", "short", "with space", "quote'value", "../traversal", "a" * 15]
 )
 def test_malformed_nonce_is_refused(value):
-    """A value that did not come from the server never reaches policy or markup."""
     with pytest.raises(ValueError):
         app_content_headers(value)
     with pytest.raises(ValueError):
@@ -98,7 +86,6 @@ def test_injection_is_idempotent():
 
 @pytest.mark.parametrize("name", APP_NAMES)
 def test_published_app_bootstrap_runs_under_the_policy(name):
-    """End to end on the real app: every inline script ends up authorised."""
     html = (APPS_DIR / f"{name}.html").read_text(encoding="utf-8")
     stamped = inject_script_nonce(html, NONCE)
     inline = re.findall(r"<script(?![^>]*\bsrc\s*=)[^>]*>", stamped)

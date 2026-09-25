@@ -1,16 +1,3 @@
-"""Catalog fallback for scoped dashboard + Control Room surfaces.
-
-#273 scoped the dashboard KPIs and the Control Room cockpit to cartridges
-with an active scoped Vault connection. That correctly declutters FEMSA
-(only ``femsa_sf`` is connected), but it also emptied the surfaces in any
-environment with NO active connection (fresh install / local / E2E / demo).
-
-These tests pin the agreed fallback: when nothing is connected yet, the
-surfaces fall back to the installed catalog so they are never dead; as soon
-as a real connection exists the view scopes down to it automatically. The
-scoping guarantee itself is still covered by test_control_room_service.py.
-"""
-
 from __future__ import annotations
 
 # fmt: off
@@ -74,8 +61,6 @@ async def test_dashboard_kpis_tenant_without_active_connection_stays_empty():
     ):
         result = await dashboard.dashboard_kpis(user=USER)
 
-    # 20B: tenant users must not fall back to global KPIs when no scoped
-    # connection exists.
     assert result["active_cartridges"] == []
     assert result["data_freshness"] == {}
 
@@ -105,7 +90,6 @@ async def test_dashboard_kpis_scopes_to_active_connection_when_present():
     ):
         result = await dashboard.dashboard_kpis(user=USER)
 
-    # A real connection (FEMSA femsa_sf) scopes the view down to it.
     assert result["active_cartridges"] == ["sap_successfactors"]
     assert set(result["data_freshness"]) == {"sap_successfactors"}
 
@@ -150,7 +134,6 @@ async def test_filter_installations_scopes_when_a_connection_exists():
             installations, USER
         )
 
-    # Only the connected cartridge survives; no fallback to the catalog.
     assert {row["cartridge_id"] for row in result} == {"sap_successfactors"}
     assert result[0]["connection_id"] == "femsa_sf"
 

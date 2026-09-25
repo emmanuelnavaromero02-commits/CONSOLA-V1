@@ -1,5 +1,3 @@
-"""Real PostgreSQL authority checks for shared Copilot context mutations."""
-
 from __future__ import annotations
 
 import asyncio

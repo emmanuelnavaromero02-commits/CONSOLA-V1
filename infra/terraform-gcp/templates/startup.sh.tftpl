@@ -165,9 +165,6 @@ set_env S3_BUCKET_NAME "$${LAKEHOUSE_BUCKET}"
 set_env MINIO_BUCKET "$${LAKEHOUSE_BUCKET}"
 set_env MINIO_ENDPOINT "$${LAKEHOUSE_ENDPOINT}"
 set_env MINIO_SECURE true
-# Keep the bootstrap-generated MINIO_* pair for the isolated local MinIO
-# service referenced by the base Compose file. The GCP override passes empty
-# literals to every application container, so GCS workloads cannot consume it.
 set_env AWS_ACCESS_KEY_ID ""
 set_env AWS_SECRET_ACCESS_KEY ""
 set_env AWS_DEFAULT_REGION auto
@@ -176,8 +173,6 @@ set_env S3_ENDPOINT_URL "https://$${LAKEHOUSE_ENDPOINT}"
 set_env LAKEHOUSE_ACCESS_KEY ""
 set_env LAKEHOUSE_SECRET_KEY ""
 
-# One shared implementation is used here and by canonical day-2 deploys.  It
-# fetches the complete GCS HMAC pair before atomically replacing infra/.env.
 OMEGA_GCP_PROJECT_ID="$${PROJECT_ID}" \
 OMEGA_GCP_SECRET_PREFIX="$${SECRET_PREFIX}" \
 OMEGA_ENV_FILE="$${RELEASE_DIR}/infra/.env" \
@@ -187,8 +182,6 @@ sync_env_atomic infra/.env "$${SHARED_ENV}"
 
 printf '%s\n' "$${COMPOSE_OVERRIDE}" > infra/docker-compose.gcp.yml
 
-# Daily scheduled backup (F4-2): the versioned cron.d file rides in the
-# release; installing it here keeps the mechanism reproducible per VM.
 if [[ -f "$${RELEASE_DIR}/infra/terraform-gcp/files/omega-backup.cron" ]]; then
   install -m 0644 -o root -g root \
     "$${RELEASE_DIR}/infra/terraform-gcp/files/omega-backup.cron" /etc/cron.d/omega-backup

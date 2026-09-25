@@ -4,7 +4,6 @@ from app.schemas.control_room_public_projection import PublicProjectionModel
 
 
 class MutationItemSummary(PublicProjectionModel):
-    """Small business-facing item state shared by mutation responses."""
 
     kind: str | None = None
     title: str | None = None
@@ -14,7 +13,6 @@ class MutationItemSummary(PublicProjectionModel):
 
 
 class MutationLesson(PublicProjectionModel):
-    """Reusable lesson handle and visible business rule."""
 
     anomaly_type: str | None = None
     rule: str | None = None

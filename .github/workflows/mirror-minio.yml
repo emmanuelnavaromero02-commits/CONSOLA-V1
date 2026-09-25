@@ -77,7 +77,6 @@ jobs:
           echo "${mc_version}"
           grep -F "minio version ${MINIO_TAG} (commit-id=${MINIO_COMMIT})" <<<"${minio_version}"
           grep -F "mc version ${MC_TAG} (commit-id=${MC_COMMIT})" <<<"${mc_version}"
-          # The compose healthcheck relies on curl inside the server image.
           curl_version="$(docker run --rm --entrypoint /usr/bin/curl "${minio_ref}" --version)"
           echo "${curl_version%%$'\n'*}"
           docker run --rm --entrypoint /bin/sh "${minio_ref}" -c 'test -x /usr/bin/docker-entrypoint.sh && test -x /usr/bin/mc'

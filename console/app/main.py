@@ -1,9 +1,3 @@
-"""
-ΩMEGA by EPIUSE — Console
-MCP-first: descubre y orquesta MCP servers registrados.
-UI minimalista: chat con asistente + estado de servidores MCP.
-"""
-
 from __future__ import annotations
 
 # fmt: off
@@ -25,10 +19,6 @@ from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 
-# Sprint v1.18: structured JSON logs to stdout, with secret redaction
-# applied to every record. Imported and called here (rather than at the
-# bottom of imports) so the logger configured below is the JSON one
-# from the very first record.
 from app.logging_config import setup_logging  # noqa: E402
 
 setup_logging(service_name="console")
@@ -696,8 +686,7 @@ from app.middleware.request_id import request_id_var
 
 
 async def _periodic_health_check():
-    """Wait for cartridges to boot, then re-check every 60 s."""
-    await asyncio.sleep(12)  # grace period for sibling containers
+    await asyncio.sleep(12)
     while True:
         try:
             await mcp_registry.health_check_all()
@@ -712,10 +701,6 @@ async def lifespan(app: FastAPI):
     get_rate_limiter()
     await mcp_registry.startup()
 
-    # Startup seeds reconcile packaged catalogs used by Studio, Control Room,
-    # and cartridge surfaces. A failure no longer leaves Console apparently
-    # ready: the process stays live, but /readyz returns 503 until the next
-    # successful boot.
     await _run_packaged_startup_seeds_impl(
         app,
         get_db_pool=_get_db_pool,
@@ -745,15 +730,9 @@ async def lifespan(app: FastAPI):
 
 
 INTERNAL_API_KEY = get_internal_api_key()
-# INTERNAL_API_KEY is cached at service startup. Rotating it requires restarting
-# Console and peer services so all in-process values are refreshed together.
 
 
 def _key_for(server: str) -> str:
-    """Sprint v1.12: pick the per-pair INTERNAL_API_KEY_CONSOLE_TO_<SERVER>
-    secret if present, falling back to the shared legacy INTERNAL_API_KEY so
-    that a half-migrated stack keeps working. ``server`` must be one of
-    ``REFINEMENT`` / ``VAULT`` / ``MCP_INFRA``."""
     return _internal_outbound_key_impl(
         server,
         internal_api_key=INTERNAL_API_KEY,
@@ -762,7 +741,6 @@ def _key_for(server: str) -> str:
 
 
 def _hdr_for(server: str) -> dict[str, str]:
-    """Headers for an outbound internal call from console to ``server``."""
     return _internal_outbound_headers_impl(
         server,
         internal_api_key=INTERNAL_API_KEY,
@@ -921,10 +899,6 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
 
 
 def _allowed_origins() -> list[str]:
-    # Static console-next is served same-origin by FastAPI on :8000.
-    # Keep workspace :8001 in the local default because it remains a
-    # legitimate browser client for credentialed workspace flows.
-    # Production MUST override via the env var (see prod fail-closed guard).
     default_local_origins = "http://localhost:8000,http://localhost:8001"
     return _allowed_origins_impl(
         os.environ,
@@ -933,36 +907,6 @@ def _allowed_origins() -> list[str]:
     )
 
 
-# v1.44.3.2.2 R-Mac-3 (CORS ordering hotfix): the CORSMiddleware
-# registration USED to live here at module-load time, which made it
-# the FIRST middleware on user_middleware and therefore the
-# INNERMOST in Starlette's reversed stack. Symptom observed via curl on
-# the Mac:
-#   $ curl -i -H "Origin: http://localhost:8001" http://localhost:8000/auth/login
-#   → access-control-allow-credentials: true   ✓
-#   → access-control-allow-origin:    MISSING  ✗
-#
-# Root cause: with CORS innermost, the OUTER auth_middleware /
-# security_headers_middleware can short-circuit responses (401 /
-# redirect / preflight 405) before reaching CORS, so CORS never gets
-# to add Allow-Origin. Even on public paths, OPTIONS preflights
-# pass through auth first.
-#
-# The fix moves the registration to the END of the module (after
-# RequestIDMiddleware), so CORS ends up OUTERMOST in the final
-# ASGI stack. See the matching block near the bottom of this file.
-# This call site stays as a no-op so existing line-number references
-# in comments / commit messages don't drift; the real registration
-# is the only effective one.
-
-# Sprint v1.41.1 / v1.42.1 — Request correlation IDs. The actual
-# ``app.add_middleware(RequestIDMiddleware)`` call lives at the bottom
-# of this module, AFTER the two ``@app.middleware("http")`` decorators
-# (security headers + auth). Starlette builds its middleware stack by
-# iterating ``user_middleware`` in reverse, so the LAST registered
-# middleware ends up outermost. The auditor's 401-vs-X-Request-ID
-# finding was caused by registering it here (which left it inside the
-# auth wrapper, so 401s never reached its send-wrapper).
 from app.middleware.request_id import RequestIDMiddleware  # noqa: E402
 
 STATIC = Path(__file__).parent / "static"
@@ -1100,19 +1044,6 @@ def _client_ip(request: Request) -> str:
 
 
 async def _rate_limit(request: Request, action: str, subject: str = "") -> None:
-    # v1.44.3.3 (Task A): E2E suites running through the Next.js
-    # same-origin proxy all surface to FastAPI as a single
-    # source-IP (the docker container's IP), so concurrent test
-    # logins share one per-IP bucket and exhaust the 8/300s
-    # window long before a real user could. The
-    # ``RATE_LIMIT_ENABLED`` env var lets the test harness bypass
-    # the limiter completely; in production it stays unset (or
-    # explicitly ``true``) and the brute-force protection is
-    # untouched.
-    #
-    # We also bypass when APP_ENV is ``test`` for the same reason
-    # — the Python suite calls these endpoints repeatedly during
-    # the auth contract tests.
     await _request_rate_limits.rate_limit(
         request,
         action,
@@ -1135,46 +1066,14 @@ async def _rate_limit_api_surface(
 
 
 def _rate_limit_disabled() -> bool:
-    """Return True when rate limiting should bypass.
-
-    The bypass fires in two scenarios — both are EXPLICITLY
-    test-harness affordances, never production behaviour:
-
-      1. ``RATE_LIMIT_ENABLED=false`` (any case) — an explicit
-         opt-out for E2E suites that hammer /auth/login. Default
-         unset → enabled.
-      2. ``APP_ENV`` ∈ {``test``, ``testing``} — automatic for
-         pytest harnesses that don't bother setting
-         RATE_LIMIT_ENABLED.
-
-    Production deployments default ``APP_ENV`` to ``production``
-    (see console/app/security.py) and leave RATE_LIMIT_ENABLED
-    unset, so the limiter stays on.
-    """
     return _request_rate_limits.rate_limit_disabled()
 
 
-# Inventory behind this guard: no /api route serves a downloadable or
-# navigable document. Every one answers JSON to a same-origin fetch/XHR, and
-# the surfaces that do stream files live under /viewer and /static. So the
-# exception list is empty by inspection rather than by assumption; add a path
-# here only with the same check done again.
 _API_NAVIGATION_EXEMPT: frozenset[str] = frozenset()
 
 
 @app.middleware("http")
 async def api_navigation_guard_middleware(request: Request, call_next):
-    """Stop a sandboxed app turning an authenticated API into a navigation.
-
-    ``connect-src 'none'`` denies a published app every fetch primitive, but
-    not navigation — and a top-level GET carries the SameSite=Lax session
-    cookie, which is how an app framed at our origin could still read
-    ``/api/me``. Nothing under /api is meant to be reached as a document, so a
-    document/frame destination is refused before any handler runs.
-
-    This is defence in depth layered on the capability check, not a substitute
-    for it, and it deliberately does not touch the cookie's SameSite setting.
-    """
     path = request.url.path
     if (
         path.startswith("/api/")
@@ -1193,10 +1092,7 @@ async def security_headers_middleware(request: Request, call_next):
     return _apply_security_headers(response, request.url.path)
 
 
-# ── Auth middleware ────────────────────────────────────────────────────────────
-
 _AUTH_PUBLIC_EXACT = {
-    # ── Login / session ──
     "/login",
     "/auth/login",
     "/api/auth/login",
@@ -1205,27 +1101,15 @@ _AUTH_PUBLIC_EXACT = {
     "/auth/me-jwt",
     "/auth/me-current",
     "/auth/refresh",
-    # ── Account activation ──
     "/activate",
     "/auth/activate",
     "/auth/activate/info",
-    # ── Password recovery ──
     "/forgot-password",
     "/auth/forgot-password",
     "/reset-password",
     "/auth/reset-password",
     "/auth/reset/info",
-    # ── Static / browser ──
     "/favicon.ico",
-    # ── Health / monitoring ──
-    # Sprint v1.23.1 hotfix: /healthz must be reachable WITHOUT auth so
-    # the v1.21 compose probe + the v1.23 smoke script can hit it from
-    # inside the container / from `make smoke` on the host. Without
-    # this entry, auth_middleware redirects /healthz to /login (307)
-    # and the probe never sees a 200 — leaving the service stuck on
-    # `(unhealthy)` even when it's fine. Workspace and vault already
-    # handle /healthz via their own public-path sets; console was the
-    # outlier.
     "/healthz",
     "/readyz",
 }
@@ -1243,10 +1127,6 @@ _AUTH_API_LIKE_PREFIX = (
     "/auth/",
 )
 _AUTH_INTERNAL_SERVICE_PREFIX = ("/monitoring/mcp/", "/studio_ops/mcp/")
-# Exact API-prefixed server-to-server requests whose route dependency owns
-# authentication.  These are deliberately separate from ``_AUTH_PUBLIC_*``:
-# the middleware only yields to FastAPI so ``verify_internal_api_key`` can
-# fail closed with the caller/service pair policy.
 _AUTH_INTERNAL_DEPENDENCY_REQUESTS = frozenset(
     {
         ("POST", "/api/operations/internal/agent-runner/due"),
@@ -1254,7 +1134,6 @@ _AUTH_INTERNAL_DEPENDENCY_REQUESTS = frozenset(
     }
 )
 
-# Routes a user is allowed to hit while in must_change_password=true state.
 _AUTH_FORCED_CHANGE_ALLOW_EXACT = {
     "/me",
     "/api/me",
@@ -1290,7 +1169,7 @@ _RBAC_DEPENDENCY_PREFIXES = (
     "/api/rag",
     "/api/catalog",
     "/api/semantic",
-    "/api/studio",  # v1.44.3.3 Task B (stubs)
+    "/api/studio",
     "/studio/cartridges",
     "/studio/import",
     "/studio/chat",
@@ -1439,8 +1318,6 @@ async def _bearer_user_for_middleware(
     if not auth_header.startswith("Bearer "):
         return None, None
     try:
-        # Sprint v1.10: async variant runs the Redis blacklist
-        # check; legacy decode kept for unit tests.
         claims = await verify_access_token_async(auth_header[7:])
         jwt_user = await _auth.get_user_by_id(int(claims["sub"]))
         if jwt_user and jwt_user.get("is_active"):
@@ -1535,8 +1412,6 @@ async def _auth_preflight_response(
             JSONResponse({"detail": "not found"}, status_code=404), path
         )
 
-    # Internal routes (server-to-server) bypass session auth.
-    # Their own router-level dependency (verify_internal_api_key) handles auth via header.
     if path.startswith("/internal/") or (
         request.method.upper(), path
     ) in _AUTH_INTERNAL_DEPENDENCY_REQUESTS:
@@ -1554,8 +1429,6 @@ async def _auth_preflight_response(
         request.state.user = cartridge_vault_user
         return await call_next(request)
 
-    # Airflow scheduled agent runs authenticate with X-Agent-Runner-Token;
-    # the route re-checks the same token before executing the agent.
     if _is_agent_runner_request(request):
         return await call_next(request)
 
@@ -1569,10 +1442,6 @@ async def auth_middleware(request: Request, call_next):
     if response is not None:
         return response
 
-    # This exact iframe route intentionally has no session identity. Its only
-    # authority is the signed, short-lived capability checked by the route.
-    # Ignore ambient Cookie/Authorization headers before they can trigger a DB
-    # lookup or make a valid capability depend on unrelated browser state.
     if _is_app_content_capability_path(path):
         request.state.user = None
         return await call_next(request)
@@ -1604,7 +1473,6 @@ async def auth_middleware(request: Request, call_next):
     if response is not None:
         return response
 
-    # Forced password change: confine the session to the change-password flow.
     response = _forced_password_change_middleware_response(
         request,
         path=path,
@@ -1657,15 +1525,8 @@ def _set_refresh_cookie(resp: JSONResponse, token: str, expires) -> None:
     )
 
 
-# ── Auth routes ────────────────────────────────────────────────────────────────
-
-
 @app.get("/login")
 async def login_page(request: Request):
-    # Seed the CSRF cookie so the page's POST /auth/login fetch can echo
-    # it back without an extra round-trip. The cookie is re-issued on
-    # every GET /login (cheap, and avoids a stale-token edge case when
-    # the user keeps the tab open across logout/login).
     from app.routers.pages import _console_next_response
 
     return _console_next_response(request, "login/index.html")
@@ -1697,12 +1558,6 @@ async def _login_response(request: Request, body: dict):
         path="/",
     )
     _set_refresh_cookie(resp, refresh_token, refresh_expires)
-    # Keep the CSRF token stable across the login transition. API clients
-    # and the Next.js proxy seed the token on GET /login, submit it to
-    # /auth/login, then immediately use the same in-memory token for the
-    # first authenticated mutation while the cookie jar is catching up.
-    # The double-submit check remains active because the header must still
-    # match the csrf_token cookie.
     set_csrf_cookie(resp, request.cookies.get(CSRF_COOKIE_NAME))
     return resp
 
@@ -1714,17 +1569,12 @@ async def auth_login(request: Request, body: dict):
 
 @app.post("/api/auth/login", dependencies=[Depends(require_csrf)])
 async def api_auth_login(request: Request, body: dict):
-    # Legacy compatibility alias for clients that still post to
-    # /api/auth/login. Delegate through the real handler so CSRF,
-    # rate-limit, and session behavior stay identical to /auth/login.
     return await auth_login(request, body)
 
 
 @app.post("/auth/refresh", dependencies=[Depends(require_csrf)])
 async def auth_refresh(request: Request):
     refresh_token = request.cookies.get(_auth.REFRESH_COOKIE_NAME)
-    # Hash a prefix of the token into the subject so per-token buckets isolate
-    # spamming attempts without writing the secret material to Redis keys.
     subject = _auth.hash_refresh_token(refresh_token or "")[:16]
     await _rate_limit(request, "/auth/refresh", subject)
     rotated = await _auth.rotate_refresh_token(refresh_token)
@@ -1751,9 +1601,6 @@ async def auth_logout(request: Request):
     refresh_token = request.cookies.get(_auth.REFRESH_COOKIE_NAME)
     await _auth.logout_tokens(token, refresh_token)
 
-    # Sprint v1.10 — blacklist the bearer access token's jti so a stolen
-    # JWT can't keep authenticating up to its exp. Silent if the caller
-    # is cookie-only (most of our UI) or the token is already invalid.
     auth_header = request.headers.get("authorization", "")
     if auth_header.lower().startswith("bearer "):
         bearer = auth_header.split(" ", 1)[1].strip()
@@ -1766,8 +1613,6 @@ async def auth_logout(request: Request):
 
                 await get_blacklist().revoke(jti, int(exp))
         except Exception:
-            # JWT already expired / malformed / signature mismatch —
-            # nothing to revoke, nothing to do.
             pass
 
     resp = JSONResponse({"logged_out": True})
@@ -1790,7 +1635,6 @@ async def auth_me_jwt(authorization: str | None = Header(None)):
     if scheme.lower() != "bearer" or not token:
         raise HTTPException(status_code=401, detail="invalid authorization header")
     try:
-        # Sprint v1.10: blacklist-aware verification.
         claims = await verify_access_token_async(token)
     except JWTAuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
@@ -1810,8 +1654,6 @@ async def auth_me_jwt(authorization: str | None = Header(None)):
 async def auth_me_current(user: dict = Depends(get_current_user_dependency)):
     return {"user": _user_payload(user)}
 
-
-# ── Activation ────────────────────────────────────────────────────────────────
 
 APP_BASE_URL = _public_url(
     "APP_BASE_URL",
@@ -1908,13 +1750,8 @@ async def auth_activate_info(token: str = ""):
     return {"valid": True, "email": info["email"], "name": info["name"]}
 
 
-# ── Forgot / reset password ──────────────────────────────────────────────────
-
-
 @app.get("/forgot-password")
 async def viewer_forgot():
-    # Seed CSRF cookie so the form's POST /auth/forgot-password fetch can
-    # echo it back without a prior visit to /login.
     response = FileResponse(STATIC / "forgot_password.html")
     set_csrf_cookie(response)
     return response
@@ -1971,15 +1808,11 @@ async def auth_reset(request: Request, body: dict):
     sess_token, expires = await _auth.create_session(user["id"], ip=ip)
     resp = JSONResponse({"reset": True, "user": user})
     _set_session_cookie(resp, sess_token, expires)
-    # Rotate CSRF after the password reset so any leaked pre-reset token
-    # cannot replay.
     set_csrf_cookie(resp)
     return resp
 
 
 def _console_version() -> str:
-    """Deprecated shim — use app.version.app_version(). Kept so existing
-    call sites stay valid; delegates to the single source of truth."""
     from app.version import app_version
 
     return app_version()
@@ -2038,9 +1871,6 @@ async def readyz(request: Request):
     it verifies Postgres and core sibling services so deploy/proxy layers can
     keep traffic away from a half-started console.
     """
-    # Readiness source-contract markers: CONTROL_ROOM_REQUIRE_DATA_READY,
-    # require_data, require_intelligence, intelligence_opt_out_allowed,
-    # require_data=require_intelligence_data, _is_production_env().
     checks, ok = await _build_readyz_checks_impl(
         app=request.app,
         query_params=request.query_params,
@@ -2074,14 +1904,6 @@ async def api_config(request: Request):
 
 @app.get("/api/system/info")
 async def system_info(user: dict = Depends(require_authenticated)):
-    # v1.43.2 (Frontend R1 hardening): expose ``dev_mode`` so the UI
-    # can hide CTAs that gate on dev-only mcp-infra tools (Studio
-    # Deploy DAG, etc). Pre-v1.43.2 the console rendered those
-    # buttons unconditionally; clicking them in production now surfaces
-    # a PermissionError from airflow_create_dag — which is correct but
-    # confusing. The button is hidden by checking this flag.
-    # Source-level contract marker for tests and frontend feature gates:
-    # "app_env" "dev_mode" {"development", "dev", "local", "test"}
     return _system_info_payload(os.environ, version=_console_version())
 
 
@@ -2108,10 +1930,6 @@ async def api_me_access(user: dict = Depends(require_authenticated)):
     decide what to render and what to disable. The backend is still the
     source of truth — every action endpoint enforces its own permission.
     """
-    # The front-end uses these flags to decide what to render. They are
-    # display hints only; every action endpoint enforces its own gate.
-    # Source-level frontend contract marker:
-    # "workspaces": switchable_workspaces
     return await _me_access_response_impl(
         user=user,
         fetch_cartridge_access=_fetch_cartridge_access,
@@ -2132,12 +1950,8 @@ async def api_me_change_password(
     if not ok:
         raise HTTPException(400, err or "password change failed")
     resp = JSONResponse({"changed": True})
-    # Rotate CSRF after a successful self-service password change.
     set_csrf_cookie(resp)
     return resp
-
-
-# ── Jobs ──────────────────────────────────────────────────────────────────────
 
 
 @app.get("/jobs", dependencies=[Depends(require_permission("monitor.read"))])
@@ -2150,9 +1964,6 @@ async def list_jobs(limit: int = 20, user: dict = Depends(require_permission("mo
 async def get_job(job_id: str, user: dict = Depends(require_permission("monitor.read"))):
     job = await job_service.get_scoped(job_id, user=user)
     return await _refresh_pipeline_job_payload(job, user)
-
-
-# ── Token usage ───────────────────────────────────────────────────────────────
 
 
 @app.get("/tokens/summary")
@@ -2198,9 +2009,6 @@ async def api_copilot_llm_key_set(
     )
 
 
-# ── Assistant ─────────────────────────────────────────────────────────────────
-
-
 @app.post(
     "/assistant/chat",
     dependencies=[Depends(require_csrf), Depends(require_permission("copilot.use"))],
@@ -2218,14 +2026,7 @@ async def chat(body: dict, user: dict = Depends(require_permission("copilot.use"
     )
 
 
-# ── Datasets proxy → refinement ───────────────────────────────────────────────
-
-
 def _sanitize_dataset_metadata_for_user(user: dict | None, dataset: dict) -> dict:
-    # Source-hardening contract markers kept in this router for audit tests:
-    # is_physical_reference = "://" in value or "tenant_id=" in value or "workspace_id=" in value
-    # or f"tenant_id={tenant_id}" not in candidate
-    # or f"workspace_id={workspace_id}" not in candidate
     return _sanitize_dataset_metadata_for_user_impl(user, dataset)
 
 
@@ -2263,9 +2064,6 @@ async def dataset_data(
     limit: int = 100,
     user: dict = Depends(require_permission("datasets.read")),
 ):
-    # Forward user context so refinement can apply RLS. Without it the GOLD
-    # tables fall through to the empty-tenant filter (or the revenue_manager
-    # 'N/D' fallback) and any authenticated user could read cross-tenant rows.
     user = user if isinstance(user, dict) else getattr(request.state, "user", None)
     user = _runtime_user(user) or {}
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
@@ -2296,9 +2094,6 @@ async def refresh_dataset(
     return await _refinement_invoke(
         "materialize", {"name": name}, timeout=120, user=user
     )
-
-
-# ── Viewer data APIs ──────────────────────────────────────────────────────────
 
 
 async def _refresh_pipeline_job_payload(job: dict, user: dict | None) -> dict:
@@ -2352,10 +2147,6 @@ async def api_tools_manifest(user: dict = Depends(require_permission("agents.rea
     from app.services.tool_manifest import build_manifest
 
     return await build_manifest()
-
-
-# Sprint v1.41.0 — cartridge management endpoints live in
-# console/app/routers/cartridges.py (registered with include_router below).
 
 
 _gold_catalog_runtime: _GoldCatalogRuntime | None = None
@@ -2508,8 +2299,6 @@ async def api_schema(source: str, user: dict = Depends(require_permission("datas
 @app.get("/api/sources", dependencies=[Depends(require_permission("datasets.read"))])
 async def api_sources(user: dict = Depends(require_permission("datasets.read"))):
     async def load_sources() -> dict:
-        # Scope-regression compatibility: the helper applies
-        # _filter_technical_sources(user, sources) before returning.
         return await _sources_response_payload_impl(
             user=user,
             refinement_invoke=_refinement_invoke,
@@ -2573,9 +2362,6 @@ async def api_dataset_detail(name: str, user: dict = Depends(require_permission(
 async def api_bronze_query(
     body: dict, user: dict = Depends(require_permission("datasets.write"))
 ):
-    # Restricted to datasets.write because this endpoint accepts arbitrary SQL.
-    # Read-only roles (viewer) must use the dataset-scoped endpoints below,
-    # which build SQL server-side instead of trusting client input.
     return await _bronze_query_payload_impl(
         body=body,
         user=user,
@@ -2635,8 +2421,6 @@ async def api_dataset_lineage(name: str, user: dict = Depends(require_permission
         }
     return r.json()
 
-
-# ── Object explorer (S3/MinIO listing + presigned downloads) ─────────────────
 
 _EXPLORER_DEFAULT_BUCKETS = [
     {
@@ -2910,9 +2694,6 @@ async def api_lineage(
     return _lineage_graph_payload(datasets, source_visible=source_visible)
 
 
-# ── Analytic Apps ─────────────────────────────────────────────────────────────
-
-
 def _workspace_server_url() -> str:
     return _workspace_server_url_impl(
         is_production_env=_is_production_env,
@@ -2923,7 +2704,6 @@ def _workspace_server_url() -> str:
 async def _proxy_workspace_app(
     request: Request, name: str, *, content: bool = False, user: dict | None = None
 ) -> Response:
-    """Serve published analytic app HTML from the same catalog used by /api/apps."""
     runtime_user = user or getattr(request.state, "user", None) or {}
     cartridge = _app_cartridge_id({"name": name})
     if cartridge:
@@ -2934,14 +2714,9 @@ async def _proxy_workspace_app(
                 raise HTTPException(403, "app content is not available")
             return RedirectResponse(url="/apps-gallery", status_code=303)
     html_text, _app = await _refinement_app_html(name, runtime_user)
-    # Server-owned, one per response: the app's inline bootstrap runs under a
-    # nonce instead of widening the policy with 'unsafe-inline'.
     nonce = secrets.token_urlsafe(16)
     html_text = _inject_published_app_theme(html_text)
     html_text = _inject_script_nonce(html_text, nonce)
-    # The broker client goes in ahead of the app's own scripts. Under
-    # ``connect-src 'none'`` this is the app's only route to data, so it must
-    # be installed before anything the author ships can capture ``fetch``.
     html_text = _inject_app_bridge(html_text, nonce)
     return HTMLResponse(
         content=html_text,
@@ -2950,12 +2725,6 @@ async def _proxy_workspace_app(
 
 
 async def _resolve_capability_subject(claims: dict) -> dict | None:
-    """Load the user the capability names, and confirm the membership stands.
-
-    The cookie is deliberately not consulted: the frame is credentialless and
-    sends none, and completing the claims from a cookie would reintroduce the
-    ambient authority the sandbox exists to remove.
-    """
     try:
         user_id = int(str(claims.get("user") or ""))
     except (TypeError, ValueError):
@@ -3011,10 +2780,6 @@ async def _resolve_capability_subject(claims: dict) -> dict | None:
         "active_workspace_id": str(row["workspace_id"]),
         "workspace_role": row["workspace_role"],
     }
-    # Session-authenticated requests receive this entitlement list during
-    # middleware enrichment.  Capability requests have no cookie, so rebuild
-    # the same server-owned context before cartridge visibility is enforced.
-    # Failure grants nothing.
     try:
         resolved["allowed_cartridges"] = await _workspace_cartridges(
             resolved["workspace_id"], user_id=resolved["id"]
@@ -3028,7 +2793,6 @@ async def _resolve_capability_subject(claims: dict) -> dict | None:
 async def _active_manifest_digest(
     name: str, tenant_id: str, workspace_id: str
 ) -> str | None:
-    """The digest the registry currently calls active for this app."""
     try:
         pool = await _get_db_pool()
         async with pool.acquire() as conn:
@@ -3046,19 +2810,6 @@ async def _active_manifest_digest(
 async def _require_app_content_capability(
     request: Request, name: str, cap: str, user: dict | None
 ) -> dict:
-    """Admit a /content request on the capability alone, then re-check it all.
-
-    A signature only proves the claims were minted by us. Everything they
-    assert is verified again against current state — the user is still active
-    and still a member of that workspace, the app is still packaged, the
-    manifest is still the active revision, the installation is still ready —
-    so a capability issued a minute ago stops working the moment any of that
-    changes.
-
-    Single implementation: this path is registered twice, here and in the v1
-    marketplace router, and two copies of a security check is how one of them
-    silently stops matching the other.
-    """
     denied = HTTPException(403, "app content is not available")
     _validate_dataset_name(name)
     claims = _verify_content_capability_envelope(cap, app_name=name)
@@ -3091,7 +2842,6 @@ async def _require_app_content_capability(
 async def _build_app_embed_response(
     request: Request, name: str, user: dict | None
 ) -> HTMLResponse:
-    """Mint the capability and render the wrapper. Shared by both routers."""
     _validate_dataset_name(name)
     _html_text, granted, digest, cartridge = await _app_grant_context(
         request, name, user
@@ -3121,12 +2871,6 @@ async def _build_app_embed_response(
 async def _require_app_scoped_grant(
     request: Request, app_name: str, dataset: str, user: dict | None
 ) -> None:
-    """Refuse unless the durable ledger grants this exact read, right now.
-
-    Every rejection is the same 403 with the same wording: a message that
-    distinguished "no such dataset" from "not granted" would let a published
-    app enumerate the workspace's datasets one refusal at a time.
-    """
     denied = HTTPException(403, "app data access is not granted")
     _validate_dataset_name(app_name)
     _validate_dataset_name(dataset)
@@ -3143,7 +2887,6 @@ async def _require_app_scoped_grant(
 
 
 async def _set_rls_scope(conn, tenant_id: str, workspace_id: str) -> None:
-    """Bind the connection to the caller's scope so RLS applies to the ledger."""
     await conn.execute(
         "SELECT set_config('app.tenant_id', $1, true), "
         "set_config('app.workspace_id', $2, true)",
@@ -3153,20 +2896,12 @@ async def _set_rls_scope(conn, tenant_id: str, workspace_id: str) -> None:
 
 
 async def _app_scope_for(user: dict | None) -> tuple[str, str]:
-    """The caller's tenant/workspace, resolved server side."""
     return await _workspace_scope_for_apps_filter(user or {})
 
 
 async def _app_grant_context(
     request: Request, name: str, user: dict | None
 ) -> tuple[str, list[str], str | None, str | None]:
-    """Everything the embed needs, with authority taken only from the ledger.
-
-    Returns the HTML about to be served, the datasets the durable ledger grants
-    for this scope/app/digest, that digest, and the cartridge. A user-created
-    app, an unknown app, or one whose served HTML no longer matches the
-    reviewed revision resolves to an empty grant list — never to a fallback.
-    """
     html_text, app_row = await _refinement_app_html(
         name, getattr(request.state, "user", None) or user or {}
     )
@@ -3181,9 +2916,6 @@ async def _app_grant_context(
         try:
             pool = await _get_db_pool()
             async with pool.acquire() as conn:
-                # set_config(..., true) is transaction-local.  Without this
-                # transaction asyncpg autocommit clears the RLS scope before
-                # the grant query and every app appears to have zero grants.
                 async with conn.transaction():
                     await _set_rls_scope(conn, tenant_id, workspace_id)
                     granted = await _granted_datasets(
@@ -3194,7 +2926,6 @@ async def _app_grant_context(
                         manifest_digest=digest,
                     )
         except Exception:
-            # Fail closed: an unreachable ledger grants nothing.
             logger.warning("[app-grants] grant lookup failed for %s", name, exc_info=True)
             granted = []
     return html_text, granted, digest, cartridge
@@ -3259,12 +2990,6 @@ async def serve_app_content_proxy(
     re-attaches the Lax cookie. The capability minted by /embed is the control;
     the Fetch Metadata check below is a second, cheaper one.
     """
-    # No session dependency on this route by design. The inner frame is
-    # credentialless, so it sends no cookie — gating on the cookie would 401
-    # before the capability was even read, and re-adding the cookie to make
-    # that work would hand the frame back the credentials the sandbox removes.
-    # The capability is the authorisation; everything in it is re-checked
-    # against the server's own state below.
     user = await _require_app_content_capability(request, name, cap, None)
     return await _proxy_workspace_app(request, name, content=True, user=user)
 
@@ -3417,11 +3142,6 @@ def _resolve_scoped_config_cartridge(
     fallback: str = "sap_successfactors",
     candidates: set[str] | None = None,
 ) -> str:
-    """Resolve read-only cartridge configuration from workspace entitlements.
-
-    Config-only surfaces must not require an active Vault connection; a single
-    connected cartridge cannot hide other installed cartridges in the workspace.
-    """
     candidate_set = candidates or _OPERATIONAL_CARTRIDGES
     visible = _context_visible_cartridges(user)
     return _resolve_scoped_config_cartridge_impl(
@@ -3436,8 +3156,6 @@ def _resolve_scoped_config_cartridge(
 
 
 async def _scope_catalog_cartridge_arg(user: dict | None, cartridge: str | None) -> str:
-    # Scope-hardening contract marker retained for source-based tests:
-    # no cartridge installed for this workspace
     active = await _active_scoped_connection_cartridges(user, _OPERATIONAL_CARTRIDGES)
     allowed = _user_allowed_cartridges(user)
     return _scope_catalog_cartridge_arg_impl(
@@ -3549,8 +3267,6 @@ async def api_data_options(
     dataset: str, columns: str = "", user: dict = Depends(require_permission("datasets.read"))
 ):
     """Return distinct values per column for building filter selectors."""
-    # SQL produced by _data_api_options_sql targets pggold.gold_<dataset> via Refinement.
-    # It invokes preview_transform with _rls_user_context(user) through the shared helper.
     return await _data_options_payload_impl(
         dataset=dataset,
         columns=columns,
@@ -3573,7 +3289,6 @@ async def api_data_query_filtered(dataset: str, body: dict, request: Request):
            "limit": 1000, "columns": ["col1", "col2"]}
     fiscal_year uses March-February logic automatically.
     """
-    # Forward the authenticated user's context so refinement can apply RLS.
     _user = getattr(request.state, "user", None) or {}
     return await _filtered_data_query_payload_impl(
         dataset=dataset,
@@ -3585,9 +3300,6 @@ async def api_data_query_filtered(dataset: str, body: dict, request: Request):
         mcp_payload_factory=_mcp_payload,
         rls_user_context=_rls_user_context,
     )
-
-
-# ── Pipeline DAG ──────────────────────────────────────────────────────────────
 
 
 @app.get(
@@ -4645,7 +4357,6 @@ async def _fetch_sync_run(
     run_id: str,
     user: dict | None,
 ) -> dict[str, Any] | None:
-    # Keep refresh_columns=True visible here for the sync scope contract tests.
     return await _fetch_sync_run_impl(
         cartridge=cartridge,
         run_id=run_id,
@@ -5475,9 +5186,6 @@ def _is_transient_airflow_trigger_error(error: str) -> bool:
     return _is_transient_airflow_trigger_error_impl(error)
 
 
-# ── Studio — Entity config ───────────────────────────────────────────────────
-
-
 @app.post(
     "/studio/cartridges/{cartridge_id}/entities/{entity}/rename",
     dependencies=[Depends(require_csrf), Depends(require_permission("studio.write"))],
@@ -5523,9 +5231,6 @@ async def studio_update_entity(
     )
 
 
-# ── Studio — Cartridge management ────────────────────────────────────────────
-
-
 @app.get("/studio/cartridges", dependencies=[Depends(require_permission("cartridges.read"))])
 async def studio_list_cartridges(user: dict = Depends(require_permission("cartridges.read"))):
     cartridges = await cartridge_service.list_cartridges()
@@ -5542,11 +5247,6 @@ async def studio_list_cartridges(user: dict = Depends(require_permission("cartri
     return {"cartridges": cartridges}
 
 
-# ── Microservice-backed cartridges (probed via internal HTTP) ───────────────
-# Maps cartridge_id → internal base URL of the cartridge microservice. When a
-# cartridge is in this map, /studio/cartridges/{id}/status probes the service's
-# /health endpoint to decide whether to report it as operational, degraded
-# (live but missing credentials) or offline (not responding).
 _MICROSERVICE_CARTRIDGES = {
     "sap_successfactors": os.environ.get(
         "SAP_SUCCESSFACTORS_URL", "http://sap-successfactors:8203"
@@ -5567,13 +5267,6 @@ def _internal_headers() -> dict:
 
 
 async def _probe_microservice(base_url: str, cartridge_id: str) -> dict:
-    """Probe a cartridge microservice and classify its status.
-
-    Returns one of:
-      - {"status": "operational",            ...} — /health and credentials OK
-      - {"status": "degraded",     "reason": ...} — /health OK, credentials missing
-      - {"status": "offline",      "reason": ...} — /health unreachable
-    """
     return await _probe_microservice_impl(
         base_url,
         cartridge_id,
@@ -5750,9 +5443,6 @@ async def studio_import_cartridge(
     return manifest
 
 
-# ── Studio — AI assistant ─────────────────────────────────────────────────────
-
-
 @app.post(
     "/studio/chat",
     dependencies=[
@@ -5842,15 +5532,7 @@ async def viewer_lineage(request: Request):
 
 @app.get("/rag", dependencies=[Depends(require_admin)])
 async def rag_page():
-    # MEJORAS moved RAG operation into Studio step 7; keep /rag as a
-    # compatibility entrypoint without serving the removed standalone page.
     return RedirectResponse(url="/studio")
-
-
-# ── Agents — CRUD + invoke ────────────────────────────────────────────────────
-# Agent definitions include prompts, tool allowlists and execution traces.
-# Platform admins can manage global seed agents; tenant/workspace admins manage
-# only agents scoped to their active workspace.
 
 
 @app.get("/agents", dependencies=[Depends(require_permission("agents.read"))])
@@ -6020,11 +5702,6 @@ async def api_agents_invoke(
     body: dict,
     user: dict = Depends(require_permission("agents.execute")),
 ):
-    # Source-contract markers: _invoke_agent_payload_impl receives these
-    # callbacks and performs the actual calls in the same order.
-    # _agent_invoke_background_requested(body)
-    # _start_agent_invoke_background(agent, message, history, user)
-    # _agent_invoke_background_response(agent)
     return await _invoke_agent_payload_impl(
         agent_id=agent_id,
         body=body,
@@ -6260,10 +5937,8 @@ async def api_agent_run_detail(
     return run
 
 
-# ── Vault proxy ───────────────────────────────────────────────────────────────
-
 _VAULT_URL = _vault_url()
-_RAG_URL = os.environ.get("RAG_URL", "http://mcp-infra:8010")  # migrado
+_RAG_URL = os.environ.get("RAG_URL", "http://mcp-infra:8010")
 
 
 def _tenant_vault_prefix(user: dict) -> str | None:
@@ -6300,10 +5975,6 @@ def _tenant_vault_conn_id(user: dict, conn_id: str) -> str:
 
 
 def _tenant_vault_display_conn(user: dict, conn: dict) -> dict | None:
-    # Tenant isolation contract markers retained for source-based hardening tests:
-    # elif key.startswith("tenant_") and "__workspace_" in key:
-    #     return None
-    # display_key = key
     return _tenant_vault_display_conn_impl(
         user,
         conn,
@@ -6603,9 +6274,6 @@ async def api_vault_delete_secret(
     return data
 
 
-# ── RAG proxy ─────────────────────────────────────────────────────────────────
-
-
 def _rag_headers_for_user(user: dict) -> dict[str, str]:
     return {
         **_hdr_for("MCP_INFRA"),
@@ -6744,14 +6412,12 @@ async def api_semantic(
         return _empty_catalog_payload()
     manifest = await _cs.get_cartridge(cartridge)
     if manifest:
-        # Pass through all entity fields so Studio can render display_name, dag_id, etc.
         return _semantic_manifest_response(
             cartridge=cartridge,
             manifest=manifest,
             catalog_entities=await _gold_semantic_entities_from_catalog(cartridge, user),
         )
 
-    # Fallback: Pattern A — invoke via MCP server
     servers = await mcp_registry.list_servers()
     srv = next((s for s in servers if s["id"] == cartridge), None)
     if not srv:
@@ -6779,9 +6445,6 @@ async def api_semantic_enrich(
         refinement_invoke=_refinement_invoke,
         scoped_read_cache_invalidate=_scoped_read_cache_invalidate,
     )
-
-
-# ── Data Catalog API ──────────────────────────────────────────────────────────
 
 
 @app.get("/api/catalog", dependencies=[Depends(require_permission("datasets.read"))])
@@ -6863,9 +6526,6 @@ async def _refinement_invoke(
     )
 
 
-# ── Monitoring MCP server — MCP-compatible wrapper (used by registry) ─────────
-
-
 @app.get("/monitoring/mcp/tools")
 async def monitoring_mcp_tools(user: dict = Depends(_internal_or_authenticated)):
     """MCP-compatible tools endpoint so the registry can discover monitoring tools.
@@ -6874,7 +6534,7 @@ async def monitoring_mcp_tools(user: dict = Depends(_internal_or_authenticated))
     schemas — an anonymous reader could enumerate the platform's MCP
     surface and target downstream attack research at it."""
     t = await monitoring_tools()
-    return t  # already returns {"tools": [...]}
+    return t
 
 
 @app.post("/monitoring/mcp/invoke")
@@ -6894,8 +6554,6 @@ async def monitoring_mcp_invoke(
         _require_effective_permission(user, "monitor.read")
     return await monitoring_invoke(body, user=user)
 
-
-# ── Studio-ops MCP server — cartridge & entity management tools ───────────────
 
 STUDIO_OPS_WRITE_TOOLS = {"rename_entity", "delete_entity", "update_entity"}
 
@@ -6954,8 +6612,6 @@ async def studio_ops_invoke(
     )
 
 
-# ── Monitoring MCP server (deeplinks para el asistente) ───────────────────────
-
 CONSOLE_URL = _public_url("CONSOLE_URL", development_default="http://localhost:8000")
 
 
@@ -6963,8 +6619,6 @@ CONSOLE_URL = _public_url("CONSOLE_URL", development_default="http://localhost:8
     "/monitoring/tools", dependencies=[Depends(require_permission("monitor.read"))]
 )
 async def monitoring_tools(user: dict = Depends(require_permission("monitor.read"))):
-    # Sprint v1.22: same rationale as /monitoring/mcp/tools — tool
-    # discovery should be authenticated.
     return {"tools": build_monitoring_tools()}
 
 
@@ -6973,10 +6627,6 @@ async def monitoring_tools(user: dict = Depends(require_permission("monitor.read
     dependencies=[Depends(require_csrf), Depends(require_permission("monitor.read"))],
 )
 async def monitoring_invoke(body: dict, user: dict = Depends(require_permission("monitor.read"))):
-    # Sprint v1.22: was reachable without any auth. monitoring tools
-    # read job state and DAG metadata, which a session-less caller has
-    # no business seeing. CSRF added because this is a state-shaped
-    # POST and could be called from a cross-origin form otherwise.
     _require_effective_permission(user, "monitor.read")
     return await _invoke_monitoring_tool_impl(
         body=body,
@@ -6986,23 +6636,16 @@ async def monitoring_invoke(body: dict, user: dict = Depends(require_permission(
     )
 
 
-# ── DAG graph parser ──────────────────────────────────────────────────────────
-
-
 @app.post(
     "/api/dags/parse",
     dependencies=[Depends(require_csrf), Depends(require_permission("studio.read"))],
 )
 async def api_dag_parse(body: dict, user: dict = Depends(require_permission("studio.read"))):
-    # Sprint v1.22: parsing arbitrary Python source is non-trivial work
-    # and an anonymous caller could DOS the parser. Auth + CSRF required.
     source = body.get("source", "")
     if not source:
         raise HTTPException(400, "source is required")
     return _parse_dag_graph(source)
 
-
-# ── Decision Manager ─────────────────────────────────────────────────────────
 
 import json as _json_dec
 import asyncpg as _asyncpg_dec
@@ -7062,11 +6705,6 @@ async def viewer_decisions(request: Request):
 
 
 def _current_workspace_id(user: dict) -> str | None:
-    """Return the active workspace UUID for ``user``, or ``None`` if the
-    middleware never assigned one. Matches the workspace service's
-    helper so console and workspace agree on which workspace owns a
-    decision row.
-    """
     return _current_workspace_id_impl(user)
 
 
@@ -7122,11 +6760,8 @@ async def _create_decision_action_idempotently(
     note: str | None,
     key_hash: str,
 ) -> dict:
-    """Reserve and complete one action in the caller's scoped transaction."""
     operation = f"decision.action.create:{decision_id}"
     request_fingerprint = _decision_action_fingerprint(action_text, note)
-    # The ledger policy binds rows to the authenticated actor in addition to
-    # the tenant/workspace GUCs installed by scoped_db_for_user().
     await conn.execute(
         "SELECT set_config('app.user_id', $1, true)",
         str(user["id"]),
@@ -7296,17 +6931,9 @@ def _dec_list_query(
 
 
 async def _dec_load_with_visibility(decision_id: int, user: dict) -> dict | None:
-    # Sprint v1.37: no active workspace -> no decisions are visible.
-    # Short-circuit BEFORE opening the pool so an unauthorized caller
-    # never touches the DB. Pre-v1.37 the lookup proceeded with only
-    # the visibility/owner filters, so a logged-in user with zero
-    # memberships could still see ``visibility='shared'`` rows from
-    # any tenant.
     workspace_id = _current_workspace_id(user)
     if not workspace_id:
         return None
-    # Scope-regression compatibility: _dec_load_query keeps the legacy guard
-    # SELECT * FROM decisions WHERE id = $1 AND workspace_id = $2.
     pool = await _dec_pool()
     async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
         return await _dec_load_on_conn(
@@ -7391,11 +7018,6 @@ async def api_decisions_create(body: dict, user: dict = Depends(require_permissi
     title = (body.get("title") or "").strip()
     if not title:
         raise HTTPException(400, "title is required")
-    # Sprint v1.37 (audit B7 P0): every decision belongs to the user's
-    # active workspace. Without this, console.POST /api/decisions
-    # silently created rows with workspace_id=NULL and the list
-    # endpoint then leaked them as "shared" across tenants on the
-    # legacy fallback in 33_decisions_workspace_id.sql.
     workspace_id = _current_workspace_id(user)
     if not workspace_id:
         raise HTTPException(400, "active workspace is required to create a decision")
@@ -7460,12 +7082,6 @@ def _decision_update_sql_and_params(
     decision_id: int,
     existing: Any,
 ) -> tuple[str, list[Any]]:
-    # Sprint v1.37: pin UPDATE to (id, workspace_id) — defense-in-depth
-    # against a future code path that loads ``existing`` from a
-    # different source. ``existing`` already came from
-    # ``_dec_load_with_visibility`` which itself filters by workspace,
-    # so ``existing["workspace_id"]`` is the active workspace by
-    # construction.
     return _decision_update_sql_and_params_impl(
         sets=sets,
         params=params,
@@ -7533,10 +7149,6 @@ async def api_decisions_update(
         )
         row = await conn.fetchrow(sql, *params)
     if not row:
-        # The visibility check passed but the row vanished between
-        # SELECT and UPDATE (e.g. a concurrent delete, or the row was
-        # moved to a different workspace). Treat as not-found rather
-        # than 500.
         raise HTTPException(404, f"Decision {decision_id} not found")
     return _dec_row_to_dict(row)
 
@@ -7552,9 +7164,6 @@ async def api_decisions_delete(
     if not workspace_id:
         raise HTTPException(403, "active workspace is required")
     pool = await _dec_pool()
-    # Sprint v1.37: pin DELETE to (id, workspace_id) — same rationale
-    # as the UPDATE above. ``existing["workspace_id"]`` comes from the
-    # workspace-scoped SELECT FOR UPDATE in this same transaction.
     async with scoped_db_for_user(pool, user) as (conn, tenant_id, _workspace_id):
         existing = await _dec_load_on_conn(
             conn,
@@ -7627,8 +7236,6 @@ async def api_decisions_add_action(
         )
 
 
-# ── Users (assignee picker, all logged-in users) ────────────────────────────
-
 _GLOBAL_ASSIGNABLE_ROLES = {
     *_IAM_GLOBAL_ASSIGNABLE_ROLES,
     ROLE_ADMIN,
@@ -7657,15 +7264,10 @@ async def api_users_list(user: dict = Depends(require_permission("iam.users.read
     )
 
 
-# ── Admin user management ───────────────────────────────────────────────────
-
-
 @app.get("/admin/users", dependencies=[Depends(require_permission("iam.users.read"))])
 async def viewer_admin_users(
     request: Request, user: dict = Depends(require_permission("iam.users.read"))
 ):
-    # Compatibility URL, but not a separate users app anymore:
-    # /admin/users now enters the IAM ecosystem and opens the Users tab.
     return RedirectResponse(url="/operations/users", status_code=307)
 
 
@@ -7686,7 +7288,6 @@ def _workspace_scope_db_unavailable(exc: BaseException) -> bool:
 
 
 async def _workspace_rows_from_auth_stub(user_id: int) -> list[dict]:
-    """Compatibility path for unit-test auth doubles without DATABASE_URL."""
     return await _workspace_rows_from_auth_stub_impl(user_id, auth=_auth)
 
 
@@ -8020,18 +7621,18 @@ from app.routers import actions as actions_router
 from app.routers import copilot as copilot_router
 from app.routers import (
     copilot_advanced as copilot_advanced_router,
-)  # v1.45 advanced copilot
-from app.routers import copilot_drafts as copilot_drafts_router  # v1.44.2 Tarea H
-from app.routers import copilot_memory as copilot_memory_router  # v1.44.2 Tarea G
-from app.routers import copilot_workflows as copilot_workflows_router  # v1.44.2 Tarea I
-from app.routers import dashboard as dashboard_router  # v1.44.1 Tarea E
+)
+from app.routers import copilot_drafts as copilot_drafts_router
+from app.routers import copilot_memory as copilot_memory_router
+from app.routers import copilot_workflows as copilot_workflows_router
+from app.routers import dashboard as dashboard_router
 from app.routers import freshness as freshness_router
 from app.routers import intelligence as intelligence_router
 from app.routers import marketplace as marketplace_router
 from app.routers import metrics as metrics_router
 from app.routers import admin_tenants as admin_tenants_router
-from app.routers import onboarding as onboarding_router  # v1.44.1 Tarea F
-from app.routers import studio as studio_router  # v1.44.3.3 Task B
+from app.routers import onboarding as onboarding_router
+from app.routers import studio as studio_router
 from app.routers import (
     control_room,
     mcp,
@@ -8061,58 +7662,27 @@ app.include_router(marketplace_router.router)
 app.include_router(metrics_router.router)
 app.include_router(admin_tenants_router.router)
 app.include_router(copilot_router.router)
-app.include_router(dashboard_router.router)  # v1.44.1 Tarea E
-app.include_router(onboarding_router.router)  # v1.44.1 Tarea F
-app.include_router(copilot_memory_router.router)  # v1.44.2 Tarea G
-app.include_router(copilot_drafts_router.router)  # v1.44.2 Tarea H
-app.include_router(copilot_workflows_router.router)  # v1.44.2 Tarea I
+app.include_router(dashboard_router.router)
+app.include_router(onboarding_router.router)
+app.include_router(copilot_memory_router.router)
+app.include_router(copilot_drafts_router.router)
+app.include_router(copilot_workflows_router.router)
 app.include_router(
     copilot_workflows_router.plural_router
-)  # v1.44.6 Task 1 executor aliases
+)
 app.include_router(
     copilot_advanced_router.router
-)  # v1.45 advanced copilot (goals, lessons, watchdogs, briefing-v2, ask-with-context)
-app.include_router(studio_router.router)  # v1.44.3.3 Task B (stub)
+)
+app.include_router(studio_router.router)
 
 
-# v1.42.1 auditor finding: RequestIDMiddleware must be the OUTERMOST
-# wrapper so the ``X-Request-ID`` header lands on responses generated
-# by inner middlewares (auth 401, CSRF 403, etc.). Registering it
-# here — after every ``@app.middleware("http")`` decorator above has
-# run — guarantees it ends up near the front of ``user_middleware``.
-# v1.44.3.2.2 R-Mac-3 update: CORS is now registered AFTER this so
-# CORS ends up STRICTLY OUTERMOST, with RequestID one layer in.
-# Both invariants hold:
-#   - CORS sees every request (incl. OPTIONS preflight) before any
-#     inner middleware short-circuits
-#   - RequestID still wraps auth_middleware so X-Request-ID lands
-#     on auth 401s / CSRF 403s
 app.add_middleware(RequestIDMiddleware)
 
-# v1.44.3.2.2 R-Mac-3 (CORS ordering hotfix): CORSMiddleware MUST
-# be the OUTERMOST middleware in the ASGI stack so that:
-#   - OPTIONS preflight requests are intercepted + answered by
-#     CORS itself BEFORE auth_middleware can return 401/405,
-#   - Allow-Origin lands on EVERY response including auth 401s and
-#     security_headers redirects (which is what the browser needs
-#     to surface a proper CORS error vs a generic "fetch failed").
-#
-# Starlette builds the stack by REVERSING user_middleware, so the
-# LAST registered middleware ends up OUTERMOST. This is the LAST
-# add_middleware call in the module, so CORS is now outermost.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins(),
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    # v1.44.3.2.2 R-Mac: added X-CSRF-Token. The Next.js login flow
-    # (lib/auth-flow.ts) sends the double-submit-cookie value as
-    # this header on POST /auth/login; without it the browser
-    # preflight rejects the actual request before it leaves the
-    # tab.
-    # R-Mac-3 follow-up: added X-Requested-With (axios + fetch
-    # default), Accept (browser default), Cookie (some browsers
-    # send it on credentialed requests).
     allow_headers=[
         "Content-Type",
         "Authorization",
@@ -8125,13 +7695,6 @@ app.add_middleware(
         "Accept",
         "Cookie",
     ],
-    # R-Mac-3: surface Set-Cookie + X-CSRF-Token through the CORS
-    # response so the browser's response.cookies / header reads
-    # work from the Next.js side. expose_headers is for ACTUAL
-    # responses (different from allow_headers, which is for the
-    # preflight Access-Control-Allow-Headers reply).
     expose_headers=["Set-Cookie", "X-CSRF-Token", "X-Request-ID"],
-    # Cache preflight for 1 h so the browser doesn't re-OPTIONS
-    # every single XHR.
     max_age=3600,
 )

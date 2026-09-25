@@ -1,5 +1,3 @@
-"""Adversarial checks for the persisted Copilot context projection."""
-
 from __future__ import annotations
 
 import json

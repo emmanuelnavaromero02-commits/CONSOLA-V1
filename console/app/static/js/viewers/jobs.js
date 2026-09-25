@@ -1,5 +1,3 @@
-// Sprint v1.11 phase 2 — extracted from jobs.html for strict CSP.
-
 function esc(s) { return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"); }
 
 let allJobs = [];

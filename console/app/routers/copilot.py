@@ -1,17 +1,3 @@
-"""Sprint v1.42 — Copilot endpoints.
-
-Thin HTTP layer over ``copilot_service``. All routes require an
-authenticated session; mutating routes also require the CSRF token
-header that the wider console already enforces.
-
-Routes:
-  POST /api/copilot/conversations                       — create
-  GET  /api/copilot/conversations                       — list mine
-  GET  /api/copilot/conversations/{cid}                 — read mine
-  POST /api/copilot/conversations/{cid}/messages        — send turn
-  POST /api/copilot/conversations/{cid}/approve/{mid}   — approve dest.
-"""
-
 from __future__ import annotations
 
 import json
@@ -34,8 +20,6 @@ from app.services.permissions import require_permission
 router = APIRouter(
     prefix="/api/copilot",
     tags=["copilot"],
-    # Service-wide gate: every endpoint needs at least copilot.use.
-    # Mutating routes layer on require_csrf below.
     dependencies=[Depends(require_permission("copilot.use"))],
 )
 
@@ -93,10 +77,6 @@ async def create_conversation(
     request: Request,
     user: dict = Depends(require_authenticated),
 ):
-    # Sprint v1.42 R1 security finding: never trust ``workspace_id`` from
-    # the body — that would let a caller attach the conversation to a
-    # workspace they don't belong to. The active workspace comes from
-    # the authenticated session (already vetted by the auth layer).
     title = (body or {}).get("title")
     result = await copilot_service.create_conversation(
         user=user,
@@ -295,9 +275,6 @@ async def approve_action(
     return result
 
 
-# ── v1.44.2 (Tarea F): proactive briefing ────────────────────────────────
-
-
 @router.get("/briefing")
 async def get_briefing(
     user: dict = Depends(require_authenticated),
@@ -340,8 +317,6 @@ async def get_briefing(
             merged.append(item)
         highlights = merged[:6]
     except Exception:
-        # The live snapshot is additive. The original proactive briefing remains
-        # available even if the persisted context tables have not been migrated.
         pass
     return {"highlights": highlights}
 

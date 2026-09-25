@@ -1,13 +1,5 @@
-# v1.43.2 (DevOps R1 follow-up): see console/requirements.txt.
-# Replicon pins fastapi explicitly so the starlette floor stays
-# satisfiable and pip-audit does not resolve unsafe patch releases.
 fastapi==0.136.1
 starlette>=1.0.1
-# v1.43.4 (DevOps R1 follow-up): mirror the SAP cartridges' lower
-# bounds so the 4 cartridges run on the same versions of the
-# critical libs. Each floor closes a CVE that the v1.43.2
-# --ignore-vuln list deferred and the v1.43.4 cartridge sprint
-# retired.
 uvicorn[standard]>=0.35.0,<1.0
 requests>=2.33.0,<3.0
 pydantic>=2.11.7,<3.0
@@ -21,10 +13,5 @@ pyarrow
 pyyaml
 cryptography
 duckdb==1.2.2
-# v1.43.4 — Replicon was unpinned, which worked by accident
-# (pulled fastmcp 3.x naturally) but left the cartridge exposed
-# to a future fastmcp 4.x breaking change with no version gate.
-# Pin to the same range as the SAP cartridges so all 4 are
-# locked to a single major.
 fastmcp>=3.3.0,<4.0
 asyncpg

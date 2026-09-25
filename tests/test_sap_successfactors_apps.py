@@ -1,11 +1,3 @@
-"""Phase 2 Block D3 — SAP SuccessFactors analytic apps (HTML dashboards).
-
-2 standalone Chart.js dashboards in cartridges/sap_successfactors/apps/, registered
-in analytic_apps via migration 87 (mirroring HCM #83 / S4 #85) and reconciled at
-console startup by seed_packaged_apps.py. analytic_apps has NO workspace_id column.
-SF gold dataset names carry the sap_successfactors_ prefix, so fetch URLs use the full
-prefixed name.
-"""
 from __future__ import annotations
 
 import json
@@ -44,8 +36,6 @@ def test_html_files_exist_and_parse(name):
     html = path.read_text(encoding="utf-8")
     HTMLParser().feed(html)
     assert "<canvas" in html, f"{name}: no chart canvas"
-    # Pinned + integrity: a floating CDN tag lets an upstream change run
-    # arbitrary code inside the published app.
     assert (
         "cdn.jsdelivr.net/npm/chart.js@" in html
     ), f"{name}: Chart.js must be pinned to an exact version"
@@ -55,7 +45,6 @@ def test_html_files_exist_and_parse(name):
 
 @pytest.mark.parametrize("name", APP_NAMES)
 def test_html_has_no_inline_event_handlers(name):
-    """The published CSP carries a nonce, which cannot authorise on* attributes."""
     html = _html(name)
     for handler in ("onclick=", "onload=", "onerror=", "onchange=", "onsubmit="):
         assert handler not in html, f"{name}: inline handler {handler} blocks under CSP"
@@ -63,13 +52,11 @@ def test_html_has_no_inline_event_handlers(name):
 
 @pytest.mark.parametrize("name", APP_NAMES)
 def test_html_does_not_force_a_theme(name):
-    """The shell's theme shim decides light/dark; a fixed attribute overrode it."""
     assert 'data-theme="dark"' not in _html(name), f"{name}: hard-coded dark theme"
 
 
 @pytest.mark.parametrize("name", APP_NAMES)
 def test_html_reports_missing_chart_runtime(name):
-    """A blocked or failed Chart.js must not leave a silent empty shell."""
     html = _html(name)
     assert "typeof Chart === 'undefined'" in html, f"{name}: no chart runtime guard"
     assert 'role="alert"' in html, f"{name}: error container is not announced"
@@ -138,7 +125,6 @@ def test_fetch_urls_literal_and_aligned(name):
     assert fetched == declared, f"{name}: fetched {fetched} != declared {declared}"
     assert "'/api/data/' +" not in html and "`/api/data/${" not in html, \
         f"{name}: uses concatenated fetch URL"
-    # SF apps must use the full sap_successfactors_-prefixed dataset name
     for ds in fetched:
         assert ds.startswith("sap_successfactors_"), f"{name}: fetch {ds} missing prefix"
 

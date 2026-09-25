@@ -1,5 +1,3 @@
-"""RLS-scoped dependency planning for ``dataset_refresh_chain``."""
-
 from __future__ import annotations
 
 import json

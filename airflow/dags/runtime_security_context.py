@@ -1,5 +1,3 @@
-"""Purpose-bound HMAC contexts emitted by automatic Airflow runtimes."""
-
 from __future__ import annotations
 
 import hashlib
@@ -62,7 +60,6 @@ def build_materialize_context(
     run_id: str,
     now: int | None = None,
 ) -> dict[str, Any]:
-    """Build a fresh context tied to one exact materialize request."""
     tenant = _required(tenant_id, "tenant_id")
     workspace = _required(workspace_id, "workspace_id")
     cartridge = _required(cartridge_id, "cartridge_id")
@@ -106,7 +103,6 @@ def build_materialize_context(
 def build_pipeline_run_context(
     args: Mapping[str, Any], *, now: int | None = None
 ) -> dict[str, Any]:
-    """Bind one telemetry envelope to its exact body and operational scope."""
     required = {"run_id", "dag_id", "cartridge_id", "entity", "status"}
     if not required.issubset(args) or any(
         not str(args[key] or "").strip() for key in required
@@ -166,7 +162,6 @@ def sign_runtime_context(
     *,
     now: int | None = None,
 ) -> dict[str, Any]:
-    """Sign one reduced server-owned context with the shared primitive."""
     return _sign_context(payload, version=SIGNATURE_VERSION, now=now)
 
 
@@ -175,7 +170,6 @@ def verify_runtime_signature(
     *,
     now: int | None = None,
 ) -> None:
-    """Verify a delegated signed context before reducing and re-signing it."""
     if context.get("_signature_version") != SIGNATURE_VERSION:
         raise ValueError("unsupported runtime context signature version")
     signature = str(context.get("_signature") or "")

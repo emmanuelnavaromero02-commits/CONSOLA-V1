@@ -18,9 +18,6 @@ def _require_settings_permission(permission: str):
 
 
 def _forensic(request: Request) -> tuple[str | None, str | None]:
-    """Sprint v1.41.0: extract ip + user_agent for audit_events. Settings
-    mutations are admin-only and persisted forever — every call site must
-    record where the action came from."""
     return (
         request.client.host if request.client else None,
         request.headers.get("user-agent"),

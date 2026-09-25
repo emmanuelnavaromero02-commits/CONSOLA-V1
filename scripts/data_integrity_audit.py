@@ -1,11 +1,4 @@
 #!/usr/bin/env python3
-"""Enterprise data integrity audit.
-
-Exit codes:
-- 0: PASS
-- 1: FAIL
-- 2: BLOCKED, unless OMEGA_AUDIT_ALLOW_BLOCKED=1
-"""
 
 from __future__ import annotations
 

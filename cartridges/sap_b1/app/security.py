@@ -1,4 +1,3 @@
-"""Internal API key resolver."""
 from __future__ import annotations
 
 import os
@@ -49,7 +48,6 @@ def _is_valid_internal_request(x_api_key: str | None, x_internal_service: str | 
 
 
 class InternalApiKeyASGIGuard:
-    """ASGI guard for mounted sub-apps that cannot receive FastAPI dependencies."""
 
     def __init__(self, app):
         self.app = app

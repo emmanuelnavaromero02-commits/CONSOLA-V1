@@ -1,5 +1,3 @@
-"""Cartridge microservice status probing helpers."""
-
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -15,7 +13,6 @@ async def probe_microservice(
     http_client_factory: Callable[..., Any] = httpx.AsyncClient,
     headers_factory: Callable[[], dict] | None = None,
 ) -> dict:
-    """Probe a cartridge service and classify the operator-facing status."""
     try:
         async with http_client_factory(timeout=3) as client:
             response = await client.get(f"{base_url}/health")

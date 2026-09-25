@@ -1,11 +1,3 @@
-"""Mission 5: an agent-authored alert cannot vouch for itself.
-
-Before this mission ``control_room__raise_alert`` stored ``evidence_refs``
-straight from its caller, and the persisted projection read them back as
-evidence. A signed runtime reference copied from any attested item therefore
-made an agent alert look attested. These tests pin the read-side closure.
-"""
-
 from __future__ import annotations
 
 import pytest
@@ -88,8 +80,6 @@ def _row(metadata: dict, item_id: str = "alert-1") -> dict:
 
 
 def test_signed_reference_really_is_attested_before_the_closure():
-    """Positive control: without the agent markers the reference is honoured,
-    so the negative tests below are not passing vacuously."""
     metadata = _signed_metadata("alert-1")
     assert metadata["evidence_refs"][0]["server_attestation"]
     item = control_room_service._persisted_intelligence_payload(_row(metadata))
@@ -161,8 +151,6 @@ AGENT_ITEM = "agent_alert:" + "d" * 32
 
 
 def test_mcp_infra_item_id_marks_the_row_even_with_markers_overwritten():
-    # A writer of the column can drop source/agent_id/control_state; it cannot
-    # choose the server-derived item id.
     metadata = {
         **_signed_metadata(AGENT_ITEM),
         "source": "console",

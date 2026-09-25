@@ -1,14 +1,3 @@
-"""
-Generic cartridge tools — replace the per-cartridge container approach.
-
-Every tool here accepts cartridge_id as a parameter and reads its configuration
-from Postgres tables (entity_config, kb_config, entity_watermarks, pipeline_runs,
-run_logs, mcp_custom_tools).
-
-Phase 1: tools live alongside replicon's own MCP server. Phase 2 wires them as
-virtual servers in the console registry. Phase 6 deletes the replicon container.
-"""
-
 from __future__ import annotations
 
 import json
@@ -47,8 +36,6 @@ from app.tools.postgres import _conn
 
 _SAFE_SCOPE_SEGMENT = re.compile(r"[A-Za-z0-9_.:-]+")
 
-# ── DuckDB helper (S3 pre-configured) ─────────────────────────────────────────
-
 
 def _duckdb() -> duckdb.DuckDBPyConnection:
     conn = connect_duckdb_runtime()
@@ -63,12 +50,6 @@ def _bronze_path(
     tenant_id: str | None = None,
     workspace_id: str | None = None,
 ) -> str:
-    # Sprint v1.35 (audit B3 P0): validate cartridge_id / entity as SQL
-    # identifiers before they go into the f-string. The returned path is
-    # consumed by DuckDB's read_parquet() inside another f-string in
-    # cartridge_preview, so an unvalidated value like
-    # ``../") UNION SELECT * FROM 's3://other/secrets.parquet')--`` would
-    # close the read_parquet() argument and inject a different query.
     cartridge_id = validate_identifier(cartridge_id, "cartridge_id")
     entity = validate_identifier(entity, "entity")
     scope = _scope_suffix(security_context, tenant_id, workspace_id)
@@ -81,12 +62,6 @@ def _bronze_path(
 
 
 def _entity_name_matches(requested: str, entity: str, odata_entity: str | None) -> bool:
-    """An entity_config row matches `requested` by any of three forms:
-    business name (`entity`), full technical `odata_entity` (e.g.
-    ``HRPA_EE_PA_SRV/PA0000Set``), or the last path segment of the
-    ``odata_entity`` (e.g. ``PA0000Set``). Lets MCP clients ask by the
-    technical OData entityset even though entity_config stores the business
-    name after the Block-A re-alignment."""
     if entity == requested:
         return True
     odata = odata_entity or ""
@@ -96,10 +71,6 @@ def _entity_name_matches(requested: str, entity: str, odata_entity: str | None) 
 
 
 def _resolve_entity_name(cur, cartridge_id: str, requested: str) -> str | None:
-    """Resolve a requested entity identifier (business name, full
-    odata_entity, or its last segment) to the canonical business `entity`
-    name for a cartridge, or None if no entity matches. odata_entity may be
-    absent on older DBs, so it is selected defensively."""
     cur.execute(
         """
         SELECT column_name FROM information_schema.columns
@@ -230,7 +201,6 @@ def _assert_reader_sandbox(
     *,
     allow_server_resolution: bool = False,
 ) -> None:
-    """Fail closed unless every storage reader stays inside the caller's scope."""
     cartridge = validate_identifier(cartridge_id, "cartridge_id")
     tenant_id, workspace_id = _scope_values(security_context)
     validate_cartridge_reader_query(
@@ -245,7 +215,6 @@ def _assert_reader_sandbox(
 
 
 def _reader_policy_rejection(cartridge_id: str) -> dict[str, Any]:
-    """Redacted rejection: no SQL, no path, no secret, no parser detail."""
     return {
         "cartridge_id": cartridge_id,
         "status": "partial",
@@ -304,9 +273,6 @@ def _scoped_rag_source_name(
     return scoped_semantic_source_name(base_name, security_context, tenant, workspace)
 
 
-# ── Tool · get_semantic ───────────────────────────────────────────────────────
-
-
 @tool(
     name="cartridge_get_semantic",
     description=(
@@ -357,9 +323,6 @@ def cartridge_get_semantic(
             if str(r[0]) in allowed_datasets
         ]
     return {"semantic_terms": terms, "data_catalog": columns}
-
-
-# ── Tool · sync_semantic_to_rag ───────────────────────────────────────────────
 
 
 @tool(
@@ -460,9 +423,6 @@ async def cartridge_sync_semantic_to_rag(
     }
 
 
-# ── Tool · search_term (fuzzy lookup across both glossaries) ─────────────────
-
-
 @tool(
     name="cartridge_search_term",
     description=(
@@ -491,7 +451,6 @@ async def cartridge_search_term(
       2. Vector search in RAG over the auto-synced semantic source for the cartridge
          (catches paraphrases, synonyms, cross-language).
     """
-    # Normalize: try with both spaces and underscores so 'costo hundido' matches 'costo_hundido'
     p_space = f"%{query}%"
     p_under = f"%{query.replace(' ', '_')}%"
     p_dash = f"%{query.replace(' ', '-')}%"
@@ -536,7 +495,6 @@ async def cartridge_search_term(
             if str(r[0]) in allowed_datasets
         ]
 
-    # Vector fallback against the auto-synced RAG source for this cartridge
     rag_results: list[dict] = []
     target_name = _scoped_rag_source_name(
         f"_semantic_{cartridge_id}",
@@ -573,9 +531,6 @@ async def _safe_list_rag_sources() -> list[dict]:
         return await list_sources()
     except Exception:
         return []
-
-
-# ── Tool · get_manifest ───────────────────────────────────────────────────────
 
 
 @tool(
@@ -665,9 +620,6 @@ def cartridge_get_hints(
     return {"cartridge_id": cartridge_id, "assistant_hints": (row[0] if row else "")}
 
 
-# ── Tool 0 · list_cartridges (discovery) ──────────────────────────────────────
-
-
 @tool(
     name="list_cartridges",
     description=(
@@ -701,9 +653,6 @@ def list_cartridges() -> list[dict[str, Any]]:
         }
         for r in rows
     ]
-
-
-# ── Tool 1 · list_entities ────────────────────────────────────────────────────
 
 
 @tool(
@@ -772,9 +721,6 @@ def cartridge_list_entities(
     ]
 
 
-# ── Tool 2 · get_schema ───────────────────────────────────────────────────────
-
-
 @tool(
     name="cartridge_get_schema",
     description=(
@@ -812,7 +758,6 @@ def cartridge_get_schema(
         def col(name: str, fallback: str) -> str:
             return name if name in columns else f"{fallback} AS {name}"
 
-        # Accept the business name, the full odata_entity, or its last segment.
         resolved = _resolve_entity_name(cur, cartridge_id, entity)
         if resolved is None:
             return {
@@ -870,9 +815,6 @@ def cartridge_get_schema(
     }
 
 
-# ── Tool 3 · preview ──────────────────────────────────────────────────────────
-
-
 @tool(
     name="cartridge_preview",
     description=(
@@ -895,8 +837,6 @@ def cartridge_preview(
     limit: int = 20,
     security_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    # Sprint v1.35 (audit B3 P0): force limit to a bounded int. cartridge_id
-    # and entity are validated transitively by _bronze_path().
     limit = validate_bounded_int(limit, "limit", lo=1, hi=200)
     path = _bronze_path(cartridge_id, entity, security_context)
     sql = f"SELECT * FROM read_parquet('{path}', hive_partitioning=true) LIMIT {limit}"
@@ -924,9 +864,6 @@ def cartridge_preview(
             "rows": [],
             "columns": [],
         }
-
-
-# ── Tool 4 · extract (one entity) ─────────────────────────────────────────────
 
 
 @tool(
@@ -967,8 +904,6 @@ async def cartridge_extract(
     conn_id: str | None = None,
     security_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    # Look up the DAG bound to this entity. Accept the business name, the full
-    # odata_entity, or its last segment (uniform MCP lookup contract).
     with _conn() as c, c.cursor() as cur:
         resolved = _resolve_entity_name(cur, cartridge_id, entity)
         if resolved is None:
@@ -1015,9 +950,6 @@ async def cartridge_extract(
         "entity": entity,
         "mode": mode,
     }
-
-
-# ── Tool 5 · extract_all ──────────────────────────────────────────────────────
 
 
 @tool(
@@ -1097,9 +1029,6 @@ async def cartridge_extract_all(
     return {"cartridge_id": cartridge_id, "mode": mode, "triggered": results}
 
 
-# ── Tool 6 · get_run_logs ─────────────────────────────────────────────────────
-
-
 @tool(
     name="cartridge_get_run_logs",
     description="Per-step logs for a run_id, ordered by timestamp ascending.",
@@ -1140,9 +1069,6 @@ def cartridge_get_run_logs(run_id: str, limit: int = 50) -> list[dict[str, Any]]
             }
         )
     return out
-
-
-# ── Tool 7 · get_job_status ───────────────────────────────────────────────────
 
 
 @tool(
@@ -1187,9 +1113,6 @@ def cartridge_get_job_status(run_id: str) -> dict[str, Any]:
         "airflow_dag_run_id": row[14],
         "extra": row[15],
     }
-
-
-# ── Tool 8 · list_jobs ────────────────────────────────────────────────────────
 
 
 @tool(
@@ -1501,9 +1424,6 @@ def cartridge_query_kb(
     resolved = _scope_cartridge_sql(sql, cartridge_id, security_context)
     if "limit" not in resolved.lower():
         resolved = f"SELECT * FROM ({resolved}) _q LIMIT {limit}"
-    # Second, independent validation of the effective statement. The rewriter
-    # runs between the two checks, so this is what guarantees that nothing the
-    # first pass approved can be smuggled past it on the way to the engine.
     try:
         _assert_reader_sandbox(resolved, cartridge_id, security_context)
     except ReaderPolicyError:

@@ -1,4 +1,3 @@
-"""The per-company read loop, shared by the cartridge and the Windows agent."""
 from __future__ import annotations
 
 import logging
@@ -29,7 +28,6 @@ WriteBatch = Callable[[list[dict[str, Any]]], None]
 
 
 def effective_mode(config: dict[str, Any], plan: EntityPlan, from_date: str | None, to_date: str | None) -> str:
-    """The mode a run of ``plan`` actually uses."""
     if from_date or to_date:
         return "historical"
     mode = str(config.get("mode") or "full").strip().lower()
@@ -62,7 +60,6 @@ def read_entity(
     batch_size: int = BATCH_SIZE,
     buffer_minutes: int = WATERMARK_BUFFER_MINUTES,
 ) -> ReadResult:
-    """Read ``plan`` in every company and deliver the rows to ``write_batch``."""
     if mode not in MODES:
         raise ValueError(f"mode must be one of {MODES}")
     if mode == "historical" and not plan.date_field:

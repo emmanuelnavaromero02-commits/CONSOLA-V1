@@ -16,7 +16,6 @@ function countNodes(row: PipelineEntity): string {
 function bronzeSummary(row: PipelineEntity): string {
   const date = row.bronze.latest_date || "sin fecha";
   if (row.bronze.empty) return `Sin filas extraídas · ${date}`;
-  // record_count ausente ≠ 0 filas: sin conteo reportamos "N/D".
   if (row.bronze.record_count == null) return `N/D filas · ${date}`;
   return `${row.bronze.record_count} filas · ${date}`;
 }

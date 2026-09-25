@@ -1,5 +1,3 @@
-"""Control Room write-back adapters."""
-
 from __future__ import annotations
 
 from .base import (

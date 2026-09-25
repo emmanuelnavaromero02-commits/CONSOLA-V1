@@ -5,10 +5,6 @@ import types
 
 import app.main as _console_main
 
-# Import the current console runtime namespace, including private helper
-# functions used by legacy handlers. Handlers are rebound to app.main's
-# namespace before registration so existing tests and monkeypatches that
-# patch app.main.<helper> continue to affect the handler at runtime.
 globals().update(_console_main.__dict__)
 router = APIRouter()
 
@@ -29,10 +25,6 @@ def _bind_to_main(fn):
     _console_main.__dict__[fn.__name__] = rebound
     return rebound
 
-# /apps/{name}/content
-# Mirrors app.main.serve_app_content_proxy exactly. Two registrations of the
-# same path are two doors: if only one carries the capability check, the other
-# is the way in. Both must stay identical.
 @router.get("/apps/{name}/content")
 @_bind_to_main
 async def serve_app_content_proxy(
@@ -43,7 +35,6 @@ async def serve_app_content_proxy(
     user = await _require_app_content_capability(request, name, cap, None)
     return await _proxy_workspace_app(request, name, content=True, user=user)
 
-# /apps/{name}/embed
 @router.get("/apps/{name}/embed", dependencies=[Depends(require_permission("apps.read"))])
 @_bind_to_main
 async def serve_app_embed(
@@ -53,22 +44,17 @@ async def serve_app_embed(
 ):
     return await _build_app_embed_response(request, name, user)
 
-# /apps/{name}
 @router.get("/apps/{name}", dependencies=[Depends(require_permission("apps.read"))])
 @_bind_to_main
 async def serve_app(name: str, request: Request, user: dict = Depends(require_permission("apps.read"))):
-    # Mirrors app.main.serve_app: the published HTML is never served as a
-    # top-level same-origin document. The wrapper at /embed is the only path in.
     _validate_dataset_name(name)
     return RedirectResponse(url=f"/analytics/viewer?app={quote(name, safe='')}", status_code=303)
 
-# /studio
 @router.get("/studio", dependencies=[Depends(require_permission("studio.read")), Depends(require_admin)])
 @_bind_to_main
 async def studio_page():
     return FileResponse(STATIC / "studio.html")
 
-# /marketplace
 @router.get("/marketplace", dependencies=[Depends(require_permission("marketplace.read"))])
 @_bind_to_main
 async def marketplace_page(request: Request):
@@ -76,7 +62,6 @@ async def marketplace_page(request: Request):
 
     return _console_next_response(request, "marketplace/index.html")
 
-# /customer/cartridges
 @router.get("/customer/cartridges", dependencies=[Depends(require_permission("marketplace.read"))])
 @_bind_to_main
 async def customer_cartridges_page(request: Request):
@@ -84,7 +69,6 @@ async def customer_cartridges_page(request: Request):
 
     return _console_next_response(request, "customer/cartridges/index.html")
 
-# /admin/installations
 @router.get(
     "/admin/installations",
     dependencies=[
@@ -97,7 +81,6 @@ async def admin_installations_page(request: Request):
 
     return _console_next_response(request, "admin/installations/index.html")
 
-# /admin/licenses
 @router.get(
     "/admin/licenses",
     dependencies=[
@@ -110,7 +93,6 @@ async def admin_licenses_page(request: Request):
 
     return _console_next_response(request, "admin/licenses/index.html")
 
-# /api/marketplace/products
 @router.get("/api/marketplace/products", dependencies=[Depends(require_permission("marketplace.read"))])
 @_bind_to_main
 async def api_marketplace_products(user: dict = Depends(require_authenticated)):
@@ -119,7 +101,6 @@ async def api_marketplace_products(user: dict = Depends(require_authenticated)):
     except marketplace_service.MarketplaceError as exc:
         raise HTTPException(400, "marketplace products unavailable") from exc
 
-# /api/marketplace/products/{cartridge_id}
 @router.get("/api/marketplace/products/{cartridge_id}", dependencies=[Depends(require_permission("marketplace.read"))])
 @_bind_to_main
 async def api_marketplace_product(cartridge_id: str, user: dict = Depends(require_authenticated)):
@@ -128,7 +109,6 @@ async def api_marketplace_product(cartridge_id: str, user: dict = Depends(requir
     except marketplace_service.MarketplaceError as exc:
         raise HTTPException(404, "marketplace product not found") from exc
 
-# /api/marketplace/installations
 @router.get("/api/marketplace/installations", dependencies=[Depends(require_permission("marketplace.read"))])
 @_bind_to_main
 async def api_marketplace_installations(user: dict = Depends(require_authenticated)):
@@ -137,7 +117,6 @@ async def api_marketplace_installations(user: dict = Depends(require_authenticat
     except marketplace_service.MarketplaceError as exc:
         raise HTTPException(400, "marketplace installations unavailable") from exc
 
-# /api/customer/cartridges
 @router.get("/api/customer/cartridges", dependencies=[Depends(require_permission("marketplace.read"))])
 @_bind_to_main
 async def api_customer_cartridges(user: dict = Depends(require_authenticated)):
@@ -146,7 +125,6 @@ async def api_customer_cartridges(user: dict = Depends(require_authenticated)):
     except marketplace_service.MarketplaceError as exc:
         raise HTTPException(400, "marketplace installations unavailable") from exc
 
-# /api/marketplace/products/{cartridge_id}/request
 @router.post(
     "/api/marketplace/products/{cartridge_id}/request",
     dependencies=[
@@ -161,7 +139,6 @@ async def api_marketplace_request(cartridge_id: str, user: dict = Depends(requir
     except marketplace_service.MarketplaceError as exc:
         raise HTTPException(400, "marketplace request failed") from exc
 
-# /api/marketplace/products/{cartridge_id}/activate
 @router.post(
     "/api/marketplace/products/{cartridge_id}/activate",
     dependencies=[
@@ -176,7 +153,6 @@ async def api_marketplace_activate(cartridge_id: str, user: dict = Depends(requi
     except marketplace_service.MarketplaceError as exc:
         raise HTTPException(400, "marketplace activation failed") from exc
 
-# /api/marketplace/installations/{installation_id}/retry
 @router.post(
     "/api/marketplace/installations/{installation_id}/retry",
     dependencies=[
@@ -195,7 +171,6 @@ async def api_marketplace_retry(installation_id: str, user: dict = Depends(requi
         )
         raise HTTPException(status, "marketplace retry failed") from exc
 
-# /api/admin/installations
 @router.get("/api/admin/installations")
 @_bind_to_main
 async def api_admin_installations(
@@ -212,7 +187,6 @@ async def api_admin_installations(
     except marketplace_service.MarketplaceError as exc:
         raise HTTPException(403, "admin marketplace access denied") from exc
 
-# /api/admin/installations/{installation_id}
 @router.get("/api/admin/installations/{installation_id}")
 @_bind_to_main
 async def api_admin_installation(
@@ -231,7 +205,6 @@ async def api_admin_installation(
     except marketplace_service.MarketplaceError as exc:
         raise HTTPException(404, "installation not found") from exc
 
-# /api/admin/installations/{installation_id}/access
 @router.get("/api/admin/installations/{installation_id}/access")
 @_bind_to_main
 async def api_admin_installation_access(
@@ -250,7 +223,6 @@ async def api_admin_installation_access(
     except marketplace_service.MarketplaceError as exc:
         raise HTTPException(404, "installation access not found") from exc
 
-# /api/admin/installations/{installation_id}/access/{target_user_id}
 @router.patch(
     "/api/admin/installations/{installation_id}/access/{target_user_id}",
     dependencies=[
@@ -280,7 +252,6 @@ async def api_admin_installation_user_access(
     except marketplace_service.MarketplaceError as exc:
         raise HTTPException(400, "installation access update failed") from exc
 
-# /api/admin/installations/{installation_id}/approve
 @router.post(
     "/api/admin/installations/{installation_id}/approve",
     dependencies=[
@@ -305,7 +276,6 @@ async def api_admin_installation_approve(
     except marketplace_service.MarketplaceError as exc:
         raise HTTPException(400, "installation approval failed") from exc
 
-# /api/admin/installations/{installation_id}/pause
 @router.post(
     "/api/admin/installations/{installation_id}/pause",
     dependencies=[
@@ -330,7 +300,6 @@ async def api_admin_installation_pause(
     except marketplace_service.MarketplaceError as exc:
         raise HTTPException(400, "installation pause failed") from exc
 
-# /api/admin/installations/{installation_id}/revoke
 @router.post(
     "/api/admin/installations/{installation_id}/revoke",
     dependencies=[
@@ -355,7 +324,6 @@ async def api_admin_installation_revoke(
     except marketplace_service.MarketplaceError as exc:
         raise HTTPException(400, "installation revoke failed") from exc
 
-# /api/admin/installations/{installation_id}/reactivate
 @router.post(
     "/api/admin/installations/{installation_id}/reactivate",
     dependencies=[
@@ -380,13 +348,11 @@ async def api_admin_installation_reactivate(
     except marketplace_service.MarketplaceError as exc:
         raise HTTPException(400, "installation reactivation failed") from exc
 
-# /viewer/pipeline
 @router.get("/viewer/pipeline", dependencies=[Depends(require_permission("monitor.read"))])
 @_bind_to_main
 async def viewer_pipeline(request: Request):
     return _viewer_redirect(request, "pipeline")
 
-# /viewer/vault
 @router.get("/viewer/vault", dependencies=[Depends(require_permission("vault.connections.read"))])
 @_bind_to_main
 async def viewer_vault(request: Request):

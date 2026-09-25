@@ -1,5 +1,3 @@
-"""Benchmark fallback must independently reject invalid CPA score inputs."""
-
 from __future__ import annotations
 
 from pathlib import Path

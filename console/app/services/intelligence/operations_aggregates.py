@@ -1,34 +1,3 @@
-"""Cap-free SQL aggregates for the OPERATIONS domain (Mission 1).
-
-Functions:
-
-* :func:`query_pipeline_health`             (console DB)  supported
-* :func:`query_data_freshness_by_cartridge` (console DB)  partial: SLA is a parameter
-* :func:`query_absence_rate_company_by_type` (Gold DB)    proxy: company level, not org unit
-
-WHY TWO DSNs
-------------
-``pipeline_health`` and ``data_freshness`` read ``pipeline_runs`` and
-``extraction_runs``. Those tables live in the console operational database
-(``DATABASE_URL``, role ``omega_console``, created by ``infra/init/*.sql``),
-not in the Gold lakehouse database (``GOLD_DATABASE_URL``, ``infra/init_gold``).
-They are operational run logs, not published datasets: there is no
-``dataset_publication_heads`` row for them, so the Talent head-resolution step
-does not apply. Everything else of the contract is kept: the read runs on a
-pooled connection (``auth.pool()``) inside a ``repeatable_read`` read-only
-transaction, ``db_scope.scoped_db`` sets the ``app.tenant_id`` /
-``app.workspace_id`` GUCs consumed by the RLS policies (``infra/init/99p_*``),
-and every query repeats the workspace/tenant predicate explicitly
-(``workspace_id = $1::uuid AND ($2::uuid IS NULL OR tenant_id = $2::uuid)``,
-the same shape ``proactive_service`` uses).
-
-``absence_rate_company_by_type`` reads Gold datasets (``sap_hcm``) through the
-shared Gold scope, exactly like Finance and Risk.
-
-Metrics without a supporting relation (shift coverage) intentionally have no
-function here.
-"""
-
 from __future__ import annotations
 
 import os
@@ -74,10 +43,8 @@ FRESHNESS_SLA_ENV = "OPERATIONS_FRESHNESS_SLA_HOURS"
 DEFAULT_FRESHNESS_SLA_HOURS = 24.0
 RECENT_FAILURES_LIMIT = 10
 
-# Console run-log tables and the only columns referenced from them.
 PIPELINE_RUNS_TABLE = "pipeline_runs"
 EXTRACTION_RUNS_TABLE = "extraction_runs"
-# Every console aggregate binds $1 = workspace_id (uuid) and $2 = tenant_id (uuid|NULL).
 CONSOLE_SCOPE_PREDICATE = (
     "workspace_id = $1::uuid AND ($2::uuid IS NULL OR tenant_id = $2::uuid)"
 )
@@ -113,9 +80,6 @@ ABSENCE_RATE_PROXY_NOTE = (
 )
 
 
-# ── Console scope (pool + repeatable_read + scoped_db GUCs) ─────────────────
-
-
 @dataclass
 class ConsoleScope:
     conn: Any
@@ -124,7 +88,6 @@ class ConsoleScope:
 
     @property
     def scope_args(self) -> tuple[str, str | None]:
-        """Positional args matching CONSOLE_SCOPE_PREDICATE ($1 workspace, $2 tenant)."""
         return (self.workspace_id, self.tenant_id or None)
 
 
@@ -132,11 +95,6 @@ class ConsoleScope:
 async def open_console_scope(
     user: dict | None, pool: Any
 ) -> AsyncIterator[ConsoleScope]:
-    """Pooled console connection with repeatable_read/readonly + RLS GUCs.
-
-    ``scoped_db`` receives the raw connection (not the pool) so the GUC
-    statement runs inside the transaction opened here; see module docstring.
-    """
     tenant_id, workspace_id = workspace_scope_from_user(user)
     async with pool.acquire() as conn:
         async with conn.transaction(isolation="repeatable_read", readonly=True):
@@ -173,9 +131,6 @@ def _console_evidence(table: str, *, filters: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-# ── O1: pipeline health ──────────────────────────────────────────────────────
-
-
 @dataclass
 class PipelineHealth(AggregateResult):
     as_of: datetime | None = None
@@ -207,8 +162,6 @@ def _health_sql(table: str) -> str:
     """
 
 
-# Workspace-wide totals come from ONE un-limited aggregate over both run logs;
-# the per-cartridge breakdown above is the only LIMITed statement.
 _HEALTH_TOTALS_SQL = f"""
     -- omega-aggregate: operations.pipeline_health.totals
     SELECT COUNT(*) FILTER (WHERE status = 'failed'  AND started_at >= $3)::bigint AS failed_24h,
@@ -228,9 +181,6 @@ _HEALTH_TOTALS_SQL = f"""
       ) runs
 """
 
-# Failures aggregated by (cartridge, entity): counts and last failure time only.
-# No run rows and no error_message text (free text from extractors may embed
-# URLs, tokens or record identifiers) ever reach the caller.
 _FAILING_ENTITIES_SQL = {
     PIPELINE_RUNS_TABLE: f"""
         -- omega-aggregate: operations.pipeline_health.failing_entities.pipeline_runs
@@ -346,13 +296,6 @@ async def query_pipeline_health(
     as_of: datetime | None = None,
     failing_entities_top_n: int = RECENT_FAILURES_LIMIT,
 ) -> PipelineHealth:
-    """Failed/successful runs per cartridge in the last 24h and 7d.
-
-    ``totals`` / ``cartridges_count`` / ``cartridges_with_failures_24h`` come
-    from one un-limited aggregate over both run logs; ``cartridges`` (per
-    cartridge) and ``failing_entities`` (per cartridge+entity) are bounded
-    breakdowns.
-    """
     now = as_of_datetime(as_of)
     start_24h = now - timedelta(hours=24)
     start_7d = now - timedelta(days=7)
@@ -429,21 +372,17 @@ async def query_pipeline_health(
     return await run_console_aggregate(user, _compute, _unavailable)
 
 
-# ── O2: data freshness by cartridge ─────────────────────────────────────────
-
-
 @dataclass
 class DataFreshnessByCartridge(AggregateResult):
     as_of: datetime | None = None
     sla_hours: float | None = None
-    sla_source: str | None = None  # param | env | default
+    sla_source: str | None = None
     cartridges: list[dict[str, Any]] = field(default_factory=list)
     cartridges_count: int | None = None
     exceeding_sla: int | None = None
 
 
 def resolve_sla_hours(sla_hours: float | None) -> tuple[float, str]:
-    """Explicit parameter > OPERATIONS_FRESHNESS_SLA_HOURS env > default 24h."""
     if sla_hours is not None:
         try:
             value = float(sla_hours)
@@ -463,7 +402,6 @@ def resolve_sla_hours(sla_hours: float | None) -> tuple[float, str]:
 
 
 def _freshness_sql(table: str) -> str:
-    """Per-cartridge breakdown, stalest first, bounded by MAX_GROUP_ROWS."""
     return f"""
         -- omega-aggregate: operations.data_freshness.{table}
         SELECT cartridge_id,
@@ -478,8 +416,6 @@ def _freshness_sql(table: str) -> str:
     """
 
 
-# Un-limited totals: how many cartridges have a visible success and how many of
-# them are older than the SLA threshold ($3 = as_of - sla_hours).
 _FRESHNESS_TOTALS_SQL = f"""
     -- omega-aggregate: operations.data_freshness.totals
     SELECT COUNT(*)::bigint AS cartridges_count,
@@ -504,7 +440,6 @@ async def query_data_freshness_by_cartridge(
     sla_hours: float | None = None,
     as_of: datetime | None = None,
 ) -> DataFreshnessByCartridge:
-    """Hours since the last successful run per cartridge vs an SLA threshold."""
     now = as_of_datetime(as_of)
     sla_value, sla_source = resolve_sla_hours(sla_hours)
     base = {
@@ -595,12 +530,9 @@ async def query_data_freshness_by_cartridge(
     return await run_console_aggregate(user, _compute, _unavailable)
 
 
-# ── O3: absence rate (company level, by type) ───────────────────────────────
-
-
 @dataclass
 class AbsenceRateCompanyByType(AggregateResult):
-    period: date | None = None  # last closed month with data (first day)
+    period: date | None = None
     working_days: int | None = None
     headcount: int | None = None
     total_days_workable: float | None = None
@@ -615,7 +547,6 @@ async def query_absence_rate_company_by_type(
     top_n: int = 20,
     as_of: date | None = None,
 ) -> AbsenceRateCompanyByType:
-    """Absence workable days for the last closed month, by type, over headcount."""
     top_n = clamp_top_n(top_n, default=20)
     current_month = month_start(as_of_date(as_of))
     base = {"proxy_note": ABSENCE_RATE_PROXY_NOTE}
@@ -741,7 +672,7 @@ async def query_absence_rate_company_by_type(
                 }
             )
         status = status_for(absence)
-        if not headcount:  # missing relation, missing column or zero rows
+        if not headcount:
             status = STATUS_DEGRADED
         return AbsenceRateCompanyByType(
             status=status,

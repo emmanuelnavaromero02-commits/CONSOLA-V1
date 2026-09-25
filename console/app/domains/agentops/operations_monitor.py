@@ -1,20 +1,3 @@
-"""Operations AgentOps monitor contract (Enlace Operativo).
-
-Watches the three Mission 1 Operations aggregates through the Mission 2 view
-``control_room__operations_kpis_read``: pipeline health, data freshness by
-cartridge, and the company-level absence rate by type.
-
-Two of those three read the console operational database (``pipeline_runs`` and
-``extraction_runs``) rather than the Gold lakehouse, because run logs are not
-published datasets. That is why this monitor is the one whose signals can be
-about OMEGA itself rather than about a customer's business.
-
-Unlike Finance and Risk, this monitor does NOT get ``market_context_read``:
-extraction failures, freshness and absence days do not move with FX, rates or
-macro conditions, and granting a tool a monitor has no honest use for only widens
-its surface.
-"""
-
 from __future__ import annotations
 
 from typing import Any
@@ -30,8 +13,6 @@ OPERATIONS_MONITOR_CARTRIDGE = "salesforce"
 OPERATIONS_MONITOR_SLUG = "salesforce_ops_liaison_monitor"
 OPERATIONS_WISDOM_BIT_ID = "WB-OPERACION"
 
-# Real Mission 1 limitations this monitor must not rediscover on every run.
-# Business-language keys, not <dataset>.<column> pairs: see finance_monitor.
 OPERATIONS_MEMORY_SUBJECTS = (
     "umbral_de_frescura_de_datos",
     "ausentismo_por_unidad_organizativa",
@@ -79,8 +60,6 @@ OPERATIONS_MONITOR_SPEC = DomainMonitorSpec(
         "en Control Room."
     ),
     instructions=OPERATIONS_INSTRUCTIONS,
-    # Reused verbatim from the conversational Enlace Operativo seed
-    # (infra/init/94_salesforce_seed.sql).
     personality=(
         "Puente entre ventas y operaciones. Alerta clara de meses en sobrecarga "
         "con magnitud. Idioma del usuario."
@@ -98,8 +77,6 @@ OPERATIONS_MONITOR_SPEC = DomainMonitorSpec(
         "intervencion con seguimiento supervisado."
     ),
     risk_metric="pipeline_failure_rate_delta",
-    # Enlace Operativo is the only agent that crosses two cartridges; its
-    # rag_filter keeps both, matching the conversational seed.
     rag_cartridges=("salesforce", "replicon"),
     uses_market_context=False,
     memory_subjects=OPERATIONS_MEMORY_SUBJECTS,
@@ -107,7 +84,6 @@ OPERATIONS_MONITOR_SPEC = DomainMonitorSpec(
 
 
 def operations_monitor_contract() -> tuple[list[str], dict[str, Any], dict[str, Any]]:
-    """``(allowed_tools, rag_filter, extra)`` for the Operations monitor."""
     return build_contract(OPERATIONS_MONITOR_SPEC)
 
 

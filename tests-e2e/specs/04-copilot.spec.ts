@@ -1,10 +1,3 @@
-/**
- * Next.js /copilot.
- *
- * /copilot now ships as the ChatLayout-backed copilot workspace.
- * These tests are active regression coverage for the page shell,
- * message region, input, and conversation history sidebar.
- */
 import { test, expect } from "../fixtures/auth";
 
 test.describe("Copilot page (Next.js, /copilot)", () => {
@@ -19,8 +12,6 @@ test.describe("Copilot page (Next.js, /copilot)", () => {
 
   test("renders a message list region", async ({ authedPage: page }) => {
     await page.goto("/copilot");
-    // The chat surface uses role=log or an explicit aria-label per
-    // the v1.44.4 brief — either is acceptable.
     const messageRegion = page.locator(
       '[role="log"], [aria-label*="mensajes" i], [data-testid="chat-messages"]',
     );

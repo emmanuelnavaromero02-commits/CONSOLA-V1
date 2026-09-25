@@ -5,8 +5,6 @@ connector:
   description: Official Banxico SIE Bronze ingestion for allowlisted macro series.
   auth:
     type: bmx_token
-    # Local/development fallback only. Production must resolve this token
-    # from Console Vault via conn_id and must not use process env.
     env_var: BANXICO_API_TOKEN
     header: Bmx-Token
   api:

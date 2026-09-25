@@ -1,19 +1,3 @@
-"""
-Console-style endpoint aliases.
-
-Clean RESTful routes for the MODecissions console UI. They thin-wrap the
-existing service functions used by ``/skills/*`` — no logic is duplicated.
-
-Authentication:
-    All routes require ``X-Internal-Api-Key`` via ``Depends(verify_api_key)``.
-
-Errors:
-    * missing/invalid key       → 401
-    * unknown entity            → 404
-    * SAP / Postgres / MinIO not configured → 503 with
-      ``{status:"degraded", configured:false, missing:[...], components:[...]}``
-    * unexpected SAP / runtime  → 503 with the underlying error message
-"""
 from __future__ import annotations
 
 import anyio
@@ -118,8 +102,6 @@ def _header_security_context(request: Request) -> str | None:
     return value.strip() or None
 
 
-# ── Catalogue ────────────────────────────────────────────────────────────────
-
 @router.get("/entities")
 def entities() -> dict:
     """List every configured entity for this cartridge."""
@@ -187,8 +169,6 @@ def foundation_metadata_readiness_probe(
     )
 
 
-# ── Preview ──────────────────────────────────────────────────────────────────
-
 @router.get("/entities/{entity_id}/preview")
 def entity_preview(
     entity_id: str,
@@ -202,7 +182,7 @@ def entity_preview(
     _get_entity_or_404(entity_id)
 
     try:
-        from app.mcp_server import preview as _preview_tool  # FastMCP @tool
+        from app.mcp_server import preview as _preview_tool
     except Exception:                                          # noqa: BLE001
         return _degraded_503({
             "status": "degraded",
@@ -216,8 +196,6 @@ def entity_preview(
             "error": "preview_failed",
         })
 
-
-# ── Extract ──────────────────────────────────────────────────────────────────
 
 @router.post("/entities/{entity_id}/extract")
 def entity_extract(
@@ -393,8 +371,6 @@ def extract_all(
         "gold_refresh": gold_refresh,
     }
 
-
-# ── Observability ────────────────────────────────────────────────────────────
 
 @router.get("/runs")
 def runs(entity: str | None = None) -> dict:

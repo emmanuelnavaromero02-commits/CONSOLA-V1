@@ -1,12 +1,3 @@
-"""Sprint v1.44.2 (Tarea H) — copilot drafts (intelligent writing).
-
-Surface for the upcoming "Redact a follow-up email" feature. This
-session ships the durable CRUD layer; the LLM generation path is
-the next-session integration in copilot_service.
-
-Lifecycle: draft → sent | discarded | failed. Sending happens through
-the SMTP-backed delivery service in app.services.draft_sender.
-"""
 from __future__ import annotations
 
 import json
@@ -19,17 +10,10 @@ from app.services.csrf import require_csrf
 from app.services.db_scope import scoped_db_for_user
 from app.services.permissions import require_permission
 
-# v1.44.3 (Tarea D): real LLM client for draft generation. The
-# llm_client.chat() signature expects a tool-using loop, but for
-# drafts we want a single-shot text completion. We import the
-# provider-routed entry point and adapt below.
 from app.services import llm_client
 
 
 def _validate_uuid(value: str, *, label: str) -> str:
-    """v1.44.2 (R1 Security P2): early UUID validation so a malformed
-    path param surfaces as a clean 400 instead of a 500 from
-    asyncpg's InvalidTextRepresentation."""
     try:
         return str(uuid.UUID(value))
     except (ValueError, AttributeError, TypeError):
@@ -49,17 +33,11 @@ _MAX_BODY_LEN = 50_000
 
 
 def _normalise_kind(kind: object) -> str:
-    """Accept the legacy UI's "message" label as a memo-style draft.
-
-    The public contract remains email/memo/note/report; this shim only keeps
-    the older static Copilot form from failing with an opaque validation error.
-    """
     raw = str(kind or "").strip().lower()
     return "memo" if raw == "message" else raw
 
 
 def _serialize(row: dict) -> dict:
-    """Render an asyncpg Record-as-dict into JSON-friendly shape."""
     out = dict(row)
     out["id"] = str(out["id"])
     if "metadata" in out and isinstance(out["metadata"], str):
@@ -193,9 +171,6 @@ async def send_draft(
     return await draft_sender.send_draft(draft_id, user)
 
 
-# ── v1.44.3 (Tarea D): LLM-backed draft generation ─────────────────────
-
-
 _DRAFT_PROMPTS = {
     "email": (
         "Eres un asistente que redacta emails profesionales. Genera "
@@ -222,16 +197,6 @@ _DRAFT_PROMPTS = {
 def _build_draft_prompt(*, kind: str, tone: str,
                         about: str, audience: str | None,
                         user_facts: list[str]) -> str:
-    """Compose the user-side message that the LLM gets. The system
-    prompt comes from _DRAFT_PROMPTS[kind].format(tone=tone); this
-    helper produces the user turn that asks for the actual content.
-
-    Memory injection: up to 5 user facts are prepended so the LLM
-    can match the user's voice / company context. Facts are
-    explicitly *appended* to the user message (not the system
-    prompt) so the LLM treats them as situational context, not
-    as immutable rules.
-    """
     parts: list[str] = []
     if user_facts:
         parts.append("Contexto sobre el remitente:")
@@ -247,19 +212,7 @@ def _build_draft_prompt(*, kind: str, tone: str,
 
 
 async def _llm_single_shot(system: str, user_message: str, user_context: dict | None = None) -> str:
-    """Adapt llm_client.chat (which is built for tool-using turns)
-    into a single-shot completion. We pass an empty tools list, a
-    no-op invoke_tool callable, and an empty server_map. The
-    response is the assistant's plain-text reply.
-
-    Note: real LLM call. Tests stub this function via monkeypatch
-    so CI doesn't burn API tokens — see
-    tests/test_v1443_llm_integration.py.
-    """
     async def _noop_invoke(*args: object, **kw: object) -> dict:
-        # Drafts don't use tools — but the chat signature requires
-        # a callable. Returning an empty result is safe because
-        # we pass tools=[] so the LLM never invokes anything.
         return {}
 
     reply, _viewer_urls, _final_msgs = await llm_client.chat(
@@ -310,10 +263,6 @@ async def generate_draft(
     if not isinstance(metadata, dict):
         raise HTTPException(400, "metadata must be an object")
 
-    # Memory context — up to 5 most recent facts feed the LLM as
-    # situational context. Failure is non-fatal: we'd rather generate
-    # a less-personalised draft than refuse the request because
-    # memory failed.
     try:
         facts = await memory_service._fetch_facts(user["id"], limit=5, user_context=user)
     except Exception:                              # noqa: BLE001
@@ -329,10 +278,6 @@ async def generate_draft(
     try:
         generated = await _llm_single_shot(system_prompt, user_message, user_context=user)
     except Exception as exc:                       # noqa: BLE001
-        # The LLM provider can return a wide range of errors. We
-        # surface a generic 502 to the client so SDK error strings
-        # (which sometimes echo Authorization headers / API keys)
-        # can't leak through.
         import logging
         logging.getLogger(__name__).exception("draft LLM call failed")
         raise HTTPException(502, "draft generation failed") from exc
@@ -342,7 +287,6 @@ async def generate_draft(
     if len(generated) > _MAX_BODY_LEN:
         generated = generated[:_MAX_BODY_LEN].rstrip()
 
-    # Persist via the same table as the manual POST /drafts.
     enriched_metadata = {
         **metadata,
         "about":     about[:500],

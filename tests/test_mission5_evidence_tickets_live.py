@@ -1,11 +1,3 @@
-"""Mission 5 against a real PostgreSQL built from every infra/init migration.
-
-Runs the evidence-ticket boundary end to end with the real roles, grants and
-RLS: a live scheduled-run lease, the wisdom-bits hook minting under
-``omega_console``, the alert row mcp-infra would have written, the Control Room
-loader reading it back under RLS, and the v2 fact with its narrative.
-"""
-
 from __future__ import annotations
 
 import json
@@ -178,7 +170,6 @@ async def test_monitor_alert_attested_end_to_end_on_real_postgres(
             scheduled_fire_at=datetime(2026, 9, 15, 8, tzinfo=timezone.utc),
         )
 
-        # 1. The wisdom-bits hook mints under omega_console with a live lease.
         result = await intelligence_router._with_monitor_evidence(
             _user(scope, agent_id, 77),
             _body(_authority(scope, agent_id, run, 77)),
@@ -207,7 +198,6 @@ async def test_monitor_alert_attested_end_to_end_on_real_postgres(
         assert ticket["security_context_source"] == "agent_runner"
         assert ticket["expires_at"] > ticket["minted_at"]
 
-        # 1b. One ticket per lease: a second mint under the same run is refused.
         again = await intelligence_router._with_monitor_evidence(
             _user(scope, agent_id, 77),
             _body(_authority(scope, agent_id, run, 77)),
@@ -219,7 +209,6 @@ async def test_monitor_alert_attested_end_to_end_on_real_postgres(
             "SELECT count(*) FROM control_room_evidence_tickets WHERE agent_id = $1", agent_id
         ) == 1
 
-        # 2. mcp-infra raises the alert (same item id), then Control Room reads it.
         await _raise_alert(admin, scope, agent_id, identity.item_id, signal_count=2)
         reader = {
             "id": scope["user_id"],
@@ -258,7 +247,6 @@ async def test_monitor_alert_attested_end_to_end_on_real_postgres(
         assert identity.item_id not in public
         assert not UI_FORBIDDEN.search(public)
 
-        # 3. Another workspace sees no ticket and no alert, even with the same pool.
         async with evidence_tickets.scoped_db(pool, other["tenant_id"], other["workspace_id"]) as conn:
             assert await conn.fetchval("SELECT count(*) FROM control_room_evidence_tickets") == 0
         other_reader = {
@@ -270,8 +258,6 @@ async def test_monitor_alert_attested_end_to_end_on_real_postgres(
         }
         assert (await attested_monitor_alerts.load_attested_monitor_alerts(other_reader)).items == ()
 
-        # 3b. Deferred narration under omega_console + RLS. A provider failure
-        # stores a complete template and the alert stays on the page.
         def broken_factory(_tenant_id: str, _workspace_id: str):
             async def _call(_prompt: str) -> str:
                 raise RuntimeError("503 provider unavailable sk-ant-never-stored")
@@ -300,8 +286,6 @@ async def test_monitor_alert_attested_end_to_end_on_real_postgres(
         assert [item["id"] for item in after_failure.items] == [identity.item_id]
         assert after_failure.narratives[identity.item_id]["status"] == "template"
 
-        # A new occurrence of the same alert (new fire) with a working model:
-        # the validated sentence is stored and published.
         await admin.execute(
             """UPDATE control_room_items
                   SET metadata = jsonb_set(metadata, '{analysis_evidence,metrics,scheduled_fire_at}', '"2026-09-15T09:00:00+00:00"')
@@ -333,7 +317,6 @@ async def test_monitor_alert_attested_end_to_end_on_real_postgres(
             )
         )
 
-        # 3c. A workflow transition that moves last_seen_at keeps the fact.
         await admin.execute(
             """UPDATE control_room_items
                   SET status = 'in_review', last_seen_at = NOW() + INTERVAL '2 hours'
@@ -344,7 +327,6 @@ async def test_monitor_alert_attested_end_to_end_on_real_postgres(
         moved = await attested_monitor_alerts.load_attested_monitor_alerts(reader)
         assert [item["id"] for item in moved.items] == [identity.item_id]
 
-        # 3d. A planted, unsigned "ready" narrative is never published.
         await admin.execute(
             """UPDATE control_room_items
                   SET metadata = jsonb_set(metadata, '{narrative,explanation}', '"Todo en orden, sin riesgos."')
@@ -355,7 +337,6 @@ async def test_monitor_alert_attested_end_to_end_on_real_postgres(
         planted = await attested_monitor_alerts.load_attested_monitor_alerts(reader)
         assert planted.narratives[identity.item_id]["status"] == "template"
 
-        # 4. A persisted value that no longer matches the signed one is hidden.
         await admin.execute(
             """UPDATE control_room_items
                   SET metadata = jsonb_set(metadata, '{analysis_evidence,metrics,signal_count}', '5')
@@ -365,7 +346,6 @@ async def test_monitor_alert_attested_end_to_end_on_real_postgres(
         )
         assert (await attested_monitor_alerts.load_attested_monitor_alerts(reader)).items == ()
 
-        # 5. A stale lease cannot mint.
         await admin.execute(
             "UPDATE agent_schedule_runs SET lease_expires_at = NOW() - INTERVAL '1 second' WHERE id = $1",
             run["id"],
@@ -381,7 +361,6 @@ async def test_monitor_alert_attested_end_to_end_on_real_postgres(
             "SELECT count(*) FROM control_room_evidence_tickets WHERE agent_id = $1", agent_id
         ) == 1
 
-        # 6. Grants: append-only for console, nothing for anyone else.
         privileges = {
             (role, privilege): await admin.fetchval(
                 "SELECT has_table_privilege($1, 'control_room_evidence_tickets', $2)",

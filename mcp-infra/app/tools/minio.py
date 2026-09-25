@@ -1,7 +1,3 @@
-"""
-MinIO MCP tools — browse the lakehouse, inspect Parquet schemas, upload specs.
-"""
-
 from __future__ import annotations
 
 import io

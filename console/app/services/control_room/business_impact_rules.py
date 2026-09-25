@@ -51,8 +51,6 @@ def calculate_item_impact(
             item=item,
             estimate=stored,
             status="ok",
-            # F11: absent confidence stays absent — never a fabricated 0.6.
-            # The declared per-rule constants below are real, this one is not.
             confidence=number(item.get("confidence")),
             drivers=[
                 {

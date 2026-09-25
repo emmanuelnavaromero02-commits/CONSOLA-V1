@@ -1,15 +1,3 @@
-"""Fase 6 — the Employee Central deterministic anomaly signal must actually
-materialize and reach the Control Room, and the WB-TALENTO action methods must
-name what they really are.
-
-Two gaps this pins:
-  (1) sap_successfactors_employees_anomalies was orphaned from the materialization
-      order and had no fallback, so the "empleado activo sin manager/departamento/
-      job invalido" signal never lit up and hard-errored on missing dependencies.
-  (2) talent_action_candidates labelled SQL COUNT heuristics as method='permutation'
-      and method='assignment' — claiming a rigor (permutation test / assignment
-      optimizer) the code does not run.
-"""
 from __future__ import annotations
 
 import json
@@ -46,22 +34,15 @@ def _orders() -> dict:
     return json.loads(ORDERS.read_text(encoding="utf-8"))
 
 
-# ── (1) the anomaly dataset is now materializable + degrades honestly ────────
-
 def test_employees_anomalies_is_in_the_foundation_sweep():
-    """It only depends on employee_360 (foundation gold) + fojobcode silver, so
-    it belongs to the foundation order — otherwise the sweep never builds it."""
     foundation = _orders()["foundation_order"]
     assert _ANOMALIES in foundation, (
         "employees_anomalies must be in foundation_order so it materializes"
     )
-    # employee_360 is its dependency and must be materialized first.
     assert foundation.index("sap_successfactors_employee_360") < foundation.index(_ANOMALIES)
 
 
 def test_employees_anomalies_degrades_to_empty_not_error():
-    """A missing dependency must degrade to an empty result with the exact
-    columns, never a hard error (an empty anomaly set is a HEALTHY state)."""
     fallback = fallback_dataset_for_successfactors(
         {"name": _ANOMALIES, "layer": "gold"},
         RuntimeError("No files found that match read_parquet source"),
@@ -75,12 +56,8 @@ def test_employees_anomalies_degrades_to_empty_not_error():
 
 
 def test_empty_anomalies_never_escalates_as_a_foundation_error():
-    """employees_anomalies must NOT be a foundation fallback: an empty result is
-    healthy and must never trip the strict foundation-empty error path."""
     assert _ANOMALIES not in FOUNDATION_GOLD_FALLBACK_SQL
 
-
-# ── (2) the WB-TALENTO action methods name what they really are ──────────────
 
 def test_action_candidate_methods_do_not_claim_false_rigor():
     for src in (ACTION_CANDIDATES_SQL.read_text(encoding="utf-8"),

@@ -36,12 +36,6 @@ def _is_forbidden_character(character: str) -> bool:
 
 
 def business_label(value: object) -> str | None:
-    """Return a displayable business label without manufacturing one.
-
-    NFKC and surrounding whitespace are presentation normalization only. Any
-    Unicode control/default-ignorable in either the source or normalized form
-    rejects the complete observation; forbidden characters are never removed.
-    """
 
     if not isinstance(value, str) or any(map(_is_forbidden_character, value)):
         return None

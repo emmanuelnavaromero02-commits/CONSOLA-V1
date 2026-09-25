@@ -1,5 +1,3 @@
-"""Executable regression for invalid score propagation through Talent Gold."""
-
 from __future__ import annotations
 
 from pathlib import Path

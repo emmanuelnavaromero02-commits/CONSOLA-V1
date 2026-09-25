@@ -17,8 +17,6 @@ KBS_PATH = BASE_DIR / "config" / "knowledge_bits.yaml"
 CARTRIDGE_ID = "salesforce"
 logger = logging.getLogger(__name__)
 
-# Cartridge header metadata — used to UPSERT the `cartridges` row on startup so
-# Studio's "Fuente de datos" dropdown lists this cartridge alongside Replicon.
 CARTRIDGE_META = {
     "name":        "Salesforce",
     "version":     "1.0.0",
@@ -40,8 +38,6 @@ def _get_engine():
         _engine = create_engine(settings.database_url, future=True)
     return _engine
 
-
-# ── YAML fallbacks ────────────────────────────────────────────────────────────
 
 def _yaml_entities() -> list[dict[str, Any]]:
     if not ENTITIES_PATH.exists():
@@ -70,21 +66,14 @@ def _merge_yaml_runtime_fields(row: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
-# ── Seed on startup ───────────────────────────────────────────────────────────
-
 def _dag_id_for_entity(entity: dict[str, Any]) -> str:
     return entity.get("dag_id") or f"{CARTRIDGE_ID}_extract"
 
 
 def _seed_if_empty() -> None:
-    """Top-up entity_config from YAML on every startup (entities missing from the
-    DB get inserted; existing rows are preserved via ON CONFLICT DO NOTHING) so
-    partial catalog states self-heal. Also upserts the cartridge header so Studio's
-    dropdown picks it up, and seeds kb_config when empty."""
     try:
         engine = _get_engine()
         with engine.begin() as conn:
-            # Ensure the cartridge header exists (Studio dropdown reads this).
             conn.execute(text("""
                 INSERT INTO cartridges (id, name, version, description, pattern, category, bronze_path)
                 VALUES (:cid, :name, :version, :description, :pattern, :category, :bronze_path)
@@ -98,10 +87,6 @@ def _seed_if_empty() -> None:
                         updated_at  = NOW()
             """), {"cid": CARTRIDGE_ID, **CARTRIDGE_META})
 
-            # Top-up entity_config from YAML on every startup so partial DB states
-            # self-heal (entities missing from the DB get inserted). ON CONFLICT
-            # DO NOTHING preserves any existing row, so admin edits and
-            # migration-set fields (odata_entity, primary_key) are never clobbered.
             for e in _yaml_entities():
                 conn.execute(text("""
                     INSERT INTO entity_config (
@@ -161,8 +146,6 @@ def _seed_if_empty() -> None:
         logger.exception("Failed to seed Salesforce catalog from YAML")
         raise
 
-
-# ── Public API ────────────────────────────────────────────────────────────────
 
 def get_all_entities() -> list[dict[str, Any]]:
     try:

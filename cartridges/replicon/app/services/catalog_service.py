@@ -32,9 +32,6 @@ def _get_engine():
     return _engine
 
 
-# ── YAML fallbacks ────────────────────────────────────────────────────────────
-
-
 def _yaml_entities() -> list[dict[str, Any]]:
     if not ENTITIES_PATH.exists():
         return []
@@ -67,11 +64,7 @@ def _yaml_kbs() -> list[dict[str, Any]]:
     return definitions
 
 
-# ── Seed on startup ───────────────────────────────────────────────────────────
-
-
 def _seed_if_empty() -> None:
-    """If entity_config has no rows for this cartridge, import from YAML."""
     try:
         engine = _get_engine()
         with engine.begin() as conn:
@@ -113,9 +106,6 @@ def _seed_if_empty() -> None:
             reconcile_packaged_kbs(conn, _yaml_kbs(), CARTRIDGE_ID)
     except Exception as exc:
         logger.warning("Replicon catalog reconciliation unavailable: %s", exc)
-
-
-# ── Public API ────────────────────────────────────────────────────────────────
 
 
 def get_all_entities() -> list[dict[str, Any]]:

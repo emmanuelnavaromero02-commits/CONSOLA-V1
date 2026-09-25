@@ -1,13 +1,3 @@
-"""
-sap_successfactors_extract DAG
-==============================
-Extrae UNA entidad llamando directo a SuccessFactors OData.
-
-El DAG no llama al contenedor sap-successfactors. Carga la configuracion de la
-entidad, exige una conexion Vault explicita, ejecuta el cliente OData local del
-cartucho como libreria y publica Bronze/telemetria desde Airflow.
-"""
-
 from __future__ import annotations
 
 import asyncio

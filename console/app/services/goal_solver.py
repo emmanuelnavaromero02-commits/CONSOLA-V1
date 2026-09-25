@@ -1,27 +1,3 @@
-"""Sprint v1.45 — copilot goal solver (Nivel 1).
-
-The copilot today answers questions. The goal solver lifts that into
-"resolve a business objective end-to-end":
-
-  user: "fix the margin this quarter"
-    → create_goal(...) writes a copilot_goals row
-    → diagnose_goal() asks the LLM to (a) classify the objective,
-      (b) propose 1-N specific sub-objectives, (c) estimate $ impact
-    → for each sub-objective the solver picks the right watchdog
-      (via watchdog_registry.relevant_watchdogs) and either invokes
-      its agent or hands the catalog to the workflow planner
-      (copilot_workflows.plan + execute_workflow), preserving the
-      existing approval gate.
-    → conclude_goal() collects the workflow outcomes and asks the LLM
-      for a one-paragraph executive summary that lands in
-      copilot_goals.outcome_summary, then records any actionable
-      decisions as lessons via lessons_service.
-
-The solver never bypasses the approval gate: destructive steps land
-in workflow_steps with status=pending and require human approval
-before execution. The goal stays in status=awaiting_approval until
-the user resolves the step.
-"""
 from __future__ import annotations
 
 import json
@@ -76,9 +52,6 @@ DIAGNOSE_SYSTEM_PROMPT = (
 )
 
 
-# ── Existence guards ──────────────────────────────────────────────────
-
-
 async def _has_table() -> bool:
     pool = await auth.pool()
     return await has_table_cached(pool, "copilot_goals")
@@ -86,7 +59,6 @@ async def _has_table() -> bool:
 
 @asynccontextmanager
 async def _goal_db(pool: Any, tenant_id: str | None, workspace_id: str | None):
-    """Yield a DB handle scoped for copilot_goals RLS when possible."""
 
     workspace_uuid = _coerce_uuid_or_none(workspace_id)
     if workspace_uuid:
@@ -94,9 +66,6 @@ async def _goal_db(pool: Any, tenant_id: str | None, workspace_id: str | None):
             yield conn, workspace_uuid
         return
     yield pool, None
-
-
-# ── Goal CRUD ─────────────────────────────────────────────────────────
 
 
 async def create_goal(
@@ -113,9 +82,6 @@ async def create_goal(
     if not goal_text:
         return None
     goal_text = goal_text[:_MAX_GOAL_TEXT]
-    # Defensive: an empty string or a non-UUID would crash $3::uuid
-    # at insert time. Coerce here so the bad input becomes NULL
-    # instead of a 500 from asyncpg.
     conversation_id_uuid = _coerce_uuid_or_none(conversation_id)
     pool = await auth.pool()
     async with _goal_db(pool, tenant_id, workspace_id) as (conn, workspace_id_uuid):
@@ -144,8 +110,6 @@ async def get_goal(
     if goal_uuid is None:
         return None
     pool = await auth.pool()
-    # Cast the parameter to uuid so we hit the PK index instead of
-    # forcing a sequential scan with a per-row id::text cast.
     async with _goal_db(pool, tenant_id, workspace_id) as (conn, _workspace_id_uuid):
         row = await conn.fetchrow(
             """
@@ -226,8 +190,6 @@ async def update_goal_status(
     goal_uuid = _coerce_uuid_or_none(goal_id)
     if goal_uuid is None:
         return False
-    # Drop garbage UUIDs in the workflow_ids list before we hit
-    # ``$5::uuid[]`` — one bad string would crash the whole UPDATE.
     safe_workflow_ids = (
         _coerce_uuid_list(workflow_ids) if workflow_ids is not None else None
     )
@@ -262,18 +224,10 @@ async def update_goal_status(
     return res.endswith("UPDATE 1")
 
 
-# ── Diagnosis ─────────────────────────────────────────────────────────
-
-
-_DIAGNOSIS_MAX_LEN = 16 * 1024  # accept up to 16 KB of LLM output
+_DIAGNOSIS_MAX_LEN = 16 * 1024
 
 
 def _extract_json_object(raw: str) -> str | None:
-    """Bracket-matching scan instead of a greedy ``r"\\{.*\\}"`` regex:
-    finds the first balanced ``{...}`` substring without the catastrophic-
-    backtracking risk of running ``re.search(..., DOTALL)`` against a
-    multi-kilobyte LLM response. Returns the substring or None.
-    """
     if not raw:
         return None
     in_string = False
@@ -305,34 +259,18 @@ def _extract_json_object(raw: str) -> str | None:
 
 
 def parse_diagnosis(raw: str) -> dict[str, Any]:
-    """Tolerant JSON parser. Strips prose preamble, fixes the common
-    trailing-comma corruption, then validates the shape. Raises
-    ``ValueError`` if the result is not a usable diagnosis.
-
-    Uses a bracket-matching scan rather than a greedy DOTALL regex so a
-    malformed multi-kilobyte LLM reply can't cause catastrophic backtrack-
-    ing in the request hot path.
-    """
     if not raw:
         raise ValueError("empty diagnosis payload")
     if len(raw) > _DIAGNOSIS_MAX_LEN:
-        # Cap the input we scan: any usable plan is well under 16 KB.
         raw = raw[:_DIAGNOSIS_MAX_LEN]
     txt = _extract_json_object(raw)
     if txt is None:
         raise ValueError("no JSON object found in diagnosis")
     txt = txt.strip()
-    # Trailing comma before } or ] — this regex is linear (no `.*`).
     txt = re.sub(r",\s*([\]}])", r"\1", txt)
     try:
         data = json.loads(txt)
     except json.JSONDecodeError:
-        # Audit-round-4 retry: some LLMs (or operators copy-pasting
-        # from a Python REPL) drift into Python-flavoured JSON with
-        # ``True``/``False``/``None`` outside of strings. We only run
-        # the substitution after a strict parse has already failed,
-        # so a legitimate ``"True positive"`` inside a JSON string
-        # in a well-formed payload is left untouched.
         retry_txt = re.sub(r"\bTrue\b",  "true",  txt)
         retry_txt = re.sub(r"\bFalse\b", "false", retry_txt)
         retry_txt = re.sub(r"\bNone\b",  "null",  retry_txt)
@@ -344,7 +282,6 @@ def parse_diagnosis(raw: str) -> dict[str, Any]:
         raise ValueError("diagnosis must be a JSON object")
     if "subgoals" not in data or not isinstance(data["subgoals"], list):
         raise ValueError("diagnosis.subgoals must be a list")
-    # Trim & normalise.
     data["classification"] = str(
         data.get("classification") or "exploration"
     )[:32].lower()
@@ -409,13 +346,6 @@ async def diagnose_goal(
     workspace_id: str | None = None,
     llm_call,
 ) -> dict[str, Any]:
-    """Ask the LLM to decompose the goal. ``llm_call`` matches
-    ``memory_service.LLMTextCall`` — ``(system, messages) -> str``.
-
-    Persists the resulting plan_summary and impact_estimate. Returns
-    the parsed diagnosis dict (which the caller can use to pick
-    watchdogs / plan workflows).
-    """
     goal = await get_goal(
         goal_id=goal_id,
         user_id=user_id,
@@ -425,8 +355,6 @@ async def diagnose_goal(
     if not goal:
         raise ValueError("goal not found")
     if goal["status"] not in ("planning", "running"):
-        # Already moved on; return the persisted plan_summary as a
-        # degenerate diagnosis so the caller doesn't re-plan.
         return {
             "classification": "exploration",
             "plan_summary": goal.get("plan_summary") or "",
@@ -461,25 +389,9 @@ async def diagnose_goal(
     return diagnosis
 
 
-# ── Watchdog routing ──────────────────────────────────────────────────
-
-
 async def pick_watchdogs_for_diagnosis(
     diagnosis: dict[str, Any], *, limit_per_subgoal: int = 2,
 ) -> list[dict[str, Any]]:
-    """For each subgoal, find the most relevant watchdog(s) by
-    combining the subgoal description with the intent_keywords.
-    Returns a flat list of ``{subgoal, watchdog}`` pairs.
-
-    Concurrency note: a goal has ≤4 subgoals × ≤6 cartridges, so the
-    worst-case is ~24 ``relevant_watchdogs`` calls. They're cheap (the
-    registry has a 60s TTL list cache so most lookups don't even hit
-    Postgres), but running them serially still pushed p99 latency past
-    a second under the audit-round-2 stress test. Fan them out with
-    ``asyncio.gather`` and preserve subgoal order in the output —
-    callers (the diagnose endpoint, the briefing-driven launcher) rely
-    on subgoal ordering for the rendered "what we'll do" list.
-    """
     import asyncio
 
     subgoals = diagnosis.get("subgoals", []) or []
@@ -487,9 +399,6 @@ async def pick_watchdogs_for_diagnosis(
     if not subgoals:
         return []
 
-    # Build the (subgoal, cartridge) work-list, preserving order so we
-    # can zip the gather output back without losing the subgoal -> wds
-    # mapping.
     plan: list[tuple[dict[str, Any], str | None]] = []
     for sg in subgoals:
         for cart in sg.get("expected_cartridges") or [None]:
@@ -502,8 +411,6 @@ async def pick_watchdogs_for_diagnosis(
             min_score=0.05, limit=limit_per_subgoal,
         )
 
-    # return_exceptions=True so a single registry hiccup doesn't poison
-    # the whole pick — we drop the failing slot and keep the rest.
     results = await asyncio.gather(
         *(_lookup(sg, cart) for sg, cart in plan),
         return_exceptions=True,
@@ -517,9 +424,6 @@ async def pick_watchdogs_for_diagnosis(
         for wd in result or []:
             pairs.append({"subgoal": sg, "watchdog": wd})
     return pairs
-
-
-# ── Conclusion ────────────────────────────────────────────────────────
 
 
 CONCLUDE_SYSTEM_PROMPT = (
@@ -542,10 +446,6 @@ async def conclude_goal(
     workflow_outcomes: list[dict[str, Any]],
     llm_call,
 ) -> dict[str, Any] | None:
-    """Aggregate workflow outcomes into a single executive summary,
-    persist it, and record one lesson per approved destructive step
-    so the next turn benefits from this history.
-    """
     goal = await get_goal(
         goal_id=goal_id,
         user_id=user_id,
@@ -577,8 +477,6 @@ async def conclude_goal(
 
     summary = (summary or "").strip()[:_MAX_OUTCOME_SUMMARY]
 
-    # Decide the terminal status: any failed workflow → goal failed;
-    # any awaiting → goal awaiting_approval; else completed.
     statuses = [
         (w.get("status") or "").lower() for w in workflow_outcomes
     ]
@@ -598,8 +496,6 @@ async def conclude_goal(
         workspace_id=workspace_id,
     )
 
-    # Promote each approved destructive step into a lesson so the
-    # next turn knows the user has already greenlit this pattern.
     for w in workflow_outcomes:
         for step in w.get("steps") or []:
             if step.get("status") != "completed":

@@ -1,11 +1,3 @@
-"""
-Internal API key resolver.
-
-The key is read on every call so that:
-  * test suites can set the env var before importing the app;
-  * a missing or insecure-default key hard-fails instead of returning a
-    sentinel string that could be submitted back as an API key.
-"""
 from __future__ import annotations
 
 import os
@@ -56,7 +48,6 @@ def _is_valid_internal_request(x_api_key: str | None, x_internal_service: str | 
 
 
 class InternalApiKeyASGIGuard:
-    """ASGI guard for mounted sub-apps that cannot receive FastAPI dependencies."""
 
     def __init__(self, app):
         self.app = app

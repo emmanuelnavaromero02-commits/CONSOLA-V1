@@ -1,12 +1,3 @@
-"""
-AWS Bedrock embeddings (Titan Text Embeddings v2 by default).
-
-Uses the model configured in EMBED_MODEL (default amazon.titan-embed-text-v2:0)
-with output dimensionality EMBED_DIM (Titan v2 supports 256 / 512 / 1024).
-
-boto3 is synchronous, so the public async interface wraps invoke_model calls in
-asyncio.to_thread and keeps the existing embed_documents / embed_query contract.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -37,7 +28,7 @@ _RETRY_DELAY_PATTERNS = [
 
 
 class EmbeddingProviderError(RuntimeError):
-    """Raised when the configured embedding provider cannot be used."""
+    pass
 
 
 def _local_fallback_enabled() -> bool:
@@ -46,7 +37,6 @@ def _local_fallback_enabled() -> bool:
 
 
 def _local_embedding(text: str) -> list[float]:
-    """Deterministic lexical embedding used only when Bedrock is unavailable."""
     dim = max(1, EMBED_DIM)
     vec = [0.0] * dim
     tokens = re.findall(r"[a-z0-9_./:-]+", (text or "").lower())
@@ -179,7 +169,6 @@ async def embed_query(text: str) -> list[float]:
     return await _invoke(text)
 
 
-# Backwards-compatible aliases for older callers.
 async def embed(texts: list[str]) -> list[list[float]]:
     return await embed_documents(texts)
 

@@ -63,13 +63,6 @@ def test_v1_router_aggregate_lists_runtime_router_modules():
 
 
 def test_v1_route_inventory_marks_all_modules_as_legacy_mirrors():
-    """v1 routers are mounted mirrors, not the only production source.
-
-    Product fixes for visible endpoints must land in the live main/router
-    implementation and only then be mirrored here while the v1 aggregate
-    exists. This keeps future fixes from being applied to a dead-looking file
-    that production does not actually serve.
-    """
     assert set(V1_ROUTE_INVENTORY.values()) == {"legacy_mirror"}
 
 

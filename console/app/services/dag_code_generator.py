@@ -1,5 +1,3 @@
-"""Dynamic Airflow DAG code generation for Studio."""
-
 from __future__ import annotations
 
 import ast
@@ -214,7 +212,6 @@ def _connector_kind(
 
 
 def validate_dag_code(code: str) -> dict[str, Any]:
-    """Validate generated DAG code without executing it."""
     if not isinstance(code, str) or not code.strip():
         return {
             "valid": False,
@@ -344,7 +341,6 @@ def generate_validated_dag_code(
     max_attempts: int = 2,
     validation_error: str | None = None,
 ) -> dict[str, Any]:
-    """Generate DAG code and retry with validation context before returning."""
     attempts: list[dict[str, Any]] = []
     result: dict[str, Any] | None = None
     for attempt in range(1, max(1, max_attempts) + 1):
@@ -374,7 +370,6 @@ def generate_dag_code(
     *,
     validation_error: str | None = None,
 ) -> dict[str, Any]:
-    """Generate a ready-to-deploy Airflow DAG from connector metadata."""
     safe_cartridge = _safe_identifier(cartridge_id, "cartridge_id")
     safe_entity = _safe_identifier(entity_name, "entity_name")
     connector = _schema_connector(schema)
@@ -468,7 +463,6 @@ def generate_dag_code(
 
 
 def _repair_generated_code(code: str, validation_error: str) -> str:
-    """Apply deterministic repairs based on validator feedback."""
     error = validation_error.lower()
     if "indentationerror" in error or "unexpected indent" in error:
         return textwrap.dedent(code).lstrip()

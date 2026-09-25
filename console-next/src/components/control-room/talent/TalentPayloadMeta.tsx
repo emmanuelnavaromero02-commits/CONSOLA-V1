@@ -8,8 +8,6 @@ import { cn } from "@/lib/utils";
 import { ReadinessBadge, readinessLabels } from "../StatusBadge";
 import type { ControlRoomStatus } from "../StatusBadge";
 
-// Normaliza estados payload-level del contrato Talent al vocabulario visual del
-// control room. No inventa estados: lo que no se reconoce se reporta como "missing".
 export function normalizeReadinessStatus(status?: string | null): ControlRoomStatus {
   const normalized = String(status || "missing").trim();
   if (
@@ -49,8 +47,6 @@ function formatGeneratedAt(iso: string): string | null {
   return new Intl.DateTimeFormat("es-MX", { dateStyle: "medium", timeStyle: "short" }).format(date);
 }
 
-// Copy honesto por bloqueo: usa el título de negocio que entrega el contrato;
-// si solo llega un status, lo traduce con el vocabulario aprobado (nunca crudo).
 function blockerCopy(blocker: SfTalentBlocker): string {
   if (blocker.title) return blocker.title;
   if (blocker.status) {
@@ -59,13 +55,6 @@ function blockerCopy(blocker: SfTalentBlocker): string {
   return "Bloqueo reportado por la fuente.";
 }
 
-/**
- * Metadatos payload-level que el contrato Talent YA entrega (status, blockers,
- * generated_at). Solo renderiza lo que llega: sin datos, no ocupa espacio.
- * - Badge de status únicamente cuando NO es "ready" (ready se asume implícito).
- * - Blockers como lista de texto de negocio, anunciada con role="status".
- * - "Actualizado:" con <time dateTime> para lectores y tooling.
- */
 export function TalentPayloadMeta({
   status,
   blockers,

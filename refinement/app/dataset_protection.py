@@ -1,15 +1,3 @@
-"""Packaged datasets that carry approval or readiness authority.
-
-A caller holding ``datasets.write`` may load data, but must never be able to
-redefine the datasets that decide whether a benchmark counts as approved:
-rewriting the SQL that emits the ``approval_*`` columns would let it mint its
-own approval. Separation of duties between whoever loads data and whoever
-approves it.
-
-This lives apart from ``dataset_store`` so the tool boundary can enforce it
-even where the store itself is substituted.
-"""
-
 from __future__ import annotations
 
 
@@ -34,16 +22,10 @@ PROTECTED_AUTHORITY_DATASETS = frozenset(
     }
 )
 
-# Packaged SuccessFactors definitions form one server-owned dependency graph.
-# Protecting only its final readiness/action nodes is insufficient: replacing a
-# packaged upstream definition can mint otherwise well-formed scores and flow
-# through every protected downstream node.  Custom datasets remain available
-# under their own namespace.
 SERVER_OWNED_DATASET_PREFIXES = ("sap_successfactors_",)
 
 
 class ProtectedDatasetError(PermissionError):
-    """Raised when a generic writer targets a packaged authority dataset."""
 
     def __init__(self) -> None:
         super().__init__("dataset is server-owned and cannot be replaced")

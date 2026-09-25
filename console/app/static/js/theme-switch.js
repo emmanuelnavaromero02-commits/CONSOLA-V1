@@ -1,13 +1,3 @@
-/**
- * Global dark/light theme switch.
- *   - Reads / writes `mod-theme` in localStorage so the choice survives
- *     refreshes and travels across pages.
- *   - On load, applies `document.documentElement.dataset.theme`.
- *   - Inserts a fixed switch button in the bottom-right corner of every
- *     page that loads this script.
- * The CSS variables for the two themes live in /static/css/main.css
- * (selector: `html[data-theme=light]`).
- */
 (function () {
   const STORAGE_KEY = 'mod-theme';
 
@@ -33,12 +23,10 @@
     catch (_) { return 'light'; }
   }
 
-  // 1. Apply on parse (before paint).
   apply(current());
 
-  // 2. Insert switch when DOM is ready.
   function mount() {
-    if (document.getElementById('mod-theme-switch')) return;  // already there
+    if (document.getElementById('mod-theme-switch')) return;
     const isStudio = window.location.pathname.replace(/\/+$/, '') === '/studio';
     const btn = document.createElement('button');
     btn.id = 'mod-theme-switch';

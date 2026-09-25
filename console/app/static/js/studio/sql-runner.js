@@ -1,4 +1,3 @@
-    // ── SQL Runner ──────────────────────────────────────────────────────────
     import { state } from './legacy-state.js';
     import { esc, _renderQueryTable, _currentEditorEntity } from './legacy.js?v=studio-autopilot-ui5';
 
@@ -75,7 +74,6 @@
       const results = document.getElementById('sql-runner-results');
       if (!ta) return;
 
-      // Selected text or full content
       const sel = ta.selectionStart !== ta.selectionEnd
         ? ta.value.slice(ta.selectionStart, ta.selectionEnd).trim()
         : ta.value.trim();
@@ -118,7 +116,6 @@
       }
     }
 
-    // Hook Ctrl+F5 or Ctrl+Shift+Enter globally to open runner with active textarea
     document.addEventListener('keydown', e => {
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'Enter') {
         e.preventDefault();
@@ -144,7 +141,6 @@
       let sql = '', label = '', sources = [];
 
       if (id === 'ds-ed-sql') {
-        // Silver / Gold / Master dataset editor
         const sel = focused.selectionStart !== focused.selectionEnd
           ? focused.value.slice(focused.selectionStart, focused.selectionEnd).trim()
           : focused.value.trim();

@@ -1,11 +1,3 @@
-"""
-banxico_extract DAG
-===================
-Manual Bronze-only extraction for Banxico SIE.
-
-This PR 2A DAG calls the Banxico cartridge microservice and stops after
-Bronze publication. It intentionally does not trigger downstream refresh.
-"""
 from __future__ import annotations
 
 import json

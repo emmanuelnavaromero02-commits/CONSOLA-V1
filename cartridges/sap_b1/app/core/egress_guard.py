@@ -1,5 +1,3 @@
-"""Fail-closed HTTP(S) transport for cartridge-controlled destinations."""
-
 from __future__ import annotations
 
 import ipaddress
@@ -21,7 +19,7 @@ _SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
 
 
 class EgressGuardError(requests.RequestException):
-    """Raised before dispatch when an outbound destination is unsafe."""
+    pass
 
 
 @dataclass(frozen=True)
@@ -47,7 +45,6 @@ def _blocked_address(address: str) -> bool:
 
 
 def resolve_public_url(url: str, *, label: str = "outbound URL") -> ResolvedTarget:
-    """Resolve once and return the public address that the adapter must use."""
     try:
         parsed = urlsplit(str(url or ""))
         port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
@@ -86,7 +83,6 @@ def resolve_public_url(url: str, *, label: str = "outbound URL") -> ResolvedTarg
 
 
 class PinnedHTTPAdapter(HTTPAdapter):
-    """Connect to the validated IP while retaining Host, TLS SNI and hostname."""
 
     def get_connection_with_tls_context(
         self,
@@ -114,7 +110,6 @@ class PinnedHTTPAdapter(HTTPAdapter):
 
 
 class EgressSession(requests.Session):
-    """A requests-compatible session with pinning and redirect denial."""
 
     def __init__(self, retries: Retry | int | None = None) -> None:
         super().__init__()

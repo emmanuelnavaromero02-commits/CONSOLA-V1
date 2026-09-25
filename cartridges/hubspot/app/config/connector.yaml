@@ -8,14 +8,12 @@ connector:
     pipelines via the HubSpot CRM v3 REST API (cursor-paginated,
     client-side watermark filter for incremental loads).
 
-  # ── Authentication ─────────────────────────────────────────────────────────
   auth:
     type: bearer_token
     env_var: HUBSPOT_API_TOKEN
     header: Authorization
     prefix: "Bearer "
 
-  # ── API configuration ───────────────────────────────────────────────────────
   api:
     base_url_env: HUBSPOT_BASE_URL
     base_url_default: https://api.hubapi.com
@@ -25,7 +23,6 @@ connector:
     pagination: cursor          # paging.next.after
     page_size_default: 100
 
-  # ── Storage ─────────────────────────────────────────────────────────────────
   storage:
     layer: bronze
     format: parquet
@@ -33,7 +30,6 @@ connector:
     path_template: "raw/hubspot/{entity}/tenant_id={tenant_id}/workspace_id={workspace_id}/load_date={load_date}/batch_id={run_id}/"
     bucket_env: MINIO_BUCKET
 
-  # ── Platform runtime contract ──────────────────────────────────────────────
   runtime:
     mode: config_only
     scope_source: signed_security_context
@@ -58,7 +54,6 @@ connector:
       - rag
       - control_room
 
-  # ── Extraction modes ────────────────────────────────────────────────────────
   modes:
     - id: full
       description: Full snapshot — pages the whole object
@@ -67,13 +62,11 @@ connector:
     - id: historical
       description: Date-range filter on date_field between from_date and to_date
 
-  # ── Watermark ───────────────────────────────────────────────────────────────
   watermark:
     storage: postgres          # table: watermarks
     buffer_minutes: 5          # safety overlap before persisting high watermark
     field_format: iso8601      # e.g. 2024-01-15T10:30:00Z
 
-  # ── MCP interface ───────────────────────────────────────────────────────────
   mcp:
     mount_path: /mcp
     transport: streamable_http
@@ -95,7 +88,6 @@ connector:
       - name: query_kb
         description: Run arbitrary DuckDB SQL against HubSpot Bronze/Silver data
 
-  # ── Entities catalogue (summary — full config in entities.yaml) ─────────────
   entities:
     count: 6
     id_field: hubspot_id

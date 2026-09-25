@@ -288,13 +288,11 @@
     </div>
   </div>
 
-  <!-- Tabs -->
   <div class="tab-bar">
     <button class="tab-btn active" id="tab-pipeline">◈ PIPELINE</button>
     <button class="tab-btn tab-dags" id="tab-dags">⚙ DAGS</button>
   </div>
 
-  <!-- ── PIPELINE tab ── -->
   <div id="view-pipeline">
     <div class="stats-bar" id="stats-bar"></div>
     <div class="pipeline-header">
@@ -308,11 +306,9 @@
     </div>
   </div>
 
-  <!-- ── DAGS tab ── -->
   <div id="view-dags" style="display:none">
     <div class="dag-editor-layout">
 
-      <!-- Sidebar: dag list -->
       <div class="dag-sidebar">
         <div class="dag-sidebar-hdr">
           ⚙ DAGS
@@ -322,7 +318,6 @@
         <div id="dag-list">
           <div style="padding:20px;text-align:center;color:var(--text3);font-size:11px">Cargando…</div>
         </div>
-        <!-- Templates section -->
         <div class="dag-sidebar-hdr" id="btn-toggle-templates" style="cursor:pointer;border-top:1px solid var(--border)"
              title="Plantillas de DAG">
           ◈ PLANTILLAS
@@ -333,7 +328,6 @@
         </div>
       </div>
 
-      <!-- Code panel -->
       <div class="dag-code-panel" id="dag-code-panel">
         <div class="dag-empty-state" id="dag-empty-state">
           Selecciona un DAG de la lista
@@ -351,7 +345,6 @@
                style="color:var(--amber);border-color:var(--amber);text-decoration:none"
                title="Ver en Airflow UI">◈ Airflow</a>
           </div>
-          <!-- Editor with line numbers -->
           <div class="dag-editor-wrap" id="dag-editor-wrap">
             <div class="dag-line-numbers" id="dag-line-numbers"></div>
             <textarea id="dag-code-textarea" class="dag-code-textarea" spellcheck="false"

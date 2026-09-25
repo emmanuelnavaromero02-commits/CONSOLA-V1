@@ -1,5 +1,3 @@
-"""Scope-aware helpers shared by public and pre-execution SQL guards."""
-
 from __future__ import annotations
 
 from sqlglot import exp
@@ -12,12 +10,10 @@ _ASCII_FOLD = str.maketrans(_ASCII_UPPER, _ASCII_LOWER)
 
 
 def _duckdb_identifier_key(value: object) -> str:
-    """Match DuckDB's ASCII-only identifier folding without folding Unicode."""
     return str(value).translate(_ASCII_FOLD)
 
 
 def resolved_cte_table_ids(tree: exp.Expression) -> frozenset[int]:
-    """Return table nodes that SQLGlot resolves to a visible CTE scope."""
     resolved: set[int] = set()
     for scope in traverse_scope(tree):
         folded_sources: dict[str, Scope] = {}

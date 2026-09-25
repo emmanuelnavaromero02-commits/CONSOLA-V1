@@ -1,5 +1,3 @@
-"""Correcciones del red-team interno (verificadas y arregladas): escalada
-vertical IAM, leak horizontal IAM, CSRF por Bearer y homógrafos Unicode."""
 from __future__ import annotations
 
 import asyncio
@@ -27,8 +25,6 @@ def _assignable(target, actor_role):
     )
 
 
-# ── IAM vertical: escalada de rango bloqueada ────────────────────────────────
-
 @pytest.mark.parametrize("higher", ["owner", "super_admin"])
 def test_admin_cannot_assign_higher_role(higher):
     with pytest.raises(HTTPException) as e:
@@ -45,8 +41,6 @@ def test_legit_assignments_still_work():
     with pytest.raises(HTTPException):
         _assignable("owner", "super_admin")
 
-
-# ── IAM horizontal: el scope del admin se filtra por rol IAM ─────────────────
 
 def test_iam_admin_workspace_ids_filters_by_role():
     user = {"workspaces": [
@@ -98,7 +92,7 @@ def test_manage_target_blocked_across_workspace_where_only_viewer():
         return {"id": 2, "role": "user"}
 
     async def target_ws(uid):
-        return {"B"}  # el objetivo vive solo en B
+        return {"B"}
 
     with pytest.raises(HTTPException) as e:
         asyncio.run(users_scope.assert_can_manage_target_user(
@@ -112,20 +106,16 @@ def test_manage_target_blocked_across_workspace_where_only_viewer():
     assert e.value.status_code == 403, "admin-solo-viewer-en-B no puede gestionar en B"
 
 
-# ── Unicode: homógrafos rechazados ───────────────────────────────────────────
-
 def test_email_rejects_homoglyphs_zerowidth_and_normalizes():
     assert normalize_email_or_400("Admin@Empresa.COM", email_re=EMAIL_RE) == "admin@empresa.com"
     for bad in (
-        "аdmin@empresa.com",   # 'а' cirílica
-        "ad​min@empresa.com",  # zero-width space
-        "admin@empresa‍.com",  # zero-width joiner en dominio
+        "аdmin@empresa.com",
+        "ad​min@empresa.com",
+        "admin@empresa‍.com",
     ):
         with pytest.raises(HTTPException):
             normalize_email_or_400(bad, email_re=EMAIL_RE)
 
-
-# ── CSRF: exención Bearer solo sin cookie de sesión ──────────────────────────
 
 def test_csrf_bearer_exemption_requires_no_session_cookie():
     from app.services import csrf

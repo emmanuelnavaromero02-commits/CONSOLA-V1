@@ -1,11 +1,6 @@
 version: 1
 cartridge: sap_successfactors
 domain: Personas
-# Contratos de inteligencia de talento SF (Fase 2A — Familia 1).
-# Series de tiempo mensuales por cohorte organizacional (division) derivadas de
-# fechas del dato (start_date/end_date), NO scores transversales por empleado.
-# Esto encaja con el motor (serie por entidad) y habilita Monte Carlo derived
-# con historia real. Metricas tenant-independientes (no dependen de C/A del tenant).
 metrics:
   - id: talent_headcount_by_cohort
     name: Plantilla activa por cohorte (mensual)
@@ -113,15 +108,6 @@ metrics:
       label_field: cohort_name
     time_field: snapshot_month
     value_field: attrition_rate
-    # Umbrales de MATERIALIDAD altos a proposito: en el dato actual las separaciones
-    # son escasas (~8 en 36 meses / 20 cohortes = ruido Poisson) y la desviacion
-    # porcentual sobre una tasa ~0 es inestable. Con expected_behavior=watch y
-    # warning_pct=2.0 la metrica queda SILENCIOSA ante el ruido 0<->tiny (validado:
-    # 0 señales sobre el dato real) y solo emite ante un cambio de rotacion
-    # materialmente grande (>200% relativo). Contratarla (en vez de dejarla sin
-    # contrato) evita ademas que el fallback generico emita señales espurias sobre
-    # sus columnas. Una señal de rotacion mas sensible requiere un modelo de
-    # conteo/Poisson (fase posterior). No se emiten datos ni señales sinteticas.
     expected_behavior: watch
     baseline:
       method: moving_average

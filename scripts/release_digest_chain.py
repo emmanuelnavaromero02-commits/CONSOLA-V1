@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Create and verify the F2 tagless, digest-authoritative release chain."""
 
 from __future__ import annotations
 
@@ -128,7 +127,6 @@ def release_config_labels(
 def verify_candidate(
     registry: RegistryClient, *, service: str, digest: str
 ) -> dict[str, Any]:
-    """Verify one runnable OCI manifest, config and every layer."""
 
     if service not in CANONICAL_SERVICES:
         raise PromotionError("release service is not canonical")
@@ -256,7 +254,6 @@ def load_receipt(
 
 
 class PackageVersionClient:
-    """Read-only recovery of an untagged candidate after a runner crash."""
 
     def __init__(
         self,

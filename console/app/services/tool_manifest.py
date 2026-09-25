@@ -1,13 +1,3 @@
-"""
-Sprint v1.41.0 — Unified tool manifest service.
-
-Consolidates tools from all registered MCP servers (mcp-infra,
-sap_hcm, sap_s4hana, sap_successfactors, replicon) into a single
-catalog with extended metadata for the copilot router (v1.42+):
-  - risk_level: read | write | destructive
-  - requires_approval: bool
-  - freshness_minutes: how stale data can be before warning user
-"""
 from __future__ import annotations
 
 from typing import Any
@@ -15,33 +5,22 @@ from typing import Any
 from app.services import mcp_registry
 
 
-# Static classification overrides per tool name.
-# Default: every tool not listed is treated as 'write' + requires_approval=True
-# for safety. Explicit READ tools listed here unlock auto-execution for pure
-# inspection/query actions so the copilot can actually answer platform
-# questions without asking for approval to "look".
 READ_ONLY_TOOLS = {
-    # mcp-infra airflow read-only
     "airflow_list_dags", "airflow_get_run_status", "airflow_get_task_logs",
     "airflow_list_task_instances", "airflow_list_dag_runs",
 
-    # monitoring deeplinks/read-only console viewers
     "view_job", "view_jobs", "view_schema", "view_dataset", "view_datasets",
     "view_semantic", "view_pipeline",
 
-    # postgres read-only
     "postgres_list_schemas", "postgres_list_tables",
     "postgres_get_table_schema", "postgres_get_sample",
     "postgres_describe_table", "postgres_select",
 
-    # MinIO/lakehouse read-only browsing and samples
     "minio_list_objects", "minio_get_parquet_schema", "minio_get_sample_rows",
     "minio_list_cartridge_specs", "minio_read_spec",
 
-    # RAG read-only
     "search_rag", "list_rag_sources",
 
-    # Studio app/catalog read-only
     "list_apps", "get_app_details", "get_app_html",
     "get_data_catalog", "describe_source", "describe_silver",
     "list_sources", "preview_source", "get_source_partitions",
@@ -49,10 +28,8 @@ READ_ONLY_TOOLS = {
     "list_datasets_with_schemas", "query_dataset", "get_lineage",
     "superset_list_databases", "superset_list_datasets",
 
-    # agent catalog read-only
     "agent_list", "agent_get",
 
-    # AgentOps analytical reads
     "calibration__bayesian_state",
     "control_room__summary_read",
     "control_room__dashboard_read",
@@ -65,18 +42,14 @@ READ_ONLY_TOOLS = {
     "control_room__talent_9box_read",
     "control_room__talent_metadata_readiness_read",
     "control_room__decision_intelligence_runs_read",
-    # Mission 2: Finance / Operations / Risk KPI reads
     "control_room__finance_kpis_read",
     "control_room__operations_kpis_read",
     "control_room__risk_kpis_read",
-    # Mission 4: shared memory between agents (read side)
     "control_room__agent_memory_read",
     "market_context_read",
 
-    # pipeline metadata read-only
     "watermark_get",
 
-    # cartridge read-only (replicon + SAP same pattern)
     "list_entities", "get_entity_logs", "get_schema", "preview",
     "get_run_status", "list_kbs", "get_watermarks",
     "cartridge_get_semantic", "cartridge_search_term",
@@ -91,42 +64,25 @@ READ_ONLY_TOOLS = {
     "introspect_source",
     "validate_dag_code",
 
-    # infra catalog read-only
     "list_cartridges",
 
-    # Vault returns masked values for get/list tools.
     "vault_list_connections", "vault_get_connection", "vault_list_secrets",
 }
 
 DESTRUCTIVE_TOOLS = {
     "airflow_delete_dag", "airflow_create_dag", "airflow_set_variable",
-    "postgres_execute_query",  # arbitrary write
+    "postgres_execute_query",
     "postgres_execute_ddl",
     "agent_delete",
     "delete_app", "delete_dataset", "delete_entity", "vault_delete_connection",
 }
 
 ADVISORY_WRITE_TOOLS = {
-    # Advisory-only internal write: creates/updates a Control Room alert but
-    # cannot approve, execute, write back externally, or mark decisions done.
     "control_room__raise_alert",
     "control_room__raise_analysis_alert",
-    # AgentOps compute tools persist internal evidence only. They cannot write
-    # back to an external system or execute destructive actions.
     "simulation__monte_carlo_run",
     "decision__orchestrate",
     "wisdom_bits__run",
-    # Mission 4: shared memory between agents (write side). It appends an
-    # advisory note to agent_shared_findings inside the caller's own
-    # tenant/workspace and can do nothing else: no approval, no execution, no
-    # external write-back, and DELETE is revoked from every service role at the
-    # table. requires_approval is therefore False, which is not a convenience —
-    # a scheduled monitor runs on cron with no human in the loop, so an
-    # approval-gated memory write would simply never happen and the shared
-    # memory would stay empty. The write is still risk_level "write", so it
-    # needs copilot.write and its arguments go through
-    # tool_policy._reject_prompt_injection, which matters because the summary is
-    # free text authored by an LLM.
     "control_room__agent_memory_write",
 }
 
@@ -160,11 +116,6 @@ def classify_tool(tool_name: str) -> dict[str, Any]:
 
 
 def requires_approval(tool_name: str) -> bool:
-    """Return whether a tool must be gated before execution.
-
-    The default is intentionally conservative: any unclassified write-style
-    tool requires explicit user approval until the manifest marks it read-only.
-    """
     if tool_name in READ_ONLY_TOOLS:
         return False
     if tool_name in ADVISORY_WRITE_TOOLS:
@@ -175,7 +126,6 @@ def requires_approval(tool_name: str) -> bool:
 
 
 async def build_manifest() -> dict[str, Any]:
-    """Aggregate tools from all registered MCP servers + classify them."""
     servers = await mcp_registry.list_servers()
     tools_by_server: dict[str, list[dict[str, Any]]] = {}
     for srv in servers:

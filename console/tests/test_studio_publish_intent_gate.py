@@ -1,5 +1,3 @@
-"""Red-team: publish_app/delete_app exigen intención explícita en el mensaje
-del usuario (canal confiable). Cierra las 14/14 inyecciones de Studio."""
 from __future__ import annotations
 
 import os
@@ -41,17 +39,13 @@ def test_publish_allowed_with_explicit_user_intent():
 
 
 def test_delete_app_is_always_blocked_from_direct_write():
-    # delete_app es destructivo: vive en _STUDIO_DIRECT_ADMIN_BLOCKED_TOOLS y
-    # nunca es escritura directa, ni con intencion explicita (requiere aprobacion).
     assert _allow("delete_app", "elimina la app vieja") is False
     assert _allow("delete_app", "publica y elimina") is False
 
 
 def test_other_writes_unchanged():
-    # create_entity conserva su propia puerta de intención
     assert _allow("create_entity", "crea una entidad nueva") is True
     assert _allow("create_entity", "muestra el catálogo") is False
-    # writes de refinamiento siguen por su ruta de step
     assert _allow("save_dataset", "ok", step=4) is True
 
 

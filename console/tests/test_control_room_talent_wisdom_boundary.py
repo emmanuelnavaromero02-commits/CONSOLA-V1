@@ -1,5 +1,3 @@
-"""WB-TALENTO must not bypass the operational diagnostic boundary."""
-
 from __future__ import annotations
 
 import json

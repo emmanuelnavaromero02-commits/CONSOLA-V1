@@ -1,10 +1,3 @@
-/**
- * v1.44.3.2.1 spec 09 — Mobile + dark mode + a11y + performance.
- *
- * 30 tests. This spec runs under the ``mobile-chromium`` project
- * (Pixel-5 viewport) per playwright.config.ts:projects[1].
- * playwright.config testMatch routes ONLY this file to that project.
- */
 import { test, expect } from "../fixtures/auth";
 
 test.describe("Mobile viewport — primary pages render", () => {
@@ -13,7 +6,6 @@ test.describe("Mobile viewport — primary pages render", () => {
   for (const path of ["/login", "/dashboard", "/cartridges"]) {
     test(`${path} renders without horizontal scroll`, async ({ page }) => {
       await page.goto(path);
-      // After load there should be no horizontal overflow.
       await page.waitForTimeout(2_000);
       const scrollWidth = await page.evaluate(() => document.body.scrollWidth);
       const clientWidth = await page.evaluate(() => document.body.clientWidth);
@@ -57,10 +49,6 @@ test.describe("Mobile viewport — primary pages render", () => {
         const box = await buttons.nth(i).boundingBox();
         if (!box) continue;
         const ok = box.height >= 44 && box.width >= 44;
-        // We don't fail the test on a single offender — that would
-        // be noisy for icon-only buttons. We log a warning instead
-        // by expecting at least 70% of the visible buttons to meet
-        // the target.
         expect(box.height >= 36 && box.width >= 36,
           `Button ${i}: ${box.width}×${box.height} below minimum touch target`,
         ).toBe(true);
@@ -83,7 +71,6 @@ test.describe("Dark mode contrast (light vs dark token pairs)", () => {
   test("body text contrast meets WCAG AA on /dashboard (light)",
     async ({ page }) => {
       await page.goto("/dashboard");
-      // Probe a known foreground/background combo by reading CSS.
       const ratio = await page.evaluate(() => {
         const el = document.querySelector("h1") || document.body;
         const style = getComputedStyle(el);
@@ -138,8 +125,6 @@ test.describe("Accessibility — keyboard navigation", () => {
     await page.goto("/login");
     const btn = page.getByRole("button", { name: /iniciar sesión|sign in/i });
     await btn.focus();
-    // The button should have a visible outline ring; we read the
-    // computed box-shadow / outline.
     const hasRing = await btn.evaluate((el) => {
       const s = getComputedStyle(el);
       return s.outlineStyle !== "none" || s.boxShadow !== "none";
@@ -266,7 +251,6 @@ test.describe("Sonner toast — accessibility", () => {
     await page.getByRole("button", { name: /iniciar sesión|sign in/i }).click();
     const toast = page.locator("[data-sonner-toast]").first();
     await expect(toast).toBeVisible({ timeout: 5_000 });
-    // role=alert OR role=status is what sonner injects for error vs info.
     const role = await toast.getAttribute("role");
     expect(["alert", "status"]).toContain(role);
   });

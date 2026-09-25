@@ -1,4 +1,3 @@
-"""Sprint v1.32.1 — Superset create tools must be dev-only."""
 from __future__ import annotations
 
 import importlib

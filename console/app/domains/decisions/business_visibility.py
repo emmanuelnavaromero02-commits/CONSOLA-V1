@@ -20,8 +20,6 @@ DECISION_BATCH_SIZE = 500
 
 def preserve_control_room_provenance(existing: Any, requested: Any) -> list[Any]:
     del existing
-    # The PATCH helper has no server-side item/decision relation. Reserved
-    # provenance is therefore removed; the control_room_items link remains truth.
     return strip_control_room_provenance(requested)
 
 

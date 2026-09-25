@@ -20,7 +20,6 @@ PACKAGED_SOURCE = (
 
 
 def _real_duckdb():
-    """Peer tests install an import-time duckdb mock in ``sys.modules``."""
     existing = sys.modules.get("duckdb")
     if isinstance(existing, MagicMock) or isinstance(
         getattr(existing, "connect", None), MagicMock
@@ -32,12 +31,6 @@ def _real_duckdb():
 def test_candidate_silver_preserves_null_status_when_metadata_omits_field(
     tmp_path: Path,
 ) -> None:
-    """The live Candidate EntitySet has no status property.
-
-    Bronze therefore legitimately contains no status column. Silver must keep
-    its public schema stable with an explicit NULL instead of referencing a
-    missing column or inferring a recruiting status.
-    """
     parquet_dir = (
         tmp_path
         / "load_date=2026-09-03"

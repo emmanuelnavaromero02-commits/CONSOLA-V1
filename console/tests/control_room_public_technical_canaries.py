@@ -1,5 +1,3 @@
-"""Shared adversarial copy that must never cross a public Control Room boundary."""
-
 from __future__ import annotations
 
 from control_room_public_technical_canaries_extended import (

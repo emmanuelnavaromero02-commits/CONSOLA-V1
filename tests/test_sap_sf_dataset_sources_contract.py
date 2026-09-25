@@ -21,7 +21,6 @@ _SEED_ROW_RE = re.compile(
 
 
 def _literal_sources(sql_text: str) -> set[str]:
-    """Storage prefixes actually read by the SQL (layer/cartridge/name)."""
     found = set()
     for literal in re.findall(r"s3://\{bucket\}/((?:raw|silver|gold)/[^'\"\s\)]+)", sql_text):
         parts = literal.split("/")
@@ -36,8 +35,6 @@ def _declared_sources(text: str) -> set[str]:
 
 
 def test_dataset_files_declare_every_storage_literal():
-    """The hardened engine only scope-rewrites DECLARED sources; an undeclared
-    literal survives unscoped and the validator rejects the materialization."""
     offenders = {}
     for path in sorted(DATASETS_DIR.glob("*.sql")):
         text = path.read_text(encoding="utf-8")
@@ -66,7 +63,6 @@ def test_seed_rows_declare_every_storage_literal():
 
 
 def test_repair_migration_matches_canonical_files():
-    """99zzx must set exactly the source lists the canonical files declare."""
     text = REPAIR_MIGRATION.read_text(encoding="utf-8")
     for name in (
         "sap_successfactors_employees_anomalies",

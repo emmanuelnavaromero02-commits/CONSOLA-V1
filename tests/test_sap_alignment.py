@@ -1,23 +1,3 @@
-"""Phase 2 Block A — SAP cartridge foundation alignment.
-
-sap_hcm (sub-PR 1) keys entities.yaml by the business names the platform uses,
-mapping each to its technical OData path via ``odata_entity`` (+ an
-``odata_filter`` for the OrgUnit / Position / JobCode trio that shares
-HRP1000Set); migration 78 seeds entity_config to match.
-
-sap_s4hana (sub-PR 2) was already DB-aligned by migration 77; here its cartridge
-seed.sql is rewritten from the 10 stale HCM rows to the 25 real ERP entities,
-and per-field ``protection:`` is added to its sensitive entities.
-
-sap_successfactors (sub-PR 3) adds the 5 talent entities + EmpJob_History to
-entities.yaml, renames the misnamed Foundation Objects (Department->FODepartment,
-...) across entity_config and the KBs, and bridges business name vs OData
-entityset via ``odata_entity`` (GoalPlan->Goal, PerformanceReview->FormHeader,
-LearningItem->Item); migration 79 seeds entity_config to match.
-
-These static checks pin the alignment (no live DB) plus real protection_service
-regressions.
-"""
 from __future__ import annotations
 
 import importlib.util
@@ -43,8 +23,6 @@ def _migration_rows() -> dict[str, str]:
     return dict(re.findall(r"\('sap_hcm',\s*'([^']+)',\s*'([^']+)'", sql))
 
 
-# ── entities.yaml contract ───────────────────────────────────────────────────
-
 def test_hcm_entities_have_odata_entity_and_valid_protection():
     entities = _yaml_entities("sap_hcm")
     assert entities, "sap_hcm entities.yaml is empty"
@@ -55,16 +33,12 @@ def test_hcm_entities_have_odata_entity_and_valid_protection():
 
 
 def test_hcm_shared_entityset_entities_carry_a_filter():
-    # OrgUnit / Position / JobCode all resolve to HRP1000Set; each must declare a
-    # distinct odata_filter so they don't overwrite each other in bronze.
     shared = [e for e in _yaml_entities("sap_hcm") if e.get("odata_entity", "").endswith("HRP1000Set")]
     filters = [e.get("odata_filter") for e in shared]
     assert len(shared) >= 3
     assert all(filters), "an HRP1000Set entity is missing odata_filter"
     assert len(set(filters)) == len(filters), "HRP1000Set entities share an odata_filter"
 
-
-# ── migration 78 <-> entities.yaml alignment ────────────────────────────────
 
 def test_migration_78_matches_yaml():
     mig = _migration_rows()
@@ -80,14 +54,10 @@ def test_migration_78_is_scoped_and_registered():
     assert insert_carts == {"sap_hcm"}, f"migration writes other cartridges: {insert_carts}"
     delete_carts = set(re.findall(r"cartridge_id\s*=\s*'(\w+)'", sql))
     assert delete_carts <= {"sap_hcm"}
-    # No other cartridge appears as a quoted SQL literal target (comments may
-    # mention them in prose).
     assert "'replicon'" not in sql, "migration must not target Replicon"
     assert "ADD COLUMN IF NOT EXISTS odata_filter" in sql
     assert "'78_sap_hcm_alignment.sql'" in sql
 
-
-# ── protection_service regression ────────────────────────────────────────────
 
 def _load_protection(cartridge: str):
     pytest.importorskip("cryptography")
@@ -106,16 +76,13 @@ def test_hcm_protection_applies_rules_to_personal_data():
     rows = [{"Pernr": "00012345", "Vorna": "Ana", "Nachn": "Garcia", "Gbdat": "1990-01-01", "Gesch": "2"}]
     out = mod.apply_protection_for_entity("PersonalData", rows)[0]
 
-    assert out["Pernr"] != "00012345" and len(out["Pernr"]) == 64       # shadowed (sha256 hex)
-    assert "*" in out["Nachn"] and out["Nachn"].endswith("rcia")        # masked (last 4 kept)
-    assert out["Gbdat"] not in ("1990-01-01", None)                     # encrypted (Fernet token)
-    assert out["Gesch"] == "2"                                          # unlisted field untouched
+    assert out["Pernr"] != "00012345" and len(out["Pernr"]) == 64
+    assert "*" in out["Nachn"] and out["Nachn"].endswith("rcia")
+    assert out["Gbdat"] not in ("1990-01-01", None)
+    assert out["Gesch"] == "2"
 
-
-# ═══ sap_s4hana (sub-PR 2) ═══════════════════════════════════════════════════
 
 def _seed_entity_config_rows(cartridge: str) -> dict[str, str]:
-    """{entity: odata_entity} parsed from the cartridge seed's entity_config block."""
     sql = (REPO_ROOT / "cartridges" / cartridge / "config" / "seed.sql").read_text(encoding="utf-8")
     block = re.search(r"INSERT INTO entity_config\b.*?VALUES(.*?)ON CONFLICT", sql, re.DOTALL)
     assert block, f"{cartridge} seed.sql has no entity_config INSERT block"
@@ -169,14 +136,12 @@ def test_s4hana_protection_applies_to_customer():
     }]
     out = mod.apply_protection_for_entity("Customer", rows)[0]
 
-    assert out["Customer"] != "0000123456" and len(out["Customer"]) == 64   # shadowed
-    assert "*" in out["TaxNumber1"] and out["TaxNumber1"].endswith("5678")  # masked
-    assert out["IBAN"] != "ES9121000418450200051332"                        # encrypted
-    assert out["BankAccount"] != "0200051332"                               # encrypted
-    assert out["CompanyCode"] == "1000"                                     # unlisted untouched
+    assert out["Customer"] != "0000123456" and len(out["Customer"]) == 64
+    assert "*" in out["TaxNumber1"] and out["TaxNumber1"].endswith("5678")
+    assert out["IBAN"] != "ES9121000418450200051332"
+    assert out["BankAccount"] != "0200051332"
+    assert out["CompanyCode"] == "1000"
 
-
-# ═══ sap_successfactors (sub-PR 3) ═══════════════════════════════════════════
 
 MIGRATION_79 = REPO_ROOT / "infra" / "init" / "79_sap_successfactors_alignment.sql"
 
@@ -194,7 +159,6 @@ def test_sf_entities_contract():
 
 
 def test_sf_business_name_entities_carry_odata_entity():
-    # Where the business name differs from the OData entityset, odata_entity bridges.
     by_name = {e["entity"]: e for e in _yaml_entities("sap_successfactors")}
     expected = {"GoalPlan": "Goal", "PerformanceReview": "FormHeader",
                 "LearningItem": "Item", "EmpJob_History": "EmpJobRelationships"}
@@ -203,7 +167,6 @@ def test_sf_business_name_entities_carry_odata_entity():
 
 
 def test_sf_seed_entities_exist_in_yaml():
-    # 3-source alignment: every seeded entity_config row has an entities.yaml home.
     seed = _seed_entity_config_rows("sap_successfactors")
     yaml_names = {e["entity"] for e in _yaml_entities("sap_successfactors")}
     missing = set(seed) - yaml_names
@@ -249,7 +212,7 @@ def test_sf_protection_applies_to_user():
     }]
     out = mod.apply_protection_for_entity("User", rows)[0]
 
-    assert out["userId"] != "USR000123" and len(out["userId"]) == 64    # shadowed
-    assert "*" in out["lastName"] and out["lastName"].endswith("rcia")  # masked
-    assert "*" in out["email"]                                          # masked
-    assert out["status"] == "active"                                    # unlisted untouched
+    assert out["userId"] != "USR000123" and len(out["userId"]) == 64
+    assert "*" in out["lastName"] and out["lastName"].endswith("rcia")
+    assert "*" in out["email"]
+    assert out["status"] == "active"

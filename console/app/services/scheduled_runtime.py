@@ -1,5 +1,3 @@
-"""Server-owned, RLS-scoped discovery for scheduled monitor agents."""
-
 from __future__ import annotations
 
 import json
@@ -21,12 +19,6 @@ async def reconcile_expired_runs(
     tenant_id: str,
     workspace_id: str,
 ) -> int:
-    """Retire abandoned executions after the normal reclaim window.
-
-    The same per-run advisory lock used by effect, reclaim and completion paths
-    serializes the retirement.  A recently expired run remains reclaimable by
-    an Airflow retry; only a run stale for an additional hour is terminalized.
-    """
 
     candidates = await conn.fetch(
         """
@@ -210,7 +202,6 @@ async def find_due_agents(
     window_start: datetime,
     window_end: datetime,
 ) -> dict[str, Any]:
-    """Discover due agents through one fresh RLS transaction per workspace."""
     start, end = validate_window(window_start, window_end)
     scopes = await _active_workspace_scopes(pool)
     if not scopes:

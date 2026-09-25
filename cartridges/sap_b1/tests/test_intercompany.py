@@ -1,4 +1,3 @@
-"""The configurable intercompany partner mapping and its Bronze snapshot."""
 from __future__ import annotations
 
 import pytest

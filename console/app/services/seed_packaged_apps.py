@@ -1,9 +1,3 @@
-"""Seed packaged cartridge apps from /registry/cartridges/*/apps.
-
-The MEJORAS Replicon cartridge ships product apps as HTML + JSON metadata.
-Existing beta databases may only have the older generated app seed, so console
-startup refreshes the app rows from the mounted cartridge source tree.
-"""
 from __future__ import annotations
 
 import json
@@ -22,13 +16,6 @@ _DATA_BIND_RE = re.compile(r"\bdata-bind=[\"']([A-Za-z_][A-Za-z0-9_]*)[\"']")
 
 
 def _declared_datasets(meta: dict, html: str) -> list[str]:
-    """Return explicit datasets a packaged app needs.
-
-    Older HubSpot metadata used a singular ``dataset`` key and some apps expose
-    declarative ``data-bind`` placeholders instead of calling /api/data from the
-    HTML. Treat both as first-class declarations so the app gallery can enforce
-    real Gold readiness instead of publishing empty dashboards.
-    """
     candidates: list[str] = []
     for key in ("datasets_used", "datasets", "dataset"):
         raw = meta.get(key)

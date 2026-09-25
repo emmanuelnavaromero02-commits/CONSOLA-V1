@@ -1,14 +1,5 @@
 import type { KpiPayload } from "./useKpis";
 
-/**
- * Vista validada en runtime del payload de KPIs.
- *
- * TypeScript no protege contra un backend que omita secciones o entregue
- * escalares no finitos: cada campo se valida estructuralmente y lo ausente
- * o inválido se representa como `null` (nunca como cero). El render decide
- * cómo mostrar la ausencia; esta capa garantiza que ningún acceso lance
- * por sección faltante.
- */
 export interface KpiView {
   cartridges: { total: number | null; connected: number | null; disconnected: number | null };
   extractions: { today: number | null; week: number | null };
@@ -23,8 +14,6 @@ export type FreshnessStatus = "fresh" | "stale" | "very_stale" | "never";
 const FRESHNESS_STATUSES = new Set<FreshnessStatus>(["fresh", "stale", "very_stale", "never"]);
 
 function freshnessStatus(value: unknown): FreshnessStatus {
-  // Un estado desconocido o ausente nunca se convierte en "fresh": cae al
-  // estado más conservador que la tabla sabe representar.
   return typeof value === "string" && FRESHNESS_STATUSES.has(value as FreshnessStatus)
     ? (value as FreshnessStatus)
     : "never";

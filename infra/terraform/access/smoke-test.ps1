@@ -1,20 +1,3 @@
-<#
-.SYNOPSIS
-  Smoke tests de los 6 servicios de MODecissions vía SSH a la EC2 App.
-
-.PARAMETER AppIp
-  IP privada de la EC2 App.
-
-.PARAMETER PemPath
-  Ruta al modecissions-key.pem
-
-.PARAMETER User
-  (Opcional) Usuario SSH. Default: ubuntu
-
-.EXAMPLE
-  .\smoke-test.ps1 -AppIp 10.0.2.15 -PemPath .\modecissions-key.pem
-#>
-
 param(
   [Parameter(Mandatory=$true)] [string] $AppIp,
   [Parameter(Mandatory=$true)] [string] $PemPath,
@@ -45,10 +28,8 @@ $sshBase = @(
   "$User@$AppIp"
 )
 
-# Una sola conexión SSH ejecuta todos los curls -> mucho más rápido que N conexiones
 $remoteScript = @()
 foreach ($s in $services) {
-  # -m 5 timeout, -s silencioso, -o /dev/null discard body, %{http_code} sólo el código
   $url = "http://localhost:$($s.Puerto)$($s.Path)"
   $remoteScript += "echo -n '$($s.Servicio)|'; curl -s -o /dev/null -m 5 -w '%{http_code}' '$url' 2>/dev/null || echo -n 'ERR'; echo"
 }
@@ -61,7 +42,6 @@ if ($LASTEXITCODE -ne 0) {
   exit 1
 }
 
-# Parsear resultados
 $results = @{}
 foreach ($line in ($raw -split "`n")) {
   $line = $line.Trim()
@@ -72,7 +52,6 @@ foreach ($line in ($raw -split "`n")) {
   }
 }
 
-# Mostrar tabla
 $ok = 0
 $rows = foreach ($s in $services) {
   $code = $results[$s.Servicio]

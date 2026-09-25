@@ -1,4 +1,3 @@
-"""sap_b1_extract DAG ====================== Extrae UNA entidad llamando al cartucho SAP Business One."""
 from __future__ import annotations
 import os
 from datetime import timedelta

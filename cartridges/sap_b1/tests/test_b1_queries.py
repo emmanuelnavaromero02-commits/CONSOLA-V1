@@ -1,4 +1,3 @@
-"""The query planner: identifiers, watermarks, SQL shape. No database."""
 from __future__ import annotations
 
 from datetime import date, datetime

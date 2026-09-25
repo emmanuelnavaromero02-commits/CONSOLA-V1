@@ -1,4 +1,3 @@
-"""SQL access to SAP Business One company databases."""
 from __future__ import annotations
 
 import logging
@@ -22,11 +21,11 @@ _MAX_ERROR_TEXT = 500
 
 
 class B1SourceError(RuntimeError):
-    """The database could not be reached or a query failed."""
+    pass
 
 
 class B1ConfigurationError(B1SourceError):
-    """The cartridge lacks the settings needed to open a connection."""
+    pass
 
 
 class CircuitBreakerOpen(B1SourceError):
@@ -34,7 +33,6 @@ class CircuitBreakerOpen(B1SourceError):
 
 
 class CartridgeCircuitBreaker:
-    """Trips on repeated connectivity failures only, and recovers on its own."""
 
     failures = 0
     threshold = 3
@@ -77,14 +75,12 @@ class CartridgeCircuitBreaker:
 
 
 def quote_ident(name: str) -> str:
-    """Double-quote a table or column name after validating it."""
     if not isinstance(name, str) or not _IDENT_RE.fullmatch(name):
         raise ValueError(f"Invalid identifier: {name!r}")
     return f'"{name}"'
 
 
 def quote_schema(name: str) -> str:
-    """Double-quote a company schema name after validating it."""
     if not isinstance(name, str) or not _SCHEMA_RE.fullmatch(name):
         raise ValueError("Invalid company schema name")
     return f'"{name}"'
@@ -97,7 +93,6 @@ class Company:
 
 
 def parse_companies(spec: str) -> list[Company]:
-    """Parse ``alias=SCHEMA,alias=SCHEMA`` into companies."""
     companies: list[Company] = []
     seen: set[str] = set()
     for chunk in (spec or "").replace(";", ",").split(","):
@@ -147,7 +142,6 @@ class B1Config:
         return not self.missing
 
     def status(self) -> dict[str, Any]:
-        """Configuration report safe to return over HTTP: no host, user or password."""
         return {
             "cartridge": CARTRIDGE_ID,
             "configured": self.configured,
@@ -158,7 +152,6 @@ class B1Config:
 
 
 def resolve_config(security_context: str | None = None) -> B1Config:
-    """Resolve the connection settings from env, then Vault, then settings."""
     from app.core.config import settings
     from app.core.vault_client import get_secret_for_worker
 
@@ -232,7 +225,6 @@ def resolve_config(security_context: str | None = None) -> B1Config:
 
 
 def _secrets_of(config: "B1Config") -> tuple[str, ...]:
-    """Values a driver message may quote back and that must not travel."""
     values = [config.password, config.host, config.user, config.database]
     values.extend(company.schema for company in config.companies)
     return tuple(dict.fromkeys(value for value in values if value and len(value) >= 3))
@@ -247,7 +239,6 @@ def _sanitize(text: str, secrets: Sequence[str]) -> str:
 
 
 class Connection:
-    """A read-only DB-API session that renders ``?`` placeholders for its driver."""
 
     def __init__(self, raw: Any, placeholder: str, secrets: Sequence[str], dialect: str = "postgres") -> None:
         self._raw = raw
@@ -261,7 +252,6 @@ class Connection:
         return sql.replace("?", self._placeholder)
 
     def fetch_all(self, sql: str, params: Sequence[Any] = ()) -> tuple[list[str], list[tuple]]:
-        """Run one statement; return the column names and every row."""
         try:
             cursor = self._raw.cursor()
             try:
@@ -279,7 +269,6 @@ class Connection:
         return columns, rows
 
     def source_now(self) -> datetime:
-        """The database server's clock, the clock Business One stamps with."""
         sql = "SELECT CURRENT_TIMESTAMP FROM DUMMY" if self.dialect == "hana" else "SELECT LOCALTIMESTAMP(0)"
         _columns, rows = self.fetch_all(sql)
         value = rows[0][0] if rows and rows[0] else None
@@ -362,7 +351,6 @@ def open_connection(config: B1Config) -> Connection:
 
 
 class B1Client:
-    """One configured Business One source: connections plus catalogue helpers."""
 
     CARTRIDGE_ID = CARTRIDGE_ID
 
@@ -398,7 +386,6 @@ class B1Client:
 
 
     def test_connection(self) -> dict[str, Any]:
-        """Open a session and read ``CINF.Version`` in every company schema."""
         status = self.configuration_status()
         if not status["configured"]:
             return {"status": "degraded", **status}

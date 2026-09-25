@@ -1,12 +1,3 @@
-"""E2a — el eslabón perdido del Montecarlo WB-TALENTO, conectado.
-
-La casa ya tenía todo: el gold prepara input_variables_json + evidencia, el
-servicio acepta wisdom_bit, y el Control Room voltea la tarjeta a 'ready'
-cuando existe una simulación persistida. Este corredor solo une las piezas —
-y esta suite fija que lo hace FIELMENTE: variables y evidencia pasan tal
-cual del dataset al motor, insumos bloqueados no simulan nada, y la semilla
-es determinista por generación publicada.
-"""
 from __future__ import annotations
 
 import asyncio

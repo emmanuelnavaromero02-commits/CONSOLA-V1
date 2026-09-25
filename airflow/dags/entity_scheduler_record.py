@@ -1,5 +1,3 @@
-"""Operational run recording for ``entity_scheduler``."""
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -18,7 +16,6 @@ def record_scheduler_run(
     headers: Mapping[str, str],
     http: Any = requests,
 ) -> None:
-    """Persist the scheduler result through MCP infrastructure."""
     triggered = int(invocation.get("triggered") or 0)
     results = invocation.get("results") or []
     total = len(results)

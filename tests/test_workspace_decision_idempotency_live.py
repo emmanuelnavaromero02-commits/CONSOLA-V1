@@ -1,4 +1,3 @@
-"""Isolated real-Postgres race proof for Workspace decision actions."""
 from __future__ import annotations
 
 import asyncio

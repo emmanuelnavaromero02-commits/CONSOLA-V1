@@ -1,5 +1,3 @@
-"""Apply the B1-shaped DDL and bulk-load a generated dataset into Postgres."""
-
 from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Sequence
@@ -12,7 +10,6 @@ from .generator import Dataset
 
 
 def load(dsn: str, dataset: Dataset, *, drop_existing: bool = False) -> Dict[str, Dict[str, int]]:
-    """Create one schema per company and insert every generated row."""
     loaded: Dict[str, Dict[str, int]] = {}
     with psycopg2.connect(dsn) as conn:
         for company in dataset.companies:
@@ -39,7 +36,6 @@ def load(dsn: str, dataset: Dataset, *, drop_existing: bool = False) -> Dict[str
 
 
 def query(dsn: str, sql: str, params: Sequence[Any] | None = None) -> List[tuple]:
-    """Run one read-only statement and fetch everything. Test helper only."""
     with psycopg2.connect(dsn) as conn:
         conn.set_session(readonly=True, autocommit=True)
         with conn.cursor() as cur:
@@ -55,10 +51,8 @@ def scalar(dsn: str, sql: str, params: Sequence[Any] | None = None) -> Any:
 
 
 def table_ref(schema: str, table: str) -> str:
-    """`"SCHEMA"."TABLE"`, the way both HANA and this fake are addressed."""
     return f"{b1.quote(schema)}.{b1.quote(table)}"
 
 
 def month_key(rows: Iterable[tuple]) -> Dict[str, Any]:
-    """Turn (year, month, value) rows into {'YYYY-MM': value}."""
     return {f"{int(y):04d}-{int(m):02d}": v for y, m, v in rows}

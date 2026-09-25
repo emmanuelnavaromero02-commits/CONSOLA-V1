@@ -1,5 +1,3 @@
-"""Scope-aware DuckDB relation helpers for externally supplied SQL."""
-
 from __future__ import annotations
 
 from sqlglot import exp
@@ -11,12 +9,10 @@ _ASCII_FOLD = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstu
 
 
 def _duckdb_identifier_key(value: object) -> str:
-    """Match DuckDB's ASCII-only unquoted identifier folding."""
     return str(value).translate(_ASCII_FOLD)
 
 
 def resolved_cte_table_ids(tree: exp.Expression) -> frozenset[int]:
-    """Return only table nodes resolved to a CTE visible in their own scope."""
     resolved: set[int] = set()
     for scope in traverse_scope(tree):
         folded_sources: dict[str, Scope] = {}
@@ -45,7 +41,6 @@ def resolved_cte_table_ids(tree: exp.Expression) -> frozenset[int]:
 
 
 def has_adjacent_relation_string_scan(tree: exp.Expression, tokens: list) -> bool:
-    """Detect E-string replacement scans obscured by parser normalization."""
     ambiguous: set[tuple[str, str]] = set()
     for table in tree.find_all(exp.Table):
         if table.args.get("db") is not None or table.args.get("catalog") is not None:

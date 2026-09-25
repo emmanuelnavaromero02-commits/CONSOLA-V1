@@ -175,7 +175,6 @@ def test_e2e_evidence_packager_preserves_forensic_paths_and_is_fail_closed(
 
 
 def test_the_e2e_stack_provides_every_per_pair_key_console_requires_to_start():
-    """Console refuses to start without the key of every cartridge it names in ``auth.py`` (production-style startup)."""
     import re
 
     root = Path(__file__).resolve().parents[1]

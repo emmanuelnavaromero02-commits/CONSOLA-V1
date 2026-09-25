@@ -17,8 +17,6 @@ from app.services.security_context import sign_server_payload
 
 
 _PURPOSE = "control-room-action-binding/v1"
-# This is one durable maker/action slot. Global effect idempotency and recovery
-# after approved/reserved states remain explicitly outside PR-A (future PR-B).
 
 
 def _handle_from_nonce(value: object) -> str:

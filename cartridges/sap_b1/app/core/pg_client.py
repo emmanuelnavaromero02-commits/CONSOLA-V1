@@ -1,4 +1,3 @@
-"""Lazy PostgreSQL connection helpers."""
 from __future__ import annotations
 
 from urllib.parse import urlparse
@@ -32,7 +31,6 @@ def _get_engine() -> Engine:
 
 
 def get_connection():
-    """Return a raw psycopg2 connection parsed from settings.database_url."""
     if not settings.database_url:
         raise RuntimeError("DATABASE_URL is not configured")
     parsed = urlparse(

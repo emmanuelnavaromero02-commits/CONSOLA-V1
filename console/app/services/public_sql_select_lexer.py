@@ -1,5 +1,3 @@
-"""Linear bounded lexer for SELECT-shaped public copy."""
-
 from __future__ import annotations
 
 import re
@@ -88,7 +86,6 @@ def _prefixed_string_quote(value: str, index: int) -> tuple[int, bool] | None:
 
 
 def tokenize_select_copy(value: str) -> tuple[SelectToken, ...] | None:
-    """Tokenize copy, returning None on malformed input or bounded overflow."""
 
     tokens: list[SelectToken] = []
     index = 0

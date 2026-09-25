@@ -1,9 +1,4 @@
 #!/usr/bin/env bash
-# Gated live cartridge validation for v1.0 public readiness.
-#
-# This intentionally refuses to run unless an operator confirms real sandbox
-# credentials were loaded. Fake HubSpot upstream / local demo credentials do
-# not count for P2-20.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

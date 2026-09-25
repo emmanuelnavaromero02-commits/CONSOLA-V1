@@ -200,15 +200,12 @@ def test_limit_detection_ignores_strings():
 @pytest.mark.parametrize(
     "sql,expected",
     [
-        # Write keywords missing from original parametrize
         ("INSERT INTO x VALUES (1)", "SELECT/WITH"),
         ("CREATE TABLE x AS SELECT 1", "SELECT/WITH"),
         ("TRUNCATE TABLE x", "SELECT/WITH"),
         ("ALTER TABLE x ADD COLUMN y INT", "SELECT/WITH"),
-        # Whitespace-only / empty variants
         ("   ", "empty"),
         ("\t\n", "empty"),
-        # Double-encoded path traversal
         (
             "SELECT * FROM read_parquet('s3://lakehouse/raw/salesforce/..%2F..%2Fetc/passwd')",
             "traversal",
@@ -234,7 +231,6 @@ def test_validate_kb_sql_rejects_none():
 
 
 def test_validate_kb_sql_union_injection_blocked():
-    """A UNION that sneaks a cross-cartridge read into a second branch must be blocked."""
     sql = (
         "SELECT * FROM read_parquet('s3://lakehouse/raw/salesforce/Opportunity/*.parquet')"
         " UNION ALL "

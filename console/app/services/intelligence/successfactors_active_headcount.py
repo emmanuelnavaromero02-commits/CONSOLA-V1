@@ -78,7 +78,6 @@ async def query_exact_active_headcount(
     tenant_id: str,
     workspace_id: str,
 ) -> ActiveHeadcountResult:
-    """Count the complete scoped active population without a row limit."""
     if failure := _contract_failure(columns, table=table):
         return failure
     rows = await conn.fetch(

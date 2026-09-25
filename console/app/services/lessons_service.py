@@ -1,26 +1,3 @@
-"""Sprint v1.45 — copilot lessons loop (Nivel 5).
-
-When the user approves or declines a destructive action, the copilot
-captures the surrounding intent as a durable lesson. On every future
-turn we surface the most relevant lessons in the system prompt so the
-copilot stops re-asking the same question and adapts to the user's
-prior choices.
-
-Public surface:
-
-  * ``record_lesson_from_approval`` — called from the approve_action
-    flow when a destructive tool is approved.
-  * ``record_lesson_from_decline`` — called when a user cancels.
-  * ``record_manual_lesson`` — operator/admin can teach the copilot.
-  * ``fetch_relevant_lessons`` — ranked list for a given user + intent.
-  * ``build_system_prompt_with_lessons`` — appends a Lessons section
-    to an already-built prompt (chains after memory_service).
-  * ``list_lessons`` / ``disable_lesson`` — UI surface.
-
-The matcher is intentionally tiny (token overlap) to avoid pulling
-embeddings into the request hot-path. Embedding-based retrieval can
-land later behind the same public function signature.
-"""
 from __future__ import annotations
 
 import logging
@@ -43,9 +20,6 @@ _MAX_TRIGGER_LEN     = 400
 _MAX_LESSONS_INJECT  = 6
 
 
-# ── Recording ──────────────────────────────────────────────────────────
-
-
 async def _has_table() -> bool:
     pool = await auth.pool()
     return await has_table_cached(pool, "copilot_lessons")
@@ -63,24 +37,11 @@ async def record_lesson(
     confidence: float = 1.0,
     applies_to: dict[str, Any] | None = None,
 ) -> str | None:
-    """Persist a single lesson. Returns the row id or None if the table
-    isn't present (older deployments). Idempotent on exact duplicates
-    via a manual lookup — the table doesn't have a UNIQUE constraint
-    because trigger_pattern is free text and duplicates are unlikely
-    in practice; the lookup keeps the hot loop from growing forever
-    when the same approval fires twice in quick succession.
-    """
     if not await _has_table():
         return None
     if not trigger_pattern or not lesson_text:
         return None
 
-    # Audit-round-7 P1 + P2 fix: drop NUL bytes and invisible Unicode
-    # format characters BEFORE truncate so the stored value matches
-    # what every later code path sees. Without this an admin could
-    # plant ``"plain text\x00secret"`` and a legacy PG client would
-    # silently expose ``"plain text"`` while the jailbreak filter
-    # checked the longer hidden suffix.
     trigger_pattern = _strip_dangerous_unicode(
         trigger_pattern.strip()
     )[:_MAX_TRIGGER_LEN]
@@ -97,8 +58,6 @@ async def record_lesson(
 
     pool = await auth.pool()
 
-    # Dedupe (user_id, trigger_pattern, lesson_text) within a short
-    # window. Without a UNIQUE constraint we do this manually.
     existing = await pool.fetchval(
         """
         SELECT id::text
@@ -114,13 +73,6 @@ async def record_lesson(
     if existing:
         return existing
 
-    # Audit-round-4 P0 fix: ``workspaces.id`` is UUID, but the INSERT
-    # used to bind ``workspace_id`` as a bare positional parameter. In
-    # production that crashes with ``asyncpg.exceptions.DataError:
-    # invalid input for type uuid`` the moment ``workspace_id`` is a
-    # non-null string. The ``$2::uuid`` cast plus the explicit
-    # ``_coerce_uuid_or_none`` step before binding rejects garbage
-    # IDs cleanly instead of letting asyncpg surface a 500.
     workspace_id_uuid = _coerce_uuid_or_none(workspace_id)
     row = await pool.fetchrow(
         """
@@ -145,14 +97,6 @@ def _json_dumps(value: Any) -> str:
 def _summarise_approval(
     tool_name: str, args: dict[str, Any] | None
 ) -> tuple[str, str]:
-    """Derive (trigger_pattern, lesson_text) from an approval event.
-
-    The result is intentionally short and operator-readable. We do not
-    call the LLM here — the lesson is a fact-of-the-action ("user
-    approved tool X with arg Y on date Z"), not a synthesised rule.
-    Synthesis happens later in :func:`promote_lessons_from_approvals`
-    if/when an operator decides to roll several approvals into a rule.
-    """
     bare = (tool_name or "tool").split(":", 1)[-1]
     trigger = f"acción: {bare}"
     safe_args = _scrub_args_for_lesson(args or {})
@@ -170,12 +114,6 @@ def _summarise_approval(
     return trigger, lesson_text
 
 
-# Audit-round-5 P2 hardening: the list of secret-suspect substrings
-# grew during review. Order doesn't matter — we just need to drop any
-# key whose name suggests a credential before it lands in the lesson
-# preview that an operator might paste into a ticket. Keep this tight
-# rather than permissive: dropping a non-secret key with a suspicious
-# name is harmless; persisting a real bearer token is not.
 _SECRET_KEY_HINTS = (
     "password", "passwd", "secret", "token", "bearer",
     "api_key", "apikey", "auth", "authorization",
@@ -186,15 +124,11 @@ _SECRET_KEY_HINTS = (
 
 
 def _scrub_args_for_lesson(args: dict[str, Any]) -> dict[str, str]:
-    """Render args as short strings, dropping any obvious secret."""
     out: dict[str, str] = {}
     for k, v in args.items():
         lk = str(k).lower()
         if any(hint in lk for hint in _SECRET_KEY_HINTS):
             continue
-        # Also drop bare-substring matches on the loose "key" suffix to
-        # keep the older "key" guard semantics: a field literally named
-        # "api_key_v2" should still be scrubbed.
         if lk.endswith("_key") or lk == "key":
             continue
         sval = str(v)
@@ -225,12 +159,6 @@ async def record_lesson_from_approval(
         confidence=0.85,
         applies_to={"tool": tool_name},
     )
-    # Audit-round-3: forensic anchor. The underlying tool execution
-    # is already audited by ``copilot_service._audit`` with a
-    # ``claim_id``; emitting a second event here lets an operator
-    # trace which approval (= which audit row) became which durable
-    # lesson row, so a malicious "approve, then read the planted
-    # lesson out of the next turn's prompt" pattern is detectable.
     if new_id:
         await _emit_lesson_audit(
             user_id=user_id,
@@ -250,17 +178,11 @@ async def _emit_lesson_audit(
     tool_name: str | None,
     source_ref: str | None,
 ) -> None:
-    """Best-effort audit emission so an auditor can later answer
-    "which approve/decline became which lesson". Imported lazily to
-    avoid a hard import cycle (audit_service depends on auth, which
-    depends on this module's pool helpers in some deploys)."""
     try:
         from app.services import audit_service
         await audit_service.record_event(
             user_id=user_id,
-            email="",  # ``copilot_service`` already has the email
-                       # on the surrounding ``copilot.tool.approved``
-                       # audit row; we don't need to re-fetch it.
+            email="",
             action=action,
             resource_type="copilot_lesson",
             resource_id=str(lesson_id),
@@ -300,7 +222,7 @@ async def record_lesson_from_decline(
         lesson_text=lesson,
         source_kind="decline",
         source_ref=workflow_id or conversation_id,
-        confidence=0.95,  # explicit declines weigh more than approvals
+        confidence=0.95,
         applies_to={"tool": tool_name},
     )
     if new_id:
@@ -333,22 +255,10 @@ async def record_manual_lesson(
     )
 
 
-# ── Retrieval ──────────────────────────────────────────────────────────
-
-
-# Backwards-compatible alias so existing call sites (and the test
-# fixtures asserting against ``lessons_service._tokens``) keep working
-# while the canonical implementation lives in _copilot_helpers.
 _tokens = tokenize_intent
 
 
 def _score_lesson(lesson: dict[str, Any], intent_tokens: set[str]) -> float:
-    """Tiny TF-style score: overlap of trigger+lesson tokens with
-    intent tokens, weighted by confidence. Empty-intent fallback
-    returns the lesson's own confidence so the most trusted lessons
-    still surface on the first turn (when we don't know the topic
-    yet).
-    """
     if not intent_tokens:
         return float(lesson.get("confidence", 1.0))
     hay = tokenize_intent(
@@ -370,18 +280,9 @@ async def fetch_relevant_lessons(
     intent_hint: str | None = None,
     limit: int = _MAX_LESSONS_INJECT,
 ) -> list[dict[str, Any]]:
-    """Return the top-N lessons for this user, ranked by relevance to
-    the optional intent hint. When ``intent_hint`` is empty we fall
-    back to recency order (most useful first turn of a conversation
-    where we don't know the topic yet).
-    """
     if not await _has_table():
         return []
     pool = await auth.pool()
-    # Audit-round-4 P0 fix: cast workspace_id to UUID at query time so
-    # the comparison hits the index and asyncpg doesn't raise a
-    # DataError when the session carries a bare string for a UUID
-    # column.
     workspace_id_uuid = _coerce_uuid_or_none(workspace_id)
     rows = await pool.fetch(
         """
@@ -415,62 +316,39 @@ async def fetch_relevant_lessons(
         ranked = [lesson for lesson, s in scored if s > 0][:limit]
         if ranked:
             return ranked
-    # Fallback: most recent.
     return candidates[:limit]
 
 
-# Lessons whose text contains these words are likely a jailbreak
-# attempt and are silently dropped from the prompt. They're not
-# deleted from the table — an operator can audit copilot_lessons
-# rows for the same patterns offline. Keep the list short and
-# precise; a permissive filter would silence too many legitimate
-# operator-authored lessons.
 _REBEL_KEYWORDS = (
-    # Spanish — with and without accents so an attacker can't bypass
-    # the filter by stripping diacritics.
     "ignora regla", "ignora la regla", "ignora las reglas",
     "olvida regla", "olvida la regla", "olvida las reglas",
     "olvida estas reglas", "olvida tus reglas",
     "anula regla", "anula la regla", "anula las reglas",
     "desobedece",
-    # English
     "ignore previous", "ignore the system", "ignore the rules",
     "ignore your rules", "ignore all previous",
     "override the system", "override system prompt", "override the rules",
     "disregard the previous", "disregard the rules", "disregard your rules",
     "forget your instructions", "forget the rules",
     "jailbreak",
-    # Spanish "rol" / persona swap tricks
     "actua como si", "actúa como si", "pretende que",
     "haz como si no tuvieras", "ya no tienes reglas",
 )
 
 
 _INVISIBLE_CHARS = (
-    "\u200b", "\u200c", "\u200d",  # zero-width space / NJ / J
-    "\u200e", "\u200f",            # LRM / RLM
-    "\u202a", "\u202b", "\u202c",  # LRE / RLE / PDF
-    "\u202d", "\u202e",            # LRO / RLO  <- the attack
-    "\u2066", "\u2067", "\u2068",  # LRI / RLI / FSI
-    "\u2069",                      # PDI
-    "\ufeff",                      # BOM
-    "\u00a0",                      # NBSP
+    "\u200b", "\u200c", "\u200d",
+    "\u200e", "\u200f",
+    "\u202a", "\u202b", "\u202c",
+    "\u202d", "\u202e",
+    "\u2066", "\u2067", "\u2068",
+    "\u2069",
+    "\ufeff",
+    "\u00a0",
 )
 
 
 def _strip_accents(text: str) -> str:
-    """Lowercase + drop common Spanish accents + neutralise Unicode
-    format characters so the rebel matcher catches ``"olvida"``,
-    ``"ólvida"`` AND ``"olv\\u202eida"`` (RLO marker injection).
-
-    Audit-round-7 P1 fix: previously the invisible-character filter
-    *removed* the chars, which broke the rebel match for attacks
-    that split a keyword with a zero-width space — ``"ignora\\u200bregla"``
-    became ``"ignoraregla"`` and missed the literal ``"ignora regla"``
-    rebel pattern. Replace with a single space so a hidden-boundary
-    attack collapses back to the real boundary, and then squeeze
-    runs of whitespace so the substring search still hits.
-    """
     if not text:
         return ""
     out = text.lower()
@@ -483,28 +361,12 @@ def _strip_accents(text: str) -> str:
     for invisible in _INVISIBLE_CHARS:
         if invisible in out:
             out = out.replace(invisible, " ")
-    # Collapse runs of whitespace so ``"olvida   regla"`` matches the
-    # rebel keyword ``"olvida regla"``. Cheap loop avoids importing re.
     while "  " in out:
         out = out.replace("  ", " ")
     return out
 
 
 def _strip_dangerous_unicode(text: str) -> str:
-    """Drop NUL bytes and invisible Unicode format characters before a
-    value lands in the DB. NUL is mostly a defence against legacy
-    Postgres client libraries that truncate text columns at the first
-    ``\\x00``; the format chars are the same set ``_strip_accents``
-    neutralises for the rebel matcher.
-
-    Unlike ``_strip_accents`` we *remove* the invisibles entirely here
-    (not replace with space) because this output is what gets stored
-    in the DB and rendered back to the user. An attacker that planted
-    ``"a\\u202eb"`` shouldn't leave a tell-tale extra space in the
-    operator's UI — we'd rather close the seam invisibly. The
-    rebel-keyword matcher always re-runs ``_strip_accents`` over the
-    stored value at render time, so the space-vs-empty asymmetry
-    doesn't open a gap."""
     if not text:
         return ""
     if "\x00" in text:
@@ -523,10 +385,6 @@ def _looks_like_jailbreak(text: str) -> bool:
 
 
 def _xml_escape(text: str) -> str:
-    """Escape the five XML special characters so a malicious lesson
-    body can't break out of the ``<lesson>...</lesson>`` element.
-    Order matters: ``&`` must be escaped first or it'll double-escape
-    the literal entities we emit afterwards."""
     if not text:
         return ""
     return (
@@ -539,12 +397,6 @@ def _xml_escape(text: str) -> str:
 
 
 def render_lessons_block(lessons: Iterable[dict[str, Any]]) -> str:
-    """Render lessons wrapped in an explicit XML envelope so the LLM
-    treats them as *data* (advice from prior turns), not as new
-    system-level instructions. Suspicious-looking lessons are filtered
-    out entirely — the SYSTEM_PROMPT base still wins on contradiction,
-    but defence-in-depth costs nothing.
-    """
     items = list(lessons)
     if not items:
         return ""
@@ -565,14 +417,6 @@ def render_lessons_block(lessons: Iterable[dict[str, Any]]) -> str:
     for lesson in safe:
         text = (lesson.get("lesson_text") or "").strip()[:_MAX_LESSON_TEXT]
         kind = str(lesson.get("source_kind") or "manual")[:32]
-        # Full XML escape: a malicious lesson_text containing literal
-        # `<`, `>`, `&`, `"` or `'` characters could otherwise inject a
-        # second `<lesson>` element, terminate the envelope early, or
-        # break attribute parsing. ``_xml_escape`` covers all five
-        # entities; the explicit ``</LEARNED_LESSONS>`` neutralisation
-        # below is a belt-and-braces sentinel for the unlikely case
-        # the LLM's tokenizer somehow re-introduces the literal close
-        # tag after we escape.
         text = _xml_escape(text).replace(
             "</LEARNED_LESSONS>", "</LEARNED_LESSONS_>",
         )
@@ -589,7 +433,6 @@ async def build_system_prompt_with_lessons(
     base_prompt: str,
     intent_hint: str | None = None,
 ) -> str:
-    """Identity transform when the user has no relevant lessons."""
     lessons = await fetch_relevant_lessons(
         user_id=user_id,
         workspace_id=workspace_id,
@@ -598,9 +441,6 @@ async def build_system_prompt_with_lessons(
     block = render_lessons_block(lessons)
     if not block:
         return base_prompt
-    # Bump hit counters in the background — fire-and-forget; the
-    # caller is in a request hot-path and we don't want to block on
-    # this.
     ids = [_coerce_uuid_or_none(lesson.get("id")) for lesson in lessons]
     ids = [i for i in ids if i]
     if ids:
@@ -620,9 +460,6 @@ async def build_system_prompt_with_lessons(
     return base_prompt + block
 
 
-# ── Admin / UI surface ─────────────────────────────────────────────────
-
-
 async def list_lessons(
     *,
     user_id: int,
@@ -633,10 +470,6 @@ async def list_lessons(
     if not await _has_table():
         return []
     pool = await auth.pool()
-    # Audit-round-4 P0 fix: same workspace_id UUID cast as the
-    # fetch_relevant_lessons path. Without it list_lessons would
-    # crash the operator's "manage my lessons" view as soon as the
-    # caller has a workspace assigned.
     workspace_id_uuid = _coerce_uuid_or_none(workspace_id)
     rows = await pool.fetch(
         """
@@ -666,8 +499,6 @@ async def list_lessons(
 
 
 async def disable_lesson(*, lesson_id: str, user_id: int) -> bool:
-    """Users can only disable their own lessons. Global / workspace
-    lessons require admin (enforced at router level)."""
     if not await _has_table():
         return False
     lid = _coerce_uuid_or_none(lesson_id)

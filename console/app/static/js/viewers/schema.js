@@ -1,5 +1,3 @@
-// Sprint v1.11 phase 2 — extracted from schema.html for strict CSP.
-
 function esc(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
 const params = new URLSearchParams(location.search);
 let currentSource = params.get('source') || '';
@@ -83,7 +81,6 @@ async function loadSchema() {
     document.getElementById('loading').style.display = 'none';
     document.getElementById('schema-area').style.display = 'block';
 
-    // Partitions
     const parts = d.partitions || {};
     const partitions = parts.partitions || [];
     const latest = parts.latest || '';
@@ -112,7 +109,6 @@ async function loadSchema() {
     document.getElementById('partition-info').innerHTML = partHTML;
     document.getElementById('sql-latest').textContent = sqlLatest || '-- No disponible';
 
-    // Columns from preview
     const preview = d.preview || {};
     const rawRows = preview.rows || preview.result || [];
     const cols = normalizeColumns(preview.columns, rawRows);
@@ -141,7 +137,6 @@ async function loadSchema() {
       document.getElementById('cols-wrap').innerHTML = '<div class="empty-state">Sin columnas inferidas</div>';
     }
 
-    // Preview table
     if (rows.length && cols.length) {
       document.getElementById('preview-wrap').innerHTML = `
         <table>

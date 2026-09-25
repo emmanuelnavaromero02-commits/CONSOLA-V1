@@ -1,16 +1,4 @@
 #!/usr/bin/env bash
-# Fast, hermetic baseline check. No Docker, no database, no network.
-#
-# This is deliberately NOT a product smoke — `make smoke` and
-# `make beta-smoke` already cover a running stack. What this answers is:
-# "is the checkout itself coherent enough to start work on?" It catches
-# the drift class that silently rots a baseline — a VERSION that no
-# longer matches what the docs and health surfaces report, a documented
-# command that no longer exists, a script or workflow that stopped
-# parsing — none of which the heavy gates surface quickly.
-#
-# Target: under a minute on a cold checkout. If it grows past that it
-# has stopped being a smoke; move the check into `make test`.
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -42,7 +30,6 @@ else
   bad "VERSION is a well-formed beta" "got '$VERSION'; v1.0 gates are still BLOCKED"
 fi
 
-# Every surface that reports a version must resolve through app.version.
 RESOLVED="$(PYTHONPATH=.:console "$PYTHON" -c \
   'from app.version import app_version; print(app_version())' 2>/dev/null | tr -d '[:space:]')"
 if [ "$RESOLVED" = "$VERSION" ]; then

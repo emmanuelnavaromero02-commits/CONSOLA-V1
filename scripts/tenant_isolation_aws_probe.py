@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-"""Probe Prompt 20B tenant isolation controls on AWS via SSM.
-
-The probe validates RLS/FORCE/no permissive policy metadata, creates isolated
-tenant A/B fixtures on the remote deploy, and exercises dashboard, security and
-catalog endpoints with scoped JWTs.
-"""
 
 from __future__ import annotations
 

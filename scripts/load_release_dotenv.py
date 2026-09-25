@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Load a passive dotenv file without evaluating shell syntax."""
 
 from __future__ import annotations
 

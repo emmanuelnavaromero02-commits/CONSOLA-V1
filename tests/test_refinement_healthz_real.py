@@ -1,5 +1,3 @@
-"""Refinement liveness/readiness split."""
-
 from __future__ import annotations
 
 import importlib

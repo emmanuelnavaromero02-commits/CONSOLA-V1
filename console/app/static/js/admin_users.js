@@ -1,22 +1,3 @@
-/* ──────────────────────────────────────────────────────────────────────────
-   admin_users.js — controller for /admin/users
-
-   Replaces the inline script previously embedded in admin_users.html.
-   Behavior identical to the legacy script except for:
-
-   - Zero inline handlers; everything wired with addEventListener and
-     event delegation on the table.
-   - JSON is NEVER serialised into an HTML attribute. Edit/Delete actions
-     resolve the row's user record from a Map keyed by id.
-   - Native alert()/confirm() replaced with non-blocking toast() and an
-     in-page confirmation modal.
-   - 401 and 403 surface distinct, actionable banners. Non-admins still
-     see the list (if backend granted iam.users.read) but every mutating
-     action is hidden, not just rejected after the click.
-   - Every fetch shows loading on the trigger button and re-enables it
-     after the request completes, success or failure.
-   ─────────────────────────────────────────────────────────────────────── */
-
 const $ = (id) => document.getElementById(id);
 
 const state = {
@@ -25,7 +6,6 @@ const state = {
   canWrite: false,    // ME has role 'admin'; drives action visibility
 };
 
-/* ── Utilities ──────────────────────────────────────────────────────── */
 
 function escHtml(s) {
   return String(s == null ? '' : s)
@@ -41,7 +21,6 @@ function fmtDate(s) {
 }
 
 function isValidEmail(s) {
-  // Minimal RFC-ish gate. Backend is the source of truth.
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 }
 
@@ -68,7 +47,6 @@ async function readError(resp) {
   catch { return `HTTP ${resp.status}`; }
 }
 
-/* ── Toast (non-blocking feedback) ───────────────────────────────── */
 let _toastTimer = null;
 function toast(message, kind = 'success') {
   let el = $('admin-toast');
@@ -86,8 +64,7 @@ function toast(message, kind = 'success') {
   _toastTimer = setTimeout(() => { el.style.display = 'none'; }, 3500);
 }
 
-/* ── Permission banner (replaces the page on 401/403) ────────────── */
-function showPermissionDenied(kind /* '401' | '403' */) {
+function showPermissionDenied(kind ) {
   const wrap = document.querySelector('.shell');
   if (!wrap) return;
   const title = kind === '401' ? 'Sesión requerida' : 'Acceso denegado';
@@ -105,7 +82,6 @@ function showPermissionDenied(kind /* '401' | '403' */) {
     </div>`;
 }
 
-/* ── Auth / Me ───────────────────────────────────────────────────── */
 
 async function loadMe() {
   try {
@@ -117,7 +93,6 @@ async function loadMe() {
   } catch (_) { state.me = null; }
   state.canWrite = !!(state.me && state.me.role === 'admin');
   renderUserBar();
-  // Mutating UI must reflect role at first paint, before any row renders.
   $('btn-invite').hidden = !state.canWrite;
   $('btn-invite').disabled = !state.canWrite;
   if (!state.canWrite) {
@@ -170,7 +145,6 @@ function renderUserBar() {
   bar.append(me, role, profile, logout);
 }
 
-/* ── Users list ─────────────────────────────────────────────────── */
 
 async function loadUsers() {
   const cont = $('users-container');
@@ -205,7 +179,6 @@ function buildTable(users) {
   const table = tpl.content.firstElementChild.cloneNode(true);
   const tbody = table.querySelector('tbody');
   users.forEach((u) => tbody.appendChild(buildRow(u)));
-  // One delegated listener on the tbody covers all row actions.
   tbody.addEventListener('click', onRowAction);
   return table;
 }
@@ -216,7 +189,6 @@ function buildRow(u) {
   const isMe   = state.me && state.me.id === u.id;
   const pending = !u.is_active && !u.last_login;
 
-  // EMAIL
   const tdEmail = document.createElement('td');
   const strong = document.createElement('strong');
   strong.textContent = u.email;
@@ -228,17 +200,14 @@ function buildRow(u) {
     tag.textContent = '(tú)';
     tdEmail.appendChild(tag);
   }
-  // NAME
   const tdName = document.createElement('td');
   tdName.style.color = 'var(--text2)';
   tdName.textContent = u.name || '—';
-  // ROLE
   const tdRole = document.createElement('td');
   const roleBadge = document.createElement('span');
   roleBadge.className = `badge b-${u.role === 'admin' ? 'admin' : 'user'}`;
   roleBadge.textContent = String(u.role || '').toUpperCase();
   tdRole.appendChild(roleBadge);
-  // STATE
   const tdState = document.createElement('td');
   const stateBadge = document.createElement('span');
   stateBadge.className = 'badge';
@@ -253,7 +222,6 @@ function buildRow(u) {
     stateBadge.textContent = 'INACTIVO';
   }
   tdState.appendChild(stateBadge);
-  // CREATED / LAST LOGIN
   const tdCreated = document.createElement('td');
   tdCreated.style.color = 'var(--text2)';
   tdCreated.textContent = fmtDate(u.created_at);
@@ -261,7 +229,6 @@ function buildRow(u) {
   tdLast.style.color = 'var(--text2)';
   tdLast.textContent = fmtDate(u.last_login);
 
-  // ACTIONS
   const tdActions = document.createElement('td');
   tdActions.style.textAlign = 'right';
   if (state.canWrite) {
@@ -328,7 +295,6 @@ function onRowAction(e) {
   }
 }
 
-/* ── Modal helpers ─────────────────────────────────────────────── */
 
 function openModal(id) {
   document.querySelectorAll('.modal-overlay.open').forEach((m) => m.classList.remove('open'));
@@ -351,7 +317,6 @@ async function withLoading(btn, label, fn) {
   finally { btn.disabled = false; btn.textContent = original; }
 }
 
-/* ── Invite flow ───────────────────────────────────────────────── */
 
 function openInviteModal() {
   if (!state.canWrite) { toast('Sólo administradores pueden invitar', 'error'); return; }
@@ -401,7 +366,6 @@ async function submitInvite() {
   });
 }
 
-/* ── Edit flow ─────────────────────────────────────────────────── */
 
 function openEditModal(u) {
   if (!state.canWrite) { toast('Sólo administradores pueden editar', 'error'); return; }
@@ -410,7 +374,6 @@ function openEditModal(u) {
   $('f-name').value       = u.name || '';
   $('f-role').value       = u.role || 'user';
   $('f-active').value     = u.is_active ? 'true' : 'false';
-  // Prevent self-demotion / self-disable in the UI as well as the backend.
   const isMe = state.me && state.me.id === u.id;
   $('f-role').disabled   = isMe;
   $('f-active').disabled = isMe;
@@ -453,7 +416,6 @@ async function submitEdit() {
   });
 }
 
-/* ── Confirm dialog (reinvite / reset / delete) ───────────────── */
 
 function askConfirm({ title, message, confirmLabel, kind, onConfirm }) {
   $('confirm-title').textContent   = title;
@@ -575,27 +537,22 @@ function askDeleteUser(u) {
   });
 }
 
-/* ── Wiring ───────────────────────────────────────────────────── */
 
 function wire() {
   $('btn-invite').addEventListener('click', openInviteModal);
 
-  // Invite modal
   $('btn-invite-close').addEventListener('click', closeAllModals);
   $('btn-invite-cancel').addEventListener('click', closeAllModals);
   $('btn-invite-submit').addEventListener('click', submitInvite);
   $('i-email').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitInvite(); });
 
-  // Edit modal
   $('btn-edit-close').addEventListener('click', closeAllModals);
   $('btn-edit-cancel').addEventListener('click', closeAllModals);
   $('btn-edit-submit').addEventListener('click', submitEdit);
 
-  // Confirm modal
   $('btn-confirm-close').addEventListener('click', closeAllModals);
   $('btn-confirm-cancel').addEventListener('click', closeAllModals);
 
-  // Backdrops + Esc.
   document.querySelectorAll('.modal-overlay').forEach((overlay) => {
     overlay.addEventListener('click', (e) => { if (e.target === overlay) closeAllModals(); });
   });

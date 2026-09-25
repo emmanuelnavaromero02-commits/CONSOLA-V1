@@ -32,18 +32,17 @@ async def test_record_event_success():
             request_id="rid-test",
             metadata={"key": "value"}
         )
-        # Give the background task a moment to execute
         await asyncio.sleep(0.01)
 
         mock_pool.execute.assert_called_once()
         args = mock_pool.execute.call_args[0]
         assert "INSERT INTO audit_events" in args[0]
-        assert args[1] == 1  # user_id
-        assert args[2] == "test@example.com"  # email
-        assert args[3] == "login"  # action
-        assert args[4] == "auth"  # resource_type
-        assert args[9] == "rid-test"  # request_id
-        assert args[10] == '{"key": "value"}'  # metadata
+        assert args[1] == 1
+        assert args[2] == "test@example.com"
+        assert args[3] == "login"
+        assert args[4] == "auth"
+        assert args[9] == "rid-test"
+        assert args[10] == '{"key": "value"}'
 
 
 @pytest.mark.asyncio
@@ -85,10 +84,8 @@ async def test_record_event_db_failure_no_exception():
     mock_pool.execute.side_effect = Exception("DB connection failed")
 
     with patch("app.services.audit_service.auth.pool", return_value=mock_pool):
-        # This should NOT raise an exception
         try:
             await record_event(action="test")
-            # Give the background task a moment to execute
             await asyncio.sleep(0.01)
         except Exception as e:
             pytest.fail(f"record_event raised an exception unexpectedly: {e}")

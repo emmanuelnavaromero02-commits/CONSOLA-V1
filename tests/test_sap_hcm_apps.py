@@ -1,15 +1,3 @@
-"""Phase 2 Block D — SAP HCM analytic apps (HTML dashboards).
-
-2 standalone Chart.js dashboards in cartridges/sap_hcm/apps/, registered in the
-analytic_apps table via migration 83 (mirroring Replicon's seed in migration 10)
-and reconciled at console startup by seed_packaged_apps.py.
-
-Schema reality (verified against 08_workspace_ownership.sql and the Replicon seed):
-analytic_apps has NO workspace_id column — apps are workspace-agnostic, scoped by
-cartridge_id + visibility + the workspace-scoped datasets they reference. So these
-tests assert workspace scoping is delegated to the datasets (which carry
-workspace_id in migration 80), NOT a non-existent app column.
-"""
 from __future__ import annotations
 
 import json
@@ -41,7 +29,6 @@ def _gold_dataset_names() -> set[str]:
     return {n for n, layer in re.findall(pat, sql) if layer == "gold"}
 
 
-# 1. Both HTML files exist and parse as HTML.
 @pytest.mark.parametrize("name", APP_NAMES)
 def test_html_files_exist_and_parse(name):
     path = APPS_DIR / f"{name}.html"
@@ -54,7 +41,6 @@ def test_html_files_exist_and_parse(name):
     assert "cdn.jsdelivr.net/npm/chart.js" in html, f"{name}: Chart.js CDN not loaded"
 
 
-# 2. Metadata comment header declares cartridge: sap_hcm.
 @pytest.mark.parametrize("name", APP_NAMES)
 def test_html_metadata_header_cartridge(name):
     html = _html(name)
@@ -64,7 +50,6 @@ def test_html_metadata_header_cartridge(name):
     assert f"app_id: {name}" in header, f"{name}: header app_id mismatch"
 
 
-# 3. Datasets referenced in metadata exist as gold datasets in migration 80.
 def test_referenced_datasets_are_real_golds():
     golds = _gold_dataset_names()
     assert len(golds) == 8
@@ -73,18 +58,15 @@ def test_referenced_datasets_are_real_golds():
             assert ds in golds, f"{name}: dataset {ds!r} is not a seeded gold (migration 80)"
 
 
-# 3b. The HTML actually fetches the datasets it declares (bridge whitelist alignment).
 @pytest.mark.parametrize("name", APP_NAMES)
 def test_html_fetches_declared_datasets(name):
     html = _html(name)
     fetched = set(re.findall(r"/api/data/([a-z0-9_]+)", html))
     declared = set(_meta(name)["datasets_used"])
     assert fetched == declared, f"{name}: fetched {fetched} != declared {declared}"
-    # must use the bare dataset name, never the pggold table prefix
     assert "gold_" not in "".join(re.findall(r"/api/data/[a-z0-9_]+", html))
 
 
-# 4. Migration 83 parses with sqlglot.
 def test_migration_83_parses():
     sqlglot = pytest.importorskip("sqlglot")
     sql = MIGRATION_83.read_text(encoding="utf-8")
@@ -92,10 +74,6 @@ def test_migration_83_parses():
     assert len(stmts) == 3, f"expected 2 app inserts + 1 schema_migrations, got {len(stmts)}"
 
 
-# 5. Workspace scoping: analytic_apps has no workspace_id column, so the INSERT
-# column list must NOT include one; scoping is delegated to the datasets (which
-# carry workspace_id in migration 80). Apps are seeded for cartridge sap_hcm with
-# shared visibility.
 def test_migration_83_schema_and_workspace_scoping():
     sql = MIGRATION_83.read_text(encoding="utf-8")
     cols = re.findall(r"INSERT INTO analytic_apps\s*\(([^)]+)\)", sql)
@@ -106,7 +84,6 @@ def test_migration_83_schema_and_workspace_scoping():
         assert {"name", "title", "html", "cartridge_id", "visibility", "datasets_used"} <= names
     assert sql.count("$seed$sap_hcm$seed$") == len(APP_NAMES), "cartridge_id sap_hcm per app"
     assert sql.count("$seed$shared$seed$") == len(APP_NAMES), "shared visibility per app"
-    # Workspace isolation is carried by the referenced datasets in migration 80.
     golds_with_ws = MIGRATION_80.read_text(encoding="utf-8")
     assert "workspace_id" in golds_with_ws
     for name in APP_NAMES:
@@ -114,7 +91,6 @@ def test_migration_83_schema_and_workspace_scoping():
             assert f"$seed${ds}$seed$" in golds_with_ws
 
 
-# 6. Alignment: each app inserted in migration 83 has a matching HTML file.
 def test_migration_apps_have_html_files():
     sql = MIGRATION_83.read_text(encoding="utf-8")
     inserted = set(re.findall(r"VALUES \(\$seed\$([a-z0-9_]+)\$seed\$", sql))
@@ -124,15 +100,11 @@ def test_migration_apps_have_html_files():
         assert (APPS_DIR / f"{name}.json").is_file(), f"no JSON sidecar for seeded app {name}"
 
 
-# 6b. Naming: filenames are prefixed sap_hcm_ to avoid cross-cartridge collision.
 def test_app_filenames_prefixed():
     for path in APPS_DIR.glob("*.html"):
         assert path.stem.startswith("sap_hcm_"), f"{path.name} not prefixed sap_hcm_"
 
 
-# 7/8. Migration 83 only touches analytic_apps + schema_migrations — not bronze,
-# datasets, kb_config or any other cartridge's data (Blocks A/B/C stay closed).
-# Inspect parsed statements (not raw text) so design comments don't trip the scan.
 def test_migration_83_scope_is_only_apps():
     sqlglot = pytest.importorskip("sqlglot")
     from sqlglot import exp

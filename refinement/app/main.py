@@ -1,9 +1,3 @@
-"""
-MODecissionsPaaS — Refinement Engine
-Servicio transversal: cualquier cartucho deposita en Bronze, el engine
-transforma a Silver/Gold con términos de negocio y trazabilidad de lineage.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -28,9 +22,6 @@ from fastapi import FastAPI, Header, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-# Sprint v1.18: structured JSON logs to stdout, with secret redaction.
-# Wired up before any other module-level import that might log so the
-# first record this service emits is already in JSON format.
 from app.logging_config import setup_logging
 
 setup_logging(service_name="refinement")
@@ -75,10 +66,6 @@ _SECURITY_CONTEXT_SIGNATURE_FUTURE_SKEW_SECONDS = 30
 _SECURITY_CONTEXT_MIN_SIGNING_KEY_LEN = 32
 _RUNTIME_CONTEXT_VALIDATED = object()
 
-# Refinement runs with a 1 CPU / 1 GiB production quota. A single admitted
-# data-plane worker avoids the superlinear CPU/GIL contention observed when
-# dataset and source discovery run together. Readiness has a separate
-# single-flight lane below.
 _SYNC_IO_MAX_CONCURRENCY = 1
 _SYNC_LONG_IO_MAX_CONCURRENCY = 1
 _READINESS_TIMEOUT_SECONDS = 2.5
@@ -105,7 +92,6 @@ _readiness_success_cache: tuple[float, dict[str, str]] | None = None
 
 
 def _sync_io_admission_gate() -> asyncio.Semaphore:
-    """Return the data-plane gate bound to the active server event loop."""
     global _sync_io_gate, _sync_io_loop
 
     loop = asyncio.get_running_loop()
@@ -116,7 +102,6 @@ def _sync_io_admission_gate() -> asyncio.Semaphore:
 
 
 def _sync_long_io_admission_gate() -> asyncio.Semaphore:
-    """Serialize mutations that could otherwise consume both data slots."""
     global _sync_long_io_gate, _sync_long_io_loop
 
     loop = asyncio.get_running_loop()
@@ -127,7 +112,6 @@ def _sync_long_io_admission_gate() -> asyncio.Semaphore:
 
 
 def _consume_background_task(task: asyncio.Task) -> None:
-    """Retrieve a detached task exception after its request was cancelled."""
     try:
         task.exception()
     except asyncio.CancelledError:
@@ -135,13 +119,6 @@ def _consume_background_task(task: asyncio.Task) -> None:
 
 
 async def _run_sync_io(func, *args, long_running: bool = False):
-    """Run synchronous data-plane I/O under the dedicated admission gate.
-
-    Once admitted, the worker keeps its token until it actually finishes.
-    Shielding is important for materialization: a disconnected caller must
-    not abandon the thread-local materialize/replay/update/reindex chain or
-    let a replacement worker exceed the configured capacity.
-    """
     long_gate = _sync_long_io_admission_gate() if long_running else None
     if long_gate is not None:
         await long_gate.acquire()
@@ -201,12 +178,6 @@ def _published_datasets_for_scope(
 def _materialize_readfree_empty(
     ds: dict, user_context: dict, cause: Exception
 ) -> dict | None:
-    """E1.1 — ultimo nivel: proyeccion vacia sin lecturas con esquema fiel.
-
-    Solo para errores de dependencia faltante (404/no files) en datasets de
-    talento registrados; cualquier otro error debe seguir tronando (jamas
-    degradar una caida real de infra a un gold vacio).
-    """
     readfree = readfree_empty_dataset_for_successfactors(ds, cause)
     if not readfree:
         return None
@@ -230,8 +201,6 @@ def _materialize_with_operational_fallback(ds: dict, user_context: dict) -> dict
     except Exception as exc:
         fallback = fallback_dataset_for_successfactors(ds, exc)
         if not fallback:
-            # Sin fallback de primer nivel: un dataset de talento con fuentes
-            # ausentes (404) aun puede degradar a su proyeccion read-free.
             readfree = _materialize_readfree_empty(ds, user_context, exc)
             if readfree is not None:
                 return readfree
@@ -239,9 +208,6 @@ def _materialize_with_operational_fallback(ds: dict, user_context: dict) -> dict
         try:
             result = engine.materialize(fallback, user_context)
         except Exception as fb_exc:
-            # E1.1: el fallback de primer nivel tambien lee fuentes que el
-            # tenant no expone y se cayo con el mismo 404 — antes esta segunda
-            # excepcion volaba sin red (ciclo 03:05: 8 datasets failed).
             readfree = _materialize_readfree_empty(ds, user_context, fb_exc)
             if readfree is not None:
                 return readfree
@@ -345,7 +311,6 @@ def _validate_dataset_name(name: str) -> None:
 
 
 def _migrate_yaml_datasets():
-    """One-time migration: import YAML dataset definitions into Postgres if missing."""
     import yaml
 
     yaml_dir = DATASETS_DIR
@@ -362,7 +327,7 @@ def _migrate_yaml_datasets():
                 continue
             existing = store.get_dataset(data["name"])
             if existing:
-                continue  # already in Postgres
+                continue
             store.save_dataset(
                 {
                     "name": data["name"],
@@ -380,22 +345,12 @@ def _migrate_yaml_datasets():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     engine.setup()
-    # Sprint v1.21.1 hotfix: the previous `_ensure_semantic_catalog_tables()`
-    # call ran CREATE TABLE IF NOT EXISTS for data_catalog / data_relationships
-    # at startup. After v1.19 the refinement service connects as
-    # `omega_refinement`, which has SELECT/INSERT/UPDATE on those tables but
-    # NOT `CREATE ON SCHEMA public` — Postgres checks the CREATE privilege
-    # BEFORE evaluating IF NOT EXISTS, so the call fails with
-    # InsufficientPrivilege and crashes refinement at boot. Removed: the
-    # tables are provisioned by infra/init/19_operational_stability_hotfix.sql
-    # (data_catalog, data_relationships) and infra/init/08_workspace_ownership.sql
-    # (analytic_apps), with the v1.20 GRANTs in 25_service_roles.sql.
     _migrate_yaml_datasets()
     _seed_relationships()
     yield
 
 
-INTERNAL_API_KEY = get_internal_api_key()  # legacy fallback, still accepted
+INTERNAL_API_KEY = get_internal_api_key()
 
 
 def _is_production() -> bool:
@@ -405,17 +360,10 @@ def _is_production() -> bool:
     }
 
 
-# Sprint v1.12: refinement is called by console, workspace, airflow and the
-# four cartridges. Each pair now has its own INTERNAL_API_KEY_*_TO_REFINEMENT
-# (the 4 cartridges share INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT). The
-# legacy shared INTERNAL_API_KEY keeps working during the migration window —
-# it gets dropped in a follow-up sprint once every client is verified.
 _ALLOWED_SERVICES_TO_KEY_ENV: dict[str, str] = {
     "console": "INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT",
     "workspace": "INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT",
     "airflow": "INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT",
-    # All cartridges (replicon, sap_hcm, sap_s4hana, sap_successfactors,
-    # salesforce) share one key — they play the same role from refinement's side.
     "replicon": "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
     "cartridge-replicon": "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
     "hubspot": "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
@@ -426,8 +374,6 @@ _ALLOWED_SERVICES_TO_KEY_ENV: dict[str, str] = {
     "cartridge-sap_b1": "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
     "cartridge-salesforce": "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
     "salesforce": "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
-    # mcp-infra proxies read-only governed market context to Refinement while
-    # forwarding the signed Console security_context for RLS.
     "refinement": None,
     "mcp-infra": "INTERNAL_API_KEY_MCP_INFRA_TO_REFINEMENT",
 }
@@ -535,13 +481,6 @@ def _merge_declared_and_inferred_bronze_sources(
 
 
 def _trusted_user_context(body: dict, args: dict) -> dict:
-    """Return the only RLS context refinement should trust.
-
-    Preferred path: console/workspace sends a top-level security_context built
-    from its authenticated session. Legacy callers may still pass
-    args.user_context, but any admin-bypass flag is stripped unless the
-    top-level server-owned context is present.
-    """
     sec = _security_context(body)
     if sec.get("trusted"):
         role = str(sec.get("role") or "").lower()
@@ -645,7 +584,6 @@ def _is_unscoped_admin_security_context(sec: dict) -> bool:
 
 
 def _allowed_prefix_matches(sec: dict, value: str) -> bool:
-    """Match explicit prefixes without letting root prefixes grant all data."""
     prefixes = [
         str(p).lstrip("/").rstrip("/") for p in (sec.get("allowed_prefixes") or [])
     ]
@@ -705,10 +643,6 @@ def _prefix_allowed(sec: dict, value: str) -> bool:
     if layer in {"silver", "gold"}:
         if len(parts) == 3:
             return True
-        # Logical dataset prefix "layer/cartridge/name/": the trailing slash
-        # yields a 4th empty segment. Cartridge is already gated above and
-        # workspace isolation is enforced by the caller (_dataset_allowed),
-        # so this is the same logical-identity grant as the 3-part form.
         if len(parts) == 4 and parts[3] == "":
             return True
         if scoped and len(parts) >= 5:
@@ -820,13 +754,6 @@ def _is_physical_storage_key(key: str) -> bool:
 
 
 def _has_foreign_storage_scope(sec: dict, key: str) -> bool:
-    """Reject physical S3 paths pinned to a different tenant/workspace.
-
-    Logical paths such as ``raw/replicon/TimeEntry`` deliberately have no
-    physical scope marker and are later rewritten by DuckDBEngine. Once a
-    caller supplies explicit ``tenant_id=.../workspace_id=...`` markers,
-    those markers must match the trusted backend context exactly.
-    """
     expected_tenant = str(sec.get("tenant_id") or "").strip()
     expected_workspace = str(sec.get("workspace_id") or "").strip()
     if not (expected_tenant and expected_workspace):
@@ -904,13 +831,10 @@ def _dataset_store_scope(sec: dict) -> dict[str, str | None]:
 
 
 def _get_dataset_scoped(name: str, sec: dict) -> dict | None:
-    """Read dataset metadata with tenant/workspace DB scope for RLS."""
     scope = _dataset_store_scope(sec)
     try:
         return store.get_dataset(name, **scope)
     except TypeError as exc:
-        # Unit tests often monkeypatch store.get_dataset with a one-argument
-        # fake; the production store supports scoped keyword args.
         if "unexpected keyword" in str(exc):
             return store.get_dataset(name)
         raise
@@ -1206,10 +1130,6 @@ def _storage_path_matches_registered_dataset(
         tenant, workspace = _storage_scope_markers(key)
         if not bool(declared) or tenant is not None or workspace is not None:
             return False
-        # Registered legacy datasets may still be materialized under the old
-        # unpartitioned snapshot layout. Only allow exact dataset-local parquet
-        # readers for datasets explicitly declared as sources and already
-        # authorized by _dataset_allowed; never allow arbitrary descendants.
         suffix = parts[3:]
         return suffix in (["data.parquet"], ["*.parquet"], ["**", "*.parquet"])
     return True
@@ -1365,7 +1285,6 @@ def verify_api_key(
         pair_key = os.environ.get(pair_key_env)
         if pair_key:
             accepted.append(pair_key)
-    # Legacy shared key, still honored during migration.
     if INTERNAL_API_KEY and not _is_production():
         accepted.append(INTERNAL_API_KEY)
 
@@ -1377,12 +1296,6 @@ def verify_api_key(
 async def verify_api_key_dependency(
     x_api_key: str = Header(None), x_internal_service: str = Header(None)
 ):
-    """Run the constant-time in-memory API-key check on the event loop.
-
-    FastAPI delegates synchronous dependencies to AnyIO's shared worker pool.
-    Keeping the original function callable preserves its focused auth tests,
-    while this async adapter prevents an unbounded pre-admission thread burst.
-    """
     return verify_api_key(x_api_key, x_internal_service)
 
 
@@ -1442,7 +1355,6 @@ async def _http_exception_handler(request: Request, exc: HTTPException):
     )
 
 
-# Sprint v1.41.1 — correlation IDs.
 from app.middleware.request_id import RequestIDMiddleware  # noqa: E402
 
 app.add_middleware(RequestIDMiddleware)
@@ -1486,7 +1398,6 @@ def _readiness_checks() -> dict[str, str]:
 
 
 def _readiness_state_lock() -> asyncio.Lock:
-    """Return the readiness lock and reset state after an event-loop change."""
     global _readiness_in_flight, _readiness_lock, _readiness_loop
     global _readiness_started_at, _readiness_success_cache
 
@@ -1501,7 +1412,6 @@ def _readiness_state_lock() -> asyncio.Lock:
 
 
 def _complete_readiness_task(task: asyncio.Task) -> None:
-    """Publish only healthy results and release the single-flight slot."""
     global _readiness_in_flight, _readiness_started_at
     global _readiness_success_cache
 
@@ -1533,7 +1443,6 @@ def _complete_readiness_task(task: asyncio.Task) -> None:
 
 
 async def _coalesced_readiness_checks() -> dict[str, str] | None:
-    """Share one bounded readiness check; never cache a degraded result."""
     global _readiness_in_flight, _readiness_started_at
 
     lock = _readiness_state_lock()
@@ -1576,14 +1485,10 @@ async def readyz():
     )
 
 
-# ── MCP tools (consumidas por la consola y el LLM) ────────────────────────────
-
-
 @app.get("/mcp/tools", dependencies=[Depends(verify_api_key_dependency)])
 async def mcp_tools():
     return {
         "tools": [
-            # ── Bronze discovery ──────────────────────────────────────────────────
             {
                 "name": "list_sources",
                 "description": (
@@ -1622,7 +1527,6 @@ async def mcp_tools():
                     "required": ["source"],
                 },
             },
-            # ── SQL generation & preview ──────────────────────────────────────────
             {
                 "name": "generate_transform",
                 "description": (
@@ -1676,7 +1580,6 @@ async def mcp_tools():
                     "required": ["sql"],
                 },
             },
-            # ── Dataset lifecycle ─────────────────────────────────────────────────
             {
                 "name": "save_dataset",
                 "description": (
@@ -1761,7 +1664,6 @@ async def mcp_tools():
                     "required": ["name"],
                 },
             },
-            # ── Schema discovery (para el asistente IA) ──────────────────────────
             {
                 "name": "describe_source",
                 "description": (
@@ -1821,7 +1723,6 @@ async def mcp_tools():
                     },
                 },
             },
-            # ── Semantic catalog ──────────────────────────────────────────────────
             {
                 "name": "discover_relationships",
                 "description": (
@@ -1981,7 +1882,6 @@ async def mcp_tools():
                     ],
                 },
             },
-            # ── Analytic Apps ─────────────────────────────────────────────────────
             {
                 "name": "publish_app",
                 "description": (
@@ -2071,7 +1971,6 @@ async def mcp_tools():
                     "required": ["name"],
                 },
             },
-            # ── Dataset delete ────────────────────────────────────────────────────
             {
                 "name": "delete_dataset",
                 "description": (
@@ -2084,7 +1983,6 @@ async def mcp_tools():
                     "required": ["name"],
                 },
             },
-            # ── Lineage ───────────────────────────────────────────────────────────
             {
                 "name": "get_lineage",
                 "description": (
@@ -2123,9 +2021,6 @@ async def mcp_invoke(
     tool = body.get("tool")
     args = body.get("args", {})
 
-    # SQL generation is genuinely async, but schema discovery performs
-    # synchronous Postgres/S3/DuckDB reads. Keep only the LLM call on the
-    # event loop and move the complete discovery operation to one worker.
     if tool == "generate_transform":
         layer = str(args.get("layer") or "silver").lower()
         schemas = await _run_sync_io(_transform_source_schemas, body, args)
@@ -2144,9 +2039,6 @@ async def mcp_invoke(
             "layer": layer,
         }
 
-    # Every other MCP branch is synchronous and may reach Postgres, MinIO,
-    # DuckDB or HTTP. Delegating the whole branch (rather than individual
-    # calls) also preserves thread-local publication replay state.
     return await _run_sync_io(
         _mcp_invoke_sync,
         body,
@@ -2194,10 +2086,7 @@ def _mcp_invoke_sync(body: dict):
             sources,
             allow_registered_dataset_paths=True,
         )
-        # params: externally-supplied positional parameters (? placeholders) from callers
-        # that build parameterized SQL (e.g. api_data_query_filtered).  When params is
-        # provided, preview_sql skips internal RLS filter injection.
-        caller_params = args.get("params")  # None → apply RLS; list → use as-is
+        caller_params = args.get("params")
         return engine.preview_sql(
             args["sql"],
             args.get("limit", 20),
@@ -2208,8 +2097,6 @@ def _mcp_invoke_sync(body: dict):
 
     if tool == "save_dataset":
         sec = _require_security_permission(body, "datasets.write")
-        # datasets.write loads data; it does not confer authority to redefine
-        # the packaged datasets that decide approval and readiness.
         if is_protected_dataset(args.get("name")):
             raise HTTPException(403, "dataset is server-owned and cannot be replaced")
         store_scope = _dataset_store_scope(sec)
@@ -2246,8 +2133,6 @@ def _mcp_invoke_sync(body: dict):
         if not ds_existing:
             raise HTTPException(404, f"Dataset '{ds_name}' not found")
         _require_dataset_scope(body, ds_existing, "datasets.delete")
-        # Block deletion if any published app references this dataset (best-effort
-        # via substring scan of the HTML — apps fetch via /api/data/<dataset>).
         try:
             blockers = (
                 _pg_exec(
@@ -2282,7 +2167,6 @@ def _mcp_invoke_sync(body: dict):
         name = info["name"]
         _validate_dataset_name(name)
         steps = []
-        # Delete MinIO Parquet for Silver datasets.
         if layer == "silver":
             try:
                 from minio import Minio
@@ -2293,11 +2177,6 @@ def _mcp_invoke_sync(body: dict):
                     secret_key=engine.minio_secret,
                     secure=engine.minio_secure,
                 )
-                # Scope the physical path to the caller's tenant/workspace.
-                # Without this a scoped user could delete another tenant's
-                # silver parquet (which is also stored under
-                # silver/<cart>/<name>/... but with a different tenant_id=
-                # /workspace_id= partition).
                 user_context = _trusted_user_context(body, args)
                 scoped_path = engine._silver_path(cartridge, name, user_context)
                 prefix = f"s3://{engine.minio_bucket}/"
@@ -2311,7 +2190,6 @@ def _mcp_invoke_sync(body: dict):
             except Exception as exc:
                 _log_internal_error(exc, "dataset parquet delete failed")
                 steps.append("parquet not found or already deleted")
-        # Drop Postgres table for Gold datasets.
         if layer == "gold":
             table = f"gold_{name}"
             try:
@@ -2683,24 +2561,6 @@ def _default_workspace_security_context() -> dict | None:
 
 
 def _ensure_semantic_catalog_tables() -> None:
-    """Sprint v1.21.1 hotfix: this helper used to run CREATE TABLE
-    IF NOT EXISTS for data_catalog and data_relationships. After v1.19,
-    refinement connects as ``omega_refinement`` which has SELECT/INSERT/
-    UPDATE on those tables but no CREATE on schema ``public``. Postgres
-    evaluates privileges BEFORE the IF NOT EXISTS branch, so the call
-    fails with InsufficientPrivilege and crashes refinement at boot.
-
-    The tables are now exclusively provisioned by:
-      - infra/init/19_operational_stability_hotfix.sql (data_catalog,
-        data_relationships — column-identical to the old DDL here)
-      - infra/init/08_workspace_ownership.sql (analytic_apps; the
-        _ensure_apps_table() helper below is also a no-op)
-
-    This function is kept as a no-op for callers that still reference it
-    (currently just the lifespan, which we've also cleaned up). The
-    callers can be deleted in a follow-up sprint once the seed scripts
-    catch up. Keeping a no-op preserves the API surface while removing
-    the unsafe DDL."""
     return None
 
 
@@ -2708,12 +2568,6 @@ def _discover_relationships(
     security_context: dict | None = None,
     cartridge: str | None = None,
 ) -> dict:
-    """Propose foreign-key candidates from the profiler stats in data_catalog.
-
-    Read-only. Returns suggestions only (never writes) so a human confirms them
-    through register_relationship. Degrades to an empty list when the profiling
-    columns are not present yet (migration not applied).
-    """
     store_scope = _dataset_store_scope(security_context) if security_context else {}
     conditions = ["c.distinct_count IS NOT NULL"]
     params: list = []
@@ -2746,13 +2600,8 @@ def _discover_relationships(
             or []
         )
     except Exception:
-        # profiling columns not present yet — nothing to infer from
         return {"candidates": []}
 
-    # Workspace/tenant scoping alone is not enough: like every other catalog
-    # read, re-filter through _dataset_allowed so a caller never sees another
-    # user's datasets or cartridges they are not allowed (per-user + cartridge
-    # boundaries the DB RLS policy does not enforce).
     row_counts: dict = {}
     allowed_datasets: set[str] = set()
     for ds in store.list_datasets(**store_scope):
@@ -2915,14 +2764,6 @@ def _register_relationship(args: dict, security_context: dict) -> dict:
 
 
 def _ensure_apps_table():
-    """Sprint v1.21.1 hotfix: same story as _ensure_semantic_catalog_tables()
-    above — ``analytic_apps`` is fully provisioned by:
-      - infra/init/08_workspace_ownership.sql (the table itself, with
-        cartridge_id / created_by_id / visibility columns)
-      - infra/init/11_app_datasets_used.sql (datasets_used TEXT[])
-    The runtime CREATE TABLE + ALTER TABLE here failed with
-    InsufficientPrivilege under the v1.19 omega_refinement role.
-    Kept as a no-op so existing callers don't need to be touched."""
     return None
 
 
@@ -2956,16 +2797,11 @@ def _publish_app(args: dict, sec: dict) -> dict:
     tenant_id = str(sec.get("tenant_id") or "").strip()
     if not workspace_id:
         return {"error": "workspace scope required for private analytic apps"}
-    # Auto-extract dataset names referenced via /api/data/<name>
     import re as _re
 
     datasets_used = sorted(
         set(_re.findall(r"/api/data/([a-zA-Z_][a-zA-Z0-9_]*)", html))
     )
-    # Sprint v1.21.1 hotfix: dropped the inline `ALTER TABLE … ADD COLUMN
-    # IF NOT EXISTS datasets_used` — omega_refinement has no ALTER on the
-    # schema and the call would 500 here. The column is added by
-    # infra/init/11_app_datasets_used.sql at DB init time.
     _pg_exec(
         """
         INSERT INTO analytic_apps (name, title, html, description, cartridge_id,
@@ -3130,10 +2966,6 @@ def _delete_app(args: dict, sec: dict) -> dict:
 
 
 def _seed_catalog_from_existing() -> int:
-    """
-    Seed data_catalog with schema from already-materialized datasets.
-    Only inserts rows where (dataset, column_name) doesn't exist yet.
-    """
     seeded = 0
     try:
         all_ds = store.list_datasets()
@@ -3150,7 +2982,6 @@ def _seed_catalog_from_existing() -> int:
             ds_full = store.get_dataset(name)
             col_map = ds_full.get("column_mapping", {}) if ds_full else {}
 
-            # Get schema
             if layer == "silver":
                 parquet = (
                     f"s3://{engine.minio_bucket}/silver/{cartridge}/{name}/data.parquet"
@@ -3206,7 +3037,6 @@ def _seed_catalog_from_existing() -> int:
 
 
 def _seed_relationships() -> int:
-    """Register known Replicon model relationships if not already present."""
     security_context = _default_workspace_security_context()
     if not security_context:
         logger.info("skip relationship seed: no default workspace")
@@ -3214,7 +3044,6 @@ def _seed_relationships() -> int:
     tenant_id = str(security_context.get("tenant_id") or "").strip() or None
     workspace_id = str(security_context["workspace_id"])
     relationships = [
-        # TimeEntry → Proyectos
         (
             "replicon_timeentry_latest",
             "projectcode",
@@ -3233,7 +3062,6 @@ def _seed_relationships() -> int:
             "Datos del proyecto: valor de contrato, cliente, estado",
             None,
         ),
-        # TimeEntry → Personas
         (
             "replicon_timeentry_latest",
             "userid",
@@ -3252,7 +3080,6 @@ def _seed_relationships() -> int:
             "Costo/hora y tipo de contrato del consultor",
             "LOWER(TRIM(em.usuario)) = LOWER(TRIM(te.username))",
         ),
-        # ResourceAllocation → Proyectos
         (
             "replicon_resourceallocation_latest",
             "projectcode",
@@ -3271,7 +3098,6 @@ def _seed_relationships() -> int:
             "Valor de contrato del proyecto asignado",
             None,
         ),
-        # Progress History → Proyectos
         (
             "project_progress_history",
             "project_code",
@@ -3290,7 +3116,6 @@ def _seed_relationships() -> int:
             "Revenue Manager y tipo de proyecto para el historial de avance",
             None,
         ),
-        # Facturación → Proyectos (Project Code viene como float string: '29630595633.0')
         (
             "replicon_projectbilling_curated",
             "Project Code",
@@ -3300,7 +3125,6 @@ def _seed_relationships() -> int:
             'Proyecto de la factura — normalizar Project Code: CAST(TRY_CAST(TRY_CAST("Project Code" AS DOUBLE) AS BIGINT) AS VARCHAR)',
             'CAST(TRY_CAST(TRY_CAST(b."Project Code" AS DOUBLE) AS BIGINT) AS VARCHAR) = p.code',
         ),
-        # BillingItem → Proyectos
         (
             "replicon_billingitem_latest",
             "projectcode",
@@ -3361,9 +3185,6 @@ def _seed_relationships() -> int:
     return seeded
 
 
-# ── REST API ──────────────────────────────────────────────────────────────────
-
-
 def _list_datasets_sync(body: dict) -> dict[str, list[dict]]:
     sec = _require_security_permission(body, "datasets.read")
     return _published_datasets_for_scope(sec, True)
@@ -3379,7 +3200,6 @@ async def list_datasets(
 
 
 def _reindex_dataset_best_effort(name: str, auth_body: dict | None = None) -> None:
-    """Keep RAG schema docs fresh without blocking materialization."""
     try:
         import httpx as _httpx
 
@@ -3412,7 +3232,6 @@ def _reindex_dataset_best_effort(name: str, auth_body: dict | None = None) -> No
 
 
 def _annotate_staleness(datasets: list[dict], sec: dict | None = None) -> None:
-    """Compute is_stale + staleness_reason from source freshness."""
     import psycopg2
 
     by_name = {d["name"]: d for d in datasets}
@@ -3519,10 +3338,6 @@ async def dataset_schema(
     "/datasets/{name}/data", dependencies=[Depends(verify_api_key_dependency)]
 )
 async def dataset_data(name: str, limit: int = 100):
-    # This GET endpoint cannot carry a per-user context, so it must not
-    # return data — callers must use POST /mcp/invoke with tool=query_dataset
-    # and a forwarded user_context. Returning data here would silently bypass
-    # RLS for every dataset whose SQL doesn't reference the pggold schema.
     raise HTTPException(
         status_code=410,
         detail="Use POST /mcp/invoke with tool=query_dataset and user_context.",
@@ -3558,13 +3373,6 @@ async def refresh_dataset(
 
 
 def _refresh_by_source_sync(body: dict, internal_service: str) -> dict:
-    """
-    Re-materializa todos los datasets Silver/Master cuyas fuentes incluyen
-    la ruta Bronze indicada. Llamado automáticamente por el job_runner
-    tras completar una extracción.
-
-    Body: {"source": "raw/replicon/TimeEntry"}
-    """
     source = body.get("source", "").strip()
     if not source:
         raise HTTPException(400, "source is required")
@@ -3595,7 +3403,7 @@ def _refresh_by_source_sync(body: dict, internal_service: str) -> dict:
     for meta in matched:
         ds = store.get_dataset(meta["name"], **store_scope)
         if not ds or ds.get("layer") == "gold":
-            continue  # gold depende de Silver, no de Bronze directamente
+            continue
         missing_sources = engine.missing_materialized_dependencies(
             ds.get("sources") or [], ctx
         )

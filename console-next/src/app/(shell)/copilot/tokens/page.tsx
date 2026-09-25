@@ -38,8 +38,6 @@ export default function CopilotTokensPage() {
     },
   });
 
-  // Honestidad: sin payload no hay métricas — nunca fabricar "$0.00"/"0"
-  // cuando el backend falló o todavía no respondió.
   const hasData = Boolean(summary.data);
   const totalTokens = Number(summary.data?.input_tokens ?? 0)
     + Number(summary.data?.output_tokens ?? 0)

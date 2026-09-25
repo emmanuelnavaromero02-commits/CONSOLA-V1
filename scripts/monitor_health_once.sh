@@ -1,9 +1,4 @@
 #!/usr/bin/env bash
-# One-shot public health monitor for OMEGA.
-#
-# Intended for cheap automation from GitHub Actions, cron, or an operator
-# terminal. It does not keep a daemon running and it exits non-zero when a
-# critical public readiness endpoint is not green.
 set -euo pipefail
 
 CONSOLE_URL="${CONSOLE_URL:-http://modecissions-public-255609366.us-east-1.elb.amazonaws.com}"

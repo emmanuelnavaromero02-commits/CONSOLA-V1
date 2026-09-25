@@ -33,18 +33,8 @@ function formatAge(ageHours: number | null): string {
   return `${Math.round(ageHours / 24)} d`;
 }
 
-/**
- * "Frescura de datos" — one row per cartridge, click navigates to
- * /cartridges/viewer?id=<id>. Loading state renders three skeleton rows so the
- * table's height stays stable across polls.
- */
 export function FreshnessTable({ rows, loading }: FreshnessTableProps) {
   return (
-    // v1.44.3.3 R-Mac-Round-3 Task E: ``overflow-x-auto`` on
-    // the wrapper so a narrow viewport scrolls the table
-    // independently instead of overflowing the page (which
-    // produced the "scroll horizontal en /cartridges" + dashboard
-    // reports). The card itself stays full width.
     <div className="rounded-lg border bg-card shadow-sm">
       <header className="border-b px-5 py-3">
         <h2 className="text-sm font-semibold tracking-tight">Frescura de datos</h2>
@@ -60,11 +50,6 @@ export function FreshnessTable({ rows, loading }: FreshnessTableProps) {
         </thead>
         <tbody>
           {loading ? (
-            // v1.44.3.3 Task D: render FOUR skeleton rows so the
-            // height matches the steady-state (one per cartridge),
-            // avoiding the layout jump that prompted the user's
-            // "freshness table no muestra 4 filas" report (we
-            // were showing 3 skeleton rows then jumping to 4).
             Array.from({ length: 4 }).map((_, i) => (
               <tr key={i} className="border-t">
                 <td className="px-5 py-3">
@@ -79,11 +64,6 @@ export function FreshnessTable({ rows, loading }: FreshnessTableProps) {
               </tr>
             ))
           ) : rows.length === 0 ? (
-            // v1.44.3.3 Task D: explicit empty-state so a failed
-            // fetch / empty payload renders SOMETHING instead of
-            // an invisible empty tbody. Without this row, the E2E
-            // assertion "table has rows" fails silently with no
-            // user-facing signal.
             <tr className="border-t">
               <td
                 colSpan={3}

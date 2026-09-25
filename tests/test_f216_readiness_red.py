@@ -1,5 +1,3 @@
-"""RED acceptance contracts for the v1.45.216 readiness recovery."""
-
 from __future__ import annotations
 
 import os
@@ -187,7 +185,6 @@ def _run_wait(
 def test_fake_healthy_daemon_reaches_ready_when_control_variable_is_absent(
     tmp_path: Path,
 ) -> None:
-    """Prove the real lock and fake daemon form a valid GREEN control."""
 
     runtime = _locked_runtime(tmp_path)
     result = _run_wait(runtime, compose_file=None)
@@ -203,7 +200,6 @@ def test_fake_healthy_daemon_reaches_ready_when_control_variable_is_absent(
 def test_normalizing_exported_empty_control_is_sufficient_for_green_readiness(
     tmp_path: Path,
 ) -> None:
-    """Model the minimal fix and prove it reaches the healthy fake daemon."""
 
     runtime = _locked_runtime(tmp_path)
     result = _run_wait(runtime, compose_file="", normalize_empty=True)
@@ -219,7 +215,6 @@ def test_normalizing_exported_empty_control_is_sufficient_for_green_readiness(
 def test_exported_empty_compose_file_reaches_ready_through_real_release_lock(
     tmp_path: Path,
 ) -> None:
-    """An empty workflow control variable must remain empty in Docker children."""
 
     runtime = _locked_runtime(tmp_path)
     result = _run_wait(runtime, compose_file="")

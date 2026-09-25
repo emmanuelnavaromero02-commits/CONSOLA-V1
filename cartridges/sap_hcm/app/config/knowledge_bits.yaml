@@ -146,9 +146,6 @@ knowledge_bits:
       JOIN Contracts c ON ae.Pernr = c.Pernr
       GROUP BY c.Ktart, ae.Persk
 
-  # ── Bloque C: KBs sobre los golds del Bloque B (gold/sap_hcm/<name>/) ─────────
-  # Se leen con read_parquet del parquet gold materializado (DuckDB), no de
-  # pggold. Prefijo kb_sap_hcm_ para id global único. Columnas = salida real del gold.
   - id: kb_sap_hcm_headcount_active_by_department
     name: "Headcount activo por departamento"
     description: "¿Cuántos empleados activos tengo por departamento? Headcount activo por unidad organizacional, desde el gold headcount_by_department."

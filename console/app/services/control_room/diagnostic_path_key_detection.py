@@ -188,7 +188,6 @@ def _semantic_candidates(values: tuple[str, ...]) -> tuple[tuple[str, ...], bool
 
 
 def path_key_detection(value: str) -> PathKeyDetection:
-    """Expose bounded semantic terminals only when a mapping key is a path."""
 
     if len(value) > _MAX_INPUT_LENGTH:
         return PathKeyDetection(unsafe=True)

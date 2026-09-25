@@ -131,16 +131,6 @@ def _fetch_connection(
 
 
 def _flatten_connection_fields(payload: dict[str, Any]) -> dict[str, Any]:
-    """Lift a nested ``fields`` mapping to the top level of the payload.
-
-    The Console reveal endpoint returns credentials under ``fields``; every
-    consumer here (``_candidate_fields`` lookups in SapSfClient and
-    ``get_secret_for_worker``) reads the payload flat. With an explicit
-    conn_id the client is vault-only — no env fallback — so the nesting
-    left the effective configuration empty and the cycle failed
-    CONFIG_INCOMPLETE even though the reveal succeeded. Top-level keys win
-    on collision: they identify the connection, never the credentials.
-    """
     nested = payload.get("fields")
     if not isinstance(nested, dict):
         return payload
@@ -167,7 +157,6 @@ def get_secret_for_worker(
     conn_id: str | None = None,
     security_context: str | None = None,
 ) -> str:
-    """Resolve a worker credential from env first, then Console Vault."""
     value = os.environ.get(env_var_name)
     if value:
         return value
@@ -185,12 +174,10 @@ def get_connection_for_worker(
     conn_id: str | None = None,
     security_context: str | None = None,
 ) -> dict[str, Any]:
-    """Return the resolved Console Vault connection payload for a worker."""
     return dict(_fetch_connection(service_name, conn_id=conn_id, security_context=security_context))
 
 
 def get_sap_successfactors_credentials() -> tuple[str, str, str, str, str]:
-    """Return SF OAuth credentials from environment, Console Vault, or settings."""
     base_url = (
         get_secret_for_worker("sap_successfactors", "SF_BASE_URL")
         or get_setting("sap_successfactors_base_url", default=settings.sf_base_url, env_fallback="SF_BASE_URL")

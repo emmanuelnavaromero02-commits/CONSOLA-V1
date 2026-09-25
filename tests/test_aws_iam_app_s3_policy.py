@@ -1,12 +1,3 @@
-"""Contract: the EC2 app role can make every S3 call main makes on AWS.
-
-Staged publication pins Silver/Gold objects by VersionId and the publication
-verifier refuses to run (and fails refinement /readyz) unless it can read the
-bucket versioning status. Plain s3:GetObject / s3:ListBucket grant neither, so
-the inline policy must carry s3:GetObjectVersion and s3:GetBucketVersioning.
-The app must still be unable to destroy a pinned version.
-"""
-
 from __future__ import annotations
 
 import re
@@ -97,6 +88,5 @@ def test_policy_tracks_the_code_that_needs_it() -> None:
         REPO / "refinement" / "app" / "publication_verifier_worker.py"
     ).read_text(encoding="utf-8")
     storage = (REPO / "omega_lakehouse" / "s3_storage.py").read_text(encoding="utf-8")
-    # If either call disappears, drop the matching permission from iam.tf.
     assert ".get_bucket_versioning(Bucket=" in verifier
     assert 'args["VersionId"] = expected_version' in storage

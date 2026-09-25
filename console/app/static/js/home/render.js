@@ -379,15 +379,7 @@ function renderStatusStrip() {
 }
 
 function renderIdentityBar() {
-  // Compact SaaS-context banner above the hero. Reads from the snapshot
-  // hydrated by home/main.js via window.OmegaSecurityContext.
-  //
-  // We delegate the actual rendering to the widget so /copilot and other
-  // pages can reuse the exact same DOM structure later.
   if (!window.OmegaSecurityContext || typeof window.OmegaSecurityContext.renderHomeIdentityBar !== 'function') {
-    // Defensive: log so an ops user grepping the console sees why the
-    // banner is missing (R1-Frontend hygiene note). The page still
-    // renders normally without the bar.
     console.warn('[home] OmegaSecurityContext widget not loaded — identity bar skipped');
     return null;
   }
@@ -400,9 +392,6 @@ export function renderHome(root) {
   root.replaceChildren();
   const shell = el('div', 'home-shell');
   const container = el('div', 'home-container');
-  // The home surface is permission-aware: unavailable actions disappear
-  // instead of becoming dead buttons. Admin-only sections stay hidden from
-  // customer/workspace users even when the backend would still deny access.
   const identityBar = renderIdentityBar();
   if (identityBar) container.append(identityBar);
   container.append(renderHero());
@@ -414,10 +403,6 @@ export function renderHome(root) {
   root.appendChild(shell);
 }
 
-/**
- * Render the version badge in the home header.
- * @param {{version:string, env:string, service:string}|null} info
- */
 export function renderVersionBadge(info, health = null) {
   const target = document.querySelector('header, .home-header, .topbar') || document.body;
   let badge = document.getElementById('version-badge');
@@ -426,7 +411,6 @@ export function renderVersionBadge(info, health = null) {
     badge.id = 'version-badge';
     target.appendChild(badge);
   }
-  // Reset class then add status modifier
   badge.className = 'version-badge';
   if (info && info.version) {
     badge.textContent = `v${info.version}`;

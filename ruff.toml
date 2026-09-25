@@ -1,27 +1,3 @@
-# Sprint v1.43.2 (follow-up) — ruff config tuned for the
-# repo's existing style debt.
-#
-# The lint job added in v1.43.2 surfaced ~200 errors across services
-# and cartridges that pre-date this sprint. Per the v1.43.2 protocol
-# the hotfix branch must NOT rewrite legacy cartridge / service code
-# beyond the 6 declared fixes — that's a separate cleanup sprint.
-#
-# This config keeps the safety net (real-bug categories) in scope
-# while ignoring the well-known style debt:
-#
-#   - E401/E402/E701/E702 : multi-statement / late-import style; common
-#                            in legacy DAG files and main.py bootstrap.
-#   - F401/F541/F811/F841 : unused / redundant import / variable; signals
-#                            cleanup is needed but not a bug.
-#
-# Real-bug categories (F821 undefined-name, etc.) stay enabled. Where
-# ruff misfires on legacy DAG files that import pandas inside the task
-# body, per-file-ignores keep CI green without masking the rule for
-# new code.
-#
-# Removing items from `extend-ignore` is the documented path back to
-# stricter linting once a follow-up sprint cleans the legacy files.
-
 target-version = "py312"
 
 [lint]
@@ -37,21 +13,8 @@ extend-ignore = [
 ]
 
 [lint.per-file-ignores]
-# Legacy cartridge DAGs import pandas inside the task body to keep
-# Airflow's parse phase fast. ruff's flow analysis flags the late
-# import as an undefined-name reference at the call site. Real bug
-# would be caught by the DAG's own import-time check.
 "cartridges/replicon/dags/*.py" = ["F821"]
-# console/app/main.py declares _RATE_BUCKETS in an `if FEATURE_FLAG:`
-# branch that ruff can't see through. Same story: caught at runtime
-# by the unit tests if the flag flips.
 "console/app/main.py" = ["F821"]
-# v1 route shards are static contract slices used by tests while the
-# production FastAPI app still owns the shared dependency/helper namespace.
 "console/app/routers/v1/*.py" = ["F821"]
-# Control Room shards mirror sections of the legacy service during the
-# staged split; runtime imports still resolve through control_room_service.
 "console/app/services/control_room/*.py" = ["F821"]
-# cartridges/replicon/app/mcp_server.py:350 references run_entity that
-# is dynamically registered by the FastMCP decorator.
 "cartridges/replicon/app/mcp_server.py" = ["F821"]

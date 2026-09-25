@@ -152,9 +152,6 @@ def explorer_path_allowed(
         return True
 
     if "*" in allowed:
-        # Workspace-scoped callers must browse only explicit cartridge
-        # entitlements. A wildcard at this layer means auth enrichment failed,
-        # so fail closed instead of exposing technical storage roots.
         return False
 
     tenant_marker = f"tenant_id={tenant}"

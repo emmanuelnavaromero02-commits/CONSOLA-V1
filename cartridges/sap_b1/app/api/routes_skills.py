@@ -91,7 +91,6 @@ def _external_failure(exc: Exception, entity: str | None = None) -> JSONResponse
 
 
 def _humanise_path(path: str) -> str:
-    """Backend review P2 fallback — see replicon for rationale."""
     bare = path.split("/skills/", 1)[-1].lstrip("/")
     if not bare:
         return ""
@@ -125,7 +124,7 @@ def list_skills() -> dict:
                     "name": path,
                     "method": method,
                     "description": description,
-                    "summary": description,  # alias — remove in v1.44.4
+                    "summary": description,
                 }
             )
     return {"service": _SERVICE, "skills": skills}

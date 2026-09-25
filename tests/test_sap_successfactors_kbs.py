@@ -1,12 +1,3 @@
-"""Phase 2 Block C3 — SAP SuccessFactors Knowledge Bits.
-
-21 new copilot KBs (prefixed kb_sap_successfactors_) appended to the existing ones,
-following the kb_sap_hcm_* / kb_sap_s4hana_* mold (id / name / description / sql,
-folded scalar) and the real execution model (DuckDB over the Block-B parquet via
-read_parquet, NOT pggold). SF gold dataset names carry the sap_successfactors_
-prefix, so the parquet path repeats it: gold/sap_successfactors/sap_successfactors_<x>/.
-One KB (workforce_distribution) reads a silver because no gold exposes employee_class.
-"""
 from __future__ import annotations
 
 import re

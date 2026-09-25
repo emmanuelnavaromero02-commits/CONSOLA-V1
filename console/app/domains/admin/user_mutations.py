@@ -1,5 +1,3 @@
-"""Admin user mutation request handlers."""
-
 from __future__ import annotations
 
 import inspect
@@ -51,9 +49,6 @@ async def create_admin_user_payload(
             "name": body.get("name"),
             "role": platform_role,
         }
-        # Test doubles from older auth contracts may not expose workspace_id;
-        # production auth.create_user does and assigns the membership in the
-        # same transaction after the route has validated workspace scope.
         if "workspace_id" in inspect.signature(auth_service.create_user).parameters:
             create_user_kwargs["workspace_id"] = workspace_id
         target_user = await auth_service.create_user(**create_user_kwargs)
@@ -66,8 +61,6 @@ async def create_admin_user_payload(
                 if not workspace_scope_db_unavailable(exc):
                     raise
     except RuntimeError:
-        # create_user assigns workspace membership in the same transaction;
-        # let the global 500 handler log + sanitize internal details.
         raise
     await audit_service.record_event(
         admin_user.get("id"),
@@ -102,7 +95,6 @@ async def update_admin_user_payload(
     set_workspace_role_for_user: Callable[[int, str, str], Awaitable[None]],
     workspace_scope_db_unavailable: Callable[[BaseException], bool],
 ) -> dict:
-    # Don't let an admin demote / disable themselves accidentally.
     if user_id == admin_user["id"] and (
         body.get("role") not in (None, admin_user.get("role"))
         or body.get("is_active") is False
@@ -167,9 +159,6 @@ async def update_admin_user_payload(
         },
     )
     if password_changed:
-        # Password change is independently auditable: an admin overriding a
-        # user's credential is privileged enough to warrant its own row, even
-        # when bundled with other field updates in the same request.
         await audit_service.record_event(
             admin_user.get("id"),
             admin_user.get("email"),

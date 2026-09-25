@@ -1,5 +1,3 @@
-"""Strict verifier for purpose-bound Airflow materialization contexts."""
-
 from __future__ import annotations
 
 import hashlib
@@ -167,7 +165,6 @@ def validate_runtime_context(
     now: int | None = None,
     consume: bool = False,
 ) -> None:
-    """Reject any unsigned, stale, replayed, or over-broad Airflow context."""
     if internal_service != "airflow" or context.get("source") != "airflow":
         raise ValueError("runtime context source mismatch")
     if context.get("audience") != "refinement":

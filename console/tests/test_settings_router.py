@@ -1,12 +1,3 @@
-"""Integration tests for /api/settings/* — auth + RBAC + happy paths.
-
-Pattern: do NOT stub sys.modules (we need the real require_authenticated to
-raise 401 when no session is present). Override the dependency with
-app.dependency_overrides to inject test users.
-
-Service-layer functions are patched on the imported module object so other
-tests' sys.modules contamination cannot leak through.
-"""
 from __future__ import annotations
 
 import os
@@ -19,8 +10,6 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-# Static-only test: stub asyncpg before importing the router/deps so import
-# side effects don't try to connect to Postgres.
 sys.modules.setdefault("asyncpg", types.ModuleType("asyncpg"))
 
 os.environ.setdefault("INTERNAL_API_KEY", "test-key-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
@@ -57,8 +46,6 @@ def _setting_row(key, value, is_secret=False, category="test"):
     }
 
 
-# ── 401 / 403 ────────────────────────────────────────────────────────────────
-
 def test_get_settings_without_session_returns_401():
     client = TestClient(_make_app(user=None))
     response = client.get("/api/settings")
@@ -70,8 +57,6 @@ def test_get_settings_non_admin_returns_403():
     response = client.get("/api/settings")
     assert response.status_code == 403
 
-
-# ── 200 GET list ─────────────────────────────────────────────────────────────
 
 def test_get_settings_admin_returns_masked_list():
     client = TestClient(_make_app(user=_ADMIN))
@@ -102,8 +87,6 @@ def test_get_settings_passes_category_filter():
     mock.assert_awaited_once_with(category="integrations", include_secrets=False)
 
 
-# ── 200 single GET ───────────────────────────────────────────────────────────
-
 def test_get_setting_by_key_admin_returns_item():
     client = TestClient(_make_app(user=_ADMIN))
     with patch.object(_svc, "get_setting", new=AsyncMock(return_value=_setting_row("k", "v"))):
@@ -119,8 +102,6 @@ def test_get_setting_unknown_key_returns_404():
     assert response.status_code == 404
 
 
-# ── 200 reveal ───────────────────────────────────────────────────────────────
-
 def test_reveal_setting_admin_returns_real_value():
     client = TestClient(_make_app(user=_ADMIN))
     real = _setting_row("replicon_token", "real-bearer", is_secret=True)
@@ -128,8 +109,6 @@ def test_reveal_setting_admin_returns_real_value():
         response = client.post("/api/settings/replicon_token/reveal", headers=_csrf_headers(client))
     assert response.status_code == 200
     assert response.json()["value"] == "real-bearer"
-    # v1.41.0: settings router forwards ip + user_agent to settings_service
-    # so the audit row records where the secret was revealed from.
     mock.assert_awaited_once_with(
         "replicon_token",
         user_id=1,
@@ -145,8 +124,6 @@ def test_reveal_setting_unknown_returns_404():
         response = client.post("/api/settings/nope/reveal", headers=_csrf_headers(client))
     assert response.status_code == 404
 
-
-# ── 200 PUT update ───────────────────────────────────────────────────────────
 
 def test_update_setting_admin_persists():
     client = TestClient(_make_app(user=_ADMIN))
@@ -181,8 +158,6 @@ def test_update_setting_unknown_key_returns_404():
         response = client.put("/api/settings/nope", json={"value": "x"}, headers=_csrf_headers(client))
     assert response.status_code == 404
 
-
-# ── 200 rotate ───────────────────────────────────────────────────────────────
 
 def test_rotate_secret_admin_returns_updated_row():
     client = TestClient(_make_app(user=_ADMIN))

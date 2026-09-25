@@ -5,9 +5,6 @@ task_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 run_token="${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-${RANDOM}"
 project="omega-ot-${run_token//[^a-zA-Z0-9_-]/-}"
 env_file="$(mktemp "${TMPDIR:-/tmp}/omega-ot-env.XXXXXX")"
-# Docker Desktop remaps /tmp bind mounts to permissive modes. Keep this
-# short-lived root-readable secret on the repository mount, whose 0600 mode is
-# preserved inside the container; the EXIT trap removes it for every outcome.
 verifier_secret="$(mktemp "$task_root/.omega-ot-verifier.XXXXXX")"
 artifacts="${E2E_ARTIFACTS_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/omega-ot-artifacts.XXXXXX")}"
 dag_dir="$(mktemp -d "$task_root/.omega-ot-dags.XXXXXX")"
@@ -195,19 +192,11 @@ printf 'E2E_PGOPTIONS=%s\n' "${pgoptions# }" >>"$env_file"
 started="$(date +%s)"
 "${compose[@]}" config --quiet
 "${compose[@]}" build --pull postgres postgres_gold
-# Keep the heavyweight MCP wheel build out of Compose's shared BuildKit bake.
-# On a loaded Docker runner the fifth target can otherwise remain queued at
-# 0/0 after all other images completed, consuming the entire job timeout.
 "${compose[@]}" build --pull \
   airflow-init airflow airflow-scheduler refinement console e2e-test
 "${compose[@]}" build --pull mcp-infra
-# Allocate the test container's writable layer before database initialization.
-# The real services remain stopped; this only avoids a late metadata write at
-# the runner's measured peak disk usage.
 "${compose[@]}" create e2e-test
 built="$(date +%s)"
-# Start by dependency layer. Peak initialization for PostgreSQL, the Python
-# services, and Airflow metadata must not compete for the runner's memory.
 "${compose[@]}" up -d --wait --wait-timeout "$wait_timeout" \
   postgres postgres_gold redis minio
 "${compose[@]}" up -d --wait --wait-timeout "$wait_timeout" refinement

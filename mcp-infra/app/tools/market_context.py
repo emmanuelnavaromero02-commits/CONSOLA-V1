@@ -1,4 +1,3 @@
-"""Read-only governed market context tools."""
 from __future__ import annotations
 
 import os

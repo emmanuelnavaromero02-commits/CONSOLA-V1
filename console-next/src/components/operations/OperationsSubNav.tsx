@@ -18,20 +18,6 @@ interface SubNavItem {
   capability?: string;
 }
 
-/**
- * v1.44.4 Group 1 — Operations sub-navigation.
- *
- * Lists ONLY the sub-pages where the real backend exists today:
- *   - Users (full CRUD against /api/admin/users)
- *   - Audit (read against /security/audit)
- *   - Vault (read connections against /api/vault/connections)
- *   - Workflows (read/execute/cancel against /api/copilot/workflow)
- *   - Metrics (read against /api/metrics and /api/operations/health)
- *
- * Workspaces / Monitor / Settings sub-pages are intentionally
- * absent — the backend endpoints don't exist yet (see audit
- * comment in lib/operations/types.ts).
- */
 const ITEMS: SubNavItem[] = [
   { href: "/operations",        label: "Resumen",  icon: ShieldCheck },
   { href: "/operations/companies", label: "Empresas", icon: Building2, capability: "can_manage_companies" },

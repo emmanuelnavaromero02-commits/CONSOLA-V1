@@ -60,7 +60,6 @@ def _docker(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
 
 
 def _remove_test_container(container_id: str) -> None:
-    """Remove a test container and any anonymous data volumes it created."""
     _docker("rm", "-f", "-v", container_id, check=False)
 
 

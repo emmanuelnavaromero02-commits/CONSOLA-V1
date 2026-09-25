@@ -1,14 +1,3 @@
-"""Sprint v1.41.0 — cartridge management endpoints (auditor P1 operativa).
-
-Moved out of console/app/main.py (3.5k lines and growing) so that the new
-surface introduced in v1.41.0 lives in one file alongside its helpers.
-Legacy endpoints stay in main.py until each gets a dedicated owner.
-
-v1.44.1 — added POST/DELETE /credentials wrappers that proxy to the
-vault service so the upcoming /cartridges UI can save and revoke
-connection credentials without each frontend reinventing the
-encrypt-then-PUT-then-audit sequence.
-"""
 from __future__ import annotations
 
 import os
@@ -32,8 +21,6 @@ from app.services.service_urls import running_in_container, vault_url
 router = APIRouter(prefix="/api/cartridges", tags=["Cartridges"])
 
 
-# DNS name in compose uses dashes (sap-hcm), service id uses underscores
-# (sap_hcm); this map captures both shapes plus the exposed port.
 _CARTRIDGE_PORTS = {
     "hubspot": 8210,
     "replicon": 8201,
@@ -100,7 +87,6 @@ def _cartridge_internal_headers_for_user(user: dict | None) -> dict[str, str]:
 
 
 def _test_connection_succeeded(http_success: bool, payload: dict) -> bool:
-    """Only an explicit cartridge status=ok is a successful credential test."""
     if not http_success:
         return False
     return str(payload.get("status") or "").strip().lower() == "ok"
@@ -121,11 +107,6 @@ def _vault_url() -> str:
     return vault_url()
 
 
-# v1.44.1: vault sits behind its own internal-API-key pair. The legacy
-# /api/vault/* proxy uses console/app/main.py::_hdr_for("VAULT") which
-# reads INTERNAL_API_KEY_CONSOLE_TO_VAULT — we mirror that here so the
-# new /cartridges/{id}/credentials endpoints land on the same audited
-# vault surface as the existing PUT /api/vault/connections/* path.
 _VAULT_URL = _vault_url()
 
 
@@ -158,13 +139,6 @@ def _vault_headers_for_credential_write(user: dict | None, cartridge: str) -> di
 
 
 def _scrub_credential_payload(payload: dict) -> dict:
-    """Return a copy of the credential payload with values masked.
-    Used as ``audit_events.metadata`` so we record WHICH fields were
-    written without persisting the secret values themselves.
-
-    The brief is explicit: every credential write must be audited
-    AND must not leak values into the audit trail.
-    """
     return {k: ("***" if v not in (None, "") else "") for k, v in payload.items()}
 
 
@@ -359,8 +333,6 @@ async def test_connection(
     except Exception as exc:
         latency_ms = int((time.monotonic() - started) * 1000)
         ok = False
-        # Truncate the message — error strings from a cartridge may
-        # surface internal endpoints / tokens / file paths.
         message = str(exc)[:200] or "connection error"
 
     await audit_service.record_event(
@@ -383,20 +355,6 @@ async def test_connection(
     if isinstance(payload.get("missing"), list):
         result["missing"] = payload["missing"]
     return result
-
-
-# ── v1.44.1: credential lifecycle wrappers ────────────────────────────────
-#
-# The legacy /api/vault/connections/{cartridge}/{conn_id} endpoints in
-# console/app/main.py stay — they're used by the existing /viewer/vault
-# admin UI and any external integration that already bound to them. The
-# new wrappers below give the upcoming /cartridges form a single,
-# cartridge-scoped surface that:
-#   * uses ``conn_id="default"`` (one credential set per cartridge — the
-#     /cartridges form only configures one)
-#   * audits every write (success + failure) with the field names but
-#     NOT the values
-#   * normalises errors so the UI can show a friendly toast
 
 
 _DEFAULT_CONN_ID = "default"
@@ -427,8 +385,6 @@ async def save_credentials(cartridge: str, body: dict, request: Request):
     audit_metadata = {
         "conn_id": _DEFAULT_CONN_ID,
         "fields_written": sorted(credential_payload.keys()),
-        # Values are *never* persisted in audit_events. See
-        # _scrub_credential_payload() for the masking contract.
         "masked_values": _scrub_credential_payload(credential_payload),
     }
 

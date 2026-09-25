@@ -1,21 +1,3 @@
-"""Sprint v1.44.2 (Tarea F) — proactive copilot heuristics.
-
-The copilot's "Buenos días" briefing on the dashboard surfaces a
-small number of highlights pulled from rule-based heuristics:
-
-  * analyze_freshness          — cartridge hasn't extracted in >24h
-  * analyze_volume_anomaly     — yesterday's row count differs from
-                                 the 7-day median by more than ±30%
-  * analyze_pending_actions    — open jobs older than 24h
-  * analyze_extraction_failures — failed extraction_runs in the last 24h
-
-Each analyzer returns a list of ``Highlight`` dicts with the same
-shape so the router can concat + sort + filter dismissed ones in
-one pass.
-
-Heuristic-only — no ML, no LLM call. The brief is explicit on this:
-proactive UX matters, prediction does not.
-"""
 from __future__ import annotations
 
 import logging
@@ -29,22 +11,16 @@ from app.services.db_scope import scoped_db
 logger = logging.getLogger(__name__)
 
 
-# A Highlight is a small dict with these keys; declared here as a type
-# hint instead of a TypedDict so the existing audit_service.record_event
-# signature (metadata: dict | None) can swallow it without coercion.
 Highlight = dict[str, Any]
 
 
 _KNOWN_CARTRIDGES = ("replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors", "sap_b1")
 
 
-# ── Severity rank for the final sort. Highest first in the briefing. ─────
-
 _SEVERITY_ORDER = {"critical": 0, "warning": 1, "info": 2}
 
 
 def _cartridge_href(cartridge_id: str) -> str:
-    """Return the canonical Next route for a cartridge configuration view."""
     return f"/cartridges/viewer?id={quote(str(cartridge_id), safe='')}"
 
 
@@ -95,13 +71,6 @@ def _make_highlight(
     cartridge:    str | None = None,
     category:     str,
 ) -> Highlight:
-    """Construct a Highlight dict with the documented shape.
-
-    ``highlight_id`` is the **stable** key used by the dismissal
-    endpoint — it must be deterministic for the same condition so a
-    user can permanently dismiss e.g. ``freshness:sap_hcm`` and not
-    see it reappear five minutes later.
-    """
     return {
         "id":           highlight_id,
         "severity":     severity,
@@ -114,17 +83,10 @@ def _make_highlight(
     }
 
 
-# ── 1. Freshness ─────────────────────────────────────────────────────────
-
-
 _STALE_HOURS = 24
 
 
 async def analyze_freshness(user_context: dict | None = None) -> list[Highlight]:
-    """Any cartridge whose last successful extraction is older than
-    24 hours surfaces as a warning. Pre-existing index from migration
-    49 (idx_extraction_runs_cartridge_finished_success) covers this
-    query so it stays cheap to run on every briefing request."""
     pool = await auth.pool()
     tenant_id, workspace_id, visible = _scope_values(user_context)
     if workspace_id:
@@ -195,21 +157,10 @@ async def analyze_freshness(user_context: dict | None = None) -> list[Highlight]
     return out
 
 
-# ── 2. Volume anomaly ────────────────────────────────────────────────────
-
-
 _VOLUME_DELTA_PCT = 30
 
 
 async def analyze_volume_anomaly(user_context: dict | None = None) -> list[Highlight]:
-    """Compare yesterday's extraction count vs the median of the
-    prior 7 days. A delta of more than ±30% surfaces as warning.
-
-    Uses extraction_runs.records_extracted (not row count) so a single
-    run that pulled 1 M rows doesn't get diluted by a same-day run
-    that pulled 100 rows. NULL records_extracted is treated as 0 so
-    cartridges that haven't reported volumes don't surface here.
-    """
     pool = await auth.pool()
     tenant_id, workspace_id, visible = _scope_values(user_context)
     source_table = "pipeline_runs" if workspace_id else "extraction_runs"
@@ -282,13 +233,7 @@ async def analyze_volume_anomaly(user_context: dict | None = None) -> list[Highl
     return out
 
 
-# ── 3. Pending actions ───────────────────────────────────────────────────
-
-
 async def analyze_pending_actions(user_context: dict | None = None) -> list[Highlight]:
-    """Jobs that have been in 'running' state for more than 24h are
-    almost certainly stuck — surface as warning so the user can
-    investigate (orphaned worker, missing wakeup, etc.)."""
     pool = await auth.pool()
     tenant_id, workspace_id, visible = _scope_values(user_context)
     params: list[Any] = []
@@ -334,12 +279,7 @@ async def analyze_pending_actions(user_context: dict | None = None) -> list[High
     return out
 
 
-# ── 4. Extraction failures ───────────────────────────────────────────────
-
-
 async def analyze_extraction_failures(user_context: dict | None = None) -> list[Highlight]:
-    """Count failed extraction_runs in the last 24h per cartridge.
-    More than one failure → warning; more than three → critical."""
     pool = await auth.pool()
     tenant_id, workspace_id, visible = _scope_values(user_context)
     if workspace_id:
@@ -393,24 +333,12 @@ async def analyze_extraction_failures(user_context: dict | None = None) -> list[
     return out
 
 
-# ── Aggregator ───────────────────────────────────────────────────────────
-
-
 async def briefing_for_user(
     user_id: int,
     *,
     limit: int = 6,
     user_context: dict | None = None,
 ) -> list[Highlight]:
-    """Run every analyzer, drop dismissed entries for this user, sort
-    by severity, return up to ``limit`` highlights.
-
-    The 4 analyzers are awaited sequentially — each is a single
-    bounded query, parallelism doesn't help and complicates error
-    handling. If one analyzer raises (e.g. a schema-drift bug) the
-    whole briefing returns empty rather than partial; the alternative
-    would be a half-rendered card list that confuses the user.
-    """
     try:
         groups = (
             await analyze_freshness(user_context=user_context),
@@ -425,7 +353,6 @@ async def briefing_for_user(
     all_highlights: list[Highlight] = [h for group in groups for h in group]
     all_highlights = _filter_visible_highlights(all_highlights, user_context)
 
-    # Subtract dismissed IDs for this user.
     if all_highlights:
         pool = await auth.pool()
         dismissed_rows = await pool.fetch(
@@ -444,8 +371,6 @@ async def briefing_for_user(
 
 
 async def dismiss_highlight(user_id: int, highlight_id: str) -> bool:
-    """Record a dismissal so the highlight stops surfacing for this
-    user. Idempotent via ON CONFLICT — repeated POSTs are no-ops."""
     pool = await auth.pool()
     await pool.execute(
         """

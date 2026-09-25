@@ -1225,9 +1225,6 @@ async def _persist_lessons(
             item.get("anomaly_type") or "control_room_item",
             rule,
             decision_id,
-            # F11: no real confidence -> NULL in control_room_lessons (the
-            # 99zzzzb migration drops the fabricated NOT NULL DEFAULT 0.70);
-            # the UI renders absence as "sin dato".
             _impact_for_item(item).get("confidence"),
             json.dumps(
                 {

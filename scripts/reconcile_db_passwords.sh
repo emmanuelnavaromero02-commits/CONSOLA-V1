@@ -1,10 +1,4 @@
 #!/usr/bin/env bash
-# Reconcile existing local Postgres login roles with infra/.env.
-#
-# Docker init SQL only runs on a fresh volume. When infra/.env is rotated or
-# regenerated later, already-created roles keep their old passwords and services
-# fail health checks with "password authentication failed". This script performs
-# the safe local rotation path without printing secret values.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

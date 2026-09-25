@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Fail-closed Docker argv guard used after the release image pre-pull lock."""
 
 from __future__ import annotations
 

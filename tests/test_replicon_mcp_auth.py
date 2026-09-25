@@ -1,4 +1,3 @@
-"""Sprint v1.40.3 — Replicon /mcp/* and /skills/* must be behind the internal guard."""
 from __future__ import annotations
 
 import pytest

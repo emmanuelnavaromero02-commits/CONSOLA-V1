@@ -1,17 +1,8 @@
--- Minimal slice of the real schema the app-grant tests need.
---
--- Mirrors infra/init: tenants/workspaces (13_rbac_models), datasets
--- (00_schema + 23 + 99zd), analytic_apps (08/10), cartridge_installations
--- (73_marketplace_installations) and the RLS helper (99e). Kept small on
--- purpose so CI can stand it up in seconds; the objects under test come from
--- the real 99zzt and 99zzu, applied on top of this.
-
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE TABLE schema_migrations (
   filename TEXT PRIMARY KEY,
   applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
--- Roles as created by the real stack.
 DO $$
 DECLARE r TEXT;
 BEGIN
@@ -40,9 +31,6 @@ $$;
 GRANT USAGE ON SCHEMA public TO omega_console, omega_refinement, omega_workspace, omega_mcp_infra, omega_airflow_dag;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO omega_console, omega_refinement, omega_workspace;
 
--- Mirror the FORCE RLS boundary from the production migrations.  The grant
--- reconciler's owner must receive its own scoped read policies from the repair
--- migration under test; ACL grants alone are intentionally insufficient.
 ALTER TABLE datasets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE datasets FORCE ROW LEVEL SECURITY;
 CREATE POLICY datasets_fixture_scope ON datasets

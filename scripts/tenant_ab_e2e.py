@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Tenant A/B end-to-end isolation harness for the Replicon AWS beta path."""
 
 from __future__ import annotations
 

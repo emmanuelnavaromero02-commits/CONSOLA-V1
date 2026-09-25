@@ -1,10 +1,3 @@
-"""Studio API routes backed by real platform services.
-
-These endpoints are the canonical ``/api/studio/*`` surface used by the
-legacy :8000 Studio UI. When a downstream system has no data yet, the endpoint
-returns an explicit empty result with source metadata instead of pretending the
-feature worked.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -649,7 +642,6 @@ async def _live_introspection(
 
 
 async def _studio_introspect_source(args: dict[str, Any], user: dict | None) -> dict[str, Any]:
-    """Studio assistant tool: live schema discovery with static fallback."""
     if user is None:
         raise HTTPException(401, "Authentication required")
     cartridge_id = _clean_identifier(str(args.get("cartridge_id") or ""), label="cartridge_id")
@@ -877,7 +869,6 @@ def _mark_partial_if_datasets_missing(args: dict[str, Any], result: dict[str, An
 
 
 async def _studio_autopilot_build_cartridge(args: dict[str, Any], user: dict | None) -> dict[str, Any]:
-    """Studio assistant tool: sentence/spec/source -> dry-run cartridge blueprint."""
     if user is None:
         raise HTTPException(401, "Authentication required")
 
@@ -1019,7 +1010,6 @@ studio_assistant.register_local_tool(
 
 
 async def _studio_generate_dag_code(args: dict[str, Any], user: dict | None) -> dict[str, Any]:
-    """Studio assistant tool: generate ready-to-review DAG code from connector schema."""
     if user is None:
         raise HTTPException(401, "Authentication required")
     cartridge_id = _clean_identifier(str(args.get("cartridge_id") or ""), label="cartridge_id")
@@ -1084,7 +1074,6 @@ studio_assistant.register_local_tool(
 
 
 async def _studio_validate_dag_code(args: dict[str, Any], user: dict | None) -> dict[str, Any]:
-    """Studio assistant tool: validate generated DAG code before showing it."""
     if user is None:
         raise HTTPException(401, "Authentication required")
     code = args.get("code")
@@ -1114,7 +1103,6 @@ studio_assistant.register_local_tool(
 
 
 async def _studio_create_full_cartridge(args: dict[str, Any], user: dict | None) -> dict[str, Any]:
-    """Studio assistant tool: create a complete cartridge with validated seed SQL."""
     if user is None:
         raise HTTPException(401, "Authentication required")
     try:

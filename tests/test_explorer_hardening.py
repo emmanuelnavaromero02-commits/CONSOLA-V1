@@ -12,7 +12,6 @@ ROOT = Path(__file__).resolve().parents[1]
 def _route_has_permission(
     source: str, *, method: str, path: str, permission: str
 ) -> bool:
-    """Return whether a route decorator carries the required permission gate."""
     for node in ast.walk(ast.parse(source)):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue

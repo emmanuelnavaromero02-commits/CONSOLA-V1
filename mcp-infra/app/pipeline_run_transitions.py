@@ -1,10 +1,3 @@
-"""SQL fragments for fail-closed pipeline run status transitions.
-
-This module intentionally has no Console dependency: mcp-infra is packaged as
-an independent service.  Keep the ranks aligned with Console's
-``app.domains.pipeline.status_transitions``; a contract test enforces parity.
-"""
-
 from __future__ import annotations
 
 

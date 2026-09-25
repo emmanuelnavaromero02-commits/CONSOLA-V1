@@ -1,15 +1,3 @@
-"""Fase 6 — contract pin for the Employee Central anomaly_type tokens.
-
-The anomaly signal crosses three authorities that MUST agree on the token set:
-  (1) the gold SQL  sap_successfactors_employees_anomalies.sql  (emits the tokens),
-  (2) core.py       anomaly label registry  (renders title/recommendation),
-  (3) business_impact_rules.py  SF branch    (assigns/withholds a $ estimate).
-
-Before this pin, the SQL emitted 'invalid_job_code' while business_impact_rules
-matched 'missing_job_code' — a silent drift that made the job-code anomaly
-unreachable by the impact rule forever. This test fails the instant any of the
-three drifts again. Parsed textually (no app import) so it stays hermetic/fast.
-"""
 from __future__ import annotations
 
 import re

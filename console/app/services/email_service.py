@@ -1,10 +1,3 @@
-"""
-SMTP sender. Uses MailHog in dev, drop-in compatible with AWS SES SMTP in prod
-(just change the env vars).
-
-Module is named `email_service` instead of `email` to avoid shadowing the
-stdlib `email` package that smtplib relies on.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -93,14 +86,6 @@ async def send_email(
     to: str, subject: str, html: str, text: str | None = None,
     attachments: list[tuple[str, bytes, str]] | None = None,
 ) -> bool:
-    """Send an email asynchronously. Returns True on success, False otherwise.
-
-    `attachments` is a list of (filename, bytes, mime_type) tuples.
-
-    Failures are intentionally swallowed (logged) so a flaky SMTP doesn't take
-    down auth flows — the calling endpoint surfaces a generic message either
-    way to avoid leaking who is registered.
-    """
     try:
         await asyncio.to_thread(_send_sync, to, subject, html, text, attachments)
         return True
@@ -116,8 +101,6 @@ def _html_to_text(html: str) -> str:
     txt = re.sub(r"<[^>]+>", "", txt)
     return txt.strip()
 
-
-# ── Templates ───────────────────────────────────────────────────────────────
 
 def _wrap(title: str, body_html: str) -> str:
     return f"""<!DOCTYPE html>
@@ -166,10 +149,6 @@ def render_invitation_with_vpn(
     vpn_ttl_hours: int,
     vpn_password: str | None = None,
 ) -> tuple[str, str]:
-    """Single welcome email that combines the activation flow and the VPN
-    config delivery. If `vpn_password` is provided, the body explains how
-    to open the attached ZIP; otherwise it falls back to the (in-network)
-    download link."""
     greeting = f"Hola {name}," if name else "Hola,"
     subject = "Bienvenida a ΩMEGA by EPIUSE"
 
@@ -247,8 +226,6 @@ def render_invitation_with_vpn(
 
 
 def _workspace_block() -> str:
-    """Step-3 block telling the user where to go once they're activated.
-    Empty if WORKSPACE_URL is not configured."""
     if not WORKSPACE_URL:
         return ""
     return f"""

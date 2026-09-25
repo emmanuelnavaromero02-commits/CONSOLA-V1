@@ -1,5 +1,3 @@
-"""Studio API endpoints must be backed by real services, not stub markers."""
-
 from __future__ import annotations
 
 import os

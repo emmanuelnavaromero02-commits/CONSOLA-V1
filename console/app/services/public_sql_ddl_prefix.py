@@ -1,5 +1,3 @@
-"""Parser-derived positional prefixes for DDL statement heads."""
-
 from __future__ import annotations
 
 from app.services.public_sql_select_lexer import SelectToken
@@ -71,8 +69,6 @@ _GLOBAL_TEMP_OBJECTS = frozenset({"sequence", "table", "view"})
 _LOCAL_TEMP_OBJECTS = _TEMP_OBJECTS
 _REPLACE_GLOBAL_TEMP_OBJECTS = frozenset({"view"})
 
-# Every tuple is an exact modifier production accepted parse-only by DuckDB 1.2.2
-# or PostgreSQL 15.18. The table deliberately is not a generic modifier skipper.
 _CREATE_MODIFIER_OBJECTS = {
     ("or", "replace"): _REPLACE_OBJECTS,
     ("temp",): _TEMP_OBJECTS,
@@ -128,7 +124,6 @@ def _matches_modifier_object(
 
 
 def ddl_prefix(head: str, tail: tuple[SelectToken, ...]) -> bool:
-    """Recognize only version-pinned DDL object/modifier positions."""
 
     if tail and _word(tail[0]) in DDL_OBJECT_WORDS:
         return True

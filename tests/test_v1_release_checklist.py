@@ -25,13 +25,6 @@ def test_no_final_v1_tag_exists_while_p2_is_blocked():
 
 
 def test_baseline_smoke_names_required_workflows_explicitly():
-    """The smoke must not decide "workflows are fine" from a glob alone.
-
-    A glob over ``.github/workflows`` yields nothing when a required
-    workflow is deleted, and "0 files parsed, 0 errors" reports PASS —
-    a false green on exactly the event worth catching. Pin the four gate
-    families by path so removing one is a failure, not a silent skip.
-    """
     smoke = (REPO / "scripts/baseline_smoke.sh").read_text(encoding="utf-8")
     assert "REQUIRED_WORKFLOWS" in smoke
     for workflow in (
@@ -45,7 +38,6 @@ def test_baseline_smoke_names_required_workflows_explicitly():
 
 
 def test_baseline_bandit_scope_matches_security_workflow():
-    """`make security-scan` must not audit less than CI does."""
     makefile = (REPO / "Makefile").read_text(encoding="utf-8")
     for helper in ("scripts/ci_changed_areas.py", "scripts/ci_control_room_paths.py"):
         assert helper in makefile, f"local bandit scope omits {helper}, CI audits it"

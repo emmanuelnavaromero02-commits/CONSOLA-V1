@@ -1,4 +1,3 @@
-"""Sprint v1.41.0 — audit_events tool columns + record_event API compat."""
 from __future__ import annotations
 
 import inspect
@@ -17,9 +16,6 @@ def audit_module():
     for name in list(sys.modules):
         if name == "app" or name.startswith("app."):
             del sys.modules[name]
-    # Strip every sibling service path that another test fixture may have
-    # left behind; otherwise their ``app/__init__.py`` (regular package)
-    # would mask console's namespace ``app`` package.
     _SIBLINGS = ("/cartridges/", "/console", "/refinement", "/vault", "/workspace", "/mcp-infra")
     sys.path[:] = [p for p in sys.path if not any(s in p for s in _SIBLINGS)]
     sys.path.insert(0, str(REPO_ROOT / "console"))
@@ -51,20 +47,15 @@ def test_migration_39_indices():
 
 
 def test_record_event_accepts_tool_metadata(audit_module):
-    """The 5 new kwargs must exist on record_event with default None."""
     sig = inspect.signature(audit_module.record_event)
     for kw in ("tool_name", "tool_args", "tool_result_status", "risk_level", "conversation_id"):
         assert kw in sig.parameters, f"{kw} not in record_event signature"
         assert sig.parameters[kw].default is None
-        # Tool metadata must be keyword-only — easy to spot a copilot caller
-        # and avoid silent positional misuse from older call sites.
         assert sig.parameters[kw].kind == inspect.Parameter.KEYWORD_ONLY
 
 
 def test_record_event_backwards_compatible(audit_module):
-    """Existing call sites pass no tool_* — must still match signature."""
     sig = inspect.signature(audit_module.record_event)
-    # bind() raises TypeError if the call wouldn't fit
     sig.bind(
         user_id=1,
         email="a@b.com",

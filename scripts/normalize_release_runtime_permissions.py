@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Normalize a copied release runtime to immutable, universally readable modes."""
 
 from __future__ import annotations
 
@@ -11,7 +10,7 @@ from pathlib import Path
 
 
 class RuntimePermissionError(RuntimeError):
-    """The runtime tree cannot be normalized safely."""
+    pass
 
 
 def _inside(root: Path, candidate: Path) -> bool:
@@ -83,13 +82,10 @@ def _inventory(root: Path) -> tuple[list[tuple[Path, int]], int]:
 
 
 def normalize_runtime_permissions(root: Path) -> tuple[int, int, int]:
-    """Make dirs 0555 and files 0444/0555 without following symlinks."""
 
     if not root.is_absolute():
         raise RuntimePermissionError("runtime root must be absolute")
     modes, symlinks = _inventory(root)
-    # Normalize leaves before their parents.  The complete tree is validated
-    # first, so a special file or escaping symlink cannot leave a partial freeze.
     for path, target_mode in sorted(
         modes, key=lambda item: len(item[0].parts), reverse=True
     ):

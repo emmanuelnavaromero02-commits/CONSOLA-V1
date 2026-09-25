@@ -90,7 +90,6 @@ function AppCard({ app }: { app: AnalyticsApp }) {
           ) : null}
           <div>
             <dt className="inline font-medium">Actualizado: </dt>
-            {/* Never invent a timestamp: absence is reported as absence. */}
             <dd className="inline">{updated ?? "Frescura no informada"}</dd>
           </div>
         </dl>
@@ -136,7 +135,6 @@ export function AppCatalog({ cartridge }: { cartridge?: string }) {
 
   if (isError) {
     const status = isApiError(error) ? error.status : undefined;
-    // 401/403 is a scope answer, not a crash: say so without leaking internals.
     const forbidden = status === 401 || status === 403;
     return (
       <div

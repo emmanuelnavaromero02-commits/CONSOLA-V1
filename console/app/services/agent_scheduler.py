@@ -32,12 +32,6 @@ async def reserve_scheduled_run(
     metadata: dict[str, Any] | None = None,
     lease_seconds: int = 900,
 ) -> dict[str, Any]:
-    """Reserve a scheduled agent fire-time exactly once.
-
-    The durable reservation is a safety boundary. A database without it must
-    not execute a scheduled monitor because a retry could duplicate alerts or
-    decisions.
-    """
 
     pool = await auth.pool()
     if not await _table_exists(pool):

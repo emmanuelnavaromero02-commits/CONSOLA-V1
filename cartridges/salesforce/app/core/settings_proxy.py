@@ -1,9 +1,3 @@
-"""Proxy para leer system_settings desde el console. Fallback a env si falla.
-
-Uso:
-    from app.core.settings_proxy import get_setting
-    token = get_setting("salesforce_token", default="", env_fallback="SALESFORCE_TOKEN")
-"""
 from __future__ import annotations
 
 import logging
@@ -28,9 +22,6 @@ def _fetch_from_console(key: str) -> str | None:
     if not _INTERNAL_KEY:
         return None
     try:
-        # Sprint v1.12: console now whitelists "cartridge-<name>" with its
-        # own pair key. Send the cartridge-specific service identifier
-        # instead of impersonating airflow.
         headers = {"x-api-key": _INTERNAL_KEY, "x-internal-service": "cartridge-salesforce"}
         with httpx.Client(timeout=2.0) as c:
             r = c.get(f"{_CONSOLE_URL}/internal/settings/{key}/reveal", headers=headers)
@@ -48,13 +39,6 @@ def _fetch_from_console(key: str) -> str | None:
 
 
 def get_setting(key: str, default: str = "", env_fallback: str | None = None) -> str:
-    """Lee setting desde console (cacheado 30s). Fallback a env si console falla.
-
-    Args:
-        key: nombre del setting en system_settings (ej. 'salesforce_token').
-        default: valor si nada está configurado.
-        env_fallback: nombre de variable de entorno a usar como fallback.
-    """
     now = time.time()
     cached = _CACHE.get(key)
     if cached and (now - cached[0]) < _CACHE_TTL_SECONDS:

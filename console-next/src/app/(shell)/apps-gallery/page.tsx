@@ -3,11 +3,6 @@
 import Link from "next/link";
 import { useEffect } from "react";
 
-/**
- * Legacy entry point. It used to bounce to /control-room#apps, an anchor that
- * stopped existing when Control Room moved to the business experience. The
- * canonical home for published apps is /analytics.
- */
 export default function AppsGalleryPage() {
   useEffect(() => {
     window.location.replace("/analytics");

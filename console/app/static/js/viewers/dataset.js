@@ -1,5 +1,3 @@
-// Sprint v1.11 phase 2 — extracted from dataset.html for strict CSP.
-
 function esc(s) { return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"); }
 const dsName = location.pathname.split('/').pop();
 let dsData = null;
@@ -130,7 +128,6 @@ async function loadPreview() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  // Tab switching: each .tab in the tab-bar carries its target name via data-tab.
   document.querySelectorAll('.tab[data-tab]').forEach(tab => {
     tab.addEventListener('click', () => showTab(tab.dataset.tab));
   });

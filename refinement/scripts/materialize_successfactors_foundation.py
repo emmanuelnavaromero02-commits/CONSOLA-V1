@@ -25,14 +25,6 @@ from app.successfactors_fallbacks import fallback_dataset_for_successfactors
 
 
 def _load_gold_dataset_orders() -> dict:
-    """Carga la FUENTE UNICA DE VERDAD de los ordenes de datasets gold SF.
-
-    Vive en el cartucho (cartridges/sap_successfactors/app/config/
-    gold_dataset_orders.json) y la comparten los modulos del cartucho
-    (dataset_orders.py). Este runner corre en el servicio refinement, que no puede
-    importar el paquete del cartucho, asi que lee el MISMO JSON: del mount
-    /registry/cartridges en runtime, o de la ruta del checkout en tests/local.
-    """
     candidates = [
         Path("/registry/cartridges/sap_successfactors/app/config/gold_dataset_orders.json"),
         Path(__file__).resolve().parents[2]
@@ -72,13 +64,10 @@ ALLOWED_FOUNDATION_DATASETS = set(SUCCESSFACTORS_GOLD_FOUNDATION_ORDER) | set(SU
 
 
 class MaterializationContractError(RuntimeError):
-    """Raised when a requested dataset is unsafe for this scoped runner."""
+    pass
 
 
 def _repo_root() -> Path:
-    # In the service image this file lives under /app/scripts. In the checkout it
-    # lives under refinement/scripts. Both layouts keep the service root one level
-    # above this file.
     return Path(__file__).resolve().parents[1]
 
 
@@ -129,7 +118,6 @@ def _scoped_dsn() -> str:
 
 
 class ScopedDatasetStore:
-    """DatasetStore-compatible catalog access for this scoped CLI runner."""
 
     def __init__(self, tenant_id: str, workspace_id: str):
         self.tenant_id = tenant_id

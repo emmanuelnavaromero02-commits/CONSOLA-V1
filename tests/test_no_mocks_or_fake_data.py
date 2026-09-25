@@ -1,4 +1,3 @@
-"""Make sure the audit cleared every mock / fake-data trace from SAP cartridges."""
 from __future__ import annotations
 
 from pathlib import Path

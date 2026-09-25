@@ -40,11 +40,6 @@ def analyze_time_series(
     latest: dict[str, Any],
     history_rows: list[dict[str, Any]],
 ) -> TimeSeriesResult | None:
-    """Build a dependency-light residual anomaly analysis.
-
-    Returns ``None`` when the metric has no reliable temporal field so callers can
-    fall back to the legacy robust baseline instead of pretending time order.
-    """
 
     time_field = str(metric.get("time_field") or "").strip()
     value_field = str(metric.get("value_field") or "").strip()

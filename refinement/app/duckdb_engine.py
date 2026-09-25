@@ -1,21 +1,3 @@
-"""
-DuckDB Engine — Refinement service (transversal, multi-cartridge).
-
-Silver layer:
-  - Limpieza 1:1 desde raw → Parquet snapshot inmutable en MinIO
-    s3://lakehouse/silver/{cartridge}/{name}/_snapshots/{timestamp}.parquet
-
-Gold layer:
-  - Modelado de negocio, dimensiones, hechos, agregaciones y KPIs → tabla Postgres en el GOLD DB: gold_{name}
-
-Postgres aliases dentro de DuckDB:
-  - pgdb   → service DB (lineage, datasets, catalog, etc.)
-  - pggold → analytical DB (gold_*)
-
-Lineage:
-  - Cada materialización escribe una fila en silver_lineage (en el service DB)
-"""
-
 from __future__ import annotations
 
 import os
@@ -53,10 +35,6 @@ S3_LITERAL_RE = re.compile(
 DUCKDB_MEMORY_LIMIT_RE = re.compile(
     r"^\d+(?:\.\d+)?\s*(?:B|KB|MB|GB|TB|KiB|MiB|GiB|TiB)$", re.IGNORECASE
 )
-# A spill directory has to be an absolute path. DuckDB's own default is the
-# relative ".tmp", which lands wherever the process happens to be running —
-# inside the container's writable layer, not on a volume — and moves if the
-# working directory ever changes.
 DUCKDB_TEMP_DIRECTORY_RE = re.compile(r"^/[^\0'\"\n\r]*$")
 
 
@@ -65,10 +43,6 @@ def _normalize_postgres_dsn(raw: str) -> str:
 
 
 def _sql_quote(value: str) -> str:
-    """Single-quote a string literal for direct interpolation into a SQL
-    statement that DuckDB will execute. We use this for ATTACH/SET arguments
-    that DuckDB does not accept as parameter placeholders. Doubling embedded
-    single quotes is the standard SQL escape and is what DuckDB expects."""
     return "'" + (value or "").replace("'", "''") + "'"
 
 
@@ -76,14 +50,6 @@ _SHARED_MACRO_FILES = ("sql/talent_score_scale.sql",)
 
 
 def _register_shared_macros(con: "duckdb.DuckDBPyConnection") -> None:
-    """Register the shared dataset macros on a fresh connection.
-
-    Packaged dataset SQL is a single SELECT, so it cannot define its own
-    helpers. The score normalization that keeps NaN, Infinity, negatives and
-    out-of-domain values out of Talent banding lives in one file and is
-    registered here, once per connection, so every dataset shares exactly the
-    same definition instead of repeating it.
-    """
     root = Path(__file__).resolve().parent
     for relative in _SHARED_MACRO_FILES:
         path = root / relative
@@ -93,11 +59,6 @@ def _register_shared_macros(con: "duckdb.DuckDBPyConnection") -> None:
 
 
 def _escape_sql_literal_inner(value: str) -> str:
-    """v1.43.1 (B4): same single-quote-doubling escape as
-    ``_sql_quote`` but WITHOUT the wrapping quotes. Use when the template
-    already provides the outer ``'…'`` (e.g. ``WHERE x = '{placeholder}'``)
-    and we just need to neutralise any quote characters embedded in the
-    value so an attacker can't break out of the literal."""
     return (value or "").replace("'", "''")
 
 
@@ -152,12 +113,6 @@ def _pg_ident(value: str) -> str:
 
 
 def _duckdb_type_to_pg_type(raw: str) -> str:
-    """Map DuckDB DESCRIBE types to PostgreSQL column types for Gold drift.
-
-    Gold tables are born from DuckDB queries, then persisted into Postgres.
-    When a dataset SQL evolves by adding columns, we add only the missing
-    nullable columns in Postgres rather than dropping all tenants' rows.
-    """
     typ = (raw or "").strip().upper()
     if not typ:
         raise ValueError("Gold query returned a column with no type")
@@ -191,12 +146,6 @@ def _duckdb_type_to_pg_type(raw: str) -> str:
 
 
 def _strip_sql_comments(sql: str) -> str:
-    """Remove SQL comments while preserving quoted string literals.
-
-    Cartridge dataset SQL commonly carries leading metadata comments. The
-    safety gate should inspect the executable SQL, not reject trusted dataset
-    definitions because they have a header.
-    """
     text = sql or ""
     out: list[str] = []
     i = 0
@@ -267,17 +216,11 @@ class DuckDBEngine:
             self.minio_bucket or "lakehouse",
         )
         self.pg_url = os.environ.get("DATABASE_URL", "")
-        # Analytical (gold) DB. Falls back to service DB if unset, so
-        # local/dev environments without postgres_gold keep working.
         self.pg_gold_url = os.environ.get("GOLD_DATABASE_URL", "") or self.pg_url
         self.duckdb_memory_limit = _duckdb_memory_limit_from_env(
             os.environ.get("DUCKDB_MEMORY_LIMIT")
         )
         self.duckdb_threads = _duckdb_threads_from_env(os.environ.get("DUCKDB_THREADS"))
-        # A bounded memory_limit makes spilling to disk normal rather than
-        # rare, so the spill needs a bound of its own. DuckDB's default cap is
-        # 90% of the filesystem, which on a single-disk host means a runaway
-        # query can starve PostgreSQL instead of failing by itself.
         self.duckdb_temp_directory = _duckdb_temp_directory_from_env(
             os.environ.get("DUCKDB_TEMP_DIRECTORY")
         )
@@ -288,13 +231,6 @@ class DuckDBEngine:
         self._duckdb_lock = threading.RLock()
 
     def _uses_aws_s3_credential_chain(self) -> bool:
-        """True when running against AWS S3 with instance/profile creds.
-
-        Local MinIO uses explicit MINIO_ACCESS_KEY / MINIO_SECRET_KEY. The AWS
-        deployment intentionally uses the EC2 instance role, so configuring
-        DuckDB with empty access/secret strings makes httpfs attempt anonymous
-        S3 reads and every materialization fails with HTTP 403.
-        """
         endpoint = (self.minio_endpoint or "").lower()
         return (
             "amazonaws.com" in endpoint
@@ -307,8 +243,6 @@ class DuckDBEngine:
         return provider == "gcs"
 
     def _gcs_hmac_credentials(self) -> tuple[str, str]:
-        # Never construct a credential pair from generic/AWS/MinIO aliases.
-        # GCP deployment hydrates these two names as one atomic unit.
         key_id = (os.environ.get("GCS_ACCESS_KEY_ID") or "").strip()
         secret = (os.environ.get("GCS_SECRET_ACCESS_KEY") or "").strip()
         if not key_id or not secret:
@@ -321,7 +255,6 @@ class DuckDBEngine:
     def _configure_duckdb_gcs(self, con: duckdb.DuckDBPyConnection) -> None:
         key_id, secret = self._gcs_hmac_credentials()
         try:
-            # GCS's S3-compatible signature scope requires the special region.
             con.execute("SET s3_region='auto';")
             con.execute(
                 "CREATE OR REPLACE SECRET omega_gcs ("
@@ -348,11 +281,6 @@ class DuckDBEngine:
                 if self.duckdb_threads is not None:
                     self._con.execute(f"SET threads={self.duckdb_threads};")
                 if self.duckdb_temp_directory:
-                    # DuckDB creates a single missing directory but not a
-                    # nested path: with the parent absent it raises
-                    # "Failed to create directory" at spill time, i.e. the
-                    # query that needed to spill is the one that fails. Create
-                    # it up front so a configured path is never a trap.
                     try:
                         os.makedirs(self.duckdb_temp_directory, exist_ok=True)
                     except OSError as exc:
@@ -385,9 +313,6 @@ class DuckDBEngine:
                         or os.environ.get("AWS_DEFAULT_REGION")
                         or "us-east-1"
                     )
-                    # ``credential_chain`` is supplied by DuckDB's aws
-                    # extension. It is installed into the image/cache ahead of
-                    # time and loaded only for native S3 role credentials.
                     self._con.execute("LOAD aws;")
                     self._con.execute(
                         "CREATE OR REPLACE SECRET omega_s3_role ("
@@ -420,7 +345,6 @@ class DuckDBEngine:
             except Exception:
                 pass
 
-    # ── Postgres connections ──────────────────────────────────────────────────
 
     def _pg_conn(self):
         return psycopg2.connect(_normalize_postgres_dsn(self.pg_url))
@@ -444,12 +368,11 @@ class DuckDBEngine:
         return f"{dsn} options={_libpq_quote(options)}"
 
     def _pg_attach(self, con: duckdb.DuckDBPyConnection) -> str:
-        """Attach service Postgres (pgdb) and return alias."""
         dsn = _normalize_postgres_dsn(self.pg_url)
         try:
             con.execute(f"ATTACH {_sql_quote(dsn)} AS pgdb (TYPE postgres);")
         except Exception:
-            pass  # already attached
+            pass
         return "pgdb"
 
     def _pg_gold_attach(
@@ -457,7 +380,6 @@ class DuckDBEngine:
         con: duckdb.DuckDBPyConnection,
         user_context: dict | None = None,
     ) -> str:
-        """Attach analytical Postgres (pggold) and return alias."""
         dsn = self._pg_gold_dsn(user_context)
         if not dsn:
             return "pggold"
@@ -468,7 +390,6 @@ class DuckDBEngine:
         con.execute(f"ATTACH {_sql_quote(dsn)} AS pggold (TYPE postgres);")
         return "pggold"
 
-    # ── Path helpers ──────────────────────────────────────────────────────────
 
     def _validate_bronze_source(self, source: str) -> str:
         source = (source or "").strip()
@@ -531,10 +452,6 @@ class DuckDBEngine:
             return self._storage_uri(
                 f"{source}/tenant_id={tenant}/workspace_id={workspace}/**/*.parquet"
             )
-        # Keep unscoped reads on the legacy/global layout only. A recursive glob
-        # over both `load_date=...` and `tenant_id=.../workspace_id=...` layouts
-        # makes DuckDB's hive partition reader fail because the partition keys
-        # differ across files.
         return self._storage_uri(f"{source}/load_date=*/batch_id=*/*.parquet")
 
     def _bronze_read(self, source: str, user_context: dict | None = None) -> str:
@@ -544,11 +461,6 @@ class DuckDBEngine:
     def _silver_path(
         self, cartridge: str, name: str, user_context: dict | None = None
     ) -> str:
-        """Legacy Silver path used to recognize older cartridge SQL.
-
-        New materializations write immutable `_snapshots/*.parquet` objects and
-        `_scope_storage_sql` redirects this path to the latest lineage URI.
-        """
         validate_safe_identifier(cartridge, "cartridge")
         validate_safe_identifier(name, "dataset")
         tenant, workspace = self._scope_values(user_context)
@@ -561,7 +473,6 @@ class DuckDBEngine:
     def _gold_path(
         self, cartridge: str, name: str, user_context: dict | None = None
     ) -> str:
-        """Legacy Gold parquet path used for backwards-compatible SQL rewrites."""
         validate_safe_identifier(cartridge, "cartridge")
         validate_safe_identifier(name, "dataset")
         tenant, workspace = self._scope_values(user_context)
@@ -653,15 +564,6 @@ class DuckDBEngine:
     def _scope_storage_sql(
         self, sql: str, sources: list[str], user_context: dict | None
     ) -> str:
-        """Rewrite known raw/silver/gold S3 references to the tenant/workspace
-        partition when the caller is scoped. This keeps dataset SQL portable:
-        definitions still reference raw/<cartridge>/<entity>, while execution
-        uses only the current tenant/workspace physical path.
-
-        Materialized silver/gold datasets are immutable snapshots. Legacy
-        cartridge SQL still references .../data.parquet; when lineage has a
-        newer snapshot we redirect that reference before execution.
-        """
         tenant, workspace = self._scope_values(user_context)
 
         out = sql
@@ -746,13 +648,6 @@ class DuckDBEngine:
         return f"{base}/{clean}" if clean else f"{base}/"
 
     def _storage_uri_variants(self, key: str) -> tuple[str, ...]:
-        """Return exact-current-bucket URIs for both supported SQL schemes.
-
-        Dataset definitions are portable artifacts and older definitions use
-        ``s3://`` even when the active lakehouse provider is GCS.  Keeping the
-        variants bound to the configured bucket lets the scoping rewrite
-        recognize either spelling without accepting another bucket or path.
-        """
         clean = str(key or "").strip("/")
         suffix = f"/{clean}" if clean else "/"
         active = self._storage_scheme()
@@ -760,7 +655,6 @@ class DuckDBEngine:
         return tuple(f"{scheme}://{self.minio_bucket}{suffix}" for scheme in schemes)
 
     def _canonical_storage_uri(self, uri: str) -> str:
-        """Normalize an exact-current-bucket URI to the active provider scheme."""
         value = str(uri or "")
         for prefix in self._storage_uri_variants(""):
             if value.startswith(prefix):
@@ -768,13 +662,6 @@ class DuckDBEngine:
         return value
 
     def _delete_s3_prefix(self, uri: str) -> None:
-        """Delete an existing MinIO/S3 object or prefix before DuckDB rewrites it.
-
-        DuckDB 1.2.2 can raise a low-level UnicodeDecodeError when `COPY TO`
-        overwrites an existing MinIO object. Removing the object/prefix first
-        gives materialization idempotent semantics and keeps repeated refreshes
-        from failing under stress.
-        """
         key = self._s3_object_key(uri)
         if not key:
             return
@@ -886,7 +773,6 @@ class DuckDBEngine:
     def _resolve_latest_date(
         self, source: str, user_context: dict | None = None
     ) -> str | None:
-        """Devuelve el load_date más reciente disponible en una fuente Bronze."""
         try:
             with self._duckdb_lock:
                 con = self._conn()
@@ -896,7 +782,6 @@ class DuckDBEngine:
         except Exception:
             return None
 
-    # ── Bronze discovery ──────────────────────────────────────────────────────
 
     def _bronze_source_from_object_key(
         self,
@@ -1030,10 +915,6 @@ class DuckDBEngine:
     def get_source_partitions(
         self, source: str, user_context: dict | None = None
     ) -> dict:
-        """
-        Returns partition values (load_date, batch_id) available in a bronze source.
-        Also returns sql_latest — a ready-to-use SQL filtered to the most recent load_date.
-        """
         try:
             with self._duckdb_lock:
                 con = self._conn()
@@ -1048,10 +929,6 @@ class DuckDBEngine:
                 "source": source,
                 "partitions": partitions,
                 "latest": latest,
-                # load_date comes from Parquet metadata and could in theory be
-                # tampered with — escape it for safe SQL interpolation. The
-                # SQL is returned to the caller (not executed here), so we
-                # can't use prepared-statement placeholders.
                 "sql_latest": (
                     f"SELECT * FROM {expr} WHERE load_date = {_sql_quote(str(latest['load_date']))}"
                 )
@@ -1109,14 +986,7 @@ class DuckDBEngine:
                 ],
             }
 
-    # ── SQL preview ───────────────────────────────────────────────────────────
 
-    # Blacklist of DuckDB constructs that must NEVER appear in user-supplied
-    # SQL. Each pattern is checked independently so the rejection reason can
-    # name the exact pattern that matched. _validate_safe_sql is only called
-    # for SQL that came from the LLM/user — internal engine calls (ATTACH at
-    # startup, INSTALL/LOAD of httpfs+postgres extensions in _conn) bypass
-    # this gate by going straight to con.execute().
     _DANGEROUS_PATTERNS = [
         re.compile(
             r"\bread_(?:csv|text|json|blob|parquet_objects)\s*\(", re.IGNORECASE
@@ -1187,21 +1057,8 @@ class DuckDBEngine:
             ),
         )
 
-    # Hard cap on preview/query result size — protects the server from a
-    # runaway query (cartesian product, missing WHERE, etc.) that asks for
-    # millions of rows in one shot. Single point of enforcement: any caller
-    # that delegates to preview_sql (query_dataset, the /preview endpoints)
-    # inherits the cap automatically and MUST NOT re-cap.
     _MAX_PREVIEW_LIMIT = 10_000
     _DEFAULT_PREVIEW_LIMIT = 20
-    # Sprint v1.16: wall-clock cap on a single preview_sql execution.
-    # Limits the blast radius of an LLM-generated query that misses a
-    # WHERE clause, builds a cartesian product, or otherwise asks DuckDB
-    # to scan a dataset that takes longer than this to read. DuckDB 1.2.x
-    # has no native `statement_timeout` configuration knob, so this is
-    # enforced via a threading.Timer that calls con.interrupt() on the
-    # shared connection — DuckDB raises InterruptException which we
-    # translate into a friendly error message below.
     _STATEMENT_TIMEOUT_SECONDS = 30
 
     def preview_sql(
@@ -1214,22 +1071,6 @@ class DuckDBEngine:
         *,
         allow_server_resolved_publication_relation: bool = False,
     ) -> dict:
-        """Execute SQL with RLS applied and caller params merged.
-
-        RLS is ALWAYS applied regardless of whether the caller supplies params.
-        get_rls_filters() injects ? placeholders inside inner subqueries; those
-        placeholders appear first in the SQL, so rls_params must come before
-        caller_params in the combined list (positional DuckDB binding is L→R).
-
-        Callers that already applied RLS (e.g. query_dataset) must NOT call
-        get_rls_filters separately — delegate entirely to preview_sql instead.
-
-        `limit` is coerced into [1, _MAX_PREVIEW_LIMIT]; non-positive or None
-        values fall back to _DEFAULT_PREVIEW_LIMIT.
-
-        Execution is bounded by ``_STATEMENT_TIMEOUT_SECONDS`` — see the
-        class-level comment for the mechanism.
-        """
         if limit is None or limit <= 0:
             limit = self._DEFAULT_PREVIEW_LIMIT
         elif limit > self._MAX_PREVIEW_LIMIT:
@@ -1268,11 +1109,6 @@ class DuckDBEngine:
                     allow_server_resolved_publication_relation=True,
                 )
 
-                # Watchdog: fires con.interrupt() if the query runs past
-                # the cap. The Timer is cancelled immediately after a
-                # successful fetch so the connection is free for the
-                # next caller. daemon=True keeps the process exitable
-                # even if the timer is somehow still pending at shutdown.
                 timer = threading.Timer(self._STATEMENT_TIMEOUT_SECONDS, con.interrupt)
                 timer.daemon = True
                 timer.start()
@@ -1298,10 +1134,6 @@ class DuckDBEngine:
             }
         except Exception as exc:
             msg = str(exc)
-            # DuckDB raises InterruptException ("INTERRUPT Error: Interrupted!")
-            # when the watchdog calls con.interrupt(). Normalize the message
-            # so the LLM/caller gets something actionable instead of a stack
-            # trace fragment.
             lower = msg.lower()
             missing_parquet = (
                 "no files found" in lower
@@ -1354,7 +1186,6 @@ class DuckDBEngine:
                 }
             return {"error": msg}
 
-    # ── Dataset query ─────────────────────────────────────────────────────────
 
     def get_dataset_schema(self, ds: dict, user_context: dict | None = None) -> dict:
         try:
@@ -1396,8 +1227,6 @@ class DuckDBEngine:
                     rls_params,
                 ).fetchall()
             fields = [{"name": r[0], "type": r[1]} for r in rows]
-            # F8: enrich with the persisted per-column profile (best-effort —
-            # a stats read failure must never break schema resolution).
             try:
                 stats = self._catalog_profile_stats(ds["name"], user_context)
                 for field in fields:
@@ -1416,7 +1245,6 @@ class DuckDBEngine:
     def _catalog_profile_stats(
         self, dataset: str, user_context: dict | None = None
     ) -> dict[str, dict]:
-        """Read persisted column quality stats from data_catalog, scoped."""
         tenant_id, workspace_id = self._scope_values(user_context)
         if not workspace_id:
             return {}
@@ -1477,14 +1305,6 @@ class DuckDBEngine:
         return f"SELECT * FROM read_parquet({_sql_quote(uri)}, hive_partitioning=true, union_by_name=true)"
 
     def _rls_filter_clause(self, cols: list, user_context: dict, params: list) -> str:
-        """Return the WHERE clause body for a pggold table (no leading WHERE).
-
-        Gold reads are workspace-strict for non-admin callers. Tables without a
-        workspace_id column are treated as unsafe legacy/global data and default
-        to deny. Tables with both tenant_id and workspace_id must match both
-        values so one workspace cannot read a sibling workspace in the same
-        tenant.
-        """
         tenant = str(user_context.get("tenant_id") or "")
         workspace = str(user_context.get("workspace_id") or "")
         colset = set(cols)
@@ -1500,26 +1320,9 @@ class DuckDBEngine:
         return "workspace_id = ?"
 
     def _inject_rls_ast(self, sql: str, user_context: dict) -> tuple[str, list]:
-        """AST-based RLS injection using sqlglot.
-
-        Walks every exp.Table node in the parsed tree (including CTEs,
-        subqueries and UNION branches), and for any table whose schema is
-        "pggold" replaces it with an inline subquery filtered on the user's
-        tenancy column. Original aliases are preserved so the surrounding
-        SQL (qualified column refs like `t.col`) keeps resolving.
-
-        Default-deny: if sqlglot cannot parse the SQL we raise ValueError
-        and the caller must NOT execute the query. There is no regex
-        fallback (that was the v1.0 design weakness called out by audit).
-        """
         try:
             tree = sqlglot.parse_one(sql, read="duckdb")
         except (sqlglot.errors.ParseError, sqlglot.errors.TokenError) as exc:
-            # v1.43.1 (B9): TokenError fires on lexer failures
-            # (e.g. unbalanced quotes, raw garbage) before sqlglot even
-            # reaches the parse step. The audit's default-deny posture
-            # treats those the same as ParseError — the caller MUST NOT
-            # see the query execute.
             raise ValueError(
                 f"SQL failed AST parse — default-deny applied: {exc}"
             ) from exc
@@ -1528,8 +1331,6 @@ class DuckDBEngine:
 
         params: list = []
 
-        # Cache column lookups so a UNION of N pggold tables only fires N
-        # DESCRIBEs, not N×2.
         cols_cache: dict[str, list] = {}
 
         def _columns_for(table_name: str) -> list:
@@ -1557,7 +1358,6 @@ class DuckDBEngine:
             cols = _columns_for(table_name)
             where_body = self._rls_filter_clause(cols, user_context, params)
 
-            # Capture original alias (if any) so qualified refs still resolve.
             original_alias = node.alias
 
             inner_sql = f"SELECT * FROM pggold.{table_name} WHERE {where_body}"
@@ -1580,10 +1380,6 @@ class DuckDBEngine:
         return new_tree.sql(dialect="duckdb"), params
 
     def get_rls_filters(self, sql: str, user_context: dict) -> tuple[str, list]:
-        # Admin bypass requires a server-built context. A raw body claiming
-        # role=admin is not enough; refinement constructs
-        # _server_trusted_context only after verifying the internal caller and
-        # its security_context source.
         if (
             user_context
             and str(user_context.get("role") or "").lower()
@@ -1622,9 +1418,6 @@ class DuckDBEngine:
             filter_params = list(filters.values())
             sql = f"SELECT * FROM ({sql}) _q WHERE {' AND '.join(clauses)}"
 
-        # Delegate RLS to preview_sql — do NOT call get_rls_filters here.
-        # preview_sql always applies RLS and combines rls_params + filter_params
-        # in the correct positional order (RLS ? inside subqueries come first).
         return self.preview_sql(
             sql,
             limit,
@@ -1656,46 +1449,21 @@ class DuckDBEngine:
         sources: list[str],
         user_context: dict | None = None,
     ) -> str:
-        """
-        Sustituye el placeholder {latest_date} en el SQL por el load_date más
-        reciente de la primera fuente Bronze. Si el SQL ya NO usa el placeholder,
-        lo devuelve sin modificar.
-
-        v1.43.1 (B4): el load_date viene de MAX(load_date) sobre
-        Parquet en MinIO. Un cartucho comprometido podría escribir un valor
-        como ``2024-01-01' UNION SELECT secrets FROM x WHERE '1'='1`` y
-        romper la consulta cuando se concatena dentro del literal de la
-        plantilla (``llm_sql.py:20`` enseña al modelo a usar
-        ``WHERE load_date = '{latest_date}'`` — el LLM provee las comillas
-        externas). Doblamos cualquier comilla simple embebida en el valor
-        para que quede atrapado dentro de su literal — mismo escape que
-        ``_sql_quote`` aplica internamente pero SIN añadir las comillas
-        externas (la plantilla ya las trae). El fallback ``1970-01-01`` no
-        contiene comillas pero pasa por el mismo escape por simetría.
-        """
         if "{latest_date}" not in sql:
             return sql
         primary_source = sources[0] if sources else None
         if not primary_source:
             return sql.replace("{latest_date}", _escape_sql_literal_inner("1970-01-01"))
-        # No silent fallback: _resolve_latest_date is always scope-aware, so we
-        # pass user_context straight through. A pre-scope one-argument caller or
-        # test double now raises TypeError loudly instead of degrading tenant
-        # isolation by resolving the latest load_date across all tenants.
         latest = self._resolve_latest_date(primary_source, user_context)
         return sql.replace(
             "{latest_date}", _escape_sql_literal_inner(latest or "1970-01-01")
         )
 
     def _inject_bucket(self, sql: str) -> str:
-        """Sustituye el placeholder {bucket} en el SQL por el bucket configurado.
-        Esto desacopla los datasets del nombre concreto del bucket (que cambia
-        entre local 'lakehouse' y AWS 'modecissions-lakehouse-XXXXXX')."""
         if "{bucket}" not in sql:
             return sql
         return sql.replace("{bucket}", self.minio_bucket)
 
-    # ── Materialization ───────────────────────────────────────────────────────
 
     def _gold_table_columns(
         self,
@@ -1778,9 +1546,6 @@ class DuckDBEngine:
             self._add_missing_gold_columns(table, missing)
             self._apply_gold_rls(table)
             return
-        # Legacy unscoped gold tables cannot safely coexist with SaaS-scoped
-        # writes. Recreate the table as empty with scoped columns rather than
-        # silently mixing tenants in pggold.gold_<dataset>.
         con.execute(f"DROP TABLE IF EXISTS pggold.{table}")
         con.execute(
             f"CREATE TABLE pggold.{table} AS SELECT * FROM ({sql}) _q WHERE 1=0"
@@ -1795,13 +1560,6 @@ class DuckDBEngine:
         tenant: str,
         workspace: str,
     ) -> int:
-        """Replace scoped rows without DuckDB's postgres COPY fast path.
-
-        DuckDB's postgres extension writes INSERT ... SELECT through COPY
-        under the hood. PostgreSQL rejects COPY FROM on tables with row-level
-        security enabled, so the RLS backstop requires a psycopg2 write path
-        with the same app.tenant_id/workspace_id settings that policies read.
-        """
         validate_safe_identifier(table, "table")
         result = con.execute(f"SELECT * FROM ({sql}) _q")
         columns = [str(desc[0]) for desc in (result.description or [])]
@@ -1850,10 +1608,6 @@ class DuckDBEngine:
         workspace: str,
         user_context: dict | None,
     ) -> str:
-        # Schema evolution happens through psycopg2 in a separate connection.
-        # Refresh DuckDB's postgres attachment before exporting, otherwise the
-        # parquet snapshot can keep an old cached column list even after the
-        # pggold table was altered successfully.
         self._pg_gold_attach(con, user_context)
         return self._copy_to_parquet(
             con,
@@ -1866,19 +1620,6 @@ class DuckDBEngine:
         )
 
     def materialize(self, ds: dict, user_context: dict | None = None) -> dict:
-        """
-        Materialize a dataset to silver or gold.
-
-        ds fields:
-          name         — dataset name
-          sql_def      — transformation SQL
-          layer        — "silver" | "gold"
-          cartridge    — source cartridge id (e.g. "replicon")
-          sources      — list of bronze source paths
-          column_mapping — {src_col: business_term, ...} (optional, for lineage)
-          source_load_date — partition date of the bronze source (for lineage)
-          source_batch_id  — batch_id of the bronze source (for lineage)
-        """
         validate_safe_identifier(ds["name"], "dataset")
         validate_safe_identifier(ds.get("cartridge", "unknown"), "cartridge")
         name = ds["name"]
@@ -1892,7 +1633,7 @@ class DuckDBEngine:
                     BANXICO_DATASETS,
                     materialize_banxico_dataset,
                 )
-            except ModuleNotFoundError:  # local tests import refinement.app.*
+            except ModuleNotFoundError:
                 from refinement.app.banxico_materializer import (
                     BANXICO_DATASETS,
                     materialize_banxico_dataset,
@@ -1906,7 +1647,7 @@ class DuckDBEngine:
                     INEGI_DATASETS,
                     materialize_inegi_dataset,
                 )
-            except ModuleNotFoundError:  # local tests import refinement.app.*
+            except ModuleNotFoundError:
                 from refinement.app.inegi_materializer import (
                     INEGI_DATASETS,
                     materialize_inegi_dataset,
@@ -1920,7 +1661,7 @@ class DuckDBEngine:
                     SEC_DATASETS,
                     materialize_sec_dataset,
                 )
-            except ModuleNotFoundError:  # local tests import refinement.app.*
+            except ModuleNotFoundError:
                 from refinement.app.sec_edgar_materializer import (
                     SEC_DATASETS,
                     materialize_sec_dataset,
@@ -1941,7 +1682,6 @@ class DuckDBEngine:
             self._validate_scoped_storage_sql(sql, user_context)
 
             if layer == "gold":
-                # ── Gold → tabla en postgres_gold ────────────────────────────────
                 self._pg_gold_attach(con, user_context)
                 table = f"gold_{name}"
                 validate_safe_identifier(table, "table")
@@ -1990,7 +1730,6 @@ class DuckDBEngine:
                     storage_uri = gold_storage_uri
 
             else:
-                # ── Silver → Parquet snapshot inmutable (última extracción vía lineage) ──
                 effective_sql = self._inject_latest_date(sql, sources, user_context)
                 self._validate_scoped_storage_sql(effective_sql, user_context)
                 self._validate_effective_sql(
@@ -2014,7 +1753,6 @@ class DuckDBEngine:
                     f"SELECT COUNT(*) FROM read_parquet('{storage_uri}')"
                 ).fetchone()[0]
 
-            # ── Infer schema for catalog & lineage ──────────────────────────────
             try:
                 if layer == "silver":
                     schema_rows = con.execute(
@@ -2029,11 +1767,6 @@ class DuckDBEngine:
             except Exception:
                 schema_fields = []
 
-            # ── Phase 7: per-column profile (best-effort, P2 log+continue) ──────
-            # One SUMMARIZE pass over the landed data (silver parquet / attached
-            # gold Postgres) yields null_rate/distinct_count/min/max per column.
-            # Wrapped so a profiling failure NEVER breaks materialization or the
-            # row_count/schema path; it just leaves the stats unset (NULL).
             if schema_fields:
                 try:
                     relation_expr = (
@@ -2052,7 +1785,6 @@ class DuckDBEngine:
                 except Exception:
                     pass
 
-        # ── Write lineage ────────────────────────────────────────────────────
         source_entity = (sources or [""])[0]
         latest_date = (
             self._resolve_latest_date(source_entity, user_context)
@@ -2077,7 +1809,6 @@ class DuckDBEngine:
         except Exception:
             pass
 
-        # ── Update semantic catalog ──────────────────────────────────────────
         self._update_catalog(
             name=name,
             layer=layer,
@@ -2096,14 +1827,6 @@ class DuckDBEngine:
         }
 
     def _profile_columns(self, con, relation_expr: str) -> dict[str, dict]:
-        """Best-effort per-column profile via a single DuckDB SUMMARIZE pass.
-
-        ``relation_expr`` is a ``read_parquet('...')`` expression for silver, or
-        the attached ``pggold.gold_<name>`` table for gold. Returns
-        ``{column_name: {"null_rate", "distinct_count", "min", "max"}}``. Never
-        raises: any failure yields ``{}`` so the caller degrades to NULL stats
-        (Phase-7 profiling is P2 — it must never break the materialization).
-        """
         try:
             rows = con.execute(f"SUMMARIZE SELECT * FROM {relation_expr}").fetchall()
             cols = [d[0] for d in con.description]
@@ -2133,9 +1856,7 @@ class DuckDBEngine:
                 continue
             null_pct = _num(_cell(row, "null_percentage"), float)
             stats[str(col)] = {
-                # SUMMARIZE reports null_percentage as 0-100; store a 0-1 rate.
                 "null_rate": None if null_pct is None else round(null_pct / 100.0, 6),
-                # approx_unique counts distinct NON-NULL values (HyperLogLog).
                 "distinct_count": _num(_cell(row, "approx_unique"), int),
                 "min": _text(_cell(row, "min")),
                 "max": _text(_cell(row, "max")),
@@ -2150,15 +1871,6 @@ class DuckDBEngine:
         to_column: str,
         user_context: dict | None = None,
     ) -> dict:
-        """Data-validate a foreign-key candidate by value containment on gold.
-
-        Confirms that every non-null value of ``from_dataset.from_column`` exists
-        in ``to_dataset.to_column`` over the RLS-scoped gold tables: the pggold
-        attach carries the tenant/workspace GUCs, so the DB itself restricts both
-        tables to the caller's rows. Identifiers are validated to block injection;
-        both datasets must be gold (the caller enforces that). Returns
-        child_distinct, orphan_values, coverage and a boolean ``contained``.
-        """
         for label, ident in (
             ("from_dataset", from_dataset),
             ("to_dataset", to_dataset),
@@ -2212,7 +1924,6 @@ class DuckDBEngine:
         description: str = "",
         user_context: dict | None = None,
     ) -> None:
-        """Upsert column entries into data_catalog after a successful materialization."""
         try:
             tenant_id, workspace_id = self._scope_values(user_context)
             if not workspace_id:
@@ -2281,7 +1992,7 @@ class DuckDBEngine:
             conn.commit()
             conn.close()
         except Exception:
-            pass  # catalog is best-effort
+            pass
 
     def _write_lineage(
         self,

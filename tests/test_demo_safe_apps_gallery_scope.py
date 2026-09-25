@@ -16,7 +16,6 @@ from app.main import (  # noqa: E402
 )
 
 
-
 def test_apps_gallery_filters_to_active_successfactors_connection():
     payload = {
         "apps": [

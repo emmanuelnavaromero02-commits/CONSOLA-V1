@@ -17,20 +17,6 @@ import {
 } from "@/lib/operations/hooks";
 
 
-/**
- * v1.44.4 Group 1 — Users table.
- *
- * Renders the real /api/admin/users response. Per-row actions:
- *   - Send password reset (POST /api/admin/users/{id}/send-reset)
- *   - Toggle is_active (PUT /api/admin/users/{id})
- *   - Delete account (DELETE /api/admin/users/{id} — gated by
- *     a confirm dialog because it's irreversible)
- *
- * Destructive actions show a confirm step so a wrong-row click
- * can't take a user out of the system. The confirm dialog
- * reuses the same a11y pattern as ApprovalGateDialog in
- * /workspace.
- */
 function relativeTime(value: string | null): string {
   if (!value) return "—";
   const ts = Date.parse(value);
@@ -83,10 +69,6 @@ export function UsersTable() {
     ? rows.filter((user) => (user.workspaces ?? []).some((workspace) => workspace.workspace_id === workspaceFilter))
     : rows;
 
-  // Round 1 P0: focus management on the delete confirm dialog.
-  // The dialog auto-focuses Cancel (defensive default for a
-  // destructive prompt), traps Escape, locks body scroll,
-  // and restores focus to the trigger on close.
   const dialogCancelRef = useRef<HTMLButtonElement | null>(null);
   const previousFocus   = useRef<HTMLElement | null>(null);
 

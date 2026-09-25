@@ -1,20 +1,3 @@
-"""Sprint v1.43.1 — B9: RLS test exercised against a REAL
-in-memory DuckDB instead of MagicMock.
-
-The original ``tests/test_rls_union_bypass.py`` mocked the engine's
-connection. That validates the AST transformer in isolation but never
-proves the rewritten SQL actually parses + runs on DuckDB and that the
-filter survives execution. Here we:
-
-  1. Spin up an in-memory DuckDB.
-  2. Create a ``pggold`` schema with two tables seeded with rows for
-     distinct tenants and workspaces.
-  3. Build a real ``DuckDBEngine`` and point its ``_conn`` at the
-     in-memory connection.
-  4. Run 10+ bypass payloads through ``get_rls_filters`` AND execute
-     the rewritten SQL. Each must return ONLY the calling tenant's
-     rows — or raise (default-deny on parse failure).
-"""
 from __future__ import annotations
 
 import sys
@@ -73,7 +56,6 @@ def engine():
     con.close()
 
 
-# Helper: rewrite + execute and return result rows.
 def _execute_with_rls(eng_pair, sql, tenant, workspace="workspace-1", extra_params=None):
     eng, con = eng_pair
     rewritten, rls_params = eng.get_rls_filters(
@@ -83,8 +65,6 @@ def _execute_with_rls(eng_pair, sql, tenant, workspace="workspace-1", extra_para
     params = list(rls_params) + list(extra_params or [])
     return con.execute(rewritten, params).fetchall()
 
-
-# ── Sanity: baseline + isolation works ─────────────────────────────────────
 
 def test_baseline_simple_select_filters_to_tenant(engine):
     rows = _execute_with_rls(engine, "SELECT * FROM pggold.orders", "tenant-a")
@@ -111,10 +91,7 @@ def test_same_tenant_other_workspace_blocked(engine):
     assert 5 not in {r[2] for r in rows}
 
 
-# ── Bypass attempts — every payload must respect the filter ────────────────
-
 def test_union_bypass_blocked(engine):
-    """The classic: UNION a second branch to leak the other tenant."""
     rows = _execute_with_rls(
         engine,
         "SELECT * FROM pggold.orders UNION SELECT * FROM pggold.orders",
@@ -153,9 +130,6 @@ def test_except_bypass_blocked(engine):
 
 
 def test_subquery_in_in_clause_blocked(engine):
-    """A subquery inside IN(…) over a second pggold table must ALSO be
-    rewritten — otherwise an attacker reads cross-tenant via the
-    subselect path."""
     rows = _execute_with_rls(
         engine,
         "SELECT * FROM pggold.orders "
@@ -166,7 +140,6 @@ def test_subquery_in_in_clause_blocked(engine):
 
 
 def test_cte_bypass_blocked(engine):
-    """A CTE that selects from a pggold table must be rewritten too."""
     rows = _execute_with_rls(
         engine,
         "WITH cte AS (SELECT * FROM pggold.orders) SELECT * FROM cte",
@@ -176,14 +149,12 @@ def test_cte_bypass_blocked(engine):
 
 
 def test_cross_join_bypass_blocked(engine):
-    """A CROSS JOIN of two pggold tables must filter BOTH sides."""
     rows = _execute_with_rls(
         engine,
         "SELECT o.tenant_id, o.workspace_id, u.tenant_id, u.workspace_id "
         "FROM pggold.orders o CROSS JOIN pggold.users u",
         "tenant-a",
     )
-    # Every row must show tenant-a/workspace-1 on BOTH sides.
     assert rows
     for o_t, o_w, u_t, u_w in rows:
         assert o_t == "tenant-a"
@@ -193,8 +164,6 @@ def test_cross_join_bypass_blocked(engine):
 
 
 def test_case_insensitive_schema_blocked(engine):
-    """``PGGOLD`` / ``PgGoLd`` must be normalised — the AST visitor
-    matches on lowercase. If it didn't, casing would be a bypass."""
     rows = _execute_with_rls(
         engine,
         "SELECT * FROM PgGoLd.orders",
@@ -204,7 +173,6 @@ def test_case_insensitive_schema_blocked(engine):
 
 
 def test_inline_comment_does_not_bypass(engine):
-    """A SQL comment cannot mask a pggold reference from the parser."""
     rows = _execute_with_rls(
         engine,
         "SELECT * FROM pggold.orders /* comment */ "
@@ -215,8 +183,6 @@ def test_inline_comment_does_not_bypass(engine):
 
 
 def test_lateral_subquery_bypass_blocked(engine):
-    """LATERAL allowing a row-correlated read of the second table —
-    must rewrite the lateral side too."""
     rows = _execute_with_rls(
         engine,
         "SELECT o.tenant_id, sub.user_id "
@@ -228,23 +194,16 @@ def test_lateral_subquery_bypass_blocked(engine):
 
 
 def test_unparseable_sql_default_deny(engine):
-    """If sqlglot can't parse the SQL, the AST path must raise — not
-    fall through to executing unfiltered. This is the audit's v1.0
-    weakness pinned closed."""
     eng, _ = engine
     with pytest.raises(ValueError):
         eng.get_rls_filters("this is not sql at all $$$", {"tenant_id": "tenant-a"})
 
 
 def test_no_pggold_reference_passes_through(engine):
-    """SQL that doesn't touch pggold must NOT be transformed (no
-    spurious params, no rewrite). This ensures the RLS engine is
-    surgical, not paranoid."""
     eng, _ = engine
     rewritten, params = eng.get_rls_filters(
         "SELECT 1 AS x", {"tenant_id": "tenant-a", "workspace_id": "workspace-1"}
     )
     assert params == []
-    # Trip through DuckDB to confirm the rewrite still parses + runs.
     rows = eng._conn().execute(rewritten).fetchall()
     assert rows == [(1,)]

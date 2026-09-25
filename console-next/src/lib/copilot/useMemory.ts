@@ -5,16 +5,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFact, deleteFact, listMemory, setPreference } from "./client";
 import type { MemoryResponse } from "./types";
 
-/**
- * v1.44.4 Task A — memory drawer hook.
- *
- * Backend reality (Round 1 review caught this — keep in sync
- * with copilot_memory.py):
- *   - Fact body is ``{fact, source?}`` — NO ``key`` / ``value``.
- *   - Preferences keys are ``pref_key`` / ``pref_value``.
- *   - createFact wrapper returns ``{ok, fact}``; client.ts
- *     unwraps to the inner MemoryFact.
- */
 export function useMemory() {
   const qc = useQueryClient();
 

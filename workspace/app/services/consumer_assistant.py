@@ -1,12 +1,3 @@
-"""
-Consumer assistant — answers business questions by combining the semantic
-catalog, RAG retrieval, and queries against GOLD datasets.
-
-Constraints (vs the builder assistant):
-  - Tool whitelist (no cartridge/dataset lifecycle operations beyond promoting to gold)
-  - save_dataset is forced to layer='gold' regardless of model output
-  - Never deletes, never edits cartridges, never touches pipeline config
-"""
 from __future__ import annotations
 
 import os
@@ -23,10 +14,6 @@ from app.services import llm_client
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
 MCP_INFRA_URL  = os.environ.get("MCP_INFRA_URL",  "http://mcp-infra:8010")
 
-# ── Tool whitelist (server_id → set of allowed tool names) ──────────────────
-# Read-only by design: the business user can EXPLORE and ASK, never create or
-# modify pipelines/datasets/apps. Anything that would require new infra is
-# routed to the admin via request_admin_help.
 ALLOWED_TOOLS = {
     "refinement": {
         "get_data_catalog",
@@ -229,8 +216,6 @@ re-formula con `limit` bajo o usa `get_schema` en su lugar.
 """
 
 
-# ── Tool discovery + invocation ─────────────────────────────────────────────
-
 _tools_cache: list[dict] | None = None
 _tools_map_cache: dict[str, str] = {}
 _tools_ts: float = 0.0
@@ -238,8 +223,6 @@ _TOOLS_TTL = 300
 
 
 async def _discover_tools() -> tuple[list[dict], dict[str, str]]:
-    """Fetch tools from each MCP server, filter by whitelist, return as
-    (tool_list, tool_name → server_id)."""
     global _tools_cache, _tools_map_cache, _tools_ts
     if _tools_cache and (time.time() - _tools_ts) < _TOOLS_TTL:
         return _tools_cache, _tools_map_cache
@@ -284,12 +267,6 @@ async def _raw_invoke(server_id: str, tool: str, args: dict, user: dict | None =
 
 
 def _make_user_aware_invoke(user: dict | None):
-    """Returns an invoke_tool closure that:
-      - prefixes user-created datasets/apps with `wk_<uid>_`
-      - stamps `created_by_id` on save_dataset / publish_app
-      - forces layer='gold' on save_dataset
-      - defaults app visibility to 'private'
-    """
     uid = user.get("id") if user else None
     prefix = f"wk_{uid}_" if uid else ""
 
@@ -297,7 +274,6 @@ def _make_user_aware_invoke(user: dict | None):
         if tool not in ALLOWED_TOOLS.get(server_id, set()):
             return {"error": f"tool_not_allowed: {server_id}__{tool}"}
         if tool == "save_dataset":
-            # Force gold layer (consumer never creates lower-layer models)
             if args.get("layer") != "gold":
                 args = {**args, "layer": "gold"}
             if uid is not None:
@@ -317,15 +293,12 @@ def _make_user_aware_invoke(user: dict | None):
                 args.setdefault("visibility", "private")
 
         elif tool == "materialize":
-            # The model passes the dataset name; if it forgot the prefix, add it.
             if uid is not None:
                 name = (args.get("name") or "").strip()
                 if name and not name.startswith(prefix) and not _looks_official(name):
                     args = {**args, "name": prefix + name}
 
         elif tool == "request_admin_help":
-            # Do not trust model-supplied identity/scope fields. The backend
-            # stamps them from the authenticated session before invoking MCP.
             if user:
                 stamped = {
                     "user_id": user.get("id"),
@@ -341,16 +314,12 @@ def _make_user_aware_invoke(user: dict | None):
     return invoke
 
 
-# Heuristic: official datasets we never want to prefix even if model forgets the wk_ form.
-# (Mostly belt-and-suspenders — users can't normally reach these names anyway.)
 _OFFICIAL_PREFIXES = ("replicon_", "pnl_", "consultor_", "costo_", "empleados_", "project_")
 
 
 def _looks_official(name: str) -> bool:
     return name.startswith(_OFFICIAL_PREFIXES) and not name.startswith("wk_")
 
-
-# ── Catalog context (cached) ────────────────────────────────────────────────
 
 _catalog_text_by_scope: dict[str, str] = {}
 _catalog_ts:   float = 0.0
@@ -422,7 +391,6 @@ _HINTS_TTL = 300
 
 
 async def _cartridge_hints_block(user: dict | None) -> str:
-    """Concatenate assistant_hints only from cartridges this workspace can use."""
     global _hints_ts
     key = _scope_cache_key(user)
     if key in _hints_text_by_scope and (time.time() - _hints_ts) < _HINTS_TTL:
@@ -479,8 +447,6 @@ async def _cartridge_hints_block(user: dict | None) -> str:
     return _hints_text_by_scope.get(key, "")
 
 
-# ── Public entry ────────────────────────────────────────────────────────────
-
 async def chat(message: str, history: list[dict], user: dict | None = None,
                on_event=None) -> dict:
     catalog_ctx = await _catalog_context(user)
@@ -532,7 +498,6 @@ def _user_context_block(user: dict) -> str:
 
 
 def invalidate_caches():
-    """Force the next chat() to re-fetch the catalog and tool list."""
     global _catalog_ts, _hints_ts, _tools_cache, _tools_ts
     _catalog_text_by_scope.clear()
     _catalog_ts = 0.0

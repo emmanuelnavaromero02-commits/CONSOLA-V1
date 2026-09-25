@@ -1,21 +1,3 @@
-"""Mission 5: attested scheduled-monitor alerts on ``/control-room``.
-
-``collect_surface_snapshot`` rebuilds the Control Room surface live from Gold on
-every request; persisted rows only overlay state onto items Gold produced. A
-monitor alert is not a Gold row, so until now it could never appear on the
-screen, however real it was.
-
-This loader adds exactly the persisted monitor alerts console itself attested
-(``evidence_tickets``), rebuilt from scratch rather than from agent-written
-metadata: identity and scope from the row's columns, the measured value from
-the analysis evidence mcp-infra stored, and the evidence from the ticket. Each
-candidate then goes through the ordinary eligibility check, so an alert whose
-persisted value no longer matches what console signed simply does not show.
-
-Nothing here writes, and any failure yields an empty result: Control Room must
-render without monitor alerts rather than fail because of them.
-"""
-
 from __future__ import annotations
 
 import json
@@ -129,9 +111,6 @@ def _candidate(
 
 
 def _with_visible_title(item: dict[str, Any]) -> dict[str, Any]:
-    # A monitor title embeds the agent name and the wisdom-bit id. When the
-    # public copy rules refuse it, the fact would vanish; a fixed title keeps
-    # the attested fact on screen without publishing the refused text.
     identity = resolve_bounded_business_surface_identity(
         item, max_length=MAX_STRUCTURAL_IDENTITY_LENGTH
     )

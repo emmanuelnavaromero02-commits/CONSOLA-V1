@@ -1,4 +1,3 @@
-"""Defensive guard for Salesforce ad-hoc Knowledge Bit SQL."""
 from __future__ import annotations
 
 import re
@@ -65,12 +64,6 @@ def validate_kb_sql(
     *,
     require_limit: bool = False,
 ) -> tuple[bool, str | None]:
-    """Validate ad-hoc DuckDB SQL before it reaches query_kb or run_knowledge_bit.
-
-    When *require_limit* is True (interactive queries), the SQL must contain a
-    LIMIT clause so callers cannot accidentally fetch unbounded result sets.
-    Scheduled KB materialisation passes require_limit=False.
-    """
     if not isinstance(sql, str) or not sql.strip():
         return False, "empty SQL"
 
@@ -115,7 +108,6 @@ def validate_kb_sql(
     normalized_prefixes = _prefixes(allowed_bucket_prefix)
     for fn in _READ_FN_RE.finditer(stripped):
         name = fn.group(1).lower()
-        # Iteratively decode until stable to defeat double/multi-encoding attacks.
         raw_path = fn.group("path")
         for _ in range(3):
             decoded = unquote(raw_path).replace("\\", "/")

@@ -1,5 +1,3 @@
-"""Real-Postgres concurrency proof for single-use refresh rotation."""
-
 from __future__ import annotations
 
 import asyncio
@@ -52,9 +50,6 @@ async def test_concurrent_refresh_consumes_exactly_once(
             "INTERNAL_API_KEY", "refresh-race-internal-key-" + "y" * 32
         )
 
-        # The root test harness deliberately evicts ``app.*`` between tests.
-        # Patch the exact auth module retained by the production route rather
-        # than the collection-time module reference above.
         from app import main as console_main
 
         route_auth = console_main._auth
@@ -78,8 +73,6 @@ async def test_concurrent_refresh_consumes_exactly_once(
             route_auth, "rotate_refresh_token", synchronized_rotate
         )
 
-        # Exercise the production route, including CSRF, cookie extraction and
-        # the invalid-token-to-401 mapping.
         transport = httpx.ASGITransport(app=console_main.app)
         csrf_token = "refresh-race-csrf"
         headers = {

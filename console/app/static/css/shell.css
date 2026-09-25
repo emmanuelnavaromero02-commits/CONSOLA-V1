@@ -36,7 +36,6 @@ html[data-theme="dark"] {
   display: none;
 }
 
-/* SIDEBAR */
 .ent-sidebar {
   width: var(--shell-sidebar-width);
   background-color: var(--shell-sidebar-bg);
@@ -88,7 +87,6 @@ html[data-theme="dark"] {
   border-left: 3px solid var(--color-accent);
 }
 
-/* MAIN LAYOUT */
 .ent-main {
   flex: 1;
   display: flex;
@@ -96,7 +94,6 @@ html[data-theme="dark"] {
   min-width: 0;
 }
 
-/* TOPBAR */
 .ent-topbar {
   height: 60px;
   background: var(--shell-topbar-bg);
@@ -193,7 +190,6 @@ html[data-theme="dark"] {
   font-size: 14px;
 }
 
-/* CONTENT AREA */
 .ent-content {
   flex: 1;
   display: flex;

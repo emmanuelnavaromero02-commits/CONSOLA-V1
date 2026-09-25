@@ -5,10 +5,6 @@ import types
 
 import app.main as _console_main
 
-# Import the current console runtime namespace, including private helper
-# functions used by legacy handlers. Handlers are rebound to app.main's
-# namespace before registration so existing tests and monkeypatches that
-# patch app.main.<helper> continue to affect the handler at runtime.
 globals().update(_console_main.__dict__)
 router = APIRouter()
 
@@ -29,21 +25,18 @@ def _bind_to_main(fn):
     _console_main.__dict__[fn.__name__] = rebound
     return rebound
 
-# /jobs
 @router.get("/jobs", dependencies=[Depends(require_permission("monitor.read"))])
 @_bind_to_main
 async def list_jobs(limit: int = 20, user: dict = Depends(require_permission("monitor.read"))):
     jobs = await _call_with_optional_user(job_service.list_recent, limit, user=user)
     return {"jobs": await _refresh_pipeline_job_payloads(jobs, user)}
 
-# /jobs/{job_id}
 @router.get("/jobs/{job_id}", dependencies=[Depends(require_permission("monitor.read"))])
 @_bind_to_main
 async def get_job(job_id: str, user: dict = Depends(require_permission("monitor.read"))):
     job = await job_service.get_scoped(job_id, user=user)
     return await _refresh_pipeline_job_payload(job, user)
 
-# /assistant/chat
 @router.post(
     "/assistant/chat",
     dependencies=[Depends(require_csrf), Depends(require_permission("copilot.use"))],
@@ -57,21 +50,18 @@ async def chat(body: dict, user: dict = Depends(require_permission("copilot.use"
         user=user,
     )
 
-# /api/jobs
 @router.get("/api/jobs", dependencies=[Depends(require_permission("monitor.read"))])
 @_bind_to_main
 async def api_jobs(limit: int = 50, user: dict = Depends(require_permission("monitor.read"))):
     jobs = await _call_with_optional_user(job_service.list_recent, limit, user=user)
     return {"jobs": await _refresh_pipeline_job_payloads(jobs, user)}
 
-# /api/jobs/{job_id}
 @router.get("/api/jobs/{job_id}", dependencies=[Depends(require_permission("monitor.read"))])
 @_bind_to_main
 async def api_job(job_id: str, user: dict = Depends(require_permission("monitor.read"))):
     job = await job_service.get_scoped(job_id, user=user)
     return await _refresh_pipeline_job_payload(job, user)
 
-# /api/jobs/{job_id}/logs
 @router.get("/api/jobs/{job_id}/logs", dependencies=[Depends(require_permission("monitor.read"))])
 @_bind_to_main
 async def api_job_logs(job_id: str, limit: int = 200, user: dict = Depends(require_permission("monitor.read"))):
@@ -113,7 +103,6 @@ async def api_job_logs(job_id: str, limit: int = 200, user: dict = Depends(requi
         })
     return {"logs": result}
 
-# /api/tools/manifest
 @router.get("/api/tools/manifest", dependencies=[Depends(require_permission("agents.read"))])
 @_bind_to_main
 async def api_tools_manifest(user: dict = Depends(require_permission("agents.read"))):

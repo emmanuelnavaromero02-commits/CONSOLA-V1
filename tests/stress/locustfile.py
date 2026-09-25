@@ -168,9 +168,6 @@ class OmegaStressUser(HttpUser):
     def _mirror_cookie(self, name: str, value: str | None) -> None:
         if not value:
             return
-        # The local stack may emit Secure cookies even on http://localhost to
-        # mimic production. Requests will not replay Secure cookies over HTTP,
-        # so stress mirrors them as host-only test cookies.
         self.client.cookies.set(name, value, path="/")
 
     def _set_cookie_string(self, raw: str) -> None:
@@ -299,13 +296,6 @@ class OmegaStressUser(HttpUser):
             return payload
 
     def _ensure_write_data_ready(self) -> None:
-        """Prime write-mode dependencies before read tasks start.
-
-        Locust schedules task methods randomly. When write mode resets local
-        HubSpot derived files, Gold reads must not race ahead of the first
-        extraction/refresh cycle or the test measures script ordering instead
-        of product behavior.
-        """
         global WRITE_WARMUP_COMPLETE, WRITE_WARMUP_ERROR
         if WRITE_WARMUP_COMPLETE:
             if WRITE_WARMUP_ERROR:
@@ -331,12 +321,6 @@ class OmegaStressUser(HttpUser):
             WRITE_WARMUP_COMPLETE = True
 
     def _ensure_live_llm_ready(self) -> None:
-        """Run one required LLM-backed HTTP probe per stress process.
-
-        The stress profile should prove the deployed Copilot path can reach the
-        configured provider without turning load testing into an expensive LLM
-        burn. A single failing probe fails the run for every user.
-        """
         global LIVE_LLM_PROBE_COMPLETE, LIVE_LLM_PROBE_ERROR
         if LIVE_LLM_PROBE_COMPLETE:
             if LIVE_LLM_PROBE_ERROR:

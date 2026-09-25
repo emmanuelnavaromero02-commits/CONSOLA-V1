@@ -1,5 +1,3 @@
-"""SuccessFactors extraction reservation helpers."""
-
 from __future__ import annotations
 
 import json

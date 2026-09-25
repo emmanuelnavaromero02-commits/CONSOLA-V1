@@ -1,5 +1,3 @@
-"""Authority and redaction boundary for Control Room context in Copilot."""
-
 from __future__ import annotations
 
 import json

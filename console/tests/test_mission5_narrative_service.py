@@ -1,5 +1,3 @@
-"""Mission 5: the narrative never invents, never claims to act, never blocks."""
-
 from __future__ import annotations
 
 import asyncio
@@ -17,7 +15,6 @@ from app.services.intelligence.alert_narrative import (
     verified_stored_narrative,
 )
 
-# The same regex the Control Room preview-flow DOM test runs over the page.
 UI_FORBIDDEN = re.compile(r"Aprobar|Ejecutar|Sí, ejecutar")
 
 
@@ -69,12 +66,10 @@ async def test_clean_sentence_is_published_with_computed_fields_only():
     assert result["basis_note"] == narrative_copy.basis_note(
         narrative_copy.BASIS_AGGREGATES_ONLY
     )
-    # A degraded domain can never read as high confidence.
     assert result["confidence_label"] == narrative_copy.CONFIDENCE_LOW
     assert result["recommendation"] == narrative_copy.recommendation_for(
         "Finanzas", "wisdombit_monitor", "medium"
     )
-    # Figures are copied from the alert, never produced by the model.
     assert result["figures"]["senales"] == 3
 
 
@@ -229,8 +224,6 @@ async def _signed(prose: str = CLEAN, **overrides: object) -> dict:
 @pytest.mark.asyncio
 async def test_reconcile_trusts_only_a_revalidated_signed_sentence():
     stored = await _signed()
-    # Fields outside the signature are never read back, so tampering with
-    # them changes nothing.
     tampered = {
         **stored,
         "recommendation": "Ya ejecute el pago a proveedores.",
@@ -280,7 +273,6 @@ async def test_edited_signed_sentence_fails_verification():
 
 @pytest.mark.asyncio
 async def test_signed_sentence_is_still_revalidated_on_read():
-    # Defence in depth: even console-signed prose is checked again.
     forged = attest_narrative(
         {**(await _narrate(CLEAN)), "explanation": "Ya ejecute la correccion del margen."},
         item_id=ITEM,

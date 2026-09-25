@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-"""Probe Monte Carlo runtime/RLS posture on AWS via SSM.
-
-The probe avoids tenant credentials. It validates the deployed Console engine,
-manual_fixture production gating, table RLS/FORCE RLS, omega_console
-NOBYPASSRLS, and a rollback-only DB isolation check.
-"""
 
 from __future__ import annotations
 

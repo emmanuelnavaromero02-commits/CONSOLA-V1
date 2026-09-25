@@ -1,5 +1,3 @@
-"""Typed fail-closed HTTP outcomes for the operational refresh chain."""
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -61,7 +59,6 @@ def require_successful_intelligence_response(response: Any) -> dict[str, Any]:
 
 
 def materialization_status(invocation: object, *, task_state: str) -> str:
-    """Classify only complete, typed materialization evidence as successful."""
     if task_state != "success" or not isinstance(invocation, Mapping):
         return "failed"
     if "error" in invocation:

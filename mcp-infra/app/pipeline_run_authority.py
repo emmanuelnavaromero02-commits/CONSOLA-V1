@@ -1,5 +1,3 @@
-"""Strict one-use authority for Airflow pipeline telemetry."""
-
 from __future__ import annotations
 
 import hashlib

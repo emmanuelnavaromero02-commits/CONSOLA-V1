@@ -1,5 +1,3 @@
-"""Fail-closed HTTP(S) transport for cartridge-controlled destinations."""
-
 from __future__ import annotations
 
 import ipaddress
@@ -22,7 +20,7 @@ _SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
 
 
 class EgressGuardError(requests.RequestException):
-    """Raised before dispatch when an outbound destination is unsafe."""
+    pass
 
 
 @dataclass(frozen=True)
@@ -48,15 +46,6 @@ def _blocked_address(address: str) -> bool:
 
 
 def _allowlisted_hosts() -> frozenset[str]:
-    """Opt-in, default-empty escape hatch for controlled test/dev stacks.
-
-    ``OMEGA_EGRESS_ALLOWED_HOSTS`` (comma-separated hostnames) lets a reviewed
-    non-production stack — e.g. the release acceptance run whose fake HubSpot
-    upstream is served on ``host.docker.internal`` — reach a specific internal
-    host. It is unset in production, so the public-address requirement in
-    ``resolve_public_url`` is unchanged there, and it never relaxes the
-    metadata/localhost hard-block below.
-    """
     raw = os.environ.get("OMEGA_EGRESS_ALLOWED_HOSTS", "")
     return frozenset(
         part.strip().rstrip(".").lower() for part in raw.split(",") if part.strip()
@@ -64,7 +53,6 @@ def _allowlisted_hosts() -> frozenset[str]:
 
 
 def resolve_public_url(url: str, *, label: str = "outbound URL") -> ResolvedTarget:
-    """Resolve once and return the public address that the adapter must use."""
     try:
         parsed = urlsplit(str(url or ""))
         port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
@@ -82,9 +70,6 @@ def resolve_public_url(url: str, *, label: str = "outbound URL") -> ResolvedTarg
         (".localhost", ".local")
     ):
         raise EgressGuardError(f"{label} host is blocked")
-    # An explicitly allowlisted host (test/dev only; empty in production) may use
-    # a private address. The metadata/localhost hard-block above is never
-    # relaxed, so cloud metadata and loopback stay unreachable regardless.
     allowlisted = host in _allowlisted_hosts()
     try:
         direct_ip = ipaddress.ip_address(host)
@@ -101,15 +86,12 @@ def resolve_public_url(url: str, *, label: str = "outbound URL") -> ResolvedTarg
     addresses = list(dict.fromkeys(record[4][0] for record in records))
     if not addresses:
         raise EgressGuardError(f"{label} host could not be resolved")
-    # Mixed public/private DNS answers fail closed; selecting only the public
-    # member would leave rebinding and resolver-order bypasses.
     if not allowlisted and any(_blocked_address(address) for address in addresses):
         raise EgressGuardError(f"{label} resolved to a non-public address")
     return ResolvedTarget(scheme, host, port, addresses[0])
 
 
 class PinnedHTTPAdapter(HTTPAdapter):
-    """Connect to the validated IP while retaining Host, TLS SNI and hostname."""
 
     def get_connection_with_tls_context(
         self,
@@ -137,7 +119,6 @@ class PinnedHTTPAdapter(HTTPAdapter):
 
 
 class EgressSession(requests.Session):
-    """A requests-compatible session with pinning and redirect denial."""
 
     def __init__(self, retries: Retry | int | None = None) -> None:
         super().__init__()

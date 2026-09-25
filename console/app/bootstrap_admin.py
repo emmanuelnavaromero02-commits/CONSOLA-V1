@@ -1,12 +1,3 @@
-"""
-Bootstrap (or update) an admin user.
-
-Usage (run inside the console container):
-    docker compose exec -e BOOTSTRAP_ADMIN_PASSWORD='...' console \
-      python -m app.bootstrap_admin <email>
-
-If the user already exists, password is reset and role is set to 'admin'.
-"""
 import asyncio
 import getpass
 import os
@@ -28,12 +19,6 @@ async def main(email: str, password: str, name: str | None = None):
         print(f"Created admin user id={u['id']} email={u['email']}")
 
 
-# v1.43.4 (Security R2): refuse the placeholder values
-# documented in infra/.env.example so an operator who runs
-# ``docker compose up`` against an unrotated .env can't ship an
-# admin account with a publicly-known password. The list is the
-# literal placeholder strings from the .env.example commit; rotate
-# this list every time the placeholders change.
 _PLACEHOLDER_PASSWORDS = frozenset({
     "ChangeMeFirstBoot123!",
     "change-me",

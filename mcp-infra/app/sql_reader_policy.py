@@ -1,5 +1,3 @@
-"""Closed DuckDB reader policy for cartridge-supplied SELECT SQL."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -48,7 +46,6 @@ _SCOPE_RE = re.compile(
 
 
 class ReaderPolicyError(ValueError):
-    """Fail closed without surfacing SQL, paths, parser detail or secrets."""
 
     def __init__(self) -> None:
         super().__init__(POLICY_ERROR)
@@ -115,7 +112,6 @@ def _resolve_scope(
     shared_roots: frozenset[str],
     allow_server_resolution: bool,
 ) -> StorageRead:
-    """Validate layer, cartridge root and scope on the effective path."""
     key = _STORAGE_URI_RE.fullmatch(path).group("key")
     parts = key.split("/")
     if len(parts) < 3:
@@ -127,25 +123,17 @@ def _resolve_scope(
         _deny()
     scope = _SCOPE_RE.search(key)
     if not scope:
-        # The public contract accepts a canonical cartridge path and inserts
-        # tenant/workspace server-side.  This exception is only for the first
-        # pass; the independent pre-execute pass requires the effective scope.
         if allow_server_resolution:
             return StorageRead(path=path, layer=layer, root=root)
         _deny()
     if scope.group("tenant") != tenant_id or scope.group("workspace") != workspace_id:
         _deny()
-    # A second scope marker anywhere in the key would make the effective prefix
-    # ambiguous; only one is ever emitted by the server-side layout.
     if len(_SCOPE_RE.findall(key)) != 1:
         _deny()
     return StorageRead(path=path, layer=layer, root=root)
 
 
 def _reader_paths(function: exp.Func, *, expected_bucket: str | None) -> list[str]:
-    # sqlglot gives read_csv a typed node whose path sits in ``this`` and whose
-    # options sit in ``expressions``; the other readers stay anonymous with the
-    # path as their first expression. Both shapes resolve to one literal path.
     if isinstance(function, exp.ReadCSV):
         target = function.this
         options = list(function.expressions)
@@ -155,8 +143,6 @@ def _reader_paths(function: exp.Func, *, expected_bucket: str | None) -> list[st
             _deny()
         target = arguments[0]
         options = arguments[1:]
-    # Only a direct string literal is accepted. Concatenation, subscripting,
-    # casts, parameters, lists, arithmetic and nested calls all land here.
     if not (isinstance(target, exp.Literal) and target.is_string):
         _deny()
     seen: set[str] = set()
@@ -230,12 +216,8 @@ def _validate(
     if len(statements) != 1 or statements[0] is None:
         _deny()
     tree = statements[0]
-    # CALL, COPY, PRAGMA, ATTACH and every other statement kind fail here.
     if not isinstance(tree, exp.Query):
         _deny()
-    # SQLGlot's scope walker logs the complete PIVOT expression (including
-    # replacement-scan paths) when it cannot traverse it. Reject before that
-    # helper so denied SQL cannot reach logs as a warning.
     if isinstance(tree, exp.Pivot) or next(tree.find_all(exp.Pivot), None):
         _deny()
     if list(tree.find_all(exp.Placeholder)) or list(tree.find_all(exp.Parameter)):
@@ -277,7 +259,6 @@ def validate_cartridge_reader_query(
     shared_roots: frozenset[str] = frozenset(),
     allow_server_resolution: bool = False,
 ) -> tuple[StorageRead, ...]:
-    """Validate reader arguments and their effective scope, or fail closed."""
     try:
         return _validate(
             sql,

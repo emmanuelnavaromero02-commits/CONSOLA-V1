@@ -1,45 +1,16 @@
 #!/usr/bin/env bash
-# Apply pending infra/init/*.sql and infra/init_gold/*.sql migrations to existing
-# local Postgres volumes.
-#
-# Docker entrypoint init scripts only run on a fresh data directory. This target
-# covers the upgrade path for already-created local stacks by replaying
-# forward-only SQL files not yet present in schema_migrations.
-#
-# Checkpoint 5.5 migration-release contract (kept small and auditable):
-#   (a) forward-only  — a file already in schema_migrations is never re-run.
-#   (b) ledger + drift — the sha256 of each applied file is recorded; on later
-#                        runs a recorded checksum that no longer matches disk is
-#                        a hard, fail-closed error (a historical migration was
-#                        edited/regressed instead of a new one being appended).
-#   (c) idempotency   — re-running applies nothing already recorded.
-#   (d) atomic retry  — each file and its ledger row commit in ONE transaction
-#                        with ON_ERROR_STOP, statement/lock timeouts, and a
-#                        transaction-scoped advisory lock so a second concurrent
-#                        applier cannot interleave (split-brain prevention).
-# A host-level flock adds single-writer protection across processes on the host.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MIGRATION_COMPOSE_PATH="${ROOT_DIR}/infra/docker-compose.yml"
 ENV_FILE="${ROOT_DIR}/infra/.env"
 
-# The release workflow deliberately exports COMPOSE_FILE="".  Bash preserves
-# the export attribute across later assignments, so keep the migration compose
-# path in a non-control variable and remove only that known-empty inheritance.
-# Any real, non-empty Docker/Compose control value remains visible to the
-# release Docker lock and is rejected there with rc 97.
 if [[ ${COMPOSE_FILE+x} == x && -z ${COMPOSE_FILE} ]]; then
   unset COMPOSE_FILE
 fi
 
-# Advisory lock key: stable, release-scoped. Held only for the duration of each
-# per-file transaction, so it serialises concurrent appliers at the database.
 MIGRATION_ADVISORY_LOCK_KEY="${OMEGA_MIGRATION_ADVISORY_LOCK_KEY:-145207}"
 
-# Single-writer across processes on this host. flock is Linux/util-linux; on a
-# host without it the database advisory lock is still the real guard, so this is
-# best-effort and never blocks a machine that lacks flock.
 if command -v flock >/dev/null 2>&1; then
   LOCK_FILE="${OMEGA_MIGRATION_LOCK_FILE:-${TMPDIR:-/tmp}/omega-apply-db-migrations.lock}"
   exec 9>"${LOCK_FILE}"
@@ -72,7 +43,6 @@ if [[ -f "${ENV_FILE}" ]]; then
   load_passive_dotenv "${ENV_FILE}"
 fi
 
-# Portable sha256 of a file's bytes (Linux coreutils or BSD/macOS shasum).
 sha256_of() {
   local path="$1"
   if command -v sha256sum >/dev/null 2>&1; then
@@ -90,10 +60,6 @@ GOLD_PGOPTIONS_VALUE="-c app.omega_refinement_gold_password=${OMEGA_REFINEMENT_G
 PSQL=(docker compose -f "${MIGRATION_COMPOSE_PATH}" exec -T -e "PGOPTIONS=${PGOPTIONS_VALUE}" postgres psql -v ON_ERROR_STOP=1 -U postgres -d modecissions)
 PSQL_GOLD=(docker compose -f "${MIGRATION_COMPOSE_PATH}" exec -T -e "PGOPTIONS=${GOLD_PGOPTIONS_VALUE}" postgres_gold psql -v ON_ERROR_STOP=1 -U postgres -d modecissions_gold -p 5433)
 
-# Verify a migration already in the ledger has not drifted on disk, and backfill
-# a legacy row that predates checksum tracking. Fails closed on real drift.
-# Args: <db-kind: main|gold> <ledger-filename> <disk-path>
-# (No bash namerefs so this stays portable to the bash 3.2 shipped on macOS.)
 assert_no_drift_and_backfill() {
   local db_kind="$1" ledger_filename="$2" disk_path="$3"
   local recorded disk
@@ -117,9 +83,6 @@ assert_no_drift_and_backfill() {
 }
 
 "${PSQL[@]}" -c "CREATE TABLE IF NOT EXISTS schema_migrations (id BIGSERIAL PRIMARY KEY, filename TEXT NOT NULL UNIQUE, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), checksum TEXT);"
-# Older init scripts (esp. init_gold) create schema_migrations WITHOUT checksum;
-# CREATE TABLE IF NOT EXISTS then skips and the checksum INSERT fails. Ensure the
-# column exists regardless of how the table was first created (forward-compatible).
 "${PSQL[@]}" -c "ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS checksum TEXT;"
 
 for sql in "${ROOT_DIR}"/infra/init/[0-9][0-9]*_*.sql; do
@@ -148,7 +111,6 @@ SQL
 done
 
 "${PSQL_GOLD[@]}" -c "CREATE TABLE IF NOT EXISTS schema_migrations (id BIGSERIAL PRIMARY KEY, filename TEXT NOT NULL UNIQUE, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), checksum TEXT);"
-# Gold init scripts (36_/37_...) create schema_migrations without checksum.
 "${PSQL_GOLD[@]}" -c "ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS checksum TEXT;"
 
 for sql in "${ROOT_DIR}"/infra/init_gold/[0-9][0-9]_*.sql; do

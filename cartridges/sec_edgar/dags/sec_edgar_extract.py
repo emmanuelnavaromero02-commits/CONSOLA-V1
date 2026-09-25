@@ -1,8 +1,3 @@
-"""
-sec_edgar_extract DAG
-=====================
-Manual Bronze-only extraction for SEC EDGAR company facts.
-"""
 from __future__ import annotations
 
 import json

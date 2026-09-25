@@ -1,13 +1,3 @@
-"""cartridge_query_kb must sandbox every storage reader argument.
-
-The scoping rewriter is a regex: it inspects the first scoped literal and
-leaves it alone once it already carries a tenant_id. DuckDB, however,
-evaluates the *effective* argument, so slicing and concatenation can build a
-different path than the one the rewriter inspected. These regressions pin the
-closed AST validation that replaces it, on both the public entry point and the
-second check performed immediately before conn.execute.
-"""
-
 from __future__ import annotations
 
 import importlib
@@ -26,7 +16,6 @@ SCOPED = (
     f"/workspace_id={WORKSPACE}/x.csv"
 )
 
-# The exact payload reproduced by the independent audit.
 EXFIL_SLICE_CONCAT = f"""SELECT count(*) AS n
 FROM read_csv(
   '{SCOPED}'[1:0]
@@ -82,9 +71,6 @@ EXFIL_ARITHMETIC = (
     "SELECT * FROM read_csv('/etc/passwd' || repeat('a', 1 + 1), header=false)"
 )
 
-# SQLGlot represents DuckDB's PIVOT replacement scan as a plain Table.  A CTE
-# with the same name in another lexical scope must not make that local file
-# reference look like a visible CTE.
 EXFIL_PIVOT_SCOPE_LAUNDERING = f"""WITH decoy AS (
   SELECT * FROM read_parquet(
     's3://lakehouse/raw/sap_successfactors/x/tenant_id={TENANT}/workspace_id={WORKSPACE}/x.parquet'
@@ -215,22 +201,17 @@ def test_scoped_reads_are_still_accepted(monkeypatch, sql):
     tools = _load_cartridge_tools(monkeypatch)
     result, spy = _call(tools, monkeypatch, sql)
 
-    # The spy always raises, so a query that passes validation shows up as a
-    # runtime failure with its statement recorded: that is the accept signal.
     assert len(spy.executed) == 1
     assert result.get("error") == "query_failed"
 
 
 def test_second_validation_runs_immediately_before_execute(monkeypatch):
-    """The effective SQL is re-validated after scoping, not only before it."""
     tools = _load_cartridge_tools(monkeypatch)
     spy = _SpyConnection()
     monkeypatch.setattr(tools, "_duckdb", lambda: spy)
     monkeypatch.setattr(
         tools, "replicon_generic_query_block_reason", lambda *a, **k: None
     )
-    # A rewriter that smuggles an unscoped path in after the first check must
-    # still be caught by the pre-execute validation.
     monkeypatch.setattr(
         tools,
         "_scope_cartridge_sql",
@@ -248,7 +229,6 @@ def test_second_validation_runs_immediately_before_execute(monkeypatch):
 
 
 def test_public_mcp_guard_uses_the_same_closed_ast_policy(monkeypatch, caplog):
-    """The HTTP boundary must reject the PIVOT bypass before tool dispatch."""
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("INTERNAL_API_KEY", "m" * 32)
     monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", "s" * 32)
@@ -260,8 +240,6 @@ def test_public_mcp_guard_uses_the_same_closed_ast_policy(monkeypatch, caplog):
             _context(), "sap_successfactors", EXFIL_PIVOT_SCOPE_LAUNDERING
         )
 
-    # FastAPI's public exception is deliberately generic and must not retain a
-    # parser/path exception as either an explicit or implicit cause.
     assert getattr(excinfo.value, "status_code", None) == 403
     assert excinfo.value.__cause__ is None
     assert excinfo.value.__context__ is None

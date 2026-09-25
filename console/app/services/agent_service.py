@@ -1,7 +1,3 @@
-"""
-Agent CRUD service — persists rows in the `agents` table and exposes them
-as plain dicts for the HTTP / MCP layers.
-"""
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
@@ -14,8 +10,6 @@ import asyncpg
 
 from app.services.db_scope import SET_SCOPE_SQL
 
-
-# ── Connection helper ──────────────────────────────────────────────────────
 
 async def _pg():
     dsn = os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "postgresql://")
@@ -36,8 +30,6 @@ async def _scoped_pg(user_context: dict | None = None) -> AsyncIterator[asyncpg.
     finally:
         await conn.close()
 
-
-# ── Serialization ──────────────────────────────────────────────────────────
 
 _FIELDS = [
     "id", "tenant_id", "workspace_id", "cartridge_id", "slug", "name", "description",
@@ -142,8 +134,6 @@ def _require_allowed_cartridge(payload: dict, user_context: dict | None) -> None
     if cartridge_id not in allowed:
         raise PermissionError("cartridge is not visible in this workspace")
 
-
-# ── Public CRUD ────────────────────────────────────────────────────────────
 
 async def list_agents(cartridge_id: str | None = None,
                       include_inactive: bool = False,
@@ -270,7 +260,7 @@ _UPDATABLE = {
     "name", "description", "instructions", "personality",
     "allowed_tools", "rag_filter", "extra",
     "model", "max_tokens", "temperature", "is_active",
-    "slug", "cartridge_id",   # rename / move allowed
+    "slug", "cartridge_id",
 }
 _JSON_FIELDS = {"allowed_tools", "rag_filter", "extra"}
 
@@ -343,8 +333,6 @@ async def delete_agent(agent_id: str, user_context: dict | None = None) -> bool:
         res = await conn.execute("DELETE FROM agents WHERE id=$1::uuid", agent_id)
     return res.endswith(" 1")
 
-
-# ── Runs ───────────────────────────────────────────────────────────────────
 
 async def list_runs(agent_id: str, limit: int = 20, user_context: dict | None = None) -> list[dict]:
     if not await get_agent(agent_id, user_context=user_context):

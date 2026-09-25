@@ -1,14 +1,5 @@
 import type { Config } from "tailwindcss";
 
-/**
- * v1.44.2 — Tailwind config mirroring the design tokens shipped in
- * console/app/static/css/tokens.css. Keeping the two stacks aligned
- * means a future Next.js page and a legacy HTML admin page render
- * with the same brand colors / spacing / typography.
- *
- * The SAP-blue / sober-amber / muted-red palette is the v1.41+
- * enterprise tone the legacy console established.
- */
 const config: Config = {
   darkMode: "class",
   content: [
@@ -19,8 +10,6 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // CSS-variable-driven so a future theme swap touches one place.
-        // The base values live in src/styles/globals.css :root.
         border:      "hsl(var(--border))",
         input:       "hsl(var(--input))",
         ring:        "hsl(var(--ring))",

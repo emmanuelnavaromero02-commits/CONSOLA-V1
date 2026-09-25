@@ -1,7 +1,3 @@
-"""
-Dataset Store — persiste definiciones de datasets en PostgreSQL.
-"""
-
 from __future__ import annotations
 
 import json
@@ -86,7 +82,6 @@ def _tenant_for_workspace(cur, workspace_id):
 
 class DatasetStore:
     def __init__(self, datasets_dir=None):
-        # datasets_dir kept for API compatibility but ignored
         pass
 
     def list_datasets(

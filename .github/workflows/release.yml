@@ -450,9 +450,6 @@ jobs:
           read -r -a targets <<< "${ROOT_TEST_TARGETS}"
           python3 -I scripts/verify_release_test_harness.py
 
-          # run_release_pytest deliberately accepts at most one component
-          # import root per invocation. Keep every detected target, but split
-          # root/Console/Refinement/etc. into import-compatible executions.
           root_targets=()
           console_targets=()
           refinement_targets=()
@@ -582,12 +579,6 @@ jobs:
             exit 1
           }
           read -r -a targets <<< "${CARTRIDGE_TEST_TARGETS}"
-          # Partition targets by cartridge import-root family so every
-          # run_release_pytest.py invocation carries exactly one component
-          # family, satisfying scripts/run_release_pytest.py:_import_roots()
-          # (len(families) <= 1). CARTRIDGE_TEST_TARGETS is cartridges/<family>/...
-          # only, by construction in scripts/ci_changed_areas.py:_cartridge_test_targets;
-          # any other prefix is contract drift and must block the release.
           families=()
           for target in "${targets[@]}"; do
             path="${target%%::*}"
@@ -779,8 +770,6 @@ jobs:
       - name: Build and push untagged candidate for ${{ matrix.service }}
         id: build
         if: steps.candidate.outputs.action == 'build'
-        # F2 guarantees the exact tested digest mapping. It does not claim a
-        # bit-identical rebuild; dependency provenance and SBOM are F17 scope.
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: ${{ matrix.context }}
@@ -818,8 +807,6 @@ jobs:
             --digest "${{ steps.build.outputs.digest }}" \
             --receipt "${{ matrix.service }}.release-candidate.json"
 
-      # This is deliberately the final matrix step.  A rerun first downloads
-      # and fully validates an already-persisted receipt for this exact run_id.
       - name: Upload immutable candidate receipt last
         if: steps.candidate.outputs.action == 'build'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -1554,9 +1541,6 @@ jobs:
           PYTHONHOME: ""
           PYTHONPATH: ""
         run: |
-          # This is a diagnostic step after an already-failed gate. Keep it
-          # successful even when an individual container disappears while the
-          # stack is being inspected, so the original failure remains primary.
           set +e
           compose=(
             docker compose --env-file infra/.env

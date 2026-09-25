@@ -6,8 +6,6 @@ from app.services import mcp_registry
 from app.services.auth import verify_internal_api_key
 
 
-# Router server-to-server. Llamadores: Airflow, Replicon DAGs, otros servicios internos.
-# Para llamadas desde el navegador usar /api/mcp/* (mcp_public.py).
 router = APIRouter(
     prefix="/internal/mcp",
     tags=["MCP Registry"],

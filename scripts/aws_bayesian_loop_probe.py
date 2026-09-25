@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Probe the deployed Bayesian probability loop on AWS via SSM."""
 
 from __future__ import annotations
 

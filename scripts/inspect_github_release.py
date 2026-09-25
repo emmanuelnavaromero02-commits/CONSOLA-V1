@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Inspect one GitHub Release with structured HTTP absence semantics."""
 
 from __future__ import annotations
 
@@ -23,7 +22,7 @@ Fetcher = Callable[[str, Mapping[str, str]], tuple[int, Any]]
 
 
 class ReleaseInspectionError(RuntimeError):
-    """The release lookup was ambiguous or malformed."""
+    pass
 
 
 def _fetch_json(url: str, headers: Mapping[str, str]) -> tuple[int, Any]:
@@ -273,8 +272,6 @@ def inspect_release(
         if normalized_id != listed_id:
             raise ReleaseInspectionError("GitHub Release API identity changed")
 
-    # A release can be published while the draft-inclusive list is being read.
-    # Re-query the published-only endpoint before declaring draft or absence.
     settled_status, settled_payload = _fetch(fetcher, tag_url, headers)
     if settled_status == 200:
         if (

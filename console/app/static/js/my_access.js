@@ -1,26 +1,8 @@
-// console/app/static/js/my_access.js
-//
-// Phase-3 — render the "Mis accesos" page from the shared
-// OmegaSecurityContext widget. Everything here is permission-aware and
-// strictly read-only: there are no mutating actions on this page; the
-// links that DO appear (sessions, IAM, marketplace admin) are gated by
-// the same ui_capabilities flags the backend exposes, so the user
-// never sees a link that would 403.
-//
-// No innerHTML on backend strings. Every dynamic node uses textContent
-// + createElement. The static <a href="/me"> for password change is
-// authored in the HTML.
-
 (function () {
   "use strict";
 
   const $ = (id) => document.getElementById(id);
 
-  // ---------------------------------------------------------------------
-  // Permission grouping — collapses ~30+ permission keys into a small
-  // set of human-meaningful domains. The role of this view is to TELL
-  // the user "what you can do here", not to dump a registry.
-  // ---------------------------------------------------------------------
 
   const DOMAIN_ORDER = [
     "copilot",
@@ -137,10 +119,6 @@
     }
   }
 
-  // ---------------------------------------------------------------------
-  // Role helpers — explain the difference between global role and
-  // workspace_role in copy the user can act on.
-  // ---------------------------------------------------------------------
 
   const GLOBAL_ROLE_HINT = {
     owner:          "Eres dueño de la plataforma. Tienes acceso total.",
@@ -176,9 +154,6 @@
     if (kind) el.classList.add(kind);
   }
 
-  // ---------------------------------------------------------------------
-  // Cartridge cards — cleaner layout than the previous status badges.
-  // ---------------------------------------------------------------------
 
   const STATUS_COPY = {
     active: ["Activo", "ok"],
@@ -252,12 +227,6 @@
     host.append(grid);
   }
 
-  // ---------------------------------------------------------------------
-  // Capability link wiring — every link below the page footer is hidden
-  // by default and only revealed when the corresponding ui_capabilities
-  // flag (mirrored from backend) is true. The flags already replicate
-  // the full guard chain of the destination page (#174).
-  // ---------------------------------------------------------------------
 
   function applyCapLinks(caps) {
     const showIf = (id, flag) => {
@@ -272,9 +241,6 @@
     showIf("link-workspace-admin", caps.can_admin_workspace);
   }
 
-  // ---------------------------------------------------------------------
-  // Error / loading state
-  // ---------------------------------------------------------------------
 
   function showError(msg) {
     const banner = $("err-banner");
@@ -283,9 +249,6 @@
     banner.style.display = "";
   }
 
-  // ---------------------------------------------------------------------
-  // Bootstrap
-  // ---------------------------------------------------------------------
 
   async function load() {
     if (!window.OmegaSecurityContext || typeof window.OmegaSecurityContext.load !== "function") {
@@ -302,13 +265,10 @@
       return;
     }
     if (!snap.authenticated) {
-      // Either the user was logged out or the endpoint returned 401/403.
-      // We redirect to /login because the rest of the page would be empty.
       window.location.href = "/login";
       return;
     }
 
-    // Identity block (matches the existing static HTML containers).
     const setText = (id, value) => {
       const el = $(id);
       if (el) el.textContent = value || "—";
@@ -329,7 +289,6 @@
       snap.workspace.workspace_role ? "workspace" : "muted",
     );
 
-    // Inline hint that explains the two role kinds in plain language.
     const noteEl = $("ws-role-note");
     if (noteEl) {
       const globalHint = GLOBAL_ROLE_HINT[snap.role.global] || "";
@@ -354,15 +313,8 @@
       }
     }
 
-    // Permission domains.
     renderPermissionsByDomain(snap.permissions);
 
-    // Cartridge cards.
-    //
-    // R1-UX gap #2: when BOTH lists are empty, the page used to render
-    // two stacked empty cards which felt broken. Collapse the deny card
-    // entirely and surface a single, actionable empty state on the
-    // allowed card.
     const hasAny =
       snap.cartridges.allowed.length > 0 || snap.cartridges.denied.length > 0;
     if (!hasAny) {
@@ -393,8 +345,6 @@
         "deny",
         "No tienes ningún cartucho bloqueado por configuración explícita.",
       );
-      // If the deny list is empty but allowed has rows, hide the deny
-      // card too — there is nothing useful to show.
       if (snap.cartridges.denied.length === 0) {
         const deniedCard = document.getElementById("cart-denied");
         if (deniedCard) {
@@ -404,7 +354,6 @@
       }
     }
 
-    // Cap-gated links.
     applyCapLinks(snap.ui_capabilities);
   }
 

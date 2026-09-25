@@ -218,19 +218,16 @@ describe("SuccessFactorsGoldPanel", () => {
       <SuccessFactorsGoldPanel payload={{ widgets: [] }} loading={false} error="" sources={[source]} talent={talent} />,
     );
 
-    // KPIs desde el bundle (una sola fuente), no valores sinteticos
     expect(markup).toContain("Workforce Trends");
     expect(markup).toContain("Plantilla activa");
     expect(markup).toContain("Antigüedad promedio");
     expect(markup).toContain("Rotación");
     expect(markup).toContain("Meses de historia");
-    expect(markup).toContain("años"); // antiguedad en años (174.39/12 = 14.5)
+    expect(markup).toContain("años");
     expect(markup).toContain("14.5 años");
-    expect(markup).toContain("36"); // meses de historia (tile)
+    expect(markup).toContain("36");
     expect(markup).toContain("serie mensual por cohorte · una sola fuente");
-    // sparklines (SVG inline, sin librerias)
     expect(markup).toContain("<polyline");
-    // no debe hacer fetch a /api/data desde el panel (contract)
     expect(markup).not.toContain("/api/data/");
   });
 

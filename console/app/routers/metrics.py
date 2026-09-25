@@ -1,14 +1,3 @@
-"""Sprint v1.41.1 — Basic operational metrics endpoint.
-
-Surfaces the counters a human operator wants on /operations:
-- extractions last 24h (total / failed)
-- average extraction duration last 24h (success only)
-- slowest 5 entities by average duration over the last 7d
-- audit_events last 24h (admin activity volume)
-
-Charts are intentionally out of scope here — they ship in v1.44
-alongside the design system refresh.
-"""
 from __future__ import annotations
 
 import os
@@ -31,8 +20,6 @@ router = APIRouter(
 
 
 def _int(value: object) -> int | None:
-    # F11: None means the backing query FAILED (see _safe_fetchval) — coercing
-    # it to 0 would report "0 failures" on an error. Keep it None.
     if value is None:
         return None
     try:
@@ -85,13 +72,6 @@ async def _safe_fetchval(
     *args,
     default: object = 0,
 ) -> object:
-    """F11: a failed query must NEVER read as a real 0.
-
-    On exception the metric is reported as degraded (None in the payload,
-    listed in degraded_metrics) — mirroring the honest unavailable pattern of
-    successfactors_gold_headcount/business_impact_rules. ``default`` only
-    covers a SUCCESSFUL query returning NULL (e.g. AVG over zero rows).
-    """
     try:
         value = await conn.fetchval(query, *args)
     except Exception:
@@ -448,8 +428,6 @@ async def operational_metrics(user: dict = Depends(require_operations_read)) -> 
                 "external_cache_active_items": _int(intelligence_external_cache_active),
             },
             "backup": _backup_status(),
-            # F11: a query failure surfaces here (and as null in its metric)
-            # instead of masquerading as a real zero.
             "status": "degraded" if degraded else "ok",
             "degraded_metrics": sorted(set(degraded)),
         }

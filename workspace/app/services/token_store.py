@@ -1,4 +1,3 @@
-"""Token usage tracking — records per-call LLM usage to Postgres."""
 from __future__ import annotations
 
 import os
@@ -6,7 +5,6 @@ import asyncpg
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
-# Public pricing per 1M tokens (USD)
 _COST_PER_1M: dict[str, dict[str, float]] = {
     "claude-haiku-4-5-20251001": {"input": 0.80,  "output": 4.00},
     "claude-sonnet-4-6":          {"input": 3.00,  "output": 15.00},
@@ -55,7 +53,6 @@ async def record(
     cache_read_tokens: int = 0,
     user_context: dict | None = None,
 ) -> None:
-    """Persist one LLM call's token usage. Never raises — non-critical path."""
     try:
         pool = await _get_pool()
         user_id, tenant_id, workspace_id = _scope_from_context(user_context)
@@ -75,7 +72,6 @@ async def record(
 
 
 async def summary(user_context: dict | None = None) -> dict:
-    """Return accumulated totals grouped by model, with cost estimate."""
     try:
         pool = await _get_pool()
         _user_id, tenant_id, workspace_id = _scope_from_context(user_context)
@@ -102,7 +98,6 @@ async def summary(user_context: dict | None = None) -> dict:
         for r in rows:
             m = dict(r)
             rates  = _COST_PER_1M.get(m["model"], {"input": 0.0, "output": 0.0})
-            # Anthropic pricing: cache write = 1.25x input, cache read = 0.1x input
             cost = (
                 m["input_tokens"]          / 1_000_000 * rates["input"]
                 + m["output_tokens"]       / 1_000_000 * rates["output"]

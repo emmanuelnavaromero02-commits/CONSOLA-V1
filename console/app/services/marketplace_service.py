@@ -201,9 +201,6 @@ def _admin_scoped_user(
 
 
 def _can_admin_marketplace(user: dict | None) -> bool:
-    # Enforced by the marketplace.admin permission, not a hardcoded global
-    # role. owner/super_admin/admin already carry it via ROLE_PERMISSIONS;
-    # a custom role granted marketplace.admin is honored too.
     return permissions.has_permission(user, "marketplace.admin")
 
 
@@ -618,17 +615,12 @@ async def request_product(cartridge_id: str, user: dict, *, source: str = "marke
 
 
 async def activate_product(cartridge_id: str, user: dict, *, source: str = "console_admin") -> dict[str, Any]:
-    """Admin/direct activation. Customer activation requests use request_product."""
     if not _can_admin_marketplace(user):
         raise MarketplaceError("admin role required")
     tenant_id, workspace_id = _scope(user)
     p = await cartridge_service.pool()
     async with scoped_db_for_user(p, user) as (conn, _tenant_id, _workspace_id):
         await _ensure_products(conn)
-        # CRITICAL: re-validate marketplace_products.status and internal_only
-        # before approving. Without this an existing installation in
-        # 'requested' state could be force-approved by an admin even after
-        # the product was marked internal_only / paused / revoked.
         await _assert_product_activatable(conn, cartridge_id)
         installation = await conn.fetchrow(
             """
@@ -805,9 +797,6 @@ async def approve_installation(
         tenant_id=tenant_id,
         workspace_id=workspace_id,
         allowed_installation_statuses={"requested", "pending_connection", "waiting_credentials", "failed", "ready"},
-        # CISO R3 hardening: re-check internal_only/status inside the
-        # transaction so a concurrent metadata flip cannot slip through
-        # between activate_product's pre-validation and the approval.
         assert_product_activatable=True,
     )
 
@@ -856,10 +845,6 @@ async def revoke_installation(
 
 
 async def _assert_product_activatable(conn, cartridge_id: str) -> None:
-    """Reject reactivation/approval if the marketplace product is no longer
-    eligible: archived/disabled status or `internal_only=true`. Without this
-    check an admin could reopen access to a cartridge that has been
-    classified internal-only after the original installation was created."""
     product = await conn.fetchrow(
         """
         SELECT p.status,
@@ -888,12 +873,6 @@ async def reactivate_installation(
     tenant_id: str | None = None,
     workspace_id: str | None = None,
 ) -> dict[str, Any]:
-    # Phase-0 P0 + CISO R3 hardening:
-    # 1) Reactivation must NOT bypass internal_only / status checks.
-    # 2) The validation must run INSIDE the same transaction as the state
-    #    change (`_set_installation_state` with `assert_product_activatable
-    #    =True`) so a concurrent admin cannot flip the product metadata in
-    #    the gap between the check and the approval.
     return await _set_installation_state(
         installation_id,
         user,
@@ -1191,18 +1170,6 @@ async def _reconcile_packaged_app_grants(
     cartridge_id: Any,
     installation_status: str,
 ) -> None:
-    """Keep this workspace's app grants in step with the installation state.
-
-    Entering ready reconciles from the registry; leaving it revokes everything
-    the cartridge granted, in the same transaction that made the change. A
-    grant that outlived its installation is an authority the operator believes
-    they withdrew.
-
-    Strict on purpose: errors propagate. Swallowing them let an installation be
-    marked ready with its grants half-written while the audit trail recorded
-    success. A workspace whose Gold is not materialised yet, and a user-created
-    app, are handled inside the SQL and are not errors.
-    """
     if not tenant_id or not workspace_id or not cartridge_id:
         return
     from app.domains.apps import grants as app_grants
@@ -1287,13 +1254,6 @@ async def _set_installation_state(
                 raise MarketplaceError("installation not found")
             if allowed_installation_statuses is not None and row["old_installation_status"] not in allowed_installation_statuses:
                 raise MarketplaceError("installation transition not allowed from current status")
-            # CISO Round-3 hardening: TOCTOU between an external
-            # `_assert_product_activatable(conn, ...)` and this transaction
-            # let an admin reactivate an internal_only cartridge if another
-            # admin flipped the metadata in the small window between the
-            # validation and the state change. Re-check here, INSIDE the
-            # same transaction that holds the FOR UPDATE row lock, so the
-            # check-and-set is atomic from the marketplace_products POV.
             if assert_product_activatable:
                 product = await conn.fetchrow(
                     """
@@ -1383,18 +1343,6 @@ async def _set_installation_state(
                 },
             )
             installation = await _installation_row(conn, installation_id, admin=True)
-            # Reconcile the packaged apps' dataset grants inside the same
-            # transaction that made the cartridge usable.
-            #
-            # Every activation path — approve, reactivate, retry, admin
-            # activate — funnels through this function, so hooking it here
-            # covers all of them rather than one. Doing it on activation, and
-            # only here, is what keeps a plain read from ever widening
-            # authority: opening an app must not be what approves it.
-            #
-            # In-transaction on purpose: a partial reconciliation rolls back
-            # with the state change, so a workspace is never left marked ready
-            # with half its grants.
             await _reconcile_packaged_app_grants(
                 conn,
                 tenant_id=installation.get("tenant_id"),

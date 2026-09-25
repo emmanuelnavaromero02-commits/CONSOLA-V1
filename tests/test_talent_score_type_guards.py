@@ -1,5 +1,3 @@
-"""Non-numeric source types must not become valid Talent scores."""
-
 from __future__ import annotations
 
 import duckdb

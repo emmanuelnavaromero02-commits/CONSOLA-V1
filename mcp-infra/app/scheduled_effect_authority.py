@@ -1,5 +1,3 @@
-"""HMAC v2, one-use verifier for scheduled monitor effects."""
-
 from __future__ import annotations
 
 import hashlib

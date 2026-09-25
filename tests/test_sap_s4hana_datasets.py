@@ -1,14 +1,3 @@
-"""Phase 2 Block B — SAP S/4HANA silver/gold datasets.
-
-19 silver + 8 gold dataset SQL files in cartridges/sap_s4hana/datasets/, registered
-in the `datasets` catalog via infra/init/81_sap_s4hana_datasets_seed.sql (a
-migration, mirroring the HCM datasets seed — the cartridge seed guard disallows
-INSERT INTO datasets / INSERT ... SELECT).
-
-Static checks (no live DuckDB): every file parses, headers are well-formed, the
-migration and the files agree (incl. workspace_id on every row), declared sources
-are real S/4HANA entities, and no gold exposes an encrypted column.
-"""
 from __future__ import annotations
 
 import json
@@ -26,7 +15,6 @@ ENTITIES_YAML = REPO_ROOT / "cartridges" / "sap_s4hana" / "app" / "config" / "en
 HEADER_RE = re.compile(r"^--\s+(\S+)\s+\((silver|gold)\)\s+cartridge:\s+sap_s4hana\s*$")
 EXPECTED_SILVER = 19
 EXPECTED_GOLD = 8
-# Fields encrypted in bronze (entities.yaml) that must never surface in a gold.
 ENCRYPTED_FIELDS = ("iban", "bankaccount", "swiftcode", "banknumber", "bankaccountholdername")
 
 
@@ -88,7 +76,6 @@ def test_migration_matches_files():
 
 
 def test_migration_sets_workspace_id_on_every_row():
-    # The #1 lesson from the HCM datasets PR: datasets.workspace_id is NOT NULL.
     sql = MIGRATION.read_text(encoding="utf-8")
     rows = sql.count("$seed$sap_s4hana$seed$")
     ws = sql.count("SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1")
@@ -116,7 +103,6 @@ def test_declared_sources_are_real_s4_entities():
 
 
 def test_golds_do_not_expose_encrypted_columns():
-    # Privacy by design: bank fields are encrypted in bronze; no gold may surface them.
     for path in _dataset_files():
         _, layer, _, _ = _parse_header(path)
         if layer != "gold":

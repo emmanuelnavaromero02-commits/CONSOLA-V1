@@ -1,9 +1,3 @@
-"""Preview helpers for Studio data layers.
-
-Console delegates the actual DuckDB/S3 execution to Refinement, because that
-service already owns DuckDB configuration, RLS, S3 credentials, and SQL guards.
-This module only resolves the requested Studio entity to a registered dataset.
-"""
 from __future__ import annotations
 
 import re

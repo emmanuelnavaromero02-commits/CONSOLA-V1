@@ -164,15 +164,11 @@ describe("DesempenoDisponiblePanel (Opción 1 B + C)", () => {
     expect(markup).toContain("Desempeño disponible");
     expect(markup).toContain("257");
     expect(markup).toContain("esperando Competencias y Aspiración");
-    // Potencial pendiente + Fit no inferido (copy aprobado, sin abreviatura "C + A")
     expect(markup).toContain("Requiere Competencias y Aspiración");
     expect(markup).not.toContain("C + A");
-    // Banda ordinal Alto/Medio/Bajo
     expect(markup).toContain("Alto");
     expect(markup).toContain("Medio");
-    // Nunca el verde "Listo" (reservado a C/P/A completo)
     expect(markup).not.toContain("Listo");
-    // Tooltip explicando por qué Potencial permanece pendiente
     expect(markup).toContain("El Potencial requiere Competencias y Aspiración");
   });
 

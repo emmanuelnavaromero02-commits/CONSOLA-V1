@@ -1,37 +1,3 @@
-"""Shared builder for the Finance / Operations / Risk AgentOps monitor contracts.
-
-Mission 4 brings three domains up to the Talent pattern
-(``successfactors_talent_monitor``). Talent hardcodes every literal inline
-because it was the only monitor; three more would mean three near-identical
-200-line files whose only real content is a handful of domain facts. So the
-*shape* of the contract lives here once, and each domain module declares only
-what is true about that domain.
-
-What a monitor contract actually is, in this repository: not a typed object and
-not a table. It is the ``extra`` jsonb column on ``agents``, and the parts the
-runtime reads are ``extra.role == "monitor"``, ``extra.schedule.cron`` and the
-``extra.monitor`` dict. There is no ``monitor_contract`` column. A contract
-builder therefore returns the same 3-tuple Talent's does —
-``(allowed_tools, rag_filter, extra)`` — so the seed SQL, the runtime repair and
-the tests all read one source of truth.
-
-Three runtime facts shaped the defaults below, all of them verified in
-``agent_runtime`` rather than assumed:
-
-* ``wisdom_bit_id`` is NOT optional in practice. ``run_scheduled_monitor`` falls
-  back to the literal ``"WB-TALENTO"`` when a contract omits it, so a Finance
-  monitor without its own id would silently run the Talent wisdom bit.
-* ``domain`` is NOT optional either. The alert argument builder falls back to
-  ``"Recursos Humanos"``, so a Finance alert with no ``domain`` would be filed
-  under HR in Control Room.
-* An engine marked ``enabled: false`` is reported as ``skipped``, and
-  ``monitor_alert_policy._engine_is_incomplete`` only treats ``blocked`` and
-  ``error`` as incomplete. A disabled engine therefore does NOT suppress
-  alerting, while a *blocked* one does. That distinction is why the engines that
-  have no data yet are disabled with a stated reason instead of being left on to
-  fail.
-"""
-
 from __future__ import annotations
 
 import json
@@ -42,74 +8,39 @@ MONITOR_ROLE = "monitor"
 MONITOR_CATEGORY = "control_room"
 MONITOR_SCOPE = "workspace"
 
-# The deterministic chain in run_scheduled_monitor always calls wisdom_bits__run
-# first and raise_analysis_alert last, and sync_agentops_monitor_candidates only
-# accepts an agent whose allowed_tools intersects SYNC_AGENTOPS_TOOLS. Both are
-# therefore structural, not optional extras.
 CHAIN_TOOLS: tuple[str, ...] = (
     "mcp-infra__wisdom_bits__run",
     "mcp-infra__control_room__raise_analysis_alert",
 )
-# AgentOps compute surface granted to every domain monitor.
 ANALYSIS_TOOLS: tuple[str, ...] = (
     "mcp-infra__decision__orchestrate",
     "mcp-infra__simulation__monte_carlo_run",
     "mcp-infra__calibration__bayesian_state",
 )
-# Shared memory between agents (Mission 4, part B).
 MEMORY_TOOLS: tuple[str, ...] = (
     "mcp-infra__control_room__agent_memory_read",
     "mcp-infra__control_room__agent_memory_write",
 )
-# Kept from the conversational agents so a monitor can still describe a schema
-# when it has to explain a gap. Both are read-only.
 REFINEMENT_TOOLS: tuple[str, ...] = (
     "refinement__query_dataset",
     "refinement__get_schema",
 )
 MARKET_CONTEXT_TOOL = "mcp-infra__market_context_read"
 
-# Alert threshold shared by the three domains, and the same one Talent uses.
-#
-# Read monitor_alert_policy.monitor_should_alert carefully before changing this:
-# the three threshold keys are OR-ed early returns, not AND-ed gates. A status
-# outside status_not_in returns True immediately; so does blockers_present with
-# any blocker; and the last clause returns True whenever signal_count > 0 and
-# signal_count >= min_signal_count. Because min_signal_count is 1, ANY payload
-# carrying at least one signal alerts, whatever its status.
-#
-# So the real gate is upstream, in how many signals the wisdom bit emits. The
-# domain wisdom-bit handlers emit a signal only for a metric that is degraded or
-# unavailable, or that carries a limitation worth raising; a fully ready domain
-# emits zero signals and therefore never alerts. What the status buys on top of
-# that is fail-closed silence: "unavailable" and "partial" are in
-# _INSUFFICIENT_STATUSES, so they suppress the alert outright, while "degraded"
-# is deliberately not, so a degraded domain can still speak.
 DEFAULT_THRESHOLD: dict[str, Any] = {
     "status_not_in": ["ready"],
     "min_signal_count": 1,
     "blockers_present": True,
 }
 
-# Why the simulation engines ship disabled. Talent feeds Monte Carlo from
-# sap_successfactors_talent_simulation_inputs, a Gold dataset that derives the
-# distributions (baseline_value, expected_delta, delay_days, ...) from live
-# aggregates. No equivalent dataset exists for these three domains, and putting
-# invented distribution parameters in a contract would be fabricating data.
 MONTE_CARLO_DISABLED_REASON = (
     "sin dataset de inputs de simulacion para este dominio: no hay "
     "distribuciones agregadas publicadas, ver docs/data_gaps.md"
 )
-# Bayesian calibration needs recorded outcomes for its group. A brand-new group
-# has none, and an engine that BLOCKS would suppress every alert, so it ships
-# disabled with the reason stated instead.
 BAYESIAN_DISABLED_REASON = (
     "sin historial de calibracion para este grupo todavia: se habilita cuando "
     "existan resultados registrados"
 )
-# See _decision_engine for the full reasoning: the provenance check only trusts
-# WB-TALENTO, so an enabled orchestrator errors and an errored engine suppresses
-# the alert.
 DECISION_ORCHESTRATOR_DISABLED_REASON = (
     "la procedencia de wisdom bit solo esta habilitada para el monitor de "
     "Talento: se habilita cuando este dominio tenga alertas de wisdom bit ya "
@@ -119,16 +50,6 @@ DECISION_ORCHESTRATOR_DISABLED_REASON = (
 
 @dataclass(frozen=True)
 class DomainMonitorSpec:
-    """Everything that is true about one domain's monitor.
-
-    ``kpi_tool`` is the bare Mission 2 tool name (for example
-    ``control_room__finance_kpis_read``); the server prefix is added here so a
-    domain module never has to know about tool namespacing.
-
-    ``source_label`` is what lands in the alert's ``source_dataset`` field. It
-    names the domain KPI view, not a Gold relation, because each view reads
-    several relations and naming one of them would misattribute the evidence.
-    """
 
     key: str
     cartridge_id: str
@@ -153,8 +74,6 @@ class DomainMonitorSpec:
     max_tokens: int = 2400
     temperature: float = 0.2
     severity: str = "medium"
-    # Banxico / INEGI / SEC context only helps a domain whose numbers actually
-    # move with FX, rates or macro conditions.
     uses_market_context: bool = False
     memory_subjects: tuple[str, ...] = field(default_factory=tuple)
 
@@ -168,11 +87,6 @@ class DomainMonitorSpec:
 
 
 def allowed_tools_for(spec: DomainMonitorSpec) -> list[str]:
-    """The agent's allowed_tools column, in a stable order.
-
-    The domain's own KPI read comes first because it is the reason the monitor
-    exists; the rest is the shared AgentOps surface.
-    """
     tools: list[str] = [f"mcp-infra__{spec.kpi_tool}"]
     tools.extend(CHAIN_TOOLS)
     tools.extend(ANALYSIS_TOOLS)
@@ -191,14 +105,6 @@ def rag_filter_for(spec: DomainMonitorSpec) -> dict[str, Any]:
 
 
 def _monte_carlo_engine(spec: DomainMonitorSpec) -> dict[str, Any]:
-    """Monte Carlo spec, disabled until the domain has simulation inputs.
-
-    The seed and the bounds are carried even while disabled so that enabling it
-    later cannot trip the runtime's fail-closed guards ("monte_carlo requires
-    explicit seed"). ``input_variables`` is deliberately absent: the runtime
-    blocks a Monte Carlo spec without a non-empty dict, which is the correct
-    outcome while no distributions exist.
-    """
     return {
         "name": "monte_carlo",
         "enabled": False,
@@ -241,28 +147,6 @@ def _bayesian_engine(spec: DomainMonitorSpec) -> dict[str, Any]:
 
 
 def _decision_engine(spec: DomainMonitorSpec) -> dict[str, Any]:
-    """Decision orchestrator spec, disabled for the same reason it would fail.
-
-    Leaving this enabled looks harmless and is not: it would silence the monitor
-    completely. ``decision__orchestrate`` with ``source_type="wisdom_bit"`` calls
-    ``wisdom_source.durable_wisdom_exists``, whose first line returns False for
-    any source_id other than ``WB-TALENTO``, so the call raises 409
-    ``source_provenance_untrusted``. That lands as an engine result with status
-    ``error``, and ``monitor_alert_policy._engine_is_incomplete`` treats any
-    errored engine as insufficient evidence, so ``monitor_should_alert`` returns
-    False and the advisory alert the monitor exists to raise never happens.
-
-    Teaching ``durable_wisdom_exists`` the three new ids would not be enough
-    either: it also requires a pre-existing Control Room ``agent_alert`` row of
-    wisdom-bit origin, which only exists after a first successful alert — a
-    deadlock on a new domain. That provenance rule is a deliberate trust
-    boundary (a decision may only be orchestrated from evidence that was already
-    durably published), so it is respected rather than loosened.
-
-    ``execute_engines`` stays False and ``engine_inputs`` empty for when this is
-    enabled: the only engine it could chain is Monte Carlo, which has no inputs
-    for this domain either.
-    """
     return {
         "name": "decision_orchestrator",
         "enabled": False,
@@ -289,12 +173,9 @@ def _decision_engine(spec: DomainMonitorSpec) -> dict[str, Any]:
 
 
 def monitor_block_for(spec: DomainMonitorSpec) -> dict[str, Any]:
-    """The ``extra.monitor`` contract itself."""
     return {
         "engine": "wisdom_bit",
         "wisdom_bit_id": spec.wisdom_bit_id,
-        # Without this the alert builder files the finding under
-        # "Recursos Humanos".
         "domain": spec.domain,
         "dataset": spec.source_label,
         "threshold": dict(DEFAULT_THRESHOLD),
@@ -340,7 +221,6 @@ def extra_for(spec: DomainMonitorSpec) -> dict[str, Any]:
 def build_contract(
     spec: DomainMonitorSpec,
 ) -> tuple[list[str], dict[str, Any], dict[str, Any]]:
-    """Same 3-tuple shape as ``successfactors_talent_monitor_contract()``."""
     return allowed_tools_for(spec), rag_filter_for(spec), extra_for(spec)
 
 
@@ -360,13 +240,6 @@ def has_monitor_contract(agent: Any) -> bool:
 
 
 def needs_runtime_repair(agent: Any, spec: DomainMonitorSpec) -> bool:
-    """True when the row exists but would be rejected by the scheduled path.
-
-    Mirrors ``successfactors_talent_monitor_needs_runtime_repair``: the cron
-    entry point refuses an agent whose ``extra.role`` is not ``monitor`` or whose
-    ``extra.monitor`` is missing, and it does so before any reservation, so the
-    run simply never happens.
-    """
     if not is_domain_monitor_row(agent, spec):
         return False
     extra = agent.get("extra") if isinstance(agent, dict) else None
@@ -381,13 +254,6 @@ def needs_runtime_repair(agent: Any, spec: DomainMonitorSpec) -> bool:
     return not (isinstance(schedule, dict) and str(schedule.get("cron") or "").strip())
 
 
-
-
-# ── runtime provisioning ─────────────────────────────────────────────────────
-
-# Same SQL shape as ensure_successfactors_talent_monitor: UPDATE the row if it is
-# there, INSERT it if the UPDATE touched nothing. The INSERT is guarded by its own
-# NOT EXISTS so two concurrent callers cannot both insert.
 _UPDATE_SQL = """
     UPDATE agents
        SET name = $4,
@@ -436,20 +302,6 @@ async def ensure_domain_monitor(
     build_security_context: Any,
     logger: Any,
 ) -> None:
-    """Create or refresh one domain monitor row for the caller's workspace.
-
-    ``infra/init/99zzzzh_domain_agentops_monitors.sql`` seeds these rows once per
-    database, which covers the workspaces that existed when the migration ran and
-    no others. A workspace provisioned later would have the global conversational
-    templates but no monitor row, so its monitors would never fire and the shared
-    memory would have no author to attribute a finding to. Talent solves this with
-    ``ensure_successfactors_talent_monitor``; this is the same idea for the three
-    domains, reading the same contract the seed was generated from.
-
-    Fail-open like Talent's: a broken database leaves the row unrepaired and logs,
-    it never breaks the caller. Returns early when the caller has no workspace
-    scope, because a monitor row without one is invisible to the scheduler anyway.
-    """
     ctx = build_security_context(user)
     tenant_id = str(ctx.get("tenant_id") or "").strip()
     workspace_id = str(ctx.get("workspace_id") or "").strip()
@@ -474,9 +326,6 @@ async def ensure_domain_monitor(
         spec.cartridge_id,
     )
     try:
-        # Inside the try on purpose: a pool that cannot be opened is exactly the
-        # failure this helper must absorb. (Talent's equivalent acquires it
-        # outside, so a dead pool propagates there.)
         pool = await get_db_pool()
         async with pool.acquire() as conn:
             async with conn.transaction():

@@ -1,18 +1,3 @@
-"""
-Cartridge Service — PostgreSQL as source of truth.
-
-All cartridge configuration (header, connections, DAGs, entities, semantic
-vocabulary) lives in the database.  MinIO is used only for supplementary files
-(OpenAPI specs, generated code, DAG source files).
-
-Export = ZIP with:
-  config/seed.sql   — generated from DB, re-runnable on any installation
-  dags/*.py         — DAG source files from MinIO cartridges/{id}/dags/
-  specs/*           — spec files from MinIO cartridges/{id}/specs/
-
-Import = run seed.sql + store supplementary files in MinIO.
-"""
-
 from __future__ import annotations
 
 import io
@@ -63,8 +48,6 @@ def _columns(value: str) -> frozenset[str]:
     return frozenset(value.split())
 
 
-# Declarative import grammar. Connection credentials, DAG source code and every
-# identity/session table are absent from this policy on purpose.
 _SEED_TABLE_POLICIES = {
     "cartridges": _SeedTablePolicy(
         "id",
@@ -143,9 +126,6 @@ _SEED_TABLE_POLICIES = {
         ),
     ),
 }
-# Opening (or closing) delimiter of a PostgreSQL dollar-quoted string: ``$$`` or
-# ``$tag$`` with an alphanumeric tag. The splitter uses this to treat ``;``
-# inside a dollar-quoted literal as data, not a statement boundary.
 _DOLLAR_QUOTE_OPEN_RE = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)?\$")
 _SAFE_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,79}$")
 _SAFE_CARTRIDGE_ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,79}$")
@@ -174,7 +154,6 @@ def _validate_plain_filename(value: str) -> str:
 
 
 def _validate_dag_filename(value: str) -> str:
-    """Return a canonical DAG basename or fail before filesystem access."""
     value = (value or "").strip()
     if (
         not value
@@ -192,7 +171,6 @@ def _validate_dag_filename(value: str) -> str:
 
 
 def _resolve_dag_file(root: pathlib.Path, filename: str) -> pathlib.Path:
-    """Resolve a DAG basename under an operator-approved root, following links."""
     safe_name = _validate_dag_filename(filename)
     approved_root = root.resolve(strict=False)
     candidate = (approved_root / safe_name).resolve(strict=False)
@@ -227,9 +205,6 @@ def _mcp_infra_payload(tool: str, args: dict, actor_user: dict | None = None) ->
     if actor_user is not None:
         payload["security_context"] = build_security_context(actor_user)
     return payload
-
-
-# ── DB connection ─────────────────────────────────────────────────────────────
 
 
 class _PooledConnection:
@@ -268,9 +243,6 @@ async def _pg():
     return _PooledConnection(db_pool, await db_pool.acquire())
 
 
-# ── MinIO ─────────────────────────────────────────────────────────────────────
-
-
 def _minio():
     return get_minio_client()
 
@@ -289,14 +261,7 @@ def _lakehouse_bucket() -> str:
     return storage.bucket
 
 
-# ── Public API ────────────────────────────────────────────────────────────────
-
-
 async def get_cartridge(cartridge_id: str) -> dict | None:
-    """
-    Return full cartridge config assembled from DB tables.
-    Returns None if the cartridge is not registered.
-    """
     conn = await _pg()
     try:
         row = await conn.fetchrow(
@@ -313,9 +278,6 @@ async def get_cartridge(cartridge_id: str) -> dict | None:
             "FROM cartridge_connections WHERE cartridge_id=$1 ORDER BY conn_id",
             cartridge_id,
         )
-        # DAGs del cartucho + DAGs compartidos del cartucho 'platform'
-        # (file_ingest, entity_scheduler, agent_runner). dag_role discrimina
-        # worker (asignable a entidad) vs orchestrator / utility.
         dags = await conn.fetch(
             "SELECT cartridge_id, dag_id, file, description, trigger, params, "
             "       COALESCE(dag_params_example, '{}'::jsonb) AS dag_params_example, "
@@ -397,7 +359,6 @@ async def get_cartridge(cartridge_id: str) -> dict | None:
 
 
 async def list_cartridges() -> list[dict]:
-    """List all registered cartridges with summary info."""
     conn = await _pg()
     try:
         rows = await conn.fetch(
@@ -426,7 +387,6 @@ async def list_cartridges() -> list[dict]:
 
 
 async def create_cartridge(cartridge_id: str, name: str, description: str = "") -> dict:
-    """Register a new cartridge. Raises if it already exists."""
     conn = await _pg()
     try:
         existing = await conn.fetchrow(
@@ -757,7 +717,6 @@ def _normalize_full_cartridge_manifest(payload: dict) -> tuple[dict, str]:
 
 
 async def create_full_cartridge(payload: dict, actor_user: dict | None = None) -> dict:
-    """Create a full cartridge after validating the seed SQL generated from it."""
     manifest, seed_sql = _normalize_full_cartridge_manifest(payload)
     conn = await _pg()
     try:
@@ -792,7 +751,6 @@ async def create_full_cartridge(payload: dict, actor_user: dict | None = None) -
 
 
 async def update_cartridge(cartridge_id: str, updates: dict) -> dict:
-    """Update top-level cartridge fields."""
     allowed = {"name", "version", "description", "pattern", "category", "bronze_path"}
     fields = {k: v for k, v in updates.items() if k in allowed}
     if not fields:
@@ -813,14 +771,6 @@ async def update_cartridge(cartridge_id: str, updates: dict) -> dict:
 
 
 async def upsert_entity(cartridge_id: str, entity: str, **kwargs) -> None:
-    """
-    Add or update fields in entity_config. `cron_expression`/`trigger_type`
-    here are the source of truth per entity — the `entity_scheduler` DAG
-    reads them and fires the entity's DAG via Airflow's REST API. The DAG
-    source's `schedule_interval` only matters when it isn't None; in that
-    case `airflow_create_dag` mirrors it onto every entity that points at
-    the DAG.
-    """
     import json as _json
 
     allowed = {
@@ -838,7 +788,6 @@ async def upsert_entity(cartridge_id: str, entity: str, **kwargs) -> None:
     if not fields:
         return
 
-    # dag_params is jsonb — accept dict and serialize, or pass string through
     if "dag_params" in fields and not isinstance(fields["dag_params"], str):
         fields["dag_params"] = _json.dumps(fields["dag_params"] or {})
 
@@ -889,15 +838,9 @@ async def upsert_entity(cartridge_id: str, entity: str, **kwargs) -> None:
 
 
 async def rename_entity(cartridge_id: str, old_name: str, new_name: str) -> None:
-    """
-    Rename an entity across all tables that reference it.
-    Runs as a single transaction for mutable operational configuration/history.
-    Append-only Silver lineage is intentionally never renamed.
-    """
     conn = await _pg()
     try:
         async with conn.transaction():
-            # entity_config (PK — must go first)
             await conn.execute(
                 "UPDATE entity_config SET entity=$3 "
                 "WHERE cartridge_id=$1 AND entity=$2",
@@ -905,7 +848,6 @@ async def rename_entity(cartridge_id: str, old_name: str, new_name: str) -> None
                 old_name,
                 new_name,
             )
-            # watermarks
             await conn.execute(
                 "UPDATE entity_watermarks SET entity_name=$3 "
                 "WHERE cartridge_id=$1 AND entity_name=$2",
@@ -913,7 +855,6 @@ async def rename_entity(cartridge_id: str, old_name: str, new_name: str) -> None
                 old_name,
                 new_name,
             )
-            # pipeline run history
             await conn.execute(
                 "UPDATE pipeline_runs SET entity=$3 "
                 "WHERE cartridge_id=$1 AND entity=$2",
@@ -921,16 +862,11 @@ async def rename_entity(cartridge_id: str, old_name: str, new_name: str) -> None
                 old_name,
                 new_name,
             )
-            # silver lineage
     finally:
         await conn.close()
 
 
 async def delete_entity(cartridge_id: str, entity: str) -> None:
-    """
-    Delete an entity from entity_config and its watermarks.
-    Pipeline run history is kept for auditing.
-    """
     conn = await _pg()
     try:
         async with conn.transaction():
@@ -946,9 +882,6 @@ async def delete_entity(cartridge_id: str, entity: str) -> None:
             )
     finally:
         await conn.close()
-
-
-# ── Supplementary files (MinIO) ────────────────────────────────────────────────
 
 
 def upload_spec(cartridge_id: str, filename: str, content: str) -> str:
@@ -984,25 +917,11 @@ def list_specs(cartridge_id: str) -> list[str]:
         return []
 
 
-# ── Export / Import ────────────────────────────────────────────────────────────
-
-
 async def export_cartridge(cartridge_id: str) -> bytes:
-    """
-    Export cartridge as a ZIP:
-      config/seed.sql  — generated from DB (cartridges, connections, dags,
-                         entities, semantic_terms, kb_config, mcp_custom_tools)
-      dags/*.py        — DAG source code from the Airflow/cartridge file on
-                         disk, with cartridge_dags.source_code only as a
-                         legacy fallback
-      specs/*          — spec files from MinIO
-    Self-contained and re-importable on a fresh installation.
-    """
     manifest = await get_cartridge(cartridge_id)
     if not manifest:
         raise ValueError(f"Cartridge '{cartridge_id}' not found")
 
-    # ── Pull additional tables (kb_config, mcp_custom_tools, dag sources) ──
     conn = await _pg()
     try:
         kb_rows = await conn.fetch(
@@ -1050,12 +969,9 @@ async def export_cartridge(cartridge_id: str) -> bytes:
     files: dict[str, bytes] = {}
     files["config/seed.sql"] = _generate_seed_sql(manifest).encode("utf-8")
 
-    # ── Hints (cartridge-specific instructions surfaced to the assistant) ──
     if manifest["assistant_hints"].strip():
         files["hints/assistant.md"] = manifest["assistant_hints"].encode("utf-8")
 
-    # ── Agents: emit one YAML per agent for human inspection. The SQL block
-    #    in seed.sql is what actually loads them on import; YAMLs are docs.
     for a in manifest.get("agents") or []:
         slug = a.get("slug", "agent")
         files[f"agents/{slug}.yaml"] = _agent_to_yaml(a).encode("utf-8")
@@ -1074,7 +990,6 @@ async def export_cartridge(cartridge_id: str) -> bytes:
                 continue
         return None
 
-    # ── DAG sources: disk is canonical; DB is only a mirror ────────────────
     seen_dag_files: set[str] = set()
     for r in dag_rows:
         fname = _validate_dag_filename(r["file"] or f"{r['dag_id']}.py")
@@ -1083,7 +998,6 @@ async def export_cartridge(cartridge_id: str) -> bytes:
         )
         seen_dag_files.add(fname)
 
-    # ── Fallback: filesystem (any DAG not already captured from DB) ───────
     for base in (
         pathlib.Path(f"/registry/cartridges/{cartridge_id}/dags"),
         pathlib.Path("/opt/airflow/dags"),
@@ -1094,13 +1008,11 @@ async def export_cartridge(cartridge_id: str) -> bytes:
             safe_fp = _resolve_dag_file(base, fp.name)
             if fp.name in seen_dag_files:
                 continue
-            # only pick up DAGs that look like they belong to this cartridge
             if base.name == "dags" and not fp.name.startswith(f"{cartridge_id}_"):
                 continue
             files[f"dags/{fp.name}"] = safe_fp.read_bytes()
             seen_dag_files.add(fp.name)
 
-    # ── Specs and other supplementary files from MinIO ────────────────────
     try:
         c = _minio()
         bucket = _lakehouse_bucket()
@@ -1122,12 +1034,6 @@ async def export_cartridge(cartridge_id: str) -> bytes:
 
 
 async def import_cartridge(zip_bytes: bytes, actor_user: dict | None = None) -> dict:
-    """
-    Import a cartridge from a previously exported ZIP.
-      1. Run config/seed.sql against the DB (cartridges + all related tables)
-      2. Write dags/*.py to /opt/airflow/dags/ so Airflow picks them up
-      3. Upload specs/* and other extras to MinIO under cartridges/{id}/
-    """
     if len(zip_bytes or b"") > _MAX_IMPORT_ZIP_BYTES:
         raise ValueError(f"ZIP too large (max {_MAX_IMPORT_ZIP_BYTES} bytes)")
 
@@ -1157,9 +1063,6 @@ async def import_cartridge(zip_bytes: bytes, actor_user: dict | None = None) -> 
         if dag_names and not allow_dag_import:
             raise ValueError("DAG import is disabled in production")
 
-        # Apply seed and dependent metadata in one DB transaction. External
-        # side effects still happen in MCP/MinIO, but a later DAG/import
-        # failure cannot leave the cartridge seed half-applied in Postgres.
         dag_files_written: list[str] = []
         spec_files_written: list[str] = []
         extra_names = [
@@ -1172,7 +1075,6 @@ async def import_cartridge(zip_bytes: bytes, actor_user: dict | None = None) -> 
             async with conn.transaction():
                 await conn.execute(sql)
 
-                # 1b · Cartridge-specific assistant hints (optional file)
                 if "hints/assistant.md" in names:
                     hints = z.read("hints/assistant.md").decode("utf-8")
                     await conn.execute(
@@ -1181,7 +1083,6 @@ async def import_cartridge(zip_bytes: bytes, actor_user: dict | None = None) -> 
                         hints,
                     )
 
-                # 2 · Supplementary files (specs etc.) → MinIO under cartridges/{id}/
                 if extra_names:
                     c = _minio()
                     bucket = _ensure_bucket(c)
@@ -1191,7 +1092,6 @@ async def import_cartridge(zip_bytes: bytes, actor_user: dict | None = None) -> 
                         c.put_object(bucket, key, io.BytesIO(raw), len(raw))
                         spec_files_written.append(name)
 
-                # 3 · DAG files → Airflow dags directory (via mcp-infra, which has the mount)
                 import httpx
 
                 mcp_infra_url = os.environ.get("MCP_INFRA_URL", "http://mcp-infra:8010")
@@ -1219,10 +1119,6 @@ async def import_cartridge(zip_bytes: bytes, actor_user: dict | None = None) -> 
                                 f"DAG import failed for {fname}: {r.text[:300]}"
                             )
                         dag_files_written.append(fname)
-            # Transaction committed. The seed and/or hints/assistant.md may have
-            # (re)written cartridges.assistant_hints, so drop the in-process
-            # hints cache; otherwise the copilot serves stale hints for up to
-            # the cache TTL after an import.
             from app.services import agent_runtime
 
             agent_runtime.invalidate_hint_cache(cartridge_id)
@@ -1309,8 +1205,6 @@ def _validate_seed_value(node: exp.Expression, *, column: str) -> None:
         if not isinstance(node.this, (exp.Literal, exp.RawString)):
             raise ValueError("seed.sql JSONB casts require a literal")
         return
-    # This rejects every function (query_to_xml/dblink included), expression,
-    # predicate and subquery. CURRENT_TIMESTAMP above is the sole safe clock.
     raise ValueError(f"seed.sql contains non-declarative value: {type(node).__name__}")
 
 
@@ -1361,7 +1255,6 @@ def _validate_upsert(
 
 
 def _validate_seed_sql(sql: str) -> str:
-    """Validate one cartridge seed as a literal-only INSERT/UPSERT program."""
     if not sql or "\x00" in sql:
         raise ValueError("seed.sql is empty or contains NUL")
     comment_masked = _SINGLE_QUOTED_SQL_RE.sub("''", sql)
@@ -1431,8 +1324,6 @@ def _validate_seed_sql(sql: str) -> str:
             rows.append(row)
         _validate_upsert(statement.args.get("conflict"), policy, set(columns))
 
-        # A declarative VALUES/UPSERT tree has exactly its target table and no
-        # read source. This independently rejects subqueries and external reads.
         tables = list(statement.find_all(exp.Table))
         if len(tables) != 1 or tables[0] is not table_node:
             raise ValueError("seed.sql cannot read from tables")
@@ -1469,15 +1360,13 @@ def _split_sql_statements(sql: str) -> list[str]:
     buf: list[str] = []
     in_single = False
     dollar_tag: str | None = (
-        None  # active dollar-quote delimiter, e.g. "$$" or "$body$"
+        None
     )
     i = 0
     n = len(sql)
     while i < n:
         ch = sql[i]
         if dollar_tag is not None:
-            # Inside a dollar-quoted string: only the matching closing delimiter
-            # ends it; ';' and "'" in between are literal data.
             if sql.startswith(dollar_tag, i):
                 buf.append(dollar_tag)
                 i += len(dollar_tag)
@@ -1525,7 +1414,6 @@ def _split_sql_statements(sql: str) -> list[str]:
 
 
 def _entity_dag_params(v) -> dict:
-    """Normalize JSON-ish DAG params to a dict for the JSON API."""
     if v is None:
         return {}
     if isinstance(v, dict):
@@ -1536,9 +1424,6 @@ def _entity_dag_params(v) -> dict:
         return _json.loads(v)
     except Exception:
         return {}
-
-
-# ── Agent YAML emitter (human-readable companion to the SQL block) ───────────
 
 
 def _agent_to_yaml(a: dict) -> str:
@@ -1552,7 +1437,6 @@ def _agent_to_yaml(a: dict) -> str:
         if isinstance(v, (int, float)):
             return str(v)
         s = str(v)
-        # Quote unless safe bare scalar
         if s == "" or any(c in s for c in ":#\n\"'\\") or s[0] in " -?":
             return _json.dumps(s, ensure_ascii=False)
         return s
@@ -1603,11 +1487,7 @@ def _agent_to_yaml(a: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-# ── SQL generator ─────────────────────────────────────────────────────────────
-
-
 def _q(v) -> str:
-    """Quote a Python value as a SQL literal."""
     if v is None:
         return "NULL"
     if isinstance(v, bool):

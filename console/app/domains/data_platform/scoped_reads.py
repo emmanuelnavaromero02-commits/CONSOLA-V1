@@ -1,5 +1,3 @@
-"""Tenant/workspace-scoped data-platform reads and singleflight caches."""
-
 from __future__ import annotations
 
 import asyncio
@@ -286,7 +284,6 @@ def bronze_latest_s3_glob(source: str, latest_date: str, user: dict | None) -> s
 
 
 def rewrite_bronze_logical_paths(sql: str, user: dict | None) -> str:
-    """Allow the UI to submit logical raw paths while preserving scoped S3 reads."""
     if "read_parquet" not in (sql or "").lower():
         return sql
 

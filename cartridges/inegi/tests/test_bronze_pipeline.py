@@ -155,10 +155,6 @@ def test_bronze_layout_manifest_provenance_and_watermark():
 
 
 def test_recovery_after_parquet_before_manifest_does_not_advance_watermark_first(monkeypatch):
-    # Force the wall clock to advance between the interrupted write and the
-    # recovery so the per-run _retrieved_at stamp differs, deterministically
-    # exercising the immutable-batch recovery/adopt path (a same-second run would
-    # pass by luck and hide a regression).
     import itertools
 
     from app.services import bronze_records, extraction_service

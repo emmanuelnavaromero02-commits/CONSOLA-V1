@@ -1,5 +1,3 @@
-"""Mission 5: who may obtain an evidence ticket from the wisdom-bits route."""
-
 from __future__ import annotations
 
 from unittest.mock import AsyncMock
@@ -90,8 +88,6 @@ async def test_scheduled_monitor_with_verified_authority_gets_an_opaque_handle(m
     assert kwargs["workspace_id"] == WORKSPACE
     assert kwargs["security_context_source"] == "agent_runner"
     assert kwargs["internal_service"] == "mcp-infra"
-    # What the caller asked for, so the mint can refuse a mismatch with the
-    # agent's own contract.
     assert kwargs["requested_wisdom_bit_id"] == "WB-FINANZAS"
     assert kwargs["requested_cartridge_id"] == "sap_s4hana"
 

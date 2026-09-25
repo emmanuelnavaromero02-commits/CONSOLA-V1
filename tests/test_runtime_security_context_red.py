@@ -307,7 +307,6 @@ def _replay(context):
 
 
 def test_successful_replay_reuses_durable_result_without_second_post(monkeypatch):
-    # Exactly the payload ``finish_materialization`` persists for a slot.
     _replay_reservation(monkeypatch, {"name": "employee_360", "row_count": 7})
     context = _materialize_context()
 

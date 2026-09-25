@@ -185,8 +185,6 @@ export default function OperationalIntelligencePage() {
   });
 
   const loading = scenarios.isLoading || confidence.isLoading || history.isLoading || plans.isLoading || validations.isLoading || runs.isLoading;
-  // Sin datos (cargando o con error) el conteo es desconocido: se
-  // muestra "—" en lugar de fabricar un 0.
   const summary = useMemo(() => ({
     scenarios: scenarios.data ? scenarios.data.items.length : "—",
     plans: plans.data ? plans.data.items.length : "—",

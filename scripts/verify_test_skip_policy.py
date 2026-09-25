@@ -1,11 +1,4 @@
 #!/usr/bin/env python3
-"""Fail-closed release policy for pytest and Playwright skips.
-
-The source inventory records every skip declaration, not merely a count.  In
-release CI this module is also loaded as a pytest plugin and turns every
-runtime skip without an exact reviewed identity into a failing test session.
-Playwright's JSON report is checked separately after each browser gate.
-"""
 
 from __future__ import annotations
 
@@ -47,12 +40,10 @@ PYTEST_CALLS = {
     "unittest.skipIf",
     "unittest.skipUnless",
 }
-# Playwright ``test.fail`` is deliberately not governed here: it declares an
-# expected-failure assertion and does not suppress execution like skip/fixme.
 
 
 class SkipPolicyError(RuntimeError):
-    """The reviewed inventory or a runtime report is unsafe."""
+    pass
 
 
 @dataclass(frozen=True)
@@ -116,8 +107,6 @@ def _python_aliases(tree: ast.AST) -> dict[str, str]:
                     f"{node.module}.{imported.name}"
                 )
 
-    # Resolve simple assignments such as ``s = pytest.skip``.  Even when the
-    # alias call cannot be proven, the source API reference itself is sealed.
     changed = True
     while changed:
         changed = False
@@ -449,7 +438,6 @@ def scan_declarations(repo: Path = REPO) -> dict[str, list[Declaration]]:
             ):
                 continue
             relative = path.relative_to(repo).as_posix()
-            # Only test modules and their conftest files are in release scope.
             if path.name != "conftest.py" and not path.name.startswith("test"):
                 continue
             pytest_declarations.extend(_python_declarations(path, relative))

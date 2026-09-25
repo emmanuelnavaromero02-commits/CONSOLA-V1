@@ -25,7 +25,6 @@ _NATIVE_TYPES = (Decimal, date, datetime, bool, int, float)
 
 
 def _fix_mixed_type_columns(df: "pd.DataFrame") -> "pd.DataFrame":
-    """Pyarrow rejects columns that mix str and float (NaN)."""
     for col in df.columns:
         if df[col].dtype != object:
             continue

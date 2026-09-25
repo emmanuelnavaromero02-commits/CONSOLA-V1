@@ -1,5 +1,3 @@
-"""Pure DAG graph parser used by Studio previews."""
-
 from __future__ import annotations
 
 import ast
@@ -48,7 +46,6 @@ def parse_dag_graph(source: str) -> dict[str, Any]:
             return node.attr
         return None
 
-    # Pass 1: classify all function defs.
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
@@ -61,7 +58,6 @@ def parse_dag_graph(source: str) -> dict[str, Any]:
         else:
             helper_fns[node.name] = node.lineno
 
-    # Pass 2: classic Operators + output-var data deps.
     for node in ast.walk(tree):
         if not isinstance(node, ast.Assign):
             continue
@@ -82,7 +78,6 @@ def parse_dag_graph(source: str) -> dict[str, Any]:
             output_vars[var] = fn_to_id[fname]
             var_to_id[var] = fn_to_id[fname]
 
-    # Pass 3: helper calls inside each @task body.
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
@@ -100,7 +95,6 @@ def parse_dag_graph(source: str) -> dict[str, Any]:
                 seen.add(cn)
                 task["calls"].append({"name": cn, "line": helper_fns[cn]})
 
-    # Pass 4: >> chains + TaskFlow data deps.
     def resolve(node: ast.AST) -> list[str]:
         if isinstance(node, ast.Name):
             t = var_to_id.get(node.id) or fn_to_id.get(node.id)
@@ -145,7 +139,6 @@ def parse_dag_graph(source: str) -> dict[str, Any]:
         ):
             collect_chain(node.value)
 
-    # Pass 4c: data deps from standalone task calls, not in >> chains.
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue

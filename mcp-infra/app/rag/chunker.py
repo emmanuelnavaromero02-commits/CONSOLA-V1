@@ -5,7 +5,7 @@ from dataclasses import dataclass
 class TextChunk:
     content: str
     index: int
-    chunk_type: str       # 'parent' | 'child'
+    chunk_type: str
     parent_index: int | None = None
 
 

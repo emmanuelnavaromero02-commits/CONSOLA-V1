@@ -3,16 +3,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { loginUser, type LoginError } from "@/lib/auth-flow";
 
-/**
- * v1.44.2 — login screen.
- *
- * v1.44.3.2.2 (R-Mac): the real endpoint is /auth/login and requires
- * a CSRF round-trip. That flow lives in lib/auth-flow.ts:loginUser;
- * this component just calls it.
- *
- * Keep this page dependency-light: it is the public gateway and
- * carries a strict first-load JS budget in E2E.
- */
 export default function LoginPage() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-background px-4">
@@ -58,10 +48,6 @@ function LoginCard() {
     setAuthError(null);
     setSubmitting(true);
     try {
-      // v1.44.3.2.2 R-Mac: loginUser handles the GET /login → read
-      // csrf cookie → POST /auth/login dance internally. Returns
-      // on 200 + cookies set; throws LoginError with a
-      // status-specific human-readable message on every failure.
       await loginUser(email, password);
       window.localStorage.setItem("omega_user_email", email);
       window.location.assign(safeNextPath());
@@ -142,12 +128,6 @@ function LoginCard() {
           </p>
         ) : null}
 
-        {/* v1.44.3.3 R-Mac-Round-3 Task D — forgot-password
-            affordance. The backend exposes GET /forgot-password
-            (renders the legacy HTML form) and
-            POST /auth/forgot-password (sends the reset email
-            via Mailhog). The Next.js console proxies both via
-            /auth/[...path], so a relative link Just Works. */}
         <a
           href="/forgot-password"
           className="block text-center text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"

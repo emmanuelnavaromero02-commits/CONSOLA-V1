@@ -70,7 +70,6 @@ async def published_object_keys(user: dict | None, bucket: str) -> set[str]:
 
 
 async def publication_epoch(user: dict | None) -> str | None:
-    """Return an opaque workspace head-set identity for public read caches."""
     tenant_id, workspace_id = workspace_scope(user)
     dsn = _gold_dsn()
     if not tenant_id or not workspace_id or not dsn:

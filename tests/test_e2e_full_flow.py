@@ -1,10 +1,3 @@
-"""Sprint v1.41.1 — End-to-end happy path against a live stack.
-
-These tests intentionally talk to a running console (and through it,
-to the cartridges + DB). They skip cleanly when the stack isn't up,
-so they're safe inside ``make test`` for CI; the opt-in runner
-(scripts/run_e2e.sh) is what operators reach for.
-"""
 from __future__ import annotations
 
 import os
@@ -43,7 +36,6 @@ def session():
     if not ADMIN_PASSWORD:
         pytest.skip("E2E_ADMIN_PASSWORD not set")
     client = httpx.Client(base_url=CONSOLE, timeout=10.0)
-    # GET /login to receive the CSRF cookie used by the JSON login.
     login = client.get("/login")
     csrf = login.cookies.get("csrf_token") or client.cookies.get("csrf_token") or client.cookies.get("csrftoken") or ""
     _mirror_cookie_for_http_client(client, "csrf_token", csrf)
@@ -69,7 +61,6 @@ def test_e2e_01_admin_can_login(session):
         r = session.get("/auth/me")
     assert r.status_code == 200
     body = r.json()
-    # /api/auth/me may return the user under "user" or flat; accept either.
     email = body.get("email") or body.get("user", {}).get("email")
     assert email == ADMIN_EMAIL
 
@@ -79,7 +70,6 @@ def test_e2e_02_tool_manifest_lists_servers(session):
     assert r.status_code == 200
     data = r.json()
     assert "servers" in data, f"manifest missing servers key: {data}"
-    # At least one cartridge/infra server present after a normal boot.
     assert isinstance(data["servers"], (dict, list))
     assert data["servers"]
 
@@ -105,7 +95,6 @@ def test_e2e_05_freshness_summary_responds(session):
 
 def test_e2e_06_response_carries_request_id_header(session):
     r = session.get("/healthz")
-    # v1.41.1: every response must carry X-Request-ID.
     rid = r.headers.get("x-request-id")
     assert rid, "X-Request-ID missing from response"
 
@@ -117,8 +106,6 @@ def test_e2e_07_client_request_id_is_echoed(session):
 
 
 def test_e2e_08_audit_events_capture_ip(session):
-    # Forensic-complete audit (v1.41.0 P1) — at least one recent row
-    # must have ip captured. Endpoint is admin-only and read-only.
     r = session.get("/api/admin/audit?limit=20")
     if r.status_code == 404:
         pytest.skip("audit list endpoint not exposed in this build")

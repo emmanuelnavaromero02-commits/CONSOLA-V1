@@ -586,15 +586,10 @@ async def test_resource_allocation_runs_only_monte_carlo_and_optimizer_candidate
     assert all(row["engine_name"] != "bayesian_calibration" for row in db.executions)
 
 
-# ── E4: los motores del Decide cableados (permutación + minimax) ─────────────
-
-
 @pytest.mark.asyncio
 async def test_e4_minimax_executes_for_resource_allocation_with_inputs(
     execution_mod, monkeypatch
 ):
-    """resource_allocation con inputs de minimax: el hueco del optimizador
-    declarado 'not yet implemented' ejecuta su forma acotada exacta."""
     db = FakeExecutionDB()
     db.add_run(
         orchestration_id="orch-minimax",
@@ -653,7 +648,6 @@ async def test_e4_minimax_executes_for_resource_allocation_with_inputs(
     summary = json.loads(row["result_summary"]) if isinstance(row["result_summary"], str) else row["result_summary"]
     assert summary["selected"] == ["valeria", "joaquin"]
     assert summary["method"] == "exact_top_k_regret"
-    # El candidato general sigue declarado, no lo pisa el ejecutable.
     assert result["aggregate"]["candidate_engines"] == [
         {"engine": "constrained_optimizer_candidate", "status": "candidate_only"}
     ]
@@ -705,8 +699,6 @@ async def test_e4_minimax_without_inputs_skips_never_invents(
 
 @pytest.mark.asyncio
 async def test_e4_permutation_executes_for_data_quality(execution_mod, monkeypatch):
-    """data_quality con inputs de permutación: veredicto matemático con
-    evidencia determinista; el caso de la demo (8/11 en Apizaco) da patrón."""
     db = FakeExecutionDB()
     db.add_run(orchestration_id="orch-perm", problem_type="data_quality")
     _patch_pool(execution_mod, monkeypatch, db)

@@ -1,13 +1,3 @@
-"""Common failure paths for every domain aggregate, parametrized.
-
-Each Gold-backed function must turn the same four conditions into
-``status='unavailable'`` without raising: no publication head, relation not
-present (``to_regclass``), a required column missing, and a Postgres/network
-error. It must also refuse a head that belongs to another workspace, treat a
-non-published head as missing, and clamp top-N / months. The two console
-functions get their own error/scope paths.
-"""
-
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
@@ -35,7 +25,6 @@ from tests.domain_aggregate_fakes import (
 AS_OF = date(2026, 9, 13)
 NOW = datetime(2026, 9, 13, 12, 0, tzinfo=timezone.utc)
 
-# (function, kwargs, primary dataset, its columns, one required column, first marker)
 GOLD_CASES = [
     (
         fin.query_billable_hours_logged,
@@ -252,9 +241,6 @@ async def test_gold_missing_dsn_is_unavailable(
     _assert_unavailable(result, "unavailable: gold database unavailable")
 
 
-# ── clamps never raise ──────────────────────────────────────────────────────
-
-
 @pytest.mark.parametrize(
     "value, expected",
     [
@@ -293,9 +279,6 @@ async def test_infinite_top_n_degrades_instead_of_raising(monkeypatch):
     )
     assert result.status == support.STATUS_UNAVAILABLE
     assert result.months == 1
-
-
-# ── console-backed functions ────────────────────────────────────────────────
 
 
 CONSOLE_CASES = [

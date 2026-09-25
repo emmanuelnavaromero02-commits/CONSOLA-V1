@@ -1,9 +1,3 @@
-"""Durable goal runs for the Studio assistant.
-
-This service is deliberately Studio-scoped. It gives the assistant a small
-state machine for cartridge objectives without pulling in the global Copilot
-workflow surface.
-"""
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable

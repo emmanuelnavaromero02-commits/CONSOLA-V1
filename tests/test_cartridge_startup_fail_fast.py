@@ -1,18 +1,3 @@
-"""Sprint v1.43.2 (P1-5) — cartridge /health mirrors startup state.
-
-Pre-v1.43.2, every cartridge's lifespan swallowed schema/migration
-exceptions and /health unconditionally returned ``{"ok": True}``.
-Result: a cartridge that failed to migrate its jobs table would still
-be marked healthy by Kubernetes and accept traffic — but every
-schedule attempt would crash at the DB layer.
-
-The fix tracks per-step startup results in ``app.state`` and the
-/health endpoint returns 503 with the captured errors if any step
-failed.
-
-These tests run each cartridge's ASGI app via TestClient with the
-lifespan executed end-to-end and assert the contract.
-"""
 from __future__ import annotations
 
 import importlib
@@ -35,7 +20,6 @@ CARTRIDGES = [
 
 
 def _isolated_cartridge(name: str):
-    """Import ``cartridges/<name>/app/main.py`` with a clean sys.path."""
     sys.path[:] = [
         p for p in sys.path
         if not any(s in p for s in ("/cartridges/", "/console", "/vault",
@@ -51,14 +35,10 @@ def _isolated_cartridge(name: str):
 
 @pytest.fixture
 def env_for_cartridges(monkeypatch):
-    """Cartridges crash at import without these. Provide stubs that
-    let the module load — we're testing /health behaviour, not the
-    SAP/Replicon network layer."""
     monkeypatch.setenv("INTERNAL_API_KEY", "x" * 64)
     monkeypatch.setenv("INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE", "x" * 64)
     monkeypatch.setenv("INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT", "x" * 64)
     monkeypatch.setenv("APP_ENV", "test")
-    # SAP cartridges read field encryption + DB credentials at import.
     from cryptography.fernet import Fernet
     monkeypatch.setenv("FIELD_ENCRYPTION_KEY", Fernet.generate_key().decode())
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg2://x:y@nohost:5432/x")
@@ -69,15 +49,10 @@ def env_for_cartridges(monkeypatch):
     monkeypatch.setenv("MINIO_SECRET_KEY", "test-minio-secret")
 
 
-# ── Structural test: every cartridge declares the contract ────────────────
-
 @pytest.mark.parametrize("cartridge,service_label", CARTRIDGES)
 def test_cartridge_lifespan_sets_startup_state_keys(
     env_for_cartridges, cartridge, service_label,
 ):
-    """Static check that ``app.state.startup_ok`` and
-    ``startup_errors`` are written by lifespan. We grep the source —
-    the alternative (actually running lifespan + DB) is brittle in CI."""
     main_py = (REPO / "cartridges" / cartridge / "app" / "main.py").read_text()
     assert "app.state.startup_ok" in main_py, (
         f"{cartridge}/app/main.py must set app.state.startup_ok in lifespan"
@@ -89,9 +64,6 @@ def test_cartridge_lifespan_sets_startup_state_keys(
 
 @pytest.mark.parametrize("cartridge,service_label", CARTRIDGES)
 def test_cartridge_health_route_reads_startup_state(cartridge, service_label):
-    """The /health endpoint must consult app.state.startup_ok and
-    return 503 when it's False. Grep is sufficient — keeps the test
-    deterministic in CI without a live DB."""
     health_py = (
         REPO / "cartridges" / cartridge / "app" / "api" / "routes_health.py"
     ).read_text()
@@ -104,20 +76,14 @@ def test_cartridge_health_route_reads_startup_state(cartridge, service_label):
     assert f'"{service_label}"' in health_py or f"'{service_label}'" in health_py
 
 
-# ── Behavioural test: run lifespan + hit /health ──────────────────────────
-
 @pytest.mark.parametrize("cartridge,service_label", CARTRIDGES)
 def test_cartridge_health_returns_503_when_startup_failed(
     env_for_cartridges, cartridge, service_label, monkeypatch,
 ):
-    """Drive lifespan with a broken job_runner. /health must return
-    503 and list the failure in startup_errors."""
     from fastapi.testclient import TestClient
 
     main_mod = _isolated_cartridge(cartridge)
 
-    # Sabotage job_runner.ensure_schema so the lifespan records a
-    # failure but still completes.
     async def _boom():
         raise RuntimeError("simulated DB outage")
     monkeypatch.setattr(main_mod.job_runner, "ensure_schema", _boom)
@@ -138,7 +104,6 @@ def test_cartridge_health_returns_503_when_startup_failed(
 def test_cartridge_health_returns_200_when_startup_clean(
     env_for_cartridges, cartridge, service_label, monkeypatch,
 ):
-    """The healthy path: every lifespan step succeeds → /health = 200."""
     from fastapi.testclient import TestClient
 
     main_mod = _isolated_cartridge(cartridge)
@@ -147,8 +112,6 @@ def test_cartridge_health_returns_200_when_startup_clean(
         return None
     monkeypatch.setattr(main_mod.job_runner, "ensure_schema", _ok)
     monkeypatch.setattr(main_mod.job_runner, "cleanup_stale", _ok)
-    # SAP cartridges also call catalog_service._seed_if_empty(); HubSpot
-    # imports catalog helpers only inside route handlers.
     if getattr(main_mod, "catalog_service", None) is not None:
         monkeypatch.setattr(
             main_mod.catalog_service, "_seed_if_empty", lambda: None,
@@ -166,8 +129,6 @@ def test_cartridge_health_returns_200_when_startup_clean(
     assert body["startup_errors"] == []
 
 
-# ── v1.43.2 (R1 hardening): /mcp/* fail-closed when startup_ok=False ──
-
 @pytest.mark.parametrize("cartridge,service_label", CARTRIDGES)
 @pytest.mark.parametrize("path,method", [
     ("/mcp/tools",  "GET"),
@@ -177,10 +138,6 @@ def test_cartridge_health_returns_200_when_startup_clean(
 def test_mcp_endpoints_return_503_when_startup_failed(
     env_for_cartridges, cartridge, service_label, path, method, monkeypatch,
 ):
-    """When the cartridge's startup recorded a failure, every /mcp/*
-    surface — REST adapters AND the mounted JSON-RPC app — must
-    refuse traffic with 503. Pre-R1 they'd serve normally and let a
-    peer trigger the very schema gap that flagged startup as broken."""
     from fastapi.testclient import TestClient
 
     main_mod = _isolated_cartridge(cartridge)
@@ -209,18 +166,12 @@ def test_mcp_endpoints_return_503_when_startup_failed(
 def test_mcp_rpc_503_body_is_valid_json_with_apostrophe_error(
     env_for_cartridges, cartridge, service_label, monkeypatch,
 ):
-    """v1.43.2 (R2 hardening): the ASGI guard's 503 body must be
-    well-formed JSON even when the error message contains an
-    apostrophe / non-ASCII / backslash. Pre-R2 the body was built by
-    Python repr (``str(list).replace("'", '"')``) which broke JSON
-    parsing for any payload containing ``'`` inside a string."""
     from fastapi.testclient import TestClient
     import json as _json
 
     main_mod = _isolated_cartridge(cartridge)
 
     async def _boom():
-        # Apostrophe + backslash + non-ASCII to stress the JSON encoder.
         raise RuntimeError("can't connect: path C:\\db; tëst")
     monkeypatch.setattr(main_mod.job_runner, "ensure_schema", _boom)
 
@@ -232,8 +183,6 @@ def test_mcp_rpc_503_body_is_valid_json_with_apostrophe_error(
         r = client.post("/mcp/rpc", headers=headers, json={})
 
     assert r.status_code == 503
-    # Must round-trip as valid JSON; the apostrophe + backslash + non-ASCII
-    # must survive.
     body = _json.loads(r.text)
     assert body["error"] == "cartridge_not_ready"
     if cartridge == "sap_successfactors":
@@ -252,19 +201,10 @@ def test_mcp_rpc_503_body_is_valid_json_with_apostrophe_error(
         assert any("tëst" in e for e in body["startup_errors"]), body
 
 
-# ── v1.43.4 (C2): /health reflects MCP contract state ───────────────
-
-
 @pytest.mark.parametrize("cartridge,service_label", CARTRIDGES)
 def test_health_returns_200_with_tool_count_when_healthy(
     env_for_cartridges, cartridge, service_label, monkeypatch,
 ):
-    """v1.43.4 (C2): /health success body must include a
-    positive ``tool_count`` derived from the MCP server's
-    ``list_tools()`` call. Before this hotfix /health only checked
-    startup_ok, so a cartridge with a broken /mcp/tools surface
-    could still report healthy.
-    """
     from fastapi.testclient import TestClient
 
     main_mod = _isolated_cartridge(cartridge)
@@ -302,11 +242,6 @@ def test_health_returns_200_with_tool_count_when_healthy(
 def test_health_returns_503_when_mcp_has_no_tools(
     env_for_cartridges, cartridge, service_label, monkeypatch,
 ):
-    """If the MCP server somehow ends up with zero tools registered
-    (regression in tool decorators, bad import order, etc.), /health
-    must return 503 with reason=mcp_no_tools_registered. This catches
-    a quiet failure mode that v1.43.4 (C2) explicitly targets.
-    """
     from fastapi.testclient import TestClient
 
     main_mod = _isolated_cartridge(cartridge)
@@ -320,10 +255,8 @@ def test_health_returns_503_when_mcp_has_no_tools(
             main_mod.catalog_service, "_seed_if_empty", lambda: None,
         )
 
-    # Replace mcp.list_tools to return [].
     async def _no_tools():
         return []
-    # Import the cartridge's routes_health module and patch its `mcp`.
     rh = importlib.import_module("app.api.routes_health")
     monkeypatch.setattr(rh.mcp, "list_tools", _no_tools)
 
@@ -344,11 +277,6 @@ def test_health_returns_503_when_mcp_has_no_tools(
 def test_health_returns_503_when_mcp_list_tools_raises(
     env_for_cartridges, cartridge, service_label, monkeypatch,
 ):
-    """If mcp.list_tools() raises (e.g. AttributeError because of a
-    fastmcp major-version mismatch — the exact C1 failure
-    mode), /health must surface that as 503 with
-    reason=mcp_unreachable instead of pretending healthy.
-    """
     from fastapi.testclient import TestClient
 
     main_mod = _isolated_cartridge(cartridge)

@@ -41,20 +41,6 @@ function formatAge(ageHours: number): string {
   return `hace ~${Math.round(ageHours / 24)} d`;
 }
 
-/**
- * Visual status pill for a cartridge.
- *
- * States:
- *   connected    — recent test_connection returned ok / fresh data
- *   untested     — credentials exist, no test recorded
- *   unconfigured — credentials absent
- *   failed       — last test_connection returned !ok
- *   stale        — data exists but is old (freshness, NOT a connection failure)
- *   very_stale   — data exists but is very old (freshness, NOT a connection failure)
- *
- * `ageHours` (optional) surfaces how old the data is ("hace ~N h")
- * so age is communicated with text, never colour alone.
- */
 export function StatusBadge({
   status,
   ageHours,

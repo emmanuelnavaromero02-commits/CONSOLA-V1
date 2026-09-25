@@ -1,5 +1,3 @@
-"""Canonical tenant/workspace placement for physical lakehouse keys."""
-
 from __future__ import annotations
 
 
@@ -12,7 +10,6 @@ _SCOPE_INDEX_BY_ROOT = {
 
 
 def has_exact_storage_scope(key: str, tenant: str, workspace: str) -> bool:
-    """Require one adjacent scope pair at the root-specific canonical position."""
     if not tenant or not workspace:
         return False
     parts = str(key or "").strip("/").split("/")

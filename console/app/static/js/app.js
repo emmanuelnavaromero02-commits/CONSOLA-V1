@@ -1,13 +1,9 @@
-// ── MODecissions PaaS — Console UI ───────────────────────────────────────────
-
 let _history = [];
 let _busy = false;
 let _currentUser = null;
 
-// ── Boot sequence ─────────────────────────────────────────────────────────────
 
 window.addEventListener('DOMContentLoaded', async () => {
-  // Sync button label with saved theme
   const saved = localStorage.getItem('mod-theme') || 'light';
   const btn = document.getElementById('theme-btn');
   if (btn) btn.textContent = saved === 'system' ? '◐ SYSTEM' : saved === 'light' ? '☀ LIGHT' : '☾ DARK';
@@ -19,13 +15,12 @@ async function bootSequence() {
   await loadMe();
   applyPermissionVisibility();
   setText('boot-mcp-line', 'Connecting to MCP registry...');
-  await loadServers(true);   // force health-check on boot
+  await loadServers(true);
   await Promise.all([loadTokens(), loadJobs()]);
   await delay(200);
   setText('boot-ready', '▶ SYSTEM READY — Type your query or use QUICK OPS');
 }
 
-// ── API helper ────────────────────────────────────────────────────────────────
 
 function csrfToken() {
   const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
@@ -81,14 +76,12 @@ async function apiFetch(url, method = 'GET', body = null) {
   }
 }
 
-// ── Chat ──────────────────────────────────────────────────────────────────────
 
 function handleKey(e) {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     sendMessage();
   }
-  // Auto-resize textarea
   const ta = e.target;
   ta.style.height = 'auto';
   ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
@@ -126,7 +119,6 @@ async function sendMessage() {
   _history = data.messages || _history;
   appendMessage('system', data.reply || '(no response)');
 
-  // Auto-open viewer panel for any deeplinks returned by monitoring tools
   const viewerLinks = data.viewer_urls || [];
   viewerLinks.forEach(({ url, label }) => openViewer(url, label));
 
@@ -170,18 +162,14 @@ function appendTyping() {
 }
 
 function renderText(text) {
-  // Viewer deeplinks → inline button that opens in the bottom panel
-  // Matches both relative (/viewer/...) and absolute (http://host/viewer/...) URLs
   const viewerLinks = [];
   text = text.replace(/\[([^\]]+)\]\(((?:https?:\/\/[^/)\s]+)?\/viewer\/[^)]+)\)/g, (_, label, rawUrl) => {
-    // Strip host so it always works regardless of CONSOLE_URL value
     const url = rawUrl.replace(/^https?:\/\/[^/]+/, '');
     const id = `vlnk_${viewerLinks.length}`;
     viewerLinks.push({ id, label, url });
     return `\x00VLNK:${id}\x00`;
   });
 
-  // Regular external links (run after viewer links so /viewer/ URLs are already consumed)
   const extLinks = [];
   text = text.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, (_, label, url) => {
     const id = `elnk_${extLinks.length}`;
@@ -196,7 +184,6 @@ function renderText(text) {
     .replace(/^#{1,3} (.+)$/gm, '<strong style="color:var(--cyan)">$1</strong>')
     .replace(/\n/g, '<br>');
 
-  // Restore viewer buttons
   viewerLinks.forEach(({ id, label, url }) => {
     html = html.replace(
       `\x00VLNK:${id}\x00`,
@@ -204,7 +191,6 @@ function renderText(text) {
     );
   });
 
-  // Restore external links
   extLinks.forEach(({ id, label, url }) => {
     html = html.replace(
       `\x00ELNK:${id}\x00`,
@@ -215,7 +201,6 @@ function renderText(text) {
   return html;
 }
 
-// ── MCP Servers ───────────────────────────────────────────────────────────────
 
 async function loadServers(forceCheck = false) {
   if (forceCheck && hasPermission('mcp.servers.write')) await apiFetch('/api/mcp/servers/health-check', 'POST');
@@ -276,7 +261,6 @@ async function showServerTools(serverId, serverName) {
   document.getElementById('chat-window').scrollTop = 99999;
 }
 
-// ── Datasets modal ────────────────────────────────────────────────────────────
 
 function openDatasets() {
   document.getElementById('datasets-modal').style.display = 'flex';
@@ -335,7 +319,6 @@ function closeModal(e) {
   }
 }
 
-// ── Activity log ──────────────────────────────────────────────────────────────
 
 function log(type, msg) {
   const el = document.getElementById('activity-log');
@@ -344,14 +327,11 @@ function log(type, msg) {
   const entry = document.createElement('div');
   entry.className = `log-entry ${type}`;
   entry.innerHTML = `<span class="log-ts">${ts}</span>${prefix} ${esc(msg)}`;
-  // Remove placeholder
   el.querySelectorAll('.dim').forEach(d => d.remove());
   el.insertBefore(entry, el.firstChild);
-  // Keep last 30
   while (el.children.length > 30) el.removeChild(el.lastChild);
 }
 
-// ── Utils ─────────────────────────────────────────────────────────────────────
 
 function esc(str) {
   if (str == null) return '';
@@ -365,7 +345,6 @@ function setText(id, text) {
 
 function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-// ── Jobs ──────────────────────────────────────────────────────────────────────
 
 let _jobPollTimer = null;
 
@@ -385,7 +364,7 @@ async function loadJobs() {
   }
 
   el.innerHTML = jobs.map(j => {
-    const tool = esc(j.tool.replace(/^.*__/, ''));   // bare tool name
+    const tool = esc(j.tool.replace(/^.*__/, ''));
     const srv  = esc(j.tool.split('__')[0] || '');
     const msg  = esc(j.message || j.error || '—');
     const url  = `/viewer/jobs/${j.job_id}`;
@@ -401,7 +380,6 @@ async function loadJobs() {
     </div>`;
   }).join('');
 
-  // Auto-poll while any job is running
   if (running > 0) {
     _startJobPoll();
   } else {
@@ -418,7 +396,6 @@ function _stopJobPoll() {
   if (_jobPollTimer) { clearInterval(_jobPollTimer); _jobPollTimer = null; }
 }
 
-// ── Token usage ───────────────────────────────────────────────────────────────
 
 async function loadTokens() {
   const data = await apiFetch('/tokens/summary');
@@ -443,16 +420,14 @@ async function loadTokens() {
     </div>`).join('');
 }
 
-// ── Viewer Panel ──────────────────────────────────────────────────────────────
 
-let _viewerTabs = [];   // [{url, label}]
+let _viewerTabs = [];
 let _activeViewerUrl = null;
 let _viewerLoadTimer = null;
 const VIEWER_DEFAULT_H = 360;
 let _viewerExpandedHeight = VIEWER_DEFAULT_H;
 
 function openViewer(url, label) {
-  // Add tab if not already open
   if (!_viewerTabs.find(t => t.url === url)) {
     _viewerTabs.push({ url, label: label || url });
   }
@@ -567,7 +542,6 @@ function toggleViewerPanel() {
   _syncViewerToggle();
 }
 
-// Drag resize
 (function () {
   const handle = document.getElementById('resize-handle');
   if (!handle) return;
@@ -598,7 +572,6 @@ function toggleViewerPanel() {
   });
 })();
 
-// ── Theme ─────────────────────────────────────────────────────────────────────
 
 function cycleTheme() {
   const current = localStorage.getItem('mod-theme') || 'light';

@@ -1,9 +1,3 @@
-"""F11 — absent confidence stays absent: never a fabricated 0.7/0.6.
-
-The declared per-rule constants (0.78, 0.74, 0.25 ...) are real, reviewed
-numbers and stay. What must never happen again is `or 0.7` / `or 0.6`
-papering over data that nobody computed.
-"""
 from __future__ import annotations
 
 import re
@@ -89,7 +83,6 @@ def test_fabricated_defaults_are_gone_from_the_writers():
     assert re.search(r'confidence=number\(item\.get\("confidence"\)\)\s*or', rules) is None, (
         "stored-impact confidence must never fall back to an invented 0.6"
     )
-    # The declared, reviewed per-rule constants stay untouched.
     assert "confidence=0.25" in rules
 
 

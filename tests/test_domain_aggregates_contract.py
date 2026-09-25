@@ -1,10 +1,3 @@
-"""Mission 1 source contract for the domain aggregate modules.
-
-Mirrors tests/test_f12_full_population_counts.py: these tests read the module
-source and fail if anyone reintroduces row-level reads, unbounded top-N,
-string-built relation names, or a stub for a metric that has no Gold data.
-"""
-
 from __future__ import annotations
 
 import inspect
@@ -33,7 +26,6 @@ PY_MODULES = {
     "risk": risk_aggregates,
 }
 
-# Functions that must NOT exist: no Gold relation supports them.
 FORBIDDEN_FUNCTIONS = (
     "query_budget_vs_actual",
     "query_cost_center_overrun",
@@ -79,7 +71,6 @@ def test_modules_never_read_rows():
         assert "fetchall" not in src, name
         assert ".format(" not in src, name
         assert "SELECT *" not in src, name
-        # No literal LIMIT: every LIMIT is a bound $n clamped by clamp_top_n / MAX_GROUP_ROWS.
         assert not re.search(r"\bLIMIT\s+\d", src), name
         assert "clamp_top_n" in src, name
         for match in re.finditer(r"\bLIMIT\s+(\S+)", src):
@@ -100,7 +91,6 @@ def test_gold_modules_follow_the_talent_pattern():
         'GOLD_SCOPE_PREDICATE = "workspace_id::text = $1 AND tenant_id::text = $2"'
         in support_src
     )
-    # Relation names are never string-built from the dataset name.
     for name, path in list(MODULES.items()) + [("support", SUPPORT)]:
         src = _source(path)
         assert (
@@ -128,7 +118,7 @@ def test_operations_uses_console_scope_with_rls_gucs():
     assert operations_aggregates.CONSOLE_SCOPE_PREDICATE == (
         "workspace_id = $1::uuid AND ($2::uuid IS NULL OR tenant_id = $2::uuid)"
     )
-    assert "WHY TWO DSNs" in src  # documented rationale
+    assert "WHY TWO DSNs" in src
     assert "OPERATIONS_FRESHNESS_SLA_HOURS" in src
 
 
@@ -162,7 +152,6 @@ def test_every_query_returns_the_shared_result_contract():
             assert hasattr(default, "proxy_note")
             assert hasattr(default, "evidence_refs")
             assert callable(default.to_dict)
-            # supported=False never ships: the function simply does not exist.
             assert "supported" in default.to_dict()
 
 
@@ -178,11 +167,10 @@ def test_proxy_notes_say_what_is_not_measured():
     assert set(notes) == PROXY_FUNCTIONS
     for attr, note in notes.items():
         assert len(note) > 80, attr
-        assert "NO " in note, attr  # explicit "what it does NOT measure"
+        assert "NO " in note, attr
 
 
 def test_dataset_names_match_cartridge_definitions():
-    """Every dataset constant points at an existing (gold) definition file."""
     cartridges = REPO_ROOT / "cartridges"
     expected = {
         finance_aggregates.CONSULTOR_MENSUAL_DATASET: "replicon",
@@ -203,7 +191,6 @@ def test_dataset_names_match_cartridge_definitions():
 
 
 def test_required_columns_exist_in_dataset_definitions():
-    """Required/optional column allowlists are real output columns of the SQL."""
     cartridges = REPO_ROOT / "cartridges"
     checks = [
         (

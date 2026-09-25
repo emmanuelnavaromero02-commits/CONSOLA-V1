@@ -1,5 +1,3 @@
-"""Navigation helpers for legacy viewer entrypoints."""
-
 from __future__ import annotations
 
 from collections.abc import Mapping

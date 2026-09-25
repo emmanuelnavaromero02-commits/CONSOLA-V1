@@ -1,11 +1,3 @@
-"""Sprint v1.43.1 — P0-3: cartridges registered in mcp_servers.
-
-Static verification of:
-  * migration 42 SQL seeds the built-in cartridge rows and is idempotent.
-  * mcp_registry.startup() includes the built-in cartridges so the rows stay
-    fresh on every console restart (and the tools JSONB gets populated
-    via /mcp/tools HTTP fetch).
-"""
 from __future__ import annotations
 
 import re
@@ -42,23 +34,13 @@ def test_migration_42_adds_builtin_cartridges():
 
 
 def test_migration_42_uses_cartridge_category():
-    """All built-in cartridges must be tagged ``category='cartridge'`` so the tool
-    manifest filter (which groups by category) sees them in the
-    right bucket."""
     src = _src()
     assert src.count("'cartridge'") >= 6
 
 
 def test_migration_42_idempotent():
-    """Re-running must be a no-op via ON CONFLICT DO UPDATE."""
     src = _src()
     assert "ON CONFLICT (id) DO UPDATE" in src
-    # The conflict update must NOT touch tools / healthy / last_seen
-    # — those columns are owned by mcp_registry.register() at console
-    # boot (HTTP fetch) and shouldn't be overwritten by a re-applied
-    # migration. We inspect only the SET clause (between DO UPDATE SET
-    # and the trailing semicolon) so the top-of-file comments don't
-    # produce false positives.
     set_clause_match = re.search(
         r"ON CONFLICT \(id\) DO UPDATE SET\b(.+?);",
         src, re.DOTALL,
@@ -74,9 +56,6 @@ def test_migration_42_idempotent():
 
 
 def test_migration_42_ordering():
-    """41 (copilot indexes) → 42 (cartridges registry). Lexicographic
-    ordering ensures docker-entrypoint-initdb.d processes 42 after 41,
-    after 00 (the CREATE TABLE for mcp_servers)."""
     init = REPO / "infra/init"
     names = sorted(p.name for p in init.glob("*.sql"))
     assert names.index("00_schema.sql") < names.index("42_cartridges_in_mcp_servers.sql")
@@ -85,9 +64,6 @@ def test_migration_42_ordering():
 
 
 def test_salesforce_backfill_migration_idempotent_and_preserves_health_state():
-    """Existing DBs may have already run migration 42 before Salesforce was
-    listed. The backfill must add/update only static metadata and leave
-    runtime-owned registry columns alone."""
     src = BACKFILL.read_text(encoding="utf-8")
     assert "'salesforce'" in src
     assert "'http://salesforce:8205'" in src
@@ -106,11 +82,7 @@ def test_salesforce_backfill_migration_idempotent_and_preserves_health_state():
 
 
 def test_mcp_registry_startup_includes_builtin_cartridges():
-    """v1.43.1: console boot must HTTP-sync each cartridge's /mcp/tools.
-    Verify by reading the source — the builtin list in startup() has
-    entries for all built-in cartridges with category='cartridge'."""
     src = (REPO / "console/app/services/mcp_registry.py").read_text(encoding="utf-8")
-    # Find the startup() function body.
     m = re.search(r"async def startup\(\).*?\n    for server in builtin:", src, re.DOTALL)
     assert m, "startup() function not found"
     body = m.group(0)
@@ -126,14 +98,10 @@ def test_mcp_registry_startup_includes_builtin_cartridges():
         assert f'"id":          "{cart_id}"' in body, (
             f"startup() missing cartridge {cart_id!r}"
         )
-    # And every cartridge is in the cartridge category, not the
-    # legacy 'mcp' or 'monitoring' buckets.
     assert body.count('"category":    "cartridge"') == 7
 
 
 def test_mcp_registry_startup_cartridge_urls_from_env():
-    """Each cartridge URL is env-var-driven (same convention the SAP
-    DAGs now use). Compose defaults match the local service hostnames."""
     src = (REPO / "console/app/services/mcp_registry.py").read_text(encoding="utf-8")
     for env_var, default in [
         ("HUBSPOT_URL",           "http://hubspot:8210"),
@@ -150,10 +118,6 @@ def test_mcp_registry_startup_cartridge_urls_from_env():
 
 
 def test_mcp_registry_console_tools_use_internal_url():
-    """Monitoring/studio_ops run inside console, but registry health checks
-    happen from the console container. They must use service DNS, not the
-    browser-facing CONSOLE_URL, otherwise AWS/local compose can store localhost.
-    """
     src = (REPO / "console/app/services/mcp_registry.py").read_text(encoding="utf-8")
     assert 'os.environ.get("CONSOLE_INTERNAL_URL", "http://console:8000")' in src
     assert 'os.environ.get("CONSOLE_URL", "http://console:8000")' not in src

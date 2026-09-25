@@ -5,10 +5,6 @@ import types
 
 import app.main as _console_main
 
-# Import the current console runtime namespace, including private helper
-# functions used by legacy handlers. Handlers are rebound to app.main's
-# namespace before registration so existing tests and monkeypatches that
-# patch app.main.<helper> continue to affect the handler at runtime.
 globals().update(_console_main.__dict__)
 router = APIRouter()
 
@@ -29,7 +25,6 @@ def _bind_to_main(fn):
     _console_main.__dict__[fn.__name__] = rebound
     return rebound
 
-# /studio/cartridges/{cartridge_id}/connections
 @router.get("/studio/cartridges/{cartridge_id}/connections", dependencies=[Depends(require_permission("vault.connections.read"))])
 @_bind_to_main
 async def studio_cartridge_connections(cartridge_id: str, user: dict = Depends(require_permission("vault.connections.read"))):
@@ -47,7 +42,6 @@ async def studio_cartridge_connections(cartridge_id: str, user: dict = Depends(r
         except (httpx.HTTPError, ValueError):
             return {"connections": []}
 
-# /api/pipeline
 @router.get("/api/pipeline", dependencies=[Depends(require_permission("pipelines.read"))])
 @_bind_to_main
 async def api_pipeline(cartridge: str = "", user: dict = Depends(require_permission("pipelines.read"))):
@@ -81,7 +75,6 @@ async def api_pipeline(cartridge: str = "", user: dict = Depends(require_permiss
             return "empty"
         return _freshness(ds.get("last_refresh"), threshold_h=threshold_h)
 
-    # 1. Entities
     from app.services import cartridge_service as _cs
     entity_list: list[dict] = []
     manifest = await _cs.get_cartridge(cartridge)
@@ -100,7 +93,6 @@ async def api_pipeline(cartridge: str = "", user: dict = Depends(require_permiss
         elif isinstance(entities_raw, list):
             entity_list = entities_raw
 
-    # 2a. pipeline_runs — most recent run per entity (written by Airflow DAGs)
     dag_runs_by_entity: dict[str, dict] = {}
     try:
         _pool = await _get_db_pool()
@@ -125,7 +117,6 @@ async def api_pipeline(cartridge: str = "", user: dict = Depends(require_permiss
     except Exception:
         logger.debug("Could not load pipeline_runs for %s", cartridge, exc_info=True)
 
-    # 2b. jobs table — internal queue (legacy / console-triggered runs)
     all_jobs = await _call_with_optional_user(job_service.list_recent, 100, user=user)
     jobs_by_entity: dict[str, dict] = {}
     for j in all_jobs:
@@ -134,14 +125,10 @@ async def api_pipeline(cartridge: str = "", user: dict = Depends(require_permiss
             continue
         jobs_by_entity[entity] = j
 
-    # 3. Silver datasets from refinement
     try:
         all_datasets = (await _refinement_invoke("list_datasets", {}, timeout=15, user=user)).get("datasets", [])
     except Exception:
         all_datasets = []
-        # Some in-process tests replace ``httpx.AsyncClient`` with a minimal
-        # get-only fake that predates the MCP invoke path. Keep that legacy
-        # compatibility path working without changing production behavior.
         if not hasattr(httpx.AsyncClient, "post"):
             try:
                 async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=15) as c:
@@ -167,13 +154,11 @@ async def api_pipeline(cartridge: str = "", user: dict = Depends(require_permiss
                 deps.append(gds)
         return deps
 
-    # 4. Assemble pipeline rows
     rows = []
     for e in entity_list:
         entity = e.get("entity") or e.get("name") or ""
         source = f"raw/{cartridge}/{entity}"
 
-        # Prefer pipeline_runs (Airflow DAGs); fall back to jobs table
         dag_run  = dag_runs_by_entity.get(entity)
         last_job = jobs_by_entity.get(entity)
 
@@ -183,7 +168,6 @@ async def api_pipeline(cartridge: str = "", user: dict = Depends(require_permiss
         dag_status = None
 
         if dag_run:
-            # Airflow DAG run is authoritative
             fin = dag_run.get("finished_at")
             bronze_date  = str(fin)[:10] if fin else None
             bronze_count = dag_run.get("record_count")
@@ -250,7 +234,6 @@ async def api_pipeline(cartridge: str = "", user: dict = Depends(require_permiss
                         "record_count": bronze_count,
                     }
 
-        # Bronze freshness
         if dag_run and dag_run["status"] == "failed" and not bronze_date:
             bronze_status = "error"
         elif dag_status in {"queued", "running"} and not bronze_date:
@@ -264,7 +247,6 @@ async def api_pipeline(cartridge: str = "", user: dict = Depends(require_permiss
         else:
             bronze_status = "never"
 
-        # Silver/Gold nodes
         is_failed = (dag_run and dag_run["status"] == "failed") or (last_job and last_job.get("status") == "failed")
         silver_nodes = []
         gold_nodes   = []
@@ -293,7 +275,6 @@ async def api_pipeline(cartridge: str = "", user: dict = Depends(require_permiss
             "modes":     e.get("modes") or ([e["mode"]] if e.get("mode") else ["full"]),
             "watermark": e.get("watermark_field") or "",
             "last_run":  last_run_info,
-            # Keep last_job for backward compat with pipeline.html polling logic
             "last_job":  {
                 "job_id":       last_run_info.get("job_id") if last_run_info else None,
                 "dag_id":       last_run_info.get("dag_id") if last_run_info else None,
@@ -321,14 +302,12 @@ async def api_pipeline(cartridge: str = "", user: dict = Depends(require_permiss
     rows.sort(key=lambda r: _order.get(r["bronze"]["status"], 5))
     return {"pipeline": rows}
 
-# /api/dag_templates
 @router.get("/api/dag_templates", dependencies=[Depends(require_permission("pipelines.read"))])
 @_bind_to_main
 async def api_dag_templates():
     from app.services import dag_templates
     return {"templates": dag_templates.get_all()}
 
-# /api/dag_templates/{template_id}
 @router.get("/api/dag_templates/{template_id}", dependencies=[Depends(require_permission("pipelines.read"))])
 @_bind_to_main
 async def api_dag_template_code(template_id: str,
@@ -340,7 +319,6 @@ async def api_dag_template_code(template_id: str,
         raise HTTPException(404, f"Template '{template_id}' not found")
     return {"id": template_id, "cartridge": cartridge, "entity": entity, "code": code}
 
-# /api/pipeline_runs
 @router.get("/api/pipeline_runs", dependencies=[Depends(require_permission("pipelines.read"))])
 @_bind_to_main
 async def api_pipeline_runs(cartridge: str = "replicon", entity: str = None, limit: int = 50, user: dict = Depends(require_permission("pipelines.read"))):
@@ -380,7 +358,6 @@ async def api_pipeline_runs(cartridge: str = "replicon", entity: str = None, lim
         logger.exception("pipeline runs query failed error_id=%s", _eid)
         raise HTTPException(500, f"Internal server error. error_id={_eid}")
 
-# /api/pipeline/{cartridge}/{entity}/runs
 @router.get("/api/pipeline/{cartridge}/{entity}/runs", dependencies=[Depends(require_permission("pipelines.read"))])
 @_bind_to_main
 async def api_pipeline_entity_runs(cartridge: str, entity: str, limit: int = 20, user: dict = Depends(require_permission("pipelines.read"))):
@@ -429,7 +406,6 @@ async def api_pipeline_entity_runs(cartridge: str, entity: str, limit: int = 20,
         "runs": runs,
     }
 
-# /api/pipeline/{cartridge}/{entity}/runs/{dag_run_id}/logs
 @router.get("/api/pipeline/{cartridge}/{entity}/runs/{dag_run_id}/logs", dependencies=[Depends(require_permission("pipelines.read"))])
 @_bind_to_main
 async def api_pipeline_run_logs(cartridge: str, entity: str, dag_run_id: str, user: dict = Depends(require_permission("pipelines.read"))):
@@ -518,7 +494,6 @@ async def api_pipeline_run_logs(cartridge: str, entity: str, dag_run_id: str, us
         response["error"] = f"Internal server error. error_id={_eid}"
         return response
 
-# /api/pipeline/{cartridge}/{entity}/extract
 @router.post("/api/pipeline/{cartridge}/{entity}/extract", dependencies=[Depends(require_permission("pipelines.run")), Depends(require_csrf)])
 @_bind_to_main
 async def api_pipeline_extract(
@@ -625,7 +600,6 @@ async def api_pipeline_extract(
     result = await mcp_registry.invoke(cartridge, "extract", args, user=user)
     return result
 
-# /api/pipeline/{cartridge}/extract_all
 @router.post(
     "/api/pipeline/{cartridge}/extract_all",
     dependencies=[Depends(require_permission("pipelines.run")), Depends(require_csrf)],
@@ -707,7 +681,6 @@ async def api_pipeline_extract_all(
         "error_count": len(errors),
     }
 
-# /studio/cartridges/{cartridge_id}/entities/{entity}/rename
 @router.post(
     "/studio/cartridges/{cartridge_id}/entities/{entity}/rename",
     dependencies=[Depends(require_csrf), Depends(require_permission("studio.write"))],
@@ -726,7 +699,6 @@ async def studio_rename_entity(
         raise HTTPException(400, "new_name is required")
     if new_name == entity:
         return {"renamed": False, "reason": "same name"}
-    # Verify old entity exists
     manifest = await cartridge_service.get_cartridge(cartridge_id)
     if not manifest:
         raise HTTPException(404, f"Cartridge '{cartridge_id}' not found")
@@ -738,7 +710,6 @@ async def studio_rename_entity(
     await cartridge_service.rename_entity(cartridge_id, entity, new_name)
     return {"renamed": True, "old_name": entity, "new_name": new_name}
 
-# /studio/cartridges/{cartridge_id}/entities/{entity}
 @router.patch(
     "/studio/cartridges/{cartridge_id}/entities/{entity}",
     dependencies=[Depends(require_csrf), Depends(require_permission("studio.write"))],
@@ -762,7 +733,6 @@ async def studio_update_entity(
     await cartridge_service.upsert_entity(cartridge_id, entity, **updates)
     return {"updated": True, "entity": entity, **updates}
 
-# /studio/cartridges
 @router.get("/studio/cartridges", dependencies=[Depends(require_permission("cartridges.read"))])
 @_bind_to_main
 async def studio_list_cartridges(user: dict = Depends(require_permission("cartridges.read"))):
@@ -773,7 +743,6 @@ async def studio_list_cartridges(user: dict = Depends(require_permission("cartri
         cartridges = [c for c in cartridges if str(c.get("id") or c.get("cartridge") or "").strip() in allowed]
     return {"cartridges": cartridges}
 
-# /studio/cartridges/{cartridge_id}/status
 @router.get("/studio/cartridges/{cartridge_id}/status", dependencies=[Depends(require_permission("cartridges.read"))])
 @_bind_to_main
 async def studio_cartridge_status(cartridge_id: str, user: dict = Depends(require_permission("cartridges.read"))):
@@ -795,7 +764,6 @@ async def studio_cartridge_status(cartridge_id: str, user: dict = Depends(requir
     probe = await _probe_microservice(base_url, cartridge_id)
     return {"cartridge_id": cartridge_id, **probe}
 
-# /studio/cartridges
 @router.post(
     "/studio/cartridges",
     dependencies=[
@@ -819,7 +787,6 @@ async def studio_create_cartridge(body: dict):
         raise HTTPException(400, "invalid cartridge payload") from exc
     return manifest
 
-# /studio/cartridges/{cartridge_id}
 @router.get("/studio/cartridges/{cartridge_id}", dependencies=[Depends(require_permission("cartridges.read"))])
 @_bind_to_main
 async def studio_get_cartridge(cartridge_id: str, user: dict = Depends(require_permission("cartridges.read"))):
@@ -829,7 +796,6 @@ async def studio_get_cartridge(cartridge_id: str, user: dict = Depends(require_p
         raise HTTPException(404, f"Cartridge '{cartridge_id}' not found")
     return manifest
 
-# /studio/cartridges/{cartridge_id}
 @router.patch(
     "/studio/cartridges/{cartridge_id}",
     dependencies=[
@@ -848,7 +814,6 @@ async def studio_update_cartridge(cartridge_id: str, body: dict, user: dict = De
     except ValueError as exc:
         raise HTTPException(400, "invalid cartridge update") from exc
 
-# /studio/cartridges/{cartridge_id}/spec
 @router.post(
     "/studio/cartridges/{cartridge_id}/spec",
     dependencies=[
@@ -870,7 +835,6 @@ async def studio_upload_spec(cartridge_id: str, file: UploadFile = File(...), us
         raise HTTPException(400, "invalid cartridge specification") from exc
     return {"uploaded": key, "filename": file.filename, "size": len(content)}
 
-# /studio/cartridges/{cartridge_id}/export
 @router.get("/studio/cartridges/{cartridge_id}/export")
 @_bind_to_main
 async def studio_export_cartridge(
@@ -891,7 +855,6 @@ async def studio_export_cartridge(
         headers={"Content-Disposition": f'attachment; filename="{cartridge_id}.zip"'},
     )
 
-# /studio/import
 @router.post(
     "/studio/import",
     dependencies=[
@@ -910,7 +873,6 @@ async def studio_import_cartridge(file: UploadFile = File(...), user: dict = Dep
         raise HTTPException(400, "invalid cartridge archive") from e
     return manifest
 
-# /studio/chat
 @router.post("/studio/chat", dependencies=[Depends(require_csrf), Depends(require_permission("studio.write")), Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN))])
 @_bind_to_main
 async def studio_chat(body: dict, user: dict = Depends(require_permission("studio.write"))):
@@ -925,7 +887,6 @@ async def studio_chat(body: dict, user: dict = Depends(require_permission("studi
         actor_user = user,
     )
 
-# /studio/chat/stream
 @router.post("/studio/chat/stream", dependencies=[Depends(require_csrf), Depends(require_permission("studio.write")), Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN))])
 @_bind_to_main
 async def studio_chat_stream(body: dict, user: dict = Depends(require_permission("studio.write"))):

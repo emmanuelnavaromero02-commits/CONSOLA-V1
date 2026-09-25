@@ -1,9 +1,3 @@
-"""Sprint v1.41.1 — /api/metrics/operational unit tests.
-
-Patches the asyncpg pool with a tiny double; verifies shape, types
-and gating. Live-stack assertion lives in test_e2e_full_flow if we
-add it later.
-"""
 from __future__ import annotations
 
 import sys
@@ -31,8 +25,6 @@ def metrics_module():
 
 
 def _make_app(mod, fetchval_seq, fetch_rows):
-    """fetchval_seq drives the fetchval() calls in order; fetch_rows
-    is returned by fetch() (slowest_entities_7d)."""
     seq = list(fetchval_seq)
 
     class _FakeConn:
@@ -66,8 +58,6 @@ def test_metrics_shape_and_types(metrics_module):
         {"cartridge_id": "replicon", "entity_name": "users",      "avg_sec": 12.5},
         {"cartridge_id": "sap_hcm",  "entity_name": "pa0001",     "avg_sec": 60.0},
     ]
-    # fetchval order in metrics.py: extraction counters, audit counter,
-    # control-room writeback counters, jobs, LLM usage, Intelligence metrics.
     app = _make_app(metrics_module, [
         42, 3, 17.4, 250, 8, 2, 1, 14, 2, 9000, 1,
         12, 4, 3, 9, 5, 2, 1, 7, 6, 1, 842.5, 1.5, 10, 8,
@@ -109,7 +99,6 @@ def test_metrics_shape_and_types(metrics_module):
 
 
 def test_metrics_returns_zeros_when_empty(metrics_module):
-    """Fresh install (no extractions yet) must not crash with None."""
     app = _make_app(metrics_module, [None, None, None, None], [])
     r = TestClient(app).get("/api/metrics/operational")
     assert r.status_code == 200
@@ -148,8 +137,6 @@ def test_metrics_requires_operations_read_permission(metrics_module):
 
 
 def test_failed_query_reports_unavailable_never_zero(metrics_module):
-    """F11: a query failure must surface as null + degraded_metrics — a
-    KPI like errors_24h reporting 0 on an exception is a lie."""
 
     class _ExplodingConn:
         async def fetchval(self, *_a, **_kw):
@@ -191,8 +178,6 @@ def test_failed_query_reports_unavailable_never_zero(metrics_module):
 
 
 def test_healthy_queries_still_report_real_zero(metrics_module):
-    """A real 0 (query succeeded, zero rows matched) stays 0 — only
-    exceptions degrade."""
     app = _make_app(metrics_module, [0] * 30, [])
     r = TestClient(app).get("/api/metrics/operational")
     assert r.status_code == 200

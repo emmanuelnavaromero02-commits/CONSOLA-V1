@@ -1,6 +1,3 @@
-"""
-Tool registry — decorators register tools; main.py exposes them via MCP endpoints.
-"""
 from __future__ import annotations
 
 import inspect
@@ -10,7 +7,6 @@ _tools: dict[str, dict] = {}
 
 
 def tool(name: str, description: str, input_schema: dict) -> Callable:
-    """Decorator that registers a function as an MCP tool."""
     def decorator(fn: Callable) -> Callable:
         _tools[name] = {
             "name":         name,

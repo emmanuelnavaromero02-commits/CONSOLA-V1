@@ -21,7 +21,6 @@ def runtime_config_payload(
     *,
     public_url: Callable[..., str],
 ) -> dict[str, Any]:
-    """Return browser-facing runtime URLs without exposing secrets."""
     return {
         "workspace_url": public_url(
             "WORKSPACE_URL",
@@ -50,7 +49,6 @@ def system_info_payload(
     *,
     version: str,
 ) -> dict[str, Any]:
-    """Return deployment mode flags used by browser-side feature gates."""
     app_env = environ.get("APP_ENV", "production").lower()
     rce_tools_enabled = environ.get("ALLOW_RCE_TOOLS", "").strip().lower() in TRUEISH_VALUES
     dev_mode = app_env in DEV_APP_ENVS

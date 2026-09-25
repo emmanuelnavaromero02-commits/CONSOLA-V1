@@ -6,7 +6,6 @@ import types
 import app.main as _console_main
 from app.services import publication_heads as _publication
 
-# Rebind legacy handlers so app.main monkeypatches remain effective.
 globals().update(_console_main.__dict__)
 router = APIRouter()
 
@@ -77,9 +76,6 @@ async def dataset_data(
     limit: int = 100,
     user: dict = Depends(require_permission("datasets.read")),
 ):
-    # Forward user context so refinement can apply RLS. Without it the GOLD
-    # tables fall through to the empty-tenant filter (or the revenue_manager
-    # 'N/D' fallback) and any authenticated user could read cross-tenant rows.
     user = user or getattr(request.state, "user", None) or {}
     return await _refinement_invoke(
         "query_dataset",
@@ -125,12 +121,9 @@ async def api_schema(
     return {"partitions": partitions, "preview": preview}
 
 
-# /api/sources
 @router.get("/api/sources", dependencies=[Depends(require_permission("datasets.read"))])
 @_bind_to_main
 async def api_sources(user: dict = Depends(require_permission("datasets.read"))):
-    # Source-regression compatibility: this route still delegates to
-    # _gold_sources_from_catalog(user) through the shared payload helper.
     return await _sources_response_payload_impl(
         user=user,
         refinement_invoke=_refinement_invoke,
@@ -139,7 +132,6 @@ async def api_sources(user: dict = Depends(require_permission("datasets.read")))
     )
 
 
-# /api/datasets/save
 @router.post(
     "/api/datasets/save",
     dependencies=[Depends(require_csrf), Depends(require_permission("datasets.write"))],
@@ -157,7 +149,6 @@ async def api_dataset_save(
     return r.json()
 
 
-# /api/datasets/{name}/detail
 @router.get(
     "/api/datasets/{name}/detail",
     dependencies=[Depends(require_permission("datasets.read"))],
@@ -180,7 +171,6 @@ async def api_dataset_detail(
     return _normalize_dataset_detail(definition, schema_payload, schema_error, user)
 
 
-# /api/bronze/query
 @router.post(
     "/api/bronze/query",
     dependencies=[Depends(require_csrf), Depends(require_permission("datasets.write"))],
@@ -189,9 +179,6 @@ async def api_dataset_detail(
 async def api_bronze_query(
     body: dict, user: dict = Depends(require_permission("datasets.write"))
 ):
-    # Restricted to datasets.write because this endpoint accepts arbitrary SQL.
-    # Read-only roles (viewer) must use the dataset-scoped endpoints below,
-    # which build SQL server-side instead of trusting client input.
     sql = body.get("sql", "").strip()
     limit = min(int(body.get("limit", 200)), 2000)
     if not sql:
@@ -219,7 +206,6 @@ async def api_bronze_query(
     return r.json()
 
 
-# /api/datasets
 @router.delete(
     "/api/datasets",
     dependencies=[
@@ -241,7 +227,6 @@ async def api_delete_dataset(
     return r.json()
 
 
-# /api/datasets/{name}/lineage
 @router.get(
     "/api/datasets/{name}/lineage",
     dependencies=[Depends(require_permission("datasets.read"))],
@@ -273,7 +258,6 @@ async def api_dataset_lineage(
     return r.json()
 
 
-# /api/explorer/buckets
 @router.get(
     "/api/explorer/buckets",
     dependencies=[Depends(require_permission("pipelines.read"))],
@@ -294,7 +278,6 @@ async def api_explorer_buckets(user: dict = Depends(require_authenticated)):
     return {"buckets": buckets, "quicklinks": quicklinks}
 
 
-# /api/explorer/list
 @router.get(
     "/api/explorer/list", dependencies=[Depends(require_permission("pipelines.read"))]
 )
@@ -343,7 +326,6 @@ async def api_explorer_list(
     )
 
 
-# /api/explorer/download
 @router.get(
     "/api/explorer/download",
     dependencies=[Depends(require_permission("pipelines.read"))],
@@ -424,7 +406,6 @@ async def api_explorer_download_content(
     )
 
 
-# /api/explorer/object
 @router.delete(
     "/api/explorer/object",
     dependencies=[
@@ -466,7 +447,6 @@ async def api_explorer_delete(
     return _explorer_delete_response(bucket_name=bucket_name, key=key)
 
 
-# /api/lineage
 @router.get("/api/lineage", dependencies=[Depends(require_permission("datasets.read"))])
 @_bind_to_main
 async def api_lineage(
@@ -496,7 +476,6 @@ async def api_lineage(
     return _lineage_graph_payload(datasets, source_visible=source_visible)
 
 
-# /api/data/{dataset}
 @router.get(
     "/api/data/{dataset}", dependencies=[Depends(require_permission("datasets.read"))]
 )
@@ -510,16 +489,11 @@ async def api_data(
     """Return dataset rows as JSON array for use by analytic apps."""
     _validate_dataset_name(dataset)
 
-    # Prefer already-materialized, workspace-scoped Gold tables. This keeps
-    # production reads on the same path as the intelligence readiness gate and
-    # avoids failing analytic views when the legacy S3 parquet dependency is
-    # unavailable but the scoped Gold table is present.
     from app.services.intelligence.gold_fetcher import query_gold_dataset_rows
 
     return await query_gold_dataset_rows(dataset, user, limit)
 
 
-# /api/data/{dataset}/options
 @router.get(
     "/api/data/{dataset}/options",
     dependencies=[Depends(require_permission("datasets.read"))],
@@ -531,8 +505,6 @@ async def api_data_options(
     user: dict = Depends(require_permission("datasets.read")),
 ):
     """Return distinct values per column for building filter selectors."""
-    # SQL produced by _data_api_options_sql targets pggold.gold_<dataset> via Refinement.
-    # It invokes preview_transform with _rls_user_context(user) through the shared helper.
     return await _data_options_payload_impl(
         dataset=dataset,
         columns=columns,
@@ -546,7 +518,6 @@ async def api_data_options(
     )
 
 
-# /api/data/{dataset}/query
 @router.post(
     "/api/data/{dataset}/query",
     dependencies=[Depends(require_permission("datasets.read"))],
@@ -560,7 +531,6 @@ async def api_data_query_filtered(dataset: str, body: dict, request: Request):
            "limit": 1000, "columns": ["col1", "col2"]}
     fiscal_year uses March-February logic automatically.
     """
-    # Forward the authenticated user's context so refinement can apply RLS.
     _user = getattr(request.state, "user", None) or {}
     return await _filtered_data_query_payload_impl(
         dataset=dataset,
@@ -574,7 +544,6 @@ async def api_data_query_filtered(dataset: str, body: dict, request: Request):
     )
 
 
-# /explorer
 @router.get("/explorer", dependencies=[Depends(require_permission("pipelines.read"))])
 @_bind_to_main
 async def explorer_page(request: Request):
@@ -583,7 +552,6 @@ async def explorer_page(request: Request):
     return _console_next_response(request, "explorer/index.html")
 
 
-# /viewer/lineage
 @router.get(
     "/viewer/lineage", dependencies=[Depends(require_permission("datasets.read"))]
 )
@@ -592,7 +560,6 @@ async def viewer_lineage(request: Request):
     return _viewer_redirect(request, "lineage")
 
 
-# /api/semantic
 @router.get(
     "/api/semantic", dependencies=[Depends(require_permission("datasets.read"))]
 )
@@ -609,7 +576,6 @@ async def api_semantic(
     )
     manifest = await _cs.get_cartridge(cartridge)
     if manifest:
-        # Pass through all entity fields so Studio can render display_name, dag_id, etc.
         return _semantic_manifest_response(
             cartridge=cartridge,
             manifest=manifest,
@@ -618,7 +584,6 @@ async def api_semantic(
             ),
         )
 
-    # Fallback: Pattern A — invoke via MCP server
     servers = await mcp_registry.list_servers()
     srv = next((s for s in servers if s["id"] == cartridge), None)
     if not srv:
@@ -627,7 +592,6 @@ async def api_semantic(
     return {"cartridge": cartridge, "server": srv, "entities": entities}
 
 
-# /api/catalog
 @router.get("/api/catalog", dependencies=[Depends(require_permission("datasets.read"))])
 @_bind_to_main
 async def api_catalog_get(
@@ -653,7 +617,6 @@ async def api_catalog_get(
     return result
 
 
-# /api/catalog/entries
 @router.post(
     "/api/catalog/entries",
     dependencies=[
@@ -669,7 +632,6 @@ async def api_catalog_upsert(
     return await _refinement_invoke("upsert_catalog_entries", body, user=user)
 
 
-# /api/catalog/relationships
 @router.post(
     "/api/catalog/relationships",
     dependencies=[

@@ -1,5 +1,3 @@
-"""Bounded production prefixes for the versioned runtime SQL catalogue."""
-
 from __future__ import annotations
 
 from app.services.public_sql_ddl_prefix import ddl_prefix
@@ -97,7 +95,6 @@ def has_complete_statement_prefix(
     head: str,
     tail: tuple[SelectToken, ...],
 ) -> bool:
-    """Return whether ``head + tail`` starts with a complete SQL production."""
 
     if head in _NO_ARGUMENT_HEADS or head == "select":
         return True

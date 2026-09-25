@@ -52,7 +52,6 @@ from app.services.intelligence.stale_signal_purge import (  # noqa: E402
 )
 
 
-
 def _dsn() -> str:
     raw = os.environ.get("DATABASE_URL") or os.environ.get("OMEGA_DATABASE_URL") or ""
     if not raw:
@@ -76,9 +75,6 @@ async def main() -> None:
     try:
         who = await conn.fetchval("SELECT current_user")
         is_super = await conn.fetchval("SELECT usesuper FROM pg_user WHERE usename = current_user")
-        # Guard duro: un superusuario ignora RLS; con --apply podría barrer basura
-        # de TODAS las workspaces en la primera iteración. El WHERE workspace_id
-        # explícito ya lo acota, pero abortamos salvo override explícito.
         if is_super and args.apply and not args.force_superuser:
             raise SystemExit(
                 f"ABORTADO: el rol '{who}' es SUPERUSUARIO (ignora RLS). Ejecuta con un rol "

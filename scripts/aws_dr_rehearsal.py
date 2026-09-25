@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""Safe AWS DR restore rehearsal wrapper.
-
-The default mode is an isolated restore into temporary containers. It never
-restores over the live databases and never writes to lakehouse prefixes.
-"""
 
 from __future__ import annotations
 

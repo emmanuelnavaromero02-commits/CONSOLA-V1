@@ -1,24 +1,3 @@
-"""E5a — outcome → calibración AUTOMÁTICA (el ciclo Evoluciona, sin manos).
-
-Hasta ahora cada outcome evaluado requería un POST /calibration/observe
-manual: el motor bayesiano (calibration.py, completo desde antes) solo
-aprendía si alguien se acordaba de avisarle. Este autopiloto cierra el lazo:
-tras cada ciclo autónomo (run_intelligence en modo gold_refresh) barre los
-prediction_outcomes evaluados que aún no tienen observación verificada y los
-observa por la MISMA ruta autoritativa de siempre (observation_service.observe
-reconstruye la verdad del servidor; el payload es solo source_type+source_id,
-así que aquí no se afirma nada que la base no respalde).
-
-Doctrina intacta:
-- La elegibilidad espeja EXACTAMENTE las condiciones del trigger de autoridad
-  (99zzf): hit/miss, evaluación completa, señal observed con horizonte y
-  procedencia — lo que no cumple queda PENDIENTE con conteo visible, jamás se
-  fuerza ni se fabrica.
-- Idempotente por construcción: observe() re-usa la idempotency_key del
-  outcome; un replay devuelve la observación existente.
-- Best-effort aislado: un outcome que falla no detiene a los demás, y el
-  autopiloto JAMÁS tumba el run de inteligencia que lo invoca.
-"""
 from __future__ import annotations
 
 import logging
@@ -32,8 +11,6 @@ logger = logging.getLogger(__name__)
 
 MAX_OUTCOMES_PER_SWEEP = 25
 
-# Espejo de las condiciones del trigger de autoridad (99zzf) + "sin
-# observación verificada todavía". Solo IDs: la verdad la reconstruye observe().
 _PENDING_SQL = """
 SELECT outcome.id::text AS outcome_id
   FROM prediction_outcomes outcome
@@ -67,10 +44,6 @@ SELECT outcome.id::text AS outcome_id
 async def observe_pending_outcomes(
     user: dict, *, limit: int = MAX_OUTCOMES_PER_SWEEP
 ) -> dict[str, Any]:
-    """Barre y observa los outcomes evaluados pendientes del workspace.
-
-    Devuelve un resumen exacto (contados, observados, fallidos con razón) —
-    cero error silencioso. Nunca lanza: el llamador (el ciclo) sigue vivo."""
     limit = max(1, min(int(limit or MAX_OUTCOMES_PER_SWEEP), 200))
     summary: dict[str, Any] = {
         "pending_found": 0,
@@ -101,8 +74,6 @@ async def observe_pending_outcomes(
 
 
 async def run_best_effort(user: dict) -> dict[str, Any] | None:
-    """Envoltura para el ciclo: cualquier fallo se reporta como None + log,
-    jamás interrumpe el run de inteligencia."""
     try:
         return await observe_pending_outcomes(user)
     except Exception as exc:  # noqa: BLE001

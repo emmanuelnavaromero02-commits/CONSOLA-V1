@@ -1,5 +1,3 @@
-"""Gold readiness checks for analytic apps."""
-
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable

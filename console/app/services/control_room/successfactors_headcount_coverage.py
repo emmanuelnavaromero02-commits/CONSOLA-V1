@@ -37,7 +37,6 @@ def dimension_coverage(
     result: Mapping[str, object],
     exact: ExactPopulation,
 ) -> CoverageDecision:
-    """Classify whether a filtered dimension covers the exact population."""
     source_status = str(result.get("status") or "unavailable")
     source_error_value = result.get("error")
     source_error = str(source_error_value) if source_error_value else None

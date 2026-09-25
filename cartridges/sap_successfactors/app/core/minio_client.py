@@ -27,11 +27,6 @@ _SAFE_STORAGE_CODES = frozenset(
 
 
 class StoragePreflightError(RuntimeError):
-    """A storage failure whose string representation is safe for callers.
-
-    Provider exceptions can contain signed URLs, access-key IDs, or request
-    details.  They must never cross the extraction boundary.
-    """
 
     def __init__(self, code: str) -> None:
         if code not in _SAFE_STORAGE_CODES:
@@ -86,8 +81,6 @@ def _provider_for(endpoint: str) -> str:
     )
     if explicit and explicit not in {"gcs", "s3", "minio"}:
         raise StoragePreflightError("storage_credentials_missing")
-    # An explicit provider may clarify an unbranded/custom endpoint, but it may
-    # not contradict a well-known GCS or AWS endpoint.
     if explicit and inferred in {"gcs", "s3"} and explicit != inferred:
         raise StoragePreflightError("storage_credentials_missing")
     return explicit or inferred
@@ -102,7 +95,6 @@ def _complete_pair(
 
 
 def resolve_storage_config() -> StorageRuntimeConfig:
-    """Resolve one provider atomically without cross-provider fallbacks."""
 
     explicit_provider = _value("lakehouse_provider").lower()
     endpoint_value = _value("lakehouse_endpoint")
@@ -135,8 +127,6 @@ def resolve_storage_config() -> StorageRuntimeConfig:
         )
 
     if provider == "s3":
-        # A complete native AWS static pair is supported for developer/CI
-        # environments.  Production normally leaves it empty and uses IMDSv2.
         access_key, secret_key = _complete_pair(
             _value("aws_access_key_id"),
             _value("aws_secret_access_key"),
@@ -179,7 +169,6 @@ def resolve_storage_config() -> StorageRuntimeConfig:
 
 
 class Ec2ImdsV2Provider(Provider):
-    """MinIO credentials provider for EC2 instance profiles using IMDSv2."""
 
     def __init__(self, base_url: str = _IMDS_BASE_URL, timeout: float = 2.0) -> None:
         self._base_url = base_url.rstrip("/")
@@ -200,8 +189,6 @@ class Ec2ImdsV2Provider(Provider):
         if method == "PUT":
             headers["X-aws-ec2-metadata-token-ttl-seconds"] = "21600"
         req = request.Request(f"{self._base_url}{path}", headers=headers, method=method)
-        # Bandit B310 false positive: URL is restricted above to EC2 IMDSv2
-        # link-local 169.254.169.254 and fixed /latest/* paths.
         with request.urlopen(req, timeout=self._timeout) as resp:  # nosec B310
             return resp.read().decode("utf-8")
 
@@ -237,11 +224,6 @@ class Ec2ImdsV2Provider(Provider):
 
 
 def get_minio_client(*, config: StorageRuntimeConfig | None = None) -> Minio:
-    """Build the S3-compatible client for the active provider.
-
-    Despite the legacy function name, GCS uses its own HMAC pair, AWS uses
-    native AWS credentials or IMDSv2, and only local MinIO uses MINIO_*.
-    """
 
     resolved = config or resolve_storage_config()
     common: dict[str, object] = {
@@ -302,9 +284,6 @@ def _bucket_ready(
 ) -> None:
     try:
         if config.provider != "minio":
-            # GCS/AWS production identities are intentionally object-scoped.
-            # Enumerating an impossible, non-sensitive prefix authenticates
-            # the bucket without requiring bucket metadata/admin permission.
             iterator = client.list_objects(
                 config.bucket,
                 prefix="_omega_storage_preflight_/",
@@ -320,12 +299,11 @@ def _bucket_ready(
             raise StoragePreflightError("storage_bucket_missing")
     except StoragePreflightError:
         raise
-    except Exception as exc:  # provider errors are deliberately sanitized
+    except Exception as exc:
         raise StoragePreflightError(_preflight_code(exc)) from None
 
 
 def check_storage_access() -> dict[str, object]:
-    """Perform a least-privilege authenticated probe without exposing errors."""
 
     try:
         config = resolve_storage_config()
@@ -349,7 +327,6 @@ def check_storage_access() -> dict[str, object]:
 
 
 def require_storage_access() -> StorageRuntimeConfig:
-    """Fail closed unless the active bucket is authenticated and reachable."""
 
     try:
         config = resolve_storage_config()
@@ -363,12 +340,6 @@ def require_storage_access() -> StorageRuntimeConfig:
 
 
 def run_storage_canary() -> dict[str, object]:
-    """Create, attest and delete one non-sensitive object.
-
-    The object name and provider response are intentionally omitted from the
-    result so this can be used as a deployment gate without leaking storage
-    details.  Cleanup is part of success, not a best-effort afterthought.
-    """
 
     config = require_storage_access()
     client = get_minio_client(config=config)
@@ -378,9 +349,6 @@ def run_storage_canary() -> dict[str, object]:
     cleanup_required = False
     failure: StoragePreflightError | None = None
     try:
-        # The server may persist the object even when the client loses the PUT
-        # response. Arm cleanup before issuing the request so that ambiguous
-        # timeouts do not leave canary debris behind.
         cleanup_required = True
         client.put_object(
             config.bucket,
@@ -435,12 +403,6 @@ def run_storage_canary() -> dict[str, object]:
 
 
 def active_storage_bucket() -> str:
-    """Return the provider-scoped bucket without resolving credentials.
-
-    SQL validation and URI construction need a bucket name even when an
-    operator is inspecting a degraded configuration.  Actual reads/writes
-    still pass through ``resolve_storage_config`` and the authenticated gate.
-    """
 
     endpoint = _value("lakehouse_endpoint") or _value("minio_endpoint")
     explicit = _value("lakehouse_provider").lower()

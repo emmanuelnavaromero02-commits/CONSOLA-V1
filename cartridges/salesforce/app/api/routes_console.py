@@ -1,19 +1,3 @@
-"""
-Console-style endpoint aliases.
-
-Clean RESTful routes for the MODecissions console UI. They thin-wrap the
-existing service functions used by ``/skills/*`` — no logic is duplicated.
-
-Authentication:
-    All routes require ``X-Internal-Api-Key`` via ``Depends(verify_api_key)``.
-
-Errors:
-    * missing/invalid key       → 401
-    * unknown entity            → 404
-    * SAP / Postgres / MinIO not configured → 503 with
-      ``{status:"degraded", configured:false, missing:[...], components:[...]}``
-    * unexpected SAP / runtime  → 503 with the underlying error message
-"""
 from __future__ import annotations
 
 import anyio
@@ -86,8 +70,6 @@ def _scoped_config(config: dict[str, Any], ctx: dict[str, Any] | None) -> dict[s
     return {**config, "security_context": ctx} if ctx else config
 
 
-# ── Catalogue ────────────────────────────────────────────────────────────────
-
 @router.get("/entities")
 def entities() -> dict:
     """List every configured entity for this cartridge."""
@@ -112,8 +94,6 @@ def entity_schema(entity_id: str) -> dict:
     }
 
 
-# ── Preview ──────────────────────────────────────────────────────────────────
-
 @router.get("/entities/{entity_id}/preview")
 def entity_preview(
     entity_id: str,
@@ -127,7 +107,7 @@ def entity_preview(
     _get_entity_or_404(entity_id)
 
     try:
-        from app.mcp_server import preview as _preview_tool  # FastMCP @tool
+        from app.mcp_server import preview as _preview_tool
     except Exception as exc:                                   # noqa: BLE001
         return _degraded_503({
             "status": "degraded",
@@ -141,8 +121,6 @@ def entity_preview(
             "error": f"preview failed: {exc}",
         })
 
-
-# ── Extract ──────────────────────────────────────────────────────────────────
 
 @router.post("/entities/{entity_id}/extract")
 def entity_extract(
@@ -238,8 +216,6 @@ def extract_all(
         )
     return {"status": "success", "results": results}
 
-
-# ── Observability ────────────────────────────────────────────────────────────
 
 @router.get("/runs")
 def runs(entity: str | None = None) -> dict:

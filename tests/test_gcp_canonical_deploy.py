@@ -1,10 +1,3 @@
-"""The reproducible GCP canonical deploy driver — structural safety contract.
-
-The driver deploys to the canonical GCP writer, so it cannot be exercised in CI.
-What we pin here is that it stays fail-closed, backs up before mutating, never
-targets AWS, and keeps the dry-run non-destructive — so a review catches a
-regression before a human runs it against production.
-"""
 from __future__ import annotations
 
 import hashlib
@@ -119,21 +112,17 @@ def test_scripts_exist_and_parse(path):
 
 
 def test_driver_never_targets_aws():
-    # The AWS deploy surface must never be invoked (it may be named only in a
-    # "must never run" warning comment, which documents the boundary).
     for path in (LOCAL, REMOTE):
         text = path.read_text(encoding="utf-8")
         assert "aws ssm" not in text
         assert "docker-compose.aws.yml" not in text
         assert "deploy_main_aws.py" not in text.replace(
             "scripts/deploy_main_aws.py is the", ""
-        )  # allow the single boundary-warning reference, forbid any invocation
+        )
 
 
 def test_remote_backs_up_both_dbs_before_mutation():
     text = REMOTE.read_text(encoding="utf-8")
-    # Slow staging/pulls finish before the short maintenance window. Inside
-    # that window, quiescence precedes pg_dump, recreate and migrations.
     preflight = text.index("preflight images")
     quiesce = text.index("step 1 quiesce")
     backup = text.index("step 1 backup")
@@ -142,7 +131,6 @@ def test_remote_backs_up_both_dbs_before_mutation():
     assert preflight < quiesce < backup < databases < migrations
     assert "modecissions" in text and "modecissions_gold" in text
     assert "pg_dump" in text and "SHA256SUMS" in text
-    # An empty dump is refused (never a false safety net).
     assert "backup dump is empty" in text
 
 
@@ -168,18 +156,12 @@ def test_remote_quiesces_all_writers_and_fences_database_sessions():
 
 
 def test_remote_recreates_db_then_migrates_then_full_stack():
-    """Deploy order fixes two real bugs found running it live: (1) recreate the
-    DBs from the new release so migrations see the new init mount; (2) migrate
-    BEFORE the app/airflow start so they come up against a ready schema."""
     text = REMOTE.read_text(encoding="utf-8")
     databases = text.index("step 4 databases")
     migrations = text.index("step 5 migrations")
     full = text.index("step 5b deploy")
     assert databases < migrations < full
-    # airflow runs as uid 50000 and writes logs; its dirs must be chowned or it
-    # crash-loops ("Unable to configure handler 'processor'").
     assert "chown -R 50000:0" in text and "airflow/logs" in text
-    # A slow-booting service is retried rather than aborting the whole deploy.
     assert "compose up attempt" in text
 
 
@@ -187,8 +169,6 @@ def test_remote_is_fail_closed_with_verified_restore():
     text = REMOTE.read_text(encoding="utf-8")
     assert "trap on_err ERR EXIT" in text
     assert "rollback()" in text
-    # Restore is checksum-verified AND atomic (all-or-nothing → no partial-drop
-    # data loss), with competing backends terminated first.
     assert "restore_db" in text
     assert "want_sha" in text and "sha256_of" in text
     assert "--single-transaction" in text
@@ -203,9 +183,6 @@ def test_rollback_stops_candidate_then_restores_and_always_attempts_previous():
     rollback = text[start:end]
     assert rollback.index("stop_all_writers") < rollback.index("restore_db")
     assert rollback.index("restore_db") < rollback.index("resume_previous_release")
-    # Previous services resume only after exclusivity, every required restore,
-    # and environment rollback were all verified. A failed restore leaves the
-    # database fenced and writers stopped for manual recovery.
     restart_gate = rollback.index(
         '"${exclusive_ok}" -eq 1 && "${restore_ok}" -eq 1 && "${environment_ok}" -eq 1'
     )
@@ -230,8 +207,6 @@ def test_quiesced_pre_mutation_failure_can_resume_previous_without_db_restore():
     environment_restore = rollback.index("restore_environment", mutated_branch)
     restart_gate = rollback.index('"${exclusive_ok}" -eq 1', environment_restore)
     assert "restore_ok=1" in rollback[:mutated_branch]
-    # restore_ok can become false only inside the MUTATED=1 branch. Therefore
-    # a post-quiesce backup failure (MUTATED=0) reaches the restart gate.
     assert "restore_ok=0" in rollback[mutated_branch:environment_restore]
     assert "restore_ok=0" not in rollback[environment_restore:]
     assert environment_restore < restart_gate
@@ -277,8 +252,6 @@ printf '%s\n' "${{events[@]}}"
 
 
 def test_remote_compose_runs_from_release_root_not_infra():
-    """compose_up uses infra/-relative -f paths, so both callers must cd to the
-    release ROOT, never into infra/ (the audit P0: cd .../infra -> infra/infra/)."""
     text = REMOTE.read_text(encoding="utf-8")
     assert 'cd "${RELEASE_DIR}/infra"' not in text
     assert 'cd "${PREV_TARGET}/infra"' not in text
@@ -292,10 +265,7 @@ def test_dryrun_exits_before_quiescence_or_any_db_service_mutation():
     quiesce = text.index("step 1 quiesce")
     databases = text.index("step 4 databases")
     up = text.index("step 5b deploy")
-    # Dry-run validates the staged candidate and exits before the maintenance
-    # window, so it cannot stop services, fence/dump DBs, or need a restart.
     assert dry < quiesce < databases < up
-    # MUTATED is only armed after the dry-run exit, so a dry-run leaves nothing to roll back.
     assert text.index("MUTATED=1") > dry
     dry_block = text[dry:quiesce]
     assert "OMEGA_SECRET_HYDRATION_MODE=check" in dry_block
@@ -308,19 +278,18 @@ def test_dryrun_exits_before_quiescence_or_any_db_service_mutation():
 
 def test_remote_reuses_audited_safety_and_pins_by_tag():
     text = REMOTE.read_text(encoding="utf-8")
-    assert "apply_db_migrations.sh" in text          # forward-only + drift guard
-    assert "ghcr-auth-run.sh" in text                # server-owned pull
-    assert "pull_policy: never" not in text          # remote pulls explicitly; overlay carries it
+    assert "apply_db_migrations.sh" in text
+    assert "ghcr-auth-run.sh" in text
+    assert "pull_policy: never" not in text
     local = LOCAL.read_text(encoding="utf-8")
-    assert "pull_policy: never" in local             # the generated overlay pins it
-    # Health gate is strict on version + app_env + readiness.
+    assert "pull_policy: never" in local
     assert "/healthz" in text and "/readyz" in text and "app_env" in text
 
 
 def test_local_requires_provenance_and_explicit_target():
     text = LOCAL.read_text(encoding="utf-8")
-    assert "^[0-9a-f]{40}$" in text                   # ref is a full commit SHA
-    assert 'git rev-list -n 1 "${TARGET_TAG}"' in text  # tag must resolve to the ref
+    assert "^[0-9a-f]{40}$" in text
+    assert 'git rev-list -n 1 "${TARGET_TAG}"' in text
     for var in ("OMEGA_PROJECT_ID", "OMEGA_INSTANCE", "OMEGA_SOURCE_BUCKET", "OMEGA_GHCR_OWNER"):
         assert var in text
 
@@ -333,8 +302,6 @@ def test_local_uses_canonical_manifest_asset_checksum_and_exact_digest_lock():
     assert '--repository "${OMEGA_GHCR_OWNER}/CONSOLA-V1"' in text
     assert '--build-run-id "${BUILD_RUN_ID}"' in text
     assert "canonical release manifest/checksum/schema/owner/digest" in text
-    # The former permissive JSON loop selected a digest by basename and ignored
-    # schema, owner, duplicate services and the published checksum asset.
     assert 'it.get("image", "").rsplit' not in text
 
 
@@ -447,9 +414,6 @@ def test_remote_snapshots_mutable_overlay_and_verifies_the_exact_compose_copy():
 
     assert lock < snapshot < trusted_checksum < candidate_copy
     assert candidate_copy < candidate_checksum < digest_parse
-    # After the one root-owned snapshot, the caller-writable /tmp pathname is
-    # never copied, parsed or handed to Compose. A racing scp can only make the
-    # snapshot checksum fail; it cannot change the verified candidate later.
     assert text[snapshot:].count('"${IMAGES_OVERLAY}"') == 1
     assert 'mktemp "${APP_ROOT}/.omega-images-${DEPLOY_REF}.' in text
     assert 'chmod 0400 "${TRUSTED_IMAGES_OVERLAY}"' in text
@@ -689,7 +653,6 @@ def test_image_pull_disk_gate_precedes_pull_and_quiesce_and_skips_when_cached():
     assert "findmnt -n -T /var/lib/containerd -o TARGET" in text[missing:disk]
     assert "IMAGE_PULL_MIN_FREE_GIB:-20" in text
     assert 'omega-image-pull "${MISSING_DIGEST_REFS[@]}"' in text[missing:cached]
-    # The cached else branch contains neither a disk query nor a pull.
     cached_branch = text[cached:branch_end]
     assert "findmnt" not in cached_branch
     assert "docker pull" not in cached_branch

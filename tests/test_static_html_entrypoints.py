@@ -1,8 +1,3 @@
-"""Regression guard for legacy HTML under /static.
-
-The static mount must keep JS/CSS/Next assets public, but raw HTML files
-are not route entrypoints. Canonical pages decide auth and CSP.
-"""
 from __future__ import annotations
 
 import sys

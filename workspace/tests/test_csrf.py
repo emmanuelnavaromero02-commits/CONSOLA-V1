@@ -1,20 +1,3 @@
-"""Workspace CSRF — Double Submit Cookie tests.
-
-Two layers:
-  1. The helper in isolation against a small FastAPI mini-app (fast, no
-     asyncpg / live Postgres), mirroring console/tests/test_csrf.py.
-  2. A coverage check that asserts every state-changing workspace route
-     declares the ``require_csrf`` dependency, so a future handler added
-     without protection fails the suite.
-
-Locked-down behaviour:
-  * Cookie + matching ``X-CSRF-Token`` header → 200.
-  * Cookie + matching ``_csrf`` body field   → 200.
-  * Missing cookie                            → 403.
-  * Cookie but no header / body field         → 403.
-  * Mismatching values                        → 403.
-  * GET routes are never blocked by CSRF.
-"""
 from __future__ import annotations
 
 import importlib
@@ -27,8 +10,6 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-# app.main reads INTERNAL_API_KEY at import time via get_internal_api_key();
-# the helper rejects keys < 32 chars or with obvious dev-default fragments.
 os.environ.setdefault("INTERNAL_API_KEY", "x" * 64)
 
 from app.services.csrf import (  # noqa: E402
@@ -41,8 +22,6 @@ from app.services.csrf import (  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-
-# ── Mini-app fixture ──────────────────────────────────────────────────
 
 def _build_app() -> TestClient:
     app = FastAPI()
@@ -59,16 +38,12 @@ def client() -> TestClient:
     return _build_app()
 
 
-# ── Token generation ──────────────────────────────────────────────────
-
 def test_generate_token_is_unpredictable():
     a = generate_csrf_token()
     b = generate_csrf_token()
     assert a != b
-    assert len(a) >= 32  # token_urlsafe(32) yields ~43 chars
+    assert len(a) >= 32
 
-
-# ── verify_csrf primitive ─────────────────────────────────────────────
 
 def test_verify_csrf_requires_cookie_and_provided_match():
     app = FastAPI()
@@ -78,16 +53,11 @@ def test_verify_csrf_requires_cookie_and_provided_match():
         return {"ok": verify_csrf(request)}
 
     c = TestClient(app)
-    # No cookie, no header → False.
     assert c.post("/check").json() == {"ok": False}
-    # Cookie + matching header → True.
     c.cookies.set(CSRF_COOKIE_NAME, "abc")
     assert c.post("/check", headers={CSRF_HEADER_NAME: "abc"}).json() == {"ok": True}
-    # Cookie + mismatching header → False.
     assert c.post("/check", headers={CSRF_HEADER_NAME: "xyz"}).json() == {"ok": False}
 
-
-# ── Protected endpoint: positive and negative paths ───────────────────
 
 def test_protected_without_csrf_returns_403(client):
     r = client.post("/protected", json={})
@@ -125,15 +95,11 @@ def test_protected_body_field_must_also_match(client):
 
 
 def test_bearer_auth_is_exempt(client):
-    # Bearer-authed requests skip CSRF (no auto-attached cookie to abuse).
     r = client.post("/protected", headers={"Authorization": "Bearer abc.def.ghi"})
     assert r.status_code == 200
 
 
-# ── Coverage: real workspace routes must declare require_csrf ─────────
-
 def _load_main():
-    """Lazy app.main loader; isolate workspace/app from peer service imports."""
     sys.path.insert(0, str(REPO_ROOT / "workspace"))
     for name in list(sys.modules):
         if name == "app" or name.startswith("app."):
@@ -141,7 +107,6 @@ def _load_main():
     return importlib.import_module("app.main")
 
 
-# (METHOD, PATH) pairs that mutate state and MUST be CSRF-protected.
 _PROTECTED = {
     ("POST", "/auth/logout"),
     ("POST", "/workspace/chat"),
@@ -157,7 +122,7 @@ _PROTECTED = {
 
 def test_all_mutating_workspace_routes_require_csrf():
     main = _load_main()
-    from app.services.csrf import require_csrf as ws_require_csrf  # this app's copy
+    from app.services.csrf import require_csrf as ws_require_csrf
 
     found = {}
     for route in main.app.routes:
@@ -177,8 +142,6 @@ def test_all_mutating_workspace_routes_require_csrf():
     assert not unprotected, f"mutating routes missing require_csrf: {unprotected}"
 
 
-# Representative read-only routes that MUST stay CSRF-free so GETs keep
-# working (no cookie/header gymnastics for plain reads).
 _GET_ROUTES = {
     "/healthz",
     "/auth/me",
@@ -204,9 +167,6 @@ def test_get_routes_do_not_require_csrf():
 
 
 def test_cors_preflight_allows_csrf_header_before_auth():
-    """A cross-origin browser mutation needs X-CSRF-Token through the CORS
-    preflight. CORS must be outermost so the OPTIONS request is answered
-    before auth_middleware can 401 it (the v1.42 ordering trap)."""
     main = _load_main()
     client = TestClient(main.app)
     r = client.options(

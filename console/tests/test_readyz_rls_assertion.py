@@ -1,11 +1,3 @@
-"""Fase 1 (misión cliente): aserción de RLS al arranque en /readyz.
-
-El runner de migraciones aplica FORCE RLS, pero nada lo asertaba en runtime:
-un `docker compose up` sobre un volumen viejo sin migrar quedaba sin red. Este
-check consulta pg_class (solo lectura) por tablas con workspace_id sin FORCE
-RLS. Informativo por defecto (no voltea despliegues sanos); fail-closed 503
-solo con OMEGA_REQUIRE_RLS_READY.
-"""
 from __future__ import annotations
 
 import asyncio

@@ -1,14 +1,3 @@
-"""Sprint v1.13 — Airflow 2.9.2 → 2.10.5 (CVE-2024-45725).
-
-Lightweight pin test: ensures the Dockerfile FROM tag and the three
-docker-compose ``image:`` references agree on the upgraded version, so a
-future bump or accidental partial revert is caught at test time instead
-of at ``make up``.
-
-The 2.x branch is the upper bound on purpose — 3.x is a breaking change
-we don't take in this sprint. The bound below is exclusive (<3) and
-will fail loudly when someone tries.
-"""
 from __future__ import annotations
 
 import re
@@ -53,10 +42,6 @@ def test_docker_compose_image_tags_match_dockerfile() -> None:
     text = COMPOSE.read_text(encoding="utf-8")
     tags = _IMAGE_RE.findall(text)
     airflow_tags = [t for t in tags if t.startswith("mode-airflow:")]
-    # We expect exactly the three airflow services (init / webserver /
-    # scheduler) referencing the same locally-built image. If one drifts,
-    # docker compose will rebuild only some of them and the deploy is
-    # inconsistent — catch that here.
     assert len(airflow_tags) == 3, (
         f"expected 3 mode-airflow image references, found {len(airflow_tags)}: {airflow_tags}"
     )
@@ -68,7 +53,5 @@ def test_docker_compose_image_tags_match_dockerfile() -> None:
 def test_no_stale_2_9_x_references_remain() -> None:
     for path in (DOCKERFILE, COMPOSE):
         text = path.read_text(encoding="utf-8")
-        # Allow "2.9" inside an unrelated comment, but flag any image / tag
-        # that literally still says 2.9.x.
         assert "apache/airflow:2.9" not in text, f"{path} still references apache/airflow:2.9"
         assert "mode-airflow:2.9" not in text, f"{path} still references mode-airflow:2.9"

@@ -1,12 +1,3 @@
-"""
-Tests for api_data_query_filtered — SQL injection hardening and input validation.
-
-Verifies that:
-- filter values are passed as params (never interpolated into SQL strings)
-- boundary conditions (too many filters, too many values, value too long) are rejected
-- invalid column names and dataset names are rejected
-- edge-case string values don't escape the parameterized query
-"""
 from __future__ import annotations
 
 import importlib
@@ -36,10 +27,6 @@ async def _noop_async(*args, **kwargs):
 async def _empty_list_async(*args, **kwargs):
     return []
 
-
-# ---------------------------------------------------------------------------
-# Fixture: console app with all heavy deps stubbed out
-# ---------------------------------------------------------------------------
 
 @pytest.fixture()
 def console_main(monkeypatch):
@@ -130,28 +117,20 @@ def console_main(monkeypatch):
 
 
 def _make_client(main, *, authenticated: bool = True) -> TestClient:
-    """Return a TestClient that bypasses auth middleware."""
     from fastapi.testclient import TestClient
 
     client = TestClient(main.app, raise_server_exceptions=True)
 
     if authenticated:
-        # Inject a session cookie so the auth middleware lets requests through
         client.cookies.set("mod_session", "fake-session-token")
 
-        # Patch require_authenticated dependency to be a no-op
         from app.dependencies import require_authenticated
         main.app.dependency_overrides[require_authenticated] = lambda: None
 
     return client
 
 
-# ---------------------------------------------------------------------------
-# Helper: intercept the httpx call to refinement and capture what was sent
-# ---------------------------------------------------------------------------
-
 class _RefinementCapture:
-    """Replaces httpx.AsyncClient.post to capture calls to refinement."""
 
     def __init__(self, monkeypatch, main, *, response_data=None):
         self.calls: list[dict] = []
@@ -190,12 +169,7 @@ class _RefinementCapture:
         return self
 
 
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
-
 def test_single_value_uses_placeholder_not_interpolation(console_main, monkeypatch):
-    """Values must appear in params list, never in the SQL string."""
     cap = _RefinementCapture(monkeypatch, console_main).install()
     main = console_main
     from app.dependencies import require_authenticated
@@ -213,16 +187,12 @@ def test_single_value_uses_placeholder_not_interpolation(console_main, monkeypat
     sql: str = args["sql"]
     params: list = args.get("params", [])
 
-    # The raw value must NOT appear in the SQL string
     assert "Garcia" not in sql, f"Value leaked into SQL: {sql!r}"
-    # The value must appear in params
     assert "Garcia" in params, f"Value missing from params: {params}"
-    # SQL should use ? placeholder
     assert "?" in sql, f"No placeholder in SQL: {sql!r}"
 
 
 def test_sql_injection_attempt_in_value_is_neutralised(console_main, monkeypatch):
-    """Classic injection payload must stay in params, not alter the SQL structure."""
     cap = _RefinementCapture(monkeypatch, console_main).install()
     main = console_main
     from app.dependencies import require_authenticated
@@ -245,7 +215,6 @@ def test_sql_injection_attempt_in_value_is_neutralised(console_main, monkeypatch
 
 
 def test_single_quote_in_value(console_main, monkeypatch):
-    """O'Reilly-style value must reach params unmodified, not break SQL."""
     cap = _RefinementCapture(monkeypatch, console_main).install()
     main = console_main
     from app.dependencies import require_authenticated
@@ -264,7 +233,6 @@ def test_single_quote_in_value(console_main, monkeypatch):
 
 
 def test_backslash_in_value(console_main, monkeypatch):
-    """Backslash in filter value must pass through as a param, not alter SQL."""
     cap = _RefinementCapture(monkeypatch, console_main).install()
     main = console_main
     from app.dependencies import require_authenticated
@@ -282,7 +250,6 @@ def test_backslash_in_value(console_main, monkeypatch):
 
 
 def test_in_list_with_multiple_values(console_main, monkeypatch):
-    """IN clause with multiple values: all go into params, SQL has correct placeholders."""
     cap = _RefinementCapture(monkeypatch, console_main).install()
     main = console_main
     from app.dependencies import require_authenticated
@@ -307,7 +274,6 @@ def test_in_list_with_multiple_values(console_main, monkeypatch):
 
 
 def test_filters_must_be_dict(console_main, monkeypatch):
-    """Sending filters as an array must return 400."""
     main = console_main
     from app.dependencies import require_authenticated
     main.app.dependency_overrides[require_authenticated] = lambda: None
@@ -322,7 +288,6 @@ def test_filters_must_be_dict(console_main, monkeypatch):
 
 
 def test_too_many_filters_rejected(console_main, monkeypatch):
-    """More than 20 filter keys must return 400."""
     main = console_main
     from app.dependencies import require_authenticated
     main.app.dependency_overrides[require_authenticated] = lambda: None
@@ -336,7 +301,6 @@ def test_too_many_filters_rejected(console_main, monkeypatch):
 
 
 def test_too_many_values_per_filter_rejected(console_main, monkeypatch):
-    """More than 100 values for a single filter key must return 400."""
     main = console_main
     from app.dependencies import require_authenticated
     main.app.dependency_overrides[require_authenticated] = lambda: None
@@ -352,7 +316,6 @@ def test_too_many_values_per_filter_rejected(console_main, monkeypatch):
 
 
 def test_value_too_long_rejected(console_main, monkeypatch):
-    """A filter value exceeding 500 chars must return 400."""
     main = console_main
     from app.dependencies import require_authenticated
     main.app.dependency_overrides[require_authenticated] = lambda: None
@@ -368,7 +331,6 @@ def test_value_too_long_rejected(console_main, monkeypatch):
 
 
 def test_invalid_column_name_is_dropped(console_main, monkeypatch):
-    """Column names that don't match the allowlist must be silently dropped."""
     cap = _RefinementCapture(monkeypatch, console_main).install()
     main = console_main
     from app.dependencies import require_authenticated
@@ -388,7 +350,6 @@ def test_invalid_column_name_is_dropped(console_main, monkeypatch):
 
 
 def test_invalid_dataset_name_rejected(console_main, monkeypatch):
-    """A dataset name with special characters must return 400 before hitting refinement."""
     main = console_main
     from app.dependencies import require_authenticated
     main.app.dependency_overrides[require_authenticated] = lambda: None
@@ -403,7 +364,6 @@ def test_invalid_dataset_name_rejected(console_main, monkeypatch):
 
 
 def test_user_context_forwarded_to_refinement(console_main, monkeypatch):
-    """user_context must be forwarded to refinement with active_* fields taking priority."""
     cap = _RefinementCapture(monkeypatch, console_main).install()
     main = console_main
     from app.dependencies import require_authenticated
@@ -421,14 +381,11 @@ def test_user_context_forwarded_to_refinement(console_main, monkeypatch):
     assert "user_context" in args, "user_context must be forwarded to refinement for RLS"
     uc = args["user_context"]
 
-    # active_* fields take precedence over bare fields
     assert uc.get("tenant_id") == "t-active", \
         f"active_tenant_id must win over tenant_id; got {uc.get('tenant_id')!r}"
     assert uc.get("workspace_id") == "ws-active", \
         f"active_workspace_id must win over workspace_id; got {uc.get('workspace_id')!r}"
-    # id resolution: id field wins over user_id
     assert uc.get("id") == 99, f"id must be resolved; got {uc.get('id')!r}"
-    # Other required fields
     assert uc.get("role") == "admin"
     assert uc.get("email") == "test@test.com"
     assert uc.get("project_id") == "proj-1"

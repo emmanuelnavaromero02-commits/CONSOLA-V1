@@ -16,7 +16,6 @@ BASE_CURRENCY_COLUMNS = (
 
 
 def base_currency_frame(rows: Iterable[Mapping[str, Any]]) -> pd.DataFrame:
-    """Build a DuckDB-registerable frame across pandas 2.x and 3.x."""
     frame = pd.DataFrame.from_records(list(rows), columns=BASE_CURRENCY_COLUMNS)
     for column in BASE_CURRENCY_COLUMNS:
         frame[column] = frame[column].astype(object)

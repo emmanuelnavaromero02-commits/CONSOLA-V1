@@ -1,11 +1,3 @@
-"""
-MCP Server Registry — console side
-Stores registered MCP servers in postgres and periodically health-checks them.
-
-Contract each MCP server must implement:
-  GET  {url}/mcp/tools   → {"tools": [{name, description, input_schema}]}
-  POST {url}/mcp/invoke  → body: {tool, args} → {result} | {error}
-"""
 from __future__ import annotations
 
 import ipaddress
@@ -193,7 +185,6 @@ def _is_unscoped_admin_context(ctx: dict) -> bool:
 
 
 def _allowed_prefix_matches(ctx: dict, value: str) -> bool:
-    """Match explicit prefixes without letting root prefixes grant all data."""
     prefixes = [str(p).lstrip("/").rstrip("/") for p in (ctx.get("allowed_prefixes") or [])]
     for prefix in prefixes:
         if not prefix:
@@ -402,7 +393,6 @@ async def close_pool() -> None:
 
 
 async def startup():
-    """Register built-in servers from environment at app startup."""
     console_url = os.environ.get("CONSOLE_INTERNAL_URL", "http://console:8000").rstrip("/")
     builtin = [
         {
@@ -436,12 +426,6 @@ async def startup():
             "category":    "studio",
             "description": "Cartridge & entity management: rename_entity, list_entities, update_entity",
         },
-        # v1.43.1: register the built-in cartridges so the
-        # copilot's tool_manifest sees their /mcp/tools at boot.
-        # ``register`` HTTP-fetches /mcp/tools and stores the result in
-        # the tools JSONB column, so refreshing the console picks up
-        # newly-added tools automatically. Migration 42 also seeds the
-        # rows so fresh installs have them even before console boots.
         {
             "id":          "hubspot",
             "name":        "HubSpot CRM",
@@ -497,7 +481,6 @@ async def startup():
         if url:
             await register(server)
 
-    # RAG migrado a mcp-infra — quita el registro standalone si quedó de antes
     pool = await _get_pool()
     await pool.execute("DELETE FROM mcp_servers WHERE id='rag'")
 
@@ -508,7 +491,6 @@ async def list_servers() -> list[dict]:
     result = []
     for r in rows:
         d = dict(r)
-        # tools stored as jsonb — may come back as string in some asyncpg versions
         if isinstance(d.get("tools"), str):
             try:
                 d["tools"] = json.loads(d["tools"])
@@ -649,7 +631,6 @@ async def invoke(
 
 
 async def health_check_all() -> int:
-    """Re-fetch tools from every registered server and update healthy/tools in DB."""
     pool = await _get_pool()
     rows = await pool.fetch("SELECT id, url FROM mcp_servers")
     for row in rows:

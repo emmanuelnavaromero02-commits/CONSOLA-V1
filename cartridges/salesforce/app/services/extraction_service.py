@@ -12,9 +12,6 @@ from app.services.watermark_service import get_watermark, update_watermark
 
 _logger = logging.getLogger(__name__)
 
-# Flush a parquet file every BATCH_SIZE rows. Buffer is drained after every
-# OData page is appended, so memory stays bounded regardless of total volume —
-# important for S/4HANA entities like JournalEntryItem (millions of rows).
 BATCH_SIZE = 10_000
 WATERMARK_BUFFER_MINUTES = 5
 CARTRIDGE_ID = "salesforce"
@@ -100,7 +97,6 @@ def run_entity(
         if mode == "incremental" and watermark_field:
             watermark = get_watermark(entity)
 
-        # Streaming buffer — flushed every BATCH_SIZE rows.
         buffer: list[dict[str, Any]] = []
         offset = 0
         batch_num = 0
@@ -140,8 +136,6 @@ def run_entity(
             if not page:
                 break
 
-            # Belt-and-suspenders client-side filters (the OData server
-            # MIGHT have ignored $filter — re-apply locally).
             if mode == "incremental" and watermark and watermark_field:
                 page = _apply_watermark_filter(page, watermark_field, watermark)
             page = _apply_date_range_filter(page, date_field, from_date, to_date)
@@ -157,8 +151,6 @@ def run_entity(
             if len(buffer) >= BATCH_SIZE:
                 _flush_buffer()
 
-        # Drain any remainder. If we never received any rows, write an empty
-        # parquet so consumers can still observe a (zero-row) Bronze artifact.
         if buffer or total_records == 0:
             _flush_buffer(allow_empty=total_records == 0)
 

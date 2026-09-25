@@ -1,4 +1,3 @@
-"""Sprint v1.31 — mcp-infra cartridge_get_schema must not query dead columns."""
 from __future__ import annotations
 
 import json
@@ -103,9 +102,6 @@ def test_cartridge_get_schema_with_replicon_returns_200():
 
 
 def test_cartridge_get_schema_with_sap_hcm_returns_200():
-    # PA0000Set is the technical OData entityset; after the Block-A re-alignment
-    # entity_config stores the business name (EmployeeActions). The triple lookup
-    # resolves the technical last-segment to the business entity.
     status, body = _invoke(
         "cartridge_get_schema",
         {"cartridge_id": "sap_hcm", "entity": "PA0000Set"},
@@ -124,8 +120,6 @@ def test_cartridge_get_schema_with_sap_hcm_returns_200():
     ids=["business_name", "full_odata_entity", "odata_last_segment"],
 )
 def test_cartridge_get_schema_accepts_three_lookup_forms(requested):
-    """The same HCM entity is reachable by business name, full odata_entity, or
-    the last segment of the odata_entity — all resolve to EmployeeActions."""
     status, body = _invoke(
         "cartridge_get_schema",
         {"cartridge_id": "sap_hcm", "entity": requested},
@@ -147,8 +141,6 @@ def test_cartridge_get_schema_unknown_entity_still_not_found():
 
 
 def _load_pure_matcher():
-    """Load _entity_name_matches from the source without importing the heavy
-    cartridges module (which pulls pandas/duckdb, absent in unit envs)."""
     import ast
 
     src = (REPO_ROOT / "mcp-infra" / "app" / "tools" / "cartridges.py").read_text(encoding="utf-8")
@@ -161,14 +153,12 @@ def _load_pure_matcher():
 
 
 def test_entity_name_matching_logic():
-    """Pure-logic coverage of the triple lookup (runs without a live stack)."""
     m = _load_pure_matcher()
     odata = "HRPA_EE_PA_SRV/PA0000Set"
-    assert m("EmployeeActions", "EmployeeActions", odata) is True   # business name
-    assert m(odata, "EmployeeActions", odata) is True               # full odata_entity
-    assert m("PA0000Set", "EmployeeActions", odata) is True         # last segment
-    assert m("Nope", "EmployeeActions", odata) is False             # invalid -> rejected
-    assert m("User", "User", None) is True                          # no odata_entity
-    assert m("PA0000Set", "BusinessPartner", None) is False         # technical req, no odata
-    # underscore in the technical name must match literally (no LIKE wildcards)
+    assert m("EmployeeActions", "EmployeeActions", odata) is True
+    assert m(odata, "EmployeeActions", odata) is True
+    assert m("PA0000Set", "EmployeeActions", odata) is True
+    assert m("Nope", "EmployeeActions", odata) is False
+    assert m("User", "User", None) is True
+    assert m("PA0000Set", "BusinessPartner", None) is False
     assert m("A_BusinessPartner", "BusinessPartner", "API_BUSINESS_PARTNER/A_BusinessPartner") is True

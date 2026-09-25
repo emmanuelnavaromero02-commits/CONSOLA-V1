@@ -1,4 +1,3 @@
-"""Sprint v1.41.0 — tool manifest classification + endpoint auth."""
 from __future__ import annotations
 
 import sys
@@ -12,7 +11,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.fixture()
 def manifest_module(monkeypatch):
-    """Load console's app.services.tool_manifest with a clean sys.path."""
     for name in list(sys.modules):
         if name == "app" or name.startswith("app."):
             del sys.modules[name]
@@ -64,8 +62,6 @@ def test_market_context_read_is_read_only(manifest_module):
 
 
 def test_classify_postgres_execute_is_destructive(manifest_module):
-    """postgres_execute_query lets the caller run arbitrary SQL writes —
-    must NOT be auto-executable by the future copilot router."""
     res = manifest_module.classify_tool("postgres_execute_query")
     assert res["risk_level"] == "destructive"
 
@@ -95,8 +91,6 @@ def test_studio_goal_run_mutating_tools_are_not_read_only(manifest_module):
 
 
 def test_build_manifest_aggregates_servers(manifest_module, monkeypatch):
-    """build_manifest should iterate every registered server and classify
-    each tool returned by list_tools(server_id)."""
     import asyncio
 
     fake_servers = [
@@ -121,12 +115,9 @@ def test_build_manifest_aggregates_servers(manifest_module, monkeypatch):
     assert result["version"] == "1.0"
     assert set(result["servers"].keys()) == {"infra", "replicon"}
     assert result["tool_count_total"] == 2
-    # airflow_list_dags is in READ_ONLY_TOOLS
     infra_tool = result["servers"]["infra"][0]
     assert infra_tool["risk_level"] == "read"
     assert infra_tool["requires_approval"] is False
-    # query_kb is intentionally not auto-read: cartridge SQL-backed KB tools
-    # can execute engine-specific SQL and must stay approval-gated.
     replicon_tool = result["servers"]["replicon"][0]
     assert replicon_tool["risk_level"] == "write"
     assert replicon_tool["requires_approval"] is True
@@ -146,8 +137,6 @@ def test_dag_get_source_is_not_read_only_because_it_caches(manifest_module):
 
 
 def test_build_manifest_tolerates_list_tools_failure(manifest_module, monkeypatch):
-    """If one server's list_tools raises, the manifest should still surface
-    the server (with an empty tools list) instead of failing entirely."""
     import asyncio
 
     async def fake_list_servers():

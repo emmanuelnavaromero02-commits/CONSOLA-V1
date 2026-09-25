@@ -8,33 +8,15 @@ interface Props {
   citation: Citation;
 }
 
-/**
- * v1.44.4 Task A — citation card.
- *
- * Shows the source label + freshness signal under an assistant
- * reply ("📊 Replicon · time_entries · hace 4h").
- *
- * Security (Round 1 review P0): backend-supplied ``href`` is
- * ULTIMATELY TOOL-DERIVED. A compromised or malicious tool
- * result could emit ``href: "javascript:alert(1)"`` and the
- * browser would execute that script in the console origin on
- * click. ``rel="noopener noreferrer"`` does NOT block
- * ``javascript:`` / ``data:`` schemes. ``safeHref`` allow-lists
- * only ``http://``, ``https://`` and same-origin path
- * references; anything else falls back to a non-clickable
- * label with the snippet shown as a tooltip.
- */
 function safeHref(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   if (!trimmed) return undefined;
 
-  // Same-origin path reference (e.g. "/cartridges/viewer?id=replicon").
   if (trimmed.startsWith("/") && !trimmed.startsWith("//")) {
     return trimmed;
   }
 
-  // External absolute URL — only http(s) allowed.
   try {
     const url = new URL(trimmed);
     if (url.protocol === "http:" || url.protocol === "https:") {

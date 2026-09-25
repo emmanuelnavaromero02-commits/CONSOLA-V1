@@ -1,19 +1,11 @@
-// Sprint v1.11 phase 2 — extracted from pipeline.html for strict CSP.
-//
-// All previous behaviour preserved. Three render paths that used to emit
-// `onclick="extractEntity(...)" / "selectDag(...)" / "applyTemplate(...)"`
-// inside innerHTML now emit data-* attributes; a small block of event
-// delegation at the bottom of the file dispatches clicks to the same
-// functions. Static handlers on the static HTML are wired by id.
-
 let pipelineData  = [];
-let activeJobs    = {};   // entity → job_id (jobs being polled)
+let activeJobs    = {};
 let activePolls   = new Set();
 let _autoTimer    = null;
 const _initialParams = new URLSearchParams(location.search);
 let _cartridge    = _initialParams.get('cartridge') || '';
 let _activeTab    = 'pipeline';
-let _selectedDag  = null;  // currently selected dag_id in editor
+let _selectedDag  = null;
 let _airflowPublicUrl = '';
 let _vaultConnections = [];
 let _selectedConnId = '';
@@ -118,7 +110,6 @@ function onCartridgeChange() {
   loadDags();
 }
 
-// ── Status helpers ────────────────────────────────────────────────────────────
 
 function dot(status) {
   const map = {fresh:'s-fresh', stale:'s-stale', error:'s-error',
@@ -156,7 +147,6 @@ function layerBadge(layer) {
   return `<span class="layer-badge layer-${layer}">${layer.toUpperCase()}</span>`;
 }
 
-// ── Render ────────────────────────────────────────────────────────────────────
 
 function renderStats(rows) {
   const fresh   = rows.filter(r => r.bronze.status === 'fresh').length;
@@ -204,12 +194,10 @@ function renderRow(row) {
   const jobInfo   = activeJobs[entity] || null;
   const isRunning = jobInfo || (row.last_job && row.last_job.status === 'running');
 
-  // Entity status
   let entityStatus = row.bronze.status;
   if (isRunning) entityStatus = 'running';
   if (row.last_job && row.last_job.status === 'failed' && !isRunning) entityStatus = 'error';
 
-  // Entity cell
   let jobHtml = '';
   if (isRunning) {
     const msg = jobInfo?.message || row.last_job?.message || 'Extrayendo...';
@@ -220,7 +208,6 @@ function renderRow(row) {
         <div class="job-msg">${esc(msg)}</div>
       </div>`;
   } else if (row.last_run) {
-    // Airflow DAG run (from pipeline_runs table)
     const lr = row.last_run;
     const statusColor = {done:'s-fresh', success:'s-fresh', failed:'s-error'}[lr.status] || 's-unknown';
     const srcBadge = lr.source === 'airflow'
@@ -250,7 +237,6 @@ function renderRow(row) {
   const disabledAttr = isRunning ? 'disabled' : '';
   const btnLabel = isRunning ? '⟳ running' : '► Extract';
 
-  // Sprint v1.11 phase 2: was onclick="extractEntity(...)" — now delegated.
   const entityCell = `
     <div class="cell entity-cell">
       <div class="entity-name">${dot(entityStatus)} ${esc(entity)}</div>
@@ -259,7 +245,6 @@ function renderRow(row) {
       ${jobHtml}
     </div>`;
 
-  // Bronze cell
   const b = row.bronze;
   const lr = row.last_run;
   const bronzeCell = `
@@ -277,7 +262,6 @@ function renderRow(row) {
       <span class="arrow-wrap">▶</span>
     </div>`;
 
-  // Silver cell
   let silverHtml = '';
   if (!row.silver || !row.silver.length) {
     silverHtml = `<div class="stage-empty">${dot('never')} sin datasets</div>`;
@@ -301,7 +285,6 @@ function renderRow(row) {
       ${row.gold && row.gold.length ? '<span class="arrow-wrap">▶</span>' : ''}
     </div>`;
 
-  // Gold cell
   let goldHtml = '';
   if (!row.gold || !row.gold.length) {
     goldHtml = `<div class="stage-empty" style="color:#333">—</div>`;
@@ -335,7 +318,6 @@ function render(rows) {
   document.getElementById('pipeline-table').innerHTML = rows.map(renderRow).join('');
 }
 
-// ── Extract actions ───────────────────────────────────────────────────────────
 
 async function extractEntity(cartridge, entity) {
   const body = {mode: 'incremental'};
@@ -379,7 +361,6 @@ async function extractAll() {
   }
 }
 
-// ── Job polling ───────────────────────────────────────────────────────────────
 
 function fetchWithTimeout(url, init = {}, timeoutMs = 30000) {
   if (timeoutMs === 0) return fetch(url, init);
@@ -451,7 +432,7 @@ async function _pollJob(entity, jobId) {
         if (activeJobs[entity]?.job_id === jobId) delete activeJobs[entity];
         activePolls.delete(pollKey);
         done = true;
-        await load();   // full reload to see Silver updates
+        await load();
       } else {
         if (activeJobs[entity]) {
           activeJobs[entity].message = j.message || 'Extrayendo...';
@@ -468,7 +449,6 @@ async function _pollJob(entity, jobId) {
 
 function _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-// ── Data loading ──────────────────────────────────────────────────────────────
 
 async function load() {
   try {
@@ -478,7 +458,6 @@ async function load() {
     const d = await r.json();
     pipelineData = d.pipeline || [];
 
-    // Merge running jobs detected server-side
     pipelineData.forEach(row => {
       if (row.last_job && row.last_job.status === 'running' && !activeJobs[row.entity]) {
         const jobId = row.last_job.job_id || row.last_job.dag_run_id || row.last_job.run_id;
@@ -514,7 +493,6 @@ function esc(s) {
   return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-// ── Auto-refresh ──────────────────────────────────────────────────────────────
 
 function startAutoRefresh() {
   if (_autoTimer) clearInterval(_autoTimer);
@@ -525,7 +503,6 @@ function startAutoRefresh() {
   }, 8000);
 }
 
-// ── Tab switching ─────────────────────────────────────────────────────────────
 
 function switchTab(tab) {
   _activeTab = tab;
@@ -536,7 +513,6 @@ function switchTab(tab) {
   if (tab === 'dags') loadDags();
 }
 
-// ── DAG editor ────────────────────────────────────────────────────────────────
 
 let _dagsCache = [];
 
@@ -564,7 +540,6 @@ async function loadDags() {
         Sin DAGs con prefijo <code>${esc(_cartridge)}_</code></div>`;
       return;
     }
-    // Sprint v1.11 phase 2: was onclick="selectDag(...)" — now delegated.
     list.innerHTML = _dagsCache.map(dag => {
       const statusDot = dag.is_paused
         ? `<span style="color:#555">● pausado</span>`
@@ -578,7 +553,6 @@ async function loadDags() {
       </div>`;
     }).join('');
 
-    // Restore previous selection, or auto-select first DAG
     const toSelect = (_selectedDag && _dagsCache.find(d => d.dag_id === _selectedDag))
       ? _selectedDag
       : _dagsCache[0]?.dag_id;
@@ -590,12 +564,10 @@ async function loadDags() {
 
 async function selectDag(dagId, reloadList = true) {
   _selectedDag = dagId;
-  // Update sidebar highlight
   document.querySelectorAll('.dag-sidebar-item').forEach(el => {
     el.classList.toggle('selected', el.id === `dagitem-${dagId}`);
   });
 
-  // Show editor panel
   _showEditor();
 
   const textarea = document.getElementById('dag-code-textarea');
@@ -616,7 +588,6 @@ async function selectDag(dagId, reloadList = true) {
   setEditorCode('# Cargando fuente…');
   setDeployMsg('', '');
 
-  // Try to load source from DB (falls back to disk automatically in dag_get_source)
   try {
     const r = await fetch('/api/mcp/invoke', {
       method: 'POST', credentials: 'same-origin',
@@ -673,7 +644,6 @@ async function deployDag() {
   const code   = document.getElementById('dag-code-textarea').value.trim();
   if (!code) { setDeployMsg('Sin código', 'err'); return; }
 
-  // Extract dag_id from code (dag_id='...') or use current
   let dagId = _selectedDag === '__new__' ? '' : _selectedDag;
   const m = code.match(/dag_id\s*=\s*['"]([^'"]+)['"]/);
   if (m) dagId = m[1];
@@ -696,7 +666,6 @@ async function deployDag() {
     const d = await r.json();
     if (d.result?.created || d.result?.dag_id) {
       setDeployMsg(`✓ Desplegado: ${esc(d.result.created || dagId)} (${d.result.bytes || 0} bytes)`, 'ok');
-      // Clear dirty flag — deployed code is now the canonical version
       _deployedCode = code;
       markDirty();
       document.getElementById('dag-editor-name').textContent = dagId;
@@ -711,9 +680,8 @@ async function deployDag() {
   btn.disabled = false;
 }
 
-// ── Code editor helpers ────────────────────────────────────────────────────────
 
-let _deployedCode = '';   // last code that was successfully deployed (or loaded from disk)
+let _deployedCode = '';
 
 function editorKeydown(e) {
   const ta    = e.target;
@@ -721,23 +689,19 @@ function editorKeydown(e) {
   const end   = ta.selectionEnd;
   const val   = ta.value;
 
-  // Ctrl+S → deploy
   if ((e.ctrlKey || e.metaKey) && e.key === 's') {
     e.preventDefault();
     deployDag();
     return;
   }
 
-  // Tab → insert 4 spaces (single cursor) or indent selected lines
   if (e.key === 'Tab') {
     e.preventDefault();
     if (start === end) {
-      // No selection — insert spaces to next 4-space boundary
       const col     = start - val.lastIndexOf('\n', start - 1) - 1;
       const spaces  = '    '.slice(col % 4) || '    ';
       _insertAt(ta, start, end, spaces, spaces.length);
     } else {
-      // Multi-line selection — indent / dedent all touched lines
       const lineStart = val.lastIndexOf('\n', start - 1) + 1;
       const lineEnd   = val.indexOf('\n', end - 1);
       const block     = val.substring(lineStart, lineEnd < 0 ? val.length : lineEnd);
@@ -754,10 +718,8 @@ function editorKeydown(e) {
     return;
   }
 
-  // Shift+Tab on single cursor → remove up to 4 spaces from line start
-  if (e.key === 'Tab' && e.shiftKey) { return; }  // handled above
+  if (e.key === 'Tab' && e.shiftKey) { return; }
 
-  // Enter → auto-indent matching current line + extra indent after ':'
   if (e.key === 'Enter') {
     e.preventDefault();
     const lineStart  = val.lastIndexOf('\n', start - 1) + 1;
@@ -800,7 +762,6 @@ function updateLineNumbers() {
   const ln    = document.getElementById('dag-line-numbers');
   if (!ta || !ln) return;
   const count = (ta.value.match(/\n/g) || []).length + 1;
-  // Only redraw if count changed
   const current = ln.querySelectorAll('span').length;
   if (current === count) return;
   ln.innerHTML = Array.from({length: count}, (_, i) =>
@@ -836,7 +797,6 @@ function copyDagCode() {
   setTimeout(() => setDeployMsg('', ''), 2000);
 }
 
-// ── DAG Templates ─────────────────────────────────────────────────────────────
 
 let _tplOpen = false;
 
@@ -859,7 +819,6 @@ async function loadTemplates() {
       list.innerHTML = '<div style="padding:12px;color:var(--text3);font-size:10px">Sin plantillas.</div>';
       return;
     }
-    // Sprint v1.11 phase 2: was onclick="applyTemplate(...)" — now delegated.
     list.innerHTML = tpls.map(t => `
       <div class="tpl-item" data-action="apply-template" data-template-id="${esc(t.id)}">
         <div class="tpl-item-name">◈ ${esc(t.name)}</div>
@@ -872,7 +831,6 @@ async function loadTemplates() {
 }
 
 async function applyTemplate(templateId) {
-  // Ask for entity name to substitute placeholders
   const entity = prompt('Nombre de la entidad (ej. "ProjectDetail"):',
                         _selectedDag && _selectedDag !== '__new__'
                           ? _selectedDag.replace(_cartridge + '_', '').replace(/_/g, '')
@@ -888,7 +846,6 @@ async function applyTemplate(templateId) {
     if (!d.code) { alert('No se pudo cargar la plantilla'); return; }
 
     setEditorCode(d.code);
-    // Show editor if not already visible
     _showEditor();
     document.getElementById('dag-editor-name').textContent =
       `${_cartridge}_${entity.toLowerCase()} (plantilla)`;
@@ -910,23 +867,17 @@ function sendDagToAssistant() {
     ? `Quiero modificar el DAG \`${dagId}\`. Este es el código actual:\n\n\`\`\`python\n${source}\n\`\`\`\n\n¿Qué cambios quieres hacer?`
     : `Quiero crear o corregir el DAG \`${dagId}\` del cartucho \`${_cartridge}\`. Genera el código completo y despliégalo con infra__airflow_create_dag.`;
 
-  // Try postMessage to parent (embedded in Monitor/Studio)
   if (window.parent && window.parent !== window) {
     window.parent.postMessage({ type: 'dag_to_assistant', message: msg, dagId, source }, '*');
     setDeployMsg('✓ Enviado al asistente', 'ok');
     setTimeout(() => setDeployMsg('', ''), 2500);
     return;
   }
-  // Fallback: open Studio via sessionStorage
   const payload = { type: 'dag_edit', dag_id: dagId, source, cartridge: _cartridge };
   sessionStorage.setItem('studio_pending', JSON.stringify(payload));
   window.open('/studio', '_blank');
 }
 
-// ── Wiring ────────────────────────────────────────────────────────────────────
-// Sprint v1.11 phase 2 — all inline handlers replaced. Static buttons are
-// wired by id; dynamically rendered controls go through event delegation
-// keyed off data-action / data-* attributes.
 
 function _wireStaticListeners() {
   document.getElementById('cart-sel').addEventListener('change', onCartridgeChange);
@@ -947,7 +898,6 @@ function _wireStaticListeners() {
 }
 
 function _wireDelegation() {
-  // Each render emits data-action attributes; this single listener dispatches.
   document.body.addEventListener('click', (ev) => {
     const target = ev.target.closest('[data-action]');
     if (!target) return;
@@ -966,12 +916,6 @@ function _wireDelegation() {
   });
 }
 
-// v1.43.2 (Frontend R1 hardening): the Deploy DAG button calls
-// infra__airflow_create_dag, which is gated by _is_development() in
-// mcp-infra. With APP_ENV=production (the new safe default), the
-// tool refuses to run and the user sees a confusing "disabled outside
-// development" error after clicking. Hide the CTA in production
-// instead — surface a clear hint pointing to the runbook.
 async function _gateDevModeUI() {
   try {
     const r = await fetch('/api/system/info', {credentials: 'same-origin'});
@@ -1001,7 +945,6 @@ document.addEventListener('DOMContentLoaded', () => {
   _wireDelegation();
   _gateDevModeUI();
 
-  // Support ?tab=dags[&dag=dag_id] URL params
   const p   = new URLSearchParams(location.search);
   const tab = p.get('tab');
   const dag = p.get('dag');

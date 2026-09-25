@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""Cartridge resilience gauntlet.
-
-The fake/contract layer is runnable without credentials. Live cartridge checks
-remain BLOCKED unless the existing live gate is explicitly enabled.
-"""
 
 from __future__ import annotations
 

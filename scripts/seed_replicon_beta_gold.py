@@ -1,11 +1,4 @@
 #!/usr/bin/env python3
-"""Seed the private-beta Replicon Gold path.
-
-This is a controlled beta seed, not an external Replicon extraction. It creates
-the Gold tables needed by the packaged Replicon apps, scopes every row to one
-tenant/workspace, applies native Gold RLS, and writes honest catalog/lineage
-metadata so app readiness, lineage, and dataset previews agree.
-"""
 
 from __future__ import annotations
 
@@ -709,7 +702,6 @@ def _connect_gold():
 
 
 def resolve_seed_scope() -> tuple[str, str]:
-    """Resolve the seed scope without mutating data."""
     _load_env_file()
     operational = _connect_operational()
     try:
@@ -849,7 +841,6 @@ def _table_scope_fingerprint(cur, dataset: str, tenant_id: str, workspace_id: st
 
 
 def replicon_beta_gold_scope_fingerprint(tenant_id: str, workspace_id: str) -> dict[str, Any]:
-    """Return deterministic counts/checksums for one tenant/workspace Gold scope."""
     _load_env_file()
     datasets: dict[str, Any] = {}
     gold = _connect_gold()

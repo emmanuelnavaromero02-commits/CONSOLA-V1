@@ -1,17 +1,3 @@
-"""audit_events must stay append-only for the application role.
-
-The migration under test closes a gap that was real: because
-25_service_roles.sql grants four verbs ON ALL TABLES and only revokes
-vault_entries, the console's role could UPDATE and DELETE the very table that
-records what the console did.
-
-These checks are source-level on purpose — they run in every CI job, not only
-where a database is wired. The runtime behaviour was verified separately
-against PostgreSQL 15 (see the pull request), where all five attacks fail:
-DELETE, UPDATE and TRUNCATE as omega_console, and DELETE and TRUNCATE as a
-superuser with session_replication_role = replica.
-"""
-
 from __future__ import annotations
 
 import re
@@ -31,9 +17,6 @@ def _sql() -> str:
 
 
 def test_migration_sorts_after_the_broad_grant_it_narrows():
-    # apply_db_migrations.sh applies infra/init/[0-9][0-9]*_*.sql in filename
-    # order. A revoke that sorted before 25_service_roles.sql would be undone
-    # by it on every fresh initialisation.
     names = sorted(p.name for p in (ROOT / "infra/init").glob("[0-9][0-9]*_*.sql"))
     grant = next(n for n in names if n.startswith("25_service_roles"))
     revoke = Path(MIGRATION).name
@@ -63,9 +46,6 @@ def test_application_role_keeps_exactly_what_an_audit_trail_needs():
 
 def test_triggers_close_the_replica_and_truncate_gaps():
     sql = _sql()
-    # A plain trigger does not fire under session_replication_role = replica,
-    # and a row-level trigger never fires on TRUNCATE. Both gaps are why the
-    # external_action_events guard is weaker than it looks.
     assert "BEFORE UPDATE OR DELETE ON audit_events" in sql
     assert "BEFORE TRUNCATE ON audit_events" in sql
     assert "FOR EACH STATEMENT" in sql
@@ -75,27 +55,18 @@ def test_triggers_close_the_replica_and_truncate_gaps():
 
 def test_migration_is_idempotent():
     sql = _sql()
-    # apply_db_migrations.sh records applied files, but a fresh initialisation
-    # replays everything, and operators re-run files by hand.
     assert sql.count("DROP TRIGGER IF EXISTS") == 2
     assert "CREATE OR REPLACE FUNCTION audit_events_append_only()" in sql
 
 
 def test_owner_is_exempt_so_maintenance_stays_possible():
-    # A session that is already the table owner can DROP the trigger or the
-    # table, so blocking it denies nothing while breaking legitimate work: a
-    # retention purge, the dedup in 44_audit_events_dedup.sql, and the live
-    # test fixtures that clear audit rows between cases.
     sql = _sql()
     assert "session_user = owner_name" in sql
     assert "pg_get_userbyid" in sql
-    # BEFORE TRUNCATE is statement-level, where NEW and OLD are unassigned.
     assert "TG_LEVEL = 'STATEMENT'" in sql
 
 
 def test_application_code_never_updates_or_deletes_audit_events():
-    # The revoke is only safe while this holds. If a future change adds an
-    # UPDATE or DELETE, this test fails before production does.
     offenders: list[str] = []
     pattern = re.compile(
         r"(UPDATE\s+audit_events|DELETE\s+FROM\s+audit_events)", re.IGNORECASE
@@ -119,8 +90,6 @@ def test_application_code_never_updates_or_deletes_audit_events():
     )
 
 
-# ── 99zzzzk: hardening on top of 99zzzzj ───────────────────────────────────
-
 HARDENING = "infra/init/99zzzzk_audit_events_append_only_hardening.sql"
 
 
@@ -129,15 +98,11 @@ def _hardening() -> str:
 
 
 def test_hardening_sorts_after_the_migration_it_fixes():
-    # 99zzzzj is recorded in schema_migrations by filename, so its fixes can
-    # only reach an environment that already applied it through a new file.
     names = sorted(p.name for p in (ROOT / "infra/init").glob("[0-9][0-9]*_*.sql"))
     assert names.index(Path(HARDENING).name) > names.index(Path(MIGRATION).name)
 
 
 def test_trigger_function_pins_search_path_with_pg_temp_last():
-    # pg_temp must be named explicitly and last; "pg_catalog, public" is not
-    # equivalent.
     sql = _hardening()
     assert "SET search_path = pg_catalog, pg_temp" in sql
     assert "SET search_path = pg_catalog, public" not in sql
@@ -149,7 +114,6 @@ def test_owner_is_read_from_the_trigger_relation_and_compared_by_oid():
     assert "FROM pg_catalog.pg_class c" in sql
     assert "FROM pg_catalog.pg_roles r" in sql
     assert "session_role = table_owner" in sql
-    # The owner comes from the trigger's own relation, never a name lookup.
     assert "relname = 'audit_events'" not in sql
 
 
@@ -161,7 +125,6 @@ def test_trigger_function_ownership_is_pinned():
 
 
 def test_conversation_foreign_key_is_dropped():
-    # Audit evidence must not change when a referenced conversation is deleted.
     sql = _hardening()
     assert "a.attname = 'conversation_id'" in sql
     assert "DROP CONSTRAINT %I" in sql

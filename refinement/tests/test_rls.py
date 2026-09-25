@@ -14,7 +14,6 @@ os.environ['MINIO_ENDPOINT'] = 'test'
 from refinement.app.duckdb_engine import DuckDBEngine, _normalize_postgres_dsn, validate_safe_identifier
 
 def _preview_execute_side_effect(describe_cursor, execute_cursor):
-    """preview_sql touches pggold via DETACH/ATTACH before the final SELECT."""
     detach_cursor = MagicMock()
     attach_cursor = MagicMock()
     return [describe_cursor, detach_cursor, attach_cursor, execute_cursor]
@@ -36,8 +35,6 @@ def test_rls_default_deny(engine):
     ctx = {"email": "test@example.com"}
 
     rls_sql, params = e.get_rls_filters(sql, ctx)
-    # sqlglot emits canonical SQL with spaces around operators ("1 = 0");
-    # strip whitespace before checking to stay assertion-stable.
     assert "WHERE1=0" in rls_sql.replace(" ", "")
     assert len(params) == 0
 
@@ -148,18 +145,13 @@ def test_rls_admin_bypass(engine):
 
 
 def test_rls_admin_role_alone_does_not_bypass(engine):
-    """Defense in depth: a body that just claims `role=admin` (without the
-    backend-only `_server_trusted_context` flag) must still be filtered. This blocks
-    a peer service or compromised caller from forging admin via the request
-    body alone — admin bypass requires the upstream service to opt in
-    explicitly after authenticating its own user."""
     e, mock_conn = engine
     mock_conn.execute.return_value.fetchall.return_value = [
         ('tenant_id', 'varchar'),
         ('workspace_id', 'varchar'),
     ]
     sql = "SELECT * FROM pggold.gold_sales"
-    ctx = {"role": "admin"}  # no server trust marker
+    ctx = {"role": "admin"}
 
     rls_sql, params = e.get_rls_filters(sql, ctx)
     assert "WHERE1=0" in rls_sql.replace(" ", ""), f"forged admin bypassed RLS: {rls_sql!r}"
@@ -265,10 +257,7 @@ def test_preview_sql_uses_duckdb_lock(engine):
     assert lock.entered == 1
 
 
-# ── RLS + caller_params coexistence tests ─────────────────────────────────────
-
 def test_preview_sql_applies_rls_even_when_caller_params_provided(engine):
-    """RLS must NOT be skipped when the caller supplies params."""
     e, mock_conn = engine
 
     describe_cursor = MagicMock()
@@ -290,7 +279,6 @@ def test_preview_sql_applies_rls_even_when_caller_params_provided(engine):
         user_context={"tenant_id": "t-123", "workspace_id": "ws-123"},
     )
 
-    # Final execute call must have combined_params = [rls params..., caller_param]
     final_call = mock_conn.execute.call_args_list[-1]
     _, combined_params = final_call[0]
     assert "t-123" in combined_params, "RLS tenant_id param missing from execute call"
@@ -303,7 +291,6 @@ def test_preview_sql_applies_rls_even_when_caller_params_provided(engine):
 
 
 def test_preview_sql_rls_precedes_caller_params_positionally(engine):
-    """Param order: rls_params first (inner subquery ?), then caller_params (outer WHERE ?)."""
     e, mock_conn = engine
 
     describe_cursor = MagicMock()
@@ -326,7 +313,6 @@ def test_preview_sql_rls_precedes_caller_params_positionally(engine):
 
 
 def test_preview_sql_admin_with_caller_params_skips_rls_injection(engine):
-    """Admin role bypasses RLS but still uses caller params unmodified."""
     e, mock_conn = engine
 
     cursor = MagicMock()
@@ -339,13 +325,11 @@ def test_preview_sql_admin_with_caller_params_skips_rls_injection(engine):
 
     actual_call = mock_conn.execute.call_args_list[-1]
     _, combined_params = actual_call[0]
-    # Admin: rls_params=[], caller_params=["admin_value"] → combined=["admin_value"]
     assert combined_params == ["admin_value"], \
         f"Admin should have only caller params, got: {combined_params}"
 
 
 def test_query_dataset_does_not_double_apply_rls(engine):
-    """query_dataset must not call get_rls_filters separately — preview_sql does it."""
     e, mock_conn = engine
 
     describe_cursor = MagicMock()
@@ -367,7 +351,6 @@ def test_query_dataset_does_not_double_apply_rls(engine):
         user_context={"tenant_id": "t-abc", "workspace_id": "ws-abc"},
     )
 
-    # Check the final SELECT call — tenant_id/workspace_id should appear exactly once
     final_sql_call = mock_conn.execute.call_args_list[-1][0][0]
     assert final_sql_call.count("tenant_id = ?") == 1, \
         f"RLS applied multiple times: {final_sql_call}"
@@ -376,10 +359,8 @@ def test_query_dataset_does_not_double_apply_rls(engine):
 
 
 def test_preview_sql_no_user_context_with_caller_params_defaults_to_deny(engine):
-    """No user_context: get_rls_filters runs with empty ctx → deny-by-default for unrecognised tables."""
     e, mock_conn = engine
 
-    # Table has 'some_col' only — not a recognised RLS column → 1=0 default deny
     describe_cursor = MagicMock()
     describe_cursor.fetchall.return_value = [('some_col', 'varchar')]
 
@@ -393,6 +374,5 @@ def test_preview_sql_no_user_context_with_caller_params_defaults_to_deny(engine)
     e.preview_sql(sql, params=["value"], user_context=None)
 
     final_sql = mock_conn.execute.call_args_list[-1][0][0]
-    # sqlglot emits "1 = 0" with spaces; check after whitespace normalisation.
     assert "1=0" in final_sql.replace(" ", ""), \
         f"No user_context with unrecognised table must default to deny (got: {final_sql!r})"

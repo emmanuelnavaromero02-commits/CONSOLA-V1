@@ -1,5 +1,3 @@
-"""Context payload sanitisation and rendering for Copilot prompts."""
-
 from __future__ import annotations
 
 import json
@@ -11,10 +9,6 @@ PAGE_CONTEXT_MAX_LEN = 14000
 LIVE_CONTROL_ROOM_CONTEXT_MAX_LEN = 9000
 
 
-# Patterns we redact before letting a page_context value reach the
-# system prompt. The list intentionally errs on the side of paranoia:
-# the cost of a false-positive is less context for the LLM, while a
-# true-positive secret leak would land in third-party logs.
 SECRET_VALUE_PATTERNS: tuple[tuple[re.Pattern, str], ...] = (
     (
         re.compile(
@@ -41,7 +35,6 @@ SECRET_VALUE_PATTERNS: tuple[tuple[re.Pattern, str], ...] = (
 
 
 def scrub_value(value: str) -> str:
-    """Best-effort redaction of common secret shapes inside one string."""
     out = value
     for pattern, replacement in SECRET_VALUE_PATTERNS:
         out = pattern.sub(replacement, out)
@@ -49,7 +42,6 @@ def scrub_value(value: str) -> str:
 
 
 def sanitise_page_context(raw: Any) -> dict[str, Any]:
-    """Normalise operator-supplied page_context before prompt injection."""
     if not isinstance(raw, dict):
         return {}
     out: dict[str, Any] = {}
@@ -78,7 +70,6 @@ def sanitise_page_context(raw: Any) -> dict[str, Any]:
 
 
 def xml_attr_escape(value: str) -> str:
-    """Escape characters that would break out of an XML attribute."""
     return (
         value.replace("&", "&amp;")
         .replace("<", "&lt;")
@@ -88,12 +79,10 @@ def xml_attr_escape(value: str) -> str:
 
 
 def xml_text_escape(value: str) -> str:
-    """Escape characters that would break out of XML text content."""
     return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def render_page_context(ctx: dict[str, Any]) -> str:
-    """Render page context as data, not as prompt-level instructions."""
     if not ctx:
         return ""
     lines = [

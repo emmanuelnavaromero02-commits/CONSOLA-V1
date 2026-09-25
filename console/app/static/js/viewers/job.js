@@ -1,5 +1,3 @@
-// Sprint v1.11 phase 2 — extracted from job.html for strict CSP.
-
 function esc(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
 const jobId = location.pathname.split('/').pop();
 let isRunning = true;
@@ -47,7 +45,6 @@ async function loadJob() {
     ${j.error ? `<div class="meta-item" style="grid-column:1/-1"><div class="meta-lbl">ERROR</div><div class="meta-val" style="color:var(--red)">${esc(j.error)}</div></div>` : ''}
   `;
 
-  // Progress parsing from message "Progreso X/Y"
   const match = (j.message || '').match(/(\d+)\/(\d+)/);
   if (match && j.status === 'running') {
     const pct = Math.round(parseInt(match[1]) / parseInt(match[2]) * 100);
@@ -55,7 +52,6 @@ async function loadJob() {
     document.getElementById('prog-fill').style.width = pct + '%';
   }
 
-  // Entity results
   const res = j.result || {};
   if (res.entities) {
     document.getElementById('entities-card').style.display = 'block';

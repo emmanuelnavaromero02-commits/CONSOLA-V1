@@ -1,12 +1,3 @@
-"""audit_events append-only guarantees, against the real infra/init schema.
-
-Structural checks for 99zzzzk on a live database built from infra/init:
-the conversation foreign key is gone, the trigger function is owned by
-postgres with a pinned search_path, the application role cannot mutate audit
-rows, and the migration is idempotent. Source-level checks live in
-tests/test_audit_events_append_only_contract.py.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -70,8 +61,6 @@ async def _seed_conversation_with_audit(admin_dsn: str) -> dict[str, object]:
 
 
 async def _cleanup(admin_dsn: str, seed: dict[str, object]) -> None:
-    # Runs as the owner, which is exactly the maintenance path that must keep
-    # working after the hardening.
     conn = await asyncpg.connect(admin_dsn)
     try:
         await conn.execute("DELETE FROM audit_events WHERE id = $1", seed["audit_id"])
@@ -166,9 +155,6 @@ def test_app_role_cannot_mutate_audit_rows_directly(
 
 
 def test_hardening_migration_is_idempotent(postgres_with_real_init_schema: str) -> None:
-    # A fresh init applies it once; operators re-run files by hand. A second
-    # pass must succeed and leave every guarantee in place — the closing check
-    # inside the file raises if any of them is missing.
     from pathlib import Path
 
     sql = (

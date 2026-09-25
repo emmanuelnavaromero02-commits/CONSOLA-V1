@@ -3,14 +3,6 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-/**
- * Boundary for the Analytics surface, mirroring the Control Room contract test.
- *
- * Analytics owns exploration (open a published dashboard); Control Room owns
- * commitment (what needs attention, with evidence and an auditable action).
- * The apps used to live inside Control Room and the cutover left them homeless;
- * this test keeps the two surfaces from merging again.
- */
 const analyticsFiles = [
   "src/app/(shell)/analytics/page.tsx",
   "src/app/(shell)/analytics/viewer/page.tsx",
@@ -24,7 +16,6 @@ const source = analyticsFiles.map(read).join("\n");
 describe("Analytics surface boundary", () => {
   it("reads the catalog from the authorised apps API only", () => {
     const endpoints = source.match(/"\/api\/[^"]+"/g) ?? [];
-    // listApps() owns the /api/apps call; the surface adds no second backend.
     expect(endpoints).toEqual([]);
     expect(source).toContain("listApps");
   });
@@ -46,8 +37,6 @@ describe("Analytics surface boundary", () => {
   });
 
   it("keeps the viewer on a statically exportable route", () => {
-    // output: "export" cannot pre-render an [app] segment for runtime data, so
-    // the app name travels in the query string.
     const viewer = read("src/app/(shell)/analytics/viewer/page.tsx");
     expect(viewer).toContain('params.get("app")');
     expect(source).toContain("/analytics/viewer?app=");
@@ -60,11 +49,6 @@ describe("Analytics surface boundary", () => {
   });
 
   it("loads the trusted wrapper, never the published app directly", () => {
-    // Regression for the P0: the viewer framed `/apps/{name}` — untrusted,
-    // externally-authored HTML — as a same-origin document, so a malicious
-    // published app could read parent.document, storage, cookies and the CSRF
-    // token, and call authenticated endpoints. `/embed` is first-party markup
-    // we generate; it hosts the app in an opaque-origin child of its own.
     const viewer = read("src/components/analytics/AppViewer.tsx");
     expect(viewer).toContain("src={`/apps/${encodeURIComponent(app.name)}/embed`}");
     const iframeSrc = viewer.match(/src=\{`\/apps\/[^`]*`\}/g) ?? [];
@@ -73,13 +57,7 @@ describe("Analytics surface boundary", () => {
   });
 
   it("keeps the outer sandbox minimal and downloads disabled", () => {
-    // The outer sandbox is not the boundary — the wrapper needs
-    // allow-same-origin to read the CSRF cookie and call the API for the user.
-    // The boundary is the wrapper's inner frame. Still, nothing beyond those
-    // two tokens is justified, and allow-downloads never was.
     const viewer = read("src/components/analytics/AppViewer.tsx");
-    // Anchor to the JSX element: the surrounding comment names the inner
-    // frame's own sandbox, which is a different (stricter) value.
     const iframe = viewer.slice(viewer.indexOf("<iframe"));
     const sandbox = iframe.match(/^\s*sandbox="([^"]*)"/m)?.[1] ?? "";
     expect(sandbox.split(/\s+/).filter(Boolean).sort()).toEqual([

@@ -1,27 +1,3 @@
-"""Mission 5: one persisted monitor alert in, its narrative out.
-
-Two callers build narratives and they must agree on what an alert "is":
-
-* the deferred narrator, which asks the LLM for a framing sentence and stores
-  the result in ``control_room_items.metadata.narrative``;
-* the Control Room read path, which publishes a narrative on ``/control-room``.
-
-Both rebuild the narrative inputs here, from the persisted row, so the
-``source_fingerprint`` the narrator stored and the one the reader recomputes
-come from the same fields.
-
-Why stored narratives are signed
---------------------------------
-``control_room_items.metadata`` is writable by mcp-infra, so a sentence found
-there proves nothing about who wrote it. The narrator therefore signs what it
-stores with console's evidence keyring, under a purpose of its own and bound to
-the item, the scope and the occurrence fingerprint. The reader reuses a stored
-sentence only when that signature verifies; anything else is treated as if no
-narrative had been stored, and the page shows the template. Even a verified
-sentence is re-validated (``narrative_service.reconcile_narrative``), and every
-other field is recomputed.
-"""
-
 from __future__ import annotations
 
 import json
@@ -54,12 +30,6 @@ def _mapping(value: Any) -> Mapping[str, Any]:
 def narrative_inputs(
     *, domain: Any, severity: Any, metadata: Mapping[str, Any]
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """``(alert_payload, engine_result)`` for the narrative service.
-
-    Built from what ``control_room__raise_analysis_alert`` persisted: the row's
-    own domain and severity columns, and the ``analysis_evidence`` block, whose
-    ``metrics`` are the ones ``agent_runtime._monitor_alert_args`` computed.
-    """
     analysis = _mapping(metadata.get("analysis_evidence"))
     blockers = analysis.get("blockers")
     payload = {
@@ -97,11 +67,6 @@ def _signed_payload(
 def attest_narrative(
     narrative: Mapping[str, Any], *, item_id: Any, tenant_id: Any, workspace_id: Any
 ) -> dict[str, Any]:
-    """The narrative to store, signed by console. Never raises.
-
-    Without a usable keyring the narrative is stored unsigned, which the reader
-    treats exactly like no narrative at all.
-    """
     unsigned = {
         key: value for key, value in narrative.items() if key != NARRATIVE_ATTESTATION_KEY
     }
@@ -128,7 +93,6 @@ def attest_narrative(
 def verified_stored_narrative(
     stored: Any, *, item_id: Any, tenant_id: Any, workspace_id: Any
 ) -> dict[str, Any] | None:
-    """The stored narrative only if console signed it for this item and scope."""
     if not isinstance(stored, Mapping):
         return None
     attestation = stored.get(NARRATIVE_ATTESTATION_KEY)
@@ -159,7 +123,6 @@ def published_narrative(
     tenant_id: Any,
     workspace_id: Any,
 ) -> dict[str, Any]:
-    """The narrative for the alert as it stands now. Synchronous, never raises."""
     payload, engine_result = narrative_inputs(
         domain=domain, severity=severity, metadata=metadata
     )
@@ -179,7 +142,6 @@ async def narrate_alert(
     metadata: Mapping[str, Any],
     llm_caller: Callable[[str], Any] | None,
 ) -> dict[str, Any]:
-    """Fresh narrative, with one LLM framing sentence when a caller is given."""
     payload, engine_result = narrative_inputs(
         domain=domain, severity=severity, metadata=metadata
     )
@@ -189,11 +151,6 @@ async def narrate_alert(
 
 
 def evidence_note(signal_count: Any, observed_at: Any) -> str | None:
-    """Which figure the alert rests on and when console observed it.
-
-    Both values come from the attested observation, never from prose, so the
-    note cannot cite a figure the evidence does not contain.
-    """
     if isinstance(signal_count, bool) or not isinstance(signal_count, int):
         return None
     if signal_count <= 0:

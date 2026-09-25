@@ -4,8 +4,6 @@ import { isApiError } from "@/lib/api";
 
 import { streamMessage } from "./client";
 
-// Se mockea únicamente el transporte (apiFetch); la política de saneamiento
-// real de @/lib/api queda activa para verificar que es una sola y compartida.
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return { ...actual, apiFetch: vi.fn() };

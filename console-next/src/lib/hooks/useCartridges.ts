@@ -11,13 +11,6 @@ import {
   type ConnectorSchema,
 } from "@/lib/cartridges";
 
-/**
- * v1.44.3 — TanStack-Query hooks for the cartridges surface.
- *
- * Read hooks are cache-shared (the grid and the detail page invalidate
- * each other via the same ``cartridges`` root key) so a save/delete in
- * the detail page refreshes the grid badge without a manual refetch.
- */
 
 const ROOT_KEY = "cartridges";
 
@@ -34,7 +27,6 @@ export function useConnectorSchema(cartridgeId: string | undefined) {
     queryKey: [ROOT_KEY, "schema", cartridgeId],
     queryFn: () => getConnectorSchema(cartridgeId as string),
     enabled: Boolean(cartridgeId),
-    // The schema is static-per-cartridge so we can be aggressive here.
     staleTime: 5 * 60_000,
   });
 }

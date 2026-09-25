@@ -57,9 +57,6 @@ async function loadHomeData() {
   setState({ user, role });
   applyPermissionsFromRole(role);
 
-  // SaaS context from /api/me/access (single source of truth for the
-  // identity bar shown above the hero). The widget never throws — it
-  // returns an empty snapshot on 401/403/5xx so the home still renders.
   if (window.OmegaSecurityContext && typeof window.OmegaSecurityContext.load === 'function') {
     const snapshot = await optional('me access', () => window.OmegaSecurityContext.load(), null);
     setState({ meAccess: snapshot });
@@ -114,9 +111,6 @@ export async function initHomeControlPlane() {
     if (window.location.pathname === '/marketplace') {
       await renderMarketplace(root);
     } else if (window.location.pathname === '/customer/cartridges') {
-      // Phase-4 — separate view: focused on the workspace's own
-      // installations (status, retry, support), without the commercial
-      // catalog grid that lives on /marketplace.
       await renderCustomerCartridges(root);
     } else if (window.location.pathname === '/admin/installations' || window.location.pathname === '/admin/licenses') {
       await renderMarketplaceAdmin(root);
@@ -143,10 +137,6 @@ document.addEventListener('click', async (event) => {
 
   const logout = event.target.closest('[data-logout]');
   if (logout) {
-    // Sprint v1.9 CSRF: echo back the csrf_token cookie value on the
-    // logout POST. The cookie was set on /login and rotated after a
-    // successful authentication, so it's present whenever this code path
-    // runs (only logged-in users reach the home).
     const csrfMatch = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
     const csrf = csrfMatch ? decodeURIComponent(csrfMatch[1]) : '';
     await fetch('/auth/logout', {

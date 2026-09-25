@@ -1,9 +1,3 @@
-"""Sprint v1.12 — console: verify_internal_api_key accepts per-pair keys + legacy.
-
-Console exposes /internal/* endpoints to workspace and to the four
-cartridges. Each pair has its own INTERNAL_API_KEY_*_TO_CONSOLE secret;
-the legacy shared INTERNAL_API_KEY also still works during migration.
-"""
 from __future__ import annotations
 
 import importlib

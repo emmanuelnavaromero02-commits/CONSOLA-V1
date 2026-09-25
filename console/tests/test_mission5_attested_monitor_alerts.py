@@ -1,10 +1,3 @@
-"""Mission 5: an attested monitor alert reaches /control-room, and only that.
-
-These tests mint a real ticket through ``evidence_tickets`` (real HMAC signing
-with the test keyring), then push the persisted alert through the same
-eligibility and v2 projection the page uses.
-"""
-
 from __future__ import annotations
 
 import json
@@ -195,9 +188,6 @@ def _row(item_id: str, *, signal_count: int = 3, **overrides: object) -> dict:
     return row
 
 
-# ── Mint ─────────────────────────────────────────────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_mint_binds_the_ticket_to_the_alert_mcp_infra_will_raise(scoped, caplog):
     caplog.set_level(logging.INFO, logger=evidence_tickets.logger.name)
@@ -212,7 +202,6 @@ async def test_mint_binds_the_ticket_to_the_alert_mcp_infra_will_raise(scoped, c
     }
     assert reference["business_binding"]["identity"]["value"] == item_id
     assert reference["business_binding"]["observation"]["value"] == "3"
-    # A bounded lock wait, then the lease, before anything is read or written.
     assert conn.executed[0][0] == evidence_tickets._LOCK_TIMEOUT_SQL
     assert "assert_scheduled_effect_authority" in conn.executed[1][0]
     (insert,) = conn.inserts()
@@ -332,9 +321,6 @@ async def test_database_failure_never_breaks_the_monitor(monkeypatch: pytest.Mon
     assert await _mint(_FakeConn(agent_row=_agent_row())) is None
 
 
-# ── Resolve ──────────────────────────────────────────────────────────────────
-
-
 class _ResolveConn:
     def __init__(self, rows: list[dict]):
         self.rows = rows
@@ -368,7 +354,6 @@ async def test_resolve_uses_only_console_written_ticket_columns(scoped):
     assert "t.agent_id = alert.agent_id" in sql
     assert "PARTITION BY t.item_id" in sql
     assert "IS NOT DISTINCT FROM alert.agent_run_id" in sql
-    # Nothing a status transition or mcp-infra can move picks the ticket.
     assert "last_seen_at" not in sql
     assert args == (
         TENANT,
@@ -420,9 +405,6 @@ async def test_resolve_skips_alerts_without_a_trusted_agent_id():
 
     assert resolved == {}
     assert conn.calls == []
-
-
-# ── Projection onto /control-room ────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -537,9 +519,6 @@ async def test_loader_fails_open(monkeypatch: pytest.MonkeyPatch):
     surface = await attested_monitor_alerts.load_attested_monitor_alerts(USER)
 
     assert surface == MonitorAlertSurface()
-
-
-# ── Snapshot merge ───────────────────────────────────────────────────────────
 
 
 def _collect(items: list[dict]):

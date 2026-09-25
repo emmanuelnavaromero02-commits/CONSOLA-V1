@@ -1,5 +1,3 @@
-"""Evidence sufficiency boundary for automatic monitor alerts."""
-
 from __future__ import annotations
 
 from typing import Any
@@ -63,7 +61,6 @@ def _engine_is_incomplete(payload: dict[str, Any]) -> bool:
 
 
 def monitor_should_alert(contract: dict[str, Any], payload: dict[str, Any]) -> bool:
-    """Return true only when evidence is sufficient and a threshold is met."""
     status = str(payload.get("status") or "unknown").strip().lower()
     if payload.get("data_sufficient") is False:
         return False

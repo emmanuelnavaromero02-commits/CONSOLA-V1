@@ -1,11 +1,3 @@
-// Sprint v1.42 — Copilot chat client.
-//
-// Every fetch reads CSRF from cookie (the console's strict CSP blocks
-// inline scripts, so no <script> body is doing this work). All dynamic
-// DOM is built with textContent / createElement — no innerHTML on
-// user-controlled strings — so even an injected message body can't
-// inject HTML.
-
 (function () {
   "use strict";
 
@@ -108,7 +100,6 @@
     },
   ];
 
-  // ── Helpers ──────────────────────────────────────────────────────────
 
   function csrfToken() {
     const m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
@@ -178,7 +169,6 @@
     return d.toLocaleString();
   }
 
-  // ── Renderers ────────────────────────────────────────────────────────
 
   function appendMessage(role, content) {
     const el = document.createElement("div");
@@ -248,7 +238,6 @@
     scrollToBottom();
   }
 
-  // ── Sidebar / conversation list ──────────────────────────────────────
 
   async function loadConversations() {
     try {
@@ -293,19 +282,16 @@
             !(Array.isArray(m.tool_results) && m.tool_results.length === 0);
           for (const c of m.tool_calls) {
             if (c.approval_key && !alreadyProcessed) {
-              // Render the pending approval card on history reload too.
               appendApprovalCard([c], m.id, id);
             } else {
               appendToolCard(c);
             }
           }
         }
-        // v1.43: re-render the citation cards from the JSONB column.
         if (Array.isArray(m.citations) && m.citations.length > 0) {
           appendCitations(m.citations);
         }
       }
-      // Refresh the sidebar to flip active state.
       loadConversations();
     } catch (err) {
       toast("Error abriendo conversación: " + err.message, "error");
@@ -328,7 +314,6 @@
     }
   }
 
-  // ── Send / approve ───────────────────────────────────────────────────
 
   async function sendMessage(text) {
     if (!activeConversationId) {
@@ -359,8 +344,6 @@
       for (const c of out.tool_calls) appendToolCard(c);
     }
     if (out.reply) appendMessage("assistant", out.reply);
-    // v1.43: evidence cards. Render under the assistant text so the
-    // user reads the answer first, then the supporting sources.
     if (Array.isArray(out.citations) && out.citations.length > 0) {
       appendCitations(out.citations);
     }
@@ -369,12 +352,6 @@
     }
   }
 
-  // ── v1.43: citation cards ────────────────────────────────────────────
-  //
-  // Each card surfaces source (cartridge), entity, run_id (truncated),
-  // age (humanised) and a freshness-level icon. Every dynamic field
-  // goes through textContent — never innerHTML — so a malicious tool
-  // result can't smuggle HTML into the page.
 
   function _formatAge(seconds) {
     if (seconds == null) return "";
@@ -430,8 +407,6 @@
     const ageText = _formatAge(c.age_seconds);
     if (ageText) parts.push(ageText);
     metaRow.textContent = parts.join(" · ");
-    // Append the freshness icon with an accessible label so a screen
-    // reader announces it instead of just reading the emoji.
     const fIcon = document.createElement("span");
     fIcon.className = "citation-freshness";
     fIcon.textContent = " " + (_FRESHNESS_ICONS[level] || _FRESHNESS_ICONS.unknown);
@@ -483,7 +458,6 @@
     }
   }
 
-  // ── Native v1.44.4 features ported back to :8000 ────────────────────
 
   function openPalette(query = "") {
     elCommandFilter.value = query;
@@ -714,7 +688,6 @@
     }
   }
 
-  // ── Wire up ──────────────────────────────────────────────────────────
 
   elForm.addEventListener("submit", (e) => {
     e.preventDefault();
@@ -758,16 +731,6 @@
     }
   });
 
-  // ------------------------------------------------------------------
-  // Phase-5 — SaaS context panel inside the sidebar.
-  //
-  // We do NOT touch the LLM prompt, the conversation flow, the approval
-  // gates or the backend wiring. The panel is read-only and exists to
-  // remind the user which workspace + cartridges the copilot is bound
-  // to so they stop asking "why no veo X". The panel is rebuilt once
-  // per page load from /api/me/access (single fetch, shared with any
-  // other widget on the page that uses the global widget).
-  // ------------------------------------------------------------------
   async function mountContextPanel() {
     if (!window.OmegaSecurityContext || typeof window.OmegaSecurityContext.load !== "function") {
       return;
@@ -783,7 +746,6 @@
     }
     const panel = window.OmegaSecurityContext.renderCopilotContextPanel(snap);
     if (!panel) return;
-    // Drop any previous render (defensive, in case this runs twice).
     sidebar.querySelectorAll("#omega-sc-copilot-panel").forEach((n) => n.remove());
     if (footer) {
       sidebar.insertBefore(panel, footer);
@@ -792,7 +754,6 @@
     }
   }
 
-  // Initial load.
   loadConversations();
   mountContextPanel();
 })();

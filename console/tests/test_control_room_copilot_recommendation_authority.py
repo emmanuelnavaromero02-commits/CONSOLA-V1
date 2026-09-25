@@ -1,5 +1,3 @@
-"""Per-recommendation RBAC for persisted Copilot context."""
-
 from __future__ import annotations
 
 from contextlib import asynccontextmanager

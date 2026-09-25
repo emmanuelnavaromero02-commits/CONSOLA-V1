@@ -1,16 +1,3 @@
-/**
- * v1.44.3.2 spec 05 — Legacy /studio (HTML console on port 8000).
- *
- * The user reported a concrete set of broken interactions on this
- * page (Grafo button, Deploy a Airflow, Plantillas, Subir spec drop
- * zone, Silver/Gold interactivity, Crear en Superset). Each
- * test here pins one of those failures so v1.44.3.3 has actionable
- * evidence.
- *
- * The studio surface is built by client-side JS (console/app/static/
- * js/studio/*), so tests assert on the RENDERED DOM, not the static
- * HTML, and wait for the tabs to materialise before clicking.
- */
 import { test, expect } from "../fixtures/auth";
 import type { Page } from "@playwright/test";
 
@@ -82,10 +69,6 @@ async function goStudioStep(page: Page, step: number) {
 test.describe("Legacy /studio page (port 8000)", () => {
   test("/studio loads with tab navigation", async ({ authedPage: page }) => {
     await openStudio(page);
-    // After client-side hydration the tab labels appear. The brief
-    // documents 7 tabs (Resumen / DAGs / Entidades / Refinar /
-    // Analytics / IA Semántica / RAG). We assert at least DAGs +
-    // Entidades + Refinar are visible — the load-bearing ones.
     for (const label of [/DAGs/, /Entidades/, /Refinar/]) {
       await expect(page.getByText(label).first()).toBeVisible({
         timeout: 15_000,
@@ -96,8 +79,6 @@ test.describe("Legacy /studio page (port 8000)", () => {
   test("'DAGs' tab renders a DAG list", async ({ authedPage: page }) => {
     await openStudio(page);
     await goStudioStep(page, 2);
-    // The DAG list either has an empty-state OR rows. Both are valid
-    // — the test fails only if NEITHER renders within 15 s.
     const eitherState = page.locator("table, [data-state='empty'], .empty, .empty-state");
     await expect(eitherState.first()).toBeVisible({ timeout: 15_000 });
   });
@@ -157,20 +138,12 @@ test.describe("Legacy /studio page (port 8000)", () => {
   }) => {
     await openStudio(page);
     const grafoBtn = page.getByRole("button", { name: /grafo/i }).first();
-    // The button may render in the DAG tab; navigate there first.
     await goStudioStep(page, 2);
 
     await expect(grafoBtn,
       "'Grafo' button is a visible Studio control; absence must fail instead of skip.",
     ).toBeVisible({ timeout: 10_000 });
 
-    // v1.44.3.2 R1 Testing F3 follow-up: use page.waitForRequest with
-    // a /studio/* predicate (mirrors the deploy + superset patterns
-    // below) instead of a leaky page.on("request") + waitForTimeout
-    // combo that picks up background telemetry as false-positives.
-    // The button MUST either navigate the page OR fire a request to
-    // a studio-scoped endpoint — both are observable signals; a no-op
-    // button trips neither.
     const beforeUrl = page.url();
     const requestPromise = page
       .waitForRequest(
@@ -201,14 +174,6 @@ test.describe("Legacy /studio page (port 8000)", () => {
       await expect(deployBtn,
         "'Deploy a Airflow' is a visible Studio control; absence must fail instead of skip.",
       ).toBeVisible({ timeout: 10_000 });
-      // #273 B4: the button must never be a silent no-op. Two valid
-      // states, both observable:
-      //   (a) packaged cartridge DAG (or production) -> DISABLED with a
-      //       clear reason: packaged DAGs already run in Airflow, and the
-      //       backend owns the production RCE gate.
-      //   (b) user-authored DAG in dev -> fires POST /api/studio/dag-deploy.
-      // refreshDagDeployButton() runs synchronously when the DAG editor
-      // renders; give it a moment to settle the gated state before we read it.
       await page.waitForTimeout(2_000);
       if (await deployBtn.isDisabled().catch(() => false)) {
         const reason =
@@ -221,8 +186,6 @@ test.describe("Legacy /studio page (port 8000)", () => {
         ).toMatch(/deshabilitado|empaquetado|producci[oó]n|ci\/cd|airflow/i);
         return;
       }
-      // Enabled button: it MUST fire the backend deploy request (which is
-      // itself gated server-side). A no-op enabled button is the bug.
       const requestPromise = page.waitForRequest(
         (req) => req.url().includes("/api/studio/dag-deploy"),
         { timeout: 10_000 },
@@ -250,9 +213,6 @@ test.describe("Legacy /studio page (port 8000)", () => {
       await openStudio(page);
       await goStudioStep(page, 3);
 
-      // The drop zone may be a hidden <input type="file"> behind a
-      // styled label. Look for either an input[type=file] OR a
-      // [data-dropzone] element.
       const fileInput = page.locator('input[type="file"]');
       const dropZone = page.locator(
         '[data-dropzone], [role="button"][aria-label*="subir" i], .dropzone',
@@ -288,9 +248,6 @@ test.describe("Legacy /studio page (port 8000)", () => {
         "Silver subtab is a visible Studio control; absence must fail instead of skip.",
       ).toBeVisible({ timeout: 10_000 });
       await silver.click({ force: true });
-      // The Silver pane must render SOMETHING — either a table, a
-      // chart, an empty-state, or an error. A truly blank pane (just
-      // whitespace) is the bug.
       const content = page.locator(
         "table, canvas, svg, .empty-state, .alert, pre, .silver-content",
       );
@@ -343,9 +300,6 @@ test.describe("Legacy /studio page (port 8000)", () => {
   }) => {
     await openStudio(page);
     await goStudioStep(page, 6);
-    // The pane must resolve to SOMETHING — error / empty / loaded
-    // content all count. expect().toBeVisible auto-waits up to its
-    // timeout, so no bare waitForTimeout is needed.
     const main = page.locator(
       ".tab-content, [role='tabpanel'], main, .studio-layout",
     );
@@ -354,11 +308,6 @@ test.describe("Legacy /studio page (port 8000)", () => {
 
   test("'Plantillas' tab loads template list (USER-REPORTED BUG)",
     async ({ authedPage: page }) => {
-      // v1.44.3.2 R1 Testing F1 follow-up: the brief's user-report
-      // list included "Plantillas no abre" but the original spec
-      // missed coverage. The "Plantillas" affordance might be a
-      // tab, a button, or a dropdown trigger in the legacy studio
-      // — we look for whichever the page exposes.
       await openStudio(page);
       await goStudioStep(page, 2);
       const existingPanel = page
@@ -387,10 +336,6 @@ test.describe("Legacy /studio page (port 8000)", () => {
         "'Plantillas' affordance is a visible Studio control; absence must fail instead of skip.",
       ).not.toBeNull();
 
-      // Click must surface a visible content region (list, modal,
-      // or panel) within 10 s. Anything is fine — empty state, full
-      // list, error — what's not fine is a no-op click that leaves
-      // the surface unchanged.
       const beforeUrl = page.url();
       const navOrPanel = Promise.race([
         page
@@ -407,8 +352,6 @@ test.describe("Legacy /studio page (port 8000)", () => {
       ]);
 
       await trigger!.click().catch(() => {});
-      // Also accept "a new dialog or panel appeared" as a positive
-      // signal so a purely client-side modal counts.
       const panelAppeared = page
         .locator('[role="dialog"], [role="tabpanel"], .templates-list, .plantillas')
         .first()

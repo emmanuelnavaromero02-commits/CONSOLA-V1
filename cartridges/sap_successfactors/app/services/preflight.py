@@ -1,11 +1,3 @@
-"""
-Pre-flight configuration checks for the sap_successfactors cartridge.
-
-Validates the three environments the cartridge depends on (SAP, Postgres,
-object storage) and returns a structured ``degraded`` report when any of them
-is incomplete.  Storage is checked with an authenticated bucket request before
-an extraction is allowed to contact SuccessFactors.
-"""
 from __future__ import annotations
 
 import json
@@ -33,7 +25,6 @@ _SAFE_METADATA_FAILURE_CODES = frozenset(
 
 
 def _metadata_http_status(exc: Exception) -> int | None:
-    """Extract only an allowlisted HTTP status; never return exception text."""
 
     current: BaseException | None = exc
     for _ in range(4):
@@ -51,8 +42,6 @@ def _metadata_http_status(exc: Exception) -> int | None:
             return status
         current = current.__cause__ or current.__context__
 
-    # SAPClientError currently wraps RequestException without typed fields.
-    # Inspecting the message is only for classification; it is never emitted.
     match = re.search(r"\b(400|401|403|404|408|429|500|502|503|504)\b", str(exc))
     return int(match.group(1)) if match else None
 
@@ -794,12 +783,6 @@ def _discovery_fields(
 def _discover_talent_alias_candidates(
     metadata_entities: dict[str, set[str]],
 ) -> dict[str, list[dict[str, Any]]]:
-    """Infer safe runtime mappings from live $metadata.
-
-    Discovery is intentionally conservative: it only proposes candidates when
-    both the entity name and the minimum field shape match a known Talent
-    component. It does not persist config and does not fabricate scores.
-    """
 
     discovered: dict[str, list[dict[str, Any]]] = {}
     for entity, fields in metadata_entities.items():
@@ -864,11 +847,6 @@ def _load_talent_alias_candidates(
     *,
     security_context: dict[str, Any] | str | None,
 ) -> dict[str, list[dict[str, Any]]]:
-    """Load approved tenant/workspace mappings for custom SAP MDF/entity names.
-
-    Older deployments do not have the alias table yet; in that case the live
-    preflight falls back to the built-in candidate list instead of failing.
-    """
 
     tenant_id, workspace_id = _security_scope(security_context)
     try:
@@ -1042,11 +1020,10 @@ def check_postgres() -> dict[str, Any]:
 
 
 def check_minio() -> dict[str, Any]:
-    """Configuration-only compatibility check; no provider error is exposed."""
 
     try:
         resolve_storage_config()
-    except Exception as exc:  # StoragePreflightError string is an allowlisted code.
+    except Exception as exc:
         code = str(exc)
         if code not in {
             "storage_credentials_missing",
@@ -1069,17 +1046,9 @@ def preflight_for_extract(
     conn_id: str | None = None,
     security_context: dict[str, Any] | str | None = None,
 ) -> dict[str, Any] | None:
-    """Return ``None`` when ready, otherwise a degraded report.
-
-    Reports each missing component separately so the caller can render a
-    precise error to the user (avoids "Postgres connection failed" hiding
-    a missing SAP credential).
-    """
     components = [
         check_sap(conn_id=conn_id, security_context=security_context),
         check_postgres(),
-        # This is an authenticated object-list probe for cloud storage (bucket
-        # creation remains local-MinIO-only). It runs before any OData download.
         check_storage_access(),
     ]
     failing = [c for c in components if not c.get("configured", True)]
@@ -1207,15 +1176,6 @@ def _entity_metadata_readiness(
     sample: bool = True,
     use_aliases: bool = True,
 ) -> dict[str, Any]:
-    """Live SuccessFactors metadata + read preflight over a requirement set.
-
-    Generic engine shared by the talent C/P/A preflight and the people-master
-    preflight. Entity/field availability comes from live ``$metadata``; optional
-    sample reads (page_size=1) validate OData read permission per entity — a
-    401/403 surfaces as ``permission_blocked`` without inventing anything.
-    ``use_aliases`` enables the talent-only custom-entity alias discovery; it is
-    off for standard-named entities (people master).
-    """
     sap_status = check_sap(conn_id=conn_id, security_context=security_context)
     if not sap_status.get("configured"):
         return {
@@ -1408,13 +1368,6 @@ def _entity_metadata_readiness(
     }
 
 
-# People-master / Employee Central foundation entities. These feed employee_360
-# (silver EmpEmployment/EmpJob/PerPersonal -> gold) and therefore the Employee
-# Central anomaly signal and the whole talent 9-box. They are standard-named
-# OData entities (no alias discovery needed). fields_required are the join/key
-# fields the downstream silver/gold actually depends on; the rest are optional.
-# User/EmpEmployment/EmpJob are the required linchpin the SAP admin must grant
-# OData read on; PerPersonal/PerPerson/FOJobCode/Position enrich but do not block.
 _PEOPLE_MASTER_REQUIREMENTS: tuple[dict[str, Any], ...] = (
     {
         "id": "user",
@@ -1563,12 +1516,6 @@ def talent_metadata_readiness(
     security_context: dict[str, Any] | str | None = None,
     sample: bool = True,
 ) -> dict[str, Any]:
-    """Live SuccessFactors C/P/A metadata preflight for WB-TALENTO.
-
-    Answers "can we calculate real C/P/A and 9-box from this tenant yet?"
-    without inventing scores. Delegates to the generic engine over the talent
-    requirement set (with custom-entity alias discovery enabled).
-    """
     return _entity_metadata_readiness(
         requirements=_TALENT_CPA_REQUIREMENTS,
         conn_id=conn_id,
@@ -1584,16 +1531,6 @@ def people_master_readiness(
     security_context: dict[str, Any] | str | None = None,
     sample: bool = True,
 ) -> dict[str, Any]:
-    """Live people-master (Employee Central foundation) permission preflight.
-
-    Read-only. For each people-master entity (User/EmpEmployment/EmpJob required;
-    PerPersonal/PerPerson/FOJobCode/Position optional) it checks live ``$metadata``
-    field availability and does a page_size=1 sample read to prove OData read
-    permission. A 401/403 surfaces as ``permission_blocked`` per entity, giving
-    the owner an exact, per-entity checklist to hand the SAP admin BEFORE any
-    extraction runs. This is the switch that flips the SF path from blocked to
-    ready the instant the people-master grant lands.
-    """
     return _entity_metadata_readiness(
         requirements=_PEOPLE_MASTER_REQUIREMENTS,
         conn_id=conn_id,

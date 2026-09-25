@@ -12,18 +12,6 @@ interface Props {
   streamingContent?: string | null;
 }
 
-/**
- * v1.44.4 Task A — scrollable message list.
- *
- * Renders the conversation history and auto-scrolls to the
- * bottom whenever a new message lands, including the assistant
- * placeholder/content injected while an SSE turn is in flight.
- *
- * Uses a sentinel element + ``scrollIntoView`` rather than
- * fighting layout heights — works with arbitrary message
- * lengths and survives window resizes without manual
- * recalculation.
- */
 export function ChatMessages({ messages, pending, streamingContent }: Props) {
   const endRef = useRef<HTMLDivElement | null>(null);
 

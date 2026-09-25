@@ -1,34 +1,4 @@
 #!/usr/bin/env bash
-# Reproducible, fail-closed deploy of a release to the CANONICAL GCP VM.
-#
-# This codifies how the omega-staging-app VM is actually deployed (source tarball
-# in a private GCS bucket + a tag-pinned image overlay + docker compose), and
-# wraps it in the Checkpoint 5.5 safety net that the live startup-script lacks:
-# a verified backup of BOTH databases BEFORE any mutation, a health gate, and a
-# fail-closed rollback to the previous release + database restore.
-#
-# It does NOT touch AWS (that is the DR standby; scripts/deploy_main_aws.py is the
-# separate AWS path and must never run as the canonical writer).
-#
-# Run from an operator workstation with: gcloud auth (Owner or equivalent) + IAP
-# access to the instance. Nothing secret is passed on the wire — the VM reads the
-# GHCR pull credential from Secret Manager with its own service account.
-#
-#   gcp-canonical-deploy.sh <target-tag> <deploy-ref-40hex>
-#
-# Required env (all non-secret; derived from the Terraform stack):
-#   OMEGA_PROJECT_ID      e.g. project-dd5ba7fa-374c-4554-ae6
-#   OMEGA_ZONE            e.g. us-central1-a
-#   OMEGA_INSTANCE        e.g. omega-staging-app
-#   OMEGA_SOURCE_BUCKET   e.g. omega-gcp-source-project-dd5ba7fa-374c-4554-ae6
-#   OMEGA_RELEASE_MANIFEST
-#                         downloaded canonical v2 release manifest asset
-#   OMEGA_RELEASE_MANIFEST_CHECKSUM
-#                         downloaded sibling .json.sha256 asset (defaults to
-#                         ${OMEGA_RELEASE_MANIFEST}.sha256)
-# Optional:
-#   OMEGA_GHCR_PULL_SECRET_VERSION (default: latest)
-#   OMEGA_IMAGE_PULL_MIN_FREE_GIB   (default: 20; allowed: 5..1024)
 set -Eeuo pipefail
 set +x
 umask 077
@@ -41,8 +11,6 @@ DEPLOY_REF="${2:-}"
 die() { printf '[deploy] ERROR: %s\n' "$*" >&2; exit 1; }
 log() { printf '[deploy] %s\n' "$*"; }
 
-# Keep local staging artifacts private and remove them on every exit. A single
-# trap avoids silently replacing the cleanup for an earlier temporary file.
 TEMP_FILES=()
 REMOTE_STAGE_PATHS=()
 SSH=()
@@ -76,7 +44,6 @@ sha256_file() {
 IMAGES=(airflow banxico console hubspot inegi mcp-infra refinement replicon
   salesforce sap_b1 sap_hcm sap_s4hana sap_successfactors sec_edgar vault workspace)
 
-# ── Validate inputs (non-secret) ────────────────────────────────────────────
 [[ -n "${TARGET_TAG}" && -n "${DEPLOY_REF}" ]] \
   || die "usage: gcp-canonical-deploy.sh <target-tag> <deploy-ref-40hex>"
 [[ "${TARGET_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]] \
@@ -107,9 +74,6 @@ IMAGE_PULL_MIN_FREE_GIB="${OMEGA_IMAGE_PULL_MIN_FREE_GIB:-20}"
       && "${IMAGE_PULL_MIN_FREE_GIB}" -le 1024 ]] \
   || die "OMEGA_IMAGE_PULL_MIN_FREE_GIB must be an integer from 5 through 1024."
 
-# vX.Y.Z tag), so the deploy pins every service to the digest recorded in the
-# canonical release manifest. Provide it with:
-#   gh release download <tag> --pattern 'omega-release-manifest-*.json*'
 MANIFEST="${OMEGA_RELEASE_MANIFEST:-}"
 [[ -n "${MANIFEST}" && -f "${MANIFEST}" ]] \
   || die "OMEGA_RELEASE_MANIFEST must point at the release manifest json for ${TARGET_TAG}."
@@ -119,9 +83,6 @@ MANIFEST_CHECKSUM="${OMEGA_RELEASE_MANIFEST_CHECKSUM:-${MANIFEST}.sha256}"
 MANIFEST_VALIDATOR="${SCRIPT_DIR}/../release_digest_env.py"
 [[ -f "${MANIFEST_VALIDATOR}" ]] || die "missing canonical release manifest validator."
 
-# The run id is an identity input to the canonical validator. Reading this one
-# scalar is not validation: release_digest_env.py below re-parses strict JSON,
-# requires canonical bytes and exact schema/filename/checksum/repository/tag/
 BUILD_RUN_ID="$(python3 -I - "${MANIFEST}" <<'PY'
 import json
 import sys
@@ -158,8 +119,6 @@ digest_ref_for() {
   ' "${MANIFEST_LOCK}"
 }
 
-# ghcr-auth-run.sh requires an explicit NUMERIC secret version. Resolve the
-# highest enabled version of the pull credential unless the operator pinned one.
 GHCR_SECRET_VERSION="${OMEGA_GHCR_PULL_SECRET_VERSION:-}"
 if [[ -z "${GHCR_SECRET_VERSION}" ]]; then
   GHCR_SECRET_VERSION="$(gcloud secrets versions list "omega-${ENVIRONMENT}-ghcr_pull_credentials" \
@@ -168,24 +127,18 @@ fi
 [[ "${GHCR_SECRET_VERSION}" =~ ^[1-9][0-9]*$ ]] \
   || die "no enabled numeric version of omega-${ENVIRONMENT}-ghcr_pull_credentials (add the read:packages token first)."
 
-# ── 1. Provenance: the tag must resolve to exactly this ref ─────────────────
 log "step 1/6 provenance: ${TARGET_TAG} -> ${DEPLOY_REF}"
 tag_ref="$(git rev-list -n 1 "${TARGET_TAG}" 2>/dev/null || true)"
 [[ "${tag_ref}" == "${DEPLOY_REF}" ]] \
   || die "tag ${TARGET_TAG} resolves to '${tag_ref:-<missing>}', not ${DEPLOY_REF}. Cut the tag on the exact ref first."
-# The app serves /healthz version from the committed VERSION file; if it does not
-# equal the tag, the on-VM health gate can never go green and would force a
-# rollback. Catch that here, before anything is built or deployed.
 committed_version="$(git show "${DEPLOY_REF}:VERSION" 2>/dev/null | tr -d '[:space:]' || true)"
 [[ "${committed_version}" == "${TARGET_TAG#v}" ]] \
   || die "VERSION at ${DEPLOY_REF} is '${committed_version}', but the tag implies '${TARGET_TAG#v}'. Align the tag with the committed VERSION."
 
-# ── 2. Source artifact: build + upload the exact tarball (idempotent) ────────
 SOURCE_OBJECT="CONSOLA-V1-${DEPLOY_REF}.tar.gz"
 SOURCE_URI="gs://${OMEGA_SOURCE_BUCKET}/${SOURCE_OBJECT}"
 log "step 2/6 source: ${SOURCE_OBJECT} -> gs://${OMEGA_SOURCE_BUCKET}"
 new_temp_file tmp_tar omega-source.XXXXXX.tar.gz
-# Archive the EXACT committed tree at the ref — no working-tree contamination.
 git archive --format=tar.gz --prefix="modecissions/" -o "${tmp_tar}" "${DEPLOY_REF}"
 SOURCE_SHA256="$(sha256_file "${tmp_tar}")"
 [[ "${SOURCE_SHA256}" =~ ^[0-9a-f]{64}$ ]] || die "could not hash the exact source archive."
@@ -193,9 +146,6 @@ SOURCE_SHA256="$(sha256_file "${tmp_tar}")"
 SOURCE_GENERATION="$(gcloud storage objects describe "${SOURCE_URI}" \
   --project "${OMEGA_PROJECT_ID}" --format='value(generation)' 2>/dev/null || true)"
 if [[ -z "${SOURCE_GENERATION}" ]]; then
-  # Generation-match zero makes first publication atomic. If another operator
-  # won the race, the describe+exact-generation download below decides whether
-  # their bytes are identical; an overwrite is never attempted.
   if ! gcloud storage cp "${tmp_tar}" "${SOURCE_URI}" \
       --project "${OMEGA_PROJECT_ID}" --if-generation-match=0; then
     log "source publication raced or failed; verifying the immutable object now present"
@@ -209,29 +159,21 @@ fi
   || die "source object has no usable immutable GCS generation."
 
 new_temp_file verified_tar omega-source-verify.XXXXXX.tar.gz
-# A generation-qualified source URL reads those immutable bytes even if a
-# different live generation appears between describe and download.
 gcloud storage cp "${SOURCE_URI}#${SOURCE_GENERATION}" "${verified_tar}" \
   --project "${OMEGA_PROJECT_ID}"
 [[ "$(sha256_file "${verified_tar}")" == "${SOURCE_SHA256}" ]] \
   || die "source object checksum differs from git archive; refusing to reuse or overwrite it."
 
-# ── 3. Image overlay: pin all 15 services to manifest digests ───────────────
 log "step 3/6 overlay: pin 15 manifest digests for ${TARGET_TAG}"
 new_temp_file overlay omega-images.XXXXXX.yml
 {
   printf '# Generated by gcp-canonical-deploy.sh — pins immutable release digests.\n'
   printf 'services:\n'
-  # compose service name uses "-" where the image name uses "_"
   for image in "${IMAGES[@]}"; do
     svc="${image//_/-}"
     ref="$(digest_ref_for "${image}")" || die "no digest for ${image} in the release manifest."
     printf '  %s:\n    image: %s\n    pull_policy: never\n' "${svc}" "${ref}"
-    # airflow image backs three services
     if [[ "${image}" == "airflow" ]]; then
-      # airflow serves under the /airflow base path; some release compose files
-      # curl /health (404) in the container healthcheck, so it never goes healthy
-      # and `up -d` aborts. Pin the correct /airflow/health path here.
       printf '    healthcheck:\n      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8080/airflow/health || exit 1"]\n'
       printf '  airflow-init:\n    image: %s\n    pull_policy: never\n' "${ref}"
       printf '  airflow-scheduler:\n    image: %s\n    pull_policy: never\n' "${ref}"
@@ -242,7 +184,6 @@ IMAGES_OVERLAY_SHA256="$(sha256_file "${overlay}")"
 [[ "${IMAGES_OVERLAY_SHA256}" =~ ^[0-9a-f]{64}$ ]] \
   || die "could not hash the canonical image overlay."
 
-# ── 4. Ship the remote deployer + overlay to the VM ─────────────────────────
 log "step 4/6 stage: copy overlay + remote deployer to the VM"
 new_temp_file remote_deployer omega-remote-deployer.XXXXXX.sh
 git show "${DEPLOY_REF}:scripts/gcp/gcp-canonical-deploy-remote.sh" > "${remote_deployer}" \
@@ -262,11 +203,7 @@ REMOTE_STAGE_PATHS=("${REMOTE_OVERLAY_STAGED}" "${REMOTE_DEPLOYER_STAGED}")
 "${SCP[@]}" "${overlay}" "${OMEGA_INSTANCE}:${REMOTE_OVERLAY_STAGED}"
 "${SCP[@]}" "${remote_deployer}" "${OMEGA_INSTANCE}:${REMOTE_DEPLOYER_STAGED}"
 
-# ── 5. Run the fail-closed remote deploy (backup -> migrate -> up -> health) ─
 log "step 5/6 deploy: running fail-closed remote deploy on ${OMEGA_INSTANCE}"
-# This bootstrap is static shell source. All release/operator values are quoted
-# argv data. Under sudo it snapshots the caller-owned upload into a unique
-# root-owned file and verifies the exact-ref SHA before executing any of it.
 REMOTE_BOOTSTRAP="$(cat <<'OMEGA_REMOTE_BOOTSTRAP'
 set -Eeuo pipefail
 umask 077
@@ -314,9 +251,6 @@ remote_argv=(sudo bash -c "${REMOTE_BOOTSTRAP}" omega-remote-bootstrap
   "IMAGE_PULL_MIN_FREE_GIB=${IMAGE_PULL_MIN_FREE_GIB}"
   "DEPLOY_MODE=${DEPLOY_MODE}"
 )
-# gcloud's --command is necessarily one remote shell string. Serialize each
-# already-validated argv element with Bash's shell escaping instead of
-# interpolating values into executable syntax.
 printf -v remote_command '%q ' "${remote_argv[@]}"
 "${SSH[@]}" --command "${remote_command% }"
 
@@ -325,7 +259,6 @@ if [[ "${DEPLOY_MODE}" == "dryrun" ]]; then
   exit 0
 fi
 
-# ── 6. External health confirmation ─────────────────────────────────────────
 log "step 6/6 confirm: external readiness of the promoted release"
 "${SSH[@]}" --command "curl -fsS --max-time 5 http://127.0.0.1:8000/healthz" \
   || die "post-deploy healthz did not answer 200 from the operator side."

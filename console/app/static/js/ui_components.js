@@ -1,35 +1,9 @@
-/* ──────────────────────────────────────────────────────────────────────────
- * ui_components.js — v1.44.1 (Tarea D)
- *
- * Universal UI primitives — toasts, modals, confirms, loading overlays.
- * Every page that imports this script gets the same look + behaviour,
- * which is the whole point of replacing the native alert()/confirm()
- * each page was inventing on its own.
- *
- * Usage:
- *   <script src="/static/js/ui_components.js"></script>
- *   <script>
- *     showToast('Saved!', 'success');
- *     showConfirm('Delete this?', () => doDelete(), { danger: true });
- *     showModal({ title: 'Edit', body: htmlEl, onConfirm: () => save() });
- *     showLoading('Connecting…');  hideLoading();
- *   </script>
- *
- * The module is deliberately framework-free — no React/Vue — so it works
- * in every page in console/app/static/ regardless of its existing JS
- * stack. All styling comes from components.css; no inline colors.
- * ────────────────────────────────────────────────────────────────────── */
-
 (function () {
   'use strict';
 
-  // Guard against double-include (some pages may pull this file twice).
   if (window.__omegaUiComponentsLoaded) return;
   window.__omegaUiComponentsLoaded = true;
 
-  // ── Toast stack ──────────────────────────────────────────────────
-  // Up to 3 visible at once; older ones auto-dismiss. The container is
-  // lazily created on first toast.
   const TOAST_MAX = 3;
   let toastContainer = null;
   const toastQueue = [];
@@ -53,8 +27,6 @@
 
     const node = document.createElement('div');
     node.className = 'toast toast-' + type;
-    // Use textContent — never innerHTML — so caller-supplied strings
-    // can't smuggle markup.
     node.textContent = message;
     node.setAttribute('role', type === 'error' ? 'alert' : 'status');
 
@@ -77,8 +49,6 @@
     return node;
   }
 
-  // ── Modal ───────────────────────────────────────────────────────
-  // Single active modal at a time — stacking modals is an antipattern.
   let activeModal = null;
   let lastFocused = null;
 
@@ -118,7 +88,6 @@
     if (opts.body instanceof Node) {
       body.appendChild(opts.body);
     } else if (typeof opts.body === 'string') {
-      // String body → text only (defensive; never inject HTML).
       body.textContent = opts.body;
     }
     modal.appendChild(body);
@@ -150,7 +119,6 @@
 
     overlay.appendChild(modal);
     overlay.addEventListener('click', function (event) {
-      // Click on the backdrop (overlay itself, not its children) closes.
       if (event.target === overlay) {
         if (typeof opts.onCancel === 'function') opts.onCancel();
         closeActiveModal();
@@ -167,7 +135,6 @@
     document.body.appendChild(overlay);
     activeModal = overlay;
 
-    // Focus the primary action so keyboard users land in the right place.
     const target = footer.querySelector('.btn-primary, .btn-danger, .btn-ghost');
     if (target) setTimeout(function () { target.focus(); }, 0);
     return overlay;
@@ -186,7 +153,6 @@
     });
   }
 
-  // ── Loading overlay ────────────────────────────────────────────
   let loadingNode = null;
   function showLoading(message) {
     hideLoading();
@@ -219,7 +185,6 @@
     loadingNode = null;
   }
 
-  // ── Public API ─────────────────────────────────────────────────
   window.showToast    = showToast;
   window.showModal    = showModal;
   window.showConfirm  = showConfirm;

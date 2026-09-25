@@ -1,10 +1,4 @@
 #!/usr/bin/env bash
-# Production-readiness gate for a running local/prod-like OMEGA stack.
-#
-# This script intentionally does not start or deploy cloud resources. It proves
-# the checked-out code can pass the same local gates an operator needs before a
-# beta/production candidate: strict readiness, Superset auth, tests, smoke,
-# browser E2E, heavy acceptance, and beta stress.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -298,11 +292,6 @@ run_multiuser_simulation_if_required() {
 }
 
 prepare_local_browser_e2e_env() {
-  # production_readiness loads infra/.env as passive data for service credentials. That file
-  # intentionally uses Docker-internal service names (hubspot, airflow, etc.)
-  # for container-to-container calls, but Playwright runs on the host runner.
-  # Pin browser probes to the host-published ports so CI does not inherit
-  # unresolvable container DNS names from infra/.env.
   export AIRFLOW_URL="${OMEGA_E2E_AIRFLOW_URL:-http://127.0.0.1:8082}"
   export SUPERSET_URL="${OMEGA_E2E_SUPERSET_URL:-http://127.0.0.1:8088}"
   export MINIO_CONSOLE_URL="${OMEGA_E2E_MINIO_CONSOLE_URL:-http://127.0.0.1:9001}"
@@ -420,10 +409,6 @@ run_gate() {
   check_superset_login
 
   if [[ "${PUBLISH_MODE}" == "1" ]]; then
-    # Acceptance already exercises the live stack after applying migrations.
-    # The release workflow performs its exact-digest and data readiness
-    # verification immediately after this command returns, so repeating the
-    # broad smoke target here only races services recreated by acceptance.
     log "publication acceptance complete; deferring runtime verification to the post-gate checks"
     log "PASS"
     return

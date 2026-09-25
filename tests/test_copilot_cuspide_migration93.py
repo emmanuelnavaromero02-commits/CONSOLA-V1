@@ -1,9 +1,3 @@
-"""Sprint v1.45 cúspide — migration 93 static shape tests.
-
-Read the migration file off disk and assert the contract the rest of
-the cúspide modules rely on: three tables, the right columns, the
-self-register pattern. No database connection required.
-"""
 from __future__ import annotations
 
 import re
@@ -52,7 +46,6 @@ def test_creates_copilot_lessons_table(sql_text: str) -> None:
         "hits", "last_used_at", "created_at",
     ):
         assert re.search(rf"\b{col}\b", block), f"missing column in copilot_lessons: {col}"
-    # confidence must be bounded
     assert "CHECK (confidence" in block
 
 
@@ -81,30 +74,20 @@ def test_indexes_present(sql_text: str) -> None:
 
 
 def test_workspace_id_is_uuid_not_bigint(sql_text: str) -> None:
-    """workspaces.id is UUID in infra/init/13_rbac_models.sql, so the
-    workspace_id columns in this migration must be UUID too — otherwise
-    any FK lookup against workspaces would silently fail to match.
-    Regression guard for the v1.45 bring-up audit."""
     for table in ("copilot_goals", "copilot_lessons"):
         block = _table_block(sql_text, table)
-        # match: `workspace_id    UUID,`  (with whitespace tolerance)
         assert re.search(r"workspace_id\s+UUID\b", block, re.IGNORECASE), (
             f"{table}.workspace_id must be UUID, not BIGINT"
         )
 
 
 def test_no_drop_table_statements(sql_text: str) -> None:
-    """Migrations in this project are additive — no DROP TABLE should
-    sneak in or earlier deploys lose data on re-apply."""
     assert not re.search(
         r"\bDROP\s+TABLE\b", sql_text, re.IGNORECASE,
     ), "migration must not DROP tables"
 
 
 def _table_block(sql: str, table: str) -> str:
-    """Slice from the CREATE TABLE for `table` to the next blank line
-    after the closing );  so we can grep columns without hitting other
-    tables' columns by accident."""
     match = re.search(
         rf"CREATE TABLE IF NOT EXISTS {re.escape(table)}\s*\((.*?)\);",
         sql,

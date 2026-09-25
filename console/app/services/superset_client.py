@@ -1,9 +1,3 @@
-"""Async Superset REST client used by Studio.
-
-The MCP infra tools still expose Superset to the copilot. Studio needs a direct
-backend client so the "Crear en Superset" button has a deterministic result and
-can report configuration/auth failures without pretending success.
-"""
 from __future__ import annotations
 
 import asyncio

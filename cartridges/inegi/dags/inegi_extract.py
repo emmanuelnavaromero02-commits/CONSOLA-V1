@@ -1,11 +1,3 @@
-"""
-inegi_extract DAG
-===================
-Manual Bronze-only extraction for INEGI SIE.
-
-This PR 3 DAG calls the INEGI cartridge microservice and stops after
-Bronze publication. It intentionally does not trigger downstream refresh.
-"""
 from __future__ import annotations
 
 import json

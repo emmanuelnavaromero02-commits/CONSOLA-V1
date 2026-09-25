@@ -5,10 +5,6 @@ import types
 
 import app.main as _console_main
 
-# Import the current console runtime namespace, including private helper
-# functions used by legacy handlers. Handlers are rebound to app.main's
-# namespace before registration so existing tests and monkeypatches that
-# patch app.main.<helper> continue to affect the handler at runtime.
 globals().update(_console_main.__dict__)
 router = APIRouter()
 
@@ -29,15 +25,11 @@ def _bind_to_main(fn):
     _console_main.__dict__[fn.__name__] = rebound
     return rebound
 
-# /rag
 @router.get("/rag", dependencies=[Depends(require_admin)])
 @_bind_to_main
 async def rag_page():
-    # MEJORAS moved RAG operation into Studio step 7; keep /rag as a
-    # compatibility entrypoint without serving the removed standalone page.
     return RedirectResponse(url="/studio")
 
-# /api/rag/sources
 @router.get("/api/rag/sources", dependencies=[Depends(require_permission("datasets.read"))])
 @_bind_to_main
 async def api_rag_sources(kinds: str = "", user: dict = Depends(require_permission("datasets.read"))):
@@ -49,7 +41,6 @@ async def api_rag_sources(kinds: str = "", user: dict = Depends(require_permissi
         headers_for_user=_rag_headers_for_user,
     )
 
-# /api/rag/sources/{source_id}
 @router.delete(
     "/api/rag/sources/{source_id}",
     dependencies=[
@@ -68,7 +59,6 @@ async def api_rag_delete_source(source_id: int, user: dict = Depends(require_per
         headers_for_user=_rag_headers_for_user,
     )
 
-# /api/rag/search
 @router.post("/api/rag/search", dependencies=[Depends(require_csrf), Depends(require_permission("datasets.read"))])
 @_bind_to_main
 async def api_rag_search(body: dict, user: dict = Depends(require_permission("datasets.read"))):
@@ -82,7 +72,6 @@ async def api_rag_search(body: dict, user: dict = Depends(require_permission("da
         upstream_error_detail=_upstream_error_detail,
     )
 
-# /api/rag/reindex
 @router.post(
     "/api/rag/reindex",
     dependencies=[
@@ -100,7 +89,6 @@ async def api_rag_reindex(body: dict, user: dict = Depends(require_permission("d
             raise HTTPException(r.status_code, _upstream_error_detail(r, "RAG reindex failed"))
         return r.json()
 
-# /api/rag/ingest
 @router.post(
     "/api/rag/ingest",
     dependencies=[
@@ -121,7 +109,6 @@ async def api_rag_ingest(body: dict, user: dict = Depends(require_permission("da
         build_security_context=build_security_context,
     )
 
-# /api/rag/ask
 @router.post("/api/rag/ask", dependencies=[Depends(require_csrf), Depends(require_permission("datasets.read"))])
 @_bind_to_main
 async def api_rag_ask(body: dict, user: dict = Depends(require_permission("datasets.read"))):

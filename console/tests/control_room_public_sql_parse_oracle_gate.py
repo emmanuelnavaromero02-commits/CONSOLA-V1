@@ -1,5 +1,3 @@
-"""Differential parse-only gate; invoked explicitly by the PostgreSQL CI job."""
-
 from __future__ import annotations
 
 import os

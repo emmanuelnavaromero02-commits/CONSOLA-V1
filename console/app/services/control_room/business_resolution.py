@@ -106,7 +106,6 @@ def _evaluate(
 def resolve_business_lineage(
     items: Iterable[Mapping[str, Any]],
 ) -> tuple[BusinessLineageResolution, ...]:
-    """Resolve eligibility from the complete graph, independent of row order."""
     rows = tuple(items)
     identities = tuple(item_identity(item) for item in rows)
     counts = Counter(item_id for item_id in identities if item_id)

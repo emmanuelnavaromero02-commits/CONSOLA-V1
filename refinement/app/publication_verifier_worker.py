@@ -164,8 +164,6 @@ def serve(socket_path: str) -> None:
     path.unlink(missing_ok=True)
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
         server.bind(str(path))
-        # The app and verifier are distinct users in one private runtime group;
-        # group read/write is the narrow IPC capability, with no world access.
         os.chmod(path, 0o660)  # nosec B103
         server.listen(8)
         while True:

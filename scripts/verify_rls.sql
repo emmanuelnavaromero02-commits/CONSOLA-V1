@@ -1,9 +1,3 @@
--- verify_rls.sql — auditoria de RLS tenant-scoped para un operador.
--- Uso: psql -U postgres -d <db> -f scripts/verify_rls.sql
--- Lista toda tabla base de 'public' con columna workspace_id y su estado de
--- RLS. Una tabla tenant-scoped SANA tiene rls=t Y force=t. Cualquier fila con
--- force=f es un hueco de aislamiento multi-tenant que hay que corregir
--- aplicando las migraciones (make migrate / apply_db_migrations.sh).
 SELECT c.relname                     AS tabla,
        c.relrowsecurity              AS rls,
        c.relforcerowsecurity         AS force,
