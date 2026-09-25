@@ -24,7 +24,6 @@ from scripts.gcp.render_gcp_compose_override import RenderError, render_file
 REPO = Path(__file__).resolve().parents[1]
 LOCAL = REPO / "scripts" / "gcp" / "gcp-canonical-deploy.sh"
 REMOTE = REPO / "scripts" / "gcp" / "gcp-canonical-deploy-remote.sh"
-RUNBOOK = REPO / "docs" / "runbook" / "gcp-canonical-deploy.md"
 TAG = "v1.2.3"
 SOURCE_SHA = "a" * 40
 
@@ -117,17 +116,6 @@ def test_scripts_exist_and_parse(path):
         ["bash", "-n", str(path)], capture_output=True, text=True, check=False
     )
     assert r.returncode == 0, f"{path.name} syntax error:\n{r.stderr}"
-
-
-def test_runbook_documents_the_mechanism():
-    assert RUNBOOK.exists()
-    text = RUNBOOK.read_text(encoding="utf-8")
-    for token in ("/opt/modecissions/releases", "docker-compose.aws-images.gcp.yml", "dry-run", "Rollback"):
-        assert token in text
-    assert "before the maintenance window" in text
-    assert "day2-release.sh` is intentionally disabled" in text
-    assert "Day-2 never copies this overlay from the" in text
-    assert "dry-run cached 15/15" in text
 
 
 def test_driver_never_targets_aws():

@@ -1,5 +1,0 @@
-{
-  "Account": "<aws-account-id>",
-  "Arn": "arn:aws:iam::<aws-account-id>:role/<redacted>",
-  "UserId": "<redacted>"
-}

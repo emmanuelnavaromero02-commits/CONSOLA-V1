@@ -33,7 +33,7 @@ PY_MODULES = {
     "risk": risk_aggregates,
 }
 
-# Functions that must NOT exist: no Gold relation supports them (docs/data_gaps.md).
+# Functions that must NOT exist: no Gold relation supports them.
 FORBIDDEN_FUNCTIONS = (
     "query_budget_vs_actual",
     "query_cost_center_overrun",

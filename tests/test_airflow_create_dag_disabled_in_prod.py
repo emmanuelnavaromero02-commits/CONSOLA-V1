@@ -116,7 +116,7 @@ async def test_airflow_set_variable_still_requires_development_when_allow_rce_tr
 async def test_airflow_create_dag_still_available_in_development(monkeypatch, tmp_path):
     airflow = _load_airflow_tools(monkeypatch)
     monkeypatch.setenv("APP_ENV", "development")
-    # v1.43.4 (Codex H1): second gate. APP_ENV alone is no longer
+    # v1.43.4 (H1): second gate. APP_ENV alone is no longer
     # sufficient; ALLOW_RCE_TOOLS=true is required.
     monkeypatch.setenv("ALLOW_RCE_TOOLS", "true")
     monkeypatch.setattr(airflow.settings, "airflow_dags_path", str(tmp_path))
@@ -130,7 +130,7 @@ async def test_airflow_create_dag_still_available_in_development(monkeypatch, tm
     assert (tmp_path / "test_dev_dag.py").read_text() == "print('dev only')\n"
 
 
-# ── v1.43.4 (Codex H1): double-gate semantics ─────────────────────────────
+# ── v1.43.4 (H1): double-gate semantics ─────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -198,7 +198,7 @@ async def test_airflow_create_dag_allow_rce_truthy_values(monkeypatch, env_value
 
 
 def test_mcp_infra_port_8010_not_exposed_in_aws_compose():
-    """v1.43.4 (Codex H1): mcp-infra's 8010 port mapping must be
+    """v1.43.4 (H1): mcp-infra's 8010 port mapping must be
     absent from the AWS compose file. mcp-infra is a backend
     service consumed only by console / workspace / airflow over
     the modecissions_net docker bridge; publishing 8010 on the
@@ -216,5 +216,5 @@ def test_mcp_infra_port_8010_not_exposed_in_aws_compose():
         assert "8010" not in s.split(":")[0], (
             "infra/terraform/deploy/docker-compose.aws.yml still publishes "
             f"mcp-infra port 8010 to the host (entry: {entry!r}). "
-            "Remove the ports: mapping (v1.43.4 Codex H1)."
+            "Remove the ports: mapping (v1.43.4 H1)."
         )

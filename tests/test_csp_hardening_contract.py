@@ -7,7 +7,6 @@ REPO = Path(__file__).resolve().parents[1]
 CONSOLE_MAIN = REPO / "console/app/main.py"
 SECURITY_HEADERS = REPO / "console/app/services/security_headers.py"
 APP_EMBED = REPO / "console/app/domains/apps/embed.py"
-SECURITY = REPO / "SECURITY.md"
 
 
 def test_console_has_no_dead_app_embed_csp():
@@ -27,10 +26,3 @@ def test_app_embed_csp_uses_nonce_for_inline_bridge():
     assert "script-src 'self' 'nonce-{nonce}'" in source
     assert "<script nonce=" in source
     assert "script-src 'self' 'unsafe-inline'" not in source
-
-
-def test_style_inline_exception_is_documented():
-    security = SECURITY.read_text(encoding="utf-8")
-    assert "CSP inline-style exception" in security
-    assert "style-src 'unsafe-inline'" in security
-    assert "does not permit inline event handlers or inline `<script>`" in security

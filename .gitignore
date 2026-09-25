@@ -7,7 +7,7 @@ venv/
 dist/
 build/
 
-# Env (NEVER commit these — see SECURITY.md, enforced by
+# Env (NEVER commit these — enforced by
 # tests/test_env_never_in_git.py)
 .env
 .env.local
@@ -19,9 +19,9 @@ build/
 *.env.save
 .env.save
 infra/.env.save
-# v1.43.4 (Codex H6): manual ad-hoc backups (e.g. `cp infra/.env
+# v1.43.4: manual ad-hoc backups (e.g. `cp infra/.env
 # infra/.env.backup-$(date +%s)` after rotating a secret) shouldn't
-# stay tracked. Codex's update demonstrated two such files lingering
+# stay tracked. Two such files were previously found lingering
 # in `git status` — one stray `git add -A` and the secret rotation
 # trail leaks into the repo.
 infra/.env.backup

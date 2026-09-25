@@ -5,8 +5,7 @@ data gap, an error, an insight, a warning — records it against a *subject* (a
 dataset, a column, a metric, an entity). Any other agent in the same workspace
 can read the active findings for that subject before acting on it.
 
-The canonical case this exists for is real and already documented in
-``docs/data_gaps.md``: Finance finds that ``cost_center_budget`` has no Gold
+The canonical case this exists for is real: Finance finds that ``cost_center_budget`` has no Gold
 table behind it, so ``budget_vs_actual_by_cost_center`` cannot exist. Risk hits
 the same wall from the other side with ``cost_center_overrun``. Without shared
 memory each agent rediscovers the gap on every run and reports it as news.

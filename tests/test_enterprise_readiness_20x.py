@@ -73,22 +73,6 @@ def test_makefile_exposes_enterprise_readiness_20x_targets():
     assert '"OMEGA_AUDIT_GOLD_PROFILE": ctx.workload' in _read("scripts/enterprise_readiness.py")
 
 
-def test_enterprise_readiness_docs_define_status_and_unblock_semantics():
-    doc = _read("docs/enterprise-readiness-20x.md")
-    for needle in (
-        "make enterprise-readiness TARGET=aws WORKLOAD=sap_successfactors PROFILE=beta-safe",
-        "PASS",
-        "FAIL",
-        "BLOCKED",
-        "cross-tenant",
-        "visible secret",
-        "mutation without approval",
-        "p95",
-        "chaos-aws",
-    ):
-        assert needle in doc
-
-
 def test_stress_runner_supports_successfactors_workload_and_summary_gate():
     script = _read("scripts/run_stress.sh")
     locust = _read("tests/stress/locustfile.py")

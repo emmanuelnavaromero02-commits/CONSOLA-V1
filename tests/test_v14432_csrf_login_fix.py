@@ -1,6 +1,6 @@
 """Sprint v1.44.3.2.2 R-Mac follow-up — login flow CSRF + CORS guards.
 
-Codex's Mac run uncovered that the migrated login page POSTed to
+A Mac validation run uncovered that the migrated login page POSTed to
 /api/auth/login while the real endpoint is /auth/login + requires
 a CSRF double-submit-cookie round-trip. Compounded by backend CORS
 that didn't allow the X-CSRF-Token header.

@@ -4,7 +4,7 @@ Mission 4, part B4. This is the concrete case the shared memory exists for, and
 it is a real one rather than a demonstration: Mission 1 could not ship
 ``finance.budget_vs_actual_by_cost_center`` because no cartridge has a budget, and
 it could not ship ``risk.cost_center_overrun`` for exactly the same reason
-(``docs/data_gaps.md`` rows 1 and 2). Two different agents therefore hit the same
+(no budget data in any cartridge). Two different agents therefore hit the same
 wall from two directions, and without shared memory each of them rediscovers it on
 every run and reports it as news.
 

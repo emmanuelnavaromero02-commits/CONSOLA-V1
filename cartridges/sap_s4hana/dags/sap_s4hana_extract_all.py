@@ -3,7 +3,7 @@ sap_s4hana_extract_all DAG
 ==========================
 Extrae TODAS las entidades llamando al cartucho SAP S/4HANA.
 
-v1.43.1 (Claude B1 + B2 + B3): see sap_s4hana_extract.py for rationale.
+v1.43.1 (B1 + B2 + B3): see sap_s4hana_extract.py for rationale.
 """
 from __future__ import annotations
 import os

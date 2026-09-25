@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # v1.43.2 (Codex P1-5): record per-step startup results so /health
+    # v1.43.2: record per-step startup results so /health
     # can report a real readiness signal. Pre-v1.43.2, schema-migration
     # failures were silently swallowed and /health stayed ``ok: true``
     # — Kubernetes would route traffic at a broken cartridge.
@@ -83,7 +83,7 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
     )
 
 
-# v1.43.1 (Codex P0-1): every response — including 401/403/404 from
+# v1.43.1: every response — including 401/403/404 from
 # the InternalApiKeyASGIGuard and the FastAPI exception handlers —
 # must carry an ``X-Request-ID`` header so operators can correlate a
 # failed request with its server-side trace. Pure-ASGI middleware
@@ -108,7 +108,7 @@ def healthz() -> dict:
     return {"ok": True, "service": "replicon"}
 
 
-# v1.43.2 (LLM R1 hardening): /mcp/* must respect startup state. If
+# v1.43.2 (R1 hardening): /mcp/* must respect startup state. If
 # lifespan recorded a failure (job_runner schema missing, etc.), the
 # cartridge is in rotation only to /health (which already returns
 # 503) — but a peer with the internal API key could still call
@@ -129,7 +129,7 @@ class _MCPStartupGuard:
         ):
             import json as _json
             errors = list(getattr(self._app.state, "startup_errors", []) or [])
-            # v1.43.2 (LLM R2 hardening): use json.dumps so error
+            # v1.43.2 (R2 hardening): use json.dumps so error
             # strings containing apostrophes / backslashes / non-ASCII
             # produce a syntactically valid body. Python repr was wrong.
             body = _json.dumps({

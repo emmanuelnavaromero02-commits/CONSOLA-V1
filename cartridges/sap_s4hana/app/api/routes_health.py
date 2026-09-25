@@ -14,7 +14,7 @@ _SERVICE = "sap_s4hana"
 
 @router.get("")
 async def health(request: Request):
-    # v1.43.2 (Codex P1-5): mirror real startup state.
+    # v1.43.2: mirror real startup state.
     state = request.app.state
     ok = getattr(state, "startup_ok", False)
     errors = list(getattr(state, "startup_errors", []) or [])
@@ -29,7 +29,7 @@ async def health(request: Request):
             status_code=503,
         )
 
-    # v1.43.4 (Codex C2): /health probes MCP surface — see
+    # v1.43.4: /health probes MCP surface — see
     # cartridges/sap_hcm/app/api/routes_health.py for full rationale.
     try:
         tools = await mcp.list_tools()

@@ -25,7 +25,7 @@ def test_health_endpoints_and_auth(cartridge: str) -> None:
     main = load_cartridge_app(cartridge)
     client = TestClient(main.app)
 
-    # 1) liveness is public. v1.43.2 (Codex P1-5): conftest seeds
+    # 1) liveness is public. v1.43.2 (P1-5): conftest seeds
     # app.state.startup_ok = True so /health returns 200 without
     # needing a lifespan-aware TestClient context.
     resp = client.get("/health")

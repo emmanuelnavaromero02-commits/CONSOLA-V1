@@ -28,7 +28,7 @@ async def main(email: str, password: str, name: str | None = None):
         print(f"Created admin user id={u['id']} email={u['email']}")
 
 
-# v1.43.4 (Claude H5 / Security R2): refuse the placeholder values
+# v1.43.4 (Security R2): refuse the placeholder values
 # documented in infra/.env.example so an operator who runs
 # ``docker compose up`` against an unrotated .env can't ship an
 # admin account with a publicly-known password. The list is the

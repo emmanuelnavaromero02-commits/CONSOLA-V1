@@ -125,7 +125,6 @@ datasets:
       - "Enable C/P/A entities before treating this as a complete talent profile."
     evidence:
       - cartridges/sap_successfactors/datasets/sap_successfactors_talent_employee_profile.sql
-      - cartridges/sap_successfactors/specs/talent_kb_wisdombit.md
   - cartridge: sap_successfactors
     dataset: sap_successfactors_talent_role_profile
     readiness: partial
@@ -143,7 +142,6 @@ datasets:
       - "Validate career interest or aspiration entities before using mobility as aspiration evidence."
     evidence:
       - cartridges/sap_successfactors/datasets/sap_successfactors_talent_mobility_history.sql
-      - cartridges/sap_successfactors/specs/talent_kb_wisdombit.md
   - cartridge: sap_successfactors
     dataset: sap_successfactors_talent_readiness
     readiness: partial

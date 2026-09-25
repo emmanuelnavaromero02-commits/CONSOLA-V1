@@ -3,7 +3,7 @@ sap_hcm_extract DAG
 ===================
 Extrae UNA entidad llamando al cartucho SAP HCM.
 
-v1.43.1 (Claude B1 + B2 + B3):
+v1.43.1 (B1 + B2 + B3):
   B1 — fail-fast at parse-time if INTERNAL_API_KEY is missing instead of
        silently sending unauthenticated requests with an empty key.
   B2 — cartridge URL comes from SAP_HCM_URL env var (with the compose

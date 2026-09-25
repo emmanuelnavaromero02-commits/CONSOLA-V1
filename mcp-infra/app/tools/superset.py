@@ -17,7 +17,7 @@ _BASE = settings.superset_url.rstrip("/")
 
 
 def _is_development() -> bool:
-    # v1.43.2 (Codex P1-2): default ``production`` — see airflow.py.
+    # v1.43.2: default ``production`` — see airflow.py.
     return os.environ.get("APP_ENV", "production").lower() in {"development", "dev", "local", "test"}
 
 

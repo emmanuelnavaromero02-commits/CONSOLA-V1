@@ -96,7 +96,6 @@ DEFAULT_THRESHOLD: dict[str, Any] = {
 # distributions (baseline_value, expected_delta, delay_days, ...) from live
 # aggregates. No equivalent dataset exists for these three domains, and putting
 # invented distribution parameters in a contract would be fabricating data.
-# Recorded in docs/data_gaps.md.
 MONTE_CARLO_DISABLED_REASON = (
     "sin dataset de inputs de simulacion para este dominio: no hay "
     "distribuciones agregadas publicadas, ver docs/data_gaps.md"

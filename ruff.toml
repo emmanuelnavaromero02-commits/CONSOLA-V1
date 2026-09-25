@@ -1,4 +1,4 @@
-# Sprint v1.43.2 (Claude B8 follow-up) — ruff config tuned for the
+# Sprint v1.43.2 (follow-up) — ruff config tuned for the
 # repo's existing style debt.
 #
 # The lint job added in v1.43.2 surfaced ~200 errors across services

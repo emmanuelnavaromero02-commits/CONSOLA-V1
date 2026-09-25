@@ -3,7 +3,7 @@ salesforce_extract_all DAG
 ==================================
 Extrae TODAS las entidades llamando al cartucho Salesforce.
 
-v1.43.1 (Claude B1 + B2 + B3): see salesforce_extract.py.
+v1.43.1 (B1 + B2 + B3): see salesforce_extract.py.
 """
 from __future__ import annotations
 import os

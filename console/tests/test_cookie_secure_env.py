@@ -34,7 +34,7 @@ def test_production_defaults_true():
 
 
 def test_no_app_env_defaults_to_production_secure():
-    # v1.43.2 (Codex P1-2): unset APP_ENV used to default to dev
+    # v1.43.2 (P1-2): unset APP_ENV used to default to dev
     # semantics — which meant a forgotten env var silently shipped
     # insecure cookies to production. The default is now flipped:
     # APP_ENV unset → production → Secure=True. Local dev opts in

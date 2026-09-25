@@ -12,7 +12,7 @@ Every function returns a dataclass with ``status`` ready|degraded|unavailable,
 the numbers, ``evidence_refs`` (relation, run, generation, snapshot, filters),
 ``supported=True`` and a ``proxy_note`` the LLM can quote so it never
 over-promises. Metrics without a Gold relation (budget vs actual by cost
-center) intentionally have no function here: see ``docs/data_gaps.md``.
+center) intentionally have no function here.
 
 Pattern (identical to ``successfactors_talent_population``): dedicated asyncpg
 connection to GOLD_DATABASE_URL, repeatable_read read-only transaction,

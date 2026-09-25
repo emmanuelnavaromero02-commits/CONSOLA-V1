@@ -26,7 +26,7 @@ the same shape ``proactive_service`` uses).
 shared Gold scope, exactly like Finance and Risk.
 
 Metrics without a supporting relation (shift coverage) intentionally have no
-function here: see ``docs/data_gaps.md``.
+function here.
 """
 
 from __future__ import annotations

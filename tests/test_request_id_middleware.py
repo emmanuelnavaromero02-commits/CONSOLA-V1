@@ -100,7 +100,7 @@ def test_request_id_is_unique_per_request(app_with_middleware):
 def test_middleware_module_present_in_all_services():
     """All services ship the identical
     middleware module (byte-equal). v1.43.1 extended the original 5
-    to cover the cartridges (Codex P0-1)."""
+    to cover the cartridges (P0-1)."""
     import hashlib
     repo = Path(__file__).resolve().parents[1]
     digests = {}
@@ -119,7 +119,7 @@ def test_middleware_module_present_in_all_services():
 
 
 def test_cartridge_main_modules_register_request_id_middleware():
-    """v1.43.1 (Codex P0-1): every cartridge main.py must register
+    """v1.43.1 (P0-1): every cartridge main.py must register
     the middleware via app.add_middleware. Without this the
     cartridges' 401/403 responses never go through the send-wrapper."""
     repo = Path(__file__).resolve().parents[1]

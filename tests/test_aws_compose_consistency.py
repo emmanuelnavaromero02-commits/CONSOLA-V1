@@ -1,8 +1,8 @@
-"""Sprint v1.43.4 — Claude N1/N3/N4 + Codex H1: AWS compose must
+"""Sprint v1.43.4 — N1/N3/N4 + H1: AWS compose must
 match local compose on critical version pins so DAGs / migrations
 tested locally don't fail silently in prod.
 
-Claude N1 (closed in this sprint): infra/docker-compose.yml ran
+N1 (closed in this sprint): infra/docker-compose.yml ran
 Airflow 2.10.5 locally while infra/terraform/deploy/docker-compose.aws.yml
 ran Airflow 2.9.2 — a year's worth of upstream behavior drift.
 
@@ -48,7 +48,7 @@ def _versions_of(images: list[str], prefix: str) -> set[str]:
 
 
 def test_airflow_version_matches_local():
-    """The Claude N1 finding: local was 2.10.5, AWS was 2.9.2 — the
+    """The N1 finding: local was 2.10.5, AWS was 2.9.2 — the
     drift this hotfix closes. Lock the parity going forward."""
     local_versions = _versions_of(_images(LOCAL), "mode-airflow") \
         or _versions_of(_images(LOCAL), "apache/airflow")
@@ -381,11 +381,11 @@ def test_no_remaining_2_9_x_airflow_in_aws():
     src = AWS.read_text(encoding="utf-8")
     assert "apache/airflow:2.9." not in src, (
         "AWS compose still references apache/airflow:2.9.x — that's "
-        "the Claude N1 drift this sprint closed"
+        "the N1 drift this sprint closed"
     )
 
 
-# ── v1.43.4 (Claude N3): AWS healthchecks + service_healthy deps ──────────
+# ── v1.43.4 (N3): AWS healthchecks + service_healthy deps ──────────
 
 
 def _aws_services() -> dict:
@@ -405,7 +405,7 @@ _ONESHOT_INIT_SERVICES = {"superset-init", "airflow-init"}
 
 
 def test_all_aws_long_running_services_have_healthchecks():
-    """Claude N3: pre-v1.43.4 AWS compose had ZERO healthchecks — so
+    """N3: pre-v1.43.4 AWS compose had ZERO healthchecks — so
     ``depends_on`` only meant "container started", which races against
     Postgres init, mcp-infra warmup, etc. Every long-running service
     must now declare a healthcheck so dependents can wait on it."""
@@ -554,7 +554,7 @@ def test_console_next_runtime_removed_from_compose_and_release():
 
 
 def test_no_healthcheck_uses_localhost_string():
-    """The bug Codex found applies to every wget/curl-based healthcheck
+    """The localhost bug applies to every wget/curl-based healthcheck
     that addresses ``localhost``. Defensively assert ZERO usage across
     both compose files so a future copy-paste can't reintroduce the
     regression for a different service.

@@ -3,7 +3,7 @@
  *
  * 50 tests across the 7 documented studio tabs, the lateral
  * assistant, cartridge switcher, and the 7 USER-REPORTED BUGS
- * Codex's diagnostic confirmed. Tests live in this separate
+ * diagnostics confirmed. Tests live in this separate
  * "-deep" file so v1.44.3.2's 05-studio.spec.ts stays as the
  * focused user-report pin list; this file goes broader.
  *

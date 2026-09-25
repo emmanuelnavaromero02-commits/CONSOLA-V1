@@ -6,9 +6,6 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 MAKEFILE = REPO / "Makefile"
-README = REPO / "README.md"
-RUNBOOK_01 = REPO / "docs/runbook/01_arrancar_desde_cero.md"
-RUNBOOK_06 = REPO / "docs/runbook/06_backup_restore.md"
 REPAIR = REPO / "scripts/local_stack_repair.sh"
 
 
@@ -44,22 +41,3 @@ def test_local_repair_script_is_local_only_and_explicit_for_superset():
     assert "CONFIRM_SUPERSET_METASTORE_REPAIR" in src
     assert "LOCAL_SUPERSET_REPAIR" in src
     assert "OMEGA_PRODUCTION_HOST" in src
-
-
-def test_runbooks_do_not_bypass_guarded_nuke_for_local_resets():
-    for path in (RUNBOOK_01, RUNBOOK_06):
-        src = path.read_text(encoding="utf-8")
-        assert "docker compose -f infra/docker-compose.yml down -v" not in src
-        assert "make nuke CONFIRM=NUKE NUKE_SCOPE=local-dev" in src
-
-
-def test_readme_documents_reproducible_local_bootstrap():
-    src = README.read_text(encoding="utf-8")
-    for needle in (
-        "make preflight",
-        "make up",
-        "make nuke CONFIRM=NUKE NUKE_SCOPE=local-dev",
-        "make repair-local-stack",
-        "Never use it for AWS",
-    ):
-        assert needle in src

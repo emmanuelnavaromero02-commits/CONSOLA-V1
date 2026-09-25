@@ -1,4 +1,4 @@
-"""Sprint v1.43.1 — Codex P0-3: cartridges registered in mcp_servers.
+"""Sprint v1.43.1 — P0-3: cartridges registered in mcp_servers.
 
 Static verification of:
   * migration 42 SQL seeds the built-in cartridge rows and is idempotent.

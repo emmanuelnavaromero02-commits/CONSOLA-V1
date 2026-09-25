@@ -1,4 +1,4 @@
-"""Sprint v1.43.1 — Claude B1 + B2 + B3: SAP DAG hardening.
+"""Sprint v1.43.1 — B1 + B2 + B3: SAP DAG hardening.
 
 Each of the 6 SAP DAG modules must:
   * Read a scoped Airflow→cartridge key at task runtime (B1).

@@ -1,4 +1,4 @@
-"""Sprint v1.43.4 — Codex C1 BLOCKER: SAP cartridges' /mcp/tools
+"""Sprint v1.43.4 — C1 BLOCKER: SAP cartridges' /mcp/tools
 endpoint returned HTTP 500 because cartridges/sap_*/requirements.txt
 pinned ``fastmcp==2.5.0`` while cartridges/sap_*/app/main.py uses
 the fastmcp 3.x API (``mcp.list_tools()`` and ``mcp.get_tool()``,
@@ -77,7 +77,7 @@ def test_all_cartridges_pin_fastmcp_to_3_x():
         ), f"{cart} must pin fastmcp to >=3.x,<4.0; got:\n{src}"
         assert "fastmcp==2." not in src, (
             f"{cart} still references fastmcp 2.x — would reintroduce "
-            f"the Codex C1 AttributeError on /mcp/tools"
+            f"the C1 AttributeError on /mcp/tools"
         )
 
 

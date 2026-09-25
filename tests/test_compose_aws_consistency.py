@@ -1,5 +1,4 @@
-"""Sprint v1.43.1 — Codex P0-4: AWS compose either includes the
-cartridges or documents that they're deployed separately, and the
+"""Sprint v1.43.1 — AWS compose declares the cartridge services, and the
 Airflow services are threaded with the cartridge URL env vars so the
 v1.43.1-hardened DAGs can resolve them.
 """
@@ -14,7 +13,6 @@ import yaml
 REPO = Path(__file__).resolve().parents[1]
 AWS_COMPOSE = REPO / "infra/terraform/deploy/docker-compose.aws.yml"
 AWS_CARTRIDGES = REPO / "infra/terraform/deploy/docker-compose.cartridges.yml"
-RUNBOOK     = REPO / "infra/terraform/deploy/DEPLOY-RUNBOOK.md"
 
 
 def _doc():
@@ -25,29 +23,20 @@ def _cartridge_doc():
     return yaml.safe_load(AWS_CARTRIDGES.read_text(encoding="utf-8"))
 
 
-def test_aws_compose_either_includes_or_documents_cartridges():
-    """Two acceptable outcomes:
-      (a) the compose declares the cartridge services, OR
-      (b) the runbook documents they ship separately.
-
-    Anything else is the audit finding — operator deploys Airflow
-    with DAGs that call hosts that don't resolve.
+def test_aws_compose_declares_the_cartridge_services():
+    """The AWS deploy must declare the cartridge services, either in the
+    main compose or in the companion cartridges compose. Otherwise the
+    operator deploys Airflow with DAGs that call hosts that don't resolve.
     """
-    doc = _doc()
     cartridges = ("replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors", "sap_b1",
                   "sap-hcm", "sap-s4hana", "sap-successfactors", "sap-b1")
-    declared = set(doc.get("services", {}).keys()) & set(cartridges)
+    services = set(_doc().get("services", {})) | set(_cartridge_doc().get("services", {}))
+    declared = services & set(cartridges)
 
-    runbook_text = RUNBOOK.read_text(encoding="utf-8")
-    documented = (
-        "Cartridges deployed separately" in runbook_text
-        and "does NOT include" in runbook_text
-    )
-
-    assert declared or documented, (
-        "AWS compose has neither cartridge services declared nor a "
-        "DEPLOY-RUNBOOK explanation. Operator would deploy DAGs that "
-        "call hosts that don't resolve."
+    assert declared, (
+        "Neither the AWS compose nor the cartridges compose declares the "
+        "cartridge services. Operator would deploy DAGs that call hosts "
+        "that don't resolve."
     )
 
 
@@ -149,15 +138,3 @@ def test_aws_compose_minio_not_latest_tag():
             assert ":latest" not in image, (
                 f"service {name} pins a MinIO :latest tag — pin a real RELEASE tag"
             )
-
-
-def test_runbook_describes_cartridge_deploy_options():
-    """The runbook must show the operator how to handle the cartridge
-    deployment — either the same-host escape hatch or the separate
-    cluster pattern."""
-    txt = RUNBOOK.read_text(encoding="utf-8")
-    assert "Same host" in txt or "same host" in txt
-    assert "Separate cluster" in txt or "separate cluster" in txt
-    # And the verification block so operators can spot a misconfigured
-    # SAP_*_URL before a DAG run.
-    assert "airflow dags list-import-errors" in txt

@@ -1,4 +1,4 @@
-"""Sprint v1.43.1 — Claude B4: SQL injection via Parquet load_date.
+"""Sprint v1.43.1 — B4: SQL injection via Parquet load_date.
 
 ``_inject_latest_date`` substitutes ``{latest_date}`` into LLM-generated
 templates of the form ``WHERE load_date = '{latest_date}'``. Before

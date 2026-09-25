@@ -6,7 +6,7 @@
  *      RBAC regression; NOT 5xx — that would be a routing bug).
  *   2. With auth → expects 200/201 + a shape sanity check.
  *
- * Codex's diagnostic confirmed the backend currently returns 401
+ * Diagnostics confirmed the backend currently returns 401
  * for every protected endpoint without auth, which is the desired
  * baseline. These tests pin that baseline as a regression guard.
  */

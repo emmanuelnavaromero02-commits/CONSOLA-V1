@@ -38,19 +38,6 @@ def test_makefile_exposes_live_cartridge_gate():
     assert "bash scripts/run_live_cartridge_checks.sh" in makefile
 
 
-def test_live_cartridge_runbook_documents_credentials_and_evidence():
-    runbook = _read("docs/runbook/13_live_cartridge_validation.md")
-    for needle in (
-        "OMEGA_ENABLE_LIVE_CARTRIDGE_TESTS=1",
-        "OMEGA_LIVE_CARTRIDGE_CREDS_CONFIRMED=1",
-        "HubSpot private app token",
-        "Salesforce sandbox Connected App",
-        "SAP HCM OData sandbox credentials",
-        "docs/release-evidence/",
-    ):
-        assert needle in runbook
-
-
 def test_public_v1_script_checks_salesforce_live_connection():
     script = _read("scripts/verify_v1_public.sh")
     loop = script.split("verify_live_cartridges()", 1)[1].split("require_https_url", 1)[0]

@@ -48,14 +48,14 @@ def test_sec_retention_plans_only_complete_duplicate_and_debug_batches():
     manifests = {
         "raw/sec_edgar/company_facts/tenant_id=t/workspace_id=w/load_date=2026-07-13/batch_id=a/manifest.json": _manifest("company_facts", "a"),
         "raw/sec_edgar/company_facts/tenant_id=t/workspace_id=w/load_date=2026-07-13/batch_id=b/manifest.json": _manifest("company_facts", "b"),
-        "raw/sec_edgar/company_facts/tenant_id=t/workspace_id=w/load_date=2026-07-13/batch_id=codex-sec-debug-1/manifest.json": _manifest("company_facts", "codex-sec-debug-1", payload_hash="debug"),
+        "raw/sec_edgar/company_facts/tenant_id=t/workspace_id=w/load_date=2026-07-13/batch_id=manual-sec-debug-1/manifest.json": _manifest("company_facts", "manual-sec-debug-1", payload_hash="debug"),
         "raw/sec_edgar/company_metadata/tenant_id=t/workspace_id=w/load_date=2026-07-13/batch_id=pending/manifest.json": _manifest("company_metadata", "pending", status="pending"),
     }
     batches = retention.load_batches(FakeStorage(manifests))
     candidates = retention.plan_candidates(batches)
 
     assert len(batches) == 3
-    assert [item.run_id for item in candidates] == ["a", "codex-sec-debug-1"]
+    assert [item.run_id for item in candidates] == ["a", "manual-sec-debug-1"]
     assert {item.reason for item in candidates} == {"duplicate_complete_batch", "debug_batch"}
 
 

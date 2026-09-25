@@ -7,7 +7,7 @@ import secrets
 def _runtime_env() -> str:
     """Return the current runtime environment name (lowercased).
 
-    v1.43.2 (Codex P1-2): default flipped from ``development`` to
+    v1.43.2: default flipped from ``development`` to
     ``production``. A misconfigured deploy that forgets to set APP_ENV
     used to silently enable dangerous tools (airflow_create_dag,
     vault mutating ops, etc.). Now it falls back to the safer mode and

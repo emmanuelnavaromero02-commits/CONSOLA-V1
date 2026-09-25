@@ -138,7 +138,7 @@ preflight:
 demo-check:
 	@bash scripts/preflight.sh || true
 	@echo ""
-	@echo "Demo validation order (see docs/runbook/09_demo_beta.md):"
+	@echo "Demo validation order:"
 	@echo "  1) make preflight"
 	@echo "  2) docker compose -f infra/docker-compose.yml config -q"
 	@echo "  3) make up"

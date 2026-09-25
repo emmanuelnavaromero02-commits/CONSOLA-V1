@@ -2,7 +2,7 @@ import os
 import sys
 from pathlib import Path
 
-# v1.43.2 (Codex P1-2): production code now defaults APP_ENV to
+# v1.43.2: production code now defaults APP_ENV to
 # ``production`` so unset envs fail closed. Test runs explicitly
 # opt in to ``test`` mode — mirrors the compose-file pattern.
 # Without this, importing app.services.auth (which runs

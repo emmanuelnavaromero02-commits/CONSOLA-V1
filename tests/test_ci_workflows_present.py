@@ -1,4 +1,4 @@
-"""Sprint v1.43.2 (Claude B8) — CI workflows for lint + security.
+"""Sprint v1.43.2 — CI workflows for lint + security.
 
 Static structural checks: the .github/workflows/*.yml files exist, are
 well-formed YAML, and pin their tooling versions so a future ruff /

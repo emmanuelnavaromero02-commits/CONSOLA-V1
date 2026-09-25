@@ -1,7 +1,7 @@
 /**
  * v1.44.3.2 spec 08 — External service surfaces.
  *
- * Codex's diagnostic flagged two specific port confusions:
+ * Diagnostics flagged two specific port confusions:
  *   - Airflow is on :8082 in the local compose (NOT :8080).
  *   - Superset reports docker healthy but doesn't always respond.
  *
