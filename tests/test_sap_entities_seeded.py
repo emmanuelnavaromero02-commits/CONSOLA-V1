@@ -77,8 +77,11 @@ def test_live_sap_entities_seeded_in_entity_config():
     psycopg2 = pytest.importorskip("psycopg2")
     try:
         conn = psycopg2.connect(_postgres_dsn(), connect_timeout=2)
-    except Exception as exc:
-        pytest.skip(f"Postgres stack not reachable for live SAP seed check: {exc}")
+    except Exception:
+        # A fixed reason on purpose: the release skip policy authorizes exact
+        # (nodeid, phase, reason) tuples, and the driver's message is
+        # environment-specific text that could never be authorized.
+        pytest.skip("requires a reachable Postgres with the platform schema (DATABASE_URL)")
 
     with conn, conn.cursor() as cur:
         cur.execute(
