@@ -13,16 +13,20 @@ from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 import duckdb
 import psycopg2
 from psycopg2.extras import execute_values
+import pyarrow.parquet as pq
 import sqlglot
 from sqlglot import exp as _sqlglot_exp
 
 from omega_lakehouse import ObjectAlreadyExists, storage_from_env
+from omega_lakehouse.checksums import sha256_file
 
 try:
+    import app.partitioned_parquet as partitioned_parquet
     from app.duckdb_runtime import connect_duckdb_runtime
     from app.sql_table_function_policy import validate_table_function_query
     from app.storage_scope_policy import has_exact_storage_scope
 except ModuleNotFoundError:
+    import refinement.app.partitioned_parquet as partitioned_parquet
     from refinement.app.duckdb_runtime import connect_duckdb_runtime
     from refinement.app.sql_table_function_policy import validate_table_function_query
     from refinement.app.storage_scope_policy import has_exact_storage_scope
@@ -36,6 +40,31 @@ DUCKDB_MEMORY_LIMIT_RE = re.compile(
     r"^\d+(?:\.\d+)?\s*(?:B|KB|MB|GB|TB|KiB|MiB|GiB|TiB)$", re.IGNORECASE
 )
 DUCKDB_TEMP_DIRECTORY_RE = re.compile(r"^/[^\0'\"\n\r]*$")
+DUCKDB_SIZE_UNITS = {
+    "b": 1,
+    "kb": 1000,
+    "mb": 1000**2,
+    "gb": 1000**3,
+    "tb": 1000**4,
+    "kib": 1024,
+    "mib": 1024**2,
+    "gib": 1024**3,
+    "tib": 1024**4,
+}
+CGROUP_MEMORY_LIMIT_FILES = (
+    "/sys/fs/cgroup/memory.max",
+    "/sys/fs/cgroup/memory/memory.limit_in_bytes",
+)
+UNBOUNDED_CGROUP_BYTES = 1 << 60
+DUCKDB_CONTAINER_MEMORY_FRACTION = 0.7
+DUCKDB_FALLBACK_MEMORY_LIMIT = "1GB"
+DUCKDB_PRODUCTION_TEMP_DIRECTORY = "/var/lib/omega/duckdb-spill"
+PARTITION_MANIFEST_READER_RE = re.compile(
+    r"(\bread_parquet\s*\(\s*)'((?:s3|gs)://[^'\s]+/"
+    + partitioned_parquet.PARTITION_SET_DIRECTORY
+    + r"/[0-9a-f]{64}\.parquet)'",
+    re.IGNORECASE,
+)
 
 
 def _normalize_postgres_dsn(raw: str) -> str:
@@ -69,6 +98,49 @@ def _duckdb_memory_limit_from_env(raw: str | None) -> str:
     if not DUCKDB_MEMORY_LIMIT_RE.fullmatch(value):
         raise ValueError("DUCKDB_MEMORY_LIMIT must look like 512MB, 1GB or 1024MiB")
     return value
+
+
+def _duckdb_size_bytes(value: str) -> int:
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)\s*([A-Za-z]+)", (value or "").strip())
+    unit = match.group(2).lower() if match else ""
+    if unit not in DUCKDB_SIZE_UNITS:
+        raise ValueError("DuckDB sizes must look like 512MB, 1GB or 1024MiB")
+    return int(float(match.group(1)) * DUCKDB_SIZE_UNITS[unit])
+
+
+def _container_memory_limit_bytes(
+    paths: tuple[str, ...] = CGROUP_MEMORY_LIMIT_FILES,
+) -> int | None:
+    for path in paths:
+        try:
+            raw = Path(path).read_text(encoding="ascii").strip()
+        except (OSError, UnicodeDecodeError):
+            continue
+        if raw.isdigit() and 0 < int(raw) < UNBOUNDED_CGROUP_BYTES:
+            return int(raw)
+        return None
+    return None
+
+
+def _effective_duckdb_memory_limit(
+    configured: str, container_bytes: int | None
+) -> str:
+    candidates: list[tuple[int, str]] = []
+    if configured:
+        candidates.append((_duckdb_size_bytes(configured), configured))
+    if container_bytes:
+        mib = max(1, int(container_bytes * DUCKDB_CONTAINER_MEMORY_FRACTION) // 1024**2)
+        candidates.append((mib * 1024**2, f"{mib}MiB"))
+    if not candidates:
+        return DUCKDB_FALLBACK_MEMORY_LIMIT
+    return min(candidates, key=lambda item: item[0])[1]
+
+
+def _is_production_env() -> bool:
+    return os.environ.get("APP_ENV", "production").strip().lower() in {
+        "production",
+        "prod",
+    }
 
 
 def _duckdb_temp_directory_from_env(raw: str | None) -> str:
@@ -217,13 +289,14 @@ class DuckDBEngine:
         )
         self.pg_url = os.environ.get("DATABASE_URL", "")
         self.pg_gold_url = os.environ.get("GOLD_DATABASE_URL", "") or self.pg_url
-        self.duckdb_memory_limit = _duckdb_memory_limit_from_env(
-            os.environ.get("DUCKDB_MEMORY_LIMIT")
+        self.duckdb_memory_limit = _effective_duckdb_memory_limit(
+            _duckdb_memory_limit_from_env(os.environ.get("DUCKDB_MEMORY_LIMIT")),
+            _container_memory_limit_bytes(),
         )
         self.duckdb_threads = _duckdb_threads_from_env(os.environ.get("DUCKDB_THREADS"))
         self.duckdb_temp_directory = _duckdb_temp_directory_from_env(
             os.environ.get("DUCKDB_TEMP_DIRECTORY")
-        )
+        ) or (DUCKDB_PRODUCTION_TEMP_DIRECTORY if _is_production_env() else "")
         self.duckdb_max_temp_directory_size = _duckdb_max_temp_directory_size_from_env(
             os.environ.get("DUCKDB_MAX_TEMP_DIRECTORY_SIZE")
         )
@@ -278,6 +351,7 @@ class DuckDBEngine:
                     self._con.execute(
                         f"SET memory_limit={_sql_quote(self.duckdb_memory_limit)};"
                     )
+                self._con.execute("SET preserve_insertion_order=false;")
                 if self.duckdb_threads is not None:
                     self._con.execute(f"SET threads={self.duckdb_threads};")
                 if self.duckdb_temp_directory:
@@ -615,6 +689,40 @@ class DuckDBEngine:
                         _replace_dataset_refs(layer, cartridge, name, latest)
         return out
 
+    def _expand_partition_manifests(self, sql: str, user_context: dict | None) -> str:
+        marker = f"/{partitioned_parquet.PARTITION_SET_DIRECTORY}/"
+        if marker not in (sql or ""):
+            return sql
+        tenant, workspace = self._scope_values(user_context)
+        expanded: dict[str, str] = {}
+
+        def replace(match: re.Match) -> str:
+            uri = match.group(2)
+            key = self._s3_object_key(uri)
+            if not key or (
+                tenant and workspace and not has_exact_storage_scope(key, tenant, workspace)
+            ):
+                return match.group(0)
+            if uri not in expanded:
+                expanded[uri] = self._parquet_reader_argument(uri)
+            return match.group(1) + expanded[uri]
+
+        return PARTITION_MANIFEST_READER_RE.sub(replace, sql)
+
+    def _partition_part_uris(self, uri: str) -> list[str] | None:
+        key = self._s3_object_key(uri)
+        if not key or not partitioned_parquet.is_manifest_key(key):
+            return None
+        manifest = partitioned_parquet.read_manifest(self.storage.get_bytes(key), key)
+        base = uri[: len(uri) - len(key)]
+        return [base + str(part["key"]) for part in manifest["parts"]]
+
+    def _parquet_reader_argument(self, uri: str) -> str:
+        parts = self._partition_part_uris(uri)
+        if not parts:
+            return _sql_quote(uri)
+        return "[" + ", ".join(_sql_quote(part) for part in parts) + "]"
+
     def _validate_scoped_storage_sql(self, sql: str, user_context: dict | None) -> None:
         tenant, workspace = self._scope_values(user_context)
         if not tenant or not workspace:
@@ -699,9 +807,117 @@ class DuckDBEngine:
             raise last_error
         return parquet_path
 
-    def _copy_to_parquet(
-        self, con: duckdb.DuckDBPyConnection, sql: str, parquet_path: str
+    def _partition_set_key(self, parquet_path: str) -> str:
+        key = self._s3_object_key(parquet_path)
+        if not key or not key.endswith(".parquet"):
+            raise ValueError("partitioned materialization requires managed storage")
+        return f"{key[: -len('.parquet')]}/{partitioned_parquet.PARTITION_SET_DIRECTORY}"
+
+    def _put_partition_object(
+        self, local_path: Path, key: str, digest: str
+    ) -> tuple[str, str]:
+        try:
+            result = self.storage.put_file(
+                key, Path(local_path), overwrite=False, checksum_sha256=digest
+            )
+        except ObjectAlreadyExists:
+            stat = self.storage.stat(key)
+            if stat.checksum_sha256 and stat.checksum_sha256 != digest:
+                raise RuntimeError("partition object checksum mismatch") from None
+            return self.storage.uri_for(key), str(stat.version or "")
+        return result.uri, str(result.version or "")
+
+    def _require_stable_partition_types(
+        self, con: duckdb.DuckDBPyConnection, column: str, paths: list[Path]
+    ) -> None:
+        listing = "[" + ", ".join(_sql_quote(str(path)) for path in paths) + "]"
+        typed = con.execute(
+            f"DESCRIBE SELECT * FROM read_parquet({listing}, hive_partitioning=false)"
+        ).fetchall()
+        hive = con.execute(
+            f"DESCRIBE SELECT * FROM read_parquet({listing}, hive_partitioning=true)"
+        ).fetchall()
+        if [row[:2] for row in typed] != [row[:2] for row in hive]:
+            raise ValueError(
+                f"partition_by column {column} changes type when read as a hive "
+                "partition; partition by a VARCHAR such as 'YYYY-MM'"
+            )
+
+    def _copy_partitioned_parquet(
+        self,
+        con: duckdb.DuckDBPyConnection,
+        sql: str,
+        parquet_path: str,
+        partition_by: str,
     ) -> str:
+        set_key = self._partition_set_key(parquet_path)
+        columns = [
+            str(row[0])
+            for row in con.execute(
+                f"DESCRIBE SELECT * FROM ({sql}) _partition_probe LIMIT 0"
+            ).fetchall()
+        ]
+        matches = [name for name in columns if name.lower() == partition_by.lower()]
+        if len(matches) != 1:
+            raise ValueError(
+                f"partition_by column {partition_by} is not produced by the dataset"
+            )
+        column = matches[0]
+        validate_safe_identifier(column, "partition column")
+        with tempfile.TemporaryDirectory(prefix="omega-partitioned-") as tmp:
+            root = Path(tmp) / "parts"
+            con.execute(
+                f"COPY ({sql}) TO {_sql_quote(str(root))} (FORMAT PARQUET, "
+                f'PARTITION_BY ("{column}"), WRITE_PARTITION_COLUMNS true)'
+            )
+            files = partitioned_parquet.local_partition_files(root, column)
+            if files:
+                self._require_stable_partition_types(
+                    con, column, [path for _value, path in files]
+                )
+                schema = pq.read_schema(files[0][1])
+            else:
+                empty = Path(tmp) / "empty.parquet"
+                con.execute(
+                    f"COPY (SELECT * FROM ({sql}) _partition_schema LIMIT 0) "
+                    f"TO {_sql_quote(str(empty))} (FORMAT PARQUET)"
+                )
+                schema = pq.read_schema(empty)
+            expected = partitioned_parquet.schema_fields(schema)
+            parts: list[dict] = []
+            for index, (value, path) in enumerate(files):
+                metadata = pq.ParquetFile(path)
+                if partitioned_parquet.schema_fields(metadata.schema_arrow) != expected:
+                    raise RuntimeError("partition files disagree on the dataset schema")
+                digest = sha256_file(path)
+                key = partitioned_parquet.part_key(set_key, column, value, index, digest)
+                _uri, version = self._put_partition_object(path, key, digest)
+                parts.append(
+                    {
+                        "key": key,
+                        "value": value,
+                        "checksum": digest,
+                        "rows": int(metadata.metadata.num_rows),
+                        "version": version,
+                    }
+                )
+            manifest = Path(tmp) / "manifest.parquet"
+            partitioned_parquet.write_manifest(manifest, schema, column, parts)
+            digest = sha256_file(manifest)
+            uri, _version = self._put_partition_object(
+                manifest, f"{set_key}/{digest}.parquet", digest
+            )
+            return uri
+
+    def _copy_to_parquet(
+        self,
+        con: duckdb.DuckDBPyConnection,
+        sql: str,
+        parquet_path: str,
+        partition_by: str | None = None,
+    ) -> str:
+        if partition_by:
+            return self._copy_partitioned_parquet(con, sql, parquet_path, partition_by)
         key = self._s3_object_key(parquet_path)
         if not key:
             con.execute(
@@ -736,12 +952,13 @@ class DuckDBEngine:
     ) -> None:
         prefix = self._snapshot_prefix(layer, cartridge, name, user_context)
         try:
-            objects = sorted(
-                [obj.key for obj in self.storage.iter_list(prefix)],
-                reverse=True,
-            )
-            for object_name in objects[keep:]:
-                self.storage.delete_object(object_name)
+            snapshots: dict[str, list[str]] = {}
+            for obj in self.storage.iter_list(prefix):
+                entry = str(obj.key).removeprefix(prefix).split("/", 1)[0]
+                snapshots.setdefault(entry, []).append(obj.key)
+            for entry in sorted(snapshots, reverse=True)[keep:]:
+                for object_name in sorted(snapshots[entry]):
+                    self.storage.delete_object(object_name)
         except Exception:
             pass
 
@@ -1091,8 +1308,9 @@ class DuckDBEngine:
                 con = self._conn()
 
                 effective_sql = self._inject_bucket(rls_sql)
-                effective_sql = self._scope_storage_sql(
-                    effective_sql, sources or [], user_context
+                effective_sql = self._expand_partition_manifests(
+                    self._scope_storage_sql(effective_sql, sources or [], user_context),
+                    user_context,
                 )
                 effective_sql = self._inject_latest_date(
                     effective_sql, sources or [], user_context
@@ -1206,8 +1424,9 @@ class DuckDBEngine:
                 rls_sql, rls_params = self.get_rls_filters(sql, user_context or {})
                 con = self._conn()
                 effective_sql = self._inject_bucket(rls_sql)
-                effective_sql = self._scope_storage_sql(
-                    effective_sql, sources, user_context
+                effective_sql = self._expand_partition_manifests(
+                    self._scope_storage_sql(effective_sql, sources, user_context),
+                    user_context,
                 )
                 effective_sql = self._inject_latest_date(
                     effective_sql, sources, user_context
@@ -1607,8 +1826,10 @@ class DuckDBEngine:
         tenant: str,
         workspace: str,
         user_context: dict | None,
+        partition_by: str | None = None,
     ) -> str:
         self._pg_gold_attach(con, user_context)
+        options = {"partition_by": partition_by} if partition_by else {}
         return self._copy_to_parquet(
             con,
             (
@@ -1617,6 +1838,7 @@ class DuckDBEngine:
                 f"AND workspace_id = {_sql_quote(workspace)}"
             ),
             storage_path,
+            **options,
         )
 
     def materialize(self, ds: dict, user_context: dict | None = None) -> dict:
@@ -1672,13 +1894,17 @@ class DuckDBEngine:
         sql = ds["sql_def"]
         self._validate_safe_sql(sql)
         sources = ds.get("sources") or []
+        partition_by = partitioned_parquet.partition_column_from_sql(sql)
+        partition_options = {"partition_by": partition_by} if partition_by else {}
         with self._duckdb_lock:
             con = self._conn()
             storage_uri = ""
             row_count = 0
 
             sql = self._inject_bucket(sql)
-            sql = self._scope_storage_sql(sql, sources, user_context)
+            sql = self._expand_partition_manifests(
+                self._scope_storage_sql(sql, sources, user_context), user_context
+            )
             self._validate_scoped_storage_sql(sql, user_context)
 
             if layer == "gold":
@@ -1724,6 +1950,7 @@ class DuckDBEngine:
                     tenant,
                     workspace,
                     user_context,
+                    **partition_options,
                 )
                 storage_uri = f"postgres_gold:{table}"
                 if gold_storage_uri:
@@ -1748,15 +1975,22 @@ class DuckDBEngine:
                 parquet_path = self._snapshot_path(
                     "silver", cartridge, name, user_context
                 )
-                storage_uri = self._copy_to_parquet(con, effective_sql, parquet_path)
+                storage_uri = self._copy_to_parquet(
+                    con, effective_sql, parquet_path, **partition_options
+                )
+                silver_relation = (
+                    f"read_parquet({self._parquet_reader_argument(storage_uri)})"
+                    if partition_by
+                    else f"read_parquet('{storage_uri}')"
+                )
                 row_count = con.execute(
-                    f"SELECT COUNT(*) FROM read_parquet('{storage_uri}')"
+                    f"SELECT COUNT(*) FROM {silver_relation}"
                 ).fetchone()[0]
 
             try:
                 if layer == "silver":
                     schema_rows = con.execute(
-                        f"DESCRIBE SELECT * FROM read_parquet('{storage_uri}') LIMIT 0"
+                        f"DESCRIBE SELECT * FROM {silver_relation} LIMIT 0"
                     ).fetchall()
                 else:
                     self._pg_gold_attach(con, user_context)
@@ -1770,9 +2004,7 @@ class DuckDBEngine:
             if schema_fields:
                 try:
                     relation_expr = (
-                        f"read_parquet('{storage_uri}')"
-                        if layer == "silver"
-                        else f"pggold.gold_{name}"
+                        silver_relation if layer == "silver" else f"pggold.gold_{name}"
                     )
                     column_stats = self._profile_columns(con, relation_expr)
                     for field in schema_fields:

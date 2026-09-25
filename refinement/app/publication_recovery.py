@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import io
 from typing import Any
 
 import pyarrow as pa
-import pyarrow.parquet as pq
 
 
 def _recovery_reason(error: Exception) -> str:
@@ -51,13 +49,9 @@ def _postgres_type(field: pa.Field) -> str:
 class PublicationRecoveryMixin:
 
     def _rebuild_gold_stage(self, identity: Any, values: dict[str, Any]) -> str:
-        key = self._s3_object_key(str(values["object_uri"]))
-        if not key:
-            raise RuntimeError("prepared materialization object is outside storage")
-        raw = self.storage.get_bytes(
-            key, expected_version=str(values["object_version"])
+        table = self._read_published_table(
+            str(values["object_uri"]), str(values["object_version"])
         )
-        table = pq.read_table(io.BytesIO(raw))
         if table.num_rows != int(values["row_count"]):
             raise RuntimeError("prepared materialization row count mismatch")
         columns = [
