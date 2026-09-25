@@ -3,179 +3,432 @@
   app_id: sap_b1_abasto
   name: Abasto SAP Business One
   cartridge: sap_b1
-  datasets: [sap_b1_item_coverage]
+  datasets: [sap_b1_item_coverage, sap_b1_material_cost_variance, sap_b1_supplier_lead_time]
 -->
-<html lang="es" data-theme="dark">
+<html lang="es-MX">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Abasto — SAP Business One</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"
+        integrity="sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ"
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <style>
-  :root{--bg:#0d1117;--bg2:#161b22;--border:#30363d;--text1:#e6edf3;--text2:#8b949e;--text3:#6e7681;
-        --blue:#7c9fff;--green:#3fb950;--amber:#d29922;--red:#f85149;--purple:#bc8cff}
+  :root{color-scheme:light;
+    --bg:#f5f7fa;--bg2:#ffffff;--bg3:#eef2f7;--border:#d8dee8;--text1:#0f172a;--text2:#334155;--text3:#64748b;
+    --green:#117a3d;--blue:#0a6ed1;--amber:#b06d00;--red:#b3261e;--purple:#6d5bd0;
+    --s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;
+    --h0:#cde2fb;--h1:#9ec5f4;--h2:#6da7ec;--h3:#3987e5;--h4:#256abf;--h5:#184f95;--h6:#0d366b;
+    --h0t:#0f172a;--h1t:#0f172a;--h2t:#0f172a;--h3t:#0f172a;--h4t:#ffffff;--h5t:#ffffff;--h6t:#ffffff}
+  :root[data-theme="dark"]{color-scheme:dark;
+    --bg:#0f1822;--bg2:#182331;--bg3:#1f2c3d;--border:rgba(226,232,240,.14);--text1:#e6edf6;--text2:#c5cfdc;--text3:#8a96a8;
+    --green:#4cb27b;--blue:#4ea3e0;--amber:#d4a042;--red:#e0716b;--purple:#b8a7f5;
+    --s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#c98500;
+    --h0:#0d366b;--h1:#184f95;--h2:#256abf;--h3:#3987e5;--h4:#6da7ec;--h5:#9ec5f4;--h6:#cde2fb;
+    --h0t:#e6edf6;--h1t:#e6edf6;--h2t:#ffffff;--h3t:#0f172a;--h4t:#0f172a;--h5t:#0f172a;--h6t:#0f172a}
   *{box-sizing:border-box}
-  body{margin:0;padding:22px;background:var(--bg);color:var(--text1);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;font-size:13px}
-  h1{font-size:18px;margin:0 0 2px}
-  .subtitle{color:var(--text2);font-size:11px;margin-bottom:16px}
-  .controls{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
-  .controls label{color:var(--text2);font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:600}
-  select,input{background:var(--bg2);color:var(--text1);border:1px solid var(--border);border-radius:6px;padding:7px 10px;font-size:12px}
-  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:18px}
-  .kpi{background:var(--bg2);border:1px solid var(--border);border-left:3px solid var(--accent,var(--blue));border-radius:8px;padding:14px 16px}
-  .kpi .l{font-size:9px;color:var(--text2);letter-spacing:1.2px;font-weight:600;text-transform:uppercase;margin-bottom:8px}
-  .kpi .v{font-size:22px;font-weight:700}
-  .kpi .s{font-size:10px;color:var(--text3);margin-top:6px}
-  .grid{display:grid;grid-template-columns:1fr 2fr;gap:16px}
-  .section{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px}
+  body{margin:0;padding:20px;background:var(--bg);color:var(--text1);font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
+  h1{font-size:19px;margin:0}
+  h2{font-size:12px;color:var(--text2);text-transform:uppercase;letter-spacing:.8px;font-weight:700;margin:0 0 10px}
+  h3{font-size:12px;margin:14px 0 6px;color:var(--text1)}
+  :focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  .top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+  .subtitle{color:var(--text2);margin:4px 0 0;max-width:760px}
+  .apps{display:flex;gap:6px;flex-wrap:wrap}
+  .apps a{padding:6px 12px;border:1px solid var(--border);border-radius:999px;color:var(--text2);text-decoration:none;font-weight:600;font-size:12px;background:var(--bg2)}
+  .apps a[href]:hover{color:var(--blue);border-color:var(--blue)}
+  .apps a[aria-current]{color:var(--blue);border-color:var(--blue)}
+  .controls{display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px}
+  .controls label{display:flex;flex-direction:column;gap:4px;color:var(--text2);font-size:11px;font-weight:600}
+  select,input{background:var(--bg2);color:var(--text1);border:1px solid var(--border);border-radius:6px;padding:7px 10px;font-size:13px;min-height:34px}
+  .meta{color:var(--text3);font-size:12px;padding-bottom:8px}
+  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:14px;overflow-x:auto;scrollbar-width:none}
+  .tabs [role=tab]{background:none;border:0;border-bottom:2px solid transparent;color:var(--text2);padding:9px 12px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap}
+  .tabs [role=tab][aria-selected=true]{color:var(--blue);border-bottom-color:var(--blue)}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:14px}
+  @media (min-width:700px){.kpis{grid-template-columns:repeat(3,minmax(0,1fr))}}
+  @media (min-width:1150px){.kpis{grid-template-columns:repeat(5,minmax(0,1fr))}}
+  .kpi{background:var(--bg2);border:1px solid var(--border);border-top:3px solid var(--accent,var(--blue));border-radius:8px;padding:12px 14px;min-width:0}
+  .kpi h3{margin:0 0 6px;font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;cursor:help}
+  .kpi .v{font-size:21px;font-weight:700;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+  .kpi .v small{font-size:12px;font-weight:600;color:var(--text2)}
+  .kpi .s{font-size:12px;color:var(--text2);margin-top:4px}
+  .kpi ul{list-style:none;margin:4px 0 0;padding:0;font-size:12px;color:var(--text2)}
+  .kpi li{display:flex;justify-content:space-between;gap:8px}
+  .kpi ul.stack li{display:block;margin-top:4px} .kpi ul.stack strong{display:block;color:var(--text1)}
+  details.formula{margin-top:8px;font-size:11px;color:var(--text3)}
+  details.formula summary{cursor:pointer;color:var(--text2)}
+  details.formula p{margin:6px 0 0}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .card{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px;min-width:0}
   .full{grid-column:1/-1}
-  .title{font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:1px;font-weight:600;margin-bottom:12px}
+  .split{display:grid;grid-template-columns:minmax(0,1fr);gap:14px}
+  @media (min-width:1200px){.split{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr)}}
+  .hint{color:var(--text3);margin:0 0 10px;font-size:12px}
   .chart{position:relative;height:280px}
+  .chart-off{color:var(--text3);font-style:italic;margin:0;padding:12px 0}
+  .chart.off{height:auto!important}
+  .tw{overflow:auto;max-width:100%}
+  .tw.tall{max-height:460px}
   table{width:100%;border-collapse:collapse;font-size:12px}
-  th,td{text-align:left;padding:7px 9px;border-bottom:1px solid var(--border)}
-  th{color:var(--text2);font-size:10px;text-transform:uppercase}
-  td.n{text-align:right;font-variant-numeric:tabular-nums}
-  .ok{background:rgba(63,185,80,.18)} .warn{background:rgba(210,153,34,.22)} .bad{background:rgba(248,81,73,.25)} .none{color:var(--text3)}
-  .empty{padding:24px;text-align:center;color:var(--text3);font-style:italic}
-  .error{background:rgba(248,81,73,.12);color:var(--red);border:1px solid var(--red);padding:12px;border-radius:6px;margin-bottom:14px}
-  .note{color:var(--text3);font-size:11px;margin-top:10px}
-  @media(max-width:900px){.grid{grid-template-columns:1fr}}
+  caption{text-align:left;color:var(--text3);font-size:11px;padding:0 0 6px}
+  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top}
+  thead th{color:var(--text2);font-size:11px;font-weight:700;position:sticky;top:0;background:var(--bg2);z-index:1}
+  td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  tbody th{font-weight:600}
+  tbody th[scope=row]{min-width:140px}
+  tr.sel td,tr.sel th{background:var(--bg3)}
+  .link{background:none;border:0;padding:0;color:var(--blue);font:inherit;font-weight:600;cursor:pointer;text-align:left}
+  .link:hover{text-decoration:underline}
+  .st{display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap;color:var(--text1);background:var(--bg3)}
+  .st i{font-style:normal;font-weight:800}
+  .st-ok{background:color-mix(in srgb,var(--green) 16%,transparent)} .st-ok i{color:var(--green)}
+  .st-warn{background:color-mix(in srgb,var(--amber) 20%,transparent)} .st-warn i{color:var(--amber)}
+  .st-bad{background:color-mix(in srgb,var(--red) 16%,transparent)} .st-bad i{color:var(--red)}
+  .st-none{color:var(--text3)}
+  .heat td.hc{text-align:center;padding:0;min-width:58px;border:2px solid var(--bg2);border-radius:4px}
+  .heat td.hc>span,.heat td.hc>button{display:block;width:100%;padding:6px 4px;font:inherit;font-weight:600;font-variant-numeric:tabular-nums;color:inherit;background:none;border:0}
+  .heat td.hc>button{cursor:pointer}
+  .heat td.hc small{display:block;font-size:10px;font-weight:600;opacity:.9}
+  .heat th{white-space:nowrap}
+  .heat td.hc.picked{outline:2px solid var(--text1);outline-offset:-2px}
+  .h0{background:var(--h0);color:var(--h0t)} .h1{background:var(--h1);color:var(--h1t)} .h2{background:var(--h2);color:var(--h2t)}
+  .h3{background:var(--h3);color:var(--h3t)} .h4{background:var(--h4);color:var(--h4t)} .h5{background:var(--h5);color:var(--h5t)}
+  .h6{background:var(--h6);color:var(--h6t)} .hn{color:var(--text3)}
+  .legend{display:flex;align-items:center;gap:8px;flex-wrap:wrap;color:var(--text3);font-size:11px;margin-top:8px}
+  .ramp{display:inline-flex;gap:2px}
+  .ramp i{display:inline-block;width:18px;height:10px;border-radius:2px}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+  .chips button{background:var(--bg2);color:var(--text2);border:1px solid var(--border);border-radius:999px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer}
+  .chips button[aria-pressed=true]{color:var(--blue);border-color:var(--blue)}
+  .btn{background:var(--bg2);color:var(--text1);border:1px solid var(--border);border-radius:6px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer}
+  .btn:hover{border-color:var(--blue);color:var(--blue)}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:space-between}
+  .summary{font-size:15px;font-weight:700}
+  textarea{width:100%;min-height:160px;background:var(--bg);color:var(--text1);border:1px solid var(--border);border-radius:6px;font:11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;padding:8px}
+  .empty{padding:18px;text-align:center;color:var(--text3);font-style:italic;margin:0}
+  .note{color:var(--text3);font-size:11px;margin:8px 0 0}
+  .error{background:color-mix(in srgb,var(--red) 12%,transparent);color:var(--text1);border:1px solid var(--red);padding:10px 12px;border-radius:6px;margin-bottom:12px}
+  .muted{color:var(--text3)}
+  @media (max-width:900px){.grid{grid-template-columns:1fr}}
+  @media (max-width:560px){body{padding:16px}.kpis{grid-template-columns:1fr 1fr}.kpi .v{font-size:18px}.chart{height:240px}}
+  @media (max-width:380px){.kpis{grid-template-columns:1fr}}
+</style>
+<style>
+  .lights{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}
+  .light{text-align:left;background:var(--bg2);color:var(--text1);border:1px solid var(--border);border-radius:8px;padding:10px 12px;cursor:pointer;font:inherit}
+  .light[aria-pressed=true]{border-color:var(--blue);box-shadow:inset 0 0 0 1px var(--blue)}
+  .light .v{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:4px}
+  .light .s{font-size:12px;color:var(--text2)}
+  td.nowrap{white-space:nowrap}
+  @media (min-width:700px){.kpis.three{grid-template-columns:repeat(3,minmax(0,1fr))}}
 </style>
 </head>
 <body>
-  <h1>◆ Abasto · SAP Business One</h1>
-  <div class="subtitle">Cobertura por artículo con y sin órdenes abiertas · riesgo de quiebre · pedido sugerido · mínimos recalculados</div>
-  <div id="error"></div>
-  <div class="controls">
-    <label for="company">Empresa</label><select id="company"></select>
-    <label for="color">Estado</label>
-    <select id="color">
-      <option value="">Todos</option>
-      <option value="rojo">Riesgo de quiebre</option>
-      <option value="amarillo">Bajo punto de reorden</option>
-      <option value="verde">Cubierto</option>
-      <option value="sin_consumo">Sin consumo</option>
-    </select>
-    <label for="search">Artículo</label><input id="search" placeholder="código o nombre">
+<header class="top">
+  <div>
+    <h1>Abasto · SAP Business One</h1>
+    <p class="subtitle">Cobertura de materias primas y artículos contra el consumo y el plan de producción, órdenes de compra contra necesidad, costo real contra estándar y cumplimiento de proveedores.</p>
   </div>
-  <div class="kpis" id="kpis"></div>
-  <div class="grid">
-    <div class="section">
-      <div class="title">Días de cobertura con órdenes abiertas</div>
-      <div class="chart"><canvas id="buckets"></canvas></div>
-    </div>
-    <div class="section">
-      <div class="title">Pedidos sugeridos (a más tardar)</div>
-      <div id="orders" style="max-height:280px;overflow-y:auto"></div>
-    </div>
-    <div class="section full">
-      <div class="title" id="table-title">Artículos</div>
-      <div id="items" style="max-height:520px;overflow:auto"></div>
-      <div class="note" id="note"></div>
-    </div>
-  </div>
+  <nav class="apps" aria-label="Aplicaciones de SAP Business One">
+    <a href="/analytics/viewer?app=sap_b1_margen" target="_top">Margen</a>
+    <a href="/analytics/viewer?app=sap_b1_sellout" target="_top">Sell-out y caducidad</a>
+    <a aria-current="page">Abasto</a>
+  </nav>
+</header>
+<div id="error" role="alert"></div>
+<div class="controls">
+  <label for="company">Empresa<select id="company"></select></label>
+  <label for="period">Mes de compras<select id="period"></select></label>
+  <span class="meta" id="meta"></span>
+</div>
+
+<h2 id="h-light">Semáforo de cobertura a 30 y 60 días</h2>
+<div class="lights" id="lights" role="group" aria-labelledby="h-light"></div>
+
+<div class="kpis three" id="kpis"></div>
+
+<div class="grid">
+  <section class="card full" aria-labelledby="h-crit">
+    <h2 id="h-crit">Materias primas críticas (top 30 por consumo)</h2>
+    <div class="chart" id="crit-chart"><canvas id="c-crit" role="img" aria-label="Días de cobertura con órdenes de las materias primas críticas"></canvas><p class="chart-off" hidden>La gráfica no está disponible; los datos están en la tabla.</p></div>
+    <div id="crit"></div>
+  </section>
+  <section class="card full" aria-labelledby="h-sug">
+    <h2 id="h-sug">Pedidos sugeridos</h2>
+    <div id="sug"></div>
+  </section>
+  <section class="card full" aria-labelledby="h-cost">
+    <h2 id="h-cost">Costo real contra estándar</h2>
+    <div id="cost"></div>
+  </section>
+  <section class="card full" aria-labelledby="h-lead">
+    <h2 id="h-lead">Proveedores con tiempo de entrega incumplido</h2>
+    <div id="lead"></div>
+  </section>
+  <section class="card full" aria-labelledby="h-items">
+    <h2 id="h-items">Artículos</h2>
+    <div class="controls"><label for="search">Buscar artículo<input id="search" placeholder="código o nombre" autocomplete="off"></label><span class="meta" id="items-meta"></span></div>
+    <div id="items"></div>
+  </section>
+</div>
+
 <script>
-const num = n => n==null ? '—' : Number(n).toLocaleString('es-MX',{maximumFractionDigits:0});
-const dec = n => n==null ? '—' : Number(n).toLocaleString('es-MX',{maximumFractionDigits:1});
-const money = n => n==null ? '—' : '$' + Number(n).toLocaleString('es-MX',{maximumFractionDigits:0});
+'use strict';
+const FORMULA = {
+  "dias_cobertura": "(Disponible + órdenes de compra abiertas + órdenes de producción abiertas) ÷ requerimiento diario; requerimiento = el mayor entre el consumo de 90 días y la necesidad del plan de producción (componentes por emitir de OWOR abiertas en el horizonte) ÷ días del horizonte.",
+  "oc_vs_necesidad": "Cantidad en órdenes de compra abiertas ÷ necesidad neta del horizonte (requerimiento diario × días del horizonte − disponible).",
+  "costo_real_vs_estandar": "(Precio real de compra − costo del artículo en B1) ÷ costo del artículo; precio real = facturas de proveedor después del descuento de pie − notas de crédito, entre unidades."
+};
+const COVER = {rojo:['bad','✕','rojo'], amarillo:['warn','!','amarillo'], verde:['ok','✓','verde'], sin_consumo:['none','–','sin consumo']};
+const COVER_TEXT = {rojo:'cobertura con órdenes bajo el umbral rojo (30 días por omisión)', amarillo:'bajo el umbral amarillo (60 días por omisión)', verde:'cubiertos más allá del umbral amarillo', sin_consumo:'sin consumo ni necesidad del plan'};
+const BASIS = {historico:'consumo de 90 días', plan:'plan de producción'};
+const ACTIONS = {comprar:'comprar', producir:'producir'};
+const MESES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+const NF0 = new Intl.NumberFormat('es-MX',{maximumFractionDigits:0});
+const NF1 = new Intl.NumberFormat('es-MX',{minimumFractionDigits:1,maximumFractionDigits:1});
+const NF2 = new Intl.NumberFormat('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2});
+const NBSP = ' ';
+const CAP_DAYS = 180;
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])); }
+const val = v => (v==null || v==='' || Number.isNaN(Number(v))) ? null : Number(v);
+const r1 = v => { const x = Math.round(v * 10) / 10; return Object.is(x, -0) ? 0 : x; };
+const bool = v => v===true || v==='true' || v==='t' || v===1 || v==='1';
+const num = v => val(v)==null ? '—' : NF0.format(val(v));
+const dec = v => val(v)==null ? '—' : NF1.format(r1(val(v)));
+const pct = v => val(v)==null ? '—' : NF1.format(r1(val(v))) + NBSP + '%';
+const signed = v => val(v)==null ? '—' : (r1(val(v))>0?'+':'') + NF1.format(r1(val(v))) + NBSP + '%';
+const days = v => val(v)==null ? '—' : NF0.format(val(v)) + NBSP + (Math.round(val(v))===1 ? 'día' : 'días');
+function money(v, cur){ const x = val(v); if(x==null) return '—'; return (x<0?'−':'') + '$' + NF0.format(Math.abs(x)) + (cur ? NBSP + esc(cur) : ''); }
+function price(v){ const x = val(v); if(x==null) return '—'; return (x<0?'−':'') + '$' + NF2.format(Math.abs(x)); }
+const monthLong = p => { const [y,m] = String(p||'').split('-'); return MESES[Number(m)-1] ? MESES[Number(m)-1] + ' ' + y : String(p||''); };
 const day = v => v ? String(v).slice(0,10) : '—';
-function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-function showError(msg){ document.getElementById('error').innerHTML = `<div class="error">${esc(msg)}</div>`; }
-async function query(dataset, filters, limit){
-  const r = await fetch('/api/data/' + dataset + '/query', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({filters, limit: limit || 2000})});
-  if(!r.ok) throw new Error('No se pudo leer ' + dataset + ' (' + r.status + ')');
-  const d = await r.json();
-  return Array.isArray(d) ? d : (d.data || []);
-}
-async function options(dataset, column){
-  const r = await fetch('/api/data/' + dataset + '/options?columns=' + encodeURIComponent(column));
-  if(!r.ok) throw new Error('No se pudo leer ' + dataset + ' (' + r.status + ')');
-  const d = await r.json();
-  return Array.isArray(d) ? [] : (d[column] || []);
-}
-
-const LIMIT = 10000;
-const CLASS = {rojo:'bad', amarillo:'warn', verde:'ok', sin_consumo:'none'};
-const LABEL = {rojo:'riesgo de quiebre', amarillo:'bajo reorden', verde:'cubierto', sin_consumo:'sin consumo'};
-const RANK = {rojo:0, amarillo:1, verde:2, sin_consumo:3};
-const BUCKETS = [[0,7,'0-7'],[7,15,'8-15'],[15,30,'16-30'],[30,60,'31-60'],[60,90,'61-90'],[90,Infinity,'>90']];
-let ROWS = [], chart = null;
-
+function badge(map, key, text){ const s = map[key] || ['none','–', String(key||'sin estado').replace(/_/g,' ')]; return `<span class="st st-${s[0]}"><i aria-hidden="true">${s[1]}</i>${esc(text==null ? s[2] : text)}</span>`; }
+function empty(msg){ return `<p class="empty">${esc(msg)}</p>`; }
+function showError(msg){ document.getElementById('error').innerHTML = msg ? `<div class="error">${esc(msg)}</div>` : ''; }
+function clean(filters){ const out = {}; Object.entries(filters).forEach(([key, value])=>{ if(value!=null && value!=='') out[key] = value; }); return out; }
 function median(values){
-  const v = values.filter(x=> x!=null).map(Number).sort((a,b)=> a-b);
+  const v = values.map(val).filter(x=> x!=null).sort((a,b)=> a-b);
   if(!v.length) return null;
   const m = Math.floor(v.length/2);
   return v.length % 2 ? v[m] : (v[m-1]+v[m])/2;
 }
 
+class DataError extends Error{ constructor(dataset, status){ super('No se pudo leer ' + dataset + ' (' + status + ')'); this.status = status; } }
+async function query(dataset, filters, limit){
+  const lim = limit || 5000;
+  const r = await fetch('/api/data/' + dataset + '/query', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({filters: clean(filters || {}), limit: lim})});
+  if(!r.ok) throw new DataError(dataset, r.status);
+  const d = await r.json();
+  const rows = Array.isArray(d) ? d : (d.data || []);
+  rows.truncated = rows.length >= lim;
+  return rows;
+}
+async function options(dataset, column){
+  const r = await fetch('/api/data/' + dataset + '/options?columns=' + encodeURIComponent(column));
+  if(!r.ok) throw new DataError(dataset, r.status);
+  const d = await r.json();
+  return Array.isArray(d) ? [] : (d[column] || []);
+}
+const CACHE = new Map();
+function cached(key, fn){
+  if(!CACHE.has(key)) CACHE.set(key, fn().catch(e=>{ CACHE.delete(key); throw e; }));
+  return CACHE.get(key);
+}
+async function settle(promise){ try{ return {rows: await promise, ok: true}; }catch(e){ return {rows: [], ok: false, error: e}; } }
+
+const DS = {
+  coverage: 'sap_b1_item_coverage',
+  cost: 'sap_b1_material_cost_variance',
+  lead: 'sap_b1_supplier_lead_time'
+};
+
+const CHARTS = {}, BUILDERS = {};
+function css(name){ return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+function draw(id, build){
+  const canvas = document.getElementById(id);
+  if(CHARTS[id]){ CHARTS[id].destroy(); delete CHARTS[id]; }
+  BUILDERS[id] = build;
+  if(!canvas) return null;
+  const off = canvas.parentElement.querySelector('.chart-off');
+  canvas.parentElement.classList.toggle('off', typeof Chart === 'undefined' || !build);
+  if(typeof Chart === 'undefined' || !build){
+    canvas.hidden = true;
+    if(off) off.hidden = !build;
+    return null;
+  }
+  canvas.hidden = false;
+  if(off) off.hidden = true;
+  CHARTS[id] = new Chart(canvas, build());
+  return CHARTS[id];
+}
+new MutationObserver(()=> Object.keys(BUILDERS).forEach(id=> draw(id, BUILDERS[id])))
+  .observe(document.documentElement, {attributes:true, attributeFilter:['data-theme']});
+
+const S = {seq:0, rows:[], color:'', costRows:[], leadRows:[]};
+
+function card(id, label, value, sub, formula, accent){
+  return `<article class="kpi" style="--accent:var(${accent})" aria-labelledby="k-${id}">
+    <h3 id="k-${id}" title="${esc(formula)}">${esc(label)}</h3>
+    <div class="v">${value}</div><div class="s">${sub}</div>
+    <details class="formula"><summary>Fórmula</summary><p>${esc(formula)}</p></details></article>`;
+}
+
+function renderLights(){
+  const el = document.getElementById('lights');
+  const at = S.rows.map(r=> day(r.as_of_date)).sort().pop();
+  document.getElementById('meta').textContent = at ? 'Corte de existencias ' + at + ((S.rows[0] || {}).local_currency ? ' · montos en ' + S.rows[0].local_currency : '') : '';
+  const risk = S.rows.filter(r=> bool(r.stockout_risk)).length;
+  el.innerHTML = ['rojo','amarillo','verde','sin_consumo'].map(c=>{
+    const n = S.rows.filter(r=> r.coverage_color===c).length;
+    return `<button type="button" class="light" data-color="${esc(c)}" aria-pressed="${S.color===c}">${badge(COVER, c)}<div class="v">${num(n)}</div><div class="s">${esc(COVER_TEXT[c])}</div></button>`;
+  }).join('') + `<button type="button" class="light" data-color="quiebre" aria-pressed="${S.color==='quiebre'}"><span class="st st-bad"><i aria-hidden="true">✕</i>riesgo de quiebre</span><div class="v">${num(risk)}</div><div class="s">se agotan antes de que llegue un pedido nuevo</div></button>`;
+}
+
 function renderKpis(){
-  const count = c => ROWS.filter(r=> r.coverage_color===c).length;
-  const suggested = ROWS.filter(r=> Number(r.suggested_qty||0) > 0);
-  const outdated = ROWS.filter(r=> Number(r.reorder_point||0) > 0 && Math.abs(Number(r.reorder_point) - Number(r.b1_min_stock||0)) > 0.2*Number(r.reorder_point)).length;
-  const asOf = ROWS.length ? day(ROWS[0].as_of_date) : '—';
-  document.getElementById('kpis').innerHTML = `
-    <div class="kpi" style="--accent:var(--red)"><div class="l">Riesgo de quiebre</div><div class="v">${num(count('rojo'))}</div>
-      <div class="s">se agotan antes de que llegue un pedido nuevo</div></div>
-    <div class="kpi" style="--accent:var(--amber)"><div class="l">Bajo punto de reorden</div><div class="v">${num(count('amarillo'))}</div>
-      <div class="s">pedir ya para no llegar al quiebre</div></div>
-    <div class="kpi" style="--accent:var(--blue)"><div class="l">Cobertura mediana</div><div class="v">${dec(median(ROWS.map(r=> r.coverage_days)))} d</div>
-      <div class="s">${esc('con órdenes: ' + dec(median(ROWS.map(r=> r.coverage_with_orders_days))) + ' d')}</div></div>
-    <div class="kpi" style="--accent:var(--purple)"><div class="l">Pedidos sugeridos</div><div class="v">${num(suggested.length)}</div>
-      <div class="s">${esc(money(suggested.reduce((s,r)=> s + Number(r.suggested_value_local||0), 0)) + ' ' + ((ROWS[0]||{}).local_currency||''))}</div></div>
-    <div class="kpi" style="--accent:var(--green)"><div class="l">Mínimos a revisar</div><div class="v">${num(outdated)}</div>
-      <div class="s">${esc('mínimo de B1 lejos del recalculado · corte ' + asOf)}</div></div>`;
+  const el = document.getElementById('kpis');
+  const withReq = S.rows.filter(r=> (val(r.daily_consumption)||0) > 0);
+  const crit = S.rows.filter(r=> bool(r.is_critical));
+  const lowest = [...withReq].sort((a,b)=> (val(a.coverage_with_orders_days) ?? 1e12) - (val(b.coverage_with_orders_days) ?? 1e12))[0];
+  const html = [];
+  html.push(card('cov', 'Días de cobertura', withReq.length ? `${days(median(withReq.map(r=> r.coverage_with_orders_days)))} <small>mediana con órdenes</small>` : '—',
+    withReq.length ? `sin órdenes ${days(median(withReq.map(r=> r.coverage_days)))}` + (crit.length ? ` · materias primas críticas ${days(median(crit.map(r=> r.coverage_with_orders_days)))}` : '') +
+      (lowest ? `<br>menor: ${esc(lowest.item_code)} con ${days(lowest.coverage_with_orders_days)}` : '') : 'ningún artículo con consumo o plan', FORMULA.dias_cobertura, '--s1'));
+  const need = S.rows.filter(r=> (val(r.net_need_qty)||0) > 0);
+  const short = need.filter(r=> (val(r.open_po_vs_need_pct)||0) < 100);
+  html.push(card('po', 'OC abiertas contra necesidad', need.length ? `${num(need.length - short.length)} <small>de ${num(need.length)} con necesidad cubiertos</small>` : '<small>ningún artículo con necesidad neta</small>',
+    need.length ? `${num(short.length)} con OC por debajo de la necesidad · mediana ${pct(median(need.map(r=> r.open_po_vs_need_pct)))}` : 'el disponible cubre el horizonte', FORMULA.oc_vs_necesidad, '--s2'));
+  const cost = S.costRows;
+  const above = cost.filter(r=> bool(r.above_threshold));
+  const limits = [...new Set(cost.map(r=> val(r.max_variance_pct)).filter(v=> v!=null))];
+  const cur = (cost[0] || {}).local_currency || '';
+  html.push(card('cost', 'Costo real contra estándar', cost.length ? `${num(above.length)} <small>de ${num(cost.length)} artículos fuera del umbral</small>` : '—',
+    cost.length ? `desviación del mes ${money(cost.reduce((s,r)=> s + (val(r.variance_value_local)||0), 0), cur)}` + (limits.length===1 ? ` · umbral ±${pct(limits[0])}` : '') : (document.getElementById('period').value ? 'sin compras en el mes' : 'sin compras publicadas'), FORMULA.costo_real_vs_estandar, '--purple'));
+  el.innerHTML = html.join('');
 }
 
-function renderBuckets(){
-  const data = BUCKETS.map(([lo,hi])=> ROWS.filter(r=> r.coverage_with_orders_days!=null && Number(r.coverage_with_orders_days) >= lo && Number(r.coverage_with_orders_days) < hi).length);
-  if(chart) chart.destroy();
-  chart = new Chart(document.getElementById('buckets'), {type:'bar',
-    data:{labels:BUCKETS.map(b=> b[2]), datasets:[{label:'Artículos', data, backgroundColor:['#f85149','#f85149','#d29922','#7c9fff','#3fb950','#3fb950']}]},
-    options:{responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}},
-      scales:{x:{ticks:{color:'#8b949e'},grid:{color:'#21262d'}}, y:{ticks:{color:'#8b949e'},grid:{color:'#21262d'}}}}});
+function renderCritical(){
+  const el = document.getElementById('crit');
+  const list = S.rows.filter(r=> bool(r.is_critical)).sort((a,b)=> (val(a.criticality_rank)||0) - (val(b.criticality_rank)||0)).slice(0, 30);
+  document.getElementById('crit-chart').hidden = !list.length;
+  if(!list.length){
+    el.innerHTML = empty(S.rows.some(r=> bool(r.is_raw_material)) ? 'Ninguna materia prima tiene consumo en la ventana.' : 'La empresa no tiene materias primas: ningún artículo es componente de una lista de materiales.');
+    draw('c-crit', null); return;
+  }
+  el.innerHTML = `<div class="tw tall"><table><caption class="sr-only">Materias primas críticas por rango de consumo</caption><thead><tr><th scope="col" class="n">Rango</th><th scope="col">Materia prima</th><th scope="col" class="n">Disponible</th><th scope="col" class="n">OC abiertas</th><th scope="col" class="n">OP abiertas</th><th scope="col" class="n">Necesidad del plan</th><th scope="col" class="n">Consumo 90 d</th><th scope="col" class="n">Requerimiento diario</th><th scope="col">Base</th><th scope="col" class="n">Cobertura con órdenes</th><th scope="col">Estado</th><th scope="col" class="n">OC vs necesidad</th><th scope="col">Se agota</th></tr></thead><tbody>${
+    list.map(r=> `<tr><td class="n">${num(r.criticality_rank)}</td><th scope="row">${esc(r.item_name || r.item_code)}<br><span class="muted">${esc(r.item_code)}</span></th><td class="n">${num(r.available)}</td><td class="n">${num(r.open_po_qty)}</td><td class="n">${num(r.open_production_qty)}</td><td class="n">${num(r.plan_need_qty)}${val(r.plan_orders) ? `<br><span class="muted">${num(r.plan_orders)} OP en ${num(r.planning_horizon_days)} d</span>` : ''}</td><td class="n">${num(r.consumed_90d)}</td><td class="n">${dec(r.daily_consumption)}</td><td>${esc(BASIS[r.consumption_basis] || r.consumption_basis || '—')}</td><td class="n">${days(r.coverage_with_orders_days)}</td><td>${badge(COVER, r.coverage_color)}${bool(r.stockout_risk) ? ' <span class="st st-bad"><i aria-hidden="true">✕</i>quiebre</span>' : ''}</td><td class="n">${pct(r.open_po_vs_need_pct)}</td><td class="nowrap">${esc(day(r.stockout_date))}</td></tr>`).join('')
+  }</tbody></table></div><p class="note">La base dice qué requerimiento manda: el consumo de 90 días o la necesidad del plan de producción repartida en el horizonte.</p>`;
+  document.getElementById('crit-chart').style.height = Math.max(180, 22 * list.length + 70) + 'px';
+  const tone = {rojo:'--red', amarillo:'--amber', verde:'--green', sin_consumo:'--text3'};
+  draw('c-crit', ()=> ({type:'bar',
+    data:{labels: list.map(r=> r.item_code), datasets:[{label:'Días de cobertura con órdenes', data: list.map(r=> val(r.coverage_with_orders_days)==null ? 0 : Math.min(CAP_DAYS, val(r.coverage_with_orders_days))),
+      backgroundColor: list.map(r=> css(tone[r.coverage_color] || '--text3')), borderRadius:4, maxBarThickness:16}]},
+    options:{indexAxis:'y', responsive:true, maintainAspectRatio:false, animation:false,
+      plugins:{legend:{display:false}, tooltip:{callbacks:{label: ctx => { const r = list[ctx.dataIndex]; return (r.item_name || r.item_code) + ': ' + days(r.coverage_with_orders_days).replace(/ /g,' ') + ' · ' + (COVER[r.coverage_color] || ['','',r.coverage_color])[2]; }}}},
+      scales:{x:{min:0, max:CAP_DAYS, ticks:{color: css('--text2'), callback: v => v>=CAP_DAYS ? CAP_DAYS + '+' : v}, grid:{color: css('--border')}, title:{display:true, text:'días de cobertura con órdenes (tope de la escala ' + CAP_DAYS + ')', color: css('--text2')}},
+        y:{ticks:{color: css('--text2'), autoSkip:false}, grid:{display:false}}}}}));
 }
 
-function renderOrders(){
-  const list = ROWS.filter(r=> Number(r.suggested_qty||0) > 0)
-    .sort((a,b)=> String(a.order_by_date||'').localeCompare(String(b.order_by_date||'')) || (RANK[a.coverage_color]-RANK[b.coverage_color])).slice(0,100);
-  document.getElementById('orders').innerHTML = list.length ? `<table><thead><tr><th>Pedir antes de</th><th>Artículo</th><th>Acción</th><th class="n">Cantidad</th><th>Proveedor</th><th class="n">Valor</th></tr></thead><tbody>${
-    list.map(r=> `<tr><td class="${CLASS[r.coverage_color]||''}">${esc(day(r.order_by_date))}</td><td>${esc(r.item_code)}</td><td>${esc(r.suggested_action)}</td><td class="n">${num(r.suggested_qty)}</td><td>${esc(r.suggested_supplier || '—')}</td><td class="n">${money(r.suggested_value_local)}</td></tr>`).join('')
-  }</tbody></table>` : '<div class="empty">Ningún artículo necesita pedido hoy</div>';
+function renderSuggestions(){
+  const el = document.getElementById('sug');
+  const list = S.rows.filter(r=> (val(r.suggested_qty)||0) > 0)
+    .sort((a,b)=> String(a.order_by_date||'').localeCompare(String(b.order_by_date||'')) || (val(a.coverage_with_orders_days)||0) - (val(b.coverage_with_orders_days)||0));
+  el.innerHTML = list.length ? `<div class="tw tall"><table><caption class="sr-only">Pedidos sugeridos por fecha límite</caption><thead><tr><th scope="col">Pedir a más tardar</th><th scope="col">Artículo</th><th scope="col">Acción</th><th scope="col" class="n">Cantidad</th><th scope="col">Proveedor</th><th scope="col">Proveedor alterno</th><th scope="col" class="n">Valor</th><th scope="col" class="n">Mínimo · múltiplo</th><th scope="col" class="n">Entrega</th><th scope="col">Estado</th></tr></thead><tbody>${
+    list.map(r=> `<tr><td class="nowrap"><strong>${esc(day(r.order_by_date))}</strong></td><th scope="row">${esc(r.item_name || r.item_code)}<br><span class="muted">${esc(r.item_code)}</span></th><td>${esc(ACTIONS[r.suggested_action] || r.suggested_action || '—')}</td><td class="n">${num(r.suggested_qty)}</td><td>${esc(r.suggested_supplier || (r.suggested_action==='producir' ? 'se fabrica' : 'sin proveedor preferido'))}</td><td>${esc(r.alternate_supplier || '—')}</td><td class="n">${money(r.suggested_value_local)}</td><td class="n">${num(r.min_order_qty)} · ${num(r.order_multiple)}</td><td class="n">${days(r.lead_time_days)}${r.lead_time_source==='parametro' ? '*' : ''}</td><td>${badge(COVER, r.coverage_color)}</td></tr>`).join('')
+  }</tbody></table></div><p class="note">* Tiempo de entrega tomado del parámetro del workspace porque el artículo no lo tiene en Business One. Solo recomendaciones: nada se escribe en Business One.</p>` : empty('Ningún artículo está debajo de su punto de pedido.');
+}
+
+function renderCost(){
+  const el = document.getElementById('cost');
+  const period = document.getElementById('period').value;
+  const list = [...S.costRows].sort((a,b)=> (bool(b.above_threshold) - bool(a.above_threshold)) || Math.abs(val(b.variance_value_local)||0) - Math.abs(val(a.variance_value_local)||0));
+  if(!list.length){ el.innerHTML = empty(period ? 'Sin compras de artículos en ' + monthLong(period) + '.' : 'Sin compras de artículos publicadas.'); return; }
+  el.innerHTML = `<div class="tw tall"><table><caption class="sr-only">Precio real de compra contra el costo en Business One</caption><thead><tr><th scope="col">Artículo</th><th scope="col">Materia prima</th><th scope="col" class="n">Proveedores</th><th scope="col" class="n">Unidades</th><th scope="col" class="n">Comprado</th><th scope="col" class="n">Precio real</th><th scope="col" class="n">Costo en B1</th><th scope="col" class="n">Variación</th><th scope="col" class="n">Variación $</th><th scope="col">Estado</th></tr></thead><tbody>${
+    list.map(r=> `<tr><th scope="row">${esc(r.item_name || r.item_code)}<br><span class="muted">${esc(r.item_code)}</span></th><td>${bool(r.is_raw_material) ? 'sí' : 'no'}</td><td class="n">${num(r.suppliers)}</td><td class="n">${num(r.purchased_qty)}</td><td class="n">${money(r.purchased_value_local)}</td><td class="n">${price(r.real_unit_price_local)}</td><td class="n">${price(r.standard_cost_local)}</td><td class="n">${signed(r.variance_pct)}</td><td class="n">${money(r.variance_value_local)}</td><td>${val(r.variance_pct)==null ? badge(COVER, 'sin_consumo', 'sin costo en B1') : bool(r.above_threshold) ? badge(COVER, 'rojo', 'fuera de ±' + pct(r.max_variance_pct).replace(/ /g,' ')) : badge(COVER, 'verde', 'dentro de ±' + pct(r.max_variance_pct).replace(/ /g,' '))}</td></tr>`).join('')
+  }</tbody></table></div>`;
+}
+
+function renderLead(){
+  const el = document.getElementById('lead');
+  const period = document.getElementById('period').value;
+  const sup = {};
+  S.leadRows.forEach(r=>{
+    const s = sup[r.card_code] = sup[r.card_code] || {code: r.card_code, name: r.supplier_name, ic: bool(r.is_intercompany), receipts:0, late:0, lead:0, promised:0, maxDelay:0, items:new Set(), lateItems:new Set()};
+    const n = val(r.receipts)||0;
+    s.receipts += n; s.late += val(r.late_receipts)||0; s.lead += (val(r.avg_lead_days)||0) * n; s.promised += (val(r.avg_promised_days)||0) * n;
+    s.maxDelay = Math.max(s.maxDelay, val(r.max_delay_days)||0); s.items.add(r.item_code); if((val(r.late_receipts)||0) > 0) s.lateItems.add(r.item_code);
+  });
+  const list = Object.values(sup).sort((a,b)=> b.late - a.late || (a.receipts ? a.late/a.receipts : 0) - (b.receipts ? b.late/b.receipts : 0) || b.receipts - a.receipts);
+  if(!list.length){ el.innerHTML = empty(period ? 'Sin recepciones ligadas a una orden de compra en ' + monthLong(period) + '.' : 'Sin recepciones de compra publicadas.'); return; }
+  const late = list.filter(s=> s.late > 0);
+  el.innerHTML = `<p class="hint">${late.length ? esc(num(late.length) + ' de ' + num(list.length) + ' proveedores entregaron tarde al menos una vez en ' + monthLong(period) + '.') : esc('Todos los proveedores entregaron a tiempo en ' + monthLong(period) + '.')}</p>` +
+    `<div class="tw tall"><table><caption class="sr-only">Cumplimiento de entrega por proveedor</caption><thead><tr><th scope="col">Proveedor</th><th scope="col" class="n">Recepciones</th><th scope="col" class="n">Tardías</th><th scope="col" class="n">A tiempo</th><th scope="col" class="n">Días reales (prom.)</th><th scope="col" class="n">Días prometidos (prom.)</th><th scope="col" class="n">Mayor retraso</th><th scope="col">Artículos con retraso</th><th scope="col">Estado</th></tr></thead><tbody>${
+    list.map(s=> `<tr><th scope="row">${esc(s.name || s.code)}<br><span class="muted">${esc(s.code)}${s.ic ? ' · empresa del grupo' : ''}</span></th><td class="n">${num(s.receipts)}</td><td class="n">${num(s.late)}</td><td class="n">${pct(s.receipts ? 100 * (s.receipts - s.late) / s.receipts : null)}</td><td class="n">${dec(s.receipts ? s.lead / s.receipts : null)}</td><td class="n">${dec(s.receipts ? s.promised / s.receipts : null)}</td><td class="n">${days(s.maxDelay)}</td><td>${esc([...s.lateItems].sort().join(', ') || '—')}</td><td>${s.late ? badge(COVER, 'rojo', 'incumple') : badge(COVER, 'verde', 'a tiempo')}</td></tr>`).join('')
+  }</tbody></table></div><p class="note">Tardía = llegó después de la fecha prometida en la orden más los días de gracia del workspace.</p>`;
 }
 
 function renderItems(){
-  const color = document.getElementById('color').value;
+  const el = document.getElementById('items');
   const term = document.getElementById('search').value.trim().toLowerCase();
-  const list = ROWS.filter(r=> (!color || r.coverage_color===color) && (!term || String(r.item_code).toLowerCase().includes(term) || String(r.item_name||'').toLowerCase().includes(term)))
-    .sort((a,b)=> (RANK[a.coverage_color]-RANK[b.coverage_color]) || (Number(a.coverage_with_orders_days ?? 1e9) - Number(b.coverage_with_orders_days ?? 1e9)));
-  document.getElementById('table-title').textContent = 'Artículos (' + list.length + ')';
-  document.getElementById('items').innerHTML = list.length ? `<table><thead><tr><th>Artículo</th><th>Nombre</th><th class="n">Disponible</th><th class="n">OC abiertas</th><th class="n">OP abiertas</th><th class="n">Consumo diario</th><th class="n">Cobertura</th><th class="n">Con órdenes</th><th class="n">Entrega</th><th>Se agota</th><th class="n">Mín. B1</th><th class="n">Reorden calc.</th><th>Estado</th></tr></thead><tbody>${
-    list.slice(0,500).map(r=> `<tr><td>${esc(r.item_code)}</td><td>${esc(r.item_name)}</td><td class="n">${num(r.available)}</td><td class="n">${num(r.open_po_qty)}</td><td class="n">${num(r.open_production_qty)}</td><td class="n">${dec(r.daily_consumption)}</td><td class="n">${dec(r.coverage_days)}</td><td class="n">${dec(r.coverage_with_orders_days)}</td><td class="n">${esc(num(r.lead_time_days) + ' d' + (r.lead_time_source==='parametro' ? '*' : ''))}</td><td>${esc(day(r.stockout_date))}</td><td class="n">${num(r.b1_min_stock)}</td><td class="n">${num(r.reorder_point)}</td><td class="${CLASS[r.coverage_color]||''}">${esc(LABEL[r.coverage_color] || r.coverage_color)}</td></tr>`).join('')
-  }</tbody></table>` : '<div class="empty">Sin artículos para el filtro</div>';
-  document.getElementById('note').textContent = (list.length > 500 ? 'Se muestran los primeros 500. ' : '') +
-    '* tiempo de entrega tomado del parámetro del workspace porque el artículo no lo tiene en Business One. Solo recomendaciones: nada se escribe en Business One.';
+  const rank = {rojo:0, amarillo:1, verde:2, sin_consumo:3};
+  const list = S.rows.filter(r=> (!S.color || (S.color==='quiebre' ? bool(r.stockout_risk) : r.coverage_color===S.color)) &&
+      (!term || String(r.item_code).toLowerCase().includes(term) || String(r.item_name||'').toLowerCase().includes(term)))
+    .sort((a,b)=> (rank[a.coverage_color] ?? 9) - (rank[b.coverage_color] ?? 9) || (val(a.coverage_with_orders_days) ?? 1e12) - (val(b.coverage_with_orders_days) ?? 1e12));
+  const label = S.color ? (S.color==='quiebre' ? 'riesgo de quiebre' : COVER[S.color][2]) : 'todos';
+  document.getElementById('items-meta').textContent = num(list.length) + ' artículos · filtro: ' + label;
+  const shown = list.slice(0, 300);
+  el.innerHTML = list.length ? `<div class="tw tall"><table><caption class="sr-only">Cobertura por artículo</caption><thead><tr><th scope="col">Artículo</th><th scope="col">Grupo</th><th scope="col" class="n">Disponible</th><th scope="col" class="n">OC abiertas</th><th scope="col" class="n">OP abiertas</th><th scope="col" class="n">Requerimiento diario</th><th scope="col" class="n">Cobertura</th><th scope="col" class="n">Con órdenes</th><th scope="col">Se agota</th><th scope="col" class="n">Mín. B1</th><th scope="col" class="n">Punto de pedido</th><th scope="col">Estado</th></tr></thead><tbody>${
+    shown.map(r=> `<tr><th scope="row">${esc(r.item_name || r.item_code)}<br><span class="muted">${esc(r.item_code)}${bool(r.is_raw_material) ? ' · materia prima' : ''}</span></th><td>${esc(r.item_group_name)}</td><td class="n">${num(r.available)}</td><td class="n">${num(r.open_po_qty)}</td><td class="n">${num(r.open_production_qty)}</td><td class="n">${dec(r.daily_consumption)}</td><td class="n">${days(r.coverage_days)}</td><td class="n">${days(r.coverage_with_orders_days)}</td><td class="nowrap">${esc(day(r.stockout_date))}</td><td class="n">${num(r.b1_min_stock)}</td><td class="n">${num(r.reorder_point)}</td><td>${badge(COVER, r.coverage_color)}${bool(r.stockout_risk) ? ' <span class="st st-bad"><i aria-hidden="true">✕</i>quiebre</span>' : ''}</td></tr>`).join('')
+  }</tbody></table></div>` + (list.length > shown.length ? `<p class="note">Se muestran ${num(shown.length)} de ${num(list.length)}; usa la búsqueda para encontrar el resto.</p>` : '') : empty('Ningún artículo con ese filtro.');
 }
 
-async function loadCompany(){
+async function loadMonth(token){
+  const company = document.getElementById('company').value, period = document.getElementById('period').value;
+  if(!period){ S.costRows = []; S.leadRows = []; return {costOk: true, leadOk: true}; }
+  const [cost, lead] = await Promise.all([
+    settle(cached('cost:' + company + ':' + period, ()=> query(DS.cost, {company, period}, 10000))),
+    settle(cached('lead:' + company + ':' + period, ()=> query(DS.lead, {company, period}, 10000)))
+  ]);
+  if(token !== S.seq) return false;
+  S.costRows = cost.rows; S.leadRows = lead.rows;
+  if(!cost.ok) document.getElementById('cost').innerHTML = empty('Sin datos de costo real contra estándar.');
+  if(!lead.ok) document.getElementById('lead').innerHTML = empty('Sin datos de tiempos de entrega.');
+  return {costOk: cost.ok, leadOk: lead.ok};
+}
+
+async function renderAll(){
+  const token = ++S.seq;
   const company = document.getElementById('company').value;
-  if(!company){ showError('Todavía no hay existencias publicadas para este workspace.'); return; }
-  document.getElementById('items').innerHTML = '<div class="empty">Cargando…</div>';
-  try{
-    ROWS = await query('sap_b1_item_coverage', {company}, LIMIT);
-    if(ROWS.length >= LIMIT) showError('La empresa tiene más de ' + LIMIT + ' artículos; el tablero muestra los primeros.');
-    renderKpis(); renderBuckets(); renderOrders(); renderItems();
-  }catch(e){ showError(e.message); }
+  showError('');
+  const [coverage, month] = await Promise.all([settle(cached('cov:' + company, ()=> query(DS.coverage, {company}, 10000))), loadMonth(token)]);
+  if(token !== S.seq || !month) return;
+  S.rows = coverage.rows;
+  if(!coverage.ok) showError('No se pudo leer la cobertura: ' + coverage.error.message);
+  else if(coverage.rows.truncated) showError('La empresa tiene más de 10 000 artículos; el tablero usa los primeros.');
+  renderLights(); renderKpis(); renderCritical(); renderSuggestions(); renderItems();
+  if(month.costOk) renderCost();
+  if(month.leadOk) renderLead();
 }
 
 async function init(){
+  document.getElementById('lights').addEventListener('click', e=>{ const b = e.target.closest('button[data-color]'); if(!b) return; S.color = S.color===b.dataset.color ? '' : b.dataset.color;
+    document.querySelectorAll('#lights button').forEach(x=> x.setAttribute('aria-pressed', x.dataset.color===S.color)); renderItems(); });
+  document.getElementById('search').addEventListener('input', renderItems);
+  document.getElementById('company').addEventListener('change', renderAll);
+  document.getElementById('period').addEventListener('change', renderAll);
   try{
-    const companies = await options('sap_b1_item_coverage', 'company');
-    document.getElementById('company').innerHTML = companies.map(c=> `<option>${esc(c)}</option>`).join('');
-    document.getElementById('company').addEventListener('change', loadCompany);
-    document.getElementById('color').addEventListener('change', renderItems);
-    document.getElementById('search').addEventListener('input', renderItems);
-    await loadCompany();
+    const [companies, costPeriods, leadPeriods] = await Promise.all([options(DS.coverage, 'company'), settle(options(DS.cost, 'period')), settle(options(DS.lead, 'period'))]);
+    if(!companies.length){ showError('Todavía no hay existencias publicadas para este workspace.'); return; }
+    document.getElementById('company').innerHTML = [...companies].sort().map(x=> `<option value="${esc(x)}">${esc(x)}</option>`).join('');
+    const periods = [...new Set([...costPeriods.rows, ...leadPeriods.rows].map(String))].sort();
+    const now = new Date(), current = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
+    const closed = periods.filter(m=> m < current);
+    const initial = closed.length ? closed[closed.length-1] : periods[periods.length-1];
+    document.getElementById('period').innerHTML = periods.length ? [...periods].reverse().map(m=> `<option value="${esc(m)}"${m===initial ? ' selected' : ''}>${esc(monthLong(m))}${m >= current ? ' (en curso)' : ''}</option>`).join('') : '<option value="">sin compras</option>';
+    await renderAll();
   }catch(e){ showError(e.message); }
 }
 init();

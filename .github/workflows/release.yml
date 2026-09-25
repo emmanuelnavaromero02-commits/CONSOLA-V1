@@ -339,7 +339,8 @@ jobs:
                       infra/init/99zzy_analytic_app_grants_owner_rls_repair.sql \
                       tests/fixtures/app_grants_seed.sql \
                       infra/init/99zzzzf_analytic_app_grant_convergence.sql \
-                      infra/init/99zzzzm_analytic_app_manifest_registry_sap_b1.sql; do
+                      infra/init/99zzzzm_analytic_app_manifest_registry_sap_b1.sql \
+                      infra/init/99zzzzq_analytic_app_manifest_registry_sap_b1_poc.sql; do
             apply_sql "${file}"
           done
 
@@ -356,7 +357,8 @@ jobs:
                       infra/init/99zzu_analytic_app_manifest_registry.sql \
                       infra/init/99zzy_analytic_app_grants_owner_rls_repair.sql \
                       infra/init/99zzzzf_analytic_app_grant_convergence.sql \
-                      infra/init/99zzzzm_analytic_app_manifest_registry_sap_b1.sql; do
+                      infra/init/99zzzzm_analytic_app_manifest_registry_sap_b1.sql \
+                      infra/init/99zzzzq_analytic_app_manifest_registry_sap_b1_poc.sql; do
             apply_sql "${file}"
           done
 

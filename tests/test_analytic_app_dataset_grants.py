@@ -519,6 +519,23 @@ async def test_the_registry_matches_the_packaged_manifests(conn):
         assert row["manifest_digest"] == packaged["packaged_digest"]
 
 
+async def test_active_manifests_carry_exactly_the_packaged_datasets(conn):
+    manifests = load_packaged_manifests()
+    rows = await conn.fetch(
+        "SELECT d.app_name, d.dataset_name FROM public.analytic_app_manifest_datasets d "
+        "JOIN public.analytic_app_manifests m ON m.app_name = d.app_name "
+        "AND m.manifest_digest = d.manifest_digest WHERE m.revision = 'active'"
+    )
+    active: dict[str, set[str]] = {}
+    for row in rows:
+        active.setdefault(row["app_name"], set()).add(row["dataset_name"])
+    assert active == {
+        name: set(manifest["datasets"])
+        for name, manifest in manifests.items()
+        if manifest["datasets"]
+    }
+
+
 async def test_drift_report_describes_but_never_widens():
     report = drift_report(
         granted=[APPROVED], referenced=[APPROVED, SENSITIVE],

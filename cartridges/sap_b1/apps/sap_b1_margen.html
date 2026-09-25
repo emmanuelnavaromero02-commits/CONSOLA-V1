@@ -3,261 +3,693 @@
   app_id: sap_b1_margen
   name: Margen SAP Business One
   cartridge: sap_b1
-  datasets: [sap_b1_margin_consolidated_month, sap_b1_margin_by_company_month, sap_b1_margin_by_customer_month, sap_b1_margin_by_item_month, sap_b1_margin_reconciliation_month, sap_b1_data_quality]
+  datasets: [sap_b1_margin_kpis_month, sap_b1_margin_detail_month, sap_b1_margin_consolidated_month, sap_b1_kpi_reconciliation, sap_b1_margin_reconciliation_month, sap_b1_data_quality, sap_b1_entity_model]
 -->
-<html lang="es" data-theme="dark">
+<html lang="es-MX">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Margen — SAP Business One</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"
+        integrity="sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ"
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <style>
-  :root{--bg:#0d1117;--bg2:#161b22;--border:#30363d;--text1:#e6edf3;--text2:#8b949e;--text3:#6e7681;
-        --blue:#7c9fff;--green:#3fb950;--amber:#d29922;--red:#f85149;--purple:#bc8cff}
+  :root{color-scheme:light;
+    --bg:#f5f7fa;--bg2:#ffffff;--bg3:#eef2f7;--border:#d8dee8;--text1:#0f172a;--text2:#334155;--text3:#64748b;
+    --green:#117a3d;--blue:#0a6ed1;--amber:#b06d00;--red:#b3261e;--purple:#6d5bd0;
+    --s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;
+    --h0:#cde2fb;--h1:#9ec5f4;--h2:#6da7ec;--h3:#3987e5;--h4:#256abf;--h5:#184f95;--h6:#0d366b;
+    --h0t:#0f172a;--h1t:#0f172a;--h2t:#0f172a;--h3t:#0f172a;--h4t:#ffffff;--h5t:#ffffff;--h6t:#ffffff}
+  :root[data-theme="dark"]{color-scheme:dark;
+    --bg:#0f1822;--bg2:#182331;--bg3:#1f2c3d;--border:rgba(226,232,240,.14);--text1:#e6edf6;--text2:#c5cfdc;--text3:#8a96a8;
+    --green:#4cb27b;--blue:#4ea3e0;--amber:#d4a042;--red:#e0716b;--purple:#b8a7f5;
+    --s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#c98500;
+    --h0:#0d366b;--h1:#184f95;--h2:#256abf;--h3:#3987e5;--h4:#6da7ec;--h5:#9ec5f4;--h6:#cde2fb;
+    --h0t:#e6edf6;--h1t:#e6edf6;--h2t:#ffffff;--h3t:#0f172a;--h4t:#0f172a;--h5t:#0f172a;--h6t:#0f172a}
   *{box-sizing:border-box}
-  body{margin:0;padding:22px;background:var(--bg);color:var(--text1);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;font-size:13px}
-  h1{font-size:18px;margin:0 0 2px}
-  .subtitle{color:var(--text2);font-size:11px;margin-bottom:16px}
-  .controls{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
-  .controls label{color:var(--text2);font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:600}
-  select{background:var(--bg2);color:var(--text1);border:1px solid var(--border);border-radius:6px;padding:7px 10px;font-size:12px}
-  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:18px}
-  .kpi{background:var(--bg2);border:1px solid var(--border);border-left:3px solid var(--accent,var(--blue));border-radius:8px;padding:14px 16px}
-  .kpi .l{font-size:9px;color:var(--text2);letter-spacing:1.2px;font-weight:600;text-transform:uppercase;margin-bottom:8px}
-  .kpi .v{font-size:22px;font-weight:700}
-  .kpi .s{font-size:10px;color:var(--text3);margin-top:6px}
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-  .section{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px}
+  body{margin:0;padding:20px;background:var(--bg);color:var(--text1);font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
+  h1{font-size:19px;margin:0}
+  h2{font-size:12px;color:var(--text2);text-transform:uppercase;letter-spacing:.8px;font-weight:700;margin:0 0 10px}
+  h3{font-size:12px;margin:14px 0 6px;color:var(--text1)}
+  :focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  .top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+  .subtitle{color:var(--text2);margin:4px 0 0;max-width:760px}
+  .apps{display:flex;gap:6px;flex-wrap:wrap}
+  .apps a{padding:6px 12px;border:1px solid var(--border);border-radius:999px;color:var(--text2);text-decoration:none;font-weight:600;font-size:12px;background:var(--bg2)}
+  .apps a[href]:hover{color:var(--blue);border-color:var(--blue)}
+  .apps a[aria-current]{color:var(--blue);border-color:var(--blue)}
+  .controls{display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px}
+  .controls label{display:flex;flex-direction:column;gap:4px;color:var(--text2);font-size:11px;font-weight:600}
+  select,input{background:var(--bg2);color:var(--text1);border:1px solid var(--border);border-radius:6px;padding:7px 10px;font-size:13px;min-height:34px}
+  .meta{color:var(--text3);font-size:12px;padding-bottom:8px}
+  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:14px;overflow-x:auto;scrollbar-width:none}
+  .tabs [role=tab]{background:none;border:0;border-bottom:2px solid transparent;color:var(--text2);padding:9px 12px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap}
+  .tabs [role=tab][aria-selected=true]{color:var(--blue);border-bottom-color:var(--blue)}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:14px}
+  @media (min-width:700px){.kpis{grid-template-columns:repeat(3,minmax(0,1fr))}}
+  @media (min-width:1150px){.kpis{grid-template-columns:repeat(5,minmax(0,1fr))}}
+  .kpi{background:var(--bg2);border:1px solid var(--border);border-top:3px solid var(--accent,var(--blue));border-radius:8px;padding:12px 14px;min-width:0}
+  .kpi h3{margin:0 0 6px;font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;cursor:help}
+  .kpi .v{font-size:21px;font-weight:700;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+  .kpi .v small{font-size:12px;font-weight:600;color:var(--text2)}
+  .kpi .s{font-size:12px;color:var(--text2);margin-top:4px}
+  .kpi ul{list-style:none;margin:4px 0 0;padding:0;font-size:12px;color:var(--text2)}
+  .kpi li{display:flex;justify-content:space-between;gap:8px}
+  .kpi ul.stack li{display:block;margin-top:4px} .kpi ul.stack strong{display:block;color:var(--text1)}
+  details.formula{margin-top:8px;font-size:11px;color:var(--text3)}
+  details.formula summary{cursor:pointer;color:var(--text2)}
+  details.formula p{margin:6px 0 0}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .card{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px;min-width:0}
   .full{grid-column:1/-1}
-  .title{font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:1px;font-weight:600;margin-bottom:12px}
+  .split{display:grid;grid-template-columns:minmax(0,1fr);gap:14px}
+  @media (min-width:1200px){.split{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr)}}
+  .hint{color:var(--text3);margin:0 0 10px;font-size:12px}
   .chart{position:relative;height:280px}
+  .chart-off{color:var(--text3);font-style:italic;margin:0;padding:12px 0}
+  .chart.off{height:auto!important}
+  .tw{overflow:auto;max-width:100%}
+  .tw.tall{max-height:460px}
   table{width:100%;border-collapse:collapse;font-size:12px}
-  th,td{text-align:left;padding:7px 9px;border-bottom:1px solid var(--border)}
-  th{color:var(--text2);font-size:10px;text-transform:uppercase}
-  td.n{text-align:right;font-variant-numeric:tabular-nums}
-  .heat td.cell{text-align:center;cursor:pointer;font-weight:600;border-radius:4px}
-  .ok{background:rgba(63,185,80,.18)} .warn{background:rgba(210,153,34,.22)} .bad{background:rgba(248,81,73,.25)} .none{color:var(--text3)}
-  .badge{font-size:9px;display:block;color:var(--text2);font-weight:500}
-  .tabs{display:flex;gap:6px;margin-bottom:10px}
-  .tabs button{background:var(--bg);color:var(--text2);border:1px solid var(--border);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:11px}
-  .tabs button.on{color:var(--blue);border-color:var(--blue)}
-  .empty{padding:24px;text-align:center;color:var(--text3);font-style:italic}
-  .error{background:rgba(248,81,73,.12);color:var(--red);border:1px solid var(--red);padding:12px;border-radius:6px;margin-bottom:14px}
-  @media(max-width:900px){.grid{grid-template-columns:1fr}}
+  caption{text-align:left;color:var(--text3);font-size:11px;padding:0 0 6px}
+  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top}
+  thead th{color:var(--text2);font-size:11px;font-weight:700;position:sticky;top:0;background:var(--bg2);z-index:1}
+  td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  tbody th{font-weight:600}
+  tbody th[scope=row]{min-width:140px}
+  tr.sel td,tr.sel th{background:var(--bg3)}
+  .link{background:none;border:0;padding:0;color:var(--blue);font:inherit;font-weight:600;cursor:pointer;text-align:left}
+  .link:hover{text-decoration:underline}
+  .st{display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap;color:var(--text1);background:var(--bg3)}
+  .st i{font-style:normal;font-weight:800}
+  .st-ok{background:color-mix(in srgb,var(--green) 16%,transparent)} .st-ok i{color:var(--green)}
+  .st-warn{background:color-mix(in srgb,var(--amber) 20%,transparent)} .st-warn i{color:var(--amber)}
+  .st-bad{background:color-mix(in srgb,var(--red) 16%,transparent)} .st-bad i{color:var(--red)}
+  .st-none{color:var(--text3)}
+  .heat td.hc{text-align:center;padding:0;min-width:58px;border:2px solid var(--bg2);border-radius:4px}
+  .heat td.hc>span,.heat td.hc>button{display:block;width:100%;padding:6px 4px;font:inherit;font-weight:600;font-variant-numeric:tabular-nums;color:inherit;background:none;border:0}
+  .heat td.hc>button{cursor:pointer}
+  .heat td.hc small{display:block;font-size:10px;font-weight:600;opacity:.9}
+  .heat th{white-space:nowrap}
+  .heat td.hc.picked{outline:2px solid var(--text1);outline-offset:-2px}
+  .h0{background:var(--h0);color:var(--h0t)} .h1{background:var(--h1);color:var(--h1t)} .h2{background:var(--h2);color:var(--h2t)}
+  .h3{background:var(--h3);color:var(--h3t)} .h4{background:var(--h4);color:var(--h4t)} .h5{background:var(--h5);color:var(--h5t)}
+  .h6{background:var(--h6);color:var(--h6t)} .hn{color:var(--text3)}
+  .legend{display:flex;align-items:center;gap:8px;flex-wrap:wrap;color:var(--text3);font-size:11px;margin-top:8px}
+  .ramp{display:inline-flex;gap:2px}
+  .ramp i{display:inline-block;width:18px;height:10px;border-radius:2px}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+  .chips button{background:var(--bg2);color:var(--text2);border:1px solid var(--border);border-radius:999px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer}
+  .chips button[aria-pressed=true]{color:var(--blue);border-color:var(--blue)}
+  .btn{background:var(--bg2);color:var(--text1);border:1px solid var(--border);border-radius:6px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer}
+  .btn:hover{border-color:var(--blue);color:var(--blue)}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:space-between}
+  .summary{font-size:15px;font-weight:700}
+  textarea{width:100%;min-height:160px;background:var(--bg);color:var(--text1);border:1px solid var(--border);border-radius:6px;font:11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;padding:8px}
+  .empty{padding:18px;text-align:center;color:var(--text3);font-style:italic;margin:0}
+  .note{color:var(--text3);font-size:11px;margin:8px 0 0}
+  .error{background:color-mix(in srgb,var(--red) 12%,transparent);color:var(--text1);border:1px solid var(--red);padding:10px 12px;border-radius:6px;margin-bottom:12px}
+  .muted{color:var(--text3)}
+  @media (max-width:900px){.grid{grid-template-columns:1fr}}
+  @media (max-width:560px){body{padding:16px}.kpis{grid-template-columns:1fr 1fr}.kpi .v{font-size:18px}.chart{height:240px}}
+  @media (max-width:380px){.kpis{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
-  <h1>◆ Margen · SAP Business One</h1>
-  <div class="subtitle">Grupo, empresas, clientes y artículos · reconciliación con finanzas · calidad de datos</div>
-  <div id="error"></div>
-  <div class="controls">
-    <label for="period">Periodo</label><select id="period"></select>
-    <label for="currency">Moneda</label><select id="currency"></select>
+<header class="top">
+  <div>
+    <h1>Margen · SAP Business One</h1>
+    <p class="subtitle">Los cinco indicadores de margen por empresa y del grupo, con su detalle por cliente, SKU, canal y vendedor, la reconciliación con Finanzas y la calidad de los datos.</p>
   </div>
+  <nav class="apps" aria-label="Aplicaciones de SAP Business One">
+    <a aria-current="page">Margen</a>
+    <a href="/analytics/viewer?app=sap_b1_sellout" target="_top">Sell-out y caducidad</a>
+    <a href="/analytics/viewer?app=sap_b1_abasto" target="_top">Abasto</a>
+  </nav>
+</header>
+<div id="error" role="alert"></div>
+<div class="controls">
+  <label for="company">Empresa<select id="company"></select></label>
+  <label for="period">Mes<select id="period"></select></label>
+  <span class="meta" id="meta"></span>
+</div>
+<div class="tabs" role="tablist" aria-label="Vistas de margen" id="tabs">
+  <button role="tab" id="tab-ind" aria-controls="panel-ind" aria-selected="true">Indicadores</button>
+  <button role="tab" id="tab-reco" aria-controls="panel-reco" aria-selected="false" tabindex="-1">Reconciliación con Finanzas</button>
+  <button role="tab" id="tab-dq" aria-controls="panel-dq" aria-selected="false" tabindex="-1">Calidad y modelo</button>
+</div>
+
+<section id="panel-ind" role="tabpanel" aria-labelledby="tab-ind">
   <div class="kpis" id="kpis"></div>
   <div class="grid">
-    <div class="section full">
-      <div class="title">Margen externo por empresa y mes (clic para el detalle)</div>
-      <div id="heat" style="overflow-x:auto"></div>
-    </div>
-    <div class="section">
-      <div class="title">Margen del grupo contra margen externo</div>
-      <div class="chart"><canvas id="trend"></canvas></div>
-    </div>
-    <div class="section">
-      <div class="title" id="drill-title">Detalle</div>
-      <div class="tabs" id="drill-tabs">
-        <button data-tab="customers" class="on">Clientes</button>
-        <button data-tab="items">Artículos</button>
-        <button data-tab="families">Familias</button>
+    <section class="card full" aria-labelledby="h-rank">
+      <h2 id="h-rank">Ranking de clientes</h2>
+      <p class="hint">Primero los destructores de margen con el margen que se pierde contra el mínimo; después los clientes que más margen dejan en los libros de la empresa, incluidas las ventas a otras empresas del grupo. Elige un cliente para ver sus SKU.</p>
+      <div class="split">
+        <div id="rank"></div>
+        <div id="drill" aria-live="polite"><p class="empty">Elige un cliente del ranking para ver sus SKU.</p></div>
       </div>
-      <div id="drill" style="max-height:320px;overflow-y:auto"><div class="empty">Elige una celda del mapa</div></div>
-    </div>
-    <div class="section full">
-      <div class="tabs" id="bottom-tabs">
-        <button data-tab="reco" class="on">Reconciliación con finanzas</button>
-        <button data-tab="dq">Calidad de datos</button>
+    </section>
+    <section class="card full" aria-labelledby="h-canal">
+      <h2 id="h-canal">Comparativo por canal</h2>
+      <div class="split">
+        <div class="chart"><canvas id="c-canal" role="img" aria-label="Margen bruto y margen de contribución por canal"></canvas><p class="chart-off" hidden>La gráfica no está disponible; los datos están en la tabla.</p></div>
+        <div id="canal"></div>
       </div>
-      <div id="bottom"></div>
-    </div>
+    </section>
+    <section class="card full" aria-labelledby="h-vend">
+      <h2 id="h-vend">Mapa por vendedor · margen bruto % por mes</h2>
+      <div id="vend"></div>
+    </section>
+    <section class="card full" aria-labelledby="h-heat">
+      <h2 id="h-heat">Margen bruto % por empresa y mes</h2>
+      <p class="hint">Cada celda lleva el estado de documentos contra contabilidad. Elige una celda para ver esa empresa y ese mes.</p>
+      <div id="heat"></div>
+    </section>
   </div>
+</section>
+
+<section id="panel-reco" role="tabpanel" aria-labelledby="tab-reco" hidden>
+  <div class="grid">
+    <section class="card full" aria-labelledby="h-fin">
+      <h2 id="h-fin">Corrida manual de Finanzas contra la plataforma</h2>
+      <div id="fin-summary"></div>
+      <div class="chips" role="group" aria-label="Filtrar por estado" id="fin-filter"></div>
+      <div id="fin"></div>
+      <div id="fin-csv"></div>
+    </section>
+    <section class="card full" aria-labelledby="h-docs">
+      <h2 id="h-docs">Documentos contra contabilidad por empresa y mes</h2>
+      <div id="docs-grid"></div>
+      <h3 id="h-docs-month">Detalle del mes</h3>
+      <div id="docs"></div>
+    </section>
+  </div>
+</section>
+
+<section id="panel-dq" role="tabpanel" aria-labelledby="tab-dq" hidden>
+  <div class="grid">
+    <section class="card full" aria-labelledby="h-model">
+      <h2 id="h-model">Modelo de entidades del grupo</h2>
+      <div id="model"></div>
+    </section>
+    <section class="card full" aria-labelledby="h-dq">
+      <h2 id="h-dq">Calidad de datos</h2>
+      <div id="dq"></div>
+    </section>
+  </div>
+</section>
+
 <script>
-const pct = n => n==null ? '—' : Number(n).toLocaleString('es-MX',{minimumFractionDigits:1,maximumFractionDigits:1}) + '%';
-const money = n => n==null ? '—' : '$' + Number(n).toLocaleString('es-MX',{maximumFractionDigits:0});
-const num = n => n==null ? '—' : Number(n).toLocaleString('es-MX');
-function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-function showError(msg){ document.getElementById('error').innerHTML = `<div class="error">${esc(msg)}</div>`; }
-const period = v => String(v||'').slice(0,7);
-async function rows(dataset){
-  const r = await fetch('/api/data/' + dataset + '?limit=5000');
-  if(!r.ok) throw new Error('No se pudo leer ' + dataset + ' (' + r.status + ')');
-  const d = await r.json();
-  return Array.isArray(d) ? d : (d.data || []);
-}
-async function query(dataset, filters){
+'use strict';
+const FORMULA = {
+  "margen_bruto": "Venta neta − costo de lo vendido. Venta neta = facturas de clientes después del descuento de pie de factura − notas de crédito; costo = costo que B1 registra en cada línea (estándar si el artículo se valúa a estándar, promedio si no). Documentos cancelados excluidos.",
+  "margen_contribucion": "Margen bruto − comisión de venta. Comisión = venta neta de la línea × % de comisión de la línea (el que B1 toma del vendedor); las ventas entre empresas del grupo no llevan comisión.",
+  "destructores": "Clientes externos cuyo margen bruto % está debajo del mínimo (o es negativo si no hay mínimo), ordenados por margen perdido = venta neta × mínimo % − margen bruto.",
+  "concentracion_top20": "Margen bruto de los clientes externos que forman el 20 % superior por margen (al menos uno) ÷ margen bruto de todos los clientes externos.",
+  "margen_vendedor": "Margen bruto y margen de contribución de las ventas de cada vendedor (el vendedor del documento en B1)."
+};
+const INDICATOR = {margen_bruto:'Margen bruto', margen_contribucion:'Margen de contribución', destructores:'Destructores de margen', concentracion_top20:'Concentración top 20 %', margen_vendedor:'Margen por vendedor'};
+const DIMENSION = {total:'Total', cliente:'Cliente', sku:'SKU', canal:'Canal', vendedor:'Vendedor'};
+const FIN_STATUS = {ok:['ok','✓','dentro de tolerancia'], fuera_tolerancia:['bad','✕','fuera de tolerancia'], sin_dato_plataforma:['warn','!','sin dato en la plataforma'], solo_plataforma:['none','–','solo en la plataforma']};
+const DOC_STATUS = {cuadra:['ok','✓','cuadra'], diferencia:['bad','✕','diferencia'], sin_contabilidad:['none','–','sin contabilidad']};
+const DQ_STATUS = {ok:['ok','✓','en umbral'], bajo_umbral:['bad','✕','bajo el umbral'], sin_datos:['none','–','sin datos']};
+const CHECK = {rfc_clientes_valido:'Clientes con RFC válido', facturas_cliente_en_maestro:'Facturas con cliente en el maestro', facturas_articulo_en_maestro:'Facturas con artículo en el maestro', asientos_cuenta_en_catalogo:'Asientos con cuenta en el catálogo', lineas_articulo_con_costo:'Líneas de artículo con costo', lotes_con_caducidad:'Lotes con fecha de caducidad', lotes_cuadran_con_existencia:'Lotes que cuadran con la existencia', intercompania_cuadra:'Venta intercompañía igual a la compra', parametros_empresa_conocida:'Parámetros con empresa conocida', relaciones_completas:'Relaciones completas (suma)'};
+const CHECK_GROUP = {maestros:'Maestros', relaciones:'Relaciones', costos:'Costos', lotes:'Lotes', intercompania:'Intercompañía', parametros:'Parámetros'};
+const ENTITY = {cliente:'Cliente', producto:'Producto', canal:'Canal', distribuidora:'Distribuidora', materia_prima:'Materia prima', proveedor:'Proveedor', vendedor:'Vendedor', lote:'Lote'};
+const MES = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+const MESES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+const NF0 = new Intl.NumberFormat('es-MX',{maximumFractionDigits:0});
+const NF1 = new Intl.NumberFormat('es-MX',{minimumFractionDigits:1,maximumFractionDigits:1});
+const NBSP = ' ';
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])); }
+const val = v => (v==null || v==='' || Number.isNaN(Number(v))) ? null : Number(v);
+const r1 = v => { const x = Math.round(v * 10) / 10; return Object.is(x, -0) ? 0 : x; };
+const num = v => val(v)==null ? '—' : NF0.format(val(v));
+const pct = v => val(v)==null ? '—' : NF1.format(r1(val(v))) + NBSP + '%';
+const pts = v => val(v)==null ? '—' : (r1(val(v))>0?'+':'') + NF1.format(r1(val(v))) + NBSP + 'pts';
+function money(v, cur){ const x = val(v); if(x==null) return '—'; return (x<0?'−':'') + '$' + NF0.format(Math.abs(x)) + (cur ? NBSP + esc(cur) : ''); }
+const ratio = (a, b) => (val(a)==null || !val(b)) ? null : 100*val(a)/val(b);
+const monthLong = p => { const [y,m] = String(p||'').split('-'); return MESES[Number(m)-1] ? MESES[Number(m)-1] + ' ' + y : String(p||''); };
+const monthShort = p => { const [y,m] = String(p||'').split('-'); return MES[Number(m)-1] ? MES[Number(m)-1] + ' ' + String(y).slice(2) : String(p||''); };
+const co = x => x==='grupo' ? 'Grupo' : String(x||'');
+const periodOf = d => String(d||'').slice(0,7);
+function badge(map, key){ const s = map[key] || ['none','–', String(key||'sin estado').replace(/_/g,' ')]; return `<span class="st st-${s[0]}"><i aria-hidden="true">${s[1]}</i>${esc(s[2])}</span>`; }
+function empty(msg){ return `<p class="empty">${esc(msg)}</p>`; }
+function showError(msg){ document.getElementById('error').innerHTML = msg ? `<div class="error">${esc(msg)}</div>` : ''; }
+function sum(rows, key){ return rows.reduce((s,r)=> s + (val(r[key]) || 0), 0); }
+function byCurrency(rows, key){ const out = {}; rows.forEach(r=>{ const c = r.local_currency || ''; out[c] = (out[c]||0) + (val(r[key])||0); }); return out; }
+function moneyByCurrency(rows, key){ const parts = Object.entries(byCurrency(rows, key)); return parts.length ? parts.map(([c,v])=> money(v, c)).join(' + ') : '—'; }
+function clean(filters){ const out = {}; Object.entries(filters).forEach(([key, value])=>{ if(value!=null && value!=='') out[key] = value; }); return out; }
+
+class DataError extends Error{ constructor(dataset, status){ super('No se pudo leer ' + dataset + ' (' + status + ')'); this.status = status; } }
+async function query(dataset, filters, limit){
+  const lim = limit || 5000;
   const r = await fetch('/api/data/' + dataset + '/query', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({filters, limit: 2000})});
-  if(!r.ok) throw new Error('No se pudo leer el detalle (' + r.status + ')');
+    body: JSON.stringify({filters: clean(filters || {}), limit: lim})});
+  if(!r.ok) throw new DataError(dataset, r.status);
   const d = await r.json();
-  return Array.isArray(d) ? d : (d.data || []);
+  const rows = Array.isArray(d) ? d : (d.data || []);
+  rows.truncated = rows.length >= lim;
+  return rows;
+}
+async function options(dataset, column){
+  const r = await fetch('/api/data/' + dataset + '/options?columns=' + encodeURIComponent(column));
+  if(!r.ok) throw new DataError(dataset, r.status);
+  const d = await r.json();
+  return Array.isArray(d) ? [] : (d[column] || []);
+}
+const CACHE = new Map();
+function cached(key, fn){
+  if(!CACHE.has(key)) CACHE.set(key, fn().catch(e=>{ CACHE.delete(key); throw e; }));
+  return CACHE.get(key);
+}
+async function settle(promise){ try{ return {rows: await promise, ok: true}; }catch(e){ return {rows: [], ok: false, error: e}; } }
+
+const DS = {
+  kpis: 'sap_b1_margin_kpis_month',
+  detail: 'sap_b1_margin_detail_month',
+  consolidated: 'sap_b1_margin_consolidated_month',
+  finance: 'sap_b1_kpi_reconciliation',
+  ledger: 'sap_b1_margin_reconciliation_month',
+  quality: 'sap_b1_data_quality',
+  model: 'sap_b1_entity_model'
+};
+
+const CHARTS = {}, BUILDERS = {};
+function css(name){ return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+function draw(id, build){
+  const canvas = document.getElementById(id);
+  if(CHARTS[id]){ CHARTS[id].destroy(); delete CHARTS[id]; }
+  BUILDERS[id] = build;
+  if(!canvas) return null;
+  const off = canvas.parentElement.querySelector('.chart-off');
+  canvas.parentElement.classList.toggle('off', typeof Chart === 'undefined' || !build);
+  if(typeof Chart === 'undefined' || !build){
+    canvas.hidden = true;
+    if(off) off.hidden = !build ? true : false;
+    return null;
+  }
+  canvas.hidden = false;
+  if(off) off.hidden = true;
+  CHARTS[id] = new Chart(canvas, build());
+  return CHARTS[id];
+}
+function axes(yFormat){
+  const ink = css('--text2'), grid = css('--border');
+  return {
+    x:{ticks:{color:ink, autoSkip:true, maxRotation:0}, grid:{display:false}, border:{color:grid}},
+    y:{ticks:{color:ink, callback: v => yFormat(v)}, grid:{color:grid}, border:{display:false}}
+  };
+}
+new MutationObserver(()=> Object.keys(BUILDERS).forEach(id=> draw(id, BUILDERS[id])))
+  .observe(document.documentElement, {attributes:true, attributeFilter:['data-theme']});
+
+function heatClass(v, lo, hi){
+  if(v==null) return 'hn';
+  if(hi<=lo) return 'h3';
+  return 'h' + Math.max(0, Math.min(6, Math.floor(7 * (v - lo) / (hi - lo + 1e-9))));
+}
+function heatRange(values){
+  const v = values.filter(x=> x!=null).sort((a,b)=> a-b);
+  if(!v.length) return [0, 0];
+  const at = q => v[Math.min(v.length-1, Math.max(0, Math.round(q * (v.length-1))))];
+  const lo = at(0.05), hi = at(0.95);
+  return hi > lo ? [lo, hi] : [v[0], v[v.length-1]];
+}
+function heatLegend(lo, hi, what){
+  return `<div class="legend"><span>${esc(what)} menor</span><span class="ramp" aria-hidden="true">${[0,1,2,3,4,5,6].map(i=> `<i class="h${i}"></i>`).join('')}</span><span>mayor</span><span>(escala de ${pct(lo)} o menos a ${pct(hi)} o más)</span></div>`;
 }
 
-let CONS = [], COMP = [], RECO = [], DQ = [], chart = null, drillTab = 'customers', bottomTab = 'reco', DRILL = null;
+const S = {company:'grupo', period:'', periods:[], companies:[], seq:0, drill:null, finFilter:'todos', finRows:[], tab:'tab-ind'};
 
-function currency(){ return document.getElementById('currency').value; }
-function selected(){ return document.getElementById('period').value; }
-function marginClass(m, min){
-  if(m==null) return 'none';
-  if(min!=null && m < min) return 'bad';
-  if(min!=null && m < min + 2) return 'warn';
-  return 'ok';
+function selected(){ return {company: document.getElementById('company').value, period: document.getElementById('period').value}; }
+function last24(){ return [...S.periods].sort().slice(-24); }
+
+function card(id, label, value, sub, formula, accent){
+  return `<article class="kpi" style="--accent:var(${accent})" aria-labelledby="k-${id}">
+    <h3 id="k-${id}" title="${esc(formula)}">${esc(label)}</h3>
+    <div class="v">${value}</div><div class="s">${sub}</div>
+    <details class="formula"><summary>Fórmula</summary><p>${esc(formula)}</p></details></article>`;
 }
 
-function renderKpis(){
-  const p = selected(), cur = currency();
-  const cons = CONS.filter(r=> period(r.doc_month)===p && r.local_currency===cur)[0] || {};
-  const prev = CONS.filter(r=> r.local_currency===cur && period(r.doc_month) < p).sort((a,b)=> period(b.doc_month).localeCompare(period(a.doc_month))).slice(0,3);
-  const trailing = prev.length ? prev.reduce((s,r)=> s + Number(r.consolidated_margin_pct||0), 0)/prev.length : null;
-  const ext = COMP.filter(r=> r.period===p && r.scope==='external' && r.local_currency===cur);
-  const rev = ext.reduce((s,r)=> s + Number(r.revenue_net_local||0), 0);
-  const gp = ext.reduce((s,r)=> s + Number(r.gross_profit_net_local||0), 0);
-  const below = ext.reduce((s,r)=> s + Number(r.customers_below_min||0), 0);
-  const belowRev = ext.reduce((s,r)=> s + Number(r.revenue_below_min_local||0), 0);
-  const neg = ext.reduce((s,r)=> s + Number(r.customers_negative||0), 0);
-  const reco = RECO.filter(r=> period(r.doc_month)===p);
-  const okCount = reco.filter(r=> r.status==='ok').length, bad = reco.filter(r=> r.status==='fuera_tolerancia').length;
-  const delta = (cons.consolidated_margin_pct!=null && trailing!=null) ? (Number(cons.consolidated_margin_pct) - trailing) : null;
-  document.getElementById('kpis').innerHTML = `
-    <div class="kpi" style="--accent:var(--purple)"><div class="l">Margen del grupo</div><div class="v">${pct(cons.consolidated_margin_pct)}</div>
-      <div class="s">${delta==null ? 'sin meses previos' : (delta>=0?'+':'') + delta.toFixed(1) + ' pts vs 3 meses'}</div></div>
-    <div class="kpi" style="--accent:var(--blue)"><div class="l">Margen neto externo</div><div class="v">${pct(rev ? 100*gp/rev : null)}</div>
-      <div class="s">venta ${money(rev)}</div></div>
-    <div class="kpi" style="--accent:var(--amber)"><div class="l">Clientes bajo mínimo</div><div class="v">${num(below)}</div>
-      <div class="s">${pct(rev ? 100*belowRev/rev : null)} de la venta</div></div>
-    <div class="kpi" style="--accent:var(--red)"><div class="l">Clientes con margen negativo</div><div class="v">${num(neg)}</div>
-      <div class="s">en ${esc(p)}</div></div>
-    <div class="kpi" style="--accent:var(--green)"><div class="l">Reconciliación</div><div class="v">${num(okCount)} / ${num(reco.length)}</div>
-      <div class="s">${bad ? esc(bad + ' fuera de tolerancia') : 'empresas dentro de tolerancia'}</div></div>`;
+async function renderKpis(token){
+  const {company, period} = selected();
+  const el = document.getElementById('kpis');
+  const [summary, customers, cons] = await Promise.all([
+    settle(cached('sum:' + period, ()=> query(DS.kpis, {period, dimension:['total','canal','vendedor']}, 10000))),
+    settle(cached('cli:' + period, ()=> query(DS.kpis, {period, dimension:'cliente', indicator:['destructores','concentracion_top20']}, 10000))),
+    settle(cached('cons', ()=> query(DS.consolidated, {}, 2000)))
+  ]);
+  if(token !== S.seq) return;
+  if(!summary.ok){ el.innerHTML = empty('No se pudieron leer los indicadores: ' + summary.error.message); return; }
+  const mine = r => company==='grupo' ? true : r.company===company;
+  const rows = summary.rows.filter(mine);
+  const total = ind => summary.rows.find(r=> r.company===company && r.indicator===ind && r.dimension==='total');
+  const gross = total('margen_bruto'), contrib = total('margen_contribucion');
+  const cur = (gross || contrib || rows[0] || {}).local_currency || '';
+  document.getElementById('meta').textContent = cur ? 'Montos en ' + cur + ' · ' + monthLong(period) : monthLong(period);
+
+  let grossSub = gross ? 'sobre venta neta de ' + money(gross.revenue_net_local, cur) : 'sin ventas en el mes';
+  if(company==='grupo' && gross){
+    const c = cons.rows.find(r=> periodOf(r.doc_month)===period && (r.local_currency||'')===cur);
+    if(c) grossSub = 'externo ' + money(c.external_gross_profit_local) + ' + intercompañía ' + money(c.intercompany_gross_profit_local) +
+      ' − cambio en utilidad no realizada ' + money(val(c.unrealized_profit_close_local) - val(c.unrealized_profit_open_local));
+  }
+  const html = [];
+  html.push(card('mb', 'Margen bruto', gross ? money(gross.value_local, cur) + ` <small>${pct(gross.value_pct)}</small>` : '—', grossSub, FORMULA.margen_bruto, '--s1'));
+  html.push(card('mc', 'Margen de contribución', contrib ? money(contrib.value_local, cur) + ` <small>${pct(contrib.value_pct)}</small>` : '—',
+    contrib ? 'comisión ' + money(contrib.commission_local, cur) : 'sin ventas en el mes', FORMULA.margen_contribucion, '--s2'));
+
+  const destroyers = customers.rows.filter(r=> r.indicator==='destructores' && mine(r));
+  const mins = [...new Set(destroyers.map(r=> val(r.min_margin_pct)).filter(v=> v!=null))];
+  const minText = !destroyers.length ? 'ningún cliente bajo el mínimo' :
+    (mins.length===1 ? 'mínimo ' + pct(mins[0]) : (mins.length ? 'mínimo según empresa' : 'sin umbral: margen negativo'));
+  html.push(card('de', 'Destructores de margen', customers.ok ? `${num(destroyers.length)} <small>clientes</small>` : '—',
+    !customers.ok ? 'sin datos' : destroyers.length ? 'margen perdido ' + moneyByCurrency(destroyers, 'value_local') + ' · ' + esc(minText) : esc(minText), FORMULA.destructores, '--red'));
+
+  const conc = summary.rows.filter(r=> r.indicator==='concentracion_top20' && r.dimension==='total' && mine(r));
+  if(company==='grupo'){
+    html.push(card('co', 'Concentración top 20 %', conc.length ? '<small>por empresa</small>' : '—',
+      conc.length ? '<ul>' + conc.map(r=> `<li><span>${esc(co(r.company))}</span><strong>${pct(r.value_pct)}</strong></li>`).join('') + '</ul>' : 'sin clientes externos',
+      FORMULA.concentracion_top20, '--s3'));
+  } else {
+    const c = conc[0];
+    html.push(card('co', 'Concentración top 20 %', c ? pct(c.value_pct) : '—',
+      c ? `${num(c.rank_in_period)} clientes dejan ${money(c.value_local, cur)} de margen` : 'sin clientes externos', FORMULA.concentracion_top20, '--s3'));
+  }
+
+  const sellers = rows.filter(r=> r.indicator==='margen_vendedor').sort((a,b)=> (val(b.value_local)||0) - (val(a.value_local)||0));
+  const label = r => esc(r.dim_label || r.dim_key) + (company==='grupo' ? ' · ' + esc(co(r.company)) : '');
+  const best = sellers[0], worst = sellers[sellers.length-1];
+  html.push(card('ve', 'Margen por vendedor', best ? `<small>${num(sellers.length)} vendedores</small>` : '—',
+    best ? `<ul class="stack"><li><span>Mejor: ${label(best)}</span><strong>${money(best.value_local, best.local_currency)} · ${pct(best.value_pct)}</strong></li>` +
+      (worst !== best ? `<li><span>Peor: ${label(worst)}</span><strong>${money(worst.value_local, worst.local_currency)} · ${pct(worst.value_pct)}</strong></li>` : '') + '</ul>'
+      : 'sin ventas con vendedor', FORMULA.margen_vendedor, '--purple'));
+  el.innerHTML = html.join('');
 }
 
-function renderHeat(){
-  const cur = currency();
-  const ext = COMP.filter(r=> r.scope==='external' && r.local_currency===cur);
-  const periods = [...new Set(ext.map(r=> r.period))].sort().slice(-12);
-  const companies = [...new Set(ext.map(r=> r.company))].sort();
-  const el = document.getElementById('heat');
-  if(!companies.length){ el.innerHTML = '<div class="empty">Sin ventas externas publicadas</div>'; return; }
-  const recoStatus = {};
-  RECO.forEach(r=> { recoStatus[r.company + '|' + period(r.doc_month)] = r.status; });
-  const mark = {ok:'✓ finanzas', fuera_tolerancia:'! finanzas', sin_control:'· sin control'};
-  el.innerHTML = `<table class="heat"><thead><tr><th>Empresa</th>${periods.map(p=> `<th>${esc(p)}</th>`).join('')}</tr></thead><tbody>${
-    companies.map(c=> `<tr><td>${esc(c)}</td>${periods.map(p=>{
-      const r = ext.find(x=> x.company===c && x.period===p);
-      if(!r) return '<td class="cell none">—</td>';
-      const cls = marginClass(r.margin_pct==null?null:Number(r.margin_pct), r.min_margin_pct==null?null:Number(r.min_margin_pct));
-      return `<td class="cell ${cls}" data-company="${esc(c)}" data-period="${esc(p)}">${pct(r.margin_pct)}<span class="badge">${esc(mark[recoStatus[c+'|'+p]] || '')}</span></td>`;
-    }).join('')}</tr>`).join('')
-  }</tbody></table>`;
-  el.querySelectorAll('td[data-company]').forEach(td=> td.addEventListener('click', ()=> openDrill(td.dataset.company, td.dataset.period)));
+async function renderRank(token){
+  const {company, period} = selected();
+  const el = document.getElementById('rank');
+  el.innerHTML = empty('Cargando…');
+  const [customers, best, group] = await Promise.all([
+    settle(cached('cli:' + period, ()=> query(DS.kpis, {period, dimension:'cliente', indicator:['destructores','concentracion_top20']}, 10000))),
+    settle(cached('best:' + company + ':' + period, ()=> query(DS.kpis, {period, indicator:'margen_bruto', dimension:'cliente', company: company==='grupo' ? null : company}, 10000))),
+    settle(cached('ic:' + period, ()=> query(DS.detail, {period, scope:'intercompany'}, 10000)))
+  ]);
+  if(token !== S.seq) return;
+  if(!customers.ok && !best.ok){ el.innerHTML = empty('No se pudo leer el ranking de clientes.'); return; }
+  const mine = r => company==='grupo' || r.company===company;
+  const many = company==='grupo';
+  const destroyers = customers.rows.filter(r=> r.indicator==='destructores' && mine(r))
+    .sort((a,b)=> (val(b.value_local)||0) - (val(a.value_local)||0));
+  const top = new Set(customers.rows.filter(r=> r.indicator==='concentracion_top20' && mine(r)).map(r=> r.company + '|' + r.dim_key));
+  const sister = new Set(group.rows.map(r=> r.company + '|' + r.card_code));
+  const bad = new Set(destroyers.map(r=> r.company + '|' + r.dim_key));
+  const leaders = best.rows.filter(r=> !bad.has(r.company + '|' + r.dim_key))
+    .sort((a,b)=> (val(b.value_local)||0) - (val(a.value_local)||0)).slice(0, 15);
+  const who = r => `<button class="link" data-company="${esc(r.company)}" data-card="${esc(r.dim_key)}" data-name="${esc(r.dim_label || r.dim_key)}">${esc(r.dim_label || r.dim_key)}</button>`;
+  const coCol = r => many ? `<td>${esc(co(r.company))}</td>` : '';
+  const coHead = many ? '<th scope="col">Empresa</th>' : '';
+  let html = `<h3>Destructores de margen (${num(destroyers.length)})</h3>`;
+  html += destroyers.length ? `<div class="tw tall"><table><caption class="sr-only">Clientes bajo el margen mínimo, ordenados por margen perdido</caption><thead><tr><th scope="col" class="n">#</th>${coHead}<th scope="col">Cliente</th><th scope="col" class="n">Venta neta</th><th scope="col" class="n">Margen bruto</th><th scope="col" class="n">MB %</th><th scope="col" class="n">Mínimo</th><th scope="col" class="n">Margen perdido</th></tr></thead><tbody>${
+    destroyers.map((r,i)=> `<tr><td class="n">${num(i+1)}</td>${coCol(r)}<th scope="row">${who(r)}</th><td class="n">${money(r.revenue_net_local)}</td><td class="n">${money(r.gross_margin_local)}</td><td class="n">${pct(r.value_pct)}</td><td class="n">${r.min_margin_pct==null ? '<span class="muted">sin umbral</span>' : pct(r.min_margin_pct)}</td><td class="n"><strong>${money(r.value_local)}</strong></td></tr>`).join('')
+  }</tbody></table></div>` : empty(customers.ok ? 'Ningún cliente externo quedó debajo del mínimo en el mes.' : 'Sin datos de destructores.');
+  html += `<h3>Mejores clientes por margen bruto</h3>`;
+  html += leaders.length ? `<div class="tw tall"><table><caption class="sr-only">Clientes con mayor margen bruto que no son destructores</caption><thead><tr><th scope="col" class="n">#</th>${coHead}<th scope="col">Cliente</th><th scope="col" class="n">Venta neta</th><th scope="col" class="n">Margen bruto</th><th scope="col" class="n">MB %</th><th scope="col" class="n">Margen de contribución</th><th scope="col" class="n">MC %</th><th scope="col">Nota</th></tr></thead><tbody>${
+    leaders.map((r,i)=> `<tr><td class="n">${num(i+1)}</td>${coCol(r)}<th scope="row">${who(r)}</th><td class="n">${money(r.revenue_net_local)}</td><td class="n">${money(r.value_local)}</td><td class="n">${pct(r.value_pct)}</td><td class="n">${money(r.contribution_margin_local)}</td><td class="n">${pct(ratio(r.contribution_margin_local, r.revenue_net_local))}</td><td>${top.has(r.company + '|' + r.dim_key) ? '<span class="st st-ok"><i aria-hidden="true">★</i>top 20 %</span>' : ''}${sister.has(r.company + '|' + r.dim_key) ? '<span class="st st-none"><i aria-hidden="true">↔</i>empresa del grupo</span>' : ''}</td></tr>`).join('')
+  }</tbody></table></div>` : empty(best.ok ? 'Sin clientes con venta en el mes.' : 'Sin datos de clientes.');
+  if(best.rows.truncated || customers.rows.truncated) html += '<p class="note">El mes tiene más clientes de los que se leen a la vez; el ranking usa los primeros 10 000.</p>';
+  el.innerHTML = html;
 }
 
-function renderTrend(){
-  const cur = currency();
-  const data = CONS.filter(r=> r.local_currency===cur).sort((a,b)=> period(a.doc_month).localeCompare(period(b.doc_month)));
-  if(chart) chart.destroy();
-  chart = new Chart(document.getElementById('trend'), {type:'line',
-    data:{labels:data.map(r=> period(r.doc_month)), datasets:[
-      {label:'Grupo (eliminando intercompañía)', data:data.map(r=> r.consolidated_margin_pct), borderColor:'#bc8cff', tension:.25},
-      {label:'Externo (suma de empresas)', data:data.map(r=> r.external_margin_pct), borderColor:'#7c9fff', tension:.25}]},
-    options:{responsive:true, maintainAspectRatio:false, plugins:{legend:{labels:{color:'#8b949e'}}},
-      scales:{x:{ticks:{color:'#8b949e'},grid:{color:'#21262d'}}, y:{ticks:{color:'#8b949e', callback:v=> v+'%'},grid:{color:'#21262d'}}}}});
-}
-
-async function openDrill(company, p){
-  document.getElementById('drill-title').textContent = 'Detalle · ' + company + ' · ' + p;
+async function openDrill(companyName, cardCode, name){
+  const {period} = selected();
   const el = document.getElementById('drill');
-  el.innerHTML = '<div class="empty">Cargando…</div>';
+  S.drill = {company: companyName, card: cardCode, name};
+  document.querySelectorAll('#rank tr').forEach(tr=> tr.classList.toggle('sel', !!tr.querySelector(`button[data-card="${CSS.escape(cardCode)}"][data-company="${CSS.escape(companyName)}"]`)));
+  el.innerHTML = empty('Cargando…');
+  if(window.innerWidth < 1200) el.scrollIntoView({block:'start', behavior:'smooth'});
   try{
-    const filters = {company, period: p, scope: 'external'};
-    const [customers, items] = await Promise.all([
-      query('sap_b1_margin_by_customer_month', filters),
-      query('sap_b1_margin_by_item_month', filters),
-    ]);
-    DRILL = {customers, items};
-    renderDrill();
-  }catch(e){ el.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+    const rows = await query(DS.detail, {company: companyName, period, card_code: cardCode}, 10000);
+    if(!S.drill || S.drill.card !== cardCode || S.drill.company !== companyName) return;
+    const items = {};
+    rows.forEach(r=>{
+      const k = r.item_code || '';
+      const it = items[k] = items[k] || {code: r.item_code, name: r.item_name, family: r.item_group_name, qty:0, rev:0, cost:0, gross:0, com:0, contrib:0, before:0, disc:0, credit:0, cur: r.local_currency};
+      it.qty += val(r.quantity_net)||0; it.rev += val(r.revenue_net_local)||0; it.cost += val(r.cost_net_local)||0;
+      it.gross += val(r.gross_margin_local)||0; it.com += val(r.commission_local)||0; it.contrib += val(r.contribution_margin_local)||0;
+      it.before += val(r.invoiced_before_discount_local)||0; it.disc += val(r.footer_discount_local)||0; it.credit += val(r.credit_memos_local)||0;
+    });
+    const list = Object.values(items).sort((a,b)=> (ratio(a.gross, a.rev) ?? 1e9) - (ratio(b.gross, b.rev) ?? 1e9));
+    const cur = (rows[0] || {}).local_currency || '';
+    const t = list.reduce((s,x)=>({before:s.before+x.before, disc:s.disc+x.disc, credit:s.credit+x.credit, rev:s.rev+x.rev, cost:s.cost+x.cost, com:s.com+x.com}), {before:0, disc:0, credit:0, rev:0, cost:0, com:0});
+    el.innerHTML = `<h3>SKU de ${esc(name)} · ${esc(co(companyName))} · ${esc(monthLong(period))}</h3>` + (list.length ?
+      `<p class="note">Facturado antes de descuento ${money(t.before, cur)} − descuento de pie ${money(t.disc, cur)} − notas de crédito ${money(t.credit, cur)} = venta neta ${money(t.rev, cur)}; costo ${money(t.cost, cur)}; comisión ${money(t.com, cur)}.</p>
+      <div class="tw tall"><table><caption class="sr-only">Margen por SKU del cliente, del menor al mayor margen</caption><thead><tr><th scope="col">SKU</th><th scope="col">Familia</th><th scope="col" class="n">Unidades</th><th scope="col" class="n">Venta neta</th><th scope="col" class="n">Margen bruto</th><th scope="col" class="n">MB %</th><th scope="col" class="n">MC %</th></tr></thead><tbody>${
+        list.map(x=> `<tr><th scope="row">${esc(x.name || x.code || 'Sin artículo')}<br><span class="muted">${esc(x.code)}</span></th><td>${esc(x.family)}</td><td class="n">${num(x.qty)}</td><td class="n">${money(x.rev)}</td><td class="n">${money(x.gross)}</td><td class="n">${pct(ratio(x.gross, x.rev))}</td><td class="n">${pct(ratio(x.contrib, x.rev))}</td></tr>`).join('')
+      }</tbody></table></div>` : empty('El cliente no tiene líneas en el mes.'));
+  }catch(e){ el.innerHTML = empty('No se pudo leer el detalle: ' + e.message); }
 }
 
-function renderDrill(){
-  const el = document.getElementById('drill');
-  if(!DRILL){ return; }
-  const byMargin = (a,b)=> Number(a.margin_pct ?? 1e9) - Number(b.margin_pct ?? 1e9);
-  if(drillTab === 'customers'){
-    const list = [...DRILL.customers].sort(byMargin).slice(0,50);
-    el.innerHTML = list.length ? `<table><thead><tr><th>Cliente</th><th class="n">Venta</th><th class="n">Margen</th><th class="n">Mínimo</th></tr></thead><tbody>${
-      list.map(r=> `<tr><td>${esc(r.card_name || r.card_code)}</td><td class="n">${money(r.revenue_net_local)}</td><td class="n ${marginClass(r.margin_pct==null?null:Number(r.margin_pct), r.min_margin_pct==null?null:Number(r.min_margin_pct))}">${pct(r.margin_pct)}</td><td class="n">${pct(r.min_margin_pct)}</td></tr>`).join('')
-    }</tbody></table>` : '<div class="empty">Sin clientes</div>';
-  } else if(drillTab === 'items'){
-    const list = [...DRILL.items].sort(byMargin).slice(0,50);
-    el.innerHTML = list.length ? `<table><thead><tr><th>Artículo</th><th>Familia</th><th class="n">Venta</th><th class="n">Margen</th></tr></thead><tbody>${
-      list.map(r=> `<tr><td>${esc(r.item_name || r.item_code)}</td><td>${esc(r.item_group_name)}</td><td class="n">${money(r.revenue_net_local)}</td><td class="n">${pct(r.margin_pct)}</td></tr>`).join('')
-    }</tbody></table>` : '<div class="empty">Sin artículos</div>';
-  } else {
-    const fam = {};
-    DRILL.items.forEach(r=>{ const k = r.item_group_name || 'Sin grupo'; fam[k] = fam[k] || {rev:0, gp:0}; fam[k].rev += Number(r.revenue_net_local||0); fam[k].gp += Number(r.gross_profit_net_local||0); });
-    const total = Object.values(fam).reduce((s,f)=> s + f.rev, 0);
-    const list = Object.entries(fam).sort((a,b)=> b[1].rev - a[1].rev);
-    el.innerHTML = list.length ? `<table><thead><tr><th>Familia</th><th class="n">Venta</th><th class="n">Mezcla</th><th class="n">Margen</th></tr></thead><tbody>${
-      list.map(([k,f])=> `<tr><td>${esc(k)}</td><td class="n">${money(f.rev)}</td><td class="n">${pct(total ? 100*f.rev/total : null)}</td><td class="n">${pct(f.rev ? 100*f.gp/f.rev : null)}</td></tr>`).join('')
-    }</tbody></table>` : '<div class="empty">Sin familias</div>';
+async function renderCanal(token){
+  const {company, period} = selected();
+  const el = document.getElementById('canal');
+  const summary = await settle(cached('sum:' + period, ()=> query(DS.kpis, {period, dimension:['total','canal','vendedor']}, 10000)));
+  if(token !== S.seq) return;
+  const many = company==='grupo';
+  const rows = summary.rows.filter(r=> r.indicator==='margen_bruto' && r.dimension==='canal' && (many || r.company===company))
+    .sort((a,b)=> (val(b.revenue_net_local)||0) - (val(a.revenue_net_local)||0));
+  const label = r => (many ? co(r.company) + ' · ' : '') + (r.dim_label || r.dim_key);
+  if(!rows.length){ el.innerHTML = empty(summary.ok ? 'Sin ventas por canal en el mes.' : 'Sin datos por canal.'); draw('c-canal', null); return; }
+  el.innerHTML = `<div class="tw"><table><caption class="sr-only">Margen por canal</caption><thead><tr><th scope="col">Canal</th><th scope="col" class="n">Venta neta</th><th scope="col" class="n">Margen bruto</th><th scope="col" class="n">MB %</th><th scope="col" class="n">Margen de contribución</th><th scope="col" class="n">MC %</th></tr></thead><tbody>${
+    rows.map(r=> `<tr><th scope="row">${esc(label(r))}</th><td class="n">${money(r.revenue_net_local)}</td><td class="n">${money(r.gross_margin_local)}</td><td class="n">${pct(r.value_pct)}</td><td class="n">${money(r.contribution_margin_local)}</td><td class="n">${pct(ratio(r.contribution_margin_local, r.revenue_net_local))}</td></tr>`).join('')
+  }</tbody></table></div>`;
+  draw('c-canal', ()=> ({type:'bar',
+    data:{labels: rows.map(label), datasets:[
+      {label:'Margen bruto', data: rows.map(r=> val(r.gross_margin_local)), backgroundColor: css('--s1'), borderRadius:4, maxBarThickness:30},
+      {label:'Margen de contribución', data: rows.map(r=> val(r.contribution_margin_local)), backgroundColor: css('--s2'), borderRadius:4, maxBarThickness:30}]},
+    options:{responsive:true, maintainAspectRatio:false, animation:false,
+      datasets:{bar:{categoryPercentage:.7, barPercentage:.92}},
+      plugins:{legend:{labels:{color: css('--text2'), boxWidth:12}},
+        tooltip:{callbacks:{label: ctx => { const r = rows[ctx.dataIndex]; const pctv = ctx.datasetIndex===0 ? val(r.value_pct) : ratio(r.contribution_margin_local, r.revenue_net_local);
+          return ctx.dataset.label + ': ' + money(ctx.parsed.y).replace(/ /g,' ') + ' (' + pct(pctv).replace(/ /g,' ') + ')'; }}}},
+      scales: axes(v => money(v).replace(/ /g,' '))}}));
+}
+
+async function renderVendors(token){
+  const {company} = selected();
+  const el = document.getElementById('vend');
+  el.innerHTML = empty('Cargando…');
+  const res = await settle(cached('vend:' + company, ()=> query(DS.kpis, {indicator:'margen_vendedor', company: company==='grupo' ? null : company}, 10000)));
+  if(token !== S.seq) return;
+  if(!res.ok){ el.innerHTML = empty('Sin datos de vendedores.'); return; }
+  const periods = last24();
+  const many = company==='grupo';
+  const people = {};
+  res.rows.forEach(r=>{
+    const key = r.company + '|' + r.dim_key;
+    const p = people[key] = people[key] || {label: (r.dim_label || r.dim_key) + (many ? ' · ' + co(r.company) : ''), cells:{}, total:0};
+    p.cells[r.period] = r; p.total += val(r.value_local)||0;
+  });
+  const list = Object.values(people).sort((a,b)=> b.total - a.total);
+  if(!list.length){ el.innerHTML = empty('Sin ventas con vendedor en los últimos 24 meses.'); return; }
+  const values = list.flatMap(p=> periods.map(m=> p.cells[m] ? val(p.cells[m].value_pct) : null)).filter(v=> v!=null);
+  const [lo, hi] = heatRange(values);
+  el.innerHTML = `<div class="tw"><table class="heat"><caption class="sr-only">Margen bruto por vendedor y mes, últimos 24 meses</caption><thead><tr><th scope="col">Vendedor</th>${periods.map(m=> `<th scope="col" class="n" title="${esc(monthLong(m))}">${esc(monthShort(m))}</th>`).join('')}</tr></thead><tbody>${
+    list.map(p=> `<tr><th scope="row">${esc(p.label)}</th>${periods.map(m=>{
+      const r = p.cells[m]; const v = r ? val(r.value_pct) : null;
+      const title = r ? `${p.label} · ${monthLong(m)}: margen bruto ${money(r.value_local, r.local_currency)} (${pct(r.value_pct)}), contribución ${pct(ratio(r.contribution_margin_local, r.revenue_net_local))}` : `${p.label} · ${monthLong(m)}: sin ventas`;
+      return `<td class="hc ${heatClass(v, lo, hi)}" title="${esc(title.replace(/ /g,' '))}"><span>${r ? pct(v) : '—'}</span></td>`;
+    }).join('')}</tr>`).join('')
+  }</tbody></table></div>` + heatLegend(lo, hi, 'Margen bruto');
+}
+
+async function renderHeat(token){
+  const {company, period} = selected();
+  const el = document.getElementById('heat');
+  const [heat, ledger] = await Promise.all([
+    settle(cached('heat', ()=> query(DS.kpis, {indicator:'margen_bruto', dimension:'total'}, 5000))),
+    settle(cached('ledger', ()=> query(DS.ledger, {}, 5000)))
+  ]);
+  if(token !== S.seq) return;
+  if(!heat.ok || !heat.rows.length){ el.innerHTML = empty('Sin margen por empresa publicado.'); return; }
+  const periods = last24();
+  const companies = [...new Set(heat.rows.map(r=> r.company))].sort((a,b)=> (a==='grupo') - (b==='grupo') || a.localeCompare(b));
+  const cell = {}; heat.rows.forEach(r=>{ cell[r.company + '|' + r.period] = r; });
+  const status = {}; ledger.rows.forEach(r=>{ status[r.company + '|' + periodOf(r.doc_month)] = r.status; });
+  const values = heat.rows.filter(r=> periods.includes(r.period)).map(r=> val(r.value_pct)).filter(v=> v!=null);
+  const [lo, hi] = heatRange(values);
+  const short = {cuadra:'✓ contab.', diferencia:'✕ contab.', sin_contabilidad:'– contab.'};
+  el.innerHTML = `<div class="tw"><table class="heat"><caption class="sr-only">Margen bruto por empresa y mes, últimos 24 meses, con el estado contra contabilidad</caption><thead><tr><th scope="col">Empresa</th>${periods.map(m=> `<th scope="col" class="n" title="${esc(monthLong(m))}">${esc(monthShort(m))}</th>`).join('')}</tr></thead><tbody>${
+    companies.map(x=> `<tr><th scope="row">${esc(co(x))}</th>${periods.map(m=>{
+      const r = cell[x + '|' + m]; const v = r ? val(r.value_pct) : null; const st = status[x + '|' + m];
+      const title = r ? `${co(x)} · ${monthLong(m)}: margen bruto ${money(r.value_local, r.local_currency)} (${pct(v)})` + (st ? ' · contabilidad: ' + (DOC_STATUS[st] ? DOC_STATUS[st][2] : st) : '') : `${co(x)} · ${monthLong(m)}: sin ventas`;
+      const picked = x===company && m===period ? ' picked' : '';
+      return `<td class="hc ${heatClass(v, lo, hi)}${picked}">${r ? `<button data-company="${esc(x)}" data-period="${esc(m)}" title="${esc(title.replace(/ /g,' '))}" aria-label="${esc(title.replace(/ /g,' '))}">${pct(v)}${st ? `<small>${esc(short[st] || '')}</small>` : ''}</button>` : '<span>—</span>'}</td>`;
+    }).join('')}</tr>`).join('')
+  }</tbody></table></div>` + heatLegend(lo, hi, 'Margen bruto') + '<p class="note">✓ cuadra con contabilidad · ✕ diferencia · – sin contabilidad en el mes.</p>';
+}
+
+async function finRows(company, period){
+  return cached('fin:' + company + ':' + period, ()=> query(DS.finance, {period, company: company==='grupo' ? null : company}, 10000));
+}
+
+async function renderFinance(token){
+  const {company, period} = selected();
+  const el = document.getElementById('fin'), sumEl = document.getElementById('fin-summary'), chips = document.getElementById('fin-filter'), csv = document.getElementById('fin-csv');
+  el.innerHTML = empty('Cargando…'); sumEl.innerHTML = ''; chips.innerHTML = ''; csv.innerHTML = '';
+  const [res, runs] = await Promise.all([settle(finRows(company, period)), settle(cached('finperiods', ()=> options(DS.finance, 'period')))]);
+  if(token !== S.seq) return;
+  S.finRows = res.rows;
+  if(!res.ok || !res.rows.length){
+    const avail = (runs.rows || []).slice().sort().reverse();
+    el.innerHTML = empty('Sin corrida de Finanzas para ' + monthLong(period) + (company==='grupo' ? '' : ' en ' + co(company)) + '.') +
+      (avail.length ? `<p class="note">Meses con corrida de Finanzas: ${avail.map(m=> `<button class="link" data-goto="${esc(m)}">${esc(monthLong(m))}</button>`).join(' · ')}</p>` :
+        '<p class="note">Todavía no se ha cargado ninguna corrida manual de Finanzas en la consola.</p>');
+    return;
   }
+  const compared = res.rows.filter(r=> r.status!=='solo_plataforma');
+  const inside = compared.filter(r=> r.status==='ok').length;
+  const tolerances = [...new Set(compared.map(r=> val(r.tolerance_pct)).filter(v=> v!=null))];
+  const tol = tolerances.length===1 ? '< ' + NF1.format(tolerances[0]) + NBSP + '%' : 'dentro de su tolerancia';
+  sumEl.innerHTML = `<div class="row"><p class="summary">Filas con diferencia ${esc(tol)}: ${num(inside)} de ${num(compared.length)}</p><span class="meta">${esc(monthLong(period))} · corrida ${esc(String((res.rows.find(r=> r.uploaded_at) || {}).uploaded_at || '').slice(0,16).replace('T',' '))}</span></div>`;
+  const counts = {todos: res.rows.length};
+  res.rows.forEach(r=>{ counts[r.status] = (counts[r.status]||0) + 1; });
+  const filters = [['todos','Todas'], ['ok','Dentro de tolerancia'], ['fuera_tolerancia','Fuera de tolerancia'], ['sin_dato_plataforma','Sin dato en la plataforma'], ['solo_plataforma','Solo en la plataforma']];
+  if(!counts[S.finFilter]) S.finFilter = 'todos';
+  chips.innerHTML = filters.map(([key, label])=> `<button type="button" data-status="${esc(key)}" aria-pressed="${S.finFilter===key}">${esc(label)} (${num(counts[key]||0)})</button>`).join('');
+  csv.innerHTML = `<div class="row" style="margin-top:10px"><span class="note">El CSV incluye todas las filas del mes y las columnas de diagnóstico.</span><span><button type="button" class="btn" id="csv-download">Descargar CSV</button> <button type="button" class="btn" id="csv-show" aria-expanded="false" aria-controls="csv-text">Ver CSV para copiar</button></span></div><textarea id="csv-text" hidden readonly aria-label="Matriz de reconciliación en CSV"></textarea>`;
+  renderFinanceTable();
 }
 
-function renderBottom(){
-  const el = document.getElementById('bottom');
-  if(bottomTab === 'reco'){
-    const p = selected();
-    const list = RECO.filter(r=> period(r.doc_month)===p);
-    const label = {ok:'dentro de tolerancia', fuera_tolerancia:'fuera de tolerancia', sin_control:'sin totales de finanzas'};
-    el.innerHTML = list.length ? `<table><thead><tr><th>Empresa</th><th class="n">Ingreso docs</th><th class="n">Ingreso contable</th><th class="n">Ingreso finanzas</th><th class="n">Dif. ingreso</th><th class="n">Dif. costo</th><th class="n">Dif. utilidad</th><th>Estado</th></tr></thead><tbody>${
-      list.map(r=> `<tr><td>${esc(r.company)}</td><td class="n">${money(r.doc_revenue_net_local)}</td><td class="n">${money(r.gl_revenue_local)}</td><td class="n">${money(r.fin_revenue_net_local)}</td><td class="n">${pct(r.revenue_diff_pct)}</td><td class="n">${pct(r.cogs_diff_pct)}</td><td class="n">${pct(r.gross_profit_diff_pct)}</td><td class="${r.status==='ok'?'ok':(r.status==='fuera_tolerancia'?'bad':'none')}">${esc(label[r.status] || r.status)}</td></tr>`).join('')
-    }</tbody></table>` : '<div class="empty">Sin reconciliación para el periodo</div>';
-  } else {
-    const list = [...DQ].sort((a,b)=> Number(a.pct_ok ?? 100) - Number(b.pct_ok ?? 100));
-    el.innerHTML = list.length ? `<table><thead><tr><th>Empresa</th><th>Revisión</th><th class="n">Registros</th><th class="n">Con problema</th><th class="n">% correcto</th><th class="n">Mínimo</th></tr></thead><tbody>${
-      list.map(r=> `<tr><td>${esc(r.company)}</td><td>${esc(String(r.check_code||'').replace(/_/g,' '))}</td><td class="n">${num(r.total)}</td><td class="n">${num(r.failing)}</td><td class="n ${r.status==='ok'?'ok':'bad'}">${pct(r.pct_ok)}</td><td class="n">${pct(r.min_pct)}</td></tr>`).join('')
-    }</tbody></table>` : '<div class="empty">Sin revisiones de calidad</div>';
-  }
+function renderFinanceTable(){
+  const el = document.getElementById('fin');
+  const rows = S.finRows.filter(r=> S.finFilter==='todos' || r.status===S.finFilter);
+  const shown = rows.slice(0, 500);
+  const value = (r, v) => r.unit==='pct' ? pct(v) : money(v, r.local_currency);
+  el.innerHTML = rows.length ? `<div class="tw tall"><table><caption class="sr-only">Corrida de Finanzas contra la plataforma, fila por fila, con los componentes que explican la diferencia</caption><thead><tr><th scope="col">Empresa</th><th scope="col">Indicador</th><th scope="col">Dimensión</th><th scope="col">Clave</th><th scope="col" class="n">Finanzas</th><th scope="col" class="n">Plataforma</th><th scope="col" class="n">Diferencia</th><th scope="col" class="n">Dif. %</th><th scope="col">Estado</th><th scope="col" class="n">Venta bruta</th><th scope="col" class="n">Devoluciones (NC)</th><th scope="col" class="n">Descuentos pie de factura</th><th scope="col" class="n">Costo aplicado</th><th scope="col" class="n">Comisión</th></tr></thead><tbody>${
+    shown.map(r=> `<tr><td>${esc(co(r.company))}</td><td>${esc(INDICATOR[r.indicator] || r.indicator)}</td><td>${esc(DIMENSION[r.dimension] || r.dimension)}</td><th scope="row">${esc(r.dim_label || r.dim_key || 'Total')}${r.dim_key && r.dim_label && r.dim_key!==r.dim_label ? `<br><span class="muted">${esc(r.dim_key)}</span>` : ''}</th><td class="n">${value(r, r.finance_value)}</td><td class="n">${value(r, r.platform_value)}</td><td class="n">${r.unit==='pct' ? pts(r.delta_pct) : money(r.delta_monto)}</td><td class="n">${r.unit==='pct' ? '—' : pct(r.delta_pct)}</td><td>${badge(FIN_STATUS, r.status)}</td><td class="n">${money(r.venta_bruta)}</td><td class="n">${money(r.devoluciones_nc)}</td><td class="n">${money(r.descuentos_pie_factura)}</td><td class="n">${money(r.costo_aplicado)}</td><td class="n">${money(r.comision)}</td></tr>`).join('')
+  }</tbody></table></div>` + (rows.length > shown.length ? `<p class="note">Se muestran ${num(shown.length)} de ${num(rows.length)} filas; el CSV las incluye todas.</p>` : '') : empty('Ninguna fila con ese estado.');
 }
 
-function renderAll(){ renderKpis(); renderHeat(); renderTrend(); renderBottom(); }
+function financeCsv(){
+  const cols = [['company','empresa'], ['period','mes'], ['indicator','indicador'], ['dimension','dimension'], ['dim_key','clave'], ['dim_label','nombre'], ['unit','unidad'], ['local_currency','moneda'],
+    ['finance_value','finanzas'], ['platform_value','plataforma'], ['delta_monto','diferencia_monto'], ['delta_pct','diferencia_pct'], ['tolerance_pct','tolerancia_pct'], ['status','estado'],
+    ['venta_bruta','venta_bruta'], ['devoluciones_nc','devoluciones_nc'], ['descuentos_pie_factura','descuentos_pie_factura'], ['costo_aplicado','costo_aplicado'], ['comision','comision'], ['venta_neta','venta_neta']];
+  const cellText = v => {
+    if(v==null) return '';
+    let s = String(v);
+    if(typeof v !== 'number' && /^[=+\-@\t\r]/.test(s) && Number.isNaN(Number(s))) s = "'" + s;
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
+  };
+  return '﻿' + [cols.map(c=> c[1]).join(','), ...S.finRows.map(r=> cols.map(c=> cellText(r[c[0]])).join(','))].join('\r\n');
+}
 
-function wireTabs(id, set){
-  document.querySelectorAll('#' + id + ' button').forEach(b=> b.addEventListener('click', ()=>{
-    document.querySelectorAll('#' + id + ' button').forEach(x=> x.classList.toggle('on', x===b));
-    set(b.dataset.tab);
-  }));
+async function renderLedger(token){
+  const {company, period} = selected();
+  const grid = document.getElementById('docs-grid'), el = document.getElementById('docs');
+  const res = await settle(cached('ledger', ()=> query(DS.ledger, {}, 5000)));
+  if(token !== S.seq) return;
+  document.getElementById('h-docs-month').textContent = 'Detalle de ' + monthLong(period);
+  if(!res.ok || !res.rows.length){ grid.innerHTML = empty('Sin reconciliación contra contabilidad publicada.'); el.innerHTML = ''; return; }
+  const periods = last24();
+  const companies = [...new Set(res.rows.map(r=> r.company))].sort();
+  const at = {}; res.rows.forEach(r=>{ at[r.company + '|' + periodOf(r.doc_month)] = r; });
+  grid.innerHTML = `<div class="tw"><table class="heat"><caption class="sr-only">Estado de documentos contra contabilidad por empresa y mes</caption><thead><tr><th scope="col">Empresa</th>${periods.map(m=> `<th scope="col" class="n" title="${esc(monthLong(m))}">${esc(monthShort(m))}</th>`).join('')}</tr></thead><tbody>${
+    companies.map(x=> `<tr><th scope="row">${esc(co(x))}</th>${periods.map(m=>{ const r = at[x + '|' + m];
+      if(!r) return '<td class="hc hn"><span>—</span></td>';
+      const s = DOC_STATUS[r.status] || ['none','–', r.status];
+      return `<td class="hc" title="${esc(co(x) + ' · ' + monthLong(m) + ': ' + s[2] + ', venta sin explicar ' + pct(r.revenue_residual_pct).replace(/ /g,' '))}"><span class="st st-${s[0]}"><i aria-hidden="true">${s[1]}</i><span class="sr-only">${esc(s[2])}</span></span></td>`;
+    }).join('')}</tr>`).join('')
+  }</tbody></table></div><p class="note">✓ cuadra · ✕ diferencia fuera de tolerancia · – mes sin asientos contables.</p>`;
+  const list = res.rows.filter(r=> periodOf(r.doc_month)===period && (company==='grupo' || r.company===company));
+  el.innerHTML = list.length ? `<div class="tw"><table><caption class="sr-only">Documentos contra contabilidad del mes</caption><thead><tr><th scope="col">Empresa</th><th scope="col" class="n">Venta en documentos</th><th scope="col" class="n">Venta contable</th><th scope="col" class="n">Diferencia por tiempo</th><th scope="col" class="n">Venta sin explicar</th><th scope="col" class="n">% sin explicar</th><th scope="col" class="n">Costo en documentos</th><th scope="col" class="n">Costo por tiempo</th><th scope="col" class="n">Costo contable de documentos</th><th scope="col" class="n">Costo sin explicar</th><th scope="col" class="n">% sin explicar</th><th scope="col">Estado</th></tr></thead><tbody>${
+    list.map(r=> `<tr><th scope="row">${esc(co(r.company))}</th><td class="n">${money(r.doc_revenue_net_local, r.local_currency)}</td><td class="n">${money(r.gl_revenue_local)}</td><td class="n">${money(r.revenue_timing_local)}</td><td class="n">${money(r.revenue_residual_local)}</td><td class="n">${pct(r.revenue_residual_pct)}</td><td class="n">${money(r.doc_cogs_net_local)}</td><td class="n">${money(r.cogs_timing_local)}</td><td class="n">${money(r.gl_cogs_documents_local)}</td><td class="n">${money(r.cogs_residual_local)}</td><td class="n">${pct(r.cogs_residual_pct)}</td><td>${badge(DOC_STATUS, r.status)}</td></tr>`).join('')
+  }</tbody></table></div>` : empty('Sin reconciliación contra contabilidad para el mes.');
+}
+
+async function renderQuality(token){
+  const {company} = selected();
+  const modelEl = document.getElementById('model'), dqEl = document.getElementById('dq');
+  const [model, dq] = await Promise.all([settle(cached('model', ()=> query(DS.model, {}, 5000))), settle(cached('dq', ()=> query(DS.quality, {}, 5000)))]);
+  if(token !== S.seq) return;
+  const models = model.rows.filter(r=> r.company===company);
+  modelEl.innerHTML = models.length ? `<div class="tw"><table><caption>${esc(company==='grupo' ? 'El grupo unificado: identidades una sola vez aunque existan en varias empresas.' : 'Registros de ' + co(company) + ' en Business One.')}</caption><thead><tr><th scope="col">Entidad</th><th scope="col" class="n">Registros en B1</th><th scope="col" class="n">Identidades</th><th scope="col" class="n">Compartidas entre empresas</th><th scope="col" class="n">Completos</th><th scope="col" class="n">% completos</th><th scope="col" class="n">Huérfanos</th><th scope="col">Regla de completo</th></tr></thead><tbody>${
+    models.sort((a,b)=> String(a.entity).localeCompare(String(b.entity))).map(r=> `<tr><th scope="row">${esc(ENTITY[r.entity] || r.entity)}</th><td class="n">${num(r.records)}</td><td class="n">${num(r.identities)}</td><td class="n">${num(r.shared_identities)}</td><td class="n">${num(r.complete_records)}</td><td class="n">${pct(r.completeness_pct)}</td><td class="n">${val(r.orphans) ? `<strong>${num(r.orphans)}</strong>` : num(r.orphans)}</td><td>${esc(r.relation_rule)}</td></tr>`).join('')
+  }</tbody></table></div>` : empty(model.ok ? 'Sin modelo de entidades para ' + co(company) + '.' : 'Sin modelo de entidades publicado.');
+  const checks = dq.rows.filter(r=> company==='grupo' || r.company===company)
+    .sort((a,b)=> (a.status==='bajo_umbral' ? 0 : 1) - (b.status==='bajo_umbral' ? 0 : 1) || String(a.company).localeCompare(String(b.company)) || String(a.check_code).localeCompare(String(b.check_code)));
+  dqEl.innerHTML = checks.length ? `<div class="tw"><table><caption class="sr-only">Controles de calidad de datos por empresa</caption><thead><tr><th scope="col">Empresa</th><th scope="col">Control</th><th scope="col">Grupo</th><th scope="col" class="n">Registros</th><th scope="col" class="n">Con problema</th><th scope="col" class="n">% correcto</th><th scope="col" class="n">Mínimo</th><th scope="col">Estado</th></tr></thead><tbody>${
+    checks.map(r=> `<tr><td>${esc(co(r.company))}</td><th scope="row">${esc(CHECK[r.check_code] || String(r.check_code||'').replace(/_/g,' '))}</th><td>${esc(CHECK_GROUP[r.check_group] || r.check_group)}</td><td class="n">${num(r.total)}</td><td class="n">${num(r.failing)}</td><td class="n">${pct(r.pct_ok)}</td><td class="n">${pct(r.min_pct)}</td><td>${badge(DQ_STATUS, r.status)}</td></tr>`).join('')
+  }</tbody></table></div>` : empty(dq.ok ? 'Sin controles de calidad para ' + co(company) + '.' : 'Sin controles de calidad publicados.');
+}
+
+function renderAll(){
+  const token = ++S.seq;
+  S.drill = null;
+  document.getElementById('drill').innerHTML = empty('Elige un cliente del ranking para ver sus SKU.');
+  const tasks = S.tab==='tab-ind' ? [renderKpis(token), renderRank(token), renderCanal(token), renderVendors(token), renderHeat(token)]
+    : S.tab==='tab-reco' ? [renderFinance(token), renderLedger(token)] : [renderQuality(token)];
+  Promise.all(tasks).catch(e=> showError(e.message));
+}
+
+function wireTabs(){
+  const tabs = [...document.querySelectorAll('#tabs [role=tab]')];
+  const pick = tab => {
+    tabs.forEach(t=>{ const on = t===tab; t.setAttribute('aria-selected', on); t.tabIndex = on ? 0 : -1; document.getElementById(t.getAttribute('aria-controls')).hidden = !on; });
+    S.tab = tab.id; renderAll();
+  };
+  tabs.forEach((t,i)=>{
+    t.addEventListener('click', ()=> pick(t));
+    t.addEventListener('keydown', e=>{
+      const to = e.key==='ArrowRight' ? tabs[(i+1)%tabs.length] : e.key==='ArrowLeft' ? tabs[(i-1+tabs.length)%tabs.length] : e.key==='Home' ? tabs[0] : e.key==='End' ? tabs[tabs.length-1] : null;
+      if(to){ e.preventDefault(); to.focus(); pick(to); }
+    });
+  });
+}
+
+function setSelection(company, period){
+  if(company) document.getElementById('company').value = company;
+  if(period) document.getElementById('period').value = period;
+  renderAll();
 }
 
 async function init(){
+  wireTabs();
+  document.getElementById('rank').addEventListener('click', e=>{ const b = e.target.closest('button[data-card]'); if(b) openDrill(b.dataset.company, b.dataset.card, b.dataset.name); });
+  document.getElementById('heat').addEventListener('click', e=>{ const b = e.target.closest('button[data-period]'); if(b) setSelection(b.dataset.company, b.dataset.period); });
+  document.getElementById('fin-filter').addEventListener('click', e=>{ const b = e.target.closest('button[data-status]'); if(!b) return; S.finFilter = b.dataset.status;
+    document.querySelectorAll('#fin-filter button').forEach(x=> x.setAttribute('aria-pressed', x===b)); renderFinanceTable(); });
+  document.getElementById('fin').addEventListener('click', e=>{ const b = e.target.closest('button[data-goto]'); if(b) setSelection(null, b.dataset.goto); });
+  document.getElementById('fin-csv').addEventListener('click', e=>{
+    const {company, period} = selected();
+    if(e.target.id==='csv-download'){
+      const url = URL.createObjectURL(new Blob([financeCsv()], {type:'text/csv;charset=utf-8'}));
+      const a = document.createElement('a'); a.href = url; a.download = 'reconciliacion_finanzas_' + (company==='grupo' ? 'grupo' : company) + '_' + period + '.csv';
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=> URL.revokeObjectURL(url), 1000);
+    }
+    if(e.target.id==='csv-show'){
+      const box = document.getElementById('csv-text'); const open = box.hidden;
+      box.hidden = !open; e.target.setAttribute('aria-expanded', open);
+      if(open){ box.value = financeCsv().replace(/^﻿/, ''); box.focus(); box.select(); }
+    }
+  });
+  document.getElementById('company').addEventListener('change', renderAll);
+  document.getElementById('period').addEventListener('change', renderAll);
   try{
-    [CONS, COMP, RECO, DQ] = await Promise.all([
-      rows('sap_b1_margin_consolidated_month'),
-      rows('sap_b1_margin_by_company_month'),
-      rows('sap_b1_margin_reconciliation_month'),
-      rows('sap_b1_data_quality'),
-    ]);
-    const currencies = [...new Set(COMP.map(r=> r.local_currency).filter(Boolean))].sort();
-    document.getElementById('currency').innerHTML = currencies.map(c=> `<option>${esc(c)}</option>`).join('');
+    const [companies, periods] = await Promise.all([options(DS.kpis, 'company'), options(DS.kpis, 'period')]);
+    S.companies = [...companies].sort((a,b)=> (b==='grupo') - (a==='grupo') || String(a).localeCompare(String(b)));
+    S.periods = [...periods].map(String).sort();
+    if(!S.periods.length){ showError('Todavía no hay indicadores de margen publicados para este workspace.'); return; }
     const now = new Date(), current = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
-    const periods = [...new Set(COMP.map(r=> r.period))].sort().reverse();
-    const closed = periods.filter(p=> p < current);
-    document.getElementById('period').innerHTML = periods.map(p=> `<option ${p===(closed[0]||periods[0])?'selected':''}>${esc(p)}</option>`).join('');
-    document.getElementById('period').addEventListener('change', renderAll);
-    document.getElementById('currency').addEventListener('change', renderAll);
-    wireTabs('drill-tabs', t=>{ drillTab = t; renderDrill(); });
-    wireTabs('bottom-tabs', t=>{ bottomTab = t; renderBottom(); });
-    if(!periods.length){ showError('Todavía no hay ventas publicadas para este workspace.'); return; }
+    const closed = S.periods.filter(m=> m < current);
+    const initial = closed.length ? closed[closed.length-1] : S.periods[S.periods.length-1];
+    document.getElementById('company').innerHTML = S.companies.map(x=> `<option value="${esc(x)}">${esc(co(x))}</option>`).join('');
+    document.getElementById('period').innerHTML = [...S.periods].reverse().map(m=> `<option value="${esc(m)}"${m===initial ? ' selected' : ''}>${esc(monthLong(m))}${m >= current ? ' (en curso)' : ''}</option>`).join('');
     renderAll();
   }catch(e){ showError(e.message); }
 }
