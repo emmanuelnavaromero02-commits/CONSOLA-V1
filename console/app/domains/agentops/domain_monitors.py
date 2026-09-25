@@ -11,7 +11,6 @@ DOMAIN_MONITOR_SPECS: tuple[DomainMonitorSpec, ...] = (
     OPERATIONS_MONITOR_SPEC,
     RISK_MONITOR_SPEC,
 )
-# Provisioned at runtime by ensure_domain_monitor only (no infra/init seed).
 ALL_DOMAIN_MONITOR_SPECS: tuple[DomainMonitorSpec, ...] = (
     *DOMAIN_MONITOR_SPECS,
     *SAP_B1_MONITOR_SPECS,

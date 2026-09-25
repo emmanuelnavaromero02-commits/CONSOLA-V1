@@ -1,5 +1,3 @@
-"""WB-B1-MARGEN: monitor contract, schedule in Mexico City, breach signals, KPI view and provisioning route."""
-
 from __future__ import annotations
 
 import asyncio

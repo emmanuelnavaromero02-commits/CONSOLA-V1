@@ -14,7 +14,6 @@ METRIC_LABELS: dict[str, str] = {
     "attrition_risk_population": "poblacion en riesgo de rotacion",
     "employment_end_expiry": "fin de registro de empleo proximo",
     "deal_slippage": "deals con cierre vencido",
-    # sap_b1
     "group_margin": "margen del grupo",
     "company_margin": "margen por empresa",
     "customer_margin": "margen por cliente",

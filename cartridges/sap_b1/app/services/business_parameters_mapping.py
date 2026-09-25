@@ -1,4 +1,3 @@
-"""Business parameters supplied by the customer (finance control totals, accounts, thresholds, settings)."""
 from __future__ import annotations
 
 import re
@@ -76,7 +75,6 @@ def _parse_entry(chunk: str) -> BusinessParameter:
 
 
 def parse_business_parameters(spec: str) -> list[BusinessParameter]:
-    """One entry per line or ``;``: ``control:mx_mfg:2026-08:revenue_net=1250000.50``."""
     parameters: list[BusinessParameter] = []
     seen: set[tuple[str, str, str, str]] = set()
     for raw in re.split(r"[;\n]", spec or ""):

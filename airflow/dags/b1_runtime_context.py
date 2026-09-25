@@ -1,5 +1,3 @@
-"""Fresh, workspace-scoped signed contexts for the sap_b1 DAGs."""
-
 from __future__ import annotations
 
 import os

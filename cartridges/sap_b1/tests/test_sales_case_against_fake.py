@@ -1,4 +1,3 @@
-"""The sales case (sell-in, sell-out, distributor scorecard, batch expiry) reconciles with the Business One fake."""
 from __future__ import annotations
 
 import importlib
@@ -68,7 +67,6 @@ def sales(tmp_path_factory, fake_postgres, dataset):
 
 
 def _intercompany_lines(dataset):
-    """Manufacturer invoice lines sold to each distributor, by buyer and month (not cancelled)."""
     tables = dataset.tables["mx_mfg"]
     buyer_of = {code: alias for alias, code in generator.INTERCOMPANY_CUSTOMER.items()}
     heads = {row[_col("OINV", "DocEntry")]: row for row in tables["OINV"]}
@@ -124,7 +122,6 @@ def test_sell_out_is_the_distributor_revenue_to_external_customers(sales, datase
         for month, truth in dataset.truth[buyer].items():
             assert truth.intercompany_sales_lc == {}, "distributors only sell to external customers"
             assert abs(scorecard[(buyer, month)] - truth.revenue_net_lc) <= Decimal("0.01"), (buyer, month)
-            # Credit memos are service documents without items, so item-level sell-out is gross of them.
             got, rows = item_lines[(buyer, month)]
             assert abs(got - (truth.revenue_net_lc + truth.credit_lc)) <= Decimal("0.01") * rows, (buyer, month)
 

@@ -1,4 +1,3 @@
-"""The purchasing case (coverage, open orders, reorder suggestions) reconciles with the Business One fake."""
 from __future__ import annotations
 
 import importlib

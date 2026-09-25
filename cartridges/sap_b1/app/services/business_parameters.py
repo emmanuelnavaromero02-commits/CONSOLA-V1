@@ -1,4 +1,3 @@
-"""Write the workspace's business parameters to Bronze as one full snapshot."""
 from __future__ import annotations
 
 import json

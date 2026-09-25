@@ -1,4 +1,3 @@
-"""Business parameters: parsing, validation and the Bronze snapshot shape."""
 from __future__ import annotations
 
 from decimal import Decimal

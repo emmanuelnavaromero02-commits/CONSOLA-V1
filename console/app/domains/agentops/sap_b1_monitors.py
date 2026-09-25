@@ -1,5 +1,3 @@
-"""SAP Business One AgentOps monitors (one per business case)."""
-
 from __future__ import annotations
 
 from app.domains.agentops.domain_monitor_support import DomainMonitorSpec

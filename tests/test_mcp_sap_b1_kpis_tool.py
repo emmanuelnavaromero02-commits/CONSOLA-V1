@@ -1,5 +1,3 @@
-"""control_room__sap_b1_kpis_read: catalog, allowlists, scope gate and view routing."""
-
 from __future__ import annotations
 
 import asyncio

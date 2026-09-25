@@ -339,9 +339,6 @@ __all__ = (
 )
 
 
-# ── SAP Business One: margin ────────────────────────────────────────────────
-
-
 class B1KpiMetricBase(KpiMetricBase):
     period: str | None = None
     breaches: list[str] = Field(default_factory=list)
@@ -453,9 +450,6 @@ class SapB1MarginMetrics(PublicProjectionModel):
 
 class ControlRoomSapB1MarginKpisResponse(DomainKpisBase):
     metrics: SapB1MarginMetrics = Field(default_factory=SapB1MarginMetrics)
-
-
-# ── SAP Business One: sales and expiry ──────────────────────────────────────
 
 
 class DistributorRow(PublicProjectionModel):

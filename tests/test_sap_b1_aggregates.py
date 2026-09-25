@@ -1,5 +1,3 @@
-"""SAP Business One finance aggregates over the fake asyncpg plumbing."""
-
 from __future__ import annotations
 
 import re

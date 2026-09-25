@@ -1,12 +1,3 @@
-"""Cap-free SQL aggregates for SAP Business One (finance case).
-
-Same contract as ``finance_aggregates``: dedicated Gold connection, RLS GUCs,
-relations resolved through publication heads, column allowlists, every value
-bound as ``$n``, COUNT/SUM in SQL and bounded top-N. Each result also carries
-``breaches``: business findings in plain Spanish that the monitor turns into
-signals, computed from the thresholds the Gold datasets already carry.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field

@@ -1,4 +1,3 @@
-"""The finance case (margin, identities, reconciliation, data quality) reconciles with the Business One fake."""
 from __future__ import annotations
 
 import importlib

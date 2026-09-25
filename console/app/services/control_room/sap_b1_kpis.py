@@ -1,5 +1,3 @@
-"""SAP Business One KPI views for the Control Room bridge (finance case)."""
-
 from __future__ import annotations
 
 from typing import Any

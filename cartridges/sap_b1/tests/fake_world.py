@@ -1,4 +1,3 @@
-"""Extract the Business One fake into a local Bronze tree and materialise every dataset over it."""
 from __future__ import annotations
 
 import re
@@ -107,7 +106,6 @@ def _month_map(rows) -> dict[tuple, Decimal]:
 
 
 def _cents(value: Decimal) -> Decimal:
-    """Round like DuckDB's ROUND(x, 2): halves away from zero."""
     return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
