@@ -29,7 +29,7 @@ foreach ($leftover in @($wrapper, (Join-Path $serviceDir "$ServiceName.xml"))) {
 $otherServices = @()
 if (Test-Path $serviceDir) { $otherServices = @(Get-ChildItem -Path $serviceDir -Filter '*.xml' -File) }
 if ($otherServices.Count -gt 0) {
-    Write-Host "==> Se conserva $InstallRoot: lo usan otros servicios ($($otherServices.BaseName -join ', '))."
+    Write-Host "==> Se conserva ${InstallRoot}: lo usan otros servicios ($($otherServices.BaseName -join ', '))."
 } elseif (Test-Path $InstallRoot) {
     Write-Host "==> Eliminando el codigo en $InstallRoot"
     Remove-Item -Recurse -Force -Path $InstallRoot
