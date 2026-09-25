@@ -3,7 +3,7 @@
   "files": [
     {
       "path": ".github/release-test-skip-policy.json",
-      "sha256": "4cc71ba1ab8f330ac19505dd4842be3244ff1c493ca1c2400d6794f9be1191b7"
+      "sha256": "8bf71a7d866710c8c79a6d6c04dd02383ae176a623db19bfb781100ba2fe9736"
     },
     {
       "path": ".github/workflows/release-runner-capacity.yml",
@@ -5571,7 +5571,7 @@
     },
     {
       "path": "tests/test_sap_entities_seeded.py",
-      "sha256": "d0e639917d3d27625a71fee588f31b720b90bff192238962e82027f3481d8c80"
+      "sha256": "05240bc1a9c5d5d92a40010dec1c40e3a89ec45fb23f546371de3fd370a4302f"
     },
     {
       "path": "tests/test_sap_hcm_apps.py",

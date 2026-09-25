@@ -60,7 +60,14 @@ def test_sap_catalog_services_do_not_swallow_seed_errors():
             REPO_ROOT / "cartridges" / cartridge / "app" / "services" / "catalog_service.py"
         ).read_text(encoding="utf-8")
         assert "pass  # DB unavailable" not in source
-        assert "logger.exception" in source
+        # A failed seed is logged and re-raised, never swallowed. Two spellings
+        # are accepted on purpose: `logger.exception` (with traceback) and, for
+        # cartridges hardened against driver exceptions that can embed a DSN or
+        # signed request details (sap_successfactors since #640), a
+        # `logger.error` that carries the exception class only.
+        logs_with_traceback = "logger.exception" in source
+        logs_class_only = "logger.error(" in source and "type(exc).__name__" in source
+        assert logs_with_traceback or logs_class_only, f"{cartridge}: seed failure is not logged"
         assert "raise" in source
         assert 'e.get("select_fields")' in source
         assert 'e.get("select")' not in source
