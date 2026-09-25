@@ -54,5 +54,6 @@ def test_the_pull_dags_send_only_a_fresh_signed_context(dag):
     source = (REPO_ROOT / "cartridges" / "sap_b1" / "dags" / dag).read_text(encoding="utf-8")
     ast.parse(source)
     assert "from b1_runtime_context import security_context_from_conf" in source
-    assert 'skill_body = {"security_context": security_context_from_conf(conf, ' in source
+    assert 'return {"security_context": security_context_from_conf(conf, ' in source
+    assert "json=skill_body," in source
     assert '"tenant_id", "workspace_id", "security_context"' not in source
