@@ -339,7 +339,7 @@
     },
     {
       "path": "cartridges/hubspot/app/services/duckdb_service.py",
-      "sha256": "2e860854185c4ea6dd35fb2cef88265307d29926adfa9ca9025792191d57e372"
+      "sha256": "20838217ca3f55295ae3ee79f2bc08d15a66c63d964d2f72011fca2412991b5c"
     },
     {
       "path": "cartridges/hubspot/app/services/extraction_service.py",
@@ -607,7 +607,7 @@
     },
     {
       "path": "cartridges/replicon/app/services/duckdb_service.py",
-      "sha256": "b35c2680cec9029ff6ccc65d258321beab6abfb4a4e05342e4959146f4ea1c2d"
+      "sha256": "94e5d5e8f959d3089ab1146995d7521b1a1285b9d2ca8762f9310a30572e2f03"
     },
     {
       "path": "cartridges/replicon/app/services/extraction_service.py",
@@ -775,7 +775,7 @@
     },
     {
       "path": "cartridges/salesforce/app/services/duckdb_service.py",
-      "sha256": "bf9a4ec37c5c9e908541c788fe422e3c22ddabf58f63f63edfb47c573ef7428c"
+      "sha256": "7f2817a5355e3a529769abdd280168b6bd56bbaf2e32e95c06e65b17e905e052"
     },
     {
       "path": "cartridges/salesforce/app/services/extraction_service.py",
@@ -955,7 +955,7 @@
     },
     {
       "path": "cartridges/sap_b1/app/services/duckdb_service.py",
-      "sha256": "2e860854185c4ea6dd35fb2cef88265307d29926adfa9ca9025792191d57e372"
+      "sha256": "20838217ca3f55295ae3ee79f2bc08d15a66c63d964d2f72011fca2412991b5c"
     },
     {
       "path": "cartridges/sap_b1/app/services/extraction_service.py",
@@ -1191,7 +1191,7 @@
     },
     {
       "path": "cartridges/sap_hcm/app/services/duckdb_service.py",
-      "sha256": "2e860854185c4ea6dd35fb2cef88265307d29926adfa9ca9025792191d57e372"
+      "sha256": "20838217ca3f55295ae3ee79f2bc08d15a66c63d964d2f72011fca2412991b5c"
     },
     {
       "path": "cartridges/sap_hcm/app/services/extraction_service.py",
@@ -1363,7 +1363,7 @@
     },
     {
       "path": "cartridges/sap_s4hana/app/services/duckdb_service.py",
-      "sha256": "2e860854185c4ea6dd35fb2cef88265307d29926adfa9ca9025792191d57e372"
+      "sha256": "20838217ca3f55295ae3ee79f2bc08d15a66c63d964d2f72011fca2412991b5c"
     },
     {
       "path": "cartridges/sap_s4hana/app/services/extraction_service.py",
@@ -1547,7 +1547,7 @@
     },
     {
       "path": "cartridges/sap_successfactors/app/services/duckdb_service.py",
-      "sha256": "2d63b0adbd5076086c708e2f0b13642f290b03671d3f8ac431bb269177f30142"
+      "sha256": "0809dd6e6aea1fb9f1f9048290fd81cbfe4caf1e01deab3d920289c2c4fb8eeb"
     },
     {
       "path": "cartridges/sap_successfactors/app/services/extraction_service.py",
@@ -3170,6 +3170,10 @@
       "sha256": "7f36dbeeeebf859b3df7af6f7e0cbc0867c1e822da40017b5f8bb1b46c89a4a2"
     },
     {
+      "path": "console/tests/test_seed_packaged_partition_header.py",
+      "sha256": "4a32b01153dca44cb438da24c8af4dbf2e26078c41854225c4ff1f28f85b57ae"
+    },
+    {
       "path": "console/tests/test_session_max_lifetime.py",
       "sha256": "5db0941be80118b1d6452b4fede7fe08ea616a2221892f7c831b82c710f1d5bd"
     },
@@ -3407,7 +3411,7 @@
     },
     {
       "path": "refinement/tests/test_duckdb_resource_limits.py",
-      "sha256": "afcce1a6453d12e9d0fb33c9fd64937d0b6b01b90819f5541ec3a176675ddec5"
+      "sha256": "fac2d42157796caa74f6789eee82f4e1dc111a876e5d35eb002329bbb9cf3df5"
     },
     {
       "path": "refinement/tests/test_duckdb_s3_materialize_paths.py",
@@ -3448,6 +3452,10 @@
     {
       "path": "refinement/tests/test_packaged_sql_scoped.py",
       "sha256": "6b22796093420955e6be5a69874ee622c8c0437e228c02ac8362a0f9034d91b1"
+    },
+    {
+      "path": "refinement/tests/test_partitioned_publication.py",
+      "sha256": "242f99a57caa2d2cf01e86b064bd38cd3f1d38e5439c855913b8d9088d8c959b"
     },
     {
       "path": "refinement/tests/test_preview_sql_limit_cap.py",
@@ -4163,7 +4171,7 @@
     },
     {
       "path": "tests/test_cartridge_duckdb_external_access.py",
-      "sha256": "9ae134ce3d90b12e8cdddecf1c01b8c6f840515eedfbd650432b62a93f1fafcd"
+      "sha256": "bf7fdd9393eea3703884eca6de2315ab36a7222c98604074bc310b898dd5c1f3"
     },
     {
       "path": "tests/test_cartridge_egress_guard.py",
@@ -4691,7 +4699,7 @@
     },
     {
       "path": "tests/test_decision_operational_truth_duckdb_httpfs.py",
-      "sha256": "5c35101b5873c07f98d5d2d3f7023d69351919d8ae4683286295501bf5bffe90"
+      "sha256": "1d302bf9608a0f1bfaeffcccd5f2d80dc64b287a9fb6a3099fe5541a4db154d6"
     },
     {
       "path": "tests/test_decision_operational_truth_final_canaries.py",
@@ -5920,6 +5928,10 @@
     {
       "path": "tests/test_staged_publication_live.py",
       "sha256": "8a97cd26c29f1a2dbc5aec75cf19699748bf02c0365d3f2ccc78556dccf946be"
+    },
+    {
+      "path": "tests/test_staged_publication_partitioned_live.py",
+      "sha256": "6d5fd183ba5e05a0de80d8c9d9365b8c164fe632289749795927b1c41257f42d"
     },
     {
       "path": "tests/test_staged_publication_public_projection.py",

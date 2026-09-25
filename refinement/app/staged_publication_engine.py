@@ -234,11 +234,13 @@ class StagedPublicationEngine(
         tenant: str,
         workspace: str,
         user_context: dict | None,
+        partition_by: str | None = None,
     ) -> str:
         state = self._state()
+        options = {"partition_by": partition_by} if partition_by else {}
         if not state:
             return super()._copy_scoped_gold_table_snapshot(
-                con, table, storage_path, tenant, workspace, user_context
+                con, table, storage_path, tenant, workspace, user_context, **options
             )
         relation = f"publication_{state['identity'].materialization_run_id.hex}"
         definitions = ",".join(
@@ -252,7 +254,7 @@ class StagedPublicationEngine(
                 marks = ",".join("?" for _ in state["gold_columns"])
                 con.executemany(f'INSERT INTO "{relation}" VALUES ({marks})', rows)
             return self._copy_to_parquet(
-                con, f'SELECT * FROM "{relation}"', storage_path
+                con, f'SELECT * FROM "{relation}"', storage_path, **options
             )
         finally:
             con.execute(f'DROP TABLE "{relation}"')
