@@ -5046,6 +5046,10 @@
       "sha256": "ea8c76d23e986c0abd34b515679c0527f1c43dd9a0a13f99c5031f235b9d7531"
     },
     {
+      "path": "tests/test_mcp_infra_duckdb_resource_limits.py",
+      "sha256": "07c511fe39edc4526c613f50b3d4cac7875b7eea44f77d05a52b26fe3541e738"
+    },
+    {
       "path": "tests/test_mcp_infra_pdf_capacity.py",
       "sha256": "bb6690f0361eb364662d5c897e1c36a1c2ce691ee594b4a8878c8d580f0c7b21"
     },
