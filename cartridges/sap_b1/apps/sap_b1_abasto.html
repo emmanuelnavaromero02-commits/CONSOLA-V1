@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<!--
+  app_id: sap_b1_abasto
+  name: Abasto SAP Business One
+  cartridge: sap_b1
+  datasets: [sap_b1_item_coverage]
+-->
+<html lang="es" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Abasto — SAP Business One</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  :root{--bg:#0d1117;--bg2:#161b22;--border:#30363d;--text1:#e6edf3;--text2:#8b949e;--text3:#6e7681;
+        --blue:#7c9fff;--green:#3fb950;--amber:#d29922;--red:#f85149;--purple:#bc8cff}
+  *{box-sizing:border-box}
+  body{margin:0;padding:22px;background:var(--bg);color:var(--text1);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;font-size:13px}
+  h1{font-size:18px;margin:0 0 2px}
+  .subtitle{color:var(--text2);font-size:11px;margin-bottom:16px}
+  .controls{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+  .controls label{color:var(--text2);font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:600}
+  select,input{background:var(--bg2);color:var(--text1);border:1px solid var(--border);border-radius:6px;padding:7px 10px;font-size:12px}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:18px}
+  .kpi{background:var(--bg2);border:1px solid var(--border);border-left:3px solid var(--accent,var(--blue));border-radius:8px;padding:14px 16px}
+  .kpi .l{font-size:9px;color:var(--text2);letter-spacing:1.2px;font-weight:600;text-transform:uppercase;margin-bottom:8px}
+  .kpi .v{font-size:22px;font-weight:700}
+  .kpi .s{font-size:10px;color:var(--text3);margin-top:6px}
+  .grid{display:grid;grid-template-columns:1fr 2fr;gap:16px}
+  .section{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px}
+  .full{grid-column:1/-1}
+  .title{font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:1px;font-weight:600;margin-bottom:12px}
+  .chart{position:relative;height:280px}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th,td{text-align:left;padding:7px 9px;border-bottom:1px solid var(--border)}
+  th{color:var(--text2);font-size:10px;text-transform:uppercase}
+  td.n{text-align:right;font-variant-numeric:tabular-nums}
+  .ok{background:rgba(63,185,80,.18)} .warn{background:rgba(210,153,34,.22)} .bad{background:rgba(248,81,73,.25)} .none{color:var(--text3)}
+  .empty{padding:24px;text-align:center;color:var(--text3);font-style:italic}
+  .error{background:rgba(248,81,73,.12);color:var(--red);border:1px solid var(--red);padding:12px;border-radius:6px;margin-bottom:14px}
+  .note{color:var(--text3);font-size:11px;margin-top:10px}
+  @media(max-width:900px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+  <h1>◆ Abasto · SAP Business One</h1>
+  <div class="subtitle">Cobertura por artículo con y sin órdenes abiertas · riesgo de quiebre · pedido sugerido · mínimos recalculados</div>
+  <div id="error"></div>
+  <div class="controls">
+    <label for="company">Empresa</label><select id="company"></select>
+    <label for="color">Estado</label>
+    <select id="color">
+      <option value="">Todos</option>
+      <option value="rojo">Riesgo de quiebre</option>
+      <option value="amarillo">Bajo punto de reorden</option>
+      <option value="verde">Cubierto</option>
+      <option value="sin_consumo">Sin consumo</option>
+    </select>
+    <label for="search">Artículo</label><input id="search" placeholder="código o nombre">
+  </div>
+  <div class="kpis" id="kpis"></div>
+  <div class="grid">
+    <div class="section">
+      <div class="title">Días de cobertura con órdenes abiertas</div>
+      <div class="chart"><canvas id="buckets"></canvas></div>
+    </div>
+    <div class="section">
+      <div class="title">Pedidos sugeridos (a más tardar)</div>
+      <div id="orders" style="max-height:280px;overflow-y:auto"></div>
+    </div>
+    <div class="section full">
+      <div class="title" id="table-title">Artículos</div>
+      <div id="items" style="max-height:520px;overflow:auto"></div>
+      <div class="note" id="note"></div>
+    </div>
+  </div>
+<script>
+const num = n => n==null ? '—' : Number(n).toLocaleString('es-MX',{maximumFractionDigits:0});
+const dec = n => n==null ? '—' : Number(n).toLocaleString('es-MX',{maximumFractionDigits:1});
+const money = n => n==null ? '—' : '$' + Number(n).toLocaleString('es-MX',{maximumFractionDigits:0});
+const day = v => v ? String(v).slice(0,10) : '—';
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function showError(msg){ document.getElementById('error').innerHTML = `<div class="error">${esc(msg)}</div>`; }
+async function query(dataset, filters, limit){
+  const r = await fetch('/api/data/' + dataset + '/query', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({filters, limit: limit || 2000})});
+  if(!r.ok) throw new Error('No se pudo leer ' + dataset + ' (' + r.status + ')');
+  const d = await r.json();
+  return Array.isArray(d) ? d : (d.data || []);
+}
+async function options(dataset, column){
+  const r = await fetch('/api/data/' + dataset + '/options?columns=' + encodeURIComponent(column));
+  if(!r.ok) throw new Error('No se pudo leer ' + dataset + ' (' + r.status + ')');
+  const d = await r.json();
+  return Array.isArray(d) ? [] : (d[column] || []);
+}
+
+const LIMIT = 10000;
+const CLASS = {rojo:'bad', amarillo:'warn', verde:'ok', sin_consumo:'none'};
+const LABEL = {rojo:'riesgo de quiebre', amarillo:'bajo reorden', verde:'cubierto', sin_consumo:'sin consumo'};
+const RANK = {rojo:0, amarillo:1, verde:2, sin_consumo:3};
+const BUCKETS = [[0,7,'0-7'],[7,15,'8-15'],[15,30,'16-30'],[30,60,'31-60'],[60,90,'61-90'],[90,Infinity,'>90']];
+let ROWS = [], chart = null;
+
+function median(values){
+  const v = values.filter(x=> x!=null).map(Number).sort((a,b)=> a-b);
+  if(!v.length) return null;
+  const m = Math.floor(v.length/2);
+  return v.length % 2 ? v[m] : (v[m-1]+v[m])/2;
+}
+
+function renderKpis(){
+  const count = c => ROWS.filter(r=> r.coverage_color===c).length;
+  const suggested = ROWS.filter(r=> Number(r.suggested_qty||0) > 0);
+  const outdated = ROWS.filter(r=> Number(r.reorder_point||0) > 0 && Math.abs(Number(r.reorder_point) - Number(r.b1_min_stock||0)) > 0.2*Number(r.reorder_point)).length;
+  const asOf = ROWS.length ? day(ROWS[0].as_of_date) : '—';
+  document.getElementById('kpis').innerHTML = `
+    <div class="kpi" style="--accent:var(--red)"><div class="l">Riesgo de quiebre</div><div class="v">${num(count('rojo'))}</div>
+      <div class="s">se agotan antes de que llegue un pedido nuevo</div></div>
+    <div class="kpi" style="--accent:var(--amber)"><div class="l">Bajo punto de reorden</div><div class="v">${num(count('amarillo'))}</div>
+      <div class="s">pedir ya para no llegar al quiebre</div></div>
+    <div class="kpi" style="--accent:var(--blue)"><div class="l">Cobertura mediana</div><div class="v">${dec(median(ROWS.map(r=> r.coverage_days)))} d</div>
+      <div class="s">${esc('con órdenes: ' + dec(median(ROWS.map(r=> r.coverage_with_orders_days))) + ' d')}</div></div>
+    <div class="kpi" style="--accent:var(--purple)"><div class="l">Pedidos sugeridos</div><div class="v">${num(suggested.length)}</div>
+      <div class="s">${esc(money(suggested.reduce((s,r)=> s + Number(r.suggested_value_local||0), 0)) + ' ' + ((ROWS[0]||{}).local_currency||''))}</div></div>
+    <div class="kpi" style="--accent:var(--green)"><div class="l">Mínimos a revisar</div><div class="v">${num(outdated)}</div>
+      <div class="s">${esc('mínimo de B1 lejos del recalculado · corte ' + asOf)}</div></div>`;
+}
+
+function renderBuckets(){
+  const data = BUCKETS.map(([lo,hi])=> ROWS.filter(r=> r.coverage_with_orders_days!=null && Number(r.coverage_with_orders_days) >= lo && Number(r.coverage_with_orders_days) < hi).length);
+  if(chart) chart.destroy();
+  chart = new Chart(document.getElementById('buckets'), {type:'bar',
+    data:{labels:BUCKETS.map(b=> b[2]), datasets:[{label:'Artículos', data, backgroundColor:['#f85149','#f85149','#d29922','#7c9fff','#3fb950','#3fb950']}]},
+    options:{responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}},
+      scales:{x:{ticks:{color:'#8b949e'},grid:{color:'#21262d'}}, y:{ticks:{color:'#8b949e'},grid:{color:'#21262d'}}}}});
+}
+
+function renderOrders(){
+  const list = ROWS.filter(r=> Number(r.suggested_qty||0) > 0)
+    .sort((a,b)=> String(a.order_by_date||'').localeCompare(String(b.order_by_date||'')) || (RANK[a.coverage_color]-RANK[b.coverage_color])).slice(0,100);
+  document.getElementById('orders').innerHTML = list.length ? `<table><thead><tr><th>Pedir antes de</th><th>Artículo</th><th>Acción</th><th class="n">Cantidad</th><th>Proveedor</th><th class="n">Valor</th></tr></thead><tbody>${
+    list.map(r=> `<tr><td class="${CLASS[r.coverage_color]||''}">${esc(day(r.order_by_date))}</td><td>${esc(r.item_code)}</td><td>${esc(r.suggested_action)}</td><td class="n">${num(r.suggested_qty)}</td><td>${esc(r.suggested_supplier || '—')}</td><td class="n">${money(r.suggested_value_local)}</td></tr>`).join('')
+  }</tbody></table>` : '<div class="empty">Ningún artículo necesita pedido hoy</div>';
+}
+
+function renderItems(){
+  const color = document.getElementById('color').value;
+  const term = document.getElementById('search').value.trim().toLowerCase();
+  const list = ROWS.filter(r=> (!color || r.coverage_color===color) && (!term || String(r.item_code).toLowerCase().includes(term) || String(r.item_name||'').toLowerCase().includes(term)))
+    .sort((a,b)=> (RANK[a.coverage_color]-RANK[b.coverage_color]) || (Number(a.coverage_with_orders_days ?? 1e9) - Number(b.coverage_with_orders_days ?? 1e9)));
+  document.getElementById('table-title').textContent = 'Artículos (' + list.length + ')';
+  document.getElementById('items').innerHTML = list.length ? `<table><thead><tr><th>Artículo</th><th>Nombre</th><th class="n">Disponible</th><th class="n">OC abiertas</th><th class="n">OP abiertas</th><th class="n">Consumo diario</th><th class="n">Cobertura</th><th class="n">Con órdenes</th><th class="n">Entrega</th><th>Se agota</th><th class="n">Mín. B1</th><th class="n">Reorden calc.</th><th>Estado</th></tr></thead><tbody>${
+    list.slice(0,500).map(r=> `<tr><td>${esc(r.item_code)}</td><td>${esc(r.item_name)}</td><td class="n">${num(r.available)}</td><td class="n">${num(r.open_po_qty)}</td><td class="n">${num(r.open_production_qty)}</td><td class="n">${dec(r.daily_consumption)}</td><td class="n">${dec(r.coverage_days)}</td><td class="n">${dec(r.coverage_with_orders_days)}</td><td class="n">${esc(num(r.lead_time_days) + ' d' + (r.lead_time_source==='parametro' ? '*' : ''))}</td><td>${esc(day(r.stockout_date))}</td><td class="n">${num(r.b1_min_stock)}</td><td class="n">${num(r.reorder_point)}</td><td class="${CLASS[r.coverage_color]||''}">${esc(LABEL[r.coverage_color] || r.coverage_color)}</td></tr>`).join('')
+  }</tbody></table>` : '<div class="empty">Sin artículos para el filtro</div>';
+  document.getElementById('note').textContent = (list.length > 500 ? 'Se muestran los primeros 500. ' : '') +
+    '* tiempo de entrega tomado del parámetro del workspace porque el artículo no lo tiene en Business One. Solo recomendaciones: nada se escribe en Business One.';
+}
+
+async function loadCompany(){
+  const company = document.getElementById('company').value;
+  if(!company){ showError('Todavía no hay existencias publicadas para este workspace.'); return; }
+  document.getElementById('items').innerHTML = '<div class="empty">Cargando…</div>';
+  try{
+    ROWS = await query('sap_b1_item_coverage', {company}, LIMIT);
+    if(ROWS.length >= LIMIT) showError('La empresa tiene más de ' + LIMIT + ' artículos; el tablero muestra los primeros.');
+    renderKpis(); renderBuckets(); renderOrders(); renderItems();
+  }catch(e){ showError(e.message); }
+}
+
+async function init(){
+  try{
+    const companies = await options('sap_b1_item_coverage', 'company');
+    document.getElementById('company').innerHTML = companies.map(c=> `<option>${esc(c)}</option>`).join('');
+    document.getElementById('company').addEventListener('change', loadCompany);
+    document.getElementById('color').addEventListener('change', renderItems);
+    document.getElementById('search').addEventListener('input', renderItems);
+    await loadCompany();
+  }catch(e){ showError(e.message); }
+}
+init();
+</script>
+</body>
+</html>

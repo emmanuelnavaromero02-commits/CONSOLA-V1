@@ -46,6 +46,15 @@ SAP_B1_MARGIN_METRICS = (
 )
 SAP_B1_SALES_METRICS = ("distributor_scorecard",)
 SAP_B1_EXPIRY_METRICS = ("batch_expiry",)
+SAP_B1_SUPPLY_METRICS = ("item_coverage",)
+SAP_B1_SEMAFORO_METRICS = (
+    "group_margin",
+    "company_margin",
+    "distributor_scorecard",
+    "batch_expiry",
+    "item_coverage",
+    "data_quality",
+)
 
 PUBLIC_PROXY_NOTES: dict[str, str] = {
     "billable_hours_logged": (
@@ -152,6 +161,13 @@ PUBLIC_PROXY_NOTES: dict[str, str] = {
         "accion sugerida por articulo. NO considera promociones ni traspasos en "
         "camino."
     ),
+    "item_coverage": (
+        "Cobertura por articulo al corte del inventario: dias que alcanza lo "
+        "disponible al ritmo de consumo de 90 dias, con y sin ordenes de compra y "
+        "de produccion abiertas, frente al tiempo de entrega, y sugerencia de "
+        "pedido redondeada al minimo y multiplo del articulo. Solo recomienda: NO "
+        "escribe en Business One."
+    ),
 }
 
 PUBLIC_SOURCE_LABELS: dict[str, str] = {
@@ -174,6 +190,7 @@ PUBLIC_SOURCE_LABELS: dict[str, str] = {
     sap_b1_aggregates.DATA_QUALITY_DATASET: "SAP Business One: calidad de datos",
     sap_b1_aggregates.SCORECARD_DATASET: "SAP Business One: semaforo de distribuidoras (mensual)",
     sap_b1_aggregates.EXPIRY_DATASET: "SAP Business One: caducidad de lotes",
+    sap_b1_aggregates.COVERAGE_DATASET: "SAP Business One: cobertura y reabasto",
 }
 
 PUBLIC_CARTRIDGE_LABELS: dict[str, str] = {
@@ -538,6 +555,8 @@ __all__ = [
     "SAP_B1_EXPIRY_METRICS",
     "SAP_B1_MARGIN_METRICS",
     "SAP_B1_SALES_METRICS",
+    "SAP_B1_SEMAFORO_METRICS",
+    "SAP_B1_SUPPLY_METRICS",
     "cartridge_label",
     "combine_status",
     "domain_payload",

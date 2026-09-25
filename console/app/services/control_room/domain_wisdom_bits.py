@@ -24,6 +24,7 @@ METRIC_LABELS: dict[str, str] = {
     "data_quality": "calidad de datos",
     "distributor_scorecard": "semaforo de distribuidoras",
     "batch_expiry": "caducidad de lotes",
+    "item_coverage": "cobertura y reabasto",
 }
 
 VIEW_BY_KEY: dict[str, str] = {
@@ -32,7 +33,11 @@ VIEW_BY_KEY: dict[str, str] = {
     "risk": "risk_kpis",
     "sap_b1_margin": "sap_b1_margin_kpis",
     "sap_b1_expiry": "sap_b1_expiry_kpis",
+    "sap_b1_supply": "sap_b1_supply_kpis",
+    "sap_b1_semaforo": "sap_b1_semaforo_kpis",
 }
+AREAS_BY_KEY: frozenset[str] = frozenset({"sap_b1_semaforo"})
+MAX_AREA_FINDINGS = 5
 
 STATUS_READY = "ready"
 STATUS_DEGRADED = "degraded"
@@ -98,6 +103,33 @@ def build_coverage(metrics: dict[str, Any]) -> dict[str, list[str]]:
     return coverage
 
 
+def area_color(item: dict[str, Any]) -> str:
+    status = str(item.get("status") or "").strip().lower()
+    if status == STATUS_UNAVAILABLE:
+        return "sin_datos"
+    if any(isinstance(b, str) and b.strip() for b in (item.get("breaches") or [])):
+        return "rojo"
+    return "amarillo" if status == STATUS_DEGRADED else "verde"
+
+
+def build_areas(metrics: dict[str, Any]) -> list[dict[str, Any]]:
+    areas = []
+    for metric, item in metrics.items():
+        if not isinstance(item, dict):
+            continue
+        findings = [b.strip() for b in (item.get("breaches") or []) if isinstance(b, str) and b.strip()]
+        areas.append({
+            "metric": metric,
+            "label": metric_label(metric),
+            "color": area_color(item),
+            "period": item.get("period") or item.get("as_of"),
+            "findings": findings[:MAX_AREA_FINDINGS],
+            "findings_total": len(findings),
+            "reason": None if findings else _metric_reason(item),
+        })
+    return areas
+
+
 def build_payload(spec: DomainMonitorSpec, view: dict[str, Any]) -> dict[str, Any]:
     metrics = view.get("metrics") if isinstance(view.get("metrics"), dict) else {}
     status = str(view.get("status") or "unknown").strip().lower()
@@ -108,7 +140,7 @@ def build_payload(spec: DomainMonitorSpec, view: dict[str, Any]) -> dict[str, An
         for metric in (view.get("unavailable_metrics") or [])
         if isinstance(metric, str)
     ]
-    return {
+    payload = {
         "ok": True,
         "wisdom_bit_id": spec.wisdom_bit_id,
         "cartridge_id": spec.cartridge_id,
@@ -132,6 +164,9 @@ def build_payload(spec: DomainMonitorSpec, view: dict[str, Any]) -> dict[str, An
         "notes": [note for note in (view.get("notes") or []) if isinstance(note, str)],
         "evidence": {"recommendation_only": True},
     }
+    if spec.key in AREAS_BY_KEY:
+        payload["areas"] = build_areas(metrics)
+    return payload
 
 
 async def domain_wisdom_bit(
@@ -154,9 +189,12 @@ async def domain_wisdom_bit(
 
 
 __all__ = (
+    "AREAS_BY_KEY",
     "MAX_SIGNALS",
     "METRIC_LABELS",
     "VIEW_BY_KEY",
+    "area_color",
+    "build_areas",
     "build_coverage",
     "build_payload",
     "build_signals",

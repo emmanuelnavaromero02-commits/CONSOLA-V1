@@ -171,6 +171,7 @@ def test_public_notes_and_labels_survive_projection():
         + domain_kpis.SAP_B1_MARGIN_METRICS
         + domain_kpis.SAP_B1_SALES_METRICS
         + domain_kpis.SAP_B1_EXPIRY_METRICS
+        + domain_kpis.SAP_B1_SUPPLY_METRICS
     )
 
 

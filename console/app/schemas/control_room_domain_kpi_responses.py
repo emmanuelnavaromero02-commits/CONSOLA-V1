@@ -331,6 +331,8 @@ __all__ = (
     "ControlRoomSapB1ExpiryKpisResponse",
     "ControlRoomSapB1MarginKpisResponse",
     "ControlRoomSapB1SalesKpisResponse",
+    "ControlRoomSapB1SemaforoKpisResponse",
+    "ControlRoomSapB1SupplyKpisResponse",
     "DomainKpisBase",
     "KpiEvidenceRef",
     "KpiMetricBase",
@@ -522,3 +524,66 @@ class SapB1ExpiryMetrics(PublicProjectionModel):
 
 class ControlRoomSapB1ExpiryKpisResponse(DomainKpisBase):
     metrics: SapB1ExpiryMetrics = Field(default_factory=SapB1ExpiryMetrics)
+
+
+class CoverageCompanyRow(PublicProjectionModel):
+    company: str | None = None
+    items: int | None = None
+    red: int | None = None
+    yellow: int | None = None
+    green: int | None = None
+    without_consumption: int | None = None
+    suggestions: int | None = None
+    suggested_value: float | int | None = None
+    median_coverage_days: float | int | None = None
+    median_coverage_with_orders_days: float | int | None = None
+    min_stock_outdated: int | None = None
+
+
+class CoverageRiskRow(PublicProjectionModel):
+    company: str | None = None
+    item: str | None = None
+    color: str | None = None
+    coverage_days: float | int | None = None
+    coverage_with_orders_days: float | int | None = None
+    lead_time_days: int | None = None
+    stockout_date: str | None = None
+    suggested_qty: float | int | None = None
+    action: str | None = None
+    order_by: str | None = None
+    suggested_value: float | int | None = None
+
+
+class ItemCoverageKpi(B1KpiMetricBase):
+    as_of: str | None = None
+    items: int | None = None
+    red: int | None = None
+    yellow: int | None = None
+    green: int | None = None
+    without_consumption: int | None = None
+    suggestions: int | None = None
+    suggested_value: float | int | None = None
+    min_stock_outdated: int | None = None
+    by_company: list[CoverageCompanyRow] = Field(default_factory=list)
+    top_risks: list[CoverageRiskRow] = Field(default_factory=list)
+
+
+class SapB1SupplyMetrics(PublicProjectionModel):
+    item_coverage: ItemCoverageKpi = Field(default_factory=ItemCoverageKpi)
+
+
+class ControlRoomSapB1SupplyKpisResponse(DomainKpisBase):
+    metrics: SapB1SupplyMetrics = Field(default_factory=SapB1SupplyMetrics)
+
+
+class SapB1SemaforoMetrics(PublicProjectionModel):
+    group_margin: GroupMarginKpi = Field(default_factory=GroupMarginKpi)
+    company_margin: CompanyMarginKpi = Field(default_factory=CompanyMarginKpi)
+    distributor_scorecard: DistributorScorecardKpi = Field(default_factory=DistributorScorecardKpi)
+    batch_expiry: BatchExpiryKpi = Field(default_factory=BatchExpiryKpi)
+    item_coverage: ItemCoverageKpi = Field(default_factory=ItemCoverageKpi)
+    data_quality: DataQualityKpi = Field(default_factory=DataQualityKpi)
+
+
+class ControlRoomSapB1SemaforoKpisResponse(DomainKpisBase):
+    metrics: SapB1SemaforoMetrics = Field(default_factory=SapB1SemaforoMetrics)

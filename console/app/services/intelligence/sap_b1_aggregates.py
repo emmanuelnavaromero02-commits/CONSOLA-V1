@@ -41,6 +41,7 @@ RECONCILIATION_DATASET = "sap_b1_margin_reconciliation_month"
 DATA_QUALITY_DATASET = "sap_b1_data_quality"
 SCORECARD_DATASET = "sap_b1_distributor_scorecard_month"
 EXPIRY_DATASET = "sap_b1_batch_expiry"
+COVERAGE_DATASET = "sap_b1_item_coverage"
 
 _CONSOLIDATED_REQUIRED = frozenset(
     {
@@ -109,6 +110,13 @@ _EXPIRY_REQUIRED = frozenset(
     {"company", "item_code", "as_of_date", "bucket", "within_horizon", "qty", "value_local",
      "at_risk_qty", "at_risk_value_local", "transfer_candidate"}
 )
+_COVERAGE_REQUIRED = frozenset(
+    {"company", "item_code", "as_of_date", "daily_consumption", "coverage_days", "coverage_with_orders_days",
+     "lead_time_days", "stockout_date", "coverage_color", "suggested_qty", "suggested_action",
+     "suggested_value_local", "order_by_date", "reorder_point", "b1_min_stock", "open_po_qty",
+     "open_production_qty"}
+)
+MIN_STOCK_DRIFT = 0.2
 _COLOR_METRICS = (
     ("growth_color", "crecimiento de sell-out", "growth_yoy_pct"),
     ("sell_through_color", "sell-through", "sell_through_3m_pct"),
@@ -909,9 +917,160 @@ async def query_batch_expiry(user: dict | None, *, top_n: int = 10) -> BatchExpi
     return await run_gold_aggregate(user, _compute, _unavailable)
 
 
+COVERAGE_PROXY_NOTE = (
+    "Cobertura por articulo al corte del inventario: dias que alcanza lo disponible "
+    "al ritmo de consumo de los ultimos 90 dias, con y sin las ordenes de compra y "
+    "de produccion abiertas, frente al tiempo de entrega; sugerencia de pedido "
+    "hasta el nivel objetivo. Solo recomienda: NO escribe en Business One."
+)
+
+
+@dataclass
+class ItemCoverage(B1Result):
+    as_of: str | None = None
+    items: int | None = None
+    red: int | None = None
+    yellow: int | None = None
+    green: int | None = None
+    without_consumption: int | None = None
+    suggestions: int | None = None
+    suggested_value: float | None = None
+    min_stock_outdated: int | None = None
+    by_company: list[dict[str, Any]] = field(default_factory=list)
+    top_risks: list[dict[str, Any]] = field(default_factory=list)
+
+
+def _iso(value: Any) -> str | None:
+    return value.isoformat() if hasattr(value, "isoformat") else (str(value) if value else None)
+
+
+async def query_item_coverage(user: dict | None, *, top_n: int = 10) -> ItemCoverage:
+    limit = clamp_top_n(top_n, default=10)
+    base = {"proxy_note": COVERAGE_PROXY_NOTE}
+
+    def _unavailable(error: str) -> ItemCoverage:
+        return ItemCoverage(status=STATUS_UNAVAILABLE, error=error, **base)
+
+    async def _compute(scope: GoldScope) -> ItemCoverage:
+        rel = await resolve_relation(scope, COVERAGE_DATASET, required=_COVERAGE_REQUIRED)
+        if rel.missing_required:
+            return ItemCoverage(status=STATUS_UNAVAILABLE, error=invalid_schema_error(rel),
+                                missing_columns=list(rel.missing_required), **base)
+        company_sql = f"""
+            -- omega-aggregate: sap_b1.item_coverage.companies
+            SELECT company,
+                   MAX(as_of_date)::date AS as_of,
+                   COUNT(*)::bigint AS items,
+                   COUNT(*) FILTER (WHERE coverage_color = 'rojo')::bigint AS red,
+                   COUNT(*) FILTER (WHERE coverage_color = 'amarillo')::bigint AS yellow,
+                   COUNT(*) FILTER (WHERE coverage_color = 'verde')::bigint AS green,
+                   COUNT(*) FILTER (WHERE coverage_color = 'sin_consumo')::bigint AS without_consumption,
+                   COUNT(*) FILTER (WHERE suggested_qty > 0)::bigint AS suggestions,
+                   COALESCE(SUM(suggested_value_local) FILTER (WHERE suggested_qty > 0), 0)::float8 AS suggested_value,
+                   percentile_cont(0.5) WITHIN GROUP (ORDER BY coverage_days)
+                       FILTER (WHERE coverage_days IS NOT NULL)::float8 AS median_coverage_days,
+                   percentile_cont(0.5) WITHIN GROUP (ORDER BY coverage_with_orders_days)
+                       FILTER (WHERE coverage_with_orders_days IS NOT NULL)::float8 AS median_coverage_with_orders_days,
+                   COUNT(*) FILTER (WHERE reorder_point > 0
+                                     AND abs(reorder_point - COALESCE(b1_min_stock, 0)) > $3 * reorder_point)::bigint AS min_stock_outdated
+              FROM {rel.sql}
+             WHERE {GOLD_SCOPE_PREDICATE}
+             GROUP BY company
+             ORDER BY company
+             LIMIT $4
+        """
+        companies = await scope.conn.fetch(company_sql, *scope.scope_args, MIN_STOCK_DRIFT, clamp_top_n(50))
+        risks_sql = f"""
+            -- omega-aggregate: sap_b1.item_coverage.top_risks
+            SELECT company, item_code, coverage_color,
+                   coverage_days::float8 AS coverage_days,
+                   coverage_with_orders_days::float8 AS coverage_with_orders_days,
+                   lead_time_days::bigint AS lead_time_days,
+                   stockout_date::date AS stockout_date,
+                   suggested_qty::float8 AS suggested_qty,
+                   suggested_action,
+                   order_by_date::date AS order_by_date,
+                   suggested_value_local::float8 AS suggested_value
+              FROM {rel.sql}
+             WHERE {GOLD_SCOPE_PREDICATE}
+               AND coverage_color IN ('rojo', 'amarillo')
+             ORDER BY (coverage_color = 'rojo') DESC, coverage_with_orders_days ASC NULLS LAST, company, item_code
+             LIMIT $3
+        """
+        risks = await scope.conn.fetch(risks_sql, *scope.scope_args, limit)
+        if not companies:
+            return ItemCoverage(status=STATUS_DEGRADED, notes=["sin existencias publicadas"],
+                                evidence_refs=[gold_evidence(rel, filters={})], **base)
+        as_of_value = max((row["as_of"] for row in companies if row["as_of"]), default=None)
+        breaches: list[str] = []
+        by_company = []
+        for row in companies:
+            item = {
+                "company": row["company"],
+                "items": as_int(row["items"]),
+                "red": as_int(row["red"]),
+                "yellow": as_int(row["yellow"]),
+                "green": as_int(row["green"]),
+                "without_consumption": as_int(row["without_consumption"]),
+                "suggestions": as_int(row["suggestions"]),
+                "suggested_value": as_float(row["suggested_value"]),
+                "median_coverage_days": as_float(row["median_coverage_days"]),
+                "median_coverage_with_orders_days": as_float(row["median_coverage_with_orders_days"]),
+                "min_stock_outdated": as_int(row["min_stock_outdated"]),
+            }
+            by_company.append(item)
+            if item["red"]:
+                breaches.append(
+                    f"{row['company']}: {item['red']} articulos se agotan antes de que pueda llegar "
+                    "un pedido nuevo, aun contando las ordenes abiertas."
+                )
+        top_risks = []
+        for row in risks:
+            risk = {
+                "company": row["company"],
+                "item": row["item_code"],
+                "color": row["coverage_color"],
+                "coverage_days": as_float(row["coverage_days"]),
+                "coverage_with_orders_days": as_float(row["coverage_with_orders_days"]),
+                "lead_time_days": as_int(row["lead_time_days"]),
+                "stockout_date": _iso(row["stockout_date"]),
+                "suggested_qty": as_float(row["suggested_qty"]),
+                "action": row["suggested_action"],
+                "order_by": _iso(row["order_by_date"]),
+                "suggested_value": as_float(row["suggested_value"]),
+            }
+            top_risks.append(risk)
+            if row["coverage_color"] == "rojo":
+                breaches.append(
+                    f"{row['company']}: el articulo {row['item_code']} se agota el {risk['stockout_date']} "
+                    f"y el tiempo de entrega es de {risk['lead_time_days']} dias; "
+                    f"{risk['action']} {risk['suggested_qty']:g} hoy."
+                )
+        return ItemCoverage(
+            status=status_for(rel),
+            evidence_refs=[gold_evidence(rel, filters={"as_of": as_of_value, "top_n": limit})],
+            breaches=breaches,
+            as_of=_iso(as_of_value),
+            items=sum(item["items"] or 0 for item in by_company),
+            red=sum(item["red"] or 0 for item in by_company),
+            yellow=sum(item["yellow"] or 0 for item in by_company),
+            green=sum(item["green"] or 0 for item in by_company),
+            without_consumption=sum(item["without_consumption"] or 0 for item in by_company),
+            suggestions=sum(item["suggestions"] or 0 for item in by_company),
+            suggested_value=sum(item["suggested_value"] or 0 for item in by_company),
+            min_stock_outdated=sum(item["min_stock_outdated"] or 0 for item in by_company),
+            by_company=by_company,
+            top_risks=top_risks,
+            **base,
+        )
+
+    return await run_gold_aggregate(user, _compute, _unavailable)
+
+
 __all__ = [
     "COMPANY_DATASET",
     "CONSOLIDATED_DATASET",
+    "COVERAGE_DATASET",
     "CUSTOMER_DATASET",
     "DATA_QUALITY_DATASET",
     "EXPIRY_DATASET",
@@ -925,6 +1084,7 @@ __all__ = [
     "query_data_quality",
     "query_distributor_scorecard",
     "query_group_margin",
+    "query_item_coverage",
     "query_item_family_margin",
     "query_reconciliation",
 ]

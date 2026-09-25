@@ -623,6 +623,21 @@ async def _with_monitor_evidence(
     return {**payload, "evidence_handle": handle}
 
 
+async def _with_sap_b1_digest(
+    user: dict[str, Any], spec: Any, payload: Any
+) -> Any:
+    if not isinstance(payload, dict) or spec.key != "sap_b1_semaforo" or not payload.get("evidence_handle"):
+        return payload
+    from app.services.control_room import sap_b1_digest
+
+    try:
+        digest = await sap_b1_digest.maybe_send_digest(user, payload, pool=await auth.pool())
+    except Exception as exc:  # noqa: BLE001 - the digest must not break the monitor
+        logging.getLogger(__name__).warning("sap_b1 digest failed: %s", type(exc).__name__)
+        digest = {"sent": False, "reason": "error"}
+    return {**payload, "digest": digest}
+
+
 @internal_router.post("/gold-refresh")
 async def intelligence_gold_refresh_internal(
     body: GoldRefreshIntelligenceRequest,
@@ -789,7 +804,8 @@ async def intelligence_wisdom_bits_run_internal(
         payload = await domain_wisdom_bits.domain_wisdom_bit(
             user, domain_spec, control_room_service=control_room_service
         )
-        return await _with_monitor_evidence(user, body, internal_service, payload)
+        payload = await _with_monitor_evidence(user, body, internal_service, payload)
+        return await _with_sap_b1_digest(user, domain_spec, payload)
 
     if wisdom_bit_id != "WB-TALENTO":
         raise HTTPException(status_code=404, detail="wisdom_bit_id is not available")

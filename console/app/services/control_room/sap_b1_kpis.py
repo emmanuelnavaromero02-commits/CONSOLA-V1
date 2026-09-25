@@ -8,6 +8,8 @@ from app.services.control_room.domain_kpis import (
     SAP_B1_EXPIRY_METRICS,
     SAP_B1_MARGIN_METRICS,
     SAP_B1_SALES_METRICS,
+    SAP_B1_SEMAFORO_METRICS,
+    SAP_B1_SUPPLY_METRICS,
     domain_payload,
 )
 from app.services.intelligence import sap_b1_aggregates
@@ -16,6 +18,8 @@ from app.services.intelligence.domain_aggregate_support import AggregateResult, 
 SAP_B1_MARGIN_DOMAIN = "sap_b1_margin"
 SAP_B1_SALES_DOMAIN = "sap_b1_sales"
 SAP_B1_EXPIRY_DOMAIN = "sap_b1_expiry"
+SAP_B1_SUPPLY_DOMAIN = "sap_b1_supply"
+SAP_B1_SEMAFORO_DOMAIN = "sap_b1_semaforo"
 
 
 async def sap_b1_margin_kpis(user: dict | None, *, top_n: int = 0) -> dict[str, Any]:
@@ -46,6 +50,25 @@ async def sap_b1_expiry_kpis(user: dict | None) -> dict[str, Any]:
     return domain_payload(SAP_B1_EXPIRY_DOMAIN, results)
 
 
+async def sap_b1_supply_kpis(user: dict | None) -> dict[str, Any]:
+    results: dict[str, AggregateResult] = {
+        "item_coverage": await sap_b1_aggregates.query_item_coverage(user),
+    }
+    return domain_payload(SAP_B1_SUPPLY_DOMAIN, results)
+
+
+async def sap_b1_semaforo_kpis(user: dict | None) -> dict[str, Any]:
+    results: dict[str, AggregateResult] = {
+        "group_margin": await sap_b1_aggregates.query_group_margin(user),
+        "company_margin": await sap_b1_aggregates.query_company_margin(user),
+        "distributor_scorecard": await sap_b1_aggregates.query_distributor_scorecard(user),
+        "batch_expiry": await sap_b1_aggregates.query_batch_expiry(user),
+        "item_coverage": await sap_b1_aggregates.query_item_coverage(user),
+        "data_quality": await sap_b1_aggregates.query_data_quality(user),
+    }
+    return domain_payload(SAP_B1_SEMAFORO_DOMAIN, results)
+
+
 __all__ = [
     "SAP_B1_EXPIRY_DOMAIN",
     "SAP_B1_EXPIRY_METRICS",
@@ -53,7 +76,13 @@ __all__ = [
     "SAP_B1_MARGIN_METRICS",
     "SAP_B1_SALES_DOMAIN",
     "SAP_B1_SALES_METRICS",
+    "SAP_B1_SEMAFORO_DOMAIN",
+    "SAP_B1_SEMAFORO_METRICS",
+    "SAP_B1_SUPPLY_DOMAIN",
+    "SAP_B1_SUPPLY_METRICS",
     "sap_b1_expiry_kpis",
     "sap_b1_margin_kpis",
     "sap_b1_sales_kpis",
+    "sap_b1_semaforo_kpis",
+    "sap_b1_supply_kpis",
 ]

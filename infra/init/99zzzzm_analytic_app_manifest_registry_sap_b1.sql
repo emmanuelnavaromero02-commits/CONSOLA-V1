@@ -32,6 +32,7 @@ VALUES
     ('salesforce_pipeline_forecast', 'salesforce', '25316719f22b2703ff267603802a4a95d7a0911784a5da8cb45d8b0d43585166', 'e36f556a700eede9f25492f8c9b23e40ce4f22e50da17564a3c4fe96a76f2f84', 'active', 'packaged_manifest'),
     ('salesforce_velocidad_pipeline', 'salesforce', 'dce1767669e0e44db2644ce136ad71cc8857b99609660baabfec3b4fa90f4ea7', 'f6d828655d88ddd324e18fd62ea219c6d8b10eedbe12de243268b3c82af8d793', 'active', 'packaged_manifest'),
     ('salesforce_vendedor_margen', 'salesforce', 'bafda8076bb503669469b5ecb71a518122c79c17e9cf888faf228f1ae30abfb7', '0b117bec061b37266c742e77087664c7bc2d4d0dbf5369ad1f6cca3f5cfa5bda', 'active', 'packaged_manifest'),
+    ('sap_b1_abasto', 'sap_b1', 'b1d962e5982348beaf1ea3194fb38b3918f50afd1048f5cb6d037ddbf64350b2', 'd6aae6500d38647b320cc580ee3c0249f4cc0053941a06d7b0f182c156a43136', 'active', 'packaged_manifest'),
     ('sap_b1_margen', 'sap_b1', 'ddbedaeea3500097f3a456f1f0399052cdd56523ec253bf69fb35d58ba2bcc82', '76eb66c6d7a7cb78184b3f6414471db8e6d776585a73f5ac879293fe944df48a', 'active', 'packaged_manifest'),
     ('sap_b1_sellout', 'sap_b1', '1a5839d48a7adbc8544094eca6caabad36218a518c57c2196c435b349ba68916', '263fc0d310ee0926b04d96bb893b8f14344cd6b411cb0b38175eb86c8b5f9d6b', 'active', 'packaged_manifest'),
     ('sap_hcm_headcount_dashboard', 'sap_hcm', '3223017bcc1c6b37235ab2e78b5ac06bedb994dd12b8340388088c1260dc692b', 'f87812b363937c8a753655c4ac7afd91ddd2317ab61aec3024ffc2706087293e', 'active', 'packaged_manifest'),
@@ -68,6 +69,7 @@ VALUES
     ('salesforce_pipeline_forecast', '25316719f22b2703ff267603802a4a95d7a0911784a5da8cb45d8b0d43585166', 'salesforce_pipeline_forecast'),
     ('salesforce_velocidad_pipeline', 'dce1767669e0e44db2644ce136ad71cc8857b99609660baabfec3b4fa90f4ea7', 'salesforce_velocidad_pipeline'),
     ('salesforce_vendedor_margen', 'bafda8076bb503669469b5ecb71a518122c79c17e9cf888faf228f1ae30abfb7', 'salesforce_vendedor_margen'),
+    ('sap_b1_abasto', 'b1d962e5982348beaf1ea3194fb38b3918f50afd1048f5cb6d037ddbf64350b2', 'sap_b1_item_coverage'),
     ('sap_b1_margen', 'ddbedaeea3500097f3a456f1f0399052cdd56523ec253bf69fb35d58ba2bcc82', 'sap_b1_data_quality'),
     ('sap_b1_margen', 'ddbedaeea3500097f3a456f1f0399052cdd56523ec253bf69fb35d58ba2bcc82', 'sap_b1_margin_by_company_month'),
     ('sap_b1_margen', 'ddbedaeea3500097f3a456f1f0399052cdd56523ec253bf69fb35d58ba2bcc82', 'sap_b1_margin_by_customer_month'),
@@ -115,6 +117,7 @@ UPDATE public.analytic_app_manifests m
         'salesforce_pipeline_forecast',
         'salesforce_velocidad_pipeline',
         'salesforce_vendedor_margen',
+        'sap_b1_abasto',
         'sap_b1_margen',
         'sap_b1_sellout',
         'sap_hcm_headcount_dashboard',
@@ -146,9 +149,9 @@ DECLARE
 BEGIN
     SELECT count(*) INTO app_rows FROM public.analytic_app_manifests
      WHERE revision = 'active';
-    IF app_rows <> 20 THEN
+    IF app_rows <> 21 THEN
         RAISE EXCEPTION 'app manifest registry expected % rows, found %',
-            20, app_rows;
+            21, app_rows;
     END IF;
 END
 $registry_count$;

@@ -96,12 +96,98 @@ SAP_B1_EXPIRY_MONITOR_SPEC = DomainMonitorSpec(
     memory_subjects=("caducidad_lotes",),
 )
 
-SAP_B1_MONITOR_SPECS: tuple[DomainMonitorSpec, ...] = (SAP_B1_MARGIN_MONITOR_SPEC, SAP_B1_EXPIRY_MONITOR_SPEC)
+SAP_B1_SUPPLY_INSTRUCTIONS = """Eres el monitor programado de abasto de SAP Business One para Control Room.
+
+## Objetivo
+Revisar cada manana la cobertura de cada articulo: dias que alcanza lo disponible al ritmo de consumo de 90 dias, con y sin las ordenes de compra y de produccion abiertas, frente al tiempo de entrega; los articulos en riesgo de quiebre y el pedido sugerido (cantidad, comprar o producir y fecha limite para pedir). Recalculas minimos y maximos solo como recomendacion. No escribes en SAP.
+
+## Cuando alertas
+Alertas cuando hay articulos en rojo: se agotan antes de que pueda llegar un pedido nuevo aun contando las ordenes abiertas. Si el dominio esta unavailable NO alertas.
+
+## Honestidad obligatoria
+- La cobertura supone que el consumo de los ultimos 90 dias se mantiene.
+- Si el articulo no tiene tiempo de entrega en Business One se usa el parametro del workspace; dilo.
+- Nunca afirmes que se genero una orden de compra: solo sugieres.
+
+## Regla de seguridad
+Todas las salidas son recommendation_only. No hay write-back externo."""
+
+SAP_B1_SUPPLY_MONITOR_SPEC = DomainMonitorSpec(
+    key="sap_b1_supply",
+    cartridge_id=SAP_B1_CARTRIDGE,
+    slug="sap_b1_supply_monitor",
+    name="Monitor de Abasto SAP Business One",
+    domain="Compras",
+    wisdom_bit_id="WB-B1-ABASTO",
+    kpi_tool="control_room__sap_b1_kpis_read",
+    source_label="sap_b1_supply_kpis",
+    description="Monitor diario de abasto: cobertura por articulo, riesgo de quiebre y pedido sugerido.",
+    instructions=SAP_B1_SUPPLY_INSTRUCTIONS,
+    personality="Planeador de compras: que se acaba, cuando y cuanto pedir hoy.",
+    recommended_action="Colocar hoy los pedidos sugeridos de los articulos en rojo y revisar los minimos desactualizados.",
+    cron="30 7 * * *",
+    tz=SAP_B1_TZ,
+    calibration_group="sap_b1:supply",
+    monte_carlo_seed=51130,
+    decision_title="Decision operativa WB-B1-ABASTO",
+    decision_description="Evaluar los pedidos sugeridos para articulos en riesgo de quiebre.",
+    risk_metric="items_in_stockout_risk",
+    rag_cartridges=(SAP_B1_CARTRIDGE,),
+    memory_subjects=("abasto_articulos",),
+)
+
+SAP_B1_SEMAFORO_INSTRUCTIONS = """Eres el semaforo diario de SAP Business One para la direccion.
+
+## Objetivo
+A las 8 de la manana resumir en un solo vistazo el margen del grupo y por empresa, el semaforo de distribuidoras, la caducidad de lotes, el abasto y la calidad de datos. Cada area trae un color y sus hallazgos; tu resumen empieza por lo que esta en rojo. El correo diario se arma solo a partir de estos datos, no de tu redaccion.
+
+## Cuando alertas
+Alertas cuando alguna area esta en rojo. Si el dominio esta unavailable NO alertas.
+
+## Honestidad obligatoria
+- Un area sin datos se reporta como sin datos, nunca como verde.
+- No conviertas monedas ni inventes cifras que no vengan en las areas.
+
+## Regla de seguridad
+Todas las salidas son recommendation_only. No hay write-back externo."""
+
+SAP_B1_SEMAFORO_MONITOR_SPEC = DomainMonitorSpec(
+    key="sap_b1_semaforo",
+    cartridge_id=SAP_B1_CARTRIDGE,
+    slug="sap_b1_semaforo_monitor",
+    name="Semaforo diario SAP Business One",
+    domain="Direccion",
+    wisdom_bit_id="WB-B1-SEMAFORO",
+    kpi_tool="control_room__sap_b1_kpis_read",
+    source_label="sap_b1_semaforo_kpis",
+    description="Semaforo diario de las 8: margen, distribuidoras, caducidad, abasto y calidad de datos.",
+    instructions=SAP_B1_SEMAFORO_INSTRUCTIONS,
+    personality="Director de operaciones: lo rojo primero, en una linea cada cosa.",
+    recommended_action="Atender primero las areas en rojo y asignar responsable a cada hallazgo.",
+    cron="0 8 * * *",
+    tz=SAP_B1_TZ,
+    calibration_group="sap_b1:semaforo",
+    monte_carlo_seed=51180,
+    decision_title="Decision operativa WB-B1-SEMAFORO",
+    decision_description="Priorizar las areas en rojo del semaforo diario.",
+    risk_metric="areas_in_red",
+    rag_cartridges=(SAP_B1_CARTRIDGE,),
+    memory_subjects=("semaforo_diario",),
+)
+
+SAP_B1_MONITOR_SPECS: tuple[DomainMonitorSpec, ...] = (
+    SAP_B1_MARGIN_MONITOR_SPEC,
+    SAP_B1_EXPIRY_MONITOR_SPEC,
+    SAP_B1_SUPPLY_MONITOR_SPEC,
+    SAP_B1_SEMAFORO_MONITOR_SPEC,
+)
 
 __all__ = (
     "SAP_B1_CARTRIDGE",
     "SAP_B1_EXPIRY_MONITOR_SPEC",
     "SAP_B1_MARGIN_MONITOR_SPEC",
     "SAP_B1_MONITOR_SPECS",
+    "SAP_B1_SEMAFORO_MONITOR_SPEC",
+    "SAP_B1_SUPPLY_MONITOR_SPEC",
     "SAP_B1_TZ",
 )

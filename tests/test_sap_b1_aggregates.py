@@ -57,6 +57,7 @@ def test_module_follows_the_aggregate_contract():
         (b1.DATA_QUALITY_DATASET, b1._DATA_QUALITY_REQUIRED),
         (b1.SCORECARD_DATASET, b1._SCORECARD_REQUIRED),
         (b1.EXPIRY_DATASET, b1._EXPIRY_REQUIRED),
+        (b1.COVERAGE_DATASET, b1._COVERAGE_REQUIRED),
     ],
 )
 def test_required_columns_are_real_outputs_of_the_gold_sql(dataset, columns):
@@ -245,3 +246,50 @@ async def test_batch_expiry_without_stock_is_degraded(monkeypatch):
     install_gold_connect(monkeypatch, conn)
     result = await b1.query_batch_expiry(user_for())
     assert result.status == "degraded" and result.notes == ["sin lotes con existencia"]
+
+
+@pytest.mark.asyncio
+async def test_item_coverage_counts_colours_and_turns_red_items_into_orders(monkeypatch):
+    conn = _conn(b1.COVERAGE_DATASET, b1._COVERAGE_REQUIRED, {
+        "sap_b1.item_coverage.companies": [
+            {"company": "empresa_a", "as_of": date(2026, 9, 25), "items": 40, "red": 2, "yellow": 3, "green": 33,
+             "without_consumption": 2, "suggestions": 5, "suggested_value": Decimal("1500.5"),
+             "median_coverage_days": Decimal("41.5"), "median_coverage_with_orders_days": Decimal("55"),
+             "min_stock_outdated": 7},
+            {"company": "empresa_b", "as_of": date(2026, 9, 25), "items": 10, "red": 0, "yellow": 1, "green": 9,
+             "without_consumption": 0, "suggestions": 1, "suggested_value": Decimal("100"),
+             "median_coverage_days": Decimal("60"), "median_coverage_with_orders_days": Decimal("60"),
+             "min_stock_outdated": 0},
+        ],
+        "sap_b1.item_coverage.top_risks": [
+            {"company": "empresa_a", "item_code": "RM-004", "coverage_color": "rojo", "coverage_days": 1.5,
+             "coverage_with_orders_days": 3.0, "lead_time_days": 14, "stockout_date": date(2026, 9, 28),
+             "suggested_qty": 300.0, "suggested_action": "comprar", "order_by_date": date(2026, 9, 25),
+             "suggested_value": 900.0},
+            {"company": "empresa_b", "item_code": "FG-002", "coverage_color": "amarillo", "coverage_days": 8.0,
+             "coverage_with_orders_days": 8.0, "lead_time_days": 5, "stockout_date": date(2026, 10, 3),
+             "suggested_qty": 50.0, "suggested_action": "comprar", "order_by_date": date(2026, 9, 28),
+             "suggested_value": 100.0},
+        ],
+    })
+    install_gold_connect(monkeypatch, conn)
+    result = await b1.query_item_coverage(user_for())
+    assert result.as_of == "2026-09-25" and (result.red, result.yellow, result.green) == (2, 4, 42)
+    assert result.suggestions == 6 and result.suggested_value == 1600.5 and result.min_stock_outdated == 7
+    assert [risk["order_by"] for risk in result.top_risks] == ["2026-09-25", "2026-09-28"]
+    assert result.breaches == [
+        "empresa_a: 2 articulos se agotan antes de que pueda llegar un pedido nuevo, aun contando las ordenes abiertas.",
+        "empresa_a: el articulo RM-004 se agota el 2026-09-28 y el tiempo de entrega es de 14 dias; comprar 300 hoy.",
+    ]
+    companies_sql = conn.sql_for("sap_b1.item_coverage.companies")
+    assert "percentile_cont(0.5)" in companies_sql and "LIMIT $4" in companies_sql
+    assert "coverage_color IN ('rojo', 'amarillo')" in conn.sql_for("sap_b1.item_coverage.top_risks")
+
+
+@pytest.mark.asyncio
+async def test_item_coverage_without_stock_is_degraded(monkeypatch):
+    conn = _conn(b1.COVERAGE_DATASET, b1._COVERAGE_REQUIRED,
+                 {"sap_b1.item_coverage.companies": [], "sap_b1.item_coverage.top_risks": []})
+    install_gold_connect(monkeypatch, conn)
+    result = await b1.query_item_coverage(user_for())
+    assert result.status == "degraded" and result.notes == ["sin existencias publicadas"]

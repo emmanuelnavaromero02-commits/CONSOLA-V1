@@ -6080,7 +6080,6 @@ async def risk_kpis(user: dict | None, *, top_n: int = 0) -> dict[str, Any]:
 
 @_bind_to_core
 async def sap_b1_margin_kpis(user: dict | None, *, top_n: int = 0) -> dict[str, Any]:
-    """SAP Business One margin KPIs (see sap_b1_kpis.sap_b1_margin_kpis)."""
     from app.services.control_room import sap_b1_kpis
 
     return await sap_b1_kpis.sap_b1_margin_kpis(user, top_n=top_n)
@@ -6088,7 +6087,6 @@ async def sap_b1_margin_kpis(user: dict | None, *, top_n: int = 0) -> dict[str, 
 
 @_bind_to_core
 async def sap_b1_sales_kpis(user: dict | None) -> dict[str, Any]:
-    """SAP Business One distributor scorecard (see sap_b1_kpis.sap_b1_sales_kpis)."""
     from app.services.control_room import sap_b1_kpis
 
     return await sap_b1_kpis.sap_b1_sales_kpis(user)
@@ -6096,10 +6094,23 @@ async def sap_b1_sales_kpis(user: dict | None) -> dict[str, Any]:
 
 @_bind_to_core
 async def sap_b1_expiry_kpis(user: dict | None) -> dict[str, Any]:
-    """SAP Business One batch expiry (see sap_b1_kpis.sap_b1_expiry_kpis)."""
     from app.services.control_room import sap_b1_kpis
 
     return await sap_b1_kpis.sap_b1_expiry_kpis(user)
+
+
+@_bind_to_core
+async def sap_b1_supply_kpis(user: dict | None) -> dict[str, Any]:
+    from app.services.control_room import sap_b1_kpis
+
+    return await sap_b1_kpis.sap_b1_supply_kpis(user)
+
+
+@_bind_to_core
+async def sap_b1_semaforo_kpis(user: dict | None) -> dict[str, Any]:
+    from app.services.control_room import sap_b1_kpis
+
+    return await sap_b1_kpis.sap_b1_semaforo_kpis(user)
 
 
 @_bind_to_core
@@ -6121,6 +6132,8 @@ __all__ = (
     "sap_b1_margin_kpis",
     "sap_b1_sales_kpis",
     "sap_b1_expiry_kpis",
+    "sap_b1_supply_kpis",
+    "sap_b1_semaforo_kpis",
     "_ITEM_STATUSES",
     "_ITEM_SEVERITIES",
     "_is_production_env",
