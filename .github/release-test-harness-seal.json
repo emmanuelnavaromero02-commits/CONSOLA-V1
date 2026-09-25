@@ -3463,7 +3463,7 @@
     },
     {
       "path": "scripts/release_digest_env.py",
-      "sha256": "e8f3901cd3fc4261eab60654c8b0bd9ca20755b545754741b141b691d3fffc70"
+      "sha256": "03cd77f594357ba231e60c8dded2acdcf1aaa6ed784315f5638a50dba738845a"
     },
     {
       "path": "scripts/release_docker_lock.py",
@@ -5387,7 +5387,7 @@
     },
     {
       "path": "tests/test_release_digest_chain_v2.py",
-      "sha256": "ef986750d9ed88dbd3e40b8b476e595098ecc8e36c6840ee075f6f941f05531a"
+      "sha256": "c71d7a95286b67d8df15414e31d4d5d8b8dce49737f5a920405ddf5911dad8dd"
     },
     {
       "path": "tests/test_release_digest_runtime.py",
