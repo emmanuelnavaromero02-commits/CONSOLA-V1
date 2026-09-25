@@ -40,3 +40,20 @@ def upload_file_to_minio(local_path: str, object_name: str) -> None:
         object_name=object_name,
         file_path=local_path,
     )
+
+
+def read_object_bytes(object_name: str, max_bytes: int = 1_000_000) -> bytes | None:
+    from minio.error import S3Error
+
+    client = get_minio_client()
+    try:
+        response = client.get_object(settings.minio_bucket, object_name)
+    except S3Error as exc:
+        if exc.code in {"NoSuchKey", "NoSuchObject", "NoSuchBucket"}:
+            return None
+        raise
+    try:
+        return response.read(max_bytes + 1)
+    finally:
+        response.close()
+        response.release_conn()

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 AUTH = {"X-Internal-Api-Key": "test-secret-key-not-default", "X-Internal-Service": "console"}
@@ -89,3 +92,64 @@ def test_a_signed_context_without_a_workspace_is_refused(client, monkeypatch):
     assert resp.status_code == 403 and "scope is required" in resp.json()["detail"]
     resp = client.post("/extract-all", headers=AUTH, json={"security_context": unscoped})
     assert resp.status_code == 403
+
+
+TENANT = "11111111-1111-4111-8111-111111111111"
+WORKSPACE = "22222222-2222-4222-8222-222222222222"
+
+
+def _signed(**fields) -> str:
+    from app.core import request_context
+
+    return json.dumps(request_context._sign_security_context({"trusted": True, "source": "console", "role": "admin", **fields}))
+
+
+def test_connector_status_needs_the_internal_key_and_a_signed_workspace_scope(client, monkeypatch):
+    reads: list[str] = []
+    monkeypatch.setattr("app.api.routes_console._read_heartbeat", lambda name: reads.append(name))
+    assert client.get("/connector/status").status_code == 401
+    assert client.get("/connector/status", headers=AUTH).status_code == 403
+    forged = json.dumps({"trusted": True, "tenant_id": TENANT, "workspace_id": WORKSPACE})
+    for header in (forged, "not json", _signed(tenant_id=TENANT)):
+        resp = client.get("/connector/status", headers={**AUTH, "x-security-context": header})
+        assert resp.status_code == 403, header
+    tampered = json.loads(_signed(tenant_id=TENANT, workspace_id=WORKSPACE))
+    tampered["workspace_id"] = "33333333-3333-4333-8333-333333333333"
+    resp = client.get("/connector/status", headers={**AUTH, "x-security-context": json.dumps(tampered)})
+    assert resp.status_code == 403
+    assert reads == [], "nothing is read from the bucket before the scope is verified"
+
+
+def test_connector_status_returns_the_scope_heartbeat_with_its_age(client, monkeypatch):
+    stored: dict[str, bytes] = {}
+    monkeypatch.setattr("app.api.routes_console._read_heartbeat", lambda name: stored.get(name))
+    headers = {**AUTH, "x-security-context": _signed(tenant_id=TENANT, workspace_id=WORKSPACE)}
+    assert client.get("/connector/status", headers=headers).json() == {"present": False}
+
+    at = (datetime.now(timezone.utc) - timedelta(seconds=90)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    beat = {
+        "schema_version": 1, "agent_version": "0.2.0", "at": at, "source_ok": True, "source_ms": 12,
+        "source_error": None, "dialect": "mssql", "companies": ["mx_mfg"],
+        "last_cycle": {"started_at": at, "finished_at": at, "status": "success", "entities_ok": 46, "entities_failed": 0},
+        "initial_load": {"state": "done", "months_done": 25, "months_total": 25}, "next_cycle_at": at,
+        "unexpected": "dropped",
+    }
+    key = f"raw/sap_b1/_agent/tenant_id={TENANT}/workspace_id={WORKSPACE}/heartbeat.json"
+    stored[key] = json.dumps(beat).encode("utf-8")
+    body = client.get("/connector/status", headers=headers).json()
+    assert body["present"] is True and body["readable"] is True and 90 <= body["age_seconds"] < 150
+    assert {k: body[k] for k in beat if k != "unexpected"} == {k: v for k, v in beat.items() if k != "unexpected"}
+    assert "unexpected" not in body
+
+    other = {**AUTH, "x-security-context": _signed(tenant_id=TENANT, workspace_id="33333333-3333-4333-8333-333333333333")}
+    assert client.get("/connector/status", headers=other).json() == {"present": False}, "another workspace reads its own key"
+
+    stored[key] = b"{not json"
+    assert client.get("/connector/status", headers=headers).json() == {"present": True, "readable": False, "age_seconds": None}
+
+    def broken(name):
+        raise OSError("bucket unreachable")
+
+    monkeypatch.setattr("app.api.routes_console._read_heartbeat", broken)
+    resp = client.get("/connector/status", headers=headers)
+    assert resp.status_code == 503 and resp.json()["status"] == "degraded"
