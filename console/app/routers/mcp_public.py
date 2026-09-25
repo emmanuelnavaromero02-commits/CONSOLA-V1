@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import ValidationError
 
 from app.services import mcp_registry
 from app.dependencies import require_admin
@@ -40,6 +41,12 @@ async def list_servers():
 
 @router.post("/servers/register", dependencies=[Depends(require_csrf)])
 async def register_server(body: dict, request: Request, user: dict = Depends(require_admin)):
+    from app.routers.mcp import RegisterServerBody
+
+    try:
+        body = RegisterServerBody.model_validate(body).model_dump()
+    except ValidationError:
+        raise HTTPException(status_code=422, detail="invalid request body") from None
     result = await mcp_registry.register(body)
     await audit_service.record_event(
         user_id=user.get("id"),

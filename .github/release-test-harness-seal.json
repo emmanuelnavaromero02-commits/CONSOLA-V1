@@ -1838,6 +1838,10 @@
       "sha256": "ccc9ef81ae492062a6f3f1afa9c110bad64d5b0ab7ec5a63ef619b50c6dfe365"
     },
     {
+      "path": "console/tests/test_admin_user_body_contract.py",
+      "sha256": "7aa703be4f30badedd95d07c1ec2acd4649bd7fbd2cbbbb76f2a870d9c185806"
+    },
+    {
       "path": "console/tests/test_admin_user_mutations.py",
       "sha256": "c6651c13b7f366c5523cf693ce47e4cc663fda731958c738b55545d98915a429"
     },
@@ -4987,7 +4991,7 @@
     },
     {
       "path": "tests/test_mcp_invoke_requires_admin.py",
-      "sha256": "661bb1ac6f8be984c11bfc2559badb97f3c4db70141f78e4eb5d45c90e5efbec"
+      "sha256": "d4791e6e7fd0877e4c74545e256f4d9e0dbdcdb5483ca8b582491efed8c5b1f6"
     },
     {
       "path": "tests/test_mcp_minio_lakehouse_storage.py",

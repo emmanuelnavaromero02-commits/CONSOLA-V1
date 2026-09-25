@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.dependencies import require_authenticated
 from app.services import settings_service
@@ -54,10 +57,20 @@ async def reveal_setting(key: str, request: Request, user: dict = Depends(_requi
     return item
 
 
+class SettingUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    value: Any
+
+
 @router.put("/{key}", dependencies=[Depends(require_csrf)])
 async def update_setting(key: str, body: dict, request: Request, user: dict = Depends(_require_settings_permission("settings.write"))):
     if "value" not in body:
         raise HTTPException(status_code=400, detail="missing 'value' in body")
+    try:
+        body = SettingUpdate.model_validate(body).model_dump()
+    except ValidationError:
+        raise HTTPException(status_code=422, detail="invalid request body") from None
     ip, ua = _forensic(request)
     try:
         return await settings_service.set_setting(
