@@ -5167,7 +5167,7 @@
     },
     {
       "path": "tests/test_operational_truth_e2e_gate_contract.py",
-      "sha256": "782449896e20a2c09294c77bd30030053f54462ccaec1e7ad41de86c8d5f2165"
+      "sha256": "a330735c57fcab446b6ba36722b2b87b48f17a8231f4cbc091875912cae0d734"
     },
     {
       "path": "tests/test_operational_truth_mcp_final_red.py",
