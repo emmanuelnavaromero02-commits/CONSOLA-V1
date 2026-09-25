@@ -44,6 +44,8 @@ SAP_B1_MARGIN_METRICS = (
     "reconciliation",
     "data_quality",
 )
+SAP_B1_SALES_METRICS = ("distributor_scorecard",)
+SAP_B1_EXPIRY_METRICS = ("batch_expiry",)
 
 PUBLIC_PROXY_NOTES: dict[str, str] = {
     "billable_hours_logged": (
@@ -138,6 +140,18 @@ PUBLIC_PROXY_NOTES: dict[str, str] = {
         "clientes, relaciones entre documentos y maestros, costo en lineas, lotes "
         "e intercompania. NO corrige datos en Business One."
     ),
+    "distributor_scorecard": (
+        "Semaforo del ultimo mes cerrado por distribuidora del grupo: sell-in, "
+        "sell-out y su crecimiento, sell-through de tres meses, dias de inventario "
+        "en canal, margen y stock expuesto a caducidad contra sus umbrales. NO "
+        "incluye ventas directas del fabricante a clientes finales."
+    ),
+    "batch_expiry": (
+        "Lotes con existencia al corte del inventario: vencidos, dentro del "
+        "horizonte y unidades que se venceran sin venderse al ritmo actual, con "
+        "accion sugerida por articulo. NO considera promociones ni traspasos en "
+        "camino."
+    ),
 }
 
 PUBLIC_SOURCE_LABELS: dict[str, str] = {
@@ -158,6 +172,8 @@ PUBLIC_SOURCE_LABELS: dict[str, str] = {
     sap_b1_aggregates.ITEM_DATASET: "SAP Business One: margen por articulo (mensual)",
     sap_b1_aggregates.RECONCILIATION_DATASET: "SAP Business One: reconciliacion con finanzas (mensual)",
     sap_b1_aggregates.DATA_QUALITY_DATASET: "SAP Business One: calidad de datos",
+    sap_b1_aggregates.SCORECARD_DATASET: "SAP Business One: semaforo de distribuidoras (mensual)",
+    sap_b1_aggregates.EXPIRY_DATASET: "SAP Business One: caducidad de lotes",
 }
 
 PUBLIC_CARTRIDGE_LABELS: dict[str, str] = {
@@ -268,6 +284,7 @@ PUBLIC_NOTE_RULES: tuple[tuple[str, str], ...] = (
         "finanzas todavia no entrego totales de control",
         "finanzas todavia no entrego totales de control",
     ),
+    ("sin lotes con existencia", "sin lotes con existencia"),
     (
         "hay varias monedas locales",
         "hay varias monedas locales: se reporta la de mayor venta",
@@ -518,7 +535,9 @@ __all__ = [
     "PUBLIC_SOURCE_LABELS",
     "RISK_DOMAIN",
     "RISK_METRICS",
+    "SAP_B1_EXPIRY_METRICS",
     "SAP_B1_MARGIN_METRICS",
+    "SAP_B1_SALES_METRICS",
     "cartridge_label",
     "combine_status",
     "domain_payload",

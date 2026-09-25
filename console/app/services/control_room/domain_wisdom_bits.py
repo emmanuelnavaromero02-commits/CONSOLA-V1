@@ -22,6 +22,8 @@ METRIC_LABELS: dict[str, str] = {
     "below_min_sales": "venta bajo margen minimo",
     "reconciliation": "reconciliacion con finanzas",
     "data_quality": "calidad de datos",
+    "distributor_scorecard": "semaforo de distribuidoras",
+    "batch_expiry": "caducidad de lotes",
 }
 
 VIEW_BY_KEY: dict[str, str] = {
@@ -29,6 +31,7 @@ VIEW_BY_KEY: dict[str, str] = {
     "operations": "operations_kpis",
     "risk": "risk_kpis",
     "sap_b1_margin": "sap_b1_margin_kpis",
+    "sap_b1_expiry": "sap_b1_expiry_kpis",
 }
 
 STATUS_READY = "ready"

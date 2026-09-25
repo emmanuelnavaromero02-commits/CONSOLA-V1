@@ -18,7 +18,9 @@ from app.schemas.control_room_domain_kpi_responses import (
     ControlRoomFinanceKpisResponse,
     ControlRoomOperationsKpisResponse,
     ControlRoomRiskKpisResponse,
+    ControlRoomSapB1ExpiryKpisResponse,
     ControlRoomSapB1MarginKpisResponse,
+    ControlRoomSapB1SalesKpisResponse,
 )
 from app.schemas.control_room_experience_actions import ExperienceActionPreviewResponse
 from app.schemas.control_room_alert_mutation_responses import (
@@ -302,6 +304,20 @@ async def _control_room_internal_view(
                 f"sap-b1-margin-kpis-{top_n}",
                 user,
                 lambda: control_room_service.sap_b1_margin_kpis(user, top_n=top_n),
+            ),
+        )
+    if view == "sap_b1_sales_kpis":
+        return project_public_control_room_response(
+            ControlRoomSapB1SalesKpisResponse,
+            await _control_room_cache_get_or_set(
+                "sap-b1-sales-kpis", user, lambda: control_room_service.sap_b1_sales_kpis(user)
+            ),
+        )
+    if view == "sap_b1_expiry_kpis":
+        return project_public_control_room_response(
+            ControlRoomSapB1ExpiryKpisResponse,
+            await _control_room_cache_get_or_set(
+                "sap-b1-expiry-kpis", user, lambda: control_room_service.sap_b1_expiry_kpis(user)
             ),
         )
     if view == "agent_memory":

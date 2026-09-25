@@ -39,6 +39,8 @@ COMPANY_DATASET = "sap_b1_margin_by_company_month"
 ITEM_DATASET = "sap_b1_margin_by_item_month"
 RECONCILIATION_DATASET = "sap_b1_margin_reconciliation_month"
 DATA_QUALITY_DATASET = "sap_b1_data_quality"
+SCORECARD_DATASET = "sap_b1_distributor_scorecard_month"
+EXPIRY_DATASET = "sap_b1_batch_expiry"
 
 _CONSOLIDATED_REQUIRED = frozenset(
     {
@@ -93,6 +95,26 @@ _RECONCILIATION_REQUIRED = frozenset(
 )
 _DATA_QUALITY_REQUIRED = frozenset(
     {"company", "check_code", "check_group", "total", "failing", "pct_ok", "min_pct", "status"}
+)
+
+_SCORECARD_REQUIRED = frozenset(
+    {
+        "distributor", "doc_month", "sell_out_revenue_local", "sell_out_qty", "sell_in_qty",
+        "growth_mom_pct", "growth_yoy_pct", "sell_through_3m_pct", "channel_days", "margin_pct",
+        "expiry_exposed_pct", "growth_color", "sell_through_color", "channel_days_color",
+        "margin_color", "expiry_color", "overall_color",
+    }
+)
+_EXPIRY_REQUIRED = frozenset(
+    {"company", "item_code", "as_of_date", "bucket", "within_horizon", "qty", "value_local",
+     "at_risk_qty", "at_risk_value_local", "transfer_candidate"}
+)
+_COLOR_METRICS = (
+    ("growth_color", "crecimiento de sell-out", "growth_yoy_pct"),
+    ("sell_through_color", "sell-through", "sell_through_3m_pct"),
+    ("channel_days_color", "dias de inventario en canal", "channel_days"),
+    ("margin_color", "margen de la distribuidora", "margin_pct"),
+    ("expiry_color", "stock expuesto a caducidad", "expiry_exposed_pct"),
 )
 
 GROUP_MARGIN_DROP_PP = 3.0
@@ -691,17 +713,217 @@ async def query_data_quality(user: dict | None) -> DataQuality:
     return await run_gold_aggregate(user, _compute, _unavailable)
 
 
+SCORECARD_PROXY_NOTE = (
+    "Semaforo mensual por distribuidora del grupo: sell-in desde el grupo, "
+    "sell-out a clientes externos y su crecimiento, sell-through de tres meses, "
+    "dias de inventario en canal, margen de la distribuidora y stock expuesto a "
+    "caducidad, cada uno contra su umbral. NO identifica distribuidoras por "
+    "nombre de empresa sino por quien compra al grupo."
+)
+EXPIRY_PROXY_NOTE = (
+    "Lotes con existencia al corte del inventario: vencidos, dentro del horizonte "
+    "de caducidad y unidades que se venceran sin venderse al ritmo de venta de "
+    "90 dias con salida por fecha de caducidad. NO considera promociones ni "
+    "traspasos ya en camino."
+)
+
+
+@dataclass
+class DistributorScorecard(B1Result):
+    distributors: list[dict[str, Any]] = field(default_factory=list)
+    red: int | None = None
+    yellow: int | None = None
+    green: int | None = None
+    without_thresholds: int | None = None
+    sell_in_qty: float | None = None
+    sell_out_qty: float | None = None
+
+
+async def query_distributor_scorecard(user: dict | None, *, as_of: date | None = None) -> DistributorScorecard:
+    base = {"proxy_note": SCORECARD_PROXY_NOTE}
+
+    def _unavailable(error: str) -> DistributorScorecard:
+        return DistributorScorecard(status=STATUS_UNAVAILABLE, error=error, **base)
+
+    async def _compute(scope: GoldScope) -> DistributorScorecard:
+        rel = await resolve_relation(scope, SCORECARD_DATASET, required=_SCORECARD_REQUIRED)
+        if rel.missing_required:
+            return DistributorScorecard(status=STATUS_UNAVAILABLE, error=invalid_schema_error(rel),
+                                        missing_columns=list(rel.missing_required), **base)
+        period = await _closed_period(scope, rel, as_of, "distributor_scorecard")
+        if period is None:
+            return _no_period(DistributorScorecard, base, rel)
+        columns = ", ".join(sorted(_SCORECARD_REQUIRED - {"doc_month"}))
+        sql = f"""
+            -- omega-aggregate: sap_b1.distributor_scorecard.distributors
+            SELECT {columns}
+              FROM {rel.sql}
+             WHERE {GOLD_SCOPE_PREDICATE}
+               AND doc_month::date = $3::date
+             ORDER BY distributor
+             LIMIT $4
+        """
+        rows = await scope.conn.fetch(sql, *scope.scope_args, period, clamp_top_n(50))
+        label = _period_label(period)
+        distributors, breaches = [], []
+        counts = {"rojo": 0, "amarillo": 0, "verde": 0, "sin_umbral": 0}
+        for row in rows:
+            item = {
+                "distributor": row["distributor"],
+                "sell_out_revenue": as_float(row["sell_out_revenue_local"]),
+                "sell_out_qty": as_float(row["sell_out_qty"]),
+                "sell_in_qty": as_float(row["sell_in_qty"]),
+                "growth_mom_pct": as_float(row["growth_mom_pct"]),
+                "growth_yoy_pct": as_float(row["growth_yoy_pct"]),
+                "sell_through_3m_pct": as_float(row["sell_through_3m_pct"]),
+                "channel_days": as_float(row["channel_days"]),
+                "margin_pct": as_float(row["margin_pct"]),
+                "expiry_exposed_pct": as_float(row["expiry_exposed_pct"]),
+                "overall_color": row["overall_color"],
+            }
+            distributors.append(item)
+            counts[str(row["overall_color"])] = counts.get(str(row["overall_color"]), 0) + 1
+            reds = [f"{name} {as_float(row[value])}" for color, name, value in _COLOR_METRICS if row[color] == "rojo"]
+            if reds:
+                breaches.append(f"La distribuidora {row['distributor']} esta en rojo en {label}: " + ", ".join(reds) + ".")
+        return DistributorScorecard(
+            status=status_for(rel),
+            evidence_refs=[gold_evidence(rel, filters={"period": label})],
+            period=label,
+            breaches=breaches,
+            distributors=distributors,
+            red=counts["rojo"],
+            yellow=counts["amarillo"],
+            green=counts["verde"],
+            without_thresholds=counts["sin_umbral"],
+            sell_in_qty=sum(item["sell_in_qty"] or 0 for item in distributors),
+            sell_out_qty=sum(item["sell_out_qty"] or 0 for item in distributors),
+            **base,
+        )
+
+    return await run_gold_aggregate(user, _compute, _unavailable)
+
+
+@dataclass
+class BatchExpiry(B1Result):
+    as_of: str | None = None
+    expired_qty: float | None = None
+    expired_value: float | None = None
+    horizon_value: float | None = None
+    at_risk_value: float | None = None
+    transfer_candidates: int | None = None
+    by_company: list[dict[str, Any]] = field(default_factory=list)
+    top_items: list[dict[str, Any]] = field(default_factory=list)
+
+
+async def query_batch_expiry(user: dict | None, *, top_n: int = 10) -> BatchExpiry:
+    limit = clamp_top_n(top_n, default=10)
+    base = {"proxy_note": EXPIRY_PROXY_NOTE}
+
+    def _unavailable(error: str) -> BatchExpiry:
+        return BatchExpiry(status=STATUS_UNAVAILABLE, error=error, **base)
+
+    async def _compute(scope: GoldScope) -> BatchExpiry:
+        rel = await resolve_relation(scope, EXPIRY_DATASET, required=_EXPIRY_REQUIRED)
+        if rel.missing_required:
+            return BatchExpiry(status=STATUS_UNAVAILABLE, error=invalid_schema_error(rel),
+                               missing_columns=list(rel.missing_required), **base)
+        company_sql = f"""
+            -- omega-aggregate: sap_b1.batch_expiry.companies
+            SELECT company,
+                   MAX(as_of_date)::date AS as_of,
+                   COALESCE(SUM(qty) FILTER (WHERE bucket = 'vencido'), 0)::float8 AS expired_qty,
+                   COALESCE(SUM(value_local) FILTER (WHERE bucket = 'vencido'), 0)::float8 AS expired_value,
+                   COALESCE(SUM(value_local) FILTER (WHERE within_horizon AND bucket <> 'vencido'), 0)::float8 AS horizon_value,
+                   COALESCE(SUM(at_risk_value_local) FILTER (WHERE bucket <> 'vencido'), 0)::float8 AS at_risk_value,
+                   COUNT(*) FILTER (WHERE transfer_candidate IS NOT NULL AND at_risk_qty > 0)::bigint AS transfers
+              FROM {rel.sql}
+             WHERE {GOLD_SCOPE_PREDICATE}
+             GROUP BY company
+             ORDER BY company
+             LIMIT $3
+        """
+        companies = await scope.conn.fetch(company_sql, *scope.scope_args, clamp_top_n(50))
+        items_sql = f"""
+            -- omega-aggregate: sap_b1.batch_expiry.top_items
+            SELECT company, item_code,
+                   SUM(at_risk_qty)::float8 AS at_risk_qty,
+                   SUM(at_risk_value_local)::float8 AS at_risk_value,
+                   MIN(transfer_candidate) AS transfer_candidate
+              FROM {rel.sql}
+             WHERE {GOLD_SCOPE_PREDICATE}
+               AND within_horizon AND bucket <> 'vencido' AND at_risk_qty > 0
+             GROUP BY company, item_code
+             ORDER BY SUM(at_risk_value_local) DESC, company, item_code
+             LIMIT $3
+        """
+        items = await scope.conn.fetch(items_sql, *scope.scope_args, limit)
+        if not companies:
+            return BatchExpiry(status=STATUS_DEGRADED, notes=["sin lotes con existencia"],
+                               evidence_refs=[gold_evidence(rel, filters={})], **base)
+        as_of_value = max(row["as_of"] for row in companies if row["as_of"]) if any(row["as_of"] for row in companies) else None
+        breaches = []
+        by_company = []
+        for row in companies:
+            by_company.append({
+                "company": row["company"],
+                "expired_qty": as_float(row["expired_qty"]),
+                "expired_value": as_float(row["expired_value"]),
+                "horizon_value": as_float(row["horizon_value"]),
+                "at_risk_value": as_float(row["at_risk_value"]),
+                "transfer_candidates": as_int(row["transfers"]),
+            })
+            if as_float(row["expired_value"]):
+                breaches.append(
+                    f"{row['company']} tiene {round(as_float(row['expired_value']), 2)} en lotes ya vencidos con existencia."
+                )
+        top_items = []
+        for row in items:
+            action = f"traspasar a {row['transfer_candidate']}" if row["transfer_candidate"] else "promocion o devolucion"
+            top_items.append({
+                "company": row["company"],
+                "item": row["item_code"],
+                "at_risk_qty": as_float(row["at_risk_qty"]),
+                "at_risk_value": as_float(row["at_risk_value"]),
+                "action": action,
+            })
+            breaches.append(
+                f"{row['company']}: el articulo {row['item_code']} tiene {round(as_float(row['at_risk_value']), 2)} "
+                f"en riesgo de caducar sin venderse; accion sugerida: {action}."
+            )
+        return BatchExpiry(
+            status=status_for(rel),
+            evidence_refs=[gold_evidence(rel, filters={"as_of": as_of_value, "top_n": limit})],
+            breaches=breaches,
+            as_of=as_of_value.isoformat() if as_of_value else None,
+            expired_qty=sum(item["expired_qty"] or 0 for item in by_company),
+            expired_value=sum(item["expired_value"] or 0 for item in by_company),
+            horizon_value=sum(item["horizon_value"] or 0 for item in by_company),
+            at_risk_value=sum(item["at_risk_value"] or 0 for item in by_company),
+            transfer_candidates=sum(item["transfer_candidates"] or 0 for item in by_company),
+            by_company=by_company,
+            top_items=top_items,
+            **base,
+        )
+
+    return await run_gold_aggregate(user, _compute, _unavailable)
+
+
 __all__ = [
     "COMPANY_DATASET",
     "CONSOLIDATED_DATASET",
     "CUSTOMER_DATASET",
     "DATA_QUALITY_DATASET",
+    "EXPIRY_DATASET",
     "ITEM_DATASET",
     "RECONCILIATION_DATASET",
+    "SCORECARD_DATASET",
+    "query_batch_expiry",
     "query_below_min_sales",
     "query_company_margin",
     "query_customer_margin",
     "query_data_quality",
+    "query_distributor_scorecard",
     "query_group_margin",
     "query_item_family_margin",
     "query_reconciliation",

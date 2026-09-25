@@ -11,7 +11,9 @@ from fastapi import HTTPException
 from app.domains.agentops import domain_monitors
 from app.domains.agentops.domain_monitor_support import build_contract
 from app.domains.agentops.invocation import agent_schedule_due
+from app.domains.agentops.sap_b1_monitors import SAP_B1_EXPIRY_MONITOR_SPEC as EXPIRY
 from app.domains.agentops.sap_b1_monitors import SAP_B1_MARGIN_MONITOR_SPEC as SPEC
+from app.domains.agentops.sap_b1_monitors import SAP_B1_MONITOR_SPECS
 from app.schemas.control_room_domain_kpi_responses import ControlRoomSapB1MarginKpisResponse
 from app.services import monitor_alert_policy
 from app.services.control_room import domain_wisdom_bits, sap_b1_kpis
@@ -130,8 +132,9 @@ def test_provisioning_route_needs_airflow_and_a_scoped_run_context(monkeypatch):
     monkeypatch.setattr(route, "verify_signed_security_context", lambda ctx: dict(good))
 
     result = asyncio.run(route.intelligence_ensure_monitors_internal(_body(), internal_service="airflow"))
-    assert result == {"ok": True, "monitors": ["sap_b1_margin_monitor"]}
-    assert calls == [("t1", "w1", "sap_b1_margin_monitor")]
+    slugs = [spec.slug for spec in SAP_B1_MONITOR_SPECS]
+    assert result == {"ok": True, "monitors": slugs} and len(slugs) == len(set(slugs))
+    assert calls == [("t1", "w1", slug) for slug in slugs]
 
     with pytest.raises(HTTPException) as exc:
         asyncio.run(route.intelligence_ensure_monitors_internal(_body(), internal_service="mcp-infra"))
@@ -149,4 +152,14 @@ def test_provisioning_route_needs_airflow_and_a_scoped_run_context(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         asyncio.run(route.intelligence_ensure_monitors_internal(_body(), internal_service="airflow"))
     assert exc.value.status_code == 403
-    assert len(calls) == 1
+    assert len(calls) == len(SAP_B1_MONITOR_SPECS)
+
+
+def test_expiry_monitor_runs_after_the_margin_one_on_its_own_view():
+    _allowed, _rag, extra = build_contract(EXPIRY)
+    assert extra["schedule"]["cron"] == "25 7 * * *" and extra["schedule"]["tz"] == "America/Mexico_City"
+    assert extra["monitor"]["wisdom_bit_id"] == "WB-B1-CADUCIDAD" and extra["monitor"]["domain"] == "Operacion"
+    assert domain_wisdom_bits.VIEW_BY_KEY[EXPIRY.key] == "sap_b1_expiry_kpis"
+    assert domain_monitors.spec_for_wisdom_bit("WB-B1-CADUCIDAD") is EXPIRY
+    assert len({spec.wisdom_bit_id for spec in domain_monitors.ALL_DOMAIN_MONITOR_SPECS}) == len(domain_monitors.ALL_DOMAIN_MONITOR_SPECS)
+    assert agent_schedule_due(extra["schedule"], datetime(2026, 9, 25, 13, 25, tzinfo=timezone.utc), interval_minutes=5, grace_minutes=2)

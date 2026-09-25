@@ -15,6 +15,10 @@ from tests.test_mcp_domain_kpi_tools import TENANT, WORKSPACE, _ctx, _load_conso
 TOOL = "control_room__sap_b1_kpis_read"
 
 
+def control_room_views() -> dict[str, str]:
+    return {"caducidad": "sap_b1_expiry_kpis", "margen": "sap_b1_margin_kpis", "ventas": "sap_b1_sales_kpis"}
+
+
 @pytest.fixture(autouse=True)
 def _clean_imports():
     saved = list(sys.path)
@@ -30,7 +34,7 @@ def test_tool_is_catalogued_read_only_with_a_case_enum(monkeypatch):
     schema = tool["input_schema"]
     assert "Solo lectura" in tool["description"] and "NO " in tool["description"]
     assert schema["additionalProperties"] is False and schema["required"] == ["case"]
-    assert schema["properties"]["case"]["enum"] == ["margen"]
+    assert schema["properties"]["case"]["enum"] == sorted(control_room_views())
     assert (schema["properties"]["top_n"]["minimum"], schema["properties"]["top_n"]["maximum"]) == (0, 10)
     assert TOOL in main._CONTROL_ROOM_READ_TOOLS
     assert TOOL not in main._CONTROL_ROOM_ALERT_TOOLS | main._CONTROL_ROOM_ANALYSIS_TOOLS
@@ -66,4 +70,7 @@ def test_invoke_is_scoped_and_routes_the_case_to_its_view(monkeypatch):
     assert captured["payload"]["params"] == {"top_n": 10}
 
     with pytest.raises(ValueError):
-        asyncio.run(control_room.control_room__sap_b1_kpis_read(case="ventas", security_context=req.args["security_context"]))
+        asyncio.run(control_room.control_room__sap_b1_kpis_read(case="inexistente", security_context=req.args["security_context"]))
+    for case, view in control_room_views().items():
+        asyncio.run(control_room.control_room__sap_b1_kpis_read(case=case, security_context=req.args["security_context"]))
+        assert captured["payload"]["view"] == view

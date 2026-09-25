@@ -328,7 +328,9 @@ __all__ = (
     "ControlRoomFinanceKpisResponse",
     "ControlRoomOperationsKpisResponse",
     "ControlRoomRiskKpisResponse",
+    "ControlRoomSapB1ExpiryKpisResponse",
     "ControlRoomSapB1MarginKpisResponse",
+    "ControlRoomSapB1SalesKpisResponse",
     "DomainKpisBase",
     "KpiEvidenceRef",
     "KpiMetricBase",
@@ -449,3 +451,74 @@ class SapB1MarginMetrics(PublicProjectionModel):
 
 class ControlRoomSapB1MarginKpisResponse(DomainKpisBase):
     metrics: SapB1MarginMetrics = Field(default_factory=SapB1MarginMetrics)
+
+
+# ── SAP Business One: sales and expiry ──────────────────────────────────────
+
+
+class DistributorRow(PublicProjectionModel):
+    distributor: str | None = None
+    sell_out_revenue: float | int | None = None
+    sell_out_qty: float | int | None = None
+    sell_in_qty: float | int | None = None
+    growth_mom_pct: float | int | None = None
+    growth_yoy_pct: float | int | None = None
+    sell_through_3m_pct: float | int | None = None
+    channel_days: float | int | None = None
+    margin_pct: float | int | None = None
+    expiry_exposed_pct: float | int | None = None
+    overall_color: str | None = None
+
+
+class DistributorScorecardKpi(B1KpiMetricBase):
+    distributors: list[DistributorRow] = Field(default_factory=list)
+    red: int | None = None
+    yellow: int | None = None
+    green: int | None = None
+    without_thresholds: int | None = None
+    sell_in_qty: float | int | None = None
+    sell_out_qty: float | int | None = None
+
+
+class SapB1SalesMetrics(PublicProjectionModel):
+    distributor_scorecard: DistributorScorecardKpi = Field(default_factory=DistributorScorecardKpi)
+
+
+class ControlRoomSapB1SalesKpisResponse(DomainKpisBase):
+    metrics: SapB1SalesMetrics = Field(default_factory=SapB1SalesMetrics)
+
+
+class ExpiryCompanyRow(PublicProjectionModel):
+    company: str | None = None
+    expired_qty: float | int | None = None
+    expired_value: float | int | None = None
+    horizon_value: float | int | None = None
+    at_risk_value: float | int | None = None
+    transfer_candidates: int | None = None
+
+
+class ExpiryItemRow(PublicProjectionModel):
+    company: str | None = None
+    item: str | None = None
+    at_risk_qty: float | int | None = None
+    at_risk_value: float | int | None = None
+    action: str | None = None
+
+
+class BatchExpiryKpi(B1KpiMetricBase):
+    as_of: str | None = None
+    expired_qty: float | int | None = None
+    expired_value: float | int | None = None
+    horizon_value: float | int | None = None
+    at_risk_value: float | int | None = None
+    transfer_candidates: int | None = None
+    by_company: list[ExpiryCompanyRow] = Field(default_factory=list)
+    top_items: list[ExpiryItemRow] = Field(default_factory=list)
+
+
+class SapB1ExpiryMetrics(PublicProjectionModel):
+    batch_expiry: BatchExpiryKpi = Field(default_factory=BatchExpiryKpi)
+
+
+class ControlRoomSapB1ExpiryKpisResponse(DomainKpisBase):
+    metrics: SapB1ExpiryMetrics = Field(default_factory=SapB1ExpiryMetrics)

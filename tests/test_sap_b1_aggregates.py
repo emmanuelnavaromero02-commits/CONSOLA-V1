@@ -55,6 +55,8 @@ def test_module_follows_the_aggregate_contract():
         (b1.ITEM_DATASET, b1._ITEM_REQUIRED),
         (b1.RECONCILIATION_DATASET, b1._RECONCILIATION_REQUIRED),
         (b1.DATA_QUALITY_DATASET, b1._DATA_QUALITY_REQUIRED),
+        (b1.SCORECARD_DATASET, b1._SCORECARD_REQUIRED),
+        (b1.EXPIRY_DATASET, b1._EXPIRY_REQUIRED),
     ],
 )
 def test_required_columns_are_real_outputs_of_the_gold_sql(dataset, columns):
@@ -194,3 +196,52 @@ async def test_reconciliation_and_data_quality_raise_one_breach_per_finding(monk
     quality = await b1.query_data_quality(user_for())
     assert quality.failing[0]["check"] == "rfc clientes valido"
     assert quality.breaches == ["Calidad de datos en empresa_b: rfc clientes valido al 93.33% (minimo 95.0%)."]
+
+
+@pytest.mark.asyncio
+async def test_scorecard_counts_colours_and_names_the_red_metrics(monkeypatch):
+    def row(name, color, growth_color="verde"):
+        return {"distributor": name, "sell_out_revenue_local": Decimal("100"), "sell_out_qty": Decimal("10"),
+                "sell_in_qty": Decimal("12"), "growth_mom_pct": Decimal("1"), "growth_yoy_pct": Decimal("-8"),
+                "sell_through_3m_pct": Decimal("30"), "channel_days": Decimal("45"), "margin_pct": Decimal("22"),
+                "expiry_exposed_pct": None, "growth_color": growth_color, "sell_through_color": "verde",
+                "channel_days_color": "verde", "margin_color": "verde", "expiry_color": "sin_umbral", "overall_color": color}
+    conn = _conn(b1.SCORECARD_DATASET, b1._SCORECARD_REQUIRED, {
+        "sap_b1.distributor_scorecard.closed_period": {"period": AUGUST},
+        "sap_b1.distributor_scorecard.distributors": [row("empresa_b", "rojo", "rojo"), row("empresa_c", "verde")],
+    })
+    install_gold_connect(monkeypatch, conn)
+    result = await b1.query_distributor_scorecard(user_for(), as_of=AS_OF)
+    assert (result.red, result.green, result.yellow) == (1, 1, 0)
+    assert (result.sell_in_qty, result.sell_out_qty) == (24.0, 20.0)
+    assert result.breaches == ["La distribuidora empresa_b esta en rojo en 2026-08: crecimiento de sell-out -8.0."]
+    sql = conn.sql_for("sap_b1.distributor_scorecard.distributors")
+    assert "overall_color" in sql and "LIMIT $4" in sql
+
+
+@pytest.mark.asyncio
+async def test_batch_expiry_reports_expired_stock_and_actions_per_item(monkeypatch):
+    conn = _conn(b1.EXPIRY_DATASET, b1._EXPIRY_REQUIRED, {
+        "sap_b1.batch_expiry.companies": [
+            {"company": "empresa_a", "as_of": date(2026, 9, 25), "expired_qty": Decimal("5"), "expired_value": Decimal("50"),
+             "horizon_value": Decimal("300"), "at_risk_value": Decimal("120"), "transfers": 1},
+        ],
+        "sap_b1.batch_expiry.top_items": [
+            {"company": "empresa_a", "item_code": "A-1", "at_risk_qty": Decimal("7"), "at_risk_value": Decimal("70"), "transfer_candidate": "empresa_b"},
+            {"company": "empresa_a", "item_code": "A-2", "at_risk_qty": Decimal("5"), "at_risk_value": Decimal("50"), "transfer_candidate": None},
+        ],
+    })
+    install_gold_connect(monkeypatch, conn)
+    result = await b1.query_batch_expiry(user_for())
+    assert result.as_of == "2026-09-25" and result.expired_value == 50.0 and result.at_risk_value == 120.0
+    assert [item["action"] for item in result.top_items] == ["traspasar a empresa_b", "promocion o devolucion"]
+    assert len(result.breaches) == 3 and "ya vencidos" in result.breaches[0]
+    assert "within_horizon AND bucket <> 'vencido'" in conn.sql_for("sap_b1.batch_expiry.top_items")
+
+
+@pytest.mark.asyncio
+async def test_batch_expiry_without_stock_is_degraded(monkeypatch):
+    conn = _conn(b1.EXPIRY_DATASET, b1._EXPIRY_REQUIRED, {"sap_b1.batch_expiry.companies": [], "sap_b1.batch_expiry.top_items": []})
+    install_gold_connect(monkeypatch, conn)
+    result = await b1.query_batch_expiry(user_for())
+    assert result.status == "degraded" and result.notes == ["sin lotes con existencia"]

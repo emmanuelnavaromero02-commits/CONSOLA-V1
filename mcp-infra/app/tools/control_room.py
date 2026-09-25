@@ -671,7 +671,11 @@ async def control_room__risk_kpis_read(
     )
 
 
-_SAP_B1_CASE_VIEWS = {"margen": "sap_b1_margin_kpis"}
+_SAP_B1_CASE_VIEWS = {
+    "caducidad": "sap_b1_expiry_kpis",
+    "margen": "sap_b1_margin_kpis",
+    "ventas": "sap_b1_sales_kpis",
+}
 
 
 @tool(
@@ -681,7 +685,10 @@ _SAP_B1_CASE_VIEWS = {"margen": "sap_b1_margin_kpis"}
         "margen del grupo con eliminacion intercompania, margen por empresa, "
         "clientes y familias bajo el margen minimo, venta bajo costo, "
         "reconciliacion contra los totales de finanzas y calidad de datos del "
-        "ultimo mes cerrado. Cada metrica trae status, proxy_note con lo que mide "
+        "ultimo mes cerrado. case=ventas: semaforo por distribuidora con sell-in, "
+        "sell-out, crecimiento, sell-through, dias de inventario en canal, margen "
+        "y stock expuesto a caducidad. case=caducidad: lotes vencidos y en riesgo "
+        "de caducar sin venderse con accion sugerida. Cada metrica trae status, proxy_note con lo que mide "
         "y lo que NO mide, breaches con los incumplimientos de negocio y "
         "evidence_refs. NO convierte monedas. Solo agregados; top_n (0-10) "
         "devuelve ademas hasta 10 clientes nombrados. Solo lectura."
