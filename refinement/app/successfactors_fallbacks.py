@@ -10,13 +10,48 @@ from .successfactors_talent_readfree_fallbacks import TALENT_READFREE_EMPTY_SQL
 from .successfactors_talent_runtime_fallbacks import TALENT_RUNTIME_FALLBACK_SQL
 
 
+# A missing dependency is an object or a glob that does not exist. DuckDB
+# 1.2.2 (the version refinement pins) says so in one of three shapes: its own
+# "No files found" for an empty glob, "…: 404 (Not Found)" when the HEAD that
+# opens an object answers 404, and "HTTP GET error on '…' (HTTP 404)" when a
+# ranged GET or a listing answers 404. The status code is part of the marker
+# on purpose: the bare phrase "http get error" also prefixes an S3 listing
+# that failed with HTTP 400, a 403 from revoked credentials, a 416 for a file
+# that changed underneath and a 500 from the storage backend. Introduced with
+# the WB-TALENTO feature pack, that bare phrase was turning those
+# infrastructure failures into an empty, "degraded" gold published with HTTP
+# 200 (see _INFRA_FAILURE_MARKERS).
 _MISSING_DEPENDENCY_MARKERS = (
     "no files found",
     "source_files_missing",
     "dependency_not_materialized",
     "missing_materialized_dependencies",
     "404 (not found)",
-    "http get error",
+    "(http 404)",
+)
+
+# Anything here is a failure of the lakehouse, the network or the credentials,
+# never an absent source, and it is checked before the markers above. Most
+# entries are an explicit defense rather than a decision: a message carrying
+# "(http 403)" cannot also carry "(http 404)". The one that decides on its
+# own is "list-type=2": a 404 on the listing is a bucket that does not exist.
+_INFRA_FAILURE_MARKERS = (
+    "list-type=2",  # S3 ListObjectsV2: the listing itself failed, whatever the code
+    "(http 400)",
+    "(http 401)",
+    "(http 403)",
+    "(http 408)",
+    "(http 416)",
+    "(http 429)",
+    "(http 500)",
+    "(http 502)",
+    "(http 503)",
+    "(http 504)",
+    "connection refused",
+    "timed out",
+    "could not establish connection",
+    "failed to read connection",
+    "name or service not known",
 )
 
 # Anti-drift marker for the conditional CPA blocker contract:
@@ -72,9 +107,18 @@ SUCCESSFACTORS_GOLD_FALLBACK_SQL: dict[str, str] = {
 
 
 def is_missing_successfactors_dependency_error(exc: Exception | Any) -> bool:
+    """True only for an absent source, never for a failing lakehouse.
+
+    The infrastructure check runs first: an S3 listing that answers 400 or 403
+    carries the same "HTTP GET error" prefix as a real 404 on an object, and it
+    must keep raising so the caller records a failure instead of publishing a
+    degraded empty gold.
+    """
     text = " ".join(
         str(part) for part in getattr(exc, "args", ()) or (str(exc),)
     ).lower()
+    if any(marker in text for marker in _INFRA_FAILURE_MARKERS):
+        return False
     return any(marker in text for marker in _MISSING_DEPENDENCY_MARKERS)
 
 

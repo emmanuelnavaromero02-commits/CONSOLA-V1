@@ -3,7 +3,7 @@
   "files": [
     {
       "path": ".github/release-test-skip-policy.json",
-      "sha256": "c8625e6231e5565f6c08614d0da0f523c0db5bf4d32a43fcdcb82f8e6a24c403"
+      "sha256": "6f6bf7926ab21b96fbfd43f8af90f9a0a642661f2c64116a4f88a3ddf8c8aa9d"
     },
     {
       "path": ".github/workflows/release-runner-capacity.yml",
@@ -3119,7 +3119,7 @@
     },
     {
       "path": "refinement/tests/test_e11_talent_readfree_fallbacks.py",
-      "sha256": "fd5f7a4815444b27f8b7d06641300f41bf1bf180bd238014301f2e4ed1fd09ba"
+      "sha256": "4f49844efa56a3127bbc16f41e08ea1f9e6b2dc781d82dbcc779e7b47f8a3642"
     },
     {
       "path": "refinement/tests/test_hotfix_runtime.py",
