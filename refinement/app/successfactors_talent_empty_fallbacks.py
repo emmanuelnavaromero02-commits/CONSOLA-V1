@@ -49,6 +49,7 @@ SELECT
     display_order,
     CURRENT_TIMESTAMP AS generated_at
 FROM boxes
+WHERE FALSE
 """,
     "sap_successfactors_talent_performance_goals": """
 SELECT
@@ -61,6 +62,7 @@ SELECT
     NULL::DOUBLE AS goals_percent_complete_avg,
     'insufficient_data' AS performance_kpi_status,
     CURRENT_TIMESTAMP AS generated_at
+WHERE FALSE
 """,
     "sap_successfactors_talent_competency_skill_gap": """
 SELECT
@@ -72,6 +74,7 @@ SELECT
     'blocked' AS required_skills_status,
     'blocked' AS skill_gap_status,
     CURRENT_TIMESTAMP AS generated_at
+WHERE FALSE
 """,
     "sap_successfactors_talent_aspiration_signals": """
 SELECT
@@ -82,6 +85,7 @@ SELECT
     0::BIGINT AS mobility_preferences,
     'insufficient_data' AS aspiration_signal_status,
     CURRENT_TIMESTAMP AS generated_at
+WHERE FALSE
 """,
     "sap_successfactors_talent_role_coverage": """
 SELECT
@@ -92,6 +96,7 @@ SELECT
     0::BIGINT AS roles_blocked,
     'blocked' AS role_coverage_status,
     CURRENT_TIMESTAMP AS generated_at
+WHERE FALSE
 """,
     "sap_successfactors_talent_learning_certification_status": """
 SELECT
@@ -103,6 +108,7 @@ SELECT
     0::DOUBLE AS credit_hours,
     'insufficient_data' AS learning_kpi_status,
     CURRENT_TIMESTAMP AS generated_at
+WHERE FALSE
 """,
     "sap_successfactors_recruitment_application_funnel": """
 SELECT
@@ -114,6 +120,7 @@ SELECT
     0::BIGINT AS candidates,
     'insufficient_data' AS application_funnel_status,
     CURRENT_TIMESTAMP AS generated_at
+WHERE FALSE
 """,
     "sap_successfactors_talent_retention_risk": """
 SELECT
@@ -143,6 +150,7 @@ SELECT
     0::BIGINT AS misaligned_count,
     'partial' AS status,
     CURRENT_TIMESTAMP AS generated_at
+WHERE FALSE
 """,
     "sap_successfactors_talent_calibration_sensitivity": """
 SELECT
@@ -153,6 +161,7 @@ SELECT
     'blocked' AS status,
     '["talent_9box_inputs_missing"]' AS blockers,
     CURRENT_TIMESTAMP AS generated_at
+WHERE FALSE
 """,
     "sap_successfactors_talent_role_fit_assignments": """
 SELECT
@@ -229,10 +238,10 @@ SELECT
     0::BIGINT AS open_signal_count,
     0::BIGINT AS high_severity_signal_count,
     '{"critical":0,"high":0,"medium":0,"low":0}' AS open_signals_by_severity,
-    1::BIGINT AS learning_blocked_count,
-    1::BIGINT AS recruiting_blocked_count,
+    0::BIGINT AS learning_blocked_count,
+    0::BIGINT AS recruiting_blocked_count,
     0::BIGINT AS mobility_observed_count,
-    1::BIGINT AS skill_gap_count,
+    0::BIGINT AS skill_gap_count,
     0::DOUBLE AS skill_coverage_pct,
     0::DOUBLE AS role_requirements_coverage_pct,
     0::DOUBLE AS nine_box_coverage_pct,
@@ -244,5 +253,6 @@ SELECT
     '["feature_pack_inputs_missing","benchmark_internal_not_configured"]' AS blockers,
     'talent_operational_features.v2' AS contract_version,
     CURRENT_TIMESTAMP AS generated_at
+WHERE FALSE
 """,
 }

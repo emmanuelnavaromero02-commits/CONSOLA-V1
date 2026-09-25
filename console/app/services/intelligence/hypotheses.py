@@ -9,8 +9,6 @@ def hypotheses(signal: dict[str, Any], evidence_items: list[dict[str, Any]], evi
     external_items = [item for item in evidence_items if item.get("source_type") == "external"]
     if "external_event_correlation" in support_keys:
         generated.append(_external_event_hypothesis(signal, external_items, evidence_pack_id))
-    if "calendar_seasonality" in support_keys:
-        generated.append(_calendar_hypothesis(signal, evidence_pack_id))
     if "external_unavailable" in support_keys:
         generated.append(_data_gap_hypothesis(signal, evidence_pack_id))
     configured = signal.get("configured_hypotheses")
@@ -80,18 +78,6 @@ def _external_event_hypothesis(signal: dict[str, Any], items: list[dict[str, Any
         "evidence_pack_id": evidence_pack_id,
     }
 
-
-def _calendar_hypothesis(signal: dict[str, Any], evidence_pack_id: int | None) -> dict[str, Any]:
-    return {
-        "hypothesis_key": "calendar_seasonality",
-        "title": "Estacionalidad o calendario operativo",
-        "rationale": (
-            f"{signal['entity_label']} debe compararse contra calendario operativo antes de tomar accion; "
-            "el motor no sube la confianza sin evidencia concreta."
-        ),
-        "confidence": round(max(0.25, float(signal.get("confidence") or 0.5) - 0.18), 2),
-        "evidence_pack_id": evidence_pack_id,
-    }
 
 
 def _data_gap_hypothesis(signal: dict[str, Any], evidence_pack_id: int | None) -> dict[str, Any]:

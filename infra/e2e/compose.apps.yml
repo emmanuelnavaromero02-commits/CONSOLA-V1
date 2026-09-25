@@ -78,7 +78,6 @@ services:
       SUPERSET_USER: disabled-e2e
       SUPERSET_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:?required}
       REFINEMENT_URL: http://refinement:8500
-      RAG_LOCAL_EMBEDDING_FALLBACK: "false"
     depends_on:
       postgres: {condition: service_healthy}
       postgres_gold: {condition: service_healthy}

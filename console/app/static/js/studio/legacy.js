@@ -3275,9 +3275,8 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       const dataset = state._selectedDS?.name || state._selectedDSDetail?.name || '';
       const prompts = {
         autopilot_sample:
-          'Crea en dry-run un cartucho nuevo llamado ACME CRM con id acme_crm desde este sample REST:\n' +
-          '{"results":[{"deal_id":"d1","amount":1000,"owner_email":"rep@example.com","updated_at":"2026-05-30T10:00:00Z","stage":"open"}]}\n' +
-          'Devuelve el blueprint resumido: entidades, primary key, watermark, Silver, Gold, KB, agente y PII.',
+          'Crea en dry-run un cartucho nuevo desde un sample REST real. Primero pídeme el nombre del sistema y un JSON de respuesta de su API; ' +
+          'cuando lo tenga, devuelve el blueprint resumido: entidades, primary key, watermark, Silver, Gold, KB, agente y PII.',
         autopilot_openapi:
           'Crea en dry-run un cartucho nuevo desde una spec OpenAPI/OData. Primero dime qué URL o archivo necesitas y, cuando lo tenga, usa autopilot_build_cartridge para devolver blueprint completo sin escribir en DB.',
         self_check:

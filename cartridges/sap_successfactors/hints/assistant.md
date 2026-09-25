@@ -97,5 +97,5 @@ asistente sigue estas reglas además de las globales.
 - **Talento C/P/A**: desempeño (`PerformanceReview`/`FormHeader`), objetivos (`GoalPlan`),
   competencias/skills y aspiración dependen de `$metadata` real del tenant. Si faltan, no
   inventes scores: reporta `insufficient_data` y los blockers.
-- **WisdomBit Talento** usa perfil `retail/femsa`, pesos C/P/A 0.45/0.30/0.25 y señales
+- **WisdomBit Talento** usa perfil `retail`, pesos C/P/A 0.45/0.30/0.25 y señales
   de recomendación solamente; no hace write-back a SuccessFactors.

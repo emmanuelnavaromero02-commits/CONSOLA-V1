@@ -18,7 +18,7 @@ TARGET ?= local
 WORKLOAD ?= sap_successfactors
 PROFILE ?= beta-safe
 
-.PHONY: help bootstrap-env up up-core down nuke repair-local-stack logs ps test baseline-smoke smoke beta-smoke beta-smoke-aws stress stress-smoke stress-beta stress-spike stress-breakpoint stress-soak-24h stress-write-heavy multiuser-simulation tenant-ab-local tenant-ab-aws live-cartridge-tests monitor-check production-readiness v1-live-readiness production-readiness-aws v1-ga-lite-local v1-ga-lite-aws v1-ga-max-aws v1-ga-cleanup v1-ga-report data-integrity-audit copilot-redteam cartridge-resilience chaos-local chaos-aws enterprise-readiness sap-successfactors-aws-live-max dr-rehearsal backup-aws dr-rehearsal-aws rollback-aws rollback-rehearsal rollback-rehearsal-aws deploy-main-aws aws-full-regression aws-observability-report aws-tls-status aws-superset-probe superset-tenant-probe superset-tenant-probe-aws monte-carlo-aws-probe bayesian-calibration-aws-probe bayesian-loop-probe bayesian-loop-probe-aws control-room-gold-engine-aws-probe control-room-mock-volume-aws-probe control-room-mock-volume-aws-cleanup cartridge-kb-scope-aws-probe action-framework-aws-probe decision-orchestrator-aws-probe decision-orchestrator-execution-aws-probe migrate rotate-keys e2e acceptance preflight demo-check security-scan verify-release verify-v1-public seed-intelligence-gold seed-replicon-beta-gold seed-replicon-beta-gold-aws run-intelligence-scheduled-local run-intelligence-scheduled-aws decision-backtest-local decision-backtest-aws
+.PHONY: help bootstrap-env up up-core down nuke repair-local-stack logs ps test baseline-smoke smoke beta-smoke beta-smoke-aws stress stress-smoke stress-beta stress-spike stress-breakpoint stress-soak-24h stress-write-heavy multiuser-simulation live-cartridge-tests monitor-check production-readiness v1-live-readiness production-readiness-aws v1-ga-lite-local v1-ga-lite-aws v1-ga-max-aws v1-ga-cleanup v1-ga-report data-integrity-audit copilot-redteam cartridge-resilience chaos-local chaos-aws enterprise-readiness sap-successfactors-aws-live-max dr-rehearsal backup-aws dr-rehearsal-aws rollback-aws rollback-rehearsal rollback-rehearsal-aws deploy-main-aws aws-full-regression aws-observability-report aws-tls-status aws-superset-probe superset-tenant-probe superset-tenant-probe-aws monte-carlo-aws-probe bayesian-calibration-aws-probe bayesian-loop-probe bayesian-loop-probe-aws cartridge-kb-scope-aws-probe decision-orchestrator-aws-probe decision-orchestrator-execution-aws-probe migrate rotate-keys e2e acceptance preflight demo-check security-scan verify-release verify-v1-public run-intelligence-scheduled-local run-intelligence-scheduled-aws decision-backtest-local decision-backtest-aws
 .PHONY: test-hermetic reconcile-db-passwords
 
 help:
@@ -87,15 +87,7 @@ help:
 	@echo "                    clean STRESS_* data/prefixes for the current unified v1 GA run"
 	@echo "  make v1-ga-report"
 	@echo "                    regenerate the unified v1 GA report for the current run"
-	@echo "  make seed-intelligence-gold"
-	@echo "                    seed scoped prod-like Gold rows for intelligence demos"
-	@echo "  make seed-replicon-beta-gold"
-	@echo "                    seed scoped Replicon Gold rows for private beta apps"
-	@echo "  make seed-replicon-beta-gold-aws"
-	@echo "                    seed scoped Replicon Gold rows on AWS via SSM, idempotency checked"
-	@echo "  make tenant-ab-local / tenant-ab-aws"
 	@echo "  make decision-backtest-local / decision-backtest-aws"
-	@echo "                    verify tenant A/B positive and forbidden cross-scope probes"
 	@echo "  make dr-rehearsal"
 	@echo "                    rehearse backup/restore scripts in a guarded mode"
 	@echo "  make backup-aws / dr-rehearsal-aws / rollback-aws"
@@ -107,13 +99,7 @@ help:
 	@echo "  make monte-carlo-aws-probe"
 	@echo "  make bayesian-calibration-aws-probe"
 	@echo "  make bayesian-loop-probe / bayesian-loop-probe-aws"
-	@echo "  make control-room-gold-engine-aws-probe"
-	@echo "  make control-room-mock-volume-aws-probe"
-	@echo "                    seed 1M mock Gold rows on AWS and validate Control Room"
-	@echo "  make control-room-mock-volume-aws-cleanup OMEGA_MOCK_VOLUME_SUFFIX=<suffix>"
-	@echo "                    remove one high-volume mock probe from AWS"
 	@echo "  make cartridge-kb-scope-aws-probe"
-	@echo "  make action-framework-aws-probe"
 	@echo "                    low-cost AWS observability, TLS, Superset, Monte Carlo, and Bayesian probes"
 	@echo "  make e2e          run Playwright browser-driven E2E tests (v1.44.3.2)"
 	@echo "  make acceptance   run heavy full-stack acceptance with fake live HubSpot"
@@ -180,29 +166,6 @@ logs:
 
 ps:
 	$(COMPOSE_FULL) ps
-
-seed-intelligence-gold:
-	@set -a; \
-	if [ -f infra/.env ]; then . infra/.env; fi; \
-	set +a; \
-	PG_PORT="$$(docker compose --env-file infra/.env -f infra/docker-compose.yml --profile sap port postgres 5432 | awk -F: 'END {print $$NF}')"; \
-	GOLD_PG_PORT="$$(docker compose --env-file infra/.env -f infra/docker-compose.yml --profile sap port postgres_gold 5433 | awk -F: 'END {print $$NF}')"; \
-	DATABASE_URL="postgresql://omega_console:$${OMEGA_CONSOLE_PASSWORD}@127.0.0.1:$${PG_PORT}/modecissions" \
-	GOLD_DATABASE_URL="postgresql://omega_refinement_gold:$${OMEGA_REFINEMENT_GOLD_PASSWORD}@127.0.0.1:$${GOLD_PG_PORT}/modecissions_gold" \
-	PYTHONPATH=console $(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi) scripts/seed_intelligence_gold_prod_like.py
-
-seed-replicon-beta-gold:
-	@set -a; \
-	if [ -f infra/.env ]; then . infra/.env; fi; \
-	set +a; \
-	PG_PORT="$$(docker compose --env-file infra/.env -f infra/docker-compose.yml --profile sap port postgres 5432 2>/dev/null | awk -F: 'END {print $$NF}')"; \
-	GOLD_PG_PORT="$$(docker compose --env-file infra/.env -f infra/docker-compose.yml --profile sap port postgres_gold 5433 2>/dev/null | awk -F: 'END {print $$NF}')"; \
-	POSTGRES_PORT="$${PG_PORT:-$${POSTGRES_PORT:-15432}}" \
-	POSTGRES_GOLD_PORT="$${GOLD_PG_PORT:-$${POSTGRES_GOLD_PORT:-15433}}" \
-	$(PYTHON) scripts/seed_replicon_beta_gold.py
-
-seed-replicon-beta-gold-aws:
-	@$(PYTHON) scripts/seed_replicon_beta_gold_aws.py
 
 run-intelligence-scheduled-local:
 	@$(PYTHON) scripts/run_intelligence_scheduled.py --target local
@@ -310,12 +273,6 @@ sap-successfactors-aws-live-max:
 multiuser-simulation:
 	@bash scripts/run_multiuser_isolation_simulation.sh
 
-tenant-ab-local:
-	@$(PYTHON) scripts/tenant_ab_e2e.py --target local
-
-tenant-ab-aws:
-	@$(PYTHON) scripts/tenant_ab_e2e.py --target aws
-
 live-cartridge-tests:
 	@bash scripts/run_live_cartridge_checks.sh
 
@@ -394,21 +351,8 @@ bayesian-loop-probe:
 bayesian-loop-probe-aws:
 	@$(PYTHON) scripts/aws_bayesian_loop_probe.py
 
-control-room-gold-engine-aws-probe:
-	@$(PYTHON) scripts/aws_control_room_gold_engine_probe.py
-
-control-room-mock-volume-aws-probe:
-	@$(PYTHON) scripts/aws_control_room_mock_volume_probe.py
-
-control-room-mock-volume-aws-cleanup:
-	@test -n "$(OMEGA_MOCK_VOLUME_SUFFIX)" || { echo "OMEGA_MOCK_VOLUME_SUFFIX is required"; exit 2; }
-	@$(PYTHON) scripts/aws_control_room_mock_volume_probe.py --cleanup-suffix "$(OMEGA_MOCK_VOLUME_SUFFIX)"
-
 cartridge-kb-scope-aws-probe:
 	@$(PYTHON) scripts/cartridge_kb_scope_aws_probe.py
-
-action-framework-aws-probe:
-	@$(PYTHON) scripts/aws_action_framework_probe.py
 
 decision-orchestrator-aws-probe:
 	@$(PYTHON) scripts/aws_decision_orchestrator_probe.py

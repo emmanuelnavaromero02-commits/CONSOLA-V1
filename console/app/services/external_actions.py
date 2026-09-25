@@ -54,7 +54,7 @@ def _truthy(value: Any, *, default: bool = False) -> bool:
 
 
 def sandbox_enabled() -> bool:
-    return _truthy(os.environ.get(SANDBOX_FLAG), default=True)
+    return _truthy(os.environ.get(SANDBOX_FLAG), default=False)
 
 
 def external_writeback_enabled() -> bool:
