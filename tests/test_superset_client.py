@@ -21,11 +21,15 @@ SCOPED_GOLD_DATABASE_NAME = (
 
 
 def test_studio_superset_copy_describes_internal_access():
-    src = (REPO / "console/app/static/js/studio/legacy.js").read_text(encoding="utf-8")
+    client = (REPO / "console-next/src/lib/studio/client.ts").read_text(encoding="utf-8")
+    panel = (REPO / "console-next/src/components/studio/LayersPanel.tsx").read_text(encoding="utf-8")
+    src = client + panel
 
-    assert "Superset interno por seguridad" in src
-    assert "Superset está disponible solo internamente por seguridad" in src
-    assert "Solicita acceso interno/VPN para abrir dashboards" in src
+    assert "Superset está disponible solo internamente por seguridad" in client
+    assert "Solicita acceso interno/VPN para abrir dashboards" in client
+    assert "error.status === 503) return SUPERSET_INTERNAL_ONLY_COPY" in client
+    assert "SUPERSET_INTERNAL_ONLY_COPY" in panel
+    assert "superset_url" in panel
     assert "Superset no expuesto" not in src
 
 

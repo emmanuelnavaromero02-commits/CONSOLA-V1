@@ -4,6 +4,9 @@ import type {
   DatasetDetail,
   DatasetLineageRow,
   DatasetSummary,
+  EntityRun,
+  EntityRunLogs,
+  ExtractResult,
   FreshnessEntity,
   JobLogLine,
   JobRun,
@@ -38,6 +41,37 @@ export async function getPipeline(cartridge: string): Promise<PipelineEntity[]> 
     `/api/pipeline?cartridge=${encodeURIComponent(cartridge)}`,
   );
   return data.pipeline ?? [];
+}
+
+function pipelineEntityPath(cartridge: string, entity: string): string {
+  return `/api/pipeline/${encodeURIComponent(cartridge)}/${encodeURIComponent(entity)}`;
+}
+
+export async function extractEntity(
+  cartridge: string,
+  entity: string,
+  body: { mode?: string; conn_id?: string } = {},
+): Promise<ExtractResult> {
+  const { data } = await api.post<ExtractResult>(`${pipelineEntityPath(cartridge, entity)}/extract`, body);
+  return data ?? {};
+}
+
+export async function listEntityRuns(cartridge: string, entity: string, limit = 10): Promise<EntityRun[]> {
+  const { data } = await api.get<{ runs?: EntityRun[] }>(
+    `${pipelineEntityPath(cartridge, entity)}/runs?limit=${limit}`,
+  );
+  return data.runs ?? [];
+}
+
+export async function getEntityRunLogs(
+  cartridge: string,
+  entity: string,
+  dagRunId: string,
+): Promise<EntityRunLogs> {
+  const { data } = await api.get<EntityRunLogs>(
+    `${pipelineEntityPath(cartridge, entity)}/runs/${encodeURIComponent(dagRunId)}/logs`,
+  );
+  return data;
 }
 
 export async function getFreshness(cartridge: string): Promise<FreshnessEntity[]> {

@@ -31,7 +31,6 @@ def test_hubspot_is_visible_in_next_cartridge_surfaces():
     surfaces = [
         NEXT_SRC / "lib/cartridges.ts",
         NEXT_SRC / "app/(shell)/cartridges/page.tsx",
-        NEXT_SRC / "app/(shell)/studio/page.tsx",
         NEXT_SRC / "components/data/DataTechnicalHub.tsx",
         NEXT_SRC / "app/(shell)/data/lineage/page.tsx",
         NEXT_SRC / "app/(shell)/copilot/knowledge/page.tsx",
@@ -39,6 +38,15 @@ def test_hubspot_is_visible_in_next_cartridge_surfaces():
     ]
     for path in surfaces:
         assert '"hubspot"' in _read(path), f"{path.relative_to(REPO)} omits hubspot"
+
+
+def test_studio_lists_cartridges_from_the_backend_instead_of_a_hardcoded_list():
+    page = _read(NEXT_SRC / "app/(shell)/studio/page.tsx")
+    client = _read(NEXT_SRC / "lib/studio/client.ts")
+    assert "useStudioCartridges" in page
+    assert '"/studio/cartridges"' in client
+    for cartridge in ('"hubspot"', '"replicon"', '"sap_hcm"', '"sap_s4hana"', '"sap_successfactors"'):
+        assert cartridge not in page
 
 
 def test_monitor_surface_is_cartridge_agnostic():

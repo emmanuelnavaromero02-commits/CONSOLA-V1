@@ -127,6 +127,13 @@ export interface DatasetDetail extends DatasetSummary {
   source_load_date?: string | null;
   source_batch_id?: string | null;
   columns?: Array<Record<string, unknown>> | null;
+  status?: string | null;
+  error?: string | null;
+  metadata?: {
+    description?: string | null;
+    sources?: string[] | null;
+    [key: string]: unknown;
+  } | null;
 }
 
 export interface DatasetLineageRow {
@@ -203,4 +210,46 @@ export interface VaultSecret {
   updated_at?: string | null;
   created_at?: string | null;
   [key: string]: unknown;
+}
+
+export interface ExtractResult {
+  triggered?: boolean;
+  dag_id?: string | null;
+  dag_run_id?: string | null;
+  run_id?: string | null;
+  job_id?: string | null;
+  state?: string | null;
+  status?: string | null;
+  message?: string | null;
+  error?: string | null;
+  [key: string]: unknown;
+}
+
+export interface EntityRun {
+  run_id?: string | null;
+  dag_id?: string | null;
+  dag_run_id?: string | null;
+  status?: string | null;
+  mode?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  duration_sec?: number | null;
+  error?: string | null;
+  record_count?: number | null;
+}
+
+export interface EntityRunLogTask {
+  task_id?: string | null;
+  available?: boolean;
+  logs?: string | null;
+  error?: string | null;
+}
+
+export interface EntityRunLogs {
+  dag_id?: string | null;
+  dag_run_id?: string | null;
+  status?: string | null;
+  available?: boolean;
+  error?: string | null;
+  logs?: EntityRunLogTask[];
 }

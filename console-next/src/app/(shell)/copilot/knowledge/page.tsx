@@ -10,11 +10,13 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
+  Trash2,
   UploadCloud,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 
+import { ConfirmDialog } from "@/components/studio/ui";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -110,6 +112,7 @@ export default function KnowledgePage() {
   const [reindexForm, setReindexForm] = useState<ReindexForm>(EMPTY_REINDEX);
   const [queryForm, setQueryForm] = useState<QueryForm>(EMPTY_QUERY);
   const [queryOutput, setQueryOutput] = useState<QueryOutput | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<RagSource | null>(null);
 
   const sources = useQuery({
     queryKey: ["rag", "sources", kindFilter],
@@ -171,6 +174,21 @@ export default function KnowledgePage() {
       queryClient.invalidateQueries({ queryKey: ["rag", "sources"] });
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "No se pudo reindexar."),
+  });
+
+  const removeSource = useMutation({
+    mutationFn: async (source: RagSource) => {
+      const id = deletableSourceId(source);
+      if (id === null) throw new Error("La fuente no tiene un identificador numérico.");
+      const { data } = await api.delete<Record<string, unknown>>(`/api/rag/sources/${id}`);
+      return data;
+    },
+    onSuccess: (_data, source) => {
+      toast.success(`Fuente ${source.name || source.id} borrada.`);
+      queryClient.invalidateQueries({ queryKey: ["rag", "sources"] });
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "No se pudo borrar la fuente."),
+    onSettled: () => setPendingDelete(null),
   });
 
   const quickQuery = useMutation({
@@ -273,7 +291,7 @@ export default function KnowledgePage() {
             ) : sources.isLoading ? (
               <SkeletonRows rows={5} />
             ) : (
-              <SourcesTable sources={sources.data ?? []} />
+              <SourcesTable sources={sources.data ?? []} onDelete={setPendingDelete} />
             )}
           </section>
 
@@ -431,8 +449,28 @@ export default function KnowledgePage() {
           </section>
         </div>
       </section>
+
+      <ConfirmDialog
+        open={Boolean(pendingDelete)}
+        title="Borrar fuente"
+        tone="danger"
+        confirmLabel="Borrar fuente"
+        pendingLabel="Borrando…"
+        pending={removeSource.isPending}
+        onConfirm={() => {
+          if (pendingDelete) removeSource.mutate(pendingDelete);
+        }}
+        onCancel={() => setPendingDelete(null)}
+        testId="delete-rag-source-dialog"
+        description={`Se borrará «${pendingDelete?.name || pendingDelete?.id || ""}» y sus chunks del índice vectorial. Esta acción no se puede deshacer.`}
+      />
     </main>
   );
+}
+
+function deletableSourceId(source: RagSource): number | null {
+  const id = typeof source.id === "number" ? source.id : Number.parseInt(String(source.id ?? ""), 10);
+  return Number.isInteger(id) && id > 0 && String(id) === String(source.id).trim() ? id : null;
 }
 
 function normalizeSources(payload: RagSourcesPayload | RagSource[]): RagSource[] {
@@ -494,7 +532,7 @@ function MetricCard({
   );
 }
 
-function SourcesTable({ sources }: { sources: RagSource[] }) {
+function SourcesTable({ sources, onDelete }: { sources: RagSource[]; onDelete: (source: RagSource) => void }) {
   if (!sources.length) {
     return (
       <p className="m-4 rounded-md border bg-muted/30 p-4 text-sm text-muted-foreground">
@@ -513,6 +551,7 @@ function SourcesTable({ sources }: { sources: RagSource[] }) {
             <th className="px-4 py-2 font-medium">Chunks</th>
             <th className="px-4 py-2 font-medium">Tamaño</th>
             <th className="px-4 py-2 font-medium">Creada</th>
+            <th className="px-4 py-2 text-right font-medium">Acciones</th>
           </tr>
         </thead>
         <tbody>
@@ -530,6 +569,18 @@ function SourcesTable({ sources }: { sources: RagSource[] }) {
               <td className="px-4 py-3 align-top text-muted-foreground">{formatNumber(Number(source.chunk_count ?? 0))}</td>
               <td className="px-4 py-3 align-top text-muted-foreground">{formatNumber(Number(source.size_chars ?? 0))}</td>
               <td className="px-4 py-3 align-top text-xs text-muted-foreground">{formatDate(source.created_at)}</td>
+              <td className="px-4 py-3 text-right align-top">
+                <button
+                  type="button"
+                  onClick={() => onDelete(source)}
+                  disabled={deletableSourceId(source) === null}
+                  aria-label={`Borrar fuente ${source.name || source.id || ""}`}
+                  className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-md border border-destructive/40 px-3 text-xs font-medium text-destructive hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/40 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <Trash2 aria-hidden className="h-4 w-4" />
+                  Borrar fuente
+                </button>
+              </td>
             </tr>
           ))}
         </tbody>

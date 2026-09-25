@@ -1,567 +1,297 @@
 import { test, expect } from "../fixtures/auth";
-import type { Page } from "@playwright/test";
-import { readFileSync } from "node:fs";
-import path from "node:path";
+import type { Page, Request, Route } from "@playwright/test";
 
-const LEGACY = process.env.LEGACY_URL || "http://localhost:8000";
-const REPO = path.basename(process.cwd()) === "tests-e2e"
-  ? path.resolve(process.cwd(), "..")
-  : process.cwd();
-const STUDIO_STATIC = path.join(REPO, "console/app/static");
-const STEP_READY: Record<number, RegExp> = {
-  2: /DAGS|Airflow|Plantillas/i,
-  3: /Entidades|Extractores|ENTIDAD/i,
-  4: /Refinamiento|BRONZE|SILVER/i,
-  5: /Analytics|Superset/i,
-  6: /IA Semántica|semántic|catálogo/i,
-  7: /RAG|Knowledge Base|BÚSQUEDA SEMÁNTICA/i,
+const CARTRIDGES = [
+  { id: "acme", name: "Acme ERP" },
+  { id: "beta", name: "Beta CRM" },
+];
+
+const MANIFEST = {
+  id: "acme",
+  name: "Acme ERP",
+  dags: [{ dag_id: "acme_packaged" }],
+  entities: [{ entity: "Invoice", name: "Invoice", dag_id: "acme_packaged", mode: "incremental" }],
 };
 
-async function openStudio(page: Page) {
-  await page.goto(`${LEGACY}/studio`, {
-    waitUntil: "domcontentloaded",
-    timeout: 30_000,
-  });
+type Handler = (route: Route, request: Request) => Promise<void> | void;
+
+function json(route: Route, body: unknown, status = 200) {
+  return route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
 }
 
-async function waitStudioReady(page: Page) {
-  await page.waitForFunction(
-    () => {
-      const win = window as typeof window & { goStep?: unknown };
-      const picker = document.querySelector("#cartridge-sel") as HTMLSelectElement | null;
-      const content = document.querySelector("#step-content");
-      return (
-        typeof win.goStep === "function" &&
-        document.body.dataset.studioStep === "1" &&
-        Boolean(picker && picker.options.length > 1 && picker.value) &&
-        Boolean(content)
-      );
+async function installStudioHarness(page: Page, overrides: Record<string, Handler> = {}) {
+  const defaults: Record<string, Handler> = {
+    "/studio/cartridges": (route) => json(route, { cartridges: CARTRIDGES }),
+    "/studio/cartridges/acme": (route) => json(route, MANIFEST),
+    "/studio/cartridges/beta": (route) => json(route, { id: "beta", name: "Beta CRM", dags: [], entities: [] }),
+    "/studio/cartridges/acme/status": (route) =>
+      json(route, { cartridge_id: "acme", status: "registered", detail: "sin servicio propio que sondear" }),
+    "/studio/cartridges/beta/status": (route) => json(route, { cartridge_id: "beta", status: "offline" }),
+    "/api/studio/dag-graph": (route, request) => {
+      const cartridge = new URL(request.url()).searchParams.get("cartridge");
+      return json(route, {
+        format: "svg",
+        svg: '<svg><script>window.__studioInjected = true</script><image href="x" onerror="window.__studioInjected = true"/></svg>',
+        nodes: [
+          { id: `cartridge:${cartridge}`, kind: "cartridge", label: cartridge },
+          { id: "entity:Invoice", kind: "entity", label: "Invoice" },
+          { id: "dag:acme_packaged", kind: "dag", label: "acme_packaged" },
+          { id: "dataset:silver:orders", kind: "dataset", label: "silver:orders" },
+        ],
+        edges: [
+          { source: `cartridge:${cartridge}`, target: "entity:Invoice" },
+          { source: "entity:Invoice", target: "dag:acme_packaged" },
+          { source: "entity:Invoice", target: "dataset:silver:orders" },
+          { source: "entity:Ghost", target: "dataset:silver:orders" },
+        ],
+      });
     },
-    null,
-    { timeout: 15_000 },
-  );
-}
-
-async function goStudioStep(page: Page, step: number) {
-  await waitStudioReady(page);
-  await page.evaluate((targetStep) => {
-    const win = window as typeof window & {
-      goStep: (step: number) => Promise<void> | void;
-    };
-    return win.goStep(targetStep);
-  }, step);
-  await page.waitForFunction(
-    (targetStep) => {
-      const content = document.querySelector("#step-content");
-      return (
-        document.body.dataset.studioStep === String(targetStep) &&
-        Boolean(content && content.textContent?.trim())
-      );
-    },
-    step,
-    { timeout: 15_000 },
-  );
-  await expect(page.locator("#step-content")).toBeVisible({ timeout: 15_000 });
-  if (step === 2) {
-    await expect(page.locator("#dag-editor-body")).toBeVisible({ timeout: 15_000 });
-  }
-  if (step > 1) {
-    await expect(page.locator("#step-content")).toContainText(STEP_READY[step], {
-      timeout: 15_000,
-    });
-  }
-}
-
-async function openAssistantPanel(page: Page) {
-  const panel = page.locator("#ai-panel");
-  if (!(await panel.isVisible({ timeout: 500 }).catch(() => false))) {
-    const toggle = page.getByRole("button", { name: /abrir asistente de studio/i }).first();
-    await expect(toggle).toBeVisible({ timeout: 10_000 });
-    await toggle.click();
-  }
-  await expect(panel).toBeVisible({ timeout: 10_000 });
-  return panel;
-}
-
-async function installHermeticStudioDagTimeoutHarness(page: Page) {
-  const cartridge = {
-    id: "acme",
-    name: "Acme ERP",
-    status: "operational",
-    entities: [
-      {
-        entity: "Invoice",
-        display_name: "Invoice",
-        mode: "full",
-        dag_id: "acme_invoice",
-      },
-    ],
-    dags: [{ dag_id: "acme_invoice" }],
+    "/api/studio/dags": (route) =>
+      json(route, {
+        cartridge: "acme",
+        total: 2,
+        dags: [
+          { dag_id: "acme_custom", is_paused: false, is_active: true, tags: [] },
+          { dag_id: "acme_packaged", is_paused: false, is_active: false, registered_only: true, tags: [] },
+        ],
+      }),
+    "/api/studio/dags/acme_custom/source": (route) =>
+      json(route, { dag_id: "acme_custom", found: true, source_code: "dag_id = 'acme_custom'\n" }),
+    "/api/studio/dags/acme_packaged/source": (route) =>
+      json(route, { dag_id: "acme_packaged", found: false, source_code: "", error: "not found" }),
+    "/api/studio/templates": (route) => json(route, { templates: [{ id: "full_extract", name: "Extracción completa" }] }),
+    "/api/system/info": (route) =>
+      json(route, { dev_mode: true, rce_tools_enabled: true, dag_deploy_enabled: true, app_env: "development" }),
+    "/api/config": (route) => json(route, { airflow_url: "http://airflow.e2e.test:8082", superset_url: "" }),
+    "/api/studio/dag-deploy": (route) => json(route, { status: "deployed", dag_id: "acme_custom", result: {} }),
+    "/api/studio/entities": (route) =>
+      json(route, {
+        cartridge: "acme",
+        total: 1,
+        entities: [{ name: "Invoice", display_name: "Facturas", mode: "incremental", dag_id: "acme_packaged", source: "entity_config" }],
+      }),
+    "/datasets": (route) => json(route, { datasets: [{ name: "orders", layer: "silver", cartridge: "acme" }] }),
+    "/api/studio/silver/preview": (route) =>
+      json(route, {
+        layer: "silver",
+        columns: [],
+        rows: [],
+        total: 0,
+        available: false,
+        reason: "No silver datasets registered for cartridge acme",
+      }),
   };
-
-  await page.route("**/*", async (route) => {
-    const url = new URL(route.request().url());
-    if (url.pathname === "/studio") {
-      await route.fulfill({
-        contentType: "text/html",
-        body: readFileSync(path.join(STUDIO_STATIC, "studio.html")),
-      });
-      return;
-    }
-    if (url.pathname.startsWith("/static/")) {
-      const file = path.resolve(STUDIO_STATIC, url.pathname.slice("/static/".length));
-      if (!file.startsWith(`${STUDIO_STATIC}${path.sep}`)) {
-        await route.abort("blockedbyclient");
-        return;
-      }
-      const contentType = file.endsWith(".js")
-        ? "application/javascript"
-        : file.endsWith(".css")
-          ? "text/css"
-          : "application/octet-stream";
-      await route.fulfill({ contentType, body: readFileSync(file) });
-      return;
-    }
-    if (url.pathname === "/studio/cartridges") {
-      await route.fulfill({ json: { cartridges: [cartridge] } });
-      return;
-    }
-    if (url.pathname === "/studio/cartridges/acme/status") {
-      await route.fulfill({ json: { status: "operational" } });
-      return;
-    }
-    if (url.pathname === "/studio/cartridges/acme") {
-      await route.fulfill({ json: cartridge });
-      return;
-    }
-    if (url.pathname === "/api/studio/entities") {
-      await route.fulfill({ json: { entities: cartridge.entities } });
-      return;
-    }
-    if (url.pathname === "/api/pipeline_runs") {
-      await route.fulfill({ json: { runs: [] } });
-      return;
-    }
-    if (url.pathname === "/api/config") {
-      await route.fulfill({ json: {} });
-      return;
-    }
-    await route.fulfill({ json: {} });
-  });
+  const handlers = { ...defaults, ...overrides };
+  await page.route(
+    (url) => Object.prototype.hasOwnProperty.call(handlers, url.pathname),
+    async (route, request) => {
+      const handler = handlers[new URL(request.url()).pathname];
+      await handler(route, request);
+    },
+  );
 }
 
-test.describe("Studio — 7 tabs render", () => {
-  const TABS = [
-    /Resumen/i, /DAGs/i, /Entidades/i, /Refinar/i,
-    /Analytics/i, /IA( Semántica)?/i, /RAG/i,
-  ];
-  for (const tab of TABS) {
-    test(`tab '${tab.source}' is visible after hydration`, async ({
-      authedPage: page,
-    }) => {
-      await openStudio(page);
-      await expect(page.getByText(tab).first()).toBeVisible({
-        timeout: 15_000,
-      });
-    });
+async function openStudio(page: Page) {
+  await page.goto("/studio", { waitUntil: "domcontentloaded", timeout: 30_000 });
+  await expect(page.getByTestId("cartridge-picker")).toHaveValue("acme", { timeout: 15_000 });
+}
 
-    test(`tab '${tab.source}' renders SOMETHING when clicked`,
-      async ({ authedPage: page }) => {
-        await openStudio(page);
-        const trigger = page.getByText(tab).first();
-        if (!(await trigger.isVisible({ timeout: 10_000 }).catch(() => false))) {
-          test.skip(true, `tab ${tab.source} not present`);
-        }
-        await trigger.click();
-        const content = page.locator(
-          "#step-content, main, .tab-content, [role='tabpanel'], table, .empty-state, .alert",
-        ).first();
-        await expect(content).toBeVisible({ timeout: 10_000 });
+async function openTab(page: Page, name: RegExp) {
+  await page.getByRole("tab", { name }).click();
+}
+
+test.describe("Studio deep — hermetic API contract", () => {
+  test("probe status is shown honestly: registered is not operational", async ({ authedPage: page }) => {
+    await installStudioHarness(page);
+    await openStudio(page);
+    const status = page.getByTestId("cartridge-status");
+    await expect(status).toHaveAttribute("data-status", "registered");
+    await expect(status).toContainText("sin servicio propio que sondear");
+    await expect(status).not.toContainText("Operativo");
+  });
+
+  test("graph is drawn from nodes/edges and never injects the server svg", async ({ authedPage: page }) => {
+    await installStudioHarness(page);
+    await openStudio(page);
+    const graph = page.getByTestId("dag-graph");
+    await expect(graph.locator("[data-node-id]")).toHaveCount(4);
+    await expect(graph.locator("path[marker-end]")).toHaveCount(3);
+    await expect(page.locator("script:not([src])").filter({ hasText: "__studioInjected" })).toHaveCount(0);
+    expect(await page.evaluate(() => (window as Window & { __studioInjected?: boolean }).__studioInjected)).toBeUndefined();
+    await graph.locator('[data-node-id="entity:Invoice"]').click();
+    const detail = page.getByTestId("dag-graph-detail");
+    await expect(detail).toContainText("Entradas (1)");
+    await expect(detail).toContainText("Salidas (2)");
+  });
+
+  test("switching cartridge refetches the graph for the new cartridge", async ({ authedPage: page }) => {
+    await installStudioHarness(page);
+    await openStudio(page);
+    const request = page.waitForRequest(
+      (req) => {
+        const url = new URL(req.url());
+        return url.pathname === "/api/studio/dag-graph" && url.searchParams.get("cartridge") === "beta";
+      },
+      { timeout: 10_000 },
+    );
+    await page.getByTestId("cartridge-picker").selectOption("beta");
+    await request;
+    await expect(page.getByTestId("cartridge-status")).toHaveAttribute("data-status", "offline");
+    await expect(page.locator('[data-node-id="cartridge:beta"]')).toBeVisible();
+  });
+
+  test("deploy: confirm modal → POST with the editor code → success toast", async ({ authedPage: page }) => {
+    await installStudioHarness(page);
+    await openStudio(page);
+    await openTab(page, /^DAGs$/);
+    await page.locator('[data-dag-id="acme_custom"]').click();
+    await expect(page.getByTestId("dag-airflow-link")).toHaveAttribute(
+      "href",
+      "http://airflow.e2e.test:8082/dags/acme_custom/grid",
+    );
+    let posted: Record<string, unknown> | null = null;
+    page.on("request", (req) => {
+      if (new URL(req.url()).pathname === "/api/studio/dag-deploy") posted = JSON.parse(req.postData() || "{}");
+    });
+    await page.getByRole("button", { name: /Deploy a Airflow/ }).click();
+    const dialog = page.getByTestId("deploy-dialog");
+    await expect(dialog).toBeVisible();
+    expect(posted).toBeNull();
+    const response = page.waitForResponse((res) => new URL(res.url()).pathname === "/api/studio/dag-deploy");
+    await dialog.getByRole("button", { name: "Desplegar" }).click();
+    await response;
+    expect(posted).toMatchObject({
+      cartridge: "acme",
+      entity: "Invoice",
+      dag_id: "acme_custom",
+      code: "dag_id = 'acme_custom'\n",
+    });
+    await expect(page.getByText("DAG acme_custom desplegado en Airflow.")).toBeVisible();
+    await expect(dialog).toHaveCount(0);
+  });
+
+  test("the ALLOW_RCE_TOOLS 403 from deploy is reported, not hidden", async ({ authedPage: page }) => {
+    await installStudioHarness(page, {
+      "/api/studio/dag-deploy": (route) =>
+        json(route, { detail: "Deploy a Airflow requiere ALLOW_RCE_TOOLS=true en el entorno local." }, 403),
+    });
+    await openStudio(page);
+    await openTab(page, /^DAGs$/);
+    await page.locator('[data-dag-id="acme_custom"]').click();
+    await page.getByRole("button", { name: /Deploy a Airflow/ }).click();
+    await page.getByTestId("deploy-dialog").getByRole("button", { name: "Desplegar" }).click();
+    await expect(page.getByText("Deploy a Airflow requiere ALLOW_RCE_TOOLS=true en el entorno local.")).toBeVisible();
+  });
+
+  test("packaged DAGs and production disable deploy with a visible reason", async ({ authedPage: page }) => {
+    await installStudioHarness(page, {
+      "/api/system/info": (route) => json(route, { dev_mode: false, rce_tools_enabled: false, dag_deploy_enabled: false }),
+    });
+    await openStudio(page);
+    await openTab(page, /^DAGs$/);
+    const packaged = page.locator('[data-dag-id="acme_packaged"]');
+    await expect(packaged).toContainText("Inactivo");
+    await expect(packaged).toContainText("Solo manifiesto");
+    await page.locator('[data-dag-id="acme_custom"]').click();
+    const deploy = page.getByRole("button", { name: /Deploy a Airflow/ });
+    await expect(deploy).toBeDisabled();
+    await expect(page.getByTestId("deploy-disabled-reason")).toContainText("desarrollo");
+    await expect(page.getByRole("button", { name: /Eliminar/ })).toBeDisabled();
+  });
+
+  test("an Airflow timeout on the DAG list is shown and does not block entities", async ({ authedPage: page }) => {
+    await installStudioHarness(page, {
+      "/api/studio/dags": (route) => json(route, { detail: "Airflow DAG list timed out" }, 504),
+    });
+    await openStudio(page);
+    await openTab(page, /^DAGs$/);
+    await expect(page.getByTestId("dags-error")).toContainText("HTTP 504", { timeout: 15_000 });
+    await openTab(page, /^Entidades$/);
+    await expect(page.getByTestId("entities-table")).toContainText("Invoice");
+  });
+
+  test("delete asks for confirmation and cancelling sends nothing", async ({ authedPage: page }) => {
+    await installStudioHarness(page);
+    const deletes: string[] = [];
+    page.on("request", (req) => {
+      if (req.method() === "DELETE") deletes.push(req.url());
+    });
+    await openStudio(page);
+    await openTab(page, /^DAGs$/);
+    await page.locator('[data-dag-id="acme_custom"]').click();
+    await page.getByRole("button", { name: /Eliminar/ }).click();
+    const dialog = page.getByTestId("delete-dag-dialog");
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    expect(deletes).toEqual([]);
+  });
+
+  test("rename opens an input and requires confirmation", async ({ authedPage: page }) => {
+    await installStudioHarness(page);
+    await openStudio(page);
+    await openTab(page, /^DAGs$/);
+    await page.locator('[data-dag-id="acme_custom"]').click();
+    await page.getByRole("button", { name: /Renombrar/ }).click();
+    const input = page.getByTestId("rename-input");
+    await expect(input).toHaveValue("acme_custom");
+    await input.fill("acme_custom_v2");
+    await page.getByRole("button", { name: "Continuar" }).click();
+    const dialog = page.getByTestId("deploy-dialog");
+    await expect(dialog).toContainText("acme_custom_v2");
+    await dialog.getByRole("button", { name: "Cancelar" }).click();
+    await expect(dialog).toHaveCount(0);
+  });
+
+  test("silver preview shows the backend's unavailable reason verbatim", async ({ authedPage: page }) => {
+    await installStudioHarness(page);
+    await openStudio(page);
+    await openTab(page, /^Capas$/);
+    await expect(page.getByText("No silver datasets registered for cartridge acme")).toBeVisible({ timeout: 15_000 });
+    await page.getByRole("tab", { name: "Gold", exact: true }).click();
+    await expect(page.getByText(/No hay datasets Gold registrados para acme/)).toBeVisible();
+    await expect(page.getByRole("button", { name: /Publicar en Superset/ })).toHaveCount(0);
+  });
+
+  test("oversized spec uploads are rejected before any request", async ({ authedPage: page }) => {
+    await installStudioHarness(page);
+    const uploads: string[] = [];
+    page.on("request", (req) => {
+      if (new URL(req.url()).pathname === "/api/studio/entities/upload") uploads.push(req.method());
+    });
+    await openStudio(page);
+    await openTab(page, /^Entidades$/);
+    await page.locator('input[type="file"][accept*=".yaml"]').setInputFiles({
+      name: "big.yaml",
+      mimeType: "application/x-yaml",
+      buffer: Buffer.alloc(2 * 1024 * 1024 + 1, "a"),
+    });
+    await expect(page.getByText("La spec supera el máximo de 2 MB.")).toBeVisible();
+    expect(uploads).toEqual([]);
+  });
+});
+
+test.describe("Knowledge base — delete source", () => {
+  test("Borrar fuente asks for confirmation before DELETE /api/rag/sources/{id}", async ({ authedPage: page }) => {
+    await page.route(
+      (url) => url.pathname === "/api/rag/sources",
+      (route) => json(route, { sources: [{ id: 9001, name: "Fuente e2e", kind: "document", chunk_count: 1 }] }),
+    );
+    let deleted: string | null = null;
+    await page.route(
+      (url) => url.pathname === "/api/rag/sources/9001",
+      (route, request) => {
+        deleted = request.method();
+        return json(route, { deleted: true });
       },
     );
-  }
-});
-
-test.describe("Studio — Resumen tab", () => {
-  test("renders cartridge selector dropdown", async ({ authedPage: page }) => {
-    await openStudio(page);
-    await page.waitForTimeout(2_000);
-    const picker = page.locator(
-      'select[name*="cartridge"], select#cartridge, [data-testid="cartridge-picker"]',
-    );
-    if (!(await picker.first().isVisible({ timeout: 5_000 }).catch(() => false))) {
-      test.skip(true, "cartridge selector dropdown not surfaced");
-    }
-  });
-
-  test("switching cartridge refreshes the summary", async ({
-    authedPage: page,
-  }) => {
-    await openStudio(page);
-    await page.waitForTimeout(2_000);
-    const picker = page.locator('select[name*="cartridge"], select#cartridge').first();
-    if (!(await picker.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      test.skip(true, "cartridge picker not present — skip switching test");
-    }
-    const before = await page.locator("main, .tab-content").innerText().catch(() => "");
-    const options = await picker.locator("option").allInnerTexts();
-    if (options.length < 2) {
-      test.skip(true, "only one cartridge in dropdown — can't test switch");
-    }
-    await picker.selectOption({ index: 1 });
-    await page.waitForTimeout(3_000);
-    const after = await page.locator("main, .tab-content").innerText().catch(() => "");
-    expect(after,
-      "switching cartridge in picker should change the summary content",
-    ).not.toBe(before);
-  });
-});
-
-test.describe("Studio — DAGs tab (USER-REPORTED BUGS pin)", () => {
-  test("DAG list shows ≥ 1 DAG or an empty state", async ({
-    authedPage: page,
-  }) => {
-    await openStudio(page);
-    await goStudioStep(page, 2);
-    const surface = page.locator("#step-content #dag-list, #step-content .empty-state").first();
-    await expect(surface).toBeVisible({ timeout: 15_000 });
-  });
-
-  test("'Copiar' button (if present) is clickable", async ({
-    authedPage: page,
-  }) => {
-    await openStudio(page);
-    await goStudioStep(page, 2);
-    const copy = page.locator("#dag-editor-body").getByRole("button", { name: /copiar/i }).first();
-    if (!(await copy.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      test.skip(true, "'Copiar' button not surfaced — tracked in E2E findings");
-    }
-    await expect(copy).toBeEnabled();
-  });
-
-  test("'Asistente' button opens a chat region", async ({
-    authedPage: page,
-  }) => {
-    await openStudio(page);
-    await goStudioStep(page, 2);
-    const assistant = page.locator("#dag-editor-body").getByRole("button", { name: /asistente/i }).first();
-    await expect(assistant).toBeVisible({ timeout: 10_000 });
-    await assistant.click();
-    await expect(page.locator("#ai-panel")).toBeVisible({ timeout: 10_000 });
-    const input = page.locator("#ai-input");
-    await expect(input).toBeVisible({ timeout: 10_000 });
-    await expect(input).toHaveValue(/DAG|dag/);
-  });
-
-  test("'Renombrar' button opens an input field", async ({
-    authedPage: page,
-  }) => {
-    await openStudio(page);
-    await goStudioStep(page, 2);
-    const renombrar = page.locator("#dag-editor-body").getByRole("button", { name: /renombrar/i }).first();
-    if (!(await renombrar.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      test.skip(true, "'Renombrar' button not present");
-    }
-    await renombrar.click();
-    const input = page.locator(
-      'input[name*="rename"], [data-testid="rename-input"], input[type="text"]:visible',
-    ).first();
-    await expect(input).toBeVisible({ timeout: 5_000 });
-  });
-
-  test("'Eliminar' button opens a confirmation", async ({
-    authedPage: page,
-  }) => {
-    await openStudio(page);
-    await goStudioStep(page, 2);
-    const eliminar = page.getByRole("button", { name: /eliminar|borrar/i }).first();
-    if (!(await eliminar.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      test.skip(true, "'Eliminar' button not present");
-    }
-    await eliminar.click();
-    const dialog = page.locator(
-      "[role='dialog'], .modal, .confirm",
-    ).first();
-    await expect(dialog).toBeVisible({ timeout: 5_000 });
-  });
-
-  test("DAG editor area (code mirror / textarea) exists", async ({
-    authedPage: page,
-  }) => {
-    await openStudio(page);
-    await goStudioStep(page, 2);
-    const editor = page.locator(
-      "textarea.code-editor, .CodeMirror, .monaco-editor, textarea[name='code']",
-    ).first();
-    if (!(await editor.isVisible({ timeout: 10_000 }).catch(() => false))) {
-      test.skip(true, "no code editor on /studio DAGs tab — tracked in E2E findings");
-    }
-  });
-
-  test("Plantillas sidebar lists templates", async ({ authedPage: page }) => {
-    await openStudio(page);
-    await goStudioStep(page, 2);
-    const sidebar = page.locator(
-      ".templates-list, .plantillas, [data-testid='templates']",
-    ).first();
-    if (!(await sidebar.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      test.skip(true, "Templates sidebar not surfaced — tracked in E2E findings");
-    }
-  });
-});
-
-test.describe("Studio — Entidades tab", () => {
-  test("a stalled optional DAG inventory does not block entities", async ({
-    authedPage: page,
-  }) => {
-    await installHermeticStudioDagTimeoutHarness(page);
-    await page.addInitScript(() => {
-      const nativeFetch = window.fetch.bind(window);
-      window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
-        const request = input instanceof Request ? input : null;
-        const url = request?.url || String(input);
-        if (!url.includes("/api/studio/dags")) {
-          return nativeFetch(input, init);
-        }
-        const signal = init?.signal || request?.signal;
-        return new Promise<Response>((_resolve, reject) => {
-          const abort = () => {
-            (window as typeof window & { __studioDagFetchAborted?: boolean })
-              .__studioDagFetchAborted = true;
-            reject(new DOMException("Aborted", "AbortError"));
-          };
-          if (!signal) return;
-          if (signal.aborted) abort();
-          else signal.addEventListener("abort", abort, { once: true });
-        });
-      };
-    });
-
-    await openStudio(page);
-    await waitStudioReady(page);
-    const startedAt = Date.now();
-    await page.evaluate(() => {
-      const win = window as typeof window & {
-        goStep: (step: number) => Promise<void> | void;
-      };
-      return win.goStep(3);
-    });
-    expect(Date.now() - startedAt).toBeLessThan(6_000);
-
-    const area = page.locator("#entity-list-area");
-    await expect(area).toContainText(/Airflow no disponible/i);
-    const addBtn = page.getByRole("button", { name: /\+ entidad/i }).first();
-    await expect(addBtn).toBeVisible();
-    await addBtn.click();
-    await expect(page.locator("#new-entity-row")).toBeVisible();
-    await expect(page.locator("#ne-dag")).toContainText(/Airflow no disponible/i, {
-      timeout: 6_000,
-    });
-    await page.evaluate(async () => {
-      const list = document.createElement("div");
-      list.id = "dag-list";
-      document.body.appendChild(list);
-      const win = window as typeof window & { loadDags: () => Promise<void> };
-      await win.loadDags();
-    });
-    await expect(page.locator("#dag-list")).toContainText(/Airflow no disponible/i);
-    expect(
-      await page.evaluate(() =>
-        Boolean(
-          (window as typeof window & { __studioDagFetchAborted?: boolean })
-            .__studioDagFetchAborted,
-        ),
-      ),
-    ).toBe(true);
-  });
-
-  test("'+ Entidad' button opens new-entity form", async ({
-    authedPage: page,
-  }) => {
-    await openStudio(page);
-    await goStudioStep(page, 3);
-    const addBtn = page.getByRole("button", { name: /\+ entidad|nueva entidad/i }).first();
-    await expect(addBtn).toBeVisible({ timeout: 10_000 });
-    await addBtn.click();
-    const form = page.locator("form, [role='dialog']").first();
-    await expect(form).toBeVisible({ timeout: 5_000 });
-  });
-
-  test("entity 'Extraer' button issues a POST", async ({
-    authedPage: page,
-  }) => {
-    await openStudio(page);
-    await goStudioStep(page, 3);
-    const extraer = page.getByRole("button", { name: /^extraer$/i }).first();
-    if (!(await extraer.isVisible({ timeout: 10_000 }).catch(() => false))) {
-      test.skip(true, "'Extraer' button not present");
-    }
-    const requestPromise = page.waitForRequest(
-      (req) => req.method() === "POST" && /extract|run|extraction/.test(req.url()),
-      { timeout: 5_000 },
-    ).catch(() => null);
-    await extraer.click();
-    const r = await requestPromise;
-    expect(r, "'Extraer' click must fire a POST to an extraction endpoint").not.toBeNull();
-  });
-
-  test("mode dropdown has full + incremental options", async ({
-    authedPage: page,
-  }) => {
-    await openStudio(page);
-    await goStudioStep(page, 3);
-    const select = page.locator(
-      'select[name*="mode"], select#mode',
-    ).first();
-    if (!(await select.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      test.skip(true, "mode dropdown not surfaced");
-    }
-    const opts = await select.locator("option").allInnerTexts();
-    const joined = opts.join("|").toLowerCase();
-    expect(joined).toMatch(/full|incremental/);
-  });
-});
-
-test.describe("Studio — Refinar subtabs", () => {
-  for (const layer of [/Bronze/i, /Silver/i, /Gold/i]) {
-    test(`Refinar > ${layer.source} subtab clicks render content`,
-      async ({ authedPage: page }) => {
-        await openStudio(page);
-        await goStudioStep(page, 4);
-        const sub = page.getByText(layer).first();
-        if (!(await sub.isVisible({ timeout: 10_000 }).catch(() => false))) {
-          test.skip(true, `${layer.source} subtab not present`);
-        }
-        await sub.click();
-        const pane = page.locator(
-          "table, .silver-content, .gold-content, .empty-state, .alert, pre, canvas",
-        ).first();
-        await expect(pane).toBeVisible({ timeout: 15_000 });
-      },
-    );
-  }
-
-  test("Silver query editor is editable", async ({ authedPage: page }) => {
-    await openStudio(page);
-    await goStudioStep(page, 4);
-    const silver = page.locator(".tab").filter({ hasText: /^SILVER|^Silver/i }).first();
-    if (!(await silver.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      test.skip(true, "Silver subtab missing");
-    }
-    await silver.click({ force: true });
-    const editor = page.locator("textarea, .CodeMirror, [contenteditable='true']").first();
-    if (!(await editor.isVisible({ timeout: 10_000 }).catch(() => false))) {
-      test.skip(true, "Silver pane has no editable query field");
-    }
-  });
-
-  test("Silver 'Ejecutar' button fires a query", async ({
-    authedPage: page,
-  }) => {
-    await openStudio(page);
-    await goStudioStep(page, 4);
-    const silver = page.locator(".tab").filter({ hasText: /^SILVER|^Silver/i }).first();
-    if (!(await silver.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      test.skip(true, "Silver subtab missing");
-    }
-    await silver.click({ force: true });
-    const ejecutar = page.getByRole("button", { name: /ejecutar|run/i }).first();
-    if (!(await ejecutar.isVisible({ timeout: 10_000 }).catch(() => false))) {
-      test.skip(true, "'Ejecutar' button missing on Silver");
-    }
-    const req = page.waitForRequest(
-      (r) => r.method() === "POST" && /query|silver|refine/.test(r.url()),
-      { timeout: 5_000 },
-    ).catch(() => null);
-    await ejecutar.click();
-    const got = await req;
-    expect(got, "'Ejecutar' click must fire a POST").not.toBeNull();
-  });
-});
-
-test.describe("Studio — Analytics tab", () => {
-  test("'Ver SQL' button surfaces the SQL", async ({ authedPage: page }) => {
-    await openStudio(page);
-    await goStudioStep(page, 5);
-    const verSql = page.getByRole("button", { name: /ver sql|view sql/i }).first();
-    if (!(await verSql.isVisible({ timeout: 10_000 }).catch(() => false))) {
-      test.skip(true, "'Ver SQL' button not present");
-    }
-    await verSql.click();
-    const sqlBlock = page.locator("pre, code, .sql-viewer").first();
-    await expect(sqlBlock).toBeVisible({ timeout: 5_000 });
-  });
-
-  test("'Abrir Superset' button navigates / opens external", async ({
-    authedPage: page,
-    context,
-  }) => {
-    await openStudio(page);
-    await goStudioStep(page, 5);
-    const abrir = page.getByRole("button", { name: /abrir superset/i }).first();
-    if (!(await abrir.isVisible({ timeout: 10_000 }).catch(() => false))) {
-      test.skip(true, "'Abrir Superset' button not present");
-    }
-    const href = await abrir.getAttribute("href");
-    expect(href, "Superset link must expose a real target").toBeTruthy();
-    const targetOrigin = new URL(href!, page.url()).origin;
-    const requestPromise = context.waitForEvent("request", {
-      predicate: (request) =>
-        request.isNavigationRequest() &&
-        new URL(request.url()).origin === targetOrigin,
-      timeout: 15_000,
-    });
-    await abrir.click();
-    const request = await requestPromise;
-    expect(new URL(request.url()).origin).toBe(targetOrigin);
-  });
-});
-
-test.describe("Studio — IA Semántica + RAG tabs", () => {
-  test("IA Semántica metrics list renders", async ({ authedPage: page }) => {
-    await openStudio(page);
-    await goStudioStep(page, 6);
-    const list = page.locator("table, ul, .metrics-list, .empty-state").first();
-    await expect(list).toBeVisible({ timeout: 10_000 });
-  });
-
-  test("RAG tab config panel renders", async ({ authedPage: page }) => {
-    await openStudio(page);
-    await goStudioStep(page, 7);
-    const panel = page.locator(
-      [
-        "form",
-        ".rag-config",
-        ".empty-state",
-        "input[placeholder*='Search the knowledge base']",
-        "textarea[placeholder*='Paste text here']",
-        "textarea[placeholder*='Pega texto']",
-        "button:has-text('INGEST')",
-        "button:has-text('SEARCH')",
-        "button:has-text('Ingerir')",
-        "button:has-text('Preguntar')",
-      ].join(", "),
-    ).first();
-    await expect(panel).toBeVisible({ timeout: 10_000 });
-  });
-});
-
-test.describe("Studio — Lateral assistant", () => {
-  test("assistant panel exists (right sidebar)", async ({
-    authedPage: page,
-  }) => {
-    await openStudio(page);
-    await goStudioStep(page, 2);
-    await openAssistantPanel(page);
-  });
-
-  test("assistant input accepts text", async ({ authedPage: page }) => {
-    await openStudio(page);
-    await goStudioStep(page, 2);
-    await openAssistantPanel(page);
-    const input = page.locator("#ai-panel textarea#ai-input").first();
-    await expect(input).toBeVisible({ timeout: 10_000 });
-    await input.fill("test message");
-    expect(await input.inputValue()).toBe("test message");
+    await page.goto("/copilot/knowledge", { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: "Borrar fuente Fuente e2e" }).click();
+    const dialog = page.getByTestId("delete-rag-source-dialog");
+    await expect(dialog).toContainText("Fuente e2e");
+    expect(deleted).toBeNull();
+    await dialog.getByRole("button", { name: "Borrar fuente" }).click();
+    await expect(page.getByText("Fuente Fuente e2e borrada.")).toBeVisible();
+    expect(deleted).toBe("DELETE");
   });
 });

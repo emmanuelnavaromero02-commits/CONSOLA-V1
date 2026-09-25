@@ -5282,23 +5282,33 @@ async def _probe_microservice(base_url: str, cartridge_id: str) -> dict:
 async def studio_cartridge_status(
     cartridge_id: str, user: dict = Depends(require_permission("cartridges.read"))
 ):
-    """Lightweight status probe for the cartridge.
-
-    For Replicon (and any cartridge not backed by a dedicated microservice in
-    this deployment) we just report ``operational`` if it is registered.
-    For SAP cartridges we probe the corresponding FastAPI service.
-    """
+    """Probe the cartridge's own service; report ``registered`` when it has none."""
     _require_cartridge_visible(user, cartridge_id)
     manifest = await cartridge_service.get_cartridge(cartridge_id)
     if not manifest:
         raise HTTPException(404, f"Cartridge '{cartridge_id}' not found")
 
-    base_url = _MICROSERVICE_CARTRIDGES.get(cartridge_id)
+    base_url = _MICROSERVICE_CARTRIDGES.get(cartridge_id) or _cartridge_service_base_url(
+        cartridge_id
+    )
     if not base_url:
-        return {"cartridge_id": cartridge_id, "status": "operational"}
+        return {
+            "cartridge_id": cartridge_id,
+            "status": "registered",
+            "detail": "sin servicio propio que sondear",
+        }
 
     probe = await _probe_microservice(base_url, cartridge_id)
     return {"cartridge_id": cartridge_id, **probe}
+
+
+def _cartridge_service_base_url(cartridge_id: str) -> str | None:
+    from app.services.operations_service import _CARTRIDGE_SERVICE_PROBES
+
+    for cfg in _CARTRIDGE_SERVICE_PROBES.values():
+        if cfg[0] == cartridge_id:
+            return _service_url(cfg[1], cfg[2], cfg[3])
+    return None
 
 
 @app.post(
@@ -5486,14 +5496,6 @@ async def studio_chat_stream(body: dict, user: dict = Depends(require_permission
         logger_exception=logger.exception,
         streaming_response_factory=StreamingResponse,
     )
-
-
-@app.get(
-    "/studio",
-    dependencies=[Depends(require_permission("studio.read")), Depends(require_admin)],
-)
-async def studio_page():
-    return FileResponse(STATIC / "studio.html")
 
 
 def _viewer_redirect(

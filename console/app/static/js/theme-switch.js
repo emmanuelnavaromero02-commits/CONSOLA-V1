@@ -27,16 +27,14 @@
 
   function mount() {
     if (document.getElementById('mod-theme-switch')) return;
-    const isStudio = window.location.pathname.replace(/\/+$/, '') === '/studio';
     const btn = document.createElement('button');
     btn.id = 'mod-theme-switch';
     btn.type = 'button';
     btn.title = 'Cambiar tema (claro/oscuro)';
     btn.style.cssText = [
       'position:fixed',
-      isStudio ? 'top:84px' : 'bottom:14px',
+      'bottom:14px',
       'right:14px',
-      isStudio ? 'bottom:auto' : '',
       'z-index:1100',
       'width:38px', 'height:38px', 'border-radius:50%',
       'border:1px solid var(--border,#30363d)',

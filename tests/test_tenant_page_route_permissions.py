@@ -48,12 +48,15 @@ def test_internal_pages_keep_platform_admin_gate():
         (pages_src, '"/security"', "security.audit.read"),
         (pages_src, '"/settings"', "settings.read"),
         (pages_src, '"/data/bronze"', "datasets.write"),
-        (main_src, '"/studio"', "studio.read"),
+        (pages_src, '"/studio"', "studio.read"),
+        (pages_src, '"/studio/"', "studio.read"),
     ]
     for source, route, permission in expectations:
         block = _route_block(source, route)
         assert f'require_permission("{permission}")' in block
         assert "require_admin" in block
+    assert not re.search(r'@app\.get\(\s*"/studio"', main_src)
+    assert '_console_next_response(request, "studio/index.html")' in _route_block(pages_src, '"/studio/"')
 
 
 def test_visible_routes_use_ui_capabilities_that_match_backend_guards():

@@ -67,9 +67,21 @@ def _relative(paths: set[Path]) -> list[str]:
 
 def test_route_served_legacy_pages_exist():
     pages = _served_pages()
-    assert {(STATIC / "studio.html").resolve(), (STATIC / "workspace.html").resolve()} <= pages
+    assert (STATIC / "workspace.html").resolve() in pages
     missing = {page for page in pages if not page.is_file()}
     assert not missing, f"routes serve missing legacy pages: {_relative(missing)}"
+
+
+def test_legacy_studio_is_gone_and_served_by_console_next():
+    studio = (STATIC / "studio.html").resolve()
+    assert not studio.exists()
+    assert studio not in _served_pages()
+    assert studio not in _live_asset_closure()
+    assert not (STATIC / "js" / "studio").exists()
+    for stylesheet in ("studio.css", "studio-modern.css", "viewer.css"):
+        assert not (STATIC / "css" / stylesheet).exists()
+    pages_py = (APP / "routers" / "pages.py").read_text(encoding="utf-8")
+    assert '_console_next_response(request, "studio/index.html")' in pages_py
 
 
 def test_every_legacy_html_page_is_served_by_a_route():

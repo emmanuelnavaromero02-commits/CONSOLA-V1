@@ -504,6 +504,24 @@ async def data_bronze_page(request: Request):
     return _console_next_response(request, "data/bronze/index.html")
 
 
+@router.get(
+    "/studio",
+    dependencies=[
+        Depends(require_permission("studio.read")),
+        Depends(require_admin),
+    ],
+)
+@router.get(
+    "/studio/",
+    dependencies=[
+        Depends(require_permission("studio.read")),
+        Depends(require_admin),
+    ],
+)
+async def studio_page(request: Request):
+    return _console_next_response(request, "studio/index.html")
+
+
 @router.get("/lineage", dependencies=[Depends(require_permission("datasets.read"))])
 async def lineage_page(request: Request):
     return _viewer_redirect(request, "lineage")

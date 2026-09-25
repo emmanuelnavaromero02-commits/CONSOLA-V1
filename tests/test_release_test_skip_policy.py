@@ -81,9 +81,9 @@ def test_current_exact_source_inventory_is_sealed() -> None:
     scanned = verify_source_policy(policy)
 
     assert len(scanned["pytest"]) == 80
-    assert len(scanned["playwright"]) == 27
+    assert len(scanned["playwright"]) == 9
     assert len({declaration.path for declaration in scanned["pytest"]}) == 53
-    assert len({declaration.path for declaration in scanned["playwright"]}) == 7
+    assert len({declaration.path for declaration in scanned["playwright"]}) == 6
 
 
 def test_changed_declaration_digest_fails_closed() -> None:
@@ -303,7 +303,7 @@ def test_pytest_runtime_categories_and_reasons_are_canonical(
 def test_cli_reports_exact_static_inventory(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--policy", str(DEFAULT_POLICY)]) == 0
     output = capsys.readouterr()
-    assert output.out == "RELEASE_TEST_SKIP_POLICY PASS pytest=80,playwright=27\n"
+    assert output.out == "RELEASE_TEST_SKIP_POLICY PASS pytest=80,playwright=9\n"
     assert output.err == ""
 
 

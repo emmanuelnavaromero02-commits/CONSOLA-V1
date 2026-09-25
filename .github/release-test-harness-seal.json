@@ -3,7 +3,7 @@
   "files": [
     {
       "path": ".github/release-test-skip-policy.json",
-      "sha256": "4e18e4781e3ffbc6cfd4d559428839dd2fbc1d97ae506de2e49777d83dc52a91"
+      "sha256": "668bf45b623ecb5d57b741331c7a7a1f4642064c456e11366ccb570419f8b20b"
     },
     {
       "path": ".github/workflows/release-runner-capacity.yml",
@@ -3223,7 +3223,7 @@
     },
     {
       "path": "console/tests/test_studio_cartridge_probe.py",
-      "sha256": "8f6b4958768ce3f5121d760abea8c3b09471f881635172056bd01cc557692469"
+      "sha256": "25afa4edba49c720f81ba4e7cfcded20c669aaf3c9f6fc1d36045592a425e554"
     },
     {
       "path": "console/tests/test_studio_cartridge_self_check.py",
@@ -3231,7 +3231,7 @@
     },
     {
       "path": "console/tests/test_studio_dag_deadline.py",
-      "sha256": "c244a9052f05901443defe57087f6066da9c667ec420a2ee4025195f39014027"
+      "sha256": "4a3eb673b3d7e9ce6aaaed694a8201929398fd7c07d24e24aeeffd5e0ee5224d"
     },
     {
       "path": "console/tests/test_studio_entity_mutations.py",
@@ -3252,10 +3252,6 @@
     {
       "path": "console/tests/test_studio_publish_intent_gate.py",
       "sha256": "f4e63376b1641f7ee3faf8a9b742cd64d8386c51a444e8122ab5951d1bb8e72b"
-    },
-    {
-      "path": "console/tests/test_studio_refine_sources_static.py",
-      "sha256": "5a5ebce0f65a7321c22e52dff632449edd1d64db0fd4482ec558bc24f7ac9627"
     },
     {
       "path": "console/tests/test_studio_source_metadata.py",
@@ -3563,7 +3559,7 @@
     },
     {
       "path": "scripts/run-e2e.sh",
-      "sha256": "2f22e4144da4949489c1eb73a8d9547b26a96b219d8f63dc4e8c346dbaafe230"
+      "sha256": "edf802da50bdf47c7980f01b8212b0d2e792ec98412c74ae9398d510a4cf4ff4"
     },
     {
       "path": "scripts/run_full_stack_acceptance.sh",
@@ -3683,11 +3679,11 @@
     },
     {
       "path": "tests-e2e/specs/05-studio-deep.spec.ts",
-      "sha256": "6c4fdb9afdd1e6c406517abaeda62fda5ecaa9e50b749507f953277612a176ed"
+      "sha256": "481210ee179921db43572e1ee78dc871ba74f8c9ca6271ef2f312f0be9713da8"
     },
     {
       "path": "tests-e2e/specs/05-studio.spec.ts",
-      "sha256": "60226c864cbbd865043a13e69f399bdf0ae39e4d6c36883c2e1af94b0472326f"
+      "sha256": "c4357fc0f9c1f6dd4c4d141dc270804a63616c442c1278c1742411e867dc1fe2"
     },
     {
       "path": "tests-e2e/specs/06-html-pages.spec.ts",
@@ -3991,7 +3987,7 @@
     },
     {
       "path": "tests/test_app_env_safe_default.py",
-      "sha256": "9b9a2b126ee6dca87200dc75d88b53381f5f1e6fefce515551ee50af9d62dc96"
+      "sha256": "b276b45b7a3e73b941abd922a0d85a74195e627ed467ddf7748abffc7adf3b77"
     },
     {
       "path": "tests/test_apply_db_migrations_script.py",
@@ -4959,7 +4955,7 @@
     },
     {
       "path": "tests/test_legacy_static_closure.py",
-      "sha256": "e6b9494b64be5e9371b4905deb053960a2e894e4f2d7e21465b832a8830926ea"
+      "sha256": "d3a71bbbd1d7c15d64d5320bda1444c43cb400a7416be430d54df2898e35bbd9"
     },
     {
       "path": "tests/test_lint_gate_contract.py",
@@ -5191,7 +5187,7 @@
     },
     {
       "path": "tests/test_nextjs_proxy.py",
-      "sha256": "5f1a849e425c56a4fc5fa17d04b48adc5316a555f6c61906a4550ba9afbe09d2"
+      "sha256": "fb93e6f7a4cf40b7f6db632d2352fdaa2b3741562501cc5b650ee964875b5ce3"
     },
     {
       "path": "tests/test_no_auth_gaps.py",
@@ -5535,7 +5531,7 @@
     },
     {
       "path": "tests/test_release_test_skip_policy.py",
-      "sha256": "0dab70eddeba25d3aa51606e116cbe1f3be45d65e6320781a21567038fdf935d"
+      "sha256": "254a7bbe6d950e392831ee732f4436a1c8a212201b5a9a776969a138600e742f"
     },
     {
       "path": "tests/test_remaining_operational_rls_sweep.py",
@@ -5978,10 +5974,6 @@
       "sha256": "d46435b567732eac2b68b290adba847311143cebef39fac8f489e98027a71005"
     },
     {
-      "path": "tests/test_studio_action_bridge.py",
-      "sha256": "a73a74d0ee761e5383a69305fdf10dc12e6a3b9a1eda925a5996abb1df4d15fa"
-    },
-    {
       "path": "tests/test_studio_airflow_source_sync.py",
       "sha256": "ee589f09c61ee0bdb85d704c831bee595b64fb7a36177be0ab0e1fd1baba3952"
     },
@@ -5991,15 +5983,7 @@
     },
     {
       "path": "tests/test_studio_dag_graph_parser.py",
-      "sha256": "daef22f66e168916433ebf58d0425d5e1c16d9190a88b87ab10a98a84073f975"
-    },
-    {
-      "path": "tests/test_studio_dag_graph_svg_sanitized.py",
-      "sha256": "4cc896283576d634c49a9600931aa090745699834374c5786028ce34b1b4d2a1"
-    },
-    {
-      "path": "tests/test_studio_dag_timeout_fallback.py",
-      "sha256": "415ee5349f2505a8c87d0106de97cf2e3d8239471cea820cd9f0e515dedade54"
+      "sha256": "e014d2ab4f529572ead88c321076b0b23276ec8259406a7bd91f1cea9d37dbcb"
     },
     {
       "path": "tests/test_studio_entities.py",
@@ -6007,11 +5991,7 @@
     },
     {
       "path": "tests/test_studio_html_sinks_escaped.py",
-      "sha256": "90316e5276c54a8dca885d212b63ec743aa23e92585bb9cd73e697de7db1b7a1"
-    },
-    {
-      "path": "tests/test_studio_legacy_handler_allowlist.py",
-      "sha256": "1b80f9010b7ac9941bd1e490b0c25e51cbcb3744ca356c700e8b48399dee91ae"
+      "sha256": "90ebf38a4985de4f78ece7afcb1164182f109bbbd0e357f78aa706b66ce78cf0"
     },
     {
       "path": "tests/test_studio_master_preview.py",
@@ -6035,7 +6015,7 @@
     },
     {
       "path": "tests/test_superset_client.py",
-      "sha256": "1ddedf4be0ad60f6faa272509164d7ea712df5f6535f00f261ca80831d32eee9"
+      "sha256": "eab07fdba169765734e9c7b26cbd2969fd5cd489e5dc0b5ba555fe24737d8997"
     },
     {
       "path": "tests/test_superset_create_tools_disabled_in_prod.py",
@@ -6123,7 +6103,7 @@
     },
     {
       "path": "tests/test_tenant_page_route_permissions.py",
-      "sha256": "02cb9280de48803534cbb9a1e34ebd5c8b743e530b6e13dd1a65f370770f7e4f"
+      "sha256": "6d353bb21441a530af6513422888e13048e26034f1239b182e739b97f90c79b9"
     },
     {
       "path": "tests/test_terraform_backend_config.py",
@@ -6147,7 +6127,7 @@
     },
     {
       "path": "tests/test_v1442_nextjs_scaffold.py",
-      "sha256": "f9110b606bf155594ae95e32d4608a6e3b1d0d98a9edb0ea4e57efb5b4248aaf"
+      "sha256": "a98761a04de56ddf57f398b9bdb90ebadeb8746daaf0cfd5b168363e83144123"
     },
     {
       "path": "tests/test_v14432_csrf_login_fix.py",
@@ -6155,7 +6135,7 @@
     },
     {
       "path": "tests/test_v1443_cartridges_next.py",
-      "sha256": "198d04938c3deb1f8889da44eddcf8a7a51535323361a0b6747744a4dabde9ce"
+      "sha256": "9816b7aca1cb150c9e350d369b047049cebafcd9ac400a7f2ae0e8ce86e3a665"
     },
     {
       "path": "tests/test_v1443_llm_integration.py",
