@@ -11,7 +11,7 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "sha256": "368a0e4c2583a515dfd4e966b3b46ec0c051b0baee3a999ac3e5d4f8407b9da3"
+      "sha256": "e48337bd5d875b3e90215e67f555855c563129efaec967e5ad3914d431b8c013"
     },
     {
       "path": "Makefile",
@@ -3302,6 +3302,10 @@
       "sha256": "9f7d3b5ea6474bb70569033251af01ba0a49a1c4b5a631ffe032063017926366"
     },
     {
+      "path": "infra/init/99zzzzm_analytic_app_manifest_registry_sap_b1.sql",
+      "sha256": "39d3cde28e6c3b1ba6a3412c4237b0068b53c44fd9f46173b0ed0cb1a1729044"
+    },
+    {
       "path": "infra/terraform-gcp/release/docker-compose.release.yml",
       "sha256": "1ac03a9191bd78a7c0e007739358f54a610d27735ce478a99e57bc4f1d40223d"
     },
@@ -3579,7 +3583,7 @@
     },
     {
       "path": "scripts/verify_release_test_harness.py",
-      "sha256": "c352043587f6d54a6553a0c1dd35dd5b3baccebb4a494cfabfb347b01e569848"
+      "sha256": "f7714d4e4a13e1d7b692289114e6cfa751133a1016648bad0bfeb53dbf229721"
     },
     {
       "path": "scripts/verify_test_skip_policy.py",
@@ -5427,7 +5431,7 @@
     },
     {
       "path": "tests/test_release_app_grants_postgres_gate.py",
-      "sha256": "4ee9ffd89ab4e3f6d8272c1c2460bd763082ae63fb6ecdc72b9770fb0c85d591"
+      "sha256": "bd64ac95f6a600a96e69afe3f86fb33d0b62de22adaa29d7f55fe073a8a08cbb"
     },
     {
       "path": "tests/test_release_ci_fail_closed.py",

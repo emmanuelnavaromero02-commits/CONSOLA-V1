@@ -89,6 +89,7 @@ FIXED_FILES = {
     "infra/init/99zzu_analytic_app_manifest_registry.sql",
     "infra/init/99zzy_analytic_app_grants_owner_rls_repair.sql",
     "infra/init/99zzzzf_analytic_app_grant_convergence.sql",
+    "infra/init/99zzzzm_analytic_app_manifest_registry_sap_b1.sql",
     "tests-e2e/global-setup.ts",
     "tests-e2e/package-lock.json",
     "tests-e2e/package.json",
