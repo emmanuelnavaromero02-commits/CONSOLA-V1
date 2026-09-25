@@ -1,5 +1,5 @@
 -- replicon_fte_profitability_monthly  (gold)  cartridge: replicon
--- sources: []
+-- sources: ["silver/replicon/empleados_maestro", "silver/replicon/replicon_billingitem_latest", "silver/replicon/replicon_project_detail_curated", "silver/replicon/replicon_resourceallocation_latest", "silver/replicon/replicon_timeentry_latest"]
 -- description: Análisis de productividad mes a mes
 
 WITH

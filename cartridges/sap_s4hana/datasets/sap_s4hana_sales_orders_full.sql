@@ -1,5 +1,5 @@
 -- sap_s4hana_sales_orders_full  (silver)  cartridge: sap_s4hana
--- sources: ["raw/sap_s4hana/SalesOrder", "raw/sap_s4hana/SalesOrderItem"]
+-- sources: ["raw/sap_s4hana/SalesOrder", "raw/sap_s4hana/SalesOrderItem", "silver/sap_s4hana/sap_s4hana_salesorder_latest", "silver/sap_s4hana/sap_s4hana_salesorderitem_latest"]
 -- description: Pedidos de venta a nivel línea, enriquecidos con la cabecera (cliente, fecha, estado, moneda). Una fila por línea.
 
 -- NOTA de privacidad: no se une al maestro de clientes porque Customer.customer

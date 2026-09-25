@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<!--
+  app_id: sap_b1_margen
+  name: Margen SAP Business One
+  cartridge: sap_b1
+  datasets: [sap_b1_margin_consolidated_month, sap_b1_margin_by_company_month, sap_b1_margin_by_customer_month, sap_b1_margin_by_item_month, sap_b1_margin_reconciliation_month, sap_b1_data_quality]
+-->
+<html lang="es" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Margen — SAP Business One</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  :root{--bg:#0d1117;--bg2:#161b22;--border:#30363d;--text1:#e6edf3;--text2:#8b949e;--text3:#6e7681;
+        --blue:#7c9fff;--green:#3fb950;--amber:#d29922;--red:#f85149;--purple:#bc8cff}
+  *{box-sizing:border-box}
+  body{margin:0;padding:22px;background:var(--bg);color:var(--text1);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;font-size:13px}
+  h1{font-size:18px;margin:0 0 2px}
+  .subtitle{color:var(--text2);font-size:11px;margin-bottom:16px}
+  .controls{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+  .controls label{color:var(--text2);font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:600}
+  select{background:var(--bg2);color:var(--text1);border:1px solid var(--border);border-radius:6px;padding:7px 10px;font-size:12px}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:18px}
+  .kpi{background:var(--bg2);border:1px solid var(--border);border-left:3px solid var(--accent,var(--blue));border-radius:8px;padding:14px 16px}
+  .kpi .l{font-size:9px;color:var(--text2);letter-spacing:1.2px;font-weight:600;text-transform:uppercase;margin-bottom:8px}
+  .kpi .v{font-size:22px;font-weight:700}
+  .kpi .s{font-size:10px;color:var(--text3);margin-top:6px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .section{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px}
+  .full{grid-column:1/-1}
+  .title{font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:1px;font-weight:600;margin-bottom:12px}
+  .chart{position:relative;height:280px}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th,td{text-align:left;padding:7px 9px;border-bottom:1px solid var(--border)}
+  th{color:var(--text2);font-size:10px;text-transform:uppercase}
+  td.n{text-align:right;font-variant-numeric:tabular-nums}
+  .heat td.cell{text-align:center;cursor:pointer;font-weight:600;border-radius:4px}
+  .ok{background:rgba(63,185,80,.18)} .warn{background:rgba(210,153,34,.22)} .bad{background:rgba(248,81,73,.25)} .none{color:var(--text3)}
+  .badge{font-size:9px;display:block;color:var(--text2);font-weight:500}
+  .tabs{display:flex;gap:6px;margin-bottom:10px}
+  .tabs button{background:var(--bg);color:var(--text2);border:1px solid var(--border);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:11px}
+  .tabs button.on{color:var(--blue);border-color:var(--blue)}
+  .empty{padding:24px;text-align:center;color:var(--text3);font-style:italic}
+  .error{background:rgba(248,81,73,.12);color:var(--red);border:1px solid var(--red);padding:12px;border-radius:6px;margin-bottom:14px}
+  @media(max-width:900px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+  <h1>◆ Margen · SAP Business One</h1>
+  <div class="subtitle">Grupo, empresas, clientes y artículos · reconciliación con finanzas · calidad de datos</div>
+  <div id="error"></div>
+  <div class="controls">
+    <label for="period">Periodo</label><select id="period"></select>
+    <label for="currency">Moneda</label><select id="currency"></select>
+  </div>
+  <div class="kpis" id="kpis"></div>
+  <div class="grid">
+    <div class="section full">
+      <div class="title">Margen externo por empresa y mes (clic para el detalle)</div>
+      <div id="heat" style="overflow-x:auto"></div>
+    </div>
+    <div class="section">
+      <div class="title">Margen del grupo contra margen externo</div>
+      <div class="chart"><canvas id="trend"></canvas></div>
+    </div>
+    <div class="section">
+      <div class="title" id="drill-title">Detalle</div>
+      <div class="tabs" id="drill-tabs">
+        <button data-tab="customers" class="on">Clientes</button>
+        <button data-tab="items">Artículos</button>
+        <button data-tab="families">Familias</button>
+      </div>
+      <div id="drill" style="max-height:320px;overflow-y:auto"><div class="empty">Elige una celda del mapa</div></div>
+    </div>
+    <div class="section full">
+      <div class="tabs" id="bottom-tabs">
+        <button data-tab="reco" class="on">Reconciliación con finanzas</button>
+        <button data-tab="dq">Calidad de datos</button>
+      </div>
+      <div id="bottom"></div>
+    </div>
+  </div>
+<script>
+const pct = n => n==null ? '—' : Number(n).toLocaleString('es-MX',{minimumFractionDigits:1,maximumFractionDigits:1}) + '%';
+const money = n => n==null ? '—' : '$' + Number(n).toLocaleString('es-MX',{maximumFractionDigits:0});
+const num = n => n==null ? '—' : Number(n).toLocaleString('es-MX');
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function showError(msg){ document.getElementById('error').innerHTML = `<div class="error">${esc(msg)}</div>`; }
+const period = v => String(v||'').slice(0,7);
+async function rows(dataset){
+  const r = await fetch('/api/data/' + dataset + '?limit=5000');
+  if(!r.ok) throw new Error('No se pudo leer ' + dataset + ' (' + r.status + ')');
+  const d = await r.json();
+  return Array.isArray(d) ? d : (d.data || []);
+}
+async function query(dataset, filters){
+  const r = await fetch('/api/data/' + dataset + '/query', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({filters, limit: 2000})});
+  if(!r.ok) throw new Error('No se pudo leer el detalle (' + r.status + ')');
+  const d = await r.json();
+  return Array.isArray(d) ? d : (d.data || []);
+}
+
+let CONS = [], COMP = [], RECO = [], DQ = [], chart = null, drillTab = 'customers', bottomTab = 'reco', DRILL = null;
+
+function currency(){ return document.getElementById('currency').value; }
+function selected(){ return document.getElementById('period').value; }
+function marginClass(m, min){
+  if(m==null) return 'none';
+  if(min!=null && m < min) return 'bad';
+  if(min!=null && m < min + 2) return 'warn';
+  return 'ok';
+}
+
+function renderKpis(){
+  const p = selected(), cur = currency();
+  const cons = CONS.filter(r=> period(r.doc_month)===p && r.local_currency===cur)[0] || {};
+  const prev = CONS.filter(r=> r.local_currency===cur && period(r.doc_month) < p).sort((a,b)=> period(b.doc_month).localeCompare(period(a.doc_month))).slice(0,3);
+  const trailing = prev.length ? prev.reduce((s,r)=> s + Number(r.consolidated_margin_pct||0), 0)/prev.length : null;
+  const ext = COMP.filter(r=> r.period===p && r.scope==='external' && r.local_currency===cur);
+  const rev = ext.reduce((s,r)=> s + Number(r.revenue_net_local||0), 0);
+  const gp = ext.reduce((s,r)=> s + Number(r.gross_profit_net_local||0), 0);
+  const below = ext.reduce((s,r)=> s + Number(r.customers_below_min||0), 0);
+  const belowRev = ext.reduce((s,r)=> s + Number(r.revenue_below_min_local||0), 0);
+  const neg = ext.reduce((s,r)=> s + Number(r.customers_negative||0), 0);
+  const reco = RECO.filter(r=> period(r.doc_month)===p);
+  const okCount = reco.filter(r=> r.status==='ok').length, bad = reco.filter(r=> r.status==='fuera_tolerancia').length;
+  const delta = (cons.consolidated_margin_pct!=null && trailing!=null) ? (Number(cons.consolidated_margin_pct) - trailing) : null;
+  document.getElementById('kpis').innerHTML = `
+    <div class="kpi" style="--accent:var(--purple)"><div class="l">Margen del grupo</div><div class="v">${pct(cons.consolidated_margin_pct)}</div>
+      <div class="s">${delta==null ? 'sin meses previos' : (delta>=0?'+':'') + delta.toFixed(1) + ' pts vs 3 meses'}</div></div>
+    <div class="kpi" style="--accent:var(--blue)"><div class="l">Margen neto externo</div><div class="v">${pct(rev ? 100*gp/rev : null)}</div>
+      <div class="s">venta ${money(rev)}</div></div>
+    <div class="kpi" style="--accent:var(--amber)"><div class="l">Clientes bajo mínimo</div><div class="v">${num(below)}</div>
+      <div class="s">${pct(rev ? 100*belowRev/rev : null)} de la venta</div></div>
+    <div class="kpi" style="--accent:var(--red)"><div class="l">Clientes con margen negativo</div><div class="v">${num(neg)}</div>
+      <div class="s">en ${esc(p)}</div></div>
+    <div class="kpi" style="--accent:var(--green)"><div class="l">Reconciliación</div><div class="v">${num(okCount)} / ${num(reco.length)}</div>
+      <div class="s">${bad ? esc(bad + ' fuera de tolerancia') : 'empresas dentro de tolerancia'}</div></div>`;
+}
+
+function renderHeat(){
+  const cur = currency();
+  const ext = COMP.filter(r=> r.scope==='external' && r.local_currency===cur);
+  const periods = [...new Set(ext.map(r=> r.period))].sort().slice(-12);
+  const companies = [...new Set(ext.map(r=> r.company))].sort();
+  const el = document.getElementById('heat');
+  if(!companies.length){ el.innerHTML = '<div class="empty">Sin ventas externas publicadas</div>'; return; }
+  const recoStatus = {};
+  RECO.forEach(r=> { recoStatus[r.company + '|' + period(r.doc_month)] = r.status; });
+  const mark = {ok:'✓ finanzas', fuera_tolerancia:'! finanzas', sin_control:'· sin control'};
+  el.innerHTML = `<table class="heat"><thead><tr><th>Empresa</th>${periods.map(p=> `<th>${esc(p)}</th>`).join('')}</tr></thead><tbody>${
+    companies.map(c=> `<tr><td>${esc(c)}</td>${periods.map(p=>{
+      const r = ext.find(x=> x.company===c && x.period===p);
+      if(!r) return '<td class="cell none">—</td>';
+      const cls = marginClass(r.margin_pct==null?null:Number(r.margin_pct), r.min_margin_pct==null?null:Number(r.min_margin_pct));
+      return `<td class="cell ${cls}" data-company="${esc(c)}" data-period="${esc(p)}">${pct(r.margin_pct)}<span class="badge">${esc(mark[recoStatus[c+'|'+p]] || '')}</span></td>`;
+    }).join('')}</tr>`).join('')
+  }</tbody></table>`;
+  el.querySelectorAll('td[data-company]').forEach(td=> td.addEventListener('click', ()=> openDrill(td.dataset.company, td.dataset.period)));
+}
+
+function renderTrend(){
+  const cur = currency();
+  const data = CONS.filter(r=> r.local_currency===cur).sort((a,b)=> period(a.doc_month).localeCompare(period(b.doc_month)));
+  if(chart) chart.destroy();
+  chart = new Chart(document.getElementById('trend'), {type:'line',
+    data:{labels:data.map(r=> period(r.doc_month)), datasets:[
+      {label:'Grupo (eliminando intercompañía)', data:data.map(r=> r.consolidated_margin_pct), borderColor:'#bc8cff', tension:.25},
+      {label:'Externo (suma de empresas)', data:data.map(r=> r.external_margin_pct), borderColor:'#7c9fff', tension:.25}]},
+    options:{responsive:true, maintainAspectRatio:false, plugins:{legend:{labels:{color:'#8b949e'}}},
+      scales:{x:{ticks:{color:'#8b949e'},grid:{color:'#21262d'}}, y:{ticks:{color:'#8b949e', callback:v=> v+'%'},grid:{color:'#21262d'}}}}});
+}
+
+async function openDrill(company, p){
+  document.getElementById('drill-title').textContent = 'Detalle · ' + company + ' · ' + p;
+  const el = document.getElementById('drill');
+  el.innerHTML = '<div class="empty">Cargando…</div>';
+  try{
+    const filters = {company, period: p, scope: 'external'};
+    const [customers, items] = await Promise.all([
+      query('sap_b1_margin_by_customer_month', filters),
+      query('sap_b1_margin_by_item_month', filters),
+    ]);
+    DRILL = {customers, items};
+    renderDrill();
+  }catch(e){ el.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+}
+
+function renderDrill(){
+  const el = document.getElementById('drill');
+  if(!DRILL){ return; }
+  const byMargin = (a,b)=> Number(a.margin_pct ?? 1e9) - Number(b.margin_pct ?? 1e9);
+  if(drillTab === 'customers'){
+    const list = [...DRILL.customers].sort(byMargin).slice(0,50);
+    el.innerHTML = list.length ? `<table><thead><tr><th>Cliente</th><th class="n">Venta</th><th class="n">Margen</th><th class="n">Mínimo</th></tr></thead><tbody>${
+      list.map(r=> `<tr><td>${esc(r.card_name || r.card_code)}</td><td class="n">${money(r.revenue_net_local)}</td><td class="n ${marginClass(r.margin_pct==null?null:Number(r.margin_pct), r.min_margin_pct==null?null:Number(r.min_margin_pct))}">${pct(r.margin_pct)}</td><td class="n">${pct(r.min_margin_pct)}</td></tr>`).join('')
+    }</tbody></table>` : '<div class="empty">Sin clientes</div>';
+  } else if(drillTab === 'items'){
+    const list = [...DRILL.items].sort(byMargin).slice(0,50);
+    el.innerHTML = list.length ? `<table><thead><tr><th>Artículo</th><th>Familia</th><th class="n">Venta</th><th class="n">Margen</th></tr></thead><tbody>${
+      list.map(r=> `<tr><td>${esc(r.item_name || r.item_code)}</td><td>${esc(r.item_group_name)}</td><td class="n">${money(r.revenue_net_local)}</td><td class="n">${pct(r.margin_pct)}</td></tr>`).join('')
+    }</tbody></table>` : '<div class="empty">Sin artículos</div>';
+  } else {
+    const fam = {};
+    DRILL.items.forEach(r=>{ const k = r.item_group_name || 'Sin grupo'; fam[k] = fam[k] || {rev:0, gp:0}; fam[k].rev += Number(r.revenue_net_local||0); fam[k].gp += Number(r.gross_profit_net_local||0); });
+    const total = Object.values(fam).reduce((s,f)=> s + f.rev, 0);
+    const list = Object.entries(fam).sort((a,b)=> b[1].rev - a[1].rev);
+    el.innerHTML = list.length ? `<table><thead><tr><th>Familia</th><th class="n">Venta</th><th class="n">Mezcla</th><th class="n">Margen</th></tr></thead><tbody>${
+      list.map(([k,f])=> `<tr><td>${esc(k)}</td><td class="n">${money(f.rev)}</td><td class="n">${pct(total ? 100*f.rev/total : null)}</td><td class="n">${pct(f.rev ? 100*f.gp/f.rev : null)}</td></tr>`).join('')
+    }</tbody></table>` : '<div class="empty">Sin familias</div>';
+  }
+}
+
+function renderBottom(){
+  const el = document.getElementById('bottom');
+  if(bottomTab === 'reco'){
+    const p = selected();
+    const list = RECO.filter(r=> period(r.doc_month)===p);
+    const label = {ok:'dentro de tolerancia', fuera_tolerancia:'fuera de tolerancia', sin_control:'sin totales de finanzas'};
+    el.innerHTML = list.length ? `<table><thead><tr><th>Empresa</th><th class="n">Ingreso docs</th><th class="n">Ingreso contable</th><th class="n">Ingreso finanzas</th><th class="n">Dif. ingreso</th><th class="n">Dif. costo</th><th class="n">Dif. utilidad</th><th>Estado</th></tr></thead><tbody>${
+      list.map(r=> `<tr><td>${esc(r.company)}</td><td class="n">${money(r.doc_revenue_net_local)}</td><td class="n">${money(r.gl_revenue_local)}</td><td class="n">${money(r.fin_revenue_net_local)}</td><td class="n">${pct(r.revenue_diff_pct)}</td><td class="n">${pct(r.cogs_diff_pct)}</td><td class="n">${pct(r.gross_profit_diff_pct)}</td><td class="${r.status==='ok'?'ok':(r.status==='fuera_tolerancia'?'bad':'none')}">${esc(label[r.status] || r.status)}</td></tr>`).join('')
+    }</tbody></table>` : '<div class="empty">Sin reconciliación para el periodo</div>';
+  } else {
+    const list = [...DQ].sort((a,b)=> Number(a.pct_ok ?? 100) - Number(b.pct_ok ?? 100));
+    el.innerHTML = list.length ? `<table><thead><tr><th>Empresa</th><th>Revisión</th><th class="n">Registros</th><th class="n">Con problema</th><th class="n">% correcto</th><th class="n">Mínimo</th></tr></thead><tbody>${
+      list.map(r=> `<tr><td>${esc(r.company)}</td><td>${esc(String(r.check_code||'').replace(/_/g,' '))}</td><td class="n">${num(r.total)}</td><td class="n">${num(r.failing)}</td><td class="n ${r.status==='ok'?'ok':'bad'}">${pct(r.pct_ok)}</td><td class="n">${pct(r.min_pct)}</td></tr>`).join('')
+    }</tbody></table>` : '<div class="empty">Sin revisiones de calidad</div>';
+  }
+}
+
+function renderAll(){ renderKpis(); renderHeat(); renderTrend(); renderBottom(); }
+
+function wireTabs(id, set){
+  document.querySelectorAll('#' + id + ' button').forEach(b=> b.addEventListener('click', ()=>{
+    document.querySelectorAll('#' + id + ' button').forEach(x=> x.classList.toggle('on', x===b));
+    set(b.dataset.tab);
+  }));
+}
+
+async function init(){
+  try{
+    [CONS, COMP, RECO, DQ] = await Promise.all([
+      rows('sap_b1_margin_consolidated_month'),
+      rows('sap_b1_margin_by_company_month'),
+      rows('sap_b1_margin_reconciliation_month'),
+      rows('sap_b1_data_quality'),
+    ]);
+    const currencies = [...new Set(COMP.map(r=> r.local_currency).filter(Boolean))].sort();
+    document.getElementById('currency').innerHTML = currencies.map(c=> `<option>${esc(c)}</option>`).join('');
+    const now = new Date(), current = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
+    const periods = [...new Set(COMP.map(r=> r.period))].sort().reverse();
+    const closed = periods.filter(p=> p < current);
+    document.getElementById('period').innerHTML = periods.map(p=> `<option ${p===(closed[0]||periods[0])?'selected':''}>${esc(p)}</option>`).join('');
+    document.getElementById('period').addEventListener('change', renderAll);
+    document.getElementById('currency').addEventListener('change', renderAll);
+    wireTabs('drill-tabs', t=>{ drillTab = t; renderDrill(); });
+    wireTabs('bottom-tabs', t=>{ bottomTab = t; renderBottom(); });
+    if(!periods.length){ showError('Todavía no hay ventas publicadas para este workspace.'); return; }
+    renderAll();
+  }catch(e){ showError(e.message); }
+}
+init();
+</script>
+</body>
+</html>

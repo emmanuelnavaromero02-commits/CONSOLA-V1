@@ -139,6 +139,9 @@ def test_airflow_dags_forward_scope_to_raw_writes_and_skill_calls():
             assert "SAP_SUCCESSFACTORS_URL" not in source
             assert "INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE" not in source
             assert '"conn_id": conn_id' in source
+        elif cartridge == "sap_b1":
+            assert "security_context_from_conf(conf, " in source
+            assert "json=skill_body" in source
         else:
             assert "skill_body = {" in source
             assert (
@@ -153,6 +156,9 @@ def test_airflow_dags_forward_scope_to_raw_writes_and_skill_calls():
             assert "entity_config.connection_id" in extract_all
             assert "SAP_SUCCESSFACTORS_URL" not in extract_all
             assert '"conn_id": conn_id' in extract_all
+        elif cartridge == "sap_b1":
+            assert "security_context_from_conf(conf, " in extract_all
+            assert "json=skill_body" in extract_all
         else:
             assert "skill_body = {" in extract_all
             assert (

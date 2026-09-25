@@ -671,6 +671,58 @@ async def control_room__risk_kpis_read(
     )
 
 
+_SAP_B1_CASE_VIEWS = {
+    "abasto": "sap_b1_supply_kpis",
+    "caducidad": "sap_b1_expiry_kpis",
+    "margen": "sap_b1_margin_kpis",
+    "semaforo": "sap_b1_semaforo_kpis",
+    "ventas": "sap_b1_sales_kpis",
+}
+
+
+@tool(
+    name="control_room__sap_b1_kpis_read",
+    description=(
+        "KPIs agregados de SAP Business One del workspace activo. case=margen: "
+        "margen del grupo con eliminacion intercompania, margen por empresa, "
+        "clientes y familias bajo el margen minimo, venta bajo costo, "
+        "reconciliacion contra los totales de finanzas y calidad de datos del "
+        "ultimo mes cerrado. case=ventas: semaforo por distribuidora con sell-in, "
+        "sell-out, crecimiento, sell-through, dias de inventario en canal, margen "
+        "y stock expuesto a caducidad. case=caducidad: lotes vencidos y en riesgo "
+        "de caducar sin venderse con accion sugerida. case=abasto: cobertura por "
+        "articulo con y sin ordenes abiertas contra el tiempo de entrega, riesgo "
+        "de quiebre y pedido sugerido. case=semaforo: resumen diario de margen, "
+        "distribuidoras, caducidad, abasto y calidad de datos. Cada metrica trae status, proxy_note con lo que mide "
+        "y lo que NO mide, breaches con los incumplimientos de negocio y "
+        "evidence_refs. NO convierte monedas. Solo agregados; top_n (0-10) "
+        "devuelve ademas hasta 10 clientes nombrados. Solo lectura."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "case": {"type": "string", "enum": sorted(_SAP_B1_CASE_VIEWS)},
+            "top_n": {"type": "integer", "minimum": 0, "maximum": 10},
+        },
+        "required": ["case"],
+        "additionalProperties": False,
+    },
+)
+async def control_room__sap_b1_kpis_read(
+    case: str = "margen",
+    top_n: int = 0,
+    security_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    view = _SAP_B1_CASE_VIEWS.get(str(case or "").strip().lower())
+    if view is None:
+        raise ValueError(f"case must be one of {sorted(_SAP_B1_CASE_VIEWS)}")
+    return await _read_control_room_view(
+        view,
+        security_context,
+        params={"top_n": _named_rows(top_n)},
+    )
+
+
 _AGENT_MEMORY_FINDING_TYPES = ("data_gap", "error", "insight", "warning")
 _AGENT_MEMORY_SEVERITIES = ("critical", "high", "medium", "low")
 _AGENT_MEMORY_SUBJECT_MAX = 200

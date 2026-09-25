@@ -76,6 +76,7 @@ class DomainMonitorSpec:
     severity: str = "medium"
     uses_market_context: bool = False
     memory_subjects: tuple[str, ...] = field(default_factory=tuple)
+    tz: str = "UTC"
 
     @property
     def dedup_key(self) -> str:
@@ -196,7 +197,7 @@ def schedule_for(spec: DomainMonitorSpec) -> dict[str, Any]:
     return {
         "enabled": True,
         "cron": spec.cron,
-        "tz": "UTC",
+        "tz": spec.tz,
         "prompt": (
             f"Ejecuta el monitor {spec.wisdom_bit_id}: lee los KPI agregados del "
             f"dominio, revisa la memoria compartida antes de reportar, evalua "

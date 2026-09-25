@@ -1,5 +1,5 @@
 -- sap_s4hana_invoices_full  (silver)  cartridge: sap_s4hana
--- sources: ["raw/sap_s4hana/BillingDocument", "raw/sap_s4hana/BillingDocumentItem"]
+-- sources: ["raw/sap_s4hana/BillingDocument", "raw/sap_s4hana/BillingDocumentItem", "silver/sap_s4hana/sap_s4hana_billingdocument_latest", "silver/sap_s4hana/sap_s4hana_billingdocumentitem_latest"]
 -- description: Facturas de venta a nivel línea, enriquecidas con la cabecera (cliente, fecha, moneda, condiciones de pago). Una fila por línea.
 
 WITH docs AS (

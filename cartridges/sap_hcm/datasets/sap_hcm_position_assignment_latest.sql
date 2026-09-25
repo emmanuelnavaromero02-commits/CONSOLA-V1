@@ -1,5 +1,5 @@
 -- sap_hcm_position_assignment_latest  (silver)  cartridge: sap_hcm
--- sources: ["raw/sap_hcm/Position", "raw/sap_hcm/EmployeeMaster", "raw/sap_hcm/PersonalData"]
+-- sources: ["raw/sap_hcm/Position", "raw/sap_hcm/EmployeeMaster", "raw/sap_hcm/PersonalData", "silver/sap_hcm/sap_hcm_employeemaster_latest", "silver/sap_hcm/sap_hcm_personaldata_latest", "silver/sap_hcm/sap_hcm_position_latest"]
 -- description: Posiciones con su titular actual (si existe). Marca posiciones vacantes (sin empleado asignado vía Plans).
 
 WITH

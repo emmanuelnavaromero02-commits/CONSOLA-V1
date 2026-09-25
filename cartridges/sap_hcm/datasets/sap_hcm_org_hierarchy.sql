@@ -1,5 +1,5 @@
 -- sap_hcm_org_hierarchy  (silver)  cartridge: sap_hcm
--- sources: ["raw/sap_hcm/OrgUnit"]
+-- sources: ["raw/sap_hcm/OrgUnit", "silver/sap_hcm/sap_hcm_orgunit_latest"]
 -- description: Estructura organizacional. Lista las unidades org con columnas de jerarquía. El padre queda NULL hasta habilitar HRP1001 (relaciones OM), que no se extrae hoy.
 
 -- TODO: la relación padre-hijo de OM vive en HRP1001Set (no extraído en Bloque A).

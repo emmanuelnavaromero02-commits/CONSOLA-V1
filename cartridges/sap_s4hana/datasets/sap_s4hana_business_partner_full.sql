@@ -1,5 +1,5 @@
 -- sap_s4hana_business_partner_full  (silver)  cartridge: sap_s4hana
--- sources: ["raw/sap_s4hana/BusinessPartner", "raw/sap_s4hana/Customer", "raw/sap_s4hana/Supplier", "raw/sap_s4hana/BusinessPartnerAddress"]
+-- sources: ["raw/sap_s4hana/BusinessPartner", "raw/sap_s4hana/Customer", "raw/sap_s4hana/Supplier", "raw/sap_s4hana/BusinessPartnerAddress", "silver/sap_s4hana/sap_s4hana_businesspartner_latest", "silver/sap_s4hana/sap_s4hana_businesspartneraddress_latest", "silver/sap_s4hana/sap_s4hana_customer_latest", "silver/sap_s4hana/sap_s4hana_supplier_latest"]
 -- description: Vista 360 del Business Partner con sus roles (cliente / proveedor) y dirección principal. Una fila por partner.
 
 -- Los cuatro maestros comparten el id de partner shadowed con el mismo hash

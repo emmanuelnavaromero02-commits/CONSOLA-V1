@@ -1,5 +1,5 @@
 -- overdue_billing  (gold)  cartridge: sap_s4hana
--- sources: ["raw/sap_s4hana/BillingDocument"]
+-- sources: ["raw/sap_s4hana/BillingDocument", "silver/sap_s4hana/sap_s4hana_billingdocument_latest"]
 -- description: Cartera vencida (aging) de facturas de venta por antigüedad estimada. El estado de pago real no está disponible; el vencimiento se aproxima por fecha.
 
 -- TODO: el estado pagado/no pagado vive en partidas abiertas de FI

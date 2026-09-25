@@ -26,7 +26,7 @@ def test_wb_talento_privacy_and_defaults():
     assert wb["decision_mode"] == "recommendation_only"
     assert wb["write_back_enabled"] is False
     assert wb["compensation_enabled"] is False
-    assert wb["default_profile"] == {"industry": "retail", "company_profile": "femsa"}
+    assert wb["default_profile"] == {"industry": "retail"}
     assert wb["pii_exposure"] == "masked"
 
 

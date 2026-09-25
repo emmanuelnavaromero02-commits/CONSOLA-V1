@@ -18,6 +18,11 @@ from app.schemas.control_room_domain_kpi_responses import (
     ControlRoomFinanceKpisResponse,
     ControlRoomOperationsKpisResponse,
     ControlRoomRiskKpisResponse,
+    ControlRoomSapB1ExpiryKpisResponse,
+    ControlRoomSapB1MarginKpisResponse,
+    ControlRoomSapB1SalesKpisResponse,
+    ControlRoomSapB1SemaforoKpisResponse,
+    ControlRoomSapB1SupplyKpisResponse,
 )
 from app.schemas.control_room_experience_actions import ExperienceActionPreviewResponse
 from app.schemas.control_room_alert_mutation_responses import (
@@ -291,6 +296,44 @@ async def _control_room_internal_view(
                 f"risk-kpis-{top_n}",
                 user,
                 lambda: control_room_service.risk_kpis(user, top_n=top_n),
+            ),
+        )
+    if view == "sap_b1_margin_kpis":
+        top_n = _bounded_int(params.get("top_n"), 0, lower=0, upper=10)
+        return project_public_control_room_response(
+            ControlRoomSapB1MarginKpisResponse,
+            await _control_room_cache_get_or_set(
+                f"sap-b1-margin-kpis-{top_n}",
+                user,
+                lambda: control_room_service.sap_b1_margin_kpis(user, top_n=top_n),
+            ),
+        )
+    if view == "sap_b1_sales_kpis":
+        return project_public_control_room_response(
+            ControlRoomSapB1SalesKpisResponse,
+            await _control_room_cache_get_or_set(
+                "sap-b1-sales-kpis", user, lambda: control_room_service.sap_b1_sales_kpis(user)
+            ),
+        )
+    if view == "sap_b1_expiry_kpis":
+        return project_public_control_room_response(
+            ControlRoomSapB1ExpiryKpisResponse,
+            await _control_room_cache_get_or_set(
+                "sap-b1-expiry-kpis", user, lambda: control_room_service.sap_b1_expiry_kpis(user)
+            ),
+        )
+    if view == "sap_b1_supply_kpis":
+        return project_public_control_room_response(
+            ControlRoomSapB1SupplyKpisResponse,
+            await _control_room_cache_get_or_set(
+                "sap-b1-supply-kpis", user, lambda: control_room_service.sap_b1_supply_kpis(user)
+            ),
+        )
+    if view == "sap_b1_semaforo_kpis":
+        return project_public_control_room_response(
+            ControlRoomSapB1SemaforoKpisResponse,
+            await _control_room_cache_get_or_set(
+                "sap-b1-semaforo-kpis", user, lambda: control_room_service.sap_b1_semaforo_kpis(user)
             ),
         )
     if view == "agent_memory":

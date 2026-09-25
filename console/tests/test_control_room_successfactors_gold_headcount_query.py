@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from importlib import import_module
 from typing import Any
 
 import pytest
@@ -258,11 +259,19 @@ async def test_gold_service_preserves_full_total_not_only_five_visible_rows(
             "sap_successfactors_headcount_by_department": dict(empty),
         }
 
-    monkeypatch.setattr(gold_fetcher, "query_gold_dataset_rows", employee_rows)
     monkeypatch.setattr(
-        headcount_query, "query_successfactors_headcount_summaries", summaries
+        import_module("app.services.intelligence.gold_fetcher"),
+        "query_gold_dataset_rows",
+        employee_rows,
     )
-    payload = await control_room_service.sap_successfactors_gold_kpis(USER)
+    monkeypatch.setattr(
+        import_module("app.services.intelligence.successfactors_gold_headcount"),
+        "query_successfactors_headcount_summaries",
+        summaries,
+    )
+    payload = await import_module(
+        "app.services.control_room_service"
+    ).sap_successfactors_gold_kpis(USER)
     company = next(
         widget
         for widget in payload["widgets"]

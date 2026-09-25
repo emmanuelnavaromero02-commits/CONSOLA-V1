@@ -1,5 +1,5 @@
 -- replicon_projectbilling_curated  (silver)  cartridge: replicon
--- sources: []
+-- sources: ["raw/replicon/ProjectBilling"]
 -- description: 
 
 SELECT

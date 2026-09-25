@@ -504,13 +504,15 @@ async def test_rls_hides_other_scopes_from_the_application_role(app_conn):
 
 
 async def test_the_registry_matches_the_packaged_manifests(conn):
+    from scripts.generate_app_manifest_registry import EXPECTED_APPS
+
     manifests = load_packaged_manifests()
-    assert len(manifests) == 18
+    assert len(manifests) == EXPECTED_APPS
     rows = await conn.fetch(
         "SELECT app_name, cartridge_id, manifest_digest FROM public.analytic_app_manifests "
         "WHERE revision = 'active' ORDER BY app_name"
     )
-    assert len(rows) == 18
+    assert len(rows) == EXPECTED_APPS
     for row in rows:
         packaged = manifests[row["app_name"]]
         assert row["cartridge_id"] == packaged["cartridge_id"]

@@ -6052,6 +6052,41 @@ async def risk_kpis(user: dict | None, *, top_n: int = 0) -> dict[str, Any]:
 
 
 @_bind_to_core
+async def sap_b1_margin_kpis(user: dict | None, *, top_n: int = 0) -> dict[str, Any]:
+    from app.services.control_room import sap_b1_kpis
+
+    return await sap_b1_kpis.sap_b1_margin_kpis(user, top_n=top_n)
+
+
+@_bind_to_core
+async def sap_b1_sales_kpis(user: dict | None) -> dict[str, Any]:
+    from app.services.control_room import sap_b1_kpis
+
+    return await sap_b1_kpis.sap_b1_sales_kpis(user)
+
+
+@_bind_to_core
+async def sap_b1_expiry_kpis(user: dict | None) -> dict[str, Any]:
+    from app.services.control_room import sap_b1_kpis
+
+    return await sap_b1_kpis.sap_b1_expiry_kpis(user)
+
+
+@_bind_to_core
+async def sap_b1_supply_kpis(user: dict | None) -> dict[str, Any]:
+    from app.services.control_room import sap_b1_kpis
+
+    return await sap_b1_kpis.sap_b1_supply_kpis(user)
+
+
+@_bind_to_core
+async def sap_b1_semaforo_kpis(user: dict | None) -> dict[str, Any]:
+    from app.services.control_room import sap_b1_kpis
+
+    return await sap_b1_kpis.sap_b1_semaforo_kpis(user)
+
+
+@_bind_to_core
 async def agent_memory_read(
     user: dict | None, *, subject: str | None = None, limit: int = 10
 ) -> dict[str, Any]:
@@ -6067,6 +6102,11 @@ __all__ = (
     "finance_kpis",
     "operations_kpis",
     "risk_kpis",
+    "sap_b1_margin_kpis",
+    "sap_b1_sales_kpis",
+    "sap_b1_expiry_kpis",
+    "sap_b1_supply_kpis",
+    "sap_b1_semaforo_kpis",
     "_ITEM_STATUSES",
     "_ITEM_SEVERITIES",
     "_is_production_env",

@@ -87,9 +87,14 @@ def test_migration_is_idempotent_and_scoped():
 def test_declared_sources_are_real_hcm_entities():
     entities = _hcm_entities()
     assert len(entities) == 10
+    silver_datasets = {path.stem for path in _dataset_files() if _parse_header(path)[1] == "silver"}
     for path in _dataset_files():
         _, _, sources, _ = _parse_header(path)
         for src in sources:
+            silver = re.match(r"silver/sap_hcm/(\w+)$", src)
+            if silver:
+                assert silver.group(1) in silver_datasets, f"{path.name}: source {src!r} not a sap_hcm silver dataset"
+                continue
             m = re.match(r"raw/sap_hcm/(\w+)$", src)
             assert m, f"{path.name}: malformed source {src!r}"
             assert m.group(1) in entities, f"{path.name}: source {src!r} not a HCM entity"

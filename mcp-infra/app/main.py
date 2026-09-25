@@ -410,6 +410,7 @@ _CONTROL_ROOM_READ_TOOLS = {
     "control_room__finance_kpis_read",
     "control_room__operations_kpis_read",
     "control_room__risk_kpis_read",
+    "control_room__sap_b1_kpis_read",
     "control_room__agent_memory_read",
 }
 _CONTROL_ROOM_MEMORY_WRITE_TOOLS = {

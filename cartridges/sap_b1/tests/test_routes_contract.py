@@ -70,3 +70,22 @@ def test_mcp_tools_are_listed_behind_the_internal_key(client):
     assert client.get("/mcp/tools").status_code == 401
     tools = {tool["name"] for tool in client.get("/mcp/tools", headers=AUTH).json()["tools"]}
     assert {"list_entities", "get_schema", "preview", "extract", "extract_all", "query_kb"} <= tools
+
+
+@pytest.mark.parametrize("path", ["/intercompany/refresh", "/business-parameters/refresh"])
+def test_writes_to_bronze_need_a_signed_workspace_scope(client, path):
+    assert client.post(path).status_code == 401
+    assert client.post(path, headers=AUTH).status_code in {403, 503}
+    forged = {"security_context": {"trusted": True, "tenant_id": "t", "workspace_id": "w"}}
+    assert client.post(path, headers=AUTH, json=forged).status_code in {403, 503}
+
+
+def test_a_signed_context_without_a_workspace_is_refused(client, monkeypatch):
+    from app.core import request_context
+
+    monkeypatch.setattr("app.api.routes_console.preflight_for_extract", lambda: None)
+    unscoped = request_context._sign_security_context({"trusted": True, "source": "console", "role": "admin"})
+    resp = client.post("/business-parameters/refresh", headers=AUTH, json={"security_context": unscoped})
+    assert resp.status_code == 403 and "scope is required" in resp.json()["detail"]
+    resp = client.post("/extract-all", headers=AUTH, json={"security_context": unscoped})
+    assert resp.status_code == 403

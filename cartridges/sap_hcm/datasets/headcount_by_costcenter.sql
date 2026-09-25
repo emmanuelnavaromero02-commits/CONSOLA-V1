@@ -1,5 +1,5 @@
 -- headcount_by_costcenter  (gold)  cartridge: sap_hcm
--- sources: ["raw/sap_hcm/EmployeeMaster", "raw/sap_hcm/PersonalData", "raw/sap_hcm/ContractData"]
+-- sources: ["raw/sap_hcm/EmployeeMaster", "raw/sap_hcm/PersonalData", "raw/sap_hcm/ContractData", "silver/sap_hcm/sap_hcm_employee_master_full"]
 -- description: Empleados activos por centro de costo (snapshot del mes en curso).
 
 WITH emp AS (

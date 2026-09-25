@@ -1,5 +1,5 @@
 -- revenue_by_customer  (gold)  cartridge: sap_s4hana
--- sources: ["raw/sap_s4hana/BillingDocument", "raw/sap_s4hana/BillingDocumentItem"]
+-- sources: ["raw/sap_s4hana/BillingDocument", "raw/sap_s4hana/BillingDocumentItem", "silver/sap_s4hana/sap_s4hana_invoices_full"]
 -- description: Ingresos por cliente y mes a partir de facturas de venta. Ranking de clientes por revenue.
 
 WITH inv AS (

@@ -7,11 +7,13 @@ import json
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 try:
     from scripts.ci_control_room_paths import control_room_changed
 except ModuleNotFoundError:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
     from ci_control_room_paths import control_room_changed
 
 

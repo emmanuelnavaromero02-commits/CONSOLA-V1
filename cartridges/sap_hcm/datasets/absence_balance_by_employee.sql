@@ -1,5 +1,5 @@
 -- absence_balance_by_employee  (gold)  cartridge: sap_hcm
--- sources: ["raw/sap_hcm/LeaveAbsence"]
+-- sources: ["raw/sap_hcm/LeaveAbsence", "silver/sap_hcm/sap_hcm_leaveabsence_latest"]
 -- description: Días de ausencia por empleado y tipo en los últimos 12 meses. Una fila por (pernr, tipo de ausencia).
 
 WITH absences AS (

@@ -1,5 +1,5 @@
 -- empleados_maestro  (master)  cartridge: replicon
--- sources: ["raw/replicon/User"]
+-- sources: ["raw/replicon/User", "silver/replicon/replicon_user_latest"]
 -- description: Maestro de empleados activos de Replicon con datos de costo, departamento, ubicación, supervisor y fechas de inicio/fin. Derivado de replicon_user_latest (Silver) filtrado a isenabled=true.
 
 SELECT 

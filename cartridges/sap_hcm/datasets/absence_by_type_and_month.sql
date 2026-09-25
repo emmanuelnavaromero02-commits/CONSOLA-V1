@@ -1,5 +1,5 @@
 -- absence_by_type_and_month  (gold)  cartridge: sap_hcm
--- sources: ["raw/sap_hcm/LeaveAbsence"]
+-- sources: ["raw/sap_hcm/LeaveAbsence", "silver/sap_hcm/sap_hcm_leaveabsence_latest"]
 -- description: Tendencia mensual de ausencias por tipo: total de días hábiles y empleados distintos afectados.
 
 SELECT

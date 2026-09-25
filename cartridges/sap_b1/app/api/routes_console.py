@@ -12,8 +12,14 @@ from app.core.job_runner import (
     fail_external_job,
     finish_external_job,
 )
-from app.core.request_context import SecurityContextError, reset_security_context, set_security_context
+from app.core.request_context import (
+    SecurityContextError,
+    require_tenant_workspace_scope,
+    reset_security_context,
+    set_security_context,
+)
 from app.core.b1_source import B1SourceError
+from app.services.business_parameters import refresh_business_parameters
 from app.services.catalog_service import get_all_entities, get_entity_config
 from app.services.extraction_service import run_entity
 from app.services.intercompany import refresh_intercompany_partners
@@ -55,6 +61,13 @@ def _security_context(body: dict[str, Any] | None) -> dict[str, Any] | None:
 def _set_security_context(ctx: dict[str, Any] | None):
     try:
         return set_security_context(ctx)
+    except SecurityContextError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+def _require_scope() -> None:
+    try:
+        require_tenant_workspace_scope()
     except SecurityContextError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
@@ -138,6 +151,7 @@ def entity_extract(
     ctx = _security_context(body)
     token = _set_security_context(ctx)
     try:
+        _require_scope()
         result = run_entity(
             _scoped_config({**config, "mode": mode}, ctx),
             from_date=from_date,
@@ -173,6 +187,7 @@ def extract_all(
     ctx = _security_context(body)
     token = _set_security_context(ctx)
     try:
+        _require_scope()
         results = []
         for config in get_all_entities():
             effective_mode = mode if mode == "full" or config.get("watermark_field") else "full"
@@ -198,6 +213,12 @@ def extract_all(
             results.append(result)
         except Exception as exc:                           # noqa: BLE001
             results.append({"entity": "IntercompanyPartners", "status": "failed", "error": str(exc)})
+        try:
+            result = refresh_business_parameters(ctx)
+            _mark_external_job(_trigger_silver_refresh, result["entity"], ctx)
+            results.append(result)
+        except Exception as exc:                           # noqa: BLE001
+            results.append({"entity": "BusinessParameters", "status": "failed", "error": str(exc)})
     finally:
         reset_security_context(token)
     return {"results": results}
@@ -212,11 +233,33 @@ def intercompany_refresh(body: dict[str, Any] | None = Body(None)):
     ctx = _security_context(body)
     token = _set_security_context(ctx)
     try:
+        _require_scope()
         result = refresh_intercompany_partners(ctx)
         _mark_external_job(_trigger_silver_refresh, result["entity"], ctx)
         return result
     except B1SourceError as exc:
         return _degraded_503({"status": "degraded", "configured": True, "error": str(exc)})
+    finally:
+        reset_security_context(token)
+
+
+@router.post("/business-parameters/refresh")
+def business_parameters_refresh(
+    refresh_silver: bool = Query(True),
+    body: dict[str, Any] | None = Body(None),
+):
+    """Write the workspace's business parameters (Vault ``business_parameters``) to Bronze."""
+    ctx = _security_context(body)
+    token = _set_security_context(ctx)
+    try:
+        _require_scope()
+        try:
+            result = refresh_business_parameters(ctx)
+        except B1SourceError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if refresh_silver:
+            _mark_external_job(_trigger_silver_refresh, result["entity"], ctx)
+        return result
     finally:
         reset_security_context(token)
 

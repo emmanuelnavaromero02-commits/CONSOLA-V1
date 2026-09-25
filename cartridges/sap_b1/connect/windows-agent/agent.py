@@ -1413,7 +1413,6 @@ def cmd_refresh_intercompany(config: AgentConfig, log: logging.Logger, args: arg
 
 
 def month_slices(cutoff: datetime, months: int) -> list[tuple[str, str, str | None]]:
-    """``(YYYY-MM, from_date, to_date)`` from the cutoff month back ``months`` months, newest first; the newest is open-ended."""
     current = date(cutoff.year, cutoff.month, 1)
     slices: list[tuple[str, str, str | None]] = []
     for index in range(months + 1):
@@ -1435,7 +1434,6 @@ class LoadStep:
 
 
 def initial_load_steps(catalogue: Sequence[dict[str, Any]], slices: Sequence[tuple[str, str, str | None]]) -> list[LoadStep]:
-    """Undated tables whole first, then every dated table month by month, newest month first."""
     dated = [entity for entity in catalogue if b1_queries.plan_from_config(entity).date_field]
     undated = [entity for entity in catalogue if entity not in dated]
     steps = [LoadStep(key=f"full:{entity['entity']}", entity=entity, mode="full") for entity in undated]
@@ -1465,7 +1463,6 @@ def initial_load_completed(config: AgentConfig) -> bool:
 
 
 def initial_load_in_progress(config: AgentConfig) -> str | None:
-    """A progress text while an initial load has started and not completed, else None."""
     if not config.state_db.is_file():
         return None
     state = _open_state(config)
@@ -1481,7 +1478,6 @@ def initial_load_in_progress(config: AgentConfig) -> str | None:
 def _integer_cutoffs(
     connection: "b1_source.Connection", config: AgentConfig, catalogue: Sequence[dict[str, Any]]
 ) -> dict[str, int]:
-    """The highest integer position of every dated integer-watermark table at the cutoff, per company."""
     cutoffs: dict[str, int] = {}
     for entity in catalogue:
         plan = b1_queries.plan_from_config(entity)
@@ -1526,7 +1522,6 @@ def _start_initial_load(runtime: Runtime, catalogue: Sequence[dict[str, Any]], m
 def _seed_watermarks(
     runtime: Runtime, catalogue: Sequence[dict[str, Any]], cutoff: datetime, integer_cutoffs: Mapping[str, int]
 ) -> None:
-    """Dated tables continue incrementally from the cutoff; the whole-table reads already set their own."""
     stamp = b1_queries.Watermark.from_stamp(cutoff).text()
     for entity in catalogue:
         plan = b1_queries.plan_from_config(entity)

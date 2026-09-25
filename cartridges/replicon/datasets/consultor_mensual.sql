@@ -1,5 +1,5 @@
 -- consultor_mensual  (gold)  cartridge: replicon
--- sources: ["raw/replicon/TimeEntry"]
+-- sources: ["raw/replicon/TimeEntry", "silver/replicon/empleados_maestro", "silver/replicon/replicon_billingitem_latest", "silver/replicon/replicon_project_latest", "silver/replicon/replicon_resourceallocation_latest", "silver/replicon/replicon_timeentry_latest"]
 -- description: Métricas mensuales por consultor y proyecto. Revenue Manager = supervisor del consultor (empleados_maestro), fallback a revenue_manager del proyecto. Horas ejecutadas, facturables, no facturables. Costos directo, no facturable y hundido prorrateado.
 
 WITH

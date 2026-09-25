@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 import time
@@ -622,6 +623,21 @@ async def _with_monitor_evidence(
     return {**payload, "evidence_handle": handle}
 
 
+async def _with_sap_b1_digest(
+    user: dict[str, Any], spec: Any, payload: Any
+) -> Any:
+    if not isinstance(payload, dict) or spec.key != "sap_b1_semaforo" or not payload.get("evidence_handle"):
+        return payload
+    from app.services.control_room import sap_b1_digest
+
+    try:
+        digest = await sap_b1_digest.maybe_send_digest(user, payload, pool=await auth.pool())
+    except Exception as exc:  # noqa: BLE001 - the digest must not break the monitor
+        logging.getLogger(__name__).warning("sap_b1 digest failed: %s", type(exc).__name__)
+        digest = {"sent": False, "reason": "error"}
+    return {**payload, "digest": digest}
+
+
 @internal_router.post("/gold-refresh")
 async def intelligence_gold_refresh_internal(
     body: GoldRefreshIntelligenceRequest,
@@ -788,7 +804,8 @@ async def intelligence_wisdom_bits_run_internal(
         payload = await domain_wisdom_bits.domain_wisdom_bit(
             user, domain_spec, control_room_service=control_room_service
         )
-        return await _with_monitor_evidence(user, body, internal_service, payload)
+        payload = await _with_monitor_evidence(user, body, internal_service, payload)
+        return await _with_sap_b1_digest(user, domain_spec, payload)
 
     if wisdom_bit_id != "WB-TALENTO":
         raise HTTPException(status_code=404, detail="wisdom_bit_id is not available")
@@ -831,6 +848,63 @@ async def intelligence_wisdom_bits_run_internal(
         "evidence": {"recommendation_only": True},
     }
     return await _with_monitor_evidence(user, body, internal_service, payload)
+
+
+class InternalEnsureMonitorsRequest(_StrictModel):
+    security_context: dict[str, Any]
+    cartridge_id: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9_]+$")
+
+
+@internal_router.post("/agentops/ensure-monitors")
+async def intelligence_ensure_monitors_internal(
+    body: InternalEnsureMonitorsRequest,
+    internal_service: str = Depends(verify_internal_api_key),
+):
+    if internal_service != "airflow":
+        raise HTTPException(status_code=403, detail="only airflow can provision monitors")
+    try:
+        ctx = verify_signed_security_context(body.security_context)
+    except Exception as exc:
+        raise HTTPException(status_code=403, detail=f"invalid security_context: {exc}") from exc
+    permissions = {str(item) for item in (ctx.get("permissions") or [])}
+    allowed = {str(item) for item in (ctx.get("allowed_cartridges") or [])}
+    tenant_id = str(ctx.get("tenant_id") or "").strip()
+    workspace_id = str(ctx.get("workspace_id") or "").strip()
+    if (
+        not ctx.get("trusted")
+        or "pipelines.run" not in permissions
+        or not tenant_id
+        or not workspace_id
+        or ("*" not in allowed and body.cartridge_id not in allowed)
+    ):
+        raise HTTPException(status_code=403, detail="scoped pipelines.run context required")
+    specs = [
+        spec
+        for spec in domain_monitors.ALL_DOMAIN_MONITOR_SPECS
+        if spec.cartridge_id == body.cartridge_id
+    ]
+    user = {
+        "id": ctx.get("user_id") or 0,
+        "role": ctx.get("role") or "service",
+        "workspace_role": ctx.get("workspace_role"),
+        "tenant_id": tenant_id,
+        "workspace_id": workspace_id,
+        "active_tenant_id": tenant_id,
+        "active_workspace_id": workspace_id,
+        "allowed_cartridges": sorted(allowed),
+    }
+    from app.domains.agentops import domain_monitor_support
+    from app.services.security_context import build_security_context
+
+    for spec in specs:
+        await domain_monitor_support.ensure_domain_monitor(
+            user,
+            spec,
+            get_db_pool=auth.pool,
+            build_security_context=build_security_context,
+            logger=logging.getLogger(__name__),
+        )
+    return {"ok": True, "monitors": [spec.slug for spec in specs]}
 
 
 @internal_router.post("/calibration/state")
