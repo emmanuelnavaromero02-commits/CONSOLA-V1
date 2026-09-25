@@ -122,7 +122,7 @@ def _payload(tool: str, args: dict, user: dict | None = None) -> dict:
     return {"tool": tool, "args": args, "security_context": _security_context(user)}
 
 
-SYSTEM_BASE = """Eres el asistente de ΩMEGA by EPIUSE para usuarios de negocio.
+SYSTEM_BASE = """Eres el asistente de ΩMEGA para usuarios de negocio.
 
 ## Tu rol
 Respondes preguntas analíticas consultando los datos GOLD ya publicados y los

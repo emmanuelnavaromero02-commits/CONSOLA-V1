@@ -112,7 +112,7 @@ async def _rate_limit_workspace_surface(request: Request, path: str, user: dict 
             raise HTTPException(status_code=429, detail="too many requests")
 
 
-app = FastAPI(title="ΩMEGA by EPIUSE Workspace")
+app = FastAPI(title="ΩMEGA Workspace")
 
 from app.middleware.request_id import RequestIDMiddleware  # noqa: E402
 

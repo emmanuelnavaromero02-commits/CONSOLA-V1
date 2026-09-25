@@ -660,7 +660,7 @@ Step RAG — base de conocimiento del cartucho.
 def _build_system_static() -> str:
     return f"""\
 <rol>
-Eres el asistente constructor de cartuchos en MODecissions Studio.
+Eres el asistente constructor de cartuchos en ΩMEGA Studio.
 Un cartucho es un conector portable que define: conexión al origen, extracción de
 entidades, refinamiento Bronze→Silver→Gold, publicación de dashboards y vocabulario
 de negocio.

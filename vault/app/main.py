@@ -527,7 +527,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="MODecissions Vault", dependencies=[Depends(verify_api_key)], lifespan=lifespan)
+app = FastAPI(title="ΩMEGA Vault", dependencies=[Depends(verify_api_key)], lifespan=lifespan)
 
 from app.middleware.request_id import RequestIDMiddleware  # noqa: E402
 
