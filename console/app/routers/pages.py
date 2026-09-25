@@ -282,6 +282,28 @@ async def control_room_talent_page_slash(request: Request):
 
 
 @router.get(
+    "/control-room/sap-b1",
+    dependencies=[
+        Depends(require_permission("operations.read")),
+        Depends(require_permission("datasets.read")),
+    ],
+)
+async def control_room_sap_b1_page(request: Request):
+    return _console_next_response(request, "control-room/sap-b1/index.html")
+
+
+@router.get(
+    "/control-room/sap-b1/",
+    dependencies=[
+        Depends(require_permission("operations.read")),
+        Depends(require_permission("datasets.read")),
+    ],
+)
+async def control_room_sap_b1_page_slash(request: Request):
+    return _console_next_response(request, "control-room/sap-b1/index.html")
+
+
+@router.get(
     "/operational-intelligence",
     dependencies=[Depends(require_permission("datasets.read"))],
 )

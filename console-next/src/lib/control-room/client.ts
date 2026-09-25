@@ -68,8 +68,9 @@ export async function getControlRoomThresholds(): Promise<ThresholdPayload> {
   return response.data;
 }
 
-export async function getControlRoomAgentsOps(): Promise<ControlRoomAgentsOpsPayload> {
-  const response = await api.get<ControlRoomAgentsOpsPayload>(CONTROL_ROOM_PATHS.agentsOps);
+export async function getControlRoomAgentsOps(limit?: number): Promise<ControlRoomAgentsOpsPayload> {
+  const query = limit ? `?limit=${Math.max(1, Math.min(50, Math.floor(limit)))}` : "";
+  const response = await api.get<ControlRoomAgentsOpsPayload>(`${CONTROL_ROOM_PATHS.agentsOps}${query}`);
   return response.data;
 }
 
