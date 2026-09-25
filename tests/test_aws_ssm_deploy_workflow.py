@@ -37,9 +37,14 @@ def test_deploy_workflow_requires_immutable_ref_and_readiness():
     assert "GHCR_TOKEN" not in workflow
     assert "github.token" not in workflow
     assert "MODECISSIONS_BOOTSTRAP_CONTROL_ROOM_EVIDENCE=false" in workflow
-    assert "/tmp/omega-deploy.log" in workflow
+    assert "/var/log/omega-deploy/deploy.log" in workflow and "/tmp/omega-deploy.log" not in workflow
+    assert "install -d -m 700 -o root -g root /var/log/omega-deploy" in workflow and "umask 077" in workflow
     assert "deploy heartbeat" in workflow
-    assert "tail -n 200" in workflow
+    assert "tail -n 60 {deploy_log} | {redact}" in workflow and "tail -n 200" not in workflow
+    assert "ssh-keyscan" not in workflow and "GITHUB_HOST_KEYS" in workflow
+    assert "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" in workflow
+    assert "PUBLIC_CONSOLE_URL: ${{ vars.PUBLIC_CONSOLE_URL }}\n" in workflow and "elb.amazonaws.com" not in workflow
+    assert '[[ "${PUBLIC_CONSOLE_URL}" == https://* ]]' in workflow
     assert "/healthz" in workflow
     assert "/readyz" in workflow
     assert "/readyz?require_data=1" in workflow

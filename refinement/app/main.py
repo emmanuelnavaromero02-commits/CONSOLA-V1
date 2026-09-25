@@ -2983,6 +2983,10 @@ def _seed_catalog_from_existing() -> int:
             col_map = ds_full.get("column_mapping", {}) if ds_full else {}
 
             if layer == "silver":
+                try:
+                    _validate_dataset_name(name)
+                except HTTPException:
+                    continue
                 parquet = (
                     f"s3://{engine.minio_bucket}/silver/{cartridge}/{name}/data.parquet"
                 )
@@ -3013,12 +3017,15 @@ def _seed_catalog_from_existing() -> int:
                         )
                     )
                     with conn.cursor() as cur:
-                        cur.execute(f"""
+                        cur.execute(
+                            """
                             SELECT column_name, data_type
                             FROM information_schema.columns
-                            WHERE table_name = 'gold_{name}'
+                            WHERE table_name = %s
                             ORDER BY ordinal_position
-                        """)
+                            """,
+                            (f"gold_{name}",),
+                        )
                         fields = [{"name": r[0], "type": r[1]} for r in cur.fetchall()]
                     conn.close()
                 except Exception as exc:

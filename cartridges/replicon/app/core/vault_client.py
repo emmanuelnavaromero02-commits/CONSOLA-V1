@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 import hashlib
+from collections import OrderedDict
 from typing import Any
 
 import requests
@@ -11,7 +13,49 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-_CONNECTION_CACHE: dict[tuple[str, str, str], dict[str, Any]] = {}
+class _ConnectionCache:
+    def __init__(self, ttl_seconds: float = 300.0, max_entries: int = 256) -> None:
+        self._ttl = ttl_seconds
+        self._max = max_entries
+        self._items: OrderedDict[Any, tuple[float, Any]] = OrderedDict()
+
+    def get(self, key: Any, default: Any = None) -> Any:
+        item = self._items.get(key)
+        if item is None:
+            return default
+        expires_at, value = item
+        if expires_at <= time.monotonic():
+            self._items.pop(key, None)
+            return default
+        self._items.move_to_end(key)
+        return value
+
+    def __setitem__(self, key: Any, value: Any) -> None:
+        self._items[key] = (time.monotonic() + self._ttl, value)
+        self._items.move_to_end(key)
+        while len(self._items) > self._max:
+            self._items.popitem(last=False)
+
+    def __contains__(self, key: Any) -> bool:
+        return self.get(key, _MISSING) is not _MISSING
+
+    def __iter__(self):
+        return iter(list(self._items))
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+    def pop(self, key: Any, default: Any = None) -> Any:
+        item = self._items.pop(key, None)
+        return default if item is None else item[1]
+
+    def clear(self) -> None:
+        self._items.clear()
+
+
+_MISSING = object()
+
+_CONNECTION_CACHE = _ConnectionCache()
 
 _ENV_ALIASES: dict[str, tuple[str, ...]] = {
     "REPLICON_API_TOKEN": ("REPLICON_API_TOKEN", "REPLICON_TOKEN", "REPLICON_API_KEY"),

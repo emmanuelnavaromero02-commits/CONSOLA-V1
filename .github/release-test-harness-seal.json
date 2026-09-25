@@ -15,7 +15,7 @@
     },
     {
       "path": "Makefile",
-      "sha256": "0df8651a3c97eaba629d741ce8629f87d876901dd5ad9395073e4f1e858f3767"
+      "sha256": "307b9cf5f84f5b7943d64543b2b91188663b3c3be863a3d5121585135f7d7294"
     },
     {
       "path": "airflow/dags/_secrets.py",
@@ -291,7 +291,7 @@
     },
     {
       "path": "cartridges/hubspot/app/core/vault_client.py",
-      "sha256": "c79c006af1a725ef34255db658b9efd942e7d1ca9e4ec54eb762bf1b99e767be"
+      "sha256": "e2d48925da209d9d06bb102827a60e17425658afa15086149cf4b2686a053614"
     },
     {
       "path": "cartridges/hubspot/app/main.py",
@@ -351,7 +351,7 @@
     },
     {
       "path": "cartridges/hubspot/dags/hubspot_extract.py",
-      "sha256": "be56249988e6961d774be9da55ddd612274f497f9ed1ecb5cc5cd89e83dd61b5"
+      "sha256": "3fe295f4b7721ab8e1cc484d6d8afb8c5b660f4cbeff835ad0628af376b4949f"
     },
     {
       "path": "cartridges/hubspot/dags/hubspot_extract_all.py",
@@ -555,7 +555,7 @@
     },
     {
       "path": "cartridges/replicon/app/core/vault_client.py",
-      "sha256": "d36b3cdd959cdfa89a42e005851a73c10cf31a5c6d1a5ff4a9d8fa82a8076f9f"
+      "sha256": "90a8e44f1bdb01d3014c09c4b3489cd101fed4580736e889153ebd72686cddb9"
     },
     {
       "path": "cartridges/replicon/app/main.py",
@@ -627,7 +627,7 @@
     },
     {
       "path": "cartridges/replicon/dags/replicon_extract.py",
-      "sha256": "4d586abe64229c9991a4cfc01565b889489e779b36f1bdde3177372dec644336"
+      "sha256": "9c87f8e544655a77029fa68a899fc1ded7fc8fb2d488c72027fe50737dad95d2"
     },
     {
       "path": "cartridges/replicon/dags/replicon_ses_inbox_import.py",
@@ -719,7 +719,7 @@
     },
     {
       "path": "cartridges/salesforce/app/core/vault_client.py",
-      "sha256": "55d77ad5fddb59f1422b46bfa1391db04a93a1bb2d1a0c8b66d5f54bd19cf879"
+      "sha256": "976a2f203305c2cf865bd8c89ee96a7eb671929c1aa3d5116b4e285bc93d6e83"
     },
     {
       "path": "cartridges/salesforce/app/main.py",
@@ -783,7 +783,7 @@
     },
     {
       "path": "cartridges/salesforce/dags/salesforce_extract.py",
-      "sha256": "476d227b25cd26922cc47b5a3bc64cda9f5c7de118d816b09e44eadf8082861d"
+      "sha256": "beb303fbf60697b317fb75be13e5c9b78dfefee329d1c64c3667fb51b4b23708"
     },
     {
       "path": "cartridges/salesforce/dags/salesforce_extract_all.py",
@@ -875,7 +875,7 @@
     },
     {
       "path": "cartridges/sap_b1/app/core/vault_client.py",
-      "sha256": "e650b9ec3b8a20ecc921c8142b8286c02f86632285fb7a4e05cba53937b2d5bf"
+      "sha256": "52550082ac98245b4fb93640879527ca9af06bc4cb2c0d600a0bb72ad6cf98f4"
     },
     {
       "path": "cartridges/sap_b1/app/main.py",
@@ -967,7 +967,7 @@
     },
     {
       "path": "cartridges/sap_b1/dags/sap_b1_extract.py",
-      "sha256": "a4744d2350e2eec8f083a0353b5065a8f6d0ffe9a28faea04d198d8915facdde"
+      "sha256": "67973d6a16a5350f34bccf02e9bb838e1b9599dfd89127ed9b242447dd136aab"
     },
     {
       "path": "cartridges/sap_b1/dags/sap_b1_extract_all.py",
@@ -1099,7 +1099,7 @@
     },
     {
       "path": "cartridges/sap_hcm/app/core/vault_client.py",
-      "sha256": "7eca70c8b1fa75b0917b26a02a2b410c789df80b8c4ea79b164a44f0cd67e547"
+      "sha256": "04cb6be8769728213f3d704a0127de135f1047050940434ad5355a5c1921a594"
     },
     {
       "path": "cartridges/sap_hcm/app/main.py",
@@ -1171,7 +1171,7 @@
     },
     {
       "path": "cartridges/sap_hcm/dags/sap_hcm_extract.py",
-      "sha256": "b01926e0c40360d2547b68647b866194780da415b78c96336a581fde45855b47"
+      "sha256": "c29dc2176c13e6c955d49353b7b336cc10d5e469cdb6ecd76bb99f6c0ea16698"
     },
     {
       "path": "cartridges/sap_hcm/dags/sap_hcm_extract_all.py",
@@ -1267,7 +1267,7 @@
     },
     {
       "path": "cartridges/sap_s4hana/app/core/vault_client.py",
-      "sha256": "f94fdf07f6080f93dfc5876a823a6c8c00fa0d6144d597bee16c5954509ba788"
+      "sha256": "3f2565a13db3e361bbc49468d5bc516db873a23477878af11c956a2c25734c71"
     },
     {
       "path": "cartridges/sap_s4hana/app/main.py",
@@ -1339,7 +1339,7 @@
     },
     {
       "path": "cartridges/sap_s4hana/dags/sap_s4hana_extract.py",
-      "sha256": "cdf6775af62e693c8c6ad6cc85c13185fd43eae65998ba79f4e17f673baa5039"
+      "sha256": "239d94d83f5c9669706c38f62f695de77cdcfd7eddccbfd37b5ea3087a3e2eb5"
     },
     {
       "path": "cartridges/sap_s4hana/dags/sap_s4hana_extract_all.py",
@@ -1451,7 +1451,7 @@
     },
     {
       "path": "cartridges/sap_successfactors/app/core/vault_client.py",
-      "sha256": "e61e331b9f45c4be7120229f313be1d151a71db45e0a08b8ef86212351de0efd"
+      "sha256": "79e2fa467dc99db989db996072543677d4d292fde81f53b07a823257e67bb2ea"
     },
     {
       "path": "cartridges/sap_successfactors/app/main.py",
@@ -1899,7 +1899,7 @@
     },
     {
       "path": "console/tests/test_auth_dependencies.py",
-      "sha256": "700178efff6442a05072696451fac0d384d094e0aa41d9eaf34e3542a0caf580"
+      "sha256": "39432178bfc23118b1813f2f45750a3108642b410b89680c0be7d165dcc3a2bb"
     },
     {
       "path": "console/tests/test_auth_service_cleanup.py",
@@ -3999,7 +3999,7 @@
     },
     {
       "path": "tests/test_aws_ssm_deploy_workflow.py",
-      "sha256": "c717befb7111c777c9597fb8db50cc23f9f35d9cbbfe5dd14f632ae4e79ec57a"
+      "sha256": "90e3f011a3bae04decf0875def7f0eaff3f71b6677a83b2390e9f500a6c05f54"
     },
     {
       "path": "tests/test_banxico_cartridge_runtime_contract.py",
@@ -4122,6 +4122,10 @@
       "sha256": "38cb6d1efbfd291b03f4c4bcde3e8065a10ad739626185c4a33db0498712ff49"
     },
     {
+      "path": "tests/test_cartridge_vault_connection_cache.py",
+      "sha256": "5a8cb66f1458cbee4d416bfcb583b00d57188de5372f7b00b1fd018bbc39eee2"
+    },
+    {
       "path": "tests/test_cartridges_skills_list_healthz.py",
       "sha256": "707878ba6bcdf91d78a23b644abb56c276c101a2b0806b58e2788e7ce8a330e2"
     },
@@ -4139,7 +4143,7 @@
     },
     {
       "path": "tests/test_ci_workflows_present.py",
-      "sha256": "319e66209fa088c729644381392f204f0f30040d14cb223b489200540345391f"
+      "sha256": "49a8d1074955b2a32102894fd3c4748aae34173eaf9bfc403812ec9d596ce721"
     },
     {
       "path": "tests/test_company_onboarding_contract.py",
@@ -4740,6 +4744,10 @@
     {
       "path": "tests/test_external_action_framework.py",
       "sha256": "3f82996e48654603f14ef6b3a25415dc2ecef6a328aecb7baef2d1c9f5f0d13c"
+    },
+    {
+      "path": "tests/test_extract_dag_names_are_validated.py",
+      "sha256": "76837f8c683e9742ddc08a9f259b8ec62db0126fdb4901c07a17e39bd2c4a055"
     },
     {
       "path": "tests/test_extract_preflight.py",

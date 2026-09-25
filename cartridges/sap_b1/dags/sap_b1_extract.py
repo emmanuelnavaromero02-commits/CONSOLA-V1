@@ -1,9 +1,20 @@
 from __future__ import annotations
+import re
 import os
 from datetime import timedelta
 
 import httpx
 from airflow.decorators import dag, task
+
+
+_SAFE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]{0,127}")
+
+
+def _safe_name(value: object, label: str) -> str:
+    text = str(value or "").strip()
+    if not _SAFE_NAME.fullmatch(text):
+        raise ValueError(f"invalid {label}")
+    return text
 
 
 def _is_production() -> bool:
@@ -36,7 +47,7 @@ def sap_b1_extract():
     @task
     def trigger_extract(**context):
         conf = context.get("dag_run").conf or {}
-        entity = conf.get("entity")
+        entity = _safe_name(conf.get("entity"), "entity")
         if not entity:
             raise ValueError("entity parameter is required")
 

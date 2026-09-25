@@ -13,6 +13,16 @@ from airflow.decorators import dag, task
 from airflow.models import Variable
 from outbound_egress_guard import guarded_session
 
+
+_SAFE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]{0,127}")
+
+
+def _safe_name(value: object, label: str) -> str:
+    text = str(value or "").strip()
+    if not _SAFE_NAME.fullmatch(text):
+        raise ValueError(f"invalid {label}")
+    return text
+
 try:
     from app.core.auth_factory import auth_trace, build_auth_headers
 except ModuleNotFoundError:  # pragma: no cover - Airflow mounts app code separately
@@ -239,7 +249,7 @@ def _resolve_connection(
     entity: str, requested_conn_id: str | None = None
 ) -> tuple[str, dict, str]:
     cfg = _get_entity_config(entity)
-    conn_id = requested_conn_id or cfg.get("connection_id") or DEFAULT_CONN_ID
+    conn_id = _safe_name(requested_conn_id or cfg.get("connection_id") or DEFAULT_CONN_ID, "conn_id")
     return _get_connection(conn_id)
 
 
@@ -624,7 +634,7 @@ def replicon_extract():
         dag_run = context.get("dag_run")
         run_conf = dag_run.conf if dag_run and isinstance(dag_run.conf, dict) else {}
         conf = {**(params or {}), **run_conf}
-        entity = str(conf.get("entity") or "User").strip()
+        entity = _safe_name(conf.get("entity") or "User", "entity")
         upstream = conf.get("security_context")
         if not isinstance(upstream, dict):
             raise RuntimeError("refresh chain admission authority is required")
@@ -654,7 +664,7 @@ def replicon_extract():
         dag_run = context.get("dag_run")
         run_conf = dag_run.conf if dag_run and dag_run.conf else {}
         conf = {**(params or {}), **run_conf}
-        entity = conf.get("entity", "User")
+        entity = _safe_name(conf.get("entity", "User"), "entity")
         mode = conf.get("mode", "incremental")
         from_date = conf.get("from_date") or None
         to_date = conf.get("to_date") or None

@@ -232,8 +232,9 @@ async def get_current_global_user(request: Request) -> dict:
 
 def require_role(role_name: str) -> Callable:
     async def dependency(user: dict = Depends(get_current_user)) -> dict:
-        role = user.get("workspace_role") or user.get("role")
-        if role != role_name:
+        from app.services.permissions import workspace_role
+
+        if user.get("role") != role_name and workspace_role(user) != role_name:
             raise HTTPException(status_code=403, detail=f"{role_name} role required")
         return user
 

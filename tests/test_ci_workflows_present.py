@@ -187,3 +187,13 @@ def test_workflows_declare_least_privilege_permissions(path):
         f"{path.name} permissions.contents must be ``read``, got "
         f"{perms.get('contents')!r}"
     )
+
+
+def test_bandit_gate_reports_medium_confidence_against_the_reviewed_baseline():
+    raw = (Path(__file__).resolve().parents[1] / ".github/workflows/security.yml").read_text(encoding="utf-8")
+    gate = raw.split("bandit -r")[2]
+    assert "--confidence-level medium" in gate and "--confidence-level high" not in raw
+    assert "-b .github/bandit-baseline.json" in gate
+    for target in ("airflow", "omega_lakehouse"):
+        assert target in gate
+    assert (Path(__file__).resolve().parents[1] / ".github/bandit-baseline.json").is_file()
