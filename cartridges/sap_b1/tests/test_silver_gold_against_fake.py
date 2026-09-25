@@ -33,7 +33,7 @@ def world(tmp_path_factory, fake_postgres, dataset):
     )
     monkeypatch.setenv("SAP_B1_INTERCOMPANY", mapping)
     root = tmp_path_factory.mktemp("bronze")
-    bronze = Bronze(root)
+    bronze = Bronze(root, today=dataset.as_of)
     bronze.install(monkeypatch)
     dsn = fake_postgres["dsn"]
 

@@ -55,7 +55,7 @@ def sales(tmp_path_factory, fake_postgres, dataset):
         + ["threshold:mx_dist_b:*:distributor_margin_min_pct=99", f"setting:*:*:expiry_horizon_days={HORIZON_DAYS}"]
     ))
     root = tmp_path_factory.mktemp("sales-bronze")
-    bronze = Bronze(root)
+    bronze = Bronze(root, today=dataset.as_of)
     bronze.install(monkeypatch)
     _extract()
     assert not bronze.failed

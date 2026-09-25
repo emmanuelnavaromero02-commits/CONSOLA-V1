@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import re
 import shutil
-from datetime import datetime
+from datetime import date, datetime, time, timedelta, timezone
+from itertools import count
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
@@ -13,8 +14,9 @@ HEADER_RE = re.compile(r"^--\s+(\S+)\s+\((silver|gold)\)\s+cartridge:\s+sap_b1\s
 
 
 class Bronze:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, today: date | None = None) -> None:
         self.root = root
+        self.today = today
         self.watermarks: dict[str, str] = {}
         self.failed: list[dict] = []
         self.runs = 0
@@ -25,6 +27,7 @@ class Bronze:
         from app.services import extraction_service as es
         from app.services import intercompany as ic
         from app.services import parquet_service
+        from app.services.bronze_parquet import stamp_now
 
         def _copy(*, local_path: str, object_name: str) -> None:
             target = self.root / object_name
@@ -43,6 +46,11 @@ class Bronze:
         monkeypatch.setattr(es, "get_watermark", lambda key: self.watermarks.get(key))
         monkeypatch.setattr(es, "update_watermark", lambda **kw: self.watermarks.__setitem__(kw["entity_name"], kw["last_watermark_value"]))
         monkeypatch.setattr(b1_source.Connection, "source_now", lambda self: datetime(2099, 1, 1))
+        if self.today is not None:
+            start = datetime.combine(self.today, time(12, 0), tzinfo=timezone.utc)
+            ticks = count()
+            monkeypatch.setattr(parquet_service, "stamp_now",
+                                lambda now=None: stamp_now(now or start + timedelta(seconds=next(ticks))))
 
 
 def _configs() -> list[dict]:

@@ -46,7 +46,7 @@ def finance(tmp_path_factory, fake_postgres, dataset):
         controls + ["threshold:*:*:margin_min_pct=25", "setting:mx_ghost:*:unused=1"]
     ))
     root = tmp_path_factory.mktemp("finance-bronze")
-    bronze = Bronze(root)
+    bronze = Bronze(root, today=dataset.as_of)
     bronze.install(monkeypatch)
     _extract()
     assert not bronze.failed
