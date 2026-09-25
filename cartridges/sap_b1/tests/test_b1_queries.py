@@ -60,9 +60,6 @@ def _oinm() -> dict:
     }
 
 
-# ── identifiers and companies ───────────────────────────────────────────────
-
-
 def test_identifiers_are_validated_before_they_reach_sql():
     assert quote_ident("DocEntry") == '"DocEntry"'
     assert quote_ident("Line_ID") == '"Line_ID"'
@@ -96,9 +93,6 @@ def test_connection_renders_the_driver_placeholder():
 
     assert Connection(_Raw(), "%s", ()).render('SELECT ? FROM "T" WHERE "A" = ?') == 'SELECT %s FROM "T" WHERE "A" = %s'
     assert Connection(_Raw(), "?", ()).render('SELECT ? FROM "T"') == 'SELECT ? FROM "T"'
-
-
-# ── watermarks ─────────────────────────────────────────────────────────────
 
 
 def test_update_stamp_watermark_round_trips_and_backs_off():
@@ -139,9 +133,6 @@ def test_watermark_keys_are_per_entity_and_company():
     assert q.watermark_key("OINV", "mx_mfg") == "OINV@mx_mfg"
 
 
-# ── plans ──────────────────────────────────────────────────────────────────
-
-
 def test_plan_rejects_incomplete_or_inconsistent_configs():
     with pytest.raises(ValueError, match="select_fields"):
         q.plan_from_config({"entity": "OINV", "select_fields": []})
@@ -168,9 +159,6 @@ def test_plan_accepts_json_and_csv_column_lists():
     assert plan.output_columns[-2:] == ("_company", "_source_updated_at")
     snapshot = q.plan_from_config({"entity": "OITW", "select_fields": "ItemCode, WhsCode, OnHand", "primary_key": "ItemCode,WhsCode"})
     assert snapshot.watermark_kind is None and not snapshot.incremental_capable
-
-
-# ── SQL ────────────────────────────────────────────────────────────────────
 
 
 def test_header_incremental_sql_uses_the_stamp_pair_and_keyset_paging():
@@ -259,9 +247,6 @@ def test_full_mode_of_a_snapshot_table_has_no_predicate_or_paging_without_a_key(
     assert params == []
     with pytest.raises(ValueError, match="mode"):
         q.select_sql(plan, "SBO_X", mode="delta")
-
-
-# ── rows ───────────────────────────────────────────────────────────────────
 
 
 def test_rows_become_records_with_company_and_source_stamp():

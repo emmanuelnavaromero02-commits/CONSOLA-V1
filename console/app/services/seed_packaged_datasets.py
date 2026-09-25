@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 _REGISTRY = pathlib.Path("/registry/cartridges")
 _EXPECTED_CATALOG_FILES = 297
 _EXPECTED_CATALOG_DIGEST = (
-    "79b2f012bb6ced7b48def73853c17fce69b0762276eb275ea6b1d81aff526922"
+    "2e91479128af588b4687a892f127be4716cc310965f6339aef0ea4fff44a4dd5"
 )
 
 _parse_dataset = parse_dataset

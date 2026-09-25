@@ -60,11 +60,6 @@ def test_sap_catalog_services_do_not_swallow_seed_errors():
             REPO_ROOT / "cartridges" / cartridge / "app" / "services" / "catalog_service.py"
         ).read_text(encoding="utf-8")
         assert "pass  # DB unavailable" not in source
-        # A failed seed is logged and re-raised, never swallowed. Two spellings
-        # are accepted on purpose: `logger.exception` (with traceback) and, for
-        # cartridges hardened against driver exceptions that can embed a DSN or
-        # signed request details (sap_successfactors since #640), a
-        # `logger.error` that carries the exception class only.
         logs_with_traceback = "logger.exception" in source
         logs_class_only = "logger.error(" in source and "type(exc).__name__" in source
         assert logs_with_traceback or logs_class_only, f"{cartridge}: seed failure is not logged"
@@ -78,9 +73,6 @@ def test_live_sap_entities_seeded_in_entity_config():
     try:
         conn = psycopg2.connect(_postgres_dsn(), connect_timeout=2)
     except Exception:
-        # A fixed reason on purpose: the release skip policy authorizes exact
-        # (nodeid, phase, reason) tuples, and the driver's message is
-        # environment-specific text that could never be authorized.
         pytest.skip("requires a reachable Postgres with the platform schema (DATABASE_URL)")
 
     with conn, conn.cursor() as cur:

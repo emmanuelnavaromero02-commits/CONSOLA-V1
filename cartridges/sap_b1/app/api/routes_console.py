@@ -1,19 +1,4 @@
-"""
-Console-style endpoint aliases.
-
-Clean RESTful routes for the MODecissions console UI. They thin-wrap the
-existing service functions used by ``/skills/*`` — no logic is duplicated.
-
-Authentication:
-    All routes require ``X-Internal-Api-Key`` via ``Depends(verify_api_key)``.
-
-Errors:
-    * missing/invalid key       → 401
-    * unknown entity            → 404
-    * Business One DB / Postgres / MinIO not configured → 503 with
-      ``{status:"degraded", configured:false, missing:[...], components:[...]}``
-    * unexpected database / runtime  → 503 with the underlying error message
-"""
+"""Console-style endpoint aliases."""
 from __future__ import annotations
 
 import anyio
@@ -79,8 +64,6 @@ def _scoped_config(config: dict[str, Any], ctx: dict[str, Any] | None) -> dict[s
     return {**config, "security_context": ctx} if ctx else config
 
 
-# ── Catalogue ────────────────────────────────────────────────────────────────
-
 @router.get("/entities")
 def entities() -> dict:
     """List every configured entity for this cartridge."""
@@ -108,18 +91,12 @@ def entity_schema(entity_id: str) -> dict:
     }
 
 
-# ── Preview ──────────────────────────────────────────────────────────────────
-
 @router.get("/entities/{entity_id}/preview")
 def entity_preview(
     entity_id: str,
     limit: int = Query(20, ge=1, le=200),
 ):
-    """Preview up to ``limit`` rows of an entity from Bronze (DuckDB → MinIO).
-
-    Returns 503 ``{status:"degraded"}`` when MinIO/Bronze can't be reached
-    instead of bubbling a 500.
-    """
+    """Preview up to ``limit`` rows of an entity from Bronze (DuckDB → MinIO)."""
     _get_entity_or_404(entity_id)
 
     try:
@@ -138,8 +115,6 @@ def entity_preview(
         })
 
 
-# ── Extract ──────────────────────────────────────────────────────────────────
-
 @router.post("/entities/{entity_id}/extract")
 def entity_extract(
     entity_id: str,
@@ -149,11 +124,7 @@ def entity_extract(
     job_id: str | None = None,
     body: dict[str, Any] | None = Body(None),
 ):
-    """Trigger an extraction for one entity (synchronous, returns when done).
-
-    For background batch execution use the MCP ``extract`` tool which
-    persists a job in PostgreSQL — this endpoint is the synchronous variant.
-    """
+    """Trigger an extraction for one entity (synchronous, returns when done)."""
     config = _get_entity_or_404(entity_id)
     if mode == "historical" and not config.get("date_field"):
         raise HTTPException(
@@ -222,8 +193,6 @@ def extract_all(
                     "status": "failed",
                     "error": str(exc),
                 })
-        # The intercompany mapping is configuration, not a table; it lands in
-        # Bronze with every full cycle so silver can join it.
         try:
             result = refresh_intercompany_partners(ctx)
             _mark_external_job(_trigger_silver_refresh, result["entity"], ctx)
@@ -252,8 +221,6 @@ def intercompany_refresh(body: dict[str, Any] | None = Body(None)):
     finally:
         reset_security_context(token)
 
-
-# ── Observability ────────────────────────────────────────────────────────────
 
 @router.get("/runs")
 def runs(entity: str | None = None) -> dict:

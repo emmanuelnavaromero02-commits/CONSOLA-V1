@@ -1,21 +1,4 @@
-"""Read Business One tables company by company into Bronze parquet.
-
-One run covers one entity across every configured company. Rows carry
-``_company`` (the alias) and ``_source_updated_at`` (the header stamp) so the
-silver layer can keep the latest version of a document per company. The
-watermark is tracked per ``entity@alias`` in ``entity_watermarks``.
-
-Each company is flushed and its watermark committed before the next company
-starts: a schema that fails half-way through the group never makes the
-others re-read what they already delivered. The watermark never advances
-past the source clock read at the start of the run, so a document edited
-behind the cursor during a long read is still reached by the next cycle.
-
-A run that reads zero changed rows on an incremental cycle is a success
-with zero rows and writes no file: nothing changed. A connection or query
-failure raises after the run is marked ``failed``; it is never reported as
-zero rows.
-"""
+"""Read Business One tables company by company into Bronze parquet."""
 from __future__ import annotations
 
 import json
@@ -39,10 +22,6 @@ logger = logging.getLogger(__name__)
 
 CARTRIDGE_ID = "sap_b1"
 
-# The per-company loop itself lives in ``app.services.b1_reader`` so the
-# Windows push agent runs the very same code against its own sinks;
-# ``BATCH_SIZE`` and ``WATERMARK_BUFFER_MINUTES`` are re-exported here and
-# passed through at call time so they stay patchable on this module.
 __all__ = ["BATCH_SIZE", "WATERMARK_BUFFER_MINUTES", "run_entity"]
 
 

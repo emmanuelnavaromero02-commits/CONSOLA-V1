@@ -138,9 +138,6 @@ async def test_complete_catalog_is_idempotent_isolated_and_non_destructive(
             dataset = packaged_seed._parse_dataset(path)
             canonical_by_name[dataset["name"]] = dataset
 
-    # The sealed size of the catalog lives in one place (the seeder's expected
-    # constants, which dataset_files() has just verified byte for byte); the
-    # counts below follow it instead of repeating a number per cartridge added.
     total = packaged_seed._EXPECTED_CATALOG_FILES
     assert len(packaged) == 10
     assert "sap_b1" in packaged

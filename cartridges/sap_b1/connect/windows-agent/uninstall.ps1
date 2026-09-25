@@ -1,16 +1,4 @@
 #Requires -RunAsAdministrator
-<#
-.SYNOPSIS
-    Desinstala el agente OMEGA para SAP Business One.
-
-.DESCRIPTION
-    Elimina la tarea programada y el codigo (-InstallRoot). El directorio de
-    datos (-DataRoot: agent.toml, estado SQLite, cola local y registros) se
-    conserva salvo que se indique -PurgeData, porque la cola puede contener
-    archivos extraidos que todavia no llegaron al lakehouse.
-
-    No desinstala Python ni elimina la cuenta de servicio.
-#>
 [CmdletBinding()]
 param(
     [string]$InstallRoot = (Join-Path $env:ProgramFiles 'OmegaSapB1Agent'),

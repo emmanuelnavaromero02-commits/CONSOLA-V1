@@ -1,26 +1,4 @@
--- OMEGA — least-privilege DB role for the SAP Business One cartridge (sap_b1).
---
--- Mirrors what 36_cartridge_and_meta_roles.sql, 38_copilot_conversations.sql,
--- 46_sap_jobs_permissions.sql, 99e_operational_native_rls.sql,
--- 99n_rag_viewer_scoped_rls.sql and 99x/99zzw (20c scope) give the other SAP
--- cartridge roles, for one new role: omega_cartridge_sap_b1. Those files are
--- checksum-recorded in schema_migrations, so the role is added here rather
--- than by editing them.
---
--- Deliberate difference from migration 36: when the password GUC
--- (app.omega_cartridge_sap_b1_password, from OMEGA_CARTRIDGE_SAP_B1_PASSWORD)
--- is empty this file WARNS and creates nothing instead of raising. The
--- cartridge is opt-in per host (compose profile "sap"); a host that does not
--- run it must not fail its migration step over a password it has no use for.
--- Every later block is conditional on the role existing, and the whole file
--- is idempotent, so it can be re-run by hand once the password is set:
---
---   PGOPTIONS="-c app.omega_cartridge_sap_b1_password=<value>" \
---     psql -U postgres -d modecissions -f infra/init/99zzzzl_sap_b1_cartridge_role.sql
---
--- (apply_db_migrations.sh will not re-run it: it is already in the ledger.)
 
--- ── 1. Role ────────────────────────────────────────────────────────────────
 DO $$
 DECLARE
   pw TEXT := current_setting('app.omega_cartridge_sap_b1_password', true);
@@ -36,7 +14,6 @@ BEGIN
   EXECUTE format('CREATE ROLE omega_cartridge_sap_b1 LOGIN PASSWORD %L', pw);
 END $$;
 
--- ── 2. Operational grants (36 + 46) ────────────────────────────────────────
 DO $$
 DECLARE
   tbl TEXT;
@@ -46,9 +23,6 @@ BEGIN
   END IF;
   GRANT CONNECT ON DATABASE modecissions TO omega_cartridge_sap_b1;
   GRANT USAGE ON SCHEMA public TO omega_cartridge_sap_b1;
-  -- job_runner self-heals the jobs table on boot (ALTER TABLE ... ADD COLUMN
-  -- IF NOT EXISTS), which needs CREATE on the schema and ownership through
-  -- the shared NOLOGIN owner role from migration 46.
   GRANT CREATE ON SCHEMA public TO omega_cartridge_sap_b1;
   FOREACH tbl IN ARRAY ARRAY[
     'cartridges', 'entity_config', 'kb_config',
@@ -69,7 +43,6 @@ BEGIN
   END IF;
 END $$;
 
--- ── 3. Hard locks (36 + 38): identity, auth, decisions, vault, conversations ─
 DO $$
 DECLARE
   tbl TEXT;
@@ -90,10 +63,6 @@ BEGIN
   END LOOP;
 END $$;
 
--- ── 4. Row-level security membership ───────────────────────────────────────
--- Policies are permissive and OR together, so a parallel policy for the new
--- role with the same expressions is equivalent to being in the original
--- role lists (the pattern 99zzw used for the SAP roles).
 DO $$
 DECLARE
   tbl TEXT;
@@ -104,7 +73,6 @@ BEGIN
     RETURN;
   END IF;
 
-  -- 99n: entity_watermarks (platform_admin bypass for unscoped runs).
   IF to_regclass('public.entity_watermarks') IS NOT NULL THEN
     DROP POLICY IF EXISTS entity_watermarks_workspace_rls_sap_b1 ON public.entity_watermarks;
     CREATE POLICY entity_watermarks_workspace_rls_sap_b1 ON public.entity_watermarks
@@ -119,7 +87,6 @@ BEGIN
       );
   END IF;
 
-  -- 99x / 99zzw: the 20c-audited observability tables.
   FOREACH tbl IN ARRAY ARRAY['run_logs', 'extraction_runs', 'jobs', 'kb_runs'] LOOP
     IF to_regclass(format('public.%I', tbl)) IS NULL THEN
       CONTINUE;
@@ -149,11 +116,6 @@ BEGIN
     );
   END LOOP;
 
-  -- 99e: the tenant/workspace operational tables that carry workspace_id and
-  -- an RLS policy list of service roles. The cartridge only touches the
-  -- tables granted above, so this covers the ones among them that 99e
-  -- scoped; the loop is written the same way to stay equivalent if 99e's
-  -- list grows.
   FOREACH tbl IN ARRAY ARRAY[
     'cartridges', 'entity_config', 'kb_config',
     'entity_watermarks', 'extraction_runs', 'kb_runs', 'jobs', 'run_logs'

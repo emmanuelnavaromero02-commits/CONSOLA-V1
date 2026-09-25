@@ -1,36 +1,4 @@
 #!/usr/bin/env bash
-# Install and configure the WireGuard endpoint for the SAP Business One
-# customer tunnel on an Ubuntu host (22.04 or later). Idempotent: re-running
-# keeps the existing keys, rewrites the config only when it changed and
-# restarts the interface only then.
-#
-# Where it runs: the host that owns the public UDP endpoint. In the current
-# AWS layout that is the VPN bastion (public subnet, Elastic IP), not the
-# application host, which sits in a private subnet without a public address
-# (see ../README.md). The bastion already runs the team VPN (wg-easy) inside
-# Docker with its own interface in the container's network namespace; this
-# script creates a separate kernel interface on a separate UDP port.
-#
-# Usage:
-#   sudo WG_LISTEN_PORT=... WG_SERVER_TUNNEL_IP=... ./install_wireguard_host.sh --keys-only
-#       installs WireGuard and generates OUR keypair; prints only the public key.
-#       Run this before the customer has sent anything.
-#   sudo WG_LISTEN_PORT=... WG_SERVER_TUNNEL_IP=... CUSTOMER_PEER_PUBLIC_KEY=... \
-#        CUSTOMER_PEER_TUNNEL_IP=... TENANT_SQL_PORT=... ./install_wireguard_host.sh
-#       writes /etc/wireguard/<WG_IFACE>.conf with the customer's peer, enables
-#       forwarding and the firewall rules, enables and starts wg-quick@<WG_IFACE>.
-#
-# Inputs (environment variables; every default is a placeholder that must be
-# replaced, the script refuses to continue while one is left):
-#   WG_IFACE                  interface and config name           (default wg0)
-#   WG_LISTEN_PORT            UDP port to listen on               (default <WG_LISTEN_PORT>)
-#   WG_SERVER_TUNNEL_IP       our address inside the tunnel       (default <WG_SERVER_TUNNEL_IP>)
-#   WG_PREFIX_LEN             tunnel subnet prefix length         (default 24)
-#   CUSTOMER_PEER_PUBLIC_KEY  the customer's WireGuard public key (default <CUSTOMER_PEER_PUBLIC_KEY>)
-#   CUSTOMER_PEER_TUNNEL_IP   the customer's address in the tunnel, no prefix (default <CUSTOMER_PEER_TUNNEL_IP>)
-#   TENANT_SQL_PORT           the only TCP port forwarded into the tunnel (default <TENANT_SQL_PORT>)
-#
-# Nothing here prints a private key. Keys live in /etc/wireguard with mode 600.
 set -euo pipefail
 
 WG_IFACE="${WG_IFACE:-wg0}"
@@ -64,14 +32,11 @@ require_filled() {   # refuse to render anything that still carries a <PLACEHOLD
 require_filled WG_LISTEN_PORT WG_SERVER_TUNNEL_IP
 [[ "$WG_LISTEN_PORT" =~ ^[0-9]{1,5}$ ]] || die "WG_LISTEN_PORT must be a port number"
 
-# 1. Packages: the kernel module ships with Ubuntu; wireguard-tools brings wg and wg-quick.
 if ! command -v wg >/dev/null 2>&1; then
     apt-get update -y
     DEBIAN_FRONTEND=noninteractive apt-get install -y wireguard wireguard-tools
 fi
 
-# 2. Our keypair, generated once. umask 077 makes the key file 600 from birth;
-#    the public key is derived from it every time so the two never diverge.
 umask 077
 mkdir -p "$WG_DIR"
 chmod 700 "$WG_DIR"
@@ -93,43 +58,11 @@ require_filled CUSTOMER_PEER_PUBLIC_KEY CUSTOMER_PEER_TUNNEL_IP TENANT_SQL_PORT
 [[ "$TENANT_SQL_PORT" =~ ^[0-9]{1,5}$ ]] || die "TENANT_SQL_PORT must be a port number"
 [[ "$CUSTOMER_PEER_PUBLIC_KEY" =~ ^[A-Za-z0-9+/]{42}=$ ]] || die "CUSTOMER_PEER_PUBLIC_KEY does not look like a WireGuard public key"
 
-# 3. Forwarding at the kernel level: packets arriving from the VPC (or from a
-#    Docker bridge when the platform shares this host) must be allowed to
-#    leave through the tunnel interface. Persisted so it survives reboots.
 cat > /etc/sysctl.d/99-wireguard-sap-b1.conf <<SYSCTL
 net.ipv4.ip_forward = 1
 SYSCTL
 sysctl -q --system >/dev/null
 
-# 4. The interface config, rendered below into a temporary file and installed
-#    only when it differs from the one in place.
-#
-#    PostUp / PostDown (undone symmetrically when the interface goes down),
-#    inserted at explicit positions so they read in chain order and all sit
-#    above Docker's own FORWARD chains on a host that runs Docker:
-#      FORWARD 1  replies that belong to connections we opened may come
-#                 back through the tunnel.
-#      FORWARD 2  anything else arriving FROM the tunnel is dropped: a NEW
-#                 connection from the customer's side towards the VPC never
-#                 gets to rely on the chain policy (DROP where Docker set
-#                 it, ACCEPT on a host without Docker).
-#      FORWARD 3  only TCP to the customer's tunnel address on the HANA port
-#                 may enter the tunnel,
-#      FORWARD 4  plus ICMP echo for diagnostics.
-#      INPUT 1-3  the same boundary for the host itself: replies to what the
-#                 host opened (ping, test_connection.sh from here) come in,
-#                 the customer may ping our tunnel address, and any other
-#                 connection from the tunnel to the host is dropped (SSH,
-#                 the team VPN's UI, Docker-published ports).
-#      MASQUERADE the source of forwarded packets becomes our tunnel address:
-#                 the only source the customer's AllowedIPs accepts, and the
-#                 only address their Windows firewall rule allows.
-#    WireGuard's own UDP handshake arrives on the public interface, not on
-#    %i, so none of this touches it.
-#    Routing needs no explicit `ip route`: wg-quick installs a route for each
-#    peer's AllowedIPs (the customer's /32) through the interface.
-#    No Endpoint on the peer: the customer initiates and keeps the tunnel
-#    alive (PersistentKeepalive on their side); we never dial out.
 RENDERED="$(mktemp)"
 trap 'rm -f "$RENDERED"' EXIT
 chmod 600 "$RENDERED"
@@ -175,7 +108,6 @@ else
     echo "wrote $CONF_FILE"
 fi
 
-# 5. systemd unit: enabled so the tunnel comes back after a reboot.
 systemctl enable "wg-quick@${WG_IFACE}" >/dev/null
 if systemctl is-active --quiet "wg-quick@${WG_IFACE}"; then
     if [[ "$CHANGED" -eq 1 ]]; then
@@ -187,7 +119,6 @@ else
     echo "started wg-quick@${WG_IFACE}"
 fi
 
-# 6. Summary. `wg show` never prints private keys.
 echo
 wg show "$WG_IFACE"
 echo

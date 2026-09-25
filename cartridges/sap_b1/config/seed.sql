@@ -1,12 +1,3 @@
--- ─────────────────────────────────────────────────────────────────────────────
--- MODecissions Cartridge: SAP Business One — seed configuration
--- GENERATED from app/config/entities.yaml (cartridges/sap_b1/tests keep both
--- in step). Run once to register this cartridge in a new installation.
--- Safe to re-run: every insert is ON CONFLICT DO NOTHING / DO UPDATE.
--- Company schema names are NOT here: they are runtime configuration.
--- ─────────────────────────────────────────────────────────────────────────────
-
--- ── Cartridge header ──────────────────────────────────────────────────────────
 INSERT INTO cartridges (id, name, version, description, pattern, category, bronze_path)
 VALUES (
     'sap_b1',
@@ -23,14 +14,12 @@ ON CONFLICT (id) DO UPDATE
         description = EXCLUDED.description,
         updated_at  = NOW();
 
--- ── DAGs ──────────────────────────────────────────────────────────────────────
 INSERT INTO cartridge_dags (cartridge_id, dag_id, file, description, trigger, params)
 VALUES
     ('sap_b1', 'sap_b1_extract',     'sap_b1_extract.py',     'Extrae una tabla de Business One en Bronze (full, incremental o histórico), todas las empresas configuradas', 'on-demand', '["entity","mode","from_date","to_date"]'),
     ('sap_b1', 'sap_b1_extract_all', 'sap_b1_extract_all.py', 'Extrae todas las tablas habilitadas',                                                                        'on-demand', '["mode","entities"]')
 ON CONFLICT (cartridge_id, dag_id) DO NOTHING;
 
--- ── Entities ──────────────────────────────────────────────────────────────────
 INSERT INTO entity_config
     (cartridge_id, entity, display_name, description, mode,
      watermark_field, watermark_format, page_size, primary_key, date_field,

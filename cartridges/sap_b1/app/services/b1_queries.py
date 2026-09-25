@@ -1,21 +1,4 @@
-"""Query plans for Business One tables: what to read and how to read it.
-
-Pure functions, no I/O. Everything that lands in SQL text is an identifier
-validated by ``app.core.b1_source``; every value is a bound parameter.
-
-Three reading patterns cover the catalogue:
-
-* header tables change in place and carry ``UpdateDate`` (a date) plus
-  ``UpdateTS`` (an integer HHMMSS); the watermark is the pair, read back as
-  ``(UpdateDate > d) OR (UpdateDate = d AND UpdateTS >= t)``;
-* line tables (INV1, JDT1, WOR1, ITT1) have no stamp of their own: they are
-  read through a join to their header and inherit its stamp, so an edited
-  document brings all of its lines back;
-* OINM movements never change once written: ``TransNum`` is the watermark.
-
-Pages are keyset pages on the primary key (``pk > last``), never OFFSET, so a
-million-row initial load costs the same per page as the first one.
-"""
+"""Query plans for Business One tables: what to read and how to read it."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -41,9 +24,6 @@ _WM_DATE_ALIAS = "_wm_date"
 _WM_TS_ALIAS = "_wm_ts"
 _INT_WIDTH = 15
 _STAMP_FORMAT = "%Y-%m-%dT%H:%M:%S"
-
-
-# ── Watermarks ─────────────────────────────────────────────────────────────
 
 
 def _as_date(value: Any) -> date | None:
@@ -101,8 +81,7 @@ class Watermark:
 
     @classmethod
     def parse(cls, kind: str | None, text: Any) -> "Watermark | None":
-        """Return None when the stored text cannot be trusted; the caller then
-        reads the whole table rather than guessing a boundary."""
+        """Return None when the stored text cannot be trusted."""
         if kind not in WATERMARK_KINDS:
             return None
         raw = str(text if text is not None else "").strip()
@@ -132,8 +111,7 @@ class Watermark:
         return self.at.strftime(_STAMP_FORMAT)
 
     def with_backoff(self, minutes: int) -> "Watermark":
-        """Re-read the last ``minutes`` so a row committed while the previous
-        run was reading is not lost; duplicates are removed downstream."""
+        """Re-read the last ``minutes`` so a row committed while the previous run was reading is not lost."""
         if self.kind != WATERMARK_UPDATE_TS or not minutes:
             return self
         assert self.at is not None
@@ -156,9 +134,6 @@ class Watermark:
 def watermark_key(entity: str, company_alias: str) -> str:
     """Watermarks are tracked per entity and company: ``OINV@mx_mfg``."""
     return f"{entity}@{company_alias}"
-
-
-# ── Plans ──────────────────────────────────────────────────────────────────
 
 
 def _as_list(value: Any) -> list[str]:
@@ -314,12 +289,7 @@ def plan_from_config(config: dict[str, Any]) -> EntityPlan:
 
 
 def arrow_schema(plan: EntityPlan):
-    """The parquet schema every file of this entity is written with.
-
-    Without ``column_types`` the writer infers types from the values, which
-    makes an all-null column (or an empty file) come out as ``null`` and
-    poisons later reads across files. With them, every file agrees.
-    """
+    """The parquet schema every file of this entity is written with."""
     if not plan.column_types:
         return None
     import pyarrow as pa
@@ -336,13 +306,8 @@ def arrow_schema(plan: EntityPlan):
     return pa.schema(fields)
 
 
-# ── SQL ────────────────────────────────────────────────────────────────────
-
-
 def _at_midnight(day: date) -> datetime:
-    """Bind a day as a datetime: B1 keeps its date columns as TIMESTAMP at
-    midnight, and a datetime parameter compares against TIMESTAMP on both
-    HANA and Postgres without an implicit cast."""
+    """Bind a day as a datetime: B1 keeps its date columns as TIMESTAMP at midnight, and a datetime parameter compares."""
     return datetime.combine(day, time.min)
 
 
@@ -385,16 +350,11 @@ def select_sql(
     from_date: str | None = None,
     to_date: str | None = None,
 ) -> tuple[str, list[Any]]:
-    """Render one page of ``plan`` in company ``schema`` as (sql, params).
-
-    ``?`` is the placeholder; ``Connection.render`` adapts it to the driver.
-    """
+    """Render one page of ``plan`` in company ``schema`` as (sql, params)."""
     if mode not in MODES:
         raise ValueError(f"mode must be one of {MODES}")
     schema_sql = quote_schema(schema)
     t, h = "t", "h"
-    # Line tables always go through their header: that is where the stamp
-    # lives, and a full load records the watermark like a header table does.
     use_join = bool(plan.parent)
     stamp_source = h if use_join else t
 
@@ -434,7 +394,6 @@ def select_sql(
             where.append(f"{column} >= ?")
             params.append(_at_midnight(start))
         if end is not None:
-            # Inclusive end day on a TIMESTAMP column.
             where.append(f"{column} < ?")
             params.append(_at_midnight(end + timedelta(days=1)))
 
@@ -451,9 +410,6 @@ def select_sql(
     return sql, params
 
 
-# ── Rows ───────────────────────────────────────────────────────────────────
-
-
 def rows_to_records(
     plan: EntityPlan,
     company_alias: str,
@@ -463,8 +419,6 @@ def rows_to_records(
     """Name the row values, stamp the company, derive ``_source_updated_at``."""
     names = [str(name) for name in columns]
     if names[: len(plan.columns)] != list(plan.columns):
-        # Drivers may lower-case unquoted names; ours are quoted, so a
-        # mismatch means the query did not come from this plan.
         raise ValueError(f"{plan.entity}: result columns do not match the plan")
     wm_date_index = names.index(_WM_DATE_ALIAS) if _WM_DATE_ALIAS in names else None
     wm_ts_index = names.index(_WM_TS_ALIAS) if _WM_TS_ALIAS in names else None

@@ -534,7 +534,6 @@ def test_compose_lock_rejects_build_tag_and_extra_consumer(
         elif attack == "mirror-lookalike":
             services["unexpected"] = {"image": f"ghcr.io/{owner}/omega-minio-evil:1"}
         else:
-            # A mirror-shaped name that actually is a release digest still blocks.
             services["unexpected"] = {"image": by_service["sap_b1"]}
 
     result = _run_compose_lock(tmp_path, identity, {}, mutate)
@@ -546,10 +545,7 @@ def test_compose_lock_rejects_build_tag_and_extra_consumer(
 def test_compose_lock_accepts_the_infrastructure_mirrors_hosted_in_the_namespace(
     tmp_path: Path, identity: ReleaseIdentity
 ) -> None:
-    """MinIO is rebuilt from source and hosted next to the release images (its
-    publisher withdrew it). The stack runs it by tag, by the exact repository
-    names the lock knows; that is not an unexpected consumer of a release
-    image. The first real run of this gate failed on exactly this."""
+    """MinIO is rebuilt from source and hosted next to the release images (its publisher withdrew it)."""
     owner = identity.owner
     result = _run_compose_lock(
         tmp_path,

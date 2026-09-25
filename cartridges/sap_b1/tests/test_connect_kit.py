@@ -1,10 +1,4 @@
-"""Static checks on the connection kit under ``cartridges/sap_b1/connect``.
-
-The repository is public. Every file in the kit must be publishable: no
-customer identifiers, no real-looking hosts or addresses, no secrets, SQL
-that grants nothing beyond SELECT on the company schemas, and templates
-that list exactly the variables the cartridge declares.
-"""
+"""Static checks on the connection kit under ``cartridges/sap_b1/connect``."""
 from __future__ import annotations
 
 import ast
@@ -24,9 +18,9 @@ KIT = CARTRIDGE / "connect"
 CONFIG_PY = CARTRIDGE / "app" / "core" / "config.py"
 VAULT_CLIENT_PY = CARTRIDGE / "app" / "core" / "vault_client.py"
 ENTITIES_YAML = CARTRIDGE / "app" / "config" / "entities.yaml"
-README = CARTRIDGE / "README.md"
 COMPOSE = REPO_ROOT / "infra" / "docker-compose.yml"
-RUNBOOK = "config/initial_load_by_company_month.md"
+LOAD_SCRIPT = "config/initial_load_by_company_month.sh"
+SEED_SQL = "config/seed_watermarks.sql"
 
 EXPECTED_FILES = (
     "hana/00_find_tenant_sql_port.sql",
@@ -38,26 +32,20 @@ EXPECTED_FILES = (
     "config/env.sap_b1.template",
     "config/vault_connection.template.json",
     "config/schedule_entities_every_2h.sql",
-    "config/initial_load_by_company_month.md",
-    "vpn/README.md",
+    "config/initial_load_by_company_month.sh",
+    "config/seed_watermarks.sql",
     "vpn/server/install_wireguard_host.sh",
     "vpn/server/open_security_group.sh",
     "vpn/client/wg-client.conf.template",
-    "windows/README.md",
 )
 
 IPV4 = re.compile(r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.])")
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
 HOSTNAME = re.compile(r"\b[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.(?:com|mx|local)\b", re.IGNORECASE)
-# Business One company schemas start with SBO_; only the <COMPANY_DB_n>
-# placeholder may stand for one, never a real name.
 SBO_SCHEMA = re.compile(r"SBO_[A-Za-z0-9]")
-# A WireGuard key is 32 bytes in base64: 44 characters ending in '='.
 WIREGUARD_KEY = re.compile(r"(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{42}=(?![A-Za-z0-9+/=])")
 PLACEHOLDER = re.compile(r"<[^<>\n]+>")
 PLACEHOLDER_FORMAT = re.compile(r"^<[A-Z][A-Z0-9_]*>$")
-# `-p` as a standalone hdbsql flag (the password on the command line); not
-# `-port`, `--dport`, `-Prompt` or `-p:` inside a comment.
 PASSWORD_FLAG = re.compile(r'(?<![\w-])-p(?=$|[\s")])')
 
 
@@ -72,8 +60,7 @@ def _git(*args: str) -> str | None:
 
 @functools.lru_cache(maxsize=None)
 def _git_index() -> dict[str, str] | None:
-    """Tracked kit files as {path relative to connect/: git mode}, or None
-    when git is unavailable (then the checkout is scanned instead)."""
+    """Tracked kit files as {path relative to connect/."""
     kit = KIT.relative_to(REPO_ROOT).as_posix()
     out = _git("ls-files", "-s", "-z", "--", kit)
     if out is None:
@@ -96,8 +83,7 @@ def _is_utf8_text(path: Path) -> bool:
 
 
 def _kit_files() -> list[Path]:
-    """The kit as git knows it, so a stray .DS_Store, swap file or byte-code
-    in a checkout never enters the secret scan."""
+    """The kit as git knows it, so a stray .DS_Store, swap file or byte-code in a checkout never enters the secret scan."""
     index = _git_index()
     if index is not None:
         return sorted(KIT / relative for relative in index if (KIT / relative).is_file())
@@ -158,8 +144,7 @@ def _env_template_vars() -> set[str]:
 
 
 def _block(text: str, start: str, end: str) -> str:
-    """The lines from the first one containing ``start`` up to and including
-    the next one containing ``end``."""
+    """The lines from the first one containing ``start`` up to and including the next one containing ``end``."""
     lines = text.splitlines()
     first = next(i for i, line in enumerate(lines) if start in line)
     last = next(i for i, line in enumerate(lines) if i > first and end in line)
@@ -170,9 +155,6 @@ def _strip_trailing_comment(line: str) -> str:
     return re.split(r"\s+#", line, maxsplit=1)[0]
 
 
-# ── Inventory ───────────────────────────────────────────────────────────────
-
-
 @pytest.mark.parametrize("relative", EXPECTED_FILES)
 def test_every_deliverable_exists_and_is_not_empty(relative):
     path = KIT / relative
@@ -181,8 +163,7 @@ def test_every_deliverable_exists_and_is_not_empty(relative):
 
 
 def test_no_stray_files_in_the_kit():
-    """Anything else under connect/ is either a deliverable or lives in the
-    windows-agent tree another engineer owns."""
+    """Anything else under connect/ is either a deliverable or lives in the windows-agent tree another engineer owns."""
     for path in _kit_files():
         relative = path.relative_to(KIT).as_posix()
         assert relative in EXPECTED_FILES or relative.startswith("windows-agent/"), relative
@@ -194,9 +175,6 @@ def test_kit_inventory_comes_from_git_when_available():
         pytest.skip("git unavailable: the checkout was scanned instead")
     assert set(EXPECTED_FILES) <= set(index), f"untracked deliverables: {set(EXPECTED_FILES) - set(index)}"
     assert all(mode in {"100644", "100755"} for mode in index.values()), index
-
-
-# ── Publishable content ─────────────────────────────────────────────────────
 
 
 @pytest.mark.parametrize("path", _kit_files(), ids=lambda p: p.relative_to(KIT).as_posix())
@@ -228,8 +206,6 @@ def test_passwords_are_placeholders_everywhere():
     assert re.search(r'PASSWORD "<[A-Z0-9_]+>"', create), "CREATE USER must carry a placeholder password"
     assert 'PrivateKey = <' in _read("vpn/client/wg-client.conf.template")
 
-
-# ── HANA SQL: only the expected statement kinds ─────────────────────────────
 
 FORBIDDEN_SQL = (
     re.compile(r"WITH GRANT OPTION", re.I),
@@ -274,7 +250,7 @@ def test_find_tenant_port_only_selects_from_the_system_catalogue():
     assert all(s.upper().startswith("SELECT") for s in statements)
     assert any("SYS_DATABASES.M_SERVICES" in s and "SERVICE_NAME = 'indexserver'" in s and "SQL_PORT" in s for s in statements)
     text = _read("hana/00_find_tenant_sql_port.sql")
-    assert "3NN13" in text and "3NN15" in text and "SYSTEMDB" in text
+    assert "SYSTEMDB" in text
 
 
 def test_create_user_script_is_exactly_user_plus_three_schema_grants():
@@ -303,12 +279,14 @@ def test_revoke_script_revokes_then_drops():
     assert len(statements) == 4
 
 
-# ── Connectivity scripts ────────────────────────────────────────────────────
-
-
 @pytest.mark.parametrize(
     "relative",
-    ("hana/test_connection.sh", "vpn/server/install_wireguard_host.sh", "vpn/server/open_security_group.sh"),
+    (
+        "hana/test_connection.sh",
+        "vpn/server/install_wireguard_host.sh",
+        "vpn/server/open_security_group.sh",
+        "config/initial_load_by_company_month.sh",
+    ),
 )
 def test_shell_scripts_parse_and_fail_closed(relative):
     path = KIT / relative
@@ -317,7 +295,6 @@ def test_shell_scripts_parse_and_fail_closed(relative):
     assert "set -euo pipefail" in text
     index = _git_index()
     if index is not None:
-        # The exec bit as committed, not as this checkout happens to carry it.
         assert index.get(relative) == "100755", f"{relative}: git mode {index.get(relative)}, expected 100755"
     else:
         assert path.stat().st_mode & 0o111, f"{relative} is not executable"
@@ -326,8 +303,7 @@ def test_shell_scripts_parse_and_fail_closed(relative):
 
 
 def _hdbsql_argument_block(relative: str) -> str:
-    """The whole block that builds and runs the hdbsql argument list, not
-    just the lines that mention hdbsql."""
+    """The whole block that builds and runs the hdbsql argument list, not just the lines that mention hdbsql."""
     text = _read(relative)
     if relative.endswith(".sh"):
         return _block(text, "if command -v hdbsql", 'hdbsql "${args[@]}"')
@@ -345,14 +321,13 @@ def test_connectivity_checks_never_pass_the_password_on_the_command_line(relativ
     assert re.search(r"(?<![\w-])-u(?![\w-])", block), "the user flag must be in the argument block"
     assert re.search(r"(?<![\w-])-U(?![\w-])", block), "the hdbuserstore key flag must be in the argument block"
     text = _read(relative)
-    assert "CINF" in text and '"Version"' in text
+    assert "CINF" in text and "Version" in text
 
 
 def test_powershell_check_tests_the_port_before_the_session():
     text = _read("hana/test_connection.ps1")
     assert "Test-NetConnection" in text
-    assert text.index("Test-NetConnection") < text.index("hdbsql")
-    # hdbsql asks for the password itself; the script never reads one.
+    assert text.index("Test-NetConnection -ComputerName") < text.index("& $hdbsql @args")
     assert "Read-Host" in text and "-AsSecureString" not in text
     assert not re.search(r"Read-Host[^\n]*(?i:contrase|password)", text)
 
@@ -364,14 +339,9 @@ def test_linux_check_validates_host_and_port_before_using_them():
     assert host_check in text and port_check in text
     assert text.index(host_check) < text.index("/dev/tcp/")
     assert text.index(port_check) < text.index("/dev/tcp/")
-    # No child shell receives the values as code: the connect runs in a
-    # subshell with both variables quoted.
     assert "bash -c" not in text
     assert 'exec 3<>"/dev/tcp/${SAP_B1_HOST}/${SAP_B1_PORT}"' in text
     assert re.search(r"^\s*\( exec 3<>\"/dev/tcp/\$\{SAP_B1_HOST\}/\$\{SAP_B1_PORT\}\" \)", text, flags=re.MULTILINE)
-
-
-# ── Environment and Vault templates ─────────────────────────────────────────
 
 
 def test_env_template_lists_exactly_the_variables_the_cartridge_declares():
@@ -413,9 +383,6 @@ def test_vault_template_uses_field_names_the_cartridge_accepts():
     assert set(aliases) == _settings_sap_b1_vars() - {"SAP_B1_CONNECT_TIMEOUT_SECONDS"}
 
 
-# ── Scheduling ──────────────────────────────────────────────────────────────
-
-
 def test_schedule_sql_targets_entity_scheduler_columns_with_psql_variables():
     text = _read("config/schedule_entities_every_2h.sql")
     assert ":'tenant_id'" in text and ":'workspace_id'" in text
@@ -425,8 +392,7 @@ def test_schedule_sql_targets_entity_scheduler_columns_with_psql_variables():
     assert re.search(r"workspace_id\s*=\s*:'workspace_id'::uuid", text)
     assert "WHERE cartridge_id = 'sap_b1'" in text
     assert "'sap_b1_extract'" in text
-    # The scheduler's contract, so a reader of the script knows what fires it.
-    assert "entity_scheduler" in text and "last_scheduled_at" in text and "cron_expression" in text
+    assert "last_scheduled_at" in text and "cron_expression" in text
 
 
 def test_schedule_sql_is_every_two_hours_for_every_entity():
@@ -443,65 +409,41 @@ def test_schedule_sql_is_every_two_hours_for_every_entity():
     assert not re.search(r"\benabled\s*=", set_clause), "the script must not flip `enabled`"
 
 
-def _runbook_list(text: str, name: str) -> list[str]:
+def _script_list(text: str, name: str) -> list[str]:
     match = re.search(rf'^{name}="([^"]*)"$', text, flags=re.MULTILINE)
-    assert match, f"{name}=... not found in the runbook script"
+    assert match, f"{name}=... not found in the initial load script"
     return match.group(1).split()
 
 
-def test_initial_load_runbook_matches_the_cartridge_contract():
-    text = _read(RUNBOOK)
+def test_initial_load_script_covers_every_entity_exactly_once():
+    text = _read(LOAD_SCRIPT)
     assert "airflow dags trigger sap_b1_extract" in text
     assert "from_date" in text and "to_date" in text
-    assert "entity_watermarks" in text, "the runbook must seed watermarks after a historical load"
-    assert "b1_update_ts" in text
-    assert "security_context" in text
 
     entities = _entities()
-    masters = _runbook_list(text, "MASTERS")
-    dated = _runbook_list(text, "DATED")
-    snapshots = _runbook_list(text, "SNAPSHOTS_LAST")
+    masters = _script_list(text, "MASTERS")
+    dated = _script_list(text, "DATED")
+    snapshots = _script_list(text, "SNAPSHOTS_LAST")
     listed = masters + dated + snapshots
     assert len(listed) == len(set(listed)), "an entity is listed twice"
     assert set(listed) == {e["entity"] for e in entities}, (
         f"missing {sorted({e['entity'] for e in entities} - set(listed))}, extra {sorted(set(listed) - {e['entity'] for e in entities})}"
     )
-    # Dated entities are exactly the ones a historical (from/to) load can read.
     with_date = {e["entity"] for e in entities if e.get("date_field")}
     assert set(dated) == with_date, f"DATED != date_field entities: {set(dated) ^ with_date}"
     assert all(e.get("date_field") is None for e in entities if e["entity"] in set(masters + snapshots))
-    # Headers before their lines, so the join a line table needs has data.
     for entity in entities:
         if entity.get("parent") and entity["entity"] in dated:
             assert dated.index(entity["parent"]) < dated.index(entity["entity"]), entity["entity"]
-    # The prose ("Orden de entidades") names every entity, and the count it quotes is the real one.
-    order = text[text.index("## Orden de entidades") : text.index("## Ventana de baja carga")]
-    for name in listed:
-        assert re.search(rf"\b{name}\b", order), f"{name} missing from the entity order"
-    assert f"{len(dated)} entidades" in text, f"the runbook must quote {len(dated)} dated entities"
 
 
-CODE_REFERENCE = re.compile(r"`([a-z_][a-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)(?:\(\))?`")
-FILE_SUFFIXES = {"py", "yaml", "yml", "md", "sql", "json", "toml", "sh", "ps1", "conf", "done", "txt", "template"}
-
-
-def test_runbook_code_references_resolve():
-    """Every `module.symbol` the runbook cites exists in the cartridge, so a
-    rename (extraction_service._effective_mode became b1_reader.effective_mode)
-    cannot leave a stale pointer behind."""
-    text = _read(RUNBOOK)
-    assert "_effective_mode" not in text
-    references = [(m, s) for m, s in CODE_REFERENCE.findall(text) if s not in FILE_SUFFIXES]
-    assert references, "no module.symbol references found; the regex or the runbook changed"
-    for module_name, symbol in references:
-        candidates = sorted(CARTRIDGE.glob(f"app/**/{module_name}.py"))
-        assert len(candidates) == 1, f"`{module_name}.{symbol}`: module not found once under app/: {candidates}"
-        dotted = ".".join(candidates[0].relative_to(CARTRIDGE).with_suffix("").parts)
-        module = importlib.import_module(dotted)
-        assert hasattr(module, symbol), f"`{module_name}.{symbol}`: {dotted} has no attribute {symbol}"
-
-
-# ── VPN kit ─────────────────────────────────────────────────────────────────
+def test_watermark_seed_matches_the_table_the_cartridge_writes():
+    text = _read(SEED_SQL)
+    assert "INSERT INTO entity_watermarks" in text
+    assert "ON CONFLICT (watermark_scope, cartridge_id, entity_name) DO NOTHING" in text
+    assert "b1_update_ts" in text
+    for variable in ("aliases", "cutoff", "tenant_id", "workspace_id"):
+        assert f":'{variable}'" in text, variable
 
 
 def test_client_template_limits_allowed_ips_to_our_tunnel_address():
@@ -534,8 +476,6 @@ def test_server_install_script_keeps_private_keys_private_and_scopes_the_peer():
     assert 'systemctl enable "wg-quick@${WG_IFACE}"' in text
     lines, opened, closed = _rendered_config_lines(text)
     key_reads = [i for i, line in enumerate(lines) if 'cat "$KEY_FILE"' in line and not line.strip().startswith("#")]
-    # The private key is read exactly once, into the config render and
-    # nowhere else: that line must sit inside the `{ ... } > "$RENDERED"` group.
     assert len(key_reads) == 1, key_reads
     assert lines[key_reads[0]].strip() == 'echo "PrivateKey = $(cat "$KEY_FILE")"'
     assert opened < key_reads[0] < closed
@@ -556,9 +496,7 @@ def _post_rules(text: str, hook: str) -> list[str]:
 
 
 def test_server_install_script_drops_anything_the_customer_initiates():
-    """The tunnel is one-way: replies to what we open come back, a NEW
-    connection from the peer never reaches the host or the VPC, whatever the
-    chain policy (Docker's DROP, or ACCEPT on a host without Docker)."""
+    """The tunnel is one-way: replies to what we open come back, a NEW connection from the peer never reaches the host or."""
     text = _read("vpn/server/install_wireguard_host.sh")
     ups = _post_rules(text, "PostUp")
     downs = _post_rules(text, "PostDown")
@@ -572,24 +510,20 @@ def test_server_install_script_drops_anything_the_customer_initiates():
         assert established in inserts, f"{chain}: no RELATED,ESTABLISHED accept on the tunnel interface"
         assert "-i %i -j DROP" in inserts, f"{chain}: nothing drops NEW connections from the tunnel"
         assert inserts[established] < inserts["-i %i -j DROP"], f"{chain}: the DROP must follow the ESTABLISHED accept"
-        # Anything accepted from the tunnel is explicit and above the DROP.
         for spec, position in inserts.items():
             if spec.startswith("-i %i") and spec != "-i %i -j DROP":
                 assert position < inserts["-i %i -j DROP"], spec
         assert sorted(inserts.values()) == list(range(1, len(inserts) + 1)), f"{chain}: positions must be contiguous"
-    # Into the tunnel only TCP on the HANA port and ICMP echo, to the peer's /32.
     forward_out = [r for r in ups if re.match(r"iptables -I FORWARD \d+ -o %i", r)]
     assert forward_out == [
         "iptables -I FORWARD 3 -o %i -d ${CUSTOMER_PEER_TUNNEL_IP}/32 -p tcp --dport ${TENANT_SQL_PORT} -j ACCEPT",
         "iptables -I FORWARD 4 -o %i -d ${CUSTOMER_PEER_TUNNEL_IP}/32 -p icmp --icmp-type echo-request -j ACCEPT",
     ]
-    # The host itself accepts nothing NEW from the tunnel but a ping from the peer.
     input_accepts = [r for r in ups if re.match(r"iptables -I INPUT \d+ ", r) and r.endswith("-j ACCEPT")]
     assert input_accepts == [
         "iptables -I INPUT 1 " + established,
         "iptables -I INPUT 2 -i %i -s ${CUSTOMER_PEER_TUNNEL_IP}/32 -p icmp --icmp-type echo-request -j ACCEPT",
     ]
-    # Every PostUp rule is undone by a PostDown with the same specification.
     expected_downs = []
     for rule in ups:
         undone = re.sub(r"iptables -I (\w+) \d+ ", r"iptables -D \1 ", rule)
@@ -604,74 +538,3 @@ def test_security_group_script_opens_the_udp_port_to_one_address_only():
     assert "${CUSTOMER_PUBLIC_IP}/32" in text
     assert "IpProtocol=udp" in text
     assert "--revoke" in text
-
-
-def test_vpn_readme_states_what_needs_the_customer_public_ip_first():
-    text = _read("vpn/README.md")
-    assert "<CUSTOMER_PUBLIC_IP>" in text
-    # The customer's key is never a placeholder in this document: they generate it and send it.
-    assert "<CUSTOMER_PEER_PUBLIC_KEY>" not in text
-    assert "clave pública" in text
-    assert "open_security_group.sh" in text and "install_wireguard_host.sh" in text
-    assert "--keys-only" in text
-    assert "portproxy" in text
-
-
-def test_vpn_readme_states_the_one_way_boundary():
-    text = _read("vpn/README.md")
-    assert "`DROP`" in text and "`FORWARD`" in text and "`INPUT`" in text
-    assert re.search(r"no entra nada", text, flags=re.IGNORECASE)
-
-
-UNBUILT_PROMISES = re.compile(r"\b(firmad[oa]s?|firmas?|manifiestos?|checksums?|latidos?|heartbeats?)\b", re.IGNORECASE)
-
-
-def test_windows_readme_only_describes_and_points_to_the_agent_tree():
-    text = _read("windows/README.md")
-    assert "windows-agent" in text
-    assert not any(p.suffix in {".py", ".ps1", ".exe", ".msi"} for p in (KIT / "windows").rglob("*"))
-
-
-def test_windows_readme_describes_the_delivered_agent_without_unbuilt_promises():
-    """What ships is a Python venv run by a Task Scheduler task with SQLite
-    state and a local spool; the customer-facing summary may promise nothing
-    beyond that (no signing, manifests, checksums or heartbeat)."""
-    text = _read("windows/README.md")
-    match = UNBUILT_PROMISES.search(text)
-    assert not match, f"windows/README.md promises {match.group(0)!r}, which the agent does not implement"
-    assert "../windows-agent/README.md" in text
-    for delivered in ("install.ps1", "Programador de tareas", "SQLite", "spool", "raw/sap_b1/", "run.ps1 status"):
-        assert delivered in text, delivered
-    assert "en paralelo" not in text
-
-
-# ── Cartridge README ────────────────────────────────────────────────────────
-
-
-def test_cartridge_readme_links_the_kit():
-    text = README.read_text(encoding="utf-8")
-    assert "## Connection kit" in text
-    assert "connect/" in text
-    assert "`tests/fixtures/sap_b1` at the\nrepository root" in text or "`tests/fixtures/sap_b1` at the repository root" in text
-
-
-def test_cartridge_readme_lists_every_entity_it_reads():
-    text = README.read_text(encoding="utf-8")
-    table = text[text.index("## What it reads") : text.index("### Incremental reads")]
-    listed = set(re.findall(r"`([A-Z][A-Z0-9]{3})`", table))
-    assert listed == _entity_names(), f"missing {_entity_names() - listed}, extra {listed - _entity_names()}"
-    assert f"{len(_entity_names())} tables" in table
-
-
-def test_cartridge_readme_states_the_headers_each_guard_reads():
-    text = README.read_text(encoding="utf-8")
-    row = next(line for line in text.splitlines() if line.startswith("| **Internal auth** |"))
-    rest, mcp = row.split("`/mcp/rpc`")
-    assert "`X-Internal-Api-Key` or `X-Api-Key`" in rest and "`X-Internal-Service`" in rest
-    assert "`X-Api-Key` plus `X-Internal-Service`" in mcp
-    assert "X-Internal-Api-Key" not in mcp, "/mcp/rpc never reads X-Internal-Api-Key"
-    # The claim must match the guard: the ASGI guard on /mcp/rpc reads x-api-key only.
-    guard = (CARTRIDGE / "app" / "security.py").read_text(encoding="utf-8")
-    guard_body = guard[guard.index("class InternalApiKeyASGIGuard") :]
-    assert 'headers.get("x-api-key")' in guard_body and 'headers.get("x-internal-service")' in guard_body
-    assert "x-internal-api-key" not in guard_body

@@ -1,25 +1,4 @@
 #!/usr/bin/env bash
-# AWS side of the customer tunnel, with the aws CLI. Three changes, each
-# scoped as narrowly as the layout allows (see ../README.md):
-#
-#   1. Security group of the VPN bastion: ingress UDP <WG_LISTEN_PORT> from
-#      the customer's public IP ONLY (/32). Never a wider range.
-#   2. Security group of the VPN bastion: ingress TCP <TENANT_SQL_PORT> from
-#      the application host's security group, because the sap-b1 container
-#      reaches the tunnel through the bastion (the application host has no
-#      public address of its own).
-#   3. Private route table: <WG_SUBNET_CIDR> via the bastion instance, so
-#      packets from the private subnet to the tunnel addresses leave through
-#      the bastion instead of the NAT gateway. The bastion already has
-#      source_dest_check disabled (infra/terraform/infra/ec2_vpn.tf).
-#
-# Step 1 needs the customer's public IP; steps 2 and 3 do not.
-# Move these three changes into Terraform (security_groups.tf, vpc.tf) once
-# the pilot is confirmed, so they do not stay as drift.
-#
-# Usage:  fill the placeholders (environment or edit), then
-#   ./open_security_group.sh            # apply
-#   ./open_security_group.sh --revoke   # undo the three changes
 set -euo pipefail
 
 AWS_REGION="${AWS_REGION:-<AWS_REGION>}"
@@ -51,8 +30,6 @@ if [[ "${1:-}" == "--revoke" ]]; then
     exit 0
 fi
 
-# authorize-* fails with InvalidPermission.Duplicate when the rule exists; that
-# is the idempotent case, not an error.
 echo "1. UDP ${WG_LISTEN_PORT} on ${SG_VPN_ID} from ${CUSTOMER_PUBLIC_IP}/32"
 aws ec2 authorize-security-group-ingress --group-id "$SG_VPN_ID" --ip-permissions "$UDP_PERMISSION" \
     || echo "   (already present)"

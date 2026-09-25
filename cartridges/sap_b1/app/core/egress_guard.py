@@ -80,8 +80,6 @@ def resolve_public_url(url: str, *, label: str = "outbound URL") -> ResolvedTarg
     addresses = list(dict.fromkeys(record[4][0] for record in records))
     if not addresses:
         raise EgressGuardError(f"{label} host could not be resolved")
-    # Mixed public/private DNS answers fail closed; selecting only the public
-    # member would leave rebinding and resolver-order bypasses.
     if any(_blocked_address(address) for address in addresses):
         raise EgressGuardError(f"{label} resolved to a non-public address")
     return ResolvedTarget(scheme, host, port, addresses[0])

@@ -45,7 +45,7 @@ with `username` and `token` outside Terraform.
 version, obtains the VM identity from the metadata server, and keeps Docker
 authentication in a temporary host-only `DOCKER_CONFIG`. Run
 `release/preflight-release-images.sh` through that wrapper before a release or
-rollback. The preflight pulls exactly 16 proprietary images and atomically
+rollback. The preflight pulls exactly 15 proprietary images and atomically
 writes a non-secret lock file with `tag@sha256` references. Combine that lock
 file with `release/docker-compose.release.yml`; the overlay removes source
 builds and forbids late pulls, so deployment consumes only the digests already

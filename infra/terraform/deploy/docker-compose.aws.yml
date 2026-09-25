@@ -310,9 +310,6 @@ services:
         source: ${GOLD_VERIFIER_DATABASE_URL_HOST_FILE:?GOLD_VERIFIER_DATABASE_URL_HOST_FILE is required}
         target: /run/secrets/gold_verifier_database_url
         read_only: true
-      # A named volume, not the container's writable layer: a spill in flight
-      # survives a recreate and a host reboot, and cannot be swept by anything
-      # that cleans temporary paths mid-materialization.
       - refinement_spill:/var/lib/omega/duckdb-spill
     ports:
       - "8500:8500"

@@ -1,28 +1,4 @@
-"""The Business One-shaped Postgres fake: it loads, and its numbers add up.
-
-This is the test bed for the future `sap_b1` cartridge. Nothing here talks to
-SAP: the schema and the data come from `tests/fixtures/sap_b1`, which records
-a ground truth while it generates. The tests below prove the fake is worth
-trusting before any extraction SQL is written against it:
-
-* it is deterministic, so a failing test can be replayed byte for byte, and
-  its invariants hold for several seeds, not just the default one;
-* every document carries doc, local and system currency amounts, never a
-  null currency; `DocRate` is 0 on a local-currency document as B1 stores
-  it, and the system amounts follow the daily rate in `ORTT`;
-* the DDL applies to a real Postgres 15 and the loaded totals match the
-  ground truth: invoice lines, the revenue account in the journal, cost of
-  goods, closing stock from the movements in date order, batch quantities
-  from the batch transactions, and the intercompany sales of the
-  manufacturer mirrored as its distributors' purchases month by month;
-* journal entries balance in both currencies, cancellations exist in both
-  B1 shapes ('Y' on the original, 'C' on the cancellation document) and
-  `UpdateTS` stays a valid HHMMSS integer.
-
-The Postgres tests need Docker and skip cleanly without it, following the
-pattern of the other live-Postgres tests in this directory. In CI they run
-in the job that pre-pulls `postgres:15`.
-"""
+"""The Business One-shaped Postgres fake: it loads, and its numbers add up."""
 
 from __future__ import annotations
 
@@ -76,9 +52,6 @@ def _col(table: str, name: str) -> int:
     return b1.columns(table).index(name)
 
 
-# ── the generator, no Postgres needed ──────────────────────────────────────
-
-
 def test_generation_is_deterministic():
     """Same seed, same bytes: a failing test can always be replayed."""
     first = generator.generate(seed=11, months=6)
@@ -94,8 +67,6 @@ def test_every_table_is_populated_for_every_company(dataset):
         for alias, tables in dataset.tables.items()
         for table in b1.TABLES
         if not tables.get(table)
-        # A distributor neither produces nor buys raw material; a manufacturer
-        # has no A/P credit memos or returns in this model.
         and not (table in ("OWOR", "WOR1", "OITT", "ITT1", "OWTR", "WTR1") and alias != "mx_mfg")
         and table not in ("ORPC", "RPC1", "ORDN", "RDN1")
     }
@@ -126,9 +97,7 @@ def test_documents_never_carry_a_null_currency(dataset):
 
 
 def test_local_currency_documents_carry_docrate_zero_and_sys_amounts_by_rate(dataset):
-    """B1 stores DocRate = 0 on a document in the company's local currency; the
-    system-currency amount is not DocTotal / DocRate but DocTotal / ORTT rate.
-    A query that divides by DocRate must guard the zero, as B1 queries do."""
+    """B1 stores DocRate = 0 on a document in the company's local currency."""
     for company in dataset.companies:
         tables = dataset.tables[company.alias]
         rcols = b1.columns("ORTT")
@@ -167,7 +136,6 @@ def test_cancellations_come_in_both_b1_shapes(dataset):
         assert flags.count("Y") == flags.count("C")
         cancelled = {row[hcols.index("DocEntry")] for row in tables["OINV"] if row[hcols.index("CANCELED")] == "Y"}
         cancellation_docs = {row[hcols.index("DocEntry")] for row in tables["OINV"] if row[hcols.index("CANCELED")] == "C"}
-        # The cancellation document's lines are drawn from the original invoice.
         based_on = {row[lcols.index("BaseEntry")] for row in tables["INV1"] if row[lcols.index("DocEntry")] in cancellation_docs}
         assert based_on == cancelled, f"{alias}: cancellation documents must point at the cancelled invoices"
 
@@ -211,8 +179,7 @@ def test_partner_lines_carry_the_card_code_as_shortname(dataset):
 
 
 def test_stock_never_goes_negative_in_date_order(dataset):
-    """Replaying OINM by (DocDate, TransNum, TransSeq) never dips below zero: no stock
-    as-of query can ever see a negative balance."""
+    """Replaying OINM by (DocDate, TransNum, TransSeq) never dips below zero."""
     icols = b1.columns("OINM")
     for alias, tables in dataset.tables.items():
         balance = defaultdict(Decimal)
@@ -224,9 +191,7 @@ def test_stock_never_goes_negative_in_date_order(dataset):
 
 
 def test_warehouse_transfers_move_stock_without_money(dataset):
-    """A transfer takes a quantity out of one warehouse and into another in
-    the same stock transaction; over the period every parked quantity comes
-    back, so the second warehouse nets to zero and no journal entry exists."""
+    """A transfer takes a quantity out of one warehouse and into another in the same stock transaction."""
     hcols, lcols, icols = b1.columns("OWTR"), b1.columns("WTR1"), b1.columns("OINM")
     tables = dataset.tables["mx_mfg"]
     assert tables["OWTR"] and len(tables["WTR1"]) == len(tables["OWTR"])
@@ -257,9 +222,7 @@ def test_warehouse_transfers_move_stock_without_money(dataset):
 
 
 def test_stock_transactions_share_a_transnum_per_document(dataset):
-    """B1 numbers one stock transaction per document: its lines share TransNum
-    and are told apart by TransSeq. A cartridge that pages on TransNum alone
-    would drop lines at every page cut; the fake has to make that visible."""
+    """B1 numbers one stock transaction per document."""
     icols = b1.columns("OINM")
     for alias, tables in dataset.tables.items():
         rows = tables["OINM"]
@@ -315,9 +278,6 @@ def test_invariants_hold_for_other_seeds(seed):
             sold = ds.truth["mx_mfg"].get(month, generator.MonthTruth()).intercompany_sales_lc.get(alias, Decimal(0))
             bought = ds.truth[alias].get(month, generator.MonthTruth()).intercompany_purchases_lc
             assert sold == bought, f"seed {seed} {alias} {month}: intercompany mismatch"
-
-
-# ── the schema on a real Postgres ──────────────────────────────────────────
 
 
 def _docker(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -436,9 +396,6 @@ def test_invoice_lines_and_revenue_account_match_the_truth(dataset, loaded_dsn):
         for month, t in truth.items():
             assert lines.get(month, Decimal(0)) == t.revenue_gross_lc, f"{company.alias} {month}: invoice lines"
             assert credits.get(month, Decimal(0)) == t.credit_lc, f"{company.alias} {month}: credit memos"
-            # Month by month the journal follows the cancellation date, not the
-            # invoice date; the documents view drops a cancelled invoice from
-            # its own month. Both are right, and the period totals agree.
             assert revenue.get(month, Decimal(0)) == t.revenue_account_lc, f"{company.alias} {month}: revenue account"
             assert cogs.get(month, Decimal(0)) == t.cogs_lc, f"{company.alias} {month}: cost of goods"
         period_documents = sum((t.revenue_net_lc for t in truth.values()), Decimal(0))
@@ -489,8 +446,6 @@ def test_closing_stock_equals_the_sum_of_movements_and_the_batches(dataset, load
         }
         for key, qty in batch_stock.items():
             assert qty == on_hand[key], f"{company.alias}: batch quantities of {key} disagree with OITW"
-        # Batch transactions net to the batch quantity per (item, batch, warehouse),
-        # through OBTN's DistNumber, and OIBT says the same.
         mismatched = loader.scalar(
             loaded_dsn,
             f'SELECT COUNT(*) FROM ('

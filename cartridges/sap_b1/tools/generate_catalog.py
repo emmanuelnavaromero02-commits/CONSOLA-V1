@@ -1,11 +1,4 @@
-"""Generate app/config/entities.yaml and config/seed.sql from the Business
-One-shaped fake schema (tests/fixtures/sap_b1/schema.py), the single source
-of truth for column names and types. Run from anywhere:
-
-    python cartridges/sap_b1/tools/generate_catalog.py
-
-A cartridge test regenerates into a temporary directory and fails when the
-committed files differ, so the catalogue can never drift from the fake."""
+"""Generate app/config/entities.yaml and config/seed.sql from the Business One-shaped fake schema (tests/fixtures/sap_b1/schema.py), the single source of truth for column names and types."""
 from __future__ import annotations
 
 import importlib
@@ -111,37 +104,12 @@ entry(entity="IBT1", display_name="Batch transactions (IBT1)", description="Batc
 covered = {e["entity"] for e in entities}
 assert covered == set(b1.TABLES), (set(b1.TABLES) ^ covered)
 assert len(entities) == len(b1.TABLES), len(entities)
-header = """# SAP Business One tables, read over SQL, one company schema at a time.
-#
-# ``entity`` is the Business One table name; ``select_fields`` is the exact
-# column list the cartridge reads (never SELECT *), kept aligned with the
-# Business One-shaped test bed in tests/fixtures/sap_b1/schema.py and, in
-# production, validated against the customer's HANA schema before the first
-# load. Reading rules:
-#
-#   watermark_format: b1_update_ts  -> (UpdateDate, UpdateTS) pair, re-read
-#                                      with a 5 minute back-off
-#   watermark_format: integer       -> monotonically growing key (OINM.TransNum)
-#   parent / parent_key / join_key  -> line tables read through their header
-#                                      and inherit its stamp
-#   mode: full                      -> snapshot tables without a stamp
-#   date_field                      -> column used by historical (from/to) loads;
-#                                      on line tables it names the header's column
-#   column_types                    -> parquet type per column (int64, decimal(19,6),
-#                                      timestamp, string) so every file of an entity
-#                                      carries the same schema, even an all-null
-#                                      column or an empty file
-#
-# Company schema names are configuration (SAP_B1_COMPANIES), never part of
-# this file: the repository is public.
-"""
+header = ""
 text = yaml.safe_dump({"entities": entities}, sort_keys=False, allow_unicode=True, width=100)
 (OUT / "app" / "config").mkdir(parents=True, exist_ok=True)
 (OUT / "app" / "config" / "entities.yaml").write_text(header + text)
 print("entities:", len(entities))
 
-# config/seed.sql mirrors entities.yaml so a fresh install registers the
-# cartridge before its container has ever started.
 def q(v):
     if v is None: return "NULL"
     if isinstance(v, bool): return "TRUE" if v else "FALSE"
@@ -154,16 +122,7 @@ for e in entities:
         q(e.get("watermark_field")), q(e.get("watermark_format")), q(e["page_size"]), q(e.get("primary_key")),
         q(e.get("date_field")), q("sap_b1_extract"), "TRUE", q("manual"),
     ]) + ")")
-seed = """-- ─────────────────────────────────────────────────────────────────────────────
--- MODecissions Cartridge: SAP Business One — seed configuration
--- GENERATED from app/config/entities.yaml (cartridges/sap_b1/tests keep both
--- in step). Run once to register this cartridge in a new installation.
--- Safe to re-run: every insert is ON CONFLICT DO NOTHING / DO UPDATE.
--- Company schema names are NOT here: they are runtime configuration.
--- ─────────────────────────────────────────────────────────────────────────────
-
--- ── Cartridge header ──────────────────────────────────────────────────────────
-INSERT INTO cartridges (id, name, version, description, pattern, category, bronze_path)
+seed = """INSERT INTO cartridges (id, name, version, description, pattern, category, bronze_path)
 VALUES (
     'sap_b1',
     'SAP Business One',
@@ -179,14 +138,12 @@ ON CONFLICT (id) DO UPDATE
         description = EXCLUDED.description,
         updated_at  = NOW();
 
--- ── DAGs ──────────────────────────────────────────────────────────────────────
 INSERT INTO cartridge_dags (cartridge_id, dag_id, file, description, trigger, params)
 VALUES
     ('sap_b1', 'sap_b1_extract',     'sap_b1_extract.py',     'Extrae una tabla de Business One en Bronze (full, incremental o histórico), todas las empresas configuradas', 'on-demand', '["entity","mode","from_date","to_date"]'),
     ('sap_b1', 'sap_b1_extract_all', 'sap_b1_extract_all.py', 'Extrae todas las tablas habilitadas',                                                                        'on-demand', '["mode","entities"]')
 ON CONFLICT (cartridge_id, dag_id) DO NOTHING;
 
--- ── Entities ──────────────────────────────────────────────────────────────────
 INSERT INTO entity_config
     (cartridge_id, entity, display_name, description, mode,
      watermark_field, watermark_format, page_size, primary_key, date_field,

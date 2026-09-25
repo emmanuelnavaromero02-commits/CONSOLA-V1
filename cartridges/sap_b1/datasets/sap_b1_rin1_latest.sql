@@ -3,9 +3,6 @@
 -- description: A/R credit memos lines, read through ORIN: quantities, prices, line totals in three currencies, base/target links.
 
 WITH versions AS (
-    -- Estado ACTUAL por clave sobre TODO el histórico bronze; después solo
-    -- las líneas que llevan la marca más reciente de su cabecera: una línea
-    -- borrada del documento desaparece en cuanto la cabecera se relee.
     SELECT *
     FROM (
         SELECT *,

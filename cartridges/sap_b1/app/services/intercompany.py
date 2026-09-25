@@ -1,22 +1,4 @@
-"""Intercompany partners: which business-partner codes are group companies.
-
-Business One has no standard flag for "this customer is one of our own
-distributors". Until the customer confirms how those partners are marked
-(a partner group, a property, or nothing at all), the mapping is
-configuration: ``SAP_B1_INTERCOMPANY`` or the Vault field ``intercompany``,
-in the form ``company:CARDCODE=counterparty,...`` where ``company`` and
-``counterparty`` are aliases from ``SAP_B1_COMPANIES``. The cartridge
-writes the mapping to Bronze as the pseudo-entity ``IntercompanyPartners``
-so silver and gold can join it like any other table, and the
-consolidation can be proven on both sides of the group.
-
-The mapping itself (parsing, validation, the Bronze shape) lives in
-``app.services.intercompany_mapping`` so the Windows push agent writes the
-same file; this module adds what only the cartridge has: the Console Vault,
-the run log and the lakehouse upload.
-
-Client-specific codes live in configuration, never in this repository.
-"""
+"""Intercompany partners: which business-partner codes are group companies."""
 from __future__ import annotations
 
 import logging
@@ -63,12 +45,7 @@ def resolve_intercompany(security_context: str | None = None) -> list[Intercompa
 
 
 def refresh_intercompany_partners(security_context: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Write the configured mapping to Bronze as a full snapshot.
-
-    An empty mapping is a valid answer ("this group has no intercompany
-    partners configured") and still leaves a zero-row artifact, so silver
-    can join it without special cases.
-    """
+    """Write the configured mapping to Bronze as a full snapshot."""
     import json
 
     serialized = (

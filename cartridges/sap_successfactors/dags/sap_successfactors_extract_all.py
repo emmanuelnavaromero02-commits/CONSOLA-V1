@@ -763,11 +763,6 @@ def sap_successfactors_extract_all():
                             "anomalies": anomalies_item.get("row_count"),
                         },
                     )
-            # A run that produced nothing for an infrastructure or credentials
-            # reason is a failed run, not a partial one. This used to be a
-            # constant False: every entity dying on the network still produced
-            # "partial" / "completed_with_blocks" and a green task,
-            # indistinguishable from one entity with a pruned select.
             hard_failure = runtime.hard_failure_code(
                 summary, results, skipped, attempted=len(entities)
             )
@@ -854,13 +849,6 @@ def sap_successfactors_extract_all():
             )
             aggregate_saved = True
             if hard_failed:
-                # Recorded first (best effort: _pipeline_run_save never
-                # raises), then raised so Airflow marks the task failed and
-                # the refresh chain does not run on nothing. Deliberately
-                # without an automatic retry: a retry reuses the run_id, and
-                # pipeline_runs only lets a status advance, so a recovered
-                # second attempt could never overwrite this "failed" row. The
-                # next cycle is a new run with its own row.
                 raise AirflowFailException(hard_failure)
             return payload
         except Exception as exc:

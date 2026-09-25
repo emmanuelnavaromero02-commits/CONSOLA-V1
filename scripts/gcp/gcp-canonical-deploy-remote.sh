@@ -570,7 +570,6 @@ else
   log "preflight config: runtime secrets hydrated atomically"
 fi
 
-# ── 3. Authenticated pull of the 16 release digests (server-owned) ───────────
 # Publish-only releases push by immutable digest only, so pull the exact digests
 # the operator pinned into the images overlay (single source of truth), not a
 # vX.Y.Z tag that GHCR never received.
@@ -600,7 +599,6 @@ done
 
 # Pulling missing image layers can exhaust the filesystem that actually backs
 # containerd. Check that filesystem before network I/O or quiescence. A prior
-# dry-run may already have cached all 16 digests; in that case apply neither
 # repeats the pull nor rejects the release based on space consumed by that pull.
 MISSING_DIGEST_REFS=()
 for ref in "${DIGEST_REFS[@]}"; do

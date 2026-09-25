@@ -1,29 +1,4 @@
-"""The DuckDB spill directory is shared by two users and must outlive the container.
-
-On 2026-09-23 every materialization in production failed. The visible error was
-`publication verifier unavailable`, then `Broken pipe`; the real one appeared
-only in the container log:
-
-    publication verification rejected: PermissionError
-
-refinement runs two processes with different uids that share a group:
-`refinement-app` (1000) and `refinement-verifier` (1001). The spill directory
-was created by whichever touched it first -- the app, via os.makedirs -- and
-landed 0755 owned by that user, so the verifier could not write into it and
-every publication was rejected.
-
-Two properties follow, and they are independent:
-
-  * the directory belongs to the shared group, setgid, so neither process can
-    lock the other out and new files inherit the group; and
-  * it is a mounted volume, not a path in the container's writable layer, so a
-    spill in flight cannot be swept away by anything that cleans temporary
-    paths, and a recreate or a host reboot does not lose it.
-
-The size ceiling is a separate guarantee and is asserted here too: the spill
-shares a filesystem with the Postgres data directories, so an uncapped spill is
-a disk-full outage for the whole stack, not just for refinement.
-"""
+"""The DuckDB spill directory is shared by two users and must outlive the container."""
 
 from __future__ import annotations
 
@@ -48,9 +23,6 @@ def _spill_default() -> str:
     service, _ = _refinement()
     raw = str(service["environment"]["DUCKDB_TEMP_DIRECTORY"])
     return raw.split(":-", 1)[1].rstrip("}")
-
-
-# ── persistence ────────────────────────────────────────────────────────────
 
 
 def test_spill_is_a_named_volume_not_the_writable_layer() -> None:
@@ -79,9 +51,6 @@ def test_spill_is_not_under_tmp() -> None:
     assert target.startswith("/"), "DuckDB rejects a relative temp_directory"
 
 
-# ── shared access ──────────────────────────────────────────────────────────
-
-
 def test_supervisor_prepares_the_spill_for_both_processes() -> None:
     """Root prepares it once, before either unprivileged process starts."""
     source = SUPERVISOR.read_text(encoding="utf-8")
@@ -108,15 +77,8 @@ def test_spill_is_prepared_before_either_child_starts() -> None:
     )
 
 
-# ── the ceiling is a separate guarantee ────────────────────────────────────
-
-
 def test_the_size_ceiling_still_applies_to_the_new_location() -> None:
-    """Moving the directory must not quietly drop its cap.
-
-    The spill shares a filesystem with the Postgres data directories. Uncapped,
-    DuckDB will use ~90% of it and take the whole stack down with a full disk.
-    """
+    """Moving the directory must not quietly drop its cap."""
     service, _ = _refinement()
     raw = str(service["environment"]["DUCKDB_MAX_TEMP_DIRECTORY_SIZE"])
     default = raw.split(":-", 1)[1].rstrip("}")

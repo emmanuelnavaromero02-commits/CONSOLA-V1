@@ -1,6 +1,3 @@
-# Knowledge Bits run DuckDB SQL over Bronze parquet. Every document table is
-# read as "latest version per company and DocEntry" because an edited
-# document is re-extracted whole; CANCELED = 'N' keeps live documents only.
 knowledge_bits:
   - id: kb_sales_by_company_month
     name: "Sales by company and month"

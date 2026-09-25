@@ -3,9 +3,6 @@
 -- description: Inventory transaction log (a view over OIVL/IVL1 in B1 >= 8.8); rows never change. One TransNum per document with one row per line (TransSeq): TransNum is the watermark, (TransNum, TransSeq) the page key.
 
 WITH latest AS (
-    -- Las filas nunca cambian en la fuente; el mismo registro puede llegar
-    -- más de una vez (carga completa + incremental), así que se deduplica
-    -- por clave sobre todo el histórico bronze.
     SELECT *
     FROM (
         SELECT *,

@@ -1,13 +1,4 @@
-"""
-sap_b1_extract DAG
-======================
-Extrae UNA entidad llamando al cartucho SAP Business One.
-
-v1.43.1 (Claude B1 + B2 + B3):
-  B1 — fail-fast at parse-time on missing INTERNAL_API_KEY.
-  B2 — cartridge URL from SAP_B1_URL env var.
-  B3 — default_args with exponential-backoff retries.
-"""
+"""sap_b1_extract DAG ====================== Extrae UNA entidad llamando al cartucho SAP Business One."""
 from __future__ import annotations
 import os
 from datetime import timedelta
@@ -60,8 +51,6 @@ def sap_b1_extract():
             if conf.get(key)
         }
 
-        # A Business One initial load reads every company; the cartridge answers
-        # when it is done, so the client waits well beyond the OData default.
         with httpx.Client(timeout=3600) as client:
             params = {
                 k: v for k, v in {

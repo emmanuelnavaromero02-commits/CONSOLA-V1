@@ -3,7 +3,6 @@
 -- description: One row per company of the group: Business One company code and name, local currency, system currency, country and Business One version, from the newest OADM/CINF snapshots.
 
 WITH oadm AS (
-    -- Newest run per company (all of its batches), never a mix of two runs.
     SELECT * EXCLUDE (_rn)
     FROM (
         SELECT s.*, ROW_NUMBER() OVER (PARTITION BY s._company, s.Code ORDER BY s._extracted_at DESC) AS _rn
@@ -21,7 +20,6 @@ WITH oadm AS (
     WHERE _rn = 1
 ),
 cinf AS (
-    -- Newest run per company (all of its batches), never a mix of two runs.
     SELECT * EXCLUDE (_rn)
     FROM (
         SELECT s.*, 1 AS _rn

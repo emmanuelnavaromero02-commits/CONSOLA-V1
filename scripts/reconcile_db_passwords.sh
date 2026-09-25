@@ -121,8 +121,6 @@ END $$;
 SQL
 
 echo "[reconcile-db-passwords] rotating optional cartridge role passwords"
-# omega_cartridge_sap_b1 is opt-in per host (compose profile "sap"): rotate it
-# only where the password is set and the role exists, never abort over it.
 "${PSQL[@]}" <<'SQL'
 DO $$
 DECLARE

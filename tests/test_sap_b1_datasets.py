@@ -1,14 +1,4 @@
-"""SAP Business One silver/gold datasets: static contracts.
-
-Every file under cartridges/sap_b1/datasets parses as DuckDB SQL, carries a
-well-formed header, declares only real Business One entities (or the
-cartridge's configured IntercompanyPartners snapshot) as sources, and the
-generated files (catalogue, silver "latest" datasets, document-line datasets
-and the registration script) are exactly what the generators produce, so
-nothing can drift from the fake schema that is the single source of truth.
-The DuckDB execution against the Business One fake lives in
-cartridges/sap_b1/tests/test_silver_gold_against_fake.py.
-"""
+"""SAP Business One silver/gold datasets: static contracts."""
 from __future__ import annotations
 
 import json
@@ -25,7 +15,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 CARTRIDGE = REPO_ROOT / "cartridges" / "sap_b1"
 DATASETS_DIR = CARTRIDGE / "datasets"
 ENTITIES_YAML = CARTRIDGE / "app" / "config" / "entities.yaml"
-REGISTER_SQL = CARTRIDGE / "config" / "register_datasets.sql"
 TOOLS = CARTRIDGE / "tools"
 
 HEADER_RE = re.compile(r"^--\s+(\S+)\s+\((silver|gold)\)\s+cartridge:\s+sap_b1\s*$")
@@ -103,9 +92,7 @@ def test_every_read_parquet_is_a_declared_source_or_a_sap_b1_silver():
 
 
 def test_incremental_latest_never_collapses_to_the_newest_day():
-    """The T2 lesson from the other SAP cartridges: an incremental entity's
-    current state is the whole bronze history deduplicated by key, never
-    MAX(load_date); snapshots take the newest run per company."""
+    """The T2 lesson from the other SAP cartridges."""
     data = yaml.safe_load(ENTITIES_YAML.read_text(encoding="utf-8"))
     modes = {e["entity"]: (e.get("mode"), bool(e.get("watermark_field"))) for e in data["entities"]}
     for path in DATASETS_DIR.glob("sap_b1_*_latest.sql"):
@@ -151,15 +138,3 @@ def test_generated_files_are_current():
             committed = DATASETS_DIR / generated.name
             assert committed.exists(), generated.name
             assert generated.read_text() == committed.read_text(), f"{generated.name} differs from its generator"
-        _run_generator("generate_register_datasets.py", scratch / "register_datasets.sql")
-        assert (scratch / "register_datasets.sql").read_text() == REGISTER_SQL.read_text()
-
-
-def test_registration_script_mirrors_the_files():
-    sql = REGISTER_SQL.read_text(encoding="utf-8")
-    names = re.findall(r"\(\$seed\$([A-Za-z0-9_]+)\$seed\$, \$seed\$(silver|gold)\$seed\$", sql)
-    assert dict(names) == {p.stem: _parse_header(p)[1] for p in _dataset_files()}
-    assert sql.count(":'workspace_id'::uuid") == len(names) + 1
-    assert "ON CONFLICT (name) DO UPDATE" in sql
-    for other in ("$seed$sap_hcm$seed$", "$seed$sap_s4hana$seed$", "$seed$sap_successfactors$seed$", "$seed$replicon$seed$"):
-        assert other not in sql

@@ -3,7 +3,6 @@
 -- description: Stock per company, item and warehouse from the newest OITW snapshot: on hand, committed, on order, available, and the stock value at the item's average price in local currency.
 
 WITH snapshot AS (
-    -- Newest run per company (all of its batches), never a mix of two runs.
     SELECT * EXCLUDE (_rn)
     FROM (
         SELECT s.*, ROW_NUMBER() OVER (PARTITION BY s._company, s.ItemCode, s.WhsCode ORDER BY s._extracted_at DESC) AS _rn
@@ -35,7 +34,6 @@ items AS (
     WHERE _rn = 1
 ),
 warehouses AS (
-    -- Newest run per company (all of its batches), never a mix of two runs.
     SELECT * EXCLUDE (_rn)
     FROM (
         SELECT s.*, ROW_NUMBER() OVER (PARTITION BY s._company, s.WhsCode ORDER BY s._extracted_at DESC) AS _rn
@@ -53,7 +51,6 @@ warehouses AS (
     WHERE _rn = 1
 ),
 company AS (
-    -- Newest run per company (all of its batches), never a mix of two runs.
     SELECT _company, MainCurncy AS local_currency, SysCurrncy AS sys_currency
     FROM (
         SELECT s.*, ROW_NUMBER() OVER (PARTITION BY s._company, s.Code ORDER BY s._extracted_at DESC) AS _rn

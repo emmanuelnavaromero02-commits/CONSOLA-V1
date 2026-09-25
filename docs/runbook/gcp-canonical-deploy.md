@@ -26,7 +26,7 @@ docker compose --env-file infra/.env \
   -f infra/docker-compose.aws-images.gcp.yml --profile sap up -d
 ```
 
-- `docker-compose.aws-images.gcp.yml` simply pins each of the 16 proprietary
+- `docker-compose.aws-images.gcp.yml` simply pins each of the 15 proprietary
   services to the immutable manifest digest with `pull_policy: never`.
 - `docker-compose.gcp.yml` is rendered deterministically and atomically from
   `infra/terraform-gcp/templates/docker-compose.gcp.yml.tftpl` inside the
@@ -53,7 +53,7 @@ docker compose --env-file infra/.env \
      configured free-space margin (20 GiB by default) whenever a digest is
      missing, then **authenticated pull** those missing immutable digests (VM
      service account reads the GHCR credential from Secret Manager). If a prior
-     dry-run cached 16/16, apply skips both this disk gate and the repeated pull;
+     dry-run cached 15/15, apply skips both this disk gate and the repeated pull;
   3. start a short maintenance window: stop every `mode_*`/`omega_*` writer,
      fence both databases at `CONNECTION LIMIT 0`, terminate old sessions and
      prove that no competing sessions remain;
@@ -76,7 +76,7 @@ It is not a second production path; use the canonical operator-side driver.
 
 1. Confirm `origin/main` is the exact SHA to release; **cut the immutable tag** on it:
    `git tag vX.Y.Z-beta <sha> && git push origin vX.Y.Z-beta` → triggers the
-   `Release Images` workflow (builds + pushes the 16 images at the tag).
+   `Release Images` workflow (builds + pushes the 15 images at the tag).
 2. Export the target (from Terraform): `OMEGA_PROJECT_ID`, `OMEGA_ZONE`,
    `OMEGA_INSTANCE`, `OMEGA_GHCR_OWNER`, `OMEGA_SOURCE_BUCKET`. Also create the
    required canonical
@@ -92,7 +92,7 @@ It is not a second production path; use the canonical operator-side driver.
    ```
 
    The local driver verifies the manifest's exact filename, checksum asset, v2
-   schema, repository/owner, release identity and 16/16 immutable digests with
+   schema, repository/owner, release identity and 15/15 immutable digests with
    the canonical release helper. It rebuilds the source archive from the exact
    commit and verifies the bytes at one immutable GCS generation; the VM fetches
    that same generation, checks SHA-256 before extraction and records a receipt.
@@ -102,7 +102,7 @@ It is not a second production path; use the canonical operator-side driver.
    intentionally ignored by Terraform.
 3. **Dry-run** validates container discovery, tarball fetch, every required
    Secret Manager value in read-only `check` mode and the
-   authenticated 16/16 pull. It exits before the maintenance window: it
+   authenticated 15/15 pull. It exits before the maintenance window: it
    does not rewrite an env file, stop services, fence or dump a database,
    migrate, or swap releases.
    `OMEGA_DEPLOY_MODE=dryrun scripts/gcp/gcp-canonical-deploy.sh vX.Y.Z-beta <ref>`

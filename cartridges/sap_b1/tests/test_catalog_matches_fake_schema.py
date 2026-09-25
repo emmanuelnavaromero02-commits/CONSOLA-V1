@@ -56,9 +56,7 @@ def test_every_entity_yields_a_plan_and_parents_exist():
 
 
 def test_only_the_single_row_company_table_is_read_without_a_key():
-    """Every other table pages on a key: a keyless read is one fetchall of the
-    whole table, which is exactly how a batch-transaction log runs a
-    container out of memory."""
+    """Every other table pages on a key: a keyless read is one fetchall of the whole table, which is exactly how a."""
     keyless = {e["entity"] for e in _entities() if not e.get("primary_key")}
     assert keyless == {"CINF"}
 

@@ -127,7 +127,7 @@ def test_runbook_documents_the_mechanism():
     assert "before the maintenance window" in text
     assert "day2-release.sh` is intentionally disabled" in text
     assert "Day-2 never copies this overlay from the" in text
-    assert "dry-run cached 16/16" in text
+    assert "dry-run cached 15/15" in text
 
 
 def test_driver_never_targets_aws():

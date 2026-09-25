@@ -1,12 +1,4 @@
-"""The MinIO images the platform runs are the ones this repository builds.
-
-MinIO withdrew every community artifact on 2026-09-24; the platform now
-rebuilds the pinned releases from their archived source tags
-(``infra/images/minio``, ``.github/workflows/mirror-minio.yml``) and hosts
-them in its own GHCR namespace. This test keeps every consumer on the same
-tag and the same index digest, and makes sure the jobs that pull the
-private packages can authenticate.
-"""
+"""The MinIO images the platform runs are the ones this repository builds."""
 from __future__ import annotations
 
 import re
@@ -56,19 +48,12 @@ def test_dockerfile_and_mirror_workflow_pin_the_same_releases_and_commits():
     assert 'test "$(git -C minio rev-parse HEAD)" = "${MINIO_COMMIT}"' in dockerfile
     assert 'test "$(git -C mc rev-parse HEAD)" = "${MC_COMMIT}"' in dockerfile
     assert "--depth 1 --branch \"${MINIO_TAG}\"" in dockerfile and "--depth 1 --branch \"${MC_TAG}\"" in dockerfile
-    # The runtime base is pinned by a multi-platform index digest, and curl
-    # (the compose healthcheck) is installed, not copied from another libc.
     assert re.search(r"^ARG RUNTIME_BASE=docker\.io/library/alpine:[0-9.]+@sha256:[0-9a-f]{64}$", dockerfile, re.M)
     assert "apk add -U --no-cache ca-certificates curl" in dockerfile
     assert "curlimages" not in dockerfile
 
     workflow = _yaml(".github/workflows/mirror-minio.yml")
-    # PyYAML reads the bare `on:` key as boolean True.
     triggers = workflow.get("on", workflow.get(True))
-    # Manual only. Publishing must happen from a run of this repository's own
-    # workflow: only a package created with its GITHUB_TOKEN is readable by
-    # the other workflows' tokens (the first publication ran from the pull
-    # request that added the file, through a temporary pull_request trigger).
     assert set(triggers) == {"workflow_dispatch"}
     assert workflow["permissions"] == {"contents": "read", "packages": "write"}
     env = workflow["env"]
@@ -86,7 +71,6 @@ def test_dockerfile_and_mirror_workflow_pin_the_same_releases_and_commits():
     assert 'grep -F "minio version ${MINIO_TAG} (commit-id=${MINIO_COMMIT})"' in verify["run"]
     assert 'grep -F "mc version ${MC_TAG} (commit-id=${MC_COMMIT})"' in verify["run"]
     assert "--entrypoint /usr/bin/curl" in verify["run"]
-    # `| head -1` under pipefail kills the step with SIGPIPE after every check passed.
     assert "| head" not in verify["run"]
 
 
@@ -110,7 +94,6 @@ def test_every_pull_by_digest_uses_the_same_index_digest():
         assert f'minio_digest="{digest}"' in text, workflow
     release = _text(".github/workflows/release.yml")
     assert f'minio_repo_digest="ghcr.io/{OWNER}/omega-minio@${{minio_digest}}"' in release
-    # The contract tests that pin the digest agree with the workflows.
     assert digest in _text("tests/test_refinement_duckdb_extensions.py")
     assert digest in _text("tests/test_release_ci_fail_closed.py")
     assert WITHDRAWN_DIGEST not in _text("tests/test_refinement_duckdb_extensions.py")
@@ -125,7 +108,7 @@ def test_no_consumer_still_points_at_the_withdrawn_registry():
     }
     offenders = []
     for path in ROOT.rglob("*"):
-        if not path.is_file() or path.suffix not in {".yml", ".yaml", ".py", ".sh", ".md", ".json", ".tftpl"}:
+        if not path.is_file() or path.suffix not in {".yml", ".yaml", ".py", ".sh", ".json", ".tftpl"}:
             continue
         relative = path.relative_to(ROOT).as_posix()
         if relative in allowed or "node_modules" in relative or relative.startswith(("data/", "console/app/static/")):

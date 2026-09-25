@@ -1,14 +1,4 @@
-"""How a Bronze parquet file of this cartridge is shaped and where it lives.
-
-Shared by ``parquet_service`` (the cartridge, uploading to the lakehouse)
-and the Windows push agent (``connect/windows-agent``, spooling locally and
-uploading over HTTPS), so both write files with the same columns, the same
-declared types and the same object layout::
-
-    raw/sap_b1/<entity>/tenant_id=<t>/workspace_id=<w>/load_date=<YYYY-MM-DD>/batch_id=<run_id>/<entity>.parquet
-
-Only ``pyarrow`` and the standard library are needed here.
-"""
+"""How a Bronze parquet file of this cartridge is shaped and where it lives."""
 from __future__ import annotations
 
 import json
@@ -23,7 +13,6 @@ CARTRIDGE_ID = "sap_b1"
 BRONZE_PREFIX = f"raw/{CARTRIDGE_ID}/"
 EXTRACTED_AT_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 LOAD_DATE_FORMAT = "%Y-%m-%d"
-# Same rule as ``app.core.request_context._SAFE_SCOPE_SEGMENT``.
 _SAFE_SCOPE_SEGMENT = re.compile(r"[A-Za-z0-9_.:-]+")
 
 
@@ -62,8 +51,7 @@ def enrich_rows(
 
 
 def coerce_for_schema(rows: list[dict[str, Any]], schema) -> list[dict[str, Any]]:
-    """Make driver values fit the declared types: a DATE into a timestamp
-    column, an int or float into a decimal column. Strings stay strings."""
+    """Make driver values fit the declared types."""
     import pyarrow as pa
 
     timestamp_columns = {field.name for field in schema if pa.types.is_timestamp(field.type)}
@@ -93,14 +81,7 @@ def bronze_table(
     watermark_field: str | None,
     extracted_at: str,
 ):
-    """The typed arrow table one Bronze file is written from.
-
-    ``rows`` are the records of ``b1_queries.rows_to_records`` (already
-    carrying ``_company`` and ``_source_updated_at``); ``schema`` is
-    ``b1_queries.arrow_schema(plan)``. Every file of an entity carries the
-    same declared schema, so an all-null column or an empty batch never
-    changes the type readers see across files.
-    """
+    """The typed arrow table one Bronze file is written from."""
     import pyarrow as pa
 
     enriched = enrich_rows(
@@ -128,12 +109,7 @@ def stamp_now(now: datetime | None = None) -> tuple[str, str]:
 
 
 def scope_prefix(tenant_id: str, workspace_id: str) -> str:
-    """``tenant_id=<t>/workspace_id=<w>/`` from two plain identifiers.
-
-    The cartridge derives the same prefix from a verified security context
-    (``request_context.scoped_prefix``); the agent has the identifiers in
-    its configuration. Both refuse anything but the safe character set.
-    """
+    """``tenant_id=<t>/workspace_id=<w>/`` from two plain identifiers."""
     tenant = str(tenant_id or "").strip()
     workspace = str(workspace_id or "").strip()
     if not (tenant and workspace):
@@ -145,8 +121,7 @@ def scope_prefix(tenant_id: str, workspace_id: str) -> str:
 
 
 def bronze_object_name(entity: str, scope: str, load_date: str, run_id: str) -> str:
-    """The object key of one batch; ``scope`` is the (possibly empty) tenant
-    and workspace prefix, ending in ``/`` when present."""
+    """The object key of one batch; ``scope`` is the (possibly empty) tenant and workspace prefix, ending in ``/`` when."""
     return f"{BRONZE_PREFIX}{entity}/{scope}load_date={load_date}/batch_id={run_id}/{entity}.parquet"
 
 

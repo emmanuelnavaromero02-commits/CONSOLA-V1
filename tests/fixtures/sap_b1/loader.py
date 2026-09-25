@@ -12,11 +12,7 @@ from .generator import Dataset
 
 
 def load(dsn: str, dataset: Dataset, *, drop_existing: bool = False) -> Dict[str, Dict[str, int]]:
-    """Create one schema per company and insert every generated row.
-
-    Returns the row count per company schema and table, as loaded. Runs in a
-    single transaction per company so a failed load leaves no half schema.
-    """
+    """Create one schema per company and insert every generated row."""
     loaded: Dict[str, Dict[str, int]] = {}
     with psycopg2.connect(dsn) as conn:
         for company in dataset.companies:
