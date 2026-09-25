@@ -1810,6 +1810,10 @@
       "sha256": "408d462e8f05debcd8a4f7343a098c4ee51fce8dc9db68d65df6133c426cc353"
     },
     {
+      "path": "console/tests/control_room_registry_items.py",
+      "sha256": "05916931755abcfa59a337d045cb362542b91829474f880336a4c684224d34ba"
+    },
+    {
       "path": "console/tests/control_room_runtime_evidence_fixture.py",
       "sha256": "817e0064c6d7ca18afbfc3323af42f6cfb785850e51f5bb35af0be878f70c620"
     },
@@ -2219,11 +2223,11 @@
     },
     {
       "path": "console/tests/test_control_room_execute_live_followup.py",
-      "sha256": "1a105a27128b8fb37d7f578ca647a068ed00959e5fe55a3c21f86191ac44c1cd"
+      "sha256": "6b5f16d1abb9c3d433adadf16b38bb6fc98bc46b8e46aed49f749db02dca8be3"
     },
     {
       "path": "console/tests/test_control_room_execute_live_guards.py",
-      "sha256": "7421dfe6c4a981528eac5b6ebe099d8aeb07939d4b0a47c9394e5502736aab27"
+      "sha256": "306bd66a22959a92d0c64bb1ecc6ecd97ca14b02c6b7a69ba291d8e34f2032d7"
     },
     {
       "path": "console/tests/test_control_room_execution_action_binding.py",
@@ -2651,7 +2655,7 @@
     },
     {
       "path": "console/tests/test_control_room_service.py",
-      "sha256": "b6bb2eda572e86f2b712404302454d833cb7b298e1c80388e6bba2d038b89ff7"
+      "sha256": "c52670d41867c25e1847fe9026f7c8535c417f10f667c7c0847f632b532e4a9c"
     },
     {
       "path": "console/tests/test_control_room_sql_business_instruction_boundaries.py",
@@ -2711,7 +2715,7 @@
     },
     {
       "path": "console/tests/test_control_room_terminal_action_binding.py",
-      "sha256": "37b28806859e4426a1c504c3d8dcc8908a5ea7c59392d52a796ec92c3a856776"
+      "sha256": "c7b65894917ee3e069e95fc6c844ff3d7a8e72a9fc61ec39dc7868b4de01172a"
     },
     {
       "path": "console/tests/test_control_room_terminal_approval_guard.py",

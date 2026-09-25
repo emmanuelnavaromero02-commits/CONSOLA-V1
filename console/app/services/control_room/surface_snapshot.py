@@ -75,7 +75,6 @@ async def collect_surface_snapshot(
         fetcher=control_room_service.query_dataset_rows,
         include_source_state_items=True,
         persist=False,
-        use_catalog=True,
         item_projector=project_business_item,
     )
     live_items = _rows(payload.get("items"))

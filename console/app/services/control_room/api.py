@@ -4225,28 +4225,13 @@ async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any
 @_bind_to_core
 async def _collect_module_inventory(
     user: dict | None,
-    *,
-    use_catalog: bool,
 ) -> tuple[
     list[dict[str, Any]],
     dict[str, dict[str, Any]],
     set[str],
     list[ControlRoomModule],
 ]:
-    if use_catalog:
-        installations = await _installed_cartridges(user)
-    else:
-        installations = [
-            {
-                "cartridge_id": module.cartridge,
-                "installation_status": "ready",
-                "current_step": "test_registry",
-                "label": module.label,
-                "category": "platform" if module.operational else "cartridge",
-            }
-            for module in MODULES
-            if module.sources
-        ]
+    installations = await _installed_cartridges(user)
     installation_by_cartridge = {
         str(row.get("cartridge_id")): row
         for row in installations
@@ -4466,7 +4451,6 @@ async def _collect_items(
     limit_per_source: int = 1000,
     include_source_state_items: bool = False,
     persist: bool = False,
-    use_catalog: bool = True,
     item_projector: Callable[..., dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if persist:
@@ -4476,14 +4460,14 @@ async def _collect_items(
         installation_by_cartridge,
         active,
         modules,
-    ) = await _collect_module_inventory(user, use_catalog=use_catalog)
+    ) = await _collect_module_inventory(user)
 
     items: list[dict[str, Any]] = []
     sources: list[dict[str, Any]] = []
     rows_by_dataset: dict[str, list[dict[str, Any]]] = {}
     threshold_rows = (
         await _load_threshold_rows(user)
-        if use_catalog and include_source_state_items
+        if include_source_state_items
         else []
     )
     thresholds = _threshold_map(threshold_rows)
@@ -5169,7 +5153,6 @@ async def list_anomalies(
         fetcher=fetcher,
         limit_per_source=limit_per_source,
         include_source_state_items=False,
-        use_catalog=True,
     )
     anomalies = [item for item in payload["items"] if item["kind"] == "anomaly"]
     return {"anomalies": anomalies, "sources": payload["sources"]}
@@ -5183,7 +5166,6 @@ async def summary(
         user,
         fetcher=fetcher,
         include_source_state_items=False,
-        use_catalog=True,
     )
     items = [item for item in collected["items"] if item["kind"] == "anomaly"]
     by_severity = _severity_counts(items)

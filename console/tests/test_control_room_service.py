@@ -26,6 +26,7 @@ from console.tests.control_room_execution_helpers import (
 from console.tests.control_room_execution_router_helpers import (
     execution_fetchrow_router as _execution_fetchrow_router,
 )
+from console.tests.control_room_registry_items import collect_registry_items
 
 
 USER = {
@@ -2184,12 +2185,12 @@ async def test_select_item_option_persists_metadata_and_records_audit_event():
 @pytest.mark.asyncio
 async def test_action_preview_and_dry_run_are_persisted_and_audited():
     item = (
-        await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
+        await collect_registry_items(
+            control_room_service,
             USER,
             fetcher=finance_fetcher,
             include_source_state_items=True,
             persist=False,
-            use_catalog=False,
         )
     )["items"][0]
     mock_pool = AsyncMock()
@@ -2848,12 +2849,12 @@ async def test_apply_item_lesson_rejects_unrelated_pattern():
 async def test_execute_live_is_blocked_by_default_and_audited(monkeypatch):
     monkeypatch.delenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", raising=False)
     items = (
-        await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
+        await collect_registry_items(
+            control_room_service,
             USER,
             fetcher=finance_fetcher,
             include_source_state_items=True,
             persist=False,
-            use_catalog=False,
         )
     )["items"]
     item = next(candidate for candidate in items if candidate["cartridge"] == "sap_hcm")
@@ -2967,12 +2968,12 @@ async def test_execute_live_external_template_without_adapter_blocks_before_pref
 ):
     monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
     items = (
-        await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
+        await collect_registry_items(
+            control_room_service,
             USER,
             fetcher=finance_fetcher,
             include_source_state_items=True,
             persist=False,
-            use_catalog=False,
         )
     )["items"]
     item = _executed_item(
@@ -3060,12 +3061,12 @@ async def test_execute_live_external_template_uses_registered_adapter(monkeypatc
         {"prepare_billing_review": ExternalBillingAdapter},
     )
     items = (
-        await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
+        await collect_registry_items(
+            control_room_service,
             USER,
             fetcher=finance_fetcher,
             include_source_state_items=True,
             persist=False,
-            use_catalog=False,
         )
     )["items"]
     item = _executed_item(
