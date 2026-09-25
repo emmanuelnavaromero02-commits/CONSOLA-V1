@@ -293,7 +293,7 @@ function Register-AgentTask {
     $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable `
         -RunOnlyIfNetworkAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 12)
     if ($Gmsa) {
-        $principal = New-ScheduledTaskPrincipal -UserId $ServiceAccount -LogonType Password -RunLevel Limited
+        $principal = New-ScheduledTaskPrincipal -UserId $aclAccount -LogonType Password -RunLevel Limited
         Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings `
             -Principal $principal -Force | Out-Null
         return
@@ -302,7 +302,7 @@ function Register-AgentTask {
     $secret = $taskCredential.GetNetworkCredential().Password
     try {
         Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings `
-            -User $taskCredential.UserName -Password $secret -RunLevel Limited -Force | Out-Null
+            -User $aclAccount -Password $secret -RunLevel Limited -Force | Out-Null
     } finally {
         $secret = $null
         $taskCredential = $null
