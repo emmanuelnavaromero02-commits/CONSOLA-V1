@@ -35,7 +35,8 @@ def test_supply_and_semaforo_run_after_the_other_monitors_in_mexico_city():
         assert contract["monitor"]["writeback_enabled"] is False and contract["monitor"]["recommendation_only"] is True
     assert domain_wisdom_bits.VIEW_BY_KEY[SUPPLY.key] == "sap_b1_supply_kpis"
     assert domain_wisdom_bits.VIEW_BY_KEY[SEMAFORO.key] == "sap_b1_semaforo_kpis"
-    assert [spec.slug for spec in SAP_B1_MONITOR_SPECS][-2:] == ["sap_b1_supply_monitor", "sap_b1_semaforo_monitor"]
+    assert [spec.slug for spec in SAP_B1_MONITOR_SPECS][-3:] == [
+        "sap_b1_supply_monitor", "sap_b1_learning_monitor", "sap_b1_semaforo_monitor"]
     assert domain_monitors.spec_for_wisdom_bit("wb-b1-semaforo") is SEMAFORO
     assert agent_schedule_due(semaforo["schedule"], datetime(2026, 9, 25, 14, 0, tzinfo=timezone.utc),
                               interval_minutes=5, grace_minutes=2)
@@ -72,35 +73,49 @@ def test_supply_and_semaforo_views_survive_the_public_projection(monkeypatch):
     async def result(factory, **fields):
         return factory(status="ready", **fields)
 
-    coverage = lambda user: result(b1.ItemCoverage, as_of="2026-09-25", red=1, suggestions=2,  # noqa: E731
-                                   breaches=["empresa_a: 1 articulos se agotan antes de que pueda llegar un pedido nuevo."],
-                                   top_risks=[{"company": "empresa_a", "item": "RM-004", "color": "rojo",
-                                               "stockout_date": "2026-09-28", "action": "comprar", "suggested_qty": 300.0}])
-    monkeypatch.setattr(b1, "query_item_coverage", coverage)
+    coverage = lambda user, top_n=10: result(b1.Coverage, as_of="2026-09-25", colors={"rojo": 1},  # noqa: E731
+                                             breaches=["empresa_a: RM-004 alcanza 4.0 días con órdenes (entrega 14 días)."],
+                                             risks=[{"company": "empresa_a", "item": "RM-004", "color": "rojo",
+                                                     "stockout_date": "2026-09-28", "action": "comprar",
+                                                     "suggested_qty": 300.0, "options": ["adelantar la orden de compra"]}])
+    monkeypatch.setattr(b1, "query_dias_cobertura", coverage)
+    monkeypatch.setattr(b1, "query_oc_vs_necesidad", lambda user: result(b1.PurchaseNeed, items_short=2))
+    monkeypatch.setattr(b1, "query_costo_real_vs_estandar", lambda user: result(b1.CostVariance, above_threshold=1))
+    monkeypatch.setattr(b1, "query_lead_time_proveedores", lambda user: result(b1.SupplierLeadTime, suppliers=3))
     supply = asyncio.run(sap_b1_kpis.sap_b1_supply_kpis({"tenant_id": "t", "workspace_id": "w"}))
     projected = ControlRoomSapB1SupplyKpisResponse.project(supply).model_dump(mode="json")
-    metric = projected["metrics"]["item_coverage"]
-    assert metric["top_risks"][0]["item"] == "RM-004" and metric["proxy_note"].startswith("Cobertura por articulo")
-    assert metric["breaches"] and projected["domain"] == "sap_b1_supply"
+    metric = projected["metrics"]["dias_cobertura"]
+    assert metric["risks"][0]["item"] == "RM-004" and metric["risks"][0]["options"] == ["adelantar la orden de compra"]
+    assert metric["proxy_note"].startswith("Días que alcanza") and metric["breaches"] and projected["domain"] == "sap_b1_supply"
+    assert projected["metrics"]["oc_vs_necesidad"]["items_short"] == 2
 
-    for name, factory in (("query_group_margin", b1.GroupMargin), ("query_company_margin", b1.CompanyMargin),
-                          ("query_distributor_scorecard", b1.DistributorScorecard),
-                          ("query_batch_expiry", b1.BatchExpiry), ("query_data_quality", b1.DataQuality)):
-        monkeypatch.setattr(b1, name, lambda user, factory=factory: result(factory))
+    for name, factory in (("query_margen_bruto", b1.MarginTotals), ("query_destructores", b1.Destroyers),
+                          ("query_reconciliacion_finanzas", b1.FinanceReconciliation),
+                          ("query_semaforo_distribuidoras", b1.DistributorScorecard),
+                          ("query_caducidad_lotes", b1.BatchExpiry), ("query_calidad_datos", b1.DataQuality)):
+        monkeypatch.setattr(b1, name, lambda user, factory=factory, **kw: result(factory))
     semaforo = asyncio.run(sap_b1_kpis.sap_b1_semaforo_kpis({"tenant_id": "t", "workspace_id": "w"}))
     projected = ControlRoomSapB1SemaforoKpisResponse.project(semaforo).model_dump(mode="json")
     assert set(projected["metrics"]) == set(sap_b1_kpis.SAP_B1_SEMAFORO_METRICS)
-    assert projected["metrics"]["item_coverage"]["top_risks"][0]["stockout_date"] == "2026-09-28"
+    assert projected["metrics"]["dias_cobertura"]["risks"][0]["stockout_date"] == "2026-09-28"
 
 
-def test_recipients_are_per_workspace_and_only_valid_addresses():
-    raw = (f"{WORKSPACE.upper()}=direccion@example.com, compras@example.com,no-es-correo,direccion@example.com;"
-           "00000000-0000-0000-0000-000000000000=otro@example.com")
-    assert sap_b1_digest.recipients_for(WORKSPACE, raw) == ["direccion@example.com", "compras@example.com"]
-    assert sap_b1_digest.recipients_for("11111111-1111-1111-1111-111111111111", raw) == []
-    assert sap_b1_digest.recipients_for(None, raw) == []
-    many = WORKSPACE + "=" + ",".join(f"u{n}@example.com" for n in range(40))
-    assert len(sap_b1_digest.recipients_for(WORKSPACE, many)) == sap_b1_digest.MAX_RECIPIENTS
+def test_recipient_addresses_are_normalized_and_validated():
+    assert sap_b1_digest.normalize_email("  Direccion@Example.com ") == "direccion@example.com"
+    for bad in ("no-es-correo", "a@b", "x y@example.com", "a,b@example.com", None, "", "a@" + "b" * 260 + ".com"):
+        assert sap_b1_digest.normalize_email(bad) is None
+
+
+def test_recipients_live_in_a_scoped_append_only_table():
+    sql = (REPO_ROOT / "infra/init/99zzzzp_sap_b1_digest_recipients.sql").read_text(encoding="utf-8")
+    assert "PRIMARY KEY (tenant_id, workspace_id, email)" in sql
+    assert "ENABLE ROW LEVEL SECURITY" in sql and "FORCE ROW LEVEL SECURITY" in sql
+    assert "omega_rls_workspace_matches(tenant_id, workspace_id)" in sql
+    assert "GRANT SELECT, INSERT, DELETE ON sap_b1_digest_recipients TO omega_console" in sql
+    assert "'99zzzzp_sap_b1_digest_recipients.sql'" in sql and "email = lower(email)" in sql
+    compose = "\n".join((REPO_ROOT / path).read_text(encoding="utf-8") for path in (
+        "infra/docker-compose.yml", "infra/terraform/deploy/docker-compose.aws.yml", "infra/.env.example"))
+    assert "SAP_B1_DIGEST_RECIPIENTS" not in compose
 
 
 def test_the_digest_only_goes_out_in_the_scheduled_hour_local_time():
@@ -125,15 +140,20 @@ def _semaforo_payload(**extra):
 
 def test_render_puts_red_first_and_escapes_every_finding():
     subject, body, text = sap_b1_digest.render(_semaforo_payload(), date(2026, 9, 25))
-    assert subject == "Semaforo SAP Business One 2026-09-25: 1 area en rojo"
+    assert subject == "Semáforo SAP Business One 2026-09-25: 1 área en rojo"
     assert "<script>" not in body and "&lt;script&gt;" in body
     assert body.index("cobertura y reabasto") < body.index("margen del grupo")
-    assert "y 2 mas en la consola" in body and "[Rojo] cobertura y reabasto" in text
+    assert "y 2 más en la consola" in body and "[Rojo] cobertura y reabasto" in text
 
 
 class _Conn:
-    def __init__(self, ledger: dict):
+    def __init__(self, ledger: dict, recipients: list[str]):
         self.ledger = ledger
+        self.recipients = recipients
+
+    async def fetch(self, sql, tenant, workspace, limit):
+        assert "FROM sap_b1_digest_recipients" in sql and limit == sap_b1_digest.MAX_RECIPIENTS
+        return [{"email": email} for email in self.recipients]
 
     async def fetchrow(self, sql, tenant, workspace, local_date, recipients, run_id, stale):
         assert "ON CONFLICT (tenant_id, workspace_id, local_date)" in sql
@@ -147,13 +167,12 @@ class _Conn:
         self.ledger[(tenant, workspace, local_date)].update(status="sent" if delivered else "failed", delivered=delivered)
 
 
-def _install(monkeypatch, ledger):
+def _install(monkeypatch, ledger, recipients=("direccion@example.com", "compras@example.com")):
     @asynccontextmanager
     async def scoped(pool, user):
-        yield _Conn(ledger), user["tenant_id"], user["workspace_id"]
+        yield _Conn(ledger, list(recipients)), user["tenant_id"], user["workspace_id"]
 
     monkeypatch.setattr(sap_b1_digest, "scoped_db_for_user", scoped)
-    monkeypatch.setenv(sap_b1_digest.RECIPIENTS_ENV, f"{WORKSPACE}=direccion@example.com,compras@example.com")
 
 
 def test_the_digest_is_sent_once_per_day_and_retried_only_after_a_failed_delivery(monkeypatch):
@@ -179,6 +198,10 @@ def test_the_digest_is_sent_once_per_day_and_retried_only_after_a_failed_deliver
     assert failed["sent"] is False and ledger[("t1", WORKSPACE, date(2026, 9, 25))]["status"] == "failed"
     retried = asyncio.run(sap_b1_digest.maybe_send_digest(user, _semaforo_payload(), pool=None, now=EIGHT_LOCAL, send=send))
     assert retried["delivered"] == 2
+
+    _install(monkeypatch, {}, recipients=())
+    nobody = asyncio.run(sap_b1_digest.maybe_send_digest(user, _semaforo_payload(), pool=None, now=EIGHT_LOCAL, send=send))
+    assert nobody == {"sent": False, "reason": "no_recipients"}
 
 
 @pytest.mark.parametrize(

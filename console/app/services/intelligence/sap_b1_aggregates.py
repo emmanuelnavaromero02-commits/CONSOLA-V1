@@ -105,12 +105,17 @@ MARGEN_CONTRIBUCION_NOTE = (
 )
 DESTRUCTORES_NOTE = (
     "Clientes externos del último mes cerrado con margen bruto por debajo del mínimo configurado (o negativo si no "
-    "hay mínimo), ordenados por el margen perdido contra ese mínimo. Los nombres solo aparecen a petición explícita."
+    "hay mínimo), ordenados por el margen perdido contra ese mínimo. Los nombres solo aparecen a petición explícita. "
+    "NO une clientes de distintas empresas: cada empresa ordena a sus propios clientes."
 )
 CONCENTRACION_NOTE = (
-    "Parte del margen bruto externo del último mes cerrado que aporta el 20 % de clientes con más margen."
+    "Parte del margen bruto externo del último mes cerrado que aporta el 20 % de clientes con más margen. NO incluye "
+    "ventas entre empresas del grupo."
 )
-MARGEN_VENDEDOR_NOTE = "Margen bruto y de contribución del último mes cerrado por vendedor de cada empresa."
+MARGEN_VENDEDOR_NOTE = (
+    "Margen bruto y de contribución del último mes cerrado por vendedor de cada empresa, según el vendedor del "
+    "documento. NO une vendedores de distintas empresas."
+)
 RECONCILIACION_NOTE = (
     "Corrida manual de Finanzas contra la plataforma, fila por fila de los cinco indicadores de margen, con la "
     "diferencia y sus componentes (venta bruta, notas de crédito, descuentos de pie, costo, comisión); además, el "
@@ -122,14 +127,21 @@ CALIDAD_NOTE = (
 )
 MODELO_NOTE = (
     "Las ocho entidades del modelo unificado de las tres empresas: registros, identidades, identidades compartidas, "
-    "relaciones completas y huérfanos."
+    "relaciones completas y huérfanos. NO corrige ni fusiona registros en Business One."
 )
 SEMAFORO_DIST_NOTE = (
     "Semáforo del último mes cerrado por distribuidora: sell-out y crecimiento, sell-through de tres meses, días de "
-    "inventario en canal, margen y stock expuesto a caducidad contra sus umbrales."
+    "inventario en canal, margen y stock expuesto a caducidad contra sus umbrales. NO incluye la venta directa de la "
+    "fábrica a clientes finales."
 )
-RATIO_NOTE = "Unidades vendidas por la distribuidora a clientes externos entre unidades compradas a la fábrica, tres meses."
-DIAS_INVENTARIO_NOTE = "Existencia de la distribuidora al cierre del mes entre su venta diaria de tres meses."
+RATIO_NOTE = (
+    "Unidades vendidas por la distribuidora a clientes externos entre unidades compradas a la fábrica, en tres "
+    "meses. NO mide valor ni margen."
+)
+DIAS_INVENTARIO_NOTE = (
+    "Existencia de la distribuidora al cierre del mes entre su venta diaria de tres meses. NO considera "
+    "inventario en tránsito."
+)
 CADUCIDAD_NOTE = (
     "Lotes con existencia al corte: vencidos y los que caducan en 30 (rojo), 60 (amarillo) o 90 días (verde), las "
     "unidades que se vencerían sin venderse al ritmo de 90 días y la acción sugerida (traslado a otra filial, a otra "
@@ -137,22 +149,29 @@ CADUCIDAD_NOTE = (
 )
 SELLOUT_CLINICA_NOTE = (
     "Venta de cada distribuidora a cada clínica del último mes cerrado, neta de descuentos y notas de crédito, con "
-    "su participación. Los nombres solo aparecen a petición explícita."
+    "su participación. Los nombres solo aparecen a petición explícita. NO incluye la venta de la fábrica."
 )
 COBERTURA_NOTE = (
     "Días que alcanza lo disponible con las órdenes abiertas al ritmo mayor entre el consumo de 90 días y la "
     "necesidad del plan de producción; semáforo rojo abajo de 30 días y amarillo abajo de 60; riesgo de quiebre "
     "cuando se agota antes de que pueda llegar un pedido. Solo recomienda: NO escribe en Business One."
 )
-OC_NECESIDAD_NOTE = "Órdenes de compra abiertas contra la necesidad neta del horizonte de planeación, por artículo."
+OC_NECESIDAD_NOTE = (
+    "Órdenes de compra abiertas contra la necesidad neta del horizonte de planeación, por artículo comprado. NO "
+    "incluye artículos que se producen."
+)
 COSTO_NOTE = (
     "Precio real de compra del último mes cerrado contra el costo del artículo en Business One (estándar si se valúa "
-    "a estándar), por artículo, y los que exceden la desviación máxima."
+    "a estándar), por artículo, y los que exceden la desviación máxima. NO conserva el historial del costo estándar: "
+    "usa el vigente al corte."
 )
-LEAD_TIME_NOTE = "Entregas de proveedores de los últimos tres meses contra la fecha prometida en la orden de compra."
+LEAD_TIME_NOTE = (
+    "Entregas de proveedores de los últimos tres meses contra la fecha prometida en la orden de compra. NO cuenta "
+    "entregas sin orden de compra de origen."
+)
 APRENDIZAJE_NOTE = (
     "Lo que se decidió sobre las alertas de SAP Business One y lo que resultó: alertas, decisiones, resultados "
-    "medidos, falsos positivos y lecciones; propone revisar umbrales cuando la evidencia lo sugiere. Nunca cambia un "
+    "medidos, falsos positivos y lecciones; propone revisar umbrales cuando la evidencia lo sugiere. NO cambia un "
     "umbral por sí mismo."
 )
 
