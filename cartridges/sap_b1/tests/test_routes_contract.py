@@ -83,7 +83,7 @@ def test_writes_to_bronze_need_a_signed_workspace_scope(client, path):
 def test_a_signed_context_without_a_workspace_is_refused(client, monkeypatch):
     from app.core import request_context
 
-    monkeypatch.setattr("app.api.routes_console.preflight_for_extract", lambda: None)
+    monkeypatch.setattr("app.api.routes_console.preflight_for_extract", lambda *_a: None)
     unscoped = request_context._sign_security_context({"trusted": True, "source": "console", "role": "admin"})
     resp = client.post("/business-parameters/refresh", headers=AUTH, json={"security_context": unscoped})
     assert resp.status_code == 403 and "scope is required" in resp.json()["detail"]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from app.core.config import settings
@@ -13,8 +14,8 @@ def _missing(*names: str) -> list[str]:
     return [n.upper() for n in names if not getattr(settings, n, "")]
 
 
-def check_sap() -> dict[str, Any]:
-    return SapS4Client().configuration_status()
+def check_sap(security_context: str | None = None) -> dict[str, Any]:
+    return SapS4Client(security_context=security_context).configuration_status()
 
 
 def check_postgres() -> dict[str, Any]:
@@ -27,8 +28,13 @@ def check_minio() -> dict[str, Any]:
     return {"component": "minio", "configured": not missing, "missing": missing}
 
 
-def preflight_for_extract() -> dict[str, Any] | None:
-    components = [check_sap(), check_postgres(), check_minio()]
+def preflight_for_extract(security_context: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    serialized = (
+        json.dumps(security_context, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if isinstance(security_context, dict)
+        else None
+    )
+    components = [check_sap(serialized), check_postgres(), check_minio()]
     failing = [c for c in components if not c.get("configured", True)]
     if not failing:
         return None

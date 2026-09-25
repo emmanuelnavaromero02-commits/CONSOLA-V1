@@ -203,3 +203,37 @@ def test_vault_reveal_connection_records_critical_audit_event():
         assert 'resource_type="vault_connection"' in section
         assert "request_id" not in section or "request_id_var" in src
         assert "critical=True" in section
+
+
+@pytest.mark.parametrize("source,accepted", [("airflow", True), ("cartridge-hubspot", False), ("workspace", False)])
+def test_reveal_accepts_only_console_or_airflow_signed_contexts(monkeypatch, source, accepted):
+    console_main = _console_main()
+    key = "sap-successfactors-dedicated-key-yyyyyyyyyyyyyyy"
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE", key)
+    monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", "security_context_signing_key_distinct_64_chars_console")
+    signed = console_main.build_security_context({
+        "id": 42,
+        "email": "scoped@example.com",
+        "role": "workspace_admin",
+        "active_tenant_id": "11111111-1111-4111-8111-111111111111",
+        "active_workspace_id": "22222222-2222-4222-8222-222222222222",
+        "allowed_cartridges": ["sap_successfactors"],
+    })
+    security_context = importlib.import_module("app.services.security_context")
+    payload = {k: v for k, v in signed.items() if not k.startswith("_signature") and k != "_signed_at"}
+    payload["source"] = source
+    ctx = security_context.sign_security_context(payload)
+    request = _request(
+        "/api/vault/connections/sap_successfactors/tenant_sf/reveal",
+        "cartridge-sap_successfactors",
+        key,
+        extra_headers={"x-security-context": json.dumps(ctx)},
+    )
+    if accepted:
+        user = console_main._cartridge_vault_reveal_user(request)
+        assert user["active_tenant_id"] == "11111111-1111-4111-8111-111111111111"
+    else:
+        with pytest.raises(HTTPException) as exc:
+            console_main._cartridge_vault_reveal_user(request)
+        assert exc.value.status_code == 403
