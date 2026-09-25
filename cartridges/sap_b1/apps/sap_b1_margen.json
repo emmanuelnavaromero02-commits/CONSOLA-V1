@@ -1,6 +1,6 @@
 {
   "name": "sap_b1_margen",
   "title": "Margen · SAP Business One",
-  "description": "Margen del grupo y por empresa, clientes y artículos bajo el mínimo, reconciliación con finanzas y calidad de datos.",
-  "datasets_used": ["sap_b1_data_quality", "sap_b1_margin_by_company_month", "sap_b1_margin_by_customer_month", "sap_b1_margin_by_item_month", "sap_b1_margin_consolidated_month", "sap_b1_margin_reconciliation_month"]
+  "description": "Margen bruto y de contribución, destructores de margen, concentración en el 20 % de clientes y margen por vendedor, por empresa y del grupo en 24 meses; ranking de clientes con detalle por SKU, comparativo por canal, reconciliación fila por fila con la corrida de Finanzas y contra contabilidad, calidad de datos y modelo de entidades.",
+  "datasets_used": ["sap_b1_data_quality", "sap_b1_entity_model", "sap_b1_kpi_reconciliation", "sap_b1_margin_consolidated_month", "sap_b1_margin_detail_month", "sap_b1_margin_kpis_month", "sap_b1_margin_reconciliation_month"]
 }

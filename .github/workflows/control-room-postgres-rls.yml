@@ -245,7 +245,8 @@ jobs:
                    infra/init/99zzy_analytic_app_grants_owner_rls_repair.sql \
                    tests/fixtures/app_grants_seed.sql \
                    infra/init/99zzzzf_analytic_app_grant_convergence.sql \
-                   infra/init/99zzzzm_analytic_app_manifest_registry_sap_b1.sql; do
+                   infra/init/99zzzzm_analytic_app_manifest_registry_sap_b1.sql \
+                   infra/init/99zzzzq_analytic_app_manifest_registry_sap_b1_poc.sql; do
             echo "[app-grants] applying $f"
             psql -h 127.0.0.1 -p 55432 -U postgres -d app_grants \
               -v ON_ERROR_STOP=1 -q -f "$f"
@@ -268,6 +269,8 @@ jobs:
             -f infra/init/99zzzzf_analytic_app_grant_convergence.sql
           psql -h 127.0.0.1 -p 55432 -U postgres -d app_grants -v ON_ERROR_STOP=1 -q \
             -f infra/init/99zzzzm_analytic_app_manifest_registry_sap_b1.sql
+          psql -h 127.0.0.1 -p 55432 -U postgres -d app_grants -v ON_ERROR_STOP=1 -q \
+            -f infra/init/99zzzzq_analytic_app_manifest_registry_sap_b1_poc.sql
           grants_after="$(psql -h 127.0.0.1 -p 55432 -U postgres -d app_grants \
             -v ON_ERROR_STOP=1 -Atc \
             "SELECT count(*) FROM public.analytic_app_dataset_grants")"
