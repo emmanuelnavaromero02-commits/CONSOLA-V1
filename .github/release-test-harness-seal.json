@@ -1895,7 +1895,7 @@
     },
     {
       "path": "console/tests/test_agent_runner_scheduler_auth.py",
-      "sha256": "affa7dc39a45e5bc60dae39438ca4f1f6c2c7bb76d719f76fc379169200c2e57"
+      "sha256": "5c80f1c0682449f50682afef146e4d39355e1587c8cfcce8dba8c7663b47de0b"
     },
     {
       "path": "console/tests/test_agent_scheduler_idempotency_required.py",
@@ -3019,7 +3019,7 @@
     },
     {
       "path": "console/tests/test_narrate_alerts_route_auth.py",
-      "sha256": "ac45b6fba614bd10ca7b993922c85beec84f8cf84a9e69226d22bc40ddc3394e"
+      "sha256": "619344378a857d142e198ecd18eb9e68adab2f737b7d11ab67623ae4c69f9c1b"
     },
     {
       "path": "console/tests/test_narrative_job.py",

@@ -43,8 +43,18 @@ def _load_console_modules():
     return main, operations
 
 
+def _app_modules() -> dict:
+    return {
+        name: module
+        for name, module in sys.modules.items()
+        if name == "app" or name.startswith("app.")
+    }
+
+
 @pytest.fixture()
 def narrate_http(monkeypatch: pytest.MonkeyPatch):
+    saved_modules = _app_modules()
+    saved_path = list(sys.path)
     main, operations = _load_console_modules()
 
     monkeypatch.setenv("APP_ENV", "production")
@@ -58,7 +68,11 @@ def narrate_http(monkeypatch: pytest.MonkeyPatch):
         operations.narrative_job, "narrate_pending_alerts", narrate
     )
 
-    return TestClient(main.app, raise_server_exceptions=False), pool, narrate, main
+    yield TestClient(main.app, raise_server_exceptions=False), pool, narrate, main
+    for name in _app_modules():
+        del sys.modules[name]
+    sys.modules.update(saved_modules)
+    sys.path[:] = saved_path
 
 
 def test_airflow_pair_key_reaches_narrate_alerts_router(narrate_http):

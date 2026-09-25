@@ -35,8 +35,18 @@ def _load_console_modules():
     return main, operations
 
 
+def _app_modules() -> dict:
+    return {
+        name: module
+        for name, module in sys.modules.items()
+        if name == "app" or name.startswith("app.")
+    }
+
+
 @pytest.fixture()
 def scheduler_http(monkeypatch: pytest.MonkeyPatch):
+    saved_modules = _app_modules()
+    saved_path = list(sys.path)
     main, operations = _load_console_modules()
 
     monkeypatch.setenv("APP_ENV", "production")
@@ -55,7 +65,11 @@ def scheduler_http(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(operations.auth, "pool", AsyncMock(return_value=pool))
     monkeypatch.setattr(operations.scheduled_runtime, "find_due_agents", find_due)
 
-    return TestClient(main.app, raise_server_exceptions=False), pool, find_due, main
+    yield TestClient(main.app, raise_server_exceptions=False), pool, find_due, main
+    for name in _app_modules():
+        del sys.modules[name]
+    sys.modules.update(saved_modules)
+    sys.path[:] = saved_path
 
 
 def test_airflow_pair_key_reaches_agent_runner_router(scheduler_http):
