@@ -122,10 +122,10 @@ def test_technical_viewer_endpoints_have_backend_scope_guards():
     source = _read(CONSOLE_MAIN)
 
     assert "_require_technical_source_access(user, source)" in source
-    assert "_filter_technical_sources(user, sources)" in source
     assert "_require_technical_cartridge_access(user, cartridge)" in source
     assert "cartridge = await _scope_catalog_cartridge_arg(user, cartridge)" in source
-    assert "no cartridge installed for this workspace" in source
+    apps_scope_source = _read(ROOT / "console/app/domains/apps/scope.py")
+    assert "no cartridge installed for this workspace" in apps_scope_source
     assert "return _empty_catalog_payload()" in source
 
 

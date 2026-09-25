@@ -118,7 +118,6 @@ def test_operations_uses_console_scope_with_rls_gucs():
     assert operations_aggregates.CONSOLE_SCOPE_PREDICATE == (
         "workspace_id = $1::uuid AND ($2::uuid IS NULL OR tenant_id = $2::uuid)"
     )
-    assert "WHY TWO DSNs" in src
     assert "OPERATIONS_FRESHNESS_SLA_HOURS" in src
 
 

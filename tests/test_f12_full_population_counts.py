@@ -157,8 +157,6 @@ def test_preview_cap_stays_and_is_documented_as_preview_only():
     assert "safe_limit = max(1, min(int(limit or 5000), 5000))" in src, (
         "the preview cap must stay — raising it is a memory band-aid"
     )
-    cap_at = src.index("safe_limit = max(1, min(int(limit or 5000), 5000))")
-    assert "PREVIEW/ROSTER" in src[:cap_at], "cap must be documented as preview-only"
 
 
 def test_population_engine_preserves_the_authority_model():

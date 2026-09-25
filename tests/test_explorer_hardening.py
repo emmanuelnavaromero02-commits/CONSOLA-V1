@@ -105,12 +105,16 @@ def test_dataset_metadata_and_lineage_are_sanitized_before_console_response():
 
     assert "def _sanitize_dataset_metadata_for_user" in source
     assert "def _sanitize_datasets_payload_for_user" in source
+    visibility_source = (
+        ROOT / "console/app/domains/data_platform/source_visibility.py"
+    ).read_text(encoding="utf-8")
+    ast.parse(visibility_source)
     assert (
         'is_physical_reference = "://" in value or "tenant_id=" in value or "workspace_id=" in value'
-        in source
+        in visibility_source
     )
-    assert 'or f"tenant_id={tenant_id}" not in candidate' in source
-    assert 'or f"workspace_id={workspace_id}" not in candidate' in source
+    assert 'or f"tenant_id={tenant_id}" not in candidate' in visibility_source
+    assert 'or f"workspace_id={workspace_id}" not in candidate' in visibility_source
     assert "_sanitize_datasets_payload_for_user(user, payload or {})" in source
     assert "if not _dataset_source_visible_for_user(user, source):" in source
 
@@ -355,7 +359,7 @@ def test_data_api_routes_require_dataset_read_permission_in_both_routers():
 
 
 def test_vault_proxy_hides_foreign_prefixed_connection_ids():
-    source = console_route_source()
+    source = (ROOT / "console/app/domains/vault/scope.py").read_text(encoding="utf-8")
     ast.parse(source)
 
     assert 'elif key.startswith("tenant_") and "__workspace_" in key:' in source

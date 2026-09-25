@@ -75,9 +75,14 @@ def test_console_and_workspace_gold_queries_route_through_refinement() -> None:
     ]
     for path in forwarding_files:
         text = path.read_text(encoding="utf-8")
-        assert "pggold.gold_" in text
         assert "preview_transform" in text
         assert "REFINEMENT_URL" in text or "refinement_url" in text
+    gold_sql_files = [
+        REPO_ROOT / "console/app/domains/data_platform/data_api_payloads.py",
+        REPO_ROOT / "workspace/app/main.py",
+    ]
+    for path in gold_sql_files:
+        assert "pggold.gold_" in path.read_text(encoding="utf-8")
 
 
 def test_postgres_mcp_tools_disable_direct_gold_flag() -> None:

@@ -76,13 +76,17 @@ _BLOCKERS_SOURCES = {
     "cartridge_cpa_scores": _REPO / "cartridges/sap_successfactors/datasets/sap_successfactors_talent_cpa_scores.sql",
     "migration_99p": _REPO / "infra/init/99p_sap_successfactors_talent_datasets.sql",
     "migration_99ze": _REPO / "infra/init/99ze_sap_successfactors_talent_optional_gold_safe.sql",
-    "fallback_py": _REPO / "refinement/app/successfactors_fallbacks.py",
+    "fallback_py": _REPO / "refinement/app/successfactors_talent_core_fallbacks.py",
+}
+_STATIC_ARRAY_SOURCES = {
+    **_BLOCKERS_SOURCES,
+    "fallback_aggregator_py": _REPO / "refinement/app/successfactors_fallbacks.py",
 }
 _STATIC_ARRAY = '["KB-COMPETENCIAS blocked","KB-DESEMPENO blocked","KB-ASPIRACION blocked"]'
 
 
 class TestNoStaticArrayDivergence:
-    @pytest.mark.parametrize("name,path", list(_BLOCKERS_SOURCES.items()))
+    @pytest.mark.parametrize("name,path", list(_STATIC_ARRAY_SOURCES.items()))
     def test_static_all_three_array_absent(self, name, path):
         assert _STATIC_ARRAY not in path.read_text(encoding="utf-8"), (
             f"{name}: reintrodujo el array estatico de los 3 KB (usar patron condicional)"
