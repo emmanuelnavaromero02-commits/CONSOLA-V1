@@ -3763,7 +3763,7 @@
     },
     {
       "path": "tests/domain_aggregate_fakes.py",
-      "sha256": "231d9978b91ae1ce5e61a4227bd249070959c01d347b507120b4b4cf306612e6"
+      "sha256": "44219765a64363fba03809efc6f78f4a16a77aae3d256968d82ea2b0a05bce23"
     },
     {
       "path": "tests/e2e/__init__.py",
