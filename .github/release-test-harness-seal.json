@@ -2842,6 +2842,10 @@
       "sha256": "e76ef5846fba183b6ac3b1fe219e3df79e3efad2fb3a1bbbe9f54fb6749abd94"
     },
     {
+      "path": "console/tests/test_db_scope_connection_scope.py",
+      "sha256": "d710bc60793fef92de10754c50f2a7973334413c99ff61ad5eae421c39b43f2a"
+    },
+    {
       "path": "console/tests/test_decision_backtesting.py",
       "sha256": "2d573076f96d50d3f016ce61f339c0e54215929e1ba26672185aea9013d8aeb3"
     },
