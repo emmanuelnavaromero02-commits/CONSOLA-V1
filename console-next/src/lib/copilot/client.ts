@@ -70,7 +70,12 @@ export async function sendMessage(
   return data;
 }
 
-function parseSseFrame(frame: string): { event: string; data: unknown } | null {
+export interface SseFrame {
+  event: string;
+  data: unknown;
+}
+
+export function parseSseFrame(frame: string): SseFrame | null {
   const lines = frame.split(/\r?\n/);
   let event = "message";
   const dataLines: string[] = [];
@@ -91,18 +96,24 @@ function parseSseFrame(frame: string): { event: string; data: unknown } | null {
 }
 
 
-export async function streamMessage(
-  conversationId: string,
-  message: string,
-  handlers: StreamMessageHandlers = {},
-): Promise<SendMessageResponse> {
-  const response = await apiFetch(
-    `/api/copilot/chat/${encodeURIComponent(conversationId)}/stream`,
-    {
-      method: "POST",
-      json: { message },
-    },
-  );
+export interface SseStreamOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
+
+export async function postSseStream(
+  endpoint: string,
+  body: unknown,
+  onFrame: (frame: SseFrame, requestId: string | undefined) => void,
+  options: SseStreamOptions = {},
+): Promise<void> {
+  const response = await apiFetch(endpoint, {
+    method: "POST",
+    json: body,
+    ...(options.signal ? { signal: options.signal } : {}),
+    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+  });
 
   const requestId = response.headers.get("x-request-id") || undefined;
 
@@ -125,39 +136,10 @@ export async function streamMessage(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  let finalData: SendMessageResponse | null = null;
-  let sawToken = false;
 
   function consume(frame: string) {
     const parsed = parseSseFrame(frame);
-    if (!parsed) return;
-    handlers.onEvent?.(parsed.event, parsed.data);
-    const data = parsed.data as Record<string, unknown>;
-
-    if (parsed.event === "token") {
-      const delta = typeof data?.delta === "string" ? data.delta : "";
-      if (delta) {
-        sawToken = true;
-        handlers.onToken?.(delta);
-      }
-      return;
-    }
-
-    if (parsed.event === "message") {
-      const text = typeof data?.text === "string" ? data.text : "";
-      if (text && !sawToken) handlers.onText?.(text);
-      return;
-    }
-
-    if (parsed.event === "done") {
-      finalData = data as unknown as SendMessageResponse;
-      return;
-    }
-
-    if (parsed.event === "error") {
-      const code = typeof data?.code === "string" ? data.code : undefined;
-      throw toApiError(publicErrorMessage(502, null, requestId), 502, { code }, requestId);
-    }
+    if (parsed) onFrame(parsed, requestId);
   }
 
   while (true) {
@@ -175,6 +157,51 @@ export async function streamMessage(
 
   const tail = buffer.trim();
   if (tail && !tail.startsWith(":")) consume(tail);
+}
+
+
+export async function streamMessage(
+  conversationId: string,
+  message: string,
+  handlers: StreamMessageHandlers = {},
+): Promise<SendMessageResponse> {
+  let finalData: SendMessageResponse | null = null;
+  let sawToken = false;
+
+  await postSseStream(
+    `/api/copilot/chat/${encodeURIComponent(conversationId)}/stream`,
+    { message },
+    (parsed, requestId) => {
+      handlers.onEvent?.(parsed.event, parsed.data);
+      const data = parsed.data as Record<string, unknown>;
+
+      if (parsed.event === "token") {
+        const delta = typeof data?.delta === "string" ? data.delta : "";
+        if (delta) {
+          sawToken = true;
+          handlers.onToken?.(delta);
+        }
+        return;
+      }
+
+      if (parsed.event === "message") {
+        const text = typeof data?.text === "string" ? data.text : "";
+        if (text && !sawToken) handlers.onText?.(text);
+        return;
+      }
+
+      if (parsed.event === "done") {
+        finalData = data as unknown as SendMessageResponse;
+        return;
+      }
+
+      if (parsed.event === "error") {
+        const code = typeof data?.code === "string" ? data.code : undefined;
+        throw toApiError(publicErrorMessage(502, null, requestId), 502, { code }, requestId);
+      }
+    },
+  );
+
   if (!finalData) throw new Error("Copilot stream ended before completion.");
   return finalData;
 }

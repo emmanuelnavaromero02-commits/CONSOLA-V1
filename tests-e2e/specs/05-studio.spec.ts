@@ -1,369 +1,185 @@
 import { test, expect } from "../fixtures/auth";
-import type { Page } from "@playwright/test";
+import type { Page, Response } from "@playwright/test";
 
-const LEGACY = process.env.LEGACY_URL || "http://localhost:8000";
-const STEP_READY: Record<number, RegExp> = {
-  2: /DAGS|Airflow|Plantillas/i,
-  3: /Entidades|Extractores|ENTIDAD/i,
-  4: /Refinamiento|BRONZE|SILVER/i,
-  5: /Analytics|Superset/i,
-  6: /IA Semántica|semántic|catálogo/i,
-  7: /RAG|Knowledge Base|BÚSQUEDA SEMÁNTICA/i,
-};
+const TABS = [/^Grafo$/, /^DAGs$/, /^Entidades$/, /^Refinar$/, /^Capas$/];
 
-async function openStudio(page: Page) {
-  await page.goto(`${LEGACY}/studio`, {
-    waitUntil: "domcontentloaded",
-    timeout: 30_000,
-  });
+function isPath(pathname: string) {
+  return (response: Response) => new URL(response.url()).pathname === pathname;
 }
 
-async function waitStudioReady(page: Page) {
-  await page.waitForFunction(
-    () => {
-      const win = window as typeof window & { goStep?: unknown };
-      const picker = document.querySelector("#cartridge-sel") as HTMLSelectElement | null;
-      const content = document.querySelector("#step-content");
-      return (
-        typeof win.goStep === "function" &&
-        document.body.dataset.studioStep === "1" &&
-        Boolean(picker && picker.options.length > 1 && picker.value) &&
-        Boolean(content)
-      );
-    },
-    null,
-    { timeout: 15_000 },
-  );
+async function openStudio(page: Page): Promise<{ ids: string[] }> {
+  const cartridges = page.waitForResponse(isPath("/studio/cartridges"), { timeout: 20_000 });
+  await page.goto("/studio", { waitUntil: "domcontentloaded", timeout: 30_000 });
+  const response = await cartridges;
+  expect(response.status(), "GET /studio/cartridges must succeed for an admin").toBe(200);
+  const payload = (await response.json()) as { cartridges?: Array<{ id: string }> };
+  const ids = (payload.cartridges ?? []).map((item) => item.id);
+  await expect(page.getByRole("heading", { level: 1, name: "Studio" })).toBeVisible({ timeout: 15_000 });
+  return { ids };
 }
 
-async function goStudioStep(page: Page, step: number) {
-  await waitStudioReady(page);
-  await page.evaluate((targetStep) => {
-    const win = window as typeof window & {
-      goStep: (step: number) => Promise<void> | void;
-    };
-    return win.goStep(targetStep);
-  }, step);
-  await page.waitForFunction(
-    (targetStep) => {
-      const content = document.querySelector("#step-content");
-      return (
-        document.body.dataset.studioStep === String(targetStep) &&
-        Boolean(content && content.textContent?.trim())
-      );
-    },
-    step,
-    { timeout: 15_000 },
-  );
-  await expect(page.locator("#step-content")).toBeVisible({ timeout: 15_000 });
-  if (step === 2) {
-    await expect(page.locator("#dag-editor-body")).toBeVisible({ timeout: 15_000 });
-  }
-  if (step > 1) {
-    await expect(page.locator("#step-content")).toContainText(STEP_READY[step], {
-      timeout: 15_000,
-    });
-  }
+async function openTab(page: Page, name: RegExp) {
+  const tab = page.getByRole("tab", { name });
+  await tab.click();
+  await expect(tab).toHaveAttribute("aria-selected", "true");
 }
 
-test.describe("Legacy /studio page (port 8000)", () => {
-  test("/studio loads with tab navigation", async ({ authedPage: page }) => {
+test.describe("Studio (Next.js, /studio)", () => {
+  test("/studio loads the Next.js Studio with tab navigation", async ({ authedPage: page }) => {
     await openStudio(page);
-    for (const label of [/DAGs/, /Entidades/, /Refinar/]) {
-      await expect(page.getByText(label).first()).toBeVisible({
-        timeout: 15_000,
-      });
+    for (const name of TABS) {
+      await expect(page.getByRole("tab", { name })).toBeVisible();
     }
+    await expect(page.locator("#step-content")).toHaveCount(0);
   });
 
-  test("'DAGs' tab renders a DAG list", async ({ authedPage: page }) => {
-    await openStudio(page);
-    await goStudioStep(page, 2);
-    const eitherState = page.locator("table, [data-state='empty'], .empty, .empty-state");
-    await expect(eitherState.first()).toBeVisible({ timeout: 15_000 });
+  test("cartridge selector lists the cartridges returned by /studio/cartridges", async ({ authedPage: page }) => {
+    const { ids } = await openStudio(page);
+    expect(ids.length, "the seeded stack exposes at least one cartridge").toBeGreaterThan(0);
+    const picker = page.getByTestId("cartridge-picker");
+    await expect(picker).toBeEnabled({ timeout: 15_000 });
+    const values = await picker.locator("option").evaluateAll((options) =>
+      options.map((option) => (option as HTMLOptionElement).value),
+    );
+    expect(values).toEqual(ids);
+    await expect(page.getByTestId("cartridge-status")).toBeVisible({ timeout: 15_000 });
   });
 
-  test("'Airflow' button opens the external Airflow UI deep link, not generic jobs", async ({
-    authedPage: page,
-  }) => {
+  test("graph renders one node per node returned by the dag-graph API", async ({ authedPage: page }) => {
+    const graph = page.waitForResponse(isPath("/api/studio/dag-graph"), { timeout: 20_000 });
     await openStudio(page);
-    await goStudioStep(page, 2);
+    const response = await graph;
+    expect(response.status()).toBe(200);
+    const payload = (await response.json()) as { nodes?: Array<{ id: string }> };
+    const ids = new Set((payload.nodes ?? []).map((node) => node.id));
+    if (!ids.size) {
+      await expect(page.getByText("Sin nodos")).toBeVisible();
+      return;
+    }
+    const nodes = page.locator('[data-testid="dag-graph"] [data-node-id]');
+    await expect(nodes).toHaveCount(ids.size, { timeout: 15_000 });
+    await nodes.first().click();
+    await expect(page.getByTestId("dag-graph-detail")).toBeVisible();
+  });
 
-    const airflow = page.locator("#dag-airflow-link");
-    await expect(airflow).toBeVisible({ timeout: 15_000 });
-    await expect(airflow).toContainText(/Airflow/i);
-
-    const config = await page.evaluate(async () => {
+  test("DAGs tab lists Airflow DAGs or explains why Airflow is unavailable", async ({ authedPage: page }) => {
+    await openStudio(page);
+    const dags = page.waitForResponse(isPath("/api/studio/dags"), { timeout: 20_000 });
+    await openTab(page, /^DAGs$/);
+    const response = await dags;
+    if (!response.ok()) {
+      await expect(page.getByTestId("dags-error")).toBeVisible();
+      return;
+    }
+    const payload = (await response.json()) as { dags?: Array<{ dag_id: string }> };
+    if (!payload.dags?.length) {
+      await expect(page.getByTestId("dags-empty")).toBeVisible();
+      return;
+    }
+    const first = page.locator(`[data-dag-id="${payload.dags[0].dag_id}"]`);
+    await first.click();
+    await expect(page.getByTestId("dag-editor")).toContainText(payload.dags[0].dag_id);
+    const config = (await page.evaluate(async () => {
       const r = await fetch("/api/config", { credentials: "same-origin" });
       return r.ok ? r.json() : {};
+    })) as { airflow_url?: string };
+    const base = String(config.airflow_url || "").replace(/\/+$/, "");
+    const link = page.getByTestId("dag-airflow-link");
+    if (!/^https?:\/\//.test(base)) {
+      await expect(link).toHaveCount(0);
+      await expect(page.getByText("Airflow sin URL pública configurada.")).toBeVisible();
+      return;
+    }
+    await expect(link).toHaveAttribute("target", "_blank");
+    const href = (await link.getAttribute("href")) || "";
+    expect(href.startsWith(base)).toBe(true);
+    expect(href).toMatch(/\/dags\/.+\/grid$/);
+  });
+
+  test("Deploy a Airflow opens a confirmation that cancels without POST, or is disabled with a reason", async ({
+    authedPage: page,
+  }) => {
+    const deployRequests: string[] = [];
+    page.on("request", (request) => {
+      if (new URL(request.url()).pathname === "/api/studio/dag-deploy") deployRequests.push(request.method());
     });
-    const expectedBase = String((config as { airflow_url?: string }).airflow_url || "").replace(
-      /\/+$/,
-      "",
-    );
-
-    await page.waitForFunction(
-      (base) => {
-        const href = document.querySelector("#dag-airflow-link")?.getAttribute("href") || "";
-        if (!href || href === "#") return false;
-        if (href.includes("type=jobs")) return false;
-        if (base) return href.startsWith(base) && /\/dags\/.+\/grid$/.test(href);
-        return /\/dags\/.+\/grid$/.test(href);
-      },
-      expectedBase,
-      { timeout: 15_000 },
-    );
-
-    const href = await airflow.getAttribute("href");
-    expect(href, "Airflow button must not be a no-op").not.toBe("#");
-    expect(href, "Airflow button must not open the generic Jobs viewer").not.toContain(
-      "type=jobs",
-    );
-    expect(href, "Airflow button must not open the in-console monitor as primary action").not.toContain(
-      "/viewer?type=airflow",
-    );
-    expect(href, "Airflow button must deep-link to the selected DAG in Airflow").toMatch(
-      /\/dags\/.+\/grid$/,
-    );
-    if (expectedBase) {
-      expect(href, "Airflow button must use the configured Airflow public URL").toContain(
-        expectedBase,
-      );
+    await openStudio(page);
+    await openTab(page, /^DAGs$/);
+    await page.getByRole("button", { name: /Nuevo DAG/ }).click();
+    const cartridge = await page.getByTestId("cartridge-picker").inputValue();
+    await page.getByRole("textbox", { name: "dag_id" }).fill(`${cartridge}_e2e_probe`);
+    await page.getByRole("textbox", { name: "Código Python" }).fill("# e2e: never deployed\n");
+    const deploy = page.getByRole("button", { name: /Deploy a Airflow/ });
+    await expect(deploy).toBeVisible();
+    if (await deploy.isDisabled()) {
+      const reason = (await deploy.getAttribute("data-disabled-reason")) || "";
+      expect(reason).toMatch(/deshabilitado|empaquetado|desarrollo|ALLOW_RCE_TOOLS|system\/info|Verificando/i);
+      await expect(page.getByTestId("deploy-disabled-reason")).toBeVisible();
+      return;
     }
-    await expect(airflow).toHaveAttribute("target", "_blank");
+    const entity = page.getByRole("combobox", { name: "Entidad" });
+    const hasEntity = Boolean(await entity.inputValue());
+    await deploy.click();
+    const dialog = page.getByTestId("deploy-dialog");
+    if (!hasEntity) {
+      await expect(dialog).toHaveCount(0);
+      return;
+    }
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText(`${cartridge}_e2e_probe`);
+    await dialog.getByRole("button", { name: "Cancelar" }).click();
+    await expect(dialog).toHaveCount(0);
+    expect(deployRequests, "cancelling the modal must not deploy").toEqual([]);
   });
 
-  test("'Grafo' button responds to click (USER-REPORTED BUG)", async ({
-    authedPage: page,
-  }) => {
+  test("Entidades tab shows the entity table, spec upload and new-entity dialog", async ({ authedPage: page }) => {
     await openStudio(page);
-    const grafoBtn = page.getByRole("button", { name: /grafo/i }).first();
-    await goStudioStep(page, 2);
-
-    await expect(grafoBtn,
-      "'Grafo' button is a visible Studio control; absence must fail instead of skip.",
-    ).toBeVisible({ timeout: 10_000 });
-
-    const beforeUrl = page.url();
-    const requestPromise = page
-      .waitForRequest(
-        (req) => req.url().includes("/api/studio/") || req.url().includes("/studio/graph"),
-        { timeout: 4_000 },
-      )
-      .then(() => "request" as const)
-      .catch(() => null);
-    const navPromise = page
-      .waitForURL((url) => url.href !== beforeUrl, { timeout: 4_000 })
-      .then(() => "navigation" as const)
-      .catch(() => null);
-
-    await grafoBtn.click({ trial: false }).catch(() => {});
-    const signal = await Promise.race([requestPromise, navPromise]);
-
-    expect(signal,
-      "'Grafo' button must trigger navigation OR a /studio/* request " +
-      "within 4 s. User-reported bug: the button is unresponsive.",
-    ).not.toBeNull();
+    const entities = page.waitForResponse(isPath("/api/studio/entities"), { timeout: 20_000 });
+    await openTab(page, /^Entidades$/);
+    expect((await entities).status()).toBe(200);
+    await expect(page.getByTestId("entities-table").or(page.getByTestId("entities-empty"))).toBeVisible();
+    await expect(page.locator('input[type="file"][accept*=".yaml"]')).toHaveCount(1);
+    await page.getByRole("button", { name: /Nueva entidad/ }).click();
+    const dialog = page.getByTestId("new-entity-dialog");
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: "Cancelar" }).click();
+    await expect(dialog).toHaveCount(0);
   });
 
-  test("'Deploy a Airflow' is gated: fires /api/studio/dag-deploy OR is disabled with a reason (USER-REPORTED BUG)",
-    async ({ authedPage: page }) => {
-      await openStudio(page);
-      await goStudioStep(page, 2);
-      const deployBtn = page.getByRole("button", { name: /deploy/i }).first();
-      await expect(deployBtn,
-        "'Deploy a Airflow' is a visible Studio control; absence must fail instead of skip.",
-      ).toBeVisible({ timeout: 10_000 });
-      await page.waitForTimeout(2_000);
-      if (await deployBtn.isDisabled().catch(() => false)) {
-        const reason =
-          (await deployBtn.getAttribute("title")) ||
-          (await deployBtn.getAttribute("data-disabled-reason")) ||
-          (await deployBtn.textContent()) ||
-          "";
-        expect(reason,
-          "a disabled 'Deploy a Airflow' must explain why (packaged DAG / production gate)",
-        ).toMatch(/deshabilitado|empaquetado|producci[oó]n|ci\/cd|airflow/i);
-        return;
-      }
-      const requestPromise = page.waitForRequest(
-        (req) => req.url().includes("/api/studio/dag-deploy"),
-        { timeout: 10_000 },
-      );
-      await deployBtn.click();
-      await requestPromise.catch(() => {
-        throw new Error(
-          "An ENABLED 'Deploy a Airflow' did NOT trigger /api/studio/dag-deploy " +
-          "within 10 s. User-reported bug: the button is unresponsive.",
-        );
-      });
-    },
-  );
-
-  test("'Entidades' tab shows entities table", async ({ authedPage: page }) => {
+  test("Capas tab switches Silver/Gold and shows data or an honest state", async ({ authedPage: page }) => {
     await openStudio(page);
-    await goStudioStep(page, 3);
-    await expect(
-      page.locator("#entity-list-area, table, [data-state='empty'], .empty-state").first(),
-    ).toBeVisible({ timeout: 15_000 });
-  });
-
-  test("'Subir spec' drop zone accepts files (USER-REPORTED BUG)",
-    async ({ authedPage: page }) => {
-      await openStudio(page);
-      await goStudioStep(page, 3);
-
-      const fileInput = page.locator('input[type="file"]');
-      const dropZone = page.locator(
-        '[data-dropzone], [role="button"][aria-label*="subir" i], .dropzone',
-      );
-
-      const hasInput = await fileInput.count();
-      const hasZone = await dropZone.count();
-      expect(hasInput + hasZone,
-        "'Subir spec' surface must render an <input type=file> or a [data-dropzone] " +
-        "element. Neither was found — user-reported bug confirmed.",
-      ).toBeGreaterThan(0);
-    },
-  );
-
-  test("'Refinar' tab exposes Bronze/Silver/Gold subtabs", async ({
-    authedPage: page,
-  }) => {
-    await openStudio(page);
-    await goStudioStep(page, 4);
-    for (const layer of [/Bronze/i, /Silver/i, /Gold/i]) {
-      await expect(page.getByText(layer).first()).toBeVisible({
-        timeout: 10_000,
-      });
+    await openTab(page, /^Capas$/);
+    for (const layer of ["Silver", "Gold"]) {
+      await page.getByRole("tab", { name: layer, exact: true }).click();
+      const panel = page.locator('[role="tabpanel"][id^="studio-layer-panel-"]');
+      await expect(panel).toBeVisible();
+      await expect(
+        panel.locator("table").or(panel.locator('[role="status"]')).or(panel.locator('[role="alert"]')).first(),
+      ).toBeVisible({ timeout: 20_000 });
     }
   });
 
-  test("'Silver' subtab renders data, not blank (USER-REPORTED BUG)",
-    async ({ authedPage: page }) => {
-      await openStudio(page);
-      await goStudioStep(page, 4);
-      const silver = page.locator(".tab").filter({ hasText: /^SILVER|^Silver/i }).first();
-      await expect(silver,
-        "Silver subtab is a visible Studio control; absence must fail instead of skip.",
-      ).toBeVisible({ timeout: 10_000 });
-      await silver.click({ force: true });
-      const content = page.locator(
-        "table, canvas, svg, .empty-state, .alert, pre, .silver-content",
-      );
-      await expect(content.first()).toBeVisible({
-        timeout: 15_000,
-      });
-    },
-  );
-
-  test("'Crear en Superset' triggers /api/studio/superset (USER-REPORTED BUG)",
-    async ({ authedPage: page }) => {
-      await openStudio(page);
-      await goStudioStep(page, 5);
-      await page.waitForFunction(
-        () => {
-          const text = document.querySelector("#gold-list")?.textContent || "";
-          return (
-            /Crear en Superset/i.test(text) ||
-            /No hay datasets Gold|Error cargando datasets/i.test(text)
-          );
-        },
-        null,
-        { timeout: 15_000 },
-      );
-      const supersetBtn = page
-        .getByRole("button", { name: /\+?\s*crear en superset/i })
-        .first();
-      if (!(await supersetBtn.isVisible().catch(() => false))) {
-        await expect(page.locator("#gold-list"),
-          "When Superset creation is not visible, Studio must explain that Gold/Superset is unavailable instead of skipping.",
-        ).toContainText(/No hay datasets Gold|Error cargando datasets|Superset.*interno|VPN|seguridad/i);
-        return;
-      }
-      const requestPromise = page.waitForRequest(
-        (req) => req.url().includes("/api/studio/superset"),
-        { timeout: 10_000 },
-      );
-      await supersetBtn.click();
-      await requestPromise.catch(() => {
-        throw new Error(
-          "Click on 'Crear en Superset' did NOT trigger /api/studio/superset " +
-          "within 10 s. User-reported bug confirmed.",
-        );
-      });
-    },
-  );
-
-  test("'IA Semántica' tab loads without errors", async ({
-    authedPage: page,
-  }) => {
+  test("Refinar previews SQL through /api/bronze/query", async ({ authedPage: page }) => {
     await openStudio(page);
-    await goStudioStep(page, 6);
-    const main = page.locator(
-      ".tab-content, [role='tabpanel'], main, .studio-layout",
+    await openTab(page, /^Refinar$/);
+    await page.getByRole("button", { name: /Nuevo dataset/ }).click();
+    await page.getByRole("textbox", { name: "SQL" }).fill("select 1 as uno");
+    const request = page.waitForRequest(
+      (req) => req.method() === "POST" && new URL(req.url()).pathname === "/api/bronze/query",
+      { timeout: 10_000 },
     );
-    await expect(main.first()).toBeVisible({ timeout: 10_000 });
+    await page.getByRole("button", { name: /Previsualizar/ }).click();
+    const sent = await request;
+    expect(JSON.parse(sent.postData() || "{}")).toMatchObject({ sql: "select 1 as uno", limit: 50 });
   });
 
-  test("'Plantillas' tab loads template list (USER-REPORTED BUG)",
-    async ({ authedPage: page }) => {
-      await openStudio(page);
-      await goStudioStep(page, 2);
-      const existingPanel = page
-        .locator('[role="dialog"], [role="tabpanel"], .templates-list, .plantillas')
-        .first();
-      if (await existingPanel.isVisible({ timeout: 5_000 }).catch(() => false)) {
-        await expect(existingPanel).toBeVisible();
-        return;
-      }
-
-      const candidates = [
-        page.getByRole("tab", { name: /plantilla/i }),
-        page.getByRole("button", { name: /plantilla/i }),
-        page.getByText(/^plantillas$/i),
-      ];
-
-      let trigger = null;
-      for (const c of candidates) {
-        if (await c.first().isVisible({ timeout: 5_000 }).catch(() => false)) {
-          trigger = c.first();
-          break;
-        }
-      }
-
-      expect(trigger,
-        "'Plantillas' affordance is a visible Studio control; absence must fail instead of skip.",
-      ).not.toBeNull();
-
-      const beforeUrl = page.url();
-      const navOrPanel = Promise.race([
-        page
-          .waitForURL((url) => url.href !== beforeUrl, { timeout: 8_000 })
-          .then(() => "navigation" as const)
-          .catch(() => null),
-        page
-          .waitForRequest(
-            (req) => req.url().includes("/api/studio/templates"),
-            { timeout: 8_000 },
-          )
-          .then(() => "request" as const)
-          .catch(() => null),
-      ]);
-
-      await trigger!.click().catch(() => {});
-      const panelAppeared = page
-        .locator('[role="dialog"], [role="tabpanel"], .templates-list, .plantillas')
-        .first()
-        .isVisible({ timeout: 8_000 })
-        .catch(() => false);
-
-      const signal = await Promise.race([navOrPanel, panelAppeared.then((v) => v ? "panel" : null)]);
-      expect(signal,
-        "'Plantillas' click must surface navigation, a /api/studio/templates " +
-        "request, or a visible panel/dialog within 8 s. User-reported bug: " +
-        "click is a no-op.",
-      ).not.toBeNull();
-    },
-  );
+  test("Studio assistant opens as a side panel and accepts text", async ({ authedPage: page }) => {
+    await openStudio(page);
+    await page.getByRole("button", { name: /Asistente de Studio/ }).click();
+    const panel = page.getByTestId("studio-assistant");
+    await expect(panel).toBeVisible();
+    const input = panel.getByRole("textbox", { name: "Mensaje para el asistente de Studio" });
+    await input.fill("¿Qué DAGs tiene este cartucho?");
+    await expect(input).toHaveValue("¿Qué DAGs tiene este cartucho?");
+  });
 });

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "next dev --port 8001",
     "build": "next build",
-    "export:copy": "npm run build && rm -rf ../console/app/static/console-next && cp -R out ../console/app/static/console-next && rm -rf ../console/app/static/console-next/studio && find ../console/app/static/console-next -type f -exec perl -pi -e 's/[ \\t]+$//' {} +",
+    "export:copy": "npm run build && rm -rf ../console/app/static/console-next && cp -R out ../console/app/static/console-next && find ../console/app/static/console-next -type f -exec perl -pi -e 's/[ \\t]+$//' {} +",
     "verify:static": "npm run export:copy && git diff --exit-code -- ../console/app/static/console-next",
     "start": "python3 -m http.server 8001 -d out",
     "typecheck": "rm -rf .next && tsc --noEmit",

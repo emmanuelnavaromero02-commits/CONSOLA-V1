@@ -1,120 +1,188 @@
 "use client";
 
-import { Info } from "lucide-react";
+import Link from "next/link";
+import { BookOpen, Bot, LayoutGrid, Library } from "lucide-react";
+import { useState, useSyncExternalStore } from "react";
 
-import { useKpis } from "@/lib/hooks/useKpis";
-import { legacyConsoleUrl } from "@/lib/legacy-url";
+import { CartridgeBar } from "@/components/studio/CartridgeBar";
+import { DagGraph } from "@/components/studio/DagGraph";
+import { DagsPanel } from "@/components/studio/DagsPanel";
+import { EntitiesPanel } from "@/components/studio/EntitiesPanel";
+import { LayersPanel } from "@/components/studio/LayersPanel";
+import { RefinePanel } from "@/components/studio/RefinePanel";
+import { StudioAssistant } from "@/components/studio/StudioAssistant";
+import { buttonClass, Notice } from "@/components/studio/ui";
+import { studioErrorMessage } from "@/lib/studio/client";
+import { useStudioCartridges, useStudioManifest } from "@/lib/studio/hooks";
+import { cn } from "@/lib/utils";
 
-import { CartridgeLauncherCard } from "@/components/studio/CartridgeLauncherCard";
+const TABS = [
+  { id: "grafo", label: "Grafo", step: 1 },
+  { id: "dags", label: "DAGs", step: 2 },
+  { id: "entidades", label: "Entidades", step: 3 },
+  { id: "refinar", label: "Refinar", step: 4 },
+  { id: "capas", label: "Capas", step: 5 },
+] as const;
 
-const CARTRIDGES: { id: string; name: string; description: string }[] = [
-  {
-    id:          "replicon",
-    name:        "Replicon",
-    description: "Time tracking + project hours.",
-  },
-  {
-    id:          "hubspot",
-    name:        "HubSpot CRM",
-    description: "Pipeline, forecast, deals y revenue comercial.",
-  },
-  {
-    id:          "sap_hcm",
-    name:        "SAP HCM",
-    description: "Recursos humanos. Empleados, puestos, organización.",
-  },
-  {
-    id:          "sap_s4hana",
-    name:        "SAP S/4HANA",
-    description: "Financiero + logística. Cuentas, asientos, materiales.",
-  },
-  {
-    id:          "sap_successfactors",
-    name:        "SAP SuccessFactors",
-    description: "Talento + performance. Goals, reviews, learning.",
-  },
+type TabId = (typeof TABS)[number]["id"];
+
+const LINKS = [
+  { href: "/data/inventory", label: "Catálogo semántico", icon: Library },
+  { href: "/copilot/knowledge", label: "Base de conocimiento (RAG)", icon: BookOpen },
+  { href: "/analytics", label: "Apps analíticas", icon: LayoutGrid },
 ];
 
+function subscribeToNothing(): () => void {
+  return () => undefined;
+}
+
+function useQueryParam(name: string): string | null {
+  return useSyncExternalStore(
+    subscribeToNothing,
+    () => new URLSearchParams(window.location.search).get(name),
+    () => null,
+  );
+}
+
+function isTab(value: string | null): value is TabId {
+  return TABS.some((tab) => tab.id === value);
+}
 
 export default function StudioPage() {
-  const { data, isLoading, isError, refetch } = useKpis();
-  const freshnessMap = data?.data_freshness ?? {};
+  const cartridges = useStudioCartridges();
+  const requested = useQueryParam("cartridge");
+  const tabParam = useQueryParam("tab");
+  const [chosen, setChosen] = useState<string | null>(null);
+  const [tabChoice, setTab] = useState<TabId | null>(null);
+  const tab: TabId = tabChoice ?? (isTab(tabParam) ? tabParam : "grafo");
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const list = cartridges.data ?? [];
+  const activeId =
+    chosen
+    ?? (requested && list.some((item) => item.id === requested) ? requested : null)
+    ?? list[0]?.id
+    ?? null;
+  const manifest = useStudioManifest(activeId);
+  const activeTab = TABS.find((item) => item.id === tab) ?? TABS[0];
+
+  function selectCartridge(id: string) {
+    setChosen(id);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("cartridge", id);
+      window.history.replaceState(window.history.state, "", url.toString());
+    }
+  }
 
   return (
-    <main className="mx-auto max-w-6xl space-y-6 px-6 py-8">
-      <header className="space-y-2">
-        <h1 className="text-3xl font-semibold tracking-tight">Studio</h1>
-        <p className="text-sm text-muted-foreground">
-          Configura DAGs, refinamiento de capas y semántica para cada cartucho.
-        </p>
+    <main className="mx-auto max-w-[1600px] space-y-6 px-4 py-6 sm:px-6">
+      <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+        <div className="space-y-1">
+          <h1 className="text-3xl font-semibold tracking-tight">Studio</h1>
+          <p className="text-sm text-muted-foreground">
+            Configura DAGs, entidades, refinamiento de capas y datasets de cada cartucho.
+          </p>
+        </div>
+        <button
+          type="button"
+          className={cn(buttonClass, assistantOpen && "border-primary text-primary")}
+          aria-expanded={assistantOpen}
+          aria-controls="studio-assistant-region"
+          onClick={() => setAssistantOpen((value) => !value)}
+        >
+          <Bot aria-hidden className="h-4 w-4" /> Asistente de Studio
+        </button>
       </header>
 
-      <aside
-        role="note"
-        className="flex flex-col gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 text-sm sm:flex-row sm:items-start"
-      >
-        <span
-          aria-hidden
-          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400"
-        >
-          <Info className="h-4 w-4" />
-        </span>
-        <div className="space-y-1">
-          <p className="font-medium">Studio se está migrando a Next.js.</p>
-          <p className="text-xs text-muted-foreground">
-            Mientras tanto, abre cada cartucho en la consola clásica
-            (puerto 8000). El estado de frescura que ves abajo viene
-            de los KPIs del panel —no es una estimación.
-          </p>
-        </div>
-      </aside>
+      <CartridgeBar
+        cartridges={list}
+        loading={cartridges.isLoading}
+        error={cartridges.isError ? studioErrorMessage(cartridges.error, "Error al consultar /studio/cartridges.") : null}
+        onRetry={() => cartridges.refetch()}
+        activeId={activeId}
+        onSelect={selectCartridge}
+      />
 
-      {isError ? (
-        <div
-          role="alert"
-          aria-live="polite"
-          className="rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm"
-        >
-          <p className="font-medium text-destructive">
-            No se pudo cargar el estado de los cartuchos.
-          </p>
-          <button
-            type="button"
-            onClick={() => refetch()}
-            className="mt-2 inline-flex min-h-[44px] items-center justify-center rounded-md border border-destructive/40 px-3 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/40"
+      <div className={cn("grid grid-cols-1 gap-4", assistantOpen && "xl:grid-cols-[minmax(0,1fr)_400px]")}>
+        <section className="min-w-0 rounded-lg border bg-card shadow-sm">
+          <div role="tablist" aria-label="Secciones de Studio" className="flex flex-wrap gap-1 border-b p-2">
+            {TABS.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                role="tab"
+                id={`studio-tab-${item.id}`}
+                aria-selected={tab === item.id}
+                aria-controls={`studio-panel-${item.id}`}
+                onClick={() => setTab(item.id)}
+                className={cn(
+                  "min-h-[44px] rounded-md px-4 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  tab === item.id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent/10",
+                )}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <div
+            role="tabpanel"
+            id={`studio-panel-${activeTab.id}`}
+            aria-labelledby={`studio-tab-${activeTab.id}`}
+            data-testid="studio-panel"
+            className="p-4"
           >
-            Reintentar
-          </button>
-        </div>
-      ) : null}
+            {!activeId ? (
+              cartridges.isLoading ? (
+                <p className="text-sm text-muted-foreground">Cargando cartuchos…</p>
+              ) : (
+                <Notice>No hay cartuchos visibles para tu usuario. Crea o importa uno para empezar.</Notice>
+              )
+            ) : (
+              <>
+                {manifest.isError ? (
+                  <div className="mb-4">
+                    <Notice tone="warning" title="No se pudo leer el manifiesto del cartucho.">
+                      {studioErrorMessage(manifest.error, "Error al consultar /studio/cartridges/{id}.")}
+                    </Notice>
+                  </div>
+                ) : null}
+                {activeTab.id === "grafo" ? <DagGraph key={activeId} cartridge={activeId} /> : null}
+                {activeTab.id === "dags" ? <DagsPanel key={activeId} cartridge={activeId} manifest={manifest.data} /> : null}
+                {activeTab.id === "entidades" ? (
+                  <EntitiesPanel key={activeId} cartridge={activeId} manifest={manifest.data} />
+                ) : null}
+                {activeTab.id === "refinar" ? (
+                  <RefinePanel key={activeId} cartridge={activeId} manifest={manifest.data} />
+                ) : null}
+                {activeTab.id === "capas" ? <LayersPanel key={activeId} cartridge={activeId} /> : null}
+              </>
+            )}
+          </div>
+        </section>
+        {assistantOpen ? (
+          <div id="studio-assistant-region">
+            <StudioAssistant
+              key={activeId ?? "sin-cartucho"}
+              cartridge={activeId}
+              step={activeTab.step}
+              onClose={() => setAssistantOpen(false)}
+            />
+          </div>
+        ) : null}
+      </div>
 
-      <section
-        aria-label="Cartuchos disponibles"
-        className="grid grid-cols-1 gap-4 sm:grid-cols-2"
-      >
-        {isLoading && !data ? (
-          Array.from({ length: CARTRIDGES.length }).map((_, i) => (
-            <div
-              key={i}
-              className="h-44 animate-pulse rounded-lg border bg-card"
-              aria-hidden
-            />
-          ))
-        ) : (
-          CARTRIDGES.map((c) => (
-            <CartridgeLauncherCard
-              key={c.id}
-              id={c.id}
-              name={c.name}
-              description={c.description}
-              freshness={freshnessMap[c.id]}
-              legacyHref={legacyConsoleUrl(
-                `/studio?cartridge=${encodeURIComponent(c.id)}`,
-              )}
-            />
-          ))
-        )}
-      </section>
+      <nav aria-label="Herramientas relacionadas" className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {LINKS.map((link) => (
+          <Link
+            key={link.href}
+            href={link.href}
+            className="flex min-h-[44px] items-center gap-3 rounded-lg border bg-card p-4 text-sm font-medium shadow-sm hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <link.icon aria-hidden className="h-4 w-4 text-primary" />
+            {link.label}
+          </Link>
+        ))}
+      </nav>
     </main>
   );
 }

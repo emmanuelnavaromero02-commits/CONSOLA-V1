@@ -60,10 +60,12 @@ def test_studio_parser_accepts_seeded_airflow_and_cartridge_dags():
     assert failures == []
 
 
-def test_studio_frontend_has_graph_parser_fallback():
-    source = (REPO / "console/app/static/js/studio/legacy.js").read_text(encoding="utf-8")
+def test_studio_frontend_renders_graph_from_nodes_and_edges_only():
+    component = (REPO / "console-next/src/components/studio/DagGraph.tsx").read_text(encoding="utf-8")
+    client = (REPO / "console-next/src/lib/studio/client.ts").read_text(encoding="utf-8")
 
-    assert "Parser Python no disponible" in source
-    assert "Parser remoto no disponible" in source
-    assert "Mostrando grafo aproximado" in source
-    assert "const fallback = _parseDagGraph(code)" in source
+    assert "layoutDagGraph(" in component
+    assert "dangerouslySetInnerHTML" not in component
+    assert ".svg" not in component
+    graph_fn = client.split("export async function getDagGraph(", 1)[1].split("\n}\n", 1)[0]
+    assert "svg" not in graph_fn

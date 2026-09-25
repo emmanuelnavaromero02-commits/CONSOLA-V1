@@ -2035,7 +2035,7 @@ async def dags_list(
             "dag_id": dag_id,
             "id": dag_id,
             "is_paused": False,
-            "is_active": True,
+            "is_active": False,
             "tags": [],
             "cartridge_id": cartridge,
             "registered_only": True,

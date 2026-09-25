@@ -121,25 +121,17 @@ if [ -f "${ROOT}/infra/.env" ]; then
 fi
 
 BASE_URL="${BASE_URL:-http://localhost:8000}"
-LEGACY_URL="${LEGACY_URL:-http://localhost:8000}"
-CONTROL_ROOM_URL="${CONTROL_ROOM_URL:-${LEGACY_URL}/control-room}"
+CONTROL_ROOM_URL="${CONTROL_ROOM_URL:-${BASE_URL}/control-room}"
 
 echo ""
 echo "Preconditions:"
 
 if curl -sS --max-time 5 -o /dev/null "${BASE_URL}/healthz" 2>/dev/null; then
     echo "  ✅ FastAPI-served console reachable at ${BASE_URL}"
+    echo "     ↳ Control Room expected at ${CONTROL_ROOM_URL}"
 else
     echo "  ❌ FastAPI-served console NOT reachable at ${BASE_URL}/healthz"
     echo "     Bring up the stack with: make up"
-    exit 1
-fi
-
-if curl -sS --max-time 5 -o /dev/null "${LEGACY_URL}/healthz" 2>/dev/null; then
-    echo "  ✅ FastAPI backend reachable at ${LEGACY_URL}"
-    echo "     ↳ Control Room expected at ${CONTROL_ROOM_URL}"
-else
-    echo "  ❌ FastAPI backend NOT reachable at ${LEGACY_URL}/healthz"
     exit 1
 fi
 

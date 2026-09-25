@@ -87,3 +87,55 @@ async def test_probe_microservice_marks_operational_with_deep_payload():
     )
 
     assert result == {"status": "operational", "credentials": "ok"}
+
+
+def _console_main():
+    import importlib
+
+    return importlib.import_module("app.main")
+
+
+def _stub_manifest(monkeypatch, main):
+    async def get_cartridge(cartridge_id):
+        return {"id": cartridge_id, "name": cartridge_id}
+
+    monkeypatch.setattr(main.cartridge_service, "get_cartridge", get_cartridge)
+
+
+@pytest.mark.asyncio
+async def test_status_probes_the_cartridge_service_from_the_operations_health_map(monkeypatch):
+    main = _console_main()
+    _stub_manifest(monkeypatch, main)
+    monkeypatch.setenv("REPLICON_URL", "http://replicon-probe.test:8201")
+    probed = []
+
+    async def fake_probe(base_url, cartridge_id):
+        probed.append((base_url, cartridge_id))
+        return {"status": "offline", "reason": "/health HTTP 503"}
+
+    monkeypatch.setattr(main, "_probe_microservice", fake_probe)
+
+    result = await main.studio_cartridge_status("replicon", user=None)
+
+    assert probed == [("http://replicon-probe.test:8201", "replicon")]
+    assert result == {"cartridge_id": "replicon", "status": "offline", "reason": "/health HTTP 503"}
+
+
+@pytest.mark.asyncio
+async def test_status_reports_registered_when_the_cartridge_has_no_service(monkeypatch):
+    main = _console_main()
+    _stub_manifest(monkeypatch, main)
+
+    async def forbidden_probe(*_args, **_kwargs):
+        raise AssertionError("a cartridge without its own service must not be probed")
+
+    monkeypatch.setattr(main, "_probe_microservice", forbidden_probe)
+
+    result = await main.studio_cartridge_status("banxico", user=None)
+
+    assert result == {
+        "cartridge_id": "banxico",
+        "status": "registered",
+        "detail": "sin servicio propio que sondear",
+    }
+    assert result["status"] != "operational"

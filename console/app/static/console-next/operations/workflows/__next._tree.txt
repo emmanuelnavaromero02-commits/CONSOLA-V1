@@ -1,2 +1,2 @@
-:HL["/static/console-next/_next/static/chunks/1wax782jgo2tq.css","style"]
+:HL["/static/console-next/_next/static/chunks/06gt-1x-1y5pk.css","style"]
 0:{"tree":{"name":"","param":null,"prefetchHints":4176,"slots":{"children":{"name":"(shell)","param":null,"prefetchHints":4192,"slots":{"children":{"name":"operations","param":null,"prefetchHints":4192,"slots":{"children":{"name":"workflows","param":null,"prefetchHints":4192,"slots":{"children":{"name":"__PAGE__","param":null,"prefetchHints":4256,"slots":null}}}}}}}}},"staleTime":300,"buildId":"console-next-static"}

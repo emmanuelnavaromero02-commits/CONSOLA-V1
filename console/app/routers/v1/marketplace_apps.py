@@ -50,11 +50,6 @@ async def serve_app(name: str, request: Request, user: dict = Depends(require_pe
     _validate_dataset_name(name)
     return RedirectResponse(url=f"/analytics/viewer?app={quote(name, safe='')}", status_code=303)
 
-@router.get("/studio", dependencies=[Depends(require_permission("studio.read")), Depends(require_admin)])
-@_bind_to_main
-async def studio_page():
-    return FileResponse(STATIC / "studio.html")
-
 @router.get("/marketplace", dependencies=[Depends(require_permission("marketplace.read"))])
 @_bind_to_main
 async def marketplace_page(request: Request):
