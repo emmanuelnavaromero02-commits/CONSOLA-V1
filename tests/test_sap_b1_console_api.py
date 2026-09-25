@@ -210,3 +210,33 @@ def test_every_write_route_needs_csrf_and_control_room_write():
         if api_route.methods & {"PUT", "POST", "DELETE"}:
             assert "require_csrf" in names, api_route.path
         assert api_route.path.startswith("/api/sap-b1/")
+
+
+def test_cartridge_calls_carry_the_signed_scope_in_the_header_and_the_body(monkeypatch):
+    sent: list = []
+    signed = {"trusted": True, "tenant_id": USER["tenant_id"], "workspace_id": USER["workspace_id"], "signature": "s"}
+    monkeypatch.setattr(route, "_signed_context", lambda user: signed)
+    monkeypatch.setattr(route, "_internal_headers", lambda server: {"x-api-key": "k", "x-internal-service": "console"})
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def request(self, method, url, headers=None, json=None):
+            sent.append((method, url, headers, json))
+            return httpx.Response(200, json={})
+
+    monkeypatch.setattr(route.httpx, "AsyncClient", _Client)
+    asyncio.run(route._cartridge("GET", "/connector/status", user=USER))
+    asyncio.run(route._cartridge("POST", "/finance-runs", user=USER, body={"csv": "x"}))
+    asyncio.run(route._cartridge("GET", "/indicators"))
+    (m1, _, h1, b1), (m2, _, h2, b2), (m3, _, h3, b3) = sent
+    assert m1 == "GET" and b1 is None and route.json.loads(h1["x-security-context"]) == signed
+    assert b2 == {"csv": "x", "security_context": signed} and "x-security-context" in h2
+    assert "x-security-context" not in h3 and b3 is None

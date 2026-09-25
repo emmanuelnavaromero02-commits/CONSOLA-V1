@@ -59,10 +59,13 @@ def _email_transport() -> str:
 async def _cartridge(method: str, path: str, *, user: dict | None = None, body: dict | None = None,
                      timeout: httpx.Timeout = TIMEOUT) -> httpx.Response:
     payload = dict(body or {})
+    headers = _internal_headers("CARTRIDGE")
     if user is not None:
-        payload["security_context"] = _signed_context(user)
+        signed = _signed_context(user)
+        payload["security_context"] = signed
+        headers["x-security-context"] = json.dumps(signed, ensure_ascii=False)
     async with httpx.AsyncClient(timeout=timeout) as client:
-        return await client.request(method, f"{_cartridge_url()}{path}", headers=_internal_headers("CARTRIDGE"),
+        return await client.request(method, f"{_cartridge_url()}{path}", headers=headers,
                                     json=payload if method != "GET" else None)
 
 
@@ -165,7 +168,7 @@ async def overview(user: dict = Depends(require_permission("control_room.read"))
     except HTTPException as exc:
         parameters.update(valid=False, error=str(exc.detail)[:300])
     try:
-        status_response = await _cartridge("POST", "/connector/status", user=user)
+        status_response = await _cartridge("GET", "/connector/status", user=user)
         connector = status_response.json() if status_response.status_code < 400 else {"present": False, "error": _detail(status_response)}
     except httpx.HTTPError:
         connector = {"present": False, "error": "el cartucho sap_b1 no respondió"}
