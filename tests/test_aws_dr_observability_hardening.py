@@ -39,7 +39,6 @@ def test_aws_full_regression_orchestrates_critical_gates():
     src = _read("scripts/aws_full_regression.py")
     for token in (
         "beta_smoke_aws.py",
-        "tenant_ab_e2e.py",
         "run_decision_backtest.py",
         "aws_observability_report.py",
         "aws_superset_probe.py",

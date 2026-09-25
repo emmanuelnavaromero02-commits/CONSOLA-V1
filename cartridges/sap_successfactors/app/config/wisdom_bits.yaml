@@ -10,7 +10,6 @@ wisdom_bits:
     pii_exposure: masked
     default_profile:
       industry: retail
-      company_profile: femsa
     fit_score:
       components:
         competency:

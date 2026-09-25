@@ -15,7 +15,7 @@
     },
     {
       "path": "Makefile",
-      "sha256": "0df8651a3c97eaba629d741ce8629f87d876901dd5ad9395073e4f1e858f3767"
+      "sha256": "d1d0e9c207d39dfe974930d5b389488415868dcf049decd4abc17b915087021e"
     },
     {
       "path": "airflow/dags/_secrets.py",
@@ -263,7 +263,7 @@
     },
     {
       "path": "cartridges/hubspot/app/core/config.py",
-      "sha256": "3ed540d9238590687a084836c568e670bf307b30d15d9be93bc3aaa702a8d1f6"
+      "sha256": "7548273fb63755afb12111bbca5d3c631e8c80d4c3d3737d5a64255fd347b794"
     },
     {
       "path": "cartridges/hubspot/app/core/egress_guard.py",
@@ -271,7 +271,7 @@
     },
     {
       "path": "cartridges/hubspot/app/core/hubspot_client.py",
-      "sha256": "51d0ccdd6c6758830bbf77032df8cf8676b4f4432b23d346c2f0101709415a5b"
+      "sha256": "c5dfc411ea1f6a3e1d285223c39e89b052c22cfc97a0aea40229799d8c17c2bd"
     },
     {
       "path": "cartridges/hubspot/app/core/job_runner.py",
@@ -367,7 +367,7 @@
     },
     {
       "path": "cartridges/hubspot/tests/test_extraction_scoped_connection_hubspot.py",
-      "sha256": "54e2866f4d44c46a9f107dba3aef7cec4321b13a947e025718a874204ac2918d"
+      "sha256": "a73e454f7ac166f651330760dbc4b5df8b73552e5024ab81bb94987675843620"
     },
     {
       "path": "cartridges/hubspot/tests/test_watermark_scope_isolation_hubspot.py",
@@ -527,7 +527,7 @@
     },
     {
       "path": "cartridges/replicon/app/core/config.py",
-      "sha256": "fc4f7ca22be6bdfeb7e8fd802f02d7070ac550d154d02370a5500a4cf7e1f5bb"
+      "sha256": "76f7697d0e18f1b616f38b6055db3aa4ccf946e207c329ff30e0cf94449d76e1"
     },
     {
       "path": "cartridges/replicon/app/core/egress_guard.py",
@@ -1491,7 +1491,7 @@
     },
     {
       "path": "cartridges/sap_successfactors/app/mcp_server.py",
-      "sha256": "4edbb67f5910d83f01739ab5653aa507c08f8699d4e93e033eb49068dca9354c"
+      "sha256": "988a3d8b337d5103bf588632a0a702f40784db8648ef737f97d61bf44b920476"
     },
     {
       "path": "cartridges/sap_successfactors/app/middleware/__init__.py",
@@ -1840,6 +1840,10 @@
     {
       "path": "console/tests/control_room_public_technical_canaries_extended.py",
       "sha256": "408d462e8f05debcd8a4f7343a098c4ee51fce8dc9db68d65df6133c426cc353"
+    },
+    {
+      "path": "console/tests/control_room_registry_items.py",
+      "sha256": "05916931755abcfa59a337d045cb362542b91829474f880336a4c684224d34ba"
     },
     {
       "path": "console/tests/control_room_runtime_evidence_fixture.py",
@@ -2251,11 +2255,11 @@
     },
     {
       "path": "console/tests/test_control_room_execute_live_followup.py",
-      "sha256": "1a105a27128b8fb37d7f578ca647a068ed00959e5fe55a3c21f86191ac44c1cd"
+      "sha256": "6b5f16d1abb9c3d433adadf16b38bb6fc98bc46b8e46aed49f749db02dca8be3"
     },
     {
       "path": "console/tests/test_control_room_execute_live_guards.py",
-      "sha256": "7421dfe6c4a981528eac5b6ebe099d8aeb07939d4b0a47c9394e5502736aab27"
+      "sha256": "306bd66a22959a92d0c64bb1ecc6ecd97ca14b02c6b7a69ba291d8e34f2032d7"
     },
     {
       "path": "console/tests/test_control_room_execution_action_binding.py",
@@ -2683,7 +2687,7 @@
     },
     {
       "path": "console/tests/test_control_room_service.py",
-      "sha256": "d9fb5d90770e0191e40d4611dc173fbf2db4f02844f793da2ad53271b62630ee"
+      "sha256": "c52670d41867c25e1847fe9026f7c8535c417f10f667c7c0847f632b532e4a9c"
     },
     {
       "path": "console/tests/test_control_room_sql_business_instruction_boundaries.py",
@@ -2731,7 +2735,7 @@
     },
     {
       "path": "console/tests/test_control_room_talent_kpis.py",
-      "sha256": "a3bc25fa51fa22387a90d2f766746c5ccac3f688a062fa628f06b5c7c4d44294"
+      "sha256": "f5f708d459b8c8dd3d7b10329a0ca2fc7ad2c2beac2f33dbd3218c5a1006329b"
     },
     {
       "path": "console/tests/test_control_room_talent_preview_guard.py",
@@ -2743,7 +2747,7 @@
     },
     {
       "path": "console/tests/test_control_room_terminal_action_binding.py",
-      "sha256": "37b28806859e4426a1c504c3d8dcc8908a5ea7c59392d52a796ec92c3a856776"
+      "sha256": "c7b65894917ee3e069e95fc6c844ff3d7a8e72a9fc61ec39dc7868b4de01172a"
     },
     {
       "path": "console/tests/test_control_room_terminal_approval_guard.py",
@@ -3271,7 +3275,7 @@
     },
     {
       "path": "infra/bootstrap.sh",
-      "sha256": "ca54ac3d35f9151233c1d2abb39075f6c25715c4f98f7d579147c07277f30a86"
+      "sha256": "1ec3c667088f89e66f4cafcdde360d4a821b779a65d17c7281f172fde71b13e8"
     },
     {
       "path": "infra/docker-compose.dev.yml",
@@ -3279,7 +3283,7 @@
     },
     {
       "path": "infra/docker-compose.yml",
-      "sha256": "917c82f705a1756997e604b4979f4187eb98682b70e9b03c92084ecee3b9139b"
+      "sha256": "ae889d0fce67928615643d565f2f633d3bf79de54d3c6715d12303fdbf49def9"
     },
     {
       "path": "infra/init/99zzt_analytic_app_dataset_grants.sql",
@@ -3472,6 +3476,10 @@
     {
       "path": "refinement/tests/test_successfactors_operational_fallback.py",
       "sha256": "962b66394f309fd44593b88db1a651efd94dbaffd170a720bb1b0168197e1885"
+    },
+    {
+      "path": "refinement/tests/test_successfactors_talent_fallbacks_are_empty.py",
+      "sha256": "6cecfc0f815a2de430cd07f4e64f0e31ab389b2bfce22f0bc36e6933dd5cf21f"
     },
     {
       "path": "scripts/apply_db_migrations.sh",
@@ -3967,7 +3975,7 @@
     },
     {
       "path": "tests/test_aws_beta_operations.py",
-      "sha256": "295ad0989e2043efa706c0a870ca1140cc967fde9247825c47bdd8af807b531e"
+      "sha256": "b023774442db9e79abce88e739e1882d17f26debba301daeac3e1e62324b1333"
     },
     {
       "path": "tests/test_aws_bootstrap_shared_env_boundary.py",
@@ -3999,7 +4007,7 @@
     },
     {
       "path": "tests/test_aws_dr_observability_hardening.py",
-      "sha256": "854ba664fccab313b478ae9f41a0693798b2928e227de1d77b35a6d08f22dea1"
+      "sha256": "03a41b5190b2115871bae6369a28d08590a5834a6ea8fae6a2fd4a43cde8f23e"
     },
     {
       "path": "tests/test_aws_env_pair_transaction.py",
@@ -4479,7 +4487,7 @@
     },
     {
       "path": "tests/test_control_room_path_policy.py",
-      "sha256": "8174cb3748072094f65e3e35fa78427c639cab339e4f0d04caf4ee4bba94c12c"
+      "sha256": "fc09a991b02ecfff47ec91b30988092d844b44c80c03218e56791e3dd9c8b670"
     },
     {
       "path": "tests/test_copilot_citation_ui.py",
@@ -4674,10 +4682,6 @@
       "sha256": "92e26238a0cfe975eabcb15ab3fb290dac18929cbf708814181e9386f371cc9e"
     },
     {
-      "path": "tests/test_demo_control_room_seed.py",
-      "sha256": "f2ef5f06c2daf3a3879f82f20a7f722b28000ed093546c2cf61dd8881a00a043"
-    },
-    {
       "path": "tests/test_demo_safe_apps_gallery_scope.py",
       "sha256": "ce2c8a2e03517d296fea6222c606efe6a12bd3b65807f0daa5093be4d517dfb0"
     },
@@ -4775,7 +4779,7 @@
     },
     {
       "path": "tests/test_external_action_framework.py",
-      "sha256": "3f82996e48654603f14ef6b3a25415dc2ecef6a328aecb7baef2d1c9f5f0d13c"
+      "sha256": "ff398ca42b326abef4edb4685690cc2d9fad1397d535bc36299add3850fa5a64"
     },
     {
       "path": "tests/test_extract_preflight.py",
@@ -4867,7 +4871,7 @@
     },
     {
       "path": "tests/test_identity_session_boundary_contract.py",
-      "sha256": "b1a39a6cd5006472858fd4d60c5c3e6c85bec17fc6b588eeb02f3d74ecf09a87"
+      "sha256": "d4aaddeda26dae8ebac2bc939fda1675e31013f80d6616748d8064aeeaa4297e"
     },
     {
       "path": "tests/test_identity_session_boundary_live.py",
@@ -4892,10 +4896,6 @@
     {
       "path": "tests/test_intelligence_provenance_resolver.py",
       "sha256": "8b19bb51d54345b15a687200def40e1100518036d11b0f351adacfab53d0f0f8"
-    },
-    {
-      "path": "tests/test_intelligence_seed_prod_like.py",
-      "sha256": "db93b758e7cd0bfb5a4cebe37c10242e0b2beb461f0ad8a0e4353674fc22dd7b"
     },
     {
       "path": "tests/test_internal_key_required_in_prod.py",
@@ -5484,10 +5484,6 @@
     {
       "path": "tests/test_remaining_operational_rls_sweep.py",
       "sha256": "252af62731c0d47e055744b73d96d03fae70a45f7b1a3616c72b69fe591d139b"
-    },
-    {
-      "path": "tests/test_replicon_beta_gold_seed.py",
-      "sha256": "b70198e9d7db567ee252f8469617778c683ef9a92989af5aa96a68f25987094a"
     },
     {
       "path": "tests/test_replicon_cartridge_restored.py",

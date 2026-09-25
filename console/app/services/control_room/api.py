@@ -236,6 +236,12 @@ async def query_dataset_rows(
 
 
 @_bind_to_core
+async def _sf_connection_id(user: dict | None) -> str | None:
+    connections = await _vault_connections_for_cartridge("sap_successfactors", user)
+    return str(connections[0].get("conn_id") or "") or None if connections else None
+
+
+@_bind_to_core
 async def sap_successfactors_gold_kpis(user: dict | None) -> dict[str, Any]:
     datasets = _sf_foundation_gold_datasets()
     results = await _sf_foundation_gold_results(datasets, user)
@@ -244,7 +250,7 @@ async def sap_successfactors_gold_kpis(user: dict | None) -> dict[str, Any]:
     tenant_id, workspace_id = _workspace_scope(user)
     return {
         "generated_at": generated_at,
-        "connection_id": "femsa_sf",
+        "connection_id": await _sf_connection_id(user),
         "tenant_id": tenant_id,
         "workspace_id": workspace_id,
         "widgets": _sf_foundation_gold_widgets(datasets, results, rows),
@@ -774,7 +780,6 @@ def _sf_talent_kpi_widgets(
 def _sf_talent_kpi_profile_payload() -> dict[str, Any]:
     return {
         "industry": "retail",
-        "company_profile": "femsa",
         "wisdom_bit": "WB-TALENTO",
         "decision_mode": "recommendation_only",
         "compensation_enabled": False,
@@ -1036,7 +1041,7 @@ async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
 
     return {
         "generated_at": generated_at,
-        "connection_id": "femsa_sf",
+        "connection_id": await _sf_connection_id(user),
         "tenant_id": tenant_id,
         "workspace_id": workspace_id,
         "profile": _sf_talent_kpi_profile_payload(),
@@ -1692,7 +1697,7 @@ async def sap_successfactors_talent_9box(user: dict | None) -> dict[str, Any]:
     tenant_id, workspace_id = _workspace_scope(user)
     return {
         "generated_at": datetime.now(UTC).isoformat(),
-        "connection_id": "femsa_sf",
+        "connection_id": await _sf_connection_id(user),
         "tenant_id": tenant_id,
         "workspace_id": workspace_id,
         "dataset": dataset,
@@ -1749,7 +1754,7 @@ async def sap_successfactors_talent_9box_box(
     tenant_id, workspace_id = _workspace_scope(user)
     return {
         "generated_at": datetime.now(UTC).isoformat(),
-        "connection_id": "femsa_sf",
+        "connection_id": await _sf_connection_id(user),
         "tenant_id": tenant_id,
         "workspace_id": workspace_id,
         "dataset": dataset,
@@ -1786,7 +1791,7 @@ async def sap_successfactors_talent_anomalies(user: dict | None) -> dict[str, An
     tenant_id, workspace_id = _workspace_scope(user)
     return {
         "generated_at": datetime.now(UTC).isoformat(),
-        "connection_id": "femsa_sf",
+        "connection_id": await _sf_connection_id(user),
         "tenant_id": tenant_id,
         "workspace_id": workspace_id,
         "dataset": dataset,
@@ -1979,7 +1984,7 @@ async def sap_successfactors_talent_metadata_readiness(
     tenant_id, workspace_id = _workspace_scope(user)
     return {
         "generated_at": datetime.now(UTC).isoformat(),
-        "connection_id": "femsa_sf",
+        "connection_id": await _sf_connection_id(user),
         "tenant_id": tenant_id,
         "workspace_id": workspace_id,
         "status": "ready" if counts["ready_cpa"] and counts["insufficient"] == 0 else "partial",
@@ -2293,25 +2298,13 @@ async def _installed_cartridges(user: dict | None) -> list[dict[str, Any]]:
         return await _filter_installations_by_scoped_connections(
             [_row_to_public(row) for row in rows], user
         )
-    except Exception:
-        allowed = _allowed_from_user(user)
-        fallback: dict[str, dict[str, Any]] = {}
-        for module in MODULES:
-            if allowed is not None and module.cartridge not in allowed:
-                continue
-            fallback.setdefault(
-                module.cartridge,
-                {
-                    "cartridge_id": module.cartridge,
-                    "installation_status": "ready",
-                    "current_step": "fallback",
-                    "label": module.label,
-                    "category": "platform" if module.operational else "cartridge",
-                },
-            )
-        return await _filter_installations_by_scoped_connections(
-            list(fallback.values()), user
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "control_room installed cartridges unavailable: %s", type(exc).__name__
         )
+        return []
 
 
 @_bind_to_core
@@ -4232,28 +4225,13 @@ async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any
 @_bind_to_core
 async def _collect_module_inventory(
     user: dict | None,
-    *,
-    use_catalog: bool,
 ) -> tuple[
     list[dict[str, Any]],
     dict[str, dict[str, Any]],
     set[str],
     list[ControlRoomModule],
 ]:
-    if use_catalog:
-        installations = await _installed_cartridges(user)
-    else:
-        installations = [
-            {
-                "cartridge_id": module.cartridge,
-                "installation_status": "ready",
-                "current_step": "test_registry",
-                "label": module.label,
-                "category": "platform" if module.operational else "cartridge",
-            }
-            for module in MODULES
-            if module.sources
-        ]
+    installations = await _installed_cartridges(user)
     installation_by_cartridge = {
         str(row.get("cartridge_id")): row
         for row in installations
@@ -4473,7 +4451,6 @@ async def _collect_items(
     limit_per_source: int = 1000,
     include_source_state_items: bool = False,
     persist: bool = False,
-    use_catalog: bool = True,
     item_projector: Callable[..., dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if persist:
@@ -4483,14 +4460,14 @@ async def _collect_items(
         installation_by_cartridge,
         active,
         modules,
-    ) = await _collect_module_inventory(user, use_catalog=use_catalog)
+    ) = await _collect_module_inventory(user)
 
     items: list[dict[str, Any]] = []
     sources: list[dict[str, Any]] = []
     rows_by_dataset: dict[str, list[dict[str, Any]]] = {}
     threshold_rows = (
         await _load_threshold_rows(user)
-        if use_catalog and include_source_state_items
+        if include_source_state_items
         else []
     )
     thresholds = _threshold_map(threshold_rows)
@@ -5176,7 +5153,6 @@ async def list_anomalies(
         fetcher=fetcher,
         limit_per_source=limit_per_source,
         include_source_state_items=False,
-        use_catalog=True,
     )
     anomalies = [item for item in payload["items"] if item["kind"] == "anomaly"]
     return {"anomalies": anomalies, "sources": payload["sources"]}
@@ -5190,7 +5166,6 @@ async def summary(
         user,
         fetcher=fetcher,
         include_source_state_items=False,
-        use_catalog=True,
     )
     items = [item for item in collected["items"] if item["kind"] == "anomaly"]
     by_severity = _severity_counts(items)
@@ -5378,8 +5353,6 @@ def _ops_summary_payload(
         "write_back_enabled": writeback_enabled,
         "writeback_blocked_by_default": not writeback_enabled,
         "external_writeback_blocked_by_default": not writeback_enabled,
-        "has_demo_seed": _os.environ.get("CONTROL_ROOM_DEMO_SEED", "").strip().lower()
-        in {"1", "true", "yes", "on"},
     }
 
 

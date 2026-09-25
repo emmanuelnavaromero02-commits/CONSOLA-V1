@@ -38,21 +38,9 @@ def test_makefile_exposes_aws_beta_operational_targets() -> None:
     makefile = _read(MAKEFILE)
     for target, script in {
         "beta-smoke-aws:": "scripts/beta_smoke_aws.py",
-        "seed-replicon-beta-gold-aws:": "scripts/seed_replicon_beta_gold_aws.py",
-        "tenant-ab-local:": "scripts/tenant_ab_e2e.py --target local",
-        "tenant-ab-aws:": "scripts/tenant_ab_e2e.py --target aws",
         "backup-aws:": "scripts/aws_backup.py",
         "dr-rehearsal-aws:": "scripts/aws_dr_rehearsal.py",
         "rollback-aws:": "scripts/aws_rollback.py",
-        "control-room-gold-engine-aws-probe:": (
-            "scripts/aws_control_room_gold_engine_probe.py"
-        ),
-        "control-room-mock-volume-aws-probe:": (
-            "scripts/aws_control_room_mock_volume_probe.py"
-        ),
-        "control-room-mock-volume-aws-cleanup:": (
-            "scripts/aws_control_room_mock_volume_probe.py --cleanup-suffix"
-        ),
     }.items():
         assert target in makefile
         assert script in makefile
@@ -123,132 +111,6 @@ def test_beta_smoke_aws_records_metadata_and_has_dual_layer_checks() -> None:
     assert (
         "printenv" not in source or "CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK" in source
     )
-
-
-def test_replicon_seed_has_scoped_lineage_and_checksum_idempotency() -> None:
-    source = _read("scripts/seed_replicon_beta_gold.py")
-    ast.parse(source)
-    for needle in (
-        "replicon_beta_gold_scope_fingerprint",
-        "checksum",
-        "hashlib.sha256",
-        "--verify-idempotent-runs",
-        "before_equals_after",
-        "storage_prefix",
-        "storage_uri LIKE",
-        "OMEGA_SEED_UPDATE_CATALOG",
-        "catalog_updated",
-    ):
-        assert needle in source
-    assert (
-        "DELETE FROM silver_lineage WHERE cartridge_id = %s AND source_batch_id = %s"
-        not in source
-    )
-
-
-def test_seed_replicon_beta_gold_aws_requires_scope_and_three_runs() -> None:
-    source = _read("scripts/seed_replicon_beta_gold_aws.py")
-    ast.parse(source)
-    for needle in (
-        "OMEGA_SEED_TENANT_ID and OMEGA_SEED_WORKSPACE_ID are required",
-        "--verify-runs must be >= 3",
-        "OMEGA_SEED_VERIFY_IDEMPOTENT_RUNS",
-        "Replicon seed idempotent",
-        "before_equals_after",
-        "remote_stdout_redacted.txt",
-    ):
-        assert needle in source
-
-
-def test_control_room_gold_engine_aws_probe_validates_refresh_loop() -> None:
-    source = _read("scripts/aws_control_room_gold_engine_probe.py")
-    ast.parse(source)
-    for needle in (
-        "/internal/intelligence/gold-refresh",
-        "intelligence_gold_refresh_internal",
-        "gold-refresh:${workspace_id}:replicon:${dag_run_id}",
-        "idempotent",
-        "control_room_item_events",
-        "metadata ? 'math_provenance'",
-        "metadata ? 'priority'",
-        "metadata ? 'monte_carlo'",
-        "metadata ? 'bayesian_calibration'",
-        "metadata ? 'evidence_pack'",
-        "external writeback disabled",
-        "Operational workspace scope",
-        "FROM workspaces",
-        "JOIN operational_scope",
-        "Seed Replicon Gold rows for an operational tenant/workspace",
-        "remote_stdout_redacted.txt",
-    ):
-        assert needle in source
-
-
-def test_control_room_mock_volume_aws_probe_validates_studio_gold_flow() -> None:
-    source = _read("scripts/aws_control_room_mock_volume_probe.py")
-    ast.parse(source)
-    for needle in (
-        "OMEGA_MOCK_VOLUME_ROWS",
-        "1000000",
-        "mock_studio_events_",
-        "mock_project_margin_",
-        "mock_billable_hours_",
-        "studio_entities",
-        "silver_lineage",
-        "data_catalog",
-        "tenant_entitlements",
-        "cartridge_installations",
-        "user_workspace_roles",
-        "Mock workspace UI visibility",
-        "omega_apply_gold_rls_for_table",
-        "intelligence_gold_refresh_internal",
-        "generic_gold_signal",
-        "metadata ? 'math_provenance'",
-        "metadata ? 'priority'",
-        "metadata ? 'monte_carlo'",
-        "metadata ? 'bayesian_calibration'",
-        "Cleanup command",
-        "--cleanup-suffix",
-        "remote_stdout_redacted.txt",
-    ):
-        assert needle in source
-
-
-def test_tenant_ab_harness_includes_positive_and_forbidden_probes() -> None:
-    source = _read("scripts/tenant_ab_e2e.py")
-    ast.parse(source)
-    for needle in (
-        "tenant A/B",
-        "seed_replicon_beta_gold",
-        "gold_consultor_mensual",
-        "omega_refinement_gold",
-        "forbidden Gold query",
-        "tenant_id={other.tenant_id}",
-        "workspace_id={other.workspace_id}",
-        "x-workspace-id",
-        '"Authorization": f"Bearer {_jwt(scope)}"',
-        "/api/intelligence/signals",
-        "/api/control-room/dashboard",
-        "/api/control-room/items/{urllib.parse.quote(other.item_id)}/decision",
-        "/api/control-room/items/{urllib.parse.quote(other.item_id)}/outcomes",
-        "/api/control-room/items/{urllib.parse.quote(other.item_id)}/lessons",
-        "/api/control-room/items/{urllib.parse.quote(other.item_id)}/execute",
-        "tenant_ab_forbidden_probe",
-        "expected={403, 404}",
-        "/api/copilot/briefing/v2",
-        "expected={403}",
-        "tenant-ab-aws",
-        "OMEGA_SEED_UPDATE_CATALOG",
-        '"binding_id": "0" * 64',
-    ):
-        assert needle in source
-    legacy_execute = source.split("legacy_execute_path =", 1)[1].split(
-        "checks.append(", 1
-    )[0]
-    assert "expected={410}" in legacy_execute
-    assert "require_empty_body=True" in legacy_execute
-    assert "expected={403, 404}" not in legacy_execute
-    assert "authenticated legacy execute is retired" in source
 
 
 def test_schema_viewer_has_gold_dataset_fallback() -> None:

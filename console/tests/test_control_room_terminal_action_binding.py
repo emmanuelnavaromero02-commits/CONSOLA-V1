@@ -14,18 +14,19 @@ from console.tests.test_control_room_terminal_execution import (
     _execution_fetchrow_router,
     finance_fetcher,
 )
+from console.tests.control_room_registry_items import collect_registry_items
 
 
 @pytest.mark.asyncio
 async def test_execute_live_rejects_resolved_terminal_item(monkeypatch):
     monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
     base_item = (
-        await control_room_service._collect_items(  # noqa: SLF001
+        await collect_registry_items(
+            control_room_service,
             USER,
             fetcher=finance_fetcher,
             include_source_state_items=True,
             persist=False,
-            use_catalog=False,
         )
     )["items"][0]
     item = _executed_item(base_item, status="resolved")

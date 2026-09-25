@@ -11,38 +11,29 @@ async function attachStatus(cartridge) {
   }
 }
 
-function fallbackCartridge() {
-  return {
-    id: 'replicon',
-    name: 'Replicon PSA',
-    version: '0.1.0',
-    description: 'Cartucho operativo para extracción Bronze, datasets y pipelines Replicon.',
-    pattern: 'dag-based',
-    category: 'cartridge',
-    entities: [],
-    healthy: true,
-  };
-}
-
 export async function loadCartridges() {
   setState({ loading: true, error: null });
   try {
     const cartridges = await listCartridges();
     const selectedId = window._currentCartridge?.id || document.getElementById('cartridge-sel')?.value || cartridges[0]?.id;
-    let selected = cartridges.find((item) => item.id === selectedId) || cartridges[0] || fallbackCartridge();
+    let selected = cartridges.find((item) => item.id === selectedId) || cartridges[0] || null;
     if (selected?.id) {
       selected = await getCartridge(selected.id).catch(() => selected);
+      selected = await attachStatus(selected);
     }
-    selected = await attachStatus(selected);
-    setState({ cartridges: cartridges.length ? cartridges : [fallbackCartridge()], selectedCartridge: selected, loading: false });
+    setState({ cartridges, selectedCartridge: selected, loading: false });
   } catch (error) {
-    setState({ cartridges: [fallbackCartridge()], selectedCartridge: fallbackCartridge(), loading: false, error: error.message });
+    setState({ cartridges: [], selectedCartridge: null, loading: false, error: error.message });
   }
 }
 
 export async function selectCartridge(id) {
   if (!id) return;
-  let selected = await getCartridge(id).catch(() => state.cartridges.find((item) => item.id === id) || fallbackCartridge());
+  let selected = await getCartridge(id).catch(() => state.cartridges.find((item) => item.id === id) || null);
+  if (!selected) {
+    setState({ selectedCartridge: null, error: `No se encontró el cartucho ${id}` });
+    return;
+  }
   selected = await attachStatus(selected);
   setState({ selectedCartridge: selected, error: null });
   if (typeof window.selectCartridge === 'function') {

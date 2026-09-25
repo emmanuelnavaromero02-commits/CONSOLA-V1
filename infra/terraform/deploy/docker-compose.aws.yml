@@ -441,7 +441,6 @@ services:
       SUPERSET_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:?SUPERSET_ADMIN_PASSWORD is required}
       EMBED_MODEL:       ${EMBED_MODEL:-amazon.titan-embed-text-v2:0}
       EMBED_DIM:         ${EMBED_DIM:-1024}
-      RAG_LOCAL_EMBEDDING_FALLBACK: ${RAG_LOCAL_EMBEDDING_FALLBACK:-true}
       ADMIN_EMAIL:       ${ADMIN_EMAIL:-}
     mem_limit: ${MCP_INFRA_MEM_LIMIT:-1536m}
     cpus: ${MCP_INFRA_CPUS:-2.0}

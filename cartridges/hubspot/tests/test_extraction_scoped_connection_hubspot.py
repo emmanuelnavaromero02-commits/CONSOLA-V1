@@ -50,7 +50,6 @@ def test_extraction_resolves_vault_credentials_per_tenant(monkeypatch):
     from app.services import extraction_service
 
     monkeypatch.setattr(vault_client, "_CONNECTION_CACHE", {})
-    monkeypatch.setattr(client_module.settings, "use_demo_data", False)
     credentials = {
         "tenant-a": {"base_url": "https://api.hubapi.test/a", "auth_method": "bearer_token", "token": "token-tenant-a"},
         "tenant-b": {"base_url": "https://api.hubapi.test/b", "auth_method": "bearer_token", "token": "token-tenant-b"},

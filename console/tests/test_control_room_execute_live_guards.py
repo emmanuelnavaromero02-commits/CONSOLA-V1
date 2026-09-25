@@ -17,16 +17,17 @@ from console.tests.control_room_execution_router_helpers import (
     execution_fetchrow_router,
 )
 from console.tests.test_control_room_service import USER, finance_fetcher
+from console.tests.control_room_registry_items import collect_registry_items
 
 
 async def _base_item() -> dict:
     items = (
-        await control_room_service._collect_items(  # noqa: SLF001
+        await collect_registry_items(
+            control_room_service,
             USER,
             fetcher=finance_fetcher,
             include_source_state_items=True,
             persist=False,
-            use_catalog=False,
         )
     )["items"]
     return items[0]
