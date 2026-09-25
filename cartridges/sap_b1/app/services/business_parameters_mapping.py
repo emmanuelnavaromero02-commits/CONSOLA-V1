@@ -36,7 +36,7 @@ PARAMETER_CATALOG: tuple[ParameterSpec, ...] = (
     ParameterSpec("reconciliation_tolerance_pct", "setting", "%", "1", "finanzas", "Diferencia máxima contra Finanzas para dar una fila por cuadrada (estrictamente menor)"),
     ParameterSpec("dq_min_pct", "threshold", "%", None, "general", "Calidad de datos mínima por control"),
     ParameterSpec("sellout_growth_min_pct", "threshold", "%", None, "ventas", "Crecimiento mínimo del sell-out de la distribuidora"),
-    ParameterSpec("sell_through_min_pct", "threshold", "%", None, "ventas", "Ratio sell-out / sell-in mínimo"),
+    ParameterSpec("sellout_sellin_min_pct", "threshold", "%", None, "ventas", "Ratio sell-out / sell-in mínimo"),
     ParameterSpec("channel_days_max", "threshold", "días", None, "ventas", "Días de inventario en el canal máximos"),
     ParameterSpec("distributor_margin_min_pct", "threshold", "%", None, "ventas", "Margen mínimo de la distribuidora"),
     ParameterSpec("expiry_exposed_max_pct", "threshold", "%", None, "ventas", "Porcentaje máximo del inventario expuesto a caducidad"),

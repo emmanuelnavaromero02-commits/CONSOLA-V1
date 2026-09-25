@@ -16,7 +16,7 @@ generator = importlib.import_module("sap_b1_fake.generator")
 DISTRIBUTORS = sorted(generator.INTERCOMPANY_CUSTOMER)
 THRESHOLDS = {
     "sellout_growth_min_pct": Decimal("0"),
-    "sell_through_min_pct": Decimal("20"),
+    "sellout_sellin_min_pct": Decimal("20"),
     "channel_days_max": Decimal("400"),
     "distributor_margin_min_pct": Decimal("5"),
     "expiry_exposed_max_pct": Decimal("50"),
@@ -177,18 +177,18 @@ def _colour(value, limit, *, higher_is_better: bool, margin: Decimal, relative: 
 
 def test_scorecard_colours_follow_the_thresholds_and_the_worst_one_wins(sales, dataset):
     rows = _rows(sales, """
-        SELECT distributor, period, growth_yoy_pct, sell_through_3m_pct, channel_days, margin_pct, expiry_exposed_pct,
-               growth_color, sell_through_color, channel_days_color, margin_color, expiry_color, overall_color,
-               growth_mom_pct, sell_out_revenue_local, stock_end_qty, sell_out_qty
+        SELECT distributor, period, growth_yoy_pct, sellout_sellin_3m_pct, channel_days, margin_pct, expiry_exposed_pct,
+               growth_color, sellout_sellin_color, channel_days_color, margin_color, expiry_color, overall_color,
+               growth_mom_pct, sell_out_revenue_local, stock_end_qty, sell_out_qty, sell_in_qty
         FROM sap_b1_distributor_scorecard_month ORDER BY distributor, doc_month""")
     by_key = {(r[0], r[1]): r for r in rows}
-    compared = 0
+    compared = ratios = 0
     for r in rows:
         distributor = r[0]
         margin_min = Decimal("99") if distributor == "mx_dist_b" else THRESHOLDS["distributor_margin_min_pct"]
         expected = (
             _colour(r[2], THRESHOLDS["sellout_growth_min_pct"], higher_is_better=True, margin=Decimal("5")),
-            _colour(r[3], THRESHOLDS["sell_through_min_pct"], higher_is_better=True, margin=Decimal("5")),
+            _colour(r[3], THRESHOLDS["sellout_sellin_min_pct"], higher_is_better=True, margin=Decimal("5")),
             _colour(r[4], THRESHOLDS["channel_days_max"], higher_is_better=False, margin=Decimal("0.9"), relative=True),
             _colour(r[5], margin_min, higher_is_better=True, margin=Decimal("2")),
             _colour(r[6], THRESHOLDS["expiry_exposed_max_pct"], higher_is_better=False, margin=Decimal("0.8"), relative=True),
@@ -211,11 +211,17 @@ def test_scorecard_colours_follow_the_thresholds_and_the_worst_one_wins(sales, d
             assert abs(_dec(r[2]) - growth) <= Decimal("0.01"), r
         else:
             assert r[2] is None and r[7] == "sin_umbral"
+        window = [by_key[(distributor, p)] for p in sorted(p for d, p in by_key if d == distributor and p <= period)][-3:]
+        sold = sum((_dec(w[16]) for w in window), Decimal("0"))
+        bought = sum((_dec(w[17]) for w in window), Decimal("0"))
         if r[4] is not None:
-            window = [by_key[(distributor, p)] for p in sorted(p for d, p in by_key if d == distributor and p <= period)][-3:]
-            sold = sum((_dec(w[16]) for w in window), Decimal("0"))
             assert abs(_dec(r[4]) - _dec(r[15]) / (sold / 90)) <= Decimal("0.1"), r
-    assert compared > 5 * len(DISTRIBUTORS)
+        if bought > 0:
+            assert abs(_dec(r[3]) - 100 * sold / bought) <= Decimal("0.01"), r
+            ratios += 1
+        else:
+            assert r[3] is None and r[8] == "sin_umbral", r
+    assert compared > 5 * len(DISTRIBUTORS) and ratios > 5 * len(DISTRIBUTORS)
     latest = [r for r in rows if r[6] is not None]
     assert {r[0] for r in latest} == set(DISTRIBUTORS) and len(latest) == len(DISTRIBUTORS)
 

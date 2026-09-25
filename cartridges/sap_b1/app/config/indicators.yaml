@@ -57,8 +57,8 @@ indicators:
     dimensions: [distribuidora, sku]
     granularity: mes
     dataset: sap_b1_distributor_scorecard_month
-    filter: "sell_through_3m_pct"
-    thresholds: [sell_through_min_pct]
+    filter: "sellout_sellin_3m_pct"
+    thresholds: [sellout_sellin_min_pct]
   - id: dias_inventario
     case: ventas
     name: Días de inventario en el canal

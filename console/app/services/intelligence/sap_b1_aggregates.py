@@ -65,8 +65,8 @@ _ENTITY_REQUIRED = frozenset(
 )
 _SCORECARD_REQUIRED = frozenset(
     {"distributor", "doc_month", "sell_out_revenue_local", "sell_out_qty", "sell_in_qty",
-     "growth_mom_pct", "growth_yoy_pct", "sell_through_3m_pct", "channel_days", "margin_pct",
-     "expiry_exposed_pct", "growth_color", "sell_through_color", "channel_days_color",
+     "growth_mom_pct", "growth_yoy_pct", "sellout_sellin_3m_pct", "channel_days", "margin_pct",
+     "expiry_exposed_pct", "growth_color", "sellout_sellin_color", "channel_days_color",
      "margin_color", "expiry_color", "overall_color"}
 )
 _CLINIC_REQUIRED = frozenset(
@@ -130,7 +130,7 @@ MODELO_NOTE = (
     "relaciones completas y huérfanos. NO corrige ni fusiona registros en Business One."
 )
 SEMAFORO_DIST_NOTE = (
-    "Semáforo del último mes cerrado por distribuidora: sell-out y crecimiento, sell-through de tres meses, días de "
+    "Semáforo del último mes cerrado por distribuidora: sell-out y crecimiento, ratio sell-out / sell-in de tres meses, días de "
     "inventario en canal, margen y stock expuesto a caducidad contra sus umbrales. NO incluye la venta directa de la "
     "fábrica a clientes finales."
 )
@@ -654,7 +654,7 @@ async def query_modelo_entidades(user: dict | None) -> EntityModel:
 
 _COLOR_METRICS = (
     ("growth_color", "crecimiento de sell-out", "growth_yoy_pct"),
-    ("sell_through_color", "ratio sell-out / sell-in", "sell_through_3m_pct"),
+    ("sellout_sellin_color", "ratio sell-out / sell-in", "sellout_sellin_3m_pct"),
     ("channel_days_color", "días de inventario en canal", "channel_days"),
     ("margin_color", "margen de la distribuidora", "margin_pct"),
     ("expiry_color", "stock expuesto a caducidad", "expiry_exposed_pct"),
@@ -696,7 +696,7 @@ async def query_semaforo_distribuidoras(user: dict | None, *, as_of: date | None
                 "sell_in_qty": as_float(row["sell_in_qty"]),
                 "growth_mom_pct": as_float(row["growth_mom_pct"]),
                 "growth_yoy_pct": as_float(row["growth_yoy_pct"]),
-                "sell_through_3m_pct": as_float(row["sell_through_3m_pct"]),
+                "sellout_sellin_3m_pct": as_float(row["sellout_sellin_3m_pct"]),
                 "channel_days": as_float(row["channel_days"]),
                 "margin_pct": as_float(row["margin_pct"]),
                 "expiry_exposed_pct": as_float(row["expiry_exposed_pct"]),
@@ -758,7 +758,7 @@ async def _distributor_metric(user: dict | None, as_of: date | None, value: str,
 
 
 async def query_ratio_sellout_sellin(user: dict | None, *, as_of: date | None = None) -> DistributorMetric:
-    return await _distributor_metric(user, as_of, "sell_through_3m_pct", "sell_through_color",
+    return await _distributor_metric(user, as_of, "sellout_sellin_3m_pct", "sellout_sellin_color",
                                      "ratio sell-out / sell-in", RATIO_NOTE, "%")
 
 

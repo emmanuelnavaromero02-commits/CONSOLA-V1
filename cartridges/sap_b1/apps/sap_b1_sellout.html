@@ -35,10 +35,6 @@
   .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
   .top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:14px}
   .subtitle{color:var(--text2);margin:4px 0 0;max-width:760px}
-  .apps{display:flex;gap:6px;flex-wrap:wrap}
-  .apps a{padding:6px 12px;border:1px solid var(--border);border-radius:999px;color:var(--text2);text-decoration:none;font-weight:600;font-size:12px;background:var(--bg2)}
-  .apps a[href]:hover{color:var(--blue);border-color:var(--blue)}
-  .apps a[aria-current]{color:var(--blue);border-color:var(--blue)}
   .controls{display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px}
   .controls label{display:flex;flex-direction:column;gap:4px;color:var(--text2);font-size:11px;font-weight:600}
   select,input{background:var(--bg2);color:var(--text1);border:1px solid var(--border);border-radius:6px;padding:7px 10px;font-size:13px;min-height:34px}
@@ -134,11 +130,6 @@
     <h1>Sell-out y caducidad · SAP Business One</h1>
     <p class="subtitle">Lo que cada distribuidora del grupo compra a la fábrica y vende a clínicas: semáforo, ratio sell-out / sell-in, días de inventario en el canal, sell-out por clínica y lotes por caducar con la acción sugerida.</p>
   </div>
-  <nav class="apps" aria-label="Aplicaciones de SAP Business One">
-    <a href="/analytics/viewer?app=sap_b1_margen" target="_top">Margen</a>
-    <a aria-current="page">Sell-out y caducidad</a>
-    <a href="/analytics/viewer?app=sap_b1_abasto" target="_top">Abasto</a>
-  </nav>
 </header>
 <div id="error" role="alert"></div>
 <div class="controls">
@@ -290,7 +281,7 @@ function renderLight(){
   const metric = (value, color) => `<td class="n">${value}<br>${badge(LIGHT, color)}</td>`;
   el.innerHTML = `<div class="tw"><table><caption class="sr-only">Semáforo por distribuidora de ${esc(monthLong(period))}</caption><thead><tr><th scope="col">Distribuidora</th><th scope="col">Global</th><th scope="col" class="n">Ratio sell-out / sell-in 3 m</th><th scope="col" class="n">Días en el canal</th><th scope="col" class="n">Crecimiento vs año anterior</th><th scope="col" class="n">vs mes anterior</th><th scope="col" class="n">Margen</th><th scope="col" class="n">Inventario por caducar</th><th scope="col" class="n">Sell-out</th><th scope="col" class="n">Sell-in u</th><th scope="col" class="n">Sell-out u</th></tr></thead><tbody>${
     rows.map(r=> `<tr class="pick${r.distributor===distributor ? ' sel' : ''}" data-distributor="${esc(r.distributor)}"><th scope="row"><button class="link" data-distributor="${esc(r.distributor)}">${esc(r.distributor)}</button></th><td>${badge(LIGHT, r.overall_color)}</td>${
-      metric(pct(r.sell_through_3m_pct), r.sell_through_color)}${metric(days(r.channel_days), r.channel_days_color)}${metric(signed(r.growth_yoy_pct), r.growth_color)}<td class="n">${signed(r.growth_mom_pct)}</td>${
+      metric(pct(r.sellout_sellin_3m_pct), r.sellout_sellin_color)}${metric(days(r.channel_days), r.channel_days_color)}${metric(signed(r.growth_yoy_pct), r.growth_color)}<td class="n">${signed(r.growth_mom_pct)}</td>${
       metric(pct(r.margin_pct), r.margin_color)}${metric(pct(r.expiry_exposed_pct), r.expiry_color)}<td class="n">${money(r.sell_out_revenue_local, r.local_currency)}</td><td class="n">${num(r.sell_in_qty)}</td><td class="n">${num(r.sell_out_qty)}</td></tr>`).join('')
   }</tbody></table></div><p class="note">Inventario por caducar se mide solo en el último corte de existencias. “Sin umbral” significa que el workspace no ha fijado el límite de esa métrica.</p>`;
 }
@@ -307,8 +298,8 @@ async function renderKpis(token){
   const one = rows.length===1 ? rows[0] : null;
   const html = [];
   if(!rows.length){ el.innerHTML = empty('Sin datos de distribuidoras para el mes.'); return; }
-  html.push(card('ratio', 'Ratio sell-out / sell-in', one ? `${pct(one.sell_through_3m_pct)} ${badge(LIGHT, one.sell_through_color)}` : '<small>por distribuidora</small>',
-    one ? `sell-out ${num(one.sell_out_qty)} u · sell-in ${num(one.sell_in_qty)} u en el mes` : perDistributor(rows, r=> pct(r.sell_through_3m_pct), 'sell_through_color'), FORMULA.ratio_sellout_sellin, '--s1'));
+  html.push(card('ratio', 'Ratio sell-out / sell-in', one ? `${pct(one.sellout_sellin_3m_pct)} ${badge(LIGHT, one.sellout_sellin_color)}` : '<small>por distribuidora</small>',
+    one ? `sell-out ${num(one.sell_out_qty)} u · sell-in ${num(one.sell_in_qty)} u en el mes` : perDistributor(rows, r=> pct(r.sellout_sellin_3m_pct), 'sellout_sellin_color'), FORMULA.ratio_sellout_sellin, '--s1'));
   html.push(card('days', 'Días de inventario en el canal', one ? `${days(one.channel_days)} ${badge(LIGHT, one.channel_days_color)}` : '<small>por distribuidora</small>',
     one ? `existencia al cierre ${num(one.stock_end_qty)} u` : perDistributor(rows, r=> days(r.channel_days), 'channel_days_color'), FORMULA.dias_inventario, '--s2'));
   const exp = expiry.rows;

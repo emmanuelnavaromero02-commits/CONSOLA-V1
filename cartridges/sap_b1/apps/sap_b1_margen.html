@@ -35,10 +35,6 @@
   .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
   .top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:14px}
   .subtitle{color:var(--text2);margin:4px 0 0;max-width:760px}
-  .apps{display:flex;gap:6px;flex-wrap:wrap}
-  .apps a{padding:6px 12px;border:1px solid var(--border);border-radius:999px;color:var(--text2);text-decoration:none;font-weight:600;font-size:12px;background:var(--bg2)}
-  .apps a[href]:hover{color:var(--blue);border-color:var(--blue)}
-  .apps a[aria-current]{color:var(--blue);border-color:var(--blue)}
   .controls{display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px}
   .controls label{display:flex;flex-direction:column;gap:4px;color:var(--text2);font-size:11px;font-weight:600}
   select,input{background:var(--bg2);color:var(--text1);border:1px solid var(--border);border-radius:6px;padding:7px 10px;font-size:13px;min-height:34px}
@@ -122,11 +118,6 @@
     <h1>Margen · SAP Business One</h1>
     <p class="subtitle">Los cinco indicadores de margen por empresa y del grupo, con su detalle por cliente, SKU, canal y vendedor, la reconciliación con Finanzas y la calidad de los datos.</p>
   </div>
-  <nav class="apps" aria-label="Aplicaciones de SAP Business One">
-    <a aria-current="page">Margen</a>
-    <a href="/analytics/viewer?app=sap_b1_sellout" target="_top">Sell-out y caducidad</a>
-    <a href="/analytics/viewer?app=sap_b1_abasto" target="_top">Abasto</a>
-  </nav>
 </header>
 <div id="error" role="alert"></div>
 <div class="controls">
@@ -562,7 +553,7 @@ async function renderFinance(token){
   const filters = [['todos','Todas'], ['ok','Dentro de tolerancia'], ['fuera_tolerancia','Fuera de tolerancia'], ['sin_dato_plataforma','Sin dato en la plataforma'], ['solo_plataforma','Solo en la plataforma']];
   if(!counts[S.finFilter]) S.finFilter = 'todos';
   chips.innerHTML = filters.map(([key, label])=> `<button type="button" data-status="${esc(key)}" aria-pressed="${S.finFilter===key}">${esc(label)} (${num(counts[key]||0)})</button>`).join('');
-  csv.innerHTML = `<div class="row" style="margin-top:10px"><span class="note">El CSV incluye todas las filas del mes y las columnas de diagnóstico.</span><span><button type="button" class="btn" id="csv-download">Descargar CSV</button> <button type="button" class="btn" id="csv-show" aria-expanded="false" aria-controls="csv-text">Ver CSV para copiar</button></span></div><textarea id="csv-text" hidden readonly aria-label="Matriz de reconciliación en CSV"></textarea>`;
+  csv.innerHTML = `<div class="row" style="margin-top:10px"><span class="note">El CSV incluye todas las filas del mes y las columnas de diagnóstico.</span><span><button type="button" class="btn" id="csv-show" aria-expanded="false" aria-controls="csv-text">Ver CSV para copiar</button></span></div><textarea id="csv-text" hidden readonly aria-label="Matriz de reconciliación en CSV"></textarea>`;
   renderFinanceTable();
 }
 
@@ -586,7 +577,7 @@ function financeCsv(){
     if(typeof v !== 'number' && /^[=+\-@\t\r]/.test(s) && Number.isNaN(Number(s))) s = "'" + s;
     return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
   };
-  return '﻿' + [cols.map(c=> c[1]).join(','), ...S.finRows.map(r=> cols.map(c=> cellText(r[c[0]])).join(','))].join('\r\n');
+  return [cols.map(c=> c[1]).join(','), ...S.finRows.map(r=> cols.map(c=> cellText(r[c[0]])).join(','))].join('\r\n');
 }
 
 async function renderLedger(token){
@@ -666,16 +657,10 @@ async function init(){
     document.querySelectorAll('#fin-filter button').forEach(x=> x.setAttribute('aria-pressed', x===b)); renderFinanceTable(); });
   document.getElementById('fin').addEventListener('click', e=>{ const b = e.target.closest('button[data-goto]'); if(b) setSelection(null, b.dataset.goto); });
   document.getElementById('fin-csv').addEventListener('click', e=>{
-    const {company, period} = selected();
-    if(e.target.id==='csv-download'){
-      const url = URL.createObjectURL(new Blob([financeCsv()], {type:'text/csv;charset=utf-8'}));
-      const a = document.createElement('a'); a.href = url; a.download = 'reconciliacion_finanzas_' + (company==='grupo' ? 'grupo' : company) + '_' + period + '.csv';
-      document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=> URL.revokeObjectURL(url), 1000);
-    }
     if(e.target.id==='csv-show'){
       const box = document.getElementById('csv-text'); const open = box.hidden;
       box.hidden = !open; e.target.setAttribute('aria-expanded', open);
-      if(open){ box.value = financeCsv().replace(/^﻿/, ''); box.focus(); box.select(); }
+      if(open){ box.value = financeCsv(); box.focus(); box.select(); }
     }
   });
   document.getElementById('company').addEventListener('change', renderAll);

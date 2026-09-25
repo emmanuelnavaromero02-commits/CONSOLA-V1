@@ -66,11 +66,11 @@ def test_every_chart_is_drawn_behind_the_library_guard(name):
 
 
 @pytest.mark.parametrize("name", APP_NAMES)
-def test_apps_link_to_each_other_through_the_viewer(name):
+def test_apps_do_not_rely_on_what_the_viewer_sandbox_blocks(name):
+    # the app frame is sandboxed with allow-scripts only: no top navigation, no downloads
     html = (APPS / f"{name}.html").read_text(encoding="utf-8")
-    for other in APP_NAMES:
-        if other != name:
-            assert f'href="/analytics/viewer?app={other}"' in html
+    assert 'target="_top"' not in html and "window.top" not in html
+    assert ".download =" not in html and "createObjectURL" not in html
 
 
 @pytest.mark.parametrize("name", APP_NAMES)

@@ -1,6 +1,6 @@
 -- sap_b1_distributor_scorecard_month  (gold)  cartridge: sap_b1
 -- sources: ["silver/sap_b1/sap_b1_ar_invoice_lines", "silver/sap_b1/sap_b1_ar_credit_memo_lines", "silver/sap_b1/sap_b1_inventory_movements", "silver/sap_b1/sap_b1_stock_on_hand", "silver/sap_b1/sap_b1_obtq_latest", "silver/sap_b1/sap_b1_obtn_latest", "silver/sap_b1/sap_b1_business_parameters"]
--- description: Monthly traffic light per buying group company (distributor), amounts in its local_currency except the sell-in amount, which is in the selling company's currency (sell_in_currency, empty when sellers differ): sell-in from the group, sell-out and its growth against the previous month and the same month a year earlier, sell-through over three months, days of stock in the channel, distributor margin and, for the latest month, the share of batch stock expiring within the horizon (setting expiry_horizon_days, 90 by default); each metric is coloured against its threshold and the overall colour is the worst one.
+-- description: Monthly traffic light per buying group company (distributor), amounts in its local_currency except the sell-in amount, which is in the selling company's currency (sell_in_currency, empty when sellers differ): sell-in from the group, sell-out and its growth against the previous month and the same month a year earlier, the sell-out / sell-in ratio over three months (units sold to external customers ÷ units bought from the group), days of stock in the channel, distributor margin and, for the latest month, the share of batch stock expiring within the horizon (setting expiry_horizon_days, 90 by default); each metric is coloured against its threshold and the overall colour is the worst one.
 
 WITH lines AS (
     SELECT company, doc_month, local_currency, is_intercompany, counterparty_company, item_code,
@@ -91,6 +91,7 @@ measured AS (
            LAG(mo.sell_out_revenue) OVER (PARTITION BY mo.distributor ORDER BY mo.doc_month) AS prev_revenue,
            LAG(mo.doc_month) OVER (PARTITION BY mo.distributor ORDER BY mo.doc_month) AS prev_month,
            SUM(mo.sell_out_qty) OVER (PARTITION BY mo.distributor ORDER BY mo.doc_month ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS sold_3m,
+           SUM(COALESCE(si.sell_in_qty, 0)) OVER (PARTITION BY mo.distributor ORDER BY mo.doc_month ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS bought_3m,
            MAX(mo.doc_month) OVER (PARTITION BY mo.distributor) AS latest_month
     FROM monthly mo
     LEFT JOIN stock_end se ON se.distributor = mo.distributor AND se.doc_month = mo.doc_month
@@ -103,8 +104,7 @@ metrics AS (
                 THEN 100.0 * (m.sell_out_revenue - m.prev_revenue) / abs(m.prev_revenue) END AS growth_mom_pct,
            CASE WHEN y.sell_out_revenue <> 0
                 THEN 100.0 * (m.sell_out_revenue - y.sell_out_revenue) / abs(y.sell_out_revenue) END AS growth_yoy_pct,
-           CASE WHEN m.sold_3m + m.stock_end_qty > 0
-                THEN 100.0 * m.sold_3m / (m.sold_3m + m.stock_end_qty) END AS sell_through_3m_pct,
+           CASE WHEN m.bought_3m > 0 THEN 100.0 * m.sold_3m / m.bought_3m END AS sellout_sellin_3m_pct,
            CASE WHEN m.sold_3m > 0 THEN m.stock_end_qty / (m.sold_3m / 90.0) END AS channel_days,
            CASE WHEN m.sell_out_revenue <> 0 THEN 100.0 * m.sell_out_gross_profit / m.sell_out_revenue END AS margin_pct,
            CASE WHEN m.doc_month = m.latest_month THEN e.expiry_exposed_pct END AS expiry_exposed_pct
@@ -119,13 +119,13 @@ limits AS (
                AND p.company IN (m.distributor, '*') AND p.period IN (strftime(m.doc_month, '%Y-%m'), '*')
              ORDER BY p.company = '*', p.period = '*' LIMIT 1) AS value
     FROM metrics m
-    CROSS JOIN (VALUES ('sellout_growth_min_pct'), ('sell_through_min_pct'), ('channel_days_max'),
+    CROSS JOIN (VALUES ('sellout_growth_min_pct'), ('sellout_sellin_min_pct'), ('channel_days_max'),
                        ('distributor_margin_min_pct'), ('expiry_exposed_max_pct')) AS k(param_key)
 ),
 pivoted AS (
     SELECT m.*,
            MAX(l.value) FILTER (WHERE l.param_key = 'sellout_growth_min_pct') AS growth_min,
-           MAX(l.value) FILTER (WHERE l.param_key = 'sell_through_min_pct') AS sell_through_min,
+           MAX(l.value) FILTER (WHERE l.param_key = 'sellout_sellin_min_pct') AS sellout_sellin_min,
            MAX(l.value) FILTER (WHERE l.param_key = 'channel_days_max') AS channel_days_max,
            MAX(l.value) FILTER (WHERE l.param_key = 'distributor_margin_min_pct') AS margin_min,
            MAX(l.value) FILTER (WHERE l.param_key = 'expiry_exposed_max_pct') AS expiry_max
@@ -138,9 +138,9 @@ coloured AS (
            CASE WHEN p.growth_min IS NULL OR p.growth_yoy_pct IS NULL THEN 'sin_umbral'
                 WHEN p.growth_yoy_pct < p.growth_min THEN 'rojo'
                 WHEN p.growth_yoy_pct < p.growth_min + 5 THEN 'amarillo' ELSE 'verde' END AS growth_color,
-           CASE WHEN p.sell_through_min IS NULL OR p.sell_through_3m_pct IS NULL THEN 'sin_umbral'
-                WHEN p.sell_through_3m_pct < p.sell_through_min THEN 'rojo'
-                WHEN p.sell_through_3m_pct < p.sell_through_min + 5 THEN 'amarillo' ELSE 'verde' END AS sell_through_color,
+           CASE WHEN p.sellout_sellin_min IS NULL OR p.sellout_sellin_3m_pct IS NULL THEN 'sin_umbral'
+                WHEN p.sellout_sellin_3m_pct < p.sellout_sellin_min THEN 'rojo'
+                WHEN p.sellout_sellin_3m_pct < p.sellout_sellin_min + 5 THEN 'amarillo' ELSE 'verde' END AS sellout_sellin_color,
            CASE WHEN p.channel_days_max IS NULL OR p.channel_days IS NULL THEN 'sin_umbral'
                 WHEN p.channel_days > p.channel_days_max THEN 'rojo'
                 WHEN p.channel_days > 0.9 * p.channel_days_max THEN 'amarillo' ELSE 'verde' END AS channel_days_color,
@@ -165,18 +165,18 @@ SELECT
     ROUND(stock_end_qty, 6)                                 AS stock_end_qty,
     ROUND(growth_mom_pct, 2)                                AS growth_mom_pct,
     ROUND(growth_yoy_pct, 2)                                AS growth_yoy_pct,
-    ROUND(sell_through_3m_pct, 2)                           AS sell_through_3m_pct,
+    ROUND(sellout_sellin_3m_pct, 2)                         AS sellout_sellin_3m_pct,
     ROUND(channel_days, 1)                                  AS channel_days,
     ROUND(margin_pct, 2)                                    AS margin_pct,
     ROUND(expiry_exposed_pct, 2)                            AS expiry_exposed_pct,
     growth_color,
-    sell_through_color,
+    sellout_sellin_color,
     channel_days_color,
     margin_color,
     expiry_color,
-    CASE WHEN 'rojo' IN (growth_color, sell_through_color, channel_days_color, margin_color, expiry_color) THEN 'rojo'
-         WHEN 'amarillo' IN (growth_color, sell_through_color, channel_days_color, margin_color, expiry_color) THEN 'amarillo'
-         WHEN 'verde' IN (growth_color, sell_through_color, channel_days_color, margin_color, expiry_color) THEN 'verde'
+    CASE WHEN 'rojo' IN (growth_color, sellout_sellin_color, channel_days_color, margin_color, expiry_color) THEN 'rojo'
+         WHEN 'amarillo' IN (growth_color, sellout_sellin_color, channel_days_color, margin_color, expiry_color) THEN 'amarillo'
+         WHEN 'verde' IN (growth_color, sellout_sellin_color, channel_days_color, margin_color, expiry_color) THEN 'verde'
          ELSE 'sin_umbral' END                              AS overall_color
 FROM coloured
 ORDER BY distributor, doc_month

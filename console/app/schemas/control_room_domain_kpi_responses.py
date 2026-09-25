@@ -510,7 +510,7 @@ class DistributorRow(PublicProjectionModel):
     sell_in_qty: Number = None
     growth_mom_pct: Number = None
     growth_yoy_pct: Number = None
-    sell_through_3m_pct: Number = None
+    sellout_sellin_3m_pct: Number = None
     channel_days: Number = None
     margin_pct: Number = None
     expiry_exposed_pct: Number = None
