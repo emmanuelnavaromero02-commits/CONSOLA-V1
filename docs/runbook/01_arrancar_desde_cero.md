@@ -139,5 +139,5 @@ Todos deben responder 200.
 | `superset` 502 | `superset-init` aún corriendo | espera 30s, reintenta |
 | Superset no descifra conexiones tras rotar `SUPERSET_SECRET_KEY` local | metastore local cifrado con la key anterior | `CONFIRM_SUPERSET_METASTORE_REPAIR=LOCAL_SUPERSET_REPAIR make repair-local-stack` |
 
-Si tras 3 minutos hay servicios unhealthy, ver
-[07 Debug fallos](07_debug_fallos.md).
+Si tras 3 minutos hay servicios unhealthy, revisar
+`docker compose -f infra/docker-compose.yml ps`.

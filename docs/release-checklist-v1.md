@@ -35,8 +35,8 @@ v1.0 approval.
 
 | Item | Status | Evidence |
 |---|---|---|
-| P2-19 live readiness | BLOCKED | `docs/release-evidence/p2-19-live-readiness-blocked.md` |
-| P2-20 live cartridges | BLOCKED | `docs/release-evidence/p2-20-live-cartridges-blocked.md` |
+| P2-19 live readiness | BLOCKED | — |
+| P2-20 live cartridges | BLOCKED | — |
 | P2-21 AWS/HTTPS staging | BLOCKED | `docs/release-evidence/aws-staging-checklist.md` |
 | P2-22 threat model | DONE | `docs/security/copilot-mcp-threat-model.md` |
 
@@ -44,7 +44,7 @@ v1.0 approval.
 
 | Item | Status | Evidence |
 |---|---|---|
-| P1-12 frontend component coverage | PARTIAL / DEUDA DE BETA | `docs/release-evidence/main-9a39a3026cd59b7030efc3e3d4c815f4362044e6.md#p1-12-frontend-coverage-status`; follow-up `FRONTEND-COV-001` |
+| P1-12 frontend component coverage | PARTIAL / DEUDA DE BETA | follow-up `FRONTEND-COV-001` |
 
 ## Final Tag Procedure
 

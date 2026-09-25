@@ -153,7 +153,7 @@ Python 3 y reintentá `make up`.
   `cd tests-e2e && npx playwright test specs/12-control-room.spec.ts --list`.
 
 ### Servicios unhealthy tras 3 min
-Ver [07 Debug fallos](07_debug_fallos.md) y `docker compose -f infra/docker-compose.yml ps`.
+Revisá `docker compose -f infra/docker-compose.yml ps`.
 
 ## Checklist "lista para demo"
 

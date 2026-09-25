@@ -71,8 +71,6 @@ sin supresiones en ambos lados, y el alcance de Bandit local incluye
 `scripts/ci_changed_areas.py` y `scripts/ci_control_room_paths.py`, igual
 que `security.yml`.
 
-Riesgos y deuda vigentes del baseline: `docs/baseline.md`.
-
 ## Validacion Rapida
 
 Con el stack arriba:
@@ -203,16 +201,8 @@ gated listo y marca `BLOCKED`; no simules `DONE`.
 - `docs/runbook/01_arrancar_desde_cero.md`: arranque limpio, dos fases,
   Postgres primero, healthchecks y fixes locales.
 - `docs/runbook/02_primer_tenant.md`: bootstrap admin y primer workspace.
-- `docs/runbook/03_configurar_replicon.md`: credenciales Replicon en Vault.
-- `docs/runbook/04_configurar_sap.md`: SAP HCM, S/4HANA y SuccessFactors.
-- `docs/runbook/05_rotar_secretos.md`: rotacion de claves y roles.
 - `docs/runbook/06_backup_restore.md`: backup/restore.
-- `docs/runbook/07_debug_fallos.md`: debugging operativo.
-- `docs/runbook/08_usar_copiloto.md`: Copilot y approval gate.
 - `docs/runbook/09_demo_beta.md`: checklist de demo/beta controlada.
-- `docs/runbook/10_v1_public_https.md`: HTTPS publico.
-- `docs/runbook/11_release_stabilization.md`: estabilizacion y rollback.
-- `docs/runbook/12_scope_hardening.md`: tenant/workspace scope.
 
 El changelog de hardening que antes estaba en el README se archivo en
 `docs/audits/security-phase-hardening-changelog.md`.

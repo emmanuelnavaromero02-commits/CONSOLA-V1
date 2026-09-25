@@ -2,8 +2,7 @@
 
 > Audiencia: SRE que mantiene la plataforma. Backups deben correr
 > al menos diariamente; antes de cualquier rotación de secretos
-> (ver [05](05_rotar_secretos.md)) o upgrade de versión, hacer uno
-> manual.
+> o upgrade de versión, hacer uno manual.
 
 ## Qué hay que respaldar
 
