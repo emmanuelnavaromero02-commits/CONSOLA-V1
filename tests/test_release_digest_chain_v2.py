@@ -465,10 +465,9 @@ def test_manifest_parser_rejects_duplicate_keys_noncanonical_bytes_and_checksum(
         )
 
 
-@pytest.mark.parametrize("attack", ["build", "tag", "extra-release-consumer"])
-def test_compose_lock_rejects_build_tag_and_extra_consumer(
-    tmp_path: Path, identity: ReleaseIdentity, attack: str
-) -> None:
+def _run_compose_lock(
+    tmp_path: Path, identity: ReleaseIdentity, extra_services: dict, mutate=None
+) -> subprocess.CompletedProcess[str]:
     manifest_path, checksum_path, manifest = _write_v2(tmp_path, identity)
     by_service = {entry["service"]: entry["digest_reference"] for entry in manifest["images"]}
     services = {
@@ -476,16 +475,12 @@ def test_compose_lock_rejects_build_tag_and_extra_consumer(
         for name, service in EXPECTED_COMPOSE.items()
     }
     services["postgres"] = {"image": "postgres:16"}
-    if attack == "build":
-        services["console"]["build"] = "."
-    elif attack == "tag":
-        services["console"]["image"] = "ghcr.io/omega-owner/console:latest"
-    else:
-        services["unexpected"] = {"image": by_service["console"]}
+    services.update(extra_services)
+    if mutate is not None:
+        mutate(services, by_service)
     compose = tmp_path / "compose.json"
     compose.write_text(json.dumps({"services": services}), encoding="utf-8")
-
-    result = subprocess.run(
+    return subprocess.run(
         [
             sys.executable,
             "scripts/release_digest_env.py",
@@ -510,8 +505,63 @@ def test_compose_lock_rejects_build_tag_and_extra_consumer(
         check=False,
     )
 
+
+@pytest.mark.parametrize(
+    "attack",
+    [
+        "build",
+        "tag",
+        "extra-release-consumer",
+        "other-repository-in-the-namespace",
+        "mirror-lookalike",
+        "mirror-name-in-another-namespace-is-fine-but-not-a-release-digest",
+    ],
+)
+def test_compose_lock_rejects_build_tag_and_extra_consumer(
+    tmp_path: Path, identity: ReleaseIdentity, attack: str
+) -> None:
+    owner = identity.owner
+
+    def mutate(services: dict, by_service: dict) -> None:
+        if attack == "build":
+            services["console"]["build"] = "."
+        elif attack == "tag":
+            services["console"]["image"] = f"ghcr.io/{owner}/console:latest"
+        elif attack == "extra-release-consumer":
+            services["unexpected"] = {"image": by_service["console"]}
+        elif attack == "other-repository-in-the-namespace":
+            services["unexpected"] = {"image": f"ghcr.io/{owner}/omega-evil:1"}
+        elif attack == "mirror-lookalike":
+            services["unexpected"] = {"image": f"ghcr.io/{owner}/omega-minio-evil:1"}
+        else:
+            # A mirror-shaped name that actually is a release digest still blocks.
+            services["unexpected"] = {"image": by_service["sap_b1"]}
+
+    result = _run_compose_lock(tmp_path, identity, {}, mutate)
+
     assert result.returncode != 0
     assert "RELEASE DIGEST ENV BLOCKED" in result.stderr
+
+
+def test_compose_lock_accepts_the_infrastructure_mirrors_hosted_in_the_namespace(
+    tmp_path: Path, identity: ReleaseIdentity
+) -> None:
+    """MinIO is rebuilt from source and hosted next to the release images (its
+    publisher withdrew it). The stack runs it by tag, by the exact repository
+    names the lock knows; that is not an unexpected consumer of a release
+    image. The first real run of this gate failed on exactly this."""
+    owner = identity.owner
+    result = _run_compose_lock(
+        tmp_path,
+        identity,
+        {
+            "minio": {"image": f"ghcr.io/{owner}/omega-minio:RELEASE.2024-12-18T13-15-44Z"},
+            "minio-init": {"image": f"ghcr.io/{owner}/omega-mc:RELEASE.2024-11-21T17-21-54Z"},
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "RELEASE DIGEST ENV PASS" in result.stdout
 
 
 def test_package_recovery_pages_and_requires_unique_exact_run_candidate(
