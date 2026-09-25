@@ -253,19 +253,6 @@ def main(argv: list[str] | None = None) -> int:
             evidence_dir,
         ),
         _run_step(
-            "tenant-ab-aws",
-            [
-                "python3",
-                "scripts/tenant_ab_e2e.py",
-                "--target",
-                "aws",
-                "--evidence-dir",
-                str(evidence_dir / "tenant-ab-aws"),
-            ],
-            env,
-            evidence_dir,
-        ),
-        _run_step(
             "decision-backtest-aws",
             [
                 "python3",

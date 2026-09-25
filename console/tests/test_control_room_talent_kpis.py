@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
@@ -125,10 +126,15 @@ async def test_sap_successfactors_talent_kpis_degrades_when_datasets_missing(
         raise HTTPException(404, "dataset unavailable")
 
     monkeypatch.setattr(control_room_service, "query_dataset_rows", missing_rows)
+    monkeypatch.setattr(
+        control_room_service,
+        "_vault_connections_for_cartridge",
+        AsyncMock(return_value=[]),
+    )
 
     result = await control_room_service.sap_successfactors_talent_kpis(USER)
 
-    assert result["connection_id"] == "femsa_sf"
+    assert result["connection_id"] is None
     assert result["readiness"]["status"] == "partial"
     assert any(
         blocker["id"] == "talent_dataset_availability" for blocker in result["blockers"]

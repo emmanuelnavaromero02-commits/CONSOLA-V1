@@ -47,7 +47,7 @@ function entityCount(cartridge) {
 }
 
 function cartridgeName(cartridge) {
-  return cartridge?.name || cartridge?.id || 'Replicon PSA';
+  return cartridge?.name || cartridge?.id || 'Sin cartucho seleccionado';
 }
 
 function cartridgeDescription(cartridge) {

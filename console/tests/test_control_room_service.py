@@ -360,9 +360,14 @@ async def test_sap_successfactors_gold_kpis_reads_scoped_gold(monkeypatch):
         fake_headcounts,
     )
 
+    monkeypatch.setattr(
+        control_room_service,
+        "_vault_connections_for_cartridge",
+        AsyncMock(return_value=[{"conn_id": "sf_principal"}]),
+    )
     result = await control_room_service.sap_successfactors_gold_kpis(USER)
 
-    assert result["connection_id"] == "femsa_sf"
+    assert result["connection_id"] == "sf_principal"
     assert result["tenant_id"] == USER["tenant_id"]
     assert result["workspace_id"] == USER["active_workspace_id"]
     active = next(
@@ -419,9 +424,14 @@ async def test_sap_successfactors_gold_kpis_degrades_when_gold_missing(monkeypat
         missing_headcounts,
     )
 
+    monkeypatch.setattr(
+        control_room_service,
+        "_vault_connections_for_cartridge",
+        AsyncMock(return_value=[{"conn_id": "sf_principal"}]),
+    )
     result = await control_room_service.sap_successfactors_gold_kpis(USER)
 
-    assert result["connection_id"] == "femsa_sf"
+    assert result["connection_id"] == "sf_principal"
     assert result["tenant_id"] == USER["tenant_id"]
     assert result["workspace_id"] == USER["active_workspace_id"]
     assert [widget["value"] for widget in result["widgets"]] == [None, None, None, None]

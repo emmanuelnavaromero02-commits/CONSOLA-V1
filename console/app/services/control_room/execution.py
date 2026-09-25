@@ -2008,8 +2008,7 @@ def _confirmed_for_execute(value: Any) -> bool:
 
 @_bind_to_core
 def _supports_transactional_acquire(pool: Any) -> bool:
-    acquire = getattr(pool, "acquire", None)
-    return callable(acquire) and not type(pool).__module__.startswith("unittest.mock")
+    return callable(getattr(type(pool), "acquire", None))
 
 
 @_bind_to_core

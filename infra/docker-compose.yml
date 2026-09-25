@@ -37,7 +37,6 @@ services:
         echo '[dev-seed] APP_ENV is production — skipping all local dev seeds';
       else
         psql -h postgres -U postgres -d modecissions -v ON_ERROR_STOP=1 -f /dev-seeds/15_local_dev_bootstrap.sql;
-        psql -h postgres -U postgres -d modecissions -v ON_ERROR_STOP=1 -f /dev-seeds/16_demo_control_room_seed.sql;
       fi"
     restart: "no"
 
@@ -870,7 +869,6 @@ services:
       AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
       EMBED_MODEL:      ${EMBED_MODEL:-amazon.titan-embed-text-v2:0}
       EMBED_DIM:        ${EMBED_DIM:-1024}
-      RAG_LOCAL_EMBEDDING_FALLBACK: ${RAG_LOCAL_EMBEDDING_FALLBACK:-true}
       ADMIN_EMAIL:      ${ADMIN_EMAIL:-}
     mem_limit: ${MCP_INFRA_MEM_LIMIT:-1536m}
     cpus: ${MCP_INFRA_CPUS:-2.0}
