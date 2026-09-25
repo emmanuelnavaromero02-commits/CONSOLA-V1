@@ -134,7 +134,7 @@
           },
           {
             "path": "tests/test_sap_entities_seeded.py",
-            "declarations_sha256": "0f62829e784e2385b59a763e8541e7e6dc9e2cd550e8603001f308dc27fa05b6"
+            "declarations_sha256": "44e60738cc1d7ba376ac6379c7e0aa6a688694c90d83788f24dd7437af954ad0"
           },
           {
             "path": "tests/test_sap_hcm_apps.py",
@@ -221,7 +221,7 @@
             "declarations_sha256": "fe98517b8fbaab00c4a1a5cbb56109ea74a148b947f3b8e79f6e6d5110e47953"
           }
         ],
-        "inventory_sha256": "81d2a37756a2eafcac19059e47d8a05e8f15b339c451eca0f66205571aec43dd"
+        "inventory_sha256": "a43f8789a6b66a6a6f39fcf32d43db0cf72929c271b9808a06cce5c57948c5d7"
       }
     },
     {
