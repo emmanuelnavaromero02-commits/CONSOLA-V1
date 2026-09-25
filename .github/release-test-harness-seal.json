@@ -303,7 +303,7 @@
     },
     {
       "path": "cartridges/hubspot/app/core/sql_guard.py",
-      "sha256": "c1a85236c39ed83daf88ec93832bcc14d8da4da931eac3742e46a138c23f5024"
+      "sha256": "ab129466a607c2b9965576d579f72c69eb18de7c5bfeb0341f5a45e480d299be"
     },
     {
       "path": "cartridges/hubspot/app/core/vault_client.py",
@@ -571,7 +571,7 @@
     },
     {
       "path": "cartridges/replicon/app/core/sql_guard.py",
-      "sha256": "c1a85236c39ed83daf88ec93832bcc14d8da4da931eac3742e46a138c23f5024"
+      "sha256": "ab129466a607c2b9965576d579f72c69eb18de7c5bfeb0341f5a45e480d299be"
     },
     {
       "path": "cartridges/replicon/app/core/vault_client.py",
@@ -623,7 +623,7 @@
     },
     {
       "path": "cartridges/replicon/app/services/kb_service.py",
-      "sha256": "cbc994de4bd2f0c13492ef9185c51aa54ae9dd0954d048a063f70448a613efec"
+      "sha256": "451789985b51d8d2bf5fe739affe51193b1ccafc0db1767bed8131e973ed5a4f"
     },
     {
       "path": "cartridges/replicon/app/services/parquet_service.py",
@@ -739,7 +739,7 @@
     },
     {
       "path": "cartridges/salesforce/app/core/sql_guard.py",
-      "sha256": "c1a85236c39ed83daf88ec93832bcc14d8da4da931eac3742e46a138c23f5024"
+      "sha256": "ab129466a607c2b9965576d579f72c69eb18de7c5bfeb0341f5a45e480d299be"
     },
     {
       "path": "cartridges/salesforce/app/core/vault_client.py",
@@ -899,7 +899,7 @@
     },
     {
       "path": "cartridges/sap_b1/app/core/sql_guard.py",
-      "sha256": "c1a85236c39ed83daf88ec93832bcc14d8da4da931eac3742e46a138c23f5024"
+      "sha256": "ab129466a607c2b9965576d579f72c69eb18de7c5bfeb0341f5a45e480d299be"
     },
     {
       "path": "cartridges/sap_b1/app/core/vault_client.py",
@@ -1155,7 +1155,7 @@
     },
     {
       "path": "cartridges/sap_hcm/app/core/sql_guard.py",
-      "sha256": "c1a85236c39ed83daf88ec93832bcc14d8da4da931eac3742e46a138c23f5024"
+      "sha256": "ab129466a607c2b9965576d579f72c69eb18de7c5bfeb0341f5a45e480d299be"
     },
     {
       "path": "cartridges/sap_hcm/app/core/vault_client.py",
@@ -1327,7 +1327,7 @@
     },
     {
       "path": "cartridges/sap_s4hana/app/core/sql_guard.py",
-      "sha256": "c1a85236c39ed83daf88ec93832bcc14d8da4da931eac3742e46a138c23f5024"
+      "sha256": "ab129466a607c2b9965576d579f72c69eb18de7c5bfeb0341f5a45e480d299be"
     },
     {
       "path": "cartridges/sap_s4hana/app/core/vault_client.py",
@@ -1507,7 +1507,7 @@
     },
     {
       "path": "cartridges/sap_successfactors/app/core/sql_guard.py",
-      "sha256": "c1a85236c39ed83daf88ec93832bcc14d8da4da931eac3742e46a138c23f5024"
+      "sha256": "ab129466a607c2b9965576d579f72c69eb18de7c5bfeb0341f5a45e480d299be"
     },
     {
       "path": "cartridges/sap_successfactors/app/core/startup_status.py",
@@ -4203,7 +4203,7 @@
     },
     {
       "path": "tests/test_cartridge_sql_guard_paths.py",
-      "sha256": "34e34b416a0ba1f45a30da46328cb4b39da97863ce9da85df605be56d4c72512"
+      "sha256": "ad5868d8e7d05b54ce1629f22726493738c7e280a4a4f1d8a82a77cb385415cb"
     },
     {
       "path": "tests/test_cartridge_startup_fail_fast.py",

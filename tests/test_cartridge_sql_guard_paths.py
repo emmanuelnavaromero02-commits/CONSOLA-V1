@@ -65,6 +65,14 @@ def test_every_cartridge_ships_the_same_guard():
         "FROM range(3) r, query('SELECT 1') q",
         "FROM {read} WHERE getenv('HOME') IS NOT NULL",
         "FROM {read} WHERE current_setting('s3_secret_access_key') IS NOT NULL",
+        "FROM \"/etc/hosts\" WHERE 1 IN (WITH \"/etc/hosts\" AS (SELECT 1 AS a) SELECT a FROM \"/etc/hosts\")",
+        "FROM \"s3://lakehouse/raw/salesforce/A/tenant_id=t9/workspace_id=w9/a.parquet\" "
+        "WHERE 1 IN (WITH \"s3://lakehouse/raw/salesforce/A/tenant_id=t9/workspace_id=w9/a.parquet\" AS (SELECT 1 AS a) "
+        "SELECT a FROM \"s3://lakehouse/raw/salesforce/A/tenant_id=t9/workspace_id=w9/a.parquet\")",
+        "FROM \"s3://lakehouse/raw/{cartridge}/A/tenant_id=t2/workspace_id=w2/a.parquet\" "
+        "WHERE 1 IN (WITH \"s3://lakehouse/raw/{cartridge}/A/tenant_id=t2/workspace_id=w2/a.parquet\" AS (SELECT 1 AS a) "
+        "SELECT a FROM \"s3://lakehouse/raw/{cartridge}/A/tenant_id=t2/workspace_id=w2/a.parquet\")",
+        "FROM replicon_base_currency",
     ],
 )
 def test_path_literals_outside_a_validated_reader_are_blocked(cartridge, tail):
@@ -106,9 +114,34 @@ def test_scoped_reads_with_ordinary_values_still_pass(cartridge):
         "SELECT price_label FROM {read} WHERE price_label = '$100' LIMIT 5",
         "SELECT * FROM read_parquet('s3://lakehouse/raw/{cartridge}/X/{scope}/**/*.parquet', hive_partitioning = true, union_by_name = true) LIMIT 5",
         "SELECT * FROM {read}, (VALUES (1), (2)) v(x), unnest([1, 2]) u, range(3) r LIMIT 5",
+        "WITH inv AS (SELECT _company, y, DocTotal FROM {read}) SELECT * FROM inv PIVOT (sum(DocTotal) FOR y IN ('2025', '2026') GROUP BY _company) LIMIT 5",
+        "SELECT count(*) FROM read_parquet('s3://lakehouse/raw/{cartridge}/X/{scope}/**/*.parquet', hive_partitioning := true) LIMIT 5",
+        "SELECT * FROM read_parquet('s3://lakehouse/raw/{cartridge}/X/{scope}/**/*.parquet', hive_partitioning = true, hive_types = {'load_date': DATE}) LIMIT 5",
+        "WITH parquet_rows(company) AS (SELECT _company FROM {read}) SELECT * FROM parquet_rows LIMIT 5",
+        "SELECT * FROM {read} AS parquet_src(a, b) LIMIT 5",
+        "WITH RECURSIVE t(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM t WHERE n < 3) SELECT * FROM t, {read} LIMIT 5;",
     ],
 )
 def test_path_like_values_outside_relation_positions_pass(cartridge, tail):
     prefixes = tuple(f"s3://lakehouse/{layer}/{cartridge}/" for layer in ("raw", "silver", "gold"))
     sql = tail.replace("{read}", _read(cartridge)).replace("{cartridge}", cartridge).replace("{scope}", SCOPE)
+    assert _guard(cartridge).validate_kb_sql(sql, prefixes, required_scope=SCOPE) == (True, None)
+
+
+@pytest.mark.parametrize("cartridge", CARTRIDGES)
+def test_runtime_tables_are_allowed_only_when_registered(cartridge):
+    prefixes = tuple(f"s3://lakehouse/{layer}/{cartridge}/" for layer in ("raw", "silver", "gold"))
+    sql = f"SELECT * FROM {_read(cartridge)} a JOIN replicon_base_currency b ON true LIMIT 5"
+    guard = _guard(cartridge)
+    assert guard.validate_kb_sql(sql, prefixes, required_scope=SCOPE)[0] is False
+    assert guard.validate_kb_sql(
+        sql, prefixes, required_scope=SCOPE, allowed_tables=frozenset({"replicon_base_currency"})
+    ) == (True, None)
+    assert guard.validate_kb_sql(sql, prefixes, required_scope=SCOPE, allowed_tables=frozenset({"a.csv"}))[0] is False
+
+
+@pytest.mark.parametrize("cartridge", CARTRIDGES)
+def test_deep_expressions_get_a_verdict_instead_of_a_crash(cartridge):
+    prefixes = tuple(f"s3://lakehouse/{layer}/{cartridge}/" for layer in ("raw", "silver", "gold"))
+    sql = "SELECT " + " || '|' || ".join(f"c{i}" for i in range(400)) + f" FROM {_read(cartridge)} LIMIT 5"
     assert _guard(cartridge).validate_kb_sql(sql, prefixes, required_scope=SCOPE) == (True, None)
