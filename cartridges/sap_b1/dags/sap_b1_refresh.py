@@ -1,4 +1,3 @@
-"""Refresh sap_b1 silver and gold after each delivery of the Windows push agent."""
 from __future__ import annotations
 
 import json
