@@ -1,5 +1,5 @@
 -- sap_b1_pnl_by_company_month  (gold)  cartridge: sap_b1
--- sources: ["raw/sap_b1/OJDT", "raw/sap_b1/JDT1", "raw/sap_b1/OACT", "raw/sap_b1/OADM"]
+-- sources: ["silver/sap_b1/sap_b1_journal_lines"]
 -- description: The accounting view per company and month from the journal: income accounts (type I) as revenue, expense accounts (type E) as expenses, and the operating result, in local and system currency. Reversals land in the month they were posted, so a month can differ from the document view; period totals agree.
 
 WITH lines AS (

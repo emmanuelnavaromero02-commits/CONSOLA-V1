@@ -1308,3 +1308,222 @@ def test_an_incremental_run_picks_up_a_row_edited_in_the_source(b1_env, dataset,
         assert all(after[key] >= before[key] for key in before)
     finally:
         _pg(dsn, f'UPDATE {table} SET "UpdateDate" = %s, "UpdateTS" = %s WHERE "DocEntry" = %s', (original[0], original[1], doc_entry))
+
+
+_HISTORY_START = datetime(2025, 1, 1)
+
+
+def _months_back_to_history_start() -> int:
+    from datetime import timezone
+
+    now = datetime.now(timezone.utc)
+    return (now.year - _HISTORY_START.year) * 12 + now.month - _HISTORY_START.month
+
+
+def _meta(config: Path) -> dict[str, str]:
+    with _db(config) as conn:
+        return {r["key"]: r["value"] for r in conn.execute("SELECT * FROM agent_meta")}
+
+
+def _steps(config: Path) -> dict[str, int]:
+    with _db(config) as conn:
+        return {r["step"]: r["records"] for r in conn.execute("SELECT * FROM initial_load_steps")}
+
+
+def _as_date(value):
+    return value.date() if isinstance(value, datetime) else value
+
+
+def test_initial_load_reads_the_window_month_by_month_then_continues_incrementally(b1_env, dataset, agent, tmp_path):
+    months = _months_back_to_history_start()
+    config = _write_config(tmp_path, extra="entities = ['OADM', 'OCRD', 'OINV', 'INV1', 'OINM']\n")
+    out = tmp_path / "out"
+    proc = _run(config, "initial-load", "--months", str(months), "--output-dir", str(out))
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert "initial load complete" in proc.stdout
+
+    meta = _meta(config)
+    cutoff = datetime.fromisoformat(meta["initial_load.cutoff"])
+    slices = agent.month_slices(cutoff, months)
+    window_start = datetime.fromisoformat(slices[-1][1]).date()
+    assert window_start == _HISTORY_START.date()
+    steps = _steps(config)
+    assert set(steps) == {"full:OADM", "full:OCRD"} | {
+        f"month:{label}:{entity}" for label, _start, _end in slices for entity in ("OINV", "INV1", "OINM")
+    }
+
+    doc_date = _col("OINV", "DocDate")
+    expected = {
+        c.alias: {row[_col("OINV", "DocEntry")] for row in dataset.tables[c.alias]["OINV"] if _as_date(row[doc_date]) >= window_start}
+        for c in dataset.companies
+    }
+    assert all(expected.values())
+    assert any(_as_date(row[doc_date]) < window_start for c in dataset.companies for row in dataset.tables[c.alias]["OINV"])
+    seen = defaultdict(set)
+    for path in out.rglob("OINV.parquet"):
+        for row in _read_parquet(path).to_pylist():
+            assert row["_load_type"] == "historical"
+            seen[row["_company"]].add(row["DocEntry"])
+    assert dict(seen) == expected
+    assert sum(v for k, v in steps.items() if k.endswith(":OINV")) == sum(len(v) for v in expected.values())
+    assert list(out.rglob("IntercompanyPartners.parquet")), "the completed load ends with the delivery marker"
+
+    marks = _watermarks(config)
+    trans = _col("OINM", "TransNum")
+    for c in dataset.companies:
+        assert marks[f"OINV@{c.alias}"] == cutoff.strftime(_STAMP)
+        assert marks[f"INV1@{c.alias}"] == cutoff.strftime(_STAMP)
+        assert int(marks[f"OINM@{c.alias}"]) == max(row[trans] for row in dataset.tables[c.alias]["OINM"])
+        assert f"OCRD@{c.alias}" in marks
+    runs = _runs(config)
+    assert {r["run_type"] for r in runs} == {"full", "historical"} and all(r["status"] == "success" for r in runs)
+
+    again = _run(config, "initial-load", "--months", str(months), "--output-dir", str(out))
+    assert again.returncode == 0 and "already completed" in again.stdout
+
+    later = tmp_path / "later"
+    follow = _run(config, "extract-all", "--entity", "OINV", "--output-dir", str(later))
+    assert follow.returncode == 0, follow.stderr
+    boundary = cutoff - timedelta(minutes=5)
+    for path in later.rglob("OINV.parquet"):
+        for row in _read_parquet(path).to_pylist():
+            assert row["_load_type"] == "incremental"
+            assert datetime.strptime(row["_source_updated_at"], _STAMP) >= boundary
+
+
+def test_initial_load_resumes_where_it_stopped_and_scheduled_cycles_wait(b1_env, dataset, agent, tmp_path, monkeypatch, capsys):
+    config = _write_config(tmp_path, extra="entities = ['OADM', 'OINV', 'INV1']\n")
+    out = str(tmp_path / "out")
+    months = str(_months_back_to_history_start())
+    total_steps = 1 + 2 * (int(months) + 1)
+    real = agent.run_extract
+    calls: list[str] = []
+    failing_step = {"on": True}
+
+    def failing(runtime, entity, **kwargs):
+        calls.append(f"{entity['entity']}:{kwargs.get('from_date')}")
+        if entity["entity"] == "INV1" and len(calls) > 4 and failing_step["on"]:
+            return agent.RunOutcome(entity="INV1", run_id="x", mode="historical", status="failed", error="source dropped")
+        return real(runtime, entity, **kwargs)
+
+    monkeypatch.setattr(agent, "run_extract", failing)
+    assert agent.main(["--config", str(config), "--quiet", "initial-load", "--months", months, "--output-dir", out]) == 1
+    assert "initial load stopped at month:" in capsys.readouterr().out
+    done = _steps(config)
+    assert "full:OADM" in done and len(done) == 4
+    assert "initial_load.completed_at" not in _meta(config)
+
+    runs_before = len(_runs(config))
+    assert agent.main(["--config", str(config), "--quiet", "extract-all", "--output-dir", out]) == 0
+    assert "extract-all skipped until it completes" in capsys.readouterr().out
+    assert len(_runs(config)) == runs_before
+
+    assert agent.main(["--config", str(config), "--quiet", "initial-load", "--months", "2", "--output-dir", out]) == 2
+    failing_step["on"] = False
+    calls.clear()
+    assert agent.main(["--config", str(config), "--quiet", "initial-load", "--months", months, "--output-dir", out]) == 0
+    assert len(calls) == total_steps - len(done)
+    assert "initial_load.completed_at" in _meta(config)
+
+
+def test_initial_load_waits_for_its_window(b1_env, agent, tmp_path, monkeypatch, capsys):
+    window = agent.LoadWindow.parse("22:00-05:30")
+    assert window.contains(datetime(2026, 9, 25, 23, 0)) and window.contains(datetime(2026, 9, 26, 5, 29))
+    assert not window.contains(datetime(2026, 9, 25, 12, 0)) and not window.contains(datetime(2026, 9, 26, 5, 30))
+    assert agent.LoadWindow.parse("01:00-04:00").contains(datetime(2026, 9, 25, 2, 0))
+    for bad in ("22-05", "25:00-01:00", "10:00-10:00"):
+        with pytest.raises(agent.ConfigError):
+            agent.LoadWindow.parse(bad)
+
+    config = _write_config(tmp_path, extra="entities = ['OADM', 'OINV']\n")
+    monkeypatch.setattr(agent, "_local_now", lambda: datetime(2026, 9, 25, 12, 0))
+    code = agent.main(["--config", str(config), "--quiet", "initial-load", "--months", "2", "--window", "22:00-05:30",
+                       "--output-dir", str(tmp_path / "out")])
+    assert code == 0
+    assert "outside the load window 22:00-05:30" in capsys.readouterr().out
+    assert _steps(config) == {} and _runs(config) == []
+
+
+def test_serve_runs_on_the_clock_survives_a_failed_cycle_and_waits_for_the_initial_load(agent, tmp_path, monkeypatch, b1_env):
+    config = _write_config(tmp_path, extra="entities = ['OADM']\n")
+    sleeps: list[float] = []
+    cycles: list[bool] = []
+
+    def cycle(current, log, entities, **kwargs):
+        cycles.append(kwargs["with_intercompany"])
+        if len(cycles) == 1:
+            raise agent.AgentError("source unreachable")
+        return 0
+
+    monkeypatch.setattr(agent, "_sleep", sleeps.append)
+    monkeypatch.setattr(agent, "_run_entities", cycle)
+    assert agent.main(["--config", str(config), "--quiet", "serve", "--cycles", "1"]) == 0
+    assert cycles == [] and "cycle skipped: run initial-load first" in _log_text(config)
+    sleeps.clear()
+
+    state = agent.AgentState(config.parent / "state" / "agent-state.sqlite")
+    state.set_meta("initial_load.cutoff", "2026-09-25T00:00:00")
+    state.set_meta("initial_load.completed_at", "2026-09-25T06:00:00Z")
+    state.close()
+    assert agent.main(["--config", str(config), "--quiet", "serve", "--cycles", "3", "--interval-minutes", "120"]) == 0
+    assert cycles == [True, True, True]
+    assert len(sleeps) == 2 and all(0 < value <= 7200 for value in sleeps)
+    assert "source unreachable" in _log_text(config)
+    assert agent._next_slot_seconds(7200 * 10 + 60, 120) == 7200 - 60
+
+    state = agent.AgentState(config.parent / "state" / "agent-state.sqlite")
+    state.reset_initial_load()
+    state.set_meta("initial_load.cutoff", "2026-09-25T00:00:00")
+    state.set_meta("initial_load.steps", "9")
+    state.close()
+    cycles.clear()
+    assert agent.main(["--config", str(config), "--quiet", "serve", "--cycles", "1"]) == 0
+    assert cycles == []
+    assert "cycle skipped: initial load in progress (0 of 9 steps)" in _log_text(config)
+    assert agent.main(["--config", str(config), "--quiet", "serve", "--interval-minutes", "5", "--cycles", "1"]) == 2
+
+
+def test_inventory_counts_every_table_per_company_and_reports_a_missing_column(b1_env, dataset, tmp_path):
+    config = _write_config(tmp_path)
+    proc = _run(config, "inventory", "--months", str(_months_back_to_history_start()), "--json",
+                "--entity", "OINV", "--entity", "OADM", "--entity", "OITW")
+    assert proc.returncode == 0, proc.stderr
+    report = json.loads(proc.stdout)
+    assert report["window_start"] == _HISTORY_START.date().isoformat() and report["failures"] == 0
+    by_entity = {item["entity"]: item for item in report["entities"]}
+    doc_date = _col("OINV", "DocDate")
+    for c in dataset.companies:
+        in_window = sum(1 for row in dataset.tables[c.alias]["OINV"] if _as_date(row[doc_date]) >= _HISTORY_START.date())
+        assert by_entity["OINV"]["companies"][c.alias] == {"rows": in_window}
+        assert by_entity["OADM"]["companies"][c.alias] == {"rows": len(dataset.tables[c.alias]["OADM"])}
+        assert by_entity["OITW"]["companies"][c.alias] == {"rows": len(dataset.tables[c.alias]["OITW"])}
+    assert by_entity["OITW"]["from_date"] is None
+
+    company = dataset.companies[0]
+    column = _entity_config("OADM")["select_fields"][1]
+    renamed = f"{column}_gone"
+    _pg(b1_env["dsn"], f'ALTER TABLE "{company.schema}"."OADM" RENAME COLUMN "{column}" TO "{renamed}"')
+    try:
+        broken = _run(config, "inventory", "--entity", "OADM")
+    finally:
+        _pg(b1_env["dsn"], f'ALTER TABLE "{company.schema}"."OADM" RENAME COLUMN "{renamed}" TO "{column}"')
+    assert broken.returncode == 1
+    assert f"{company.alias}=ERROR" in broken.stdout
+    assert company.schema not in broken.stdout and b1_env["password"] not in broken.stdout
+
+
+def test_windows_service_install_verifies_winsw_and_never_stores_the_password():
+    install = (AGENT_DIR / "install.ps1").read_text(encoding="utf-8")
+    uninstall = (AGENT_DIR / "uninstall.ps1").read_text(encoding="utf-8")
+
+    assert "[TimeSpan]::MaxValue" not in install
+    assert "-RepetitionDuration (New-TimeSpan -Days 1)" in install and "New-ScheduledTaskTrigger -Daily" in install
+    assert "[ValidateSet('Service', 'Task')][string]$Mode = 'Service'" in install
+    assert "Get-FileHash -Algorithm SHA256 -Path $WinswExe" in install
+    assert "WinSW no se instala sin verificar su hash" in install
+    assert "serve --interval-minutes $IntervalMinutes" in install
+    assert "Invoke-CimMethod -InputObject $service -MethodName Change" in install
+    assert "SeServiceLogonRight" in install and "secedit /configure" in install
+    service_xml = install[install.index("$xml = @(") : install.index("Set-Content -Path (Join-Path $serviceDir")]
+    assert "password" not in service_xml.lower() and "serviceaccount" not in service_xml.lower()
+    assert "Stop-Service -Name $ServiceName" in uninstall and "& $wrapper uninstall" in uninstall

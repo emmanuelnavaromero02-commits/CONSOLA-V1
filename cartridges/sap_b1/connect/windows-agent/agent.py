@@ -26,6 +26,9 @@ Commands::
     python agent.py test-connection
     python agent.py extract --entity OINV --mode incremental|full [--from-date --to-date]
     python agent.py extract-all [--mode full] [--entity OINV --entity INV1]
+    python agent.py initial-load [--months 24] [--window 22:00-05:30] [--restart]
+    python agent.py serve [--interval-minutes 120]
+    python agent.py inventory [--months 24] [--json]
     python agent.py status [--json]
 
 ``--output-dir DIR`` on ``extract``/``extract-all`` writes the files under
@@ -38,6 +41,7 @@ line is scrubbed before it is written.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import logging
 import logging.handlers
@@ -49,11 +53,11 @@ import time
 import tomllib
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-AGENT_VERSION = "0.1.0"
+AGENT_VERSION = "0.2.0"
 AGENT_NAME = "omega-sap-b1-agent"
 HERE = Path(__file__).resolve().parent
 CARTRIDGE_ROOT_ENV = "OMEGA_SAP_B1_CARTRIDGE_ROOT"
@@ -67,6 +71,9 @@ PROBE_ENTITY = "CINF"
 DEFAULT_MAX_PENDING_FILES = 500
 DEFAULT_UPLOAD_ATTEMPTS = 5
 EXIT_OK, EXIT_FAILED, EXIT_CONFIG = 0, 1, 2
+INITIAL_LOAD_META = "initial_load."
+DEFAULT_HISTORY_MONTHS = 24
+DEFAULT_SERVE_MINUTES = 120
 
 CARTRIDGE_FILES = (
     "app/__init__.py",
@@ -467,6 +474,16 @@ CREATE TABLE IF NOT EXISTS spool_lost (
     reason           TEXT NOT NULL,
     quarantine_path  TEXT
 );
+CREATE TABLE IF NOT EXISTS initial_load_steps (
+    step        TEXT PRIMARY KEY,
+    run_id      TEXT NOT NULL,
+    records     INTEGER NOT NULL,
+    finished_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS agent_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
@@ -597,6 +614,33 @@ class AgentState:
     def spool_lost(self) -> list[dict[str, Any]]:
         rows = self.conn.execute("SELECT * FROM spool_lost ORDER BY lost_at, rowid").fetchall()
         return [dict(row) for row in rows]
+
+    def get_meta(self, key: str) -> str | None:
+        row = self.conn.execute("SELECT value FROM agent_meta WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def set_meta(self, key: str, value: str) -> None:
+        self.conn.execute(
+            "INSERT INTO agent_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+        self.conn.commit()
+
+    def step_records(self) -> dict[str, int]:
+        rows = self.conn.execute("SELECT step, records FROM initial_load_steps").fetchall()
+        return {row[0]: int(row[1]) for row in rows}
+
+    def record_step(self, step: str, run_id: str, records: int) -> None:
+        self.conn.execute(
+            "INSERT OR REPLACE INTO initial_load_steps (step, run_id, records, finished_at) VALUES (?, ?, ?, ?)",
+            (step, run_id, int(records), _utc_now_text()),
+        )
+        self.conn.commit()
+
+    def reset_initial_load(self) -> None:
+        self.conn.execute("DELETE FROM initial_load_steps")
+        self.conn.execute("DELETE FROM agent_meta WHERE key LIKE ?", (f"{INITIAL_LOAD_META}%",))
+        self.conn.commit()
 
 
 _NO_RETRY_CODES = {
@@ -1013,6 +1057,7 @@ def run_extract(
     mode: str | None = None,
     from_date: str | None = None,
     to_date: str | None = None,
+    skip_empty: bool = False,
 ) -> RunOutcome:
     """One entity across every company: the cartridge's ``run_entity`` with the SQLite state and the spool as sinks."""
     config, state, spool, log = runtime.config, runtime.state, runtime.spool, runtime.log
@@ -1049,6 +1094,8 @@ def run_extract(
     pending: list[str] = []
 
     def _write_batch(records: list[dict[str, Any]]) -> None:
+        if skip_empty and not records:
+            return
         batch_run_id = run_id if outcome.batches == 0 else f"{run_id}-b{outcome.batches}"
         load_date, extracted_at = bronze_parquet.stamp_now()
         table = bronze_parquet.bronze_table(
@@ -1368,6 +1415,12 @@ def cmd_extract(config: AgentConfig, log: logging.Logger, args: argparse.Namespa
 
 def cmd_extract_all(config: AgentConfig, log: logging.Logger, args: argparse.Namespace) -> int:
     entities = select_entities(load_catalogue(), config, only=args.entity or (), log=log)
+    pending_steps = initial_load_in_progress(config)
+    if pending_steps is not None:
+        message = f"initial load in progress ({pending_steps}); extract-all skipped until it completes"
+        log.info(message)
+        _print(message, config.secrets())
+        return EXIT_OK
     return _run_entities(
         config,
         log,
@@ -1384,6 +1437,376 @@ def cmd_refresh_intercompany(config: AgentConfig, log: logging.Logger, args: arg
     return _run_entities(
         config, log, [], mode=None, from_date=None, to_date=None, output_dir=args.output_dir, with_intercompany=True
     )
+
+
+def month_slices(cutoff: datetime, months: int) -> list[tuple[str, str, str | None]]:
+    """``(YYYY-MM, from_date, to_date)`` from the cutoff month back ``months`` months, newest first; the newest is open-ended."""
+    current = date(cutoff.year, cutoff.month, 1)
+    slices: list[tuple[str, str, str | None]] = []
+    for index in range(months + 1):
+        following = (current.replace(day=28) + timedelta(days=4)).replace(day=1)
+        to_date = None if index == 0 else (following - timedelta(days=1)).isoformat()
+        slices.append((current.strftime("%Y-%m"), current.isoformat(), to_date))
+        current = (current - timedelta(days=1)).replace(day=1)
+    return slices
+
+
+@dataclass(frozen=True)
+class LoadStep:
+    key: str
+    entity: dict[str, Any]
+    mode: str | None
+    from_date: str | None = None
+    to_date: str | None = None
+    skip_empty: bool = False
+
+
+def initial_load_steps(catalogue: Sequence[dict[str, Any]], slices: Sequence[tuple[str, str, str | None]]) -> list[LoadStep]:
+    """Undated tables whole first, then every dated table month by month, newest month first."""
+    dated = [entity for entity in catalogue if b1_queries.plan_from_config(entity).date_field]
+    undated = [entity for entity in catalogue if entity not in dated]
+    steps = [LoadStep(key=f"full:{entity['entity']}", entity=entity, mode="full") for entity in undated]
+    for label, from_date, to_date in slices:
+        steps.extend(
+            LoadStep(
+                key=f"month:{label}:{entity['entity']}",
+                entity=entity,
+                mode=None,
+                from_date=from_date,
+                to_date=to_date,
+                skip_empty=True,
+            )
+            for entity in dated
+        )
+    return steps
+
+
+def initial_load_completed(config: AgentConfig) -> bool:
+    if not config.state_db.is_file():
+        return False
+    state = _open_state(config)
+    try:
+        return bool(state.get_meta(f"{INITIAL_LOAD_META}completed_at"))
+    finally:
+        state.close()
+
+
+def initial_load_in_progress(config: AgentConfig) -> str | None:
+    """A progress text while an initial load has started and not completed, else None."""
+    if not config.state_db.is_file():
+        return None
+    state = _open_state(config)
+    try:
+        if not state.get_meta(f"{INITIAL_LOAD_META}cutoff") or state.get_meta(f"{INITIAL_LOAD_META}completed_at"):
+            return None
+        total = state.get_meta(f"{INITIAL_LOAD_META}steps") or "?"
+        return f"{len(state.step_records())} of {total} steps"
+    finally:
+        state.close()
+
+
+def _integer_cutoffs(
+    connection: "b1_source.Connection", config: AgentConfig, catalogue: Sequence[dict[str, Any]]
+) -> dict[str, int]:
+    """The highest integer position of every dated integer-watermark table at the cutoff, per company."""
+    cutoffs: dict[str, int] = {}
+    for entity in catalogue:
+        plan = b1_queries.plan_from_config(entity)
+        if plan.watermark_kind != b1_queries.WATERMARK_INTEGER or not plan.date_field or plan.parent:
+            continue
+        for company in config.source.companies:
+            sql = (
+                f"SELECT MAX({b1_source.quote_ident(plan.watermark_field or '')}) "
+                f"FROM {b1_source.quote_schema(company.schema)}.{b1_source.quote_ident(plan.table)}"
+            )
+            _columns, rows = connection.fetch_all(sql)
+            value = rows[0][0] if rows and rows[0] else None
+            if value is not None:
+                cutoffs[b1_queries.watermark_key(plan.entity, company.alias)] = int(value)
+    return cutoffs
+
+
+def _start_initial_load(runtime: Runtime, catalogue: Sequence[dict[str, Any]], months: int) -> tuple[datetime, dict[str, int]]:
+    state, config = runtime.state, runtime.config
+    stored_cutoff = state.get_meta(f"{INITIAL_LOAD_META}cutoff")
+    if stored_cutoff:
+        stored_months = int(state.get_meta(f"{INITIAL_LOAD_META}months") or 0)
+        if stored_months != months:
+            raise ConfigError(
+                f"an initial load of {stored_months} months is in progress; run it with --months {stored_months} or use --restart"
+            )
+        cutoffs = json.loads(state.get_meta(f"{INITIAL_LOAD_META}integer_cutoffs") or "{}")
+        return datetime.fromisoformat(stored_cutoff), {key: int(value) for key, value in cutoffs.items()}
+    connection = b1_source.open_connection(config.source)
+    try:
+        cutoff = connection.source_now().replace(microsecond=0)
+        cutoffs = _integer_cutoffs(connection, config, catalogue)
+    finally:
+        connection.close()
+    state.set_meta(f"{INITIAL_LOAD_META}months", str(months))
+    state.set_meta(f"{INITIAL_LOAD_META}integer_cutoffs", json.dumps(cutoffs, sort_keys=True))
+    state.set_meta(f"{INITIAL_LOAD_META}cutoff", cutoff.isoformat())
+    runtime.log.info("initial load started: %d months back from the source clock %s", months, cutoff.isoformat())
+    return cutoff, cutoffs
+
+
+def _seed_watermarks(
+    runtime: Runtime, catalogue: Sequence[dict[str, Any]], cutoff: datetime, integer_cutoffs: Mapping[str, int]
+) -> None:
+    """Dated tables continue incrementally from the cutoff; the whole-table reads already set their own."""
+    stamp = b1_queries.Watermark.from_stamp(cutoff).text()
+    for entity in catalogue:
+        plan = b1_queries.plan_from_config(entity)
+        if not plan.date_field or plan.watermark_kind is None:
+            continue
+        for company in runtime.config.source.companies:
+            key = b1_queries.watermark_key(plan.entity, company.alias)
+            if plan.watermark_kind == b1_queries.WATERMARK_UPDATE_TS:
+                value = stamp
+            elif key in integer_cutoffs:
+                value = b1_queries.Watermark.from_number(integer_cutoffs[key]).text()
+            else:
+                continue
+            runtime.state.update_watermark(key, plan.watermark_field or "", value, "initial-load")
+
+
+@dataclass(frozen=True)
+class LoadWindow:
+    start: tuple[int, int]
+    end: tuple[int, int]
+
+    @classmethod
+    def parse(cls, text: str) -> "LoadWindow":
+        match = re.fullmatch(r"(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})", text.strip())
+        if not match:
+            raise ConfigError("--window must look like 22:00-05:30")
+        hours = (int(match.group(1)), int(match.group(2)), int(match.group(3)), int(match.group(4)))
+        if hours[0] > 23 or hours[2] > 23 or hours[1] > 59 or hours[3] > 59 or hours[:2] == hours[2:]:
+            raise ConfigError("--window must look like 22:00-05:30")
+        return cls(start=hours[:2], end=hours[2:])
+
+    def contains(self, moment: datetime) -> bool:
+        now = (moment.hour, moment.minute)
+        if self.start < self.end:
+            return self.start <= now < self.end
+        return now >= self.start or now < self.end
+
+
+def _local_now() -> datetime:
+    return datetime.now()
+
+
+def _drain_before_run(runtime: Runtime) -> DrainResult:
+    config, log = runtime.config, runtime.log
+    drained = runtime.spool.drain()
+    if drained.uploaded:
+        log.info("spool: %d file(s) uploaded from earlier runs", drained.uploaded)
+    if drained.pending:
+        log.error("spool: %d file(s) from earlier runs still pending", drained.pending)
+    if drained.lost:
+        log.error("spool: %d file(s) lost (never uploaded); see status", drained.lost)
+    if drained.pending >= config.max_pending_files:
+        raise AgentError(
+            f"spool holds {drained.pending} pending files (limit {config.max_pending_files}); "
+            "not extracting more until uploads work again"
+        )
+    return drained
+
+
+def _report(outcome: RunOutcome, secrets: Sequence[str]) -> None:
+    line = f"{outcome.entity}: {outcome.status} run={outcome.run_id} mode={outcome.mode} rows={outcome.records} batches={outcome.batches}"
+    if outcome.error:
+        line += f" error={outcome.error}"
+    _print(line, secrets)
+
+
+def cmd_initial_load(config: AgentConfig, log: logging.Logger, args: argparse.Namespace) -> int:
+    if not 1 <= args.months <= 120:
+        raise ConfigError("--months must be between 1 and 120")
+    window = LoadWindow.parse(args.window) if args.window else None
+    config.require_scope()
+    config.require_source()
+    secrets = config.secrets()
+    catalogue = select_entities(load_catalogue(), config, log=log)
+    runtime = _build_runtime(config, log, args.output_dir)
+    state = runtime.state
+    try:
+        with RunLock(config.state_dir / LOCK_NAME):
+            if args.restart:
+                state.reset_initial_load()
+                log.info("initial load progress discarded (--restart)")
+            if state.get_meta(f"{INITIAL_LOAD_META}completed_at"):
+                _print(
+                    f"initial load already completed at {state.get_meta(f'{INITIAL_LOAD_META}completed_at')}; "
+                    "use --restart to load the history again",
+                    secrets,
+                )
+                return EXIT_OK
+            drained = _drain_before_run(runtime)
+            if drained.pending or drained.lost:
+                _print("spool: earlier files are pending or lost; fix uploads before the initial load (see status)", secrets)
+                return EXIT_FAILED
+            cutoff, integer_cutoffs = _start_initial_load(runtime, catalogue, args.months)
+            steps = initial_load_steps(catalogue, month_slices(cutoff, args.months))
+            state.set_meta(f"{INITIAL_LOAD_META}steps", str(len(steps)))
+            done = state.step_records()
+            for step in steps:
+                if step.key in done:
+                    continue
+                if window is not None and not window.contains(_local_now()):
+                    left = sum(1 for item in steps if item.key not in done)
+                    _print(f"outside the load window {args.window}: {left} step(s) left; run initial-load again to resume", secrets)
+                    return EXIT_OK
+                outcome = run_extract(
+                    runtime,
+                    step.entity,
+                    mode=step.mode,
+                    from_date=step.from_date,
+                    to_date=step.to_date,
+                    skip_empty=step.skip_empty,
+                )
+                _report(outcome, secrets)
+                if not outcome.ok:
+                    _print(f"initial load stopped at {step.key}; run initial-load again to resume from there", secrets)
+                    return EXIT_FAILED
+                state.record_step(step.key, outcome.run_id, outcome.records)
+                done[step.key] = outcome.records
+            newest = month_slices(cutoff, args.months)[0]
+            for entity in catalogue:
+                name = entity["entity"]
+                keys = [step.key for step in steps if step.entity is entity and step.key.startswith("month:")]
+                if not keys or sum(done[key] for key in keys) or f"empty:{name}" in done:
+                    continue
+                outcome = run_extract(runtime, entity, from_date=newest[1], to_date=newest[2])
+                _report(outcome, secrets)
+                if not outcome.ok:
+                    return EXIT_FAILED
+                state.record_step(f"empty:{name}", outcome.run_id, 0)
+            _seed_watermarks(runtime, catalogue, cutoff, integer_cutoffs)
+            outcome = run_intercompany(runtime)
+            _report(outcome, secrets)
+            if not outcome.ok:
+                return EXIT_FAILED
+            state.set_meta(f"{INITIAL_LOAD_META}completed_at", _utc_now_text())
+    finally:
+        state.close()
+    total = sum(done.values())
+    _print(f"initial load complete: {len(steps)} steps, {total} rows, incremental reads continue from {cutoff.isoformat()}", secrets)
+    return EXIT_OK
+
+
+def _next_slot_seconds(now: float, minutes: int) -> float:
+    slot = minutes * 60
+    return (int(now // slot) + 1) * slot - now
+
+
+def _sleep(seconds: float) -> None:
+    time.sleep(seconds)
+
+
+def _refresh_secrets(secrets: Sequence[str]) -> None:
+    for handler in logging.getLogger().handlers:
+        if isinstance(handler.formatter, RedactingFormatter):
+            handler.formatter.secrets = tuple(secrets)
+
+
+def cmd_serve(config: AgentConfig, log: logging.Logger, args: argparse.Namespace) -> int:
+    if not 15 <= args.interval_minutes <= 1440:
+        raise ConfigError("--interval-minutes must be between 15 and 1440")
+    cycles = 0
+    log.info("serving: one extract-all every %d minutes", args.interval_minutes)
+    try:
+        while True:
+            try:
+                current = load_config(config.config_path) if config.config_path is not None else config
+                _refresh_secrets(current.secrets())
+                if not initial_load_completed(current):
+                    pending_steps = initial_load_in_progress(current)
+                    log.info(
+                        "cycle skipped: %s",
+                        f"initial load in progress ({pending_steps})" if pending_steps else "run initial-load first",
+                    )
+                else:
+                    code = _run_entities(
+                        current,
+                        log,
+                        select_entities(load_catalogue(), current, log=log),
+                        mode=None,
+                        from_date=None,
+                        to_date=None,
+                        output_dir=args.output_dir,
+                        with_intercompany=True,
+                    )
+                    log.info("cycle finished with exit code %d", code)
+            except ConfigError as exc:
+                log.error("configuration: %s", exc)
+            except AgentError as exc:
+                log.error("%s", exc)
+            except Exception as exc:  # noqa: BLE001 - a service keeps running; the next cycle tries again
+                log.exception("unexpected failure: %s: %s", type(exc).__name__, exc)
+            cycles += 1
+            if args.cycles and cycles >= args.cycles:
+                return EXIT_OK
+            wait = _next_slot_seconds(time.time(), args.interval_minutes)
+            log.info("next cycle in %d seconds", int(wait))
+            _sleep(wait)
+    except KeyboardInterrupt:
+        log.info("stopping")
+        return EXIT_OK
+
+
+def cmd_inventory(config: AgentConfig, log: logging.Logger, args: argparse.Namespace) -> int:
+    if not 1 <= args.months <= 120:
+        raise ConfigError("--months must be between 1 and 120")
+    config.require_source()
+    secrets = config.secrets()
+    catalogue = select_entities(load_catalogue(), config, only=args.entity or (), log=log)
+    connection = b1_source.open_connection(config.source)
+    failures = 0
+    try:
+        clock = connection.source_now().replace(microsecond=0)
+        window_start = month_slices(clock, args.months)[-1][1]
+        entities: list[dict[str, Any]] = []
+        for entity in catalogue:
+            plan = b1_queries.plan_from_config(entity)
+            counted = dataclasses.replace(plan, primary_key=())
+            companies: dict[str, dict[str, Any]] = {}
+            for company in config.source.companies:
+                try:
+                    sql, params = b1_queries.select_sql(
+                        counted,
+                        company.schema,
+                        mode="historical" if plan.date_field else "full",
+                        from_date=window_start if plan.date_field else None,
+                    )
+                    _columns, rows = connection.fetch_all(f"SELECT COUNT(*) FROM ({sql}) counted", params)
+                    companies[company.alias] = {"rows": int(rows[0][0])}
+                except b1_source.B1SourceError as exc:
+                    failures += 1
+                    companies[company.alias] = {"error": scrub(str(exc), secrets)}
+            entities.append(
+                {"entity": plan.entity, "from_date": window_start if plan.date_field else None, "companies": companies}
+            )
+    finally:
+        connection.close()
+    report = {
+        "agent_version": AGENT_VERSION,
+        "source_clock": clock.isoformat(),
+        "months": args.months,
+        "window_start": window_start,
+        "failures": failures,
+        "entities": entities,
+    }
+    if args.json:
+        _print(json.dumps(report, indent=2, ensure_ascii=True), secrets)
+    else:
+        _print(f"source clock {report['source_clock']}; dated tables counted from {window_start}", secrets)
+        for item in entities:
+            cells = []
+            for alias, value in item["companies"].items():
+                cells.append(f"{alias}={value['rows']}" if "rows" in value else f"{alias}=ERROR {value['error']}")
+            _print(f"  {item['entity']:<22} {'window' if item['from_date'] else 'whole '} {' '.join(cells)}", secrets)
+    return EXIT_FAILED if failures else EXIT_OK
 
 
 def cmd_status(config: AgentConfig, log: logging.Logger, args: argparse.Namespace) -> int:
@@ -1467,6 +1890,22 @@ def _parser() -> argparse.ArgumentParser:
     )
     refresh.add_argument("--output-dir", type=Path, default=None)
 
+    initial_load = sub.add_parser("initial-load", help="load the history month by month, then continue incrementally")
+    initial_load.add_argument("--months", type=int, default=DEFAULT_HISTORY_MONTHS)
+    initial_load.add_argument("--window", default=None, help="local HH:MM-HH:MM; stop between steps outside it")
+    initial_load.add_argument("--restart", action="store_true", help="discard the progress of an earlier initial load")
+    initial_load.add_argument("--output-dir", type=Path, default=None)
+
+    serve = sub.add_parser("serve", help="run extract-all on a fixed interval until stopped (the Windows service)")
+    serve.add_argument("--interval-minutes", type=int, default=DEFAULT_SERVE_MINUTES)
+    serve.add_argument("--cycles", type=int, default=0, help=argparse.SUPPRESS)
+    serve.add_argument("--output-dir", type=Path, default=None)
+
+    inventory = sub.add_parser("inventory", help="count the rows of every table per company, without extracting")
+    inventory.add_argument("--months", type=int, default=DEFAULT_HISTORY_MONTHS)
+    inventory.add_argument("--entity", action="append", default=None)
+    inventory.add_argument("--json", action="store_true")
+
     status = sub.add_parser("status", help="watermarks, last runs and pending uploads")
     status.add_argument("--limit", type=int, default=20)
     status.add_argument("--json", action="store_true")
@@ -1488,6 +1927,9 @@ COMMANDS = {
     "extract": cmd_extract,
     "extract-all": cmd_extract_all,
     "refresh-intercompany": cmd_refresh_intercompany,
+    "initial-load": cmd_initial_load,
+    "serve": cmd_serve,
+    "inventory": cmd_inventory,
     "status": cmd_status,
 }
 

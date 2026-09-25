@@ -24,6 +24,7 @@ SELECT
     CAST(Currency AS VARCHAR)                   AS currency,
     CAST(SlpCode AS BIGINT)                     AS slp_code,
     CAST(Country AS VARCHAR)                    AS country,
+    CAST(LicTradNum AS VARCHAR)                 AS lic_trad_num,
     CAST(validFor AS VARCHAR)                   AS valid_for,
     CAST(frozenFor AS VARCHAR)                  AS frozen_for,
     CAST(CreateDate AS TIMESTAMP)               AS create_date,

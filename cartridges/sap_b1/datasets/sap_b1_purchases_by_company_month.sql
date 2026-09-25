@@ -1,5 +1,5 @@
 -- sap_b1_purchases_by_company_month  (gold)  cartridge: sap_b1
--- sources: ["raw/sap_b1/OPCH", "raw/sap_b1/PCH1", "raw/sap_b1/ORPC", "raw/sap_b1/RPC1", "raw/sap_b1/OADM", "raw/sap_b1/IntercompanyPartners"]
+-- sources: ["silver/sap_b1/sap_b1_ap_credit_memo_lines", "silver/sap_b1/sap_b1_ap_invoice_lines"]
 -- description: Purchases per company and month from supplier invoices net of supplier credit memos, split between external suppliers and group companies, in local and system currency. Cancelled documents are excluded.
 
 WITH invoices AS (

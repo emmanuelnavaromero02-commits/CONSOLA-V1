@@ -73,6 +73,46 @@ DEFAULT_COMPANIES: Tuple[CompanyProfile, ...] = (
 
 INTERCOMPANY_CUSTOMER = {"mx_dist_a": "C-IC-DIST-A", "mx_dist_b": "C-IC-DIST-B"}
 INTERCOMPANY_SUPPLIER = "V-IC-MFG"
+GENERIC_RFC = "XAXX010101000"
+INVALID_RFC = "RFC-PENDIENTE"
+SHARED_CUSTOMERS = {
+    ("mx_mfg", "C-0001"): 1, ("mx_dist_a", "C-0011"): 1,
+    ("mx_mfg", "C-0002"): 2, ("mx_dist_a", "C-0012"): 2,
+    ("mx_mfg", "C-0003"): 3, ("mx_dist_b", "C-0013"): 3,
+    ("mx_dist_a", "C-0005"): 4, ("mx_dist_b", "C-0005"): 4,
+    ("mx_dist_a", "C-0007"): 5, ("mx_dist_b", "C-0008"): 5,
+}
+GENERIC_RFC_CUSTOMERS = {("mx_dist_a", "C-0015"), ("mx_dist_b", "C-0015")}
+MISSING_RFC_CUSTOMERS = {("mx_mfg", "C-0010")}
+INVALID_RFC_CUSTOMERS = {("mx_dist_b", "C-0009")}
+
+
+def _rfc(prefix: str, number: int) -> str:
+    return f"{prefix}{100101 + number:06d}{'ABCDEFGHJK'[number % 10]}{number % 10}{'XYZ'[number % 3]}"
+
+
+def company_rfc(alias: str) -> str:
+    return _rfc("EMP", sum(map(ord, alias)) % 900)
+
+
+def customer_rfc(alias: str, code: str) -> Optional[str]:
+    key = (alias, code)
+    if key in GENERIC_RFC_CUSTOMERS:
+        return GENERIC_RFC
+    if key in MISSING_RFC_CUSTOMERS:
+        return None
+    if key in INVALID_RFC_CUSTOMERS:
+        return INVALID_RFC
+    shared = SHARED_CUSTOMERS.get(key)
+    return _rfc("CLI", shared if shared else 100 + 20 * (sum(map(ord, alias)) % 40) + int(code[2:]))
+
+
+def item_barcode(code: str) -> Optional[str]:
+    if not code.startswith("FG-"):
+        return None
+    digits = f"750{int(code[3:]):09d}"
+    check = (10 - sum(int(d) * (3 if i % 2 else 1) for i, d in enumerate(digits)) % 10) % 10
+    return f"{digits}{check}"
 
 
 @dataclass
@@ -435,22 +475,23 @@ class _Builder:
         c.add("OITB", ItmsGrpCod=101, ItmsGrpNam="Materia prima")
         d0 = self.start_month - timedelta(days=90)
 
-        def card(code: str, name: str, kind: str, group: int) -> None:
+        def card(code: str, name: str, kind: str, group: int, rfc: Optional[str]) -> None:
             self.card_names[code] = name
             c.add("OCRD", CardCode=code, CardName=name, CardType=kind, GroupCode=group, Currency=p.local_currency,
-                  SlpCode=rng.randint(1, 5), Country="MX", validFor="Y", frozenFor="N", CreateDate=ts(d0), UpdateDate=ts(d0), UpdateTS=90000)
+                  SlpCode=rng.randint(1, 5), Country="MX", LicTradNum=rfc, validFor="Y", frozenFor="N",
+                  CreateDate=ts(d0), UpdateDate=ts(d0), UpdateTS=90000)
 
         if p.role == "manufacturer":
             c.finished_goods = list(self.finished_goods)
             c.raw_materials = list(self.raw_materials)
             for i in range(1, 11):
-                card(f"S-{i:04d}", f"Proveedor sintetico {i}", "S", 101)
+                card(f"S-{i:04d}", f"Proveedor sintetico {i}", "S", 101, _rfc("PRV", i))
                 c.suppliers.append(f"S-{i:04d}")
             for other in self.companies:
                 if other.role == "distributor":
-                    card(INTERCOMPANY_CUSTOMER[other.alias], f"Intercompania {other.alias}", "C", 102)
+                    card(INTERCOMPANY_CUSTOMER[other.alias], f"Intercompania {other.alias}", "C", 102, company_rfc(other.alias))
             for i in range(1, 11):
-                card(f"C-{i:04d}", f"Cliente sintetico {i}", "C", 100)
+                card(f"C-{i:04d}", f"Cliente sintetico {i}", "C", 100, customer_rfc(p.alias, f"C-{i:04d}"))
                 c.customers.append(f"C-{i:04d}")
             for fg in c.finished_goods:
                 c.item_cost[fg] = self.fg_cost[fg]
@@ -463,19 +504,27 @@ class _Builder:
                     c.add("ITT1", Father=fg, ChildNum=n, Code=rm, Quantity=qty, Warehouse=WHS_MAIN, IssueMthd="B", PriceList=1)
         else:
             c.finished_goods = list(self.finished_goods)
-            card(INTERCOMPANY_SUPPLIER, "Intercompania fabricante", "S", 102)
+            maker = next((other.alias for other in self.companies if other.role == "manufacturer"), p.alias)
+            card(INTERCOMPANY_SUPPLIER, "Intercompania fabricante", "S", 102, company_rfc(maker))
             c.suppliers.append(INTERCOMPANY_SUPPLIER)
             for i in range(1, 16):
-                card(f"C-{i:04d}", f"Cliente final sintetico {i}", "C", 100)
+                card(f"C-{i:04d}", f"Cliente final sintetico {i}", "C", 100, customer_rfc(p.alias, f"C-{i:04d}"))
                 c.customers.append(f"C-{i:04d}")
             for fg in c.finished_goods:
                 c.item_cost[fg] = q6(self.fg_cost[fg] * Decimal("1.25"))  # the manufacturer's intercompany price
                 c.item_price[fg] = q6(c.item_cost[fg] * Decimal("1.35"))
         for code in c.finished_goods + c.raw_materials:
             is_fg = code.startswith("FG-")
+            made = is_fg and p.role == "manufacturer"
+            number = int(code[3:])
             c.add("OITM", ItemCode=code, ItemName=f"Articulo {code}", ItmsGrpCod=100 if is_fg else 101, InvntItem="Y",
-                  SellItem="Y" if is_fg else "N", PrchseItem="N" if (is_fg and p.role == "manufacturer") else "Y",
+                  SellItem="Y" if is_fg else "N", PrchseItem="N" if made else "Y",
                   ManBtchNum="Y" if is_fg else "N", DfltWH=WHS_MAIN, AvgPrice=c.item_cost[code], LastPurPrc=c.item_cost[code],
+                  CodeBars=item_barcode(code), SuppCatNum=None if made else f"{'FAB' if is_fg else 'PRV'}-{code}",
+                  CardCode=None if made else (INTERCOMPANY_SUPPLIER if is_fg else f"S-{number % 10 + 1:04d}"),
+                  LeadTime=None if made else (5 if is_fg else 7 * (1 + number % 4)),
+                  MinOrdrQty=ZERO if made else Decimal("50" if is_fg else "100"),
+                  OrdrMulti=Decimal("1") if made else Decimal("10"), PrcrmntMtd="M" if made else "B",
                   validFor="Y", frozenFor="N", CreateDate=ts(d0), UpdateDate=ts(d0), UpdateTS=90000)
 
     def opening_stock(self, c: _Company) -> None:

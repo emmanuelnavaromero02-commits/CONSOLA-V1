@@ -283,6 +283,7 @@ entities:
   - Currency
   - SlpCode
   - Country
+  - LicTradNum
   - validFor
   - frozenFor
   - CreateDate
@@ -297,6 +298,7 @@ entities:
     Currency: string
     SlpCode: int64
     Country: string
+    LicTradNum: string
     validFor: string
     frozenFor: string
     CreateDate: timestamp
@@ -322,6 +324,13 @@ entities:
   - DfltWH
   - AvgPrice
   - LastPurPrc
+  - CodeBars
+  - SuppCatNum
+  - CardCode
+  - LeadTime
+  - MinOrdrQty
+  - OrdrMulti
+  - PrcrmntMtd
   - validFor
   - frozenFor
   - CreateDate
@@ -339,6 +348,13 @@ entities:
     DfltWH: string
     AvgPrice: decimal(19,6)
     LastPurPrc: decimal(19,6)
+    CodeBars: string
+    SuppCatNum: string
+    CardCode: string
+    LeadTime: int64
+    MinOrdrQty: decimal(19,6)
+    OrdrMulti: decimal(19,6)
+    PrcrmntMtd: string
     validFor: string
     frozenFor: string
     CreateDate: timestamp

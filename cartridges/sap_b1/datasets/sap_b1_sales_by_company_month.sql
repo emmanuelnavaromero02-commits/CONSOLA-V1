@@ -1,5 +1,5 @@
 -- sap_b1_sales_by_company_month  (gold)  cartridge: sap_b1
--- sources: ["raw/sap_b1/OINV", "raw/sap_b1/INV1", "raw/sap_b1/ORIN", "raw/sap_b1/RIN1", "raw/sap_b1/OADM", "raw/sap_b1/IntercompanyPartners"]
+-- sources: ["silver/sap_b1/sap_b1_ar_credit_memo_lines", "silver/sap_b1/sap_b1_ar_invoice_lines"]
 -- description: Sales per company and month, split between external customers and group companies: invoices, credit memos, net revenue in local and system currency, the cost carried by the invoice lines and the resulting gross margin. Cancelled documents are excluded.
 
 WITH invoices AS (

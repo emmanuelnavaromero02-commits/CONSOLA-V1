@@ -1,6 +1,6 @@
 -- sap_b1_items  (silver)  cartridge: sap_b1
 -- sources: ["raw/sap_b1/OITM", "raw/sap_b1/OITB"]
--- description: Current item master per company with its item group, the inventory/sales/purchase flags, batch management and the default warehouse.
+-- description: Current item master per company with its item group, the inventory/sales/purchase flags, batch management, the default warehouse, barcode and the purchasing terms (preferred supplier, lead time, minimum and multiple).
 
 WITH oitm AS (
     SELECT * EXCLUDE (_rn)
@@ -46,6 +46,13 @@ SELECT
     CAST(i.DfltWH AS VARCHAR)               AS default_warehouse,
     CAST(i.AvgPrice AS DECIMAL(19,6))       AS avg_price,
     CAST(i.LastPurPrc AS DECIMAL(19,6))     AS last_purchase_price,
+    CAST(i.CodeBars AS VARCHAR)             AS barcode,
+    CAST(i.SuppCatNum AS VARCHAR)           AS supplier_catalog_number,
+    CAST(i.CardCode AS VARCHAR)             AS preferred_supplier,
+    CAST(i.LeadTime AS BIGINT)              AS lead_time_days,
+    CAST(i.MinOrdrQty AS DECIMAL(19,6))     AS min_order_qty,
+    CAST(i.OrdrMulti AS DECIMAL(19,6))      AS order_multiple,
+    CAST(i.PrcrmntMtd AS VARCHAR)           AS procurement_method,
     CAST(i.validFor AS VARCHAR)             AS valid_for,
     CAST(i.frozenFor AS VARCHAR)            AS frozen_for,
     CAST(i.CreateDate AS TIMESTAMP)         AS created_at,

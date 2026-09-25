@@ -19,7 +19,7 @@ SAP_DAGS = {
         "sap_successfactors_extract.py",
         "sap_successfactors_extract_all.py",
     ),
-    "sap_b1": ("sap_b1_extract.py", "sap_b1_extract_all.py"),
+    "sap_b1": ("sap_b1_extract.py", "sap_b1_extract_all.py", "sap_b1_refresh.py"),
 }
 
 

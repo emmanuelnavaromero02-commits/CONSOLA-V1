@@ -1,5 +1,5 @@
 -- sap_b1_intercompany_reconciliation_month  (gold)  cartridge: sap_b1
--- sources: ["raw/sap_b1/OINV", "raw/sap_b1/INV1", "raw/sap_b1/OPCH", "raw/sap_b1/PCH1", "raw/sap_b1/OADM", "raw/sap_b1/IntercompanyPartners"]
+-- sources: ["silver/sap_b1/sap_b1_ap_invoice_lines", "silver/sap_b1/sap_b1_ar_invoice_lines"]
 -- description: What consolidation eliminates, proven on both sides: per seller, buyer and month, the seller's invoices to the buyer against the buyer's supplier invoices from the seller, and the difference. A non-zero difference is a capture or timing gap to explain, not something to hide.
 
 WITH sold AS (
