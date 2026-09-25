@@ -1,10 +1,3 @@
-"""Sprint v1.12 — refinement: verify_api_key accepts per-pair keys + legacy.
-
-Refinement is called by console, workspace, airflow and the 4 cartridges.
-Each pair has its own INTERNAL_API_KEY_*_TO_REFINEMENT secret. The legacy
-shared INTERNAL_API_KEY also still works during the migration window.
-"""
-
 from __future__ import annotations
 
 import importlib
@@ -165,7 +158,6 @@ def test_cartridge_caller_legacy_replicon_identifier_still_works(refinement_main
 
 @pytest.fixture()
 def refinement_main_prod_legacy_only(monkeypatch):
-    """Production stack where only the legacy shared key is set (no pair keys)."""
     saved_path = list(sys.path)
     _force_refinement_import_path()
     monkeypatch.setenv("APP_ENV", "production")
@@ -206,8 +198,6 @@ def refinement_main_prod_legacy_only(monkeypatch):
 
 
 def test_legacy_key_rejected_in_production(refinement_main_prod_legacy_only):
-    # The legacy fallback is disabled in production: even a correct legacy key
-    # is refused once APP_ENV=production and no pair key is configured.
     with pytest.raises(HTTPException) as exc:
         refinement_main_prod_legacy_only.verify_api_key(
             x_api_key=LEGACY, x_internal_service="console"
@@ -218,8 +208,6 @@ def test_legacy_key_rejected_in_production(refinement_main_prod_legacy_only):
 def test_pair_key_still_accepted_in_production(
     monkeypatch, refinement_main_prod_legacy_only
 ):
-    # verify_api_key reads the pair-key env live, so configuring it makes the
-    # caller work even in production (only the legacy fallback is disabled).
     monkeypatch.setenv("INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT", CONSOLE_KEY)
     refinement_main_prod_legacy_only.verify_api_key(
         x_api_key=CONSOLE_KEY, x_internal_service="console"

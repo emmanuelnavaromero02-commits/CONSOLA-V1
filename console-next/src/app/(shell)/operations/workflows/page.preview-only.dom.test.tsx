@@ -51,7 +51,6 @@ async function renderPage() {
       </QueryClientProvider>,
     );
   });
-  // Da tiempo a que react-query resuelva las queries iniciales.
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
   });

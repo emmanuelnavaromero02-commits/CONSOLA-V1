@@ -1,7 +1,3 @@
-"""
-RAG MCP tools — semantic search + ingest over pgvector.
-Migrated from the standalone rag service into mcp-infra.
-"""
 from __future__ import annotations
 
 from app.registry import tool
@@ -15,8 +11,6 @@ from app.rag.store import (
     search as _search,
 )
 
-
-# ── Tool 1 · search_rag ───────────────────────────────────────────────────────
 
 @tool(
     name="search_rag",
@@ -56,8 +50,6 @@ async def search_rag(
     return {"results": results}
 
 
-# ── Tool 2 · list_rag_sources ─────────────────────────────────────────────────
-
 @tool(
     name="list_rag_sources",
     description="List all documents currently ingested in the RAG knowledge base.",
@@ -66,8 +58,6 @@ async def search_rag(
 async def list_rag_sources(security_context: dict | None = None) -> dict:
     return {"sources": await _list_sources(scope=security_context)}
 
-
-# ── Tool 3 · ingest_document ──────────────────────────────────────────────────
 
 @tool(
     name="ingest_document",
@@ -102,8 +92,6 @@ async def ingest_document(
         security_context=security_context,
     )
 
-
-# ── Helpers (also imported by REST endpoints in main.py) ─────────────────────
 
 async def _do_ingest(
     name: str,

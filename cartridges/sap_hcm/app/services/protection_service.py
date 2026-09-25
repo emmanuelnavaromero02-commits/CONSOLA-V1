@@ -40,11 +40,6 @@ def _shadow(value: Any) -> Any:
     return hashlib.sha256(str(value).encode("utf-8")).hexdigest()
 
 
-# Sprint v1.33 (audit B1 P0): FIELD_ENCRYPTION_KEY is required at import
-# time. The previous version fell back to a hardcoded placeholder seed if
-# the operator forgot to set it, which would have encrypted every PII
-# column (Pernr, Gbdat, PA0008 salary, PA0009 banking) with a publicly
-# known key. The cartridge now refuses to start instead.
 _FIELD_ENCRYPTION_KEY = os.environ.get("FIELD_ENCRYPTION_KEY", "").strip()
 if not _FIELD_ENCRYPTION_KEY:
     raise RuntimeError(

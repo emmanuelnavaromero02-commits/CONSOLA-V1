@@ -1,5 +1,3 @@
-"""Mission 5: deferred narration job — claim, budget, CAS, attestation, no platform key."""
-
 from __future__ import annotations
 
 import ast
@@ -76,8 +74,6 @@ def _sign(
     signed = attest_narrative(
         narrative, item_id=item_id, tenant_id=tenant_id, workspace_id=workspace_id
     )
-    # The test keyring from conftest must be usable, or every test below would
-    # silently exercise the unsigned path.
     assert NARRATIVE_ATTESTATION_KEY in signed
     return signed
 
@@ -89,9 +85,6 @@ def _verifies(stored: Any, item_id: str = "alert-1") -> bool:
         )
         is not None
     )
-
-
-# ── Fake asyncpg pool ────────────────────────────────────────────────────────
 
 
 class _FakeDB:
@@ -148,7 +141,6 @@ class _FakeConn:
             self.db.open_transactions -= 1
 
     def _in_scope(self, tenant_id: str, workspace_id: str) -> None:
-        # Every statement filters by the same tenant/workspace the RLS GUCs set.
         assert self.db.open_transactions == 1
         assert self.scope == (tenant_id, workspace_id)
 
@@ -189,7 +181,6 @@ class _FakeConn:
             and row["status"] in statuses
             and "analysis_evidence" in row["metadata"]
         ]
-        # asyncpg without a JSONB codec returns metadata as text.
         return [
             {
                 "item_id": row["item_id"],
@@ -296,7 +287,6 @@ class _Caller:
 
         async def call(prompt: str) -> object:
             self.prompts.append(prompt)
-            # The claim is committed: no transaction, so no row lock, is held.
             assert self.db.open_transactions == 0
             if self.during is not None:
                 self.during()
@@ -336,9 +326,6 @@ def test_prose_fixture_still_passes_the_strict_validator():
             denylist=frozenset(),
         )
         assert (prose, reason) == (sentence, "ok")
-
-
-# ── Happy path ───────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -439,9 +426,6 @@ async def test_at_most_twenty_alerts_per_workspace_per_tick(db):
     assert result["narrated_ready"] == 20
 
 
-# ── Skip / trust ─────────────────────────────────────────────────────────────
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("prose", [None, PROSE], ids=("template", "ready"))
 async def test_skips_alert_whose_signed_narrative_is_current(db, prose):
@@ -499,7 +483,6 @@ async def test_planted_ready_narrative_with_matching_fingerprint_is_renarrated(
         }
     metadata["narrative"] = planted
     db.add_alert("alert-1", metadata=metadata)
-    # The fingerprint matches the alert as it is now: only the signature is wrong.
     assert planted["source_fingerprint"] == (await _fresh(_metadata()))["source_fingerprint"]
     assert planted["status"] == "ready"
     assert not _verifies(planted)
@@ -547,8 +530,6 @@ async def test_post_claim_current_check_releases_claim_without_budget(db):
     other_runner_narrative = _sign(await _fresh(_metadata(), PLANTED))
 
     def other_runner_finishes(item_id: str) -> None:
-        # Between candidate selection and our claim, another runner stored a
-        # verified narrative for this very occurrence.
         db.metadata(item_id)["narrative"] = dict(other_runner_narrative)
 
     db.on_claim = other_runner_finishes
@@ -567,7 +548,7 @@ async def test_post_claim_current_check_releases_claim_without_budget(db):
 
     (claim_args,) = db.executed(narrative_job.CLAIM_SQL)
     (write_args,) = db.executed(narrative_job.WRITE_SQL)
-    assert write_args[4] == claim_args[3]  # released under our own token
+    assert write_args[4] == claim_args[3]
     metadata = db.metadata("alert-1")
     assert "narrative_claim" not in metadata
     assert metadata["narrative"] == other_runner_narrative
@@ -593,9 +574,6 @@ async def test_post_claim_unsigned_narrative_does_not_release_the_claim(db):
     assert len(caller.prompts) == 1
     assert db.llm_events[WORKSPACE] == 1
     assert _verifies(db.metadata("alert-1")["narrative"])
-
-
-# ── Claim / CAS ──────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -655,9 +633,6 @@ async def test_cas_token_mismatch_reports_lost_claim_and_writes_nothing(db):
     assert db.metadata("alert-1")["narrative_claim"]["token"] == "faster-runner"
 
 
-# ── Budget ───────────────────────────────────────────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_budget_exhausted_at_fifty_stores_template_without_llm_call(db):
     db.add_alert("alert-1")
@@ -705,9 +680,6 @@ async def test_reservation_counts_even_when_the_call_fails(db):
     assert db.llm_events[WORKSPACE] == 1
 
 
-# ── Provider failures ────────────────────────────────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_llm_timeout_stores_template_with_closed_reason(db, monkeypatch):
     monkeypatch.setattr(narrative_service, "LLM_TIMEOUT_SECONDS", 0.01)
@@ -738,9 +710,6 @@ async def test_llm_exception_stores_template_without_exception_text(db):
     assert "provider-detail" not in json.dumps(result)
 
 
-# ── No platform-key fallback ─────────────────────────────────────────────────
-
-
 def test_narrator_context_is_scoped_non_admin_and_signed():
     ctx = narrative_job.narrator_user_context(TENANT, WORKSPACE)
 
@@ -749,8 +718,6 @@ def test_narrator_context_is_scoped_non_admin_and_signed():
     assert llm_client._tenant_scope_parts(ctx) == (TENANT, WORKSPACE)
 
     signed = build_security_context(ctx)
-    # What vault's _require_secret_scope needs for a workspace scope: a trusted
-    # signed context with tenant and workspace, not an unscoped admin.
     assert signed["trusted"] is True
     assert signed["_signature"]
     assert signed["tenant_id"] == TENANT
@@ -855,9 +822,6 @@ async def test_default_caller_is_toolless_bounded_and_workspace_scoped(monkeypat
     }
 
 
-# ── SQL hygiene ──────────────────────────────────────────────────────────────
-
-
 def test_sql_is_static_positional_and_filters_tenant_and_workspace():
     for sql in narrative_job.SQL_STATEMENTS:
         assert "{" not in sql and "}" not in sql
@@ -877,7 +841,6 @@ def test_sql_is_static_positional_and_filters_tenant_and_workspace():
     assert "item_kind = 'agent_alert'" in narrative_job.CLAIM_SQL
     assert "clock_timestamp()" in narrative_job.CLAIM_SQL
     assert "RETURNING" in narrative_job.CLAIM_SQL
-    # A stored narrative is attacker-writable: it must never gate the claim.
     assert "source_fingerprint" not in narrative_job.CLAIM_SQL
     assert "'narrative'" not in narrative_job.CLAIM_SQL
     assert "$5::double precision" in narrative_job.CLAIM_SQL
@@ -935,12 +898,8 @@ def test_job_signs_what_it_stores_and_trusts_only_verified_narratives():
     }
 
     assert {"attest_narrative", "verified_stored_narrative"} <= names
-    # The fingerprint is never read straight out of unverified metadata.
     assert "metadata.get(NARRATIVE_METADATA_KEY).get" not in source
     assert '["narrative"]["source_fingerprint"]' not in source
-
-
-# ── Isolation ────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,3 @@
-# Cartridge REST adapter dependencies.
-# Pins mirror the existing cartridges (replicon / sap_*) so all cartridges
-# run on the same versions of the critical libs and share the same CVE floors.
 fastapi==0.136.1
 starlette>=1.0.1
 uvicorn[standard]>=0.35.0,<1.0

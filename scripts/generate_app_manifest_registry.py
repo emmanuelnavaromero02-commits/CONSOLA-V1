@@ -1,19 +1,4 @@
 #!/usr/bin/env python3
-"""Generate the server-owned manifest registry SQL from the packaged apps.
-
-The database must not take the caller's word for which datasets an app may
-read, and it must not read the app's own HTML to find out. So the reviewed
-manifests are compiled into a registry table at build time, and the
-reconciliation function resolves everything from there.
-
-Deterministic by construction: manifests are visited in sorted order, dataset
-lists are sorted, and the digest is computed by the same
-``app.domains.apps.manifests`` code the runtime uses. Running this twice
-produces byte-identical SQL, which ``--check`` enforces in CI.
-
-    python3 scripts/generate_app_manifest_registry.py            # write
-    python3 scripts/generate_app_manifest_registry.py --check    # verify
-"""
 
 from __future__ import annotations
 

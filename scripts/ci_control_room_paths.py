@@ -1,5 +1,3 @@
-"""Pure path policy for the protected Control Room CI surface."""
-
 from __future__ import annotations
 
 import re
@@ -140,7 +138,6 @@ def _is_explicitly_innocuous(path: str) -> bool:
 
 
 def control_room_changed(files: Iterable[str]) -> bool:
-    """Return whether any exact changed path affects protected Control Room CI."""
 
     paths = tuple(files)
     if not paths:

@@ -1,11 +1,3 @@
-"""Workspace-local authorization dependencies.
-
-The Workspace container is deployed independently from Console, so it cannot
-import Console's ``app.services.permissions`` package at runtime.  Keep the
-security decision small and fail-closed: this module exposes the same
-``require_permission`` dependency shape for the mutation permission Workspace
-currently needs.
-"""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -38,7 +30,6 @@ def _effective_roles(user: dict | None) -> set[str]:
 
 
 def has_permission(user: dict | None, permission: str) -> bool:
-    """Return a conservative decision for Workspace-owned permissions."""
 
     if permission != "control_room.write":
         return False
@@ -46,7 +37,6 @@ def has_permission(user: dict | None, permission: str) -> bool:
 
 
 def require_permission(permission: str) -> Callable:
-    """Mirror Console's FastAPI dependency contract, defaulting to deny."""
 
     async def dependency(request: Request) -> dict:
         user = getattr(request.state, "user", None)

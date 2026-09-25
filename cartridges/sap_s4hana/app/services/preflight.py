@@ -1,11 +1,3 @@
-"""
-Pre-flight configuration checks for the sap_s4hana cartridge.
-
-Validates the three environments the cartridge depends on (SAP, Postgres,
-MinIO) and returns a structured ``degraded`` report when any of them is
-incomplete. The checks are cheap (env / settings only — no network
-calls) so they run before every extract / preview.
-"""
 from __future__ import annotations
 
 from typing import Any
@@ -36,12 +28,6 @@ def check_minio() -> dict[str, Any]:
 
 
 def preflight_for_extract() -> dict[str, Any] | None:
-    """Return ``None`` when ready, otherwise a degraded report.
-
-    Reports each missing component separately so the caller can render a
-    precise error to the user (avoids "Postgres connection failed" hiding
-    a missing SAP credential).
-    """
     components = [check_sap(), check_postgres(), check_minio()]
     failing = [c for c in components if not c.get("configured", True)]
     if not failing:

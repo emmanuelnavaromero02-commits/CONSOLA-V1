@@ -1,24 +1,3 @@
-<#
-.SYNOPSIS
-  SSH a la EC2 App de MODecissions vía VPN.
-
-.PARAMETER AppIp
-  IP privada de la EC2 App (10.0.2.X)
-
-.PARAMETER PemPath
-  Ruta al modecissions-key.pem
-
-.PARAMETER Cmd
-  (Opcional) Comando a ejecutar. Si se omite, abre sesión interactiva.
-
-.PARAMETER User
-  (Opcional) Usuario SSH. Default: ubuntu
-
-.EXAMPLE
-  .\ssh-app.ps1 -AppIp 10.0.2.5 -PemPath .\modecissions-key.pem
-  .\ssh-app.ps1 -AppIp 10.0.2.5 -PemPath .\modecissions-key.pem -Cmd "docker ps"
-#>
-
 param(
   [Parameter(Mandatory=$true)] [string] $AppIp,
   [Parameter(Mandatory=$true)] [string] $PemPath,
@@ -33,8 +12,6 @@ if (-not (Test-Path $PemPath)) {
   exit 1
 }
 
-# En Windows, ssh.exe ignora la llave si los permisos del archivo son demasiado abiertos.
-# El propio cliente recomienda restringir a usuario actual.
 $acl = Get-Acl $PemPath
 $openTo = $acl.Access | Where-Object { $_.IdentityReference -match 'Everyone|Users|Authenticated Users' }
 if ($openTo) {

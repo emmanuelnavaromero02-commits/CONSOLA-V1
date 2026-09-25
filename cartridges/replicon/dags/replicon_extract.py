@@ -1,17 +1,3 @@
-"""
-replicon_extract DAG  (Pattern B — portable, no custom container)
-=================================================================
-Extrae UNA entidad de Replicon API → Parquet → MinIO (Bronze).
-
-Credenciales: Console/Vault en connections/replicon/default.
-
-El conf de cada run puede sobreescribir parámetros:
-  entity          — nombre de la entidad (requerido)
-  mode            — "full" | "incremental"  (default: incremental)
-  from_date       — YYYY-MM-DD (solo modo histórico)
-  to_date         — YYYY-MM-DD (solo modo histórico)
-"""
-
 from __future__ import annotations
 
 import io
@@ -57,13 +43,6 @@ DEFAULT_CONN_ID = "default"
 LEGACY_CONN_IDS = ("analytics",)
 logger = logging.getLogger(__name__)
 _SAFE_SCOPE_SEGMENT = re.compile(r"[A-Za-z0-9_.:-]+")
-
-
-# Entity → connection and watermark config read from entity_config table.
-# No hardcoded mappings — all driven by PostgreSQL.
-
-
-# ── Postgres helpers ──────────────────────────────────────────────────────────
 
 
 def _pg_conn():
@@ -159,11 +138,6 @@ def _set_watermark(
         pass
 
 
-# ── Console Vault connection helper ───────────────────────────────────────────
-# Credentials stay in Console/Vault. Airflow receives only a service key and
-# reveals the Replicon connection at runtime through a narrow internal bypass.
-
-
 def _is_production() -> bool:
     return os.environ.get("APP_ENV", "production").strip().lower() in {
         "production",
@@ -190,7 +164,6 @@ def _internal_auth_headers() -> dict[str, str]:
 
 
 def _get_connection(conn_id: str = DEFAULT_CONN_ID) -> tuple[str, dict, str]:
-    """Return (base_url, connection_payload, conn_id) from Console Vault."""
     import os
     import requests
 
@@ -245,7 +218,6 @@ def _get_connection(conn_id: str = DEFAULT_CONN_ID) -> tuple[str, dict, str]:
 
 
 def _get_entity_config(entity: str) -> dict:
-    """Read entity config from entity_config table."""
     try:
         conn = _pg_conn()
         with conn.cursor() as cur:
@@ -266,7 +238,6 @@ def _get_entity_config(entity: str) -> dict:
 def _resolve_connection(
     entity: str, requested_conn_id: str | None = None
 ) -> tuple[str, dict, str]:
-    """Return (base_url, connection_payload, conn_id) via entity_config → Console/Vault."""
     cfg = _get_entity_config(entity)
     conn_id = requested_conn_id or cfg.get("connection_id") or DEFAULT_CONN_ID
     return _get_connection(conn_id)
@@ -306,21 +277,12 @@ def _seeded_gold_result(
     }
 
 
-# ── MinIO helpers ─────────────────────────────────────────────────────────────
-
-
 def _variable(name: str, default: str = "") -> str:
-    """Read one Airflow Variable without allowing ``None`` to escape."""
 
     return str(Variable.get(name, default_var=default) or "").strip()
 
 
 def _storage_config() -> dict[str, object]:
-    """Resolve lakehouse settings without crossing provider boundaries.
-
-    A GCS run must use the complete GCS interoperability pair. It may never
-    fall back to local MinIO credentials or to unrelated AWS/SES credentials.
-    """
 
     endpoint_hint = (
         os.environ.get("LAKEHOUSE_ENDPOINT")
@@ -430,8 +392,6 @@ def _minio_client(storage: dict[str, object] | None = None):
 
         return Minio(
             endpoint=str(resolved["endpoint"]),
-            # IamAwsProvider performs the IMDSv2 token exchange on EC2 and
-            # supports AWS workload identity without anonymous access.
             credentials=IamAwsProvider(region=str(resolved["region"])),
             secure=True,
             region=str(resolved["region"]),
@@ -482,8 +442,6 @@ def _upload_parquet(
     buf.seek(0)
 
     client = _minio_client(storage)
-    # Cloud buckets are provisioned by Terraform and the runtime identity is
-    # intentionally not allowed to create them.
     if storage["provider"] == "minio" and not client.bucket_exists(bucket):
         client.make_bucket(bucket)
     client.put_object(
@@ -494,9 +452,6 @@ def _upload_parquet(
         content_type="application/octet-stream",
     )
     return f"s3://{bucket}/{key}"
-
-
-# ── Replicon HTTP client ───────────────────────────────────────────────────────
 
 
 class _RepliconClient:
@@ -608,8 +563,6 @@ class _RepliconClient:
 
         frames = []
         for url in (data.get("dataUrls") or {}).values():
-            # Pre-signed downloads must not receive Replicon credentials. The
-            # guarded session still validates and pins each response-provided URL.
             r = self._s.get(url, timeout=120)
             r.raise_for_status()
             frames.append(pd.read_csv(_io.StringIO(r.text), low_memory=False))
@@ -623,8 +576,6 @@ class _RepliconClient:
         ]
         return df
 
-
-# ── DAG definition ────────────────────────────────────────────────────────────
 
 default_args = {
     "owner": "modecissions",
@@ -769,13 +720,11 @@ def replicon_extract():
                 "message": "No rows returned",
             }
 
-        # ── Filtro incremental ─────────────────────────────────────────────
         if mode == "incremental" and watermark_field and watermark_field in df.columns:
             last_wm = _get_watermark(entity, tenant_id, workspace_id)
             if last_wm:
                 df = df[df[watermark_field].astype(str) > last_wm]
 
-        # ── Filtro de rango de fechas ──────────────────────────────────────
         if watermark_field and watermark_field in df.columns:
             if from_date:
                 df = df[df[watermark_field].astype(str) >= from_date]
@@ -786,7 +735,6 @@ def replicon_extract():
         storage_uri = _upload_parquet(df, entity, run_id, tenant_id, workspace_id)
         count = len(df)
 
-        # ── Actualizar watermark ───────────────────────────────────────────
         new_wm = None
         if mode == "incremental" and watermark_field and watermark_field in df.columns:
             vals = df[watermark_field].dropna().astype(str)
@@ -808,7 +756,6 @@ def replicon_extract():
 
     @task
     def trigger_refresh_chain(result: dict, admission: dict) -> dict:
-        """Propaga silver/gold aguas abajo con el meta-DAG dataset_refresh_chain."""
         import logging
         import os as _os
         import requests as _req

@@ -195,7 +195,6 @@ def _binding_payload(
 def issue_explicit_action_binding(
     item: Mapping[str, Any], *, template_id: str, clock: Clock | None = None
 ) -> dict[str, Any]:
-    """Issue one server-owned binding; presentation code only verifies it."""
 
     issued = _now(clock)
     payload = _binding_payload(

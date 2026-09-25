@@ -1,14 +1,3 @@
-"""
-MCP Infrastructure Server
-=========================
-Single FastAPI service that exposes tools for Airflow, MinIO, PostgreSQL and Superset
-via the standard MCP contract:
-
-  GET  /mcp/tools          → { tools: [{name, description, input_schema}] }
-  POST /mcp/invoke         → { tool, args } → { result } | { error }
-  GET  /health             → { status }   (public; tool count intentionally redacted)
-"""
-
 from __future__ import annotations
 import json
 import hmac
@@ -50,7 +39,6 @@ from app.sql_reader_policy import (
 setup_logging(service_name="mcp-infra")
 logger = logging.getLogger(__name__)
 
-# ── Import tool modules so decorators register themselves ──────────────────────
 import app.tools.airflow  # noqa: F401
 import app.tools.admin_request  # noqa: F401
 import app.tools.agents  # noqa: F401
@@ -64,19 +52,11 @@ import app.tools.rag  # noqa: F401
 import app.tools.superset  # noqa: F401
 import app.tools.vault  # noqa: F401
 
-# ── App ────────────────────────────────────────────────────────────────────────
 from contextlib import asynccontextmanager
 from app.rag.store import get_pool as _rag_get_pool
 
 
 def _assert_pg_role_not_privileged() -> None:
-    """Refuse to serve if the main PG role can bypass RLS.
-
-    The whole tenancy model rides on row level security; a superuser or
-    BYPASSRLS role (the old config default was ``postgres``) silently voids
-    every policy. Unreachable DB is tolerated — the guard only decides when
-    the role can actually be resolved.
-    """
     import psycopg2
 
     try:
@@ -112,11 +92,11 @@ async def _lifespan(app: FastAPI):
     try:
         await _rag_get_pool()
     except Exception:
-        pass  # RAG is optional — server starts even if pgvector is not ready
+        pass
     yield
 
 
-INTERNAL_API_KEY = get_internal_api_key()  # legacy fallback, still accepted
+INTERNAL_API_KEY = get_internal_api_key()
 _RAG_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
 _DAG_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,250}$")
 _SHARED_PLATFORM_DAGS = {
@@ -199,15 +179,11 @@ def _security_context_signature_valid(ctx: dict[str, Any]) -> bool:
     return hmac.compare_digest(signature, expected)
 
 
-# Sprint v1.12: mcp-infra is called by console, workspace and airflow. Each
-# pair has its own INTERNAL_API_KEY_*_TO_MCP_INFRA secret. The legacy shared
-# key keeps working during the migration window and is dropped in a follow-up.
 _ALLOWED_SERVICES_TO_KEY_ENV: dict[str, str | None] = {
     "console": "INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA",
     "workspace": "INTERNAL_API_KEY_WORKSPACE_TO_MCP_INFRA",
     "airflow": "INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA",
     "refinement": "INTERNAL_API_KEY_REFINEMENT_TO_MCP_INFRA",
-    # The old whitelist allowed this; we keep it via legacy key only outside prod.
     "mcp-infra": None,
 }
 
@@ -215,9 +191,6 @@ _ALLOWED_SERVICES_TO_KEY_ENV: dict[str, str | None] = {
 def verify_api_key(
     x_api_key: str = Header(None), x_internal_service: str = Header(None)
 ):
-    # v1.42.1 auditor fix: distinguish "no auth presented" (401) from
-    # "auth presented but invalid" (403). Matches the cartridge pattern
-    # in app/api/deps.py and the wider HTTP convention.
     if not x_internal_service or not x_api_key:
         raise HTTPException(
             status_code=401,
@@ -311,7 +284,6 @@ async def _http_exception_handler(request: Request, exc: HTTPException):
     )
 
 
-# Sprint v1.41.1 — correlation IDs.
 from app.middleware.request_id import RequestIDMiddleware  # noqa: E402
 
 app.add_middleware(RequestIDMiddleware)
@@ -435,19 +407,11 @@ _CONTROL_ROOM_READ_TOOLS = {
     "control_room__talent_overview_read",
     "control_room__talent_9box_read",
     "control_room__talent_metadata_readiness_read",
-    # Mission 2: domain KPI reads (datasets.read; security_context injected)
     "control_room__finance_kpis_read",
     "control_room__operations_kpis_read",
     "control_room__risk_kpis_read",
-    # Mission 4: shared agent memory, read side (datasets.read, same bridge)
     "control_room__agent_memory_read",
 }
-# Mission 4. Its own set rather than a line inside _CONTROL_ROOM_ALERT_TOOLS or
-# _CONTROL_ROOM_ANALYSIS_TOOLS: it needs their treatment (control_room.write,
-# injected security_context, tenant/workspace scope, and effect authority when
-# the caller is the agent runner) but it is neither an alert nor an analysis, and
-# _CONTROL_ROOM_ALERT_TOOLS additionally demands a cartridge_id argument that a
-# memory write does not carry.
 _CONTROL_ROOM_MEMORY_WRITE_TOOLS = {
     "control_room__agent_memory_write",
 }
@@ -568,7 +532,6 @@ def _is_unscoped_admin_context(ctx: dict[str, Any]) -> bool:
 
 
 def _allowed_prefix_matches(ctx: dict[str, Any], value: str) -> bool:
-    """Match explicit prefixes without letting root prefixes grant all data."""
     prefixes = [
         str(p).lstrip("/").rstrip("/") for p in (ctx.get("allowed_prefixes") or [])
     ]
@@ -702,7 +665,6 @@ def _has_invalid_scoped_storage_path(ctx: dict[str, Any], key: str) -> bool:
 
 
 def _require_scoped_object_path(ctx: dict[str, Any], value: str) -> None:
-    """Prevent scoped callers from listing/downloading whole cartridge object trees."""
     value = str(value or "").strip()
     if not value:
         return
@@ -1237,9 +1199,6 @@ def _rag_source_allowed(ctx: dict[str, Any], name: str) -> bool:
         )
     if name.startswith("dataset:"):
         dataset = name.split(":", 1)[1]
-        # Pass ctx so the lookup is forward-compatible with tenant-aware
-        # dataset filtering. Today _cartridge_of treats ctx as a reserved
-        # arg; the cartridge scope is still enforced by _prefix_allowed.
         cartridge = _cartridge_of(dataset, ctx)
         return bool(
             cartridge
@@ -1367,13 +1326,6 @@ def _filter_airflow_payload(tool: str, payload: Any, ctx: dict[str, Any]) -> Any
 
 
 def _redact_tool_result(payload: Any) -> Any:
-    """Redact secrets from tool return payloads before MCP responds.
-
-    Tools sometimes return third-party error text instead of raising. That
-    text may contain Authorization headers, API keys, SAP passwords or Vault
-    values echoed by SDKs. Logging redaction does not protect JSON responses,
-    so the final invoke boundary sanitizes recursively.
-    """
     return redact_response_value(payload)
 
 
@@ -1570,9 +1522,6 @@ def _enforce_data_scope(
             raise HTTPException(
                 403, detail=f"backend-owned arg is not allowed: {', '.join(supplied)}"
             )
-        # Mission 5: underscore-prefixed parameters are server-only by
-        # convention (e.g. the alert metadata patch). The registry dispatches
-        # with fn(**args), so they must never arrive from a caller.
         server_only = sorted(key for key in args if str(key).startswith("_"))
         if server_only:
             raise HTTPException(
@@ -1701,9 +1650,6 @@ def _enforce_data_scope(
     return ctx
 
 
-# ── MCP endpoints ──────────────────────────────────────────────────────────────
-
-
 @app.get("/mcp/tools", dependencies=[Depends(verify_api_key)])
 def get_tools():
     return {"tools": registry.list_tools()}
@@ -1757,9 +1703,6 @@ async def invoke_tool(
         raise HTTPException(status_code=404, detail="Resource not found") from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Tool invocation failed") from exc
-
-
-# ── Health ─────────────────────────────────────────────────────────────────────
 
 
 @app.get("/healthz")
@@ -1857,14 +1800,8 @@ def readyz():
 
 @app.get("/health")
 def health():
-    # Public endpoint used by Docker healthchecks and load balancers — keep
-    # the response minimal so unauthenticated callers can't fingerprint how
-    # many tools / integrations this instance has loaded. Internal callers
-    # that need that detail use GET /mcp/tools behind x-api-key.
     return {"status": "ok"}
 
-
-# ── RAG REST endpoints (used by Studio UI) ─────────────────────────────────────
 
 from app.rag.store import (
     list_sources as _rag_list_sources,
@@ -2020,9 +1957,6 @@ async def rag_rest_ingest(
         raise HTTPException(503, detail="Embedding provider unavailable") from exc
 
 
-# ── Re-index a single raw entity or dataset into the RAG ────────────────────
-
-
 @app.post("/rag/reindex")
 async def rag_rest_reindex(body: dict, internal_service: str = Depends(verify_api_key)):
     """
@@ -2122,7 +2056,6 @@ async def rag_rest_rebuild_semantic(
 
 
 def _cartridge_of(dataset_name: str, ctx: dict[str, Any] | None = None) -> str | None:
-    """Resolve cartridge_id for a dataset inside the caller scope."""
     import psycopg2
     from app.config import settings as s
 
@@ -2165,11 +2098,7 @@ def _cartridge_of(dataset_name: str, ctx: dict[str, Any] | None = None) -> str |
 
 
 def _duckdb_s3_settings(con, endpoint: str = "", region: str = "") -> None:
-    """Compatibility wrapper around the provider-aware lakehouse resolver."""
 
-    # ``endpoint`` and ``region`` remain accepted for old internal callers, but
-    # environment-derived values are deliberately ignored here: only the
-    # active provider's resolved configuration may supply credentials/settings.
     del endpoint, region
     from app.lakehouse_runtime import configure_duckdb_s3
 
@@ -2179,7 +2108,6 @@ def _duckdb_s3_settings(con, endpoint: str = "", region: str = "") -> None:
 async def _rebuild_semantic_doc(
     cartridge: str, ctx: dict[str, Any] | None = None
 ) -> dict:
-    """Rebuild `_semantic_<cartridge>` from live schemas + data_catalog."""
     import os
     import duckdb
     import psycopg2
@@ -2283,9 +2211,6 @@ async def _rebuild_semantic_doc(
             if isinstance(field, dict) and field.get("name") and field.get("type")
         ]
 
-    # restrict file discovery to their tenant/workspace partition. Otherwise
-    # the entity list would include entities that only exist in other tenants'
-    # data — leaking their presence even if their rows aren't read.
     if scoped_raw_glob:
         glob_pattern = f"s3://{bucket}/raw/{cartridge}/*/{scoped_raw_glob}**/*.parquet"
     else:
@@ -2385,9 +2310,6 @@ def _build_raw_doc(
     cartridge = _safe_rag_segment(cartridge, "cartridge")
     entity = _safe_rag_segment(entity, "entity")
     ctx = ctx or {}
-    # When the caller is scoped to a tenant/workspace, read ONLY the partition
-    # that belongs to that tenant. Otherwise the RAG document would index raw
-    # data from every tenant and leak it through semantic search.
     if _has_tenant_workspace_scope(ctx) and not _is_unscoped_admin_context(ctx):
         tenant_id = _safe_rag_segment(str(ctx.get("tenant_id") or ""), "tenant_id")
         workspace_id = _safe_rag_segment(
@@ -2455,7 +2377,6 @@ def _build_dataset_doc(name: str, ctx: dict[str, Any] | None = None) -> tuple[st
     if not row:
         raise HTTPException(404, f"dataset '{name}' not found")
     layer, cartridge, sql_def, description = row
-    # Reject indexing a dataset whose cartridge is not in the caller's scope.
     if cartridge and not _is_unscoped_admin_context(ctx):
         allowed = {
             str(item).strip()

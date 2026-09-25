@@ -1,4 +1,3 @@
-"""Intercompany partners: which business-partner codes are group companies."""
 from __future__ import annotations
 
 import logging
@@ -35,7 +34,6 @@ __all__ = [
 
 
 def resolve_intercompany(security_context: str | None = None) -> list[IntercompanyPartner]:
-    """The configured mapping, validated against the configured companies."""
     ctx = (security_context or "").strip() or None
     spec = get_secret_for_worker(CARTRIDGE_ID, "SAP_B1_INTERCOMPANY", security_context=ctx)
     partners = parse_intercompany(spec)
@@ -45,7 +43,6 @@ def resolve_intercompany(security_context: str | None = None) -> list[Intercompa
 
 
 def refresh_intercompany_partners(security_context: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Write the configured mapping to Bronze as a full snapshot."""
     import json
 
     serialized = (

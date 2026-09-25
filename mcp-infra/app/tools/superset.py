@@ -1,7 +1,3 @@
-"""
-Superset MCP tools — wraps Superset REST API v1.
-Handles database connections, datasets, charts and dashboards.
-"""
 from __future__ import annotations
 
 import json
@@ -17,7 +13,6 @@ _BASE = settings.superset_url.rstrip("/")
 
 
 def _is_development() -> bool:
-    # v1.43.2: default ``production`` — see airflow.py.
     return os.environ.get("APP_ENV", "production").lower() in {"development", "dev", "local", "test"}
 
 
@@ -28,8 +23,6 @@ def _request_headers(extra: dict[str, str] | None = None) -> dict[str, str]:
         headers["X-Request-ID"] = rid
     return headers
 
-
-# ── Auth ───────────────────────────────────────────────────────────────────────
 
 async def _token() -> str:
     async with httpx.AsyncClient(timeout=30, headers=_request_headers()) as c:
@@ -53,8 +46,6 @@ async def _hdrs() -> dict:
         "Content-Type": "application/json",
     })
 
-
-# ── Database connections ───────────────────────────────────────────────────────
 
 @tool(
     name="superset_list_databases",
@@ -105,8 +96,6 @@ async def superset_create_database(name: str, sqlalchemy_uri: str) -> dict:
     return {"database_id": data["id"], "name": name}
 
 
-# ── Datasets ───────────────────────────────────────────────────────────────────
-
 @tool(
     name="superset_list_datasets",
     description="List datasets (virtual tables) registered in Superset.",
@@ -155,8 +144,6 @@ async def superset_create_dataset(
         data = r.json()
     return {"dataset_id": data["id"], "table": table_name, "schema": schema}
 
-
-# ── Charts ─────────────────────────────────────────────────────────────────────
 
 @tool(
     name="superset_list_charts",
@@ -226,8 +213,6 @@ async def superset_create_chart(
         "url":      f"{_BASE}/chart/edit/{data['id']}",
     }
 
-
-# ── Dashboards ─────────────────────────────────────────────────────────────────
 
 @tool(
     name="superset_list_dashboards",

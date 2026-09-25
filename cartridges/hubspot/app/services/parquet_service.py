@@ -24,10 +24,6 @@ def _normalize_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _fix_mixed_type_columns(df: "pd.DataFrame") -> "pd.DataFrame":
-    """
-    Pyarrow rejects columns that mix str and float (NaN).
-    Cast every object column to string, preserving None for nulls.
-    """
     for col in df.columns:
         if df[col].dtype == object:
             df[col] = df[col].where(df[col].isna(), df[col].astype(str))

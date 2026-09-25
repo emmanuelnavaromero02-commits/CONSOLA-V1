@@ -101,7 +101,6 @@ describe("Inteligencia Operativa: tablist accesible", () => {
     expect(all[1].getAttribute("aria-selected")).toBe("true");
     expect(document.activeElement).toBe(all[1]);
 
-    // Ciclo: desde la última, la derecha vuelve a la primera.
     for (let i = 0; i < 4; i += 1) {
       await act(async () => pressKey(document.activeElement as Element, "ArrowRight"));
     }

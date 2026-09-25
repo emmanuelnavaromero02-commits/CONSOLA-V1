@@ -143,7 +143,6 @@ describe("TalentControlRoom roster: error != caja vacía", () => {
     );
     expect(alert).toBeDefined();
     expect(alert?.textContent).not.toContain("network down");
-    // El error nunca se disfraza del vacío legítimo.
     expect(container.textContent).not.toContain("esta caja esta vacia");
     expect(button("Reintentar")).toBeDefined();
   });
@@ -161,7 +160,6 @@ describe("TalentControlRoom roster: error != caja vacía", () => {
       alerts().some((node) => node.textContent?.includes("No se pudo cargar el roster")),
     ).toBe(false);
     expect(container.textContent).toContain("Colaborador 6789");
-    // data_status por fila visible de forma discreta (badge de vocabulario aprobado).
     expect(container.textContent).toContain("Campos parciales");
   });
 
@@ -186,15 +184,12 @@ describe("TalentControlRoom estados payload-level (contrato existente)", () => {
   it("muestra status != ready, blockers y generated_at cuando el payload los trae", async () => {
     await renderPage();
 
-    // status "partial" del 9-box y anomalías → vocabulario aprobado, no crudo.
     expect(container.textContent).toContain("Datos parciales");
     expect(container.textContent).not.toContain("partial_fields");
-    // Blockers: título de negocio y traducción de status sin detalle técnico.
     expect(container.textContent).toContain("Bloqueos reportados por la fuente");
     expect(container.textContent).toContain("Falta Aspiración en SuccessFactors");
     expect(container.textContent).toContain("Requiere permisos OData");
     expect(container.textContent).not.toContain("no_permission");
-    // generated_at con <time dateTime> y prefijo "Actualizado:".
     expect(container.textContent).toContain("Actualizado:");
     expect(container.querySelector('time[datetime="2026-07-29T18:00:00Z"]')).not.toBeNull();
     expect(container.querySelector('time[datetime="2026-07-29T18:05:00Z"]')).not.toBeNull();
@@ -238,7 +233,6 @@ describe("TalentControlRoom ausencia de datos (sin ceros fabricados)", () => {
     expect(summary?.textContent).toContain("—");
     expect(summary?.textContent).not.toContain("0/0");
     expect(summary?.querySelector("strong")?.textContent).toBe("—");
-    // El fallo global sí se anuncia como alerta.
     expect(alerts().length).toBeGreaterThan(0);
   });
 

@@ -1,5 +1,4 @@
 knowledge_bits:
-  # ── Raw-level: unified opportunity view ─────────────────────────────────────
   - id: kb_salesforce_opportunity_360
     name: "Opportunity 360"
     description: "Vista unificada de la oportunidad: deal + cuenta + dueño + última actividad."
@@ -31,7 +30,6 @@ knowledge_bits:
       LEFT JOIN acc a ON o.AccountId = a.Id
       LEFT JOIN usr u ON o.OwnerId = u.Id
 
-  # ── Gold-level KBs (read the materialized gold parquet) ─────────────────────
   - id: kb_salesforce_pipeline_forecast
     name: "Pipeline y forecast por vendedor"
     description: "¿Qué vamos a cerrar este mes y trimestre? Pipeline abierto, forecast ponderado y ganado por mes y vendedor."

@@ -1,5 +1,3 @@
-"""Real PostgreSQL proof that Copilot refresh persistence is atomic."""
-
 from __future__ import annotations
 
 import uuid
@@ -223,9 +221,6 @@ async def test_real_postgres_refresh_audit_and_state_share_one_transaction(
         await pool.close()
 
 
-# Ages in days of the rows seeded for the retention proof. Workspace "fresh" has
-# history on both sides of the 14-day window; workspace "stale" only has rows
-# older than the window, so the purge must keep exactly its newest one.
 _FRESH_AGES = (30, 15, 13, 1, 0)
 _STALE_AGES = (40, 30)
 
@@ -254,7 +249,6 @@ async def _seed_retention_workspaces(scope: CopilotScope) -> dict[str, object]:
             )
             workspaces[label] = workspace_id
             for age in ages:
-                # Age 0 is a minute old so it never races the window edge.
                 snapshot_id = await conn.fetchval(
                     "INSERT INTO copilot_context_snapshots "
                     "(tenant_id, workspace_id, generated_by, created_at) "
@@ -331,11 +325,6 @@ async def _cleanup_retention_workspaces(
 async def test_real_postgres_retention_purge_deletes_exactly_the_expired_history(
     copilot_scope: CopilotScope,
 ) -> None:
-    """The purge runs unscoped as omega_console under FORCE RLS.
-
-    It must delete only rows older than the window, never the newest row of a
-    workspace, and detach recommendations that pointed at a purged snapshot.
-    """
 
     seeded = await _seed_retention_workspaces(copilot_scope)
     pool = await asyncpg.create_pool(copilot_scope.console_dsn, min_size=1, max_size=2)

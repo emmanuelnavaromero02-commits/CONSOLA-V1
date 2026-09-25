@@ -7,14 +7,12 @@ connector:
     Extracts timesheets, projects, users, and related entities
     via Replicon's async export API (POST /extracts → poll → CSV download).
 
-  # ── Authentication ─────────────────────────────────────────────────────────
   auth:
     type: bearer_token
     env_var: REPLICON_API_KEY
     header: Authorization
     prefix: "Bearer "
 
-  # ── API configuration ───────────────────────────────────────────────────────
   api:
     base_url_env: REPLICON_BASE_URL
     timeout_seconds: 120
@@ -23,7 +21,6 @@ connector:
     extract_poll_interval_seconds: 5
     extract_poll_max_attempts: 60
 
-  # ── Storage ─────────────────────────────────────────────────────────────────
   storage:
     layer: bronze
     format: parquet
@@ -31,7 +28,6 @@ connector:
     path_template: "raw/replicon/{entity}/tenant_id={tenant_id}/workspace_id={workspace_id}/load_date={load_date}/batch_id={run_id}/"
     bucket_env: MINIO_BUCKET
 
-  # ── Platform runtime contract ──────────────────────────────────────────────
   runtime:
     mode: config_only
     scope_source: signed_security_context
@@ -56,7 +52,6 @@ connector:
       - rag
       - control_room
 
-  # ── Extraction modes ────────────────────────────────────────────────────────
   modes:
     - id: full
       description: Full snapshot — replaces all data for the entity
@@ -65,13 +60,11 @@ connector:
     - id: historical
       description: Date-range filter on date_field between from_date and to_date
 
-  # ── Watermark ───────────────────────────────────────────────────────────────
   watermark:
     storage: postgres          # table: watermarks
     buffer_minutes: 5          # safety overlap before persisting high watermark
     field_format: iso8601      # e.g. 2024-01-15T10:30:00Z
 
-  # ── MCP interface ───────────────────────────────────────────────────────────
   mcp:
     mount_path: /mcp
     transport: streamable_http
@@ -93,7 +86,6 @@ connector:
       - name: query_kb
         description: Run arbitrary DuckDB SQL against Replicon Bronze/Silver data
 
-  # ── Entities catalogue (summary — full config in entities.yaml) ─────────────
   entities:
     count: 21
     primary_key_patterns:

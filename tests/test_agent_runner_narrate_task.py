@@ -25,9 +25,6 @@ def _dag(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_narrate_task_is_a_sibling_of_record_run_so_run_state_stays_honest():
-    # Airflow derives the DAG-run state from its leaf tasks. Narration after
-    # record_run with trigger_rule=all_done would be the only leaf, and a green
-    # narration would hide a failed record_run.
     assert "t_find >> t_inv >> [t_rec, t_narrate]" in _SOURCE
     assert "t_rec >> t_narrate" not in _SOURCE
     assert _SOURCE.count("t_find >> t_inv") == 1
@@ -46,7 +43,6 @@ def test_narrate_task_never_retries_and_runs_when_upstream_failed(monkeypatch):
         timedelta(seconds=agent_runner.NARRATE_HTTP_TIMEOUT_SECONDS)
         < task["execution_timeout"]
     )
-    # The monitor tasks keep the DAG defaults; only narration opts out.
     assert "retries" not in agent_runner.t_rec.kwargs
     assert "trigger_rule" not in agent_runner.t_rec.kwargs
     assert agent_runner.default_args["retries"] == 1

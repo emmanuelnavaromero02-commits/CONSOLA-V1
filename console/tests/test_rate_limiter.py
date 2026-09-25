@@ -38,7 +38,6 @@ async def test_in_memory_isolates_keys():
     limiter = InMemoryRateLimiter()
     for _ in range(2):
         await limiter.check("a", limit=2, window=60)
-    # Hitting a different key must not consume A's window.
     assert await limiter.check("b", limit=2, window=60) is True
     assert await limiter.check("a", limit=2, window=60) is False
 
@@ -50,7 +49,6 @@ def test_factory_returns_in_memory_when_no_redis_url(monkeypatch):
 
 def test_factory_falls_back_to_in_memory_when_redis_missing(monkeypatch):
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
-    # Simulate redis-py not installed.
     import builtins
 
     real_import = builtins.__import__
@@ -66,8 +64,6 @@ def test_factory_falls_back_to_in_memory_when_redis_missing(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_redis_backend_uses_incr_and_expire():
-    """Verifies the Redis backend honours the contract — first hit sets TTL,
-    subsequent hits only INCR, and overflow returns False without raising."""
 
     class FakeRedis:
         def __init__(self):
@@ -87,7 +83,6 @@ async def test_redis_backend_uses_incr_and_expire():
     assert await limiter.check("login", limit=2, window=60) is True
     assert await limiter.check("login", limit=2, window=60) is True
     assert await limiter.check("login", limit=2, window=60) is False
-    # Exactly one expire call — the first one that opened the window.
     assert len(fake.expires) == 1
     assert next(iter(fake.expires.values())) == 60
 
@@ -102,7 +97,6 @@ async def test_redis_backend_fails_open_on_error():
             pass
 
     limiter = RedisRateLimiter(BrokenRedis())
-    # Non-sensitive endpoints stay reachable when Redis is down.
     assert await limiter.check("non-sensitive", limit=1, window=60) is True
 
 
@@ -116,15 +110,11 @@ async def test_redis_backend_fails_closed_for_sensitive_on_error():
             pass
 
     limiter = RedisRateLimiter(BrokenRedis())
-    # Sensitive endpoints (login / refresh / reset) MUST deny when Redis is
-    # unreachable — silently disabling rate limits on auth is unacceptable.
     assert await limiter.check("login", limit=1, window=60, sensitive=True) is False
 
 
 @pytest.mark.asyncio
 async def test_in_memory_accepts_sensitive_flag():
-    # The in-memory backend cannot lose state on its own, so the flag is a
-    # no-op for it; the contract is just that the call signature accepts it.
     limiter = InMemoryRateLimiter()
     assert await limiter.check("k", limit=2, window=60, sensitive=True) is True
     assert await limiter.check("k", limit=2, window=60, sensitive=True) is True
@@ -133,18 +123,12 @@ async def test_in_memory_accepts_sensitive_flag():
 
 @pytest.mark.asyncio
 async def test_in_memory_cleans_up_stale_keys():
-    """Without periodic cleanup the bucket dict grows forever as new
-    (ip, subject) keys arrive. The sweep keys-empty buckets and any whose
-    last hit is older than the conservative stale-after threshold."""
     limiter = InMemoryRateLimiter()
-    # Force the cleanup interval to a small number for the test, then prime
-    # buckets that should be considered stale.
     limiter.CLEANUP_INTERVAL = 5
     import time as _t
-    fake_old = _t.monotonic() - (60 * 60 * 25)  # 25h ago
+    fake_old = _t.monotonic() - (60 * 60 * 25)
     for i in range(3):
         limiter._buckets[f"stale-{i}"] = [fake_old]
-    # Trigger the sweep by issuing the threshold number of fresh checks.
     for i in range(limiter.CLEANUP_INTERVAL):
         await limiter.check(f"fresh-{i}", limit=10, window=60)
     assert all(k.startswith("fresh-") for k in limiter._buckets), \

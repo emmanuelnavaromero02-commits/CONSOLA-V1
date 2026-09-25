@@ -139,24 +139,19 @@ async def test_two_tenants_and_user_deny_stay_isolated_in_console_and_workspace(
     monkeypatch.setattr(console_dependencies._auth, "pool", fake_console_pool)
     workspace_session = _load_workspace_session_module()
 
-    # Cliente A: Pedro hereda el acceso activo a Replicon.
     assert await console_dependencies._workspace_cartridges("workspace-a", user_id=101) == ["replicon"]
     assert await workspace_session._workspace_cartridges(pool, "workspace-a", user_id=101) == ["replicon"]
 
-    # Cliente A: Maria tiene deny explicito; no ve Replicon aunque el workspace este activo.
     assert await console_dependencies._workspace_cartridges("workspace-a", user_id=102) == []
     assert await workspace_session._workspace_cartridges(pool, "workspace-a", user_id=102) == []
 
-    # Cliente B: no hereda Replicon por accidente; solo ve su propio cartucho.
     assert await console_dependencies._workspace_cartridges("workspace-b", user_id=201) == ["sap_successfactors"]
     assert "replicon" not in await workspace_session._workspace_cartridges(pool, "workspace-b", user_id=201)
 
-    # Revocar Replicon al workspace A bloquea a todos los usuarios de A.
     pool.set_entitlement_status("tenant-a", "workspace-a", "replicon", "revoked")
     assert await console_dependencies._workspace_cartridges("workspace-a", user_id=101) == []
     assert await workspace_session._workspace_cartridges(pool, "workspace-a", user_id=101) == []
 
-    # Reactivar recupera a Pedro, pero Maria sigue bloqueada por deny explicito.
     pool.set_entitlement_status("tenant-a", "workspace-a", "replicon", "active")
     pool.set_installation_status("tenant-a", "workspace-a", "replicon", "ready")
     assert await console_dependencies._workspace_cartridges("workspace-a", user_id=101) == ["replicon"]

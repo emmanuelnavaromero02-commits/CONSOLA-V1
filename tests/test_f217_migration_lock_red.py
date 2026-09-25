@@ -1,5 +1,3 @@
-"""RED acceptance contracts for the v1.45.217 migration-lock recovery."""
-
 from __future__ import annotations
 
 import os
@@ -33,7 +31,6 @@ def _migration_runtime(
     *,
     model_non_control_local: bool = False,
 ) -> MigrationRuntime:
-    """Build a no-daemon runtime around the real sealed Docker lock."""
 
     workspace = tmp_path / "checkout"
     (workspace / "scripts").mkdir(parents=True)
@@ -149,7 +146,6 @@ def _run_with_control_environment(
 def test_exported_empty_compose_file_reaches_migrations_through_real_lock(
     tmp_path: Path,
 ) -> None:
-    """Reproduce .216: exported-empty must not become exported-nonempty."""
 
     runtime = _migration_runtime(tmp_path)
     result = _run_migrations(runtime, compose_file="")
@@ -183,7 +179,6 @@ def test_migration_compose_path_is_a_non_control_local() -> None:
 def test_non_control_local_is_sufficient_for_green_migration_acceptance(
     tmp_path: Path,
 ) -> None:
-    """Model only the proposed rename; all runtime authority remains real."""
 
     runtime = _migration_runtime(tmp_path, model_non_control_local=True)
     result = _run_migrations(runtime, compose_file="")
@@ -196,7 +191,6 @@ def test_non_control_local_is_sufficient_for_green_migration_acceptance(
 def test_real_compose_poison_still_returns_97_without_daemon_access(
     tmp_path: Path,
 ) -> None:
-    """The local rename must not weaken fail-closed control poisoning."""
 
     runtime = _migration_runtime(tmp_path, model_non_control_local=True)
     result = _run_migrations(

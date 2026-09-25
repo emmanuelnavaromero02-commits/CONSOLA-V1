@@ -1,4 +1,3 @@
-"""Sprint v1.31 — bootstrap_admin must not accept passwords via argv."""
 from __future__ import annotations
 
 import asyncio

@@ -38,20 +38,12 @@ export async function fetchPipeline() {
   return getJson('/api/pipeline');
 }
 
-/**
- * GET /api/system/info — returns {version, env, service}.
- * Requires authenticated session. Throws on non-2xx.
- */
 export async function fetchSystemInfo() {
   const response = await fetch('/api/system/info', { credentials: 'same-origin' });
   if (!response.ok) throw new Error(`system info failed: ${response.status}`);
   return response.json();
 }
 
-/**
- * GET /api/operations/health — admin-only. Retorna null silenciosamente
- * para usuarios sin rol admin (esperado: 401/403 sin permisos).
- */
 export async function fetchHealth() {
   try {
     const r = await fetch('/api/operations/health', { credentials: 'same-origin' });

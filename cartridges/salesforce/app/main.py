@@ -22,17 +22,11 @@ from app.services import catalog_service
 logger = logging.getLogger(__name__)
 
 
-# ── FastMCP Streamable HTTP (JSON-RPC 2.0) at /mcp/rpc ───────────────────────
-
 _mcp_app = mcp.http_app(path="/")
 
 
-# ── Lifespan: schema migration + job runner init ──────────────────────────────
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # v1.43.2: track per-step startup state — see
-    # cartridges/replicon/app/main.py for the rationale.
     app.state.startup_ok = False
     app.state.startup_errors = []
 
@@ -45,8 +39,6 @@ async def lifespan(app: FastAPI):
         app.state.startup_errors.append(f"job_runner: {type(e).__name__}: {e}")
 
     try:
-        # Register cartridge header + entities so Studio's dropdown lists
-        # this source even if no client has hit /entities yet.
         catalog_service._seed_if_empty()
     except Exception as e:
         app.state.startup_errors.append(f"catalog_seed: {type(e).__name__}: {e}")
@@ -89,7 +81,6 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
     )
 
 
-# v1.43.1: X-Request-ID middleware.
 from app.middleware.request_id import RequestIDMiddleware  # noqa: E402
 
 app.add_middleware(RequestIDMiddleware)
@@ -99,19 +90,12 @@ app.include_router(skills_router)
 app.include_router(console_router)
 
 
-# v1.44.3.3 Task C — yes/no liveness probe; see replicon/sap_hcm
-# for the full rationale.
 @app.get("/healthz")
 def healthz() -> dict:
     return {"ok": True, "service": "salesforce"}
 
 
-
-# v1.43.2 (R1 hardening): /mcp/* must respect startup state. See
-# cartridges/replicon/app/main.py for the rationale.
-
 class _MCPStartupGuard:
-    """ASGI wrapper that 503s when startup_ok=False for /mcp/* paths."""
 
     def __init__(self, inner, fastapi_app: FastAPI):
         self._inner = inner
@@ -123,7 +107,6 @@ class _MCPStartupGuard:
         ):
             import json as _json
             errors = list(getattr(self._app.state, "startup_errors", []) or [])
-            # Redact detailed error messages before sending to unauthenticated callers.
             error_count = len(errors)
             body = _json.dumps({
                 "error": "cartridge_not_ready",
@@ -157,8 +140,6 @@ def _require_startup_ok(request: "Request") -> None:
 
 from fastapi import Request  # noqa: E402
 
-
-# ── REST adapter — contract for the console MCP registry ─────────────────────
 
 def _tool_schema(tool_fn) -> dict:
     sig = inspect.signature(tool_fn)

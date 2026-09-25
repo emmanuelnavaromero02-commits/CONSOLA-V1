@@ -107,7 +107,6 @@ def _durable_benchmark_result(
     ledger: Mapping[tuple[str, str], Mapping[str, Any]] | None = None,
     benchmark_head: str = "",
 ) -> bool:
-    """Derived data must bind the same exact benchmark head as the ledger."""
     if not (
         row.get("benchmark_approval_valid") is True
         and row.get("benchmark_provenance_status") == "approved_durable"
@@ -217,12 +216,6 @@ def project_operational_truth_rows(
     *,
     benchmark_head: str = "",
 ) -> list[dict[str, Any]]:
-    """Project Gold rows, refusing every claim the server cannot corroborate.
-
-    ``authority`` maps (tenant_id, workspace_id) to the ledger entry read from
-    ``talent_benchmark_approvals``. It defaults to empty, so a caller that does
-    not resolve the ledger gets the fail-closed projection.
-    """
     ledger = authority or {}
     projected: list[dict[str, Any]] = []
     for source in rows:

@@ -1,7 +1,3 @@
-// Sprint v1.11 phase 3 — extracted from iam.html for strict CSP.
-// The body executes after the script is parsed; the original <script> tag
-// sat at the bottom of <body>, so the DOM is already available.
-
     const state = { users: [], sessions: [], audit: [], permissions: null, attempts: [], editing: null };
     const $ = (id) => document.getElementById(id);
     const fmt = (v) => {
@@ -605,8 +601,6 @@
       btn.addEventListener('click', () => activateTab(btn.dataset.tab));
     });
 
-    // /admin/users is a compatibility URL inside the IAM ecosystem, not a
-    // separate page. It opens the Users tab directly without redirecting.
     const _qs = new URLSearchParams(location.search);
     const _preUserId = _qs.get('user_id');
     const _requestedTab = _qs.get('tab');

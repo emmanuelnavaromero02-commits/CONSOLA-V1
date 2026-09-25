@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Local wrapper for the Refinement SuccessFactors foundation materializer."""
 
 from __future__ import annotations
 

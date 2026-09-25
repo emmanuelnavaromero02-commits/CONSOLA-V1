@@ -84,9 +84,6 @@ resource "aws_secretsmanager_secret" "app" {
   description = "MODecissions runtime secret for ${each.key}"
 }
 
-# Pull-only GHCR credentials are deliberately separate from the application
-# secret set.  aws-entrypoint.sh must never render this value into the runtime
-# .env; the EC2 host reads AWSCURRENT only while it is pulling release images.
 resource "aws_secretsmanager_secret" "ghcr_pull_credentials" {
   name        = "modecissions/ghcr_pull_credentials"
   description = "Server-owned GHCR pull credentials as JSON username and token"

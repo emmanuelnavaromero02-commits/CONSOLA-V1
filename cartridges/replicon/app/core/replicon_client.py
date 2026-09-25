@@ -16,7 +16,7 @@ from app.core.vault_client import get_replicon_connection
 
 _RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
 _RETRY_ATTEMPTS = 5
-_RETRY_BASE_DELAY = 1.0  # doubles each attempt: 1, 2, 4, 8, 16 s
+_RETRY_BASE_DELAY = 1.0
 logger = logging.getLogger(__name__)
 
 
@@ -57,18 +57,6 @@ class CartridgeCircuitBreaker:
 
 
 class RepliconClient:
-    """
-    Client for the Replicon Analytics BI API.
-
-    Authentication: dynamic Auth Factory from the Vault connection
-    ``auth_method`` (bearer_token, api_key, basic, none).
-
-    Extract flow (async):
-      1. POST /extracts  →  { extractId }
-      2. Poll GET /extracts/{extractId} until status = "completed"
-      3. dataUrls is a dict { tableId: csv_url } — download each URL
-      4. Parse CSV → list[dict]
-    """
 
     def __init__(self, security_context: str | None = None, conn_id: str | None = None) -> None:
         connection = get_replicon_connection(security_context=security_context, conn_id=conn_id)
@@ -84,9 +72,6 @@ class RepliconClient:
     def _is_seeded_gold_connection(self) -> bool:
         return self._auth_method == "seeded_gold" or self.base_url.startswith("seeded://")
 
-    # ------------------------------------------------------------------
-    # Auth header
-    # ------------------------------------------------------------------
 
     @property
     def _auth_headers(self) -> dict[str, str]:
@@ -108,9 +93,6 @@ class RepliconClient:
         suffix = f" -> Respuesta del servidor {status_code}" if status_code is not None else ""
         logger.warning("%s%s", auth_trace(method, header_names), suffix)
 
-    # ------------------------------------------------------------------
-    # HTTP helpers with retry / backoff
-    # ------------------------------------------------------------------
 
     def _get(self, path: str, timeout: int = 60) -> requests.Response:
         CartridgeCircuitBreaker.before_request()
@@ -192,9 +174,6 @@ class RepliconClient:
         CartridgeCircuitBreaker.record_failure()
         raise last_exc or RuntimeError(f"POST {url} failed after {_RETRY_ATTEMPTS} attempts")
 
-    # ------------------------------------------------------------------
-    # Tables discovery
-    # ------------------------------------------------------------------
 
     def list_tables(self) -> list[dict[str, Any]]:
         return self._get("/tables").json()
@@ -202,9 +181,6 @@ class RepliconClient:
     def get_table_schema(self, table_id: str) -> dict[str, Any]:
         return self._get(f"/tables/{table_id}").json()
 
-    # ------------------------------------------------------------------
-    # Async extract → CSV download
-    # ------------------------------------------------------------------
 
     def _create_extract(self, table_ids: list[str]) -> str:
         body = {
@@ -218,7 +194,6 @@ class RepliconClient:
         return extract_id
 
     def _poll_extract(self, extract_id: str) -> dict[str, Any]:
-        """Poll until completed or failed. dataUrls is a dict {tableId: url}."""
         deadline = time.monotonic() + settings.replicon_poll_timeout
         while time.monotonic() < deadline:
             data = self._get(f"/extracts/{extract_id}").json()
@@ -234,13 +209,11 @@ class RepliconClient:
         )
 
     def _download_csv(self, url: str) -> pd.DataFrame:
-        """Download a pre-signed S3 CSV URL (no auth header needed)."""
         delay = _RETRY_BASE_DELAY
         last_exc: Exception | None = None
 
         for _ in range(_RETRY_ATTEMPTS):
             try:
-                # S3 pre-signed URLs must NOT include the Authorization header
                 logger.warning("Replicon outbound CSV download %s", url.split("?", 1)[0])
                 resp = self._session.get(url, timeout=120)
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
@@ -259,17 +232,8 @@ class RepliconClient:
 
         raise last_exc or RuntimeError(f"CSV download failed after {_RETRY_ATTEMPTS} attempts")
 
-    # ------------------------------------------------------------------
-    # Main extraction entry point
-    # ------------------------------------------------------------------
 
     def extract_table(self, table_id: str) -> list[dict[str, Any]]:
-        """
-        Full extract of one Replicon table. Returns list[dict].
-
-        dataUrls in the completed extract is a dict keyed by tableId:
-          { "Project": "https://s3.amazonaws.com/..." }
-        """
         if self._is_seeded_gold_connection():
             logger.warning(
                 "Replicon seeded_gold extraction is data-only; "
@@ -281,7 +245,6 @@ class RepliconClient:
         extract_id = self._create_extract([table_id])
         result = self._poll_extract(extract_id)
 
-        # dataUrls is {tableId: url}, not a list
         data_urls: dict[str, str] = result.get("dataUrls") or {}
         if not data_urls:
             return []
@@ -301,9 +264,6 @@ class RepliconClient:
         ]
         return combined.to_dict(orient="records")
 
-    # ------------------------------------------------------------------
-    # Connection test
-    # ------------------------------------------------------------------
 
     def test_connection(self) -> dict[str, Any]:
         if self._is_seeded_gold_connection():
@@ -368,11 +328,6 @@ def _safe_host(url: str) -> str | None:
 def _request_error_message(exc: requests.RequestException, base_url: str) -> str:
     text = str(exc)
     lowered = text.lower()
-    # DNS-resolution failures surface with platform-specific wording: glibc
-    # getaddrinfo on Linux ("name or service not known", "temporary failure in
-    # name resolution"), BSD/macOS ("nodename nor servname provided"), and
-    # urllib3's own wrapper ("NameResolutionError"/"failed to resolve"). Match
-    # them all so operators get the same friendly message regardless of host OS.
     if (
         "name resolution" in lowered
         or "nodename nor servname provided" in lowered

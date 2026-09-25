@@ -1,24 +1,3 @@
-"""
-DAG: entity_scheduler
-
-Meta-scheduler para la plataforma: cada 5 minutos lee la tabla `entity_config`,
-identifica las entidades cuyo `cron_expression` cae dentro de la ventana actual
-y dispara una corrida del DAG asociado pasando `entity` (y `mode`,
-`cartridge_id`) por `conf`.
-
-Permite que múltiples entidades compartan el mismo `dag_id` pero tengan su
-propia cadencia, sin tener que duplicar archivos DAG ni que Airflow conozca
-la cadencia por entidad.
-
-Convención para los DAGs base que quieran ser disparados por aquí:
-- `schedule=None` en el constructor del DAG (lo programa este scheduler).
-- Aceptar `conf.entity` (obligatorio) y opcionalmente `conf.mode`,
-  `conf.cartridge_id` desde `context["dag_run"].conf`.
-
-Idempotencia: tras disparar, se hace UPDATE entity_config SET
-last_scheduled_at=<fire_time>. La siguiente corrida del scheduler ignora
-entidades cuyo fire_time ya esté <= last_scheduled_at.
-"""
 from __future__ import annotations
 
 import os
@@ -36,8 +15,6 @@ from entity_scheduler_trigger import (
 
 
 AIRFLOW_URL   = os.environ.get("AIRFLOW_URL", "http://airflow:8080")
-# The container exposes AIRFLOW_ADMIN_USER/PASSWORD (set by docker-compose);
-# AIRFLOW_USER/PASSWORD are kept as fallback for legacy installs.
 AIRFLOW_USER  = (os.environ.get("AIRFLOW_USER")
                  or os.environ.get("AIRFLOW_ADMIN_USER") or "admin")
 AIRFLOW_PASS  = (os.environ.get("AIRFLOW_PASSWORD")
@@ -81,8 +58,6 @@ dag = DAG(
 )
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
-
 def _pg():
     import psycopg2
     return psycopg2.connect(POSTGRES_DSN)
@@ -108,8 +83,6 @@ def _mcp_headers() -> dict[str, str]:
 
 
 def _fire_in_window(cron_expr: str, window_start: datetime, window_end: datetime):
-    """Si el cron dispara en [window_start, window_end), devuelve el fire_time
-    (UTC, tz-aware). Si no, devuelve None."""
     try:
         from croniter import croniter
     except Exception:
@@ -124,8 +97,6 @@ def _fire_in_window(cron_expr: str, window_start: datetime, window_end: datetime
     return nxt if window_start <= nxt < window_end else None
 
 
-# ── Task 1 · find_due_entities ───────────────────────────────────────────────
-
 def find_due_entities(**context):
     logical_date = context["logical_date"]
     window_end   = logical_date + timedelta(minutes=INTERVAL_MIN)
@@ -135,10 +106,6 @@ def find_due_entities(**context):
     conn = _pg()
     try:
         with conn.cursor() as cur:
-            # Fallback de dag_params: si la entidad no tiene override propio,
-            # toma el dag_params_example registrado en cartridge_dags para el
-            # DAG correspondiente. Así una entidad nueva con cron y DAG
-            # asignado funciona sin tener que duplicar el ejemplo en cada row.
             cur.execute(
                 """SELECT ec.cartridge_id, ec.entity, ec.dag_id, ec.mode,
                           ec.cron_expression, ec.last_scheduled_at,
@@ -202,8 +169,6 @@ def find_due_entities(**context):
     return len(due)
 
 
-# ── Task 2 · trigger_each ────────────────────────────────────────────────────
-
 def trigger_each(**context):
     due = context["ti"].xcom_pull(task_ids="find_due_entities", key="due") or []
     if not due:
@@ -211,8 +176,6 @@ def trigger_each(**context):
 
     results = []
     for it in due:
-        # Stable dag_run_id per (entity, fire_time) so a retry of this task
-        # doesn't create a duplicate run.
         ts_id = it["fire_time"].replace(":", "").replace("-", "").replace("+", "_")
         run_id = f"sched_{it['cartridge_id']}_{it['entity']}_{ts_id}"
         try:
@@ -227,8 +190,6 @@ def trigger_each(**context):
                 conf["workspace_id"] = it["workspace_id"]
             if it.get("conn_id"):
                 conf["conn_id"] = it["conn_id"]
-            # Merge per-entity dag_params (file_pattern, parser, etc.) — but
-            # never let them clobber the canonical fields above.
             for k, v in (it.get("dag_params") or {}).items():
                 conf.setdefault(k, v)
             status_code = trigger_dag_run(
@@ -244,7 +205,6 @@ def trigger_each(**context):
                 "dag_id": it["dag_id"], "status": status_code,
                 "ok": True, "fire_time": it["fire_time"],
             })
-            # Mark scheduled only after Airflow accepted or already had the run.
             conn = _pg()
             try:
                 with conn.cursor() as cur:
@@ -275,8 +235,6 @@ def trigger_each(**context):
     return {"triggered": ok_count, "results": results}
 
 
-# ── Task 3 · record_run ──────────────────────────────────────────────────────
-
 def record_run(**context):
     inv = context["ti"].xcom_pull(task_ids="trigger_each") or {}
     try:
@@ -290,8 +248,6 @@ def record_run(**context):
         print(f"[entity_scheduler] pipeline_run_save failed: {type(exc).__name__}")
         raise
 
-
-# ── DAG wiring ───────────────────────────────────────────────────────────────
 
 t_find = PythonOperator(task_id="find_due_entities", python_callable=find_due_entities, dag=dag)
 t_trig = PythonOperator(task_id="trigger_each",      python_callable=trigger_each,      dag=dag)

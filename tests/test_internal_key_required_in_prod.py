@@ -1,4 +1,3 @@
-"""Sprint v1.32 — production must fail fast when per-pair keys are missing."""
 from __future__ import annotations
 
 import importlib

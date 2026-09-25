@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# OMEGA_DR_ALLOW_NON_ROOT=1 is for isolated DR rehearsals (ephemeral compose
-# stacks owned by the invoking user); deploy hosts keep requiring root.
 if [ "${EUID:-$(id -u)}" -ne 0 ] && [ "${OMEGA_DR_ALLOW_NON_ROOT:-0}" != "1" ]; then
   exec sudo "$0" "$@"
 fi
@@ -28,9 +26,6 @@ set -a
 source .env
 set +a
 
-# Same backend contract as backup.sh: explicit BACKUP_STORAGE_BACKEND wins;
-# otherwise OMEGA_BACKUP_LOCAL_DIR (rehearsals) > GCS_BUCKET (GCP hosts) >
-# S3_BUCKET_NAME (AWS hosts). A backup must be restored from the same backend.
 BACKUP_STORAGE_BACKEND="${BACKUP_STORAGE_BACKEND:-}"
 if [[ -z "${BACKUP_STORAGE_BACKEND}" ]]; then
   if [[ -n "${OMEGA_BACKUP_LOCAL_DIR:-}" ]]; then
@@ -93,12 +88,6 @@ docker compose "${COMPOSE_FILES[@]}" down
 docker compose "${COMPOSE_FILES[@]}" up -d postgres postgres_gold
 sleep 30
 
-# pg_dumpall --clean emits DROP/CREATE for the bootstrap role itself;
-# "DROP ROLE postgres" always fails ("current user cannot be dropped") and
-# aborts the whole restore under ON_ERROR_STOP. Filter exactly those
-# statements, and ONLY inside the globals preamble (before the first
-# \connect) so COPY data rows can never be dropped by the filter. Every
-# other error must still stop the restore.
 strip_bootstrap_role() {
   awk '
     BEGIN { globals = 1 }

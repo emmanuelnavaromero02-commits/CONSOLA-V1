@@ -21,19 +21,11 @@ from app.security import InternalApiKeyASGIGuard, get_internal_api_key
 logger = logging.getLogger(__name__)
 
 
-# ── Lifespan: schema migration + job runner init ──────────────────────────────
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # v1.43.2: record per-step startup results so /health
-    # can report a real readiness signal. Pre-v1.43.2, schema-migration
-    # failures were silently swallowed and /health stayed ``ok: true``
-    # — Kubernetes would route traffic at a broken cartridge.
     app.state.startup_ok = False
     app.state.startup_errors = []
 
-    # get_internal_api_key() is intentionally NOT caught: a missing
-    # INTERNAL_API_KEY is unrecoverable and must fail the process.
     get_internal_api_key()
 
     try:
@@ -49,7 +41,6 @@ async def lifespan(app: FastAPI):
         yield
 
 
-# ── FastMCP Streamable HTTP (JSON-RPC 2.0) at /mcp/rpc ───────────────────────
 _mcp_app = mcp.http_app(path="/")
 
 app = FastAPI(title="Replicon Cartridge", lifespan=lifespan)
@@ -83,13 +74,6 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
     )
 
 
-# v1.43.1: every response — including 401/403/404 from
-# the InternalApiKeyASGIGuard and the FastAPI exception handlers —
-# must carry an ``X-Request-ID`` header so operators can correlate a
-# failed request with its server-side trace. Pure-ASGI middleware
-# intercepts at the send() level so it survives every short-circuit
-# auth path. Byte-identical to console/workspace/vault/refinement/mcp-infra
-# (md5 7fe9a9120bfac6f028a9c7662afcccae).
 from app.middleware.request_id import RequestIDMiddleware  # noqa: E402
 
 app.add_middleware(RequestIDMiddleware)
@@ -98,26 +82,12 @@ app.include_router(health_router)
 app.include_router(skills_router)
 
 
-# v1.44.3.3 Task C — minimal liveness probe. ``/health`` (above)
-# reflects real startup state and gates on MCP tool registration;
-# ``/healthz`` is the Kubernetes-style yes/no liveness signal that
-# stays 200 as long as the process is serving HTTP. The console
-# orchestrator + E2E suite both expect ``/healthz`` to exist.
 @app.get("/healthz")
 def healthz() -> dict:
     return {"ok": True, "service": "replicon"}
 
 
-# v1.43.2 (R1 hardening): /mcp/* must respect startup state. If
-# lifespan recorded a failure (job_runner schema missing, etc.), the
-# cartridge is in rotation only to /health (which already returns
-# 503) — but a peer with the internal API key could still call
-# /mcp/rpc | /mcp/tools | /mcp/invoke and trigger the very schema gap
-# that flagged startup as broken. Fail-closed across the whole MCP
-# surface keeps behaviour consistent with /health.
-
 class _MCPStartupGuard:
-    """ASGI wrapper that 503s when startup_ok=False for /mcp/* paths."""
 
     def __init__(self, inner, fastapi_app: FastAPI):
         self._inner = inner
@@ -129,9 +99,6 @@ class _MCPStartupGuard:
         ):
             import json as _json
             errors = list(getattr(self._app.state, "startup_errors", []) or [])
-            # v1.43.2 (R2 hardening): use json.dumps so error
-            # strings containing apostrophes / backslashes / non-ASCII
-            # produce a syntactically valid body. Python repr was wrong.
             body = _json.dumps({
                 "error": "cartridge_not_ready",
                 "startup_errors": errors,
@@ -150,7 +117,6 @@ class _MCPStartupGuard:
 
 
 class _MCPSecurityContextGuard:
-    """Install signed tenant/workspace context for mounted FastMCP traffic."""
 
     def __init__(self, inner):
         self._inner = inner
@@ -192,9 +158,6 @@ app.mount("/mcp/rpc", _MCPStartupGuard(InternalApiKeyASGIGuard(_MCPSecurityConte
 
 
 def _require_startup_ok(request: "Request") -> None:
-    """FastAPI dependency for the REST adapter endpoints (/mcp/tools,
-    /mcp/invoke, /mcp-reload). Mirrors _MCPStartupGuard for the
-    ASGI-mounted /mcp/rpc."""
     from fastapi import HTTPException
     if not getattr(request.app.state, "startup_ok", False):
         errors = list(getattr(request.app.state, "startup_errors", []) or [])
@@ -207,12 +170,7 @@ def _require_startup_ok(request: "Request") -> None:
 from fastapi import Request  # noqa: E402 — used by _require_startup_ok
 
 
-# ── REST adapter — contract for the MODecissions console registry ─────────────
-# GET  /mcp/tools  → {"tools": [...]}
-# POST /mcp/invoke → {"tool": "name", "args": {...}} → result
-
 def _tool_schema(tool_fn) -> dict:
-    """Build input_schema from function signature annotations."""
     sig = inspect.signature(tool_fn)
     properties: dict[str, Any] = {}
     required: list[str] = []
@@ -279,9 +237,8 @@ async def mcp_invoke(body: dict, request: Request):
         finally:
             reset_security_context(token)
 
-        # FastMCP returns a ToolResult object with .content list of TextContent
         content_items = None
-        if hasattr(result, "content"):          # ToolResult
+        if hasattr(result, "content"):
             content_items = result.content
         elif isinstance(result, list):
             content_items = result
@@ -313,8 +270,6 @@ async def mcp_invoke(body: dict, request: Request):
             status_code=500,
         )
 
-
-# ── Custom tools reload ───────────────────────────────────────────────────────
 
 @app.post("/mcp-reload", dependencies=[Depends(verify_api_key), Depends(_require_startup_ok)])
 def mcp_reload():

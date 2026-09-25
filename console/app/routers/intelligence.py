@@ -139,9 +139,6 @@ class InternalMcpWisdomBitRequest(_StrictModel):
     wisdom_bit_id: str = Field(min_length=1, max_length=120)
     cartridge_id: str = Field(default="sap_successfactors", max_length=120)
     payload: dict[str, Any] = Field(default_factory=dict)
-    # Mission 5: forwarded by mcp-infra for scheduled monitors so console can
-    # attest the observation it computes. Optional: without it nothing is
-    # attested and the route behaves exactly as before.
     effect_authority: dict[str, Any] | None = None
 
     @field_validator("payload")
@@ -580,15 +577,6 @@ async def _with_monitor_evidence(
     internal_service: str,
     payload: Any,
 ) -> Any:
-    """Mission 5: attest the wisdom-bit observation of a scheduled monitor.
-
-    Additive and fail-open for the monitor: the payload comes back unchanged
-    unless a ticket was minted, in which case it also carries the opaque
-    ``evidence_handle``. A ticket needs all three of: a signed context whose
-    source is ``agent_runner``, a scheduled-effect authority that verifies
-    here, and a lease the database accepts. Everyone else, conversational
-    agents included, stays advisory-only.
-    """
     if not isinstance(payload, dict):
         return payload
     if user.get("security_context_source") != "agent_runner":
@@ -787,15 +775,8 @@ async def intelligence_wisdom_bits_run_internal(
     user = _internal_mcp_user(body, internal_service)
     wisdom_bit_id = body.wisdom_bit_id.strip().upper()
 
-    # Mission 4: the Finance / Operations / Risk monitors are wisdom bits built
-    # from the Mission 2 domain KPI views. Before this the route accepted only
-    # WB-TALENTO, which is what stopped the other three domains from ever running
-    # the deterministic monitor chain: run_scheduled_monitor always calls
-    # wisdom_bits__run first, so a 404 here ended every run.
     domain_spec = domain_monitors.spec_for_wisdom_bit(wisdom_bit_id)
     if domain_spec is not None:
-        # Accept the hyphen spelling too, matching how the Talent branch below
-        # tolerates "sap-successfactors".
         requested_cartridge = str(body.cartridge_id or "").strip().replace("-", "_")
         if requested_cartridge != domain_spec.cartridge_id:
             raise HTTPException(

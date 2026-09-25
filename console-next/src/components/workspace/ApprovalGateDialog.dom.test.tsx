@@ -91,11 +91,9 @@ describe("ApprovalGateDialog focus trap", () => {
     expect(approve).toBeDefined();
     expect(document.activeElement).toBe(cancel);
 
-    // Shift+Tab desde el primer foco salta al último elemento.
     await pressKey("Tab", { shiftKey: true });
     expect(document.activeElement).toBe(approve);
 
-    // Tab desde el último elemento vuelve al primero.
     await pressKey("Tab");
     expect(document.activeElement).toBe(cancel);
   });

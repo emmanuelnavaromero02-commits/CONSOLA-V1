@@ -80,8 +80,6 @@ FOUNDATION_EXTRACT_ALL_ENTITIES = {
     "Position",
 }
 
-# Cartridge header metadata — used to UPSERT the `cartridges` row on startup so
-# Studio's "Fuente de datos" dropdown lists this cartridge alongside Replicon.
 CARTRIDGE_META = {
     "name":        "SAP SuccessFactors",
     "version":     "1.0.0",
@@ -107,7 +105,6 @@ _SAFE_METADATA_FAILURE_CODES = frozenset(
 
 
 def _safe_metadata_failure_code(exc: Exception) -> str:
-    """Classify a metadata failure without returning its URL/body/token text."""
 
     current: BaseException | None = exc
     status: int | None = None
@@ -149,8 +146,6 @@ def _get_engine():
     return _engine
 
 
-# ── YAML fallbacks ────────────────────────────────────────────────────────────
-
 def _yaml_entities() -> list[dict[str, Any]]:
     if not ENTITIES_PATH.exists():
         return []
@@ -191,21 +186,14 @@ def _merge_yaml_runtime_fields(row: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
-# ── Seed on startup ───────────────────────────────────────────────────────────
-
 def _dag_id_for_entity(entity: dict[str, Any]) -> str:
     return entity.get("dag_id") or f"{CARTRIDGE_ID}_extract"
 
 
 def _seed_if_empty() -> None:
-    """Top-up entity_config from YAML on every startup (entities missing from the
-    DB get inserted; existing rows are preserved via ON CONFLICT DO NOTHING) so
-    partial catalog states self-heal. Also upserts the cartridge header so Studio's
-    dropdown picks it up, and seeds kb_config when empty."""
     try:
         engine = _get_engine()
         with engine.begin() as conn:
-            # Ensure the cartridge header exists (Studio dropdown reads this).
             conn.execute(text("""
                 INSERT INTO cartridges (id, name, version, description, pattern, category, bronze_path)
                 VALUES (:cid, :name, :version, :description, :pattern, :category, :bronze_path)
@@ -219,10 +207,6 @@ def _seed_if_empty() -> None:
                         updated_at  = NOW()
             """), {"cid": CARTRIDGE_ID, **CARTRIDGE_META})
 
-            # Top-up entity_config from YAML on every startup so partial DB states
-            # self-heal (entities missing from the DB get inserted). ON CONFLICT
-            # DO NOTHING preserves any existing row, so admin edits and
-            # migration-set fields (odata_entity, primary_key) are never clobbered.
             for e in _yaml_entities():
                 conn.execute(text("""
                     INSERT INTO entity_config (
@@ -257,8 +241,6 @@ def _seed_if_empty() -> None:
                 })
 
     except Exception as exc:
-        # Driver exceptions can embed a DSN or signed request details. The
-        # startup health surface needs only a stable component failure code.
         logger.error(
             "Failed to seed SAP SuccessFactors catalog from YAML error_type=%s",
             type(exc).__name__,
@@ -295,8 +277,6 @@ def _seed_if_empty() -> None:
             type(exc).__name__,
         )
 
-
-# ── Public API ────────────────────────────────────────────────────────────────
 
 def get_all_entities() -> list[dict[str, Any]]:
     try:
@@ -361,10 +341,6 @@ def _metadata_entities_for_connection(
             None,
         )
     except Exception as exc:  # noqa: BLE001 - metadata preflight is fail-closed.
-        # Do not copy the upstream exception into API/job payloads: depending on
-        # the HTTP client it may contain a URL, query string or credential
-        # diagnostics.  Operators still get the exception class in server logs
-        # while callers receive only the stable, allowlisted blocker below.
         logger.warning(
             "SuccessFactors metadata preflight failed conn_id=%s error_type=%s",
             conn_id,
@@ -494,7 +470,6 @@ def _required_config_outcome(config: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def required_entity_config_block(config: dict[str, Any]) -> dict[str, Any] | None:
-    """Public fail-closed validation shared by single and batch extraction paths."""
     return _required_config_outcome(config)
 
 
@@ -546,10 +521,6 @@ def _prepare_config_with_metadata_fields(
             fields_missing=missing_required_fields,
         )
 
-    # A configured $select is corrected to the live schema.  Operationally
-    # required fields are appended when they exist so a stale catalog cannot
-    # accidentally omit the key/watermark/date needed downstream.  The
-    # expected schema below remains based on the original catalog declaration.
     implicit_fields = [
         primary_key,
         str(config.get("watermark_field") or "").strip(),
@@ -602,12 +573,6 @@ def prepare_entity_config_for_metadata(
     security_context: dict[str, Any] | None = None,
     metadata_entities: dict[str, set[str]] | None = None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    """Validate/prune one extraction config against live SuccessFactors metadata.
-
-    Missing entitysets become explicit skips. Missing optional select fields are
-    dropped from ``$select`` while ``expected_select_fields`` keeps the Bronze
-    schema stable with null columns for downstream Silver SQL.
-    """
     entity = str(config.get("entity") or "").strip()
     odata_entity = str(config.get("odata_entity") or entity).strip() or entity
     if metadata_entities is None:
@@ -766,12 +731,6 @@ def get_extract_all_plan(
     security_context: dict[str, Any] | None = None,
     target: str | None = "all",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Return the Studio-first live extraction plan for extract_all.
-
-    ``entity_config enabled=true`` is the contract. Every enabled Studio entity
-    must either be selected for extraction or returned as an explicit outcome;
-    no internal deny-list may make entities disappear from the batch plan.
-    """
     selected_conn_id = (conn_id or "").strip()
     tenant_id, workspace_id = _security_scope(security_context)
     normalized_target = _normalize_extract_all_target(target)
@@ -796,8 +755,6 @@ def get_extract_all_plan(
         if not entity:
             continue
         if entity.startswith("__"):
-            # Pseudo entries ('__talent_cpa__' outcomes, the '__foundation_cycle__'
-            # scheduler marker) are not extractable OData entities.
             continue
         configured_entities.add(entity)
 
@@ -830,8 +787,6 @@ def get_extract_all_plan(
                     "conn_id": selected_conn_id,
                     "connection_id": selected_conn_id,
                 }
-            # A selected Vault connection can reuse old workspace-scoped entity
-            # templates; extracted data is still written with the current scope.
             if not _matches_security_scope(config, tenant_id, workspace_id) and not _uses_selected_connection(
                 config,
                 selected_conn_id,

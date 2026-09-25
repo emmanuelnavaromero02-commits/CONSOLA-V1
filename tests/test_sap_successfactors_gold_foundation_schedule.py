@@ -1,10 +1,3 @@
-"""SuccessFactors Gold dependency schedule contract.
-
-The packaged Gold datasets for employee 360/headcount/org/turnover depend on
-Foundation Objects and EmpEmploymentTermination. AWS needs those entities to be
-scheduled with the same FEMSA scoped Vault connection as the existing seven live
-entities.
-"""
 from __future__ import annotations
 
 from pathlib import Path

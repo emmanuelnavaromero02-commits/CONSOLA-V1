@@ -59,12 +59,11 @@ Fetcher = Callable[[str, Mapping[str, str], float], tuple[int, Any]]
 
 
 class PackageVisibilityError(RuntimeError):
-    """Raised for unsafe or invalid local checker configuration."""
+    pass
 
 
 @dataclass(frozen=True)
 class PackageCheck:
-    """A sanitized result for one package; it never contains credentials."""
 
     package: str
     private: bool
@@ -129,13 +128,10 @@ def _validate_inventory(names: Sequence[str]) -> tuple[str, ...]:
             f"{suffix}"
         )
 
-    # Query in one deterministic order even if a reviewed custom file uses a
-    # different presentation order.
     return CANONICAL_PACKAGE_NAMES
 
 
 def load_inventory(path: Path) -> tuple[str, ...]:
-    """Load and validate a shell, JSON, or newline-delimited inventory."""
 
     try:
         text = path.read_text(encoding="utf-8")
@@ -196,8 +192,6 @@ def _fetch_json(url: str, headers: Mapping[str, str], timeout: float) -> tuple[i
             status = int(response.status)
             raw = response.read(MAX_RESPONSE_BYTES + 1)
     except HTTPError as exc:
-        # The response body is deliberately ignored: it is unnecessary for the
-        # decision and may contain details that should not reach CI logs.
         return int(exc.code), None
     except (URLError, TimeoutError, OSError) as exc:
         raise PackageVisibilityError("GitHub Packages API request failed") from exc
@@ -233,7 +227,7 @@ def _check_package(
         url = _package_url(api_url, owner, candidate_kind, package)
         try:
             status, payload = fetcher(url, headers, timeout)
-        except Exception:  # A transport must never make this gate fail open.
+        except Exception:
             return PackageCheck(package, False, "transport_error", candidate_kind)
 
         if not isinstance(status, int):
@@ -255,7 +249,6 @@ def _check_package(
             elif visibility is None:
                 reason = "visibility_missing"
             else:
-                # Do not reflect arbitrary API response data into CI logs.
                 reason = "visibility_invalid"
             return PackageCheck(package, False, reason, candidate_kind)
         return PackageCheck(package, True, "private", candidate_kind)
@@ -273,7 +266,6 @@ def verify_release_packages(
     timeout: float = 10.0,
     fetcher: Fetcher = _fetch_json,
 ) -> tuple[PackageCheck, ...]:
-    """Return a result for all 16 packages without changing GitHub state."""
 
     owner = _validate_owner(owner)
     token = token.strip()

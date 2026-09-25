@@ -1,5 +1,3 @@
-"""DB-gated canaries for the F-SEG identity/session boundary."""
-
 from __future__ import annotations
 
 import hashlib
@@ -205,8 +203,6 @@ async def test_workspace_cannot_read_secrets_or_forge_admin_session(
         )
         assert denied_workspace == []
 
-        # A compromised Workspace role can no longer choose its own clock,
-        # sliding threshold, or absolute-lifetime cutoff.
         with pytest.raises(asyncpg.UndefinedFunctionError):
             await workspace.fetch(
                 """SELECT * FROM omega_auth_resolve_workspace_session(

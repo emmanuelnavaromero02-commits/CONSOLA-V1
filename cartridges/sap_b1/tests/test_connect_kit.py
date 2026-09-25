@@ -1,4 +1,3 @@
-"""Static checks on the connection kit under ``cartridges/sap_b1/connect``."""
 from __future__ import annotations
 
 import ast
@@ -50,7 +49,6 @@ PASSWORD_FLAG = re.compile(r'(?<![\w-])-p(?=$|[\s")])')
 
 
 def _git(*args: str) -> str | None:
-    """stdout of a git command run at the repository root, None without git."""
     try:
         result = subprocess.run(["git", *args], cwd=REPO_ROOT, capture_output=True, text=True, check=False)
     except OSError:
@@ -60,7 +58,6 @@ def _git(*args: str) -> str | None:
 
 @functools.lru_cache(maxsize=None)
 def _git_index() -> dict[str, str] | None:
-    """Tracked kit files as {path relative to connect/."""
     kit = KIT.relative_to(REPO_ROOT).as_posix()
     out = _git("ls-files", "-s", "-z", "--", kit)
     if out is None:
@@ -83,7 +80,6 @@ def _is_utf8_text(path: Path) -> bool:
 
 
 def _kit_files() -> list[Path]:
-    """The kit as git knows it, so a stray .DS_Store, swap file or byte-code in a checkout never enters the secret scan."""
     index = _git_index()
     if index is not None:
         return sorted(KIT / relative for relative in index if (KIT / relative).is_file())
@@ -95,7 +91,6 @@ def _read(relative: str) -> str:
 
 
 def _sql_statements(text: str) -> list[str]:
-    """Uncommented SQL statements, whitespace-normalised, without the ';'."""
     text = re.sub(r"/\*.*?\*/", " ", text, flags=re.DOTALL)
     text = re.sub(r"--[^\n]*", " ", text)
     statements = []
@@ -107,7 +102,6 @@ def _sql_statements(text: str) -> list[str]:
 
 
 def _settings_sap_b1_vars() -> set[str]:
-    """SAP_B1_* variables the cartridge Settings class declares."""
     tree = ast.parse(CONFIG_PY.read_text(encoding="utf-8"))
     names: set[str] = set()
     for node in ast.walk(tree):
@@ -144,7 +138,6 @@ def _env_template_vars() -> set[str]:
 
 
 def _block(text: str, start: str, end: str) -> str:
-    """The lines from the first one containing ``start`` up to and including the next one containing ``end``."""
     lines = text.splitlines()
     first = next(i for i, line in enumerate(lines) if start in line)
     last = next(i for i, line in enumerate(lines) if i > first and end in line)
@@ -163,7 +156,6 @@ def test_every_deliverable_exists_and_is_not_empty(relative):
 
 
 def test_no_stray_files_in_the_kit():
-    """Anything else under connect/ is either a deliverable or lives in the windows-agent tree another engineer owns."""
     for path in _kit_files():
         relative = path.relative_to(KIT).as_posix()
         assert relative in EXPECTED_FILES or relative.startswith("windows-agent/"), relative
@@ -216,7 +208,7 @@ FORBIDDEN_SQL = (
     re.compile(r"CATALOG READ", re.I),
     re.compile(r"DATA ADMIN", re.I),
     re.compile(r"USER ADMIN", re.I),
-    re.compile(r"SBOCOMMON", re.I),  # the common schema is an opt-in comment, never a live grant
+    re.compile(r"SBOCOMMON", re.I),
 )
 GRANT_SHAPE = re.compile(r'^GRANT SELECT ON SCHEMA "<COMPANY_DB_[123]>" TO <OMEGA_B1_READER>$')
 REVOKE_SHAPE = re.compile(r'^REVOKE SELECT ON SCHEMA "<COMPANY_DB_[123]>" FROM <OMEGA_B1_READER>$')
@@ -303,7 +295,6 @@ def test_shell_scripts_parse_and_fail_closed(relative):
 
 
 def _hdbsql_argument_block(relative: str) -> str:
-    """The whole block that builds and runs the hdbsql argument list, not just the lines that mention hdbsql."""
     text = _read(relative)
     if relative.endswith(".sh"):
         return _block(text, "if command -v hdbsql", 'hdbsql "${args[@]}"')
@@ -358,7 +349,6 @@ def test_env_template_lists_exactly_the_variables_the_cartridge_declares():
 
 
 def test_compose_forwards_every_variable_the_env_template_names():
-    """Every SAP_B1_* the operator is told to set reaches the container."""
     compose = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
     environment = compose["services"]["sap-b1"]["environment"]
     assert isinstance(environment, dict), "the sap-b1 environment block must be a mapping"
@@ -455,8 +445,6 @@ def test_client_template_limits_allowed_ips_to_our_tunnel_address():
 
 
 def _rendered_config_lines(text: str) -> tuple[list[str], int, int]:
-    """The script's lines plus the indexes of the `{` ... `} > "$RENDERED"`
-    group that renders the WireGuard config."""
     lines = text.splitlines()
     opened = lines.index("{")
     closed = lines.index('} > "$RENDERED"')
@@ -496,7 +484,6 @@ def _post_rules(text: str, hook: str) -> list[str]:
 
 
 def test_server_install_script_drops_anything_the_customer_initiates():
-    """The tunnel is one-way: replies to what we open come back, a NEW connection from the peer never reaches the host or."""
     text = _read("vpn/server/install_wireguard_host.sh")
     ups = _post_rules(text, "PostUp")
     downs = _post_rules(text, "PostDown")

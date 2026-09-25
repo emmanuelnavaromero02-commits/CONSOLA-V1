@@ -1,9 +1,3 @@
-"""Runtime URL and environment parsing helpers.
-
-These helpers keep local/docker/AWS URL decisions in one place so routers and
-services do not drift into subtly different localhost fallbacks.
-"""
-
 from __future__ import annotations
 
 import ipaddress

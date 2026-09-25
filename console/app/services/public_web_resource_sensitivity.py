@@ -1,5 +1,3 @@
-"""Web URL and internal-host checks for public response copy."""
-
 from __future__ import annotations
 
 import ipaddress
@@ -92,7 +90,6 @@ def _internal_ip_literal(host: str) -> bool:
 
 
 def contains_internal_host_literal(value: str) -> bool:
-    """Detect internal host and IP literals even when embedded in prose."""
 
     if any(
         _is_internal_web_host(match.group("host"))
@@ -130,7 +127,6 @@ def web_url_contains_sensitive_resource(
     contains_embedded_resource: Callable[[str], bool],
     _depth: int = 0,
 ) -> bool:
-    """Inspect one external URL, recursively including nested URL parameters."""
 
     if _depth >= _MAX_NESTED_URL_DEPTH:
         return True

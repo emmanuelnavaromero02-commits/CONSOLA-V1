@@ -1,5 +1,3 @@
-"""Release harness seal contracts carried into the v1.45.222 successor."""
-
 from __future__ import annotations
 
 import json

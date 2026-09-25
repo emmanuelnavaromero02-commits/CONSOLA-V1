@@ -1,25 +1,3 @@
-"""
-DAG: agent_runner
-
-Cada 5 minutos pide a Console una enumeración server-owned y RLS-scoped de
-agentes cuyo `extra.schedule.cron` cae en el intervalo. Después invoca cada
-capability contra `/api/agents/<id>/invoke/scheduled`.
-
-El mensaje enviado al agente es `extra.schedule.prompt` si existe,
-de lo contrario "ejecuta tu tarea programada".
-
-Para que un agente se ejecute aquí:
-  - `extra.schedule.cron`: expresión cron válida (puede incluir tz vía
-    `extra.schedule.tz`, default UTC).
-  - opcional `extra.schedule.prompt`: instrucción concreta para esa
-    invocación programada.
-  - opcional `extra.schedule.enabled = false` para pausar sin borrar.
-
-Resultado: cada invocación crea un row en `agent_runs` (lo hace el
-runtime del console) y este DAG además registra un row en `pipeline_runs`
-para que la UI muestre la última corrida del agent_runner.
-"""
-
 from __future__ import annotations
 
 import os
@@ -33,8 +11,6 @@ from airflow.utils.trigger_rule import TriggerRule
 from agent_runner_outcome import require_scheduled_invocation
 from agent_runner_record import record_agent_runner_run
 
-
-# ── Config ───────────────────────────────────────────────────────────────────
 
 CARTRIDGE_ID = "platform"
 ENTITY = "AgentRunner"
@@ -72,18 +48,10 @@ def _pause_scheduled_dag_on_creation() -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-# Shared token so this DAG can call /invoke/scheduled without a user cookie.
-# Set in the App EC2's .env as AGENT_RUNNER_TOKEN, propagated to mode_airflow
-# and mode_console via docker-compose env.
 RUNNER_TOKEN = os.environ.get("AGENT_RUNNER_TOKEN", "")
 
-# DAG runs every 5 min. We look back over this same window so a cron that
-# fires anywhere in [previous_run, now) gets dispatched exactly once per fire.
 INTERVAL_MIN = 5
 
-# Deferred alert narration runs after the monitors and must finish well inside
-# the 5-minute schedule. The HTTP timeout sits under the task timeout so a slow
-# Console fails the request (and only this task) before Airflow kills it.
 NARRATE_ALERTS_PATH = "/api/operations/internal/control-room/narrate-alerts"
 NARRATE_HTTP_TIMEOUT_SECONDS = 210
 NARRATE_TASK_TIMEOUT = timedelta(minutes=4)
@@ -116,12 +84,8 @@ def _mcp_headers() -> dict[str, str]:
     }
 
 
-# ── Task 1 · find_due_agents ─────────────────────────────────────────────────
-
-
 def find_due_agents(**context):
-    """Pick agents whose cron expression fires inside this scheduling window."""
-    logical_date = context["logical_date"]  # tz-aware UTC
+    logical_date = context["logical_date"]
     window_end = logical_date + timedelta(minutes=INTERVAL_MIN)
 
     url = f"{CONSOLE_URL.rstrip('/')}/api/operations/internal/agent-runner/due"
@@ -157,9 +121,6 @@ def find_due_agents(**context):
         },
     )
     return len(due)
-
-
-# ── Task 2 · invoke_each ─────────────────────────────────────────────────────
 
 
 def invoke_each(**context):
@@ -233,18 +194,7 @@ def record_run(**context):
     )
 
 
-# ── Task 4 · narrate_alerts ──────────────────────────────────────────────────
-
-
 def narrate_alerts(**_context):
-    """Ask Console to narrate open monitor alerts. Advisory; executes nothing.
-
-    Runs after invoke_each with trigger_rule=all_done, so narration still happens
-    when some invocations failed. It is a sibling of record_run rather than its
-    successor: Airflow derives the DAG-run state from the leaf tasks, and a
-    narration leaf that succeeds must not turn a failed record_run into a green
-    run. A failure here fails only this task, never the monitors.
-    """
     url = f"{CONSOLE_URL.rstrip('/')}{NARRATE_ALERTS_PATH}"
     try:
         response = requests.post(
@@ -277,8 +227,6 @@ def narrate_alerts(**_context):
     summary["failures"] = len(data.get("failures") or [])
     return summary
 
-
-# ── DAG wiring ───────────────────────────────────────────────────────────────
 
 t_find = PythonOperator(
     task_id="find_due_agents",

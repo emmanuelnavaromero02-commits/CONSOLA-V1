@@ -5,11 +5,6 @@ import type { LucideIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
-/**
- * Tablist accesible (patrón WAI-ARIA Tabs con activación automática):
- * roving tabIndex, flechas izquierda/derecha con ciclo, Home/End, y
- * asociación tab ↔ panel vía aria-controls / aria-labelledby.
- */
 export interface OiTabMeta<Id extends string = string> {
   id: Id;
   label: string;

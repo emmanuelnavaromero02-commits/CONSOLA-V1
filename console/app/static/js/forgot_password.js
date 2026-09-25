@@ -1,5 +1,3 @@
-// Sprint v1.11 — extracted from forgot_password.html for strict CSP.
-
 function getCsrfToken() {
   const m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
   return m ? decodeURIComponent(m[1]) : '';

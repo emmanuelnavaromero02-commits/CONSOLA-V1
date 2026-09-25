@@ -1,12 +1,3 @@
-"""
-SAP HCM MCP Server
-===================
-Exposes 8 tools over Streamable HTTP so that Claude (or any MCP client)
-can inspect, extract, and query SAP HCM data without writing custom code.
-
-Mount path: /mcp  (configured in main.py)
-"""
-
 from __future__ import annotations
 
 import re
@@ -15,12 +6,6 @@ from typing import Any
 from fastmcp import FastMCP
 
 
-# Sprint v1.35 (audit B3 P0): local SQL-identifier validator. We can't
-# import from mcp-infra here because cartridges intentionally don't
-# share code (each runs in its own container with its own deps); the
-# regex matches refinement.app.duckdb_engine.SAFE_IDENTIFIER_RE and
-# mcp-infra/app/tools/_validators.py so the platform speaks one
-# language about what "a safe identifier" is.
 _SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 _MAX_QUERY_LIMIT = 5000
 
@@ -95,9 +80,6 @@ mcp = FastMCP(
 )
 
 
-# ── Tool 1: list_entities ─────────────────────────────────────────────────────
-
-
 @mcp.tool()
 def list_entities() -> list[dict[str, Any]]:
     """
@@ -119,9 +101,6 @@ def list_entities() -> list[dict[str, Any]]:
             }
         )
     return result
-
-
-# ── Tool 2: get_schema ────────────────────────────────────────────────────────
 
 
 @mcp.tool()
@@ -149,9 +128,6 @@ def get_schema(entity: str) -> dict[str, Any]:
     }
 
 
-# ── Tool 3: preview ───────────────────────────────────────────────────────────
-
-
 @mcp.tool()
 def preview(entity: str, limit: int = 20) -> dict[str, Any]:
     """
@@ -162,10 +138,6 @@ def preview(entity: str, limit: int = 20) -> dict[str, Any]:
         entity: Entity name (e.g. "User", "TimeEntry")
         limit:  Maximum number of rows to return (default 20, max 200)
     """
-    # Sprint v1.35 (audit B3 P0): validate entity / limit before they
-    # land in the f-string. Without this an attacker could pass entity
-    # = "X/load_date=*/batch_id=*/*.parquet') UNION SELECT * FROM ..."
-    # and inject a second read_parquet() call.
     entity = _validate_identifier(entity, "entity")
     limit = _validate_bounded_int(limit, "limit", lo=1, hi=200)
     bucket = settings.minio_bucket
@@ -192,9 +164,6 @@ def preview(entity: str, limit: int = 20) -> dict[str, Any]:
         }
     except Exception as exc:
         return {"entity": entity, "error": str(exc), "rows": [], "columns": []}
-
-
-# ── Tool 4: extract (BATCH — returns immediately) ─────────────────────────────
 
 
 @mcp.tool()
@@ -226,9 +195,6 @@ async def extract(
     )
 
 
-# ── Tool 4b: extract_all (BATCH — extrae todas las entidades) ────────────────
-
-
 @mcp.tool()
 async def extract_all(mode: str = "incremental") -> dict[str, Any]:
     """
@@ -244,9 +210,6 @@ async def extract_all(mode: str = "incremental") -> dict[str, Any]:
         mode: "full" | "incremental" (default: incremental)
     """
     return await job_runner.create_extract_all_job(mode)
-
-
-# ── Tool 4c: get_run_logs ─────────────────────────────────────────────────────
 
 
 @mcp.tool()
@@ -290,9 +253,6 @@ async def get_run_logs(job_id: str, limit: int = 50) -> list[dict[str, Any]]:
     return result
 
 
-# ── Tool 5: get_job_status ────────────────────────────────────────────────────
-
-
 @mcp.tool()
 async def get_job_status(job_id: str) -> dict[str, Any]:
     """
@@ -304,9 +264,6 @@ async def get_job_status(job_id: str) -> dict[str, Any]:
     return await job_runner.get_job(job_id)
 
 
-# ── Tool 5b: list_jobs ────────────────────────────────────────────────────────
-
-
 @mcp.tool()
 async def list_jobs(limit: int = 10) -> list[dict[str, Any]]:
     """
@@ -316,9 +273,6 @@ async def list_jobs(limit: int = 10) -> list[dict[str, Any]]:
         limit: Number of jobs to return (default 10, max 50)
     """
     return await job_runner.list_jobs(limit)
-
-
-# ── Tool 6: list_kbs ─────────────────────────────────────────────────────────
 
 
 @mcp.tool()
@@ -340,9 +294,6 @@ def list_kbs() -> list[dict[str, Any]]:
     ]
 
 
-# ── Tool 7: run_kb ────────────────────────────────────────────────────────────
-
-
 @mcp.tool()
 def run_kb(kb_id: str) -> dict[str, Any]:
     """
@@ -356,9 +307,6 @@ def run_kb(kb_id: str) -> dict[str, Any]:
         return run_knowledge_bit(kb_id)
     except Exception as exc:
         return {"kb_id": kb_id, "status": "failed", "error": str(exc)}
-
-
-# ── Tool 8: query_kb ─────────────────────────────────────────────────────────
 
 
 @mcp.tool()
@@ -411,11 +359,7 @@ def query_kb(sql: str, limit: int = 100) -> dict[str, Any]:
         return {"error": "query_failed", "reason": "DuckDB query failed"}
 
 
-# ── Custom tools loader ───────────────────────────────────────────────────────
-
-
 def _make_sql_tool(name: str, description: str, sql: str) -> None:
-    """Register a SQL-query custom tool on the mcp instance."""
     from app.core.sql_guard import validate_kb_sql
 
     resolved_sql = sql.replace("{bucket}", settings.minio_bucket)
@@ -465,7 +409,6 @@ def _make_sql_tool(name: str, description: str, sql: str) -> None:
 
 
 def _make_extract_tool(name: str, description: str, entity: str, mode: str) -> None:
-    """Register an entity-extract custom tool on the mcp instance."""
 
     def _tool_fn() -> dict[str, Any]:
         config = get_entity_config(entity)
@@ -484,7 +427,6 @@ def _make_extract_tool(name: str, description: str, entity: str, mode: str) -> N
 
 
 def _make_kb_tool(name: str, description: str, kb_id: str) -> None:
-    """Register a Knowledge Bit runner custom tool on the mcp instance."""
 
     def _tool_fn() -> dict[str, Any]:
         try:
@@ -498,10 +440,6 @@ def _make_kb_tool(name: str, description: str, kb_id: str) -> None:
 
 
 def load_custom_tools() -> int:
-    """
-    Load custom tool definitions from mcp_custom_tools in PostgreSQL
-    and register them on the mcp instance. Returns the count loaded.
-    """
     try:
         from app.core.pg_client import get_connection
 
@@ -543,7 +481,6 @@ def load_custom_tools() -> int:
     return loaded
 
 
-# Failure (e.g. DB unavailable in tests) must not abort module import.
 try:
     load_custom_tools()
 except Exception:

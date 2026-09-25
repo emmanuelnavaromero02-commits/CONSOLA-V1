@@ -1,11 +1,3 @@
-"""Sprint v1.43 — copilot multi-source orchestration.
-
-Verifies:
-  * A two-cartridge query produces one citation per cartridge.
-  * The server-side guardrail trims to MAX_DISTINCT_SOURCES_PER_TURN
-    when the LLM ignores the system-prompt cap.
-  * Citations stay grouped by source in appearance order.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -117,7 +109,6 @@ def _patch(mod, db, tools, fake_chat, fake_invoke):
 def test_two_cartridge_query_returns_two_citations(copilot_module):
     db = _FakeDB()
 
-    # The LLM calls one tool from Replicon and one from SAP HCM.
     async def fake_invoke(server_id, tool, args, **_kwargs):
         if server_id == "replicon":
             return {"_meta": {"entity": "TimeEntry", "row_count": 40,
@@ -168,15 +159,12 @@ def test_two_cartridge_query_returns_two_citations(copilot_module):
 
     sources = {c["source"] for c in out["citations"]}
     assert sources == {"replicon", "sap_hcm"}
-    # And both citations are present.
     by_src = {c["source"]: c for c in out["citations"]}
     assert by_src["replicon"]["entity"] == "TimeEntry"
     assert by_src["sap_hcm"]["entity"]  == "Employee"
 
 
 def test_source_cap_enforced_at_3(copilot_module, caplog):
-    """If the LLM reaches for >3 cartridges, server trims citations to
-    only the first 3 sources (in invocation order) and logs a warning."""
     db = _FakeDB()
 
     async def fake_invoke(server_id, tool, args, **_kwargs):
@@ -184,7 +172,6 @@ def test_source_cap_enforced_at_3(copilot_module, caplog):
                           "timestamp": "2026-05-16T00:00:00Z"}}
 
     async def fake_chat(*, messages, invoke_tool, **_kw):
-        # Reach for 4 distinct sources — one over the cap.
         await invoke_tool("replicon",            "do_x", {})
         await invoke_tool("sap_hcm",             "do_x", {})
         await invoke_tool("sap_s4hana",          "do_x", {})
@@ -231,17 +218,12 @@ def test_source_cap_enforced_at_3(copilot_module, caplog):
 
     surfaced_sources = {c["source"] for c in out["citations"]}
     assert len(surfaced_sources) == copilot_module.MAX_DISTINCT_SOURCES_PER_TURN
-    # Insertion order: the FIRST 3 reached survive.
     assert surfaced_sources == {"replicon", "sap_hcm", "sap_s4hana"}
-    # The 4th (sap_successfactors) was trimmed.
     assert "sap_successfactors" not in surfaced_sources
-    # And the warning was logged.
     assert any("multi_source_limit_exceeded" in r.message for r in caplog.records)
 
 
 def test_citations_grouped_by_source_in_order(copilot_module):
-    """Citations come back in the order they were invoked. The UI uses
-    that ordering to render cards left-to-right."""
     db = _FakeDB()
 
     async def fake_invoke(server_id, tool, args, **_kwargs):
@@ -286,7 +268,6 @@ def test_citations_grouped_by_source_in_order(copilot_module):
         user=admin,
     ))
     ordered = [c["source"] for c in out["citations"]]
-    # sap_hcm came first → its citation appears first.
     assert ordered[0] == "sap_hcm"
     assert ordered[1] == "replicon"
 

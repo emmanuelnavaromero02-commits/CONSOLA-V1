@@ -1,9 +1,3 @@
-"""
-Lazy PostgreSQL connection helpers.
-
-The engine is built on first use so that an empty ``DATABASE_URL`` (e.g. in
-unit tests) does not crash at module import time.
-"""
 from __future__ import annotations
 
 from urllib.parse import urlparse
@@ -37,7 +31,6 @@ def _get_engine() -> Engine:
 
 
 def get_connection():
-    """Return a raw psycopg2 connection parsed from settings.database_url."""
     if not settings.database_url:
         raise RuntimeError("DATABASE_URL is not configured")
     parsed = urlparse(

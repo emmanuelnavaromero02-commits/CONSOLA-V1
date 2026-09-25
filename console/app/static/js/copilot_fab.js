@@ -1,16 +1,3 @@
-/* ──────────────────────────────────────────────────────────────────────────
- * copilot_fab.js — v1.44.1 (Tarea C)
- *
- * Drop-in floating action button that any authenticated page can include
- * to surface the copilot. Skips itself on /copilot (don't FAB the copilot
- * page) and on the login page (no FAB pre-auth).
- *
- *   <script src="/static/js/copilot_fab.js" defer></script>
- *
- * Styling lives in components.css (.fab). The script's only job is the
- * DOM injection + page-aware skip logic + click handler.
- * ────────────────────────────────────────────────────────────────────── */
-
 (function () {
   'use strict';
 
@@ -37,7 +24,7 @@
     fab.setAttribute('data-fab', 'copilot');
     fab.setAttribute('aria-label', 'Abre el copiloto');
     fab.setAttribute('title',      'Abre el copiloto');
-    fab.textContent = '🤖';  // 🤖
+    fab.textContent = '🤖';
     fab.addEventListener('click', function () {
       window.location.href = '/copilot';
     });

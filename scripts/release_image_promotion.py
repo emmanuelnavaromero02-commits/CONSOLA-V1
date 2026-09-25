@@ -1,19 +1,4 @@
 #!/usr/bin/env python3
-"""Build evidence and recoverably promote the 16 release images.
-
-The build matrix publishes only untagged, content-addressed candidates.  This
-module verifies their OCI graph and BuildKit attestation, seals one immutable
-receipt per service to the current Actions run, and promotes the exact top
-manifest bytes only after all receipts and a canonical promotion intent exist.
-Candidates deliberately remain untagged in the already-private canonical GHCR
-package.  Registry retention may garbage-collect them after their useful life;
-a missing digest blocks recovery and never authorizes a rebuild or substitute.
-
-Manifest/tag lookups never follow redirects.  The only redirects accepted are
-GHCR blob downloads to ``pkg-containers.githubusercontent.com`` and GitHub
-artifact archives to ``*.blob.core.windows.net``; credentials are stripped on
-both hops.
-"""
 
 from __future__ import annotations
 
@@ -68,12 +53,6 @@ CANONICAL_SERVICES = (
     "salesforce",
     "sap_b1",
 )
-# The Airflow Dockerfile inherits these reviewed labels from its version-selected
-# ``apache/airflow:2.10.5`` base.  Every other release image currently inherits
-# no labels from ``python:3.12-slim``.  Managed release identity keys below
-# overwrite the base source/revision/version values and are checked separately.
-# F2 binds and tests the resulting artifact digest; it does not claim a
-# bit-for-bit rebuild. Base digest pinning, SBOM and provenance belong to F17.
 EXPECTED_INHERITED_LABELS: dict[str, dict[str, str]] = {
     "airflow": {
         "org.apache.airflow.component": "airflow",
@@ -115,7 +94,7 @@ REPOSITORY_RE = re.compile(
 
 
 class PromotionError(RuntimeError):
-    """Evidence is absent, ambiguous, malformed, or not bound to this run."""
+    pass
 
 
 @dataclass(frozen=True)
@@ -318,7 +297,6 @@ def _validate_service(service: str) -> str:
 def expected_config_labels(
     identity: ReleaseIdentity, service: str
 ) -> dict[str, str]:
-    """Return the exact reviewed config-label allowlist for one service."""
 
     _validate_service(service)
     return {
@@ -533,7 +511,6 @@ class RegistryClient:
         return body
 
     def head_blob(self, service: str, descriptor: Mapping[str, Any]) -> None:
-        """Prove that one layer blob is present without loading it into memory."""
 
         descriptor = _validate_descriptor(descriptor, label="OCI layer descriptor")
         digest = descriptor["digest"]
@@ -668,7 +645,6 @@ def verify_candidate(
     service: str,
     digest: str,
 ) -> dict[str, object]:
-    """Validate the complete candidate graph and return its sealed receipt data."""
 
     _validate_service(service)
     digest = _validate_digest(digest, label="candidate digest")
@@ -1160,7 +1136,7 @@ def validate_intent(
 ) -> dict[str, Any]:
     if value != expected:
         raise PromotionError("promotion intent is not byte-equivalent current intent")
-    if not isinstance(value, dict):  # narrowed by equality, retained for typing
+    if not isinstance(value, dict):
         raise PromotionError("promotion intent schema is invalid")
     if value.get("run_id") != identity.run_id:
         raise PromotionError("promotion intent is cross-run")
@@ -1305,8 +1281,6 @@ def promote(
                         "final reference conflicts with sealed promotion intent"
                     )
                 continue
-            # This GET is intentionally adjacent to the mutation.  GHCR does
-            # not expose a portable cross-repository transaction primitive.
             registry.put_manifest(
                 receipt["service"],
                 reference,

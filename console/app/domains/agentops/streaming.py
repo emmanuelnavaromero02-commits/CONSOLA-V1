@@ -18,7 +18,6 @@ async def agent_invoke_stream_response(
     agent_runtime: Any,
     streaming_response_factory: Callable[..., StreamingResponse] = StreamingResponse,
 ) -> StreamingResponse:
-    """Build the SSE stream for an agent run after the route handles auth."""
 
     visible = await agents_service.get_agent(agent_id, user_context=user)
     if not visible:

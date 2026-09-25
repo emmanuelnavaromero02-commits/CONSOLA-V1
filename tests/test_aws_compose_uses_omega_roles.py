@@ -1,4 +1,3 @@
-"""Sprint v1.32 — AWS compose must not run app services as postgres superuser."""
 from __future__ import annotations
 
 from pathlib import Path

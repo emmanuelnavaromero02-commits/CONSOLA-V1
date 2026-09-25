@@ -84,7 +84,6 @@ def _context_cache_key(security_context: str | None) -> str:
 
 
 def _flatten_connection_fields(payload: dict[str, Any]) -> dict[str, Any]:
-    """Lift a nested ``fields`` mapping to the top level of the payload."""
     nested = payload.get("fields")
     if not isinstance(nested, dict):
         return payload
@@ -141,7 +140,6 @@ def _candidate_fields(env_var_name: str) -> tuple[str, ...]:
 
 
 def get_secret_for_worker(service_name: str, env_var_name: str, security_context: str | None = None) -> str:
-    """Resolve a worker credential from env first, then Console Vault."""
     value = os.environ.get(env_var_name)
     if value:
         return value
@@ -155,12 +153,10 @@ def get_secret_for_worker(service_name: str, env_var_name: str, security_context
 
 
 def get_connection_for_worker(service_name: str, security_context: str | None = None) -> dict[str, Any]:
-    """Return the resolved Console Vault connection payload for a worker."""
     return dict(_fetch_connection(service_name, security_context=security_context))
 
 
 def get_sap_b1_credentials() -> dict[str, str]:
-    """Return the Business One connection settings from env, Console Vault or settings."""
     resolved = {
         "dialect": get_secret_for_worker("sap_b1", "SAP_B1_DIALECT") or settings.sap_b1_dialect,
         "host": get_secret_for_worker("sap_b1", "SAP_B1_HOST") or settings.sap_b1_host,

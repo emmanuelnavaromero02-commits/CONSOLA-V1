@@ -1,5 +1,3 @@
-"""Release root tests must run in import-compatible, exhaustive groups."""
-
 from __future__ import annotations
 
 import ast
@@ -94,7 +92,6 @@ def test_release_root_target_partition_is_explicit_and_exhaustive() -> None:
 
 
 def test_each_workflow_group_satisfies_release_pytest_import_root_contract() -> None:
-    """Exercise the runner's real grouping function without its seal side effects."""
 
     tree = ast.parse(RUNNER.read_text(encoding="utf-8"), filename=str(RUNNER))
     function = next(

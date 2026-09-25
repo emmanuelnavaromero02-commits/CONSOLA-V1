@@ -1,10 +1,3 @@
-"""SQL fragments for monotonic writes to the shared pipeline run registry.
-
-The SuccessFactors service is packaged independently from Console and
-mcp-infra, so it keeps a small local copy of the status contract.  A
-cross-service test fails if the three registries drift.
-"""
-
 from __future__ import annotations
 
 

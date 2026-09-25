@@ -1,12 +1,3 @@
-"""F11 — reproducible purge of stale generic-Gold signals, proven on real PG.
-
-Seeds BOTH classes into an ephemeral PostgreSQL: the pre-#475 garbage
-(structural-column metrics, scope-UUID entities) and legitimate signals
-(real business KPIs, talent signals). The purge must report them in dry-run,
-delete exactly the stale class on apply, leave every legitimate row and every
-other workspace untouched, and be idempotent — after it, zero stale-generic.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -181,7 +172,6 @@ async def test_purge_removes_exactly_the_stale_class(purge_postgres: str):
         assert dry["child_decision_options"] == 1
         assert dry["child_prediction_outcomes"] == 1
         assert "DRY-RUN" in dry["action"]
-        # Dry-run deleted nothing.
         assert await conn.fetchval("SELECT count(*) FROM intelligence_signals") == 9
 
         applied = await process_workspace(conn, TENANT_A, WORKSPACE_A, apply=True)
@@ -215,7 +205,6 @@ async def test_purge_removes_exactly_the_stale_class(purge_postgres: str):
             )
         }
         assert baselines == {"generic_revenue_total"}
-        # Children of stale signals are gone; children of legit ones stay.
         assert await conn.fetchval(
             "SELECT count(*) FROM evidence_packs WHERE signal_id = 's-user-1'"
         ) == 0
@@ -224,19 +213,16 @@ async def test_purge_removes_exactly_the_stale_class(purge_postgres: str):
         ) == 1
         assert await conn.fetchval("SELECT count(*) FROM hypotheses") == 1
 
-        # Other workspaces are untouched until their own purge runs.
         assert await conn.fetchval(
             "SELECT count(*) FROM intelligence_signals WHERE workspace_id = $1::uuid",
             WORKSPACE_B,
         ) == 1
 
-        # Idempotent: a re-run finds nothing.
         rerun = await process_workspace(conn, TENANT_A, WORKSPACE_A, apply=True)
         assert rerun["signals"] == 0
         assert rerun["control_room_items"] == 0
         assert rerun["metric_baselines"] == 0
 
-        # The exit criterion: zero stale-generic left for the workspace.
         from app.services.intelligence.gold_control_room import (
             is_stale_generic_signal,
         )

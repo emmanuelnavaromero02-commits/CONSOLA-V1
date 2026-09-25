@@ -1,20 +1,3 @@
-/**
- * v1.44.3.2.1 — Playwright global setup.
- *
- * Logs in ONCE via the same-origin Next.js auth proxy, persists the
- * resulting BrowserContext storage state (cookies + localStorage) to
- * .auth/session.json, and lets every spec downstream inherit it via
- * playwright.config.ts ``use.storageState``.
- *
- * Why: the v1.44.3.2 sprint logged in per-test; that adds 1-2 s
- * to every spec AND triggers the rate limiter when the suite
- * grows past ~60 tests. Global setup runs the login exactly once
- * per `playwright test` invocation.
- *
- * Failure mode: if login fails here, EVERY spec downstream will
- * report "no authenticated session" — a single loud error at the
- * suite root is better than 200 cascading false-negatives.
- */
 import { chromium, type FullConfig } from "@playwright/test";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";

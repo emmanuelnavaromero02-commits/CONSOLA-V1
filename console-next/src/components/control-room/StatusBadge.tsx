@@ -5,9 +5,6 @@ import type { ReactNode } from "react";
 import type { DataReadiness, SourceRollup, SourceState } from "@/lib/control-room/types";
 import { cn } from "@/lib/utils";
 
-// "available": una dimension (p. ej. Desempeno) esta presente aunque el conjunto C/P/A
-// aun no este completo. Se anade solo aqui (no al DataReadiness global) para evitar que el
-// vocabulario se filtre a payloads que no lo modelan.
 export type ControlRoomStatus = DataReadiness | SourceState | SourceRollup | "error" | "available";
 export type ControlOrigin =
   | "rule"
@@ -49,8 +46,6 @@ export const readinessLabels: Record<string, string> = {
 
 export function readinessTone(status?: ControlRoomStatus): string {
   if (status === "available") {
-    // Dimension presente (p. ej. Desempeno) pero el conjunto C/P/A aun no esta completo:
-    // tono teal propio, deliberadamente distinto del verde "Listo" (que exige C/P/A).
     return "border-teal-500/40 bg-teal-500/10 text-teal-700 dark:text-teal-300";
   }
   if (status === "ready" || status === "ok" || status === "benchmark_internal") {
@@ -283,10 +278,6 @@ export function MiniBar({
   );
 }
 
-/**
- * Sparkline: mini tendencia (SVG inline, sin librerias ni fetch). Renderiza una
- * serie numerica ya calculada por el backend (fuente unica); ignora huecos null.
- */
 export function Sparkline({
   values,
   label,

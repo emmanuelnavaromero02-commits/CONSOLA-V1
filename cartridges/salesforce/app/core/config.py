@@ -48,23 +48,18 @@ def _storage_value(gcs_name: str, minio_name: str) -> str:
 class Settings(BaseSettings):
     app_name: str = "salesforce"
 
-    # Salesforce OAuth2 / REST (SOQL). `sf_base_url` is the org instance URL
-    # (e.g. https://mycompany.my.salesforce.com). Auth supports the OAuth2
-    # username-password flow, client_credentials, or a static bearer token.
     sf_base_url: str = ""
-    sf_company_id: str = ""          # unused by Salesforce; kept for config parity
-    sf_client_id: str = ""           # Connected App consumer key
-    sf_client_secret: str = ""       # Connected App consumer secret
-    sf_token_url: str = ""           # e.g. https://login.salesforce.com/services/oauth2/token
-    sf_username: str = ""            # username-password flow
-    sf_password: str = ""            # username-password flow
-    sf_security_token: str = ""      # appended to password when org requires it
-    sf_api_version: str = "v60.0"    # Salesforce REST/SOQL API version
+    sf_company_id: str = ""
+    sf_client_id: str = ""
+    sf_client_secret: str = ""
+    sf_token_url: str = ""
+    sf_username: str = ""
+    sf_password: str = ""
+    sf_security_token: str = ""
+    sf_api_version: str = "v60.0"
 
-    # Database
     database_url: str = Field(default_factory=lambda: os.environ["DATABASE_URL"])
 
-    # MinIO
     minio_endpoint: str = Field(
         default_factory=lambda: os.environ.get("LAKEHOUSE_ENDPOINT") or "minio:9000"
     )
@@ -86,13 +81,10 @@ class Settings(BaseSettings):
         default_factory=lambda: os.environ.get("AWS_SESSION_TOKEN", "")
     )
 
-    # Internal API key (validated by app.security on startup)
     internal_api_key: str = ""
 
-    # Refinement service (silver layer trigger)
     refinement_url: Optional[str] = None
 
-    # Airflow (optional)
     airflow_url: Optional[str] = None
     airflow_user: Optional[str] = None
     airflow_password: Optional[str] = None

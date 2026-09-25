@@ -28,7 +28,7 @@ def test_agent_crud_and_manual_invoke_use_workspace_agent_permissions():
         '@app.post("/api/agents/{agent_id}/invoke/stream", dependencies=[Depends(require_csrf), Depends(require_permission("agents.execute"))])'
         in src
     )
-    invoke_section = src.split("async def api_agents_invoke", 1)[1].split(
+    invoke_section = agents_section.split("async def api_agents_invoke", 1)[1].split(
         "async def api_agents_invoke_scheduled", 1
     )[0]
     assert "_agent_invoke_background_requested(body)" in invoke_section

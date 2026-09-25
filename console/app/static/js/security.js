@@ -1,5 +1,3 @@
-// Sprint v1.11 phase 3 — extracted from security.html for strict CSP.
-
 const state = {
   sessions: [],
   audit: []

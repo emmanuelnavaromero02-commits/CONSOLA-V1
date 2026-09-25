@@ -1,18 +1,3 @@
-"""Mission 4 — the Risk AgentOps monitor contract.
-
-Same mould as tests/test_finance_monitor.py. What this file adds on top of the
-shared shape:
-
-* Risk shares the ``salesforce`` cartridge with Operations, so the two monitors
-  must stay distinguishable by slug alone;
-* Risk is the READER side of the shared-memory case: it consults
-  ``cost_center_budget``, which Finance records, instead of rediscovering that
-  cost-centre overrun cannot be computed;
-* the prompt repeats the three Mission 1 limitations this domain must never
-  over-promise past, including that the seller behind a slipping deal is never
-  returned.
-"""
-
 from __future__ import annotations
 
 from app.domains.agentops.operations_monitor import OPERATIONS_MONITOR_SLUG
@@ -44,7 +29,6 @@ def test_identity_matches_the_conversational_agent_it_shadows() -> None:
 
 
 def test_it_does_not_collide_with_the_operations_monitor() -> None:
-    # Both live in the salesforce cartridge, so slug is the only discriminator.
     assert RISK_MONITOR_SLUG != OPERATIONS_MONITOR_SLUG
     assert is_risk_monitor_row(
         {"cartridge_id": "salesforce", "slug": OPERATIONS_MONITOR_SLUG}
@@ -56,10 +40,8 @@ def test_allowed_tools_grant_the_domain_read_and_the_chain() -> None:
     assert allowed_tools[0] == "mcp-infra__control_room__risk_kpis_read"
     assert "mcp-infra__wisdom_bits__run" in allowed_tools
     assert "mcp-infra__control_room__raise_analysis_alert" in allowed_tools
-    # Reading shared memory is what lets Risk cite Finance instead of repeating it.
     assert "mcp-infra__control_room__agent_memory_read" in allowed_tools
     assert "mcp-infra__control_room__agent_memory_write" in allowed_tools
-    # Deal closings move with macro conditions.
     assert "mcp-infra__market_context_read" in allowed_tools
     assert "mcp-infra__control_room__finance_kpis_read" not in allowed_tools
     assert "mcp-infra__control_room__operations_kpis_read" not in allowed_tools
@@ -93,7 +75,6 @@ def test_every_engine_is_disabled_and_says_why() -> None:
     assert engines["bayesian_calibration"]["calibration_group"] == (
         "salesforce:deal_slippage"
     )
-    # Never chains a simulation it has no inputs for.
     assert engines["decision_orchestrator"]["execute_engines"] is False
     assert engines["decision_orchestrator"]["engine_inputs"] == {}
 
@@ -104,26 +85,19 @@ def test_schedule_is_enabled_and_does_not_collide() -> None:
     assert schedule["enabled"] is True
     assert schedule["cron"] == "12,27,42,57 * * * *"
     minutes = {int(part) for part in schedule["cron"].split(" ")[0].split(",")}
-    assert minutes.isdisjoint({2, 17, 32, 47})  # finance
-    assert minutes.isdisjoint({7, 22, 37, 52})  # operations
+    assert minutes.isdisjoint({2, 17, 32, 47})
+    assert minutes.isdisjoint({7, 22, 37, 52})
 
 
 def test_prompt_repeats_the_mission_one_limitations() -> None:
     instructions = RISK_MONITOR_SPEC.instructions
     assert instructions.startswith("Eres el monitor programado de Riesgo")
-    # The seller is never returned by risk_kpis.
     assert "NUNCA el vendedor de un deal" in instructions
-    # Attrition reuses the Talent bands rather than recomputing a score.
     assert "reutiliza las bandas de riesgo de Talento" in instructions
-    # The 2030 sentinel is not a real contract end.
     assert "centinela de 2030" in instructions
-    # And this metric is NOT a contract end at all: it is the end of the
-    # SuccessFactors employment record, which the aggregate's own note says.
     assert "NO es fin de contrato" in instructions
     assert "REGISTRO DE EMPLEO" in instructions
-    # The risk-reason breakdown repeats the same filter.
     assert "no distingue causas independientes" in instructions
-    # And it must cite shared memory for the overrun gap.
     assert "cost_center_overrun" in instructions
     assert "memoria compartida" in instructions
     assert "recommendation_only" in instructions
@@ -132,7 +106,6 @@ def test_prompt_repeats_the_mission_one_limitations() -> None:
 
 
 def test_personality_is_reused_verbatim_from_the_conversational_seed() -> None:
-    # infra/init/94_salesforce_seed.sql, Centinela de Deals.
     assert RISK_MONITOR_SPEC.personality == (
         "Directo y proactivo. Lista priorizada por monto con dueño y motivo. "
         "Idioma del usuario."
@@ -140,16 +113,12 @@ def test_personality_is_reused_verbatim_from_the_conversational_seed() -> None:
 
 
 def test_model_is_the_system_default_not_the_conversational_haiku() -> None:
-    # The conversational Centinela de Deals runs on claude-haiku-4-5-20251001.
-    # Its monitor ships on the system default instead, and that row is where a
-    # future upgrade happens: one UPDATE, no code change.
     assert RISK_MONITOR_SPEC.model == "claude-sonnet-4-6"
     assert "haiku" not in RISK_MONITOR_SPEC.model
     assert "opus" not in RISK_MONITOR_SPEC.model
 
 
 def test_memory_subjects_include_the_subject_finance_records() -> None:
-    # The join key between the two agents must be identical on both sides.
     assert COST_CENTER_BUDGET_SUBJECT in RISK_MEMORY_SUBJECTS
     assert "fin_de_empleo_indefinido" in RISK_MEMORY_SUBJECTS
     for subject in RISK_MEMORY_SUBJECTS:
@@ -196,13 +165,9 @@ def test_alert_policy_behaviour() -> None:
 def test_a_signal_count_that_disagrees_with_its_items_is_refused() -> None:
     _, _, extra = _contract()
     payload = _payload("degraded", 2)
-    # _signal_count returns 0 unless count == len(items) exactly, which is why the
-    # wisdom-bit builder must never adjust one without the other.
     payload["signals"]["count"] = 5
     assert monitor_should_alert(extra["monitor"], payload) is False
 
-
-# ── the wisdom bit this monitor runs ─────────────────────────────────────────
 
 METRIC_NAMES = ("attrition_risk_population", "employment_end_expiry", "deal_slippage")
 
@@ -238,7 +203,6 @@ def test_wisdom_bit_payload_is_silent_when_every_metric_is_ready() -> None:
     assert payload["cartridge_id"] == "salesforce"
     assert payload["status"] == "ready"
     assert payload["data_sufficient"] is True
-    # No signal means no alert, and that is the only real gate.
     assert payload["signals"] == {"count": 0, "items": []}
     assert payload["blockers"] == []
     _, _, extra = _contract()
@@ -261,14 +225,11 @@ def test_wisdom_bit_payload_raises_one_signal_per_unhealthy_metric() -> None:
     )
     payload = domain_wisdom_bits.build_payload(RISK_MONITOR_SPEC, view)
     assert payload["signals"]["count"] == 2
-    # _signal_count refuses the whole payload unless count == len(items) exactly.
     assert payload["signals"]["count"] == len(payload["signals"]["items"])
     assert all(isinstance(item, dict) and item for item in payload["signals"]["items"])
-    # Business labels travel, never the metric key.
     assert all(item["metric"] != names[1] for item in payload["signals"]["items"])
     assert payload["blockers"] and "sin evidencia disponible" in payload["blockers"][0]
     assert payload["coverage"]["ready"] and payload["coverage"]["unavailable"]
-    # And this payload does alert.
     _, _, extra = _contract()
     full = {**payload, "tenant_id": "t", "workspace_id": "w"}
     full["evidence"] = {"engine_results": []}
@@ -281,7 +242,6 @@ def test_wisdom_bit_payload_fails_closed_when_the_domain_is_unavailable() -> Non
     view = _view("unavailable", {name: _metric("unavailable") for name in METRIC_NAMES})
     payload = domain_wisdom_bits.build_payload(RISK_MONITOR_SPEC, view)
     assert payload["status"] == "unavailable"
-    # Explicit rather than implied: no evidence, no alert.
     assert payload["data_sufficient"] is False
     assert payload["decision_mode"] == "recommendation_only"
     assert payload["writeback_enabled"] is False

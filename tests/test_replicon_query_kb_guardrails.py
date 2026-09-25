@@ -1,9 +1,3 @@
-"""Sprint v1.41.0 — query_kb DuckDB guardrails.
-
-Only SELECT / WITH statements should pass through. ATTACH, COPY,
-INSTALL, LOAD, PRAGMA, and any DDL/DML keyword must be rejected
-before reaching DuckDB.
-"""
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -32,11 +26,6 @@ def _signed_scope():
 
 
 def _call(sql: str, limit: int = 1):
-    # Make sure replicon's ``app`` package is importable: load_cartridge_app
-    # is the same helper test_replicon_mcp_auth uses, and it isolates sys.path
-    # from any sibling service (mcp-infra/console/etc.) a previous test left
-    # behind. We hit the bare ``query_kb`` function — the guard rails sit in
-    # that function, before any DuckDB / MCP transport layer.
     load_cartridge_app("replicon")
     from app.mcp_server import query_kb as fn
     with _signed_scope():
@@ -81,8 +70,6 @@ def test_query_kb_rejects_select_followed_by_attach():
 
 def test_query_kb_accepts_select():
     res = _call("SELECT 1 AS one")
-    # The select itself may fail with DuckDB error (no MinIO mounted in
-    # the test harness) but the guardrail must NOT short-circuit it.
     if "error" in res:
         assert "SELECT/WITH" not in _message(res)
         assert "Forbidden" not in _message(res)

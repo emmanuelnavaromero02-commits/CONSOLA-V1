@@ -1,9 +1,3 @@
-"""Pure helpers for published app embeds.
-
-The route handlers keep the runtime and permission checks; this module owns the
-same-origin wrapper, CSP, and declared dataset extraction.
-"""
-
 from __future__ import annotations
 
 import html
@@ -17,8 +11,6 @@ from urllib.parse import quote
 
 from app.domains.apps.payloads import DATASET_NAME_RE
 
-# ``secrets.token_urlsafe`` alphabet. Validating the shape keeps a caller-supplied
-# value from ever reaching the policy or the markup.
 _NONCE_RE = re.compile(r"[A-Za-z0-9_-]{16,}")
 
 
@@ -42,11 +34,6 @@ _INLINE_SCRIPT_OPEN_RE = re.compile(
 
 
 def inject_script_nonce(html_text: str, nonce: str) -> str:
-    """Stamp a server-owned nonce on inline scripts only.
-
-    Scripts carrying ``src`` keep their integrity/crossorigin contract untouched:
-    a nonce on an external script would widen the policy for no benefit.
-    """
     if not nonce or not _NONCE_RE.fullmatch(nonce):
         raise ValueError("invalid script nonce")
     escaped = html.escape(nonce, quote=True)
@@ -56,28 +43,6 @@ def inject_script_nonce(html_text: str, nonce: str) -> str:
 
 
 def app_content_headers(nonce: str) -> dict[str, str]:
-    """Headers for published app HTML — untrusted content, treated as such.
-
-    Published app HTML is authored outside this codebase, so this response is
-    the hostile one. Three directives carry the weight:
-
-    ``sandbox allow-scripts`` gives the document an opaque origin *from the
-    header*, not from the embedding iframe. That matters because the iframe
-    attribute only protects the app when it is reached through the wrapper;
-    this header keeps the opaque origin even if someone navigates straight to
-    ``/apps/{name}/content``. No storage, no cookies, no same-origin reads,
-    no top navigation, no forms, no popups — scripts and nothing else.
-
-    ``connect-src 'none'`` removes the network from the app entirely: fetch,
-    XHR, WebSocket, EventSource and sendBeacon all fail closed. The only way
-    out is postMessage to the wrapper, which validates every request against
-    the datasets the app declared. postMessage is not a fetch directive, so it
-    survives — that is the whole point of routing data through the broker.
-
-    ``script-src`` carries a per-response nonce so the app's own inline
-    bootstrap runs without 'unsafe-inline'. jsDelivr stays allow-listed
-    because the charting runtime is loaded from it with an integrity hash.
-    """
     if not nonce or not _NONCE_RE.fullmatch(nonce):
         raise ValueError("invalid script nonce")
     return {
@@ -96,10 +61,6 @@ def app_content_headers(nonce: str) -> dict[str, str]:
         ),
         "X-Frame-Options": "SAMEORIGIN",
         "X-Content-Type-Options": "nosniff",
-        # no-referrer, not same-origin: the capability rides in the query
-        # string, and a same-origin referrer would leak it to anything the
-        # frame loads. no-store keeps the response out of the back/forward
-        # cache, so an expired capability cannot be replayed from history.
         "Referrer-Policy": "no-referrer",
         "Cache-Control": "no-store, no-cache, must-revalidate, private",
         "Pragma": "no-cache",
@@ -109,37 +70,12 @@ def app_content_headers(nonce: str) -> dict[str, str]:
 _HEAD_OPEN_RE = re.compile(r"<head\b[^>]*>", re.IGNORECASE)
 _HTML_OPEN_RE = re.compile(r"<html\b[^>]*>", re.IGNORECASE)
 
-# Ceiling on a brokered request body. The apps send small JSON filters; anything
-# larger is either a mistake or an attempt to use the broker as a tunnel.
 APP_BRIDGE_MAX_BODY = 64 * 1024
 
-# The complete data surface a published app may reach, mirroring the routes the
-# console actually exposes: /api/data/{dataset}, .../options and .../query.
-# Kept as a closed allowlist so the broker refuses an unknown tail instead of
-# forwarding it — a prefix match would let any deeper path ride along.
 APP_DATA_SUBPATHS = ("options", "query")
 
 
 def app_bridge_script(nonce: str) -> str:
-    """The data client that runs *inside* the untrusted content frame.
-
-    ``connect-src 'none'`` already denies the app every network primitive. This
-    script is what gives it a working one back — a single ``fetch`` that speaks
-    postMessage to the wrapper instead of touching the network. The wrapper is
-    the component that holds the user's credentials and the declared-dataset
-    allowlist; the app never sees either.
-
-    It carries no configuration. The dataset allowlist deliberately lives in
-    the wrapper only: anything embedded here would sit in the same document as
-    the app's own scripts and be editable by it, so a list here would be a list
-    the attacker controls.
-
-    The blocked primitives are shadowed with throwing stubs rather than left to
-    CSP alone. CSP already stops them, but a bare CSP block surfaces as a
-    console violation with no exception, which reads to app authors as "the
-    call silently did nothing". These make the contract explicit and, being
-    non-configurable own properties, cannot be restored from app code.
-    """
     if not nonce or not _NONCE_RE.fullmatch(nonce):
         raise ValueError("invalid script nonce")
     nonce_attr = html.escape(nonce, quote=True)
@@ -283,14 +219,6 @@ def app_bridge_script(nonce: str) -> str:
 
 
 def inject_app_bridge(html_text: str, nonce: str) -> str:
-    """Put the broker client ahead of every script the app ships.
-
-    Order is the whole contract: if the app's bootstrap runs first it captures
-    the real ``fetch`` before the shadow lands, and the broker becomes optional
-    for the very code it is meant to contain. Injecting at the first structural
-    opening tag — ``<head>``, else ``<html>``, else the top of the document —
-    keeps the client ahead of anything the author can place.
-    """
     bridge = app_bridge_script(nonce)
     text = html_text or ""
     for pattern in (_HEAD_OPEN_RE, _HTML_OPEN_RE):
@@ -307,12 +235,6 @@ def app_embed_wrapper_html(
     *,
     capability: str | None = None,
 ) -> str:
-    """Render the trusted wrapper.
-
-    ``datasets_used`` must already come from the durable grant ledger — this
-    function does not derive, widen or re-check it, it only publishes it to the
-    broker. The app-scoped endpoint re-validates every request regardless.
-    """
     title = html.escape(name.replace("_", " ").strip() or "Analytic app")
     content_src = f"/apps/{quote(name, safe='')}/content"
     if capability:
@@ -560,10 +482,6 @@ def workspace_server_url(
     is_production_env: Callable[[], bool] | None = None,
     logger_warning: Callable[[str], None] | None = None,
 ) -> str:
-    # Respect an explicitly-passed empty mapping. `environ or os.environ` would
-    # treat {} as falsy and leak the real process env, so a caller asking for
-    # "no config" (e.g. the production-safety check) would still read WORKSPACE_*
-    # from the ambient environment (green locally, red in the full stack).
     env = environ if environ is not None else os.environ
     raw = env.get("WORKSPACE_INTERNAL_URL") or env.get("WORKSPACE_BACKEND_URL")
     if raw:

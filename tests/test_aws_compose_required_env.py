@@ -1,19 +1,3 @@
-"""Per-service required env keys must survive the env_file removal.
-
-When the shared .env env_file was dropped, each service kept only what its
-`environment:` block declares. A key a service's code needs but nobody declares
-now vanishes silently -- `docker compose config` stays green and the container
-boots, then fails on a later request (403, empty CORS, admin/admin, unbounded
-DuckDB). This test renders the real compose and asserts each service still
-resolves the keys its code requires, per the 2026-09-22 code audit.
-
-The list is the audit's required_hard + required_silent, minus keys that reach
-the service embedded in a DSN (checked by value, not key) and the console
-evidence keys (private env_file). It skips without docker and runs in the
-control-room-postgres-rls CI job. It is a static gate; the live per-service
-rehearsal on a disposable instance is what exercises each key with a request.
-"""
-
 from __future__ import annotations
 
 import json
@@ -27,10 +11,6 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 DEPLOY = REPO / "infra/terraform/deploy"
 
-# Keys each service must resolve as a standalone environment entry after the
-# split. Derived from the per-service code audit (required_hard + silent that
-# are not DSN-embedded). Kept explicit and readable on purpose: this is the
-# contract, and a reviewer should see exactly what each service is promised.
 REQUIRED = {
     "vault": ["VAULT_ENCRYPTION_KEY", "INTERNAL_API_KEY", "SECURITY_CONTEXT_SIGNING_KEY"],
     "console": [
@@ -61,10 +41,6 @@ REQUIRED = {
 
 
 def _rendered_services() -> dict:
-    # Deliberately not guarded by a docker skipif, matching
-    # tests/test_mcp_infra_pdf_compose_capacity.py. This is the contract that
-    # keeps the shared .env from reaching ~20 services; one that can skip
-    # itself is how that guarantee goes missing without anyone noticing.
     with tempfile.TemporaryDirectory() as tmp:
         evidence = Path(tmp) / "evidence.env"
         evidence.write_text("", encoding="utf-8")

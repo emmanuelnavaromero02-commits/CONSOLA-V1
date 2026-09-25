@@ -1,4 +1,3 @@
-"""Behavioral tests for the universal introspect router (Level 1)."""
 from __future__ import annotations
 
 from app.services import cartridge_introspect_router as r
@@ -64,8 +63,8 @@ def test_graphql_introspection_parsing():
             {"name": "id", "type": {"kind": "NON_NULL", "ofType": {"kind": "SCALAR", "name": "ID"}}},
             {"name": "amount", "type": {"kind": "SCALAR", "name": "Float"}},
         ]},
-        {"kind": "OBJECT", "name": "Query", "fields": []},  # skipped
-        {"kind": "OBJECT", "name": "__Type", "fields": []},  # skipped
+        {"kind": "OBJECT", "name": "Query", "fields": []},
+        {"kind": "OBJECT", "name": "__Type", "fields": []},
     ]}}}
     out = r.parse_graphql_introspection(sample)
     assert "Deal" in out and "Query" not in out and "__Type" not in out
@@ -113,35 +112,28 @@ def test_extract_entities_end_to_end_csv():
 
 def test_extract_entities_empty_safe():
     entities, kind = r.extract_entities({"kind": "soap", "wsdl": "<not-xml"})
-    assert entities == []  # malformed -> empty, no crash
+    assert entities == []
 
 
 def test_dos_cap_on_huge_schema():
-    """Audit-15: a huge schema is capped (entities <=500, fields <=1000)."""
     cols = [{"table_name": "t", "column_name": f"c{i}", "data_type": "int"} for i in range(3000)]
     ents, _ = r.extract_entities({"columns": cols})
     assert len(ents[0]["fields"]) <= 1000
 
 
-# ── Audit-round-2 regression / new-edge-case tests ──────────────────────────
-
-
 def test_detect_source_kind_non_dict_never_raises():
-    """detect_source_kind must return a safe default for non-dict input."""
     assert r.detect_source_kind(None) == "rest_sample"
     assert r.detect_source_kind("odata") == "rest_sample"
     assert r.detect_source_kind(42) == "rest_sample"
 
 
 def test_detect_source_pattern_non_dict_never_raises():
-    """detect_source_pattern must not raise on non-dict descriptor."""
     result = r.detect_source_pattern(None)
     assert isinstance(result, dict)
     assert "paginated" in result
 
 
 def test_extract_entities_non_dict_returns_empty():
-    """extract_entities must return ([], 'rest_sample') for non-dict input."""
     ents, kind = r.extract_entities(None)
     assert ents == []
     assert kind == "rest_sample"
@@ -150,13 +142,11 @@ def test_extract_entities_non_dict_returns_empty():
 
 
 def test_parse_csv_header_non_string_returns_empty():
-    """parse_csv_header must return {} for non-string input."""
     assert r.parse_csv_header(None) == {}
     assert r.parse_csv_header(123) == {}
 
 
 def test_parse_csv_header_pk_uses_looks_like_pk():
-    """parse_csv_header must mark only genuine id columns as primary_key."""
     out = r.parse_csv_header("name,id,value\nfoo,1,99")
     by = {f["name"]: f for f in out["records"]}
     assert by["id"]["primary_key"] is True
@@ -165,13 +155,11 @@ def test_parse_csv_header_pk_uses_looks_like_pk():
 
 
 def test_parse_sql_information_schema_non_list_rows():
-    """parse_sql_information_schema must return {} for non-list rows."""
     assert r.parse_sql_information_schema(None) == {}
     assert r.parse_sql_information_schema("bad") == {}
 
 
 def test_detect_source_pattern_non_dict_field_skipped():
-    """Non-dict entries in the fields list must be silently skipped."""
     fields = [None, {"name": "updated_at", "type": "timestamp"}, "garbage"]
     desc = {"sample": {"next": "cursor"}}
     pat = r.detect_source_pattern(desc, fields)
@@ -180,7 +168,6 @@ def test_detect_source_pattern_non_dict_field_skipped():
 
 
 def test_graphql_introspection_entity_cap():
-    """GraphQL parser must stop adding entities at _MAX_ENTITIES."""
     types = [
         {"kind": "OBJECT", "name": f"T{i}", "fields": [{"name": "id", "type": {"kind": "SCALAR", "name": "ID"}}]}
         for i in range(600)
@@ -191,54 +178,43 @@ def test_graphql_introspection_entity_cap():
 
 
 def test_first_record_wrapper_with_none_value_returns_none():
-    """_first_record on a wrapper dict with None-valued keys must return None, not the wrapper."""
     from app.services.cartridge_introspect_router import _first_record
     assert _first_record({"results": None}) is None
     assert _first_record({"data": None, "items": None}) is None
-    # A direct record (no wrapper keys) still returns itself
     assert _first_record({"id": 1, "name": "foo"}) == {"id": 1, "name": "foo"}
 
 
 def test_first_record_empty_list_returns_none():
-    """_first_record on a wrapper with an empty list must return None."""
     from app.services.cartridge_introspect_router import _first_record
     assert _first_record({"results": []}) is None
     assert _first_record({"data": []}) is None
 
 
 def test_parse_json_sample_none_results_produces_no_fields():
-    """parse_json_sample with {'results': None} must produce no phantom fields."""
     out = r.parse_json_sample({"results": None}, "records")
     assert out == {}
 
 
-# ── Audit-round-3 regression / new-edge-case tests ──────────────────────────
-
-
 def test_safe_field_slugifies_non_ascii_name():
-    """Audit-40: non-ASCII field names must be slugified and retained, not silently dropped."""
     out = r.parse_json_sample({"nombre": "Ana", "monto_crédit": 42.5}, "records")
-    assert out  # must produce fields, not empty {}
+    assert out
     names = {f["name"] for f in out["records"]}
     assert any("nombre" in n or "nombre" == n for n in names)
 
 
 def test_safe_field_cjk_name_slugified():
-    """Audit-40: CJK field names must not cause extract_entities to return empty."""
     out = r.parse_json_sample({"名前": "Tanaka", "金額": 50000}, "records")
-    assert out  # must not be {} — slugified names preserved
+    assert out
 
 
 def test_detect_source_pattern_nan_sample_does_not_raise():
-    """Audit-40: sample containing float('nan') must not raise in detect_source_pattern."""
     import math
     desc = {"sample": {"amount": float("nan"), "next": "cursor123"}}
     pat = r.detect_source_pattern(desc)
-    assert pat["paginated"] is True  # 'next' still detected
+    assert pat["paginated"] is True
 
 
 def test_infer_scalar_type_bool_vs_int():
-    """bool must be detected before int (Python bool is a subclass of int)."""
     from app.services.cartridge_introspect_router import _infer_scalar_type
     assert _infer_scalar_type(True) == "bool"
     assert _infer_scalar_type(False) == "bool"
@@ -247,7 +223,6 @@ def test_infer_scalar_type_bool_vs_int():
 
 
 def test_parse_json_sample_native_int_and_bool():
-    """Native Python int/bool values must be typed via isinstance, not string-regex."""
     sample = {"data": [{"id": "x", "count": 5, "active": True}]}
     out = r.parse_json_sample(sample, "things")
     by = {f["name"]: f for f in out["things"]}
@@ -256,7 +231,6 @@ def test_parse_json_sample_native_int_and_bool():
 
 
 def test_wsdl_nested_complextype_does_not_bleed_fields():
-    """Audit-37: fields from a nested complexType must NOT bleed into the parent entity."""
     wsdl = """<?xml version="1.0"?>
     <definitions xmlns:xsd="http://www.w3.org/2001/XMLSchema">
       <xsd:complexType name="Order">
@@ -274,11 +248,10 @@ def test_wsdl_nested_complextype_does_not_bleed_fields():
     assert "Order" in out
     order_names = [f["name"] for f in out["Order"]]
     assert "OrderId" in order_names
-    assert "Street" not in order_names  # must not bleed from nested complexType
+    assert "Street" not in order_names
 
 
 def test_extract_entities_soap_valid_wsdl():
-    """Audit-37: extract_entities must dispatch soap kind through parse_wsdl_elements."""
     wsdl = """<?xml version="1.0"?>
     <definitions xmlns:xsd="http://www.w3.org/2001/XMLSchema">
       <xsd:complexType name="Invoice">

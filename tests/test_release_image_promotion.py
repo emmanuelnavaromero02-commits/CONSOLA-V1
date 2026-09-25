@@ -1,5 +1,3 @@
-"""Adversarial contracts for recoverable OCI release promotion."""
-
 from __future__ import annotations
 
 import copy

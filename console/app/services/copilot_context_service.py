@@ -1,5 +1,3 @@
-"""Workspace-scoped live console context for Copilot recommendations."""
-
 from __future__ import annotations
 
 import asyncio
@@ -187,7 +185,6 @@ def _safe_action_href(value: Any) -> str | None:
 
 
 def project_control_room_diagnostic(name: str, value: Any) -> dict[str, Any] | None:
-    """Project one raw Control Room service result through an explicit model."""
 
     model = _CONTROL_ROOM_PROJECTIONS.get(str(name or ""))
     if model is None:
@@ -399,7 +396,6 @@ def _source_lookup(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
 def build_recommendations_from_snapshot(
     snapshot: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Pure recommendation builder used by runtime and tests."""
 
     sources = _source_lookup(snapshot)
     recommendations: list[dict[str, Any]] = []
@@ -942,7 +938,6 @@ async def dismiss_recommendation(
 async def prompt_context_for_user(
     user: dict[str, Any], *, limit: int = 8
 ) -> str | None:
-    """Compact projected context; diagnostics require operational authority."""
 
     try:
         recs = project_operator_recommendations(
@@ -1047,8 +1042,6 @@ async def hourly_scheduler(stop_event: asyncio.Event | None = None) -> None:
         except Exception:
             logger.warning("copilot live context scheduler tick failed", exc_info=True)
 
-        # Own try/except: a failed purge must never stop the refreshes, and a
-        # failed refresh must never leave expired snapshots behind.
         try:
             purged = await purge_expired_snapshots()
             if purged.get("deleted") or purged.get("status") != "ok":

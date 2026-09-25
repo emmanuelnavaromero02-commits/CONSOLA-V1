@@ -1,16 +1,4 @@
-# SAP S/4HANA OData APIs.
-#
-# Each entry uses a URL-safe ``entity:`` id (no slashes) so it can travel
-# through console routes like /entities/{entity}/schema. The real OData
-# path lives in ``odata_entity:`` — extraction_service uses it when calling
-# fetch_entity().
-#
-# In production, point SAP_S4_BASE_URL at the API service root, e.g.
-#   https://my-s4.example.com:44300/sap/opu/odata/sap
-# The full URL fetched for an entity is then:
-#   {SAP_S4_BASE_URL}/{odata_entity}
 entities:
-  # ── Master data: business partners ────────────────────────────────────────
   - entity: BusinessPartner
     odata_entity: API_BUSINESS_PARTNER/A_BusinessPartner
     description: "Business Partner header (customers, vendors, employees)."
@@ -87,7 +75,6 @@ entities:
       Country: plain
       Region: plain
 
-  # ── Master data: products / materials ────────────────────────────────────
   - entity: Product
     odata_entity: API_PRODUCT_SRV/A_Product
     description: "Product (material) master."
@@ -101,7 +88,6 @@ entities:
     mode: full
     page_size: 1000
 
-  # ── Master data: organisation / cost objects ─────────────────────────────
   - entity: CompanyCode
     odata_entity: API_COMPANYCODE_SRV/A_CompanyCode
     description: "Company code master."
@@ -128,7 +114,6 @@ entities:
     mode: full
     page_size: 1000
 
-  # ── Sales (SD) ────────────────────────────────────────────────────────────
   - entity: SalesOrder
     odata_entity: API_SALES_ORDER_SRV/A_SalesOrder
     description: "Sales order header."
@@ -166,7 +151,6 @@ entities:
     watermark_field: LastChangeDateTime
     page_size: 1000
 
-  # ── Procurement (MM) ──────────────────────────────────────────────────────
   - entity: PurchaseOrder
     odata_entity: API_PURCHASEORDER_PROCESS_SRV/A_PurchaseOrder
     description: "Purchase order header."
@@ -205,7 +189,6 @@ entities:
     protection:
       InvoicingParty: shadowed
 
-  # ── Finance (FI / CO) ─────────────────────────────────────────────────────
   - entity: GLAccountLineItem
     odata_entity: API_GLACCOUNTLINEITEM_SRV/YY1_GLAccountLineItem
     description: "G/L account line items (FI ledger detail)."
@@ -232,7 +215,6 @@ entities:
     page_size: 2000
     date_field: PostingDate
 
-  # ── Inventory ─────────────────────────────────────────────────────────────
   - entity: MatlStkInAcctMod
     odata_entity: API_MATERIAL_STOCK_SRV/A_MatlStkInAcctMod
     description: "Material stock by account modification."

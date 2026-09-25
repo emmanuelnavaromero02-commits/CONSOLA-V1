@@ -1,17 +1,3 @@
-"""Sprint v1.11 phase 3 — strict CSP globally + root HTMLs externalised.
-
-Verifies:
-  * Every root HTML in console/app/static/ has 0 inline event handlers
-    and 0 inline <script> blocks with code.
-  * Each refactored HTML references its extracted .js
-    (apps_gallery / decisions / iam / monitor / security).
-  * Each extracted .js file exists and calls addEventListener.
-  * The global SECURITY_HEADERS now drops 'unsafe-inline' from
-    script-src for every non-auth, non-viewer path.
-
-Lazy-imports app.main so this module's collection doesn't pollute
-sys.modules for neighbouring tests.
-"""
 from __future__ import annotations
 
 import importlib
@@ -48,8 +34,6 @@ def _csp_for(path: str) -> str:
     return resp.headers.get("content-security-policy", "")
 
 
-# ── Refactored HTMLs ──────────────────────────────────────────────────
-
 REFACTORED_PAGES = {
     "apps_gallery.html": "apps_gallery.js",
     "decisions.html":    "decisions.js",
@@ -75,8 +59,6 @@ def test_each_extracted_js_exists_and_wires_listeners():
             f"{js} should call addEventListener — the inline on* handlers were removed."
         )
 
-
-# ── No inline handlers / no inline <script> with code in ANY root HTML ────
 
 _INLINE_HANDLER_RE = re.compile(
     r'\bon(?:click|change|submit|input|keydown|mousedown|load|error|scroll|mouseover|mouseout|mouseenter|mouseleave)\s*=\s*"',
@@ -107,8 +89,6 @@ def test_no_inline_script_with_code_in_any_root_html():
         )
 
 
-# ── Global SECURITY_HEADERS — strict everywhere ───────────────────────
-
 GLOBAL_STRICT_PATHS = [
     "/",
     "/decisions",
@@ -127,7 +107,6 @@ GLOBAL_STRICT_PATHS = [
 def test_every_non_viewer_path_has_strict_csp():
     for path in GLOBAL_STRICT_PATHS:
         csp = _csp_for(path)
-        # Only script-src segment matters — style-src still has 'unsafe-inline'.
         script_seg = csp.split("style-src", 1)[0]
         assert "'unsafe-inline'" not in script_seg, (
             f"{path}: script-src still allows 'unsafe-inline' — {script_seg!r}"
@@ -139,21 +118,15 @@ def test_every_non_viewer_path_has_strict_csp():
 
 def test_global_csp_keeps_style_unsafe_inline():
     csp = _csp_for("/")
-    # style-src 'unsafe-inline' stays — the page <style> blocks aren't in
-    # scope for this phase.
     assert "style-src 'self' 'unsafe-inline'" in csp, csp
 
 
 def test_global_csp_keeps_frame_ancestors_none_for_non_viewers():
-    """The root pages aren't iframe-embedded; X-Frame-Options DENY +
-    frame-ancestors 'none' must stay. (Viewer pages override this with
-    frame-ancestors 'self' so Monitor can iframe them.)"""
     csp = _csp_for("/")
     assert "frame-ancestors 'none'" in csp, csp
 
 
 def test_viewer_path_still_keeps_frame_ancestors_self():
-    """Sanity check we didn't accidentally tighten viewers."""
     csp = _csp_for("/viewer/pipeline")
     assert "frame-ancestors 'self'" in csp, csp
 
@@ -171,8 +144,6 @@ def test_app_embed_path_is_frameable_but_script_strict():
     assert "script-src 'self'" in script_seg, csp
     assert "'unsafe-inline'" not in script_seg, csp
 
-
-# ── Per-page sanity for the 6 refactored ones ─────────────────────────
 
 def test_decisions_csp_is_strict():
     assert "'unsafe-inline'" not in _csp_for("/decisions").split("style-src", 1)[0]

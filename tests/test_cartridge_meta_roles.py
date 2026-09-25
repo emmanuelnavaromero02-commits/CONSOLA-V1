@@ -1,24 +1,3 @@
-"""
-Sprint v1.38 — audit B5 + B6 (P0.5).
-
-Pre-v1.38 the three SAP cartridges, the Airflow webserver / scheduler
-plus the Airflow DAG variable, and the Superset webserver all
-connected to Postgres as the ``postgres`` superuser. Any one of them
-being compromised handed the attacker read/write on every public
-table (including ``users``, ``decisions``, ``vault_entries``),
-``CREATE ROLE``, and bypass of every row-level filter we add later.
-
-v1.38 introduces six least-privilege roles and rewires the runtime
-services to use them. Bootstrap (the init containers) still use the
-superuser by design — they have to ``CREATE DATABASE`` and run
-``airflow db migrate`` / ``superset db upgrade`` which create the
-tables we want to grant on; after that they transfer ownership via
-explicit GRANT statements before exiting.
-
-These tests are AST-style guards that run in milliseconds without a
-live Postgres. The live smoke test (scripts/smoke_test.sh, checks
-19-23) covers the "GRANTs actually held in pg_catalog" path.
-"""
 from __future__ import annotations
 
 import re
@@ -44,8 +23,6 @@ NEW_ROLES = (
     "omega_superset_meta",
 )
 
-# Tables the migration must EXPLICITLY REVOKE on the operational
-# roles (SAP cartridges + omega_airflow_dag).
 HARD_LOCKED_TABLES = (
     "users", "user_sessions", "user_tokens", "refresh_tokens",
     "tenants", "workspaces", "roles", "user_workspace_roles",
@@ -55,13 +32,9 @@ HARD_LOCKED_TABLES = (
 )
 
 
-# ── Migration 36 ────────────────────────────────────────────────────────────
-
 def test_migration_36_creates_all_six_roles():
     src = MIGRATION_36.read_text(encoding="utf-8")
     for role in NEW_ROLES:
-        # The migration creates roles inside DO blocks; verify the
-        # ``CREATE ROLE <name>`` text is emitted for each.
         assert re.search(
             rf"CREATE ROLE {role}\b", src
         ), f"migration must CREATE ROLE {role!r}"
@@ -69,27 +42,20 @@ def test_migration_36_creates_all_six_roles():
 
 def test_migration_36_requires_password_from_guc():
     src = MIGRATION_36.read_text(encoding="utf-8")
-    # Every role must read its password from current_setting() and
-    # refuse to create the role if the GUC is empty (same v1.19
-    # pattern that omega_console / omega_vault use).
     for role in NEW_ROLES:
         guc = f"app.{role}_password"
         assert (
             f"current_setting('{guc}', true)" in src
         ), f"migration must read password for {role!r} from GUC {guc!r}"
-    # And the empty-password guard must fire for every role.
     assert src.count("refusing to create role with empty password") >= len(NEW_ROLES)
 
 
 def test_migration_36_hard_locks_sensitive_tables():
     src = MIGRATION_36.read_text(encoding="utf-8")
-    # The REVOKE block iterates over an ARRAY[...] — verify every
-    # sensitive table name appears in that list so it can't slip past.
     for tbl in HARD_LOCKED_TABLES:
         assert (
             f"'{tbl}'" in src
         ), f"migration must REVOKE on {tbl!r}"
-    # And the four roles that must be REVOKED.
     for role in (
         "omega_cartridge_sap_hcm",
         "omega_cartridge_sap_s4",
@@ -103,7 +69,6 @@ def test_migration_36_hard_locks_sensitive_tables():
 
 def test_migration_36_grants_operational_to_sap_cartridges():
     src = MIGRATION_36.read_text(encoding="utf-8")
-    # The cartridges need at least these for the SAP runtime to work.
     must_grant = (
         "cartridges",
         "entity_config",
@@ -130,13 +95,7 @@ def test_migration_36_grants_airflow_dag_runtime_observability_tables():
         assert tbl in body, f"omega_airflow_dag needs {tbl!r} for direct DAG runtime"
 
 
-# ── docker-compose.yml ──────────────────────────────────────────────────────
-
 def test_local_compose_no_postgres_superuser_in_runtime_services():
-    """The five runtime services (3 SAP cartridges, airflow webserver,
-    airflow scheduler, superset) must NOT use ``postgres:`` in their
-    connection strings. The two init containers (airflow-init,
-    superset-init) are allowed — they bootstrap the DBs."""
     with LOCAL_COMPOSE.open("r", encoding="utf-8") as f:
         compose = yaml.safe_load(f)
     services = compose.get("services", {}) or {}
@@ -149,7 +108,6 @@ def test_local_compose_no_postgres_superuser_in_runtime_services():
         svc = services.get(name)
         assert svc is not None, f"service {name!r} missing from compose"
         env = svc.get("environment") or {}
-        # environment may be a dict or a list — normalize.
         if isinstance(env, list):
             env_str = "\n".join(env)
         else:
@@ -186,12 +144,10 @@ def test_local_compose_airflow_runtime_uses_dedicated_roles():
 
     for svc_name in ("airflow", "airflow-scheduler"):
         env = services[svc_name]["environment"]
-        # Metastore connection.
         meta = env.get("AIRFLOW__DATABASE__SQL_ALCHEMY_CONN", "")
         assert "://omega_airflow_meta:" in meta, (
             f"{svc_name} metastore must use omega_airflow_meta"
         )
-        # DAG-side variable.
         dag = env.get("AIRFLOW_VAR_POSTGRES_CONN", "")
         assert "://omega_airflow_dag:" in dag, (
             f"{svc_name} AIRFLOW_VAR_POSTGRES_CONN must use omega_airflow_dag"
@@ -227,8 +183,6 @@ def test_superset_config_honors_runtime_sqlalchemy_uri_env():
 
 
 def test_local_compose_pgoptions_carries_six_new_passwords():
-    """The postgres container must forward all six new GUC passwords
-    so the migration can read them via ``current_setting``."""
     with LOCAL_COMPOSE.open("r", encoding="utf-8") as f:
         compose = yaml.safe_load(f)
     pgoptions = compose["services"]["postgres"]["environment"]["PGOPTIONS"]
@@ -238,8 +192,6 @@ def test_local_compose_pgoptions_carries_six_new_passwords():
             f"postgres PGOPTIONS must forward {guc_flag!r}"
         )
 
-
-# ── docker-compose.aws.yml ──────────────────────────────────────────────────
 
 def test_aws_compose_airflow_runtime_uses_dedicated_roles():
     with AWS_COMPOSE.open("r", encoding="utf-8") as f:
@@ -267,8 +219,6 @@ def test_aws_console_can_register_superset_gold_database():
 
 
 def test_aws_compose_airflow_init_keeps_superuser_for_bootstrap():
-    """The init container must KEEP postgres superuser — it has to
-    CREATE the metastore tables before any GRANT can fire."""
     with AWS_COMPOSE.open("r", encoding="utf-8") as f:
         compose = yaml.safe_load(f)
     env = compose["services"]["airflow-init"]["environment"]
@@ -277,8 +227,6 @@ def test_aws_compose_airflow_init_keeps_superuser_for_bootstrap():
         "airflow-init must connect as postgres superuser to run db migrate"
     )
 
-
-# ── bootstrap.sh / .env.example ─────────────────────────────────────────────
 
 def test_bootstrap_generates_six_new_passwords():
     src = BOOTSTRAP_SH.read_text(encoding="utf-8")
@@ -290,7 +238,6 @@ def test_bootstrap_generates_six_new_passwords():
         "OMEGA_AIRFLOW_META_PASSWORD",
         "OMEGA_SUPERSET_META_PASSWORD",
     ):
-        # bootstrap.sh must both generate AND write the variable.
         assert re.search(rf'^{var}="\$\(openssl rand', src, re.MULTILINE), (
             f"bootstrap.sh must generate {var!r}"
         )
@@ -312,8 +259,6 @@ def test_env_example_documents_six_new_passwords():
         assert f"{var}=" in src, f".env.example must document {var}"
 
 
-# ── smoke_test.sh ───────────────────────────────────────────────────────────
-
 def test_smoke_test_includes_lockdown_checks_for_new_roles():
     src = SMOKE_SCRIPT.read_text(encoding="utf-8")
     must_appear = (
@@ -324,44 +269,13 @@ def test_smoke_test_includes_lockdown_checks_for_new_roles():
     )
     for role in must_appear:
         assert role in src, f"smoke must exercise {role!r}"
-    # And the positive check (no over-revoke).
     assert "entity_config" in src, (
         "smoke must also verify SAP cartridges keep operational access"
     )
 
 
-# ── Hotfix v1.38.1: live deployment evidence ────────────────────────────────
-#
-# Background: the original v1.38 commit got merged with a green test
-# suite but failed in real life: `make migrate && make smoke` reported
-# every v1.38 role as "got: ''" — the role didn't exist at all. The
-# root cause was scripts/apply_db_migrations.sh: it forwards GUC
-# passwords to psql via the PGOPTIONS env var, but the v1.38 commit
-# only updated infra/docker-compose.yml's PGOPTIONS, not the
-# migrate-script's separate PGOPTIONS_VALUE. The migration then
-# raised "password not set", the script aborted the transaction for
-# that file, the next migration ran successfully, and `make smoke`
-# saw a partly-migrated DB.
-#
-# These two tests pin the contract so the hotfix can't silently
-# regress.
-
 def test_migration_36_fails_loud_when_password_missing():
-    """Every CREATE-ROLE DO block in migration 36 must RAISE EXCEPTION
-    (not RETURN) when its GUC password is empty.
-
-    A silent RETURN would skip the role and let the migration record
-    itself as successful in schema_migrations even though the role
-    was never created — then the smoke test would later report
-    has_table_privilege(<missing role>, …) = '' (NULL) and fail in
-    confusing ways. The loud RAISE aborts the transaction so
-    apply_db_migrations.sh stops at the failing file and the
-    operator gets a clear error pointing at the missing env var.
-    """
     src = MIGRATION_36.read_text(encoding="utf-8")
-    # The migration has six "IF pw IS NULL OR pw = '' THEN" guards,
-    # one per role. Each must be followed by RAISE EXCEPTION before
-    # any other statement.
     pattern = re.compile(
         r"IF pw IS NULL OR pw = ''\s+THEN\s+(\S+)",
         re.IGNORECASE,
@@ -381,9 +295,6 @@ def test_migration_36_fails_loud_when_password_missing():
 
 
 def test_apply_db_migrations_script_passes_six_new_passwords():
-    """scripts/apply_db_migrations.sh must forward the six new
-    v1.38 GUC passwords to psql via PGOPTIONS so migration 36 can
-    read them via current_setting()."""
     src = (REPO_ROOT / "scripts" / "apply_db_migrations.sh").read_text(
         encoding="utf-8"
     )

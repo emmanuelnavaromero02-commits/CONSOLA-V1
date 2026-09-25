@@ -1,5 +1,3 @@
-"""Pure helpers for the public data API payloads."""
-
 from __future__ import annotations
 
 import re
@@ -23,7 +21,6 @@ class DataApiFilteredQuery:
 
 
 class DataApiQueryValidationError(ValueError):
-    """Input validation error for the filtered data query endpoint."""
 
     def __init__(self, status_code: int, detail: str) -> None:
         super().__init__(detail)
@@ -32,7 +29,6 @@ class DataApiQueryValidationError(ValueError):
 
 
 def data_api_columns_param(columns: str) -> list[str]:
-    """Parse the comma-separated columns query parameter."""
 
     if not columns:
         return []
@@ -40,7 +36,6 @@ def data_api_columns_param(columns: str) -> list[str]:
 
 
 def data_api_invalid_column(columns: Iterable[str]) -> str | None:
-    """Return the first unsafe column identifier, if any."""
 
     for column in columns:
         if not DATA_API_IDENTIFIER_RE.match(column):
@@ -53,7 +48,6 @@ def data_api_valid_dataset_name(dataset: str | None) -> bool:
 
 
 def data_api_options_sql(dataset: str, columns: list[str]) -> str:
-    """Build the legacy distinct-options SQL used by Refinement."""
 
     sqls = [
         f"SELECT DISTINCT {column} AS val, '{column}' AS col FROM pggold.gold_{dataset} WHERE {column} IS NOT NULL"
@@ -65,11 +59,6 @@ def data_api_options_sql(dataset: str, columns: list[str]) -> str:
 def data_api_options_response(
     columns: list[str], rows: list[Mapping[str, Any]]
 ) -> dict[str, list[str]] | list[Any]:
-    """Group Refinement rows by option column.
-
-    The empty-row contract intentionally stays as ``[]`` because analytic apps
-    already depend on that legacy response shape.
-    """
 
     if not rows:
         return []

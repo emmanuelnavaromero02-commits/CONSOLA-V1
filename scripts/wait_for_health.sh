@@ -1,16 +1,8 @@
 #!/usr/bin/env bash
-# Wait until the local OMEGA compose stack is ready for smoke/E2E.
-#
-# Static export architecture: FastAPI on :8000 serves the console, APIs,
-# legacy pages, and Control Room from the same origin.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 compose_file_path="${COMPOSE_FILE:-${ROOT}/infra/docker-compose.yml}"
-# The release job deliberately exports an empty COMPOSE_FILE as a poison
-# boundary. Do not turn that empty value into an exported non-empty path: the
-# post-lock Docker guard would reject every otherwise safe inspect. A genuinely
-# non-empty control value remains exported so the guard still fails closed.
 if [[ "${COMPOSE_FILE+x}" == "x" ]] && [[ -z "${COMPOSE_FILE}" ]]; then
     unset COMPOSE_FILE
 fi

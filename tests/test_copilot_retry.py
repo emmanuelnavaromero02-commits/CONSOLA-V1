@@ -1,4 +1,3 @@
-"""Sprint v1.43 — copilot retry + backoff (capacidad 18)."""
 from __future__ import annotations
 
 import asyncio
@@ -28,10 +27,7 @@ def _run(coro):
     return asyncio.new_event_loop().run_until_complete(coro)
 
 
-# ── _invoke_tool_with_retry: pure unit tests ───────────────────────────────
-
 def test_first_attempt_success_no_retry(copilot_module, monkeypatch):
-    """If the underlying invoke succeeds first time, no sleep, no retry."""
     calls = []
     async def fake(server, tool, args, **_kwargs):
         calls.append((server, tool))
@@ -44,7 +40,6 @@ def test_first_attempt_success_no_retry(copilot_module, monkeypatch):
 
 
 def test_retry_on_transient_failure_then_success(copilot_module, monkeypatch):
-    """Two transient exceptions, third attempt succeeds → real result."""
     attempts = []
     async def fake(server, tool, args, **_kwargs):
         attempts.append(1)
@@ -53,7 +48,6 @@ def test_retry_on_transient_failure_then_success(copilot_module, monkeypatch):
         return {"ok": True, "rows": [1, 2]}
     monkeypatch.setattr(copilot_module.mcp_registry, "invoke", fake)
 
-    # Patch asyncio.sleep so the test is fast.
     slept = []
     async def fake_sleep(d):
         slept.append(d)
@@ -62,12 +56,10 @@ def test_retry_on_transient_failure_then_success(copilot_module, monkeypatch):
     out = _run(copilot_module._invoke_tool_with_retry("srv", "t", {}))
     assert out == {"ok": True, "rows": [1, 2]}
     assert len(attempts) == 3
-    # Exponential: 1s, then 2s before attempts 2 and 3.
     assert slept == [1.0, 2.0]
 
 
 def test_retry_exhaustion_returns_user_friendly_envelope(copilot_module, monkeypatch):
-    """All 3 attempts fail → no exception, an error envelope returns."""
     async def fake(*a, **kw):
         raise TimeoutError("ECONNREFUSED")
     monkeypatch.setattr(copilot_module.mcp_registry, "invoke", fake)
@@ -79,15 +71,12 @@ def test_retry_exhaustion_returns_user_friendly_envelope(copilot_module, monkeyp
     assert out["error_type"] == "TimeoutError"
     assert out["server"] == "sap_hcm"
     assert out["tool"]   == "get_emp"
-    # User-facing text is in _meta so the LLM can quote it directly.
     msg = out["_meta"]["user_facing"]
     assert "sap_hcm" in msg
     assert "3 intentos" in msg
 
 
 def test_retry_error_envelope_strips_internals(copilot_module, monkeypatch):
-    """The error_message field is sanitised — Bearer tokens etc. don't
-    leak from the SDK exception into the audit / LLM context."""
     async def fake(*a, **kw):
         raise RuntimeError(
             "401 Unauthorized: Authorization: Bearer sk-LEAK-12345 to upstream"
@@ -103,27 +92,19 @@ def test_retry_error_envelope_strips_internals(copilot_module, monkeypatch):
 
 
 def test_retry_max_attempts_constant(copilot_module):
-    """The plan caps retries at 3 with base delay 1s — pin both so a
-    future tweak surfaces visibly."""
     assert copilot_module._TOOL_RETRY_MAX_ATTEMPTS == 3
     assert copilot_module._TOOL_RETRY_BASE_DELAY_S == 1.0
 
 
-# ── Service-level: error envelope propagates through invoke_tool ───────────
-
 def test_error_envelope_propagates_to_llm_as_tool_result(copilot_module, monkeypatch):
-    """The LLM must receive the error envelope as a normal tool_result
-    so it can explain to the user — never see an exception."""
     seen_results = []
 
-    # The retry helper inside copilot_service.invoke_tool will hit this.
     async def fake_invoke(server, tool, args, **_kwargs):
         raise ConnectionError("upstream down")
     monkeypatch.setattr(copilot_module.mcp_registry, "invoke", fake_invoke)
     async def fake_sleep(_d): pass
     monkeypatch.setattr(asyncio, "sleep", fake_sleep)
 
-    # Minimal fake DB so create_conversation + run_turn don't blow up.
     import uuid
     class _DB:
         def __init__(self):
@@ -190,8 +171,6 @@ def test_error_envelope_propagates_to_llm_as_tool_result(copilot_module, monkeyp
     copilot_module.audit_service.record_event = _ev
 
     async def fake_chat(*, messages, invoke_tool, **_kw):
-        # The invoke_tool here is the closure inside copilot_service.
-        # On transient-then-down, it must return the envelope, not raise.
         result = await invoke_tool("sap_hcm", "get_employees", {})
         seen_results.append(result)
         final = list(messages) + [
@@ -230,7 +209,5 @@ def test_error_envelope_propagates_to_llm_as_tool_result(copilot_module, monkeyp
     envelope = seen_results[0]
     assert envelope["_error"] is True
     assert envelope["server"] == "sap_hcm"
-    # The turn still completed cleanly (no 5xx, no exception).
     assert "No pude conectar" in out["reply"]
-    # Error envelopes do NOT yield citations.
     assert out["citations"] == []

@@ -1,4 +1,3 @@
-"""Shared FastAPI dependencies — primarily the X-Internal-Api-Key check."""
 from __future__ import annotations
 
 import os
@@ -22,7 +21,6 @@ def verify_api_key(
     x_api_key: str | None = Header(None, alias="X-Api-Key"),
     x_internal_service: str | None = Header(None, alias="X-Internal-Service"),
 ) -> None:
-    """Reject the request unless a valid internal API key is presented."""
     presented = x_internal_api_key or x_api_key
     accepted = []
     if x_internal_service == "console":

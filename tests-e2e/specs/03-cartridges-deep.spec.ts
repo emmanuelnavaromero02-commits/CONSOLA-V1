@@ -1,11 +1,3 @@
-/**
- * v1.44.3.2.1 spec 03-deep — Exhaustive /cartridges.
- *
- * 31 tests covering the grid for all 5 built-in cartridges, the dynamic
- * form for each, save / test / delete flows with the LIVE Vault
- * (using cleanup-safe fake credentials), and per-cartridge schema
- * shape sanity.
- */
 import { test, expect } from "../fixtures/auth";
 
 const CARTRIDGES = ["hubspot", "replicon", "sap_hcm", "sap_s4hana", "sap_successfactors"] as const;
@@ -36,8 +28,6 @@ test.describe("Cartridges grid — coverage of all 5", () => {
   test("grid has at least 5 cartridge tiles", async ({ page }) => {
     await page.goto("/cartridges");
     const tiles = page.locator(cartridgeViewerLinks);
-    // Allow >5 in case related dashboard cards also appear, but at
-    // least the canonical built-in cartridges must be present.
     await expect(tiles.first()).toBeVisible({ timeout: 15_000 });
     expect(await tiles.count()).toBeGreaterThanOrEqual(5);
   });
@@ -51,8 +41,6 @@ test.describe("Cartridges grid — coverage of all 5", () => {
 
   test("loading state shows skeleton tiles before data arrives",
     async ({ page }) => {
-      // Throttle the listCartridges request so the skeleton has
-      // time to render.
       await page.route("**/api/cartridges", async (route) => {
         await new Promise((r) => setTimeout(r, 2_000));
         await route.continue();
@@ -79,8 +67,6 @@ test.describe("Cartridge detail — schema-driven form", () => {
     test(`${cart} detail page loads the Vault-scoped config surface`,
       async ({ page }) => {
         await page.goto(cartridgeViewer(cart));
-        // #273 B5: no inline credentials form; every cartridge viewer
-        // shows the scoped Vault CTA + a "Probar conexión" affordance.
         await expect(
           page.getByRole("link", { name: /configurar en vault/i }),
         ).toBeVisible({ timeout: 15_000 });
@@ -148,9 +134,6 @@ test.describe("Cartridge detail — interactions (Replicon)", () => {
       await page.goto(cartridgeViewer("replicon"));
       const testBtn = page.getByRole("button", { name: /probar conexión/i });
       await testBtn.click();
-      // The TestConnectionResult component renders OK/error with a
-      // message + latency. Either path is acceptable as long as the
-      // component renders.
       await expect(
         page.getByText(/conexión (exitosa|fallida)/i),
       ).toBeVisible({ timeout: 15_000 });
@@ -163,8 +146,6 @@ test.describe("Cartridge detail — interactions (Replicon)", () => {
       await expect(
         page.getByRole("button", { name: /probar conexión/i }),
       ).toBeVisible({ timeout: 15_000 });
-      // #273 B5 removed the inline "Borrar credenciales" destructive flow;
-      // the credential lifecycle now lives on the scoped Vault page.
       await expect(
         page.getByRole("button", { name: /borrar credenciales/i }),
       ).toHaveCount(0);
@@ -176,10 +157,6 @@ test.describe("Cartridge detail — interactions (Replicon)", () => {
 });
 
 test.describe("Cartridge detail — credentials are Vault-delegated", () => {
-  // #273 B5: the viewer no longer writes credentials from the browser.
-  // Secrets live in the scoped Vault page; the viewer only tests the
-  // connection. This guards against a regression that re-introduces an
-  // inline credential write path.
   test("viewer never POSTs credentials from the browser", async ({ page }) => {
     const credentialWrites: string[] = [];
     page.on("request", (req) => {
@@ -197,7 +174,6 @@ test.describe("Cartridge detail — credentials are Vault-delegated", () => {
     await expect(
       page.getByRole("button", { name: /probar conexión/i }),
     ).toBeVisible();
-    // No inline Save affordance exists to trigger a credential write.
     await expect(
       page.getByRole("button", { name: /guardar credenciales/i }),
     ).toHaveCount(0);

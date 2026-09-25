@@ -21,7 +21,6 @@ describe("published app name validation", () => {
   });
 
   it("refuses anything that could become a different URL", () => {
-    // The viewer builds /apps/{name}; these must never reach it.
     for (const value of [
       "",
       " ",

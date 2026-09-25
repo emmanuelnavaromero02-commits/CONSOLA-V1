@@ -1,5 +1,3 @@
-"""Typed HTTP contracts for the scheduled Agent Runner."""
-
 from __future__ import annotations
 
 from collections.abc import Mapping

@@ -1,10 +1,3 @@
-"""Sprint v1.26 (audit F11) — refinement → vault dedicated pair key.
-
-Mirror of test_per_pair_keys_workspace.py for the refinement service.
-Refinement doesn't call vault as of v1.26; the key exists so the
-future call site lands on the dedicated credential and vault's
-WARNING log surfaces any caller still on the legacy path.
-"""
 from __future__ import annotations
 
 import importlib
@@ -52,15 +45,12 @@ def vault_main(monkeypatch):
 
 
 def test_refinement_to_vault_uses_dedicated_key(vault_main):
-    """Vault accepts the dedicated refinement→vault key for x-internal-service=refinement."""
     vault_main.verify_api_key(
         x_api_key=REFINEMENT_KEY, x_internal_service="refinement",
     )
 
 
 def test_refinement_key_does_not_authorize_other_services(vault_main):
-    """Per-pair isolation guard: refinement's key MUST NOT authorize
-    console / mcp-infra / workspace requests."""
     for foreign_svc in ("console", "mcp-infra", "workspace"):
         with pytest.raises(HTTPException) as exc:
             vault_main.verify_api_key(
@@ -72,14 +62,10 @@ def test_refinement_key_does_not_authorize_other_services(vault_main):
 
 
 def test_legacy_key_still_accepted_for_refinement_during_migration(vault_main):
-    """Compat window: legacy INTERNAL_API_KEY is still accepted for
-    x-internal-service=refinement."""
     vault_main.verify_api_key(x_api_key=LEGACY, x_internal_service="refinement")
 
 
 def test_legacy_use_by_refinement_emits_warning(vault_main, caplog):
-    """Migration trail: legacy fallback emits a WARNING that mentions
-    refinement so operators can find the caller to roll forward."""
     with caplog.at_level(logging.WARNING, logger="vault"):
         vault_main.verify_api_key(x_api_key=LEGACY, x_internal_service="refinement")
     msgs = [rec.getMessage() for rec in caplog.records if rec.levelno >= logging.WARNING]

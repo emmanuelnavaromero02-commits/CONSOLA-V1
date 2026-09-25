@@ -46,8 +46,6 @@ def test_gcs_uses_only_complete_gcs_pair_and_region_auto(monkeypatch):
     monkeypatch.setattr(minio_client.settings, "gcs_bucket", "omega-gcs")
     monkeypatch.setattr(minio_client.settings, "gcs_access_key_id", "gcs-access")
     monkeypatch.setattr(minio_client.settings, "gcs_secret_access_key", "gcs-secret")
-    # Complete local credentials may coexist in a developer shell, but are
-    # never selected for GCS.
     monkeypatch.setattr(minio_client.settings, "minio_access_key", "wrong-access")
     monkeypatch.setattr(minio_client.settings, "minio_secret_key", "wrong-secret")
     monkeypatch.setattr(minio_client, "Minio", lambda **kwargs: captured.update(kwargs))

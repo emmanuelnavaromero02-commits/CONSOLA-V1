@@ -128,13 +128,9 @@ help:
 	@echo "                    rotate existing local DB roles to match infra/.env"
 	@echo "  make rotate-keys  back up infra/.env, generate fresh secrets"
 
-# Read-only preflight: Docker daemon, compose plugin, infra/.env, host
-# cryptography (bootstrap mints the Fernet key), occupied ports, and the
-# final demo URLs. Run it BEFORE 'make up' — it chains: make preflight && make up
 preflight:
 	@bash scripts/preflight.sh
 
-# Demo readiness helper: preflight, then the documented validation order.
 demo-check:
 	@bash scripts/preflight.sh || true
 	@echo ""
@@ -252,17 +248,9 @@ test-hermetic:
 	OMEGA_SAP_S4HANA_BASE=http://127.0.0.1:$(MOCK_SAP_S4HANA_PORT) \
 		$(PYTEST) tests/ -q
 
-# Fast, hermetic baseline coherence check. No Docker, no DB, no network.
-# Answers "is this checkout coherent enough to work from?", not "does the
-# product work" — that stays with smoke / beta-smoke / test.
 baseline-smoke:
 	@bash scripts/baseline_smoke.sh
 
-# Sprint v1.23 (audit B3): real end-to-end smoke. Verifies the stack is
-# functional — not just "containers running" — by hitting /healthz on
-# every app service, probing Postgres + MinIO, checking the auth gate,
-# and asserting the v1.19 vault_entries partitioning is intact.
-# Assumes `make up` has been run; doesn't try to start the stack.
 smoke:
 	@bash scripts/smoke_test.sh
 
@@ -431,12 +419,6 @@ decision-orchestrator-execution-aws-probe:
 rollback-rehearsal:
 	@$(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi) scripts/rollback_rehearsal.py
 
-# Sprint v1.44.3.2: Playwright browser-driven E2E suite.
-# Validates the FastAPI-served static console (port 8000), legacy HTML
-# routes, backend API contracts, and external service reachability
-# against a running stack.
-# Configuration: edit tests-e2e/.env (copied from tests-e2e/.env.example
-# on first run). The HTML report lands at tests-e2e/playwright-report/.
 e2e:
 	@bash scripts/run-e2e.sh
 
@@ -485,11 +467,6 @@ migrate:
 reconcile-db-passwords:
 	@bash scripts/reconcile_db_passwords.sh
 
-# Sprint v1.14: real implementation. Backs up the current infra/.env to
-# infra/.env.save (gitignored), then regenerates ALL secrets via
-# bootstrap.sh + bootstrap-keys.sh. Every active user session becomes
-# invalid after `make down && make up` because JWT_SECRET_KEY rotates,
-# so this is a deliberately operator-driven action.
 rotate-keys:
 	@echo "[rotate-keys] Backing up current .env to infra/.env.save..."
 	@if [ -f infra/.env ]; then cp infra/.env infra/.env.save; fi

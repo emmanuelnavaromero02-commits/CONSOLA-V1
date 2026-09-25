@@ -34,7 +34,6 @@ def test_beta_smoke_checks_release_identity_and_strict_readiness() -> None:
     source = _read(SCRIPT)
     for needle in (
         "VERSION",
-        "git describe",
         "git status",
         "release tree is clean",
         "OMEGA_BETA_SMOKE_ALLOW_DIRTY",

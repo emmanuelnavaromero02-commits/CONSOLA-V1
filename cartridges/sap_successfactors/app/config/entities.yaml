@@ -1,8 +1,4 @@
-# SAP SuccessFactors Employee Central — OData v2 entities
-# Names match the OData EntitySet name on the customer's API URL
-# (e.g. https://api{N}.sapsf.{eu|com}/odata/v2/<EntitySet>).
 entities:
-  # ── Core people master ────────────────────────────────────────────────────
   - entity: User
     description: "Platform user (login, email, manager, dept). Master record across modules."
     mode: incremental
@@ -132,7 +128,6 @@ entities:
     protection:
       nationalId: encrypted
 
-  # ── Employment ────────────────────────────────────────────────────────────
   - entity: EmpEmployment
     description: "Employment record per person (start date, employee class, end date)."
     mode: incremental
@@ -268,7 +263,6 @@ entities:
       - endDate
       - lastModifiedDateTime
 
-  # ── Org structure (Foundation Objects) ────────────────────────────────────
   - entity: FOCompany
     description: "Foundation Object: legal companies."
     mode: full
@@ -398,7 +392,6 @@ entities:
       - costCenter
       - lastModifiedDateTime
 
-  # ── Time off ──────────────────────────────────────────────────────────────
   - entity: EmployeeTime
     description: "Time off requests (leave, vacation, sick)."
     mode: incremental
@@ -431,7 +424,6 @@ entities:
     effective_dated: true
     date_field: startDate
 
-  # ── Recruiting ──────────────────────────────────────────────────────────────
   - entity: JobRequisition
     description: "Recruiting: job requisitions (open positions in the pipeline)."
     mode: incremental
@@ -479,9 +471,6 @@ entities:
     protection:
       candidateId: shadowed
 
-  # ── Performance & Goals ───────────────────────────────────────────────────
-  # Business names differ from the OData entityset, so odata_entity carries the
-  # technical name (extraction_service resolves config.get("odata_entity", entity)).
   - entity: GoalPlan
     odata_entity: Goal
     description: "Performance & Goals: goal entries (OData entityset Goal)."
@@ -513,10 +502,6 @@ entities:
       - formSubjectId
       - formTemplateId
       - status
-      # overallRating is null in this tenant's FormHeader; the overall performance
-      # rating is carried by the `rating` scalar (populated only when isRated=true).
-      # Select both so the silver can COALESCE the real value. Evidence: 2,104
-      # forms with isRated=true expose rating=1..N via FormHeader.rating.
       - overallRating
       - rating
       - isRated
@@ -656,7 +641,6 @@ entities:
     protection:
       userId: shadowed
 
-  # ── Competencies and skills ───────────────────────────────────────────────
   - entity: CompetencyEntity
     description: "Tenant competency catalog used to map role requirements and employee skills."
     mode: incremental
@@ -766,7 +750,6 @@ entities:
       - status
       - lastModifiedDateTime
 
-  # ── Career aspiration and succession ──────────────────────────────────────
   - entity: CareerWorksheet
     description: "Custom/enrichment career worksheet. Not a standard SuccessFactors C/P/A blocker unless tenant metadata exposes it."
     mode: incremental
@@ -876,7 +859,6 @@ entities:
     protection:
       userId: shadowed
 
-  # ── Learning ──────────────────────────────────────────────────────────────
   - entity: LearningItem
     odata_entity: Item
     description: "Learning (LMS): learning items. odata_entity 'Item' is the standard default and is NOT externally verified — see PR notes."
@@ -1015,7 +997,6 @@ entities:
       - creditHours
       - lastModifiedDateTime
 
-  # ── Job relationships ─────────────────────────────────────────────────────
   - entity: EmpJob_History
     odata_entity: EmpJobRelationships
     description: "Job relationships (matrix / additional managers); OData entityset EmpJobRelationships."

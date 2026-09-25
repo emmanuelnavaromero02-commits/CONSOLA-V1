@@ -1,9 +1,4 @@
 #!/usr/bin/env bash
-# Local-only repair helpers for stale Docker volumes after infra/.env changes.
-#
-# This script never performs destructive cleanup in production. Role
-# reconciliation is non-destructive; Superset encrypted-metastore repair is
-# local/dev only and requires an explicit confirmation flag.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

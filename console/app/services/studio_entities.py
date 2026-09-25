@@ -1,9 +1,3 @@
-"""Studio entity authoring service.
-
-``entity_config`` is still the operational source of truth for extraction.
-This module adds a Studio-facing spec registry and keeps entity_config in sync
-so UI-created entities are immediately visible to cartridges, DAGs, and MCP.
-"""
 from __future__ import annotations
 
 import json

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Prove every release container still runs its tested digest image."""
 
 from __future__ import annotations
 

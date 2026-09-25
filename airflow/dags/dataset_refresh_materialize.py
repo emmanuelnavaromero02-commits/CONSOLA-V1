@@ -1,5 +1,3 @@
-"""Signed, idempotent execution for ``dataset_refresh_chain``."""
-
 from __future__ import annotations
 
 from typing import Any, Callable
@@ -29,7 +27,6 @@ def _safe_result(
 
 
 def _reused_layer(item: dict[str, Any], payload: dict[str, Any]) -> str:
-    """Resolve a completed slot's layer from the validated plan and its evidence."""
     planned = str(item.get("layer") or "").strip()
     durable = str((payload or {}).get("layer") or "").strip()
     if planned and durable and planned != durable:

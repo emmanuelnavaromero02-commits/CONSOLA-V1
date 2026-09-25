@@ -67,7 +67,7 @@ _MIN_SIGNING_KEY_LENGTH = 32
 
 
 class SecurityContextError(ValueError):
-    """Raised when the transported signed security_context cannot be trusted."""
+    pass
 
 
 def _security_context_signing_key() -> str:
@@ -84,7 +84,6 @@ def _security_context_signing_key() -> str:
 
 
 def verify_security_context(raw_context: str | None) -> dict[str, Any]:
-    """Verify the signed security_context transported via X-Security-Context."""
     if not raw_context or not str(raw_context).strip():
         raise SecurityContextError("signed security_context is required")
     try:
@@ -122,11 +121,6 @@ def resolve_signed_scope(
     raw_context: str | None,
     body: Mapping[str, Any] | None,
 ) -> tuple[str, str]:
-    """Resolve tenant/workspace exclusively from the verified signed context.
-
-    Body-supplied scope never routes data; if it disagrees with the signed
-    context the request is rejected instead of honored.
-    """
     ctx = verify_security_context(raw_context)
     tenant_id = str(ctx.get("tenant_id") or "").strip()
     workspace_id = str(ctx.get("workspace_id") or "").strip()

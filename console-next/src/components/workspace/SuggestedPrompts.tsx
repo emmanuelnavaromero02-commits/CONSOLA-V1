@@ -10,24 +10,8 @@ interface Props {
   onSelect: (prompt: string) => void;
 }
 
-/**
- * v1.44.4 Task A — empty-state suggested prompts.
- *
- * Renders four canned prompts that the operator can click to
- * seed a brand-new conversation. The icons are emoji (no
- * dependency) and the prompt strings double as accessibility
- * labels. Clicking a card fires onSelect with the full prompt
- * which the page wires to the same send-message flow as the
- * input.
- *
- * Per the v1.44.4 brief these are the four "centro" prompts —
- * the slash-command palette covers the longer enterprise
- * report templates (/reporte_mensual, /turnover_analysis, …).
- */
 const PROMPTS: SuggestedPrompt[] = [
   {
-    // Round 1 review: universal entry-point for first-time
-    // operators who don't yet know what OMEGA can do.
     icon:   "✨",
     title:  "¿Qué puedes hacer?",
     prompt: "¿Qué puedes hacer? Dame ejemplos concretos para mi operación.",

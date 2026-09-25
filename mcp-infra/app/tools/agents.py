@@ -1,11 +1,3 @@
-"""
-Agent management MCP tools — exposed so the Studio assistant can
-create / update / list / delete agents conversationally.
-
-These tools talk directly to the `agents` table (no HTTP roundtrip through
-console). Invocation of agents is intentionally NOT exposed here — that
-lives in console/UI, since it carries a user session and streams results.
-"""
 from __future__ import annotations
 
 import json
@@ -160,8 +152,6 @@ def _fetch_one(cur, sql: str, params: tuple) -> dict | None:
     return dict(row) if row else None
 
 
-# ── agent_list ─────────────────────────────────────────────────────────────
-
 @tool(
     name="agent_list",
     description=(
@@ -201,8 +191,6 @@ async def agent_list(cartridge_id: str | None = None,
     return {"agents": [_row_to_dict(r) for r in rows]}
 
 
-# ── agent_get ──────────────────────────────────────────────────────────────
-
 @tool(
     name="agent_get",
     description="Fetch a single agent by id OR by (cartridge_id, slug).",
@@ -239,8 +227,6 @@ async def agent_get(agent_id: str | None = None,
         return {"error": "agent not found"}
     return _row_to_dict(row)
 
-
-# ── agent_create ───────────────────────────────────────────────────────────
 
 @tool(
     name="agent_create",
@@ -356,8 +342,6 @@ async def agent_create(
     return _row_to_dict(dict(row))
 
 
-# ── agent_update ───────────────────────────────────────────────────────────
-
 _UPDATABLE = {
     "name", "description", "instructions", "personality",
     "allowed_tools", "rag_filter", "extra",
@@ -427,8 +411,6 @@ async def agent_update(agent_id: str, security_context: dict | None = None, **pa
         return {"error": "agent not found"}
     return _row_to_dict(dict(row))
 
-
-# ── agent_delete ───────────────────────────────────────────────────────────
 
 @tool(
     name="agent_delete",

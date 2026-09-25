@@ -1,5 +1,3 @@
-"""Real PostgreSQL proofs for the workspace uniqueness schema guard."""
-
 from __future__ import annotations
 
 import json

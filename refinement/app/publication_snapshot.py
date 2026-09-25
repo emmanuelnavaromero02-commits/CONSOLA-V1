@@ -18,16 +18,6 @@ def _dsn(raw: str) -> str:
 
 
 def _require_pinned_version(version: str, subject: str) -> None:
-    """A version id that does not pin one immutable object is not a pin.
-
-    Empty means the read would silently be unpinned: s3_storage.stat only sends
-    VersionId `if expected_version`. The literal "null" is what S3 reports for
-    an object written while versioning was suspended; under Enabled versioning
-    it is still a distinct immutable version, but it is also the one id that
-    would stop pinning if a bucket ever lost versioning, so it is refused here
-    rather than trusted. `None` reaches this as "" by construction at the call
-    sites, never as the string "None".
-    """
     if not version or version == "null":
         raise RuntimeError(f"{subject} has no pinned version")
 
@@ -65,7 +55,6 @@ class PublicationSnapshot:
 
 
 class PublicationSnapshotResolver:
-    """Pins head, receipt and evidence in one repeatable-read transaction."""
 
     def __init__(self, storage: Any | None = None, database_url: str | None = None):
         self.storage = storage
@@ -202,22 +191,6 @@ class PublicationSnapshotResolver:
         return self._read_many([scope])[scope]
 
     def _validate_object(self, snapshot: PublicationSnapshot) -> None:
-        """Prove the published object is the one the head names, by identity.
-
-        This used to stream the whole object and recompute SHA-256 on every
-        read. The adversarial byte-level proof is not this: it is
-        publication_verifier_worker, which downloads the object out of band and
-        recomputes the digest once (publication_verifier_worker.py:90-92). This
-        check is the per-read gate, and pinning the version answers the same
-        question at the cost of one HEAD, because S3 cannot serve different
-        bytes for one version id and the app role is denied
-        DeleteObjectVersion/PutBucketVersioning (infra/terraform/infra/iam.tf).
-
-        The recorded digest still has to match; it is read from the object's
-        own `omega-sha256` metadata, which every object written through
-        omega_lakehouse carries. An object without one is refused rather than
-        waved through -- an absent value must never read as agreement.
-        """
         if not self.storage or snapshot.head.get("status") == "legacy_unverified":
             return
         uri = str(snapshot.head["object_uri"])
@@ -227,8 +200,6 @@ class PublicationSnapshotResolver:
             raise RuntimeError("published snapshot object is outside managed storage")
         if self.storage.uri_for(key) != uri:
             raise RuntimeError("published snapshot object scope mismatch")
-        # `or ""` and not str(...): a None here would become the string "None",
-        # which is truthy and would sail past the guard into an unpinned read.
         version = str(snapshot.head.get("object_version") or "")
         _require_pinned_version(version, "published snapshot object")
         try:

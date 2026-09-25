@@ -1,4 +1,3 @@
-"""Default-deny MCP gate for the legacy assistant chat surface."""
 from __future__ import annotations
 
 import os
@@ -57,12 +56,6 @@ def _deny(full_name: str, reason: str, *, risk_level: str = "unknown") -> dict[s
 
 
 async def build_tools(user: dict | None = None) -> tuple[list[dict], dict[str, str], dict[str, dict[str, Any]]]:
-    """Return Assistant-visible tools, tool_server_map, and an invocation catalog.
-
-    Only explicit read-only tools from the static manifest are exposed. Unknown,
-    write, destructive, approval-required, or permissionless tools stay invisible
-    to the LLM and are denied again at invocation time.
-    """
     if not permissions.has_permission(user, "copilot.use") or not _has_required_scope(user):
         return [], {}, {}
 

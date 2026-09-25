@@ -1,4 +1,3 @@
-"""entities.yaml, seed.sql and the Business One-shaped test bed stay in step."""
 from __future__ import annotations
 
 import importlib
@@ -56,7 +55,6 @@ def test_every_entity_yields_a_plan_and_parents_exist():
 
 
 def test_only_the_single_row_company_table_is_read_without_a_key():
-    """Every other table pages on a key: a keyless read is one fetchall of the whole table, which is exactly how a."""
     keyless = {e["entity"] for e in _entities() if not e.get("primary_key")}
     assert keyless == {"CINF"}
 
@@ -110,7 +108,6 @@ def test_connector_and_knowledge_bits_are_scoped_to_this_cartridge():
 
 
 def test_no_customer_specific_names_in_the_catalogue():
-    """The repository is public: schema names, hosts and IPs stay out."""
     text = "\n".join(p.read_text(encoding="utf-8") for p in (ENTITIES, CONNECTOR, KBS, SEED))
     assert not re.search(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", text)
     assert not re.search(r"\bSBO[_A-Z0-9-]{3,}\b", text), "a company schema name leaked into the catalogue"

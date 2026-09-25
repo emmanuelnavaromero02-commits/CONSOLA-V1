@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-"""Select the nearest trusted ancestral strict-SemVer release.
-
-Names and ancestry are only candidate filters.  Authority comes from a
-checksum-valid canonical GitHub Release manifest bound to the tag/SHA, apart
-from one exact current-tag-bound transition ledger entry.
-"""
 
 from __future__ import annotations
 
@@ -56,11 +50,6 @@ CANONICAL_INVENTORY_HISTORY: tuple[tuple[str, ...], ...] = (
     CANONICAL_SERVICES[:-1],
     CANONICAL_SERVICES,
 )
-# The release chain predates canonical manifests.  This sole recovery bridge
-# skips the known failed .210 through .220 runs only while their exact annotated
-# tag objects, peeled commits, direct-parent chain, and lack of canonical
-# evidence all match. Every later base must carry a checksum-valid canonical
-# manifest.
 TRANSITION_RELEASES = {
     "v1.45.221-beta": (
         "v1.45.209-beta",
@@ -134,7 +123,7 @@ TrustVerifier = Callable[[str, str], bool]
 
 
 class ReleaseTrustError(RuntimeError):
-    """Previous-release evidence is unavailable or ambiguous."""
+    pass
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -221,8 +210,6 @@ def _asset_bytes(
             or parsed.fragment
         ):
             raise ReleaseTrustError("GitHub release asset redirect is unsafe")
-        # GitHub's API may redirect an authenticated asset request to a signed
-        # CDN URL.  Never forward the bearer token across that host boundary.
         status, raw, _response_headers = fetcher(
             location,
             {
@@ -240,7 +227,6 @@ def _asset_bytes(
 
 
 def _canonical_inventory_for(images: object) -> tuple[str, ...] | None:
-    """Return the exact historical inventory a manifest's image list must match."""
     if not isinstance(images, list):
         return None
     for inventory in CANONICAL_INVENTORY_HISTORY:
@@ -393,12 +379,6 @@ def verify_github_release_manifest(
     token: str,
     fetcher: RawFetcher = _fetch_bytes,
 ) -> bool:
-    """Return true only for a release with checksum-valid canonical evidence.
-
-    A structural 404 or invalid/missing canonical asset marks only that tag as
-    untrusted.  Authentication, transport, and other HTTP failures are
-    ambiguous and abort selection instead of silently shortening the delta.
-    """
 
     owner, name = _strict_repository(repository)
     if SemVer.parse(tag) is None or not re.fullmatch(r"[0-9a-f]{40}", commit):
@@ -756,10 +736,6 @@ def select_previous_release(
         ).stdout.strip()
         candidates.append((int(distance_text), version, tag, commit))
 
-    # Check nearest commits first, and the highest SemVer only as a deterministic
-    # tie-breaker.  A newly injected SemVer tag has no authority by itself: it
-    # is ignored unless it has canonical release evidence.  The sole pinned
-    # transition was validated and returned above.
     for distance in sorted({candidate[0] for candidate in candidates}):
         at_distance = sorted(
             (candidate for candidate in candidates if candidate[0] == distance),

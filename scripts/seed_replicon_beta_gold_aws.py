@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-"""Seed the AWS Replicon beta Gold path through SSM.
-
-This command is intentionally mutating and scoped. It refuses to run unless the
-operator provides a tenant_id and workspace_id, then runs the seed three times
-and verifies the scoped checksum remains stable.
-"""
 
 from __future__ import annotations
 

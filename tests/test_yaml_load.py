@@ -1,4 +1,3 @@
-"""Each cartridge ships a valid, non-stub entities.yaml."""
 from __future__ import annotations
 
 import pytest

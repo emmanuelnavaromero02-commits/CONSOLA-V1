@@ -1,5 +1,3 @@
-"""Persistence helpers for pipeline run triggers."""
-
 from __future__ import annotations
 
 import json
@@ -144,10 +142,6 @@ async def refresh_dag_run_status(
         user=user,
     )
     if result.get("error"):
-        # A not-found response is not proof of failure: Airflow can age a DAG
-        # run out of its metadata retention window while pipeline_runs remains
-        # the durable product history.  Only the explicit, audited server-side
-        # reconciler may terminalize that row.
         return row
 
     observed_status = normalize_airflow_state(result.get("state"))
@@ -215,10 +209,6 @@ async def refresh_dag_run_status(
                 )
                 if persisted:
                     durable = dict(persisted)
-                    # The CAS predicate and SET clause make this exact in
-                    # PostgreSQL.  Keep the selected transition explicit for
-                    # lightweight asyncpg test doubles that return their
-                    # pre-update fixture for every fetchrow call.
                     durable.update(
                         status=new_status,
                         started_at=candidate.get("started_at"),
@@ -227,9 +217,6 @@ async def refresh_dag_run_status(
                     )
                     return durable
 
-                # Another writer won after our Airflow read.  Re-read the
-                # durable row under the same RLS scope; never return the stale
-                # observation as if it had been committed.
                 select_args: list[Any] = [row.get("run_id")]
                 select_scope = ""
                 if tenant_id and workspace_id:

@@ -1,5 +1,3 @@
-"""Release validation must execute app-grant regressions on real PostgreSQL."""
-
 from __future__ import annotations
 
 import json

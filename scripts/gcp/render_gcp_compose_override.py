@@ -1,11 +1,4 @@
 #!/usr/bin/env python3
-"""Render the no-variable Terraform GCP Compose template for day-2 deploys.
-
-Terraform's ``templatefile(path, {})`` turns ``$${NAME}`` into the literal
-Compose interpolation ``${NAME}``.  The canonical day-2 path must apply the
-same transformation to the exact template in the verified source archive; it
-must never inherit a potentially stale overlay from the running release.
-"""
 
 from __future__ import annotations
 
@@ -31,13 +24,9 @@ _REQUIRED_HARDENING = (
 
 
 def render_template(raw: str) -> str:
-    """Apply exactly the Terraform escaping used by this zero-variable template."""
 
     if "\x00" in raw or "\r" in raw:
         raise RenderError("template contains unsupported bytes")
-    # This template has an empty Terraform variable map.  Any unescaped
-    # interpolation/directive would either diverge from templatefile({}, ...) or
-    # introduce a second template language into the privileged deploy path.
     terraform_probe = raw.replace("$${", "")
     if "${" in terraform_probe or "%{" in raw:
         raise RenderError("template contains unsupported Terraform syntax")

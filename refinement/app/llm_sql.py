@@ -1,6 +1,3 @@
-"""
-LLM SQL generation — Claude genera SQL DuckDB dado descripción + esquemas de fuentes.
-"""
 from __future__ import annotations
 
 import json
@@ -22,7 +19,7 @@ _JSON_FENCE_RE = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.IGNORECASE
 
 
 class GeneratedSQLValidationError(ValueError):
-    """Raised when the LLM does not return strict, safe SQL JSON."""
+    pass
 
 
 def _mask_single_quoted(sql: str) -> str:

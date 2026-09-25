@@ -3,7 +3,6 @@ from unittest.mock import AsyncMock, patch, MagicMock
 import sys
 import types
 
-# Stub out auth and asyncpg before importing the router
 sys.modules.setdefault('app.dependencies', MagicMock())
 sys.modules.setdefault('app.services.auth', MagicMock())
 
@@ -40,10 +39,8 @@ def _csrf_headers():
 
 
 def _make_fetch_side_effect(data_rows):
-    """Return a side_effect for mock_conn.fetch that handles _columns() queries."""
     async def fetch_side_effect(query, *args):
         if "information_schema.columns" in query:
-            # _columns() expects rows with "column_name" key
             table_name = args[0] if args else ""
             if table_name == "user_sessions":
                 return [{"column_name": "token_hash"}, {"column_name": "user_id"},
@@ -65,7 +62,7 @@ def _make_fetch_side_effect(data_rows):
 def test_get_sessions(mock_pool):
     mock_conn = AsyncMock()
     mock_pool.return_value = mock_conn
-    mock_conn.fetchval = AsyncMock(return_value=True)  # _table_exists → True
+    mock_conn.fetchval = AsyncMock(return_value=True)
     mock_conn.fetch.side_effect = _make_fetch_side_effect(
         [{"session_id": "a" * 64, "user_id": 1, "user_email": "a@b.com",
           "ip": None, "last_seen": None, "user_agent": None,
@@ -96,7 +93,7 @@ def test_revoke_session(mock_pool):
 def test_get_audit_events(mock_pool):
     mock_conn = AsyncMock()
     mock_pool.return_value = mock_conn
-    mock_conn.fetchval = AsyncMock(return_value=True)  # _table_exists → True
+    mock_conn.fetchval = AsyncMock(return_value=True)
     mock_conn.fetch.side_effect = _make_fetch_side_effect(
         [{"id": 1, "user_id": 1, "user_email": "a@b.com", "action": "login",
           "resource_type": None, "resource_id": None,

@@ -1,22 +1,10 @@
-"""Unit tests covering the 5 gaps identified in Ronda 17-C audit.
-
-1. watermark_service.update_watermark — guard clause prevents stale rewind
-2. protection_service.apply_protection_for_entity — masks/shadows fields correctly
-3. salesforce_client._odata_filter_to_soql — escapes single quotes
-4. salesforce_client._query/_query_more — 401 triggers token refresh + retry
-5. kb_service.run_knowledge_bit — SQL guard fires before DuckDB
-"""
 from __future__ import annotations
 
 import hashlib
 from unittest.mock import MagicMock, patch
 
 
-# ── 1. watermark update: guard clause prevents stale rewind ──────────────────
-
 def test_update_watermark_guard_clause_is_in_sql():
-    """The ON CONFLICT DO UPDATE must include a WHERE guard to prevent a
-    slower concurrent run from rewinding the watermark to a stale value."""
     from pathlib import Path
     src = (
         Path(__file__).resolve().parents[1]
@@ -26,8 +14,6 @@ def test_update_watermark_guard_clause_is_in_sql():
         "update_watermark() ON CONFLICT DO UPDATE must guard against stale writes"
     )
 
-
-# ── 2. protection_service — masked/shadowed/encrypted ────────────────────────
 
 def test_apply_protection_masks_text_fields():
     from app.services.protection_service import _mask, _shadow
@@ -46,7 +32,7 @@ def test_apply_protection_shadowed_email_is_deterministic():
     h1 = _shadow("same@email.com")
     h2 = _shadow("same@email.com")
     assert h1 == h2
-    assert len(h1) == 64  # SHA-256 hex
+    assert len(h1) == 64
 
 
 def test_apply_protection_for_contact_row():
@@ -65,15 +51,11 @@ def test_apply_protection_for_contact_row():
     protected = apply_protection_for_entity("Contact", rows)
     assert len(protected) == 1
     row = protected[0]
-    # Id should be shadowed (SHA-256 hex)
     assert row["Id"] == hashlib.sha256("003abc".encode()).hexdigest()
-    # Email should be shadowed
     assert row["Email"] == hashlib.sha256("juan@example.com".encode()).hexdigest()
-    # FirstName/LastName/Phone should be masked (non-original, contains *)
     assert "*" in row["FirstName"]
     assert "*" in row["LastName"]
     assert "*" in row["Phone"]
-    # Non-PII fields unchanged
     assert row["Title"] == "VP Sales"
     assert row["OwnerId"] == "005xyz"
 
@@ -84,20 +66,15 @@ def test_apply_protection_warns_on_missing_field(caplog):
     rows = [{"Id": "003abc", "Title": "VP Sales"}]
     with caplog.at_level(logging.WARNING, logger="app.services.protection_service"):
         apply_protection_for_entity("Contact", rows)
-    # Should log warnings for missing PII fields (Email, FirstName, etc.)
     assert any("absent from row" in r.message for r in caplog.records)
 
-
-# ── 3. salesforce_client._odata_filter_to_soql single-quote escaping ─────────
 
 def test_odata_filter_to_soql_escapes_single_quotes():
     from app.core.salesforce_client import _odata_filter_to_soql
 
-    # OData operator is translated and quoted string value is preserved
     result = _odata_filter_to_soql("StageName eq 'Closed Won'")
     assert result == "StageName = 'Closed Won'"
 
-    # Numeric-looking strings stay quoted (not datetimes)
     result2 = _odata_filter_to_soql("Name eq '42'")
     assert result2 == "Name = '42'"
 
@@ -122,10 +99,7 @@ def test_odata_filter_to_soql_none_returns_none():
     assert _odata_filter_to_soql("") is None
 
 
-# ── 4. salesforce_client 401 refresh-and-retry ───────────────────────────────
-
 def test_query_retries_on_401():
-    """After a 401, the client must clear its token and retry exactly once."""
     from app.core.salesforce_client import SalesforceClient
 
     client = SalesforceClient.__new__(SalesforceClient)
@@ -152,7 +126,6 @@ def test_query_retries_on_401():
         call_count[0] += 1
         if call_count[0] == 1:
             return FakeResponse(401)
-        # Second call returns success
         return FakeResponse(200)
 
     mock_session = MagicMock()
@@ -168,7 +141,6 @@ def test_query_retries_on_401():
 
 
 def test_query_clears_token_on_401():
-    """After a 401, _token and _token_expires_at must be cleared before retry."""
     from app.core.salesforce_client import SalesforceClient
 
     client = SalesforceClient.__new__(SalesforceClient)
@@ -202,19 +174,12 @@ def test_query_clears_token_on_401():
             client._query("SELECT Id FROM Account")
 
     assert len(token_at_retry) == 2, "Expected exactly two GET calls"
-    # First call: token was still 'stale-token' (cleared after receiving 401)
     assert token_at_retry[0] == "stale-token"
-    # Second call: token must be None (cleared before the retry)
     assert token_at_retry[1] is None, "_token must be cleared to None before the retry GET"
-    # Expiry must also be reset
     assert client._token_expires_at == 0.0, "_token_expires_at must be reset to 0.0 on 401"
 
 
-# ── 5. kb_service.run_knowledge_bit — guard fires before DuckDB ──────────────
-
 def test_run_knowledge_bit_blocks_malicious_sql(monkeypatch):
-    """run_knowledge_bit must reject SQL that fails the security guard
-    WITHOUT opening a DuckDB connection."""
     from app.services import kb_service
 
     monkeypatch.setattr(
@@ -230,15 +195,12 @@ def test_run_knowledge_bit_blocks_malicious_sql(monkeypatch):
         type("S", (), {"minio_bucket": "lakehouse"})(),
     )
 
-    # If DuckDB is reached, this would fail with a connection error —
-    # the test asserts the guard fires before any DuckDB call.
     result = kb_service.run_knowledge_bit("kb_test")
     assert result["status"] == "error"
     assert "guard" in result["error"].lower() or "SQL" in result["error"]
 
 
 def test_run_knowledge_bit_passes_valid_sql(monkeypatch):
-    """run_knowledge_bit must pass a valid salesforce-prefixed SQL through to execution."""
     import pandas as pd
     from app.services import kb_service
 

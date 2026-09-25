@@ -11,22 +11,6 @@ interface Props {
   onClose: () => void;
 }
 
-/**
- * v1.44.4 Task A — memory drawer (Sheet-style side panel).
- *
- * Backend reality (Round 1 review):
- *   - Facts:        ``{id, fact, source?, confidence?, created_at?}``
- *   - Preferences:  ``{pref_key, pref_value, updated_at?}``
- *
- * POST /memory/fact accepts ``{fact, source?}`` with source
- * limited to explicit/extracted. Manual UI writes always use
- * the backend default (explicit); extracted is reserved for the
- * LLM memory hook.
- *
- * Security review (Round 1): bounded maxLength on the inputs
- * (200 chars per fact, 64 per source) so an operator can't DOS
- * the storage layer by pasting a megabyte of text.
- */
 const MAX_FACT_CHARS   = 200;
 
 
@@ -41,8 +25,6 @@ export function MemoryDrawer({ open, onClose }: Props) {
 
   const [factText, setFactText]     = useState("");
 
-  // Capture the previously-focused element so we can restore
-  // focus on close (WCAG 2.4.3).
   const previousFocus = useRef<HTMLElement | null>(null);
   const firstInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -53,7 +35,6 @@ export function MemoryDrawer({ open, onClose }: Props) {
       ? document.activeElement
       : null;
 
-    // Defer focus to next tick so the input is mounted.
     requestAnimationFrame(() => firstInputRef.current?.focus());
 
     function onKey(e: KeyboardEvent) {
@@ -102,8 +83,6 @@ export function MemoryDrawer({ open, onClose }: Props) {
       aria-modal="true"
       aria-labelledby="memory-drawer-title"
     >
-      {/* Backdrop owns the click-outside handler so a tap on the
-          dimmed area actually closes the drawer (Round 1 P1). */}
       <div
         className="flex-1 bg-black/40"
         onClick={onClose}

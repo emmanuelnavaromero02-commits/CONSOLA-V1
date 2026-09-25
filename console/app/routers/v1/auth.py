@@ -5,10 +5,6 @@ import types
 
 import app.main as _console_main
 
-# Import the current console runtime namespace, including private helper
-# functions used by legacy handlers. Handlers are rebound to app.main's
-# namespace before registration so existing tests and monkeypatches that
-# patch app.main.<helper> continue to affect the handler at runtime.
 globals().update(_console_main.__dict__)
 router = APIRouter()
 
@@ -29,31 +25,22 @@ def _bind_to_main(fn):
     _console_main.__dict__[fn.__name__] = rebound
     return rebound
 
-# /login
 @router.get("/login")
 @_bind_to_main
 async def login_page(request: Request):
-    # Seed the CSRF cookie so the page's POST /auth/login fetch can echo
-    # it back without an extra round-trip. The cookie is re-issued on
-    # every GET /login (cheap, and avoids a stale-token edge case when
-    # the user keeps the tab open across logout/login).
     from app.routers.pages import _console_next_response
 
     return _console_next_response(request, "login/index.html")
 
-# /auth/login
 @router.post("/auth/login", dependencies=[Depends(require_csrf)])
 @_bind_to_main
 async def auth_login(request: Request, body: dict):
     return await _login_response(request, body)
 
-# /auth/refresh
 @router.post("/auth/refresh", dependencies=[Depends(require_csrf)])
 @_bind_to_main
 async def auth_refresh(request: Request):
     refresh_token = request.cookies.get(_auth.REFRESH_COOKIE_NAME)
-    # Hash a prefix of the token into the subject so per-token buckets isolate
-    # spamming attempts without writing the secret material to Redis keys.
     subject = _auth.hash_refresh_token(refresh_token or "")[:16]
     await _rate_limit(request, "/auth/refresh", subject)
     rotated = await _auth.rotate_refresh_token(refresh_token)
@@ -73,7 +60,6 @@ async def auth_refresh(request: Request):
     _set_refresh_cookie(resp, new_refresh_token, refresh_expires)
     return resp
 
-# /auth/logout
 @router.post("/auth/logout", dependencies=[Depends(require_csrf)])
 @_bind_to_main
 async def auth_logout(request: Request):
@@ -81,9 +67,6 @@ async def auth_logout(request: Request):
     refresh_token = request.cookies.get(_auth.REFRESH_COOKIE_NAME)
     await _auth.logout_tokens(token, refresh_token)
 
-    # Sprint v1.10 — blacklist the bearer access token's jti so a stolen
-    # JWT can't keep authenticating up to its exp. Silent if the caller
-    # is cookie-only (most of our UI) or the token is already invalid.
     auth_header = request.headers.get("authorization", "")
     if auth_header.lower().startswith("bearer "):
         bearer = auth_header.split(" ", 1)[1].strip()
@@ -95,8 +78,6 @@ async def auth_logout(request: Request):
                 from app.services.jwt_blacklist import get_blacklist
                 await get_blacklist().revoke(jti, int(exp))
         except Exception:
-            # JWT already expired / malformed / signature mismatch —
-            # nothing to revoke, nothing to do.
             pass
 
     resp = JSONResponse({"logged_out": True})
@@ -105,13 +86,11 @@ async def auth_logout(request: Request):
     clear_csrf_cookie(resp)
     return resp
 
-# /auth/me
 @router.get("/auth/me")
 @_bind_to_main
 async def auth_me(request: Request):
     return {"user": _user_payload(current_user(request))}
 
-# /auth/me-jwt
 @router.get("/auth/me-jwt")
 @_bind_to_main
 async def auth_me_jwt(authorization: str | None = Header(None)):
@@ -121,7 +100,6 @@ async def auth_me_jwt(authorization: str | None = Header(None)):
     if scheme.lower() != "bearer" or not token:
         raise HTTPException(status_code=401, detail="invalid authorization header")
     try:
-        # Sprint v1.10: blacklist-aware verification.
         claims = await verify_access_token_async(token)
     except JWTAuthError as exc:
         raise HTTPException(status_code=401, detail="invalid token") from exc
@@ -134,13 +112,11 @@ async def auth_me_jwt(authorization: str | None = Header(None)):
         "jti": claims["jti"],
     }}
 
-# /auth/me-current
 @router.get("/auth/me-current")
 @_bind_to_main
 async def auth_me_current(user: dict = Depends(get_current_user_dependency)):
     return {"user": _user_payload(user)}
 
-# /activate
 @router.get("/activate")
 @_bind_to_main
 async def viewer_activate():
@@ -148,7 +124,6 @@ async def viewer_activate():
     set_csrf_cookie(response)
     return response
 
-# /auth/activate
 @router.post("/auth/activate", dependencies=[Depends(require_csrf)])
 @_bind_to_main
 async def auth_activate(request: Request, body: dict):
@@ -170,7 +145,6 @@ async def auth_activate(request: Request, body: dict):
     _set_session_cookie(resp, sess_token, expires)
     return resp
 
-# /auth/activate/info
 @router.get("/auth/activate/info")
 @_bind_to_main
 async def auth_activate_info(token: str = ""):
@@ -180,17 +154,13 @@ async def auth_activate_info(token: str = ""):
         return {"valid": False}
     return {"valid": True, "email": info["email"], "name": info["name"]}
 
-# /forgot-password
 @router.get("/forgot-password")
 @_bind_to_main
 async def viewer_forgot():
-    # Seed CSRF cookie so the form's POST /auth/forgot-password fetch can
-    # echo it back without a prior visit to /login.
     response = FileResponse(STATIC / "forgot_password.html")
     set_csrf_cookie(response)
     return response
 
-# /auth/forgot-password
 @router.post("/auth/forgot-password", dependencies=[Depends(require_csrf)])
 @_bind_to_main
 async def auth_forgot(request: Request, body: dict):
@@ -205,7 +175,6 @@ async def auth_forgot(request: Request, body: dict):
             await _email.send_email(u["email"], subject, html)
     return {"sent": True}
 
-# /reset-password
 @router.get("/reset-password")
 @_bind_to_main
 async def viewer_reset():
@@ -213,7 +182,6 @@ async def viewer_reset():
     set_csrf_cookie(response)
     return response
 
-# /auth/reset/info
 @router.get("/auth/reset/info")
 @_bind_to_main
 async def auth_reset_info(token: str = ""):
@@ -222,7 +190,6 @@ async def auth_reset_info(token: str = ""):
         return {"valid": False}
     return {"valid": True, "email": info["email"]}
 
-# /auth/reset-password
 @router.post("/auth/reset-password", dependencies=[Depends(require_csrf)])
 @_bind_to_main
 async def auth_reset(request: Request, body: dict):
@@ -242,7 +209,5 @@ async def auth_reset(request: Request, body: dict):
     sess_token, expires = await _auth.create_session(user["id"], ip=ip)
     resp = JSONResponse({"reset": True, "user": user})
     _set_session_cookie(resp, sess_token, expires)
-    # Rotate CSRF after the password reset so any leaked pre-reset token
-    # cannot replay.
     set_csrf_cookie(resp)
     return resp

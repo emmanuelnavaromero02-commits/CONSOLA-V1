@@ -1,5 +1,3 @@
-"""Functional error page helpers for Console routes."""
-
 from __future__ import annotations
 
 import html

@@ -1,8 +1,3 @@
-"""Sprint v1.41.1 — pins the v1.41.1 observability indexes.
-
-Without these the /api/metrics/operational and /api/freshness queries
-seq-scan extraction_runs / audit_events as soon as volume grows.
-"""
 from __future__ import annotations
 
 from pathlib import Path

@@ -30,11 +30,6 @@ async def run_sync_agentops_monitors(
     schedule_key = sync_agentops.sync_agentops_schedule_key(sync_run_id)
     if cartridge == "sap_successfactors":
         await ensure_successfactors_talent_monitor(user)
-    # Mission 4: the same repair Talent gets, for the three domain monitors. Their
-    # rows come from a one-shot infra/init seed, so a workspace created after that
-    # migration ran would otherwise have no monitor row at all and nothing would
-    # ever create one. Imported here rather than injected because, unlike Talent's,
-    # this helper has no test seam that needs to replace it.
     domain_specs = [
         spec
         for spec in domain_monitors.DOMAIN_MONITOR_SPECS
@@ -173,11 +168,6 @@ async def run_sync_agentops_status(
     sync_agentops_is_terminal: Any,
     logger_warning: Any | None = None,
 ) -> dict[str, Any]:
-    # Mission 4: any cartridge that HAS a monitor, not just SuccessFactors. The
-    # old literal check rendered this step as "skipped — Monitores especificos no
-    # aplican para este cartucho" for sap_s4hana and salesforce, which is now
-    # false: both have scheduled monitors. Cartridges with no monitor at all still
-    # take the applies=False branch.
     if cartridge in domain_monitors.AGENTOPS_MONITOR_CARTRIDGES:
         can_run_agentops = (
             not running_children

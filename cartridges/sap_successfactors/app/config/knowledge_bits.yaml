@@ -162,10 +162,6 @@ knowledge_bits:
       JOIN Job j ON c.userId = j.userId
       GROUP BY j.payGrade, j.department, j.jobCode
 
-  # ── Bloque C: KBs sobre los golds del Bloque B (gold/sap_successfactors/<name>/) ─
-  # Leen el parquet gold materializado vía read_parquet (DuckDB), no pggold. Los
-  # datasets gold de SF llevan el prefijo sap_successfactors_ en el nombre, por eso
-  # la ruta repite el prefijo. Prefijo kb_sap_successfactors_ para id global unico.
   - id: kb_sap_successfactors_headcount_by_department
     name: "Headcount por departamento"
     description: "¿Cuántos empleados activos tengo por departamento? Headcount activo por departamento, desde el gold sap_successfactors_headcount_by_department."

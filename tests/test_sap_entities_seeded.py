@@ -1,4 +1,3 @@
-"""Sprint v1.31 — SAP catalog seed must populate entity_config for real."""
 from __future__ import annotations
 
 import os

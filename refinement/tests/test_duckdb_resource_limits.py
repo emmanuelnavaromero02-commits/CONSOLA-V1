@@ -70,9 +70,6 @@ def test_duckdb_threads_validator_rejects_invalid_values(engine_module, value):
 def test_duckdb_connection_bounds_the_spill_directory(
     engine_module, monkeypatch, tmp_path
 ):
-    # A bounded memory_limit makes spilling normal rather than rare, so the
-    # spill needs a bound of its own: DuckDB's default cap is 90% of the
-    # filesystem, and on a single-disk host that starves PostgreSQL.
     spill = tmp_path / "spill"
     fake = FakeDuckDBConnection()
     monkeypatch.setenv("DUCKDB_MEMORY_LIMIT", "1GB")
@@ -87,15 +84,12 @@ def test_duckdb_connection_bounds_the_spill_directory(
     joined = "\n".join(fake.statements)
     assert f"SET temp_directory='{spill}';" in joined
     assert "SET max_temp_directory_size='8GB';" in joined
-    # The directory has to exist before the cap can apply to it.
     assert joined.index("SET temp_directory=") < joined.index(
         "SET max_temp_directory_size="
     )
 
 
 def test_spill_settings_are_omitted_when_unset(engine_module, monkeypatch):
-    # Absent configuration must not turn into an empty SET, which DuckDB would
-    # read as "spill into the current working directory".
     fake = FakeDuckDBConnection()
     monkeypatch.delenv("DUCKDB_TEMP_DIRECTORY", raising=False)
     monkeypatch.delenv("DUCKDB_MAX_TEMP_DIRECTORY_SIZE", raising=False)
@@ -118,7 +112,7 @@ def test_temp_directory_validator_accepts_absolute_paths(engine_module, value):
 @pytest.mark.parametrize(
     "value",
     [
-        ".tmp",                      # DuckDB's own default: relative to the cwd
+        ".tmp",
         "relative/spill",
         "/var/lib/duckdb'; DROP TABLE x; --",
         "/var/lib/duckdb\nSET memory_limit='64GB'",
@@ -143,9 +137,6 @@ def test_max_temp_directory_size_validator_rejects_nonsense(engine_module, value
 
 
 def test_spill_directory_is_created_before_use(engine_module, monkeypatch, tmp_path):
-    # DuckDB creates one missing directory but not a nested path: with the
-    # parent absent it raises "Failed to create directory" at spill time, so
-    # the query that needed to spill is the one that fails.
     target = tmp_path / "deep" / "nested" / "spill"
     fake = FakeDuckDBConnection()
     monkeypatch.setenv("DUCKDB_TEMP_DIRECTORY", str(target))
@@ -160,8 +151,6 @@ def test_spill_directory_is_created_before_use(engine_module, monkeypatch, tmp_p
 
 
 def test_an_uncreatable_spill_directory_fails_loudly(engine_module, monkeypatch, tmp_path):
-    # Silently falling back to the default would reinstate the 90%-of-disk cap
-    # that the setting exists to replace.
     blocker = tmp_path / "a-file"
     blocker.write_text("not a directory", encoding="utf-8")
     fake = FakeDuckDBConnection()

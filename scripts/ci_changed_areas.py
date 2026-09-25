@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-"""Emit coarse CI impact flags from the files changed in a GitHub run.
-
-The goal is to keep pull-request CI focused: run regression checks for the
-areas touched by a diff, and reserve full-stack gates for changes that can
-actually affect the full runtime surface.
-"""
 
 from __future__ import annotations
 
@@ -139,7 +133,6 @@ def _changed_files(base: str, head: str) -> list[str]:
 
 
 def _deleted_files(base: str, head: str) -> list[str]:
-    """Return deletions separately so a removed test cannot authorize a skip."""
 
     return _run_diff_paths(base, head, diff_filter="D")
 
@@ -167,8 +160,6 @@ def _service_changed(files: list[str], service: str, context: str) -> bool:
     if service == "airflow":
         return _any(files, r"^infra/airflow/", r"^airflow/", r"^infra/docker-compose")
     if service.startswith("sap_") or service in {"replicon", "hubspot", "salesforce", "banxico", "inegi", "sec_edgar"}:
-        # Cartridge datasets and docs are mounted from the repo at runtime; the
-        # service image only needs rebuilds for app code, deps, DAGs, or Docker.
         return _any(files, rf"^{re.escape(root)}(app|dags)/", rf"^{re.escape(root)}(Dockerfile|requirements\.txt)$")
     if service == "console":
         return _any(files, r"^console/(app|Dockerfile|requirements\.txt)", r"^console-next/")
@@ -233,10 +224,6 @@ def _root_test_targets(files: list[str]) -> str:
         if re.match(r"^(?:tests|console/tests)/test.*\.py$", path)
         and Path(path).exists()
     }
-    # Runtime-only edits must still select the fail-closed regressions that
-    # protect scheduler authentication and storage/release boundaries.  A
-    # release tag may contain only the implementation file, so relying on the
-    # corresponding test file also being changed would silently skip them.
     console_runtime_contracts = {
         "console/app/main.py": {
             "console/tests/test_agent_runner_scheduler_auth.py",
@@ -365,11 +352,6 @@ def _root_test_targets(files: list[str]) -> str:
             for target in {"tests/test_aws_deploy_pins_release_digests.py"}
             if Path(target).exists()
         )
-    # A compose edit is exactly how refinement lost its ceiling: the AWS file
-    # declared no mem_limit and no DUCKDB_* key, and no root test was selected
-    # by a compose-only change, so CI stayed green while production ran
-    # unbounded (2026-09-20). These contracts must run whenever a compose file
-    # or the env template that feeds it moves, not only when the test does.
     if _any(
         files,
         r"^infra/docker-compose\.ya?ml$",

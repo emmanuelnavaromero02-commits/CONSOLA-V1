@@ -274,12 +274,8 @@ def _executable_engines_for_problem(problem_type: str) -> list[str]:
     if problem_type in {"risk_forecast", "temporal_control"}:
         return ["monte_carlo", "bayesian_calibration"]
     if problem_type in {"resource_allocation", "budget_optimization"}:
-        # E4: el hueco 'constrained_optimizer_candidate — not yet implemented'
-        # tiene ya su forma acotada y EXACTA: minimax top-K de regret. El
-        # candidato general sigue declarado para lo que el minimax no cubre.
         return ["monte_carlo", "minimax_allocation"]
     if problem_type == "data_quality":
-        # E4: concentracion/sesgo — ¿azar o patron? — con test de permutacion.
         return ["permutation_test"]
     return []
 
@@ -678,7 +674,6 @@ async def _run_bayesian_lookup(
 def _run_permutation(
     *, engine_inputs: dict[str, Any]
 ) -> tuple[str, dict[str, Any], list[dict[str, Any]], str | None, str | None]:
-    """E4 — motor puro y determinista; sin inputs no corre (jamas inventa)."""
     payload = engine_inputs.get("permutation_test")
     if not isinstance(payload, dict) or not payload:
         return (
@@ -717,7 +712,6 @@ def _run_permutation(
 def _run_minimax(
     *, engine_inputs: dict[str, Any]
 ) -> tuple[str, dict[str, Any], list[dict[str, Any]], str | None, str | None]:
-    """E4 — asignacion minimax exacta; sin inputs no corre (jamas inventa)."""
     payload = engine_inputs.get("minimax_allocation")
     if not isinstance(payload, dict) or not payload:
         return (

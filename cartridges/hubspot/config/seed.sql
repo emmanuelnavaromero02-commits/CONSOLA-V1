@@ -1,16 +1,3 @@
--- ─────────────────────────────────────────────────────────────────────────────
--- MODecissions Cartridge: HubSpot CRM — seed configuration
--- Run once to register this cartridge in a new installation.
--- Safe to re-run: agent inserts use target-less ON CONFLICT DO NOTHING so they
--- work with both the original global agents constraint and the later
--- workspace-aware partial indexes.
---
--- Construido siguiendo la lógica del cartucho Replicon (medallion, config-en-
--- datos, espina plan-vs-real, agentes con guardarraíles) — NO es un clon:
--- entidades, espina (pipeline_salud) y agentes son propios de CRM/ventas.
--- ─────────────────────────────────────────────────────────────────────────────
-
--- ── Cartridge header ──────────────────────────────────────────────────────────
 INSERT INTO cartridges (id, name, version, description, pattern, category, bronze_path)
 VALUES (
     'hubspot',
@@ -27,27 +14,12 @@ ON CONFLICT (id) DO UPDATE
         description = EXCLUDED.description,
         updated_at  = NOW();
 
--- ── DAGs ──────────────────────────────────────────────────────────────────────
 INSERT INTO cartridge_dags (cartridge_id, dag_id, file, description, trigger, params)
 VALUES
     ('hubspot', 'hubspot_extract',     'hubspot_extract.py',     'Extrae una entidad de HubSpot (full|incremental) vía el microservicio y propaga silver/gold.', 'on-demand', '["entity","mode"]'),
     ('hubspot', 'hubspot_extract_all', 'hubspot_extract_all.py', 'Extrae TODAS las entidades de HubSpot vía el microservicio.',                                  'on-demand', '["mode"]')
 ON CONFLICT (cartridge_id, dag_id) DO NOTHING;
 
--- ── Entities ──────────────────────────────────────────────────────────────────
--- mode:          full | incremental
--- dag_id:        hubspot_extract (DAG fino → microservicio del cartucho, Pattern A)
--- trigger_type:  scheduled  (el meta-DAG entity_scheduler dispara según cron_expression)
--- El microservicio del cartucho posee: cliente HTTP, paginación, watermark, parquet.
--- watermark_field / page_size se siembran aquí (son columnas reales) para que
--- el modo incremental se active (routes_skills.run_incremental usa
--- watermark_field). api_path/result_shape/properties NO son columnas: el
--- microservicio los re-inyecta desde app/config/entities.yaml en tiempo de
--- lectura (catalog_service._merge_yaml_runtime_fields), igual que SAP hace con
--- odata_entity. Los cron usan listas (0,4,8,...) en lugar de sintaxis de paso
--- con barra, porque el validador de import de cartuchos
--- (console _validate_seed_sql) rechaza esa secuencia al confundirla con un
--- comentario de bloque. La lista es equivalente y segura.
 INSERT INTO entity_config
     (cartridge_id, entity,       display_name,          mode,          primary_key,  dag_id,            description,                                                  watermark_field,       watermark_format, page_size, enabled, trigger_type, cron_expression)
 VALUES
@@ -69,7 +41,6 @@ ON CONFLICT (cartridge_id, entity) DO UPDATE
         trigger_type     = EXCLUDED.trigger_type,
         cron_expression  = EXCLUDED.cron_expression;
 
--- ── Semantic vocabulary ───────────────────────────────────────────────────────
 INSERT INTO semantic_terms (cartridge_id, term, definition, maps_to)
 VALUES
     ('hubspot', 'pipeline ponderado', 'Suma de monto × probabilidad de los deals abiertos (estado=forecast)',      'SUM(monto_usd * probabilidad) WHERE estado=''forecast'''),
@@ -79,11 +50,6 @@ VALUES
     ('hubspot', 'ticket promedio',    'Monto promedio de los deals ganados',                                        'AVG(monto_usd) WHERE estado=''ganado''')
 ON CONFLICT (cartridge_id, term) DO NOTHING;
 
--- ── Agents ────────────────────────────────────────────────────────────────────
--- Dos agentes especializados que viven dentro del cartucho hubspot.
--- El cartucho es su mente (datos + hints + vocabulario); cada agente es una
--- especialización (rol + tools + personalidad + prompt). Mismo patrón que
--- Replicon, contenido nuevo de ventas.
 
 INSERT INTO agents (cartridge_id, slug, name, description, instructions, personality,
                     allowed_tools, rag_filter, model, max_tokens, temperature, extra)

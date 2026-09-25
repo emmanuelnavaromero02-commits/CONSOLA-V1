@@ -149,15 +149,6 @@ class BronzeWriter:
             stat = self.storage.stat(key)
         except ObjectNotFound:
             return None
-        # The final key encodes the full batch identity (tenant, workspace,
-        # load_date, batch_id=run_id, entity), so an object already present at it
-        # can only be a prior interrupted attempt of THIS same immutable batch.
-        # Recovery adopts the durable object instead of failing when the freshly
-        # serialized bytes differ solely by volatile provenance (e.g. the per-run
-        # _retrieved_at stamp): a batch's bytes, once written, are immutable and
-        # recovery finalizes with them. A genuinely different batch carries a
-        # different run_id and therefore a different key; cross-batch integrity is
-        # still enforced by the manifest payload_hash/request_hash check above.
         return stat
 
     def _existing_manifest(self, key: str) -> dict[str, Any] | None:

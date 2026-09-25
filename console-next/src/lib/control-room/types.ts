@@ -336,7 +336,6 @@ export interface SfTalentKpisPayload {
   widgets?: SfTalentWidget[];
   signals?: SfTalentSignal[];
   blockers?: SfTalentBlocker[];
-  /** Fase 3 P0: fuente unica de plantilla/antiguedad/rotacion/historia + series. */
   workforce_trends?: SfWorkforceTrends | null;
 }
 
@@ -381,8 +380,6 @@ export interface SfTalentDesempenoRow {
   fit_band?: string | null;
 }
 
-// Cohorte "Desempeño disponible": desempeño real presente, Potencial pendiente (falta C+A).
-// Alimenta la columna Desempeño (B), la franja del 9-box (C) y el contador.
 export interface SfTalentDesempenoCohort {
   count: number;
   band_counts: { high: number; medium: number; low: number };

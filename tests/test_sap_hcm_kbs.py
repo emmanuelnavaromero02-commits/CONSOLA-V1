@@ -1,11 +1,3 @@
-"""Phase 2 Block C — SAP HCM Knowledge Bits.
-
-7 new copilot KBs (prefixed kb_sap_hcm_) appended to the existing 5, following
-the platform's real KB schema (id / name / description / sql — the fields
-kb_config and catalog_service actually read) and the real execution model (DuckDB
-over parquet via read_parquet, NOT pggold). The new KBs read the Block-B gold
-parquet at gold/sap_hcm/<name>/.
-"""
 from __future__ import annotations
 
 import re
@@ -92,7 +84,6 @@ def test_new_kbs_read_existing_gold_datasets():
 
 
 def test_new_kb_sql_executes_in_duckdb_not_pggold():
-    # Real execution is DuckDB over parquet; pggold is not attached in run_kb_sql.
     for kb in _kbs():
         if kb["id"] not in NEW_KB_IDS:
             continue

@@ -250,10 +250,6 @@ def test_marketplace_admin_and_retry_do_not_escalate_customer_access():
     retry_section = service.split("async def retry_installation", 1)[1].split(
         "async def list_installation_access", 1
     )[0]
-    # Marketplace admin is enforced by the marketplace.admin PERMISSION, not a
-    # hardcoded global role: the admin routes gate on require_permission and the
-    # service resolves access through has_permission. owner/super_admin/admin
-    # still pass because they carry marketplace.admin via ROLE_PERMISSIONS.
     assert 'require_permission("marketplace.admin")' in main
     assert 'permissions.has_permission(user, "marketplace.admin")' in service
     assert "in ADMIN_ROLES" not in service

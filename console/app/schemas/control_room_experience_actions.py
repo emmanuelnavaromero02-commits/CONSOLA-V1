@@ -45,11 +45,6 @@ class ExperienceActionPreviewResponse(_StrictModel):
 
 
 class ExperienceNarrative(_StrictModel):
-    """Mission 5: business narrative of an attested monitor alert.
-
-    Advisory only. Every field is sanitized public copy; the recommendation,
-    confidence, basis and limitations are fixed vocabulary, never model text.
-    """
 
     status: Literal["ready", "template"]
     explanation: str = Field(min_length=1, max_length=600)

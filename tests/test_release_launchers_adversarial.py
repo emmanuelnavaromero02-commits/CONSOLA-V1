@@ -26,8 +26,6 @@ def test_release_harness_rejects_a_regenerated_mutable_seal_before_inventory(
     seal.write_bytes(original)
     expected = hashlib.sha256(original).hexdigest()
 
-    # Models changing a test and regenerating the mutable checkout seal. The
-    # action-bound digest remains tied to the reviewed GITHUB_SHA bytes.
     seal.write_text(
         '{"files":[{"path":"tests/test_fake.py","sha256":"'
         + "0" * 64

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Probe the automatic Gold -> Control Room loop through /internal/intelligence/gold-refresh."""
 
 from __future__ import annotations
 

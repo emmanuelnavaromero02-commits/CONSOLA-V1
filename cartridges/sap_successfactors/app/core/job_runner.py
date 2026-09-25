@@ -1,12 +1,3 @@
-"""
-SAP SuccessFactors Batch Job Runner
-=========================
-Manages async extraction jobs within the cartridge process.
-
-- Jobs are persisted to the shared service DB (jobs table).
-- Each job runs as an asyncio Task; sync extraction code runs in a thread pool.
-- The MCP tools expose create / status / list to the LLM.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -32,8 +23,6 @@ from app.core.extraction_status import (
     summarize_extraction_results,
 )
 from app.core.request_context import get_security_context, refinement_security_context
-# Fuente unica de verdad de los ordenes de datasets gold SF (ver dataset_orders.py
-# + app/config/gold_dataset_orders.json). NO redefinir como literales aqui.
 from app.core.dataset_orders import (
     SUCCESSFACTORS_GOLD_FOUNDATION_ORDER,
     SUCCESSFACTORS_GOLD_TALENT_ORDER,
@@ -79,21 +68,15 @@ def _refinement_security_context_for_service(
     return refinement_security_context(security_context, source=source)
 
 
-# ── DB pool ───────────────────────────────────────────────────────────────────
-
 async def _get_pool() -> asyncpg.Pool:
     global _pool
     if _pool is None:
-        # asyncpg needs postgresql:// not postgresql+psycopg2://
         dsn = settings.database_url.replace("postgresql+psycopg2://", "postgresql://")
         _pool = await asyncpg.create_pool(dsn, min_size=1, max_size=3)
     return _pool
 
 
-# ── Schema migration ──────────────────────────────────────────────────────────
-
 async def ensure_schema() -> None:
-    """Create the jobs table if it doesn't exist (idempotent)."""
     pool = await _get_pool()
     await pool.execute("""
         CREATE TABLE IF NOT EXISTS jobs (
@@ -119,7 +102,6 @@ async def ensure_schema() -> None:
 
 
 async def cleanup_stale() -> None:
-    """Mark jobs stuck in 'running' at process startup as failed."""
     try:
         pool = await _get_pool()
         await pool.execute(
@@ -129,8 +111,6 @@ async def cleanup_stale() -> None:
     except Exception:
         pass
 
-
-# ── CRUD helpers ──────────────────────────────────────────────────────────────
 
 async def _insert(job_id: str, tool: str, args: dict) -> None:
     pool = await _get_pool()
@@ -178,8 +158,6 @@ async def fail_external_job(job_id: str | None, error: str) -> None:
         await _update(job_id, "failed", message="Failed in Airflow", error=error)
 
 
-# ── Central log writer ───────────────────────────────────────────────────────
-
 async def _log(
     job_id: str,
     entity: str | None,
@@ -187,7 +165,6 @@ async def _log(
     message: str,
     detail: dict | None = None,
 ) -> None:
-    """Write a progress entry to the central run_logs table."""
     try:
         pool = await _get_pool()
         async with pool.acquire() as conn:
@@ -200,22 +177,14 @@ async def _log(
                 tenant_id or None, workspace_id or None,
             )
     except Exception:
-        pass  # logs are best-effort
+        pass
 
-
-# ── Public API ────────────────────────────────────────────────────────────────
 
 async def create_extract_job(
     config: dict,
     from_date: str | None = None,
     to_date: str | None = None,
 ) -> dict:
-    """
-    Create a background extraction job and return immediately.
-    - Si AIRFLOW_URL está configurado: delega al DAG sap_successfactors_extract en Airflow.
-    - Si no: corre la extracción inline en un asyncio Task (comportamiento original).
-    The LLM should use get_job_status(job_id) to track progress.
-    """
     entity = config.get("entity", "unknown")
     mode   = config.get("mode", "full")
     job_id = str(uuid.uuid4())[:8]
@@ -253,10 +222,6 @@ async def create_extract_all_job(
     conn_id: str | None = None,
     target: str = "all",
 ) -> dict:
-    """
-    Extract all enabled entities in parallel (max 4 concurrent).
-    Logs progress to run_logs; updates job message after each entity.
-    """
     job_id = str(uuid.uuid4())[:8]
     selected_conn_id = (conn_id or "").strip() or None
     normalized_target = str(target or "all").strip().lower()
@@ -305,14 +270,7 @@ async def list_jobs(limit: int = 10) -> list[dict]:
     return [_row_to_dict(r) for r in rows]
 
 
-# ── Silver refresh trigger ────────────────────────────────────────────────────
-
 async def _trigger_silver_refresh(entity: str, security_context: dict | None = None) -> None:
-    """
-    Notifica al refinement engine que hay nuevos datos Bronze para esta entidad.
-    El engine re-materializa todos los datasets Silver que dependen de esa fuente.
-    Fail-fast: si refresh-by-source falla, el job debe quedar fallido.
-    """
     source = f"raw/sap_successfactors/{entity}"
     api_key, internal_service = _refinement_auth()
     async with httpx.AsyncClient(timeout=300) as client:
@@ -357,12 +315,6 @@ async def _trigger_successfactors_gold_refresh(
     target: str = "all",
     security_context: dict | None = None,
 ) -> dict[str, Any]:
-    """Materialize SuccessFactors Gold once after aggregate extraction.
-
-    Entity-level refresh-by-source keeps Silver current. The master extract-all
-    path then refreshes the known SuccessFactors Gold order once so Control Room
-    reads fresh Gold/Talent without each entity re-running the full Gold graph.
-    """
     silver_datasets = _successfactors_curated_silver_datasets_for_target(target)
     datasets = _successfactors_gold_datasets_for_target(target)
     api_key, internal_service = _refinement_auth()
@@ -475,15 +427,12 @@ async def _trigger_successfactors_gold_refresh(
     }
 
 
-# ── Airflow trigger ───────────────────────────────────────────────────────────
-
 async def _trigger_airflow(
     job_id: str,
     config: dict,
     from_date: str | None,
     to_date: str | None,
 ) -> None:
-    """POST to Airflow REST API to trigger the sap_successfactors_extract DAG."""
     entity = config.get("entity", "")
     conf = {
         "job_id":            job_id,
@@ -517,8 +466,6 @@ async def _trigger_airflow(
     )
 
 
-# ── Background executor ───────────────────────────────────────────────────────
-
 async def _run_extract_all(
     job_id: str,
     mode: str,
@@ -533,8 +480,6 @@ async def _run_extract_all(
         run_entity_with_metadata_guard,
     )
 
-    # Batch planning performs live $metadata discovery, so prove the Bronze
-    # destination first and avoid contacting SAP on a doomed run.
     try:
         require_storage_access()
         entities, skipped = get_extract_all_plan(

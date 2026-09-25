@@ -1,26 +1,3 @@
-"""
-Cartridge Introspect Router — Level 1: universal source discovery.
-==================================================================
-Detects the *pattern* of an arbitrary data source and extracts its entities
-+ typed fields into the canonical ``schema_introspect.Field`` shape, so the
-Autopilot can build a cartridge from ANY source — not just OData.
-
-Supported source kinds (deterministic, offline-parseable):
-  - odata        : EDMX $metadata          -> schema_introspect.parse_odata_metadata
-  - openapi      : OpenAPI/Swagger spec     -> schema_introspect.parse_openapi_fields
-  - graphql      : introspection __schema   -> parse_graphql_introspection
-  - sql          : information_schema rows   -> parse_sql_information_schema
-  - file_csv     : CSV header (+ sample)     -> parse_csv_header
-  - rest_sample  : JSON sample payload       -> parse_json_sample
-  - soap         : WSDL/XSD elements         -> parse_wsdl_elements (best-effort)
-
-Plus ``detect_source_pattern`` which infers extraction strategy:
-paginated? incremental (by date)? async export? webhook?
-
-Design: pure, deterministic, no network. The live HTTP fetch lives in the
-Studio router; this module only PARSES what it's handed, which keeps it
-unit-testable and keeps secrets out of the parsing layer.
-"""
 from __future__ import annotations
 
 import csv
@@ -36,23 +13,14 @@ from app.services.schema_introspect import Field
 
 
 def _safe_field(spec: dict[str, Any]) -> Field | None:
-    """Normalize a field, returning None instead of raising on a bad name.
-
-    Real introspection routinely yields non-identifier names ('Order ID',
-    'created-at', '2024sales', non-ASCII CJK/accented chars). On first failure
-    we retry with a slugified name so non-ASCII schemas aren't silently empty.
-    """
     try:
         return schema_introspect.normalize_field(spec)
     except (ValueError, TypeError):
         pass
-    # Retry: transliterate/slugify the name so non-ASCII / non-identifier
-    # field names produce a usable fallback rather than silent data loss.
     raw = str(spec.get("name") or "")
     if not raw:
         return None
     slug = re.sub(r"[^A-Za-z0-9_]", "_", raw)
-    # Pure non-ASCII produces only underscores — use "f_" prefix.
     if not slug or slug.replace("_", "") == "":
         slug = "f_"
     elif not (slug[0].isalpha() or slug[0] == "_"):
@@ -64,18 +32,15 @@ def _safe_field(spec: dict[str, Any]) -> Field | None:
         return None
 
 
-# DoS caps for adversarially-large introspected schemas (audit #15).
 _MAX_ENTITIES = 500
 _MAX_FIELDS_PER_ENTITY = 1000
 
 
 def _append_field(fields: list[Field], spec: dict[str, Any]) -> None:
-    """Normalize+append a field, silently skipping non-identifier names."""
     f = _safe_field(spec)
     if f is not None:
         fields.append(f)
 
-# ── Source-kind detection ─────────────────────────────────────────────────────
 
 _INCREMENTAL_HINTS = (
     "modified", "updated", "lastchange", "last_change", "changed", "fecha",
@@ -85,7 +50,6 @@ _PAGINATION_HINTS = ("next", "cursor", "offset", "page", "skiptoken", "@odata.ne
 
 
 def detect_source_kind(descriptor: dict[str, Any]) -> str:
-    """Classify a source from a descriptor (hint + payload). Never raises."""
     if not isinstance(descriptor, dict):
         return "rest_sample"
     kind = str(descriptor.get("kind") or "").strip().lower().replace("-", "_")
@@ -122,7 +86,6 @@ def _is_graphql_introspection(sample: Any) -> bool:
 
 
 def detect_source_pattern(descriptor: dict[str, Any], fields: list[Field] | None = None) -> dict[str, Any]:
-    """Infer the extraction strategy: paginated / incremental / async / webhook."""
     if not isinstance(descriptor, dict):
         descriptor = {}
     sample = descriptor.get("sample")
@@ -159,11 +122,7 @@ def detect_source_pattern(descriptor: dict[str, Any], fields: list[Field] | None
     }
 
 
-# ── Per-kind parsers (each returns {entity_name: [Field]}) ────────────────────
-
-
 def parse_csv_header(text: str) -> dict[str, list[Field]]:
-    """CSV header -> one entity 'records' with inferred-from-sample types."""
     if not isinstance(text, str) or not text.strip():
         return {}
     reader = csv.reader(io.StringIO(text))
@@ -187,10 +146,6 @@ def parse_csv_header(text: str) -> dict[str, list[Field]]:
 
 
 def parse_sql_information_schema(rows: list[dict[str, Any]]) -> dict[str, list[Field]]:
-    """information_schema.columns rows -> {table: [Field]}.
-
-    Each row: {table_name, column_name, data_type, is_nullable, is_primary_key?}.
-    """
     out: dict[str, list[Field]] = {}
     for r in (rows if isinstance(rows, list) else []):
         table = str(r.get("table_name") or r.get("table") or "").strip()
@@ -208,7 +163,6 @@ def parse_sql_information_schema(rows: list[dict[str, Any]]) -> dict[str, list[F
 
 
 def parse_json_sample(sample: Any, entity_name: str = "records") -> dict[str, list[Field]]:
-    """A sample REST JSON payload -> inferred fields. Handles {data:[...]}, [...], {...}."""
     obj = _first_record(sample)
     if not isinstance(obj, dict):
         return {}
@@ -223,7 +177,6 @@ def parse_json_sample(sample: Any, entity_name: str = "records") -> dict[str, li
 
 
 def parse_graphql_introspection(sample: Any) -> dict[str, list[Field]]:
-    """GraphQL introspection result -> object types as entities."""
     if not _is_graphql_introspection(sample):
         return {}
     types = sample["data"]["__schema"].get("types") or []
@@ -252,12 +205,6 @@ def parse_graphql_introspection(sample: Any) -> dict[str, list[Field]]:
 
 
 def _shallow_elements(element: Any) -> list[Any]:
-    """Yield xsd:element children without crossing into nested complexType/simpleType.
-
-    Using ct.iter() (recursive) bleeds inner complexType fields into the parent
-    entity's field list. This walker stops recursion at type boundaries so each
-    complexType entity only gets its own direct structural elements.
-    """
     result: list[Any] = []
     for child in element:
         ctag = _strip_ns(getattr(child, "tag", "") or "")
@@ -269,16 +216,12 @@ def _shallow_elements(element: Any) -> list[Any]:
 
 
 def parse_wsdl_elements(wsdl_xml: str) -> dict[str, list[Field]]:
-    """Best-effort: extract xsd:complexType elements as entities. XXE-safe."""
     if not wsdl_xml or not wsdl_xml.strip():
         return {}
     try:
         root = ET.fromstring(wsdl_xml.encode("utf-8"))
     except Exception:
         return {}
-    # Some XML backends (e.g. lxml, depending on what else is loaded in-process)
-    # return a 'parsererror' element for malformed input instead of raising —
-    # treat that as a parse failure, not a real schema.
     if root is None or _strip_ns(getattr(root, "tag", "") or "").lower() == "parsererror":
         return {}
     out: dict[str, list[Field]] = {}
@@ -302,14 +245,6 @@ def parse_wsdl_elements(wsdl_xml: str) -> dict[str, list[Field]]:
 
 
 def _entities_from_descriptor(descriptor: dict[str, Any]) -> list[dict[str, Any]]:
-    """Normalize pre-parsed entities supplied by a live caller.
-
-    The router normally parses raw descriptors (OpenAPI, EDMX, CSV, SQL rows).
-    Studio's live introspection already returns canonical entities in some
-    paths, so accepting ``{"entities": [{"name": ..., "fields": [...]}]}``
-    lets the factory pipeline consume the same live result without re-fetching
-    metadata or duplicating parser logic.
-    """
     entities = descriptor.get("entities")
     if not isinstance(entities, list):
         return []
@@ -341,11 +276,6 @@ def _entities_from_descriptor(descriptor: dict[str, Any]) -> list[dict[str, Any]
 
 
 def extract_entities(descriptor: dict[str, Any]) -> tuple[list[dict[str, Any]], str]:
-    """Universal entry: classify the source, parse it, return entities + kind.
-
-    Returns ([{"name", "fields":[Field]}], source_kind). Empty list if nothing
-    could be parsed (caller falls back to static connector.yaml).
-    """
     if not isinstance(descriptor, dict):
         return [], "rest_sample"
     kind = detect_source_kind(descriptor)
@@ -370,20 +300,15 @@ def extract_entities(descriptor: dict[str, Any]) -> tuple[list[dict[str, Any]], 
         by_entity = parse_csv_header(str(descriptor.get("csv") or descriptor.get("text") or ""))
     elif kind == "soap":
         by_entity = parse_wsdl_elements(str(descriptor.get("wsdl") or ""))
-    else:  # rest_sample
+    else:
         by_entity = parse_json_sample(descriptor.get("sample"), descriptor.get("entity_name") or "records")
 
     entities = [{"name": name, "fields": fields} for name, fields in by_entity.items() if fields]
-    # DoS cap (audit #15): a maliciously huge schema (100k entities/fields) would
-    # fan out into multi-MB SQL + several in-memory copies. Bound both.
     entities = entities[:_MAX_ENTITIES]
     for e in entities:
         if len(e["fields"]) > _MAX_FIELDS_PER_ENTITY:
             e["fields"] = e["fields"][:_MAX_FIELDS_PER_ENTITY]
     return entities, kind
-
-
-# ── Type inference helpers ────────────────────────────────────────────────────
 
 
 def _infer_scalar_type(value: Any) -> str:
@@ -425,7 +350,6 @@ def _sql_type(data_type: str) -> str:
 
 
 def _graphql_type(type_ref: Any) -> str:
-    """Unwrap NON_NULL/LIST and map scalar GraphQL types."""
     seen = 0
     t = type_ref
     while isinstance(t, dict) and t.get("ofType") and seen < 6:
@@ -461,9 +385,6 @@ def _first_record(sample: Any) -> Any:
                 return v[0]
             if isinstance(v, dict):
                 return v
-        # If this dict has known wrapper keys but all had empty/None values,
-        # return None rather than the wrapper itself (which would produce
-        # phantom fields like "results: string" in the schema).
         if has_wrapper_key:
             return None
         return sample
@@ -471,8 +392,6 @@ def _first_record(sample: Any) -> Any:
 
 
 def _looks_like_pk(field_name: str, entity_name: str) -> bool:
-    """Heuristic primary-key detection: 'id', '{entity}_id', or the singular
-    '{entity-without-trailing-s}_id' (e.g. 'deals' -> 'deal_id')."""
     fn = field_name.lower()
     en = entity_name.lower()
     singular = en[:-1] if en.endswith("s") else en

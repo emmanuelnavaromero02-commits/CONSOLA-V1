@@ -27,7 +27,6 @@ BUSINESS_ONLY_FIELDS = BUSINESS_ARTIFACT_FIELDS
 
 
 class ProjectedBusinessItem(dict[str, Any]):
-    """Dictionary payload with non-serializable lineage context."""
 
     __slots__ = (
         "_eligible_parent_ids",

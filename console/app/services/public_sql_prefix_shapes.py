@@ -1,5 +1,3 @@
-"""Positional shapes for SQL heads that overlap ordinary business words."""
-
 from __future__ import annotations
 
 from app.services.public_sql_select_lexer import SelectToken

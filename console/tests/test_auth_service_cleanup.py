@@ -32,7 +32,6 @@ def auth_module(monkeypatch):
     sys.modules["app.services.auth"] = auth
     setattr(_svc_pkg, "auth", auth)
     yield auth
-    # Restore original — do NOT use monkeypatch for this to avoid ordering issues
     if _original is not None:
         sys.modules["app.services.auth"] = _original
         setattr(_svc_pkg, "auth", _original)

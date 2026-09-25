@@ -104,7 +104,6 @@ def _external_failure(exc: Exception, entity: str | None = None) -> JSONResponse
 
 
 def _humanise_path(path: str) -> str:
-    """Backend review P2 fallback — see replicon for rationale."""
     bare = path.split("/skills/", 1)[-1].lstrip("/")
     if not bare:
         return ""
@@ -113,10 +112,6 @@ def _humanise_path(path: str) -> str:
     if not bare:
         return ""
     return bare[0].upper() + bare[1:]
-
-
-# v1.44.3.3 Task C — GET /skills/list (router-introspecting
-# skill discovery; see replicon/sap_hcm for the full rationale).
 
 
 @router.get("/list")
@@ -141,15 +136,12 @@ def list_skills() -> dict:
                 description = endpoint.__doc__.strip().split("\n", 1)[0].strip()
             if not description:
                 description = _humanise_path(path)
-            # v1.44.3.3 R-Mac-Round-3 Task F: ``description`` is
-            # the canonical key (matches orchestrator contract);
-            # ``summary`` aliased for one sprint.
             skills.append(
                 {
                     "name": path,
                     "method": method,
                     "description": description,
-                    "summary": description,  # alias — remove in v1.44.4
+                    "summary": description,
                 }
             )
     return {"service": _SERVICE, "skills": skills}
@@ -161,8 +153,6 @@ def skills_root() -> dict:
     return list_skills()
 
 
-# v1.41.0 — auditor P1: validate credentials from the console without
-# triggering an extraction. SalesforceClient.test_connection() is degraded-aware.
 @router.post("/test_connection")
 def test_connection(
     x_security_context: str | None = Header(default=None, alias="x-security-context"),
@@ -175,15 +165,9 @@ def test_connection(
         return {"status": "error", "message": str(exc)[:200]}
 
 
-# ── Catalogue ─────────────────────────────────────────────────────────────────
-
-
 @router.get("/entities")
 def entities() -> dict:
     return {"entities": get_all_entities()}
-
-
-# ── Extraction ────────────────────────────────────────────────────────────────
 
 
 @router.post("/run_full_load/{entity}")
@@ -303,9 +287,6 @@ def run_historical_load_all(
     return {"results": results}
 
 
-# ── Status / watermarks ──────────────────────────────────────────────────────
-
-
 @router.get("/get_last_run_status")
 def last_run_status(entity: str | None = None) -> dict:
     return {"runs": get_last_run_status(entity_name=entity)}
@@ -314,9 +295,6 @@ def last_run_status(entity: str | None = None) -> dict:
 @router.get("/get_watermarks")
 def get_watermarks() -> dict:
     return {"watermarks": list_watermarks()}
-
-
-# ── Discovery (real client, no mocks) ────────────────────────────────────────
 
 
 @router.get("/list_tables")
@@ -331,9 +309,6 @@ def get_table_schema(table_id: str) -> dict:
     from app.core.salesforce_client import SalesforceClient
 
     return SalesforceClient().get_table_schema(table_id)
-
-
-# ── Knowledge Bits ───────────────────────────────────────────────────────────
 
 
 @router.get("/knowledge_bits")

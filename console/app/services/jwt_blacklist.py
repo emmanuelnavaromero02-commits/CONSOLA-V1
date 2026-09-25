@@ -1,16 +1,3 @@
-"""JWT blacklist via Redis. Invalidates access tokens at logout.
-
-Hooked into:
-  - POST /auth/logout in main.py (writes the jti → blacklist with TTL = exp).
-  - verify_access_token_async in jwt_auth.py (reads the blacklist on every
-    JWT-authenticated request).
-
-Failure policy is environment-aware. Production defaults to fail-closed for
-is_revoked(): if Redis is unreachable, JWT-authenticated requests are denied
-rather than allowing a revoked token. Development/test defaults to fail-open
-so local work without Redis remains ergonomic. Override with
-JWT_BLACKLIST_FAIL_CLOSED={true,false}.
-"""
 from __future__ import annotations
 
 import logging
@@ -21,9 +8,6 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 _BLACKLIST_KEY_PREFIX = "jwt_blacklist:"
-# Minimum TTL applied even if exp is already in the past. Protects against
-# clock-skew between the auth issuer and Redis, and gives us a small grace
-# window for in-flight requests already past the auth check.
 _MIN_TTL_SECONDS = 60
 _FALSEY = {"0", "false", "no", "off"}
 _TRUTHY = {"1", "true", "yes", "on"}
@@ -45,7 +29,6 @@ def _fail_closed_enabled() -> bool:
 
 
 class _BlacklistBackend:
-    """Thin wrapper over redis-py async client. One instance per process."""
 
     def __init__(self) -> None:
         self._client = None
@@ -75,7 +58,6 @@ class _BlacklistBackend:
         return self._client
 
     async def revoke(self, jti: str, exp_unix: int) -> bool:
-        """Mark jti as revoked. Returns True iff the key was written."""
         if not jti:
             return False
         client = self._get_client()
@@ -92,11 +74,6 @@ class _BlacklistBackend:
             return False
 
     async def is_revoked(self, jti: str) -> bool:
-        """Return True iff the jti is in the blacklist.
-
-        In production, Redis outages fail closed by default so a known-revoked
-        token cannot slip through while the blacklist backend is unavailable.
-        """
         if not jti:
             return False
         client = self._get_client()
@@ -122,7 +99,6 @@ _BACKEND: Optional[_BlacklistBackend] = None
 
 
 def get_blacklist() -> _BlacklistBackend:
-    """Module-level singleton accessor."""
     global _BACKEND
     if _BACKEND is None:
         _BACKEND = _BlacklistBackend()
@@ -130,6 +106,5 @@ def get_blacklist() -> _BlacklistBackend:
 
 
 def reset_blacklist() -> None:
-    """Test hook — clears the cached backend so the next call rebuilds it."""
     global _BACKEND
     _BACKEND = None

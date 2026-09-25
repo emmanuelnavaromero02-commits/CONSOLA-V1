@@ -1,9 +1,3 @@
-"""Sprint v1.41.0 — migration 38 (copilot scaffolding) static checks.
-
-These are file-level assertions only: they don't touch a live Postgres,
-so they run in CI without infra. A separate suite under tests/e2e/ would
-verify the migration applies correctly against a fresh container.
-"""
 from __future__ import annotations
 
 import re
@@ -79,6 +73,5 @@ def test_omega_console_has_grants_on_conversations():
 
 def test_idempotency_guards():
     sql = _sql()
-    # Tables: IF NOT EXISTS. Indices: IF NOT EXISTS. Role guards: IF EXISTS pg_roles.
     assert sql.count("IF NOT EXISTS") >= 4
     assert "IF EXISTS (SELECT 1 FROM pg_roles" in sql

@@ -1,9 +1,3 @@
-/**
- * Settings API client.
- * All endpoints require admin role (RBAC enforced server-side).
- * Cookies/session are sent via credentials: 'same-origin'.
- */
-
 const BASE = '/api/settings';
 
 function csrfToken() {

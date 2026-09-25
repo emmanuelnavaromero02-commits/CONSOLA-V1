@@ -1,16 +1,3 @@
-"""Phase-0 SaaS controls — contract test for /api/me/access.
-
-The "Mis accesos" page renders strictly what this endpoint returns. The
-endpoint:
-  * requires authentication;
-  * never invents permissions — it derives them from the canonical
-    permission registry;
-  * exposes both the global role and the workspace_role separately so the
-    UI cannot conflate a workspace_admin with a platform admin;
-  * surfaces cartridge allow/deny info coming from the marketplace tables;
-  * sets `ui_capabilities` flags so the front-end can hide buttons that
-    would 403 — those flags are display hints; the backend still enforces.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -24,22 +11,7 @@ from fastapi.testclient import TestClient
 from app.services import permissions
 
 
-# ---------------------------------------------------------------------------
-# Minimal FastAPI app that mounts /api/me/access via the same code path as
-# production. We don't import the whole console/app/main.py because that
-# module triggers a heavy startup (CORS, security headers, refinement proxy,
-# etc.) — instead we copy the body of the route into a tiny app, calling
-# the same downstream helpers. This keeps the test focused on the endpoint
-# contract and on the permission/role wiring.
-# ---------------------------------------------------------------------------
-
-
 def _build_app(fake_user: dict | None) -> TestClient:
-    """Mount a tiny FastAPI app that exposes /api/me/access with the same
-    payload shape as production. The full console main.py is too heavy for
-    a unit test (it triggers DB pools, CORS, security headers, refinement
-    proxy, etc.); we replicate the route here so the test focuses on the
-    payload contract."""
     from fastapi import Depends, HTTPException
     app = FastAPI()
 
@@ -67,10 +39,6 @@ def _build_app(fake_user: dict | None) -> TestClient:
             "permissions": effective,
             "cartridges": {"allowed": [], "denied": []},
             "ui_capabilities": {
-                # Replicate the full guard chain of /iam: permission AND
-                # global admin role. Otherwise the UI would lie to
-                # security_admin / auditor users who have the permission
-                # but are not platform admins.
                 "can_view_iam":            "iam.users.read" in effective and role_canonical in {"owner", "super_admin", "admin"},
                 "can_manage_workspace_users": (
                     "iam.users.read" in effective
@@ -89,14 +57,7 @@ def _build_app(fake_user: dict | None) -> TestClient:
     return TestClient(app)
 
 
-# ---------------------------------------------------------------------------
-# Contract tests
-# ---------------------------------------------------------------------------
-
-
 def test_me_access_returns_global_and_workspace_role_separately():
-    """The golden SaaS rule: global role and workspace_role must NEVER be
-    conflated in the payload."""
     client = _build_app({
         "id": 42,
         "email": "alice@example.com",
@@ -111,17 +72,12 @@ def test_me_access_returns_global_and_workspace_role_separately():
     assert body["role"]["global"] == "user"
     assert body["role"]["is_platform_admin"] is False
     assert body["workspace"]["workspace_role"] == "workspace_admin"
-    # The same payload must say the user CAN administer their workspace
-    # but CANNOT administer the platform marketplace.
     assert body["ui_capabilities"]["can_admin_workspace"] is True
     assert body["ui_capabilities"]["can_manage_workspace_users"] is True
     assert body["ui_capabilities"]["can_admin_marketplace"] is False
 
 
 def test_workspace_role_admin_legacy_is_downgraded_to_workspace_admin():
-    """Legacy DB row workspace_role=admin must be exposed as workspace_admin
-    by /api/me/access — the front-end must not see the magical string
-    'admin' for a workspace-scoped role."""
     client = _build_app({
         "id": 7,
         "email": "legacy-ws@example.com",
@@ -191,7 +147,6 @@ def test_viewer_capabilities():
     assert body["ui_capabilities"]["can_admin_marketplace"] is False
     assert body["ui_capabilities"]["can_view_iam"] is False
     assert body["ui_capabilities"]["can_view_audit"] is False
-    # Viewer must NOT inherit any write permissions.
     assert "iam.users.write" not in body["permissions"]
     assert "marketplace.admin" not in body["permissions"]
 
@@ -203,10 +158,6 @@ def test_anonymous_caller_is_rejected():
 
 
 def test_security_admin_cannot_view_iam_link_despite_having_permission():
-    """`security_admin` has iam.users.read but is NOT a platform admin.
-    /iam requires BOTH (see pages.py). The UI capability flag must
-    replicate that double gate so the UI does not show a link the
-    backend rejects."""
     user = {
         "id": 8,
         "email": "sec-admin@example.com",
@@ -223,8 +174,6 @@ def test_security_admin_cannot_view_iam_link_despite_having_permission():
 
 
 def test_permissions_field_matches_effective_permissions_registry():
-    """No invented permissions, no inflated set. The payload must equal
-    `sorted(get_effective_permissions(user))` for the caller."""
     user = {
         "id": 5,
         "email": "analyst@example.com",

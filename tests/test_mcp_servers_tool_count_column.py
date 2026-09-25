@@ -1,4 +1,3 @@
-"""v1.44.5 — mcp_servers.tool_count registry contract."""
 from __future__ import annotations
 
 import subprocess

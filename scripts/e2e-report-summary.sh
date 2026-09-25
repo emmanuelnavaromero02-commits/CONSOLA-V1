@@ -1,22 +1,4 @@
 #!/usr/bin/env bash
-# v1.44.3.2.1 — Parse the JSON Playwright report into a categorised
-# markdown digest.
-#
-# Reads:  tests-e2e/playwright-report/results.json (written by the
-#         json reporter declared in playwright.config.ts).
-# Writes: stdout — pipe to a file or paste into the findings doc.
-#
-# Severity buckets are heuristic, derived from the spec filename
-# the test lives in:
-#   🔴 Críticos  — auth gate (07-apis-deep), MCP cartridges (10-mcp),
-#                  studio user-reported bugs (05-studio)
-#   🟡 Altos     — dashboard / cartridges Next.js (02, 03)
-#   🟢 Medios    — legacy HTML pages (06), API contracts (07)
-#   🔵 Bajos     — UX / mobile / a11y / perf (09)
-#                  copilot deferred (04, 11)
-#
-# Operators are encouraged to rewrite the severity ranking once
-# the first run lands real data; the heuristic is just a default.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -33,9 +15,6 @@ EOF
     exit 1
 fi
 
-# Need either jq OR python3 to parse the JSON. Most operator boxes
-# have one or the other; use python3 because we already require it
-# for the Python test suite.
 if ! command -v python3 > /dev/null 2>&1; then
     echo "❌ python3 not on PATH — needed to parse the report" >&2
     exit 1

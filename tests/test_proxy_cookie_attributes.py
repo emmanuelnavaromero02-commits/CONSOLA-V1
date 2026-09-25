@@ -1,4 +1,3 @@
-"""Cookie and CSRF guards for the FastAPI-served static console."""
 from __future__ import annotations
 
 from pathlib import Path

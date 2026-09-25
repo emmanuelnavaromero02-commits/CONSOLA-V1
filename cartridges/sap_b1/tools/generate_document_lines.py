@@ -1,4 +1,3 @@
-"""Generate the curated silver datasets for Business One document lines."""
 from __future__ import annotations
 
 import pathlib

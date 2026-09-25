@@ -39,8 +39,6 @@ def _get_engine():
     return _engine
 
 
-# ── YAML fallbacks ────────────────────────────────────────────────────────────
-
 def _yaml_entities() -> list[dict[str, Any]]:
     if not ENTITIES_PATH.exists():
         return []
@@ -68,15 +66,11 @@ def _merge_yaml_runtime_fields(row: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
-# ── Seed on startup ───────────────────────────────────────────────────────────
-
 def _dag_id_for_entity(entity: dict[str, Any]) -> str:
     return entity.get("dag_id") or f"{CARTRIDGE_ID}_extract"
 
 
 def _seed_if_empty() -> None:
-    """If entity_config has no rows for this cartridge, import from YAML.
-    Also upserts the cartridge header so Studio's dropdown picks it up."""
     try:
         engine = _get_engine()
         with engine.begin() as conn:
@@ -157,8 +151,6 @@ def _seed_if_empty() -> None:
         logger.exception("Failed to seed SAP HCM catalog from YAML")
         raise
 
-
-# ── Public API ────────────────────────────────────────────────────────────────
 
 def get_all_entities() -> list[dict[str, Any]]:
     try:

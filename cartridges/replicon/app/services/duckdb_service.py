@@ -33,7 +33,7 @@ _REMOTE_SOURCE_UNAVAILABLE = "DuckDB remote source unavailable"
 
 
 class DuckDBHTTPFSUnavailable(RuntimeError):
-    """Raised when an admitted remote source cannot be opened hermetically."""
+    pass
 
 
 def _path_has_scope(path: str, scope: str) -> bool:

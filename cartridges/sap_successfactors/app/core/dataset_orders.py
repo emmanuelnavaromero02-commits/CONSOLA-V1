@@ -1,14 +1,3 @@
-"""Fuente unica de verdad del orden de materializacion de datasets gold de SF.
-
-Las listas viven en un unico JSON de datos
-(app/config/gold_dataset_orders.json) para que puedan compartirse a traves de la
-frontera de despliegue: este modulo lo carga para el contenedor del cartucho
-(refinement_triggers.py, job_runner.py), y refinement/scripts/
-materialize_successfactors_foundation.py lo carga desde el mount
-/registry/cartridges. Un test anti-drift falla si alguna copia diverge.
-
-NO redefinir estas listas como literales en otro modulo: importar de aqui.
-"""
 from __future__ import annotations
 
 import json
@@ -24,8 +13,6 @@ def _load() -> dict[str, list[str]]:
     talent = list(data["talent_order"])
     contract = list(data["talent_contract_order"])
     operational = list(data["talent_operational_order"])
-    # Invariante estructural: el split contract+operational reconstruye talent
-    # exactamente (mismo contenido y orden).
     if contract + operational != talent:
         raise ValueError(
             "gold_dataset_orders.json invalido: "

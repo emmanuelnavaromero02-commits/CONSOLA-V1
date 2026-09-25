@@ -1,26 +1,3 @@
-"""
-MODecissions Vault — persistent secret & connection store (PostgreSQL-backed).
-
-API:
-  # Connections (cartridge API credentials)
-  GET    /connections/{cartridge}           → [{ conn_id, base_url, auth_method, ... masked }]
-  GET    /connections/{cartridge}/{conn_id} → { base_url, auth_method, token, ... }
-  PUT    /connections/{cartridge}/{conn_id} → upsert  body: { base_url, auth_method, token, ... }
-  DELETE /connections/{cartridge}/{conn_id} → delete
-
-  # Secrets (generic key-value)
-  GET    /secrets/{scope}        → { keys: [...] }
-  GET    /secrets/{scope}/{key}  → { value }
-  PUT    /secrets/{scope}/{key}  → { value }  — upsert
-  DELETE /secrets/{scope}/{key}  → delete
-
-  # Legacy compat
-  GET    /destinations           → { destinations: [...] }
-  GET    /destinations/{name}    → { config: {...} }
-
-  GET    /health                 → { status, store }
-  POST   /reload                 → re-seed from YAML (idempotent — ON CONFLICT DO NOTHING)
-"""
 from __future__ import annotations
 
 import json
@@ -43,9 +20,6 @@ from app.crypto import (
     decrypt_value,
     encrypt_value,
 )
-# Sprint v1.18: structured JSON logs to stdout, with secret redaction.
-# This MUST run before any logger.* call below so the first record this
-# service emits is already in JSON format.
 from app.logging_config import setup_logging
 
 setup_logging(service_name="vault")
@@ -69,8 +43,6 @@ _SECURITY_CONTEXT_SIGNATURE_TTL_SECONDS = 300
 _SECURITY_CONTEXT_SIGNATURE_FUTURE_SKEW_SECONDS = 30
 _SECURITY_CONTEXT_MIN_SIGNING_KEY_LEN = 32
 
-
-# ── PostgreSQL helpers ────────────────────────────────────────────────────────
 
 def _normalize_postgres_dsn(raw: str) -> str:
     return (raw or "").replace(
@@ -229,24 +201,13 @@ def _require_runtime_write_scope(
     )
 
 
-# Sprint v1.15: secrets are encrypted at rest in vault_entries.value_encrypted
-# (BYTEA). The legacy `value` JSONB column is kept as nullable so reads can
-# fall back to it for rows that haven't been re-encrypted yet by the runtime
-# migration. Writes ALWAYS go to value_encrypted with value = NULL.
-
 def _row_value(row_encrypted: bytes | memoryview | None, row_value_json) -> dict | None:
-    """Return the decoded dict from whichever column has data.
-
-    Prefers ``value_encrypted`` (the post-v1.15 path). Falls back to the
-    legacy ``value`` JSONB column for rows that pre-existed the rollout
-    and haven't been migrated yet. Returns ``None`` if both are NULL.
-    """
     if row_encrypted is not None:
         return decrypt_value(row_encrypted)
     if row_value_json is None:
         return None
     if isinstance(row_value_json, (dict, list)):
-        return row_value_json  # psycopg2 already decoded the JSONB
+        return row_value_json
     return json.loads(row_value_json)
 
 
@@ -257,8 +218,6 @@ def _db_upsert(scope: str, cartridge: str, key: str, value: dict, ctx: dict | No
     conn = _pg()
     with conn.cursor() as cur:
         _set_db_scope(cur, tenant_id, workspace_id)
-        # Write only to value_encrypted; clear the legacy value so a future
-        # rollback can't read stale plaintext that no longer matches.
         if tenant_id and workspace_id:
             cur.execute(
                 """
@@ -395,24 +354,12 @@ def _db_list(scope: str, cartridge: str, ctx: dict | None = None, *, allow_unsco
     for r in rows:
         decoded = _row_value(r[1], r[2])
         if decoded is None:
-            continue  # row with both columns NULL — shouldn't happen post-migration
+            continue
         out.append({"key": r[0], "value": decoded})
     return out
 
 
 def _migrate_legacy_plaintext_secrets() -> None:
-    """One-time runtime migration: encrypt rows that still have plaintext
-    ``value`` and no ``value_encrypted``. Idempotent — re-running after a
-    successful migration is a no-op because the query returns nothing.
-
-    Partial failures are isolated per row: a failure encrypting row A
-    does not prevent row B from being encrypted. The legacy ``value`` is
-    only cleared once the encrypted write has committed for that row, so
-    a mid-migration crash leaves successful rows on the new path and
-    failed rows on the old path — both still readable via _db_get's
-    fallback. We never delete the legacy column data without a successful
-    encrypted write.
-    """
     conn = _pg()
     try:
         with conn.cursor() as cur:
@@ -459,14 +406,11 @@ def _migrate_legacy_plaintext_secrets() -> None:
         conn.close()
 
 
-# ── Seed from secrets.yaml ────────────────────────────────────────────────────
-
 def _seed() -> None:
     if not _SECRETS_FILE.exists():
         return
     data = yaml.safe_load(_SECRETS_FILE.read_text(encoding="utf-8")) or {}
 
-    # secrets: { scope: { key: value } }
     for scope, keys in (data.get("secrets") or {}).items():
         if _is_production() and str(scope or "").strip() not in _GLOBAL_SECRET_SCOPES:
             logger.warning(
@@ -477,11 +421,9 @@ def _seed() -> None:
         for key, val in (keys or {}).items():
             _db_upsert_if_absent("secrets", scope, key, {"value": val})
 
-    # destinations: { name: { host, port, ... } }
     for name, config in (data.get("destinations") or {}).items():
         _db_upsert_if_absent("destinations", "platform", name, config or {})
 
-    # connections: { cartridge_id: { conn_id: { base_url, auth_method, ... } } }
     allow_unscoped_connections = (
         os.environ.get(_ALLOW_UNSCOPED_VAULT_CONNECTIONS_ENV, "").strip().lower()
         in {"1", "true", "yes", "on"}
@@ -498,8 +440,6 @@ def _seed() -> None:
             _db_upsert_if_absent("connections", cartridge_id, conn_id, config or {})
 
 
-# ── Credential masking ────────────────────────────────────────────────────────
-
 def _mask(d: dict) -> dict:
     out = {}
     for k, v in d.items():
@@ -510,31 +450,17 @@ def _mask(d: dict) -> dict:
     return out
 
 
-# ── FastAPI app ───────────────────────────────────────────────────────────────
-INTERNAL_API_KEY = get_internal_api_key()  # legacy fallback, dev/test only
+INTERNAL_API_KEY = get_internal_api_key()
 
-# Sprint v1.12: vault is called by console and mcp-infra. Each pair has its
-# own INTERNAL_API_KEY_*_TO_VAULT secret. The legacy shared key is refused in
-# production so one leaked credential cannot open every internal hop.
 _ALLOWED_SERVICES_TO_KEY_ENV: dict[str, str | None] = {
     "console":    "INTERNAL_API_KEY_CONSOLE_TO_VAULT",
     "mcp-infra":  "INTERNAL_API_KEY_MCP_INFRA_TO_VAULT",
-    # Sprint v1.26 (audit F11): provisioned dedicated keys for workspace
-    # and refinement. NEITHER service calls vault as of v1.26, but vault
-    # accepted them via the legacy shared key — making any future
-    # misrouted call invisible until something failed. With dedicated
-    # keys in place, vault still accepts the legacy key (compat window)
-    # but logs a WARNING the first time it falls back, so an operator
-    # can spot the dependency.
     "workspace":  "INTERNAL_API_KEY_WORKSPACE_TO_VAULT",
     "refinement": "INTERNAL_API_KEY_REFINEMENT_TO_VAULT",
-    "airflow":    None,  # airflow doesn't call vault directly
+    "airflow":    None,
 }
 
 
-# Per-process throttle for the v1.26 "legacy key used by <svc>" warning.
-# We want operator-visible signal without flooding the log if a tight
-# loop hits the legacy path many times in one process.
 _LEGACY_WARN_SEEN: set[str] = set()
 
 
@@ -542,7 +468,6 @@ _PUBLIC_PATHS = {"/healthz"}
 
 
 def _is_production() -> bool:
-    # v1.43.2: default ``production`` — see console/security.py.
     return os.environ.get("APP_ENV", "production").lower() in {"production", "prod"}
 
 
@@ -562,18 +487,10 @@ _require_pair_keys_in_production()
 
 
 def verify_api_key(
-    request: Request = None,  # FastAPI injects; tests can call without
+    request: Request = None,
     x_api_key: str = Header(None),
     x_internal_service: str = Header(None),
 ):
-    # Sprint v1.21 (F2): /healthz is the compose-probe liveness endpoint
-    # and must answer 200 without credentials. The app-level
-    # `dependencies=[Depends(verify_api_key)]` cascades to every route,
-    # so the only way to make /healthz public is to short-circuit here.
-    # The legacy /health endpoint stays behind auth — that one returns
-    # {store: postgresql} which is mild fingerprinting and was already
-    # gated. Request defaults to None so the v1.12 unit tests can call
-    # verify_api_key directly without spinning up a FastAPI scope.
     if request is not None and request.url.path in _PUBLIC_PATHS:
         return
 
@@ -585,16 +502,9 @@ def verify_api_key(
     pair_key_env = _ALLOWED_SERVICES_TO_KEY_ENV.get(x_internal_service)
     pair_key = os.environ.get(pair_key_env) if pair_key_env else None
 
-    # Match in priority order so we can tell WHICH credential the caller
-    # used. Order: dedicated pair key first, legacy shared key second.
     if pair_key and secrets.compare_digest(x_api_key, pair_key):
         return
     if INTERNAL_API_KEY and not _is_production() and secrets.compare_digest(x_api_key, INTERNAL_API_KEY):
-        # Sprint v1.26 (audit F11): warn when a service that HAS a
-        # dedicated key is still using the legacy shared one. This is
-        # the migration trail — operators grep for this line to find
-        # callers that need to be rolled forward. Throttled per-process
-        # so a tight loop doesn't flood the log.
         if pair_key_env and x_internal_service not in _LEGACY_WARN_SEEN:
             _LEGACY_WARN_SEEN.add(x_internal_service)
             logger.warning(
@@ -608,9 +518,6 @@ def verify_api_key(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Sprint v1.15: fail fast at startup if VAULT_ENCRYPTION_KEY is missing
-    # or unparseable. The alternative — booting and silently 500'ing every
-    # request — is much worse for the on-call.
     try:
         _get_fernet()
     except VaultEncryptionError as e:
@@ -622,7 +529,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="MODecissions Vault", dependencies=[Depends(verify_api_key)], lifespan=lifespan)
 
-# Sprint v1.41.1 — correlation IDs.
 from app.middleware.request_id import RequestIDMiddleware  # noqa: E402
 
 app.add_middleware(RequestIDMiddleware)
@@ -647,8 +553,6 @@ def reload():
     _seed()
     return {"reloaded": True, "note": "ON CONFLICT DO NOTHING — existing entries not overwritten"}
 
-
-# ── Connections ───────────────────────────────────────────────────────────────
 
 @app.get("/connections/{cartridge}")
 def list_connections(cartridge: str, x_security_context: str | None = Header(None, alias="x-security-context")):
@@ -696,8 +600,6 @@ def delete_connection(cartridge: str, conn_id: str, x_security_context: str | No
     return {"deleted": True}
 
 
-# ── Secrets ───────────────────────────────────────────────────────────────────
-
 @app.get("/secrets/{scope}")
 def list_secret_keys(scope: str, x_security_context: str | None = Header(None, alias="x-security-context")):
     ctx = _security_context_from_header(x_security_context)
@@ -738,8 +640,6 @@ def delete_secret(scope: str, key: str, x_security_context: str | None = Header(
         raise HTTPException(404, f"Secret '{scope}/{key}' not found")
     return {"deleted": True}
 
-
-# ── Destinations (legacy compat) ──────────────────────────────────────────────
 
 @app.get("/destinations")
 def list_destinations():

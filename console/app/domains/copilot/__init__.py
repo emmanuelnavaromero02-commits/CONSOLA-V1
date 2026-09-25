@@ -1,1 +1,1 @@
-"""Copilot domain helpers."""
+pass

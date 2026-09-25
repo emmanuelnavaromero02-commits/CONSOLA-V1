@@ -1,4 +1,3 @@
-
 SELECT
     DATABASE_NAME,
     HOST,

@@ -39,8 +39,6 @@ def _load_console_modules():
 def scheduler_http(monkeypatch: pytest.MonkeyPatch):
     main, operations = _load_console_modules()
 
-    # Exercise the production key policy: the legacy shared key must not be a
-    # hidden fallback for this Airflow-only route.
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE", _AIRFLOW_KEY)
     monkeypatch.setenv("INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE", _WORKSPACE_KEY)

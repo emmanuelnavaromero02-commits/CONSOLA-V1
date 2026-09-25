@@ -1,5 +1,3 @@
-"""Bounded path and resource-locator checks for public response copy."""
-
 from __future__ import annotations
 
 import re
@@ -106,7 +104,6 @@ def _decoded_encoding_forms(candidate: str) -> tuple[str, ...]:
 
 
 def public_encoding_scan(value: str) -> tuple[tuple[str, ...], bool]:
-    """Return bounded decoded variants and whether the eight-layer limit overflowed."""
 
     if len(value) > _MAX_PUBLIC_ENCODING_LENGTH:
         return (), True
@@ -140,7 +137,6 @@ def public_encoding_scan(value: str) -> tuple[tuple[str, ...], bool]:
 
 
 def public_encoding_variants(value: str) -> tuple[str, ...]:
-    """Decode percent and escaped codepoints for at most eight bounded passes."""
 
     variants, _overflowed = public_encoding_scan(value)
     return variants
@@ -164,7 +160,6 @@ def _contains_embedded_resource(value: str) -> bool:
 
 
 def decoded_form_contains_public_path_or_resource(candidate: str) -> bool:
-    """Inspect one form whose bounded decoding closure was already computed."""
 
     if any(
         web_url_contains_sensitive_resource(
@@ -199,7 +194,6 @@ def decoded_form_contains_public_path_or_resource(candidate: str) -> bool:
 
 
 def contains_public_path_or_resource(value: str) -> bool:
-    """Reject filesystem paths and non-web resource locators, including encodings."""
 
     variants, overflowed = public_encoding_scan(value)
     return overflowed or any(

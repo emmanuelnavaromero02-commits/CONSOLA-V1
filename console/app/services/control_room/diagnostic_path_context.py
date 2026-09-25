@@ -101,7 +101,6 @@ def _is_safe_quoted_path(value: str) -> bool:
 
 
 def structured_path_detection(value: str) -> StructuredPathDetection:
-    """Mask validated path values and expose bounded whole-path forms."""
 
     if len(value) > _MAX_INPUT_LENGTH or "path" not in value.casefold():
         return StructuredPathDetection(masked_value=value)

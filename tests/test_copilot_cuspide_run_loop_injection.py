@@ -1,14 +1,3 @@
-"""Sprint v1.45 cúspide — verify the copilot_service._run_loop calls
-the lessons injector and stitches the result into the system prompt
-sent to the LLM.
-
-We import copilot_service and patch the two collaborators
-(``memory_service.build_system_prompt_with_memory`` and
-``lessons_service.build_system_prompt_with_lessons``) so the run loop
-can exercise the injection path without a live DB or LLM. The assertion
-is that the system prompt the LLM ultimately receives contains the
-lessons block when lessons_service returns one.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -39,11 +28,6 @@ def copilot_mod():
 def test_run_loop_injects_lessons_block_into_system_prompt(
     copilot_mod, monkeypatch,
 ):
-    """When lessons_service.build_system_prompt_with_lessons returns a
-    base+lessons string, llm_client.chat must receive THAT prompt (not
-    the bare SYSTEM_PROMPT). This is the contract the v1.45 cúspide
-    upgrade put in place — regress on it and lessons silently stop
-    flowing into the LLM."""
 
     captured: dict = {}
 
@@ -124,7 +108,5 @@ def test_run_loop_injects_lessons_block_into_system_prompt(
         "lessons block missing from system prompt"
     )
     assert "regla A" in captured["system"]
-    # intent_hint should be the user's last message
     assert captured.get("intent_hint") == "revisa cartera vencida"
-    # Memory block also present (chain preserved)
     assert "Contexto del usuario" in captured["system"]

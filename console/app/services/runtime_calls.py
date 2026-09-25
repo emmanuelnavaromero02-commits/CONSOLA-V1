@@ -9,9 +9,6 @@ def runtime_user(user: Any) -> dict[str, Any] | None:
         return user
     if user is None:
         return None
-    # Direct unit calls hit route functions with FastAPI's Depends sentinel.
-    # Runtime requests still pass through require_authenticated before this
-    # point; this fallback only preserves internal/platform test semantics.
     return {"role": "owner", "allowed_cartridges": ["*"]}
 
 

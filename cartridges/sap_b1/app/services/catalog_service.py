@@ -72,7 +72,6 @@ def _dag_id_for_entity(entity: dict[str, Any]) -> str:
 
 
 def _seed_if_empty() -> None:
-    """If entity_config has no rows for this cartridge, import from YAML."""
     try:
         engine = _get_engine()
         with engine.begin() as conn:

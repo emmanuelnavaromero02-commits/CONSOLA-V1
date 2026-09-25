@@ -26,7 +26,7 @@ _CURRENT_SECURITY_CONTEXT: ContextVar[dict[str, Any] | None] = ContextVar(
 
 
 class SecurityContextError(ValueError):
-    """Raised when an inbound trusted security_context cannot be verified."""
+    pass
 
 
 def set_security_context(
@@ -160,7 +160,6 @@ def verify_security_context(
 
 
 def refinement_security_context(ctx: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Build the Salesforce-owned context accepted by Refinement."""
     ctx = ctx if ctx is not None else get_security_context()
     tenant, workspace = scope_values(ctx)
     if tenant and workspace:

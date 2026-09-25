@@ -12,9 +12,6 @@ def test_talent_employee_profile_fallback_uses_foundation_gold_snapshot():
     )
 
     assert fallback is not None
-    # Performance is now wired into the employee_profile fallback from
-    # performance_cycle (decoupled from the tenant-blocked Competency/Aspiration),
-    # so the snapshot reads foundation gold AND the performance_cycle silver.
     assert fallback["sources"] == [
         "gold/sap_successfactors/sap_successfactors_employee_360",
         "silver/sap_successfactors/sap_successfactors_performance_cycle",

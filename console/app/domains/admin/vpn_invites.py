@@ -1,5 +1,3 @@
-"""VPN invite helpers for admin user lifecycle routes."""
-
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable

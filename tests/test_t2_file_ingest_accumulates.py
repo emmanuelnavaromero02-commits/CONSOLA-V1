@@ -1,17 +1,3 @@
-"""T2c — file_ingest ya no borra lo ingestado del mismo día.
-
-El bug (auditoría 2026-08-17, alto): ingest_and_archive barría TODO el
-prefijo del día y escribía un data.parquet solo con los archivos presentes
-AHORA; como los originales se archivan a bak/ tras cada corrida, el archivo A
-de las 9:00 desaparecía del bronze cuando llegaba B a las 14:00 — y los
-silver/gold aguas abajo se materializaban truncados.
-
-El arreglo: un parquet POR archivo fuente (data-<sha256(nombre)[:12]>) —
-reintento/corrección del mismo archivo sobrescribe SOLO su objeto
-(idempotente); archivos nuevos del día se ACUMULAN; el único borrado
-permitido es el data.parquet monolítico legado de ese día (nombre exacto,
-jamás un barrido).
-"""
 from __future__ import annotations
 
 import hashlib
@@ -76,16 +62,12 @@ def test_contract_no_prefix_wipe_and_per_file_objects():
     ), "prohibido listar el prefijo del día para borrarlo"
     assert 'data-{digest}.parquet' in src, "objeto por archivo fuente"
     assert 'hashlib.sha256(f["name"].encode' in src, "nombrado por hash del nombre"
-    # El único remove permitido: el monolito legado por nombre exacto.
     assert 'legacy_key = f"{out_pref}data.parquet"' in src
     assert ejecutable.count("client.remove_object(bucket, legacy_key)") == 1
-    # remove_object aparece solo para: legacy + archivado de originales a bak/.
     assert ejecutable.count("client.remove_object(") == 2
 
 
 def test_same_filename_same_key_new_filename_new_key():
-    """Idempotencia por identidad de archivo: la corrección re-subida pisa su
-    propio objeto; un archivo nuevo jamás pisa a otro."""
     def key(name: str) -> str:
         return "data-" + hashlib.sha256(name.encode("utf-8")).hexdigest()[:12] + ".parquet"
 
@@ -94,9 +76,6 @@ def test_same_filename_same_key_new_filename_new_key():
 
 
 def test_reader_unions_per_file_objects(tmp_path):
-    """El contrato del lector: **/*.parquet con union_by_name concatena los
-    objetos por-archivo del mismo día — la acumulación es real de punta a
-    punta, no una promesa del escritor."""
     con = duckdb.connect()
     day = tmp_path / "raw" / "files" / "ventas" / "load_date=2026-08-19"
     day.mkdir(parents=True)

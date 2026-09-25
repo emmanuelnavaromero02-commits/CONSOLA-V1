@@ -1,18 +1,3 @@
-"""Sprint v1.44.1 (Tarea F) — first-time-user onboarding state.
-
-Two endpoints:
-  * GET  /api/system/onboarding/state    — am I done with the tour?
-  * POST /api/system/onboarding/complete — mark me done.
-
-The wizard JS (next session) calls /state on every page load; if
-``completed=false`` it triggers the 5-step tour. The dropdown
-"Mostrar tour" menu item posts to /complete (well, actually it
-RESETS completion — that's a separate concern) and re-runs the
-wizard locally.
-
-State lives in users.onboarding_completed (added by
-infra/init/48_users_onboarding_completed.sql).
-"""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
@@ -29,8 +14,6 @@ router = APIRouter(
     dependencies=[Depends(require_permission("workspace.access"))],
 )
 
-# Single source of truth for the wizard step count. If the wizard grows
-# from 5 steps to 6, change this constant — the UI reads it.
 TOTAL_STEPS = 5
 
 

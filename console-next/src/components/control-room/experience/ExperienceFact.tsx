@@ -27,8 +27,6 @@ const severityLabel = {
   low: "Baja",
 } as const;
 
-// Lectura de negocio opcional adjunta al dato. Todo llega como texto y se
-// renderiza como nodos de texto (nunca HTML); el bloque no ofrece acciones.
 function FactNarrative({ narrative }: { narrative: ExperienceNarrative }) {
   const limitationsId = useId();
   return (
@@ -125,8 +123,6 @@ export function ExperienceFact({
             Información anterior
           </span>
         ) : fact.stale == null ? (
-          // El backend no informó la frescura: se declara desconocida en
-          // lugar de asumir vigencia (nunca "vigente" por omisión).
           <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-muted-foreground">
             <Clock3 aria-hidden className="h-4 w-4" />
             Frescura no informada

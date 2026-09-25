@@ -10,11 +10,6 @@ interface State {
   hasError: boolean;
 }
 
-/**
- * Último recurso si un payload inválido logra atravesar los guards
- * estructurales de kpi-view: la ruta degrada a un aviso seguro con
- * reintento en lugar de una pantalla rota. No muestra detalles técnicos.
- */
 export class DashboardErrorBoundary extends Component<Props, State> {
   state: State = { hasError: false };
 

@@ -1,5 +1,4 @@
 #!/bin/bash -p
-# Verify effective VM Secret Manager permissions without reading secret values.
 set -Eeuo pipefail
 set +x
 umask 077

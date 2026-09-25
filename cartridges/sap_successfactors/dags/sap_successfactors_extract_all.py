@@ -1,12 +1,3 @@
-"""
-sap_successfactors_extract_all DAG
-==================================
-Extrae entidades SAP SuccessFactors llamando directo a SuccessFactors OData.
-
-No llama al contenedor sap-successfactors. Cada entidad debe traer
-connection_id desde entity_config o recibir conn_id en dag_run.conf.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -482,13 +473,6 @@ def sap_successfactors_extract_all():
         conf = dag_run.conf if dag_run and isinstance(dag_run.conf, dict) else {}
         upstream = conf.get("security_context")
         if not isinstance(upstream, dict):
-            # A scheduler-fired cycle (entity_scheduler) carries the
-            # tenant/workspace scope but no pre-signed context. Mint the same
-            # service authority the console trigger passes — signed with the
-            # platform key inside this perimeter, carrying the pipelines.run
-            # permission the admission builder demands — and let it re-verify
-            # signature, scope and cartridge; the purpose-bound envelope it
-            # mints is unchanged. No scope at all still fails closed below.
             _sched_tenant = str(conf.get("tenant_id") or "").strip()
             _sched_workspace = str(conf.get("workspace_id") or "").strip()
             if _sched_tenant and _sched_workspace:
@@ -544,8 +528,6 @@ def sap_successfactors_extract_all():
         token = runtime.set_security_context(security_context)
         aggregate_saved = False
         try:
-            # Fail before catalog metadata discovery: downloading $metadata is
-            # pointless when Bronze cannot be authenticated or written.
             runtime.require_storage_access()
             entities, skipped = runtime.get_extract_all_plan(
                 conn_id=selected_conn_id,
@@ -698,10 +680,6 @@ def sap_successfactors_extract_all():
                     "success",
                     "ok",
                 }
-                # Cycle transitions land in pipeline_runs — the ledger every
-                # DAG already writes — so the run leaves a queryable timeline:
-                # per-entity 'extracted' rows above, then Gold, then the
-                # anomaly signal the Control Room surfaces.
                 gold_results = [
                     item
                     for item in (gold_refresh or {}).get("results") or []
@@ -887,18 +865,6 @@ def sap_successfactors_extract_all():
 
     @task
     def trigger_refresh_chain(result: dict, admission: dict) -> dict:
-        """Puente Airflow -> inteligencia (P3).
-
-        Tras la extraccion+gold del cartucho, dispara el meta-DAG
-        dataset_refresh_chain para que materialice la cascada de talento en
-        orden y notifique /internal/intelligence/gold-refresh -- exactamente
-        lo que hoy solo hacen HubSpot y Replicon y de lo que carecia SAP
-        SuccessFactors (por eso el dato extraido nunca alcanzaba los motores
-        de decision por el reloj).
-
-        Se dispara por REST, sin importar el job_runner del cartucho dentro del
-        DAG, para respetar la separacion de responsabilidades del contrato de DAGs.
-        """
         import logging
 
         log = logging.getLogger("airflow.task")

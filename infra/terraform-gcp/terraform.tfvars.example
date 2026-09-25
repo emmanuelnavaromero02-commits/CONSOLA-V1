@@ -14,13 +14,10 @@ app_machine_type = "e2-standard-4"
 data_disk_size_gb = 150
 admin_email       = "emmanuelromero060601@gmail.com"
 
-# Leave empty for technical HTTP/IP mode. Set both domains to enable managed
-# HTTPS, host rules, and HTTP -> HTTPS redirect on the main public IP.
 public_console_domain   = ""
 public_workspace_domain = ""
 enable_https            = true
 
-# GCP lakehouse is exposed to the app through the GCS S3-compatible XML API.
 lakehouse_endpoint    = "storage.googleapis.com"
 lakehouse_bucket_name = ""
 

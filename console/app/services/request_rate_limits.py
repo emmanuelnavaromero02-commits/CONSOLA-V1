@@ -1,5 +1,3 @@
-"""Request rate-limit helpers for console HTTP surfaces."""
-
 from __future__ import annotations
 
 import os
@@ -17,16 +15,12 @@ RATE_LIMITS = {
     "/auth/forgot-password": (5, RATE_LIMIT_WINDOW_SECONDS),
     "/auth/reset-password": (8, RATE_LIMIT_WINDOW_SECONDS),
     "/auth/activate": (8, RATE_LIMIT_WINDOW_SECONDS),
-    # Refresh is more frequent than login (access tokens expire in minutes), so
-    # the cap is higher; still bounded to deter token-stuffing brute force.
     "/auth/refresh": (60, RATE_LIMIT_WINDOW_SECONDS),
     "/api/copilot": (120, 60),
     "/api/agents": (80, 60),
     "/api/mcp": (80, 60),
     "/studio/import": (10, RATE_LIMIT_WINDOW_SECONDS),
     "/api/explorer": (180, 60),
-    # Credentialless iframe route: the capability is the authentication, but a
-    # forged envelope must not become an unbounded anonymous database workload.
     "/apps/content": (60, 60),
 }
 API_RATE_LIMIT_PREFIXES = (
@@ -54,7 +48,6 @@ def client_ip(
 ) -> str:
     real_ip = request.client.host if request.client else "unknown"
     proxies = trusted_proxy_ips() if trusted_proxies is None else trusted_proxies
-    # Only trust X-Forwarded-For when the direct connection comes from a declared proxy.
     if proxies and real_ip in proxies:
         forwarded_for = request.headers.get("x-forwarded-for", "")
         if forwarded_for:
@@ -63,18 +56,6 @@ def client_ip(
 
 
 def rate_limit_disabled(env: Mapping[str, str] | None = None) -> bool:
-    """Return True when rate limiting should bypass.
-
-    The bypass fires in two scenarios — both are EXPLICITLY
-    test-harness affordances, never production behaviour:
-
-      1. ``RATE_LIMIT_ENABLED=false`` (any case) — an explicit
-         opt-out for E2E suites that hammer /auth/login. Default
-         unset -> enabled.
-      2. ``APP_ENV`` in {``test``, ``testing``} — automatic for
-         pytest harnesses that don't bother setting
-         RATE_LIMIT_ENABLED.
-    """
     values = env if env is not None else os.environ
     enabled_env = values.get("RATE_LIMIT_ENABLED")
     if enabled_env is not None and enabled_env.strip().lower() in {
@@ -109,9 +90,6 @@ async def rate_limit(
     limit, window = RATE_LIMITS[action]
     ip = client_ip(request, trusted_proxies=trusted_proxies)
     subject_key = subject.lower().strip() or "-"
-    # Two checks both must pass:
-    #   1) per (ip, subject) — keeps a noisy single user from drowning others
-    #   2) per ip — prevents subject-rotation bypass.
     limiter = limiter_factory()
     keys = dict.fromkeys((f"{action}:{ip}:{subject_key}", f"{action}:{ip}:-"))
     for key in keys:
@@ -147,12 +125,6 @@ async def rate_limit_app_content_capability(
     *,
     limiter_factory: Callable[[], Any] = get_rate_limiter,
 ) -> None:
-    """Limit expensive content checks by the authenticated capability user.
-
-    The credentialless frame is anonymous to session middleware and production
-    proxy addresses are not a reliable end-user identity. This runs only after
-    the HMAC envelope is valid, so one user's reloads cannot throttle everyone.
-    """
     if rate_limit_disabled():
         return
     user_key = str(claims.get("user") or "")

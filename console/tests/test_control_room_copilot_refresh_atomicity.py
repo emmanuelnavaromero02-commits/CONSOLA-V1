@@ -1,5 +1,3 @@
-"""Focused contracts for atomic Copilot refresh persistence and scheduling."""
-
 from __future__ import annotations
 
 import asyncio
@@ -130,7 +128,6 @@ async def test_scheduler_keeps_stable_actor_and_optional_forensics(monkeypatch) 
 
 
 class _RecordingPool:
-    """Pool that records the purge statement instead of running it."""
 
     def __init__(self, status: str = "DELETE 12") -> None:
         self.status = status
@@ -142,7 +139,6 @@ class _RecordingPool:
 
 
 class _FakeStopEvent:
-    """Skips the scheduler's sleeps: raises TimeoutError for `ticks` waits."""
 
     def __init__(self, ticks: int = 1) -> None:
         self.ticks = ticks
@@ -173,11 +169,9 @@ async def test_purge_always_keeps_the_newest_snapshot_of_every_workspace(
     sql, args = pool.calls[0]
     assert args == (14,)
     normalized = " ".join(sql.split())
-    # The guard: never delete the row `latest_snapshot` would read.
     assert "s.id <> ( SELECT x.id" in normalized
     assert "WHERE x.workspace_id = s.workspace_id" in normalized
     assert "ORDER BY x.created_at DESC LIMIT 1" in normalized
-    # The window is a bound parameter, never string-formatted into the SQL.
     assert "$1::int * INTERVAL '1 day'" in normalized
     assert "14" not in normalized
 
@@ -193,8 +187,6 @@ async def test_purge_is_disabled_by_a_non_positive_retention(monkeypatch) -> Non
     for days in (0, -1, "nonsense"):
         result = await persistence.purge_expired_snapshots(pool, retention_days=days)
         if days == "nonsense":
-            # Unparseable falls back to the default window, it does not delete
-            # everything.
             assert result["retention_days"] == persistence.DEFAULT_RETENTION_DAYS
         else:
             assert result == {
@@ -202,7 +194,7 @@ async def test_purge_is_disabled_by_a_non_positive_retention(monkeypatch) -> Non
                 "reason": "retention_disabled",
                 "deleted": 0,
             }
-    assert len(pool.calls) == 1  # only the "nonsense" fallback ran
+    assert len(pool.calls) == 1
 
 
 @pytest.mark.asyncio
@@ -232,7 +224,7 @@ def test_retention_window_reads_the_env_and_falls_back_to_fourteen_days(
     monkeypatch.setenv("COPILOT_CONTEXT_RETENTION_DAYS", "not-a-number")
     assert service._retention_days() == 14
     monkeypatch.setenv("COPILOT_CONTEXT_RETENTION_DAYS", "0")
-    assert service._retention_days() == 0  # explicit opt-out, handled downstream
+    assert service._retention_days() == 0
 
 
 @pytest.mark.asyncio

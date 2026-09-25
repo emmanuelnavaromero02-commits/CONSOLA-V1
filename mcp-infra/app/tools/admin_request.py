@@ -1,9 +1,3 @@
-"""
-admin_request — tool the workspace assistant uses when it can't answer a
-question with the existing data and tools. Sends an email to the platform
-admin describing what the user asked and what the assistant believes is
-needed to make it answerable.
-"""
 from __future__ import annotations
 
 import os
@@ -126,8 +120,6 @@ async def request_admin_help(
 
 
 def _resolve_recipients() -> list[str]:
-    """Pull active admins flagged escalation_notify=TRUE; fall back to
-    ADMIN_EMAIL env if the table has no opted-in admin."""
     try:
         import psycopg2
         from app.config import settings as s

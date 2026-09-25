@@ -42,9 +42,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      # refinement/tests/test_rls.py imports `refinement.app.duckdb_engine`, so
-      # the repo root must be on PYTHONPATH. Per-service conftests only add
-      # their own service directory.
       PYTHONPATH: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
@@ -91,9 +88,6 @@ jobs:
             echo "::warning::workspace/tests/ no existe — pendiente de crear suite"
           fi
 
-      # Root tests/ exercises cartridge contracts and Airflow DAG wiring. They
-      # were added in #82 / #84 but never wired to CI, so a regression in any
-      # cartridge passed CI silently. Install every live cartridge's deps then run.
       - name: Install cartridge requirements for root tests/
         if: needs.changes.outputs.root_tests == 'true' || needs.changes.outputs.cartridge_tests == 'true'
         run: |
@@ -107,14 +101,6 @@ jobs:
       - name: Run root tests/ (cartridge contracts)
         if: needs.changes.outputs.root_tests == 'true'
         env:
-          # v1.43.4: when the team wires up a live-stack
-          # job (start docker-compose, sleep ≈180s, then pytest), set
-          # E2E_REQUIRE_STACK=1 here AND provide E2E_ADMIN_PASSWORD as
-          # a repo secret. The conftest's autouse fixture will then
-          # fail loudly if the secret is empty, so a misconfigured
-          # workflow can't silently skip the E2E surface and ship
-          # green. Until that sprint lands the variables stay unset
-          # and the unit-only path skips E2E cleanly.
           E2E_REQUIRE_STACK: ""
           E2E_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
         run: |
@@ -127,11 +113,6 @@ jobs:
             --source=console/app,refinement/app,vault/app,workspace/app,mcp-infra/app,cartridges \
             -m pytest $targets -q
 
-      # Beta-8: gate the per-cartridge suite too. The conftest shim that lets
-      # `import app` resolve to the right cartridge (and that fixed
-      # `pytest cartridges -q` from the repo root) was previously unprotected,
-      # so a regression could silently re-break it. Deps are already installed
-      # above.
       - name: Run cartridges/ suite
         if: needs.changes.outputs.cartridge_tests == 'true'
         run: |
@@ -196,15 +177,7 @@ jobs:
           AIRFLOW_SECRET_KEY: dummy_airflow_secret_key_for_ci_only
           AIRFLOW_ADMIN_USER: ci_admin
           AIRFLOW_ADMIN_PASSWORD: dummy_airflow_admin_password_for_ci_only
-          # Sprint v1.33 (audit B1 P0): SAP and Salesforce cartridges refuse
-          # to start without a valid Fernet FIELD_ENCRYPTION_KEY. `docker
-          # compose config` interpolates this even when those services
-          # aren't spun up, so the CI step needs a real Fernet-shaped value.
           FIELD_ENCRYPTION_KEY: d7to_DkrHVKV5_jOzwCNV-wOl4r6gGCY7Usccczm9dk=
-          # Sprint v1.38 (audit B5+B6 P0.5): SAP cartridges + Airflow
-          # + Superset switched to dedicated omega_* roles. The
-          # compose file marks each password ${VAR:?...}-required so
-          # `docker compose config` interpolates them on validate.
           OMEGA_CARTRIDGE_SAP_HCM_PASSWORD: dummy_cartridge_sap_hcm_password_for_ci_only
           OMEGA_CARTRIDGE_SAP_S4_PASSWORD: dummy_cartridge_sap_s4_password_for_ci_only
           OMEGA_CARTRIDGE_SAP_SF_PASSWORD: dummy_cartridge_sap_sf_password_for_ci_only
@@ -212,9 +185,6 @@ jobs:
           OMEGA_AIRFLOW_DAG_PASSWORD: dummy_airflow_dag_password_for_ci_only
           OMEGA_AIRFLOW_META_PASSWORD: dummy_airflow_meta_password_for_ci_only
           OMEGA_SUPERSET_META_PASSWORD: dummy_superset_meta_password_for_ci_only
-          # Sprint v1.40: Replicon cartridge restored. The new service
-          # in compose marks its DB role + 3 pair keys as required, so
-          # ``docker compose config`` interpolates them on validate.
           OMEGA_CARTRIDGE_REPLICON_PASSWORD: dummy_cartridge_replicon_password_for_ci_only
           OMEGA_CARTRIDGE_SALESFORCE_PASSWORD: dummy_cartridge_salesforce_password_for_ci_only
           INTERNAL_API_KEY_REPLICON_TO_CONSOLE: dummy_replicon_to_console_key_for_ci_only_32chars_xxxxxxx
@@ -255,10 +225,6 @@ jobs:
       (needs.compose-validate.result == 'success' || needs.compose-validate.result == 'skipped')
     runs-on: ubuntu-latest
     strategy:
-      # Build every service image so a Dockerfile regression in any of them
-      # fails CI instead of being discovered at deploy time. The previous
-      # workflow only built `console`, which let workspace/refinement/vault/
-      # mcp-infra/SAP cartridge images break silently for entire commits.
       fail-fast: false
       matrix: ${{ fromJson(needs.changes.outputs.build_matrix) }}
     steps:

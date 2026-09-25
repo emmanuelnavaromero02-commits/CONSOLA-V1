@@ -8,19 +8,12 @@ except ModuleNotFoundError:
     from refinement.app.publication_semantics import snapshot_public_semantics
 
 
-# F8: the per-column profile the engine attaches at materialization
-# (null_rate/distinct_count/min_value/max_value) must SURVIVE the staged
-# rebuilds below — the gold_schema reconstruction and the parquet-derived
-# catalog both used to flatten fields back to name+type, so no reader ever
-# saw quality stats and relationship discovery (which needs distinct_count
-# in data_catalog) stayed empty.
 _PROFILE_STAT_KEYS = ("null_rate", "distinct_count", "min_value", "max_value")
 
 
 def _merge_profile_stats(
     target: list[dict], source_fields: list[dict]
 ) -> list[dict]:
-    """Carry profile stats from source fields onto same-named target items."""
     stats_by_name = {
         str(field.get("name") or ""): {
             key: field[key] for key in _PROFILE_STAT_KEYS if key in field
@@ -36,7 +29,6 @@ def _merge_profile_stats(
 
 
 class PublicationFinalizeMixin:
-    """Verify, attest and atomically publish one frozen materialization."""
 
     def _update_catalog(
         self,
@@ -66,8 +58,6 @@ class PublicationFinalizeMixin:
         ):
             raise RuntimeError("materialization object was not durably prepared")
         if layer == "gold" and state.get("gold_schema"):
-            # F8 (punto B): the rebuild is authoritative for names/types but
-            # must not drop the profile the engine attached to schema_fields.
             schema_fields = _merge_profile_stats(
                 [
                     {"name": item[0], "type": item[1]}
@@ -86,8 +76,6 @@ class PublicationFinalizeMixin:
             expected_columns=[str(field.get("name") or "") for field in schema_fields],
         )
         state["row_count"] = row_count
-        # F8 (punto C): the parquet-derived catalog is authoritative for the
-        # verified shape; re-attach the profile stats by column name.
         catalog = _merge_profile_stats(catalog, schema_fields)
         semantics = snapshot_public_semantics(
             self._pg_conn if self.pg_url else None,
@@ -143,12 +131,6 @@ class PublicationFinalizeMixin:
             state["receipt"] = self._recover_prepared(state["identity"], exc)
         self._mark_publication_replayed(bool(state["receipt"].get("replayed")))
         state["published"] = True
-        # F8 (punto A, raíz): the staged path never reached the base
-        # data_catalog writer, so profile stats were never persisted and
-        # relationship discovery (distinct_count) stayed empty. Upsert the
-        # enriched catalog now that the publication succeeded; data_catalog is
-        # descriptive metadata, so a failure here must never fail an
-        # already-published run (the base writer is itself best-effort).
         try:
             super()._update_catalog(
                 name,

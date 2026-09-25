@@ -1,11 +1,3 @@
-"""E5a — el lazo outcome→calibración se cierra SOLO (el ciclo Evoluciona).
-
-Antes, cada outcome evaluado requería un POST /calibration/observe manual: el
-motor bayesiano solo aprendía si alguien se acordaba. Ahora, tras cada
-gold_refresh persistido, el autopiloto barre los outcomes evaluados sin
-observación verificada y los observa por la MISMA ruta autoritativa
-(payload = solo source_type+source_id: nada afirmable que la base no respalde).
-"""
 from __future__ import annotations
 
 import asyncio
@@ -62,7 +54,6 @@ def test_observes_each_pending_outcome_with_authoritative_payload(monkeypatch):
         }, "el payload jamás afirma más que la identidad del outcome"
     sql, args = conn.queries[0]
     assert args == ("ws-1", 25)
-    # La elegibilidad espeja el trigger de autoridad (99zzf) — cero forzados.
     for condition in (
         "evaluation_status IN ('hit', 'miss')",
         "signal.signal_subtype = 'observed'",

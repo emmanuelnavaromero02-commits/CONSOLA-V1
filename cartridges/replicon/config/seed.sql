@@ -1,12 +1,3 @@
--- ─────────────────────────────────────────────────────────────────────────────
--- MODecissions Cartridge: Replicon PSA — seed configuration
--- Run once to register this cartridge in a new installation.
--- Safe to re-run: agent inserts use target-less ON CONFLICT DO NOTHING so they
--- work with both the original global agents constraint and the later
--- workspace-aware partial indexes.
--- ─────────────────────────────────────────────────────────────────────────────
-
--- ── Cartridge header ──────────────────────────────────────────────────────────
 INSERT INTO cartridges (id, name, version, description, pattern, category, bronze_path)
 VALUES (
     'replicon',
@@ -23,7 +14,6 @@ ON CONFLICT (id) DO UPDATE
         description = EXCLUDED.description,
         updated_at  = NOW();
 
--- ── DAGs ──────────────────────────────────────────────────────────────────────
 INSERT INTO cartridge_dags (cartridge_id, dag_id, file, description, trigger, params)
 VALUES
     ('replicon', 'replicon_extract', 'replicon_extract.py', 'Extrae una entidad en Bronze MinIO (full o incremental)',  'on-demand', '["entity","mode","from_date","to_date"]'),
@@ -32,12 +22,6 @@ VALUES
     ('replicon', 'replicon_outlook_audit_report_import', 'replicon_outlook_audit_report_import.py', 'Ingesta reporte de auditoría recibido por Outlook.', 'scheduled', '["mailbox","subject_filter"]')
 ON CONFLICT (cartridge_id, dag_id) DO NOTHING;
 
--- ── Entities ──────────────────────────────────────────────────────────────────
--- display_name: nombre legible para UI y reportes
--- mode:         full | incremental
--- dag_id:       DAG que maneja la extracción
--- trigger_type: manual | scheduled
--- The DAG itself owns: connection logic, watermark field, API call, mapping
 INSERT INTO entity_config
     (cartridge_id, entity,               display_name,                         mode,          primary_key,        dag_id,              description,                                                   enabled, trigger_type)
 VALUES
@@ -66,7 +50,6 @@ ON CONFLICT (cartridge_id, entity) DO UPDATE
         description   = EXCLUDED.description,
         trigger_type  = EXCLUDED.trigger_type;
 
--- ── File-import entities (servidas por file_ingest, parametrizadas por dag_params) ──
 INSERT INTO entity_config
     (cartridge_id, entity,           display_name,             mode,          primary_key,        dag_id,        description,                                                                   enabled, trigger_type, dag_params)
 VALUES
@@ -85,7 +68,6 @@ ON CONFLICT (cartridge_id, entity) DO UPDATE
         trigger_type = EXCLUDED.trigger_type,
         dag_params   = EXCLUDED.dag_params;
 
--- ── Semantic vocabulary ───────────────────────────────────────────────────────
 INSERT INTO semantic_terms (cartridge_id, term, definition, maps_to)
 VALUES
     ('replicon', 'horas facturables', 'Horas de TimeEntry con billable_status = Billable',                          'TimeEntry.hours WHERE billable_status=''Billable'''),
@@ -93,10 +75,6 @@ VALUES
     ('replicon', 'backlog',           'Proyectos con status InProgress y budget_hours no consumido',                'Project WHERE status=''InProgress''')
 ON CONFLICT (cartridge_id, term) DO NOTHING;
 
--- ── Agents ────────────────────────────────────────────────────────────────────
--- Cinco agentes especializados que viven dentro del cartucho replicon.
--- El cartucho es su mente (datos + hints + vocabulario); cada agente es una
--- especialización (rol + tools + personalidad + prompt).
 
 INSERT INTO agents (cartridge_id, slug, name, description, instructions, personality,
                     allowed_tools, rag_filter, model, max_tokens, temperature, extra)

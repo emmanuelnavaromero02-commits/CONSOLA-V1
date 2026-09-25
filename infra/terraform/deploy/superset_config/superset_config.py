@@ -1,9 +1,3 @@
-"""
-Superset config — points at the postgres container instead of the default
-in-image SQLite. Mounted at /app/pythonpath/superset_config.py via
-docker-compose.aws.yml. Reads secrets from environment.
-"""
-
 import os
 
 SECRET_KEY = os.environ["SUPERSET_SECRET_KEY"]
@@ -15,8 +9,6 @@ if not SQLALCHEMY_DATABASE_URI:
         "SQLALCHEMY_DATABASE_URI is required; refusing superuser fallback"
     )
 
-# Security defaults are production-safe. Local/dev can explicitly opt out with
-# SUPERSET_TALISMAN_ENABLED=false / SUPERSET_CSRF_ENABLED=false.
 TALISMAN_ENABLED = os.environ.get("SUPERSET_TALISMAN_ENABLED", "true").lower() == "true"
 WTF_CSRF_ENABLED = os.environ.get("SUPERSET_CSRF_ENABLED", "true").lower() == "true"
 RATELIMIT_ENABLED = (
@@ -54,6 +46,5 @@ FEATURE_FLAGS = {
     "EMBEDDED_SUPERSET": True,
 }
 
-# Gold identity is the publication head, so cross-head result reuse is unsafe.
 DATA_CACHE_CONFIG = {"CACHE_TYPE": "NullCache"}
 RESULTS_BACKEND = None

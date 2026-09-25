@@ -1,20 +1,3 @@
-"""
-hubspot_extract DAG  (Pattern A — thin trigger → cartridge microservice)
-========================================================================
-Extrae UNA entidad de HubSpot llamando al microservicio del cartucho
-(`/skills/run_{mode}/{entity}`) y luego propaga silver/gold aguas abajo
-con el meta-DAG `dataset_refresh_chain`.
-
-A diferencia de Replicon (Pattern B, cliente embebido en el DAG), aquí el
-DAG es delgado: la extracción real (paginación, watermark, parquet) vive en
-el microservicio del cartucho y se puede reusar por REST/MCP. Esto evita la
-duplicación de lógica de extracción que tiene replicon_extract.py.
-
-conf del run:
-  entity   — nombre de la entidad (requerido; e.g. deals, companies)
-  mode     — "incremental" | "full"  (default: incremental)
-"""
-
 from __future__ import annotations
 
 import os
@@ -141,7 +124,6 @@ def hubspot_extract():
 
     @task
     def trigger_refresh_chain(result: dict, admission: dict) -> dict:
-        """Propaga silver/gold aguas abajo con el meta-DAG dataset_refresh_chain."""
         import logging
 
         log = logging.getLogger("airflow.task")

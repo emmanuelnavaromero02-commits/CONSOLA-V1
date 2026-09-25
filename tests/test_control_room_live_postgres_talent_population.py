@@ -1,10 +1,3 @@
-"""F12 — real PostgreSQL proof that population totals count ALL rows.
-
-Seeds 6,010 talent rows (over the 5,000-row preview cap) into a real gold
-database with native RLS and asserts the population engine reports the full
-COUNT — the exact scenario the capped len(rows) counting silently broke.
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -165,8 +158,6 @@ async def test_population_counts_cover_all_rows_beyond_the_preview_cap(
 
     cohort = await query_desempeno_cohort_counts(_user(TENANT_A, WORKSPACE_A))
     assert cohort["status"] == "ready", cohort["error"]
-    # 82 on the percentage scale is 'high'; the 10 blocked rows carry the
-    # explicit 'low' band column.
     assert cohort["count"] == POPULATION + INSUFFICIENT
     assert cohort["band_counts"] == {
         "high": POPULATION,

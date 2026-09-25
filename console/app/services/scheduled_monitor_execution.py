@@ -81,7 +81,6 @@ async def execute_reserved_scheduled_monitor(
     heartbeat_scheduled_run: Callable[..., Awaitable[None]] | None = None,
     finish_scheduled_run: Callable[..., Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
-    """Run and close one reserved monitor while continuously owning its fence."""
     if (
         run_scheduled_monitor is None
         or heartbeat_scheduled_run is None

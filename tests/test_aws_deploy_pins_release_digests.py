@@ -1,5 +1,3 @@
-"""Every OMEGA image the AWS deploy pulls must be a digest the release signed."""
-
 from __future__ import annotations
 
 import json
@@ -17,7 +15,6 @@ CARTRIDGES_COMPOSE = REPO / "infra" / "terraform" / "deploy" / "docker-compose.c
 DEPLOY = REPO / "scripts" / "deploy_main_aws.py"
 
 def _deploy_module():
-    """Load the deploy script by path."""
     import importlib.util
 
     if str(REPO / "scripts") not in sys.path:
@@ -41,7 +38,6 @@ def _compose_images(path: Path) -> dict[str, str]:
 
 
 def _manifest_fixture() -> dict:
-    """A manifest shaped exactly like a real one, with by_service resolved."""
     import importlib.util
     if str(REPO / 'scripts') not in sys.path:
         sys.path.insert(0, str(REPO / 'scripts'))
@@ -60,7 +56,6 @@ def _manifest_fixture() -> dict:
 
 
 def test_release_publishes_by_digest_only() -> None:
-    """The premise. If this ever stops being true, revisit the whole design."""
     source = RELEASE_WORKFLOW.read_text(encoding="utf-8")
 
     assert "push-by-digest=true" in source, (
@@ -70,7 +65,6 @@ def test_release_publishes_by_digest_only() -> None:
 
 
 def test_compose_files_reference_images_by_tag() -> None:
-    """The other half. The compose asks for a tag the registry never receives."""
     tagged = {
         **_compose_images(AWS_COMPOSE),
         **_compose_images(CARTRIDGES_COMPOSE),
@@ -84,7 +78,6 @@ def test_compose_files_reference_images_by_tag() -> None:
 
 
 def test_deploy_requires_the_signed_manifest() -> None:
-    """A deploy without a manifest must refuse, not fall back to the tag."""
     resolve_release_manifest = _deploy_module().resolve_release_manifest
 
     with pytest.raises(SystemExit) as excinfo:
@@ -94,7 +87,6 @@ def test_deploy_requires_the_signed_manifest() -> None:
 
 
 def test_overlay_pins_every_service_the_deploy_recreates() -> None:
-    """The invariant: nothing the deploy pulls may resolve by tag."""
     release_manifest_overlay = _deploy_module().release_manifest_overlay
 
     overlay = yaml.safe_load(release_manifest_overlay(_manifest_fixture()))
@@ -120,7 +112,6 @@ def test_every_overlay_reference_is_a_digest() -> None:
 
 
 def test_one_airflow_image_backs_its_three_services() -> None:
-    """A real trap: airflow, airflow-init and airflow-scheduler share an image."""
     release_manifest_overlay = _deploy_module().release_manifest_overlay
 
     overlay = yaml.safe_load(release_manifest_overlay(_manifest_fixture()))
@@ -133,7 +124,6 @@ def test_one_airflow_image_backs_its_three_services() -> None:
 
 
 def test_overlay_does_not_disable_the_pull() -> None:
-    """`pull_policy: never` would silently remove the existence proof."""
     release_manifest_overlay = _deploy_module().release_manifest_overlay
 
     overlay = yaml.safe_load(release_manifest_overlay(_manifest_fixture()))
@@ -146,7 +136,6 @@ def test_overlay_does_not_disable_the_pull() -> None:
 
 
 def test_remote_script_verifies_and_uses_the_overlay() -> None:
-    """The overlay must reach the host intact and actually be in play."""
     source = DEPLOY.read_text(encoding="utf-8")
 
     assert "IMAGES_OVERLAY_SHA256" in source, "the overlay is shipped unverified"

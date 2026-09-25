@@ -5,10 +5,6 @@ import types
 
 import app.main as _console_main
 
-# Import the current console runtime namespace, including private helper
-# functions used by legacy handlers. Handlers are rebound to app.main's
-# namespace before registration so existing tests and monkeypatches that
-# patch app.main.<helper> continue to affect the handler at runtime.
 globals().update(_console_main.__dict__)
 router = APIRouter()
 
@@ -29,7 +25,6 @@ def _bind_to_main(fn):
     _console_main.__dict__[fn.__name__] = rebound
     return rebound
 
-# /healthz
 @router.get("/healthz")
 @_bind_to_main
 async def healthz():
@@ -45,7 +40,6 @@ async def healthz():
     beta/demo runbook's health checks."""
     return _healthz_payload(version=_console_version(), app_env=_app_env())
 
-# /readyz
 @router.get("/readyz")
 @_bind_to_main
 async def readyz(request: Request):
@@ -55,9 +49,6 @@ async def readyz(request: Request):
     it verifies Postgres and core sibling services so deploy/proxy layers can
     keep traffic away from a half-started console.
     """
-    # Readiness source-contract markers: CONTROL_ROOM_REQUIRE_DATA_READY,
-    # require_data, require_intelligence, intelligence_opt_out_allowed,
-    # require_data=require_intelligence_data, _is_production_env().
     checks, ok = await _build_readyz_checks_impl(
         app=request.app,
         query_params=request.query_params,
@@ -82,26 +73,17 @@ async def readyz(request: Request):
         status_code=200 if ok else 503,
     )
 
-# /api/config
 @router.get("/api/config")
 @_bind_to_main
 async def api_config(request: Request):
     """Runtime config (URLs only, no secrets)."""
     return _runtime_config_payload(os.environ, public_url=_public_url)
 
-# /api/system/info
 @router.get("/api/system/info")
 @_bind_to_main
 async def system_info(user: dict = Depends(require_authenticated)):
-    # v1.43.2 (Frontend R1 hardening): expose ``dev_mode`` so the UI
-    # can hide CTAs that gate on dev-only mcp-infra tools (Studio
-    # Deploy DAG, etc). Pre-v1.43.2 the console rendered those
-    # buttons unconditionally; clicking them in production now surfaces
-    # a PermissionError from airflow_create_dag — which is correct but
-    # confusing. The button is hidden by checking this flag.
     return _system_info_payload(os.environ, version=_console_version())
 
-# /me
 @router.get("/me")
 @_bind_to_main
 async def viewer_me(request: Request):
@@ -110,13 +92,11 @@ async def viewer_me(request: Request):
 
     return _console_next_response(request, "me/index.html")
 
-# /api/me
 @router.get("/api/me")
 @_bind_to_main
 async def api_me(user: dict = Depends(require_authenticated)):
     return _user_payload(user)
 
-# /api/me/access
 @router.get("/api/me/access")
 @_bind_to_main
 async def api_me_access(user: dict = Depends(require_authenticated)):
@@ -139,7 +119,6 @@ async def api_me_access(user: dict = Depends(require_authenticated)):
     try:
         p = await cartridge_service.pool()
         async with p.acquire() as conn:  # noqa: SIM117 — nested try/except is intentional
-            # Cartridges visible to this caller in their workspace.
             try:
                 allowed_rows = await conn.fetch(
                     """
@@ -172,7 +151,6 @@ async def api_me_access(user: dict = Depends(require_authenticated)):
                     for r in allowed_rows
                 ]
             except Exception:  # noqa: BLE001
-                # Marketplace migrations may not be applied in every env.
                 cartridges_allowed = []
             try:
                 denied_rows = await conn.fetch(
@@ -207,10 +185,6 @@ async def api_me_access(user: dict = Depends(require_authenticated)):
             except Exception:  # noqa: BLE001
                 cartridges_denied = []
     except Exception:  # noqa: BLE001
-        # If the marketplace pool is unavailable we still return the
-        # identity-level info so the page can render in restricted mode.
-        # Log it: silent fallback is intentional for ops resilience but
-        # we must not mask repeated failures from the team.
         logger.warning("api_me_access: marketplace pool unavailable", exc_info=True)
 
     return {
@@ -233,31 +207,15 @@ async def api_me_access(user: dict = Depends(require_authenticated)):
             "allowed": cartridges_allowed,
             "denied": cartridges_denied,
         },
-        # The front-end uses these flags to decide what to render. They are
-        # *display hints only*; every action endpoint enforces its own gate.
-        # IMPORTANT: each flag must replicate the FULL guard chain of the
-        # target page. /iam, /admin/users, /settings, /operations require
-        # both the permission AND `require_admin` (global admin role).
-        # If we only checked the permission, a security_admin user (who
-        # has iam.users.read but is not a global admin) would see the
-        # link and get a 403 on click. The backend still rejects, but the
-        # UI must not lie.
         "ui_capabilities": {
             "can_view_iam":            "iam.users.read" in effective and role_canonical in {"owner", "super_admin", "admin"},
             "can_admin_marketplace":   "marketplace.admin" in effective,
-            # `workspace_role()` already normalizes the legacy database
-            # workspace_role values (admin/owner/super_admin/security_admin)
-            # to "workspace_admin" before returning. Comparing only to
-            # "workspace_admin" keeps the intent explicit and prevents a
-            # future copy-paste from re-introducing a global-admin check on
-            # a workspace-scoped flag.
             "can_admin_workspace":     workspace_role_resolved in {"workspace_admin", "tenant_admin"},
             "can_view_audit":          "security.audit.read" in effective,
             "can_view_sessions":       "security.sessions.read" in effective,
         },
     }
 
-# /api/me/change-password
 @router.post("/api/me/change-password", dependencies=[Depends(require_csrf)])
 @_bind_to_main
 async def api_me_change_password(body: dict, user: dict = Depends(require_authenticated)):
@@ -269,11 +227,9 @@ async def api_me_change_password(body: dict, user: dict = Depends(require_authen
     if not ok:
         raise HTTPException(400, err or "password change failed")
     resp = JSONResponse({"changed": True})
-    # Rotate CSRF after a successful self-service password change.
     set_csrf_cookie(resp)
     return resp
 
-# /tokens/summary
 @router.get("/tokens/summary")
 @_bind_to_main
 async def tokens_summary(user: dict = Depends(require_permission("copilot.use"))):

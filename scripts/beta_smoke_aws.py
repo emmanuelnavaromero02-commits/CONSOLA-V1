@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-"""Read-only AWS beta smoke gate over SSM.
-
-This complements local ``make beta-smoke``. It proves what was tested by
-recording the SSM command id, target instance, region, release refs, UTC time
-and public URL, while keeping secrets out of evidence.
-"""
 
 from __future__ import annotations
 

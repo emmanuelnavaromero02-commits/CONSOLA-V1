@@ -1,10 +1,3 @@
-"""Sprint v1.42 — copilot_service unit tests.
-
-Patches ``llm_client.chat``, ``mcp_registry`` and the asyncpg pool with
-in-memory doubles to exercise the run-turn loop without standing up
-the stack. The fake pool stores rows in dicts so ownership checks,
-ordering and approval state can be observed.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -34,12 +27,7 @@ def copilot_module():
     return mod
 
 
-# ── Fake DB infrastructure ──────────────────────────────────────────────────
-
 class FakeDB:
-    """Tiny stand-in for the bits of asyncpg we use. Only the queries the
-    copilot service actually executes are honoured — the test fails fast
-    on an unknown query so the harness can't silently drift."""
     def __init__(self):
         self.conversations: dict[str, dict] = {}
         self.messages: list[dict] = []
@@ -62,7 +50,6 @@ class FakeDB:
             return None
         return row
 
-    # asyncpg-compatible helpers ────────────────────────────────────────
     async def fetchrow(self, query: str, *args):
         q = " ".join(query.split())
         if q.startswith("SELECT id, user_id, workspace_id, title, created_at, updated_at FROM conversations"):
@@ -106,10 +93,6 @@ class FakeDB:
         if q.startswith("UPDATE conversation_messages SET tool_results = jsonb_build_array"):
             if not self._conversation_visible(str(args[1])):
                 return None
-            # The atomic claim used by approve_pending_action: returns
-            # tool_calls only if the row is still pending (tool_results
-            # IS NULL). A second call returns None, which the service
-            # turns into a 409.
             for m in self.messages:
                 if (m["id"] == args[0]
                         and m["conversation_id"] == args[1]
@@ -217,7 +200,6 @@ def _patch_pool(mod, db: FakeDB):
 
 
 def _patch_manifest(mod, tools: list[dict]):
-    """tools shape: [{"name": "<server>___<bare>", "risk_level": "read"|...}]"""
     servers: dict[str, list] = {}
     for t in tools:
         srv, bare = t["name"].split("___", 1)
@@ -251,8 +233,6 @@ def _patch_invoke(mod, fake_invoke):
 def _run(coro):
     return asyncio.new_event_loop().run_until_complete(coro)
 
-
-# ── Tests ───────────────────────────────────────────────────────────────────
 
 def test_copilot_creates_conversation(copilot_module, db, admin_user):
     _patch_pool(copilot_module, db)
@@ -366,7 +346,6 @@ def test_copilot_read_tool_executes_immediately(
         return {"dags": ["sap_hcm_full", "replicon_users"]}
 
     async def fake_chat(*, system, messages, tools, invoke_tool, tool_server_map, on_event=None, **_kw):
-        # Simulate the LLM calling one read tool then replying.
         result = await invoke_tool("infra", "airflow_list_dags", {})
         assert "dags" in result
         return ("Tenés 2 DAGs activos.", [], [])
@@ -416,7 +395,7 @@ def test_copilot_destructive_tool_blocks_without_approval(
         conversation_id=conv["id"], user_message="borra el DAG x",
         user=admin_user,
     ))
-    assert invoked == []  # mcp_registry was NOT called
+    assert invoked == []
     assert captured[0]["error"] == "approval_required"
     assert out["requires_approval"] is True
     assert len(out["pending_actions"]) == 1
@@ -426,8 +405,6 @@ def test_copilot_destructive_tool_blocks_without_approval(
 def test_copilot_write_tool_blocks_without_approval(
     copilot_module, db, admin_user,
 ):
-    """Non-read tools with requires_approval=True must not bypass the gate
-    merely because their risk is "write" instead of "destructive"."""
     _patch_pool(copilot_module, db)
     _patch_manifest(copilot_module, [
         {"name": "infra___foo_write_bar", "risk_level": "write", "requires_approval": True},
@@ -508,8 +485,6 @@ def test_copilot_write_tool_executes_after_approval(
     assert invoke_count == []
 
     async def fake_chat_second(*, messages, invoke_tool, **_kw):
-        # Approval execution is now deterministic in the service layer:
-        # the LLM receives the real tool_result and only has to summarise.
         assert any(
             m.get("role") == "user"
             and isinstance(m.get("content"), str)
@@ -543,8 +518,6 @@ def test_copilot_write_tool_executes_after_approval(
 def test_copilot_write_approval_does_not_require_execute_permission(
     copilot_module, db, monkeypatch,
 ):
-    """A write-level approved action needs copilot.write, not the
-    destructive copilot.execute permission."""
     writer_user = {
         "id": 3,
         "email": "writer@example.com",
@@ -610,11 +583,6 @@ def test_copilot_write_approval_does_not_require_execute_permission(
 def test_copilot_destructive_tool_executes_with_approval(
     copilot_module, db, admin_user,
 ):
-    """End-to-end approval flow. The fake LLM speaks the structured
-    Anthropic message shape (assistant turn with a tool_use block,
-    followed by the final reply) so the v1.42 refactor — which now
-    persists from ``final_msgs`` instead of a side-log — gets a
-    realistic chunk to work with."""
     _patch_pool(copilot_module, db)
     _patch_manifest(copilot_module, [
         {"name": "infra___airflow_delete_dag", "risk_level": "destructive"},
@@ -629,9 +597,6 @@ def test_copilot_destructive_tool_executes_with_approval(
 
     async def fake_chat_first(*, messages, invoke_tool, **_kw):
         r = await invoke_tool("infra", "airflow_delete_dag", {"dag_id": "x"})
-        # Build a realistic final_msgs: the history we received +
-        # one assistant turn with a tool_use block + one user turn
-        # with the tool_result + the final assistant text.
         final = list(messages) + [
             {"role": "assistant", "content": [
                 {"type": "tool_use", "id": "toolu_1",
@@ -706,7 +671,6 @@ def test_copilot_audit_records_tool_call_with_risk_level(
         conversation_id=conv["id"], user_message="¿DAGs?",
         user=admin_user, ip="10.0.0.5", user_agent="pytest/1.0",
     ))
-    # asyncio.create_task fires the audit; one event loop tick is enough.
     _run(asyncio.sleep(0))
     audit = db.audit_calls[-1]
     assert audit["tool_name"] == "airflow_list_dags"
@@ -744,7 +708,7 @@ def test_copilot_scrubs_secrets_from_tool_args(copilot_module, db, admin_user):
     args = audit["tool_args"]
     assert args["password"] == "***"
     assert args["nested"]["api_key"] == "***"
-    assert args["sql"] == "UPDATE x SET y=$1"  # untouched
+    assert args["sql"] == "UPDATE x SET y=$1"
 
 
 def test_copilot_persists_messages_in_conversation_messages(
@@ -777,7 +741,6 @@ def test_copilot_persists_messages_in_conversation_messages(
 def test_copilot_blocks_tool_when_user_lacks_permission(
     copilot_module, db, analyst_user,
 ):
-    """Analyst only has copilot.use → can read, can't write/execute."""
     _patch_pool(copilot_module, db)
     _patch_manifest(copilot_module, [
         {"name": "infra___airflow_set_variable", "risk_level": "destructive"},
@@ -797,7 +760,6 @@ def test_copilot_blocks_tool_when_user_lacks_permission(
     _patch_invoke(copilot_module, fake_invoke)
     _patch_llm(copilot_module, fake_chat)
 
-    # Analyst owns this conversation.
     conv = _run(copilot_module.create_conversation(user=analyst_user))
     _run(copilot_module.run_turn(
         conversation_id=conv["id"], user_message="set k=v",
@@ -811,8 +773,6 @@ def test_copilot_blocks_tool_when_user_lacks_permission(
 def test_copilot_never_invents_data_when_tool_returns_empty(
     copilot_module, db, admin_user,
 ):
-    """System prompt must instruct the LLM to say 'no encontré' on empty.
-    We test the contract by verifying the prompt literal text."""
     assert "NUNCA inventes datos" in copilot_module.SYSTEM_PROMPT
     assert "No encontré ese dato" in copilot_module.SYSTEM_PROMPT
 
@@ -838,7 +798,6 @@ def test_copilot_ownership_check_blocks_cross_user_access(
     _patch_manifest(copilot_module, [])
     _patch_audit(copilot_module, db)
     _patch_llm(copilot_module, AsyncMock(return_value=("ok", [], [])))
-    # admin creates the convo, analyst tries to send to it
     conv = _run(copilot_module.create_conversation(user=admin_user))
     with pytest.raises(Exception) as exc_info:
         _run(copilot_module.run_turn(
@@ -851,15 +810,9 @@ def test_copilot_ownership_check_blocks_cross_user_access(
     )
 
 
-# ── R1 review fixes ────────────────────────────────────────────────────────
-
 def test_copilot_tool_use_id_preserved_through_history(
     copilot_module, db, admin_user,
 ):
-    """v1.42 R1 LLM-F1: the persisted tool_calls must keep the original
-    Anthropic block id and tool_results must keep the matching
-    tool_use_id. Without this, a follow-up turn's history reload
-    generates fresh UUIDs and Anthropic API rejects with 400."""
     _patch_pool(copilot_module, db)
     _patch_manifest(copilot_module, [
         {"name": "infra___airflow_list_dags", "risk_level": "read"},
@@ -889,9 +842,6 @@ def test_copilot_tool_use_id_preserved_through_history(
     _run(copilot_module.run_turn(
         conversation_id=conv["id"], user_message="dags?", user=admin_user,
     ))
-    # Find the assistant message with tool_calls — its first call MUST
-    # have id="toolu_known_id". Find the tool message — its first result
-    # MUST have tool_use_id="toolu_known_id".
     assistant_msg = next(m for m in db.messages
                          if m["role"] == "assistant" and m["tool_calls"])
     tool_msg = next(m for m in db.messages
@@ -905,11 +855,7 @@ def test_copilot_tool_use_id_preserved_through_history(
 def test_copilot_unknown_risk_level_defaults_to_destructive(
     copilot_module, db, admin_user,
 ):
-    """v1.42 R1 SEC-F2: a tool returning an unrecognised risk_level
-    (typo, manifest drift) must be treated as destructive — never
-    auto-execute as plain write."""
     _patch_pool(copilot_module, db)
-    # Tool with a bogus risk_level.
     _patch_manifest(copilot_module, [
         {"name": "infra___mystery_tool", "risk_level": "mystery_value"},
     ])
@@ -932,7 +878,6 @@ def test_copilot_unknown_risk_level_defaults_to_destructive(
         conversation_id=conv["id"], user_message="run",
         user=admin_user,
     ))
-    # mcp_registry NOT called → blocked by approval gate.
     assert invoked == []
     assert out["requires_approval"] is True
 
@@ -940,9 +885,6 @@ def test_copilot_unknown_risk_level_defaults_to_destructive(
 def test_copilot_502_does_not_leak_provider_exception(
     copilot_module, db, admin_user,
 ):
-    """v1.42 R1 SEC-F4: the 502 raised when llm_client.chat() fails
-    must NOT echo the SDK's str(exc) into the HTTP body. SDK errors
-    sometimes include Authorization headers / API keys verbatim."""
     _patch_pool(copilot_module, db)
     _patch_manifest(copilot_module, [])
     _patch_audit(copilot_module, db)
@@ -969,13 +911,8 @@ def test_copilot_502_does_not_leak_provider_exception(
 
 
 def test_copilot_workspace_id_in_body_is_ignored_by_router():
-    """v1.42 R1 SEC-F6: the router must NOT trust body.workspace_id —
-    that would let a user attach a conversation to a workspace they
-    don't belong to. The active workspace comes from the session."""
     src = (Path(__file__).resolve().parents[1] / "console" / "app"
            / "routers" / "copilot.py").read_text(encoding="utf-8")
-    # Confirm by reading source: the whole authenticated user context is
-    # handed to the service, which derives workspace scope from session state.
     assert "copilot_service.create_conversation(" in src
     assert "user=user" in src
     assert "body.get(\"workspace_id\")" not in src
@@ -983,9 +920,6 @@ def test_copilot_workspace_id_in_body_is_ignored_by_router():
 
 
 def test_copilot_pending_actions_deduped(copilot_module, db, admin_user):
-    """v1.42 R1 LLM-F4: if the LLM emits the same destructive call
-    twice in one turn (it may, ignoring the prompt rule), we render
-    one approval card, not two."""
     _patch_pool(copilot_module, db)
     _patch_manifest(copilot_module, [
         {"name": "infra___airflow_delete_dag", "risk_level": "destructive"},
@@ -994,7 +928,6 @@ def test_copilot_pending_actions_deduped(copilot_module, db, admin_user):
     _patch_invoke(copilot_module, AsyncMock(return_value={}))
 
     async def fake_chat(*, messages, invoke_tool, **_kw):
-        # Same destructive call attempted twice.
         await invoke_tool("infra", "airflow_delete_dag", {"dag_id": "X"})
         await invoke_tool("infra", "airflow_delete_dag", {"dag_id": "X"})
         return ("aprobá", [], list(messages))
@@ -1005,16 +938,12 @@ def test_copilot_pending_actions_deduped(copilot_module, db, admin_user):
         conversation_id=conv["id"], user_message="borra X dos veces",
         user=admin_user,
     ))
-    # One approval entry, not two.
     assert len(out["pending_actions"]) == 1
 
 
 def test_copilot_approval_race_returns_409_on_second_call(
     copilot_module, db, admin_user,
 ):
-    """v1.42 R1 SEC-F1: a concurrent second POST /approve must NOT
-    execute the destructive action a second time. The atomic claim
-    UPDATE returns 0 rows on the second call → 409."""
     _patch_pool(copilot_module, db)
     _patch_manifest(copilot_module, [
         {"name": "infra___airflow_delete_dag", "risk_level": "destructive"},
@@ -1052,7 +981,6 @@ def test_copilot_approval_race_returns_409_on_second_call(
     ))
     pending_id = out["message_id"]
 
-    # First approve wins, executes once.
     async def fake_chat_second(*, messages, invoke_tool, **_kw):
         assert any(
             m.get("role") == "user"
@@ -1077,21 +1005,17 @@ def test_copilot_approval_race_returns_409_on_second_call(
     assert out2["reply"] == "Eliminado."
     assert len(invoke_log) == 1
 
-    # Second concurrent approve must be rejected with 409.
     with pytest.raises(Exception) as exc_info:
         _run(copilot_module.approve_pending_action(
             conversation_id=conv["id"], message_id=pending_id, user=admin_user,
         ))
     assert "409" in str(exc_info.value)
-    # And no extra invocation happened.
     assert len(invoke_log) == 1
 
 
 def test_copilot_approval_dedupes_duplicate_tool_calls(
     copilot_module, db, admin_user,
 ):
-    """If a model emits the same pending tool twice, one approval must
-    still execute the captured action only once."""
     _patch_pool(copilot_module, db)
     _patch_manifest(copilot_module, [
         {"name": "infra___airflow_delete_dag", "risk_level": "destructive"},
@@ -1154,8 +1078,6 @@ def test_copilot_approval_dedupes_duplicate_tool_calls(
 def test_copilot_approved_tool_result_is_clipped_before_history(
     copilot_module, db, admin_user, monkeypatch,
 ):
-    """Approved tool results use the same model-facing clipping as the
-    normal llm_client tool loop."""
     _patch_pool(copilot_module, db)
     _patch_manifest(copilot_module, [
         {"name": "infra___foo_write_bar", "risk_level": "write", "requires_approval": True},
@@ -1214,8 +1136,6 @@ def test_copilot_approved_tool_result_is_clipped_before_history(
 def test_copilot_pending_action_args_are_scrubbed(
     copilot_module, db, admin_user,
 ):
-    """v1.42 R1 SEC-F3: secrets in destructive args must be scrubbed
-    before they hit the durable JSONB column."""
     _patch_pool(copilot_module, db)
     _patch_manifest(copilot_module, [
         {"name": "infra___airflow_set_variable", "risk_level": "destructive"},
@@ -1239,13 +1159,7 @@ def test_copilot_pending_action_args_are_scrubbed(
     assert pa["args"]["key"] == "k"
 
 
-# ── R2 review fixes ────────────────────────────────────────────────────────
-
 def test_copilot_sanitises_error_string_for_audit(copilot_module):
-    """v1.42 R2 SEC: upstream error strings (MCP server replies or
-    invocation exceptions) sometimes echo credentials. Audit metadata
-    must run them through the same redaction patterns logging_config
-    uses before persistence."""
     out = copilot_module._sanitise_error(
         "POST https://x/y failed: Authorization: Bearer abc123def_ghi-jkl. password=hunter2"
     )
@@ -1265,24 +1179,16 @@ def test_copilot_sanitises_basic_and_apikey_authorization_errors(copilot_module)
 
 
 def test_copilot_clips_oversized_tool_args(copilot_module):
-    """v1.42 R2 DBA: the LLM can synthesise multi-MB tool_use input.
-    Cap at MAX_TOOL_ARGS_BYTES before durable persistence."""
     huge = {"sql": "x" * (copilot_module.MAX_TOOL_ARGS_BYTES + 1000)}
     clipped = copilot_module._clip_tool_args(huge)
     assert clipped["_clipped"] is True
     assert clipped["_max_bytes"] == copilot_module.MAX_TOOL_ARGS_BYTES
     assert clipped["_original_bytes"] > copilot_module.MAX_TOOL_ARGS_BYTES
-    # Small args pass through.
     small = {"k": "v"}
     assert copilot_module._clip_tool_args(small) == small
 
 
 def test_copilot_clipped_input_is_swapped_for_empty_on_history_reload(copilot_module):
-    """v1.42 R3 LLM-F1: a previously-clipped tool_use input must NOT
-    be re-emitted to the LLM as ``{"_clipped": True, ...}`` — the
-    model would either hallucinate those were real args or retry with
-    the marker. _load_history swaps the clipped stub for ``{}``."""
-    # We can drive _load_history through a tiny fake conn.
     class _C:
         async def fetch(self, *_a, **_kw):
             return [
@@ -1306,8 +1212,6 @@ def test_copilot_clipped_input_is_swapped_for_empty_on_history_reload(copilot_mo
 
 
 def test_copilot_rejects_invalid_uuid_with_400(copilot_module, db, admin_user):
-    """v1.42 R2 DBA: invalid UUID path params used to bubble asyncpg
-    InvalidTextRepresentationError as 500. Now caught at the boundary."""
     _patch_pool(copilot_module, db)
     _patch_manifest(copilot_module, [])
     _patch_audit(copilot_module, db)
@@ -1388,14 +1292,11 @@ def test_copilot_surfaces_sanitised_llm_provider_authorization_headers(copilot_m
 
 
 def test_copilot_approval_key_is_args_specific(copilot_module):
-    """The approval key must include args so approving 'delete X' does
-    NOT also approve 'delete Y' that happened to share the bare name."""
     k1 = copilot_module._approval_key("infra", "airflow_delete_dag", {"dag_id": "X"})
     k2 = copilot_module._approval_key("infra", "airflow_delete_dag", {"dag_id": "Y"})
     assert k1 != k2
     k_other_server = copilot_module._approval_key("sap", "airflow_delete_dag", {"dag_id": "X"})
     assert k1 != k_other_server
-    # Order-insensitive: {a:1,b:2} == {b:2,a:1}.
     k3 = copilot_module._approval_key("infra", "foo", {"a": 1, "b": 2})
     k4 = copilot_module._approval_key("infra", "foo", {"b": 2, "a": 1})
     assert k3 == k4
@@ -1404,8 +1305,6 @@ def test_copilot_approval_key_is_args_specific(copilot_module):
 def test_copilot_open_turn_stream_emits_events_and_scrubs_args(
     copilot_module, db, admin_user,
 ):
-    """Streaming should reuse the real turn loop while keeping raw tool args
-    out of the browser-visible event stream."""
     _patch_pool(copilot_module, db)
     _patch_manifest(copilot_module, [])
     _patch_audit(copilot_module, db)

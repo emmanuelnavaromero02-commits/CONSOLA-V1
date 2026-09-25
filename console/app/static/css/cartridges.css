@@ -1,6 +1,4 @@
-/* Sprint v1.41.0 — cartridge wizard page styles.
-   Kept in a dedicated stylesheet to comply with the strict CSP that
-   forbids inline <style> blocks. */
+
 
 .cartridges-shell {
   max-width: 1100px;

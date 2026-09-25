@@ -1,15 +1,3 @@
-"""T2d — Replicon deja de extraer identidad de contacto en claro.
-
-La auditoría (alta): ninguna entidad de Replicon definía bloque protection:
-— nombres, email y login llegaban en claro a bronze→silver→gold y eran
-consultables vía MCP, mientras Salesforce/HubSpot/SAP ya protegen lo suyo.
-
-Se protege la identidad de contacto del User (masked/shadowed, el mismo
-vocabulario de la casa). Decisión de producto documentada y pendiente del
-dueño: username (llave de join y display de los tableros de consultores) y
-las tarifas numéricas (alimentan costo_consultor_mensual) quedan como están,
-ahora pseudonimizadas al viajar sin nombres/email.
-"""
 from __future__ import annotations
 
 import importlib
@@ -55,7 +43,6 @@ def test_protection_applies_on_rows():
     assert out["externalid"] == ps.apply_protection_for_entity(
         "User", [{"externalid": "EXT-991"}]
     )[0]["externalid"], "shadow determinista (los joins por externalid sobreviven)"
-    # Decisión de producto pendiente del dueño, deliberada y documentada:
     assert out["username"] == "eperez", "username plano (llave de join/display)"
     assert out["currenthourlycostamount"] == 85.5, "tarifas numéricas intactas"
 

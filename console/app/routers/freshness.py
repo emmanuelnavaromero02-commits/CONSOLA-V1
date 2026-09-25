@@ -1,15 +1,3 @@
-"""Sprint v1.41.1 — Data freshness service (copilot scaffolding).
-
-Returns watermark timestamps + last extraction status per
-(cartridge, entity). The copilot (v1.43) calls
-:func:`freshness_for_cartridge_internal` directly — same SQL, no auth
-dependency — to annotate citation cards with how stale the cited data
-is. Schema used:
-
-  entity_config(cartridge_id, entity, …)
-  entity_watermarks(cartridge_id, entity_name, last_watermark_value, updated_at)
-  extraction_runs(cartridge_id, entity_name, status, finished_at, started_at)
-"""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -32,11 +20,6 @@ router = APIRouter(
     dependencies=[Depends(require_permission("pipelines.read"))],
 )
 
-
-# ── Internal API (no auth dependency) ───────────────────────────────────────
-# v1.43: callable from copilot_service without an HTTP round-trip. Both
-# helpers raise HTTPException on bad input so router thin-wrappers can
-# just await them.
 
 def _allowed_cartridges(user: dict | None) -> set[str] | None:
     ctx = build_security_context(user)
@@ -71,8 +54,6 @@ def _watermark_scope_for_user(user: dict | None) -> str | None:
 
 
 async def freshness_for_cartridge_internal(cartridge: str, user: dict | None = None) -> dict:
-    """Per-entity freshness for one cartridge. Identical SQL to the
-    HTTP endpoint below — the router just wraps this."""
     if cartridge not in _KNOWN_CARTRIDGES:
         raise HTTPException(404, "Unknown cartridge")
     watermark_scope = _watermark_scope_for_user(user)
@@ -173,8 +154,6 @@ async def freshness_all_internal() -> dict:
         )
     return {"cartridges": [dict(r) for r in rows]}
 
-
-# ── HTTP endpoints ──────────────────────────────────────────────────────────
 
 @router.get("/{cartridge}")
 async def freshness_for_cartridge(

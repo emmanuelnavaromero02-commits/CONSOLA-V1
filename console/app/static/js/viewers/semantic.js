@@ -1,5 +1,3 @@
-// Sprint v1.11 phase 2 — extracted from semantic.html for strict CSP.
-
 function esc(s) { return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"); }
 const params = new URLSearchParams(location.search);
 let semanticData = null;
@@ -120,7 +118,6 @@ function renderMain(entities) {
   const total_fields = list.reduce((a, e) => a + (e.fields || e.columns || []).length, 0);
   const has_watermark = list.filter(e => e.watermark_field || e.watermark).length;
 
-  // Collect watermarks
   const watermarks = list
     .filter(e => e.watermark_field || e.watermark)
     .map(e => ({ entity: e.name || e.entity, field: e.watermark_field || e.watermark, value: e.last_watermark || '—' }));
@@ -234,10 +231,6 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('cartridge-sel').addEventListener('change', loadSemantic);
   document.getElementById('btn-reload').addEventListener('click', loadSemantic);
 
-  // Delegated handlers for dynamic content rendered into #main-area:
-  //   * .tab[data-view]  → switchView
-  //   * #search          → filterEntities (input)
-  //   * #mode-filter     → filterEntities (change)
   const main = document.getElementById('main-area');
   main.addEventListener('click', (ev) => {
     if (ev.target.closest('#btn-enrich-semantic')) {

@@ -124,8 +124,6 @@ def test_max_aws_live_credentials_are_blocked_not_done(tmp_path: Path):
         ANTHROPIC_API_KEY="",
         HUBSPOT_ACCESS_TOKEN="",
     )
-    # The run reaches phases but remains blocked because live LLM/HubSpot and
-    # DB credentials are intentionally not faked.
     assert result.returncode == 2
     report = (tmp_path / "STRESS_TEST_RUN" / "aws" / "REPORT.md").read_text(encoding="utf-8")
     assert "ANTHROPIC_API_KEY missing" in report

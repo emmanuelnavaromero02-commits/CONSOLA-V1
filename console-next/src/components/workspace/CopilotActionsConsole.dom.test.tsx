@@ -109,7 +109,6 @@ describe("CopilotActionsConsole loading accessibility", () => {
     const busySections = [...container.querySelectorAll('section[aria-busy="true"]')];
     expect(busySections.length).toBeGreaterThan(0);
 
-    // El contador "..." tiene alternativa accesible.
     const hiddenDots = [...container.querySelectorAll('span[aria-hidden="true"]')].filter(
       (node) => node.textContent === "...",
     );

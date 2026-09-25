@@ -47,7 +47,6 @@ function formatNumber(value: number): string {
   return new Intl.NumberFormat("es-MX").format(value);
 }
 
-// Ausencia honesta: si el contrato no entrega el valor, se dice "N/D" (nunca un 0 fabricado).
 function formatCount(value: number | null | undefined): string {
   return value == null ? "N/D" : formatNumber(value);
 }
@@ -99,7 +98,6 @@ export function TalentOverviewPanel({
   nineBox: SfTalentNineBoxPayload | null;
   anomalies: SfTalentAnomaliesPayload | null;
 }) {
-  // Sin overview o sin readiness todavía no hay dato: "—" honesto, nunca un 0 fabricado.
   const profiled = overview?.readiness?.profiled_employees ?? null;
   const calculable = overview?.readiness?.calculable_employees ?? null;
   const classified = nineBox?.totals?.ready ?? overview?.nine_box?.totals?.ready ?? null;
@@ -415,7 +413,6 @@ const PERF_BAND_ORDER: Record<string, number> = { high: 3, medium: 2, low: 1 };
 const POTENCIAL_PENDIENTE_TOOLTIP =
   "El Potencial requiere Competencias y Aspiración. SuccessFactors aún no expone esas entidades para este tenant, por eso permanece pendiente. No se infiere del desempeño.";
 
-// Banda horizontal de desempeño (teal, ordinal Alto/Medio/Bajo). Nunca verde "Listo".
 function PerformanceBand({ band }: { band?: string | null }) {
   const normalizedBand = band || "unknown";
   const filled = PERF_BAND_ORDER[normalizedBand] ?? 0;
@@ -437,9 +434,6 @@ function PerformanceBand({ band }: { band?: string | null }) {
   );
 }
 
-// Opción 1 (B + C): superficie "Desempeño disponible". Desempeño es un eje independiente
-// (columna + franja); Potencial queda pendiente (requiere C+A); Fit es independiente y no se
-// infiere. Shortlist manual: solo agrupa personas, sin acciones automáticas ni write-back.
 export function DesempenoDisponiblePanel({ cohort }: { cohort?: SfTalentDesempenoCohort | null }) {
   const [sortDesc, setSortDesc] = useState(true);
   const [bandFilter, setBandFilter] = useState<"all" | "high" | "medium" | "low">("all");
@@ -480,7 +474,6 @@ export function DesempenoDisponiblePanel({ cohort }: { cohort?: SfTalentDesempen
 
   return (
     <section className="rounded-xl border border-teal-500/30 bg-card p-4 shadow-sm dark:bg-[#06141a]" aria-label="Desempeño disponible">
-      {/* Contador visible */}
       <div className="flex flex-col gap-3 border-b border-teal-500/20 pb-4 md:flex-row md:items-end md:justify-between">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-teal-700 dark:text-teal-300">Desempeño disponible</p>
@@ -501,7 +494,6 @@ export function DesempenoDisponiblePanel({ cohort }: { cohort?: SfTalentDesempen
         </div>
       </div>
 
-      {/* B — roster con columna Desempeño */}
       <div className="mt-4">
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <button
@@ -611,7 +603,6 @@ export function DesempenoDisponiblePanel({ cohort }: { cohort?: SfTalentDesempen
         ) : null}
       </div>
 
-      {/* C — franja "Desempeño disponible" (1-D, independiente del 9-box) */}
       <div className="mt-5 rounded-lg border border-teal-500/30 bg-background p-3 dark:bg-[#06111f]">
         <div className="mb-2 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-xs font-semibold text-teal-700 dark:text-teal-300">
@@ -656,7 +647,6 @@ export function TalentControlRoom() {
   const [selectedAnomaly, setSelectedAnomaly] = useState<SfTalentAnomaly | null>(null);
   const [loading, setLoading] = useState(true);
   const [rosterLoading, setRosterLoading] = useState(false);
-  // Error de roster separado del vacío real: fallo de consulta != caja sin empleados.
   const [rosterError, setRosterError] = useState(false);
   const [rosterAttempt, setRosterAttempt] = useState(0);
   const [error, setError] = useState("");

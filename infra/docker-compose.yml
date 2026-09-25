@@ -1,5 +1,4 @@
 services:
-  # ── Infrastructure ────────────────────────────────────────────────────────────
 
   postgres:
     security_opt: ["no-new-privileges:true"]
@@ -9,16 +8,6 @@ services:
       POSTGRES_DB: modecissions
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      # Sprint v1.19: passwords for the 5 service-specific roles created by
-      # infra/init/25_service_roles.sql. The migration uses
-      # current_setting('app.omega_xxx_password', true), which libpq
-      # populates from these PGOPTIONS connection options when the
-      # entrypoint runs the init scripts via psql. `:-` keeps the value
-      # empty if .env wasn't regenerated; the migration aborts loudly
-      # in that case rather than creating roles with NULL passwords.
-      # Sprint v1.38 (audit B5+B6): added six more roles for SAP
-      # cartridges, Airflow and Superset (see
-      # infra/init/36_cartridge_and_meta_roles.sql).
       PGOPTIONS: "-c app.omega_console_password=${OMEGA_CONSOLE_PASSWORD:-} -c app.omega_outcome_binder_password=${OMEGA_OUTCOME_BINDER_PASSWORD:-} -c app.omega_refinement_password=${OMEGA_REFINEMENT_PASSWORD:-} -c app.omega_vault_password=${OMEGA_VAULT_PASSWORD:-} -c app.omega_workspace_password=${OMEGA_WORKSPACE_PASSWORD:-} -c app.omega_mcp_infra_password=${OMEGA_MCP_INFRA_PASSWORD:-} -c app.omega_cartridge_sap_hcm_password=${OMEGA_CARTRIDGE_SAP_HCM_PASSWORD:-} -c app.omega_cartridge_sap_s4_password=${OMEGA_CARTRIDGE_SAP_S4_PASSWORD:-} -c app.omega_cartridge_sap_sf_password=${OMEGA_CARTRIDGE_SAP_SF_PASSWORD:-} -c app.omega_cartridge_sap_b1_password=${OMEGA_CARTRIDGE_SAP_B1_PASSWORD:-} -c app.omega_airflow_dag_password=${OMEGA_AIRFLOW_DAG_PASSWORD:-} -c app.omega_airflow_meta_password=${OMEGA_AIRFLOW_META_PASSWORD:-} -c app.omega_superset_meta_password=${OMEGA_SUPERSET_META_PASSWORD:-} -c app.omega_cartridge_replicon_password=${OMEGA_CARTRIDGE_REPLICON_PASSWORD:-} -c app.omega_cartridge_salesforce_password=${OMEGA_CARTRIDGE_SALESFORCE_PASSWORD:-} -c app.omega_cartridge_hubspot_password=${OMEGA_CARTRIDGE_HUBSPOT_PASSWORD:-} -c app.omega_cartridge_banxico_password=${OMEGA_CARTRIDGE_BANXICO_PASSWORD:-} -c app.omega_cartridge_inegi_password=${OMEGA_CARTRIDGE_INEGI_PASSWORD:-} -c app.omega_cartridge_sec_edgar_password=${OMEGA_CARTRIDGE_SEC_EDGAR_PASSWORD:-}"
     ports:
       - "15432:5432"
@@ -26,8 +15,6 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./init:/docker-entrypoint-initdb.d
     healthcheck:
-      # Dependents connect through the compose network, so this must probe
-      # the final TCP listener instead of Postgres' local Unix socket.
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U postgres -d modecissions"]
       interval: 5s
       timeout: 5s
@@ -88,9 +75,6 @@ services:
     security_opt: ["no-new-privileges:true"]
     image: redis:7-alpine
     container_name: mode_redis
-    # Shared rate-limit backend for the console (see console/app/services/
-    # rate_limiter.py). Without this, the in-memory limiter applies per-replica
-    # and an attacker can multiply the limit by the number of pods.
     command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -100,10 +84,6 @@ services:
 
   minio:
     security_opt: ["no-new-privileges:true"]
-    # v1.43.2: pin MinIO to a specific RELEASE tag.
-    # ``:latest`` silently shipped breaking changes between deploys;
-    # pinning here gives reproducible local + staging behaviour. Bump
-    # deliberately via a versioned migration when needed.
     image: ghcr.io/emmanuelnavaromero02-commits/omega-minio:RELEASE.2024-12-18T13-15-44Z
     container_name: mode_minio
     command: server /data --console-address ":9001"
@@ -117,10 +97,6 @@ services:
       - type: bind
         source: ../data/lakehouse
         target: /data
-    # Without a healthcheck, dependents only get service_started semantics
-    # and race the MinIO bucket initialization at boot. The /minio/health/live
-    # endpoint is part of the MinIO public surface and responds 200 once the
-    # server has finished local setup.
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/minio/health/live || exit 1"]
       interval: 10s
@@ -135,14 +111,6 @@ services:
       minio:
         condition: service_healthy
     entrypoint: ["/bin/sh", "-c"]
-    # `mc version enable` is the authoritative operation: it exits non-zero if
-    # versioning could not be turned on, and the `&&` chain already fails the
-    # container on that. Re-reading its human-readable output through `grep`
-    # added nothing and made the init depend on a binary the mc image does not
-    # ship — grep is not part of coreutils, and its absence failed the whole
-    # step with exit 127 *after* the bucket and versioning were already
-    # correct. That took minio-init down, and vault with it, and with vault
-    # every application service.
     command:
       - >-
         mc alias set local http://minio:9000 minio "$${MINIO_SECRET_KEY}" &&
@@ -152,7 +120,6 @@ services:
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
     restart: "no"
 
-  # ── Application services ──────────────────────────────────────────────────────
 
   console:
     security_opt: ["no-new-privileges:true"]
@@ -161,23 +128,8 @@ services:
       dockerfile: console/Dockerfile
     container_name: mode_console
     environment:
-      # v1.43.2: APP_ENV default flipped to ``production`` in
-      # code so an unset env never silently disables guardrails. Local dev
-      # opts in explicitly here.
-      #
-      # v1.44.3.3 R-Mac Mini-fix review (DevOps P2): kept the
-      # ${APP_ENV:-development} substitution to preserve symmetry
-      # with every other service in this compose file (refinement,
-      # vault, workspace, mcp-infra, cartridges, airflow all use
-      # the same pattern). The "stale host env" risk the prior
-      # commit cited is already neutralised in code — the
-      # APP_ENV default in console/app/security.py is "production",
-      # so an unset/empty value fails CLOSED.
       APP_ENV: ${APP_ENV:-production}
       ALLOW_RCE_TOOLS: ${ALLOW_RCE_TOOLS:-false}
-      # Keep the base compose prod-like: the rate limiter defaults to enabled
-      # when this variable is omitted. Local E2E/dev harnesses that need to
-      # bypass the shared per-IP login bucket must use docker-compose.dev.yml.
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       SECURITY_CONTEXT_SIGNING_KEY: ${SECURITY_CONTEXT_SIGNING_KEY:?SECURITY_CONTEXT_SIGNING_KEY is required}
       CONTROL_ROOM_EVIDENCE_SIGNING_KEY_ID: ${CONTROL_ROOM_EVIDENCE_SIGNING_KEY_ID:?CONTROL_ROOM_EVIDENCE_SIGNING_KEY_ID is required}
@@ -203,9 +155,6 @@ services:
       INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE: ${INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE:-}
       INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE: ${INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE:-}
       INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT: ${INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT:-}
-      # Sprint v1.19: per-service Postgres role (least-privilege).
-      # The omega_console role can read/write every operational table
-      # except vault_entries (locked to omega_vault).
       DATABASE_URL:      "postgresql+psycopg2://omega_console:${OMEGA_CONSOLE_PASSWORD:-}@postgres:5432/modecissions"
       OUTCOME_BINDER_DATABASE_URL: "postgresql+psycopg2://omega_outcome_binder:${OMEGA_OUTCOME_BINDER_PASSWORD:?OMEGA_OUTCOME_BINDER_PASSWORD is required}@postgres:5432/modecissions"
       GOLD_DATABASE_URL: "postgresql+psycopg2://omega_refinement_gold:${OMEGA_REFINEMENT_GOLD_PASSWORD:-}@postgres_gold:5433/modecissions_gold"
@@ -232,8 +181,6 @@ services:
       SUPERSET_URL:      http://superset:8088
       AIRFLOW_PUBLIC_URL: ${AIRFLOW_PUBLIC_URL:-http://localhost:8082}
       SUPERSET_PUBLIC_URL: ${SUPERSET_PUBLIC_URL:-http://localhost:8088}
-      # Prefer a least-privilege Superset service account for Studio dataset
-      # creation. Local dev falls back to the bootstrap admin until one exists.
       SUPERSET_SERVICE_USER: ${SUPERSET_SERVICE_USER:-}
       SUPERSET_SERVICE_PASSWORD: ${SUPERSET_SERVICE_PASSWORD:-}
       SUPERSET_ADMIN_USER: ${SUPERSET_ADMIN_USER:?SUPERSET_ADMIN_USER is required}
@@ -242,7 +189,6 @@ services:
       CONSOLE_URL:       ${CONSOLE_URL:-http://localhost:8000}
       WORKSPACE_URL:     ${WORKSPACE_PUBLIC_URL:-http://localhost:8001}
       RAG_URL:           http://mcp-infra:8010   # RAG migrado a mcp-infra
-      # Email (MailHog/SMTP in dev; SES API in prod after domain verification)
       EMAIL_PROVIDER:    ${EMAIL_PROVIDER:-smtp}
       SMTP_HOST:         ${SMTP_HOST:-mailhog}
       SMTP_PORT:         ${SMTP_PORT:-1025}
@@ -263,17 +209,10 @@ services:
       JWT_ALGORITHM:     ${JWT_ALGORITHM:-HS256}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-15}
       REDIS_URL:         ${REDIS_URL:-redis://redis:6379/0}
-      # Static console-next is served same-origin by FastAPI on :8000.
-      # Workspace keeps :8001 as the only local cross-origin browser client.
       ALLOWED_ORIGINS:   ${ALLOWED_ORIGINS:-http://localhost:8000,http://localhost:8001}
     ports:
       - "8000:8000"
     volumes:
-      # Sprint v1.20: read-only — console reads cartridge .py sources to
-      # seed cartridge_dags.source_code at startup, but must NEVER modify
-      # the host's cartridge code from inside the container. Existing
-      # callers (cartridge_service.export_cartridge fallback) are also
-      # read-only, so the tightening is safe.
       - ../cartridges:/registry/cartridges:ro
       - ../airflow/dags:/opt/airflow/dags:ro
       - ../console/app/static:/app/app/static:ro
@@ -290,9 +229,6 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      # Sprint v1.21 (F2): liveness probe so dependent services can
-      # wait on `condition: service_healthy`. The image is
-      # python:3.12-slim (no wget/curl), hence python3 -c.
       test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).status==200 else 1)"]
       interval: 10s
       timeout: 5s
@@ -307,7 +243,6 @@ services:
       dockerfile: Dockerfile
     container_name: mode_workspace
     environment:
-      # v1.43.2: see console block above.
       APP_ENV: ${APP_ENV:-production}
       ALLOW_RCE_TOOLS: ${ALLOW_RCE_TOOLS:-false}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
@@ -315,13 +250,7 @@ services:
       INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE: ${INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE:-}
       INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT: ${INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT:-}
       INTERNAL_API_KEY_WORKSPACE_TO_MCP_INFRA: ${INTERNAL_API_KEY_WORKSPACE_TO_MCP_INFRA:-}
-      # Sprint v1.26 (audit F11): provisioned for the day workspace
-      # starts calling vault. Until then it's an unused env var here;
-      # vault recognizes the value via its own _ALLOWED_SERVICES map.
       INTERNAL_API_KEY_WORKSPACE_TO_VAULT: ${INTERNAL_API_KEY_WORKSPACE_TO_VAULT:-}
-      # Sprint v1.19: per-service Postgres role (least-privilege).
-      # omega_workspace reads most operational tables and writes only
-      # decisions / decision_actions; cannot touch vault_entries.
       DATABASE_URL:         "postgresql+psycopg2://omega_workspace:${OMEGA_WORKSPACE_PASSWORD:-}@postgres:5432/modecissions"
       REFINEMENT_URL:       http://refinement:8500
       MCP_INFRA_URL:        http://mcp-infra:8010
@@ -345,9 +274,6 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      # Sprint v1.21 (F2): liveness probe so dependent services can
-      # wait on `condition: service_healthy`. The image is
-      # python:3.12-slim (no wget/curl), hence python3 -c.
       test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8001/healthz', timeout=3).status==200 else 1)"]
       interval: 10s
       timeout: 5s
@@ -364,7 +290,6 @@ services:
     mem_limit: ${REFINEMENT_MEM_LIMIT:-1g}
     cpus: ${REFINEMENT_CPUS:-1.0}
     environment:
-      # v1.43.2: see console block above.
       APP_ENV: ${APP_ENV:-production}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       SECURITY_CONTEXT_SIGNING_KEY: ${SECURITY_CONTEXT_SIGNING_KEY:?SECURITY_CONTEXT_SIGNING_KEY is required}
@@ -374,13 +299,7 @@ services:
       INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT: ${INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT:-}
       INTERNAL_API_KEY_REFINEMENT_TO_MCP_INFRA: ${INTERNAL_API_KEY_REFINEMENT_TO_MCP_INFRA:-}
       INTERNAL_API_KEY_MCP_INFRA_TO_REFINEMENT: ${INTERNAL_API_KEY_MCP_INFRA_TO_REFINEMENT:-}
-      # Sprint v1.26 (audit F11): provisioned for the day refinement
-      # starts calling vault. Until then it's an unused env var here;
-      # vault recognizes the value via its own _ALLOWED_SERVICES map.
       INTERNAL_API_KEY_REFINEMENT_TO_VAULT: ${INTERNAL_API_KEY_REFINEMENT_TO_VAULT:-}
-      # Sprint v1.19/v1.32.1: per-service Postgres roles on the
-      # operational DB and analytical GOLD DB. Refinement writes gold_*
-      # and master_* tables but must not use the postgres superuser.
       DATABASE_URL:       "postgresql+psycopg2://omega_refinement:${OMEGA_REFINEMENT_PASSWORD:-}@postgres:5432/modecissions"
       GOLD_DATABASE_URL:  "postgresql+psycopg2://omega_refinement_gold:${OMEGA_REFINEMENT_GOLD_PASSWORD:-}@postgres_gold:5433/modecissions_gold"
       GOLD_PUBLISHER_DATABASE_URL: "postgresql+psycopg2://omega_gold_publisher:${OMEGA_GOLD_PUBLISHER_PASSWORD:?OMEGA_GOLD_PUBLISHER_PASSWORD is required}@postgres_gold:5433/modecissions_gold"
@@ -416,9 +335,6 @@ services:
       minio-init:
         condition: service_completed_successfully
     healthcheck:
-      # Sprint v1.21 (F2): liveness probe so dependent services can
-      # wait on `condition: service_healthy`. The image is
-      # python:3.12-slim (no wget/curl), hence python3 -c.
       test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8500/readyz', timeout=3).status==200 else 1)"]
       interval: 10s
       timeout: 5s
@@ -433,46 +349,21 @@ services:
       dockerfile: Dockerfile
     container_name: mode_vault
     environment:
-      # v1.43.2: see console block above.
       APP_ENV: ${APP_ENV:-production}
-      # Sprint v1.19: per-service Postgres role (least-privilege).
-      # omega_vault is the ONLY role with access to vault_entries.
-      # Every other service is REVOKE'd from this table — that's the
-      # whole point of this sprint.
       DATABASE_URL:      "postgresql+psycopg2://omega_vault:${OMEGA_VAULT_PASSWORD:-}@postgres:5432/modecissions"
       INTERNAL_API_KEY:  ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       SECURITY_CONTEXT_SIGNING_KEY: ${SECURITY_CONTEXT_SIGNING_KEY:?SECURITY_CONTEXT_SIGNING_KEY is required}
       INTERNAL_API_KEY_CONSOLE_TO_VAULT: ${INTERNAL_API_KEY_CONSOLE_TO_VAULT:-}
       INTERNAL_API_KEY_MCP_INFRA_TO_VAULT: ${INTERNAL_API_KEY_MCP_INFRA_TO_VAULT:-}
-      # Sprint v1.26 (audit F11): dedicated keys for workspace +
-      # refinement → vault. Vault reads these to authenticate callers
-      # that announce x-internal-service: workspace / refinement.
-      # Until those services actually start calling vault, the values
-      # exist but are unused; once they do, vault's WARNING log will
-      # flag any caller still using the legacy shared INTERNAL_API_KEY.
       INTERNAL_API_KEY_WORKSPACE_TO_VAULT: ${INTERNAL_API_KEY_WORKSPACE_TO_VAULT:-}
       INTERNAL_API_KEY_REFINEMENT_TO_VAULT: ${INTERNAL_API_KEY_REFINEMENT_TO_VAULT:-}
-      # Sprint v1.15: Fernet master key for encryption at rest. The vault
-      # service validates the key at startup in vault/app/crypto.py
-      # (_get_fernet raises VaultEncryptionError if missing/invalid), so
-      # `:-` here keeps `docker compose config` usable in CI without an
-      # env file present. Production deployments always set the var via
-      # infra/.env generated by bootstrap.sh.
       VAULT_ENCRYPTION_KEY: ${VAULT_ENCRYPTION_KEY:-}
-    # Internal callers reach the service over the Docker network as
-    # http://vault:8300 (uvicorn already listens on 8300 — see
-    # ../vault/Dockerfile CMD). Exposing the same port to the host makes
-    # the smoke check `curl http://localhost:8300/health` work without
-    # having to docker-exec into a peer container.
     ports:
       - "8300:8300"
     depends_on:
       postgres:
         condition: service_healthy
     healthcheck:
-      # Sprint v1.21 (F2): liveness probe so dependent services can
-      # wait on `condition: service_healthy`. The image is
-      # python:3.12-slim (no wget/curl), hence python3 -c.
       test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8300/healthz', timeout=3).status==200 else 1)"]
       interval: 10s
       timeout: 5s
@@ -488,8 +379,6 @@ services:
       - "1025:1025"   # SMTP (consumed by console)
       - "8025:8025"   # Web UI (open in browser to read sent emails)
     restart: unless-stopped
-    # Sprint v1.41.1: docker compose ps now reports real health. wget is
-    # bundled inside the alpine-based mailhog image.
     healthcheck:
       test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1:8025/api/v1/messages || exit 1"]
       interval: 30s
@@ -497,13 +386,6 @@ services:
       retries: 3
       start_period: 15s
 
-  # ── Replicon cartridge (Sprint v1.40 — restored from original) ─────────────
-  # Standalone FastAPI service that exposes Replicon ETL tools via MCP.
-  # Credentials live in Vault (operators configure them in the OMEGA
-  # console at /apps-gallery), not in Airflow Connections. The mock
-  # service was removed in v1.40 — production never wants synthetic
-  # data feeding the pipeline, and dev hits Replicon's sandbox URL
-  # configured per-environment from Vault.
   replicon:
     security_opt: ["no-new-privileges:true"]
     build:
@@ -529,8 +411,6 @@ services:
       REPLICON_API_TOKEN: ${REPLICON_API_TOKEN:-}
       REPLICON_TOKEN: ${REPLICON_TOKEN:-}
       REPLICON_BASE_URL: ${REPLICON_BASE_URL:-https://na5.replicon.com/analytics}
-      # Sprint v1.40 (audit B6 pattern): least-privilege DB role.
-      # See infra/init/37_replicon_role_and_tables.sql.
       DATABASE_URL: "postgresql+psycopg2://omega_cartridge_replicon:${OMEGA_CARTRIDGE_REPLICON_PASSWORD:?OMEGA_CARTRIDGE_REPLICON_PASSWORD is required}@postgres:5432/modecissions"
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: minio
@@ -540,9 +420,6 @@ services:
     ports:
       - "8201:8201"
     healthcheck:
-      # The cartridge exposes /health (not /healthz) — see
-      # cartridges/replicon/app/api/routes_health.py. We probe it as-is
-      # to keep the cartridge bit-identical to the original ZIP.
       test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8201/health', timeout=3).status==200 else 1)"]
       interval: 30s
       timeout: 5s
@@ -574,9 +451,6 @@ services:
       CONSOLE_URL: http://console:8000
       MCP_INFRA_URL: http://mcp-infra:8010
       REFINEMENT_URL: http://refinement:8500
-      # Salesforce-specific host vars map to the container's SF_* env (which
-      # app/core/config.py reads) so they don't collide with SAP SuccessFactors'
-      # own SF_* host vars. In production these come from the Console Vault.
       SF_BASE_URL: ${SALESFORCE_BASE_URL:-}
       SF_TOKEN_URL: ${SALESFORCE_TOKEN_URL:-https://login.salesforce.com/services/oauth2/token}
       SF_CLIENT_ID: ${SALESFORCE_CLIENT_ID:-}
@@ -585,8 +459,6 @@ services:
       SF_PASSWORD: ${SALESFORCE_PASSWORD:-}
       SF_SECURITY_TOKEN: ${SALESFORCE_SECURITY_TOKEN:-}
       SF_API_VERSION: ${SALESFORCE_API_VERSION:-v60.0}
-      # Sprint v1.38 (audit B6 pattern): least-privilege DB role.
-      # See infra/init/93_salesforce_role_and_tables.sql.
       DATABASE_URL: "postgresql+psycopg2://omega_cartridge_salesforce:${OMEGA_CARTRIDGE_SALESFORCE_PASSWORD:?OMEGA_CARTRIDGE_SALESFORCE_PASSWORD is required}@postgres:5432/modecissions"
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: minio
@@ -607,8 +479,6 @@ services:
       minio:
         condition: service_healthy
 
-  # HubSpot CRM cartridge follows the Replicon runtime contract: internal
-  # microservice, dedicated DB role, Vault-backed credentials, and Airflow DAGs.
   hubspot:
     security_opt: ["no-new-privileges:true"]
     build:
@@ -633,8 +503,6 @@ services:
       REFINEMENT_URL: http://refinement:8500
       HUBSPOT_BASE_URL: ${HUBSPOT_BASE_URL:-https://api.hubapi.com}
       HUBSPOT_API_TOKEN: ${HUBSPOT_API_TOKEN:-}
-      # Empty in production (full SSRF protection); non-prod acceptance sets this
-      # to the fake HubSpot upstream host so the egress guard can reach the mock.
       OMEGA_EGRESS_ALLOWED_HOSTS: ${OMEGA_EGRESS_ALLOWED_HOSTS:-}
       DATABASE_URL: "postgresql+psycopg2://omega_cartridge_hubspot:${OMEGA_CARTRIDGE_HUBSPOT_PASSWORD:?OMEGA_CARTRIDGE_HUBSPOT_PASSWORD is required}@postgres:5432/modecissions"
       MINIO_ENDPOINT: minio:9000
@@ -645,8 +513,6 @@ services:
     ports:
       - "8210:8210"
     extra_hosts:
-      # Full-stack acceptance runs a deterministic fake HubSpot API on the
-      # host and points HUBSPOT_BASE_URL at host.docker.internal.
       - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8210/health', timeout=3).status==200 else 1)"]
@@ -660,7 +526,6 @@ services:
       minio:
         condition: service_healthy
 
-  # Banxico SIE cartridge (PR 2A): Bronze-only, manual DAG, no MCP/refresh.
   banxico:
     security_opt: ["no-new-privileges:true"]
     build:
@@ -696,7 +561,6 @@ services:
       minio:
         condition: service_healthy
 
-  # INEGI Banco de Indicadores cartridge: Bronze + governed market context.
   inegi:
     security_opt: ["no-new-privileges:true"]
     build:
@@ -732,7 +596,6 @@ services:
       minio:
         condition: service_healthy
 
-  # SEC EDGAR cartridge: Bronze + governed company context.
   sec-edgar:
     security_opt: ["no-new-privileges:true"]
     build:
@@ -769,10 +632,6 @@ services:
       minio:
         condition: service_healthy
 
-  # ── SAP cartridges (opt-in via `--profile sap`) ─────────────────────────────
-  # These cartridges are part of the registry mount and run as standalone
-  # FastAPI services for direct console / MCP access. They're under the
-  # ``sap`` profile so the default ``docker compose up`` is unchanged.
 
   sap-successfactors:
     security_opt: ["no-new-privileges:true"]
@@ -782,7 +641,6 @@ services:
       dockerfile: Dockerfile
     container_name: mode_sap_successfactors
     environment:
-      # v1.43.2: see console block above.
       APP_ENV: ${APP_ENV:-production}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       SECURITY_CONTEXT_SIGNING_KEY: ${SECURITY_CONTEXT_SIGNING_KEY:?SECURITY_CONTEXT_SIGNING_KEY is required}
@@ -791,13 +649,6 @@ services:
       INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE: ${INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE:-}
       INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE: ${INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE:-}
       INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT: ${INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT:-}
-      # Sprint v1.38 (audit B6 P0.5): least-privilege DB role. Pre-v1.38
-      # the SAP cartridges connected as the postgres superuser; a
-      # compromise of the cartridge handed the attacker every table
-      # in the DB. omega_cartridge_sap_sf is scoped to the operational
-      # tables (cartridges, entity_config, kb_config, watermarks,
-      # extraction_runs, jobs, run_logs) and is explicitly REVOKED on
-      # users / decisions / vault_entries via 36_cartridge_and_meta_roles.sql.
       DATABASE_URL:     "postgresql+psycopg2://omega_cartridge_sap_sf:${OMEGA_CARTRIDGE_SAP_SF_PASSWORD:?OMEGA_CARTRIDGE_SAP_SF_PASSWORD is required}@postgres:5432/modecissions"
       MINIO_ENDPOINT:   minio:9000
       MINIO_ACCESS_KEY: minio
@@ -816,8 +667,6 @@ services:
       SF_PRIVATE_KEY_PATH: ${SF_PRIVATE_KEY_PATH:-/run/secrets/sf_epiuse_iaappliance_connector.pem}
       FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required for SAP cartridges}
     volumes:
-      # Optional X.509 key for SuccessFactors OAuth2 SAML Bearer Assertion.
-      # Leave SF_PRIVATE_KEY_HOST_PATH unset for client_credentials/dev smoke.
       - ${SF_PRIVATE_KEY_HOST_PATH:-/dev/null}:${SF_PRIVATE_KEY_PATH:-/run/secrets/sf_epiuse_iaappliance_connector.pem}:ro
     ports:
       - "8203:8203"
@@ -827,8 +676,6 @@ services:
       minio:
         condition: service_healthy
     restart: unless-stopped
-    # Sprint v1.41.1: the cartridge's /health is unauth and reports
-    # degraded vs ok based on vault reachability — perfect for compose.
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8203/health"]
       interval: 15s
@@ -844,7 +691,6 @@ services:
       dockerfile: Dockerfile
     container_name: mode_sap_hcm
     environment:
-      # v1.43.2: see console block above.
       APP_ENV: ${APP_ENV:-production}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       SECURITY_CONTEXT_SIGNING_KEY: ${SECURITY_CONTEXT_SIGNING_KEY:?SECURITY_CONTEXT_SIGNING_KEY is required}
@@ -853,8 +699,6 @@ services:
       INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE: ${INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE:-}
       INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE: ${INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE:-}
       INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT: ${INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT:-}
-      # Sprint v1.38 (audit B6 P0.5): least-privilege DB role; see
-      # comment on sap-successfactors above.
       DATABASE_URL:     "postgresql+psycopg2://omega_cartridge_sap_hcm:${OMEGA_CARTRIDGE_SAP_HCM_PASSWORD:?OMEGA_CARTRIDGE_SAP_HCM_PASSWORD is required}@postgres:5432/modecissions"
       MINIO_ENDPOINT:   minio:9000
       MINIO_ACCESS_KEY: minio
@@ -875,8 +719,6 @@ services:
       minio:
         condition: service_healthy
     restart: unless-stopped
-    # Sprint v1.41.1: /health unauth, reports ok/degraded based on
-    # vault reachability.
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8202/health"]
       interval: 15s
@@ -892,7 +734,6 @@ services:
       dockerfile: Dockerfile
     container_name: mode_sap_s4hana
     environment:
-      # v1.43.2: see console block above.
       APP_ENV: ${APP_ENV:-production}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       SECURITY_CONTEXT_SIGNING_KEY: ${SECURITY_CONTEXT_SIGNING_KEY:?SECURITY_CONTEXT_SIGNING_KEY is required}
@@ -901,8 +742,6 @@ services:
       INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE: ${INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE:-}
       INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE: ${INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE:-}
       INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT: ${INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT:-}
-      # Sprint v1.38 (audit B6 P0.5): least-privilege DB role; see
-      # comment on sap-successfactors above.
       DATABASE_URL:     "postgresql+psycopg2://omega_cartridge_sap_s4:${OMEGA_CARTRIDGE_SAP_S4_PASSWORD:?OMEGA_CARTRIDGE_SAP_S4_PASSWORD is required}@postgres:5432/modecissions"
       MINIO_ENDPOINT:   minio:9000
       MINIO_ACCESS_KEY: minio
@@ -924,8 +763,6 @@ services:
       minio:
         condition: service_healthy
     restart: unless-stopped
-    # Sprint v1.41.1: /health unauth, reports ok/degraded based on
-    # vault reachability.
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8204/health"]
       interval: 15s
@@ -941,7 +778,6 @@ services:
       dockerfile: Dockerfile
     container_name: mode_sap_b1
     environment:
-      # v1.43.2: see console block above.
       APP_ENV: ${APP_ENV:-production}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       SECURITY_CONTEXT_SIGNING_KEY: ${SECURITY_CONTEXT_SIGNING_KEY:?SECURITY_CONTEXT_SIGNING_KEY is required}
@@ -984,7 +820,6 @@ services:
       retries: 5
       start_period: 30s
 
-  # ── MCP Infrastructure (incluye RAG) ─────────────────────────────────────────
 
   mcp-infra:
     security_opt: ["no-new-privileges:true"]
@@ -993,10 +828,6 @@ services:
       dockerfile: mcp-infra/Dockerfile
     container_name: mode_mcp_infra
     environment:
-      # v1.43.2: see console block above. mcp-infra is the
-      # service most affected — airflow/superset/vault tools gate on
-      # _is_development() and would have run unrestricted if APP_ENV
-      # was simply unset. Default flipped, explicit opt-in here.
       APP_ENV: ${APP_ENV:-production}
       ALLOW_RCE_TOOLS: ${ALLOW_RCE_TOOLS:-false}
       MCP_INFRA_PDF_MAX_WORKERS: ${MCP_INFRA_PDF_MAX_WORKERS:-2}
@@ -1022,9 +853,6 @@ services:
       PG_HOST:          postgres
       PG_PORT:          5432
       PG_DB:            modecissions
-      # Sprint v1.19: per-service Postgres role (least-privilege).
-      # omega_mcp_infra can read/write only mcp_servers / mcp_custom_tools.
-      # No vault_entries access, no auth-state access.
       PG_USER:          omega_mcp_infra
       PG_PASSWORD:      ${OMEGA_MCP_INFRA_PASSWORD:-}
       PG_GOLD_HOST:     postgres_gold
@@ -1064,9 +892,6 @@ services:
       airflow:
         condition: service_healthy
     healthcheck:
-      # Sprint v1.21 (F2): liveness probe so dependent services can
-      # wait on `condition: service_healthy`. The image is
-      # python:3.12-slim (no wget/curl), hence python3 -c.
       test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8010/healthz', timeout=3).status==200 else 1)"]
       interval: 10s
       timeout: 5s
@@ -1074,7 +899,6 @@ services:
       start_period: 20s
     restart: unless-stopped
 
-  # ── Superset ──────────────────────────────────────────────────────────────────
 
   superset-init:
     security_opt: ["no-new-privileges:true"]
@@ -1173,10 +997,6 @@ services:
       SUPERSET_SECRET_KEY:     ${SUPERSET_SECRET_KEY:?SUPERSET_SECRET_KEY is required}
       SUPERSET_PREVIOUS_SECRET_KEY: ${SUPERSET_PREVIOUS_SECRET_KEY:-}
       POSTGRES_PASSWORD:       ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      # Sprint v1.38 (audit B6 P0.5): runtime uses the dedicated
-      # omega_superset_meta role created by 36_cartridge_and_meta_roles.sql.
-      # superset-init grants ALL on the public schema of the
-      # superset DB to this role after `superset db upgrade`.
       SQLALCHEMY_DATABASE_URI: postgresql+psycopg2://omega_superset_meta:${OMEGA_SUPERSET_META_PASSWORD:?OMEGA_SUPERSET_META_PASSWORD is required}@postgres:5432/superset
       SUPERSET_WEBSERVER_PORT: 8088
       SUPERSET_ADMIN_USER:     ${SUPERSET_ADMIN_USER:?SUPERSET_ADMIN_USER is required}
@@ -1202,9 +1022,6 @@ services:
       superset-init:
         condition: service_completed_successfully
     restart: unless-stopped
-    # Sprint v1.41.1: Superset exposes /health on the same web port.
-    # start_period generous because the first boot pulls the metadata
-    # cache from postgres.
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://127.0.0.1:8088/health || exit 1"]
       interval: 30s
@@ -1212,9 +1029,6 @@ services:
       retries: 5
       start_period: 60s
 
-  # ── Airflow ───────────────────────────────────────────────────────────────────
-  # Initializes Airflow metadata idempotently, including existing local Postgres
-  # volumes where /docker-entrypoint-initdb.d no longer runs.
 
   airflow-init:
     security_opt: ["no-new-privileges:true"]
@@ -1233,12 +1047,6 @@ services:
         airflow users reset-password --username \"$$AIRFLOW_ADMIN_USER\" --password \"$$AIRFLOW_ADMIN_PASSWORD\"
       "
     environment:
-      # Sprint v1.38 (audit B6 P0.5): the init container intentionally
-      # keeps the postgres superuser — it creates the `airflow` DB
-      # and runs `airflow db migrate` which has to CREATE the
-      # metastore tables. After that, it transfers ownership /
-      # grants to omega_airflow_meta so the runtime webserver /
-      # scheduler (next two services) can use the dedicated role.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       AIRFLOW_ADMIN_USER: ${AIRFLOW_ADMIN_USER:?AIRFLOW_ADMIN_USER is required}
       AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?AIRFLOW_ADMIN_PASSWORD is required}
@@ -1258,26 +1066,18 @@ services:
       - ../cartridges/sap_hcm/dags:/opt/airflow/dags/sap_hcm:ro
       - ../cartridges/sap_s4hana/dags:/opt/airflow/dags/sap_s4hana:ro
       - ../cartridges/sap_b1/dags:/opt/airflow/dags/sap_b1:ro
-      # Sprint v1.40: Replicon DAGs ship inside the cartridge.
       - ../cartridges/replicon/dags:/opt/airflow/dags/replicon:ro
-      # HubSpot CRM cartridge DAGs ship inside the cartridge (same pattern).
       - ../cartridges/hubspot/dags:/opt/airflow/dags/hubspot:ro
-      # Salesforce Sales Cloud cartridge DAGs ship inside the cartridge.
       - ../cartridges/salesforce/dags:/opt/airflow/dags/salesforce:ro
       - ../cartridges/banxico/dags:/opt/airflow/dags/banxico:ro
       - ../cartridges/inegi/dags:/opt/airflow/dags/inegi:ro
       - ../cartridges/sec_edgar/dags:/opt/airflow/dags/sec_edgar:ro
-      # A1: scheduled SF extraction runs inside the Airflow workers, which
-      # resolve the Vault connection whose private_key_path points here —
-      # same optional mount the sap_successfactors service carries.
       - ${SF_PRIVATE_KEY_HOST_PATH:-/dev/null}:${SF_PRIVATE_KEY_PATH:-/run/secrets/sf_epiuse_iaappliance_connector.pem}:ro
     depends_on:
       postgres:
         condition: service_healthy
       vault:
         condition: service_healthy
-      # Sprint v1.40: replicon-mock service was removed (cartridge restored,
-      # real Replicon credentials live in Vault).
       
       
     restart: "no"
@@ -1303,27 +1103,13 @@ services:
       FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required for cartridge DAGs}
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
-      # Sprint v1.38 (audit B6 P0.5): the webserver runtime uses the
-      # dedicated omega_airflow_meta role. airflow-init grants ALL
-      # on the public schema of the `airflow` DB to this role after
-      # `airflow db migrate`.
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://omega_airflow_meta:${OMEGA_AIRFLOW_META_PASSWORD:?OMEGA_AIRFLOW_META_PASSWORD is required}@postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:?AIRFLOW_SECRET_KEY is required}
-      # GitHub Actions runners are memory-constrained; the default
-      # Airflow webserver worker count can restart-loop before E2E
-      # begins. Keep the UI available with a single worker by default,
-      # while allowing operators to raise it locally/prod via env.
       AIRFLOW__WEBSERVER__WORKERS: ${AIRFLOW_WEBSERVER_WORKERS:-1}
       AIRFLOW__WEBSERVER__WEB_SERVER_MASTER_TIMEOUT: ${AIRFLOW_WEBSERVER_MASTER_TIMEOUT:-300}
       AIRFLOW__WEBSERVER__WEB_SERVER_WORKER_TIMEOUT: ${AIRFLOW_WEBSERVER_WORKER_TIMEOUT:-300}
       AIRFLOW__API__AUTH_BACKENDS: "airflow.api.auth.backend.basic_auth"
-      # Variables disponibles en los DAGs via Variable.get(). Sprint
-      # v1.38: scoped to the operational omega_airflow_dag role
-      # (REVOKEs on users / decisions / vault_entries enforced by
-      # 36_cartridge_and_meta_roles.sql) so if a DAG ever starts
-      # consuming this variable, the blast radius is the operational
-      # tables, not superuser.
       AIRFLOW_VAR_POSTGRES_CONN: "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
       DATABASE_URL: "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
       AIRFLOW_VAR_MINIO_ENDPOINT: "minio:9000"
@@ -1334,8 +1120,6 @@ services:
       AIRFLOW_VAR_OUTLOOK_RECEIVER_EMAIL: "${OUTLOOK_RECEIVER_EMAIL:-devnull@modecissions.local}"
       AIRFLOW_VAR_OUTLOOK_SENDER_EMAIL: "${OUTLOOK_SENDER_EMAIL:-devnull@modecissions.local}"
       AIRFLOW_VAR_OUTLOOK_APP_PASSWORD: "${OUTLOOK_APP_PASSWORD:-dummy-local-password}"
-      # DAG get_secret() prefers these env names over Variable.get; kept
-      # alongside AIRFLOW_VAR_* during the transition off metadata-DB storage.
       MINIO_ENDPOINT:      "minio:9000"
       MINIO_ACCESS_KEY:     "minio"
       MINIO_SECRET_KEY:     "${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}"
@@ -1343,33 +1127,18 @@ services:
       MINIO_SECURE:         "false"
       REFINEMENT_URL:       http://refinement:8500
       OUTLOOK_APP_PASSWORD: "${OUTLOOK_APP_PASSWORD:-dummy-local-password}"
-      # v1.43.1: cartridge URLs are env-var driven so the
-      # SAP DAGs are portable to Kubernetes / MWAA / Composer without
-      # code edits. Defaults match the compose service hostnames so
-      # local dev continues working unchanged.
       SAP_HCM_URL:            "${SAP_HCM_URL:-http://sap-hcm:8202}"
       SAP_S4HANA_URL:         "${SAP_S4HANA_URL:-http://sap-s4hana:8204}"
       SAP_B1_URL:             "${SAP_B1_URL:-http://sap-b1:8206}"
-      # v1.43.1 R1 Security-F3: mirror docker-compose.aws.yml — even
-      # though the Replicon DAG posts back through the console today,
-      # keep the var here so a future cartridge-direct DAG works
-      # without operators having to touch compose first.
       REPLICON_URL:           "${REPLICON_URL:-http://replicon:8201}"
       HUBSPOT_URL:            "${HUBSPOT_URL:-http://hubspot:8210}"
       SALESFORCE_URL:         "${SALESFORCE_URL:-http://salesforce:8205}"
       BANXICO_URL:            "${BANXICO_URL:-http://banxico:8215}"
       INEGI_URL:              "${INEGI_URL:-http://inegi:8216}"
       SEC_EDGAR_URL:          "${SEC_EDGAR_URL:-http://sec-edgar:8217}"
-      # Conexiones API — definir aquí o en Airflow UI > Admin > Connections
     ports:
       - "8082:8080"
     volumes:
-      # Kept read-write on purpose: the per-cartridge DAGs below are nested
-      # bind mounts under this directory (/opt/airflow/dags/<cartridge>), and
-      # Docker has to create those mountpoints inside this mount at container
-      # start. A :ro parent makes that fail (EROFS) because the subdirs don't
-      # pre-exist on the host. Runtime DAG-write protection lives in the
-      # airflow_create_dag tool (APP_ENV dev + ALLOW_RCE_TOOLS), not here.
       - ../airflow/dags:/opt/airflow/dags
       - ../airflow/logs:/opt/airflow/logs
       - ../airflow/plugins:/opt/airflow/plugins
@@ -1378,33 +1147,23 @@ services:
       - ../cartridges/sap_hcm/dags:/opt/airflow/dags/sap_hcm:ro
       - ../cartridges/sap_s4hana/dags:/opt/airflow/dags/sap_s4hana:ro
       - ../cartridges/sap_b1/dags:/opt/airflow/dags/sap_b1:ro
-      # Sprint v1.40: Replicon DAGs ship inside the cartridge.
       - ../cartridges/replicon/dags:/opt/airflow/dags/replicon:ro
-      # HubSpot CRM cartridge DAGs ship inside the cartridge (same pattern).
       - ../cartridges/hubspot/dags:/opt/airflow/dags/hubspot:ro
-      # Salesforce Sales Cloud cartridge DAGs ship inside the cartridge.
       - ../cartridges/salesforce/dags:/opt/airflow/dags/salesforce:ro
       - ../cartridges/banxico/dags:/opt/airflow/dags/banxico:ro
       - ../cartridges/inegi/dags:/opt/airflow/dags/inegi:ro
       - ../cartridges/sec_edgar/dags:/opt/airflow/dags/sec_edgar:ro
-      # A1: scheduled SF extraction runs inside the Airflow workers, which
-      # resolve the Vault connection whose private_key_path points here —
-      # same optional mount the sap_successfactors service carries.
       - ${SF_PRIVATE_KEY_HOST_PATH:-/dev/null}:${SF_PRIVATE_KEY_PATH:-/run/secrets/sf_epiuse_iaappliance_connector.pem}:ro
     depends_on:
       postgres:
         condition: service_healthy
       vault:
         condition: service_healthy
-      # Sprint v1.40: replicon-mock service was removed (cartridge restored,
-      # real Replicon credentials live in Vault).
       
       
       airflow-init:
         condition: service_completed_successfully
     restart: unless-stopped
-    # Sprint v1.41.1: Airflow webserver exposes /health on port 8080.
-    # start_period covers the slow first boot while plugins/dags load.
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://127.0.0.1:8080/health || exit 1"]
       interval: 30s
@@ -1437,8 +1196,6 @@ services:
       FIELD_ENCRYPTION_KEY:                 ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required for cartridge DAGs}
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
-      # Sprint v1.38 (audit B6 P0.5): see comment on the airflow
-      # webserver service above.
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://omega_airflow_meta:${OMEGA_AIRFLOW_META_PASSWORD:?OMEGA_AIRFLOW_META_PASSWORD is required}@postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:?AIRFLOW_SECRET_KEY is required}
@@ -1452,8 +1209,6 @@ services:
       AIRFLOW_VAR_OUTLOOK_RECEIVER_EMAIL: "${OUTLOOK_RECEIVER_EMAIL:-devnull@modecissions.local}"
       AIRFLOW_VAR_OUTLOOK_SENDER_EMAIL: "${OUTLOOK_SENDER_EMAIL:-devnull@modecissions.local}"
       AIRFLOW_VAR_OUTLOOK_APP_PASSWORD: "${OUTLOOK_APP_PASSWORD:-dummy-local-password}"
-      # DAG get_secret() prefers these env names over Variable.get; kept
-      # alongside AIRFLOW_VAR_* during the transition off metadata-DB storage.
       MINIO_ENDPOINT:      "minio:9000"
       MINIO_ACCESS_KEY:     "minio"
       MINIO_SECRET_KEY:     "${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}"
@@ -1461,13 +1216,9 @@ services:
       MINIO_SECURE:         "false"
       REFINEMENT_URL:       http://refinement:8500
       OUTLOOK_APP_PASSWORD: "${OUTLOOK_APP_PASSWORD:-dummy-local-password}"
-      # v1.43.1: mirror the webserver's cartridge URL env vars
-      # so DAGs parse the same way regardless of which Airflow component
-      # imports them.
       SAP_HCM_URL:            "${SAP_HCM_URL:-http://sap-hcm:8202}"
       SAP_S4HANA_URL:         "${SAP_S4HANA_URL:-http://sap-s4hana:8204}"
       SAP_B1_URL:             "${SAP_B1_URL:-http://sap-b1:8206}"
-      # v1.43.1 R1 Security-F3: mirror docker-compose.aws.yml.
       REPLICON_URL:           "${REPLICON_URL:-http://replicon:8201}"
       HUBSPOT_URL:            "${HUBSPOT_URL:-http://hubspot:8210}"
       SALESFORCE_URL:         "${SALESFORCE_URL:-http://salesforce:8205}"
@@ -1475,12 +1226,6 @@ services:
       INEGI_URL:              "${INEGI_URL:-http://inegi:8216}"
       SEC_EDGAR_URL:          "${SEC_EDGAR_URL:-http://sec-edgar:8217}"
     volumes:
-      # Kept read-write on purpose: the per-cartridge DAGs below are nested
-      # bind mounts under this directory (/opt/airflow/dags/<cartridge>), and
-      # Docker has to create those mountpoints inside this mount at container
-      # start. A :ro parent makes that fail (EROFS) because the subdirs don't
-      # pre-exist on the host. Runtime DAG-write protection lives in the
-      # airflow_create_dag tool (APP_ENV dev + ALLOW_RCE_TOOLS), not here.
       - ../airflow/dags:/opt/airflow/dags
       - ../airflow/logs:/opt/airflow/logs
       - ../airflow/plugins:/opt/airflow/plugins
@@ -1489,34 +1234,23 @@ services:
       - ../cartridges/sap_hcm/dags:/opt/airflow/dags/sap_hcm:ro
       - ../cartridges/sap_s4hana/dags:/opt/airflow/dags/sap_s4hana:ro
       - ../cartridges/sap_b1/dags:/opt/airflow/dags/sap_b1:ro
-      # Sprint v1.40: Replicon DAGs ship inside the cartridge.
       - ../cartridges/replicon/dags:/opt/airflow/dags/replicon:ro
-      # HubSpot CRM cartridge DAGs ship inside the cartridge (same pattern).
       - ../cartridges/hubspot/dags:/opt/airflow/dags/hubspot:ro
-      # Salesforce Sales Cloud cartridge DAGs ship inside the cartridge.
       - ../cartridges/salesforce/dags:/opt/airflow/dags/salesforce:ro
       - ../cartridges/banxico/dags:/opt/airflow/dags/banxico:ro
       - ../cartridges/inegi/dags:/opt/airflow/dags/inegi:ro
       - ../cartridges/sec_edgar/dags:/opt/airflow/dags/sec_edgar:ro
-      # A1: scheduled SF extraction runs inside the Airflow workers, which
-      # resolve the Vault connection whose private_key_path points here —
-      # same optional mount the sap_successfactors service carries.
       - ${SF_PRIVATE_KEY_HOST_PATH:-/dev/null}:${SF_PRIVATE_KEY_PATH:-/run/secrets/sf_epiuse_iaappliance_connector.pem}:ro
     depends_on:
       postgres:
         condition: service_healthy
       vault:
         condition: service_healthy
-      # Sprint v1.40: replicon-mock service was removed (cartridge restored,
-      # real Replicon credentials live in Vault).
       
       
       airflow-init:
         condition: service_completed_successfully
     restart: unless-stopped
-    # Scheduler does not expose HTTP. Keep the healthcheck lightweight:
-    # `airflow jobs check` can hang under DAG parsing load and pile up
-    # healthcheck processes, making an otherwise live scheduler look dead.
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import os, sys; sys.exit(0 if any(('airflow scheduler' in open('/proc/' + p + '/cmdline', 'rb').read().replace(b'\\0', b' ').decode('utf-8', 'ignore')) for p in os.listdir('/proc') if p.isdigit()) else 1)\""]
       interval: 30s

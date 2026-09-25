@@ -1,5 +1,3 @@
-"""Real PostgreSQL proof for scheduled workspace fan-out and replay slots."""
-
 from __future__ import annotations
 
 from datetime import datetime, timezone

@@ -1,11 +1,3 @@
-"""Reading and reconciling the durable dataset grants.
-
-Authority lives in ``analytic_app_dataset_grants`` and nowhere else. This module
-only reads it, and asks the server-owned SECURITY DEFINER function to write it
-from reviewed packaged manifests. No path here accepts a dataset name that came
-from an app's HTML, its stored ``datasets_used`` or a runtime payload.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -22,16 +14,10 @@ logger = logging.getLogger(__name__)
 
 _RECONCILIATION_LOCK_PREFIX = "omega:app-grants:"
 
-# One authoritative call. Reading the grant here and checking the installation
-# separately would leave a TOCTOU window: a cartridge can stop being ready
-# between the two statements, and the read would still be served. The SQL
-# function joins grant, active manifest, ready installation and the workspace's
-# own dataset row in a single query.
 _SELECT_GRANTS = "SELECT dataset_name FROM public.analytic_app_granted_datasets($1, $2)"
 
 
 async def lock_workspace_reconciliation(conn: Any, *, workspace_id: str) -> None:
-    """Serialize every grant reconcile/revoke path for one workspace."""
     await conn.execute(
         "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
         _RECONCILIATION_LOCK_PREFIX + str(workspace_id),
@@ -46,12 +32,6 @@ async def granted_datasets(
     app_name: str,
     manifest_digest: str | None,
 ) -> list[str]:
-    """Datasets this app may read in this scope, under this exact digest.
-
-    A missing digest means the app is not packaged, or what is being served no
-    longer matches what was reviewed. Either way the answer is nothing — fail
-    closed, rather than falling back to a laxer source.
-    """
     if not manifest_digest or not APP_NAME_RE.fullmatch(str(app_name or "")):
         return []
     if not tenant_id or not workspace_id:
@@ -69,8 +49,6 @@ async def has_grant(
     manifest_digest: str | None,
     dataset: str,
 ) -> bool:
-    """One dataset, one answer. Used by the app-scoped endpoint, which is the
-    definitive authority and must not trust the wrapper's own filtering."""
     if not dataset:
         return False
     return str(dataset) in await granted_datasets(
@@ -88,17 +66,6 @@ async def reconcile_app(
     app_name: str,
     served_html: str | None = None,
 ) -> list[dict[str, str]]:
-    """Bring one packaged app's grants in line with the registry.
-
-    Passes the app name and nothing else. The cartridge, the digest, the
-    dataset list and the actor are all resolved inside the database from
-    ``analytic_app_manifests`` — a caller able to supply any of them could
-    grant itself anything, which is exactly the hole this closes.
-
-    ``served_html`` is used only to state which revision the caller believes is
-    current; the database compares it and aborts on a mismatch. It never
-    selects the datasets.
-    """
     manifest = packaged_manifest(app_name)
     if manifest is None:
         return []
@@ -120,18 +87,6 @@ async def reconcile_workspace(
     cartridge_id: str | None = None,
     app_html_loader: Callable[[str], Awaitable[str]] | None = None,
 ) -> dict[str, Any]:
-    """Reconcile every packaged app of a cartridge for the caller's scope.
-
-    Strict: any database error propagates and rolls the caller's transaction
-    back. Swallowing them meant an installation could be marked ready with its
-    grants half-written and the audit trail recording success — an activation
-    that silently produced a broken authority state is worse than one that
-    fails.
-
-    A user-created app is skipped by the database (no registry row) and a
-    workspace whose Gold is not materialised simply gets fewer grants; neither
-    is an error.
-    """
     manifests = load_packaged_manifests()
     summary: dict[str, Any] = {"granted": 0, "revoked": 0, "apps": []}
     for name, manifest in sorted(manifests.items()):
@@ -155,12 +110,6 @@ async def reconcile_workspace(
 async def revoke_cartridge_grants(
     conn: Any, *, cartridge_id: str, reason: str = "installation_not_ready"
 ) -> int:
-    """Revoke every grant a cartridge holds in the caller's scope.
-
-    Called in the same transaction that takes an installation out of ready, so
-    a paused, revoked or failed cartridge stops authorising immediately rather
-    than at the next reconciliation.
-    """
     return int(
         await conn.fetchval(
             "SELECT public.revoke_analytic_app_cartridge_grants($1, $2)",

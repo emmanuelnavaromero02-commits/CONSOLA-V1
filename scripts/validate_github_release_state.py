@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Validate the canonical GitHub Release metadata/assets at publication edges."""
 
 from __future__ import annotations
 

@@ -69,12 +69,11 @@ FIXED_PROTECTED_EXECUTABLES: Final = (
 
 
 class RunnerDiskError(RuntimeError):
-    """Runner identity, cleanup safety, or disk budget is invalid."""
+    pass
 
 
 @dataclass(frozen=True)
 class CleanupTarget:
-    """One exact, reviewed directory that may be removed."""
 
     name: str
     path: Path
@@ -82,7 +81,6 @@ class CleanupTarget:
 
 @dataclass(frozen=True)
 class DiskSnapshot:
-    """Relevant filesystem capacity at one point in time."""
 
     path: Path
     device: int
@@ -94,7 +92,6 @@ class DiskSnapshot:
 
 @dataclass(frozen=True)
 class ReclaimReport:
-    """Auditable result of an adaptive cleanup."""
 
     before: DiskSnapshot
     after: DiskSnapshot
@@ -108,9 +105,6 @@ class _EntryIdentity:
     device: int
     inode: int
     mode: int
-    # st_blocks is capacity telemetry, not object identity.  Freshly written
-    # files can gain allocated blocks during background writeback while their
-    # path, type, device, inode, and mode remain unchanged.
     allocated_bytes: int = field(compare=False)
 
 
@@ -119,8 +113,6 @@ class _TargetInventory:
     target: CleanupTarget
     exists: bool
     entries: tuple[_EntryIdentity, ...]
-    # Derived solely from per-entry st_blocks; keep it visible in the audit
-    # log without letting asynchronous allocation invalidate a safe tree.
     allocated_bytes: int = field(compare=False)
 
 
@@ -142,7 +134,6 @@ Emitter = Callable[[str], None]
 
 
 def default_cleanup_targets() -> tuple[CleanupTarget, ...]:
-    """Return the production allowlist in its mandatory cleanup order."""
 
     return (
         CleanupTarget(
@@ -157,7 +148,6 @@ def default_cleanup_targets() -> tuple[CleanupTarget, ...]:
 
 
 def snapshot_disk(path: Path) -> DiskSnapshot:
-    """Read byte and inode availability for ``path`` without changing it."""
 
     checked = _strict_absolute_path(path, label="disk path")
     try:
@@ -189,7 +179,6 @@ def assert_disk_budget(
     snapshotter: Snapshotter = snapshot_disk,
     emit: Emitter = print,
 ) -> DiskSnapshot:
-    """Log and enforce an exact byte/inode budget for a release phase."""
 
     _validate_budget(minimum_free_bytes, minimum_free_inodes)
     if not phase or any(character.isspace() for character in phase):
@@ -228,7 +217,6 @@ def assert_release_phase_budget(
     snapshotter: Snapshotter = snapshot_disk,
     emit: Emitter = print,
 ) -> DiskSnapshot:
-    """Enforce one of the three non-overridable production budgets."""
 
     try:
         minimum_free_bytes = PHASE_BUDGETS[phase]
@@ -264,13 +252,6 @@ def reclaim_hosted_runner_disk(
     syncer: Callable[[], None] = os.sync,
     emit: Emitter = print,
 ) -> ReclaimReport:
-    """Remove reviewed targets adaptively after a complete safe inventory.
-
-    ``cache_targets`` followed by ``toolchain_targets`` is the exact allowlist
-    and order for this invocation.  Production callers use
-    :func:`default_cleanup_targets`; injectable paths exist only so the safety
-    properties can be exercised in temporary test directories.
-    """
 
     _validate_host_context(
         runner_environment=runner_environment,
@@ -305,7 +286,6 @@ def reclaim_hosted_runner_disk(
         protected=protected,
     )
 
-    # This loop must finish for every allowlisted root before deletion starts.
     inventories = tuple(
         _inventory_target(target, disk_device=disk_device) for target in targets
     )
@@ -719,8 +699,6 @@ def _assert_absent_inventory_unchanged(inventory: _TargetInventory) -> None:
 
 
 def _remove_inventory(inventory: _TargetInventory, *, disk_device: int) -> None:
-    # Validate the complete tree a second time immediately before the first
-    # unlink.  Deletion below also uses no-follow directory descriptors.
     current = _inventory_target(inventory.target, disk_device=disk_device)
     if current != inventory:
         raise RunnerDiskError(
@@ -767,7 +745,6 @@ def _remove_inventory(inventory: _TargetInventory, *, disk_device: int) -> None:
 def _index_expected_children(
     expected: Mapping[str, _EntryIdentity],
 ) -> Mapping[str, frozenset[str]]:
-    """Index each inventoried directory's direct children exactly once."""
 
     children: dict[str, set[str]] = {}
     for relative, identity in expected.items():

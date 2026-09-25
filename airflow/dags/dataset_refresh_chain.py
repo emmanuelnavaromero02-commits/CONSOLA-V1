@@ -1,5 +1,3 @@
-"""RLS-scoped Bronze→Silver→Gold dependency refresh orchestrator."""
-
 from __future__ import annotations
 
 import os
@@ -78,7 +76,6 @@ def _internal_key(env_name: str) -> str:
 
 
 def _internal_headers(target: str, ctx: dict | None = None) -> dict[str, str]:
-    # The exact pair key is INTERNAL_API_KEY_AIRFLOW_TO_{target}.
     headers = {
         "X-Internal-Service": "airflow",
         "X-API-Key": _internal_key(f"INTERNAL_API_KEY_AIRFLOW_TO_{target}"),

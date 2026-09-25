@@ -17,13 +17,6 @@ _PUBLISHED_RELATION_RE = re.compile(
 def _qualified_published_relation(
     status: str, gold_table: str, *, relation_exists: bool
 ) -> str | None:
-    """Build a queryable name without trusting ``regclass`` display text.
-
-    PostgreSQL omits ``public.`` when a regclass is visible on ``search_path``.
-    The catalog existence check therefore returns only a boolean; this helper
-    constructs the schema-qualified identifier from separately whitelisted
-    publication metadata.
-    """
     if not relation_exists:
         return None
     if status == "published":
@@ -60,12 +53,6 @@ def _workspace_scope(user: dict | None) -> tuple[str | None, str | None]:
 
 
 async def _default_workspace_scope() -> tuple[str | None, str | None]:
-    """Return a deterministic service-readiness scope when no user exists.
-
-    Gold tables are protected with FORCE RLS, so service-level readiness probes
-    must still set a tenant/workspace context before counting rows. This keeps
-    readiness honest without granting the Gold role BYPASSRLS.
-    """
     dsn = _operational_dsn()
     if not dsn:
         return None, None
@@ -108,7 +95,6 @@ def _contract_filter(user: dict | None) -> set[str] | None:
 
 
 def required_datasets(user: dict | None = None) -> list[dict[str, Any]]:
-    """Return unique Gold datasets referenced by loaded intelligence contracts."""
     contracts = load_contracts(_contract_filter(user))
     grouped: dict[str, dict[str, Any]] = {}
     for contract in contracts:
@@ -204,7 +190,6 @@ async def _gold_counts(
                     continue
                 row_count = int(
                     await conn.fetchval(
-                        # ``relation`` passed _PUBLISHED_RELATION_RE.fullmatch above.
                         f"SELECT COUNT(*) FROM {relation} "  # nosec B608
                         "WHERE tenant_id::text = $1 AND workspace_id::text = $2",
                         tenant_id,

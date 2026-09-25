@@ -191,7 +191,6 @@ async def persist_gold_refresh_binding(
 async def resume_failed_gold_refresh(
     user: dict[str, Any], *, run_id: int, run_ref: str, request: dict[str, Any]
 ) -> dict[str, Any]:
-    """Reopen only the same failed gold_refresh request for controlled retry."""
     tenant_id, workspace_id = workspace_scope(user)
     pool = await auth.pool()
     async with scoped_db(pool, tenant_id, workspace_id) as conn:
@@ -226,7 +225,6 @@ async def persist_gold_refresh_pending(
     datasets_evaluated: list[dict[str, Any]],
     duration_ms: int,
 ) -> dict[str, Any]:
-    """Commit Intelligence artifacts and binding_pending as one unit."""
     tenant_id, workspace_id = workspace_scope(user)
     counts = Counter(str(item.get("status") or "unknown") for item in skipped)
     pool = await auth.pool()

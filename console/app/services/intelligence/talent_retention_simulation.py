@@ -1,27 +1,3 @@
-"""E2a — el eslabón perdido del Montecarlo de talento (WB-TALENTO).
-
-La casa ya había preparado TODO el camino, cada pieza esperando a las demás:
-- sap_successfactors_talent_simulation_inputs construye en SQL el JSON
-  COMPLETO de variables del motor (input_variables_json: baseline del índice
-  de riesgo, delta triangular, retrasos por severidad, probabilidad desde la
-  incertidumbre) más la evidencia (evidence_refs_json, ya con el wisdom_bit
-  WB-TALENTO).
-- monte_carlo_service acepta source_type='wisdom_bit' con procedencia
-  validada y persiste en monte_carlo_simulations.
-- _sf_talent_latest_simulation_result (Control Room) YA lee la última
-  simulación WB-TALENTO del workspace y voltea la tarjeta de
-  'waiting_for_data' a 'ready' con distribución y sensibilidad.
-
-Faltaba únicamente ESTE corredor: leer los insumos preparados y llamar al
-motor. Cero modelos nuevos, cero constantes inventadas — el modelo (índice de
-riesgo 0-100 proyectado: net_value = riesgo_base + delta simulado) es el que
-el autor del dataset dejó declarado en el propio SQL.
-
-Doctrina: fail-closed (insumos blocked → no se escribe simulación, se reporta
-la razón del propio dataset), determinista (semilla derivada del head
-publicado: misma generación de datos → misma simulación), best-effort (jamás
-tumba el ciclo que lo invoca).
-"""
 from __future__ import annotations
 
 import hashlib
@@ -39,14 +15,10 @@ SIMULATION_INPUTS_DATASET = "sap_successfactors_talent_simulation_inputs"
 WISDOM_BIT_ID = "WB-TALENTO"
 ITERATIONS = 10_000
 HORIZON_DAYS = 90
-# Frontera de la banda alta de retention_risk (>=70 = high): la simulación
-# reporta la probabilidad de que el índice proyectado quede en banda alta.
 HIGH_RISK_THRESHOLD = 70.0
 
 
 def _stable_seed(manifest: dict[str, Any], row: dict[str, Any]) -> int:
-    """Misma generación publicada de insumos → misma semilla → misma
-    simulación (reproducible y auditable por construcción)."""
     basis = json.dumps(
         {
             "head_run_id": str(manifest.get("head_run_id") or ""),
@@ -70,9 +42,6 @@ def _parse_json_field(row: dict[str, Any], field: str):
 
 
 async def run_for_workspace(user: dict) -> dict[str, Any]:
-    """Corre (y persiste) la simulación WB-TALENTO del workspace desde los
-    insumos preparados. Devuelve un resumen exacto del resultado o de la
-    razón por la que NO corrió — jamás una simulación fabricada."""
     rows, manifest = await query_gold_dataset_population(
         SIMULATION_INPUTS_DATASET, user
     )
@@ -116,8 +85,6 @@ async def run_for_workspace(user: dict) -> dict[str, Any]:
 
 
 async def run_best_effort(user: dict) -> dict[str, Any] | None:
-    """Para el ciclo: cualquier fallo queda en log y como None — el run de
-    inteligencia que lo invoca sigue vivo siempre."""
     try:
         return await run_for_workspace(user)
     except Exception as exc:  # noqa: BLE001

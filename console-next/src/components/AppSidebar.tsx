@@ -122,7 +122,6 @@ const NAV_SECTIONS: NavSection[] = [
 ];
 
 function navPath(href: string): string {
-  // Split on '#' too: a hash target used to leave the pressed item unhighlighted.
   return href.split(/[?#]/)[0] || href;
 }
 

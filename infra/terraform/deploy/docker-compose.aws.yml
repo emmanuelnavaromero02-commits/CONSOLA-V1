@@ -1,12 +1,3 @@
-# ============================================================================
-# MODecissions — Producción AWS (EC2 single-node)
-# Secrets are injected by scripts/aws-entrypoint.sh at boot — DO NOT commit a .env to git.
-# Repo clonado en /opt/modecissions/   (este archivo: /opt/modecissions/deploy/)
-# postgres / postgres_gold → contenedores en la misma EC2 (paridad con local)
-# minio                    → S3
-# Imágenes buildeadas localmente con deploy/build.sh
-# ============================================================================
-
 x-logging: &default-logging
   driver: json-file
   options:
@@ -18,7 +9,6 @@ networks:
     driver: bridge
 
 services:
-  # ── Infrastructure (Postgres en contenedor, igual que local) ──────────────
 
   postgres:
     image: pgvector/pgvector:pg15
@@ -27,11 +17,6 @@ services:
       POSTGRES_DB:       modecissions
       POSTGRES_USER:     postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      # Sprint v1.38 + v1.40: forward every per-role password GUC the
-      # init scripts read so AWS prod creates the same role set as
-      # local dev. ``:-`` keeps the value empty if the operator hasn't
-      # rotated .env to match — the migration aborts loudly via
-      # ``RAISE EXCEPTION`` instead of creating a NULL-password role.
       PGOPTIONS: "-c app.omega_console_password=${OMEGA_CONSOLE_PASSWORD:?OMEGA_CONSOLE_PASSWORD is required} -c app.omega_outcome_binder_password=${OMEGA_OUTCOME_BINDER_PASSWORD:?OMEGA_OUTCOME_BINDER_PASSWORD is required} -c app.omega_refinement_password=${OMEGA_REFINEMENT_PASSWORD:?OMEGA_REFINEMENT_PASSWORD is required} -c app.omega_vault_password=${OMEGA_VAULT_PASSWORD:?OMEGA_VAULT_PASSWORD is required} -c app.omega_workspace_password=${OMEGA_WORKSPACE_PASSWORD:?OMEGA_WORKSPACE_PASSWORD is required} -c app.omega_mcp_infra_password=${OMEGA_MCP_INFRA_PASSWORD:?OMEGA_MCP_INFRA_PASSWORD is required} -c app.omega_cartridge_sap_hcm_password=${OMEGA_CARTRIDGE_SAP_HCM_PASSWORD:-} -c app.omega_cartridge_sap_s4_password=${OMEGA_CARTRIDGE_SAP_S4_PASSWORD:-} -c app.omega_cartridge_sap_sf_password=${OMEGA_CARTRIDGE_SAP_SF_PASSWORD:-} -c app.omega_cartridge_sap_b1_password=${OMEGA_CARTRIDGE_SAP_B1_PASSWORD:-} -c app.omega_airflow_dag_password=${OMEGA_AIRFLOW_DAG_PASSWORD:-} -c app.omega_airflow_meta_password=${OMEGA_AIRFLOW_META_PASSWORD:-} -c app.omega_superset_meta_password=${OMEGA_SUPERSET_META_PASSWORD:-} -c app.omega_cartridge_replicon_password=${OMEGA_CARTRIDGE_REPLICON_PASSWORD:-} -c app.omega_cartridge_salesforce_password=${OMEGA_CARTRIDGE_SALESFORCE_PASSWORD:-} -c app.omega_cartridge_hubspot_password=${OMEGA_CARTRIDGE_HUBSPOT_PASSWORD:-} -c app.omega_cartridge_banxico_password=${OMEGA_CARTRIDGE_BANXICO_PASSWORD:-} -c app.omega_cartridge_inegi_password=${OMEGA_CARTRIDGE_INEGI_PASSWORD:-} -c app.omega_cartridge_sec_edgar_password=${OMEGA_CARTRIDGE_SEC_EDGAR_PASSWORD:-}"
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -40,10 +25,6 @@ services:
       - modecissions_net
     restart: unless-stopped
     logging: *default-logging
-    # v1.43.4: mirror the local healthcheck so AWS
-    # depends_on can use ``condition: service_healthy`` instead of
-    # the implicit "container started" semantics that race-condition
-    # boot order.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U postgres -d modecissions"]
       interval: 5s
@@ -88,7 +69,6 @@ services:
       timeout: 3s
       retries: 20
 
-  # ── Application services ──────────────────────────────────────────────────
 
   console:
     image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/console:${IMAGE_TAG:?IMAGE_TAG is required}
@@ -140,8 +120,6 @@ services:
       SUPERSET_URL:        http://superset:8088
       AIRFLOW_PUBLIC_URL:  ${AIRFLOW_PUBLIC_URL:-}
       SUPERSET_PUBLIC_URL: ${SUPERSET_PUBLIC_URL:-}
-      # Least-privilege Superset service account for Studio dataset creation.
-      # Production refuses admin fallback.
       SUPERSET_SERVICE_USER: ${SUPERSET_SERVICE_USER:?SUPERSET_SERVICE_USER is required}
       SUPERSET_SERVICE_PASSWORD: ${SUPERSET_SERVICE_PASSWORD:?SUPERSET_SERVICE_PASSWORD is required}
       SUPERSET_ADMIN_USER:  ${SUPERSET_ADMIN_USER:?SUPERSET_ADMIN_USER is required}
@@ -151,7 +129,6 @@ services:
       WORKSPACE_URL:       ${WORKSPACE_PUBLIC_URL:?WORKSPACE_PUBLIC_URL is required}
       RAG_URL:             http://mcp-infra:8010   # RAG migrado a mcp-infra
       REDIS_URL:           ${REDIS_URL:-redis://redis:6379/0}
-      # Email: MailHog/SMTP in staging, SES API in production after domain verification.
       EMAIL_PROVIDER:      ${EMAIL_PROVIDER:-smtp}
       AWS_REGION:          ${AWS_REGION:?AWS_REGION is required}
       SMTP_HOST:           ${SMTP_HOST:-mailhog}
@@ -181,12 +158,6 @@ services:
       - /opt/modecissions/console/app/static:/app/app/static:ro
     networks:
       - modecissions_net
-    # v1.43.4: wait on the upstream healthchecks rather
-    # than the implicit "container started" race window — postgres
-    # accepting connections, mcp-infra serving /healthz, mailhog
-    # listening on its inbox port. Pre-v1.43.4 a slow Postgres init
-    # would let console boot, fail its DB pool warmup, and end up
-    # in a restart loop while the operator stared at "starting".
     depends_on:
       postgres:
         condition: service_healthy
@@ -253,29 +224,11 @@ services:
   refinement:
     image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/refinement:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: mode_refinement
-    # Refinement is the only service that can consume the whole host on a single
-    # request: DuckDB sizes itself from host RAM, not from the container. Nothing
-    # here bounded it, so an unbounded materialization took the host down on
-    # 2026-09-20. All four keys are declared by the service rather than inherited
-    # from the shared .env on purpose -- that is how the limit reached production
-    # until now, and a re-rendered .env must not be able to remove the ceiling.
     mem_limit: ${REFINEMENT_MEM_LIMIT:-3g}
-    # Equal to mem_limit, which is how Docker expresses "no swap for this
-    # container". Left unset, the container may use mem_limit again in swap on
-    # top of RAM, so the ceiling would not be a ceiling -- and a refinement that
-    # swaps drags the whole host down, which is the outcome being prevented.
     memswap_limit: ${REFINEMENT_MEM_LIMIT:-3g}
     cpus: ${REFINEMENT_CPUS:-1.5}
     environment:
       DUCKDB_MEMORY_LIMIT:            ${DUCKDB_MEMORY_LIMIT:-1GB}
-      # DuckDB already spills without these: to the relative path ".tmp", capped
-      # at ~90% of the filesystem -- the same volume as the Postgres data
-      # directories. These two pin the spill somewhere stable and bound it. The
-      # path is absolute (DuckDB rejects relative ones) and lives on the
-      # container's writable layer, which is disk, not tmpfs.
-      #
-      # The engine only reads them from v1.45.230-beta onward (#658, #659). On
-      # an older image they are inert: harmless, but spill stays uncapped.
       DUCKDB_TEMP_DIRECTORY:          ${DUCKDB_TEMP_DIRECTORY:-/var/lib/omega/duckdb-spill}
       DUCKDB_MAX_TEMP_DIRECTORY_SIZE: ${DUCKDB_MAX_TEMP_DIRECTORY_SIZE:-8GB}
       DUCKDB_THREADS:                 ${DUCKDB_THREADS:-2}
@@ -410,9 +363,6 @@ services:
       SF_PRIVATE_KEY_PATH: ${SF_PRIVATE_KEY_PATH:-/run/secrets/sf_epiuse_iaappliance_connector.pem}
       FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required for SAP cartridges}
     volumes:
-      # Optional X.509 key for SuccessFactors OAuth2 SAML Bearer Assertion.
-      # Most production installs store the PEM in scoped Vault as private_key_pem;
-      # this mount is available only for operators who prefer a host secret file.
       - ${SF_PRIVATE_KEY_HOST_PATH:-/dev/null}:${SF_PRIVATE_KEY_PATH:-/run/secrets/sf_epiuse_iaappliance_connector.pem}:ro
     ports:
       - "8203:8203"
@@ -434,7 +384,6 @@ services:
       retries: 5
       start_period: 30s
 
-  # ── MCP Infrastructure ────────────────────────────────────────────────────
 
   mcp-infra:
     image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/mcp-infra:${IMAGE_TAG:?IMAGE_TAG is required}
@@ -496,18 +445,6 @@ services:
     mem_limit: ${MCP_INFRA_MEM_LIMIT:-1536m}
     cpus: ${MCP_INFRA_CPUS:-2.0}
     pids_limit: ${MCP_INFRA_PIDS_LIMIT:-128}
-    # v1.43.4: mcp-infra port 8010 is no longer published
-    # on the host network in AWS — it's an internal service consumed
-    # only by console / workspace / airflow workers over the
-    # modecissions_net docker bridge. Publishing 8010:8010 exposed
-    # the entire MCP tool surface (including airflow_create_dag,
-    # which is gated by APP_ENV but still a write-destructive RCE
-    # tool) to whatever IPs the AWS security group allows on port
-    # 8010 — i.e. one mis-clicked SG rule away from public.
-    # Defence-in-depth: the SG already restricts the port, the
-    # APP_ENV gate already blocks airflow_create_dag in production,
-    # and removing the host-port binding makes external reach
-    # impossible regardless of either.
     volumes:
       - /opt/modecissions/airflow/dags:/opt/airflow/dags
       - /opt/modecissions/cartridges:/registry/cartridges:ro
@@ -529,7 +466,6 @@ services:
       retries: 5
       start_period: 30s
 
-  # ── Superset ──────────────────────────────────────────────────────────────
 
   superset-init:
     image: apache/superset:3.1.3
@@ -633,8 +569,6 @@ services:
         PY
     networks:
       - modecissions_net
-    # v1.43.4: one-shot init waits on postgres healthy
-    # so ``superset db upgrade`` doesn't race the DB startup.
     depends_on:
       postgres:
         condition: service_healthy
@@ -661,8 +595,6 @@ services:
       SUPERSET_WEBSERVER_PORT: 8088
     volumes:
       - /opt/modecissions/infra/terraform/deploy/superset_config/superset_config.py:/app/pythonpath/superset_config.py:ro
-    # El contenedor escucha internamente en 0.0.0.0, pero el puerto del host se
-    # limita a loopback. Produccion debe exponer Superset por proxy/TLS/auth.
     command: superset run -h 0.0.0.0 -p 8088 --with-threads --reload
     ports:
       - "127.0.0.1:8088:8088"
@@ -684,15 +616,8 @@ services:
       retries: 5
       start_period: 60s
 
-  # ── Airflow ───────────────────────────────────────────────────────────────
-  # Init (correr una vez):
-  #   docker compose -f docker-compose.aws.yml run --rm airflow-init
 
   airflow-init:
-    # One-shot bootstrap: connects as the postgres superuser BY
-    # DESIGN — `airflow db migrate` has to CREATE the metastore
-    # tables, then we transfer GRANTs to omega_airflow_meta so the
-    # runtime services (next two) can use the dedicated role.
     image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/airflow:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: mode_airflow_init
     entrypoint: /bin/bash
@@ -725,8 +650,6 @@ services:
       FIELD_ENCRYPTION_KEY:                 ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required for cartridge DAGs}
     networks:
       - modecissions_net
-    # v1.43.4: wait on postgres healthy so
-    # ``airflow db migrate`` doesn't race the DB startup.
     depends_on:
       postgres:
         condition: service_healthy
@@ -741,8 +664,6 @@ services:
     environment:
       AIRFLOW__CORE__EXECUTOR:              LocalExecutor
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
-      # Sprint v1.38 (audit B6 P0.5): runtime services use dedicated
-      # omega_airflow_meta role; init keeps superuser by design.
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN:  "postgresql+psycopg2://omega_airflow_meta:${OMEGA_AIRFLOW_META_PASSWORD:?OMEGA_AIRFLOW_META_PASSWORD is required}@postgres:5432/airflow"
       AIRFLOW__CORE__LOAD_EXAMPLES:         "false"
       AIRFLOW__WEBSERVER__SECRET_KEY:       ${AIRFLOW_SECRET_KEY:?AIRFLOW_SECRET_KEY is required}
@@ -763,7 +684,6 @@ services:
       AIRFLOW_HEALTH_PATH:                  "${AIRFLOW_HEALTH_PATH:-/airflow/health}"
       AIRFLOW__WEBSERVER__WEB_SERVER_MASTER_TIMEOUT: ${AIRFLOW_WEBSERVER_MASTER_TIMEOUT:-300}
       AIRFLOW__WEBSERVER__WEB_SERVER_WORKER_TIMEOUT: ${AIRFLOW_WEBSERVER_WORKER_TIMEOUT:-300}
-      # Sprint v1.38: scoped operational role; see local compose comment.
       AIRFLOW_VAR_POSTGRES_CONN:            "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
       DATABASE_URL:                         "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
       LAKEHOUSE_PROVIDER:                   "s3"
@@ -785,14 +705,6 @@ services:
       MINIO_SECRET_KEY:                     ${AWS_SECRET_ACCESS_KEY:-}
       MINIO_SECURE:                         "true"
       REFINEMENT_URL:                       http://refinement:8500
-      # v1.43.1: cartridges are deployed OUT OF THIS COMPOSE
-      # (see docker-compose.cartridges.yml). The
-      # DAGs need to know where each cartridge lives; the operator sets
-      # these env vars to the cluster-local hostnames (Kubernetes service
-      # DNS, MWAA secret, etc.). The defaults here MATCH the local
-      # docker-compose service names so that pinning the cartridges on
-      # the same host with `--profile sap` (escape hatch for staging)
-      # works without further env tweaks.
       SAP_HCM_URL:            "${SAP_HCM_URL:-http://sap-hcm:8202}"
       SAP_S4HANA_URL:         "${SAP_S4HANA_URL:-http://sap-s4hana:8204}"
       SAP_B1_URL:             "${SAP_B1_URL:-http://sap-b1:8206}"
@@ -811,13 +723,10 @@ services:
       - /opt/modecissions/cartridges:/registry/cartridges:ro
       - /opt/modecissions/cartridges/sap_successfactors/dags:/opt/airflow/dags/sap_successfactors:ro
       - /opt/modecissions/cartridges/sap_hcm/dags:/opt/airflow/dags/sap_hcm:ro
-      # Sprint v1.40: Replicon DAGs ship inside the cartridge.
       - /opt/modecissions/cartridges/replicon/dags:/opt/airflow/dags/replicon:ro
       - /opt/modecissions/cartridges/hubspot/dags:/opt/airflow/dags/hubspot:ro
       - /opt/modecissions/cartridges/sap_s4hana/dags:/opt/airflow/dags/sap_s4hana:ro
       - /opt/modecissions/cartridges/sap_b1/dags:/opt/airflow/dags/sap_b1:ro
-      # Salesforce DAGs (service may not be provisioned on every AWS
-      # target yet; mount is safe — Airflow sees an empty dir if unprovisioned).
       - /opt/modecissions/cartridges/salesforce/dags:/opt/airflow/dags/salesforce:ro
       - /opt/modecissions/cartridges/banxico/dags:/opt/airflow/dags/banxico:ro
       - /opt/modecissions/cartridges/inegi/dags:/opt/airflow/dags/inegi:ro
@@ -848,8 +757,6 @@ services:
       AWS_REGION:             ${AWS_REGION:-us-east-1}
       AIRFLOW__CORE__EXECUTOR:              LocalExecutor
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
-      # Sprint v1.38 (audit B6 P0.5): runtime services use dedicated
-      # omega_airflow_meta role; init keeps superuser by design.
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN:  "postgresql+psycopg2://omega_airflow_meta:${OMEGA_AIRFLOW_META_PASSWORD:?OMEGA_AIRFLOW_META_PASSWORD is required}@postgres:5432/airflow"
       AIRFLOW__CORE__LOAD_EXAMPLES:         "false"
       AIRFLOW__WEBSERVER__SECRET_KEY:       ${AIRFLOW_SECRET_KEY:?AIRFLOW_SECRET_KEY is required}
@@ -864,7 +771,6 @@ services:
       VAULT_URL:                            http://vault:8300
       FIELD_ENCRYPTION_KEY:                 ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required for cartridge DAGs}
       AIRFLOW_URL:                          http://airflow:8080/airflow
-      # Sprint v1.38: scoped operational role; see local compose comment.
       AIRFLOW_VAR_POSTGRES_CONN:            "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
       DATABASE_URL:                         "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
       LAKEHOUSE_PROVIDER:                   "s3"
@@ -886,7 +792,6 @@ services:
       MINIO_SECRET_KEY:                     ${AWS_SECRET_ACCESS_KEY:-}
       MINIO_SECURE:                         "true"
       REFINEMENT_URL:                       http://refinement:8500
-      # v1.43.1: mirror the webserver's cartridge URL vars.
       SAP_HCM_URL:            "${SAP_HCM_URL:-http://sap-hcm:8202}"
       SAP_S4HANA_URL:         "${SAP_S4HANA_URL:-http://sap-s4hana:8204}"
       SAP_B1_URL:             "${SAP_B1_URL:-http://sap-b1:8206}"
@@ -903,13 +808,10 @@ services:
       - /opt/modecissions/cartridges:/registry/cartridges:ro
       - /opt/modecissions/cartridges/sap_successfactors/dags:/opt/airflow/dags/sap_successfactors:ro
       - /opt/modecissions/cartridges/sap_hcm/dags:/opt/airflow/dags/sap_hcm:ro
-      # Sprint v1.40: Replicon DAGs ship inside the cartridge.
       - /opt/modecissions/cartridges/replicon/dags:/opt/airflow/dags/replicon:ro
       - /opt/modecissions/cartridges/hubspot/dags:/opt/airflow/dags/hubspot:ro
       - /opt/modecissions/cartridges/sap_s4hana/dags:/opt/airflow/dags/sap_s4hana:ro
       - /opt/modecissions/cartridges/sap_b1/dags:/opt/airflow/dags/sap_b1:ro
-      # Salesforce DAGs (service may not be provisioned on every AWS
-      # target yet; mount is safe — Airflow sees an empty dir if unprovisioned).
       - /opt/modecissions/cartridges/salesforce/dags:/opt/airflow/dags/salesforce:ro
       - /opt/modecissions/cartridges/banxico/dags:/opt/airflow/dags/banxico:ro
       - /opt/modecissions/cartridges/inegi/dags:/opt/airflow/dags/inegi:ro

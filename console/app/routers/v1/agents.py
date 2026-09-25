@@ -5,10 +5,6 @@ import types
 
 import app.main as _console_main
 
-# Import the current console runtime namespace, including private helper
-# functions used by legacy handlers. Handlers are rebound to app.main's
-# namespace before registration so existing tests and monkeypatches that
-# patch app.main.<helper> continue to affect the handler at runtime.
 globals().update(_console_main.__dict__)
 router = APIRouter()
 
@@ -29,7 +25,6 @@ def _bind_to_main(fn):
     _console_main.__dict__[fn.__name__] = rebound
     return rebound
 
-# /agents
 @router.get("/agents", dependencies=[Depends(require_permission("agents.read"))])
 @_bind_to_main
 async def viewer_agents(request: Request):
@@ -37,7 +32,6 @@ async def viewer_agents(request: Request):
 
     return _console_next_response(request, "agents/index.html")
 
-# /api/agents
 @router.get("/api/agents", dependencies=[Depends(require_permission("agents.read"))])
 @_bind_to_main
 async def api_agents_list(
@@ -55,7 +49,6 @@ async def api_agents_list(
     )
     return {"agents": agents}
 
-# /api/agents/_tool-catalog
 @router.get("/api/agents/_tool-catalog", dependencies=[Depends(require_permission("agents.read"))])
 @_bind_to_main
 async def api_agents_tool_catalog(request: Request):
@@ -80,7 +73,6 @@ async def api_agents_tool_catalog(request: Request):
                 out[srv_id] = []
     return {"servers": out}
 
-# /api/agents/{agent_id}
 @router.get("/api/agents/{agent_id}", dependencies=[Depends(require_permission("agents.read"))])
 @_bind_to_main
 async def api_agents_get(request: Request, agent_id: str, user: dict = Depends(require_permission("agents.read"))):
@@ -90,7 +82,6 @@ async def api_agents_get(request: Request, agent_id: str, user: dict = Depends(r
         raise HTTPException(404, "agent not found")
     return a
 
-# /api/agents
 @router.post("/api/agents", dependencies=[Depends(require_csrf), Depends(require_permission("agents.write"))])
 @_bind_to_main
 async def api_agents_create(request: Request, body: dict, user: dict = Depends(require_permission("agents.write"))):
@@ -102,7 +93,6 @@ async def api_agents_create(request: Request, body: dict, user: dict = Depends(r
     except ValueError as exc:
         raise HTTPException(400, "invalid agent payload") from exc
 
-# /api/agents/{agent_id}
 @router.patch("/api/agents/{agent_id}", dependencies=[Depends(require_csrf), Depends(require_permission("agents.write"))])
 @_bind_to_main
 async def api_agents_update(request: Request, agent_id: str, body: dict, user: dict = Depends(require_permission("agents.write"))):
@@ -117,7 +107,6 @@ async def api_agents_update(request: Request, agent_id: str, body: dict, user: d
         raise HTTPException(404, "agent not found")
     return a
 
-# /api/agents/{agent_id}
 @router.delete("/api/agents/{agent_id}", dependencies=[Depends(require_csrf), Depends(require_permission("agents.write"))])
 @_bind_to_main
 async def api_agents_delete(request: Request, agent_id: str, user: dict = Depends(require_permission("agents.write"))):
@@ -129,7 +118,6 @@ async def api_agents_delete(request: Request, agent_id: str, user: dict = Depend
         raise HTTPException(404, "agent not found")
     return {"deleted": True}
 
-# /api/agents/{agent_id}/invoke
 @router.post("/api/agents/{agent_id}/invoke", dependencies=[Depends(require_csrf), Depends(require_permission("agents.execute"))])
 @_bind_to_main
 async def api_agents_invoke(request: Request, agent_id: str, body: dict, user: dict = Depends(require_permission("agents.execute"))):
@@ -149,7 +137,6 @@ async def api_agents_invoke(request: Request, agent_id: str, body: dict, user: d
     result = await _agent_runtime.run(agent, message, history=history, user=user)
     return result
 
-# /api/agents/{agent_id}/invoke/scheduled
 @router.post("/api/agents/{agent_id}/invoke/scheduled", dependencies=[Depends(verify_internal_api_key)])
 @_bind_to_main
 async def api_agents_invoke_scheduled(request: Request, agent_id: str, body: dict):
@@ -246,7 +233,6 @@ async def api_agents_invoke_scheduled(request: Request, agent_id: str, body: dic
     }
     return result
 
-# /api/agents/{agent_id}/invoke/stream
 @router.post("/api/agents/{agent_id}/invoke/stream", dependencies=[Depends(require_csrf), Depends(require_permission("agents.execute"))])
 @_bind_to_main
 async def api_agents_invoke_stream(request: Request, agent_id: str, body: dict, user: dict = Depends(require_permission("agents.execute"))):
@@ -294,13 +280,11 @@ async def api_agents_invoke_stream(request: Request, agent_id: str, body: dict, 
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 
-# /api/agents/{agent_id}/runs
 @router.get("/api/agents/{agent_id}/runs", dependencies=[Depends(require_permission("agents.read"))])
 @_bind_to_main
 async def api_agents_runs(request: Request, agent_id: str, limit: int = 20, user: dict = Depends(require_permission("agents.read"))):
     return {"runs": await _agents.list_runs(agent_id, limit=limit, user_context=user)}
 
-# /api/agent-runs/{run_id}
 @router.get("/api/agent-runs/{run_id}", dependencies=[Depends(require_permission("agents.read"))])
 @_bind_to_main
 async def api_agent_run_detail(request: Request, run_id: int, user: dict = Depends(require_permission("agents.read"))):

@@ -1,11 +1,3 @@
-"""Phase 2 Block E3 — SAP SuccessFactors assistant hints + specialized agents.
-
-Parallel to the HCM (#196) and S4 (#199) hints/agents tests. hints/assistant.md
-feeds cartridges.assistant_hints (injected into the copilot prompt, capped at 8000
-chars). 2 agents are seeded into the `agents` table via migration 88, mirrored in
-config/seed.sql. No workspace_id, no triggers column (triggers live in extra);
-instructions must avoid the P6 seed-hardening blacklist.
-"""
 from __future__ import annotations
 
 import json
@@ -96,8 +88,6 @@ def test_hints_references_existing_kbs():
 
 
 def test_hints_references_existing_golds():
-    # gold table names in hints look like gold_sap_successfactors_<x>; the dataset
-    # name is sap_successfactors_<x> (the gold_ prefix is the pggold table prefix).
     referenced = set(re.findall(r"gold_(sap_successfactors_[a-z0-9_]+)", _hints()))
     assert referenced, "hints references no gold dataset"
     datasets = _dataset_names()
@@ -169,7 +159,6 @@ def test_agents_migration_scope():
     assert targets == {"agents", "schema_migrations"}, f"unexpected targets: {targets}"
 
 
-# Holistic SuccessFactors inventory (Blocks A-E + Talent/WB-TALENTO).
 def test_sf_inventory_blocks_a_to_e():
     kb_ids = _kb_ids()
     assert len(kb_ids) == 27, f"expected 27 KBs, got {len(kb_ids)}"

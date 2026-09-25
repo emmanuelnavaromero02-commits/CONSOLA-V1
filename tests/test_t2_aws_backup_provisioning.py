@@ -1,17 +1,3 @@
-"""T2e — el Postgres de AWS deja de vivir sin respaldos en el IaC.
-
-La auditoría (alta, confirmada): toda la base (Postgres en contenedores)
-vive en el disco raíz del único EC2 con delete_on_termination=true, sin
-aws_backup_plan, sin snapshots y sin cron de backup (el cron diario solo se
-instalaba en GCP). Una terminación —error humano o terraform destroy—
-destruía la base entera sin copia.
-
-El arreglo espejo del host GCP (F4): cron.d versionado en el repo instalado
-por el user_data, backup.sh con backend PINNEADO a s3 (destino
-s3://$S3_BUCKET_NAME/backups/), y candado disable_api_termination en la
-instancia. Los hosts ya aprovisionados requieren la instalación única del
-cron por el dueño (documentada en el propio archivo).
-"""
 from __future__ import annotations
 
 from pathlib import Path

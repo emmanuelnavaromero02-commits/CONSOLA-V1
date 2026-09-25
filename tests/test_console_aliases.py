@@ -1,4 +1,3 @@
-"""Console-style alias endpoints share authentication semantics with /skills/*."""
 from __future__ import annotations
 
 import pytest
@@ -16,10 +15,8 @@ def test_console_alias_auth_matrix(cartridge: str) -> None:
     main = load_cartridge_app(cartridge)
     client = TestClient(main.app)
 
-    # /health stays public
     assert client.get("/health").status_code == 200
 
-    # Every aliased route rejects unauth requests
     unauth_targets = [
         ("GET", "/entities"),
         ("GET", "/entities/User/schema"),

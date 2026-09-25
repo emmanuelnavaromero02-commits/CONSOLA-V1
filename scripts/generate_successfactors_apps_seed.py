@@ -1,14 +1,4 @@
 #!/usr/bin/env python3
-"""Regenerate 87_sap_successfactors_apps_seed.sql from the cartridge sources.
-
-The seed embeds the app HTML inline so a fresh database can serve the apps
-before the console reconciles from ``/registry``. Hand-editing that copy is how
-it drifted from the cartridge files, so the seed is generated instead.
-
-Usage:
-    python scripts/generate_successfactors_apps_seed.py          # write
-    python scripts/generate_successfactors_apps_seed.py --check  # verify only
-"""
 
 from __future__ import annotations
 
@@ -21,7 +11,6 @@ REPO = Path(__file__).resolve().parents[1]
 APPS_DIR = REPO / "cartridges" / "sap_successfactors" / "apps"
 SEED_PATH = REPO / "infra" / "init" / "87_sap_successfactors_apps_seed.sql"
 
-# Order is part of the contract: the file is diffed against the generator.
 APP_NAMES = (
     "sap_successfactors_workforce_overview",
     "sap_successfactors_talent_health",
@@ -59,7 +48,6 @@ ON CONFLICT (filename) DO NOTHING;
 
 
 def _quote(value: str) -> str:
-    """Wrap in the dollar-quoted delimiter the seed already uses."""
     if DELIM in value:
         raise SystemExit(
             f"value contains the {DELIM} delimiter and cannot be embedded safely"

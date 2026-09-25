@@ -1,16 +1,3 @@
-"""Cross-tenant isolation regression tests backed by a live database.
-
-The previous version of this file proved isolation by inspecting generated
-SQL strings and by using a fake asyncpg pool. That left the critical guarantee
-untested: a real database session for workspace A must not be able to read
-workspace B rows.
-
-This suite starts PostgreSQL with the production `infra/init/` schema, seeds two
-workspaces, and queries as the real `omega_workspace` service role with
-`app.tenant_id`/`app.workspace_id` set per workspace. It must use production
-policies from `infra/init/99e_operational_native_rls.sql`, not test-created RLS.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -63,7 +50,6 @@ def _docker(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
 
 
 def _ensure_postgres_image() -> None:
-    """Pull the RLS image with retries so CI does not fail on one registry blip."""
 
     docker_info = _docker("info", check=False)
     if docker_info.returncode != 0:

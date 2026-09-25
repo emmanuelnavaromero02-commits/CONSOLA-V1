@@ -1,38 +1,3 @@
-"""Shared memory between agents: one records a finding, another reads it.
-
-Mission 4. An agent that discovers something another agent needs to know — a
-data gap, an error, an insight, a warning — records it against a *subject* (a
-dataset, a column, a metric, an entity). Any other agent in the same workspace
-can read the active findings for that subject before acting on it.
-
-The canonical case this exists for is real: Finance finds that ``cost_center_budget`` has no Gold
-table behind it, so ``budget_vs_actual_by_cost_center`` cannot exist. Risk hits
-the same wall from the other side with ``cost_center_overrun``. Without shared
-memory each agent rediscovers the gap on every run and reports it as news.
-
-Contract, deliberately the same shape as ``domain_aggregate_support``:
-
-* Reads go through ``auth.pool()`` + ``db_scope.scoped_db_for_user``, so
-  ``app.tenant_id`` / ``app.workspace_id`` are set before the first statement
-  and native RLS agrees with the explicit predicate in the SQL.
-* Failures degrade to a status, they never raise: a missing table, a missing
-  workspace scope, a Postgres error or a network error all return
-  ``status='unavailable'`` with an empty list.
-* ``record_finding`` is strictly fire-and-forget. It returns a bool and logs on
-  failure; it must never break the caller's flow, because the caller is an
-  aggregate answering a business question, not a memory writer.
-* Nothing here deletes. The table revokes DELETE from every service role;
-  findings age out through ``expires_at``.
-* The write is *record-once-while-active*: re-recording the same
-  (agent, subject, finding_type) while an unexpired row exists is a no-op, so an
-  aggregate can call it on every run without growing the table.
-
-What crosses to an LLM is bounded on purpose. ``detail`` is free-form JSON
-written by another agent, so it stays internal: the MCP projection exposes the
-business fields only. Attribution travels as the agent's display *name*, never
-its id or slug, because the public projection redacts identifiers.
-"""
-
 from __future__ import annotations
 
 import json
@@ -58,46 +23,23 @@ logger = logging.getLogger(__name__)
 TABLE_NAME = "agent_shared_findings"
 _TABLE_REGCLASS = "public.agent_shared_findings"
 
-# Mirrors agent_shared_findings_type_check / _severity_check in
-# infra/init/99zzzzg_agent_shared_findings.sql. Kept as frozensets so an invalid
-# value is refused here instead of raising a CheckViolation at the database.
 FINDING_TYPES = frozenset({"data_gap", "error", "insight", "warning"})
 SEVERITIES = frozenset({"critical", "high", "medium", "low"})
 DEFAULT_SEVERITY = "medium"
 
-# Mirrors the CHECK bounds. Values longer than this are rejected, not silently
-# truncated: a half-sentence finding would mislead the agent that reads it.
 SUBJECT_MAX_CHARS = 200
-# Bounded by what the PUBLIC PROJECTION will carry, not by what the column
-# accepts. control_room_public_projection replaces any string longer than 64 word
-# tokens with "[REDACTED]", so a longer summary is stored successfully and then
-# reaches every reader as nothing at all — and because the write is
-# record-once-while-active, the useless finding is the one that sticks. 60 tokens
-# leaves headroom; the character bound is the column's, kept as a second gate.
 SUMMARY_MAX_WORDS = 60
 SUMMARY_MAX_CHARS = 600
-# Bounded read. Shared memory is an advisory hint, not a feed to page through.
 MAX_FINDINGS = 20
 DEFAULT_FINDINGS_LIMIT = 10
 COMMAND_TIMEOUT_SECONDS = 5
 
-# Every statement binds $1 = tenant_id and $2 = workspace_id, matching the RLS
-# policy predicate so the SQL filter and the policy cannot drift apart.
 SCOPE_PREDICATE = "f.tenant_id = $1::uuid AND f.workspace_id = $2::uuid"
 _ACTIVE_PREDICATE = "(f.expires_at IS NULL OR f.expires_at > NOW())"
 
 
-# ── Result contract ──────────────────────────────────────────────────────────
-
-
 @dataclass
 class SharedFinding:
-    """One finding as another agent should see it.
-
-    ``agent_name`` is the recording agent's display name ("Controller
-    Financiero"), never its uuid or slug. ``detail`` is carried for console-side
-    callers and is NOT part of the MCP projection.
-    """
 
     subject: str
     finding_type: str
@@ -125,12 +67,6 @@ class SharedFinding:
 
 @dataclass
 class SharedFindingsResult(AggregateResult):
-    """Status-bearing read result.
-
-    A missing table and "nobody recorded anything yet" are different facts and
-    must not look the same to an agent: the first is ``unavailable``, the second
-    is ``ready`` with ``count == 0``.
-    """
 
     subject: str | None = None
     count: int = 0
@@ -161,9 +97,6 @@ MEMORY_PROXY_NOTE = (
 )
 
 
-# The only reasons that ever cross to a model. Mission 2 established this rule the
-# hard way: an interpolated exception reaches the LLM either as driver text or, once
-# it is long enough, as "[REDACTED]", and neither tells the agent anything.
 ERROR_REASONS: dict[str, str] = {
     "missing": "la memoria compartida no esta disponible en este entorno",
     "invalid_scope": "sin workspace activo para leer la memoria compartida",
@@ -184,15 +117,7 @@ def _unavailable(reason: str, *, subject: str | None = None) -> SharedFindingsRe
     )
 
 
-# ── Validation ───────────────────────────────────────────────────────────────
-
-
 def normalise_subject(value: Any) -> str | None:
-    """Trim and bound a subject, or return None when it cannot be stored.
-
-    The database CHECK requires ``subject = btrim(subject)`` and a length in
-    1..200, so a value that cannot satisfy it is refused here.
-    """
     text = str(value or "").strip()
     if not text or len(text) > SUBJECT_MAX_CHARS:
         return None
@@ -221,7 +146,6 @@ def _iso(value: Any) -> str | None:
 
 
 class _ExpiryRefused(Exception):
-    """An expiry was supplied that cannot be stored."""
 
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
@@ -229,22 +153,6 @@ class _ExpiryRefused(Exception):
 
 
 def _normalise_expiry(value: Any, *, now: datetime) -> datetime | None:
-    """Coerce an expiry to an aware UTC datetime, or None for "never expires".
-
-    asyncpg binds ``timestamptz`` from a ``datetime``, not from a string, so an
-    ISO string is parsed here instead of failing at bind time, and a naive
-    datetime is read as UTC.
-
-    A value that is unparseable, or that is not in the future, is REFUSED rather
-    than coerced — and this is the ONLY place that rule lives. The table
-    deliberately carries no ``expires_at > created_at`` constraint, because with
-    DELETE revoked from every service role, setting ``expires_at`` into the past is
-    the only way to retire a finding that turned out to be wrong; a constraint on
-    that ordering would forbid exactly that UPDATE. So the database accepts a past
-    expiry on purpose, and refusing one at INSERT time is a judgement about the
-    caller: a finding that is dead on arrival is a caller mistake, and it is named
-    as one instead of being stored where no reader will ever see it.
-    """
     if value in (None, ""):
         return None
     parsed = value
@@ -274,11 +182,6 @@ def _clamp_limit(value: Any) -> int:
 
 
 async def _table_present(conn: Any) -> bool:
-    """True when the migration has been applied on this database.
-
-    Checked explicitly instead of catching UndefinedTableError so a genuine
-    permission or connectivity failure is not reported as "not migrated yet".
-    """
     return bool(
         await conn.fetchval(
             "SELECT to_regclass($1)",
@@ -286,9 +189,6 @@ async def _table_present(conn: Any) -> bool:
             timeout=COMMAND_TIMEOUT_SECONDS,
         )
     )
-
-
-# ── Read ─────────────────────────────────────────────────────────────────────
 
 
 _READ_SQL = f"""
@@ -316,7 +216,6 @@ async def read_shared_findings(
     subject: Any = None,
     limit: Any = DEFAULT_FINDINGS_LIMIT,
 ) -> SharedFindingsResult:
-    """Active findings for one subject (or all subjects), newest first."""
     wanted: str | None = None
     if subject not in (None, ""):
         wanted = normalise_subject(subject)
@@ -340,8 +239,6 @@ async def read_shared_findings(
                 timeout=COMMAND_TIMEOUT_SECONDS,
             )
     except HTTPException as exc:
-        # The driver's text and the HTTP detail stay in the log. What crosses is a
-        # code from ERROR_REASONS plus its fixed Spanish phrase.
         logger.warning(
             "agent_memory: read refused for subject=%s: %s", wanted, exc.detail
         )
@@ -411,17 +308,8 @@ async def check_prior_findings(
     *,
     limit: Any = DEFAULT_FINDINGS_LIMIT,
 ) -> list[dict[str, Any]]:
-    """Active findings about ``subject``, newest first; empty list on any failure.
-
-    Thin wrapper over :func:`read_shared_findings` for callers that only want
-    "has anyone already told me about this?" and treat a degraded backend the
-    same as "nothing recorded".
-    """
     result = await read_shared_findings(user_context, subject=subject, limit=limit)
     return [item.to_dict() for item in result.findings]
-
-
-# ── Write ────────────────────────────────────────────────────────────────────
 
 
 _RESOLVE_AGENT_SQL = """
@@ -437,8 +325,6 @@ _RESOLVE_AGENT_SQL = """
      LIMIT 1
 """
 
-# Record-once-while-active. The guard is inside the same statement so a
-# concurrent duplicate is the worst case, never a lost finding.
 _INSERT_SQL = f"""
     INSERT INTO {TABLE_NAME} (
         tenant_id, workspace_id, agent_id, finding_type,
@@ -472,16 +358,6 @@ async def record_finding(
     detail: Any = None,
     expires_at: Any = None,
 ) -> bool:
-    """Record a finding. Returns True only when a row was written.
-
-    Never raises: the caller is answering a business question and a memory
-    write must not be able to fail that answer. Every refusal is logged at
-    warning level with the reason.
-
-    ``agent_id`` may be omitted, in which case the recording agent is resolved
-    from ``agent_cartridge_id`` + ``agent_slug`` inside the same scoped
-    transaction (a workspace-scoped row wins over the global template).
-    """
     clean_subject = normalise_subject(subject)
     clean_summary = _normalise_summary(summary)
     if clean_subject is None:
@@ -543,11 +419,6 @@ async def record_finding(
                 return False
             author = str(agent_id) if agent_id else None
             if author is None:
-                # Several candidates, tried in order: the monitor row when the
-                # workspace has one, otherwise the conversational template, which
-                # always exists because it is a global seed row. Without the
-                # fallback the write is silently dropped in any workspace the
-                # monitor seed never reached.
                 candidates = (
                     (agent_slug,) if isinstance(agent_slug, str) else tuple(agent_slug or ())
                 )

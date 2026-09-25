@@ -44,23 +44,6 @@ const META: Record<
   },
 };
 
-/**
- * /cartridges grid.
- *
- * The page derives ConnectionStatus from the dashboard KPI payload
- * (data_freshness) so it doesn't need a second endpoint per
- * cartridge. The mapping is honest — freshness is reported as
- * freshness, never collapsed into connection success/failure:
- *   fresh      → connected    (recent successful run)
- *   stale      → stale        ("Datos antiguos", ámbar)
- *   very_stale → very_stale   ("Datos muy antiguos"; antigüedad ≠ fallo)
- *   never      → unconfigured (no successful run on record)
- *
- * "untested" — credentials saved but not yet probed — needs a
- * separate vault-read endpoint that v1.44.3 doesn't yet expose;
- * we conservatively report "untested" on the detail page after a
- * save action but never mark a grid tile that way for now.
- */
 export default function CartridgesPage() {
   const list = useCartridgeList();
   const kpis = useKpis();

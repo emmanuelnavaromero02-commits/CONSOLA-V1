@@ -25,8 +25,6 @@ def _get_engine():
     return _engine
 
 
-# ── YAML fallbacks ────────────────────────────────────────────────────────────
-
 def _yaml_entities() -> list[dict[str, Any]]:
     if not ENTITIES_PATH.exists():
         return []
@@ -46,16 +44,6 @@ def _yaml_entity_map() -> dict[str, dict[str, Any]]:
 
 
 def _merge_yaml_runtime_fields(row: Any) -> dict[str, Any]:
-    """Re-inject HubSpot runtime fields that are NOT columns in entity_config
-    (``api_path``, ``result_shape``) and guarantee ``properties`` is populated,
-    sourcing them from the bundled entities.yaml.
-
-    Mirrors the SAP cartridge's odata_entity re-injection: the extraction client
-    always gets what it needs regardless of how the DB row was seeded. Without
-    this, a DB-backed entity_config row (seeded by seed.sql, which can only set
-    real columns) would reach the client without api_path/result_shape/properties
-    and every object extraction would silently return only HubSpot's default
-    property set."""
     data = dict(row)
     yaml_entity = _yaml_entity_map().get(str(data.get("entity"))) or {}
     for key in ("api_path", "result_shape"):
@@ -72,10 +60,7 @@ def _merge_yaml_runtime_fields(row: Any) -> dict[str, Any]:
     return data
 
 
-# ── Seed on startup ───────────────────────────────────────────────────────────
-
 def _seed_if_empty() -> None:
-    """If entity_config has no rows for this cartridge, import from YAML."""
     try:
         engine = _get_engine()
         with engine.begin() as conn:
@@ -134,10 +119,8 @@ def _seed_if_empty() -> None:
                         "out": kb.get("output_path", ""),
                     })
     except Exception:
-        pass  # DB unavailable — callers fall back to YAML
+        pass
 
-
-# ── Public API ────────────────────────────────────────────────────────────────
 
 def get_all_entities() -> list[dict[str, Any]]:
     try:

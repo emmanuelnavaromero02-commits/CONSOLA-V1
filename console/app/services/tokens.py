@@ -1,4 +1,3 @@
-"""Single-use email tokens (invite | reset | vpn)."""
 from __future__ import annotations
 
 import os
@@ -39,13 +38,11 @@ def _ttl_for(kind: str) -> timedelta:
 
 
 async def create(user_id: int, kind: str, wg_client_id: str | None = None) -> tuple[str, datetime]:
-    """Generate and persist a single-use token. Returns (token, expires_at)."""
     if kind not in ("invite", "reset", "vpn"):
         raise ValueError(f"unknown token kind: {kind}")
     token   = secrets.token_hex(32)
     expires = datetime.now(timezone.utc) + _ttl_for(kind)
     p = await _pool()
-    # Invalidate any prior unused tokens of the same kind for the user
     await p.execute(
         "UPDATE user_tokens SET used_at = NOW() "
         "WHERE user_id = $1 AND kind = $2 AND used_at IS NULL",
@@ -66,8 +63,6 @@ async def create(user_id: int, kind: str, wg_client_id: str | None = None) -> tu
 
 
 async def lookup(token: str, kind: str) -> dict | None:
-    """Return user info if token is valid (exists, matches kind, not expired,
-    not used). DOES NOT mark it used — call `consume()` once the action succeeds."""
     if not token:
         return None
     p = await _pool()
@@ -90,11 +85,6 @@ async def consume(token: str) -> None:
 
 
 async def consume_lookup(db, token: str | None = None, kind: str | None = None) -> dict | None:
-    """Atomically validate and consume a single-use token.
-
-    Supports both the current call shape ``consume_lookup(token, kind)`` and
-    the explicit test/service shape ``consume_lookup(db, token, kind)``.
-    """
     if kind is None:
         actual_token = str(db or "")
         actual_kind = str(token or "")

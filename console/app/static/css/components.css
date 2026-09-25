@@ -1,19 +1,5 @@
-/* ──────────────────────────────────────────────────────────────────────────
-   components.css — v1.44.1 (Tarea A)
 
-   Reusable UI primitives that consume only the tokens declared in tokens.css.
-   Load order:
 
-     <link rel="stylesheet" href="/static/css/tokens.css">
-     <link rel="stylesheet" href="/static/css/components.css">
-     <link rel="stylesheet" href="/static/css/<page>.css">  <!-- optional -->
-
-   Every selector is class-scoped (no element-bare rules) so a page that
-   doesn't opt in keeps its existing visuals. Dark-mode is automatic via the
-   tokens — every colour reference goes through ``var(--…)``.
-   ────────────────────────────────────────────────────────────────────── */
-
-/* ── Buttons ───────────────────────────────────────────────────────── */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -80,7 +66,6 @@
 .btn-sm { font-size: var(--font-size-sm); padding: var(--space-xs) var(--space-sm); }
 .btn-lg { font-size: var(--font-size-lg); padding: var(--space-md) var(--space-lg); }
 
-/* ── Cards ─────────────────────────────────────────────────────────── */
 .card {
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -94,7 +79,6 @@
 .card-header  { border-bottom: 1px solid var(--border-subtle); font-weight: 600; }
 .card-footer  { border-top:    1px solid var(--border-subtle); }
 
-/* ── Inputs / labels ──────────────────────────────────────────────── */
 .label {
   display: block;
   font-size: var(--font-size-sm);
@@ -126,7 +110,6 @@
   margin-bottom: var(--space-md);
 }
 
-/* ── Badges ───────────────────────────────────────────────────────── */
 .badge {
   display: inline-flex;
   align-items: center;
@@ -153,13 +136,11 @@
   50%      { transform: scale(1.06);  opacity: 0.85; }
 }
 
-/* ── Alerts ───────────────────────────────────────────────────────── */
 .alert-success { border-left: 3px solid var(--success); background: var(--success-soft); }
 .alert-warning { border-left: 3px solid var(--warning); background: var(--warning-soft); }
 .alert-danger  { border-left: 3px solid var(--danger);  background: var(--danger-soft);  }
 .alert-info    { border-left: 3px solid var(--info);    background: var(--info-soft);    }
 
-/* ── Tables ───────────────────────────────────────────────────────── */
 .table {
   width: 100%;
   border-collapse: collapse;
@@ -183,7 +164,6 @@
 .table-striped tbody tr:nth-child(even) { background: var(--surface-soft); }
 .table-hover   tbody tr:hover           { background: var(--bg3); cursor: pointer; }
 
-/* ── Modal ────────────────────────────────────────────────────────── */
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -227,7 +207,6 @@
   gap: var(--space-sm);
 }
 
-/* ── Toasts (extended from tokens.css) ─────────────────────────────── */
 .toast-stack {
   position: fixed;
   top:   var(--space-md);
@@ -254,7 +233,6 @@
 .toast.toast-warning { border-left-color: var(--warning); }
 .toast.toast-error   { border-left-color: var(--danger);  }
 
-/* ── Skeleton & loading ────────────────────────────────────────────── */
 .skeleton {
   background: linear-gradient(
     90deg,
@@ -281,7 +259,6 @@
   display: inline-block;
 }
 
-/* ── Empty / error states (additive to tokens.css .empty-state) ─── */
 .empty-state-cta {
   margin-top: var(--space-md);
 }
@@ -295,7 +272,6 @@
   margin-bottom: var(--space-md);
 }
 
-/* ── Nav primitives ───────────────────────────────────────────────── */
 .nav        { display: flex; align-items: center; gap: var(--space-sm); }
 .nav-item   { list-style: none; }
 .nav-link {
@@ -314,7 +290,6 @@
 .nav-copilot     { color: var(--primary); font-weight: 500; }
 .nav-copilot:hover { box-shadow: var(--shadow-sm); }
 
-/* ── Floating Action Button (copilot) ──────────────────────────────── */
 .fab {
   position: fixed;
   bottom: var(--space-lg);

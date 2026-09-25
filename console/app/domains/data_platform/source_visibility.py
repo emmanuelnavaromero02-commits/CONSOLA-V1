@@ -1,5 +1,3 @@
-"""Tenant/workspace visibility helpers for technical data sources."""
-
 from __future__ import annotations
 
 from typing import Any

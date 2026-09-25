@@ -162,7 +162,6 @@ def _project_value(annotation: Any, value: object, *, field: str) -> object:
 
 
 class PublicProjectionModel(BaseModel):
-    """Explicit allowlist model; unknown input is removed before strict validation."""
 
     model_config = ConfigDict(extra="forbid")
 

@@ -1,19 +1,3 @@
-"""Reviewed, packaged manifests — the only description of an app we trust.
-
-A published app's own HTML cannot say what data it may read. It is authored
-outside this repository, it ships inside the app record an attacker may
-control, and scraping it does not even work reliably: the regex that used to
-derive authority yields fragments like ``sale`` and ``pnl_men`` out of the
-packaged apps' template literals.
-
-What we do trust is the manifest reviewed and baked into the image next to each
-app, at ``cartridges/<cartridge>/apps/<app>.json``. This module reads those,
-computes a deterministic digest that covers both the manifest and the HTML
-revision it was reviewed against, and refuses to answer for anything that is
-not packaged. Everything else — user-created apps, unknown names — gets no
-datasets at all.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -30,8 +14,6 @@ logger = logging.getLogger(__name__)
 APP_NAME_RE = DATASET_NAME_RE
 CARTRIDGE_ID_RE = DATASET_NAME_RE
 
-# The registry as it exists inside the image; the repository layout is the
-# fallback so tests and local runs resolve the same files.
 _REGISTRY_CANDIDATES = (
     pathlib.Path(os.environ.get("OMEGA_CARTRIDGE_REGISTRY", "/registry/cartridges")),
     pathlib.Path(__file__).resolve().parents[4] / "cartridges",
@@ -51,11 +33,6 @@ def registry_root() -> pathlib.Path | None:
 
 
 def _coerce_datasets(raw: Any) -> list[str]:
-    """Accept only well-formed dataset names, sorted and de-duplicated.
-
-    A manifest is reviewed, not trusted blindly: a malformed entry is dropped
-    rather than carried into a grant.
-    """
     if not isinstance(raw, (list, tuple)):
         return []
     return sorted(
@@ -70,17 +47,6 @@ def _coerce_datasets(raw: Any) -> list[str]:
 def manifest_digest(
     *, app_name: str, cartridge_id: str, datasets: list[str], html: str
 ) -> str:
-    """Deterministic identity of "this app, as reviewed".
-
-    Covers the app name, its cartridge, the sorted dataset list and the HTML
-    revision. Any edit to the served HTML or to the manifest moves the digest,
-    which strands the grants made under the old one — that is the drift
-    detection, and it is why the digest includes the HTML and not just the
-    manifest.
-
-    The payload is canonical JSON with sorted keys, so the digest depends on
-    values only and never on formatting or field order.
-    """
     payload = json.dumps(
         {
             "version": MANIFEST_DIGEST_VERSION,
@@ -97,12 +63,6 @@ def manifest_digest(
 
 
 def load_packaged_manifests(root: pathlib.Path | None = None) -> dict[str, dict]:
-    """Every packaged app manifest, keyed by app name.
-
-    One packaged app (hubspot) keys its name as ``slug``; both spellings are
-    accepted, and the file stem is the last resort so the key always matches
-    the name the route is asked for.
-    """
     base = root or registry_root()
     if base is None:
         return {}
@@ -122,7 +82,6 @@ def load_packaged_manifests(root: pathlib.Path | None = None) -> dict[str, dict]
             logger.warning("[app-manifests] rejected app name in %s", path)
             continue
         if declared_cartridge != cartridge:
-            # The directory wins: a manifest cannot claim another cartridge.
             logger.warning(
                 "[app-manifests] %s claims cartridge %s but ships under %s",
                 path, declared_cartridge, cartridge,
@@ -153,13 +112,6 @@ def packaged_manifest(app_name: str, root: pathlib.Path | None = None) -> dict |
 
 
 def served_digest(app_name: str, html: str, root: pathlib.Path | None = None) -> str | None:
-    """Digest of the app *as currently served*, or ``None`` if not packaged.
-
-    The HTML passed here is what the route is about to render. If it differs
-    from the reviewed revision the digest differs too, and no grant matches —
-    which is the intended outcome: a modified app has no data access until the
-    server reconciles it.
-    """
     manifest = packaged_manifest(app_name, root)
     if manifest is None:
         return None
@@ -179,12 +131,6 @@ def drift_report(
     served: str | None,
     packaged: str | None,
 ) -> dict[str, Any]:
-    """Descriptive only. Never widens anything.
-
-    The scraped values keep their diagnostic use — an app asking for something
-    it was not granted is worth surfacing — but they inform an operator, they
-    do not inform the allowlist.
-    """
     granted_set = set(granted or [])
     referenced_set = {
         item for item in (referenced or []) if DATASET_NAME_RE.fullmatch(str(item))

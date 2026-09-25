@@ -1,5 +1,3 @@
-"""Mission 5: source-level contracts for the evidence-ticket boundary."""
-
 from __future__ import annotations
 
 import ast
@@ -62,7 +60,6 @@ def test_public_alert_tool_takes_no_server_only_argument():
     public_args = [arg.arg for arg in (*public.args.args, *public.args.kwonlyargs)]
     assert [name for name in public_args if name.startswith("_")] == []
     assert "_server_metadata_patch" in [arg.arg for arg in impl.args.args]
-    # The decorator (the registry entry) sits on the public function only.
     assert public.decorator_list and not impl.decorator_list
     called = {
         node.func.id

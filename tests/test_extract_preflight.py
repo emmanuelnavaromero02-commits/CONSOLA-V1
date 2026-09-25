@@ -1,13 +1,3 @@
-"""
-Pre-flight contract:
-
-* POST /entities/{e}/extract  without SAP creds → 503 + degraded JSON,
-  *not* 500.
-* POST /extract-all            without SAP creds → 503.
-* The reported ``missing`` list names every component that needs config
-  so the caller doesn't confuse a missing SAP cred with e.g. a Postgres
-  outage.
-"""
 from __future__ import annotations
 
 import pytest
@@ -26,16 +16,11 @@ def _pick_known_entity(client) -> str:
 
 @pytest.mark.parametrize("cartridge", PRIORITY_CARTRIDGES)
 def test_extract_without_sap_returns_503(cartridge: str, monkeypatch) -> None:
-    """SAP creds absent (env empty) → /extract responds 503, never 500."""
     from fastapi.testclient import TestClient
 
-    # Force all SAP env vars unset for the priority cartridges
     for env_var in [
-        # SuccessFactors
         "SF_BASE_URL", "SF_COMPANY_ID", "SF_CLIENT_ID", "SF_CLIENT_SECRET", "SF_TOKEN_URL",
-        # HCM
         "SAP_HCM_BASE_URL", "SAP_HCM_USER", "SAP_HCM_PASS",
-        # S/4HANA — canonical + legacy
         "SAP_S4_BASE_URL", "SAP_S4_USER", "SAP_S4_PASS",
         "S4_BASE_URL", "S4_USER", "S4_PASS",
     ]:
@@ -53,7 +38,6 @@ def test_extract_without_sap_returns_503(cartridge: str, monkeypatch) -> None:
     assert body.get("configured") is False
     assert isinstance(body.get("missing"), list) and body["missing"], \
         f"{cartridge}: 'missing' list is empty"
-    # Should list at least one SAP env var
     sap_prefixes = ("SF_", "SAP_HCM_", "SAP_S4_")
     assert any(any(m.startswith(p) for p in sap_prefixes) for m in body["missing"]), \
         f"{cartridge}: missing list {body['missing']} does not name any SAP env var"

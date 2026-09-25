@@ -102,7 +102,6 @@ def _bind_to_core(fn):
     return rebound
 
 
-# External API/data access and item aggregation.
 @_bind_to_core
 def _is_production_env() -> bool:
     return os.environ.get("APP_ENV", "production").strip().lower() in {
@@ -238,12 +237,6 @@ async def query_dataset_rows(
 
 @_bind_to_core
 async def sap_successfactors_gold_kpis(user: dict | None) -> dict[str, Any]:
-    """Core SuccessFactors Gold widgets for the active tenant/workspace.
-
-    Reads go through the scoped Gold fetcher. A user outside the FEMSA
-    workspace simply receives empty widgets because native Gold RLS filters the
-    rows before they reach this code path.
-    """
     datasets = _sf_foundation_gold_datasets()
     results = await _sf_foundation_gold_results(datasets, user)
     rows = _sf_foundation_gold_rows(results)
@@ -434,7 +427,6 @@ def _sf_talent_readiness_counts(
         }
     operational_pending = _sf_talent_int(operational_row.get("readiness_pending_count"))
     return {
-        # The aggregate is display evidence, never authority for readiness.
         "readiness_calculable": calculable_rows,
         "readiness_insufficient": (
             insufficient_rows if readiness_rows else operational_pending
@@ -456,9 +448,6 @@ def _sf_talent_nine_box_available_count(
         )
     )
     if operational_row:
-        # The aggregate is not authority: only validated detail can prove that
-        # a person is classified. A stale/tampered count must not manufacture
-        # public 9-box availability.
         return row_count
     return row_count
 
@@ -503,10 +492,6 @@ def _sf_talent_kpi_metrics(
     nine_box_rows = rows["nine_box_rows"]
     operational_row = rows["operational_row"]
     readiness_counts = _sf_talent_readiness_counts(operational_row, readiness_rows)
-    # F12: population totals come from full COUNT(*) aggregation in SQL
-    # (successfactors_talent_population), never from len() over the capped
-    # 5,000-row preview read. The row-derived counts above remain only the
-    # fallback when the SQL aggregation is unavailable.
     population = population_counts or {}
     if population.get("status") == "ready":
         readiness_counts = {
@@ -554,10 +539,6 @@ def _sf_talent_kpi_metrics(
         "source_mode": source_mode,
         "operational_label": str(operational_row.get("user_status_label") or "En espera de datos"),
     }
-    # Nothing calculable means the analysis cannot be trusted, so it degrades to
-    # insufficient_data. An unreadable dataset keeps its own status instead:
-    # "missing" says we never read it, which is a different fact from having
-    # read it and found the inputs too thin.
     if (
         metrics["readiness_calculable"] == 0
         and metrics["operational_status"] not in {"missing", "unavailable", "error"}
@@ -893,17 +874,6 @@ def _sf_talent_analysis_inputs_payload(
     }
 
 
-# --- Workforce Trends (Fase 3 P0) --------------------------------------------
-# Fuente UNICA de: plantilla activa, antiguedad promedio, rotacion, meses de
-# historia y las series para sparklines/graficos. Lee gold YA materializado
-# (talent_operational_features + las 3 series mensuales por cohorte de #476) y
-# AGREGA una sola vez aqui. NO toca Gold/Monte Carlo/Bayes/datasets: solo
-# presentacion. Consumido por Control Room (via el payload de talent-kpis) y,
-# mas adelante, por Workforce Overview (via el endpoint) sin re-agregar.
-# NOTA: estos helpers llevan @_bind_to_core porque build_workforce_trends corre en
-# el namespace de core (ver _bind_to_core); sin el decorador no serian visibles.
-
-
 @_bind_to_core
 def _wt_num(value: Any) -> float | None:
     if value is None or value == "":
@@ -931,11 +901,6 @@ def _wt_aggregate_series(
     tenure_rows: list[dict[str, Any]],
     attrition_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Agrega las 3 series por-(cohorte,mes) a series por-mes de todo el workspace.
-
-    headcount = suma; antiguedad = promedio PONDERADO por cohort_size; rotacion =
-    suma(separations)/suma(cohort_size) RECOMPUTADA por mes (nunca promediar tasas).
-    """
     headcount: dict[str, float] = {}
     for row in headcount_rows:
         month = _wt_month_key(row)
@@ -990,11 +955,6 @@ async def build_workforce_trends(
     *,
     operational_row: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Bundle unico de Workforce Trends para todas las superficies (presentacion).
-
-    operational_row se pasa cuando ya fue leido (payload de talent-kpis) para no
-    re-consultar; el endpoint standalone lo omite y se lee aqui.
-    """
     if operational_row is None:
         op_result = await _sf_talent_gold_result(
             "sap_successfactors_talent_operational_features", user, 1
@@ -1042,11 +1002,6 @@ async def build_workforce_trends(
 
 @_bind_to_core
 async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
-    """Talent/WisdomBit KPIs for the active SuccessFactors workspace.
-
-    The endpoint intentionally returns aggregate coverage and blockers only.
-    C/P/A scores, salary values and individual PII are not exposed here.
-    """
 
     datasets = _sf_talent_kpi_datasets()
     results = await _sf_talent_kpi_results(datasets, user)
@@ -1212,7 +1167,6 @@ def _sf_talent_json_list(value: Any) -> list[str]:
 @_bind_to_core
 @_bind_to_core
 async def _sf_talent_population_counts(user: dict | None) -> dict[str, Any]:
-    """Full-population COUNT(*) totals; failure degrades to the row fallback."""
     from app.services.intelligence.successfactors_talent_population import (
         query_talent_population_counts,
     )
@@ -1319,7 +1273,6 @@ def _sf_talent_fit_band(value: Any) -> str:
 
 @_bind_to_core
 def _sf_talent_performance_band(value: Any) -> str | None:
-    """Band legacy 0..5 or current percentage scores after bounded validation."""
     score = _sf_talent_score(value)
     if score is None:
         return None
@@ -1361,18 +1314,10 @@ def _sf_talent_masked_roster_row(row: dict[str, Any]) -> dict[str, Any]:
         and _sf_talent_score(row.get("performance_score")) is not None
     )
     scores_valid = _sf_talent_nine_box_scores_valid(row)
-    # Banda de desempeno REAL: preferir la columna gold; si aun no existe, calcular desde
-    # performance_score (compute-fallback). NUNCA es el proxy benchmark (que vive en
-    # performance_band). None si no hay desempeno real.
     band_available = row.get("performance_band_available") if performance_valid else None
     if performance_valid and band_available not in {"high", "medium", "low"}:
         band_available = _sf_talent_performance_band(row.get("performance_score"))
-    # Potencial pendiente (faltan Competencias y Aspiracion): preferir columna gold; si no,
-    # inferir de cpa_status/box_status insuficiente.
     if row.get("potential_pending") is not None:
-        # This field describes the performance-only cohort, not whether the
-        # complete 9-box pair passed validation.  Preserve an explicit false;
-        # converting it to true would invent a pending-potential cohort.
         potential_pending = _sf_talent_bool(row.get("potential_pending"))
     else:
         potential_pending = _sf_talent_status(
@@ -1392,7 +1337,6 @@ def _sf_talent_masked_roster_row(row: dict[str, Any]) -> dict[str, Any]:
             if scores_valid
             else "unknown"
         ),
-        # Banda "Desempeno disponible" (real) + cohorte esperando Competencias y Aspiracion.
         "performance_band_available": band_available or "insufficient_data",
         "potential_pending": bool(potential_pending),
         "desempeno_disponible": bool(band_available) and bool(potential_pending),
@@ -1526,11 +1470,6 @@ def _sf_talent_blockers_from_results(results: list[dict[str, Any]]) -> list[dict
 
 @_bind_to_core
 async def _sf_talent_live_metadata_readiness(user: dict | None) -> dict[str, Any] | None:
-    """Fetch live SAP C/P/A metadata readiness from the cartridge service.
-
-    Control Room must degrade, not fail, when the SAP cartridge is offline or
-    credentials are pending. The payload carries no sample values/PII.
-    """
     base_url = os.environ.get("SAP_SUCCESSFACTORS_URL", "http://sap-successfactors:8203").rstrip("/")
     headers = _internal_headers("CARTRIDGE")
     headers["X-Security-Context"] = json.dumps(build_security_context(user), ensure_ascii=False)
@@ -1681,9 +1620,6 @@ def _sf_talent_9box_blockers(
 def _sf_talent_desempeno_cohort(
     rows: list[dict[str, Any]], *, limit: int = 200
 ) -> dict[str, Any]:
-    """Cohorte 'Desempeno disponible': personas con desempeno real presente pero Potencial
-    pendiente (faltan Competencias y Aspiracion). Alimenta la columna Desempeno (B), la franja
-    del 9-box (C) y el contador. Fit permanece independiente y NO se infiere aqui."""
     band_order = {"high": 3, "medium": 2, "low": 1}
     band_counts = {"high": 0, "medium": 0, "low": 0}
     roster: list[dict[str, Any]] = []
@@ -1726,15 +1662,6 @@ async def sap_successfactors_talent_9box(user: dict | None) -> dict[str, Any]:
         "sap_successfactors_talent_9box", user, 5000
     )
     raw_detail_rows = detail_result["rows"]
-    # F12: matrix cells/totals are rebuilt from the FULL detail population by
-    # SQL aggregation (query_nine_box_cell_counts) instead of len() over the
-    # capped 5,000-row read. The fail-closed doctrine is unchanged — the
-    # materialized aggregate stays display-only evidence and is still
-    # deliberately discarded (test_talent_nine_box_fail_closed): a stale or
-    # poisoned ready_count can never manufacture public readiness, because
-    # the SQL rebuild applies the same score-validity and ledger-authority
-    # predicates the row-by-row rebuild applies. The capped Python rebuild
-    # remains only as fallback when the SQL path is unavailable.
     known_boxes = {item["box_id"] for item in _sf_talent_box_definitions()}
     cell_counts = await _sf_talent_nine_box_cell_counts(user)
     sql_cell_rows = [
@@ -1753,9 +1680,6 @@ async def sap_successfactors_talent_9box(user: dict | None) -> dict[str, Any]:
     result = detail_result if raw_detail_rows else operational_result
     blockers = _sf_talent_9box_blockers(result, total_ready=totals["ready"])
 
-    # Cohort roster stays masked and capped; its COUNT and band histogram come
-    # from full-population SQL aggregation, falling back to the capped rows
-    # only when that path is unavailable.
     desempeno_disponible = _sf_talent_desempeno_cohort(raw_detail_rows)
     cohort_counts = await _sf_talent_desempeno_cohort_counts(user)
     if cohort_counts.get("status") == "ready":
@@ -1802,8 +1726,6 @@ async def sap_successfactors_talent_9box_box(
         and _sf_talent_nine_box_scores_valid(row)
     ]
     roster = [_sf_talent_masked_roster_row(row) for row in rows[:100]]
-    # F12: the cell total is a full-population COUNT(*); the masked roster
-    # stays capped at 100 with an honest truncation flag.
     count = len(rows)
     box_population = await _sf_talent_nine_box_box_count(user, box_id)
     if box_population.get("status") == "ready":
@@ -1932,10 +1854,6 @@ def _sf_talent_entities_for_readiness(
             else entity
             for entity in entities
         ]
-    # GATE 1 (Opcion 3): Desempeno no debe verse "Bloqueado" si existe performance_score.
-    # La entidad Performance pasa a "available" (Desempeno disponible - Potencial pendiente);
-    # Competencia y Aspiracion permanecen bloqueadas. No fabrica fit_score ni toca 9-box, y
-    # NO usa el tono verde "ready" (que exige C/P/A completo).
     if performance_present:
         entities = [
             {
@@ -2151,13 +2069,6 @@ def _severity(value: Any) -> str:
 
 @_bind_to_core
 def _num(value: Any) -> float | None:
-    """Parse a number, refusing anything that cannot be serialized publicly.
-
-    NaN and Infinity survive float() and then serialize as bare NaN/Infinity
-    tokens, which are not valid JSON and would carry an invalid score all the
-    way to the client. They are treated as absent instead. This is the single
-    choke point for every numeric field the Control Room publishes.
-    """
     if value is None:
         return None
     try:
@@ -4226,8 +4137,6 @@ def _persisted_intelligence_payload(row: Any) -> dict[str, Any]:
     )
 
     public_row = _row_to_public(row)
-    # Mission 5: an agent-authored row cannot vouch for itself with a signed
-    # reference it copied from elsewhere.
     metadata = without_agent_attestations(
         _details(public_row.get("metadata")), item_id=public_row.get("item_id")
     )
@@ -5134,8 +5043,6 @@ def _dashboard_meta_payload(
         "live_mode": "polling",
         "source_count": len(sources),
         "item_count": len(items),
-        # Runtime confidence: the UI surfaces the real version/env and
-        # distinguishes supervised execution from external ERP write-back.
         "version": app_version(),
         "app_env": os.environ.get("APP_ENV", "production").strip().lower(),
         "execution_mode": "supervised_execution",
@@ -5478,11 +5385,6 @@ def _ops_summary_payload(
 
 @_bind_to_core
 async def ops_summary(user: dict | None) -> dict[str, Any]:
-    """Operational summary for the active workspace.
-
-    Business counters exhaust the paginated persisted eligible projection.
-    Aggregate operational queries are then scoped to those IDs.
-    """
     tenant_id, workspace_id = _workspace_scope(user)
     pool = await auth.pool()
     business_items = await persisted_business_projection(pool, user)
@@ -6034,21 +5936,9 @@ def _agentops_payload_from_raw(
 
 @_bind_to_core
 async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
-    """AgentOps snapshot scoped by the persisted business projection.
-
-    It reads operational state only and never starts agents or simulations.
-    """
     tenant_id, workspace_id = _workspace_scope(user)
     pool = await auth.pool()
     limit = max(1, min(int(limit or 12), 50))
-    # Source-hardening markers retained after helper extraction:
-    # _agentops_tool_is_operational(tool); _agentops_tool_label(tool);
-    # _agentops_monitor_engines(monitor); "configured_engines": configured_engines
-    # "monte_carlo_simulations"; "bayesian_calibration_states";
-    # "bayesian_calibration_samples"; "decision_orchestrations";
-    # "engines": engines_payload
-    # "a.cartridge_id = ANY($3::text[])"; "cartridge_id = ANY($3::text[])";
-    # "cartridge_id = ANY($2::text[])"; "cartridge_id = 'platform'"
     allowed_cartridges = _allowed_from_user(user)
     allowed_param = None if allowed_cartridges is None else sorted(allowed_cartridges)
     business_items = await persisted_business_projection(pool, user)
@@ -6167,12 +6057,8 @@ async def list_alerts(
     }
 
 
-# Mission 2: domain KPI views (Finance / Operations / Risk). Thin wrappers so
-# control_room_service.<name> keeps the historical import/monkeypatch surface;
-# the implementation lives in app.services.control_room.domain_kpis.
 @_bind_to_core
 async def finance_kpis(user: dict | None, *, top_n: int = 0) -> dict[str, Any]:
-    """Finance KPIs for the active tenant/workspace (see domain_kpis.finance_kpis)."""
     from app.services.control_room import domain_kpis
 
     return await domain_kpis.finance_kpis(user, top_n=top_n)
@@ -6180,7 +6066,6 @@ async def finance_kpis(user: dict | None, *, top_n: int = 0) -> dict[str, Any]:
 
 @_bind_to_core
 async def operations_kpis(user: dict | None) -> dict[str, Any]:
-    """Operations KPIs for the active tenant/workspace (see domain_kpis.operations_kpis)."""
     from app.services.control_room import domain_kpis
 
     return await domain_kpis.operations_kpis(user)
@@ -6188,7 +6073,6 @@ async def operations_kpis(user: dict | None) -> dict[str, Any]:
 
 @_bind_to_core
 async def risk_kpis(user: dict | None, *, top_n: int = 0) -> dict[str, Any]:
-    """Risk KPIs for the active tenant/workspace (see domain_kpis.risk_kpis)."""
     from app.services.control_room import domain_kpis
 
     return await domain_kpis.risk_kpis(user, top_n=top_n)
@@ -6198,10 +6082,6 @@ async def risk_kpis(user: dict | None, *, top_n: int = 0) -> dict[str, Any]:
 async def agent_memory_read(
     user: dict | None, *, subject: str | None = None, limit: int = 10
 ) -> dict[str, Any]:
-    """Shared agent memory for the active tenant/workspace.
-
-    See ``control_room.agent_memory_view.agent_memory_read``. Mission 4.
-    """
     from app.services.control_room import agent_memory_view
 
     return await agent_memory_view.agent_memory_read(

@@ -874,7 +874,6 @@ async def execute(
             conn, workspace_id=workspace_id, action_id=action_id
         )
 
-        # Last defensive line: revalidate inside this scoped transaction.
         if not has_permission(user, "control_room.execute"):
             raise HTTPException(403, "permission required: control_room.execute")
         if str(_row_get(row, "workspace_id")) != workspace_id:

@@ -1,14 +1,3 @@
-"""Sprint v1.44.1 (Tarea E backend) — dashboard KPI aggregator.
-
-GET /api/dashboard/kpis returns the per-tile data the dashboard
-home renders. Designed to be fast (one or two short queries per
-section, no JOINs across hot tables) so the 30s frontend poll
-doesn't move the Postgres needle.
-
-The endpoint requires workspace access and scopes tenant/workspace
-reads for non-platform users. Viewer-specific field hiding is still
-handled by the ``viewer_only`` short-circuits below.
-"""
 from __future__ import annotations
 
 import json
@@ -29,10 +18,6 @@ from app.services.security_context import build_security_context
 router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
 
 
-# Cartridge IDs the platform ships with — matches the registry in
-# console/app/services/mcp_registry.py and the router map in
-# console/app/routers/cartridges.py. Adding a new cartridge means
-# updating those + this list (the test guards parity).
 _CARTRIDGES = ("replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors", "sap_b1")
 VAULT_URL = os.environ.get("VAULT_URL", "http://vault:8300").rstrip("/")
 _PLATFORM_ROLES = {"owner", "super_admin", "admin"}
@@ -73,7 +58,6 @@ async def _visible_workspace_user_ids(pool, user: dict | None) -> list[int]:
 
 
 def _freshness_label(age_hours: float | None) -> str:
-    """Map an extraction-age in hours to a UI-facing status code."""
     if age_hours is None:
         return "never"
     if age_hours <= 24:
@@ -119,7 +103,6 @@ async def _active_scoped_cartridges(user: dict | None) -> tuple[str, ...]:
 
 
 async def _cartridge_counts(pool, active_cartridges: tuple[str, ...]) -> dict:
-    """Count only cartridges with an active scoped Vault connection."""
     if not active_cartridges:
         return {"total": 0, "connected": 0, "disconnected": 0}
     row = await pool.fetchrow(
@@ -145,15 +128,6 @@ async def _extraction_counts(
     tenant_id: str | None = None,
     workspace_id: str | None = None,
 ) -> dict:
-    """Extraction runs started today + over the last 7 days.
-
-    Uses ``started_at`` (not finished_at) because migration 40 only
-    indexes ``idx_extraction_runs_started_at`` — querying finished_at
-    forces a seq-scan on every 30s dashboard poll, which compounds
-    fast with multiple operators open. The KPI semantics are
-    equivalent for a daily window (an extraction started 2 minutes
-    ago that hasn't finished still counts as "today's work").
-    """
     if not active_cartridges:
         return {
             "today": 0,
@@ -256,7 +230,6 @@ async def _freshness_per_cartridge(
     tenant_id: str | None = None,
     workspace_id: str | None = None,
 ) -> dict:
-    """Hours since the latest successful extraction per cartridge."""
     if not active_cartridges:
         return {}
     if workspace_id:
@@ -301,14 +274,6 @@ async def _freshness_per_cartridge(
 
 
 async def _user_counts(pool, user: dict | None = None) -> dict:
-    """Daily-active = distinct emails with a successful login today.
-
-    The login_attempts table is authoritative for "did user X log in
-    on date Y" (login_security migration v1.32) — querying users.last_login
-    would race the JWT-refresh path. Column is ``created_at`` (see
-    infra/init/17_login_security.sql:8) and is covered by
-    ``idx_login_attempts_email_created_at``.
-    """
     if user is not None and not _is_platform_admin(user):
         visible_user_ids = await _visible_workspace_user_ids(pool, user)
         if not visible_user_ids:

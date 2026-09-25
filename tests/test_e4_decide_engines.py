@@ -1,10 +1,3 @@
-"""E4 — los dos motores del Decide que faltaban: permutación y minimax.
-
-Contrato: deterministas (misma entrada+semilla = mismo resultado, con digest),
-fail-closed (insuficiente → insufficient_data con razón, jamás un número
-fabricado), veredicto matemático no editable por el LLM, y optimalidad exacta
-del minimax para el objetivo min-max de regret excluido.
-"""
 from __future__ import annotations
 
 import pytest
@@ -18,8 +11,6 @@ from app.services.intelligence.permutation_test import (
     run_permutation_test,
 )
 
-
-# ── Permutación ──────────────────────────────────────────────────────────────
 
 def _two_even_categories():
     return [{"key": "a", "weight": 1}, {"key": "b", "weight": 1}]
@@ -42,7 +33,6 @@ def test_permutation_is_deterministic_and_seed_sensitive():
 
 
 def test_permutation_extreme_observation_is_systemic():
-    """10 de 10 eventos en una categoría de peso 1/2: p ≈ 2^-10 ≈ 0.001."""
     result = run_permutation_test(
         categories=_two_even_categories(),
         draws=10,
@@ -71,8 +61,6 @@ def test_permutation_observed_zero_is_chance():
 
 
 def test_permutation_demo_case_apizaco():
-    """El caso SIN-002 de la demo: 8 de 11 bypass en una planta que solo pesa
-    ~14% de las vacantes. Debe salir patrón sistémico, no azar."""
     plantas = [
         {"key": "toluca", "weight": 140},
         {"key": "guadalajara", "weight": 110},
@@ -133,8 +121,6 @@ def test_permutation_validation_errors():
         )
 
 
-# ── Minimax ──────────────────────────────────────────────────────────────────
-
 def _stars():
     return [
         {"id": "valeria", "risk": 0.9, "impact_weight": 3.0},
@@ -149,14 +135,11 @@ def test_minimax_selects_top_regret_and_reports_worst_excluded():
     result = solve_minimax_allocation(candidates=_stars(), capacity=2)
     assert result["status"] == "succeeded"
     assert result["selected"] == ["valeria", "joaquin"]
-    # El peor excluido es marcela: 0.7 * 1.5 = 1.05
     assert result["worst_unmitigated_regret"] == pytest.approx(1.05)
     assert result["method"] == "exact_top_k_regret"
 
 
 def test_minimax_optimality_no_swap_improves_worst_excluded():
-    """Exhaustivo sobre el caso base: ninguna otra selección de K=2 logra un
-    máximo excluido menor — la prueba de que top-K es exacto, no heurística."""
     from itertools import combinations
 
     stars = _stars()
@@ -182,7 +165,7 @@ def test_minimax_ties_break_deterministically_by_id():
 def test_minimax_capacity_edges():
     zero = solve_minimax_allocation(candidates=_stars(), capacity=0)
     assert zero["selected"] == []
-    assert zero["worst_unmitigated_regret"] == pytest.approx(2.7)  # valeria
+    assert zero["worst_unmitigated_regret"] == pytest.approx(2.7)
 
     everyone = solve_minimax_allocation(candidates=_stars(), capacity=99)
     assert len(everyone["selected"]) == 5
@@ -216,8 +199,6 @@ def test_minimax_is_deterministic():
     assert first["selected"] == second["selected"], "el orden de entrada no importa"
     assert first["input_digest"] != "", "digest de reproducibilidad presente"
 
-
-# ── E4-SEC: endurecimiento contra el red-team (NaN/Infinity/bool + DoS) ──────
 
 @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
 def test_permutation_rejects_non_finite_weights(bad):

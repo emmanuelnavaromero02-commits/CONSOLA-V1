@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Generate a low-cost AWS observability report through public HTTP + SSM."""
 
 from __future__ import annotations
 

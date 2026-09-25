@@ -1,21 +1,7 @@
 #!/usr/bin/env bash
-# infra/bootstrap-keys.sh — generate the per-pair INTERNAL_API_KEY_* secrets.
-#
-# Sprint v1.12: the platform used to share one INTERNAL_API_KEY across 11
-# services; a compromise in any one of them meant every internal call could
-# be forged. Each client→server pair now has its own key. This script
-# generates those keys into infra/.env IF they don't exist yet.
-#
-# Idempotent: re-running with an existing key leaves it untouched.
-# The legacy INTERNAL_API_KEY in infra/.env is *not* touched — it stays
-# valid as a fallback during the migration window and gets retired in a
-# later sprint.
 set -euo pipefail
 
 ENV_FILE="${1:-infra/.env}"
-# Local infra/bootstrap.sh renders its own keyring. This helper only creates
-# evidence keys when a caller opts in explicitly; AWS must always leave them
-# in the private evidence env rendered by scripts/aws-entrypoint.sh.
 BOOTSTRAP_CONTROL_ROOM_EVIDENCE="${MODECISSIONS_BOOTSTRAP_CONTROL_ROOM_EVIDENCE:-false}"
 if [[ "$BOOTSTRAP_CONTROL_ROOM_EVIDENCE" != "true" && "$BOOTSTRAP_CONTROL_ROOM_EVIDENCE" != "false" ]]; then
   echo "ERROR: MODECISSIONS_BOOTSTRAP_CONTROL_ROOM_EVIDENCE must be true or false" >&2
@@ -57,12 +43,6 @@ KEYS=(
   "INTERNAL_API_KEY_MCP_INFRA_TO_VAULT"
   "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE"
   "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT"
-  # Sprint v1.26 (audit F11): provisioned for future use. Workspace and
-  # refinement don't call vault TODAY, but vault still accepts them via
-  # the legacy shared INTERNAL_API_KEY — so a misrouted call wouldn't
-  # be visible until something failed. With these keys in place, when
-  # either service starts calling vault it can switch to the dedicated
-  # key and the legacy fallback drops a WARNING that's easy to grep.
   "INTERNAL_API_KEY_WORKSPACE_TO_VAULT"
   "INTERNAL_API_KEY_REFINEMENT_TO_VAULT"
 )

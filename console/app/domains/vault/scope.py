@@ -1,5 +1,3 @@
-"""Tenant/workspace scoped Vault helper rules."""
-
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -54,8 +52,6 @@ def tenant_vault_display_conn(
     elif key.startswith("tenant_") and "__workspace_" in key:
         return None
     else:
-        # Vault already applies signed tenant/workspace scope and may return
-        # clean IDs. Keep those visible; hide explicit IDs for another workspace.
         display_key = key
     display = {**conn, "conn_id": display_key}
     if "id" in display:

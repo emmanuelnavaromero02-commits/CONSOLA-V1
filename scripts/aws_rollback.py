@@ -1,8 +1,4 @@
 #!/usr/bin/env python3
-"""Rollback/rehearse AWS immutable-tag rollback through SSM.
-
-Default is dry-run. A real rollback requires CONFIRM_ROLLBACK=1.
-"""
 
 from __future__ import annotations
 

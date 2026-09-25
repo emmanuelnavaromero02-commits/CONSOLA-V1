@@ -1,22 +1,3 @@
-"""The grant ledger is the only thing that authorises a published app's read.
-
-Run against a real PostgreSQL with the real migrations applied. Three families
-of check live here:
-
-* **self-authorisation** — C1's canaries: the app's HTML, its stored
-  ``datasets_used`` and a cross-cartridge claim must all fail to grant;
-* **pg_temp shadowing** — a caller that creates temp tables named like the
-  tables a ``SECURITY DEFINER`` function consults must not be able to steer it.
-  This was reproducible: with ``search_path = pg_catalog, public`` PostgreSQL
-  searches the temporary schema *first* for relations, and the function was
-  owned by a superuser, so shadowing it granted an unapproved dataset;
-* **lifecycle** — revocation, scope isolation, and grants dying with their
-  installation.
-
-``OMEGA_TEST_GRANTS_DSN`` selects the database. CI sets it and these tests must
-not skip there; locally they skip when it is absent.
-"""
-
 from __future__ import annotations
 
 import os
@@ -84,7 +65,6 @@ async def conn():
 
 @pytest_asyncio.fixture
 async def app_conn():
-    """A connection acting as omega_console — what the service really is."""
     connection = await asyncpg.connect(DSN)
     try:
         await connection.execute("DELETE FROM public.analytic_app_dataset_grants")
@@ -108,17 +88,7 @@ async def _active_digest(conn, app=APP):
     )
 
 
-# --- pg_temp shadowing ------------------------------------------------------
-
-
 async def test_temp_tables_cannot_steer_the_definer_function(app_conn):
-    """The reproduced P0, kept as a canary.
-
-    Five temp tables shadow every relation the function consults, including a
-    forged manifest registry that "approves" a dataset nobody reviewed. The
-    function must resolve public.* regardless and grant only what the real
-    registry holds.
-    """
     await _scoped(app_conn, TENANT_A, WS_A1)
     await app_conn.execute("""
         CREATE TEMP TABLE datasets (name TEXT, layer TEXT, cartridge TEXT,
@@ -156,8 +126,6 @@ async def test_temp_tables_cannot_steer_the_definer_function(app_conn):
 
 
 async def test_the_old_permissive_signature_is_gone(app_conn):
-    """A caller that can pass datasets, cartridge or actor grants itself
-    anything. That overload must not exist at all."""
     with pytest.raises(asyncpg.PostgresError):
         await app_conn.fetch(
             "SELECT * FROM public.reconcile_analytic_app_dataset_grants"
@@ -182,7 +150,6 @@ async def test_definer_functions_are_not_owned_by_a_superuser(conn):
         assert row["rolbypassrls"] is False, row["proname"]
         config = list(row["proconfig"] or [])
         assert "search_path=pg_catalog, pg_temp" in config, row["proname"]
-        # public must not be on the path; every name is qualified instead.
         assert not any("public" in item for item in config), row["proname"]
 
 
@@ -302,11 +269,7 @@ async def test_no_application_role_may_write_the_ledger_or_the_registry(app_conn
             await app_conn.execute(statement)
 
 
-# --- self-authorisation canaries -------------------------------------------
-
-
 async def test_html_mention_does_not_authorise(conn):
-    """The app's own markup is not an approval, however plainly it asks."""
     await _scoped(conn, TENANT_A, WS_A1)
     await _reconcile(conn)
     digest = await _active_digest(conn)
@@ -334,8 +297,6 @@ async def test_runtime_metadata_does_not_authorise(conn):
 
 
 async def test_cross_cartridge_dataset_is_never_granted(conn):
-    """The registry has no such row for this app, so there is nothing to grant
-    — and the manifest FK would refuse the row even if something tried."""
     await _scoped(conn, TENANT_A, WS_A1)
     granted = [r["dataset_name"] for r in await _reconcile(conn)]
     assert OTHER_CARTRIDGE not in granted
@@ -381,9 +342,6 @@ async def test_a_stale_expected_digest_aborts(conn):
         await _reconcile(conn, expected="f" * 64)
 
 
-# --- the positive read ------------------------------------------------------
-
-
 async def test_a_reviewed_manifest_authorises_exactly_its_datasets(conn):
     await _scoped(conn, TENANT_A, WS_A1)
     actions = await _reconcile(conn)
@@ -400,7 +358,6 @@ async def test_a_reviewed_manifest_authorises_exactly_its_datasets(conn):
             APP, digest,
         )
     ]
-    # Only the registry datasets that exist in this workspace.
     assert set(allowed) <= set(registry)
     assert APPROVED in allowed
     assert await has_grant(
@@ -418,12 +375,9 @@ async def test_reconciliation_is_idempotent(conn):
 
 
 async def test_startup_reconciles_ready_installations_idempotently(conn):
-    """The post-seed startup pass repairs installations already marked ready."""
     assert await conn.fetchval(
         "SELECT count(*) FROM public.analytic_app_dataset_grants"
     ) == 0
-    # Startup reconciles every manifest in an installed cartridge. Mirror the
-    # runtime app seed for the second SuccessFactors app omitted by this fixture.
     supplemental_app = await conn.fetchval(
         """INSERT INTO public.analytic_apps
                   (name, title, html, cartridge_id, created_by_id, visibility,
@@ -471,12 +425,7 @@ async def test_startup_reconciles_ready_installations_idempotently(conn):
     assert second_events == first_events
 
 
-# --- lifecycle --------------------------------------------------------------
-
-
 async def test_leaving_ready_revokes_immediately(conn):
-    """A grant that outlives its installation is authority the operator
-    believes they withdrew."""
     await _scoped(conn, TENANT_A, WS_A1)
     await _reconcile(conn)
     digest = await _active_digest(conn)
@@ -496,8 +445,6 @@ async def test_leaving_ready_revokes_immediately(conn):
 
 
 async def test_a_not_ready_installation_blocks_the_read_without_revoking(conn):
-    """The authoritative read joins the installation, so there is no window
-    between the grant lookup and the state check."""
     await _scoped(conn, TENANT_A, WS_A1)
     await _reconcile(conn)
     digest = await _active_digest(conn)
@@ -526,15 +473,12 @@ async def test_returning_to_ready_reconciles_without_resurrecting(conn):
         "SELECT count(*) FROM public.analytic_app_dataset_grants WHERE revoked_at IS NULL"
     )
     assert after == before
-    # The revoked rows stay revoked; new rows were issued instead.
     assert await conn.fetchval(
         "SELECT count(*) FROM public.analytic_app_dataset_grants WHERE revoked_at IS NOT NULL"
     ) == before
 
 
 async def test_scope_isolation(conn):
-    """The same dataset name exists in all three scopes, so this really tests
-    scope and not name matching."""
     await _scoped(conn, TENANT_A, WS_A1)
     await _reconcile(conn)
     digest = await _active_digest(conn)
@@ -557,9 +501,6 @@ async def test_rls_hides_other_scopes_from_the_application_role(app_conn):
     assert await app_conn.fetchval(
         "SELECT count(*) FROM public.analytic_app_dataset_grants"
     ) == 0
-
-
-# --- registry integrity -----------------------------------------------------
 
 
 async def test_the_registry_matches_the_packaged_manifests(conn):

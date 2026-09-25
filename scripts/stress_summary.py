@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Summarize Locust evidence and enforce enterprise load thresholds."""
 
 from __future__ import annotations
 
@@ -105,13 +104,6 @@ def _is_waf_403_error(error: str) -> bool:
 
 
 def _blocked_by_public_waf(path: Path, *, failures: int) -> bool:
-    """Detect AWS WAF rate-block HTML so prod-safe load is not mislabelled.
-
-    FastAPI/Console 403s are JSON responses. The public ALB WAF returns the
-    stock HTML "403 Forbidden" page and applies globally, including /healthz.
-    When almost every recorded failure has that signature, the correct release
-    evidence is BLOCKED by the public WAF cap, not FAIL for an application bug.
-    """
     if failures <= 0:
         return False
     rows = _read_failure_rows(path)

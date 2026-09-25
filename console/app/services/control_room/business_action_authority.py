@@ -61,7 +61,6 @@ def require_action_item_prerequisites(
 
 
 def require_action_item_evidence(item: Mapping[str, Any]) -> None:
-    """Guard source evidence before the authoritative execute lifecycle check."""
 
     if action_item_is_stale(item):
         raise HTTPException(409, "control room item data is stale")

@@ -4,7 +4,6 @@ from typing import Any
 
 
 class PublicationReadGuardMixin:
-    """Makes the publication head mandatory for managed public reads."""
 
     def _published_dataset_head(
         self, dataset: dict[str, Any], user_context: dict[str, Any] | None

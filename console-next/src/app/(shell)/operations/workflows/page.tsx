@@ -184,8 +184,6 @@ function WorkflowsTable({
           {rows.map((workflow) => {
             const active = selectedId === workflow.id;
             const canCancel = ACTIVE_STATUSES.has(workflow.status);
-            // Solo se planifica un workflow que no está en un estado terminal
-            // ni ya activo (planning/running/waiting_approval).
             const canPlan = !TERMINAL_STATUSES.has(workflow.status) && !ACTIVE_STATUSES.has(workflow.status);
             return (
               <tr key={workflow.id} className={cn("align-top", active && "bg-primary/5")}>

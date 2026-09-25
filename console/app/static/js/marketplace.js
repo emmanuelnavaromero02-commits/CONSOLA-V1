@@ -567,11 +567,6 @@ export async function renderMarketplace(root) {
   });
 }
 
-// Phase-4 — /customer/cartridges is the "Mis cartuchos" view.
-// Same backend (`/api/customer/cartridges`) but the shell is focused on
-// the workspace's actual installations: status, last activity, retry,
-// support. The catalog and search are deliberately hidden so the user
-// does not see commercial copy alongside their operational state.
 function renderCustomerShell(root) {
   root.replaceChildren();
   view.workspaceId = state.user?.active_workspace_id || view.workspaceId;
@@ -625,17 +620,12 @@ function renderCustomerShell(root) {
   root.appendChild(shell);
 }
 
-// Customer view — same load function so we share metrics + installations
-// data; the renderer just skips the catalog panel.
 function renderCustomerAll() {
   renderMetrics();
   renderInstallations();
 }
 
 async function loadCustomerCartridges() {
-  // We still fetch products so the metrics block (which counts the
-  // catalog size in the header) renders correctly; the catalog grid is
-  // not painted in customer mode.
   const [productData, installData] = await Promise.all([
     fetchJson('/api/marketplace/products'),
     fetchJson('/api/customer/cartridges'),

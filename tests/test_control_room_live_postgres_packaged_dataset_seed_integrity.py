@@ -1,5 +1,3 @@
-"""Real PostgreSQL proof for packaged-catalog content integrity."""
-
 from __future__ import annotations
 
 from pathlib import Path

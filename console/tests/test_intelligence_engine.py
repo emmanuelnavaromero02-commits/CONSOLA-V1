@@ -1007,9 +1007,6 @@ async def test_run_intelligence_gold_refresh_infers_generic_signal_for_missing_c
 
 @pytest.mark.asyncio
 async def test_run_intelligence_skips_generic_for_cross_sectional_snapshot(monkeypatch):
-    # A per-employee snapshot (one row per user, single generated_at, no period)
-    # must NOT be fabricated into a time series, and must never emit a signal on
-    # the user_id identifier column (the production generic_user_id garbage).
     async def fake_fetcher(dataset: str, user: dict | None, limit: int):
         assert dataset == "talent_snapshot"
         return [
@@ -1354,7 +1351,6 @@ async def _gold_counts_with_head(monkeypatch, head, *, row_count: int = 7):
 
 @pytest.mark.asyncio
 async def test_intelligence_readiness_qualifies_public_regclass_contract(monkeypatch):
-    """A visible public regclass renders without ``public.`` in PostgreSQL."""
     rows, gold = await _gold_counts_with_head(
         monkeypatch,
         {

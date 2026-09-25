@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Bind the F2 hybrid digest stack to one clean, reviewed source checkout."""
 
 from __future__ import annotations
 

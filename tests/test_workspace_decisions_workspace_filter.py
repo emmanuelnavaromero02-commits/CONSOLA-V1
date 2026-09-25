@@ -1,4 +1,3 @@
-"""Sprint v1.32 — workspace decisions must be scoped by workspace_id."""
 from __future__ import annotations
 
 import importlib

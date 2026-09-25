@@ -1,7 +1,3 @@
-"""
-Airflow MCP tools — wraps Airflow REST API v1.
-Handles DAG management, triggers, status, logs, variables and dynamic DAG creation.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -21,7 +17,6 @@ _DAG_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,127}$")
 _DAG_RUN_ID_RE = re.compile(r"^[A-Za-z0-9_.:+-]{1,250}$")
 _CARTRIDGE_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,127}$")
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _client() -> httpx.AsyncClient:
     headers = _request_headers()
@@ -85,27 +80,14 @@ def _dag_file_path(dag_id: str) -> Path:
 
 
 def _is_development() -> bool:
-    # v1.43.2: default ``production`` — a forgotten
-    # APP_ENV no longer enables airflow_create_dag (RCE-shaped tool)
-    # on a fresh deploy.
     return os.environ.get("APP_ENV", "production").lower() in {"development", "dev", "local", "test"}
 
 
 def _rce_tools_explicitly_enabled() -> bool:
-    """v1.43.4: second gate. APP_ENV=development was used
-    to enable airflow_create_dag in dev environments — and review
-    showed that an operator who flips APP_ENV (e.g. to debug a
-    production-only path) implicitly unlocks the RCE tool. Require
-    an explicit second opt-in so APP_ENV alone is no longer enough.
-    Default off; only ``ALLOW_RCE_TOOLS=true`` (case-insensitive)
-    flips the gate.
-    """
     return os.environ.get("ALLOW_RCE_TOOLS", "").strip().lower() in {
         "true", "1", "yes", "on",
     }
 
-
-# ── Tools ──────────────────────────────────────────────────────────────────────
 
 @tool(
     name="airflow_list_dags",
@@ -260,7 +242,6 @@ async def airflow_get_task_logs(dag_id: str, dag_run_id: str, task_id: str) -> d
                 "found": False,
             }
         r.raise_for_status()
-    # Trim to last 6 000 chars so it fits in context
     return {
         "logs": r.text[-6000:],
         "dag_id": dag_id,
@@ -300,12 +281,6 @@ async def airflow_create_dag(dag_id: str, code: str,
                               cartridge_id: str | None = None,
                               description: str | None = None,
                               dag_params_example: dict | None = None) -> dict:
-    # v1.43.4: double-gate. APP_ENV must be a dev variant
-    # AND ALLOW_RCE_TOOLS must be explicitly set. Either gate alone
-    # was demonstrably bypassable: APP_ENV gets flipped to debug
-    # production-only paths, and a "default-on" RCE tool gated by
-    # ALLOW_RCE_TOOLS alone would fail open if the variable is
-    # forgotten. Require both.
     if not _is_development():
         raise PermissionError(
             "airflow_create_dag is disabled outside development because writing "
@@ -320,7 +295,6 @@ async def airflow_create_dag(dag_id: str, code: str,
     dag_id = _validate_dag_id(dag_id)
     path = _dag_file_path(dag_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    # Fuerza is_paused_upon_creation=False para que el DAG arranque activo
     import re
     code = re.sub(
         r'(is_paused_upon_creation\s*=\s*(?:True|False),?\s*\n?)',
@@ -358,7 +332,6 @@ async def airflow_create_dag(dag_id: str, code: str,
     entities_synced = 0
     registered = False
 
-    # Auto-register in cartridge_dags and save source if cartridge_id provided
     try:
         import json as _json
         import psycopg2
@@ -371,7 +344,6 @@ async def airflow_create_dag(dag_id: str, code: str,
         with conn.cursor() as cur:
             if cartridge_id:
                 ex_json = _json.dumps(dag_params_example) if dag_params_example is not None else None
-                # Solo registra si el cartucho ya existe — nunca crea cartuchos nuevos
                 cur.execute("SELECT 1 FROM cartridges WHERE id = %s", (cartridge_id,))
                 if cur.fetchone():
                     cur.execute(
@@ -414,7 +386,6 @@ async def airflow_create_dag(dag_id: str, code: str,
         conn.commit()
         conn.close()
     except Exception:
-        # DAG file is already written; DB registration/sync is best-effort.
         pass
 
     return {"created": str(path), "dag_id": dag_id, "bytes": len(code.encode()),
@@ -478,14 +449,12 @@ async def airflow_delete_dag(dag_id: str, cartridge_id: str | None = None) -> di
     if path.exists():
         path.unlink()
         deleted_file = True
-    # Delete from Airflow metadata DB
     try:
         async with _client() as c:
             r = await _request_with_transport_retry(c, "DELETE", f"{_BASE}/api/v1/dags/{dag_id}")
             deleted_db = r.status_code in (200, 204)
     except Exception:
         deleted_db = False
-    # Delete from cartridge_dags
     try:
         import psycopg2
         from app.config import settings as s
@@ -544,7 +513,7 @@ async def airflow_set_variable(key: str, value: str) -> dict:
             f"{_BASE}/api/v1/variables",
             json={"key": key, "value": value},
         )
-        if r.status_code == 409:          # already exists → patch
+        if r.status_code == 409:
             r = await _request_with_transport_retry(
                 c,
                 "PATCH",

@@ -1,11 +1,3 @@
-"""Reconcile packaged-app dataset grants for installations already ready.
-
-Database migrations can create the grant ledger before the runtime seed has
-inserted every packaged ``analytic_apps`` row.  Reconcile once after all
-packaged datasets and apps are seeded so both upgrades and fresh installations
-end startup with the same durable authority state.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -22,12 +14,6 @@ logger = logging.getLogger(__name__)
 
 
 async def reconcile_packaged_app_grants(pool: Any) -> None:
-    """Reconcile every ready cartridge, one isolated workspace transaction each.
-
-    The advisory transaction lock serializes concurrent Console replicas.  RLS
-    scope is installed before reading installations and remains active while
-    the SECURITY DEFINER reconciler validates and writes the ledger.
-    """
     async with pool.acquire() as conn:
         workspaces = await conn.fetch(
             """SELECT w.tenant_id, w.id AS workspace_id

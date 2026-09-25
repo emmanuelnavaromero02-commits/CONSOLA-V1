@@ -1,9 +1,3 @@
-"""Stable facade for Bayesian calibration services.
-
-Implementation is split by validation, persistence, observation, and recompute
-responsibilities so each production module remains reviewable and bounded.
-"""
-
 from app.services import auth
 from app.services.intelligence import calibration
 from app.services.intelligence.calibration_observation_service import observe

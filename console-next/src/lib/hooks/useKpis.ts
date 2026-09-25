@@ -3,13 +3,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 
-/**
- * Shape returned by FastAPI's GET /api/dashboard/kpis (v1.44.1
- * backend hook). Mirrors the 6 sections the dashboard renders.
- *
- * Keep this in lockstep with console/app/routers/dashboard.py —
- * adding a section there is a no-op until this interface lists it.
- */
 export interface KpiPayload {
   cartridges:    { total: number; connected: number; disconnected: number };
   extractions:   { today: number; week: number };

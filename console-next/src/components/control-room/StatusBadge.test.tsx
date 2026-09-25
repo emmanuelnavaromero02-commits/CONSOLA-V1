@@ -31,7 +31,6 @@ describe("Control Room readiness states", () => {
   });
 
   it("distingues 'available' del verde 'ready' y del naranja 'blocked'", () => {
-    // Desempeno disponible pero C/P/A incompleto: tono teal propio, ni verde ni bloqueado.
     expect(readinessTone("available")).toContain("teal");
     expect(readinessTone("available")).not.toContain("emerald");
     expect(readinessTone("available")).not.toContain("orange");

@@ -20,7 +20,7 @@ _MISSING_DEPENDENCY_MARKERS = (
 )
 
 _INFRA_FAILURE_MARKERS = (
-    "list-type=2",  # S3 ListObjectsV2: the listing itself failed, whatever the code
+    "list-type=2",
     "(http 400)",
     "(http 401)",
     "(http 403)",
@@ -38,20 +38,12 @@ _INFRA_FAILURE_MARKERS = (
     "name or service not known",
 )
 
-# Anti-drift marker for the conditional CPA blocker contract:
-# WHEN performance_score IS NULL THEN 'KB-DESEMPENO blocked'
 TALENT_GOLD_FALLBACK_SQL = {
     **TALENT_CORE_FALLBACK_SQL,
     **TALENT_RUNTIME_FALLBACK_SQL,
     **TALENT_EMPTY_FALLBACK_SQL,
 }
 
-# Employee Central operational anomalies (Fase 6). Deliberately NOT a foundation
-# fallback: an EMPTY anomalies result is HEALTHY ("no hay empleados irregulares"),
-# so it must never escalate to a strict foundation error. When employee_360 or the
-# fojobcode silver dependency is missing, the dataset degrades to this empty shape
-# instead of hard-erroring, keeping the Control Room "Employee Central" module
-# materializable. Columns mirror sap_successfactors_employees_anomalies exactly.
 EMPLOYEE_CENTRAL_FALLBACK_SQL: dict[str, str] = {
     "sap_successfactors_employees_anomalies": """
 SELECT
@@ -91,7 +83,6 @@ SUCCESSFACTORS_GOLD_FALLBACK_SQL: dict[str, str] = {
 
 
 def is_missing_successfactors_dependency_error(exc: Exception | Any) -> bool:
-    """True only for an absent source, never for a failing lakehouse."""
     text = " ".join(
         str(part) for part in getattr(exc, "args", ()) or (str(exc),)
     ).lower()
@@ -121,17 +112,6 @@ def fallback_dataset_for_successfactors(
 def readfree_empty_dataset_for_successfactors(
     ds: dict[str, Any], exc: Exception | Any
 ) -> dict[str, Any] | None:
-    """E1.1 — ultimo nivel de degradacion, SIN lecturas.
-
-    Engancha solo cuando (a) el dataset tiene proyeccion read-free registrada
-    y (b) el error es de dependencia faltante (404 / no files). El fallback de
-    primer nivel de la cadena de talento lee fuentes que un tenant sin modulos
-    de talento no expone: cuando ese fallback tambien se cae con 404, esta
-    proyeccion emite el esquema FIEL del dataset con cero filas para que el
-    SQL real downstream ligue y produzca su propio vacio honesto. Cualquier
-    otro error (MinIO caido, Binder por drift real de esquema) NO engancha:
-    esos deben tronar fuerte.
-    """
     name = str(ds.get("name") or "")
     sql = TALENT_READFREE_EMPTY_SQL.get(name)
     if not sql or not is_missing_successfactors_dependency_error(exc):
@@ -148,10 +128,6 @@ def readfree_empty_dataset_for_successfactors(
 
 
 def _strict_fallback_enabled() -> bool:
-    """El modo estricto (opt-in) hace que un gold vacio por falta de foundation
-    se reporte como error, para que dataset_refresh_chain deje de contarlo como
-    exito silencioso. Apagado por defecto para no voltear la semantica de un
-    entorno desplegado sin aviso."""
     return str(os.environ.get("REFINEMENT_SF_FALLBACK_STRICT", "")).strip().lower() in {
         "1",
         "true",
@@ -164,7 +140,6 @@ def _fallback_row_count_is_zero(result: dict[str, Any]) -> bool:
     try:
         return int(result.get("row_count") or 0) <= 0
     except (TypeError, ValueError):
-        # row_count no confiable -> tratar como vacio (fail-safe hacia visibilidad).
         return True
 
 
@@ -173,20 +148,6 @@ def annotate_operational_fallback(
     result: dict[str, Any],
     original_error: str,
 ) -> dict[str, Any]:
-    """Hace OBSERVABLE el estado degradado de un fallback operativo (P2).
-
-    Antes, un fallback devolvia status 'partial'/fallback=True SIN clave 'error',
-    de modo que dataset_refresh_chain lo contaba como exito y disparaba el
-    gold-refresh de inteligencia como si hubiera datos: por eso "se extraia de SF
-    y no pasaba nada" sin que saltara ninguna alarma. Aqui:
-
-    - `degraded=True` cuando el fallback produce 0 filas (no hay datos de origen).
-    - `error` SOLO cuando ademas es un dataset foundation vacio Y el modo estricto
-      esta activo (REFINEMENT_SF_FALLBACK_STRICT), para que el chain lo marque no-ok.
-
-    No altera las claves previas (status/fallback/fallback_reason/original_error):
-    es aditivo y por defecto no rompe el comportamiento actual.
-    """
     empty = _fallback_row_count_is_zero(result)
     is_foundation = dataset_name in FOUNDATION_GOLD_FALLBACK_SQL
     annotated: dict[str, Any] = {

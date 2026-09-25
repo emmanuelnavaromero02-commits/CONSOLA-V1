@@ -1,5 +1,3 @@
-"""Pipeline run tenant/workspace scoping helpers."""
-
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
@@ -48,7 +46,6 @@ async def pipeline_runs_read_conn(
     build_security_context: BuildSecurityContext,
     scoped_db_for_user: ScopedDbForUser,
 ):
-    """Yield a connection scoped for pipeline_runs RLS when workspace context exists."""
     ctx = build_security_context(user)
     if ctx.get("workspace_id"):
         async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):

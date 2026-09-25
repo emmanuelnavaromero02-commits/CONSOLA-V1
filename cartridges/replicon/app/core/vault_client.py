@@ -140,7 +140,6 @@ def get_secret_for_worker(
     security_context: str | None = None,
     conn_id: str | None = None,
 ) -> str:
-    """Resolve a worker credential from env first, then Console Vault."""
     for candidate in _ENV_ALIASES.get(env_var_name, (env_var_name,)):
         value = os.environ.get(candidate)
         if value:
@@ -159,7 +158,6 @@ def get_connection_for_worker(
     security_context: str | None = None,
     conn_id: str | None = None,
 ) -> dict[str, Any]:
-    """Return the resolved Console Vault connection payload for a worker."""
     return dict(_fetch_connection(service_name, security_context=security_context, conn_id=conn_id))
 
 
@@ -167,7 +165,6 @@ def get_replicon_connection(
     security_context: str | None = None,
     conn_id: str | None = None,
 ) -> dict[str, Any]:
-    """Return Replicon connection material from env first, then Console Vault."""
     payload = get_connection_for_worker("replicon", security_context=security_context, conn_id=conn_id)
     connection = dict(payload)
     connection["base_url"] = (
@@ -208,7 +205,6 @@ def get_replicon_connection(
 
 
 def get_replicon_credentials() -> tuple[str, str]:
-    """Return (base_url, token) from environment or Console Vault."""
     connection = get_replicon_connection()
     base_url = str(connection.get("base_url") or "")
     token = (

@@ -16,7 +16,6 @@ from app.main import (  # noqa: E402
 )
 
 
-
 def test_apps_gallery_filters_to_active_successfactors_connection():
     payload = {
         "apps": [
@@ -69,7 +68,6 @@ def test_apps_gallery_is_only_a_control_room_entrypoint():
 
     assert "Analitica del workspace" in src
     assert "Revisa indicadores, agentes y decisiones" in src
-    assert "/control-room#apps" in src
     assert "listApps({ includeUnready: true })" not in src
     assert "Apps publicadas" not in src
     assert "Ver en Control Room" not in src

@@ -1,17 +1,3 @@
-"""Sprint v1.43.4 — N1/N3/N4 + H1: AWS compose must
-match local compose on critical version pins so DAGs / migrations
-tested locally don't fail silently in prod.
-
-N1 (closed in this sprint): infra/docker-compose.yml ran
-Airflow 2.10.5 locally while infra/terraform/deploy/docker-compose.aws.yml
-ran Airflow 2.9.2 — a year's worth of upstream behavior drift.
-
-The tests below are static guards: they read both compose files,
-extract image pins, and assert AWS matches the local ground truth.
-Adding a new pin to local compose will fail the test until the
-operator either (a) mirrors it in AWS or (b) explicitly carves it
-out of the consistency check.
-"""
 from __future__ import annotations
 
 import re
@@ -32,13 +18,10 @@ RELEASE_WORKFLOW = REPO / ".github/workflows/release.yml"
 
 
 def _images(path: Path) -> list[str]:
-    """Return every ``image: …`` value in the compose file."""
     return re.findall(r"^\s*image:\s*(\S+)\s*$", path.read_text(), re.MULTILINE)
 
 
 def _versions_of(images: list[str], prefix: str) -> set[str]:
-    """Return the set of versions for an image prefix, e.g.
-    'apache/airflow' → {'2.10.5'}."""
     out: set[str] = set()
     for img in images:
         if img.startswith(prefix + ":") or img == prefix:
@@ -48,14 +31,10 @@ def _versions_of(images: list[str], prefix: str) -> set[str]:
 
 
 def test_airflow_version_matches_local():
-    """The N1 finding: local was 2.10.5, AWS was 2.9.2 — the
-    drift this hotfix closes. Lock the parity going forward."""
     local_versions = _versions_of(_images(LOCAL), "mode-airflow") \
         or _versions_of(_images(LOCAL), "apache/airflow")
     aws_versions = _versions_of(_images(AWS), "apache/airflow")
 
-    # Normalise the local "mode-airflow:2.10.5-local" custom-built tag
-    # to just the upstream version it derives from.
     local_upstream = {v.split("-")[0] for v in local_versions}
 
     if not aws_versions:
@@ -73,7 +52,6 @@ def test_airflow_version_matches_local():
 
 
 def test_postgres_version_matches_local():
-    """Local + AWS both run pgvector/pgvector:pg15. Lock the match."""
     local_pg = _versions_of(_images(LOCAL), "pgvector/pgvector")
     aws_pg = _versions_of(_images(AWS), "pgvector/pgvector")
     assert local_pg, "local compose must use pgvector/pgvector"
@@ -83,8 +61,6 @@ def test_postgres_version_matches_local():
 
 
 def test_postgres_healthchecks_probe_tcp_in_local_and_aws():
-    """Airflow/Superset init containers connect over compose networking.
-    Keep both compose files from regressing to socket-only pg_isready."""
     for path in (LOCAL, AWS):
         text = path.read_text(encoding="utf-8")
         assert "pg_isready -h 127.0.0.1 -p 5432 -U postgres -d modecissions" in text
@@ -92,7 +68,6 @@ def test_postgres_healthchecks_probe_tcp_in_local_and_aws():
 
 
 def test_superset_version_matches_local():
-    """Same lock for Superset — easy to forget when bumping locally."""
     local_ss = _versions_of(_images(LOCAL), "apache/superset")
     aws_ss = _versions_of(_images(AWS), "apache/superset")
     assert local_ss, "local compose must use apache/superset"
@@ -102,9 +77,6 @@ def test_superset_version_matches_local():
 
 
 def test_no_floating_tags_on_third_party_images():
-    """``:latest``, ``:main``, ``:edge`` on any upstream image is an
-    invitation to ship a different binary every redeploy. Application
-    images must also use the release-tagged GHCR path."""
     aws_images = _images(AWS)
     forbidden_tags = ("latest", "main", "edge", "stable")
     offenders: list[str] = []
@@ -121,8 +93,6 @@ def test_no_floating_tags_on_third_party_images():
 
 
 def test_aws_application_images_use_ghcr_release_tags():
-    """AWS should pull immutable release images from GHCR, not local
-    modecissions/*:latest builds."""
     src = AWS.read_text(encoding="utf-8")
     assert "modecissions/console:latest" not in src
     assert "${IMAGE_TAG:-v1.44.5}" not in src
@@ -131,8 +101,6 @@ def test_aws_application_images_use_ghcr_release_tags():
 
 
 def test_aws_cartridge_overlay_ships_release_images():
-    """The same-host cartridge deploy path must be real, not a runbook-only
-    reference. It also uses the same immutable IMAGE_TAG guard as core."""
     src = AWS_CARTRIDGES.read_text(encoding="utf-8")
     assert "${IMAGE_TAG:-v1.44.5}" not in src
     expected = {
@@ -207,8 +175,6 @@ def test_release_workflow_validates_before_publishing_images():
         assert gate in readiness
     assert 'OMEGA_RELEASE_PUBLISH_ONLY: "1"' in src
     assert "OMEGA_PRODUCTION_READINESS_SKIP_STRESS=1" not in src
-    # Beta no longer gets an implicit branch in the workflow. Any optional
-    # stress skip must come from the reviewed, versioned policy job.
     assert "production_readiness_stress_action" in src
     assert "production_readiness_stress_skip_authorized" in src
     assert "production_readiness_stress_policy_id" in src
@@ -235,11 +201,6 @@ def test_release_workflow_validates_before_publishing_images():
 
 
 def test_release_gate_pauses_scheduled_airflow_dags_in_ci():
-    """The digest full-stack release gate uses dummy local credentials for external
-    connectors. It must import DAGs and allow manual tests, but it must not let
-    Airflow auto-schedule external-ingest DAGs such as Replicon SES while the
-    release gate is running.
-    """
     workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
     dev_override = (REPO / "infra/docker-compose.dev.yml").read_text(encoding="utf-8")
 
@@ -253,13 +214,6 @@ def test_release_gate_pauses_scheduled_airflow_dags_in_ci():
 
 
 def test_release_gate_writes_host_urls_for_playwright_e2e():
-    """Playwright runs on the GitHub host runner, not inside Docker DNS.
-
-    The release stack still needs container-internal URLs in infra/.env for
-    service-to-service calls, but tests-e2e/.env must point at published host
-    ports. Otherwise the production-readiness gate can inherit names such as
-    hubspot/airflow and fail with getaddrinfo on GitHub-hosted runners.
-    """
     workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
     release_stack = workflow.split("Bootstrap digest release stack", 1)[1].split(
         "Download the canonical candidate manifest", 1
@@ -302,24 +256,17 @@ def test_start_script_honors_cartridge_overlay_flag():
 
 
 def test_release_workflow_does_not_publish_latest_tags():
-    """Prod deploys should point at immutable release tags. Publishing
-    :latest invites accidental mutable deploys even if compose is strict."""
     src = (REPO / ".github/workflows/release.yml").read_text(encoding="utf-8")
     assert ":latest" not in src
 
 
 def test_aws_env_file_defaults_to_documented_deploy_env():
-    """The AWS runbook creates infra/terraform/deploy/.env. The compose
-    file may accept AWS_ENV_FILE override for local validation, but the
-    default must stay .env relative to the deploy compose file."""
     src = AWS.read_text(encoding="utf-8")
     assert "${AWS_ENV_FILE:-.env}" in src
     assert "${AWS_ENV_FILE:-../../.env}" not in src
 
 
 def test_aws_console_mounts_cartridges_read_only():
-    """Prod console must never mutate the cartridge registry mounted from
-    the host. Runtime writes belong in scoped tenant/workspace storage."""
     src = AWS.read_text(encoding="utf-8")
     assert re.search(
         r"^\s*-\s+/opt/modecissions/cartridges:/registry/cartridges:ro\s*$",
@@ -334,9 +281,6 @@ def test_aws_console_mounts_cartridges_read_only():
 
 
 def test_aws_mcp_infra_mounts_cartridges_read_only_for_studio_source_sync():
-    """Studio gets DAG source through mcp-infra. Packaged cartridge DAGs are
-    mounted into Airflow from /opt/modecissions/cartridges, so mcp-infra must
-    see the same read-only tree to keep Studio and Airflow in sync."""
     src = AWS.read_text(encoding="utf-8")
     marker = "container_name: mode_mcp_infra"
     start = src.index(marker)
@@ -348,8 +292,6 @@ def test_aws_mcp_infra_mounts_cartridges_read_only_for_studio_source_sync():
 
 
 def test_vpn_admin_password_hash_is_required_not_hardcoded():
-    """The wg-easy admin password hash must be injected at deploy time so
-    every environment can rotate it and the repo never ships a live hash."""
     user_data = VPN_USERDATA.read_text(encoding="utf-8")
     variables = (TERRAFORM_INFRA / "variables.tf").read_text(encoding="utf-8")
     ec2_vpn = (TERRAFORM_INFRA / "ec2_vpn.tf").read_text(encoding="utf-8")
@@ -362,8 +304,6 @@ def test_vpn_admin_password_hash_is_required_not_hardcoded():
 
 
 def test_prod_compose_does_not_mount_dev_init_seeds():
-    """AWS may mount schema migrations only; local development seeds must
-    remain outside infra/init and outside the AWS compose mount."""
     aws_src = AWS.read_text(encoding="utf-8")
     local_src = LOCAL.read_text(encoding="utf-8")
     assert "init_dev" not in aws_src
@@ -375,9 +315,6 @@ def test_prod_compose_does_not_mount_dev_init_seeds():
 
 
 def test_no_remaining_2_9_x_airflow_in_aws():
-    """Defensive: should never see 2.9.x airflow in AWS after this
-    sprint. Catches the case where a future change re-introduces the
-    old pin via copy-paste."""
     src = AWS.read_text(encoding="utf-8")
     assert "apache/airflow:2.9." not in src, (
         "AWS compose still references apache/airflow:2.9.x — that's "
@@ -385,30 +322,17 @@ def test_no_remaining_2_9_x_airflow_in_aws():
     )
 
 
-# ── v1.43.4 (N3): AWS healthchecks + service_healthy deps ──────────
-
-
 def _aws_services() -> dict:
-    """Parse AWS compose; return services dict."""
     import yaml
     with AWS.open(encoding="utf-8") as f:
         data = yaml.safe_load(f)
     return data.get("services", {})
 
 
-# Two AWS services are one-shot init containers (run command, exit
-# cleanly). A Docker healthcheck on an exited container never goes
-# HEALTHY by definition — dependents must use
-# ``condition: service_completed_successfully`` instead. Carve them
-# out of the healthcheck-coverage assertion.
 _ONESHOT_INIT_SERVICES = {"superset-init", "airflow-init"}
 
 
 def test_all_aws_long_running_services_have_healthchecks():
-    """N3: pre-v1.43.4 AWS compose had ZERO healthchecks — so
-    ``depends_on`` only meant "container started", which races against
-    Postgres init, mcp-infra warmup, etc. Every long-running service
-    must now declare a healthcheck so dependents can wait on it."""
     svcs = _aws_services()
     missing = [
         name for name, body in svcs.items()
@@ -422,10 +346,6 @@ def test_all_aws_long_running_services_have_healthchecks():
 
 
 def test_aws_oneshot_services_are_explicitly_oneshot():
-    """If a service is in the oneshot carve-out, it must actually be
-    a one-shot (``restart: "no"`` AND no healthcheck). Catches the
-    case where someone adds a long-running service to the carve-out
-    by mistake."""
     svcs = _aws_services()
     for name in _ONESHOT_INIT_SERVICES:
         if name not in svcs:
@@ -438,10 +358,6 @@ def test_aws_oneshot_services_are_explicitly_oneshot():
 
 
 def test_critical_aws_dependencies_use_service_healthy():
-    """Every depends_on of a critical service (postgres, mcp-infra,
-    airflow, vault, refinement) must use the long-form with
-    ``condition:`` — the bare-list shorthand only waits for the
-    container to start, not for the service inside it."""
     svcs = _aws_services()
     critical_targets = {
         "postgres",
@@ -457,9 +373,6 @@ def test_critical_aws_dependencies_use_service_healthy():
         deps = body.get("depends_on")
         if deps is None:
             continue
-        # Shorthand (list of strings) means no condition — that's the
-        # racy form. If any item in the depends-on list is a critical
-        # target, fail.
         if isinstance(deps, list):
             racy = [d for d in deps if d in critical_targets]
             if racy:
@@ -493,9 +406,6 @@ def test_critical_aws_dependencies_use_service_healthy():
 
 
 def test_aws_healthcheck_test_command_is_well_formed():
-    """A healthcheck declared with ``test: <string>`` (instead of the
-    ``["CMD", ...]`` / ``["CMD-SHELL", ...]`` form) is silently
-    ignored by docker compose. Lock the explicit-list form."""
     svcs = _aws_services()
     bad: list[str] = []
     for name, body in svcs.items():
@@ -515,9 +425,6 @@ def test_aws_healthcheck_test_command_is_well_formed():
     )
 
 
-# ── Healthchecks and removed console_next runtime ───────────────────────
-
-
 def _services_from(compose_path: Path) -> dict:
     import yaml
     with compose_path.open(encoding="utf-8") as f:
@@ -525,10 +432,6 @@ def _services_from(compose_path: Path) -> dict:
 
 
 def _healthcheck_test_strings(services: dict) -> list[tuple[str, str]]:
-    """Return [(service_name, joined_test_string)] for every service
-    that declares a healthcheck. The joined string covers both the
-    ``["CMD", "wget", "url"]`` form (test[0]=='CMD') and the
-    ``["CMD-SHELL", "curl url"]`` form (the URL lives in test[1])."""
     out: list[tuple[str, str]] = []
     for name, body in services.items():
         hc = body.get("healthcheck") or {}
@@ -554,15 +457,6 @@ def test_console_next_runtime_removed_from_compose_and_release():
 
 
 def test_no_healthcheck_uses_localhost_string():
-    """The localhost bug applies to every wget/curl-based healthcheck
-    that addresses ``localhost``. Defensively assert ZERO usage across
-    both compose files so a future copy-paste can't reintroduce the
-    regression for a different service.
-
-    Note: this guard explicitly only audits healthcheck ``test`` strings.
-    Browser-visible AWS URLs are covered separately so production never
-    falls back to localhost.
-    """
     bad: list[str] = []
     for path in (
         REPO / "infra/docker-compose.yml",
@@ -582,7 +476,6 @@ def test_no_healthcheck_uses_localhost_string():
 
 
 def test_aws_compose_does_not_default_public_urls_to_localhost():
-    """AWS browser-visible URLs must come from deploy env, never localhost."""
     src = AWS.read_text(encoding="utf-8")
     assert "localhost" not in src, (
         "AWS compose must not contain localhost fallbacks. Public URLs "

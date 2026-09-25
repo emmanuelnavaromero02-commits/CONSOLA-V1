@@ -27,9 +27,6 @@ class SurfaceSnapshot:
     diagnostics: tuple[Mapping[str, object], ...]
     sources: tuple[Mapping[str, object], ...]
     installations: tuple[Mapping[str, object], ...]
-    # Mission 5: narratives of attested monitor alerts, keyed by item id. Kept
-    # beside the items rather than inside them, so narrative text can never
-    # take part in an item's eligibility or observation checks.
     narratives: Mapping[str, Mapping[str, object]] = field(default_factory=dict)
 
 
@@ -82,9 +79,6 @@ async def collect_surface_snapshot(
         item_projector=project_business_item,
     )
     live_items = _rows(payload.get("items"))
-    # Mission 5: attested scheduled-monitor alerts are not Gold rows, so the
-    # live collection above never produces them. They join the same snapshot
-    # and pass the same scope validation below.
     monitor_alerts = await load_attested_monitor_alerts(user)
     live_ids = {str(item.get("id") or "") for item in live_items}
     monitor_items = tuple(

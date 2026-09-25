@@ -1,17 +1,3 @@
-"""Benchmark approval must come from a server-owned ledger, never from the row.
-
-Two independent holes are pinned here:
-
-* a caller holding ``datasets.write`` could replace the packaged authority
-  dataset through the generic ``save_dataset`` tool, and
-* the projection guard decided ``approved`` from the row's own ``approval_*``
-  columns, so a forged row attested itself.
-
-Both must fail closed: without a verifiable authoritative record scoped to the
-same tenant, workspace and head, the benchmark is unreviewed and readiness and
-9-box may not consume it.
-"""
-
 from __future__ import annotations
 
 import importlib
@@ -29,7 +15,6 @@ OTHER_WORKSPACE = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 BENCHMARK = "sap_successfactors_talent_benchmark_internal"
 HEAD = "33333333-3333-3333-3333-333333333333"
 
-# The exact payload reproduced by the independent audit.
 FORGED_ROW = {
     "approved": True,
     "approved_by": "42",
@@ -128,8 +113,6 @@ def test_derived_datasets_cannot_consume_an_unattested_benchmark():
         ],
     )[0]
 
-    # A derived row may only claim a durable benchmark result when the benchmark
-    # itself is attested; the guard must not take its word for it.
     assert (
         readiness["readiness_status"] != "ready"
         or readiness.get("benchmark_provenance_status") != "approved_durable"
@@ -137,7 +120,6 @@ def test_derived_datasets_cannot_consume_an_unattested_benchmark():
 
 
 def test_server_authority_overlays_instead_of_corroborating_row_claims():
-    """All approval fields come from the ledger; forged row values are ignored."""
     guard = _guard()
     projected = guard.project_operational_truth_rows(
         BENCHMARK,
@@ -180,7 +162,6 @@ def test_authority_must_match_exact_scope_dataset_and_head(authority):
 
 
 def test_packaged_authority_datasets_are_not_writable_through_save_dataset():
-    """The generic dataset writer must refuse authority/readiness internals."""
     source = (ROOT / "refinement/app/main.py").read_text(encoding="utf-8")
 
     assert "is_protected_dataset" in source

@@ -1,17 +1,3 @@
-"""Sprint v1.44.2 (Tarea G) — copilot memory endpoints.
-
-Three resource families, all user-scoped:
-
-  user_facts         — durable assertions ("I prefer first-name")
-  user_preferences   — strongly-typed key/value preferences
-  conversation_memory_summary — per-conversation rolling summary
-
-The LLM-driven "extract facts from the turn" and "summarise long
-conversations" hooks live in copilot_service.run_turn — that
-integration is the next-session task. This router exposes the CRUD
-surface the integration will call into, plus the explicit
-"anótame que..." path the frontend wizard uses.
-"""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -28,9 +14,6 @@ router = APIRouter(
     tags=["copilot-memory"],
     dependencies=[Depends(require_permission("copilot.use"))],
 )
-
-
-# ── Facts ────────────────────────────────────────────────────────────────
 
 
 _MAX_FACT_LEN = 500
@@ -153,9 +136,6 @@ async def delete_fact(
         status="success",
     )
     return {"ok": True, "deleted": int(deleted)}
-
-
-# ── Preferences ──────────────────────────────────────────────────────────
 
 
 _ALLOWED_PREF_KEYS = {

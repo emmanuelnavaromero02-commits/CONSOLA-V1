@@ -1,10 +1,3 @@
-"""Sprint v1.42 — /api/copilot/* router tests.
-
-We mount the router on a bare FastAPI app, override
-``require_authenticated`` and the CSRF dependency, and patch
-``copilot_service`` with stubs so we can observe routing, dependency
-gating and CSRF + auth enforcement.
-"""
 from __future__ import annotations
 
 import sys
@@ -32,15 +25,6 @@ def copilot_router():
 
 
 def _make_app(mod, *, user=None, bypass_csrf=True):
-    """Mount router with auth + (optionally) CSRF bypassed.
-
-    The router-level dependency uses ``require_permission("copilot.use")``
-    which reads ``request.state.user`` (an upstream auth middleware
-    populates this in production). We mimic that by installing a tiny
-    middleware here so the permission check passes for the injected
-    user; otherwise every route 401s before ``require_authenticated``
-    even runs.
-    """
     from starlette.middleware.base import BaseHTTPMiddleware
 
     from app.dependencies import require_authenticated
@@ -119,8 +103,6 @@ def test_list_conversations_filters_by_user(copilot_router):
 
 
 def test_send_message_requires_csrf(copilot_router):
-    """Without the CSRF token (production path), POSTing a message must
-    be rejected at the dependency level — never reach the service."""
     from app.dependencies import require_authenticated
 
     api = FastAPI()
@@ -128,7 +110,6 @@ def test_send_message_requires_csrf(copilot_router):
     api.dependency_overrides[require_authenticated] = lambda: {
         "id": 7, "email": "u@example.com", "role": "admin",
     }
-    # Do NOT bypass CSRF here.
     invoked = []
     async def fake_run_turn(**kw):
         invoked.append(kw)
@@ -140,7 +121,7 @@ def test_send_message_requires_csrf(copilot_router):
         json={"message": "hola"},
     )
     assert r.status_code in (401, 403)
-    assert invoked == []  # service was NOT called
+    assert invoked == []
 
 
 def test_send_message_passes_ip_and_user_agent(copilot_router):
@@ -161,7 +142,6 @@ def test_send_message_passes_ip_and_user_agent(copilot_router):
     assert captured["conversation_id"] == "c1"
     assert captured["user_message"] == "hola"
     assert captured["user"]["id"] == 7
-    # TestClient uses 'testclient' as the host name; user_agent passes through.
     assert captured["user_agent"] == "test-agent/1.0"
     assert captured["ip"] is not None
 
@@ -257,8 +237,6 @@ def test_stream_message_happy_path_emits_sse_and_audits(copilot_router):
 def test_get_conversation_returns_only_owner_messages(copilot_router):
     api = _make_app(copilot_router, user={"id": 1, "role": "admin"})
     async def fake_get(*, conversation_id, user):
-        # The router must hand the same user dict to the service so the
-        # service's ownership check runs against the requesting user.
         assert user["id"] == 1
         return {"messages": []}
     copilot_router.copilot_service.get_conversation_messages = fake_get

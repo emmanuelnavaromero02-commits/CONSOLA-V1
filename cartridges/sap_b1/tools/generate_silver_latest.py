@@ -1,4 +1,3 @@
-"""Generate datasets/sap_b1_<entity>_latest.sql from entities.yaml (run."""
 from __future__ import annotations
 
 import pathlib

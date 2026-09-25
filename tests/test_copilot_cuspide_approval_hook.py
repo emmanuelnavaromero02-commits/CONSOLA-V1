@@ -1,17 +1,3 @@
-"""Sprint v1.45 cúspide — verify the approve_pending_action hook
-records a lesson via lessons_service.
-
-The full ``approve_pending_action`` flow requires a Postgres pool and
-the LLM chain; we don't reproduce that here. Instead we directly test
-the hook contract: when ``entries`` carry an approved destructive tool
-call, ``record_lesson_from_approval`` must fire once per entry with
-the right arguments.
-
-To stay inside the unit-test boundary, we extract the hook block by
-calling ``record_lesson_from_approval`` ourselves with the same args
-the modified ``approve_pending_action`` passes, then assert on the
-resulting lesson row (via FakePool).
-"""
 from __future__ import annotations
 
 import asyncio
@@ -68,13 +54,12 @@ class FakePool:
 def test_record_lesson_from_approval_writes_expected_row(lessons_mod, monkeypatch):
     fake = FakePool()
     fake._fetchval_queue = [
-        "copilot_lessons",  # _has_table OK
-        None,               # dedupe lookup → none
+        "copilot_lessons",
+        None,
     ]
     fake._fetchrow_queue = [FakeRecord(id="lesson-from-approval")]
     monkeypatch.setattr(lessons_mod.auth, "pool", AsyncMock(return_value=fake))
 
-    # Simulate the contract used inside copilot_service.approve_pending_action.
     out = asyncio.run(
         lessons_mod.record_lesson_from_approval(
             user_id=42,
@@ -108,13 +93,10 @@ def test_record_lesson_from_decline_writes_expected_row(lessons_mod, monkeypatch
 def test_record_lesson_from_approval_idempotent_within_dedupe_window(
     lessons_mod, monkeypatch,
 ):
-    """The dedupe lookup returns an existing row → same id returned, no
-    new INSERT issued. This protects the approve flow against double-
-    POST hammering the lessons table."""
     fake = FakePool()
     fake._fetchval_queue = [
         "copilot_lessons",
-        "previous-lesson-id",  # dedupe hit
+        "previous-lesson-id",
     ]
     monkeypatch.setattr(lessons_mod.auth, "pool", AsyncMock(return_value=fake))
 

@@ -1,12 +1,3 @@
-"""Mission 5: the public projection of a monitor alert's narrative.
-
-Every string passes the same ``visible_business_copy`` gate as the fact's title
-(the Mission 2 sanitizer that closed the ``base_currency`` leak class), and the
-narrative is dropped rather than published half-sanitized when a required part
-does not survive. A limitation is never silently dropped: one that cannot be
-published as written is replaced by the generic limitation note.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping

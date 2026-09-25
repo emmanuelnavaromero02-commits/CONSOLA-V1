@@ -545,7 +545,6 @@ def test_compose_lock_rejects_build_tag_and_extra_consumer(
 def test_compose_lock_accepts_the_infrastructure_mirrors_hosted_in_the_namespace(
     tmp_path: Path, identity: ReleaseIdentity
 ) -> None:
-    """MinIO is rebuilt from source and hosted next to the release images (its publisher withdrew it)."""
     owner = identity.owner
     result = _run_compose_lock(
         tmp_path,

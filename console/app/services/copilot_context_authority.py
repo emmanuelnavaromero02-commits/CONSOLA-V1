@@ -1,5 +1,3 @@
-"""Authorization and scoped persistence for shared Copilot context state."""
-
 from __future__ import annotations
 
 from datetime import datetime
@@ -23,19 +21,16 @@ def _require(user: dict[str, Any], *required: str) -> None:
 
 
 def require_refresh(user: dict[str, Any]) -> None:
-    """Authorize a workspace-global refresh before any collector or SQL."""
 
     _require(user, "operations.read", "control_room.write")
 
 
 def require_recommendation_write(user: dict[str, Any]) -> None:
-    """Authorize shared recommendation mutation before any SQL."""
 
     _require(user, "control_room.write")
 
 
 def require_declared_permission(user: dict[str, Any], required: Any) -> None:
-    """Revalidate the permission stored on a locked recommendation row."""
 
     value = str(required or "").strip()
     if value:

@@ -96,7 +96,6 @@ def _resolve_server_copy(
     *,
     _registry: Mapping[tuple[object, str, str], object] | None = None,
 ) -> str | None:
-    """Resolve an opaque server capability at one exact public position."""
 
     if isinstance(copy_id, (str, bytes, int, float, bool)) or copy_id is None:
         return None

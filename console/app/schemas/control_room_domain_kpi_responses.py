@@ -1,19 +1,8 @@
-"""Public response schemas for the Finance / Operations / Risk KPI views.
-
-These allowlist models are the projection boundary between the aggregate
-payloads (``app.services.control_room.domain_kpis``) and what the internal
-read bridge hands to mcp-infra and, through it, to the LLM. Anything not
-declared here is dropped; strings still go through the public copy filters.
-"""
-
 from __future__ import annotations
 
 from pydantic import Field
 
 from app.schemas.control_room_public_projection import PublicProjectionModel
-
-
-# ── shared ──────────────────────────────────────────────────────────────────
 
 
 class KpiEvidenceFilters(PublicProjectionModel):
@@ -66,9 +55,6 @@ class DomainKpisBase(PublicProjectionModel):
     notes: list[str] = Field(default_factory=list)
     unavailable_metrics: list[str] = Field(default_factory=list)
     degraded_metrics: list[str] = Field(default_factory=list)
-
-
-# ── finance ─────────────────────────────────────────────────────────────────
 
 
 class ProjectHoursRow(PublicProjectionModel):
@@ -151,9 +137,6 @@ class FinanceMetrics(PublicProjectionModel):
 
 class ControlRoomFinanceKpisResponse(DomainKpisBase):
     metrics: FinanceMetrics = Field(default_factory=FinanceMetrics)
-
-
-# ── operations ──────────────────────────────────────────────────────────────
 
 
 class RunTotals(PublicProjectionModel):
@@ -245,9 +228,6 @@ class OperationsMetrics(PublicProjectionModel):
 
 class ControlRoomOperationsKpisResponse(DomainKpisBase):
     metrics: OperationsMetrics = Field(default_factory=OperationsMetrics)
-
-
-# ── risk ────────────────────────────────────────────────────────────────────
 
 
 class DepartmentRiskRow(PublicProjectionModel):

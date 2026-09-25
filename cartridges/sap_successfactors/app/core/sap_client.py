@@ -1,12 +1,3 @@
-"""
-SAP SuccessFactors OData v2 client.
-
-Auth: OAuth2 client_credentials per SAP docs:
-  https://help.sap.com/docs/successfactors-platform/sap-successfactors-platform/oauth-token-authentication
-
-If credentials are missing the client REFUSES to fetch and returns a
-structured "degraded" error - it never invents data.
-"""
 from __future__ import annotations
 
 import logging
@@ -30,8 +21,6 @@ from app.core.settings_proxy import get_setting
 from app.core.vault_client import _candidate_fields, get_connection_for_worker, get_secret_for_worker
 
 logger = logging.getLogger(__name__)
-# urllib3 retry logger is noisy by default; INFO surfaces retries
-# without flooding DEBUG output during normal operation.
 logging.getLogger("urllib3.util.retry").setLevel(logging.INFO)
 
 CLIENT_CREDENTIALS_AUTH_METHODS = {"oauth2", "oauth2_client_credentials", "client_credentials"}
@@ -100,12 +89,6 @@ def _get_setting_or_env(key: str, *, default: str = "", env_fallback: str | None
 
 
 def _successfactors_idp_private_key_payload(private_key_text: str) -> str:
-    """Return the private_key form expected by SuccessFactors /oauth/idp.
-
-    The endpoint expects the raw base64 key body on one line. Users commonly
-    paste a full PEM block into Vault; preserve already-raw values while
-    stripping PEM armor and whitespace when present.
-    """
     text = _normalize_config_value(private_key_text)
     if "-----BEGIN " in text or "-----END " in text:
         text = _PEM_ARMOR_RE.sub("", text)
@@ -113,13 +96,6 @@ def _successfactors_idp_private_key_payload(private_key_text: str) -> str:
 
 
 def _normalize_odata_base_url(base_url: str) -> str:
-    """Return the SuccessFactors OData v2 service root.
-
-    Vault connections often store the tenant host root
-    (https://apiXX.sales.successfactors.com). The OData metadata and entity
-    APIs live under /odata/v2; preserve already-explicit paths so custom
-    deployments are not rewritten unexpectedly.
-    """
     url = _normalize_config_value(base_url).rstrip("/")
     if not url:
         return ""
@@ -132,24 +108,7 @@ def _normalize_odata_base_url(base_url: str) -> str:
     return url
 
 
-
-# Sprint v1.17: shared by the 3 SAP cartridges (no shared lib between
-# cartridges → copied textually into each). Exponential backoff for
-# transient errors so a 429 from a busy SAP mandant or a 503 during
-# maintenance no longer kills the whole extraction DAG.
-#
-# Backoff schedule with the defaults: sleep before retry N is
-#   backoff_factor * (2 ** (N - 1)) seconds
-# i.e. 2s, 4s, 8s between attempts. urllib3 honors any `Retry-After`
-# header the upstream returns and overrides the exponential schedule
-# when one is present (respect_retry_after_header=True).
 def _make_retry_session(max_retries: int = 3, backoff_factor: float = 2.0) -> requests.Session:
-    """Return a requests.Session with exponential backoff for transient errors.
-
-    Retries on 429 (rate limit), 500/502/503/504 (gateway). Sleeps are
-    backoff_factor * (2 ** (n-1)) seconds between attempts: 2s, 4s, 8s
-    with the defaults. Respects Retry-After header automatically.
-    """
     retry = Retry(
         total=max_retries,
         backoff_factor=backoff_factor,
@@ -161,19 +120,11 @@ def _make_retry_session(max_retries: int = 3, backoff_factor: float = 2.0) -> re
     return guarded_session(retries=retry)
 
 
-
 class SAPClientError(RuntimeError):
     pass
 
 
 class ODataRequestError(SAPClientError):
-    """Safe, typed failure for one OData entity request.
-
-    Only the status and whether the rejected request carried ``$filter`` are
-    retained for downstream policy decisions.  The response body, request URL,
-    query values, connection id and direct identifiers are intentionally not
-    attributes of this exception.
-    """
 
     def __init__(
         self,
@@ -262,12 +213,10 @@ class CartridgeCircuitBreaker:
 
 
 class SapSfClient:
-    """SuccessFactors OData v2 client with OAuth2 auth variants."""
 
     CARTRIDGE_ID = "sap_successfactors"
     REQUIRED_ENV = ("sf_base_url", "sf_client_id", "sf_client_secret", "sf_token_url", "sf_company_id")
 
-    # Sprint v1.17: exponential-retry session config (see _make_retry_session).
     _RETRY_MAX = 3
     _RETRY_BACKOFF_FACTOR = 2.0
 
@@ -302,9 +251,6 @@ class SapSfClient:
             return ""
 
         def worker_secret(env_var_name: str) -> str:
-            # An explicit Vault connection is selected by the user and must win
-            # over container-level defaults such as SF_AUTH_METHOD. Those env
-            # defaults remain the fallback for legacy/default flows.
             if self._conn_id:
                 value = vault_connection_secret(env_var_name)
                 if value:
@@ -445,9 +391,6 @@ class SapSfClient:
         self._token: str | None = None
         self._token_expires_at = 0.0
 
-    # ------------------------------------------------------------------
-    # Configuration / introspection
-    # ------------------------------------------------------------------
 
     @staticmethod
     def _select_saml_subject(
@@ -573,9 +516,6 @@ class SapSfClient:
                 f"auth_method={self.auth_method}"
             )
 
-    # ------------------------------------------------------------------
-    # OAuth2
-    # ------------------------------------------------------------------
 
     @staticmethod
     def _derive_idp_url(token_url: str) -> str:
@@ -845,9 +785,6 @@ class SapSfClient:
         suffix = f" -> Respuesta del servidor {status_code}" if status_code is not None else ""
         logger.warning("%s%s", auth_trace(method, header_names), suffix)
 
-    # ------------------------------------------------------------------
-    # Connectivity
-    # ------------------------------------------------------------------
 
     def test_connection(self) -> dict[str, Any]:
         status = self.configuration_status()
@@ -931,12 +868,6 @@ class SapSfClient:
             }
 
     def fetch_metadata_xml(self) -> str:
-        """Return the live OData $metadata document.
-
-        This is intentionally a low-level helper: callers decide which
-        entities/fields matter for their domain preflight. It uses the same
-        auth/circuit-breaker path as ``test_connection`` and never logs secrets.
-        """
         self._require_configured()
         try:
             CartridgeCircuitBreaker.before_request()
@@ -966,7 +897,6 @@ class SapSfClient:
 
     @staticmethod
     def parse_metadata_entities(metadata_xml: str) -> dict[str, set[str]]:
-        """Parse OData CSDL into ``{entity_or_set_name: {field_names}}``."""
         if not metadata_xml or not metadata_xml.strip():
             raise SAPClientError("SuccessFactors $metadata response is empty")
         try:
@@ -997,9 +927,6 @@ class SapSfClient:
     def metadata_entities(self) -> dict[str, set[str]]:
         return self.parse_metadata_entities(self.fetch_metadata_xml())
 
-    # ------------------------------------------------------------------
-    # Discovery (uses local catalog as the source of truth)
-    # ------------------------------------------------------------------
 
     def list_tables(self) -> list[dict[str, Any]]:
         from app.services.catalog_service import get_all_entities
@@ -1020,9 +947,6 @@ class SapSfClient:
             "watermark_field": cfg.get("watermark_field"),
         }
 
-    # ------------------------------------------------------------------
-    # Fetch
-    # ------------------------------------------------------------------
 
     def fetch_entity(
         self,
@@ -1034,7 +958,6 @@ class SapSfClient:
         from_date: str | None = None,
         to_date: str | None = None,
     ) -> list[dict[str, Any]]:
-        """OData v2 GET with pagination. Refuses to run if not configured."""
         self._require_configured()
 
         params: dict[str, Any] = {
@@ -1091,9 +1014,6 @@ class SapSfClient:
                 suffix = f" HTTP {status}" if status else ""
                 raise SAPClientError(f"successfactors_request_failed{suffix}") from exc
 
-        # Raise outside the requests exception handler so the safe typed error
-        # does not retain the HTTPError/Response as cause or context. Those
-        # objects may contain the full URL, query, response body and auth data.
         if safe_request_error is not None:
             raise safe_request_error
 

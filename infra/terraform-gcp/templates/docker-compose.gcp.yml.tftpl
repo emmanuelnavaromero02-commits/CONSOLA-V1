@@ -14,9 +14,6 @@ x-gcp-lakehouse-env: &gcp-lakehouse-env
   GCS_SECRET_ACCESS_KEY: $${GCS_SECRET_ACCESS_KEY:-}
   LAKEHOUSE_ACCESS_KEY: $${LAKEHOUSE_ACCESS_KEY:-}
   LAKEHOUSE_SECRET_KEY: $${LAKEHOUSE_SECRET_KEY:-}
-  # Generic AWS credentials never enter GCP application containers. The
-  # optional SES inbox requires dedicated SES_INBOX_AWS_* credentials and is
-  # disabled until those are provisioned by a separate release.
   AWS_ACCESS_KEY_ID: ""
   AWS_SECRET_ACCESS_KEY: ""
   AWS_SESSION_TOKEN: ""
@@ -101,9 +98,6 @@ services:
       AIRFLOW_VAR_GCS_BUCKET: $${GCS_BUCKET:-}
       AIRFLOW_VAR_LAKEHOUSE_BUCKET: $${LAKEHOUSE_BUCKET:-}
       AIRFLOW_VAR_S3_BUCKET: $${S3_BUCKET_NAME:-}
-      # The base Compose file still needs its local MinIO credentials, but a
-      # GCP Airflow process must not receive them through the AIRFLOW_VAR_*
-      # back door. Provider-aware DAGs use the GCS variables above.
       AIRFLOW_VAR_MINIO_BUCKET: ""
       AIRFLOW_VAR_MINIO_ENDPOINT: ""
       AIRFLOW_VAR_MINIO_ACCESS_KEY: ""

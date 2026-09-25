@@ -862,10 +862,6 @@ async def test_sap_successfactors_talent_9box_roster_masks_people(monkeypatch):
 async def test_talent_performance_entity_available_when_performance_present(
     monkeypatch,
 ):
-    """GATE 1 (Opcion 3): con performance_score presente pero competency/aspiration
-    ausentes (cpa_status='insufficient_data', ready_cpa=0), la entidad Performance deja
-    de estar 'blocked' y pasa a 'available' (Desempeno disponible - Potencial pendiente).
-    Competencia y Aspiracion permanecen bloqueadas; no se fabrica fit ni tono verde."""
 
     async def fake_rows(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
         if dataset == "sap_successfactors_talent_cpa_scores":
@@ -895,23 +891,19 @@ async def test_talent_performance_entity_available_when_performance_present(
     )
     entities = {entity["id"]: entity for entity in readiness["entities"]}
 
-    # Performance ya no aparece bloqueado; pasa a 'available' y NUNCA a 'ready' (verde exige C/P/A).
     assert entities["performance"]["status"] == "available"
     assert entities["performance"]["status"] != "ready"
     assert any(
         "Potencial pendiente" in str(blocker)
         for blocker in entities["performance"]["blockers"]
     )
-    # Competencia y Aspiracion permanecen bloqueadas.
     assert entities["competency"]["status"] == "blocked"
     assert entities["aspiration"]["status"] == "blocked"
-    # ready_cpa == 0 aqui: no hay empleados con C/P/A completo, no se fabrica fit_score.
     assert readiness["summary"]["cpa_ready_employees"] == 0
 
 
 @pytest.mark.asyncio
 async def test_talent_performance_entity_stays_blocked_without_performance(monkeypatch):
-    """Sin performance_score en ninguna fila, Performance sigue 'blocked' (sin regresion)."""
 
     async def fake_rows(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
         if dataset == "sap_successfactors_talent_cpa_scores":
@@ -938,21 +930,17 @@ async def test_talent_performance_entity_stays_blocked_without_performance(monke
 
 
 def test_talent_performance_band_reuses_current_cuts():
-    """Opcion 1: banda real desde performance_score con los cortes actuales (0-5: >=4/>=3).
-    Nunca proxy. None sin desempeno."""
     pb = control_room_service._sf_talent_performance_band
     assert pb(4.5) == "high"
     assert pb(3.2) == "medium"
     assert pb(2.0) == "low"
-    assert pb(90) == "high"  # escala 0-100 -> /20 = 4.5
-    assert pb(64) == "medium"  # 64/20 = 3.2
+    assert pb(90) == "high"
+    assert pb(64) == "medium"
     assert pb(None) is None
     assert pb("") is None
 
 
 def test_talent_roster_row_desempeno_disponible_and_separation():
-    """Desempeno disponible = desempeno real presente + Potencial pendiente. Fit no se infiere
-    (queda insufficient_data mientras fit_score sea NULL)."""
     row_perf = {
         "user_id": "1",
         "performance_score": 4.4,
@@ -980,14 +968,13 @@ def test_talent_roster_row_desempeno_disponible_and_separation():
     masked_perf = control_room_service._sf_talent_masked_roster_row(row_perf)
     assert masked_perf["performance_band_available"] == "high"
     assert masked_perf["desempeno_disponible"] is True
-    assert masked_perf["fit_band"] == "insufficient_data"  # Fit no inferido
+    assert masked_perf["fit_band"] == "insufficient_data"
     assert (
         control_room_service._sf_talent_masked_roster_row(row_noperf)[
             "desempeno_disponible"
         ]
         is False
     )
-    # Con C/P/A completo (potencial no pendiente) no entra a la cohorte.
     assert (
         control_room_service._sf_talent_masked_roster_row(row_full)[
             "desempeno_disponible"
@@ -997,7 +984,6 @@ def test_talent_roster_row_desempeno_disponible_and_separation():
 
 
 def test_talent_roster_row_band_compute_fallback_without_gold_column():
-    """Si el gold aun no trae performance_band_available, se calcula desde performance_score."""
     row = {
         "user_id": "9",
         "performance_score": 4.6,
@@ -1006,7 +992,7 @@ def test_talent_roster_row_band_compute_fallback_without_gold_column():
     }
     masked = control_room_service._sf_talent_masked_roster_row(row)
     assert masked["performance_band_available"] == "high"
-    assert masked["desempeno_disponible"] is True  # perf presente + cpa insuficiente
+    assert masked["desempeno_disponible"] is True
 
 
 def test_talent_desempeno_cohort_counts_bands_and_sorts():
@@ -1041,9 +1027,9 @@ def test_talent_desempeno_cohort_counts_bands_and_sorts():
         },
     ]
     cohort = control_room_service._sf_talent_desempeno_cohort(rows)
-    assert cohort["count"] == 2  # rows 1 y 2 (3 sin perf, 4 potencial no pendiente)
+    assert cohort["count"] == 2
     assert cohort["band_counts"] == {"high": 1, "medium": 1, "low": 0}
-    assert cohort["roster"][0]["performance_band_available"] == "high"  # orden desc
+    assert cohort["roster"][0]["performance_band_available"] == "high"
 
 
 @pytest.mark.asyncio
@@ -1098,11 +1084,8 @@ async def test_talent_9box_payload_exposes_desempeno_cohort(monkeypatch):
     assert cohort["roster"][0]["performance_band_available"] == "high"
 
 
-# Keep assert messages lazy; Ruff 0.6.9 otherwise rewrites their evaluation order.
 # fmt: off
 def test_desempeno_module_rewired_to_real_performance_not_compensation():
-    """Etapa 1 (Trabajo 1): el modulo Desempeno consume el dataset REAL de performance
-    (talent_cpa_scores), no el stub de compensacion; Compensacion es un modulo SEPARADO."""
     from app.services.control_room.core import MODULES
 
     perf = next(
@@ -1126,10 +1109,6 @@ def test_desempeno_module_rewired_to_real_performance_not_compensation():
 
 
 def test_no_module_mixes_compensation_and_performance():
-    """Invariante anti-mezcla: ningun modulo tiene a la vez dataset de compensacion y de
-    performance; compensation_distribution lo consume exactamente un modulo; y la separacion
-    de term-match del frontend se conserva (Desempeno no matchea terminos de compensacion,
-    y viceversa)."""
     from app.services.control_room.core import MODULES
 
     comp_consumers = 0
@@ -3939,4 +3918,3 @@ async def test_false_positive_alert_dismisses_item_and_removes_alert():
     assert audit_event.await_args.kwargs["connection"] is mock_pool
 
 
-# --- Fase 3 P0: Workforce Trends (fuente unica) ------------------------------

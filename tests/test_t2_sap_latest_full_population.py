@@ -1,20 +1,3 @@
-"""T2 — los Silver `_latest` de SAP ya no pierden datos con incrementales.
-
-El bug (auditoría 2026-08-17, crítico): 18 datasets `_latest` de sap_hcm y
-sap_s4hana filtraban `WHERE load_date = MAX(load_date)` mientras su entidad
-fuente opera en mode:incremental — la primera corrida incremental posterior al
-full load colapsaba el Silver al delta del día (pérdida silenciosa del
-maestro). El arreglo: estado actual por clave de negocio sobre TODO el
-histórico bronze (ROW_NUMBER por identidad, load_date DESC + watermark DESC).
-
-Esta suite lo demuestra HERMÉTICAMENTE con DuckDB real: construye un bronze
-sintético (full + delta), ejecuta el SQL REAL del dataset (con las rutas s3
-sustituidas por locales) y verifica: población completa, versión más nueva por
-clave, y que el patrón viejo habría perdido filas. Además, un guardián de
-contrato: ningún `_latest` alimentado por entidad incremental puede volver a
-usar MAX(load_date); los full-snapshot lo conservan (deduplicar su histórico
-resucitaría filas borradas — el bug inverso).
-"""
 from __future__ import annotations
 
 import glob
@@ -58,15 +41,13 @@ def _emp(pernr: str, begda: str, kostl: str, aedtm: str) -> dict:
 
 
 def test_employeemaster_full_plus_delta_keeps_whole_population(tmp_path):
-    """5 empleados en el full + delta de 2 (1 actualizado, 1 nuevo) = 6 filas
-    con la versión más nueva; el patrón viejo habría dejado SOLO 2."""
     con = duckdb.connect()
     root = tmp_path / "raw" / "sap_hcm" / "EmployeeMaster"
     full = [_emp(f"E{i}", "2020-01-01", f"CC{i}", "2026-07-01") for i in range(1, 6)]
     _write_parquet(con, full, root / "load_date=2026-08-01" / "data.parquet")
     delta = [
-        _emp("E3", "2020-01-01", "CC3-NUEVO", "2026-08-14"),  # actualizado
-        _emp("E6", "2026-08-10", "CC6", "2026-08-14"),        # alta nueva
+        _emp("E3", "2020-01-01", "CC3-NUEVO", "2026-08-14"),
+        _emp("E6", "2026-08-10", "CC6", "2026-08-14"),
     ]
     _write_parquet(con, delta, root / "load_date=2026-08-15" / "data.parquet")
 
@@ -83,7 +64,6 @@ def test_employeemaster_full_plus_delta_keeps_whole_population(tmp_path):
         "los no tocados por el delta sobreviven"
     )
 
-    # El patrón viejo (solo la última partición) habría perdido el maestro:
     viejo = con.execute(
         f"""SELECT COUNT(*) FROM read_parquet('{(root / '**/*.parquet').as_posix()}',
             hive_partitioning=true, union_by_name=true)
@@ -94,13 +74,10 @@ def test_employeemaster_full_plus_delta_keeps_whole_population(tmp_path):
 
 
 def test_effective_dated_slices_are_distinct_rows(tmp_path):
-    """EmployeeMaster es effective-dated: dos vigencias del MISMO empleado son
-    dos filas (Pernr+Begda), no una — el dedupe no debe fusionarlas."""
     con = duckdb.connect()
     root = tmp_path / "raw" / "sap_hcm" / "EmployeeMaster"
     _write_parquet(con, [_emp("E1", "2020-01-01", "CC-A", "2026-07-01")],
                    root / "load_date=2026-08-01" / "data.parquet")
-    # Delta: nueva vigencia (traslado) — la anterior sigue siendo historia válida.
     _write_parquet(con, [_emp("E1", "2026-08-10", "CC-B", "2026-08-14")],
                    root / "load_date=2026-08-15" / "data.parquet")
     sql = _dataset_sql("sap_hcm", "sap_hcm_employeemaster_latest", tmp_path)
@@ -109,8 +86,6 @@ def test_effective_dated_slices_are_distinct_rows(tmp_path):
 
 
 def test_salesorderitem_composite_key_dedupe(tmp_path):
-    """Clave compuesta (SalesOrder+SalesOrderItem): el delta actualiza un
-    ítem sin borrar los demás ítems de la orden."""
     con = duckdb.connect()
     root = tmp_path / "raw" / "sap_s4hana" / "SalesOrderItem"
 
@@ -139,8 +114,6 @@ def test_salesorderitem_composite_key_dedupe(tmp_path):
 
 
 def test_contract_no_incremental_latest_uses_max_load_date():
-    """Guardián: incremental → prohibido MAX(load_date); full → lo conserva
-    (deduplicar histórico de snapshots resucitaría filas borradas)."""
     for cart in ("sap_hcm", "sap_s4hana"):
         cfg = yaml.safe_load(
             (REPO_ROOT / "cartridges" / cart / "app" / "config" / "entities.yaml")
@@ -150,7 +123,6 @@ def test_contract_no_incremental_latest_uses_max_load_date():
         for path in glob.glob(str(REPO_ROOT / "cartridges" / cart / "datasets" / "*_latest.sql")):
             raw = Path(path).read_text(encoding="utf-8")
             m = re.search(r'sources: \["raw/' + cart + r'/([A-Za-z0-9_]+)"\]', raw)
-            # El contrato aplica al SQL EJECUTABLE, no a los comentarios.
             src = "\n".join(
                 line.split("--", 1)[0] for line in raw.splitlines()
             )

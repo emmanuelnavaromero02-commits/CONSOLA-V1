@@ -1,10 +1,3 @@
-"""Shared policy helpers for AI-driven tool execution.
-
-Copilot and Agents both receive tool calls from an LLM. This module keeps the
-server-side rules in one place: classify risk, map risk to permission, scrub
-arguments, validate model-supplied input, and detect obvious prompt-injection
-attempts before a tool can run.
-"""
 from __future__ import annotations
 
 import json
@@ -29,7 +22,6 @@ SECRET_KEYS = frozenset({
 BACKEND_CONTEXT_KEYS = frozenset({
     "security_context", "user_context", "_trusted_admin",
     "_server_trusted_context",
-    # Mission 5: server-only parameters of mcp-infra's alert writer.
     "_server_metadata_patch", "_server_event_kind", "_server_event_metadata",
 })
 
@@ -48,7 +40,7 @@ _PROMPT_INJECTION_RE = re.compile(
 
 
 class ToolPolicyError(ValueError):
-    """Raised when a tool call violates shared AI execution policy."""
+    pass
 
 
 def classify(tool_name: str) -> dict[str, Any]:

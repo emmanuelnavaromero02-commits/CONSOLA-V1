@@ -222,8 +222,6 @@ export function AppChrome({ children }: { children: ReactNode }) {
     staleTime: 60_000,
   });
 
-  // Refs for the mobile-drawer accessibility plumbing
-  // (focus management on open + restoration on close).
   const hamburgerRef = useRef<HTMLButtonElement | null>(null);
   const drawerCloseRef = useRef<HTMLButtonElement | null>(null);
 
@@ -247,16 +245,12 @@ export function AppChrome({ children }: { children: ReactNode }) {
     applyThemePreference(readThemePreference());
   }, [email]);
 
-  // Mobile drawer accessibility — focus the close button on
-  // open, restore focus to the hamburger on close, lock body
-  // scroll, and handle Escape. (Frontend Round-1 P0.)
   useEffect(() => {
     if (!mobileOpen) return;
 
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
 
-    // Defer focus so the drawer is mounted.
     const focusTimer = window.setTimeout(() => {
       drawerCloseRef.current?.focus();
     }, 0);
@@ -271,7 +265,6 @@ export function AppChrome({ children }: { children: ReactNode }) {
       window.clearTimeout(focusTimer);
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = previousOverflow;
-      // Restore focus to the hamburger that opened the drawer.
       opener?.focus();
     };
   }, [mobileOpen]);
@@ -368,9 +361,6 @@ export function AppChrome({ children }: { children: ReactNode }) {
         </div>
       </header>
 
-      {/* Mobile drawer — slides from the LEFT so it matches the
-          hamburger button's position. Round 1 P1 fixed the
-          drawer-on-right vs hamburger-on-left mismatch. */}
       {mobileOpen ? (
         <div
           role="dialog"

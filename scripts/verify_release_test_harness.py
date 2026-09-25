@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Verify the complete release-test harness against a reviewed full-file seal."""
 
 from __future__ import annotations
 

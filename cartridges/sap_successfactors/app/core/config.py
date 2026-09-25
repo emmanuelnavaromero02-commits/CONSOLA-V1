@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-try:  # Airflow runs the DAGs without the cartridge web dependency set.
+try:
     from pydantic import Field
     from pydantic_settings import BaseSettings, SettingsConfigDict
 except ModuleNotFoundError:  # pragma: no cover - exercised by source-level tests.
@@ -17,7 +17,6 @@ if BaseSettings is not None:
     class Settings(BaseSettings):
         app_name: str = "sap_successfactors"
 
-        # SAP SuccessFactors OAuth2 / OData
         sf_base_url: str = ""
         sf_company_id: str = ""
         sf_client_id: str = ""
@@ -28,11 +27,8 @@ if BaseSettings is not None:
         sf_private_key_path: str = "/run/secrets/sf_epiuse_iaappliance_connector.pem"
         sf_admin_user: str = ""
 
-        # Database
         database_url: str = Field(default_factory=lambda: os.environ["DATABASE_URL"])
 
-        # Lakehouse storage.  MINIO_* is intentionally limited to local
-        # MinIO; GCS and AWS use their provider-native credential names.
         lakehouse_provider: str = ""
         lakehouse_endpoint: str = ""
         lakehouse_bucket: str = ""
@@ -46,21 +42,16 @@ if BaseSettings is not None:
         aws_region: str = ""
         aws_default_region: str = ""
 
-        # Local MinIO compatibility names.  These cannot be required at model
-        # construction time because production GCS/AWS deliberately omit them.
         minio_endpoint: str = ""
         minio_access_key: str = ""
         minio_secret_key: str = ""
         minio_bucket: str = "lakehouse"
         minio_secure: bool = False
 
-        # Internal API key (validated by app.security on startup)
         internal_api_key: str = ""
 
-        # Refinement service (silver layer trigger)
         refinement_url: Optional[str] = None
 
-        # Airflow (optional)
         airflow_url: Optional[str] = None
         airflow_user: Optional[str] = None
         airflow_password: Optional[str] = None

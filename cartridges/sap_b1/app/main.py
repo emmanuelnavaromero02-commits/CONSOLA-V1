@@ -97,7 +97,6 @@ def healthz() -> dict:
 
 
 class _MCPStartupGuard:
-    """ASGI wrapper that 503s when startup_ok=False for /mcp/* paths."""
 
     def __init__(self, inner, fastapi_app: FastAPI):
         self._inner = inner
@@ -127,7 +126,6 @@ class _MCPStartupGuard:
 
 
 class _MCPSecurityContextGuard:
-    """Install signed tenant/workspace context for mounted FastMCP traffic."""
 
     def __init__(self, inner):
         self._inner = inner

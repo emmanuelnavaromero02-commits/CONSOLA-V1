@@ -153,7 +153,6 @@ def published_dataset_metadata(
 def public_dataset_projection(
     ds: dict[str, Any], snapshot: PublicationSnapshot
 ) -> dict[str, Any]:
-    """Project metadata and schema from one already-pinned publication epoch."""
     head, evidence = snapshot.head, snapshot.evidence
     lineage = (evidence or {}).get("lineage") or {}
     public_metadata = lineage.get("public_metadata") or {}
@@ -170,8 +169,6 @@ def public_dataset_projection(
         data_type = _public_text(value.get("type"))
         if name and data_type:
             field = {"name": name, "type": data_type}
-            # F8: surface the per-column quality profile persisted with the
-            # published evidence (absent keys mean the run did not profile).
             for key in ("null_rate", "distinct_count", "min_value", "max_value"):
                 if key in value:
                     field[key] = value[key]
@@ -254,7 +251,6 @@ def published_catalog(
                 "is_metric": bool(field.get("is_metric")),
                 "example_values": _public_examples(field.get("example_values")),
             }
-            # F8: quality profile for catalog consumers.
             for key in ("null_rate", "distinct_count", "min_value", "max_value"):
                 if key in field:
                     column[key] = field[key]

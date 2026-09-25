@@ -1,5 +1,3 @@
-"""RED acceptance contracts for the v1.45.221 transition bridge."""
-
 from __future__ import annotations
 
 import subprocess

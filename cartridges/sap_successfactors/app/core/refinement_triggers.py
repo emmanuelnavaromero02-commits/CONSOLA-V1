@@ -8,8 +8,6 @@ from urllib.parse import quote
 import httpx
 
 from app.core.request_context import refinement_security_context
-# Fuente unica de verdad de los ordenes de datasets gold SF (ver dataset_orders.py
-# + app/config/gold_dataset_orders.json). NO redefinir como literales aqui.
 from app.core.dataset_orders import (
     SUCCESSFACTORS_GOLD_FOUNDATION_ORDER,
     SUCCESSFACTORS_GOLD_TALENT_ORDER,
@@ -46,10 +44,6 @@ async def trigger_silver_refresh(entity: str, security_context: dict | None = No
     source = f"raw/sap_successfactors/{entity}"
     api_key, internal_service = _refinement_auth()
     if internal_service == "airflow":
-        # Same reason as the gold loop below: refinement only accepts the
-        # purpose-bound runtime envelope from the airflow perimeter, so the
-        # entity's conventional silver is materialized through /mcp/invoke
-        # instead of /refresh-by-source.
         name = f"sap_successfactors_{entity.strip().lower()}_latest"
         async with httpx.AsyncClient(timeout=300) as client:
             response = await _runtime_materialize_request(
@@ -124,16 +118,6 @@ def _runtime_materialize_request(
     api_key: str,
     security_context: dict | None,
 ):
-    """Materialize one dataset through the refinement runtime (v2) route.
-
-    Refinement routes every trusted ``source=airflow`` context through the
-    purpose-bound hmac-v2 runtime validation, so the plain signed-context
-    ``/datasets/{name}/refresh`` call the cartridge container uses is
-    rejected there. From the Airflow workers we take the same route the
-    dataset_refresh_chain already takes: an ``/mcp/invoke`` materialize
-    with the envelope minted by runtime_security_context (importable only
-    inside the Airflow container, hence the local import).
-    """
     import secrets as _secrets
 
     from runtime_security_context import build_materialize_context

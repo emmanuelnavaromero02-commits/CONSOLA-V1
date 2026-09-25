@@ -1,15 +1,3 @@
-/**
- * v1.44.3.2 spec 07 — Backend API contract probes.
- *
- * For each documented endpoint:
- *   1. Without auth → expects 401/403 (NOT 200 — that would be a
- *      RBAC regression; NOT 5xx — that would be a routing bug).
- *   2. With auth → expects 200/201 + a shape sanity check.
- *
- * Diagnostics confirmed the backend currently returns 401
- * for every protected endpoint without auth, which is the desired
- * baseline. These tests pin that baseline as a regression guard.
- */
 import { test, expect, request as pwRequest } from "@playwright/test";
 import { loginViaApi } from "../fixtures/auth";
 
@@ -40,22 +28,13 @@ async function postApiAuthLogin(
   });
 }
 
-// v1.44.3.2.1: this spec mixes unauth + authed checks. Force the
-// unauth surface for the WHOLE file by clearing storage state; the
-// authed tests inside re-mint a session via loginViaApi.
 test.use({ storageState: { cookies: [], origins: [] } });
 
 interface ApiCheck {
   method:    "GET" | "POST" | "PUT" | "DELETE";
   path:      string;
   body?:     unknown;
-  /**
-   * Shape validator for the authed response. The validator receives
-   * the parsed JSON body and must return true. Throw or return false
-   * to fail the test.
-   */
   shape?:    (data: unknown) => boolean;
-  /** Endpoints that may legitimately return 404/409 instead of 200 */
   authedOk?: number[];
 }
 
@@ -124,9 +103,6 @@ test.describe("Backend API — authenticated", () => {
     test(`${check.method} ${check.path} returns expected shape`, async ({
       page,
     }) => {
-      // v1.44.3.2.1: fixture signature changed — loginViaApi now
-      // takes an APIRequestContext (cookies persist on the context)
-      // and returns the response. Authed page.request follows.
       await loginViaApi(page.request);
       const response = await page.request.fetch(`${LEGACY}${check.path}`, {
         method: check.method,
@@ -162,11 +138,6 @@ test.describe("Backend API — POST /api/auth/login round-trip", () => {
   });
 
   test("valid creds return 200 + set a cookie", async () => {
-    // v1.44.3.2 R1 Testing F4 follow-up: fail loud (not silent
-    // skip) when env vars are missing. The whole-suite contract
-    // (fixtures/auth.ts:readCreds) already throws on missing
-    // creds; the previous test.skip here contradicted that
-    // contract and let a misconfigured run silently green-pass.
     const email = process.env.TEST_EMAIL;
     const password = process.env.TEST_PASSWORD;
     if (!email || !password) {
@@ -179,8 +150,6 @@ test.describe("Backend API — POST /api/auth/login round-trip", () => {
     const ctx = await pwRequest.newContext();
     const response = await postApiAuthLogin(ctx, { email, password });
     expect(response.status()).toBe(200);
-    // The Set-Cookie header must include httpOnly + at least one
-    // recognised auth cookie name.
     const setCookie = response.headers()["set-cookie"] || "";
     expect(setCookie).toMatch(/httponly/i);
     expect(setCookie).toMatch(/access_token|session|jwt|auth_token/i);

@@ -1,5 +1,3 @@
-"""Independent downstream guards for stale or malformed 9-box rows."""
-
 from __future__ import annotations
 
 import duckdb

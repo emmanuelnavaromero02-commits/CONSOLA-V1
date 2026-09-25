@@ -1,32 +1,3 @@
-"""Domain KPI views (Finance / Operations / Risk) for the Control Room bridge.
-
-Mission 2: each view runs the Mission 1 aggregates of one domain
-(``app.services.intelligence.{finance,operations,risk}_aggregates``) and folds
-them into one dict the internal read bridge (``POST
-/api/control-room/internal/read``) projects through the public response
-schemas and hands to the MCP tools ``control_room__{finance,operations,risk}_kpis_read``.
-
-The payload is built for the LLM, so it must survive the public projection
-(``control_room_public_projection``), which redacts technical copy: dataset
-and column identifiers, tier-qualified table names, UUIDs. Therefore:
-
-* every metric carries a PUBLIC proxy note (plain business Spanish, no
-  identifiers) that states what the number measures and what it does NOT;
-  the developer-facing ``proxy_note`` of the aggregate result is not exposed;
-* ``error`` becomes a stable reason code plus a fixed Spanish phrase, so the
-  LLM learns WHY a metric is missing without receiving dataset or column
-  identifiers (and without a Postgres error text that would be redacted);
-* every developer note is translated to a public equivalent: a degraded metric
-  must always say why, so notes are mapped, never silently dropped;
-* evidence references expose a business ``source`` label instead of the
-  physical relation, plus generation and snapshot timestamp (``run_id``,
-  ``dataset`` and column lists are internal and never published);
-* cartridge ids are complemented with a business label.
-
-Global status per domain: ``ready`` when every metric is ready, ``unavailable``
-when every metric is unavailable, ``degraded`` otherwise.
-"""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -64,9 +35,6 @@ OPERATIONS_METRICS = (
 )
 RISK_METRICS = ("attrition_risk_population", "employment_end_expiry", "deal_slippage")
 
-# LLM-facing explanations. Plain business Spanish on purpose: no dataset,
-# column or table identifiers, so the public projection keeps them verbatim
-# (see tests/test_control_room_domain_kpis.py::test_public_notes_survive_projection).
 PUBLIC_PROXY_NOTES: dict[str, str] = {
     "billable_hours_logged": (
         "Horas marcadas como facturables registradas por los consultores en "
@@ -153,7 +121,6 @@ PUBLIC_CARTRIDGE_LABELS: dict[str, str] = {
     "sec_edgar": "SEC EDGAR",
 }
 
-# Scalar evidence filters that are safe and useful for the LLM.
 _EVIDENCE_FILTER_KEYS = (
     "window_start",
     "window_end_exclusive",
@@ -178,7 +145,6 @@ _EVIDENCE_FILTER_KEYS = (
 
 
 def combine_status(statuses: list[str]) -> str:
-    """ready if all ready; unavailable if all unavailable; degraded otherwise."""
     if not statuses:
         return STATUS_UNAVAILABLE
     if all(status == STATUS_READY for status in statuses):
@@ -188,8 +154,6 @@ def combine_status(statuses: list[str]) -> str:
     return STATUS_DEGRADED
 
 
-# Evidence type labels that survive the public projection ("gold_relation"
-# would be redacted as a tier-qualified identifier).
 PUBLIC_EVIDENCE_TYPES: dict[str, str] = {
     "gold_relation": "published_dataset",
     "console_table": "run_log",
@@ -197,18 +161,12 @@ PUBLIC_EVIDENCE_TYPES: dict[str, str] = {
 
 
 def public_text(value: Any) -> str | None:
-    """Return the string when the public projection would keep it, else None."""
     if value is None:
         return None
     text = str(value)
     return None if contains_public_technical_copy(text) else text
 
 
-# Stable reason codes for a metric that could not be computed. The prefix is
-# the machine-readable half of the aggregate error (see
-# domain_aggregate_support._HTTP_REASONS and invalid_schema_error); the tail is
-# a fixed phrase, because the aggregate tail carries dataset/column names or a
-# driver error text the public projection would redact.
 PUBLIC_ERROR_REASONS: dict[str, str] = {
     "missing": "el origen no esta publicado para este workspace",
     "invalid_schema": "el origen publicado no tiene la forma esperada",
@@ -218,9 +176,6 @@ PUBLIC_ERROR_REASONS: dict[str, str] = {
 }
 _DEFAULT_ERROR_REASON = "el origen de datos no esta disponible"
 
-# Developer notes -> public equivalents. Ordered: the first marker contained in
-# the note wins. A note with no rule is kept when it is public-safe, and
-# otherwise reported as a generic limitation, never dropped in silence.
 PUBLIC_NOTE_RULES: tuple[tuple[str, str], ...] = (
     (
         "billing_rate_usd ausente",
@@ -284,7 +239,6 @@ _GENERIC_NOTE = "el detalle de esta limitacion es interno; ver status y proxy_no
 
 
 def public_error(error: Any) -> str | None:
-    """Stable reason code + fixed phrase, never the aggregate's technical tail."""
     text = str(error or "").strip()
     if not text:
         return None
@@ -295,7 +249,6 @@ def public_error(error: Any) -> str | None:
 
 
 def public_note(note: Any) -> str | None:
-    """Translate one developer note into public copy (never silently dropped)."""
     text = str(note or "").strip()
     if not text:
         return None
@@ -305,17 +258,12 @@ def public_note(note: Any) -> str | None:
     return text if not contains_public_technical_copy(text) else _GENERIC_NOTE
 
 
-# Filter VALUES are published too, so they need the same treatment as notes:
-# the aggregates put explanatory prose in some of them (base_currency carries
-# "unverified (<dataset>.<column> is NULL)"), which would hand the model a
-# dataset and a column name.
 PUBLIC_FILTER_VALUES: dict[str, str] = {
     "unverified (pnl_mensual.base_currency is NULL)": "sin verificar en el origen",
 }
 
 
 def public_filter_value(value: Any) -> Any:
-    """Public form of one evidence filter value, or None to drop the key."""
     if isinstance(value, str):
         mapped = PUBLIC_FILTER_VALUES.get(value)
         if mapped is not None:
@@ -345,7 +293,6 @@ def cartridge_label(cartridge_id: Any) -> str | None:
 
 
 def public_notes(notes: list[Any]) -> list[str]:
-    """Translate every note to public copy, preserving order and dropping dups."""
     out: list[str] = []
     for note in notes or []:
         text = public_note(note)
@@ -368,8 +315,6 @@ def public_evidence(metric: str, refs: list[dict[str, Any]]) -> list[dict[str, A
                     "source": public_source_label(ref),
                     "generation": ref.get("generation"),
                     "published_at": ref.get("published_at"),
-                    # The publication run id is a UUID and a forbidden public
-                    # key; generation + published_at identify the snapshot.
                     "partial_source": bool(ref.get("missing_optional_columns")),
                     "filters": {
                         key: public
@@ -384,7 +329,6 @@ def public_evidence(metric: str, refs: list[dict[str, Any]]) -> list[dict[str, A
 
 
 def _label_cartridge_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Add the business label; keep the raw id only when it is public-safe."""
     return [
         {
             **row,
@@ -396,7 +340,6 @@ def _label_cartridge_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _bucket_rows(buckets: dict[str, Any]) -> list[dict[str, Any]]:
-    """Public projection models cannot have field names starting with a digit."""
     return [
         {"bucket": name, **(values if isinstance(values, dict) else {})}
         for name, values in (buckets or {}).items()
@@ -407,7 +350,6 @@ def metric_payload(metric: str, result: AggregateResult) -> dict[str, Any]:
     payload = result.to_dict()
     payload["proxy_note"] = PUBLIC_PROXY_NOTES.get(metric)
     payload["error"] = public_error(payload.get("error"))
-    # Column allowlists are internal; the public signal is status + notes.
     payload.pop("missing_columns", None)
     payload["notes"] = public_notes(payload.get("notes") or [])
     payload["evidence_refs"] = public_evidence(
@@ -434,8 +376,6 @@ def domain_payload(
     statuses = [result.status for result in results.values()]
     return {
         "domain": domain,
-        # Second precision on purpose: a microsecond ISO stamp is redacted as
-        # technical copy by the public projection.
         "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
         "status": combine_status(statuses),
         "named_rows": named_rows,
@@ -460,11 +400,6 @@ def domain_payload(
 
 
 async def finance_kpis(user: dict | None, *, top_n: int = 0) -> dict[str, Any]:
-    """Finance KPIs: billable hours, labor cost by department, project margin.
-
-    ``top_n`` (0..10) forwards the controlled named-rows exception to
-    ``query_project_margin``; the default 0 keeps everything aggregate-only.
-    """
     named_rows = clamp_named_rows(top_n)
     results: dict[str, AggregateResult] = {
         "billable_hours_logged": await finance_aggregates.query_billable_hours_logged(
@@ -477,19 +412,10 @@ async def finance_kpis(user: dict | None, *, top_n: int = 0) -> dict[str, Any]:
             user, top_n=named_rows
         ),
     }
-    # NOTE Mission 4: the cost-centre budget gap is NOT recorded here. This
-    # function is the body of control_room__finance_kpis_read, which is classified
-    # read-only and approval-free and gated only on datasets.read, so an INSERT on
-    # this path would be a persistent write hiding behind a read classification —
-    # reachable by any caller with datasets.read and never covered by the
-    # scheduled-effect fence. The write lives on the wisdom-bit path instead
-    # (control_room.domain_wisdom_bits), which is already classified as an
-    # advisory write and requires control_room.write.
     return domain_payload(FINANCE_DOMAIN, results, named_rows=named_rows)
 
 
 async def operations_kpis(user: dict | None) -> dict[str, Any]:
-    """Operations KPIs: pipeline health, data freshness, absence rate."""
     results: dict[str, AggregateResult] = {
         "pipeline_health": await operations_aggregates.query_pipeline_health(user),
         "data_freshness_by_cartridge": (
@@ -503,11 +429,6 @@ async def operations_kpis(user: dict | None) -> dict[str, Any]:
 
 
 async def risk_kpis(user: dict | None, *, top_n: int = 0) -> dict[str, Any]:
-    """Risk KPIs: attrition risk population, employment end expiry, deal slippage.
-
-    ``top_n`` (0..10) forwards the controlled named-rows exception to
-    ``query_deal_slippage``; the default 0 keeps everything aggregate-only.
-    """
     named_rows = clamp_named_rows(top_n)
     results: dict[str, AggregateResult] = {
         "attrition_risk_population": await risk_aggregates.query_attrition_risk_population(
@@ -521,9 +442,6 @@ async def risk_kpis(user: dict | None, *, top_n: int = 0) -> dict[str, Any]:
         ),
     }
     payload = domain_payload(RISK_DOMAIN, results, named_rows=named_rows)
-    # Mission 4. Risk cannot compute cost-centre overrun for the same reason
-    # Finance cannot compute budget-vs-actual. Rather than rediscovering it, Risk
-    # reads the shared memory and cites whoever recorded it.
     note = await domain_memory_hooks.cost_center_overrun_note(user)
     if note:
         payload["notes"] = [*payload["notes"], note]

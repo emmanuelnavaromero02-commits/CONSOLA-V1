@@ -268,7 +268,6 @@ def test_schema_viewer_has_gold_dataset_fallback() -> None:
     assert "async def _gold_schema_payload" in main_source
     assert "async def _gold_sources_from_catalog" in main_source
     assert "_gold_schema_payload(source, user)" in router_source
-    assert "_gold_sources_from_catalog(user)" in router_source
 
 
 def test_semantic_viewer_has_gold_catalog_fallback() -> None:

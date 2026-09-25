@@ -1,12 +1,3 @@
-"""Sprint v1.21 (F2) — every app service in compose has a healthcheck.
-
-Pins the F2 fix: console / workspace / refinement / vault / mcp-infra
-must each declare a healthcheck so dependent services can wait on
-`condition: service_healthy` instead of `service_started`. The probe
-itself is asserted to use python3 -c (the images are python:3.12-slim
-and don't ship with wget/curl).
-"""
-
 from __future__ import annotations
 
 import shlex
@@ -44,7 +35,6 @@ def _healthcheck_command(service: str) -> str:
 
 @pytest.mark.parametrize("service", sorted(APP_SERVICES_WITH_PORTS))
 def test_app_service_has_healthcheck(service):
-    """Every in-scope app service declares a healthcheck block."""
     doc = _compose_doc()
     svc = doc["services"][service]
     hc = svc.get("healthcheck")
@@ -54,14 +44,7 @@ def test_app_service_has_healthcheck(service):
 
 @pytest.mark.parametrize("service,port", sorted(APP_SERVICES_WITH_PORTS.items()))
 def test_app_service_healthcheck_targets_healthz_on_correct_port(service, port):
-    """The probe must hit the approved endpoint on the service's own port.
-
-    Refinement intentionally uses dependency-aware /readyz because downstream
-    services must not start before Postgres, DuckDB and the publication verifier
-    are ready. The remaining app services use their cheap /healthz endpoint.
-    """
     hc = _compose_doc()["services"][service]["healthcheck"]
-    # `test:` can be either ["CMD", arg1, arg2, …] or ["CMD-SHELL", "string"]
     joined = _healthcheck_command(service)
     endpoint = APP_SERVICE_HEALTH_PATHS[service]
     assert f":{port}{endpoint}" in joined, (
@@ -71,11 +54,6 @@ def test_app_service_healthcheck_targets_healthz_on_correct_port(service, port):
 
 
 def test_all_healthchecks_use_python_not_wget_or_curl():
-    """Service images are python:3.12-slim — no wget, no curl. The probe
-    must use the python3 binary that's guaranteed to be present.
-
-    A future migration to a distro image with curl is fine; this test
-    will fail visibly so the change is noticed."""
     doc = _compose_doc()
     bad = []
     for svc in APP_SERVICES_WITH_PORTS:
@@ -95,9 +73,6 @@ def test_all_healthchecks_use_python_not_wget_or_curl():
     ],
 )
 def test_postgres_healthchecks_use_tcp_listener(service, port, database):
-    """Init containers connect through service hostnames over TCP.
-    Socket-only pg_isready can go green while Postgres is still in
-    its first-boot temporary server, racing airflow-init/superset-init."""
     joined = _healthcheck_command(service)
     assert "pg_isready" in joined
     assert "-h 127.0.0.1" in joined
@@ -107,10 +82,6 @@ def test_postgres_healthchecks_use_tcp_listener(service, port, database):
 
 @pytest.mark.parametrize("service", sorted(APP_SERVICES_WITH_PORTS))
 def test_app_service_healthcheck_has_start_period(service):
-    """A start_period gives the lifespan time to finish (DB pool setup,
-    crypto key validation, MCP registry scan) before the first probe
-    counts toward retries. Without it, fast probes during boot race
-    the lifespan and the container loops forever as `(starting)`."""
     hc = _compose_doc()["services"][service]["healthcheck"]
     assert hc.get("start_period"), (
         f"{service} healthcheck must declare start_period to absorb "
@@ -118,11 +89,6 @@ def test_app_service_healthcheck_has_start_period(service):
     )
 
 
-# ── Sprint v1.41.1: blanket coverage for every long-running service ─────────
-
-# Init / one-shot containers exit with status 0 by design; docker compose
-# represents their terminal state as Exited (0), not a healthy/unhealthy
-# pair, so a healthcheck on these would only confuse compose ps.
 _INIT_SERVICES = {
     "airflow-init",
     "minio-init",
@@ -145,10 +111,6 @@ def test_minio_init_is_classified_as_one_shot():
 
 @pytest.mark.parametrize("service", sorted(_long_running_services()))
 def test_long_running_service_has_healthcheck(service):
-    """Every long-running service must declare a healthcheck so that
-    `docker compose ps` reflects real health (healthy / unhealthy /
-    starting) instead of falling back to plain `Up`. Init/one-shot
-    services are excluded — they exit by design."""
     svc = _compose_doc()["services"][service]
     hc = svc.get("healthcheck")
     assert hc, (
@@ -159,7 +121,6 @@ def test_long_running_service_has_healthcheck(service):
 
 
 def test_critical_local_dependencies_use_service_healthy():
-    """Critical local dependencies must not regress to service_started."""
     services = _compose_doc()["services"]
     critical_targets = {
         "airflow",
@@ -198,7 +159,6 @@ def test_critical_local_dependencies_use_service_healthy():
 
 
 def test_service_healthy_dependencies_have_healthchecks():
-    """Every dependency waited on as healthy must expose a real healthcheck."""
     services = _compose_doc()["services"]
     offenders: list[str] = []
     for service, body in services.items():
@@ -215,19 +175,6 @@ def test_service_healthy_dependencies_have_healthchecks():
                     f"{service} waits on {target}, but {target} has no healthcheck"
                 )
     assert not offenders, "\n".join(offenders)
-
-
-# ── minio-init: no grep dependency ───────────────────────────────────────────
-
-# Same failure class as the healthcheck probes above, one service over. The
-# init chained `| grep -q Enabled` after `mc version enable`, and the mc image
-# does not ship grep (it is not part of coreutils). The step exited 127 *after*
-# the bucket and versioning were already correct, which took minio-init down,
-# vault with it, and every application service after that.
-#
-# Scoped to grep on purpose. That is the absence the reproduction demonstrated;
-# asserting the same about awk/sed/curl/wget/jq would be guessing at what else
-# the image lacks, and a test should only defend what was actually shown.
 
 
 def _minio_init_command() -> str:
@@ -248,10 +195,8 @@ def test_minio_init_does_not_depend_on_grep():
 
 
 def test_minio_init_still_creates_the_bucket_and_enables_versioning():
-    """The init must keep doing its job — this is not a licence to drop steps."""
     command = _minio_init_command()
     assert "mc alias set local" in command
     assert "mc mb --ignore-existing local/lakehouse" in command
     assert "mc version enable local/lakehouse" in command
-    # Chained with && so any failing step fails the container.
     assert command.count("&&") >= 2

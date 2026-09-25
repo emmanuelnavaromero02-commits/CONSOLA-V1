@@ -1,19 +1,3 @@
-"""Regression tests for the dataset RLS bug in refinement's authorization layer.
-
-Bug: ``_dataset_allowed`` builds the logical prefix ``f"{layer}/{cartridge}/{name}/"``
-(trailing slash -> 4 segments, last empty). ``_prefix_allowed``'s silver/gold
-branch only accepted 3-segment (legacy) or 5+-segment (tenant-partitioned
-physical) paths for scoped users, so every dataset in a real workspace was
-rejected -> /datasets, /api/catalog and /api/lineage returned 0 datasets.
-
-Fix: the silver/gold branch now also accepts the 4-segment logical form
-``layer/cartridge/name/``. Cartridge access is gated by ``allowed_cartridges``
-and workspace isolation is enforced by ``_dataset_allowed`` itself, so this is
-the same logical-identity grant as the existing 3-segment form.
-
-These tests exercise the real functions (imported, not parsed).
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -29,9 +13,6 @@ from fastapi import HTTPException
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# The module validates these settings at import time and constructs a lazy
-# DuckDBEngine. Keep the temporary defaults scoped to this import so collection
-# cannot poison DATABASE_URL for later live tests in the same pytest process.
 _IMPORT_DEFAULTS = {
     "INTERNAL_API_KEY": "x7Qp9zR2mK4vL8wN6tJ3sH1bD5fG0aYcE7uV2iO9kP4qZ",
     "SECURITY_CONTEXT_SIGNING_KEY": (
@@ -59,9 +40,6 @@ try:
 finally:
     if sys.path and sys.path[0] == _REFINEMENT_PATH:
         sys.path.pop(0)
-    # ``refinement`` and ``console`` both expose their package as ``app``.
-    # Keep the imported module object for these regression tests, but do not
-    # leak refinement's ``app.*`` modules into collection of console tests.
     _purge_app_namespace()
     for _name, _previous in _PREVIOUS_IMPORT_ENV.items():
         if _previous is None:
@@ -112,7 +90,6 @@ def _dataset(
     }
 
 
-# 1. Happy path that used to fail: scoped user, matching workspace, allowed cartridge.
 def test_scoped_user_sees_own_dataset():
     assert _dataset_allowed(_scoped_sec(), _dataset()) is True
 
@@ -122,7 +99,6 @@ def test_scoped_user_sees_own_gold_dataset():
     assert _dataset_allowed(_scoped_sec(), ds) is True
 
 
-# 2. Cartridge not in the user's allowlist -> denied.
 def test_scoped_user_denied_when_cartridge_not_allowed():
     ds = _dataset(cartridge="sap_s4hana", name="some_dataset")
     assert _dataset_allowed(_scoped_sec(cartridges=("replicon",)), ds) is False
@@ -138,13 +114,11 @@ def test_broad_allowed_prefixes_do_not_override_cartridge_allowlist():
     assert _dataset_allowed(sec, ds) is False
 
 
-# 3. Dataset in a different workspace -> denied.
 def test_scoped_user_denied_other_workspace():
     ds = _dataset(workspace="ws-OTHER")
     assert _dataset_allowed(_scoped_sec(workspace="ws-1"), ds) is False
 
 
-# 4. Legacy 3-segment prefix still works (no trailing slash).
 def test_legacy_three_part_prefix_allowed():
     assert (
         _prefix_allowed(_scoped_sec(), "silver/replicon/replicon_project_latest")
@@ -152,7 +126,6 @@ def test_legacy_three_part_prefix_allowed():
     )
 
 
-# The fix itself: 4-segment logical prefix (trailing slash) is now accepted.
 def test_four_part_logical_prefix_allowed():
     assert (
         _prefix_allowed(_scoped_sec(), "silver/replicon/replicon_project_latest/")
@@ -163,17 +136,12 @@ def test_four_part_logical_prefix_allowed():
     )
 
 
-# A 4-segment path whose last segment is NOT empty must not be treated as the
-# logical form (guards against accidental over-acceptance of physical paths).
 def test_four_part_nonempty_tail_not_logical_form():
-    # tenant partition without the workspace partition -> not a valid 5-part
-    # physical path and not the logical trailing-slash form -> denied.
     assert (
         _prefix_allowed(_scoped_sec(), "silver/replicon/x/tenant_id=tenant-1") is False
     )
 
 
-# 5. Multi-tenant 5+-segment physical paths keep matching on tenant+workspace.
 def test_multitenant_five_part_prefix_matches_and_isolates():
     sec = _scoped_sec(workspace="ws-1")
     ok = "silver/replicon/x/tenant_id=tenant-1/workspace_id=ws-1/data.parquet"
@@ -182,11 +150,9 @@ def test_multitenant_five_part_prefix_matches_and_isolates():
     assert _prefix_allowed(sec, bad) is False
 
 
-# 4./5. for the raw layer: untouched by the fix, still behaves as before.
 def test_raw_layer_behaviour_unchanged():
     sec = _scoped_sec()
-    assert _prefix_allowed(sec, "raw/replicon/Entity") is True  # legacy 3-part
-    # logical 4-part raw prefix is NOT accepted (fix is silver/gold only)
+    assert _prefix_allowed(sec, "raw/replicon/Entity") is True
     assert _prefix_allowed(sec, "raw/replicon/Entity/") is False
 
 
@@ -333,7 +299,6 @@ def test_registered_dataset_physical_glob_allowed_only_for_dataset_query(monkeyp
     )
 
 
-# 4. Unscoped admin (no tenant/workspace, allowed_cartridges == ["*"]) sees everything.
 def test_unscoped_admin_sees_all():
     admin = {"trusted": True, "role": "admin", "allowed_cartridges": ["*"]}
     assert (
@@ -342,9 +307,6 @@ def test_unscoped_admin_sees_all():
     )
 
 
-# 6. Endpoint-level proxy: /datasets, /api/catalog and /api/lineage all filter
-# the dataset list through _dataset_allowed. Simulate that filter and assert a
-# scoped user now receives their workspace's datasets (the symptom was 0).
 def test_endpoint_filter_returns_scoped_datasets():
     sec = _scoped_sec(workspace="ws-1", cartridges=("replicon", "sap_hcm"))
     catalog = [
@@ -362,10 +324,10 @@ def test_endpoint_filter_returns_scoped_datasets():
         ),
         _dataset(
             cartridge="sap_s4hana", layer="silver", name="gl_account", workspace="ws-1"
-        ),  # cartridge not allowed
+        ),
         _dataset(
             cartridge="replicon", layer="silver", name="other_ws", workspace="ws-2"
-        ),  # other workspace
+        ),
     ]
     visible = [ds for ds in catalog if _dataset_allowed(sec, ds)]
     names = {ds["name"] for ds in visible}

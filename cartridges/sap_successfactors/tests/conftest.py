@@ -1,4 +1,3 @@
-"""Pin ``import app`` to the SuccessFactors cartridge for local cartridge tests."""
 from __future__ import annotations
 
 import os

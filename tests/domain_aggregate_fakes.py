@@ -1,20 +1,3 @@
-"""In-memory asyncpg stand-ins for the domain aggregate unit tests.
-
-No database is involved. The fakes emulate exactly the calls the Talent
-pattern makes:
-
-* ``asyncpg.connect(dsn, command_timeout=...)``
-* ``conn.transaction(isolation="repeatable_read", readonly=True)``
-* ``conn.execute(SET_SCOPE_SQL, tenant_id, workspace_id)``
-* the publication-head lookup (``dataset_publication_heads`` JOIN
-  ``materialization_runs``), ``to_regclass``, ``information_schema.columns``
-  and the ``published_at`` probe
-* every aggregate query, routed by its ``-- omega-aggregate: <name>`` marker
-
-Tests register the canned answer per marker and then assert on the SQL text
-and bound arguments the module produced (``FakeConn.calls``).
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -49,7 +32,6 @@ def user_for(
 
 
 class FakeGoldDataset:
-    """A published Gold dataset as the console resolves it."""
 
     def __init__(
         self,
@@ -66,18 +48,14 @@ class FakeGoldDataset:
         workspace_id: str = WORKSPACE_A,
     ) -> None:
         self.name = name
-        # A head is keyed by (tenant, workspace, dataset, layer): the fake only
-        # answers for its own scope, like the real ledger.
         self.tenant_id = tenant_id
         self.workspace_id = workspace_id
         if isinstance(columns, dict):
             self.columns = dict(columns)
         else:
             self.columns = {column: "text" for column in columns}
-        # Scope columns are injected by materialization; add them by default.
         self.columns.setdefault("tenant_id", "text")
         self.columns.setdefault("workspace_id", "text")
-        # One physical run table per dataset, like a real publication head.
         self.run_hex = run_hex or hashlib.md5(name.encode("utf-8")).hexdigest()
         self.generation = generation
         self.status = status
@@ -133,7 +111,6 @@ class _FakeTransaction:
 
 
 class FakeConn:
-    """Minimal asyncpg connection double (Gold or console flavour)."""
 
     def __init__(
         self,
@@ -149,8 +126,6 @@ class FakeConn:
         self.closed = False
         self.dsn: str | None = None
 
-    # NOTE: no ``acquire`` attribute on purpose — db_scope.scoped_db treats an
-    # object without ``acquire`` as a raw connection.
 
     def transaction(
         self, isolation: str | None = None, readonly: bool = False
@@ -171,7 +146,6 @@ class FakeConn:
         return self._answer(sql, args)
 
     def _head_for(self, args: tuple[Any, ...]) -> FakeGoldDataset | None:
-        """Resolve a head exactly like the ledger: (tenant_id, workspace_id, dataset)."""
         tenant_id, workspace_id, dataset_name = args[0], args[1], args[2]
         dataset = self.datasets.get(str(dataset_name))
         if dataset is None or not dataset.head:
@@ -210,7 +184,6 @@ class FakeConn:
     async def close(self) -> None:
         self.closed = True
 
-    # ── helpers for assertions ────────────────────────────────────────────
 
     def _answer(self, sql: str, args: tuple[Any, ...]) -> Any:
         marker = marker_of(sql)
@@ -230,10 +203,6 @@ class FakeConn:
 
     @staticmethod
     def _check_parameters(marker: str, sql: str, args: tuple[Any, ...]) -> None:
-        """Emulate Postgres' prepare-time checks: every bound argument must be
-        referenced by exactly one ``$n`` family (unused parameters raise
-        ``could not determine data type of parameter $n``) and no ``$n`` may
-        exceed the number of arguments."""
         referenced = {int(number) for number in PARAM_RE.findall(sql)}
         expected = set(range(1, len(args) + 1))
         if referenced != expected:
@@ -259,7 +228,6 @@ class FakeConn:
 
 
 class FakePool:
-    """asyncpg pool double: ``acquire()`` yields the same FakeConn."""
 
     def __init__(self, conn: FakeConn) -> None:
         self.conn = conn
@@ -284,7 +252,6 @@ class _FakeAcquire:
 def install_gold_connect(
     monkeypatch, conn: FakeConn, *, dsn: str = "postgresql://gold-test/db"
 ) -> Callable:
-    """Route ``asyncpg.connect`` (used by the shared Gold scope) to ``conn``."""
     calls: list[dict[str, Any]] = []
 
     async def fake_connect(target: str, **kwargs: Any) -> FakeConn:
@@ -298,7 +265,6 @@ def install_gold_connect(
 
 
 def install_console_pool(monkeypatch, module: Any, conn: FakeConn) -> FakePool:
-    """Route ``auth.pool()`` (used by the console scope) to a FakePool."""
     pool = FakePool(conn)
 
     async def fake_pool() -> FakePool:

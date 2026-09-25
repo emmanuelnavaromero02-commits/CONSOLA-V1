@@ -203,8 +203,6 @@ def test_knowledge_bits_read_write_under_forwarded_workspace_scope():
         assert "def _scope_kb_sql(" in kb_service
         assert "resolved_sql = _scope_kb_sql(sql, security_context)" in kb_service
         if cartridge == "replicon":
-            # The provenance-aware runtime spreads the call across lines but must
-            # still forward the security context to both writers.
             assert "storage_uri = write_kb_parquet(" in kb_service
             assert "security_context," in kb_service
             assert "write_kb_to_postgres(" in kb_service

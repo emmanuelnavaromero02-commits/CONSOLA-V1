@@ -1,23 +1,3 @@
-"""E4 — asignación minimax: a quién proteger con K recursos, minimizando el
-peor arrepentimiento.
-
-El motor que el orquestador declaraba como 'constrained_optimizer_candidate —
-Requires optimization engine (not yet implemented)' para resource_allocation,
-en su forma acotada y EXACTA (demo omega-9box, TAL-001: elegir K estrellas a
-retener): cada candidato lleva un arrepentimiento (regret) = riesgo x peso de
-impacto — lo que cuesta NO protegerlo. Elegir los K de mayor regret minimiza
-el máximo regret de los no protegidos.
-
-Optimalidad (exacta, no heurística): si una selección excluye a un candidato A
-e incluye a B con regret(B) < regret(A), intercambiarlos no empeora ningún
-excluido y reduce (o mantiene) el máximo excluido; por inducción, el top-K por
-regret es óptimo para el objetivo min-max. Con empates, el orden es
-determinista (regret desc, id asc).
-
-Doctrina de la casa: determinista, fail-closed (entradas insuficientes →
-insufficient_data con razón exacta), digest de reproducibilidad, y el
-resultado NO es editable por el LLM (invariante 19 del plan maestro).
-"""
 from __future__ import annotations
 
 import hashlib
@@ -34,9 +14,6 @@ class MinimaxValidationError(ValueError):
 
 
 def _finite_number(value: object, *, field: str) -> float:
-    """Numero real finito y NO booleano (rechaza NaN, +/-Infinity y bool):
-    NaN burlaba los rangos por comparacion (NaN<=x es False) e Infinity pasaba
-    cualquier cota, dejando pasar un regret NaN no serializable."""
     if isinstance(value, bool):
         raise MinimaxValidationError(f"{field} must be a number, not a boolean")
     try:
@@ -100,8 +77,6 @@ def solve_minimax_allocation(
     candidates: list[dict[str, Any]],
     capacity: Any,
 ) -> dict[str, Any]:
-    """Selecciona hasta `capacity` candidatos minimizando el máximo regret de
-    los NO seleccionados. Exacto y determinista; sin azar, sin semilla."""
     cleaned = _clean_candidates(candidates)
     if isinstance(capacity, bool):
         raise MinimaxValidationError("capacity must be an integer, not a boolean")

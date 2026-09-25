@@ -1,11 +1,3 @@
-"""The AWS probes write to a real deployment.
-
-In September 2026 an earlier run left rows behind in production that had to be
-removed by hand, table by table, under individual confirmation. The invariant
-that prevents a repeat is simple and checkable from the source: every table a
-probe writes to, the same probe deletes from.
-"""
-
 from __future__ import annotations
 
 import re
@@ -46,7 +38,5 @@ def test_every_table_written_is_also_cleaned(probe: str):
 def test_cleanup_is_reachable_and_reports_its_outcome(probe: str):
     src = _read(probe)
     assert "async def _cleanup()" in src
-    # Silence is the failure mode that hid the last residue: the probe must say
-    # whether the cleanup finished, so an operator can tell without querying.
     assert "probe_cleanup=" in src
     assert "INCOMPLETE" in src

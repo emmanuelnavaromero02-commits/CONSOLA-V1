@@ -1,12 +1,3 @@
-"""P11 — config contract for every cartridge's packaged YAML.
-
-sap_successfactors and replicon had no dedicated unit tests of their own
-config (the SAP suites are mostly parametrized contract tests). These pure
-checks pin the minimal shape of each cartridge's entities / knowledge_bits /
-connector YAML for all built-in cartridges, so a malformed config is caught without
-a live SAP/MinIO backend.
-"""
-
 from __future__ import annotations
 
 from pathlib import Path

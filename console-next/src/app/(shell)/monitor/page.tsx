@@ -98,8 +98,6 @@ function MetricCard({
   value: number;
   tone?: "neutral" | "success" | "warning";
 }) {
-  // La semántica warning/success no puede depender solo del color del
-  // icono (aria-hidden): se acompaña de texto sr-only equivalente.
   const toneText =
     tone === "warning" ? "requiere atención" : tone === "success" ? "sin incidencias" : null;
   return (

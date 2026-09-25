@@ -229,7 +229,6 @@ def _canonical_field_is_sensitive(field: str) -> bool:
 
 
 def _canonical_path_terminal_is_sensitive(field: str) -> bool:
-    """Apply strong field names without treating generic path words as secrets."""
 
     if field in _SAFE_FIELDS:
         return False

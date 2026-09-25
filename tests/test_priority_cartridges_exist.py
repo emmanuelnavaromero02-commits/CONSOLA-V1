@@ -1,5 +1,3 @@
-"""Structural checks: the three priority cartridges exist and ship the
-canonical set of files."""
 from __future__ import annotations
 
 from pathlib import Path

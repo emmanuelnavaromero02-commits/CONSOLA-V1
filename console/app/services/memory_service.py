@@ -1,32 +1,3 @@
-"""Sprint v1.44.3 (Tarea D) — memory injection + extraction.
-
-The v1.44.2 migration 51 created the three memory tables
-(user_facts, user_preferences, conversation_memory_summary) and
-v1.44.2's copilot_memory router exposes CRUD. This module is the
-bridge between the storage layer and copilot_service.run_turn:
-
-  build_system_prompt_with_memory(user_id, base_prompt)
-      → reads the user's recent facts + every preference + recent
-        conversation summaries, renders them as a structured
-        appendix to the base system prompt. Empty data set =
-        original base_prompt returned unchanged.
-
-  extract_facts_from_turn(user_id, recent_messages, llm_call)
-      → asks the LLM to identify durable facts mentioned in the
-        most recent turn ("my fiscal year starts in July",
-        "we work in CET"). Persists each as source='extracted'
-        via the existing UNIQUE(user_id, fact) constraint, so
-        re-observing the same fact across turns is idempotent.
-
-  summarise_conversation(conversation_id, recent_messages, llm_call)
-      → produces a single-paragraph summary of the conversation,
-        upserts into conversation_memory_summary so future
-        conversations can reference it.
-
-Real LLM calls land in production (the llm_call dependency is
-console/app/services/llm_client.chat). Tests inject a stub —
-see tests/test_v1443_llm_integration.py for the contract.
-"""
 from __future__ import annotations
 
 import json
@@ -41,16 +12,7 @@ from app.services.db_scope import scoped_db_for_user
 logger = logging.getLogger(__name__)
 
 
-# ── Public types ─────────────────────────────────────────────────────────
-
-
-# A minimal callable shape that the real llm_client.chat or a test
-# double can satisfy. The function takes (system, messages) and
-# returns the assistant's plain-text reply.
 LLMTextCall = Callable[[str, list[dict]], Awaitable[str]]
-
-
-# ── 1. System-prompt builder ────────────────────────────────────────────
 
 
 _MAX_FACTS         = 20
@@ -60,14 +22,6 @@ _MAX_SUMMARIES     =  3
 async def build_system_prompt_with_memory(
     user_id: int, base_prompt: str, *, user_context: dict | None = None
 ) -> str:
-    """Return ``base_prompt`` with a "Contexto del usuario" section
-    appended when the user has facts / preferences / recent
-    summaries on record. Identity transform when empty.
-
-    The section sits at the end of the prompt — the LLM sees the
-    immutable rules first, the personalisation second. Splitting it
-    out keeps the immutable rules cache-friendly across users.
-    """
     facts       = await _fetch_facts(user_id, limit=_MAX_FACTS, user_context=user_context)
     preferences = await _fetch_preferences(user_id, user_context=user_context)
     summaries   = await _fetch_recent_summaries(user_id, limit=_MAX_SUMMARIES, user_context=user_context)
@@ -80,9 +34,6 @@ async def build_system_prompt_with_memory(
     if facts:
         block.append("\n### Hechos sobre el usuario y su empresa:\n")
         for f in facts:
-            # The fact is operator-controlled text — render verbatim
-            # but cap line length so a 10 KB pasted artifact can't
-            # blow up the prompt token count.
             block.append(f"- {f[:500]}\n")
 
     if preferences:
@@ -143,9 +94,6 @@ async def _fetch_preferences(user_id: int, *, user_context: dict | None = None) 
 async def _fetch_recent_summaries(
     user_id: int, *, limit: int, user_context: dict | None = None
 ) -> list[str]:
-    """Per-conversation summaries for the user's most recent N
-    conversations. Joins conversations on user_id since the summary
-    table itself isn't user-scoped (one row per conversation)."""
     if user_context is None:
         return []
     pool = await auth.pool()
@@ -170,9 +118,6 @@ async def _fetch_recent_summaries(
             user_id, workspace_id, tenant_id, limit,
         )
     return [r["summary"] for r in rows]
-
-
-# ── 2. Fact extraction ──────────────────────────────────────────────────
 
 
 _FACT_EXTRACTION_PROMPT = (
@@ -206,19 +151,6 @@ async def extract_facts_from_turn(
     max_new_facts: int = 5,
     user_context: dict | None = None,
 ) -> list[dict]:
-    """Run an LLM extraction pass over the recent turn and persist
-    every well-formed fact into user_facts with source='extracted'.
-
-    Returns the list of facts that were actually inserted (the UNIQUE
-    constraint silently drops duplicates).
-
-    The extraction call is cheap (small max_tokens, single round-trip)
-    so we run it on every turn rather than gating on heuristics —
-    keeping the trigger simple makes the behaviour easier to reason
-    about. The LLM is asked for a strict JSON array; we tolerate
-    common malformations (trailing commas, prose preamble) but bail
-    on anything we can't parse.
-    """
     if not conversation_history:
         return []
 
@@ -232,12 +164,6 @@ async def extract_facts_from_turn(
     if not parsed:
         return []
 
-    # v1.44.3 R1 LLM-A2 follow-up: validate BEFORE slicing. The
-    # previous slice-then-validate order silently under-counted when
-    # the LLM returned a mix of valid + invalid candidates: a list
-    # like [empty, empty, valid, valid, valid] with max_new_facts=3
-    # would yield zero inserts because the slice took the three
-    # leading empties first. Validate first, then slice.
     valid_texts: list[str] = []
     for candidate in parsed:
         fact_text = (candidate.get("fact") or "").strip()
@@ -273,16 +199,6 @@ async def extract_facts_from_turn(
 
 
 def _parse_facts_json(raw: str) -> list[dict]:
-    """Parse the LLM's response into a list of {fact, category} dicts.
-
-    The LLM is asked for strict JSON but real models occasionally
-    wrap the array in prose or trailing-comma it. We:
-      1. Try a direct json.loads.
-      2. If that fails, extract the first bracketed array via regex
-         and try again.
-      3. Bail if neither works — fact extraction is best-effort, a
-         failed parse is logged and skipped.
-    """
     s = raw.strip()
     try:
         parsed = json.loads(s)
@@ -301,9 +217,6 @@ def _parse_facts_json(raw: str) -> list[dict]:
     return [item for item in parsed if isinstance(item, dict)]
 
 
-# ── 3. Conversation summary ─────────────────────────────────────────────
-
-
 _SUMMARY_PROMPT = (
     "Resume la siguiente conversación en UN solo párrafo de máximo 4 "
     "frases. Captura: tema central, decisiones del usuario, datos "
@@ -320,13 +233,6 @@ async def summarise_conversation(
     *,
     user_context: dict | None = None,
 ) -> str | None:
-    """Generate (or refresh) the rolling summary for a conversation.
-
-    Stored in ``conversation_memory_summary``. Returns the summary
-    text the LLM produced, or None if the summary was "sin contenido"
-    (we don't store empty summaries — they'd pollute the memory
-    block on future turns).
-    """
     if not recent_messages:
         return None
     try:
@@ -366,13 +272,7 @@ async def summarise_conversation(
 
 
 def _approx_tokens(text: str) -> int:
-    """Cheap token estimate (4 chars/token rough mean for European
-    languages). Used for token_count column; not load-bearing —
-    real tokenisation happens at the LLM provider."""
     return max(1, len(text) // 4)
-
-
-# ── 4. Helpers exposed for tests / future callers ───────────────────────
 
 
 def render_memory_block(
@@ -380,8 +280,6 @@ def render_memory_block(
     preferences: dict[str, str],
     summaries: Iterable[str],
 ) -> str:
-    """Pure-function version of the prompt-builder body — useful for
-    unit tests that don't want to mock the DB pool."""
     fact_list      = list(facts)
     summary_list   = list(summaries)
     if not fact_list and not preferences and not summary_list:

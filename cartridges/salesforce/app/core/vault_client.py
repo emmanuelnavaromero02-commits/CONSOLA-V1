@@ -19,10 +19,6 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "SF_BASE_URL": ("base_url", "url", "host", "instance_url", "sf_base_url"),
     "SF_COMPANY_ID": ("company_id", "company", "sf_company_id"),
     "SF_CLIENT_ID": ("client_id", "consumer_key", "sf_client_id"),
-    # NOTE: "password" is deliberately NOT an alias for the OAuth client secret.
-    # In Salesforce's username-password flow the Connected App consumer secret
-    # and the user's login password are distinct; a Vault field named
-    # ``password`` is the login password (SF_PASSWORD), never the client secret.
     "SF_CLIENT_SECRET": ("client_secret", "secret", "consumer_secret", "sf_client_secret"),
     "SF_USERNAME": ("username", "user", "sf_username"),
     "SF_PASSWORD": ("password", "pass", "sf_password"),
@@ -134,7 +130,6 @@ def _candidate_fields(env_var_name: str) -> tuple[str, ...]:
 
 
 def get_secret_for_worker(service_name: str, env_var_name: str, security_context: str | None = None) -> str:
-    """Resolve a worker credential from env first, then Console Vault."""
     value = os.environ.get(env_var_name)
     if value:
         return value
@@ -148,12 +143,10 @@ def get_secret_for_worker(service_name: str, env_var_name: str, security_context
 
 
 def get_connection_for_worker(service_name: str, security_context: str | None = None) -> dict[str, Any]:
-    """Return the resolved Console Vault connection payload for a worker."""
     return dict(_fetch_connection(service_name, security_context=security_context))
 
 
 def get_salesforce_credentials() -> tuple[str, str, str, str, str]:
-    """Return SF OAuth credentials from environment, Console Vault, or settings."""
     base_url = (
         get_secret_for_worker("salesforce", "SF_BASE_URL")
         or get_setting("salesforce_base_url", default=settings.sf_base_url, env_fallback="SF_BASE_URL")
@@ -173,10 +166,6 @@ def get_salesforce_credentials() -> tuple[str, str, str, str, str]:
     )
     token_url = get_secret_for_worker("salesforce", "SF_TOKEN_URL") or settings.sf_token_url
 
-    # Salesforce has no company_id (that was a SAP concept) — it is NOT required.
-    # base_url + client_id + client_secret + token_url is the minimum for the
-    # OAuth flows; company_id is returned only for tuple-shape parity and is
-    # always "" for Salesforce.
     if not all([base_url, client_id, client_secret, token_url]):
         raise ValueError(
             "Salesforce credentials not configured.\n"

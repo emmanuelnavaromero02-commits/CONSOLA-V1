@@ -13,18 +13,6 @@ interface Props {
   detail: WorkflowDetailResponse;
 }
 
-/**
- * v1.44.4 Task A — multi-step workflow visualiser.
- *
- * Renders the real backend shape: ``{workflow, steps}`` envelope
- * from GET /api/copilot/workflow/{id}. Step fields are
- * ``step_idx``, ``description``, ``tool``, ``args``, ``result``,
- * ``status`` (one of pending|running|completed|failed|skipped),
- * plus ``started_at`` / ``finished_at`` timestamps.
- *
- * Live status updates come from polling via ``useWorkflow`` —
- * the parent re-renders every ~5 s while the run is non-terminal.
- */
 const RUN_STATUS_BADGE: Record<WorkflowRunStatus, string> = {
   planning:   "bg-muted text-muted-foreground",
   running:    "bg-blue-500 text-white",

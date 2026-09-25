@@ -5,9 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Mis accesos — OMEGA</title>
   <link rel="stylesheet" href="/static/css/main.css">
-  <!-- Phase-3b reskin — adopt the same design tokens as Home / Marketplace
-       so /mis-accesos no se siente "otra app". home-modern.css trae los
-       --home-* tokens y el reset de body/fondo consistente. -->
   <link rel="stylesheet" href="/static/css/home-modern.css">
   <style>
     /* Page-scoped styles. Same DOM ids the JS already targets
@@ -332,8 +329,6 @@
     </section>
   </main>
 
-  <!-- Phase-3 — shared SaaS-context client. Must load BEFORE my_access.js
-       so window.OmegaSecurityContext is defined when the page boots. -->
   <script src="/static/js/security_context_widget.js"></script>
   <script src="/static/js/my_access.js"></script>
 </body>

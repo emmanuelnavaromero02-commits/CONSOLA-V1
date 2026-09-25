@@ -7,31 +7,6 @@ import { legacyConsoleUrl } from "@/lib/legacy-url";
 
 import { CartridgeLauncherCard } from "@/components/studio/CartridgeLauncherCard";
 
-/**
- * v1.44.4 Group 1 — slim Studio launcher.
- *
- * BACKEND REALITY (audited 2026-05-17):
- *   - Every /api/studio/* endpoint is a v1.44.3.3 stub returning
- *     ``{stub: true, version: "v1.44.3.3", …empty…}``.
- *   - The legacy /studio HTML at :8000 still works end-to-end —
- *     it calls /studio/* (no /api prefix) + /api/mcp/invoke for
- *     real Deploy / Materialise / etc.
- *   - Only real-data signal the Next.js side has is the
- *     per-cartridge freshness from /api/dashboard/kpis.
- *
- * Per the scope decision (option B in the v1.44.4 Group 1
- * brief), this page is a SLIM LAUNCHER, not a full UI:
- *
- *   - Built-in cartridge cards showing real freshness + status.
- *   - Each card links to /studio?cartridge=<id> on the legacy
- *     :8000 origin via the LEGACY_CONSOLE_URL env var.
- *   - A clear banner at the top explains the migration in
- *     progress so an operator isn't surprised by the bounce
- *     to the classic UI.
- *
- * Replace this page with the full Next.js Studio in v1.44.5
- * once the /api/studio/* endpoints graduate from stubs.
- */
 const CARTRIDGES: { id: string; name: string; description: string }[] = [
   {
     id:          "replicon",

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Run Playwright with an external collection/execution reconciliation."""
 
 from __future__ import annotations
 

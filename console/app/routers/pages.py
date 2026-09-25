@@ -313,27 +313,16 @@ async def supervised_actions_page_slash(request: Request):
     return _console_next_response(request, "supervised-actions/index.html")
 
 
-# Sprint Phase-0 SaaS controls — "Mis accesos" is the user-facing view of
-# their own identity, role, workspace, effective permissions and cartridge
-# entitlements. Available to any authenticated user. No admin powers
-# implied; the page renders strictly what /api/me/access returns and the
-# backend continues to enforce every action it offers as a link.
 @router.get("/my-access", dependencies=[Depends(require_authenticated)])
 async def my_access_page(request: Request):
     return _console_next_response(request, "my-access/index.html")
 
 
-# Spanish alias for the same page so the navigation copy stays bilingual
-# with the rest of the console.
 @router.get("/mis-accesos", dependencies=[Depends(require_authenticated)])
 async def mis_accesos_page():
     return RedirectResponse(url="/my-access", status_code=307)
 
 
-# Sprint v1.5 — admin-only gate on the IAM / Settings panels
-# in addition to the pre-existing permission check. Non-admin users with
-# the permission (e.g. security_admin → iam.users.read) are now also
-# rejected per the binary admin/non-admin policy the client demoed.
 @router.get(
     "/iam",
     dependencies=[
@@ -423,8 +412,6 @@ async def operations_metrics_page(request: Request):
     return _console_next_response(request, "operations/metrics/index.html")
 
 
-# Viewer pages are operational read surfaces. They stay permission-gated so
-# Monitor can deep-link into them without showing buttons the backend rejects.
 @router.get("/viewer/jobs", dependencies=[Depends(require_permission("monitor.read"))])
 async def viewer_jobs(request: Request):
     return _viewer_redirect(request, "jobs")
@@ -539,8 +526,6 @@ async def apps_gallery(request: Request):
     return _console_next_response(request, "apps-gallery/index.html")
 
 
-# Canonical home for published analytic apps. Control Room answers "what needs
-# attention"; this surface answers "let me explore the dashboards".
 @router.get("/analytics", dependencies=[Depends(require_permission("apps.read"))])
 async def analytics_page(request: Request):
     return _console_next_response(request, "analytics/index.html")
@@ -553,7 +538,6 @@ async def analytics_viewer_page(request: Request):
     return _console_next_response(request, "analytics/viewer/index.html")
 
 
-# Sprint v1.41.0 — auditor P1 operativa: cartridge wizard page.
 @router.get(
     "/cartridges",
     dependencies=[Depends(require_permission("cartridges.read"))],
@@ -570,9 +554,6 @@ async def cartridges_viewer_page(request: Request):
     return _console_next_response(request, "cartridges/viewer/index.html")
 
 
-# Workspace shell: apps, decisions, datasets and assistant stay under the
-# canonical console origin (:8000), while chat execution is proxied to the
-# workspace service that already owns the consumer-assistant logic.
 @router.get(
     "/workspace",
     dependencies=[Depends(require_permission("workspace.access"))],

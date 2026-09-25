@@ -1,10 +1,3 @@
-"""Schema introspection helpers for Studio.
-
-The functions in this module are deliberately pure: they do not perform I/O,
-do not log credentials, and never raise for malformed customer specs. Callers
-receive an empty mapping when a document cannot be parsed and can attach their
-own reason at the API boundary.
-"""
 from __future__ import annotations
 
 from copy import deepcopy
@@ -235,7 +228,6 @@ def _schema_from_array_or_ref(schema: dict[str, Any], components: dict[str, Any]
 
 
 def parse_openapi_fields(spec: dict) -> dict[str, list[Field]]:
-    """Return entity fields from OpenAPI components.schemas and path responses."""
     try:
         if not isinstance(spec, dict):
             return {}
@@ -289,7 +281,6 @@ def _entity_type_name(value: str) -> str:
 
 
 def parse_odata_entity_sets(edmx_xml: str) -> dict[str, str]:
-    """Return OData EntitySet name -> EntityType name mappings."""
     try:
         if not isinstance(edmx_xml, str) or not edmx_xml.strip():
             return {}
@@ -308,7 +299,6 @@ def parse_odata_entity_sets(edmx_xml: str) -> dict[str, str]:
 
 
 def parse_odata_metadata(edmx_xml: str) -> dict[str, list[Field]]:
-    """Parse OData V2/V4 EDMX EntityType/Property metadata."""
     try:
         if not isinstance(edmx_xml, str) or not edmx_xml.strip():
             return {}
@@ -355,7 +345,6 @@ def parse_odata_metadata(edmx_xml: str) -> dict[str, list[Field]]:
 
 
 def normalize_field(field: dict[str, Any]) -> Field:
-    """Normalize a Studio field dict while preserving source type metadata."""
     name = _field_name(str(field.get("name") or field.get("id") or ""))
     if not name:
         raise ValueError("field.name is required")

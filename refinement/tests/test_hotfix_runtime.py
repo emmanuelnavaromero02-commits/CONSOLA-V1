@@ -122,8 +122,6 @@ def test_dataset_allowed_filters_owned_datasets_for_workspace_employees(
 def test_discover_relationships_excludes_datasets_the_caller_cannot_see(
     refinement_main, monkeypatch
 ):
-    # A viewer must not learn about a coworker's dataset via FK discovery — the
-    # tool must re-filter through _dataset_allowed, not just workspace/tenant.
     base_sec = {
         "trusted": True,
         "source": "console",
@@ -135,10 +133,8 @@ def test_discover_relationships_excludes_datasets_the_caller_cannot_see(
         "allowed_cartridges": ["hubspot"],
     }
     catalog_rows = [
-        # caller-owned key + child -> a legitimate candidate
         {"dataset": "gold_customers", "column_name": "customer_id", "data_type": "VARCHAR", "distinct_count": 10, "null_rate": 0.0},
         {"dataset": "gold_invoices", "column_name": "customer_id", "data_type": "VARCHAR", "distinct_count": 4, "null_rate": 0.0},
-        # a coworker's dataset (created_by 11) that would also match by name/type
         {"dataset": "gold_secret", "column_name": "customer_id", "data_type": "VARCHAR", "distinct_count": 3, "null_rate": 0.0},
     ]
     datasets = [
@@ -161,9 +157,7 @@ def test_discover_relationships_excludes_datasets_the_caller_cannot_see(
     involved = {c["from_dataset"] for c in candidates} | {
         c["to_dataset"] for c in candidates
     }
-    # the coworker's dataset is never exposed
     assert "gold_secret" not in involved
-    # the caller's own datasets still produce the legitimate candidate
     assert any(
         c["from_dataset"] == "gold_invoices" and c["to_dataset"] == "gold_customers"
         for c in candidates
@@ -337,11 +331,6 @@ async def test_mcp_non_string_tool_preserves_unknown_tool_response(refinement_ma
 
 @pytest.mark.anyio
 async def test_rest_dataset_data_endpoint_is_disabled(refinement_main):
-    """Regression: GET /datasets/{name}/data used to call query_dataset
-    without a user context. Any peer holding INTERNAL_API_KEY (workspace,
-    mcp-infra, replicon, airflow) could trigger an RLS-less read of any
-    dataset whose SQL did not reference pggold.* . The endpoint is now
-    disabled in favour of POST /mcp/invoke with a forwarded user_context."""
     with pytest.raises(HTTPException) as exc:
         await refinement_main.dataset_data("gold_sales", limit=10)
 

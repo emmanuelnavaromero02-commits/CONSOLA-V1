@@ -19,7 +19,6 @@ if [[ -z "${DOCKER_CONFIG:-}" || ! -s "${DOCKER_CONFIG}/config.json" ]]; then
   exit 1
 fi
 
-# Verificar que .env existe y tiene variables críticas
 if [ ! -f .env ]; then
   echo "ERROR: .env no existe en $DEPLOY_DIR. Ejecuta /opt/modecissions/scripts/aws-entrypoint.sh."
   exit 1
@@ -72,7 +71,6 @@ if [ "${DEPLOY_CARTRIDGES_SAME_HOST:-true}" = "true" ]; then
   COMPOSE_FILES+=(-f docker-compose.cartridges.yml)
 fi
 
-# Postgres primero (necesita estar listo antes de los init containers)
 echo "--- Iniciando Postgres ---"
 docker compose "${COMPOSE_FILES[@]}" up -d postgres postgres_gold
 echo "Esperando Postgres listo (30s)..."
@@ -81,13 +79,11 @@ sleep 30
 echo "--- Aplicando migraciones pendientes ---"
 bash apply_db_migrations.sh
 
-# Init containers (DB superset/airflow ya creadas por init/*.sh del contenedor postgres)
 echo "--- Iniciando init containers ---"
 docker compose "${COMPOSE_FILES[@]}" up -d superset-init airflow-init
 echo "Esperando init containers (60s)..."
 sleep 60
 
-# Levantar resto
 echo "--- Iniciando todos los servicios ---"
 docker compose "${COMPOSE_FILES[@]}" up -d
 

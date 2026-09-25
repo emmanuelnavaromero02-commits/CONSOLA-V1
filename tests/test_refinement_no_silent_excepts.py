@@ -1,4 +1,3 @@
-"""Sprint v1.32 — refinement app must not hide failures with except/pass."""
 from __future__ import annotations
 
 import re

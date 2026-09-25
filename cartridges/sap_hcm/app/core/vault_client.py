@@ -123,7 +123,6 @@ def _candidate_fields(env_var_name: str) -> tuple[str, ...]:
 
 
 def get_secret_for_worker(service_name: str, env_var_name: str, security_context: str | None = None) -> str:
-    """Resolve a worker credential from env first, then Console Vault."""
     value = os.environ.get(env_var_name)
     if value:
         return value
@@ -137,12 +136,10 @@ def get_secret_for_worker(service_name: str, env_var_name: str, security_context
 
 
 def get_connection_for_worker(service_name: str, security_context: str | None = None) -> dict[str, Any]:
-    """Return the resolved Console Vault connection payload for a worker."""
     return dict(_fetch_connection(service_name, security_context=security_context))
 
 
 def get_sap_hcm_credentials() -> tuple[str, str, str]:
-    """Return (base_url, user, pass) from environment or Console Vault."""
     base_url = get_secret_for_worker("sap_hcm", "SAP_HCM_BASE_URL") or settings.sap_hcm_base_url
     user = get_secret_for_worker("sap_hcm", "SAP_HCM_USER") or settings.sap_hcm_user
     password = get_secret_for_worker("sap_hcm", "SAP_HCM_PASS") or settings.sap_hcm_pass

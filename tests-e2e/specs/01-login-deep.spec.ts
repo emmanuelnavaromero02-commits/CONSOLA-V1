@@ -1,11 +1,3 @@
-/**
- * v1.44.3.2.1 spec 01-deep — Exhaustive login + auth surface.
- *
- * 20 tests covering validation, status-specific error toasts,
- * CSRF, session lifetime, rate limit, and the /auth/me round-trip.
- * Each test runs without pre-mounted storage state so the unauth
- * surface is exercised directly.
- */
 import { test, expect, request as pwRequest } from "@playwright/test";
 
 test.use({ storageState: { cookies: [], origins: [] } });
@@ -36,11 +28,6 @@ test.describe("Login form — validation surface", () => {
 
   test("submitting empty form does NOT call the API", async ({ page }) => {
     await page.goto("/login");
-    // v1.44.3.2.1 R1 Testing F1: was a bare waitForTimeout(500) +
-    // boolean snapshot. expect.poll is the deterministic shape:
-    // it re-evaluates the predicate until the timeout elapses, so
-    // we get the same negative-assertion semantics ("no request
-    // fired") without picking an arbitrary sleep duration.
     let apiCalled = false;
     page.on("request", (req) => {
       if (req.url().includes("/auth/login")) apiCalled = true;
@@ -77,7 +64,6 @@ test.describe("Login — specific error toasts", () => {
     await page.getByRole("button", { name: /iniciar sesión|sign in/i }).click();
     const toast = page.locator("[data-sonner-toast]");
     await expect(toast.first()).toBeVisible({ timeout: 5_000 });
-    // Toast text should mention either credentials or auth error.
     const text = (await toast.first().innerText()).toLowerCase();
     expect(text).toMatch(/incorrect|inválid|no se pudo|credenciales/);
   });
@@ -91,8 +77,6 @@ test.describe("Login — specific error toasts", () => {
       const toast = page.locator("[data-sonner-toast]");
       await expect(toast.first()).toBeVisible({ timeout: 5_000 });
       const text = (await toast.first().innerText()).toLowerCase();
-      // SECURITY: identical wording to the unknown-email case
-      // prevents user-enumeration via differential error text.
       expect(text).toMatch(/incorrect|inválid|no se pudo|credenciales/);
     },
   );
@@ -140,15 +124,9 @@ test.describe("Login — happy path", () => {
     await page.getByLabel(/email/i).fill(EMAIL.toUpperCase());
     await page.getByLabel(/contraseña|password/i).fill(PASSWORD);
     await page.getByRole("button", { name: /iniciar sesión|sign in/i }).click();
-    // If this test FAILS (login succeeds), the backend normalises
-    // emails — fine semantics but worth knowing. The bug report
-    // pins it as user-reported behaviour.
     await page.waitForURL(/\/dashboard/, { timeout: 10_000 }).catch(() => undefined);
     const url = page.url();
-    // Allow either: login succeeded (case-insensitive backend) or
-    // stayed on /login (case-sensitive). Pin which one happens.
     if (/\/dashboard/.test(url)) {
-      // OK, backend is case-insensitive. Document this in findings.
       expect(true).toBe(true);
     } else {
       await expect(page).toHaveURL(/\/login/);
@@ -242,8 +220,6 @@ test.describe("Logout + session lifecycle", () => {
     await page.getByRole("button", { name: /iniciar sesión|sign in/i }).click();
     await page.waitForURL(/\/dashboard/, { timeout: 15_000 });
 
-    // Try to find a logout affordance. Common shapes: button[name=logout],
-    // link[href=/logout], menu item "Cerrar sesión".
     const logout = page.locator(
       'button[name="logout"], a[href*="logout"], button:has-text("Cerrar sesión"), button:has-text("Logout")',
     );

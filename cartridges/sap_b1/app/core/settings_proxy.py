@@ -1,4 +1,3 @@
-"""Proxy para leer system_settings desde el console. Fallback a env si falla."""
 from __future__ import annotations
 
 import logging
@@ -40,7 +39,6 @@ def _fetch_from_console(key: str) -> str | None:
 
 
 def get_setting(key: str, default: str = "", env_fallback: str | None = None) -> str:
-    """Lee setting desde console (cacheado 30s). Fallback a env si console falla."""
     now = time.time()
     cached = _CACHE.get(key)
     if cached and (now - cached[0]) < _CACHE_TTL_SECONDS:

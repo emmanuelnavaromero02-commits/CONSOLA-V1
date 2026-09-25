@@ -3,48 +3,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 export interface SlashCommand {
-  /** Token typed after "/", lowercase, no spaces. */
   id:          string;
-  /** Human-readable label rendered in the palette. */
   label:       string;
-  /** Short description shown below the label. */
   description: string;
-  /** Group header — palette renders commands grouped by this. */
   group:       "Básicos" | "Reportes";
-  /** Fired when the user picks the command. The page decides
-   *  whether to send a prompt, open a drawer, etc. */
   onSelect:    () => void;
 }
 
 interface Props {
   open:     boolean;
-  /** Initial query — typically "/" when triggered by the input. */
   query?:   string;
   commands: SlashCommand[];
   onClose:  () => void;
 }
 
-/**
- * v1.44.4 Task A — slash-command palette.
- *
- * Lightweight cmdk-like surface implemented inline (no cmdk
- * dependency). Filters the registered commands by a fuzzy
- * substring match, groups them under "Básicos" / "Reportes"
- * sections, and dispatches the selection through ``onSelect``.
- *
- * Accessibility:
- *   - role=dialog + aria-modal,
- *   - the input keeps focus after each filter pass,
- *   - Arrow Up/Down + Enter for keyboard nav,
- *   - Escape closes via onClose,
- *   - Each result has role=option + aria-selected on the
- *     active index.
- *
- * Why inline and not cmdk: keeping the dependency surface
- * small until shadcn/cmdk lands a polished, accessible
- * primitive into this codebase. The palette logic here is
- * intentionally tiny so a future replacement is mechanical.
- */
 export function SlashCommandsPalette({
   open,
   query,
@@ -85,8 +57,6 @@ function SlashCommandsPaletteContent({
     );
   }, [search, commands]);
 
-  // Group the filtered list, preserving registration order
-  // within each group.
   const grouped = useMemo(() => {
     const out: Record<string, SlashCommand[]> = {};
     for (const cmd of filtered) {
@@ -124,8 +94,6 @@ function SlashCommandsPaletteContent({
     }
   }
 
-  // Flat-index helper so the per-group rendering knows which
-  // row in the global filtered list it represents.
   let flatIdx = -1;
 
   return (

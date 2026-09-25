@@ -20,7 +20,6 @@ _PUBLIC_HASH_KEYS = {
 
 
 def redact_response_value(value: Any, key: str | None = None) -> Any:
-    """Redact secrets without corrupting public OMEGA IDs and hashes."""
     if isinstance(value, dict):
         return {item_key: redact_response_value(item, str(item_key)) for item_key, item in value.items()}
     if isinstance(value, (list, tuple)):

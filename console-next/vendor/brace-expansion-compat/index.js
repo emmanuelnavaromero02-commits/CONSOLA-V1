@@ -1,6 +1,5 @@
 "use strict";
 
-// CommonJS is required for minimatch 3 compatibility.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const modern = require("brace-expansion-safe");
 

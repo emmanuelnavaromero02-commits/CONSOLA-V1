@@ -29,9 +29,6 @@ export function AppViewer({ appName }: { appName: string | null }) {
   const requested = (appName ?? "").trim();
   const validName = isPublishedAppName(requested);
 
-  // The catalog is the authority on what this caller may open. A name that the
-  // API did not return is treated as not found, so the viewer can never be used
-  // to probe for apps outside the caller's scope.
   const { data, isLoading, isError, error } = useAnalyticsApps();
   const app = useMemo(
     () => (validName ? data?.apps?.find((item) => item.name === requested) : undefined),
@@ -95,8 +92,6 @@ export function AppViewer({ appName }: { appName: string | null }) {
     <main className="mx-auto flex h-[calc(100vh-4rem)] max-w-[1600px] flex-col gap-3 px-4 py-4 sm:px-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
-          {/* The app renders its own <h1>; the shell header stays a breadcrumb
-              so the viewer does not stack two competing titles. */}
           <Link
             href="/analytics"
             className="inline-flex min-h-[44px] items-center gap-2 text-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -121,23 +116,6 @@ export function AppViewer({ appName }: { appName: string | null }) {
       ) : null}
 
       <iframe
-        // Always the wrapper, never the app. `/apps/{name}` returns published
-        // HTML authored outside this repo; `/apps/{name}/embed` returns a
-        // first-party document we generate, which then hosts that HTML in its
-        // own sandboxed child. Loading the app directly here would run
-        // untrusted markup at the console's origin.
-        //
-        // The sandbox below is not the security boundary — it cannot be, since
-        // the wrapper needs `allow-same-origin` to read the CSRF cookie and
-        // make credentialed calls on the user's behalf. The real boundary is
-        // one level down: the wrapper's inner iframe is `sandbox="allow-scripts"`
-        // with no `allow-same-origin`, so the app holds an opaque origin and
-        // reaches data only through the postMessage broker. This attribute is
-        // defence in depth over trusted markup; `allow-downloads` is gone
-        // because the wrapper has no reason to start one.
-        //
-        // Server-side name validation happens again in /apps/{name}/embed; this
-        // encode keeps the client from building anything but a same-origin path.
         src={`/apps/${encodeURIComponent(app.name)}/embed`}
         title={title}
         className="min-h-[60vh] flex-1 rounded-lg border bg-background"

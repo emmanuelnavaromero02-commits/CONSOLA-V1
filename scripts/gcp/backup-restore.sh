@@ -1,21 +1,4 @@
 #!/usr/bin/env bash
-# Capture / restore a verifiable Postgres restore-point for a GCP day-two release.
-#
-# Checkpoint 5.5 blocking category: "impossible rollback/restore". A release must
-# never mutate the databases without first capturing a restore-point that can be
-# verified byte-for-byte and restored on demand — never a blind N-1.
-#
-# Both canonical databases are captured:
-#   modecissions       (postgres, 5432)
-#   modecissions_gold  (postgres_gold, 5433)
-#
-# Subcommands:
-#   backup  <backup-dir>   pg_dump both DBs into <backup-dir>, write a sha256
-#                          manifest, and refuse to report success unless every
-#                          artifact hashed. Run BEFORE any migration/deploy.
-#   restore <backup-dir>   verify every artifact against the manifest sha256,
-#                          then restore both DBs. Fails closed on any mismatch.
-#   verify  <backup-dir>   verify the manifest without touching the databases.
 set -Eeuo pipefail
 set +x
 umask 077
@@ -23,7 +6,6 @@ umask 077
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 COMPOSE_FILE="${OMEGA_COMPOSE_FILE:-${ROOT_DIR}/infra/docker-compose.yml}"
 
-# (service, port, database) for the two canonical clusters.
 DB_MAIN_SERVICE="postgres";      DB_MAIN_PORT="5432"; DB_MAIN_NAME="modecissions"
 DB_GOLD_SERVICE="postgres_gold"; DB_GOLD_PORT="5433"; DB_GOLD_NAME="modecissions_gold"
 
@@ -72,7 +54,6 @@ do_backup() {
     name="${triple%%:*}"; service="${triple#*:}"; port="${service#*:}"; service="${service%%:*}"
     dump="${dir}/${name}.sql"
     echo "[backup] pg_dump ${name} (${service}:${port})"
-    # --clean --if-exists makes the dump self-contained for a psql restore.
     dc exec -T "${service}" pg_dump --clean --if-exists -U postgres -p "${port}" -d "${name}" > "${dump}"
     if [[ ! -s "${dump}" ]]; then
       echo "ERROR: pg_dump produced an empty dump for ${name}; failing closed." >&2
@@ -118,7 +99,6 @@ verify_manifest() {
 
 do_restore() {
   local dir="$1"
-  # Never restore an unverified restore-point.
   verify_manifest "${dir}"
   local name service port sha dump
   while IFS=$'\t' read -r name service port sha; do

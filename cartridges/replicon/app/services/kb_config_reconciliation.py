@@ -33,7 +33,6 @@ def classify_managed_kb(
     *,
     stored_digest: str | None = None,
 ) -> ReconciliationAction:
-    """Classify ownership without guessing from names or SQL fragments."""
 
     if kb_id not in CURRENT_PACKAGE_VERSIONS:
         return "custom"
@@ -64,7 +63,6 @@ def reconcile_packaged_kbs(
     packaged_kbs: list[dict[str, Any]],
     cartridge_id: str,
 ) -> dict[str, int]:
-    """Insert missing KBs and upgrade only exact package-owned legacy WIP."""
 
     rows = (
         conn.execute(
@@ -136,7 +134,6 @@ def is_kb_runtime_safe(
     stored_sql: str,
     packaged_kbs: list[dict[str, Any]],
 ) -> bool:
-    """Reserved WIP executes only when it exactly matches the current package."""
 
     if kb_id not in CURRENT_PACKAGE_VERSIONS:
         return True

@@ -1,15 +1,3 @@
-"""
-Port hygiene contract for SAP cartridge DAGs / ap_flows.
-
-Every cartridge has a canonical port assignment:
-    hubspot            -> 8210
-    sap_successfactors → 8203
-    sap_hcm            → 8202
-    sap_s4hana         → 8204
-
-Cross-references in DAGs / ap_flows / Dockerfile / docker-compose must
-NOT use another cartridge's port (a common copy-paste bug).
-"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -53,8 +41,6 @@ def test_cartridge_does_not_reference_other_cartridges_port(
             continue
         for lineno, line in enumerate(text.splitlines(), 1):
             for port in foreign_ports:
-                # Look for "<cartridge>:<port>" patterns — port reuse out of
-                # context is fine (e.g. a comment about MinIO 9000).
                 if f"{cartridge}:{port}" in line:
                     bad_lines.append(
                         f"{path.relative_to(CARTRIDGES_ROOT)}:{lineno}: {line.strip()}"
@@ -64,8 +50,6 @@ def test_cartridge_does_not_reference_other_cartridges_port(
 
 
 def test_s4hana_uses_8204_not_8202_in_dags() -> None:
-    """Regression: the S/4HANA DAGs were copied from HCM and shipped with
-    ``http://sap_s4hana:8202`` instead of 8204. Belt-and-suspenders check."""
     dags_dir = CARTRIDGES_ROOT / "sap_s4hana" / "dags"
     assert dags_dir.is_dir()
 
@@ -73,7 +57,6 @@ def test_s4hana_uses_8204_not_8202_in_dags() -> None:
         text = path.read_text(encoding="utf-8")
         assert "sap_s4hana:8202" not in text, \
             f"{path.name}: still points to port 8202"
-        # Each DAG MUST contain at least one 8204 reference
         assert "sap_s4hana:8204" in text or "8204" in text, \
             f"{path.name}: no 8204 reference"
 

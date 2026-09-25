@@ -4,9 +4,6 @@ connector:
   description: "Conecta Salesforce Sales Cloud vía SOQL (OAuth2 username-password o bearer token estático)."
   version: "1.0"
   auth:
-    # OAuth2 username-password flow by default (server-to-server). The client
-    # also supports client_credentials and a static bearer token; pick via the
-    # Vault connection's auth_method.
     type: oauth2_password
     token_url_env: SF_TOKEN_URL
     client_id_env: SF_CLIENT_ID
@@ -32,8 +29,6 @@ connector:
     buffer_minutes: 5
     field_format: iso8601
 
-# UI form fields — rendered by the /cartridges credentials form.
-# name maps to the vault connection key; type=password fields are masked in the UI.
 fields:
   - name: instance_url
     type: url

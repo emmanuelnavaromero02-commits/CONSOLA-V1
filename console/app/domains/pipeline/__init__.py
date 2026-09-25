@@ -1,2 +1,2 @@
-"""Pipeline domain helpers."""
+pass
 

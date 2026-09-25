@@ -1,5 +1,3 @@
-"""Bounded full-stream recognizer for versioned SQL statement productions."""
-
 from __future__ import annotations
 
 import re
@@ -52,7 +50,6 @@ def _has_invalid_nesting(tokens: tuple[SelectToken, ...]) -> bool:
 
 
 def contains_runtime_sql(value: str) -> bool:
-    """Detect a complete catalogue production from every bounded token position."""
 
     if not _HEAD_WORD.search(value):
         return False

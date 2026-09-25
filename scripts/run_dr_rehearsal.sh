@@ -1,10 +1,4 @@
 #!/usr/bin/env bash
-# Guarded backup/restore rehearsal.
-#
-# Default mode is non-destructive: it verifies the DR scripts still contain the
-# required backup, restore, manifest, and destructive-confirmation controls.
-# Set OMEGA_DR_REHEARSAL_EXECUTE=1 only in a disposable staging/prod-like
-# environment to run backup.sh + restore.sh and then smoke/readiness.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

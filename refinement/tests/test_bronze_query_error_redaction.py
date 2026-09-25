@@ -1,5 +1,3 @@
-"""Error redaction contracts for rejected Bronze Query SQL."""
-
 from __future__ import annotations
 
 import logging

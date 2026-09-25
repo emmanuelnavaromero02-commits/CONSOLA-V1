@@ -274,8 +274,6 @@ async def test_live_approved_or_reserved_intent_blocks_new_attempt(
 async def test_expired_approved_or_reserved_is_explicitly_fail_closed(
     authority_seed: AuthoritySeed, expired_state: str
 ):
-    # PR-A cannot prove that a reserved effect did not occur, so both expired
-    # states remain explicitly non-retryable until PR-B defines recovery.
     seed = authority_seed
     scope = await seed_authority_item(seed, seed.first, f"expired-{expired_state}")
     pool = await _pool(seed)

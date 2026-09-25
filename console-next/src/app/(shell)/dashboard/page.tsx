@@ -10,13 +10,6 @@ import { FreshnessTable } from "@/components/dashboard/FreshnessTable";
 import { BriefingSection } from "@/components/dashboard/BriefingSection";
 import { LogoutButton } from "@/components/auth/LogoutButton";
 
-/**
- * Un claim de éxito ("Todos en línea", "Sin movimientos") solo puede
- * afirmarse con un payload válido y actual que lo demuestre:
- * - `isError` domina cualquier claim de actualidad, incluso con caché;
- * - ausencia de payload se muestra como cargando o "No disponible";
- * - un campo ausente/no finito se muestra como "Sin datos", nunca cero.
- */
 function claimHint(
   raw: number | null,
   view: KpiView | null,
@@ -45,8 +38,6 @@ export default function DashboardPage() {
 
 function DashboardContent() {
   const { data, isLoading, isError, refetch } = useKpis();
-  // Vista validada en runtime: ninguna sección ausente puede lanzar y
-  // ningún escalar inválido se convierte en cero (ver lib/hooks/kpi-view).
   const view = toKpiView(data);
   const freshnessRows = view?.freshnessRows ?? [];
 
@@ -60,10 +51,6 @@ function DashboardContent() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {/* v1.44.4 Task A — surface the new /workspace entry
-              point here so a returning operator can jump
-              straight into the copilot without the AppChrome
-              nav (which lands in Task H). */}
           <Link
             href="/workspace"
             className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -71,23 +58,13 @@ function DashboardContent() {
             <span aria-hidden className="mr-1.5">💬</span>
             Ir al workspace
           </Link>
-          {/* v1.44.3.3 Task E — logout affordance the 01-login-deep
-              spec was flagging as a known v1.44.4 deficit. */}
           <LogoutButton />
         </div>
       </header>
 
-      {/* v1.44.4 Task B — proactive briefing surfaced ABOVE the
-          KPIs so a returning operator sees actionable alerts the
-          moment they land. Polls every 60 s. */}
       <BriefingSection />
 
       {isError ? (
-        // v1.44.3.3 R-Mac-Round-3 Task E: ``role="alert"`` so
-        // screen readers announce the failure; retry button
-        // bumped to min-h-[44px] (was a text-link); aria-live
-        // marked polite so a transient refetch error doesn't
-        // hijack focus.
         <div
           role="alert"
           aria-live="polite"
@@ -109,17 +86,10 @@ function DashboardContent() {
 
       <section
         aria-label="Indicadores clave"
-        // v1.44.3.3 R-Mac-Round-3 Task E: ``sm:`` (≥640 px) for
-        // the first split so phones in landscape get two
-        // columns, not four-wide squished cards. Behaviour on
-        // ≥md is unchanged.
         className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
       >
         <KpiCard
           label="Cartuchos conectados"
-          // Display "5 / 10"; expose the connected count as the
-          // numeric token tests key off (the more important number
-          // of the two).
           value={
             view
               ? view.cartridges.connected != null && view.cartridges.total != null

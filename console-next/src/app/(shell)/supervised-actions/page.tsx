@@ -24,8 +24,6 @@ import { useSupervisedActionMutations } from "./use-action-mutations";
 
 const EMPTY_ACTIONS: SupervisedAction[] = [];
 
-// Estados terminales según el contrato (status/state ya entregados por la
-// API): sobre una acción ejecutada o cancelada no procede ninguna mutación.
 const TERMINAL_STATES = new Set(["executed", "completed", "cancelled", "canceled"]);
 
 function actionId(action: SupervisedAction): string {
@@ -107,10 +105,6 @@ export default function SupervisedActionsPage() {
     ]);
   };
 
-  // Idempotencia por intención lógica: la clave se conserva entre
-  // reintentos y solo rota tras éxito definitivo (ver use-action-mutations).
-  // La aprobación legacy no tiene camino interactivo: PR-A sigue sin
-  // capacidad server-authoritative que la habilite.
   const { validate, reject, cancel, busy } = useSupervisedActionMutations(currentId);
 
   const summary = useMemo(() => {
@@ -226,7 +220,6 @@ export default function SupervisedActionsPage() {
                 ) : null}
 
                 <div className="grid gap-3 md:grid-cols-2">
-                  {/* Procedencia veraz: lo ausente se declara, nunca se inventa. */}
                   <DetailBox label="Fuente" value={activeAction.source_type ? String(activeAction.source_type) : "Fuente no informada"} />
                   <DetailBox label="Tipo" value={activeAction.action_type ? String(activeAction.action_type) : "Tipo no informado"} />
                   <DetailBox label="Creada" value={shortDate(activeAction.created_at)} />

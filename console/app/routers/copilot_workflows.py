@@ -1,17 +1,3 @@
-"""Sprint v1.44.2 (Tarea I, capability 16) — copilot workflows.
-
-"Operar procesos completos" — multi-step LLM-planned execution
-with intermediate progress reports. This module ships the durable
-schema layer + CRUD + a per-workflow status endpoint; the
-LLM-driven planning loop and the SSE stream (the brief mentions
-GET /workflow/{id}/stream) are next-session work in
-copilot_service.
-
-Lifecycle of a workflow_run:
-  planning → running → completed | failed | cancelled
-Each step in workflow_steps:
-  pending → running → completed | failed | skipped
-"""
 from __future__ import annotations
 
 import json
@@ -27,10 +13,6 @@ from app.services.permissions import require_permission
 
 
 def _validate_uuid(value: str, *, label: str) -> str:
-    """v1.44.2 (R1 Security P2): malformed path UUIDs would surface
-    as 500 (asyncpg InvalidTextRepresentation) without an early
-    validation step. Convert to a clean 400 so the client gets a
-    deterministic response shape."""
     try:
         return str(uuid.UUID(value))
     except (ValueError, AttributeError, TypeError):
@@ -310,9 +292,6 @@ async def approve_workflow_step_plural(
     return await workflow_executor.approve_step(workflow_id, step_idx, user)
 
 
-# ── v1.44.3 (Tarea D): LLM-backed planning ─────────────────────────────
-
-
 _PLANNING_SYSTEM_PROMPT = (
     "Eres un planificador de workflows en una plataforma de "
     "integraciones empresariales (Replicon, SAP HCM/S4/SF). "
@@ -335,14 +314,6 @@ _PLANNING_SYSTEM_PROMPT = (
 )
 
 
-# v1.44.3 R1 Security P2 follow-up: deny-list defense-in-depth.
-# The planner prompt instructs the LLM to emit ``tool=null`` for
-# destructive operations so a human approves them, but a misbehaving
-# model could ignore the instruction and emit e.g. ``"tool":
-# "airflow_delete_dag"`` directly. _parse_plan_json normalises any
-# tool name matching this regex back to None so the (next-session)
-# executor loop can never reach the destructive surface without an
-# approval gate. Belt + suspenders: the prompt + the parser.
 _DESTRUCTIVE_TOOL_RE = __import__("re").compile(
     r"(?:^|[._])(delete|drop|truncate|set_variable|create_dag|destroy|wipe|reset)\b",
     __import__("re").IGNORECASE,
@@ -356,13 +327,6 @@ def _is_destructive_tool(name: str | None) -> bool:
 
 
 def _parse_plan_json(raw: str) -> list[dict]:
-    """Same defensive parser pattern as memory_service._parse_facts_json.
-    The LLM is asked for strict JSON; we tolerate prose wrappers via
-    regex but bail if the array is truly malformed.
-
-    Defense-in-depth: any tool name matching the destructive deny-list
-    is forced back to None regardless of what the LLM emitted.
-    """
     import re as _re
     s = (raw or "").strip()
     try:
@@ -385,8 +349,6 @@ def _parse_plan_json(raw: str) -> list[dict]:
         if not description:
             continue
         raw_tool = item.get("tool") or None
-        # v1.44.3 R1 Security P2: deny-list filter for destructive
-        # tool names regardless of LLM compliance with the prompt.
         tool = None if _is_destructive_tool(raw_tool) else raw_tool
         out.append({
             "step":        item.get("step", i),
@@ -398,13 +360,6 @@ def _parse_plan_json(raw: str) -> list[dict]:
 
 
 def _validate_planned_steps(plan: list[dict], tool_meta: dict[str, dict]) -> list[dict]:
-    """Server-side enforcement for LLM-authored workflow plans.
-
-    The prompt asks the model to use only listed tools, but execution cannot
-    depend on prompt obedience. Unknown tools become a hard planner failure;
-    unsafe/destructive tools become human-review steps; args are validated
-    with the same policy used at execution time.
-    """
     validated: list[dict] = []
     for idx, step in enumerate(plan[:8], start=1):
         tool = step.get("tool")
@@ -442,14 +397,6 @@ def _validate_planned_steps(plan: list[dict], tool_meta: dict[str, dict]) -> lis
 
 
 async def _llm_plan(intent: str, available_tools: list[str], user_context: dict | None = None) -> list[dict]:
-    """Call the LLM with the planning prompt + the intent.
-
-    The available_tools list goes into the user message so the LLM
-    can reference real tool names. We use the same chat() adapter as
-    drafts so the request shape is consistent across the codebase.
-    """
-    # Local import to keep the workflow router lightweight when LLM
-    # isn't reachable (e.g. unit tests that monkeypatch the function).
     from app.services import llm_client
 
     user_msg = (
@@ -505,13 +452,8 @@ async def plan_workflow(
     if run["status"] != "planning":
         raise HTTPException(409, "Workflow already planned or finished")
 
-    # Pull the available tool list from the MCP registry — keeps the
-    # planner grounded so it can't hallucinate tool names. We import
-    # locally to avoid pulling mcp_registry at module-import time.
     try:
         from app.services import mcp_registry
-        # mcp_registry exposes list_servers + list_tools; flatten to
-        # a single name list so the planner can reference them.
         servers = await mcp_registry.list_servers()
         all_tools: list[str] = []
         tool_meta: dict[str, dict] = {}
@@ -541,8 +483,6 @@ async def plan_workflow(
         raise HTTPException(502, "planner returned empty plan")
     plan = _validate_planned_steps(plan, tool_meta)
 
-    # Persist the plan + the per-step rows. Status flips to 'running'
-    # so the (next-session) executor loop knows it can start.
     async with scoped_db_for_user(pool, user) as (conn, tenant_id, workspace_id):
         claimed = await conn.fetchrow(
             """

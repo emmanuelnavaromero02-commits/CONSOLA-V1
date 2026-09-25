@@ -1,31 +1,3 @@
-"""Refinement must be bounded in every environment that runs it.
-
-Until 2026-09-22 this file asserted only against `infra/docker-compose.yml`, so
-CI stayed green while the AWS compose declared no ceiling at all: no mem_limit,
-no cpus and no DUCKDB_* key. Production got a memory limit only because someone
-hand-added one line to the host `.env`, which `env_file` then copied in -- a fix
-any re-render of that file would have removed, restoring the unbounded engine
-that took the host down on 2026-09-20.
-
-Two properties matter, and only the second one catches that outage:
-
-  * the keys are declared by the service, not inherited from a shared .env; and
-  * the values they *resolve to*, with nothing in the environment, are small
-    enough to be a ceiling.
-
-So the AWS checks render the real compose through an EMPTY env file -- the
-re-rendered-.env scenario itself -- and compare resolved bytes, following
-tests/test_mcp_infra_pdf_compose_capacity.py, which already solved this. A
-string comparison against the template cannot tell "bounded at 1GB" from
-"bounded at 6GB" from "mem_limit: 0", and 0 means unlimited.
-
-DuckDB sizes itself from *host* RAM unless told otherwise, so an absent limit
-means one query may take the whole box. It also spills by default -- to the
-relative path ".tmp", uncapped at ~90% of the filesystem, on the same volume as
-the Postgres data directories. Pinning an absolute spill directory and a cap is
-what bounds that; it does not enable spilling, which already happens.
-"""
-
 from __future__ import annotations
 
 import json
@@ -48,13 +20,8 @@ AWS_CARTRIDGES_COMPOSE = (
 )
 AWS_ENV_EXAMPLE = ROOT / "infra" / "terraform" / "deploy" / ".env.example"
 
-# The production host (m7i-flex.large) has 7.6 GiB for ~21 containers. This is
-# the budget the ceilings are judged against; it is what makes an assertion
-# about "small enough" meaningful rather than a restatement of the template.
 HOST_RAM_BYTES = 7 * 1024**3 + 600 * 1024**2
 
-# Tunables that must NOT leak in from the ambient environment, so that what the
-# compose file itself defaults to is what gets rendered.
 TUNABLES = (
     "REFINEMENT_MEM_LIMIT",
     "REFINEMENT_CPUS",
@@ -76,20 +43,16 @@ _UNITS = {
 
 
 def _to_bytes(value: str) -> int:
-    """Parse a DuckDB size string ('1GB', '512MB', '8GB') into bytes."""
     match = _SIZE_RE.match(str(value))
     assert match, f"not a DuckDB size literal: {value!r}"
     return int(float(match.group(1)) * _UNITS[match.group(2).upper()])
 
 
 def _render(compose_files: list[Path], env_file: Path) -> dict:
-    """Render the real compose with nothing but `env_file` to draw from."""
     sources = "\n".join(p.read_text(encoding="utf-8") for p in compose_files)
     environ = os.environ.copy()
     for name in TUNABLES:
         environ.pop(name, None)
-    # Keys the compose marks as required are irrelevant here; give them a value
-    # so `config` resolves and the quota assertions are what can fail.
     for name in REQUIRED_ENV_RE.findall(sources):
         environ[name] = "compose-contract"
     environ.update(
@@ -115,18 +78,9 @@ def _render(compose_files: list[Path], env_file: Path) -> dict:
 
 @pytest.fixture(scope="module")
 def aws_refinement(tmp_path_factory: pytest.TempPathFactory) -> dict:
-    """refinement as it renders with an EMPTY .env -- the regression scenario.
-
-    Deliberately not guarded by a docker skipif, matching
-    tests/test_mcp_infra_pdf_compose_capacity.py: a ceiling contract that can
-    skip itself is how the ceiling goes missing unnoticed.
-    """
     empty = tmp_path_factory.mktemp("quota") / "empty.env"
     empty.touch()
     return _render([AWS_COMPOSE, AWS_CARTRIDGES_COMPOSE], empty)
-
-
-# ── local compose (unchanged) ──────────────────────────────────────────────
 
 
 def test_refinement_compose_has_container_resource_quotas():
@@ -156,11 +110,7 @@ def test_env_example_documents_refinement_duckdb_quotas():
         assert needle in src
 
 
-# ── AWS: the environment that actually runs production ─────────────────────
-
-
 def test_aws_container_is_bounded(aws_refinement: dict) -> None:
-    """A ceiling, by resolved value. In Docker, mem_limit 0 means unlimited."""
     mem = int(aws_refinement.get("mem_limit") or 0)
 
     assert mem > 0, (
@@ -170,9 +120,6 @@ def test_aws_container_is_bounded(aws_refinement: dict) -> None:
     assert mem <= 3 * 1024**3, f"mem_limit {mem} is above the 3 GiB budget"
     assert float(aws_refinement.get("cpus") or 0) > 0, "no cpus ceiling"
 
-    # Without memswap_limit, Docker grants the container mem_limit again in
-    # swap, so the ceiling is really 2x. A refinement that swaps drags the whole
-    # host down -- the exact outcome the ceiling exists to prevent.
     swap = int(aws_refinement.get("memswap_limit") or 0)
     assert swap == mem, (
         f"memswap_limit ({swap}) must equal mem_limit ({mem}) so the container "
@@ -183,12 +130,6 @@ def test_aws_container_is_bounded(aws_refinement: dict) -> None:
 def test_aws_duckdb_memory_limit_is_a_fraction_of_the_host(
     aws_refinement: dict,
 ) -> None:
-    """The assertion that would have failed on 2026-09-20.
-
-    With the key absent the engine took DuckDB's host-sized default (~6 GiB of
-    the 7.6 GiB box). A presence check cannot express that; a byte comparison
-    against a declared host budget can.
-    """
     env = aws_refinement["environment"]
     duck = _to_bytes(env["DUCKDB_MEMORY_LIMIT"])
     mem = int(aws_refinement["mem_limit"])
@@ -205,11 +146,6 @@ def test_aws_duckdb_memory_limit_is_a_fraction_of_the_host(
 
 
 def test_aws_spill_is_pinned_and_capped(aws_refinement: dict) -> None:
-    """DuckDB spills by default, uncapped, to a relative path.
-
-    The risk this closes is an unbounded spill onto the volume that also holds
-    the Postgres data directories, not a query that fails for lack of spill.
-    """
     env = aws_refinement["environment"]
 
     directory = str(env["DUCKDB_TEMP_DIRECTORY"])
@@ -234,12 +170,6 @@ def test_aws_threads_fit_the_cpu_ceiling(aws_refinement: dict) -> None:
 
 @pytest.mark.parametrize("key", TUNABLES[2:])
 def test_aws_refinement_declares_duckdb_key_itself(key: str) -> None:
-    """Declared per service, not inherited from the shared .env.
-
-    `env_file` is what carried DUCKDB_MEMORY_LIMIT into production, and it is
-    exactly what the per-service secret split removes. A key that only ever
-    arrives that way disappears the moment either changes.
-    """
     doc = yaml.safe_load(AWS_COMPOSE.read_text(encoding="utf-8"))
     env = doc["services"]["refinement"].get("environment") or {}
 
@@ -251,7 +181,6 @@ def test_aws_refinement_declares_duckdb_key_itself(key: str) -> None:
 
 
 def test_aws_env_example_documents_refinement_quotas() -> None:
-    """Exact NAME=value, so a `=0` cannot pass a bare-name grep."""
     src = AWS_ENV_EXAMPLE.read_text(encoding="utf-8")
     for needle in (
         "REFINEMENT_MEM_LIMIT=3g",

@@ -1,11 +1,3 @@
-"""Fase 6 — people-master (Employee Central foundation) permission preflight.
-
-Proves the read-only per-entity permission checklist that tells the owner
-exactly which OData read grants to request from the SAP admin to unblock the
-SF golden path. Reuses the generic _entity_metadata_readiness engine over
-_PEOPLE_MASTER_REQUIREMENTS; a 401/403 on any entity surfaces as
-permission_blocked without inventing anything.
-"""
 from __future__ import annotations
 
 import sys
@@ -25,7 +17,6 @@ def _import_modules():
     return SAPClientError, preflight
 
 
-# Live $metadata that exposes every people-master entity with its required fields.
 _FULL_METADATA = {
     "User": {"userId", "lastModifiedDateTime", "username", "status", "department", "manager"},
     "EmpEmployment": {"personIdExternal", "userId", "startDate", "lastModifiedDateTime"},
@@ -38,8 +29,6 @@ _FULL_METADATA = {
 
 
 def _client_factory(preflight, *, metadata, deny=(), empty=()):
-    """Build a FakeSapSfClient class: `deny` entities raise 401/403 on read,
-    `empty` entities return no rows, everything else returns a redacted row."""
     from app.core.sap_client import SAPClientError
 
     class FakeSapSfClient:
@@ -89,19 +78,16 @@ def test_people_master_all_required_ready(monkeypatch):
     assert payload["summary"]["required_total"] == 3
     assert payload["summary"]["optional_total"] == 4
     assert payload["blockers"] == []
-    # every required people-master entity is ready to extract
     by_id = {c["id"]: c for c in payload["components"]}
     for required_id in ("user", "emp_employment", "emp_job"):
         assert by_id[required_id]["status"] == "ready"
         assert by_id[required_id]["ready_to_extract"] is True
-    # no PII leaks through the preflight payload
     assert payload["privacy"] == {"pii_exposed": False, "sample_values_returned": False}
     assert all("redacted" not in t for t in payload["extraction_targets"])
 
 
 def test_people_master_permission_blocked_surfaces_per_entity_checklist(monkeypatch):
     _, preflight = _import_modules()
-    # EmpJob metadata is fine but the API user lacks OData read permission on it.
     monkeypatch.setattr(
         preflight,
         "SapSfClient",
@@ -110,7 +96,6 @@ def test_people_master_permission_blocked_surfaces_per_entity_checklist(monkeypa
 
     payload = preflight.people_master_readiness(conn_id="femsa_sf", sample=True)
 
-    # not all required entities are ready -> overall partial, EmpJob blocked
     assert payload["status"] == "partial"
     assert payload["summary"]["required_ready"] == 2
     blocked_components = {b["component"] for b in payload["blockers"]}
@@ -120,7 +105,6 @@ def test_people_master_permission_blocked_surfaces_per_entity_checklist(monkeypa
     statuses = {s["entity"]: s for s in emp_job_blocker["candidate_statuses"]}
     assert statuses["EmpJob"]["status"] == "permission_blocked"
     assert statuses["EmpJob"]["reason"] == "permission_denied"
-    # Only a stable code is exposed; upstream URL/body/token text stays server-side.
     emp_job_component = next(c for c in payload["components"] if c["id"] == "emp_job")
     denied = next(c for c in emp_job_component["candidates"] if c["entity"] == "EmpJob")
     assert denied["failure_code"] == "metadata_access_denied"
@@ -154,12 +138,10 @@ def test_people_master_blocked_when_not_configured(monkeypatch):
         def configuration_status(self):
             return {"cartridge": "sap_successfactors", "configured": False, "missing": ["SF_BASE_URL"]}
 
-    # check_sap reads configuration_status via the client; force unconfigured.
     monkeypatch.setattr(preflight, "SapSfClient", UnconfiguredClient)
 
     payload = preflight.people_master_readiness(conn_id=None, sample=True)
     assert payload["status"] == "blocked"
     assert payload["configured"] is False
-    # summary counts come from the people-master requirement set, not talent
     assert payload["summary"]["required_total"] == 3
     assert payload["summary"]["optional_total"] == 4

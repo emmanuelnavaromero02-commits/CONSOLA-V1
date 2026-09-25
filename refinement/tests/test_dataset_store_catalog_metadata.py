@@ -13,10 +13,6 @@ def test_get_dataset_returns_catalog_refresh_metadata():
 
 
 def test_data_catalog_surfaces_refresh_metadata_from_the_live_reader():
-    """F8: the legacy in-function reader after the return was dead code that
-    this test used to pin. The LIVE reader is published_catalog, which takes
-    row_count/last_refresh from the publication head (stronger than the old
-    registered-metadata fallback) and applies the tags filter."""
     source = Path("refinement/app/main.py").read_text()
     catalog_section = source.split("def _get_data_catalog", 1)[1].split(
         "def _upsert_catalog_entries", 1

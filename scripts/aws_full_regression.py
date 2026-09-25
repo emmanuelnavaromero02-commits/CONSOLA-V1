@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Run the official AWS beta full regression gate and collect evidence."""
 
 from __future__ import annotations
 

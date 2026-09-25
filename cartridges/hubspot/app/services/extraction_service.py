@@ -9,13 +9,8 @@ from app.services.parquet_service import write_parquet_and_upload
 from app.services.runlog_service import create_run, fail_run, finish_run
 from app.services.watermark_service import get_watermark, update_watermark
 
-# Flush a parquet file every BATCH_SIZE rows. The cursor loop drains the buffer
-# as it pages, so memory stays bounded regardless of total volume.
 BATCH_SIZE = 10_000
 
-# Safety buffer subtracted from the max watermark before persisting — guards
-# against clock skew / late-arriving records. The small overlap is harmless
-# because silver dedups by id keeping the latest hs_lastmodifieddate.
 WATERMARK_BUFFER_MINUTES = 5
 CARTRIDGE_ID = "hubspot"
 
@@ -32,9 +27,6 @@ def _apply_watermark_filter(
     watermark_field: str,
     watermark_value: str,
 ) -> list[dict[str, Any]]:
-    """Client-side incremental filter. HubSpot list endpoints don't accept a
-    server-side updatedAt filter, so we page the full object and filter here —
-    the same approach Replicon uses for its async export."""
     return [r for r in rows if str(r.get(watermark_field, "")) > watermark_value]
 
 
@@ -43,14 +35,6 @@ def run_entity(
     from_date: str | None = None,
     to_date: str | None = None,
 ) -> dict[str, Any]:
-    """
-    Extract one HubSpot object and write it to Bronze (MinIO Parquet).
-
-    Modes:
-      full        — full snapshot of the object
-      incremental — client-side filter on watermark_field > last watermark
-      historical  — from_date/to_date range filter on date_field (or watermark)
-    """
     entity = config["entity"]
     watermark_field = config.get("watermark_field")
     date_field = config.get("date_field") or watermark_field
@@ -128,8 +112,6 @@ def run_entity(
             if not after:
                 break
 
-        # Drain remainder. If we never received any rows, still write an empty
-        # parquet so downstream can observe a (zero-row) Bronze artifact.
         if buffer or total_records == 0:
             _flush(allow_empty=total_records == 0)
 
@@ -143,7 +125,7 @@ def run_entity(
                     dt - timedelta(minutes=WATERMARK_BUFFER_MINUTES)
                 ).strftime("%Y-%m-%dT%H:%M:%SZ")
             except Exception:
-                pass  # use raw value if parsing fails
+                pass
 
             update_watermark(
                 entity_name=entity,

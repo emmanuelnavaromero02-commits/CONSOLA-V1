@@ -1,5 +1,3 @@
-"""Semantic catalog enrichment helpers."""
-
 from __future__ import annotations
 
 import re

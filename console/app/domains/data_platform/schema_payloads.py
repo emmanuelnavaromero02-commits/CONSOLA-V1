@@ -1,9 +1,3 @@
-"""Schema viewer payload normalization helpers.
-
-These helpers are intentionally pure and framework-light so the schema viewer
-can be tested without importing the monolithic FastAPI app.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Callable

@@ -1,11 +1,3 @@
-"""Fase 7 (perfilado automático) — executable proof of the per-column profiler.
-
-Runs DuckDBEngine._profile_columns against a REAL in-memory DuckDB over fixtures
-with known null ratios, known distinct cardinality and known min/max, over both a
-plain relation (gold-style) and a read_parquet expression (silver-style). Mirrors
-the real-DuckDB harness of tests/test_rls_real_duckdb.py. Key-independent: fixture
-data only, no external SuccessFactors OData key.
-"""
 from __future__ import annotations
 
 import sys
@@ -36,11 +28,6 @@ def engine():
 
 
 def _seed(con):
-    # 4 rows so null ratios are exact quarters (SUMMARIZE rounds null_percentage
-    # to 2 decimals, so quarters avoid rounding ambiguity):
-    #   id  : 0 nulls, 4 distinct, min 1  max 4
-    #   cat : 1 null  -> 0.25, distinct non-null = 2 ('a','b')
-    #   amt : 1 null  -> 0.25, min 10.0 max 30.0
     con.execute(
         """
         CREATE TABLE t AS SELECT * FROM (VALUES
@@ -65,7 +52,7 @@ def test_profile_columns_null_rate_distinct_min_max(engine):
         assert stats["id"]["max"] == "4"
 
         assert stats["cat"]["null_rate"] == 0.25
-        assert stats["cat"]["distinct_count"] == 2  # distinct NON-NULL: 'a','b'
+        assert stats["cat"]["distinct_count"] == 2
         assert stats["cat"]["min"] == "a"
         assert stats["cat"]["max"] == "b"
 
@@ -87,7 +74,7 @@ def test_profile_columns_over_parquet_silver_path(engine, tmp_path):
 
         stats = engine._profile_columns(con, f"read_parquet('{str(parquet)}')")
         assert stats["cat"]["null_rate"] == 0.25
-        assert stats["cat"]["distinct_count"] == 1  # only 'x'
+        assert stats["cat"]["distinct_count"] == 1
         assert stats["id"]["null_rate"] == 0.0
         assert stats["id"]["distinct_count"] == 4
     finally:
@@ -97,7 +84,6 @@ def test_profile_columns_over_parquet_silver_path(engine, tmp_path):
 def test_profile_columns_bad_relation_never_raises(engine):
     con = duckdb.connect()
     try:
-        # a profiling failure must degrade to {} (P2), never raise
         assert engine._profile_columns(con, "nonexistent_relation_xyz") == {}
     finally:
         con.close()
@@ -112,7 +98,6 @@ def test_profile_columns_all_null_column(engine):
         )
         stats = engine._profile_columns(con, "t")
         assert stats["empty_col"]["null_rate"] == 1.0
-        # an all-null column is honestly profiled, not skipped
         assert "empty_col" in stats
     finally:
         con.close()

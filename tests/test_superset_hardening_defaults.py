@@ -26,8 +26,6 @@ def test_superset_prod_hardening_defaults_enabled():
     assert re.search(r"SUPERSET_CSRF_ENABLED:\s+\$\{SUPERSET_CSRF_ENABLED:-true\}", compose)
     assert "SUPERSET_RATELIMIT_STORAGE_URI: ${SUPERSET_RATELIMIT_STORAGE_URI:-redis://redis:6379/1}" in compose
     assert "SUPERSET_SESSION_COOKIE_SECURE: ${SUPERSET_SESSION_COOKIE_SECURE:-false}" in compose
-    # The one-shot bootstrap marker must sit inside the superset-init block, but
-    # not necessarily on its first line: #624 legitimately put security_opt there.
     assert re.search(
         r"^  superset-init:\n(?:    .*\n)*?    # One-shot bootstrap", compose, re.M
     )

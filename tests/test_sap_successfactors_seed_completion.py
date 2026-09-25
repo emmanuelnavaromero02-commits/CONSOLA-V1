@@ -1,17 +1,3 @@
-"""Phase 1 / P0 — SAP SuccessFactors seed completion (15 -> 30+ entities).
-
-Migration 79 seeded only 15 of the 30 entities declared in entities.yaml, so the
-live DB catalog diverged from the YAML and test_sap_entities_seeded failed
-(sap_successfactors >= 30, got 15). Migration 89 UPSERTs those 30; the cartridge
-config/seed.sql is now completed to the current YAML catalog; and catalog_service tops up entity_config on
-every startup (ON CONFLICT DO NOTHING) so partial states self-heal.
-
-Migration 99j adds the live FEMSA payment-detail entity and effective-dated
-OData extraction metadata for the extra scoped entities enabled after PerPerson.
-
-These are static checks (runnable without Postgres); the live count test in
-tests/test_sap_entities_seeded.py passes in CI with migration 89 applied.
-"""
 from __future__ import annotations
 
 import re
@@ -101,12 +87,10 @@ def test_migration_89_includes_the_15_previously_missing():
 
 def test_migration_89_is_idempotent_and_scoped():
     sql = MIGRATION_89.read_text(encoding="utf-8")
-    # Idempotent UPSERT, registers itself, never deletes existing rows.
     assert "ON CONFLICT (cartridge_id, entity) DO UPDATE" in sql
     assert "89_sap_successfactors_seed_completion.sql" in sql
     assert "ON CONFLICT (filename) DO NOTHING" in sql
     assert re.search(r"\bDELETE\b", sql, re.IGNORECASE) is None, "must not delete rows"
-    # entity_config has no workspace_id — must not appear in the INSERT column list.
     cols = re.search(r"INSERT INTO entity_config\s*\(([^)]+)\)", sql, re.DOTALL)
     assert cols and "workspace_id" not in cols.group(1)
 
@@ -115,7 +99,7 @@ def test_migration_89_parses_with_sqlglot():
     import pytest
     sqlglot = pytest.importorskip("sqlglot")
     stmts = [s for s in sqlglot.parse(MIGRATION_89.read_text(encoding="utf-8"), read="postgres") if s]
-    assert len(stmts) == 2  # entity_config upsert + schema_migrations
+    assert len(stmts) == 2
 
 
 def test_cartridge_seed_completed_to_63():
@@ -294,8 +278,6 @@ def test_new_talent_yaml_entities_have_extract_contract():
 
 def test_catalog_service_always_tops_up_not_gated_on_empty():
     src = CATALOG_SERVICE.read_text(encoding="utf-8")
-    # The entity seeding must no longer be gated on an empty table.
     assert "if count == 0:" not in src, "entity seeding is still gated on count == 0"
-    # Self-heal contract: insert from YAML with a non-clobbering conflict policy.
     assert "for e in _yaml_entities():" in src
     assert "ON CONFLICT (cartridge_id, entity) DO NOTHING" in src

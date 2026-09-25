@@ -1,5 +1,3 @@
-"""The Business One-shaped Postgres fake: it loads, and its numbers add up."""
-
 from __future__ import annotations
 
 import importlib.util
@@ -22,7 +20,6 @@ POSTGRES_PASSWORD = "test_sap_b1_fake_password"
 
 
 def _load_fixture_package():
-    """Import tests/fixtures/sap_b1 as a package without touching sys.path globally."""
     name = "sap_b1_fake"
     if name in sys.modules:
         return sys.modules[name]
@@ -53,7 +50,6 @@ def _col(table: str, name: str) -> int:
 
 
 def test_generation_is_deterministic():
-    """Same seed, same bytes: a failing test can always be replayed."""
     first = generator.generate(seed=11, months=6)
     second = generator.generate(seed=11, months=6)
     assert first.checksum() == second.checksum()
@@ -82,7 +78,6 @@ def test_rows_match_the_declared_columns(dataset):
 
 
 def test_documents_never_carry_a_null_currency(dataset):
-    """The rule the future datasets inherit: doc, local and system currency, always."""
     for alias, tables in dataset.tables.items():
         for header, line, _obj in b1.MARKETING_PAIRS:
             hcols = b1.columns(header)
@@ -97,7 +92,6 @@ def test_documents_never_carry_a_null_currency(dataset):
 
 
 def test_local_currency_documents_carry_docrate_zero_and_sys_amounts_by_rate(dataset):
-    """B1 stores DocRate = 0 on a document in the company's local currency."""
     for company in dataset.companies:
         tables = dataset.tables[company.alias]
         rcols = b1.columns("ORTT")
@@ -153,7 +147,6 @@ def test_update_stamps_are_valid(dataset):
 
 
 def test_journal_entries_balance_in_both_currencies(dataset):
-    """Every TransId sums to zero in local and in system currency."""
     jcols = b1.columns("JDT1")
     for alias, tables in dataset.tables.items():
         local = defaultdict(Decimal)
@@ -167,7 +160,6 @@ def test_journal_entries_balance_in_both_currencies(dataset):
 
 
 def test_partner_lines_carry_the_card_code_as_shortname(dataset):
-    """B1 puts the business partner code in JDT1.ShortName on control-account lines."""
     jcols = b1.columns("JDT1")
     for alias, tables in dataset.tables.items():
         for row in tables["JDT1"]:
@@ -179,7 +171,6 @@ def test_partner_lines_carry_the_card_code_as_shortname(dataset):
 
 
 def test_stock_never_goes_negative_in_date_order(dataset):
-    """Replaying OINM by (DocDate, TransNum, TransSeq) never dips below zero."""
     icols = b1.columns("OINM")
     for alias, tables in dataset.tables.items():
         balance = defaultdict(Decimal)
@@ -191,7 +182,6 @@ def test_stock_never_goes_negative_in_date_order(dataset):
 
 
 def test_warehouse_transfers_move_stock_without_money(dataset):
-    """A transfer takes a quantity out of one warehouse and into another in the same stock transaction."""
     hcols, lcols, icols = b1.columns("OWTR"), b1.columns("WTR1"), b1.columns("OINM")
     tables = dataset.tables["mx_mfg"]
     assert tables["OWTR"] and len(tables["WTR1"]) == len(tables["OWTR"])
@@ -222,7 +212,6 @@ def test_warehouse_transfers_move_stock_without_money(dataset):
 
 
 def test_stock_transactions_share_a_transnum_per_document(dataset):
-    """B1 numbers one stock transaction per document."""
     icols = b1.columns("OINM")
     for alias, tables in dataset.tables.items():
         rows = tables["OINM"]
@@ -244,7 +233,6 @@ def test_stock_transactions_share_a_transnum_per_document(dataset):
 
 
 def test_intercompany_truth_is_recorded_on_both_sides_month_by_month(dataset):
-    """Manufacturer's sales to a distributor == that distributor's purchases from it, every month."""
     for alias in ("mx_dist_a", "mx_dist_b"):
         months = sorted(set(dataset.truth["mx_mfg"]) | set(dataset.truth[alias]))
         for month in months:
@@ -256,7 +244,6 @@ def test_intercompany_truth_is_recorded_on_both_sides_month_by_month(dataset):
 
 @pytest.mark.parametrize("seed", OTHER_SEEDS)
 def test_invariants_hold_for_other_seeds(seed):
-    """The suite must not pass by luck of the default seed."""
     ds = generator.generate(seed=seed, months=24)
     icols = b1.columns("OINM")
     hcols = b1.columns("OINV")
@@ -346,8 +333,6 @@ def test_ddl_applies_and_row_counts_match(dataset, loaded_dsn):
 
 
 def test_hana_style_quoted_query_returns_what_the_generator_wrote(dataset, loaded_dsn):
-    """The fake is addressed exactly like HANA: "SCHEMA"."TABLE"."Column", and an
-    incremental predicate on UpdateDate returns the same rows the generator holds."""
     schema = _schema(dataset, "mx_mfg")
     since = date(2026, 6, 1)
     rows = loader.query(
@@ -367,7 +352,6 @@ def test_hana_style_quoted_query_returns_what_the_generator_wrote(dataset, loade
 
 
 def test_invoice_lines_and_revenue_account_match_the_truth(dataset, loaded_dsn):
-    """Reconciliation the client will ask for: documents vs. accounting, exact."""
     for company in dataset.companies:
         s = company.schema
         lines = loader.month_key(loader.query(
@@ -467,7 +451,6 @@ def test_closing_stock_equals_the_sum_of_movements_and_the_batches(dataset, load
 
 
 def test_intercompany_sales_are_the_distributors_purchases(dataset, loaded_dsn):
-    """What consolidation must eliminate, provable on both sides of the group, month by month."""
     mfg = _schema(dataset, "mx_mfg")
     for alias, customer in sorted(generator.INTERCOMPANY_CUSTOMER.items()):
         dist = _schema(dataset, alias)
@@ -488,7 +471,6 @@ def test_intercompany_sales_are_the_distributors_purchases(dataset, loaded_dsn):
 
 
 def test_document_chains_are_linked(dataset, loaded_dsn):
-    """Order lines point at their delivery, delivery lines at their invoice."""
     s = _schema(dataset, "mx_mfg")
     unlinked = loader.scalar(
         loaded_dsn,

@@ -1,18 +1,8 @@
-# Dependencies for the cartridge audit pytest suite (tests/).
-# Install with:   pip install -r tests/requirements.txt
-#
-# These are the minimum runtime deps needed to import a cartridge's
-# app.main in-process under TestClient — they intentionally mirror the
-# union of cartridges/*/requirements.txt plus pytest itself.
-
 pytest>=7.4
 pytest-asyncio>=0.23
 coverage==7.6.1
 httpx>=0.28.1        # required by fastmcp 3.x + supported by fastapi.testclient
 
-# Cartridge runtime imports pulled in transitively when TestClient boots an app
-# v1.43.2 (DevOps R1 follow-up): pin fastapi to the same version as
-# the services so audits do not resolve unsafe patch releases.
 fastapi==0.136.1
 starlette>=1.0.1
 uvicorn[standard]>=0.47.0,<0.48.0
@@ -25,15 +15,9 @@ asyncpg>=0.29
 minio>=7.2
 pandas>=2.1
 pyarrow>=15.0
-# Parse-only SQL oracle used by the Control Room policy tests. Keep this exact:
-# runtime classification is derived from this grammar but never imports DuckDB.
 duckdb==1.2.2
-# fastmcp-slim provides the importable `fastmcp` package. We spell out the
-# client/server extra dependencies below to avoid pip backtracking through the
-# fastmcp metapackage / extras self-dependency.
 fastmcp-slim==3.3.1
 mcp>=1.24.0,<2.0
-# mcp depends on PyJWT; keep the resolved version above the 2026 advisory floor.
 PyJWT>=2.13.0
 authlib>=1.6.11
 exceptiongroup>=1.2.2

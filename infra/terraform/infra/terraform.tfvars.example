@@ -4,9 +4,6 @@ github_repo_url = "git@github.com:emmanuelnavaromero02-commits/CONSOLA-V1.git"
 deploy_ref      = "v1.0.0-rc3"
 image_tag       = "v1.0.0-rc3"
 
-# Low-cost staging defaults:
-# - nat_instance avoids the always-on NAT Gateway hourly/data-processing cost.
-# - enable_vpn=false keeps public ALB + SSM access only.
 app_env           = "staging"
 app_instance_type = "m7i-flex.large"
 egress_mode       = "nat_instance"
@@ -16,23 +13,14 @@ enable_vpn        = false
 public_console_domain   = "console.7businesssolutions.com"
 public_workspace_domain = "workspace.7businesssolutions.com"
 
-# If the public domain is in Route53, set the zone id and Terraform will
-# create ACM validation and A-alias records automatically.
 route53_zone_id = ""
 
-# If DNS is managed elsewhere and Terraform creates the ACM certificate,
-# create the output acm_validation_records manually, wait until ACM is ISSUED,
-# then set this true and apply again to create the HTTPS listener.
 manual_acm_validation_complete = false
 
-# If DNS is managed elsewhere, this can point to an already issued ACM cert.
 public_acm_certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/00000000-0000-0000-0000-000000000000"
 
-# Public SSH is disabled by default. Prefer SSM:
-# aws ssm start-session --target <instance-id>
 ssh_allowed_cidrs = []
 
-# Required for SNS alarm subscription confirmation.
 alarm_email = "ops@example.com"
 
 enable_monthly_budget    = true
@@ -40,25 +28,10 @@ monthly_budget_limit_usd = 50
 budget_actual_thresholds = [50, 80, 100]
 budget_forecast_thresholds = [100]
 
-# Low-cost public ALB WAF. Managed Bot/Fraud controls are intentionally not
-# enabled here because they can be materially more expensive.
 enable_public_alb_waf             = true
 public_alb_waf_rate_limit         = 2000
 public_alb_waf_common_rule_action = "count"
 
-# Transactional email. Production uses Amazon SES API with the EC2 IAM role.
-# For Amazon SES API after domain verification/sandbox approval:
-# email_provider    = "ses"
-# ses_sender_domain = "7businesssolutions.com"
-# smtp_from         = "no-reply@7businesssolutions.com"
-# smtp_from_domain  = "7businesssolutions.com"
-#
-# Keep SMTP only for MailHog/dev or an external SMTP provider:
-# email_provider   = "smtp"
-# smtp_host        = "smtp.example.com"
-# smtp_port        = 587
-# smtp_user        = "<smtp-username>"
-# smtp_use_tls     = true
 email_provider    = "ses"
 ses_sender_domain = "7businesssolutions.com"
 smtp_host         = "email-smtp.us-east-1.amazonaws.com"

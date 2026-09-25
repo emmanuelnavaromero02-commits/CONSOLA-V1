@@ -1,4 +1,3 @@
-# v1.43.2 (DevOps R1 follow-up): see console/requirements.txt.
 fastapi==0.136.1
 starlette>=1.0.1
 uvicorn[standard]==0.47.0

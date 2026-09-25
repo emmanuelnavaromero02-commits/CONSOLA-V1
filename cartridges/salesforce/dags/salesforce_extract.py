@@ -1,13 +1,3 @@
-"""
-salesforce_extract DAG
-==============================
-Extrae UNA entidad llamando al cartucho Salesforce.
-
-v1.43.1 (B1 + B2 + B3):
-  B1 — fail-fast at parse-time on missing INTERNAL_API_KEY.
-  B2 — cartridge URL from SALESFORCE_URL env var.
-  B3 — default_args with exponential-backoff retries.
-"""
 from __future__ import annotations
 import os
 from datetime import timedelta

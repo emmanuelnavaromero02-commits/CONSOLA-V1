@@ -11,19 +11,6 @@ import type { AuditEvent } from "@/lib/operations/types";
 import { useAuditEvents } from "@/lib/operations/hooks";
 
 
-/**
- * v1.44.4 Group 1 — Audit log table.
- *
- * GET /security/audit returns up to 100 events (server-imposed
- * LIMIT). The table supports:
- *   - free-text filter across user_email / action /
- *     resource_type / resource_id / ip / request_id
- *   - per-row expandable detail panel showing the JSONB
- *     ``details`` payload
- *
- * Time format uses date-fns with es-MX locale so "hace 5 min"
- * reads naturally to Spanish operators.
- */
 function relativeTime(value: string | null): string {
   if (!value) return "—";
   const ts = Date.parse(value);
@@ -138,11 +125,6 @@ export function AuditTable() {
                   && Object.keys(e.details).length > 0;
                 return (
                   <Fragment key={key}>
-                    {/* Round 1 P1: button-only expand. Earlier
-                        version made the whole row clickable but
-                        had no keyboard equivalent — dropped the
-                        onClick so the chevron button is the sole
-                        affordance, fully keyboard-reachable. */}
                     <tr className="border-t">
                       <td className="px-3 py-2 align-top">
                         {hasDetails ? (
