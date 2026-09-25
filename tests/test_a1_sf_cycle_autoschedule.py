@@ -144,13 +144,12 @@ def test_airflow_materializes_via_runtime_envelope():
         REPO_ROOT / "cartridges" / "sap_successfactors" / "app" / "core"
         / "refinement_triggers.py"
     ).read_text(encoding="utf-8")
-    assert "def _runtime_materialize_request(" in src
+    assert "async def _runtime_materialize(" in src
     assert "build_materialize_context" in src
-    call_sites = src.count("await _runtime_materialize_request(")
-    assert call_sites >= 3, (
-        "silver refresh plus both gold-sweep loops must use the runtime "
-        f"route under airflow (found {call_sites})"
-    )
+    assert src.count("await _runtime_materialize(") == 2
+    assert src.count("await _refresh_dataset(") == 2
+    for phase in ("entity-silver", "curated-silver", "gold"):
+        assert f'phase="{phase}"' in src
     assert 'internal_service == "airflow"' in src
     assert "/refresh-by-source" in src and "/datasets/" in src, (
         "the cartridge-container v1 paths must survive"
@@ -235,8 +234,8 @@ def test_a2_dev_path_unchanged():
 def test_a2_only_foundation_templates_are_rebound():
     body = _reconciler_body(_a2_sql())
     bind = body[body.index("UPDATE public.entity_config"):]
-    for femsa_only in ("PerEmail", "PaymentInformationDetailV3", "EmpEmploymentTermination"):
-        assert f"'{femsa_only}'" not in bind
+    for acmeco_only in ("PerEmail", "PaymentInformationDetailV3", "EmpEmploymentTermination"):
+        assert f"'{acmeco_only}'" not in bind
     assert bind.count("UPDATE public.entity_config") == 1
     assert "trigger_type" not in bind[:bind.index("INSERT INTO public.entity_config")], (
         "per-entity rows stay manual; only the marker schedules"

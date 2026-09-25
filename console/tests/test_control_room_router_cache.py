@@ -13,10 +13,10 @@ USER = {
     "id": 7,
     "email": "emmanuelnavaromero02@gmail.com",
     "role": "super_admin",
-    "tenant_id": "b95f4d58-c9c8-4fd5-8d07-ddde294c7d78",
-    "active_tenant_id": "b95f4d58-c9c8-4fd5-8d07-ddde294c7d78",
-    "workspace_id": "a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4",
-    "active_workspace_id": "a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4",
+    "tenant_id": "11111111-1111-4111-8111-111111111111",
+    "active_tenant_id": "11111111-1111-4111-8111-111111111111",
+    "workspace_id": "22222222-2222-4222-8222-222222222222",
+    "active_workspace_id": "22222222-2222-4222-8222-222222222222",
     "allowed_cartridges": ["sap_successfactors"],
 }
 

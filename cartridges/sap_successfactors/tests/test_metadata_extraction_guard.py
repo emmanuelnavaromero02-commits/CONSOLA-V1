@@ -15,7 +15,7 @@ def _config(**overrides):
     return {
         "entity": "JobRequisition",
         "odata_entity": "JobRequisition",
-        "connection_id": "femsa_sf",
+        "connection_id": "tenant_sf",
         "primary_key": "jobReqId",
         "mode": "incremental",
         "watermark_field": "lastModifiedDateTime",
@@ -179,7 +179,7 @@ def test_extract_all_plan_keeps_metadata_failure_as_explicit_outcome(monkeypatch
         ),
     )
 
-    entities, outcomes = catalog_service.get_extract_all_plan(conn_id="femsa_sf")
+    entities, outcomes = catalog_service.get_extract_all_plan(conn_id="tenant_sf")
 
     assert entities == []
     assert len(outcomes) == 1
@@ -210,7 +210,7 @@ def test_extract_all_plan_marks_missing_entity_and_required_fields_as_explicit_s
         ),
     )
 
-    entities, outcomes = catalog_service.get_extract_all_plan(conn_id="femsa_sf")
+    entities, outcomes = catalog_service.get_extract_all_plan(conn_id="tenant_sf")
 
     assert entities == []
     assert {item["entity"]: item["status"] for item in outcomes} == {
@@ -240,7 +240,7 @@ def test_talent_catalog_preflight_never_serializes_raw_exception(monkeypatch):
     )
 
     _, outcomes, _, _ = catalog_service._talent_extract_target_entities(
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         security_context={"tenant_id": "t1", "workspace_id": "w1"},
     )
 

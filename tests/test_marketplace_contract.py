@@ -73,13 +73,6 @@ def test_marketplace_next_static_pages_exist_after_export():
         assert (static / page).exists()
 
 
-def test_marketplace_css_is_scoped_to_console_view():
-    css = read("console/app/static/css/marketplace.css")
-    assert ".marketplace-view" in css
-    assert ".market-shell" not in css
-    assert ".market-sidebar" not in css
-
-
 def test_marketplace_migration_uses_existing_platform_models():
     sql = read("infra/init/73_marketplace_installations.sql")
     for table in ("cartridges", "tenants", "workspaces"):
@@ -246,7 +239,7 @@ def test_marketplace_permissions_distinguish_request_from_admin():
 def test_marketplace_admin_and_retry_do_not_escalate_customer_access():
     main = console_route_source()
     service = read("console/app/services/marketplace_service.py")
-    js = read("console/app/static/js/marketplace.js")
+    component = read("console-next/src/components/marketplace/MarketplaceConsole.tsx")
     retry_section = service.split("async def retry_installation", 1)[1].split(
         "async def list_installation_access", 1
     )[0]
@@ -256,20 +249,13 @@ def test_marketplace_admin_and_retry_do_not_escalate_customer_access():
     assert "admin approval required before retry" in retry_section
     assert "SET status = 'pending_connection'" in retry_section
     assert "UPDATE tenant_entitlements" not in retry_section
-    assert "row.can_retry" in js
+    assert "installation.can_retry" in component
     assert "installation transition not allowed from current status" in service
     assert (
         'allowed_installation_statuses={"paused", "revoked", "expired", "suspended"}'
         in service
     )
-    assert (
-        "const reactivateStates = ['paused', 'revoked', 'expired', 'suspended']" in js
-    )
-    assert (
-        "const approveStates = ['requested', 'pending_connection', 'waiting_credentials', 'failed', 'ready']"
-        in js
-    )
-    assert 'href="/viewer/vault"' not in js
+    assert 'href="/viewer/vault"' not in component
 
 
 def test_marketplace_permissions_follow_selected_workspace_header():
@@ -302,7 +288,7 @@ def test_marketplace_admin_user_access_api_is_server_side_and_audited():
     v1_router = read("console/app/routers/v1/marketplace_apps.py")
     lib = read("console-next/src/lib/marketplace.ts")
     companies = read("console-next/src/components/operations/CompaniesConsole.tsx")
-    js = read("console/app/static/js/marketplace.js")
+    component = read("console-next/src/components/marketplace/MarketplaceConsole.tsx")
     access_section = service.split("async def set_installation_user_access", 1)[
         1
     ].split("async def _set_installation_state", 1)[0]
@@ -319,9 +305,9 @@ def test_marketplace_admin_user_access_api_is_server_side_and_audited():
     assert "mode must be inherit or deny" in access_section
     assert "cartridge_user_access_updated" in access_section
     assert '"target_user_id"' in access_section
-    assert 'value="allow"' not in js
-    assert "Heredar workspace" in js
-    assert "Bloquear" in js
+    assert 'value="allow"' not in component
+    assert "Heredar workspace" in component
+    assert "Bloquear" in component
     assert "get_current_global_user" not in router
     assert "get_current_global_user" not in v1_router
     for route_source in (router, v1_router):

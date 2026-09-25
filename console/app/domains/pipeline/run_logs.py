@@ -36,14 +36,17 @@ async def build_job_logs_payload(
             422, "job cartridge is unavailable; cannot resolve scoped logs"
         )
 
+    from app.services.db_scope import scoped_db_for_user
+
     pool = await get_db_pool()
-    rows = await pool.fetch(
-        "SELECT entity, level, message, detail, ts FROM run_logs "
-        "WHERE run_id=$1 AND cartridge=$2 ORDER BY ts ASC LIMIT $3",
-        job_id,
-        cartridge,
-        limit,
-    )
+    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+        rows = await conn.fetch(
+            "SELECT entity, level, message, detail, ts FROM run_logs "
+            "WHERE run_id=$1 AND cartridge=$2 ORDER BY ts ASC LIMIT $3",
+            job_id,
+            cartridge,
+            limit,
+        )
     logs = []
     for row in rows:
         detail = row["detail"]

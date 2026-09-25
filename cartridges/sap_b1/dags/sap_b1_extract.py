@@ -1,9 +1,20 @@
 from __future__ import annotations
+import re
 import os
 from datetime import timedelta
 
 import httpx
 from airflow.decorators import dag, task
+
+
+_SAFE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]{0,127}")
+
+
+def _safe_name(value: object, label: str) -> str:
+    text = str(value or "").strip()
+    if not _SAFE_NAME.fullmatch(text):
+        raise ValueError(f"invalid {label}")
+    return text
 
 
 def _is_production() -> bool:
@@ -21,6 +32,8 @@ def _internal_key() -> str:
     raise RuntimeError("INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE missing; legacy fallback disabled in production")
 
 CARTRIDGE_URL = os.environ.get("SAP_B1_URL", "http://sap-b1:8206")
+REQUEST_TIMEOUT_SECONDS = 60
+JOB_DEADLINE_SECONDS = 4 * 3600
 
 default_args = {
     "owner": "omega",
@@ -36,7 +49,7 @@ def sap_b1_extract():
     @task
     def trigger_extract(**context):
         conf = context.get("dag_run").conf or {}
-        entity = conf.get("entity")
+        entity = _safe_name(conf.get("entity"), "entity")
         if not entity:
             raise ValueError("entity parameter is required")
 
@@ -44,11 +57,22 @@ def sap_b1_extract():
             "X-Api-Key": _internal_key(),
             "X-Internal-Service": "airflow",
         }
-        from b1_runtime_context import security_context_from_conf
+        from b1_runtime_context import admission_time, sap_b1_security_context, security_context_from_conf
 
-        skill_body = {"security_context": security_context_from_conf(conf, user_id="airflow:sap_b1_extract")}
+        verified = security_context_from_conf(
+            conf, user_id="airflow:sap_b1_extract", admitted_at=admission_time(context.get("dag_run"))
+        )
 
-        with httpx.Client(timeout=3600) as client:
+        def skill_body() -> dict:
+            return {
+                "security_context": sap_b1_security_context(
+                    verified["tenant_id"], verified["workspace_id"], user_id="airflow:sap_b1_extract"
+                )
+            }
+
+        from service_job_client import idempotency_key, run_service_job
+
+        with httpx.Client(timeout=REQUEST_TIMEOUT_SECONDS) as client:
             params = {
                 k: v for k, v in {
                     "mode": conf.get("mode") or "incremental",
@@ -57,14 +81,15 @@ def sap_b1_extract():
                     "job_id": conf.get("job_id") or None,
                 }.items() if v
             }
-            res = client.post(
+            return run_service_job(
+                client,
                 f"{CARTRIDGE_URL}/entities/{entity}/extract",
                 params=params,
                 json=skill_body,
                 headers=headers,
+                key=idempotency_key(context, entity),
+                deadline_seconds=JOB_DEADLINE_SECONDS,
             )
-            res.raise_for_status()
-            return res.json()
 
     trigger_extract()
 

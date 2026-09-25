@@ -209,7 +209,11 @@ def test_every_endpoint_accepts_admin(method, path, mock_attr):
             method,
             path,
             headers={"x-test-user-role": "admin", "Content-Type": "application/json", **csrf_headers},
-            json={"server": "infra", "tool": "x", "args": {}} if method == "POST" else None,
+            json=(
+                {"id": "infra", "name": "Infra", "url": "http://mcp-infra:8010"}
+                if mock_attr == "register"
+                else {"server": "infra", "tool": "x", "args": {}}
+            ) if method == "POST" else None,
         )
     assert resp.status_code == 200, (
         f"{method} {path} as admin should 200, got {resp.status_code}: {resp.text}"
@@ -264,3 +268,18 @@ def test_no_api_mcp_routes_outside_mcp_public_router():
         f"console/app/main.py (must go through the mcp_public router so "
         f"router-level require_admin applies): {offenders}"
     )
+
+
+def test_register_refuses_unknown_fields():
+    from app.services import mcp_registry
+
+    with patch.object(mcp_registry, "register", new=AsyncMock(return_value={"ok": True})) as register:
+        client = TestClient(_make_app())
+        csrf_headers = _set_csrf(client)
+        resp = client.post(
+            "/api/mcp/servers/register",
+            headers={"x-test-user-role": "admin", "Content-Type": "application/json", **csrf_headers},
+            json={"id": "infra", "name": "Infra", "url": "http://mcp-infra:8010", "healthy": True},
+        )
+    assert resp.status_code == 422
+    register.assert_not_awaited()

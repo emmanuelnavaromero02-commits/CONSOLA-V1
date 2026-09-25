@@ -104,13 +104,13 @@ def test_inactive_sync_run_payload_is_explicit():
         cartridge="sap_successfactors",
         mode="incremental",
         target="all",
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
     )
 
     assert payload["status"] == "skipped"
     assert payload["active"] is False
     assert payload["reason"] == "no_active_sync_run"
-    assert payload["conn_id"] == "femsa_sf"
+    assert payload["conn_id"] == "tenant_sf"
 
 
 def test_extract_all_public_response_separates_blocked_failed_and_partial():
@@ -210,7 +210,7 @@ def test_sync_now_lock_key_uses_scope_and_connection_defaults():
         cartridge="sap_successfactors",
         mode="incremental",
         target="all",
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         tenant_id="tenant-1",
         workspace_id="workspace-1",
     )
@@ -224,7 +224,7 @@ def test_sync_now_lock_key_uses_scope_and_connection_defaults():
     )
 
     assert scoped == (
-        "sync-now:tenant-1:workspace-1:sap_successfactors:incremental:all:femsa_sf"
+        "sync-now:tenant-1:workspace-1:sap_successfactors:incremental:all:tenant_sf"
     )
     assert defaulted == "sync-now:platform:global:replicon:full:all:__default__"
 
@@ -311,28 +311,28 @@ def test_extract_all_run_id_is_stable_with_idempotency_key_and_random_without_on
         cartridge="sap_successfactors",
         mode="incremental",
         target="all",
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         idempotency_key="manual-1",
     )
     second = sync_progress.extract_all_run_id(
         cartridge="sap_successfactors",
         mode="incremental",
         target="all",
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         idempotency_key="manual-1",
     )
     random_one = sync_progress.extract_all_run_id(
         cartridge="sap_successfactors",
         mode="incremental",
         target="all",
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         idempotency_key=None,
     )
     random_two = sync_progress.extract_all_run_id(
         cartridge="sap_successfactors",
         mode="incremental",
         target="all",
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         idempotency_key=None,
     )
 

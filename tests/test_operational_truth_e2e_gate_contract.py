@@ -69,6 +69,7 @@ def test_e2e_linux_dag_bundle_is_readable_by_the_non_root_airflow_user() -> None
         "dataset_refresh_materialize.py",
         "dataset_refresh_outcome.py",
         "runtime_security_context.py",
+        "service_job_client.py",
     }
 
     assert 'chmod 0755 "$dag_dir"' in script

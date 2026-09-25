@@ -1,16 +1,8 @@
+import { apiFetch } from "./api.js?v=studio-autopilot-ui6";
 import { state } from "./legacy-state.js";
 
 const ACTION_BRIDGE_VERSION = "v1.44.5";
 const AI_PANEL_STORAGE_KEY = "studio.ai.panel";
-
-function readCookie(name) {
-  const prefix = `${name}=`;
-  for (const raw of document.cookie.split(";")) {
-    const c = raw.trim();
-    if (c.startsWith(prefix)) return decodeURIComponent(c.slice(prefix.length));
-  }
-  return null;
-}
 
 function currentCartridge() {
   return state._currentCartridge?.id
@@ -27,18 +19,10 @@ function withCartridge(path) {
 }
 
 export async function studioAction(path, { method = "GET", body = null, render = null } = {}) {
-  const headers = { "Accept": "application/json" };
-  if (method !== "GET" && method !== "HEAD") {
-    headers["Content-Type"] = "application/json";
-    const csrf = readCookie("csrf_token");
-    if (csrf) headers["X-CSRF-Token"] = csrf;
-  }
-
   try {
-    const r = await fetch(path, {
+    const r = await apiFetch(path, {
       method,
-      credentials: "include",
-      headers,
+      headers: { "Accept": "application/json" },
       body: body ? JSON.stringify(body) : null,
     });
     const payload = await r.json().catch(() => ({}));
@@ -176,10 +160,32 @@ function renderEntities(data) {
     : '<div class="empty-card">Sin entidades registradas.</div>';
 }
 
+function sanitizedSvg(markup) {
+  const doc = new DOMParser().parseFromString(String(markup || ""), "image/svg+xml");
+  const svg = doc.documentElement;
+  if (!svg || svg.nodeName.toLowerCase() !== "svg" || doc.getElementsByTagName("parsererror").length) return null;
+  svg.querySelectorAll("script, foreignObject, iframe, object, embed").forEach((node) => node.remove());
+  for (const node of [svg, ...svg.querySelectorAll("*")]) {
+    for (const attr of [...node.attributes]) {
+      const name = attr.name.toLowerCase();
+      const value = attr.value.trim().toLowerCase();
+      if (name.startsWith("on") || ((name === "href" || name === "xlink:href") && !value.startsWith("#"))) {
+        node.removeAttribute(attr.name);
+      }
+    }
+  }
+  return document.importNode(svg, true);
+}
+
 function renderDagGraph(data) {
   const panel = document.getElementById("dag-graph-panel");
   if (!panel || !data?.svg) return;
-  panel.innerHTML = `<div style="padding:10px;overflow:auto">${data.svg}</div>`;
+  const svg = sanitizedSvg(data.svg);
+  const frame = document.createElement("div");
+  frame.style.padding = "10px";
+  frame.style.overflow = "auto";
+  if (svg) frame.appendChild(svg);
+  panel.replaceChildren(frame);
 }
 
 function renderLayerPreview(layer, data) {

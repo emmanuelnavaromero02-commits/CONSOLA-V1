@@ -1,12 +1,13 @@
 import { state } from './legacy-state.js';
+import { apiFetch, safeUrl } from './api.js?v=studio-autopilot-ui6';
 
 	    window.state = state;
 
 	    function fetchWithTimeout(url, init = {}, timeoutMs = 30000) {
-	      if (timeoutMs === 0) return fetch(url, init);
+	      if (timeoutMs === 0) return apiFetch(url, init);
 	      const controller = new AbortController();
 	      const timer = setTimeout(() => controller.abort(), timeoutMs);
-	      return fetch(url, { ...init, signal: init.signal || controller.signal })
+	      return apiFetch(url, { ...init, signal: init.signal || controller.signal })
 	        .catch(err => {
 	          if (err && err.name === 'AbortError') throw new Error('La consulta tardó demasiado');
 	          throw err;
@@ -17,17 +18,17 @@ import { state } from './legacy-state.js';
 	    fetchWithTimeout('/api/config').then(r => r.json())
       .then(d => {
         if (d.s3_bucket) state.S3_BUCKET = d.s3_bucket;
-        if (d.airflow_url) state.AIRFLOW_PUBLIC_URL = d.airflow_url.replace(/\/+$/, '');
-        if (d.superset_url) state.SUPERSET_PUBLIC_URL = d.superset_url.replace(/\/+$/, '');
+        if (d.airflow_url) state.AIRFLOW_PUBLIC_URL = safeUrl(d.airflow_url).replace(/\/+$/, '');
+        if (d.superset_url) state.SUPERSET_PUBLIC_URL = safeUrl(d.superset_url).replace(/\/+$/, '');
         const afLink = document.getElementById('dag-airflow-link');
         if (afLink && state._selectedDag && state._selectedDag !== '__new__') {
-          afLink.setAttribute('href', airflowDagUrl(state._selectedDag));
+          afLink.setAttribute('href', safeUrl(airflowDagUrl(state._selectedDag)) || '#');
         }
         const supersetLink = document.getElementById('analytics-superset-link');
         if (supersetLink) {
-          const url = supersetUrl();
-          supersetLink.setAttribute('href', url);
-          if (!url || url === '#') {
+          const url = safeUrl(supersetUrl());
+          supersetLink.setAttribute('href', url || '#');
+          if (!url) {
             supersetLink.setAttribute('aria-disabled', 'true');
             supersetLink.textContent = 'Superset interno por seguridad';
           }
@@ -62,27 +63,6 @@ import { state } from './legacy-state.js';
       const host = window.location.hostname;
       if (host === 'localhost' || host === '127.0.0.1') return `${window.location.protocol}//${host}:8088`;
       return '#';
-    }
-
-    function readCookie(name) {
-      const prefix = `${name}=`;
-      for (const raw of document.cookie.split(';')) {
-        const c = raw.trim();
-        if (c.startsWith(prefix)) return decodeURIComponent(c.slice(prefix.length));
-      }
-      return null;
-    }
-
-    function jsonHeaders() {
-      const headers = {'Content-Type': 'application/json'};
-      const csrf = readCookie('csrf_token');
-      if (csrf) headers['X-CSRF-Token'] = csrf;
-      return headers;
-    }
-
-    function csrfHeaders() {
-      const csrf = readCookie('csrf_token');
-      return csrf ? {'X-CSRF-Token': csrf} : {};
     }
 
     const AI_STEP_HINTS = {
@@ -236,7 +216,7 @@ import { state } from './legacy-state.js';
 
     export async function loadCartridges() {
       try {
-        const r = await fetch('/studio/cartridges');
+        const r = await apiFetch('/studio/cartridges');
         const d = await r.json();
         state._cartridges = d.cartridges || [];
       } catch(e) { state._cartridges = []; }
@@ -252,7 +232,7 @@ import { state } from './legacy-state.js';
     export async function selectCartridge(id) {
       if (!id) { state._currentCartridge = null; _updateCartridgeInfo(); _refreshStudioMiniHeader(); return; }
       try {
-        const r = await fetch(`/studio/cartridges/${encodeURIComponent(id)}`);
+        const r = await apiFetch(`/studio/cartridges/${encodeURIComponent(id)}`);
         state._currentCartridge = await r.json();
         try { localStorage.setItem('studio.selectedCartridge', id); } catch(_) {}
         _updateCartridgeInfo();
@@ -296,9 +276,8 @@ import { state } from './legacy-state.js';
     }
 
     window.__studioCreateCartridge = async function(payload) {
-      const r = await fetch('/studio/cartridges', {
+      const r = await apiFetch('/studio/cartridges', {
         method: 'POST',
-        headers: jsonHeaders(),
         body: JSON.stringify(payload),
       });
       const d = await r.json().catch(() => ({}));
@@ -323,9 +302,8 @@ import { state } from './legacy-state.js';
     export async function patchCartridge(updates) {
       if (!state._currentCartridge) return;
       const id = state._currentCartridge.id;
-      const r  = await fetch(`/studio/cartridges/${encodeURIComponent(id)}`, {
+      const r  = await apiFetch(`/studio/cartridges/${encodeURIComponent(id)}`, {
         method: 'PATCH',
-        headers: jsonHeaders(),
         body: JSON.stringify(updates),
       });
       if (r.ok) {
@@ -340,13 +318,13 @@ import { state } from './legacy-state.js';
         ? '.zip,application/zip'
         : '.yaml,.yml,.json,.xml,.wsdl';
       return `
-        <div class="upload-zone" id="${containerId}" data-upload-zone="${containerId}">
-          <input type="file" id="fi-${containerId}" accept="${accept}"
-                 data-upload-input="${containerId}">
+        <div class="upload-zone" id="${esc(containerId)}" data-upload-zone="${esc(containerId)}">
+          <input type="file" id="fi-${esc(containerId)}" accept="${esc(accept)}"
+                 data-upload-input="${esc(containerId)}">
           <div class="uz-icon">↑</div>
           <div class="uz-label">${esc(label)}</div>
           <div class="uz-sub">${esc(sublabel)}</div>
-          <div id="uz-status-${containerId}" style="margin-top:8px;font-size:10px"></div>
+          <div id="uz-status-${esc(containerId)}" style="margin-top:8px;font-size:10px"></div>
         </div>`;
     }
 
@@ -389,9 +367,8 @@ import { state } from './legacy-state.js';
       const form = new FormData();
       form.append('file', file);
       try {
-        const r = await fetch(`/api/studio/entities/upload?cartridge=${encodeURIComponent(state._currentCartridge.id)}`, {
+        const r = await apiFetch(`/api/studio/entities/upload?cartridge=${encodeURIComponent(state._currentCartridge.id)}`, {
           method: 'POST',
-          headers: csrfHeaders(),
           body: form,
         });
         const d = await r.json();
@@ -421,9 +398,8 @@ import { state } from './legacy-state.js';
       const form = new FormData();
       form.append('file', file);
       try {
-        const r = await fetch('/studio/import', {
+        const r = await apiFetch('/studio/import', {
           method: 'POST',
-          headers: csrfHeaders(),
           body: form,
         });
         const d = await r.json().catch(() => ({}));
@@ -557,7 +533,7 @@ import { state } from './legacy-state.js';
     export function cartCard(c) {
       const pattern  = c.pattern || 'dag-based';
       const isDag    = pattern === 'dag-based';
-      const entities = c.entities || 0;
+      const entityCount = Array.isArray(c.entities) ? c.entities.length : Number(c.entities) || 0;
       const version  = c.version  || '—';
       const selected = state._currentCartridge && state._currentCartridge.id === c.id;
       const cls      = selected ? 'ok' : '';
@@ -575,7 +551,7 @@ import { state } from './legacy-state.js';
           </div>
           <div class="ic-desc">${esc(c.description || '—')}</div>
           <div class="ic-meta">
-            <span>${entities} entidades</span>
+            <span>${entityCount} entidades</span>
             ${c.connector ? `<span>conector: ${esc(c.connector)}</span>` : ''}
             <span style="color:var(--text3)">${esc(c.source || '')}</span>
           </div>
@@ -583,12 +559,12 @@ import { state } from './legacy-state.js';
             <button class="btn btn-sm"
                     data-studio-action="open-cartridge-entities"
                     data-cartridge="${esc(c.id)}"
-                    onclick='event.stopPropagation();openCartridgeEntities(${escJsArg(c.id)})'
+                    onclick="event.stopPropagation();openCartridgeEntities(${escJsArg(c.id)})"
                     title="Ver entidades">Entidades →</button>
             <button class="btn btn-sm"
                     data-studio-action="export-cartridge"
                     data-cartridge="${esc(c.id)}"
-                    onclick='event.stopPropagation();exportCartridge(${escJsArg(c.id)})'
+                    onclick="event.stopPropagation();exportCartridge(${escJsArg(c.id)})"
                     title="Exportar ZIP">↓ ZIP</button>
           </div>
         </div>`;
@@ -821,7 +797,7 @@ import { state } from './legacy-state.js';
       const dagParamsBtn = `
         <button class="btn btn-sm" title="dag_params (JSON pasado a dag_run.conf)"
                 style="${hasParams?'color:var(--amber);border-color:var(--amber)':''}"
-                onclick='openDagParamsEditor(${JSON.stringify(cartridge)},${JSON.stringify(rawName)},${JSON.stringify(dagParamsObj)})'>⚙</button>`;
+                onclick="openDagParamsEditor(${escJsArg(cartridge)},${escJsArg(rawName)},${escJsonArg(dagParamsObj)})">⚙</button>`;
 
       return `
         <div class="et-row" id="erow-${safeEntityId}">
@@ -896,9 +872,8 @@ import { state } from './legacy-state.js';
       try {
         const body = { kind, name };
         if (cartridge) body.cartridge = cartridge;
-        const r = await fetch('/api/rag/reindex', {
+        const r = await apiFetch('/api/rag/reindex', {
           method: 'POST',
-          headers: jsonHeaders(),
           body: JSON.stringify(body),
         });
         const d = await r.json().catch(() => ({}));
@@ -979,9 +954,9 @@ import { state } from './legacy-state.js';
           err.textContent = 'Debe ser un objeto JSON.';
           return;
         }
-        const r = await fetch(
+        const r = await apiFetch(
           `/studio/cartridges/${encodeURIComponent(cartridge)}/entities/${encodeURIComponent(entity)}`,
-          { method: 'PATCH', headers: jsonHeaders(), body: JSON.stringify({ dag_params: obj }) },
+          { method: 'PATCH', body: JSON.stringify({ dag_params: obj }) },
         );
         if (!r.ok) { err.textContent = 'Error del servidor (' + r.status + ')'; return; }
         if (state._currentCartridge?.entities) {
@@ -998,11 +973,10 @@ import { state } from './legacy-state.js';
       const triggerType = cron ? 'scheduled' : 'manual';
       el.style.borderColor = 'var(--cyan)';
       try {
-        const r = await fetch(
+        const r = await apiFetch(
           `/studio/cartridges/${encodeURIComponent(cartridge)}/entities/${encodeURIComponent(entity)}`,
           {
             method: 'PATCH',
-            headers: jsonHeaders(),
             body: JSON.stringify({ cron_expression: cron || null, trigger_type: triggerType }),
           },
         );
@@ -1019,11 +993,10 @@ import { state } from './legacy-state.js';
       el.dataset.prev = value;
       el.style.borderColor = 'var(--cyan)';
       try {
-        const r = await fetch(
+        const r = await apiFetch(
           `/studio/cartridges/${encodeURIComponent(cartridge)}/entities/${encodeURIComponent(entity)}`,
           {
             method: 'PATCH',
-            headers: jsonHeaders(),
             body: JSON.stringify({[field]: value}),
           }
         );
@@ -1048,11 +1021,10 @@ import { state } from './legacy-state.js';
       const newName = prompt(`Nuevo nombre para la entidad "${entity}":`, entity);
       if (!newName || newName.trim() === entity) return;
       try {
-        const r = await fetch(
+        const r = await apiFetch(
           `/studio/cartridges/${encodeURIComponent(cartridge)}/entities/${encodeURIComponent(entity)}/rename`,
           {
             method: 'POST',
-            headers: jsonHeaders(),
             body: JSON.stringify({ new_name: newName.trim() }),
           }
         );
@@ -1090,11 +1062,10 @@ import { state } from './legacy-state.js';
     }
 
     export async function _setEntitySchedule(cartridge, entity, triggerType, cronExpression) {
-      await fetch(
+      await apiFetch(
         `/studio/cartridges/${encodeURIComponent(cartridge)}/entities/${encodeURIComponent(entity)}`,
         {
           method: 'PATCH',
-          headers: jsonHeaders(),
           body: JSON.stringify({ trigger_type: triggerType, cron_expression: cronExpression }),
         }
       );
@@ -1102,9 +1073,8 @@ import { state } from './legacy-state.js';
       const dagId = ((state._currentCartridge?.entities || [])
         .find(e => (e.entity || e.id) === entity) || {}).dag_id || '';
       if (dagId) {
-        await fetch('/api/mcp/invoke', {
+        await apiFetch('/api/mcp/invoke', {
           method: 'POST',
-          headers: jsonHeaders(),
           body: JSON.stringify({
             server: 'infra',
             tool: triggerType === 'scheduled' ? 'airflow_unpause_dag' : 'airflow_pause_dag',
@@ -1112,9 +1082,8 @@ import { state } from './legacy-state.js';
           }),
         }).catch(() => {});
         if (triggerType === 'scheduled' && cronExpression) {
-          await fetch('/api/mcp/invoke', {
+          await apiFetch('/api/mcp/invoke', {
             method: 'POST',
-            headers: jsonHeaders(),
             body: JSON.stringify({
               server: 'infra',
               tool: 'airflow_set_variable',
@@ -1226,9 +1195,8 @@ import { state } from './legacy-state.js';
       if (btn) btn.textContent = '...';
 
       try {
-        const r = await fetch('/api/studio/entity', {
+        const r = await apiFetch('/api/studio/entity', {
           method: 'POST',
-          headers: jsonHeaders(),
           body: JSON.stringify({
             cartridge,
             entity: name,
@@ -1274,9 +1242,8 @@ import { state } from './legacy-state.js';
         const connId = entityConnectionId(entity);
         const body = { mode: mode || 'incremental', dag_id: dagId };
         if (connId) body.conn_id = connId;
-        const r = await fetch(`/api/pipeline/${encodeURIComponent(cartridge)}/${encodeURIComponent(entity)}/extract`, {
+        const r = await apiFetch(`/api/pipeline/${encodeURIComponent(cartridge)}/${encodeURIComponent(entity)}/extract`, {
           method: 'POST',
-          headers: jsonHeaders(),
           body: JSON.stringify(body),
         });
         const d = await jsonOrThrow(r);
@@ -1309,7 +1276,7 @@ import { state } from './legacy-state.js';
 
 
         try {
-          const r = await fetch(`/api/pipeline/${encodeURIComponent(cartridge)}/${encodeURIComponent(entity)}/runs?limit=10`);
+          const r = await apiFetch(`/api/pipeline/${encodeURIComponent(cartridge)}/${encodeURIComponent(entity)}/runs?limit=10`);
           if (!r.ok) continue;
           const d   = await r.json();
           const runs = d.runs || [];
@@ -1350,7 +1317,7 @@ import { state } from './legacy-state.js';
       panel.innerHTML = `<div class="et-preview-inner" style="color:var(--text3);font-size:11px">Cargando logs de Airflow...</div>`;
 
       try {
-        const lr = await fetch(
+        const lr = await apiFetch(
           `/api/pipeline/${encodeURIComponent(cartridge)}/${encodeURIComponent(entity)}/runs/${encodeURIComponent(runId)}/logs`
         );
         const ld = await jsonOrThrow(lr);
@@ -1386,10 +1353,10 @@ import { state } from './legacy-state.js';
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn btn-sm" style="color:var(--cyan);border-color:var(--cyan)"
-                    onclick="sendLogsToAssistant(${JSON.stringify(prompt).replace(/</g,'\\u003c').replace(/"/g,'&quot;')})">
+                    onclick="sendLogsToAssistant(${escJsArg(prompt)})">
               ✎ Analizar con Asistente
             </button>
-            <a href="${esc(airflowUrl)}" target="_blank" class="btn btn-sm"
+            <a href="${esc(safeUrl(airflowUrl) || '#')}" target="_blank" class="btn btn-sm"
                style="color:var(--amber);border-color:var(--amber);text-decoration:none">
               ◈ Ver en Airflow
             </a>
@@ -1398,7 +1365,7 @@ import { state } from './legacy-state.js';
       } catch(e) {
         panel.innerHTML = `<div class="et-preview-inner">
           <div class="preview-err">No se pudieron cargar los logs: ${esc(e.message)}</div>
-          <a href="${esc(airflowDagUrl(dagId))}" target="_blank"
+          <a href="${esc(safeUrl(airflowDagUrl(dagId)) || '#')}" target="_blank"
              class="btn btn-sm" style="color:var(--amber);border-color:var(--amber);text-decoration:none;margin-top:8px">
             ◈ Ver en Airflow
           </a>
@@ -1446,18 +1413,18 @@ import { state } from './legacy-state.js';
 
       const source = `raw/${cartridge}/${entity}`;
       try {
-        const r = await fetch(`/api/schema?source=${encodeURIComponent(source)}`);
+        const r = await apiFetch(`/api/schema?source=${encodeURIComponent(source)}`);
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const d = await r.json();
 
         const run      = state._runsByEntity[entity];
         const statsHtml = run ? `
           <div class="preview-stats">
-            <div class="preview-stat">Estado: <span>${run.status === 'success' ? '✓ success' : '✗ '+run.status}</span></div>
-            <div class="preview-stat">Modo: <span>${run.mode || '—'}</span></div>
+            <div class="preview-stat">Estado: <span>${run.status === 'success' ? '✓ success' : '✗ ' + esc(run.status)}</span></div>
+            <div class="preview-stat">Modo: <span>${esc(run.mode || '—')}</span></div>
             <div class="preview-stat">Filas: <span>${run.record_count != null ? Number(run.record_count).toLocaleString('es') : '—'}</span></div>
-            <div class="preview-stat">Duración: <span>${run.duration_seconds ? run.duration_seconds.toFixed(1)+'s' : '—'}</span></div>
-            <div class="preview-stat">Fecha: <span>${(run.finished_at||'').substring(0,16).replace('T',' ')}</span></div>
+            <div class="preview-stat">Duración: <span>${run.duration_seconds ? Number(run.duration_seconds).toFixed(1)+'s' : '—'}</span></div>
+            <div class="preview-stat">Fecha: <span>${esc(String(run.finished_at || '').substring(0,16).replace('T',' '))}</span></div>
             ${run.storage_uri ? `<div class="preview-stat">Path: <span style="font-size:9px">${esc(run.storage_uri.replace(/^s3:\/\/[^/]+\//,''))}</span></div>` : ''}
           </div>` : '';
 
@@ -1555,8 +1522,8 @@ import { state } from './legacy-state.js';
       const errMsg = run?.error_message || '';
 
       try {
-        const r = await fetch('/studio_ops/mcp/invoke', {
-          method: 'POST', headers: jsonHeaders(),
+        const r = await apiFetch('/studio_ops/mcp/invoke', {
+          method: 'POST',
           body: JSON.stringify({ tool: 'get_entity_logs', args: { cartridge_id: cartridge, entity } }),
         });
         const d = await r.json();
@@ -1604,10 +1571,10 @@ import { state } from './legacy-state.js';
           </div>` : ''}
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn btn-sm" style="color:var(--cyan);border-color:var(--cyan)"
-                    onclick="sendLogsToAssistant(${JSON.stringify(prompt).replace(/</g,'\\u003c').replace(/"/g,'&quot;')})">
+                    onclick="sendLogsToAssistant(${escJsArg(prompt)})">
               ✎ Analizar con Asistente
             </button>
-            <a href="${esc(airflowUrl)}" target="_blank" class="btn btn-sm"
+            <a href="${esc(safeUrl(airflowUrl) || '#')}" target="_blank" class="btn btn-sm"
                style="color:var(--amber);border-color:var(--amber);text-decoration:none">
               ◈ Ver en Airflow
             </a>
@@ -1650,7 +1617,7 @@ import { state } from './legacy-state.js';
               <div class="tab" onclick="filterDS('silver')">Silver</div>
               <div class="tab" onclick="filterDS('gold')">Gold</div>
             </div>
-            <div id="ds-list-area" class="${state._activeLayer}-content empty-state"
+            <div id="ds-list-area" class="${esc(state._activeLayer)}-content empty-state"
                  style="flex:1;min-height:0;overflow:auto;background:var(--bg2);border-top:1px solid var(--border);padding:14px">
               <div style="color:var(--text3);padding:16px">Cargando datasets reales...</div>
             </div>
@@ -1673,10 +1640,8 @@ import { state } from './legacy-state.js';
 
       const _cart = state._currentCartridge?.id || '';
       const _visDS = _cart ? state._allDatasets.filter(d => d.cartridge === _cart) : state._allDatasets;
-      const counts = {
-        silver: _visDS.filter(d => d.layer === 'silver').length,
-        gold:   _visDS.filter(d => d.layer === 'gold').length,
-      };
+      const silverCount = _visDS.filter(d => d.layer === 'silver').length;
+      const goldCount = _visDS.filter(d => d.layer === 'gold').length;
 
       const sc = document.getElementById('step-content');
       sc.style.padding  = '0';
@@ -1697,15 +1662,15 @@ import { state } from './legacy-state.js';
           <!-- Tab bar (shrinks to content) -->
           <div class="tab-bar" style="flex-shrink:0;margin:0;display:flex;align-items:center">
             <div class="tab ${state._activeLayer==='bronze'?'active':''}" onclick="filterDS('bronze')">BRONZE <span style="opacity:.6" id="bronze-count"></span></div>
-            <div class="tab ${state._activeLayer==='silver'?'active':''}" onclick="filterDS('silver')">SILVER <span style="opacity:.6">(${counts.silver})</span></div>
-            <div class="tab ${state._activeLayer==='gold'?'active':''}" onclick="filterDS('gold')">GOLD <span style="opacity:.6">(${counts.gold})</span></div>
+            <div class="tab ${state._activeLayer==='silver'?'active':''}" onclick="filterDS('silver')">SILVER <span style="opacity:.6">(${silverCount})</span></div>
+            <div class="tab ${state._activeLayer==='gold'?'active':''}" onclick="filterDS('gold')">GOLD <span style="opacity:.6">(${goldCount})</span></div>
             <button class="btn btn-amber btn-sm" id="btn-new-ds" onclick="toggleNewDS()"
                     style="margin-left:auto;margin-right:8px;${state._activeLayer==='bronze'?'display:none':''}">+ Nuevo</button>
           </div>
 
           <!-- Workspace (fills remaining height) -->
           <div id="ds-list-area"
-               class="${state._activeLayer}-content empty-state"
+               class="${esc(state._activeLayer)}-content empty-state"
                style="flex:1;min-height:0;overflow:hidden;
                       background:var(--bg2);border-top:1px solid var(--border)">
             <div style="color:var(--text3);padding:16px">Cargando...</div>
@@ -1756,7 +1721,7 @@ import { state } from './legacy-state.js';
             <div class="ds-row-name" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(d.name)}</div>
             <div class="ds-row-meta" style="font-size:9px">
               ${d.row_count != null ? Number(d.row_count).toLocaleString('es')+' rows' : 'sin datos'}
-              ${d.last_refresh ? ' · '+fmt(d.last_refresh) : ''}
+              ${d.last_refresh ? ' · ' + esc(fmt(d.last_refresh)) : ''}
             </div>
           </div>
         </div>`).join('')
@@ -2069,8 +2034,8 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       const t0 = Date.now();
       const sources = currentEditorSources();
       try {
-        const r = await fetch('/api/bronze/query', {
-          method: 'POST', headers: jsonHeaders(),
+        const r = await apiFetch('/api/bronze/query', {
+          method: 'POST',
           body: JSON.stringify({ sql, limit: 50, sources }),
         });
         const d = await r.json().catch(() => ({}));
@@ -2120,8 +2085,8 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       if (status) status.textContent = '⟳ guardando...';
       try {
         const sources = currentEditorSources();
-        const r = await fetch('/api/datasets/save', {
-          method: 'POST', credentials: 'include', headers: jsonHeaders(),
+        const r = await apiFetch('/api/datasets/save', {
+          method: 'POST',
           body: JSON.stringify({ name, layer, sql, description: desc, cartridge: cart, sources }),
         });
         const d = await r.json().catch(() => ({}));
@@ -2129,7 +2094,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         if (status) status.innerHTML = '<span style="color:var(--green)">✓ guardado</span>';
         state._dsEditorDirty = false;
         state._selectedDS = { name };
-        const rd = await fetch('/datasets');
+        const rd = await apiFetch('/datasets');
         state._allDatasets = (await rd.json()).datasets || [];
         renderDSWorkspace(layer);
         selectDS(name);
@@ -2149,10 +2114,8 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       const status = document.getElementById('ds-ed-status');
       if (status) status.textContent = '⟳ materializando...';
       try {
-        const r = await fetch(`/datasets/${encodeURIComponent(name)}/refresh`, {
+        const r = await apiFetch(`/datasets/${encodeURIComponent(name)}/refresh`, {
           method: 'POST',
-          credentials: 'include',
-          headers: jsonHeaders(),
         });
         const d = await r.json().catch(() => ({}));
         if (!r.ok || d.error || d.detail) {
@@ -2160,7 +2123,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         }
         const rows = d.row_count ?? d.result?.row_count;
         if (status) status.innerHTML = `<span style="color:var(--green)">✓ ${rows != null ? Number(rows).toLocaleString('es')+' filas' : 'ok'}</span>`;
-        const rd = await fetch('/datasets');
+        const rd = await apiFetch('/datasets');
         state._allDatasets = (await rd.json()).datasets || [];
         renderDSWorkspace(state._activeLayer);
         selectDS(name);
@@ -2175,10 +2138,8 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       const status = document.getElementById('ds-ed-status');
       if (status) status.textContent = '⟳ eliminando...';
       try {
-        const r = await fetch(`/api/datasets?name=${encodeURIComponent(name)}`, {
+        const r = await apiFetch(`/api/datasets?name=${encodeURIComponent(name)}`, {
           method: 'DELETE',
-          credentials: 'include',
-          headers: csrfHeaders(),
         });
         const d = await r.json().catch(() => ({}));
         if (!r.ok || d.detail || d.error) {
@@ -2234,7 +2195,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       let sources = state._bronzeSources;
       if (!sources.length) {
         try {
-          const r = await fetch('/api/sources');
+          const r = await apiFetch('/api/sources');
           const d = await r.json();
           state._bronzeSources = (d.sources || []).map(s => {
             const parts = s.split('/');
@@ -2339,8 +2300,8 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       if (resultsEl) resultsEl.innerHTML  = '';
       const t0 = Date.now();
       try {
-        const r = await fetch('/api/bronze/query', {
-          method: 'POST', credentials: 'include', headers: jsonHeaders(),
+        const r = await apiFetch('/api/bronze/query', {
+          method: 'POST',
           body: JSON.stringify({ sql, limit: 500, sources: bronzeSourcesFromSql(sql) }),
         });
         const d = await r.json().catch(() => ({}));
@@ -2400,10 +2361,8 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
 
     export async function refreshDS(name) {
       try {
-        const r = await fetch(`/datasets/${encodeURIComponent(name)}/refresh`, {
+        const r = await apiFetch(`/datasets/${encodeURIComponent(name)}/refresh`, {
           method: 'POST',
-          credentials: 'include',
-          headers: csrfHeaders(),
         });
         if (!r.ok) {
           const d = await r.json().catch(() => ({}));
@@ -2432,8 +2391,8 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
     export function renderAnalytics() {
       const cartridge = _dagCartridge();
       const initialSql = analyticsSqlText(cartridge);
-      const supersetHref = supersetUrl();
-      const supersetDisabled = !supersetHref || supersetHref === '#';
+      const supersetHref = safeUrl(supersetUrl());
+      const supersetDisabled = !supersetHref;
       document.getElementById('step-content').innerHTML = `
         <div class="step-title">
           <div>
@@ -2441,7 +2400,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
             <p class="step-desc">Crea datasets, gráficos y dashboards en Apache Superset directamente desde el asistente.
               Superset está disponible solo internamente por seguridad; Solicita acceso interno/VPN para abrir dashboards.</p>
           </div>
-          <a class="btn btn-sm btn-amber" id="analytics-superset-link" role="button" href="${esc(supersetHref || '#')}" target="_blank" rel="noopener" ${supersetDisabled ? 'aria-disabled="true"' : ''}>${supersetDisabled ? 'Superset interno por seguridad' : 'Abrir Superset ↗'}</a>
+          <a class="btn btn-sm btn-amber" id="analytics-superset-link" role="button" href="${esc(safeUrl(supersetHref) || '#')}" target="_blank" rel="noopener" ${supersetDisabled ? 'aria-disabled="true"' : ''}>${supersetDisabled ? 'Superset interno por seguridad' : 'Abrir Superset ↗'}</a>
         </div>
 
         <div class="card">
@@ -2518,9 +2477,9 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       document.getElementById('btn-analytics-sql')?.addEventListener('click', showAnalyticsSql);
       const supersetLink = document.getElementById('analytics-superset-link');
       supersetLink?.addEventListener('click', (event) => {
-        const url = supersetUrl();
-        supersetLink.setAttribute('href', url);
-        if (!url || url === '#') {
+        const url = safeUrl(supersetUrl());
+        supersetLink.setAttribute('href', url || '#');
+        if (!url) {
           event.preventDefault();
           supersetLink.setAttribute('aria-disabled', 'true');
           supersetLink.textContent = 'Superset interno por seguridad';
@@ -2550,7 +2509,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       }
       const supersetLink = target.closest('#analytics-superset-link');
       if (supersetLink) {
-        supersetLink.setAttribute('href', supersetUrl());
+        supersetLink.setAttribute('href', safeUrl(supersetUrl()) || '#');
       }
     });
 
@@ -2558,7 +2517,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       const el = document.getElementById('apps-step5-list');
       if (!el) return;
       try {
-        const r = await fetch('/api/apps');
+        const r = await apiFetch('/api/apps');
         const d = await r.json();
         const apps = d.apps || [];
         if (!apps.length) {
@@ -2598,10 +2557,8 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
     export async function deleteAnalyticApp(name, title) {
       if (!confirm(`¿Eliminar la aplicación "${title}"?\n\nEsto no se puede deshacer.`)) return;
       try {
-        const r = await fetch('/api/apps/' + encodeURIComponent(name), {
+        const r = await apiFetch('/api/apps/' + encodeURIComponent(name), {
           method: 'DELETE',
-          headers: csrfHeaders(),
-          credentials: 'include'
         });
         if (!r.ok) {
           const d = await r.json().catch(() => ({}));
@@ -2627,9 +2584,8 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         el.insertAdjacentHTML('afterbegin', '<div class="superset-status empty-card">⟳ Creando dataset en Superset...</div>');
       }
       try {
-        const r = await fetch('/api/studio/superset/dataset', {
+        const r = await apiFetch('/api/studio/superset/dataset', {
           method: 'POST',
-          headers: jsonHeaders(),
           body: JSON.stringify({ table_name: tableName, dataset_name: datasetName, cartridge, schema: 'public' }),
         });
         const d = await r.json();
@@ -2715,7 +2671,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
     export async function ragLoadSources() {
       const list = document.getElementById('rag-sources-list');
       try {
-        const r = await fetch('/api/rag/sources');
+        const r = await apiFetch('/api/rag/sources');
         const d = await r.json();
         const sources = d.sources || [];
         if (!sources.length) {
@@ -2738,7 +2694,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
     export async function ragDeleteSource(id) {
       if (!confirm('¿Borrar esta fuente del RAG?')) return;
       try {
-        const r = await fetch(`/api/rag/sources/${id}`, {method: 'DELETE', headers: csrfHeaders()});
+        const r = await apiFetch(`/api/rag/sources/${id}`, {method: 'DELETE'});
         await jsonOrThrow(r);
         await ragLoadSources();
       } catch(e) {
@@ -2768,7 +2724,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
           body.content = text;
         }
 
-        const r = await fetch('/api/rag/ingest', {method: 'POST', headers: jsonHeaders(), body: JSON.stringify(body)});
+        const r = await apiFetch('/api/rag/ingest', {method: 'POST', body: JSON.stringify(body)});
         const d = await jsonOrThrow(r);
         msg.innerHTML = `<span style="color:var(--green)">✓ Ingerido — ${Number(d.children || d.chunk_count || 0).toLocaleString('es')} chunks</span>`;
         document.getElementById('rag-name').value = '';
@@ -2803,7 +2759,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         const body = {query: q, top_k: 5};
         const kinds = ragSelectedKinds();
         if (kinds) body.kinds = kinds;
-        const r = await fetch('/api/rag/ask', {method: 'POST', headers: jsonHeaders(), body: JSON.stringify(body)});
+        const r = await apiFetch('/api/rag/ask', {method: 'POST', body: JSON.stringify(body)});
         const d = await jsonOrThrow(r);
         const answer = d.answer || '(sin respuesta)';
         const res = d.results || [];
@@ -2813,7 +2769,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
             <div style="white-space:pre-wrap;color:var(--text);line-height:1.5">${esc(answer)}</div>
           </div>`;
         const evidence = res.map((x, i) => {
-          const score = (x.similarity ?? x.score ?? 0);
+          const score = Number(x.similarity ?? x.score ?? 0);
           const body  = x.context || x.parent_content || x.child_content || x.content || '';
           return `
           <div style="border:1px solid var(--border);padding:10px;margin-bottom:8px;border-radius:2px">
@@ -2841,12 +2797,12 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         const body = {query: q, top_k: 5};
         const kinds = ragSelectedKinds();
         if (kinds) body.kinds = kinds;
-        const r = await fetch('/api/rag/search', {method: 'POST', headers: jsonHeaders(), body: JSON.stringify(body)});
+        const r = await apiFetch('/api/rag/search', {method: 'POST', body: JSON.stringify(body)});
         const d = await jsonOrThrow(r);
         const res = d.results || [];
         if (!res.length) { ul.innerHTML = '<div style="color:var(--text2)">Sin resultados.</div>'; return; }
         ul.innerHTML = res.map((r, i) => {
-          const score = (r.similarity ?? r.score ?? 0);
+          const score = Number(r.similarity ?? r.score ?? 0);
           const body  = r.context || r.parent_content || r.child_content || r.content || '';
           return `
           <div style="border:1px solid var(--border);padding:10px;margin-bottom:8px;border-radius:2px">
@@ -3006,7 +2962,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       const qs = params.toString() ? `?${params.toString()}` : '';
       document.getElementById('cat-status').textContent = 'Cargando…';
       try {
-        const r   = await fetch(`/api/catalog${qs}`);
+        const r   = await apiFetch(`/api/catalog${qs}`);
         state._catData  = await r.json();
         const nDs = Object.keys(state._catData.datasets || {}).length;
         const nCo = Object.values(state._catData.datasets || {}).reduce((a,d)=>a+d.columns.length,0);
@@ -3040,7 +2996,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       if (!wrap) return;
 
       const datasets = state._catData.datasets || {};
-      let rows = '';
+      let rowsHtml = '';
       let totalVisible = 0;
 
       for (const [dsName, ds] of Object.entries(datasets)) {
@@ -3052,7 +3008,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         );
         if (!cols.length) continue;
 
-        rows += `<tr class="cat-ds-row">
+        rowsHtml += `<tr class="cat-ds-row">
           <td colspan="7" style="padding:8px 10px">
             <span style="opacity:.5;font-size:9px;margin-right:6px">${esc(ds.layer)}</span>
             ${esc(dsName)}
@@ -3066,12 +3022,12 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
           const isEditing = state._catEditing && state._catEditing.dataset===dsName && state._catEditing.col===col.name;
           const tagsHtml  = (col.tags||[]).map(t=>`<span class="cat-tag">${esc(t)}</span>`).join('');
 
-          rows += `<tr id="cat-row-${CSS.escape(editId)}">
+          rowsHtml += `<tr id="cat-row-${esc(CSS.escape(editId))}">
             <td style="color:var(--text3);font-family:var(--font-mono);font-size:9px;padding-left:18px">${esc(col.name)}</td>
             <td style="color:var(--text3);font-size:9px">${esc(col.type||'')}</td>
-            <td style="max-width:300px;white-space:normal" id="cat-desc-cell-${CSS.escape(editId)}">
+            <td style="max-width:300px;white-space:normal" id="cat-desc-cell-${esc(CSS.escape(editId))}">
               ${isEditing
-                ? `<input class="cat-edit-desc" id="cat-desc-inp-${CSS.escape(editId)}"
+                ? `<input class="cat-edit-desc" id="cat-desc-inp-${esc(CSS.escape(editId))}"
                      value="${esc(col.description||'')}"
                      onblur="catSaveDesc(${escJsArg(dsName)},${escJsArg(col.name)})"
                      onkeydown="if(event.key==='Enter')catSaveDesc(${escJsArg(dsName)},${escJsArg(col.name)});if(event.key==='Escape')catCancelEdit()">`
@@ -3098,7 +3054,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         }
       }
 
-      if (!rows) {
+      if (!rowsHtml) {
         wrap.innerHTML = `<div class="empty-card">Sin columnas${search?' para la búsqueda "'+esc(search)+'"':''}</div>`;
         return;
       }
@@ -3113,7 +3069,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
               <th>COLUMNA</th><th>TIPO</th><th style="min-width:200px">DESCRIPCIÓN</th>
               <th>TAGS</th><th>KEY</th><th>MTR</th><th></th>
             </tr></thead>
-            <tbody>${rows}</tbody>
+            <tbody>${rowsHtml}</tbody>
           </table>
         </div>`;
     }
@@ -3176,8 +3132,8 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       catRenderCols();
 
       try {
-        const r = await fetch('/api/catalog/entries', {
-          method:'POST', headers: jsonHeaders(),
+        const r = await apiFetch('/api/catalog/entries', {
+          method:'POST',
           body: JSON.stringify({ entries:[{ dataset, cartridge: currentCartridgeId(), column_name:col, description:desc }] })
         });
         await jsonOrThrow(r);
@@ -3196,8 +3152,8 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       catRenderCols();
 
       try {
-        const r = await fetch('/api/catalog/entries', {
-          method:'POST', headers: jsonHeaders(),
+        const r = await apiFetch('/api/catalog/entries', {
+          method:'POST',
           body: JSON.stringify({ entries:[{ dataset, cartridge: currentCartridgeId(), column_name:col, [flag]:value }] })
         });
         await jsonOrThrow(r);
@@ -3218,8 +3174,8 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       catRenderCols();
 
       try {
-        const r = await fetch('/api/catalog/entries', {
-          method:'POST', headers: jsonHeaders(),
+        const r = await apiFetch('/api/catalog/entries', {
+          method:'POST',
           body: JSON.stringify({ entries:[{ dataset, cartridge: currentCartridgeId(), column_name:col, tags: c?.tags||[tag.trim()] }] })
         });
         await jsonOrThrow(r);
@@ -3249,8 +3205,8 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         alert('Completa los 4 campos de dataset y columna'); return;
       }
       try {
-        const r = await fetch('/api/catalog/relationships', {
-          method:'POST', headers: jsonHeaders(),
+        const r = await apiFetch('/api/catalog/relationships', {
+          method:'POST',
           body: JSON.stringify(body)
         });
         await jsonOrThrow(r);
@@ -3384,7 +3340,8 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         }
         state.aiHistory = saved.messages || [];
         const chat = document.getElementById('ai-chat');
-        (saved.rendered || []).forEach(({ role, html }) => {
+        (saved.rendered || []).forEach(({ role: savedRole, html }) => {
+          const role = savedRole === 'user' ? 'user' : 'assistant';
           const div  = document.createElement('div');
           div.className = `ai-msg ai-${role}`;
           const label = role === 'user' ? 'TÚ' : '◈ MOD·AI';
@@ -3496,9 +3453,8 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       let toolSteps = 0;
 
       try {
-        const r = await fetch('/studio/chat/stream', {
+        const r = await apiFetch('/studio/chat/stream', {
           method: 'POST',
-          headers: jsonHeaders(),
           body: JSON.stringify({
             message:      msg,
             history:      state.aiHistory,
@@ -3573,10 +3529,13 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         aiAppend('assistant', finalReply || '(sin respuesta)');
         _saveChatHistory();
         if (state._currentCartridge?.id) {
-          const cr = await fetch(`/studio/cartridges/${encodeURIComponent(state._currentCartridge.id)}`);
+          const cr = await apiFetch(`/studio/cartridges/${encodeURIComponent(state._currentCartridge.id)}`);
           if (cr.ok) { state._currentCartridge = await cr.json(); _updateCartridgeInfo(); }
         }
-        finalUrls.forEach(({ url }) => window.open(url, '_blank'));
+        finalUrls.forEach(({ url } = {}) => {
+          const target = safeUrl(url);
+          if (target) window.open(target, '_blank', 'noopener');
+        });
       } catch(e) {
         trail.container.remove();
         aiAppend('assistant', `⚠ Sin conexión con el servidor — verifica que los servicios estén corriendo.`);
@@ -3649,7 +3608,11 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
     }
 
     export function escJsArg(s) {
-      return JSON.stringify(String(s || '')).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026');
+      return esc(JSON.stringify(String(s || '')));
+    }
+
+    export function escJsonArg(value) {
+      return esc(JSON.stringify(value ?? null));
     }
 
     export function fmt(iso) {
@@ -3778,7 +3741,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       const afLink = document.getElementById('dag-airflow-link');
       if (nameEl) nameEl.textContent = state._selectedDag;
       if (badgeEl) badgeEl.innerHTML = '<span class="dag-badge dag-paused">preview</span>';
-      if (afLink) afLink.href = airflowDagUrl(state._selectedDag);
+      if (afLink) afLink.href = safeUrl(airflowDagUrl(state._selectedDag)) || '#';
       dagSetEditorCode(
         `from airflow import DAG\n` +
         `from airflow.operators.empty import EmptyOperator\n\n` +
@@ -3823,14 +3786,14 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
             ? `<span style="color:#555">● pausado</span>`
             : `<span style="color:var(--green)">● activo</span>`;
           const prefix = dag.dag_id.split('_')[0];
-          const badge = prefix !== dag.dag_id
+          const prefixBadge = prefix !== dag.dag_id
             ? `<span style="font-size:8px;color:var(--text3);margin-left:4px">[${esc(prefix)}]</span>`
             : '';
           return `<div class="dag-sidebar-item ${state._selectedDag === dag.dag_id ? 'selected' : ''}"
                        id="dagitem-${esc(dag.dag_id)}"
                        data-dag-id="${esc(dag.dag_id)}"
                        onclick="selectDag(${escJsArg(dag.dag_id)})">
-            <div class="dag-item-id">${esc(dag.dag_id)}${badge}</div>
+            <div class="dag-item-id">${esc(dag.dag_id)}${prefixBadge}</div>
             <div class="dag-item-meta">${statusDot}</div>
           </div>`;
         }).join('');
@@ -3863,7 +3826,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       if (!textarea || !nameEl) return;
 
       nameEl.textContent = dagId;
-      if (afLink) afLink.href = airflowDagUrl(dagId);
+      if (afLink) afLink.href = safeUrl(airflowDagUrl(dagId)) || '#';
 
       const dag = state._dagsCache.find(d => d.dag_id === dagId);
       if (dag && badgeEl) {
@@ -3878,7 +3841,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       setDeployMsg('', '');
 
       try {
-        const r = await fetch(`/api/studio/dags/${encodeURIComponent(dagId)}/source?cartridge=${encodeURIComponent(_dagCartridge())}`);
+        const r = await apiFetch(`/api/studio/dags/${encodeURIComponent(dagId)}/source?cartridge=${encodeURIComponent(_dagCartridge())}`);
         const d = await jsonOrThrow(r);
         if (!isCurrentRequest()) return;
         if (d.found && d.source_code) {
@@ -3929,7 +3892,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
     async function _systemInfo() {
       if (_systemInfoCache !== null) return _systemInfoCache;
       try {
-        const r = await fetch('/api/system/info', {credentials: 'same-origin'});
+        const r = await apiFetch('/api/system/info');
         if (!r.ok) { _systemInfoCache = {}; return _systemInfoCache; }
         _systemInfoCache = await r.json();
       } catch { _systemInfoCache = {}; }
@@ -3997,9 +3960,8 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       setDeployMsg('Desplegando…', '');
 
       try {
-        const r = await fetch('/api/studio/dag-deploy', {
+        const r = await apiFetch('/api/studio/dag-deploy', {
           method: 'POST',
-          headers: jsonHeaders(),
           body: JSON.stringify({
             dag_id: dagId,
             code,
@@ -4097,9 +4059,8 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
 
       setDeployMsg('Renombrando…', '');
       try {
-        const r1 = await fetch('/api/studio/dag-deploy', {
+        const r1 = await apiFetch('/api/studio/dag-deploy', {
           method: 'POST',
-          headers: jsonHeaders(),
           body: JSON.stringify({
             dag_id: newId,
             code: newCode,
@@ -4111,9 +4072,8 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         if (!r1.ok || d1.status === 'failed' || (!d1.result?.created && !d1.result?.dag_id && d1.status !== 'deployed')) {
           setDeployMsg(`Error al crear: ${esc(friendlyError(d1.result || d1, `HTTP ${r1.status}`))}`, 'err'); return;
         }
-        await fetch(`/api/studio/dags/${encodeURIComponent(oldId)}?cartridge=${encodeURIComponent(_dagCartridge())}`, {
+        await apiFetch(`/api/studio/dags/${encodeURIComponent(oldId)}?cartridge=${encodeURIComponent(_dagCartridge())}`, {
           method: 'DELETE',
-          headers: jsonHeaders(),
         });
         setDeployMsg(`✓ Renombrado a ${esc(newId)}`, 'ok');
         state._selectedDag = newId;
@@ -4133,13 +4093,13 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
               ? `<span style="color:#555">● pausado</span>`
               : `<span style="color:var(--green)">● activo</span>`;
             const prefix = dag.dag_id.split('_')[0];
-            const badge = prefix !== dag.dag_id
+            const prefixBadge = prefix !== dag.dag_id
               ? `<span style="font-size:8px;color:var(--text3);margin-left:4px">[${esc(prefix)}]</span>` : '';
             return `<div class="dag-sidebar-item ${dag.dag_id === newId ? 'selected' : ''}"
                          id="dagitem-${esc(dag.dag_id)}"
                          data-dag-id="${esc(dag.dag_id)}"
                          onclick="selectDag(${escJsArg(dag.dag_id)})">
-              <div class="dag-item-id">${esc(dag.dag_id)}${badge}</div>
+              <div class="dag-item-id">${esc(dag.dag_id)}${prefixBadge}</div>
               <div class="dag-item-meta">${statusDot}</div>
             </div>`;
           }).join('');
@@ -4192,9 +4152,8 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
 
       setDeployMsg('Eliminando…', '');
       try {
-        const r = await fetch(`/api/studio/dags/${encodeURIComponent(dagId)}?cartridge=${encodeURIComponent(_dagCartridge())}`, {
+        const r = await apiFetch(`/api/studio/dags/${encodeURIComponent(dagId)}?cartridge=${encodeURIComponent(_dagCartridge())}`, {
           method: 'DELETE',
-          headers: jsonHeaders(),
         });
         const d = await r.json().catch(() => ({}));
         if (r.ok && (d.deleted || d.result?.deleted_file || d.result?.deleted_db)) {
@@ -4289,7 +4248,11 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       const count   = (ta.value.match(/\n/g) || []).length + 1;
       const current = ln.querySelectorAll('span').length;
       if (current === count) return;
-      ln.innerHTML = Array.from({length: count}, (_, i) => `<span>${i + 1}</span>`).join('');
+      ln.replaceChildren(...Array.from({length: count}, (_, i) => {
+        const span = document.createElement('span');
+        span.textContent = String(i + 1);
+        return span;
+      }));
     }
 
     export function dagMarkDirty() {
@@ -4504,8 +4467,8 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       let tasks = [], edges = [];
       let parseWarning = '';
       try {
-        const r = await fetch('/api/dags/parse', {
-          method: 'POST', headers: jsonHeaders(),
+        const r = await apiFetch('/api/dags/parse', {
+          method: 'POST',
           body: JSON.stringify({ source: code }),
         });
         const d = await r.json();
@@ -4538,8 +4501,9 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         return;
       }
 
-      const { pos, svgInnerW, svgH } = _layoutDagGraph(tasks, edges);
-      const svgW = svgInnerW;
+      const { pos, svgInnerW, svgH: layoutH } = _layoutDagGraph(tasks, edges);
+      const graphW = Number(svgInnerW) || 0;
+      const graphH = Number(layoutH) || 0;
 
       const opColor = op => ({
         PythonOperator:   '#1e3a20',
@@ -4555,8 +4519,8 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       edges.forEach(([f, t]) => {
         const fp = pos[f], tp = pos[t];
         if (!fp || !tp) return;
-        const x1 = fp.x + fp.w / 2, y1 = fp.y + fp.h;
-        const x2 = tp.x + tp.w / 2, y2 = tp.y;
+        const x1 = Number(fp.x) + fp.w / 2, y1 = Number(fp.y) + Number(fp.h);
+        const x2 = Number(tp.x) + tp.w / 2, y2 = Number(tp.y);
         const cy = (y1 + y2) / 2;
         edgeSvg += `<path d="M${x1},${y1} C${x1},${cy} ${x2},${cy} ${x2},${y2}" stroke="#555" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>`;
       });
@@ -4567,29 +4531,30 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         if (!p) return;
         const label = t.id.length > 22 ? t.id.slice(0, 20) + '…' : t.id;
         const bg    = opColor(t.op);
+        const boxX = Number(p.x), boxY = Number(p.y), boxW = Number(p.w), boxH = Number(p.h);
 
         let inner = `
-          <rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="4"
-                fill="${bg}" stroke="#444" stroke-width="1"/>
-          <text x="${p.x + p.w/2}" y="${p.y + 14}" text-anchor="middle"
+          <rect x="${boxX}" y="${boxY}" width="${boxW}" height="${boxH}" rx="4"
+                fill="${esc(bg)}" stroke="#444" stroke-width="1"/>
+          <text x="${boxX + boxW / 2}" y="${boxY + 14}" text-anchor="middle"
                 fill="var(--text3)" font-family="var(--font-mono)" font-size="8" letter-spacing=".05em">
             ${esc(opLabel(t.op))}
           </text>
-          <text x="${p.x + p.w/2}" y="${p.y + 30}" text-anchor="middle"
+          <text x="${boxX + boxW / 2}" y="${boxY + 30}" text-anchor="middle"
                 fill="#d4d4d4" font-family="var(--font-mono)" font-size="10" font-weight="600">
             ${esc(label)}
           </text>`;
 
         if (t.calls && t.calls.length) {
-          inner += `<line x1="${p.x + 8}" y1="${p.y + 38}" x2="${p.x + p.w - 8}" y2="${p.y + 38}" stroke="#333" stroke-width="1"/>`;
+          inner += `<line x1="${boxX + 8}" y1="${boxY + 38}" x2="${boxX + boxW - 8}" y2="${boxY + 38}" stroke="#333" stroke-width="1"/>`;
           t.calls.forEach((c, ci) => {
-            const cy = p.y + 52 + ci * 16;
+            const cy = boxY + 52 + ci * 16;
             const fnLabel = c.name.length > 24 ? c.name.slice(0, 22) + '…' : c.name;
             inner += `
-              <g onclick="event.stopPropagation();jumpToTaskLine(${c.line},${escJsArg(t.id)})" style="cursor:pointer">
-                <rect x="${p.x + 4}" y="${cy - 11}" width="${p.w - 8}" height="14" rx="2"
+              <g onclick="event.stopPropagation();jumpToTaskLine(${Number(c.line) || 0},${escJsArg(t.id)})" style="cursor:pointer">
+                <rect x="${boxX + 4}" y="${cy - 11}" width="${boxW - 8}" height="14" rx="2"
                       fill="rgba(255,255,255,.04)" stroke="none"/>
-                <text x="${p.x + 10}" y="${cy}" fill="var(--cyan)"
+                <text x="${boxX + 10}" y="${cy}" fill="var(--cyan)"
                       font-family="var(--font-mono)" font-size="9">
                   ƒ ${esc(fnLabel)}
                 </text>
@@ -4598,13 +4563,13 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         }
 
         nodeSvg += `<g class="dag-graph-node" id="gnode-${esc(t.id)}"
-            onclick="jumpToTaskLine(${t.line},${escJsArg(t.id)})" style="cursor:pointer"
-            title="${esc(t.id)} — línea ${t.line}">
+            onclick="jumpToTaskLine(${Number(t.line) || 0},${escJsArg(t.id)})" style="cursor:pointer"
+            title="${esc(t.id)} — línea ${Number(t.line) || 0}">
           ${inner}
         </g>`;
       });
 
-      panel.innerHTML = `${parseWarning ? `<div style="padding:8px 12px;color:var(--amber);font-size:10px;border-bottom:1px solid var(--border)">${esc(parseWarning)}</div>` : ''}<svg width="${svgW}" height="${svgH}" style="display:block;min-width:${svgW}px">
+      panel.innerHTML = `${parseWarning ? `<div style="padding:8px 12px;color:var(--amber);font-size:10px;border-bottom:1px solid var(--border)">${esc(parseWarning)}</div>` : ''}<svg width="${graphW}" height="${graphH}" style="display:block;min-width:${graphW}px">
         <defs>
           <marker id="arr" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
             <path d="M0,0 L7,3.5 L0,7 z" fill="#555"/>
@@ -4771,7 +4736,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       const list = document.getElementById('tpl-list-s');
       if (!list) return;
       try {
-        const r = await fetch('/api/dag_templates');
+        const r = await apiFetch('/api/dag_templates');
         const d = await r.json();
         const tpls = d.templates || [];
         if (!tpls.length) {
@@ -4798,7 +4763,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       if (!entity) return;
 
       try {
-        const r = await fetch(
+        const r = await apiFetch(
           `/api/dag_templates/${encodeURIComponent(templateId)}` +
           `?cartridge=${encodeURIComponent(cartridge)}&entity=${encodeURIComponent(entity)}`
         );

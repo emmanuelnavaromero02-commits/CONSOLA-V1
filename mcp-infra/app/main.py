@@ -2226,6 +2226,7 @@ async def _rebuild_semantic_doc(
         raws = [r[0] for r in raw_rows]
     except Exception:
         raws = []
+    raws = [ent for ent in raws if re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", str(ent or ""))]
     if raws:
         out.append(f"## Bronze · raw — {len(raws)} entidades\n\n")
         for ent in raws:
@@ -2271,6 +2272,8 @@ async def _rebuild_semantic_doc(
                         parquet = (
                             f"s3://{bucket}/silver/{cartridge}/{name}/data.parquet"
                         )
+                    if "'" in parquet or not parquet.startswith(f"s3://{bucket}/"):
+                        raise ValueError("unexpected storage uri")
                     fields = con.execute(
                         f"DESCRIBE SELECT * FROM read_parquet('{parquet}') LIMIT 0"
                     ).fetchall()

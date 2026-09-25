@@ -17,10 +17,10 @@ USER = {
     "id": 7,
     "email": "emmanuelnavaromero02@gmail.com",
     "role": "super_admin",
-    "tenant_id": "b95f4d58-c9c8-4fd5-8d07-ddde294c7d78",
-    "active_tenant_id": "b95f4d58-c9c8-4fd5-8d07-ddde294c7d78",
-    "workspace_id": "a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4",
-    "active_workspace_id": "a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4",
+    "tenant_id": "11111111-1111-4111-8111-111111111111",
+    "active_tenant_id": "11111111-1111-4111-8111-111111111111",
+    "workspace_id": "22222222-2222-4222-8222-222222222222",
+    "active_workspace_id": "22222222-2222-4222-8222-222222222222",
     "allowed_cartridges": [
         "hubspot",
         "replicon",
@@ -63,19 +63,19 @@ def _isolate_scoped_read_runtime(monkeypatch):
 
 
 def test_bronze_query_rewrites_logical_raw_paths_to_scoped_s3(monkeypatch):
-    monkeypatch.setenv("S3_BUCKET_NAME", "modecissions-lakehouse-783792")
+    monkeypatch.setenv("S3_BUCKET_NAME", "lakehouse-test")
     sql = "select * from read_parquet('raw/sap_successfactors/PerPerson') limit 50"
 
     rewritten = console_main._rewrite_bronze_logical_paths(sql, USER)
 
     assert "raw/sap_successfactors/PerPerson')" not in rewritten
     assert "read_parquet(read_parquet" not in rewritten
-    assert "read_parquet('s3://modecissions-lakehouse-783792/" in rewritten
+    assert "read_parquet('s3://lakehouse-test/" in rewritten
     assert "hive_partitioning=true, union_by_name=true" in rewritten
     assert (
-        "s3://modecissions-lakehouse-783792/raw/sap_successfactors/PerPerson/"
-        "tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/"
-        "workspace_id=a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4/**/*.parquet"
+        "s3://lakehouse-test/raw/sap_successfactors/PerPerson/"
+        "tenant_id=11111111-1111-4111-8111-111111111111/"
+        "workspace_id=22222222-2222-4222-8222-222222222222/**/*.parquet"
     ) in rewritten
 
 
@@ -93,7 +93,7 @@ def test_infers_bronze_sources_from_packaged_s3_reader():
 
 @pytest.mark.asyncio
 async def test_bronze_query_endpoint_sends_scoped_s3_to_refinement(monkeypatch):
-    monkeypatch.setenv("S3_BUCKET_NAME", "modecissions-lakehouse-783792")
+    monkeypatch.setenv("S3_BUCKET_NAME", "lakehouse-test")
     captured: dict = {}
 
     class FakeResponse:
@@ -127,9 +127,9 @@ async def test_bronze_query_endpoint_sends_scoped_s3_to_refinement(monkeypatch):
     assert result == {"rows": [{"personIdExternal": "1"}]}
     assert "read_parquet('raw/sap_successfactors/PerPerson')" not in sql
     assert (
-        "s3://modecissions-lakehouse-783792/raw/sap_successfactors/PerPerson/"
-        "tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/"
-        "workspace_id=a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4/**/*.parquet"
+        "s3://lakehouse-test/raw/sap_successfactors/PerPerson/"
+        "tenant_id=11111111-1111-4111-8111-111111111111/"
+        "workspace_id=22222222-2222-4222-8222-222222222222/**/*.parquet"
     ) in sql
     assert captured["payload"]["args"]["user_context"]["tenant_id"] == USER["active_tenant_id"]
     assert captured["payload"]["args"]["user_context"]["workspace_id"] == USER["active_workspace_id"]
@@ -255,7 +255,7 @@ async def test_apps_list_filters_to_active_scoped_vault_cartridges(monkeypatch):
 
         async def get(self, url, **_kwargs):
             if str(url).endswith("/connections/sap_successfactors"):
-                return FakeResponse({"connections": [{"conn_id": "femsa_sf", "auth_method": "saml_bearer_assertion"}]})
+                return FakeResponse({"connections": [{"conn_id": "tenant_sf", "auth_method": "saml_bearer_assertion"}]})
             return FakeResponse({"connections": []})
 
     monkeypatch.setattr(console_main, "_get_db_pool", AsyncMock(side_effect=AssertionError("vault_entries must not be read by Console")))
@@ -320,7 +320,7 @@ async def test_apps_list_resolves_scope_from_membership_when_user_is_unscoped(mo
 
         async def get(self, url, **_kwargs):
             if str(url).endswith("/connections/sap_successfactors"):
-                return FakeResponse({"connections": [{"conn_id": "femsa_sf"}]})
+                return FakeResponse({"connections": [{"conn_id": "tenant_sf"}]})
             return FakeResponse({"connections": []})
 
     monkeypatch.setattr(console_main, "_get_db_pool", AsyncMock(side_effect=AssertionError("vault_entries must not be read by Console")))
@@ -382,7 +382,7 @@ async def test_apps_list_global_super_admin_uses_vault_service_for_scoped_connec
 
         async def get(self, url, **_kwargs):
             if str(url).endswith("/connections/sap_successfactors"):
-                return FakeResponse({"connections": [{"conn_id": "femsa_sf", "auth_method": "saml_bearer_assertion"}]})
+                return FakeResponse({"connections": [{"conn_id": "tenant_sf", "auth_method": "saml_bearer_assertion"}]})
             return FakeResponse({"connections": []})
 
     monkeypatch.setattr(console_main, "_get_db_pool", AsyncMock(side_effect=AssertionError("vault_entries must not be read by Console")))
@@ -657,8 +657,8 @@ def test_explorer_allows_scoped_ancestors_but_rejects_foreign_objects():
     assert console_main._explorer_path_allowed(
         (
             "raw/sap_successfactors/PerPerson/"
-            "tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/"
-            "workspace_id=a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4/data.parquet"
+            "tenant_id=11111111-1111-4111-8111-111111111111/"
+            "workspace_id=22222222-2222-4222-8222-222222222222/data.parquet"
         ),
         USER,
         object_access=True,
@@ -666,7 +666,7 @@ def test_explorer_allows_scoped_ancestors_but_rejects_foreign_objects():
     assert not console_main._explorer_path_allowed(
         (
             "raw/sap_successfactors/PerPerson/"
-            "tenant_id=other/workspace_id=a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4/data.parquet"
+            "tenant_id=other/workspace_id=22222222-2222-4222-8222-222222222222/data.parquet"
         ),
         USER,
         object_access=True,
@@ -759,7 +759,7 @@ async def test_control_room_production_reports_known_non_ready_sources_without_f
                 {
                     "cartridge_id": "sap_successfactors",
                     "installation_status": "ready",
-                    "connection_id": "femsa_sf",
+                    "connection_id": "tenant_sf",
                     "auth_method": "saml_bearer_assertion",
                 },
             ]),

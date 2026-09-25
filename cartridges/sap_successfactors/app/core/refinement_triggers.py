@@ -16,6 +16,8 @@ from app.core.dataset_orders import (
 
 
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
+RUNTIME_REQUEST_TIMEOUT_SECONDS = 60
+RUNTIME_JOB_DEADLINE_SECONDS = 3 * 3600
 
 
 def _refinement_auth() -> tuple[str, str]:
@@ -45,15 +47,15 @@ async def trigger_silver_refresh(entity: str, security_context: dict | None = No
     api_key, internal_service = _refinement_auth()
     if internal_service == "airflow":
         name = f"sap_successfactors_{entity.strip().lower()}_latest"
-        async with httpx.AsyncClient(timeout=300) as client:
-            response = await _runtime_materialize_request(
-                client, name, api_key=api_key, security_context=security_context
+        async with httpx.AsyncClient(timeout=RUNTIME_REQUEST_TIMEOUT_SECONDS) as client:
+            status_code, payload = await _runtime_materialize(
+                client,
+                name,
+                api_key=api_key,
+                security_context=security_context,
+                phase="entity-silver",
             )
-        try:
-            payload = response.json()
-        except Exception:  # noqa: BLE001
-            payload = {"text": response.text[:300]}
-        if response.status_code >= 400:
+        if status_code >= 400:
             return {
                 "status": "partial",
                 "source": source,
@@ -111,30 +113,81 @@ def successfactors_curated_silver_datasets_for_target(target: str = "all") -> li
     return list(SUCCESSFACTORS_SILVER_TALENT_CURATED_ORDER)
 
 
-def _runtime_materialize_request(
+async def _runtime_materialize(
     client: "httpx.AsyncClient",
     name: str,
     *,
     api_key: str,
     security_context: dict | None,
-):
+    phase: str,
+) -> tuple[int, Any]:
     import secrets as _secrets
 
     from runtime_security_context import build_materialize_context
+    from service_job_client import ServiceJobError, ambient_idempotency_key, run_service_job_async
 
     scoped = security_context or {}
-    ctx = build_materialize_context(
-        tenant_id=str(scoped.get("tenant_id") or ""),
-        workspace_id=str(scoped.get("workspace_id") or ""),
-        cartridge_id="sap_successfactors",
-        dataset_name=name,
-        run_id=_secrets.token_hex(16),
+
+    def body() -> dict[str, Any]:
+        return {
+            "tool": "materialize",
+            "args": {"name": name},
+            "security_context": build_materialize_context(
+                tenant_id=str(scoped.get("tenant_id") or ""),
+                workspace_id=str(scoped.get("workspace_id") or ""),
+                cartridge_id="sap_successfactors",
+                dataset_name=name,
+                run_id=_secrets.token_hex(16),
+            ),
+        }
+
+    try:
+        payload = await run_service_job_async(
+            client,
+            f"{REFINEMENT_URL}/mcp/invoke",
+            headers={"x-api-key": api_key, "x-internal-service": "airflow"},
+            key=ambient_idempotency_key(
+                "sap_successfactors",
+                phase,
+                name,
+                scoped.get("tenant_id"),
+                scoped.get("workspace_id"),
+            ),
+            json=body,
+            deadline_seconds=RUNTIME_JOB_DEADLINE_SECONDS,
+        )
+    except ServiceJobError as exc:
+        return exc.status_code or 502, exc.result if exc.result is not None else {"error": str(exc)}
+    except httpx.HTTPStatusError as exc:
+        try:
+            return exc.response.status_code, exc.response.json()
+        except Exception:  # noqa: BLE001
+            return exc.response.status_code, {"text": exc.response.text[:300]}
+    return 200, payload if isinstance(payload, dict) else {"result": payload}
+
+
+async def _refresh_dataset(
+    client: "httpx.AsyncClient",
+    name: str,
+    *,
+    use_runtime_route: bool,
+    api_key: str,
+    headers: dict[str, str],
+    security_context: dict | None,
+    phase: str,
+) -> tuple[int, Any]:
+    if use_runtime_route:
+        return await _runtime_materialize(
+            client, name, api_key=api_key, security_context=security_context, phase=phase
+        )
+    response = await client.post(
+        f"{REFINEMENT_URL}/datasets/{quote(name, safe='')}/refresh",
+        headers=headers,
     )
-    return client.post(
-        f"{REFINEMENT_URL}/mcp/invoke",
-        headers={"x-api-key": api_key, "x-internal-service": "airflow"},
-        json={"tool": "materialize", "args": {"name": name}, "security_context": ctx},
-    )
+    try:
+        return response.status_code, response.json()
+    except Exception:  # noqa: BLE001
+        return response.status_code, {"text": response.text[:300]}
 
 
 async def trigger_successfactors_gold_refresh(
@@ -158,28 +211,25 @@ async def trigger_successfactors_gold_refresh(
     }
     silver_results: list[dict[str, Any]] = []
     results: list[dict[str, Any]] = []
-    async with httpx.AsyncClient(timeout=600) as client:
+    timeout = RUNTIME_REQUEST_TIMEOUT_SECONDS if use_runtime_route else 600
+    async with httpx.AsyncClient(timeout=timeout) as client:
         for name in silver_datasets:
             try:
-                if use_runtime_route:
-                    response = await _runtime_materialize_request(
-                        client, name, api_key=api_key, security_context=security_context
-                    )
-                else:
-                    response = await client.post(
-                        f"{REFINEMENT_URL}/datasets/{quote(name, safe='')}/refresh",
-                        headers=headers,
-                    )
-                try:
-                    payload = response.json()
-                except Exception:
-                    payload = {"text": response.text[:300]}
-                if response.status_code >= 400:
+                status_code, payload = await _refresh_dataset(
+                    client,
+                    name,
+                    use_runtime_route=use_runtime_route,
+                    api_key=api_key,
+                    headers=headers,
+                    security_context=security_context,
+                    phase="curated-silver",
+                )
+                if status_code >= 400:
                     silver_results.append(
                         {
                             "name": name,
                             "status": "error",
-                            "status_code": response.status_code,
+                            "status_code": status_code,
                             "error": payload,
                         }
                     )
@@ -202,25 +252,21 @@ async def trigger_successfactors_gold_refresh(
                 )
         for name in datasets:
             try:
-                if use_runtime_route:
-                    response = await _runtime_materialize_request(
-                        client, name, api_key=api_key, security_context=security_context
-                    )
-                else:
-                    response = await client.post(
-                        f"{REFINEMENT_URL}/datasets/{quote(name, safe='')}/refresh",
-                        headers=headers,
-                    )
-                try:
-                    payload = response.json()
-                except Exception:
-                    payload = {"text": response.text[:300]}
-                if response.status_code >= 400:
+                status_code, payload = await _refresh_dataset(
+                    client,
+                    name,
+                    use_runtime_route=use_runtime_route,
+                    api_key=api_key,
+                    headers=headers,
+                    security_context=security_context,
+                    phase="gold",
+                )
+                if status_code >= 400:
                     results.append(
                         {
                             "name": name,
                             "status": "error",
-                            "status_code": response.status_code,
+                            "status_code": status_code,
                             "error": payload,
                         }
                     )

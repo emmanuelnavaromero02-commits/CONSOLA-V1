@@ -13,6 +13,16 @@ from airflow.decorators import dag, task
 from airflow.models import Variable
 from outbound_egress_guard import guarded_session
 
+
+_SAFE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]{0,127}")
+
+
+def _safe_name(value: object, label: str) -> str:
+    text = str(value or "").strip()
+    if not _SAFE_NAME.fullmatch(text):
+        raise ValueError(f"invalid {label}")
+    return text
+
 try:
     from app.core.auth_factory import auth_trace, build_auth_headers
 except ModuleNotFoundError:  # pragma: no cover - Airflow mounts app code separately
@@ -163,12 +173,36 @@ def _internal_auth_headers() -> dict[str, str]:
     )
 
 
-def _get_connection(conn_id: str = DEFAULT_CONN_ID) -> tuple[str, dict, str]:
+_SIGNATURE_FIELDS = frozenset({"_signature", "_signed_at", "_signature_version"})
+
+
+def _reveal_security_context(security_context: object) -> str:
+    import json
+
+    from runtime_security_context import sign_runtime_context
+
+    if (
+        not isinstance(security_context, dict)
+        or security_context.get("trusted") is not True
+        or security_context.get("source") != "console"
+    ):
+        raise RuntimeError("a signed console security_context is required to reveal Vault credentials")
+    allowed = {str(item).strip() for item in security_context.get("allowed_cartridges") or []}
+    if "*" not in allowed and "replicon" not in allowed:
+        raise RuntimeError("replicon is not allowed by the security_context")
+    payload = {key: value for key, value in security_context.items() if key not in _SIGNATURE_FIELDS}
+    return json.dumps(sign_runtime_context(payload), ensure_ascii=False)
+
+
+def _get_connection(
+    conn_id: str = DEFAULT_CONN_ID, security_context: dict | None = None
+) -> tuple[str, dict, str]:
     import os
     import requests
 
     console_url = os.environ.get("CONSOLE_URL", "http://console:8000").rstrip("/")
     headers = _internal_auth_headers()
+    headers["x-security-context"] = _reveal_security_context(security_context)
 
     requested = (conn_id or DEFAULT_CONN_ID).strip() or DEFAULT_CONN_ID
     candidates = tuple(dict.fromkeys((requested, DEFAULT_CONN_ID, *LEGACY_CONN_IDS)))
@@ -236,11 +270,13 @@ def _get_entity_config(entity: str) -> dict:
 
 
 def _resolve_connection(
-    entity: str, requested_conn_id: str | None = None
+    entity: str,
+    requested_conn_id: str | None = None,
+    security_context: dict | None = None,
 ) -> tuple[str, dict, str]:
     cfg = _get_entity_config(entity)
-    conn_id = requested_conn_id or cfg.get("connection_id") or DEFAULT_CONN_ID
-    return _get_connection(conn_id)
+    conn_id = _safe_name(requested_conn_id or cfg.get("connection_id") or DEFAULT_CONN_ID, "conn_id")
+    return _get_connection(conn_id, security_context)
 
 
 def _is_seeded_gold_connection(base_url: str, connection: dict) -> bool:
@@ -624,7 +660,7 @@ def replicon_extract():
         dag_run = context.get("dag_run")
         run_conf = dag_run.conf if dag_run and isinstance(dag_run.conf, dict) else {}
         conf = {**(params or {}), **run_conf}
-        entity = str(conf.get("entity") or "User").strip()
+        entity = _safe_name(conf.get("entity") or "User", "entity")
         upstream = conf.get("security_context")
         if not isinstance(upstream, dict):
             raise RuntimeError("refresh chain admission authority is required")
@@ -654,7 +690,7 @@ def replicon_extract():
         dag_run = context.get("dag_run")
         run_conf = dag_run.conf if dag_run and dag_run.conf else {}
         conf = {**(params or {}), **run_conf}
-        entity = conf.get("entity", "User")
+        entity = _safe_name(conf.get("entity", "User"), "entity")
         mode = conf.get("mode", "incremental")
         from_date = conf.get("from_date") or None
         to_date = conf.get("to_date") or None
@@ -683,7 +719,7 @@ def replicon_extract():
                 workspace_id=workspace_id,
             )
 
-        base_url, connection, resolved_conn_id = _resolve_connection(entity, conn_id)
+        base_url, connection, resolved_conn_id = _resolve_connection(entity, conn_id, security_context)
         if _is_seeded_gold_connection(base_url, connection):
             logger.warning(
                 "replicon_extract using seeded_gold data-only connection "

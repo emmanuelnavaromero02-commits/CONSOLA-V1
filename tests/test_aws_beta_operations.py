@@ -135,7 +135,6 @@ def test_schema_viewer_has_gold_dataset_fallback() -> None:
 def test_semantic_viewer_has_gold_catalog_fallback() -> None:
     source = _read("console/app/domains/data_platform/gold_catalog.py")
     main_source = ast.unparse(ast.parse(_read("console/app/main.py")))
-    schema_js = _read("console/app/static/js/viewers/schema.js")
     for needle in (
         "async def semantic_entities_from_catalog",
         'source": "gold_catalog"',
@@ -143,7 +142,6 @@ def test_semantic_viewer_has_gold_catalog_fallback() -> None:
     ):
         assert needle in source
     assert "await _gold_semantic_entities_from_catalog(cartridge, user)" in main_source
-    assert "if (!currentSource && sources.length)" in schema_js
 
 
 def test_workspace_apps_prefer_direct_gold_for_published_data() -> None:

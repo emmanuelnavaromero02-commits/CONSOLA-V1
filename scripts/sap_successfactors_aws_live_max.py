@@ -23,10 +23,6 @@ INSTANCE_ID_ENV_VARS = (
 )
 DEFAULT_REGION = "us-east-1"
 DEFAULT_CONSOLE_URL = "https://console.7businesssolutions.com"
-DEFAULT_TENANT_ID = "b95f4d58-c9c8-4fd5-8d07-ddde294c7d78"
-DEFAULT_WORKSPACE_ID = "a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4"
-DEFAULT_CONN_ID = "femsa_sf"
-DEFAULT_BUCKET = "modecissions-lakehouse-783792"
 
 REQUESTED_GOLD = (
     "sap_successfactors_employee_360",
@@ -1289,6 +1285,13 @@ def _resolve_instance_id() -> str:
     )
 
 
+def _required_env(name: str) -> str:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        raise SystemExit(f"Set {name} explicitly (no default is assumed).")
+    return value
+
+
 def main() -> int:
     timestamp = _timestamp()
     run_id = os.environ.get("OMEGA_SF_LIVE_RUN_ID") or "SF_LIVE_" + timestamp
@@ -1300,10 +1303,10 @@ def main() -> int:
         instance_id=_resolve_instance_id(),
         region=os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or DEFAULT_REGION,
         console_url=os.environ.get("PUBLIC_CONSOLE_URL") or os.environ.get("CONSOLE_URL") or DEFAULT_CONSOLE_URL,
-        tenant_id=os.environ.get("OMEGA_TENANT_ID", DEFAULT_TENANT_ID),
-        workspace_id=os.environ.get("OMEGA_WORKSPACE_ID", DEFAULT_WORKSPACE_ID),
-        conn_id=os.environ.get("OMEGA_SF_CONN_ID", DEFAULT_CONN_ID),
-        bucket=os.environ.get("OMEGA_LAKEHOUSE_BUCKET", DEFAULT_BUCKET),
+        tenant_id=_required_env("OMEGA_TENANT_ID"),
+        workspace_id=_required_env("OMEGA_WORKSPACE_ID"),
+        conn_id=_required_env("OMEGA_SF_CONN_ID"),
+        bucket=_required_env("OMEGA_LAKEHOUSE_BUCKET"),
         trigger_extract=os.environ.get("OMEGA_SF_LIVE_TRIGGER_EXTRACT", "1") != "0",
         max_wait_seconds=int(os.environ.get("OMEGA_SF_LIVE_MAX_WAIT_SECONDS", "2400")),
     )

@@ -823,3 +823,49 @@ def test_garbage_collected_untagged_candidate_does_not_expand_authority(
 
     with pytest.raises(PromotionError, match="HTTP 404"):
         promote(registry, intent=intent)
+
+
+class _FlakyOpener:
+    def __init__(self, failures: int) -> None:
+        self.failures = failures
+        self.calls = 0
+
+    def open(self, _request, timeout):
+        self.calls += 1
+        if self.calls <= self.failures:
+            from urllib.error import URLError
+
+            raise URLError("connection reset")
+        return _OkResponse()
+
+
+class _OkResponse:
+    status = 200
+    headers = {"Content-Type": "application/json"}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+    def read(self, _limit):
+        return b"{}"
+
+
+@pytest.mark.parametrize("failures,succeeds", [(0, True), (2, True), (3, False)])
+def test_http_transport_retries_transient_network_failures(monkeypatch, failures, succeeds):
+    import scripts.release_image_promotion as promotion
+
+    opener = _FlakyOpener(failures)
+    slept: list[float] = []
+    monkeypatch.setattr(promotion, "build_opener", lambda *_handlers: opener)
+    monkeypatch.setattr(promotion, "_transport_sleep", slept.append)
+    if succeeds:
+        result = promotion.http_request("GET", "https://ghcr.io/v2/", {}, None, 5, 1024)
+        assert result.status == 200
+    else:
+        with pytest.raises(promotion.PromotionError, match="HTTP transport failed"):
+            promotion.http_request("GET", "https://ghcr.io/v2/", {}, None, 5, 1024)
+    assert opener.calls == min(failures + 1, promotion.TRANSPORT_ATTEMPTS)
+    assert len(slept) == min(failures, promotion.TRANSPORT_ATTEMPTS - 1)

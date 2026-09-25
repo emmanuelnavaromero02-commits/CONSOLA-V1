@@ -1356,8 +1356,16 @@ async def _http_exception_handler(request: Request, exc: HTTPException):
 
 
 from app.middleware.request_id import RequestIDMiddleware  # noqa: E402
+from app.async_jobs import AsyncJobMiddleware  # noqa: E402
 
 app.add_middleware(RequestIDMiddleware)
+app.add_middleware(
+    AsyncJobMiddleware,
+    authorize=lambda headers: verify_api_key(
+        headers.get("x-api-key"), headers.get("x-internal-service")
+    ),
+    paths=(r"/mcp/invoke",),
+)
 
 
 @app.get("/healthz")
@@ -2983,6 +2991,10 @@ def _seed_catalog_from_existing() -> int:
             col_map = ds_full.get("column_mapping", {}) if ds_full else {}
 
             if layer == "silver":
+                try:
+                    _validate_dataset_name(name)
+                except HTTPException:
+                    continue
                 parquet = (
                     f"s3://{engine.minio_bucket}/silver/{cartridge}/{name}/data.parquet"
                 )
@@ -3013,12 +3025,15 @@ def _seed_catalog_from_existing() -> int:
                         )
                     )
                     with conn.cursor() as cur:
-                        cur.execute(f"""
+                        cur.execute(
+                            """
                             SELECT column_name, data_type
                             FROM information_schema.columns
-                            WHERE table_name = 'gold_{name}'
+                            WHERE table_name = %s
                             ORDER BY ordinal_position
-                        """)
+                            """,
+                            (f"gold_{name}",),
+                        )
                         fields = [{"name": r[0], "type": r[1]} for r in cur.fetchall()]
                     conn.close()
                 except Exception as exc:

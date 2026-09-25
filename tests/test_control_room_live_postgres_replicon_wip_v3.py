@@ -164,6 +164,7 @@ async def test_real_legacy_parquet_is_quarantined_and_only_v3_run_is_public(
         "RESOLVED_SQL": str(resolved_path),
         "ARTIFACT_PATH": str(artifact_path),
         "RESULT_JSON": str(result_path),
+        "INPUT_ROOT": str(tmp_path),
     }
     subprocess.run(
         [sys.executable, "-c", RUNTIME_SCRIPT], cwd=ROOT, env=env, check=True

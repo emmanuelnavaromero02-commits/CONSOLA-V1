@@ -9,6 +9,8 @@ STUDIO_HTML = REPO / "console/app/static/studio.html"
 BRIDGE_JS = REPO / "console/app/static/js/studio/action-bridge.js"
 BOOTSTRAP_JS = REPO / "console/app/static/js/studio/legacy-bootstrap.js"
 LEGACY_JS = REPO / "console/app/static/js/studio/legacy.js"
+SQL_RUNNER_JS = REPO / "console/app/static/js/studio/sql-runner.js"
+STUDIO_API_JS = REPO / "console/app/static/js/studio/api.js"
 STUDIO_MODERN_CSS = REPO / "console/app/static/css/studio-modern.css"
 
 
@@ -70,13 +72,24 @@ def test_bridge_does_not_autofire_assistant_before_legacy_prompt():
 
 def test_bridge_attaches_csrf_on_mutations():
     src = _read(BRIDGE_JS)
-    assert '"X-CSRF-Token"' in src
-    assert "readCookie" in src
-    assert '"csrf_token"' in src
+    api = _read(STUDIO_API_JS)
+    assert 'import { apiFetch } from "./api.js' in src
+    assert "await apiFetch(path, {" in src
+    assert "readCookie" not in src
+    assert "'X-CSRF-Token'" in api
+    assert "csrf_token=" in api
+    assert "SAFE_METHODS.has(method)" in api
 
 
-def test_bridge_uses_credentials_include():
-    assert 'credentials: "include"' in _read(BRIDGE_JS)
+def test_studio_modules_share_one_same_origin_fetch_wrapper():
+    api = _read(STUDIO_API_JS)
+    assert "credentials: 'same-origin'" in api
+    for path in (BRIDGE_JS, LEGACY_JS, SQL_RUNNER_JS):
+        src = _read(path)
+        assert "apiFetch" in src, path.name
+        assert not re.search(r"(?<![\w.$])fetch\(", src), f"{path.name} calls fetch directly"
+        for helper in ("readCookie", "jsonHeaders", "csrfHeaders", "credentials:"):
+            assert helper not in src, f"{path.name} still defines {helper}"
 
 
 def test_bridge_does_not_create_fake_e2e_ui():
@@ -160,6 +173,6 @@ def test_studio_assistant_is_collapsible_in_modern_ui():
 
 def test_studio_assistant_stream_uses_csrf_headers():
     src = _read(LEGACY_JS)
-    block = re.search(r"export async function aiSend[\s\S]*?fetch\('/studio/chat/stream'[\s\S]*?body: JSON\.stringify", src)
+    block = re.search(r"export async function aiSend[\s\S]*?apiFetch\('/studio/chat/stream'[\s\S]*?body: JSON\.stringify", src)
     assert block
-    assert "headers: jsonHeaders()" in block.group(0)
+    assert "method: 'POST'" in block.group(0)

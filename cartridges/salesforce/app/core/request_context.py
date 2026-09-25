@@ -76,6 +76,14 @@ def scoped_prefix(ctx: dict[str, Any] | None = None) -> str:
     return f"tenant_id={tenant}/workspace_id={workspace}/"
 
 
+def require_tenant_workspace_scope(ctx: dict[str, Any] | None = None) -> dict[str, Any]:
+    verified = verify_security_context(ctx) if ctx is not None else get_security_context()
+    tenant, workspace = scope_values(verified)
+    if not (tenant and workspace):
+        raise SecurityContextError("security_context tenant/workspace scope is required")
+    return dict(verified or {})
+
+
 def _transport_keys() -> dict[str, str]:
     return {
         name: value.strip()

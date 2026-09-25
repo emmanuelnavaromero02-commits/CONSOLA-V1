@@ -40,7 +40,7 @@ jobs:
       AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
       AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN || secrets.AWS_DEPLOY_ROLE_ARN }}
       AWS_APP_INSTANCE_ID: ${{ vars.AWS_APP_INSTANCE_ID || secrets.AWS_APP_INSTANCE_ID }}
-      PUBLIC_CONSOLE_URL: ${{ vars.PUBLIC_CONSOLE_URL || 'http://modecissions-public-255609366.us-east-1.elb.amazonaws.com' }}
+      PUBLIC_CONSOLE_URL: ${{ vars.PUBLIC_CONSOLE_URL }}
 
     steps:
       - uses: actions/checkout@v4
@@ -112,6 +112,11 @@ jobs:
           import os
           import shlex
 
+          GITHUB_HOST_KEYS = [
+              "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl",
+              "github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=",
+              "github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYfNqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z8CSSNY7GidjMIZ7Q4zMjA2n1nGrlTDkzwDCsw+wqFPGQA179cnfGWOWRVruj16z6XyvxvjJwbz0wQZ75XK5tKSb7FNyeIEs4TT4jk+S4dhPeAUC5y+bDYirYgM4GC7uEnztnZyaVWQ7B381AK4Qdrwt51ZqExKbQpTUNn+EjqoTwvqNj4kqx5QUCI0ThS/YkOxJCXmPUWZbhjpCg56i+2aB6CmK2JGhn57K5mj0MNdBXA4/WnwH6XoPWJzK5Nyu2zB3nAZp+S5hpQs+p1vN1/wsjk=",
+          ]
           deploy_ref = os.environ["DEPLOY_REF"]
           image_tag = os.environ["IMAGE_TAG"]
           service = os.environ.get("SERVICE", "").strip()
@@ -143,7 +148,10 @@ jobs:
               set_env_line("DEPLOY_REF", deploy_ref),
               set_env_line("IMAGE_TAG", image_tag),
               "install -d -m 700 -o ubuntu -g ubuntu /home/ubuntu/.ssh",
-              "ssh-keyscan -H github.com >> /home/ubuntu/.ssh/known_hosts",
+              "touch /home/ubuntu/.ssh/known_hosts",
+              "ssh-keygen -R github.com -f /home/ubuntu/.ssh/known_hosts >/dev/null 2>&1 || true",
+              "printf '%s\\n' " + " ".join(shlex.quote(line) for line in GITHUB_HOST_KEYS)
+              + " >> /home/ubuntu/.ssh/known_hosts",
               "chown ubuntu:ubuntu /home/ubuntu/.ssh/known_hosts",
               "chmod 600 /home/ubuntu/.ssh/known_hosts",
               "sudo -u ubuntu git fetch --tags origin",
@@ -165,7 +173,15 @@ jobs:
               update_cmd = "sudo bash infra/terraform/deploy/update.sh"
           if service:
               update_cmd += " " + shlex.quote(service)
-          deploy_log = "/tmp/omega-deploy.log"
+          deploy_log = "/var/log/omega-deploy/deploy.log"
+          redact = (
+              "sed -E "
+              + shlex.quote(
+                  r"s#(://[^:/@ ]+):[^@ ]+@#\1:<redacted>@#g; "
+                  r"s#((PASSWORD|password|SECRET|secret|TOKEN|token|KEY|key)[A-Za-z_]*[=:] *)[^ ,;]+#\1<redacted>#g; "
+                  r"s#(PASSWORD|password) '[^']*'#\1 '<redacted>'#g"
+              )
+          )
           heartbeat_update = (
               f"({update_cmd} > {deploy_log} 2>&1) & "
               "deploy_pid=$!; "
@@ -174,12 +190,14 @@ jobs:
               "sleep 20; "
               "done; "
               "wait \"$deploy_pid\" || "
-              f"(status=$?; tail -n 200 {deploy_log}; exit \"$status\")"
+              f"(status=$?; tail -n 60 {deploy_log} | {redact}; exit \"$status\")"
           )
           commands.extend([
+              "install -d -m 700 -o root -g root /var/log/omega-deploy",
               f"rm -f {deploy_log}",
+              "umask 077",
               heartbeat_update,
-              f"tail -n 120 {deploy_log} || true",
+              f"echo \"deploy log kept at {deploy_log} ($(wc -l < {deploy_log}) lines)\"",
               retry_curl("http://127.0.0.1:8000/healthz"),
               retry_curl("http://127.0.0.1:8000/readyz"),
           ])
@@ -231,6 +249,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          [[ "${PUBLIC_CONSOLE_URL}" == https://* ]] || { echo "PUBLIC_CONSOLE_URL must be an https URL"; exit 1; }
           retry_curl() {
             local url="$1"
             for _ in $(seq 1 60); do

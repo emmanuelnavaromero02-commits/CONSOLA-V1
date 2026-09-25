@@ -46,9 +46,20 @@ async def scoped_db(
         return
 
     execute = getattr(pool, "execute", None)
+    transaction = getattr(pool, "transaction", None)
+    if callable(execute) and callable(transaction) and not _in_transaction(pool):
+        async with transaction():
+            await execute(SET_SCOPE_SQL, tenant_text, workspace_text)
+            yield pool
+        return
     if callable(execute):
         await execute(SET_SCOPE_SQL, tenant_text, workspace_text)
     yield pool
+
+
+def _in_transaction(conn: Any) -> bool:
+    probe = getattr(conn, "is_in_transaction", None)
+    return bool(probe()) if callable(probe) else False
 
 
 @asynccontextmanager

@@ -11,6 +11,10 @@ def _payload(response: Any) -> Mapping[str, Any]:
         payload = response.json()
     except Exception as exc:
         raise RuntimeError("operational dependency unavailable") from exc
+    return _checked(payload)
+
+
+def _checked(payload: Any) -> Mapping[str, Any]:
     if not isinstance(payload, Mapping) or payload.get("error"):
         raise RuntimeError("operational dependency unavailable")
     if "ok" in payload and payload.get("ok") is not True:
@@ -21,7 +25,15 @@ def _payload(response: Any) -> Mapping[str, Any]:
 def require_successful_materialization_response(
     response: Any, *, expected_name: str
 ) -> dict[str, Any]:
-    payload = _payload(response)
+    return require_successful_materialization_payload(
+        _payload(response), expected_name=expected_name
+    )
+
+
+def require_successful_materialization_payload(
+    payload: Any, *, expected_name: str
+) -> dict[str, Any]:
+    payload = _checked(payload)
     if set(payload) != {"name", "layer", "row_count"}:
         raise RuntimeError("materialization outcome unavailable")
     if str(payload.get("name") or "") != expected_name:

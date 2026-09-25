@@ -139,6 +139,11 @@ def _read_bounded(response: Any, limit: int) -> bytes:
     return body
 
 
+TRANSPORT_ATTEMPTS = 3
+TRANSPORT_BACKOFF_SECONDS = 2.0
+_transport_sleep = time.sleep
+
+
 def http_request(
     method: str,
     url: str,
@@ -147,23 +152,27 @@ def http_request(
     timeout: float,
     limit: int,
 ) -> HttpResult:
-    request = Request(url, data=body, headers=dict(headers), method=method)
     opener = build_opener(_NoRedirect)
-    try:
-        with opener.open(request, timeout=timeout) as response:
+    for attempt in range(TRANSPORT_ATTEMPTS):
+        request = Request(url, data=body, headers=dict(headers), method=method)
+        try:
+            with opener.open(request, timeout=timeout) as response:
+                return HttpResult(
+                    status=int(response.status),
+                    body=_read_bounded(response, limit),
+                    headers=dict(response.headers.items()),
+                )
+        except HTTPError as exc:
             return HttpResult(
-                status=int(response.status),
-                body=_read_bounded(response, limit),
-                headers=dict(response.headers.items()),
+                status=int(exc.code),
+                body=_read_bounded(exc, limit),
+                headers=dict(exc.headers.items()),
             )
-    except HTTPError as exc:
-        return HttpResult(
-            status=int(exc.code),
-            body=_read_bounded(exc, limit),
-            headers=dict(exc.headers.items()),
-        )
-    except (URLError, TimeoutError, OSError) as exc:
-        raise PromotionError("HTTP transport failed") from exc
+        except (URLError, TimeoutError, OSError) as exc:
+            if attempt + 1 >= TRANSPORT_ATTEMPTS:
+                raise PromotionError("HTTP transport failed") from exc
+            _transport_sleep(TRANSPORT_BACKOFF_SECONDS * (attempt + 1))
+    raise PromotionError("HTTP transport failed")
 
 
 def _json_bytes(value: object) -> bytes:

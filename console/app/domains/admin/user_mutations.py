@@ -5,6 +5,42 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from fastapi import HTTPException
+from pydantic import BaseModel, ConfigDict, ValidationError
+
+
+class _StrictBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class CreateAdminUserBody(_StrictBody):
+    email: str | None = None
+    password: str | None = None
+    name: str | None = None
+    role: str | None = None
+    workspace_id: str | None = None
+
+
+class UpdateAdminUserBody(_StrictBody):
+    name: str | None = None
+    role: str | None = None
+    is_active: bool | None = None
+    password: str | None = None
+    escalation_notify: bool | None = None
+
+
+class InviteAdminUserBody(_StrictBody):
+    email: str | None = None
+    name: str | None = None
+    role: str | None = None
+    workspace_id: str | None = None
+    with_vpn: bool = True
+
+
+def _validated(model: type[_StrictBody], body: dict | None) -> dict:
+    try:
+        return model.model_validate(body or {}).model_dump(exclude_unset=True)
+    except ValidationError:
+        raise HTTPException(422, "invalid request body") from None
 
 
 async def create_admin_user_payload(
@@ -23,6 +59,7 @@ async def create_admin_user_payload(
     set_workspace_role_for_user: Callable[[int, str, str], Awaitable[None]],
     workspace_scope_db_unavailable: Callable[[BaseException], bool],
 ) -> dict:
+    body = _validated(CreateAdminUserBody, body)
     email_raw = body.get("email")
     password = body.get("password") or ""
     if not email_raw or not password:
@@ -95,6 +132,7 @@ async def update_admin_user_payload(
     set_workspace_role_for_user: Callable[[int, str, str], Awaitable[None]],
     workspace_scope_db_unavailable: Callable[[BaseException], bool],
 ) -> dict:
+    body = _validated(UpdateAdminUserBody, body)
     if user_id == admin_user["id"] and (
         body.get("role") not in (None, admin_user.get("role"))
         or body.get("is_active") is False
@@ -225,6 +263,7 @@ async def invite_admin_user_payload(
     vpn_ttl_hours: int,
     logger_exception: Callable[..., None],
 ) -> dict:
+    body = _validated(InviteAdminUserBody, body)
     email = normalize_email_or_400(body.get("email"))
     existing = await auth_service.get_user_by_email(email)
     if existing:

@@ -1,11 +1,22 @@
 from __future__ import annotations
 
+import re
 import os
 from datetime import timedelta
 
 import httpx
 import requests
 from airflow.decorators import dag, task
+
+
+_SAFE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]{0,127}")
+
+
+def _safe_name(value: object, label: str) -> str:
+    text = str(value or "").strip()
+    if not _SAFE_NAME.fullmatch(text):
+        raise ValueError(f"invalid {label}")
+    return text
 
 
 def _is_production() -> bool:
@@ -29,6 +40,8 @@ def _internal_key() -> str:
 
 
 CARTRIDGE_URL = os.environ.get("HUBSPOT_URL", "http://hubspot:8210")
+REQUEST_TIMEOUT_SECONDS = 60
+JOB_DEADLINE_SECONDS = 2 * 3600
 
 
 default_args = {
@@ -68,7 +81,7 @@ def hubspot_extract():
         dag_run = context.get("dag_run")
         run_conf = dag_run.conf if dag_run and isinstance(dag_run.conf, dict) else {}
         conf = {**(params or {}), **run_conf}
-        entity = str(conf.get("entity") or "").strip()
+        entity = _safe_name(conf.get("entity"), "entity")
         upstream = conf.get("security_context")
         if not entity or not isinstance(upstream, dict):
             raise RuntimeError("refresh chain admission authority is required")
@@ -93,7 +106,7 @@ def hubspot_extract():
         dag_run = context.get("dag_run")
         run_conf = dag_run.conf if dag_run and isinstance(dag_run.conf, dict) else {}
         conf = {**(params or {}), **run_conf}
-        entity = conf.get("entity")
+        entity = _safe_name(conf.get("entity"), "entity")
         if not entity:
             raise ValueError("entity parameter is required")
         mode = (conf.get("mode") or "incremental").strip().lower()
@@ -108,14 +121,17 @@ def hubspot_extract():
             for key in ("tenant_id", "workspace_id", "security_context")
             if conf.get(key)
         }
-        with httpx.Client(timeout=600) as client:
-            res = client.post(
+        from service_job_client import idempotency_key, run_service_job
+
+        with httpx.Client(timeout=REQUEST_TIMEOUT_SECONDS) as client:
+            result = run_service_job(
+                client,
                 f"{CARTRIDGE_URL}/skills/{endpoint}/{entity}",
                 json=skill_body,
                 headers=headers,
+                key=idempotency_key(context, entity, endpoint),
+                deadline_seconds=JOB_DEADLINE_SECONDS,
             )
-            res.raise_for_status()
-            result = res.json()
         if isinstance(result, dict):
             result.setdefault("entity", entity)
         return (

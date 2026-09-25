@@ -8,7 +8,7 @@ Inserta en orden FK padres->hijas, casteando cada valor al tipo real de su colum
 
 Uso:
   # descargar el respaldo desde S3 primero, p.ej.:
-  #   aws s3 cp s3://modecissions-lakehouse-783792/backups/fase-a-purge/<ts>/<file>.json backup.json
+  #   aws s3 cp s3://<lakehouse-bucket>/backups/fase-a-purge/<ts>/<file>.json backup.json
   python scripts/restore_stale_generic_signals.py --backup backup.json          # dry-run
   python scripts/restore_stale_generic_signals.py --backup backup.json --apply   # restaura
 """

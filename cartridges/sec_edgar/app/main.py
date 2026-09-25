@@ -6,6 +6,8 @@ import uuid
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from app.api.deps import verify_api_key
+from app.core.async_jobs import AsyncJobMiddleware, header_authorizer
 from app.api.routes_health import router as health_router
 from app.api.routes_skills import router as skills_router
 from app.middleware.request_id import RequestIDMiddleware
@@ -24,6 +26,11 @@ except Exception as exc:  # noqa: BLE001
     app.state.startup_errors = [type(exc).__name__]
 
 app.add_middleware(RequestIDMiddleware)
+app.add_middleware(
+    AsyncJobMiddleware,
+    authorize=header_authorizer(verify_api_key),
+    paths=(r"/skills/run_(?:incremental|full_load)/[A-Za-z0-9_.-]+",),
+)
 app.include_router(health_router)
 app.include_router(skills_router)
 

@@ -5,7 +5,7 @@ import sys
 import types
 
 import pytest
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from app.services.jwt_auth import create_access_token
@@ -202,3 +202,17 @@ def test_require_role_admin_rejects_viewer(dependency_app):
     response = client.get("/admin", headers={"Authorization": f"Bearer {_token('viewer')}"})
 
     assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_require_role_keeps_global_and_workspace_roles_apart():
+    deps = importlib.import_module("app.dependencies")
+    check = deps.require_role("admin")
+    assert await check({"role": "admin", "workspace_role": "workspace_admin"}) == {
+        "role": "admin",
+        "workspace_role": "workspace_admin",
+    }
+    with pytest.raises(HTTPException):
+        await check({"role": "analyst", "workspace_role": "admin"})
+    workspace_admin = await deps.require_role("workspace_admin")({"role": "analyst", "workspace_role": "admin"})
+    assert workspace_admin["workspace_role"] == "admin"

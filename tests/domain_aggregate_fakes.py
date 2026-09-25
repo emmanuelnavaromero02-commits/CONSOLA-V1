@@ -104,9 +104,11 @@ class _FakeTransaction:
         self.owner.transactions.append(
             {"isolation": self.isolation, "readonly": self.readonly}
         )
+        self.owner.depth += 1
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> bool:
+        self.owner.depth -= 1
         return False
 
 
@@ -125,7 +127,10 @@ class FakeConn:
         self.scope: tuple[Any, ...] | None = None
         self.closed = False
         self.dsn: str | None = None
+        self.depth = 0
 
+    def is_in_transaction(self) -> bool:
+        return self.depth > 0
 
     def transaction(
         self, isolation: str | None = None, readonly: bool = False

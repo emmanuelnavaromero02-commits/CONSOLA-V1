@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.services import mcp_registry
 from app.services.auth import verify_internal_api_key
@@ -51,10 +52,24 @@ async def list_servers(internal_service: str = Depends(verify_internal_api_key))
     return {"servers": await mcp_registry.list_servers()}
 
 
+class RegisterServerBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")
+    name: str = Field(min_length=1, max_length=200)
+    url: str = Field(min_length=1, max_length=2048)
+    category: str = Field(default="other", max_length=64)
+    description: str = Field(default="", max_length=2000)
+
+
 @router.post("/servers/register")
 async def register_server(body: dict, internal_service: str = Depends(verify_internal_api_key)):
     _require_internal_service(internal_service, _MUTATE_SERVICES)
-    result = await mcp_registry.register(body)
+    try:
+        server = RegisterServerBody.model_validate(body).model_dump()
+    except ValidationError:
+        raise HTTPException(status_code=422, detail="invalid request body") from None
+    result = await mcp_registry.register(server)
     return result
 
 

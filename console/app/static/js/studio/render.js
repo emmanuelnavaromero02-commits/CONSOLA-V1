@@ -1,4 +1,4 @@
-import { exportCartridge, importCartridge } from './api.js';
+import { exportCartridge, importCartridge, safeUrl } from './api.js?v=studio-autopilot-ui6';
 import { selectCartridge } from './cartridges.js';
 import { openNewCartridgeModal } from './modals.js';
 import { state } from './state.js';
@@ -20,7 +20,7 @@ function button(label, className, onClick) {
 
 function link(label, href) {
   const node = el('a', 'studio-modern-link', label);
-  node.href = href;
+  node.href = safeUrl(href) || '#';
   return node;
 }
 

@@ -26,7 +26,7 @@ describe("SuccessFactors Gold business row labels", () => {
           id: "sf_headcount_by_company",
           title: "Headcount por compania",
           value: 10,
-          rows: [{ company_name: "FEMSA Comercio", headcount: 10 }],
+          rows: [{ company_name: "ACMECO Comercio", headcount: 10 }],
         },
         {
           id: "sf_headcount_by_location",
@@ -43,7 +43,7 @@ describe("SuccessFactors Gold business row labels", () => {
       ],
     });
 
-    expect(markup).toContain("FEMSA Comercio");
+    expect(markup).toContain("ACMECO Comercio");
     expect(markup).toContain("Monterrey");
     expect(markup).toContain("Finanzas");
     expect(markup).not.toContain("Registro");

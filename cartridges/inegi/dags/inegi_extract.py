@@ -8,9 +8,12 @@ from typing import Any
 import httpx
 from airflow.decorators import dag, task
 from market_security_context import security_context_from_conf
+from service_job_client import idempotency_key, run_service_job
 
 CARTRIDGE_URL = os.environ.get("INEGI_URL", "http://inegi:8216")
 DEFAULT_CONN_ID = "default"
+REQUEST_TIMEOUT_SECONDS = 60
+JOB_DEADLINE_SECONDS = 3 * 3600
 
 
 def _is_production() -> bool:
@@ -82,16 +85,19 @@ def inegi_extract():
         }
         security_context = security_context_from_conf(conf, "inegi")
         headers["X-Security-Context"] = json.dumps(security_context, ensure_ascii=False)
-        with httpx.Client(timeout=900) as client:
-            response = client.post(
-                f"{CARTRIDGE_URL}/skills/{endpoint}/series_observations",
-                json=body,
-                headers=headers,
-                params={"conn_id": conn_id} if conn_id else None,
-            )
-            if response.status_code >= 400:
-                raise RuntimeError(_response_error(response))
-            return response.json()
+        with httpx.Client(timeout=REQUEST_TIMEOUT_SECONDS) as client:
+            try:
+                return run_service_job(
+                    client,
+                    f"{CARTRIDGE_URL}/skills/{endpoint}/series_observations",
+                    json=body,
+                    headers=headers,
+                    params={"conn_id": conn_id} if conn_id else None,
+                    key=idempotency_key(context, endpoint, conn_id),
+                    deadline_seconds=JOB_DEADLINE_SECONDS,
+                )
+            except httpx.HTTPStatusError as exc:
+                raise RuntimeError(_response_error(exc.response)) from exc
 
     extract()
 

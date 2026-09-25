@@ -25,6 +25,21 @@ def _validate_kb_sql(sql: str):
     return validate_kb_sql(sql, PREFIXES)
 
 
+@pytest.fixture
+def scoped_context(monkeypatch):
+    monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", "test-security-context-signing-key-12345")
+    from app.core import request_context
+
+    signed = request_context._sign_security_context(
+        {"trusted": True, "source": "console", "tenant_id": "tenant-a", "workspace_id": "workspace-a"}
+    )
+    token = request_context.set_security_context(signed)
+    try:
+        yield signed
+    finally:
+        request_context.reset_security_context(token)
+
+
 @pytest.mark.parametrize(
     "sql",
     [
@@ -83,7 +98,7 @@ def test_validate_kb_sql_blocks_dangerous_queries(sql, expected):
     assert expected in reason
 
 
-def test_query_kb_returns_sql_blocked_before_duckdb(monkeypatch):
+def test_query_kb_returns_sql_blocked_before_duckdb(monkeypatch, scoped_context):
     from app import mcp_server
 
     def fail_get_connection():
@@ -107,7 +122,7 @@ def test_query_kb_rejects_invalid_limit_before_duckdb(monkeypatch):
     assert "positive integer" in result["reason"]
 
 
-def test_query_kb_caps_huge_limit_argument(monkeypatch):
+def test_query_kb_caps_huge_limit_argument(monkeypatch, scoped_context):
     from app import mcp_server
 
     class FakeResult:
@@ -136,7 +151,7 @@ def test_query_kb_caps_huge_limit_argument(monkeypatch):
     assert conn.executed == ["SELECT * FROM (SELECT 1 AS ok) _q LIMIT 5000"]
 
 
-def test_query_kb_error_response_does_not_leak_resolved_sql_or_paths(monkeypatch):
+def test_query_kb_error_response_does_not_leak_resolved_sql_or_paths(monkeypatch, scoped_context):
     from app import mcp_server
 
     class LeakyConnection:
@@ -239,3 +254,21 @@ def test_validate_kb_sql_union_injection_blocked():
     ok, reason = _validate_kb_sql(sql)
     assert ok is False
     assert "path must start" in reason
+
+
+def test_query_kb_requires_a_tenant_workspace_scope(monkeypatch):
+    from app import mcp_server
+
+    monkeypatch.setattr(mcp_server, "_get_duckdb_connection", lambda: (_ for _ in ()).throw(AssertionError("no scope, no DuckDB")))
+    result = mcp_server.query_kb("SELECT * FROM read_parquet('s3://{bucket}/raw/salesforce/Opportunity/*.parquet')")
+    assert result["error"] == "security_context_denied"
+
+
+def test_query_kb_rejects_a_path_from_another_tenant(monkeypatch, scoped_context):
+    from app import mcp_server
+
+    monkeypatch.setattr(mcp_server, "_get_duckdb_connection", lambda: (_ for _ in ()).throw(AssertionError("blocked before DuckDB")))
+    result = mcp_server.query_kb(
+        "SELECT * FROM read_parquet('s3://{bucket}/raw/salesforce/Opportunity/tenant_id=other/workspace_id=x/*.parquet')"
+    )
+    assert result["error"] == "security_context_denied"

@@ -106,7 +106,7 @@ def test_gold_projection_keeps_only_real_business_names():
                     "value": 3,
                     "status": "ready",
                     "rows": [
-                        {"company_name": "FEMSA Comercio", "headcount": 2},
+                        {"company_name": "ACMECO Comercio", "headcount": 2},
                         {"location_name": "Monterrey", "headcount": 1},
                         {"department_name": "Finanzas", "headcount": 0},
                     ],
@@ -116,7 +116,7 @@ def test_gold_projection_keeps_only_real_business_names():
     ).model_dump()
 
     rows = projected["widgets"][0]["rows"]
-    assert rows[0]["company_name"] == "FEMSA Comercio"
+    assert rows[0]["company_name"] == "ACMECO Comercio"
     assert rows[1]["location_name"] == "Monterrey"
     assert rows[2]["department_name"] == "Finanzas"
 

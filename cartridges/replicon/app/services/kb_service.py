@@ -39,6 +39,9 @@ _SQL_SHARED_RAW_PATH_RE = re.compile(
 )
 
 
+RUNTIME_TABLES = frozenset({"replicon_base_currency"})
+
+
 def _scope_kb_sql(sql: str, security_context: dict[str, Any] | None = None) -> str:
     security_context = require_tenant_workspace_scope(security_context)
     resolved = str(sql or "").replace("{bucket}", settings.minio_bucket)
@@ -122,6 +125,7 @@ def run_knowledge_bit(
         resolved_sql,
         _kb_allowed_prefixes(),
         required_scope=scoped_prefix(security_context),
+        allowed_tables=RUNTIME_TABLES if kb_id in MANAGED_WIP_IDS else frozenset(),
     )
     if not ok:
         return {"status": "error", "error": f"KB SQL blocked by security guard: {err}"}
@@ -130,7 +134,7 @@ def run_knowledge_bit(
     try:
         if kb_id in MANAGED_WIP_IDS:
             base_currency, input_digest = load_base_currency_config(security_context)
-            runtime_tables = {"replicon_base_currency": base_currency}
+            runtime_tables = {name: base_currency for name in RUNTIME_TABLES}
         else:
             input_digest = hashlib.sha256(b"not_applicable").hexdigest()
             runtime_tables = None

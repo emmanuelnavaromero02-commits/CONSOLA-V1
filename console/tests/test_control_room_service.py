@@ -335,7 +335,7 @@ async def test_sap_successfactors_gold_kpis_reads_scoped_gold(monkeypatch):
                 "error": None,
             },
             "sap_successfactors_headcount_by_company": {
-                "rows": [{"company_name": "FEMSA", "headcount": 2}],
+                "rows": [{"company_name": "ACMECO", "headcount": 2}],
                 "total": 2,
                 "status": "ready",
                 "error": None,
@@ -384,7 +384,7 @@ async def test_sap_successfactors_gold_kpis_reads_scoped_gold(monkeypatch):
     )
     assert by_company["status"] == "ready"
     assert by_company["rows"] == [
-        {"label": "FEMSA", "company_name": "FEMSA", "headcount": 2}
+        {"label": "ACMECO", "company_name": "ACMECO", "headcount": 2}
     ]
     by_location = next(
         widget
@@ -490,7 +490,7 @@ async def test_dashboard_includes_successfactors_talent_gold_signals(monkeypatch
                     {
                         "cartridge_id": "sap_successfactors",
                         "installation_status": "ready",
-                        "connection_id": "femsa_sf",
+                        "connection_id": "tenant_sf",
                         "auth_method": "saml_bearer_assertion",
                     },
                 ]
@@ -1193,7 +1193,7 @@ async def test_summary_uses_scoped_vault_connected_cartridges(monkeypatch):
                     {
                         "cartridge_id": "sap_successfactors",
                         "installation_status": "ready",
-                        "connection_id": "femsa_sf",
+                        "connection_id": "tenant_sf",
                         "auth_method": "saml_bearer_assertion",
                     },
                 ]

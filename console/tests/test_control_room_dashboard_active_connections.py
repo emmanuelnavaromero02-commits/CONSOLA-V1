@@ -66,7 +66,7 @@ async def test_dashboard_filters_persisted_intelligence_to_active_connections(
                     {
                         "cartridge_id": "sap_successfactors",
                         "installation_status": "ready",
-                        "connection_id": "femsa_sf",
+                        "connection_id": "tenant_sf",
                         "auth_method": "saml_bearer_assertion",
                     },
                 ]

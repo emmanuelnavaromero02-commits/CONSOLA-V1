@@ -29,6 +29,15 @@ ctx = _sign_security_context({
     "tenant_id": os.environ["TENANT_ID"], "workspace_id": os.environ["WORKSPACE_ID"],
 })
 set_security_context(ctx)
+input_root = os.environ["INPUT_ROOT"].rstrip("/") + "/"
+
+
+def _restrict_to_inputs(conn, _bucket):
+    conn.execute(f"SET allowed_directories=['{input_root}'];")
+    conn.execute("SET enable_external_access=false;")
+
+
+duckdb_service._restrict_external_access = _restrict_to_inputs
 base_currency, input_digest = load_base_currency_config(ctx)
 frame = duckdb_service.run_kb_sql(
     resolved, runtime_tables={"replicon_base_currency": base_currency}

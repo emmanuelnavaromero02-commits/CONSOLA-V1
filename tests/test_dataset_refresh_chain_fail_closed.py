@@ -231,16 +231,6 @@ class _MaterializeTaskInstance:
         self.pushed = (key, value)
 
 
-class _Materialized:
-    status_code = 200
-
-    def __init__(self, name: str):
-        self._name = name
-
-    def json(self) -> dict:
-        return {"name": self._name, "layer": "gold", "row_count": 5}
-
-
 def _retry_materialization(
     monkeypatch: pytest.MonkeyPatch,
     dataset_refresh_materialize,
@@ -265,10 +255,11 @@ def _retry_materialization(
             "lease_token": 1,
         }
 
-    def post(_url: str, *, json: dict, **_kwargs) -> _Materialized:
-        name = str(json["args"]["name"])
+    def run_job(_client, _url: str, *, json, **_kwargs) -> dict:
+        body = json() if callable(json) else json
+        name = str(body["args"]["name"])
         posts.append(name)
-        return _Materialized(name)
+        return {"name": name, "layer": "gold", "row_count": 5}
 
     monkeypatch.setattr(dataset_refresh_materialize, "reserve_materialization", reserve)
     monkeypatch.setattr(
@@ -279,7 +270,7 @@ def _retry_materialization(
         "build_materialize_context",
         lambda **_kwargs: {"trusted": True},
     )
-    monkeypatch.setattr(dataset_refresh_materialize.requests, "post", post)
+    monkeypatch.setattr(dataset_refresh_materialize, "run_service_job", run_job)
 
     conf = {
         "tenant_id": "tenant-a",

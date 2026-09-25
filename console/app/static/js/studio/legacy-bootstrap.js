@@ -1,6 +1,6 @@
-import * as legacy from './legacy.js?v=studio-autopilot-ui5';
-import * as sqlRunner from './sql-runner.js?v=studio-autopilot-ui5';
-import { wireStudioHandlers } from './wire-handlers.js?v=studio-autopilot-ui5';
+import * as legacy from './legacy.js?v=studio-autopilot-ui6';
+import * as sqlRunner from './sql-runner.js?v=studio-autopilot-ui6';
+import { wireStudioHandlers } from './wire-handlers.js?v=studio-autopilot-ui6';
 
 const LEGACY_EVENTS = [
   'click',
@@ -13,7 +13,24 @@ const LEGACY_EVENTS = [
   'mousedown',
   'mouseenter',
   'mouseleave',
+  'scroll',
 ];
+
+const LEGACY_HANDLER_ALLOWLIST = new Set([
+  '_onEntityChange', '_openRunnerFromActiveTextarea', 'applyTemplate', 'askSemanticHelp',
+  'askSuperset', 'bronzeSelectSource', 'cancelNewEntity', 'catAddRelModal', 'catAddTagPrompt',
+  'catCancelEdit', 'catReload', 'catRender', 'catSaveDesc', 'catSaveRel', 'catStartEdit',
+  'catSwitchTab', 'catToggleFlag', 'copyDagCode', 'createSupersetDataset', 'dagEditorKeydown',
+  'dagEditorOnInput', 'dagResizeStart', 'dagSyncLineScroll', 'deleteAnalyticApp', 'deleteDS',
+  'deployDag', 'exportCartridge', 'extractNow', 'filterDS', 'jumpToTaskLine', 'loadDags',
+  'loadEntityList', 'materializeDS', 'newDag', 'openCartridgeEntities', 'openDagEditor',
+  'openDagParamsEditor', 'openDsEditorRunner', 'patchEntityCron', 'patchEntityField', 'previewDS',
+  'ragAsk', 'ragDeleteSource', 'ragIngest', 'ragSearch', 'reindexSource', 'renameDag',
+  'renameEntity', 'runBronzeQuery', 'saveDS', 'saveNewEntity', 'saveThenMaterialize',
+  'selectCartridge', 'selectDS', 'selectDag', 'sendDSToAI', 'sendDagToAssistantStudio',
+  'sendLogsToAssistant', 'showAddEntityRow', 'toggleDagGraph', 'toggleDagTemplates',
+  'toggleEntityLogs', 'toggleEntityPreview', 'toggleNewDS', 'vResizeStart',
+]);
 
 for (const [name, value] of Object.entries(legacy)) {
   if (typeof value === 'function') window[name] = value;
@@ -144,6 +161,10 @@ function runStatement(statement, el, event) {
 }
 
 function callWindow(name, args, el, event) {
+  if (!LEGACY_HANDLER_ALLOWLIST.has(name)) {
+    console.warn(`[studio] legacy handler rejected: ${name}`);
+    return;
+  }
   const fn = window[name];
   if (typeof fn !== 'function') {
     console.warn(`[studio] legacy handler not found: ${name}`);
@@ -182,11 +203,10 @@ function parseArg(arg, el, event) {
 }
 
 function unquote(value) {
-  const q = value[0];
-  const body = value.slice(1, -1).replace(/&quot;/g, '"').replace(/&#39;/g, "'");
-  if (q === '"') {
-    try { return JSON.parse(`"${body.replace(/"/g, '\\"')}"`); } catch (_) { return body; }
+  if (value[0] === '"') {
+    try { return JSON.parse(value); } catch (_) { /* fall back to literal body */ }
   }
+  const body = value.slice(1, -1).replace(/&quot;/g, '"').replace(/&#39;/g, "'");
   return body.replace(/\\'/g, "'").replace(/\\"/g, '"');
 }
 

@@ -91,11 +91,11 @@ describe("sync-now client", () => {
     await getActiveCartridgeSyncRun("sap_successfactors", {
       mode: "incremental",
       target: "talent",
-      conn_id: "femsa_sf",
+      conn_id: "tenant_sf",
     });
 
     expect(apiMock.get).toHaveBeenCalledWith(
-      "/api/cartridges/sap_successfactors/sync-runs/active?mode=incremental&target=talent&conn_id=femsa_sf",
+      "/api/cartridges/sap_successfactors/sync-runs/active?mode=incremental&target=talent&conn_id=tenant_sf",
     );
   });
 

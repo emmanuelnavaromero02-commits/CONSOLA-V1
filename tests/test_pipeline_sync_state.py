@@ -67,13 +67,13 @@ def test_sync_now_lock_key_uses_security_scope():
         cartridge="sap_successfactors",
         mode="incremental",
         target="talent",
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         tenant_id="tenant-1",
         workspace_id="workspace-1",
     )
 
     assert lock_key == (
-        "sync-now:tenant-1:workspace-1:sap_successfactors:incremental:talent:femsa_sf"
+        "sync-now:tenant-1:workspace-1:sap_successfactors:incremental:talent:tenant_sf"
     )
 
 
@@ -189,7 +189,7 @@ def test_sync_running_extra_uses_expected_contract():
     extra = sync_state.sync_running_extra(
         mode="incremental",
         target="all",
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         request_id="request-1",
         steps=[{"id": "connection", "status": "running"}],
     )
@@ -197,7 +197,7 @@ def test_sync_running_extra_uses_expected_contract():
     assert extra == {
         "mode": "incremental",
         "target": "all",
-        "conn_id": "femsa_sf",
+        "conn_id": "tenant_sf",
         "request_id": "request-1",
         "steps": [{"id": "connection", "status": "running"}],
         "triggered_entities": [],
@@ -238,7 +238,7 @@ def test_sync_extract_all_trigger_extra_defaults_trigger_strategy():
     extra = sync_state.sync_extract_all_trigger_extra(
         mode="incremental",
         target="all",
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         request_id="request-1",
         steps=[{"id": "bronze", "status": "running"}],
         triggered_entities=[{"entity": "__extract_all__"}],
@@ -306,7 +306,7 @@ async def test_run_sync_extract_all_with_retries_uses_aggregate_result_first():
         cartridge="sap_successfactors",
         mode="incremental",
         target="all",
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         run_id="sync-1",
         extract_body={"idempotency_key": "sync-1"},
         user={"sub": "user-1"},
@@ -325,7 +325,7 @@ async def test_run_sync_extract_all_with_retries_uses_aggregate_result_first():
             "cartridge": "sap_successfactors",
             "mode": "incremental",
             "target": "all",
-            "conn_id": "femsa_sf",
+            "conn_id": "tenant_sf",
             "run_id": "sync-1",
             "user": {"sub": "user-1"},
         }
@@ -611,7 +611,7 @@ async def test_fetch_active_sync_run_uses_scoped_lookup():
         cartridge="sap_successfactors",
         mode="incremental",
         target="all",
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         user={"sub": "user-1"},
         get_db_pool=get_db_pool,
         table_has_column=table_has_column,
@@ -663,7 +663,7 @@ async def test_fetch_active_sync_run_returns_none_on_query_error():
         cartridge="sap_successfactors",
         mode="incremental",
         target="all",
-        conn_id="femsa_sf",
+        conn_id="tenant_sf",
         user=None,
         get_db_pool=get_db_pool,
         table_has_column=table_has_column,

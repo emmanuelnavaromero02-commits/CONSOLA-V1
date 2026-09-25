@@ -21,6 +21,8 @@ def _internal_key() -> str:
     raise RuntimeError("INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE missing; legacy fallback disabled in production")
 
 CARTRIDGE_URL = os.environ.get("SAP_B1_URL", "http://sap-b1:8206")
+REQUEST_TIMEOUT_SECONDS = 60
+JOB_DEADLINE_SECONDS = 8 * 3600
 
 default_args = {
     "owner": "omega",
@@ -41,19 +43,31 @@ def sap_b1_extract_all():
             "X-Api-Key": _internal_key(),
             "X-Internal-Service": "airflow",
         }
-        from b1_runtime_context import security_context_from_conf
+        from b1_runtime_context import admission_time, sap_b1_security_context, security_context_from_conf
 
-        skill_body = {"security_context": security_context_from_conf(conf, user_id="airflow:sap_b1_extract_all")}
+        verified = security_context_from_conf(
+            conf, user_id="airflow:sap_b1_extract_all", admitted_at=admission_time(context.get("dag_run"))
+        )
 
-        with httpx.Client(timeout=3600) as client:
-            res = client.post(
+        def skill_body() -> dict:
+            return {
+                "security_context": sap_b1_security_context(
+                    verified["tenant_id"], verified["workspace_id"], user_id="airflow:sap_b1_extract_all"
+                )
+            }
+
+        from service_job_client import idempotency_key, run_service_job
+
+        with httpx.Client(timeout=REQUEST_TIMEOUT_SECONDS) as client:
+            return run_service_job(
+                client,
                 f"{CARTRIDGE_URL}/extract-all",
                 params={"mode": conf.get("mode") or "incremental"},
                 json=skill_body,
                 headers=headers,
+                key=idempotency_key(context, "extract-all"),
+                deadline_seconds=JOB_DEADLINE_SECONDS,
             )
-            res.raise_for_status()
-            return res.json()
 
     trigger_extract_all()
 

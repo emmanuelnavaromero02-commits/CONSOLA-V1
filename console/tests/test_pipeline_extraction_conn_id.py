@@ -24,10 +24,10 @@ def test_build_dag_extract_conf_accepts_safe_conn_id():
         "sap_successfactors",
         "PerPerson",
         "incremental",
-        {"conn_id": "femsa_sf"},
+        {"conn_id": "tenant_sf"},
     )
 
-    assert conf["conn_id"] == "femsa_sf"
+    assert conf["conn_id"] == "tenant_sf"
 
 
 def test_build_dag_extract_conf_rejects_unsafe_conn_id():
@@ -36,7 +36,7 @@ def test_build_dag_extract_conf_rejects_unsafe_conn_id():
             "sap_successfactors",
             "PerPerson",
             "incremental",
-            {"conn_id": "../../femsa_sf"},
+            {"conn_id": "../../tenant_sf"},
         )
 
     assert exc.value.status_code == 400
@@ -123,9 +123,9 @@ def test_pipeline_extract_metadata_selects_connection_id():
 def test_extract_config_helpers_parse_vault_and_idempotency():
     assert (
         connection_id_from_vault_payload(
-            {"connections": [{"conn_id": ""}], "items": [{"id": "femsa_sf"}]}
+            {"connections": [{"conn_id": ""}], "items": [{"id": "tenant_sf"}]}
         )
-        == "femsa_sf"
+        == "tenant_sf"
     )
     run_id = dag_run_id_from_idempotency_key("sap_successfactors_extract", "same-key")
     assert run_id == dag_run_id_from_idempotency_key(

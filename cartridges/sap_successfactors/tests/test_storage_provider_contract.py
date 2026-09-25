@@ -453,8 +453,12 @@ def test_successfactors_duckdb_uses_resolved_gcs_pair_and_auto_region(monkeypatc
 
     assert ("SET s3_endpoint=?;", ["storage.googleapis.com"]) in statements
     assert ("SET s3_region=?;", ["auto"]) in statements
-    assert ("SET s3_access_key_id=?;", ["gcs-access"]) in statements
-    assert ("SET s3_secret_access_key=?;", ["gcs-secret"]) in statements
+    secrets = [sql for sql, _params in statements if sql.startswith("CREATE OR REPLACE SECRET omega_s3_keys")]
+    assert len(secrets) == 1
+    assert "KEY_ID 'gcs-access'" in secrets[0] and "SECRET 'gcs-secret'" in secrets[0]
+    assert "REGION 'auto'" in secrets[0] and "ENDPOINT 'storage.googleapis.com'" in secrets[0]
+    assert "SCOPE 's3://omega-gcs/'" in secrets[0]
+    assert not any(sql.startswith(("SET s3_access_key_id", "SET s3_secret_access_key")) for sql, _ in statements)
 
 
 def test_successfactors_duckdb_does_not_expose_secret_on_configuration_error(
@@ -464,8 +468,8 @@ def test_successfactors_duckdb_does_not_expose_secret_on_configuration_error(
 
     class FakeConnection:
         def execute(self, sql, params=None):
-            if sql == "SET s3_secret_access_key=?;":
-                raise RuntimeError(f"invalid setting {params[0]}")
+            if sql.startswith("CREATE OR REPLACE SECRET omega_s3_keys"):
+                raise RuntimeError(f"invalid secret {sql}")
             return self
 
         def close(self):

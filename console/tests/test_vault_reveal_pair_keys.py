@@ -125,14 +125,14 @@ def test_scoped_cartridge_vault_reveal_uses_signed_security_context(monkeypatch)
         "id": 42,
         "email": "scoped@example.com",
         "role": "workspace_admin",
-        "active_tenant_id": "b95f4d58-c9c8-4fd5-8d07-ddde294c7d78",
-        "active_workspace_id": "a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4",
+        "active_tenant_id": "11111111-1111-4111-8111-111111111111",
+        "active_workspace_id": "22222222-2222-4222-8222-222222222222",
         "allowed_cartridges": ["sap_successfactors"],
     })
 
     user = console_main._cartridge_vault_reveal_user(
         _request(
-            "/api/vault/connections/sap_successfactors/femsa_sf/reveal",
+            "/api/vault/connections/sap_successfactors/tenant_sf/reveal",
             "cartridge-sap_successfactors",
             key,
             extra_headers={"x-security-context": json.dumps(ctx)},
@@ -140,8 +140,8 @@ def test_scoped_cartridge_vault_reveal_uses_signed_security_context(monkeypatch)
     )
 
     assert user["role"] == console_main.ROLE_ADMIN
-    assert user["active_tenant_id"] == "b95f4d58-c9c8-4fd5-8d07-ddde294c7d78"
-    assert user["active_workspace_id"] == "a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4"
+    assert user["active_tenant_id"] == "11111111-1111-4111-8111-111111111111"
+    assert user["active_workspace_id"] == "22222222-2222-4222-8222-222222222222"
     assert user["allowed_cartridges"] == ["sap_successfactors"]
 
 
@@ -154,18 +154,36 @@ def test_scoped_cartridge_vault_reveal_rejects_unsigned_trusted_context(monkeypa
     unsigned = {
         "trusted": True,
         "source": "console",
-        "tenant_id": "b95f4d58-c9c8-4fd5-8d07-ddde294c7d78",
-        "workspace_id": "a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4",
+        "tenant_id": "11111111-1111-4111-8111-111111111111",
+        "workspace_id": "22222222-2222-4222-8222-222222222222",
         "allowed_cartridges": ["sap_successfactors"],
     }
 
     with pytest.raises(HTTPException) as exc:
         console_main._cartridge_vault_reveal_user(
             _request(
-                "/api/vault/connections/sap_successfactors/femsa_sf/reveal",
+                "/api/vault/connections/sap_successfactors/tenant_sf/reveal",
                 "cartridge-sap_successfactors",
                 key,
                 extra_headers={"x-security-context": json.dumps(unsigned)},
+            )
+        )
+
+    assert exc.value.status_code == 403
+
+
+def test_cartridge_vault_reveal_without_a_signed_context_is_refused(monkeypatch):
+    console_main = _console_main()
+    key = "sap-successfactors-dedicated-key-yyyyyyyyyyyyyyy"
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE", key)
+
+    with pytest.raises(HTTPException) as exc:
+        console_main._cartridge_vault_reveal_user(
+            _request(
+                "/api/vault/connections/sap_successfactors/default/reveal",
+                "cartridge-sap_successfactors",
+                key,
             )
         )
 

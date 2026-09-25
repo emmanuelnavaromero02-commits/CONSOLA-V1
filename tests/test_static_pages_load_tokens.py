@@ -72,18 +72,3 @@ def test_no_dangling_css_variable_references():
         "CSS references undeclared tokens (silent breakage):\n  "
         + "\n  ".join(sorted(set(missing)))
     )
-
-
-def test_copilot_page_present_and_uses_tokens():
-    p = STATIC / "copilot.html"
-    assert p.exists()
-    text = p.read_text(encoding="utf-8")
-    refs = re.findall(r'<link[^>]+href="/static/css/([^"]+)"', text)
-    refs_basenames = {Path(r).name for r in refs}
-    assert refs_basenames & _OK_STYLESHEETS
-
-
-def test_cartridges_page_uses_real_tokens():
-    text = (CSS_DIR / "cartridges.css").read_text(encoding="utf-8")
-    assert "var(--text1)" not in text
-    assert "var(--font-pixel)" not in text

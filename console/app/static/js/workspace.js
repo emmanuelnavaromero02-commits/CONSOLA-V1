@@ -4,44 +4,60 @@ function csrfToken(){
   const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
   return match ? decodeURIComponent(match[1]) : '';
 }
-function csrfHeaders(base = {}){
-  const token = csrfToken();
-  return token ? { ...base, 'X-CSRF-Token': token } : base;
-}
-function jsonHeaders(base = {}){
-  return csrfHeaders({ 'Content-Type': 'application/json', ...base });
-}
-function fetchWithTimeout(url, init = {}, timeoutMs = 30000) {
-  if (timeoutMs === 0) return fetch(url, init);
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+const DEFAULT_TIMEOUT_MS = 30000;
+function apiFetch(url, init = {}, timeoutMs = 0) {
+  const method = String(init.method || 'GET').toUpperCase();
+  const headers = new Headers(init.headers || {});
+  if (typeof init.body === 'string' && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  if (!SAFE_METHODS.has(method)) {
+    const token = csrfToken();
+    if (token) headers.set('X-CSRF-Token', token);
+  }
+  const request = { ...init, method, headers, credentials: 'same-origin' };
+  if (!timeoutMs) return fetch(url, request);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  return fetch(url, { ...init, signal: init.signal || controller.signal })
+  return fetch(url, { ...request, signal: init.signal || controller.signal })
     .catch(err => {
       if (err && err.name === 'AbortError') throw new Error('La consulta tardó demasiado');
       throw err;
     })
     .finally(() => clearTimeout(timer));
 }
+function safeHttpUrl(value){
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  try {
+    const url = new URL(raw, window.location.origin);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return '';
+    return url.href.replace(/\/+$/, '');
+  } catch {
+    return '';
+  }
+}
 
 let ME = null;
 async function loadMe() {
-  try { const r = await fetch('/auth/me'); const d = await r.json(); ME = d.user; }
+  try { const r = await apiFetch('/auth/me'); const d = await r.json(); ME = d.user; }
   catch { ME = null; }
   const bar = document.getElementById('user-bar');
   if (!ME) { bar.innerHTML = '<a href="/">Recargar</a>'; return; }
   bar.innerHTML = `
     <span class="me"><strong>${escHtml(ME.email)}</strong></span>
     <span class="role-pill ${ME.role==='admin'?'admin':''}">${escHtml(ME.role)}</span>
-    <a href="${CONSOLE_URL}/me">Mi perfil</a>
+    <a href="${escHtml(CONSOLE_URL)}/me">Mi perfil</a>
     <a href="#" data-action="logout">Salir</a>`;
 }
 async function doLogout(){
-  await fetch('/auth/logout', { method:'POST', headers: csrfHeaders() });
+  await apiFetch('/auth/logout', { method: 'POST' });
   location.href = (CONSOLE_URL || '') + '/login';
 }
 let CONSOLE_URL = '';
 async function loadConfig(){
-  try { const r = await fetch('/api/config'); const d = await r.json(); CONSOLE_URL = d.console_url || ''; }
+  try { const r = await apiFetch('/api/config'); const d = await r.json(); CONSOLE_URL = safeHttpUrl(d.console_url); }
   catch { CONSOLE_URL = ''; }
 }
 
@@ -49,7 +65,7 @@ async function loadApps() {
   const cont = document.getElementById('apps-container');
   cont.innerHTML = '<div class="empty-state">Cargando…</div>';
   try {
-    const r = await fetchWithTimeout('/api/apps');
+    const r = await apiFetch('/api/apps', {}, DEFAULT_TIMEOUT_MS);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
     const apps = d.apps || [];
@@ -68,7 +84,7 @@ async function loadApps() {
         <div class="app-icon">▦</div>
         <div class="app-title">${escHtml(a.title || a.name)}</div>
         <div class="app-desc">${escHtml(a.description || '—')}</div>
-        <div class="app-meta">Actualizado: ${fmt(a.updated_at)}</div>
+        <div class="app-meta">Actualizado: ${escHtml(fmt(a.updated_at))}</div>
       </a>`).join('')}</div>`;
   } catch (e) {
     cont.innerHTML = `<div class="empty-state" style="color:var(--red)">Error: ${escHtml(e.message)}</div>`;
@@ -108,7 +124,7 @@ function renderMarkdown(text){
   let html = String(text ?? '').replace(/```([a-z]*)\n?([\s\S]*?)```/g,
     (_, lang, code) => protect(`<pre><code>${escHtml(code)}</code></pre>`));
   html = html.replace(/`([^`]+)`/g, (_, c) => protect(`<code>${escHtml(c)}</code>`));
-  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+|\/[^)]*)\)/g,
+  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+|\/(?![\/\\])[^)]*)\)/g,
     (_, t, u) => protect(`<a href="${escHtml(u)}" target="_blank" rel="noopener">${escHtml(t)}</a>`));
   html = html.replace(/\*\*([^*]+)\*\*/g, (_, t) => protect(`<strong>${escHtml(t)}</strong>`));
   html = escHtml(html);
@@ -243,9 +259,8 @@ async function sendMessage(){
   let toolSteps = 0;
 
   try {
-    const r = await fetch('/workspace/chat/stream', {
+    const r = await apiFetch('/workspace/chat/stream', {
       method: 'POST',
-      headers: jsonHeaders(),
       body: JSON.stringify({ message: text, history: HISTORY }),
     });
     if (!r.ok) {
@@ -327,7 +342,7 @@ let DEC_FILTER = 'visible';
 let USERS = [];
 
 async function loadUsers() {
-  try { const r = await fetch('/api/users'); const d = await r.json(); USERS = d.users || []; }
+  try { const r = await apiFetch('/api/users'); const d = await r.json(); USERS = d.users || []; }
   catch { USERS = []; }
 }
 function userLabel(uid) {
@@ -357,7 +372,7 @@ async function loadDecisions() {
   if (DEC_FILTER === 'open')    params.set('status', 'open');
   if (DEC_FILTER === 'overdue') params.set('overdue', 'true');
   try {
-    const r = await fetch('/api/decisions?' + params.toString());
+    const r = await apiFetch('/api/decisions?' + params.toString());
     const d = await r.json();
     const rows = d.decisions || [];
     document.getElementById('cnt-decisions').textContent = rows.length;
@@ -388,7 +403,7 @@ async function loadDecisions() {
 function decRowHtml(r) {
   const days = daysUntil(r.commitment_date);
   const statusLabel = r.status === 'open' ? 'Abierta' : (r.status === 'closed' ? 'Cerrada' : r.status);
-  let statusBadge = `<span class="badge b-${r.status}">${escHtml(statusLabel)}</span>`;
+  let statusBadge = `<span class="badge b-${escHtml(r.status)}">${escHtml(statusLabel)}</span>`;
   let daysCell = '—';
   if (r.status === 'open' && days !== null) {
     if (days < 0)      { statusBadge = `<span class="badge b-overdue">Vencida</span>`; daysCell = `<span style="color:var(--red)">${days}d</span>`; }
@@ -398,15 +413,16 @@ function decRowHtml(r) {
   let outcomeCell = '—';
   if (r.outcome === 'achieved')         outcomeCell = `<span class="badge b-ok">Logrado</span>`;
   else if (r.outcome === 'not_achieved') outcomeCell = `<span class="badge b-fail">No logrado</span>`;
-  const responsable = userLabel(r.assignee_id) || `<span style="color:var(--text3)">—</span>`;
+  const assignee = userLabel(r.assignee_id);
+  const responsable = assignee ? escHtml(assignee) : `<span style="color:var(--text3)">—</span>`;
   const visBadge = r.visibility === 'shared'
     ? '<span class="badge b-shared" title="Visible para todo el equipo">Equipo</span>'
     : '<span class="badge b-private" title="Solo creador, responsable y admins">Privada</span>';
-  return `<tr data-id="${r.id}">
+  return `<tr data-id="${escHtml(r.id)}">
     <td><strong>${escHtml(r.title)}</strong></td>
     <td style="color:var(--text2)">${responsable}</td>
     <td>${visBadge}</td>
-    <td>${fmtDate(r.commitment_date)}</td>
+    <td>${escHtml(fmtDate(r.commitment_date))}</td>
     <td>${statusBadge}</td>
     <td>${outcomeCell}</td>
     <td>${daysCell}</td>
@@ -415,7 +431,7 @@ function decRowHtml(r) {
 
 function userOpts(selectedId) {
   return ['<option value="">(sin asignar)</option>']
-    .concat(USERS.map(u => `<option value="${u.id}" ${u.id===selectedId?'selected':''}>${escHtml(u.name||u.email)}</option>`))
+    .concat(USERS.map(u => `<option value="${escHtml(u.id)}" ${u.id===selectedId?'selected':''}>${escHtml(u.name||u.email)}</option>`))
     .join('');
 }
 
@@ -464,8 +480,8 @@ window.submitNewDecision = async function() {
   const title = document.getElementById('nd-title').value.trim();
   if (!title) { alert('El título es obligatorio'); return; }
   const aRaw = document.getElementById('nd-assignee').value;
-  const r = await fetch('/api/decisions', {
-    method: 'POST', headers: jsonHeaders(),
+  const r = await apiFetch('/api/decisions', {
+    method: 'POST',
     body: JSON.stringify({
       title,
       description: document.getElementById('nd-desc').value,
@@ -490,7 +506,7 @@ let CUR_DEC = null;
 
 async function openDecisionDetail(id) {
   try {
-    const r = await fetch('/api/decisions/' + id);
+    const r = await apiFetch('/api/decisions/' + encodeURIComponent(id));
     if (!r.ok) throw new Error(r.statusText);
     CUR_DEC = await r.json();
   } catch(e) { alert('Error: ' + e.message); return; }
@@ -524,11 +540,11 @@ function renderDetailModal(tab) {
         }</div>
       </div>
       <div class="modal-foot">
-        ${tab==='overview' ? `<button class="btn-danger" data-action="decision-delete" data-id="${d.id}">Eliminar</button>` : ''}
+        ${tab==='overview' ? `<button class="btn-danger" data-action="decision-delete" data-id="${escHtml(d.id)}">Eliminar</button>` : ''}
         <div style="flex:1"></div>
         <button class="btn-ghost" data-action="modal-close">Cerrar</button>
-        ${tab==='overview' ? `<button class="btn-pri" data-action="decision-save-overview" data-id="${d.id}">Guardar</button>` : ''}
-        ${tab==='kpis'     ? `<button class="btn-pri" data-action="decision-save-kpis" data-id="${d.id}">Guardar KPIs</button>` : ''}
+        ${tab==='overview' ? `<button class="btn-pri" data-action="decision-save-overview" data-id="${escHtml(d.id)}">Guardar</button>` : ''}
+        ${tab==='kpis'     ? `<button class="btn-pri" data-action="decision-save-kpis" data-id="${escHtml(d.id)}">Guardar KPIs</button>` : ''}
       </div>
     </div>`);
   if (tab === 'kpis') initKpiEditor();
@@ -541,7 +557,7 @@ function detailOverviewHtml(d) {
     <div class="field"><label>Descripción</label><textarea id="ed-desc">${escHtml(d.description)}</textarea></div>
     <div class="field-grid">
       <div class="field"><label>Fecha compromiso</label>
-        <input id="ed-commit" type="date" value="${d.commitment_date ? d.commitment_date.slice(0,10) : ''}">
+        <input id="ed-commit" type="date" value="${escHtml(d.commitment_date ? String(d.commitment_date).slice(0,10) : '')}">
       </div>
       <div class="field"><label>Responsable</label><select id="ed-assignee">${userOpts(d.assignee_id)}</select></div>
       <div class="field"><label>Estado</label>
@@ -575,7 +591,7 @@ function detailActionsHtml(d) {
     </div>`).join('');
   return `
     <div class="field"><label>Nueva entrada</label><textarea id="ac-text" placeholder="Acción tomada o nota…"></textarea></div>
-    <div style="margin-bottom:14px"><button class="btn-pri" data-action="decision-action-add" data-id="${d.id}">Añadir</button></div>
+    <div style="margin-bottom:14px"><button class="btn-pri" data-action="decision-action-add" data-id="${escHtml(d.id)}">Añadir</button></div>
     <div class="actions-list">${items || '<div class="empty-state" style="padding:20px">Sin entradas</div>'}</div>`;
 }
 
@@ -600,7 +616,7 @@ function detailKpisHtml(d) {
 async function fetchDatasets() {
   if (DATASETS) return DATASETS;
   try {
-    const r = await fetchWithTimeout('/api/datasets');
+    const r = await apiFetch('/api/datasets', {}, DEFAULT_TIMEOUT_MS);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
     DATASETS = (d.datasets || []).map(x => ({ name: x.name, layer: x.layer || 'silver' }));
@@ -610,7 +626,7 @@ async function fetchDatasets() {
 async function fetchSchema(name) {
   if (SCHEMAS[name]) return SCHEMAS[name];
   try {
-    const r = await fetchWithTimeout('/api/datasets/' + encodeURIComponent(name) + '/schema');
+    const r = await apiFetch('/api/datasets/' + encodeURIComponent(name) + '/schema', {}, DEFAULT_TIMEOUT_MS);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
     SCHEMAS[name] = d.schema || d.fields || [];
@@ -639,9 +655,9 @@ function renderKpiList() {
 
 function kpiRowHtml(k, i) {
   const dsOpts = (DATASETS || []).map(d =>
-    `<option value="${escHtml(d.name)}" ${k.dataset===d.name?'selected':''}>${escHtml(d.name)} [${d.layer}]</option>`
+    `<option value="${escHtml(d.name)}" ${k.dataset===d.name?'selected':''}>${escHtml(d.name)} [${escHtml(d.layer)}]</option>`
   ).join('');
-  return `<div class="kpi-row" data-i="${i}">
+  return `<div class="kpi-row" data-i="${Number(i)}">
     <div><label>Dataset</label>
       <select data-f="dataset"><option value="">—</option>${dsOpts}</select>
     </div>
@@ -649,12 +665,12 @@ function kpiRowHtml(k, i) {
       <select data-f="column"><option value="">—</option></select>
     </div>
     <div><label>OP</label>
-      <select data-f="operator">${KPI_OPS.map(o=>`<option ${k.operator===o?'selected':''}>${o}</option>`).join('')}</select>
+      <select data-f="operator">${KPI_OPS.map(o=>`<option ${k.operator===o?'selected':''}>${escHtml(o)}</option>`).join('')}</select>
     </div>
     <div><label>Target</label><input data-f="target" value="${escHtml(k.target||'')}" placeholder="15"></div>
     <div><label>Periodo</label><input data-f="period" value="${escHtml(k.period||'')}" placeholder="2026-Q2"></div>
     <div><label>Etiqueta</label><input data-f="label" value="${escHtml(k.label||'')}" placeholder="Margen mínimo"></div>
-    <div><button class="btn-danger" data-action="kpi-remove" data-i="${i}">×</button></div>
+    <div><button class="btn-danger" data-action="kpi-remove" data-i="${Number(i)}">×</button></div>
   </div>`;
 }
 
@@ -666,7 +682,7 @@ async function bindKpiRow(i) {
   if (k.dataset) {
     const cols = await fetchSchema(k.dataset);
     colSel.innerHTML = '<option value="">—</option>' + cols.map(c =>
-      `<option value="${escHtml(c.name)}" ${k.column===c.name?'selected':''}>${escHtml(c.name)} <${escHtml(c.type||'')}></option>`
+      `<option value="${escHtml(c.name)}" ${k.column===c.name?'selected':''}>${escHtml(c.name)} &lt;${escHtml(c.type||'')}&gt;</option>`
     ).join('');
   }
   row.querySelectorAll('[data-f]').forEach(el => {
@@ -677,7 +693,7 @@ async function bindKpiRow(i) {
         k.column = '';
         const cols = await fetchSchema(k.dataset);
         colSel.innerHTML = '<option value="">—</option>' + cols.map(c =>
-          `<option value="${escHtml(c.name)}"><${escHtml(c.type||'')}> ${escHtml(c.name)}</option>`
+          `<option value="${escHtml(c.name)}">&lt;${escHtml(c.type||'')}&gt; ${escHtml(c.name)}</option>`
         ).join('');
       }
     });
@@ -696,8 +712,8 @@ window.removeKpiRow = function(i) {
 
 window.saveDecisionKpis = async function(id) {
   const cleaned = WORKING_KPIS.filter(k => k.dataset && k.column);
-  const r = await fetch('/api/decisions/' + id, {
-    method: 'PATCH', headers: jsonHeaders(),
+  const r = await apiFetch('/api/decisions/' + encodeURIComponent(id), {
+    method: 'PATCH',
     body: JSON.stringify({ kpis: cleaned })
   });
   if (!r.ok) {
@@ -722,8 +738,8 @@ window.saveDecisionOverview = async function(id) {
     visibility:      document.getElementById('ed-vis').value,
   };
   if (!body.title) { alert('El título no puede estar vacío'); return; }
-  const r = await fetch('/api/decisions/' + id, {
-    method: 'PATCH', headers: jsonHeaders(), body: JSON.stringify(body)
+  const r = await apiFetch('/api/decisions/' + encodeURIComponent(id), {
+    method: 'PATCH', body: JSON.stringify(body)
   });
   if (!r.ok) {
     const e = await r.json().catch(()=>({}));
@@ -739,21 +755,21 @@ window.addDecisionAction = async function(id) {
   if (!txt) return;
   const idempotencyKey = globalThis.crypto?.randomUUID?.() ||
     `decision-action-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const r = await fetch('/api/decisions/' + id + '/actions', {
-    method: 'POST', headers: jsonHeaders({
+  const r = await apiFetch('/api/decisions/' + encodeURIComponent(id) + '/actions', {
+    method: 'POST', headers: {
       'Idempotency-Key': idempotencyKey,
-    }),
+    },
     body: JSON.stringify({ action_text: txt })
   });
   if (!r.ok) { alert('Error: ' + r.statusText); return; }
-  const r2 = await fetch('/api/decisions/' + id);
+  const r2 = await apiFetch('/api/decisions/' + encodeURIComponent(id));
   CUR_DEC = await r2.json();
   renderDetailModal('actions');
 };
 
 window.deleteDecision = async function(id) {
   if (!confirm('¿Eliminar esta decisión y toda su bitácora? No se puede deshacer.')) return;
-  const r = await fetch('/api/decisions/' + id, { method: 'DELETE', headers: csrfHeaders() });
+  const r = await apiFetch('/api/decisions/' + encodeURIComponent(id), { method: 'DELETE' });
   if (!r.ok) { alert('Error: ' + r.statusText); return; }
   closeModal();
   loadDecisions();

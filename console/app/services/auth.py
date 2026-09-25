@@ -59,7 +59,7 @@ _ALLOWED_INTERNAL_SERVICES_TO_KEY_ENV: dict[str, str | None] = {
 
 
 def _is_production() -> bool:
-    return os.environ.get("APP_ENV", "production").lower() in {"production", "prod"}
+    return os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod", "staging"}
 
 
 def _require_pair_keys_in_production() -> None:
