@@ -61,7 +61,7 @@ def _yaml_entity_map() -> dict[str, dict[str, Any]]:
 def _merge_yaml_runtime_fields(row: dict[str, Any]) -> dict[str, Any]:
     data = dict(row)
     yaml_entity = _yaml_entity_map().get(str(data.get("entity"))) or {}
-    for key in ("table", "parent", "parent_key", "join_key", "watermark_ts_field", "column_types"):
+    for key in ("table", "parent", "parent_key", "join_key", "watermark_ts_field", "column_types", "business_name", "select_fields"):
         if yaml_entity.get(key) and not data.get(key):
             data[key] = yaml_entity[key]
     return data

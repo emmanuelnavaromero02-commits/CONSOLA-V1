@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import html
-import os
 import re
 from datetime import date, datetime, timezone
 from typing import Any, Awaitable, Callable
@@ -12,7 +11,6 @@ from app.domains.agentops.domain_monitor_support import DomainMonitorSpec
 from app.services import email_service
 from app.services.db_scope import scoped_db_for_user
 
-RECIPIENTS_ENV = "SAP_B1_DIGEST_RECIPIENTS"
 MAX_RECIPIENTS = 20
 STALE_CLAIM_MINUTES = 30
 _EMAIL_RE = re.compile(r"^[^@\s,;=<>\"']+@[^@\s,;=<>\"']+\.[^@\s,;=<>\"']+$")
@@ -51,22 +49,47 @@ FINISH_SQL = """
 Sender = Callable[[str, str, str, str | None], Awaitable[bool]]
 
 
-def recipients_for(workspace_id: str | None, raw: str | None = None) -> list[str]:
-    wanted = str(workspace_id or "").strip().lower()
-    if not wanted:
-        return []
-    text = os.environ.get(RECIPIENTS_ENV, "") if raw is None else raw
-    for entry in re.split(r"[;\n]", text):
-        scope, sep, emails = entry.partition("=")
-        if not sep or scope.strip().lower() != wanted:
-            continue
-        found: list[str] = []
-        for email in emails.split(","):
-            email = email.strip()
-            if _EMAIL_RE.match(email) and email.lower() not in {known.lower() for known in found}:
-                found.append(email)
-        return found[:MAX_RECIPIENTS]
-    return []
+RECIPIENTS_SQL = """
+    SELECT email FROM sap_b1_digest_recipients
+     WHERE tenant_id = $1::uuid AND workspace_id = $2::uuid
+     ORDER BY email
+     LIMIT $3
+"""
+ADD_RECIPIENT_SQL = """
+    INSERT INTO sap_b1_digest_recipients (tenant_id, workspace_id, email, added_by)
+    VALUES ($1::uuid, $2::uuid, $3, $4)
+    ON CONFLICT (tenant_id, workspace_id, email) DO NOTHING
+    RETURNING email
+"""
+REMOVE_RECIPIENT_SQL = """
+    DELETE FROM sap_b1_digest_recipients
+     WHERE tenant_id = $1::uuid AND workspace_id = $2::uuid AND email = $3
+    RETURNING email
+"""
+COUNT_RECIPIENTS_SQL = """
+    SELECT COUNT(*) FROM sap_b1_digest_recipients WHERE tenant_id = $1::uuid AND workspace_id = $2::uuid
+"""
+
+
+def normalize_email(value: Any) -> str | None:
+    email = str(value or "").strip().lower()
+    return email if 6 <= len(email) <= 254 and _EMAIL_RE.match(email) else None
+
+
+async def recipients(conn: Any, tenant_id: str | None, workspace_id: str) -> list[str]:
+    rows = await conn.fetch(RECIPIENTS_SQL, tenant_id, workspace_id, MAX_RECIPIENTS)
+    return [str(row["email"]) for row in rows]
+
+
+async def add_recipient(conn: Any, tenant_id: str | None, workspace_id: str, email: str, user_id: Any) -> bool:
+    if (await conn.fetchval(COUNT_RECIPIENTS_SQL, tenant_id, workspace_id) or 0) >= MAX_RECIPIENTS:
+        raise ValueError(f"no more than {MAX_RECIPIENTS} recipients")
+    added_by = int(user_id) if str(user_id or "").isdigit() else None
+    return await conn.fetchrow(ADD_RECIPIENT_SQL, tenant_id, workspace_id, email, added_by) is not None
+
+
+async def remove_recipient(conn: Any, tenant_id: str | None, workspace_id: str, email: str) -> bool:
+    return await conn.fetchrow(REMOVE_RECIPIENT_SQL, tenant_id, workspace_id, email) is not None
 
 
 def local_now(spec: DomainMonitorSpec, now: datetime | None = None) -> datetime:
@@ -89,12 +112,12 @@ def render(payload: dict[str, Any], local_date: date) -> tuple[str, str, str]:
     red = sum(1 for area in areas if area.get("color") == "rojo")
     missing = sum(1 for area in areas if area.get("color") == "sin_datos")
     if red:
-        headline = f"{red} area{'s' if red != 1 else ''} en rojo"
+        headline = f"{red} área{'s' if red != 1 else ''} en rojo"
     elif missing:
-        headline = f"sin rojos, {missing} area{'s' if missing != 1 else ''} sin datos"
+        headline = f"sin rojos, {missing} área{'s' if missing != 1 else ''} sin datos"
     else:
         headline = "todo en verde"
-    subject = f"Semaforo SAP Business One {local_date.isoformat()}: {headline}"
+    subject = f"Semáforo SAP Business One {local_date.isoformat()}: {headline}"
     blocks, lines = [], [subject, ""]
     for area in areas:
         color, label = _COLORS.get(str(area.get("color")), _COLORS["sin_datos"])
@@ -106,7 +129,7 @@ def render(payload: dict[str, Any], local_date: date) -> tuple[str, str, str]:
             findings = [str(area["reason"])]
         items = "".join(f"<li>{html.escape(item)}</li>" for item in findings)
         if extra > 0:
-            items += f"<li>y {extra} mas en la consola</li>"
+            items += f"<li>y {extra} más en la consola</li>"
         listing = f'<ul style="margin:6px 0 0 18px;padding:0">{items}</ul>' if items else ""
         blocks.append(
             f'<tr><td style="padding:10px 12px;vertical-align:top;white-space:nowrap">'
@@ -118,7 +141,7 @@ def render(payload: dict[str, Any], local_date: date) -> tuple[str, str, str]:
         lines.append(f"[{label}] {title}{period}")
         lines.extend(f"  - {item}" for item in findings)
         if extra > 0:
-            lines.append(f"  - y {extra} mas en la consola")
+            lines.append(f"  - y {extra} más en la consola")
     body = (
         '<!DOCTYPE html><html><body style="font-family:Helvetica,Arial,sans-serif;background:#0d1117;'
         'color:#e6edf3;padding:24px"><div style="max-width:680px;margin:0 auto;background:#161b22;'
@@ -147,32 +170,35 @@ async def maybe_send_digest(
         return {"sent": False, "reason": "unverified_run"}
     if not in_schedule_window(spec, now):
         return {"sent": False, "reason": "outside_schedule"}
-    recipients = recipients_for(user.get("workspace_id"))
-    if not recipients:
-        return {"sent": False, "reason": "no_recipients"}
     local_date = local_now(spec, now).date()
     subject, body, text = render(payload, local_date)
     async with scoped_db_for_user(pool, user) as (conn, tenant_id, workspace_id):
+        to = await recipients(conn, tenant_id, workspace_id)
+        if not to:
+            return {"sent": False, "reason": "no_recipients"}
         claimed = await conn.fetchrow(
-            CLAIM_SQL, tenant_id, workspace_id, local_date, len(recipients),
+            CLAIM_SQL, tenant_id, workspace_id, local_date, len(to),
             str(user.get("agent_run_id") or "") or None, STALE_CLAIM_MINUTES,
         )
     if claimed is None:
         return {"sent": False, "reason": "already_sent"}
     deliver = send or email_service.send_email
     delivered = 0
-    for recipient in recipients:
+    for recipient in to:
         if await deliver(recipient, subject, body, text):
             delivered += 1
     async with scoped_db_for_user(pool, user) as (conn, tenant_id, workspace_id):
         await conn.execute(FINISH_SQL, tenant_id, workspace_id, local_date, delivered)
-    return {"sent": delivered > 0, "recipients": len(recipients), "delivered": delivered, "local_date": local_date.isoformat()}
+    return {"sent": delivered > 0, "recipients": len(to), "delivered": delivered, "local_date": local_date.isoformat()}
 
 
 __all__ = (
-    "RECIPIENTS_ENV",
+    "MAX_RECIPIENTS",
+    "add_recipient",
     "in_schedule_window",
     "maybe_send_digest",
-    "recipients_for",
+    "normalize_email",
+    "recipients",
+    "remove_recipient",
     "render",
 )

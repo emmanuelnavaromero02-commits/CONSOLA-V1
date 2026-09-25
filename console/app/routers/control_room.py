@@ -19,6 +19,7 @@ from app.schemas.control_room_domain_kpi_responses import (
     ControlRoomOperationsKpisResponse,
     ControlRoomRiskKpisResponse,
     ControlRoomSapB1ExpiryKpisResponse,
+    ControlRoomSapB1LearningKpisResponse,
     ControlRoomSapB1MarginKpisResponse,
     ControlRoomSapB1SalesKpisResponse,
     ControlRoomSapB1SemaforoKpisResponse,
@@ -309,10 +310,18 @@ async def _control_room_internal_view(
             ),
         )
     if view == "sap_b1_sales_kpis":
+        top_n = _bounded_int(params.get("top_n"), 0, lower=0, upper=10)
         return project_public_control_room_response(
             ControlRoomSapB1SalesKpisResponse,
             await _control_room_cache_get_or_set(
-                "sap-b1-sales-kpis", user, lambda: control_room_service.sap_b1_sales_kpis(user)
+                f"sap-b1-sales-kpis-{top_n}", user, lambda: control_room_service.sap_b1_sales_kpis(user, top_n=top_n)
+            ),
+        )
+    if view == "sap_b1_learning_kpis":
+        return project_public_control_room_response(
+            ControlRoomSapB1LearningKpisResponse,
+            await _control_room_cache_get_or_set(
+                "sap-b1-learning-kpis", user, lambda: control_room_service.sap_b1_learning_kpis(user)
             ),
         )
     if view == "sap_b1_expiry_kpis":

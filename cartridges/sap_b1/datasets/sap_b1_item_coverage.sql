@@ -1,6 +1,6 @@
 -- sap_b1_item_coverage  (gold)  cartridge: sap_b1
 -- sources: ["silver/sap_b1/sap_b1_stock_on_hand", "silver/sap_b1/sap_b1_items", "silver/sap_b1/sap_b1_inventory_movements", "silver/sap_b1/sap_b1_purchase_order_lines", "silver/sap_b1/sap_b1_production_orders", "silver/sap_b1/sap_b1_business_parameters", "silver/sap_b1/sap_b1_itt1_latest", "silver/sap_b1/sap_b1_goods_receipt_lines"]
--- description: Coverage and replenishment per company and inventory item as of the stock snapshot, all warehouses together, in the company's local_currency: available stock (on hand minus committed), open purchase orders (not cancelled, open lines) and open production orders (planned or released, not yet completed or rejected); consumption over the 90 days up to the snapshot (deliveries, invoices and goods issues net of returns; transfers excluded) and the need of the production plan (components still to issue on open production orders due within setting planning_horizon_days, 90 by default); the daily requirement is the larger of the historical pace and the plan's need spread over the horizon (consumption_basis says which); days of coverage with and without the open orders; open purchase orders against the net need over the horizon; raw materials (BOM components) ranked by the value they consume with the top setting critical_materials_top_n (30) marked critical; a traffic light on coverage with orders (rojo below setting coverage_red_days 30, amarillo below coverage_yellow_days 60, verde otherwise, sin_consumo without requirement) and a stockout risk flag when stock with open orders runs out before a new order could arrive; the lead time (the item's, else setting default_lead_time_days, 7 by default), the reorder point and order-up-to level recalculated from the requirement (settings safety_days 7 and review_period_days 14 by default) next to Business One's own minimum and maximum, and, below the reorder point, the suggested quantity up to the order-up-to level, at least the item's minimum order and rounded up to its order multiple, whether to buy or make it, the preferred supplier and an alternate supplier (the most recent other supplier that delivered the item), and the date to place the order by. Read-only: nothing is written back to Business One.
+-- description: Coverage and replenishment per company and inventory item as of the stock snapshot, all warehouses together, in the company's local_currency: available stock (on hand minus committed), open purchase orders (not cancelled, open lines) and open production orders (planned or released, not yet completed or rejected); consumption over the 90 days up to the snapshot (deliveries, invoices and goods issues net of returns; transfers excluded) and the need of the production plan (components still to issue on open production orders due within setting planning_horizon_days, 90 by default, and when that plan last changed); the daily requirement is the larger of the historical pace and the plan's need spread over the horizon (consumption_basis says which); days of coverage with and without the open orders; open purchase orders against the net need over the horizon; raw materials (BOM components) ranked by the value they consume with the top setting critical_materials_top_n (30) marked critical; a traffic light on coverage with orders (rojo below setting coverage_red_days 30, amarillo below coverage_yellow_days 60, verde otherwise, sin_consumo without requirement) and a stockout risk flag when stock with open orders runs out before a new order could arrive; the lead time (the item's, else setting default_lead_time_days, 7 by default), the reorder point and order-up-to level recalculated from the requirement (settings safety_days 7 and review_period_days 14 by default) next to Business One's own minimum and maximum, and, below the reorder point, the suggested quantity up to the order-up-to level, at least the item's minimum order and rounded up to its order multiple, whether to buy or make it, the preferred supplier and an alternate supplier (the most recent other supplier that delivered the item), and the date to place the order by. Read-only: nothing is written back to Business One.
 
 WITH stock_rows AS (
     SELECT * FROM read_parquet('s3://{bucket}/silver/sap_b1/sap_b1_stock_on_hand/**/*.parquet')
@@ -78,7 +78,8 @@ open_production AS (
 plan_need AS (
     SELECT o.company, o.component_item_code AS item_code,
            SUM(GREATEST(o.component_planned_qty - COALESCE(o.component_issued_qty, 0), 0)) AS plan_need_qty,
-           COUNT(DISTINCT o.doc_entry) AS plan_orders
+           COUNT(DISTINCT o.doc_entry) AS plan_orders,
+           MAX(CAST(o.source_updated_at AS TIMESTAMP)) AS plan_updated_at
     FROM read_parquet('s3://{bucket}/silver/sap_b1/sap_b1_production_orders/**/*.parquet') o
     JOIN snapshot sn ON sn.company = o.company
     JOIN settings se ON se.company = o.company
@@ -107,7 +108,7 @@ base AS (
            st.b1_on_order, st.b1_min_stock, st.b1_max_stock,
            GREATEST(COALESCE(c.consumed, 0), 0) AS consumed_90d,
            GREATEST(COALESCE(c.consumed, 0), 0) / 90.0 AS historical_daily,
-           COALESCE(pn.plan_need_qty, 0) AS plan_need_qty, COALESCE(pn.plan_orders, 0) AS plan_orders,
+           COALESCE(pn.plan_need_qty, 0) AS plan_need_qty, COALESCE(pn.plan_orders, 0) AS plan_orders, pn.plan_updated_at,
            COALESCE(pn.plan_need_qty, 0) / se.horizon_days AS plan_daily,
            GREATEST(GREATEST(COALESCE(c.consumed, 0), 0) / 90.0, COALESCE(pn.plan_need_qty, 0) / se.horizon_days) AS daily_consumption,
            CASE WHEN COALESCE(pn.plan_need_qty, 0) / se.horizon_days > GREATEST(COALESCE(c.consumed, 0), 0) / 90.0
@@ -183,6 +184,7 @@ SELECT
     ROUND(historical_daily, 6)                                          AS historical_daily,
     ROUND(plan_need_qty, 6)                                             AS plan_need_qty,
     plan_orders,
+    plan_updated_at,
     CAST(horizon_days AS INTEGER)                                       AS planning_horizon_days,
     ROUND(plan_daily, 6)                                                AS plan_daily,
     ROUND(daily_consumption, 6)                                         AS daily_consumption,

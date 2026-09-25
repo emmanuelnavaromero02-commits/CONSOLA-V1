@@ -673,6 +673,7 @@ async def control_room__risk_kpis_read(
 
 _SAP_B1_CASE_VIEWS = {
     "abasto": "sap_b1_supply_kpis",
+    "aprendizaje": "sap_b1_learning_kpis",
     "caducidad": "sap_b1_expiry_kpis",
     "margen": "sap_b1_margin_kpis",
     "semaforo": "sap_b1_semaforo_kpis",
@@ -683,20 +684,18 @@ _SAP_B1_CASE_VIEWS = {
 @tool(
     name="control_room__sap_b1_kpis_read",
     description=(
-        "KPIs agregados de SAP Business One del workspace activo. case=margen: "
-        "margen del grupo con eliminacion intercompania, margen por empresa, "
-        "clientes y familias bajo el margen minimo, venta bajo costo, "
-        "reconciliacion contra los totales de finanzas y calidad de datos del "
-        "ultimo mes cerrado. case=ventas: semaforo por distribuidora con sell-in, "
-        "sell-out, crecimiento, sell-through, dias de inventario en canal, margen "
-        "y stock expuesto a caducidad. case=caducidad: lotes vencidos y en riesgo "
-        "de caducar sin venderse con accion sugerida. case=abasto: cobertura por "
-        "articulo con y sin ordenes abiertas contra el tiempo de entrega, riesgo "
-        "de quiebre y pedido sugerido. case=semaforo: resumen diario de margen, "
-        "distribuidoras, caducidad, abasto y calidad de datos. Cada metrica trae status, proxy_note con lo que mide "
-        "y lo que NO mide, breaches con los incumplimientos de negocio y "
-        "evidence_refs. NO convierte monedas. Solo agregados; top_n (0-10) "
-        "devuelve ademas hasta 10 clientes nombrados. Solo lectura."
+        "Indicadores de la prueba de concepto de SAP Business One del workspace activo. "
+        "case=margen: margen bruto y de contribucion (grupo y empresas), ranking de destructores de margen, "
+        "concentracion del margen en el 20 % de clientes, margen por vendedor, corrida manual de Finanzas "
+        "contra la plataforma fila por fila, calidad de datos y modelo de entidades del ultimo mes cerrado. "
+        "case=ventas: ratio sell-out/sell-in, dias de inventario en canal, sell-out por clinica y semaforo "
+        "por distribuidora. case=caducidad: lotes que caducan a 30, 60 y 90 dias priorizados por valor con "
+        "la opcion de traslado entre filiales, a otra empresa o promocion. case=abasto: dias de cobertura "
+        "con el consumo historico o el plan de produccion, ordenes de compra contra necesidad, costo real "
+        "contra estandar y proveedores con entregas tardias. case=aprendizaje: decisiones y resultados sobre "
+        "las alertas y sugerencias para revisar umbrales. case=semaforo: resumen diario por area. Cada "
+        "metrica trae status, proxy_note con lo que mide y lo que NO mide, breaches y evidence_refs. NO "
+        "convierte monedas. Solo agregados; top_n (0-10) devuelve ademas hasta 10 filas nombradas. Solo lectura."
     ),
     input_schema={
         "type": "object",

@@ -26,6 +26,7 @@ _DOMAIN_LABELS = {
     "ventas": "Ventas",
     "operacion": "Operacion",
     "riesgo": "Riesgo",
+    "direccion": "Dirección",
 }
 _SOURCE_STATE_FIELDS = (
     "status",
