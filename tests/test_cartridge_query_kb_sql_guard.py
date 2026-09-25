@@ -240,6 +240,9 @@ def test_duckdb_service_locks_configuration_after_s3_credentials(cartridge):
     src = service_path.read_text(encoding="utf-8")
 
     assert "SET lock_configuration=true;" in src
-    assert src.index("SET s3_secret_access_key") < src.index(
+    assert "SET s3_secret_access_key" not in src
+    assert "SET s3_access_key_id" not in src
+    assert src.index("    _create_s3_secret(") < src.index(
         "SET lock_configuration=true;"
     )
+    assert 'f"SCOPE {_sql_text(f\'s3://{bucket}/\')}"' in src

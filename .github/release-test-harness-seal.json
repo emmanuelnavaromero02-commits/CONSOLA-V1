@@ -303,7 +303,7 @@
     },
     {
       "path": "cartridges/hubspot/app/core/sql_guard.py",
-      "sha256": "ab129466a607c2b9965576d579f72c69eb18de7c5bfeb0341f5a45e480d299be"
+      "sha256": "5843ab22611fd319b0c86cc41d40201dda0ac62f0e4b4ffa519d080756111b94"
     },
     {
       "path": "cartridges/hubspot/app/core/vault_client.py",
@@ -339,7 +339,7 @@
     },
     {
       "path": "cartridges/hubspot/app/services/duckdb_service.py",
-      "sha256": "4189c71eba520bbc6e2346e51a56accdd663f63d59bf749a5bf9b1881be55506"
+      "sha256": "2e860854185c4ea6dd35fb2cef88265307d29926adfa9ca9025792191d57e372"
     },
     {
       "path": "cartridges/hubspot/app/services/extraction_service.py",
@@ -571,7 +571,7 @@
     },
     {
       "path": "cartridges/replicon/app/core/sql_guard.py",
-      "sha256": "ab129466a607c2b9965576d579f72c69eb18de7c5bfeb0341f5a45e480d299be"
+      "sha256": "5843ab22611fd319b0c86cc41d40201dda0ac62f0e4b4ffa519d080756111b94"
     },
     {
       "path": "cartridges/replicon/app/core/vault_client.py",
@@ -607,7 +607,7 @@
     },
     {
       "path": "cartridges/replicon/app/services/duckdb_service.py",
-      "sha256": "767e849213ac9a78dad84932bc82adb9e6c557f1290205df921fea01d78076e8"
+      "sha256": "b35c2680cec9029ff6ccc65d258321beab6abfb4a4e05342e4959146f4ea1c2d"
     },
     {
       "path": "cartridges/replicon/app/services/extraction_service.py",
@@ -739,7 +739,7 @@
     },
     {
       "path": "cartridges/salesforce/app/core/sql_guard.py",
-      "sha256": "ab129466a607c2b9965576d579f72c69eb18de7c5bfeb0341f5a45e480d299be"
+      "sha256": "5843ab22611fd319b0c86cc41d40201dda0ac62f0e4b4ffa519d080756111b94"
     },
     {
       "path": "cartridges/salesforce/app/core/vault_client.py",
@@ -775,7 +775,7 @@
     },
     {
       "path": "cartridges/salesforce/app/services/duckdb_service.py",
-      "sha256": "3a12278255136a7d218dea77c52567ac34ccfb68d13737d20b33b337df02cb49"
+      "sha256": "bf9a4ec37c5c9e908541c788fe422e3c22ddabf58f63f63edfb47c573ef7428c"
     },
     {
       "path": "cartridges/salesforce/app/services/extraction_service.py",
@@ -899,7 +899,7 @@
     },
     {
       "path": "cartridges/sap_b1/app/core/sql_guard.py",
-      "sha256": "ab129466a607c2b9965576d579f72c69eb18de7c5bfeb0341f5a45e480d299be"
+      "sha256": "5843ab22611fd319b0c86cc41d40201dda0ac62f0e4b4ffa519d080756111b94"
     },
     {
       "path": "cartridges/sap_b1/app/core/vault_client.py",
@@ -955,7 +955,7 @@
     },
     {
       "path": "cartridges/sap_b1/app/services/duckdb_service.py",
-      "sha256": "4189c71eba520bbc6e2346e51a56accdd663f63d59bf749a5bf9b1881be55506"
+      "sha256": "2e860854185c4ea6dd35fb2cef88265307d29926adfa9ca9025792191d57e372"
     },
     {
       "path": "cartridges/sap_b1/app/services/extraction_service.py",
@@ -1155,7 +1155,7 @@
     },
     {
       "path": "cartridges/sap_hcm/app/core/sql_guard.py",
-      "sha256": "ab129466a607c2b9965576d579f72c69eb18de7c5bfeb0341f5a45e480d299be"
+      "sha256": "5843ab22611fd319b0c86cc41d40201dda0ac62f0e4b4ffa519d080756111b94"
     },
     {
       "path": "cartridges/sap_hcm/app/core/vault_client.py",
@@ -1191,7 +1191,7 @@
     },
     {
       "path": "cartridges/sap_hcm/app/services/duckdb_service.py",
-      "sha256": "4189c71eba520bbc6e2346e51a56accdd663f63d59bf749a5bf9b1881be55506"
+      "sha256": "2e860854185c4ea6dd35fb2cef88265307d29926adfa9ca9025792191d57e372"
     },
     {
       "path": "cartridges/sap_hcm/app/services/extraction_service.py",
@@ -1327,7 +1327,7 @@
     },
     {
       "path": "cartridges/sap_s4hana/app/core/sql_guard.py",
-      "sha256": "ab129466a607c2b9965576d579f72c69eb18de7c5bfeb0341f5a45e480d299be"
+      "sha256": "5843ab22611fd319b0c86cc41d40201dda0ac62f0e4b4ffa519d080756111b94"
     },
     {
       "path": "cartridges/sap_s4hana/app/core/vault_client.py",
@@ -1363,7 +1363,7 @@
     },
     {
       "path": "cartridges/sap_s4hana/app/services/duckdb_service.py",
-      "sha256": "4189c71eba520bbc6e2346e51a56accdd663f63d59bf749a5bf9b1881be55506"
+      "sha256": "2e860854185c4ea6dd35fb2cef88265307d29926adfa9ca9025792191d57e372"
     },
     {
       "path": "cartridges/sap_s4hana/app/services/extraction_service.py",
@@ -1507,7 +1507,7 @@
     },
     {
       "path": "cartridges/sap_successfactors/app/core/sql_guard.py",
-      "sha256": "ab129466a607c2b9965576d579f72c69eb18de7c5bfeb0341f5a45e480d299be"
+      "sha256": "5843ab22611fd319b0c86cc41d40201dda0ac62f0e4b4ffa519d080756111b94"
     },
     {
       "path": "cartridges/sap_successfactors/app/core/startup_status.py",
@@ -1547,7 +1547,7 @@
     },
     {
       "path": "cartridges/sap_successfactors/app/services/duckdb_service.py",
-      "sha256": "bb4a1d0193be97d32f539ed9138e68a0e1ddaa4790aae3c05ecd70d7300a5839"
+      "sha256": "2d63b0adbd5076086c708e2f0b13642f290b03671d3f8ac431bb269177f30142"
     },
     {
       "path": "cartridges/sap_successfactors/app/services/extraction_service.py",
@@ -1655,7 +1655,7 @@
     },
     {
       "path": "cartridges/sap_successfactors/tests/test_storage_provider_contract.py",
-      "sha256": "616892ae98240a41e6418ffda0e50d5d9d92a3609e2eea3bb70785bf37282130"
+      "sha256": "6e952a5e5fdd5f625525b3d4d92cf4a9c40675f562b93c2238b246a9dad8c05c"
     },
     {
       "path": "cartridges/sap_successfactors/tests/test_talent_metadata_readiness.py",
@@ -4187,7 +4187,7 @@
     },
     {
       "path": "tests/test_cartridge_query_kb_sql_guard.py",
-      "sha256": "5efd1fdf356b1d404aace7a718a4a680f0864fb12488e61786aba51c5249f378"
+      "sha256": "a1f3fc64a47d100d435329ab1a9ae2718605d62405945bea06765420a3b1894e"
     },
     {
       "path": "tests/test_cartridge_raw_scope.py",
@@ -4195,7 +4195,7 @@
     },
     {
       "path": "tests/test_cartridge_scope_propagation.py",
-      "sha256": "5d537a2ec17d73a3f18b4ce4ea5b5e172c558fec2c3947093c907a2b3f5c5e12"
+      "sha256": "e9e3b98d4a5ee2b25002ce96eb776eaf1ec22d221eca826a9b556e5d99fe1d60"
     },
     {
       "path": "tests/test_cartridge_security_context_signing.py",
@@ -4203,7 +4203,7 @@
     },
     {
       "path": "tests/test_cartridge_sql_guard_paths.py",
-      "sha256": "ad5868d8e7d05b54ce1629f22726493738c7e280a4a4f1d8a82a77cb385415cb"
+      "sha256": "7a868a45e7a4301812846913ee1c081b9eef73b6da16ad80dcc882d0ac2436be"
     },
     {
       "path": "tests/test_cartridge_startup_fail_fast.py",

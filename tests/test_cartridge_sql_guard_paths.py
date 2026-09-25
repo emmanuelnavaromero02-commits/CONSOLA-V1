@@ -73,6 +73,14 @@ def test_every_cartridge_ships_the_same_guard():
         "WHERE 1 IN (WITH \"s3://lakehouse/raw/{cartridge}/A/tenant_id=t2/workspace_id=w2/a.parquet\" AS (SELECT 1 AS a) "
         "SELECT a FROM \"s3://lakehouse/raw/{cartridge}/A/tenant_id=t2/workspace_id=w2/a.parquet\")",
         "FROM replicon_base_currency",
+        "FROM read_parquet('s3://lakehouse/raw/{cartridge}/X/tenant_id=*/workspace_id=*/a.parquet?s3_region=x/{scope}')",
+        "FROM read_parquet('s3://lakehouse/raw/{cartridge}/X/tenant_id=t2/workspace_id=w2/a.parquet%3Fs3_region=x/{scope}')",
+        "FROM read_parquet('s3://lakehouse/raw/{cartridge}/X/{scope}/a.parquet#frag')",
+        "FROM (WITH a AS (WITH pg_settings AS (SELECT 1 AS x) SELECT x FROM pg_settings) SELECT name, setting FROM pg_settings)",
+        "FROM (WITH tables AS (SELECT 1 AS x) SELECT * FROM tables)",
+        "FROM {read} WHERE json_serialize_plan('SELECT 1') IS NOT NULL",
+        "FROM {read} WHERE getvariable('x') IS NOT NULL",
+        "FROM {read} a, (SELECT count(*) OVER () FROM duckdb_settings()) s",
     ],
 )
 def test_path_literals_outside_a_validated_reader_are_blocked(cartridge, tail):
@@ -120,6 +128,8 @@ def test_scoped_reads_with_ordinary_values_still_pass(cartridge):
         "WITH parquet_rows(company) AS (SELECT _company FROM {read}) SELECT * FROM parquet_rows LIMIT 5",
         "SELECT * FROM {read} AS parquet_src(a, b) LIMIT 5",
         "WITH RECURSIVE t(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM t WHERE n < 3) SELECT * FROM t, {read} LIMIT 5;",
+        "SELECT repeat('-', 3), histogram(DocTotal), version() FROM {read} LIMIT 5",
+        "SELECT range(3), generate_series(1, 2) FROM {read} LIMIT 5",
     ],
 )
 def test_path_like_values_outside_relation_positions_pass(cartridge, tail):

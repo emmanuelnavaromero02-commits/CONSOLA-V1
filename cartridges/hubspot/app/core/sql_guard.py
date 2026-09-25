@@ -108,10 +108,34 @@ _BLOCKED_FUNCTION_PREFIXES = (
 _BLOCKED_FUNCTIONS = frozenset(
     {
         "glob", "sniff_csv", "query", "query_table", "getenv", "current_setting", "getvariable",
-        "which_secret", "json_serialize_sql", "json_deserialize_sql", "json_execute_serialized_sql",
-        "csv_scan", "csv_auto", "json_scan", "load", "install",
+        "which_secret", "json_serialize_sql", "json_serialize_plan", "json_deserialize_sql",
+        "json_execute_serialized_sql", "current_query", "csv_scan", "csv_auto", "json_scan", "load", "install",
     }
 )
+_CATALOG_CACHE: dict[str, frozenset[str]] = {}
+
+
+def _catalog() -> dict[str, frozenset[str]]:
+    if not _CATALOG_CACHE:
+        import duckdb
+
+        conn = duckdb.connect()
+        try:
+            relations = conn.execute(
+                "SELECT lower(view_name) FROM duckdb_views() UNION SELECT lower(table_name) FROM duckdb_tables() "
+                "UNION SELECT lower(schema_name) FROM duckdb_schemas()"
+            ).fetchall()
+            functions = conn.execute(
+                "SELECT lower(function_name) FROM duckdb_functions() "
+                "WHERE function_type IN ('table', 'pragma', 'table_macro') "
+                "EXCEPT SELECT lower(function_name) FROM duckdb_functions() "
+                "WHERE function_type IN ('scalar', 'aggregate', 'macro')"
+            ).fetchall()
+        finally:
+            conn.close()
+        _CATALOG_CACHE["relations"] = frozenset(row[0] for row in relations) | {"information_schema", "pg_catalog"}
+        _CATALOG_CACHE["table_functions"] = frozenset(row[0] for row in functions)
+    return _CATALOG_CACHE
 
 
 def _parse_tree(sql: str) -> dict | None:
@@ -141,6 +165,10 @@ def _walk(root: object):
             stack.extend(current)
 
 
+def _usable_name(name: str) -> bool:
+    return bool(_IDENTIFIER_RE.fullmatch(name)) and name.lower() not in _catalog()["relations"]
+
+
 def _cte_names(tree: object) -> set[str] | None:
     names: set[str] = set()
     for node in _walk(tree):
@@ -148,12 +176,12 @@ def _cte_names(tree: object) -> set[str] | None:
         if isinstance(cte_map, dict):
             for entry in cte_map.get("map") or []:
                 key = str((entry or {}).get("key") or "")
-                if not _IDENTIFIER_RE.fullmatch(key):
+                if not _usable_name(key):
                     return None
                 names.add(key.lower())
         if node.get("type") == "RECURSIVE_CTE_NODE":
             key = str(node.get("cte_name") or "")
-            if not _IDENTIFIER_RE.fullmatch(key):
+            if not _usable_name(key):
                 return None
             names.add(key.lower())
     return names
@@ -205,6 +233,8 @@ def _reader_paths(function: dict) -> list[str] | None:
 
 def _path_violation(path: str, prefixes: tuple[str, ...], required_scope: str | None) -> str | None:
     raw_path = _canonical_s3_path(path)
+    if "?" in raw_path or "#" in raw_path:
+        return "DuckDB reader paths cannot carry query strings or fragments"
     if raw_path.lower().startswith(("file:", "/", "../", "~", "http:", "https:")):
         return "DuckDB readers may only read from the cartridge S3 prefixes"
     if "/../" in raw_path or raw_path.endswith("/.."):
@@ -250,9 +280,13 @@ def _node_violation(
                         return found
             elif name not in _SAFE_TABLE_FUNCTIONS:
                 return f"Forbidden DuckDB table function in query_kb: {name}"
-    if node.get("class") == "FUNCTION":
+    if node.get("class") in ("FUNCTION", "WINDOW", "AGGREGATE"):
         name = str(node.get("function_name") or "").lower()
-        if name in _BLOCKED_FUNCTIONS or name.startswith(_BLOCKED_FUNCTION_PREFIXES):
+        if (
+            name in _BLOCKED_FUNCTIONS
+            or name.startswith(_BLOCKED_FUNCTION_PREFIXES)
+            or (name in _catalog()["table_functions"] and name not in _SAFE_TABLE_FUNCTIONS)
+        ):
             if not node.get("_reader_call"):
                 return f"Forbidden DuckDB function in query_kb: {name}"
     return None
@@ -342,6 +376,8 @@ def validate_kb_sql(
     for fn in _READ_FN_RE.finditer(stripped):
         name = fn.group(1).lower()
         raw_path = _canonical_s3_path(fn.group("path"))
+        if "?" in raw_path or "#" in raw_path:
+            return False, f"{name} paths cannot carry query strings or fragments"
         if raw_path.lower().startswith(("file:", "/", "../", "~", "http:", "https:")):
             return False, f"{name} may only read from the cartridge S3 prefixes"
         if "/../" in raw_path or raw_path.endswith("/.."):
@@ -351,7 +387,7 @@ def validate_kb_sql(
         if not _has_exact_scope(raw_path, required_scope):
             return False, f"{name} path must stay inside the active tenant/workspace scope"
 
-    if any(not _IDENTIFIER_RE.fullmatch(str(name)) for name in allowed_tables):
+    if any(not _usable_name(str(name)) for name in allowed_tables):
         return False, "Runtime table names must be plain identifiers"
     violation = _ast_violation(stripped, normalized_prefixes, required_scope, frozenset(allowed_tables))
     if violation:

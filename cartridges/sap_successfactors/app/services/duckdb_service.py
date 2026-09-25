@@ -35,6 +35,38 @@ def _path_has_scope(path: str, scope: str) -> bool:
     )
 
 
+def _sql_text(value: object) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _create_s3_secret(
+    conn: duckdb.DuckDBPyConnection,
+    *,
+    key_id: str,
+    secret: str,
+    session_token: str | None,
+    region: str,
+    endpoint: str | None,
+    use_ssl: bool,
+    url_style: str,
+    bucket: str,
+) -> None:
+    options = [
+        "TYPE S3",
+        f"KEY_ID {_sql_text(key_id)}",
+        f"SECRET {_sql_text(secret)}",
+        f"REGION {_sql_text(region)}",
+        f"URL_STYLE {_sql_text(url_style)}",
+        f"USE_SSL {'true' if use_ssl else 'false'}",
+        f"SCOPE {_sql_text(f's3://{bucket}/')}",
+    ]
+    if session_token:
+        options.append(f"SESSION_TOKEN {_sql_text(session_token)}")
+    if endpoint:
+        options.append(f"ENDPOINT {_sql_text(endpoint)}")
+    conn.execute(f"CREATE OR REPLACE SECRET omega_s3_keys ({', '.join(options)});")
+
+
 _BUCKET_NAME_RE = re.compile(r"[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]")
 
 
@@ -57,10 +89,17 @@ def _get_duckdb_connection() -> duckdb.DuckDBPyConnection:
         conn.execute("SET s3_endpoint=?;", [storage.endpoint])
         conn.execute("SET s3_region=?;", [storage.region or "us-east-1"])
         if storage.access_key and storage.secret_key:
-            conn.execute("SET s3_access_key_id=?;", [storage.access_key])
-            conn.execute("SET s3_secret_access_key=?;", [storage.secret_key])
-            if storage.session_token:
-                conn.execute("SET s3_session_token=?;", [storage.session_token])
+            _create_s3_secret(
+                conn,
+                key_id=storage.access_key,
+                secret=storage.secret_key,
+                session_token=storage.session_token,
+                region=storage.region or "us-east-1",
+                endpoint=storage.endpoint,
+                use_ssl=bool(storage.secure),
+                url_style="vhost" if storage.provider == "s3" else "path",
+                bucket=storage.bucket,
+            )
         elif storage.provider == "s3":
             conn.execute("LOAD aws;")
             conn.execute(
