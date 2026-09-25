@@ -146,8 +146,8 @@ async def _dag_states(user: dict) -> list[dict[str, Any]]:
     ]
 
 
-@router.get("/overview", dependencies=[Depends(require_permission("control_room.read"))])
-async def overview(user: dict = Depends(require_permission("control_room.read"))) -> dict[str, Any]:
+@router.get("/overview", dependencies=[Depends(require_permission("datasets.read"))])
+async def overview(user: dict = Depends(require_permission("datasets.read"))) -> dict[str, Any]:
     pool = await auth.pool()
     async with scoped_db_for_user(pool, user) as (conn, tenant_id, workspace_id):
         installed = await conn.fetchval(
@@ -187,16 +187,16 @@ async def overview(user: dict = Depends(require_permission("control_room.read"))
     }
 
 
-@router.get("/indicators", dependencies=[Depends(require_permission("control_room.read"))])
-async def indicators(user: dict = Depends(require_permission("control_room.read"))) -> dict[str, Any]:
+@router.get("/indicators", dependencies=[Depends(require_permission("datasets.read"))])
+async def indicators(user: dict = Depends(require_permission("datasets.read"))) -> dict[str, Any]:
     response = await _cartridge("GET", "/indicators")
     if response.status_code >= 400:
         raise HTTPException(502, _detail(response))
     return response.json()
 
 
-@router.get("/mapping", dependencies=[Depends(require_permission("control_room.read"))])
-async def mapping(user: dict = Depends(require_permission("control_room.read"))) -> dict[str, Any]:
+@router.get("/mapping", dependencies=[Depends(require_permission("datasets.read"))])
+async def mapping(user: dict = Depends(require_permission("datasets.read"))) -> dict[str, Any]:
     from app.services.seed_packaged_catalog import dataset_files, load_packaged_manifest
     from app.services.seed_packaged_datasets import _EXPECTED_CATALOG_DIGEST, _EXPECTED_CATALOG_FILES, _REGISTRY
 
@@ -232,8 +232,8 @@ async def mapping(user: dict = Depends(require_permission("control_room.read")))
     return {"entities": rows}
 
 
-@router.get("/business-parameters", dependencies=[Depends(require_permission("control_room.read"))])
-async def get_business_parameters(user: dict = Depends(require_permission("control_room.read"))) -> dict[str, Any]:
+@router.get("/business-parameters", dependencies=[Depends(require_permission("control_room.write"))])
+async def get_business_parameters(user: dict = Depends(require_permission("control_room.write"))) -> dict[str, Any]:
     text = _parameters_text(await _connection(user))
     catalog = await _catalog()
     parsed = (await _validate(text))["parameters"] if text.strip() else []
@@ -298,8 +298,8 @@ async def post_finance_run(
     return {"rows": result.get("rows"), "indicators": result.get("indicators"), "companies": result.get("companies")}
 
 
-@router.get("/recipients", dependencies=[Depends(require_permission("control_room.read"))])
-async def list_recipients(user: dict = Depends(require_permission("control_room.read"))) -> dict[str, Any]:
+@router.get("/recipients", dependencies=[Depends(require_permission("control_room.write"))])
+async def list_recipients(user: dict = Depends(require_permission("control_room.write"))) -> dict[str, Any]:
     pool = await auth.pool()
     async with scoped_db_for_user(pool, user) as (conn, tenant_id, workspace_id):
         emails = await sap_b1_digest.recipients(conn, tenant_id, workspace_id)
