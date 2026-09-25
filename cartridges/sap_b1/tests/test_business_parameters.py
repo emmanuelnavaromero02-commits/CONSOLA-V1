@@ -73,3 +73,25 @@ def test_the_snapshot_always_carries_the_loaded_row_and_the_declared_schema():
     assert all(schema.field(name).type == pa.string() for name in ("Kind", "Company", "Period", "ParamKey", "ValueText", "_company"))
     table = pa.Table.from_pylist([{**r, **{c: None for c in schema.names if c not in r}} for r in rows], schema=schema)
     assert table.num_rows == 2
+
+
+def test_extraction_preflight_reads_the_connection_with_the_request_context(monkeypatch):
+    import json
+
+    from app.services import preflight
+
+    seen: list[object] = []
+
+    class _Client:
+        def __init__(self, security_context=None):
+            seen.append(security_context)
+
+        def configuration_status(self):
+            return {"configured": True}
+
+    monkeypatch.setattr(preflight, "B1Client", _Client)
+    monkeypatch.setattr(preflight, "_missing", lambda *_names: [])
+    ctx = {"trusted": True, "tenant_id": "t", "workspace_id": "w"}
+
+    assert preflight.preflight_for_extract(ctx) is None
+    assert json.loads(seen[0]) == ctx

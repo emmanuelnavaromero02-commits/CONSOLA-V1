@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import HTTPException, Request
 
 
+REVEAL_SOURCES = frozenset({"console", "airflow"})
 REVEAL_PATH_RE = re.compile(r"/api/vault/connections/([^/]+)/[^/]+/reveal")
 
 
@@ -81,7 +82,7 @@ def cartridge_vault_reveal_user(
         ctx = verify_signed_security_context(raw_ctx)
     except Exception as exc:
         raise HTTPException(403, "invalid signed security context") from exc
-    if ctx.get("trusted") is not True or ctx.get("source") != "console":
+    if ctx.get("trusted") is not True or ctx.get("source") not in REVEAL_SOURCES:
         raise HTTPException(403, "invalid signed security context")
 
     cartridge = cartridge_from_reveal_path(request.url.path) or ""
