@@ -127,6 +127,7 @@ dag_modules=(
   dataset_refresh_finalization.py
   dataset_refresh_idempotency.py dataset_refresh_materialize.py
   dataset_refresh_outcome.py runtime_security_context.py
+  service_job_client.py
 )
 for module in "${dag_modules[@]}"; do
   install -m 0444 "$task_root/airflow/dags/$module" "$dag_dir/$module"
