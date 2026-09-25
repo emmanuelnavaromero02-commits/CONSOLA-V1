@@ -32,6 +32,7 @@ async def actor_has_current_permission(
     user_id: int,
     permission: str,
 ) -> bool:
+    # The DB-backed snapshot rechecks users.is_active and user_workspace_roles.
     return (
         await capture_authorization_snapshot(
             conn,
