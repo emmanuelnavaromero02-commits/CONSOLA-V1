@@ -37,16 +37,6 @@ JOIN roles r ON r.name = 'admin'
 WHERE u.email = 'emmanuel@local.ai'
 ON CONFLICT (user_id, workspace_id, role_id) DO NOTHING;
 
-UPDATE cartridges
-SET name = 'Replicon PSA',
-    version = '3.0.0',
-    description = 'Replicon Professional Services Automation — extrae datos de workforce: usuarios, proyectos, tiempo registrado, tareas, clientes, facturas, asignaciones y gastos.',
-    pattern = 'dag-based',
-    category = 'cartridge',
-    bronze_path = 'raw/replicon/{entity}/load_date={date}/',
-    updated_at = NOW()
-WHERE id = 'replicon';
-
 -- LOCAL DEV ONLY: seed marketplace entitlements + installations so the
 -- bootstrap workspace lands with the same cartridges visible as before
 -- v1.45.x marketplace gating. Production must never auto-grant cartridges;

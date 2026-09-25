@@ -233,8 +233,6 @@ SQL_LLM_MODEL=claude-sonnet-4-6
 # === Replicon ===
 REPLICON_API_TOKEN=
 REPLICON_BASE_URL=https://na5.replicon.com/analytics
-REPLICON_USE_DEMO=false
-REPLICON_MOCK_USER_COUNT=
 
 # === HubSpot ===
 HUBSPOT_BASE_URL=https://api.hubapi.com

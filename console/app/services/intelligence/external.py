@@ -65,10 +65,10 @@ def _manual_findings(source: dict[str, Any], signal: dict[str, Any]) -> list[dic
 
 def _calendar_evidence(source: dict[str, Any], signal: dict[str, Any]) -> dict[str, Any]:
     findings = _manual_findings(source, signal)
-    title = "Calendario operativo revisado"
-    if findings:
-        title = str(findings[0].get("title") or findings[0].get("name") or title)
-    strength = max([float(item.get("strength") or 0.35) for item in findings], default=0.20)
+    if not findings:
+        return _unavailable_evidence(source, signal, reason="no_calendar_entries")
+    title = str(findings[0].get("title") or findings[0].get("name") or "Evento de calendario")
+    strength = max(float(item.get("strength") or 0.35) for item in findings)
     return {
         "source_type": "external",
         "source_ref": _source_id(source),
@@ -78,15 +78,17 @@ def _calendar_evidence(source: dict[str, Any], signal: dict[str, Any]) -> dict[s
             "title": title,
             "period_key": signal.get("period_key"),
             "findings": public_json(findings[:5]),
-            "status": "matched" if findings else "checked",
+            "status": "matched",
         },
-        "supports_hypothesis": "external_event_correlation" if findings else "calendar_seasonality",
+        "supports_hypothesis": "external_event_correlation",
         "strength": round(min(0.90, strength), 2),
         "metadata": {"external": True, "ttl_seconds": source.get("ttl_seconds") or 86400},
     }
 
 
-def _unavailable_evidence(source: dict[str, Any], signal: dict[str, Any]) -> dict[str, Any]:
+def _unavailable_evidence(
+    source: dict[str, Any], signal: dict[str, Any], *, reason: str = "source_not_configured"
+) -> dict[str, Any]:
     source_type = _source_type(source)
     return {
         "source_type": "external",
@@ -96,7 +98,7 @@ def _unavailable_evidence(source: dict[str, Any], signal: dict[str, Any]) -> dic
             "source_type": source_type,
             "period_key": signal.get("period_key"),
             "status": "external_unavailable",
-            "reason": "source_not_configured",
+            "reason": reason,
         },
         "supports_hypothesis": "external_unavailable",
         "strength": 0.05,

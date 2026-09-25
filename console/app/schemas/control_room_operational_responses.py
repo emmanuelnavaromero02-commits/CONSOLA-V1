@@ -42,7 +42,6 @@ class ControlRoomOpsSummaryResponse(PublicProjectionModel):
     write_back_enabled: bool | None = None
     writeback_blocked_by_default: bool | None = None
     external_writeback_blocked_by_default: bool | None = None
-    has_demo_seed: bool | None = None
 
 
 class AgentOpsRun(PublicProjectionModel):

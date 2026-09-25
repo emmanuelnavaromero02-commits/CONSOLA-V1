@@ -50,8 +50,7 @@ infra/terraform-gcp/main.tf
 infra/terraform/deploy/docker-compose.aws.yml
 infra/terraform/infra/secretsmanager.tf scripts/aws-env-pair.sh
 scripts/aws-entrypoint.sh scripts/validate-evidence-keyring.py
-scripts/ci_changed_areas.py scripts/ci_control_room_paths.py scripts/aws_control_room_gold_engine_probe.py
-scripts/aws_control_room_mock_volume_probe.py
+scripts/ci_changed_areas.py scripts/ci_control_room_paths.py
 .github/workflows/deploy-aws.yml
 .github/workflows/control-room-postgres-rls.yml
 .github/workflows/mcp-infra-pdf-security.yml .github/workflows/security.yml console-next/src/app/control-room/page.tsx

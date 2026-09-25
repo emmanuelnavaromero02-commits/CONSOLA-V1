@@ -196,7 +196,7 @@ async def extract(
         mode:      "full" | "incremental" | "historical" (default: incremental)
         from_date: ISO date — historical mode only (e.g. "2024-01-01")
         to_date:   ISO date — historical mode only (e.g. "2024-03-31")
-        conn_id:   optional Vault connection id (e.g. "femsa_sf")
+        conn_id:   optional Vault connection id (e.g. "sf_principal")
     """
     config = get_entity_config(entity)
     if not config:
@@ -228,7 +228,7 @@ async def extract_all(
 
     Args:
         mode: "full" | "incremental" (default: incremental)
-        conn_id: optional Vault connection id (e.g. "femsa_sf")
+        conn_id: optional Vault connection id (e.g. "sf_principal")
         target: "all" | "foundation" | "talent" (default: all)
     """
     return await job_runner.create_extract_all_job(mode, conn_id=conn_id, target=target)
