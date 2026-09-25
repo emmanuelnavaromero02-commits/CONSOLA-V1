@@ -138,9 +138,14 @@ async def test_complete_catalog_is_idempotent_isolated_and_non_destructive(
             dataset = packaged_seed._parse_dataset(path)
             canonical_by_name[dataset["name"]] = dataset
 
-    assert len(packaged) == 9
-    assert sum(len(paths) for paths in packaged.values()) == 229
-    assert len(canonical_by_name) == 229
+    # The sealed size of the catalog lives in one place (the seeder's expected
+    # constants, which dataset_files() has just verified byte for byte); the
+    # counts below follow it instead of repeating a number per cartridge added.
+    total = packaged_seed._EXPECTED_CATALOG_FILES
+    assert len(packaged) == 10
+    assert "sap_b1" in packaged
+    assert sum(len(paths) for paths in packaged.values()) == total
+    assert len(canonical_by_name) == total, "dataset names must be unique across cartridges"
     for scope in scopes:
         await _insert_dataset(
             postgres_with_real_init_schema,
@@ -168,12 +173,12 @@ async def test_complete_catalog_is_idempotent_isolated_and_non_destructive(
 
     assert seeded == second_seeded
     assert set(seeded) == set(packaged)
-    assert sum(seeded.values()) == 458
+    assert sum(seeded.values()) == 2 * total
     assert first == second
     for scope in scopes:
         scoped = [row for row in second if row["workspace_id"] == scope["id"]]
-        assert len(scoped) == 230
-        assert len({row["name"] for row in scoped}) == 230
+        assert len(scoped) == total + 1  # the whole catalog plus the custom row
+        assert len({row["name"] for row in scoped}) == total + 1
         assert {row["cartridge"] for row in scoped} == set(packaged)
         assert all(row["tenant_id"] == scope["tenant_id"] for row in scoped)
         custom = next(row for row in scoped if row["name"] == custom_name)
