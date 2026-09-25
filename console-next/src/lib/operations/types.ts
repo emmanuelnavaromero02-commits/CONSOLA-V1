@@ -1,3 +1,55 @@
+/**
+ * v1.44.4 Group 1 — Operations types.
+ *
+ * BACKEND AUDIT (2026-05-17). Endpoints actually shipped today:
+ *
+ *   GET    /api/admin/users
+ *     → { users: [...] }
+ *
+ *   POST   /api/admin/users  (CSRF)
+ *     body  → { email, password, name?, role? }
+ *     resp  → user dict (created)
+ *
+ *   PATCH  /api/admin/users/{user_id}  (CSRF)
+ *     body  → { name?, role?, is_active?, password? }
+ *     resp  → user dict (updated)
+ *
+ *   DELETE /api/admin/users/{user_id}  (CSRF)
+ *     resp  → { deleted: true, id: <user_id> }
+ *
+ *   POST   /api/admin/users/{user_id}/send-reset  (CSRF, no body)
+ *     resp  → { sent: <bool>, temporary_password?: <string>, password_delivery?: <string> }
+ *
+ *   GET    /api/admin/tenants
+ *   POST   /api/admin/tenants  (CSRF)
+ *   GET    /api/admin/tenants/{tenant_id}/workspaces
+ *   POST   /api/admin/tenants/{tenant_id}/workspaces  (CSRF)
+ *   POST   /api/admin/tenants/{tenant_id}/bootstrap-admin  (CSRF)
+ *   POST   /api/admin/tenants/{tenant_id}/admins/{user_id}/temporary-password  (CSRF)
+ *
+ *   GET    /security/audit
+ *     → list of audit events
+ *
+ *   GET    /api/copilot/workflow
+ *   GET    /api/copilot/workflow/{workflow_id}
+ *   POST   /api/copilot/workflow/{workflow_id}/plan     (CSRF)
+ *   POST   /api/copilot/workflow/{workflow_id}/execute  (CSRF)
+ *   POST   /api/copilot/workflow/{workflow_id}/cancel   (CSRF)
+ *
+ *   GET    /api/metrics/operational
+ *   GET    /api/operations/health
+ *
+ *   GET    /api/vault/connections/{cartridge}
+ *   GET    /api/vault/connections/{cartridge}/{conn_id}/reveal
+ *   PUT    /api/vault/connections/{cartridge}/{conn_id}
+ *   DELETE /api/vault/connections/{cartridge}/{conn_id}
+ *
+ *   GET    /api/vault/secrets/{scope}
+ *     → { keys: [...] } today; the TS client normalizes to secrets[].
+ *   GET    /api/vault/secrets/{scope}/{key}/reveal
+ *   PUT    /api/vault/secrets/{scope}/{key}
+ *   DELETE /api/vault/secrets/{scope}/{key}
+ */
 export type UserRole =
   | "admin"
   | "workspace_admin"

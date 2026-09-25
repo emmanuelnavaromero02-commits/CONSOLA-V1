@@ -990,6 +990,7 @@ async def export_cartridge(cartridge_id: str) -> bytes:
                 continue
         return None
 
+    # ── DAG sources: disk is canonical; DB is only a mirror ────────────────
     seen_dag_files: set[str] = set()
     for r in dag_rows:
         fname = _validate_dag_filename(r["file"] or f"{r['dag_id']}.py")

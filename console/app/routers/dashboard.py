@@ -313,6 +313,14 @@ async def _copilot_counts(
     tenant_id: str | None = None,
     workspace_id: str | None = None,
 ) -> dict:
+    """Copilot activity today — conversations started + tool
+    invocations.
+
+    Table is ``conversations`` (created by migration 38) — NOT
+    ``copilot_conversations``. The to_regclass guard handles
+    pre-v1.42 DBs where the table doesn't exist yet (returns NULL
+    → counts default to 0).
+    """
     conversations = 0
     has_convs = await pool.fetchval(
         "SELECT to_regclass('public.conversations')"

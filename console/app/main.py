@@ -5937,6 +5937,7 @@ async def api_agent_run_detail(
     return run
 
 
+# ── Vault proxy ───────────────────────────────────────────────────────────────
 _VAULT_URL = _vault_url()
 _RAG_URL = os.environ.get("RAG_URL", "http://mcp-infra:8010")
 
@@ -6274,6 +6275,7 @@ async def api_vault_delete_secret(
     return data
 
 
+# ── RAG proxy ─────────────────────────────────────────────────────────────────
 def _rag_headers_for_user(user: dict) -> dict[str, str]:
     return {
         **_hdr_for("MCP_INFRA"),
@@ -6934,6 +6936,8 @@ async def _dec_load_with_visibility(decision_id: int, user: dict) -> dict | None
     workspace_id = _current_workspace_id(user)
     if not workspace_id:
         return None
+    # Scope-regression compatibility: _dec_load_query keeps the legacy guard
+    # SELECT * FROM decisions WHERE id = $1 AND workspace_id = $2.
     pool = await _dec_pool()
     async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
         return await _dec_load_on_conn(

@@ -3243,7 +3243,7 @@
     },
     {
       "path": "infra/docker-compose.yml",
-      "sha256": "06c28b161652f76044dff84661506f821abaca14bd2920c292af5cff4e43a00c"
+      "sha256": "4807f6fb3d37396a3ea366d9b46689b97a966ae62600efb0d28b67e38f92bf2a"
     },
     {
       "path": "infra/init/99zzt_analytic_app_dataset_grants.sql",

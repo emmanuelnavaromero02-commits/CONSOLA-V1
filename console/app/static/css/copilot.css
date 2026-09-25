@@ -690,6 +690,7 @@
   }
 }
 
+/* ── v1.43: citation cards (evidence under each assistant reply) ───────── */
 .copilot-citations {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -734,6 +735,12 @@
   color: var(--text2);
 }
 
+/* ────────────────────────────────────────────────────────────────────
+ * Phase-5 — SaaS context panel mounted in the sidebar between the
+ * conversation list and the footer. Read-only. No actions wired.
+ * Surfaces workspace + workspace_role + cartuchos disponibles/bloqueados
+ * so the user understands the bounded scope the copilot sees.
+ * ──────────────────────────────────────────────────────────────────── */
 .copilot-context-panel {
   margin: 0 18px 14px;
   padding: 14px 14px 12px;
