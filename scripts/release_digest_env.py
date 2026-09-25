@@ -47,6 +47,22 @@ EXPECTED_COMPOSE = {
 }
 
 
+# Infrastructure images this repository rebuilds from source and hosts in its
+# own GHCR namespace because their publisher withdrew them (MinIO, see
+# infra/images/minio and .github/workflows/mirror-minio.yml). They are not
+# release images: they never appear in the release manifest and the stack
+# runs them by tag. The names are exact on purpose, not a prefix, so any other
+# repository in the namespace that a stray compose service consumes still
+# blocks the release.
+INFRASTRUCTURE_MIRRORS = frozenset({"omega-minio", "omega-mc"})
+
+
+def _repository_name(image: str) -> str:
+    """``ghcr.io/owner/name:tag@sha256:...`` -> ``name``."""
+    reference = image.split("@", 1)[0]
+    return reference.rsplit("/", 1)[-1].split(":", 1)[0]
+
+
 class ManifestError(RuntimeError):
     pass
 
@@ -204,10 +220,12 @@ def main(argv: list[str] | None = None) -> int:
                 if name in EXPECTED_COMPOSE:
                     continue
                 image = service.get("image") if isinstance(service, dict) else None
+                namespace = f"ghcr.io/{args.repository.split('/', 1)[0].lower()}/"
                 if isinstance(image, str) and (
                     image in expected_references
-                    or image.startswith(
-                        f"ghcr.io/{args.repository.split('/', 1)[0].lower()}/"
+                    or (
+                        image.startswith(namespace)
+                        and _repository_name(image) not in INFRASTRUCTURE_MIRRORS
                     )
                 ):
                     raise ManifestError(
