@@ -19,6 +19,7 @@ SAP_DAGS = {
         "sap_successfactors_extract.py",
         "sap_successfactors_extract_all.py",
     ),
+    "sap_b1": ("sap_b1_extract.py", "sap_b1_extract_all.py"),
 }
 
 
@@ -76,6 +77,12 @@ def test_sap_successfactors_dag_present_in_airflow_dags():
     _assert_sap_dag_files_exist("sap_successfactors")
     _assert_local_sap_mount("sap_successfactors")
     _assert_aws_sap_mount("sap_successfactors")
+
+
+def test_sap_b1_dag_present_in_airflow_dags():
+    _assert_sap_dag_files_exist("sap_b1")
+    _assert_local_sap_mount("sap_b1")
+    _assert_aws_sap_mount("sap_b1")
 
 
 def test_sap_dags_are_valid_python():

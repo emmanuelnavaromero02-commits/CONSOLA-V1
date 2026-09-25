@@ -288,6 +288,8 @@ def test_wait_for_health_does_not_accept_exited_containers_as_ready():
     assert "mode_sap_hcm" in body
     assert "mode_sap_s4hana" in body
     assert "mode_sap_successfactors" in body
+    assert "mode_sap_b1" in body
+    assert "http://127.0.0.1:8206/health" in body
 
 
 def test_smoke_script_checks_salesforce_cartridge_contract():
@@ -296,11 +298,13 @@ def test_smoke_script_checks_salesforce_cartridge_contract():
     assert 'auth_gate_check "http://localhost:8205/mcp/tools"' in body
     assert 'auth_gate_check "http://localhost:8205/skills/entities"' in body
     assert '"salesforce:8205"' in body
+    assert '"sap-b1:8206"' in body
+    assert '"sap_b1:8206"' in body
     assert "mcp_servers registers salesforce cartridge" in body
     assert "mcp_servers WHERE id='salesforce'" in body
     assert "omega_cartridge_salesforce" in body
-    assert "skipping 6 MCP tool probes" in body
-    assert "skipping 5 MCP tool probes" not in body
+    assert "skipping 7 MCP tool probes" in body
+    assert "skipping 6 MCP tool probes" not in body
 
 
 def test_bootstrap_keys_backfills_all_runtime_db_role_passwords():

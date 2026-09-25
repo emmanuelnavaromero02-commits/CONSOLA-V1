@@ -32,6 +32,7 @@ async def reveal_setting_internal(
         "cartridge-sap_hcm": ("sap_hcm_",),
         "cartridge-sap_s4hana": ("sap_s4hana_",),
         "cartridge-sap_successfactors": ("sap_successfactors_",),
+        "cartridge-sap_b1": ("sap_b1_",),
     }
     prefixes = allowed_prefixes.get(x_internal_service or "")
     if not prefixes or not key.startswith(prefixes):

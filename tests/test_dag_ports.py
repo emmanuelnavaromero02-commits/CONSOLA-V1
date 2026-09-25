@@ -23,6 +23,7 @@ CARTRIDGE_PORTS = {
     "sap_successfactors": "8203",
     "sap_hcm":            "8202",
     "sap_s4hana":         "8204",
+    "sap_b1":             "8206",
 }
 
 

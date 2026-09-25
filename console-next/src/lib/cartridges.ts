@@ -69,6 +69,7 @@ export const KNOWN_CARTRIDGES = [
   "sap_s4hana",
   "sap_successfactors",
   "salesforce",
+  "sap_b1",
 ] as const;
 export type CartridgeId = typeof KNOWN_CARTRIDGES[number];
 

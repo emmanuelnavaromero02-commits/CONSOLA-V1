@@ -19,7 +19,7 @@ def _state(state: str) -> dict[str, object]:
         "immutable": state == "present",
         "title": TAG,
         "body": (
-            f"Automated OMEGA release manifest: 15 images bound to {SHA} "
+            f"Automated OMEGA release manifest: 16 images bound to {SHA} "
             "and tested with exact source checkout bind mounts."
         ),
         "prerelease": True,

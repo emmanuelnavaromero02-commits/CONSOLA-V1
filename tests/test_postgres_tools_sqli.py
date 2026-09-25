@@ -533,7 +533,7 @@ def test_cartridge_preview_error_does_not_leak_sql_or_path(cartridges_tool):
 
 # ── SAP cartridges — preview() validates entity / limit ─────────────────────
 
-SAP_CARTRIDGES = ("sap_hcm", "sap_s4hana", "sap_successfactors")
+SAP_CARTRIDGES = ("sap_hcm", "sap_s4hana", "sap_successfactors", "sap_b1")
 
 
 def _load_sap_mcp_module(cartridge_id: str):

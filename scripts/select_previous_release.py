@@ -50,6 +50,16 @@ CANONICAL_SERVICES = (
     "sap_s4hana",
     "sap_successfactors",
     "salesforce",
+    "sap_b1",
+)
+# A previous release is only a delta base: it is compared, never deployed.
+# Releases published before sap_b1 joined the inventory carry exactly the
+# fifteen services before it, so their manifests stay trusted bases. The
+# history is a frozen list of exact inventories, not a prefix rule: a manifest
+# is canonical only when it matches one of them in full.
+CANONICAL_INVENTORY_HISTORY: tuple[tuple[str, ...], ...] = (
+    CANONICAL_SERVICES[:-1],
+    CANONICAL_SERVICES,
 )
 # The release chain predates canonical manifests.  This sole recovery bridge
 # skips the known failed .210 through .220 runs only while their exact annotated
@@ -234,6 +244,16 @@ def _asset_bytes(
     return raw
 
 
+def _canonical_inventory_for(images: object) -> tuple[str, ...] | None:
+    """Return the exact historical inventory a manifest's image list must match."""
+    if not isinstance(images, list):
+        return None
+    for inventory in CANONICAL_INVENTORY_HISTORY:
+        if len(images) == len(inventory):
+            return inventory
+    return None
+
+
 def _manifest_is_canonical(
     *, repository: str, tag: str, commit: str, raw: bytes
 ) -> bool:
@@ -263,10 +283,11 @@ def _manifest_is_canonical(
     ):
         return False
     images = manifest["images"]
-    if not isinstance(images, list) or len(images) != len(CANONICAL_SERVICES):
+    inventory = _canonical_inventory_for(images)
+    if inventory is None:
         return False
     owner = repository.split("/", 1)[0]
-    for service, image_entry in zip(CANONICAL_SERVICES, images, strict=True):
+    for service, image_entry in zip(inventory, images, strict=True):
         if not isinstance(image_entry, dict) or set(image_entry) != {
             "schema_version",
             "service",
@@ -324,10 +345,11 @@ def _manifest_v2_is_canonical(
     ):
         return False
     images = manifest.get("images")
-    if not isinstance(images, list) or len(images) != len(CANONICAL_SERVICES):
+    inventory = _canonical_inventory_for(images)
+    if inventory is None:
         return False
     owner = repository.split("/", 1)[0]
-    for service, entry in zip(CANONICAL_SERVICES, images, strict=True):
+    for service, entry in zip(inventory, images, strict=True):
         if not isinstance(entry, dict) or set(entry) != {
             "schema_version",
             "service",

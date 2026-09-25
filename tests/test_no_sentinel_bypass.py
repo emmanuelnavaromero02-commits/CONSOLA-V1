@@ -10,7 +10,7 @@ import pytest
 from tests.conftest import CARTRIDGES_ROOT, load_cartridge_app
 
 
-SAP_CARTRIDGES = ("sap_hcm", "sap_s4hana", "sap_successfactors")
+SAP_CARTRIDGES = ("sap_hcm", "sap_s4hana", "sap_successfactors", "sap_b1")
 SENTINEL = "__internal_api_key_not_configured__"
 STRONG_KEY = "long-strong-key-abcdef1234567890"
 

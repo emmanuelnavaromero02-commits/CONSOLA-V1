@@ -76,6 +76,9 @@ services:
   sap-s4hana:
     environment:
       <<: *gcp-lakehouse-env
+  sap-b1:
+    environment:
+      <<: *gcp-lakehouse-env
   mcp-infra:
     environment:
       <<: *gcp-lakehouse-env

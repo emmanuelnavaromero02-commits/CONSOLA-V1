@@ -107,7 +107,7 @@ def test_middleware_module_present_in_all_services():
     paths = []
     for svc in ("console", "workspace", "vault", "refinement", "mcp-infra"):
         paths.append((svc, repo / svc / "app" / "middleware" / "request_id.py"))
-    for cart in ("replicon", "hubspot", "banxico", "inegi", "sec_edgar", "sap_hcm", "sap_s4hana", "sap_successfactors"):
+    for cart in ("replicon", "hubspot", "banxico", "inegi", "sec_edgar", "sap_hcm", "sap_s4hana", "sap_successfactors", "sap_b1"):
         paths.append((f"cartridges/{cart}", repo / "cartridges" / cart / "app" / "middleware" / "request_id.py"))
     for svc, path in paths:
         assert path.exists(), f"{svc} missing middleware/request_id.py"
@@ -123,7 +123,7 @@ def test_cartridge_main_modules_register_request_id_middleware():
     the middleware via app.add_middleware. Without this the
     cartridges' 401/403 responses never go through the send-wrapper."""
     repo = Path(__file__).resolve().parents[1]
-    for cart in ("replicon", "hubspot", "banxico", "inegi", "sec_edgar", "sap_hcm", "sap_s4hana", "sap_successfactors"):
+    for cart in ("replicon", "hubspot", "banxico", "inegi", "sec_edgar", "sap_hcm", "sap_s4hana", "sap_successfactors", "sap_b1"):
         src = (repo / "cartridges" / cart / "app" / "main.py").read_text(encoding="utf-8")
         assert "from app.middleware.request_id import RequestIDMiddleware" in src, (
             f"{cart} main.py does not import RequestIDMiddleware"

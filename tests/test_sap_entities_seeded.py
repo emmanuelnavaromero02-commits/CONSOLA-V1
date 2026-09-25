@@ -9,7 +9,7 @@ import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SAP_CARTRIDGES = ("sap_hcm", "sap_s4hana", "sap_successfactors")
+SAP_CARTRIDGES = ("sap_hcm", "sap_s4hana", "sap_successfactors", "sap_b1")
 REQUIRED_COLUMNS = (
     "watermark_format",
     "page_size",
@@ -78,7 +78,7 @@ def test_live_sap_entities_seeded_in_entity_config():
             """
             SELECT cartridge_id, COUNT(*)
             FROM entity_config
-            WHERE cartridge_id IN ('sap_hcm', 'sap_s4hana', 'sap_successfactors')
+            WHERE cartridge_id IN ('sap_hcm', 'sap_s4hana', 'sap_successfactors', 'sap_b1')
             GROUP BY cartridge_id
             """
         )

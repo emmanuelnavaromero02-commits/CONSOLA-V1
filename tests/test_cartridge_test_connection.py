@@ -57,6 +57,7 @@ def test_cartridge_port_map_complete():
         "sap_successfactors": 8203,
         "sap_s4hana": 8204,
         "salesforce": 8205,
+        "sap_b1": 8206,
     }
     for cart, port in expected.items():
         assert f'"{cart}": {port}' in src, f"port map missing {cart} -> {port}"
@@ -105,6 +106,7 @@ def test_cartridge_skills_test_connection_routes_exist():
         "sap_s4hana",
         "sap_successfactors",
         "salesforce",
+        "sap_b1",
     ):
         routes = root / cart / "app" / "api" / "routes_skills.py"
         src = routes.read_text(encoding="utf-8")

@@ -127,7 +127,7 @@ def test_runbook_documents_the_mechanism():
     assert "before the maintenance window" in text
     assert "day2-release.sh` is intentionally disabled" in text
     assert "Day-2 never copies this overlay from the" in text
-    assert "dry-run cached 15/15" in text
+    assert "dry-run cached 16/16" in text
 
 
 def test_driver_never_targets_aws():
@@ -693,7 +693,7 @@ def test_image_pull_disk_gate_precedes_pull_and_quiesce_and_skips_when_cached():
     missing = text.index('if [[ "${#MISSING_DIGEST_REFS[@]}" -gt 0 ]]')
     disk = text.index('log "preflight disk:', missing)
     pull = text.index('docker pull --quiet "$ref"', disk)
-    cached = text.index("15/15 immutable digests already cached", pull)
+    cached = text.index("16/16 immutable digests already cached", pull)
     branch_end = text.index("\nfi", cached)
     quiesce = text.index('log "step 1 quiesce', branch_end)
 

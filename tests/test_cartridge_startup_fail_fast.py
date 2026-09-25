@@ -29,6 +29,7 @@ CARTRIDGES = [
     ("hubspot",            "hubspot"),
     ("sap_hcm",            "sap_hcm"),
     ("sap_s4hana",         "sap_s4hana"),
+    ("sap_b1",             "sap_b1"),
     ("sap_successfactors", "sap_successfactors"),
 ]
 

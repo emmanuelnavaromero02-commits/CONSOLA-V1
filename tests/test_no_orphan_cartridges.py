@@ -42,6 +42,7 @@ def test_remaining_cartridge_dirs_are_deployed_or_profiled():
         "sap_hcm",
         "sap_s4hana",
         "sap_successfactors",
+        "sap_b1",
     }
     assert {
         "banxico",
@@ -53,4 +54,5 @@ def test_remaining_cartridge_dirs_are_deployed_or_profiled():
         "sap-hcm",
         "sap-s4hana",
         "sap-successfactors",
+        "sap-b1",
     }.issubset(service_names)

@@ -68,7 +68,7 @@ def main(argv: list[str] | None = None) -> int:
     except (ManifestError, PromotionError) as exc:
         print(f"RELEASE DIGEST REMOTE BLOCKED: {exc}", file=sys.stderr)
         return 1
-    print("RELEASE DIGEST REMOTE PASS: 15/15 private images reachable")
+    print("RELEASE DIGEST REMOTE PASS: 16/16 private images reachable")
     return 0
 
 

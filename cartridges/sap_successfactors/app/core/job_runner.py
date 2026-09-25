@@ -27,6 +27,7 @@ from app.core.config import settings
 from app.core.extraction_status import (
     classify_extraction_exception,
     classify_successful_extraction,
+    hard_failure_code,
     public_failure_message,
     summarize_extraction_results,
 )
@@ -683,11 +684,18 @@ async def _run_extract_all(
         f"Completado — {completed}/{total} entidades, "
         f"{total_records:,} registros totales, {failed + blocked_count} bloqueadas/fallidas"
     )
-    final_status = "failed" if result_summary["failed_open"] else "done"
+    # Same rule as the DAG and the console route: only a run that produced
+    # nothing for a real reason is "failed"; a mixed run stays "done" with
+    # its blocked entities listed.
+    hard_failure = hard_failure_code(
+        result_summary, results, skipped_results, attempted=len(entities)
+    )
+    final_status = "failed" if hard_failure else "done"
     await _update(
         job_id, final_status,
         message=summary,
         result={"entities": results, "total_records": total_records,
+                "hard_failure": hard_failure,
                 "completed": completed, "failed": failed,
                 "summary": result_summary,
                 "skipped": skipped_results,

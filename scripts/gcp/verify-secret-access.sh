@@ -116,6 +116,7 @@ managed = (
     "internal_api_key_sap_hcm_to_console",
     "internal_api_key_sap_s4hana_to_console",
     "internal_api_key_sap_successfactors_to_console",
+    "internal_api_key_sap_b1_to_console",
     "internal_api_key_mcp_infra_to_vault",
     "internal_api_key_cartridge_to_console",
     "internal_api_key_cartridge_to_refinement",

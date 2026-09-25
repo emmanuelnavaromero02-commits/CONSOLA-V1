@@ -41,7 +41,14 @@ def test_sap_successfactors_mcp_rpc_requires_auth():
     assert resp.status_code == 401
 
 
-@pytest.mark.parametrize("cartridge", ("sap_hcm", "sap_s4hana", "sap_successfactors"))
+def test_sap_b1_mcp_rpc_requires_auth():
+    with _client_for("sap_b1") as client:
+        resp = client.get("/mcp/rpc/")
+
+    assert resp.status_code == 401
+
+
+@pytest.mark.parametrize("cartridge", ("sap_hcm", "sap_s4hana", "sap_successfactors", "sap_b1"))
 def test_sap_mcp_rpc_accepts_valid_key(cartridge: str):
     with _client_for(cartridge) as client:
         resp = client.get("/mcp/rpc/", headers=VALID_HEADERS)

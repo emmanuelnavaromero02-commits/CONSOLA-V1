@@ -11,6 +11,7 @@ SCOPED_KB_CASES = [
     ("sap_hcm", "EmployeeMaster"),
     ("sap_s4hana", "BusinessPartner"),
     ("sap_successfactors", "User"),
+    ("sap_b1", "OINV"),
     ("salesforce", "Opportunity"),
 ]
 

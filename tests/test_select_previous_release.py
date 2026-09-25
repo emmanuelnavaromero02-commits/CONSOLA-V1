@@ -9,6 +9,7 @@ import pytest
 
 import scripts.select_previous_release as selector
 from scripts.select_previous_release import (
+    CANONICAL_INVENTORY_HISTORY,
     CANONICAL_SERVICES,
     TRANSITION_AUTHORITY_ROOTS,
     TRANSITION_RELEASES,
@@ -129,11 +130,16 @@ def _manifest(repository: str, tag: str, commit: str) -> bytes:
     ).encode()
 
 
-def _manifest_v2(repository: str, tag: str, commit: str) -> bytes:
+def _manifest_v2(
+    repository: str,
+    tag: str,
+    commit: str,
+    services: tuple[str, ...] = CANONICAL_SERVICES,
+) -> bytes:
     owner = repository.split("/", 1)[0]
     run_id = 987654
     images = []
-    for index, service in enumerate(CANONICAL_SERVICES, start=1):
+    for index, service in enumerate(services, start=1):
         image = f"ghcr.io/{owner}/{service}"
         digest = f"sha256:{index:064x}"
         images.append(
@@ -249,6 +255,83 @@ def test_previous_release_accepts_legacy_v1_and_tagless_v2_chain(
         commit=commit,
         token="token",
         fetcher=fetch,
+    )
+
+
+def _release_fetcher(tag: str, manifest: bytes):
+    checksum = (
+        f"{hashlib.sha256(manifest).hexdigest()}  "
+        f"omega-release-manifest-{tag}.json\n"
+    ).encode()
+    release = json.dumps(
+        {
+            "tag_name": tag,
+            "draft": False,
+            "immutable": True,
+            "assets": [
+                {"id": 1, "name": f"omega-release-manifest-{tag}.json"},
+                {"id": 2, "name": f"omega-release-manifest-{tag}.json.sha256"},
+            ],
+        }
+    ).encode()
+
+    def fetch(url: str, _headers: object) -> tuple[int, bytes, dict[str, str]]:
+        if "/releases/tags/" in url:
+            return 200, release, {}
+        return (200, manifest, {}) if url.endswith("/1") else (200, checksum, {})
+
+    return fetch
+
+
+def test_previous_release_accepts_exactly_the_inventory_before_sap_b1() -> None:
+    """A base is compared, never deployed: releases cut before sap_b1 joined
+    the inventory keep their fifteen-image manifests and must remain trusted
+    bases, or the first sixteen-image release could never select one."""
+    repository = "owner/repo"
+    tag = "v1.45.231-beta"
+    commit = "a" * 40
+    before_sap_b1 = CANONICAL_INVENTORY_HISTORY[0]
+
+    assert CANONICAL_INVENTORY_HISTORY[-1] == CANONICAL_SERVICES
+    assert CANONICAL_SERVICES[-1] == "sap_b1"
+    assert before_sap_b1 == CANONICAL_SERVICES[:-1]
+    assert len(before_sap_b1) == 15
+    assert verify_github_release_manifest(
+        repository=repository,
+        tag=tag,
+        commit=commit,
+        token="token",
+        fetcher=_release_fetcher(
+            tag, _manifest_v2(repository, tag, commit, services=before_sap_b1)
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "services",
+    [
+        CANONICAL_SERVICES[:-2],
+        CANONICAL_SERVICES[:-2] + ("sap_b1",),
+        tuple(reversed(CANONICAL_SERVICES[:-1])),
+        CANONICAL_SERVICES + ("sap_b1",),
+    ],
+    ids=["fourteen", "fifteen-with-sap_b1-instead-of-salesforce", "fifteen-reordered", "duplicate"],
+)
+def test_previous_release_rejects_inventories_outside_the_frozen_history(
+    services: tuple[str, ...],
+) -> None:
+    repository = "owner/repo"
+    tag = "v1.45.231-beta"
+    commit = "a" * 40
+
+    assert not verify_github_release_manifest(
+        repository=repository,
+        tag=tag,
+        commit=commit,
+        token="token",
+        fetcher=_release_fetcher(
+            tag, _manifest_v2(repository, tag, commit, services=services)
+        ),
     )
 
 

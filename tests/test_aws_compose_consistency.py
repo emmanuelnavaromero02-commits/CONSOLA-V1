@@ -142,6 +142,7 @@ def test_aws_cartridge_overlay_ships_release_images():
         "sap-hcm": "sap_hcm",
         "sap-s4hana": "sap_s4hana",
         "sap-successfactors": "sap_successfactors",
+        "sap-b1": "sap_b1",
     }
     for service, image in expected.items():
         assert f"{service}:" in src

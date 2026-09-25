@@ -1,0 +1,13 @@
+{
+  "_comment": "Console Vault connection sap_b1/default. Save it from the Console (Studio > Connections, cartridge sap_b1, connection 'default') or with PUT /api/vault/connections/sap_b1/default (permission vault.connections.write, CSRF token). The Vault stores the body as-is and the reveal endpoint returns the same flat fields; the cartridge maps them with app/core/vault_client.py _FIELD_ALIASES (first alias of each SAP_B1_* variable used here). The reveal only works once the console allow-lists cartridge-sap_b1 (cartridge README, deploy step 2). Values are placeholders: never commit a filled copy.",
+  "dialect": "hana",
+  "host": "<HANA_HOST_OR_TUNNEL_ADDRESS>",
+  "port": "<TENANT_SQL_PORT>",
+  "user": "<OMEGA_B1_READER>",
+  "password": "<PASSWORD_FROM_CUSTOMER_IT_VIA_SECURE_CHANNEL>",
+  "database": "",
+  "companies": "mx_mfg=<COMPANY_DB_1>,mx_dist_a=<COMPANY_DB_2>,mx_dist_b=<COMPANY_DB_3>",
+  "intercompany": "mx_mfg:<IC_CARDCODE_DIST_A>=mx_dist_a,mx_mfg:<IC_CARDCODE_DIST_B>=mx_dist_b,mx_dist_a:<IC_CARDCODE_MFG>=mx_mfg,mx_dist_b:<IC_CARDCODE_MFG>=mx_mfg",
+  "encrypt": "true",
+  "ssl_validate_certificate": "true"
+}

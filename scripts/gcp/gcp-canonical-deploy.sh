@@ -20,7 +20,7 @@
 #   OMEGA_PROJECT_ID      e.g. project-dd5ba7fa-374c-4554-ae6
 #   OMEGA_ZONE            e.g. us-central1-a
 #   OMEGA_INSTANCE        e.g. omega-staging-app
-#   OMEGA_GHCR_OWNER      lowercase GHCR owner hosting the 15 packages
+#   OMEGA_GHCR_OWNER      lowercase GHCR owner hosting the 16 packages
 #   OMEGA_SOURCE_BUCKET   e.g. omega-gcp-source-project-dd5ba7fa-374c-4554-ae6
 #   OMEGA_RELEASE_MANIFEST
 #                         downloaded canonical v2 release manifest asset
@@ -74,9 +74,9 @@ sha256_file() {
   fi
 }
 
-# The exact 15 proprietary images (single source of truth = release preflight).
+# The exact 16 proprietary images (single source of truth = release preflight).
 IMAGES=(airflow banxico console hubspot inegi mcp-infra refinement replicon
-  salesforce sap_hcm sap_s4hana sap_successfactors sec_edgar vault workspace)
+  salesforce sap_b1 sap_hcm sap_s4hana sap_successfactors sec_edgar vault workspace)
 
 # ── Validate inputs (non-secret) ────────────────────────────────────────────
 [[ -n "${TARGET_TAG}" && -n "${DEPLOY_REF}" ]] \
@@ -109,7 +109,7 @@ IMAGE_PULL_MIN_FREE_GIB="${OMEGA_IMAGE_PULL_MIN_FREE_GIB:-20}"
       && "${IMAGE_PULL_MIN_FREE_GIB}" -le 1024 ]] \
   || die "OMEGA_IMAGE_PULL_MIN_FREE_GIB must be an integer from 5 through 1024."
 
-# Publish-only releases push the 15 images by immutable digest only (never by the
+# Publish-only releases push the 16 images by immutable digest only (never by the
 # vX.Y.Z tag), so the deploy pins every service to the digest recorded in the
 # canonical release manifest. Provide it with:
 #   gh release download <tag> --pattern 'omega-release-manifest-*.json*'
@@ -125,7 +125,7 @@ MANIFEST_VALIDATOR="${SCRIPT_DIR}/../release_digest_env.py"
 # The run id is an identity input to the canonical validator. Reading this one
 # scalar is not validation: release_digest_env.py below re-parses strict JSON,
 # requires canonical bytes and exact schema/filename/checksum/repository/tag/
-# source/run bindings, and verifies all 15 owner-scoped digest references.
+# source/run bindings, and verifies all 16 owner-scoped digest references.
 BUILD_RUN_ID="$(python3 -I - "${MANIFEST}" <<'PY'
 import json
 import sys
@@ -150,8 +150,8 @@ python3 -I "${MANIFEST_VALIDATOR}" \
   --build-run-id "${BUILD_RUN_ID}" \
   --github-env "${MANIFEST_LOCK}" >/dev/null \
   || die "canonical release manifest/checksum/schema/owner/digest validation failed."
-[[ "$(wc -l < "${MANIFEST_LOCK}" | tr -d '[:space:]')" == "15" ]] \
-  || die "canonical release manifest did not produce an exact 15-image lock."
+[[ "$(wc -l < "${MANIFEST_LOCK}" | tr -d '[:space:]')" == "16" ]] \
+  || die "canonical release manifest did not produce an exact 16-image lock."
 
 digest_ref_for() {
   local image="$1" key

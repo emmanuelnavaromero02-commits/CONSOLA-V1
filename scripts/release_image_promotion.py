@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build evidence and recoverably promote the 15 release images.
+"""Build evidence and recoverably promote the 16 release images.
 
 The build matrix publishes only untagged, content-addressed candidates.  This
 module verifies their OCI graph and BuildKit attestation, seals one immutable
@@ -66,6 +66,7 @@ CANONICAL_SERVICES = (
     "sap_s4hana",
     "sap_successfactors",
     "salesforce",
+    "sap_b1",
 )
 # The Airflow Dockerfile inherits these reviewed labels from its version-selected
 # ``apache/airflow:2.10.5`` base.  Every other release image currently inherits
@@ -1139,7 +1140,7 @@ def _intent(
         or [receipt.get("service") for receipt in receipts]
         != list(CANONICAL_SERVICES)
     ):
-        raise PromotionError("promotion receipts are not canonical 15/15 inventory")
+        raise PromotionError("promotion receipts are not canonical 16/16 inventory")
     return {
         "schema_version": 1,
         "kind": "omega-release-promotion-intent",
@@ -1341,8 +1342,13 @@ def verify_final(
             if result is None or _sha256(result.body) != receipt["digest"]:
                 raise PromotionError("final image reference does not match intent")
             verified += 1
-    if verified != 30:
-        raise PromotionError(f"final image verification is incomplete: {verified}/30")
+    # Two final references per canonical image: the release tag and the
+    # source-sha tag (see _final_references).
+    expected = 2 * len(CANONICAL_SERVICES)
+    if verified != expected:
+        raise PromotionError(
+            f"final image verification is incomplete: {verified}/{expected}"
+        )
 
 
 def _identity_from_args(args: argparse.Namespace) -> ReleaseIdentity:

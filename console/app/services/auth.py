@@ -72,6 +72,8 @@ _ALLOWED_INTERNAL_SERVICES_TO_KEY_ENV: dict[str, str | None] = {
     "cartridge-sap_s4hana": "INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE",
     "sap_successfactors": "INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE",
     "cartridge-sap_successfactors": "INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE",
+    "sap_b1": "INTERNAL_API_KEY_SAP_B1_TO_CONSOLE",
+    "cartridge-sap_b1": "INTERNAL_API_KEY_SAP_B1_TO_CONSOLE",
     "salesforce": "INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE",
     "cartridge-salesforce": "INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE",
     "airflow": "INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE",

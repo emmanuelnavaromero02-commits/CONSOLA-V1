@@ -41,8 +41,8 @@ def _private_fetcher(
 
 
 def test_canonical_inventory_matches_release_preflight() -> None:
-    assert len(CANONICAL_PACKAGE_NAMES) == 15
-    assert len(set(CANONICAL_PACKAGE_NAMES)) == 15
+    assert len(CANONICAL_PACKAGE_NAMES) == 16
+    assert len(set(CANONICAL_PACKAGE_NAMES)) == 16
     assert load_inventory(DEFAULT_INVENTORY_PATH) == CANONICAL_PACKAGE_NAMES
 
 
@@ -57,7 +57,7 @@ def test_verifies_every_package_without_putting_token_in_urls() -> None:
         fetcher=_private_fetcher(calls),
     )
 
-    assert len(checks) == len(calls) == 15
+    assert len(checks) == len(calls) == 16
     assert all(check.private for check in checks)
     assert [_package_from_url(call[0]) for call in calls] == list(
         CANONICAL_PACKAGE_NAMES
@@ -130,7 +130,8 @@ def test_auto_owner_falls_back_from_organization_to_user() -> None:
     )
 
     assert all(check.private and check.owner_kind == "user" for check in checks)
-    assert len(calls) == 30
+    # One /orgs/ probe (404) plus one /users/ fallback per canonical package.
+    assert len(calls) == 2 * len(CANONICAL_PACKAGE_NAMES)
 
 
 def test_inventory_file_must_be_the_exact_reviewed_set(tmp_path: Path) -> None:
@@ -140,7 +141,7 @@ def test_inventory_file_must_be_the_exact_reviewed_set(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    with pytest.raises(PackageVisibilityError, match="canonical 15"):
+    with pytest.raises(PackageVisibilityError, match="canonical 16"):
         load_inventory(inventory)
 
 
@@ -156,7 +157,7 @@ def test_cli_passes_offline_and_does_not_print_token(capsys: pytest.CaptureFixtu
 
     captured = capsys.readouterr()
     assert status == 0
-    assert captured.out == "RELEASE_PACKAGE_PRIVACY PASS 15/15 owner=omega-owner\n"
+    assert captured.out == "RELEASE_PACKAGE_PRIVACY PASS 16/16 owner=omega-owner\n"
     assert captured.err == ""
     assert token not in captured.out + captured.err
 

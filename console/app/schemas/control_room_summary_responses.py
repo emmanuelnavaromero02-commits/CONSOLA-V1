@@ -13,6 +13,7 @@ _CAPABILITY_LABELS = {
     "sap_hcm": "Personal y nomina",
     "sap_successfactors": "Talento y organizacion",
     "sap_s4hana": "Finanzas y operaciones",
+    "sap_b1": "Finanzas, ventas y compras (SAP Business One)",
     "replicon": "Servicios profesionales",
     "platform": "Plataforma",
 }

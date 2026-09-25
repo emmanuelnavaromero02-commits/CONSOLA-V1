@@ -423,6 +423,7 @@ _ALLOWED_SERVICES_TO_KEY_ENV: dict[str, str] = {
     "cartridge-sap_hcm": "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
     "cartridge-sap_s4hana": "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
     "cartridge-sap_successfactors": "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
+    "cartridge-sap_b1": "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
     "cartridge-salesforce": "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
     "salesforce": "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
     # mcp-infra proxies read-only governed market context to Refinement while
@@ -442,6 +443,7 @@ _SECURITY_SOURCE_BY_SERVICE = {
     "cartridge-sap_hcm": {"cartridge-sap_hcm"},
     "cartridge-sap_s4hana": {"cartridge-sap_s4hana"},
     "cartridge-sap_successfactors": {"cartridge-sap_successfactors"},
+    "cartridge-sap_b1": {"cartridge-sap_b1"},
     "refinement": {"refinement"},
     "mcp-infra": {"mcp-infra", "console", "agent_runner"},
 }

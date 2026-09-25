@@ -89,7 +89,7 @@ else
 fi
 
 # ── SAP cartridges (v1.40.3) ──
-for pair in "sap-hcm:8202" "sap-successfactors:8203" "sap-s4hana:8204"; do
+for pair in "sap-hcm:8202" "sap-successfactors:8203" "sap-s4hana:8204" "sap-b1:8206"; do
   name="${pair%:*}"
   port="${pair#*:}"
   if fetch "http://localhost:${port}/health"; then
@@ -174,9 +174,9 @@ if [ -f "infra/.env" ]; then
   fi
 fi
 if [ -z "$CARTRIDGE_KEY" ]; then
-    echo "[smoke] WARN  INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE not found in infra/.env — skipping 6 MCP tool probes"
+    echo "[smoke] WARN  INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE not found in infra/.env — skipping 7 MCP tool probes"
 else
-  for pair in "replicon:8201" "hubspot:8210" "salesforce:8205" "sap_hcm:8202" "sap_successfactors:8203" "sap_s4hana:8204"; do
+  for pair in "replicon:8201" "hubspot:8210" "salesforce:8205" "sap_hcm:8202" "sap_successfactors:8203" "sap_s4hana:8204" "sap_b1:8206"; do
     name="${pair%:*}"
     port="${pair#*:}"
     BODY="$(curl -sS --max-time 5 \

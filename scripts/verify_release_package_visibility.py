@@ -3,7 +3,7 @@
 
 The checker is read-only.  It obtains a GitHub token from an environment
 variable, calls the GitHub Packages REST API, and never includes the token in
-URLs or output.  The default inventory is the same 15-image inventory used by
+URLs or output.  The default inventory is the same 16-image inventory used by
 the GCP release preflight; a JSON or newline-delimited inventory can be passed
 explicitly, but it must describe exactly the canonical set.
 """
@@ -36,6 +36,7 @@ CANONICAL_PACKAGE_NAMES: tuple[str, ...] = (
     "refinement",
     "replicon",
     "salesforce",
+    "sap_b1",
     "sap_hcm",
     "sap_s4hana",
     "sap_successfactors",
@@ -124,7 +125,7 @@ def _validate_inventory(names: Sequence[str]) -> tuple[str, ...]:
             details.append(f"unexpected={','.join(unexpected)}")
         suffix = f" ({'; '.join(details)})" if details else ""
         raise PackageVisibilityError(
-            "release inventory must contain exactly the canonical 15 packages"
+            "release inventory must contain exactly the canonical 16 packages"
             f"{suffix}"
         )
 
@@ -272,7 +273,7 @@ def verify_release_packages(
     timeout: float = 10.0,
     fetcher: Fetcher = _fetch_json,
 ) -> tuple[PackageCheck, ...]:
-    """Return a result for all 15 packages without changing GitHub state."""
+    """Return a result for all 16 packages without changing GitHub state."""
 
     owner = _validate_owner(owner)
     token = token.strip()
@@ -376,12 +377,12 @@ def main(
                 file=sys.stderr,
             )
         print(
-            f"BLOCKED release package privacy: {len(checks) - len(failed)}/15 private",
+            f"BLOCKED release package privacy: {len(checks) - len(failed)}/16 private",
             file=sys.stderr,
         )
         return 1
 
-    print(f"RELEASE_PACKAGE_PRIVACY PASS 15/15 owner={_validate_owner(owner)}")
+    print(f"RELEASE_PACKAGE_PRIVACY PASS 16/16 owner={_validate_owner(owner)}")
     return 0
 
 

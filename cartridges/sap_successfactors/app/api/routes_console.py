@@ -27,6 +27,7 @@ from app.api.deps import verify_api_key
 from app.core.extraction_status import (
     classify_extraction_exception,
     classify_successful_extraction,
+    hard_failure_code,
     public_failure_message,
     summarize_extraction_results,
 )
@@ -346,7 +347,8 @@ def extract_all(
             target,
             ctx,
         )
-    status_text = "success" if not any(
+    hard_failure = hard_failure_code(summary, results, skipped, attempted=len(entities))
+    blocked_or_failed = any(
         summary[key]
         for key in (
             "auth_blocked",
@@ -356,13 +358,24 @@ def extract_all(
             "skipped_explicit",
             "partial",
         )
-    ) else "completed_with_blocks"
+    )
+    # Same rule as the DAG and the async job: a run that produced nothing
+    # because SuccessFactors was unreachable or rejected the credentials is
+    # "failed", not "completed_with_blocks".
+    status_text = (
+        "failed"
+        if hard_failure
+        else "success"
+        if not blocked_or_failed
+        else "completed_with_blocks"
+    )
     attempted = [
         item for item in results
         if item.get("entity") and not str(item.get("entity")).startswith("__")
     ]
     return {
         "status": status_text,
+        "hard_failure": hard_failure,
         "target": target,
         "attempted": len(attempted),
         "triggered": [

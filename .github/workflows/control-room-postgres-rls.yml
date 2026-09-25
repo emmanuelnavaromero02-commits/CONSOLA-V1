@@ -297,6 +297,7 @@ jobs:
           env -u GITHUB_ENV -u GITHUB_PATH \
             pytest -ra --junitxml=/tmp/control-room-postgres-rls.xml \
             tests/test_analytic_app_dataset_grants.py \
+            tests/test_sap_b1_fake_schema.py \
             tests/test_operational_rls_console_refinement.py \
             tests/test_operational_rls_policy_guard.py \
             tests/test_control_room_live_postgres*.py \
@@ -320,6 +321,21 @@ jobs:
             tests/test_staged_publication_red.py \
             tests/test_staged_publication_verifier_boundary_live.py \
             tests/test_talent_benchmark_publication_authority_live.py
+
+      # The cartridge's conftest pins `import app` to the cartridge (it puts its
+      # directory first on sys.path when it is loaded), which breaks the
+      # collection of every console test that shares the process. It runs in
+      # its own pytest process; its report is verified below like the others.
+      - name: Run SAP Business One cartridge tests against the Postgres fake
+        if: always()
+        continue-on-error: true
+        env:
+          DOCKER_HOST: unix:///var/run/docker.sock
+        run: |
+          env -u GITHUB_ENV -u GITHUB_PATH \
+            pytest -ra --junitxml=/tmp/control-room-sap-b1.xml \
+            cartridges/sap_b1/tests/test_extraction_against_fake.py \
+            cartridges/sap_b1/tests/test_windows_agent.py
 
       - name: Verify hermetic DuckDB extension cache
         if: always()
@@ -388,6 +404,7 @@ jobs:
 
           verify_junit("/tmp/control-room-focal.xml", minimum=9659, label="Focal Control Room")
           verify_junit("/tmp/control-room-postgres-rls.xml", minimum=296, label="Live PostgreSQL/RLS")
+          verify_junit("/tmp/control-room-sap-b1.xml", minimum=62, label="SAP Business One cartridge")
           PY
 
   operational-truth-e2e:

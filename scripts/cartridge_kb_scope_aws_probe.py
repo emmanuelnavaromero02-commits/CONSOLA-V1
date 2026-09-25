@@ -82,7 +82,7 @@ forbid_pattern() {
 
 check_cartridge_contract() {
   local missing=()
-  for cartridge in hubspot replicon sap_hcm sap_s4hana sap_successfactors; do
+  for cartridge in hubspot replicon sap_hcm sap_s4hana sap_successfactors sap_b1; do
     require_pattern "cartridges/${cartridge}/app/core/request_context.py" "def require_tenant_workspace_scope" || missing+=("${cartridge}:request_context")
     require_pattern "cartridges/${cartridge}/app/services/kb_service.py" "security_context = require_tenant_workspace_scope" || missing+=("${cartridge}:kb_service")
     require_pattern "cartridges/${cartridge}/app/core/sql_guard.py" "required_scope: str | None = None" || missing+=("${cartridge}:sql_guard_scope")
@@ -91,7 +91,7 @@ check_cartridge_contract() {
     require_pattern "cartridges/${cartridge}/app/main.py" "x-security-context" || missing+=("${cartridge}:mcp_header_guard")
   done
   if [ "${#missing[@]}" -eq 0 ]; then
-    emit "cartridge KB signed scope contract" "PASS" "hubspot/replicon/sap_hcm/sap_s4hana/sap_successfactors fail closed with signed scope"
+    emit "cartridge KB signed scope contract" "PASS" "hubspot/replicon/sap_hcm/sap_s4hana/sap_successfactors/sap_b1 fail closed with signed scope"
   else
     emit "cartridge KB signed scope contract" "FAIL" "${missing[*]}"
   fi

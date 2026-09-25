@@ -31,6 +31,7 @@ const CARTRIDGE_LABELS: Record<string, string> = {
   "hubspot": "HubSpot CRM",
   "sap_hcm": "SAP HCM",
   "sap_s4hana": "SAP S/4HANA",
+  "sap_b1": "SAP Business One",
   "salesforce": "Salesforce",
 };
 

@@ -18,6 +18,7 @@ RELEASE_IMAGES = {
     "refinement",
     "replicon",
     "salesforce",
+    "sap_b1",
     "sap_hcm",
     "sap_s4hana",
     "sap_successfactors",
@@ -95,14 +96,14 @@ def test_wrapped_shell_entrypoints_reexec_an_absolute_script_path() -> None:
         assert 'bash "$0" "$@"' not in source, path
 
 
-def test_rollback_preflight_pulls_all_15_release_images() -> None:
+def test_rollback_preflight_pulls_all_16_release_images() -> None:
     source = _read("scripts/aws_rollback.py")
 
     for image in RELEASE_IMAGES:
         assert image in source
     assert "docker compose" in source
     assert "pull" in source
-    assert "15/15" in source
+    assert "16/16" in source
     assert "target console image exists" not in source
 
 

@@ -11,6 +11,7 @@ CARTRIDGES = (
     "sap_hcm",
     "sap_s4hana",
     "sap_successfactors",
+    "sap_b1",
 )
 
 SAP_DAGS = (
@@ -20,6 +21,8 @@ SAP_DAGS = (
     "cartridges/sap_hcm/dags/sap_hcm_extract_all.py",
     "cartridges/sap_s4hana/dags/sap_s4hana_extract.py",
     "cartridges/sap_s4hana/dags/sap_s4hana_extract_all.py",
+    "cartridges/sap_b1/dags/sap_b1_extract.py",
+    "cartridges/sap_b1/dags/sap_b1_extract_all.py",
 )
 
 

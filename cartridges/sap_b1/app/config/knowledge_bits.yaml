@@ -1,0 +1,45 @@
+# Knowledge Bits run DuckDB SQL over Bronze parquet. Every document table is
+# read as "latest version per company and DocEntry" because an edited
+# document is re-extracted whole; CANCELED = 'N' keeps live documents only.
+knowledge_bits:
+  - id: kb_sales_by_company_month
+    name: "Sales by company and month"
+    description: "A/R invoice totals per company alias and invoice month, in local and system currency."
+    sql: >
+      WITH latest AS (
+        SELECT _company, DocEntry, DocDate, DocTotal, DocTotalSy, CANCELED,
+               ROW_NUMBER() OVER (PARTITION BY _company, DocEntry ORDER BY _extracted_at DESC) AS rn
+        FROM read_parquet('s3://{bucket}/raw/sap_b1/OINV/load_date=*/batch_id=*/*.parquet', hive_partitioning=true, union_by_name=true)
+      )
+      SELECT _company AS company,
+             strftime(CAST(DocDate AS TIMESTAMP), '%Y-%m') AS month,
+             COUNT(*) AS invoices,
+             SUM(DocTotal) AS total_local_currency,
+             SUM(DocTotalSy) AS total_system_currency
+      FROM latest
+      WHERE rn = 1 AND CANCELED = 'N'
+      GROUP BY 1, 2
+      ORDER BY 1, 2
+    pg_table: kb_sales_by_company_month
+    output_path: silver/sap_b1/kb_sales_by_company_month
+
+  - id: kb_stock_on_hand
+    name: "Stock on hand by company and warehouse"
+    description: "Items and on-hand quantity per company alias and warehouse from the latest OITW snapshot."
+    sql: >
+      WITH latest AS (
+        SELECT _company, ItemCode, WhsCode, OnHand, IsCommited, OnOrder,
+               ROW_NUMBER() OVER (PARTITION BY _company, ItemCode, WhsCode ORDER BY _extracted_at DESC) AS rn
+        FROM read_parquet('s3://{bucket}/raw/sap_b1/OITW/load_date=*/batch_id=*/*.parquet', hive_partitioning=true, union_by_name=true)
+      )
+      SELECT _company AS company, WhsCode AS warehouse,
+             COUNT(*) AS items,
+             SUM(OnHand) AS on_hand,
+             SUM(IsCommited) AS committed,
+             SUM(OnOrder) AS on_order
+      FROM latest
+      WHERE rn = 1
+      GROUP BY 1, 2
+      ORDER BY 1, 2
+    pg_table: kb_stock_on_hand
+    output_path: silver/sap_b1/kb_stock_on_hand

@@ -98,6 +98,7 @@ async def test_probe_services_filters_cartridge_services_to_active_connections()
     assert "hubspot" not in names
     assert "sap-hcm" not in names
     assert "sap-s4hana" not in names
+    assert "sap-b1" not in names
     assert "console" in names
     assert "refinement" in names
 

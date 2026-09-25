@@ -343,7 +343,7 @@ if [ "$actual_overlay_sha" != "$IMAGES_OVERLAY_SHA256" ]; then
   exit 22
 fi
 pinned="$(grep -c '@sha256:' "$OVERLAY_FILE" || true)"
-if [ "$pinned" -lt 15 ]; then
+if [ "$pinned" -lt 16 ]; then
   emit "image digest overlay" "FAIL" "only $pinned digest pins in the overlay"
   exit 22
 fi
@@ -359,7 +359,7 @@ fi
 
 available_services="$(docker compose $COMPOSE_FILES config --services)"
 services=""
-for service in console workspace refinement vault mcp-infra airflow sap-successfactors replicon hubspot salesforce banxico inegi sec-edgar sap-hcm sap-s4hana; do
+for service in console workspace refinement vault mcp-infra airflow sap-successfactors replicon hubspot salesforce banxico inegi sec-edgar sap-hcm sap-s4hana sap-b1; do
   if printf '%s\\n' "$available_services" | grep -qx "$service"; then
     services="$services $service"
   fi
@@ -516,7 +516,7 @@ def resolve_release_manifest(
 
     load_manifest is the sealed canonical validator the GCP path already uses:
     canonical bytes, exact filename, exact sibling checksum, owner-scoped image
-    names, 15/15 inventory, and source_sha equality. Passing deploy_ref here is
+    names, 16/16 inventory, and source_sha equality. Passing deploy_ref here is
     what makes it impossible to deploy images built from another commit.
     """
     if manifest_path is None:

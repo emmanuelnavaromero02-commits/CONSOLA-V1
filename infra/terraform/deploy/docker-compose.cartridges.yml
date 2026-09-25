@@ -250,6 +250,42 @@ services:
       retries: 5
       start_period: 30s
 
+  sap-b1:
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/sap_b1:${IMAGE_TAG:?IMAGE_TAG is required}
+    environment:
+      <<: *cartridge-env
+      INTERNAL_API_KEY_SAP_B1_TO_CONSOLE: ${INTERNAL_API_KEY_SAP_B1_TO_CONSOLE:?INTERNAL_API_KEY_SAP_B1_TO_CONSOLE is required}
+      # Least-privilege role created by infra/init/99zzzzl_sap_b1_cartridge_role.sql.
+      DATABASE_URL: "postgresql+psycopg2://omega_cartridge_sap_b1:${OMEGA_CARTRIDGE_SAP_B1_PASSWORD:?OMEGA_CARTRIDGE_SAP_B1_PASSWORD is required}@postgres:5432/modecissions"
+      # Business One database (HANA in production). Company schema names are
+      # "alias=SCHEMA,..." and never live in the repository; the host .env or
+      # the Vault connection sap_b1/default carries them.
+      SAP_B1_DIALECT: ${SAP_B1_DIALECT:-hana}
+      SAP_B1_HOST: ${SAP_B1_HOST:-}
+      SAP_B1_PORT: ${SAP_B1_PORT:-}
+      SAP_B1_USER: ${SAP_B1_USER:-}
+      SAP_B1_PASSWORD: ${SAP_B1_PASSWORD:-}
+      SAP_B1_DATABASE: ${SAP_B1_DATABASE:-}
+      SAP_B1_COMPANIES: ${SAP_B1_COMPANIES:-}
+      # Intercompany partners "alias:CARDCODE=counterparty,..." (customer data,
+      # never in the repository).
+      SAP_B1_INTERCOMPANY: ${SAP_B1_INTERCOMPANY:-}
+      SAP_B1_ENCRYPT: ${SAP_B1_ENCRYPT:-true}
+      SAP_B1_SSL_VALIDATE_CERTIFICATE: ${SAP_B1_SSL_VALIDATE_CERTIFICATE:-true}
+      SAP_B1_CONNECT_TIMEOUT_SECONDS: ${SAP_B1_CONNECT_TIMEOUT_SECONDS:-15}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - modecissions_net
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8206/health', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
 networks:
   modecissions_net:
     external: false

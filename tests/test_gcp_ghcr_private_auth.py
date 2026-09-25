@@ -22,6 +22,7 @@ RELEASE_IMAGES = {
     "refinement",
     "replicon",
     "salesforce",
+    "sap_b1",
     "sap_hcm",
     "sap_s4hana",
     "sap_successfactors",
@@ -97,11 +98,11 @@ def test_release_overlay_is_digest_locked_and_disables_build_and_pull() -> None:
 
     for image in RELEASE_IMAGES:
         assert f"  {image}" in preflight
-    assert "15/15" in preflight
+    assert "16/16" in preflight
     assert "sha256:[0-9a-f]{64}" in preflight
     assert "@%s" in preflight
-    assert overlay.count("build: !reset null") == 17
-    assert overlay.count("pull_policy: never") == 17
+    assert overlay.count("build: !reset null") == 18
+    assert overlay.count("pull_policy: never") == 18
     for lock_name in (
         "AIRFLOW",
         "BANXICO",
@@ -112,6 +113,7 @@ def test_release_overlay_is_digest_locked_and_disables_build_and_pull() -> None:
         "REFINEMENT",
         "REPLICON",
         "SALESFORCE",
+        "SAP_B1",
         "SAP_HCM",
         "SAP_S4HANA",
         "SAP_SUCCESSFACTORS",
@@ -244,7 +246,7 @@ def test_auth_runner_rejects_latest_without_contacting_metadata(
     assert not curl_marker.exists()
 
 
-def test_preflight_pulls_exactly_15_and_writes_digest_lock(tmp_path: Path) -> None:
+def test_preflight_pulls_exactly_16_and_writes_digest_lock(tmp_path: Path) -> None:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     docker_config = tmp_path / "docker-config"
@@ -297,17 +299,17 @@ esac
     )
 
     assert result.returncode == 0, result.stderr
-    assert "PASS\t15/15" in result.stdout
+    assert "PASS\t16/16" in result.stdout
     pulls = pull_record.read_text(encoding="utf-8").splitlines()
-    assert len(pulls) == 15
+    assert len(pulls) == 16
     assert {line.rsplit("/", 1)[1].split(":", 1)[0] for line in pulls} == RELEASE_IMAGES
     lock_lines = [
         line
         for line in lock_file.read_text(encoding="utf-8").splitlines()
         if line and not line.startswith("#")
     ]
-    assert len(lock_lines) == 15
-    assert len({line.split("=", 1)[0] for line in lock_lines}) == 15
+    assert len(lock_lines) == 16
+    assert len({line.split("=", 1)[0] for line in lock_lines}) == 16
     assert all(":v1.45.207-beta@sha256:" in line for line in lock_lines)
     assert lock_file.stat().st_mode & 0o777 == 0o600
 

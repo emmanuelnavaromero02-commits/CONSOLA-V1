@@ -33,7 +33,7 @@ router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
 # console/app/services/mcp_registry.py and the router map in
 # console/app/routers/cartridges.py. Adding a new cartridge means
 # updating those + this list (the test guards parity).
-_CARTRIDGES = ("replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors")
+_CARTRIDGES = ("replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors", "sap_b1")
 VAULT_URL = os.environ.get("VAULT_URL", "http://vault:8300").rstrip("/")
 _PLATFORM_ROLES = {"owner", "super_admin", "admin"}
 

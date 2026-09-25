@@ -887,8 +887,8 @@ Browser ──HTTPS──► ALB ──HTTP target privado──► EC2 App :800
 ## v1.43.1 — Cartridges deployed separately (Codex P0-4)
 
 This compose file (**`docker-compose.aws.yml`**) **does NOT include
-the 6 cartridges** (`replicon`, `hubspot`, `salesforce`, `sap_hcm`,
-`sap_s4hana`, `sap_successfactors`). Reason: cartridges have independent scaling +
+the 7 cartridges** (`replicon`, `hubspot`, `salesforce`, `sap_hcm`,
+`sap_s4hana`, `sap_successfactors`, `sap_b1`). Reason: cartridges have independent scaling +
 release cadence from the core platform and typically live in a
 separate compute pool (their own EC2, ECS service, or Kubernetes
 namespace).
@@ -898,7 +898,7 @@ What the AWS compose **does** ship:
 1. **DAG mounts** — `cartridges/<c>/dags/` is mounted into the
    Airflow workers, so the DAGs still parse and schedule.
 2. **Cartridge URL env vars** — `SAP_HCM_URL`, `SAP_S4HANA_URL`,
-   `SAP_SUCCESSFACTORS_URL`, `REPLICON_URL`, `HUBSPOT_URL`, `SALESFORCE_URL`
+   `SAP_SUCCESSFACTORS_URL`, `SAP_B1_URL`, `REPLICON_URL`, `HUBSPOT_URL`, `SALESFORCE_URL`
    are threaded into both `airflow` and `airflow-scheduler`. The DAGs read these env vars
    (v1.43.1 Claude B2 hardening) so the operator points them at
    wherever the cartridges actually run.

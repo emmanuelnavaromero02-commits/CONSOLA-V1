@@ -47,9 +47,12 @@ def looks_odata(cartridge_id: str, connector: dict[str, Any], args: dict[str, An
     explicit = str(args.get("source_kind") or args.get("kind") or "").lower()
     if explicit in {"odata", "sap"}:
         return True
+    auth = connector.get("auth") if isinstance(connector.get("auth"), dict) else {}
+    if str(auth.get("type") or "").lower() == "database":
+        # SAP Business One is read over SQL, not OData, despite the sap_ prefix.
+        return False
     if cartridge_id.startswith("sap_"):
         return True
-    auth = connector.get("auth") if isinstance(connector.get("auth"), dict) else {}
     return str(auth.get("type") or "").lower() in {
         "basic",
         "oauth2_client_credentials",

@@ -36,6 +36,7 @@ SERVICES = {
     "sap_hcm": "./cartridges/sap_hcm",
     "sap_s4hana": "./cartridges/sap_s4hana",
     "sap_successfactors": "./cartridges/sap_successfactors",
+    "sap_b1": "./cartridges/sap_b1",
     "salesforce": "./cartridges/salesforce",
 }
 
@@ -49,6 +50,7 @@ CARTRIDGE_ROOT_TEST_PREFIXES = {
     "sap_hcm": "sap_hcm",
     "sap_s4hana": "sap_s4hana",
     "sap_successfactors": "sap_successfactors",
+    "sap_b1": "sap_b1",
 }
 
 PY_RUNTIME_ROOTS = (
@@ -305,7 +307,7 @@ def _root_test_targets(files: list[str]) -> str:
             )
     if _any(
         files,
-        r"^cartridges/(?:hubspot|replicon|salesforce|sap_hcm|sap_s4hana)/app/core/(?:config|minio_client)\.py$",
+        r"^cartridges/(?:hubspot|replicon|salesforce|sap_hcm|sap_s4hana|sap_b1)/app/core/(?:config|minio_client)\.py$",
     ):
         targets.update(
             target
@@ -317,7 +319,7 @@ def _root_test_targets(files: list[str]) -> str:
         )
     if _any(
         files,
-        r"^cartridges/(?:hubspot|replicon|salesforce|sap_hcm|sap_s4hana)/app/services/duckdb_service\.py$",
+        r"^cartridges/(?:hubspot|replicon|salesforce|sap_hcm|sap_s4hana|sap_b1)/app/services/duckdb_service\.py$",
         r"^mcp-infra/app/lakehouse_runtime\.py$",
     ):
         targets.update(
@@ -327,7 +329,7 @@ def _root_test_targets(files: list[str]) -> str:
         )
     if _any(
         files,
-        r"^cartridges/(?:hubspot|replicon|salesforce|sap_hcm|sap_s4hana|sap_successfactors)/Dockerfile$",
+        r"^cartridges/(?:hubspot|replicon|salesforce|sap_hcm|sap_s4hana|sap_successfactors|sap_b1)/Dockerfile$",
         r"^mcp-infra/(?:app/lakehouse_runtime\.py|scripts/(?:install_duckdb_extensions|duckdb_offline_smoke)\.py)$",
     ):
         targets.update(

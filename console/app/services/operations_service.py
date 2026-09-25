@@ -51,6 +51,7 @@ _CARTRIDGE_SERVICE_PROBES = {
     "sap-hcm":            ("sap_hcm", "SAP_HCM_URL", "http://sap-hcm:8202", "http://127.0.0.1:8202", "/health"),
     "sap-successfactors": ("sap_successfactors", "SAP_SUCCESSFACTORS_URL", "http://sap-successfactors:8203", "http://127.0.0.1:8203", "/health"),
     "sap-s4hana":         ("sap_s4hana", "SAP_S4HANA_URL", "http://sap-s4hana:8204", "http://127.0.0.1:8204", "/health"),
+    "sap-b1":             ("sap_b1", "SAP_B1_URL", "http://sap-b1:8206", "http://127.0.0.1:8206", "/health"),
 }
 
 

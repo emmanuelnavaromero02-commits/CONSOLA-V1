@@ -121,13 +121,14 @@ def test_mcp_registry_startup_includes_builtin_cartridges():
         "sap_hcm",
         "sap_successfactors",
         "sap_s4hana",
+        "sap_b1",
     ):
         assert f'"id":          "{cart_id}"' in body, (
             f"startup() missing cartridge {cart_id!r}"
         )
     # And every cartridge is in the cartridge category, not the
     # legacy 'mcp' or 'monitoring' buckets.
-    assert body.count('"category":    "cartridge"') == 6
+    assert body.count('"category":    "cartridge"') == 7
 
 
 def test_mcp_registry_startup_cartridge_urls_from_env():
@@ -141,6 +142,7 @@ def test_mcp_registry_startup_cartridge_urls_from_env():
         ("SAP_HCM_URL",            "http://sap-hcm:8202"),
         ("SAP_SUCCESSFACTORS_URL", "http://sap-successfactors:8203"),
         ("SAP_S4HANA_URL",         "http://sap-s4hana:8204"),
+        ("SAP_B1_URL",             "http://sap-b1:8206"),
     ]:
         assert f'os.environ.get("{env_var}", "{default}")' in src, (
             f"{env_var} not used with default {default!r}"

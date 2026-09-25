@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { BarChart3, Calculator, Clock3, Handshake, Landmark, Package, TrendingUp, Users } from "lucide-react";
+import { BarChart3, Boxes, Calculator, Clock3, Handshake, Landmark, Package, TrendingUp, Users } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { StatusBadge, type ConnectionStatus } from "./StatusBadge";
 
@@ -22,6 +22,7 @@ const ICON_FOR_ID: Record<string, LucideIcon> = {
   sap_hcm:             Users,
   sap_s4hana:          Calculator,
   sap_successfactors:  TrendingUp,
+  sap_b1:              Boxes,
 };
 
 /**

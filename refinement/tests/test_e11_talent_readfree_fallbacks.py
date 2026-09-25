@@ -18,6 +18,7 @@ import duckdb
 import pytest
 
 from refinement.app.successfactors_fallbacks import (
+    fallback_dataset_for_successfactors,
     is_missing_successfactors_dependency_error,
     readfree_empty_dataset_for_successfactors,
 )
@@ -116,6 +117,92 @@ def test_shapes_keep_downstream_real_sql_bindable():
 
 def test_marker_recognizes_the_real_duckdb_404_text():
     assert is_missing_successfactors_dependency_error(Exception(REAL_DUCKDB_404))
+
+
+# DuckDB 1.2.2 (the version refinement pins) has two shapes for a missing
+# object: REAL_DUCKDB_404 above when the opening HEAD answers 404, and this one
+# when a ranged GET or a listing does.
+DUCKDB_12_OBJECT_404 = (
+    "HTTP Error: HTTP GET error on '/lakehouse/silver/sap_successfactors/"
+    "sap_successfactors_performance_cycle/tenant_id%3De75f/workspace_id%3D1a2b/"
+    "data.parquet' (HTTP 404)"
+)
+
+# And this is what the SAME prefix looks like when the lakehouse itself fails:
+# the S3 listing behind a glob answering 400, a 403 from revoked credentials,
+# a 500 from the backend. None of these is an absent source.
+S3_LISTING_400 = (
+    "HTTP Error: HTTP GET error on '/?encoding-type=url&list-type=2&prefix="
+    "silver%2Fsap_successfactors%2Fsap_successfactors_performance_cycle%2F"
+    "tenant_id%3De75f%2F' (HTTP 400)"
+)
+S3_OBJECT_403 = (
+    "HTTP Error: HTTP GET error on '/lakehouse/silver/sap_successfactors/"
+    "sap_successfactors_performance_cycle/tenant_id%3De75f/data.parquet' (HTTP 403)"
+)
+S3_LISTING_404 = (
+    "HTTP Error: HTTP GET error on '/?encoding-type=url&list-type=2&prefix="
+    "silver%2F' (HTTP 404)"
+)
+
+
+def test_marker_recognizes_the_duckdb_12_object_404_text():
+    assert is_missing_successfactors_dependency_error(Exception(DUCKDB_12_OBJECT_404))
+
+
+@pytest.mark.parametrize(
+    "infra_error",
+    [
+        S3_LISTING_400,
+        S3_OBJECT_403,
+        # A 404 on the listing is a bucket that does not exist, not a source
+        # that was never materialized.
+        S3_LISTING_404,
+        "HTTP Error: HTTP GET error on '/lakehouse/x.parquet' (HTTP 500)",
+        # A file replaced between the HEAD and the ranged GET.
+        "HTTP Error: HTTP GET error on '/lakehouse/x.parquet' (HTTP 416) "
+        "This could mean the file was changed. Try disabling the duckdb http "
+        "metadata cache if enabled, and confirm the server supports range requests.",
+        # The connection-level shapes of httpfs 1.2.2.
+        "IO Error: Could not establish connection error for HTTP HEAD to "
+        "'http://minio:9000/lakehouse/silver/x/data.parquet' with status 0",
+        "IO Error: Connection timed out error for HTTP GET to "
+        "'/lakehouse/?encoding-type=url&list-type=2&prefix=silver%2F'",
+    ],
+)
+def test_lakehouse_failures_are_never_a_missing_dependency(infra_error):
+    """The regression: 'http get error' alone matched a failed S3 listing, so a
+    lakehouse outage published an empty degraded gold with HTTP 200."""
+    exc = Exception(infra_error)
+    assert not is_missing_successfactors_dependency_error(exc)
+    ds = {"name": "sap_successfactors_performance_cycle", "sql_def": "SELECT 1"}
+    assert readfree_empty_dataset_for_successfactors(ds, exc) is None
+    profile = {"name": "sap_successfactors_talent_employee_profile", "sql_def": "SELECT 1"}
+    assert fallback_dataset_for_successfactors(profile, exc) is None
+
+
+def test_lakehouse_failure_raises_through_the_fallback_wrapper(monkeypatch):
+    """End to end through main: a failed S3 listing must leave the wrapper as an
+    exception, so the caller records an error instead of a degraded gold."""
+    main = pytest.importorskip("refinement.app.main")
+
+    calls: list[str] = []
+
+    class _Engine:
+        def materialize(self, ds, user_context):
+            calls.append(ds.get("sql_def") or "")
+            raise RuntimeError(S3_LISTING_400)
+
+    monkeypatch.setattr(main, "engine", _Engine())
+    ds = {
+        "name": "sap_successfactors_talent_employee_profile",
+        "sql_def": "SELECT real",
+        "description": "perfil",
+    }
+    with pytest.raises(RuntimeError, match="list-type=2"):
+        main._materialize_with_operational_fallback(ds, {})
+    # One attempt, the real SQL. No fallback SQL, no read-free projection.
+    assert calls == ["SELECT real"]
 
 
 def test_readfree_engages_only_on_missing_dependency():

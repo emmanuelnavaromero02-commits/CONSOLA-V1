@@ -161,6 +161,7 @@ def test_compose_validate_declares_required_pair_keys():
         "INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE",
         "INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE",
         "INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE",
+        "INTERNAL_API_KEY_SAP_B1_TO_CONSOLE",
     ):
         assert key in raw
 
