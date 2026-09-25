@@ -21,6 +21,8 @@ def _internal_key() -> str:
     raise RuntimeError("INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE missing; legacy fallback disabled in production")
 
 CARTRIDGE_URL = os.environ.get("SAP_HCM_URL", "http://sap-hcm:8202")
+REQUEST_TIMEOUT_SECONDS = 60
+JOB_DEADLINE_SECONDS = 4 * 3600
 
 default_args = {
     "owner": "omega",
@@ -47,15 +49,18 @@ def sap_hcm_extract_all():
             if conf.get(key)
         }
 
-        with httpx.Client(timeout=300) as client:
-            res = client.post(
+        from service_job_client import idempotency_key, run_service_job
+
+        with httpx.Client(timeout=REQUEST_TIMEOUT_SECONDS) as client:
+            return run_service_job(
+                client,
                 f"{CARTRIDGE_URL}/extract-all",
                 params={"mode": conf.get("mode") or "incremental"},
                 json=skill_body,
                 headers=headers,
+                key=idempotency_key(context, "extract-all"),
+                deadline_seconds=JOB_DEADLINE_SECONDS,
             )
-            res.raise_for_status()
-            return res.json()
 
     trigger_extract_all()
 

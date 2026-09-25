@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from app.core.async_jobs import AsyncJobMiddleware, header_authorizer
 from app.api.deps import verify_api_key
 from app.api.routes_health import router as health_router
 from app.api.routes_console import router as console_router
@@ -84,6 +85,11 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
 from app.middleware.request_id import RequestIDMiddleware  # noqa: E402
 
 app.add_middleware(RequestIDMiddleware)
+app.add_middleware(
+    AsyncJobMiddleware,
+    authorize=header_authorizer(verify_api_key),
+    paths=(r"/entities/[A-Za-z0-9_.-]+/extract", r"/extract-all"),
+)
 
 app.include_router(health_router)
 app.include_router(skills_router)

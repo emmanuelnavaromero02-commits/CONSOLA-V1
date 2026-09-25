@@ -144,13 +144,12 @@ def test_airflow_materializes_via_runtime_envelope():
         REPO_ROOT / "cartridges" / "sap_successfactors" / "app" / "core"
         / "refinement_triggers.py"
     ).read_text(encoding="utf-8")
-    assert "def _runtime_materialize_request(" in src
+    assert "async def _runtime_materialize(" in src
     assert "build_materialize_context" in src
-    call_sites = src.count("await _runtime_materialize_request(")
-    assert call_sites >= 3, (
-        "silver refresh plus both gold-sweep loops must use the runtime "
-        f"route under airflow (found {call_sites})"
-    )
+    assert src.count("await _runtime_materialize(") == 2
+    assert src.count("await _refresh_dataset(") == 2
+    for phase in ("entity-silver", "curated-silver", "gold"):
+        assert f'phase="{phase}"' in src
     assert 'internal_service == "airflow"' in src
     assert "/refresh-by-source" in src and "/datasets/" in src, (
         "the cartridge-container v1 paths must survive"

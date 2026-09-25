@@ -233,14 +233,10 @@ def test_allow_partial_never_absorbs_runtime_authority_failure(monkeypatch):
         lambda **_kwargs: {"trusted": True},
     )
 
-    class _Rejected:
-        status_code = 403
+    def rejected(*_args, **_kwargs):
+        raise dataset_refresh_materialize.ServiceJobError("rejected", status_code=403)
 
-    monkeypatch.setattr(
-        dataset_refresh_materialize.requests,
-        "post",
-        lambda *_args, **_kwargs: _Rejected(),
-    )
+    monkeypatch.setattr(dataset_refresh_materialize, "run_service_job", rejected)
     context = _materialize_context(allow_partial=True)
     with pytest.raises(RuntimeError, match="failed closed"):
         dataset_refresh_materialize.materialize_in_order(
@@ -290,8 +286,8 @@ def _replay_reservation(monkeypatch, result):
         },
     )
     monkeypatch.setattr(
-        dataset_refresh_materialize.requests,
-        "post",
+        dataset_refresh_materialize,
+        "run_service_job",
         lambda *_args, **_kwargs: pytest.fail("replay performed a second POST"),
     )
 

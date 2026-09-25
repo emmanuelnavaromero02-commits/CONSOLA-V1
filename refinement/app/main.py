@@ -1356,8 +1356,16 @@ async def _http_exception_handler(request: Request, exc: HTTPException):
 
 
 from app.middleware.request_id import RequestIDMiddleware  # noqa: E402
+from app.async_jobs import AsyncJobMiddleware  # noqa: E402
 
 app.add_middleware(RequestIDMiddleware)
+app.add_middleware(
+    AsyncJobMiddleware,
+    authorize=lambda headers: verify_api_key(
+        headers.get("x-api-key"), headers.get("x-internal-service")
+    ),
+    paths=(r"/mcp/invoke",),
+)
 
 
 @app.get("/healthz")

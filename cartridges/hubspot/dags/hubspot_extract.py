@@ -40,6 +40,8 @@ def _internal_key() -> str:
 
 
 CARTRIDGE_URL = os.environ.get("HUBSPOT_URL", "http://hubspot:8210")
+REQUEST_TIMEOUT_SECONDS = 60
+JOB_DEADLINE_SECONDS = 2 * 3600
 
 
 default_args = {
@@ -119,14 +121,17 @@ def hubspot_extract():
             for key in ("tenant_id", "workspace_id", "security_context")
             if conf.get(key)
         }
-        with httpx.Client(timeout=600) as client:
-            res = client.post(
+        from service_job_client import idempotency_key, run_service_job
+
+        with httpx.Client(timeout=REQUEST_TIMEOUT_SECONDS) as client:
+            result = run_service_job(
+                client,
                 f"{CARTRIDGE_URL}/skills/{endpoint}/{entity}",
                 json=skill_body,
                 headers=headers,
+                key=idempotency_key(context, entity, endpoint),
+                deadline_seconds=JOB_DEADLINE_SECONDS,
             )
-            res.raise_for_status()
-            result = res.json()
         if isinstance(result, dict):
             result.setdefault("entity", entity)
         return (

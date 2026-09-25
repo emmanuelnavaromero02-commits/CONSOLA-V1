@@ -55,11 +55,11 @@
     },
     {
       "path": "airflow/dags/dataset_refresh_materialize.py",
-      "sha256": "f5c50879f8799be03c918c790796ec0b56dbc7f7ec786ae19f22e77315c1d451"
+      "sha256": "ee0785507301170d33d630a3fe34b5be368e7cc8dc386813f9241a23c7286073"
     },
     {
       "path": "airflow/dags/dataset_refresh_outcome.py",
-      "sha256": "73b210806e2f250f45842c389f9e30a55891e7acbb1a7a51f13cc48ea6642d06"
+      "sha256": "394d780fdc8a09c8237f6b19a04f6d79ed4371954ffef60f2eede8c123c97124"
     },
     {
       "path": "airflow/dags/entity_scheduler.py",
@@ -98,6 +98,10 @@
       "sha256": "d264057fc889d79b57eaa6978b96fff799896749fca4cc94f3f82fce777690d6"
     },
     {
+      "path": "airflow/dags/service_job_client.py",
+      "sha256": "283b1e7f78a687573c7efc635fa0c34c5ca24352501a851fe8ae6b3951129191"
+    },
+    {
       "path": "cartridges/banxico/app/__init__.py",
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
@@ -120,6 +124,10 @@
     {
       "path": "cartridges/banxico/app/core/__init__.py",
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "cartridges/banxico/app/core/async_jobs.py",
+      "sha256": "e1f927b6cfcd7d26e14bbeb548d05e64f702e2d09ea6c86db96340cca7d4447e"
     },
     {
       "path": "cartridges/banxico/app/core/banxico_client.py",
@@ -147,7 +155,7 @@
     },
     {
       "path": "cartridges/banxico/app/main.py",
-      "sha256": "d370aa2058f1d02772db21a67a0ba1753e5cde3c48506de9855f83c2d9c9b89c"
+      "sha256": "2144d11f2a84e7b48edad5f31751a58dec16dba9a384b1bd379c081ff23dd5ba"
     },
     {
       "path": "cartridges/banxico/app/middleware/__init__.py",
@@ -199,7 +207,7 @@
     },
     {
       "path": "cartridges/banxico/dags/banxico_extract.py",
-      "sha256": "b6e7f66da8ae6e3426106ff5079a480308cebde75fa2676b4b60207888ae7e0a"
+      "sha256": "cf82e6c7147c22c298ad1c8a2ce3ca6cbb82d7f7433213f282ea2b44fe8a955a"
     },
     {
       "path": "cartridges/banxico/tests/conftest.py",
@@ -254,6 +262,10 @@
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
+      "path": "cartridges/hubspot/app/core/async_jobs.py",
+      "sha256": "e1f927b6cfcd7d26e14bbeb548d05e64f702e2d09ea6c86db96340cca7d4447e"
+    },
+    {
       "path": "cartridges/hubspot/app/core/auth_factory.py",
       "sha256": "174b8a28f8335c8d859a2d889e783f61f8dca93e6dfd4ebf918de6ab9fd8529e"
     },
@@ -295,7 +307,7 @@
     },
     {
       "path": "cartridges/hubspot/app/main.py",
-      "sha256": "3cf223310b795fe82b8cc919970cb3ad8285704a7f01a9f4bd67544866918079"
+      "sha256": "4a680b0d54a0c681aeb24bdb82a732e4ad9c12a1899cef53f8c308a2971eb533"
     },
     {
       "path": "cartridges/hubspot/app/mcp_server.py",
@@ -351,11 +363,11 @@
     },
     {
       "path": "cartridges/hubspot/dags/hubspot_extract.py",
-      "sha256": "3fe295f4b7721ab8e1cc484d6d8afb8c5b660f4cbeff835ad0628af376b4949f"
+      "sha256": "6dbaf039251b88728a249ce76169fc6f7adfd1cf576fa7132ad58a83c072563a"
     },
     {
       "path": "cartridges/hubspot/dags/hubspot_extract_all.py",
-      "sha256": "384f222108c0cb5f28d6b13e54eb7663f181a4132fd52ca2459a20067bf99f0b"
+      "sha256": "38f4f7d3a01912abde92d557827f48ad90881d246fdd4f5e480a84de96351e3b"
     },
     {
       "path": "cartridges/hubspot/tests/conftest.py",
@@ -394,6 +406,10 @@
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
+      "path": "cartridges/inegi/app/core/async_jobs.py",
+      "sha256": "e1f927b6cfcd7d26e14bbeb548d05e64f702e2d09ea6c86db96340cca7d4447e"
+    },
+    {
       "path": "cartridges/inegi/app/core/config.py",
       "sha256": "bf0b4cab551a7025efdda7abc933ab6bc01023360a5b274e8fac6843c366fdf9"
     },
@@ -419,7 +435,7 @@
     },
     {
       "path": "cartridges/inegi/app/main.py",
-      "sha256": "b5e4e83dcb5df536b66841f4277b594b997ab7759a9fea8e51f0e2ad4f49a429"
+      "sha256": "65416ef51f72645003275ae1b6bc795fdb5425603a9b61ca72d477ad2a180932"
     },
     {
       "path": "cartridges/inegi/app/middleware/__init__.py",
@@ -471,7 +487,7 @@
     },
     {
       "path": "cartridges/inegi/dags/inegi_extract.py",
-      "sha256": "fce96e717b8906d6a9b708fd7856cfbd20753d688255e81eb79c121fce9923e9"
+      "sha256": "260961ac50dc3b991d982edd4ea3c7ec6f9bcda31d457af101297a8b2720b6ac"
     },
     {
       "path": "cartridges/inegi/tests/conftest.py",
@@ -678,6 +694,10 @@
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
+      "path": "cartridges/salesforce/app/core/async_jobs.py",
+      "sha256": "e1f927b6cfcd7d26e14bbeb548d05e64f702e2d09ea6c86db96340cca7d4447e"
+    },
+    {
       "path": "cartridges/salesforce/app/core/auth_factory.py",
       "sha256": "174b8a28f8335c8d859a2d889e783f61f8dca93e6dfd4ebf918de6ab9fd8529e"
     },
@@ -723,7 +743,7 @@
     },
     {
       "path": "cartridges/salesforce/app/main.py",
-      "sha256": "8a592d53cafff4c4022e9360ebaa990915be60202de2e43424907cce7ca15faf"
+      "sha256": "bdad91fdac577f2165754e187eec8a91f47dd5a7447db403514f8a3ff6e61ec0"
     },
     {
       "path": "cartridges/salesforce/app/mcp_server.py",
@@ -783,11 +803,11 @@
     },
     {
       "path": "cartridges/salesforce/dags/salesforce_extract.py",
-      "sha256": "beb303fbf60697b317fb75be13e5c9b78dfefee329d1c64c3667fb51b4b23708"
+      "sha256": "9a75dbcf0ae287cfedbbb428b2304edb0f2e0f386ae84937809dd11a2eef692b"
     },
     {
       "path": "cartridges/salesforce/dags/salesforce_extract_all.py",
-      "sha256": "13caf8c5ba5334ebe301edf99eeb83e7a97877d791b3d28c030c4e5fc2438e93"
+      "sha256": "bda69af32ec9c4593b6d0dc9a486964b201dc23c606d4129daf8993739d81dc1"
     },
     {
       "path": "cartridges/salesforce/tests/conftest.py",
@@ -838,6 +858,10 @@
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
+      "path": "cartridges/sap_b1/app/core/async_jobs.py",
+      "sha256": "e1f927b6cfcd7d26e14bbeb548d05e64f702e2d09ea6c86db96340cca7d4447e"
+    },
+    {
       "path": "cartridges/sap_b1/app/core/b1_source.py",
       "sha256": "9b9c1d4bf328de7cbc9d805b05e43fd9573370816db9253a4c35d227de1ef8fc"
     },
@@ -879,7 +903,7 @@
     },
     {
       "path": "cartridges/sap_b1/app/main.py",
-      "sha256": "f65d21cfbd4dcf067bd81f3b2dc592832caf5547dbcef636e083fca8715176b2"
+      "sha256": "0483727ed53b0e0d89b306fdb3f397b85ba9cecaf7e4bb988b9766f79f63225f"
     },
     {
       "path": "cartridges/sap_b1/app/mcp_server.py",
@@ -967,11 +991,11 @@
     },
     {
       "path": "cartridges/sap_b1/dags/sap_b1_extract.py",
-      "sha256": "67973d6a16a5350f34bccf02e9bb838e1b9599dfd89127ed9b242447dd136aab"
+      "sha256": "b4b3ca1064db78ca7469c2b8fc9f308102a1ffb7446b34244c4655f54568e3b4"
     },
     {
       "path": "cartridges/sap_b1/dags/sap_b1_extract_all.py",
-      "sha256": "bfa1f566d8dd097da18433cb9ee6193316404c00f270a571d839146d392e9eb5"
+      "sha256": "1c3991d109135802178ee8d76a23da5b9a0a0bf41b94e05b564ed5449888ec63"
     },
     {
       "path": "cartridges/sap_b1/dags/sap_b1_refresh.py",
@@ -1058,6 +1082,10 @@
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
+      "path": "cartridges/sap_hcm/app/core/async_jobs.py",
+      "sha256": "e1f927b6cfcd7d26e14bbeb548d05e64f702e2d09ea6c86db96340cca7d4447e"
+    },
+    {
       "path": "cartridges/sap_hcm/app/core/auth_factory.py",
       "sha256": "174b8a28f8335c8d859a2d889e783f61f8dca93e6dfd4ebf918de6ab9fd8529e"
     },
@@ -1103,7 +1131,7 @@
     },
     {
       "path": "cartridges/sap_hcm/app/main.py",
-      "sha256": "3b841fb7d1d3fa833436fadab4f1e8e4a8dd7d22121a07ace7be2eaf1677d40a"
+      "sha256": "5fcc694dae54cda87e8fc8e41770e4557d4d059522e677485bb5297df6e13b08"
     },
     {
       "path": "cartridges/sap_hcm/app/mcp_server.py",
@@ -1171,11 +1199,11 @@
     },
     {
       "path": "cartridges/sap_hcm/dags/sap_hcm_extract.py",
-      "sha256": "c29dc2176c13e6c955d49353b7b336cc10d5e469cdb6ecd76bb99f6c0ea16698"
+      "sha256": "14886ef07e9739e2e1d6d324e2e28d8cfe35185a523ed06888f02c681d3daba2"
     },
     {
       "path": "cartridges/sap_hcm/dags/sap_hcm_extract_all.py",
-      "sha256": "bac0112bd0e1f0d1c81e42593b6ef147a62e41c5dd2e070d0844752361dd52a3"
+      "sha256": "1b715521293ebd6fcb9db5f011fe4e26d4aadd2234aaf7ef850faedb763256f8"
     },
     {
       "path": "cartridges/sap_hcm/tests/conftest.py",
@@ -1226,6 +1254,10 @@
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
+      "path": "cartridges/sap_s4hana/app/core/async_jobs.py",
+      "sha256": "e1f927b6cfcd7d26e14bbeb548d05e64f702e2d09ea6c86db96340cca7d4447e"
+    },
+    {
       "path": "cartridges/sap_s4hana/app/core/auth_factory.py",
       "sha256": "174b8a28f8335c8d859a2d889e783f61f8dca93e6dfd4ebf918de6ab9fd8529e"
     },
@@ -1271,7 +1303,7 @@
     },
     {
       "path": "cartridges/sap_s4hana/app/main.py",
-      "sha256": "7db7c540e486aa4e8a9623f56b576f6816a2d079e6a7e0f679fb86c7faa25d1c"
+      "sha256": "438cca22240d9095a75af8037844891af591de24cdf376170137c01dae8084bf"
     },
     {
       "path": "cartridges/sap_s4hana/app/mcp_server.py",
@@ -1339,11 +1371,11 @@
     },
     {
       "path": "cartridges/sap_s4hana/dags/sap_s4hana_extract.py",
-      "sha256": "239d94d83f5c9669706c38f62f695de77cdcfd7eddccbfd37b5ea3087a3e2eb5"
+      "sha256": "01aee8ea65da3813284a5881d667f4de271dce8dedeac12ffa33db7dcf3d9c23"
     },
     {
       "path": "cartridges/sap_s4hana/dags/sap_s4hana_extract_all.py",
-      "sha256": "36d1ec7986d00a7a9c10d790106c744d09de061ab2b5437b798b187ec3b44575"
+      "sha256": "96b45ef03f78951c8bc427170655059faee2c41a4709c60c7aaf47c2813ddc5e"
     },
     {
       "path": "cartridges/sap_s4hana/tests/conftest.py",
@@ -1427,7 +1459,7 @@
     },
     {
       "path": "cartridges/sap_successfactors/app/core/refinement_triggers.py",
-      "sha256": "f0341f0899b52a57b44d5d3859fbb0f21eee873d6e0592659272176f0524b79a"
+      "sha256": "46183f72368af34d727668be55368744dea5e6823caeba8e46fc8cdafa1250ac"
     },
     {
       "path": "cartridges/sap_successfactors/app/core/request_context.py",
@@ -1630,6 +1662,10 @@
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
+      "path": "cartridges/sec_edgar/app/core/async_jobs.py",
+      "sha256": "e1f927b6cfcd7d26e14bbeb548d05e64f702e2d09ea6c86db96340cca7d4447e"
+    },
+    {
       "path": "cartridges/sec_edgar/app/core/config.py",
       "sha256": "c7e068c452df64270c33abb8751ac3f693c15c2a2968b034bcd8782a48c1e466"
     },
@@ -1655,7 +1691,7 @@
     },
     {
       "path": "cartridges/sec_edgar/app/main.py",
-      "sha256": "b0a3967572ce86b2f6295a06a5b40702dc73b8146eae8b2dd9e823f18179338f"
+      "sha256": "a801c5d958bd58bc5f2f791a5ed8e840f7ab2df0a0d02d6121052b77fe7c2a0d"
     },
     {
       "path": "cartridges/sec_edgar/app/middleware/__init__.py",
@@ -1715,7 +1751,7 @@
     },
     {
       "path": "cartridges/sec_edgar/dags/sec_edgar_extract.py",
-      "sha256": "4a13694b8494045908e54870addbf71dfefdd18b0b7dd3843d90e7ecb5d60d8a"
+      "sha256": "51a96c74ab69d69ed8cfcf81975e4f8d3f956dba928b608a54631796b667bc51"
     },
     {
       "path": "cartridges/sec_edgar/tests/conftest.py",
@@ -3863,7 +3899,7 @@
     },
     {
       "path": "tests/test_a1_sf_cycle_autoschedule.py",
-      "sha256": "bb66e6bc4f042a3861f9913687829deacfaf0444b6e1e98aaa16227e33188889"
+      "sha256": "64d2119cef3c146001dcbe3251c2c3dac9f4843b8b9c4dc7c8deba8237e1ea56"
     },
     {
       "path": "tests/test_agent_api_admin_only.py",
@@ -4591,7 +4627,7 @@
     },
     {
       "path": "tests/test_dataset_refresh_chain_fail_closed.py",
-      "sha256": "926ac70469b4444b66e17f1cb93322cd2430fed5bfeb3c58b519366846164767"
+      "sha256": "8c94362c587287856c2533ee4ce1e59af64b527582bc6e3ae10d522e96350c26"
     },
     {
       "path": "tests/test_dataset_refresh_graph_cartridge_seed.py",
@@ -5543,7 +5579,7 @@
     },
     {
       "path": "tests/test_runtime_security_context_red.py",
-      "sha256": "3db9d08ab9f298f2ed73748308ff4d6c063ddbcc772cc19c7e1df5b90a6b2c94"
+      "sha256": "85cda593ba6a40e21f2dfb081c38bd2115b2a5b1f00340c94e3205329539027c"
     },
     {
       "path": "tests/test_saas_cartridge_isolation.py",
@@ -5784,6 +5820,10 @@
     {
       "path": "tests/test_select_previous_release.py",
       "sha256": "8a0ea433745b32ce95d9acf43da92b21db5af9c52a6d1830edb26a80bb3c6b86"
+    },
+    {
+      "path": "tests/test_service_async_jobs.py",
+      "sha256": "415a05e0ed100c4a584936c3b36520f0ce7bd3c5c2d391fa07e2b4477092d991"
     },
     {
       "path": "tests/test_service_urls.py",

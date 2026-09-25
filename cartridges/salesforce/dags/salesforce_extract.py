@@ -34,6 +34,8 @@ def _internal_key() -> str:
 CARTRIDGE_URL = os.environ.get(
     "SALESFORCE_URL", "http://salesforce:8205",
 )
+REQUEST_TIMEOUT_SECONDS = 60
+JOB_DEADLINE_SECONDS = 2 * 3600
 
 default_args = {
     "owner": "omega",
@@ -60,7 +62,9 @@ def salesforce_extract():
             "X-Internal-Service": "airflow",
         }
 
-        with httpx.Client(timeout=300) as client:
+        from service_job_client import idempotency_key, run_service_job
+
+        with httpx.Client(timeout=REQUEST_TIMEOUT_SECONDS) as client:
             params = {
                 k: v for k, v in {
                     "mode": conf.get("mode") or "incremental",
@@ -74,14 +78,15 @@ def salesforce_extract():
                 for key in ("tenant_id", "workspace_id", "security_context")
                 if conf.get(key)
             }
-            res = client.post(
+            return run_service_job(
+                client,
                 f"{CARTRIDGE_URL}/entities/{entity}/extract",
                 params=params,
                 json=skill_body,
                 headers=headers,
+                key=idempotency_key(context, entity),
+                deadline_seconds=JOB_DEADLINE_SECONDS,
             )
-            res.raise_for_status()
-            return res.json()
 
     trigger_extract()
 
