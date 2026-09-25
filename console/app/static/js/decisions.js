@@ -222,7 +222,7 @@ async function renderTab(tab, d){
         </div>
         <div class="field-row">
           <label>FECHA COMPROMISO</label>
-          <input id="ed-commitment" type="date" value="${d.commitment_date ? d.commitment_date.slice(0,10) : ''}">
+          <input id="ed-commitment" type="date" value="${escHtml(d.commitment_date ? String(d.commitment_date).slice(0,10) : '')}">
         </div>
         <div class="field-row" style="grid-column: 1 / span 2">
           <label>DESCRIPCIÓN</label>

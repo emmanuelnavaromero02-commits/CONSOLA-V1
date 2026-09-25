@@ -176,10 +176,32 @@ function renderEntities(data) {
     : '<div class="empty-card">Sin entidades registradas.</div>';
 }
 
+function sanitizedSvg(markup) {
+  const doc = new DOMParser().parseFromString(String(markup || ""), "image/svg+xml");
+  const svg = doc.documentElement;
+  if (!svg || svg.nodeName.toLowerCase() !== "svg" || doc.getElementsByTagName("parsererror").length) return null;
+  svg.querySelectorAll("script, foreignObject, iframe, object, embed").forEach((node) => node.remove());
+  for (const node of [svg, ...svg.querySelectorAll("*")]) {
+    for (const attr of [...node.attributes]) {
+      const name = attr.name.toLowerCase();
+      const value = attr.value.trim().toLowerCase();
+      if (name.startsWith("on") || ((name === "href" || name === "xlink:href") && !value.startsWith("#"))) {
+        node.removeAttribute(attr.name);
+      }
+    }
+  }
+  return document.importNode(svg, true);
+}
+
 function renderDagGraph(data) {
   const panel = document.getElementById("dag-graph-panel");
   if (!panel || !data?.svg) return;
-  panel.innerHTML = `<div style="padding:10px;overflow:auto">${data.svg}</div>`;
+  const svg = sanitizedSvg(data.svg);
+  const frame = document.createElement("div");
+  frame.style.padding = "10px";
+  frame.style.overflow = "auto";
+  if (svg) frame.appendChild(svg);
+  panel.replaceChildren(frame);
 }
 
 function renderLayerPreview(layer, data) {

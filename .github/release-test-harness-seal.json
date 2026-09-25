@@ -5894,6 +5894,10 @@
       "sha256": "daef22f66e168916433ebf58d0425d5e1c16d9190a88b87ab10a98a84073f975"
     },
     {
+      "path": "tests/test_studio_dag_graph_svg_sanitized.py",
+      "sha256": "4cc896283576d634c49a9600931aa090745699834374c5786028ce34b1b4d2a1"
+    },
+    {
       "path": "tests/test_studio_dag_timeout_fallback.py",
       "sha256": "415ee5349f2505a8c87d0106de97cf2e3d8239471cea820cd9f0e515dedade54"
     },
