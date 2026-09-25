@@ -578,7 +578,7 @@ class _RepliconClient:
 
 
 default_args = {
-    "owner": "modecissions",
+    "owner": "omega",
     "retries": 1,
     "retry_delay": timedelta(minutes=5),
 }

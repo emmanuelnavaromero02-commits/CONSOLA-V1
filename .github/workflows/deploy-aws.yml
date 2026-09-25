@@ -91,7 +91,7 @@ jobs:
               --output text)"
           fi
           if [[ -z "$instance_id" || "$instance_id" == "None" ]]; then
-            echo "::error::Could not resolve modecissions app instance id"
+            echo "::error::Could not resolve app instance id"
             exit 1
           fi
           echo "instance_id=$instance_id" >> "$GITHUB_OUTPUT"

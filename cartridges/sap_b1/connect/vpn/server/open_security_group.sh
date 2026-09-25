@@ -2,10 +2,10 @@
 set -euo pipefail
 
 AWS_REGION="${AWS_REGION:-<AWS_REGION>}"
-SG_VPN_ID="${SG_VPN_ID:-<SG_VPN_ID>}"                              # modecissions-sg-vpn
-SG_APP_ID="${SG_APP_ID:-<SG_APP_ID>}"                              # modecissions-sg-app
+SG_VPN_ID="${SG_VPN_ID:-<SG_VPN_ID>}"
+SG_APP_ID="${SG_APP_ID:-<SG_APP_ID>}"
 VPN_INSTANCE_ID="${VPN_INSTANCE_ID:-<VPN_INSTANCE_ID>}"            # the bastion (aws_instance.vpn)
-PRIVATE_ROUTE_TABLE_ID="${PRIVATE_ROUTE_TABLE_ID:-<PRIVATE_ROUTE_TABLE_ID>}"   # modecissions-rt-private
+PRIVATE_ROUTE_TABLE_ID="${PRIVATE_ROUTE_TABLE_ID:-<PRIVATE_ROUTE_TABLE_ID>}"
 CUSTOMER_PUBLIC_IP="${CUSTOMER_PUBLIC_IP:-<CUSTOMER_PUBLIC_IP>}"   # the egress IP of the customer's Windows server
 WG_LISTEN_PORT="${WG_LISTEN_PORT:-<WG_LISTEN_PORT>}"
 TENANT_SQL_PORT="${TENANT_SQL_PORT:-<TENANT_SQL_PORT>}"

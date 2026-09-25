@@ -627,7 +627,7 @@
     },
     {
       "path": "cartridges/replicon/dags/replicon_extract.py",
-      "sha256": "86c0efc14e4975388c0f6860c1cf1d55dc5e66cd28dc4b9fb35e1d580c251672"
+      "sha256": "4d586abe64229c9991a4cfc01565b889489e779b36f1bdde3177372dec644336"
     },
     {
       "path": "cartridges/replicon/dags/replicon_ses_inbox_import.py",
