@@ -90,7 +90,7 @@ class AggregateResult:
     """Base contract shared by every domain aggregate result.
 
     ``supported`` is always True for a function that exists: metrics without a
-    Gold relation are not shipped as stubs (see docs/data_gaps.md).
+    Gold relation are not shipped as stubs.
     ``proxy_note`` explains, for proxy metrics, what the number really measures
     and what it does NOT measure so the LLM never over-promises.
     """

@@ -51,14 +51,6 @@ else
   bad "app.version.app_version() resolves to VERSION" "resolver said '$RESOLVED', file says '$VERSION'"
 fi
 
-# A doc that copies the number instead of pointing at it goes stale silently.
-STALE="$(grep -rlE '[0-9]+\.[0-9]+\.[0-9]+-beta' README.md SECURITY.md docs/release-checklist-v1.md 2>/dev/null)"
-if [ -z "$STALE" ]; then
-  ok "canonical docs restate no version literal"
-else
-  bad "canonical docs restate no version literal" "hardcoded in: $(echo "$STALE" | tr '\n' ' ')"
-fi
-
 step "Canonical commands exist"
 
 for target in preflight up up-core down smoke beta-smoke baseline-smoke test e2e acceptance verify-release security-scan migrate nuke; do

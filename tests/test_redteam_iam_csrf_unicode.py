@@ -1,4 +1,4 @@
-"""Correcciones del red-team de Codex (verificadas y arregladas): escalada
+"""Correcciones del red-team interno (verificadas y arregladas): escalada
 vertical IAM, leak horizontal IAM, CSRF por Bearer y homógrafos Unicode."""
 from __future__ import annotations
 

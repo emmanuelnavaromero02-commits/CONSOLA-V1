@@ -542,7 +542,7 @@ _PUBLIC_PATHS = {"/healthz"}
 
 
 def _is_production() -> bool:
-    # v1.43.2 (Codex P1-2): default ``production`` — see console/security.py.
+    # v1.43.2: default ``production`` — see console/security.py.
     return os.environ.get("APP_ENV", "production").lower() in {"production", "prod"}
 
 

@@ -1,4 +1,4 @@
-"""Sprint v1.43.2 (Claude B7) — every compose image must be pinned.
+"""Sprint v1.43.2 — every compose image must be pinned.
 
 ``:latest`` ships breaking changes silently between deploys. Both
 the local compose and the AWS compose now use a real RELEASE tag

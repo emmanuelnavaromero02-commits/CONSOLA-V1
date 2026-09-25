@@ -1,4 +1,4 @@
-"""Sprint v1.43.1 (Codex P0-5 + Claude) — End-to-end extraction flow.
+"""Sprint v1.43.1 (P0-5) — End-to-end extraction flow.
 
 Walks the full path:
 

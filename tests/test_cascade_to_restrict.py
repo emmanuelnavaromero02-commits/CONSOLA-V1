@@ -1,4 +1,4 @@
-"""Sprint v1.43.2 (Claude B6) — CASCADE → RESTRICT + soft-delete trigger.
+"""Sprint v1.43.2 — CASCADE → RESTRICT + soft-delete trigger.
 
 Static structural verification of migration 45. Live-DB assertions
 (actual DELETE blocked, audit_deletes row captured) live in the E2E

@@ -1,21 +1,16 @@
-"""Sprint v1.43.4 — Codex H3/H6 + Claude H5 + Claude M7.
+"""Sprint v1.43.4 — config polish guards.
 
-Static guards for the documentation/config polish that v1.43.4
-landed:
+Static guards for the config polish that v1.43.4 landed:
 
-  * Runbook 01 now documents the two-phase Postgres-first arranque
-    order so a slow-DB-init machine doesn't race the rest of the
-    stack (Codex H3).
   * .gitignore excludes the ad-hoc ``infra/.env.backup*`` family so
     a stray ``git add -A`` after a secret rotation doesn't leak the
-    rotation trail (Codex H6).
+    rotation trail.
   * scripts/cleanup_env_backups.sh is executable, idempotent, and
-    refuses to overwrite existing backups (Codex H6).
+    refuses to overwrite existing backups.
   * infra/.env.example documents BOOTSTRAP_ADMIN_EMAIL / _PASSWORD /
-    _NAME so the runbook 02 first-boot flow works without
-    silent failure (Claude H5).
+    _NAME so the first-boot flow works without silent failure.
   * infra/sync_dag_sources.py is gone — it was dead code with no
-    callers (Claude M7).
+    callers.
 """
 from __future__ import annotations
 
@@ -28,49 +23,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 
 
-# ── Codex H3: runbook 01 Postgres-first ───────────────────────────────────
-
-
-def _runbook_01() -> str:
-    return (REPO / "docs/runbook/01_arrancar_desde_cero.md").read_text(
-        encoding="utf-8"
-    )
-
-
-def _runbook_02() -> str:
-    return (REPO / "docs/runbook/02_primer_tenant.md").read_text(
-        encoding="utf-8"
-    )
-
-
-def test_runbook_01_documents_postgres_first_arranque():
-    """Runbook 01 must call out the two-phase order explicitly. Pre-
-    v1.43.4 the doc said "up everything, sleep 90s" — which races
-    on slow machines."""
-    src = _runbook_01()
-    # The phase headers introduced by Codex H3 fix.
-    assert re.search(
-        r"Paso\s*1\s*[-—]\s*Postgres primero", src, re.IGNORECASE
-    ), "runbook 01 missing 'Paso 1 — Postgres primero' section"
-    assert re.search(
-        r"Paso\s*2\s*[-—]\s*Resto del stack", src, re.IGNORECASE
-    ), "runbook 01 missing 'Paso 2 — Resto del stack' section"
-    # The polling loop is the load-bearing detail.
-    assert "State.Health.Status" in src, (
-        "runbook 01 must show the docker inspect polling loop"
-    )
-
-
-def test_runbook_01_mentions_v1_43_4_rationale():
-    """The reader needs to understand WHY the order matters; pure
-    procedure without context invites copy-paste that drops the
-    explanation when someone shortens the doc."""
-    src = _runbook_01()
-    assert "v1.43.4" in src
-    assert "race" in src.lower() or "race-condition" in src.lower()
-
-
-# ── Codex H6: .gitignore + cleanup script ─────────────────────────────────
+# ── .gitignore + cleanup script ─────────────────────────────────
 
 
 def _gitignore() -> str:
@@ -134,7 +87,7 @@ def test_cleanup_env_backups_script_exists_and_executable():
     )
 
 
-# ── Claude H5: BOOTSTRAP_ADMIN in .env.example ────────────────────────────
+# ── BOOTSTRAP_ADMIN in .env.example ────────────────────────────
 
 
 def _env_example() -> str:
@@ -319,22 +272,13 @@ def test_env_example_bootstrap_admin_block_warns_against_committing():
     )
 
 
-def test_runbook_02_documents_manual_bootstrap_admin_cli():
-    src = _runbook_02()
-    assert "python -m app.bootstrap_admin" in src
-    assert "BOOTSTRAP_ADMIN_PASSWORD" in src
-    assert "BOOTSTRAP_ADMIN_FULL_NAME" in src
-    assert "al primer boot" not in src.lower()
-
-
-# ── Claude M7: dead code removed ──────────────────────────────────────────
+# ── Dead code removed ──────────────────────────────────────────
 
 
 def test_sync_dag_sources_dead_code_removed():
     """infra/sync_dag_sources.py was dead — no Makefile / workflow /
-    runbook ever invoked it. Claude M7 flagged it; v1.43.4 deletes
-    it."""
+    runbook ever invoked it; v1.43.4 deletes it."""
     legacy = REPO / "infra/sync_dag_sources.py"
     assert not legacy.exists(), (
-        f"{legacy} should have been removed in v1.43.4 (Claude M7)"
+        f"{legacy} should have been removed in v1.43.4"
     )

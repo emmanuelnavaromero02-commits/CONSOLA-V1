@@ -9,8 +9,6 @@
 # is present, so it is safe to chain:
 #
 #     bash scripts/preflight.sh && make up
-#
-# See docs/runbook/09_demo_beta.md for the full flow.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -30,7 +28,7 @@ echo "════════════════════"
 echo ""
 echo "Docker:"
 if ! command -v docker >/dev/null 2>&1; then
-    block "docker not installed — install Docker Engine 24+ (see docs/runbook/01_arrancar_desde_cero.md)"
+    block "docker not installed — install Docker Engine 24+"
 elif ! docker info >/dev/null 2>&1; then
     block "docker daemon not reachable. Start Docker Desktop / the docker service. \
 On a CI/sandbox without a daemon you cannot run 'make up' — use the unit suites instead (make test)."

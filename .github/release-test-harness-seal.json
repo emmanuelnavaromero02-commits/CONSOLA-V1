@@ -3,7 +3,7 @@
   "files": [
     {
       "path": ".github/release-test-skip-policy.json",
-      "sha256": "4bbd8a3b69b4cc54476bb600084d127222b7f2cd441685f023cfb0469f2b037c"
+      "sha256": "c94dc4784e9cd047723da6676140b33c032b6908c8ac36cfcf87f50da47a324c"
     },
     {
       "path": ".github/workflows/release-runner-capacity.yml",
@@ -15,7 +15,7 @@
     },
     {
       "path": "Makefile",
-      "sha256": "b45079948773ea8c3be3f2833b04cbb9e9db96f67304e8d9b820651b3104d329"
+      "sha256": "a5e35a194c8bc76536437fb0cefb4606dc49018766e913a8a1070538f67cf904"
     },
     {
       "path": "airflow/dags/_secrets.py",
@@ -559,7 +559,7 @@
     },
     {
       "path": "cartridges/replicon/app/main.py",
-      "sha256": "c0ef95ee540d3df3ede5fb4d461eb93192da203a2da4d9e775cf0792630d96e3"
+      "sha256": "23499ffc50377b95ebbfe118097f06ab842712ca3e1e6ed2123549a8cbe3624d"
     },
     {
       "path": "cartridges/replicon/app/mcp_server.py",
@@ -667,7 +667,7 @@
     },
     {
       "path": "cartridges/salesforce/app/api/routes_health.py",
-      "sha256": "0db0ea06feb85bf4115e7bb09605f12b2b18024a7c280a8b41c1a6f80af8ffcb"
+      "sha256": "b581cd8ed09665c6a355b48352f257a9d8360c8d6238b7014e3356e4c2739e40"
     },
     {
       "path": "cartridges/salesforce/app/api/routes_skills.py",
@@ -723,7 +723,7 @@
     },
     {
       "path": "cartridges/salesforce/app/main.py",
-      "sha256": "f067e0d2195a60c754cbe98e3d16aed1cf10b04885dc9f3fe9494335f3657505"
+      "sha256": "e8f91e38d286fd4daa9e2b6fc566c07b20902c5e19a19808146d0434d912b8e8"
     },
     {
       "path": "cartridges/salesforce/app/mcp_server.py",
@@ -783,11 +783,11 @@
     },
     {
       "path": "cartridges/salesforce/dags/salesforce_extract.py",
-      "sha256": "60ef08c6b27bf8eea616ee8f60de9f3457b611d0a6d445827336be581fc01084"
+      "sha256": "7003f5defd35303d5914d2e364709f0b3cfb3edf2b8cb5f415c29c77ddd9a105"
     },
     {
       "path": "cartridges/salesforce/dags/salesforce_extract_all.py",
-      "sha256": "00ea070e6011134a2ea4b3847a787719a80f887f6667906bb6002d912665bb20"
+      "sha256": "34f58771ba1494cb58d3d66ac8857958fcee414fbc60711070d15026c335f03f"
     },
     {
       "path": "cartridges/salesforce/tests/conftest.py",
@@ -827,7 +827,7 @@
     },
     {
       "path": "cartridges/sap_b1/app/api/routes_health.py",
-      "sha256": "503a62600eccf17026b259db0a028d84e731080fed741fa86a5a4f2f423ade2c"
+      "sha256": "598b698df7a7de38d17ca4f411fac8428999d09d35b2a0f423d9bf0936db04c4"
     },
     {
       "path": "cartridges/sap_b1/app/api/routes_skills.py",
@@ -879,7 +879,7 @@
     },
     {
       "path": "cartridges/sap_b1/app/main.py",
-      "sha256": "2c640caa16eace5ce3ab55286b68a46a30a6252384fd57253cb7c4e1d5dacb5b"
+      "sha256": "4d04d17d8a6994ddcc5590144938791a76fd66404cb337aa002322d9bd005dc1"
     },
     {
       "path": "cartridges/sap_b1/app/mcp_server.py",
@@ -967,11 +967,11 @@
     },
     {
       "path": "cartridges/sap_b1/dags/sap_b1_extract.py",
-      "sha256": "176c87fe9c88f7ab83d67d1053b556278d032e4496965017883e353a1753fada"
+      "sha256": "abb5a58b46887e65af6a157d4853046316b5cb3ee85e360b46f852059c393f72"
     },
     {
       "path": "cartridges/sap_b1/dags/sap_b1_extract_all.py",
-      "sha256": "1b8d12f002097ae1bb470e843adfc0816881417949f2be4019bcfbda88676925"
+      "sha256": "4491ac2c98fd169bd0a1e14ada8acf1d257588f8df4c6d7fdb45c5c869069f2f"
     },
     {
       "path": "cartridges/sap_b1/tests/conftest.py",
@@ -987,7 +987,7 @@
     },
     {
       "path": "cartridges/sap_b1/tests/test_connect_kit.py",
-      "sha256": "70c6a4f114a2be98dfdc7dc32606f47b743ada960db61e8137eda7c1a711efc8"
+      "sha256": "adb9e9616924e342993c0cca47101a8ca085b6fd51c46bd66951ccb5b9cf4e9e"
     },
     {
       "path": "cartridges/sap_b1/tests/test_extraction_against_fake.py",
@@ -1047,7 +1047,7 @@
     },
     {
       "path": "cartridges/sap_hcm/app/api/routes_health.py",
-      "sha256": "190dfe605498c4219b7240c3dfcc79c71ce1ca251b8b930dc2f7a1a003d2753b"
+      "sha256": "c026bb6b120d9b73440bd1d09ebc71b044f3f50a34bf53a07301af70158b0196"
     },
     {
       "path": "cartridges/sap_hcm/app/api/routes_skills.py",
@@ -1103,7 +1103,7 @@
     },
     {
       "path": "cartridges/sap_hcm/app/main.py",
-      "sha256": "74e317905200ff5d8f94801e5c8b87595f8014f280674f085e8f79ad8df6525e"
+      "sha256": "4f5516da08873892f81b47b7abd3d7e35c1871aaebef3910bd5c330964575173"
     },
     {
       "path": "cartridges/sap_hcm/app/mcp_server.py",
@@ -1171,11 +1171,11 @@
     },
     {
       "path": "cartridges/sap_hcm/dags/sap_hcm_extract.py",
-      "sha256": "907e711fd27b04d8218b86a3bfce9bc41e066ded4b7f4793969a3f8f2a7aff07"
+      "sha256": "8b759e831d5d0d080c061445f1bfe5d54fb3222cf68ae168020109465ee2e657"
     },
     {
       "path": "cartridges/sap_hcm/dags/sap_hcm_extract_all.py",
-      "sha256": "fa58918f531fa663b7dc7aa0429901fa224852e20f9fd0f748f9c3aa1736ae22"
+      "sha256": "c97a08dc1603488a6f24f572abd42bc79b12465f4907c20b6c3ca72f6364941c"
     },
     {
       "path": "cartridges/sap_hcm/tests/conftest.py",
@@ -1215,7 +1215,7 @@
     },
     {
       "path": "cartridges/sap_s4hana/app/api/routes_health.py",
-      "sha256": "67508f9a4a2d22b64b6edf01a68566f6d2492073cd4e3fe5ef40f2894d676a44"
+      "sha256": "4368a463ae222385361be229c77361b46ff7596b5c1c52a793d9c4270b7111e5"
     },
     {
       "path": "cartridges/sap_s4hana/app/api/routes_skills.py",
@@ -1271,7 +1271,7 @@
     },
     {
       "path": "cartridges/sap_s4hana/app/main.py",
-      "sha256": "e2f182e4f1080ae57edece2d9225613dbbf73b761bbe3ec15cbca1068852884e"
+      "sha256": "31d35f138a6aeb5d4672f82acf59546ec0fbb22bc4d658c3eccacf457008b83a"
     },
     {
       "path": "cartridges/sap_s4hana/app/mcp_server.py",
@@ -1339,11 +1339,11 @@
     },
     {
       "path": "cartridges/sap_s4hana/dags/sap_s4hana_extract.py",
-      "sha256": "ba55375088449ae77d96a9bf33c9f3402c6b561e42124e42f0da2815da4e46a3"
+      "sha256": "42b3c9c502f9794c6c7a3c89e141a41b80f1f45330bfb8deb3be41e519412c26"
     },
     {
       "path": "cartridges/sap_s4hana/dags/sap_s4hana_extract_all.py",
-      "sha256": "3b2cb2a415981690c12611a70d574146b921814f62e89464eb25195012f899d4"
+      "sha256": "9dd378cc0c59328462a2573337c10a9596ebe1e349acdf830c49c59c8cc93a66"
     },
     {
       "path": "cartridges/sap_s4hana/tests/conftest.py",
@@ -1383,7 +1383,7 @@
     },
     {
       "path": "cartridges/sap_successfactors/app/api/routes_health.py",
-      "sha256": "04a19bc513370fc9d5e4c2823b4cb102256e36e9fea2193078d8248852c106d1"
+      "sha256": "3954d67c4c081b07549b78889cf9770fa79ff3b5393bc1d2097f1db8708471ab"
     },
     {
       "path": "cartridges/sap_successfactors/app/api/routes_skills.py",
@@ -1455,7 +1455,7 @@
     },
     {
       "path": "cartridges/sap_successfactors/app/main.py",
-      "sha256": "8a5f0a10702d182b2d0efdebd9b258471184369c1f08f999948241aa74c73b74"
+      "sha256": "ca6d8703f1c3354d9410e26084d829ef423ba67c72a3b24a777a089a96c4daf5"
     },
     {
       "path": "cartridges/sap_successfactors/app/mcp_server.py",
@@ -1751,7 +1751,7 @@
     },
     {
       "path": "console/conftest.py",
-      "sha256": "b9c0cb5b7b73b5460c65fcbab7575dcb88c060839bb7e70a8f6442ec818653c5"
+      "sha256": "c4edaec8db61c47a3bbfe4c8fc0fc0e77977252e480ecd3dc3d7503b917e059d"
     },
     {
       "path": "console/tests/conftest.py",
@@ -2755,7 +2755,7 @@
     },
     {
       "path": "console/tests/test_cookie_secure_env.py",
-      "sha256": "e476946c37bcc66d58dad551e7febbf2f55ce3b0d1424353c739c2e1736c80ec"
+      "sha256": "9a75337a829490967054e7f284ce2e30e0250fa31a4ad198d25ff464ce44a914"
     },
     {
       "path": "console/tests/test_copilot_admin_scope.py",
@@ -3247,7 +3247,7 @@
     },
     {
       "path": "infra/docker-compose.yml",
-      "sha256": "f06a81dd91ea147546f16485eee70ea23ddd64a928828b9f35b78799d8b6d602"
+      "sha256": "9b67b9fe74eca9c1ecd828c3d65bd027cf99bcebb57f5909c7e0895fc4437016"
     },
     {
       "path": "infra/init/99zzt_analytic_app_dataset_grants.sql",
@@ -3279,7 +3279,7 @@
     },
     {
       "path": "refinement/conftest.py",
-      "sha256": "391f5c695118cbe6fcb527db7761c0fd7f31c091b9ee3db120c38f5bd5e62e57"
+      "sha256": "157c2cdecea78d60f1efa55be2d40f37101ae248c4c22781700f7139eeade19f"
     },
     {
       "path": "refinement/tests/conftest.py",
@@ -3507,7 +3507,7 @@
     },
     {
       "path": "scripts/smoke_test.sh",
-      "sha256": "feb8b20a2b24594bd9e3e735faba8d76d97da45c26fd6945d8728ea17efa7bb8"
+      "sha256": "34196d119f0beb1fe3759c7abe63a61133307ce90c4e2a2a01bc732f7f8b1fc0"
     },
     {
       "path": "scripts/stress_summary.py",
@@ -3563,7 +3563,7 @@
     },
     {
       "path": "tests-e2e/specs/00-csp-smoke.spec.ts",
-      "sha256": "734c0ee92d1204f56d88e455115b6c1bd14f78617527cfaf2eaed6fef36df102"
+      "sha256": "814b0f60808b934d4594f626146270277f971bbef7faa7af8cbb6234e15754af"
     },
     {
       "path": "tests-e2e/specs/01-login-deep.spec.ts",
@@ -3595,7 +3595,7 @@
     },
     {
       "path": "tests-e2e/specs/05-studio-deep.spec.ts",
-      "sha256": "a2d6273af65a6ddf05a3b99ff5c16a925816681d8055ade63e47877f6dfb2912"
+      "sha256": "0a520319562faa3760300aad896e2c11a75b4d53e8d89441126ef9d0c63a1093"
     },
     {
       "path": "tests-e2e/specs/05-studio.spec.ts",
@@ -3607,15 +3607,15 @@
     },
     {
       "path": "tests-e2e/specs/07-api-endpoints.spec.ts",
-      "sha256": "cdffbd63cbfd1106699bac8333d79bc627e37d7f2f8a3121002d941440e83bed"
+      "sha256": "c198dc4720b8803b4f42daea2879c8e12700b66d1201792c3ee252ed2f35dab7"
     },
     {
       "path": "tests-e2e/specs/07-apis-deep.spec.ts",
-      "sha256": "05ce2b4f7264489456f43120e67649b86c29c76ed14210d9a6256ab9a1046be8"
+      "sha256": "fd09430b8d00d6bf1bcc48901f3046640f510dc110e9eb895ff2c567b12dd777"
     },
     {
       "path": "tests-e2e/specs/08-external-services.spec.ts",
-      "sha256": "ca0cdd4cecc53089b370ed03bdc091c14409016f241519e2b234e59c35d0247e"
+      "sha256": "421890031ccc09f49928e5b734e786d66bac871c38350e0f5cc180a87982bf88"
     },
     {
       "path": "tests-e2e/specs/09-ux-mobile.spec.ts",
@@ -3623,7 +3623,7 @@
     },
     {
       "path": "tests-e2e/specs/10-mcp-cartridges.spec.ts",
-      "sha256": "4fd97ad74a9bb9d2272bf9d316ff20ba8a106bd76f39f8253cfd89eaaafbe8dc"
+      "sha256": "15d526982e9c40be7504a8575a9bfb0484adfe76a899e3b2a6a3e58af4967450"
     },
     {
       "path": "tests-e2e/specs/11-copilot-deep.spec.ts",
@@ -3659,7 +3659,7 @@
     },
     {
       "path": "tests/conftest.py",
-      "sha256": "bb4bc52f50164ee7d8258521e593971ebb3f041c038aed756020fa5b1862436a"
+      "sha256": "f4f8ee9a1259176b6f98a1bf22970ca663cebb4edf485452f0569128831cfaf2"
     },
     {
       "path": "tests/console_route_source.py",
@@ -3723,7 +3723,7 @@
     },
     {
       "path": "tests/e2e/conftest.py",
-      "sha256": "84a383cf494614cfc2dbde5558e30b42b4e1accab239a3ce4002ebad1833cbbc"
+      "sha256": "54c91a94e386e15ec485757b46ed00fc3f1a0d495cf6aa2af446cd4550c43497"
     },
     {
       "path": "tests/e2e/test_console_full_stack_acceptance.py",
@@ -3731,7 +3731,7 @@
     },
     {
       "path": "tests/e2e/test_full_extraction_flow.py",
-      "sha256": "43f154851b72b81a28eb14efed8a2b40a2c6d0ac030b5513f78070b4a7a76e54"
+      "sha256": "d1dc9b8c9cf44a11ca6f33449ed26f91a4f7883e1675451295919f66d38553fe"
     },
     {
       "path": "tests/fixtures/app_grants_schema.sql",
@@ -3887,7 +3887,7 @@
     },
     {
       "path": "tests/test_airflow_create_dag_disabled_in_prod.py",
-      "sha256": "890218b384fe24b1415afe8d5665f3c556fe120b1e020f9cf2d1bd5d5d304a85"
+      "sha256": "2191307a5692e379a888dcc4ca7f380e407c63d1f44c5efacfadb253ee0e5425"
     },
     {
       "path": "tests/test_airflow_release_contract.py",
@@ -3903,7 +3903,7 @@
     },
     {
       "path": "tests/test_app_env_safe_default.py",
-      "sha256": "e7cdfc8f820a1aa4cc587de269d528de1133c5610426d71bbd598c853798eb72"
+      "sha256": "f317e85bf9991dd5b982efa7128307aa4d8956c7fcf388c97d0b6312a69514e0"
     },
     {
       "path": "tests/test_apply_db_migrations_script.py",
@@ -3911,7 +3911,7 @@
     },
     {
       "path": "tests/test_audit_deletes_pii_sanitization.py",
-      "sha256": "ffdfd6f55dfc4203d13082df0cbf5280ed806882e4a386a60fc7db3a0d46efd2"
+      "sha256": "ed328abe75d084d95029784774661b26d198da03f024f6c1613e156f947af785"
     },
     {
       "path": "tests/test_audit_events_append_only_contract.py",
@@ -3919,7 +3919,7 @@
     },
     {
       "path": "tests/test_audit_events_dedup.py",
-      "sha256": "59d4db9336ca45782fbb367a17a072dc9a750f22622bd5096b873134d5ef0936"
+      "sha256": "1c1de61615bf85b8962634a16720fda573487951cbcdde8fbac4a96bbaba3cfb"
     },
     {
       "path": "tests/test_audit_tool_columns.py",
@@ -3935,7 +3935,7 @@
     },
     {
       "path": "tests/test_aws_compose_consistency.py",
-      "sha256": "3d9f06b1d263b8b89cd760c181d2a025bd84b6952aaf1581f7b86bd7043cd043"
+      "sha256": "3cfcf10bd20e08f6598bbfb2902334de90bb3c6ed4456abaa82fbcc31022e070"
     },
     {
       "path": "tests/test_aws_compose_required_env.py",
@@ -3991,19 +3991,11 @@
     },
     {
       "path": "tests/test_aws_secrets_manager_config.py",
-      "sha256": "77a61926e87422862a439cf7b30fd4984396d1433cf89c224a994ce498c801df"
+      "sha256": "3670f7c258e11bcaecdb56b9448028777676e75ecc21bb2f58608aebae80f6b8"
     },
     {
       "path": "tests/test_aws_ssm_deploy_workflow.py",
       "sha256": "c717befb7111c777c9597fb8db50cc23f9f35d9cbbfe5dd14f632ae4e79ec57a"
-    },
-    {
-      "path": "tests/test_aws_staging_checklist.py",
-      "sha256": "13cbfd07c9c349ab281621abff444c28b91eec3e9be12d90e7881fdc486801c6"
-    },
-    {
-      "path": "tests/test_bandit_b608_triage_doc.py",
-      "sha256": "1c51fb7ba1165c779b4c47b975f0f77f2986701e4d2db77fa66389964bfb4f9b"
     },
     {
       "path": "tests/test_banxico_cartridge_runtime_contract.py",
@@ -4119,7 +4111,7 @@
     },
     {
       "path": "tests/test_cartridge_startup_fail_fast.py",
-      "sha256": "146c6e77df01869a72036c39d45c5c99286394ee4586d111fefd6e66ec60cd42"
+      "sha256": "684e6bf5e60b77fa5f0469ba8bda8133a7d9072952386d45583c82b867546904"
     },
     {
       "path": "tests/test_cartridge_test_connection.py",
@@ -4131,7 +4123,7 @@
     },
     {
       "path": "tests/test_cascade_to_restrict.py",
-      "sha256": "b89c9a6d7a0eee36e7afb0b6c7905b600aefdebba5b64f8d0591623538f7fd1c"
+      "sha256": "db1dfec61625a2594fffcf1c110a192b2ea11cccc139605bae50eeeef8a2cfce"
     },
     {
       "path": "tests/test_ci_changed_areas.py",
@@ -4143,7 +4135,7 @@
     },
     {
       "path": "tests/test_ci_workflows_present.py",
-      "sha256": "1b80a4fecc0ed73d0de741593b576b1ad05ee6f7ecade0a971aca001592cf7f2"
+      "sha256": "a8e65b23c6475b8b940a429c6ff9548d1a06652b9c8590fc9bc546e975dbe999"
     },
     {
       "path": "tests/test_company_onboarding_contract.py",
@@ -4151,7 +4143,7 @@
     },
     {
       "path": "tests/test_compose_aws_consistency.py",
-      "sha256": "77cf35dba31f9eca1a243c2560d180e449e17b9019f4a75032b6ec38b5cf9374"
+      "sha256": "72622ae06ab0880cc9c5f84396e68c5a529b1ea334351fd7e16483d770c8080d"
     },
     {
       "path": "tests/test_compose_healthchecks.py",
@@ -4159,7 +4151,7 @@
     },
     {
       "path": "tests/test_compose_images_pinned.py",
-      "sha256": "0651110f26f3bf7c12dd2a52c90c1879e637d2efeab03698a2092957b04a0246"
+      "sha256": "0fafe0dd663044480ff4262422ece4436e797bfbe5605ec4e62c1f219e2c415d"
     },
     {
       "path": "tests/test_config_only_cartridge_runtime.py",
@@ -4522,10 +4514,6 @@
       "sha256": "f28e5365d665d0d6fdbe02712cb21b1f5db95c1d5e96cf03343e7e7aa6347c7c"
     },
     {
-      "path": "tests/test_copilot_mcp_threat_model.py",
-      "sha256": "67e8a4db68e2479b69432debdd6fc2a31c132c41c1f919d8f43040a77000aeff"
-    },
-    {
       "path": "tests/test_copilot_multi_source.py",
       "sha256": "96b01e08a694a0e2955cd213153562495ee1b406ad5307bf032d0183e4426dac"
     },
@@ -4539,11 +4527,11 @@
     },
     {
       "path": "tests/test_cors_for_nextjs.py",
-      "sha256": "bab05543ad389fca958647b097c149527818c35f26836b3e957c2aea62691214"
+      "sha256": "5b710309bd12b553aa9f925cc37c296220ff4e22920e5241e544dc197620c8d3"
     },
     {
       "path": "tests/test_csp_hardening_contract.py",
-      "sha256": "ae9c8e2981d0adb99c2ffbfd05a968dd3d68779815600ade0d69ba20b0b1e2a4"
+      "sha256": "162640cf17f1894c262a21c95551ea0f73c48aaad3ab481149e4aa4f69c93cfb"
     },
     {
       "path": "tests/test_csrf_coverage.py",
@@ -4663,7 +4651,7 @@
     },
     {
       "path": "tests/test_domain_aggregates_contract.py",
-      "sha256": "df66eb019abf5bfd7a3f3484a3902b5724c0f5db44e2bc19ccbf75a175f53f4a"
+      "sha256": "529007f28d101b29532a5e06bcd74f52407edfeac24d9fbaed6a5097502ff15a"
     },
     {
       "path": "tests/test_domain_aggregates_live_postgres.py",
@@ -4679,7 +4667,7 @@
     },
     {
       "path": "tests/test_duckdb_injection_via_parquet.py",
-      "sha256": "5d36a470193cd1e723da91e69c200b4beeb7d5cd5f48a647df61a0c052b91076"
+      "sha256": "86ae36d3adb930be087e336378e1711197c34a5fd3fc98ac5e1c79c2df2173d6"
     },
     {
       "path": "tests/test_duckdb_p0_guard.py",
@@ -4691,7 +4679,7 @@
     },
     {
       "path": "tests/test_e2e_force_in_ci_v1434.py",
-      "sha256": "241b9b8544bb00880f7aae565cac99aa4113916e748f3b86148e2a5d8b076ec1"
+      "sha256": "736b1c0939e8d31a04a985b206c57ee60c3da95996bf135181d3cf9ebfcfbced"
     },
     {
       "path": "tests/test_e2e_full_flow.py",
@@ -4719,7 +4707,7 @@
     },
     {
       "path": "tests/test_enterprise_readiness_20x.py",
-      "sha256": "e042511d9d9779518224fe25d2450e73dfe52466eecfcf89f2ac28015da863ab"
+      "sha256": "3016e235ce40eb7d81d1b5544ae3fdccedefa284ec2cdae6265eb7f4d128316d"
     },
     {
       "path": "tests/test_enterprise_security_gauntlets.py",
@@ -4731,11 +4719,11 @@
     },
     {
       "path": "tests/test_env_example_and_runbooks_v1434.py",
-      "sha256": "3c6f63255ddf3add5e2d61fefa59fb8f443beae8f219a6968fa6b69953ae6bd4"
+      "sha256": "0ef611563a95a83e6f8022b124a58633f0b5beb6a0e113319610ecf585ff5b5b"
     },
     {
       "path": "tests/test_env_never_in_git.py",
-      "sha256": "f1bd7339abc311749b0086818770c5a43e1f5e2ae3ee47de6d4523a4f33b4d00"
+      "sha256": "903628a2aef7ddbb98bf989294331f717a15442b5e9207650941c0bdbb7cd2c1"
     },
     {
       "path": "tests/test_explorer_hardening.py",
@@ -4771,7 +4759,7 @@
     },
     {
       "path": "tests/test_f217_release_evidence_red.py",
-      "sha256": "d2b881b6b67b17217d6117bc87ff7559491136138fcb01600c94bf5d005b0808"
+      "sha256": "8400301ff6258377109745a5381a593ebf481dfc0706dd0af003aa66368b47bc"
     },
     {
       "path": "tests/test_f217_transition_bridge_red.py",
@@ -4795,7 +4783,7 @@
     },
     {
       "path": "tests/test_gcp_canonical_deploy.py",
-      "sha256": "3f29099c359a8fc554acbd3207e53807cd871cdae5631be04d99b1f3a95d58a4"
+      "sha256": "e0741e234efd482f5a6a59cc0462b08a02160ed1ee45639354f60b5ac795efa2"
     },
     {
       "path": "tests/test_gcp_day2_release.py",
@@ -4827,7 +4815,7 @@
     },
     {
       "path": "tests/test_health_and_auth.py",
-      "sha256": "80263bb6708ee5e87f717521a341ea6f96c5524973e5d939c74873d2468ec547"
+      "sha256": "b49e9f699f467780ea28e43a360fba6574a5be7bacbe5de0df5bd4be7a07a578"
     },
     {
       "path": "tests/test_hubspot_cartridge_runtime_contract.py",
@@ -4879,7 +4867,7 @@
     },
     {
       "path": "tests/test_live_cartridge_gate.py",
-      "sha256": "bf416bad63259febc56f147c1b45f86e4e85e4dfbabbcf13bb75a72d7858f6df"
+      "sha256": "643a0f47e48af707f61c4ca38441022d71017826f77120723fd7c33755eaa235"
     },
     {
       "path": "tests/test_llm_client_config.py",
@@ -4887,7 +4875,7 @@
     },
     {
       "path": "tests/test_local_bootstrap_reproducibility.py",
-      "sha256": "af27abb917fda3aa370b790b4a56fa0dd42456848e441b8c5844ea9ba93a132e"
+      "sha256": "f7c5fb81fd8bec3e628e3a9670e85b5ca7424a98535b79cf5e833b4fcd4349bb"
     },
     {
       "path": "tests/test_local_compose_gold_uses_omega_role.py",
@@ -5027,7 +5015,7 @@
     },
     {
       "path": "tests/test_migration_42_cartridges_registry.py",
-      "sha256": "ad87a92bc5b086d4023c8963cd23b074c7e99c7bbc4a7214fe23c18db42d5ef9"
+      "sha256": "15a6d56d3091391d88e1715b60c85987bbb54e39f7644f58df5600d2418b9695"
     },
     {
       "path": "tests/test_migration_46_sap_perms.py",
@@ -5128,10 +5116,6 @@
     {
       "path": "tests/test_normalize_release_runtime_permissions.py",
       "sha256": "d7828b0a96f5e2eff8177e7c62a445102e28b16aeef891d1faace9df9dec3994"
-    },
-    {
-      "path": "tests/test_observability_plan.py",
-      "sha256": "2db61b952e0eebf9072cceed9caa224e3b581bc53d4007d8c98008968b46e6e3"
     },
     {
       "path": "tests/test_omega_mcp_infra_lockdown.py",
@@ -5267,7 +5251,7 @@
     },
     {
       "path": "tests/test_postgres_roles.py",
-      "sha256": "0c16d3fec2db477e47f182f80738250439d1cceff7a1355700a160088fbb75a7"
+      "sha256": "63e6dcf5e8c616d7178791d4a24f0ba99d6edced10bab835f3febe804fbb39d9"
     },
     {
       "path": "tests/test_postgres_tools_sqli.py",
@@ -5330,10 +5314,6 @@
       "sha256": "169ec97d0706691a18233175999e46fb65f01a7412c671b81dc153fa76aa90d3"
     },
     {
-      "path": "tests/test_readme_onboarding.py",
-      "sha256": "e2b7f4405da25bc93d6c097e67a5c9e3c03fddb7959466a202027d1043c0b9b4"
-    },
-    {
       "path": "tests/test_readyz_data.py",
       "sha256": "620ef58293a1eeb76b4dacbd0c9a076eea314de72a1038597ed4ad4cb9190003"
     },
@@ -5359,7 +5339,7 @@
     },
     {
       "path": "tests/test_redteam_iam_csrf_unicode.py",
-      "sha256": "2092160a4e29bd14ac3ade669bd9391ccd717fb749478ac15e628be5ef87ff66"
+      "sha256": "06f89fd7041c7211a85eebb40287492381559b368bfa082c63eac864e5540af0"
     },
     {
       "path": "tests/test_refinement_duckdb_extensions.py",
@@ -5399,7 +5379,7 @@
     },
     {
       "path": "tests/test_release_ci_fail_closed.py",
-      "sha256": "b9195cd55f4c04260ab37d5fd7992ed716f68c903b6feeae5d82cbe41cf2eed4"
+      "sha256": "3ced4acb6a8cf2ec8b82ee36b4b4c99c98924cca3848c1d071f8c23394ff1b5f"
     },
     {
       "path": "tests/test_release_compose_env_contract.py",
@@ -5503,7 +5483,7 @@
     },
     {
       "path": "tests/test_request_id_middleware.py",
-      "sha256": "859605fa75a1c1b7ff5ecc52dc4029cd6784ed1b31d22557b1f0e131d436338c"
+      "sha256": "7945a2f3ec2732629a93cb5cf524135a0942d422f83396a395b7b3a4f92d1761"
     },
     {
       "path": "tests/test_request_rate_limits.py",
@@ -5519,7 +5499,7 @@
     },
     {
       "path": "tests/test_rls_real_duckdb.py",
-      "sha256": "cfb42aecda53fa0cd6878d9a028b5816cd32815a31f7b22031b059eca7fdc64e"
+      "sha256": "f672088854b72b57632897602fb94ec2d051fbf7c22a663bd8603654ce9f9998"
     },
     {
       "path": "tests/test_rls_union_bypass.py",
@@ -5563,7 +5543,7 @@
     },
     {
       "path": "tests/test_sap_dags_config.py",
-      "sha256": "97aaeb7ad8668b919eccc6bc3c5267b9d98a9f25af9bd3a46540f88822da420a"
+      "sha256": "975da96d1afe9363aa9544d80761fb0149cca96a8587614750e85e3da5405c81"
     },
     {
       "path": "tests/test_sap_dags_deployed.py",
@@ -5595,7 +5575,7 @@
     },
     {
       "path": "tests/test_sap_mcp_contract.py",
-      "sha256": "fa65b2a299703bd228158a9ef854e55d435089710000ab9f189e8a34f37d1ec2"
+      "sha256": "0ceab146450251a309e50d9f3e40063572ef6ba644684b4c811cdc9743c91ec7"
     },
     {
       "path": "tests/test_sap_retry.py",
@@ -5691,7 +5671,7 @@
     },
     {
       "path": "tests/test_schema_migrations_tracking.py",
-      "sha256": "aadc1a029e1e2bdfe1d954c00a6b63e8cbc77854354982755bf62046d6203f3b"
+      "sha256": "8f759d5757fba506cd126b53f80ac936bcfe7a6a60f9e0a8e56ef083ee47e897"
     },
     {
       "path": "tests/test_scoped_reads.py",
@@ -5703,7 +5683,7 @@
     },
     {
       "path": "tests/test_sec_bronze_retention.py",
-      "sha256": "0bbbcb66a1f8a7a6ef64f708435a1cfa61a278fd849bd700b45db37d9610e1b4"
+      "sha256": "22b8534725f6a0c8c6e7d8c4d4f86d5ce627e31e3bbd5d53a206ea1ba4b8bb58"
     },
     {
       "path": "tests/test_sec_edgar_cartridge_runtime_contract.py",
@@ -6007,7 +5987,7 @@
     },
     {
       "path": "tests/test_v1441_backend_hooks.py",
-      "sha256": "8a0d36daeff115f6bc96e2bb728d2740dfec0d73872b3d957676aff78033df94"
+      "sha256": "1ee03871f9cae9f852825dc3ef1e1926cbfe6e4d0d7f2f3cf30477f6ec6158a9"
     },
     {
       "path": "tests/test_v1442_memory_drafts_workflows.py",
@@ -6019,7 +5999,7 @@
     },
     {
       "path": "tests/test_v14432_csrf_login_fix.py",
-      "sha256": "f1445cf4709d3046d1445cb7b8f2677d2018c22185f0d46f410f4518fe8ed7ab"
+      "sha256": "4db25a6a8ab58377d93befea8e0f393d64a79a1d88278585d873539d8f77f90b"
     },
     {
       "path": "tests/test_v1443_cartridges_next.py",
@@ -6039,7 +6019,7 @@
     },
     {
       "path": "tests/test_v1_release_checklist.py",
-      "sha256": "c56ce1be09e9d16edaeb5481afe1c6a069b6dc2c97f4376fad46f64a900d2ed0"
+      "sha256": "91c227881dac288d872c4d182ce5070a1d23ceb711fe2086a5c9cfe82f51a1a5"
     },
     {
       "path": "tests/test_v1_router_mount.py",
@@ -6083,7 +6063,7 @@
     },
     {
       "path": "vault/conftest.py",
-      "sha256": "19e0eb9dab8ec50e5ea31c4c81839d4fb6ddd216115f31bb2b2c3ac313f8f2cf"
+      "sha256": "409d329bc7cb60f78d902fe0f90fa96854c379ac41de2f61ff192d139edf61bb"
     },
     {
       "path": "vault/tests/test_encryption.py",
@@ -6115,7 +6095,7 @@
     },
     {
       "path": "workspace/conftest.py",
-      "sha256": "391f5c695118cbe6fcb527db7761c0fd7f31c091b9ee3db120c38f5bd5e62e57"
+      "sha256": "157c2cdecea78d60f1efa55be2d40f37101ae248c4c22781700f7139eeade19f"
     },
     {
       "path": "workspace/tests/test_csrf.py",

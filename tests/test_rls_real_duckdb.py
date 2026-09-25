@@ -1,4 +1,4 @@
-"""Sprint v1.43.1 — Claude B9: RLS test exercised against a REAL
+"""Sprint v1.43.1 — B9: RLS test exercised against a REAL
 in-memory DuckDB instead of MagicMock.
 
 The original ``tests/test_rls_union_bypass.py`` mocked the engine's

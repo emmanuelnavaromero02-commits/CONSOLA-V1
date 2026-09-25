@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # v1.44.3.2.1 — Parse the JSON Playwright report into a categorised
-# markdown digest. Designed to be appended to docs/E2E_FINDINGS.md
-# so the v1.44.3.3 fix sprint has a single source of truth.
+# markdown digest.
 #
 # Reads:  tests-e2e/playwright-report/results.json (written by the
 #         json reporter declared in playwright.config.ts).

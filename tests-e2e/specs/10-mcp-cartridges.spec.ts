@@ -68,7 +68,7 @@ for (const c of CARTS) {
     });
 
     test(`/skills/list GET unauth → 401 (privileged metadata)`, async () => {
-      // v1.44.3.3 R-Mac Mini-fix: Codex's Mac run reported tests
+      // v1.44.3.3 R-Mac Mini-fix: a Mac validation run reported tests
       // expecting 200 here, but the agreed contract (Option B
       // in the brief) is that /skills/list is PRIVILEGED — the
       // skill catalogue is sensitive metadata that the
@@ -153,7 +153,7 @@ for (const c of CARTS) {
           timeout: 10_000,
         });
         expect(r.status(),
-          `${c.id} /mcp/tools authed must return 200 (Codex C1 regression guard)`,
+          `${c.id} /mcp/tools authed must return 200 (C1 regression guard)`,
         ).toBe(200);
         const body = await r.json();
         expect(body).toHaveProperty("tools");

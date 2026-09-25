@@ -1,4 +1,4 @@
-"""Sprint v1.43.1 — Codex P1-1: schema_migrations backfill for the
+"""Sprint v1.43.1 — P1-1: schema_migrations backfill for the
 files that ran via docker-entrypoint-initdb.d but never went through
 scripts/apply_db_migrations.sh.
 

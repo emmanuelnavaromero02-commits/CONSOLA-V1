@@ -1,6 +1,6 @@
 """Sprint v1.44.3.2.2 R-Mac-3 — runtime CORS contract for Workspace.
 
-Codex's Mac reproduced the failure mode:
+A Mac validation run reproduced the failure mode:
 
   $ curl -i -H "Origin: http://localhost:8001" http://localhost:8000/auth/login
   → access-control-allow-credentials: true   ✓
@@ -25,7 +25,7 @@ These tests exercise the LIVE ASGI stack via Starlette's TestClient
 (no docker, no real DB — the security_headers + auth middlewares
 short-circuit before any DB access on these probes). They would have
 caught the v1.44.3.2.2 R-Mac regression in CI rather than waiting
-for Codex's Mac curl.
+for a manual Mac curl.
 """
 
 from __future__ import annotations

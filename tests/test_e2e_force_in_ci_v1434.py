@@ -1,4 +1,4 @@
-"""Sprint v1.43.4 — Claude L1: E2E tests must not silently skip in
+"""Sprint v1.43.4 — L1: E2E tests must not silently skip in
 CI without making the misconfiguration visible.
 
 Static guards for the v1.43.4 changes that close the audit finding:
@@ -29,14 +29,14 @@ def _ci_workflow() -> str:
 
 
 def test_e2e_conftest_has_require_admin_password_in_ci_fixture():
-    """Codex/Claude L1 explicitly requested an autouse fixture
+    """Review item L1 explicitly requested an autouse fixture
     named ``require_admin_password_in_ci``. Lock the name so any
     future "let's just delete this" change has to face the test
     failure first."""
     src = _e2e_conftest()
     assert "def require_admin_password_in_ci" in src, (
         "tests/e2e/conftest.py must define require_admin_password_in_ci "
-        "(v1.43.4 Claude L1)"
+        "(v1.43.4 L1)"
     )
 
 

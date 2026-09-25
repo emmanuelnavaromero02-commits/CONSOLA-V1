@@ -25,7 +25,7 @@ if str(CONSOLE_ROOT) not in sys.path:
     sys.path.insert(0, str(CONSOLE_ROOT))
 _BASE_SYS_PATH = list(sys.path)
 
-# v1.43.2 (Codex P1-2): the production code now defaults APP_ENV to
+# v1.43.2 (P1-2): the production code now defaults APP_ENV to
 # ``production`` so unset envs fail closed. The test harness explicitly
 # opts in to dev/test mode — mirroring the compose file pattern — so
 # importing console/app/services/auth.py + vault/app/main.py at
@@ -100,13 +100,13 @@ def load_cartridge_app(cartridge_id: str) -> ModuleType:
     if hasattr(main, "catalog_service"):
         main.catalog_service._seed_if_empty = lambda: None
 
-    # v1.43.2 (Codex P1-5): /health now requires app.state.startup_ok=True
+    # v1.43.2 (P1-5): /health now requires app.state.startup_ok=True
     # for a 200. Pre-seed a clean state for tests that build a TestClient
     # WITHOUT a ``with`` block (so lifespan never runs).
     main.app.state.startup_ok = True
     main.app.state.startup_errors = []
 
-    # v1.43.2 (LLM R1 hardening): tests that DO enter the TestClient
+    # v1.43.2 (R1 hardening): tests that DO enter the TestClient
     # ``with`` block run the lifespan end-to-end, which calls
     # job_runner.ensure_schema + cleanup_stale against a real Postgres.
     # Without a DB, the lifespan records errors and flips startup_ok

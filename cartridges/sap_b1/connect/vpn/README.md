@@ -172,6 +172,6 @@ el piloto, para que no queden como deriva.
   diagnóstico a nuestra dirección de túnel.
 * **¿Qué datos salen?** Consultas SQL de solo lectura sobre 45 tablas de los
   tres esquemas acordados, cifradas dos veces (TLS de HANA dentro del túnel
-  WireGuard). El detalle está en `cartridges/sap_b1/README.md`.
+  WireGuard).
 * **¿Y si la plataforma se cae?** El túnel se queda esperando; no hay
   reintentos agresivos ni efecto sobre HANA. Sin handshake no hay tráfico.

@@ -105,7 +105,7 @@ async def record_event(
 
         if has_request_id:
             await db.execute(
-                # v1.43.2 Claude B5: ON CONFLICT DO NOTHING swallows
+                # v1.43.2: ON CONFLICT DO NOTHING swallows
                 # exact-duplicate inserts (same user/action/resource at
                 # the same created_at timestamp) so a retry of the same
                 # admin action no longer inflates the forensic trail.

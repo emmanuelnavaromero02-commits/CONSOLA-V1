@@ -153,7 +153,7 @@ case "$CODE" in
   *)           fail "auth gate broken (POST /monitoring/invoke → ${CODE}, expected 401|403)" ;;
 esac
 
-# ── v1.43.4 (Codex C2): authenticated /mcp/tools must return tools ────
+# ── v1.43.4: authenticated /mcp/tools must return tools ────
 # v1.43.3 shipped with SAP cartridges' /mcp/tools returning HTTP 500
 # (fastmcp 2.5.0 pin vs 3.x API in main.py). The auth-rejection check
 # above only verified the gate; it can't tell whether the endpoint
@@ -198,7 +198,7 @@ else
     if [ "${TOOL_COUNT:-0}" -gt 0 ]; then
       pass "${name} /mcp/tools returns ${TOOL_COUNT} tools (port ${port})"
     else
-      fail "${name} /mcp/tools returned 0 tools — Codex C1 regression (port ${port}, body: ${BODY:0:200})"
+      fail "${name} /mcp/tools returned 0 tools — fastmcp contract regression (port ${port}, body: ${BODY:0:200})"
     fi
   done
 fi

@@ -1,7 +1,7 @@
 /**
  * v1.44.3.2.2 spec 00 — CSP smoke check.
  *
- * Codex's Mac diagnostic surfaced that a stale CSP could block
+ * A Mac diagnostic surfaced that a stale CSP could block
  * the exported Next.js bootstrap. Result: /login rendered a
  * skeleton forever, the form never mounted, and the E2E suite
  * cascaded because Playwright couldn't find the inputs.

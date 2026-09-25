@@ -37,7 +37,7 @@ _mcp_app = mcp.http_app(path="/")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # v1.43.2 (Codex P1-5): track per-step startup state — see
+    # v1.43.2: track per-step startup state — see
     # cartridges/replicon/app/main.py for the rationale.
     app.state.startup_ok = False
     app.state.startup_errors = []
@@ -106,7 +106,7 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
     )
 
 
-# v1.43.1 (Codex P0-1): X-Request-ID middleware.
+# v1.43.1: X-Request-ID middleware.
 from app.middleware.request_id import RequestIDMiddleware  # noqa: E402
 
 app.add_middleware(RequestIDMiddleware)
@@ -124,7 +124,7 @@ def healthz() -> dict:
 
 
 
-# v1.43.2 (LLM R1 hardening): /mcp/* must respect startup state. See
+# v1.43.2 (R1 hardening): /mcp/* must respect startup state. See
 # cartridges/replicon/app/main.py for the rationale.
 
 class _MCPStartupGuard:

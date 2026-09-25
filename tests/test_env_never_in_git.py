@@ -2,7 +2,7 @@
 
 Mandated by external audit (Sprint v1.14, CRITICAL finding). If this test
 ever fails, a developer has committed secrets to the repo and they must
-be rotated immediately — see SECURITY.md ("Rotating secrets").
+be rotated immediately.
 """
 from __future__ import annotations
 
@@ -44,8 +44,7 @@ def test_no_env_file_is_currently_tracked():
     offenders = [line for line in tracked.splitlines() if _looks_like_env_file(line)]
     assert offenders == [], (
         f"Found .env files tracked by git: {offenders}. "
-        "Remove them immediately and rotate all secrets they contained "
-        "(see SECURITY.md → Rotating secrets)."
+        "Remove them immediately and rotate all secrets they contained."
     )
 
 

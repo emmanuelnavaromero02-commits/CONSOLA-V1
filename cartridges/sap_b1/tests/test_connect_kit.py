@@ -24,7 +24,6 @@ KIT = CARTRIDGE / "connect"
 CONFIG_PY = CARTRIDGE / "app" / "core" / "config.py"
 VAULT_CLIENT_PY = CARTRIDGE / "app" / "core" / "vault_client.py"
 ENTITIES_YAML = CARTRIDGE / "app" / "config" / "entities.yaml"
-README = CARTRIDGE / "README.md"
 COMPOSE = REPO_ROOT / "infra" / "docker-compose.yml"
 RUNBOOK = "config/initial_load_by_company_month.md"
 
@@ -43,7 +42,6 @@ EXPECTED_FILES = (
     "vpn/server/install_wireguard_host.sh",
     "vpn/server/open_security_group.sh",
     "vpn/client/wg-client.conf.template",
-    "windows/README.md",
 )
 
 IPV4 = re.compile(r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.])")
@@ -623,54 +621,11 @@ def test_vpn_readme_states_the_one_way_boundary():
     assert re.search(r"no entra nada", text, flags=re.IGNORECASE)
 
 
-UNBUILT_PROMISES = re.compile(r"\b(firmad[oa]s?|firmas?|manifiestos?|checksums?|latidos?|heartbeats?)\b", re.IGNORECASE)
+# ── MCP guard ────────────────────────────────────────────────────────
 
 
-def test_windows_readme_only_describes_and_points_to_the_agent_tree():
-    text = _read("windows/README.md")
-    assert "windows-agent" in text
-    assert not any(p.suffix in {".py", ".ps1", ".exe", ".msi"} for p in (KIT / "windows").rglob("*"))
-
-
-def test_windows_readme_describes_the_delivered_agent_without_unbuilt_promises():
-    """What ships is a Python venv run by a Task Scheduler task with SQLite
-    state and a local spool; the customer-facing summary may promise nothing
-    beyond that (no signing, manifests, checksums or heartbeat)."""
-    text = _read("windows/README.md")
-    match = UNBUILT_PROMISES.search(text)
-    assert not match, f"windows/README.md promises {match.group(0)!r}, which the agent does not implement"
-    assert "../windows-agent/README.md" in text
-    for delivered in ("install.ps1", "Programador de tareas", "SQLite", "spool", "raw/sap_b1/", "run.ps1 status"):
-        assert delivered in text, delivered
-    assert "en paralelo" not in text
-
-
-# ── Cartridge README ────────────────────────────────────────────────────────
-
-
-def test_cartridge_readme_links_the_kit():
-    text = README.read_text(encoding="utf-8")
-    assert "## Connection kit" in text
-    assert "connect/" in text
-    assert "`tests/fixtures/sap_b1` at the\nrepository root" in text or "`tests/fixtures/sap_b1` at the repository root" in text
-
-
-def test_cartridge_readme_lists_every_entity_it_reads():
-    text = README.read_text(encoding="utf-8")
-    table = text[text.index("## What it reads") : text.index("### Incremental reads")]
-    listed = set(re.findall(r"`([A-Z][A-Z0-9]{3})`", table))
-    assert listed == _entity_names(), f"missing {_entity_names() - listed}, extra {listed - _entity_names()}"
-    assert f"{len(_entity_names())} tables" in table
-
-
-def test_cartridge_readme_states_the_headers_each_guard_reads():
-    text = README.read_text(encoding="utf-8")
-    row = next(line for line in text.splitlines() if line.startswith("| **Internal auth** |"))
-    rest, mcp = row.split("`/mcp/rpc`")
-    assert "`X-Internal-Api-Key` or `X-Api-Key`" in rest and "`X-Internal-Service`" in rest
-    assert "`X-Api-Key` plus `X-Internal-Service`" in mcp
-    assert "X-Internal-Api-Key" not in mcp, "/mcp/rpc never reads X-Internal-Api-Key"
-    # The claim must match the guard: the ASGI guard on /mcp/rpc reads x-api-key only.
+def test_mcp_rpc_guard_reads_the_api_key_and_service_headers_only():
+    # The ASGI guard on /mcp/rpc reads x-api-key and x-internal-service only.
     guard = (CARTRIDGE / "app" / "security.py").read_text(encoding="utf-8")
     guard_body = guard[guard.index("class InternalApiKeyASGIGuard") :]
     assert 'headers.get("x-api-key")' in guard_body and 'headers.get("x-internal-service")' in guard_body

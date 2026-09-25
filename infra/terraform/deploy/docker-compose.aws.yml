@@ -40,7 +40,7 @@ services:
       - modecissions_net
     restart: unless-stopped
     logging: *default-logging
-    # v1.43.4 (Claude N3): mirror the local healthcheck so AWS
+    # v1.43.4: mirror the local healthcheck so AWS
     # depends_on can use ``condition: service_healthy`` instead of
     # the implicit "container started" semantics that race-condition
     # boot order.
@@ -181,7 +181,7 @@ services:
       - /opt/modecissions/console/app/static:/app/app/static:ro
     networks:
       - modecissions_net
-    # v1.43.4 (Claude N3): wait on the upstream healthchecks rather
+    # v1.43.4: wait on the upstream healthchecks rather
     # than the implicit "container started" race window — postgres
     # accepting connections, mcp-infra serving /healthz, mailhog
     # listening on its inbox port. Pre-v1.43.4 a slow Postgres init
@@ -499,7 +499,7 @@ services:
     mem_limit: ${MCP_INFRA_MEM_LIMIT:-1536m}
     cpus: ${MCP_INFRA_CPUS:-2.0}
     pids_limit: ${MCP_INFRA_PIDS_LIMIT:-128}
-    # v1.43.4 (Codex H1): mcp-infra port 8010 is no longer published
+    # v1.43.4: mcp-infra port 8010 is no longer published
     # on the host network in AWS — it's an internal service consumed
     # only by console / workspace / airflow workers over the
     # modecissions_net docker bridge. Publishing 8010:8010 exposed
@@ -636,7 +636,7 @@ services:
         PY
     networks:
       - modecissions_net
-    # v1.43.4 (Claude N3): one-shot init waits on postgres healthy
+    # v1.43.4: one-shot init waits on postgres healthy
     # so ``superset db upgrade`` doesn't race the DB startup.
     depends_on:
       postgres:
@@ -728,7 +728,7 @@ services:
       FIELD_ENCRYPTION_KEY:                 ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required for cartridge DAGs}
     networks:
       - modecissions_net
-    # v1.43.4 (Claude N3): wait on postgres healthy so
+    # v1.43.4: wait on postgres healthy so
     # ``airflow db migrate`` doesn't race the DB startup.
     depends_on:
       postgres:
@@ -788,8 +788,8 @@ services:
       MINIO_SECRET_KEY:                     ${AWS_SECRET_ACCESS_KEY:-}
       MINIO_SECURE:                         "true"
       REFINEMENT_URL:                       http://refinement:8500
-      # v1.43.1 (Codex P0-4): cartridges are deployed OUT OF THIS COMPOSE
-      # — see DEPLOY-RUNBOOK.md §"Cartridges deployed separately". The
+      # v1.43.1: cartridges are deployed OUT OF THIS COMPOSE
+      # (see docker-compose.cartridges.yml). The
       # DAGs need to know where each cartridge lives; the operator sets
       # these env vars to the cluster-local hostnames (Kubernetes service
       # DNS, MWAA secret, etc.). The defaults here MATCH the local
@@ -889,7 +889,7 @@ services:
       MINIO_SECRET_KEY:                     ${AWS_SECRET_ACCESS_KEY:-}
       MINIO_SECURE:                         "true"
       REFINEMENT_URL:                       http://refinement:8500
-      # v1.43.1 (Codex P0-4): mirror the webserver's cartridge URL vars.
+      # v1.43.1: mirror the webserver's cartridge URL vars.
       SAP_HCM_URL:            "${SAP_HCM_URL:-http://sap-hcm:8202}"
       SAP_S4HANA_URL:         "${SAP_S4HANA_URL:-http://sap-s4hana:8204}"
       SAP_B1_URL:             "${SAP_B1_URL:-http://sap-b1:8206}"

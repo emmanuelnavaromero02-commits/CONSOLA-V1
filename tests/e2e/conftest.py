@@ -1,4 +1,4 @@
-"""Sprint v1.43.1 (Codex P0-5 + Claude) — E2E sandbox fixtures.
+"""Sprint v1.43.1 (P0-5) — E2E sandbox fixtures.
 
 The pattern v1.41.1 introduced (``tests/test_e2e_full_flow.py``) skips
 silently when the stack isn't up. That covers the local-dev case but
@@ -62,7 +62,7 @@ def _mirror_cookie_for_http_client(client: httpx.Client, name: str, value: str |
         client.cookies.set(name, value, path="/")
 
 
-# v1.43.4 (Claude L1): if E2E tests are being collected inside CI
+# v1.43.4 (L1): if E2E tests are being collected inside CI
 # AND the admin password isn't set, fail the collection step
 # loudly. Pre-v1.43.4 the silent skip path made it impossible to
 # tell whether a green CI run had actually exercised the E2E
@@ -83,9 +83,9 @@ def require_admin_password_in_ci():
             "E2E_ADMIN_PASSWORD is empty inside CI with "
             "E2E_REQUIRE_STACK=1. Either provide the value as a "
             "repository secret (recommended) or drop "
-            "E2E_REQUIRE_STACK=1 to silently skip E2E. See "
-            "docs/runbook/02_primer_tenant.md for how the password "
-            "relates to BOOTSTRAP_ADMIN_PASSWORD."
+            "E2E_REQUIRE_STACK=1 to silently skip E2E. It must "
+            "match the BOOTSTRAP_ADMIN_PASSWORD used to create the "
+            "admin with python -m app.bootstrap_admin."
         )
 
 

@@ -2,7 +2,7 @@ import os
 import sys
 from pathlib import Path
 
-# v1.43.2 (Codex P1-2): see console/conftest.py for the rationale —
+# v1.43.2: see console/conftest.py for the rationale —
 # the production APP_ENV default would trip vault's pair-key check
 # at import time during CI test collection.
 os.environ.setdefault("APP_ENV", "test")

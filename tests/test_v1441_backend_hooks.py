@@ -8,7 +8,7 @@ exist and have the shape the brief documents.
 
 Covered:
   * console/app/routers/cartridges.py — POST/DELETE /credentials
-    (Tarea B backend), enhanced POST /test_connection (Codex C2
+    (Tarea B backend), enhanced POST /test_connection (C2
     follow-through: normalised response + audit).
   * console/app/routers/dashboard.py  — GET /api/dashboard/kpis
     (Tarea E backend).

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v1.43.4 (Codex H6) — Move ad-hoc .env backups out of the repo and into a
+# v1.43.4 — Move ad-hoc .env backups out of the repo and into a
 # locked-down per-user backup directory. Run after rotating secrets to keep
 # the rotation trail accessible (read-only, owner-only) without polluting
 # `git status`.

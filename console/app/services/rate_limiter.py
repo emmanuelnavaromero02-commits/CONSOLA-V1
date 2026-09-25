@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 def _is_production() -> bool:
-    # v1.43.2 (Codex P1-2): default ``production`` — unset APP_ENV must
+    # v1.43.2: default ``production`` — unset APP_ENV must
     # not silently disable production guardrails. Local dev compose sets
     # APP_ENV=development explicitly.
     return os.environ.get("APP_ENV", "production").lower() in {"production", "prod"}

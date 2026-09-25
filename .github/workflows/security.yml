@@ -1,4 +1,4 @@
-# Sprint v1.43.2 (Claude B8) — bandit + pip-audit security scans.
+# Sprint v1.43.2 — bandit + pip-audit security scans.
 #
 # bandit catches in-source security smells (hardcoded password literals,
 # shell=True, weak random, etc.). pip-audit cross-references each
@@ -66,8 +66,7 @@ jobs:
             --severity-level medium \
             -f json -o bandit-report.json || true
           # v1.45.17 audit follow-up: fail the job on MEDIUM+
-          # severity AT HIGH confidence. The current B608 baseline is
-          # documented in docs/security/bandit-b608-triage.md: as of
+          # severity AT HIGH confidence. The current B608 baseline: as of
           # 2026-06-05 there are 165 MEDIUM severity findings, all at
           # LOW/MEDIUM confidence. They require line-by-line adjudication
           # before v1.0, but HIGH-confidence regressions still fail CI now.

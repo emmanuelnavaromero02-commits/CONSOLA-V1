@@ -1,4 +1,4 @@
-"""Sprint v1.43.2 (Codex P1-5) — cartridge /health mirrors startup state.
+"""Sprint v1.43.2 (P1-5) — cartridge /health mirrors startup state.
 
 Pre-v1.43.2, every cartridge's lifespan swallowed schema/migration
 exceptions and /health unconditionally returned ``{"ok": True}``.
@@ -166,7 +166,7 @@ def test_cartridge_health_returns_200_when_startup_clean(
     assert body["startup_errors"] == []
 
 
-# ── v1.43.2 (LLM R1 hardening): /mcp/* fail-closed when startup_ok=False ──
+# ── v1.43.2 (R1 hardening): /mcp/* fail-closed when startup_ok=False ──
 
 @pytest.mark.parametrize("cartridge,service_label", CARTRIDGES)
 @pytest.mark.parametrize("path,method", [
@@ -209,7 +209,7 @@ def test_mcp_endpoints_return_503_when_startup_failed(
 def test_mcp_rpc_503_body_is_valid_json_with_apostrophe_error(
     env_for_cartridges, cartridge, service_label, monkeypatch,
 ):
-    """v1.43.2 (LLM R2 hardening): the ASGI guard's 503 body must be
+    """v1.43.2 (R2 hardening): the ASGI guard's 503 body must be
     well-formed JSON even when the error message contains an
     apostrophe / non-ASCII / backslash. Pre-R2 the body was built by
     Python repr (``str(list).replace("'", '"')``) which broke JSON
@@ -252,14 +252,14 @@ def test_mcp_rpc_503_body_is_valid_json_with_apostrophe_error(
         assert any("tëst" in e for e in body["startup_errors"]), body
 
 
-# ── v1.43.4 (Codex C2): /health reflects MCP contract state ───────────────
+# ── v1.43.4 (C2): /health reflects MCP contract state ───────────────
 
 
 @pytest.mark.parametrize("cartridge,service_label", CARTRIDGES)
 def test_health_returns_200_with_tool_count_when_healthy(
     env_for_cartridges, cartridge, service_label, monkeypatch,
 ):
-    """v1.43.4 (Codex C2): /health success body must include a
+    """v1.43.4 (C2): /health success body must include a
     positive ``tool_count`` derived from the MCP server's
     ``list_tools()`` call. Before this hotfix /health only checked
     startup_ok, so a cartridge with a broken /mcp/tools surface
@@ -290,7 +290,7 @@ def test_health_returns_200_with_tool_count_when_healthy(
     assert body["service"] == service_label
     assert "tool_count" in body, (
         f"{cartridge} /health success body must include tool_count "
-        f"(v1.43.4 Codex C2). got keys={list(body)}"
+        f"(v1.43.4 C2). got keys={list(body)}"
     )
     assert isinstance(body["tool_count"], int) and body["tool_count"] > 0, (
         f"{cartridge} /health tool_count must be a positive int — "
@@ -305,7 +305,7 @@ def test_health_returns_503_when_mcp_has_no_tools(
     """If the MCP server somehow ends up with zero tools registered
     (regression in tool decorators, bad import order, etc.), /health
     must return 503 with reason=mcp_no_tools_registered. This catches
-    a quiet failure mode that v1.43.4 (Codex C2) explicitly targets.
+    a quiet failure mode that v1.43.4 (C2) explicitly targets.
     """
     from fastapi.testclient import TestClient
 
@@ -345,7 +345,7 @@ def test_health_returns_503_when_mcp_list_tools_raises(
     env_for_cartridges, cartridge, service_label, monkeypatch,
 ):
     """If mcp.list_tools() raises (e.g. AttributeError because of a
-    fastmcp major-version mismatch — the exact Codex C1 failure
+    fastmcp major-version mismatch — the exact C1 failure
     mode), /health must surface that as 503 with
     reason=mcp_unreachable instead of pretending healthy.
     """

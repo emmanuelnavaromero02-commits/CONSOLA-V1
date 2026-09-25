@@ -107,7 +107,7 @@ jobs:
       - name: Run root tests/ (cartridge contracts)
         if: needs.changes.outputs.root_tests == 'true'
         env:
-          # v1.43.4 (Claude L1): when the team wires up a live-stack
+          # v1.43.4: when the team wires up a live-stack
           # job (start docker-compose, sleep ≈180s, then pytest), set
           # E2E_REQUIRE_STACK=1 here AND provide E2E_ADMIN_PASSWORD as
           # a repo secret. The conftest's autouse fixture will then

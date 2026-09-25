@@ -93,7 +93,7 @@ def _register_shared_macros(con: "duckdb.DuckDBPyConnection") -> None:
 
 
 def _escape_sql_literal_inner(value: str) -> str:
-    """v1.43.1 (Claude B4): same single-quote-doubling escape as
+    """v1.43.1 (B4): same single-quote-doubling escape as
     ``_sql_quote`` but WITHOUT the wrapping quotes. Use when the template
     already provides the outer ``'…'`` (e.g. ``WHERE x = '{placeholder}'``)
     and we just need to neutralise any quote characters embedded in the
@@ -1515,7 +1515,7 @@ class DuckDBEngine:
         try:
             tree = sqlglot.parse_one(sql, read="duckdb")
         except (sqlglot.errors.ParseError, sqlglot.errors.TokenError) as exc:
-            # v1.43.1 (Claude B9): TokenError fires on lexer failures
+            # v1.43.1 (B9): TokenError fires on lexer failures
             # (e.g. unbalanced quotes, raw garbage) before sqlglot even
             # reaches the parse step. The audit's default-deny posture
             # treats those the same as ParseError — the caller MUST NOT
@@ -1661,7 +1661,7 @@ class DuckDBEngine:
         reciente de la primera fuente Bronze. Si el SQL ya NO usa el placeholder,
         lo devuelve sin modificar.
 
-        v1.43.1 (Claude B4): el load_date viene de MAX(load_date) sobre
+        v1.43.1 (B4): el load_date viene de MAX(load_date) sobre
         Parquet en MinIO. Un cartucho comprometido podría escribir un valor
         como ``2024-01-01' UNION SELECT secrets FROM x WHERE '1'='1`` y
         romper la consulta cuando se concatena dentro del literal de la

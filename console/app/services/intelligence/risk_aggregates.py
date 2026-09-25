@@ -10,7 +10,7 @@ Datasets (layer=gold, resolved through publication heads):
   -> :func:`query_deal_slippage`
 
 Metrics without a Gold relation (cost center overrun: no budget data anywhere)
-intentionally have no function here: see ``docs/data_gaps.md``.
+intentionally have no function here.
 
 Same pattern as ``successfactors_talent_population``: dedicated asyncpg
 connection to GOLD_DATABASE_URL, repeatable_read read-only transaction,

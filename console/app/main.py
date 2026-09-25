@@ -936,7 +936,7 @@ def _allowed_origins() -> list[str]:
 # v1.44.3.2.2 R-Mac-3 (CORS ordering hotfix): the CORSMiddleware
 # registration USED to live here at module-load time, which made it
 # the FIRST middleware on user_middleware and therefore the
-# INNERMOST in Starlette's reversed stack. Symptom Codex curl'd on
+# INNERMOST in Starlette's reversed stack. Symptom observed via curl on
 # the Mac:
 #   $ curl -i -H "Origin: http://localhost:8001" http://localhost:8000/auth/login
 #   → access-control-allow-credentials: true   ✓

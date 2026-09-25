@@ -1,4 +1,4 @@
-"""Sprint v1.43.2 (Codex P1-2) — APP_ENV defaults to ``production``.
+"""Sprint v1.43.2 (P1-2) — APP_ENV defaults to ``production``.
 
 Pre-v1.43.2, an unset ``APP_ENV`` silently put the stack in
 development mode: cookies were Secure=False, vault production-only

@@ -85,16 +85,16 @@ def _dag_file_path(dag_id: str) -> Path:
 
 
 def _is_development() -> bool:
-    # v1.43.2 (Codex P1-2): default ``production`` — a forgotten
+    # v1.43.2: default ``production`` — a forgotten
     # APP_ENV no longer enables airflow_create_dag (RCE-shaped tool)
     # on a fresh deploy.
     return os.environ.get("APP_ENV", "production").lower() in {"development", "dev", "local", "test"}
 
 
 def _rce_tools_explicitly_enabled() -> bool:
-    """v1.43.4 (Codex H1): second gate. APP_ENV=development was used
-    to enable airflow_create_dag in dev environments — and Codex
-    proved that an operator who flips APP_ENV (e.g. to debug a
+    """v1.43.4: second gate. APP_ENV=development was used
+    to enable airflow_create_dag in dev environments — and review
+    showed that an operator who flips APP_ENV (e.g. to debug a
     production-only path) implicitly unlocks the RCE tool. Require
     an explicit second opt-in so APP_ENV alone is no longer enough.
     Default off; only ``ALLOW_RCE_TOOLS=true`` (case-insensitive)
@@ -300,7 +300,7 @@ async def airflow_create_dag(dag_id: str, code: str,
                               cartridge_id: str | None = None,
                               description: str | None = None,
                               dag_params_example: dict | None = None) -> dict:
-    # v1.43.4 (Codex H1): double-gate. APP_ENV must be a dev variant
+    # v1.43.4: double-gate. APP_ENV must be a dev variant
     # AND ALLOW_RCE_TOOLS must be explicitly set. Either gate alone
     # was demonstrably bypassable: APP_ENV gets flipped to debug
     # production-only paths, and a "default-on" RCE tool gated by

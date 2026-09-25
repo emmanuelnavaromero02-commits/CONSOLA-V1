@@ -1791,113 +1791,11 @@ def test_duckdb_cache_verifier_blocks_manifest_content_and_topology_drift(
     assert run().returncode != 0
 
 
-def test_failed_210_through_220_releases_are_preserved_and_version_moves_forward():
+def test_version_moves_forward_past_the_failed_210_through_220_releases():
     current_version = (REPO / "VERSION").read_text(encoding="utf-8").strip()
     version_match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)-beta", current_version)
     assert version_match is not None
     assert tuple(map(int, version_match.groups())) > (1, 45, 220)
-    evidence = (
-        REPO / "docs/release-evidence/omega-f2-digest-release-gate.md"
-    ).read_text(encoding="utf-8")
-    flattened_evidence = " ".join(evidence.split())
-    for needle in (
-        "v1.45.212-beta",
-        "v1.45.213-beta",
-        "v1.45.214-beta",
-        "v1.45.215-beta",
-        "v1.45.216-beta",
-        "v1.45.217-beta",
-        "v1.45.218-beta",
-        "v1.45.219-beta",
-        "v1.45.220-beta",
-        "v1.45.211-beta",
-        "v1.45.210-beta",
-        "31801477645",
-        "31809737977",
-        "31823738299",
-        "31831837077",
-        "6c70e0067eb44dd991d355b3e5cab663300c790b",
-        "2429e9a2bdab13ff00740fe318009fd5b101850d",
-        "cadf0b28b771257bc6cb9129cf8b4cd72ef5adff",
-        "cc0873e4d86bb5bd2f183a003d43ff8a0970df8c",
-        "5e3bbc3d1475486bbc0ddabb57b440210ac0782c",
-        "dd882bc08bb445d1446f9cbbe313448b24827720",
-        "926330d8e1e2067e4e56429fb91e4585ffa4eb43",
-        "4bcfda1811d4cbe0511624e0d5cd9c1f5205926b",
-        "31851541639",
-        "31858396322",
-        "f40a3ab516689343514411806318cffd4f67c3bd",
-        "82a7e45adff10b4877b1bfb0e6acab4206744c60",
-        "Docker control environment is forbidden after release lock: COMPOSE_FILE",
-        "13 failed, 689 passed, 18 errors",
-        "1 failed, 720 passed, 16 errors",
-        "Freeze trusted Playwright and Docker gate runtimes",
-        "PermissionError",
-        "no space left on device",
-        "no preflight, image build, manifest, digest gate, or release assets ran",
-        "f940c6e2184ea1e786c8391903d15523eb0cf4731d7928f38e2f7881a5ba4adc",
-    ):
-        assert needle in flattened_evidence
-
-    failed_214_offset = evidence.index("31843803006")
-    failed_214_context = evidence[
-        max(0, failed_214_offset - 500) : failed_214_offset + 2_500
-    ]
-    for needle in (
-        "v1.45.214-beta",
-        "cea2ec51314248daf26710cfe8a94a483d7287eb",
-        "325170ff109e88860df857c8615f05b059698fec",
-        "dependency failed to start: container mode_airflow is unhealthy",
-        "publish-release-manifest",
-        "was skipped",
-        "no GitHub Release",
-    ):
-        assert needle in failed_214_context
-
-    failed_215_offset = flattened_evidence.index("31851541639")
-    failed_215_context = flattened_evidence[
-        max(0, failed_215_offset - 500) : failed_215_offset + 3_500
-    ]
-    for needle in (
-        "v1.45.215-beta",
-        "f40a3ab516689343514411806318cffd4f67c3bd",
-        "82a7e45adff10b4877b1bfb0e6acab4206744c60",
-        "Wait for exact digest stack basic readiness",
-        "240 seconds",
-        "exit 97",
-        "Docker control environment is forbidden after release lock: COMPOSE_FILE",
-        "false `starting` states",
-        "Airflow webserver and scheduler were healthy",
-        "3259df40b06c312b39ad4d8ad0c1731e98b2f2f986165b850d7e766c3ff54393",
-        "all 15 candidate images remained private and tagless (`tags: []`)",
-        "zero canonical `v1.45.215-beta` tags across the 15 packages",
-        "publish-release-manifest",
-        "was skipped",
-        "GitHub Release remained `404`",
-    ):
-        assert needle in failed_215_context
-
-    failed_216_offset = flattened_evidence.index("31858396322")
-    failed_216_context = flattened_evidence[
-        max(0, failed_216_offset - 500) : failed_216_offset + 5_500
-    ]
-    for needle in (
-        "v1.45.216-beta",
-        "0f47139b7c3e8ba2b907804d0b2a3673da3a000c",
-        "1544f511cb49375120e75d04e6f8b18c7564f3e7",
-        "973748408592f6df5b55cab1b75dcef72c46ca1fcffff147788be75cd0fd0fb1",
-        "00615a2030a6873ed37729782fe08f6495332ce410f3367b824a15ba33c33aca",
-        "exactly 16 workflow artifacts",
-        "All 15/15 packages remained private and tagless",
-        "zero canonical `v1.45.216-beta` tags",
-        "Run all final gates against exact digest stack",
-        "apply_db_migrations.sh",
-        "exit 97",
-        "publish-release-manifest",
-        "was skipped",
-        "GitHub Release, including drafts, was absent",
-    ):
-        assert needle in failed_216_context
 
 
 def test_publication_stops_after_acceptance_without_duplicate_post_gate_checks():

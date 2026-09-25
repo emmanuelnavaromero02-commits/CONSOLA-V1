@@ -1,4 +1,4 @@
-"""Sprint v1.43.2 (Claude B5) — audit_events dedup + UNIQUE constraint.
+"""Sprint v1.43.2 — audit_events dedup + UNIQUE constraint.
 
 Static + structural verification of:
   * migration 44 enforces uniqueness with the documented escape hatch
@@ -84,7 +84,7 @@ def test_migration_19_keeps_other_tables_intact():
 
 
 def test_audit_service_uses_on_conflict_do_nothing():
-    """v1.43.2 Claude B5: the INSERT must carry ON CONFLICT DO NOTHING
+    """v1.43.2 B5: the INSERT must carry ON CONFLICT DO NOTHING
     so a retry of the same admin action doesn't error out at the new
     UNIQUE constraint and propagate up as a 500 — instead it silently
     no-ops, which is the desired forensic posture."""

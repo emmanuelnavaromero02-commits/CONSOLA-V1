@@ -1,4 +1,4 @@
-# Sprint v1.43.2 (Claude B8) — ruff lint + format check.
+# Sprint v1.43.2 — ruff lint + format check.
 #
 # Runs on every PR + push to main. Pinned ruff version so style drift
 # in a future ruff release doesn't silently change what the CI accepts.

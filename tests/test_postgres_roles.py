@@ -344,5 +344,5 @@ def test_vault_entries_still_only_in_omega_vault():
     assert distinct == ["omega_vault"], (
         f"vault_entries grants leaked beyond omega_vault: {distinct!r}. "
         f"Banca-grade defense-in-depth: only omega_vault may touch "
-        f"vault_entries — see SECURITY.md."
+        f"vault_entries."
     )

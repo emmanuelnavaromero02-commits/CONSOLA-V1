@@ -224,13 +224,3 @@ def test_aws_env_example_does_not_document_static_aws_keys():
     assert "HUBSPOT_URL=" in src
     assert "SALESFORCE_URL=" in src
     assert "SF_TOKEN_URL=" in src
-
-
-def test_deploy_runbook_mentions_secretsmanager_not_nano_env():
-    src = _read(DEPLOY / "DEPLOY-RUNBOOK.md")
-    assert "AWS Secrets Manager" in src
-    assert "scripts/aws-entrypoint.sh" in src
-    assert "nano .env" not in src
-    assert "deploy_private_key" not in src
-    assert "aws_secretsmanager_secret.app" in src
-    assert "aws_secretsmanager_secret.ghcr_pull_credentials" in src

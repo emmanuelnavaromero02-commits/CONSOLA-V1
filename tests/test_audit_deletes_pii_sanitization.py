@@ -1,4 +1,4 @@
-"""Sprint v1.43.4 — Claude H7: GDPR-aligned PII sanitization in
+"""Sprint v1.43.4 — H7: GDPR-aligned PII sanitization in
 audit_deletes trigger (migration 47).
 
 Static verification of:

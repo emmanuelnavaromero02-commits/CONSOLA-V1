@@ -100,7 +100,7 @@ services:
 
   minio:
     security_opt: ["no-new-privileges:true"]
-    # v1.43.2 (Claude B7): pin MinIO to a specific RELEASE tag.
+    # v1.43.2: pin MinIO to a specific RELEASE tag.
     # ``:latest`` silently shipped breaking changes between deploys;
     # pinning here gives reproducible local + staging behaviour. Bump
     # deliberately via a versioned migration when needed.
@@ -163,7 +163,7 @@ services:
       dockerfile: console/Dockerfile
     container_name: mode_console
     environment:
-      # v1.43.2 (Codex P1-2): APP_ENV default flipped to ``production`` in
+      # v1.43.2: APP_ENV default flipped to ``production`` in
       # code so an unset env never silently disables guardrails. Local dev
       # opts in explicitly here.
       #
@@ -309,7 +309,7 @@ services:
       dockerfile: Dockerfile
     container_name: mode_workspace
     environment:
-      # v1.43.2 (Codex P1-2): see console block above.
+      # v1.43.2: see console block above.
       APP_ENV: ${APP_ENV:-production}
       ALLOW_RCE_TOOLS: ${ALLOW_RCE_TOOLS:-false}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
@@ -366,7 +366,7 @@ services:
     mem_limit: ${REFINEMENT_MEM_LIMIT:-1g}
     cpus: ${REFINEMENT_CPUS:-1.0}
     environment:
-      # v1.43.2 (Codex P1-2): see console block above.
+      # v1.43.2: see console block above.
       APP_ENV: ${APP_ENV:-production}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       SECURITY_CONTEXT_SIGNING_KEY: ${SECURITY_CONTEXT_SIGNING_KEY:?SECURITY_CONTEXT_SIGNING_KEY is required}
@@ -435,7 +435,7 @@ services:
       dockerfile: Dockerfile
     container_name: mode_vault
     environment:
-      # v1.43.2 (Codex P1-2): see console block above.
+      # v1.43.2: see console block above.
       APP_ENV: ${APP_ENV:-production}
       # Sprint v1.19: per-service Postgres role (least-privilege).
       # omega_vault is the ONLY role with access to vault_entries.
@@ -784,7 +784,7 @@ services:
       dockerfile: Dockerfile
     container_name: mode_sap_successfactors
     environment:
-      # v1.43.2 (Codex P1-2): see console block above.
+      # v1.43.2: see console block above.
       APP_ENV: ${APP_ENV:-production}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       SECURITY_CONTEXT_SIGNING_KEY: ${SECURITY_CONTEXT_SIGNING_KEY:?SECURITY_CONTEXT_SIGNING_KEY is required}
@@ -846,7 +846,7 @@ services:
       dockerfile: Dockerfile
     container_name: mode_sap_hcm
     environment:
-      # v1.43.2 (Codex P1-2): see console block above.
+      # v1.43.2: see console block above.
       APP_ENV: ${APP_ENV:-production}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       SECURITY_CONTEXT_SIGNING_KEY: ${SECURITY_CONTEXT_SIGNING_KEY:?SECURITY_CONTEXT_SIGNING_KEY is required}
@@ -894,7 +894,7 @@ services:
       dockerfile: Dockerfile
     container_name: mode_sap_s4hana
     environment:
-      # v1.43.2 (Codex P1-2): see console block above.
+      # v1.43.2: see console block above.
       APP_ENV: ${APP_ENV:-production}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       SECURITY_CONTEXT_SIGNING_KEY: ${SECURITY_CONTEXT_SIGNING_KEY:?SECURITY_CONTEXT_SIGNING_KEY is required}
@@ -943,7 +943,7 @@ services:
       dockerfile: Dockerfile
     container_name: mode_sap_b1
     environment:
-      # v1.43.2 (Codex P1-2): see console block above.
+      # v1.43.2: see console block above.
       APP_ENV: ${APP_ENV:-production}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       SECURITY_CONTEXT_SIGNING_KEY: ${SECURITY_CONTEXT_SIGNING_KEY:?SECURITY_CONTEXT_SIGNING_KEY is required}
@@ -1000,7 +1000,7 @@ services:
       dockerfile: mcp-infra/Dockerfile
     container_name: mode_mcp_infra
     environment:
-      # v1.43.2 (Codex P1-2): see console block above. mcp-infra is the
+      # v1.43.2: see console block above. mcp-infra is the
       # service most affected — airflow/superset/vault tools gate on
       # _is_development() and would have run unrestricted if APP_ENV
       # was simply unset. Default flipped, explicit opt-in here.
@@ -1350,7 +1350,7 @@ services:
       MINIO_SECURE:         "false"
       REFINEMENT_URL:       http://refinement:8500
       OUTLOOK_APP_PASSWORD: "${OUTLOOK_APP_PASSWORD:-dummy-local-password}"
-      # v1.43.1 (Claude B2): cartridge URLs are env-var driven so the
+      # v1.43.1: cartridge URLs are env-var driven so the
       # SAP DAGs are portable to Kubernetes / MWAA / Composer without
       # code edits. Defaults match the compose service hostnames so
       # local dev continues working unchanged.
@@ -1468,7 +1468,7 @@ services:
       MINIO_SECURE:         "false"
       REFINEMENT_URL:       http://refinement:8500
       OUTLOOK_APP_PASSWORD: "${OUTLOOK_APP_PASSWORD:-dummy-local-password}"
-      # v1.43.1 (Claude B2): mirror the webserver's cartridge URL env vars
+      # v1.43.1: mirror the webserver's cartridge URL env vars
       # so DAGs parse the same way regardless of which Airflow component
       # imports them.
       SAP_HCM_URL:            "${SAP_HCM_URL:-http://sap-hcm:8202}"

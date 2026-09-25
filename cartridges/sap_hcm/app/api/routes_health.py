@@ -14,7 +14,7 @@ _SERVICE = "sap_hcm"
 
 @router.get("")
 async def health(request: Request):
-    # v1.43.2 (Codex P1-5): /health mirrors real startup state.
+    # v1.43.2: /health mirrors real startup state.
     state = request.app.state
     ok = getattr(state, "startup_ok", False)
     errors = list(getattr(state, "startup_errors", []) or [])
@@ -29,7 +29,7 @@ async def health(request: Request):
             status_code=503,
         )
 
-    # v1.43.4 (Codex C2): /health must additionally reflect the MCP
+    # v1.43.4: /health must additionally reflect the MCP
     # contract. v1.43.3 shipped with fastmcp 2.5.0 pinned + 3.x API
     # in main.py — every /mcp/tools request 500'd while the
     # container reported HEALTHY because /health only checked

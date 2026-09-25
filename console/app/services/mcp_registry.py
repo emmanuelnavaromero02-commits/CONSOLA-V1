@@ -436,7 +436,7 @@ async def startup():
             "category":    "studio",
             "description": "Cartridge & entity management: rename_entity, list_entities, update_entity",
         },
-        # v1.43.1 (Codex P0-3): register the built-in cartridges so the
+        # v1.43.1: register the built-in cartridges so the
         # copilot's tool_manifest sees their /mcp/tools at boot.
         # ``register`` HTTP-fetches /mcp/tools and stores the result in
         # the tools JSONB column, so refreshing the console picks up

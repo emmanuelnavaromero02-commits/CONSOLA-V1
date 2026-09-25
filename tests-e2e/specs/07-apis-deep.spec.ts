@@ -4,7 +4,7 @@
  * 40+ tests covering auth round-trip, every documented endpoint
  * with both unauth gate + authed shape validation, RBAC (admin
  * vs viewer), security headers (CSP / HSTS / X-Frame-Options),
- * and the LIVE CSRF flow Codex uncovered.
+ * and the LIVE CSRF flow a Mac validation run uncovered.
  */
 import { test, expect, request as pwRequest } from "@playwright/test";
 
