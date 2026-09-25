@@ -121,9 +121,24 @@ def _build_plan(
     reverse = _reverse_index(graph)
     if seed_raw:
         raw_key = seed_raw.strip().strip("/").lower()
-        if raw_key not in reverse:
+        if raw_key.endswith("/*"):
+            cartridge_prefix = raw_key[:-1]
+            if cartridge_prefix.count("/") != 2:
+                raise ValueError("cartridge raw seed must be raw/<cartridge>/*")
+            roots = sorted(
+                {
+                    child
+                    for key, children in reverse.items()
+                    if key.startswith(cartridge_prefix)
+                    for child in children
+                }
+            )
+            if not roots:
+                raise ValueError("raw seed does not exist in the active workspace graph")
+        elif raw_key not in reverse:
             raise ValueError("raw seed does not exist in the active workspace graph")
-        roots = list(reverse[raw_key])
+        else:
+            roots = list(reverse[raw_key])
         ranks: dict[str, int] = {}
         root_depth = 1
     else:

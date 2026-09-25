@@ -1098,11 +1098,10 @@ async def test_run_intelligence_gold_refresh_run_ref_is_idempotent(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_run_intelligence_uses_scoped_gold_fetcher_by_default(monkeypatch):
-    async def fake_gold_fetcher(dataset: str, user: dict | None, limit: int):
+    async def fake_gold_population(dataset: str, user: dict | None):
         assert dataset == "forecast_mensual"
         assert user == USER
-        assert limit >= 3
-        return [
+        rows = [
             {
                 "mes": "2026-01-01",
                 "owner_id": "u1",
@@ -1122,6 +1121,14 @@ async def test_run_intelligence_uses_scoped_gold_fetcher_by_default(monkeypatch)
                 "forecast_ponderado_usd": 200,
             },
         ]
+        return rows, {
+            "dataset": dataset,
+            "population_total": len(rows),
+            "rows_fetched": len(rows),
+            "complete": True,
+            "ceiling": None,
+            "source": "gold_population_cursor",
+        }
 
     monkeypatch.setattr(
         intelligence_engine,
@@ -1129,7 +1136,7 @@ async def test_run_intelligence_uses_scoped_gold_fetcher_by_default(monkeypatch)
         lambda cartridge_ids=None: [{**_contract(), "metrics": [_metric()]}],
     )
     monkeypatch.setattr(
-        intelligence_engine_module, "query_intelligence_dataset_rows", fake_gold_fetcher
+        intelligence_engine_module, "query_gold_dataset_population", fake_gold_population
     )
 
     result = await intelligence_engine.run_intelligence(USER, {}, persist=False)

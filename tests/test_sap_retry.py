@@ -46,7 +46,7 @@ def test_make_retry_session_exists_in_each_cartridge(cartridge):
 def test_make_retry_session_is_textually_identical_across_cartridges():
     bodies = {}
     body_re = re.compile(
-        r"def _make_retry_session\(.*?return session", re.DOTALL,
+        r"def _make_retry_session\(.*?\n    return [^\n]+", re.DOTALL,
     )
     for cart, path in CLIENT_PATHS.items():
         src = path.read_text(encoding="utf-8")

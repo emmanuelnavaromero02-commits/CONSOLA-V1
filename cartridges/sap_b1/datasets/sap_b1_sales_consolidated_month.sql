@@ -1,5 +1,5 @@
 -- sap_b1_sales_consolidated_month  (gold)  cartridge: sap_b1
--- sources: ["raw/sap_b1/OINV", "raw/sap_b1/INV1", "raw/sap_b1/ORIN", "raw/sap_b1/RIN1", "raw/sap_b1/OADM", "raw/sap_b1/IntercompanyPartners"]
+-- sources: ["silver/sap_b1/sap_b1_ar_credit_memo_lines", "silver/sap_b1/sap_b1_ar_invoice_lines"]
 -- description: Group sales per month with intercompany sales eliminated: only invoices to external customers count, per local currency, with the eliminated intercompany amount shown next to it. A month where a company's currency differs from the others is reported on its own row, never mixed.
 
 WITH lines AS (

@@ -1,0 +1,119 @@
+name: Windows agent
+
+on:
+  pull_request:
+    paths:
+      - "cartridges/sap_b1/connect/windows-agent/**"
+      - "cartridges/sap_b1/app/core/b1_source.py"
+      - "cartridges/sap_b1/app/services/b1_*.py"
+      - "cartridges/sap_b1/app/services/bronze_parquet.py"
+      - "cartridges/sap_b1/app/services/intercompany_mapping.py"
+      - "cartridges/sap_b1/app/config/entities.yaml"
+      - ".github/workflows/windows-agent.yml"
+  push:
+    branches: [main]
+    paths:
+      - "cartridges/sap_b1/connect/windows-agent/**"
+      - ".github/workflows/windows-agent.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-agent-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-service:
+    name: windows-agent-service
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install the agent as a service under a local non-admin account
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $toolcache = Split-Path -Parent (& py -3.12 -c 'import sys; print(sys.executable)')
+          Copy-Item -Recurse -Path $toolcache -Destination (Join-Path $env:ProgramFiles 'Python312')
+          $winsw = Join-Path $env:RUNNER_TEMP 'WinSW-x64.exe'
+          Invoke-WebRequest -Uri 'https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW-x64.exe' -OutFile $winsw -UseBasicParsing
+          $hash = (Get-FileHash -Algorithm SHA256 -Path $winsw).Hash
+          $secure = ConvertTo-SecureString ([guid]::NewGuid().ToString('N') + 'Aa1!') -AsPlainText -Force
+          New-LocalUser -Name 'omegab1svc' -Password $secure -PasswordNeverExpires -AccountNeverExpires | Out-Null
+          $credential = New-Object System.Management.Automation.PSCredential('.\omegab1svc', $secure)
+          $bad = $false
+          try {
+            & .\cartridges\sap_b1\connect\windows-agent\install.ps1 -ServiceAccount '.\omegab1svc' -Credential $credential -WinswExe $winsw -WinswSha256 ('0' * 64)
+          } catch {
+            if ($_.Exception.Message -notlike '*SHA-256*') { throw }
+            $bad = $true
+          }
+          if (-not $bad) { throw 'a WinSW binary with the wrong hash was accepted' }
+          & .\cartridges\sap_b1\connect\windows-agent\install.ps1 -ServiceAccount '.\omegab1svc' -Credential $credential -WinswExe $winsw -WinswSha256 $hash -IntervalMinutes 15
+          if ((Get-Service -Name 'OmegaSapB1Agent').Status -ne 'Stopped') { throw 'the service must wait for a completed agent.toml' }
+
+      - name: Run the service and prove it runs as that account
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dataRoot = Join-Path $env:ProgramData 'OmegaSapB1Agent'
+          @(
+            '[agent]',
+            'tenant_id = "11111111-1111-4111-8111-111111111111"',
+            'workspace_id = "22222222-2222-4222-8222-222222222222"',
+            '[source]',
+            'dialect = "hana"',
+            'host = "hana-under-test"',
+            'user = "OMEGA_B1_READER"',
+            'password = "not-a-real-password"',
+            'companies = "mx_mfg=COMPANY_A"',
+            '[upload]',
+            'bucket = "agent-ci-bucket"',
+            'region = "us-east-1"'
+          ) | Set-Content -Path (Join-Path $dataRoot 'agent.toml') -Encoding UTF8
+          Start-Service -Name 'OmegaSapB1Agent'
+          $log = Join-Path $dataRoot 'state\logs\agent.log'
+          $deadline = (Get-Date).AddSeconds(120)
+          while (-not ((Test-Path $log) -and (Select-String -Path $log -Pattern 'cycle skipped: run initial-load first' -Quiet))) {
+            if ((Get-Date) -gt $deadline) {
+              Get-ChildItem -Recurse $dataRoot | Out-Host
+              Get-Content (Join-Path $dataRoot 'logs\*') -ErrorAction SilentlyContinue | Out-Host
+              throw 'the service never logged its first cycle'
+            }
+            Start-Sleep -Seconds 3
+          }
+          $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='OmegaSapB1Agent'"
+          if ($service.StartName -notmatch 'omegab1svc$') { throw "service runs as $($service.StartName)" }
+          $child = Get-CimInstance -ClassName Win32_Process -Filter "ParentProcessId=$($service.ProcessId)" | Where-Object { $_.Name -eq 'python.exe' } | Select-Object -First 1
+          if (-not $child) { throw 'the agent process is not running under the service' }
+          $owner = Invoke-CimMethod -InputObject $child -MethodName GetOwner
+          if ($owner.User -ne 'omegab1svc') { throw "the agent runs as $($owner.User)" }
+          $admins = Get-LocalGroupMember -Group 'Administrators' | Where-Object { $_.Name -match 'omegab1svc$' }
+          if ($admins) { throw 'the service account must not be an administrator' }
+          if (Select-String -Path $log -Pattern 'not-a-real-password' -Quiet) { throw 'the log carries the password' }
+          Stop-Service -Name 'OmegaSapB1Agent'
+          if ((Get-Service -Name 'OmegaSapB1Agent').Status -ne 'Stopped') { throw 'the service did not stop' }
+
+      - name: Task mode registers a two-hour trigger that Windows accepts
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $secure = ConvertTo-SecureString ([guid]::NewGuid().ToString('N') + 'Aa1!') -AsPlainText -Force
+          Set-LocalUser -Name 'omegab1svc' -Password $secure
+          $credential = New-Object System.Management.Automation.PSCredential('.\omegab1svc', $secure)
+          & .\cartridges\sap_b1\connect\windows-agent\install.ps1 -ServiceAccount '.\omegab1svc' -Credential $credential -Mode Task
+          $trigger = (Get-ScheduledTask -TaskName 'OMEGA SAP B1 Agent').Triggers[0]
+          if ($trigger.Repetition.Interval -ne 'PT2H' -or $trigger.Repetition.Duration -ne 'P1D') {
+            throw "unexpected repetition $($trigger.Repetition.Interval) / $($trigger.Repetition.Duration)"
+          }
+
+      - name: Uninstall removes the service, the task and the code
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\cartridges\sap_b1\connect\windows-agent\uninstall.ps1 -PurgeData
+          if (Get-Service -Name 'OmegaSapB1Agent' -ErrorAction SilentlyContinue) { throw 'the service is still registered' }
+          if (Get-ScheduledTask -TaskName 'OMEGA SAP B1 Agent' -ErrorAction SilentlyContinue) { throw 'the task is still registered' }
+          if (Test-Path (Join-Path $env:ProgramFiles 'OmegaSapB1Agent')) { throw 'the code is still installed' }

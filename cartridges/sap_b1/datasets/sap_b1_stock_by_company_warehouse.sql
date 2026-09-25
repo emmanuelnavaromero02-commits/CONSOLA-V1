@@ -1,5 +1,5 @@
 -- sap_b1_stock_by_company_warehouse  (gold)  cartridge: sap_b1
--- sources: ["raw/sap_b1/OITW", "raw/sap_b1/OITM", "raw/sap_b1/OWHS", "raw/sap_b1/OADM"]
+-- sources: ["silver/sap_b1/sap_b1_stock_on_hand"]
 -- description: Stock position per company and warehouse from the newest snapshot: items with stock, quantities on hand, committed and on order, and the stock value at average price in local currency.
 
 SELECT

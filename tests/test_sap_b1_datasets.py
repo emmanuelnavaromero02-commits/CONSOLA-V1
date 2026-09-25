@@ -69,9 +69,14 @@ def test_headers_match_filenames_and_sources_are_real_entities():
         assert name == path.stem, f"{path.name}: header name {name!r} != filename"
         assert sources and description
         for source in sources:
-            m = re.match(r"^raw/sap_b1/([A-Za-z0-9_]+)$", source)
+            m = re.match(r"^(raw|silver)/sap_b1/([A-Za-z0-9_]+)$", source)
             assert m, f"{path.name}: malformed source {source!r}"
-            assert m.group(1) in entities, f"{path.name}: source {source!r} is not a sap_b1 entity"
+            if m.group(1) == "raw":
+                assert m.group(2) in entities, f"{path.name}: source {source!r} is not a sap_b1 entity"
+            else:
+                assert layer == "gold", f"{path.name}: only gold may declare a silver source"
+                upstream = DATASETS_DIR / f"{m.group(2)}.sql"
+                assert upstream.exists() and _parse_header(upstream)[1] == "silver", f"{path.name}: {source!r}"
 
 
 def test_every_read_parquet_is_a_declared_source_or_a_sap_b1_silver():

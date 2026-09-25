@@ -4,6 +4,7 @@ param(
     [string]$InstallRoot = (Join-Path $env:ProgramFiles 'OmegaSapB1Agent'),
     [string]$DataRoot = (Join-Path $env:ProgramData 'OmegaSapB1Agent'),
     [string]$TaskName = 'OMEGA SAP B1 Agent',
+    [string]$ServiceName = 'OmegaSapB1Agent',
     [switch]$PurgeData
 )
 
@@ -14,7 +15,22 @@ if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
 }
 
-if (Test-Path $InstallRoot) {
+$serviceDir = Join-Path $InstallRoot 'service'
+$wrapper = Join-Path $serviceDir "$ServiceName.exe"
+if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
+    Write-Host "==> Deteniendo y eliminando el servicio $ServiceName"
+    Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
+    if (Test-Path $wrapper) { & $wrapper uninstall | Out-Null } else { & sc.exe delete $ServiceName | Out-Null }
+}
+foreach ($leftover in @($wrapper, (Join-Path $serviceDir "$ServiceName.xml"))) {
+    if (Test-Path $leftover) { Remove-Item -Force -Path $leftover }
+}
+
+$otherServices = @()
+if (Test-Path $serviceDir) { $otherServices = @(Get-ChildItem -Path $serviceDir -Filter '*.xml' -File) }
+if ($otherServices.Count -gt 0) {
+    Write-Host "==> Se conserva ${InstallRoot}: lo usan otros servicios ($($otherServices.BaseName -join ', '))."
+} elseif (Test-Path $InstallRoot) {
     Write-Host "==> Eliminando el codigo en $InstallRoot"
     Remove-Item -Recurse -Force -Path $InstallRoot
 }

@@ -1,6 +1,6 @@
 -- sap_b1_business_partners  (silver)  cartridge: sap_b1
 -- sources: ["raw/sap_b1/OCRD", "raw/sap_b1/OCRG", "raw/sap_b1/IntercompanyPartners"]
--- description: Current business partners per company (customers C, suppliers S) with their group name and the intercompany flag from the configured partner mapping.
+-- description: Current business partners per company (customers C, suppliers S) with their tax id (RFC), group name and the intercompany flag from the configured partner mapping.
 
 WITH ocrd AS (
     SELECT * EXCLUDE (_rn)
@@ -60,6 +60,7 @@ SELECT
     CAST(b.Currency AS VARCHAR)             AS partner_currency,
     CAST(b.SlpCode AS BIGINT)               AS slp_code,
     CAST(b.Country AS VARCHAR)              AS country,
+    CAST(b.LicTradNum AS VARCHAR)           AS rfc,
     CAST(b.validFor AS VARCHAR)             AS valid_for,
     CAST(b.frozenFor AS VARCHAR)            AS frozen_for,
     p.CardCode IS NOT NULL                  AS is_intercompany,
