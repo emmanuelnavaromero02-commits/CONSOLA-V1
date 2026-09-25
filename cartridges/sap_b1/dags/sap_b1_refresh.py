@@ -64,7 +64,7 @@ def latest_delivery(objects: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 
 def upstream_context(tenant_id: str, workspace_id: str) -> dict[str, Any]:
-    from sap_b1_security_context import sap_b1_security_context
+    from b1_runtime_context import sap_b1_security_context
 
     return sap_b1_security_context(tenant_id, workspace_id, user_id=f"airflow:{DAG_ID}")
 

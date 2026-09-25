@@ -16,9 +16,9 @@ from app.services import seed_packaged_dataset_rows as row_helpers
 
 logger = logging.getLogger(__name__)
 _REGISTRY = pathlib.Path("/registry/cartridges")
-_EXPECTED_CATALOG_FILES = 297
+_EXPECTED_CATALOG_FILES = 305
 _EXPECTED_CATALOG_DIGEST = (
-    "68761b9bfbf41712a0f8453b332ad5f18306285e57fa4084fbb115083c50dad3"
+    "f4ebec96e9c9cc3a5c8765f7dea5e02c584b1bc7591c07083e678c69ec98cd7f"
 )
 
 _parse_dataset = parse_dataset

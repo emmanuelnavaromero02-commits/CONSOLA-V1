@@ -74,13 +74,14 @@ checks AS (
     SELECT sold.company, 'intercompania_cuadra', 'intercompania',
            COUNT(*), COUNT(*) FILTER (WHERE abs(sold.amount - COALESCE(bought.amount, 0)) > greatest(1, 0.005 * abs(sold.amount)))
     FROM (
-        SELECT company, counterparty_company AS buyer, doc_month, SUM(amount_local) AS amount
-        FROM invoices WHERE is_intercompany AND counterparty_company IS NOT NULL GROUP BY 1, 2, 3
+        SELECT company, counterparty_company AS buyer, doc_month, local_currency, SUM(amount_local) AS amount
+        FROM invoices WHERE is_intercompany AND counterparty_company IS NOT NULL GROUP BY 1, 2, 3, 4
     ) sold
     LEFT JOIN (
-        SELECT company AS buyer, counterparty_company AS seller, doc_month, SUM(amount_local) AS amount
-        FROM purchases WHERE is_intercompany AND counterparty_company IS NOT NULL GROUP BY 1, 2, 3
+        SELECT company AS buyer, counterparty_company AS seller, doc_month, local_currency, SUM(amount_local) AS amount
+        FROM purchases WHERE is_intercompany AND counterparty_company IS NOT NULL GROUP BY 1, 2, 3, 4
     ) bought ON bought.buyer = sold.buyer AND bought.seller = sold.company AND bought.doc_month = sold.doc_month
+            AND bought.local_currency = sold.local_currency
     GROUP BY 1
     UNION ALL
     SELECT p.company, 'parametros_empresa_conocida', 'parametros',

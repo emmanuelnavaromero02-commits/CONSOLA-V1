@@ -17,9 +17,9 @@ ENTITIES_YAML = CARTRIDGE / "app" / "config" / "entities.yaml"
 TOOLS = CARTRIDGE / "tools"
 
 HEADER_RE = re.compile(r"^--\s+(\S+)\s+\((silver|gold)\)\s+cartridge:\s+sap_b1\s*$")
-EXPECTED_SILVER = 62
-EXPECTED_GOLD = 6
-PSEUDO_ENTITIES = {"IntercompanyPartners"}
+EXPECTED_SILVER = 65
+EXPECTED_GOLD = 11
+PSEUDO_ENTITIES = {"IntercompanyPartners", "BusinessParameters"}
 
 
 def _dataset_files() -> list[Path]:

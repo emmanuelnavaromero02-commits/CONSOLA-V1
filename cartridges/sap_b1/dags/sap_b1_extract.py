@@ -44,7 +44,7 @@ def sap_b1_extract():
             "X-Api-Key": _internal_key(),
             "X-Internal-Service": "airflow",
         }
-        from sap_b1_security_context import security_context_from_conf
+        from b1_runtime_context import security_context_from_conf
 
         skill_body = {"security_context": security_context_from_conf(conf, user_id="airflow:sap_b1_extract")}
 
