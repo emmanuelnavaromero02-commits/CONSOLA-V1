@@ -14,12 +14,21 @@ METRIC_LABELS: dict[str, str] = {
     "attrition_risk_population": "poblacion en riesgo de rotacion",
     "employment_end_expiry": "fin de registro de empleo proximo",
     "deal_slippage": "deals con cierre vencido",
+    # sap_b1
+    "group_margin": "margen del grupo",
+    "company_margin": "margen por empresa",
+    "customer_margin": "margen por cliente",
+    "item_family_margin": "margen por familia de articulo",
+    "below_min_sales": "venta bajo margen minimo",
+    "reconciliation": "reconciliacion con finanzas",
+    "data_quality": "calidad de datos",
 }
 
 VIEW_BY_KEY: dict[str, str] = {
     "finance": "finance_kpis",
     "operations": "operations_kpis",
     "risk": "risk_kpis",
+    "sap_b1_margin": "sap_b1_margin_kpis",
 }
 
 STATUS_READY = "ready"
@@ -51,19 +60,27 @@ def build_signals(metrics: dict[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(item, dict):
             continue
         status = str(item.get("status") or "").strip().lower()
-        if status == STATUS_READY:
-            continue
-        signal: dict[str, Any] = {
-            "metric": metric_label(metric),
-            "status": status or "unknown",
-        }
-        reason = _metric_reason(item)
-        if reason:
-            signal["reason"] = reason
-        signals.append(signal)
+        breaches = [
+            breach.strip()
+            for breach in (item.get("breaches") or [])
+            if isinstance(breach, str) and breach.strip()
+        ]
+        if status != STATUS_READY:
+            signal: dict[str, Any] = {
+                "metric": metric_label(metric),
+                "status": status or "unknown",
+            }
+            reason = _metric_reason(item)
+            if reason:
+                signal["reason"] = reason
+            signals.append(signal)
+        for breach in breaches:
+            if len(signals) >= MAX_SIGNALS:
+                break
+            signals.append({"metric": metric_label(metric), "status": "alerta", "reason": breach})
         if len(signals) >= MAX_SIGNALS:
             break
-    return signals
+    return signals[:MAX_SIGNALS]
 
 
 def build_coverage(metrics: dict[str, Any]) -> dict[str, list[str]]:

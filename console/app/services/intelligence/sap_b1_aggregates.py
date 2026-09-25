@@ -1,0 +1,708 @@
+"""Cap-free SQL aggregates for SAP Business One (finance case).
+
+Same contract as ``finance_aggregates``: dedicated Gold connection, RLS GUCs,
+relations resolved through publication heads, column allowlists, every value
+bound as ``$n``, COUNT/SUM in SQL and bounded top-N. Each result also carries
+``breaches``: business findings in plain Spanish that the monitor turns into
+signals, computed from the thresholds the Gold datasets already carry.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import date
+from typing import Any
+
+from app.services.intelligence.domain_aggregate_support import (
+    GOLD_SCOPE_PREDICATE,
+    STATUS_DEGRADED,
+    STATUS_UNAVAILABLE,
+    AggregateResult,
+    GoldScope,
+    add_months,
+    as_float,
+    as_int,
+    as_of_date,
+    clamp_named_rows,
+    clamp_top_n,
+    gold_evidence,
+    invalid_schema_error,
+    month_start,
+    resolve_relation,
+    run_gold_aggregate,
+    status_for,
+)
+
+CONSOLIDATED_DATASET = "sap_b1_margin_consolidated_month"
+CUSTOMER_DATASET = "sap_b1_margin_by_customer_month"
+COMPANY_DATASET = "sap_b1_margin_by_company_month"
+ITEM_DATASET = "sap_b1_margin_by_item_month"
+RECONCILIATION_DATASET = "sap_b1_margin_reconciliation_month"
+DATA_QUALITY_DATASET = "sap_b1_data_quality"
+
+_CONSOLIDATED_REQUIRED = frozenset(
+    {
+        "doc_month",
+        "local_currency",
+        "external_revenue_net_local",
+        "external_gross_profit_local",
+        "consolidated_gross_profit_local",
+        "unrealized_profit_open_local",
+        "unrealized_profit_close_local",
+    }
+)
+_CUSTOMER_REQUIRED = frozenset(
+    {
+        "company",
+        "doc_month",
+        "scope",
+        "card_code",
+        "card_name",
+        "revenue_net_local",
+        "gross_profit_net_local",
+        "min_margin_pct",
+        "below_min",
+        "negative_margin",
+    }
+)
+_COMPANY_REQUIRED = frozenset(
+    {"company", "doc_month", "scope", "revenue_net_local", "gross_profit_net_local", "min_margin_pct"}
+)
+_ITEM_REQUIRED = frozenset(
+    {
+        "company",
+        "doc_month",
+        "scope",
+        "item_group_name",
+        "revenue_net_local",
+        "gross_profit_net_local",
+        "below_min_revenue_local",
+        "negative_margin_revenue_local",
+    }
+)
+_RECONCILIATION_REQUIRED = frozenset(
+    {
+        "company",
+        "doc_month",
+        "status",
+        "revenue_diff_pct",
+        "cogs_diff_pct",
+        "gross_profit_diff_pct",
+        "tolerance_pct",
+    }
+)
+_DATA_QUALITY_REQUIRED = frozenset(
+    {"company", "check_code", "check_group", "total", "failing", "pct_ok", "min_pct", "status"}
+)
+
+GROUP_MARGIN_DROP_PP = 3.0
+RECONCILIATION_MONTHS = 12
+
+GROUP_MARGIN_PROXY_NOTE = (
+    "Margen bruto del grupo: venta externa de todas las empresas menos el costo "
+    "del grupo, eliminando la utilidad intercompania que sigue en el inventario "
+    "de la empresa compradora. NO convierte monedas: cada moneda local se "
+    "reporta por separado y aqui se toma la de mayor venta."
+)
+COMPANY_MARGIN_PROXY_NOTE = (
+    "Margen neto por empresa de la venta a clientes externos: facturas menos "
+    "notas de credito en ingreso y costo, sin documentos cancelados. NO incluye "
+    "ventas entre empresas del grupo ni costos que no pasan por documentos."
+)
+CUSTOMER_MARGIN_PROXY_NOTE = (
+    "Clientes externos del ultimo mes cerrado contra el margen minimo "
+    "configurado: cuantos quedan por debajo, que parte de la venta representan y "
+    "cuantos tienen margen negativo. NO une clientes entre empresas sin un RFC "
+    "valido."
+)
+ITEM_FAMILY_MARGIN_PROXY_NOTE = (
+    "Margen y mezcla de venta externa por grupo de articulo del ultimo mes "
+    "cerrado. NO usa jerarquias de producto que no esten en el grupo de "
+    "articulo de Business One."
+)
+BELOW_MIN_PROXY_NOTE = (
+    "Parte de la venta externa del ultimo mes cerrado en lineas con margen por "
+    "debajo del minimo configurado y en lineas vendidas bajo costo. NO evalua "
+    "notas de credito linea por linea."
+)
+RECONCILIATION_PROXY_NOTE = (
+    "Meses cerrados por empresa comparados con los totales de control de "
+    "finanzas: dentro de tolerancia, fuera de tolerancia o sin totales de "
+    "control. NO sustituye el cierre contable: explica la diferencia entre "
+    "documentos y contabilidad por desfase y por costos fuera de documentos."
+)
+DATA_QUALITY_PROXY_NOTE = (
+    "Revisiones de calidad por empresa: RFC de clientes, relaciones completas "
+    "entre documentos y maestros, costo en lineas de articulo, lotes con "
+    "caducidad e intercompania. NO corrige datos en Business One."
+)
+
+
+@dataclass
+class B1Result(AggregateResult):
+    period: str | None = None
+    breaches: list[str] = field(default_factory=list)
+
+
+def _period_label(value: date | None) -> str | None:
+    return value.strftime("%Y-%m") if value else None
+
+
+def _pct(numerator: float | None, denominator: float | None) -> float | None:
+    if numerator is None or not denominator:
+        return None
+    return round(100.0 * numerator / denominator, 2)
+
+
+async def _closed_period(scope: GoldScope, rel: Any, as_of: date | None, marker: str) -> date | None:
+    sql = f"""
+        -- omega-aggregate: sap_b1.{marker}.closed_period
+        SELECT MAX(doc_month)::date AS period
+          FROM {rel.sql}
+         WHERE {GOLD_SCOPE_PREDICATE}
+           AND doc_month::date < $3::date
+    """
+    row = await scope.conn.fetchrow(sql, *scope.scope_args, month_start(as_of_date(as_of)))
+    return row["period"] if row else None
+
+
+def _no_period(result_type: type, base: dict[str, Any], rel: Any) -> Any:
+    return result_type(
+        status=STATUS_DEGRADED,
+        notes=["sin meses cerrados con datos"],
+        evidence_refs=[gold_evidence(rel, filters={})],
+        **base,
+    )
+
+
+@dataclass
+class GroupMargin(B1Result):
+    currency: str | None = None
+    external_revenue: float | None = None
+    external_gross_profit: float | None = None
+    consolidated_gross_profit: float | None = None
+    external_margin_pct: float | None = None
+    consolidated_margin_pct: float | None = None
+    unrealized_profit_change: float | None = None
+    trailing_margin_pct: float | None = None
+    currencies: list[str] = field(default_factory=list)
+
+
+async def query_group_margin(user: dict | None, *, as_of: date | None = None) -> GroupMargin:
+    base = {"proxy_note": GROUP_MARGIN_PROXY_NOTE}
+
+    def _unavailable(error: str) -> GroupMargin:
+        return GroupMargin(status=STATUS_UNAVAILABLE, error=error, **base)
+
+    async def _compute(scope: GoldScope) -> GroupMargin:
+        rel = await resolve_relation(scope, CONSOLIDATED_DATASET, required=_CONSOLIDATED_REQUIRED)
+        if rel.missing_required:
+            return GroupMargin(status=STATUS_UNAVAILABLE, error=invalid_schema_error(rel),
+                               missing_columns=list(rel.missing_required), **base)
+        sql = f"""
+            -- omega-aggregate: sap_b1.group_margin.months
+            SELECT doc_month::date AS doc_month,
+                   local_currency,
+                   SUM(external_revenue_net_local)::float8 AS revenue,
+                   SUM(external_gross_profit_local)::float8 AS external_gp,
+                   SUM(consolidated_gross_profit_local)::float8 AS consolidated_gp,
+                   SUM(unrealized_profit_close_local - unrealized_profit_open_local)::float8 AS up_change
+              FROM {rel.sql}
+             WHERE {GOLD_SCOPE_PREDICATE}
+               AND doc_month::date < $3::date
+             GROUP BY 1, 2
+             ORDER BY 1 DESC, 2
+             LIMIT $4
+        """
+        rows = await scope.conn.fetch(
+            sql, *scope.scope_args, month_start(as_of_date(as_of)), clamp_top_n(16, upper=16)
+        )
+        if not rows:
+            return _no_period(GroupMargin, base, rel)
+        revenue_by_currency: dict[str, float] = {}
+        for row in rows:
+            key = str(row["local_currency"] or "")
+            revenue_by_currency[key] = revenue_by_currency.get(key, 0.0) + (as_float(row["revenue"]) or 0.0)
+        currency = max(revenue_by_currency, key=lambda item: revenue_by_currency[item])
+        months = [row for row in rows if str(row["local_currency"] or "") == currency]
+        latest, trailing = months[0], months[1:4]
+        revenue = as_float(latest["revenue"])
+        consolidated = as_float(latest["consolidated_gp"])
+        margin = _pct(consolidated, revenue)
+        trailing_margins = [
+            value for value in (_pct(as_float(r["consolidated_gp"]), as_float(r["revenue"])) for r in trailing)
+            if value is not None
+        ]
+        trailing_margin = round(sum(trailing_margins) / len(trailing_margins), 2) if trailing_margins else None
+        period = _period_label(latest["doc_month"])
+        breaches: list[str] = []
+        if margin is not None and trailing_margin is not None and margin < trailing_margin - GROUP_MARGIN_DROP_PP:
+            breaches.append(
+                f"El margen del grupo de {period} fue {margin}% y cayo "
+                f"{round(trailing_margin - margin, 2)} puntos contra el promedio de los tres meses previos ({trailing_margin}%)."
+            )
+        notes = [] if len(revenue_by_currency) == 1 else ["hay varias monedas locales: se reporta la de mayor venta"]
+        return GroupMargin(
+            status=status_for(rel),
+            evidence_refs=[gold_evidence(rel, filters={"period": period})],
+            notes=notes,
+            period=period,
+            breaches=breaches,
+            currency=currency or None,
+            external_revenue=revenue,
+            external_gross_profit=as_float(latest["external_gp"]),
+            consolidated_gross_profit=consolidated,
+            external_margin_pct=_pct(as_float(latest["external_gp"]), revenue),
+            consolidated_margin_pct=margin,
+            unrealized_profit_change=as_float(latest["up_change"]),
+            trailing_margin_pct=trailing_margin,
+            currencies=sorted(item for item in revenue_by_currency if item),
+            **base,
+        )
+
+    return await run_gold_aggregate(user, _compute, _unavailable)
+
+
+@dataclass
+class CompanyMargin(B1Result):
+    companies: list[dict[str, Any]] = field(default_factory=list)
+
+
+async def query_company_margin(user: dict | None, *, as_of: date | None = None) -> CompanyMargin:
+    base = {"proxy_note": COMPANY_MARGIN_PROXY_NOTE}
+
+    def _unavailable(error: str) -> CompanyMargin:
+        return CompanyMargin(status=STATUS_UNAVAILABLE, error=error, **base)
+
+    async def _compute(scope: GoldScope) -> CompanyMargin:
+        rel = await resolve_relation(scope, COMPANY_DATASET, required=_COMPANY_REQUIRED)
+        if rel.missing_required:
+            return CompanyMargin(status=STATUS_UNAVAILABLE, error=invalid_schema_error(rel),
+                                 missing_columns=list(rel.missing_required), **base)
+        period = await _closed_period(scope, rel, as_of, "company_margin")
+        if period is None:
+            return _no_period(CompanyMargin, base, rel)
+        sql = f"""
+            -- omega-aggregate: sap_b1.company_margin.companies
+            SELECT company,
+                   SUM(revenue_net_local)::float8 AS revenue,
+                   SUM(gross_profit_net_local)::float8 AS gross_profit,
+                   MAX(min_margin_pct)::float8 AS min_margin_pct
+              FROM {rel.sql}
+             WHERE {GOLD_SCOPE_PREDICATE}
+               AND doc_month::date = $3::date
+               AND scope = 'external'
+             GROUP BY company
+             ORDER BY company
+             LIMIT $4
+        """
+        rows = await scope.conn.fetch(sql, *scope.scope_args, period, clamp_top_n(50))
+        label = _period_label(period)
+        companies, breaches = [], []
+        for row in rows:
+            margin = _pct(as_float(row["gross_profit"]), as_float(row["revenue"]))
+            minimum = as_float(row["min_margin_pct"])
+            companies.append({
+                "company": row["company"],
+                "revenue": as_float(row["revenue"]),
+                "gross_profit": as_float(row["gross_profit"]),
+                "margin_pct": margin,
+                "min_margin_pct": minimum,
+            })
+            if margin is not None and minimum is not None and margin < minimum:
+                breaches.append(
+                    f"La empresa {row['company']} cerro {label} con margen de {margin}%, "
+                    f"por debajo del minimo de {minimum}%."
+                )
+        return CompanyMargin(
+            status=status_for(rel),
+            evidence_refs=[gold_evidence(rel, filters={"period": label})],
+            period=label,
+            breaches=breaches,
+            companies=companies,
+            **base,
+        )
+
+    return await run_gold_aggregate(user, _compute, _unavailable)
+
+
+@dataclass
+class CustomerMargin(B1Result):
+    customers: int | None = None
+    customers_below_min: int | None = None
+    customers_negative: int | None = None
+    revenue: float | None = None
+    revenue_below_min_pct: float | None = None
+    worst_customers: list[dict[str, Any]] = field(default_factory=list)
+
+
+async def query_customer_margin(
+    user: dict | None, *, as_of: date | None = None, top_n: int = 0
+) -> CustomerMargin:
+    top_n = clamp_named_rows(top_n)
+    base = {"proxy_note": CUSTOMER_MARGIN_PROXY_NOTE}
+
+    def _unavailable(error: str) -> CustomerMargin:
+        return CustomerMargin(status=STATUS_UNAVAILABLE, error=error, **base)
+
+    async def _compute(scope: GoldScope) -> CustomerMargin:
+        rel = await resolve_relation(scope, CUSTOMER_DATASET, required=_CUSTOMER_REQUIRED)
+        if rel.missing_required:
+            return CustomerMargin(status=STATUS_UNAVAILABLE, error=invalid_schema_error(rel),
+                                  missing_columns=list(rel.missing_required), **base)
+        period = await _closed_period(scope, rel, as_of, "customer_margin")
+        if period is None:
+            return _no_period(CustomerMargin, base, rel)
+        totals_sql = f"""
+            -- omega-aggregate: sap_b1.customer_margin.totals
+            SELECT COUNT(*)::bigint AS customers,
+                   COUNT(*) FILTER (WHERE below_min)::bigint AS below_min,
+                   COUNT(*) FILTER (WHERE negative_margin)::bigint AS negative,
+                   COALESCE(SUM(revenue_net_local), 0)::float8 AS revenue,
+                   COALESCE(SUM(revenue_net_local) FILTER (WHERE below_min), 0)::float8 AS revenue_below_min
+              FROM {rel.sql}
+             WHERE {GOLD_SCOPE_PREDICATE}
+               AND doc_month::date = $3::date
+               AND scope = 'external'
+        """
+        totals = await scope.conn.fetchrow(totals_sql, *scope.scope_args, period)
+        worst: list[Any] = []
+        if top_n:
+            worst_sql = f"""
+                -- omega-aggregate: sap_b1.customer_margin.worst
+                SELECT company, card_name,
+                       SUM(revenue_net_local)::float8 AS revenue,
+                       SUM(gross_profit_net_local)::float8 AS gross_profit
+                  FROM {rel.sql}
+                 WHERE {GOLD_SCOPE_PREDICATE}
+                   AND doc_month::date = $3::date
+                   AND scope = 'external'
+                 GROUP BY company, card_code, card_name
+                HAVING SUM(revenue_net_local) <> 0
+                 ORDER BY SUM(gross_profit_net_local) / SUM(revenue_net_local), company, card_code
+                 LIMIT $4
+            """
+            worst = await scope.conn.fetch(worst_sql, *scope.scope_args, period, top_n)
+        label = _period_label(period)
+        below = as_int(totals["below_min"]) or 0
+        negative = as_int(totals["negative"]) or 0
+        revenue = as_float(totals["revenue"])
+        below_pct = _pct(as_float(totals["revenue_below_min"]), revenue)
+        breaches = []
+        if negative:
+            breaches.append(f"{negative} clientes externos cerraron {label} con margen negativo.")
+        if below:
+            breaches.append(
+                f"{below} clientes externos quedaron bajo el margen minimo en {label} "
+                f"({below_pct}% de la venta del mes)."
+            )
+        return CustomerMargin(
+            status=status_for(rel),
+            evidence_refs=[gold_evidence(rel, filters={"period": label, "top_n": top_n})],
+            period=label,
+            breaches=breaches,
+            customers=as_int(totals["customers"]),
+            customers_below_min=below,
+            customers_negative=negative,
+            revenue=revenue,
+            revenue_below_min_pct=below_pct,
+            worst_customers=[
+                {
+                    "company": row["company"],
+                    "customer": row["card_name"],
+                    "revenue": as_float(row["revenue"]),
+                    "margin_pct": _pct(as_float(row["gross_profit"]), as_float(row["revenue"])),
+                }
+                for row in worst
+            ],
+            **base,
+        )
+
+    return await run_gold_aggregate(user, _compute, _unavailable)
+
+
+@dataclass
+class ItemFamilyMargin(B1Result):
+    families: list[dict[str, Any]] = field(default_factory=list)
+
+
+async def query_item_family_margin(
+    user: dict | None, *, as_of: date | None = None, top_n: int = 10
+) -> ItemFamilyMargin:
+    limit = clamp_top_n(top_n, default=10)
+    base = {"proxy_note": ITEM_FAMILY_MARGIN_PROXY_NOTE}
+
+    def _unavailable(error: str) -> ItemFamilyMargin:
+        return ItemFamilyMargin(status=STATUS_UNAVAILABLE, error=error, **base)
+
+    async def _compute(scope: GoldScope) -> ItemFamilyMargin:
+        rel = await resolve_relation(scope, ITEM_DATASET, required=_ITEM_REQUIRED)
+        if rel.missing_required:
+            return ItemFamilyMargin(status=STATUS_UNAVAILABLE, error=invalid_schema_error(rel),
+                                    missing_columns=list(rel.missing_required), **base)
+        period = await _closed_period(scope, rel, as_of, "item_family_margin")
+        if period is None:
+            return _no_period(ItemFamilyMargin, base, rel)
+        sql = f"""
+            -- omega-aggregate: sap_b1.item_family_margin.families
+            SELECT item_group_name,
+                   SUM(revenue_net_local)::float8 AS revenue,
+                   SUM(gross_profit_net_local)::float8 AS gross_profit,
+                   SUM(SUM(revenue_net_local)) OVER ()::float8 AS total_revenue
+              FROM {rel.sql}
+             WHERE {GOLD_SCOPE_PREDICATE}
+               AND doc_month::date = $3::date
+               AND scope = 'external'
+             GROUP BY item_group_name
+             ORDER BY SUM(revenue_net_local) DESC, item_group_name
+             LIMIT $4
+        """
+        rows = await scope.conn.fetch(sql, *scope.scope_args, period, limit)
+        label = _period_label(period)
+        families, breaches = [], []
+        for row in rows:
+            gross_profit = as_float(row["gross_profit"])
+            families.append({
+                "family": row["item_group_name"],
+                "revenue": as_float(row["revenue"]),
+                "gross_profit": gross_profit,
+                "margin_pct": _pct(gross_profit, as_float(row["revenue"])),
+                "mix_pct": _pct(as_float(row["revenue"]), as_float(row["total_revenue"])),
+            })
+            if gross_profit is not None and gross_profit < 0:
+                breaches.append(f"La familia {row['item_group_name']} cerro {label} con margen negativo.")
+        return ItemFamilyMargin(
+            status=status_for(rel),
+            evidence_refs=[gold_evidence(rel, filters={"period": label, "top_n": limit})],
+            period=label,
+            breaches=breaches,
+            families=families,
+            **base,
+        )
+
+    return await run_gold_aggregate(user, _compute, _unavailable)
+
+
+@dataclass
+class BelowMinSales(B1Result):
+    revenue: float | None = None
+    below_min_revenue: float | None = None
+    below_min_pct: float | None = None
+    below_cost_revenue: float | None = None
+    below_cost_pct: float | None = None
+
+
+async def query_below_min_sales(user: dict | None, *, as_of: date | None = None) -> BelowMinSales:
+    base = {"proxy_note": BELOW_MIN_PROXY_NOTE}
+
+    def _unavailable(error: str) -> BelowMinSales:
+        return BelowMinSales(status=STATUS_UNAVAILABLE, error=error, **base)
+
+    async def _compute(scope: GoldScope) -> BelowMinSales:
+        rel = await resolve_relation(scope, ITEM_DATASET, required=_ITEM_REQUIRED)
+        if rel.missing_required:
+            return BelowMinSales(status=STATUS_UNAVAILABLE, error=invalid_schema_error(rel),
+                                 missing_columns=list(rel.missing_required), **base)
+        period = await _closed_period(scope, rel, as_of, "below_min_sales")
+        if period is None:
+            return _no_period(BelowMinSales, base, rel)
+        sql = f"""
+            -- omega-aggregate: sap_b1.below_min_sales.totals
+            SELECT COALESCE(SUM(revenue_net_local), 0)::float8 AS revenue,
+                   COALESCE(SUM(below_min_revenue_local), 0)::float8 AS below_min,
+                   COALESCE(SUM(negative_margin_revenue_local), 0)::float8 AS below_cost
+              FROM {rel.sql}
+             WHERE {GOLD_SCOPE_PREDICATE}
+               AND doc_month::date = $3::date
+               AND scope = 'external'
+        """
+        row = await scope.conn.fetchrow(sql, *scope.scope_args, period)
+        label = _period_label(period)
+        revenue = as_float(row["revenue"])
+        below_cost = as_float(row["below_cost"])
+        breaches = []
+        if below_cost:
+            breaches.append(
+                f"En {label} se facturaron {round(below_cost, 2)} de venta externa por debajo del costo."
+            )
+        return BelowMinSales(
+            status=status_for(rel),
+            evidence_refs=[gold_evidence(rel, filters={"period": label})],
+            period=label,
+            breaches=breaches,
+            revenue=revenue,
+            below_min_revenue=as_float(row["below_min"]),
+            below_min_pct=_pct(as_float(row["below_min"]), revenue),
+            below_cost_revenue=below_cost,
+            below_cost_pct=_pct(below_cost, revenue),
+            **base,
+        )
+
+    return await run_gold_aggregate(user, _compute, _unavailable)
+
+
+@dataclass
+class Reconciliation(B1Result):
+    months: int = RECONCILIATION_MONTHS
+    company_months: int | None = None
+    within_tolerance: int | None = None
+    out_of_tolerance: int | None = None
+    without_controls: int | None = None
+    outliers: list[dict[str, Any]] = field(default_factory=list)
+
+
+async def query_reconciliation(user: dict | None, *, as_of: date | None = None) -> Reconciliation:
+    base = {"proxy_note": RECONCILIATION_PROXY_NOTE}
+    window_end = month_start(as_of_date(as_of))
+    window_start = add_months(window_end, -RECONCILIATION_MONTHS)
+
+    def _unavailable(error: str) -> Reconciliation:
+        return Reconciliation(status=STATUS_UNAVAILABLE, error=error, **base)
+
+    async def _compute(scope: GoldScope) -> Reconciliation:
+        rel = await resolve_relation(scope, RECONCILIATION_DATASET, required=_RECONCILIATION_REQUIRED)
+        if rel.missing_required:
+            return Reconciliation(status=STATUS_UNAVAILABLE, error=invalid_schema_error(rel),
+                                  missing_columns=list(rel.missing_required), **base)
+        totals_sql = f"""
+            -- omega-aggregate: sap_b1.reconciliation.totals
+            SELECT COUNT(*)::bigint AS company_months,
+                   COUNT(*) FILTER (WHERE status = 'ok')::bigint AS within,
+                   COUNT(*) FILTER (WHERE status = 'fuera_tolerancia')::bigint AS outside,
+                   COUNT(*) FILTER (WHERE status = 'sin_control')::bigint AS without
+              FROM {rel.sql}
+             WHERE {GOLD_SCOPE_PREDICATE}
+               AND doc_month::date >= $3::date AND doc_month::date < $4::date
+        """
+        totals = await scope.conn.fetchrow(totals_sql, *scope.scope_args, window_start, window_end)
+        outliers_sql = f"""
+            -- omega-aggregate: sap_b1.reconciliation.outliers
+            SELECT company, doc_month::date AS doc_month,
+                   revenue_diff_pct::float8 AS revenue_diff_pct,
+                   cogs_diff_pct::float8 AS cogs_diff_pct,
+                   gross_profit_diff_pct::float8 AS gross_profit_diff_pct,
+                   tolerance_pct::float8 AS tolerance_pct
+              FROM {rel.sql}
+             WHERE {GOLD_SCOPE_PREDICATE}
+               AND doc_month::date >= $3::date AND doc_month::date < $4::date
+               AND status = 'fuera_tolerancia'
+             ORDER BY doc_month DESC, company
+             LIMIT $5
+        """
+        rows = await scope.conn.fetch(outliers_sql, *scope.scope_args, window_start, window_end, clamp_top_n(10))
+        outliers, breaches = [], []
+        for row in rows:
+            label = _period_label(row["doc_month"])
+            outliers.append({
+                "company": row["company"],
+                "period": label,
+                "revenue_diff_pct": as_float(row["revenue_diff_pct"]),
+                "cogs_diff_pct": as_float(row["cogs_diff_pct"]),
+                "gross_profit_diff_pct": as_float(row["gross_profit_diff_pct"]),
+                "tolerance_pct": as_float(row["tolerance_pct"]),
+            })
+            breaches.append(
+                f"La reconciliacion de {row['company']} en {label} esta fuera de tolerancia "
+                f"(ingreso {as_float(row['revenue_diff_pct'])}%, utilidad bruta {as_float(row['gross_profit_diff_pct'])}%)."
+            )
+        notes = []
+        without = as_int(totals["without"]) or 0
+        if without and without == (as_int(totals["company_months"]) or 0):
+            notes.append("finanzas todavia no entrego totales de control")
+        return Reconciliation(
+            status=status_for(rel),
+            evidence_refs=[gold_evidence(rel, filters={"window_start": window_start, "window_end_exclusive": window_end})],
+            notes=notes,
+            breaches=breaches,
+            company_months=as_int(totals["company_months"]),
+            within_tolerance=as_int(totals["within"]),
+            out_of_tolerance=as_int(totals["outside"]),
+            without_controls=without,
+            outliers=outliers,
+            **base,
+        )
+
+    return await run_gold_aggregate(user, _compute, _unavailable)
+
+
+@dataclass
+class DataQuality(B1Result):
+    checks: int | None = None
+    checks_below_min: int | None = None
+    failing: list[dict[str, Any]] = field(default_factory=list)
+
+
+async def query_data_quality(user: dict | None) -> DataQuality:
+    base = {"proxy_note": DATA_QUALITY_PROXY_NOTE}
+
+    def _unavailable(error: str) -> DataQuality:
+        return DataQuality(status=STATUS_UNAVAILABLE, error=error, **base)
+
+    async def _compute(scope: GoldScope) -> DataQuality:
+        rel = await resolve_relation(scope, DATA_QUALITY_DATASET, required=_DATA_QUALITY_REQUIRED)
+        if rel.missing_required:
+            return DataQuality(status=STATUS_UNAVAILABLE, error=invalid_schema_error(rel),
+                               missing_columns=list(rel.missing_required), **base)
+        totals_sql = f"""
+            -- omega-aggregate: sap_b1.data_quality.totals
+            SELECT COUNT(*)::bigint AS checks,
+                   COUNT(*) FILTER (WHERE status = 'bajo_umbral')::bigint AS below
+              FROM {rel.sql}
+             WHERE {GOLD_SCOPE_PREDICATE}
+        """
+        totals = await scope.conn.fetchrow(totals_sql, *scope.scope_args)
+        failing_sql = f"""
+            -- omega-aggregate: sap_b1.data_quality.failing
+            SELECT company, check_code, check_group,
+                   total::bigint AS total, failing::bigint AS failing,
+                   pct_ok::float8 AS pct_ok, min_pct::float8 AS min_pct
+              FROM {rel.sql}
+             WHERE {GOLD_SCOPE_PREDICATE}
+               AND status = 'bajo_umbral'
+             ORDER BY pct_ok, company, check_code
+             LIMIT $3
+        """
+        rows = await scope.conn.fetch(failing_sql, *scope.scope_args, clamp_top_n(10))
+        failing, breaches = [], []
+        for row in rows:
+            failing.append({
+                "company": row["company"],
+                "check": row["check_code"].replace("_", " "),
+                "group": row["check_group"],
+                "total": as_int(row["total"]),
+                "failing": as_int(row["failing"]),
+                "pct_ok": as_float(row["pct_ok"]),
+                "min_pct": as_float(row["min_pct"]),
+            })
+            breaches.append(
+                f"Calidad de datos en {row['company']}: {row['check_code'].replace('_', ' ')} "
+                f"al {as_float(row['pct_ok'])}% (minimo {as_float(row['min_pct'])}%)."
+            )
+        return DataQuality(
+            status=status_for(rel),
+            evidence_refs=[gold_evidence(rel, filters={})],
+            breaches=breaches,
+            checks=as_int(totals["checks"]),
+            checks_below_min=as_int(totals["below"]),
+            failing=failing,
+            **base,
+        )
+
+    return await run_gold_aggregate(user, _compute, _unavailable)
+
+
+__all__ = [
+    "COMPANY_DATASET",
+    "CONSOLIDATED_DATASET",
+    "CUSTOMER_DATASET",
+    "DATA_QUALITY_DATASET",
+    "ITEM_DATASET",
+    "RECONCILIATION_DATASET",
+    "query_below_min_sales",
+    "query_company_margin",
+    "query_customer_margin",
+    "query_data_quality",
+    "query_group_margin",
+    "query_item_family_margin",
+    "query_reconciliation",
+]

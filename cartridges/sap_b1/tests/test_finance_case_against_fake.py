@@ -212,3 +212,23 @@ def test_data_quality_reports_the_defects_the_fake_carries(finance):
     assert dq[("mx_mfg", "intercompania_cuadra")][1:] == (0, "ok")
     assert dq[("mx_ghost", "parametros_empresa_conocida")] == (1, 1, "bajo_umbral")
     assert dq[("mx_mfg", "parametros_empresa_conocida")] == (6, 0, "ok")
+
+
+def test_company_view_is_the_customer_view_rolled_up(finance):
+    company = {
+        tuple(r[:3]): r[3:]
+        for r in _rows(finance["con"], "SELECT company, period, scope, revenue_net_local, gross_profit_net_local, "
+                                       "customers, customers_below_min, customers_negative FROM sap_b1_margin_by_company_month")
+    }
+    rolled = {
+        tuple(r[:3]): r[3:]
+        for r in _rows(finance["con"], "SELECT company, period, scope, SUM(revenue_net_local), SUM(gross_profit_net_local), "
+                                       "COUNT(*), COUNT(*) FILTER (WHERE below_min), COUNT(*) FILTER (WHERE negative_margin) "
+                                       "FROM sap_b1_margin_by_customer_month GROUP BY 1, 2, 3")
+    }
+    assert company.keys() == rolled.keys()
+    for key, (revenue, profit, customers, below, negative) in company.items():
+        other = rolled[key]
+        slack = Decimal("0.01") * customers
+        assert abs(_dec(revenue) - _dec(other[0])) <= slack and abs(_dec(profit) - _dec(other[1])) <= slack, key
+        assert (customers, below, negative) == tuple(other[2:]), key

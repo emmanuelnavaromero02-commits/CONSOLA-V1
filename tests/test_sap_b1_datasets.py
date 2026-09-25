@@ -18,7 +18,7 @@ TOOLS = CARTRIDGE / "tools"
 
 HEADER_RE = re.compile(r"^--\s+(\S+)\s+\((silver|gold)\)\s+cartridge:\s+sap_b1\s*$")
 EXPECTED_SILVER = 65
-EXPECTED_GOLD = 11
+EXPECTED_GOLD = 12
 PSEUDO_ENTITIES = {"IntercompanyPartners", "BusinessParameters"}
 
 

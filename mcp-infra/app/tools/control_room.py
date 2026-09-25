@@ -671,6 +671,46 @@ async def control_room__risk_kpis_read(
     )
 
 
+_SAP_B1_CASE_VIEWS = {"margen": "sap_b1_margin_kpis"}
+
+
+@tool(
+    name="control_room__sap_b1_kpis_read",
+    description=(
+        "KPIs agregados de SAP Business One del workspace activo. case=margen: "
+        "margen del grupo con eliminacion intercompania, margen por empresa, "
+        "clientes y familias bajo el margen minimo, venta bajo costo, "
+        "reconciliacion contra los totales de finanzas y calidad de datos del "
+        "ultimo mes cerrado. Cada metrica trae status, proxy_note con lo que mide "
+        "y lo que NO mide, breaches con los incumplimientos de negocio y "
+        "evidence_refs. NO convierte monedas. Solo agregados; top_n (0-10) "
+        "devuelve ademas hasta 10 clientes nombrados. Solo lectura."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "case": {"type": "string", "enum": sorted(_SAP_B1_CASE_VIEWS)},
+            "top_n": {"type": "integer", "minimum": 0, "maximum": 10},
+        },
+        "required": ["case"],
+        "additionalProperties": False,
+    },
+)
+async def control_room__sap_b1_kpis_read(
+    case: str = "margen",
+    top_n: int = 0,
+    security_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    view = _SAP_B1_CASE_VIEWS.get(str(case or "").strip().lower())
+    if view is None:
+        raise ValueError(f"case must be one of {sorted(_SAP_B1_CASE_VIEWS)}")
+    return await _read_control_room_view(
+        view,
+        security_context,
+        params={"top_n": _named_rows(top_n)},
+    )
+
+
 _AGENT_MEMORY_FINDING_TYPES = ("data_gap", "error", "insight", "warning")
 _AGENT_MEMORY_SEVERITIES = ("critical", "high", "medium", "low")
 _AGENT_MEMORY_SUBJECT_MAX = 200

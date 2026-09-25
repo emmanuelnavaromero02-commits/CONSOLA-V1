@@ -18,6 +18,7 @@ from app.schemas.control_room_domain_kpi_responses import (
     ControlRoomFinanceKpisResponse,
     ControlRoomOperationsKpisResponse,
     ControlRoomRiskKpisResponse,
+    ControlRoomSapB1MarginKpisResponse,
 )
 from app.schemas.control_room_experience_actions import ExperienceActionPreviewResponse
 from app.schemas.control_room_alert_mutation_responses import (
@@ -291,6 +292,16 @@ async def _control_room_internal_view(
                 f"risk-kpis-{top_n}",
                 user,
                 lambda: control_room_service.risk_kpis(user, top_n=top_n),
+            ),
+        )
+    if view == "sap_b1_margin_kpis":
+        top_n = _bounded_int(params.get("top_n"), 0, lower=0, upper=10)
+        return project_public_control_room_response(
+            ControlRoomSapB1MarginKpisResponse,
+            await _control_room_cache_get_or_set(
+                f"sap-b1-margin-kpis-{top_n}",
+                user,
+                lambda: control_room_service.sap_b1_margin_kpis(user, top_n=top_n),
             ),
         )
     if view == "agent_memory":

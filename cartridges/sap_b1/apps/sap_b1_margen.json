@@ -1,0 +1,6 @@
+{
+  "name": "sap_b1_margen",
+  "title": "Margen · SAP Business One",
+  "description": "Margen del grupo y por empresa, clientes y artículos bajo el mínimo, reconciliación con finanzas y calidad de datos.",
+  "datasets_used": ["sap_b1_data_quality", "sap_b1_margin_by_company_month", "sap_b1_margin_by_customer_month", "sap_b1_margin_by_item_month", "sap_b1_margin_consolidated_month", "sap_b1_margin_reconciliation_month"]
+}

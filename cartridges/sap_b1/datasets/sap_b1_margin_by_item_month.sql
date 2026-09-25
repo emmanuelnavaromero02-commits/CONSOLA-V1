@@ -61,6 +61,7 @@ merged AS (
 SELECT
     m.company,
     m.doc_month,
+    strftime(m.doc_month, '%Y-%m')                                        AS period,
     CASE WHEN m.is_intercompany THEN 'intercompany' ELSE 'external' END   AS scope,
     m.local_currency,
     m.item_code,

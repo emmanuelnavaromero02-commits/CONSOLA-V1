@@ -197,6 +197,7 @@ def test_a_processed_delivery_is_not_triggered_again_and_parameters_come_first(m
         list_objects=lambda prefix: [item for item in delivered if item["Key"].startswith(prefix)],
         trigger=lambda run_id, conf: events.append(("trigger", run_id)) or 201,
         parameters=lambda tenant, workspace: events.append(("parameters", workspace)),
+        monitors=lambda tenant, workspace: events.append(("monitors", workspace)),
     )
 
     summary = module.refresh_scopes([(TENANT, WORKSPACE)], run_exists=lambda run_id: True, **common)
@@ -204,4 +205,4 @@ def test_a_processed_delivery_is_not_triggered_again_and_parameters_come_first(m
 
     summary = module.refresh_scopes([(TENANT, WORKSPACE)], run_exists=lambda run_id: False, **common)
     assert summary["triggered"] == [f"{TENANT}/{WORKSPACE}"]
-    assert [kind for kind, _value in events] == ["parameters", "trigger"]
+    assert [kind for kind, _value in events] == ["parameters", "trigger", "monitors"]

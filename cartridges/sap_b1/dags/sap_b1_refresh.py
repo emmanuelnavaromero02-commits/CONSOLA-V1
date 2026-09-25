@@ -20,6 +20,7 @@ AIRFLOW_URL = os.environ.get("AIRFLOW_URL", "http://airflow:8080")
 AIRFLOW_USER = os.environ.get("AIRFLOW_USER") or os.environ.get("AIRFLOW_ADMIN_USER") or "admin"
 AIRFLOW_PASSWORD = os.environ.get("AIRFLOW_PASSWORD") or os.environ.get("AIRFLOW_ADMIN_PASSWORD") or "admin"
 CARTRIDGE_URL = os.environ.get("SAP_B1_URL", "http://sap-b1:8206")
+CONSOLE_URL = os.environ.get("CONSOLE_INTERNAL_URL") or os.environ.get("CONSOLE_URL", "http://console:8000")
 
 _UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 _MARKER_RE = re.compile(
@@ -139,6 +140,21 @@ def refresh_parameters(tenant_id: str, workspace_id: str) -> None:
     response.raise_for_status()
 
 
+def ensure_monitors(tenant_id: str, workspace_id: str) -> None:
+    import requests
+
+    key = os.environ.get("INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE", "")
+    if not key:
+        raise RuntimeError("INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE missing")
+    response = requests.post(
+        f"{CONSOLE_URL.rstrip('/')}/internal/intelligence/agentops/ensure-monitors",
+        json={"security_context": upstream_context(tenant_id, workspace_id), "cartridge_id": CARTRIDGE_ID},
+        headers={"X-API-Key": key, "X-Internal-Service": "airflow"},
+        timeout=60,
+    )
+    response.raise_for_status()
+
+
 def chain_run_exists(run_id: str) -> bool:
     import requests
     from urllib.parse import quote
@@ -162,6 +178,7 @@ def refresh_scopes(
     trigger: Any,
     run_exists: Any = lambda run_id: False,
     parameters: Any = lambda tenant_id, workspace_id: None,
+    monitors: Any = lambda tenant_id, workspace_id: None,
 ) -> dict[str, Any]:
     triggered, already_done, silent, failed = [], [], [], []
     for tenant_id, workspace_id in scopes:
@@ -180,6 +197,7 @@ def refresh_scopes(
             parameters(tenant_id, workspace_id)
             status = trigger(admission["dag_run_id"], admission["conf"])
             (already_done if status == 409 else triggered).append(label)
+            monitors(tenant_id, workspace_id)
         except Exception as exc:  # noqa: BLE001
             failed.append(f"{label}: {type(exc).__name__}")
     summary = {"triggered": triggered, "already_done": already_done, "silent": silent, "failed": failed}
@@ -223,6 +241,7 @@ def sap_b1_refresh():
             ),
             run_exists=chain_run_exists,
             parameters=refresh_parameters,
+            monitors=ensure_monitors,
         )
 
     refresh_deliveries()

@@ -32,7 +32,7 @@ async def run_sync_agentops_monitors(
         await ensure_successfactors_talent_monitor(user)
     domain_specs = [
         spec
-        for spec in domain_monitors.DOMAIN_MONITOR_SPECS
+        for spec in domain_monitors.ALL_DOMAIN_MONITOR_SPECS
         if spec.cartridge_id == cartridge
     ]
     if domain_specs:

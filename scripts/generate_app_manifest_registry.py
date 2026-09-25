@@ -11,8 +11,8 @@ sys.path.insert(0, str(REPO / "console"))
 
 from app.domains.apps.manifests import load_packaged_manifests  # noqa: E402
 
-TARGET = REPO / "infra/init/99zzu_analytic_app_manifest_registry.sql"
-EXPECTED_APPS = 18
+TARGET = REPO / "infra/init/99zzzzm_analytic_app_manifest_registry_sap_b1.sql"
+EXPECTED_APPS = 19
 
 HEADER = """\
 -- GENERATED FILE — do not edit by hand.

@@ -328,7 +328,124 @@ __all__ = (
     "ControlRoomFinanceKpisResponse",
     "ControlRoomOperationsKpisResponse",
     "ControlRoomRiskKpisResponse",
+    "ControlRoomSapB1MarginKpisResponse",
     "DomainKpisBase",
     "KpiEvidenceRef",
     "KpiMetricBase",
 )
+
+
+# ── SAP Business One: margin ────────────────────────────────────────────────
+
+
+class B1KpiMetricBase(KpiMetricBase):
+    period: str | None = None
+    breaches: list[str] = Field(default_factory=list)
+
+
+class GroupMarginKpi(B1KpiMetricBase):
+    currency: str | None = None
+    external_revenue: float | int | None = None
+    external_gross_profit: float | int | None = None
+    consolidated_gross_profit: float | int | None = None
+    external_margin_pct: float | int | None = None
+    consolidated_margin_pct: float | int | None = None
+    unrealized_profit_change: float | int | None = None
+    trailing_margin_pct: float | int | None = None
+    currencies: list[str] = Field(default_factory=list)
+
+
+class CompanyMarginRow(PublicProjectionModel):
+    company: str | None = None
+    revenue: float | int | None = None
+    gross_profit: float | int | None = None
+    margin_pct: float | int | None = None
+    min_margin_pct: float | int | None = None
+
+
+class CompanyMarginKpi(B1KpiMetricBase):
+    companies: list[CompanyMarginRow] = Field(default_factory=list)
+
+
+class CustomerMarginRow(PublicProjectionModel):
+    company: str | None = None
+    customer: str | None = None
+    revenue: float | int | None = None
+    margin_pct: float | int | None = None
+
+
+class CustomerMarginKpi(B1KpiMetricBase):
+    customers: int | None = None
+    customers_below_min: int | None = None
+    customers_negative: int | None = None
+    revenue: float | int | None = None
+    revenue_below_min_pct: float | int | None = None
+    worst_customers: list[CustomerMarginRow] = Field(default_factory=list)
+
+
+class ItemFamilyMarginRow(PublicProjectionModel):
+    family: str | None = None
+    revenue: float | int | None = None
+    gross_profit: float | int | None = None
+    margin_pct: float | int | None = None
+    mix_pct: float | int | None = None
+
+
+class ItemFamilyMarginKpi(B1KpiMetricBase):
+    families: list[ItemFamilyMarginRow] = Field(default_factory=list)
+
+
+class BelowMinSalesKpi(B1KpiMetricBase):
+    revenue: float | int | None = None
+    below_min_revenue: float | int | None = None
+    below_min_pct: float | int | None = None
+    below_cost_revenue: float | int | None = None
+    below_cost_pct: float | int | None = None
+
+
+class ReconciliationRow(PublicProjectionModel):
+    company: str | None = None
+    period: str | None = None
+    revenue_diff_pct: float | int | None = None
+    cogs_diff_pct: float | int | None = None
+    gross_profit_diff_pct: float | int | None = None
+    tolerance_pct: float | int | None = None
+
+
+class ReconciliationKpi(B1KpiMetricBase):
+    months: int | None = None
+    company_months: int | None = None
+    within_tolerance: int | None = None
+    out_of_tolerance: int | None = None
+    without_controls: int | None = None
+    outliers: list[ReconciliationRow] = Field(default_factory=list)
+
+
+class DataQualityRow(PublicProjectionModel):
+    company: str | None = None
+    check: str | None = None
+    group: str | None = None
+    total: int | None = None
+    failing: int | None = None
+    pct_ok: float | int | None = None
+    min_pct: float | int | None = None
+
+
+class DataQualityKpi(B1KpiMetricBase):
+    checks: int | None = None
+    checks_below_min: int | None = None
+    failing: list[DataQualityRow] = Field(default_factory=list)
+
+
+class SapB1MarginMetrics(PublicProjectionModel):
+    group_margin: GroupMarginKpi = Field(default_factory=GroupMarginKpi)
+    company_margin: CompanyMarginKpi = Field(default_factory=CompanyMarginKpi)
+    customer_margin: CustomerMarginKpi = Field(default_factory=CustomerMarginKpi)
+    item_family_margin: ItemFamilyMarginKpi = Field(default_factory=ItemFamilyMarginKpi)
+    below_min_sales: BelowMinSalesKpi = Field(default_factory=BelowMinSalesKpi)
+    reconciliation: ReconciliationKpi = Field(default_factory=ReconciliationKpi)
+    data_quality: DataQualityKpi = Field(default_factory=DataQualityKpi)
+
+
+class ControlRoomSapB1MarginKpisResponse(DomainKpisBase):
+    metrics: SapB1MarginMetrics = Field(default_factory=SapB1MarginMetrics)
