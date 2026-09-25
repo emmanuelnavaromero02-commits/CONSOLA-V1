@@ -1,4 +1,5 @@
 -- replicon_user_latest  (silver)  cartridge: replicon
+-- sources: ["raw/replicon/User", "raw/replicon/UserSkills"]
 -- description: Usuarios de Replicon con enriquecimiento de tipo_de_proveedor (primer proveedor del usuario, tomado de UserSkills). Se mantienen todos los 45 campos existentes.
 -- exported from AWS postgres on session
 

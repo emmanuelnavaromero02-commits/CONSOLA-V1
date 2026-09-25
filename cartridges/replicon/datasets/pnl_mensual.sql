@@ -1,4 +1,5 @@
 -- pnl_mensual  (gold)  cartridge: replicon
+-- sources: ["raw/fx_rates/mxn_usd", "silver/replicon/empleados_maestro", "silver/replicon/project_progress_history", "silver/replicon/replicon_billingitem_latest", "silver/replicon/replicon_project_detail_curated", "silver/replicon/replicon_project_latest", "silver/replicon/replicon_projectbilling_curated", "silver/replicon/replicon_resourceallocation_latest", "silver/replicon/replicon_timeentry_latest"]
 WITH
 fx_rates AS (
     SELECT
@@ -8,7 +9,7 @@ fx_rates AS (
              THEN MAX(TRY_CAST(avg_rate AS DOUBLE)) END                    AS mxn_to_usd,
         'raw/fx_rates/mxn_usd/fx_rates.parquet'                            AS fx_source,
         MAX(TRY_CAST(year_month AS TIMESTAMP))                             AS fx_observed_at
-    FROM read_parquet('s3://{bucket}/raw/fx_rates/mxn_usd/fx_rates.parquet')
+    FROM read_parquet('s3://{bucket}/raw/fx_rates/mxn_usd/**/*.parquet')
     GROUP BY 1
 ),
 proj_catalog AS (

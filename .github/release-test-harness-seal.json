@@ -3402,6 +3402,10 @@
       "sha256": "e434401fea2e4c64d0da15403100e67b3a5edbf5f681993ede409b71bf6e2509"
     },
     {
+      "path": "refinement/tests/test_packaged_sql_scoped.py",
+      "sha256": "6b22796093420955e6be5a69874ee622c8c0437e228c02ac8362a0f9034d91b1"
+    },
+    {
       "path": "refinement/tests/test_preview_sql_limit_cap.py",
       "sha256": "0c6c328ff7c8f75573888f0762097ed78c80d1452938469384fca2194fd04416"
     },
@@ -5234,6 +5238,10 @@
       "sha256": "d09d116ec9ad6179333e6289458a747e52f1096dd90fe84f3b4d6466f8bf6be8"
     },
     {
+      "path": "tests/test_packaged_dataset_declared_sources.py",
+      "sha256": "efe6056f4ecc50a2ef9f6707e306e952636d26b30744e5ce0c8e778535c34ce6"
+    },
+    {
       "path": "tests/test_phase0_provider_safe_storage.py",
       "sha256": "a1faf845aeb01de25d55fea2cd517466c891b0f89517e9796dac39fa4c3d92ee"
     },
@@ -5631,7 +5639,7 @@
     },
     {
       "path": "tests/test_sap_hcm_datasets.py",
-      "sha256": "f53dcb0c3b8edfdf028c268f51f653f622fe30a711ef684bc799976e234e0c86"
+      "sha256": "f9b9a817549e54c5311607f3be0ed3b3526234f3feb9db91fdf1ea02cb8fa4ff"
     },
     {
       "path": "tests/test_sap_hcm_hints_agents.py",
@@ -5659,7 +5667,7 @@
     },
     {
       "path": "tests/test_sap_s4hana_datasets.py",
-      "sha256": "3e86d43ac4e697ca594b5d4d9f0c05f1775b61bedd822155a2658fb693e42e56"
+      "sha256": "e7347e9b0f776d03268239cd875ccf40da4c2c762f1d6c27de9ebe7d44f1d206"
     },
     {
       "path": "tests/test_sap_s4hana_entity_alignment.py",

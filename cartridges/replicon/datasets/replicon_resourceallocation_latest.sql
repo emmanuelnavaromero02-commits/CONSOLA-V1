@@ -13,7 +13,7 @@ SELECT date, userid, username, projectid, projectcode, projectname, durationhour
 FROM (
     SELECT *, ROW_NUMBER() OVER (PARTITION BY date, userid, projectid ORDER BY load_date DESC NULLS LAST) AS rn
     FROM read_parquet(
-        's3://{bucket}/raw/replicon/ResourceAllocation/load_date=*/data.parquet',
+        's3://{bucket}/raw/replicon/ResourceAllocation/**/*.parquet',
         hive_partitioning=true, union_by_name=true)
     WHERE load_date = '{latest_date}'
 ) t

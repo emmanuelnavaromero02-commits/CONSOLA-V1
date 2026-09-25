@@ -1,5 +1,5 @@
 -- cost_center_expense  (gold)  cartridge: sap_s4hana
--- sources: ["raw/sap_s4hana/CostCenter", "raw/sap_s4hana/PurchaseOrder"]
+-- sources: ["raw/sap_s4hana/CostCenter", "raw/sap_s4hana/PurchaseOrder", "silver/sap_s4hana/sap_s4hana_costcenter_latest"]
 -- description: Gasto por centro de costo. PENDIENTE: el enlace compra -> centro de costo vive en la asignación contable de la línea (no extraída); hoy se lista el maestro de centros de costo con expense en NULL.
 
 -- TODO: el gasto real requiere A_PurchaseOrderAccountAssignment (CostCenter por
