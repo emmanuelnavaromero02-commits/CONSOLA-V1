@@ -1,4 +1,4 @@
-import { createCartridge as apiCreateCartridge, getCartridge, getCartridgeStatus, listCartridges } from './api.js';
+import { createCartridge as apiCreateCartridge, getCartridge, getCartridgeStatus, listCartridges } from './api.js?v=studio-autopilot-ui6';
 import { setState, state } from './state.js';
 
 async function attachStatus(cartridge) {

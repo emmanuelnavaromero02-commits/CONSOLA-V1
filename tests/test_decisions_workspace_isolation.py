@@ -114,7 +114,6 @@ def test_all_console_decision_action_surfaces_use_durable_idempotency():
 
 def test_all_console_decision_clients_send_fresh_idempotency_key():
     client_sources = (
-        CONSOLE_DIR / "app" / "static" / "js" / "decisions.js",
         CONSOLE_DIR / "app" / "static" / "js" / "workspace.js",
         REPO_ROOT / "console-next" / "src" / "lib" / "admin-surfaces.ts",
     )

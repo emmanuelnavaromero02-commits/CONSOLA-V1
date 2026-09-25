@@ -1,4 +1,4 @@
-import { exportCartridge, importCartridge } from './api.js';
+import { exportCartridge, importCartridge } from './api.js?v=studio-autopilot-ui6';
 import { selectCartridge } from './cartridges.js';
 import { openNewCartridgeModal } from './modals.js';
 import { state } from './state.js';

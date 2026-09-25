@@ -1,25 +1,25 @@
-function csrfToken() {
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+export function csrfToken() {
   const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
   return match ? decodeURIComponent(match[1]) : '';
 }
 
-function csrfHeaders(base = {}) {
-  const token = csrfToken();
-  return token ? { ...base, 'X-CSRF-Token': token } : base;
+export function apiFetch(url, options = {}) {
+  const method = String(options.method || 'GET').toUpperCase();
+  const headers = new Headers(options.headers || {});
+  if (typeof options.body === 'string' && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  if (!SAFE_METHODS.has(method)) {
+    const token = csrfToken();
+    if (token) headers.set('X-CSRF-Token', token);
+  }
+  return fetch(url, { ...options, method, headers, credentials: 'same-origin' });
 }
 
-async function requestJson(url, options = {}) {
-  const method = String(options.method || 'GET').toUpperCase();
-  const response = await fetch(url, {
-    credentials: 'same-origin',
-    ...options,
-    method,
-    headers: {
-      ...(options.headers || {}),
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-      ...(!['GET', 'HEAD', 'OPTIONS'].includes(method) ? csrfHeaders() : {}),
-    },
-  });
+export async function requestJson(url, options = {}) {
+  const response = await apiFetch(url, options);
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(data.detail || data.error || `${response.status} ${response.statusText}`);
@@ -58,15 +58,5 @@ export function exportCartridge(id) {
 export async function importCartridge(file) {
   const data = new FormData();
   data.append('file', file);
-  const response = await fetch('/studio/import', {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: csrfHeaders(),
-    body: data,
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload.detail || payload.error || `${response.status} ${response.statusText}`);
-  }
-  return payload;
+  return requestJson('/studio/import', { method: 'POST', body: data });
 }

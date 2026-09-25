@@ -1,21 +1,6 @@
     import { state } from './legacy-state.js';
-    import { esc, _renderQueryTable, _currentEditorEntity } from './legacy.js?v=studio-autopilot-ui5';
-
-    function readCookie(name) {
-      const prefix = `${name}=`;
-      for (const raw of document.cookie.split(';')) {
-        const c = raw.trim();
-        if (c.startsWith(prefix)) return decodeURIComponent(c.slice(prefix.length));
-      }
-      return null;
-    }
-
-    function jsonHeaders() {
-      const headers = {'Content-Type': 'application/json'};
-      const csrf = readCookie('csrf_token');
-      if (csrf) headers['X-CSRF-Token'] = csrf;
-      return headers;
-    }
+    import { apiFetch } from './api.js?v=studio-autopilot-ui6';
+    import { esc, _renderQueryTable, _currentEditorEntity } from './legacy.js?v=studio-autopilot-ui6';
 
     function currentCartridgeId() {
       return state._currentCartridge?.id
@@ -89,10 +74,8 @@
       results.innerHTML = '';
       const t0 = Date.now();
       try {
-        const r = await fetch('/api/bronze/query', {
+        const r = await apiFetch('/api/bronze/query', {
           method: 'POST',
-          credentials: 'include',
-          headers: jsonHeaders(),
           body: JSON.stringify({ sql: sel, limit: 200, sources: state._sqlRunnerSources }),
         });
         const d      = await r.json().catch(() => ({}));

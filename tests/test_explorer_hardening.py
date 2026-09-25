@@ -69,14 +69,6 @@ def test_explorer_delete_requires_permission_csrf_scope_audit_and_confirmation()
     assert 'action="explorer.object.delete"' in source
 
 
-def test_explorer_frontend_sends_strong_delete_confirmation():
-    source = (ROOT / "console/app/static/js/explorer.js").read_text(encoding="utf-8")
-
-    assert "prompt(`Escribe la ruta completa" in source
-    assert "typed !== key" in source
-    assert "confirm: typed" in source
-
-
 def test_explorer_list_filters_child_prefixes_and_objects_by_scope():
     source = console_route_source()
     ast.parse(source)

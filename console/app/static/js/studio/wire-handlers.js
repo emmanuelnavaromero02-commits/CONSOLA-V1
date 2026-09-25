@@ -9,8 +9,8 @@ import {
   aiKey,
   aiQuickPrompt,
   aiResizeStart,
-} from './legacy.js?v=studio-autopilot-ui5';
-import { closeSqlRunner, execSqlRunner } from './sql-runner.js?v=studio-autopilot-ui5';
+} from './legacy.js?v=studio-autopilot-ui6';
+import { closeSqlRunner, execSqlRunner } from './sql-runner.js?v=studio-autopilot-ui6';
 
 const $ = (id) => document.getElementById(id);
 const on = (el, ev, fn) => { if (el) el.addEventListener(ev, fn); };

@@ -1,16 +1,8 @@
+import { apiFetch } from "./api.js?v=studio-autopilot-ui6";
 import { state } from "./legacy-state.js";
 
 const ACTION_BRIDGE_VERSION = "v1.44.5";
 const AI_PANEL_STORAGE_KEY = "studio.ai.panel";
-
-function readCookie(name) {
-  const prefix = `${name}=`;
-  for (const raw of document.cookie.split(";")) {
-    const c = raw.trim();
-    if (c.startsWith(prefix)) return decodeURIComponent(c.slice(prefix.length));
-  }
-  return null;
-}
 
 function currentCartridge() {
   return state._currentCartridge?.id
@@ -27,18 +19,10 @@ function withCartridge(path) {
 }
 
 export async function studioAction(path, { method = "GET", body = null, render = null } = {}) {
-  const headers = { "Accept": "application/json" };
-  if (method !== "GET" && method !== "HEAD") {
-    headers["Content-Type"] = "application/json";
-    const csrf = readCookie("csrf_token");
-    if (csrf) headers["X-CSRF-Token"] = csrf;
-  }
-
   try {
-    const r = await fetch(path, {
+    const r = await apiFetch(path, {
       method,
-      credentials: "include",
-      headers,
+      headers: { "Accept": "application/json" },
       body: body ? JSON.stringify(body) : null,
     });
     const payload = await r.json().catch(() => ({}));

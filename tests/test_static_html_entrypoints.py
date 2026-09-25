@@ -23,8 +23,8 @@ def test_direct_static_html_is_not_public_entrypoint(monkeypatch):
     client = _console_client(monkeypatch)
 
     for path in (
-        "/static/cartridges.html",
-        "/static/viewers/vault.html",
+        "/static/studio.html",
+        "/static/workspace.html",
         "/static/console-next/index.html",
     ):
         response = client.get(path)

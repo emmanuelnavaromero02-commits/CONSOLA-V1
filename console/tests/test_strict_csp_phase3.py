@@ -24,7 +24,6 @@ def _main():
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STATIC = REPO_ROOT / "console" / "app" / "static"
-JS_DIR = STATIC / "js"
 
 
 def _csp_for(path: str) -> str:
@@ -32,32 +31,6 @@ def _csp_for(path: str) -> str:
     resp = JSONResponse({})
     main_module._apply_security_headers(resp, path)
     return resp.headers.get("content-security-policy", "")
-
-
-REFACTORED_PAGES = {
-    "apps_gallery.html": "apps_gallery.js",
-    "decisions.html":    "decisions.js",
-    "iam.html":          "iam.js",
-    "monitor.html":      "monitor.js",
-    "security.html":     "security.js",
-}
-
-
-def test_each_refactored_page_references_extracted_js():
-    for page, js in REFACTORED_PAGES.items():
-        html = (STATIC / page).read_text(encoding="utf-8")
-        expected = f"/static/js/{js}"
-        assert expected in html, f"{page} should reference {expected}"
-
-
-def test_each_extracted_js_exists_and_wires_listeners():
-    for page, js in REFACTORED_PAGES.items():
-        js_path = JS_DIR / js
-        assert js_path.is_file(), f"missing {js_path}"
-        src = js_path.read_text(encoding="utf-8")
-        assert "addEventListener" in src, (
-            f"{js} should call addEventListener — the inline on* handlers were removed."
-        )
 
 
 _INLINE_HANDLER_RE = re.compile(

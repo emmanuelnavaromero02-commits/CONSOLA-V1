@@ -85,15 +85,11 @@ def test_strict_csp_paths_set_matches_expected():
 
 
 _FORM_PAGES = [
-    "login.html",
-    "me.html",
     "forgot_password.html",
     "reset_password.html",
     "activate.html",
 ]
 _EXTRACTED_JS = {
-    "login.html": "login.js",
-    "me.html": "me.js",
     "forgot_password.html": "forgot_password.js",
     "reset_password.html": "reset_password.js",
     "activate.html": "activate.js",

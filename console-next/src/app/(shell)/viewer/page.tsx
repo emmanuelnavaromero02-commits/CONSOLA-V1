@@ -27,6 +27,7 @@ import type { LucideIcon } from "lucide-react";
 import { JobTable } from "@/components/monitor/JobTable";
 import { PipelineTable } from "@/components/monitor/PipelineTable";
 import { StatusPill } from "@/components/monitor/StatusPill";
+import { api } from "@/lib/api";
 import { enrichSemantic } from "@/lib/monitor/client";
 import { cn } from "@/lib/utils";
 import {
@@ -179,12 +180,12 @@ function useActiveScopedCartridges(): string[] {
   const [active, setActive] = useState<string[]>([]);
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/apps", { credentials: "same-origin" })
-      .then((response) => response.ok ? response.json() : null)
-      .then((payload) => {
+    api.get<{ active_scoped_cartridges?: unknown }>("/api/apps")
+      .then(({ data }) => {
         if (cancelled) return;
-        const cartridges = Array.isArray(payload?.active_scoped_cartridges)
-          ? payload.active_scoped_cartridges.filter((item: unknown): item is string => typeof item === "string" && item.trim().length > 0)
+        const scoped = data?.active_scoped_cartridges;
+        const cartridges = Array.isArray(scoped)
+          ? scoped.filter((item: unknown): item is string => typeof item === "string" && item.trim().length > 0)
           : [];
         setActive(cartridges);
       })

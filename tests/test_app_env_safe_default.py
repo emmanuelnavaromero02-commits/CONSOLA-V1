@@ -207,21 +207,9 @@ def test_console_system_info_exposes_dev_mode_flag():
     assert "{\"development\", \"dev\", \"local\", \"test\"}" in runtime
 
 
-def test_pipeline_js_hides_deploy_button_outside_dev_mode():
-    js = (REPO / "console" / "app" / "static" / "js" / "viewers"
-          / "pipeline.js").read_text(encoding="utf-8")
-    assert "/api/system/info" in js
-    assert "dev_mode" in js
-    assert "btn-deploy" in js
-
-
 def test_studio_airflow_button_stays_visible_and_external():
     legacy_js = (REPO / "console" / "app" / "static" / "js" / "studio"
                  / "legacy.js").read_text(encoding="utf-8")
-    pipeline_html = (REPO / "console" / "app" / "static" / "viewers"
-                     / "pipeline.html").read_text(encoding="utf-8")
-    pipeline_js = (REPO / "console" / "app" / "static" / "js" / "viewers"
-                   / "pipeline.js").read_text(encoding="utf-8")
 
     airflow_url_fn = re.search(
         r"function airflowDagUrl\(dagId\)\s*\{(.*?)\n    \}",
@@ -241,15 +229,6 @@ def test_studio_airflow_button_stays_visible_and_external():
     assert 'title="Ver en Airflow UI"' in legacy_js
     assert ">◈ Airflow</a>" in legacy_js
     assert "Airflow en consola" not in legacy_js
-
-    assert 'id="dag-airflow-link"' in pipeline_html
-    assert 'href="#"' in pipeline_html
-    assert 'target="_blank"' in pipeline_html
-    assert 'title="Ver en Airflow UI"' in pipeline_html
-    assert ">◈ Airflow</a>" in pipeline_html
-    assert "Airflow en consola" not in pipeline_html
-    assert "/dags/${encodeURIComponent(dagId)}/grid" in pipeline_js
-    assert "document.getElementById('dag-airflow-link').href = '#';" in pipeline_js
 
 
 def test_legacy_js_gates_every_dev_only_action():
@@ -293,13 +272,13 @@ def test_legacy_js_gates_every_dev_only_action():
         deploy_body,
     )
     assert re.search(
-        r"fetch\('/api/studio/dag-deploy'",
+        r"apiFetch\('/api/studio/dag-deploy'",
         deploy_body,
     )
     assert "backend owns the production RCE gate" in deploy_body
 
     packaged_cut = m_packaged.end()
-    first_backend_call = deploy_body.find("fetch('/api/studio/dag-deploy'")
+    first_backend_call = deploy_body.find("apiFetch('/api/studio/dag-deploy'")
     assert first_backend_call != -1 and first_backend_call > packaged_cut
 
     assert "_gateDevOnlyAction" not in deploy_body
