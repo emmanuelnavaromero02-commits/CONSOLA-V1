@@ -38,6 +38,7 @@ SELECT
     CAST(VatSumFC AS DECIMAL(19,6))             AS vat_sum_fc,
     CAST(VatSumSy AS DECIMAL(19,6))             AS vat_sum_sy,
     CAST(DiscSum AS DECIMAL(19,6))              AS disc_sum,
+    CAST(DiscPrcnt AS DECIMAL(19,6))            AS disc_prcnt,
     CAST(GrosProfit AS DECIMAL(19,6))           AS gros_profit,
     CAST(GrosProfFC AS DECIMAL(19,6))           AS gros_prof_fc,
     CAST(GrosProfSy AS DECIMAL(19,6))           AS gros_prof_sy,

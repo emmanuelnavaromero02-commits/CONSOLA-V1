@@ -5,14 +5,14 @@
 WITH invoices AS (
     SELECT company, doc_month, local_currency, sys_currency,
            CASE WHEN is_intercompany THEN 'intercompany' ELSE 'external' END AS scope,
-           doc_entry, card_code, amount_local, amount_sys
+           doc_entry, card_code, amount_local_net, amount_sys_net
     FROM read_parquet('s3://{bucket}/silver/sap_b1/sap_b1_ap_invoice_lines/**/*.parquet')
     WHERE canceled = 'N'
 ),
 credits AS (
     SELECT company, doc_month,
            CASE WHEN is_intercompany THEN 'intercompany' ELSE 'external' END AS scope,
-           doc_entry, amount_local, amount_sys
+           doc_entry, amount_local_net, amount_sys_net
     FROM read_parquet('s3://{bucket}/silver/sap_b1/sap_b1_ap_credit_memo_lines/**/*.parquet')
     WHERE canceled = 'N'
 ),
@@ -20,16 +20,16 @@ invoice_totals AS (
     SELECT company, doc_month, local_currency, sys_currency, scope,
            COUNT(DISTINCT doc_entry) AS supplier_invoices,
            COUNT(DISTINCT card_code) AS suppliers,
-           SUM(amount_local)         AS purchases_gross_local,
-           SUM(amount_sys)           AS purchases_gross_sys
+           SUM(amount_local_net)     AS purchases_gross_local,
+           SUM(amount_sys_net)       AS purchases_gross_sys
     FROM invoices
     GROUP BY 1, 2, 3, 4, 5
 ),
 credit_totals AS (
     SELECT company, doc_month, scope,
            COUNT(DISTINCT doc_entry) AS credit_memos,
-           SUM(amount_local)         AS credit_local,
-           SUM(amount_sys)           AS credit_sys
+           SUM(amount_local_net)     AS credit_local,
+           SUM(amount_sys_net)       AS credit_sys
     FROM credits
     GROUP BY 1, 2, 3
 )

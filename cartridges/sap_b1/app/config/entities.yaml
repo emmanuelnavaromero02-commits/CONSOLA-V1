@@ -8,6 +8,7 @@ entities:
   select_fields:
   - Version
   - CompnyName
+  business_name: Información de la empresa
   protection: {}
   column_types:
     Version: int64
@@ -24,6 +25,7 @@ entities:
   - MainCurncy
   - SysCurrncy
   - Country
+  business_name: Parámetros de la empresa
   protection: {}
   column_types:
     Code: string
@@ -41,6 +43,7 @@ entities:
   - CurrCode
   - CurrName
   - DocCurrCod
+  business_name: Monedas
   protection: {}
   column_types:
     CurrCode: string
@@ -56,6 +59,7 @@ entities:
   - RateDate
   - Currency
   - Rate
+  business_name: Tipos de cambio
   protection: {}
   column_types:
     RateDate: timestamp
@@ -75,6 +79,7 @@ entities:
   - FatherNum
   - Levels
   - GroupMask
+  business_name: Catálogo de cuentas
   protection: {}
   column_types:
     AcctCode: string
@@ -98,6 +103,7 @@ entities:
   - T_RefDate
   - Category
   - Indicator
+  business_name: Periodos contables
   protection: {}
   column_types:
     AbsEntry: int64
@@ -118,6 +124,7 @@ entities:
   - PrcName
   - DimCode
   - Active
+  business_name: Centros de costo
   protection: {}
   column_types:
     PrcCode: string
@@ -134,6 +141,7 @@ entities:
   - GroupCode
   - GroupName
   - GroupType
+  business_name: Grupos de socios de negocio
   protection: {}
   column_types:
     GroupCode: int64
@@ -148,11 +156,14 @@ entities:
   select_fields:
   - SlpCode
   - SlpName
+  - Commission
   - Active
+  business_name: Vendedores
   protection: {}
   column_types:
     SlpCode: int64
     SlpName: string
+    Commission: decimal(19,6)
     Active: string
 - entity: OWHS
   display_name: Warehouses (OWHS)
@@ -164,6 +175,7 @@ entities:
   - WhsCode
   - WhsName
   - Locked
+  business_name: Almacenes
   protection: {}
   column_types:
     WhsCode: string
@@ -178,6 +190,7 @@ entities:
   select_fields:
   - ItmsGrpCod
   - ItmsGrpNam
+  business_name: Grupos de artículos
   protection: {}
   column_types:
     ItmsGrpCod: int64
@@ -197,6 +210,7 @@ entities:
   - AvgPrice
   - MinStock
   - MaxStock
+  business_name: Existencias por almacén
   protection: {}
   column_types:
     ItemCode: string
@@ -222,6 +236,7 @@ entities:
   - ExpDate
   - InDate
   - Status
+  business_name: Lotes
   protection: {}
   column_types:
     AbsEntry: int64
@@ -243,6 +258,7 @@ entities:
   - SysNumber
   - WhsCode
   - Quantity
+  business_name: Cantidades por lote
   protection: {}
   column_types:
     ItemCode: string
@@ -260,12 +276,113 @@ entities:
   - BatchNum
   - WhsCode
   - Quantity
+  business_name: Cantidades por lote (tabla anterior)
   protection: {}
   column_types:
     ItemCode: string
     BatchNum: string
     WhsCode: string
     Quantity: decimal(19,6)
+- entity: OSPP
+  display_name: Special prices (OSPP)
+  description: Special prices per business partner and item (price, currency, discount, validity).
+  mode: full
+  page_size: 5000
+  primary_key: ItemCode,CardCode
+  select_fields:
+  - ItemCode
+  - CardCode
+  - Price
+  - Currency
+  - Discount
+  - ListNum
+  - Valid
+  - ValidFrom
+  - ValidTo
+  - CreateDate
+  - UpdateDate
+  business_name: Precios especiales
+  protection: {}
+  column_types:
+    ItemCode: string
+    CardCode: string
+    Price: decimal(19,6)
+    Currency: string
+    Discount: decimal(19,6)
+    ListNum: int64
+    Valid: string
+    ValidFrom: timestamp
+    ValidTo: timestamp
+    CreateDate: timestamp
+    UpdateDate: timestamp
+- entity: OSRI
+  display_name: Serial numbers (OSRI)
+  description: 'Serial number master: item, internal and supplier serial, warehouse, status and dates
+    (legacy serial table, validate in HANA).'
+  mode: full
+  page_size: 5000
+  primary_key: ItemCode,SysSerial
+  select_fields:
+  - ItemCode
+  - SysSerial
+  - IntrSerial
+  - SuppSerial
+  - WhsCode
+  - Status
+  - BatchId
+  - ExpDate
+  - PrdDate
+  - InDate
+  - CardCode
+  - CreateDate
+  business_name: Números de serie
+  protection: {}
+  column_types:
+    ItemCode: string
+    SysSerial: int64
+    IntrSerial: string
+    SuppSerial: string
+    WhsCode: string
+    Status: int64
+    BatchId: string
+    ExpDate: timestamp
+    PrdDate: timestamp
+    InDate: timestamp
+    CardCode: string
+    CreateDate: timestamp
+- entity: SRI1
+  display_name: Serial number transactions (SRI1)
+  description: Serial numbers per document line, Direction 0 in / 1 out (legacy serial table, validate
+    in HANA).
+  mode: full
+  page_size: 5000
+  primary_key: ItemCode,SysSerial,LineNum
+  select_fields:
+  - ItemCode
+  - SysSerial
+  - LineNum
+  - BaseType
+  - BaseEntry
+  - BaseNum
+  - BaseLinNum
+  - DocDate
+  - CardCode
+  - WhsCode
+  - Direction
+  business_name: Movimientos de números de serie
+  protection: {}
+  column_types:
+    ItemCode: string
+    SysSerial: int64
+    LineNum: int64
+    BaseType: int64
+    BaseEntry: int64
+    BaseNum: int64
+    BaseLinNum: int64
+    DocDate: timestamp
+    CardCode: string
+    WhsCode: string
+    Direction: int64
 - entity: OCRD
   display_name: Business partners (OCRD)
   description: Customers (CardType C) and suppliers (CardType S) with their currency and group.
@@ -289,6 +406,7 @@ entities:
   - CreateDate
   - UpdateDate
   - UpdateTS
+  business_name: Socios de negocio (clientes y proveedores)
   protection: {}
   column_types:
     CardCode: string
@@ -336,6 +454,7 @@ entities:
   - CreateDate
   - UpdateDate
   - UpdateTS
+  business_name: Artículos
   protection: {}
   column_types:
     ItemCode: string
@@ -378,6 +497,7 @@ entities:
   - CreateDate
   - UpdateDate
   - UpdateTS
+  business_name: Listas de materiales
   protection: {}
   column_types:
     Code: string
@@ -408,6 +528,7 @@ entities:
   - Warehouse
   - IssueMthd
   - PriceList
+  business_name: Componentes de listas de materiales
   protection: {}
   column_types:
     Father: string
@@ -450,6 +571,7 @@ entities:
   - VatSumFC
   - VatSumSy
   - DiscSum
+  - DiscPrcnt
   - GrosProfit
   - GrosProfFC
   - GrosProfSy
@@ -464,6 +586,7 @@ entities:
   - UpdateDate
   - UpdateTS
   - UserSign
+  business_name: Facturas de clientes
   protection: {}
   column_types:
     DocEntry: int64
@@ -487,6 +610,7 @@ entities:
     VatSumFC: decimal(19,6)
     VatSumSy: decimal(19,6)
     DiscSum: decimal(19,6)
+    DiscPrcnt: decimal(19,6)
     GrosProfit: decimal(19,6)
     GrosProfFC: decimal(19,6)
     GrosProfSy: decimal(19,6)
@@ -539,6 +663,7 @@ entities:
   - GrssProfit
   - GrssProfFC
   - GrssProfSC
+  - Commission
   - StockPrice
   - WhsCode
   - ShipDate
@@ -550,6 +675,7 @@ entities:
   - TreeType
   - ObjType
   - VisOrder
+  business_name: Líneas de facturas de clientes
   protection: {}
   column_types:
     DocEntry: int64
@@ -575,6 +701,7 @@ entities:
     GrssProfit: decimal(19,6)
     GrssProfFC: decimal(19,6)
     GrssProfSC: decimal(19,6)
+    Commission: decimal(19,6)
     StockPrice: decimal(19,6)
     WhsCode: string
     ShipDate: timestamp
@@ -619,6 +746,7 @@ entities:
   - VatSumFC
   - VatSumSy
   - DiscSum
+  - DiscPrcnt
   - GrosProfit
   - GrosProfFC
   - GrosProfSy
@@ -633,6 +761,7 @@ entities:
   - UpdateDate
   - UpdateTS
   - UserSign
+  business_name: Notas de crédito de clientes
   protection: {}
   column_types:
     DocEntry: int64
@@ -656,6 +785,7 @@ entities:
     VatSumFC: decimal(19,6)
     VatSumSy: decimal(19,6)
     DiscSum: decimal(19,6)
+    DiscPrcnt: decimal(19,6)
     GrosProfit: decimal(19,6)
     GrosProfFC: decimal(19,6)
     GrosProfSy: decimal(19,6)
@@ -708,6 +838,7 @@ entities:
   - GrssProfit
   - GrssProfFC
   - GrssProfSC
+  - Commission
   - StockPrice
   - WhsCode
   - ShipDate
@@ -719,6 +850,7 @@ entities:
   - TreeType
   - ObjType
   - VisOrder
+  business_name: Líneas de notas de crédito de clientes
   protection: {}
   column_types:
     DocEntry: int64
@@ -744,6 +876,7 @@ entities:
     GrssProfit: decimal(19,6)
     GrssProfFC: decimal(19,6)
     GrssProfSC: decimal(19,6)
+    Commission: decimal(19,6)
     StockPrice: decimal(19,6)
     WhsCode: string
     ShipDate: timestamp
@@ -788,6 +921,7 @@ entities:
   - VatSumFC
   - VatSumSy
   - DiscSum
+  - DiscPrcnt
   - GrosProfit
   - GrosProfFC
   - GrosProfSy
@@ -802,6 +936,7 @@ entities:
   - UpdateDate
   - UpdateTS
   - UserSign
+  business_name: Entregas
   protection: {}
   column_types:
     DocEntry: int64
@@ -825,6 +960,7 @@ entities:
     VatSumFC: decimal(19,6)
     VatSumSy: decimal(19,6)
     DiscSum: decimal(19,6)
+    DiscPrcnt: decimal(19,6)
     GrosProfit: decimal(19,6)
     GrosProfFC: decimal(19,6)
     GrosProfSy: decimal(19,6)
@@ -877,6 +1013,7 @@ entities:
   - GrssProfit
   - GrssProfFC
   - GrssProfSC
+  - Commission
   - StockPrice
   - WhsCode
   - ShipDate
@@ -888,6 +1025,7 @@ entities:
   - TreeType
   - ObjType
   - VisOrder
+  business_name: Líneas de entregas
   protection: {}
   column_types:
     DocEntry: int64
@@ -913,6 +1051,7 @@ entities:
     GrssProfit: decimal(19,6)
     GrssProfFC: decimal(19,6)
     GrssProfSC: decimal(19,6)
+    Commission: decimal(19,6)
     StockPrice: decimal(19,6)
     WhsCode: string
     ShipDate: timestamp
@@ -956,6 +1095,7 @@ entities:
   - VatSumFC
   - VatSumSy
   - DiscSum
+  - DiscPrcnt
   - GrosProfit
   - GrosProfFC
   - GrosProfSy
@@ -970,6 +1110,7 @@ entities:
   - UpdateDate
   - UpdateTS
   - UserSign
+  business_name: Devoluciones
   protection: {}
   column_types:
     DocEntry: int64
@@ -993,6 +1134,7 @@ entities:
     VatSumFC: decimal(19,6)
     VatSumSy: decimal(19,6)
     DiscSum: decimal(19,6)
+    DiscPrcnt: decimal(19,6)
     GrosProfit: decimal(19,6)
     GrosProfFC: decimal(19,6)
     GrosProfSy: decimal(19,6)
@@ -1045,6 +1187,7 @@ entities:
   - GrssProfit
   - GrssProfFC
   - GrssProfSC
+  - Commission
   - StockPrice
   - WhsCode
   - ShipDate
@@ -1056,6 +1199,7 @@ entities:
   - TreeType
   - ObjType
   - VisOrder
+  business_name: Líneas de devoluciones
   protection: {}
   column_types:
     DocEntry: int64
@@ -1081,6 +1225,7 @@ entities:
     GrssProfit: decimal(19,6)
     GrssProfFC: decimal(19,6)
     GrssProfSC: decimal(19,6)
+    Commission: decimal(19,6)
     StockPrice: decimal(19,6)
     WhsCode: string
     ShipDate: timestamp
@@ -1125,6 +1270,7 @@ entities:
   - VatSumFC
   - VatSumSy
   - DiscSum
+  - DiscPrcnt
   - GrosProfit
   - GrosProfFC
   - GrosProfSy
@@ -1139,6 +1285,7 @@ entities:
   - UpdateDate
   - UpdateTS
   - UserSign
+  business_name: Pedidos de clientes
   protection: {}
   column_types:
     DocEntry: int64
@@ -1162,6 +1309,7 @@ entities:
     VatSumFC: decimal(19,6)
     VatSumSy: decimal(19,6)
     DiscSum: decimal(19,6)
+    DiscPrcnt: decimal(19,6)
     GrosProfit: decimal(19,6)
     GrosProfFC: decimal(19,6)
     GrosProfSy: decimal(19,6)
@@ -1214,6 +1362,7 @@ entities:
   - GrssProfit
   - GrssProfFC
   - GrssProfSC
+  - Commission
   - StockPrice
   - WhsCode
   - ShipDate
@@ -1225,6 +1374,7 @@ entities:
   - TreeType
   - ObjType
   - VisOrder
+  business_name: Líneas de pedidos de clientes
   protection: {}
   column_types:
     DocEntry: int64
@@ -1250,6 +1400,7 @@ entities:
     GrssProfit: decimal(19,6)
     GrssProfFC: decimal(19,6)
     GrssProfSC: decimal(19,6)
+    Commission: decimal(19,6)
     StockPrice: decimal(19,6)
     WhsCode: string
     ShipDate: timestamp
@@ -1294,6 +1445,7 @@ entities:
   - VatSumFC
   - VatSumSy
   - DiscSum
+  - DiscPrcnt
   - GrosProfit
   - GrosProfFC
   - GrosProfSy
@@ -1308,6 +1460,7 @@ entities:
   - UpdateDate
   - UpdateTS
   - UserSign
+  business_name: Facturas de proveedores
   protection: {}
   column_types:
     DocEntry: int64
@@ -1331,6 +1484,7 @@ entities:
     VatSumFC: decimal(19,6)
     VatSumSy: decimal(19,6)
     DiscSum: decimal(19,6)
+    DiscPrcnt: decimal(19,6)
     GrosProfit: decimal(19,6)
     GrosProfFC: decimal(19,6)
     GrosProfSy: decimal(19,6)
@@ -1383,6 +1537,7 @@ entities:
   - GrssProfit
   - GrssProfFC
   - GrssProfSC
+  - Commission
   - StockPrice
   - WhsCode
   - ShipDate
@@ -1394,6 +1549,7 @@ entities:
   - TreeType
   - ObjType
   - VisOrder
+  business_name: Líneas de facturas de proveedores
   protection: {}
   column_types:
     DocEntry: int64
@@ -1419,6 +1575,7 @@ entities:
     GrssProfit: decimal(19,6)
     GrssProfFC: decimal(19,6)
     GrssProfSC: decimal(19,6)
+    Commission: decimal(19,6)
     StockPrice: decimal(19,6)
     WhsCode: string
     ShipDate: timestamp
@@ -1463,6 +1620,7 @@ entities:
   - VatSumFC
   - VatSumSy
   - DiscSum
+  - DiscPrcnt
   - GrosProfit
   - GrosProfFC
   - GrosProfSy
@@ -1477,6 +1635,7 @@ entities:
   - UpdateDate
   - UpdateTS
   - UserSign
+  business_name: Notas de crédito de proveedores
   protection: {}
   column_types:
     DocEntry: int64
@@ -1500,6 +1659,7 @@ entities:
     VatSumFC: decimal(19,6)
     VatSumSy: decimal(19,6)
     DiscSum: decimal(19,6)
+    DiscPrcnt: decimal(19,6)
     GrosProfit: decimal(19,6)
     GrosProfFC: decimal(19,6)
     GrosProfSy: decimal(19,6)
@@ -1552,6 +1712,7 @@ entities:
   - GrssProfit
   - GrssProfFC
   - GrssProfSC
+  - Commission
   - StockPrice
   - WhsCode
   - ShipDate
@@ -1563,6 +1724,7 @@ entities:
   - TreeType
   - ObjType
   - VisOrder
+  business_name: Líneas de notas de crédito de proveedores
   protection: {}
   column_types:
     DocEntry: int64
@@ -1588,6 +1750,7 @@ entities:
     GrssProfit: decimal(19,6)
     GrssProfFC: decimal(19,6)
     GrssProfSC: decimal(19,6)
+    Commission: decimal(19,6)
     StockPrice: decimal(19,6)
     WhsCode: string
     ShipDate: timestamp
@@ -1632,6 +1795,7 @@ entities:
   - VatSumFC
   - VatSumSy
   - DiscSum
+  - DiscPrcnt
   - GrosProfit
   - GrosProfFC
   - GrosProfSy
@@ -1646,6 +1810,7 @@ entities:
   - UpdateDate
   - UpdateTS
   - UserSign
+  business_name: Entradas de mercancía
   protection: {}
   column_types:
     DocEntry: int64
@@ -1669,6 +1834,7 @@ entities:
     VatSumFC: decimal(19,6)
     VatSumSy: decimal(19,6)
     DiscSum: decimal(19,6)
+    DiscPrcnt: decimal(19,6)
     GrosProfit: decimal(19,6)
     GrosProfFC: decimal(19,6)
     GrosProfSy: decimal(19,6)
@@ -1721,6 +1887,7 @@ entities:
   - GrssProfit
   - GrssProfFC
   - GrssProfSC
+  - Commission
   - StockPrice
   - WhsCode
   - ShipDate
@@ -1732,6 +1899,7 @@ entities:
   - TreeType
   - ObjType
   - VisOrder
+  business_name: Líneas de entradas de mercancía
   protection: {}
   column_types:
     DocEntry: int64
@@ -1757,6 +1925,7 @@ entities:
     GrssProfit: decimal(19,6)
     GrssProfFC: decimal(19,6)
     GrssProfSC: decimal(19,6)
+    Commission: decimal(19,6)
     StockPrice: decimal(19,6)
     WhsCode: string
     ShipDate: timestamp
@@ -1801,6 +1970,7 @@ entities:
   - VatSumFC
   - VatSumSy
   - DiscSum
+  - DiscPrcnt
   - GrosProfit
   - GrosProfFC
   - GrosProfSy
@@ -1815,6 +1985,7 @@ entities:
   - UpdateDate
   - UpdateTS
   - UserSign
+  business_name: Órdenes de compra
   protection: {}
   column_types:
     DocEntry: int64
@@ -1838,6 +2009,7 @@ entities:
     VatSumFC: decimal(19,6)
     VatSumSy: decimal(19,6)
     DiscSum: decimal(19,6)
+    DiscPrcnt: decimal(19,6)
     GrosProfit: decimal(19,6)
     GrosProfFC: decimal(19,6)
     GrosProfSy: decimal(19,6)
@@ -1890,6 +2062,7 @@ entities:
   - GrssProfit
   - GrssProfFC
   - GrssProfSC
+  - Commission
   - StockPrice
   - WhsCode
   - ShipDate
@@ -1901,6 +2074,7 @@ entities:
   - TreeType
   - ObjType
   - VisOrder
+  business_name: Líneas de órdenes de compra
   protection: {}
   column_types:
     DocEntry: int64
@@ -1926,6 +2100,7 @@ entities:
     GrssProfit: decimal(19,6)
     GrssProfFC: decimal(19,6)
     GrssProfSC: decimal(19,6)
+    Commission: decimal(19,6)
     StockPrice: decimal(19,6)
     WhsCode: string
     ShipDate: timestamp
@@ -1962,6 +2137,7 @@ entities:
   - CreateTS
   - UpdateDate
   - UpdateTS
+  business_name: Asientos contables
   protection: {}
   column_types:
     TransId: int64
@@ -2013,6 +2189,7 @@ entities:
   - TransType
   - ObjType
   - LineMemo
+  business_name: Líneas de asientos contables
   protection: {}
   column_types:
     TransId: int64
@@ -2066,6 +2243,7 @@ entities:
   - UpdateDate
   - UpdateTS
   - UserSign
+  business_name: Traslados entre almacenes
   protection: {}
   column_types:
     DocEntry: int64
@@ -2117,6 +2295,7 @@ entities:
   - WhsCode
   - ObjType
   - VisOrder
+  business_name: Líneas de traslados entre almacenes
   protection: {}
   column_types:
     DocEntry: int64
@@ -2163,6 +2342,7 @@ entities:
   - CreateTS
   - UpdateDate
   - UpdateTS
+  business_name: Órdenes de producción
   protection: {}
   column_types:
     DocEntry: int64
@@ -2204,6 +2384,7 @@ entities:
   - IssuedQty
   - wareHouse
   - ItemType
+  business_name: Componentes de órdenes de producción
   protection: {}
   column_types:
     DocEntry: int64
@@ -2244,6 +2425,7 @@ entities:
   - ApplObj
   - AppObjAbs
   - CreateDate
+  business_name: Movimientos de inventario
   protection: {}
   column_types:
     TransNum: int64
@@ -2285,6 +2467,7 @@ entities:
   - Quantity
   - Direction
   - DocDate
+  business_name: Movimientos de lotes
   protection: {}
   column_types:
     LogEntry: int64

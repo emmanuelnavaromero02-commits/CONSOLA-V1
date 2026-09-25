@@ -1,6 +1,6 @@
 -- sap_b1_margin_reconciliation_month  (gold)  cartridge: sap_b1
 -- sources: ["silver/sap_b1/sap_b1_ar_invoice_lines", "silver/sap_b1/sap_b1_ar_credit_memo_lines", "silver/sap_b1/sap_b1_delivery_lines", "silver/sap_b1/sap_b1_journal_lines", "silver/sap_b1/sap_b1_oact_latest", "silver/sap_b1/sap_b1_business_parameters"]
--- description: Margin reconciliation per company and month: the documents behind the dashboards, the timing that separates them from the ledger (cancellations reversed in a later month, cost posted at delivery), the ledger's revenue and cost of sales by origin, and the finance control totals; status ok when revenue, cost of sales and gross profit are within the tolerance (setting reconciliation_tolerance_pct, 1 by default), sin_control when finance has not supplied its totals.
+-- description: Documents against the ledger per company and month: the documents behind the dashboards (net of the footer discount and of credit memos), the timing that separates them from the ledger (cancellations reversed in a later month, cost posted at delivery), the ledger's revenue and cost of sales by origin (documents, production, manual entries, other), and what is left unexplained; status cuadra when the unexplained revenue and document cost are within the tolerance (setting reconciliation_tolerance_pct, 1 by default) of the ledger, diferencia otherwise, sin_contabilidad when the month has no ledger lines. Finance's manual run is compared indicator by indicator in sap_b1_kpi_reconciliation.
 
 WITH params AS (
     SELECT * FROM read_parquet('s3://{bucket}/silver/sap_b1/sap_b1_business_parameters/**/*.parquet')
@@ -13,15 +13,15 @@ credit_lines AS (
 ),
 documents AS (
     SELECT company, doc_month, local_currency,
-           SUM(CASE WHEN canceled = 'N' THEN amount_local ELSE 0 END)                         AS revenue,
+           SUM(CASE WHEN canceled = 'N' THEN amount_local_net ELSE 0 END)                         AS revenue,
            SUM(CASE WHEN canceled = 'N' THEN COALESCE(cost_local, 0) ELSE 0 END)              AS cogs,
-           SUM(CASE WHEN canceled = 'Y' THEN amount_local WHEN canceled = 'C' THEN -amount_local ELSE 0 END) AS revenue_timing,
+           SUM(CASE WHEN canceled = 'Y' THEN amount_local_net WHEN canceled = 'C' THEN -amount_local_net ELSE 0 END) AS revenue_timing,
            SUM(CASE WHEN canceled = 'N' AND base_type = 15 THEN COALESCE(cost_local, 0) ELSE 0 END) AS invoiced_delivery_cost
     FROM invoice_lines
     GROUP BY 1, 2, 3
     UNION ALL
     SELECT company, doc_month, local_currency,
-           -SUM(amount_local), -SUM(COALESCE(cost_local, 0)), 0, 0
+           -SUM(amount_local_net), -SUM(COALESCE(cost_local, 0)), 0, 0
     FROM credit_lines
     WHERE canceled = 'N'
     GROUP BY 1, 2, 3
@@ -80,15 +80,6 @@ keys AS (
     UNION
     SELECT DISTINCT company, doc_month, local_currency FROM ledger
 ),
-controls AS (
-    SELECT company, period,
-           MAX(CASE WHEN param_key = 'revenue_net' THEN value_num END)     AS fin_revenue,
-           MAX(CASE WHEN param_key = 'cogs' THEN value_num END)            AS fin_cogs,
-           MAX(CASE WHEN param_key = 'gross_profit' THEN value_num END)    AS fin_gross_profit
-    FROM params
-    WHERE kind = 'control'
-    GROUP BY 1, 2
-),
 tolerances AS (
     SELECT company, value_num
     FROM params
@@ -106,9 +97,7 @@ combined AS (
         COALESCE(ANY_VALUE(l.gl_cogs_documents), 0)                   AS gl_cogs_documents,
         COALESCE(ANY_VALUE(l.gl_cogs_production), 0)                  AS gl_cogs_production,
         COALESCE(ANY_VALUE(l.gl_cogs_manual), 0)                      AS gl_cogs_manual,
-        ANY_VALUE(c.fin_revenue)                                      AS fin_revenue,
-        ANY_VALUE(c.fin_cogs)                                         AS fin_cogs,
-        ANY_VALUE(COALESCE(c.fin_gross_profit, c.fin_revenue - c.fin_cogs)) AS fin_gross_profit,
+        COUNT(l.company) > 0                                          AS has_ledger,
         COALESCE(
             ANY_VALUE((SELECT t.value_num FROM tolerances t WHERE t.company IN (k.company, '*') ORDER BY t.company = '*' LIMIT 1)),
             1.0
@@ -117,7 +106,6 @@ combined AS (
     LEFT JOIN documents d ON d.company = k.company AND d.doc_month = k.doc_month AND d.local_currency = k.local_currency
     LEFT JOIN deliveries dl ON dl.company = k.company AND dl.doc_month = k.doc_month AND dl.local_currency = k.local_currency
     LEFT JOIN ledger l ON l.company = k.company AND l.doc_month = k.doc_month AND l.local_currency = k.local_currency
-    LEFT JOIN controls c ON c.company = k.company AND c.period = strftime(k.doc_month, '%Y-%m')
     GROUP BY 1, 2, 3
 ),
 platform AS (
@@ -129,12 +117,11 @@ platform AS (
 ),
 diffs AS (
     SELECT *,
-           CASE WHEN fin_revenue IS NOT NULL AND fin_revenue <> 0
-                THEN 100.0 * (platform_revenue - fin_revenue) / abs(fin_revenue) END                          AS revenue_diff_pct,
-           CASE WHEN fin_cogs IS NOT NULL AND fin_cogs <> 0
-                THEN 100.0 * (platform_cogs - fin_cogs) / abs(fin_cogs) END                                  AS cogs_diff_pct,
-           CASE WHEN fin_gross_profit IS NOT NULL AND fin_gross_profit <> 0
-                THEN 100.0 * ((platform_revenue - platform_cogs) - fin_gross_profit) / abs(fin_gross_profit) END AS gross_profit_diff_pct
+           gl_revenue - platform_revenue                                                        AS revenue_residual,
+           gl_cogs_documents - doc_cogs - cogs_timing                                           AS cogs_residual,
+           CASE WHEN gl_revenue <> 0 THEN 100.0 * (gl_revenue - platform_revenue) / abs(gl_revenue) END AS revenue_residual_pct,
+           CASE WHEN gl_cogs_documents <> 0
+                THEN 100.0 * (gl_cogs_documents - doc_cogs - cogs_timing) / abs(gl_cogs_documents) END AS cogs_residual_pct
     FROM platform
 )
 SELECT
@@ -152,24 +139,19 @@ SELECT
     ROUND(gl_cogs_production, 2)                                    AS gl_cogs_production_local,
     ROUND(gl_cogs_manual, 2)                                        AS gl_cogs_manual_local,
     ROUND(gl_cogs - gl_cogs_documents - gl_cogs_production - gl_cogs_manual, 2) AS gl_cogs_other_local,
-    ROUND(gl_revenue - platform_revenue, 2)                         AS revenue_residual_local,
-    ROUND(gl_cogs_documents - doc_cogs - cogs_timing, 2)            AS cogs_residual_local,
+    ROUND(revenue_residual, 2)                                      AS revenue_residual_local,
+    ROUND(cogs_residual, 2)                                         AS cogs_residual_local,
+    ROUND(revenue_residual_pct, 4)                                  AS revenue_residual_pct,
+    ROUND(cogs_residual_pct, 4)                                     AS cogs_residual_pct,
     ROUND(platform_revenue, 2)                                      AS platform_revenue_local,
     ROUND(platform_cogs, 2)                                         AS platform_cogs_local,
     ROUND(platform_revenue - platform_cogs, 2)                      AS platform_gross_profit_local,
-    ROUND(fin_revenue, 2)                                           AS fin_revenue_net_local,
-    ROUND(fin_cogs, 2)                                              AS fin_cogs_local,
-    ROUND(fin_gross_profit, 2)                                      AS fin_gross_profit_local,
-    ROUND(revenue_diff_pct, 4)                                      AS revenue_diff_pct,
-    ROUND(cogs_diff_pct, 4)                                         AS cogs_diff_pct,
-    ROUND(gross_profit_diff_pct, 4)                                 AS gross_profit_diff_pct,
     tolerance_pct,
     CASE
-        WHEN fin_revenue IS NULL AND fin_cogs IS NULL AND fin_gross_profit IS NULL THEN 'sin_control'
-        WHEN COALESCE(abs(revenue_diff_pct), 0) <= tolerance_pct
-         AND COALESCE(abs(cogs_diff_pct), 0) <= tolerance_pct
-         AND COALESCE(abs(gross_profit_diff_pct), 0) <= tolerance_pct THEN 'ok'
-        ELSE 'fuera_tolerancia'
+        WHEN NOT has_ledger THEN 'sin_contabilidad'
+        WHEN abs(revenue_residual) <= abs(gl_revenue) * tolerance_pct / 100.0
+         AND abs(cogs_residual) <= abs(gl_cogs_documents) * tolerance_pct / 100.0 THEN 'cuadra'
+        ELSE 'diferencia'
     END                                                             AS status
 FROM diffs
 ORDER BY company, doc_month, local_currency

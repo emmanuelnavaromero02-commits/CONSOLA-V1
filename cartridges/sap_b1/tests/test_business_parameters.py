@@ -11,24 +11,42 @@ from app.services import business_parameters_mapping as m
 def test_a_full_specification_parses_into_typed_rows():
     spec = """
     # comentarios y lineas vacias se ignoran
-    control:mx_mfg:2026-08:revenue_net=1250000.505
-    control:mx_mfg:2026-08:cogs=800000
+    branch:mx_dist_a:*:02=Filial Norte
+    branch:mx_dist_a:*:ALM-3=Filial Bajío
     account:*:*:revenue=4*, 7100-01
     threshold:mx_dist_a:*:margin_min_pct=22.5;setting:*:*:reconciliation_tolerance_pct=0.5
     setting:*:*:roles=manufacturer
     """
     params = m.parse_business_parameters(spec)
     assert [(p.kind, p.company, p.period, p.key) for p in params] == [
-        ("control", "mx_mfg", "2026-08", "revenue_net"),
-        ("control", "mx_mfg", "2026-08", "cogs"),
+        ("branch", "mx_dist_a", "*", "02"),
+        ("branch", "mx_dist_a", "*", "ALM-3"),
         ("account", "*", "*", "revenue"),
         ("threshold", "mx_dist_a", "*", "margin_min_pct"),
         ("setting", "*", "*", "reconciliation_tolerance_pct"),
         ("setting", "*", "*", "roles"),
     ]
-    assert params[0].value_num == Decimal("1250000.505000")
+    assert params[1].value_text == "Filial Bajío" and params[1].value_num is None
     assert params[2].value_text == "4*,7100-01" and params[2].value_num is None
+    assert params[3].value_num == Decimal("22.500000")
     assert params[5].value_num is None and params[5].value_text == "manufacturer"
+
+
+def test_the_catalog_lists_every_key_the_datasets_read():
+    from pathlib import Path
+    import re
+
+    datasets = Path(__file__).resolve().parents[1] / "datasets"
+    read = set()
+    for path in datasets.glob("*.sql"):
+        read |= set(re.findall(r"param_key = '([a-z_0-9]+)'", path.read_text(encoding="utf-8")))
+        for group in re.findall(r"param_key IN \(([^)]*)\)", path.read_text(encoding="utf-8")):
+            read |= set(re.findall(r"'([a-z_0-9]+)'", group))
+    read = {key for key in read if not key.endswith("_")} - set(m.ACCOUNT_KEYS)
+    assert read <= set(m.CATALOG_BY_KEY), read - set(m.CATALOG_BY_KEY)
+    payload = m.catalog_payload()
+    assert all(item["label"] and item["unit"] and item["case"] for item in payload)
+    assert {item["key"] for item in payload} == set(m.CATALOG_BY_KEY)
 
 
 @pytest.mark.parametrize(
@@ -49,8 +67,14 @@ def test_a_full_specification_parses_into_typed_rows():
         "account:*:*:revenue=4 1",
         "threshold:*:*:margin_min_pct=alto",
         "threshold:*:*:Margin=1",
-        "control:mx_mfg:2026-08:cogs=1e20",
-        "control:mx_mfg:2026-08:cogs=1;control:mx_mfg:2026-08:cogs=2",
+        "threshold:*:*:margin_min_pct=1e20",
+        "threshold:*:*:margin_min_pct=1;threshold:*:*:margin_min_pct=2",
+        "setting:*:*:margin_min_pct=25",
+        "threshold:*:*:expiry_red_days=30",
+        "setting:*:*:coverage_red_days=pocos",
+        "branch:*:*:02=Filial",
+        "branch:mx_dist_a:2026-08:02=Filial",
+        "branch:mx_dist_a:*:almacen muy largo=Filial",
     ],
 )
 def test_malformed_entries_are_configuration_errors(spec):

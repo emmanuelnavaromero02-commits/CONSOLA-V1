@@ -45,6 +45,15 @@ def module(monkeypatch):
     return loaded
 
 
+def _alive(list_objects, silent: tuple[str, ...] = ()):
+    def listing(prefix):
+        if prefix.endswith("/heartbeat.json"):
+            workspace = next(w for w in (WORKSPACE, OTHER_WORKSPACE) if w in prefix)
+            return [] if workspace in silent else [{"Key": prefix, "LastModified": NOW - timedelta(minutes=4)}]
+        return list_objects(prefix)
+    return listing
+
+
 def _marker(workspace: str, batch: str, when: datetime, day: str = "2026-09-25") -> dict:
     key = (
         f"raw/sap_b1/IntercompanyPartners/tenant_id={TENANT}/workspace_id={workspace}/"
@@ -55,7 +64,7 @@ def _marker(workspace: str, batch: str, when: datetime, day: str = "2026-09-25")
 
 def test_dag_is_paused_on_creation_and_never_overlaps(module):
     assert module.DAG_KWARGS["dag_id"] == "sap_b1_refresh"
-    assert module.DAG_KWARGS["schedule"] == "*/30 * * * *"
+    assert module.DAG_KWARGS["schedule"] == "*/10 * * * *"
     assert module.DAG_KWARGS["is_paused_upon_creation"] is True
     assert module.DAG_KWARGS["max_active_runs"] == 1
     assert module.DAG_KWARGS["catchup"] is False
@@ -132,7 +141,7 @@ def test_refresh_triggers_new_deliveries_and_skips_processed_ones(module):
     summary = module.refresh_scopes(
         [(TENANT, WORKSPACE), (TENANT, OTHER_WORKSPACE)],
         now=NOW,
-        list_objects=list_objects,
+        list_objects=_alive(list_objects),
         trigger=trigger,
     )
 
@@ -155,7 +164,7 @@ def test_a_silent_agent_fails_the_run_after_every_scope_is_processed(module):
         module.refresh_scopes(
             [(TENANT, WORKSPACE), (TENANT, OTHER_WORKSPACE)],
             now=NOW,
-            list_objects=list_objects,
+            list_objects=_alive(list_objects),
             trigger=lambda run_id, conf: calls.append(conf["workspace_id"]) or 201,
         )
     assert calls == [WORKSPACE, OTHER_WORKSPACE]
@@ -166,7 +175,7 @@ def test_a_scope_without_any_delivery_is_reported_silent(module):
         module.refresh_scopes(
             [(TENANT, WORKSPACE)],
             now=NOW,
-            list_objects=lambda prefix: [],
+            list_objects=_alive(lambda prefix: []),
             trigger=lambda run_id, conf: pytest.fail("nothing to trigger"),
         )
 
@@ -183,7 +192,7 @@ def test_a_failing_scope_does_not_stop_the_others(module):
         module.refresh_scopes(
             [(TENANT, WORKSPACE), (TENANT, OTHER_WORKSPACE)],
             now=NOW,
-            list_objects=list_objects,
+            list_objects=_alive(list_objects),
             trigger=lambda run_id, conf: calls.append(conf["workspace_id"]) or 201,
         )
     assert calls == [OTHER_WORKSPACE]
@@ -194,7 +203,7 @@ def test_a_processed_delivery_is_not_triggered_again_and_parameters_come_first(m
     delivered = [_marker(WORKSPACE, "run-a", NOW - timedelta(minutes=5))]
     common = dict(
         now=NOW,
-        list_objects=lambda prefix: [item for item in delivered if item["Key"].startswith(prefix)],
+        list_objects=_alive(lambda prefix: [item for item in delivered if item["Key"].startswith(prefix)]),
         trigger=lambda run_id, conf: events.append(("trigger", run_id)) or 201,
         parameters=lambda tenant, workspace: events.append(("parameters", workspace)),
         monitors=lambda tenant, workspace: events.append(("monitors", workspace)),
@@ -206,3 +215,18 @@ def test_a_processed_delivery_is_not_triggered_again_and_parameters_come_first(m
     summary = module.refresh_scopes([(TENANT, WORKSPACE)], run_exists=lambda run_id: False, **common)
     assert summary["triggered"] == [f"{TENANT}/{WORKSPACE}"]
     assert [kind for kind, _value in events] == ["parameters", "trigger", "monitors"]
+
+
+def test_an_agent_without_a_recent_heartbeat_fails_the_run_after_triggering(module):
+    calls = []
+    delivered = [_marker(WORKSPACE, "run-a", NOW - timedelta(minutes=5))]
+    with pytest.raises(RuntimeError, match="heartbeat"):
+        module.refresh_scopes(
+            [(TENANT, WORKSPACE)],
+            now=NOW,
+            list_objects=_alive(lambda prefix: [item for item in delivered if item["Key"].startswith(prefix)], silent=(WORKSPACE,)),
+            trigger=lambda run_id, conf: calls.append(run_id) or 201,
+        )
+    assert len(calls) == 1, "the delivery that did arrive is still refreshed"
+    stale = [{"Key": module.heartbeat_key(TENANT, WORKSPACE), "LastModified": NOW - timedelta(minutes=16)}]
+    assert module.heartbeat_age(stale, module.heartbeat_key(TENANT, WORKSPACE), NOW) > module.HEARTBEAT_LIMIT

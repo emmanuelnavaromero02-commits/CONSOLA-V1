@@ -36,7 +36,7 @@ def test_liveness_and_skill_discovery(client):
 def test_catalogue_comes_from_entities_yaml_when_postgres_is_absent(client):
     assert client.get("/entities").status_code == 401
     entities = client.get("/entities", headers=AUTH).json()["entities"]
-    assert len(entities) == 45
+    assert len(entities) == 48
     header = client.get("/entities/OINV/schema", headers=AUTH).json()
     assert header["primary_key"] == "DocEntry" and header["watermark_format"] == "b1_update_ts"
     assert header["watermark_ts_field"] == "UpdateTS" and header["parent"] is None
@@ -89,3 +89,34 @@ def test_a_signed_context_without_a_workspace_is_refused(client, monkeypatch):
     assert resp.status_code == 403 and "scope is required" in resp.json()["detail"]
     resp = client.post("/extract-all", headers=AUTH, json={"security_context": unscoped})
     assert resp.status_code == 403
+
+
+def test_finance_runs_need_a_signed_workspace_scope_and_a_valid_csv(client, monkeypatch):
+    from app.core import request_context
+
+    csv = "indicador,empresa,mes,dimension,clave,valor\nmargen_bruto,mx_mfg,2026-08,total,,1\n"
+    assert client.post("/finance-runs", json={"csv": csv}).status_code == 401
+    assert client.post("/finance-runs", headers=AUTH, json={"csv": csv}).status_code == 403
+    forged = {"csv": csv, "security_context": {"trusted": True, "tenant_id": "t", "workspace_id": "w"}}
+    assert client.post("/finance-runs", headers=AUTH, json=forged).status_code == 403
+    scoped = request_context._sign_security_context(
+        {"trusted": True, "source": "console", "role": "admin", "tenant_id": "t1", "workspace_id": "w1"}
+    )
+    stored = []
+    monkeypatch.setattr("app.api.routes_console.load_finance_run", lambda text, ctx: stored.append(ctx) or {"entity": "FinanceManualRun", "rows": 1})
+    monkeypatch.setattr("app.api.routes_console._mark_external_job", lambda *a: None)
+    ok = client.post("/finance-runs", headers=AUTH, json={"csv": csv, "security_context": scoped})
+    assert ok.status_code == 200 and stored and stored[0]["workspace_id"] == "w1"
+    assert client.post("/finance-runs", headers=AUTH, json={"security_context": scoped}).status_code == 422
+
+
+def test_parameter_catalog_validation_and_indicators(client):
+    assert client.get("/business-parameters/catalog").status_code == 401
+    keys = {item["key"] for item in client.get("/business-parameters/catalog", headers=AUTH).json()["parameters"]}
+    assert {"margin_min_pct", "coverage_red_days", "expiry_red_days", "reconciliation_tolerance_pct"} <= keys
+    good = client.post("/business-parameters/validate", headers=AUTH, json={"spec": "threshold:*:*:margin_min_pct=25"})
+    assert good.status_code == 200 and good.json()["count"] == 1
+    bad = client.post("/business-parameters/validate", headers=AUTH, json={"spec": "control:mx:2026-08:cogs=1"})
+    assert bad.status_code == 422 and "unknown parameter kind" in bad.json()["detail"]
+    items = client.get("/indicators", headers=AUTH).json()["indicators"]
+    assert len(items) == 12 and {item["case"] for item in items} == {"finanzas", "ventas", "compras"}

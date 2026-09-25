@@ -572,7 +572,7 @@ def test_the_agent_needs_nothing_from_the_platform():
     env = {k: v for k, v in _clean_env().items() if not k.startswith("SAP_B1_")}
     proc = subprocess.run([sys.executable, "-c", probe], env=env, capture_output=True, text=True, check=False)
     assert proc.returncode == 0, proc.stderr
-    assert "LOADED=\n" in proc.stdout and "ENTITIES=45" in proc.stdout
+    assert "LOADED=\n" in proc.stdout and "ENTITIES=48" in proc.stdout
 
 
 def test_iam_policy_allows_only_the_bronze_prefix():

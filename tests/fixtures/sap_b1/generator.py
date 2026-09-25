@@ -92,6 +92,15 @@ SHARED_CUSTOMERS = {
 GENERIC_RFC_CUSTOMERS = {("mx_dist_a", "C-0015"), ("mx_dist_b", "C-0015")}
 MISSING_RFC_CUSTOMERS = {("mx_mfg", "C-0010")}
 INVALID_RFC_CUSTOMERS = {("mx_dist_b", "C-0009")}
+SALES_COMMISSION_PCT = {1: Decimal("2.0"), 2: Decimal("2.5"), 3: Decimal("3.0"), 4: Decimal("1.5"), 5: ZERO}
+SALES_OBJECTS = {"13", "14", "15", "16", "17"}
+FOOTER_DISCOUNT_PCT = Decimal("3")
+FOOTER_DISCOUNT_EVERY = 5
+SPECIAL_PRICE_DISCOUNT_PCT = Decimal("5")
+LATE_SUPPLIER = "S-0003"
+LATE_SUPPLIER_PROMISE_DAYS = 1
+PRICE_VARIANCE_EVERY = 4
+PRICE_VARIANCE = Decimal("1.08")
 
 
 def _rfc(prefix: str, number: int) -> str:
@@ -136,6 +145,7 @@ class MonthTruth:
     revenue_account_sc: Decimal = ZERO
     cogs_lc: Decimal = ZERO
     purchases_lc: Decimal = ZERO
+    footer_discount_lc: Decimal = ZERO
     intercompany_sales_lc: Dict[str, Decimal] = field(default_factory=dict)
     intercompany_purchases_lc: Decimal = ZERO
 
@@ -153,6 +163,7 @@ class MonthTruth:
             "revenue_account_sc": str(self.revenue_account_sc),
             "cogs_lc": str(self.cogs_lc),
             "purchases_lc": str(self.purchases_lc),
+            "footer_discount_lc": str(self.footer_discount_lc),
             "intercompany_sales_lc": {k: str(v) for k, v in sorted(self.intercompany_sales_lc.items())},
             "intercompany_purchases_lc": str(self.intercompany_purchases_lc),
         }
@@ -217,6 +228,7 @@ class _Company:
         self.open_production: Dict[str, Decimal] = {}
         self.open_purchases: Dict[str, Decimal] = {}
         self.committed: Dict[str, Decimal] = {}
+        self.doc_discount: Dict[int, Decimal] = {}
 
 
     def entry(self, table: str) -> int:
@@ -340,9 +352,13 @@ class _Company:
 
     def marketing_doc(self, header: str, line: str, obj_type: str, d: date, card: str, lines: List[Dict[str, Any]],
                       doc_type: str = "I", base: Optional[Tuple[int, int]] = None, canceled: str = "N",
-                      num_at_card: Optional[str] = None, closed: bool = False) -> Tuple[int, Decimal, Decimal]:
+                      num_at_card: Optional[str] = None, closed: bool = False,
+                      doc_discount_pct: Decimal = ZERO, due_days: int = 30) -> Tuple[int, Decimal, Decimal]:
         entry = self.entry(header)
         sys_rate = self.sys_rate(d)
+        slp = self.rng.randint(1, 5)
+        commission = SALES_COMMISSION_PCT[slp] if obj_type in SALES_OBJECTS and card not in INTERCOMPANY_CUSTOMER.values() else ZERO
+        keep = Decimal("1") - doc_discount_pct / Decimal("100")
         net = ZERO
         vat = ZERO
         profit = ZERO
@@ -350,7 +366,7 @@ class _Company:
             qty = q6(Decimal(ln["qty"]))
             price = q6(Decimal(ln["price"]))
             line_total = q6(qty * price)
-            line_vat = q6(line_total * VAT_RATE)
+            line_vat = q6(line_total * keep * VAT_RATE)
             stock_price = q6(Decimal(ln.get("cost", "0")))
             line_profit = q6(line_total - qty * stock_price) if ln.get("item") else ZERO
             net += line_total
@@ -363,20 +379,23 @@ class _Company:
                 Quantity=qty, OpenQty=ZERO if closed else qty, Price=price, PriceBefDi=price, Currency=self.p.local_currency,
                 Rate=ZERO, DiscPrcnt=ZERO, LineTotal=line_total, TotalFrgn=ZERO,
                 TotalSumSy=q6(line_total / sys_rate), GrssProfit=line_profit, GrssProfFC=ZERO,
-                GrssProfSC=q6(line_profit / sys_rate), StockPrice=stock_price, WhsCode=ln.get("whs"), ShipDate=ts(d),
+                GrssProfSC=q6(line_profit / sys_rate), Commission=commission, StockPrice=stock_price, WhsCode=ln.get("whs"), ShipDate=ts(d),
                 VatPrcnt=q6(VAT_RATE * 100), VatSum=line_vat, AcctCode=ln.get("account"), OcrCode=None,
                 LineType=None, TreeType="N", ObjType=obj_type, VisOrder=i,
             )
+        discount = q6(net * doc_discount_pct / Decimal("100"))
+        net = net - discount
+        profit = profit - discount
         total = q6(net + vat)
         self.add(
             header, DocEntry=entry, DocNum=entry, DocType=doc_type, CANCELED=canceled,
             DocStatus="C" if (closed or canceled != "N") else "O",
-            ObjType=obj_type, DocDate=ts(d), DocDueDate=ts(d + timedelta(days=30)), TaxDate=ts(d),
+            ObjType=obj_type, DocDate=ts(d), DocDueDate=ts(d + timedelta(days=due_days)), TaxDate=ts(d),
             CardCode=card, CardName=self.ds.card_names.get(card, card), NumAtCard=num_at_card,
             DocCur=self.p.local_currency, DocRate=ZERO, DocTotal=total, DocTotalFC=ZERO,
-            DocTotalSy=q6(total / sys_rate), VatSum=q6(vat), VatSumFC=ZERO, VatSumSy=q6(vat / sys_rate), DiscSum=ZERO,
-            GrosProfit=q6(profit), GrosProfFC=ZERO, GrosProfSy=q6(profit / sys_rate),
-            SlpCode=self.rng.randint(1, 5), GroupNum=1, Comments=None, TransId=None, BPLId=1, Series=1,
+            DocTotalSy=q6(total / sys_rate), VatSum=q6(vat), VatSumFC=ZERO, VatSumSy=q6(vat / sys_rate), DiscSum=discount,
+            DiscPrcnt=q6(doc_discount_pct), GrosProfit=q6(profit), GrosProfFC=ZERO, GrosProfSy=q6(profit / sys_rate),
+            SlpCode=slp, GroupNum=1, Comments=None, TransId=None, BPLId=1, Series=1,
             UserSign=1, **self.stamp(d),
         )
         return entry, q6(net), q6(vat)
@@ -472,7 +491,7 @@ class _Builder:
         c.add("OCRG", GroupCode=101, GroupName="Proveedores", GroupType="S")
         c.add("OCRG", GroupCode=102, GroupName="Intercompania", GroupType="C")
         for i in range(1, 6):
-            c.add("OSLP", SlpCode=i, SlpName=f"Vendedor {i}", Active="Y")
+            c.add("OSLP", SlpCode=i, SlpName=f"Vendedor {i}", Commission=SALES_COMMISSION_PCT[i], Active="Y")
         c.add("OWHS", WhsCode=WHS_MAIN, WhsName="Almacen principal", Locked="N")
         c.add("OWHS", WhsCode=WHS_SECOND, WhsName="Almacen secundario", Locked="N")
         c.add("OITB", ItmsGrpCod=100, ItmsGrpNam="Producto terminado")
@@ -517,6 +536,12 @@ class _Builder:
             for fg in c.finished_goods:
                 c.item_cost[fg] = q6(self.fg_cost[fg] * Decimal("1.25"))
                 c.item_price[fg] = q6(c.item_cost[fg] * Decimal("1.35"))
+            for customer in c.customers[:3]:
+                for fg in c.finished_goods[:3]:
+                    c.add("OSPP", ItemCode=fg, CardCode=customer, ListNum=1, Currency=p.local_currency,
+                          Discount=SPECIAL_PRICE_DISCOUNT_PCT,
+                          Price=q6(c.item_price[fg] * (Decimal("1") - SPECIAL_PRICE_DISCOUNT_PCT / Decimal("100"))),
+                          Valid="Y", ValidFrom=ts(d0), ValidTo=None, CreateDate=ts(d0), UpdateDate=ts(d0))
         for code in c.finished_goods + c.raw_materials:
             is_fg = code.startswith("FG-")
             made = is_fg and p.role == "manufacturer"
@@ -548,7 +573,8 @@ class _Builder:
     def purchase_chain(self, c: _Company, d: date, supplier: str, lines: List[Dict[str, Any]],
                        batch_prefix: Optional[str] = None, same_day: bool = False) -> None:
         d = c.clamp(d)
-        po, _, _ = c.marketing_doc("OPOR", "POR1", "22", d, supplier, lines, closed=True)
+        promise = LATE_SUPPLIER_PROMISE_DAYS if supplier == LATE_SUPPLIER else 30
+        po, _, _ = c.marketing_doc("OPOR", "POR1", "22", d, supplier, lines, closed=True, due_days=promise)
         d_receipt = d if same_day else c.clamp(d + timedelta(days=2))
         pdn, _, _ = c.marketing_doc("OPDN", "PDN1", "20", d_receipt, supplier, lines, base=(22, po), closed=True)
         c.link_target("POR1", po, "20", pdn)
@@ -632,13 +658,17 @@ class _Builder:
             cogs += q6(qty * c.item_cost[ln["item"]])
         c.journal(d_del, f"COGS {dln}", "15", dln, [(ACCT_COGS, cogs, ZERO, None), (ACCT_INVENTORY, ZERO, cogs, None)])
         d_inv = c.clamp(d_del + timedelta(days=1))
-        inv, net, vat = c.marketing_doc("OINV", "INV1", "13", d_inv, customer, lines, base=(15, dln))
+        external = customer not in INTERCOMPANY_CUSTOMER.values()
+        pct = FOOTER_DISCOUNT_PCT if external and c.next_entry.get("OINV", 1) % FOOTER_DISCOUNT_EVERY == 0 else ZERO
+        inv, net, vat = c.marketing_doc("OINV", "INV1", "13", d_inv, customer, lines, base=(15, dln), doc_discount_pct=pct)
+        c.doc_discount[inv] = pct
         c.link_target("DLN1", dln, "13", inv)
         trans = c.journal(d_inv, f"AR {inv}", "13", inv, [
             (ACCT_AR, q6(net + vat), ZERO, customer), (ACCT_REVENUE, ZERO, net, None), (ACCT_VAT_PAYABLE, ZERO, vat, None)])
         c.set_header("OINV", inv, TransId=trans)
         truth = c.truth_for(d_inv)
         truth.invoices += 1
+        truth.footer_discount_lc += q6(sum((q6(q6(Decimal(ln["qty"])) * q6(Decimal(ln["price"]))) for ln in lines), ZERO) * pct / Decimal("100"))
         truth.revenue_gross_lc += net
         truth.revenue_net_lc += net
         truth.revenue_net_sc += c.to_sys(net, d_inv)
@@ -669,7 +699,8 @@ class _Builder:
                        lines: List[Dict[str, Any]], d_cancel: date, d_inv: date) -> None:
         d_cancel = c.clamp(d_cancel)
         c.set_header("OINV", inv, CANCELED="Y", DocStatus="C", UpdateDate=ts(d_cancel), UpdateTS=hhmmss(c.rng))
-        cancel_entry, _, _ = c.marketing_doc("OINV", "INV1", "13", d_cancel, customer, lines, canceled="C", base=(13, inv))
+        cancel_entry, _, _ = c.marketing_doc("OINV", "INV1", "13", d_cancel, customer, lines, canceled="C", base=(13, inv),
+                                             doc_discount_pct=c.doc_discount.get(inv, ZERO))
         c.link_target("INV1", inv, "13", cancel_entry)
         original_trans = next(r[b1.columns("OINV").index("TransId")] for r in c.rows["OINV"] if r[0] == inv)
         trans = c.journal(d_cancel, f"STORNO {inv}", "13", cancel_entry, [
@@ -678,6 +709,8 @@ class _Builder:
         c.set_header("OINV", cancel_entry, TransId=trans)
         truth = c.truth_for(d_inv)
         truth.invoices_canceled += 1
+        truth.footer_discount_lc -= q6(sum((q6(q6(Decimal(ln["qty"])) * q6(Decimal(ln["price"]))) for ln in lines), ZERO)
+                                       * c.doc_discount.get(inv, ZERO) / Decimal("100"))
         truth.revenue_gross_lc -= net
         truth.revenue_net_lc -= net
         truth.revenue_net_sc -= c.to_sys(net, d_inv)
@@ -698,7 +731,8 @@ class _Builder:
             weights = [max(1, int(self.rm_demand[rm])) for rm in c.raw_materials]
             for _ in range(12):
                 items = rng.sample(c.raw_materials, rng.randint(2, 3), counts=weights)
-                lines = [{"item": rm, "name": f"Articulo {rm}", "qty": str(rng.randint(150, 900)), "price": str(c.item_cost[rm]), "whs": WHS_MAIN} for rm in items]
+                factor = PRICE_VARIANCE if m % PRICE_VARIANCE_EVERY == PRICE_VARIANCE_EVERY - 1 else Decimal("1")
+                lines = [{"item": rm, "name": f"Articulo {rm}", "qty": str(rng.randint(150, 900)), "price": str(q6(c.item_cost[rm] * factor)), "whs": WHS_MAIN} for rm in items]
                 self.purchase_chain(c, d0 + timedelta(days=rng.randint(0, 5)), rng.choice(c.suppliers), lines)
             parked = rng.choice(c.raw_materials)
             parked_qty = min(Decimal(rng.randint(40, 120)), c.stock.get((parked, WHS_MAIN), ZERO))

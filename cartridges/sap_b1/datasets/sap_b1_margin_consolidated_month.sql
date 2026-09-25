@@ -4,19 +4,19 @@
 
 WITH invoices AS (
     SELECT company, doc_month, doc_date, local_currency, is_intercompany, counterparty_company, item_code,
-           quantity, amount_local, COALESCE(cost_local, 0) AS cost_local
+           quantity, amount_local_net, COALESCE(cost_local, 0) AS cost_local
     FROM read_parquet('s3://{bucket}/silver/sap_b1/sap_b1_ar_invoice_lines/**/*.parquet')
     WHERE canceled = 'N'
 ),
 credits AS (
-    SELECT company, doc_month, local_currency, is_intercompany, amount_local, COALESCE(cost_local, 0) AS cost_local
+    SELECT company, doc_month, local_currency, is_intercompany, amount_local_net, COALESCE(cost_local, 0) AS cost_local
     FROM read_parquet('s3://{bucket}/silver/sap_b1/sap_b1_ar_credit_memo_lines/**/*.parquet')
     WHERE canceled = 'N'
 ),
 sales AS (
-    SELECT doc_month, local_currency, is_intercompany, amount_local AS revenue, cost_local AS cost FROM invoices
+    SELECT doc_month, local_currency, is_intercompany, amount_local_net AS revenue, cost_local AS cost FROM invoices
     UNION ALL
-    SELECT doc_month, local_currency, is_intercompany, -amount_local, -cost_local FROM credits
+    SELECT doc_month, local_currency, is_intercompany, -amount_local_net, -cost_local FROM credits
 ),
 monthly AS (
     SELECT doc_month, local_currency,
@@ -34,7 +34,7 @@ pairs AS (
 ),
 unit_profit AS (
     SELECT counterparty_company AS buyer, item_code, local_currency,
-           SUM(amount_local - cost_local) / NULLIF(SUM(quantity), 0) AS unit_profit
+           SUM(amount_local_net - cost_local) / NULLIF(SUM(quantity), 0) AS unit_profit
     FROM invoices
     WHERE is_intercompany AND counterparty_company IS NOT NULL AND item_code IS NOT NULL
     GROUP BY 1, 2, 3

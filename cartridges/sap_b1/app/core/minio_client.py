@@ -40,3 +40,10 @@ def upload_file_to_minio(local_path: str, object_name: str) -> None:
         object_name=object_name,
         file_path=local_path,
     )
+
+
+def object_exists_with_prefix(prefix: str) -> bool:
+    client = get_minio_client()
+    for _ in client.list_objects(settings.minio_bucket, prefix=prefix, recursive=True):
+        return True
+    return False

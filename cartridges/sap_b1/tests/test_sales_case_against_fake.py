@@ -271,3 +271,95 @@ def test_batch_expiry_matches_the_batch_ledger_and_sells_first_expired_first(sal
             assert r[13] != r[0], r
             if (r[13], r[12]) in pace:
                 assert pace[(r[13], r[12])] > pace[(r[0], r[12])], r
+
+
+def test_sell_out_by_clinic_is_what_each_distributor_sold_to_each_customer(sales, dataset):
+    got = {
+        (r[0], r[1], r[2]): (_dec(r[3]), _dec(r[4]), _dec(r[5]))
+        for r in _rows(sales, "SELECT distributor, period, card_code, sell_out_revenue_local, units, share_of_sell_out_pct "
+                              "FROM sap_b1_sellout_by_customer_month")
+    }
+    expected: dict[tuple, list[Decimal]] = defaultdict(lambda: [Decimal("0"), Decimal("0")])
+    for buyer in DISTRIBUTORS:
+        tables = dataset.tables[buyer]
+        for header, lines, sign in (("OINV", "INV1", 1), ("ORIN", "RIN1", -1)):
+            heads = {row[_col(header, "DocEntry")]: row for row in tables[header]}
+            for line in tables[lines]:
+                head = heads[line[_col(lines, "DocEntry")]]
+                if head[_col(header, "CANCELED")] != "N":
+                    continue
+                key = (buyer, _day(head[_col(header, "DocDate")]).strftime("%Y-%m"), head[_col(header, "CardCode")])
+                net = line[_col(lines, "LineTotal")] * (100 - head[_col(header, "DiscPrcnt")]) / 100
+                expected[key][0] += sign * net
+                expected[key][1] += sign * (line[_col(lines, "Quantity")] or 0)
+    assert got.keys() == expected.keys()
+    for key, (revenue, units) in expected.items():
+        assert abs(got[key][0] - revenue) <= Decimal("0.01"), key
+        assert abs(got[key][1] - units) <= Decimal("0.000001"), key
+    shares = defaultdict(Decimal)
+    for (buyer, period, _card), (_revenue, _units, share) in got.items():
+        shares[(buyer, period)] += share
+    assert all(abs(total - 100) <= Decimal("0.01") for total in shares.values())
+    assert not {key[2] for key in got} & {generator.INTERCOMPANY_SUPPLIER}
+
+
+def test_expiry_alerts_are_levelled_prioritised_by_value_and_carry_an_option(sales):
+    rows = _rows(sales, """
+        SELECT company, days_to_expiry, alert_level, within_horizon, at_risk_value_local, priority_rank, action_option,
+               transfer_warehouse, transfer_candidate
+        FROM sap_b1_batch_expiry""")
+    for company, days, level, within, _value, _rank, option, warehouse, candidate in rows:
+        if days is None:
+            assert level is None
+        elif days < 0:
+            assert level == "vencido"
+        else:
+            assert level == ("rojo" if days <= 30 else "amarillo" if days <= 60 else "verde" if days <= HORIZON_DAYS else None)
+        if option is not None:
+            assert option == ("traslado_filial" if warehouse else "traslado_empresa" if candidate else "promocion")
+    by_company = defaultdict(list)
+    for company, _days, _level, within, value, rank, _option, _w, _c in rows:
+        if rank is not None:
+            by_company[company].append((rank, _dec(value)))
+    assert by_company, "some batches are at risk inside the horizon"
+    for ranked in by_company.values():
+        ranked.sort()
+        assert [r for r, _v in ranked] == list(range(1, len(ranked) + 1))
+        values = [v for _r, v in ranked]
+        assert values == sorted(values, reverse=True)
+    assert {r[6] for r in rows if r[6]} <= {"traslado_filial", "traslado_empresa", "promocion"}
+
+
+def test_expiry_prefers_the_branch_that_sells_the_item_fastest(tmp_path):
+    import duckdb
+
+    from fake_world import DATASETS
+
+    root = tmp_path
+    con = duckdb.connect()
+
+    def put(name: str, sql: str) -> None:
+        out = root / "silver" / "sap_b1" / name
+        out.mkdir(parents=True, exist_ok=True)
+        con.execute(f"COPY ({sql}) TO '{(out / 'data.parquet').as_posix()}' (FORMAT PARQUET)")
+
+    today = date(2026, 6, 30)
+    put("sap_b1_obtq_latest", f"SELECT * FROM (VALUES ('c1', '01', 'I1', 1, 100.0, DATE '{today}'), ('c1', '01', 'I2', 1, 50.0, DATE '{today}')) "
+                              "t(company, whs_code, item_code, sys_number, quantity, load_date)")
+    put("sap_b1_obtn_latest", f"SELECT * FROM (VALUES ('c1', 'I1', 1, DATE '{today}' + 20, 'L1'), ('c1', 'I2', 1, DATE '{today}' + 45, 'L2')) "
+                              "t(company, item_code, sys_number, exp_date, dist_number)")
+    put("sap_b1_stock_on_hand", "SELECT * FROM (VALUES ('c1', 'I1', '01', 10.0, 'MXN'), ('c1', 'I2', '01', 4.0, 'MXN')) "
+                                "t(company, item_code, warehouse, avg_price, local_currency)")
+    put("sap_b1_ar_invoice_lines", f"SELECT * FROM (VALUES ('c1', 'I1', 9.0, 'N', TIMESTAMP '{today} 00:00:00' - INTERVAL 5 DAY, '01'), "
+                                   f"('c1', 'I1', 90.0, 'N', TIMESTAMP '{today} 00:00:00' - INTERVAL 5 DAY, '02')) "
+                                   "t(company, item_code, quantity, canceled, doc_date, warehouse)")
+    put("sap_b1_item_crosswalk", "SELECT * FROM (VALUES ('c1', 'I1', 'CODE:I1'), ('c1', 'I2', 'CODE:I2')) t(company, item_code, item_key)")
+    put("sap_b1_business_parameters", "SELECT * FROM (VALUES ('branch', 'c1', '*', '02', 'Filial Norte', NULL::DECIMAL(19,6))) "
+                                      "t(kind, company, period, param_key, value_text, value_num)")
+    put("sap_b1_owhs_latest", "SELECT * FROM (VALUES ('c1', '01', 'Almacen principal'), ('c1', '02', 'Almacen 2')) t(company, whs_code, whs_name)")
+    sql = (DATASETS / "sap_b1_batch_expiry.sql").read_text(encoding="utf-8").replace("s3://{bucket}/", root.as_posix() + "/")
+    got = {r[0]: r[1:] for r in con.execute(
+        f"SELECT item_code, alert_level, priority_rank, action_option, transfer_warehouse, transfer_branch_name, branch_name FROM ({sql})"
+    ).fetchall()}
+    assert got["I1"] == ("rojo", 1, "traslado_filial", "02", "Filial Norte", "Almacen principal")
+    assert got["I2"] == ("amarillo", 2, "promocion", None, None, "Almacen principal")

@@ -10,8 +10,57 @@ from fake_world import Bronze, _cents, _dataset_files, _extract, _materialise, _
 pytestmark = pytest.mark.usefixtures("fake_postgres")
 
 
+def _dec(value) -> Decimal:
+    return Decimal(str(value))
+
+
 def _schema(dataset, alias: str) -> str:
     return next(c.schema for c in dataset.companies if c.alias == alias)
+
+
+COUNT_SHORTFALL = ("mx_mfg", "OINV", 3)
+COUNT_FAILED = ("mx_dist_a", "OJDT")
+
+
+def _write_source_counts(dataset, dsn) -> None:
+    from app.services import source_counts_mapping as scm
+    from app.services.catalog_service import _yaml_entities
+    from app.services.parquet_service import write_parquet_and_upload
+
+    start = datetime.combine(dataset.start_month, datetime.min.time())
+    end = datetime.combine(dataset.as_of + timedelta(days=1), datetime.min.time())
+    for company in dataset.companies:
+        counts = []
+        catalog = {e["entity"]: e for e in _yaml_entities()}
+        for entity in catalog.values():
+            name = entity["entity"]
+            table = f'"{company.schema}"."{name}"'
+            if not entity.get("date_field"):
+                sql, params = f"SELECT COUNT(*) FROM {table}", ()
+            elif entity.get("parent"):
+                head = catalog[entity["parent"]]
+                sql = (f'SELECT COUNT(*) FROM {table} l JOIN "{company.schema}"."{head["entity"]}" h '
+                       f'ON h."{entity["parent_key"]}" = l."{entity["join_key"]}" '
+                       f'WHERE h."{head["date_field"]}" >= %s AND h."{head["date_field"]}" < %s')
+                params = (start, end)
+            else:
+                sql = f'SELECT COUNT(*) FROM {table} WHERE "{entity["date_field"]}" >= %s AND "{entity["date_field"]}" < %s'
+                params = (start, end)
+            rows = _pg(dsn, sql, params)[0][0]
+            item = {"entity": name, "dated": bool(entity.get("date_field")), "rows": rows, "error": None}
+            if (company.alias, name) == COUNT_SHORTFALL[:2]:
+                item["rows"] = rows + COUNT_SHORTFALL[2]
+            if (company.alias, name) == COUNT_FAILED:
+                item.update(rows=None, error="timeout")
+            counts.append(item)
+        write_parquet_and_upload(
+            entity=scm.ENTITY,
+            rows=scm.records(company.alias, counts, window_start=start, window_end=end, counted_at=end),
+            run_id=f"counts-{company.alias}",
+            load_type="full",
+            expected_columns=[*scm.COLUMNS, "_company", "_source_updated_at"],
+            arrow_schema=scm.arrow_schema(),
+        )
 
 
 @pytest.fixture(scope="module")
@@ -73,6 +122,7 @@ def world(tmp_path_factory, fake_postgres, dataset):
     _extract(["OINV", "INV1"], mode="incremental")
     _extract(["OITW"], mode="full")
     assert not bronze.failed
+    _write_source_counts(dataset, dsn)
 
     con = _materialise(root)
     try:
@@ -163,13 +213,13 @@ def test_sales_gold_matches_the_invoice_lines_of_the_source(world, dataset):
     for company in dataset.companies:
         s = company.schema
         expected = _month_map(_pg(dsn,
-            f'SELECT DATE_TRUNC(\'month\', h."DocDate")::date, SUM(l."LineTotal") FROM "{s}"."OINV" h JOIN "{s}"."INV1" l ON l."DocEntry" = h."DocEntry" '
+            f'SELECT DATE_TRUNC(\'month\', h."DocDate")::date, SUM(l."LineTotal" * (100 - h."DiscPrcnt") / 100) FROM "{s}"."OINV" h JOIN "{s}"."INV1" l ON l."DocEntry" = h."DocEntry" '
             f'WHERE h."CANCELED" = %s GROUP BY 1', ("N",)))
         cost = _month_map(_pg(dsn,
             f'SELECT DATE_TRUNC(\'month\', h."DocDate")::date, SUM(l."StockPrice" * l."Quantity") FROM "{s}"."OINV" h JOIN "{s}"."INV1" l ON l."DocEntry" = h."DocEntry" '
             f'WHERE h."CANCELED" = %s GROUP BY 1', ("N",)))
         profit = _month_map(_pg(dsn,
-            f'SELECT DATE_TRUNC(\'month\', h."DocDate")::date, SUM(l."GrssProfit") FROM "{s}"."OINV" h JOIN "{s}"."INV1" l ON l."DocEntry" = h."DocEntry" '
+            f'SELECT DATE_TRUNC(\'month\', h."DocDate")::date, SUM(l."GrssProfit" - l."LineTotal" * h."DiscPrcnt" / 100) FROM "{s}"."OINV" h JOIN "{s}"."INV1" l ON l."DocEntry" = h."DocEntry" '
             f'WHERE h."CANCELED" = %s GROUP BY 1', ("N",)))
         credits = _month_map(_pg(dsn,
             f'SELECT DATE_TRUNC(\'month\', h."DocDate")::date, SUM(l."LineTotal") FROM "{s}"."ORIN" h JOIN "{s}"."RIN1" l ON l."DocEntry" = h."DocEntry" '
@@ -186,6 +236,8 @@ def test_sales_gold_matches_the_invoice_lines_of_the_source(world, dataset):
             assert g_profit == _cents(profit[month]), f"{company.alias} {month}: gross profit"
             assert g_credit == _cents(credits.get(month, Decimal(0))), f"{company.alias} {month}: credit memos"
         assert sum(cost.values()) > 0 and sum(profit.values()) > 0
+    discounted = _pg(dsn, f'SELECT COUNT(*) FROM "{_schema(dataset, "mx_mfg")}"."OINV" WHERE "DiscPrcnt" > 0 AND "CANCELED" = %s', ("N",))[0][0]
+    assert discounted > 0, "the fake must carry footer discounts so the net amounts are exercised"
     scopes = {r[0] for r in _rows(con, "SELECT DISTINCT scope FROM sap_b1_sales_by_company_month WHERE company = 'mx_mfg'")}
     assert scopes == {"external", "intercompany"}
     assert {r[0] for r in _rows(con, "SELECT DISTINCT scope FROM sap_b1_sales_by_company_month WHERE company <> 'mx_mfg'")} == {"external"}
@@ -273,3 +325,16 @@ def test_masters_carry_group_names_and_intercompany_flags(world, dataset):
     assert orders[0] > 0 and orders[1] > orders[0]
     assert _rows(con, "SELECT COUNT(*) FROM sap_b1_purchases_by_company_month WHERE scope = 'intercompany' AND company = 'mx_mfg'") == [(0,)]
     assert _rows(con, "SELECT COUNT(*) FROM sap_b1_purchases_by_company_month WHERE scope = 'intercompany' AND company <> 'mx_mfg'")[0][0] > 0
+
+
+def test_load_reconciliation_compares_source_counts_with_silver(world, dataset):
+    rows = _rows(world["con"], "SELECT company, entity, business_name, source_rows, platform_rows, difference, loaded_pct, status "
+                               "FROM sap_b1_load_reconciliation")
+    by = {(r[0], r[1]): r[2:] for r in rows}
+    entities = {r[1] for r in rows}
+    assert len(entities) == 48 and all(r[2] for r in rows), "every table carries its business name"
+    shortfall = by[COUNT_SHORTFALL[:2]]
+    assert shortfall[-1] == "faltan" and shortfall[3] == -COUNT_SHORTFALL[2]
+    assert by[COUNT_FAILED][-1] == "sin_conteo"
+    others = [r for key, r in by.items() if key not in (COUNT_SHORTFALL[:2], COUNT_FAILED)]
+    assert all(r[-1] == "ok" and r[3] == 0 and _dec(r[4]) == 100 for r in others), [r for r in others if r[-1] != "ok"]

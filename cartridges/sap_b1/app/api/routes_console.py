@@ -20,6 +20,9 @@ from app.core.request_context import (
 )
 from app.core.b1_source import B1SourceError
 from app.services.business_parameters import refresh_business_parameters
+from app.services.business_parameters_mapping import catalog_payload, parse_business_parameters
+from app.services.finance_runs import load_finance_run
+from app.services.indicators import indicators
 from app.services.catalog_service import get_all_entities, get_entity_config
 from app.services.extraction_service import run_entity
 from app.services.intercompany import refresh_intercompany_partners
@@ -259,6 +262,58 @@ def business_parameters_refresh(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         if refresh_silver:
             _mark_external_job(_trigger_silver_refresh, result["entity"], ctx)
+        return result
+    finally:
+        reset_security_context(token)
+
+
+@router.get("/indicators")
+def indicator_catalog() -> dict:
+    """The indicators of the three cases with formula, unit, dimensions, granularity and source dataset."""
+    return {"indicators": list(indicators())}
+
+
+@router.get("/business-parameters/catalog")
+def business_parameters_catalog() -> dict:
+    """Every business parameter the datasets read, with its unit and default."""
+    return {"parameters": catalog_payload()}
+
+
+@router.post("/business-parameters/validate")
+def business_parameters_validate(body: dict[str, Any] | None = Body(None)) -> dict:
+    """Parse a business-parameters text without storing it."""
+    spec = body.get("spec") if isinstance(body, dict) else None
+    if not isinstance(spec, str):
+        raise HTTPException(status_code=422, detail="spec must be a string")
+    try:
+        parsed = parse_business_parameters(spec)
+    except B1SourceError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "valid": True,
+        "count": len(parsed),
+        "parameters": [
+            {"kind": p.kind, "company": p.company, "period": p.period, "key": p.key, "value": p.value_text}
+            for p in parsed
+        ],
+    }
+
+
+@router.post("/finance-runs")
+def finance_runs(body: dict[str, Any] | None = Body(None)):
+    """Store Finance's manual run of the margin indicators (CSV) in Bronze for this workspace."""
+    text = body.get("csv") if isinstance(body, dict) else None
+    if not isinstance(text, str) or not text.strip():
+        raise HTTPException(status_code=422, detail="csv is required")
+    ctx = _security_context(body)
+    token = _set_security_context(ctx)
+    try:
+        _require_scope()
+        try:
+            result = load_finance_run(text, ctx)
+        except B1SourceError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        _mark_external_job(_trigger_silver_refresh, result["entity"], ctx)
         return result
     finally:
         reset_security_context(token)

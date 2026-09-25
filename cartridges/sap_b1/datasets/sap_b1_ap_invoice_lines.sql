@@ -1,6 +1,7 @@
 -- sap_b1_ap_invoice_lines  (silver)  cartridge: sap_b1
 -- sources: ["raw/sap_b1/OPCH", "raw/sap_b1/PCH1", "raw/sap_b1/OADM", "raw/sap_b1/IntercompanyPartners"]
--- description: A/P invoice lines with their header (OPCH/PCH1, ObjType 18): amounts in document, local and system currency, the cost the line carries, and the intercompany flag from the configured partner mapping. CANCELED is kept (N/Y/C); gold filters it.
+-- description: A/P invoice lines with their header (OPCH/PCH1, ObjType 18): amounts in document, local and system currency before and after the document (footer) discount, the sales commission the line carries, the cost the line carries, and the intercompany flag from the configured partner mapping. CANCELED is kept (N/Y/C); gold filters it.
+-- partition_by: period
 
 WITH headers AS (
     SELECT * EXCLUDE (_rn)
@@ -85,6 +86,7 @@ SELECT
     CAST(l.LineStatus AS VARCHAR)                       AS line_status,
     CAST(h.DocDate AS TIMESTAMP)                        AS doc_date,
     CAST(DATE_TRUNC('month', CAST(h.DocDate AS TIMESTAMP)) AS DATE) AS doc_month,
+    strftime(CAST(h.DocDate AS TIMESTAMP), '%Y-%m')     AS period,
     CAST(h.DocDueDate AS TIMESTAMP)                     AS doc_due_date,
     CAST(h.TaxDate AS TIMESTAMP)                        AS tax_date,
     CAST(h.CardCode AS VARCHAR)                         AS card_code,
@@ -110,6 +112,11 @@ SELECT
          ELSE CAST(l.TotalFrgn AS DECIMAL(19,6)) END    AS amount_doc,
     CAST(l.LineTotal AS DECIMAL(19,6))                  AS amount_local,
     CAST(l.TotalSumSy AS DECIMAL(19,6))                 AS amount_sys,
+    CAST(COALESCE(h.DiscPrcnt, 0) AS DECIMAL(19,6))     AS doc_discount_pct,
+    CAST(ROUND(l.LineTotal * (100 - COALESCE(h.DiscPrcnt, 0)) / 100, 6) AS DECIMAL(19,6)) AS amount_local_net,
+    CAST(ROUND(l.TotalSumSy * (100 - COALESCE(h.DiscPrcnt, 0)) / 100, 6) AS DECIMAL(19,6)) AS amount_sys_net,
+    CAST(COALESCE(l.Commission, 0) AS DECIMAL(19,6))    AS commission_pct,
+    CAST(ROUND(l.LineTotal * (100 - COALESCE(h.DiscPrcnt, 0)) / 100 * COALESCE(l.Commission, 0) / 100, 6) AS DECIMAL(19,6)) AS commission_local,
     CAST(l.VatSum AS DECIMAL(19,6))                     AS vat_local,
     CAST(l.VatPrcnt AS DECIMAL(19,6))                   AS vat_pct,
     CAST(l.StockPrice AS DECIMAL(19,6))                 AS stock_price,

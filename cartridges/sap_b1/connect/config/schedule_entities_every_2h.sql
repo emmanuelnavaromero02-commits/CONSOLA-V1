@@ -28,7 +28,7 @@ SET trigger_type    = 'scheduled',
     tenant_id       = :'tenant_id'::uuid,
     workspace_id    = :'workspace_id'::uuid,
     cron_expression = CASE
-        WHEN entity IN ('CINF','OADM','OCRN','ORTT','OACT','OFPR','OPRC','OCRG','OSLP','OWHS','OITB','OCRD','OITM','OITT','ITT1')
+        WHEN entity IN ('CINF','OADM','OCRN','ORTT','OACT','OFPR','OPRC','OCRG','OSLP','OSPP','OWHS','OITB','OCRD','OITM','OITT','ITT1')
             THEN '0 */2 * * *'
         WHEN entity IN ('OINV','INV1','ORIN','RIN1','ODLN','DLN1','ORDN','RDN1','ORDR','RDR1')
             THEN '10 */2 * * *'
@@ -36,7 +36,7 @@ SET trigger_type    = 'scheduled',
             THEN '20 */2 * * *'
         WHEN entity IN ('OJDT','JDT1')
             THEN '30 */2 * * *'
-        WHEN entity IN ('OWTR','WTR1','OINM','IBT1','OITW','OBTN','OBTQ','OIBT')
+        WHEN entity IN ('OWTR','WTR1','OINM','IBT1','OITW','OBTN','OBTQ','OIBT','OSRI','SRI1')
             THEN '40 */2 * * *'
         WHEN entity IN ('OWOR','WOR1')
             THEN '50 */2 * * *'

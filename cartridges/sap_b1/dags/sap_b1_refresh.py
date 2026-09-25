@@ -15,6 +15,7 @@ DAG_ID = "sap_b1_refresh"
 MARKER_ENTITY = "IntercompanyPartners"
 SCOPES_VARIABLE = "sap_b1_push_scopes"
 SILENCE_LIMIT = timedelta(hours=6)
+HEARTBEAT_LIMIT = timedelta(minutes=15)
 AIRFLOW_URL = os.environ.get("AIRFLOW_URL", "http://airflow:8080")
 AIRFLOW_USER = os.environ.get("AIRFLOW_USER") or os.environ.get("AIRFLOW_ADMIN_USER") or "admin"
 AIRFLOW_PASSWORD = os.environ.get("AIRFLOW_PASSWORD") or os.environ.get("AIRFLOW_ADMIN_PASSWORD") or "admin"
@@ -51,6 +52,16 @@ def marker_prefixes(tenant_id: str, workspace_id: str, now: datetime) -> list[st
     base = f"raw/{CARTRIDGE_ID}/{MARKER_ENTITY}/tenant_id={tenant_id}/workspace_id={workspace_id}/"
     days = (now.date(), (now - timedelta(days=1)).date())
     return [f"{base}load_date={day.isoformat()}/" for day in days]
+
+
+def heartbeat_key(tenant_id: str, workspace_id: str) -> str:
+    return f"raw/{CARTRIDGE_ID}/_agent/tenant_id={tenant_id}/workspace_id={workspace_id}/heartbeat.json"
+
+
+def heartbeat_age(objects: list[dict[str, Any]], key: str, now: datetime) -> timedelta | None:
+    stamps = [item.get("LastModified") for item in objects if item.get("Key") == key]
+    stamps = [stamp for stamp in stamps if isinstance(stamp, datetime)]
+    return now - max(stamps) if stamps else None
 
 
 def latest_delivery(objects: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -179,10 +190,14 @@ def refresh_scopes(
     parameters: Any = lambda tenant_id, workspace_id: None,
     monitors: Any = lambda tenant_id, workspace_id: None,
 ) -> dict[str, Any]:
-    triggered, already_done, silent, failed = [], [], [], []
+    triggered, already_done, silent, failed, offline = [], [], [], [], []
     for tenant_id, workspace_id in scopes:
         label = f"{tenant_id}/{workspace_id}"
         try:
+            key = heartbeat_key(tenant_id, workspace_id)
+            age = heartbeat_age(list_objects(key), key, now)
+            if age is None or age > HEARTBEAT_LIMIT:
+                offline.append(label)
             objects = [item for prefix in marker_prefixes(tenant_id, workspace_id, now) for item in list_objects(prefix)]
             delivery = latest_delivery(objects)
             if delivery is None or now - delivery["delivered_at"] > SILENCE_LIMIT:
@@ -199,17 +214,19 @@ def refresh_scopes(
             monitors(tenant_id, workspace_id)
         except Exception as exc:  # noqa: BLE001
             failed.append(f"{label}: {type(exc).__name__}")
-    summary = {"triggered": triggered, "already_done": already_done, "silent": silent, "failed": failed}
+    summary = {"triggered": triggered, "already_done": already_done, "silent": silent, "failed": failed, "offline": offline}
     if failed:
         raise RuntimeError(f"sap_b1 refresh failed for {len(failed)} scope(s): {failed}")
     if silent:
         raise RuntimeError(f"no sap_b1 delivery in the last {SILENCE_LIMIT} for: {silent}")
+    if offline:
+        raise RuntimeError(f"no sap_b1 agent heartbeat in the last {HEARTBEAT_LIMIT} for: {offline}")
     return summary
 
 
 @dag(
     dag_id=DAG_ID,
-    schedule="*/30 * * * *",
+    schedule="*/10 * * * *",
     start_date=datetime(2026, 9, 25, tzinfo=timezone.utc),
     catchup=False,
     max_active_runs=1,
@@ -224,7 +241,7 @@ def sap_b1_refresh():
 
         scopes = parse_scopes(Variable.get(SCOPES_VARIABLE, default_var="[]"))
         if not scopes:
-            return {"triggered": [], "already_done": [], "silent": [], "failed": []}
+            return {"triggered": [], "already_done": [], "silent": [], "failed": [], "offline": []}
         client, bucket = _lakehouse()
         return refresh_scopes(
             scopes,

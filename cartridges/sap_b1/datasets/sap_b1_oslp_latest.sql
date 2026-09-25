@@ -27,6 +27,7 @@ latest AS (
 SELECT
     CAST(SlpCode AS BIGINT)                     AS slp_code,
     CAST(SlpName AS VARCHAR)                    AS slp_name,
+    CAST(Commission AS DECIMAL(19,6))           AS commission,
     CAST(Active AS VARCHAR)                     AS active,
     _company                              AS company,
     load_date
