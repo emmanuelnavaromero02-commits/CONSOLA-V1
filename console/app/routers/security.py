@@ -207,15 +207,27 @@ async def get_audit_events(user: dict = Depends(require_permission("security.aud
         tenant_id = str(user.get("active_tenant_id") or user.get("tenant_id") or "").strip()
         visible_user_ids = await _visible_workspace_user_ids(p, workspace_ids)
         scope_parts: list[str] = []
-        if "user_id" in audit_columns and visible_user_ids:
-            args.append(visible_user_ids)
-            scope_parts.append(f"a.user_id = ANY(${len(args)}::bigint[])")
+        workspace_arg = tenant_arg = None
         if "metadata" in audit_columns and workspace_ids:
             args.append(workspace_ids)
-            scope_parts.append(f"a.metadata->>'workspace_id' = ANY(${len(args)}::text[])")
+            workspace_arg = len(args)
+            scope_parts.append(f"a.metadata->>'workspace_id' = ANY(${workspace_arg}::text[])")
         if "metadata" in audit_columns and tenant_id:
             args.append(tenant_id)
-            scope_parts.append(f"a.metadata->>'tenant_id' = ${len(args)}")
+            tenant_arg = len(args)
+            scope_parts.append(f"a.metadata->>'tenant_id' = ${tenant_arg}")
+        if "user_id" in audit_columns and visible_user_ids:
+            args.append(visible_user_ids)
+            member = f"a.user_id = ANY(${len(args)}::bigint[])"
+            if "metadata" in audit_columns:
+                in_workspace = "a.metadata->>'workspace_id' IS NULL" + (
+                    f" OR a.metadata->>'workspace_id' = ANY(${workspace_arg}::text[])" if workspace_arg else ""
+                )
+                in_tenant = "a.metadata->>'tenant_id' IS NULL" + (
+                    f" OR a.metadata->>'tenant_id' = ${tenant_arg}" if tenant_arg else ""
+                )
+                member = f"({member} AND ({in_workspace}) AND ({in_tenant}))"
+            scope_parts.append(member)
         if not scope_parts:
             return []
         where_clause = "WHERE (" + " OR ".join(scope_parts) + ")"

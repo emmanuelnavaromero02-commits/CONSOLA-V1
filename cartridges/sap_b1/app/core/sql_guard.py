@@ -24,6 +24,16 @@ _READ_FN_RE = re.compile(
     r"\b(read_parquet|read_csv)\s*\(\s*(['\"])(?P<path>[^'\"]+)\2",
     re.IGNORECASE,
 )
+_FORBIDDEN_FN_RE = re.compile(
+    r"\b(glob|sniff_csv|parquet_[a-z0-9_]+|query_table|query|read_text|read_blob|getenv|"
+    r"iceberg_[a-z0-9_]+|delta_scan|sqlite_scan|postgres_scan|mysql_scan)\s*\(",
+    re.IGNORECASE,
+)
+_PATH_LIKE_RE = re.compile(
+    r"^(?:[a-z][a-z0-9+.-]*://|/|~|\.{1,2}[/\\]|[a-z]:[/\\])|\.\.[/\\]|[/\\]\.\."
+    r"|\.(?:csv|tsv|parquet|json|jsonl|ndjson|txt|gz|zst|xlsx?|db|duckdb|sqlite|arrow|feather|avro)$",
+    re.IGNORECASE,
+)
 _COMMENT_RE = re.compile(r"(--|/\*)")
 _QUOTED_RE = re.compile(r"('(?:''|[^'])*'|\"(?:\"\"|[^\"])*\")")
 _LIMIT_RE = re.compile(r"\bLIMIT\s+(?P<value>[^\s,)]+)", re.IGNORECASE)
@@ -92,11 +102,23 @@ def _validate_limit_clause(masked_sql: str) -> tuple[bool, str | None]:
     return True, None
 
 
+def _stray_path_literal(sql: str, reader_spans: list[tuple[int, int]]) -> str | None:
+    for literal in _QUOTED_RE.finditer(sql):
+        start, end = literal.span()
+        if any(start >= s and end <= e for s, e in reader_spans):
+            continue
+        body = literal.group(0)[1:-1]
+        if _PATH_LIKE_RE.search(unquote(body).strip()):
+            return body
+    return None
+
+
 def validate_kb_sql(
     sql: str,
     allowed_bucket_prefix: str | tuple[str, ...] | list[str],
     *,
     required_scope: str | None = None,
+    require_limit: bool = False,
 ) -> tuple[bool, str | None]:
     if not isinstance(sql, str) or not sql.strip():
         return False, "empty SQL"
@@ -119,6 +141,9 @@ def validate_kb_sql(
     if _METADATA_EXFIL_RE.search(stripped):
         return False, "DuckDB metadata/settings access (PRAGMA/current_setting/duckdb_settings) is not allowed in query_kb"
 
+    if require_limit and not has_limit_clause(stripped):
+        return False, f"Interactive queries must include a LIMIT clause (max {_MAX_LIMIT})"
+
     limit_ok, limit_err = _validate_limit_clause(masked)
     if not limit_ok:
         return False, limit_err
@@ -126,6 +151,10 @@ def validate_kb_sql(
     match = _FORBIDDEN_RE.search(masked)
     if match:
         return False, f"Forbidden DuckDB keyword in query_kb: {match.group(1).upper()}"
+
+    forbidden_fn = _FORBIDDEN_FN_RE.search(stripped)
+    if forbidden_fn:
+        return False, f"Forbidden DuckDB function in query_kb: {forbidden_fn.group(1).lower()}"
 
     read_calls = list(_READER_FN_RE.finditer(stripped))
     allowed_read_names = {"read_parquet", "read_csv"}
@@ -137,6 +166,10 @@ def validate_kb_sql(
     direct_literal_calls = list(_READ_FN_RE.finditer(stripped))
     if len(direct_literal_calls) != len(read_calls):
         return False, "DuckDB readers must use a direct string literal path"
+
+    reader_spans = [call.span() for call in _READ_FN_RE.finditer(stripped)]
+    if _stray_path_literal(stripped, reader_spans) is not None:
+        return False, "File paths may only appear as the first argument of read_parquet/read_csv"
 
     normalized_prefixes = _prefixes(allowed_bucket_prefix)
     for fn in _READ_FN_RE.finditer(stripped):

@@ -227,3 +227,10 @@ def test_airflow_shared_guard_rejects_loopback_without_network():
 
     with pytest.raises(module.EgressGuardError, match="non-public"):
         module.resolve_public_url("http://127.0.0.1:8000/api/health")
+
+
+def test_generated_dags_never_fall_back_to_the_shared_key_in_production():
+    source = (Path(__file__).resolve().parents[1] / "console/app/services/dag_code_generator.py").read_text(encoding="utf-8")
+    body = source.split("def _internal_key(env_name: str) -> str:", 1)[1].split("def _session()", 1)[0]
+    assert 'os.environ.get(env_name) or os.environ.get("INTERNAL_API_KEY")' not in body
+    assert 'not in {{"production", "prod", "staging"}}' in body

@@ -172,6 +172,24 @@ def test_scoped_cartridge_vault_reveal_rejects_unsigned_trusted_context(monkeypa
     assert exc.value.status_code == 403
 
 
+def test_cartridge_vault_reveal_without_a_signed_context_is_refused(monkeypatch):
+    console_main = _console_main()
+    key = "sap-successfactors-dedicated-key-yyyyyyyyyyyyyyy"
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE", key)
+
+    with pytest.raises(HTTPException) as exc:
+        console_main._cartridge_vault_reveal_user(
+            _request(
+                "/api/vault/connections/sap_successfactors/default/reveal",
+                "cartridge-sap_successfactors",
+                key,
+            )
+        )
+
+    assert exc.value.status_code == 403
+
+
 def test_vault_reveal_connection_records_critical_audit_event():
     for path in (
         CONSOLE_ROOT / "app" / "main.py",

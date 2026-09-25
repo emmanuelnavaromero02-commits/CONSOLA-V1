@@ -619,7 +619,9 @@ def _render_code(constants: dict[str, Any]) -> str:
 
 
     def _internal_key(env_name: str) -> str:
-        key = os.environ.get(env_name) or os.environ.get("INTERNAL_API_KEY")
+        key = os.environ.get(env_name)
+        if not key and os.environ.get("APP_ENV", "production").strip().lower() not in {{"production", "prod", "staging"}}:
+            key = os.environ.get("INTERNAL_API_KEY")
         if not key:
             raise RuntimeError(f"Missing internal API key: {{env_name}}")
         return key

@@ -73,7 +73,7 @@ def cartridge_vault_reveal_user(
 
     header = (request.headers.get("x-security-context") or "").strip()
     if not header:
-        return internal_service_user()
+        raise HTTPException(403, "signed security context required")
     try:
         raw_ctx = json.loads(header)
         if not isinstance(raw_ctx, dict):

@@ -236,6 +236,12 @@ def test_run_knowledge_bit_passes_valid_sql(monkeypatch):
     monkeypatch.setattr("app.services.kb_service.write_kb_to_postgres", lambda *a, **kw: None)
     monkeypatch.setattr("app.services.kb_service._finish_kb_run", lambda *a, **kw: None)
 
-    result = kb_service.run_knowledge_bit("kb_test")
+    monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", "test-security-context-signing-key-12345")
+    from app.core import request_context
+
+    signed = request_context._sign_security_context(
+        {"trusted": True, "source": "console", "tenant_id": "tenant-a", "workspace_id": "workspace-a"}
+    )
+    result = kb_service.run_knowledge_bit("kb_test", security_context=signed)
     assert result["status"] == "completed"
     assert result["records"] == 1

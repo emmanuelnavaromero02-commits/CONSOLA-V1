@@ -157,3 +157,37 @@ def test_tenant_permissions_payload_is_scoped(mock_pool):
     assert "pipelines.write" not in permission_keys
     assert "studio.read" not in permission_keys
     assert "settings.read" not in permission_keys
+
+
+@patch.object(security_router._auth, "pool", new_callable=AsyncMock)
+def test_audit_for_a_workspace_admin_never_includes_a_co_member_event_from_another_scope(mock_pool):
+    tenant_user = {
+        "id": 2,
+        "role": "user",
+        "workspace_role": "tenant_admin",
+        "email": "tenant-admin@example.com",
+        "active_tenant_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "active_workspace_id": "11111111-1111-1111-1111-111111111111",
+        "workspaces": [{"workspace_id": "11111111-1111-1111-1111-111111111111"}],
+    }
+    captured = []
+
+    async def fetch(query, *args):
+        if "information_schema.columns" in query:
+            return [{"column_name": name} for name in ("id", "user_id", "email", "action", "metadata", "created_at")]
+        if "user_workspace_roles" in query:
+            return [{"user_id": 7}]
+        captured.append((query, args))
+        return []
+
+    mock_conn = AsyncMock()
+    mock_pool.return_value = mock_conn
+    mock_conn.fetchval = AsyncMock(return_value=True)
+    mock_conn.fetch.side_effect = fetch
+    scoped_client = TestClient(_make_app(tenant_user))
+
+    assert scoped_client.get("/security/audit").status_code == 200
+    query, args = captured[-1]
+    assert "(a.user_id = ANY($3::bigint[]) AND (a.metadata->>'workspace_id' IS NULL OR a.metadata->>'workspace_id' = ANY($1::text[]))" in query
+    assert "AND (a.metadata->>'tenant_id' IS NULL OR a.metadata->>'tenant_id' = $2))" in query
+    assert args[:3] == (["11111111-1111-1111-1111-111111111111"], "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", [7])

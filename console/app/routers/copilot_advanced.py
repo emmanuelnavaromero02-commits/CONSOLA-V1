@@ -79,7 +79,7 @@ async def _conversation_belongs_to_user(
         "SELECT to_regclass('public.conversations')"
     )
     if not has_table:
-        return True
+        return False
     coerced = conversation_id
     try:
         owner = await pool.fetchval(

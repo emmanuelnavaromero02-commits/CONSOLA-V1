@@ -7,7 +7,12 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.pg_client import get_connection
-from app.core.request_context import get_security_context, scoped_prefix
+from app.core.request_context import (
+    SecurityContextError,
+    get_security_context,
+    require_tenant_workspace_scope,
+    scoped_prefix,
+)
 from app.core.sql_guard import validate_kb_sql
 from app.services.catalog_service import get_all_kbs, get_kb_config
 from app.services.duckdb_service import (
@@ -23,17 +28,20 @@ _SQL_STORAGE_PATH_RE = re.compile(
 
 
 def _scope_kb_sql(sql: str, security_context: dict[str, Any] | None = None) -> str:
+    security_context = require_tenant_workspace_scope(security_context)
     resolved = str(sql or "").replace("{bucket}", settings.minio_bucket)
     scope = scoped_prefix(security_context)
-    if not scope:
-        return resolved
 
     def _scope_path(match: re.Match[str]) -> str:
         base, rest = match.group(1), match.group(2)
-        if not rest or "tenant_id=" in rest:
-            return match.group(0)
+        if not rest:
+            raise SecurityContextError("KB storage path must include an entity or dataset segment")
         head, sep, tail = rest.partition("/")
         if not sep or not head:
+            raise SecurityContextError("KB storage path must include an entity or dataset segment")
+        if "tenant_id=" in rest or "workspace_id=" in rest:
+            if not rest.startswith(f"{head}/{scope}"):
+                raise SecurityContextError("KB storage path is outside the active tenant/workspace scope")
             return match.group(0)
         return f"{base}{head}/{scope}{tail}"
 
@@ -130,8 +138,14 @@ def run_knowledge_bit(
         if isinstance(security_context, dict)
         else get_security_context()
     )
-    resolved_sql = _scope_kb_sql(sql, security_context)
-    ok, err = validate_kb_sql(resolved_sql, _kb_allowed_prefixes())
+    try:
+        security_context = require_tenant_workspace_scope(security_context)
+        resolved_sql = _scope_kb_sql(sql, security_context)
+    except SecurityContextError as exc:
+        return {"status": "error", "error": f"KB SQL blocked by security guard: {exc}"}
+    ok, err = validate_kb_sql(
+        resolved_sql, _kb_allowed_prefixes(), required_scope=scoped_prefix(security_context)
+    )
     if not ok:
         return {"status": "error", "error": f"KB SQL blocked by security guard: {err}"}
 
