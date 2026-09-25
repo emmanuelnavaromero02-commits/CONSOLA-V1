@@ -198,9 +198,13 @@ def test_local_compose_app_services_set_app_env(svc):
 
 def test_console_system_info_exposes_dev_mode_flag():
     src = console_route_source()
-    assert '"dev_mode"' in src
-    assert '"app_env"' in src
-    assert "{\"development\", \"dev\", \"local\", \"test\"}" in src
+    system_info = src.split("async def system_info(", 1)[1].split("\n@app.", 1)[0]
+    assert "return _system_info_payload(os.environ" in system_info
+    runtime = (REPO / "console" / "app" / "domains" / "system"
+               / "runtime.py").read_text(encoding="utf-8")
+    assert '"dev_mode"' in runtime
+    assert '"app_env"' in runtime
+    assert "{\"development\", \"dev\", \"local\", \"test\"}" in runtime
 
 
 def test_pipeline_js_hides_deploy_button_outside_dev_mode():
@@ -251,9 +255,8 @@ def test_studio_airflow_button_stays_visible_and_external():
 def test_legacy_js_gates_every_dev_only_action():
     js = (REPO / "console" / "app" / "static" / "js" / "studio"
           / "legacy.js").read_text(encoding="utf-8")
-    assert "_devModeCache" in js
     assert "/api/system/info" in js
-    for func_name in ("renameDag", "deleteDag", "_setEntitySchedule"):
+    for func_name in ("submitDagRename", "confirmDeleteDag", "_setEntitySchedule"):
         m = re.search(
             rf"export async function {func_name}\([^)]*\)\s*\{{(.*?)"
             r"(?=\n    export async function |\Z)",

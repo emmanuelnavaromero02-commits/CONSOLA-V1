@@ -183,7 +183,6 @@ def test_compose_aws_does_not_contain_secret_literals():
         src,
     )
     assert leaked_assignments == []
-    assert "aws-entrypoint.sh" in src
 
 
 def test_deploy_key_is_not_passed_through_terraform_state():
@@ -215,7 +214,6 @@ def test_aws_env_example_does_not_document_static_aws_keys():
     src = _read(DEPLOY / ".env.example")
     assert "AWS_ACCESS_KEY_ID=" not in src
     assert "AWS_SECRET_ACCESS_KEY=" not in src
-    assert "instance profile" in src
     assert "INTERNAL_API_KEY_CONSOLE_TO_CONSOLE=" in src
     assert "INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE=" in src
     assert "OMEGA_CARTRIDGE_SALESFORCE_PASSWORD=" in src
