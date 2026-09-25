@@ -1,4 +1,3 @@
-"""Sprint v1.28 — SAP FastMCP /mcp/rpc must be behind the internal guard."""
 from __future__ import annotations
 
 import pytest

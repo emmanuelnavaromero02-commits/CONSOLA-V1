@@ -1,11 +1,3 @@
-"""
-DAG Templates — starting points for common extraction patterns.
-Each template is a complete, runnable DAG with clear EDIT_HERE markers
-for the operator who copies it and adapts it to a real API or DB.
-All templates follow the 4-task pattern:
-  extract → [update_watermark ‖ save_stats] → trigger_silver
-"""
-
 from __future__ import annotations
 
 import re
@@ -19,8 +11,6 @@ def _validate_template_identifier(value: str, field_name: str) -> str:
         raise ValueError(f"{field_name} inválido")
     return value
 
-
-# ── Shared helpers injected into every template ───────────────────────────────
 
 _CONN_BLOCK = '''\
 MCP_INFRA_URL  = "http://mcp-infra:8010"
@@ -320,7 +310,6 @@ def _upload_parquet(df, cartridge_id: str, entity_name: str) -> tuple[str, int]:
 
 '''
 
-# ── Shared trigger_silver task body (same logic for all templates) ─────────────
 
 _TRIGGER_SILVER_TASK = '''\
     @task(retries=3, retry_delay=timedelta(minutes=2))
@@ -357,7 +346,6 @@ _TRIGGER_SILVER_TASK = '''\
 
 
 TEMPLATES: list[dict] = [
-    # ─────────────────────────────────────────────────────────────────────────
     {
         "id": "rest_full",
         "name": "REST API — Extracción Full",
@@ -483,7 +471,6 @@ def dag_func():
 dag_func()
 """,
     },
-    # ─────────────────────────────────────────────────────────────────────────
     {
         "id": "rest_incremental",
         "name": "REST API — Incremental (watermark)",
@@ -638,7 +625,6 @@ def dag_func():
 dag_func()
 """,
     },
-    # ─────────────────────────────────────────────────────────────────────────
     {
         "id": "sql_extract",
         "name": "Base de datos — SQL Query",
@@ -792,7 +778,6 @@ def dag_func():
 dag_func()
 """,
     },
-    # ─────────────────────────────────────────────────────────────────────────
     {
         "id": "replicon_analytics",
         "name": "Replicon Analytics API",

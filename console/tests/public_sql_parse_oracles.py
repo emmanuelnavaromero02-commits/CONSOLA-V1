@@ -1,5 +1,3 @@
-"""Real parse-only SQL oracles; this module is never imported by Console."""
-
 from __future__ import annotations
 
 import socket
@@ -32,11 +30,10 @@ class PostgreSQLOracleConfig:
 
 
 class OracleProtocolError(RuntimeError):
-    """The test oracle did not provide the pinned parse-only contract."""
+    pass
 
 
 def duckdb_parse_only(value: str) -> ParseResult:
-    """Parse with DuckDB extract_statements without preparing or executing."""
 
     import duckdb
 
@@ -137,7 +134,6 @@ def postgresql_parse_only(
     value: str,
     config: PostgreSQLOracleConfig,
 ) -> ParseResult:
-    """Send only PostgreSQL Parse and Sync protocol messages; never Bind/Execute."""
 
     if "\0" in value:
         return ParseResult.REJECTED

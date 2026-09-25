@@ -1,5 +1,3 @@
-"""Invalid Talent scores cannot re-enter through lateral Gold datasets."""
-
 from __future__ import annotations
 
 import duckdb

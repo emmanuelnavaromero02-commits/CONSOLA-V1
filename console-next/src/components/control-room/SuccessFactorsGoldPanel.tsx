@@ -455,7 +455,6 @@ export function SuccessFactorsGoldPanel({
   const talentReadinessTotal = talent?.readiness?.profiled_employees ?? talentNumber("sf_talent_profiled_employees") ?? 0;
   const talentReadinessCalculable = talent?.readiness?.calculable_employees ?? talentNumber("sf_talent_readiness_calculable") ?? 0;
   const talentNineBoxAvailable = talent?.readiness?.nine_box_available ?? talentNumber("sf_talent_9box_available") ?? 0;
-  // Fase 3 P0: Workforce Trends — fuente unica (bundle del backend); no se agrega en frontend.
   const workforceTrends = talent?.workforce_trends;
   const wtKpis = workforceTrends?.kpis;
   const wtSeries = workforceTrends?.series;

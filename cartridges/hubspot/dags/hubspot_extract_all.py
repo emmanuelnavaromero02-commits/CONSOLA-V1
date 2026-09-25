@@ -1,12 +1,3 @@
-"""
-hubspot_extract_all DAG  (Pattern A — thin trigger → cartridge microservice)
-============================================================================
-Extrae TODAS las entidades de HubSpot llamando al microservicio del cartucho
-(`/skills/run_incremental_all` | `/skills/run_full_load_all`).
-
-El refresh de silver/gold se dispara por entidad vía el DAG hubspot_extract,
-o manualmente con dataset_refresh_chain una vez completada la ingesta.
-"""
 from __future__ import annotations
 
 import os

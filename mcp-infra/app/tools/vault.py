@@ -1,17 +1,3 @@
-"""
-MCP tools — Vault connection & secret management.
-
-These tools let the Studio AI configure cartridge API credentials
-without editing files or restarting containers.
-
-Tools exposed:
-  vault_list_connections(cartridge_id)
-  vault_set_connection(cartridge_id, conn_id, base_url, auth_method, token, **extra)
-  vault_get_connection(cartridge_id, conn_id)    — credentials masked
-  vault_delete_connection(cartridge_id, conn_id)
-  vault_set_secret(scope, key, value)
-  vault_list_secrets(scope)
-"""
 from __future__ import annotations
 
 import json
@@ -27,16 +13,10 @@ _VAULT = settings.vault_url.rstrip("/")
 
 
 def _is_development() -> bool:
-    # v1.43.2: default ``production`` — see airflow.py.
     return os.environ.get("APP_ENV", "production").lower() in {"development", "dev", "local", "test"}
 
 
 def _auth_headers(security_context: dict | None = None) -> dict:
-    """Headers required by the Vault internal API (Fase 1 dual-auth).
-
-    Sprint v1.12: prefer the dedicated pair key INTERNAL_API_KEY_MCP_INFRA_TO_VAULT.
-    The legacy shared key is accepted only outside production.
-    """
     api_key = os.environ.get("INTERNAL_API_KEY_MCP_INFRA_TO_VAULT", "")
     if not api_key and _is_development():
         api_key = os.environ.get("INTERNAL_API_KEY", "")
@@ -69,8 +49,6 @@ def _vault_delete(path: str, security_context: dict | None = None) -> dict:
     r.raise_for_status()
     return r.json()
 
-
-# ── Connection tools ──────────────────────────────────────────────────────────
 
 @tool(
     name="vault_list_connections",
@@ -193,7 +171,6 @@ async def vault_set_connection(
 )
 async def vault_get_connection(cartridge_id: str, conn_id: str, security_context: dict | None = None) -> dict:
     data = _vault_get(f"/connections/{cartridge_id}/{conn_id}", security_context)
-    # mask sensitive fields before returning to AI
     masked = {}
     sensitive = {"token", "password", "secret", "api_key", "api_secret"}
     for k, v in data.items():
@@ -218,8 +195,6 @@ async def vault_delete_connection(cartridge_id: str, conn_id: str, security_cont
         raise PermissionError("vault_delete_connection is disabled outside development.")
     return _vault_delete(f"/connections/{cartridge_id}/{conn_id}", security_context)
 
-
-# ── Secret tools ──────────────────────────────────────────────────────────────
 
 @tool(
     name="vault_list_secrets",

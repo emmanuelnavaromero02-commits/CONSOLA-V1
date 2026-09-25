@@ -1,4 +1,3 @@
-"""Pin ``import app`` to the SAP Business One cartridge and provide the Business One-shaped Postgres test bed to the."""
 from __future__ import annotations
 
 import importlib
@@ -52,7 +51,6 @@ def _isolate_cartridge_app():
 
 
 def load_fixture_package():
-    """Import tests/fixtures/sap_b1 as a package without touching sys.path globally."""
     name = "sap_b1_fake"
     if name in sys.modules:
         return sys.modules[name]
@@ -112,7 +110,6 @@ def _wait_ready(dsn: str) -> None:
 
 @pytest.fixture(scope="session")
 def fake_postgres(dataset):
-    """A postgres:15 container loaded with the fake; yields connection facts."""
     if _docker("info", check=False).returncode != 0:
         pytest.skip("Docker is required to run the Postgres-backed B1 fake")
     if _docker("image", "inspect", POSTGRES_IMAGE, check=False).returncode != 0:
@@ -143,7 +140,6 @@ def fake_postgres(dataset):
 
 @pytest.fixture
 def b1_env(fake_postgres, monkeypatch):
-    """Point the cartridge at the fake through the same variables production uses."""
     monkeypatch.setenv("SAP_B1_DIALECT", "postgres")
     monkeypatch.setenv("SAP_B1_HOST", fake_postgres["host"])
     monkeypatch.setenv("SAP_B1_PORT", str(fake_postgres["port"]))

@@ -1,4 +1,3 @@
-"""SAP Business One silver/gold datasets: static contracts."""
 from __future__ import annotations
 
 import json
@@ -97,7 +96,6 @@ def test_every_read_parquet_is_a_declared_source_or_a_sap_b1_silver():
 
 
 def test_incremental_latest_never_collapses_to_the_newest_day():
-    """The T2 lesson from the other SAP cartridges."""
     data = yaml.safe_load(ENTITIES_YAML.read_text(encoding="utf-8"))
     modes = {e["entity"]: (e.get("mode"), bool(e.get("watermark_field"))) for e in data["entities"]}
     for path in DATASETS_DIR.glob("sap_b1_*_latest.sql"):
@@ -131,7 +129,6 @@ def _run_generator(script: str, out_dir: Path) -> None:
 
 
 def test_generated_files_are_current():
-    """Regenerate into a scratch directory and compare byte for byte."""
     with tempfile.TemporaryDirectory() as tmp:
         scratch = Path(tmp)
         _run_generator("generate_catalog.py", scratch / "catalog")

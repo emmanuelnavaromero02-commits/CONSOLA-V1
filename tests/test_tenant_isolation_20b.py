@@ -1,5 +1,3 @@
-"""Prompt 20B tenant isolation and data exposure contracts."""
-
 from __future__ import annotations
 
 import ast

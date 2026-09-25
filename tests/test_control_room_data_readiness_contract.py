@@ -103,15 +103,19 @@ def test_readyz_supports_strict_control_room_data_mode():
     router_src = _read(REPO / "console/app/routers/v1/system.py")
     readyz_data_src = _read(REPO / "console/app/services/readyz_data.py")
     makefile = _read(REPO / "Makefile")
+    readyz_impl_src = _read(REPO / "console/app/domains/system/readyz.py")
     for src in (main_src, router_src):
         assert "control_room_data" in src
-        assert "CONTROL_ROOM_REQUIRE_DATA_READY" in src
-        assert "require_data" in src
-        assert "require_intelligence" in src
-        assert "_is_production_env()" in src
-        assert "intelligence_opt_out_allowed" in src
-        assert "require_data=require_intelligence_data" in src
+        assert "_build_readyz_checks_impl(" in src
         assert re.search(r"status_code=200 if ok else 503", src)
+    assert "require_data" in main_src
+    assert "_is_production_env()" in main_src
+    assert "CONTROL_ROOM_REQUIRE_DATA_READY" in readyz_impl_src
+    assert "require_data" in readyz_impl_src
+    assert "require_intelligence" in readyz_impl_src
+    assert "is_production_env()" in readyz_impl_src
+    assert "intelligence_opt_out_allowed" in readyz_impl_src
+    assert "require_data=require_intelligence_data" in readyz_impl_src
     assert "omega_publication.dataset_publication_heads" in readyz_data_src
     assert "omega_publication.materialization_runs" in readyz_data_src
     assert "r.status IN ('published','legacy_unverified')" in readyz_data_src

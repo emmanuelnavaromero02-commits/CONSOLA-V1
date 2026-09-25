@@ -10,7 +10,6 @@ async def lock_calibration_group(
     group: str,
     model_version: str,
 ) -> None:
-    """Serialize observation and full recompute for one calibration state."""
     key = f"calibration:{workspace_id}:{group}:{model_version}"
     await conn.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", key)
 

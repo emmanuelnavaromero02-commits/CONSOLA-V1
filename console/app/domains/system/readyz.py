@@ -17,13 +17,8 @@ def _is_falseish(value: Any) -> bool:
     return str(value or "").strip().lower() in FALSEISH_VALUES
 
 
-# Tablas con workspace_id que legitimamente NO son tenant-scoped por RLS
-# (excepciones conocidas): vacio por ahora. Cualquier otra tabla con
-# workspace_id DEBE tener FORCE ROW LEVEL SECURITY.
 _RLS_EXEMPT_TABLES: frozenset[str] = frozenset()
 
-# Deteccion dinamica: toda tabla base de 'public' que tenga columna
-# workspace_id pero NO tenga relrowsecurity AND relforcerowsecurity.
 _RLS_OFFENDERS_SQL = """
 SELECT c.relname
   FROM pg_class c
@@ -38,11 +33,6 @@ SELECT c.relname
 
 
 async def _tenant_rls_check(pool: Any) -> dict[str, Any]:
-    """Verifica que toda tabla tenant-scoped (con workspace_id) tenga FORCE
-    RLS aplicado. Cierra el hueco de un despliegue sobre un volumen viejo sin
-    migrar: el runner aplica RLS, pero nada lo asertaba en runtime.
-
-    Solo lectura de pg_class. Devuelve la lista de infractores si los hay."""
     try:
         async with pool.acquire() as conn:
             rows = await conn.fetch(_RLS_OFFENDERS_SQL)
@@ -94,10 +84,6 @@ async def build_readyz_checks(
         warn("readiness probe failed for postgres", exc_info=True)
         checks["postgres"] = {"status": "down", "error": type(exc).__name__}
 
-    # RLS al arranque (defensa en profundidad). Informativo por defecto;
-    # bloquea /readyz (503) solo con OMEGA_REQUIRE_RLS_READY para no voltear
-    # la salud de despliegues existentes sin aviso. Si postgres no responde,
-    # se omite (ya lo reporta el check de postgres).
     require_rls = _is_trueish(environ.get("OMEGA_REQUIRE_RLS_READY"))
     if checks["postgres"].get("status") == "up":
         checks["rls"] = await _tenant_rls_check(pool)
@@ -165,8 +151,6 @@ async def build_readyz_checks(
         for name, check in checks.items()
         if name not in {"control_room_data", "intelligence_data", "rls"}
     )
-    # 'rls' solo tumba readiness cuando el operador lo exige (opt-in
-    # fail-closed); por defecto es diagnostico visible en el cuerpo.
     rls_ok = (
         checks.get("rls", {}).get("status") == "up"
         or not require_rls

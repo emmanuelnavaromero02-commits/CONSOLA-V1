@@ -1,28 +1,3 @@
-"""
-DAG: replicon_ses_inbox_import
-
-Reads emails received by Amazon SES Inbound at
-    s3://${INBOX_BUCKET}/inbound/
-extracts every attachment, and lands them in the lakehouse uploads area:
-    s3://${LAKEHOUSE_BUCKET}/uploads/replicon/tenant_id=<tenant>/workspace_id=<workspace>/in/<filename>
-
-Behavior:
-- ZIP attachments are extracted; each file inside the archive is uploaded.
-- Excel/CSV/PDF attachments go straight through.
-- Processed message objects are moved to inbound-processed/ so the next run
-  doesn't pick them up again (idempotent — a re-run only sees new mail).
-- Files that are not interesting attachments (text/plain bodies, signatures,
-  AMAZON_SES_SETUP_NOTIFICATION) are skipped.
-
-The DAG is split into 4 tasks so the run shows as a real graph in the
-Airflow UI and the Studio entity row gets per-step logs:
-
-    list_inbox  →  extract_attachments  →  archive_processed  →  record_run
-
-`record_run` writes a row to pipeline_runs (via mcp-infra) so the studio
-"última ejecución" badge picks up status, finished_at and counts.
-"""
-
 from __future__ import annotations
 
 import email
@@ -53,8 +28,6 @@ except ModuleNotFoundError:
     from runtime_security_context import build_pipeline_run_context
 
 
-# ── Config ───────────────────────────────────────────────────────────────────
-
 CARTRIDGE_ID = "replicon"
 ENTITY = "SESInboxJobNoEntity"
 MCP_INFRA_URL = "http://mcp-infra:8010"
@@ -74,9 +47,7 @@ UPLOADS_PREFIX = Variable.get(
     "lakehouse_uploads_prefix", default_var="uploads/replicon/in/"
 )
 
-# Attachments we actually want to land on the lakehouse.
 PASSTHROUGH_EXTS = {".xlsx", ".xls", ".csv", ".pdf", ".tsv", ".txt"}
-# Filenames produced by SES tooling that are not real mail.
 SKIP_NAMES = {"AMAZON_SES_SETUP_NOTIFICATION"}
 MAX_ZIP_MEMBERS = int(os.environ.get("SES_IMPORT_MAX_ZIP_MEMBERS", "100"))
 MAX_ZIP_MEMBER_BYTES = int(
@@ -149,9 +120,6 @@ dag = DAG(
 )
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
-
-
 def _endpoint_url(value: str) -> str:
     endpoint = str(value or "").strip()
     if not endpoint or "://" in endpoint:
@@ -172,7 +140,6 @@ def _client_with_pair(*, endpoint: str, region: str, access: str, secret: str):
 
 
 def _inbox_s3():
-    """Return the native AWS/SES client, never the GCS lakehouse client."""
 
     _require_ses_inbox_enabled()
     region = (
@@ -194,14 +161,10 @@ def _inbox_s3():
         raise RuntimeError("ses_inbox_credentials_missing")
     provider = os.environ.get("LAKEHOUSE_PROVIDER", "").strip().lower()
     if provider == "gcs" and not (dedicated_access and dedicated_secret):
-        # A GCP runtime has no AWS instance role. Never borrow GCS or generic
-        # lakehouse credentials for the separate SES inbox.
         raise RuntimeError("ses_inbox_credentials_missing")
     access = dedicated_access
     secret = dedicated_secret
     if provider != "gcs" and not access:
-        # Native AWS deployments may keep their existing static pair or use
-        # the boto workload identity chain when both values are absent.
         access = os.environ.get("AWS_ACCESS_KEY_ID", "").strip()
         secret = os.environ.get("AWS_SECRET_ACCESS_KEY", "").strip()
     return _client_with_pair(
@@ -213,7 +176,6 @@ def _inbox_s3():
 
 
 def _lakehouse_s3():
-    """Return the active lakehouse client with provider-native credentials."""
 
     provider = os.environ.get("LAKEHOUSE_PROVIDER", "").strip().lower()
     endpoint = os.environ.get("LAKEHOUSE_ENDPOINT", "").strip()
@@ -354,7 +316,6 @@ def _safe_zip_members(zf: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
 
 
 def _pipeline_run_save(**kwargs) -> None:
-    """Best-effort write to pipeline_runs through mcp-infra."""
     try:
         headers = {
             "x-api-key": _internal_key("INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA"),
@@ -381,12 +342,7 @@ def _pipeline_run_save(**kwargs) -> None:
         pass
 
 
-# ── Tasks ────────────────────────────────────────────────────────────────────
-
-
 def list_inbox(**context) -> dict:
-    """List unprocessed mail objects in s3://INBOX_BUCKET/INBOX_PREFIX.
-    Pushes the list of keys to XCom for the next task."""
     started_at = datetime.now(timezone.utc).isoformat()
     run_id = context["run_id"]
     tenant_id, workspace_id = _scope_values(context)
@@ -430,10 +386,6 @@ def list_inbox(**context) -> dict:
 
 
 def extract_attachments(**context) -> dict:
-    """For every queued mail object, pull the .eml from S3, parse it, and
-    upload each interesting attachment under the scoped Replicon upload prefix.
-    ZIPs are expanded. Records which keys succeeded so the next task can
-    archive them."""
     ti = context["task_instance"]
     keys = ti.xcom_pull(task_ids="list_inbox", key="keys") or []
     upload_prefix = ti.xcom_pull(task_ids="list_inbox", key="upload_prefix")
@@ -531,8 +483,6 @@ def extract_attachments(**context) -> dict:
 
 
 def archive_processed(**context) -> dict:
-    """Move every successfully-processed mail object out of inbound/ to
-    inbound-processed/. Failed messages stay in inbound/ for retry/inspection."""
     ti = context["task_instance"]
     succeeded = ti.xcom_pull(task_ids="extract_attachments", key="succeeded") or []
 
@@ -558,8 +508,6 @@ def archive_processed(**context) -> dict:
 
 
 def record_run(**context) -> dict:
-    """Final write to pipeline_runs so the studio entity row reflects the
-    run's status, end time and counts."""
     ti = context["task_instance"]
     keys = ti.xcom_pull(task_ids="list_inbox", key="keys") or []
     succeeded = ti.xcom_pull(task_ids="extract_attachments", key="succeeded") or []
@@ -632,8 +580,6 @@ def record_run(**context) -> dict:
     }
 
 
-# ── DAG wiring ───────────────────────────────────────────────────────────────
-
 t_list = PythonOperator(
     task_id="list_inbox",
     python_callable=list_inbox,
@@ -655,7 +601,7 @@ t_archive = PythonOperator(
 t_record = PythonOperator(
     task_id="record_run",
     python_callable=record_run,
-    trigger_rule="all_done",  # always summarize, even if upstream failed
+    trigger_rule="all_done",
     dag=dag,
 )
 

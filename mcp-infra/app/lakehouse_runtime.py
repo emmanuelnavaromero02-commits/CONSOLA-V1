@@ -1,5 +1,3 @@
-"""Provider-aware S3 compatibility settings for MCP lakehouse access."""
-
 from __future__ import annotations
 
 import json
@@ -13,7 +11,6 @@ from minio.credentials import Credentials, Provider
 
 
 class Ec2ImdsV2Provider(Provider):
-    """Narrow EC2 instance-role provider that only talks to IMDSv2."""
 
     def __init__(
         self,
@@ -77,7 +74,6 @@ class Ec2ImdsV2Provider(Provider):
 
 
 def configure_duckdb_s3(connection: Any) -> ResolvedStorageConfig:
-    """Configure DuckDB using only credentials owned by the active provider."""
 
     storage = settings.resolved_storage
     storage.require_interoperability_pair()
@@ -100,17 +96,11 @@ def _configure_duckdb_s3(
     connection: Any,
     storage: ResolvedStorageConfig,
 ) -> None:
-    """Apply settings; caller owns conversion of driver errors to safe codes."""
 
     if storage.access_key and storage.secret_key:
-        # Keep credentials outside the SQL text.  Apart from being safer for
-        # tracing, this prevents DuckDB exceptions from echoing a secret-bearing
-        # statement into a tool response or log.
         connection.execute("SET s3_access_key_id = ?", [storage.access_key])
         connection.execute("SET s3_secret_access_key = ?", [storage.secret_key])
     else:
-        # Native S3 is the only provider allowed to rely on the VM/container
-        # credential chain. GCS must always use its exact interoperability pair.
         connection.execute("LOAD aws;")
         try:
             connection.execute("CALL load_aws_credentials();")
@@ -136,15 +126,12 @@ def _configure_duckdb_s3(
 
 
 def minio_compatible_client():
-    """Return a MinIO SDK client for object writes; never creates cloud buckets."""
 
     from minio import Minio
 
     storage = settings.resolved_storage
     storage.require_interoperability_pair()
     if storage.provider == "s3" and not storage.access_key:
-        # Force the EC2 link-local metadata endpoint. IamAwsProvider performs
-        # the IMDSv2 token exchange before fetching the instance-role pair.
         return Minio(
             storage.endpoint,
             credentials=Ec2ImdsV2Provider(),
@@ -161,7 +148,6 @@ def minio_compatible_client():
 
 
 def ensure_local_bucket(client: Any) -> str:
-    """Create the bucket only for the local MinIO provider."""
 
     storage = settings.resolved_storage
     storage.require_interoperability_pair()

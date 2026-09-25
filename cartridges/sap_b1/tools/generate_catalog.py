@@ -1,4 +1,3 @@
-"""Generate app/config/entities.yaml and config/seed.sql from the Business One-shaped fake schema (tests/fixtures/sap_b1/schema.py), the single source of truth for column names and types."""
 from __future__ import annotations
 
 import importlib

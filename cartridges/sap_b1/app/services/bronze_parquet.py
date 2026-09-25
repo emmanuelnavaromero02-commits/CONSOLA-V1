@@ -1,4 +1,3 @@
-"""How a Bronze parquet file of this cartridge is shaped and where it lives."""
 from __future__ import annotations
 
 import json
@@ -23,7 +22,6 @@ def _normalize_value(value: Any) -> Any:
 
 
 def normalize_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Nested values become JSON text; everything else travels as is."""
     return [{k: _normalize_value(v) for k, v in row.items()} for row in rows]
 
 
@@ -36,7 +34,6 @@ def enrich_rows(
     watermark_field: str | None,
     extracted_at: str,
 ) -> list[dict[str, Any]]:
-    """Append the metadata columns every Bronze row carries."""
     enriched_rows = []
     for row in rows:
         enriched = dict(row)
@@ -51,7 +48,6 @@ def enrich_rows(
 
 
 def coerce_for_schema(rows: list[dict[str, Any]], schema) -> list[dict[str, Any]]:
-    """Make driver values fit the declared types."""
     import pyarrow as pa
 
     timestamp_columns = {field.name for field in schema if pa.types.is_timestamp(field.type)}
@@ -81,7 +77,6 @@ def bronze_table(
     watermark_field: str | None,
     extracted_at: str,
 ):
-    """The typed arrow table one Bronze file is written from."""
     import pyarrow as pa
 
     enriched = enrich_rows(
@@ -96,20 +91,17 @@ def bronze_table(
 
 
 def write_bronze_file(table, path) -> None:
-    """The one parquet writer call both producers use."""
     import pyarrow.parquet as pq
 
     pq.write_table(table, path, compression="snappy")
 
 
 def stamp_now(now: datetime | None = None) -> tuple[str, str]:
-    """``(load_date, extracted_at)`` for a batch written at ``now`` (UTC)."""
     moment = now or datetime.now(timezone.utc)
     return moment.strftime(LOAD_DATE_FORMAT), moment.strftime(EXTRACTED_AT_FORMAT)
 
 
 def scope_prefix(tenant_id: str, workspace_id: str) -> str:
-    """``tenant_id=<t>/workspace_id=<w>/`` from two plain identifiers."""
     tenant = str(tenant_id or "").strip()
     workspace = str(workspace_id or "").strip()
     if not (tenant and workspace):
@@ -121,7 +113,6 @@ def scope_prefix(tenant_id: str, workspace_id: str) -> str:
 
 
 def bronze_object_name(entity: str, scope: str, load_date: str, run_id: str) -> str:
-    """The object key of one batch; ``scope`` is the (possibly empty) tenant and workspace prefix, ending in ``/`` when."""
     return f"{BRONZE_PREFIX}{entity}/{scope}load_date={load_date}/batch_id={run_id}/{entity}.parquet"
 
 

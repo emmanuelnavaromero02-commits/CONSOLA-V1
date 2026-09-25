@@ -21,8 +21,8 @@ async def get_system_version() -> str:
     here = Path(__file__).resolve()
     candidates = [
         Path("/app/VERSION"),
-        here.parent.parent.parent.parent / "VERSION",  # repo root from services/
-        here.parent.parent.parent / "VERSION",         # repo root from app/ (legacy)
+        here.parent.parent.parent.parent / "VERSION",
+        here.parent.parent.parent / "VERSION",
     ]
     for p in candidates:
         try:

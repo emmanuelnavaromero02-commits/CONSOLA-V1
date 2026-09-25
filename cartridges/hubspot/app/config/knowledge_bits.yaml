@@ -1,25 +1,3 @@
-# HubSpot Knowledge Bits — declarative analytics catalog.
-#
-# Each Knowledge Bit (KB) is a named analytics query the cartridge can run on
-# demand. KBs read Bronze/Silver Parquet via DuckDB and write results to Silver
-# Parquet + a Postgres table.
-#
-# Schema per KB:
-#   id:          stable identifier (snake_case)
-#   name:        human-readable name
-#   description: what question it answers
-#   pg_table:    Postgres table written in the gold DB
-#   output_path: Silver directory prefix in MinIO (write_kb_parquet appends
-#                load_date=…/batch_id=…/<kb>.parquet) — NOT a file path
-#   sql: |       DuckDB SQL (use {bucket} placeholder for the MinIO bucket)
-#
-# NOTE: pg_table / output_path are TOP-LEVEL keys (the seeder reads them flat,
-# matching the replicon cartridge) — do NOT nest them under an `output:` block.
-#
-# These are OPTIONAL analytics shortcuts — the medallion datasets (silver/gold)
-# in datasets/*.sql are the canonical layer. KBs are ad-hoc rollups the
-# assistant can trigger by name via the run_kb MCP tool.
-
 knowledge_bits:
 
   - id: open_pipeline_by_owner

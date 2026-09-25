@@ -1,14 +1,12 @@
-    /* Studio overrides viewer.css: allow page-level scroll, panels manage their own overflow */
+
     html, body { overflow-x: hidden; overflow-y: auto; min-height: 100vh; }
 
-    /* ── Studio layout ── */
     .studio-layout {
       display: flex;
       flex-direction: column;
       min-height: 100vh;
     }
 
-    /* ── Header ── */
     .studio-header {
       display: flex;
       align-items: center;
@@ -48,7 +46,6 @@
     .hdr-lnk.explorer { color: var(--amber); border-color: var(--amber); }
     .hdr-lnk.lineage { color: var(--cyan); border-color: var(--cyan); }
 
-    /* ── Step bar ── */
     .step-bar {
       display: flex;
       align-items: center;
@@ -91,7 +88,6 @@
     .step-item.done .step-num { background: var(--green); color: var(--bg); border-color: var(--green); }
     .step-arrow { color: var(--border); font-size: 14px; padding: 0 2px; flex-shrink: 0; }
 
-    /* ── Studio body ── */
     .studio-body {
       display: flex;
       flex: 1;
@@ -99,7 +95,6 @@
       overflow: hidden;
     }
 
-    /* Main step content */
     .step-content {
       flex: 1;
       overflow-y: auto;
@@ -107,7 +102,6 @@
       min-width: 0;
     }
 
-    /* AI panel resize handle */
     .ai-resize-handle {
       width: 5px;
       flex-shrink: 0;
@@ -121,7 +115,6 @@
     .ai-resize-handle:hover,
     .ai-resize-handle.dragging { background: var(--green); opacity: .4; }
 
-    /* AI panel */
     .ai-panel {
       width: 320px;
       min-width: 180px;
@@ -229,7 +222,6 @@
     .ai-msg.ai-assistant .ai-body code { color:var(--cyan); font-size:10px; }
     .ai-typing { color: var(--green); letter-spacing: 4px; animation: pulse 1s infinite; font-size: 14px; padding: 4px; }
 
-    /* ── Reasoning trail ────────────────────────────────────────────── */
     .ai-trail {
       font-family: var(--font-mono);
       font-size: 10px;
@@ -282,7 +274,6 @@
     .ai-input-bar textarea:focus { outline: none; border-color: var(--green); }
     .ai-input-bar .btn { padding: 5px 12px; font-size: 11px; }
 
-    /* ── Step content elements ── */
     .step-title {
       display: flex;
       justify-content: space-between;
@@ -344,14 +335,12 @@
     .et-wm   { color:var(--cyan); font-size:9px; font-family:var(--font-mono); }
     .et-num  { color:var(--text3); text-align:center; }
 
-    /* Run status badge */
     .run-badge { display:flex; align-items:center; gap:4px; margin-top:3px; font-size:9px; font-family:var(--font-mono); }
     .run-dot-ok    { color:var(--green); }
     .run-dot-fail  { color:var(--red); }
     .run-dot-never { color:var(--text3); }
     .run-dot-run   { color:var(--cyan); animation:pulse 1s infinite; }
 
-    /* Vertical (horizontal-drag) resize handle between query and preview */
     .v-resize-handle {
       height: 6px;
       flex-shrink: 0;
@@ -375,7 +364,6 @@
     .v-resize-handle:hover,
     .v-resize-handle.dragging { background: var(--green); opacity: .4; }
 
-    /* Vista previa / Preview panel */
     .et-preview {
       border-bottom: 1px solid var(--border);
       background: var(--bg);
@@ -444,7 +432,6 @@
     }
     .feature-coming .icon { color: var(--amber); font-size: 14px; }
 
-    /* ── Cartridge selector bar ── */
     .cartridge-bar {
       display: flex;
       align-items: center;
@@ -477,7 +464,6 @@
       border-radius: 10px;
     }
 
-    /* ── Connection status cards (kept for potential future use) ── */
     .conn-card {
       background: var(--bg2);
       border: 1px solid var(--border);
@@ -498,7 +484,6 @@
     .conn-status-ok  { font-size: 9px; color: var(--green); margin-left: auto; }
     .conn-status-bad { font-size: 9px; color: #888; margin-left: auto; }
 
-    /* ── File upload dropzone ── */
     .upload-zone {
       border: 2px dashed var(--border);
       border-radius: 4px;
@@ -525,7 +510,6 @@
       cursor: pointer;
     }
 
-    /* ── Create cartridge modal ── */
     .cc-modal-overlay {
       position: fixed; inset: 0;
       background: rgba(0,0,0,.6);
@@ -542,7 +526,6 @@
     }
     .cc-modal h3 { font-family: var(--font-ui); font-size: 14px; font-weight: 700; margin-bottom: 16px; }
 
-    /* ── Step 2: DAG editor (embedded) ── */
     .dag-editor-step {
       display: flex;
       flex-direction: column;
@@ -623,7 +606,6 @@
     .tpl-tag        { font-size: 8px; font-family: var(--font-mono); padding: 1px 4px;
                       border: 1px solid var(--border); border-radius: 2px; color: var(--text3); }
 
-    /* ── Studio mini-header (visible only in steps 2-7) ───────────────────── */
     .studio-mini-header {
       display: flex;
       align-items: center;
@@ -644,7 +626,6 @@
       color: var(--color-text-muted, #64748b);
     }
 
-    /* Steps 2-7: hide the big summary block, show the mini-header. */
     body[data-studio-step="2"] .studio-summary-block,
     body[data-studio-step="3"] .studio-summary-block,
     body[data-studio-step="4"] .studio-summary-block,
@@ -662,9 +643,6 @@
       display: flex !important;
     }
 
-    /* sprint v1.2-pr1: in step 1 the big summary block already covers the
-       cartridge overview, so the mini-header and the EPI IA assistant panel
-       are redundant. Hide them on step 1; keep them on steps 2-7. */
     body[data-studio-step="1"] #studio-mini-header {
       display: none !important;
     }
@@ -675,15 +653,6 @@
       display: block !important;
     }
 
-    /* ════════════════════════════════════════════════════════════════════════
-       Sprint v1.2-pr2 — Studio visual polish for the 7 steps.
-       CSS-only: never changes JS render logic, never changes IDs, never adds
-       inline handlers. Targets the existing classes emitted by renderResumen,
-       renderEntities, renderRefine, renderAnalytics, renderSemantic,
-       renderRAG and renderDagEditor.
-       ════════════════════════════════════════════════════════════════════════ */
-
-    /* ── Local design tokens (not exported globally) ─────────────────────── */
     .studio-layout {
       --studio-radius-sm: 6px;
       --studio-radius-md: 8px;
@@ -699,7 +668,6 @@
       --studio-spacing-xl: 24px;
     }
 
-    /* ── Step header (used by every step) ────────────────────────────────── */
     .step-content .step-title {
       align-items: center;
       margin-bottom: var(--studio-spacing-xl);
@@ -719,7 +687,6 @@
       line-height: 1.55;
     }
 
-    /* ── Buttons inside the step content ─────────────────────────────────── */
     .step-content .btn {
       padding: 8px 16px;
       font-size: 12px;
@@ -752,7 +719,6 @@
     .step-content .btn-danger { background: var(--danger-soft); }
     .step-content .btn-danger:hover { background: var(--red); color: var(--on-danger); }
 
-    /* ── Form controls inside the step content ───────────────────────────── */
     .step-content input[type=text],
     .step-content input[type=search],
     .step-content input[type=email],
@@ -775,7 +741,6 @@
       box-shadow: 0 0 0 3px var(--primary-soft);
     }
 
-    /* ── Cards (used by Analytics, Semantic, RAG, etc.) ──────────────────── */
     .step-content .card {
       border-radius: var(--studio-radius-lg);
       box-shadow: var(--studio-shadow-md);
@@ -803,7 +768,6 @@
       color: var(--text3);
     }
 
-    /* ── PASO 1 — Resumen (cartridge cards .item-card / .ic-*) ───────────── */
     .step-content .item-grid {
       gap: var(--studio-spacing-lg);
       grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
@@ -860,7 +824,6 @@
     .step-content .ic-status-ok  { background: rgba(17, 122, 61, 0.10); border: 1px solid rgba(17, 122, 61, 0.3); }
     .step-content .ic-status-err { background: rgba(179, 38, 30, 0.10); border: 1px solid rgba(179, 38, 30, 0.3); }
 
-    /* ── PASO 3 — Entidades (.et-table / .et-hdr / .et-row) ──────────────── */
     .step-content .et-table {
       border: 1px solid var(--border);
       border-radius: var(--studio-radius-lg);
@@ -910,7 +873,6 @@
       letter-spacing: 0.04em;
     }
 
-    /* ── PASO 4 — Refinar (.tab / .tab-bar) ──────────────────────────────── */
     .step-content .tab-bar {
       gap: 4px;
       padding: 8px 16px 0;
@@ -941,7 +903,6 @@
       box-shadow: 0 -1px 2px rgba(15, 23, 42, 0.04);
     }
 
-    /* ── PASO 5 — Analytics (.ds-row inside .card) ───────────────────────── */
     .step-content .card .ds-row {
       padding: var(--studio-spacing-md) var(--studio-spacing-sm);
       border-radius: var(--studio-radius-md);
@@ -961,9 +922,6 @@
       color: var(--text3);
     }
 
-    /* Apps Analíticas cards inside renderAnalytics — wrapper-class hook
-       (added by surgical edit in legacy.js). Layered on top of the inline
-       styles emitted by the renderer; only adds shadow + interaction. */
     .step-content .studio-app-card {
       border-radius: var(--studio-radius-lg) !important;
       box-shadow: var(--studio-shadow-sm);
@@ -974,7 +932,6 @@
       transform: translateY(-2px);
     }
 
-    /* ── PASO 6 — IA Semántica (.btn-tab / .cat-inp) ─────────────────────── */
     .step-content .btn-tab {
       padding: 7px 16px;
       font-size: 11px;
@@ -1010,7 +967,6 @@
       box-shadow: 0 0 0 3px var(--primary-soft);
     }
 
-    /* Layer pills (silver / master / gold) used in semantic catalog. */
     .step-content .layer-silver,
     .step-content .layer-master,
     .step-content .layer-gold {
@@ -1022,9 +978,6 @@
       text-transform: uppercase;
     }
 
-    /* ── PASO 7 — RAG: keep .card polish above; nothing step-specific ────── */
-
-    /* ── PASO 2 — DAGs (sidebar items, deploy bar) ───────────────────────── */
     .dag-sidebar-item {
       padding: 12px 14px;
       transition: var(--studio-transition);

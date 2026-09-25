@@ -1,11 +1,4 @@
 #!/usr/bin/env bash
-# Heavy full-stack acceptance for the local stack.
-#
-# This is intentionally not a browser-only E2E. It validates:
-# Console auth/admin/settings/control-room/copilot/studio surfaces,
-# HubSpot test_connection against a deterministic fake upstream,
-# MCP extraction jobs, Bronze Parquet, Silver refresh, Gold materialization,
-# catalog/semantic/lineage queryability.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

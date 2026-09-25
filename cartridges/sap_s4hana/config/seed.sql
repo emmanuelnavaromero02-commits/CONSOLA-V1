@@ -1,12 +1,3 @@
--- ─────────────────────────────────────────────────────────────────────────────
--- MODecissions Cartridge: SAP S/4HANA Core — seed configuration
--- Run once to register this cartridge in a new installation.
--- Safe to re-run: agent inserts use target-less ON CONFLICT DO NOTHING so they
--- work with both the original global agents constraint and the later
--- workspace-aware partial indexes.
--- ─────────────────────────────────────────────────────────────────────────────
-
--- ── Cartridge header ──────────────────────────────────────────────────────────
 INSERT INTO cartridges (id, name, version, description, pattern, category, bronze_path)
 VALUES (
     'sap_s4hana',
@@ -23,19 +14,12 @@ ON CONFLICT (id) DO UPDATE
         description = EXCLUDED.description,
         updated_at  = NOW();
 
--- ── DAGs ──────────────────────────────────────────────────────────────────────
 INSERT INTO cartridge_dags (cartridge_id, dag_id, file, description, trigger, params)
 VALUES
     ('sap_s4hana', 'sap_s4hana_extract',     'sap_s4hana_extract.py',     'Extrae una entidad en Bronze MinIO (full o incremental)',  'on-demand', '["entity","mode","from_date","to_date"]'),
     ('sap_s4hana', 'sap_s4hana_extract_all', 'sap_s4hana_extract_all.py', 'Extrae todas las entidades habilitadas en secuencia',       'on-demand', '["mode","entities"]')
 ON CONFLICT (cartridge_id, dag_id) DO NOTHING;
 
--- ── Entities ──────────────────────────────────────────────────────────────────
--- The real S/4HANA OData entities, mirroring infra/init/77_sap_entity_alignment.sql
--- and cartridges/sap_s4hana/app/config/entities.yaml. This UPSERT seeds the 25
--- correct commercial, procurement, finance and inventory rows on (cartridge_id,
--- entity). Metadata (odata_entity / mode / watermark / page_size / date_field)
--- is inherited from entities.yaml.
 INSERT INTO entity_config
     (cartridge_id, entity, odata_entity, display_name, description, mode,
      watermark_field, watermark_format, page_size, date_field, dag_id, enabled, trigger_type)
@@ -78,7 +62,6 @@ ON CONFLICT (cartridge_id, entity) DO UPDATE
         enabled          = EXCLUDED.enabled,
         trigger_type     = EXCLUDED.trigger_type;
 
--- ── Semantic vocabulary ───────────────────────────────────────────────────────
 INSERT INTO semantic_terms (cartridge_id, term, definition, maps_to)
 VALUES
     ('sap_s4hana', 'ventas', 'Pedidos de venta y valor comercial por periodo', 'SalesOrder JOIN SalesOrderItem'),
@@ -90,10 +73,6 @@ ON CONFLICT (cartridge_id, term) DO UPDATE
     SET definition = EXCLUDED.definition,
         maps_to    = EXCLUDED.maps_to;
 
--- ── Specialized agents ────────────────────────────────────────────────────────
--- Mirrored in infra/init/86_sap_s4hana_agents_seed.sql for fresh DB installs. The
--- agents table has no workspace_id (cartridge-scoped). The platform has no
--- trigger-based routing yet; "triggers" phrases live in extra as intent metadata.
 INSERT INTO agents (cartridge_id, slug, name, description, instructions, personality,
                     allowed_tools, rag_filter, model, max_tokens, temperature, extra)
 VALUES

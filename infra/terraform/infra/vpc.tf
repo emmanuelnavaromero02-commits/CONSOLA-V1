@@ -53,8 +53,6 @@ resource "aws_subnet" "private" {
   }
 }
 
-# Second private subnet exists only to satisfy the AWS requirement that an
-# RDS DB subnet group span at least two AZs. No workloads run here.
 resource "aws_subnet" "private_secondary" {
   vpc_id            = aws_vpc.main.id
   cidr_block        = "10.0.3.0/24"

@@ -1,15 +1,3 @@
-"""F8 — the per-column quality profile must SURVIVE staged publication.
-
-Closes today's false-green: only _profile_columns was tested in isolation,
-while the staged finalize flattened every field back to name+type at four
-points, so no reader ever saw null_rate/distinct_count/min/max and
-relationship discovery stayed empty. This test runs the REAL
-StagedPublicationEngine against a real gold PostgreSQL + MinIO + verifier
-worker and asserts the stats land in (1) the published evidence catalog,
-(2) the data_catalog table, (3) get_dataset_schema, and (4) that
-relationship discovery finds the profiled columns.
-"""
-
 from __future__ import annotations
 
 import psycopg2
@@ -81,9 +69,6 @@ def test_quality_stats_survive_the_staged_pipeline_end_to_end(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     stack = staged_publication_live_stack
-    # The engine's data_catalog writer talks to the console database; in this
-    # harness the same PostgreSQL hosts a minimal data_catalog so the full
-    # persist -> read chain runs for real.
     with psycopg2.connect(stack.admin_dsn) as conn, conn.cursor() as cur:
         cur.execute(_DATA_CATALOG_DDL)
     for name, value in {
@@ -111,7 +96,6 @@ def test_quality_stats_survive_the_staged_pipeline_end_to_end(
     result = engine.materialize(dataset, scope)
     assert result["row_count"] == 4
 
-    # (1) The PUBLISHED evidence catalog carries the real profile.
     evidence = stack.evidence("quality_stats_probe")
     assert len(evidence) == 1
     stats = _stats_by_name(evidence[0][3])
@@ -124,8 +108,6 @@ def test_quality_stats_survive_the_staged_pipeline_end_to_end(
     assert category["null_rate"] == 0.25
     assert category["distinct_count"] == 2
 
-    # (2) data_catalog persisted the stats (the F8 root fix: the staged path
-    # now reaches the base writer).
     with psycopg2.connect(stack.admin_dsn) as conn, conn.cursor() as cur:
         cur.execute(
             """SELECT column_name, null_rate, distinct_count, min_value,
@@ -139,16 +121,12 @@ def test_quality_stats_survive_the_staged_pipeline_end_to_end(
     assert rows["entity_key"][5] is not None, "profiled_at must be stamped"
     assert rows["category"][1] == 0.25, "null_rate must persist"
 
-    # (3) get_dataset_schema surfaces the persisted profile.
     schema = engine.get_dataset_schema(dataset, scope)
     assert "error" not in schema, schema.get("error")
     schema_stats = _stats_by_name(schema["fields"])
     assert schema_stats["entity_key"]["distinct_count"] == 3
     assert schema_stats["category"]["null_rate"] == 0.25
 
-    # (4) Relationship discovery: with the stats persisted, the discoverer
-    # proposes the FK edge child.entity_key -> parent.entity_key from REAL
-    # data_catalog rows (before F8 it always saw an empty profile).
     parent_result = engine.materialize(
         {
             "name": "quality_parent_probe",

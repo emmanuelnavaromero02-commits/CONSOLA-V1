@@ -1,4 +1,3 @@
-"""Sprint v1.29 — SAP internal auth must fail fast, not return sentinels."""
 from __future__ import annotations
 
 import importlib

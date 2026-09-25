@@ -1,17 +1,3 @@
-# /etc/cron.d/omega-backup — daily OMEGA backup on the canonical AWS host.
-#
-# Versioned source of truth: infra/terraform/files/omega-backup-aws.cron
-# (T2e; mirror of the GCP one in infra/terraform-gcp/files/). Fresh hosts get
-# it installed by the terraform user_data provisioning; already-provisioned
-# hosts need the owner to install it once:
-#   sudo install -m 0644 -o root -g root \
-#     /opt/modecissions/infra/terraform/files/omega-backup-aws.cron \
-#     /etc/cron.d/omega-backup
-#
-# 03:10 UTC daily — after the nightly pipeline window, before MX business
-# hours. S3_BUCKET_NAME/AWS_REGION come from /etc/modecissions/
-# aws-entrypoint.env (provisioning writes it); BACKUP_STORAGE_BACKEND=s3 is
-# pinned so an ambient GCS variable can never divert the destination.
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 10 3 * * * root . /etc/modecissions/aws-entrypoint.env && REPO_DIR=/opt/modecissions DEPLOY_DIR=/opt/modecissions BACKUP_ENV_FILE=infra/terraform/deploy/.env BACKUP_COMPOSE_FILES="--env-file infra/terraform/deploy/.env -f infra/docker-compose.yml -f infra/terraform/deploy/docker-compose.aws.yml" BACKUP_STORAGE_BACKEND=s3 bash /opt/modecissions/infra/terraform/deploy/backup.sh >> /var/log/omega-backup.log 2>&1

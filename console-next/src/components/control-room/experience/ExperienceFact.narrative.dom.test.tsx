@@ -45,7 +45,6 @@ const baseFact = {
   ],
 };
 
-// Pasa por el contrato real: lo que se renderiza es lo que aceptaría la pantalla.
 function parseFact(raw: unknown): ExperienceFactV2 {
   return controlRoomExperienceV2Schema.parse({
     schema_version: "control-room-experience/v2",

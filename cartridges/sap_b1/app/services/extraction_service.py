@@ -1,4 +1,3 @@
-"""Read Business One tables company by company into Bronze parquet."""
 from __future__ import annotations
 
 import json

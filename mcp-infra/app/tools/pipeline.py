@@ -1,13 +1,3 @@
-"""
-Pipeline MCP tools — watermark management and DAG source storage.
-
-watermark_get   : returns the last watermark value for a cartridge/entity
-watermark_set   : writes a new watermark value after a successful run
-dag_get_source  : reads the DAG Python source Airflow actually sees and mirrors
-                  it into cartridge_dags.source_code for Studio/export
-dag_save_source : writes DAG Python source only when the Airflow-visible file can
-                  be updated too; never creates a DB-only copy
-"""
 from __future__ import annotations
 
 import os
@@ -57,13 +47,6 @@ def _safe_candidate(root: Path, *parts: str) -> Path | None:
 
 
 def _dag_source_candidates(cartridge_id: str, dag_id: str) -> list[tuple[str, Path]]:
-    """Return source files that represent Airflow's execution view.
-
-    Packaged cartridge DAGs are mounted into Airflow under
-    /opt/airflow/dags/<cartridge>/, while mcp-infra sees the same host files
-    through /registry/cartridges/<cartridge>/dags. Dynamic Studio-created DAGs
-    live directly under AIRFLOW_DAGS_PATH.
-    """
     dags_root = Path(settings.airflow_dags_path).resolve()
     registry_root = Path("/registry/cartridges").resolve()
     candidates: list[tuple[str, Path]] = []
@@ -104,8 +87,6 @@ def _dag_source_writes_enabled() -> bool:
     rce = os.environ.get("ALLOW_RCE_TOOLS", "").strip().lower()
     return app_env in {"development", "dev", "local", "test"} and rce in {"true", "1", "yes", "on"}
 
-
-# ── Watermark ─────────────────────────────────────────────────────────────────
 
 @tool(
     name="watermark_get",
@@ -216,8 +197,6 @@ def watermark_set(
         conn.commit()
     return {"saved": True, "cartridge_id": cartridge_id, "entity": entity, "value": value}
 
-
-# ── Pipeline run log ──────────────────────────────────────────────────────────
 
 @tool(
     name="pipeline_run_save",
@@ -387,8 +366,6 @@ def pipeline_run_save(
     }
 
 
-# ── DAG source storage ────────────────────────────────────────────────────────
-
 @tool(
     name="dag_save_source",
     description=(
@@ -486,8 +463,6 @@ def dag_get_source(cartridge_id: str, dag_id: str) -> dict:
         return {"found": False, "cartridge_id": cartridge_id, "dag_id": dag_id,
                 "error": str(exc)}
 
-    # 1. Airflow-visible disk source is canonical. Refresh the DB mirror so
-    # Studio/export cannot keep showing old code after a deploy or hotfix.
     for label, dag_path in _dag_source_candidates(cartridge_id, dag_id):
         if not dag_path.exists():
             continue
@@ -504,7 +479,6 @@ def dag_get_source(cartridge_id: str, dag_id: str) -> dict:
             "source_code":  source_code,
         }
 
-    # 2. DB fallback is only a legacy snapshot. It must not win over disk.
     with _conn() as conn, conn.cursor() as cur:
         cur.execute(
             "SELECT source_code, updated_at FROM cartridge_dags "

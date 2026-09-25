@@ -1,13 +1,3 @@
-"""P5 — cartridge assistant_hints are attacker-controllable (a marketplace
-cartridge ships them) and get injected into the agent system prompt inside a
-``<hints_cartucho>`` wrapper. These tests pin the runtime hardening:
-
-  * wrapper / chat-template tokens embedded in a hint are neutralised so a
-    malicious hint cannot break out of the wrapper and fake a trusted
-    ``<system>`` turn;
-  * benign ``<`` usage is left intact (no over-escaping);
-  * an oversized hint is hard-capped so it cannot crowd out the prompt.
-"""
 from __future__ import annotations
 
 import sys
@@ -65,12 +55,9 @@ def test_hints_wrapper_breakout_is_neutralized(agent_runtime):
     )
     out = agent_runtime._build_system_prompt(agent, malicious)
 
-    # The legit wrapper close tag the builder adds is still there exactly once;
-    # the injected one inside the hint has been neutralised.
     assert out.count("</hints_cartucho>") == 1
     assert "<system>" not in out
     assert "</system>" not in out
-    # Neutralised forms appear as inert text, and the benign advice survives.
     assert "&lt;/hints_cartucho&gt;" in out
     assert "&lt;system&gt;" in out
     assert "buen consejo" in out
@@ -87,7 +74,6 @@ def test_chat_template_tokens_are_neutralized(agent_runtime):
 
 
 def test_benign_angle_brackets_are_not_escaped(agent_runtime):
-    """No over-escaping: a hint that legitimately uses ``<`` must pass through."""
     agent = _agent(agent_runtime)
     benign = "Filtra por horas < 5 y usa el dataset de timesheets."
     out = agent_runtime._build_system_prompt(agent, benign)
@@ -101,14 +87,11 @@ def test_oversized_hints_are_capped(agent_runtime):
     out = agent_runtime._build_system_prompt(agent, "x" * 20000)
 
     assert "[...HINTS TRUNCADOS" in out
-    # The capped run is present, but nothing longer than the cap survives.
     assert ("x" * cap) in out
     assert ("x" * (cap + 1)) not in out
 
 
 def test_invalidate_hint_cache_drops_entry(agent_runtime):
-    """The invalidation primitive the import path relies on actually removes the
-    cached hints so the next read re-fetches from the DB."""
     import time as _t
 
     agent_runtime._hints_cache["replicon"] = ("stale hints", _t.time())
@@ -117,9 +100,6 @@ def test_invalidate_hint_cache_drops_entry(agent_runtime):
 
 
 def test_import_cartridge_invalidates_hint_cache_after_write():
-    """Tarea 3 wiring: import_cartridge (the runtime path that rewrites
-    cartridges.assistant_hints) must drop the in-process hints cache, otherwise
-    the copilot serves stale hints for up to the cache TTL after an import."""
     src = (REPO_ROOT / "console" / "app" / "services" / "cartridge_service.py").read_text(
         encoding="utf-8"
     )

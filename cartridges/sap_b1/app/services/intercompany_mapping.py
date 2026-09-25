@@ -1,4 +1,3 @@
-"""The intercompany mapping itself: parsing, validation and the Bronze shape."""
 from __future__ import annotations
 
 import re
@@ -21,7 +20,6 @@ class IntercompanyPartner:
 
 
 def parse_intercompany(spec: str) -> list[IntercompanyPartner]:
-    """``mx_mfg:C-IC-DIST-A=mx_dist_a,mx_dist_a:V-IC-MFG=mx_mfg`` → partners."""
     partners: list[IntercompanyPartner] = []
     seen: set[tuple[str, str]] = set()
     for chunk in (spec or "").replace(";", ",").split(","):
@@ -48,7 +46,6 @@ def parse_intercompany(spec: str) -> list[IntercompanyPartner]:
 
 
 def validate_against_companies(partners: list[IntercompanyPartner], aliases: Iterable[str]) -> None:
-    """Every company named in the mapping must be a configured company."""
     known = set(aliases)
     if not known:
         return

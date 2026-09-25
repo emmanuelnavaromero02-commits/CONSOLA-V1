@@ -1,12 +1,3 @@
-"""Fase 6 — executable proof that the Employee Central anomaly signal
-materializes. Runs the REAL gold SQL (sap_successfactors_employees_anomalies.sql)
-through DuckDB over synthetic employee_360 gold + fojobcode silver parquet.
-
-Until now Phase-6 acceptance was 100% static (ordering/columns/labels); nothing
-executed the SQL, so nobody could prove a real anomaly row actually lights up.
-This closes that gap deterministically and reuses the DuckDB parquet harness
-pattern from tests/test_talent_nine_box_downstream.py.
-"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -81,8 +72,6 @@ def test_anomalies_materialize_three_types_and_exclude_clean_and_inactive(tmp_pa
         emp_path, fojob_path = _write_inputs(
             con,
             tmp_path,
-            # clean active (no anomaly), blank dept, null manager, bad job code,
-            # and an inactive employee that is dirty on every axis (must be excluded)
             "('u-clean',    'Clean Active', 'D1',  'M1',  'J1',   TRUE), "
             "('u-nodept',   'No Dept',      '',    'M1',  'J1',   TRUE), "
             "('u-nomgr',    'No Manager',   'D1',  NULL,  'J2',   TRUE), "
@@ -100,7 +89,6 @@ def test_anomalies_materialize_three_types_and_exclude_clean_and_inactive(tmp_pa
             ("u-nomgr", "missing_manager", "low"),
         ]
 
-        # schema contract preserved
         cols = [c[0] for c in con.execute("DESCRIBE anomalies").fetchall()]
         assert cols == EXPECTED_COLUMNS
     finally:

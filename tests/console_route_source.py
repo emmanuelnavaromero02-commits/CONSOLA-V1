@@ -10,13 +10,6 @@ CONSOLE_DOMAINS = REPO_ROOT / "console" / "app" / "domains"
 
 
 def console_route_source() -> str:
-    """Return the static console route source after the v1 router split.
-
-    Older guard tests inspected only console/app/main.py because every
-    endpoint lived there. The production contract is now main.py plus the v1
-    route modules. Normalize @router decorators to @app so existing route
-    regex/AST assertions keep checking the same API contract.
-    """
     parts = [CONSOLE_MAIN.read_text(encoding="utf-8")]
     parts.extend(
         path.read_text(encoding="utf-8").replace("@router.", "@app.")

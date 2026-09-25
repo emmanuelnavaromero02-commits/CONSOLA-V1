@@ -1,14 +1,3 @@
-"""Phase 2 Block B — SAP HCM silver/gold datasets.
-
-13 silver + 8 gold dataset SQL files in cartridges/sap_hcm/datasets/, registered
-in the `datasets` catalog via infra/init/80_sap_hcm_datasets_seed.sql (a
-migration, mirroring how Replicon seeds its catalog — the cartridge seed guard
-intentionally disallows INSERT INTO datasets / INSERT ... SELECT).
-
-Static checks (no live DuckDB): every file parses, headers are well-formed,
-the migration and the files agree, declared sources are real HCM entities, and
-no gold exposes an encrypted column raw (privacy by design).
-"""
 from __future__ import annotations
 
 import json
@@ -90,8 +79,6 @@ def test_migration_is_idempotent_and_scoped():
     sql = MIGRATION_80.read_text(encoding="utf-8")
     assert "ON CONFLICT (name) DO NOTHING" in sql
     assert "'80_sap_hcm_datasets_seed.sql'" in sql
-    # Every seeded row's cartridge column is sap_hcm; no other cartridge appears
-    # as a quoted catalog value (prose comments may name Replicon as the model).
     assert "$seed$sap_hcm$seed$" in sql
     for other in ("$seed$replicon$seed$", "$seed$sap_successfactors$seed$", "$seed$sap_s4hana$seed$"):
         assert other not in sql, f"migration seeds another cartridge: {other}"
@@ -109,8 +96,6 @@ def test_declared_sources_are_real_hcm_entities():
 
 
 def test_golds_do_not_expose_encrypted_columns():
-    # Privacy by design: birth date (Gbdat) is encrypted in bronze; no gold may
-    # surface it raw or under its silver alias.
     for path in _dataset_files():
         _, layer, _, _ = _parse_header(path)
         if layer != "gold":

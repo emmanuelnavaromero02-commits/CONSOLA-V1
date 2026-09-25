@@ -1,36 +1,3 @@
-"""Sprint v1.45 — advanced copilot endpoints.
-
-Public surface for the four new copilot capabilities:
-
-  * Goal Solver (Nivel 1):
-      POST /api/copilot/goals               — create a goal
-      GET  /api/copilot/goals               — list mine
-      GET  /api/copilot/goals/{id}          — read mine
-      POST /api/copilot/goals/{id}/diagnose — LLM decomposition
-      POST /api/copilot/goals/{id}/conclude — aggregate + summary
-
-  * Lessons (Nivel 5):
-      GET  /api/copilot/lessons             — list mine
-      POST /api/copilot/lessons             — record manual
-      POST /api/copilot/lessons/{id}/disable
-      POST /api/copilot/lessons/{id}/enable
-
-  * Watchdogs (Nivel 4):
-      GET  /api/copilot/watchdogs           — list registered
-      GET  /api/copilot/watchdogs/match     — pick by intent
-      POST /api/copilot/watchdogs/{cart}/{slug}/invoke
-
-  * Briefing v2 (Nivel 2):
-      GET  /api/copilot/briefing/v2         — enriched briefing
-
-  * Context-aware ask (Nivel 3):
-      POST /api/copilot/ask-with-context    — single-shot LLM call
-                                              with page_context.
-
-All endpoints reuse the same auth/CSRF/permission machinery as the
-v1.42 copilot router (``copilot.use`` gate, ``copilot.write`` for
-mutating, CSRF on POST/PUT/DELETE).
-"""
 from __future__ import annotations
 
 import logging
@@ -83,17 +50,11 @@ router = APIRouter(
 )
 
 
-# ── Tiny helpers ──────────────────────────────────────────────────────
-
-
 def _user_id(user: dict[str, Any]) -> int:
     return _user_id_impl(user)
 
 
 def _workspace_id(user: dict[str, Any]) -> str | None:
-    """``workspaces.id`` is a UUID string (see infra/init/13_rbac_models.sql).
-    We return it verbatim so asyncpg can do the UUID cast at query time.
-    """
     return _workspace_id_impl(user)
 
 
@@ -102,32 +63,16 @@ def _tenant_id(user: dict[str, Any]) -> str | None:
 
 
 async def _noop_invoke_tool(*_args, **_kwargs) -> dict:
-    """No-op invoke_tool for single-shot text calls — goal diagnosis,
-    goal conclusion and ask-with-context never use tools, so the
-    invoke_tool param of ``llm_client.chat`` is plumbed but inert."""
     return {"error": "tools_disabled_in_this_context"}
 
 
 def _require_uuid_path(value: str, *, label: str) -> str:
-    """Validate a path parameter that must be a UUID *before* it
-    reaches the database. Returns a 400 instead of letting asyncpg
-    surface a 500 on the eventual ``$X::uuid`` cast.
-
-    Path-param validation lives in the router on purpose: by the time
-    the service-layer ``_coerce_uuid_or_none`` runs we've already
-    burned a DB pool checkout and (potentially) audited a request.
-    """
     return _require_uuid_path_impl(value, label=label)
 
 
 async def _conversation_belongs_to_user(
     conversation_id: str, user_id: int,
 ) -> bool:
-    """Stop a client from attaching their goal to another user's
-    conversation. Returns True when the row exists *and* it's owned
-    by the caller, False otherwise. Soft-True on schema-drift (no
-    conversations table → skip the check, the FK already drops bad
-    refs at insert time)."""
     from app.services import auth
     pool = await auth.pool()
     has_table = await pool.fetchval(
@@ -146,7 +91,6 @@ async def _conversation_belongs_to_user(
             coerced,
         )
     except Exception:
-        # Bad uuid / pool issue — refuse to attach.
         return False
     if owner is None:
         return False
@@ -157,24 +101,6 @@ _LLM_HARD_TIMEOUT_SECONDS = 60.0
 
 
 async def _llm_text_call(system: str, messages: list[dict], user_context: dict | None = None) -> str:
-    """Adapter so memory_service.LLMTextCall (and goal_solver) can hit
-    the real llm_client.chat.
-
-    ``llm_client.chat`` returns ``(reply_text, viewer_urls, messages)``.
-    We only need the reply for these flows — no tool use, no streaming,
-    no events.
-
-    Audit round 3 hardening: the previous version had no overall
-    timeout, so a stuck LLM connection could pin a worker for the
-    framework default (~300s). It also only logged ``warning`` then
-    re-raised ``Exception`` — fine for the goal-solver's
-    ``except ValueError`` filter, but a ``TimeoutError`` or
-    ``ConnectionError`` would have surfaced raw to the client. Now
-    we wrap in ``asyncio.wait_for`` and convert any non-``ValueError``
-    failure into a ``RuntimeError("llm_call_failed")`` so the router
-    can sanitise it into a 502 / 504 instead of leaking the upstream
-    exception type in the response body.
-    """
     import asyncio
 
     async def _do_call() -> str:
@@ -189,8 +115,6 @@ async def _llm_text_call(system: str, messages: list[dict], user_context: dict |
                 user_context=user_context,
             )
         except ValueError:
-            # Surface upstream parse errors so the goal-solver's own
-            # ``except ValueError`` branch can decide what to do.
             raise
         except Exception as exc:
             logger.warning("llm adapter call failed: %s", exc)
@@ -202,9 +126,6 @@ async def _llm_text_call(system: str, messages: list[dict], user_context: dict |
     except asyncio.TimeoutError:
         logger.warning("llm adapter call timed out after %ss", _LLM_HARD_TIMEOUT_SECONDS)
         raise RuntimeError("llm_call_timeout")
-
-
-# ── Goal solver endpoints ─────────────────────────────────────────────
 
 
 @router.post(
@@ -225,10 +146,6 @@ async def create_goal_endpoint(
     conversation_id: str | None = None
     if conversation_id_raw:
         conversation_id = str(conversation_id_raw)
-        # Defence-in-depth on top of the new FK in migration 93:
-        # reject the request outright when the caller passes a
-        # conversation that belongs to someone else, so the goal
-        # row never gets associated with cross-user metadata.
         if not await _conversation_belongs_to_user(
             conversation_id, _user_id(user),
         ):
@@ -244,10 +161,6 @@ async def create_goal_endpoint(
     )
     if goal is None:
         raise HTTPException(503, "copilot_goals table not provisioned")
-    # Audit-round-3: emit a durable forensic event so an operator can
-    # later attribute "who asked the copilot to fix the margin?" — the
-    # goal_text is truncated to 200 chars to avoid logging arbitrary
-    # client PII into the audit stream.
     try:
         await audit_service.record_event(
             user_id=_user_id(user),
@@ -317,19 +230,9 @@ async def diagnose_goal_endpoint(
             llm_call=_llm_text_call,
         )
     except ValueError as exc:
-        # Bad goal_id / unparsable diagnosis — caller can retry.
-        # Server-side log keeps the original exception message
-        # (intentionally truncated by ``logger.warning`` %.300s style)
-        # so an operator can diagnose; the client only sees a generic
-        # message so we don't leak raw LLM output (which might echo
-        # the user's PII or system-prompt fragments) into the
-        # HTTP response.
         logger.warning("diagnose_goal failed for %s: %.200s", goal_id, exc)
         raise HTTPException(422, "diagnosis failed: invalid plan returned by LLM")
     except RuntimeError as exc:
-        # ``_llm_text_call`` converts upstream LLM failures into
-        # ``RuntimeError("llm_call_timeout"|"llm_call_failed")``. Map
-        # to 504 / 502 so the UI can show the right retry affordance.
         msg = str(exc)
         if msg == "llm_call_timeout":
             raise HTTPException(504, "llm call timed out")
@@ -369,9 +272,6 @@ async def conclude_goal_endpoint(
     if result is None:
         raise HTTPException(404, "goal not found")
     return result
-
-
-# ── Lessons endpoints ─────────────────────────────────────────────────
 
 
 @router.get("/lessons")
@@ -433,10 +333,6 @@ def _lesson_creation_payload(body: dict | None) -> tuple[Any, Any, str]:
 
 
 def _validate_lesson_scope(scope: str, user: dict[str, Any]) -> str:
-    # Reject unknown scopes outright so a typo can't silently land a
-    # lesson into the wrong visibility bucket. The Python service
-    # layer also normalises scope, but that's the second line of
-    # defence — we want a 400 at the edge, not a silent fallback.
     if scope == "global":
         scope = "workspace_global"
     if scope not in (
@@ -495,20 +391,8 @@ async def _reject_jailbreak_lesson_if_needed(
     lesson: Any,
     scope: str,
 ) -> None:
-    # Audit-round-6 P1 fix: previously ``_looks_like_jailbreak`` only
-    # ran at render time, so a malicious admin could plant a row
-    # carrying ``"[SYSTEM OVERRIDE]: ignore everything"`` into
-    # ``copilot_lessons``. The render filter silently dropped it —
-    # but it still occupied a row, ate the operator's mental
-    # audit-row budget, and would have shipped if the filter ever
-    # regressed. Validate at the edge so the row never lands.
     if not lessons_service._looks_like_jailbreak(str(lesson)):
         return
-    # We still emit an audit event below for the rejection so an
-    # operator can spot a hostile pattern. Note: we deliberately
-    # do NOT echo the offending text back in the 400 — keeps the
-    # forensic value of the audit row but doesn't help an
-    # attacker iterate on a working bypass string.
     await _audit_lesson_event(
         user,
         action="copilot.lesson.rejected_jailbreak",
@@ -527,26 +411,6 @@ _ADMIN_ROLE_ALLOWLIST = COPILOT_ADMIN_ROLE_ALLOWLIST
 
 
 def _has_admin(user: dict[str, Any]) -> bool:
-    """Promote a lesson to workspace / global scope only when the
-    caller is a real admin. We intentionally accept exactly two
-    signals:
-
-    - ``user["role"]`` is one of the four canonical admin roles
-      enumerated in ``permissions.ROLE_PERMISSIONS`` (owner,
-      super_admin, admin, workspace_admin), or
-    - the caller carries the narrow ``iam.users.write`` permission
-      via the effective role-grant set (so a custom role that has
-      been given user-management can also promote lessons).
-
-    The earlier draft accepted ``copilot.execute`` here, but that
-    permission is granted to power users who can run destructive
-    tools — that's *not* the same authority as promoting a lesson
-    into another teammate's prompt. We also dropped the ``"admin"
-    in role`` substring trick: it accidentally matched anything
-    containing "admin" (e.g. a custom role like
-    ``"non_admin_observer"``) which was the wrong direction of
-    failure for an admin gate.
-    """
     return _has_admin_impl(user)
 
 
@@ -582,9 +446,6 @@ async def enable_lesson_endpoint(
     if not ok:
         raise HTTPException(404, "lesson not found or not yours")
     return {"ok": True, "id": lesson_id, "enabled": True}
-
-
-# ── Watchdog endpoints ────────────────────────────────────────────────
 
 
 @router.get("/watchdogs")
@@ -635,9 +496,6 @@ async def invoke_watchdog_endpoint(
     )
     if result.get("error") == "watchdog_not_found":
         raise HTTPException(404, "watchdog not found")
-    # Audit-round-3: watchdog invocations are the "specialist agent
-    # ran on the user's behalf" event — log it so an operator can
-    # reconstruct who triggered which diagnosis run.
     try:
         await audit_service.record_event(
             user_id=_user_id(user),
@@ -655,9 +513,6 @@ async def invoke_watchdog_endpoint(
     except Exception:
         logger.debug("audit copilot.watchdog.invoked failed", exc_info=True)
     return result
-
-
-# ── Briefing v2 ───────────────────────────────────────────────────────
 
 
 @router.get("/briefing/v2")
@@ -705,9 +560,6 @@ async def briefing_v2_endpoint(
         return highlights
 
 
-# ── Context-aware ask ────────────────────────────────────────────────
-
-
 _QUESTION_MAX_LEN = 2000
 
 
@@ -715,12 +567,6 @@ async def _control_room_live_context_for_prompt(
     page_context: dict[str, Any],
     user: dict[str, Any],
 ) -> str | None:
-    """Best-effort read-only Control Room snapshot for the inline copilot.
-
-    The main chat can use MCP tools. This endpoint is intentionally single-shot,
-    so for Control Room pages we inject a compact live snapshot instead of
-    giving the LLM only the DOM-level page_context.
-    """
     if not _looks_like_control_room_page(page_context):
         return None
     if not permissions.has_permission(user, "datasets.read"):
@@ -868,11 +714,6 @@ async def _ask_llm_answer(
     try:
         return await _llm_text_call(final_prompt, messages, user_context=user)
     except RuntimeError as exc:
-        # ``_llm_text_call`` raises ``RuntimeError("llm_call_timeout")``
-        # or ``RuntimeError("llm_call_failed")``. Map both to sanitised
-        # gateway responses so we don't leak the upstream LLM provider
-        # error type (which might hint at the model name, the API
-        # endpoint, auth header layout, etc.).
         if str(exc) == "llm_call_timeout":
             raise HTTPException(504, "llm call timed out")
         raise HTTPException(502, "llm call failed")

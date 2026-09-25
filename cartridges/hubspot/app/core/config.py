@@ -50,7 +50,6 @@ class Settings(BaseSettings):
     database_url_override: str | None = Field(default=None, alias="DATABASE_URL")
     gold_database_url_override: str | None = Field(default=None, alias="GOLD_DATABASE_URL")
 
-    # HubSpot CRM API (v3) — REST, cursor-paginated, Private App bearer token.
     hubspot_base_url:   str = "https://api.hubapi.com"
     hubspot_api_token:  str | None = (
         os.environ.get("HUBSPOT_API_TOKEN")
@@ -60,12 +59,10 @@ class Settings(BaseSettings):
     hubspot_page_size:  int = 100
     hubspot_timeout:    int = 120
 
-    # PostgreSQL fallback (used when vault is unreachable)
     pg_host:     str = "postgres"
     pg_port:     int = 5432
     pg_db:       str = "modecissions"
 
-    # MinIO fallback
     minio_endpoint: str = Field(
         default_factory=lambda: os.environ.get("LAKEHOUSE_ENDPOINT") or "minio:9000"
     )
@@ -87,12 +84,10 @@ class Settings(BaseSettings):
         default_factory=lambda: os.environ.get("AWS_SESSION_TOKEN", "")
     )
 
-    # Airflow — si está configurado, extract() delega al DAG en lugar de correr inline
-    airflow_url:      str | None = None   # e.g. http://airflow:8080
+    airflow_url:      str | None = None
     airflow_user:     str | None = None
     airflow_password: str | None = None
 
-    # Demo
     use_demo_data: bool = False
 
     model_config = SettingsConfigDict(

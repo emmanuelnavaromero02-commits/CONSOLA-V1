@@ -1,16 +1,3 @@
-"""9-box must fail closed on non-finite and out-of-range scores.
-
-TRY_CAST only rejects values that cannot be parsed. It happily returns -1.0,
-NaN, Infinity and 1000.0, and the banding that follows turns them into a real
-box: Infinity/20 lands above the high threshold, 1000/20 = 50 does too, and
-NaN compares false against every bound so it falls through to 'low'. All four
-then count as classified and reach Control Room as recommendations.
-
-These regressions run the packaged dataset SQL against DuckDB and pin the
-single normalization that must reject them before any band, box, candidate or
-signal is computed.
-"""
-
 from __future__ import annotations
 
 import math
@@ -27,7 +14,6 @@ DATASETS = ROOT / "cartridges/sap_successfactors/datasets"
 SHARED_SQL = ROOT / "refinement/app/sql"
 NINE_BOX = DATASETS / "sap_successfactors_talent_9box.sql"
 
-# The exact values reproduced by the independent audit.
 INVALID_CASES = [
     pytest.param(-1.0, id="negative"),
     pytest.param(float("nan"), id="nan"),
@@ -45,7 +31,6 @@ VALID_CASES = [
 
 
 def _normalization_sql() -> str:
-    """The reusable normalization the packaged SQL must apply."""
     body = NINE_BOX.read_text(encoding="utf-8")
     assert (
         "talent_percent_scale" in body
@@ -109,22 +94,17 @@ def test_percent_scores_are_never_reinterpreted_as_five_point_ratings(
 def test_nine_box_sql_validates_finiteness_before_banding():
     body = NINE_BOX.read_text(encoding="utf-8")
 
-    # The raw TRY_CAST chain that let Infinity through must be gone from the
-    # scoring stage: every score is routed through the shared normalization.
     assert "talent_percent_scale(" in body
     scored = body.split("scored AS (", 1)[1].split("banded AS (", 1)[0]
     assert "TRY_CAST(performance_score AS DOUBLE) > 5" not in scored
     assert "TRY_CAST(competency_score AS DOUBLE) > 5" not in scored
 
 
-# The datasets that turn a raw score into a scale, a band or a CPA figure.
 SCORING_DATASETS = [
     "sap_successfactors_talent_employee_profile.sql",
     "sap_successfactors_talent_cpa_scores.sql",
     "sap_successfactors_talent_9box.sql",
 ]
-# The datasets downstream of them: they consume already-normalized columns and
-# must never reintroduce a raw cast of their own.
 CONSUMING_DATASETS = [
     "sap_successfactors_talent_action_candidates.sql",
     "sap_successfactors_talent_signals.sql",
@@ -146,7 +126,6 @@ def test_consuming_datasets_never_recast_raw_scores(dataset):
 
 
 def test_invalid_scores_never_reach_control_room_serialization():
-    """No NaN or Infinity may be serialized publicly."""
     api = (ROOT / "console/app/services/control_room/api.py").read_text(
         encoding="utf-8"
     )
@@ -184,7 +163,6 @@ def test_control_room_never_treats_invalid_scores_as_available(value):
 
 
 def test_refinement_image_contains_the_canonical_score_macro():
-    """The product image cannot depend on a repository path it never copies."""
     packaged = ROOT / "refinement/app/sql/talent_score_scale.sql"
     engine = (ROOT / "refinement/app/duckdb_engine.py").read_text(encoding="utf-8")
 

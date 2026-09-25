@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Probe the live Bayesian calibration loop without tenant credentials."""
 
 from __future__ import annotations
 

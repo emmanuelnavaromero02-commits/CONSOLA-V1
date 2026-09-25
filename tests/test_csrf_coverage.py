@@ -1,29 +1,3 @@
-"""Sprint v1.22 — CSRF coverage on state-changing routes.
-
-v1.22 added `require_csrf` to 17 state-changing routes (the POST/PATCH/
-DELETE/PUT subset of the v1.21 gap list). This file pins those wins and
-prevents regressions:
-
-  test_v22_csrf_fixes_are_in_place
-      The 17 routes v1.22 fixed MUST have CSRF declared. A future PR
-      that drops the dep here fails the test.
-
-  test_no_state_changing_route_is_csrf_free
-      Every state-changing route in the app must EITHER have CSRF
-      declared OR be in one of two allowlists:
-        - CSRF_EXEMPT_BY_DESIGN: /auth/login, /auth/refresh, etc.
-        - KNOWN_CSRF_GAPS_FOR_LATER: pre-existing routes that v1.22
-          didn't touch (29 routes flagged for a follow-up sprint).
-      A NEW state-changing route without CSRF that's not in either
-      allowlist fails the test loudly.
-
-  test_known_csrf_gap_list_only_contains_gaps_that_still_exist
-      Same shrink-as-fixed enforcement as v1.21's gap list. When a
-      follow-up sprint adds CSRF to a listed route, the cleanup must
-      remove the entry from KNOWN_CSRF_GAPS_FOR_LATER.
-
-Pure AST inspection — no FastAPI imports, no DB.
-"""
 from __future__ import annotations
 
 import ast
@@ -37,17 +11,10 @@ from tests.console_route_source import console_route_source
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONSOLE_MAIN = REPO_ROOT / "console" / "app" / "main.py"
 
-# State-changing HTTP methods. GETs are excluded from CSRF (they should
-# be side-effect-free; if a GET mutates state, the route is bugged in a
-# different way).
 STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
-# ── The 17 state-changing fixes v1.22 landed ────────────────────────
-
-
 V22_CSRF_FIXES = frozenset({
-    # 15 routes that already had auth — v1.22 added CSRF
     ("/assistant/chat",                             "POST"),
     ("/api/bronze/query",                           "POST"),
     ("/studio/chat",                                "POST"),
@@ -64,50 +31,23 @@ V22_CSRF_FIXES = frozenset({
     ("/api/admin/users/{user_id}/reinvite",         "POST"),
     ("/api/admin/users/{user_id}/send-reset",       "POST"),
     ("/auth/refresh",                               "POST"),
-    # 2 routes that had neither auth nor CSRF — v1.22 added both
     ("/monitoring/invoke",                          "POST"),
     ("/api/dags/parse",                             "POST"),
 })
 
 
-# Routes that are STATE-CHANGING but legitimately CSRF-exempt.
-# Each entry needs a one-line rationale in the matching code comment.
 CSRF_EXEMPT_BY_DESIGN = frozenset({
-    # Login creates the session — no cookie exists yet to drive a CSRF
-    # double-submit check. The route already has require_csrf as a
-    # decorator-level dep (it's a per-form token); listed here for
-    # completeness so the test understands the route exists.
     ("/auth/login",         "POST"),
-    # Legacy compat alias for /auth/login. It delegates through the
-    # real handler and carries the same require_csrf dependency.
     ("/api/auth/login",     "POST"),
-    # Activation accepts a one-time invite token in the body — the
-    # token IS the credential, no cookie / no CSRF needed.
     ("/auth/activate",      "POST"),
-    # Airflow scheduled agent invocations do not carry a browser session;
-    # Console authorizes them with X-Agent-Runner-Token instead.
     ("/api/agents/{agent_id}/invoke/scheduled", "POST"),
 })
 
 
-# State-changing routes that DO have auth but don't have CSRF yet.
-# v1.22 deliberately did not touch these — the sprint spec scoped the
-# CSRF work to the 33-endpoint list it inherited from v1.21. These are
-# queued for a follow-up sprint. Adding entries here requires explicit
-# operator sign-off; removing an entry (because someone added CSRF to
-# the route) is always welcome.
 KNOWN_CSRF_GAPS_FOR_LATER = frozenset({
     ("/api/data/{dataset}/query",                                           "POST"),
     ("/monitoring/mcp/invoke",                                              "POST"),
-    # v1.21-shipped pages that change session state through the
-    # cookie chain — already have CSRF on the form POSTs:
-    #   /auth/logout, /auth/forgot-password, /auth/reset-password,
-    #   /api/me/change-password
-    # so they're not listed here.
 })
-
-
-# ── AST helpers ─────────────────────────────────────────────────────
 
 
 def _route_decorators(tree: ast.Module):
@@ -158,8 +98,6 @@ def _has_csrf(deco: ast.Call) -> bool:
 
 @pytest.fixture(scope="module")
 def console_state_changing_routes():
-    """Return a list of (path, method, decorator_ast) tuples for every
-    state-changing route declared on the app."""
     tree = ast.parse(console_route_source())
     routes = []
     for path, method, deco in _route_decorators(tree):
@@ -168,12 +106,8 @@ def console_state_changing_routes():
     return routes
 
 
-# ── Tests ───────────────────────────────────────────────────────────
-
-
 @pytest.mark.parametrize("path,method", sorted(V22_CSRF_FIXES))
 def test_v22_csrf_fixes_are_in_place(console_state_changing_routes, path, method):
-    """Each route v1.22 fixed must continue to declare require_csrf."""
     matches = [
         (p, m, d) for p, m, d in console_state_changing_routes
         if (p, m) == (path, method)
@@ -189,9 +123,6 @@ def test_v22_csrf_fixes_are_in_place(console_state_changing_routes, path, method
 
 
 def test_no_state_changing_route_is_csrf_free(console_state_changing_routes):
-    """Every state-changing route on console must have CSRF declared OR
-    be in one of the two explicit allowlists. A NEW state-changing route
-    without CSRF that's not in either allowlist fails this test."""
     bad = []
     for path, method, deco in console_state_changing_routes:
         if _has_csrf(deco):
@@ -210,10 +141,6 @@ def test_no_state_changing_route_is_csrf_free(console_state_changing_routes):
 
 
 def test_known_csrf_gap_list_only_contains_gaps_that_still_exist(console_state_changing_routes):
-    """When a follow-up sprint adds CSRF to a listed route, the cleanup
-    PR must remove that entry from KNOWN_CSRF_GAPS_FOR_LATER. This test
-    enforces that — a listed entry that now has CSRF fails loudly,
-    forcing the cleanup."""
     actual = {(p, m): _has_csrf(d) for p, m, d in console_state_changing_routes}
     stale = []
     fixed = []
@@ -237,12 +164,7 @@ def test_known_csrf_gap_list_only_contains_gaps_that_still_exist(console_state_c
 
 
 def test_csrf_exempt_routes_have_documented_rationale():
-    """Every entry in CSRF_EXEMPT_BY_DESIGN is explained by a comment in
-    THIS file (the comment block above the set). This test guards
-    against silently growing the exempt list — adding an entry without
-    a rationale fails the file-level check."""
     src = Path(__file__).read_text(encoding="utf-8")
-    # Find the CSRF_EXEMPT_BY_DESIGN block in the source
     start = src.index("CSRF_EXEMPT_BY_DESIGN = frozenset({")
     end = src.index("})", start)
     block = src[start:end]

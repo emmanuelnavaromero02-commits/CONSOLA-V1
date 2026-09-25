@@ -5,10 +5,6 @@ import types
 
 import app.main as _console_main
 
-# Import the current console runtime namespace, including private helper
-# functions used by legacy handlers. Handlers are rebound to app.main's
-# namespace before registration so existing tests and monkeypatches that
-# patch app.main.<helper> continue to affect the handler at runtime.
 globals().update(_console_main.__dict__)
 router = APIRouter()
 
@@ -29,16 +25,11 @@ def _bind_to_main(fn):
     _console_main.__dict__[fn.__name__] = rebound
     return rebound
 
-# /api/auth/login
 @router.post("/api/auth/login", dependencies=[Depends(require_csrf)])
 @_bind_to_main
 async def api_auth_login(request: Request, body: dict):
-    # Legacy compatibility alias for clients that still post to
-    # /api/auth/login. Delegate through the real handler so CSRF,
-    # rate-limit, and session behavior stay identical to /auth/login.
     return await auth_login(request, body)
 
-# /api/apps
 @router.get("/api/apps", dependencies=[Depends(require_permission("apps.read"))])
 @_bind_to_main
 async def api_apps(
@@ -51,7 +42,6 @@ async def api_apps(
         user, include_unready=include_unready, cartridge=cartridge
     )
 
-# /api/apps/{name}
 @router.delete(
     "/api/apps/{name}",
     dependencies=[

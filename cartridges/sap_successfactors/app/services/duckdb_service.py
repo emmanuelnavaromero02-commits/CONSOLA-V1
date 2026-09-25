@@ -42,8 +42,6 @@ def _get_duckdb_connection() -> duckdb.DuckDBPyConnection:
     conn.execute("SET autoload_known_extensions=false;")
     conn.execute("LOAD httpfs;")
     try:
-        # All values come from the provider-atomic resolver.  In particular,
-        # GCS never falls back to MINIO_* and signs with region ``auto``.
         conn.execute("SET s3_endpoint=?;", [storage.endpoint])
         conn.execute("SET s3_region=?;", [storage.region or "us-east-1"])
         if storage.access_key and storage.secret_key:
@@ -52,9 +50,6 @@ def _get_duckdb_connection() -> duckdb.DuckDBPyConnection:
             if storage.session_token:
                 conn.execute("SET s3_session_token=?;", [storage.session_token])
         elif storage.provider == "s3":
-            # The credential-chain provider lives in DuckDB's separately
-            # preinstalled aws extension. Autoload stays disabled, so load it
-            # explicitly only for native S3 role credentials.
             conn.execute("LOAD aws;")
             conn.execute(
                 "CREATE OR REPLACE SECRET omega_s3_role "

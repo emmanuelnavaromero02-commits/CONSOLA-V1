@@ -1,11 +1,3 @@
-"""CONSOLA-V1 is a public repository.
-
-Infrastructure identifiers are not secrets in the cryptographic sense, but
-published together they hand a reader the map: which instance to target, which
-account it lives in, and which address answers. They belong in the operator's
-local notes, not in the tree. This test is the guard that keeps them out.
-"""
-
 from __future__ import annotations
 
 import re
@@ -52,7 +44,6 @@ TEXT_SUFFIXES = {
 
 MAX_BYTES = 2_000_000
 
-# Documented, obviously-fake stand-ins that examples are allowed to use.
 PLACEHOLDER_ACCOUNTS = {"123456789012", "000000000000", "111111111111"}
 
 EC2_INSTANCE_ID = re.compile(r"\bi-[0-9a-f]{8,17}\b")

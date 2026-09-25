@@ -1,16 +1,10 @@
-// Sprint v1.11 phase 3 — extracted from decisions.html for strict CSP.
-//
-// All 15 inline on* handlers lived inside innerHTML-rendered markup, so they
-// are migrated to data-action / data-* attributes and dispatched through a
-// single body-level delegated listener at the bottom of this file.
-
 const OPS = ['>=', '>', '<=', '<', '=', '!='];
 let CURRENT_FILTER = 'all';
 let SELECTED_ID = null;
 let DATASETS_CACHE = null;
-let SCHEMA_CACHE = {};        // { dataset_name: [ {name, type}, ... ] }
-let ME = null;                // current user
-let USERS = [];               // list of users for assignee dropdown
+let SCHEMA_CACHE = {};
+let ME = null;
+let USERS = [];
 
 async function loadMe(){
   try {
@@ -32,8 +26,6 @@ async function loadMe(){
     <a href="#" data-action="logout">SALIR</a>`;
 }
 async function doLogout(){
-  // Sprint v1.9 CSRF: POST /auth/logout requires the token; read it
-  // from the csrf_token cookie (not HttpOnly).
   const m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
   const csrf = m ? decodeURIComponent(m[1]) : '';
   await fetch('/auth/logout', {
@@ -479,7 +471,6 @@ async function unlinkFollowUp(id){
   renderDetail(id);
 }
 
-// ── New decision modal ────────────────────────────────────────────────────
 
 function openNewModal(){
   const m = document.getElementById('modal-new');
@@ -556,7 +547,6 @@ async function submitNew(){
   selectDecision(d.id);
 }
 
-// ── Wiring ────────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-new').addEventListener('click', openNewModal);
@@ -569,7 +559,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // Single body-level delegation for every action emitted in innerHTML.
   document.body.addEventListener('click', (ev) => {
     const target = ev.target.closest('[data-action]');
     if (!target) return;
@@ -599,7 +588,6 @@ document.addEventListener('DOMContentLoaded', () => {
     } else if (action === 'remove-kpi') {
       removeKpi(Number(target.dataset.i));
     } else if (action === 'modal-backdrop') {
-      // Only close if the click landed on the backdrop itself, not a child.
       if (ev.target === target) closeNewModal();
     } else if (action === 'close-new-modal') {
       closeNewModal();

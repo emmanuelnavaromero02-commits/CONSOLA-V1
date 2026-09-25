@@ -1,5 +1,3 @@
-"""Deterministic Business One-shaped dataset for N companies over N months."""
-
 from __future__ import annotations
 
 import hashlib
@@ -32,7 +30,7 @@ TT_GOODS_RECEIPT_PO = 20
 TT_DELIVERY = 15
 TT_PRODUCTION_ISSUE = 60
 TT_PRODUCTION_RECEIPT = 59
-TT_TRANSFER = 67  # inventory transfer OWTR/WTR1: one OINM row out, one in
+TT_TRANSFER = 67
 APPL_OBJ_PRODUCTION_ORDER = "202"
 
 
@@ -62,7 +60,7 @@ class CompanyProfile:
     country: str
     local_currency: str
     sys_currency: str
-    role: str  # "manufacturer" | "distributor"
+    role: str
 
 
 DEFAULT_COMPANIES: Tuple[CompanyProfile, ...] = (
@@ -121,16 +119,16 @@ class MonthTruth:
     invoices_canceled: int = 0
     cancellation_docs: int = 0
     credit_memos: int = 0
-    revenue_gross_lc: Decimal = ZERO  # non-cancelled A/R invoice lines
-    credit_lc: Decimal = ZERO  # non-cancelled A/R credit memo lines
-    revenue_net_lc: Decimal = ZERO  # documents: gross minus credit memos, cancelled excluded at invoice month
+    revenue_gross_lc: Decimal = ZERO
+    credit_lc: Decimal = ZERO
+    revenue_net_lc: Decimal = ZERO
     revenue_net_sc: Decimal = ZERO
     revenue_account_lc: Decimal = ZERO
     revenue_account_sc: Decimal = ZERO
     cogs_lc: Decimal = ZERO
-    purchases_lc: Decimal = ZERO  # A/P invoice lines
-    intercompany_sales_lc: Dict[str, Decimal] = field(default_factory=dict)  # by buyer alias
-    intercompany_purchases_lc: Decimal = ZERO  # from the manufacturer
+    purchases_lc: Decimal = ZERO
+    intercompany_sales_lc: Dict[str, Decimal] = field(default_factory=dict)
+    intercompany_purchases_lc: Decimal = ZERO
 
     def as_dict(self) -> Dict[str, Any]:
         return {
@@ -158,10 +156,10 @@ class Dataset:
     months: int
     as_of: date
     companies: Tuple[CompanyProfile, ...]
-    tables: Dict[str, Dict[str, List[tuple]]]  # alias -> table -> rows
-    truth: Dict[str, Dict[str, MonthTruth]]  # alias -> "YYYY-MM" -> truth
-    closing_stock: Dict[str, Dict[Tuple[str, str], Decimal]]  # alias -> (item, whs) -> on hand
-    expired_batches: Dict[str, int]  # alias -> batches with stock and ExpDate < as_of
+    tables: Dict[str, Dict[str, List[tuple]]]
+    truth: Dict[str, Dict[str, MonthTruth]]
+    closing_stock: Dict[str, Dict[Tuple[str, str], Decimal]]
+    expired_batches: Dict[str, int]
 
     def row_counts(self) -> Dict[str, Dict[str, int]]:
         return {alias: {t: len(rows) for t, rows in tables.items()} for alias, tables in self.tables.items()}
@@ -178,11 +176,10 @@ class Dataset:
         return {alias: {m: t.as_dict() for m, t in months.items()} for alias, months in self.truth.items()}
 
 
-JournalLine = Tuple[str, Decimal, Decimal, Optional[str]]  # account, debit, credit, ShortName
+JournalLine = Tuple[str, Decimal, Decimal, Optional[str]]
 
 
 class _Company:
-    """Mutable generation state for one company (one HANA schema)."""
 
     def __init__(self, profile: CompanyProfile, rng: random.Random, ds: "_Builder") -> None:
         self.p = profile
@@ -190,17 +187,17 @@ class _Company:
         self.ds = ds
         self.rows: Dict[str, List[tuple]] = {t: [] for t in b1.TABLES}
         self.next_entry: Dict[str, int] = {}
-        self.next_trans = 1  # OJDT.TransId
-        self.next_inm = 1  # OINM.TransNum: one per stock transaction (document)
-        self.inm_group: Optional[Tuple[int, int]] = None  # (TransType, CreatedBy) of the open transaction
+        self.next_trans = 1
+        self.next_inm = 1
+        self.inm_group: Optional[Tuple[int, int]] = None
         self.inm_seq = 0
-        self.next_ibt = 1  # IBT1.LogEntry
+        self.next_ibt = 1
         self.next_batch_abs = 1
         self.next_sysnumber: Dict[str, int] = {}
         self.stock: Dict[Tuple[str, str], Decimal] = {}
-        self.batches: Dict[Tuple[str, str], List[List[Any]]] = {}  # (item, whs) -> [[sysno, dist, qty], ...]
-        self.batch_meta: Dict[Tuple[str, int], tuple] = {}  # (item, sysno) -> (dist, mnf, exp)
-        self.batch_numbers: set = set()  # (item, dist): a batch number is unique per item in B1
+        self.batches: Dict[Tuple[str, str], List[List[Any]]] = {}
+        self.batch_meta: Dict[Tuple[str, int], tuple] = {}
+        self.batch_numbers: set = set()
         self.truth: Dict[str, MonthTruth] = {}
         self.item_cost: Dict[str, Decimal] = {}
         self.item_price: Dict[str, Decimal] = {}
@@ -230,7 +227,6 @@ class _Company:
         return self.truth.setdefault(key, MonthTruth())
 
     def sys_rate(self, d: date) -> Decimal:
-        """Local-currency units per one unit of system currency on that day."""
         if self.p.sys_currency == self.p.local_currency:
             return Decimal("1")
         return self.ds.rates[(month_start(d, 0), self.p.sys_currency)]
@@ -296,7 +292,6 @@ class _Company:
 
     def journal(self, d: date, memo: str, obj_type: str, base_ref: int, lines: List[JournalLine],
                 storno_to: Optional[int] = None) -> int:
-        """Post a journal entry balanced in local AND system currency."""
         debit = sum((ln[1] for ln in lines), ZERO)
         credit = sum((ln[2] for ln in lines), ZERO)
         if q6(debit) != q6(credit):
@@ -324,7 +319,6 @@ class _Company:
         return trans
 
     def stamp(self, d: date) -> Dict[str, Any]:
-        """CreateDate/UpdateDate/TS for a document created on d; some get a later edit."""
         create_ts = hhmmss(self.rng)
         update_d, update_ts = d, create_ts
         if self.rng.random() < 0.10:
@@ -335,7 +329,6 @@ class _Company:
     def marketing_doc(self, header: str, line: str, obj_type: str, d: date, card: str, lines: List[Dict[str, Any]],
                       doc_type: str = "I", base: Optional[Tuple[int, int]] = None, canceled: str = "N",
                       num_at_card: Optional[str] = None, closed: bool = False) -> Tuple[int, Decimal, Decimal]:
-        """Write one header + lines; returns (DocEntry, net total LC, vat LC)."""
         entry = self.entry(header)
         sys_rate = self.sys_rate(d)
         net = ZERO
@@ -390,7 +383,6 @@ class _Company:
         raise KeyError(f"{header} {entry} not found")
 
     def link_target(self, line_table: str, base_entry: int, target_type: str, target_entry: int) -> None:
-        """Close the base document's lines and point them at the document drawn from them."""
         cols = b1.columns(line_table)
         idx = {c: i for i, c in enumerate(cols)}
         rows = self.rows[line_table]
@@ -420,7 +412,7 @@ class _Builder:
         self.bom: Dict[str, List[Tuple[str, Decimal]]] = {}
         self.rm_price: Dict[str, Decimal] = {}
         self.fg_cost: Dict[str, Decimal] = {}
-        self.rm_demand: Dict[str, Decimal] = {}  # units of each raw material per unit of every finished good, summed
+        self.rm_demand: Dict[str, Decimal] = {}
 
 
     def build_shared(self) -> None:
@@ -511,7 +503,7 @@ class _Builder:
                 card(f"C-{i:04d}", f"Cliente final sintetico {i}", "C", 100, customer_rfc(p.alias, f"C-{i:04d}"))
                 c.customers.append(f"C-{i:04d}")
             for fg in c.finished_goods:
-                c.item_cost[fg] = q6(self.fg_cost[fg] * Decimal("1.25"))  # the manufacturer's intercompany price
+                c.item_cost[fg] = q6(self.fg_cost[fg] * Decimal("1.25"))
                 c.item_price[fg] = q6(c.item_cost[fg] * Decimal("1.35"))
         for code in c.finished_goods + c.raw_materials:
             is_fg = code.startswith("FG-")
@@ -543,7 +535,6 @@ class _Builder:
 
     def purchase_chain(self, c: _Company, d: date, supplier: str, lines: List[Dict[str, Any]],
                        batch_prefix: Optional[str] = None, same_day: bool = False) -> None:
-        """PO -> goods receipt (stock in, batches) -> A/P invoice (journal)."""
         d = c.clamp(d)
         po, _, _ = c.marketing_doc("OPOR", "POR1", "22", d, supplier, lines, closed=True)
         d_receipt = d if same_day else c.clamp(d + timedelta(days=2))
@@ -568,7 +559,6 @@ class _Builder:
             truth.intercompany_purchases_lc += net
 
     def transfer(self, c: _Company, d: date, item: str, qty: Decimal, from_whs: str, to_whs: str) -> int:
-        """Inventory transfer (ObjType 67): the same document takes the quantity out of one warehouse and into another."""
         d = c.clamp(d)
         entry = c.entry("OWTR")
         price = c.item_cost[item]
@@ -584,7 +574,6 @@ class _Builder:
         return entry
 
     def production(self, c: _Company, d0: date, days: int, last_month: bool) -> None:
-        """Production orders start in the second week, after the month's receipts."""
         for n in range(6):
             fg = c.rng.choice(c.finished_goods)
             planned = Decimal(c.rng.randint(100, 400))
@@ -614,7 +603,6 @@ class _Builder:
                                 close + timedelta(days=c.rng.choice([120, 365, 540])), TT_PRODUCTION_RECEIPT, entry, 0)
 
     def sale_chain(self, c: _Company, d: date, customer: str, lines: List[Dict[str, Any]]) -> Tuple[int, Decimal, Decimal, date]:
-        """Order -> delivery (stock out, COGS journal, batches) -> A/R invoice (revenue journal)."""
         for ln in lines:
             ln["cost"] = c.item_cost[ln["item"]]
         d = c.clamp(d)
@@ -665,7 +653,6 @@ class _Builder:
 
     def cancel_invoice(self, c: _Company, inv: int, net: Decimal, vat: Decimal, customer: str,
                        lines: List[Dict[str, Any]], d_cancel: date, d_inv: date) -> None:
-        """B1 style: original CANCELED='Y', a cancellation document with CANCELED='C' whose lines are based on the original."""
         d_cancel = c.clamp(d_cancel)
         c.set_header("OINV", inv, CANCELED="Y", DocStatus="C", UpdateDate=ts(d_cancel), UpdateTS=hhmmss(c.rng))
         cancel_entry, _, _ = c.marketing_doc("OINV", "INV1", "13", d_cancel, customer, lines, canceled="C", base=(13, inv))
@@ -779,7 +766,6 @@ class _Builder:
 
 def generate(seed: int = 7, start_month: date = date(2024, 10, 1), months: int = 24,
              companies: Tuple[CompanyProfile, ...] = DEFAULT_COMPANIES) -> Dataset:
-    """Build the whole dataset in memory. Same arguments, same bytes."""
     if months < 1:
         raise ValueError("months must be >= 1")
     roles = {p.role for p in companies}

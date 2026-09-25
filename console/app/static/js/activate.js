@@ -1,4 +1,3 @@
-// Sprint v1.11 — extracted from activate.html for strict CSP.
 const TOKEN = new URLSearchParams(location.search).get('token') || '';
 
 function csrfToken() {

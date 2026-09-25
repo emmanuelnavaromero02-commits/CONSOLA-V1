@@ -5,14 +5,6 @@ import secrets
 
 
 def _runtime_env() -> str:
-    """Return the current runtime environment name (lowercased).
-
-    v1.43.2: default flipped from ``development`` to
-    ``production``. A misconfigured deploy that forgets to set APP_ENV
-    used to silently enable dangerous tools (airflow_create_dag,
-    vault mutating ops, etc.). Now it falls back to the safer mode and
-    operators have to opt into dev behaviour explicitly via
-    APP_ENV=development in their docker-compose env."""
     return (
         os.environ.get("APP_ENV")
         or os.environ.get("ENV")
@@ -22,11 +14,6 @@ def _runtime_env() -> str:
 
 
 def required_secret(name: str, dev_default: str | None = None) -> str:
-    """Return env var `name`, failing loudly in production if absent.
-
-    - In production/prod: raises RuntimeError if the var is unset.
-    - In other envs: returns dev_default if provided, else raises RuntimeError.
-    """
     value = os.environ.get(name)
     if value:
         return value

@@ -12,7 +12,6 @@ class ControlRoomApprovalRequest(_StrictRequest):
 
 
 class ControlRoomThresholdRequest(BaseModel):
-    """Preserve the legacy threshold shape while validating its boolean switch."""
 
     model_config = ConfigDict(extra="allow", strict=True)
 

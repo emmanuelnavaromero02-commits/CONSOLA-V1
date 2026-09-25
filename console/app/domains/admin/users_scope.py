@@ -1,5 +1,3 @@
-"""Workspace-scoped admin user visibility helpers."""
-
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
@@ -146,8 +144,6 @@ async def visible_user_ids_for_admin(
 ) -> set[int]:
     if is_global_iam_admin(admin_user):
         return {int(u["id"]) for u in users if u.get("id") is not None}
-    # Scope del ADMIN: solo los workspaces donde tiene rol IAM-admin (cierra el
-    # leak horizontal). El candidato se sigue resolviendo con session_ids amplio.
     admin_scope = admin_workspace_ids or session_workspace_ids
     workspace_ids = sorted(admin_scope(admin_user))
     if not workspace_ids:
@@ -250,9 +246,6 @@ async def assert_can_manage_target_user(
 ) -> None:
     if is_global_iam_admin(admin_user):
         return
-    # Solo cuenta como "membresia" para GESTIONAR a un usuario objetivo el
-    # workspace donde el actor es IAM-admin; ser viewer en el workspace
-    # compartido no habilita PATCH/DELETE (cierre del leak horizontal a write).
     admin_scope = admin_workspace_ids or session_workspace_ids
     memberships = admin_scope(admin_user)
     if not memberships:

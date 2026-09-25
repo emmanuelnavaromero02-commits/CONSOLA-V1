@@ -1,4 +1,2 @@
-/* Compatibility shim.
-   The canonical design tokens live in tokens.css; this file remains only
-   for older pages/imports that still reference theme.css directly. */
+
 @import url("./tokens.css");

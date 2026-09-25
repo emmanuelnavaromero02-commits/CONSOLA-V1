@@ -19,7 +19,6 @@ async def require_no_legacy_action_reservation(
     template_id: str,
     operation: str,
 ) -> None:
-    """Block retries that cannot prove the v2 target and payload contract."""
 
     legacy_key = legacy_effective_action_key_v1(
         workspace_id=workspace_id,

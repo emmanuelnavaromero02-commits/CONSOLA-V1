@@ -75,9 +75,6 @@ const EMPTY_CONN_FORM: ConnForm = {
 const EMPTY_SECRET_FORM: SecretForm = { key: "", value: "" };
 const FALLBACK_AUTH_METHODS: VaultAuthMethod[] = ["bearer_token", "api_key", "basic", "none"];
 
-// Mirrors connector.yaml auth.auth_method_values for cartridges that expose it.
-// Most current cartridges only declare auth.type, so they intentionally fall
-// back to the legacy four-method selector.
 const CONNECTOR_AUTH_METHOD_VALUES: Record<string, VaultAuthMethod[]> = {
   sap_successfactors: ["oauth2_client_credentials", "saml_bearer_assertion"],
 };

@@ -1,20 +1,3 @@
-"""E4 — test de permutación: ¿la concentración observada es azar o patrón?
-
-El motor que faltaba para la pregunta de sesgo/concentración del ciclo Decide
-(demo omega-9box, TAL-002/SIN-002): dados N eventos repartidos entre categorías
-con pesos conocidos (p. ej. 11 bypass de escalafón entre plantas proporcional a
-sus vacantes), ¿cuántos caerían en la categoría foco solo por azar? Simula
-`iterations` repartos con semilla determinista y devuelve el p-valor de cola
-superior: P(foco >= observado | azar).
-
-Doctrina de la casa (espejo de monte_carlo.py):
-- Determinista: misma entrada + misma semilla = mismo resultado, con digest
-  sha-256 de reproducibilidad.
-- Fail-closed: entradas insuficientes producen status insufficient_data con la
-  razón exacta — jamás un p-valor fabricado.
-- El veredicto es matemático y NO editable por el LLM: el lenguaje natural
-  solo puede citarlo (invariante 19 del plan maestro).
-"""
 from __future__ import annotations
 
 import hashlib
@@ -28,16 +11,11 @@ MIN_ITERATIONS = 1_000
 MAX_ITERATIONS = 100_000
 DEFAULT_ITERATIONS = 10_000
 MIN_DRAWS = 5
-# Techos de complejidad (anti-DoS): el trabajo es draws * iterations *
-# categorias por corrida; sin tope, un cliente podia pedir millones de sorteos.
 MAX_DRAWS = 10_000
 MAX_CATEGORIES = 1_000
 
 
 def _finite_number(value: object, *, field: str) -> float:
-    """Numero real finito y NO booleano. Rechaza NaN, +/-Infinity y bool
-    (True/False colandose como 1/0) — los tres burlaban las validaciones por
-    comparacion, porque NaN<0 es False e inf pasa cualquier cota superior."""
     if isinstance(value, bool):
         raise PermutationValidationError(f"{field} must be a number, not a boolean")
     try:
@@ -57,8 +35,6 @@ def _finite_int(value: object, *, field: str) -> int:
     except (TypeError, ValueError) as exc:
         raise PermutationValidationError(f"{field} must be an integer") from exc
 
-# Umbrales del veredicto (cola superior). Fijos y versionados: cambiarlos es
-# cambiar el contrato del motor, no un ajuste de estilo.
 P_SYSTEMIC = 0.01
 P_POSSIBLE = 0.05
 PERMUTATION_RULESET_VERSION = "permutation_v1"
@@ -132,8 +108,6 @@ def run_permutation_test(
     iterations: Any = None,
     seed: Any = 0,
 ) -> dict[str, Any]:
-    """Reparte `draws` eventos entre categorías (proporcional al peso) y mide
-    con qué frecuencia la categoría foco recibe >= `observed` por puro azar."""
     cleaned = _clean_categories(categories)
     seed_value = _clean_seed(seed)
     iteration_count = _clean_iterations(iterations)
@@ -162,7 +136,6 @@ def run_permutation_test(
         }
     )
 
-    # Fail-closed: sin volumen o sin contraste no hay p-valor que valga.
     insufficient_reason = None
     if draw_count < MIN_DRAWS:
         insufficient_reason = f"draws < {MIN_DRAWS}"

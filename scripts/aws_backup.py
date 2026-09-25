@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Run the AWS backup script through SSM and capture redacted evidence."""
 
 from __future__ import annotations
 

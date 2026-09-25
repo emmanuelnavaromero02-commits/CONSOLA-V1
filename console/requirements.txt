@@ -1,9 +1,3 @@
-# v1.43.2 (DevOps R1 follow-up): bumped fastapi 0.115.0 → 0.121.0
-# so the transitive starlette range moves to >=0.40.0,<0.50.0 —
-# escaping CVE-2024-47874 (multipart DoS) AND GHSA-2c2j-9gv5-cj73 +
-# GHSA-7f5h-v6xp-fcq8 (starlette 0.47/0.49 fixes). fastapi 0.115
-# capped starlette at <0.39 and 0.116 at <0.47 — both still vulnerable
-# to the later GHSAs. starlette is explicitly re-pinned below.
 fastapi==0.136.1
 starlette>=1.0.1
 uvicorn[standard]==0.47.0
@@ -19,17 +13,9 @@ defusedxml==0.7.1
 minio==7.2.9
 pyzipper==0.4.0
 croniter==3.0.3
-# v1.43.2 (DevOps R1 follow-up): python-multipart 0.0.9 had 4 CVEs
-# (GHSA-59g5-xgcq-4qw3, GHSA-wp53-j4wj-2cfg, GHSA-mj87-hwqh-73pj,
-# GHSA-pp6c-gr5w-3c5g). 0.0.31 also includes the 2026 multipart fixes.
 python-multipart==0.0.31
 bcrypt==4.1.3
-# PyJWT covers the console's signed HS256 JWT flow without the legacy
-# vulnerable ECDSA transitive dependency.
 PyJWT>=2.13.0
 redis==5.0.8
 sqlglot==25.16.1
-# Test-only: fakeredis backs console/tests/test_jwt_blacklist.py. Listed here
-# (not in a separate requirements-dev.txt) so the CI workflow — which only
-# installs console/requirements.txt before running console/tests/ — sees it.
 fakeredis==2.35.1

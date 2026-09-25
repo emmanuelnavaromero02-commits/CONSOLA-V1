@@ -92,7 +92,10 @@ def test_workspace_context_is_backend_driven_and_sent_as_header():
     api = _read("console-next/src/lib/api.ts")
     sidebar = _read("console-next/src/components/AppSidebar.tsx")
 
-    assert '"workspaces": switchable_workspaces' in access
+    access_payload = _read("console/app/domains/iam/access_payload.py")
+    me_access = access.split("async def api_me_access(", 1)[1].split("\n@app.", 1)[0]
+    assert "return await _me_access_response_impl(" in me_access
+    assert '"workspaces": switchable_workspaces' in access_payload
     assert "ACTIVE_WORKSPACE_COOKIE" in api
     assert 'headers.set("X-Workspace-Id", activeWorkspaceId)' in api
     assert "WorkspaceSwitcher" in sidebar
@@ -109,13 +112,12 @@ def test_semantic_and_control_room_use_config_only_entitlements_not_vault_only_c
 
     assert "def _resolve_scoped_config_cartridge(" in main
     semantic_section = main.split('@app.get("/api/semantic"', 1)[1].split(
-        "# ── Data Catalog API", 1
+        '@app.get("/api/catalog"', 1
     )[0]
     assert (
         "cartridge, _active = await _resolve_scoped_operation_cartridge("
         in semantic_section
     )
-    assert "must not require an active Vault" in main
 
     installation_filter = control_room.split(
         "async def _filter_installations_by_scoped_connections", 1

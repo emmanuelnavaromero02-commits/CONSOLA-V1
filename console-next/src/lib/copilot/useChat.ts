@@ -15,25 +15,6 @@ import type {
   SendMessageResponse,
 } from "./types";
 
-/**
- * v1.44.4 Task A — chat orchestration hook.
- *
- * Exposes the four operations the chat UI needs:
- *   - listConversationsQuery: the sidebar's conversation list
- *   - conversationQuery: messages + metadata for the currently
- *                        open conversation
- *   - sendMutation:       legacy JSON POST for non-stream callers
- *   - approveMutation:    confirm a pending destructive action
- *
- * The interactive chat surface uses streamMessage directly so token
- * deltas can render while the turn is still running.
- *
- * The hook intentionally does NOT manage "which conversation is
- * open" — the page passes a ``conversationId`` in. That keeps
- * the hook reusable from a future route param + lets the page
- * own the "no conversation yet → show suggested prompts" empty
- * state.
- */
 export function useChat(conversationId: string | null) {
   const qc = useQueryClient();
 

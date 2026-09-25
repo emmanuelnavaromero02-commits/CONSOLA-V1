@@ -1,11 +1,3 @@
-"""Phase 2 Block C2 — SAP S/4HANA Knowledge Bits.
-
-8 new copilot KBs (prefixed kb_sap_s4hana_) appended to the existing 4, following
-the real KB schema (id / name / description / sql — the gold-reading KBs omit the
-optional pg_table / output_path, matching the kb_sap_hcm_* mold from #193) and the
-real execution model (DuckDB over the Block-B gold parquet via read_parquet, NOT
-pggold).
-"""
 from __future__ import annotations
 
 import re

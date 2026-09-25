@@ -1,5 +1,3 @@
-"""Central SSRF/egress guard for outbound HTTP(S) requests."""
-
 from __future__ import annotations
 
 import asyncio
@@ -19,7 +17,6 @@ _DEFAULT_MAX_BYTES = 2 * 1024 * 1024
 
 
 class EgressGuardError(ValueError):
-    """Raised when an outbound URL is not safe to request."""
 
     def __init__(self, message: str, *, request_dispatched: bool = False) -> None:
         super().__init__(message)

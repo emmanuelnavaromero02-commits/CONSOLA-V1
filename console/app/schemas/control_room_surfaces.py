@@ -42,11 +42,6 @@ class ExperienceDecision(_StrictModel):
 
 
 class ExperienceFact(_StrictModel):
-    """Read-only v1 fact.
-
-    A future action contract must bind item/template IDs, permissions,
-    prerequisites, enabled state, approval, and a validated endpoint.
-    """
 
     kind: Literal["anomaly", "signal", "alert", "kpi"]
     title: str

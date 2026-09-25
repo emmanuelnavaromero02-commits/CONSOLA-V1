@@ -1,7 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// legacy-url resolves NEXT_PUBLIC_LEGACY_CONSOLE_URL at module-load time, so
-// each case resets the module registry and re-imports with a stubbed env.
 async function loadWithEnv(value: string) {
   vi.resetModules();
   vi.stubEnv("NEXT_PUBLIC_LEGACY_CONSOLE_URL", value);

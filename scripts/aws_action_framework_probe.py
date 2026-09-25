@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Probe the Prompt 18A external action framework on AWS via SSM."""
 
 from __future__ import annotations
 

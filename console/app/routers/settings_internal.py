@@ -6,9 +6,6 @@ from app.services.auth import verify_internal_api_key
 from app.services import settings_service
 
 
-# Router server-to-server. Llamadores: cartuchos (Replicon, SAP SF/HCM/S4HANA)
-# que necesitan leer credenciales de system_settings sin tener sesión humana.
-# La auth la valida verify_internal_api_key (x-api-key + x-internal-service).
 router = APIRouter(
     prefix="/internal/settings",
     tags=["Settings (internal)"],

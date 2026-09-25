@@ -85,7 +85,6 @@ def _technical_form(value: str) -> bool:
 
 
 def contains_public_technical_copy(value: str) -> bool:
-    """Return whether a scalar string is unsuitable for a public response."""
 
     if not isinstance(value, str) or len(value) > MAX_VISIBLE_COPY_SCAN_LENGTH:
         return True
@@ -114,7 +113,6 @@ def contains_public_technical_data(
     _depth: int = 0,
     _seen: set[int] | None = None,
 ) -> bool:
-    """Inspect bounded nested keys and values without stringifying objects."""
 
     if isinstance(value, str):
         return contains_public_technical_copy(value)
@@ -161,7 +159,6 @@ def contains_public_technical_data(
 
 
 def public_business_label(value: object) -> str | None:
-    """Normalize a label, then reject technical rather than business copy."""
 
     normalized = business_label(value)
     missing_form = (

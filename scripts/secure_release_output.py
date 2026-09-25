@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Create one release evidence file without following or replacing paths."""
 
 from __future__ import annotations
 

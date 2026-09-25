@@ -1,10 +1,3 @@
-// Sprint v1.41.0 — cartridge wizard logic.
-//
-// All listeners are attached via addEventListener (no inline onclick) so the
-// strict CSP introduced in v1.11 keeps blocking inline scripts. User-provided
-// strings rendered into the DOM go through escHtml() to prevent XSS — every
-// other dynamic field passes through textContent assignment.
-
 const CARTRIDGE_META = {
   replicon: {
     name: 'Replicon',
@@ -280,8 +273,6 @@ async function testConnection(cartridge) {
     if (data.ok) {
       toast(`${cartridge}: conexión OK (${data.latency_ms || 0} ms) — ${data.message || 'verificada'}`, 'ok');
     } else {
-      // Only surface `message`; the full payload may include base_url, hosts
-      // or other deployment detail we don't want pasted into the UI.
       toast(`${cartridge}: ${data.message || 'error de conexión'}`, 'error');
     }
   } catch (e) {

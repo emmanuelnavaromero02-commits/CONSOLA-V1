@@ -17,8 +17,6 @@ resource "google_project_iam_member" "app_project_roles" {
   member  = "serviceAccount:${google_service_account.app.email}"
 }
 
-# Secret access is intentionally resource-scoped. In particular, the private
-# GHCR credential must not require a project-wide Secret Manager grant.
 resource "google_secret_manager_secret_iam_member" "app_runtime_secret_access" {
   for_each = google_secret_manager_secret.runtime
 

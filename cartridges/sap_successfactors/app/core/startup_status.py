@@ -19,7 +19,6 @@ _SAFE_STARTUP_CODES = frozenset(
 
 
 def safe_startup_errors(value: Any) -> list[str]:
-    """Return only stable startup codes, including for legacy in-memory state."""
 
     if not isinstance(value, Iterable) or isinstance(value, (str, bytes, dict)):
         return []
@@ -27,8 +26,6 @@ def safe_startup_errors(value: Any) -> list[str]:
     for item in value:
         code = item if isinstance(item, str) and item in _SAFE_STARTUP_CODES else ""
         if not code and isinstance(item, str):
-            # Rolling restarts can briefly expose state written by the previous
-            # format. Preserve the component signal without echoing its error.
             if item.startswith("job_runner"):
                 code = JOB_RUNNER_FAILED
             elif item.startswith("catalog_seed"):

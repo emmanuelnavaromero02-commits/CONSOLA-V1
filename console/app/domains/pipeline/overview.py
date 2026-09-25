@@ -206,9 +206,6 @@ async def _pipeline_refinement_datasets(
             )
         ).get("datasets", [])
     except Exception:
-        # Some in-process tests replace ``httpx.AsyncClient`` with a minimal
-        # get-only fake that predates the MCP invoke path. Keep that legacy
-        # compatibility path working without changing production behavior.
         if hasattr(http_client_factory, "post"):
             return []
         try:

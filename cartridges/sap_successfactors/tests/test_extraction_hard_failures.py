@@ -1,5 +1,3 @@
-"""An extract_all run that produced nothing for a real reason is a failed run."""
-
 from __future__ import annotations
 
 import os
@@ -33,7 +31,6 @@ def test_failed_open_with_nothing_produced_is_a_hard_failure():
 
 
 def test_a_mixed_run_stays_partial_so_gold_and_the_cascade_still_run():
-    """24 entities extracted, one timed out: gold was refreshed with the 24 and the intelligence cascade must not be."""
     summary = _summary(extracted=24, failed_open=1)
     assert hard_failure_code(summary, [], [], attempted=25) is None
 
@@ -44,7 +41,6 @@ def test_credentials_rejected_for_every_entity_is_a_hard_failure():
 
 
 def test_one_entity_extracted_keeps_the_run_partial():
-    """A tenant that lacks permission for some entities is a normal state."""
     summary = _summary(extracted=1, permission_blocked=5)
     assert hard_failure_code(summary, [], [], attempted=6) is None
     summary = _summary(empty_valid=1, auth_blocked=2)
@@ -70,7 +66,6 @@ def test_metadata_preflight_unreachable_in_the_plan_fails_the_run():
 
 
 def test_metadata_guard_rejecting_every_attempted_entity_fails_the_run():
-    """The per-entity guard lands in results, not in skipped, with attempted>0."""
     results = [
         {
             "entity": entity,
@@ -88,7 +83,6 @@ def test_metadata_guard_rejecting_every_attempted_entity_fails_the_run():
 
 
 def test_metadata_not_found_or_invalid_stays_partial():
-    """A 404 or 400 from $metadata is configuration, not an outage."""
     summary = _summary(skipped_explicit=2)
     for code in ("metadata_not_found", "metadata_query_invalid"):
         skipped = [
@@ -188,7 +182,6 @@ def test_console_extract_all_is_failed_when_metadata_preflight_is_unreachable(mo
 
 
 def test_console_extract_all_stays_completed_with_blocks_for_a_partial_tenant(monkeypatch):
-    """One entity extracted, one rejected: the pre-existing contract holds."""
     from app.core.sap_client import SAPClientError
 
     def fake_run_entity(config, **_kwargs):

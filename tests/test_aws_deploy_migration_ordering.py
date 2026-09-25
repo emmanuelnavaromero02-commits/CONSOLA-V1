@@ -18,9 +18,6 @@ def _runtime_service_loop(src: str) -> str:
 
 
 def test_airflow_scheduler_is_not_a_runtime_service():
-    # The scheduler owns its own lifecycle: recreating it mid-deploy leaves the
-    # DAG heartbeat pointing at a container that the compose run already
-    # replaced, so it is deliberately out of the runtime loop.
     loop = _runtime_service_loop(_read("scripts/deploy_main_aws.py"))
     assert "airflow " in loop
     assert "airflow-scheduler" not in loop
@@ -36,9 +33,6 @@ def test_image_pull_carries_server_owned_ghcr_auth():
 
 
 def test_app_is_stopped_between_pull_and_migrations():
-    # Ordering is the contract: every image is proven present (pull) before the
-    # app lets go of the database (stop), and the schema only mutates once no
-    # application process can write to it (migrations).
     src = _read("scripts/deploy_main_aws.py")
     pull = src.index("docker compose $COMPOSE_FILES pull")
     stop = src.index("docker compose $COMPOSE_FILES stop")
@@ -48,8 +42,6 @@ def test_app_is_stopped_between_pull_and_migrations():
 
 
 def test_migrations_run_under_a_deterministic_locale():
-    # psql sorts and error strings are locale-sensitive; the deploy gate parses
-    # them, so the migration step pins the C locale.
     src = _read("scripts/deploy_main_aws.py")
     migration_call = next(
         line

@@ -91,9 +91,6 @@ const experienceActionSchema = z
     }
   });
 
-// The backend (Pydantic) bounds text by characters (code points), while
-// `string.length` counts UTF-16 units: an emoji would count twice and a
-// valid narrative would make the whole screen fail parsing.
 const narrativeTextSchema = (min: number, max: number) =>
   z.string().refine((value) => {
     const length = Array.from(value).length;

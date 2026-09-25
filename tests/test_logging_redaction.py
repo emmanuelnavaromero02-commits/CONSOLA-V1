@@ -1,27 +1,3 @@
-"""Sprint v1.18 — JSON logging + secret redaction.
-
-The ``logging_config`` module is shipped as a textual copy in console,
-workspace, mcp-infra, refinement and vault (no shared library across services). These tests
-exercise:
-
-  * The redaction patterns over a representative set of secret-bearing
-    log shapes (Bearer tokens, key=value pairs, JSON-encoded creds,
-    long hex strings).
-  * Edge cases: empty string, non-string inputs, unrelated text.
-  * The ``SecretRedactionFilter`` rewrites ``record.msg`` in place so
-    formatters never see the raw secret.
-  * The ``JSONFormatter`` emits parseable JSON with the expected keys,
-    plus ``exc_info`` when the record has an exception.
-  * ``setup_logging`` is idempotent — repeated calls don't stack
-    duplicate handlers on the root logger.
-  * The module is **textually identical** across the 5 services, via
-    md5 fingerprint. Drift would mean an operator who fixes the filter
-    in one service has to remember to fix the other two.
-
-We import the module directly from its console path and reuse it for
-the unit tests; the textual-identity test reads the other two files
-from disk so we don't need three separate imports.
-"""
 from __future__ import annotations
 
 import hashlib
@@ -48,13 +24,6 @@ LOGGING_FILES = {
 
 @pytest.fixture()
 def logging_config(monkeypatch):
-    """Import logging_config from the console package directly. We point
-    sys.path at console/ so ``from app.logging_config import ...`` resolves
-    to the console copy. Three copies are textually identical (other
-    test below), so it doesn't matter which one we exercise."""
-    # Clear any prior cartridge/refinement/vault `app` package mounted on
-    # sys.modules by a peer test, so importing console's `app` package
-    # doesn't return the wrong logging_config.
     for name in list(sys.modules):
         if name == "app" or name.startswith("app."):
             del sys.modules[name]
@@ -66,9 +35,6 @@ def logging_config(monkeypatch):
     ]
     sys.path.insert(0, str(REPO_ROOT / "console"))
     return importlib.import_module("app.logging_config")
-
-
-# ── Redaction patterns ──────────────────────────────────────────────
 
 
 def test_redact_bearer_token(logging_config):
@@ -135,7 +101,7 @@ def test_redact_json_password_field(logging_config):
     assert "refresh-secret" not in out
     assert '"password": "***REDACTED***"' in out
     assert '"refresh_token": "***REDACTED***"' in out
-    assert '"user": "alice"' in out  # untouched
+    assert '"user": "alice"' in out
 
 
 def test_redact_normal_text_is_unchanged(logging_config):
@@ -146,17 +112,12 @@ def test_redact_normal_text_is_unchanged(logging_config):
 def test_redact_long_hex_string(logging_config):
     secret_hex = "a" * 40
     out = logging_config._redact(f"INTERNAL_API_KEY={secret_hex} loaded")
-    # The kv pattern catches it first → "INTERNAL_API_KEY=***REDACTED***".
-    # Either redaction is acceptable; what matters is the secret never
-    # appears verbatim in the output.
     assert secret_hex not in out
     assert "REDACTED" in out
 
 
 def test_redact_long_hex_string_in_freeform_text(logging_config):
-    """A bare hex blob in freeform prose (no key=) still gets caught by
-    the long-hex pattern."""
-    secret_hex = "deadbeef" * 5  # 40 chars
+    secret_hex = "deadbeef" * 5
     out = logging_config._redact(f"loaded blob {secret_hex} into cache")
     assert secret_hex not in out
     assert "***REDACTED_HEX***" in out
@@ -171,12 +132,7 @@ def test_redact_none_is_safe(logging_config):
 
 
 def test_redact_non_string_passthrough(logging_config):
-    """Numbers / dicts / etc. are returned unchanged — the filter runs
-    before formatting and shouldn't crash on non-string args."""
     assert logging_config._redact(42) == 42
-
-
-# ── SecretRedactionFilter ───────────────────────────────────────────
 
 
 def _make_record(msg: str, args=None) -> logging.LogRecord:
@@ -196,11 +152,6 @@ def test_filter_redacts_record_msg(logging_config):
 def test_filter_redacts_string_args_in_tuple(logging_config):
     record = _make_record("user=%s token=%s", ("alice", "leaky"))
     logging_config.SecretRedactionFilter().filter(record)
-    # The tuple element passed in IS a bare value, not a key=value, so
-    # only the long-hex / format-string-shape patterns apply. The token
-    # arg "leaky" is short and doesn't match a redaction pattern by
-    # itself; the redaction is on the rendered MSG, not the arg. Verify
-    # the filter doesn't crash and preserves arity.
     assert isinstance(record.args, tuple)
     assert len(record.args) == 2
 
@@ -215,21 +166,15 @@ def test_filter_redacts_dict_args_by_sensitive_key(logging_config):
 
 
 def test_filter_returns_true_to_let_record_through(logging_config):
-    """A Filter that returns False would suppress the log entirely. The
-    redaction filter must always return True so we still ship the
-    record (just sanitized)."""
     record = _make_record("nothing secret here")
     assert logging_config.SecretRedactionFilter().filter(record) is True
-
-
-# ── JSONFormatter ───────────────────────────────────────────────────
 
 
 def test_json_formatter_emits_parseable_json_with_expected_keys(logging_config):
     record = _make_record("hello")
     record.created = 1715000000.0
     out = logging_config.JSONFormatter(service_name="testsvc").format(record)
-    payload = json.loads(out)  # MUST parse — no trailing newlines, no junk
+    payload = json.loads(out)
     assert payload["level"] == "INFO"
     assert payload["service"] == "testsvc"
     assert payload["logger"] == "test"
@@ -256,8 +201,6 @@ def test_json_formatter_includes_exc_info_when_present(logging_config):
 
 
 def test_json_formatter_includes_extra_context_when_set(logging_config):
-    """logger.info("...", extra={"request_id": "..."}) shows up as a
-    top-level field in the JSON payload."""
     record = _make_record("ok")
     record.request_id = "req-123"
     record.user_id = "u42"
@@ -267,13 +210,7 @@ def test_json_formatter_includes_extra_context_when_set(logging_config):
     assert payload["user_id"] == "u42"
 
 
-# ── setup_logging idempotency ───────────────────────────────────────
-
-
 def test_setup_logging_does_not_stack_handlers(logging_config):
-    """Calling setup_logging twice must leave the root logger with
-    exactly one handler — otherwise every log line gets printed twice
-    (or N times) after a reload."""
     logging_config.setup_logging(service_name="t1")
     n_after_first = len(logging.getLogger().handlers)
     logging_config.setup_logging(service_name="t2")
@@ -283,12 +220,9 @@ def test_setup_logging_does_not_stack_handlers(logging_config):
 
 
 def test_setup_logging_emits_json_end_to_end(logging_config, capsys):
-    """End-to-end smoke: configure, log, parse the captured stdout. The
-    secret in the log line must be redacted in the emitted JSON."""
     logging_config.setup_logging(service_name="e2e")
     logging.getLogger("e2e_test").info("token=should-be-redacted-12345")
     captured = capsys.readouterr().out.strip().splitlines()
-    # Last line is our log; earlier lines may be from setup itself.
     payload = json.loads(captured[-1])
     assert payload["service"] == "e2e"
     assert payload["level"] == "INFO"
@@ -315,13 +249,7 @@ def test_setup_logging_redacts_secret_from_cartridge_exception(logging_config, c
     assert "***REDACTED***" in combined
 
 
-# ── Textual-identity contract ───────────────────────────────────────
-
-
 def test_logging_config_is_textually_identical_across_services():
-    """The 5 services ship a verbatim copy. A drift here is exactly the
-    bug pattern the audit flagged — a fix in one service that doesn't
-    propagate to the other services."""
     digests = {
         svc: hashlib.md5(path.read_bytes()).hexdigest()
         for svc, path in LOGGING_FILES.items()

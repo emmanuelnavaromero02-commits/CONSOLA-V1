@@ -265,7 +265,6 @@ async def _control_room_internal_view(
             ),
         )
     if view == "finance_kpis":
-        # Mission 2: top_n (0..10) is the controlled named-rows exception.
         top_n = _bounded_int(params.get("top_n"), 0, lower=0, upper=10)
         return project_public_control_room_response(
             ControlRoomFinanceKpisResponse,
@@ -295,10 +294,6 @@ async def _control_room_internal_view(
             ),
         )
     if view == "agent_memory":
-        # Mission 4. Deliberately NOT cached: the point of shared memory is that
-        # one agent records a finding and the next agent sees it on its very next
-        # call. A TTL here would hand back a snapshot from before the write and
-        # the two agents would silently disagree.
         subject = params.get("subject")
         subject_text = str(subject).strip() if subject not in (None, "") else None
         if subject_text is not None and len(subject_text) > 200:
@@ -791,8 +786,6 @@ async def control_room_internal_read(
         internal_service,
     )
     view = str(payload.get("view") or "").strip()
-    # Mission 5 audit trail: which service read which view, in which scope, on
-    # behalf of which agent run and context source. There was none before.
     logger.info(
         "control_room.internal_read view=%r internal_service=%r"
         " security_context_source=%r tenant_id=%s workspace_id=%s"

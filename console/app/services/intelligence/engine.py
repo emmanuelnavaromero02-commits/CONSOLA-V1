@@ -194,14 +194,6 @@ async def run_intelligence(
     population_manifests: list[dict[str, Any]] = []
 
     async def _fetch_population(dataset: str) -> list[dict[str, Any]]:
-        """E3 — ruta certificada sin cap: poblacion completa + manifiesto exacto.
-
-        Con fetcher inyectado (tests/llamadores legacy) se conserva su contrato
-        de 3 argumentos y el manifiesto declara la fuente; la ruta real lee la
-        poblacion entera por cursor con COUNT en el mismo snapshot. Si el techo
-        operativo corta la lectura, el run queda PARCIAL declarado via skipped
-        (population_truncated) — jamas truncamiento silencioso.
-        """
         if fetcher is not None:
             rows = await fetch(dataset, user, DEFAULT_LIMIT)
             population_manifests.append(
@@ -550,18 +542,12 @@ async def run_intelligence(
                 "duration_ms": duration_ms,
             },
         )
-    # E5a — el ciclo Evoluciona: tras un gold_refresh persistido, el
-    # autopiloto observa los outcomes evaluados pendientes por la ruta
-    # autoritativa (best-effort: jamas tumba el run; el resumen viaja en el
-    # resultado para que el ciclo quede auditable de punta a punta).
     calibration_autopilot_summary = None
     retention_simulation_summary = None
     if should_persist and run_mode == "gold_refresh":
         calibration_autopilot_summary = await calibration_autopilot.run_best_effort(
             user
         )
-        # E2a — cada ciclo refresca la simulación WB-TALENTO desde los
-        # insumos preparados por el propio gold (best-effort, fail-closed).
         retention_simulation_summary = (
             await talent_retention_simulation.run_best_effort(user)
         )
@@ -571,10 +557,6 @@ async def run_intelligence(
         "signals": [artifact["signal"] for artifact in artifacts],
         "artifacts": artifacts,
         "skipped": skipped,
-        # E3 — manifiesto poblacional: un registro exacto por dataset leido en
-        # la ruta certificada (population_total via COUNT en el mismo snapshot,
-        # rows_fetched, complete). population_complete=False solo cuando algun
-        # dataset quedo declarado parcial (population_truncated en skipped).
         "population": population_manifests,
         "population_complete": all(
             bool(item.get("complete")) for item in population_manifests

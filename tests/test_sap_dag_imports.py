@@ -1,4 +1,3 @@
-"""Sprint v1.32 — SAP DAG files must import and expose a DAG object."""
 from __future__ import annotations
 
 import importlib.util

@@ -1,28 +1,3 @@
-"""Sprint v1.44.3.3 Task C — cartridge /skills/list + /healthz contracts.
-
-The user's brief reported MCP cartridges returning 404 on
-``GET /skills/list``. The pre-existing audit confirmed that
-``/healthz`` was also missing (``/health`` was present but
-gates on real startup state — it's not the simple yes/no
-probe the orchestrator + E2E suite expect).
-
-This file pins:
-
-  - ``GET /skills/list`` exists on every cartridge,
-  - it's protected by the same ``verify_api_key`` dependency as
-    every other ``/skills/*`` route (unauth → 401),
-  - the response shape includes ``service`` (matching the
-    cartridge id) and ``skills`` (a non-empty list of
-    {name, method, summary}),
-  - ``/list`` does NOT appear in its own output (avoid the
-    catalog listing itself recursively),
-  - ``GET /healthz`` exists, is PUBLIC (no auth header
-    required), and returns ``{"ok": true, "service": <id>}``.
-
-The tests use ``load_cartridge_app`` from conftest.py to load
-each cartridge's app cleanly. Same pattern as
-tests/test_replicon_mcp_auth.py.
-"""
 from __future__ import annotations
 
 import pytest
@@ -47,14 +22,8 @@ def _client(cartridge_id: str):
     return TestClient(main.app, raise_server_exceptions=False)
 
 
-# ── /skills/list ───────────────────────────────────────────────────────────
-
-
 @pytest.mark.parametrize("cartridge_id", CARTRIDGES)
 def test_skills_list_requires_auth(cartridge_id):
-    """Anonymous → 401. The skill list is privileged metadata —
-    the orchestrator authenticates with an internal API key
-    before discovering capabilities."""
     with _client(cartridge_id) as client:
         resp = client.get("/skills/list")
     assert resp.status_code == 401, (
@@ -76,9 +45,6 @@ def test_skills_list_returns_200_authenticated(cartridge_id):
 
 @pytest.mark.parametrize("cartridge_id", CARTRIDGES)
 def test_skills_list_response_shape(cartridge_id):
-    """The body must include ``service`` (cartridge id) and
-    ``skills`` (a list). The shape is consumed by the console's
-    capability discovery."""
     with _client(cartridge_id) as client:
         body = client.get("/skills/list", headers=VALID_HEADERS).json()
 
@@ -95,9 +61,6 @@ def test_skills_list_response_shape(cartridge_id):
         f"skills/list on {cartridge_id} returned an empty list — "
         f"the cartridge must expose at least one skill (test_connection)"
     )
-    # Sanity check shape of one entry. v1.44.3.3 R-Mac-Round-3
-    # Task F: ``description`` is the canonical key; ``summary``
-    # is aliased for one sprint and will go away in v1.44.4.
     sample = skills[0]
     for key in ("name", "method", "description", "summary"):
         assert key in sample, (
@@ -114,8 +77,6 @@ def test_skills_list_response_shape(cartridge_id):
 
 @pytest.mark.parametrize("cartridge_id", CARTRIDGES)
 def test_skills_list_does_not_list_itself(cartridge_id):
-    """Catalog endpoints that include themselves create
-    confusing UI loops. Filter ``/list`` out of its own output."""
     with _client(cartridge_id) as client:
         body = client.get("/skills/list", headers=VALID_HEADERS).json()
     names = [s["name"] for s in body.get("skills", [])]
@@ -126,9 +87,6 @@ def test_skills_list_does_not_list_itself(cartridge_id):
 
 @pytest.mark.parametrize("cartridge_id", CARTRIDGES)
 def test_skills_list_includes_test_connection(cartridge_id):
-    """Spot-check: every cartridge exposes test_connection (the
-    auditor P1 endpoint added in v1.41.0). If discovery omits it
-    the introspection logic is broken."""
     with _client(cartridge_id) as client:
         body = client.get("/skills/list", headers=VALID_HEADERS).json()
     names = [s["name"] for s in body.get("skills", [])]
@@ -138,14 +96,8 @@ def test_skills_list_includes_test_connection(cartridge_id):
     )
 
 
-# ── /healthz ──────────────────────────────────────────────────────────────
-
-
 @pytest.mark.parametrize("cartridge_id", CARTRIDGES)
 def test_healthz_returns_200_no_auth(cartridge_id):
-    """``/healthz`` must be PUBLIC — Kubernetes liveness probes
-    don't send API keys. Adding auth would knock the cartridge
-    out of rotation every time the probe fires."""
     with _client(cartridge_id) as client:
         resp = client.get("/healthz")
     assert resp.status_code == 200, (
@@ -156,8 +108,6 @@ def test_healthz_returns_200_no_auth(cartridge_id):
 
 @pytest.mark.parametrize("cartridge_id", CARTRIDGES)
 def test_healthz_response_shape(cartridge_id):
-    """``{ok: true, service: <id>}`` is the wire shape every
-    orchestrator key off."""
     with _client(cartridge_id) as client:
         body = client.get("/healthz").json()
     assert body.get("ok") is True, (
@@ -171,13 +121,9 @@ def test_healthz_response_shape(cartridge_id):
 
 @pytest.mark.parametrize("cartridge_id", CARTRIDGES)
 def test_healthz_independent_of_startup_state(cartridge_id):
-    """``/health`` gates on app.state.startup_ok; ``/healthz``
-    must NOT — it's a yes/no liveness probe, NOT a readiness
-    probe. Flip startup_ok off and confirm /healthz still 200s."""
     from fastapi.testclient import TestClient
 
     main = load_cartridge_app(cartridge_id)
-    # Force a failed-startup state.
     main.app.state.startup_ok = False
     main.app.state.startup_errors = ["forced for test"]
     try:
@@ -189,6 +135,5 @@ def test_healthz_independent_of_startup_state(cartridge_id):
             f"of readiness — /health is the readiness probe."
         )
     finally:
-        # Restore for any downstream test that shares the cached app.
         main.app.state.startup_ok = True
         main.app.state.startup_errors = []

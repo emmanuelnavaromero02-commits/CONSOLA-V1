@@ -1,21 +1,3 @@
-<#
-.SYNOPSIS
-  Reconecta una VPN WireGuard ya instalada y verifica acceso a MODecissions.
-
-.PARAMETER AppIp
-  IP privada de la EC2 App (terraform output ec2_app_private_ip)
-
-.PARAMETER VpnIp
-  (Opcional) IP pública de la EC2 VPN — sólo para imprimir URL de wg-easy.
-
-.PARAMETER TunnelName
-  (Opcional) Nombre del tunnel. Si se omite, se busca el primero disponible.
-
-.EXAMPLE
-  .\connect.ps1 -AppIp 10.0.2.15
-  .\connect.ps1 -AppIp 10.0.2.15 -TunnelName laptop-rodolfo
-#>
-
 param(
   [Parameter(Mandatory=$true)] [string] $AppIp,
   [Parameter(Mandatory=$false)][string] $VpnIp = "",
@@ -28,7 +10,6 @@ function Write-Ok   { param($msg) Write-Host "  [OK] $msg" -ForegroundColor Gree
 function Write-Warn2{ param($msg) Write-Host "  [!]  $msg" -ForegroundColor Yellow }
 function Write-Err  { param($msg) Write-Host "  [X]  $msg" -ForegroundColor Red }
 
-# Localizar el servicio del tunnel
 $services = Get-Service -Name "WireGuardTunnel*" -ErrorAction SilentlyContinue
 if (-not $services) {
   Write-Err "No hay tunnels WireGuard instalados. Corre primero vpn-setup.ps1."
@@ -49,7 +30,6 @@ if ($TunnelName) {
 $displayName = $svc.Name -replace '^WireGuardTunnel\$',''
 Write-Host "Tunnel: $displayName" -ForegroundColor Cyan
 
-# Activar (idempotente)
 if ($svc.Status -ne 'Running') {
   Start-Service -Name $svc.Name
   Start-Sleep -Seconds 3
@@ -58,7 +38,6 @@ if ($svc.Status -ne 'Running') {
   Write-Ok "Tunnel ya estaba activo"
 }
 
-# Verificar conectividad
 $reachable = $false
 try {
   $reachable = Test-Connection -ComputerName $AppIp -Count 2 -Quiet -ErrorAction Stop

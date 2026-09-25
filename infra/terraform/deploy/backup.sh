@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# OMEGA_DR_ALLOW_NON_ROOT=1 is for isolated DR rehearsals (ephemeral compose
-# stacks owned by the invoking user); deploy hosts keep requiring root.
 if [ "${EUID:-$(id -u)}" -ne 0 ] && [ "${OMEGA_DR_ALLOW_NON_ROOT:-0}" != "1" ]; then
   exec sudo "$0" "$@"
 fi
@@ -11,9 +9,6 @@ REPO_DIR="${REPO_DIR:-/opt/modecissions}"
 DEPLOY_DIR="${DEPLOY_DIR:-${REPO_DIR}/infra/terraform/deploy}"
 cd "${DEPLOY_DIR}"
 
-# BACKUP_ENV_FILE / BACKUP_COMPOSE_FILES let the same script run on the
-# canonical GCP host layout (env at infra/.env, compose infra/docker-compose.yml
-# + infra/docker-compose.gcp.yml). Defaults preserve the AWS deploy layout.
 BACKUP_ENV_FILE="${BACKUP_ENV_FILE:-.env}"
 if [ ! -f "${BACKUP_ENV_FILE}" ]; then
   echo "ERROR: ${BACKUP_ENV_FILE} no existe en ${DEPLOY_DIR}. Ejecuta el entrypoint del host (scripts/aws-entrypoint.sh en AWS; provisioning terraform-gcp en GCP)." >&2
@@ -25,9 +20,6 @@ set -a
 source "${BACKUP_ENV_FILE}"
 set +a
 
-# Storage backend: explicit BACKUP_STORAGE_BACKEND wins; otherwise inferred —
-# OMEGA_BACKUP_LOCAL_DIR (isolated rehearsals) > GCS_BUCKET (canonical GCP
-# hosts export it, see terraform-gcp templates) > S3_BUCKET_NAME (AWS hosts).
 BACKUP_STORAGE_BACKEND="${BACKUP_STORAGE_BACKEND:-}"
 if [[ -z "${BACKUP_STORAGE_BACKEND}" ]]; then
   if [[ -n "${OMEGA_BACKUP_LOCAL_DIR:-}" ]]; then
@@ -81,8 +73,6 @@ storage_cp() {
 }
 
 if [[ -n "${BACKUP_COMPOSE_FILES:-}" ]]; then
-  # Verbatim compose args for non-AWS host layouts (e.g. the GCP cron sets
-  # "--env-file infra/.env -f infra/docker-compose.yml -f infra/docker-compose.gcp.yml").
   read -r -a COMPOSE_FILES <<< "${BACKUP_COMPOSE_FILES}"
 else
   COMPOSE_FILES=(-f docker-compose.aws.yml)
@@ -110,18 +100,12 @@ POSTGRES_GOLD_SIZE="$(wc -c < "${WORKDIR}/postgres_gold.sql.gz" | tr -d ' ')"
 
 case "${BACKUP_STORAGE_BACKEND}" in
   s3)
-    # The prefix filter runs on the extracted key (column 4), anchored: the
-    # old raw-line 'grep -v /backups/' never matched the top-level backups/
-    # prefix, so prior backups leaked into the lakehouse inventory.
     aws s3 ls "s3://${S3_BUCKET_NAME}/" --recursive --region "${AWS_REGION}" \
       | awk '{print $4 "\t" $3}' \
       | grep -v '^backups/' \
       | sort > "${WORKDIR}/lakehouse_objects.tsv" || true
     ;;
   gcs)
-    # index/substr keeps object names with spaces intact and strips the
-    # bucket prefix literally (never as a regex). gcloud errors stay visible
-    # on stderr; an empty inventory is tolerated like the s3 branch.
     gcloud storage du "gs://${GCS_BUCKET}/**" \
       | awk -v prefix="gs://${GCS_BUCKET}/" '{
           pos = index($0, prefix); if (pos == 0) next;
@@ -133,7 +117,6 @@ case "${BACKUP_STORAGE_BACKEND}" in
       | sort > "${WORKDIR}/lakehouse_objects.tsv" || true
     ;;
   local)
-    # Isolated rehearsal: no lakehouse bucket to inventory.
     : > "${WORKDIR}/lakehouse_objects.tsv"
     ;;
 esac
@@ -167,8 +150,6 @@ Path(sys.argv[1]).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n
 PY
 CONFIG_SHA="$(sha256sum "${WORKDIR}/config_manifest.json" | awk '{print $1}')"
 
-# Extra manifest fields only for non-s3 backends: S3 manifests (uploaded bytes
-# and the OMEGA_BACKUP_MANIFEST stdout line) stay byte-identical to before.
 BACKEND_MANIFEST_FIELDS=""
 if [[ "${BACKUP_STORAGE_BACKEND}" != "s3" ]]; then
   BACKEND_MANIFEST_FIELDS="\"storage_backend\": \"${BACKUP_STORAGE_BACKEND}\",
@@ -224,7 +205,6 @@ storage_cp "${WORKDIR}/lakehouse_objects.tsv" "backups/${BACKUP_ID}/lakehouse_ob
 storage_cp "${WORKDIR}/config_manifest.json" "backups/${BACKUP_ID}/config_manifest.json"
 storage_cp "${WORKDIR}/manifest.json" "backups/${BACKUP_ID}/manifest.json"
 
-# Snapshot lakehouse objects into the backup prefix without recursively copying prior backups.
 case "${BACKUP_STORAGE_BACKEND}" in
   s3)
     aws s3 sync "s3://${S3_BUCKET_NAME}/" "s3://${S3_BUCKET_NAME}/backups/${BACKUP_ID}/lakehouse/" \
@@ -241,8 +221,6 @@ case "${BACKUP_STORAGE_BACKEND}" in
     ;;
 esac
 
-# Assignment first so set -e catches a manifest-canonicalization failure
-# (a command substitution inside echo's arguments would be silently ignored).
 OMEGA_BACKUP_MANIFEST_JSON="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1])), sort_keys=True))' "${WORKDIR}/manifest.json")"
 echo "OMEGA_BACKUP_MANIFEST=${OMEGA_BACKUP_MANIFEST_JSON}"
 case "${BACKUP_STORAGE_BACKEND}" in

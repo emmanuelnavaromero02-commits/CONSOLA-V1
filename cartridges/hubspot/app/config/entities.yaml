@@ -1,23 +1,5 @@
-# HubSpot CRM v3 objects.
-#
-# Each entry uses a URL-safe ``entity:`` id (matches the HubSpot object name)
-# so it travels cleanly through console routes like /entities/{entity}/schema.
-# ``api_path`` is the real REST path the client calls; ``result_shape`` tells
-# the client how to flatten the response (objects | owners | pipelines).
-#
-# Extraction is cursor-paginated. Incremental mode pages the full object and
-# filters client-side on ``watermark_field`` (HubSpot list endpoints take no
-# server-side updatedAt filter — same approach Replicon uses for its export).
-#
-# In production set HUBSPOT_API_TOKEN to a Private App token with CRM read
-# scopes (crm.objects.deals.read, crm.objects.companies.read,
-# crm.objects.contacts.read, crm.objects.line_items.read, crm.schemas.deals.read).
-
 entities:
 
-  # ---------------------------------------------------------------
-  # Pipeline backbone — deals (incremental by hs_lastmodifieddate)
-  # ---------------------------------------------------------------
 
   - entity: deals
     object: deals
@@ -48,9 +30,6 @@ entities:
       - hs_deal_amount_calculation_preference
       - num_associated_contacts
 
-  # ---------------------------------------------------------------
-  # Accounts & people — incremental
-  # ---------------------------------------------------------------
 
   - entity: companies
     object: companies
@@ -122,9 +101,6 @@ entities:
       - createdate
       - hs_lastmodifieddate
 
-  # ---------------------------------------------------------------
-  # Reference data — full load (small)
-  # ---------------------------------------------------------------
 
   - entity: owners
     object: owners

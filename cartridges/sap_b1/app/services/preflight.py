@@ -1,4 +1,3 @@
-"""Pre-flight configuration checks for the sap_b1 cartridge."""
 from __future__ import annotations
 
 from typing import Any
@@ -30,7 +29,6 @@ def check_minio() -> dict[str, Any]:
 
 
 def preflight_for_extract() -> dict[str, Any] | None:
-    """Return ``None`` when ready, otherwise a degraded report."""
     components = [check_sap(), check_postgres(), check_minio()]
     failing = [c for c in components if not c.get("configured", True)]
     if not failing:

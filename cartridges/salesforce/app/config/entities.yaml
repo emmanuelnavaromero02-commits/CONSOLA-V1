@@ -1,11 +1,4 @@
-# Salesforce Sales Cloud — SOQL entities
-# Names match the Salesforce sObject API name used in the REST Query resource
-# (e.g. {instance_url}/services/data/v60.0/query?q=SELECT ... FROM <entity>).
-# Incremental loads watermark on SystemModstamp (the canonical change field on
-# every standard object). select_fields ALWAYS include the watermark field so
-# the silver/gold layers can de-duplicate to the latest version.
 entities:
-  # ── Accounts & People ─────────────────────────────────────────────────────
   - entity: Account
     description: "Customer / prospect company (the CRM account master)."
     mode: incremental
@@ -74,7 +67,6 @@ entities:
       Email: shadowed
       Phone: masked
 
-  # ── Pipeline ──────────────────────────────────────────────────────────────
   - entity: Opportunity
     description: "Deal in the sales pipeline (the spine of the cartridge)."
     mode: incremental
@@ -144,7 +136,6 @@ entities:
       - IsPrimary
       - SystemModstamp
 
-  # ── Owners / reps ─────────────────────────────────────────────────────────
   - entity: User
     description: "Salesforce user — the opportunity/account owner (sales rep)."
     mode: incremental
@@ -168,7 +159,6 @@ entities:
       Email: shadowed
       Username: masked
 
-  # ── Products & pricing ────────────────────────────────────────────────────
   - entity: Product2
     description: "Product catalog entry."
     mode: full
@@ -193,7 +183,6 @@ entities:
       - IsActive
       - SystemModstamp
 
-  # ── Marketing ─────────────────────────────────────────────────────────────
   - entity: Campaign
     description: "Marketing campaign (source of leads / influenced pipeline)."
     mode: incremental
@@ -227,7 +216,6 @@ entities:
       - Status
       - SystemModstamp
 
-  # ── Activities ────────────────────────────────────────────────────────────
   - entity: Task
     description: "Logged task (call, email, to-do). Signals deal activity."
     mode: incremental

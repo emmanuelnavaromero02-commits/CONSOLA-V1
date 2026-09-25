@@ -77,9 +77,6 @@ TABLE_NON_PRODUCTIONS = (
     "the negotiating table",
 )
 
-# Each pair exercises a complete production and either SQL-ambiguous (ID-only)
-# or structurally safe raw copy around the same head. These are grammar canaries,
-# not a product allowlist.
 HEAD_DECISION_PAIRS = (
     (
         "show-id-only",

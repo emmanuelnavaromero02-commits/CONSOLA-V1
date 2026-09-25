@@ -1,16 +1,3 @@
-"""Mission 4 — the Operations AgentOps monitor contract.
-
-Same mould as tests/test_finance_monitor.py. What this file exists to pin, beyond
-the shared shape, are the two ways Operations deliberately differs:
-
-* it is the only monitor WITHOUT ``market_context_read``, because extraction
-  failures, data freshness and absence days do not move with FX, rates or macro
-  conditions, and granting a tool a monitor has no honest use for only widens its
-  surface;
-* it keeps the cross-cartridge RAG filter of the conversational Enlace Operativo,
-  the only agent in the repository that spans two cartridges.
-"""
-
 from __future__ import annotations
 
 from app.domains.agentops.operations_monitor import (
@@ -39,8 +26,6 @@ def test_identity_matches_the_conversational_agent_it_shadows() -> None:
 
 def test_rag_filter_keeps_both_cartridges() -> None:
     _, rag_filter, _ = _contract()
-    # infra/init/94_salesforce_seed.sql: Enlace Operativo is "el unico agente que
-    # cruza dos cartuchos", and its monitor must see the same corpus.
     assert rag_filter == {
         "cartridges": ["salesforce", "replicon"],
         "kinds": ["document", "schema"],
@@ -106,21 +91,17 @@ def test_schedule_is_enabled_and_does_not_collide() -> None:
     assert schedule["enabled"] is True
     assert schedule["cron"] == "7,22,37,52 * * * *"
     minutes = {int(part) for part in schedule["cron"].split(" ")[0].split(",")}
-    assert minutes.isdisjoint({2, 17, 32, 47})  # finance
-    assert minutes.isdisjoint({12, 27, 42, 57})  # risk
+    assert minutes.isdisjoint({2, 17, 32, 47})
+    assert minutes.isdisjoint({12, 27, 42, 57})
 
 
 def test_prompt_carries_the_mission_one_honesty_clauses() -> None:
     instructions = OPERATIONS_MONITOR_SPEC.instructions
     assert instructions.startswith("Eres el monitor programado de Operacion")
-    # The freshness threshold is a parameter, not an agreed business SLA.
     assert "NO un SLA de negocio" in instructions
-    # Only two cartridges mirror into pipeline_runs; the rest log elsewhere.
     assert "extraction_runs" in instructions and "pipeline_runs" in instructions
-    # Absence is company-level, and the headcount is today's snapshot.
     assert "nivel EMPRESA" in instructions
     assert "snapshot actual" in instructions
-    # Never leaks a run's error text.
     assert "Nunca el texto de un error de corrida" in instructions
     assert "recommendation_only" in instructions
     assert "memoria compartida" in instructions
@@ -129,7 +110,6 @@ def test_prompt_carries_the_mission_one_honesty_clauses() -> None:
 
 
 def test_personality_is_reused_verbatim_from_the_conversational_seed() -> None:
-    # infra/init/94_salesforce_seed.sql, Enlace Operativo.
     assert OPERATIONS_MONITOR_SPEC.personality == (
         "Puente entre ventas y operaciones. Alerta clara de meses en sobrecarga "
         "con magnitud. Idioma del usuario."
@@ -155,7 +135,6 @@ def test_row_identity_and_repair_detection() -> None:
     assert operations_monitor_needs_runtime_repair(row) is True
     _, _, extra = _contract()
     assert operations_monitor_needs_runtime_repair({**row, "extra": extra}) is False
-    # The Risk monitor shares this cartridge; its row must not match ours.
     assert is_operations_monitor_row(
         {"cartridge_id": "salesforce", "slug": "salesforce_deal_risk_sentinel_monitor"}
     ) is False
@@ -189,8 +168,6 @@ def test_alert_policy_behaviour() -> None:
     assert monitor_should_alert(contract, _payload("ready", 0)) is False
     assert monitor_should_alert(contract, _payload("unavailable", 3)) is False
 
-
-# ── the wisdom bit this monitor runs ─────────────────────────────────────────
 
 METRIC_NAMES = ("pipeline_health", "data_freshness_by_cartridge", "absence_rate_company_by_type")
 
@@ -226,7 +203,6 @@ def test_wisdom_bit_payload_is_silent_when_every_metric_is_ready() -> None:
     assert payload["cartridge_id"] == "salesforce"
     assert payload["status"] == "ready"
     assert payload["data_sufficient"] is True
-    # No signal means no alert, and that is the only real gate.
     assert payload["signals"] == {"count": 0, "items": []}
     assert payload["blockers"] == []
     _, _, extra = _contract()
@@ -249,14 +225,11 @@ def test_wisdom_bit_payload_raises_one_signal_per_unhealthy_metric() -> None:
     )
     payload = domain_wisdom_bits.build_payload(OPERATIONS_MONITOR_SPEC, view)
     assert payload["signals"]["count"] == 2
-    # _signal_count refuses the whole payload unless count == len(items) exactly.
     assert payload["signals"]["count"] == len(payload["signals"]["items"])
     assert all(isinstance(item, dict) and item for item in payload["signals"]["items"])
-    # Business labels travel, never the metric key.
     assert all(item["metric"] != names[1] for item in payload["signals"]["items"])
     assert payload["blockers"] and "sin evidencia disponible" in payload["blockers"][0]
     assert payload["coverage"]["ready"] and payload["coverage"]["unavailable"]
-    # And this payload does alert.
     _, _, extra = _contract()
     full = {**payload, "tenant_id": "t", "workspace_id": "w"}
     full["evidence"] = {"engine_results": []}
@@ -269,7 +242,6 @@ def test_wisdom_bit_payload_fails_closed_when_the_domain_is_unavailable() -> Non
     view = _view("unavailable", {name: _metric("unavailable") for name in METRIC_NAMES})
     payload = domain_wisdom_bits.build_payload(OPERATIONS_MONITOR_SPEC, view)
     assert payload["status"] == "unavailable"
-    # Explicit rather than implied: no evidence, no alert.
     assert payload["data_sufficient"] is False
     assert payload["decision_mode"] == "recommendation_only"
     assert payload["writeback_enabled"] is False

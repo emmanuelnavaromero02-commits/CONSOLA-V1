@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-"""Local/AWS Superset tenant-safety probe.
-
-Local mode is a static guard for the repository contract. AWS mode delegates to
-the SSM live probe that checks public reachability, EC2 loopback binding, and
-database role posture.
-"""
 
 from __future__ import annotations
 

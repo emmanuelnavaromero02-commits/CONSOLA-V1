@@ -17,23 +17,6 @@ import type { LucideIcon } from "lucide-react";
 
 import { getMeAccess } from "@/lib/admin-surfaces";
 
-/**
- * v1.44.4 Group 1 — Operations overview.
- *
- * BACKEND REALITY (audited 2026-06-14):
- *   - Real surfaces: /api/admin/tenants, /api/admin/users,
- *                    /security/audit, /api/vault/connections/{cartridge},
- *                    /api/copilot/workflow and /api/metrics/operational.
- *   - Brief asked for:  Vault entries / Audit log / Users CRUD
- *                       / Workspaces CRUD / Settings / Monitor.
- *     Workspace onboarding now lives in Empresas. Settings(workspace_id)
- *     remains backend-pending and is kept in the honest pending panel.
- *
- * Pre-Task-D placeholder linked to the legacy :8000 surface;
- * this page now replaces it with a Next.js-native overview
- * that surfaces real sub-modules + an honest
- * "próximamente" panel for what's still backend-pending.
- */
 interface ModuleCard {
   href:        string;
   title:       string;

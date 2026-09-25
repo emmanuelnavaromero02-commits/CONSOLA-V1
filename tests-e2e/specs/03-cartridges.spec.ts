@@ -1,10 +1,3 @@
-/**
- * v1.44.3.2 spec 03 — Next.js /cartridges.
- *
- * The user's bug report mentioned "muchos botones no responden" on
- * the legacy console; this spec validates the v1.44.3 Next.js
- * rewrite where every button must actually do something.
- */
 import { test, expect } from "../fixtures/auth";
 
 const cartridgeViewerLinks =
@@ -13,7 +6,6 @@ const cartridgeViewerLinks =
 test.describe("Cartridges grid (Next.js, /cartridges)", () => {
   test("renders the built-in cartridge grid", async ({ authedPage: page }) => {
     await page.goto("/cartridges");
-    // Each tile exposes a static-export-safe query-param viewer link.
     const tiles = page.locator(cartridgeViewerLinks);
     await expect(tiles.first()).toBeVisible({ timeout: 10_000 });
     const count = await tiles.count();
@@ -30,7 +22,6 @@ test.describe("Cartridges grid (Next.js, /cartridges)", () => {
       .locator("xpath=ancestor::article[1]");
     await expect(firstTile).toBeVisible({ timeout: 10_000 });
     const text = (await firstTile.innerText()).trim();
-    // The brief documents one of these 4 status labels.
     expect(text,
       "tile must render at least one of the 4 status labels",
     ).toMatch(/conectado|sin probar|sin configurar|falló/i);
@@ -46,8 +37,6 @@ test.describe("Cartridges grid (Next.js, /cartridges)", () => {
     await expect(repliconLink.first()).toBeVisible({ timeout: 10_000 });
     await repliconLink.first().click();
     await page.waitForURL(/\/cartridges\/viewer\/?\?id=replicon/, { timeout: 10_000 });
-    // v1.45 Vault-only UX (#273 B5): the viewer delegates credential
-    // writes to the scoped Vault page instead of an inline form.
     await expect(
       page.getByRole("link", { name: /configurar en vault/i }),
     ).toBeVisible({ timeout: 15_000 });
@@ -59,9 +48,6 @@ test.describe("Cartridge detail (Next.js, /cartridges/viewer?id=...)", () => {
     authedPage: page,
   }) => {
     await page.goto("/cartridges/viewer?id=replicon");
-    // #273 B5: credentials are never typed into the browser. The viewer
-    // shows the expected-field summary + a CTA to the scoped Vault page,
-    // and must NOT render credential inputs.
     await expect(
       page.getByRole("link", { name: /configurar en vault/i }),
     ).toBeVisible({ timeout: 15_000 });
@@ -99,8 +85,6 @@ test.describe("Cartridge detail (Next.js, /cartridges/viewer?id=...)", () => {
     await expect(
       page.getByRole("button", { name: /probar conexión/i }),
     ).toBeVisible({ timeout: 15_000 });
-    // #273 B5 removed the inline credential write/delete affordances so
-    // secrets never live in the browser. Guard against their return.
     await expect(
       page.getByRole("button", { name: /guardar credenciales/i }),
     ).toHaveCount(0);

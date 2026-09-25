@@ -12,8 +12,6 @@ import type { SupervisedAction } from "@/lib/supervised-actions/types";
 
 import SupervisedActionsPage from "./page";
 
-// Boundary completo del client: si la página importara approve/execute,
-// cualquier clic quedaría registrado aquí.
 const clientBoundary = vi.hoisted(() => ({
   listSupervisedActions: vi.fn(),
   getSupervisedAction: vi.fn(),
@@ -92,7 +90,6 @@ describe("SupervisedActionsPage sin camino a approve/execute (PR-A sin cablear)"
   it("ningún clic ni submit alcanza approve o execute", async () => {
     await renderPage();
 
-    // Clic sobre absolutamente todos los controles interactivos de la página.
     for (const button of [...container.querySelectorAll("button")]) {
       await act(async () => button.click());
     }

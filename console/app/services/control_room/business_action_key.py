@@ -27,7 +27,6 @@ def legacy_effective_action_key_v1(
     template_id: str,
     operation: str,
 ) -> str:
-    """Reproduce the deployed v1 key only to quarantine legacy reservations."""
 
     contract = {
         "version": 1,
@@ -51,7 +50,6 @@ def effective_action_key(
     provided: str | None = None,
     input_payload: Mapping[str, Any] | None = None,
 ) -> str:
-    """Derive one server-owned key for a business execution contract."""
     del provided
     contract = {
         "version": 2,

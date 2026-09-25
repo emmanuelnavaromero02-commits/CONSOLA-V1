@@ -1,11 +1,4 @@
 #!/usr/bin/env bash
-# Deprecated unsafe GCP release entrypoint.
-#
-# There is exactly one production deployment path. The canonical controller
-# hydrates runtime secrets atomically, quiesces every writer before its verified
-# database backup, keeps the databases exclusive through migrations, and stops
-# a failed candidate before rollback restore. Maintaining those invariants in a
-# second on-VM controller caused the two paths to drift.
 set -Eeuo pipefail
 set +x
 

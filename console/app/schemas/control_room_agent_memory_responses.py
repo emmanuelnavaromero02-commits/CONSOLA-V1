@@ -1,14 +1,3 @@
-"""Public response schema for the shared agent memory read.
-
-Allowlist boundary between ``control_room.agent_memory_view`` and what the
-internal read bridge hands to mcp-infra. Anything not declared here is dropped,
-and every string still goes through the public copy filters.
-
-``detail`` is absent on purpose: it is free-form JSON authored by another agent
-and has no business being in a model's context. ``recorded_by`` carries the
-agent's display name; there is no field for its id or slug.
-"""
-
 from __future__ import annotations
 
 from pydantic import Field

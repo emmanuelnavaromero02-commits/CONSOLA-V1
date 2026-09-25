@@ -1,5 +1,3 @@
-"""Real PostgreSQL proof for concurrent packaged-dataset reconciliation."""
-
 from __future__ import annotations
 
 import asyncio

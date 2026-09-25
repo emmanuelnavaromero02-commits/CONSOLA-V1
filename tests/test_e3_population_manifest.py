@@ -1,17 +1,3 @@
-"""E3 — cero límites ocultos: manifiesto poblacional exacto en la ruta certificada.
-
-Contrato que fija esta suite:
-- El motor de señales genérico ya NO lee con el cap de 5.000 (DEFAULT_LIMIT):
-  la ruta certificada lee la población COMPLETA por cursor con COUNT(*) en el
-  mismo snapshot (query_gold_dataset_population) y devuelve un manifiesto por
-  dataset: population_total, rows_fetched, complete.
-- Si el techo operativo (INTELLIGENCE_POPULATION_MAX_ROWS) corta la lectura,
-  el run queda PARCIAL DECLARADO (skipped: population_truncated con los
-  conteos exactos) — jamás truncamiento silencioso.
-- La cuadratura es fail-closed: lectura completa != COUNT del mismo snapshot
-  truena con 500, nunca un parcial disfrazado de completo.
-- El cap de 5.000 sobrevive SOLO como protección de previews (doctrina F12).
-"""
 from __future__ import annotations
 
 import asyncio
@@ -28,11 +14,7 @@ def read(rel: str) -> str:
 
 def test_certified_route_no_longer_uses_the_5000_cap():
     engine = read("console/app/services/intelligence/engine.py")
-    # Los dos sitios de lectura del run (métricas con contrato y datasets sin
-    # contrato) usan la ruta poblacional.
     assert engine.count("await _fetch_population(dataset)") == 2
-    # El único uso restante de DEFAULT_LIMIT es la compatibilidad con
-    # fetchers inyectados (tests/llamadores legacy), dentro del helper.
     compat = engine.split("if fetcher is not None:", 1)[1]
     assert "await fetch(dataset, user, DEFAULT_LIMIT)" in compat
     assert engine.count("await fetch(dataset, user, DEFAULT_LIMIT)") == 1
@@ -48,7 +30,6 @@ def test_population_reader_counts_and_fails_closed():
     assert "conn.cursor(" in block, "lectura completa por lotes, no una sola query capada"
     assert "population accounting mismatch" in block, "cuadratura fail-closed"
     assert "LIMIT" not in block.split("SELECT COUNT")[0], "sin cap oculto en la ruta"
-    # El cap de preview sigue existiendo, documentado como preview-only (F12).
     assert "safe_limit = max(1, min(int(limit or 5000), 5000))" in fetcher
 
 
@@ -63,8 +44,6 @@ def _user() -> dict:
 
 
 def test_injected_fetcher_still_works_and_declares_manifest():
-    """Compatibilidad: los llamadores que inyectan fetcher conservan su
-    contrato, y el resultado declara el manifiesto con fuente inyectada."""
     from app.services.intelligence import engine as eng
 
     async def fake_fetch(dataset, user, limit):
@@ -84,8 +63,6 @@ def test_injected_fetcher_still_works_and_declares_manifest():
 
 
 def test_truncated_population_is_declared_partial_never_silent(monkeypatch):
-    """Techo operativo alcanzado → population_truncated en skipped con los
-    conteos exactos y population_complete=False."""
     from app.services.intelligence import engine as eng
 
     async def fake_population(dataset, user):

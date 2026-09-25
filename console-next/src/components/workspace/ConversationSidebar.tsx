@@ -17,21 +17,6 @@ interface Props {
   onRetry?:       () => void;
 }
 
-/**
- * v1.44.4 Task A — conversation list sidebar.
- *
- * Renders a scrollable list of the operator's conversations,
- * each with title + relative-time updated stamp ("hace 4 h").
- * Includes a search filter that narrows by title substring.
- *
- * Round 1 review fixes:
- *   - Search input now meets 44px touch target.
- *   - Conversation rows enforce min-h-[44px].
- *   - Error state with retry CTA when listConversations fails.
- *   - "Empezar nueva conversación" label is honest (the actual
- *     conversation row materialises after the first message —
- *     the button just resets to the empty-state).
- */
 export function ConversationSidebar({
   conversations,
   activeId,

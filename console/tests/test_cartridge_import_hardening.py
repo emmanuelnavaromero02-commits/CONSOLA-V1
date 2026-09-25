@@ -319,7 +319,7 @@ def test_seed_sql_rejects_dag_path_canary():
         r"nested\escape.py",
         "dag\uff0fescape.py",
         "dag\uff3cescape.py",
-        "d\u0430g.py",  # Cyrillic small a
+        "d\u0430g.py",
         "dag.txt",
     ],
 )

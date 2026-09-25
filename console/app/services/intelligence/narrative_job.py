@@ -1,38 +1,3 @@
-"""Mission 5: deferred narration of persisted monitor alerts.
-
-The monitor chain raises the alert and finishes. This job runs afterwards, from
-the ``agent_runner`` DAG, and attaches a Spanish narrative to each open monitor
-alert that does not yet have one for its current occurrence.
-
-Guarantees, in the order they matter:
-
-* The alert is never blocked. Nothing here runs inside the monitor chain, and no
-  row lock is held while the model is called: a short transaction claims the
-  row with a random token, the model is called with no transaction open, and a
-  second short transaction writes the narrative only if the token still matches
-  (compare-and-set). A lost race is reported, never retried in place.
-* Only console's own narratives count. ``control_room_items.metadata`` is
-  writable by mcp-infra, so a stored narrative is "current" only when its
-  console attestation verifies for this item and scope AND its fingerprint
-  matches the alert as it is now. A planted narrative, signed or not, never
-  blocks a claim and never makes the job skip an alert. What the job stores is
-  signed with :func:`alert_narrative.attest_narrative`.
-* The budget is bounded before the model is called. At most
-  :data:`MAX_LLM_CALLS_PER_DAY` attempts per workspace per UTC day, reserved as a
-  ``control_room_item_events`` row in the claim transaction, so a crash after the
-  reservation still counts. At most :data:`MAX_ALERTS_PER_TICK` alerts per
-  workspace per tick.
-* No platform key. The model is called with a workspace-scoped, non-admin user
-  context, so ``llm_client`` reads the workspace key from Vault and never falls
-  back to ``ANTHROPIC_API_KEY``. A workspace with no key, a Vault failure, a
-  provider error or a timeout all store the TEMPLATE narrative.
-* Advisory only. The job writes ``metadata.narrative`` and nothing else; it
-  executes nothing and changes no status.
-
-This module never raises. Failures are isolated per workspace and per alert and
-reported by exception class name only.
-"""
-
 from __future__ import annotations
 
 import json
@@ -62,9 +27,6 @@ logger = logging.getLogger(__name__)
 MAX_ALERTS_PER_TICK = 20
 MAX_LLM_CALLS_PER_DAY = 50
 CLAIM_TTL_SECONDS = 300
-# Wall-clock budget for one tick. Each alert is bounded by the narrator's own
-# 8 s model timeout, so without this a tick with several busy workspaces would
-# outlive the Airflow request. Alerts not reached are narrated on a later tick.
 TICK_BUDGET_SECONDS = 180.0
 
 NARRATABLE_STATUSES: tuple[str, ...] = (
@@ -76,10 +38,6 @@ NARRATABLE_STATUSES: tuple[str, ...] = (
 LLM_CALL_EVENT_TYPE = "agent_alert_narrative_llm_call"
 CLAIM_METADATA_KEY = "narrative_claim"
 
-# The least-privileged role that still yields a signed, workspace-scoped
-# security context: Vault's secret read only requires a trusted context with a
-# tenant and a workspace, and llm_client only uses the platform key for
-# owner/super_admin/admin.
 NARRATOR_ROLE = "workspace_user"
 
 _LLM_SYSTEM_PROMPT = (
@@ -95,9 +53,6 @@ _CLAIM_ACQUIRED = "acquired"
 
 _monotonic = time.monotonic
 
-# ── SQL ──────────────────────────────────────────────────────────────────────
-# Static statements with positional parameters only. Every statement filters by
-# tenant_id AND workspace_id on top of the RLS scope set by scoped_db.
 
 CANDIDATES_SQL = """
 SELECT item_id, domain, severity, metadata
@@ -111,11 +66,6 @@ SELECT item_id, domain, severity, metadata
  LIMIT $4
 """
 
-# Claims the row unless a live claim exists. Deliberately NOT conditioned on the
-# stored narrative: that field is writable outside console, so whether it is
-# current is decided after the claim, by verifying its attestation. The claim
-# timestamp is the database clock, and a malformed claim is treated as expired;
-# CASE is used so the numeric cast only runs on a JSON number.
 CLAIM_SQL = """
 UPDATE control_room_items
    SET metadata = COALESCE(metadata, jsonb_build_object())
@@ -142,8 +92,6 @@ UPDATE control_room_items
 RETURNING item_id, domain, severity, metadata
 """
 
-# Serialises the count-then-insert of the daily budget for one workspace, held
-# only for the short claim transaction.
 BUDGET_LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))"
 
 BUDGET_COUNT_SQL = """
@@ -191,9 +139,6 @@ SQL_STATEMENTS: tuple[str, ...] = (
 )
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
-
-
 def _metadata(value: Any) -> Mapping[str, Any]:
     if isinstance(value, (str, bytes, bytearray)):
         try:
@@ -216,12 +161,6 @@ def verified_current_narrative(
     tenant_id: str,
     workspace_id: str,
 ) -> dict[str, Any] | None:
-    """The stored narrative if console signed it for this item and scope AND it
-    describes the alert as it is now; otherwise None.
-
-    An unsigned, forged or foreign-scope narrative is None regardless of its
-    fingerprint, so it can never make the job skip an alert.
-    """
     verified = verified_stored_narrative(
         metadata.get(NARRATIVE_METADATA_KEY),
         item_id=item_id,
@@ -252,13 +191,6 @@ def _utc_day(now: datetime | None) -> tuple[datetime, datetime]:
 
 
 def narrator_user_context(tenant_id: str, workspace_id: str) -> dict[str, Any]:
-    """Least-privileged workspace context for the narrator's model call.
-
-    Not an interactive user and never an admin role: ``llm_client`` falls back
-    to the platform key only for owner/super_admin/admin, and Vault authorises a
-    workspace secret read from the signed tenant/workspace alone. No cartridge
-    access is carried.
-    """
     return {
         "id": None,
         "email": "",
@@ -276,11 +208,6 @@ async def _no_tool(*_args: Any, **_kwargs: Any) -> dict[str, str]:
 def default_llm_caller_factory(
     tenant_id: str, workspace_id: str
 ) -> Callable[[str], Any]:
-    """Async caller bound to one workspace's own LLM key.
-
-    Exceptions propagate to ``build_narrative``, which turns them into a
-    template narrative with a closed reason code.
-    """
     user_context = narrator_user_context(tenant_id, workspace_id)
 
     async def _call(prompt: str) -> str:
@@ -303,9 +230,6 @@ def _failure(workspace_id: str, exc: BaseException) -> dict[str, str]:
     return {"workspace_id": workspace_id, "error_code": type(exc).__name__}
 
 
-# ── Per alert ────────────────────────────────────────────────────────────────
-
-
 async def _claim(
     pool: Any,
     *,
@@ -315,13 +239,6 @@ async def _claim(
     token: str,
     day: tuple[datetime, datetime],
 ) -> tuple[str, Mapping[str, Any] | None, bool]:
-    """Claim the row and reserve one model call.
-
-    Returns ``(outcome, claimed_row, may_call_llm)`` where outcome is
-    ``lost`` (someone else holds a live claim), ``current`` (a verified,
-    current narrative was already stored; the claim was released and no budget
-    was touched) or ``acquired``.
-    """
     async with scoped_db(pool, tenant_id, workspace_id) as conn:
         row = await conn.fetchrow(
             CLAIM_SQL,
@@ -334,8 +251,6 @@ async def _claim(
         if row is None:
             return _CLAIM_LOST, None, False
 
-        # Re-check on the row as claimed: another runner may have finished
-        # between selection and claim. Only a verified narrative counts.
         current = verified_current_narrative(
             domain=row["domain"],
             severity=row["severity"],
@@ -345,8 +260,6 @@ async def _claim(
             workspace_id=workspace_id,
         )
         if current is not None:
-            # Release the claim by writing the verified narrative back under
-            # our token, in this same transaction. No budget, no model call.
             await conn.fetchrow(
                 WRITE_SQL,
                 tenant_id,
@@ -440,7 +353,6 @@ async def _narrate_one(
     if not may_call:
         counts["budget_exhausted"] += 1
 
-    # No transaction is open here: the claim is committed and the row is free.
     narrative = await narrate_alert(
         domain=claimed["domain"],
         severity=claimed["severity"],
@@ -470,9 +382,6 @@ async def _narrate_one(
         counts["narrated_template"] += 1
 
 
-# ── Entry point ──────────────────────────────────────────────────────────────
-
-
 async def narrate_pending_alerts(
     pool: Any,
     *,
@@ -480,7 +389,6 @@ async def narrate_pending_alerts(
     | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Narrate open monitor alerts across active workspaces. Never raises."""
     counts: dict[str, Any] = {
         "status": "ready",
         "workspaces": 0,

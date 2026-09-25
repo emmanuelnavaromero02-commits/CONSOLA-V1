@@ -1,22 +1,3 @@
-/* ──────────────────────────────────────────────────────────────────────────
-   vault.js — controller for /viewer/vault
-
-   Replaces the inline script that previously lived in vault.html. No
-   business logic changed; the endpoints, payloads and revealed-token cache
-   are identical to the legacy script. What is new:
-
-   - No inline event handlers (`onclick=`, `onchange=`). All wired with
-     addEventListener + a single delegated handler on the tbody for row
-     buttons, so the markup stays static and works under a strict CSP.
-   - All dynamic HTML goes through escHtml(). User-controlled values never
-     reach innerHTML un-escaped.
-   - Esc closes the open modal. Cancel/✕ also close. Backdrop click closes
-     only when it lands on the backdrop, not on the box.
-   - Save buttons toggle disabled + "Guardando…" while the request flies.
-   - 403 from any endpoint surfaces a permission-denied banner inside the
-     viewer instead of a blocking native dialog.
-   ─────────────────────────────────────────────────────────────────────── */
-
 const state = {
   cartridge: 'replicon',
   currentTab: 'conn',
@@ -73,7 +54,6 @@ function showPermissionDenied(msg) {
     </div>`;
 }
 
-/* ── Toast (transient feedback) ─────────────────────────────────────────── */
 let _toastTimer = null;
 function toast(message, kind = 'success') {
   let el = $('vault-toast');
@@ -91,7 +71,6 @@ function toast(message, kind = 'success') {
   _toastTimer = setTimeout(() => { el.style.display = 'none'; }, 3000);
 }
 
-/* ── Tabs ───────────────────────────────────────────────────────────────── */
 function switchTab(tab) {
   state.currentTab = tab;
   $('pane-conn').style.display    = tab === 'conn'    ? '' : 'none';
@@ -102,7 +81,6 @@ function switchTab(tab) {
   $('tab-secrets').setAttribute('aria-selected', tab === 'secrets' ? 'true' : 'false');
 }
 
-/* ── Cartridge selector ─────────────────────────────────────────────────── */
 async function loadCartridgeSelector() {
   try {
     const r = await fetch('/studio/cartridges', { credentials: 'same-origin' });
@@ -128,7 +106,6 @@ function load() {
   else loadSecrets();
 }
 
-/* ── Connections ────────────────────────────────────────────────────────── */
 async function loadConnections() {
   const tbody  = $('conn-tbody');
   const status = $('conn-status');
@@ -207,7 +184,6 @@ async function rerenderOneConnRow(connId) {
   } catch (_) { /* silent — next manual reload will fix */ }
 }
 
-/* ── Connection modal ───────────────────────────────────────────────────── */
 function openAddConn() {
   state.editingConnId = null;
   $('conn-modal-title').textContent = 'Nueva conexión';
@@ -325,7 +301,6 @@ async function deleteConn(connId) {
   }
 }
 
-/* ── Secrets ────────────────────────────────────────────────────────────── */
 async function loadSecrets() {
   const scope  = $('scope-input').value.trim() || 'platform';
   const tbody  = $('secrets-tbody');
@@ -485,7 +460,6 @@ async function deleteSecret(key, scope) {
   }
 }
 
-/* ── Modal helpers ─────────────────────────────────────────────────────── */
 function openModal(id) {
   document.querySelectorAll('.modal-overlay.open').forEach((el) => el.classList.remove('open'));
   $(id).classList.add('open');
@@ -496,7 +470,6 @@ function closeAllModals() {
   delete document.body.dataset.modalOpen;
 }
 
-/* ── Wiring ────────────────────────────────────────────────────────────── */
 function wire() {
   $('cart-sel').addEventListener('change', onCartridgeChange);
   $('btn-refresh').addEventListener('click', load);
@@ -510,17 +483,14 @@ function wire() {
     if (e.key === 'Enter') { e.preventDefault(); loadSecrets(); }
   });
 
-  // Conn modal buttons
   $('btn-close-conn').addEventListener('click', closeAllModals);
   $('btn-cancel-conn').addEventListener('click', closeAllModals);
   $('btn-save-conn').addEventListener('click', saveConn);
 
-  // Secret modal buttons
   $('btn-close-secret').addEventListener('click', closeAllModals);
   $('btn-cancel-secret').addEventListener('click', closeAllModals);
   $('btn-save-secret').addEventListener('click', saveSecret);
 
-  // Delete modal buttons
   $('btn-close-del').addEventListener('click', closeAllModals);
   $('btn-cancel-del').addEventListener('click', closeAllModals);
   $('del-confirm-btn').addEventListener('click', () => {
@@ -531,19 +501,16 @@ function wire() {
     if (target === 'secret') deleteSecret(id, scope);
   });
 
-  // Backdrop click → close only if it landed on the overlay itself.
   document.querySelectorAll('.modal-overlay').forEach((overlay) => {
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay) closeAllModals();
     });
   });
 
-  // Esc closes the open modal.
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && document.body.dataset.modalOpen) closeAllModals();
   });
 
-  // Delegated handlers for row buttons (rendered dynamically).
   $('conn-tbody').addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-action]');
     if (!btn) return;
@@ -569,7 +536,6 @@ function wire() {
   });
 }
 
-/* ── Init ──────────────────────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', () => {
   wire();
   loadCartridgeSelector().then(() => loadConnections());

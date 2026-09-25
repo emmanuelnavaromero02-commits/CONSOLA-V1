@@ -1,5 +1,3 @@
-"""Live two-workspace proof for Gold, Intelligence, replay, and projection."""
-
 from __future__ import annotations
 
 import uuid

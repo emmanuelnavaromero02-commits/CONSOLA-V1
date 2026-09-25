@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Seed scoped, prod-like Gold fixtures for the operational intelligence demo."""
 
 from __future__ import annotations
 

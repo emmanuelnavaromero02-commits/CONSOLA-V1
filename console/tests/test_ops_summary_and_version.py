@@ -1,5 +1,3 @@
-"""Beta-8 hardening: release version identity + Control Room ops summary."""
-
 from __future__ import annotations
 
 import re
@@ -20,9 +18,6 @@ USER = {
     "active_workspace_id": "workspace-A",
     "tenant_id": "tenant-A",
 }
-
-
-# ── Track 1: release identity is not a lie ────────────────────────────
 
 
 def test_version_file_is_not_the_stale_placeholder():
@@ -49,28 +44,22 @@ async def test_healthz_reports_version_and_app_env():
 
 
 def test_system_info_and_healthz_share_one_version_source():
-    # Both surfaces must resolve version through app.version.app_version so
-    # they can never drift. main._console_version delegates to it.
     from app import main
 
     assert main._console_version() == app_version()
-
-
-# ── Track 3: ops summary ──────────────────────────────────────────────
 
 
 def _ops_pool() -> AsyncMock:
     pool = AsyncMock()
     pool.fetch = AsyncMock(
         side_effect=[
-            # action executions by status
             [{"status": "dry_run_validated", "n": 4}, {"status": "preview", "n": 1}],
         ]
     )
     pool.fetchval = AsyncMock(
         side_effect=[
-            5,  # lessons
-            2,  # thresholds active
+            5,
+            2,
         ]
     )
     return pool
@@ -139,7 +128,7 @@ async def test_ops_summary_shape_and_counts():
     assert "app_env" in out
     assert out["items"]["total"] == 4
     assert out["items"]["by_status"]["open"] == 3
-    assert out["items"]["by_status"]["resolved"] == 0  # zero-filled
+    assert out["items"]["by_status"]["resolved"] == 0
     assert out["open_items_by_severity"]["high"] == 2
     assert out["action_executions"]["dry_run_validated"] == 4
     assert out["lessons"] == 5

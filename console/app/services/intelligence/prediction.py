@@ -10,8 +10,6 @@ def projected_value(actual: float, history_values: list[float], horizon_days: in
         return actual, "latest_value"
     recent = history_values[-1]
     trend = actual - recent
-    # Keep v1 deliberately simple and explainable: one observed trend step scaled
-    # softly by the horizon so 21 days does not explode small samples.
     scale = min(2.0, max(0.5, horizon_days / 14))
     return round(actual + trend * scale, 4), "trend_delta"
 

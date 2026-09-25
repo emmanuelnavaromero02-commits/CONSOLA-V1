@@ -1,11 +1,3 @@
-"""Checkpoint 5.5 — GCP release support-script contracts.
-
-These scripts run against the live GCP VM, so the executable path is an external
-wall we cannot cross in CI. What we CAN pin here is the safety contract of the
-scripts as artifacts: helpers are syntactically valid and never read secret
-values, while the retired day2 controller is a fail-closed stub that directs
-operators to the single canonical deployment path.
-"""
 from __future__ import annotations
 
 import subprocess
@@ -37,27 +29,21 @@ def test_script_exists_and_is_syntactically_valid(name):
     assert result.returncode == 0, f"{name} has a bash syntax error:\n{result.stderr}"
 
 
-# ── verify-host-identity: wrong-project/VM guard ────────────────────────────
-
 def test_host_identity_requires_explicit_target_and_is_fail_closed():
     script = _text("verify-host-identity")
-    # Refuses to run without all four expected identity components.
     for token in ("expected_project", "expected_instance", "expected_zone", "expected_sa"):
         assert token in script
     assert "requires <project-id> <instance-name> <zone> <service-account-email>" in script
-    # Reads live identity from the metadata server.
     assert "metadata.google.internal" in script
     assert "project/project-id" in script
     assert "instance/name" in script
     assert "instance/zone" in script
     assert "instance/service-accounts/default/email" in script
-    # Exact-match, fail-closed on any mismatch.
     assert "mismatch" in script
     assert "HOST_IDENTITY\\tFAIL" in script
 
 
 def test_host_identity_is_identity_only_never_reads_a_token_or_secret():
-    """The wrong-target guard must not pull a token or any secret value."""
     script = _text("verify-host-identity")
     assert "service-accounts/default/token" not in script
     assert ":access" not in script
@@ -74,26 +60,18 @@ def test_host_identity_rejects_missing_arguments_at_runtime():
     assert "must be declared explicitly" in result.stderr
 
 
-# ── verify-secret-access: effective IAM without reading values ──────────────
-
 def test_secret_access_uses_testiampermissions_and_never_reads_values():
     script = _text("verify-secret-access")
     assert "testIamPermissions" in script
     assert "secretmanager.versions.access" in script
-    # Never reads a secret payload: no :access version fetch here.
     assert ":access" not in script
-    # Explicitly attests it did not read any secret value.
     assert '"secret_values_read": False' in script or '"secret_values_read"' in script
 
 
 def test_secret_access_allowlist_includes_ghcr_pull_credentials():
-    """The private-image pull (issue #579/#583) depends on the VM being able to
-    access the server-owned GHCR pull credential."""
     script = _text("verify-secret-access")
     assert "ghcr_pull_credentials" in script
 
-
-# ── backup-restore: verifiable restore-point, no blind rollback ─────────────
 
 def test_backup_covers_both_canonical_databases():
     script = _text("backup-restore")
@@ -111,12 +89,10 @@ def test_backup_writes_a_sha256_manifest():
 
 def test_restore_verifies_the_manifest_before_touching_the_database():
     script = _text("backup-restore")
-    # do_restore calls verify_manifest first.
     do_restore = script.index("do_restore()")
     verify_call = script.index("verify_manifest", do_restore)
     psql_restore = script.index("psql", do_restore)
     assert do_restore < verify_call < psql_restore
-    # A checksum mismatch fails closed.
     assert "checksum mismatch" in script
 
 
@@ -126,17 +102,12 @@ def test_backup_refuses_to_overwrite_an_existing_restore_point():
     assert "refusing to overwrite" in script
 
 
-# ── day2-release: deprecated; canonical deploy is the only mutation path ────
-
 def test_day2_is_a_fail_closed_deprecation_stub():
     script = _text("day2-release")
     assert "gcp-canonical-deploy.sh <target-tag> <deploy-ref-40hex>" in script
     assert "disabled and performs no action" in script
     assert "exit 64" in script
 
-    # The retired entrypoint must not retain any mutation primitive. This makes
-    # it impossible for an operator to accidentally use the stale rollback and
-    # secret-hydration path.
     for forbidden in (
         "docker compose",
         "pg_dump",

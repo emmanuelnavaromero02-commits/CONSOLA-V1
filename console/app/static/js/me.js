@@ -1,11 +1,5 @@
-// Sprint v1.11 — extracted from me.html so the page can ship under strict CSP.
-// Behaviour identical to the previous inline block.
-
 function fmt(s) { return s ? String(s).slice(0, 16).replace('T', ' ') : '—'; }
 
-// Sprint v1.9 — CSRF token reader. Server seeds csrf_token cookie on
-// GET /me; we echo it back on POST /api/me/change-password and
-// POST /auth/logout.
 function getCsrfToken() {
   const m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
   return m ? decodeURIComponent(m[1]) : '';

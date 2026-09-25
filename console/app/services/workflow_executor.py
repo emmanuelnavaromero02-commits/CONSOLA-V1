@@ -1,10 +1,3 @@
-"""Durable workflow executor for Copilot planned workflows.
-
-The planner stores its plan in ``workflow_runs.plan`` and materialises
-one row per step in ``workflow_steps``. This executor owns the runtime
-state machine: sequential execution, approval pauses, retries, audit
-trail, cancellation checks, and fail-fast semantics.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -40,12 +33,6 @@ def _row_to_dict(row: Any) -> dict[str, Any]:
 
 
 def _split_tool(tool: str, args: dict[str, Any]) -> tuple[str, str]:
-    """Return ``(server_id, bare_tool_name)`` from a planned tool.
-
-    The planner is prompted with ``server.tool`` names. Older/manual
-    rows may store the server in args; support that shape without
-    silently guessing a server for ambiguous bare tool names.
-    """
     if "." in tool:
         server_id, bare_name = tool.split(".", 1)
         return server_id, bare_name
@@ -69,9 +56,6 @@ def _step_timeout(args: dict[str, Any]) -> int:
 
 def _is_approved(step: dict[str, Any]) -> bool:
     result = _json_load(step.get("result"), {})
-    # Approval must be server-side state written by approve_step().
-    # Never trust args.approved / args._approved: args come from the
-    # LLM-authored plan and would let the plan approve itself.
     return result.get("approved") is True
 
 
@@ -335,9 +319,6 @@ async def _invoke_with_retry(
                 timeout=timeout_seconds,
             )
             if isinstance(result, dict) and (result.get("_error") or result.get("error")):
-                # Tool-level error envelopes are semantic failures, not
-                # transport failures. Retrying them can duplicate side
-                # effects for write tools that partially applied.
                 last_error = _safe_error(result.get("error_message") or result.get("error"))
                 return False, None, last_error
             return True, result, None
@@ -359,11 +340,6 @@ async def execute_workflow(workflow_id: str, user: dict[str, Any]) -> dict[str, 
 
 
 async def _execute_workflow_scoped(pool: Any, workflow_id: str, user: dict[str, Any]) -> dict[str, Any]:
-    """Execute a planned workflow sequentially.
-
-    Returns the workflow status and current step results. The function
-    stops at the first approval gate or terminal failure.
-    """
     workflow = await _load_workflow(pool, workflow_id, user)
     status = workflow.get("status")
     if status in TERMINAL_RUN_STATUSES:

@@ -5,10 +5,6 @@ import types
 
 import app.main as _console_main
 
-# Import the current console runtime namespace, including private helper
-# functions used by legacy handlers. Handlers are rebound to app.main's
-# namespace before registration so existing tests and monkeypatches that
-# patch app.main.<helper> continue to affect the handler at runtime.
 globals().update(_console_main.__dict__)
 router = APIRouter()
 
@@ -29,7 +25,6 @@ def _bind_to_main(fn):
     _console_main.__dict__[fn.__name__] = rebound
     return rebound
 
-# /monitoring/mcp/tools
 @router.get("/monitoring/mcp/tools")
 @_bind_to_main
 async def monitoring_mcp_tools(user: dict = Depends(_internal_or_authenticated)):
@@ -39,9 +34,8 @@ async def monitoring_mcp_tools(user: dict = Depends(_internal_or_authenticated))
     schemas — an anonymous reader could enumerate the platform's MCP
     surface and target downstream attack research at it."""
     t = await monitoring_tools()
-    return t  # already returns {"tools": [...]}
+    return t
 
-# /monitoring/mcp/invoke
 @router.post("/monitoring/mcp/invoke")
 @_bind_to_main
 async def monitoring_mcp_invoke(body: dict, user: dict = Depends(_internal_or_authenticated)):
@@ -58,7 +52,6 @@ async def monitoring_mcp_invoke(body: dict, user: dict = Depends(_internal_or_au
         _require_effective_permission(user, "monitor.read")
     return await monitoring_invoke(body, user=user)
 
-# /studio_ops/mcp/tools
 @router.get("/studio_ops/mcp/tools")
 @_bind_to_main
 async def studio_ops_tools(user: dict = Depends(_internal_or_authenticated)):
@@ -69,7 +62,6 @@ async def studio_ops_tools(user: dict = Depends(_internal_or_authenticated)):
         tools = [tool for tool in tools if tool["name"] not in STUDIO_OPS_WRITE_TOOLS]
     return {"tools": tools}
 
-# /studio_ops/mcp/invoke
 @router.post("/studio_ops/mcp/invoke", dependencies=[Depends(require_csrf)])
 @_bind_to_main
 async def studio_ops_invoke(body: dict, user: dict = Depends(_internal_or_authenticated)):
@@ -100,25 +92,17 @@ async def studio_ops_invoke(body: dict, user: dict = Depends(_internal_or_authen
         logger_exception=logger.exception,
     )
 
-# /monitoring/tools
 @router.get("/monitoring/tools", dependencies=[Depends(require_permission("monitor.read"))])
 @_bind_to_main
 async def monitoring_tools(user: dict = Depends(require_permission("monitor.read"))):
-    # Sprint v1.22: same rationale as /monitoring/mcp/tools — tool
-    # discovery should be authenticated.
     return {"tools": build_monitoring_tools()}
 
-# /monitoring/invoke
 @router.post(
     "/monitoring/invoke",
     dependencies=[Depends(require_csrf), Depends(require_permission("monitor.read"))],
 )
 @_bind_to_main
 async def monitoring_invoke(body: dict, user: dict = Depends(require_permission("monitor.read"))):
-    # Sprint v1.22: was reachable without any auth. monitoring tools
-    # read job state and DAG metadata, which a session-less caller has
-    # no business seeing. CSRF added because this is a state-shaped
-    # POST and could be called from a cross-origin form otherwise.
     _require_effective_permission(user, "monitor.read")
     return await _invoke_monitoring_tool_impl(
         body=body,
@@ -127,15 +111,12 @@ async def monitoring_invoke(body: dict, user: dict = Depends(require_permission(
         console_url=CONSOLE_URL,
     )
 
-# /api/dags/parse
 @router.post(
     "/api/dags/parse",
     dependencies=[Depends(require_csrf), Depends(require_permission("studio.read"))],
 )
 @_bind_to_main
 async def api_dag_parse(body: dict, user: dict = Depends(require_permission("studio.read"))):
-    # Sprint v1.22: parsing arbitrary Python source is non-trivial work
-    # and an anonymous caller could DOS the parser. Auth + CSRF required.
     source = body.get("source", "")
     if not source:
         raise HTTPException(400, "source is required")

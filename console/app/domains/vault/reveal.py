@@ -1,5 +1,3 @@
-"""Vault reveal request authentication helpers."""
-
 from __future__ import annotations
 
 import json
@@ -27,7 +25,6 @@ def is_cartridge_vault_reveal_request(
     is_production_env: Callable[[], bool],
     internal_api_key: str,
 ) -> bool:
-    """Allow cartridge workers to reveal only their own Vault connection."""
     if request.method != "GET":
         return False
     cartridge = cartridge_from_reveal_path(request.url.path)
@@ -65,7 +62,6 @@ def cartridge_vault_reveal_user(
     internal_service_user: Callable[[], dict],
     verify_signed_security_context: Callable[[dict[str, Any]], dict[str, Any]],
 ) -> dict | None:
-    """Return the internal reveal actor, optionally scoped by signed context."""
     if not is_cartridge_vault_reveal_request(
         request,
         reveal_keys=reveal_keys,

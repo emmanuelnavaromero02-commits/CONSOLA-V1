@@ -1,5 +1,3 @@
-"""Pure access helpers for decision routes."""
-
 from __future__ import annotations
 
 # fmt: off

@@ -1,14 +1,3 @@
-"""Mission 2 — the three domain KPI tools reach the LLM like talent_kpis_read.
-
-Checks the whole registration chain: mcp-infra catalog (name, Spanish
-description, top_n schema), the two allowlists that would otherwise silently
-break the tool (mcp-infra _CONTROL_ROOM_READ_TOOLS -> security_context
-injection; console tool_manifest.READ_ONLY_TOOLS -> risk=read without
-approval), console-side argument validation, and invocation through
-mcp-infra's scope gate: no security_context -> 403, valid signed context ->
-data via the internal read bridge (console call mocked).
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -140,9 +129,6 @@ def _ctx(permissions: list[str] | None = None) -> dict[str, Any]:
     )
 
 
-# ── catalog + allowlists (the two traps) ────────────────────────────────────
-
-
 def test_domain_kpi_tools_are_in_the_mcp_catalog(monkeypatch):
     _load_mcp_module(monkeypatch, "app.main")
     registry = importlib.import_module("app.registry")
@@ -152,7 +138,7 @@ def test_domain_kpi_tools_are_in_the_mcp_catalog(monkeypatch):
         assert name in tools, name
         description = tools[name]["description"]
         assert "Solo lectura" in description, name
-        assert "NO " in description, name  # says what it does not measure
+        assert "NO " in description, name
         assert tools[name]["input_schema"]["additionalProperties"] is False
     for name in ("control_room__finance_kpis_read", "control_room__risk_kpis_read"):
         top_n = tools[name]["input_schema"]["properties"]["top_n"]
@@ -189,8 +175,6 @@ def test_domain_kpi_tools_are_console_read_only_without_approval():
 
 
 def test_console_arg_validation_accepts_bounded_top_n_only(monkeypatch):
-    # The schema console validates against is the one the catalog advertises,
-    # and the server-side clamp is what actually bounds the answer.
     _load_mcp_module(monkeypatch, "app.main")
     registry = importlib.import_module("app.registry")
     control_room = importlib.import_module("app.tools.control_room")
@@ -224,14 +208,9 @@ def test_console_arg_validation_accepts_bounded_top_n_only(monkeypatch):
             schema,
             risk_level="read",
         )
-    # console does not enforce minimum/maximum: out-of-range args pass here and
-    # are bounded server-side (clamps above), never by the LLM's request.
     assert tool_policy.validate_tool_args(
         "control_room__risk_kpis_read", {"top_n": 11}, schema, risk_level="read"
     ) == {"top_n": 11}
-
-
-# ── invocation through the scope gate ───────────────────────────────────────
 
 
 @pytest.mark.parametrize("tool", DOMAIN_TOOLS)
@@ -244,7 +223,6 @@ def test_invoke_without_security_context_is_403(monkeypatch, tool):
     assert exc.value.status_code == 403
     assert "trusted security_context required" in str(exc.value.detail)
 
-    # The tool itself also fails closed when called without a trusted context.
     control_room = importlib.import_module("app.tools.control_room")
     with pytest.raises(HTTPException) as direct:
         asyncio.run(getattr(control_room, tool)())
@@ -268,8 +246,6 @@ def test_invoke_requires_datasets_read_and_scope(monkeypatch, tool):
     with pytest.raises(HTTPException) as exc:
         main._enforce_data_scope(req, "console")
     assert exc.value.status_code == 403
-    # Pin the detail: a broken re-sign would also raise 403 ("Invalid signed
-    # security_context") and hide that the scope branch is no longer reached.
     assert "tenant/workspace scope" in str(exc.value.detail)
 
     req = main.InvokeRequest(
@@ -321,7 +297,7 @@ def test_invoke_with_valid_context_returns_data(monkeypatch, tool):
     if tool == "control_room__operations_kpis_read":
         assert captured["payload"]["params"] == {}
     else:
-        assert captured["payload"]["params"] == {"top_n": 10}  # clamped to the max
+        assert captured["payload"]["params"] == {"top_n": 10}
 
 
 def test_invoke_over_http_end_to_end(monkeypatch):

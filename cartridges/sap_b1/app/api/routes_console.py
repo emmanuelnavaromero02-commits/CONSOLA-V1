@@ -1,4 +1,3 @@
-"""Console-style endpoint aliases."""
 from __future__ import annotations
 
 import anyio
@@ -100,7 +99,7 @@ def entity_preview(
     _get_entity_or_404(entity_id)
 
     try:
-        from app.mcp_server import preview as _preview_tool  # FastMCP @tool
+        from app.mcp_server import preview as _preview_tool
     except Exception as exc:                                   # noqa: BLE001
         return _degraded_503({
             "status": "degraded",

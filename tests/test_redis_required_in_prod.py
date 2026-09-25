@@ -1,4 +1,3 @@
-"""Sprint v1.32 — production console must require Redis rate limiting."""
 from __future__ import annotations
 
 import importlib

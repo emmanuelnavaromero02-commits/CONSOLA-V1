@@ -26,7 +26,6 @@ describe("StatusPill", () => {
   it("does not surface raw English keys in the visible label", () => {
     for (const status of ["very_stale", "queued", "running", "failed"]) {
       const markup = renderToStaticMarkup(<StatusPill status={status} />);
-      // The raw key stays only in the title attribute, not as visible text.
       expect(markup).toContain(`title="${status}"`);
       expect(markup).toMatch(/>[^<]*</);
       const visible = markup.replace(/<[^>]+>/g, "");

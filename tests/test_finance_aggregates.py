@@ -1,11 +1,3 @@
-"""Finance aggregates — unit tests over the fake asyncpg plumbing.
-
-Covers, per the Mission 1 contract: relation missing -> unavailable, optional
-column missing -> degraded, required column missing -> unavailable
-(invalid_schema), tenant/workspace scope enforced (GUCs + explicit predicate),
-correct aggregate wiring with a small fixture, bounded top-N, and JSON output.
-"""
-
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
@@ -76,9 +68,6 @@ def _without(columns: dict[str, str], *names: str) -> dict[str, str]:
     return {key: value for key, value in columns.items() if key not in names}
 
 
-# ── F1 billable hours logged ────────────────────────────────────────────────
-
-
 def _billable_answers() -> dict:
     return {
         "finance.billable_hours_logged.totals": {
@@ -134,7 +123,6 @@ async def test_billable_hours_logged_ready_follows_talent_pattern(monkeypatch):
     assert result.window_start == date(2026, 8, 1)
     assert result.window_end == date(2026, 10, 1)
 
-    # Talent pattern: dedicated connection, repeatable_read readonly, GUCs, close.
     assert connects()[0]["command_timeout"] == 10
     assert conn.transactions == [{"isolation": "repeatable_read", "readonly": True}]
     assert conn.scope == (TENANT_A, WORKSPACE_A)
@@ -143,7 +131,7 @@ async def test_billable_hours_logged_ready_follows_talent_pattern(monkeypatch):
     totals_sql = conn.sql_for("finance.billable_hours_logged.totals")
     assert "workspace_id::text = $1 AND tenant_id::text = $2" in totals_sql
     assert '"omega_publication_gold"."run_' in totals_sql
-    assert "gold_consultor_mensual" not in totals_sql  # never string-built
+    assert "gold_consultor_mensual" not in totals_sql
     assert "SUM(horas_facturables * billing_rate_usd)" in totals_sql
     assert "COUNT(DISTINCT consultor)" in totals_sql
     assert "LIMIT" not in totals_sql
@@ -214,7 +202,7 @@ async def test_billable_hours_logged_unavailable_without_published_head(monkeypa
     assert result.error == "missing: dataset unavailable: consultor_mensual"
     assert result.billable_hours is None
     assert result.proxy_note == fin.BILLABLE_HOURS_PROXY_NOTE
-    assert conn.markers() == []  # no aggregate ran
+    assert conn.markers() == []
     assert conn.closed is True
 
 
@@ -275,7 +263,7 @@ async def test_billable_hours_logged_requires_tenant_scope(monkeypatch):
     result = await fin.query_billable_hours_logged(no_tenant, as_of=AS_OF)
     assert result.status == "unavailable"
     assert result.error.startswith("no_permission:")
-    assert connects() == []  # never connected
+    assert connects() == []
 
     no_workspace = {"tenant_id": TENANT_A, "active_tenant_id": TENANT_A}
     result = await fin.query_billable_hours_logged(no_workspace, as_of=AS_OF)
@@ -300,7 +288,6 @@ async def test_billable_hours_logged_bounds_top_n_and_months(monkeypatch):
 
     assert result.months == 24
     assert result.window_start == date(2024, 10, 1)
-    # Named rows are the controlled exception: clamped to MAX_NAMED_ROWS (10).
     assert (
         conn.args_for("finance.billable_hours_logged.top_projects")[-1]
         == MAX_NAMED_ROWS
@@ -342,9 +329,6 @@ async def test_billable_hours_logged_postgres_error_becomes_unavailable(monkeypa
     assert result.status == "unavailable"
     assert result.error.startswith("unavailable: boom")
     assert conn.closed is True
-
-
-# ── F3 labor cost by department ─────────────────────────────────────────────
 
 
 def _labor_answers() -> dict:
@@ -421,7 +405,7 @@ async def test_labor_cost_by_department_ready(monkeypatch):
     departments_sql = conn.sql_for("finance.labor_cost_by_department.departments")
     assert "GROUP BY departamento" in departments_sql
     assert "COUNT(DISTINCT userid)" in departments_sql
-    assert "nombre_completo" not in departments_sql  # never PII
+    assert "nombre_completo" not in departments_sql
     assert conn.args_for("finance.labor_cost_by_department.departments")[-1] == 20
     assert result.evidence_refs[0]["filters"]["period"] == "2026-08-01"
 
@@ -490,9 +474,6 @@ async def test_labor_cost_by_department_unavailable_without_head(monkeypatch):
 
     assert result.status == "unavailable"
     assert result.error == "missing: dataset unavailable: costo_consultor_mensual"
-
-
-# ── F4 project margin ───────────────────────────────────────────────────────
 
 
 def _margin_answers() -> dict:
@@ -566,7 +547,7 @@ async def test_project_margin_ready(monkeypatch):
     assert "COALESCE(SUM(cost_sunk_base_amount), 0)" in totals_sql
     assert "array_agg(DISTINCT original_currency)" in totals_sql
     assert "SUM(original_billing_amount)" in totals_sql
-    assert "revenue_usd" not in totals_sql  # always NULL in the dataset, never used
+    assert "revenue_usd" not in totals_sql
     assert "ORDER BY margin DESC" in conn.sql_for("finance.project_margin.top_projects")
     assert "ORDER BY margin ASC" in conn.sql_for(
         "finance.project_margin.bottom_projects"

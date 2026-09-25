@@ -1,23 +1,3 @@
-"""Published objects are proved by pinned version, not by re-downloading them.
-
-`_validate_object` ran on every read of a published snapshot and streamed the
-whole object through SHA-256 each time. `_published_state` did the same for
-every published dependency of a dataset, and it runs twice per materialization
-(before the replay check and again at finalize), so a gold dataset with a dozen
-dependencies downloaded each of them four times.
-
-The adversarial byte-level proof is not either of those: it is
-publication_verifier_worker, which downloads the object out of band and
-recomputes the digest once. These two are per-read/per-materialization gates,
-and a pinned version id answers the same question for one HEAD -- S3 cannot
-serve different bytes for one version id, and the application role is denied
-DeleteObjectVersion and PutBucketVersioning.
-
-What these tests hold down is the way that can go wrong silently: an absent
-version, or an absent recorded digest, must be refused rather than read as
-agreement. A fingerprint that degrades to "" makes every object look identical.
-"""
-
 from __future__ import annotations
 
 import pytest
@@ -38,7 +18,6 @@ VERSION = "3HL4kqtJlcpXroDTDmJ+rmSpXd3dIbrHY+MTRCxf3vjVBH40Nrjfkd"
 
 
 class _Storage:
-    """Records every access so a test can assert no bytes were transferred."""
 
     def __init__(self, stat: ObjectStat | None = None, error: Exception | None = None):
         self._stat = stat
@@ -56,7 +35,6 @@ class _Storage:
         assert self._stat is not None
         return self._stat
 
-    # Any call to these two means the change regressed.
     def iter_chunks(self, key: str, **_: object):
         self.byte_calls.append(key)
         raise AssertionError("iter_chunks must not be used to verify a published object")
@@ -95,9 +73,6 @@ def _resolver(storage: _Storage) -> PublicationSnapshotResolver:
     return resolver
 
 
-# ── the snapshot read path ─────────────────────────────────────────────────
-
-
 def test_valid_object_is_verified_without_transferring_bytes() -> None:
     storage = _Storage(_stat())
 
@@ -109,13 +84,6 @@ def test_valid_object_is_verified_without_transferring_bytes() -> None:
 
 @pytest.mark.parametrize("bad", [None, "", "null"])
 def test_unpinnable_version_is_refused(bad: str | None) -> None:
-    """None must not become the string "None"; "null" must not be trusted.
-
-    `str(None)` is "None", which is truthy -- a naive guard lets it through into
-    an unpinned read. And "null" is what S3 reports for an object written while
-    versioning was suspended, the one id that would stop pinning if a bucket
-    ever lost versioning.
-    """
     storage = _Storage(_stat())
 
     with pytest.raises(RuntimeError, match="no pinned version"):
@@ -125,7 +93,6 @@ def test_unpinnable_version_is_refused(bad: str | None) -> None:
 
 
 def test_missing_recorded_checksum_is_refused() -> None:
-    """An object with no omega-sha256 metadata must not pass as verified."""
     storage = _Storage(_stat(checksum=None))
 
     with pytest.raises(RuntimeError, match="no recorded checksum"):
@@ -140,7 +107,6 @@ def test_checksum_mismatch_still_fails() -> None:
 
 
 def test_unknown_version_fails_as_unavailable() -> None:
-    """S3 raises for a version id that does not exist; that must not pass."""
     storage = _Storage(error=RuntimeError("NoSuchVersion"))
 
     with pytest.raises(RuntimeError, match="unavailable"):
@@ -148,15 +114,11 @@ def test_unknown_version_fails_as_unavailable() -> None:
 
 
 def test_legacy_unverified_still_short_circuits() -> None:
-    """Unchanged: pre-attestation rows carry no evidence to check against."""
     storage = _Storage(_stat())
 
     _resolver(storage)._validate_object(_snapshot(status="legacy_unverified"))
 
     assert storage.stat_calls == []
-
-
-# ── the materialization input path ─────────────────────────────────────────
 
 
 class _Engine:
@@ -209,7 +171,6 @@ def test_dependency_is_fingerprinted_without_downloading(
 
     assert storage.stat_calls == [(KEY, VERSION)]
     assert storage.byte_calls == []
-    # The digest input is unchanged, so no stored input_digest is invalidated.
     assert state["published"]["checksum"] == DIGEST
     assert state["published"]["object_version"] == VERSION
 

@@ -52,7 +52,6 @@ def _canonical_context(ctx: dict[str, Any]) -> bytes:
 
 
 def sign_server_payload(payload: bytes, *, purpose: str) -> str:
-    """Sign a server-owned payload with a purpose-derived key."""
     normalized_purpose = str(purpose or "").strip()
     if not isinstance(payload, bytes) or not normalized_purpose:
         raise ValueError("payload bytes and signing purpose are required")
@@ -79,7 +78,6 @@ def sign_security_context(ctx: dict[str, Any]) -> dict[str, Any]:
 
 
 def sign_runtime_envelope(payload: dict[str, Any]) -> dict[str, Any]:
-    """Sign a one-use purpose-bound runtime envelope with HMAC v2."""
     signed = {
         key: value
         for key, value in payload.items()
@@ -96,12 +94,6 @@ def sign_runtime_envelope(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def verify_signed_security_context(ctx: dict[str, Any]) -> dict[str, Any]:
-    """Validate a trusted security_context signed by Console.
-
-    Internal callers may omit a security context for legacy unscoped flows, but
-    once a payload declares ``trusted=true`` it must be signed, fresh, and
-    transport-key distinct in every environment.
-    """
     if not isinstance(ctx, dict):
         raise ValueError("security_context must be an object")
     if not ctx.get("trusted"):
@@ -132,13 +124,6 @@ def verify_signed_security_context(ctx: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_security_context(user: dict | None) -> dict[str, Any]:
-    """Build the server-owned context forwarded to internal MCP services.
-
-    This payload is intentionally derived from the authenticated backend user,
-    never from LLM/tool arguments. Downstream services should treat request
-    body ``user_context`` fields as untrusted unless this context accompanies
-    the internal request.
-    """
     if not user:
         return {
             "trusted": False,
@@ -164,10 +149,6 @@ def build_security_context(user: dict | None) -> dict[str, Any]:
         or "vault.connections.write" in effective
         or "cartridges.read" in effective
     ):
-        # Workspace-scoped users must never receive wildcard cartridge access
-        # from permissions alone. The authenticated user enrichment layer
-        # populates allowed_cartridges from workspace entitlements/installations;
-        # if that context is missing, fail closed downstream.
         allowed_cartridges = []
     else:
         allowed_cartridges = []
@@ -195,13 +176,6 @@ def build_security_context(user: dict | None) -> dict[str, Any]:
 
 
 def _allowed_buckets() -> list[str]:
-    """Buckets the Console may authorize downstream data readers to touch.
-
-    Local MinIO historically uses ``lakehouse``. AWS deployments use the real
-    S3 bucket name via ``S3_BUCKET_NAME``/``MINIO_BUCKET`` while still reading
-    through the same Refinement guards. Include only configured bucket names,
-    never wildcard buckets.
-    """
     buckets: list[str] = []
     for candidate in (
         "lakehouse",
@@ -215,7 +189,6 @@ def _allowed_buckets() -> list[str]:
 
 
 def rls_user_context(user: dict | None) -> dict[str, Any]:
-    """RLS context for refinement, derived from the same server-owned source."""
     ctx = build_security_context(user)
     return {
         "id": ctx.get("user_id"),

@@ -1,14 +1,3 @@
-"""Full-stack acceptance checks for the running local platform.
-
-These tests are deliberately heavier than Playwright/browser smoke:
-they exercise authenticated console APIs, Studio tools, Copilot durable
-surfaces, a real HubSpot cartridge extraction against a deterministic fake
-upstream, Bronze files in MinIO, Silver refresh, Gold materialization, catalog,
-semantic, Control Room, settings and user surfaces.
-
-Run through scripts/run_full_stack_acceptance.sh. The module skips unless
-OMEGA_FULL_STACK_ACCEPTANCE=1 is set so normal unit runs stay fast.
-"""
 from __future__ import annotations
 
 import json

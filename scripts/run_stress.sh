@@ -1,11 +1,4 @@
 #!/usr/bin/env bash
-# Deterministic local stress runner for OMEGA.
-#
-# Default mode is safe for local development:
-#   - uses authenticated console traffic
-#   - points HubSpot at the deterministic fake upstream
-#   - keeps extract/refresh writes disabled unless explicitly enabled
-#   - writes reports under artifacts/stress/<timestamp>/ (gitignored)
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -283,10 +276,6 @@ if [[ "${OMEGA_STRESS_WARM_ACCEPTANCE:-0}" == "1" ]]; then
 fi
 
 if [[ "$STRESS_WORKLOAD" == "hubspot" && "$ENABLE_WRITES" =~ ^(1|true|yes)$ && "${OMEGA_STRESS_RESET_HUBSPOT_DERIVED:-1}" =~ ^(1|true|yes)$ ]]; then
-  # Local MinIO on Docker Desktop can leave overwritten parquet objects in a
-  # deadlocked state. Write stress is intentionally destructive, so reset the
-  # specific derived outputs that this run will rewrite; raw Bronze remains
-  # intact and Gold is reset only when Gold refresh is enabled for this run.
   if [[ -d data/lakehouse/lakehouse ]]; then
     echo "[stress] resetting local HubSpot derived parquet outputs"
     rm -rf data/lakehouse/lakehouse/silver/hubspot

@@ -153,7 +153,6 @@ function Counter({ label, value, href }: { label: string; value: number; href?: 
       <p className="mt-1 text-2xl font-semibold tracking-tight">{value}</p>
     </>
   );
-  // A count is only a link when there is something to open behind it.
   if (href && value > 0) {
     return (
       <Link

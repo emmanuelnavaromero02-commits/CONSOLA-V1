@@ -57,7 +57,6 @@ class PublicationStore:
 
     @contextmanager
     def run_lock(self, identity: PublicationIdentity):
-        """Serialize one server-owned run across its complete preparation."""
         conn = psycopg2.connect(self._publisher_url())
         try:
             with conn.cursor() as cur:

@@ -54,8 +54,6 @@ function cartridgeDescription(cartridge) {
   return cartridge?.description || 'Fuente de datos operativa para conectar tablas, tareas automáticas, reportes y conocimiento semántico.';
 }
 
-// Maps the status returned by /studio/cartridges/{id}/status into the chip
-// label + variant rendered in Studio.
 function statusBadge(cartridge) {
   if (cartridge?.healthy === false) return { label: 'Revisar', variant: 'warning' };
   switch (cartridge?.status) {

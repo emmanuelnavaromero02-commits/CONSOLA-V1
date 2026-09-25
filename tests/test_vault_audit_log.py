@@ -1,4 +1,3 @@
-"""Sprint v1.32 — Vault plaintext reads must be audited."""
 from __future__ import annotations
 
 import importlib

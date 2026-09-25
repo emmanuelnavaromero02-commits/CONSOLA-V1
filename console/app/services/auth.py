@@ -1,11 +1,3 @@
-"""
-Local authentication & session management for the console.
-
-- Passwords hashed with bcrypt.
-- Sessions are server-side (SHA-256 token digest in user_sessions) + HttpOnly cookie.
-- Sessions slide on each authenticated request (renewed by SESSION_SLIDE_DAYS).
-"""
-
 from __future__ import annotations
 
 import os
@@ -22,33 +14,16 @@ from app.security import get_internal_api_key
 COOKIE_NAME = "mod_session"
 REFRESH_COOKIE_NAME = "refresh_token"
 SESSION_LIFETIME = timedelta(days=7)
-SESSION_SLIDE = timedelta(days=1)  # extend if older than this
-# Absolute cap on a session's age — overrides the sliding window so an
-# attacker holding a stolen cookie cannot keep extending the session
-# forever, and so password/role revocation eventually takes effect for
-# users with long-running sessions. 12h matches the typical workday
-# boundary the security team uses for similar caps elsewhere.
+SESSION_SLIDE = timedelta(days=1)
 MAX_SESSION_LIFETIME = timedelta(hours=12)
 REFRESH_TOKEN_LIFETIME = timedelta(days=7)
 
-# Minimum password length enforced on every server-side setter
-# (activate_user, change_own_password, reset_password). 12 chars matches
-# NIST SP 800-63B 2024 guidance and lines up with the entropy bar most
-# managed-password products use as default.
 MIN_PASSWORD_LENGTH = 12
 
 _POOL: asyncpg.Pool | None = None
 
 
 def _login_attempt_lockout_disabled() -> bool:
-    """Disable only the DB-backed lockout for local E2E runs.
-
-    ``console.app.main`` already honors RATE_LIMIT_ENABLED=false for
-    the Redis/IP limiter. ``login_attempts`` is a separate hardening
-    mechanism: attempts must still be tracked for auditability, but the
-    lockout check can be bypassed by the explicit local E2E switch so
-    repeated full-suite runs do not poison the shared test account.
-    """
     enabled_env = os.environ.get("RATE_LIMIT_ENABLED")
     if enabled_env is not None and enabled_env.strip().lower() in {
         "false",
@@ -78,14 +53,12 @@ _ALLOWED_INTERNAL_SERVICES_TO_KEY_ENV: dict[str, str | None] = {
     "cartridge-salesforce": "INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE",
     "airflow": "INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE",
     "mcp-infra": "INTERNAL_API_KEY_MCP_INFRA_TO_CONSOLE",
-    # The old whitelist allowed these too; kept via legacy key only outside prod.
     "console": None,
     "refinement": None,
 }
 
 
 def _is_production() -> bool:
-    # v1.43.2: default ``production`` — see security.py.
     return os.environ.get("APP_ENV", "production").lower() in {"production", "prod"}
 
 
@@ -125,17 +98,6 @@ async def close_pool() -> None:
         _POOL = None
 
 
-# ── Password hashing ────────────────────────────────────────────────────────
-#
-# bcrypt silently truncates inputs at 72 bytes, so a long password manager
-# entry like "a"*73 would collide with "a"*72. Pre-hashing with SHA-256 and
-# encoding the digest in URL-safe base64 (44 ASCII chars, well under 72)
-# keeps the entropy of the original password while staying inside bcrypt's
-# bounds. Both hash and verify must use the same pre-hash, so existing
-# stored hashes from the previous (truncating) implementation continue to
-# verify only when the original password was ≤72 bytes — passwords longer
-# than that were silently truncated before, and anyone affected can reset.
-
 import base64 as _b64
 
 
@@ -150,28 +112,17 @@ def hash_password(plain: str) -> str:
 
 
 def verify_password(plain: str, hashed: str | None) -> bool:
-    if not hashed:  # invited but not yet activated → cannot log in
+    if not hashed:
         return False
     hashed_bytes = hashed.encode("utf-8")
     try:
         if bcrypt.checkpw(_bcrypt_input(plain), hashed_bytes):
             return True
-        # Backward-compat: hashes written before the SHA-256 pre-hash was
-        # introduced used the raw password bytes. Accept those once so
-        # existing users can still log in; a successful login can re-hash
-        # via the normal change-password flow.
         return bcrypt.checkpw(plain.encode("utf-8"), hashed_bytes)
     except Exception:
         return False
 
 
-# ── User CRUD ───────────────────────────────────────────────────────────────
-
-# Map non-canonical / legacy users.role values to one of the four workspace
-# roles that exist in the `roles` table (admin / workspace_admin / analyst /
-# viewer). Without this fallback a user created with role "user" or "owner"
-# could not be granted membership: the SELECT against `roles` would miss and
-# /api/me would 403 the user on first login.
 _WORKSPACE_ROLE_FALLBACK = {
     "owner": "workspace_admin",
     "super_admin": "workspace_admin",
@@ -220,10 +171,6 @@ async def _assign_default_workspace_role(
     workspace_id: str | None = None,
     tenant_id: str | None = None,
 ) -> None:
-    """Grant a freshly-created user membership in the target/default workspace.
-    The dependency chain in dependencies._with_workspace_context refuses
-    requests without at least one row in user_workspace_roles, so this must
-    run in the same transaction as the INSERT into users."""
     workspace = await _assignment_workspace(conn, workspace_id, tenant_id)
     role_id = await _resolve_workspace_role_id(conn, role)
     if not role_id:
@@ -248,7 +195,6 @@ async def create_user(
     workspace_id: str | None = None,
     tenant_id: str | None = None,
 ) -> dict:
-    """Direct create with password — used by bootstrap_admin and admin override."""
     p = await pool()
     async with p.acquire() as conn:
         async with conn.transaction():
@@ -276,9 +222,6 @@ async def create_invited_user(
     workspace_id: str | None = None,
     tenant_id: str | None = None,
 ) -> dict:
-    """Create a user without a password (must_change_password is moot here —
-    the activation flow sets the password). is_active stays FALSE until the
-    invitee clicks the email link and chooses a password."""
     p = await pool()
     async with p.acquire() as conn:
         async with conn.transaction():
@@ -299,7 +242,6 @@ async def create_invited_user(
 
 
 async def activate_user(user_id: int, new_password: str) -> dict | None:
-    """Mark user active and set their password (called from /auth/activate)."""
     if not new_password or len(new_password) < MIN_PASSWORD_LENGTH:
         return None
     p = await pool()
@@ -316,8 +258,6 @@ async def activate_user(user_id: int, new_password: str) -> dict | None:
 
 
 async def reset_password_to(user_id: int, new_password: str) -> dict | None:
-    """Token-based password reset — sets a new password and clears the
-    must_change_password flag (the user just chose this one)."""
     if not new_password or len(new_password) < MIN_PASSWORD_LENGTH:
         return None
     p = await pool()
@@ -379,7 +319,6 @@ async def update_user(
     password: str | None = None,
     escalation_notify: bool | None = None,
 ) -> dict | None:
-    """Admin update. If password is provided, force the user to change it on next login."""
     sets, params = [], []
     if name is not None:
         params.append(name)
@@ -413,7 +352,6 @@ async def update_user(
 async def change_own_password(
     user_id: int, current_password: str, new_password: str
 ) -> tuple[bool, str | None]:
-    """Self-service password change. Returns (success, error_msg)."""
     if not new_password or len(new_password) < MIN_PASSWORD_LENGTH:
         return (
             False,
@@ -460,17 +398,12 @@ async def delete_user(user_id: int) -> bool:
     return res != "DELETE 0"
 
 
-# ── Authentication ──────────────────────────────────────────────────────────
-
-
 async def authenticate(email: str, password: str, ip: str | None = None) -> dict | None:
-    """Returns user dict (without password_hash) on success, else None."""
     p = await pool()
     normalized_email = email.lower().strip()
     login_attempts_available = True
     lockout_disabled = _login_attempt_lockout_disabled()
 
-    # Check for brute force (5 failures in 15 minutes)
     try:
         recent_failures = await p.fetchval(
             """SELECT COUNT(*) FROM login_attempts
@@ -505,7 +438,6 @@ async def authenticate(email: str, password: str, ip: str | None = None) -> dict
             )
         return None
 
-    # Success
     if login_attempts_available:
         await p.execute(
             "INSERT INTO login_attempts (email, ip, success) VALUES ($1, $2, TRUE)",
@@ -514,9 +446,6 @@ async def authenticate(email: str, password: str, ip: str | None = None) -> dict
         )
     await p.execute("UPDATE users SET last_login = NOW() WHERE id = $1", u["id"])
     return _user_to_dict(u)
-
-
-# ── Session management ─────────────────────────────────────────────────────
 
 
 async def create_session(user_id: int, ip: str | None = None) -> tuple[str, datetime]:
@@ -534,15 +463,6 @@ async def create_session(user_id: int, ip: str | None = None) -> tuple[str, date
 
 
 async def get_session_user(token: str) -> dict | None:
-    """Return user dict if session is valid; slides expiration if close to expiring.
-
-    Two independent windows apply:
-      * SESSION_LIFETIME (sliding) — extended on each request via SESSION_SLIDE.
-      * MAX_SESSION_LIFETIME (absolute) — measured from created_at; once
-        exceeded the session is deleted server-side and the caller is forced
-        to log in again. This guarantees password/role revocations propagate
-        within the cap and prevents indefinite session extension.
-    """
     if not token:
         return None
     p = await pool()
@@ -577,7 +497,6 @@ async def destroy_session(token: str) -> None:
 async def logout_tokens(
     session_token: str | None, refresh_token: str | None
 ) -> tuple[bool, bool]:
-    """Atomically invalidate both browser credentials, if present."""
     p = await pool()
     row = await p.fetchrow(
         "SELECT * FROM omega_auth_logout($1, $2)",
@@ -590,9 +509,6 @@ async def logout_tokens(
 async def cleanup_expired_sessions() -> int:
     p = await pool()
     return int(await p.fetchval("SELECT omega_auth_cleanup_sessions()") or 0)
-
-
-# ── Refresh token management ────────────────────────────────────────────────
 
 
 def generate_refresh_token() -> str:
@@ -655,12 +571,6 @@ async def revoke_refresh_token(token: str) -> None:
 async def rotate_refresh_token(
     token: str | None,
 ) -> tuple[dict, str, datetime] | None:
-    """Consume one refresh token exactly once and create its successor.
-
-    The database function performs the guarded UPDATE and successor INSERT in
-    one statement. Concurrent callers therefore observe exactly one consumed
-    row; there is intentionally no read/revoke/create fallback.
-    """
     if not token:
         return None
     new_token = generate_refresh_token()
@@ -688,9 +598,6 @@ async def rotate_refresh_token(
     return user, new_token, expires
 
 
-# ── Helpers ─────────────────────────────────────────────────────────────────
-
-
 def _user_to_dict(row) -> dict | None:
     if row is None:
         return None
@@ -705,19 +612,9 @@ def _user_to_dict(row) -> dict | None:
 
 
 def cookie_secure() -> bool:
-    """Should the session cookie be marked Secure?
-
-    Explicit COOKIE_SECURE env var always wins. Without it, default to
-    True UNLESS APP_ENV is "development" (local dev over http://localhost
-    cannot accept Secure cookies). This makes the safe production default
-    automatic and leaves dev behaviour unchanged.
-    """
     explicit = os.environ.get("COOKIE_SECURE")
     if explicit is not None:
         return explicit.lower() == "true"
-    # v1.43.2: default flipped to ``production`` so a
-    # forgotten APP_ENV no longer ships insecure cookies to a real
-    # browser. Local dev opts in via APP_ENV=development in compose.
     app_env = os.environ.get("APP_ENV", "production").lower()
     return app_env != "development"
 
@@ -726,9 +623,6 @@ def verify_internal_api_key(
     x_api_key: str | None = Header(None),
     x_internal_service: str | None = Header(None),
 ) -> str:
-    # Sprint v1.12: console exposes /internal/* endpoints to workspace and
-    # to the built-in cartridges. Each pair has its own dedicated key. The
-    # legacy shared INTERNAL_API_KEY is still accepted during migration.
     if (
         not x_internal_service
         or x_internal_service not in _ALLOWED_INTERNAL_SERVICES_TO_KEY_ENV

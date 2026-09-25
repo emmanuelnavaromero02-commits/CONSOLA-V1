@@ -1,5 +1,3 @@
-"""The DuckDB spill directory is shared by two users and must outlive the container."""
-
 from __future__ import annotations
 
 import re
@@ -41,7 +39,6 @@ def test_spill_is_a_named_volume_not_the_writable_layer() -> None:
 
 
 def test_spill_is_not_under_tmp() -> None:
-    """/tmp is exactly the path a system cleaner is entitled to empty."""
     target = _spill_default()
 
     assert not target.startswith("/tmp/"), (
@@ -52,7 +49,6 @@ def test_spill_is_not_under_tmp() -> None:
 
 
 def test_supervisor_prepares_the_spill_for_both_processes() -> None:
-    """Root prepares it once, before either unprivileged process starts."""
     source = SUPERVISOR.read_text(encoding="utf-8")
 
     assert "SPILL_DIR" in source, "the supervisor does not know about the spill"
@@ -66,7 +62,6 @@ def test_supervisor_prepares_the_spill_for_both_processes() -> None:
 
 
 def test_spill_is_prepared_before_either_child_starts() -> None:
-    """Order matters: a fresh volume arrives root-owned 0755."""
     source = SUPERVISOR.read_text(encoding="utf-8")
     spill_at = source.index("spill.mkdir(")
     verifier_at = source.index("app.publication_verifier_worker")
@@ -78,7 +73,6 @@ def test_spill_is_prepared_before_either_child_starts() -> None:
 
 
 def test_the_size_ceiling_still_applies_to_the_new_location() -> None:
-    """Moving the directory must not quietly drop its cap."""
     service, _ = _refinement()
     raw = str(service["environment"]["DUCKDB_MAX_TEMP_DIRECTORY_SIZE"])
     default = raw.split(":-", 1)[1].rstrip("}")
@@ -90,7 +84,6 @@ def test_the_size_ceiling_still_applies_to_the_new_location() -> None:
 
 
 def test_memory_limit_and_spill_are_both_declared_by_the_service() -> None:
-    """Neither may fall back to the shared .env, which a re-render can empty."""
     service, _ = _refinement()
     env = service["environment"]
 

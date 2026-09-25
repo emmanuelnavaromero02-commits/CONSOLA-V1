@@ -21,13 +21,12 @@ import os
 
 import asyncpg  # noqa: E402
 
-# Orden de inserción: padres antes que hijas (respeta todas las FKs entrantes).
 _RESTORE_ORDER = (
-    "metric_baselines",            # referenciada por intelligence_signals.baseline_id (SET NULL)
-    "intelligence_signals",        # padre de evidence_packs/hypotheses/decision_options/…/snapshots
-    "control_room_items",          # padre de item_events/action_runs/action_executions
-    "evidence_packs",              # padre de evidence_items
-    "prediction_outcomes",         # referenciada por snapshots.outcome_id (SET NULL)
+    "metric_baselines",
+    "intelligence_signals",
+    "control_room_items",
+    "evidence_packs",
+    "prediction_outcomes",
     "evidence_items",
     "hypotheses",
     "decision_options",
@@ -36,7 +35,6 @@ _RESTORE_ORDER = (
     "action_runs",
     "control_room_action_executions",
 )
-# Casteo SQL por udt_name (los demás van sin cast; asyncpg infiere text/int/bool).
 _CAST = {"uuid": "uuid", "jsonb": "jsonb", "json": "json", "timestamptz": "timestamptz",
          "timestamp": "timestamp", "numeric": "numeric", "date": "date", "_int4": "int4[]",
          "_text": "text[]", "int8": "int8", "int4": "int4", "bool": "bool"}

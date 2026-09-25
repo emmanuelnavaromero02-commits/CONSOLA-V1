@@ -1,7 +1,5 @@
-// Sprint v1.11 — extracted from reset_password.html for strict CSP.
 const TOKEN = new URLSearchParams(location.search).get('token') || '';
 
-// Sprint v1.9 — CSRF cookie reader. Server seeds csrf_token on GET /reset-password.
 function getCsrfToken() {
   const m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
   return m ? decodeURIComponent(m[1]) : '';

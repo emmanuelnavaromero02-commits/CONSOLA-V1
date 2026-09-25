@@ -85,7 +85,6 @@ def _executable(path: Path, text: str) -> None:
 def test_migration_runner_treats_dotenv_as_data_before_executable_sentinel(
     tmp_path: Path,
 ) -> None:
-    """A dotenv assignment must not be able to return a false green gate."""
     (tmp_path / "scripts").mkdir()
     (tmp_path / "infra").mkdir()
     (tmp_path / "fake-bin").mkdir()
@@ -119,7 +118,6 @@ def test_migration_runner_treats_dotenv_as_data_before_executable_sentinel(
 def test_multiuser_runner_treats_dotenv_as_data_before_executable_sentinel(
     tmp_path: Path,
 ) -> None:
-    """The multi-user gate must reach its executable after passive loading."""
     (tmp_path / "scripts").mkdir()
     (tmp_path / "infra").mkdir()
     shutil.copy2(

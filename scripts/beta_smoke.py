@@ -1,15 +1,4 @@
 #!/usr/bin/env python3
-"""Strict private-beta gate for a running local OMEGA stack.
-
-This is intentionally stricter than ``make smoke``. The classic smoke target
-proves the platform is alive and locked down; beta-smoke proves the product is
-honest enough for a private beta: release identity is aligned, strict data
-readiness passes, Gold has scoped rows with native RLS, lineage exists, Superset
-is up, and Intelligence has generated at least one persisted signal.
-
-The script is read-only. It does not seed, migrate, start, stop, or repair the
-stack. Failures are meant to be actionable blockers, not papered-over demos.
-"""
 
 from __future__ import annotations
 
@@ -111,8 +100,6 @@ class BetaSmoke:
                 "Keep VERSION beta until v1.0 gates are green.",
             )
 
-        # Release identity uses `git describe --tags --exact-match HEAD`
-        # when the operator wants a tagged release-candidate gate.
         result = _run(
             ["git", "describe", "--tags", "--exact-match", "HEAD"], timeout=10
         )

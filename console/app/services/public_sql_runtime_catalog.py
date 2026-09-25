@@ -1,5 +1,3 @@
-"""Versioned runtime catalogue derived from the test-only SQL grammars."""
-
 from __future__ import annotations
 
 from enum import Enum
@@ -11,13 +9,11 @@ SQL_RUNTIME_CATALOG_VERSION = "duckdb-1.2.2_postgresql-15.18_v3"
 
 
 class HeadPolicy(str, Enum):
-    """Catalogue grouping; every head still requires a recognized production."""
 
     STRUCTURAL = "structural"
     FAIL_CLOSED = "fail_closed"
 
 
-# These heads overlap common business words and use positional production shapes.
 STRUCTURAL_HEADS = frozenset(
     {
         "call",
@@ -41,8 +37,6 @@ STRUCTURAL_PRODUCTIONS = {
     "use": "qualified_catalog_or_schema",
 }
 
-# These heads have grammar-specific evidence in the prefix recognizer. Membership
-# alone never blocks an isolated word; valid no-argument productions are explicit.
 FAIL_CLOSED_HEADS = frozenset(
     {
         "abort",

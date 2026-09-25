@@ -86,7 +86,6 @@ def _round_forms(value: str) -> FieldEscapeDetection:
 
 
 def malformed_field_escape_detection(value: str) -> FieldEscapeDetection:
-    """Return bounded detection-only forms for malformed or nested field escapes."""
 
     if len(value) > _MAX_INPUT_LENGTH:
         return FieldEscapeDetection(unsafe=True)
@@ -132,7 +131,6 @@ def _field_before_separator(value: str, separator: int) -> str:
 
 
 def assignment_field_detection(value: str) -> AssignmentFieldDetection:
-    """Extract bounded escaped field tokens immediately before assignment marks."""
 
     if len(value) > _MAX_INPUT_LENGTH:
         return AssignmentFieldDetection(unsafe=True)

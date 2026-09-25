@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Validate a v2 release manifest and export its exact Compose digest lock."""
 
 from __future__ import annotations
 
@@ -51,7 +50,6 @@ INFRASTRUCTURE_MIRRORS = frozenset({"omega-minio", "omega-mc"})
 
 
 def _repository_name(image: str) -> str:
-    """``ghcr.io/owner/name:tag@sha256:...`` -> ``name``."""
     reference = image.split("@", 1)[0]
     return reference.rsplit("/", 1)[-1].split(":", 1)[0]
 

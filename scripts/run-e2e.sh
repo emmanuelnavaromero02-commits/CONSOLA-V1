@@ -1,12 +1,4 @@
 #!/usr/bin/env bash
-# v1.44.3.2 — OMEGA E2E test runner.
-#
-# Validates preconditions (FastAPI-served console reachable,
-# tests-e2e/.env present, Chromium installed), then runs the
-# Playwright suite and surfaces the HTML report.
-#
-# Pre-existing v1.43.x convention: scripts/* are bash, set strict
-# mode, idempotent, no surprises.
 set -euo pipefail
 
 echo "🧪 OMEGA E2E Test Suite"
@@ -38,8 +30,6 @@ if [ "${OMEGA_RELEASE_DIGEST_STACK:-0}" = "1" ]; then
     fi
 fi
 
-# Credentials gate: refuse to run without explicit configuration so
-# tests can't silently skip every protected check.
 if [ ! -f .env ]; then
     if [ -f .env.example ]; then
         cp .env.example .env
@@ -53,8 +43,6 @@ if [ ! -f .env ]; then
     fi
 fi
 
-# Load .env as passive data so the shell-level reachability checks below see
-# the configured BASE_URL / LEGACY_URL overrides.
 if [ "${RELEASE_MODE}" = "1" ]; then
     while IFS= read -r dotenv_line || [ -n "${dotenv_line}" ]; do
         [[ "${dotenv_line}" =~ ^[[:space:]]*($|#) ]] && continue
@@ -115,10 +103,6 @@ if [ "${RELEASE_MODE}" = "1" ]; then
     python3 -I "${ROOT}/scripts/run_release_playwright.py" --verify-runtime-only
 fi
 
-# Some deep cartridge probes identify as X-Internal-Service: console,
-# so they need the console→cartridge pair key. tests-e2e/.env may carry
-# an operator-facing legacy INTERNAL_API_KEY, so always hydrate the
-# pair key explicitly from infra/.env when the caller did not provide it.
 read_infra_env() {
     local key="$1"
     awk -F= -v key="${key}" '$1 == key { print substr($0, index($0, "=") + 1); exit }' \
@@ -136,8 +120,6 @@ if [ -f "${ROOT}/infra/.env" ]; then
     fi
 fi
 
-# Static export architecture: FastAPI on :8000 serves the console, APIs,
-# legacy pages, and Control Room from the same origin.
 BASE_URL="${BASE_URL:-http://localhost:8000}"
 LEGACY_URL="${LEGACY_URL:-http://localhost:8000}"
 CONTROL_ROOM_URL="${CONTROL_ROOM_URL:-${LEGACY_URL}/control-room}"
@@ -145,7 +127,6 @@ CONTROL_ROOM_URL="${CONTROL_ROOM_URL:-${LEGACY_URL}/control-room}"
 echo ""
 echo "Preconditions:"
 
-# FastAPI-served static console healthcheck.
 if curl -sS --max-time 5 -o /dev/null "${BASE_URL}/healthz" 2>/dev/null; then
     echo "  ✅ FastAPI-served console reachable at ${BASE_URL}"
 else
@@ -154,7 +135,6 @@ else
     exit 1
 fi
 
-# FastAPI backend healthcheck (APIs + Control Room, :8000)
 if curl -sS --max-time 5 -o /dev/null "${LEGACY_URL}/healthz" 2>/dev/null; then
     echo "  ✅ FastAPI backend reachable at ${LEGACY_URL}"
     echo "     ↳ Control Room expected at ${CONTROL_ROOM_URL}"
@@ -194,7 +174,6 @@ if [ "${RELEASE_MODE}" = "1" ]; then
     python3 -I scripts/run_release_playwright.py || EXIT=$?
     cd "${E2E_DIR}"
 else
-    # Interactive runs retain the HTML/list reporters from the checked-in config.
     npx --no-install playwright test || EXIT=$?
 fi
 
@@ -220,8 +199,6 @@ echo ""
 echo "📊 Report: ${E2E_DIR}/playwright-report/index.html"
 echo ""
 
-# Only auto-open the report in interactive shells; in CI / headless
-# pipelines just print the path.
 if [ -t 1 ] && [ "${OPEN_REPORT:-1}" = "1" ]; then
     npx playwright show-report --host localhost 2>/dev/null || true
 fi

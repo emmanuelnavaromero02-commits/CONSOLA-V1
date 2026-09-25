@@ -1,37 +1,3 @@
-"""
-DAG: file_ingest  (cartridge-agnostic)
-=======================================
-Patrón genérico de ingesta de archivos desde el lake → parquet bronze.
-Reemplaza N DAGs casi-idénticos donde solo cambia el nombre del archivo,
-la entidad destino y los detalles de parseo (csv/excel/encoding/sheet).
-
-## Cómo se dispara
-`entity_scheduler` lo invoca con conf que merge el `entity_config.dag_params`:
-
-    conf = {
-        "entity":       "ProjectsBilling",
-        "mode":         "full",
-        "cartridge_id": "replicon",
-        # ── desde entity_config.dag_params ──
-        "file_pattern": "projects_billing*.csv",  # glob en uploads/<cartridge>/in/
-        "format":       "csv",                      # csv | excel
-        "delimiter":    ",",                        # csv
-        "encoding":     "utf-8",                    # csv
-        "sheet":        0,                          # excel: índice o nombre
-        "skiprows":     0,                          # excel/csv: filas a saltar
-        "parser":       "default",                  # ver PARSERS abajo
-    }
-
-## Resultado por archivo
-1. `s3://<bucket>/raw/<cartridge>/<entity>/load_date=<today>/data-<hash>.parquet`
-   — un objeto POR archivo fuente (hash del nombre): archivos nuevos del día
-   se ACUMULAN, y reintento/corrección del mismo archivo sobrescribe SOLO su
-   objeto. Nada borra lo ya ingestado (T2c: antes, la segunda corrida del día
-   barría el prefijo y truncaba el bronze al último lote).
-2. Mueve el original a `uploads/<cartridge>/bak/<ts>_<filename>`
-3. Registra el run en `pipeline_runs` (vía mcp-infra)
-"""
-
 from __future__ import annotations
 
 import fnmatch
@@ -75,9 +41,6 @@ def _mcp_headers() -> dict[str, str]:
         "X-Internal-Service": "airflow",
         "X-API-Key": _internal_key("INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA"),
     }
-
-
-# ── MinIO / S3 helpers ───────────────────────────────────────────────────────
 
 
 def _minio_cfg() -> dict:
@@ -156,13 +119,7 @@ def _raw_prefix(
     return f"{base}load_date={load_date}/"
 
 
-# ── Parsers (dispatch by name) ───────────────────────────────────────────────
-# Each parser receives the raw bytes + conf and returns a pandas DataFrame.
-# Add new ones here — referenced from entity_config.dag_params["parser"].
-
-
 def _parse_default(data: bytes, conf: dict):
-    """Auto-detect by `format` (csv|excel). Honors delimiter/encoding/sheet/skiprows."""
     import pandas as pd
 
     fmt = (conf.get("format") or "csv").lower()
@@ -187,14 +144,12 @@ def _parse_default(data: bytes, conf: dict):
 
 
 def _parse_csv_latin1(data: bytes, conf: dict):
-    """Atajo: CSV con encoding=latin1 y delimiter=; (SAP-style)."""
     import pandas as pd
 
     return pd.read_csv(io.BytesIO(data), sep=";", encoding="latin1", header=0)
 
 
 def _parse_excel_skip_decor(data: bytes, conf: dict):
-    """Excel con cabecera decorativa en filas 1-4, datos desde fila 5."""
     import pandas as pd
 
     return pd.read_excel(
@@ -211,9 +166,6 @@ PARSERS = {
     "csv_latin1": _parse_csv_latin1,
     "excel_skip_decor": _parse_excel_skip_decor,
 }
-
-
-# ── pipeline_runs registry helper ────────────────────────────────────────────
 
 
 def _save_run(cartridge_id: str, entity: str, run_id: str, **kwargs) -> None:
@@ -280,8 +232,6 @@ def _trigger_refresh_chain(
     *,
     admission: dict,
 ) -> None:
-    """Dispara dataset_refresh_chain con seed_raw=raw/<cartridge>/<entity>
-    para que los silver/gold dependientes se materialicen en cascada."""
     import os as _os
     import requests as _req
 
@@ -310,9 +260,6 @@ def _trigger_refresh_chain(
         r.raise_for_status()
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError(f"refresh_chain trigger falló: {exc}") from exc
-
-
-# ── DAG ──────────────────────────────────────────────────────────────────────
 
 
 @dag(
@@ -412,8 +359,6 @@ def file_ingest():
         if not entity:
             raise ValueError("conf.entity es obligatorio")
 
-        # Capture el dag_run_id de Airflow para que el badge "↗" del Studio
-        # pueda linkear al run específico en la UI de Airflow.
         airflow_run_id = (ctx.get("dag_run").run_id if ctx.get("dag_run") else "") or ""
 
         parser_name = conf.get("parser") or "default"
@@ -450,7 +395,6 @@ def file_ingest():
             )
             return {"row_count": 0, "files": 0, "storage_uri": None}
 
-        # Read+concat all matching files
         frames = []
         for f in files:
             resp = client.get_object(bucket, f["key"])
@@ -471,14 +415,6 @@ def file_ingest():
             f"[file_ingest] {cartridge_id}.{entity} → {len(df)} filas de {len(files)} archivo(s)"
         )
 
-        # T2c: un parquet POR archivo fuente, nombrado por hash del nombre.
-        # Idempotencia real sin destruir el dia: el reintento (o una
-        # correccion re-subida con el mismo nombre) sobrescribe SOLO su
-        # objeto; archivos nuevos del mismo dia se ACUMULAN y el lector
-        # (**/*.parquet, union_by_name) los concatena. El barrido del prefijo
-        # que vivia aqui truncaba el bronze al ultimo lote del dia: como los
-        # originales se archivan a bak/ tras cada corrida, lo de las 9:00
-        # desaparecia cuando llegaba lo de las 14:00.
         size = 0
         for f, frame in zip(files, frames):
             if tenant_id:
@@ -497,9 +433,6 @@ def file_ingest():
                 content_type="application/octet-stream",
             )
             size += part_size
-        # Transicion: el data.parquet monolitico del patron viejo (si este
-        # dia ya tenia uno) se retira para no duplicar contra los objetos
-        # por-archivo. SOLO ese nombre exacto; jamas un barrido del prefijo.
         legacy_key = f"{out_pref}data.parquet"
         try:
             client.remove_object(bucket, legacy_key)
@@ -507,7 +440,6 @@ def file_ingest():
             pass
         storage_uri = f"s3://{bucket}/{out_pref}"
 
-        # Move originals to bak/
         ts = started.strftime("%Y%m%d_%H%M%S")
         for f in files:
             dst_key = (
@@ -538,7 +470,6 @@ def file_ingest():
             files_processed=len(files),
         )
 
-        # Propagar aguas abajo (silver→gold) según el grafo de dependencias
         _trigger_refresh_chain(
             admission=admission,
         )

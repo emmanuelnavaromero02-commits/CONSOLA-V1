@@ -1,11 +1,3 @@
-"""The seed must stay byte-identical to the cartridge sources.
-
-Migration 87 embeds the app HTML inline so a fresh database can serve the apps
-before the console reconciles from /registry. That copy had silently drifted
-from the cartridge files, so a stale dashboard shipped on first boot. The seed
-is generated now, and this test is what keeps it honest.
-"""
-
 from __future__ import annotations
 
 import importlib.util

@@ -1,5 +1,3 @@
-"""Durable per-dataset reservation slots backed by ``pipeline_runs``."""
-
 from __future__ import annotations
 
 import hashlib

@@ -115,7 +115,6 @@ def decision_eligibility_provenance(
     decision_id: int | None = None,
     workspace_id: str | None = None,
 ) -> dict[str, Any]:
-    """Compatibility wrapper; server writes always provide workspace_id."""
     workspace = str(workspace_id or item.get("workspace_id") or "").strip()
     return workflow_eligibility_provenance(
         item,

@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""Safe chaos gate.
-
-Production AWS must refuse destructive chaos. Dedicated staging must be
-explicitly confirmed before any destructive command can be wired.
-"""
 
 from __future__ import annotations
 

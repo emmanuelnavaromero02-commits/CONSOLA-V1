@@ -155,7 +155,6 @@ def record(
 
 
 def command_result_status(code: int) -> str:
-    # Existing release scripts use exit 2 for operator-blocked checks.
     if code == 0:
         return "PASS"
     if code == 2:
@@ -668,8 +667,6 @@ def phase_h_chaos(ctx: HarnessContext) -> StepResult:
             command="OMEGA_V1_GA_EXECUTE_CHAOS=1 make v1-ga-max-aws",
         )
     command = "bash scripts/v1_stress/run_chaos_placeholder.sh"
-    # The placeholder command is intentionally not present; operators must wire
-    # infrastructure-specific recovery commands before executing destructive chaos.
     return record(
         ctx,
         "H",

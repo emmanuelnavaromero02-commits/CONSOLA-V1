@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-"""Deterministic HubSpot API subset for full-stack acceptance tests.
-
-This server intentionally behaves like a tiny real upstream:
-it requires a bearer token, exposes the CRM v3 paths used by the cartridge,
-and returns HubSpot-shaped JSON rather than fixture rows in cartridge format.
-"""
 from __future__ import annotations
 
 import json

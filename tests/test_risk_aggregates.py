@@ -1,12 +1,3 @@
-"""Risk aggregates — unit tests over the fake asyncpg plumbing.
-
-attrition_risk_population reuses Talent's retention_risk dataset (no score
-recompute) and the official affected_count from talent_action_candidates;
-employment_end_expiry is the honest proxy for contract expiry; deal_slippage
-reads salesforce_deals_en_riesgo. Covers scope, degraded/unavailable paths,
-PII exclusion and bounded top-N.
-"""
-
 from __future__ import annotations
 
 from datetime import date, timedelta
@@ -83,9 +74,6 @@ def _without(columns: dict[str, str], *names: str) -> dict[str, str]:
 
 def _all_sql(conn: FakeConn) -> str:
     return "\n".join(sql for _method, sql, _args in conn.calls)
-
-
-# ── R1 attrition risk population ────────────────────────────────────────────
 
 
 def _attrition_answers() -> dict:
@@ -173,13 +161,12 @@ async def test_attrition_risk_population_reuses_talent(monkeypatch):
         TENANT_A,
         "talent_retention_risk",
     )
-    # Person-level columns never reach SQL text: aggregates only.
     executed = _all_sql(conn)
     assert "user_id" not in executed.replace("workspace_id", "").replace(
         "tenant_id", ""
     )
     assert "full_name" not in executed
-    assert "talent_percent_is_valid" not in executed  # DuckDB macro, not Postgres
+    assert "talent_percent_is_valid" not in executed
     assert [ref["dataset"] for ref in result.evidence_refs] == [
         risk.RETENTION_RISK_DATASET,
         risk.ACTION_CANDIDATES_DATASET,
@@ -304,9 +291,6 @@ async def test_attrition_risk_population_unavailable_paths(monkeypatch):
     assert result.missing_columns == ["risk_band"]
 
 
-# ── R3 employment end expiry ────────────────────────────────────────────────
-
-
 def _expiry_answers() -> dict:
     return {
         "risk.employment_end_expiry.windows": {
@@ -421,9 +405,6 @@ async def test_employment_end_expiry_unavailable_without_end_date(monkeypatch):
     assert conn.markers() == []
 
 
-# ── R4 deal slippage ────────────────────────────────────────────────────────
-
-
 def _slippage_answers() -> dict:
     return {
         "risk.deal_slippage.totals": {
@@ -484,7 +465,7 @@ async def test_deal_slippage_ready(monkeypatch):
             "max_days_overdue": 45,
         }
     ]
-    assert result.top_deals == []  # default top_n=0: aggregates only
+    assert result.top_deals == []
     assert any("sin conversion de moneda" in note for note in result.notes)
 
     totals_sql = conn.sql_for("risk.deal_slippage.totals")
@@ -501,15 +482,15 @@ async def test_deal_slippage_ready(monkeypatch):
         AS_OF,
         risk.BREAKDOWN_ROWS,
     )
-    assert result.top_deals == []  # default top_n=0: aggregates only
+    assert result.top_deals == []
     assert "risk.deal_slippage.top_deals" not in conn.markers()
     reason_sql = conn.sql_for("risk.deal_slippage.by_reason")
     assert "GROUP BY motivo_riesgo" in reason_sql
     assert "ORDER BY amount DESC NULLS LAST" in reason_sql
     executed = _all_sql(conn)
-    assert "vendedor" not in executed  # seller name never selected
-    assert "opportunity_name" not in executed  # no per-deal rows
-    assert "is_closed" not in executed  # dataset already filters it
+    assert "vendedor" not in executed
+    assert "opportunity_name" not in executed
+    assert "is_closed" not in executed
     assert all(
         "GROUP BY" in conn.sql_for(m) for m in conn.markers() if "totals" not in m
     )
@@ -593,7 +574,6 @@ async def test_deal_slippage_named_rows_are_a_controlled_exception(monkeypatch):
             "risk_reason": "cierre vencido",
         }
     ]
-    # Clamped to MAX_NAMED_ROWS (10), never the 50-row breakdown bound.
     assert conn.args_for("risk.deal_slippage.top_deals") == (
         WORKSPACE_A,
         TENANT_A,

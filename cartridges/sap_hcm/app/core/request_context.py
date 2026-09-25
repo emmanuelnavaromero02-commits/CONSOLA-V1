@@ -27,7 +27,7 @@ _CURRENT_SECURITY_CONTEXT: ContextVar[dict[str, Any] | None] = ContextVar(
 
 
 class SecurityContextError(ValueError):
-    """Raised when an inbound trusted security_context cannot be verified."""
+    pass
 
 
 def set_security_context(

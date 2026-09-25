@@ -130,7 +130,6 @@ def _candidate_fields(env_var_name: str) -> tuple[str, ...]:
 
 
 def get_secret_for_worker(service_name: str, env_var_name: str, security_context: str | None = None) -> str:
-    """Resolve a worker credential from env first, then Console Vault."""
     for candidate in _ENV_ALIASES.get(env_var_name, (env_var_name,)):
         value = os.environ.get(candidate)
         if value:
@@ -145,18 +144,14 @@ def get_secret_for_worker(service_name: str, env_var_name: str, security_context
 
 
 def get_secret(env_var_name: str, default: str = "") -> str:
-    """Single-arg secret access used by protection_service (mirrors the SAP
-    cartridge signature). Reads from the process environment only."""
     return os.environ.get(env_var_name, default)
 
 
 def get_connection_for_worker(service_name: str, security_context: str | None = None) -> dict[str, Any]:
-    """Return the resolved Console Vault connection payload for a worker."""
     return dict(_fetch_connection(service_name, security_context=security_context))
 
 
 def get_hubspot_connection(security_context: str | None = None) -> dict[str, Any]:
-    """Return HubSpot connection material from env first, then Console Vault."""
     payload = get_connection_for_worker("hubspot", security_context=security_context)
     connection = dict(payload)
     env_token = ""
@@ -193,7 +188,6 @@ def get_hubspot_connection(security_context: str | None = None) -> dict[str, Any
 
 
 def get_hubspot_credentials() -> tuple[str, str]:
-    """Return (base_url, token) from environment or Console Vault."""
     connection = get_hubspot_connection()
     base_url = str(connection.get("base_url") or "")
     token = (

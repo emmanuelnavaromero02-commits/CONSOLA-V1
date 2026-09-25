@@ -155,8 +155,6 @@ describe("SupervisedActionsPage: idempotencia por intención lógica", () => {
     const firstKey = sentKeys(clientBoundary.validateSupervisedAction)[0];
     expect(firstKey).toBeTruthy();
 
-    // Tras un desenlace ambiguo la página debe re-sincronizar el estado
-    // del servidor (refetch) para resolver la ambigüedad de forma visible.
     expect(clientBoundary.listSupervisedActions.mock.calls.length).toBeGreaterThan(listCallsBeforeError);
 
     await act(async () => root.unmount());
@@ -166,10 +164,6 @@ describe("SupervisedActionsPage: idempotencia por intención lógica", () => {
 
     const keys = sentKeys(clientBoundary.validateSupervisedAction);
     expect(keys).toHaveLength(2);
-    // Sin identidad/versión de intención server-authoritative en el contrato,
-    // la UI no promete idempotencia entre montajes: el nuevo intento es una
-    // intención nueva sobre el estado re-sincronizado, con clave nueva y sin
-    // haber tocado ningún storage.
     expect(keys[1]).not.toBe(firstKey);
     expect(window.localStorage.length).toBe(0);
     expect(window.sessionStorage.length).toBe(0);

@@ -1,5 +1,4 @@
 {
-  "_comment": "FUENTE UNICA DE VERDAD del orden de materializacion de datasets gold de SuccessFactors. La leen los TRES modulos: cartridges/sap_successfactors/app/core/dataset_orders.py (usado por refinement_triggers.py y job_runner.py) y refinement/scripts/materialize_successfactors_foundation.py (servicio refinement, via el mount /registry/cartridges). NO hardcodees estas listas en otro lugar. Un test anti-drift (refinement/tests/test_successfactors_gold_dataset_orders_single_source.py) FALLA si algun consumidor diverge. Invariante: talent_contract_order + talent_operational_order == talent_order.",
   "foundation_order": [
     "sap_successfactors_employee_360",
     "sap_successfactors_org_structure",

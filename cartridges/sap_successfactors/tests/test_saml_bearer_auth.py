@@ -104,7 +104,6 @@ def test_saml_bearer_auth_gets_assertion_from_successfactors_idp_and_caches_toke
 
 
 def test_explicit_vault_connection_auth_method_wins_over_container_default(monkeypatch):
-    """A selected Vault connection must not be downgraded by SF_AUTH_METHOD env."""
     monkeypatch.setenv("SF_AUTH_METHOD", "oauth2_client_credentials")
 
     sap_client = _import_client()
@@ -179,7 +178,6 @@ def test_saml_bearer_token_401_reports_successfactors_rejection(monkeypatch):
 
 
 def test_vault_admin_user_wins_over_placeholder_extra_username(monkeypatch):
-    """The SAML subject must come from admin_user, not UI/example usernames."""
     monkeypatch.setenv("SF_ADMIN_USER", "env-should-not-win")
 
     sap_client = _import_client()

@@ -5,10 +5,6 @@ import types
 
 import app.main as _console_main
 
-# Import the current console runtime namespace, including private helper
-# functions used by legacy handlers. Handlers are rebound to app.main's
-# namespace before registration so existing tests and monkeypatches that
-# patch app.main.<helper> continue to affect the handler at runtime.
 globals().update(_console_main.__dict__)
 router = APIRouter()
 
@@ -29,7 +25,6 @@ def _bind_to_main(fn):
     _console_main.__dict__[fn.__name__] = rebound
     return rebound
 
-# /api/vault/connections/{cartridge}
 @router.get("/api/vault/connections/{cartridge}", dependencies=[Depends(require_permission("vault.connections.read"))])
 @_bind_to_main
 async def api_vault_list_connections(cartridge: str, user: dict = Depends(require_authenticated)):
@@ -61,7 +56,6 @@ async def api_vault_list_connections(cartridge: str, user: dict = Depends(requir
             visible.append(display)
     return {"connections": visible}
 
-# /api/vault/connections/{cartridge}/{conn_id}/reveal
 @router.get("/api/vault/connections/{cartridge}/{conn_id}/reveal", dependencies=[Depends(require_permission("vault.secrets.reveal"))])
 @_bind_to_main
 async def api_vault_reveal_connection(cartridge: str, conn_id: str, user: dict = Depends(_internal_or_authenticated)):
@@ -97,7 +91,6 @@ async def api_vault_reveal_connection(cartridge: str, conn_id: str, user: dict =
             data["id"] = conn_id
     return data
 
-# /api/vault/connections/{cartridge}/{conn_id}
 @router.put("/api/vault/connections/{cartridge}/{conn_id}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write"))])
 @_bind_to_main
 async def api_vault_upsert_connection(cartridge: str, conn_id: str, body: dict, user: dict = Depends(require_authenticated)):
@@ -116,7 +109,6 @@ async def api_vault_upsert_connection(cartridge: str, conn_id: str, body: dict, 
             data["id"] = conn_id
     return data
 
-# /api/vault/connections/{cartridge}/{conn_id}
 @router.delete("/api/vault/connections/{cartridge}/{conn_id}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write"))])
 @_bind_to_main
 async def api_vault_delete_connection(cartridge: str, conn_id: str, user: dict = Depends(require_authenticated)):
@@ -136,7 +128,6 @@ async def api_vault_delete_connection(cartridge: str, conn_id: str, user: dict =
             data["id"] = conn_id
     return data
 
-# /api/vault/secrets/{scope}
 @router.get("/api/vault/secrets/{scope}", dependencies=[Depends(require_permission("vault.secrets.read_masked"))])
 @_bind_to_main
 async def api_vault_list_secrets(scope: str, user: dict = Depends(require_authenticated)):
@@ -150,7 +141,6 @@ async def api_vault_list_secrets(scope: str, user: dict = Depends(require_authen
         data["scope"] = scope
     return data
 
-# /api/vault/secrets/{scope}/{key}/reveal
 @router.get("/api/vault/secrets/{scope}/{key}/reveal", dependencies=[Depends(require_permission("vault.secrets.reveal"))])
 @_bind_to_main
 async def api_vault_reveal_secret(scope: str, key: str, user: dict = Depends(require_authenticated)):
@@ -163,7 +153,6 @@ async def api_vault_reveal_secret(scope: str, key: str, user: dict = Depends(req
         r.raise_for_status()
         return r.json()
 
-# /api/vault/secrets/{scope}/{key}
 @router.put("/api/vault/secrets/{scope}/{key}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write"))])
 @_bind_to_main
 async def api_vault_upsert_secret(scope: str, key: str, body: dict, user: dict = Depends(require_authenticated)):
@@ -177,7 +166,6 @@ async def api_vault_upsert_secret(scope: str, key: str, body: dict, user: dict =
         data["scope"] = scope
     return data
 
-# /api/vault/secrets/{scope}/{key}
 @router.delete("/api/vault/secrets/{scope}/{key}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write"))])
 @_bind_to_main
 async def api_vault_delete_secret(scope: str, key: str, user: dict = Depends(require_authenticated)):

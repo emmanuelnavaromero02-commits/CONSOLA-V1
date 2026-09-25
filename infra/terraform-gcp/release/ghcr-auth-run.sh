@@ -115,8 +115,6 @@ sys.stdout.write(token)
 fi
 unset metadata_token_response
 
-# A curl config keeps the metadata token out of process arguments. Both this
-# file and Docker's auth config live in the same mode-0700 ephemeral directory.
 printf 'header = "Authorization: Bearer %s"\n' "$metadata_access_token" > "$curl_config"
 chmod 600 "$curl_config"
 unset metadata_access_token
@@ -131,9 +129,6 @@ if ! secret_response="$(
 fi
 rm -f -- "$curl_config"
 
-# Secret Manager returns the resource name with the numeric project id, not the
-# project-id string from metadata, so match the stable suffix (secret + version)
-# instead of the full project-prefixed name.
 expected_version="/secrets/${secret_id}/versions/${secret_version}"
 if ! credentials="$(
   printf '%s' "$secret_response" | python3 -c '

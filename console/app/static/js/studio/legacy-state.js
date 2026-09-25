@@ -1,10 +1,4 @@
-// Studio Legacy — shared mutable state.
-// Container for top-level variables that used to live as `let`/`const` at the
-// top of legacy.js. Centralized here so legacy.js and sql-runner.js can both
-// mutate and observe the same values after the ES Module conversion of Fase 4B.
-
 export const state = {
-  // S3/MinIO bucket — viene de /api/config; default cubre dev local.
   S3_BUCKET: 'lakehouse',
   AIRFLOW_PUBLIC_URL: '',
   SUPERSET_PUBLIC_URL: '',
@@ -112,6 +106,5 @@ export const state = {
   _aiResizeX0: 0,
   _aiResizeW0: 0,
 
-  // Used by sql-runner.js
   _sqlRunnerSources: [],
 };

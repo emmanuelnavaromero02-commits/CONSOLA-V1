@@ -230,7 +230,6 @@ def console_main(monkeypatch):
         monkeypatch.setitem(sys.modules, name, mod)
     monkeypatch.setitem(sys.modules, "asyncpg", _module())
 
-    # Also patch the package attributes so `from app.services import auth` gets the stub
     import app.services as _svc_pkg
 
     for attr, mod in [
@@ -249,8 +248,6 @@ def console_main(monkeypatch):
     sys.modules.pop("app.main", None)
     sys.modules.pop("app.dependencies", None)
     main = importlib.import_module("app.main")
-    # Force a fresh in-memory limiter for each test so rate-limit counters
-    # from earlier tests don't bleed across cases.
     from app.services.rate_limiter import reset_rate_limiter
 
     reset_rate_limiter()
@@ -262,7 +259,6 @@ def console_main(monkeypatch):
 
 def test_login_success_returns_access_token(console_main):
     client = TestClient(console_main.app)
-    # Sprint v1.9 — /auth/login now enforces double-submit CSRF.
     client.cookies.set("csrf_token", "test-csrf")
 
     response = client.post(
@@ -284,7 +280,6 @@ def test_login_success_returns_access_token(console_main):
 
 def test_login_issued_token_decodes(console_main):
     client = TestClient(console_main.app)
-    # Sprint v1.9 — CSRF gate on /auth/login.
     client.cookies.set("csrf_token", "test-csrf")
     response = client.post(
         "/auth/login",
@@ -550,7 +545,6 @@ def test_api_data_prefers_scoped_gold_table(console_main, monkeypatch):
 
 
 def test_api_data_without_published_gold_fails_closed(console_main, monkeypatch):
-    """A missing scoped publication cannot fall back to mutable Refinement data."""
     monkeypatch.delenv("GOLD_DATABASE_URL", raising=False)
     monkeypatch.delenv("DATABASE_URL", raising=False)
     captured = {}
@@ -590,10 +584,6 @@ def test_api_data_without_published_gold_fails_closed(console_main, monkeypatch)
 
 
 def test_datasets_data_proxy_forwards_user_context(console_main, monkeypatch):
-    """Regression: GET /datasets/{name}/data used to proxy via REST without
-    a user_context, which let any authenticated user read non-pggold datasets
-    in full. The endpoint now goes through /mcp/invoke with the caller's
-    context attached."""
     captured = {}
 
     class FakeResponse:
@@ -653,12 +643,6 @@ def test_rbac_dependency_prefix_route_without_auth_does_not_return_200(console_m
 
 
 def test_assistant_chat_without_auth_is_rejected(console_main):
-    """Sprint v1.22: /assistant/chat is now CSRF-protected. An anonymous
-    POST with neither bearer token nor CSRF cookie/header is rejected.
-    The status code is 403 (CSRF fails first as a decorator-level dep,
-    short-circuiting before the parameter-level require_authenticated).
-    Either rejection is correct from the security side; the test asserts
-    the route is NOT 2xx — that's the property worth pinning."""
     client = TestClient(console_main.app)
 
     response = client.post("/assistant/chat", json={"message": "hello", "history": []})
@@ -1014,10 +998,6 @@ def test_admin_reinvite_rejects_active_user(console_main):
 def test_viewer_pipeline_allows_same_origin_iframe_with_session(console_main):
     client = TestClient(console_main.app)
     client.cookies.set("mod_session", "legacy-session-token")
-    # Sprint v1.5 locked /viewer/pipeline to admins. This test verifies the
-    # CSP/iframe headers, not the auth gate, so switch the fixture user's
-    # role to admin to satisfy require_admin while keeping the original
-    # intent.
     console_main._auth.user["role"] = "admin"
 
     response = client.get("/viewer/pipeline")
@@ -1076,7 +1056,6 @@ def test_logout_revokes_refresh_token(console_main):
     client = TestClient(console_main.app)
     client.cookies.set("mod_session", "legacy-session-token")
     client.cookies.set("refresh_token", "valid-refresh-token")
-    # Sprint v1.9 — CSRF gate on /auth/logout.
     client.cookies.set("csrf_token", "test-csrf")
 
     response = client.post("/auth/logout", headers={"X-CSRF-Token": "test-csrf"})

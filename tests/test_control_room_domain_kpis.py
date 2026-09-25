@@ -1,13 +1,3 @@
-"""Mission 2 — Finance / Operations / Risk KPI views for the internal read bridge.
-
-Covers: each view folds its aggregates into one payload, the global status
-propagates (ready / degraded / unavailable), the named-rows exception is
-clamped to 0..10 and forwarded, scope (the authenticated user) is passed
-through untouched, every payload validates through its public schema, the
-LLM-facing notes survive the public copy filters, and the router dispatcher
-wires the three views with permission checks and bounded params.
-"""
-
 from __future__ import annotations
 
 import json
@@ -140,7 +130,6 @@ def _margin(status: str = "ready") -> ProjectMargin:
 
 
 class _Recorder:
-    """Async stand-in for an aggregate function that records its call."""
 
     def __init__(self, result):
         self.result = result
@@ -149,9 +138,6 @@ class _Recorder:
     async def __call__(self, user, **kwargs):
         self.calls.append((user, kwargs))
         return self.result
-
-
-# ── status combination ──────────────────────────────────────────────────────
 
 
 @pytest.mark.parametrize(
@@ -169,14 +155,11 @@ def test_combine_status(statuses, expected):
     assert domain_kpis.combine_status(statuses) == expected
 
 
-# ── public copy ─────────────────────────────────────────────────────────────
-
-
 def test_public_notes_and_labels_survive_projection():
     for metric, note in domain_kpis.PUBLIC_PROXY_NOTES.items():
         assert not contains_public_technical_copy(note), metric
         assert _safe_text(note, field="proxy_note") == note, metric
-        assert "NO " in note, metric  # says what it does not measure
+        assert "NO " in note, metric
     for key, label in domain_kpis.PUBLIC_SOURCE_LABELS.items():
         assert _safe_text(label, field="source") == label, key
     for key, label in domain_kpis.PUBLIC_CARTRIDGE_LABELS.items():
@@ -189,14 +172,13 @@ def test_public_notes_and_labels_survive_projection():
 
 
 def test_public_notes_translate_instead_of_dropping():
-    """A degraded metric must always say why, in copy the projection keeps."""
     kept = domain_kpis.public_notes(
         [
             "sin meses cerrados con datos en costo_consultor_mensual",
             "headcount_by_department sin filas para el scope: absence_rate no calculable",
             "sap_successfactors_talent_action_candidates no disponible: sin cifra oficial",
             "un detalle tecnico nuevo sobre gold_consultor_mensual",
-            "sin meses cerrados con datos en absence_by_type_and_month",  # duplicate
+            "sin meses cerrados con datos en absence_by_type_and_month",
             "",
             None,
         ]
@@ -238,8 +220,6 @@ def test_public_error_keeps_the_reason_and_drops_the_technical_tail(raw, expecte
 
 
 def test_public_evidence_sanitises_filter_values():
-    """Filter VALUES are published too: the aggregates put prose in some of
-    them (base_currency carries the dataset and column that were NULL)."""
     refs = domain_kpis.public_evidence(
         "project_margin",
         [
@@ -261,7 +241,6 @@ def test_public_evidence_sanitises_filter_values():
         if isinstance(value, str):
             assert _safe_text(value, field="base_currency") == value
     assert "pnl_mensual" not in json.dumps(refs, ensure_ascii=False)
-    # An unknown technical value is dropped rather than published verbatim.
     assert domain_kpis.public_filter_value("gold_consultor_mensual snapshot") is None
     assert domain_kpis.public_filter_value("param") == "param"
 
@@ -274,7 +253,7 @@ def test_public_evidence_uses_labels_and_scalar_filters():
                 "consultor_mensual",
                 window_start=date(2026, 8, 1),
                 months=2,
-                workspace_id=WORKSPACE_A,  # never exposed
+                workspace_id=WORKSPACE_A,
             ),
             {
                 "type": "console_table",
@@ -290,8 +269,6 @@ def test_public_evidence_uses_labels_and_scalar_filters():
     assert refs[0]["generation"] == 3
     assert refs[0]["partial_source"] is False
     assert refs[0]["filters"] == {"window_start": "2026-08-01", "months": 2}
-    # The publication run id is a UUID and a forbidden public key; neither it
-    # nor the relation, dataset or column names are published.
     for forbidden in (
         "run_id",
         "published_run",
@@ -304,9 +281,6 @@ def test_public_evidence_uses_labels_and_scalar_filters():
     assert refs[1]["type"] == "run_log"
     assert refs[1]["source"] == domain_kpis.PUBLIC_SOURCE_LABELS["pipeline_runs"]
     assert refs[1]["filters"] == {"as_of": NOW.isoformat()}
-
-
-# ── finance view ────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -327,9 +301,8 @@ async def test_finance_kpis_folds_results_and_forwards_named_rows(monkeypatch):
 
     assert payload["domain"] == "finance"
     assert payload["status"] == "degraded"
-    assert payload["named_rows"] == 10  # clamped to MAX_NAMED_ROWS
+    assert payload["named_rows"] == 10
     assert margin.calls == [(user, {"top_n": 10})]
-    # named_rows drives every named list of the domain, not only the margin one.
     assert billable.calls == [(user, {"top_n": 10})]
     assert labor.calls == [(user, {})]
     assert payload["unavailable_metrics"] == ["project_margin"]
@@ -339,7 +312,6 @@ async def test_finance_kpis_folds_results_and_forwards_named_rows(monkeypatch):
         metric["proxy_note"] == domain_kpis.PUBLIC_PROXY_NOTES["billable_hours_logged"]
     )
     assert "billing_rate_usd" not in metric["proxy_note"]
-    # Developer notes are translated to public copy, never dropped in silence.
     assert metric["notes"] == [
         "sin tarifa publicada: no se puede calcular el monto facturable"
     ]
@@ -359,7 +331,6 @@ async def test_finance_kpis_folds_results_and_forwards_named_rows(monkeypatch):
         "billable_hours_logged",
         "labor_cost_by_department",
     ]
-    # The reason code survives; the dataset name in the aggregate text does not.
     assert payload["metrics"]["project_margin"]["error"] == (
         "missing: el origen no esta publicado para este workspace"
     )
@@ -380,11 +351,10 @@ async def test_finance_kpis_folds_results_and_forwards_named_rows(monkeypatch):
     assert out["metrics"]["project_margin"]["original_currencies"] == ["MXN", "USD"]
     assert out["evidence_refs"][0]["published_at"] == "2026-09-01T00:00:00+00:00"
     assert out["unavailable_metrics"] == ["project_margin"]
-    # What the LLM actually reads for the broken metric, after projection.
     assert out["metrics"]["project_margin"]["error"] == (
         "missing: el origen no esta publicado para este workspace"
     )
-    assert out["generated_at"] == payload["generated_at"]  # not redacted
+    assert out["generated_at"] == payload["generated_at"]
     assert out["metrics"]["billable_hours_logged"]["notes"] == metric["notes"]
     dumped = json.dumps(out, ensure_ascii=False)
     for identifier in (
@@ -421,9 +391,6 @@ async def test_finance_kpis_default_is_aggregates_only(monkeypatch):
     assert payload["named_rows"] == 0
     assert margin.calls[0][1] == {"top_n": 0}
     assert billable.calls[0][1] == {"top_n": 0}
-
-
-# ── operations view ─────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -545,7 +512,7 @@ async def test_operations_kpis_labels_cartridges_and_validates(monkeypatch):
     assert rows[0]["cartridge"] == "SAP SuccessFactors"
     assert (
         rows[0]["cartridge_id"] is None
-    )  # identifier would be redacted, so it is omitted
+    )
     assert rows[1] == {
         "cartridge_id": "replicon",
         "cartridge": "Replicon",
@@ -589,9 +556,6 @@ async def test_operations_kpis_labels_cartridges_and_validates(monkeypatch):
         "pipeline_health: solo SuccessFactors espeja extraction_runs en pipeline_runs",
         "data_freshness_by_cartridge: sla_hours no configurado: se usa el default de 24h",
     ]
-
-
-# ── risk view ───────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -665,8 +629,6 @@ async def test_risk_kpis_named_rows_and_projection(monkeypatch):
                 "close_date": date(2026, 9, 1),
                 "days_overdue": 12,
                 "risk_reason": "cierre vencido",
-                # Present on purpose: the allowlist must strip them, so the
-                # assertion below proves the projection and not the fixture.
                 "vendedor": "Juan Perez",
                 "owner_email": "juan@example.com",
                 "opportunity_id": "006ABC",
@@ -728,13 +690,8 @@ async def test_risk_kpis_named_rows_and_projection(monkeypatch):
     assert "Juan Perez" not in json.dumps(out, ensure_ascii=False)
 
 
-# ── control_room_service surface + router dispatcher ────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_control_room_service_exposes_domain_views(monkeypatch):
-    # tests/conftest.py purges app.* after every test, so everything this test
-    # touches must come from the same (fresh) import generation.
     import app.services.control_room.domain_kpis as fresh_domain_kpis
     from app.services import control_room_service
 
@@ -769,9 +726,7 @@ async def test_control_room_service_exposes_domain_views(monkeypatch):
 async def test_internal_view_dispatcher_wires_domain_views(monkeypatch):
     monkeypatch.setenv(
         "OMEGA_CONTROL_ROOM_CACHE_TTL_SECONDS", "0"
-    )  # bypass epoch cache
-    # Same import-generation caveat as above: take the response classes from
-    # the freshly imported schema module, not from the module-level imports.
+    )
     from app.routers import control_room as router
     from app.schemas import control_room_domain_kpi_responses as fresh_schemas
     from app.services import control_room_service
@@ -814,7 +769,7 @@ async def test_internal_view_dispatcher_wires_domain_views(monkeypatch):
     assert isinstance(finance, fresh_schemas.ControlRoomFinanceKpisResponse)
     assert isinstance(operations, fresh_schemas.ControlRoomOperationsKpisResponse)
     assert isinstance(risk, fresh_schemas.ControlRoomRiskKpisResponse)
-    assert finance.status == "ready" and finance.named_rows == 10  # bounded 0..10
+    assert finance.status == "ready" and finance.named_rows == 10
     assert operations.status == "degraded"
     assert risk.status == "unavailable" and risk.named_rows == 0
     assert calls == [
@@ -823,7 +778,6 @@ async def test_internal_view_dispatcher_wires_domain_views(monkeypatch):
         ("risk", WORKSPACE_A, 0),
     ]
 
-    # datasets.read is required (the views are not operational views).
     no_permission = _user(_effective_permissions=["operations.read"])
     with pytest.raises(HTTPException) as exc:
         await router._control_room_internal_view("finance_kpis", no_permission, {})
@@ -832,12 +786,8 @@ async def test_internal_view_dispatcher_wires_domain_views(monkeypatch):
     assert "finance_kpis" not in router._INTERNAL_OPERATIONAL_VIEWS
 
 
-# ── cache identity and all-unavailable payloads ─────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_named_rows_do_not_share_a_cache_entry(monkeypatch):
-    """A top_n=5 answer must never be served to a later aggregates-only call."""
     monkeypatch.setenv("OMEGA_CONTROL_ROOM_CACHE_TTL_SECONDS", "60")
     from app.routers import control_room as router
     from app.services.control_room import authorization_cache
@@ -867,9 +817,9 @@ async def test_named_rows_do_not_share_a_cache_entry(monkeypatch):
     again = await router._control_room_internal_view("finance_kpis", user, {"top_n": 5})
 
     assert named.named_rows == 5
-    assert plain.named_rows == 0  # not the cached named-rows payload
+    assert plain.named_rows == 0
     assert again.named_rows == 5
-    assert calls == [5, 0]  # the third call was served from the cache
+    assert calls == [5, 0]
     namespaces = {key[0] for key in authorization_cache.READ_CACHE}
     assert {"finance-kpis-5", "finance-kpis-0"} <= namespaces
     authorization_cache.READ_CACHE.clear()

@@ -1,30 +1,3 @@
-"""Sprint v1.43.4 — C1 BLOCKER: SAP cartridges' /mcp/tools
-endpoint returned HTTP 500 because cartridges/sap_*/requirements.txt
-pinned ``fastmcp==2.5.0`` while cartridges/sap_*/app/main.py uses
-the fastmcp 3.x API (``mcp.list_tools()`` and ``mcp.get_tool()``,
-neither of which exist on fastmcp 2.x's FastMCP class).
-
-Replicon worked by accident: it pinned ``fastmcp`` with no version,
-so pip picked the latest (3.x).
-
-This sprint:
-  * Bumps ``fastmcp`` to ``>=3.3.0,<4.0`` in all built-in cartridges.
-  * Bumps ``pydantic`` to ``>=2.11.7,<3.0`` (fastmcp 3.x floor).
-  * Bumps ``uvicorn[standard]`` to ``>=0.35.0,<1.0`` (fastmcp 3.x
-    server extras floor).
-  * Bumps ``requests`` to ``>=2.33.0,<3.0`` (closes the two CVEs
-    v1.43.2 had to --ignore-vuln in the cartridge sprint).
-  * Bumps ``python-dotenv`` to ``>=1.2.2,<2.0`` (closes the one
-    CVE v1.43.2 had to --ignore-vuln).
-  * Retires the 10 ``--ignore-vuln`` entries from
-    .github/workflows/security.yml that the v1.43.2 sprint added
-    as "cartridge sprint" technical debt.
-
-Static verification only — the runtime HTTP contract is exercised
-by tests/test_e2e_smoke.py against the live stack (which the dev
-must run before merging this PR; the CI sandbox cannot boot
-docker-compose).
-"""
 from __future__ import annotations
 
 import re
@@ -60,16 +33,7 @@ def _security_workflow() -> str:
     )
 
 
-# ─────────────────────────────────────────────────────────────
-# requirements.txt — version pin contracts
-# ─────────────────────────────────────────────────────────────
-
-
 def test_all_cartridges_pin_fastmcp_to_3_x():
-    """fastmcp 2.x's FastMCP class is missing ``list_tools()`` and
-    ``get_tool()`` — the exact methods cartridge main.py calls.
-    Lock every cartridge to the 3.x major so a future re-pin to
-    2.x can't reopen the regression."""
     for cart in CARTRIDGES:
         src = _reqs(cart)
         assert re.search(
@@ -82,14 +46,6 @@ def test_all_cartridges_pin_fastmcp_to_3_x():
 
 
 def test_all_cartridges_pin_pydantic_compatible_with_fastmcp_3():
-    """fastmcp 3.x requires pydantic >= 2.11.7. SAP cartridges were
-    pinned at 2.9.2 (v1.43.1 era), which makes pip refuse to resolve.
-
-    Replicon is the exception here: its pydantic was unpinned in
-    v1.43.1, and fastmcp 3's dep solver pulls a compatible
-    transitively. Don't force a re-pin there — only assert the SAP
-    floor.
-    """
     for cart in ("sap_hcm", "sap_s4hana", "sap_successfactors", "sap_b1"):
         src = _reqs(cart)
         assert re.search(
@@ -98,8 +54,6 @@ def test_all_cartridges_pin_pydantic_compatible_with_fastmcp_3():
 
 
 def test_all_cartridges_pin_uvicorn_compatible_with_fastmcp_3_server():
-    """fastmcp 3.x's ``[server]`` extra requires uvicorn >= 0.35.
-    The 0.30.x pin from v1.43.2 makes pip refuse to resolve."""
     for cart in ("sap_hcm", "sap_s4hana", "sap_successfactors", "sap_b1"):
         src = _reqs(cart)
         assert re.search(
@@ -110,10 +64,6 @@ def test_all_cartridges_pin_uvicorn_compatible_with_fastmcp_3_server():
 
 
 def test_sap_cartridges_no_longer_pin_vulnerable_requests():
-    """v1.43.2 deferred ``requests==2.32.3`` → ``>=2.33.0`` as part
-    of the "cartridge sprint" and used --ignore-vuln to suppress
-    the two CVEs (GHSA-9hjg-9r4m-mvj7, GHSA-gc5v-m9x4-r6x2).
-    The sprint is this hotfix; the pins move."""
     for cart in ("sap_hcm", "sap_s4hana", "sap_successfactors", "sap_b1"):
         src = _reqs(cart)
         assert "requests==2.32.3" not in src, (
@@ -127,8 +77,6 @@ def test_sap_cartridges_no_longer_pin_vulnerable_requests():
 
 
 def test_sap_cartridges_no_longer_pin_vulnerable_python_dotenv():
-    """Same story as requests: v1.43.2 --ignore-vuln'd
-    GHSA-mf9w-mj56-hr94 against python-dotenv 1.1.0. 1.2.2 fixes it."""
     for cart in ("sap_hcm", "sap_s4hana", "sap_successfactors", "sap_b1"):
         src = _reqs(cart)
         assert "python-dotenv==1.1.0" not in src
@@ -137,21 +85,12 @@ def test_sap_cartridges_no_longer_pin_vulnerable_python_dotenv():
         ), f"{cart} must pin python-dotenv to >=1.2.2"
 
 
-# ─────────────────────────────────────────────────────────────
-# main.py — /mcp/tools and /mcp/invoke contract
-# ─────────────────────────────────────────────────────────────
-
-
 def test_all_cartridges_implement_mcp_tools_endpoint():
-    """Every cartridge must expose ``GET /mcp/tools`` so the console
-    registry can sync tool catalogs. This is the contract the v1.43.4
-    fix makes work for SAP."""
     for cart in CARTRIDGES:
         src = _main(cart)
         assert "@app.get(\"/mcp/tools\"" in src, (
             f"{cart} missing GET /mcp/tools handler"
         )
-        # The handler must call fastmcp 3.x's list_tools() API.
         assert "await mcp.list_tools()" in src, (
             f"{cart}/app/main.py must call ``await mcp.list_tools()`` — "
             f"the fastmcp 3.x API the pins now align with"
@@ -159,8 +98,6 @@ def test_all_cartridges_implement_mcp_tools_endpoint():
 
 
 def test_all_cartridges_implement_mcp_invoke_endpoint():
-    """``POST /mcp/invoke`` is the tool-execution contract. Same
-    fastmcp 3.x API requirement."""
     for cart in CARTRIDGES:
         src = _main(cart)
         assert "@app.post(\"/mcp/invoke\"" in src, (
@@ -173,9 +110,6 @@ def test_all_cartridges_implement_mcp_invoke_endpoint():
 
 
 def test_all_cartridges_mcp_tools_return_uniform_shape():
-    """Console assumes the same JSON shape from all built-in cartridges:
-    ``{"tools": [{"name": ..., "description": ..., "input_schema": ...}]}``.
-    Verifies that all cartridge main.py files build that shape."""
     for cart in CARTRIDGES:
         src = _main(cart)
         for key in ('"name"', '"description"', '"input_schema"', '"tools"'):
@@ -184,16 +118,7 @@ def test_all_cartridges_mcp_tools_return_uniform_shape():
             )
 
 
-# ─────────────────────────────────────────────────────────────
-# security.yml — ignore-list pruning
-# ─────────────────────────────────────────────────────────────
-
-
 def test_security_workflow_retired_fastmcp_2x_ignores():
-    """v1.43.2 added 6 GHSAs to suppress fastmcp 2.x vulnerabilities.
-    The 3.x bump retires them; the workflow must not silently keep
-    suppressing CVEs that no longer apply (would mask future 3.x CVEs
-    with the same IDs — unlikely but worth guarding)."""
     src = _security_workflow()
     for ghsa in (
         "GHSA-mxxr-jv3v-6pgc",
@@ -210,14 +135,12 @@ def test_security_workflow_retired_fastmcp_2x_ignores():
 
 
 def test_security_workflow_retired_cartridge_transitive_ignores():
-    """Same story for mcp / requests / python-dotenv — those bumps
-    landed in this hotfix and the suppressions can come off."""
     src = _security_workflow()
     for ghsa in (
-        "GHSA-9h52-p55h-vw2f",     # mcp
-        "GHSA-9hjg-9r4m-mvj7",     # requests
-        "GHSA-gc5v-m9x4-r6x2",     # requests
-        "GHSA-mf9w-mj56-hr94",     # python-dotenv
+        "GHSA-9h52-p55h-vw2f",
+        "GHSA-9hjg-9r4m-mvj7",
+        "GHSA-gc5v-m9x4-r6x2",
+        "GHSA-mf9w-mj56-hr94",
     ):
         assert ghsa not in src, (
             f"security workflow still suppresses {ghsa} — closed by v1.43.4"

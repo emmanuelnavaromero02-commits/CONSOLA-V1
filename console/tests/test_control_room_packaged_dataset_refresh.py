@@ -1,5 +1,3 @@
-"""The general packaged-dataset seed is the single startup refresh path."""
-
 from __future__ import annotations
 
 from pathlib import Path

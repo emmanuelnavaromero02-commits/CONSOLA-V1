@@ -1,15 +1,3 @@
-"""Sprint v1.41.0 — /api/cartridges/{cartridge}/test_connection proxy.
-
-Validates the proxy endpoint registered in console/app/main.py:
-  * Unknown cartridge → 404 (not a generic 200 with error)
-  * Allowed cartridge slugs cover replicon + the 3 SAP cartridges
-  * Maps slugs to the correct internal port + DNS host
-
-Static introspection only — does not boot the console app (its lifespan
-needs Postgres). When test_main_endpoints adds live coverage we will
-parametrise the live test there.
-"""
-
 from __future__ import annotations
 
 import re
@@ -30,7 +18,6 @@ def _router_source() -> str:
 
 def test_endpoint_registered():
     src = _router_source()
-    # router declares prefix="/api/cartridges" + a /{cartridge}/test_connection path.
     assert 'prefix="/api/cartridges"' in src
     assert '"/{cartridge}/test_connection"' in src
 
@@ -48,7 +35,6 @@ def test_endpoint_requires_csrf_and_permission():
 
 
 def test_cartridge_port_map_complete():
-    """All built-in cartridges must be mapped to their exposed ports."""
     src = _router_source()
     expected = {
         "hubspot": 8210,
@@ -64,7 +50,6 @@ def test_cartridge_port_map_complete():
 
 
 def test_test_connection_requires_explicit_ok_status():
-    """degraded/missing_config/auth_error must not render as success."""
     src = _router_source()
     assert "def _test_connection_succeeded" in src
     assert '== "ok"' in src
@@ -72,7 +57,6 @@ def test_test_connection_requires_explicit_ok_status():
 
 
 def test_router_registered_in_main():
-    """main.py must include the new cartridges router."""
     main_src = (
         Path(__file__).resolve().parents[1] / "console" / "app" / "main.py"
     ).read_text(encoding="utf-8")
@@ -97,7 +81,6 @@ def test_cartridge_permissions_registered():
 
 
 def test_cartridge_skills_test_connection_routes_exist():
-    """Each cartridge exposes /skills/test_connection guarded by verify_api_key."""
     root = Path(__file__).resolve().parents[1] / "cartridges"
     for cart in (
         "hubspot",
@@ -113,5 +96,4 @@ def test_cartridge_skills_test_connection_routes_exist():
         assert (
             '@router.post("/test_connection")' in src
         ), f"{cart} missing /test_connection"
-        # router-level dependencies=[Depends(verify_api_key)] still in force
         assert "dependencies=[Depends(verify_api_key)]" in src

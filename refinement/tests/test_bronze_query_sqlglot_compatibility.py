@@ -1,5 +1,3 @@
-"""Compatibility contract for SQLGlot's typed DuckDB function nodes."""
-
 from __future__ import annotations
 
 import sqlglot

@@ -102,7 +102,6 @@ def build_dataset_refresh_trigger(
     source_dag_run_id: str,
     prefix: str,
 ) -> dict[str, Any]:
-    """Exchange upstream authority once, before a long-running extraction."""
     source_run = str(source_dag_run_id or "").strip()
     clean_prefix = "".join(
         char for char in str(prefix or "") if char.isalnum() or char in "_-"

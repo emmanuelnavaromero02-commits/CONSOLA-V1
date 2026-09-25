@@ -1,5 +1,3 @@
-"""Sanitized durable run recording for the scheduled agent fan-out."""
-
 from __future__ import annotations
 
 from datetime import datetime, timezone

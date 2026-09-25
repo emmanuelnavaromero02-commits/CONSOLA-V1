@@ -1,5 +1,3 @@
-"""Contracts for the release workflow's Compose validation environment."""
-
 from pathlib import Path
 import re
 
@@ -8,7 +6,6 @@ REPO = Path(__file__).resolve().parents[1]
 
 
 def test_release_env_example_documents_required_compose_variables() -> None:
-    """The env file used by validate-release must satisfy every ``:?`` guard."""
     compose = (REPO / "infra/docker-compose.yml").read_text(encoding="utf-8")
     env_example = (REPO / "infra/.env.example").read_text(encoding="utf-8")
 

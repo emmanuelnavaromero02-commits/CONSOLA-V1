@@ -1,17 +1,3 @@
-/**
- * v1.44.3 — typed API helpers for /api/cartridges/*.
- *
- * Backend surface (v1.44.1 + v1.44.2 R-Mac-3):
- *   GET    /api/cartridges                      → list cartridge IDs
- *   GET    /api/cartridges/{id}/connector_schema → dynamic form schema
- *   POST   /api/cartridges/{id}/credentials      → encrypt + store
- *   POST   /api/cartridges/{id}/test_connection  → probe live cartridge
- *   DELETE /api/cartridges/{id}/credentials      → revoke
- *
- * All routes are RBAC-gated server-side (cartridges.* or
- * vault.connections.write) and CSRF-gated on mutations. The cookie
- * is carried by the shared same-origin API client.
- */
 import { api } from "@/lib/api";
 
 export type FieldType = "string" | "url" | "password" | "select" | "boolean" | "number";
@@ -23,20 +9,15 @@ export interface ConnectorField {
   description?: string;
   required?:   boolean;
   default?:    string | number | boolean;
-  options?:    { value: string; label: string }[];   // for select
+  options?:    { value: string; label: string }[];
   pattern?:    string;
   min_length?: number;
   max_length?: number;
 }
 
 export interface ConnectorSchema {
-  // The backend's connector.yaml may use either ``fields`` or a
-  // flat top-level dict. We type the canonical ``fields`` shape;
-  // the page-level adapter handles both forms.
   fields: ConnectorField[];
   authMethodValues?: string[];
-  // Free-form metadata the schema author may emit; the page only
-  // displays it when present.
   name?:        string;
   description?: string;
 }
@@ -149,8 +130,6 @@ export async function listCartridges(): Promise<{ cartridges: string[] }> {
 
 export async function getConnectorSchema(id: string): Promise<ConnectorSchema> {
   const { data } = await api.get<unknown>(`/api/cartridges/${encodeURIComponent(id)}/connector_schema`);
-  // Tolerate both shapes — ``{ fields: [...] }`` AND the older
-  // ``{ field_a: {...}, field_b: {...} }`` dict form.
   if (isRecord(data) && Array.isArray(data.fields)) {
     const auth = isRecord(data.auth) ? data.auth : {};
     return {

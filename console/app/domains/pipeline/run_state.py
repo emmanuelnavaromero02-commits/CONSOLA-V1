@@ -1,5 +1,3 @@
-"""Small helpers for pipeline run status and Airflow log metadata."""
-
 from __future__ import annotations
 
 import json
@@ -368,7 +366,6 @@ def pipeline_entity_row(
         or ([entity_config["mode"]] if entity_config.get("mode") else ["full"]),
         "watermark": entity_config.get("watermark_field") or "",
         "last_run": last_run_info,
-        # Keep last_job for backward compat with pipeline.html polling logic
         "last_job": pipeline_legacy_last_job(last_run_info),
         "bronze": {
             "source": source,

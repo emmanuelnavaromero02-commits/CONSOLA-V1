@@ -1,11 +1,3 @@
-"""Operations aggregates — unit tests over the fake asyncpg plumbing.
-
-pipeline_health / data_freshness run against the console DB (pool +
-scoped_db); absence_rate runs against Gold (publication heads). Covers scope
-enforcement, merging of pipeline_runs + extraction_runs, SLA resolution
-(param > env > default), degraded/unavailable paths and bounded top-N.
-"""
-
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
@@ -41,9 +33,6 @@ HEADCOUNT_COLUMNS = {
     "headcount": "bigint",
     "snapshot_month": "date",
 }
-
-
-# ── O1 pipeline health (console DB) ─────────────────────────────────────────
 
 
 def _health_answers() -> dict:
@@ -88,7 +77,6 @@ def _health_answers() -> dict:
                 "last_failed_at": NOW - timedelta(hours=2),
             },
         ],
-        # Un-limited totals (UNION ALL over both tables) drive the headline numbers.
         "operations.pipeline_health.totals": {
             "failed_24h": 6,
             "success_24h": 11,
@@ -154,7 +142,6 @@ async def test_pipeline_health_merges_both_run_tables(monkeypatch):
         "sap_hcm",
         "sap_successfactors",
     ]
-    # Headline numbers come from the un-limited totals row, not from the breakdown.
     assert result.totals == {
         "failed_24h": 6,
         "success_24h": 11,
@@ -174,7 +161,6 @@ async def test_pipeline_health_merges_both_run_tables(monkeypatch):
         NOW - timedelta(hours=24),
         NOW - timedelta(days=7),
     )
-    # Failing entities are merged across tables and aggregated (no run rows, no error text).
     assert [
         (item["cartridge_id"], item["entity"]) for item in result.failing_entities
     ] == [
@@ -201,7 +187,6 @@ async def test_pipeline_health_merges_both_run_tables(monkeypatch):
         10,
     )
 
-    # console scope: pool, repeatable_read readonly, GUCs via scoped_db, uuid predicate
     assert pool.acquired == 1
     assert conn.transactions == [{"isolation": "repeatable_read", "readonly": True}]
     assert conn.scope == (TENANT_A, WORKSPACE_A)
@@ -267,9 +252,6 @@ async def test_pipeline_health_db_error_becomes_unavailable(monkeypatch):
     assert result.error == "unavailable: connection reset"
 
 
-# ── O2 data freshness ───────────────────────────────────────────────────────
-
-
 def test_resolve_sla_hours_precedence(monkeypatch):
     monkeypatch.delenv(ops.FRESHNESS_SLA_ENV, raising=False)
     assert ops.resolve_sla_hours(None) == (24.0, "default")
@@ -309,7 +291,6 @@ def _freshness_answers() -> dict:
                 "success_runs": 12,
             },
         ],
-        # Un-limited totals: cartridges with a success and those older than the SLA.
         "operations.data_freshness.totals": {"cartridges_count": 3, "exceeding_sla": 2},
     }
 
@@ -329,7 +310,7 @@ async def test_data_freshness_by_cartridge_with_param_sla(monkeypatch):
     assert result.sla_source == "param"
     assert result.proxy_note == ops.FRESHNESS_PROXY_NOTE
     by_cartridge = {item["cartridge_id"]: item for item in result.cartridges}
-    assert by_cartridge["replicon"]["hours_since_success"] == 30.0  # max across tables
+    assert by_cartridge["replicon"]["hours_since_success"] == 30.0
     assert by_cartridge["replicon"]["success_runs"] == 43
     assert by_cartridge["replicon"]["exceeds_sla"] is True
     assert by_cartridge["sap_hcm"]["exceeds_sla"] is False
@@ -386,16 +367,13 @@ async def test_data_freshness_default_sla_is_degraded_and_env_wins(monkeypatch):
     assert result.status == "ready"
     assert result.sla_source == "env"
     assert result.sla_hours == 72.0
-    assert result.exceeding_sla == 1  # only sap_successfactors (100h)
+    assert result.exceeding_sla == 1
     assert conn.args_for("operations.data_freshness.totals")[-1] == NOW - timedelta(
         hours=72
     )
     by_cartridge = {item["cartridge_id"]: item for item in result.cartridges}
     assert by_cartridge["replicon"]["exceeds_sla"] is False
     assert by_cartridge["sap_successfactors"]["exceeds_sla"] is True
-
-
-# ── O3 absence rate (Gold) ──────────────────────────────────────────────────
 
 
 def _absence_answers() -> dict:
@@ -444,7 +422,7 @@ async def test_absence_rate_company_by_type_ready(monkeypatch):
     assert result.proxy_note == ops.ABSENCE_RATE_PROXY_NOTE
     assert "NO esta desglosada por unidad organizativa" in result.proxy_note
     assert result.period == date(2026, 8, 1)
-    assert result.working_days == 21  # August 2026 has 21 weekdays
+    assert result.working_days == 21
     assert result.headcount == 100
     assert result.total_days_workable == 210.0
     assert result.absence_rate == round(210 / (100 * 21), 4)
@@ -503,7 +481,7 @@ async def test_absence_rate_degrades_without_headcount_dataset(monkeypatch):
 async def test_absence_rate_degrades_when_headcount_is_zero(monkeypatch):
     answers = _absence_answers()
     answers["operations.absence_rate.headcount"] = (
-        0  # relation published, no rows in scope
+        0
     )
     conn = FakeConn(
         datasets={

@@ -39,11 +39,6 @@ def build_auth_headers(
     default_api_key_header: str = "X-API-Key",
     base_headers: Mapping[str, str] | None = None,
 ) -> tuple[dict[str, str], str, tuple[str, ...]]:
-    """Build outbound auth headers from a Vault connection payload.
-
-    Returns ``(headers, method, auth_header_names)``. Header values are
-    intentionally omitted from the metadata so callers can log safely.
-    """
     method = normalize_auth_method(payload.get("auth_method"), default_method)
     headers = dict(base_headers or {})
 

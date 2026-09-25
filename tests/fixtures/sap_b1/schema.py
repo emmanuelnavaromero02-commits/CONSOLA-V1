@@ -1,5 +1,3 @@
-"""Tables shaped like SAP Business One 10, rendered as Postgres DDL."""
-
 from __future__ import annotations
 
 from typing import Dict, List, Tuple
@@ -85,15 +83,15 @@ MARKETING_LINE: List[Column] = [
 ]
 
 MARKETING_PAIRS: List[Tuple[str, str, str]] = [
-    ("OINV", "INV1", "13"),  # A/R invoice
-    ("ORIN", "RIN1", "14"),  # A/R credit memo
-    ("ODLN", "DLN1", "15"),  # delivery
-    ("ORDN", "RDN1", "16"),  # return
-    ("ORDR", "RDR1", "17"),  # sales order
-    ("OPCH", "PCH1", "18"),  # A/P invoice
-    ("ORPC", "RPC1", "19"),  # A/P credit memo
-    ("OPDN", "PDN1", "20"),  # goods receipt PO
-    ("OPOR", "POR1", "22"),  # purchase order
+    ("OINV", "INV1", "13"),
+    ("ORIN", "RIN1", "14"),
+    ("ODLN", "DLN1", "15"),
+    ("ORDN", "RDN1", "16"),
+    ("ORDR", "RDR1", "17"),
+    ("OPCH", "PCH1", "18"),
+    ("ORPC", "RPC1", "19"),
+    ("OPDN", "PDN1", "20"),
+    ("OPOR", "POR1", "22"),
 ]
 
 TABLES: Dict[str, List[Column]] = {
@@ -227,7 +225,7 @@ TABLES: Dict[str, List[Column]] = {
         ("Quantity", _NUM + " NOT NULL"),
     ],
     "IBT1": [
-        ("LogEntry", "INTEGER NOT NULL"),  # validate in HANA: IBT1's identity column
+        ("LogEntry", "INTEGER NOT NULL"),
         ("ItemCode", "VARCHAR(50) NOT NULL"),
         ("BatchNum", "VARCHAR(36) NOT NULL"),
         ("WhsCode", "VARCHAR(8) NOT NULL"),
@@ -235,14 +233,14 @@ TABLES: Dict[str, List[Column]] = {
         ("BaseEntry", "INTEGER NOT NULL"),
         ("BaseLinNum", "INTEGER NOT NULL"),
         ("Quantity", _NUM + " NOT NULL"),
-        ("Direction", "INTEGER NOT NULL"),  # 0 = in, 1 = out
+        ("Direction", "INTEGER NOT NULL"),
         ("DocDate", _TS),
     ],
     "OITT": [
         ("Code", "VARCHAR(50) NOT NULL"),
         ("TreeType", "CHAR(1)"),
-        ("Qauntity", _NUM),  # sic: B1 spells the BOM quantity column this way
-        ("ToWH", "VARCHAR(8)"),  # validate in HANA: the BOM warehouse column name
+        ("Qauntity", _NUM),
+        ("ToWH", "VARCHAR(8)"),
         ("PriceList", "INTEGER"),
         ("CreateDate", _TS),
         ("UpdateDate", _TS),
@@ -322,7 +320,7 @@ TABLES: Dict[str, List[Column]] = {
         ("BaseQty", _NUM),
         ("PlannedQty", _NUM + " NOT NULL"),
         ("IssuedQty", _NUM + " NOT NULL"),
-        ("wareHouse", "VARCHAR(8)"),  # sic: B1's casing on WOR1
+        ("wareHouse", "VARCHAR(8)"),
         ("ItemType", "INTEGER"),
     ],
     "OINM": [
@@ -425,7 +423,6 @@ UPDATE_TS_MAX = 235959
 
 
 def quote(identifier: str) -> str:
-    """Double-quote an identifier the way HANA and Postgres both accept."""
     if '"' in identifier:
         raise ValueError(f"identifier cannot contain a double quote: {identifier!r}")
     return f'"{identifier}"'
@@ -436,7 +433,6 @@ def columns(table: str) -> List[str]:
 
 
 def render_ddl(schema: str) -> str:
-    """CREATE SCHEMA plus one CREATE TABLE per B1 table, in declaration order."""
     statements = [f"CREATE SCHEMA {quote(schema)};"]
     for table, cols in TABLES.items():
         body = [f"    {quote(name)} {ctype}" for name, ctype in cols]

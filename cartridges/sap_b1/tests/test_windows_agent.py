@@ -1,4 +1,3 @@
-"""The Windows push agent writes exactly what the cartridge writes."""
 from __future__ import annotations
 
 import ast
@@ -39,7 +38,6 @@ SPOOL_NAME = re.compile(r"^[0-9a-f]{20}\.parquet$")
 
 
 def _read_parquet(path):
-    """The file exactly as written. Newer pyarrow infers partition columns (load_date, batch_id, ...) from the hive-style."""
     import pyarrow.parquet as pq
 
     return pq.ParquetFile(str(path)).read()
@@ -51,7 +49,6 @@ def _entity_config(entity: str) -> dict:
 
 
 def _write_config(tmp_path: Path, extra: str = "", upload: bool = False) -> Path:
-    """agent.toml with the scope and a relative state dir."""
     tmp_path.mkdir(parents=True, exist_ok=True)
     config = tmp_path / "agent.toml"
     text = (
@@ -103,7 +100,6 @@ def _spool_files(config: Path) -> list[Path]:
 
 
 def _pg(dsn: str, sql: str, params=None, fetch: bool = False):
-    """Edit or read the fake through the very connection facts it runs on."""
     import psycopg2
 
     with psycopg2.connect(dsn) as conn:
@@ -115,7 +111,6 @@ def _pg(dsn: str, sql: str, params=None, fetch: bool = False):
 
 
 def _ps_array(name: str) -> list[str]:
-    """The quoted items of ``$name = @( ... )`` in install.ps1, with forward slashes."""
     text = (AGENT_DIR / "install.ps1").read_text(encoding="utf-8")
     match = re.search(rf"\${name}\s*=\s*@\((.*?)\)", text, flags=re.DOTALL)
     assert match, f"${name} not found in install.ps1"
@@ -123,7 +118,6 @@ def _ps_array(name: str) -> list[str]:
 
 
 class _FakeUploader:
-    """Stands in for ``S3Uploader`` inside the loaded agent module."""
 
     error: Exception | None = None
     calls: list[tuple[str, str]] = []
@@ -194,7 +188,6 @@ def _latest(dataset, table: str) -> dict[str, datetime]:
 
 
 def _platform_watermarks(monkeypatch, entity_config: dict) -> dict[str, str]:
-    """What ``extraction_service.run_entity`` records for the same read."""
     from app.services import extraction_service as es
 
     marks: dict[str, str] = {}
@@ -212,7 +205,6 @@ def _platform_watermarks(monkeypatch, entity_config: dict) -> dict[str, str]:
 
 @pytest.fixture
 def agent():
-    """A fresh load of agent.py per test, after the conftest re-pinned ``app``, so patches on ``app.core.b1_source`` reach."""
     name = "sap_b1_windows_agent_under_test"
     spec = importlib.util.spec_from_file_location(name, AGENT)
     module = importlib.util.module_from_spec(spec)
@@ -292,7 +284,6 @@ def test_full_load_writes_the_cartridge_schema_and_layout(b1_env, dataset, tmp_p
 
 
 def test_agent_files_match_the_cartridge_writer_byte_for_byte_in_schema(b1_env, dataset, tmp_path, monkeypatch):
-    """Same records through the agent and through ``parquet_service``."""
     import shutil
 
     import pyarrow.parquet as pq
@@ -366,7 +357,6 @@ def test_a_second_incremental_run_writes_nothing(b1_env, dataset, tmp_path, agen
 
 
 def test_the_stored_watermark_is_what_the_cartridge_would_store(b1_env, dataset, tmp_path, monkeypatch, agent):
-    """Max stamp seen, capped at the source clock read when the run started."""
     from app.core import b1_source
 
     latest = _latest(dataset, "OINV")
@@ -399,7 +389,6 @@ def test_the_stored_watermark_is_what_the_cartridge_would_store(b1_env, dataset,
 
 
 def _mapping(dataset) -> str:
-    """The test bed's own intercompany codes, as the customer would configure them."""
     generator = importlib.import_module("sap_b1_fake.generator")
     aliases = {c.alias for c in dataset.companies}
     entries = [f"mx_mfg:{code}={alias}" for alias, code in sorted(generator.INTERCOMPANY_CUSTOMER.items()) if alias in aliases]
@@ -456,7 +445,6 @@ def test_extract_all_writes_the_intercompany_mapping_last_like_the_cartridge(b1_
 
 
 def test_an_empty_mapping_is_a_zero_row_typed_file(b1_env, dataset, tmp_path):
-    """"No group partners" is an answer silver can join, not a missing file."""
     import pyarrow.parquet as pq
 
     from app.services import intercompany_mapping as icm
@@ -572,7 +560,6 @@ def test_placeholders_and_missing_configuration_are_configuration_errors(tmp_pat
 
 
 def test_the_agent_needs_nothing_from_the_platform():
-    """agent.py imports only the pure cartridge modules: no platform settings, no Postgres, no MinIO, no pandas."""
     probe = (
         "import sys, importlib.util\n"
         f"spec = importlib.util.spec_from_file_location('probe_agent', {str(AGENT)!r})\n"
@@ -589,7 +576,6 @@ def test_the_agent_needs_nothing_from_the_platform():
 
 
 def test_iam_policy_allows_only_the_bronze_prefix():
-    """One key per customer: it writes and lists nothing but its own tenant/workspace scope under every entity of."""
     scoped = "raw/sap_b1/*/tenant_id=<TENANT_ID>/workspace_id=<WORKSPACE_ID>/*"
     policy = json.loads((AGENT_DIR / "iam-policy.template.json").read_text(encoding="utf-8"))
     assert policy["Version"] == "2012-10-17"
@@ -642,7 +628,6 @@ def test_install_scripts_and_templates_embed_no_credentials():
 
 
 class _FakeS3Client:
-    """The boto3 client surface the uploader touches: each ``upload_file`` raises the next scripted exception, then succeeds."""
 
     def __init__(self, failures=()):
         self.failures = list(failures)
@@ -676,7 +661,6 @@ def sleeps(agent, monkeypatch):
 
 
 def test_a_rejected_key_is_reported_after_one_attempt_even_when_boto3_hides_the_code(agent, sleeps, tmp_path):
-    """boto3 wraps the ClientError of a managed upload into S3UploadFailedError (no .response, no cause)."""
     from boto3.exceptions import S3UploadFailedError
     from botocore.exceptions import ClientError
 
@@ -761,7 +745,6 @@ def test_the_uploader_refuses_keys_outside_its_own_scope_and_probes_only_it(agen
 
 
 def test_spool_file_names_stay_short_and_local_delivery_keeps_the_bucket_layout(agent, tmp_path):
-    """The Bronze key of an IntercompanyPartners batch is ~170 characters."""
     template = (AGENT_DIR / "agent.toml.template").read_text(encoding="utf-8")
     default_state_dir = re.search(r"^state_dir\s*=\s*'([^']+)'", template, flags=re.MULTILINE).group(1)
     longest_entity = max((e["entity"] for e in yaml.safe_load(ENTITIES.read_text("utf-8"))["entities"]), key=len)
@@ -771,7 +754,7 @@ def test_spool_file_names_stay_short_and_local_delivery_keeps_the_bucket_layout(
     assert len(object_name) > 160
 
     log = logging.getLogger("spool-under-test")
-    spooled = agent.Spool(tmp_path / "spool", state=None, uploader=object(), log=log)  # any uploader: not local
+    spooled = agent.Spool(tmp_path / "spool", state=None, uploader=object(), log=log)
     target = spooled._target(object_name)
     assert target.parent == tmp_path / "spool" and SPOOL_NAME.match(target.name), target
     windows_path = f"{default_state_dir}\\spool\\{target.name}.part"
@@ -859,7 +842,6 @@ def test_the_pending_limit_stops_extraction_with_a_failed_exit(b1_env, dataset, 
 
 
 def test_a_rejected_key_stops_every_upload_of_the_cycle(b1_env, dataset, tmp_path, agent, fake_uploader):
-    """One attempt tells that the key is revoked."""
     config = _write_config(tmp_path, upload=True)
     argv = ["--config", str(config), "--quiet", "extract-all", "--entity", "CINF", "--mode", "full"]
     fake_uploader.error = agent.UploadRejected(
@@ -900,7 +882,6 @@ def test_test_connection_probes_the_scoped_prefix(b1_env, dataset, tmp_path, age
 
 
 def test_a_missing_spool_file_is_a_lost_file_and_a_failed_cycle(b1_env, dataset, tmp_path, agent, fake_uploader):
-    """The watermark already covers a spooled batch."""
     config = _write_config(tmp_path, upload=True)
     argv = ["--config", str(config), "--quiet", "extract", "--entity", "CINF", "--mode", "full"]
     fake_uploader.error = agent.UploadError("upload failed after 5 attempts: ConnectionError: down")
@@ -963,7 +944,6 @@ def test_a_truncated_spool_file_is_quarantined_and_never_uploaded(b1_env, datase
 
 
 def test_an_uploaded_file_windows_will_not_let_us_delete_is_still_delivered(b1_env, dataset, tmp_path, agent, fake_uploader, monkeypatch):
-    """S3 confirmed the upload: a PermissionError from an antivirus holding the file must not fail the run (the watermark has moved."""
     config = _write_config(tmp_path, upload=True)
     argv = ["--config", str(config), "--quiet", "extract", "--entity", "CINF", "--mode", "full"]
     real_unlink = Path.unlink
@@ -1175,7 +1155,6 @@ def test_extract_all_honours_entities_and_exclude_against_the_source(b1_env, dat
 
 
 def _module_level(tree: ast.Module):
-    """Statements that run on import: the module body, looking into ``if`` and ``try`` blocks but never into a function or class body (the cartridge modules import their platform-only helpers lazily, inside functions the agent never calls."""
     todo = list(tree.body)
     while todo:
         node = todo.pop()
@@ -1187,7 +1166,6 @@ def _module_level(tree: ast.Module):
 
 
 def _transitive_app_modules(start: Path) -> set[str]:
-    """Every ``app.*`` module ``start`` imports at import time, directly or through the modules it imports."""
     modules: set[str] = set()
     todo, seen = [start], set()
     while todo:
@@ -1212,7 +1190,6 @@ def _transitive_app_modules(start: Path) -> set[str]:
 
 
 def test_install_copies_exactly_the_modules_the_agent_imports(agent):
-    """install.ps1, agent.py's manifest and the transitive ``app.*`` imports of agent.py must agree, or the installed agent."""
     modules = _transitive_app_modules(AGENT)
     assert "app.services.intercompany_mapping" in modules
     expected = {module.replace(".", "/") + ".py" for module in modules}
@@ -1226,7 +1203,6 @@ def test_install_copies_exactly_the_modules_the_agent_imports(agent):
 
 
 def _install_like_install_ps1(tmp_path: Path) -> Path:
-    """The tree install.ps1 produces: <InstallRoot>/windows-agent/* and <InstallRoot>/app/*, copied from the very lists the."""
     root = tmp_path / "InstallRoot"
     for relative in _ps_array("agentFiles"):
         target = root / "windows-agent" / relative

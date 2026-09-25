@@ -1,4 +1,3 @@
-"""The MinIO images the platform runs are the ones this repository builds."""
 from __future__ import annotations
 
 import re
@@ -29,7 +28,6 @@ def _yaml(relative: str) -> dict:
 
 
 def _minio_digest() -> str:
-    """The one index digest every pull-by-digest consumer must use."""
     workflow = _text(".github/workflows/control-room-postgres-rls.yml")
     match = re.search(r'minio_digest="(sha256:[0-9a-f]{64})"', workflow)
     assert match, "control-room-postgres-rls.yml must pin the mirror digest"
@@ -104,7 +102,7 @@ def test_no_consumer_still_points_at_the_withdrawn_registry():
         "infra/images/minio/Dockerfile",
         ".github/workflows/mirror-minio.yml",
         "tests/test_minio_mirror_contract.py",
-        "tests/test_compose_aws_consistency.py",  # accepts both prefixes in its :latest guard
+        "tests/test_compose_aws_consistency.py",
     }
     offenders = []
     for path in ROOT.rglob("*"):

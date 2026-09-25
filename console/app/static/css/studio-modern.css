@@ -1,4 +1,4 @@
-/* Studio frontend island: enterprise shell for cartridge overview. */
+
 :root {
   --studio-bg: var(--bg);
   --studio-surface: var(--surface);
@@ -368,7 +368,6 @@ body.studio-modern-ready.studio-modern-summary-active .studio-body {
   color: var(--studio-success);
 }
 
-/* Create cartridge modal */
 .cc-modal-overlay {
   position: fixed !important;
   inset: 0 !important;
@@ -534,7 +533,6 @@ body.studio-modal-open {
   }
 }
 
-/* Keep the old resize rail out of the modern layout. */
 body.studio-modern-ready #ai-resize-handle {
   display: none !important;
 }
@@ -589,8 +587,6 @@ body #studio-ai-close {
   color: var(--text3);
 }
 
-/* Studio assistant: collapsed by default so it never covers workflow content.
-   The user opens it explicitly from the small floating launcher. */
 body.studio-modern-ready #ai-panel {
   display: none !important;
 }

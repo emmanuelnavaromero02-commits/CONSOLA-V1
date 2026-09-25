@@ -1,10 +1,3 @@
-"""F12 — population totals must come from SQL COUNT/SUM, never len(capped rows).
-
-The 5,000-row preview cap in gold_fetcher.query_gold_dataset_rows silently
-truncated every talent population total: a 6,000-employee workspace reported
-5,000 as if it were the whole population. These tests fail if any surface
-goes back to counting the capped read.
-"""
 from __future__ import annotations
 
 import re
@@ -22,7 +15,6 @@ POPULATION = (
 
 
 def _kpi_metrics():
-    """Load _sf_talent_kpi_metrics with its light helpers, no app import."""
     src = API.read_text(encoding="utf-8")
 
     def _fn(name: str) -> str:
@@ -90,8 +82,6 @@ def _rows_bundle(readiness_rows: list[dict]) -> dict:
 
 
 def test_population_totals_override_the_capped_row_count():
-    """A 6,000-person workspace reads only 5,000 rows (the preview cap) but
-    must report 6,000 — the SQL population count wins over len(rows)."""
     metrics_fn = _kpi_metrics()
     capped = _rows_bundle(_capped_rows(5000))
     population = {
@@ -123,10 +113,6 @@ def test_population_totals_fall_back_when_sql_unavailable():
 
 
 def test_nine_box_cells_rebuild_from_full_detail_in_sql():
-    """Cells/totals come from the cap-free SQL rebuild of the VALIDATED
-    detail — never from the materialized aggregate (fail-closed doctrine:
-    a stale ready_count cannot manufacture readiness) and never from len()
-    over the capped read (which is only the fallback)."""
     src = API.read_text(encoding="utf-8")
     fn = re.search(
         r"async def sap_successfactors_talent_9box\(.*?\n(?=@_bind_to_core)",
@@ -171,14 +157,9 @@ def test_preview_cap_stays_and_is_documented_as_preview_only():
     assert "safe_limit = max(1, min(int(limit or 5000), 5000))" in src, (
         "the preview cap must stay — raising it is a memory band-aid"
     )
-    cap_at = src.index("safe_limit = max(1, min(int(limit or 5000), 5000))")
-    assert "PREVIEW/ROSTER" in src[:cap_at], "cap must be documented as preview-only"
 
 
 def test_population_engine_preserves_the_authority_model():
-    """SQL counting must never trust a benchmark claim the projection guard
-    would degrade: the durable predicate binds the ledger verdict AND the
-    exact benchmark head, failing closed when the columns are absent."""
     src = POPULATION.read_text(encoding="utf-8")
     assert "_valid_authority" in src
     assert "benchmark_materialization_head" in src

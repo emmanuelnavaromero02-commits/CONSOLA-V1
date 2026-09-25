@@ -1,13 +1,3 @@
-"""
-Studio Assistant
-================
-AI assistant specialized for cartridge construction.
-Uses the same LLM + MCP machinery as the Monitor assistant,
-but with a different system prompt that is:
-  - Action-oriented (generate code, deploy DAGs, test connections)
-  - Cartridge-context-aware (receives current manifest)
-  - Step-aware (knows which wizard step is active)
-"""
 from __future__ import annotations
 
 from typing import Any, Awaitable, Callable
@@ -118,7 +108,6 @@ def register_local_tool(
     input_schema: dict[str, Any],
     handler: LocalToolHandler,
 ) -> None:
-    """Register a Studio-native tool exposed through the assistant tool loop."""
     _LOCAL_TOOLS[name] = {
         "name": name,
         "description": description,
@@ -137,7 +126,6 @@ async def _invoke_local_tool(tool: str, args: dict[str, Any], user: dict | None)
         raise HTTPException(404, f"Studio local tool '{tool}' is not registered")
     return await handler(args or {}, user)
 
-# ── Step metadata (aligned with studio.html nav) ──────────────────────────────
 
 STEP_LABELS = {
     1: "RESUMEN",
@@ -150,30 +138,23 @@ STEP_LABELS = {
 }
 
 
-# Tool slimming: per-step allow-list. Reduces tool count from 60 to ~10–20 per
-# step, drastically improving model focus and accuracy. Names are bare (no
-# server prefix); "*" suffix is a glob-prefix match. _common applies to all steps.
 STEP_TOOLS: dict[int | str, set[str]] = {
     "_common": {
-        # Cartridge discovery — needed everywhere
         "list_cartridges", "cartridge_get_manifest",
         "cartridge_list_entities", "cartridge_get_schema",
         "cartridge_search_term", "cartridge_get_semantic",
-        # Durable Studio objectives + approval loop
         "cartridge_self_check", "create_goal_run", "execute_goal_run",
         "get_goal_run_status", "approve_goal_step", "reject_goal_step",
-        # Vault — credentials may be needed in any step
         "vault_*",
     },
-    # Note: cartridge_sync_semantic_to_rag is exposed in step 6 (semantic editing).
-    1: {  # RESUMEN — overview, manifest editing
+    1: {
         "create_full_cartridge",
         "autopilot_build_cartridge",
         "plan_goal_run",
         "cartridge_list_jobs", "cartridge_list_kbs",
         "minio_list_cartridge_specs", "minio_read_spec", "minio_upload_spec",
     },
-    2: {  # DAGS
+    2: {
         "airflow_*",
         "introspect_source",
         "generate_dag_code",
@@ -181,7 +162,7 @@ STEP_TOOLS: dict[int | str, set[str]] = {
         "dag_save_source", "dag_get_source",
         "cartridge_get_run_logs", "cartridge_get_job_status",
     },
-    3: {  # ENTIDADES
+    3: {
         "cartridge_preview", "cartridge_extract", "cartridge_extract_all",
         "autopilot_build_cartridge",
         "introspect_source",
@@ -192,7 +173,7 @@ STEP_TOOLS: dict[int | str, set[str]] = {
         "create_entity",
         "watermark_get",
     },
-    4: {  # REFINAR (Silver/Gold)
+    4: {
         "list_sources", "preview_source", "get_source_partitions",
         "generate_transform", "preview_transform",
         "save_dataset", "materialize", "list_datasets",
@@ -202,20 +183,20 @@ STEP_TOOLS: dict[int | str, set[str]] = {
         "cartridge_run_kb", "cartridge_query_kb", "cartridge_list_kbs",
         "postgres_*",
     },
-    5: {  # ANALYTICS (Superset + Apps)
+    5: {
         "superset_*",
         "publish_app", "list_apps", "delete_app", "get_app_details", "get_app_html",
         "query_dataset", "list_datasets", "list_datasets_with_schemas",
         "postgres_list_tables",
     },
-    6: {  # IA SEMÁNTICA (vocabulary)
+    6: {
         "get_data_catalog", "upsert_catalog_entries", "register_relationship",
         "list_datasets_with_schemas", "describe_silver",
         "view_dataset", "view_datasets", "view_semantic",
         "postgres_execute_query", "postgres_execute_ddl",
-        "cartridge_sync_semantic_to_rag",  # re-embed glossary after edits
+        "cartridge_sync_semantic_to_rag",
     },
-    7: {  # RAG
+    7: {
         "search_rag", "ingest_document", "list_rag_sources",
     },
 }
@@ -300,12 +281,6 @@ _SENSITIVE_ARG_FRAGMENTS = (
 _APPROVAL_DECISION_TOOLS = {"approve_goal_step", "reject_goal_step"}
 _REFINE_DIRECT_ADMIN_TOOLS = {"save_dataset", "materialize"}
 _ENTITY_DIRECT_ADMIN_TOOLS = {"create_entity"}
-# publish_app exige intencion EXPLICITA en el mensaje actual del usuario
-# (canal confiable). Antes caia al 'write' generico, asi que contenido no
-# confiable en tool results/hints podia inducir la publicacion pese a un "NO
-# publiques" — el vector de prompt injection del red-team (14/14). Mismo patron
-# ya usado para create_entity. (delete_app NO va aqui: ya esta en
-# _STUDIO_DIRECT_ADMIN_BLOCKED_TOOLS, nunca es escritura directa.)
 _PUBLISH_DIRECT_ADMIN_TOOLS = {"publish_app"}
 _PUBLISH_INTENT_PHRASES = (
     "publica",
@@ -393,7 +368,6 @@ def _scrub_tool_args(value: Any) -> Any:
 
 
 def _current_user_text_allows_approval_tool(tool_name: str, args: dict[str, Any] | None, message: str) -> bool:
-    """Do not let the model approve its own waiting step in the same turn."""
     bare = _bare_tool_name(tool_name)
     if bare not in _APPROVAL_DECISION_TOOLS:
         return True
@@ -461,14 +435,11 @@ def _admin_direct_write_allowed(
     if bare_name in _ENTITY_DIRECT_ADMIN_TOOLS:
         return step == 3 and _is_explicit_entity_create_request(message)
     if bare_name in _PUBLISH_DIRECT_ADMIN_TOOLS:
-        # La escritura de app solo procede si el USUARIO la pidio en su mensaje
-        # actual; el contenido no confiable no puede inducirla.
         return _is_explicit_publish_request(message)
     return risk_meta.get("risk_level") == "write"
 
 
 def is_tool_allowed_for_role(role: str | None, tool_name: str) -> bool:
-    """Server-side Studio tool policy. Analysts are read/query/preview only."""
     if (role or "").lower() != "analyst":
         return True
     bare = _bare_tool_name(tool_name)
@@ -485,13 +456,11 @@ def _matches_pattern(bare_name: str, allowed: set[str]) -> bool:
 
 
 def filter_tools_for_step(tools: list[dict], step: int) -> list[dict]:
-    """Return only tools relevant to the active step + common ones."""
     allowed = STEP_TOOLS["_common"] | STEP_TOOLS.get(step, set())
     if not allowed:
         return tools
     out = []
     for t in tools:
-        # tool name format: "<server>__<bare>" e.g. "infra__cartridge_search_term"
         bare = t["name"].split("__", 1)[-1]
         if _matches_pattern(bare, allowed):
             out.append(t)
@@ -687,13 +656,8 @@ Step RAG — base de conocimiento del cartucho.
 """,
 }
 
-# ── System prompt builder ──────────────────────────────────────────────────────
 
 def _build_system_static() -> str:
-    """Static system prompt — same across cartridges, steps and turns. Cacheable.
-    Structure follows the "Lost in the Middle" mitigation: rules anchored at the
-    very top (primacy), tool catalog as the dense body, recency reminder at end.
-    """
     return f"""\
 <rol>
 Eres el asistente constructor de cartuchos en MODecissions Studio.
@@ -816,7 +780,6 @@ NO respondas hasta que las 3 sean SÍ.
 
 
 def _build_dynamic_context(step: int, manifest: dict | None) -> str:
-    """Per-turn context — only counts and IDs. The LLM uses tools for details."""
     step_label = STEP_LABELS.get(step, f"Paso {step}")
     step_instr = STEP_INSTRUCTIONS.get(step, "")
 
@@ -846,8 +809,6 @@ def _build_dynamic_context(step: int, manifest: dict | None) -> str:
 {step_label}: {step_instr.strip()}
 ──────────────────────────────────"""
 
-
-# ── Main chat handler ─────────────────────────────────────────────────────────
 
 async def chat(
     message: str,
@@ -883,21 +844,12 @@ async def chat(
             "input_schema": t.get("input_schema", {"type": "object", "properties": {}}),
         })
         tool_server_map[full_name] = STUDIO_LOCAL_SERVER_ID
-        # Some providers normalize or return the bare function name even when
-        # the schema was exposed with the Studio prefix. Keep local tools
-        # routable either way so the live assistant does not fall through to MCP.
         tool_server_map.setdefault(t["name"], STUDIO_LOCAL_SERVER_ID)
 
-    # Tool slimming: only expose tools relevant to the active step + common ones.
-    # Reduces ~60 tools to 10–20 per call, sharply improving LLM accuracy.
     tools = filter_tools_for_step(tools, step)
     tools = filter_tools_by_whitelist(tools, tools_whitelist or STUDIO_TOOLS_WHITELIST)
     tools = [t for t in tools if is_tool_allowed_for_role(actor_role, t["name"])]
 
-    # Keep full history (including tool call/result blocks) so the model
-    # remembers what tools it already ran and what they returned.
-    # Per-turn dynamic context (manifest + step) is prepended to the latest user
-    # message so the static system stays cacheable across cartridges/steps.
     messages = list(history)
     context = _build_dynamic_context(step, manifest)
     messages.append({"role": "user", "content": f"{context}\n\n---\n\n{message}"})
@@ -1105,7 +1057,4 @@ async def chat(
         full_msgs = messages + [{"role": "assistant", "content": reply}]
         return {"reply": reply, "viewer_urls": [], "messages": full_msgs}
 
-    # full_msgs already contains the complete conversation including tool calls.
-    # The frontend stores this and sends it back on the next turn so the model
-    # has full context (no more cycling "I'll do X" without knowing it already tried).
     return {"reply": reply, "viewer_urls": viewer_urls, "messages": full_msgs}

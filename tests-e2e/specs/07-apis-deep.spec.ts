@@ -1,11 +1,3 @@
-/**
- * v1.44.3.2.1 spec 07-deep — Exhaustive backend API contracts.
- *
- * 40+ tests covering auth round-trip, every documented endpoint
- * with both unauth gate + authed shape validation, RBAC (admin
- * vs viewer), security headers (CSP / HSTS / X-Frame-Options),
- * and the LIVE CSRF flow a Mac validation run uncovered.
- */
 import { test, expect, request as pwRequest } from "@playwright/test";
 
 test.use({ storageState: { cookies: [], origins: [] } });
@@ -14,7 +6,6 @@ const BACKEND = process.env.LEGACY_URL || "http://localhost:8000";
 const EMAIL = process.env.TEST_EMAIL || "emmanuel@local.ai";
 const PASSWORD = process.env.TEST_PASSWORD || "";
 
-/** Mint a fresh authenticated APIRequestContext using the CSRF flow. */
 async function authedCtx() {
   const ctx = await pwRequest.newContext();
   const csrf = await ctx.get(`${BACKEND}/login`);
@@ -95,7 +86,6 @@ test.describe("Auth — CSRF flow happy path", () => {
   );
 });
 
-// ── Unauth + authed contract probes for every documented endpoint ──
 
 interface Check {
   method: "GET" | "POST" | "PUT" | "DELETE";
@@ -213,8 +203,6 @@ test.describe("API — RBAC sanity", () => {
   test("DELETE /api/cartridges/{id}/credentials requires CSRF", async () => {
     const ctx = await authedCtx();
     const r = await ctx.delete(`${BACKEND}/api/cartridges/replicon/credentials`);
-    // No CSRF header → expect 403; or 404 if no creds exist (also OK
-    // — both prove the route doesn't run destructively without CSRF).
     expect([403, 404]).toContain(r.status());
     await ctx.dispose();
   });
@@ -232,7 +220,6 @@ test.describe("API — RBAC sanity", () => {
 test.describe("API — copilot detail validation", () => {
   test("POST /api/copilot/memory/fact rejects empty body", async () => {
     const ctx = await authedCtx();
-    // Get CSRF token from the same context.
     const cookies = await ctx.storageState();
     const csrf = cookies.cookies.find((c) => c.name === "csrf_token");
     if (!csrf) {
@@ -269,7 +256,6 @@ test.describe("API — copilot detail validation", () => {
     async () => {
       const ctx = await authedCtx();
       const r = await ctx.get(`${BACKEND}/api/copilot/workflow/not-a-uuid`);
-      // The v1.44.3 R1 fix added _validate_uuid → 400 on malformed.
       expect([400, 404]).toContain(r.status());
       await ctx.dispose();
     },

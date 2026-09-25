@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""Dry-run SEC EDGAR Bronze retention planner.
-
-Deletes are disabled unless both --execute and --confirm-delete-sec-bronze are
-passed. Only complete batches with a manifest are eligible.
-"""
 from __future__ import annotations
 
 import argparse

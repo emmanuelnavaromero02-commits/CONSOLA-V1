@@ -20,7 +20,6 @@ def _quote(value: str) -> str:
 
 
 class PublicationInputBindingMixin:
-    """Pins execution to the exact dependency vector used by the run digest."""
 
     def _input_items(self) -> dict[str, dict[str, Any]]:
         state = self._state() or {}

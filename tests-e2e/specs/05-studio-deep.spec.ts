@@ -1,17 +1,3 @@
-/**
- * v1.44.3.2.1 spec 05-deep — Legacy /studio deep coverage.
- *
- * 50 tests across the 7 documented studio tabs, the lateral
- * assistant, cartridge switcher, and the 7 USER-REPORTED BUGS
- * diagnostics confirmed. Tests live in this separate
- * "-deep" file so v1.44.3.2's 05-studio.spec.ts stays as the
- * focused user-report pin list; this file goes broader.
- *
- * Storage state from global-setup pre-authenticates the page.
- * The legacy /studio is HTML-rendered client-side by
- * console/app/static/js/studio/* — tests assert on rendered DOM
- * + behaviour, not the raw HTML markup.
- */
 import { test, expect } from "../fixtures/auth";
 import type { Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
@@ -187,7 +173,6 @@ test.describe("Studio — 7 tabs render", () => {
           test.skip(true, `tab ${tab.source} not present`);
         }
         await trigger.click();
-        // Wait for either a panel, table, empty state, or error.
         const content = page.locator(
           "#step-content, main, .tab-content, [role='tabpanel'], table, .empty-state, .alert",
         ).first();
@@ -200,7 +185,6 @@ test.describe("Studio — 7 tabs render", () => {
 test.describe("Studio — Resumen tab", () => {
   test("renders cartridge selector dropdown", async ({ authedPage: page }) => {
     await openStudio(page);
-    // Allow a few seconds for the JS to wire the cartridge picker.
     await page.waitForTimeout(2_000);
     const picker = page.locator(
       'select[name*="cartridge"], select#cartridge, [data-testid="cartridge-picker"]',
@@ -521,8 +505,6 @@ test.describe("Studio — Analytics tab", () => {
     const href = await abrir.getAttribute("href");
     expect(href, "Superset link must expose a real target").toBeTruthy();
     const targetOrigin = new URL(href!, page.url()).origin;
-    // `window.open(..., "noopener")` deliberately severs the popup handle.
-    // Observe the cross-origin navigation request without weakening noopener.
     const requestPromise = context.waitForEvent("request", {
       predicate: (request) =>
         request.isNavigationRequest() &&

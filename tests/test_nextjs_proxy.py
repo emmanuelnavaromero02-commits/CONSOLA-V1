@@ -1,5 +1,3 @@
-"""Static console contract: no Next.js proxy, FastAPI same-origin only."""
-
 from __future__ import annotations
 
 from pathlib import Path

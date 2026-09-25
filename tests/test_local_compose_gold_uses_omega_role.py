@@ -1,4 +1,3 @@
-"""Sprint v1.32.1 — local compose must not use postgres for GOLD_DATABASE_URL."""
 from __future__ import annotations
 
 from pathlib import Path

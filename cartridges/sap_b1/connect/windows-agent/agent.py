@@ -89,7 +89,6 @@ CARTRIDGE_FILES = (
 
 
 def _locate_cartridge_root() -> Path:
-    """The directory holding ``app/`` (the cartridge modules the agent reuses)."""
     candidates: list[Path] = []
     override = os.environ.get(CARTRIDGE_ROOT_ENV, "").strip()
     if override:
@@ -124,19 +123,18 @@ ENTITIES_PATH = CARTRIDGE_ROOT / "app" / "config" / "entities.yaml"
 
 
 class AgentError(RuntimeError):
-    """A run could not complete; reported as a failed run, exit code 1."""
+    pass
 
 
 class ConfigError(AgentError):
-    """The agent lacks or rejects configuration; exit code 2."""
+    pass
 
 
 class UploadError(AgentError):
-    """A file could not be delivered to S3 after the configured attempts."""
+    pass
 
 
 class UploadRejected(UploadError):
-    """S3 refused the key or the bucket for good (AccessDenied, ExpiredToken, ...)."""
 
     def __init__(self, message: str, code: str) -> None:
         super().__init__(message)
@@ -144,7 +142,6 @@ class UploadRejected(UploadError):
 
 
 def scrub(text: Any, secrets: Sequence[str]) -> str:
-    """Replace every secret (password, host, user, database, schema names, access keys) with ``***``."""
     out = str(text if text is not None else "")
     for secret in sorted((s for s in secrets if s and len(s) >= 3), key=len, reverse=True):
         out = out.replace(secret, "***")
@@ -243,7 +240,6 @@ _PLACEHOLDER = re.compile(r"^<[A-Z][A-Z0-9_]*>$")
 
 
 def _text(section: Mapping[str, Any], key: str, env: Mapping[str, str], env_name: str | None, default: str = "") -> str:
-    """Environment first (so a secret can live outside the file), then the file."""
     if env_name and env.get(env_name, "").strip():
         text = env[env_name].strip()
     else:
@@ -322,7 +318,6 @@ def _source_config(section: Mapping[str, Any], env: Mapping[str, str]) -> "b1_so
 def _intercompany_config(
     section: Mapping[str, Any], env: Mapping[str, str], source: "b1_source.B1Config"
 ) -> list["intercompany_mapping.IntercompanyPartner"]:
-    """``[source] intercompany`` (or ``SAP_B1_INTERCOMPANY``)."""
     spec = _text(section, "intercompany", env, "SAP_B1_INTERCOMPANY")
     try:
         partners = intercompany_mapping.parse_intercompany(spec)
@@ -418,7 +413,6 @@ def select_entities(
     only: Sequence[str] = (),
     log: logging.Logger | None = None,
 ) -> list[dict[str, Any]]:
-    """The entities a command runs, in catalogue order of the request."""
     by_name = {entity["entity"]: entity for entity in catalogue}
     unknown = [name for name in (*only, *config.entities, *config.exclude) if name not in by_name]
     if unknown:
@@ -492,7 +486,6 @@ def _utc_now_text() -> str:
 
 
 class AgentState:
-    """Watermarks per ``Entity@alias``, the run log and the spool ledger."""
 
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -600,7 +593,6 @@ class AgentState:
         return [dict(row) for row in rows]
 
     def spool_lose(self, path: Path, reason: str, quarantine_path: Path | None = None) -> None:
-        """A spooled file that can never be uploaded (missing or unreadable)."""
         self.conn.execute(
             """
             INSERT INTO spool_lost (path, object_name, run_id, entity_name, created_at, lost_at, reason, quarantine_path)
@@ -658,12 +650,10 @@ _ERROR_CODE_IN_MESSAGE = re.compile(r"An error occurred \(([A-Za-z0-9_.]+)\)")
 
 
 def scoped_prefix(scope: str, entity: str = "*") -> str:
-    """``raw/sap_b1/<entity>/tenant_id=<t>/workspace_id=<w>/``."""
     return f"{bronze_parquet.BRONZE_PREFIX}{entity}/{scope}"
 
 
 class S3Uploader:
-    """boto3 uploads restricted to this tenant and workspace under ``raw/sap_b1/<entity>/``."""
 
     def __init__(self, config: UploadConfig, log: logging.Logger, *, scope: str, client: Any = None) -> None:
         self.config = config
@@ -704,7 +694,6 @@ class S3Uploader:
 
     @staticmethod
     def _error_code(exc: BaseException) -> str:
-        """The S3 error code of ``exc``: from its ``response``, from the exception it wraps (``__cause__``/``__context__``), or."""
         seen: set[int] = set()
         current: BaseException | None = exc
         while current is not None and id(current) not in seen:
@@ -719,7 +708,6 @@ class S3Uploader:
         return match.group(1) if match else ""
 
     def check_scope(self, object_name: str) -> None:
-        """Refuse any key outside ``raw/sap_b1/<entity>/<this scope>``."""
         prefix = bronze_parquet.BRONZE_PREFIX
         entity, separator, rest = object_name[len(prefix):].partition("/") if object_name.startswith(prefix) else ("", "", "")
         if (
@@ -732,7 +720,6 @@ class S3Uploader:
             raise UploadError(f"refusing to upload outside {scoped_prefix(self.scope)}: {object_name}")
 
     def probe(self) -> None:
-        """Prove the key can see its own prefix without writing anything."""
         self.client.list_objects_v2(Bucket=self.config.bucket, Prefix=scoped_prefix(self.scope, PROBE_ENTITY), MaxKeys=1)
 
     def upload(self, path: Path, object_name: str) -> None:
@@ -774,7 +761,6 @@ class DrainResult:
 
 
 class Spool:
-    """Files wait here until S3 confirms them; nothing is deleted before."""
 
     def __init__(
         self,
@@ -806,7 +792,6 @@ class Spool:
         return self.root / f"{uuid.uuid4().hex[:SPOOL_NAME_HEX]}.parquet"
 
     def _write(self, table, object_name: str) -> Path:
-        """Write next to the target and rename into place, with the bytes forced to disk first."""
         target = self._target(object_name)
         target.parent.mkdir(parents=True, exist_ok=True)
         partial = target.with_name(target.name + ".part")
@@ -822,7 +807,6 @@ class Spool:
             self.state.spool_attempt(path, scrub(error, self.secrets))
 
     def _remove(self, path: Path) -> None:
-        """S3 confirmed the file, so the delivery stands whatever the local cleanup does (on Windows an antivirus may still hold the file)."""
         try:
             path.unlink()
         except FileNotFoundError:
@@ -853,7 +837,6 @@ class Spool:
         return True
 
     def deliver(self, table, object_name: str, *, run_id: str, entity: str) -> tuple[Path, bool]:
-        """Write the batch; upload it now when there is an uploader."""
         path = self._write(table, object_name)
         if self.uploader is None:
             return path, True
@@ -863,7 +846,6 @@ class Spool:
 
     @staticmethod
     def _unreadable(path: Path) -> str | None:
-        """None when ``path`` is a parquet file with a readable footer."""
         import pyarrow.parquet as pq
 
         try:
@@ -894,7 +876,6 @@ class Spool:
         )
 
     def sweep(self) -> None:
-        """Delete files in the spool the ledger does not know."""
         assert self.state is not None
         known = {Path(row["path"]).name for row in self.state.spool_pending()}
         for candidate in sorted(self.root.iterdir()):
@@ -908,7 +889,6 @@ class Spool:
                 self.log.info("removed leftover spool file: %s", candidate.name)
 
     def drain(self) -> DrainResult:
-        """Retry every pending file, oldest first."""
         result = DrainResult()
         if self.uploader is None or self.state is None:
             return result
@@ -944,11 +924,11 @@ def _pid_alive(pid: int) -> bool:
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         kernel32.OpenProcess.restype = ctypes.c_void_p
         kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
-        handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        handle = kernel32.OpenProcess(0x1000, False, pid)
         if handle:
             kernel32.CloseHandle(handle)
             return True
-        return ctypes.get_last_error() == 5  # ERROR_ACCESS_DENIED: it exists, just not ours to query
+        return ctypes.get_last_error() == 5
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -959,7 +939,6 @@ def _pid_alive(pid: int) -> bool:
 
 
 def _claim(source: Path, target: Path) -> None:
-    """Make ``source`` appear as ``target`` atomically, failing with FileExistsError when ``target`` exists."""
     if os.name == "nt":
         os.rename(source, target)
         return
@@ -968,7 +947,6 @@ def _claim(source: Path, target: Path) -> None:
 
 
 class RunLock:
-    """One extraction at a time per state directory (a scheduled cycle must not overlap a manual run)."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -983,7 +961,6 @@ class RunLock:
         return pid if pid > 0 else None
 
     def _inspect_existing(self) -> None:
-        """Raise when the existing lock must be respected."""
         try:
             text = self.path.read_text(encoding="utf-8")
         except FileNotFoundError:
@@ -1059,7 +1036,6 @@ def run_extract(
     to_date: str | None = None,
     skip_empty: bool = False,
 ) -> RunOutcome:
-    """One entity across every company: the cartridge's ``run_entity`` with the SQLite state and the spool as sinks."""
     config, state, spool, log = runtime.config, runtime.state, runtime.spool, runtime.log
     entity_name = str(entity_config.get("entity") or "")
     plan = b1_queries.plan_from_config(entity_config)
@@ -1166,7 +1142,6 @@ def run_extract(
 
 
 def run_intercompany(runtime: Runtime) -> RunOutcome:
-    """Write the configured intercompany mapping as the full snapshot ``IntercompanyPartners``, exactly as the cartridge's ``refresh_intercompany_partners`` does."""
     config, state, spool, log = runtime.config, runtime.state, runtime.spool, runtime.log
     entity_name = intercompany_mapping.ENTITY
     scope = config.scope
@@ -1241,7 +1216,6 @@ def _setup_logging(
 
 
 def _bootstrap_log_dir(path: Path | None, env: Mapping[str, str]) -> Path | None:
-    """Where a configuration error is logged when the configuration itself is unusable."""
     if path is None:
         return None
     base = path.resolve().parent
@@ -1273,7 +1247,6 @@ def _env_secrets(env: Mapping[str, str]) -> tuple[str, ...]:
 
 
 def _log_config_error(path: Path | None, message: str) -> None:
-    """Best effort: the scheduled task shows nothing but an exit code, so a configuration error also lands in agent.log whenever a log directory can be worked out."""
     log_dir = _bootstrap_log_dir(path, os.environ)
     if log_dir is None:
         return

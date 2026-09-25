@@ -12,7 +12,6 @@ from app.core.rate_limit import WindowRateLimiter
 from app.core.source_security import BASE_URL, sanitize_source_url, validate_url
 from app.core.vault_client import resolve_inegi_token
 
-# Public token embedded by INEGI's own query builder for catalog metadata.
 CATALOG_TOKEN = "96fbd1bf-21e6-28e3-6e64-2b15999d2c89"
 DEFAULT_SOURCE = "BISE"
 

@@ -49,7 +49,6 @@ def _postgres_type(field: pa.Field) -> str:
 
 
 class PublicationRecoveryMixin:
-    """Revalidates frozen prepared state instead of recomputing it."""
 
     def _rebuild_gold_stage(self, identity: Any, values: dict[str, Any]) -> str:
         key = self._s3_object_key(str(values["object_uri"]))

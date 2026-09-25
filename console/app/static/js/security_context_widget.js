@@ -1,32 +1,8 @@
-// console/app/static/js/security_context_widget.js
-//
-// Reusable SaaS-context client for the legacy console UI.
-//
-// Single source of truth: GET /api/me/access (shipped in #174). Every
-// page that wants to show the caller's identity, role, workspace and
-// cartridge entitlements imports from here so the network call happens
-// once per page-load and the rendering rules stay consistent.
-//
-// Rules enforced by this module:
-//   - Never throws on 401/403/5xx; returns a normalized "anonymous" or
-//     "limited" snapshot the caller can render gracefully.
-//   - Uses fetch with credentials: "same-origin" (cookie auth).
-//   - Never inserts user-controlled strings via innerHTML; everything
-//     goes through createElement + textContent.
-//   - Never persists state in localStorage; the snapshot lives on
-//     window.__omegaSecurityContext for cross-script reads on the same
-//     page, but is rebuilt on every page-load.
-
 (function (global) {
   "use strict";
 
   const ENDPOINT = "/api/me/access";
 
-  // ---------------------------------------------------------------------
-  // Normalization — collapse the backend payload into a stable shape so
-  // every UI surface reads from the same fields, even when the backend
-  // returns partial data (e.g. marketplace pool down -> empty cartridges).
-  // ---------------------------------------------------------------------
 
   function _str(value) {
     return value == null ? "" : String(value);
@@ -109,10 +85,6 @@
     };
   }
 
-  // ---------------------------------------------------------------------
-  // Fetch — single in-flight promise per page so multiple widgets on the
-  // same page (Home banner + Copilot panel) share one network round-trip.
-  // ---------------------------------------------------------------------
 
   let _inflight = null;
 
@@ -126,8 +98,6 @@
           headers: { Accept: "application/json" },
         });
       } catch (_) {
-        // Network unreachable. Return a benign empty snapshot so the
-        // page still renders.
         const snap = emptySnapshot("network_error");
         global.__omegaSecurityContext = snap;
         return snap;
@@ -157,12 +127,6 @@
     return _inflight;
   }
 
-  // ---------------------------------------------------------------------
-  // Render helpers — generic factories used by the page-specific
-  // mount points. Every text node uses textContent; every element is
-  // built with createElement; class names are static strings; ids are
-  // namespaced under `omega-sc-`.
-  // ---------------------------------------------------------------------
 
   function el(tag, className, text) {
     const node = document.createElement(tag);
@@ -182,24 +146,12 @@
     return span;
   }
 
-  // ---------------------------------------------------------------------
-  // Home compact identity bar.
-  //
-  // Anchored full-width above the hero. Three columns:
-  //   left  -> identity (email + global role)
-  //   mid   -> workspace context (workspace_id + workspace_role)
-  //   right -> chips (permissions / allowed / denied) + "Mis accesos" link
-  //
-  // No actions are wired here besides the link to /mis-accesos which is
-  // always safe for any authenticated user.
-  // ---------------------------------------------------------------------
 
   function renderHomeIdentityBar(snap) {
     const bar = el("section", "home-identity-bar");
     bar.id = "omega-sc-home-bar";
     bar.setAttribute("aria-label", "Mi contexto SaaS");
 
-    // Left — identity
     const left = el("div", "home-identity-left");
     if (snap.authenticated) {
       left.append(
@@ -226,7 +178,6 @@
       );
     }
 
-    // Middle — workspace
     const mid = el("div", "home-identity-mid");
     if (snap.workspace.workspace_id) {
       mid.append(
@@ -248,9 +199,6 @@
       }
       mid.append(wsRoleRow);
     } else {
-      // R1-UX gap #1: a user with no workspace assignment used to see
-      // a silent "Sin workspace seleccionado" with no path forward.
-      // Give them a clear next step.
       mid.append(
         el("div", "home-identity-label", "Workspace activo"),
         el("div", "home-identity-workspace home-identity-muted", "Sin workspace asignado"),
@@ -263,7 +211,6 @@
       );
     }
 
-    // Right — chips + link
     const right = el("div", "home-identity-right");
     const chipsWrap = el("div", "home-identity-chips");
     chipsWrap.append(
@@ -285,20 +232,6 @@
     return bar;
   }
 
-  // ---------------------------------------------------------------------
-  // Copilot context panel — compact, fits in the existing sidebar
-  // between the conversation list and the footer.
-  //
-  // Surfaces only what the copilot caller actually has at hand:
-  //   - workspace + workspace_role
-  //   - cartuchos disponibles (clickable -> filtran nada hoy, son label
-  //     visual; el backend del copilot ya recibe el security_context
-  //     en cada invoke).
-  //   - cartuchos bloqueados con razón.
-  //   - link a /mis-accesos.
-  //
-  // No new actions, no fake buttons, no LLM prompt changes.
-  // ---------------------------------------------------------------------
 
   function renderCopilotContextPanel(snap) {
     const panel = el("section", "copilot-context-panel");
@@ -307,7 +240,6 @@
 
     panel.append(el("div", "copilot-context-eyebrow", "Tu contexto"));
 
-    // Workspace row
     if (snap.workspace.workspace_id) {
       const wsRow = el("div", "copilot-context-row");
       wsRow.append(
@@ -324,9 +256,6 @@
         panel.append(roleRow);
       }
     } else {
-      // R1-UX gap #3: make the no-workspace state unmissable, not a soft
-      // muted line. The copilot will run with restricted context so the
-      // user needs to know up-front.
       const warn = el("div", "copilot-context-warning");
       warn.append(
         el("strong", null, "Sin workspace asignado"),
@@ -340,7 +269,6 @@
       panel.append(warn);
     }
 
-    // Allowed cartridges
     const allowed = snap.cartridges.allowed;
     panel.append(el("div", "copilot-context-section-title", "Cartuchos disponibles"));
     if (allowed.length === 0) {
@@ -365,7 +293,6 @@
       panel.append(list);
     }
 
-    // Denied cartridges
     const denied = snap.cartridges.denied;
     if (denied.length > 0) {
       panel.append(el("div", "copilot-context-section-title", "Bloqueados para tu usuario"));
@@ -389,7 +316,6 @@
       );
     }
 
-    // Link to full view
     const link = el("a", "copilot-context-cta", "Ver mis accesos →");
     link.href = "/mis-accesos";
     panel.append(link);
@@ -397,9 +323,6 @@
     return panel;
   }
 
-  // ---------------------------------------------------------------------
-  // Public API
-  // ---------------------------------------------------------------------
 
   global.OmegaSecurityContext = {
     load: loadSecurityContext,

@@ -5,10 +5,6 @@ import types
 
 import app.main as _console_main
 
-# Import the current console runtime namespace, including private helper
-# functions used by legacy handlers. Handlers are rebound to app.main's
-# namespace before registration so existing tests and monkeypatches that
-# patch app.main.<helper> continue to affect the handler at runtime.
 globals().update(_console_main.__dict__)
 router = APIRouter()
 
@@ -29,7 +25,6 @@ def _bind_to_main(fn):
     _console_main.__dict__[fn.__name__] = rebound
     return rebound
 
-# /decisions
 @router.get("/decisions", dependencies=[Depends(require_admin)])
 @_bind_to_main
 async def viewer_decisions(request: Request):
@@ -37,7 +32,6 @@ async def viewer_decisions(request: Request):
 
     return _console_next_response(request, "decisions/index.html")
 
-# /api/decisions
 @router.get("/api/decisions", dependencies=[Depends(require_permission("datasets.read"))])
 @_bind_to_main
 async def api_decisions_list(status: str = "", overdue: str = "", user: dict = Depends(require_permission("datasets.read"))):
@@ -55,18 +49,12 @@ async def api_decisions_list(status: str = "", overdue: str = "", user: dict = D
         rows = await conn.fetch(sql, *params)
     return {"decisions": [_dec_row_to_dict(r) for r in rows]}
 
-# /api/decisions
 @router.post("/api/decisions", dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))])
 @_bind_to_main
 async def api_decisions_create(body: dict, user: dict = Depends(require_permission("control_room.write"))):
     title = (body.get("title") or "").strip()
     if not title:
         raise HTTPException(400, "title is required")
-    # Sprint v1.37 (audit B7 P0): every decision belongs to the user's
-    # active workspace. Without this, console.POST /api/decisions
-    # silently created rows with workspace_id=NULL and the list
-    # endpoint then leaked them as "shared" across tenants on the
-    # legacy fallback in 33_decisions_workspace_id.sql.
     workspace_id = _current_workspace_id(user)
     if not workspace_id:
         raise HTTPException(400, "active workspace is required to create a decision")
@@ -95,7 +83,6 @@ async def api_decisions_create(body: dict, user: dict = Depends(require_permissi
         )
     return _dec_row_to_dict(row)
 
-# /api/decisions/{decision_id}
 @router.get("/api/decisions/{decision_id}", dependencies=[Depends(require_permission("datasets.read"))])
 @_bind_to_main
 async def api_decisions_get(decision_id: int, user: dict = Depends(require_permission("datasets.read"))):
@@ -114,7 +101,6 @@ async def api_decisions_get(decision_id: int, user: dict = Depends(require_permi
     ]
     return out
 
-# /api/decisions/{decision_id}
 @router.patch("/api/decisions/{decision_id}", dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))])
 @_bind_to_main
 async def api_decisions_update(decision_id: int, body: dict, user: dict = Depends(require_permission("control_room.write"))):
@@ -161,14 +147,9 @@ async def api_decisions_update(decision_id: int, body: dict, user: dict = Depend
         )
         row = await conn.fetchrow(sql, *params)
     if not row:
-        # The visibility check passed but the row vanished between
-        # SELECT and UPDATE (e.g. a concurrent delete, or the row was
-        # moved to a different workspace). Treat as not-found rather
-        # than 500.
         raise HTTPException(404, f"Decision {decision_id} not found")
     return _dec_row_to_dict(row)
 
-# /api/decisions/{decision_id}
 @router.delete("/api/decisions/{decision_id}", dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))])
 @_bind_to_main
 async def api_decisions_delete(decision_id: int, user: dict = Depends(require_permission("control_room.write"))):
@@ -176,9 +157,6 @@ async def api_decisions_delete(decision_id: int, user: dict = Depends(require_pe
     if not workspace_id:
         raise HTTPException(403, "active workspace is required")
     pool = await _dec_pool()
-    # Sprint v1.37: pin DELETE to (id, workspace_id) — same rationale
-    # as the UPDATE above. ``existing["workspace_id"]`` comes from the
-    # workspace-scoped SELECT FOR UPDATE in this same transaction.
     async with scoped_db_for_user(pool, user) as (conn, tenant_id, _workspace_id):
         existing = await _dec_load_on_conn(
             conn,
@@ -199,7 +177,6 @@ async def api_decisions_delete(decision_id: int, user: dict = Depends(require_pe
         )
     return {"deleted": True, "id": decision_id}
 
-# /api/decisions/{decision_id}/actions
 @router.post("/api/decisions/{decision_id}/actions", dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))])
 @_bind_to_main
 async def api_decisions_add_action(
@@ -248,7 +225,6 @@ async def api_decisions_add_action(
             key_hash=key_hash,
         )
 
-# /api/users
 @router.get("/api/users")
 @_bind_to_main
 async def api_users_list(user: dict = Depends(require_permission("iam.users.read"))):
@@ -259,15 +235,11 @@ async def api_users_list(user: dict = Depends(require_permission("iam.users.read
         visible_user_ids_for_admin=_visible_user_ids_for_admin,
     )
 
-# /admin/users
 @router.get("/admin/users", dependencies=[Depends(require_permission("iam.users.read"))])
 @_bind_to_main
 async def viewer_admin_users(request: Request, user: dict = Depends(require_permission("iam.users.read"))):
-    # Compatibility URL, but not a separate users app anymore:
-    # /admin/users now enters the IAM ecosystem and opens the Users tab.
     return RedirectResponse(url="/operations/users", status_code=307)
 
-# /api/admin/users
 @router.get("/api/admin/users")
 @_bind_to_main
 async def api_admin_users_list(admin_user: dict = Depends(require_permission("iam.users.read"))):
@@ -277,7 +249,6 @@ async def api_admin_users_list(admin_user: dict = Depends(require_permission("ia
     visible_ids = await _visible_user_ids_for_admin(admin_user, users)
     return {"users": [u for u in users if u.get("id") in visible_ids]}
 
-# /api/admin/users
 @router.post(
     "/api/admin/users",
     dependencies=[Depends(require_csrf), Depends(require_permission("iam.users.write"))],
@@ -309,9 +280,6 @@ async def api_admin_users_create(body: dict, request: Request, admin_user: dict 
             "name": body.get("name"),
             "role": platform_role,
         }
-        # Test doubles from older auth contracts may not expose workspace_id;
-        # production auth.create_user does and assigns the membership in the
-        # same transaction after the route has validated workspace scope.
         if "workspace_id" in inspect.signature(_auth.create_user).parameters:
             create_user_kwargs["workspace_id"] = workspace_id
         target_user = await _auth.create_user(**create_user_kwargs)
@@ -322,8 +290,6 @@ async def api_admin_users_create(body: dict, request: Request, admin_user: dict 
                 if not _workspace_scope_db_unavailable(exc):
                     raise
     except RuntimeError:
-        # create_user assigns workspace membership in the same transaction;
-        # let the global 500 handler log + sanitize internal details.
         raise
     await _audit.record_event(
         admin_user.get("id"), admin_user.get("email"), "user.created", "user", str(target_user["id"]),
@@ -332,14 +298,12 @@ async def api_admin_users_create(body: dict, request: Request, admin_user: dict 
     )
     return target_user
 
-# /api/admin/users/{user_id}
 @router.patch(
     "/api/admin/users/{user_id}",
     dependencies=[Depends(require_csrf), Depends(require_permission("iam.users.write"))],
 )
 @_bind_to_main
 async def api_admin_users_update(user_id: int, body: dict, request: Request, admin_user: dict = Depends(require_permission("iam.users.write"))):
-    # Don't let an admin demote / disable themselves accidentally
     if user_id == admin_user["id"] and (body.get("role") not in (None, admin_user.get("role")) or body.get("is_active") is False):
         raise HTTPException(400, "you cannot demote or disable your own account")
     await _assert_can_manage_target_user(admin_user, user_id)
@@ -399,9 +363,6 @@ async def api_admin_users_update(user_id: int, body: dict, request: Request, adm
         },
     )
     if password_changed:
-        # Password change is independently auditable: an admin overriding a
-        # user's credential is privileged enough to warrant its own row, even
-        # when bundled with other field updates in the same request.
         await _audit.record_event(
             admin_user.get("id"),
             admin_user.get("email"),
@@ -414,7 +375,6 @@ async def api_admin_users_update(user_id: int, body: dict, request: Request, adm
         )
     return target_user
 
-# /api/admin/users/{user_id}
 @router.delete(
     "/api/admin/users/{user_id}",
     dependencies=[Depends(require_csrf), Depends(require_permission("iam.users.write"))],
@@ -445,7 +405,6 @@ async def api_admin_users_delete(
     )
     return {"deleted": True, "id": user_id}
 
-# /vpn-config/{token}
 @router.get("/vpn-config/{token}")
 @_bind_to_main
 async def get_vpn_config(token: str, user: dict | None = Depends(current_user)):
@@ -458,7 +417,6 @@ async def get_vpn_config(token: str, user: dict | None = Depends(current_user)):
         vpn_error_cls=_vpn.VPNError,
     )
 
-# /api/admin/users/{user_id}/vpn-reissue
 @router.post(
     "/api/admin/users/{user_id}/vpn-reissue",
     dependencies=[Depends(require_csrf), Depends(require_permission("iam.users.write"))],
@@ -486,7 +444,6 @@ async def api_admin_users_vpn_reissue(
     )
     return {"reissued": res.get("issued", False), **res}
 
-# /api/admin/users/invite
 @router.post(
     "/api/admin/users/invite",
     dependencies=[Depends(require_csrf), Depends(require_permission("iam.users.write"))],
@@ -549,7 +506,6 @@ async def api_admin_users_invite(body: dict, request: Request, admin_user: dict 
     )
     return {"invited": True, "user": target_user, "email_sent": sent, "vpn": vpn_result}
 
-# /api/admin/users/{user_id}/reinvite
 @router.post(
     "/api/admin/users/{user_id}/reinvite",
     dependencies=[Depends(require_csrf), Depends(require_permission("iam.users.write"))],
@@ -610,7 +566,6 @@ async def api_admin_users_reinvite(
     )
     return {"reinvited": True, "email_sent": sent, "vpn": vpn_result}
 
-# /api/admin/users/{user_id}/send-reset
 @router.post(
     "/api/admin/users/{user_id}/send-reset",
     dependencies=[Depends(require_csrf), Depends(require_permission("iam.users.write"))],

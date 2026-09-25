@@ -122,8 +122,6 @@ export async function apiFetch(path: string, init: ApiFetchInit = {}): Promise<R
   }
 }
 
-// Marcadores técnicos que nunca deben mostrarse al usuario final
-// (tracebacks, SQL, rutas de servidor, punteros, digests).
 const UNSAFE_DETAIL_MARKERS: RegExp[] = [
   /traceback/i,
   /exception/i,
@@ -141,12 +139,6 @@ const UNSAFE_DETAIL_MARKERS: RegExp[] = [
   /[0-9a-f]{32,}/i,
 ];
 
-// Heurística FAIL-CLOSED: un `detail` del backend solo se muestra si
-// parece copy pensado para el usuario (una sola línea, corto y sin
-// marcadores técnicos). Limitación conocida: el backend no distingue
-// mensajes de usuario de mensajes técnicos; el contrato ideal sería un
-// campo explícito `user_message` marcado por el backend. Mientras no
-// exista, ante la duda mostramos el mensaje genérico + Ref.
 function isSafeUserDetail(detail: string): boolean {
   const trimmed = detail.trim();
   if (!trimmed) return false;
@@ -155,12 +147,7 @@ function isSafeUserDetail(detail: string): boolean {
   return !UNSAFE_DETAIL_MARKERS.some((marker) => marker.test(trimmed));
 }
 
-// Política ÚNICA de saneamiento de errores del backend para toda la
-// consola (fetch JSON y streaming SSE comparten esta misma función; no
-// deben existir denylists divergentes).
 export function publicErrorMessage(status: number, payload: unknown, requestId?: string): string {
-  // Solo 4xx puede exponer `detail` de JSON, y solo si pasa el filtro.
-  // Cuerpos string crudos (p. ej. HTML de un proxy) nunca se muestran.
   if (status < 500 && payload && typeof payload === "object" && "detail" in payload) {
     const detail = (payload as { detail?: unknown }).detail;
     if (typeof detail === "string" && isSafeUserDetail(detail)) return detail.trim();

@@ -1,4 +1,3 @@
-"""sap_b1_extract_all DAG ========================== Extrae TODAS las entidades llamando al cartucho SAP Business One."""
 from __future__ import annotations
 import os
 from datetime import timedelta

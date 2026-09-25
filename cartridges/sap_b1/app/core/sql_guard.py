@@ -1,4 +1,3 @@
-"""Defensive guard for SAP Business One ad-hoc Knowledge Bit SQL."""
 from __future__ import annotations
 
 import re
@@ -99,7 +98,6 @@ def validate_kb_sql(
     *,
     required_scope: str | None = None,
 ) -> tuple[bool, str | None]:
-    """Validate ad-hoc DuckDB SQL before it reaches query_kb."""
     if not isinstance(sql, str) or not sql.strip():
         return False, "empty SQL"
 

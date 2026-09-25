@@ -1,13 +1,3 @@
-/**
- * Studio action bridge.
- * ---------------------
- * Connects the legacy :8000 Studio screen to the canonical
- * /api/studio/* endpoints. This is intentionally best-effort:
- * the original legacy handlers keep running, and this bridge
- * only adds canonical requests plus small render hooks where the
- * old UI did not have a real target yet.
- */
-
 import { state } from "./legacy-state.js";
 
 const ACTION_BRIDGE_VERSION = "v1.44.5";

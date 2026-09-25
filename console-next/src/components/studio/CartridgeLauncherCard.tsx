@@ -50,19 +50,6 @@ function formatAge(hours: number | null): string {
 }
 
 
-/**
- * v1.44.4 Group 1 — Studio cartridge launcher card.
- *
- * Surfaces real freshness data from /api/dashboard/kpis (the
- * only Studio-relevant data the backend exposes today — the
- * full /api/studio/* surface is 100 % stubs) plus a deep link
- * into the legacy /studio?cartridge=<id> UI on :8000 where
- * the actual feature still works.
- *
- * No buttons trigger destructive Studio operations from here;
- * the legacy UI owns Deploy / Materialise / Create / Delete
- * until v1.44.5 graduates the stubs.
- */
 export function CartridgeLauncherCard({
   id,
   name,

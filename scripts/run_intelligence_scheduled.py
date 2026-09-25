@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""Run a controlled scheduled Intelligence pass locally or through AWS SSM.
-
-This is a beta scheduler gate, not an always-on daemon. It executes inside the
-Console container so it uses the same production env without printing secrets.
-"""
 
 from __future__ import annotations
 

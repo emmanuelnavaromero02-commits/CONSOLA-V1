@@ -6,40 +6,14 @@ import type { PendingAction } from "@/lib/copilot/types";
 
 interface Props {
   open:        boolean;
-  /** ID of the assistant message that produced pending_actions. */
   messageId:   string;
   pending:     PendingAction[];
   onApprove:   () => void | Promise<void>;
   onCancel:    () => void;
   submitting?: boolean;
-  /** Error message to render INLINE inside the dialog after a
-   *  failed approval — keeps the user in the recovery flow
-   *  instead of dismissing them back to the chat. */
   error?:      string | null;
 }
 
-/**
- * v1.44.4 Task A — destructive-action approval gate.
- *
- * The backend's run_turn flags ``requires_approval: true``
- * whenever the assistant proposes a tool whose
- * destructive-action policy demands confirmation. The user
- * sees ONE consolidated dialog summarising every queued
- * operation; clicking "Sí, ejecutar" calls
- * POST /api/copilot/conversations/{cid}/approve/{mid}.
- *
- * Round 1 review fixes:
- *   - Error state rendered INSIDE the dialog (P0) so a failed
- *     approval doesn't strand the user.
- *   - Tool args summary rendered as a disclosure ("Ver
- *     detalles") so the operator sees WHAT will change before
- *     approving (P1).
- *   - Focus restoration on close (P1, WCAG 2.4.3).
- *
- * Pending action shape (real, per copilot_service.py): ``tool``,
- * ``server``, ``args``, ``risk_level``, ``requires_approval``,
- * ``approval_key``. No ``rationale`` field.
- */
 function PendingActionDetail({ action }: { action: PendingAction }) {
   const [expanded, setExpanded] = useState(false);
   const hasArgs = action.args && Object.keys(action.args).length > 0;
@@ -101,9 +75,6 @@ export function ApprovalGateDialog({
 
     cancelRef.current?.focus();
 
-    // Trampa de foco + guardas durante submit (mismo patrón que
-    // ExperiencePreviewFlow): Escape no cierra mientras se ejecuta y
-    // Tab siempre cicla dentro del diálogo.
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
         if (!submittingRef.current) onCancel();

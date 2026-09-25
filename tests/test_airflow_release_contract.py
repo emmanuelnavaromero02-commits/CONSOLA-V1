@@ -1,5 +1,3 @@
-"""Release-stack contracts for the Airflow health endpoint split."""
-
 import os
 import subprocess
 

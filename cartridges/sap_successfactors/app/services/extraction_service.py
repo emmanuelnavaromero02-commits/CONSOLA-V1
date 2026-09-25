@@ -13,9 +13,6 @@ from app.services.parquet_service import write_parquet_and_upload
 from app.services.runlog_service import create_run, fail_run, finish_run
 from app.services.watermark_service import get_watermark, touch_watermark_attempt, update_watermark
 
-# Flush a parquet file every BATCH_SIZE rows. Buffer is drained after every
-# OData page is appended, so memory stays bounded regardless of total volume —
-# important for S/4HANA entities like JournalEntryItem (millions of rows).
 BATCH_SIZE = 10_000
 WATERMARK_BUFFER_MINUTES = 5
 CARTRIDGE_ID = "sap_successfactors"
@@ -36,12 +33,6 @@ _SAFE_METADATA_FAILURE_CODES = frozenset(
 
 
 def _metadata_skip_result(block: dict[str, Any]) -> dict[str, Any]:
-    """Return the only public shape used for metadata-gated extractions.
-
-    The nested blocker is deliberately assembled from allowlisted fields.  In
-    particular, no upstream exception text is returned to MCP, Airflow or UI
-    callers.
-    """
     failure_code = str(block.get("failure_code") or "").strip()
     if failure_code not in _SAFE_METADATA_FAILURE_CODES:
         failure_code = ""
@@ -86,14 +77,6 @@ def run_entity_with_metadata_guard(
     from_date: str | None = None,
     to_date: str | None = None,
 ) -> dict[str, Any]:
-    """Validate live ``$metadata`` immediately before extracting one entity.
-
-    Every external extraction entry point calls this wrapper.  An unavailable
-    metadata document, missing EntitySet or invalid required field is returned
-    as an explicit, safe skip and the unguarded extractor is never invoked.
-    Optional stale ``$select`` fields are pruned by the shared catalog helper,
-    while ``expected_select_fields`` preserves the Bronze schema.
-    """
     from app.services.catalog_service import (
         prepare_entity_config_for_metadata,
         required_entity_config_block,
@@ -104,9 +87,6 @@ def run_entity_with_metadata_guard(
         str(config.get("conn_id") or config.get("connection_id") or "").strip()
         or None
     )
-    # Storage is a prerequisite for every extraction outcome. Prove it before
-    # doing config/metadata planning so a batch or single run cannot contact
-    # SuccessFactors when Bronze is unavailable.
     require_storage_access()
     config_block = required_entity_config_block(config)
     if config_block is not None:
@@ -173,8 +153,6 @@ def _parse_watermark_datetime(value: Any) -> datetime | None:
     if re.fullmatch(r"-?\d+(\.\d+)?", text):
         try:
             number = float(text)
-            # SAP payloads usually use milliseconds. Accept seconds for small
-            # epoch values so old watermarks do not become year 53900 dates.
             if abs(number) > 9_999_999_999:
                 number = number / 1000
             return datetime.fromtimestamp(number, tz=timezone.utc)
@@ -196,8 +174,6 @@ def _successfactors_datetime_literal(value: Any) -> str | None:
         return None
     if parsed > datetime.now(timezone.utc) + timedelta(minutes=5):
         return None
-    # SuccessFactors OData v2 accepts datetime literals for Edm.DateTime
-    # filters. Do not send raw SAP /Date(ms)/ payloads as quoted strings.
     return "datetime'" + parsed.strftime("%Y-%m-%dT%H:%M:%S") + "'"
 
 
@@ -358,7 +334,6 @@ def _effective_date_window(
     from_date: str | None,
     to_date: str | None,
 ) -> tuple[str | None, str | None]:
-    """Return OData fromDate/toDate for effective-dated SuccessFactors entities."""
     if not config.get("effective_dated"):
         return from_date, to_date
     return (
@@ -409,9 +384,6 @@ def run_entity(
             f"SAP SuccessFactors entity {entity} requires entity_config.connection_id "
             "or an explicit conn_id; no environment/default credential fallback is allowed."
         )
-    # Enforce the authenticated storage preflight for every entry point,
-    # including Airflow and MCP paths that do not pass through routes_console.
-    # StoragePreflightError exposes only an allowlisted, non-sensitive code.
     if config.get("_storage_preflight_token") is not _STORAGE_PREFLIGHT_VERIFIED:
         require_storage_access()
     raw_expected_select_fields = config.get("expected_select_fields") or select_fields
@@ -476,7 +448,6 @@ def run_entity(
             select_fields=select_fields,
         )
 
-        # Streaming buffer — flushed every BATCH_SIZE rows.
         buffer: list[dict[str, Any]] = []
         offset = 0
         batch_num = 0
@@ -557,8 +528,6 @@ def run_entity(
                 break
             seen_page_signatures.add(signature)
 
-            # Belt-and-suspenders client-side filters (the OData server
-            # MIGHT have ignored $filter — re-apply locally).
             if mode == "incremental" and watermark_for_client_filter and watermark_field:
                 page = _apply_watermark_filter(page, watermark_field, watermark_for_client_filter)
             page = _apply_date_range_filter(page, date_field, from_date, to_date)
@@ -576,8 +545,6 @@ def run_entity(
             if server_page_len < page_size:
                 break
 
-        # Drain any remainder. If we never received any rows, write an empty
-        # parquet so consumers can still observe a (zero-row) Bronze artifact.
         if buffer or total_records == 0:
             _flush_buffer(allow_empty=total_records == 0)
 

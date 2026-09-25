@@ -342,7 +342,6 @@ export function AgentsConsole() {
         setTab("runs");
       }
     },
-    // No exponer error.message crudo como output de prueba: solo copy seguro + Ref.
     onError: (error) => {
       const requestId = isApiError(error) ? error.requestId : undefined;
       setTestOutput(requestId ? `No se pudo invocar el agente. Ref: ${requestId}` : "No se pudo invocar el agente.");

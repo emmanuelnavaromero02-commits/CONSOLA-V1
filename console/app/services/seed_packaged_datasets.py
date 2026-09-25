@@ -1,5 +1,3 @@
-"""Validate and seed packaged cartridge dataset definitions per workspace."""
-
 from __future__ import annotations
 
 import logging

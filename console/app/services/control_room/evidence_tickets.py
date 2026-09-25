@@ -1,51 +1,3 @@
-"""Mission 5: server-minted evidence tickets for scheduled monitor alerts.
-
-Why this module exists
-----------------------
-Control Room trusts a business fact only when its evidence carries an HMAC
-attestation, and the doctrine of that attestation is one line in
-``business_runtime_evidence``: *attest a locator taken from a row already
-retrieved by the server*. The signer must have seen the row.
-
-Scheduled monitors raise their alerts through mcp-infra, which can neither sign
-(the evidence key is console-only) nor read Gold. So a monitor alert could never
-become an eligible business fact, and ``/control-room`` stayed empty.
-
-This module closes that gap without moving the key. The first step of every
-monitor chain is ``wisdom_bits__run``, which bounces back into console, and
-console computes the wisdom-bit numbers from Gold itself. At that moment, and
-only for a caller holding a live scheduled-run lease, console signs the
-observation it just computed, stores the signed reference in
-``control_room_evidence_tickets`` and hands back a 32-hex handle. Nothing signed
-ever leaves console: not into the agent run, not into
-``control_room_items.metadata``, not into a log line.
-
-Binding
--------
-A ticket is bound at mint time to the one item the monitor is about to raise.
-Console derives ``item_id`` from the agent row it reads under RLS, with the
-recipe mcp-infra uses to deduplicate the alert (``_dedup_item_id``; the two are
-pinned together by a drift test), and refuses when the requested wisdom bit or
-cartridge is not the one that agent's contract runs. The signed business
-observation carries that id, so the attestation cannot validate any other item.
-
-Reading it back is a plain scoped SELECT over data only console writes: tickets
-for the item and agent that have not expired, the one minted by the same agent
-run as the alert first, newest next. Nothing on the alert row that mcp-infra or
-a status transition can move (``last_seen_at``) decides which ticket applies,
-and the ordinary eligibility check still requires the persisted value to match
-what console signed. Nothing is consumed and the read path never writes.
-
-What authenticates a mint
--------------------------
-Not the security context on its own: it is signed with a symmetric key held by
-many containers. Minting also requires ``assert_scheduled_effect_authority``
-(``infra/init/99zzq_scheduled_effect_fencing.sql``) to accept the lease, at most
-one ticket exists per lease, and ``agent_schedule_runs`` is a table only
-``omega_console`` writes. Conversational agents never hold a lease, so they stay
-advisory-only.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -72,33 +24,20 @@ from app.services.db_scope import scoped_db
 
 logger = logging.getLogger(__name__)
 
-# How long a ticket can back its alert. Monitors fire every 15 minutes, so a
-# live alert is re-attested long before this; an alert whose monitor stopped
-# attesting drops off the page a day later instead of staying "verified" with a
-# stale observation forever.
 TICKET_TTL_SECONDS = 86_400
 
 SCHEDULED_CONTEXT_SOURCE = "agent_runner"
 MONITOR_ITEM_KIND = "agent_alert"
 MONITOR_METRIC_TYPE = "count"
-# Signed as part of the observation, so the public metric label is bound too.
 MONITOR_METRIC_NAME = "Senales del monitor"
 LOCATOR_FIELD = "item_id"
-# ``run_scheduled_monitor`` calls this wisdom bit when the contract names none.
 DEFAULT_MONITOR_WISDOM_BIT = "WB-TALENTO"
 MAX_RESOLVE_ITEMS = 200
-# A later fire can mint without its alert being raised (or the other way round),
-# so a reader considers a few recent tickets rather than only one.
 MAX_TICKETS_PER_ITEM = 3
 _HANDLE_BYTES = 16
 
-# Mirrors mcp-infra tools/control_room.py ``_SAFE_ID_RE``. A key mcp-infra would
-# refuse means the alert is never raised, so there is nothing to attest.
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_.:@/=-]{1,240}$")
 
-# Closed vocabulary. Every refusal is a reason code, never driver text: an
-# interpolated exception reaches a reader either raw or, once long, as
-# "[REDACTED]", and neither says what went wrong.
 EVIDENCE_EVENTS = frozenset(
     {
         "minted",
@@ -118,14 +57,10 @@ EVIDENCE_EVENTS = frozenset(
 )
 _QUIET_EVENTS = frozenset({"minted", "resolved"})
 
-# In-process counters. ``sign_failed`` is the one that used to be silent: the
-# signing path returns ``{}`` when the keyring is missing, and until now nothing
-# at runtime noticed.
 _COUNTERS: Counter[str] = Counter()
 
 
 class _Refused(Exception):
-    """Raised inside the mint transaction so it rolls back, then recorded."""
 
     def __init__(self, reason: str, **fields: object) -> None:
         super().__init__(reason)
@@ -141,7 +76,6 @@ def _record(event: str, **fields: object) -> None:
 
 
 def record_evidence_event(event: str, **fields: object) -> None:
-    """Record a refusal decided by a caller (e.g. the authority check)."""
     _record(event if event in EVIDENCE_EVENTS else "unavailable", **fields)
 
 
@@ -169,9 +103,6 @@ def _json_mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
 
 
-# ── Identity: the item the monitor is about to raise ─────────────────────────
-
-
 @dataclass(frozen=True)
 class MonitorAlertIdentity:
     item_id: str
@@ -189,7 +120,6 @@ def monitor_alert_item_id(
     entity_key: str,
     source_dataset: str,
 ) -> str:
-    """Byte-for-byte the id mcp-infra ``_dedup_item_id`` gives the alert."""
     raw = json.dumps(
         {
             "agent_id": agent_id,
@@ -214,8 +144,6 @@ def monitor_alert_identity(
     contract: Mapping[str, Any],
     payload: Mapping[str, Any],
 ) -> MonitorAlertIdentity | None:
-    """The defaults of ``agent_runtime._monitor_alert_args``, after mcp-infra's
-    ``_as_safe_key`` normalisation. Pinned to both by a drift test."""
     wisdom_bit_id = str(
         contract.get("wisdom_bit_id") or payload.get("wisdom_bit_id") or "wisdom_bit"
     )
@@ -244,7 +172,6 @@ def monitor_alert_identity(
 
 
 def monitor_signal_count(payload: Mapping[str, Any]) -> int:
-    """Same count ``agent_runtime._monitor_signal_count`` writes into the alert."""
     signals = payload.get("signals")
     if isinstance(signals, Mapping):
         try:
@@ -259,7 +186,6 @@ def monitor_signal_count(payload: Mapping[str, Any]) -> int:
 def monitor_business_observation(
     *, item_id: str, signal_count: int, observation_date: str
 ) -> dict[str, Any]:
-    """The business fact being attested. Readers rebuild the same shape."""
     return {
         "id": item_id,
         "kind": MONITOR_ITEM_KIND,
@@ -270,12 +196,6 @@ def monitor_business_observation(
     }
 
 
-# ── Mint ─────────────────────────────────────────────────────────────────────
-
-# mcp-infra holds the shared advisory lock on this run across its HTTP call to
-# console. If a reclaim queues the exclusive lock in between, console's shared
-# request would wait behind it while mcp-infra waits on console: a cycle
-# Postgres cannot see. Bounded here, a timeout is just a lease refusal.
 _LOCK_TIMEOUT_SQL = "SET LOCAL lock_timeout = '2s'"
 
 _ASSERT_LEASE_SQL = (
@@ -292,7 +212,6 @@ SELECT cartridge_id, slug, extra
    AND is_active = TRUE
 """
 
-# At most one ticket per lease: a run computes its wisdom bit once.
 _INSERT_TICKET_SQL = """
 INSERT INTO control_room_evidence_tickets (
     handle, tenant_id, workspace_id, item_id,
@@ -351,10 +270,6 @@ async def _mint(
     if not contract:
         raise _Refused("not_monitor")
     cartridge_id = _text(agent["cartridge_id"])
-    # The numbers being signed were computed for the wisdom bit the caller
-    # asked for; the item being attested belongs to this agent's contract.
-    # They must be the same thing, or one monitor's count could be signed onto
-    # another monitor's alert.
     expected_wisdom_bit = _text(
         contract.get("wisdom_bit_id") or DEFAULT_MONITOR_WISDOM_BIT
     ).upper()
@@ -374,7 +289,6 @@ async def _mint(
         raise _Refused("identity_invalid", mismatch="item")
     signal_count = monitor_signal_count(payload)
     if signal_count <= 0:
-        # Nothing to alert on, and a zero is not an eligible observation.
         raise _Refused("no_signal", item_id=identity.item_id)
 
     observation_date = datetime.now(UTC).date().isoformat()
@@ -458,13 +372,6 @@ async def mint_monitor_evidence_ticket(
     requested_cartridge_id: str,
     payload: Mapping[str, Any],
 ) -> str | None:
-    """Attest the wisdom-bit observation console just computed. Never raises.
-
-    The caller must already have verified the signed scheduled-effect authority;
-    this function re-proves the lease in the database, derives the item itself
-    and returns the opaque handle, or ``None`` when nothing was attested. A
-    monitor run never fails because its evidence could not be attested.
-    """
     tenant = _uuid_text(tenant_id)
     workspace = _uuid_text(workspace_id)
     agent = _uuid_text(agent_id)
@@ -501,8 +408,6 @@ async def mint_monitor_evidence_ticket(
     except Exception as exc:  # noqa: BLE001 - attestation must not break the monitor
         _record("unavailable", error_code=type(exc).__name__, **base)
         return None
-    # Logged after commit, for incident review. Carries no signature and no row
-    # hash; the key id is not secret and scopes a key compromise.
     _record(
         "minted",
         handle=handle,
@@ -514,8 +419,6 @@ async def mint_monitor_evidence_ticket(
     )
     return handle
 
-
-# ── Resolve ──────────────────────────────────────────────────────────────────
 
 _RESOLVE_SQL = """
 SELECT ranked.item_id, ranked.handle, ranked.reference
@@ -565,13 +468,6 @@ async def resolve_monitor_evidence(
     workspace_id: str,
     alerts: Sequence[Mapping[str, Any]],
 ) -> dict[str, list[dict[str, Any]]]:
-    """Signed references for persisted monitor alerts, best candidate first.
-
-    ``alerts`` carry ``item_id``, ``agent_id`` and ``agent_run_id`` (from the
-    row mcp-infra wrote from its trusted scope). Each reference is re-verified
-    here (signature, locator, scope) before it is returned; whether it matches
-    the item's observation is decided by the ordinary eligibility check.
-    """
     tenant = _uuid_text(tenant_id)
     workspace = _uuid_text(workspace_id)
     if not tenant or not workspace:

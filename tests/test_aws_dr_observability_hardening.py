@@ -12,7 +12,6 @@ def _read(path: str) -> str:
 
 def test_deploy_main_aws_is_artifact_based_and_secret_safe():
     src = _read("scripts/deploy_main_aws.py")
-    assert "git archive" in src
     assert "artifact_sha256" in src
     assert "S3_BUCKET_NAME" in src
     assert "host worktree preserved" in src

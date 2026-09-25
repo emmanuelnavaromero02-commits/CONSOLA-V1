@@ -1,5 +1,3 @@
-"""No-network SSRF regression probes for every packaged cartridge."""
-
 from __future__ import annotations
 
 import importlib.util
@@ -172,10 +170,6 @@ def test_test_connection_and_extraction_clients_use_guarded_transport(
 
 
 def test_hubspot_egress_allowlist_is_opt_in_and_defaults_closed(monkeypatch):
-    # The hubspot cartridge gained an opt-in, default-empty egress allowlist
-    # (OMEGA_EGRESS_ALLOWED_HOSTS) so the release acceptance run can reach its
-    # fake HubSpot upstream on host.docker.internal. Unset -> production is
-    # unchanged (full SSRF protection); set -> only the named host is reachable.
     guard = _load_guard("hubspot")
     monkeypatch.setattr(guard.socket, "getaddrinfo", _dns("192.168.65.2"))
     mock_url = "http://host.docker.internal:18030/crm/v3/owners"
@@ -210,8 +204,6 @@ def test_hubspot_egress_allowlist_never_relaxes_metadata_or_localhost(monkeypatc
     "cartridge", [c for c in PACKAGED_CARTRIDGES if c != "hubspot"]
 )
 def test_egress_allowlist_escape_hatch_is_scoped_to_hubspot(cartridge, monkeypatch):
-    # The escape hatch is deliberately hubspot-only; the other guards ignore the
-    # env var and keep blocking private destinations.
     guard = _load_guard(cartridge)
     monkeypatch.setattr(guard.socket, "getaddrinfo", _dns("192.168.65.2"))
     monkeypatch.setenv("OMEGA_EGRESS_ALLOWED_HOSTS", "host.docker.internal")

@@ -1,5 +1,3 @@
-"""Bounded SELECT grammar used by the public-copy SQL classifier."""
-
 from __future__ import annotations
 
 import re
@@ -75,7 +73,6 @@ def _select_tokens_are_sql(tokens: tuple[SelectToken, ...]) -> bool:
 
 
 def contains_public_select_sql(value: str) -> bool:
-    """Detect bounded SELECT/FROM and no-FROM projection grammar."""
 
     if len(value) > _MAX_SCAN_LENGTH or not _SELECT_WORD.search(value):
         return False

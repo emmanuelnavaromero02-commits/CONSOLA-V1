@@ -108,7 +108,6 @@ async def execute_action(
     body: ActionMutationRequest = Body(default_factory=ActionMutationRequest),
     user: dict = Depends(require_authenticated),
 ):
-    # Keep request in the signature so middleware/request-id context is active for audit.
     _ = request
     return await external_actions.execute(user, action_id, body.model_dump())
 

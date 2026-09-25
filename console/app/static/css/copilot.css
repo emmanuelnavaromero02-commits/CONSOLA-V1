@@ -1,8 +1,4 @@
-/* Sprint v1.42 — copilot chat page.
- *
- * Uses ONLY tokens declared in tokens.css. No inline colors anywhere
- * so /copilot remains legible in both light and dark themes.
- */
+
 
 :root {
   --copilot-sidebar-w: 248px;
@@ -24,7 +20,6 @@
   margin: 0 auto;
 }
 
-/* ── Sidebar ──────────────────────────────────────────────────────────── */
 .copilot-sidebar {
   position: sticky;
   top: 28px;
@@ -73,8 +68,7 @@
 
 .copilot-btn-primary {
   background: var(--primary);
-  /* v1.42 R2 fix: use --on-primary token (declared in tokens.css)
-     instead of hardcoded #fff so dark mode picks the contrast token. */
+
   color: var(--on-primary);
   border: 1px solid var(--primary);
   border-radius: 8px;
@@ -177,7 +171,6 @@
   font-size: 13px;
 }
 
-/* ── Chat column ──────────────────────────────────────────────────────── */
 .copilot-chat {
   display: flex;
   flex-direction: column;
@@ -242,7 +235,6 @@
   background: var(--bg);
 }
 
-/* ── Welcome panel (empty state) ──────────────────────────────────────── */
 .copilot-welcome {
   width: min(900px, 100%);
   background: var(--surface);
@@ -314,7 +306,6 @@
   border-top: 1px solid var(--color-border);
 }
 
-/* ── Message bubbles ──────────────────────────────────────────────────── */
 .copilot-message {
   max-width: var(--copilot-bubble-max);
   padding: 14px 16px;
@@ -339,7 +330,6 @@
   border-bottom-left-radius: 4px;
 }
 
-/* ── Tool call cards ──────────────────────────────────────────────────── */
 .copilot-tool-card {
   background: var(--surface-soft);
   border: 1px solid var(--color-border);
@@ -360,7 +350,6 @@
 .copilot-tool-card-status-success { color: var(--success); }
 .copilot-tool-card-status-error   { color: var(--danger); }
 
-/* ── Approval card (destructive actions) ──────────────────────────────── */
 .copilot-approval-card {
   background: var(--surface-elevated);
   border: 2px solid var(--warning);
@@ -400,7 +389,6 @@
   gap: 8px;
 }
 
-/* ── Toast ────────────────────────────────────────────────────────────── */
 .copilot-toast {
   margin: 0 28px 10px;
   padding: 11px 14px;
@@ -409,8 +397,7 @@
   font-weight: 700;
 }
 .copilot-toast-error {
-  /* v1.42 R2 fix: --danger-soft token (tokens.css) replaces the
-     hardcoded rgba so dark mode picks the matching soft fill. */
+
   background: var(--danger-soft);
   color: var(--danger);
   border: 1px solid var(--danger);
@@ -421,7 +408,6 @@
   border: 1px solid var(--primary);
 }
 
-/* ── Native :8000 copiloto panels (memory, drafts, workflows) ─────────── */
 .copilot-overlay {
   position: fixed;
   inset: 0;
@@ -626,7 +612,6 @@
 }
 .copilot-pref-list dd { margin: 0; }
 
-/* ── Input area ───────────────────────────────────────────────────────── */
 .copilot-input {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -679,7 +664,6 @@
   right: 24px !important;
 }
 
-/* ── Responsive: hide sidebar on narrow screens (no breakpoint magic, just collapse) */
 @media (max-width: 920px) {
   .copilot-container {
     grid-template-columns: 1fr;
@@ -719,9 +703,7 @@
 .copilot-citation-card {
   background: var(--surface-soft);
   border: 1px solid var(--border);
-  /* Freshness-mapped accent on the left edge. Overridden by the
-     [data-freshness=...] rules below so dark mode picks the matching
-     accent token. */
+
   border-left: 3px solid var(--text3);
   border-radius: 8px;
   padding: 10px 12px;
@@ -770,8 +752,7 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  /* The sidebar is sticky and capped by max-height; let this panel
-     shrink with its own scroller if a workspace has many cartridges. */
+
   max-height: 38vh;
   overflow-y: auto;
 }
@@ -877,8 +858,6 @@
 }
 .copilot-context-cta:hover { text-decoration: underline; }
 
-/* R1-UX gap #3 — promote the no-workspace state from muted text to a
-   visible warning block so the user can't miss it. */
 .copilot-context-warning {
   margin: 4px 0 6px;
   padding: 8px 10px;

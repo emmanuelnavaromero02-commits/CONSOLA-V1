@@ -1,4 +1,3 @@
-"""Sprint v1.27 — renderMarkdown must not turn untrusted HTML into DOM."""
 from __future__ import annotations
 
 import re

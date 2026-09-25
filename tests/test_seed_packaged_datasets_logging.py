@@ -1,5 +1,3 @@
-"""Packaged-dataset manifests fail closed before any database write."""
-
 from __future__ import annotations
 
 import importlib

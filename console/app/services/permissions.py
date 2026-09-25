@@ -25,7 +25,6 @@ def user_role(user: dict | None) -> str:
 
 
 def workspace_role(user: dict | None) -> str | None:
-    """Return the scoped workspace role, never a platform-admin role."""
 
     if not user or not user.get("workspace_role"):
         return None

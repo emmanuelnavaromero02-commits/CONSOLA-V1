@@ -1,5 +1,3 @@
-"""Fail-closed contracts for tag release validation."""
-
 from __future__ import annotations
 
 import hashlib
@@ -786,9 +784,6 @@ def test_validate_release_runs_every_test_target_resolved_by_detector():
         "${{ needs.detect-release-changes.outputs.cartridge_test_targets }}"
     )
     assert '[[ -n "${CARTRIDGE_TEST_TARGETS}" ]]' in cartridge_tests["run"]
-    # The cartridge step already partitions by cartridges/<family> and invokes
-    # the runner with that concrete group; keep this assertion tied to its real
-    # (independently unchanged) workflow contract.
     assert 'scripts/run_release_pytest.py -q "${group[@]}"' in cartridge_tests["run"]
 
 

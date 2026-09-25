@@ -1,10 +1,3 @@
-"""Sprint v1.43 — copilot citation extraction tests.
-
-Pure-unit tests against ``_extract_citations`` plus a service-level
-test that runs through ``_run_loop`` to confirm citations are written
-to ``conversation_messages.citations`` JSONB and surfaced on the
-turn's response payload.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -32,11 +25,7 @@ def copilot_module():
     return mod
 
 
-# ── _extract_citations: pure unit tests ─────────────────────────────────────
-
 def test_extract_citations_from_cartridge_meta(copilot_module):
-    """The standard cartridge envelope: a ``_meta`` block with
-    run_id + entity + timestamp + row_count."""
     result = {
         "rows": [{"id": 1}, {"id": 2}],
         "_meta": {
@@ -58,7 +47,6 @@ def test_extract_citations_from_cartridge_meta(copilot_module):
 
 
 def test_extract_citations_uses_extracted_at_fallback(copilot_module):
-    """``_meta.extracted_at`` is used when ``timestamp`` isn't present."""
     result = {"_meta": {"entity": "TimeEntry", "extracted_at": "2026-05-16T09:00:00Z"}}
     cs = copilot_module._extract_citations("get_timesheets", result, "replicon")
     assert len(cs) == 1
@@ -66,8 +54,6 @@ def test_extract_citations_uses_extracted_at_fallback(copilot_module):
 
 
 def test_extract_citations_from_dag_runs_array(copilot_module):
-    """``airflow_list_dag_runs`` returns ``runs[]`` — one citation per
-    run, capped to top-5 so the JSONB stays bounded."""
     runs = [
         {"dag_run_id": f"run_{i}", "dag_id": "etl_employees",
          "end_date": f"2026-05-16T{10+i:02d}:00:00Z", "state": "success"}
@@ -75,7 +61,6 @@ def test_extract_citations_from_dag_runs_array(copilot_module):
     ]
     result = {"runs": runs}
     cs = copilot_module._extract_citations("airflow_list_dag_runs", result, "mcp-infra")
-    # 5-cap kicks in inside _extract_citations itself (per multi-run result).
     assert len(cs) == 5
     assert cs[0]["run_id"] == "run_0"
     assert cs[0]["source"] == "mcp-infra"
@@ -84,7 +69,6 @@ def test_extract_citations_from_dag_runs_array(copilot_module):
 
 
 def test_extract_citations_from_runs_with_finished_at(copilot_module):
-    """The cartridge extraction_runs shape uses ``finished_at``."""
     result = {"runs": [{
         "run_id": "abc", "entity": "Employee",
         "finished_at": "2026-05-16T08:00:00Z", "status": "success",
@@ -103,8 +87,6 @@ def test_empty_tool_result_no_citations(copilot_module):
 
 
 def test_error_envelope_yields_no_citation(copilot_module):
-    """A failed tool result must not produce a citation card — the UI
-    surfaces errors separately."""
     assert copilot_module._extract_citations(
         "foo", {"error": "boom", "_meta": {"run_id": "r1"}}, "x",
     ) == []
@@ -114,9 +96,6 @@ def test_error_envelope_yields_no_citation(copilot_module):
 
 
 def test_extract_citations_combined_meta_and_runs(copilot_module):
-    """Both a top-level ``_meta`` AND a ``runs[]`` array produce
-    distinct citations — the first describes the wrapper call, the
-    rest describe each enumerated run."""
     result = {
         "_meta": {"entity": "Summary", "row_count": 3},
         "runs": [
@@ -132,14 +111,11 @@ def test_extract_citations_combined_meta_and_runs(copilot_module):
 
 
 def test_extract_citations_ignores_garbage_run_entries(copilot_module):
-    """Mixed-type ``runs`` (e.g. a stray None or string) doesn't crash."""
     result = {"runs": [None, "oops", {"run_id": "ok"}]}
     cs = copilot_module._extract_citations("foo", result, "x")
     assert len(cs) == 1
     assert cs[0]["run_id"] == "ok"
 
-
-# ── System prompt enforcement ───────────────────────────────────────────────
 
 def test_system_prompt_includes_critical_evidence_rule(copilot_module):
     p = copilot_module.SYSTEM_PROMPT
@@ -150,11 +126,8 @@ def test_system_prompt_includes_critical_evidence_rule(copilot_module):
 
 def test_system_prompt_includes_no_number_without_tool_rule(copilot_module):
     p = copilot_module.SYSTEM_PROMPT
-    # Numbers without a tool call must be refused, not approximated.
     assert "NUNCA des un número aproximado" in p
 
-
-# ── Service-level: citations land in JSONB + show up on the response ────────
 
 class _FakeDB:
     def __init__(self):
@@ -243,7 +216,6 @@ def test_citations_persisted_to_jsonb_and_returned_on_turn(copilot_module):
     db = _FakeDB()
 
     async def fake_invoke(server_id, tool, args, **_kwargs):
-        # Tool result with the standard _meta envelope.
         return {
             "rows": [{"x": 1}],
             "_meta": {
@@ -291,13 +263,10 @@ def test_citations_persisted_to_jsonb_and_returned_on_turn(copilot_module):
         user=admin,
     ))
 
-    # The turn response surfaces citations for the UI to render now.
     assert out["citations"], "the turn payload must surface citations"
     assert out["citations"][0]["entity"] == "Employee"
     assert out["citations"][0]["row_count"] == 1247
 
-    # And the persisted assistant message stamps the citations JSONB
-    # so a later page reload still has them.
     assistant_msg = next(
         m for m in db.messages
         if m["role"] == "assistant" and m["tool_calls"] is not None
@@ -306,33 +275,26 @@ def test_citations_persisted_to_jsonb_and_returned_on_turn(copilot_module):
     assert any(c.get("run_id") == "run-xyz" for c in stored)
 
 
-# ── Tarea B: freshness annotation ──────────────────────────────────────────
-
 def test_freshness_classification_thresholds(copilot_module):
-    """The bucket boundaries: < 5 min fresh, < 1 h recent, < 24 h stale,
-    >= 24 h very_stale, None unknown."""
     c = copilot_module._classify_freshness
     assert c(None) == "unknown"
     assert c("not a number") == "unknown"
     assert c(0) == "fresh"
     assert c(60) == "fresh"
     assert c(4 * 60) == "fresh"
-    assert c(5 * 60) == "recent"        # boundary
+    assert c(5 * 60) == "recent"
     assert c(30 * 60) == "recent"
     assert c(59 * 60) == "recent"
-    assert c(60 * 60) == "stale"        # boundary
+    assert c(60 * 60) == "stale"
     assert c(6 * 60 * 60) == "stale"
-    assert c(24 * 60 * 60) == "very_stale"   # boundary
+    assert c(24 * 60 * 60) == "very_stale"
     assert c(48 * 60 * 60) == "very_stale"
-    # Negative (clock skew) → fresh, not crash.
     assert c(-5) == "fresh"
 
 
 def test_freshness_uses_age_seconds_already_on_citation(copilot_module):
-    """If the citation already carries an age (set by the cartridge),
-    no extra DB roundtrip — just classify."""
     citation = {"source": "sap_hcm", "entity": "Employee",
-                "age_seconds": 30 * 60}   # 30 min
+                "age_seconds": 30 * 60}
     out = _run(copilot_module._annotate_citation_freshness(citation))
     assert out["freshness_level"] == "recent"
     assert out["age_seconds"] == 30 * 60
@@ -340,7 +302,7 @@ def test_freshness_uses_age_seconds_already_on_citation(copilot_module):
 
 def test_freshness_unknown_when_no_source_or_entity(copilot_module):
     out = _run(copilot_module._annotate_citation_freshness(
-        {"source": "sap_hcm"}   # no entity
+        {"source": "sap_hcm"}
     ))
     assert out["freshness_level"] == "unknown"
     out = _run(copilot_module._annotate_citation_freshness({}))
@@ -348,8 +310,6 @@ def test_freshness_unknown_when_no_source_or_entity(copilot_module):
 
 
 def test_freshness_unknown_when_freshness_lookup_raises(copilot_module, monkeypatch):
-    """Swallow exceptions from freshness_for_cartridge_internal so the
-    citation card still renders."""
     async def _boom(_):
         raise RuntimeError("DB down")
     import app.routers.freshness as fr
@@ -362,14 +322,12 @@ def test_freshness_unknown_when_freshness_lookup_raises(copilot_module, monkeypa
 
 
 def test_freshness_lookup_resolves_entity_in_response(copilot_module, monkeypatch):
-    """When the freshness service knows the entity, the citation
-    inherits age_seconds + classification."""
     async def _ok(cartridge):
         return {
             "cartridge": cartridge,
             "entities": [
                 {"entity": "Other",    "age_seconds": 9999},
-                {"entity": "Employee", "age_seconds": 200},   # 200s → fresh
+                {"entity": "Employee", "age_seconds": 200},
             ],
         }
     import app.routers.freshness as fr
@@ -383,7 +341,6 @@ def test_freshness_lookup_resolves_entity_in_response(copilot_module, monkeypatc
 
 
 def test_freshness_unknown_when_entity_not_in_response(copilot_module, monkeypatch):
-    """The cartridge replied but the entity wasn't in the list."""
     async def _ok(cartridge):
         return {"cartridge": cartridge, "entities": []}
     import app.routers.freshness as fr
@@ -396,18 +353,12 @@ def test_freshness_unknown_when_entity_not_in_response(copilot_module, monkeypat
 
 
 def test_freshness_router_internal_api_present():
-    """v1.43 contract: the freshness router must export
-    freshness_for_cartridge_internal so the copilot can call it
-    without going through HTTP / auth."""
     from app.routers import freshness as fr
     assert hasattr(fr, "freshness_for_cartridge_internal")
     assert hasattr(fr, "freshness_all_internal")
 
 
 def test_citations_capped_when_a_single_tool_returns_many_runs(copilot_module):
-    """A tool emitting 8 runs yields at most 5 citations from
-    _extract_citations; multiple such tools in a turn can stack, but
-    the per-message JSONB still caps at MAX_CITATIONS_PER_MESSAGE."""
     cs = copilot_module._extract_citations(
         "airflow_list_dag_runs",
         {"runs": [{"run_id": f"r{i}", "dag_id": f"d{i}"} for i in range(50)]},
@@ -417,10 +368,7 @@ def test_citations_capped_when_a_single_tool_returns_many_runs(copilot_module):
     assert copilot_module.MAX_CITATIONS_PER_MESSAGE == 20
 
 
-# ── Tarea E: hallucination guardrails ──────────────────────────────────────
-
 def test_response_with_numbers_no_citation_gets_warning(copilot_module):
-    """When the LLM hedges a number but cited nothing, attach a warning."""
     f = copilot_module._check_for_hallucination
     assert f("Hay aproximadamente 1500 empleados.", has_citations=False)
     assert f("Around 200 records exist.",            has_citations=False)
@@ -431,13 +379,11 @@ def test_response_with_numbers_no_citation_gets_warning(copilot_module):
 
 
 def test_response_with_citation_no_warning(copilot_module):
-    """If the LLM cited a tool, the numbers are grounded — no warning."""
     f = copilot_module._check_for_hallucination
     assert f("Hay aproximadamente 1500 empleados.", has_citations=True) is None
 
 
 def test_response_with_no_numbers_no_warning(copilot_module):
-    """Plain prose without hedged numbers → no warning."""
     f = copilot_module._check_for_hallucination
     assert f("No tengo ese dato. ¿Quieres que lo consulte?",
              has_citations=False) is None
@@ -446,17 +392,12 @@ def test_response_with_no_numbers_no_warning(copilot_module):
 
 
 def test_concrete_number_without_hedging_is_not_flagged(copilot_module):
-    """A bare 'hay 1247 empleados' (no hedging word) does NOT trigger.
-    We only flag the hedging phrasing — bare assertions are the model's
-    word to defend through citations, not ours to police via regex."""
     f = copilot_module._check_for_hallucination
     assert f("Hay 1247 empleados activos.", has_citations=False) is None
     assert f("Procesé 30 DAGs.",            has_citations=False) is None
 
 
 def test_warning_prepended_to_reply_in_turn_payload(copilot_module):
-    """End-to-end: when the LLM hedges without citations, the warning
-    appears at the top of the reply the UI receives."""
     db = _FakeDB()
     _patch_full(copilot_module, db, tools=[],
                 fake_chat=_make_chat_replying("Aproximadamente 1500 empleados."),
@@ -477,12 +418,7 @@ def test_warning_prepended_to_reply_in_turn_payload(copilot_module):
     assert "Aproximadamente 1500 empleados." in out["reply"]
 
 
-# ── R1 DBA fixes ───────────────────────────────────────────────────────────
-
 def test_oversize_citation_string_is_trimmed(copilot_module):
-    """v1.43 R1-DBA F1: a hostile cartridge returning a 1MB run_id must
-    not bloat conversation_messages.citations JSONB. Each string-shaped
-    field is capped at MAX_CITATION_FIELD_CHARS."""
     cap = copilot_module._MAX_CITATION_FIELD_CHARS
     huge_run = "x" * (cap + 5000)
     cs = copilot_module._extract_citations(
@@ -492,18 +428,14 @@ def test_oversize_citation_string_is_trimmed(copilot_module):
         "srv",
     )
     assert len(cs) == 1
-    # Length is capped (and the elision char is appended).
     assert len(cs[0]["run_id"]) == cap
     assert cs[0]["run_id"].endswith("…")
     assert len(cs[0]["entity"]) == cap
     assert len(cs[0]["timestamp"]) == cap
-    # Numeric field passes through.
     assert cs[0]["row_count"] == 1
 
 
 def test_freshness_cache_avoids_n_plus_one(copilot_module, monkeypatch):
-    """v1.43 R1-DBA F2: when many citations share a cartridge, the
-    cache should reduce N lookups to one."""
     calls = []
 
     async def fake_lookup(cartridge):
@@ -520,22 +452,17 @@ def test_freshness_cache_avoids_n_plus_one(copilot_module, monkeypatch):
     citations = [
         {"source": "sap_hcm", "entity": "Employee"},
         {"source": "sap_hcm", "entity": "TimeEntry"},
-        {"source": "sap_hcm", "entity": "Employee"},   # duplicate
+        {"source": "sap_hcm", "entity": "Employee"},
     ]
     for c in citations:
         _run(copilot_module._annotate_citation_freshness(c, cache=cache))
 
-    # All 3 citations share sap_hcm → only ONE backend call total.
     assert calls == ["sap_hcm"]
-    # All got freshness assigned.
     for c in citations:
         assert c["freshness_level"] == "fresh"
 
 
 def test_freshness_cache_negative_caches_failures(copilot_module, monkeypatch):
-    """If the freshness lookup blows up, the cache stores an empty
-    entries list so subsequent citations don't re-hit the failing
-    backend within the same turn."""
     calls = []
 
     async def fake_lookup(cartridge):
@@ -550,13 +477,10 @@ def test_freshness_cache_negative_caches_failures(copilot_module, monkeypatch):
         _run(copilot_module._annotate_citation_freshness(
             {"source": "replicon", "entity": "Foo"}, cache=cache,
         ))
-    # Only one call — the cache absorbed the rest.
     assert calls == ["replicon"]
 
 
 def _make_chat_replying(text):
-    """Tiny helper: a fake llm_client.chat that emits one assistant
-    text block matching `text` and nothing else."""
     async def _chat(*, messages, **_kw):
         final = list(messages) + [
             {"role": "assistant",

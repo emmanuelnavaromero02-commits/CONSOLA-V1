@@ -1,16 +1,8 @@
-// Sprint v1.11 — extracted from login.html so the page can ship under a
-// strict CSP (no 'unsafe-inline' for scripts). Behaviour identical to the
-// previous inline block: theme bootstrap, next-URL whitelist, CSRF token
-// reader and the form submit handler.
-
 function nextUrl() {
   const p = new URLSearchParams(location.search);
   const n = p.get('next');
   if (!n) return '/';
-  // Same-path relative URLs always allowed.
   if (n.startsWith('/') && !n.startsWith('//')) return n;
-  // Allow same-hostname absolute URLs (cross-port within the org / dev),
-  // and any localhost target for development.
   try {
     const u = new URL(n);
     if (u.hostname === location.hostname) return u.toString();
@@ -19,9 +11,6 @@ function nextUrl() {
   return '/';
 }
 
-// Sprint v1.9 — CSRF double-submit cookie. The server seeds `csrf_token`
-// on GET /login; we echo it back as a header on every sensitive POST.
-// The cookie is NOT HttpOnly so document.cookie can read it.
 function getCsrfToken() {
   const m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
   return m ? decodeURIComponent(m[1]) : '';

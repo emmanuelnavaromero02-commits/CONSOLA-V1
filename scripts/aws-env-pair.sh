@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Helpers for building and transactionally publishing the AWS runtime env pair.
 
 AWS_ENV_SHARED_TARGET=""
 AWS_ENV_EVIDENCE_TARGET=""

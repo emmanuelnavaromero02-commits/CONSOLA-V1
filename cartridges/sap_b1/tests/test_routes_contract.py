@@ -1,4 +1,3 @@
-"""HTTP contract of the cartridge: auth, catalogue, degraded answers."""
 from __future__ import annotations
 
 import pytest

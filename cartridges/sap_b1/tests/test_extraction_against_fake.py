@@ -1,4 +1,3 @@
-"""The cartridge reads the Business One-shaped fake the way it will read HANA."""
 from __future__ import annotations
 
 import importlib
@@ -15,7 +14,6 @@ b1 = importlib.import_module("sap_b1_fake.schema")
 pytestmark = pytest.mark.usefixtures("fake_postgres")
 
 def _read_parquet(path):
-    """The file exactly as written. Newer pyarrow infers partition columns (load_date, batch_id, ...) from the hive-style."""
     import pyarrow.parquet as pq
 
     return pq.ParquetFile(str(path)).read()
@@ -82,7 +80,6 @@ def _fmt(stamp: datetime) -> str:
 
 
 def _lift_clock_cap(monkeypatch) -> None:
-    """The fake's newest stamps lie after today's date, so the source clock would cap the recorded watermark below them."""
     from app.core import b1_source
 
     monkeypatch.setattr(b1_source.Connection, "source_now", lambda self: datetime(2099, 1, 1))
@@ -121,7 +118,6 @@ def test_snapshot_tables_fall_back_to_full_when_asked_for_incremental(b1_env, da
 
 
 def test_the_first_incremental_read_of_an_empty_table_leaves_a_zero_row_artifact(b1_env, dataset, monkeypatch):
-    """A/P credit memos exist in no company of the fake."""
     assert not any(dataset.tables[c.alias]["RPC1"] for c in dataset.companies)
     recorder, es = _install(monkeypatch)
     first = es.run_entity(_config("RPC1", mode="incremental"))
@@ -298,7 +294,6 @@ def test_batch_transactions_are_incremental_by_log_entry(b1_env, dataset, monkey
 
 
 def test_watermark_never_passes_the_source_clock(b1_env, dataset, monkeypatch):
-    """A document edited behind the cursor during a long run keeps a stamp older than the newest row read."""
     from app.core import b1_source
 
     latest = max(_stamp("OINV", row) for c in dataset.companies for row in dataset.tables[c.alias]["OINV"])
@@ -313,7 +308,6 @@ def test_watermark_never_passes_the_source_clock(b1_env, dataset, monkeypatch):
 
 
 def test_a_failing_company_keeps_the_others_committed(b1_env, dataset, monkeypatch):
-    """Companies are flushed and committed one by one."""
     from app.core.b1_source import B1SourceError, CartridgeCircuitBreaker
 
     CartridgeCircuitBreaker.reset()

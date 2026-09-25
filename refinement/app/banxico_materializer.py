@@ -10,7 +10,7 @@ try:
         latest_manifest,
     )
     from app.duckdb_engine import _sql_quote, validate_safe_identifier
-except ModuleNotFoundError:  # local tests import refinement.app.*
+except ModuleNotFoundError:
     from refinement.app.banxico_manifest import (
         BanxicoInsufficientData,
         SERIES_CONFIG,

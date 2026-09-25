@@ -1,5 +1,3 @@
-"""Real PostgreSQL proof for exact SuccessFactors active-headcount isolation."""
-
 from __future__ import annotations
 
 from pathlib import Path

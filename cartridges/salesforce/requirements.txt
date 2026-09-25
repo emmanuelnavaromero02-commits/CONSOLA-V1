@@ -1,16 +1,9 @@
-# v1.43.2 (DevOps R1 follow-up): see console/requirements.txt.
 fastapi==0.136.1
 starlette>=1.0.1,<2.0
-# v1.43.4 — See cartridges/sap_hcm/requirements.txt for the uvicorn
-# floor bump (fastmcp 3.x server extras require uvicorn >= 0.35).
 uvicorn[standard]>=0.35.0,<1.0
-# v1.43.4 — Bumped from 2.32.3 (closes GHSA-9hjg-9r4m-mvj7, GHSA-gc5v-m9x4-r6x2).
 requests>=2.33.0,<3.0
-# v1.43.4 — See cartridges/sap_hcm/requirements.txt for the
-# pydantic bump rationale (fastmcp 3.x floor).
 pydantic>=2.11.7,<3.0
 pydantic-settings>=2.7.0,<3.0
-# v1.43.4 — Bumped from 1.1.0 (closes GHSA-mf9w-mj56-hr94).
 python-dotenv>=1.2.2,<2.0
 sqlalchemy==2.0.35
 psycopg2-binary==2.9.9
@@ -20,8 +13,6 @@ pyarrow==23.0.1
 pyyaml==6.0.2
 cryptography==50.0.0
 duckdb==1.2.2
-# v1.43.4 — See cartridges/sap_hcm/requirements.txt for the
-# fastmcp 2 → 3 bump rationale (C1 BLOCKER).
 fastmcp>=3.3.0,<4.0
 asyncpg==0.29.0
 httpx==0.28.1

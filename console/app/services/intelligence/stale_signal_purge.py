@@ -1,24 +1,9 @@
-"""Surgical purge of stale generic-Gold signals (pre-#475 class).
-
-F11: the engine is upsert-only and never deletes, so the garbage "signals"
-written before #475 (identifier/structural columns or scope UUIDs presented
-as KPIs) stayed frozen at status=open. This module is the REPRODUCIBLE purge
-step: the same read predicate (``is_stale_generic_signal``) drives both the
-dry-run report and the transactional delete, scoped per workspace with an
-explicit ``WHERE workspace_id`` on top of RLS. The CLI wrapper lives in
-``scripts/purge_stale_generic_signals.py``; the regression test in
-``tests/test_stale_generic_signal_purge.py`` seeds both classes against a
-real PostgreSQL and proves the stale class reaches zero while legitimate
-signals survive.
-"""
-
 from __future__ import annotations
 
 import asyncpg
 
 from app.services.intelligence.gold_control_room import is_stale_generic_signal
 
-# Tablas hijas ligadas por signal_id (evidence_items cuelga de evidence_packs por FK).
 _CHILD_BY_SIGNAL = ("evidence_packs", "hypotheses", "decision_options", "prediction_outcomes")
 _LIKE_GENERIC = r"metric LIKE 'generic\_%' ESCAPE '\'"
 
@@ -35,9 +20,6 @@ async def _workspaces(conn: asyncpg.Connection) -> list[tuple[str | None, str]]:
     return [(r["tenant"], r["ws"]) for r in rows]
 
 
-# Belt-and-suspenders: un ``WHERE workspace_id = $1`` EXPLÍCITO además de la RLS,
-# para que un rol mal configurado (superusuario que ignora RLS) NUNCA barra otra
-# workspace. ``$1`` = workspace del scope actual.
 async def _garbage_signal_ids(conn: asyncpg.Connection, scope_ids: tuple) -> list[str]:
     rows = await conn.fetch(
         f"SELECT signal_id, metric, entity_id FROM intelligence_signals "
@@ -52,10 +34,6 @@ async def _garbage_signal_ids(conn: asyncpg.Connection, scope_ids: tuple) -> lis
 
 
 async def _garbage_item_ids(conn: asyncpg.Connection, scope_ids: tuple) -> list[str]:
-    # Intencional: la clase basura del fallback generic-Gold se republica SIEMPRE
-    # como item_kind='intelligence_signal'. Los agent_alert (monitores) no son de
-    # esta clase; el filtro de lectura los cubre por robustez pero la purga no los
-    # toca (verificado en prod: 0 agent_alert con anomaly_type generic_).
     rows = await conn.fetch(
         "SELECT item_id, anomaly_type, entity_id FROM control_room_items "
         "WHERE workspace_id = $1::uuid AND item_kind='intelligence_signal' "
@@ -92,8 +70,6 @@ async def _count(conn: asyncpg.Connection, table: str, sids: list[str]) -> int:
     )
 
 
-# Tablas que el DB borra AUTOMÁTICAMENTE por FK ON DELETE CASCADE (verificado en
-# prod). Por signal_id -> intelligence_signals; por item_id -> control_room_items.
 _CASCADE_BY_SIGNAL = ("decision_intelligence_snapshots",)
 _CASCADE_BY_ITEM = ("control_room_item_events", "action_runs", "control_room_action_executions")
 
@@ -101,8 +77,6 @@ _CASCADE_BY_ITEM = ("control_room_item_events", "action_runs", "control_room_act
 async def _cascade_counts(
     conn: asyncpg.Connection, sids: list[str], item_ids: list[str]
 ) -> dict[str, int]:
-    """Cuenta las filas que cascadean por FK al borrar señales/items, para
-    transparencia total del impacto (aunque el DB las borra solo)."""
     counts: dict[str, int] = {}
     for table in _CASCADE_BY_SIGNAL:
         counts[table] = (
@@ -122,15 +96,6 @@ async def _cascade_counts(
 async def _delete_garbage(
     conn: asyncpg.Connection, sids: list[str], item_ids: list[str], baseline_ids: list[int]
 ) -> None:
-    """Borra hijas-por-signal_id, baselines, luego las SEÑALES y por último los ITEMS.
-
-    Orden crítico: intelligence_signals se borra ANTES que control_room_items. Así
-    decision_intelligence_snapshots cae por su FK (workspace_id, signal_id) ON DELETE
-    CASCADE y desaparece primero; si se borraran los items antes, la FK COMPUESTA
-    (workspace_id, control_room_item_id) -> control_room_items ON DELETE SET NULL
-    pondría NULL en workspace_id (NOT NULL) de las snapshots aún vivas y violaría la
-    constraint. control_room_item_events cascadea igual al borrar los items.
-    """
     if sids:
         await conn.execute(
             "DELETE FROM evidence_items WHERE evidence_pack_id IN "
@@ -146,15 +111,10 @@ async def _delete_garbage(
             "DELETE FROM metric_baselines WHERE id = ANY($1::bigint[])", baseline_ids
         )
     if sids:
-        # PRIMERO las señales: decision_intelligence_snapshots cascadea por
-        # (workspace_id, signal_id) ON DELETE CASCADE y se elimina antes de tocar
-        # los items -> evita el SET NULL de la FK compuesta sobre workspace_id.
         await conn.execute(
             "DELETE FROM intelligence_signals WHERE signal_id = ANY($1::text[])", sids
         )
     if item_ids:
-        # Ya sin snapshots que referencien estos items; control_room_item_events
-        # cascadea por FK ON DELETE CASCADE.
         await conn.execute(
             "DELETE FROM control_room_items WHERE item_id = ANY($1::text[])", item_ids
         )
@@ -174,8 +134,6 @@ async def process_workspace(
         )
 
     if apply:
-        # Recolectar Y borrar dentro de la MISMA transacción: cierra la ventana de
-        # carrera con el motor (aunque #475 ya no genera basura nueva).
         async with conn.transaction():
             sids, item_ids, baseline_ids = await _collect()
             child_counts = {t: await _count(conn, t, sids) for t in _CHILD_BY_SIGNAL}
@@ -201,7 +159,6 @@ async def process_workspace(
         "cascade": cascade,
         "action": action,
     }
-
 
 
 __all__ = (

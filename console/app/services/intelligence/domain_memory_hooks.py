@@ -1,32 +1,3 @@
-"""Where the domain aggregates meet the shared agent memory.
-
-Mission 4, part B4. This is the concrete case the shared memory exists for, and
-it is a real one rather than a demonstration: Mission 1 could not ship
-``finance.budget_vs_actual_by_cost_center`` because no cartridge has a budget, and
-it could not ship ``risk.cost_center_overrun`` for exactly the same reason
-(no budget data in any cartridge). Two different agents therefore hit the same
-wall from two directions, and without shared memory each of them rediscovers it on
-every run and reports it as news.
-
-The detection is genuine, not a hardcoded assertion. ``cost_center_expense`` IS a
-published Gold dataset; what is missing is its numbers — the dataset ships
-``CAST(NULL AS DECIMAL(15,2)) AS total_expense`` with a TODO, because the
-purchase-to-cost-centre link lives in an entity that is not extracted. So the hook
-counts rows and non-null expenses: if the column is entirely NULL the gap is still
-real today, and the finding carries those counts as evidence. If someone later
-lands the account assignment and the column fills in, the hook stops recording and
-the stale finding can be retired by setting its ``expires_at``.
-
-These hooks live outside ``finance_aggregates`` / ``risk_aggregates`` on purpose.
-Those modules are cap-free SQL readers with one job; a memory write is a side
-effect on a different database, and folding it in would make every aggregate a
-writer. The domain views call the hooks instead, which is also where the wiring is
-visible to a reader.
-
-Nothing here can fail a caller. ``record_finding`` already swallows and logs, and
-the detection wraps its own Gold read the same way the aggregates do.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -40,7 +11,6 @@ from app.domains.agentops.finance_monitor import (
     FINANCE_MONITOR_SLUG,
 )
 
-# The global conversational template, seeded by infra/init/86_sap_s4hana_agents_seed.sql.
 FINANCE_CONVERSATIONAL_SLUG = "sap_s4hana_controller_financiero"
 from app.services.intelligence import agent_memory
 from app.services.intelligence.domain_aggregate_support import (
@@ -51,16 +21,11 @@ from app.services.intelligence.domain_aggregate_support import (
 
 logger = logging.getLogger(__name__)
 
-# The subject both agents agree on. Finance writes it, Risk reads it; it is the
-# join key, so it must stay stable and identical in both places.
 COST_CENTER_BUDGET_SUBJECT = "cost_center_budget"
 
 COST_CENTER_EXPENSE_DATASET = "cost_center_expense"
 _EXPENSE_REQUIRED = frozenset({"cost_center", "total_expense"})
 
-# Two summaries, because only one branch actually proves the second half. Writing
-# one constant for both would have the finding assert as fact something the code
-# never checked — the exact over-promising this repository is built to avoid.
 COST_CENTER_BUDGET_SUMMARY = (
     "No hay presupuesto por centro de costo en ningun cartucho, y el gasto real "
     "por centro de costo llega vacio en el origen. Comparar presupuesto contra "
@@ -74,12 +39,6 @@ COST_CENTER_BUDGET_SUMMARY_UNVERIFIED = (
 
 
 async def _expense_column_is_empty(user: dict | None) -> tuple[bool, dict[str, Any]]:
-    """Count rows and non-null expenses in the cost-centre expense dataset.
-
-    Returns ``(gap_is_real, evidence)``. ``gap_is_real`` is True when the dataset
-    is missing, unreadable, or present with zero non-null expenses. Only
-    aggregates travel back: two counts, never a row.
-    """
     async with open_gold_scope(user) as scope:
         resolved = await resolve_relation(
             scope,
@@ -111,19 +70,10 @@ async def _expense_column_is_empty(user: dict | None) -> tuple[bool, dict[str, A
 
 
 async def record_cost_center_budget_gap(user: dict | None) -> bool:
-    """Detect the budget gap and, if it is real, record it once for other agents.
-
-    Attributed to the Finance monitor when that row exists in the workspace, and
-    otherwise to the global Controller Financiero template, because the
-    conversational agent is what answered the question that surfaced the gap.
-    """
     verified = True
     try:
         gap_is_real, evidence = await _expense_column_is_empty(user)
     except HTTPException as exc:
-        # No published head, no scope, no permission. The metric still cannot be
-        # computed, so the gap is real, but the expense column was NOT inspected —
-        # so the finding must not claim it was.
         verified = False
         gap_is_real = True
         evidence = {"reason": "dataset_unavailable", "detail": exc.detail}
@@ -147,9 +97,6 @@ async def record_cost_center_budget_gap(user: dict | None) -> bool:
             else COST_CENTER_BUDGET_SUMMARY_UNVERIFIED
         ),
         agent_cartridge_id=FINANCE_MONITOR_CARTRIDGE,
-        # The monitor row first, then the conversational template. The template is
-        # a global seed row so it always exists; without it the write would be
-        # silently dropped in any workspace the monitor seed never reached.
         agent_slug=(FINANCE_MONITOR_SLUG, FINANCE_CONVERSATIONAL_SLUG),
         severity="high",
         detail={
@@ -163,12 +110,6 @@ async def record_cost_center_budget_gap(user: dict | None) -> bool:
 
 
 async def cost_center_overrun_note(user: dict | None) -> str | None:
-    """What Risk should say about cost-centre overrun, citing Finance's finding.
-
-    Returns a business-Spanish note when another agent has already recorded the
-    gap, and None when nobody has. Risk appends it to its own payload, so the LLM
-    cites shared memory instead of rediscovering the limitation.
-    """
     prior = await agent_memory.check_prior_findings(
         COST_CENTER_BUDGET_SUBJECT, user, limit=1
     )
@@ -176,10 +117,6 @@ async def cost_center_overrun_note(user: dict | None) -> str | None:
         return None
     finding = prior[0]
     author = finding.get("recorded_by") or finding.get("agent_name") or "otro agente"
-    # Short on purpose. The public projection redacts any string longer than 64
-    # word tokens to "[REDACTED]", so inlining the finding's full summary here
-    # would destroy the whole note instead of shortening it. The citation points
-    # at shared memory; the detail is one tool call away.
     return (
         "sobregiro por centro de costo no se puede calcular: "
         f"{author} ya registro ese hallazgo en la memoria compartida entre agentes"

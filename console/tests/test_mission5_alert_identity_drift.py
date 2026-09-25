@@ -1,12 +1,3 @@
-"""Mission 5: console attests the exact item mcp-infra raises.
-
-A ticket is bound at mint time to an ``item_id`` console derives itself. If that
-derivation ever drifts from ``agent_runtime._monitor_alert_args`` (what the
-monitor sends) or from mcp-infra ``_dedup_item_id`` (what gets stored), every
-attestation silently stops matching and Control Room goes empty again. These
-tests fail first instead.
-"""
-
 from __future__ import annotations
 
 import ast
@@ -115,7 +106,6 @@ def test_console_item_id_equals_the_id_mcp_infra_stores(
     stored_item_id = _mcp_infra_dedup_item_id()(
         agent_id=AGENT,
         workspace_id=WORKSPACE,
-        # mcp-infra's _as_safe_key strips before deduplicating.
         alert_type=args["alert_type"].strip(),
         entity_key=args["entity_key"].strip(),
         source_dataset=args["source_dataset"].strip(),

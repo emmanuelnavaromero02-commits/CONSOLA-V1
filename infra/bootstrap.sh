@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# infra/bootstrap.sh — one-shot generator for infra/.env
-# Idempotent: re-running with an existing infra/.env is a no-op.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,11 +28,6 @@ SUPERSET_ADMIN_PASSWORD="$(openssl rand -hex 16)"
 SUPERSET_SERVICE_PASSWORD="$(openssl rand -hex 16)"
 AIRFLOW_ADMIN_PASSWORD="$(openssl rand -hex 16)"
 AGENT_RUNNER_TOKEN="$(openssl rand -hex 32)"
-# Sprint v1.19: per-service Postgres roles (least-privilege). Each
-# service gets its own login role and its own password so a compromise
-# of one service can't reach the other tables — most importantly,
-# vault_entries is locked to the omega_vault role. See
-# infra/init/25_service_roles.sql for the GRANTs.
 OMEGA_CONSOLE_PASSWORD="$(openssl rand -hex 16)"
 OMEGA_REFINEMENT_PASSWORD="$(openssl rand -hex 16)"
 OMEGA_REFINEMENT_GOLD_PASSWORD="$(openssl rand -hex 16)"
@@ -44,10 +37,6 @@ OMEGA_OUTCOME_BINDER_PASSWORD="$(openssl rand -hex 16)"
 OMEGA_VAULT_PASSWORD="$(openssl rand -hex 16)"
 OMEGA_WORKSPACE_PASSWORD="$(openssl rand -hex 16)"
 OMEGA_MCP_INFRA_PASSWORD="$(openssl rand -hex 16)"
-# Sprint v1.38 (audit B5+B6 P0.5): least-privilege roles for the
-# SAP cartridges, the two Airflow surfaces (metastore + DAG runtime),
-# and the Superset metastore. Created by
-# infra/init/36_cartridge_and_meta_roles.sql.
 OMEGA_CARTRIDGE_SAP_HCM_PASSWORD="$(openssl rand -hex 16)"
 OMEGA_CARTRIDGE_SAP_S4_PASSWORD="$(openssl rand -hex 16)"
 OMEGA_CARTRIDGE_SAP_SF_PASSWORD="$(openssl rand -hex 16)"
@@ -55,40 +44,27 @@ OMEGA_CARTRIDGE_SAP_B1_PASSWORD="$(openssl rand -hex 16)"
 OMEGA_AIRFLOW_DAG_PASSWORD="$(openssl rand -hex 16)"
 OMEGA_AIRFLOW_META_PASSWORD="$(openssl rand -hex 16)"
 OMEGA_SUPERSET_META_PASSWORD="$(openssl rand -hex 16)"
-# Sprint v1.40 (replicon cartridge restored): DB role + 3 pair keys
-# (replicon -> console / mcp-infra / refinement). Created by
-# infra/init/37_replicon_role_and_tables.sql.
 OMEGA_CARTRIDGE_REPLICON_PASSWORD="$(openssl rand -hex 16)"
-# Salesforce cartridge: DB role created by
-# infra/init/93_salesforce_role_and_tables.sql.
 OMEGA_CARTRIDGE_SALESFORCE_PASSWORD="$(openssl rand -hex 16)"
 INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE="$(openssl rand -hex 32)"
 INTERNAL_API_KEY_REPLICON_TO_CONSOLE="$(openssl rand -hex 32)"
 INTERNAL_API_KEY_REPLICON_TO_MCP_INFRA="$(openssl rand -hex 32)"
 INTERNAL_API_KEY_REPLICON_TO_REFINEMENT="$(openssl rand -hex 32)"
 
-# HubSpot cartridge (same runtime contract as Replicon).
 OMEGA_CARTRIDGE_HUBSPOT_PASSWORD="$(openssl rand -hex 16)"
 INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE="$(openssl rand -hex 32)"
 INTERNAL_API_KEY_HUBSPOT_TO_MCP_INFRA="$(openssl rand -hex 32)"
 INTERNAL_API_KEY_HUBSPOT_TO_REFINEMENT="$(openssl rand -hex 32)"
 
-# Banxico PR 2A: Bronze-only cartridge. Credentials live in Vault; this
-# key only lets the cartridge reveal its scoped Vault connection.
 OMEGA_CARTRIDGE_BANXICO_PASSWORD="$(openssl rand -hex 16)"
 INTERNAL_API_KEY_BANXICO_TO_CONSOLE="$(openssl rand -hex 32)"
 
-# INEGI cartridge: official Banco de Indicadores credentials live in Vault.
 OMEGA_CARTRIDGE_INEGI_PASSWORD="$(openssl rand -hex 16)"
 INTERNAL_API_KEY_INEGI_TO_CONSOLE="$(openssl rand -hex 32)"
 
-# SEC EDGAR cartridge: User-Agent lives in Vault/env, no API token required.
 OMEGA_CARTRIDGE_SEC_EDGAR_PASSWORD="$(openssl rand -hex 16)"
 INTERNAL_API_KEY_SEC_EDGAR_TO_CONSOLE="$(openssl rand -hex 32)"
 
-# Sprint v1.15: Fernet master key for vault encryption at rest.
-# Fernet keys are URL-safe base64 of 32 random bytes. Generate them
-# with Python's stdlib so bootstrap does not depend on host cryptography/cffi.
 if ! command -v python3 >/dev/null 2>&1; then
   echo "ERROR: python3 is required to generate VAULT_ENCRYPTION_KEY" >&2
   exit 1
@@ -97,10 +73,6 @@ BOOTSTRAP_PYTHON="$(command -v python3)"
 FERNET_KEY_SCRIPT='import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())'
 VAULT_ENCRYPTION_KEY="$("${BOOTSTRAP_PYTHON}" -c "${FERNET_KEY_SCRIPT}")"
 
-# Sprint v1.33 (audit B1 P0): Fernet key used by SAP cartridges
-# (sap_hcm / sap_s4hana / sap_successfactors) to encrypt PII columns at
-# rest before they land in MinIO/parquet. The cartridges refuse to start
-# without it — there is no longer a hardcoded fallback.
 FIELD_ENCRYPTION_KEY="$("${BOOTSTRAP_PYTHON}" -c "${FERNET_KEY_SCRIPT}")"
 
 umask 077

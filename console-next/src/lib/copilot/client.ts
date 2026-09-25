@@ -1,21 +1,3 @@
-/**
- * v1.44.4 Task A — Copilot API client.
- *
- * Thin same-origin wrapper that returns the typed response shapes
- * defined in ./types.ts. Re-uses the shared ``api`` client from
- * ``@/lib/api`` so CSRF, session cookies and request IDs stay
- * consistent with the rest of the static console.
- *
- * Backend reality (see types.ts module doc for the audit
- * findings):
- *   - ``sendMessage`` preserves the legacy JSON route; the chat UI
- *     calls ``streamMessage`` for the SSE path.
- *   - createFact + generateDraft return ENVELOPES
- *     ({ok, fact} / {ok, draft}); we unwrap before returning
- *     so call sites can stay simple.
- *   - getWorkflow returns ``{workflow, steps}`` (NOT a flat
- *     Workflow); the typed wrapper preserves both.
- */
 import { api, apiFetch, publicErrorMessage, toApiError } from "@/lib/api";
 import type {
   Conversation,
@@ -46,9 +28,6 @@ export interface StreamMessageHandlers {
   onText?:  (text: string) => void;
   onEvent?: (event: string, data: unknown) => void;
 }
-
-
-// ── Conversations ───────────────────────────────────────────────────
 
 
 export async function listConversations(): Promise<Conversation[]> {
@@ -128,10 +107,6 @@ export async function streamMessage(
   const requestId = response.headers.get("x-request-id") || undefined;
 
   if (!response.ok || !response.body) {
-    // Misma política de saneamiento que api.ts: un cuerpo no-JSON (HTML de
-    // proxy, texto crudo) jamás se muestra; solo un `detail` JSON user-safe
-    // de 4xx puede llegar al usuario. Estado y payload quedan en el error
-    // para diagnóstico, nunca en el mensaje.
     const raw = await response.text().catch(() => "");
     let payload: unknown = null;
     try {
@@ -180,11 +155,6 @@ export async function streamMessage(
     }
 
     if (parsed.event === "error") {
-      // El contrato del stream no marca ningún detail como user-safe
-      // (no existe `user_message`), así que el detail crudo nunca se
-      // muestra: copy genérico + referencia segura vía la política única
-      // de api.ts. El código de error se conserva en el objeto para la
-      // lógica de llamada, sin exponerlo en el mensaje.
       const code = typeof data?.code === "string" ? data.code : undefined;
       throw toApiError(publicErrorMessage(502, null, requestId), 502, { code }, requestId);
     }
@@ -223,20 +193,12 @@ export async function approveAction(
 }
 
 
-// ── Memory ──────────────────────────────────────────────────────────
-
-
 export async function listMemory(): Promise<MemoryResponse> {
   const { data } = await api.get<MemoryResponse>("/api/copilot/memory");
   return data;
 }
 
 
-/**
- * POST /api/copilot/memory/fact accepts ``{fact, source?}`` and
- * returns ``{ok, fact}`` — we unwrap to the inner fact for the
- * caller's convenience.
- */
 export async function createFact(
   fact: string,
   source?: string,
@@ -265,14 +227,6 @@ export async function setPreference(
 }
 
 
-// ── Drafts ──────────────────────────────────────────────────────────
-
-
-/**
- * POST /api/copilot/drafts/generate. Backend requires
- * ``{kind, about, tone?, audience?, title?, metadata?}`` and
- * returns ``{ok, draft}``. We unwrap to the inner draft.
- */
 export async function generateDraft(request: DraftRequest): Promise<Draft> {
   const { data } = await api.post<GenerateDraftResponse>(
     "/api/copilot/drafts/generate",
@@ -280,9 +234,6 @@ export async function generateDraft(request: DraftRequest): Promise<Draft> {
   );
   return data.draft;
 }
-
-
-// ── Workflows ───────────────────────────────────────────────────────
 
 
 export async function listWorkflows(): Promise<Workflow[]> {
@@ -299,9 +250,6 @@ export async function getWorkflow(id: string): Promise<WorkflowDetailResponse> {
   );
   return data;
 }
-
-
-// ── Copilot advanced v1.45 ───────────────────────────────────────────
 
 
 export async function listCopilotGoals(limit = 5): Promise<CopilotGoal[]> {
@@ -381,9 +329,6 @@ export async function askCopilotWithContext(
   );
   return data;
 }
-
-
-// ── Live console context ────────────────────────────────────────────
 
 
 export async function getCopilotContextSnapshot(): Promise<CopilotContextSnapshot> {

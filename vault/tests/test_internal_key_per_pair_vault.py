@@ -1,9 +1,3 @@
-"""Sprint v1.12 — vault: verify_api_key accepts per-pair keys + dev legacy.
-
-Vault is called by console and mcp-infra. Each pair has its own
-INTERNAL_API_KEY_*_TO_VAULT secret; the legacy shared INTERNAL_API_KEY
-only works outside production.
-"""
 from __future__ import annotations
 
 import importlib
@@ -36,8 +30,6 @@ def vault_main(monkeypatch):
     monkeypatch.setenv("INTERNAL_API_KEY", LEGACY)
     monkeypatch.setenv("INTERNAL_API_KEY_CONSOLE_TO_VAULT",   CONSOLE_KEY)
     monkeypatch.setenv("INTERNAL_API_KEY_MCP_INFRA_TO_VAULT", MCP_KEY)
-    # Stub out heavyweight third-party deps that vault's app/main.py imports
-    # at module load. Their behavior isn't exercised by the verify tests.
     monkeypatch.setitem(sys.modules, "psycopg2", _module())
     monkeypatch.setitem(sys.modules, "yaml", _module(safe_load=lambda *a, **kw: {}))
     monkeypatch.setitem(

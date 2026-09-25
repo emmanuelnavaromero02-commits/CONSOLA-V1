@@ -2,7 +2,6 @@ from __future__ import annotations
 
 
 class PublicationReplayMixin:
-    """Carries replay state internally without adding it to public JSON."""
 
     def _mark_publication_replayed(self, replayed: bool) -> None:
         self._publication_replay_local.replayed = bool(replayed)

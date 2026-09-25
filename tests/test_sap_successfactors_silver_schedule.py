@@ -1,10 +1,3 @@
-"""SuccessFactors live Silver schedule and migration contract.
-
-The AWS FEMSA flow uses a scoped Vault connection (`femsa_sf`) and Airflow runs
-without an interactive user. This migration must therefore carry tenant,
-workspace, and connection id into `entity_config`, while the Silver catalog is
-updated for existing installs that already applied migration 82.
-"""
 from __future__ import annotations
 
 from pathlib import Path

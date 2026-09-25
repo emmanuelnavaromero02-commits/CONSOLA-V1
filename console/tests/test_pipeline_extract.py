@@ -466,7 +466,6 @@ def console_main(monkeypatch):
         monkeypatch.setitem(sys.modules, name, mod)
     monkeypatch.setitem(sys.modules, "asyncpg", asyncpg_stub)
 
-    # Also patch package attributes so `from app.services import xxx` gets the stub
     import app.services as _svc_pkg
 
     for attr, mod in [

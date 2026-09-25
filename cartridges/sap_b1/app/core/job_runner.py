@@ -1,4 +1,3 @@
-"""SAP Business One Batch Job Runner ========================= Manages async extraction jobs within the cartridge process."""
 from __future__ import annotations
 
 import asyncio
@@ -43,7 +42,6 @@ async def _get_pool() -> asyncpg.Pool:
 
 
 async def ensure_schema() -> None:
-    """Create the jobs table if it doesn't exist (idempotent)."""
     pool = await _get_pool()
     await pool.execute("""
         CREATE TABLE IF NOT EXISTS jobs (
@@ -69,7 +67,6 @@ async def ensure_schema() -> None:
 
 
 async def cleanup_stale() -> None:
-    """Mark jobs stuck in 'running' at process startup as failed."""
     try:
         pool = await _get_pool()
         await pool.execute(
@@ -133,7 +130,6 @@ async def _log(
     message: str,
     detail: dict | None = None,
 ) -> None:
-    """Write a progress entry to the central run_logs table."""
     try:
         pool = await _get_pool()
         async with pool.acquire() as conn:
@@ -146,7 +142,7 @@ async def _log(
                 tenant_id or None, workspace_id or None,
             )
     except Exception:
-        pass  # logs are best-effort
+        pass
 
 
 async def create_extract_job(
@@ -154,7 +150,6 @@ async def create_extract_job(
     from_date: str | None = None,
     to_date: str | None = None,
 ) -> dict:
-    """Create a background extraction job and return immediately."""
     entity = config.get("entity", "unknown")
     mode   = config.get("mode", "full")
     job_id = str(uuid.uuid4())[:8]
@@ -184,7 +179,6 @@ async def create_extract_job(
 
 
 async def create_extract_all_job(mode: str = "incremental") -> dict:
-    """Extract all enabled entities in parallel (max 4 concurrent)."""
     job_id = str(uuid.uuid4())[:8]
     await _insert(job_id, "sap_b1__extract_all", {"mode": mode})
     security_context = get_security_context()
@@ -226,7 +220,6 @@ async def list_jobs(limit: int = 10) -> list[dict]:
 
 
 async def _trigger_silver_refresh(entity: str, security_context: dict | None = None) -> None:
-    """Notifica al refinement engine que hay nuevos datos Bronze para esta entidad."""
     source = f"raw/sap_b1/{entity}"
     api_key = os.environ.get("INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT", "")
     if not api_key and os.environ.get("APP_ENV", "production").strip().lower() not in {"production", "prod"}:
@@ -258,7 +251,6 @@ async def _trigger_airflow(
     from_date: str | None,
     to_date: str | None,
 ) -> None:
-    """POST to Airflow REST API to trigger the sap_b1_extract DAG."""
     entity = config.get("entity", "")
     conf = {
         "job_id":            job_id,
@@ -301,7 +293,7 @@ async def _run_extract_all(job_id: str, mode: str, security_context: dict | None
     await _update(job_id, "running", f"Iniciando — {total} entidades en modo {mode}")
     await _log(job_id, None, "INFO", f"Batch iniciado: {total} entidades, modo={mode}")
 
-    sem = asyncio.Semaphore(4)          # máx 4 extracciones en paralelo
+    sem = asyncio.Semaphore(4)
     loop = asyncio.get_event_loop()
 
     async def _one(config: dict) -> None:

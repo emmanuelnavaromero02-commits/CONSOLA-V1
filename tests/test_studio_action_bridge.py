@@ -1,10 +1,3 @@
-"""Static contracts for the legacy Studio action bridge.
-
-The bridge exists because :8000 remains the canonical console while
-the legacy Studio JavaScript is being retired gradually. It must call
-real /api/studio/* endpoints and must not fabricate invisible E2E-only
-DOM sentinels.
-"""
 from __future__ import annotations
 
 import re

@@ -19,7 +19,6 @@ async def studio_chat_stream_response(
     logger_exception: Callable[..., Any],
     streaming_response_factory: Callable[..., StreamingResponse] = StreamingResponse,
 ) -> StreamingResponse:
-    """Build the Studio assistant SSE response while the route keeps auth concerns."""
 
     cartridge_id = body.get("cartridge_id")
     manifest = (

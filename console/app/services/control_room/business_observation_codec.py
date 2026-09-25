@@ -147,11 +147,6 @@ def _legacy_flat_claim(envelope: Mapping[str, Any]) -> Mapping[str, Any] | None:
 
 
 def persisted_claims(item: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
-    """Read canonical v1 envelopes and one strict legacy flat policy claim.
-
-    Flat envelopes are accepted only for persisted compatibility. They cannot contain
-    wrappers or unknown fields, and writers always emit the canonical versioned form.
-    """
     claims: list[Mapping[str, Any]] = []
     for container in (item, _mapping(item.get("metadata"))):
         if ENVELOPE_KEY not in container:

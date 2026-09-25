@@ -1,5 +1,3 @@
-"""Security header and published-app theme helpers for the console."""
-
 from __future__ import annotations
 
 from fastapi import Response
@@ -9,9 +7,6 @@ from app.domains.security.request_classification import (
 )
 
 
-# NOTE: script-src is intentionally strict on shell/auth/control-room paths.
-# style-src still has a documented inline-style exception for legacy static
-# <style> blocks until those styles move to external assets or hashes.
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -168,7 +163,6 @@ def is_app_embed_path(path: str) -> bool:
 
 
 def is_app_frame_path(path: str) -> bool:
-    """Routes intentionally rendered inside the same-origin app viewer."""
     return is_app_embed_path(path) or is_app_content_capability_path(path)
 
 

@@ -1,30 +1,5 @@
-"""E1.1 — proyecciones vacias SIN LECTURAS para la cadena de talento SF.
-
-El fallback operativo de primer nivel (core/empty) de varios datasets de
-talento LEE fuentes silver/gold que un tenant sin modulos de talento no
-expone: cuando el real falla por 404, el fallback engancha y luego se cae
-sobre el MISMO 404 — esa segunda excepcion volaba sin red (evidencia:
-ciclo autonomo 03:05, 8 datasets 'materialization_failed').
-
-Estas proyecciones son el ULTIMO nivel: cero read_parquet, cero red, solo
-el esquema FIEL al SELECT final del dataset real con WHERE FALSE. Con el
-esquema fiel, el SQL real de los consumidores downstream LIGA y produce su
-propio vacio honesto (insufficient_data), en vez de tronar con Binder
-Error contra una proyeccion 'no disponible' de otra forma.
-
-Doctrina intacta: cero filas = cero hechos fabricados. Solo engancha ante
-errores de dependencia faltante (404/no files); un MinIO caido u otro
-error real sigue tronando fuerte (jamas se degrada una caida de infra a
-un gold vacio que pise datos buenos).
-
-Anti-drift: si cambias el SELECT final de un dataset en
-cartridges/sap_successfactors/datasets/*.sql, actualiza su proyeccion aqui
-en el mismo commit (test guardian: refinement/tests/test_e11_talent_readfree_fallbacks.py).
-"""
 from __future__ import annotations
 
-# Datasets silver curados de talento (SUCCESSFACTORS_SILVER_TALENT_CURATED_ORDER)
-# + las dos raices gold de la cadena C/P/A. Esquemas espejo del SELECT final real.
 TALENT_READFREE_EMPTY_SQL: dict[str, str] = {
     "sap_successfactors_performance_cycle": """
 SELECT

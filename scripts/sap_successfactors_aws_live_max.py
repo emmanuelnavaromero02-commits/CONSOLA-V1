@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-"""AWS live end-to-end validation for SAP SuccessFactors/FEMSA.
-
-This runner intentionally talks to the deployed AWS instance through SSM and
-public HTTP. It does not use mocks, does not print secrets, and does not mark a
-run green when a required live layer was not executed.
-"""
 
 from __future__ import annotations
 
@@ -1284,9 +1278,6 @@ def write_summary(ctx: Context, fix_report: Path, final_report: Path) -> None:
 
 
 def _resolve_instance_id() -> str:
-    # No baked-in default: a hard-coded instance id is both an infrastructure
-    # identifier in a public repository and a correctness trap, because the
-    # instance it names outlives neither a rebuild nor a region move.
     for name in INSTANCE_ID_ENV_VARS:
         value = (os.environ.get(name) or "").strip()
         if value:

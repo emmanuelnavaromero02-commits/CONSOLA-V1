@@ -1,16 +1,3 @@
-"""E5b — la pizarra del ciclo: UNA lectura de lo que la máquina hizo y aprendió.
-
-Los cuadernos ya existían, cada uno por su lado: pipeline_runs (qué corrió el
-ciclo autónomo), intelligence_signals (qué encontró), control_room_lessons
-(qué reglas aprendió el copiloto) y calibration_observations (cómo se
-movieron las creencias con cada outcome — ahora automático vía E5a). Esta
-pizarra los compone en una sola superficie scoped por workspace, para que el
-siguiente ciclo, el copiloto y el dueño lean el MISMO estado sin recorrer
-cuatro tablas.
-
-Integrar, no reconstruir: cero tablas nuevas, cero escritores nuevos — solo
-la lectura unificada que faltaba (el "Evoluciona" visible de la demo).
-"""
 from __future__ import annotations
 
 from datetime import datetime
@@ -72,9 +59,6 @@ def _jsonable(row: dict[str, Any]) -> dict[str, Any]:
 
 
 async def read_blackboard(user: dict, *, limit: int = DEFAULT_LIMIT) -> dict[str, Any]:
-    """Compone la pizarra del workspace: ciclos, señales, lecciones y
-    movimientos de calibración — todo reciente, todo scoped, nada inventado
-    (una sección sin filas es una lista vacía, jamás un relleno)."""
     limit = max(1, min(int(limit or DEFAULT_LIMIT), MAX_LIMIT))
     pool = await auth.pool()
     async with scoped_db_for_user(pool, user) as (conn, _tenant_id, workspace_id):

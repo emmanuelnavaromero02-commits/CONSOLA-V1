@@ -1,10 +1,3 @@
-"""SMTP delivery for copilot drafts.
-
-The draft router owns CRUD and generation. This service owns the
-delivery boundary: validate ownership, send through the existing SMTP
-helper, persist delivery state, and audit without storing full message
-body in metadata.
-"""
 from __future__ import annotations
 
 import html
@@ -56,8 +49,6 @@ def _safe_error(error: Any) -> str:
 
 
 async def _send_email(*, to: str, subject: str, body: str, from_user: str | None) -> bool:
-    """Call the existing email helper, passing from_user only if the
-    helper grows that parameter in a later sprint."""
     kwargs: dict[str, Any] = {
         "to": to,
         "subject": subject,
@@ -110,12 +101,6 @@ async def _send_draft_scoped(
     tenant_id: str | None,
     workspace_id: str,
 ) -> dict[str, Any]:
-    """Deliver a draft via SMTP and persist its delivery result.
-
-    ``metadata.to`` (or one of the backward-compatible aliases) is the
-    recipient. ``metadata.subject`` wins over title; body is the email
-    text. SMTP failures never mark a draft as sent.
-    """
     row = await pool.fetchrow(
         """
         UPDATE copilot_drafts

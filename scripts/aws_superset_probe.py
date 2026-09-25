@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Probe Superset tenant exposure and Gold/RLS posture on AWS via SSM."""
 
 from __future__ import annotations
 

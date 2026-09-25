@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Seed and probe a large AWS mock Studio -> Gold -> Control Room flow."""
 
 from __future__ import annotations
 

@@ -46,7 +46,6 @@ def project_generic_gold_widget(
     is_active_headcount: bool,
     rows_shape_valid: bool,
 ) -> dict[str, Any]:
-    """Compatibility shim; terminal policy lives in the Gold factory."""
 
     del is_active_headcount, rows_shape_valid
     return project_public_gold_widget(raw_widget)

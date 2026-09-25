@@ -1,11 +1,3 @@
-"""Repo-level guards for the Salesforce cartridge.
-
-The cartridge-local config/seed.sql is only consumed by the runtime upload path;
-a fresh `docker compose up` registers the cartridges row, entity_config,
-semantic_terms and agents ONLY via infra/init/*.sql. This suite guards that the
-fresh-install seed exists and stays in sync with the cartridge source — so the 5
-agents and 14 entities can never silently fail to register again.
-"""
 from __future__ import annotations
 
 import json
@@ -39,7 +31,6 @@ def test_init_seed_exists_and_registers_cartridge():
     src = INIT_SEED.read_text(encoding="utf-8")
     assert "INSERT INTO cartridges" in src
     assert "'salesforce'" in src
-    # Idempotent: safe to re-run on every container start.
     assert "ON CONFLICT" in src
 
 
@@ -59,8 +50,6 @@ def test_init_seed_registers_all_five_agents():
 
 
 def test_init_seed_body_matches_cartridge_seed():
-    """The fresh-install seed must mirror the cartridge source so they can't
-    drift. Compare the body (drop each file's leading comment header)."""
     def _body(text: str) -> str:
         lines = [ln for ln in text.splitlines() if not ln.strip().startswith("--")]
         return "\n".join(lines).strip()
@@ -81,12 +70,6 @@ def test_apps_reference_existing_datasets():
 
 
 def test_all_entities_have_silver_datasets():
-    """Every entity in entities.yaml must have a corresponding silver SQL file.
-
-    Guards against the case where a new entity is added to entities.yaml but
-    its salesforce_{entity}_latest.sql file is omitted — which would make any
-    gold query that JOINs that entity silently unavailable.
-    """
     data = yaml.safe_load(ENTITIES_YAML.read_text(encoding="utf-8"))
     entities = data["entities"]
     assert len(entities) == 14, f"expected 14 entities, got {len(entities)}"
@@ -108,11 +91,9 @@ def test_agent_gold_and_kb_references_exist():
             (CART / "app" / "config" / "knowledge_bits.yaml").read_text(encoding="utf-8")
         )["knowledge_bits"]
     }
-    # Every gold_salesforce_<x> named in an agent must exist as a dataset file.
     for gold in set(re.findall(r"gold_(salesforce_[a-z0-9_]+)", seed)):
         assert (CART / "datasets" / f"{gold}.sql").exists(), (
             f"agent references gold {gold!r} with no dataset file"
         )
-    # Every kb_salesforce_<x> named in an agent must be a defined knowledge bit.
     for kb in set(re.findall(r"(kb_salesforce_[a-z0-9_]+)", seed)):
         assert kb in kb_ids, f"agent references undefined knowledge bit {kb!r}"

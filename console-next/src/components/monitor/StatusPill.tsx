@@ -4,9 +4,6 @@ const OK = new Set(["done", "success", "fresh", "operational", "completed"]);
 const WARN = new Set(["queued", "running", "partial", "empty", "stale", "degraded", "never", "unknown"]);
 const BAD = new Set(["failed", "error", "very_stale", "offline"]);
 
-// Spanish labels for the raw backend status keys (pattern:
-// FreshnessTable STATUS_LABEL). Unknown keys fall back to the raw
-// value so nothing is hidden.
 const LABEL: Record<string, string> = {
   done:        "Completado",
   success:     "Exitoso",

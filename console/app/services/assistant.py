@@ -1,7 +1,3 @@
-"""
-Assistant — orchestrates MCP tools via the configured LLM.
-Job management (extract, get_job_status, list_jobs) is the cartridge's responsibility.
-"""
 from __future__ import annotations
 
 import os
@@ -66,9 +62,7 @@ Cuando el usuario pida un dashboard, reporte o visualización interactiva:
 Responde siempre en el idioma del usuario."""
 
 
-# ── Data Catalog cache ────────────────────────────────────────────────────────
-
-_CATALOG_TTL   = int(os.environ.get("CATALOG_TTL_SECONDS", "3600"))  # 1 hour default
+_CATALOG_TTL   = int(os.environ.get("CATALOG_TTL_SECONDS", "3600"))
 _catalog_text_by_scope: dict[str, str] = {}
 _catalog_ts    : float = 0.0
 
@@ -76,7 +70,6 @@ REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
 
 
 def _format_catalog(data: dict) -> str:
-    """Render data_catalog as a compact context block for the system prompt."""
     lines = ["## Modelo de datos — Data Catalog\n"]
     lines.append("Usa este catálogo para generar SQL sin necesitar tool calls adicionales.")
     lines.append("Paths Parquet silver: s3://lakehouse/silver/{cartridge}/{dataset}/data.parquet")
@@ -134,7 +127,6 @@ async def _get_catalog_context(
     user: dict | None = None,
     catalog: dict[str, dict] | None = None,
 ) -> str:
-    """Return cached catalog context, refreshing if stale."""
     global _catalog_ts
 
     key = _scope_cache_key(user)
@@ -156,13 +148,10 @@ async def _get_catalog_context(
         _catalog_text_by_scope[key] = _format_catalog(payload if isinstance(payload, dict) else {})
         _catalog_ts   = time.time()
     except Exception:
-        # On failure keep stale cache (or empty if first load)
         pass
 
     return _catalog_text_by_scope.get(key, "")
 
-
-# ── Main chat handler ─────────────────────────────────────────────────────────
 
 async def chat(message: str, history: list[dict], user: dict | None = None) -> dict:
     tools, tool_server_map, catalog = await assistant_tool_gate.build_tools(user)

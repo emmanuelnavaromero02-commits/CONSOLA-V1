@@ -30,9 +30,6 @@ services:
     environment:
       - WG_HOST=${vpn_public_ip}
       - PASSWORD_HASH=${vpn_password_hash}
-      # Split tunnel: solo enrutar tráfico hacia la VPC (10.0.0.0/16) y la red
-      # WG interna (10.8.0.0/24) por el tunnel. El resto va por el ISP normal
-      # del usuario. DNS vacío para no sobreescribir el del cliente.
       - WG_DEFAULT_DNS=
       - WG_ALLOWED_IPS=10.0.0.0/16,10.8.0.0/24
       - WG_PERSISTENT_KEEPALIVE=25

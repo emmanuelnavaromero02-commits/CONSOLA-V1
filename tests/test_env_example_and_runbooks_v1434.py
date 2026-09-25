@@ -1,17 +1,3 @@
-"""Sprint v1.43.4 — config polish guards.
-
-Static guards for the config polish that v1.43.4 landed:
-
-  * .gitignore excludes the ad-hoc ``infra/.env.backup*`` family so
-    a stray ``git add -A`` after a secret rotation doesn't leak the
-    rotation trail.
-  * scripts/cleanup_env_backups.sh is executable, idempotent, and
-    refuses to overwrite existing backups.
-  * infra/.env.example documents BOOTSTRAP_ADMIN_EMAIL / _PASSWORD /
-    _NAME so the first-boot flow works without silent failure.
-  * infra/sync_dag_sources.py is gone — it was dead code with no
-    callers.
-"""
 from __future__ import annotations
 
 import os
@@ -23,26 +9,18 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 
 
-# ── .gitignore + cleanup script ─────────────────────────────────
-
-
 def _gitignore() -> str:
     return (REPO / ".gitignore").read_text(encoding="utf-8")
 
 
 def test_gitignore_excludes_env_backups():
     src = _gitignore()
-    # Two flavours: the literal infra/.env.backup* path and a
-    # **/.env.backup* glob for any nested copy.
     assert "infra/.env.backup" in src
     assert "infra/.env.backup-*" in src
     assert "**/.env.backup" in src
 
 
 def test_no_env_backup_files_currently_tracked_by_git():
-    """If someone already committed a backup before this hotfix
-    landed, `git ls-files` would surface it. Catch the case where
-    the .gitignore addition arrived too late."""
     import subprocess
     result = subprocess.run(
         ["git", "ls-files"],
@@ -52,7 +30,6 @@ def test_no_env_backup_files_currently_tracked_by_git():
         check=False,
     )
     if result.returncode != 0:
-        # Not a git repo in this sandbox — skip rather than fail.
         return
     tracked = result.stdout.splitlines()
     offenders = [
@@ -74,20 +51,15 @@ def test_cleanup_env_backups_script_exists_and_executable():
         "scripts/cleanup_env_backups.sh must be executable (chmod +x)"
     )
     src = script.read_text(encoding="utf-8")
-    # Defensive guards that justify reading this file:
     assert "set -euo pipefail" in src, (
         "cleanup_env_backups.sh must use strict bash mode"
     )
     assert "chmod 600" in src, (
         "moved backups must be locked down to owner-only read"
     )
-    # Idempotency: the script must refuse to overwrite an existing dest.
     assert "already exists" in src, (
         "cleanup_env_backups.sh must refuse to overwrite existing backups"
     )
-
-
-# ── BOOTSTRAP_ADMIN in .env.example ────────────────────────────
 
 
 def _env_example() -> str:
@@ -233,13 +205,6 @@ def test_env_example_documents_superset_previous_secret_key():
 
 
 def test_local_superset_bootstrap_does_not_force_https_on_http_port():
-    """Local compose exposes Superset over HTTP on :8088.
-
-    If bootstrap emits HTTPS-forcing cookies/Talisman flags here, the UI
-    redirects http://localhost:8088 to https://localhost:8088 even though
-    the local container is not serving TLS. That breaks the E2E Superset
-    reachability and Studio "Abrir Superset" checks.
-    """
     for label, src in {
         "infra/.env.example": _env_example(),
         "infra/bootstrap.sh": _bootstrap_sh(),
@@ -253,9 +218,6 @@ def test_local_superset_bootstrap_does_not_force_https_on_http_port():
 
 
 def test_env_example_bootstrap_admin_block_warns_against_committing():
-    """The placeholder values in .env.example are deliberately weak.
-    The surrounding comment must remind operators to rotate before
-    boot AND to remove the variables after first login."""
     src = _env_example()
     block_match = re.search(
         r"#\s*===\s*Bootstrap admin.*?(?=#\s*===|\Z)",
@@ -272,12 +234,7 @@ def test_env_example_bootstrap_admin_block_warns_against_committing():
     )
 
 
-# ── Dead code removed ──────────────────────────────────────────
-
-
 def test_sync_dag_sources_dead_code_removed():
-    """infra/sync_dag_sources.py was dead — no Makefile / workflow /
-    runbook ever invoked it; v1.43.4 deletes it."""
     legacy = REPO / "infra/sync_dag_sources.py"
     assert not legacy.exists(), (
         f"{legacy} should have been removed in v1.43.4"

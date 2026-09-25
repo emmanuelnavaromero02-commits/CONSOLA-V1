@@ -1,12 +1,3 @@
-"""A1 — the SF foundation cycle must schedule itself on any install.
-
-Diagnosis pinned by these tests: the whole automatic cycle already existed
-(entity_scheduler -> sap_successfactors_extract_all -> Bronze -> Silver ->
-Gold foundation + employees_anomalies -> Control Room); what was missing is a
-scheduler-eligible entity_config row pointing at the cycle DAG. 99k/99l only
-flip per-entity rows for a hardcoded FEMSA scope (a no-op everywhere else),
-and those point at sap_successfactors_extract, which never reaches Gold.
-"""
 from __future__ import annotations
 
 import re
@@ -52,9 +43,6 @@ def test_migration_schedules_the_cycle_dag_not_per_entity_extract():
 
 
 def test_migration_resolves_scope_from_server_state_never_hardcoded():
-    """99k/99l died because they hardcoded the FEMSA tenant/workspace UUIDs.
-    The repair must resolve scope from installations / bootstrap names and
-    no-op cleanly when neither exists."""
     sql = MIGRATION.read_text(encoding="utf-8")
     assert not re.search(
         r"'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'", sql
@@ -65,11 +53,6 @@ def test_migration_resolves_scope_from_server_state_never_hardcoded():
 
 
 def test_foundation_templates_bound_only_under_local_convention():
-    """The live run showed the plan skipping every foundation entity with
-    'scope_mismatch': templates carry a production connection id and no
-    scope. The repair binds them to the local scope + 'default' connection,
-    but ONLY when the resolved workspace is the dev bootstrap convention —
-    a production install keeps its rows untouched."""
     sql = MIGRATION.read_text(encoding="utf-8")
     guard = sql.find("IF COALESCE(local_scope, FALSE) THEN")
     update = sql.find("SET connection_id = 'default'")
@@ -85,9 +68,6 @@ def test_foundation_templates_bound_only_under_local_convention():
 
 
 def test_dev_bootstrap_reseeds_after_workspace_exists():
-    """On a fresh install infra/init runs before any workspace exists, so the
-    bootstrap (which creates the dev workspace + installations) must re-run
-    the seeding function afterwards."""
     sql = BOOTSTRAP.read_text(encoding="utf-8")
     call = sql.find("seed_sap_successfactors_cycle_schedule")
     installs = sql.find("INSERT INTO cartridge_installations")
@@ -104,9 +84,6 @@ def test_plan_skips_pseudo_entities():
 
 
 def test_cycle_transitions_land_in_pipeline_runs():
-    """Each cycle leaves a ledger timeline in pipeline_runs: per-entity
-    'extracted' saves already existed; the Gold and anomaly-signal
-    transitions must be recorded from the same helper."""
     src = EXTRACT_ALL.read_text(encoding="utf-8")
     assert '"transition": "gold_materialized"' in src
     assert '"transition": "anomalies_detected"' in src
@@ -121,10 +98,6 @@ def test_cycle_transitions_land_in_pipeline_runs():
 
 
 def test_scheduler_fired_cycle_builds_signed_admission_context():
-    """entity_scheduler conf carries scope but no pre-signed context; the
-    admission task must self-sign from conf (same path extraction uses)
-    instead of refusing every scheduler-fired run. Absent scope must still
-    fail closed."""
     src = EXTRACT_ALL.read_text(encoding="utf-8")
     fn = re.search(
         r"def authorize_refresh_chain\(.*?\n(?=\s*@task)", src, re.DOTALL
@@ -141,14 +114,6 @@ def test_scheduler_fired_cycle_builds_signed_admission_context():
 
 
 def test_vault_reveal_fields_are_flattened():
-    """Third live finding: the Console reveal nests credentials under
-    'fields' while every consumer reads the payload flat; with an explicit
-    conn_id there is no env fallback, so extraction failed CONFIG_INCOMPLETE
-    despite a successful reveal. The client must lift 'fields' to the top
-    level, with top-level identity keys winning on collision."""
-    # Executed from source: importing the cartridge's vault_client pulls its
-    # settings (DATABASE_URL) and collides with the console 'app' package on
-    # sys.path, so the pure function is isolated instead.
     src = (
         REPO_ROOT / "cartridges" / "sap_successfactors" / "app" / "core"
         / "vault_client.py"
@@ -175,11 +140,6 @@ def test_vault_reveal_fields_are_flattened():
 
 
 def test_airflow_materializes_via_runtime_envelope():
-    """Refinement only admits source=airflow contexts through the
-    purpose-bound hmac-v2 runtime validation, so both the per-entity silver
-    refresh and the gold sweep must take the /mcp/invoke materialize route
-    (build_materialize_context) when running under the airflow key; the
-    cartridge-container v1 path stays as-is."""
     src = (
         REPO_ROOT / "cartridges" / "sap_successfactors" / "app" / "core"
         / "refinement_triggers.py"
@@ -206,9 +166,6 @@ def test_control_room_shows_freshness():
     assert "latestObservedAt(experience)" in page
 
 
-# ── A2: per-client connection + cadence ──────────────────────────────────────
-
-
 def _a2_sql() -> str:
     return A2_MIGRATION.read_text(encoding="utf-8")
 
@@ -219,9 +176,6 @@ def _reconciler_body(sql: str) -> str:
 
 
 def test_a2_marker_and_templates_bound_to_config_connection():
-    """(a) The marker and the 14 foundation templates take connection, cron,
-    target and scope from the ACTIVE cartridge_cycle_config row — no
-    hardcoded 'default' anywhere in the binding paths."""
     body = _reconciler_body(_a2_sql())
     bind = body[body.index("UPDATE public.entity_config"):]
     assert "connection_id = cfg.connection_id" in bind
@@ -234,9 +188,6 @@ def test_a2_marker_and_templates_bound_to_config_connection():
 
 
 def test_a2_missing_credential_disables_the_cycle():
-    """(b) A config whose credential is absent from vault_entries seeds the
-    marker DISABLED and returns before binding any template — never an
-    empty scheduled run."""
     body = _reconciler_body(_a2_sql())
     gate = body.index("IF NOT has_credential")
     disabled = body.index("esperando credencial")
@@ -252,8 +203,6 @@ def test_a2_missing_credential_disables_the_cycle():
 
 
 def test_a2_cadence_comes_from_config_not_a_literal():
-    """(c) The marker upsert honours cartridge_cycle_config.cron_expression;
-    the only '*/15' literals are the column default and the dev fallback."""
     sql = _a2_sql()
     body = _reconciler_body(sql)
     marker = body[body.index("'__foundation_cycle__'"):]
@@ -266,10 +215,6 @@ def test_a2_cadence_comes_from_config_not_a_literal():
 
 
 def test_a2_dev_path_unchanged():
-    """(d) Default Tenant / Main Workspace with connection 'default' keeps
-    A1's behaviour: bootstrap seeds the config row, the reconciler skips the
-    credential gate there (a fresh install has no credential yet), and the
-    production 'any ready install' auto-activation is gone."""
     sql = _a2_sql()
     body = _reconciler_body(sql)
     assert "'Default Tenant'" in body and "'Main Workspace'" in body
@@ -288,9 +233,6 @@ def test_a2_dev_path_unchanged():
 
 
 def test_a2_only_foundation_templates_are_rebound():
-    """(e) The rebind touches exactly the 14 foundation entities; FEMSA's
-    other scheduled rows (PerEmail, PaymentInformationDetailV3,
-    EmpEmploymentTermination) are outside the list and stay untouched."""
     body = _reconciler_body(_a2_sql())
     bind = body[body.index("UPDATE public.entity_config"):]
     for femsa_only in ("PerEmail", "PaymentInformationDetailV3", "EmpEmploymentTermination"):
@@ -315,15 +257,12 @@ def test_a2_rls_matches_house_boundaries():
 
 
 def test_a2_migration_sorts_after_a1():
-    """(f) 99zzzza must apply strictly after 99zzzz on fresh installs."""
     assert A2_MIGRATION.name > MIGRATION.name
     assert A2_MIGRATION.name > "99zzz_workspace_decision_idempotency.sql"
     sql = _a2_sql()
     assert "99zzzza_sap_successfactors_cycle_config.sql" in sql
     assert "INSERT INTO schema_migrations" in sql
 
-
-# ── E1 (Nine Box come): el ciclo corre el recorrido completo ────────────────
 
 E1_MIGRATION = (
     REPO_ROOT / "infra" / "init" / "99zzzzc_sap_successfactors_cycle_target_all.sql"
@@ -343,17 +282,12 @@ def _e1_sql() -> str:
 
 
 def test_e1_cycle_target_defaults_to_all():
-    """New configs are born running the FULL journey, not just foundation."""
     sql = _e1_sql()
     assert "ALTER COLUMN target SET DEFAULT 'all'" in sql
-    # The dev self-seed inside the replaced reconciler is born 'all' too.
     assert "'*/15 * * * *', 'all', TRUE" in sql
 
 
 def test_e1_existing_foundation_configs_promoted_but_explicit_targets_kept():
-    """Rows seeded as 'foundation' before this migration are promoted; a
-    deliberately different target ('talent', or a future explicit choice)
-    is never clobbered."""
     sql = _e1_sql()
     update = sql[sql.index("UPDATE public.cartridge_cycle_config"):]
     update = update[: update.index(";")]
@@ -365,8 +299,6 @@ def test_e1_existing_foundation_configs_promoted_but_explicit_targets_kept():
 
 
 def test_e1_reconciler_replaced_and_rerun_forward_only():
-    """99zzzz/99zzzza stay sealed: the change lands as a CREATE OR REPLACE in
-    a NEW migration that re-runs the reconciler to propagate dag_params."""
     sql = _e1_sql()
     assert "CREATE OR REPLACE FUNCTION public.seed_sap_successfactors_cycle_schedule()" in sql
     assert "SELECT public.seed_sap_successfactors_cycle_schedule();" in sql
@@ -379,9 +311,6 @@ def test_e1_reconciler_replaced_and_rerun_forward_only():
 
 
 def test_e1_credential_gate_and_scope_resolution_survive_the_replace():
-    """The A2 invariants must remain byte-alive in the replaced body: missing
-    credential -> DISABLED marker (RETURN 2), scope from server state, only
-    the 14 foundation templates rebound."""
     sql = _e1_sql()
     assert "RETURN 2" in sql
     assert "vault_entries" in sql
@@ -394,9 +323,6 @@ def test_e1_credential_gate_and_scope_resolution_survive_the_replace():
 
 
 def test_e1_target_all_reaches_the_talent_cascade():
-    """target=all must route foundation + the WB-TALENTO gold order (the
-    9-box chain) plus the curated talent silver — wired in refinement_triggers
-    from the single source of truth (gold_dataset_orders.json)."""
     import json as _json
 
     src = TRIGGERS.read_text(encoding="utf-8")
@@ -419,9 +345,6 @@ def test_e1_target_all_reaches_the_talent_cascade():
 
 
 def test_e1_nine_box_stays_fail_closed_no_proxies():
-    """The cycle now feeds the 9-box, but the doctrine is untouched: without
-    observed performance/competency/aspiration the chain keeps
-    insufficient_data — it never fabricates proxies."""
     nine = (
         REPO_ROOT / "cartridges" / "sap_successfactors" / "datasets"
         / "sap_successfactors_talent_9box.sql"
@@ -434,8 +357,6 @@ def test_e1_nine_box_stays_fail_closed_no_proxies():
     assert "insufficient_data" in cpa
 
 
-# ── E2 (9-box con datos): el ciclo reata tambien las entidades de talento C/P/A
-
 E2_MIGRATION = (
     REPO_ROOT / "infra" / "init"
     / "99zzzzd_sap_successfactors_cycle_talent_rebind.sql"
@@ -447,18 +368,13 @@ def _e2_sql() -> str:
 
 
 def test_e2_reconciler_rebinds_talent_cpa_entities_to_active_config():
-    """Las 6 entidades fuente de C/P/A se reatan a la conexion ACTIVA (igual
-    que fundacion), para que el ciclo deje de saltarlas con scope_mismatch y
-    el 9-box pueda pintar cuando el tenant expone calificaciones."""
     sql = _e2_sql()
-    # Segundo UPDATE de entity_config (ademas del de fundacion), con el set C/P/A.
     assert sql.count("UPDATE public.entity_config ec") == 2
     for entity in (
         "'PerformanceReview'", "'UserSkill'", "'CompetencyEntity'",
         "'DevGoal'", "'SkillProfile'", "'WorkerCompetencyAssessment'",
     ):
         assert entity in sql, entity
-    # Se atan a la MISMA conexion activa que fundacion (cfg.connection_id).
     talent_block = sql.split("'PerformanceReview'", 1)[0].rsplit(
         "UPDATE public.entity_config ec", 1
     )[1] + sql.split("'PerformanceReview'", 1)[1].split(";", 1)[0]
@@ -466,8 +382,6 @@ def test_e2_reconciler_rebinds_talent_cpa_entities_to_active_config():
 
 
 def test_e2_does_not_touch_other_client_entities():
-    """Acotado: NO reata compensacion/terminacion/sucesion/aprendizaje —
-    solo las 6 que alimentan el 9-box."""
     sql = _e2_sql()
     for forbidden in (
         "'EmpCompensation'", "'EmpEmploymentTermination'", "'SuccessionNomination'",
@@ -483,5 +397,4 @@ def test_e2_forward_only_and_registers():
     assert E2_MIGRATION.name > "99zzzzc_sap_successfactors_cycle_target_all.sql"
     assert "99zzzzd_sap_successfactors_cycle_talent_rebind.sql" in sql
     assert "INSERT INTO schema_migrations" in sql
-    # Invariantes A2 vivos en la funcion reemplazada.
     assert "RETURN 2" in sql and "vault_entries" in sql

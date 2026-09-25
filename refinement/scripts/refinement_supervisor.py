@@ -112,7 +112,6 @@ def supervise(command: list[str]) -> int:
     runtime = Path(SOCKET_PATH).parent
     runtime.mkdir(parents=True, exist_ok=True)
     os.chown(runtime, verifier_uid, verifier_gid)
-    # Only the private app/verifier group may traverse and create the IPC socket.
     os.chmod(runtime, 0o770)  # nosec B103
 
     spill = Path(SPILL_DIR)

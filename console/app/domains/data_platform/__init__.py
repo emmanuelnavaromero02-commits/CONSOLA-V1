@@ -1,2 +1,2 @@
-"""Data platform domain helpers."""
+pass
 

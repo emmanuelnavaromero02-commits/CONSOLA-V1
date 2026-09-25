@@ -1,11 +1,4 @@
 #!/usr/bin/env bash
-# Hydrate the GCP runtime secrets into one Docker Compose env file.
-#
-# The complete secret set is fetched and validated before the destination is
-# touched.  The final rewrite uses os.replace(2), so readers see either the old
-# environment or the complete new environment, never a mixed credential pair.
-# OMEGA_SECRET_HYDRATION_MODE=check fetches and validates the full set without
-# creating a temporary file or touching OMEGA_ENV_FILE.
 set -Eeuo pipefail
 set +x
 umask 077
@@ -84,8 +77,6 @@ load_required_secret() {
   printf -v "${variable_name}" '%s' "${value}"
 }
 
-# Fetch every value first.  In particular, neither half of the HMAC pair is
-# written if its partner is missing or invalid.
 load_required_secret control_room_evidence_signing_key_id control_room_key_id
 load_required_secret control_room_evidence_signing_key control_room_key
 load_required_secret control_room_evidence_signing_previous_keys control_room_previous_keys
@@ -109,11 +100,6 @@ append_update CONTROL_ROOM_EVIDENCE_SIGNING_PREVIOUS_KEYS "${control_room_previo
 append_update GCS_ACCESS_KEY_ID "${gcs_access_key_id}"
 append_update GCS_SECRET_ACCESS_KEY "${gcs_secret_access_key}"
 
-# Provider aliases stay empty. GCP workloads resolve only the exact GCS names.
-# MINIO_* is deliberately left untouched: the base Compose file interpolates
-# those values for its isolated local MinIO service before the GCP override is
-# merged. The GCP override passes literal empty MINIO_* values to application
-# containers, so these local credentials never become lakehouse credentials.
 for alias_name in \
   LAKEHOUSE_ACCESS_KEY LAKEHOUSE_SECRET_KEY \
   GOOGLE_HMAC_ACCESS_KEY_ID GOOGLE_HMAC_SECRET_ACCESS_KEY \

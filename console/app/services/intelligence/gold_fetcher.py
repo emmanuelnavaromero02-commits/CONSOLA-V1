@@ -83,7 +83,6 @@ def _gold_cache_set(key: _CacheKey, rows: list[dict[str, Any]]) -> list[dict[str
 def clear_gold_row_cache(
     tenant_id: str | None = None, workspace_id: str | None = None
 ) -> None:
-    """Clear cached Gold reads after sync/materialization updates."""
     tenant_text = str(tenant_id or "").strip()
     workspace_text = str(workspace_id or "").strip()
     if not tenant_text and not workspace_text:
@@ -110,12 +109,6 @@ def clear_gold_row_cache(
 async def query_gold_dataset_rows(
     dataset: str, user: dict | None, limit: int = 5000
 ) -> list[dict[str, Any]]:
-    """Read workspace-scoped Gold rows directly for intelligence runs.
-
-    Refinement can still serve datasets for legacy flows, but the intelligence
-    readiness gate verifies Gold tables directly. This fetcher keeps the run path
-    aligned with that gate and refuses unscoped Gold reads for authenticated users.
-    """
     dsn = _gold_dsn()
     if not dsn:
         raise HTTPException(503, "gold database unavailable")
@@ -125,12 +118,6 @@ async def query_gold_dataset_rows(
         raise HTTPException(
             403, "gold dataset requires complete tenant/workspace scope"
         )
-    # F12: this cap protects PREVIEW/ROSTER row reads only — it must never be
-    # the source of a population total. Counts and totals aggregate in SQL via
-    # successfactors_talent_population / successfactors_active_headcount /
-    # successfactors_gold_headcount, which are cap-free by construction.
-    # Raising this number is a band-aid that trades silent under-counting for
-    # unbounded memory; add an aggregate instead.
     safe_limit = max(1, min(int(limit or 5000), 5000))
     conn = await asyncpg.connect(dsn, command_timeout=10)
     try:
@@ -214,10 +201,6 @@ async def query_gold_dataset_rows(
 
 
 def _population_max_rows() -> int:
-    """Techo operativo de lectura poblacional (E3). No es un cap de negocio:
-    cuando se alcanza, el run se declara PARCIAL con los conteos exactos —
-    jamas truncamiento silencioso. Subirlo es una decision de capacidad de
-    memoria del nodo, no de correccion."""
     import os
 
     try:
@@ -230,17 +213,6 @@ def _population_max_rows() -> int:
 async def query_gold_dataset_population(
     dataset: str, user: dict | None
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """E3 — lectura poblacional COMPLETA con manifiesto exacto (sin cap de 5.000).
-
-    A diferencia de query_gold_dataset_rows (preview, cap 5.000 por doctrina
-    F12), esta ruta es la CERTIFICADA para el motor de senales: cuenta la
-    poblacion total en SQL dentro del MISMO snapshot (repeatable_read) y lee
-    todas las filas por lotes via cursor. Devuelve (rows, manifest) donde el
-    manifiesto declara la cuadratura: population_total exacto, rows_fetched,
-    complete, y el techo operativo si aplico. Fail-closed: si la lectura
-    completa no cuadra con el COUNT del mismo snapshot, truena — jamas un
-    parcial disfrazado de completo.
-    """
     dsn = _gold_dsn()
     if not dsn:
         raise HTTPException(503, "gold database unavailable")
@@ -313,7 +285,6 @@ async def query_gold_dataset_population(
                     break
                 rows.extend(dict(record) for record in batch)
             if not truncated and len(rows) != population_total:
-                # Mismo snapshot: esto solo puede ser un bug de cuadratura.
                 raise HTTPException(
                     500,
                     f"population accounting mismatch for {dataset}: "
@@ -340,5 +311,4 @@ async def query_gold_dataset_population(
 async def query_intelligence_dataset_rows(
     dataset: str, user: dict | None, limit: int = 5000
 ) -> list[dict[str, Any]]:
-    """Read Intelligence only from the scoped, published Gold head."""
     return await query_gold_dataset_rows(dataset, user, limit)

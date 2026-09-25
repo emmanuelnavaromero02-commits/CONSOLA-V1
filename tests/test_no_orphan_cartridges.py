@@ -1,11 +1,3 @@
-"""Sprint v1.32 — only deployed/self-contained cartridges should remain.
-
-Sprint v1.40 reversed the v1.32 deletion of the Replicon cartridge:
-the cartridge is restored from the original ZIP and ships its own
-service in compose, with DAGs bind-mounted into Airflow alongside
-the SAP cartridges. The two assertions in this file were rewritten
-to reflect the new shape.
-"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -17,12 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_replicon_cartridge_restored_with_dags_inside_cartridge():
-    """v1.40: Replicon cartridge restored. Its DAGs ship inside the
-    cartridge (cartridges/replicon/dags/), not as zombie copies in
-    airflow/dags/."""
     assert (ROOT / "cartridges/replicon").is_dir()
     assert (ROOT / "cartridges/replicon/dags/replicon_extract.py").is_file()
-    # The pre-v1.40 zombie copies in airflow/dags/ must be gone.
     assert not (ROOT / "airflow/dags/replicon_extract.py").exists()
     assert not (ROOT / "airflow/dags/replicon_extract_all.py").exists()
 

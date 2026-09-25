@@ -1,5 +1,3 @@
-"""Read the scoped, server-owned Talent benchmark approval ledger."""
-
 from __future__ import annotations
 
 import os
@@ -32,7 +30,6 @@ async def resolve_benchmark_approval_authority(
     workspace_id: str,
     materialization_head: str,
 ) -> dict[tuple[str, str], dict[str, Any]]:
-    """Return only an exact approved ledger row; absence/errors fail closed."""
     dsn = _console_dsn()
     if not dsn or not tenant_id or not workspace_id or not materialization_head:
         return {}

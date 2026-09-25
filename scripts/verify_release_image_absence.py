@@ -62,7 +62,7 @@ STRICT_RELEASE_TAG = re.compile(
 
 
 class ImageAbsenceError(RuntimeError):
-    """GHCR did not provide unambiguous evidence of tag absence."""
+    pass
 
 
 @dataclass(frozen=True)
@@ -272,7 +272,6 @@ def verify_release_image_tags_absent(
     timeout: float = 15.0,
     fetcher: Fetcher = _fetch_bytes,
 ) -> tuple[str, str]:
-    """Return both exact references only after structured absence is proven."""
 
     owner, service, source_sha, release_tag = _validate_identity(
         owner=owner,

@@ -1,4 +1,3 @@
-"""Sprint v1.45 cúspide — watchdog_registry tests."""
 from __future__ import annotations
 
 import asyncio
@@ -22,10 +21,6 @@ def wd_mod():
         if name == "app" or name.startswith("app."):
             del sys.modules[name]
     from app.services import watchdog_registry as mod
-    # Module-level caches (_list_cache here, _table_cache in
-    # _copilot_helpers) are process-global by design. Reset them at the
-    # start of every test so cross-file run order can't leak a cached
-    # row list or table-presence flag into this test.
     from app.services._copilot_helpers import reset_table_cache
     reset_table_cache()
     mod.invalidate_list_cache()
@@ -37,13 +32,10 @@ def test_clean_string_list_normalises(wd_mod):
         ["Margen", " MARGEN", "rentabilidad", None, "", "x" * 200],
         max_count=10, max_len=64,
     )
-    # dedup + lower
     assert "margen" in out
     assert "rentabilidad" in out
-    assert out.count("margen") == 1  # second " MARGEN" deduped
-    # blanks / None dropped
+    assert out.count("margen") == 1
     assert "" not in out
-    # cap respected
     assert all(len(s) <= 64 for s in out)
 
 
@@ -74,9 +66,6 @@ def test_score_watchdog_partial_overlap(wd_mod):
     wd = {"intent_keywords": ["margen", "cartera", "billable"]}
     score = wd_mod._score_watchdog(wd, {"margen"})
     assert 0 < score < 1
-
-
-# ── DB-mocked behaviour ──────────────────────────────────────────────
 
 
 class FakeRecord(dict):
@@ -163,14 +152,13 @@ def test_register_watchdog_rejects_invalid_risk(wd_mod, monkeypatch):
     fake._fetchrow_queue = [FakeRecord(id="x")]
     monkeypatch.setattr(wd_mod.auth, "pool", AsyncMock(return_value=fake))
 
-    # risk_level falls back to 'read' silently
     out = asyncio.run(
         wd_mod.register_watchdog(
             cartridge_id="c", slug="s", name="n",
             risk_level="WILD",
         )
     )
-    assert out == "x"  # didn't raise
+    assert out == "x"
 
 
 def test_relevant_watchdogs_ranks_by_overlap(wd_mod, monkeypatch):
@@ -200,57 +188,44 @@ def test_relevant_watchdogs_ranks_by_overlap(wd_mod, monkeypatch):
 
 
 def test_list_watchdogs_caches_within_ttl(wd_mod, monkeypatch):
-    """The list cache lives in module state. Two calls in quick
-    succession must NOT issue a second SELECT against pool.fetch.
-    """
     from app.services._copilot_helpers import reset_table_cache
     reset_table_cache()
     wd_mod.invalidate_list_cache()
     fake = FakePool()
-    fake._fetchval_queue = ["copilot_watchdogs"]  # has_table on first call
-    fake._fetch_queue = [[]]                        # one fetch only
+    fake._fetchval_queue = ["copilot_watchdogs"]
+    fake._fetch_queue = [[]]
     monkeypatch.setattr(wd_mod.auth, "pool", AsyncMock(return_value=fake))
 
     a = asyncio.run(wd_mod.list_watchdogs())
     b = asyncio.run(wd_mod.list_watchdogs())
 
     assert a == b == []
-    # The second list_watchdogs call hit the in-process cache; the
-    # FakePool's fetch queue therefore still has zero remaining items.
     assert fake._fetch_queue == []
 
 
 def test_register_watchdog_invalidates_cache(wd_mod, monkeypatch):
-    """After register, the cached list_watchdogs result must be dropped
-    so the new row is observable on the next list call. We assert by
-    checking that the *list* cache is empty post-register; the
-    table-existence cache lives separately in _copilot_helpers.
-    """
     from app.services._copilot_helpers import reset_table_cache
     reset_table_cache()
     wd_mod.invalidate_list_cache()
     fake = FakePool()
-    fake._fetchval_queue = ["copilot_watchdogs"]  # one is enough — cached after
+    fake._fetchval_queue = ["copilot_watchdogs"]
     fake._fetchrow_queue = [FakeRecord(id="abc")]
     fake._fetch_queue = [[]]
     monkeypatch.setattr(wd_mod.auth, "pool", AsyncMock(return_value=fake))
 
-    # Pre-warm the list cache with a dummy entry so we can verify the
-    # register call drops it.
     wd_mod._list_cache[(None, True, wd_mod._MAX_LIST_LIMIT)] = (
         99999999.0, [{"id": "stale"}],
     )
     asyncio.run(
         wd_mod.register_watchdog(cartridge_id="c", slug="s", name="n")
     )
-    # Post-register, the stale list-cache entry must be gone.
     assert (None, True, wd_mod._MAX_LIST_LIMIT) not in wd_mod._list_cache
 
 
 def test_invoke_watchdog_handles_missing(wd_mod, monkeypatch):
     fake = FakePool()
     fake._fetchval_queue = ["copilot_watchdogs"]
-    fake._fetchrow_queue = [None]  # get_watchdog returns nothing
+    fake._fetchrow_queue = [None]
     monkeypatch.setattr(wd_mod.auth, "pool", AsyncMock(return_value=fake))
 
     out = asyncio.run(

@@ -1,5 +1,3 @@
-"""Schema request orchestration helpers."""
-
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable

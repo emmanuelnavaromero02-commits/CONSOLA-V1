@@ -32,7 +32,6 @@ def test_compose_resolves_private_env_only_for_console(
     private = tmp_path / "custom-evidence.env"
     monkeypatch.setenv("S3_BUCKET_NAME", "")
     env = os.environ.copy()
-    # Shell values outrank --env-file; ignore the empty local bootstrap value.
     env.pop("S3_BUCKET_NAME", None)
     env.pop("MODECISSIONS_CONTROL_ROOM_EVIDENCE_ENV_FILE", None)
     env["AWS_ENV_FILE"] = str(shared)
@@ -83,7 +82,6 @@ def test_compose_resolves_private_env_only_for_console(
     } == evidence_values
 
     raw = yaml.safe_load(AWS_COMPOSE.read_text(encoding="utf-8"))
-    # Post-split: console loads only the private evidence env_file.
     assert [item["required"] for item in raw["services"]["console"]["env_file"]] == [True]
     assert not EVIDENCE_NAMES & raw["services"]["console"].get("environment", {}).keys()
     assert "MODECISSIONS_CONTROL_ROOM_EVIDENCE_ENV_FILE" not in (

@@ -1,8 +1,4 @@
 #!/bin/bash
-# Apply infra/init migrations against an existing AWS Postgres volume.
-#
-# Docker's /docker-entrypoint-initdb.d only runs when the data directory is
-# empty. This script is the upgrade path for long-lived EC2 volumes.
 set -euo pipefail
 
 if [ "${EUID:-$(id -u)}" -ne 0 ]; then

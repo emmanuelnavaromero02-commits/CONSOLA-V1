@@ -1,4 +1,3 @@
-
 \set ON_ERROR_STOP on
 
 SELECT COUNT(*) > 0 AS sap_b1_seeded

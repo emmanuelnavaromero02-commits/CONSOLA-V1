@@ -21,8 +21,6 @@ try:
         ).fetchall()
     )
     assert installed == {"aws": True, "httpfs": True}
-    # Native AWS support is preloaded in the image but remains unloaded for
-    # local MinIO/GCS/static-key runtimes.
     assert "aws" not in {
         str(row[0])
         for row in connection.execute(

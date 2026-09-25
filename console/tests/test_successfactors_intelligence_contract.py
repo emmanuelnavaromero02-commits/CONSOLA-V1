@@ -1,11 +1,3 @@
-"""Fase 2A — SuccessFactors talent intelligence contract (Familia 1).
-
-Validates that the packaged SF intelligence contract binds the monthly-cohort
-time-series datasets and that Monte Carlo (derived mode) runs on real-shaped
-monthly history. Attrition is intentionally NOT a signal metric (see the contract
-note) — it stays a dataset/KPI — so it must be absent from the contract metrics.
-"""
-
 from __future__ import annotations
 
 import pathlib
@@ -42,7 +34,6 @@ def test_sf_contract_loads_binds_datasets_and_validates():
     contract = _contract()
     assert contract["cartridge"] == "sap_successfactors"
     metrics = {m["id"]: m for m in contract["metrics"]}
-    # Familia 1 signal metrics present and bound to the monthly-cohort datasets.
     assert set(metrics) == {
         "talent_headcount_by_cohort",
         "talent_avg_tenure_by_cohort",
@@ -54,10 +45,7 @@ def test_sf_contract_loads_binds_datasets_and_validates():
     for m in contract["metrics"]:
         assert m["time_field"] == "snapshot_month"
         assert m["entity"]["id_field"] == "cohort_id"
-        validate_metric(contract, m)  # raises if the 5 required fields are missing
-    # Attrition uses high materiality thresholds so sparse Poisson data stays quiet
-    # (fires only on materially large shifts); it is contracted so it never falls to
-    # the generic fallback.
+        validate_metric(contract, m)
     att = metrics["talent_attrition_rate_by_cohort"]
     assert att["expected_behavior"] == "watch"
     assert att["signal_rules"]["warning_pct"] >= 2.0
@@ -81,8 +69,6 @@ def _headcount_series(cohort_id: str, values: list[int]) -> list[dict]:
 
 @pytest.mark.asyncio
 async def test_mc_derived_runs_on_monthly_headcount_trend(monkeypatch):
-    # A cohort stable at ~200 then jumping +30% in the latest month must emit an
-    # observed signal whose Monte Carlo ran in derived mode over the real history.
     series = _headcount_series("D1", [200, 201, 199, 202, 200, 203, 201, 200, 202, 201, 200, 260])
     monkeypatch.setattr(
         intelligence_engine,
@@ -115,7 +101,6 @@ async def test_mc_derived_runs_on_monthly_headcount_trend(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_stable_series_produces_no_false_signals(monkeypatch):
-    # A flat/stable workforce must NOT fabricate anomaly signals (honest quiet).
     series = _headcount_series("D2", [200, 200, 201, 200, 199, 200, 201, 200, 200, 201, 200, 200])
     monkeypatch.setattr(
         intelligence_engine,

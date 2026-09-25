@@ -1,22 +1,11 @@
 entities:
 
-  # ---------------------------------------------------------------
-  # Dimensions — full load daily
-  # ---------------------------------------------------------------
 
   - entity: User
     mode: full
     watermark_field: last_modified
     page_size: 1000
     description: "Replicon users with cost and billing rates"
-    # T2d: identidad de contacto protegida en bronze (estandar de la casa:
-    # mismo vocabulario masked/shadowed que salesforce/hubspot/sap_*).
-    # NOTA deliberada: username queda PLANO por ahora — es la llave de join
-    # (UserSkills."User Name", ResourceAllocation/TimeEntry.username) y el
-    # display de los tableros de consultores; cambiarlo a shadowed es una
-    # decision de producto del dueno (rompe la vista diaria). Las tarifas
-    # (currenthourly*) permanecen numericas: alimentan costo_consultor_mensual;
-    # con nombres/email enmascarados quedan pseudonimizadas.
     protection:
       firstname: masked
       lastname: masked
@@ -51,9 +40,6 @@ entities:
     page_size: 1000
     description: "Activities / work codes"
 
-  # ---------------------------------------------------------------
-  # Projects — incremental by last_modified
-  # ---------------------------------------------------------------
 
   - entity: Project
     mode: incremental
@@ -61,9 +47,6 @@ entities:
     page_size: 1000
     description: "Projects with budget, status and date range"
 
-  # ---------------------------------------------------------------
-  # Time — incremental by date
-  # ---------------------------------------------------------------
 
   - entity: TimeEntry
     mode: incremental
@@ -78,9 +61,6 @@ entities:
     page_size: 2000
     description: "Timesheets with period, user and approval status"
 
-  # ---------------------------------------------------------------
-  # Expenses — incremental
-  # ---------------------------------------------------------------
 
   - entity: ExpenseEntry
     mode: incremental
@@ -89,9 +69,6 @@ entities:
     page_size: 2000
     description: "Expense entries with amount, category and billable flag"
 
-  # ---------------------------------------------------------------
-  # Resources — full load daily
-  # ---------------------------------------------------------------
 
   - entity: ResourceAllocation
     mode: full
@@ -108,9 +85,6 @@ entities:
     page_size: 2000
     description: "Project team members"
 
-  # ---------------------------------------------------------------
-  # Financial — incremental
-  # ---------------------------------------------------------------
 
   - entity: BillingItem
     mode: incremental

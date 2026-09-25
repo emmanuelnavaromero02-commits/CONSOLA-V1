@@ -9,12 +9,8 @@ from app.services.parquet_service import write_parquet_and_upload
 from app.services.runlog_service import create_run, fail_run, finish_run
 from app.services.watermark_service import get_watermark, update_watermark
 
-# Flush to Parquet every N rows — keeps memory bounded for large tables
 BATCH_SIZE = 10_000
 
-# Safety buffer subtracted from the max watermark before persisting.
-# Guards against Replicon clock skew or late-arriving records.
-# The small overlap is handled gracefully by upsert on dedup key.
 WATERMARK_BUFFER_MINUTES = 5
 
 
@@ -30,13 +26,6 @@ def _apply_watermark_filter(
     watermark_field: str,
     watermark_value: str,
 ) -> list[dict[str, Any]]:
-    """
-    Client-side watermark filter for incremental loads.
-
-    Replicon's download-type extract does not support server-side date filters,
-    so we fetch the full table and filter here. For large tables configure
-    the BigQuery target instead and rely on partitioned filters there.
-    """
     return [r for r in rows if str(r.get(watermark_field, "")) > watermark_value]
 
 
@@ -45,14 +34,6 @@ def run_entity(
     from_date: str | None = None,
     to_date: str | None = None,
 ) -> dict[str, Any]:
-    """
-    Extract one Replicon entity (table) and write it to Bronze (MinIO Parquet).
-
-    Modes:
-      full        — full snapshot of the table
-      incremental — client-side filter on watermark_field > last watermark
-      historical  — triggered by explicit from_date / to_date (sets mode label)
-    """
     entity = config["entity"]
     watermark_field = config.get("watermark_field")
 
@@ -82,32 +63,21 @@ def run_entity(
     try:
         client = RepliconClient(security_context=serialized_security_context, conn_id=conn_id)
 
-        # Retrieve last watermark for incremental loads
         watermark: str | None = None
         if mode == "incremental" and watermark_field:
             watermark = get_watermark(entity)
 
-        # ------------------------------------------------------------------
-        # Extract full table from Replicon, then split into batches.
-        # The API is async (POST /extracts → poll → download CSV) so we get
-        # all rows at once; batching happens on the write side.
-        # ------------------------------------------------------------------
         all_rows = client.extract_table(entity)
 
-        # Client-side incremental filter
         if mode == "incremental" and watermark and watermark_field:
             all_rows = _apply_watermark_filter(all_rows, watermark_field, watermark)
 
-        # Optional date range filter on a date field (historical mode)
         date_field = config.get("date_field")
         if date_field and from_date:
             all_rows = [r for r in all_rows if str(r.get(date_field, "")) >= from_date]
         if date_field and to_date:
             all_rows = [r for r in all_rows if str(r.get(date_field, "")) <= to_date]
 
-        # ------------------------------------------------------------------
-        # Write in batches to avoid large single Parquet files
-        # ------------------------------------------------------------------
         storage_uri = ""
         batch_num = 0
         max_watermark: str | None = None
@@ -135,9 +105,6 @@ def run_entity(
 
         total_records = len(all_rows)
 
-        # ------------------------------------------------------------------
-        # Update watermark with safety buffer
-        # ------------------------------------------------------------------
         if mode == "incremental" and watermark_field and max_watermark:
             safe_watermark = max_watermark
             try:
@@ -148,7 +115,7 @@ def run_entity(
                     dt - timedelta(minutes=WATERMARK_BUFFER_MINUTES)
                 ).strftime("%Y-%m-%dT%H:%M:%SZ")
             except Exception:
-                pass  # use raw value if parsing fails
+                pass
 
             update_watermark(
                 entity_name=entity,

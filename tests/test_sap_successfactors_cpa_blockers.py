@@ -1,11 +1,3 @@
-"""Fase B / GATE 3 — blockers de talent_cpa_scores condicionales por componente.
-
-Antes, cpa_scores emitia el array estatico de los 3 KB
-(["KB-COMPETENCIAS blocked","KB-DESEMPENO blocked","KB-ASPIRACION blocked"]) cuando
-faltaba CUALQUIERA de C/P/A, marcando KB-DESEMPENO como bloqueado aun con
-performance_100 presente (el dato SI existe en prod). El fix lista cada KB solo si
-su score falta. NO cambia cpa_status / fit_score / 9-box / C-A / logica SAP.
-"""
 from __future__ import annotations
 
 import pathlib
@@ -18,8 +10,6 @@ CPA_SQL = (
     / "cartridges/sap_successfactors/datasets/sap_successfactors_talent_cpa_scores.sql"
 ).read_text(encoding="utf-8")
 
-# Expresion de blockers reproducida del SQL (misma logica; el test estructural de
-# abajo garantiza que el archivo no diverja de esta forma condicional).
 _BLOCKERS_EXPR = """
     CASE
       WHEN competency_100 IS NULL OR performance_100 IS NULL OR aspiration_100 IS NULL
@@ -35,7 +25,6 @@ _BLOCKERS_EXPR = """
 
 class TestBlockersStructure:
     def test_static_all_three_array_is_gone(self):
-        # El array estatico de los 3 KB no debe existir mas.
         assert '"KB-COMPETENCIAS blocked","KB-DESEMPENO blocked","KB-ASPIRACION blocked"' not in CPA_SQL
 
     def test_each_kb_is_conditional_on_its_own_score(self):
@@ -49,7 +38,6 @@ class TestBlockersStructure:
             ), f"{kb} debe estar condicionado a {score} IS NULL"
 
     def test_cpa_status_and_fit_score_unchanged(self):
-        # No tocamos cpa_status ni fit_score (siguen requiriendo los 3).
         assert "END AS cpa_status" in CPA_SQL
         assert "'insufficient_data'" in CPA_SQL
         assert "END AS fit_score" in CPA_SQL
@@ -69,7 +57,6 @@ class TestBlockersBehavior:
     def test_performance_present_never_lists_desempeno(self):
         duckdb = pytest.importorskip("duckdb")
         con = duckdb.connect()
-        # Performance presente, C/A faltantes: NO KB-DESEMPENO.
         b = self._blockers(con, None, 40.0, None)
         assert "KB-DESEMPENO blocked" not in b
         assert set(b) == {"KB-COMPETENCIAS blocked", "KB-ASPIRACION blocked"}
@@ -77,27 +64,29 @@ class TestBlockersBehavior:
     def test_only_missing_components_are_listed(self):
         duckdb = pytest.importorskip("duckdb")
         con = duckdb.connect()
-        assert self._blockers(con, 10.0, 40.0, 20.0) == []            # los 3 -> vacio
-        assert self._blockers(con, 10.0, None, 20.0) == ["KB-DESEMPENO blocked"]  # solo P falta
+        assert self._blockers(con, 10.0, 40.0, 20.0) == []
+        assert self._blockers(con, 10.0, None, 20.0) == ["KB-DESEMPENO blocked"]
         assert set(self._blockers(con, None, None, None)) == {
             "KB-COMPETENCIAS blocked", "KB-DESEMPENO blocked", "KB-ASPIRACION blocked",
         }
 
 
-# Las 4 copias del bloque de blockers deben usar el patron condicional por
-# componente y NINGUNA el array estatico de los 3 KB (anti-drift, GATE 3 Fase B).
 _REPO = pathlib.Path(__file__).resolve().parents[1]
 _BLOCKERS_SOURCES = {
     "cartridge_cpa_scores": _REPO / "cartridges/sap_successfactors/datasets/sap_successfactors_talent_cpa_scores.sql",
     "migration_99p": _REPO / "infra/init/99p_sap_successfactors_talent_datasets.sql",
     "migration_99ze": _REPO / "infra/init/99ze_sap_successfactors_talent_optional_gold_safe.sql",
-    "fallback_py": _REPO / "refinement/app/successfactors_fallbacks.py",
+    "fallback_py": _REPO / "refinement/app/successfactors_talent_core_fallbacks.py",
+}
+_STATIC_ARRAY_SOURCES = {
+    **_BLOCKERS_SOURCES,
+    "fallback_aggregator_py": _REPO / "refinement/app/successfactors_fallbacks.py",
 }
 _STATIC_ARRAY = '["KB-COMPETENCIAS blocked","KB-DESEMPENO blocked","KB-ASPIRACION blocked"]'
 
 
 class TestNoStaticArrayDivergence:
-    @pytest.mark.parametrize("name,path", list(_BLOCKERS_SOURCES.items()))
+    @pytest.mark.parametrize("name,path", list(_STATIC_ARRAY_SOURCES.items()))
     def test_static_all_three_array_absent(self, name, path):
         assert _STATIC_ARRAY not in path.read_text(encoding="utf-8"), (
             f"{name}: reintrodujo el array estatico de los 3 KB (usar patron condicional)"
@@ -106,7 +95,6 @@ class TestNoStaticArrayDivergence:
     @pytest.mark.parametrize("name,path", list(_BLOCKERS_SOURCES.items()))
     def test_desempeno_is_conditional_on_performance(self, name, path):
         text = path.read_text(encoding="utf-8")
-        # KB-DESEMPENO debe listarse solo condicionado a performance (100 o score) IS NULL.
         assert re.search(
             r"WHEN\s+performance_(100|score)\s+IS NULL\s+THEN\s+'KB-DESEMPENO blocked'", text
         ), f"{name}: KB-DESEMPENO debe condicionarse a performance IS NULL"

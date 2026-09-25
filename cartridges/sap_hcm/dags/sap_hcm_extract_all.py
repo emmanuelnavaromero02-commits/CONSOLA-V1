@@ -1,10 +1,3 @@
-"""
-sap_hcm_extract_all DAG
-=======================
-Extrae TODAS las entidades llamando al cartucho SAP HCM.
-
-v1.43.1 (B1 + B2 + B3): see sap_hcm_extract.py for rationale.
-"""
 from __future__ import annotations
 import os
 from datetime import timedelta

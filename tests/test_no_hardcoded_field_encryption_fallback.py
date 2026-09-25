@@ -1,25 +1,3 @@
-"""
-Sprint v1.33 — audit B1 (P0).
-
-The three SAP cartridges (sap_hcm, sap_s4hana, sap_successfactors) used to
-fall back to a hardcoded ``"change-this-key-in-prod"`` Fernet seed if the
-operator forgot to provision FIELD_ENCRYPTION_KEY. That meant every PII
-column (Pernr, salaries, banking, biographical) could be encrypted with a
-publicly-known key — reversible by anyone with read access to a parquet
-file in MinIO.
-
-This test suite enforces, at the source level, that:
-
-1. Each cartridge's ``protection_service`` module raises ``RuntimeError``
-   when ``FIELD_ENCRYPTION_KEY`` is unset.
-2. Each cartridge's ``protection_service`` module raises ``RuntimeError``
-   when ``FIELD_ENCRYPTION_KEY`` is set to something that isn't a valid
-   Fernet key.
-3. Each cartridge's ``protection_service`` module imports cleanly and
-   exposes a ``Fernet`` instance when given a valid key.
-4. The literal ``"change-this-key-in-prod"`` never reappears in
-   production source.
-"""
 from __future__ import annotations
 
 import importlib
@@ -76,14 +54,12 @@ def test_protection_service_loads_with_valid_key(cartridge_id, monkeypatch):
     monkeypatch.setenv("FIELD_ENCRYPTION_KEY", key)
     mod = _import_protection(cartridge_id)
     assert isinstance(mod._FERNET, Fernet)
-    # And the module's _encrypt helper round-trips through that Fernet.
     token = mod._encrypt("hello")
     assert isinstance(token, str)
     assert Fernet(key.encode("utf-8")).decrypt(token.encode("utf-8")) == b"hello"
 
 
 def test_no_change_this_key_in_repo():
-    """Production source must not contain the legacy hardcoded fallback."""
     bad_literal = "change-this-key-in-prod"
     production_dirs = (
         "cartridges",
@@ -96,8 +72,6 @@ def test_no_change_this_key_in_repo():
     offenders: list[str] = []
     for top in production_dirs:
         for path in (REPO_ROOT / top).rglob("*.py"):
-            # Skip test files; they may legitimately reference the literal
-            # to assert it is gone.
             if path.name.startswith("test_") or "/tests/" in str(path):
                 continue
             text = path.read_text(encoding="utf-8", errors="ignore")

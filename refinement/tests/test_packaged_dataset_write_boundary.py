@@ -1,5 +1,3 @@
-"""Generic dataset writers cannot redefine packaged SuccessFactors SQL."""
-
 from __future__ import annotations
 
 from unittest.mock import MagicMock

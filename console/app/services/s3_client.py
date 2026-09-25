@@ -64,7 +64,6 @@ def _endpoint_url(raw: str, *, secure: bool) -> str:
 
 
 def resolve_storage_config(*, bucket: str | None = None) -> ResolvedStorageConfig:
-    """Resolve storage while keeping GCS, AWS and local MinIO keys isolated."""
 
     endpoint_hint = _env("LAKEHOUSE_ENDPOINT")
     provider = _env("LAKEHOUSE_PROVIDER").lower()
@@ -84,7 +83,6 @@ def resolve_storage_config(*, bucket: str | None = None) -> ResolvedStorageConfi
             provider="gcs",
             endpoint=endpoint,
             endpoint_url=_endpoint_url(endpoint, secure=True),
-            # Exact GCS interoperability pair; never AWS/SES or MINIO aliases.
             access_key=_env("GCS_ACCESS_KEY_ID"),
             secret_key=_env("GCS_SECRET_ACCESS_KEY"),
             bucket=(bucket or _env("GCS_BUCKET") or _env("LAKEHOUSE_BUCKET")).strip(),
@@ -144,7 +142,6 @@ def _secure_from_env() -> bool:
 
 
 class Ec2ImdsV2Provider(Provider):
-    """MinIO credentials provider for EC2 instance profiles using IMDSv2."""
 
     def __init__(self, base_url: str = _IMDS_BASE_URL, timeout: float = 2.0) -> None:
         self._base_url = base_url.rstrip("/")
@@ -163,8 +160,6 @@ class Ec2ImdsV2Provider(Provider):
         if method == "PUT":
             headers["X-aws-ec2-metadata-token-ttl-seconds"] = "21600"
         req = request.Request(f"{self._base_url}{path}", headers=headers, method=method)
-        # Bandit B310 false positive: URL is restricted above to EC2 IMDSv2
-        # link-local 169.254.169.254 and fixed /latest/* paths.
         with request.urlopen(req, timeout=self._timeout) as resp:  # nosec B310
             return resp.read().decode("utf-8")
 
@@ -233,7 +228,6 @@ def get_boto3_s3_client():
 
 
 class LakehouseExplorerClient:
-    """Boto3-shaped adapter used by the console object explorer."""
 
     def _storage(self, bucket: str):
         storage = resolve_storage_config(bucket=bucket)

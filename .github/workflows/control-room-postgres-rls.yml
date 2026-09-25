@@ -236,11 +236,6 @@ jobs:
           PGPASSWORD: postgres
         run: |
           set -euo pipefail
-          # The published-app grant ledger is authority for what an app may
-          # read, so its guarantees — pg_temp shadowing, function ownership,
-          # ACL, RLS, revocation — have to be exercised against a real server.
-          # Applying the real migrations here is what keeps these tests from
-          # skipping in CI, which is how they were passing without running.
           psql -h 127.0.0.1 -p 55432 -U postgres -d postgres \
             -v ON_ERROR_STOP=1 -c "DROP DATABASE IF EXISTS app_grants" \
             -c "CREATE DATABASE app_grants"
@@ -262,7 +257,6 @@ jobs:
             "SELECT count(*) FROM public.analytic_app_dataset_grant_events")"
           test "${grants_before}" -gt 0
           test "${events_before}" -gt 0
-          # Applying twice proves the migration is idempotent on every run.
           psql -h 127.0.0.1 -p 55432 -U postgres -d app_grants -v ON_ERROR_STOP=1 -q \
             -f infra/init/99zzt_analytic_app_dataset_grants.sql
           psql -h 127.0.0.1 -p 55432 -U postgres -d app_grants -v ON_ERROR_STOP=1 -q \

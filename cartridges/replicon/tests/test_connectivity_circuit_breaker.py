@@ -20,8 +20,6 @@ def _import_client():
 
     replicon_client._RETRY_ATTEMPTS = 1
     replicon_client._RETRY_BASE_DELAY = 0
-    # These tests exercise circuit-breaker behavior against an intentional
-    # loopback fixture. Egress denial itself has separate no-network tests.
     replicon_client.guarded_session = lambda *args, **kwargs: __import__(
         "requests"
     ).Session()
@@ -187,11 +185,6 @@ def test_replicon_seeded_gold_extract_is_data_only_without_network(monkeypatch):
     assert result == []
 
 
-# Real DNS-resolution failures reach the client with platform-specific wording.
-# The test must recognise the friendly message for every one of them, so it is
-# parametrised over the glibc (Linux), BSD/macOS, and urllib3 phrasings. Using
-# the exact CI-observed urllib3 wrapper here guards against the regression where
-# the Linux message leaked raw because only the macOS phrasing was matched.
 _DNS_FAILURE_TEXTS = [
     pytest.param("[Errno -3] Temporary failure in name resolution", id="glibc-eai-again"),
     pytest.param("[Errno -2] Name or service not known", id="glibc-eai-noname"),
@@ -229,10 +222,6 @@ def test_replicon_dns_failure_reports_configured_host(monkeypatch, dns_error_tex
     def fail_dns(*_args, **_kwargs):
         raise replicon_client.requests.exceptions.ConnectionError(dns_error_text)
 
-    # The client issues requests through its guarded session, so patch the
-    # session instance. Patching module-level ``requests.get`` would be a no-op
-    # and let the test hit real DNS — the source of the earlier macOS/Linux
-    # divergence.
     monkeypatch.setattr(client._session, "get", fail_dns)
 
     result = client.test_connection()

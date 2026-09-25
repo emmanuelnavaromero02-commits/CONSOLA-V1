@@ -1,4 +1,3 @@
-"""Sprint v1.32 — Vault Fernet key rotation with key ids."""
 from __future__ import annotations
 
 import json

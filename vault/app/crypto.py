@@ -1,14 +1,3 @@
-"""Fernet-based encryption for vault secrets at rest (Sprint v1.15).
-
-The master key lives in the ``VAULT_ENCRYPTION_KEY`` environment variable
-(Fernet 32-byte base64). If absent or invalid, the vault service refuses
-to start — the alternative would be writing plaintext secrets to disk
-under the audit's nose.
-
-Plaintext format on the wire / in code is a dict (matches the existing
-JSONB shape). Ciphertext is the Fernet token (URL-safe base64 with a
-version byte + timestamp + IV + HMAC) stored in a BYTEA column.
-"""
 from __future__ import annotations
 
 import json
@@ -18,7 +7,7 @@ from cryptography.fernet import Fernet, InvalidToken
 
 
 class VaultEncryptionError(Exception):
-    """Raised when the master key is missing, invalid, or cannot decrypt."""
+    pass
 
 
 _KEY_SEPARATOR = b":"
@@ -59,7 +48,7 @@ def _get_keyring() -> tuple[str, dict[str, Fernet]]:
     raw_keys[current_kid] = key
     try:
         return current_kid, {kid: Fernet(raw.encode()) for kid, raw in raw_keys.items()}
-    except Exception as e:  # ValueError / binascii.Error / TypeError, etc.
+    except Exception as e:
         raise VaultEncryptionError(f"Vault encryption key invalid: {e}")
 
 
@@ -69,7 +58,6 @@ def _get_fernet() -> Fernet:
 
 
 def encrypt_value(value: dict) -> bytes:
-    """Encrypt a dict (vault value) to bytes for storage in the BYTEA column."""
     plaintext = json.dumps(value).encode("utf-8")
     current_kid, keyring = _get_keyring()
     token = keyring[current_kid].encrypt(plaintext)
@@ -77,11 +65,6 @@ def encrypt_value(value: dict) -> bytes:
 
 
 def decrypt_value(ciphertext: bytes) -> dict:
-    """Decrypt BYTEA bytes back to a dict.
-
-    Raises ``VaultEncryptionError`` if the key is wrong or the ciphertext
-    is corrupted — never silently returns garbage.
-    """
     if ciphertext is None:
         raise VaultEncryptionError("Cannot decrypt None")
     raw = bytes(ciphertext)
@@ -101,9 +84,6 @@ def decrypt_value(ciphertext: bytes) -> dict:
             )
         return json.loads(plaintext.decode("utf-8"))
 
-    # Legacy ciphertexts written before key ids had no prefix. Try every
-    # configured key so operators can rotate once, configure previous keys,
-    # and still read old rows until a rewrite migrates them.
     try:
         plaintext = keyring[current_kid].decrypt(raw)
     except InvalidToken:

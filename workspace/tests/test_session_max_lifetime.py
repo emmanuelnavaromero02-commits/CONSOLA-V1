@@ -1,9 +1,3 @@
-"""Workspace sessions must honor the same absolute cap as Console.
-
-Workspace reads the shared ``user_sessions`` table so Console cookies work on
-the app surface too. If Workspace only applies the sliding window, a long-lived
-or stolen cookie can keep extending here after Console would reject it.
-"""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone

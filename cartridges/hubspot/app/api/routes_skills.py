@@ -149,19 +149,9 @@ def test_connection(
         return {"status": "error", "message": str(exc)[:200]}
 
 
-# ------------------------------------------------------------------
-# Entity catalogue
-# ------------------------------------------------------------------
-
-
 @router.get("/entities")
 def entities() -> dict:
     return {"entities": get_all_entities()}
-
-
-# ------------------------------------------------------------------
-# Extraction
-# ------------------------------------------------------------------
 
 
 @router.post("/run_full_load/{entity}")
@@ -275,11 +265,6 @@ def run_historical_load_all(
     return {"results": results}
 
 
-# ------------------------------------------------------------------
-# Status / watermarks
-# ------------------------------------------------------------------
-
-
 @router.get("/get_last_run_status")
 def last_run_status(entity: str | None = None) -> dict:
     return {"runs": get_last_run_status(entity_name=entity)}
@@ -288,11 +273,6 @@ def last_run_status(entity: str | None = None) -> dict:
 @router.get("/get_watermarks")
 def get_watermarks() -> dict:
     return {"watermarks": list_watermarks()}
-
-
-# ------------------------------------------------------------------
-# Table discovery (pass-through to HubSpot API)
-# ------------------------------------------------------------------
 
 
 @router.get("/list_tables")
@@ -310,11 +290,6 @@ def get_table_schema(table_id: str) -> dict:
 
     client = HubSpotClient()
     return client.get_table_schema(table_id)
-
-
-# ------------------------------------------------------------------
-# Knowledge Bits
-# ------------------------------------------------------------------
 
 
 @router.get("/knowledge_bits")

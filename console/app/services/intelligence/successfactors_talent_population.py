@@ -1,26 +1,3 @@
-"""Full-population SQL counts for the SuccessFactors talent surfaces.
-
-F12: every Gold row read goes through the 5,000-row preview cap in
-``gold_fetcher.query_gold_dataset_rows``, and the talent surfaces used to
-count population by ``len(rows)`` over that capped read — silently
-under-reporting any workspace with more than 5,000 employees. Totals must
-come from COUNT(*)/SUM aggregation in SQL (mirroring
-``successfactors_active_headcount``); the capped read remains correct for
-previews and rosters only.
-
-Authority model preserved: the projection guard
-(``gold_projection_guard.project_operational_truth_rows``) degrades rows
-that claim a benchmark result the durable approval ledger does not
-corroborate. That decision is per-workspace (single ledger entry) plus a
-per-row head binding, so the same semantics are expressed here as SQL
-predicates parameterised by the ledger verdict and the benchmark head —
-counting NEVER trusts a benchmark claim the guard would have degraded.
-
-The float-conversion quirk in ``_sf_talent_score`` (a non-zero raw value
-that collapses to 0.0) cannot occur under SQL numeric comparison, so the
-SQL range check ``BETWEEN 0 AND 100`` is the faithful translation.
-"""
-
 from __future__ import annotations
 
 from typing import Any, TypedDict
@@ -68,8 +45,6 @@ _NINE_BOX_REQUIRED = frozenset(
     }
 )
 
-# Columns _claims_benchmark_result inspects; a claim can only travel through
-# a column the relation actually has (row.get on a missing key is None).
 _CLAIM_COLUMN_SQL = {
     "source_mode": "source_mode = 'benchmark_internal'",
     "readiness_status": "readiness_status = 'benchmark_internal'",
@@ -127,16 +102,7 @@ def _claims_sql(columns: set[str]) -> str:
 
 
 def _durable_sql(columns: set[str]) -> str:
-    """Durable = ledger says approved AND the row binds that exact head.
-
-    ``$1`` is the ledger verdict for this workspace, ``$2`` the benchmark
-    materialization head. A relation without the binding columns can never
-    prove durability — fail closed to FALSE, exactly like ``row.get`` on a
-    missing key.
-    """
     if not _DURABLE_COLUMNS.issubset(columns):
-        # Still reference both parameters so asyncpg can type the statement;
-        # the predicate stays constant FALSE.
         return "(FALSE AND $1::boolean AND $2::text IS NOT NULL)"
     return (
         "($1::boolean"
@@ -177,7 +143,6 @@ async def _relation_and_columns(conn, tenant_id, workspace_id, dataset):
 async def _benchmark_verdict(
     conn, tenant_id: str, workspace_id: str
 ) -> tuple[bool, str]:
-    """Resolve the workspace's durable benchmark approval, fail closed."""
     try:
         relation = await resolve_published_gold_relation(
             conn, tenant_id, workspace_id, BENCHMARK_DATASET
@@ -209,7 +174,6 @@ def _http_status(exc: HTTPException) -> str:
 
 
 async def query_talent_population_counts(user: dict | None) -> TalentPopulationCounts:
-    """COUNT the full readiness / 9-box population — no row limit, no cap."""
 
     def _unavailable(status: str, error: str | None) -> TalentPopulationCounts:
         return {
@@ -252,10 +216,6 @@ async def query_talent_population_counts(user: dict | None) -> TalentPopulationC
                     "nine-box relation misses population count columns",
                 )
 
-            # Mirrors _sf_talent_readiness_row_valid after the projection
-            # guard: the cpa_real branch never depends on benchmark columns;
-            # the benchmark branch only counts when the durable ledger backs
-            # the exact head the row binds.
             readiness_calculable_sql = f"""
                 SELECT COUNT(*)::bigint AS total,
                        COUNT(*) FILTER (WHERE
@@ -321,12 +281,6 @@ async def query_talent_population_counts(user: dict | None) -> TalentPopulationC
 
 
 async def query_desempeno_cohort_counts(user: dict | None) -> DesempenoCohortCounts:
-    """Full-population cohort count + band histogram for 'Desempeno disponible'.
-
-    Membership mirrors _sf_talent_masked_roster_row: real performance present
-    (provenance valid + score in range). The band prefers the Gold column and
-    falls back to the same legacy 0..5 / percentage scale compute.
-    """
 
     def _unavailable(status: str, error: str | None) -> DesempenoCohortCounts:
         return {"count": None, "band_counts": None, "status": status, "error": error}
@@ -411,18 +365,6 @@ class NineBoxCellCounts(TypedDict):
 
 
 async def query_nine_box_cell_counts(user: dict | None) -> NineBoxCellCounts:
-    """Rebuild the 9-box cells from the FULL detail population in SQL.
-
-    This is the fail-closed doctrine (test_talent_nine_box_fail_closed) made
-    cap-free: public ready counts are always rebuilt from the validated
-    detail — a stale/poisoned aggregate ready_count can never manufacture
-    readiness — but the rebuild aggregates in SQL over every row instead of
-    len() over the capped preview. Garbage scores (negative, NaN, Infinity,
-    out-of-range) fail the range predicates exactly as they fail
-    _sf_talent_score, and rows whose benchmark claim the ledger does not
-    corroborate are excluded like the projection guard excludes them (their
-    classification — box_key included — is degraded away).
-    """
 
     def _unavailable(status: str, error: str | None) -> NineBoxCellCounts:
         return {"rows": [], "status": status, "error": error}
@@ -511,7 +453,6 @@ async def query_nine_box_cell_counts(user: dict | None) -> NineBoxCellCounts:
 
 
 async def query_nine_box_box_count(user: dict | None, box_id: str) -> NineBoxBoxCount:
-    """COUNT the full population of one 9-box cell (roster stays capped)."""
 
     def _unavailable(status: str, error: str | None) -> NineBoxBoxCount:
         return {"count": None, "status": status, "error": error}

@@ -35,10 +35,6 @@ jobs:
         run: |
           bash infra/bootstrap.sh
           bash infra/bootstrap-keys.sh infra/.env
-          # This job is an ephemeral dev stack. Enable the explicit
-          # second RCE opt-in so Studio's "Deploy a Airflow" E2E can
-          # exercise /api/studio/dag-deploy instead of the production
-          # safety gate. AWS/prod compose remains default-off.
           sed -i 's/^APP_ENV=.*/APP_ENV=development/' infra/.env || true
           sed -i 's/^ALLOW_RCE_TOOLS=.*/ALLOW_RCE_TOOLS=true/' infra/.env || true
           grep -q '^APP_ENV=' infra/.env || echo 'APP_ENV=development' >> infra/.env
@@ -49,8 +45,6 @@ jobs:
 
       - name: Configure E2E credentials
         run: |
-          # Static export architecture: FastAPI on :8000 serves the console,
-          # APIs, legacy pages, and the Control Room from the same origin.
           {
             echo "TEST_EMAIL=emmanuel@local.ai"
             echo "TEST_PASSWORD=Admin123!"

@@ -1,4 +1,3 @@
-"""E5b — la pizarra del ciclo compone los cuatro cuadernos en una lectura."""
 from __future__ import annotations
 
 import asyncio

@@ -20,13 +20,6 @@ import { MessageInput }        from "./MessageInput";
 import { SlashCommandsPalette, type SlashCommand } from "./SlashCommandsPalette";
 import { SuggestedPrompts }    from "./SuggestedPrompts";
 
-/**
- * Module-scope catalog of enterprise prompt commands. Keeping
- * the data outside the component so the slash-palette catalog
- * can't accidentally capture a stale `handleSend` closure.
- * Built command instances reference the live page handlers via
- * dispatch keys rather than direct function references.
- */
 type CommandKind =
   | "open-palette"
   | "open-memory"
@@ -41,12 +34,10 @@ interface CommandMeta {
   description: string;
   group:       "Básicos" | "Reportes";
   kind:        CommandKind;
-  /** Prompt body for ``kind === "send-prompt"`` commands. */
   prompt?:     string;
 }
 
 const COMMAND_CATALOG: CommandMeta[] = [
-  // Básicos — open drawer / modal / palette / reset
   { id: "help",      group: "Básicos", kind: "open-palette",
     label: "Ayuda",
     description: "Lista todos los comandos disponibles." },
@@ -67,7 +58,6 @@ const COMMAND_CATALOG: CommandMeta[] = [
     label: "Conversaciones recientes",
     description: "Lista de las últimas conversaciones." },
 
-  // Reportes enterprise
   { id: "reporte_mensual",   group: "Reportes", kind: "send-prompt",
     label: "Reporte mensual",
     description: "Genera el reporte ejecutivo del mes con KPIs principales.",
@@ -102,28 +92,6 @@ const COMMAND_CATALOG: CommandMeta[] = [
     prompt: "Genera un resumen prospectivo del próximo trimestre a partir de mis datos operativos." },
 ];
 
-/**
- * v1.44.4 Task A — chat surface orchestrator.
- *
- * Owns the "which conversation is open" state plus the four
- * modal/drawer toggles (memory drawer, draft modal, slash
- * palette, approval gate). Wires up the slash-command catalog
- * including the enterprise prompt templates the brief specifies
- * (/reporte_mensual, /turnover_analysis, /cash_position, …).
- *
- * Flow:
- *   1. Page mounts → useChat loads conversation list.
- *   2. Empty state: SuggestedPrompts. Click → creates a new
- *      conversation and sends the prompt as the first message.
- *   3. Active conversation: ChatMessages + MessageInput.
- *   4. Send response carries requires_approval → ApprovalGateDialog
- *      opens with the pending_actions; "Sí, ejecutar" calls
- *      approveMutation.
- *
- * The component is intentionally thick — it owns flow state so
- * the leaf components (Message, CitationCard, etc.) stay
- * presentational and the page file stays a one-liner.
- */
 interface ChatLayoutProps {
   initialPrompt?: string;
   actionsHref?: string;
@@ -148,31 +116,15 @@ export function ChatLayout({ initialPrompt, actionsHref }: ChatLayoutProps = {})
     [rawMessages],
   );
 
-  // Round 1 review: do NOT auto-select on cold mount — a
-  // returning user might want a fresh thread, and a brand-new
-  // user must see SuggestedPrompts (the onboarding surface)
-  // rather than being yanked into stale history. The sidebar
-  // gives one-tap access to past conversations. If the brief
-  // ever wants "land on last conversation", make it opt-in via
-  // ?continue=last query param.
 
-  // ── Modal / drawer state ────────────────────────────────────
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
   const [memoryOpen,  setMemoryOpen]  = useState(false);
   const [draftOpen,   setDraftOpen]   = useState(false);
   const [draftSeed,   setDraftSeed]   = useState<string | undefined>();
 
-  // Mobile sidebar toggle — sub-md the sidebar is hidden by
-  // default; this state opens it as a Sheet-style overlay so
-  // phone users can still navigate conversations + start a
-  // new one. (Frontend P0 from Round 1 review.)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
-  // ── Approval gate state ─────────────────────────────────────
-  // Captures the conversation id at the moment the gate opened
-  // so a user switching activeId mid-flight can't approve
-  // against the wrong conversation. (Round 1 review P2.)
   const [pendingApproval, setPendingApproval] = useState<{
     conversationId: string;
     messageId:      string;
@@ -290,17 +242,11 @@ export function ChatLayout({ initialPrompt, actionsHref }: ChatLayoutProps = {})
       toast.success("Acción ejecutada.");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Error desconocido.";
-      // Keep the dialog open + render the error inline so the
-      // user can retry or cancel. (Frontend P0 from Round 1.)
       setApproveError(msg);
       toast.error(`No se pudo aprobar: ${msg}`);
     }
   }, [approveMutation, pendingApproval]);
 
-  // ── Slash command dispatcher ────────────────────────────────
-  // ``dispatchCommand`` reads the latest handlers at call time
-  // so a slash-palette click from a stale catalog still
-  // operates against the current activeId / pending state.
   const dispatchCommand = useCallback((cmd: CommandMeta) => {
     switch (cmd.kind) {
       case "open-palette":
@@ -318,9 +264,6 @@ export function ChatLayout({ initialPrompt, actionsHref }: ChatLayoutProps = {})
         setActiveId(null);
         return;
       case "show-history":
-        // Sidebar already shows history; open the mobile
-        // sidebar so phone users see it, and give desktop users
-        // visible feedback instead of a no-op.
         setMobileSidebarOpen(true);
         toast.info("El historial está visible en la barra lateral.");
         return;
@@ -340,7 +283,6 @@ export function ChatLayout({ initialPrompt, actionsHref }: ChatLayoutProps = {})
     })),
   [dispatchCommand]);
 
-  // ── Render ──────────────────────────────────────────────────
   const showEmpty =
     (!activeId && !streamingTurn) ||
     (!conversationQuery.isLoading &&
@@ -349,7 +291,6 @@ export function ChatLayout({ initialPrompt, actionsHref }: ChatLayoutProps = {})
 
   return (
     <div className="flex h-full min-h-0">
-      {/* Desktop sidebar — visible from md (≥768 px). */}
       <div className="hidden w-72 shrink-0 md:block">
         <ConversationSidebar
           conversations={conversations}
@@ -368,7 +309,6 @@ export function ChatLayout({ initialPrompt, actionsHref }: ChatLayoutProps = {})
         />
       </div>
 
-      {/* Mobile sidebar — drawer overlay (Round 1 P0 fix). */}
       {mobileSidebarOpen ? (
         <div
           role="dialog"
@@ -407,7 +347,6 @@ export function ChatLayout({ initialPrompt, actionsHref }: ChatLayoutProps = {})
       >
         <header className="flex items-center justify-between gap-2 border-b px-3 py-3 sm:px-4">
           <div className="flex min-w-0 items-center gap-1.5">
-            {/* Mobile hamburger to open the sidebar drawer. */}
             <button
               type="button"
               onClick={() => setMobileSidebarOpen(true)}

@@ -1,11 +1,4 @@
 #!/usr/bin/env bash
-# v1.43.4 — Move ad-hoc .env backups out of the repo and into a
-# locked-down per-user backup directory. Run after rotating secrets to keep
-# the rotation trail accessible (read-only, owner-only) without polluting
-# `git status`.
-#
-# Idempotent. Safe to run multiple times. Refuses to overwrite an existing
-# backup destination.
 set -euo pipefail
 
 BACKUP_DIR="${OMEGA_ENV_BACKUP_DIR:-$HOME/.omega-env-backups}"

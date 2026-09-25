@@ -1,12 +1,3 @@
--- ─────────────────────────────────────────────────────────────────────────────
--- MODecissions Cartridge: Salesforce Sales Cloud — seed configuration
--- Run once to register this cartridge in a new installation.
--- Safe to re-run: agent inserts use target-less ON CONFLICT DO NOTHING so they
--- work with both the original global agents constraint and the later
--- workspace-aware partial indexes.
--- ─────────────────────────────────────────────────────────────────────────────
-
--- ── Cartridge header ──────────────────────────────────────────────────────────
 INSERT INTO cartridges (id, name, version, description, pattern, category, bronze_path)
 VALUES (
     'salesforce',
@@ -23,19 +14,12 @@ ON CONFLICT (id) DO UPDATE
         description = EXCLUDED.description,
         updated_at  = NOW();
 
--- ── DAGs ──────────────────────────────────────────────────────────────────────
 INSERT INTO cartridge_dags (cartridge_id, dag_id, file, description, trigger, params)
 VALUES
     ('salesforce', 'salesforce_extract',     'salesforce_extract.py',     'Extrae una entidad en Bronze MinIO (full o incremental)', 'on-demand', '["entity","mode","from_date","to_date"]'),
     ('salesforce', 'salesforce_extract_all', 'salesforce_extract_all.py', 'Extrae todas las entidades habilitadas en secuencia',      'on-demand', '["mode"]')
 ON CONFLICT (cartridge_id, dag_id) DO NOTHING;
 
--- ── Entities ──────────────────────────────────────────────────────────────────
--- Canonical entities, aligned with app/config/entities.yaml. For Salesforce the
--- sObject API name equals the catalog name, so odata_entity mirrors entity.
--- Incremental objects watermark on SystemModstamp (OpportunityHistory on
--- CreatedDate, which is immutable per stage row). Reference data (Product2,
--- PricebookEntry) is loaded full.
 INSERT INTO entity_config
     (cartridge_id, entity, odata_entity, display_name, description, mode,
      watermark_field, page_size, primary_key, dag_id, enabled, trigger_type)
@@ -66,7 +50,6 @@ ON CONFLICT (cartridge_id, entity) DO UPDATE
         enabled         = EXCLUDED.enabled,
         trigger_type    = EXCLUDED.trigger_type;
 
--- ── Semantic vocabulary ───────────────────────────────────────────────────────
 INSERT INTO semantic_terms (cartridge_id, term, definition, maps_to)
 VALUES
     ('salesforce', 'pipeline abierto', 'Oportunidades no cerradas (IsClosed = false)', 'Opportunity WHERE IsClosed = false'),
@@ -76,10 +59,6 @@ VALUES
     ('salesforce', 'velocidad de pipeline', 'Días que tarda una oportunidad en pasar de etapa', 'OpportunityHistory: días entre CreatedDate por etapa')
 ON CONFLICT (cartridge_id, term) DO NOTHING;
 
--- ── Specialized agents ────────────────────────────────────────────────────────
--- Cartridge-scoped sales personas. Each owns ONE operational concern and reads
--- pre-computed gold; none invents SQL against bronze. "triggers" phrases live in
--- extra as intent metadata for future routing.
 INSERT INTO agents (cartridge_id, slug, name, description, instructions, personality,
                     allowed_tools, rag_filter, model, max_tokens, temperature, extra)
 VALUES

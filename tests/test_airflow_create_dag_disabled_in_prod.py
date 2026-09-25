@@ -1,4 +1,3 @@
-"""Sprint v1.32 — airflow_create_dag is RCE and must be disabled in prod."""
 from __future__ import annotations
 
 import importlib
@@ -116,8 +115,6 @@ async def test_airflow_set_variable_still_requires_development_when_allow_rce_tr
 async def test_airflow_create_dag_still_available_in_development(monkeypatch, tmp_path):
     airflow = _load_airflow_tools(monkeypatch)
     monkeypatch.setenv("APP_ENV", "development")
-    # v1.43.4 (H1): second gate. APP_ENV alone is no longer
-    # sufficient; ALLOW_RCE_TOOLS=true is required.
     monkeypatch.setenv("ALLOW_RCE_TOOLS", "true")
     monkeypatch.setattr(airflow.settings, "airflow_dags_path", str(tmp_path))
 
@@ -130,15 +127,8 @@ async def test_airflow_create_dag_still_available_in_development(monkeypatch, tm
     assert (tmp_path / "test_dev_dag.py").read_text() == "print('dev only')\n"
 
 
-# ── v1.43.4 (H1): double-gate semantics ─────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_airflow_create_dag_blocked_when_only_app_env_set(monkeypatch):
-    """APP_ENV=development alone is no longer enough. Without
-    ALLOW_RCE_TOOLS=true the tool must refuse — even in dev — so a
-    debugging-time APP_ENV flip can't accidentally unlock the RCE
-    surface."""
     airflow = _load_airflow_tools(monkeypatch)
     monkeypatch.setenv("APP_ENV", "development")
     monkeypatch.delenv("ALLOW_RCE_TOOLS", raising=False)
@@ -164,8 +154,6 @@ async def test_airflow_delete_dag_blocked_when_only_app_env_set(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_airflow_create_dag_blocked_when_only_allow_rce_tools_set(monkeypatch):
-    """The reverse direction: ALLOW_RCE_TOOLS=true on a production
-    APP_ENV must still refuse. Two locks; neither alone opens."""
     airflow = _load_airflow_tools(monkeypatch)
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("ALLOW_RCE_TOOLS", "true")
@@ -175,17 +163,12 @@ async def test_airflow_create_dag_blocked_when_only_allow_rce_tools_set(monkeypa
             dag_id="x_should_fail",
             code="print('blocked')\n",
         )
-    # Production gate fires first; message must mention production.
     assert "outside development" in str(exc.value)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("env_value", ["", "false", "no", "0", "off", "random"])
 async def test_airflow_create_dag_allow_rce_truthy_values(monkeypatch, env_value):
-    """Only explicit truthy strings (``true``/``1``/``yes``/``on``,
-    case-insensitive) flip the gate. Any other value must keep it
-    closed — particularly the empty string from an undocumented
-    deployment template."""
     airflow = _load_airflow_tools(monkeypatch)
     monkeypatch.setenv("APP_ENV", "development")
     monkeypatch.setenv("ALLOW_RCE_TOOLS", env_value)
@@ -198,19 +181,12 @@ async def test_airflow_create_dag_allow_rce_truthy_values(monkeypatch, env_value
 
 
 def test_mcp_infra_port_8010_not_exposed_in_aws_compose():
-    """v1.43.4 (H1): mcp-infra's 8010 port mapping must be
-    absent from the AWS compose file. mcp-infra is a backend
-    service consumed only by console / workspace / airflow over
-    the modecissions_net docker bridge; publishing 8010 on the
-    host puts the entire MCP tool surface one SG rule away from
-    the open internet."""
     import yaml
     aws = Path(__file__).resolve().parents[1] / "infra/terraform/deploy/docker-compose.aws.yml"
     with aws.open(encoding="utf-8") as f:
         data = yaml.safe_load(f)
     svc = data["services"]["mcp-infra"]
     ports = svc.get("ports", []) or []
-    # No host:container port mapping should publish 8010.
     for entry in ports:
         s = str(entry)
         assert "8010" not in s.split(":")[0], (

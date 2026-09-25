@@ -1,9 +1,3 @@
-"""
-Shared FastAPI dependencies — primarily the X-Internal-Api-Key check.
-
-The function is defined here (not in main.py) so any router or test can import
-it without triggering the FastAPI app construction.
-"""
 from __future__ import annotations
 
 import os
@@ -27,12 +21,6 @@ def verify_api_key(
     x_api_key: str | None = Header(None, alias="X-Api-Key"),
     x_internal_service: str | None = Header(None, alias="X-Internal-Service"),
 ) -> None:
-    """Reject the request unless a valid internal API key is presented.
-
-    Accepts either ``X-Internal-Api-Key`` (preferred) or ``X-Api-Key``
-    (legacy). When ``X-Internal-Service`` is provided it must match the
-    allow-list of service identifiers.
-    """
     presented = x_internal_api_key or x_api_key
     accepted = []
     if x_internal_service == "console":

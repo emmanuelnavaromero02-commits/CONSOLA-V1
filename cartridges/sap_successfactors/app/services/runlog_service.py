@@ -42,7 +42,6 @@ def _mirror_pipeline_run(
     error_message: str | None = None,
     finished_at: datetime | None = None,
 ) -> None:
-    """Best-effort mirror so operational viewers do not depend on the MCP save path."""
     conn = get_connection()
     try:
         with conn.cursor() as cur:

@@ -1,4 +1,3 @@
-"""F-SEG focal guards for Workspace Decision mutations."""
 from __future__ import annotations
 
 import importlib

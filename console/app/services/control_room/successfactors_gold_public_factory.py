@@ -35,7 +35,6 @@ def valid_gold_widget_id(value: object) -> bool:
 
 
 def strict_public_gold_label(value: object) -> str | None:
-    """Validate untrusted label copy while preserving its original bytes."""
 
     if type(value) is not str or public_business_label(value) is None:
         return None

@@ -44,7 +44,6 @@ class ResolvedStorageConfig:
         )
 
     def require_interoperability_pair(self) -> None:
-        """Require explicit pairs for GCS/MinIO; S3 may use instance identity."""
 
         if self.provider in {"gcs", "minio"} and not (
             self.access_key and self.secret_key
@@ -64,7 +63,6 @@ def resolve_storage_config(
     minio_bucket: str = "lakehouse",
     minio_secure: bool = False,
 ) -> ResolvedStorageConfig:
-    """Resolve one provider without ever borrowing another provider's keys."""
 
     endpoint_hint = _env("LAKEHOUSE_ENDPOINT")
     provider = _env("LAKEHOUSE_PROVIDER").lower()
@@ -82,7 +80,6 @@ def resolve_storage_config(
             endpoint=_endpoint_host(
                 _env("LAKEHOUSE_ENDPOINT") or "storage.googleapis.com"
             ),
-            # Deliberately exact: never reuse AWS/SES, LAKEHOUSE_* or MINIO_*.
             access_key=_env("GCS_ACCESS_KEY_ID"),
             secret_key=_env("GCS_SECRET_ACCESS_KEY"),
             bucket=_env("GCS_BUCKET") or _env("LAKEHOUSE_BUCKET"),
@@ -118,13 +115,11 @@ def resolve_storage_config(
 
 
 class Settings(BaseSettings):
-    # ── Airflow ────────────────────────────────────────────────────────────────
     airflow_url:      str = "http://airflow:8080"
     airflow_user:     str = Field(..., min_length=1)
     airflow_password: str = Field(..., min_length=1)
     airflow_dags_path: str = "/opt/airflow/dags"
 
-    # ── MinIO ──────────────────────────────────────────────────────────────────
     minio_endpoint:   str  = "minio:9000"
     minio_access_key: str  = "minio"
     minio_secret_key: str = ""
@@ -134,27 +129,20 @@ class Settings(BaseSettings):
     storage_provider: str = "minio"
     storage_region: str = "us-east-1"
 
-    # ── PostgreSQL main (modecissions) ─────────────────────────────────────────
     pg_host:     str = "postgres"
     pg_port:     int = 5432
     pg_db:       str = "modecissions"
-    # Least-privilege default matching infra/docker-compose.yml; a superuser
-    # or BYPASSRLS role here would void the RLS tenancy model (startup also
-    # fail-fasts on that — see _assert_pg_role_not_privileged in app.main).
     pg_user:     str = "omega_mcp_infra"
     pg_password: str = Field(..., min_length=1)
 
-    # ── PostgreSQL gold ────────────────────────────────────────────────────────
     pg_gold_host: str = "postgres_gold"
     pg_gold_port: int = 5433
     pg_gold_db:   str = "modecissions_gold"
     pg_gold_user: str = ""
     pg_gold_password: str = ""
 
-    # ── Vault ──────────────────────────────────────────────────────────────────
     vault_url: str = "http://vault:8300"
 
-    # ── Superset ───────────────────────────────────────────────────────────────
     superset_url:      str = "http://superset:8088"
     superset_user:     str = Field(..., min_length=1)
     superset_password: str = Field(..., min_length=1)
@@ -168,8 +156,6 @@ class Settings(BaseSettings):
             minio_bucket=self.minio_bucket,
             minio_secure=self.minio_secure,
         )
-        # Keep legacy call sites working while ensuring GCP does not see the
-        # blank MINIO_* literals intentionally injected by the Compose overlay.
         self.minio_endpoint = resolved.endpoint
         self.minio_access_key = resolved.access_key
         self.minio_secret_key = resolved.secret_key

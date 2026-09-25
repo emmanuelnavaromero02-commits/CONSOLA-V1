@@ -195,7 +195,7 @@ class BaseAdapter(ABC):
         credentials: dict[str, Any],
         dry_run: bool = True,
     ) -> ExecutionResult | dict[str, Any] | Awaitable[ExecutionResult | dict[str, Any]]:
-        """Execute an approved external write-back action."""
+        pass
 
 
 class WriteBackAdapterFactory:
@@ -214,10 +214,6 @@ class WriteBackAdapterFactory:
     def _register_builtin(cls, template_type: str, adapter_cls: type[BaseAdapter]) -> None:
         registered_cls = adapter_cls
         if not issubclass(adapter_cls, BaseAdapter):
-            # Pytest can import the legacy facade and modular core in an order
-            # that leaves adapter modules bound to a different BaseAdapter
-            # object with the same module name. Bridge the class back onto the
-            # active factory contract without changing runtime behavior.
             class BuiltinAdapterBridge(BaseAdapter):
                 def execute(self, action_data, credentials, dry_run=True):
                     return adapter_cls().execute(action_data, credentials, dry_run=dry_run)
@@ -533,12 +529,6 @@ MODULES: tuple[ControlRoomModule, ...] = (
         module_id="sap_successfactors_recruiting",
         description="Embudo, requisiciones y senales de cobertura de vacantes.",
     ),
-    # Etapa 1 (Trabajo 1): "Desempeno" apunta al dataset REAL de performance (C/P/A), no al
-    # stub de compensacion. Se mantiene el mecanismo metric_snapshot (solo cablea; el rediseno
-    # a un widget de Performance es Etapa 2). Compensacion queda como modulo SEPARADO abajo.
-    # DEUDA TECNICA (aprobada 2026-07-10): sap_successfactors_talent_cpa_scores es una fuente
-    # TRANSITORIA para esta tarjeta. En una etapa posterior construir un dataset de negocio
-    # dedicado a Desempeno en vez de reutilizar uno disenado para C/P/A. No bloquea Etapa 1.
     ControlRoomModule(
         cartridge="sap_successfactors",
         label="Desempeno",
@@ -561,9 +551,6 @@ MODULES: tuple[ControlRoomModule, ...] = (
         module_id="sap_successfactors_performance",
         description="Senales de desempeno (C/P/A) del talento. Compensacion es un modulo aparte.",
     ),
-    # Compensacion como modulo propio: conserva el dataset compensation_distribution (stub por
-    # proteccion de paycomp) para que la tarjeta "Compensacion y pagos" siga respaldada y honesta,
-    # sin mezclarse con Desempeno.
     ControlRoomModule(
         cartridge="sap_successfactors",
         label="Compensacion",
@@ -1123,9 +1110,6 @@ def _module_data_readiness(module_sources: list[dict[str, Any]]) -> str:
             return state
     return "partial"
 
-# Implementation modules bind their functions back into this module namespace.
-# That keeps the historical `app.services.control_room_service.<name>` import
-# and monkeypatch surface stable while the physical code is split by domain.
 def _install_module_exports() -> None:
     from app.services.control_room import api as _api
     from app.services.control_room import state as _state

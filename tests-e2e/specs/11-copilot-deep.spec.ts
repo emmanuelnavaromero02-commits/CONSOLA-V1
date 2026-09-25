@@ -1,16 +1,3 @@
-/**
- * v1.44.3.2.1 spec 11 — Copilot backend deep coverage.
- *
- * 22 tests covering the LIVE /api/copilot/* endpoints. These are
- * skipped only where they require live LLM keys. The /copilot shell
- * itself is active coverage and reuses the global authenticated
- * storage state.
- *
- * Real LLM calls happen only when the developer opts in with
- * E2E_LIVE_LLM=1 and has ANTHROPIC_API_KEY
- * exported. Without explicit opt-in the LLM-dependent tests skip
- * cleanly; CSRF + RBAC + boundary checks always run.
- */
 import { test, expect, request as pwRequest } from "@playwright/test";
 
 test.use({ storageState: { cookies: [], origins: [] } });
@@ -75,9 +62,6 @@ test.describe("Copilot memory CRUD", () => {
       data: { fact: `e2e-test fact ${Date.now()}` },
     });
     let factId: number | null = null;
-    // v1.44.3.2.1 R1 Security P2: wrap the cleanup in try/finally
-    // so an assertion failure above doesn't leave the throwaway
-    // fact in the user_facts table.
     try {
       expect(r.status()).toBe(200);
       const body = await r.json();
@@ -93,7 +77,6 @@ test.describe("Copilot memory CRUD", () => {
       }
       await ctx.dispose();
     }
-    // Early return below — the dispose already happened in finally.
     return;
   });
 
@@ -111,7 +94,6 @@ test.describe("Copilot memory CRUD", () => {
   test("DELETE memory/fact/{id} for another user's fact returns 404",
     async () => {
       const { ctx, csrf } = await authedCtxAndCsrf();
-      // Use a very high ID unlikely to belong to this user.
       const r = await ctx.delete(
         `${BACKEND}/api/copilot/memory/fact/999999999`,
         { headers: { "X-CSRF-Token": csrf } },
@@ -177,7 +159,6 @@ test.describe("Copilot drafts CRUD", () => {
       `${BACKEND}/api/copilot/drafts/not-a-uuid/send`,
       { headers: { "X-CSRF-Token": csrf } },
     );
-    // The v1.44.3 R1 fix added UUID validation → 400.
     expect([400, 404]).toContain(r.status());
     await ctx.dispose();
   });
@@ -261,9 +242,6 @@ test.describe("Copilot briefing", () => {
       `${BACKEND}/api/copilot/briefing/%20/dismiss`,
       { headers: { "X-CSRF-Token": csrf } },
     );
-    // Either 400 (whitespace-stripped boundary check) or 404
-    // (path normalisation). Both prove the destructive branch
-    // doesn't execute.
     expect([400, 404]).toContain(r.status());
     await ctx.dispose();
   });

@@ -1,10 +1,3 @@
-"""
-Token-bound session reader for the workspace container.
-
-Workspace doesn't own login or auth tables. It can only execute the narrow
-``omega_auth_resolve_workspace_session`` / ``omega_auth_destroy_session``
-functions, passing a SHA-256 digest of the cookie. Raw tokens are never stored.
-"""
 from __future__ import annotations
 
 import os
@@ -141,9 +134,6 @@ async def get_session_user(token: str, requested_workspace_id: str | None = None
     )
     rows = await p.fetch(query, *args)
     if not rows and requested_workspace_id:
-        # Distinguish an invalid session (401) from a valid caller asking for a
-        # workspace outside its memberships (403). The second lookup remains
-        # token-bound and returns no data for an expired/revoked session.
         membership_rows = await p.fetch(query, args[0], None)
         if membership_rows:
             raise PermissionError("workspace access forbidden")
@@ -196,7 +186,6 @@ async def destroy_session(token: str) -> None:
 async def logout_tokens(
     session_token: str | None, refresh_token: str | None
 ) -> tuple[bool, bool]:
-    """Atomically invalidate both browser credentials, if present."""
     p = await pool()
     row = await p.fetchrow(
         "SELECT * FROM omega_auth_logout($1, $2)",

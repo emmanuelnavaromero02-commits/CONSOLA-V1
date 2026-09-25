@@ -1,4 +1,3 @@
-"""Sprint v1.30 — SAP cartridge DAGs must be visible to Airflow."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -93,14 +92,6 @@ def test_sap_dags_are_valid_python():
 
 
 def test_no_orphan_cartridge_dags():
-    """Every cartridge DAG source must be readable by Airflow somehow.
-
-    Sprint v1.40: every cartridge (SAP + Replicon) now keeps DAGs
-    self-contained inside ``cartridges/<id>/dags/`` and exposes them
-    through compose bind mounts. The pre-v1.40 fallback that tolerated
-    runtime copies in ``airflow/dags/`` is gone — those zombie copies
-    were deleted when the Replicon cartridge was restored.
-    """
     cartridge_dags = sorted(CARTRIDGES.glob("*/dags/*.py"))
     assert cartridge_dags, "expected cartridge DAG sources"
 
@@ -110,8 +101,6 @@ def test_no_orphan_cartridge_dags():
             _assert_local_sap_mount(cartridge)
             continue
         if cartridge in ("replicon", "hubspot", "salesforce", "banxico", "inegi", "sec_edgar"):
-            # v1.40: replicon DAGs are bind-mounted just like SAP.
-            # The HubSpot CRM cartridge and Salesforce follow the same pattern.
             expected_local = f"../cartridges/{cartridge}/dags:/opt/airflow/dags/{cartridge}:ro"
             expected_aws = (
                 f"/opt/modecissions/cartridges/{cartridge}/dags:"
@@ -136,12 +125,6 @@ def test_no_orphan_cartridge_dags():
 
 
 def test_no_root_sap_cartridge_dag_copies():
-    """SAP cartridge DAG sources must not be copied into airflow/dags.
-
-    Airflow reads the canonical cartridge DAGs through read-only compose
-    mounts. Root-level runtime copies drift from the cartridge sources and
-    caused stale zombie DAGs to survive after regeneration.
-    """
     leftovers = sorted(
         path.relative_to(REPO_ROOT)
         for path in AIRFLOW_DAGS.glob("sap_*.py")

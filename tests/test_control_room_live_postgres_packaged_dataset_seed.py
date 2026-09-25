@@ -1,5 +1,3 @@
-"""Real PostgreSQL proofs for non-destructive packaged dataset reconciliation."""
-
 from __future__ import annotations
 
 import json
@@ -174,7 +172,7 @@ async def test_complete_catalog_is_idempotent_isolated_and_non_destructive(
     assert first == second
     for scope in scopes:
         scoped = [row for row in second if row["workspace_id"] == scope["id"]]
-        assert len(scoped) == total + 1  # the whole catalog plus the custom row
+        assert len(scoped) == total + 1
         assert len({row["name"] for row in scoped}) == total + 1
         assert {row["cartridge"] for row in scoped} == set(packaged)
         assert all(row["tenant_id"] == scope["tenant_id"] for row in scoped)

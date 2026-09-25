@@ -1,16 +1,3 @@
-"""
-SAP HCM client.
-
-Talks to the on-premise SAP NetWeaver Gateway OData services exposed for
-HCM / SAP_HR (e.g. /sap/opu/odata/sap/HRPA_SE_LEAVEREQUEST_SRV/, the
-Employee Master service, etc).
-
-Auth: HTTP Basic on every request. ``sap-client`` (mandant) is sent both as
-header and query parameter for compatibility with NetWeaver.
-
-If credentials are missing the client refuses to fetch and returns a
-structured "degraded" status.
-"""
 from __future__ import annotations
 
 import logging
@@ -25,29 +12,10 @@ from app.core.egress_guard import guarded_session
 from app.core.vault_client import get_connection_for_worker, get_secret_for_worker
 
 logger = logging.getLogger(__name__)
-# urllib3 retry logger is noisy by default; INFO surfaces retries
-# without flooding DEBUG output during normal operation.
 logging.getLogger("urllib3.util.retry").setLevel(logging.INFO)
 
 
-
-# Sprint v1.17: shared by the 3 SAP cartridges (no shared lib between
-# cartridges → copied textually into each). Exponential backoff for
-# transient errors so a 429 from a busy SAP mandant or a 503 during
-# maintenance no longer kills the whole extraction DAG.
-#
-# Backoff schedule with the defaults: sleep before retry N is
-#   backoff_factor * (2 ** (N - 1)) seconds
-# i.e. 2s, 4s, 8s between attempts. urllib3 honors any `Retry-After`
-# header the upstream returns and overrides the exponential schedule
-# when one is present (respect_retry_after_header=True).
 def _make_retry_session(max_retries: int = 3, backoff_factor: float = 2.0) -> requests.Session:
-    """Return a requests.Session with exponential backoff for transient errors.
-
-    Retries on 429 (rate limit), 500/502/503/504 (gateway). Sleeps are
-    backoff_factor * (2 ** (n-1)) seconds between attempts: 2s, 4s, 8s
-    with the defaults. Respects Retry-After header automatically.
-    """
     retry = Retry(
         total=max_retries,
         backoff_factor=backoff_factor,
@@ -57,7 +25,6 @@ def _make_retry_session(max_retries: int = 3, backoff_factor: float = 2.0) -> re
         raise_on_status=False,
     )
     return guarded_session(retries=retry)
-
 
 
 class SAPClientError(RuntimeError):
@@ -101,12 +68,10 @@ class CartridgeCircuitBreaker:
 
 
 class SapHcmClient:
-    """SAP HCM Gateway OData v2 client (Basic Auth)."""
 
     CARTRIDGE_ID = "sap_hcm"
     REQUIRED_ENV = ("sap_hcm_base_url", "sap_hcm_user", "sap_hcm_pass")
 
-    # Sprint v1.17: exponential-retry session config (see _make_retry_session).
     _RETRY_MAX = 3
     _RETRY_BACKOFF_FACTOR = 2.0
 
@@ -143,9 +108,6 @@ class SapHcmClient:
             "token": self.token or self._vault_connection.get("token") or self.api_key,
         }
 
-    # ------------------------------------------------------------------
-    # Configuration
-    # ------------------------------------------------------------------
 
     def configuration_status(self) -> dict[str, Any]:
         required = {"SAP_HCM_BASE_URL": self.base_url}
@@ -171,9 +133,6 @@ class SapHcmClient:
                 f"sap_hcm not configured; missing env: {status['missing']}"
             )
 
-    # ------------------------------------------------------------------
-    # HTTP plumbing
-    # ------------------------------------------------------------------
 
     def _headers(self) -> dict[str, str]:
         headers, _, _ = build_auth_headers(
@@ -198,19 +157,12 @@ class SapHcmClient:
         suffix = f" -> Respuesta del servidor {status_code}" if status_code is not None else ""
         logger.warning("%s%s", auth_trace(method, header_names), suffix)
 
-    # ------------------------------------------------------------------
-    # Connectivity
-    # ------------------------------------------------------------------
 
     def test_connection(self) -> dict[str, Any]:
         status = self.configuration_status()
         if not status["configured"]:
             return {"status": "degraded", **status}
 
-        # SAP NetWeaver Gateway exposes one $metadata per service. We probe
-        # the service that owns the first catalogued entity (via its
-        # ``service_path:`` / ``odata_entity:`` field) instead of assuming a
-        # single global metadata document.
         try:
             from app.services.catalog_service import get_all_entities
             catalogue = get_all_entities() or []
@@ -284,9 +236,6 @@ class SapHcmClient:
                 "circuit_breaker": CartridgeCircuitBreaker.snapshot(),
             }
 
-    # ------------------------------------------------------------------
-    # Discovery
-    # ------------------------------------------------------------------
 
     def list_tables(self) -> list[dict[str, Any]]:
         from app.services.catalog_service import get_all_entities
@@ -307,9 +256,6 @@ class SapHcmClient:
             "watermark_field": cfg.get("watermark_field"),
         }
 
-    # ------------------------------------------------------------------
-    # Fetch
-    # ------------------------------------------------------------------
 
     def fetch_entity(
         self,

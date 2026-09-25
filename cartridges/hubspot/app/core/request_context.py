@@ -25,7 +25,7 @@ _CURRENT_SECURITY_CONTEXT: ContextVar[dict[str, Any] | None] = ContextVar(
 
 
 class SecurityContextError(ValueError):
-    """Raised when an inbound trusted security_context cannot be verified."""
+    pass
 
 
 def set_security_context(
@@ -167,13 +167,6 @@ def verify_security_context(
 
 
 def refinement_security_context(ctx: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Build the HubSpot-owned context accepted by Refinement.
-
-    The console forwards the user's trusted workspace scope to HubSpot. HubSpot
-    then calls Refinement with its own internal service identity while preserving
-    the tenant/workspace fence. This avoids leaking the console source across an
-    internal trust boundary, and keeps the cartridge constrained to its prefixes.
-    """
     ctx = ctx if ctx is not None else get_security_context()
     tenant, workspace = scope_values(ctx)
     if tenant and workspace:

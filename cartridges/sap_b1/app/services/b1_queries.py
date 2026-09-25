@@ -1,4 +1,3 @@
-"""Query plans for Business One tables: what to read and how to read it."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -57,7 +56,6 @@ def _as_int(value: Any) -> int | None:
 
 
 def combine_update_stamp(update_date: Any, update_ts: Any) -> datetime | None:
-    """``UpdateDate`` + ``UpdateTS`` (HHMMSS) → one naive datetime, source clock."""
     day = _as_date(update_date)
     if day is None:
         return None
@@ -73,7 +71,6 @@ def combine_update_stamp(update_date: Any, update_ts: Any) -> datetime | None:
 
 @dataclass(frozen=True)
 class Watermark:
-    """A persisted position in a table, canonical text sorts monotonically."""
 
     kind: str
     at: datetime | None = None
@@ -81,7 +78,6 @@ class Watermark:
 
     @classmethod
     def parse(cls, kind: str | None, text: Any) -> "Watermark | None":
-        """Return None when the stored text cannot be trusted."""
         if kind not in WATERMARK_KINDS:
             return None
         raw = str(text if text is not None else "").strip()
@@ -111,7 +107,6 @@ class Watermark:
         return self.at.strftime(_STAMP_FORMAT)
 
     def with_backoff(self, minutes: int) -> "Watermark":
-        """Re-read the last ``minutes`` so a row committed while the previous run was reading is not lost."""
         if self.kind != WATERMARK_UPDATE_TS or not minutes:
             return self
         assert self.at is not None
@@ -132,7 +127,6 @@ class Watermark:
 
 
 def watermark_key(entity: str, company_alias: str) -> str:
-    """Watermarks are tracked per entity and company: ``OINV@mx_mfg``."""
     return f"{entity}@{company_alias}"
 
 
@@ -179,7 +173,6 @@ class EntityPlan:
 
 
 def plan_from_config(config: dict[str, Any]) -> EntityPlan:
-    """Turn one ``entities.yaml`` / ``entity_config`` row into a validated plan."""
     entity = str(config.get("entity") or "").strip()
     if not entity:
         raise ValueError("entity is required")
@@ -289,7 +282,6 @@ def plan_from_config(config: dict[str, Any]) -> EntityPlan:
 
 
 def arrow_schema(plan: EntityPlan):
-    """The parquet schema every file of this entity is written with."""
     if not plan.column_types:
         return None
     import pyarrow as pa
@@ -307,12 +299,10 @@ def arrow_schema(plan: EntityPlan):
 
 
 def _at_midnight(day: date) -> datetime:
-    """Bind a day as a datetime: B1 keeps its date columns as TIMESTAMP at midnight, and a datetime parameter compares."""
     return datetime.combine(day, time.min)
 
 
 def _keyset_clause(alias: str, key: Sequence[str], after: Sequence[Any]) -> tuple[str, list[Any]]:
-    """``pk > last`` for a composite key without row-value syntax (HANA lacks it)."""
     if len(key) != len(after):
         raise ValueError("keyset cursor does not match the primary key")
     branches: list[str] = []
@@ -350,7 +340,6 @@ def select_sql(
     from_date: str | None = None,
     to_date: str | None = None,
 ) -> tuple[str, list[Any]]:
-    """Render one page of ``plan`` in company ``schema`` as (sql, params)."""
     if mode not in MODES:
         raise ValueError(f"mode must be one of {MODES}")
     schema_sql = quote_schema(schema)
@@ -416,7 +405,6 @@ def rows_to_records(
     columns: Sequence[str],
     rows: Sequence[Sequence[Any]],
 ) -> list[dict[str, Any]]:
-    """Name the row values, stamp the company, derive ``_source_updated_at``."""
     names = [str(name) for name in columns]
     if names[: len(plan.columns)] != list(plan.columns):
         raise ValueError(f"{plan.entity}: result columns do not match the plan")
@@ -446,7 +434,6 @@ def keyset_cursor(plan: EntityPlan, record: dict[str, Any]) -> tuple[Any, ...] |
 
 
 def next_watermark(plan: EntityPlan, records: Sequence[dict[str, Any]]) -> Watermark | None:
-    """The highest position seen in ``records`` for the plan's watermark kind."""
     if not records or plan.watermark_kind is None:
         return None
     if plan.watermark_kind == WATERMARK_INTEGER:

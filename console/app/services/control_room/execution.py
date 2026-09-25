@@ -249,7 +249,6 @@ def _bind_to_core(fn):
     return rebound
 
 
-# Action preview, dry-run, execution, and operator workflows.
 @_bind_to_core
 def _external_writeback_enabled() -> bool:
     return os.environ.get(

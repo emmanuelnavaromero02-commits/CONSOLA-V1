@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Copiloto — OMEGA</title>
-  <!-- v1.42: tokens.css FIRST so every later stylesheet sees the design vars. -->
   <link rel="stylesheet" href="/static/css/tokens.css">
   <link rel="stylesheet" href="/static/css/main.css">
   <link rel="stylesheet" href="/static/css/copilot.css">
@@ -193,9 +192,6 @@
   </div>
 
   <script type="module" src="/static/js/theme.js"></script>
-  <!-- Phase-5 — SaaS context client. Loaded BEFORE copilot.js so the
-       chat client can read window.OmegaSecurityContext to render the
-       compact context panel inside the sidebar. -->
   <script src="/static/js/security_context_widget.js"></script>
   <script src="/static/js/copilot.js" defer></script>
   <script src="/static/js/theme-switch.js" defer></script>

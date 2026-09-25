@@ -1,12 +1,3 @@
-"""
-Agent runtime — executes a configurable Agent (row in `agents`).
-
-The Agent's `cartridge_id` is its "mind" (hints inherited from the cartridge).
-The Agent's own `instructions` + `personality` + `allowed_tools` + `rag_filter`
-+ `model` are its specialization. The platform (this runtime + MCP servers)
-is its "body".
-"""
-
 from __future__ import annotations
 
 import json
@@ -47,8 +38,6 @@ MCP_INFRA_URL = os.environ.get("MCP_INFRA_URL", "http://mcp-infra:8010")
 SERVER_URLS = {
     "refinement": REFINEMENT_URL,
     "mcp-infra": MCP_INFRA_URL,
-    # Historical surfaces and DB rows may still store MCP Infra as "infra".
-    # Keep the alias executable while treating "mcp-infra" as canonical.
     "infra": MCP_INFRA_URL,
 }
 
@@ -68,14 +57,6 @@ _DEFAULT_SCHEDULED_MAX_TOOL_CALLS = 5
 _CONTROL_ROOM_ADVISORY_TOOLS = {
     "mcp-infra__control_room__raise_alert",
     "mcp-infra__control_room__raise_analysis_alert",
-    # Mission 4: appending a note to the shared agent memory is an advisory
-    # internal write with the same ceiling as raising an alert — it cannot
-    # approve, execute or write back externally. Listing it here is what lets a
-    # SCHEDULED monitor perform it: _make_invoke denies every non-read tool for a
-    # scheduled agent unless its full name is in _SCHEDULED_MONITOR_WRITE_TOOLS
-    # (this set unioned with _AGENTOPS_COMPUTE_TOOLS), and membership also earns
-    # control_room.write in _scheduled_permissions. Both server aliases are
-    # required because allowed_tools entries are matched on their full name.
     "mcp-infra__control_room__agent_memory_write",
     "infra__control_room__raise_alert",
     "infra__control_room__raise_analysis_alert",
@@ -140,9 +121,6 @@ def _headers_for(server_id: str) -> dict[str, str]:
     return headers
 
 
-# ── Agent definition ─────────────────────────────────────────────────────────
-
-
 @dataclass
 class Agent:
     id: str
@@ -152,12 +130,12 @@ class Agent:
     description: str
     instructions: str
     personality: str
-    allowed_tools: list[str]  # ["refinement__query_dataset", ...]
-    rag_filter: dict  # {"cartridges":[...], "kinds":[...]}
+    allowed_tools: list[str]
+    rag_filter: dict
     model: str
     max_tokens: int
     temperature: float
-    extra: dict  # {"variables":{}, "schedule":{...}}
+    extra: dict
     is_active: bool = True
     tenant_id: str | None = None
     workspace_id: str | None = None
@@ -200,11 +178,6 @@ class Agent:
             else None,
         )
 
-
-# ── Connection pool (lazy-init) ─────────────────────────────────────────────
-# A single pool shared by every agent run avoids the per-call connect+close
-# tax (≈30-50ms each) and the postgres `max_connections` ceiling we'd hit
-# at moderate concurrency.
 
 import asyncio as _asyncio
 
@@ -261,9 +234,6 @@ async def close_pool() -> None:
         if _gold_pool is not None:
             await _gold_pool.close()
             _gold_pool = None
-
-
-# ── Loaders ──────────────────────────────────────────────────────────────────
 
 
 async def _fetch_with_optional_scope(
@@ -332,8 +302,6 @@ async def load_agent_by_slug(
     return Agent.from_row(row) if row else None
 
 
-# ── Cartridge hints (mind context) ──────────────────────────────────────────
-
 _hints_cache: dict[str, tuple[str, float]] = {}
 _HINTS_TTL = 300
 
@@ -352,11 +320,6 @@ async def _cartridge_hints(cartridge_id: str) -> str:
     return text
 
 
-# ── Tool discovery (filtered by agent.allowed_tools) ────────────────────────
-# Catalog cache: GET /mcp/tools is identical for every agent talking to the
-# same MCP server. Cache the full server catalog with TTL, then filter
-# per-agent purely in memory.
-
 _catalog_cache: dict[str, tuple[list[dict], float]] = {}
 _CATALOG_TTL = 300
 
@@ -372,14 +335,12 @@ async def _server_catalog(srv_id: str, base: str) -> list[dict]:
             data = r.json()
         tools = data.get("tools", []) or []
     except Exception:
-        # On failure keep the stale entry if we have one — better than no tools
         return cached[0] if cached else []
     _catalog_cache[srv_id] = (tools, time.time())
     return tools
 
 
 async def _discover_agent_tools(agent: Agent) -> tuple[list[dict], dict[str, str]]:
-    """Return (anthropic_tools, server_map) honoring agent.allowed_tools."""
     by_server: dict[str, set] = {}
     for full in agent.allowed_tools:
         if "__" not in full:
@@ -420,14 +381,10 @@ async def _discover_agent_tools(agent: Agent) -> tuple[list[dict], dict[str, str
 
 
 def invalidate_catalog_cache(server_id: str | None = None):
-    """Force the next discovery to re-fetch from the MCP server."""
     if server_id is None:
         _catalog_cache.clear()
     else:
         _catalog_cache.pop(server_id, None)
-
-
-# ── Invocation (applies rag_filter automatically) ───────────────────────────
 
 
 def _rls_user_context(user: dict | None) -> dict:
@@ -1225,10 +1182,6 @@ def _make_invoke(
             )
             args = {**args, "effect_authority": effect_authority}
 
-        # Scheduled runs have no human in the loop. They may read and raise
-        # advisory Control Room/AgentOps evidence; no external write/delete
-        # action is allowed without a future scheduler approval token wired
-        # server-side.
         if scheduled and risk != "read" and not scheduled_monitor_write:
             return await deny(
                 "scheduled_action_blocked",
@@ -1236,9 +1189,6 @@ def _make_invoke(
                 required_permission=needed,
             )
 
-        # Manual runs still require the Copilot-style approval card for every
-        # write/destructive tool. The agent runtime records a pending action
-        # instead of executing it; UI/API can surface that state safely.
         if meta["requires_approval"] and not scheduled_monitor_write:
             await _audit_agent_tool(
                 agent=agent,
@@ -1275,9 +1225,6 @@ def _make_invoke(
                 "_agent_tool_status": "pending_approval",
             }
 
-        # Apply RAG filter defaults if the agent didn't override per-call.
-        # Only `kinds` is supported by the current search_rag MCP tool; a
-        # `cartridges` filter would need a future tool change to take effect.
         if tool in ("search_rag", "list_rag_sources"):
             if "kinds" in rf and "kinds" not in args:
                 args = {**args, "kinds": rf["kinds"]}
@@ -1286,8 +1233,6 @@ def _make_invoke(
             "preview_sql",
             "preview_transform",
         ):
-            # Always overwrite model-supplied context with the authenticated
-            # backend context. Agent prompts/tool args are untrusted input.
             args = {**args, "user_context": _rls_user_context(user)}
 
         base = SERVER_URLS.get(server_id)
@@ -1356,9 +1301,6 @@ def _make_invoke(
     return invoke
 
 
-# ── System prompt assembly ──────────────────────────────────────────────────
-
-
 def _interpolate_variables(text: str, variables: dict) -> str:
     if not variables:
         return text
@@ -1367,14 +1309,8 @@ def _interpolate_variables(text: str, variables: dict) -> str:
     return text
 
 
-# Hard cap on injected cartridge hints. The largest real hint shipped today is
-# ~4.2 KB (replicon); 8000 matches tool_policy.MAX_STRING_VALUE_CHARS and leaves
-# ~2x headroom while preventing a giant imported hint from crowding the prompt.
 MAX_HINTS_CHARS = 8000
 
-# Wrapper / chat-template tokens a malicious imported cartridge could embed in
-# assistant_hints to break out of the <hints_cartucho> wrapper (or fake a new
-# system turn) so the model treats following text as trusted system text.
 _HINT_INJECTION_TOKENS = (
     "</hints_cartucho>",
     "<hints_cartucho",
@@ -1386,18 +1322,6 @@ _HINT_INJECTION_TOKENS = (
 
 
 def _sanitize_cartridge_hints(cartridge_id: str, hints: str) -> str:
-    """Neutralise prompt-injection vectors in cartridge-supplied hints.
-
-    ``assistant_hints`` is attacker-controllable: a cartridge installed from the
-    marketplace ships arbitrary text here, and it is injected into the agent
-    system prompt inside a ``<hints_cartucho>`` wrapper. A hint containing the
-    literal closing tag (or chat-template tokens like ``<system>`` /
-    ``<|im_start|>``) could break out of the wrapper and have the model treat
-    the following text as trusted system instructions. We neutralise those
-    tokens at injection time by HTML-escaping their angle brackets — benign
-    ``<`` usage elsewhere in the hint is left untouched — and hard-cap the
-    length. The stored hints are never modified; this is runtime-only.
-    """
     if not hints:
         return ""
     sanitized = hints
@@ -1456,9 +1380,6 @@ def _build_system_prompt(agent: Agent, cartridge_hints: str) -> str:
     text = "\n".join(parts)
     vars_dict = (agent.extra or {}).get("variables") or {}
     return _interpolate_variables(text, vars_dict)
-
-
-# ── Run logging ─────────────────────────────────────────────────────────────
 
 
 async def _agent_runs_have_scope_columns() -> bool:
@@ -1606,9 +1527,6 @@ async def _record_scheduled_audit(
             await audit_service.record_event(**audit_values)
 
 
-# ── Public entry ────────────────────────────────────────────────────────────
-
-
 async def run(
     agent: Agent,
     message: str,
@@ -1616,10 +1534,6 @@ async def run(
     user: dict | None = None,
     on_event=None,
 ) -> dict:
-    """Execute one turn of the agent.
-
-    Returns {"reply", "viewer_urls", "messages", "agent_id", "run_id"}.
-    """
     if not agent.is_active:
         return {
             "reply": "(agent inactive)",
@@ -1768,7 +1682,6 @@ async def run_scheduled_monitor(
     schedule_run_id: int | None = None,
     fencing_token: int | None = None,
 ) -> dict:
-    """Execute a scheduled monitor through a fixed AgentOps tool chain."""
     if not agent.is_active:
         return {
             "reply": "(agent inactive)",

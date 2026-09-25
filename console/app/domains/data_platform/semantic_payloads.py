@@ -1,5 +1,3 @@
-"""Pure response helpers for semantic catalog routes."""
-
 from __future__ import annotations
 
 from typing import Any

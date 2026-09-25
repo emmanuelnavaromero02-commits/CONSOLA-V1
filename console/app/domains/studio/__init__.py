@@ -1,1 +1,1 @@
-"""Studio domain helpers."""
+pass

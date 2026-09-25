@@ -121,8 +121,6 @@ async def rotate_secret(
     user_agent: str | None = None,
 ) -> dict:
     new_value = py_secrets.token_hex(length_bytes)
-    # set_setting() already records settings.update with ip+UA; this entry
-    # marks the rotate intent on top so an auditor can reconstruct both.
     result = await set_setting(key, new_value, user_id, user_email, ip=ip, user_agent=user_agent)
     await audit_service.record_event(
         user_id=user_id,

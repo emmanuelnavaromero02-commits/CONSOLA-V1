@@ -139,7 +139,6 @@ def runtime_row_evidence_fields(
     existing_refs: Any = None,
     business_observation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Attest a locator taken from a row already retrieved by the server."""
     dataset = str(source_dataset or "").strip()
     system = str(source_system or "").strip()
     cartridge_id = str(cartridge or "").strip()

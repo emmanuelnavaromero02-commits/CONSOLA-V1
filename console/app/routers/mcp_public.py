@@ -26,22 +26,6 @@ def _scrub_args(value):
     return value
 
 
-# Router para el navegador. Autenticación por sesión + RBAC.
-# Para llamadas server-to-server usar /internal/mcp/* (mcp.py).
-#
-# Sprint v1.34 (audit B2 P0): every route here proxies to mcp-infra
-# (and other registered MCP servers) using console's own
-# INTERNAL_API_KEY. A non-admin authenticated user reaching ``/invoke``
-# could therefore execute privileged tools (``postgres_execute_query``,
-# ``airflow_trigger_dag``, ``airflow_set_variable``, etc.) under the
-# console service identity — a full privilege-escalation primitive.
-# Locking the router to ``require_admin`` removes that primitive; the
-# non-admin Studio/Monitor flows already go through ``/studio_ops/*``
-# and ``/monitoring/*`` which perform their own per-tool RBAC checks
-# and never proxy with the internal key.
-#
-# Mutating browser calls are CSRF-protected. Studio and viewer/pipeline attach
-# the same double-submit token used by the rest of the :8000 console.
 router = APIRouter(
     prefix="/api/mcp",
     tags=["MCP UI"],

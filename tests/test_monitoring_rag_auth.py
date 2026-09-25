@@ -1,4 +1,3 @@
-"""Sprint v1.31 — monitoring discovery and RAG page must be auth-gated."""
 from __future__ import annotations
 
 import importlib

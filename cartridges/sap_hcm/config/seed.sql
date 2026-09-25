@@ -1,12 +1,3 @@
--- ─────────────────────────────────────────────────────────────────────────────
--- MODecissions Cartridge: SAP HCM Core — seed configuration
--- Run once to register this cartridge in a new installation.
--- Safe to re-run: agent inserts use target-less ON CONFLICT DO NOTHING so they
--- work with both the original global agents constraint and the later
--- workspace-aware partial indexes.
--- ─────────────────────────────────────────────────────────────────────────────
-
--- ── Cartridge header ──────────────────────────────────────────────────────────
 INSERT INTO cartridges (id, name, version, description, pattern, category, bronze_path)
 VALUES (
     'sap_hcm',
@@ -23,18 +14,12 @@ ON CONFLICT (id) DO UPDATE
         description = EXCLUDED.description,
         updated_at  = NOW();
 
--- ── DAGs ──────────────────────────────────────────────────────────────────────
 INSERT INTO cartridge_dags (cartridge_id, dag_id, file, description, trigger, params)
 VALUES
     ('sap_hcm', 'sap_hcm_extract',     'sap_hcm_extract.py',     'Extrae una entidad en Bronze MinIO (full o incremental)',  'on-demand', '["entity","mode","from_date","to_date"]'),
     ('sap_hcm', 'sap_hcm_extract_all', 'sap_hcm_extract_all.py', 'Extrae todas las entidades habilitadas en secuencia',       'on-demand', '["mode","entities"]')
 ON CONFLICT (cartridge_id, dag_id) DO NOTHING;
 
--- ── Entities ──────────────────────────────────────────────────────────────────
--- display_name: nombre legible para UI y reportes
--- mode:         full | incremental
--- dag_id:       DAG que maneja la extracción
--- trigger_type: manual | scheduled
 INSERT INTO entity_config
     (cartridge_id, entity,               display_name,                         mode,          primary_key,        dag_id,              description,                                                   enabled, trigger_type)
 VALUES
@@ -56,17 +41,12 @@ ON CONFLICT (cartridge_id, entity) DO UPDATE
         description   = EXCLUDED.description,
         trigger_type  = EXCLUDED.trigger_type;
 
--- ── Semantic vocabulary ───────────────────────────────────────────────────────
 INSERT INTO semantic_terms (cartridge_id, term, definition, maps_to)
 VALUES
     ('sap_hcm', 'headcount activo', 'Número de empleados activos hoy', 'EmployeeMaster WHERE Endda >= CURRENT_DATE AND Begda <= CURRENT_DATE'),
     ('sap_hcm', 'ausencia', 'Días de ausencia', 'LeaveAbsence.Abwtg')
 ON CONFLICT (cartridge_id, term) DO NOTHING;
 
--- ── Specialized agents ────────────────────────────────────────────────────────
--- Mirrored in infra/init/84_sap_hcm_agents_seed.sql for fresh DB installs. The
--- agents table has no workspace_id (cartridge-scoped). The platform has no
--- trigger-based routing yet; "triggers" phrases live in extra as intent metadata.
 INSERT INTO agents (cartridge_id, slug, name, description, instructions, personality,
                     allowed_tools, rag_filter, model, max_tokens, temperature, extra)
 VALUES

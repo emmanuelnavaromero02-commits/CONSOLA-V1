@@ -34,7 +34,6 @@ async def run_intelligence(
     fetcher: DatasetFetcher | None = None,
     persist: bool = True,
 ) -> dict[str, Any]:
-    # Keep old tests/extensions that monkeypatch app.services.intelligence_engine.load_contracts working.
     _engine.load_contracts = load_contracts
     return await _engine.run_intelligence(user, body, fetcher=fetcher, persist=persist)
 

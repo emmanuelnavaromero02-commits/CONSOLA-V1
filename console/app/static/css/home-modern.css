@@ -476,9 +476,6 @@ body {
   grid-column: span 2;
 }
 
-/* sprint v1.2-pr1: the 4 operational cards (Workspace/Studio/Monitor/Decisions)
-   render in a 2×2 grid with identical dimensions, regardless of their
-   primary/secondary class. */
 .home-operational-grid .home-card.primary-card,
 .home-operational-grid .home-card.secondary-card,
 .home-operational-grid .home-card {
@@ -696,7 +693,6 @@ body {
   }
 }
 
-/* ── Action menus (Crear / Ejecutar / Revisar / Configurar) ───────────────── */
 .home-action-groups {
   display: flex;
   align-items: center;
@@ -781,15 +777,6 @@ body {
   cursor: not-allowed;
 }
 
-/* ------------------------------------------------------------------
- * SaaS-context identity bar — mounted above the hero on the Home,
- * consumed via the OmegaSecurityContext widget. Three columns:
- *   left: identity (email + global role)
- *   mid:  workspace context (workspace_id + tenant + workspace_role)
- *   right: counters chips + link to /mis-accesos
- *
- * Falls back to a single-column stack on narrow screens.
- * ------------------------------------------------------------------ */
 .home-identity-bar {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
@@ -862,9 +849,6 @@ body {
   font-weight: 400;
 }
 
-/* Inline warning shown inside the identity bar when the user has no
-   workspace assignment. Kept compact so it doesn't blow up the bar
-   height; the copy is the action ("contact admin"). */
 .home-identity-warning {
   margin: 6px 0 0;
   font-size: 11px;
@@ -905,8 +889,6 @@ body {
   background: var(--primary-soft, rgba(37, 99, 235, 0.08));
 }
 
-/* Generic chip primitives used by the widget so they can be reused on
- * other pages without redefining the look. */
 .omega-sc-chip {
   display: inline-flex;
   align-items: center;

@@ -5,12 +5,6 @@ interface Props {
   result: ResultShape | null;
 }
 
-/**
- * Renders the outcome of POST /test_connection. The two states are
- * deliberately verbose (full message + latency) so a failed probe
- * surfaces exactly what the cartridge reported — operators told us
- * "Connection failed" with no detail was a productivity killer.
- */
 export function TestConnectionResult({ result }: Props) {
   if (!result) return null;
 

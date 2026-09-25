@@ -50,9 +50,6 @@
  *   PUT    /api/vault/secrets/{scope}/{key}
  *   DELETE /api/vault/secrets/{scope}/{key}
  */
-
-// ── Users ──────────────────────────────────────────────────────────
-
 export type UserRole =
   | "admin"
   | "workspace_admin"
@@ -106,7 +103,6 @@ export interface UpdateUserRequest {
   password?:  string;
 }
 
-// ── Companies / tenants ────────────────────────────────────────
 
 export interface TenantSummary {
   id: string;
@@ -188,7 +184,6 @@ export interface IssueTenantAdminTemporaryPasswordRequest {
   workspace_id: string;
 }
 
-// ── Audit ──────────────────────────────────────────────────────────
 
 export interface AuditEvent {
   id:            number | null;
@@ -203,7 +198,6 @@ export interface AuditEvent {
   created_at:    string | null;
 }
 
-// ── Vault ──────────────────────────────────────────────────────────
 
 export type VaultAuthMethod = "bearer_token" | "basic" | "api_key" | "none" | string;
 
@@ -251,7 +245,6 @@ export interface VaultSecretPayload {
   value: string;
 }
 
-// ── Workflows ──────────────────────────────────────────────────────
 
 export type OperationWorkflowStatus =
   | "planning"
@@ -313,7 +306,6 @@ export interface OperationWorkflowActionResponse {
   error?: string | null;
 }
 
-// ── Metrics ────────────────────────────────────────────────────────
 
 export interface SlowEntityMetric {
   cartridge_id?: string | null;

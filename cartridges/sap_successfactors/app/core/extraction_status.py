@@ -10,7 +10,6 @@ _PUBLIC_HTTP_STATUSES = frozenset(
 
 
 def safe_http_status(exc: Exception) -> int | None:
-    """Return only an allowlisted HTTP status from an exception chain."""
 
     current: BaseException | None = exc
     for _ in range(4):
@@ -34,10 +33,7 @@ def safe_http_status(exc: Exception) -> int | None:
 
 
 def classify_successful_extraction(result: dict[str, Any]) -> dict[str, Any]:
-    """Normalize successful entity extraction into the live validation vocabulary."""
     if result.get("status") == "skipped_explicit":
-        # A metadata guard result is an intentional non-extraction, never an
-        # empty-but-valid Bronze publication.
         return dict(result)
     record_count = int(result.get("record_count") or 0)
     if result.get("metadata_status") == "select_pruned" or result.get(
@@ -56,7 +52,6 @@ def classify_successful_extraction(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def classify_extraction_exception(entity: str | None, exc: Exception) -> dict[str, Any]:
-    """Classify one failure into a public payload with no exception text."""
     text = str(exc)
     lowered = text.lower()
     code = "FAILED_OPEN"
@@ -123,7 +118,6 @@ def classify_extraction_exception(entity: str | None, exc: Exception) -> dict[st
 
 
 def public_failure_message(classified: dict[str, Any]) -> str:
-    """Stable message suitable for pipeline rows, XCom and API responses."""
 
     return str(classified.get("failure_code") or "extraction_failed")
 
@@ -152,7 +146,6 @@ def hard_failure_code(
     *,
     attempted: int,
 ) -> str | None:
-    """Why a whole extract_all run must be recorded as failed, or None."""
     produced = sum(
         int(summary.get(key) or 0) for key in ("extracted", "empty_valid", "partial")
     )

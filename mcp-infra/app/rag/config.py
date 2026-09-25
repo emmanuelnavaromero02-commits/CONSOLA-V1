@@ -11,7 +11,6 @@ def _env_int(name: str, default: int) -> int:
         raise RuntimeError(f"{name} must be an integer") from exc
 
 
-# Compose DSN from mcp-infra's PG_* envs, falling back to DATABASE_URL if present
 _pg_dsn_env = os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "postgresql://")
 if _pg_dsn_env:
     PG_DSN = _pg_dsn_env

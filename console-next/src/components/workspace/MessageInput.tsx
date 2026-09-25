@@ -8,17 +8,9 @@ interface Props {
   disabled?:    boolean;
   placeholder?: string;
   initialValue?: string;
-  /** Called when the user types "/" at the start of an empty
-   *  input — opens the slash-command palette. */
   onSlash?:     () => void;
 }
 
-/**
- * Round 1 security P2 — bound the message length so a single
- * paste can't blow up DB row size + downstream LLM token cost.
- * 8 000 chars matches the documented backend MAX_USER_MESSAGE_CHARS
- * referenced by copilot_service.py.
- */
 const MAX_MESSAGE_CHARS = 8_000;
 
 type ValueAction =
@@ -37,21 +29,6 @@ function valueReducer(current: string, action: ValueAction): string {
   return current.trim() || !seed ? current : seed;
 }
 
-/**
- * v1.44.4 Task A — chat input.
- *
- * Autoresizing textarea via react-textarea-autosize so the
- * input grows with the message and shrinks on submit. Submit
- * is Enter (Shift+Enter inserts a newline). Empty / whitespace
- * messages are blocked client-side so we don't waste a backend
- * round-trip on a 400.
- *
- * Slash-command interception: when the input is empty and the
- * user presses "/" we let the keydown propagate up via
- * ``onSlash`` so the page can open the SlashCommandsPalette.
- * The "/" character STILL types into the field so the
- * palette can render it as the first search keystroke.
- */
 export function MessageInput({
   onSend,
   disabled,
@@ -79,10 +56,6 @@ export function MessageInput({
       return;
     }
     if (e.key === "/" && value === "" && onSlash) {
-      // Round 1 review: previously, "/" both opened the palette
-      // AND typed into the textarea — confusing dual state.
-      // Eat the keystroke so the palette becomes the SOLE
-      // input surface for the command.
       e.preventDefault();
       onSlash();
     }

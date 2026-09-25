@@ -1,5 +1,3 @@
-"""PostgreSQL PROCEDURAL LANGUAGE statements and business-copy controls."""
-
 from __future__ import annotations
 
 

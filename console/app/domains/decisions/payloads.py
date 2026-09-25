@@ -1,5 +1,3 @@
-"""Pure payload helpers for decision routes."""
-
 from __future__ import annotations
 
 import json

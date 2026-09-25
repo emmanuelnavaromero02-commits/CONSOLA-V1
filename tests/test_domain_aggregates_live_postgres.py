@@ -1,15 +1,3 @@
-"""Mission 1 — real PostgreSQL proof for all nine domain aggregates.
-
-Mirrors tests/test_control_room_live_postgres_talent_population.py: seeds Gold
-tables beyond the 5,000-row preview cap into a Docker Postgres with native RLS
-+ the staged publication ledger (legacy heads backfilled by
-40_staged_publication_schema.sql), then asserts every aggregate counts the
-whole population, honours tenant/workspace isolation and degrades cleanly.
-The console run-log tables used by Operations are created in the same
-container and reached through ``auth.pool()`` (DATABASE_URL). Skips when
-Docker is not available.
-"""
-
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
@@ -48,7 +36,7 @@ WORKSPACE_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 
 AS_OF = date(2026, 9, 13)
 NOW = datetime(2026, 9, 13, 12, 0, tzinfo=timezone.utc)
-POPULATION = 6000  # beyond the 5,000-row preview cap
+POPULATION = 6000
 EXTRA = 10
 
 GOLD_TABLES = (
@@ -83,7 +71,6 @@ def _staged_schema_sql() -> str:
 
 
 def _seed_gold(cur) -> None:
-    # ── salesforce_deals_en_riesgo ──────────────────────────────────────
     cur.execute(
         """
         CREATE TABLE public.gold_salesforce_deals_en_riesgo (
@@ -130,7 +117,6 @@ def _seed_gold(cur) -> None:
         """,
         (TENANT_B, WORKSPACE_B, AS_OF),
     )
-    # ── sap_successfactors_talent_retention_risk (+ action candidates) ──
     cur.execute(
         """
         CREATE TABLE public.gold_sap_successfactors_talent_retention_risk (
@@ -188,7 +174,6 @@ def _seed_gold(cur) -> None:
         """,
         (TENANT_A, WORKSPACE_A, POPULATION, TENANT_A, WORKSPACE_A),
     )
-    # ── sap_successfactors_employee_360 ─────────────────────────────────
     cur.execute(
         """
         CREATE TABLE public.gold_sap_successfactors_employee_360 (
@@ -230,7 +215,6 @@ def _seed_gold(cur) -> None:
         """,
         (TENANT_B, WORKSPACE_B, AS_OF),
     )
-    # ── consultor_mensual (replicon) ─────────────────────────────────────
     cur.execute(
         """
         CREATE TABLE public.gold_consultor_mensual (
@@ -264,7 +248,6 @@ def _seed_gold(cur) -> None:
         """,
         (TENANT_B, WORKSPACE_B),
     )
-    # ── costo_consultor_mensual (replicon) ───────────────────────────────
     cur.execute(
         """
         CREATE TABLE public.gold_costo_consultor_mensual (
@@ -299,7 +282,6 @@ def _seed_gold(cur) -> None:
         """,
         (TENANT_A, WORKSPACE_A),
     )
-    # ── pnl_mensual (replicon) ───────────────────────────────────────────
     cur.execute(
         """
         CREATE TABLE public.gold_pnl_mensual (
@@ -334,7 +316,6 @@ def _seed_gold(cur) -> None:
         """,
         (TENANT_A, WORKSPACE_A, POPULATION),
     )
-    # ── sap_hcm absence + headcount ──────────────────────────────────────
     cur.execute(
         """
         CREATE TABLE public.gold_absence_by_type_and_month (
@@ -383,8 +364,6 @@ def _seed_gold(cur) -> None:
 
 
 def _seed_console(cur) -> None:
-    """Console run-log tables (normally in DATABASE_URL) with the columns the
-    Operations aggregates reference."""
     cur.execute(
         """
         CREATE TABLE public.pipeline_runs (
@@ -406,7 +385,6 @@ def _seed_console(cur) -> None:
         """
     )
     rows = [
-        # pipeline_runs: (run_id, dag, cartridge, entity, status, started, finished, error, tenant, ws)
         (
             "p1",
             "sf",
@@ -606,9 +584,6 @@ def gold_dsn(seeded_dsn: str, monkeypatch) -> str:
     return role_dsn
 
 
-# ── Risk ────────────────────────────────────────────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_deal_slippage_counts_all_rows_beyond_the_preview_cap(gold_dsn):
     result = await query_deal_slippage(
@@ -633,7 +608,6 @@ async def test_deal_slippage_counts_all_rows_beyond_the_preview_cap(gold_dsn):
             "max_days_overdue": 45,
         }
     ]
-    # Mission 2 controlled exception: top_n=3 returns three named deals by amount.
     assert [row["amount"] for row in result.top_deals] == [1000.0, 1000.0, 1000.0]
     assert result.top_deals[0]["days_overdue"] == 45
     assert result.top_deals[0]["opportunity_name"].startswith("Late ")
@@ -682,7 +656,6 @@ async def test_attrition_risk_population_reuses_talent_counts(gold_dsn):
     isolated = await query_attrition_risk_population(_user(TENANT_B, WORKSPACE_B))
     assert isolated.status == "ready", isolated.error
     assert isolated.high == 2
-    # Tenant B has no action_candidates head: degrades to a note, never fails.
     assert isolated.talent_action is None
 
 
@@ -712,9 +685,6 @@ async def test_employment_end_expiry_windows_exclude_sentinel_and_inactive(gold_
     assert (isolated.within_30, isolated.within_90) == (1, 1)
 
 
-# ── Finance ─────────────────────────────────────────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_billable_hours_logged_sums_the_window(gold_dsn):
     result = await query_billable_hours_logged(
@@ -728,7 +698,6 @@ async def test_billable_hours_logged_sums_the_window(gold_dsn):
     assert result.contributors == 7
     assert len(result.top_projects) == 2
     assert result.top_projects[0]["billable_hours"] == 2000 * 2
-    # The January rows (outside the window) must not leak into the totals.
     assert result.billable_hours != POPULATION * 2 + 5 * 999
 
     isolated = await query_billable_hours_logged(
@@ -745,9 +714,9 @@ async def test_labor_cost_by_department_uses_last_closed_month(gold_dsn):
     )
 
     assert result.status == "ready", result.error
-    assert result.period == date(2026, 8, 1)  # September rows are the open month
+    assert result.period == date(2026, 8, 1)
     assert result.departments_count == 2
-    assert result.headcount == 12  # 7 SAP + 5 Data distinct userid
+    assert result.headcount == 12
     assert result.total_hours == POPULATION
     assert result.total_cost == 3000 * 10 + 3000 * 5
     assert result.total_sunk_cost == 3000 * 2 + 3000 * 1
@@ -770,7 +739,7 @@ async def test_project_margin_on_base_amounts(gold_dsn):
     )
 
     assert result.status == "ready", result.error
-    assert result.projects_count == 3  # OLD (May) is outside the window
+    assert result.projects_count == 3
     assert result.total_revenue_base == 100000 + 10000 + 10 * POPULATION
     assert result.total_cost_direct == 60000 + 14000 + 4 * POPULATION
     assert result.total_cost_sunk == 5000 + 1000 + 1 * POPULATION
@@ -782,9 +751,6 @@ async def test_project_margin_on_base_amounts(gold_dsn):
     assert result.top_projects[0]["margin_pct"] == 35.0
     assert result.bottom_projects[0]["proyecto"] == "P-9"
     assert result.bottom_projects[0]["margin"] == -5000.0
-
-
-# ── Operations ──────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -831,26 +797,24 @@ async def test_pipeline_health_over_console_run_logs(console_pool):
     by_cartridge = {row["cartridge_id"]: row for row in result.cartridges}
     sf = by_cartridge["sap_successfactors"]
     assert sf["failed_24h"] == 2
-    assert sf["success_24h"] == 2  # pipeline_runs p3 + extraction_runs e4
-    assert sf["failed_7d"] == 3  # p1, p2, p4 (p6 is older than 7 days)
-    assert sf["success_7d"] == 3  # p3, p5, e4
+    assert sf["success_24h"] == 2
+    assert sf["failed_7d"] == 3
+    assert sf["success_7d"] == 3
     assert sf["failure_rate_7d"] == 0.5
     assert sf["last_failed_at"] == NOW - timedelta(hours=2, minutes=50)
     hcm = by_cartridge["sap_hcm"]
     assert hcm["failed_24h"] == 2
     assert hcm["success_24h"] == 1
-    assert "salesforce" not in by_cartridge  # unscoped rows are invisible
+    assert "salesforce" not in by_cartridge
     assert result.totals == {
         "failed_24h": 4,
-        "success_24h": 3,  # p3, e3, e4
-        "failed_7d": 5,  # p1, p2, p4, e1, e2
-        "success_7d": 5,  # p3, p5, p7, e3, e4
+        "success_24h": 3,
+        "failed_7d": 5,
+        "success_7d": 5,
         "partial_7d": 0,
     }
     assert result.cartridges_count == 3
     assert result.cartridges_with_failures_24h == 2
-    # Aggregated by (cartridge, entity); PA0001 and EmpJob both failed twice,
-    # PA0001 more recently. No error text, no run rows, no other tenant.
     assert [
         (row["cartridge_id"], row["entity"]) for row in result.failing_entities
     ] == [
@@ -887,11 +851,11 @@ async def test_data_freshness_by_cartridge_over_console_run_logs(console_pool):
     assert by_cartridge["sap_hcm"]["hours_since_success"] == 1.0
     assert by_cartridge["replicon"]["hours_since_success"] == 30.0
     assert by_cartridge["replicon"]["exceeds_sla"] is True
-    assert result.exceeding_sla == 1  # from the un-limited totals query
+    assert result.exceeding_sla == 1
     assert result.cartridges_count == 3
     assert [row["cartridge_id"] for row in result.cartridges][
         0
-    ] == "replicon"  # stalest first
+    ] == "replicon"
     assert "salesforce" not in by_cartridge
 
     unscoped = await query_data_freshness_by_cartridge(

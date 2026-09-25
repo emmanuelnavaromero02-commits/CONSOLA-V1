@@ -1,5 +1,3 @@
-"""Closed DuckDB table-function policy for externally supplied SELECT SQL."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -193,7 +191,6 @@ def _relation_functions(
 
 
 def _reject_adjacent_relation_strings(tree: exp.Expression, tokens: list) -> None:
-    """Reject DuckDB E-string replacement scans obscured by parser normalization."""
     ambiguous: set[tuple[str, str]] = set()
     for table in tree.find_all(exp.Table):
         if table.args.get("db") is not None or table.args.get("catalog") is not None:
@@ -283,7 +280,6 @@ def validate_table_function_query(
     allow_server_resolved_path_list: bool = False,
     allow_server_resolved_publication_relation: bool = False,
 ) -> tuple[StorageRead, ...]:
-    """Fail closed without surfacing parser, function, SQL, or path details."""
     try:
         return _validate_table_function_query(
             sql,

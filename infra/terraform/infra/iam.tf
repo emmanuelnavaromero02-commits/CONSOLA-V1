@@ -8,7 +8,6 @@ data "aws_iam_policy_document" "ec2_assume_role" {
   }
 }
 
-# ---------- App role ----------
 
 resource "aws_iam_role" "app" {
   name               = "modecissions-app-role"
@@ -21,11 +20,6 @@ resource "aws_iam_role_policy_attachment" "app_ssm" {
 }
 
 data "aws_iam_policy_document" "app_s3" {
-  # Bucket level. s3:GetBucketVersioning: the refinement publication verifier
-  # (refinement/app/publication_verifier_worker.py) fails closed unless the
-  # lakehouse bucket reports versioning Status=Enabled, and it runs that check
-  # on every refinement /readyz probe, so without it refinement never becomes
-  # healthy.
   statement {
     actions = [
       "s3:GetBucketLocation",
@@ -37,12 +31,6 @@ data "aws_iam_policy_document" "app_s3" {
     ]
   }
 
-  # Object level. s3:GetObjectVersion: staged publication pins every
-  # Silver/Gold object by VersionId, and HeadObject/GetObject with a VersionId
-  # (omega_lakehouse/s3_storage.py) are authorized by s3:GetObjectVersion, not
-  # s3:GetObject. Version-destroying actions (s3:DeleteObjectVersion,
-  # s3:PutBucketVersioning) stay out on purpose: the app must not be able to
-  # erase a pinned version.
   statement {
     actions = [
       "s3:AbortMultipartUpload",
@@ -129,7 +117,6 @@ resource "aws_iam_instance_profile" "app" {
   role = aws_iam_role.app.name
 }
 
-# ---------- NAT instance role ----------
 
 resource "aws_iam_role" "nat" {
   count = local.use_nat_instance ? 1 : 0
@@ -152,7 +139,6 @@ resource "aws_iam_instance_profile" "nat" {
   role = aws_iam_role.nat[0].name
 }
 
-# ---------- VPN role ----------
 
 resource "aws_iam_role" "vpn" {
   name               = "modecissions-vpn-role"

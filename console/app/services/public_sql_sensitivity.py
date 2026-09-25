@@ -1,5 +1,3 @@
-"""Bounded SQL grammar checks for copy exposed by public APIs."""
-
 from __future__ import annotations
 
 import base64
@@ -254,7 +252,6 @@ def _contains_public_sql_form(value: str) -> bool:
 
 
 def contains_public_sql(value: str) -> bool:
-    """Detect SQL both inside comments and with comments between tokens."""
 
     decoded = _decoded_base64_text(value)
     return _contains_public_sql_form(value) or bool(

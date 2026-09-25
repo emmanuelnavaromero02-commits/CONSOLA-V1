@@ -1,4 +1,3 @@
-"""Sprint v1.45 cúspide — briefing_v2 tests."""
 from __future__ import annotations
 
 import asyncio
@@ -101,7 +100,7 @@ def test_briefing_v2_enriches_and_sorts(briefing_mod, monkeypatch):
         return sample
 
     async def fake_match(intent, *, cartridge_id=None, min_score=0.1, limit=2):
-        return []  # no watchdogs registered in this unit test
+        return []
 
     monkeypatch.setattr(briefing_mod.proactive_service, "briefing_for_user", fake_briefing)
     monkeypatch.setattr(briefing_mod.watchdog_registry, "relevant_watchdogs", fake_match)
@@ -110,9 +109,7 @@ def test_briefing_v2_enriches_and_sorts(briefing_mod, monkeypatch):
         briefing_mod.briefing_v2_for_user(user_id=1, limit=6)
     )
     assert len(out) == 2
-    # critical should sort first
     assert out[0]["id"] == "failure:sap_hcm"
-    # enrichments present
     assert "priority_score" in out[0]
     assert out[0]["priority_score"] >= out[1]["priority_score"]
     assert out[0]["next_action"]["kind"] == "open_pipeline"

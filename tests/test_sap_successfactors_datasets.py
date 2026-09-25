@@ -1,19 +1,3 @@
-"""Phase 2 Block B — SAP SuccessFactors silver/gold datasets.
-
-72 silver + 36 gold dataset SQL files in cartridges/sap_successfactors/datasets/.
-Historical install migrations seed the original foundation/talent set; Console
-startup refreshes the full packaged catalog from datasets/*.sql.
-
-All dataset names are prefixed `sap_successfactors_` for cross-cartridge clarity
-and backwards compatibility with historical rows (headcount_by_department /
-manager_hierarchy / employees_anomalies already exist for sap_hcm).
-
-Static checks: every file parses, headers well-formed, migration<->files agree
-(incl. workspace_id on every row), sources are real SF entities or internal
-cartridge config contracts, prefix avoids collisions, and no gold exposes an
-encrypted column.
-"""
-
 from __future__ import annotations
 
 import json
@@ -201,8 +185,6 @@ def test_headers_well_formed_and_match_filename():
 
 
 def test_all_names_prefixed_to_avoid_cross_cartridge_ambiguity():
-    # SF names stay cartridge-prefixed for compatibility with historical rows
-    # and to avoid ambiguity with sap_hcm's headcount_by_department / etc.
     for path in _dataset_files():
         assert path.stem.startswith("sap_successfactors_"), f"{path.name} not prefixed"
 
@@ -382,8 +364,6 @@ def test_compensation_full_declares_raw_triggers_and_silver_dependencies():
 
 
 def test_golds_do_not_expose_encrypted_columns():
-    # Privacy by design: paycompValue / dateOfBirth / nationalId are encrypted in
-    # bronze; no gold may surface them (raw or under their silver alias).
     for path in _dataset_files():
         _, layer, _, _ = _parse_header(path)
         if layer != "gold":

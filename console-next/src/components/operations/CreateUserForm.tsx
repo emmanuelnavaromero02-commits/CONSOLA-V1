@@ -33,11 +33,6 @@ const MAX_NAME   = 120;
 const MIN_PASS   = 12;
 const MAX_PASS   = 256;
 
-// Round 1 P1 — client-side email format guard so we don't
-// round-trip a malformed value to the backend just to get a
-// generic 400.  Same shape RFC 5322 accepts for simple
-// mailboxes (no comment/quoted-string forms, which we don't
-// need for an enterprise console).
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 function workspaceLabel(workspace: WorkspaceAccessItem): string {
@@ -47,18 +42,6 @@ function workspaceLabel(workspace: WorkspaceAccessItem): string {
 }
 
 
-/**
- * v1.44.4 Group 1 — Create user form.
- *
- * POSTs to /api/admin/users (real backend). Returns the new user
- * dict; React-Query invalidates the list so the table updates
- * immediately.
- *
- * Backend enforces ``must_change_password=TRUE`` whenever an
- * admin sets a password, so this form's "password" is a
- * temporary credential the operator gives the user — they'll
- * be forced to change it on first login.
- */
 export function CreateUserForm() {
   const createMutation = useCreateUser();
   const access = useQuery({

@@ -78,7 +78,7 @@ def test_encoded_ddl_modifier_statement_is_blocked(statement: str) -> None:
 def test_nfkc_and_homoglyph_ddl_modifier_forms_are_blocked() -> None:
     forms = (
         "ＣＲＥＡＴＥ ＯＲ ＲＥＰＬＡＣＥ ＳＣＨＥＭＡ Comercio",
-        "CRЕATE OR REPLACE SCHEMA Comercio",  # Cyrillic IE in CREATE.
+        "CRЕATE OR REPLACE SCHEMA Comercio",
     )
 
     for value in forms:

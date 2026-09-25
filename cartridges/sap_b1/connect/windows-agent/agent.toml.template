@@ -1,4 +1,3 @@
-
 [agent]
 tenant_id = "<TENANT_ID>"          # (OMEGA_TENANT_ID)
 workspace_id = "<WORKSPACE_ID>"    # (OMEGA_WORKSPACE_ID)

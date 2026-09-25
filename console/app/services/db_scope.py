@@ -13,11 +13,6 @@ SET_SCOPE_SQL = (
 
 
 def workspace_scope_from_user(user: dict | None) -> tuple[str | None, str]:
-    """Resolve tenant/workspace scope from authenticated runtime context.
-
-    The scope must come from auth/session state. Callers should not pass values
-    copied from payloads, query parameters or model/tool arguments.
-    """
 
     data = user or {}
     tenant_id = data.get("active_tenant_id") or data.get("tenant_id")
@@ -39,11 +34,6 @@ def _looks_like_asyncpg_pool(pool: Any) -> bool:
 async def scoped_db(
     pool: Any, tenant_id: str | None, workspace_id: str
 ) -> AsyncIterator[Any]:
-    """Yield a connection with transaction-local Postgres RLS scope set.
-
-    SQL WHERE filters by workspace remain useful defense-in-depth, but scoped
-    operational queries must also set the GUCs consumed by RLS policies.
-    """
 
     workspace_text = str(workspace_id or "").strip()
     if not workspace_text:

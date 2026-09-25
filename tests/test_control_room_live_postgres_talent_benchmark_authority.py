@@ -1,5 +1,3 @@
-"""Real PostgreSQL proof for scoped Talent benchmark approval authority."""
-
 from __future__ import annotations
 
 import uuid

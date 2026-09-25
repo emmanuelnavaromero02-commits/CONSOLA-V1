@@ -1,15 +1,3 @@
-"""
-ΩMEGA by EPIUSE — Workspace container (end-user view).
-
-Standalone FastAPI service that hosts:
-  - The consumer assistant (RAG + semantic catalog + GOLD queries)
-  - The published analytic apps gallery and HTML
-  - The data API consumed by those apps (proxy to refinement)
-  - Decision management scoped to the connected user
-
-Authentication: shares the `users` / `user_sessions` tables with console.
-                Login itself lives in console — workspace just reads the cookie.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -38,7 +26,6 @@ from app.services.permissions import require_permission
 from app.services.rate_limiter import get_rate_limiter
 from app.services.security_context import sign_security_context
 from app.security import get_internal_api_key
-# Sprint v1.41.1 — structured JSON logs so request_id correlates here too.
 from app.logging_config import setup_logging  # noqa: E402
 from app.middleware.request_id import request_id_var  # noqa: E402
 
@@ -80,10 +67,6 @@ WORKSPACE_RATE_LIMITS = {
 
 
 def _key_for(server: str) -> str:
-    """Sprint v1.12: pick the per-pair INTERNAL_API_KEY_WORKSPACE_TO_<SERVER>
-    secret if present, falling back to the shared legacy INTERNAL_API_KEY only
-    outside production.
-    ``server`` is one of ``CONSOLE`` / ``REFINEMENT`` / ``MCP_INFRA``."""
     pair = os.environ.get(f"INTERNAL_API_KEY_WORKSPACE_TO_{server}")
     if pair:
         return pair
@@ -131,10 +114,6 @@ async def _rate_limit_workspace_surface(request: Request, path: str, user: dict 
 
 app = FastAPI(title="ΩMEGA by EPIUSE Workspace")
 
-# Sprint v1.41.1 / v1.42.1 — correlation IDs. Import here but register
-# at the BOTTOM of this module (after every @app.middleware decorator
-# below) so the outer middleware order ends up correct — see the
-# matching note in console/app/main.py for the why.
 from app.middleware.request_id import RequestIDMiddleware  # noqa: E402
 
 
@@ -143,10 +122,6 @@ def _allowed_origins() -> list[str]:
     raw = raw_env if raw_env is not None else ("" if _is_production_env() else "http://localhost:8000")
     return [origin.strip() for origin in raw.split(",") if origin.strip() and origin.strip() != "*"]
 
-
-# CORS is registered at the BOTTOM of this module (after every other
-# middleware) so it ends up OUTERMOST in the ASGI stack — see the note next
-# to that add_middleware call for why preflight ordering matters.
 
 STATIC = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
@@ -190,9 +165,6 @@ async def _visible_dataset_metadata(user: dict, dataset: str) -> dict:
                 ws_id,
             )
         elif _is_admin_user(user):
-            # Private beta admins often arrive from Console without a selected
-            # workspace. Use the Gold catalog as the server-side scope source
-            # instead of leaking a false 404 to published apps.
             row = await conn.fetchrow(
                 """
                 SELECT d.name, d.cartridge, d.workspace_id::text AS workspace_id,
@@ -240,13 +212,6 @@ def _user_with_dataset_scope(user: dict, meta: dict) -> dict:
 
 
 def _rls_user_context(user: dict | None) -> dict:
-    # Forward only the fields refinement's RLS layer consumes. Avoid sending
-    # the raw session dict downstream — it may carry fields we don't want the
-    # internal API surface to depend on.
-    #
-    # Admin bypass is computed downstream from role + server-trusted context;
-    # do not forward a standalone flag that a tool/request body could learn
-    # to depend on.
     if not user:
         return {}
     workspace_id = user.get("active_workspace_id") or user.get("workspace_id")
@@ -549,12 +514,6 @@ SECURITY_HEADERS = {
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "same-origin",
     "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
-    # Sprint v1.24 (audit B6): JavaScript sources are strict. Every
-    # script in the workspace shell now ships as an external .js file
-    # (see workspace/app/static/js/) and inline event handlers are
-    # bound via addEventListener — same pattern console adopted in
-    # v1.18+. style-src KEEPS 'unsafe-inline' on purpose (separate
-    # refactor; the audit blocker was script-src).
     "Content-Security-Policy": (
         "default-src 'self'; "
         "script-src 'self'; "
@@ -568,12 +527,6 @@ SECURITY_HEADERS = {
 }
 
 
-# Sprint v1.24: published analytic apps under /apps/* are USER CONTENT
-# — analysts upload self-contained HTML pages with inline <script>,
-# inline <style>, and CDN libraries (chart.js etc.). Locking those to
-# script-src 'self' would brick every published app instantly.
-# Path-based dispatch: shell paths get strict CSP; /apps/* keeps the
-# relaxed pre-v1.24 CSP. Same pattern console used in v1.11.
 _APPS_WRAPPER_CSP = (
     "default-src 'self'; "
     "script-src 'self'; "
@@ -610,7 +563,6 @@ def _apps_content_csp(nonce: str) -> str:
 
 
 def _apply_security_headers(response: Response, path: str = "") -> Response:
-    # Path-based CSP dispatch. The non-CSP headers are uniform.
     headers = dict(SECURITY_HEADERS)
     if path.startswith("/apps/"):
         if path.endswith("/content"):
@@ -628,8 +580,6 @@ async def security_headers_middleware(request: Request, call_next):
     response = await call_next(request)
     return _apply_security_headers(response, request.url.path)
 
-
-# ── Postgres pool (apps + sessions) ────────────────────────────────────────
 
 _PG_POOL: asyncpg.Pool | None = None
 
@@ -682,7 +632,6 @@ async def scoped_pg(user: dict | None):
 
 
 def _is_db_permission_denied(exc: BaseException) -> bool:
-    """Recognize PostgreSQL insufficient-privilege without leaking details."""
 
     return isinstance(exc, asyncpg.InsufficientPrivilegeError) or (
         getattr(exc, "sqlstate", None) == "42501"
@@ -691,7 +640,6 @@ def _is_db_permission_denied(exc: BaseException) -> bool:
 
 @asynccontextmanager
 async def _decision_pg(user: dict | None):
-    """Decision DB scope that converts privilege failures to fail-closed 403."""
 
     try:
         async with scoped_pg(user) as conn:
@@ -701,8 +649,6 @@ async def _decision_pg(user: dict | None):
             raise HTTPException(403, "decision operation forbidden") from None
         raise
 
-
-# ── Auth middleware ────────────────────────────────────────────────────────
 
 _PUBLIC_EXACT  = {"/healthz", "/auth/me"}
 _PUBLIC_PREFIX = ("/static/",)
@@ -718,14 +664,9 @@ def _is_api(path: str, accept: str) -> bool:
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
-    # Logout must remain reachable when the session is expired/revoked, the
-    # selected workspace is stale or malformed, or password change is forced.
-    # The route still enforces double-submit CSRF before touching auth state.
     if path == "/auth/logout":
         request.state.user = None
         return await call_next(request)
-    # Always resolve the session if a cookie is present so soft-auth endpoints
-    # like /auth/me can introspect it.
     token = request.cookies.get(_session.COOKIE_NAME)
     requested_workspace_id = (request.headers.get("x-workspace-id") or "").strip() or None
     try:
@@ -741,14 +682,12 @@ async def auth_middleware(request: Request, call_next):
     if not user:
         if _is_api(path, request.headers.get("accept", "")):
             return _apply_security_headers(JSONResponse({"detail": "authentication required"}, status_code=401))
-        # Bounce to console login with an absolute return URL pointing back to us
         return_url = f"{WORKSPACE_PUBLIC_URL}{path}"
         if request.url.query:
             return_url += "?" + request.url.query
         return _apply_security_headers(RedirectResponse(url=f"{CONSOLE_URL}/login?next={return_url}"))
 
     if user.get("must_change_password"):
-        # Forced change runs in the console (where the form lives)
         if _is_api(path, request.headers.get("accept", "")):
             return _apply_security_headers(JSONResponse(
                 {"detail": "password change required", "must_change_password": True},
@@ -774,8 +713,6 @@ def require_user(request: Request) -> dict:
         raise HTTPException(401, "authentication required")
     return u
 
-
-# ── Routes ─────────────────────────────────────────────────────────────────
 
 @app.get("/healthz")
 async def healthz():
@@ -809,8 +746,6 @@ async def auth_logout(request: Request):
     clear_csrf_cookie(resp)
     return resp
 
-
-# ── Consumer chat ──────────────────────────────────────────────────────────
 
 @app.post("/workspace/chat", dependencies=[Depends(require_csrf)])
 async def workspace_chat(request: Request, body: dict):
@@ -856,7 +791,6 @@ async def workspace_chat_stream(request: Request, body: dict):
     asyncio.create_task(run())
 
     async def event_stream():
-        # Initial tick so clients can observe the connection is live.
         yield "event: open\ndata: {}\n\n"
         while True:
             evt = await queue.get()
@@ -871,8 +805,6 @@ async def workspace_chat_stream(request: Request, body: dict):
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
-
-# ── Apps ───────────────────────────────────────────────────────────────────
 
 @app.get("/api/apps")
 async def api_apps(request: Request):
@@ -907,9 +839,6 @@ def _datasets_from_html(html: str) -> list[str]:
 
 
 async def _load_visible_app(user: dict, name: str) -> dict:
-    """Return app HTML after enforcing the same visibility contract for
-    wrappers and sandboxed content. Published apps are user content; the
-    caller must never receive the raw HTML unless they can view that app."""
     if DATASET_NAME_RE.fullmatch(name or ""):
         static_app = STATIC / "apps" / f"{name}.html"
         if static_app.is_file():
@@ -926,9 +855,6 @@ async def _load_visible_app(user: dict, name: str) -> dict:
     )
     if not row:
         raise HTTPException(404, f"App '{name}' not found")
-    # Visibility check: shared apps are public to all logged-in users; private
-    # apps are visible only to creator and admins. Returning 404 (not 403) so we
-    # don't leak that the app exists.
     if row["visibility"] != "shared" and row["created_by_id"] != user["id"] and not _is_admin_user(user):
         raise HTTPException(404, f"App '{name}' not found")
     if not _app_allowed_for_user(user, row["cartridge_id"], row["created_by_id"]):
@@ -1113,17 +1039,10 @@ async def serve_app(request: Request, name: str):
     )
 
 
-# ── Data API consumed by the published apps ────────────────────────────────
-
 @app.get("/api/data/{dataset}")
 async def api_data(request: Request, dataset: str, limit: int = 5000):
     user = require_user(request)
     _validate_dataset_name(dataset)
-    # Sprint v1.3 RLS hardening (CRIT-4): the dataset name alone is no
-    # longer sufficient — confirm the dataset is registered to this
-    # caller's workspace before proxying the query downstream. Returning
-    # 404 (not 403) so the response cannot be used to enumerate datasets
-    # in other tenants.
     meta = await _assert_dataset_visible(user, dataset)
     scoped_user = _user_with_dataset_scope(user, meta)
     try:
@@ -1155,9 +1074,6 @@ async def api_data_options(request: Request, dataset: str, columns: str = ""):
     if not cols:
         raise HTTPException(400, "columns param required")
     import re as _re
-    # Strict identifier regex — no spaces. Allowing whitespace lets a caller
-    # smuggle `col1 UNION SELECT secrets ...` past validation since the regex
-    # has no semantic understanding of SQL.
     for col in cols:
         if not _re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
             raise HTTPException(400, f"Invalid column name: {col}")
@@ -1218,10 +1134,6 @@ async def api_data_query(request: Request, dataset: str, body: dict):
     if len(filters) > 20:
         raise HTTPException(400, "Too many filters (max 20)")
 
-    # Parameterised filter values — earlier code interpolated strings with
-    # `'`-doubling, which breaks the moment an attacker uses backslashes or
-    # newlines that DuckDB recognises in dollar-quoted contexts. Use real
-    # placeholders so refinement binds the values via the driver.
     params: list = []
 
     def _add_param(v) -> str:
@@ -1271,8 +1183,6 @@ async def api_data_query(request: Request, dataset: str, body: dict):
     return result.get("data", [])
 
 
-# ── Users (assignee picker) ────────────────────────────────────────────────
-
 @app.get("/api/users")
 async def api_users_list(request: Request):
     user = require_user(request)
@@ -1297,8 +1207,6 @@ async def api_users_list(request: Request):
             )
     return {"users": [dict(r) for r in rows]}
 
-
-# ── Dataset metadata for KPI editor ─────────────────────────────────────────
 
 @app.get("/api/datasets")
 async def api_datasets_list(request: Request):
@@ -1328,8 +1236,6 @@ async def api_dataset_schema(request: Request, name: str):
         raise HTTPException(r.status_code, "schema unavailable")
     return r.json()
 
-
-# ── Decisions (mirrors console, scoped to logged-in user) ───────────────────
 
 def _coerce_date(v):
     if v is None or v == "":
@@ -1403,7 +1309,6 @@ async def _validate_decision_references(
     assignee_id: int | None = None,
     follow_up_decision_id: int | None = None,
 ) -> None:
-    """Validate mutable references inside the same transaction as the write."""
 
     if assignee_id is None and follow_up_decision_id is None:
         return
@@ -1830,22 +1735,8 @@ async def api_decisions_add_action(request: Request, decision_id: int, body: dic
     return _decision_action_to_dict(row)
 
 
-# v1.42.1 auditor finding: register RequestIDMiddleware AFTER every
-# @app.middleware decorator above so it ends up as the OUTERMOST
-# wrapper in the ASGI stack. Otherwise responses produced inside the
-# auth middleware never reach its send-wrapper and the X-Request-ID
-# header is lost.
 app.add_middleware(RequestIDMiddleware)
 
-# CORS MUST be the OUTERMOST middleware so OPTIONS preflight requests are
-# answered by CORS itself BEFORE auth_middleware can 401 them — otherwise a
-# cross-origin browser call that needs to send X-CSRF-Token never gets past
-# the preflight. Starlette reverses user_middleware when building the stack,
-# so the LAST add_middleware call ends up outermost (mirrors the console
-# CORS-ordering hotfix). PATCH is listed because /api/decisions/{id} is a
-# PATCH mutation; X-CSRF-Token because require_csrf reads the double-submit
-# token from that header on cross-origin mutations; Idempotency-Key because
-# decision-action POSTs require it before they touch the database.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins(),

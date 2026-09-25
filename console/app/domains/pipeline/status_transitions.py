@@ -1,14 +1,3 @@
-"""Fail-closed status ordering for durable pipeline run state.
-
-The registry is written by Console immediately after an Airflow trigger is
-acknowledged, by Airflow tasks when product work completes, and by Console
-again while polling Airflow.  Those writers can arrive in any order.  The
-ordering below treats a more conclusive or more severe outcome as monotonic:
-late acknowledgements cannot move a terminal run back to queued/running, and
-an Airflow-level success can still be refined to a product-level partial or
-failure.
-"""
-
 from __future__ import annotations
 
 
@@ -45,12 +34,6 @@ def pipeline_status_rank(value: object | None) -> int:
 
 
 def advance_pipeline_status(current: object | None, incoming: object | None) -> str:
-    """Return the monotonic state selected from concurrent observations.
-
-    Equal-rank aliases keep the already persisted spelling.  Repeating the
-    same state remains idempotent.  Unknown future values are therefore never
-    allowed to erase a known state.
-    """
 
     current_status = normalize_pipeline_status(current)
     incoming_status = normalize_pipeline_status(incoming)
@@ -60,7 +43,6 @@ def advance_pipeline_status(current: object | None, incoming: object | None) -> 
 
 
 def pipeline_status_accepts(current: object | None, incoming: object | None) -> bool:
-    """Whether metadata belonging to ``incoming`` may replace current facts."""
 
     current_status = normalize_pipeline_status(current)
     incoming_status = normalize_pipeline_status(incoming)
@@ -70,7 +52,6 @@ def pipeline_status_accepts(current: object | None, incoming: object | None) -> 
 
 
 def postgres_status_rank(expression: str) -> str:
-    """Render a rank expression for a trusted SQL identifier/expression."""
 
     cases = " ".join(
         f"WHEN '{status}' THEN {rank}" for status, rank in PIPELINE_STATUS_RANKS.items()

@@ -1,5 +1,3 @@
-"""Close variants for the shared public technical-copy boundary."""
-
 from __future__ import annotations
 
 

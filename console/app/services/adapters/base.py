@@ -53,4 +53,4 @@ class BaseAdapter(ABC):
     async def execute(
         self, action_data: dict[str, Any], credentials: dict[str, Any]
     ) -> ExecutionResult:
-        """Execute a real remote write-back action."""
+        pass

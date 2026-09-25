@@ -1,24 +1,3 @@
-"""Mission 4 — shared memory between agents.
-
-Two halves. The first uses a fake connection to pin the behaviours that must hold
-without a database: every refusal path, and the one that matters most, a database
-where the migration has not been applied — ``record_finding`` must log and return
-False, and ``read_shared_findings`` must say ``unavailable`` rather than pretending
-the memory is empty.
-
-The second half runs against a real Postgres with the whole of ``infra/init``
-applied (the same fixture the operational RLS tests use), because the guarantees
-that matter here are database guarantees: the RLS policy, the revoked DELETE, and
-the record-once-while-active guard living inside a single statement. It closes on
-the case the feature exists for: Finance records the cost-centre budget gap and
-Risk reads it instead of rediscovering it.
-
-Mould: tests/test_domain_aggregates_live_postgres.py and
-tests/test_workspace_decision_idempotency_live.py. No skip guards, matching those
-files: a live test that cannot reach Docker fails loudly instead of passing
-quietly.
-"""
-
 from __future__ import annotations
 
 import uuid
@@ -34,11 +13,7 @@ from tests.test_operational_rls_console_refinement import (  # noqa: F401
 TENANT_PASSWORD = "test_omega_console_password"
 
 
-# ── half one: no database needed ─────────────────────────────────────────────
-
-
 class _FakeConn:
-    """Enough of an asyncpg connection for the paths that never reach real SQL."""
 
     def __init__(self, *, table_present: bool = True) -> None:
         self.table_present = table_present
@@ -59,8 +34,6 @@ class _FakeConn:
         return "SELECT 1"
 
     def transaction(self, **kwargs):
-        # scoped_db opens a transaction before setting the RLS GUCs, so the fake
-        # has to offer one even though nothing here is transactional.
         return _FakeTransaction()
 
 
@@ -95,7 +68,6 @@ class _FakeAcquire:
 
 
 def _fresh_memory():
-    """Import the service fresh: conftest purges app.* modules after each test."""
     from app.services.intelligence import agent_memory
 
     return agent_memory
@@ -142,7 +114,6 @@ async def test_read_says_unavailable_when_the_table_is_not_migrated(
     memory = _fresh_memory()
     _install_fake_pool(monkeypatch, _FakeConn(table_present=False))
     result = await memory.read_shared_findings(_user(), subject="cost_center_budget")
-    # "Could not look" and "looked, found nothing" must not be the same answer.
     assert result.status == memory.STATUS_UNAVAILABLE
     assert result.error == "missing"
     assert result.findings == []
@@ -194,17 +165,12 @@ async def test_record_refuses_bad_input_before_touching_the_database(
         {**base, "summary": "   "},
         {**base, "summary": "x" * (memory.SUMMARY_MAX_CHARS + 1)},
         {**base, "subject": "x" * (memory.SUBJECT_MAX_CHARS + 1)},
-        # No author at all: neither an id nor a cartridge/slug pair.
         {k: v for k, v in base.items() if k != "agent_id"},
-        # An expiry that is already in the past would violate nothing in the
-        # database (the ordering constraint is deliberately absent) but it would
-        # store a finding that is dead on arrival, so it is refused here.
         {**base, "expires_at": "2020-01-01T00:00:00+00:00"},
         {**base, "expires_at": "not-a-timestamp"},
     ]
     for kwargs in refusals:
         assert await memory.record_finding(_user(), **kwargs) is False, kwargs
-    # Not one of them reached an INSERT.
     assert not any("INSERT INTO" in sql for sql in conn.statements)
 
 
@@ -219,8 +185,6 @@ async def test_read_refuses_an_unusable_subject(monkeypatch) -> None:
 
 def test_read_limit_is_clamped_not_trusted() -> None:
     memory = _fresh_memory()
-    # The advertised JSON-Schema maximum is not enforced by tool_policy, so the
-    # clamp has to live in the service.
     from app.services.intelligence.agent_memory import _clamp_limit
 
     assert _clamp_limit(10_000) == memory.MAX_FINDINGS
@@ -260,14 +224,9 @@ def test_public_payload_explains_an_empty_memory() -> None:
     payload = agent_memory_view.public_payload(
         SharedFindingsResult(status=STATUS_READY, subject="whatever", count=0)
     )
-    # An agent must be able to tell "nobody recorded anything" from "I could not
-    # look", so the empty case says so instead of returning a bare zero.
     assert payload["status"] == STATUS_READY
     assert payload["count"] == 0
     assert any("ningun agente" in note for note in payload["notes"])
-
-
-# ── half two: real Postgres, whole infra/init applied ────────────────────────
 
 
 def _console_dsn(admin_dsn: str) -> str:
@@ -277,7 +236,6 @@ def _console_dsn(admin_dsn: str) -> str:
 
 
 async def _scope(dsn: str) -> tuple[str, str, str]:
-    """First workspace plus the Controller Financiero agent id, from the seeds."""
     conn = await asyncpg.connect(dsn)
     try:
         row = await conn.fetchrow(
@@ -296,7 +254,6 @@ async def _scope(dsn: str) -> tuple[str, str, str]:
 
 
 async def _clear(dsn: str) -> None:
-    """Empty the table between cases as the OWNER: services cannot DELETE."""
     conn = await asyncpg.connect(dsn)
     try:
         await conn.execute("DELETE FROM agent_shared_findings")
@@ -345,10 +302,8 @@ async def test_record_then_read_round_trip_live(
         assert finding.subject == "cost_center_budget"
         assert finding.finding_type == "data_gap"
         assert finding.severity == "high"
-        # Attribution resolves to the agent's display name, never its id.
         assert finding.agent_name == "Controller Financiero"
         assert finding.detail == {"metric": "budget_vs_actual_by_cost_center"}
-        # Second-precision timestamps: the public projection redacts microseconds.
         assert finding.created_at and "." not in finding.created_at
     finally:
         await auth.close_pool()
@@ -365,7 +320,6 @@ async def test_author_resolves_from_cartridge_and_slug_live(
     memory, auth = _live_memory(monkeypatch, dsn)
     user = _user(tenant_id, workspace_id)
     try:
-        # A caller that only knows "I am the Finance domain" still gets an author.
         assert await memory.record_finding(
             user,
             subject="pnl_mensual.base_currency",
@@ -379,7 +333,6 @@ async def test_author_resolves_from_cartridge_and_slug_live(
         )
         assert stored.findings[0].agent_name == "Controller Financiero"
 
-        # An agent that does not exist is refused, not invented.
         assert await memory.record_finding(
             user,
             subject="whatever",
@@ -410,12 +363,10 @@ async def test_record_once_while_active_live(
             "agent_id": agent_id,
         }
         assert await memory.record_finding(user, **kwargs) is True
-        # A monitor calls this on every run; the table must not grow.
         assert await memory.record_finding(user, **kwargs) is False
         assert await memory.record_finding(user, **{**kwargs, "summary": "otro texto"}) is False
         stored = await memory.read_shared_findings(user, subject="cost_center_budget")
         assert stored.count == 1
-        # A DIFFERENT finding_type about the same subject is a different finding.
         assert await memory.record_finding(
             user, **{**kwargs, "finding_type": "warning"}
         ) is True
@@ -449,10 +400,6 @@ async def test_expired_findings_are_not_returned_live(
             await memory.read_shared_findings(user, subject="tema_caducable")
         ).count == 1
 
-        # Retiring a finding is an UPDATE of expires_at, which is the only way
-        # available: DELETE is revoked from every service role. The table
-        # deliberately carries no expires_at > created_at constraint so that this
-        # works.
         conn = await asyncpg.connect(_console_dsn(dsn))
         try:
             async with conn.transaction():
@@ -474,7 +421,6 @@ async def test_expired_findings_are_not_returned_live(
         assert (
             await memory.read_shared_findings(user, subject="tema_caducable")
         ).count == 0
-        # And because it is no longer active, the same finding may be recorded again.
         assert await memory.record_finding(
             user,
             subject="tema_caducable",
@@ -503,13 +449,10 @@ async def test_findings_do_not_cross_workspaces_live(
             summary="No hay presupuesto.",
             agent_id=agent_id,
         ) is True
-        # Another workspace of the same tenant sees nothing: the RLS policy
-        # matches on app.workspace_id, not only on the SQL predicate.
         other = _user(tenant_id, "cccccccc-cccc-4ccc-8ccc-cccccccccccc")
         assert (
             await memory.read_shared_findings(other, subject="cost_center_budget")
         ).count == 0
-        # And a caller with no tenant scope at all gets unavailable, not a leak.
         scopeless = await memory.read_shared_findings(
             {"workspace_id": workspace_id, "active_workspace_id": workspace_id},
             subject="cost_center_budget",
@@ -550,7 +493,6 @@ async def test_services_cannot_delete_a_finding_live(
                 tenant_id,
                 workspace_id,
             )
-            # One agent must not be able to erase what another agent recorded.
             with pytest.raises(asyncpg.InsufficientPrivilegeError):
                 await conn.execute(
                     "DELETE FROM agent_shared_findings WHERE subject = 'no_borrar'"
@@ -563,12 +505,6 @@ async def test_services_cannot_delete_a_finding_live(
 async def test_finance_records_the_gap_and_risk_reads_it_live(
     monkeypatch, postgres_with_real_init_schema: str
 ) -> None:
-    """The case the whole feature exists for, end to end.
-
-    Finance is the agent that hits the cost-centre budget gap; Risk hits the same
-    wall from the other side with cost_center_overrun. After Finance records it,
-    Risk's note cites the author instead of reporting it as news.
-    """
     dsn = postgres_with_real_init_schema
     await _clear(dsn)
     tenant_id, workspace_id, _ = await _scope(dsn)
@@ -577,10 +513,8 @@ async def test_finance_records_the_gap_and_risk_reads_it_live(
 
     user = _user(tenant_id, workspace_id)
     try:
-        # Before anyone records anything, Risk has nothing to cite.
         assert await domain_memory_hooks.cost_center_overrun_note(user) is None
 
-        # Finance records it, attributed through cartridge + slug.
         assert await memory.record_finding(
             user,
             subject=domain_memory_hooks.COST_CENTER_BUDGET_SUBJECT,
@@ -596,18 +530,13 @@ async def test_finance_records_the_gap_and_risk_reads_it_live(
         assert "sobregiro por centro de costo no se puede calcular" in note
         assert "Controller Financiero" in note
         assert "memoria compartida" in note
-        # Short enough to survive the public projection's 64-token limit.
         assert len(note.split()) < 64
 
-        # Another workspace does not inherit the citation.
         other = _user(tenant_id, "dddddddd-dddd-4ddd-8ddd-dddddddddddd")
         assert await domain_memory_hooks.cost_center_overrun_note(other) is None
     finally:
         await auth.close_pool()
         auth._POOL = None
-
-
-# ── the tool registrations, each of which fails silently if forgotten ────────
 
 
 def _source(relative: str) -> str:
@@ -629,18 +558,12 @@ def test_read_tool_is_classified_read_only() -> None:
 def test_write_tool_is_an_advisory_write_that_can_auto_execute() -> None:
     from app.services import permissions, tool_manifest, tool_policy
 
-    # The repository already has a category for exactly this: an internal write
-    # that cannot approve, execute or write back externally. The alternative,
-    # leaving it unclassified, defaults to requires_approval True — which reads as
-    # "safer" and is not: a cron monitor has no human in the loop, so the write
-    # would never happen and the shared memory would stay empty.
     assert "control_room__agent_memory_write" in tool_manifest.ADVISORY_WRITE_TOOLS
     assert "control_room__agent_memory_write" not in tool_manifest.READ_ONLY_TOOLS
     assert "control_room__agent_memory_write" not in tool_manifest.DESTRUCTIVE_TOOLS
     meta = tool_policy.classify("control_room__agent_memory_write")
     assert meta["risk_level"] == "write"
     assert meta["requires_approval"] is False
-    # "write" still means a permission, not a free pass.
     assert tool_policy.required_permission("write") == "copilot.write"
     assert permissions is not None
 
@@ -648,9 +571,6 @@ def test_write_tool_is_an_advisory_write_that_can_auto_execute() -> None:
 def test_write_args_are_scanned_for_prompt_injection() -> None:
     from app.services import tool_policy
 
-    # Because the risk level is "write" and not "read", validate_tool_args runs
-    # _reject_prompt_injection over the arguments. That matters here: the summary
-    # is free text authored by a model.
     with pytest.raises(tool_policy.ToolPolicyError):
         tool_policy.validate_tool_args(
             "control_room__agent_memory_write",
@@ -666,9 +586,6 @@ def test_write_args_are_scanned_for_prompt_injection() -> None:
 def test_scheduled_monitors_are_allowed_to_perform_the_write() -> None:
     from app.services import agent_runtime
 
-    # A scheduled agent is denied every non-read tool unless its full name is in
-    # _SCHEDULED_MONITOR_WRITE_TOOLS, and both server aliases must be listed
-    # because allowed_tools entries are matched on their full name.
     for full_name in (
         "mcp-infra__control_room__agent_memory_write",
         "infra__control_room__agent_memory_write",
@@ -685,11 +602,7 @@ def test_mcp_side_injects_scope_for_both_tools() -> None:
         "}", 1
     )[0]
     assert '"control_room__agent_memory_write"' in write_block
-    # Membership in a control-room set is what injects args["security_context"]
-    # and enforces the tenant/workspace gate; a name in no set falls through and
-    # then 403s inside the tool body.
     assert "_CONTROL_ROOM_MEMORY_WRITE_TOOLS" in source
-    # And the write must require effect authority when the caller is the runner.
     authority_clause = source.split('str(ctx.get("source") or "") == "agent_runner"', 1)[1]
     assert "_CONTROL_ROOM_MEMORY_WRITE_TOOLS" in authority_clause.split("effect_authority is None", 1)[0]
 
@@ -698,13 +611,10 @@ def test_both_tools_are_defined_in_mcp_infra() -> None:
     source = _source("mcp-infra/app/tools/control_room.py")
     assert 'name="control_room__agent_memory_read"' in source
     assert 'name="control_room__agent_memory_write"' in source
-    # The write follows the raise_alert pattern: direct Postgres with the RLS
-    # scope set from the signed context, and the scheduled fence when present.
     write_body = source.split("async def control_room__agent_memory_write(", 1)[1]
     assert "_trusted_agent_scope(security_context)" in write_body
     assert "_set_rls_scope(cur" in write_body
     assert "_lock_scheduled_effect(cur, scope, effect_authority)" in write_body
-    # Scope is never accepted from the model.
     read_schema = source.split('name="control_room__agent_memory_read"', 1)[1].split(
         "async def", 1
     )[0]
@@ -716,18 +626,12 @@ def test_the_internal_read_bridge_exposes_the_memory_view_uncached() -> None:
     source = _source("console/app/routers/control_room.py")
     branch = source.split('if view == "agent_memory":', 1)[1].split("if view ==", 1)[0]
     assert "ControlRoomAgentMemoryResponse" in branch
-    # Deliberately NOT cached: one agent writes, the next agent must see it now.
     assert "_control_room_cache_get_or_set" not in branch
     assert "control_room_service.agent_memory_read(" in branch
 
 
-# ── what the adversarial review caught, pinned so it cannot come back ────────
-
-
 def test_error_is_a_code_from_a_closed_set_never_driver_text(monkeypatch) -> None:
     memory = _fresh_memory()
-    # Mission 2 established this the hard way: an interpolated exception reaches
-    # the model either as driver text or, once long enough, as "[REDACTED]".
     assert set(memory.ERROR_REASONS) == {
         "missing",
         "invalid_scope",
@@ -751,7 +655,6 @@ async def test_a_postgres_error_becomes_a_code_and_a_note(monkeypatch) -> None:
     result = await memory.read_shared_findings(_user(), subject="cost_center_budget")
     assert result.status == memory.STATUS_UNAVAILABLE
     assert result.error == "unavailable"
-    # The driver's sentence must not travel.
     assert "relation" not in (result.error or "")
     assert result.notes == [memory.ERROR_REASONS["unavailable"]]
 
@@ -760,13 +663,10 @@ def test_summary_is_bounded_by_the_projection_budget_not_the_column() -> None:
     memory = _fresh_memory()
     from app.services.intelligence.agent_memory import _normalise_summary
 
-    # 600 chars, not 1000: a summary over 64 word tokens is stored fine and then
-    # reaches every reader as "[REDACTED]", and record-once makes it permanent.
     assert memory.SUMMARY_MAX_CHARS == 600
     assert memory.SUMMARY_MAX_WORDS == 60
     assert _normalise_summary("palabra " * memory.SUMMARY_MAX_WORDS) is not None
     assert _normalise_summary("palabra " * (memory.SUMMARY_MAX_WORDS + 5)) is None
-    # And the bound really is below the projection's limit.
     from app.schemas.control_room_public_projection import _safe_text
 
     longest = " ".join(["palabra"] * memory.SUMMARY_MAX_WORDS)
@@ -784,7 +684,6 @@ async def test_author_falls_back_to_the_next_candidate_slug(monkeypatch) -> None
                 return "agent_shared_findings"
             if "FROM agents" in sql:
                 tried.append(args[3])
-                # Only the conversational template exists in this workspace.
                 return "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" if args[3] == "conv" else None
             return 1
 
@@ -798,20 +697,13 @@ async def test_author_falls_back_to_the_next_candidate_slug(monkeypatch) -> None
         agent_slug=("monitor", "conv"),
     )
     assert wrote is True
-    # The monitor row is tried first, the template second.
     assert tried == ["monitor", "conv"]
 
 
 def test_the_finance_read_tool_does_not_write() -> None:
-    # control_room__finance_kpis_read is classified read-only, approval-free and
-    # gated on datasets.read. A persistent write on that path would be a write
-    # hiding behind a read classification, and would skip the scheduled-effect
-    # fence the dedicated write tool requires. The recorder lives on the
-    # wisdom-bit path instead, which requires control_room.write.
     view_source = _source("console/app/services/control_room/domain_kpis.py")
     finance = view_source.split("async def finance_kpis(", 1)[1].split("async def", 1)[0]
     assert "record_cost_center_budget_gap" not in finance
-    # Risk only READS shared memory, which is fine on a read tool.
     risk = view_source.split("async def risk_kpis(", 1)[1].split("async def", 1)[0]
     assert "cost_center_overrun_note" in risk
     assert "record_" not in risk
@@ -826,11 +718,8 @@ def test_the_gap_summary_does_not_claim_what_it_did_not_verify() -> None:
     verified = domain_memory_hooks.COST_CENTER_BUDGET_SUMMARY
     unverified = domain_memory_hooks.COST_CENTER_BUDGET_SUMMARY_UNVERIFIED
     assert verified != unverified
-    # Only the branch that actually counted non-null expenses may say the expense
-    # column is empty.
     assert "llega vacio" in verified
     assert "llega vacio" not in unverified
     assert "no se pudo verificar" in unverified
-    # Both stay inside the projection budget.
     for text in (verified, unverified):
         assert len(text.split()) < 60
