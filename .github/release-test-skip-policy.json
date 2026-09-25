@@ -134,7 +134,7 @@
           },
           {
             "path": "tests/test_sap_entities_seeded.py",
-            "declarations_sha256": "44e60738cc1d7ba376ac6379c7e0aa6a688694c90d83788f24dd7437af954ad0"
+            "declarations_sha256": "0a258150664d1b83e0d372ef64dda363e6735dea3979058dc795d570c8534cdf"
           },
           {
             "path": "tests/test_sap_hcm_apps.py",
@@ -221,7 +221,7 @@
             "declarations_sha256": "fe98517b8fbaab00c4a1a5cbb56109ea74a148b947f3b8e79f6e6d5110e47953"
           }
         ],
-        "inventory_sha256": "a43f8789a6b66a6a6f39fcf32d43db0cf72929c271b9808a06cce5c57948c5d7"
+        "inventory_sha256": "ac55278a4af98218b23171c6e81eb676d3f9e99ef880c6ce6df2a519ee0f8941"
       }
     },
     {
@@ -384,6 +384,12 @@
           {
             "nodeid": "tests/test_mcp_pg_role_guard.py::test_guard_fails_fast_on_superuser_role",
             "phase": "setup",
+            "category": "skip",
+            "reason": "requires a reachable Postgres with the platform schema (DATABASE_URL)"
+          },
+          {
+            "nodeid": "tests/test_sap_entities_seeded.py::test_live_sap_entities_seeded_in_entity_config",
+            "phase": "call",
             "category": "skip",
             "reason": "requires a reachable Postgres with the platform schema (DATABASE_URL)"
           }
