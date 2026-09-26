@@ -8,6 +8,7 @@ import { copyText } from "@/lib/clipboard";
 import type { Message } from "@/lib/copilot/types";
 import { splitFencedBlocks, type PendingApproval } from "@/lib/studio/assistant";
 import { plural } from "@/lib/studio/format";
+import { mediaMatches, REDUCED_MOTION_QUERY } from "@/lib/studio/media";
 import { cn } from "@/lib/utils";
 
 import { buttonClass, dangerButtonClass, primaryButtonClass } from "./ui";
@@ -83,7 +84,7 @@ export function StudioMessage({ message, pending }: { message: Message; pending?
       >
         {pending ? (
           <p className="flex items-center gap-2 text-muted-foreground">
-            <span className="h-2 w-2 animate-pulse rounded-full bg-current" aria-hidden />
+            <span className="h-2 w-2 rounded-full bg-current motion-safe:animate-pulse" aria-hidden />
             Pensando…
           </p>
         ) : isUser ? (
@@ -114,14 +115,19 @@ export function StudioMessage({ message, pending }: { message: Message; pending?
 }
 
 export function StudioChatLog({ messages, streamingContent }: { messages: Message[]; streamingContent: string | null }) {
-  const endRef = useRef<HTMLDivElement | null>(null);
+  const logRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    const log = logRef.current;
+    if (!log) return;
+    const behavior: ScrollBehavior = mediaMatches(REDUCED_MOTION_QUERY, false) ? "auto" : "smooth";
+    if (typeof log.scrollTo === "function") log.scrollTo({ top: log.scrollHeight, behavior });
+    else log.scrollTop = log.scrollHeight;
   }, [messages.length, streamingContent]);
 
   return (
     <div
+      ref={logRef}
       role="log"
       aria-live="polite"
       aria-label="Mensajes de la conversación"
@@ -142,7 +148,6 @@ export function StudioChatLog({ messages, streamingContent }: { messages: Messag
           <StudioMessage message={{ id: "__streaming__", role: "assistant", content: "" }} pending />
         )
       ) : null}
-      <div ref={endRef} aria-hidden />
     </div>
   );
 }

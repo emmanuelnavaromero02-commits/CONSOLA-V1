@@ -26,6 +26,13 @@ export interface Point {
   y: number;
 }
 
+export interface Box {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export const IDENTITY_VIEW: ViewState = { x: 0, y: 0, k: 1 };
 
 export function clampZoom(k: number): number {
@@ -78,6 +85,29 @@ export function fitView(content: Size, viewport: Size, pad = FIT_PADDING): ViewS
 export function actualSizeView(content: Size, viewport: Size, pad = FIT_PADDING): ViewState {
   if (!hasArea(content) || !hasArea(viewport)) return IDENTITY_VIEW;
   return place(content, viewport, 1, pad);
+}
+
+export function revealBox(
+  view: ViewState,
+  box: Box,
+  viewport: Size,
+  pad = FIT_PADDING,
+  rightInset = 0,
+): ViewState {
+  if (!hasArea(viewport)) return view;
+  const left = box.x * view.k + view.x;
+  const top = box.y * view.k + view.y;
+  const right = left + box.width * view.k;
+  const bottom = top + box.height * view.k;
+  const maxRight = viewport.width - Math.max(0, rightInset) - pad;
+  const maxBottom = viewport.height - pad;
+  let dx = 0;
+  let dy = 0;
+  if (left < pad) dx = pad - left;
+  else if (right > maxRight) dx = Math.max(pad - left, maxRight - right);
+  if (top < pad) dy = pad - top;
+  else if (bottom > maxBottom) dy = Math.max(pad - top, maxBottom - bottom);
+  return dx || dy ? panBy(view, dx, dy) : view;
 }
 
 export function wheelFactor(deltaY: number, deltaMode = 0): number {

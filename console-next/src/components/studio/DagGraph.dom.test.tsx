@@ -105,7 +105,7 @@ function resetHooks() {
         cartridge: "acme",
         modes: ["incremental"],
         last_run: { status: "success", finished_at: "2026-09-26T11:00:00Z" },
-        bronze: { source: "raw/acme/Invoice", record_count: 1200, status: "ok" },
+        bronze: { source: "raw/acme/Invoice", record_count: 1200, latest_date: "2026-09-26", status: "ok" },
         silver: [],
         gold: [],
       },
@@ -190,7 +190,45 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
+  vi.unstubAllGlobals();
 });
+
+function stubCanvasSize(width: number, height: number) {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      observe() {
+        this.callback([{ contentRect: { width, height } } as ResizeObserverEntry], this as unknown as ResizeObserver);
+      }
+      disconnect() {}
+      unobserve() {}
+    },
+  );
+}
+
+function stubViewport(desktop: boolean) {
+  vi.stubGlobal(
+    "matchMedia",
+    (query: string) =>
+      ({
+        matches: query.includes("min-width") ? desktop : false,
+        media: query,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      }) as unknown as MediaQueryList,
+  );
+}
+
+function screenBox(id: string) {
+  const view = /translate\((-?[\d.]+) (-?[\d.]+)\) scale\(([\d.]+)\)/.exec(viewport());
+  const place = /translate\((-?[\d.]+) (-?[\d.]+)\)/.exec(node(id)?.getAttribute("transform") ?? "");
+  expect(view && place, "parsable transforms").toBeTruthy();
+  const [x, y, k] = [Number(view?.[1]), Number(view?.[2]), Number(view?.[3])];
+  const left = Number(place?.[1]) * k + x;
+  const top = Number(place?.[2]) * k + y;
+  return { left, top, right: left + 200 * k, bottom: top + 56 * k };
+}
 
 describe("DagGraph canvas", () => {
   it("keeps one node per node and one arrow per edge, lighting the hovered node's edges", async () => {
@@ -239,7 +277,9 @@ describe("DagGraph canvas", () => {
     await render();
     await click(container.querySelector('button[aria-label="Acercar"]'));
     expect(zoom()).toBe("120 %");
-    await click(container.querySelector('button[aria-label="Restablecer al 100 %"]'));
+    const actualSize = container.querySelector('button[aria-label="1:1 · Restablecer al 100 %"]');
+    expect(actualSize?.textContent).toBe("1:1");
+    await click(actualSize);
     expect(zoom()).toBe("100 %");
     const zoomOut = container.querySelector('button[aria-label="Alejar"]');
     for (let step = 0; step < 6; step += 1) await click(zoomOut);
@@ -313,10 +353,42 @@ describe("DagGraph node drawer", () => {
     expect(detail?.textContent).toContain("Entradas (1) · Salidas (2)");
     expect(detail?.textContent).toContain("Facturas emitidas a clientes");
     expect(detail?.textContent).toContain("Diaria a las 08:00 UTC (cron 0 8 * * *)");
-    expect(detail?.textContent).toContain("1,200 registros");
+    const load = detail?.querySelector("[data-bronze-load]");
+    expect(load?.textContent).toContain("1,200 registros");
+    expect(load?.textContent).toMatch(/Cargados el 26 sept?\.? 2026/);
+    expect(load?.textContent).toContain("no el total de la tabla");
+    expect(detail?.textContent).toContain("Última corrida");
+    expect(detail?.textContent).not.toContain("Volumen");
     expect(detail?.querySelector("[data-node-status]")?.textContent).toBe("Sincronizado");
     expect(detail?.querySelector('time[dateTime="2026-09-26T11:00:00Z"]')).toBeTruthy();
     expect(container.querySelector('[role="group"][aria-label="Controles del lienzo"]')?.className).toContain("md:right-[436px]");
+  });
+
+  it("labels a failed run as a run and never presents it as the table's data", async () => {
+    state.hooks.usePipeline = query([
+      {
+        entity: "Invoice",
+        cartridge: "acme",
+        modes: ["incremental"],
+        last_run: { status: "failed", finished_at: "2026-09-26T11:30:00Z", error: "timeout al leer la fuente" },
+        bronze: { source: "raw/acme/Invoice", record_count: 3, latest_date: "2026-09-26", status: "error" },
+        silver: [],
+        gold: [],
+      },
+    ]);
+    const manifest = { ...MANIFEST, entities: [{ ...MANIFEST.entities[0], trigger_type: "manual" }] };
+    await act(async () => {
+      root.render(<DagGraph cartridge="acme" manifest={manifest} onOpenEditor={onOpenEditor} onOpenSection={onOpenSection} />);
+    });
+    await openNode("entity:Invoice");
+    const detail = drawer();
+    expect(detail?.textContent).toContain("Sin carga confirmada por la última corrida.");
+    expect(detail?.querySelector("[data-bronze-load]")).toBeNull();
+    expect(detail?.textContent).not.toContain("3 registros");
+    expect(detail?.querySelector('time[dateTime="2026-09-26T11:30:00Z"]')).toBeTruthy();
+    expect(detail?.querySelector("[data-node-status]")?.textContent).toBe("Requiere revisión");
+    expect(detail?.textContent).toContain("timeout al leer la fuente");
+    expect(detail?.textContent).toContain("Sin programación activa (cron 0 8 * * * registrado sin activar)");
   });
 
   it("says so when a fact is missing instead of inventing it", async () => {
@@ -372,7 +444,7 @@ describe("DagGraph node drawer", () => {
   it("opens the query editor and forces a dataset refresh only after confirming", async () => {
     const refresh = state.hooks.useRefreshDataset as Mutation;
     refresh.mutate.mockImplementation((_name: string, options: { onSuccess?: (result: unknown) => void; onSettled?: () => void }) => {
-      options.onSuccess?.({ row_count: 31 });
+      options.onSuccess?.({ row_count: 1240 });
       options.onSettled?.();
     });
     await render();
@@ -397,7 +469,7 @@ describe("DagGraph node drawer", () => {
     await click(byText('[data-testid="dag-graph-detail"] button', /Forzar actualización ahora/));
     await click(byText('[data-testid="refresh-dataset-dialog"] button', "Actualizar ahora"));
     expect(refresh.mutate.mock.calls[0][0]).toBe("orders");
-    expect(toastMock.success).toHaveBeenCalledWith("Dataset orders materializado: 31 filas.");
+    expect(toastMock.success).toHaveBeenCalledWith("Dataset orders materializado: 1,240 filas.");
     expect(document.querySelector('[data-testid="refresh-dataset-dialog"]')).toBeNull();
   });
 
@@ -453,5 +525,102 @@ describe("DagGraph node drawer", () => {
     await click(container.querySelector('button[aria-label="Cerrar detalle"]'));
     expect(drawer()).toBeNull();
     expect(document.activeElement).toBe(node("entity:Invoice"));
+  });
+
+  it("ignores Escape typed in controls outside the canvas, like the assistant input", async () => {
+    const outside = document.createElement("textarea");
+    outside.setAttribute("aria-label", "Mensaje para el asistente de Studio");
+    document.body.append(outside);
+    try {
+      await render();
+      await openNode("entity:Invoice");
+      outside.focus();
+      await key(outside, "Escape");
+      expect(drawer()).toBeTruthy();
+      expect(document.activeElement).toBe(outside);
+
+      await key(node("dag:acme_invoice"), "Escape");
+      expect(drawer()).toBeNull();
+      expect(document.activeElement).toBe(node("entity:Invoice"));
+    } finally {
+      outside.remove();
+    }
+  });
+
+  it("stays non-modal beside the canvas on wide screens", async () => {
+    stubViewport(true);
+    await render();
+    await openNode("entity:Invoice");
+    expect(drawer()?.hasAttribute("aria-modal")).toBe(false);
+  });
+
+  it("becomes a modal that traps focus when it covers a narrow screen", async () => {
+    stubViewport(false);
+    await render();
+    await openNode("entity:Invoice");
+    const detail = drawer();
+    expect(detail?.getAttribute("aria-modal")).toBe("true");
+    const focusable = [...(detail?.querySelectorAll<HTMLElement>("button:not([disabled]), [tabindex]:not([tabindex='-1'])") ?? [])];
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    expect(document.activeElement).toBe(first);
+    await dispatch(first, new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true }));
+    expect(document.activeElement).toBe(last);
+    await dispatch(last, new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+    expect(document.activeElement).toBe(first);
+    await key(first, "Escape");
+    expect(drawer()).toBeNull();
+  });
+});
+
+describe("DagGraph keyboard reveal", () => {
+  it("pans a keyboard-focused node that sits beyond the canvas into view", async () => {
+    stubCanvasSize(800, 420);
+    await render();
+    const canvas = container.querySelector('[role="region"][aria-label="Lienzo del Mapa del Flujo"]');
+    await key(canvas, "0");
+    expect(viewport()).toBe("translate(24 106) scale(1)");
+    expect(screenBox("dataset:gold:sales").left).toBeGreaterThan(800);
+
+    await act(async () => {
+      (node("dataset:gold:sales") as SVGGElement).focus();
+    });
+    const box = screenBox("dataset:gold:sales");
+    expect(viewport()).toBe("translate(-336 106) scale(1)");
+    expect(box.left).toBeGreaterThanOrEqual(24);
+    expect(box.right).toBeLessThanOrEqual(776);
+
+    await act(async () => {
+      (node("cartridge:acme") as SVGGElement).focus();
+    });
+    expect(screenBox("cartridge:acme").left).toBeGreaterThanOrEqual(24);
+  });
+
+  it("does not move nodes under the pointer when a click focuses them", async () => {
+    stubCanvasSize(800, 420);
+    await render();
+    await key(container.querySelector('[role="region"][aria-label="Lienzo del Mapa del Flujo"]'), "0");
+    const target = node("dataset:gold:sales") as SVGGElement;
+    await dispatch(target, new MouseEvent("pointerdown", { bubbles: true }));
+    await act(async () => {
+      target.focus();
+    });
+    expect(viewport()).toBe("translate(24 106) scale(1)");
+    await dispatch(target, new MouseEvent("pointerup", { bubbles: true }));
+  });
+
+  it("reveals the node again when closing the drawer returns focus to it, clear of the drawer", async () => {
+    stubCanvasSize(800, 420);
+    stubViewport(true);
+    await render();
+    await key(container.querySelector('[role="region"][aria-label="Lienzo del Mapa del Flujo"]'), "0");
+    await openNode("dataset:gold:sales");
+    expect(screenBox("dataset:gold:sales").left).toBeGreaterThan(800);
+    await key(document.body, "Escape");
+    expect(drawer()).toBeNull();
+    expect(document.activeElement).toBe(node("dataset:gold:sales"));
+    const box = screenBox("dataset:gold:sales");
+    expect(box.left).toBeGreaterThanOrEqual(24);
+    expect(box.right).toBeLessThanOrEqual(800 - 420 - 24);
   });
 });

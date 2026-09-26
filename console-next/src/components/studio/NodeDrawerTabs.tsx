@@ -9,17 +9,20 @@ import { useAnalyticsApps } from "@/lib/hooks/useAnalyticsApps";
 import { useDatasetDetail, usePipeline, useSourceSchema } from "@/lib/monitor/hooks";
 import type { DatasetSummary, PipelineEntity } from "@/lib/monitor/types";
 import { studioErrorMessage } from "@/lib/studio/client";
-import { absoluteTime, plural } from "@/lib/studio/format";
+import { absoluteTime, formatDay, plural } from "@/lib/studio/format";
 import { graphNeighbours, kindLabel } from "@/lib/studio/graph-layout";
 import { collectDownstream, nodeCaption, nodeRef, nodeStage, STAGE_LABEL, STAGE_TEXT } from "@/lib/studio/graph-view";
 import { useCartridgeStatus } from "@/lib/studio/hooks";
 import {
   aggregateStatus,
   appsUsing,
+  bronzeLoad,
   datasetStatus,
   entityStatus,
   NODE_STATUS_LABEL,
   NODE_STATUS_TONE,
+  registeredRun,
+  runTime,
   scheduleText,
   type StatusFact,
 } from "@/lib/studio/node-facts";
@@ -154,7 +157,9 @@ function EntityAbout({ cartridge, name, node, manifest }: { cartridge: string; n
   const pipeline = usePipeline(cartridge);
   const entity = manifestEntity(manifest, name);
   const entry = pipelineEntry(pipeline.data, name);
-  const run = entry?.last_run ?? entry?.last_job;
+  const run = registeredRun(entry);
+  const load = bronzeLoad(entry);
+  const lastRun = runTime(run);
   return (
     <div className="space-y-2">
       <PipelineNotice query={pipeline} />
@@ -163,13 +168,21 @@ function EntityAbout({ cartridge, name, node, manifest }: { cartridge: string; n
         <Fact label="Descripción">{text(entity?.description) ?? <Missing>{NO_DESCRIPTION}</Missing>}</Fact>
         <Fact label="Capa">Bronce · tabla de origen</Fact>
         <Fact label="Frecuencia de actualización">{scheduleText(entity) ?? <Missing>{NO_SCHEDULE}</Missing>}</Fact>
-        <Fact label="Volumen">
-          <Volume count={entry?.bronze?.record_count} />
+        <Fact label="Última carga en bronce">
+          {load ? (
+            <span data-bronze-load className="flex flex-col">
+              <span>{load.count !== null ? plural(load.count, "registro", "registros") : "Sin conteo registrado."}</span>
+              {load.day ? <span className="text-xs text-muted-foreground">Cargados el {formatDay(load.day)}</span> : null}
+              <span className="text-xs text-muted-foreground">Cuenta solo la última carga, no el total de la tabla.</span>
+            </span>
+          ) : (
+            <Missing>{run ? "Sin carga confirmada por la última corrida." : "Sin información de cargas."}</Missing>
+          )}
         </Fact>
-        <Fact label="Última actualización">
-          <RelativeTime value={run?.finished_at} />
+        <Fact label="Última corrida">
+          {lastRun ? <RelativeTime value={lastRun} /> : <Missing>Sin corridas registradas.</Missing>}
         </Fact>
-        <Fact label="Estado">
+        <Fact label="Estado de la última corrida">
           <StatusValue fact={entityStatus(entry)} />
         </Fact>
       </dl>
@@ -217,10 +230,10 @@ function DatasetAbout({ name, summary }: { name: string; summary: DatasetSummary
   );
 }
 
-function latestFinished(entries: Array<PipelineEntity | undefined>): string | null {
+function latestRun(entries: Array<PipelineEntity | undefined>): string | null {
   let best: { time: number; value: string } | null = null;
   for (const entry of entries) {
-    const value = text((entry?.last_run ?? entry?.last_job)?.finished_at);
+    const value = runTime(registeredRun(entry));
     const time = value ? Date.parse(value) : Number.NaN;
     if (value && !Number.isNaN(time) && (!best || time > best.time)) best = { time, value };
   }
@@ -254,10 +267,10 @@ function DagAbout({ cartridge, dagId, manifest }: { cartridge: string; dagId: st
             <Missing>{NO_SCHEDULE}</Missing>
           )}
         </Fact>
-        <Fact label="Última ejecución">
-          <RelativeTime value={latestFinished(entries)} />
+        <Fact label="Última corrida">
+          <RelativeTime value={latestRun(entries)} />
         </Fact>
-        <Fact label="Estado">
+        <Fact label="Estado de las corridas">
           <StatusValue fact={aggregateStatus(entries.map((entry) => entityStatus(entry)))} />
         </Fact>
       </dl>

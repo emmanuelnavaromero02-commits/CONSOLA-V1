@@ -25,14 +25,17 @@ import {
   STAGE_STYLE,
   STAGE_TEXT,
 } from "@/lib/studio/graph-view";
+import { DESKTOP_QUERY, useMediaQuery } from "@/lib/studio/media";
 import type { DagGraphNode } from "@/lib/studio/types";
 import {
   actualSizeView,
   atMaxZoom,
   atMinZoom,
+  FIT_PADDING,
   fitView,
   PAN_STEP,
   panBy,
+  revealBox,
   wheelFactor,
   ZOOM_STEP,
   zoomAt,
@@ -50,6 +53,7 @@ const ARROW_IN = "studio-graph-arrow-in";
 const ARROW_OUT = "studio-graph-arrow-out";
 const DOTS = "studio-graph-dots";
 const GLOW = "[filter:drop-shadow(0_0_3px_currentColor)]";
+export const DRAWER_WIDTH = 420;
 
 const controlClass = cn(
   "inline-flex h-10 min-w-10 items-center justify-center rounded-lg px-2 text-xs font-semibold text-foreground",
@@ -95,6 +99,8 @@ export function GraphCanvas({
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<SVGSVGElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
+  const pointerFocusRef = useRef(false);
+  const desktop = useMediaQuery(DESKTOP_QUERY, true);
   const [view, setView] = useState<ViewState | null>(null);
   const [size, setSize] = useState<Size>({ width: 0, height: 0 });
   const [dragging, setDragging] = useState(false);
@@ -169,6 +175,17 @@ export function GraphCanvas({
     setView(actualSizeView(content, size));
   }
 
+  function revealNode(x: number, y: number) {
+    if (pointerFocusRef.current) return;
+    const inset = drawerOpen && desktop ? DRAWER_WIDTH : 0;
+    const box = { x, y, width: GRAPH_NODE_WIDTH, height: GRAPH_NODE_HEIGHT };
+    setView((value) => {
+      const base = value ?? fitted;
+      const next = revealBox(base, box, size, FIT_PADDING, inset);
+      return next === base ? value : next;
+    });
+  }
+
   function onKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
     if (event.target !== event.currentTarget) return;
     switch (event.key) {
@@ -237,6 +254,7 @@ export function GraphCanvas({
   return (
     <div
       ref={wrapperRef}
+      data-graph-canvas
       role="region"
       aria-label="Lienzo del Mapa del Flujo"
       aria-describedby={hintId}
@@ -306,7 +324,7 @@ export function GraphCanvas({
                 data-active={role ? "true" : "false"}
                 data-direction={role ?? undefined}
                 className={cn(
-                  "pointer-events-none fill-none transition-[opacity,stroke] duration-150",
+                  "pointer-events-none fill-none motion-safe:transition-[opacity,stroke] motion-safe:duration-150",
                   role === "in" && cn("stroke-sky-500 stroke-[2.5] text-sky-500", GLOW),
                   role === "out" && cn("stroke-emerald-500 stroke-[2.5] text-emerald-500", GLOW),
                   !role && "stroke-muted-foreground stroke-[1.5]",
@@ -347,8 +365,23 @@ export function GraphCanvas({
                 }}
                 onMouseEnter={() => onHover(node.id)}
                 onMouseLeave={() => onHover(null)}
-                onFocus={() => onHover(node.id)}
-                onBlur={() => onHover(null)}
+                onPointerDown={() => {
+                  pointerFocusRef.current = true;
+                }}
+                onPointerUp={() => {
+                  pointerFocusRef.current = false;
+                }}
+                onPointerCancel={() => {
+                  pointerFocusRef.current = false;
+                }}
+                onFocus={() => {
+                  onHover(node.id);
+                  revealNode(x, y);
+                }}
+                onBlur={() => {
+                  pointerFocusRef.current = false;
+                  onHover(null);
+                }}
               >
                 <title>
                   {`${name}\n${STAGE_LABEL[stage]} · ${caption}\n${plural(counts.incoming, "entrada", "entradas")} · ${plural(counts.outgoing, "salida", "salidas")}`}
@@ -358,7 +391,7 @@ export function GraphCanvas({
                   height={GRAPH_NODE_HEIGHT}
                   rx={10}
                   className={cn(
-                    "stroke-[1.5] transition-[stroke-width] duration-150",
+                    "stroke-[1.5] motion-safe:transition-[stroke-width] motion-safe:duration-150",
                     STAGE_STYLE[stage],
                     isActive && "stroke-[2.5]",
                     isSelected && "stroke-primary stroke-[3]",
@@ -444,7 +477,7 @@ export function GraphCanvas({
         </button>
         <button
           type="button"
-          aria-label="Restablecer al 100 %"
+          aria-label="1:1 · Restablecer al 100 %"
           title="Restablecer al 100 % (0)"
           className={controlClass}
           onClick={resetToActualSize}

@@ -11,6 +11,7 @@ import { useDatasetDetail, useDatasets } from "@/lib/monitor/hooks";
 import type { DatasetDetail } from "@/lib/monitor/types";
 import { studioErrorMessage } from "@/lib/studio/client";
 import { datasetsForLayer } from "@/lib/studio/datasets";
+import { plural } from "@/lib/studio/format";
 import { useDeleteDataset, useRefreshDataset, useSaveDataset } from "@/lib/studio/hooks";
 import { editorSources } from "@/lib/studio/sources";
 import type { StudioEditorTarget, StudioLayer, StudioManifest } from "@/lib/studio/types";
@@ -173,7 +174,7 @@ export function RefinePanel({
       onSuccess: (result) =>
         toast.success(
           typeof result.row_count === "number"
-            ? `Dataset ${existing} materializado: ${result.row_count} filas.`
+            ? `Dataset ${existing} materializado: ${plural(result.row_count, "fila", "filas")}.`
             : `Dataset ${existing} materializado.`,
         ),
       onError: (error) => toast.error(studioErrorMessage(error, "No se pudo materializar el dataset.")),

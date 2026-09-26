@@ -7,9 +7,11 @@ import { toast } from "sonner";
 import { nextTabIndexForKey } from "@/app/(shell)/operational-intelligence/tablist-a11y";
 import type { DatasetSummary } from "@/lib/monitor/types";
 import { studioErrorMessage } from "@/lib/studio/client";
+import { plural } from "@/lib/studio/format";
 import { graphNeighbours } from "@/lib/studio/graph-layout";
 import { nodeRef, nodeStage, STAGE_LABEL, STAGE_STYLE, STAGE_TEXT } from "@/lib/studio/graph-view";
 import { useRefreshDataset } from "@/lib/studio/hooks";
+import { DESKTOP_QUERY, useMediaQuery } from "@/lib/studio/media";
 import type { StudioSectionId } from "@/lib/studio/sections";
 import type { DagGraphEdge, DagGraphNode, StudioEditorTarget, StudioManifest } from "@/lib/studio/types";
 import { cn } from "@/lib/utils";
@@ -27,6 +29,13 @@ const TABS: Array<{ id: DrawerTab; label: string; icon: LucideIcon }> = [
 ];
 
 type Confirming = "refresh" | "extract";
+
+const FOCUSABLE =
+  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function startedOutsidePage(target: EventTarget | null): boolean {
+  return target === null || target === document || target === document.body || target === document.documentElement;
+}
 
 export function NodeDrawer({
   cartridge,
@@ -53,6 +62,7 @@ export function NodeDrawer({
 }) {
   const baseId = useId();
   const titleId = `${baseId}-title`;
+  const asideRef = useRef<HTMLElement | null>(null);
   const closeRef = useRef<HTMLButtonElement | null>(null);
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [tab, setTab] = useState<DrawerTab>("about");
@@ -69,6 +79,8 @@ export function NodeDrawer({
   const currentLaunch = launch?.nodeId === node.id ? launch.value : null;
   const entity = ref.kind === "entity" ? manifestEntity(manifest, ref.name) : undefined;
   const mode = extractionMode(entity?.mode);
+  const desktop = useMediaQuery(DESKTOP_QUERY, true);
+  const modal = !desktop;
 
   useEffect(() => {
     confirmOpenRef.current = action !== null;
@@ -81,13 +93,37 @@ export function NodeDrawer({
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if (event.key !== "Escape" || confirmOpenRef.current) return;
-      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      if (event.key !== "Escape" || event.defaultPrevented || confirmOpenRef.current) return;
+      const aside = asideRef.current;
+      if (!aside) return;
+      const otherModal = [...document.querySelectorAll('[role="dialog"][aria-modal="true"]')].some(
+        (dialog) => dialog !== aside,
+      );
+      if (otherModal) return;
+      const scope = aside.closest("[data-graph-canvas]") ?? aside;
+      const target = event.target;
+      const inside = target instanceof Node && scope.contains(target);
+      if (!inside && !startedOutsidePage(target)) return;
       onCloseRef.current();
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, []);
+
+  function trapFocus(event: ReactKeyboardEvent<HTMLElement>) {
+    if (!modal || event.key !== "Tab") return;
+    const focusable = [...(asideRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])];
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
 
   function onTabKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>, index: number) {
     const next = nextTabIndexForKey(event.key, index, TABS.length);
@@ -103,7 +139,7 @@ export function NodeDrawer({
       onSuccess: (result) =>
         toast.success(
           typeof result?.row_count === "number"
-            ? `Dataset ${name} materializado: ${result.row_count} filas.`
+            ? `Dataset ${name} materializado: ${plural(result.row_count, "fila", "filas")}.`
             : `Dataset ${name} materializado.`,
         ),
       onError: (error) => toast.error(studioErrorMessage(error, "No se pudo materializar el dataset.")),
@@ -132,9 +168,12 @@ export function NodeDrawer({
   return (
     <>
       <aside
+        ref={asideRef}
         role="dialog"
+        aria-modal={modal ? "true" : undefined}
         aria-labelledby={titleId}
         data-testid="dag-graph-detail"
+        onKeyDown={trapFocus}
         className={cn(
           "fixed inset-0 z-40 flex flex-col overflow-y-auto border-l bg-card shadow-xl",
           "motion-safe:animate-studio-drawer-in md:absolute md:inset-y-0 md:left-auto md:right-0 md:w-[420px]",

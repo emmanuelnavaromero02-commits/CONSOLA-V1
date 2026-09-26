@@ -365,6 +365,15 @@ describe("Studio page", () => {
     expect(document.activeElement?.id).toBe("studio-tab-grafo");
   });
 
+  it("lands focus on Automatizaciones when the drawer opens it", async () => {
+    await render();
+    await click(container.querySelector('[data-node-id="dag:acme_packaged"]'));
+    await click(byText('[data-testid="dag-graph-detail"] [role="tab"]', "Ver información"));
+    await click(byText('[data-testid="dag-graph-detail"] button', /Abrir en Automatizaciones/));
+    expect(container.querySelector("#studio-tab-dags")?.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement?.id).toBe("studio-panel-dags");
+  });
+
   it("opens a dataset from the flow map in the query editor", async () => {
     state.hooks.useDagGraph = query({
       nodes: [
@@ -391,6 +400,15 @@ describe("Studio page", () => {
     expect(container.querySelector("#studio-tab-refinar")?.getAttribute("aria-selected")).toBe("true");
     expect(container.querySelector<HTMLTextAreaElement>('textarea[name="sql"]')?.value).toBe("select * from invoices");
     expect(new URLSearchParams(window.location.search).get("tab")).toBe("refinar");
+    expect(document.activeElement?.id).toBe("studio-panel-refinar");
+
+    const sql = container.querySelector<HTMLTextAreaElement>('textarea[name="sql"]');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(sql, "select id from invoices");
+      sql?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(container.querySelector("#studio-tab-refinar"));
+    expect(container.querySelector<HTMLTextAreaElement>('textarea[name="sql"]')?.value).toBe("select id from invoices");
 
     await click(container.querySelector("#studio-tab-grafo"));
     await click(container.querySelector("#studio-tab-refinar"));

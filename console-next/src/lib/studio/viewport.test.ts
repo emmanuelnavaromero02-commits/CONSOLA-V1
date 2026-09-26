@@ -8,6 +8,7 @@ import {
   fitView,
   IDENTITY_VIEW,
   panBy,
+  revealBox,
   wheelFactor,
   ZOOM_MAX,
   ZOOM_MIN,
@@ -83,5 +84,29 @@ describe("viewport", () => {
     expect(zoomPercent(1.2)).toBe(120);
     expect(zoomPercent(0.4)).toBe(40);
     expect(zoomPercent(2.5)).toBe(250);
+  });
+
+  it("pans just enough to reveal a box, keeping the padding and the drawer inset clear", () => {
+    const view = { x: 24, y: 106, k: 1 };
+    const box = { x: 912, y: 52, width: 200, height: 56 };
+    expect(revealBox(view, box, { width: 800, height: 420 })).toEqual({ x: -336, y: 106, k: 1 });
+    expect(revealBox(view, box, { width: 800, height: 420 }, 24, 420)).toEqual({ x: -756, y: 106, k: 1 });
+    expect(revealBox(view, { x: 0, y: 900, width: 200, height: 56 }, { width: 800, height: 420 })).toEqual({ x: 24, y: -560, k: 1 });
+    expect(revealBox({ x: -500, y: -40, k: 0.5 }, { x: 24, y: 52, width: 200, height: 56 }, { width: 800, height: 420 })).toEqual({
+      x: 12,
+      y: -2,
+      k: 0.5,
+    });
+  });
+
+  it("keeps the left edge visible when the box is wider than the free space and ignores unknown sizes", () => {
+    expect(revealBox({ x: 0, y: 0, k: 1 }, { x: 500, y: 24, width: 200, height: 56 }, { width: 300, height: 420 }, 24, 200)).toEqual({
+      x: -476,
+      y: 0,
+      k: 1,
+    });
+    const visible = { x: 24, y: 24, k: 1 };
+    expect(revealBox(visible, { x: 0, y: 0, width: 200, height: 56 }, { width: 800, height: 420 })).toBe(visible);
+    expect(revealBox(visible, { x: 5000, y: 0, width: 200, height: 56 }, { width: 0, height: 0 })).toBe(visible);
   });
 });

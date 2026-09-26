@@ -100,6 +100,7 @@ export default function StudioPage() {
   }
 
   function chooseTab(id: StudioSectionId) {
+    if (id === tab) return;
     setEditorTarget(null);
     selectTab(id);
   }
@@ -112,14 +113,18 @@ export default function StudioPage() {
     tabRefs.current[next]?.focus();
   }
 
+  function openSection(id: StudioSectionId) {
+    selectTab(id);
+    setFocusRequest((value) => value + 1);
+  }
+
   function openEditor(target: StudioEditorTarget) {
     setEditorTarget(target);
-    selectTab("refinar");
+    openSection("refinar");
   }
 
   function openDeploy() {
-    selectTab("dags");
-    setFocusRequest((value) => value + 1);
+    openSection("dags");
   }
 
   return (
@@ -233,7 +238,7 @@ export default function StudioPage() {
                     cartridge={activeId}
                     manifest={manifest.data}
                     onOpenEditor={openEditor}
-                    onOpenSection={selectTab}
+                    onOpenSection={openSection}
                   />
                 ) : null}
                 {activeSection.id === "dags" ? <DagsPanel key={activeId} cartridge={activeId} manifest={manifest.data} /> : null}

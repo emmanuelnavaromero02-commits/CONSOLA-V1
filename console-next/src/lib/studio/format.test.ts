@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { absoluteTime, formatCount, plural } from "./format";
+import { absoluteTime, formatCount, formatDay, plural } from "./format";
 
 describe("format helpers", () => {
   it("groups thousands like es-MX", () => {
@@ -19,5 +19,11 @@ describe("format helpers", () => {
     expect(formatted).toMatch(/^26 sept?\.? 2026, 11:48/);
     expect(formatted.endsWith(" UTC")).toBe(true);
     expect(absoluteTime("no es fecha")).toBe("no es fecha");
+  });
+
+  it("formats load days in UTC without a time", () => {
+    expect(formatDay("2026-09-26")).toMatch(/^26 sept?\.? 2026$/);
+    expect(formatDay("2026-09-26T23:30:00Z")).toMatch(/^26 sept?\.? 2026$/);
+    expect(formatDay("ayer")).toBe("ayer");
   });
 });

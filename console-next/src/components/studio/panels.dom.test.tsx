@@ -324,6 +324,37 @@ describe("StudioAssistant", () => {
     expect(container.textContent).toContain("cartridge_get_manifest");
   });
 
+  it("scrolls the conversation without smooth motion when reduced motion is requested", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query.includes("prefers-reduced-motion"),
+      media: query,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    }));
+    const scrollTo = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollTo", { value: scrollTo, configurable: true, writable: true });
+    let finish: (value: unknown) => void = () => undefined;
+    clientMocks.streamStudioChat.mockImplementation(() => new Promise((resolve) => {
+      finish = resolve;
+    }));
+    try {
+      await render(<StudioAssistant cartridge="acme" step={1} onClose={() => undefined} />);
+      await typeInto(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Mensaje para el asistente de Studio"]'), "Hola");
+      await click(byText("button", "Enviar"));
+      expect(scrollTo).toHaveBeenCalled();
+      expect(scrollTo.mock.calls.every(([options]) => options.behavior === "auto")).toBe(true);
+      const dot = container.querySelector('[data-testid="chat-messages"] span[aria-hidden]');
+      expect(dot?.className).toContain("motion-safe:animate-pulse");
+      expect(dot?.className).not.toMatch(/(^|\s)animate-pulse/);
+      await act(async () => {
+        finish({ reply: "Listo", history: [], viewerUrls: [] });
+      });
+    } finally {
+      delete (HTMLElement.prototype as { scrollTo?: unknown }).scrollTo;
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("offers the section's suggested questions and sends them", async () => {
     clientMocks.streamStudioChat.mockResolvedValue({ reply: "Revisado", history: [], viewerUrls: [] });
     await render(<StudioAssistant cartridge="acme" step={2} onClose={() => undefined} />);

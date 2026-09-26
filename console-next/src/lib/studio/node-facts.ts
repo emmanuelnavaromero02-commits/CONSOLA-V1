@@ -1,6 +1,6 @@
 import type { AnalyticsApp } from "@/lib/admin-surfaces";
 import { dailyParts } from "@/lib/control-room/wisdom-bit-monitors";
-import type { DatasetDetail, DatasetSummary, PipelineEntity } from "@/lib/monitor/types";
+import type { DatasetDetail, DatasetSummary, PipelineEntity, PipelineLastRun } from "@/lib/monitor/types";
 
 export type NodeStatus = "sincronizado" | "en_proceso" | "requiere_revision";
 
@@ -53,11 +53,38 @@ export function datasetStatus(
   return null;
 }
 
+// A last_run with source "bronze" is synthesised from the latest partition, not a registered run.
+export function registeredRun(entry: PipelineEntity | null | undefined): PipelineLastRun | null {
+  const run = entry?.last_run ?? entry?.last_job ?? null;
+  return run && run.source !== "bronze" ? run : null;
+}
+
+export function runTime(run: PipelineLastRun | null | undefined): string | null {
+  return text(run?.finished_at) ?? text(run?.started_at) ?? text(run?.triggered_at);
+}
+
 export function entityStatus(entry: PipelineEntity | null | undefined): StatusFact | null {
-  const run = entry?.last_run ?? entry?.last_job;
+  const run = registeredRun(entry);
   const status = runStatus(run?.status);
   if (!status) return null;
   return { status, reason: status === "requiere_revision" ? text(run?.error) ?? text(run?.message) : null };
+}
+
+export interface BronzeLoad {
+  count: number | null;
+  day: string | null;
+}
+
+// Latest load only (last run or newest partition), never the table total; hidden unless that load is confirmed.
+export function bronzeLoad(entry: PipelineEntity | null | undefined): BronzeLoad | null {
+  if (!entry) return null;
+  const run = entry.last_run ?? entry.last_job ?? null;
+  const confirmed = run?.source === "bronze" || entityStatus(entry)?.status === "sincronizado";
+  if (!confirmed) return null;
+  const raw = entry.bronze?.record_count;
+  const count = typeof raw === "number" && Number.isFinite(raw) ? raw : null;
+  const day = text(entry.bronze?.latest_date);
+  return count === null && !day ? null : { count, day };
 }
 
 export function aggregateStatus(facts: Array<StatusFact | null>): StatusFact | null {
@@ -69,10 +96,30 @@ export function aggregateStatus(facts: Array<StatusFact | null>): StatusFact | n
   return facts.every((fact) => fact?.status === "sincronizado") ? { status: "sincronizado", reason: null } : null;
 }
 
-export function scheduleText(entity: { trigger_type?: string | null; cron_expression?: string | null } | null | undefined): string | null {
+export interface ScheduleSource {
+  trigger_type?: string | null;
+  cron_expression?: string | null;
+  enabled?: boolean | null;
+  dag_id?: string | null;
+}
+
+// Mirrors airflow/dags/entity_scheduler.py: enabled, trigger_type 'scheduled', a cron and a dag_id.
+export function scheduleIsActive(entity: ScheduleSource | null | undefined): boolean {
+  return Boolean(
+    entity
+      && entity.enabled !== false
+      && String(entity.trigger_type ?? "").trim().toLowerCase() === "scheduled"
+      && text(entity.cron_expression)
+      && text(entity.dag_id),
+  );
+}
+
+export function scheduleText(entity: ScheduleSource | null | undefined): string | null {
   if (!entity) return null;
   const cron = text(entity.cron_expression);
-  if (!cron) return String(entity.trigger_type ?? "").trim().toLowerCase() === "manual" ? "Manual (sin programación)" : null;
+  if (!scheduleIsActive(entity)) {
+    return cron ? `Sin programación activa (cron ${cron} registrado sin activar)` : "Sin programación activa";
+  }
   const daily = dailyParts(cron);
   if (daily) {
     const time = `${String(daily.hour).padStart(2, "0")}:${String(daily.minute).padStart(2, "0")}`;
