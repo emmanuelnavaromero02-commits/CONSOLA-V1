@@ -92,6 +92,9 @@ GET_PATHS = {
         "/api/control-room/lessons?cartridge_id=sap_hcm"
         f"&anomaly_type=risk&item_id={ENCODED_ITEM_ID}"
     ),
+    "/api/control-room/sap-b1/views/{view}": (
+        "/api/control-room/sap-b1/views/sap_b1_sales_kpis?top_n=3"
+    ),
 }
 
 READINESS_SHAPE = {
@@ -197,17 +200,18 @@ PAYLOAD_SHAPES = {
     "/api/control-room/anomalies/{anomaly_id}": ITEM_SHAPE,
     "/api/control-room/thresholds": {"thresholds": list, "summary": dict},
     "/api/control-room/lessons": {"lessons": list, "summary": dict},
+    "/api/control-room/sap-b1/views/{view}": {"domain": str, "status": str, "metrics": dict},
 }
 
 
 @pytest.mark.asyncio
-async def test_all_30_get_routes_are_asgi_pure_repeatable_and_concurrent():
+async def test_all_31_get_routes_are_asgi_pure_repeatable_and_concurrent():
     discovered = {
         route.path
         for route in routes.router.routes
         if "GET" in (route.methods or set())
     }
-    assert len(GET_PATHS) == 30
+    assert len(GET_PATHS) == 31
     assert set(GET_PATHS).issubset(discovered)
     assert discovered - set(GET_PATHS) == {
         "/api/control-room/experience",
@@ -289,7 +293,7 @@ async def test_all_30_get_routes_are_asgi_pure_repeatable_and_concurrent():
                     expected_scope=(TENANT_ID, WORKSPACE_ID),
                 )
 
-    assert len(seen_paths) == 30
+    assert len(seen_paths) == 31
     assert sentinel.snapshot() == global_before
     assert sentinel.mutation_attempts == []
     scoped_request_ids = {entry[0] for entry in sentinel.scope_calls}

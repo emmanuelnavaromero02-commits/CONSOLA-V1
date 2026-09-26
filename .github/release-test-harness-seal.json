@@ -1895,11 +1895,11 @@
     },
     {
       "path": "console/tests/control_room_get_edges.py",
-      "sha256": "209e4939795ad90b86240ddaabe7c807682fb52568a4455326f789973e0031bd"
+      "sha256": "4fd8893e92447d82ec256511dd785303284da7aa7a5b65b373d4563bfdb9de61"
     },
     {
       "path": "console/tests/control_room_get_harness.py",
-      "sha256": "013eb658ff94b295e28900212012afecfe7f422ee2d3e6cbcd2331a4113e1a5e"
+      "sha256": "fdc0b7c4b6de5fdbb72e42f3bd551c59328a65a3a1145d6a361faafb7e8435fc"
     },
     {
       "path": "console/tests/control_room_mutation_contract_cases.py",
@@ -2135,7 +2135,7 @@
     },
     {
       "path": "console/tests/test_control_room_all_get_purity.py",
-      "sha256": "aa341cafd45b9f230a29b953a7329b664176403bc15009cc1f3d172d36d5b831"
+      "sha256": "bd75cfadd99ca8770663e1b062e1ae43326472f1a1d64989fbb715121383e025"
     },
     {
       "path": "console/tests/test_control_room_allowlisted_secret_markers.py",
@@ -2811,7 +2811,7 @@
     },
     {
       "path": "console/tests/test_control_room_surfaces_purity.py",
-      "sha256": "c45e7fe7a34c66fc2d8e5aa869a7948b2c33788edbd04c37b3c404a9cad4d5ab"
+      "sha256": "e897cca991724b2052cf90cb7b2d93f75aae650908252fc8558350b33b5df435"
     },
     {
       "path": "console/tests/test_control_room_talent_kpis.py",

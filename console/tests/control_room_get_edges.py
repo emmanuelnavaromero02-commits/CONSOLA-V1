@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, asynccontextmanager, contextmanager
 from importlib import import_module
 import re
 from unittest.mock import patch
@@ -156,6 +156,16 @@ def installed_read_edges(sentinel: MutationSentinel, probe: ConcurrencyProbe):
                 new=dataset_fetcher,
             )
         )
+        aggregates = import_module("app.services.intelligence.domain_aggregate_support")
+
+        @asynccontextmanager
+        async def gold_scope(user):
+            tenant_id, workspace_id = aggregates.workspace_scope(user)
+            assert (tenant_id, workspace_id) == (TENANT_ID, WORKSPACE_ID)
+            await sentinel.execute(aggregates.SET_SCOPE_SQL, tenant_id, workspace_id)
+            yield aggregates.GoldScope(conn=sentinel, tenant_id=tenant_id, workspace_id=workspace_id)
+
+        stack.enter_context(patch.object(aggregates, "open_gold_scope", new=gold_scope))
         for name in ("banxico", "inegi", "sec_edgar"):
             module = import_module(f"app.services.{name}_readiness")
             stack.enter_context(

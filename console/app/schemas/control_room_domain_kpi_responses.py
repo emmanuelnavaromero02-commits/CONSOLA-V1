@@ -503,6 +503,14 @@ class ControlRoomSapB1MarginKpisResponse(DomainKpisBase):
     metrics: SapB1MarginMetrics = Field(default_factory=SapB1MarginMetrics)
 
 
+class DistributorColors(PublicProjectionModel):
+    growth_color: str | None = None
+    sellout_sellin_color: str | None = None
+    channel_days_color: str | None = None
+    margin_color: str | None = None
+    expiry_color: str | None = None
+
+
 class DistributorRow(PublicProjectionModel):
     distributor: str | None = None
     sell_out_revenue: Number = None
@@ -514,7 +522,7 @@ class DistributorRow(PublicProjectionModel):
     channel_days: Number = None
     margin_pct: Number = None
     expiry_exposed_pct: Number = None
-    colors: dict[str, str | None] = Field(default_factory=dict)
+    colors: DistributorColors = Field(default_factory=DistributorColors)
     overall_color: str | None = None
 
 
@@ -574,6 +582,19 @@ class ExpiryLevel(PublicProjectionModel):
     at_risk_value: Number = None
 
 
+class ExpiryLevels(PublicProjectionModel):
+    vencido: ExpiryLevel | None = None
+    rojo: ExpiryLevel | None = None
+    amarillo: ExpiryLevel | None = None
+    verde: ExpiryLevel | None = None
+
+
+class ExpiryOptions(PublicProjectionModel):
+    traslado_filial: int = 0
+    traslado_empresa: int = 0
+    promocion: int = 0
+
+
 class ExpiryPriorityRow(PublicProjectionModel):
     company: str | None = None
     item: str | None = None
@@ -589,9 +610,9 @@ class ExpiryPriorityRow(PublicProjectionModel):
 
 class BatchExpiryKpi(B1KpiMetricBase):
     as_of: str | None = None
-    levels: dict[str, ExpiryLevel] = Field(default_factory=dict)
+    levels: ExpiryLevels = Field(default_factory=ExpiryLevels)
     at_risk_value: Number = None
-    options: dict[str, int] = Field(default_factory=dict)
+    options: ExpiryOptions = Field(default_factory=ExpiryOptions)
     priorities: list[ExpiryPriorityRow] = Field(default_factory=list)
 
 
@@ -623,9 +644,16 @@ class CoverageRiskRow(PublicProjectionModel):
     options: list[str] = Field(default_factory=list)
 
 
+class CoverageColors(PublicProjectionModel):
+    rojo: int = 0
+    amarillo: int = 0
+    verde: int = 0
+    sin_consumo: int = 0
+
+
 class CoverageKpi(B1KpiMetricBase):
     as_of: str | None = None
-    colors: dict[str, int] = Field(default_factory=dict)
+    colors: CoverageColors = Field(default_factory=CoverageColors)
     stockout_risk: int | None = None
     critical_at_risk: int | None = None
     plan_changes: int | None = None
