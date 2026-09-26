@@ -5463,7 +5463,11 @@
     },
     {
       "path": "tests/test_published_app_isolation.py",
-      "sha256": "202bf91cb27c4cf90ce9ca8466aa20ef51074ec95004482fc6d62b66e848a0d8"
+      "sha256": "3b5dfc846fc8ed431f2b89354046307f7ec9fc6de420e96603b6fad20af2005d"
+    },
+    {
+      "path": "tests/test_published_app_modern_theme.py",
+      "sha256": "c04f934bb81baa228479c714eb37ee7308c983ae718c0b1f364588af3054c978"
     },
     {
       "path": "tests/test_pypdf_security.py",
@@ -5927,7 +5931,7 @@
     },
     {
       "path": "tests/test_security_headers.py",
-      "sha256": "2dcca96adee3e3d536ef44bca977175bd2385ff03702519382bb5fd19fb706a9"
+      "sha256": "ede8fd5c7eb54afb5e1493bdeab5adea4f7f63fc522487d90ced1fa25184f3d3"
     },
     {
       "path": "tests/test_security_negative_v141.py",

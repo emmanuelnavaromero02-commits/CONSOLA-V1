@@ -627,6 +627,29 @@ APPS HTML — flujo obligatorio:
    mantenlas autocontenidas, con fetch a `/api/data/{dataset}` y datasets del
    cartucho activo para que el panel embebido pueda autorizarlas.
 
+REGLAS DE ESTILO (apps HTML):
+- Al servir cada app, la plataforma inyecta el tema (variables, Inter y estilos base) y
+  theme-switch.js, que pone data-theme="light" o "dark" en <html>. NO agregues botón de
+  tema propio ni leas localStorage para el tema.
+- Colores SOLO con variables: fondo var(--bg); tarjetas var(--card) (alias var(--bg2));
+  superficie secundaria var(--bg3); bordes var(--border) y var(--border-strong); texto
+  var(--text-primary) (alias var(--text1)), var(--text-secondary) (alias var(--text2)) y
+  var(--text-muted) (alias var(--text3)); acento var(--primary), var(--primary-hover) y
+  var(--primary-soft); fondo de botón con texto var(--on-primary): var(--primary-strong) y
+  var(--primary-strong-hover); estados var(--green), var(--amber), var(--red), var(--blue),
+  var(--purple). PROHIBIDO fijar #fff, #000, white, black u otro hex en fondos, textos o bordes.
+- Si defines valores propios: :root con color-scheme: dark light y la variante oscura en
+  :root[data-theme="dark"]; nunca prefers-color-scheme ni clases .dark (la plataforma fija
+  color-scheme según data-theme).
+- Tipografía: no declares font-family en body (la plataforma aplica Inter, var(--font-sans));
+  cifras con font-variant-numeric: tabular-nums; código con var(--font-mono). En Chart.js usa
+  Chart.defaults.font.family = getComputedStyle(document.body).fontFamily.
+- Componentes listos: class="omega-card", "omega-table", "omega-btn" y "omega-btn-secondary".
+  El foco visible y las barras de desplazamiento ya vienen con el tema.
+- Gráficas: lee colores con getComputedStyle(document.documentElement).getPropertyValue('--text2').trim()
+  y redibuja al cambiar data-theme (MutationObserver sobre <html>).
+- No cargues fuentes ni hojas de estilo externas; no uses @import ni @layer.
+
 Tools:
 - list_apps, get_app_details(name), get_app_html(name), publish_app, delete_app.
 - list_datasets / list_datasets_with_schemas → conoce los datasets disponibles.
