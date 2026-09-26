@@ -1,47 +1,68 @@
 "use client";
 
 import { RefreshCw } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
+import { useDatasets } from "@/lib/monitor/hooks";
+import type { DatasetSummary } from "@/lib/monitor/types";
 import { studioErrorMessage } from "@/lib/studio/client";
-import {
-  GRAPH_NODE_HEIGHT,
-  GRAPH_NODE_WIDTH,
-  graphNeighbours,
-  kindLabel,
-  layoutDagGraph,
-} from "@/lib/studio/graph-layout";
+import { plural } from "@/lib/studio/format";
+import { layoutDagGraph } from "@/lib/studio/graph-layout";
+import { nodeRef, STAGE_LABEL, STAGE_STYLE, STAGES } from "@/lib/studio/graph-view";
+import { isGoldReady } from "@/lib/studio/health";
 import { useDagGraph } from "@/lib/studio/hooks";
-import type { DagGraphNode } from "@/lib/studio/types";
+import type { StudioSectionId } from "@/lib/studio/sections";
+import type { DagGraphNode, StudioEditorTarget, StudioManifest } from "@/lib/studio/types";
 import { cn } from "@/lib/utils";
 
+import { GraphCanvas, type GoldDot } from "./GraphCanvas";
+import { NodeDrawer } from "./NodeDrawer";
 import { buttonClass, Notice, Spinner } from "./ui";
 
-const KIND_STYLE: Record<string, string> = {
-  cartridge: "fill-primary/10 stroke-primary",
-  entity: "fill-card stroke-border",
-  dag: "fill-amber-500/10 stroke-amber-500",
-  dataset: "fill-success/10 stroke-success",
-};
-
-function shortText(value: string, max: number): string {
-  return value.length > max ? `${value.slice(0, Math.max(0, max - 1))}…` : value;
-}
-
-function nodeName(node: DagGraphNode | undefined, fallback: string): string {
-  return String(node?.label || node?.id || fallback);
-}
-
-export function DagGraph({ cartridge }: { cartridge: string }) {
+export function DagGraph({
+  cartridge,
+  manifest,
+  onOpenEditor,
+  onOpenSection,
+}: {
+  cartridge: string;
+  manifest?: StudioManifest | null;
+  onOpenEditor?: (target: StudioEditorTarget) => void;
+  onOpenSection?: (id: StudioSectionId) => void;
+}) {
   const graph = useDagGraph(cartridge);
+  const datasets = useDatasets();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const nodeElements = useRef(new Map<string, SVGGElement>());
   const layout = useMemo(
     () => layoutDagGraph(graph.data?.nodes ?? [], graph.data?.edges ?? []),
     [graph.data],
   );
   const byId = useMemo(() => new Map(layout.nodes.map((item) => [item.node.id, item.node])), [layout.nodes]);
+  const datasetsByName = useMemo(
+    () => new Map<string, DatasetSummary>((datasets.data ?? []).map((dataset) => [dataset.name, dataset])),
+    [datasets.data],
+  );
   const selected = selectedId ? byId.get(selectedId) : undefined;
-  const neighbours = selected ? graphNeighbours(selected.id, layout.edges) : null;
+
+  function goldDot(node: DagGraphNode): GoldDot | null {
+    const summary = datasetsByName.get(nodeRef(node).name);
+    if (!summary) return null;
+    if (isGoldReady(summary)) return { state: "ready" };
+    if (summary.is_stale === true) return { state: "stale", reason: summary.staleness_reason ?? null };
+    return null;
+  }
+
+  function registerNode(id: string, element: SVGGElement | null) {
+    if (element) nodeElements.current.set(id, element);
+    else nodeElements.current.delete(id);
+  }
+
+  function closeDrawer() {
+    if (selectedId) nodeElements.current.get(selectedId)?.focus();
+    setSelectedId(null);
+  }
 
   if (graph.isLoading) {
     return (
@@ -72,139 +93,55 @@ export function DagGraph({ cartridge }: { cartridge: string }) {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground" aria-label="Leyenda">
-        {(["cartridge", "entity", "dag", "dataset"] as const).map((kind) => (
-          <span key={kind} className="inline-flex items-center gap-1.5">
+    <div className="space-y-3">
+      <div role="group" aria-label="Leyenda" className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
+        {STAGES.map((stage) => (
+          <span key={stage} className="inline-flex items-center gap-1.5">
             <svg width="14" height="14" aria-hidden>
-              <rect x="1" y="1" width="12" height="12" rx="3" className={cn("stroke-[1.5]", KIND_STYLE[kind])} />
+              <rect x="1" y="1" width="12" height="12" rx="3" className={cn("stroke-[1.5]", STAGE_STYLE[stage])} />
             </svg>
-            {kindLabel(kind)}
+            {STAGE_LABEL[stage]}
           </span>
         ))}
-        <span>
-          {layout.nodes.length} nodos · {layout.edges.length} relaciones
+        <span className="inline-flex items-center gap-1.5">
+          <span aria-hidden className="h-2 w-2 rounded-full bg-emerald-500" /> Oro listo
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span aria-hidden className="h-2 w-2 rounded-full bg-amber-500" /> Oro desactualizado
+        </span>
+        <span className="sm:ml-auto">
+          {plural(layout.nodes.length, "nodo", "nodos")} · {plural(layout.edges.length, "relación", "relaciones")}
         </span>
       </div>
-      <div className="overflow-auto rounded-lg border bg-background">
-        <svg
-          data-testid="dag-graph"
-          role="group"
-          aria-label={`Grafo del cartucho ${cartridge}`}
-          width={layout.width}
-          height={layout.height}
-          viewBox={`0 0 ${layout.width} ${layout.height}`}
-          className="block"
-        >
-          <defs>
-            <marker
-              id="studio-graph-arrow"
-              viewBox="0 0 10 10"
-              refX="9"
-              refY="5"
-              markerWidth="7"
-              markerHeight="7"
-              orient="auto-start-reverse"
-            >
-              <path d="M 0 0 L 10 5 L 0 10 z" className="fill-muted-foreground" />
-            </marker>
-          </defs>
-          {layout.columns.map((column) => (
-            <text
-              key={column.depth}
-              x={column.x}
-              y={28}
-              className="fill-muted-foreground text-[11px] font-semibold uppercase"
-            >
-              {column.label}
-            </text>
-          ))}
-          {layout.edges.map((edge) => {
-            const related = selected && (edge.source === selected.id || edge.target === selected.id);
-            return (
-              <path
-                key={`${edge.source}->${edge.target}`}
-                d={edge.path}
-                markerEnd="url(#studio-graph-arrow)"
-                className={cn(
-                  "fill-none",
-                  related ? "stroke-primary stroke-[2.5]" : "stroke-muted-foreground stroke-[1.5] opacity-50",
-                )}
-              />
-            );
-          })}
-          {layout.nodes.map(({ node, x, y }) => {
-            const isSelected = selected?.id === node.id;
-            const label = nodeName(node, node.id);
-            return (
-              <g
-                key={node.id}
-                data-node-id={node.id}
-                data-kind={node.kind}
-                role="button"
-                tabIndex={0}
-                aria-pressed={isSelected}
-                aria-label={`${kindLabel(node.kind)}: ${label}`}
-                transform={`translate(${x} ${y})`}
-                className="cursor-pointer focus:outline-none [&:focus-visible>rect]:stroke-primary [&:focus-visible>rect]:stroke-[3]"
-                onClick={() => setSelectedId(node.id)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    setSelectedId(node.id);
-                  }
-                }}
-              >
-                <rect
-                  width={GRAPH_NODE_WIDTH}
-                  height={GRAPH_NODE_HEIGHT}
-                  rx={8}
-                  className={cn(
-                    "stroke-[1.5]",
-                    KIND_STYLE[String(node.kind)] ?? "fill-card stroke-border",
-                    isSelected && "stroke-primary stroke-[3]",
-                  )}
-                />
-                <text x={12} y={22} className="fill-muted-foreground text-[10px] uppercase">
-                  {kindLabel(node.kind)}
-                </text>
-                <text x={12} y={40} className="fill-foreground text-[12px] font-medium">
-                  {shortText(label, 26)}
-                </text>
-              </g>
-            );
-          })}
-        </svg>
-      </div>
-      {selected && neighbours ? (
-        <article aria-label="Detalle del nodo" data-testid="dag-graph-detail" className="rounded-md border bg-card p-4 text-sm">
-          <p className="text-xs uppercase text-muted-foreground">{kindLabel(selected.kind)}</p>
-          <h3 className="mt-1 break-all font-semibold">{nodeName(selected, selected.id)}</h3>
-          <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{selected.id}</p>
-          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div>
-              <p className="text-xs font-medium text-muted-foreground">Entradas ({neighbours.incoming.length})</p>
-              <ul className="mt-1 space-y-0.5 text-xs">
-                {neighbours.incoming.map((id) => (
-                  <li key={id} className="break-all">{nodeName(byId.get(id), id)}</li>
-                ))}
-                {!neighbours.incoming.length ? <li className="text-muted-foreground">Ninguna</li> : null}
-              </ul>
-            </div>
-            <div>
-              <p className="text-xs font-medium text-muted-foreground">Salidas ({neighbours.outgoing.length})</p>
-              <ul className="mt-1 space-y-0.5 text-xs">
-                {neighbours.outgoing.map((id) => (
-                  <li key={id} className="break-all">{nodeName(byId.get(id), id)}</li>
-                ))}
-                {!neighbours.outgoing.length ? <li className="text-muted-foreground">Ninguna</li> : null}
-              </ul>
-            </div>
-          </div>
-        </article>
-      ) : (
-        <p className="text-xs text-muted-foreground">Selecciona un nodo para ver sus relaciones.</p>
-      )}
+      <GraphCanvas
+        cartridge={cartridge}
+        layout={layout}
+        selectedId={selected?.id ?? null}
+        hoveredId={hoveredId && byId.has(hoveredId) ? hoveredId : null}
+        drawerOpen={Boolean(selected)}
+        goldDot={goldDot}
+        onSelect={setSelectedId}
+        onHover={setHoveredId}
+        registerNode={registerNode}
+      >
+        {selected ? (
+          <NodeDrawer
+            cartridge={cartridge}
+            manifest={manifest ?? null}
+            node={selected}
+            edges={layout.edges}
+            byId={byId}
+            datasetsByName={datasetsByName}
+            onClose={closeDrawer}
+            onSelect={setSelectedId}
+            onOpenEditor={onOpenEditor}
+            onOpenSection={onOpenSection}
+          />
+        ) : null}
+      </GraphCanvas>
+      <p className="text-xs text-muted-foreground">
+        Arrastra el fondo para moverte, usa la rueda para acercar o alejar y selecciona un nodo para ver su detalle.
+      </p>
     </div>
   );
 }

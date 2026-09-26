@@ -62,11 +62,17 @@ export interface DagGraphNode {
   id: string;
   kind: DagGraphKind;
   label?: string | null;
+  layer?: string | null;
 }
 
 export interface DagGraphEdge {
   source: string;
   target: string;
+}
+
+export interface StudioEditorTarget {
+  dataset?: string;
+  entity?: string;
 }
 
 export interface DagGraphPayload {

@@ -1,30 +1,32 @@
 "use client";
 
 import Link from "next/link";
-import { BookOpen, Bot, LayoutGrid, Library } from "lucide-react";
-import { useState, useSyncExternalStore } from "react";
+import { BookOpen, LayoutGrid, Library } from "lucide-react";
+import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
-import { CartridgeBar } from "@/components/studio/CartridgeBar";
+import { nextTabIndexForKey } from "@/app/(shell)/operational-intelligence/tablist-a11y";
 import { DagGraph } from "@/components/studio/DagGraph";
 import { DagsPanel } from "@/components/studio/DagsPanel";
 import { EntitiesPanel } from "@/components/studio/EntitiesPanel";
 import { LayersPanel } from "@/components/studio/LayersPanel";
 import { RefinePanel } from "@/components/studio/RefinePanel";
 import { StudioAssistant } from "@/components/studio/StudioAssistant";
-import { buttonClass, Notice } from "@/components/studio/ui";
+import { StudioTopBar } from "@/components/studio/StudioTopBar";
+import { Notice } from "@/components/studio/ui";
+import { useDatasets } from "@/lib/monitor/hooks";
 import { studioErrorMessage } from "@/lib/studio/client";
-import { useStudioCartridges, useStudioManifest } from "@/lib/studio/hooks";
+import { formatCount, plural } from "@/lib/studio/format";
+import { useDagGraph, useStudioCartridges, useStudioManifest } from "@/lib/studio/hooks";
+import {
+  isSectionId,
+  sectionById,
+  sectionCounts,
+  sectionHint,
+  STUDIO_SECTIONS,
+  type StudioSectionId,
+} from "@/lib/studio/sections";
+import type { StudioEditorTarget } from "@/lib/studio/types";
 import { cn } from "@/lib/utils";
-
-const TABS = [
-  { id: "grafo", label: "Grafo", step: 1 },
-  { id: "dags", label: "DAGs", step: 2 },
-  { id: "entidades", label: "Entidades", step: 3 },
-  { id: "refinar", label: "Refinar", step: 4 },
-  { id: "capas", label: "Capas", step: 5 },
-] as const;
-
-type TabId = (typeof TABS)[number]["id"];
 
 const LINKS = [
   { href: "/data/inventory", label: "Catálogo semántico", icon: Library },
@@ -44,8 +46,11 @@ function useQueryParam(name: string): string | null {
   );
 }
 
-function isTab(value: string | null): value is TabId {
-  return TABS.some((tab) => tab.id === value);
+function replaceQueryParam(name: string, value: string) {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  url.searchParams.set(name, value);
+  window.history.replaceState(window.history.state, "", url.toString());
 }
 
 export default function StudioPage() {
@@ -53,9 +58,13 @@ export default function StudioPage() {
   const requested = useQueryParam("cartridge");
   const tabParam = useQueryParam("tab");
   const [chosen, setChosen] = useState<string | null>(null);
-  const [tabChoice, setTab] = useState<TabId | null>(null);
-  const tab: TabId = tabChoice ?? (isTab(tabParam) ? tabParam : "grafo");
+  const [tabChoice, setTabChoice] = useState<StudioSectionId | null>(null);
+  const tab: StudioSectionId = tabChoice ?? (isSectionId(tabParam) ? tabParam : "grafo");
   const [assistantOpen, setAssistantOpen] = useState(false);
+  const [editorTarget, setEditorTarget] = useState<StudioEditorTarget | null>(null);
+  const [focusRequest, setFocusRequest] = useState(0);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const list = cartridges.data ?? [];
   const activeId =
     chosen
@@ -63,73 +72,150 @@ export default function StudioPage() {
     ?? list[0]?.id
     ?? null;
   const manifest = useStudioManifest(activeId);
-  const activeTab = TABS.find((item) => item.id === tab) ?? TABS[0];
+  const graph = useDagGraph(activeId);
+  const datasets = useDatasets();
+  const activeSection = sectionById(tab);
+  const counts = sectionCounts({
+    cartridge: activeId,
+    graph: graph.data,
+    manifest: manifest.data,
+    datasets: datasets.data,
+  });
+  const sourceName = manifest.data?.name ?? list.find((item) => item.id === activeId)?.name ?? null;
+  const activeHint = sectionHint(tab, { sourceName });
+
+  useEffect(() => {
+    if (focusRequest) panelRef.current?.focus();
+  }, [focusRequest]);
 
   function selectCartridge(id: string) {
     setChosen(id);
-    if (typeof window !== "undefined") {
-      const url = new URL(window.location.href);
-      url.searchParams.set("cartridge", id);
-      window.history.replaceState(window.history.state, "", url.toString());
-    }
+    setEditorTarget(null);
+    replaceQueryParam("cartridge", id);
+  }
+
+  function selectTab(id: StudioSectionId) {
+    setTabChoice(id);
+    replaceQueryParam("tab", id);
+  }
+
+  function chooseTab(id: StudioSectionId) {
+    if (id === tab) return;
+    setEditorTarget(null);
+    selectTab(id);
+  }
+
+  function onTabKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>, index: number) {
+    const next = nextTabIndexForKey(event.key, index, STUDIO_SECTIONS.length);
+    if (next === null) return;
+    event.preventDefault();
+    chooseTab(STUDIO_SECTIONS[next].id);
+    tabRefs.current[next]?.focus();
+  }
+
+  function openSection(id: StudioSectionId) {
+    selectTab(id);
+    setFocusRequest((value) => value + 1);
+  }
+
+  function openEditor(target: StudioEditorTarget) {
+    setEditorTarget(target);
+    openSection("refinar");
+  }
+
+  function openDeploy() {
+    openSection("dags");
   }
 
   return (
-    <main className="mx-auto max-w-[1600px] space-y-6 px-4 py-6 sm:px-6">
-      <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-        <div className="space-y-1">
-          <h1 className="text-3xl font-semibold tracking-tight">Studio</h1>
-          <p className="text-sm text-muted-foreground">
-            Configura DAGs, entidades, refinamiento de capas y datasets de cada cartucho.
-          </p>
-        </div>
-        <button
-          type="button"
-          className={cn(buttonClass, assistantOpen && "border-primary text-primary")}
-          aria-expanded={assistantOpen}
-          aria-controls="studio-assistant-region"
-          onClick={() => setAssistantOpen((value) => !value)}
-        >
-          <Bot aria-hidden className="h-4 w-4" /> Asistente de Studio
-        </button>
-      </header>
-
-      <CartridgeBar
+    <main className="mx-auto max-w-[1600px] space-y-5 px-4 py-6 sm:px-6">
+      <StudioTopBar
         cartridges={list}
         loading={cartridges.isLoading}
         error={cartridges.isError ? studioErrorMessage(cartridges.error, "Error al consultar /studio/cartridges.") : null}
         onRetry={() => cartridges.refetch()}
         activeId={activeId}
         onSelect={selectCartridge}
+        manifest={manifest.data}
+        assistantOpen={assistantOpen}
+        onToggleAssistant={() => setAssistantOpen((value) => !value)}
+        onDeploy={openDeploy}
       />
 
       <div className={cn("grid grid-cols-1 gap-4", assistantOpen && "xl:grid-cols-[minmax(0,1fr)_400px]")}>
-        <section className="min-w-0 rounded-lg border bg-card shadow-sm">
-          <div role="tablist" aria-label="Secciones de Studio" className="flex flex-wrap gap-1 border-b p-2">
-            {TABS.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                role="tab"
-                id={`studio-tab-${item.id}`}
-                aria-selected={tab === item.id}
-                aria-controls={`studio-panel-${item.id}`}
-                onClick={() => setTab(item.id)}
-                className={cn(
-                  "min-h-[44px] rounded-md px-4 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  tab === item.id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent/10",
-                )}
-              >
-                {item.label}
-              </button>
-            ))}
+        <section className="min-w-0 rounded-xl border bg-card shadow-sm">
+          <div className="space-y-2 border-b p-2">
+            <div role="tablist" aria-label="Secciones de Studio" className="flex flex-wrap gap-1">
+              {STUDIO_SECTIONS.map((item, index) => {
+                const active = tab === item.id;
+                const count = counts[item.id];
+                const hint = sectionHint(item.id, { sourceName });
+                return (
+                  <button
+                    key={item.id}
+                    ref={(element) => {
+                      tabRefs.current[index] = element;
+                    }}
+                    type="button"
+                    role="tab"
+                    id={`studio-tab-${item.id}`}
+                    aria-selected={active}
+                    aria-controls={`studio-panel-${item.id}`}
+                    aria-describedby={`studio-tab-hint-${item.id}`}
+                    title={hint}
+                    tabIndex={active ? 0 : -1}
+                    onClick={() => chooseTab(item.id)}
+                    onKeyDown={(event) => onTabKeyDown(event, index)}
+                    className={cn(
+                      "inline-flex min-h-[44px] items-center gap-2 rounded-lg px-3 text-sm font-medium transition-colors",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      active
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "text-muted-foreground hover:bg-accent/10 hover:text-foreground",
+                    )}
+                  >
+                    <item.icon aria-hidden className="h-4 w-4 shrink-0" />
+                    <span data-tab-label>{item.label}</span>
+                    {count !== null ? (
+                      <span
+                        data-tab-count
+                        aria-hidden
+                        className={cn(
+                          "rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular-nums",
+                          active ? "bg-primary-foreground/20 text-primary-foreground" : "bg-muted text-muted-foreground",
+                        )}
+                      >
+                        {formatCount(count)}
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+            <div hidden>
+              {STUDIO_SECTIONS.map((item) => {
+                const count = counts[item.id];
+                return (
+                  <span key={item.id} id={`studio-tab-hint-${item.id}`}>
+                    {sectionHint(item.id, { sourceName })}
+                    {count !== null ? `. ${plural(count, item.countNoun.one, item.countNoun.other)}` : ""}
+                  </span>
+                );
+              })}
+            </div>
+            <p id="studio-section-hint" className="px-2 pb-1 text-sm text-muted-foreground">
+              {activeHint}
+            </p>
           </div>
           <div
+            ref={panelRef}
             role="tabpanel"
-            id={`studio-panel-${activeTab.id}`}
-            aria-labelledby={`studio-tab-${activeTab.id}`}
+            id={`studio-panel-${activeSection.id}`}
+            aria-labelledby={`studio-tab-${activeSection.id}`}
+            aria-describedby="studio-section-hint"
+            tabIndex={0}
             data-testid="studio-panel"
-            className="p-4"
+            className="p-4 focus-visible:outline-none"
           >
             {!activeId ? (
               cartridges.isLoading ? (
@@ -146,15 +232,28 @@ export default function StudioPage() {
                     </Notice>
                   </div>
                 ) : null}
-                {activeTab.id === "grafo" ? <DagGraph key={activeId} cartridge={activeId} /> : null}
-                {activeTab.id === "dags" ? <DagsPanel key={activeId} cartridge={activeId} manifest={manifest.data} /> : null}
-                {activeTab.id === "entidades" ? (
+                {activeSection.id === "grafo" ? (
+                  <DagGraph
+                    key={activeId}
+                    cartridge={activeId}
+                    manifest={manifest.data}
+                    onOpenEditor={openEditor}
+                    onOpenSection={openSection}
+                  />
+                ) : null}
+                {activeSection.id === "dags" ? <DagsPanel key={activeId} cartridge={activeId} manifest={manifest.data} /> : null}
+                {activeSection.id === "entidades" ? (
                   <EntitiesPanel key={activeId} cartridge={activeId} manifest={manifest.data} />
                 ) : null}
-                {activeTab.id === "refinar" ? (
-                  <RefinePanel key={activeId} cartridge={activeId} manifest={manifest.data} />
+                {activeSection.id === "refinar" ? (
+                  <RefinePanel
+                    key={`${activeId}:${editorTarget?.dataset ?? ""}:${editorTarget?.entity ?? ""}`}
+                    cartridge={activeId}
+                    manifest={manifest.data}
+                    initialTarget={editorTarget}
+                  />
                 ) : null}
-                {activeTab.id === "capas" ? <LayersPanel key={activeId} cartridge={activeId} /> : null}
+                {activeSection.id === "capas" ? <LayersPanel key={activeId} cartridge={activeId} /> : null}
               </>
             )}
           </div>
@@ -164,7 +263,8 @@ export default function StudioPage() {
             <StudioAssistant
               key={activeId ?? "sin-cartucho"}
               cartridge={activeId}
-              step={activeTab.step}
+              step={activeSection.step}
+              manifest={manifest.data}
               onClose={() => setAssistantOpen(false)}
             />
           </div>

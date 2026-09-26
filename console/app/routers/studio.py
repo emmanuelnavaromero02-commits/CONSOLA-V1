@@ -19,6 +19,7 @@ import yaml
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.dependencies import ROLE_ADMIN, require_authenticated, require_global_any_role
+from app.domains.data_platform.lineage_payloads import dataset_source_match
 from app.domains.security.internal_auth import (
     internal_outbound_headers as _internal_outbound_headers_impl,
     internal_outbound_key as _internal_outbound_key_impl,
@@ -1961,7 +1962,9 @@ async def dag_graph(
             continue
         entity_name = _clean_identifier(str(entity_name), label="entity")
         entity_id = f"entity:{entity_name}"
-        nodes.append({"id": entity_id, "kind": "entity", "label": entity.get("display_name") or entity_name})
+        nodes.append(
+            {"id": entity_id, "kind": "entity", "label": entity.get("display_name") or entity_name, "layer": "bronze"}
+        )
         edges.append({"source": f"cartridge:{cartridge}", "target": entity_id})
         if entity.get("dag_id"):
             dag_id = f"dag:{entity['dag_id']}"
@@ -1970,15 +1973,25 @@ async def dag_graph(
             edges.append({"source": entity_id, "target": dag_id})
 
     try:
-        for ds in await _refinement_datasets(user):
-            if ds.get("cartridge") and ds.get("cartridge") != cartridge:
-                continue
-            ds_id = f"dataset:{ds.get('layer')}:{ds.get('name')}"
-            nodes.append({"id": ds_id, "kind": "dataset", "label": f"{ds.get('layer')}:{ds.get('name')}"})
+        datasets = [
+            ds
+            for ds in await _refinement_datasets(user)
+            if ds.get("name") and (not ds.get("cartridge") or ds.get("cartridge") == cartridge)
+        ]
+        ids_by_name = {str(ds["name"]): f"dataset:{ds.get('layer')}:{ds['name']}" for ds in datasets}
+        for ds in datasets:
+            name = str(ds["name"])
+            ds_id = f"dataset:{ds.get('layer')}:{name}"
+            nodes.append({"id": ds_id, "kind": "dataset", "label": f"{ds.get('layer')}:{name}", "layer": ds.get("layer")})
             for source in ds.get("sources") or []:
-                parts = str(source).split("/")
+                source_text = str(source or "")
+                parts = source_text.split("/")
                 if len(parts) >= 3 and parts[0] == "raw" and parts[1] == cartridge:
                     edges.append({"source": f"entity:{parts[2]}", "target": ds_id})
+                    continue
+                matched = dataset_source_match(source_text, ids_by_name)
+                if matched and ids_by_name[matched] != ds_id:
+                    edges.append({"source": ids_by_name[matched], "target": ds_id})
     except Exception:
         pass
 

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -84,6 +85,7 @@ vi.mock("@/lib/studio/hooks", () => {
 vi.mock("@/lib/monitor/hooks", () => ({
   useDatasets: () => state.hooks.useDatasets,
   useDatasetDetail: () => state.hooks.useDatasetDetail,
+  usePipeline: () => state.hooks.usePipeline,
   useSourceSchema: () => state.hooks.useSourceSchema,
   useEntityRuns: () => state.hooks.useEntityRuns,
   useEntityRunLogs: () => state.hooks.useEntityRunLogs,
@@ -91,6 +93,11 @@ vi.mock("@/lib/monitor/hooks", () => ({
   useJobLogs: () => state.hooks.useJobLogs,
   findEntityRun: () => undefined,
   isTerminalRunStatus: () => false,
+}));
+
+vi.mock("@/lib/hooks/useAnalyticsApps", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/hooks/useAnalyticsApps")>()),
+  useAnalyticsApps: () => state.hooks.useAnalyticsApps,
 }));
 
 const MANIFEST = {
@@ -151,6 +158,8 @@ function resetHooks() {
     useDeleteDataset: mutation(),
     useDatasets: query([]),
     useDatasetDetail: query(undefined),
+    usePipeline: query([]),
+    useAnalyticsApps: query({ apps: [] }),
     useSourceSchema: query(undefined),
     useEntityRuns: query([]),
     useEntityRunLogs: query(undefined),
@@ -164,7 +173,11 @@ let root: Root;
 
 async function render() {
   await act(async () => {
-    root.render(<StudioPage />);
+    root.render(
+      <QueryClientProvider client={new QueryClient()}>
+        <StudioPage />
+      </QueryClientProvider>,
+    );
   });
 }
 
@@ -183,11 +196,26 @@ async function click(element: Element | null | undefined) {
 }
 
 async function openDagsTab() {
-  await click(byText('[role="tab"]', "DAGs"));
+  await click(container.querySelector("#studio-tab-dags"));
+}
+
+async function keyDown(element: Element | null | undefined, key: string) {
+  expect(element, "element for keydown").toBeTruthy();
+  await act(async () => {
+    element?.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+  });
+}
+
+function accessibleText(element: Element): string {
+  const clone = element.cloneNode(true) as Element;
+  clone.querySelectorAll('[aria-hidden="true"], [aria-hidden=""]').forEach((node) => node.remove());
+  return clone.textContent?.trim() ?? "";
 }
 
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  window.history.replaceState(null, "", "/");
+  Element.prototype.scrollIntoView = vi.fn();
   resetHooks();
   vi.clearAllMocks();
   container = document.createElement("div");
@@ -198,6 +226,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
+  vi.useRealTimers();
 });
 
 describe("Studio page", () => {
@@ -221,11 +250,170 @@ describe("Studio page", () => {
     expect(container.querySelector('[data-injected="yes"]')).toBeNull();
     expect(container.innerHTML).not.toContain("<script");
 
-    await click(container.querySelector('[data-node-id="entity:Invoice"]'));
-    const detail = container.querySelector('[data-testid="dag-graph-detail"]');
+    const invoice = container.querySelector('[data-node-id="entity:Invoice"]');
+    await act(async () => {
+      invoice?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    });
+    expect(graph?.querySelectorAll("[data-node-id]")).toHaveLength(3);
+    expect(graph?.querySelectorAll("path[marker-end]")).toHaveLength(2);
+
+    await click(invoice);
+    const detail = container.querySelector('[role="dialog"][data-testid="dag-graph-detail"]');
     expect(detail?.textContent).toContain("Invoice");
     expect(detail?.textContent).toContain("Entradas (1)");
     expect(detail?.textContent).toContain("Salidas (1)");
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("Cerrar detalle");
+
+    await keyDown(document.activeElement, "Escape");
+    expect(container.querySelector('[data-testid="dag-graph-detail"]')).toBeNull();
+    expect(document.activeElement).toBe(container.querySelector('[data-node-id="entity:Invoice"]'));
+  });
+
+  it("names the sections for the business with real counts and hints", async () => {
+    await render();
+    const tabs = [...container.querySelectorAll('[role="tab"][id^="studio-tab-"]')];
+    expect(tabs.map((tab) => tab.querySelector("[data-tab-label]")?.textContent)).toEqual([
+      "Mapa del Flujo",
+      "Automatizaciones",
+      "Tablas de Origen (Bronce)",
+      "Modelado y Limpieza (Plata)",
+      "Indicadores y KPIs (Oro)",
+    ]);
+    expect(tabs.map((tab) => tab.querySelector("[data-tab-count]")?.textContent)).toEqual(["3", "1", "1", "0", "0"]);
+    expect(tabs.map(accessibleText)).toEqual([
+      "Mapa del Flujo",
+      "Automatizaciones",
+      "Tablas de Origen (Bronce)",
+      "Modelado y Limpieza (Plata)",
+      "Indicadores y KPIs (Oro)",
+    ]);
+    expect(container.querySelector("#studio-tab-hint-entidades")?.textContent).toContain(
+      "Datos crudos extraídos directamente de Acme ERP",
+    );
+    expect(container.querySelector("#studio-tab-hint-entidades")?.textContent).toContain("1 tabla de origen");
+    expect(container.querySelector("#studio-tab-entidades")?.getAttribute("aria-describedby")).toBe(
+      "studio-tab-hint-entidades",
+    );
+    expect(container.querySelector("#studio-section-hint")?.textContent).toBe(
+      "Vista visual de cómo viaja la información desde el origen hasta los reportes finales",
+    );
+  });
+
+  it("shows the cartridge health only from real fields", async () => {
+    await render();
+    const health = container.querySelector('[data-testid="studio-health"]');
+    expect(health?.getAttribute("aria-label")).toBe("Salud del cartucho");
+    expect(health?.querySelector('[data-metric="tables"] dd')?.textContent).toBe("1");
+    expect(health?.querySelector('[data-metric="gold-ready"] dd')?.textContent).toBe("Sin datasets Oro");
+    expect(health?.querySelector('[data-metric="last-refresh"]')).toBeNull();
+
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-26T12:00:00Z"));
+    state.hooks.useDatasets = query([
+      { name: "ventas", layer: "gold", cartridge: "acme", is_stale: false, last_refresh: "2026-09-26T11:48:00Z" },
+      { name: "margen", layer: "gold", cartridge: "acme", is_stale: true },
+      { name: "x", layer: "gold", cartridge: "beta", is_stale: false, last_refresh: "2026-09-26T11:59:00Z" },
+    ]);
+    await render();
+    const refreshed = container.querySelector('[data-testid="studio-health"]');
+    expect(refreshed?.querySelector('[data-metric="gold-ready"] dd')?.textContent).toBe("1 de 2");
+    const time = refreshed?.querySelector('[data-metric="last-refresh"] time');
+    expect(time?.textContent).toBe("hace 12 minutos");
+    expect(time?.getAttribute("dateTime")).toBe("2026-09-26T11:48:00Z");
+    expect(container.querySelector("#studio-tab-capas [data-tab-count]")?.textContent).toBe("2");
+  });
+
+  it("Desplegar a Airflow opens Automatizaciones and focuses it without deploying", async () => {
+    const deploy = state.hooks.useDeployDag as Mutation;
+    await render();
+    const button = byText("button", /Desplegar a Airflow/);
+    expect(button?.getAttribute("aria-describedby")).toBe("studio-deploy-hint");
+    await click(button);
+    expect(container.querySelector("#studio-tab-dags")?.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement?.id).toBe("studio-panel-dags");
+    expect(deploy.mutate).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-testid="deploy-dialog"]')).toBeNull();
+    expect(new URLSearchParams(window.location.search).get("tab")).toBe("dags");
+  });
+
+  it("opens the Studio assistant with the section's suggested questions", async () => {
+    await render();
+    const toggle = byText("button", /Consultar al Asistente de Studio/);
+    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+    expect([...container.querySelectorAll("button")].filter((button) => /Asistente de Studio/.test(button.textContent ?? ""))).toHaveLength(1);
+    await click(toggle);
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+    const assistant = container.querySelector('[data-testid="studio-assistant"]');
+    expect(assistant).toBeTruthy();
+    expect(assistant?.textContent).toContain("Sección: Mapa del Flujo");
+    expect(container.querySelectorAll('[aria-label="Preguntas sugeridas"] button')).toHaveLength(2);
+  });
+
+  it("moves between sections with the arrow keys", async () => {
+    await render();
+    const first = container.querySelector<HTMLElement>("#studio-tab-grafo");
+    expect(first?.getAttribute("tabindex")).toBe("0");
+    await keyDown(first, "ArrowRight");
+    const dags = container.querySelector("#studio-tab-dags");
+    expect(dags?.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(dags);
+    await keyDown(dags, "End");
+    expect(document.activeElement?.id).toBe("studio-tab-capas");
+    await keyDown(document.activeElement, "Home");
+    expect(document.activeElement?.id).toBe("studio-tab-grafo");
+  });
+
+  it("lands focus on Automatizaciones when the drawer opens it", async () => {
+    await render();
+    await click(container.querySelector('[data-node-id="dag:acme_packaged"]'));
+    await click(byText('[data-testid="dag-graph-detail"] [role="tab"]', "Ver información"));
+    await click(byText('[data-testid="dag-graph-detail"] button', /Abrir en Automatizaciones/));
+    expect(container.querySelector("#studio-tab-dags")?.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement?.id).toBe("studio-panel-dags");
+  });
+
+  it("opens a dataset from the flow map in the query editor", async () => {
+    state.hooks.useDagGraph = query({
+      nodes: [
+        { id: "cartridge:acme", kind: "cartridge", label: "Acme ERP" },
+        { id: "entity:Invoice", kind: "entity", label: "Invoice", layer: "bronze" },
+        { id: "dataset:silver:orders", kind: "dataset", label: "silver:orders", layer: "silver" },
+      ],
+      edges: [
+        { source: "cartridge:acme", target: "entity:Invoice" },
+        { source: "entity:Invoice", target: "dataset:silver:orders" },
+      ],
+    });
+    state.hooks.useDatasetDetail = query({
+      name: "orders",
+      layer: "silver",
+      sql: "select * from invoices",
+      columns: [{ name: "id", type: "BIGINT" }],
+      metadata: { description: "Pedidos" },
+    });
+    await render();
+    await click(container.querySelector('[data-node-id="dataset:silver:orders"]'));
+    await click(byText('[data-testid="dag-graph-detail"] [role="tab"]', "Ver información"));
+    await click(byText('[data-testid="dag-graph-detail"] button', /Abrir en Editor de Consultas/));
+    expect(container.querySelector("#studio-tab-refinar")?.getAttribute("aria-selected")).toBe("true");
+    expect(container.querySelector<HTMLTextAreaElement>('textarea[name="sql"]')?.value).toBe("select * from invoices");
+    expect(new URLSearchParams(window.location.search).get("tab")).toBe("refinar");
+    expect(document.activeElement?.id).toBe("studio-panel-refinar");
+
+    const sql = container.querySelector<HTMLTextAreaElement>('textarea[name="sql"]');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(sql, "select id from invoices");
+      sql?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(container.querySelector("#studio-tab-refinar"));
+    expect(container.querySelector<HTMLTextAreaElement>('textarea[name="sql"]')?.value).toBe("select id from invoices");
+
+    await click(container.querySelector("#studio-tab-grafo"));
+    await click(container.querySelector("#studio-tab-refinar"));
+    expect(container.querySelector('textarea[name="sql"]')).toBeNull();
+    expect(container.textContent).toContain("Selecciona un dataset o crea uno nuevo");
   });
 
   it("confirms before deploying and toasts the deployed outcome", async () => {
