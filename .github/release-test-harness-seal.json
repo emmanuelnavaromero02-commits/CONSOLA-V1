@@ -5927,7 +5927,7 @@
     },
     {
       "path": "tests/test_security_headers.py",
-      "sha256": "994b8eccb9dab5461e9c929ff70946ff18628548323d7ae0e9095af865b6dd39"
+      "sha256": "2dcca96adee3e3d536ef44bca977175bd2385ff03702519382bb5fd19fb706a9"
     },
     {
       "path": "tests/test_security_negative_v141.py",
@@ -6039,7 +6039,7 @@
     },
     {
       "path": "tests/test_static_html_entrypoints.py",
-      "sha256": "8ce7384c6798a2fb2f64a50efb101bd2869a6e4a6b09770b94084813d52ab8b1"
+      "sha256": "1e219ae4f9353c982a2735bbffb4a7e69fde0e94882103cb119b8b19d821f9ea"
     },
     {
       "path": "tests/test_static_pages_load_tokens.py",

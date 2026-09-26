@@ -97,6 +97,17 @@ STRICT_CSP_PATHS = frozenset(
     }
 )
 
+APP_FONT_PATH_PREFIX = "/static/fonts/"
+APP_THEME_FONT_DIR = "/static/fonts/inter-4.1"
+# The app frame is sandboxed without allow-same-origin, so its origin is opaque
+# ("null") and the browser fetches @font-face files in CORS mode without
+# credentials. Only these public font files get a wildcard ACAO.
+APP_FONT_CORS_HEADERS = {"Access-Control-Allow-Origin": "*"}
+APP_FONT_OK_HEADERS = {
+    "Content-Type": "font/woff2",
+    "Cache-Control": "public, max-age=31536000, immutable",
+}
+
 APP_THEME_SHIM = """
 <style id="omega-app-theme-shim">
 :root,
@@ -170,6 +181,14 @@ def is_control_room_path(path: str) -> bool:
     return path == "/control-room" or path.startswith("/control-room/")
 
 
+def is_app_font_path(path: str) -> bool:
+    return (
+        path.startswith(APP_FONT_PATH_PREFIX)
+        and path.endswith(".woff2")
+        and ".." not in path
+    )
+
+
 def apply_security_headers(response: Response, path: str = "") -> Response:
     if is_app_frame_path(path):
         headers = APP_EMBED_SECURITY_HEADERS
@@ -186,6 +205,10 @@ def apply_security_headers(response: Response, path: str = "") -> Response:
             del response.headers["X-Frame-Options"]
     for name, value in headers.items():
         response.headers.setdefault(name, value)
+    if is_app_font_path(path):
+        response.headers.update(APP_FONT_CORS_HEADERS)
+        if response.status_code == 200:
+            response.headers.update(APP_FONT_OK_HEADERS)
     return response
 
 
