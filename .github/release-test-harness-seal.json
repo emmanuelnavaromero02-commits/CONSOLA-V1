@@ -1095,7 +1095,7 @@
     },
     {
       "path": "cartridges/sap_b1/tests/test_sales_case_against_fake.py",
-      "sha256": "81cb8c03509ff560fa20bff27455fb31eccd17b0597f87d026e3a6b1e1341856"
+      "sha256": "a310567609560decb80be9457509461649151afc5054c34ecf7d6fcfc7aaa3d1"
     },
     {
       "path": "cartridges/sap_b1/tests/test_silver_gold_against_fake.py",

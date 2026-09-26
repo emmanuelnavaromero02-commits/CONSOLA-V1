@@ -364,8 +364,10 @@ def test_expiry_prefers_the_branch_that_sells_the_item_fastest(tmp_path):
                                       "t(kind, company, period, param_key, value_text, value_num)")
     put("sap_b1_owhs_latest", "SELECT * FROM (VALUES ('c1', '01', 'Almacen principal'), ('c1', '02', 'Almacen 2')) t(company, whs_code, whs_name)")
     sql = (DATASETS / "sap_b1_batch_expiry.sql").read_text(encoding="utf-8").replace("s3://{bucket}/", root.as_posix() + "/")
+    con.execute("CREATE TEMP VIEW batch_expiry_case AS " + sql)
     got = {r[0]: r[1:] for r in con.execute(
-        f"SELECT item_code, alert_level, priority_rank, action_option, transfer_warehouse, transfer_branch_name, branch_name FROM ({sql})"
+        "SELECT item_code, alert_level, priority_rank, action_option, transfer_warehouse, transfer_branch_name, branch_name "
+        "FROM batch_expiry_case"
     ).fetchall()}
     assert got["I1"] == ("rojo", 1, "traslado_filial", "02", "Filial Norte", "Almacen principal")
     assert got["I2"] == ("amarillo", 2, "promocion", None, None, "Almacen principal")
