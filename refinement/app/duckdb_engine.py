@@ -22,12 +22,30 @@ from omega_lakehouse.checksums import sha256_file
 
 try:
     import app.partitioned_parquet as partitioned_parquet
-    from app.duckdb_runtime import connect_duckdb_runtime
+    from app.duckdb_runtime import (
+        DuckDBResourceLimits,
+        connect_duckdb_runtime,
+        container_memory_limit_bytes as _container_memory_limit_bytes,
+        effective_memory_limit as _effective_duckdb_memory_limit,
+        max_temp_directory_size_from_env as _duckdb_max_temp_directory_size_from_env,
+        memory_limit_from_env as _duckdb_memory_limit_from_env,
+        temp_directory_from_env as _duckdb_temp_directory_from_env,
+        threads_from_env as _duckdb_threads_from_env,
+    )
     from app.sql_table_function_policy import validate_table_function_query
     from app.storage_scope_policy import has_exact_storage_scope
 except ModuleNotFoundError:
     import refinement.app.partitioned_parquet as partitioned_parquet
-    from refinement.app.duckdb_runtime import connect_duckdb_runtime
+    from refinement.app.duckdb_runtime import (
+        DuckDBResourceLimits,
+        connect_duckdb_runtime,
+        container_memory_limit_bytes as _container_memory_limit_bytes,
+        effective_memory_limit as _effective_duckdb_memory_limit,
+        max_temp_directory_size_from_env as _duckdb_max_temp_directory_size_from_env,
+        memory_limit_from_env as _duckdb_memory_limit_from_env,
+        temp_directory_from_env as _duckdb_temp_directory_from_env,
+        threads_from_env as _duckdb_threads_from_env,
+    )
     from refinement.app.sql_table_function_policy import validate_table_function_query
     from refinement.app.storage_scope_policy import has_exact_storage_scope
 
@@ -36,28 +54,6 @@ SAFE_S3_BRONZE_TAIL_RE = re.compile(r"^[a-zA-Z0-9_./=*-]+$")
 S3_LITERAL_RE = re.compile(
     r"(['\"])((?:s3|gs)://.*?)(?<!\\)\1", re.IGNORECASE | re.DOTALL
 )
-DUCKDB_MEMORY_LIMIT_RE = re.compile(
-    r"^\d+(?:\.\d+)?\s*(?:B|KB|MB|GB|TB|KiB|MiB|GiB|TiB)$", re.IGNORECASE
-)
-DUCKDB_TEMP_DIRECTORY_RE = re.compile(r"^/[^\0'\"\n\r]*$")
-DUCKDB_SIZE_UNITS = {
-    "b": 1,
-    "kb": 1000,
-    "mb": 1000**2,
-    "gb": 1000**3,
-    "tb": 1000**4,
-    "kib": 1024,
-    "mib": 1024**2,
-    "gib": 1024**3,
-    "tib": 1024**4,
-}
-CGROUP_MEMORY_LIMIT_FILES = (
-    "/sys/fs/cgroup/memory.max",
-    "/sys/fs/cgroup/memory/memory.limit_in_bytes",
-)
-UNBOUNDED_CGROUP_BYTES = 1 << 60
-DUCKDB_CONTAINER_MEMORY_FRACTION = 0.7
-DUCKDB_FALLBACK_MEMORY_LIMIT = "1GB"
 DUCKDB_PRODUCTION_TEMP_DIRECTORY = "/var/lib/omega/duckdb-spill"
 PARTITION_MANIFEST_READER_RE = re.compile(
     r"(\bread_parquet\s*\(\s*)'((?:s3|gs)://[^'\s]+/"
@@ -91,89 +87,11 @@ def _escape_sql_literal_inner(value: str) -> str:
     return (value or "").replace("'", "''")
 
 
-def _duckdb_memory_limit_from_env(raw: str | None) -> str:
-    value = (raw or "").strip()
-    if not value:
-        return ""
-    if not DUCKDB_MEMORY_LIMIT_RE.fullmatch(value):
-        raise ValueError("DUCKDB_MEMORY_LIMIT must look like 512MB, 1GB or 1024MiB")
-    return value
-
-
-def _duckdb_size_bytes(value: str) -> int:
-    match = re.fullmatch(r"(\d+(?:\.\d+)?)\s*([A-Za-z]+)", (value or "").strip())
-    unit = match.group(2).lower() if match else ""
-    if unit not in DUCKDB_SIZE_UNITS:
-        raise ValueError("DuckDB sizes must look like 512MB, 1GB or 1024MiB")
-    return int(float(match.group(1)) * DUCKDB_SIZE_UNITS[unit])
-
-
-def _container_memory_limit_bytes(
-    paths: tuple[str, ...] = CGROUP_MEMORY_LIMIT_FILES,
-) -> int | None:
-    for path in paths:
-        try:
-            raw = Path(path).read_text(encoding="ascii").strip()
-        except (OSError, UnicodeDecodeError):
-            continue
-        if raw.isdigit() and 0 < int(raw) < UNBOUNDED_CGROUP_BYTES:
-            return int(raw)
-        return None
-    return None
-
-
-def _effective_duckdb_memory_limit(
-    configured: str, container_bytes: int | None
-) -> str:
-    candidates: list[tuple[int, str]] = []
-    if configured:
-        candidates.append((_duckdb_size_bytes(configured), configured))
-    if container_bytes:
-        mib = max(1, int(container_bytes * DUCKDB_CONTAINER_MEMORY_FRACTION) // 1024**2)
-        candidates.append((mib * 1024**2, f"{mib}MiB"))
-    if not candidates:
-        return DUCKDB_FALLBACK_MEMORY_LIMIT
-    return min(candidates, key=lambda item: item[0])[1]
-
-
 def _is_production_env() -> bool:
     return os.environ.get("APP_ENV", "production").strip().lower() in {
         "production",
         "prod",
     }
-
-
-def _duckdb_temp_directory_from_env(raw: str | None) -> str:
-    value = (raw or "").strip()
-    if not value:
-        return ""
-    if not DUCKDB_TEMP_DIRECTORY_RE.fullmatch(value):
-        raise ValueError("DUCKDB_TEMP_DIRECTORY must be an absolute path")
-    return value
-
-
-def _duckdb_max_temp_directory_size_from_env(raw: str | None) -> str:
-    value = (raw or "").strip()
-    if not value:
-        return ""
-    if not DUCKDB_MEMORY_LIMIT_RE.fullmatch(value):
-        raise ValueError(
-            "DUCKDB_MAX_TEMP_DIRECTORY_SIZE must look like 512MB, 1GB or 1024MiB"
-        )
-    return value
-
-
-def _duckdb_threads_from_env(raw: str | None) -> int | None:
-    value = (raw or "").strip()
-    if not value:
-        return None
-    try:
-        parsed = int(value)
-    except ValueError as exc:
-        raise ValueError("DUCKDB_THREADS must be an integer") from exc
-    if parsed < 1 or parsed > 64:
-        raise ValueError("DUCKDB_THREADS must be between 1 and 64")
-    return parsed
 
 
 def _libpq_quote(value: str) -> str:
@@ -346,30 +264,15 @@ class DuckDBEngine:
     def _conn(self) -> duckdb.DuckDBPyConnection:
         if self._con is None:
             try:
-                self._con = connect_duckdb_runtime()
-                if self.duckdb_memory_limit:
-                    self._con.execute(
-                        f"SET memory_limit={_sql_quote(self.duckdb_memory_limit)};"
-                    )
-                self._con.execute("SET preserve_insertion_order=false;")
-                if self.duckdb_threads is not None:
-                    self._con.execute(f"SET threads={self.duckdb_threads};")
-                if self.duckdb_temp_directory:
-                    try:
-                        os.makedirs(self.duckdb_temp_directory, exist_ok=True)
-                    except OSError as exc:
-                        raise RuntimeError(
-                            "DUCKDB_TEMP_DIRECTORY is not creatable: "
-                            f"{self.duckdb_temp_directory}"
-                        ) from exc
-                    self._con.execute(
-                        f"SET temp_directory={_sql_quote(self.duckdb_temp_directory)};"
-                    )
-                if self.duckdb_max_temp_directory_size:
-                    self._con.execute(
-                        "SET max_temp_directory_size="
-                        f"{_sql_quote(self.duckdb_max_temp_directory_size)};"
-                    )
+                self._con = connect_duckdb_runtime(
+                    DuckDBResourceLimits(
+                        memory_limit=self.duckdb_memory_limit,
+                        threads=self.duckdb_threads,
+                        temp_directory=self.duckdb_temp_directory,
+                        max_temp_directory_size=self.duckdb_max_temp_directory_size,
+                    ),
+                    prepare_temp_directory=True,
+                )
                 if self._uses_gcs_lakehouse():
                     self._configure_duckdb_gcs(self._con)
                 else:

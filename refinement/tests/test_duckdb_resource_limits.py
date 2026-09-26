@@ -162,8 +162,32 @@ def test_an_uncreatable_spill_directory_fails_loudly(engine_module, monkeypatch,
     monkeypatch.setattr(engine_module.duckdb, "connect", lambda **_kwargs: fake)
 
     engine = engine_module.DuckDBEngine()
-    with pytest.raises(RuntimeError, match="DUCKDB_TEMP_DIRECTORY"):
+    with pytest.raises(RuntimeError, match="DUCKDB_TEMP_DIRECTORY") as exc:
         engine._conn()
+    assert str(blocker) not in str(exc.value)
+
+
+def test_engine_emits_each_resource_setting_exactly_once(
+    engine_module, monkeypatch, tmp_path
+):
+    fake = FakeDuckDBConnection()
+    monkeypatch.setenv("DUCKDB_MEMORY_LIMIT", "256MB")
+    monkeypatch.setenv("DUCKDB_THREADS", "2")
+    monkeypatch.setenv("DUCKDB_TEMP_DIRECTORY", str(tmp_path / "spill"))
+    monkeypatch.setenv("DUCKDB_MAX_TEMP_DIRECTORY_SIZE", "1GB")
+    monkeypatch.setattr(engine_module.duckdb, "__version__", "1.2.2", raising=False)
+    monkeypatch.setattr(engine_module.duckdb, "connect", lambda **_kwargs: fake)
+
+    engine_module.DuckDBEngine()._conn()
+
+    for prefix in (
+        "SET memory_limit=",
+        "SET preserve_insertion_order=",
+        "SET threads=",
+        "SET temp_directory=",
+        "SET max_temp_directory_size=",
+    ):
+        assert sum(s.startswith(prefix) for s in fake.statements) == 1, prefix
 
 
 GIB = 1024**3

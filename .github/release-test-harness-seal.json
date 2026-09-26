@@ -3455,7 +3455,7 @@
     },
     {
       "path": "refinement/tests/test_duckdb_resource_limits.py",
-      "sha256": "fac2d42157796caa74f6789eee82f4e1dc111a876e5d35eb002329bbb9cf3df5"
+      "sha256": "384e18d02eda1053040b7000df7eab19067a530504d5057ac1b0002e4caf90b7"
     },
     {
       "path": "refinement/tests/test_duckdb_s3_materialize_paths.py",
@@ -5515,7 +5515,7 @@
     },
     {
       "path": "tests/test_refinement_duckdb_extensions.py",
-      "sha256": "27d2d734521526b813ec26e0448100936d9ffea6054e8c7107b244cf1b36ca21"
+      "sha256": "90a3df6e8a963cb75148878bed699628d8e4d0a643f954daa8a009f21d84b733"
     },
     {
       "path": "tests/test_refinement_healthz_real.py",

@@ -172,3 +172,138 @@ def test_missing_extension_fails_closed_with_sanitized_error(monkeypatch) -> Non
         duckdb_runtime.connect_duckdb_runtime()
     assert str(caught.value) == "DuckDB required extensions are unavailable"
     assert connection.closed is True
+
+
+class _RecordingConnection:
+    def __init__(self) -> None:
+        self.statements: list[str] = []
+        self.closed = False
+
+    def execute(self, statement: str):
+        self.statements.append(statement)
+        return self
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _clear_duckdb_env(monkeypatch) -> None:
+    for name in (
+        "DUCKDB_MEMORY_LIMIT",
+        "DUCKDB_THREADS",
+        "DUCKDB_TEMP_DIRECTORY",
+        "DUCKDB_MAX_TEMP_DIRECTORY_SIZE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_runtime_config_holds_only_extension_switches() -> None:
+    assert set(duckdb_runtime.RUNTIME_CONFIG) == {
+        "autoinstall_known_extensions",
+        "autoload_known_extensions",
+    }
+
+
+def test_runtime_applies_bounded_defaults_after_loading_extensions(
+    monkeypatch,
+) -> None:
+    connection = _RecordingConnection()
+    _clear_duckdb_env(monkeypatch)
+    monkeypatch.setattr(
+        duckdb_runtime, "container_memory_limit_bytes", lambda: 3 * 1024**3
+    )
+    monkeypatch.setattr(duckdb_runtime.duckdb, "connect", lambda **_kwargs: connection)
+    monkeypatch.setattr(duckdb_runtime.duckdb, "__version__", "1.2.2")
+
+    assert duckdb_runtime.connect_duckdb_runtime() is connection
+    assert connection.statements == [
+        "SET autoinstall_known_extensions=false;",
+        "SET autoload_known_extensions=false;",
+        "LOAD httpfs;",
+        "LOAD postgres;",
+        "SET memory_limit='2150MiB';",
+        "SET preserve_insertion_order=false;",
+    ]
+
+
+def test_runtime_honours_env_limits_without_creating_the_spill_directory(
+    monkeypatch, tmp_path: Path
+) -> None:
+    connection = _RecordingConnection()
+    spill = tmp_path / "ro" / "spill"
+    monkeypatch.setenv("DUCKDB_MEMORY_LIMIT", "512MB")
+    monkeypatch.setenv("DUCKDB_THREADS", "2")
+    monkeypatch.setenv("DUCKDB_TEMP_DIRECTORY", str(spill))
+    monkeypatch.setenv("DUCKDB_MAX_TEMP_DIRECTORY_SIZE", "1GB")
+    monkeypatch.setattr(duckdb_runtime, "container_memory_limit_bytes", lambda: None)
+    monkeypatch.setattr(duckdb_runtime.duckdb, "connect", lambda **_kwargs: connection)
+    monkeypatch.setattr(duckdb_runtime.duckdb, "__version__", "1.2.2")
+
+    duckdb_runtime.connect_duckdb_runtime()
+
+    assert connection.statements[4:] == [
+        "SET memory_limit='512MB';",
+        "SET preserve_insertion_order=false;",
+        "SET threads=2;",
+        f"SET temp_directory='{spill}';",
+        "SET max_temp_directory_size='1GB';",
+    ]
+    assert not spill.exists()
+    assert not spill.parent.exists()
+
+
+def test_invalid_resource_env_fails_closed_without_echoing_the_value(
+    monkeypatch,
+) -> None:
+    injected = "1GB'; SET x"
+    connects: list[object] = []
+    _clear_duckdb_env(monkeypatch)
+    monkeypatch.setenv("DUCKDB_MEMORY_LIMIT", injected)
+    monkeypatch.setattr(
+        duckdb_runtime.duckdb,
+        "connect",
+        lambda **_kwargs: connects.append(object()) or _RecordingConnection(),
+    )
+    monkeypatch.setattr(duckdb_runtime.duckdb, "__version__", "1.2.2")
+
+    with pytest.raises(RuntimeError) as caught:
+        duckdb_runtime.connect_duckdb_runtime()
+    assert str(caught.value) == "DuckDB resource limits are invalid"
+    assert injected not in str(caught.value)
+    assert caught.value.__cause__ is None
+    assert connects == []
+
+    with pytest.raises(RuntimeError) as explicit:
+        duckdb_runtime.connect_duckdb_runtime(
+            duckdb_runtime.DuckDBResourceLimits(memory_limit="1GB", threads=0)
+        )
+    assert str(explicit.value) == "DuckDB resource limits are invalid"
+    assert connects == []
+
+
+def test_uncreatable_spill_directory_error_hides_the_path(
+    monkeypatch, tmp_path: Path
+) -> None:
+    blocker = tmp_path / "private-blocker"
+    blocker.write_text("not a directory", encoding="utf-8")
+    target = blocker / "spill"
+    connects: list[object] = []
+    monkeypatch.setattr(
+        duckdb_runtime.duckdb,
+        "connect",
+        lambda **_kwargs: connects.append(object()) or _RecordingConnection(),
+    )
+    monkeypatch.setattr(duckdb_runtime.duckdb, "__version__", "1.2.2")
+
+    with pytest.raises(RuntimeError) as caught:
+        duckdb_runtime.connect_duckdb_runtime(
+            duckdb_runtime.DuckDBResourceLimits(
+                memory_limit="1GB", temp_directory=str(target)
+            ),
+            prepare_temp_directory=True,
+        )
+    assert str(caught.value) == "DUCKDB_TEMP_DIRECTORY is not creatable"
+    assert str(target) not in str(caught.value)
+    assert "private-blocker" not in str(caught.value)
+    assert caught.value.__cause__ is None
+    assert connects == []
