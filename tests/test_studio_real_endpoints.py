@@ -232,6 +232,29 @@ def test_studio_endpoints_return_real_payloads(client, verb, path, payload):
     assert body.get("stub") is not True
 
 
+def test_dag_graph_links_datasets_and_exposes_layers(client):
+    test_client, _studio_router = client
+    response = test_client.get("/api/studio/dag-graph?cartridge=replicon")
+    assert response.status_code == 200, response.text[:500]
+    body = response.json()
+    nodes = {node["id"]: node for node in body["nodes"]}
+    assert nodes["entity:TimeEntry"]["layer"] == "bronze"
+    assert nodes["dataset:gold:timeentry_gold"]["layer"] == "gold"
+    assert nodes["dataset:master:timeentry_master"]["layer"] == "master"
+    assert nodes["dataset:gold:timeentry_gold"]["label"] == "gold:timeentry_gold"
+    edges = body["edges"]
+    assert {
+        "source": "entity:TimeEntry",
+        "target": "dataset:silver:timeentry_clean",
+    } in edges
+    assert {
+        "source": "dataset:silver:timeentry_clean",
+        "target": "dataset:gold:timeentry_gold",
+    } in edges
+    assert all(edge["source"] in nodes and edge["target"] in nodes for edge in edges)
+    assert "svg" in body
+
+
 def test_dag_deploy_skips_packaged_cartridge_dag(client, monkeypatch):
     test_client, studio_router = client
     calls = []

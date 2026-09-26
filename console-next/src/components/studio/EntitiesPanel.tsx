@@ -4,7 +4,6 @@ import { Pencil, Play, Plus, RefreshCw, ScanSearch, Table2, Type, Upload } from 
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { extractEntity } from "@/lib/monitor/client";
 import { useSourceSchema } from "@/lib/monitor/hooks";
 import { MAX_SPEC_BYTES, studioErrorMessage } from "@/lib/studio/client";
 import {
@@ -25,8 +24,9 @@ import type {
 import { changedEntityFields, identifierError, type EntityDraft as EditDraft } from "@/lib/studio/validation";
 import { cn } from "@/lib/utils";
 
-import { ExtractionTracker, type ExtractionLaunch } from "./ExtractionTracker";
-import { buttonClass, ConfirmDialog, DataTable, inputClass, Notice, primaryButtonClass, Spinner } from "./ui";
+import { DataTable } from "./DataTable";
+import { ExtractionTracker, extractionMode, startExtraction, type ExtractionLaunch } from "./ExtractionTracker";
+import { buttonClass, ConfirmDialog, inputClass, Notice, primaryButtonClass, Spinner } from "./ui";
 
 const MODES = ["full", "incremental"];
 
@@ -78,7 +78,14 @@ function SchemaPreview({ cartridge, entity }: { cartridge: string; entity: strin
       ) : (
         <p className="text-muted-foreground">Sin columnas en bronze para esta entidad.</p>
       )}
-      {rows.length ? <DataTable columns={fields.map((field) => String(field.name))} rows={rows} maxHeight="max-h-56" /> : null}
+      {rows.length ? (
+        <DataTable
+          columns={fields.map((field) => String(field.name))}
+          rows={rows}
+          maxHeight="max-h-56"
+          exportName={`${cartridge}_${entity}_bronze`}
+        />
+      ) : null}
       {messages.length ? (
         <ul className="space-y-0.5 text-muted-foreground">
           {messages.slice(0, 4).map((message, index) => <li key={index}>{message}</li>)}
@@ -214,19 +221,8 @@ export function EntitiesPanel({ cartridge, manifest }: { cartridge: string; mani
   async function runExtraction(entity: StudioEntity) {
     setExtracting(entity.name);
     try {
-      const mode = String(entity.mode || "incremental") === "full" ? "full" : "incremental";
-      const result = await extractEntity(cartridge, entity.name, { mode });
-      const runId = result.dag_run_id || null;
-      setLaunches((current) => ({
-        ...current,
-        [entity.name]: {
-          entity: entity.name,
-          dagId: result.dag_id || null,
-          runId,
-          jobId: runId ? null : result.job_id || null,
-          launchedAt: Date.now(),
-        },
-      }));
+      const launch = await startExtraction(cartridge, entity.name, extractionMode(entity.mode));
+      setLaunches((current) => ({ ...current, [entity.name]: launch }));
       toast.success(`Extracción enviada para ${entity.name}.`);
     } catch (error) {
       toast.error(studioErrorMessage(error, `No se pudo extraer ${entity.name}.`));

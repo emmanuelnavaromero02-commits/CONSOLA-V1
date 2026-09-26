@@ -7,11 +7,13 @@ import { toast } from "sonner";
 import { useDatasets } from "@/lib/monitor/hooks";
 import { studioErrorMessage, SUPERSET_INTERNAL_ONLY_COPY, supersetErrorMessage } from "@/lib/studio/client";
 import { datasetsForLayer, goldTableName } from "@/lib/studio/datasets";
+import { plural } from "@/lib/studio/format";
 import { useLayerPreview, usePublishSuperset, useRuntimeConfig } from "@/lib/studio/hooks";
 import type { StudioLayer, SupersetDatasetResult } from "@/lib/studio/types";
 import { cn } from "@/lib/utils";
 
-import { buttonClass, DataTable, Notice, primaryButtonClass, Spinner } from "./ui";
+import { DataTable } from "./DataTable";
+import { buttonClass, Notice, primaryButtonClass, Spinner } from "./ui";
 
 const LAYERS: Array<{ id: StudioLayer; label: string }> = [
   { id: "silver", label: "Silver" },
@@ -34,7 +36,17 @@ function notifySuperset(result: SupersetDatasetResult, table: string) {
   toast.error(result.error || result.message || "Superset no creó el dataset.");
 }
 
-function LayerPreview({ layer, cartridge, dataset }: { layer: StudioLayer; cartridge: string; dataset: string }) {
+function LayerPreview({
+  layer,
+  cartridge,
+  dataset,
+  total,
+}: {
+  layer: StudioLayer;
+  cartridge: string;
+  dataset: string;
+  total: number | null;
+}) {
   const preview = useLayerPreview(layer, cartridge, dataset);
   if (preview.isLoading) {
     return <p className="flex items-center gap-2 text-sm text-muted-foreground"><Spinner /> Consultando {dataset}…</p>;
@@ -57,9 +69,15 @@ function LayerPreview({ layer, cartridge, dataset }: { layer: StudioLayer; cartr
   return (
     <div className="space-y-2">
       <p className="text-xs text-muted-foreground">
-        {data.dataset || dataset} · {data.total} filas en la vista previa · {data.columns.length} columnas
+        {data.dataset || dataset} · {plural(data.columns.length, "columna", "columnas")}
       </p>
-      <DataTable columns={data.columns} rows={data.rows} caption={`Vista previa de ${data.dataset || dataset}`} />
+      <DataTable
+        columns={data.columns}
+        rows={data.rows}
+        caption={`Vista previa de ${data.dataset || dataset}`}
+        total={total}
+        exportName={data.dataset || dataset}
+      />
     </div>
   );
 }
@@ -68,7 +86,7 @@ export function LayersPanel({ cartridge }: { cartridge: string }) {
   const datasets = useDatasets();
   const config = useRuntimeConfig();
   const publish = usePublishSuperset();
-  const [layer, setLayer] = useState<StudioLayer>("silver");
+  const [layer, setLayer] = useState<StudioLayer>("gold");
   const [selectedByLayer, setSelectedByLayer] = useState<Record<string, string>>({});
   const list = useMemo(
     () => datasetsForLayer(datasets.data ?? [], cartridge, layer),
@@ -183,7 +201,7 @@ export function LayersPanel({ cartridge }: { cartridge: string }) {
             </div>
           ) : null}
           {selected ? (
-            <LayerPreview layer={layer} cartridge={cartridge} dataset={selected.name} />
+            <LayerPreview layer={layer} cartridge={cartridge} dataset={selected.name} total={selected.row_count ?? null} />
           ) : (
             <Notice>Selecciona un dataset para ver sus filas.</Notice>
           )}

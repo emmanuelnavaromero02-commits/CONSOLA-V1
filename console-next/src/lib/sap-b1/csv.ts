@@ -1,4 +1,8 @@
+import { toCsv, type CsvCell as Cell } from "@/lib/csv";
+
 import type { SapB1LoadRow, SapB1MappingEntity } from "./types";
+
+export { csvCell, downloadText, toCsv } from "@/lib/csv";
 
 export const FINANCE_RUN_HEADER = ["indicador", "empresa", "mes", "dimension", "clave", "valor", "unidad"] as const;
 export const FINANCE_RUN_MAX_BYTES = 5 * 1024 * 1024;
@@ -21,19 +25,6 @@ export const MAPPING_CSV_HEADER = [
   "estado",
   "contado_en",
 ] as const;
-
-type Cell = string | number | boolean | null | undefined;
-
-export function csvCell(value: Cell): string {
-  if (value === null || value === undefined) return "";
-  let text = typeof value === "number" ? (Number.isFinite(value) ? String(value) : "") : String(value);
-  if (/^[=+@\t\r]/.test(text)) text = `'${text}`;
-  return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
-}
-
-export function toCsv(rows: ReadonlyArray<ReadonlyArray<Cell>>): string {
-  return `${rows.map((row) => row.map(csvCell).join(",")).join("\r\n")}\r\n`;
-}
 
 export function financeRunTemplate(): string {
   return toCsv([FINANCE_RUN_HEADER]);
@@ -103,17 +94,4 @@ export function mappingCsv(rows: MappingRow[]): string {
     }
   }
   return toCsv(lines);
-}
-
-export function downloadText(filename: string, text: string, type = "text/csv;charset=utf-8"): void {
-  const blob = new Blob(["﻿", text], { type });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.rel = "noopener";
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
