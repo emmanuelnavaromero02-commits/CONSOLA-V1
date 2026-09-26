@@ -20,7 +20,7 @@ STUDIO_ASSISTANT = REPO / "console" / "app" / "services" / "studio_assistant.py"
 WORKSPACE_ASSISTANT = REPO / "workspace" / "app" / "services" / "consumer_assistant.py"
 AGENT_RUNTIME = REPO / "console" / "app" / "services" / "agent_runtime.py"
 DEPLOY = REPO / "infra" / "terraform" / "deploy"
-STUDIO_PAGE = REPO / "console-next" / "src" / "app" / "(shell)" / "studio" / "page.tsx"
+STUDIO_SECTIONS = REPO / "console-next" / "src" / "lib" / "studio" / "sections.ts"
 CONNECTOR = CONFIG / "connector.yaml"
 STUDIO_TOOL_STEPS = {
     "query_dataset": {4, 5},
@@ -242,18 +242,17 @@ def _studio_module(monkeypatch):
 
 
 def _studio_tabs() -> dict[int, str]:
-    page = STUDIO_PAGE.read_text(encoding="utf-8")
-    tabs = re.findall(r'\{ id: "\w+", label: "([^"]+)", step: (\d+) \}', page)
+    source = STUDIO_SECTIONS.read_text(encoding="utf-8")
+    tabs = re.findall(r'id: "\w+",\s*label: "([^"]+)",\s*step: (\d+)', source)
     return {int(step): label for label, step in tabs}
 
 
 def test_hints_route_studio_to_the_steps_that_expose_each_tool(monkeypatch):
     studio = _studio_module(monkeypatch)
     tabs = _studio_tabs()
-    assert tabs[4] == "Refinar" and tabs[5] == "Capas"
     text = " ".join(_hints().split())
-    assert "en Studio, `query_dataset` está en las pestañas Refinar (paso 4) y Capas (paso 5)" in text
-    assert "`get_schema`, `describe_silver` y `cartridge_run_kb` solo en Refinar" in text
+    assert f"en Studio, `query_dataset` está en {tabs[4]} y en {tabs[5]}" in text
+    assert f"`get_schema`, `describe_silver` y `cartridge_run_kb` solo en {tabs[4]}" in text
     for tool, claimed in STUDIO_TOOL_STEPS.items():
         assert tool in studio.STUDIO_TOOLS_WHITELIST, tool
         assert f"`{tool}`" in text, tool

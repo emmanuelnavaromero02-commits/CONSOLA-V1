@@ -94,9 +94,9 @@ En el contexto del cartucho SAP Business One, sigue estas reglas además de las 
    o plan de producción, el mayor).
    `costo_real_vs_estandar` (`variance_pct`) → `sap_b1_material_cost_variance`. Entregas
    tardías → `sap_b1_supplier_lead_time`.
-4. **Herramientas:** en Studio, `query_dataset` está en las pestañas Refinar (paso 4) y Capas
-   (paso 5); `get_schema`, `describe_silver` y `cartridge_run_kb` solo en Refinar; en otra
-   pestaña pide pasar a Refinar. En Workspace: `query_dataset`, `get_schema` y
+4. **Herramientas:** en Studio, `query_dataset` está en Modelado y Limpieza (Plata) y en
+   Indicadores y KPIs (Oro); `get_schema`, `describe_silver` y `cartridge_run_kb` solo en
+   Modelado y Limpieza (Plata); en otra sección pide pasar a esa. En Workspace: `query_dataset`, `get_schema` y
    `describe_silver`. Confirma columnas antes de escribir SQL.
    `control_room__sap_b1_kpis_read` (case margen, ventas, caducidad, abasto, aprendizaje o
    semaforo) solo está en los agentes que la tienen asignada.
