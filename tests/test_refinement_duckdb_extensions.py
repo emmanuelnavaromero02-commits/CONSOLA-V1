@@ -66,8 +66,8 @@ def test_release_root_cache_is_fresh_frozen_and_network_independent() -> None:
     preparation = _text("scripts/prepare_refinement_duckdb_ci.sh")
     runner = _text("scripts/run_refinement_duckdb_offline_smoke.sh")
     exact_minio = (
-        "ghcr.io/emmanuelnavaromero02-commits/omega-minio:RELEASE.2024-12-18T13-15-44Z@"
-        "sha256:2385e334b7fdcdafe5feffcad50df622901f57893393c6da267497995037290b"
+        "ghcr.io/emmanuelnavaromero02-commits/omega-minio:RELEASE.2024-12-18T13-15-44Z-r1@"
+        "sha256:36c21848e137e58e2a2f8012bb1ddb05d5f73df3fe968f2e0059b32865dd87ea"
     )
 
     assert 'manifest="${DUCKDB_CACHE_MANIFEST:?' in preparation

@@ -11,7 +11,7 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "sha256": "5ac27486ab770ba4ae96147005fe7cd476491a5fc5be6cd167c52a60aa6e3d0c"
+      "sha256": "7d6e24297020254276a6057a5d28ec6b09b19abf6334d8a6c8e8497471281fc0"
     },
     {
       "path": "Makefile",
@@ -3363,7 +3363,7 @@
     },
     {
       "path": "infra/docker-compose.yml",
-      "sha256": "7de51248d18a3a34e0cf37b32ffdd27734240879a96c0690fd446e3af7f0d15c"
+      "sha256": "3c16dc05f97b3cb6758bdfee5901d4d0e798c5ee356e10bf94a9ee201e6dd698"
     },
     {
       "path": "infra/init/99zzt_analytic_app_dataset_grants.sql",
@@ -3627,7 +3627,7 @@
     },
     {
       "path": "scripts/run_refinement_duckdb_offline_smoke.sh",
-      "sha256": "1e8e426437ef2d89f2e7f11728bdcd56e0e46539a1f6402155c23b7ece211c70"
+      "sha256": "c5feb42a8e6e7da650ea68f75b727e46f0d1398c9b8b4ca10088c054e2ade718"
     },
     {
       "path": "scripts/run_release_playwright.py",
@@ -5219,7 +5219,7 @@
     },
     {
       "path": "tests/test_minio_mirror_contract.py",
-      "sha256": "6887cd7a918207a4f95e1f26fb77aeded1b8396b47bb59be888934ce32f34b1d"
+      "sha256": "1a63af9e09c76aa8277d092c3ab69e7f7b0c2c3931911d755b4c3d1bc42a065a"
     },
     {
       "path": "tests/test_mission5_evidence_ticket_contracts.py",
@@ -5519,7 +5519,7 @@
     },
     {
       "path": "tests/test_refinement_duckdb_extensions.py",
-      "sha256": "90a3df6e8a963cb75148878bed699628d8e4d0a643f954daa8a009f21d84b733"
+      "sha256": "661c2635a1b39e79139ae37299d7eba62efc608cb17194471bbd7434feb87643"
     },
     {
       "path": "tests/test_refinement_healthz_real.py",
@@ -5555,7 +5555,7 @@
     },
     {
       "path": "tests/test_release_ci_fail_closed.py",
-      "sha256": "6139007317be29b781f210686c89cfb2027296aab71f2d84df99fd00aac95eab"
+      "sha256": "8b7b9ba8e85f12a223aa5097dac1b7b9a7f6f1529d87f046c7c57c9f94bcd207"
     },
     {
       "path": "tests/test_release_compose_env_contract.py",
@@ -5995,7 +5995,7 @@
     },
     {
       "path": "tests/test_staged_publication_live.py",
-      "sha256": "8a97cd26c29f1a2dbc5aec75cf19699748bf02c0365d3f2ccc78556dccf946be"
+      "sha256": "075d8291ac6a371c11c2a366b70b0539d03723d5e15ff63ad2837dd9ee66f88b"
     },
     {
       "path": "tests/test_staged_publication_partitioned_live.py",
