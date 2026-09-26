@@ -62,6 +62,7 @@ export interface DagGraphNode {
   id: string;
   kind: DagGraphKind;
   label?: string | null;
+  layer?: string | null;
 }
 
 export interface DagGraphEdge {

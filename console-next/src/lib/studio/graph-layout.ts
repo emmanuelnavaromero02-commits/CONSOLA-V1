@@ -16,12 +16,8 @@ const KIND_LABEL: Record<string, string> = {
   dag: "DAG",
   dataset: "Dataset",
 };
-const KIND_COLUMN_LABEL: Record<string, string> = {
-  cartridge: "Cartucho",
-  entity: "Entidades",
-  dag: "DAGs",
-  dataset: "Datasets",
-};
+const COLUMN_LABELS = ["Conector", "Tablas de origen", "Automatizaciones", "Plata", "Oro", "Datasets", "Otros"];
+const DATASET_ID_LAYER = /^dataset:([^:]+):/;
 
 export interface PositionedNode {
   node: DagGraphNode;
@@ -54,8 +50,38 @@ export function kindLabel(kind: string | null | undefined): string {
   return KIND_LABEL[String(kind ?? "")] ?? "Nodo";
 }
 
-function kindRank(kind: string): number {
+export function nodeLayer(node: Pick<DagGraphNode, "id" | "kind" | "layer">): string | null {
+  const explicit = typeof node.layer === "string" ? node.layer.trim().toLowerCase() : "";
+  if (explicit) return explicit;
+  const kind = String(node.kind ?? "");
+  if (kind === "dataset") {
+    const match = DATASET_ID_LAYER.exec(String(node.id ?? ""));
+    return match ? match[1].toLowerCase() : null;
+  }
+  return kind === "entity" ? "bronze" : null;
+}
+
+function nodeRank(node: DagGraphNode): number {
+  const kind = String(node.kind);
+  if (kind === "dataset" && nodeLayer(node) === "gold") return 3;
   return KIND_RANK[kind] ?? 1;
+}
+
+function columnLabel(node: DagGraphNode): string {
+  switch (String(node.kind)) {
+    case "cartridge":
+      return "Conector";
+    case "entity":
+      return "Tablas de origen";
+    case "dag":
+      return "Automatizaciones";
+    case "dataset": {
+      const layer = nodeLayer(node);
+      return layer === "silver" ? "Plata" : layer === "gold" ? "Oro" : "Datasets";
+    }
+    default:
+      return "Otros";
+  }
 }
 
 function kindOrder(kind: string): number {
@@ -92,7 +118,7 @@ export function graphDepths(nodes: DagGraphNode[], edges: DagGraphEdge[]): Map<s
   const indegree = new Map<string, number>();
   const outgoing = new Map<string, string[]>();
   for (const node of nodes) {
-    depth.set(node.id, kindRank(String(node.kind)));
+    depth.set(node.id, nodeRank(node));
     indegree.set(node.id, 0);
     outgoing.set(node.id, []);
   }
@@ -150,12 +176,10 @@ export function layoutDagGraph(rawNodes: DagGraphNode[], rawEdges: DagGraphEdge[
         || nodeLabel(a).localeCompare(nodeLabel(b))
         || a.id.localeCompare(b.id),
     );
-    const kinds = [...new Set(members.map((node) => String(node.kind)))];
-    columnMeta.push({
-      depth,
-      x,
-      label: kinds.map((kind) => KIND_COLUMN_LABEL[kind] ?? "Otros").join(" · "),
-    });
+    const labels = [...new Set(members.map(columnLabel))].sort(
+      (a, b) => COLUMN_LABELS.indexOf(a) - COLUMN_LABELS.indexOf(b),
+    );
+    columnMeta.push({ depth, x, label: labels.join(" · ") });
     members.forEach((node, row) => {
       positioned.push({ node, depth, x, y: PAD_TOP + row * (GRAPH_NODE_HEIGHT + ROW_GAP) });
     });
