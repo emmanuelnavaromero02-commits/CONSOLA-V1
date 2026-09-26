@@ -4287,7 +4287,7 @@
     },
     {
       "path": "tests/test_ci_changed_areas.py",
-      "sha256": "464440b3d43aca2a930a47bbc88b53937de468d3f8ece4357dacd23aa8b76b68"
+      "sha256": "dbb670be616a0f0a82fd37ed97e9b82d4c2d407d9d7ef4b183f8d9b07c8aca64"
     },
     {
       "path": "tests/test_ci_detector_self_protection.py",
@@ -5724,6 +5724,10 @@
     {
       "path": "tests/test_sap_b1_fake_schema.py",
       "sha256": "387f3c293cfbebff833ee7037eea6012b6e5031c2bf0630039c3269b6f8c2f2d"
+    },
+    {
+      "path": "tests/test_sap_b1_hints.py",
+      "sha256": "fbb00b033679e2dcb7cf4de888de14ce4f67d4454b3f0496c41730a9c889957d"
     },
     {
       "path": "tests/test_sap_b1_margin_monitor.py",

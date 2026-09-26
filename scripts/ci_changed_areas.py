@@ -392,6 +392,21 @@ def _root_test_targets(files: list[str]) -> str:
             "tests/test_mcp_infra_pdf_compose_capacity.py",
             "tests/test_pypdf_security.py",
         })
+    if _any(
+        files,
+        r"^cartridges/sap_b1/(?!tests/)",
+        r"^console/app/services/(?:studio_assistant|agent_runtime|seed_packaged_hints)\.py$",
+        r"^workspace/app/services/consumer_assistant\.py$",
+        r"^mcp-infra/app/tools/control_room\.py$",
+        r"^console-next/src/app/\(shell\)/studio/page\.tsx$",
+        r"^scripts/deploy_main_aws\.py$",
+        r"^infra/terraform/deploy/docker-compose\.(aws|cartridges)\.ya?ml$",
+    ):
+        targets.update(
+            target
+            for target in {"tests/test_sap_b1_hints.py"}
+            if Path(target).exists()
+        )
     if any(path.startswith("omega_lakehouse/") for path in files):
         targets.add("tests/lakehouse")
     for cartridge in _changed_cartridges(files):
