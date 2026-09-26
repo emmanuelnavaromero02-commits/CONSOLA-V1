@@ -531,67 +531,67 @@
             "nodeid": "tests/test_e2e_smoke.py::test_e2e_console_healthz_returns_json",
             "phase": "setup",
             "category": "skip",
-            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz — set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
+            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz \u2014 set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
           },
           {
             "nodeid": "tests/test_e2e_smoke.py::test_e2e_console_login_has_baseline_security_headers",
             "phase": "setup",
             "category": "skip",
-            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz — set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
+            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz \u2014 set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
           },
           {
             "nodeid": "tests/test_e2e_smoke.py::test_e2e_console_login_has_strict_csp",
             "phase": "setup",
             "category": "skip",
-            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz — set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
+            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz \u2014 set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
           },
           {
             "nodeid": "tests/test_e2e_smoke.py::test_e2e_mcp_infra_healthz_returns_json",
             "phase": "setup",
             "category": "skip",
-            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz — set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
+            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz \u2014 set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
           },
           {
             "nodeid": "tests/test_e2e_smoke.py::test_e2e_refinement_healthz_returns_json",
             "phase": "setup",
             "category": "skip",
-            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz — set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
+            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz \u2014 set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
           },
           {
             "nodeid": "tests/test_e2e_smoke.py::test_e2e_unauthenticated_get_to_protected_page_redirects_or_401s",
             "phase": "setup",
             "category": "skip",
-            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz — set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
+            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz \u2014 set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
           },
           {
             "nodeid": "tests/test_e2e_smoke.py::test_e2e_unauthenticated_post_to_admin_users_is_rejected",
             "phase": "setup",
             "category": "skip",
-            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz — set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
+            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz \u2014 set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
           },
           {
             "nodeid": "tests/test_e2e_smoke.py::test_e2e_unauthenticated_post_to_monitoring_invoke_is_rejected",
             "phase": "setup",
             "category": "skip",
-            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz — set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
+            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz \u2014 set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
           },
           {
             "nodeid": "tests/test_e2e_smoke.py::test_e2e_vault_healthz_returns_json",
             "phase": "setup",
             "category": "skip",
-            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz — set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
+            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz \u2014 set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
           },
           {
             "nodeid": "tests/test_e2e_smoke.py::test_e2e_workspace_healthz_returns_json",
             "phase": "setup",
             "category": "skip",
-            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz — set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
+            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz \u2014 set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
           },
           {
             "nodeid": "tests/test_e2e_smoke.py::test_e2e_workspace_shell_has_strict_csp",
             "phase": "setup",
             "category": "skip",
-            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz — set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
+            "reason": "E2E smoke disabled or stack not reachable at http://localhost:8000/healthz \u2014 set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
           },
           {
             "nodeid": "tests/test_mcp_pg_role_guard.py::test_guard_accepts_scoped_service_role",
