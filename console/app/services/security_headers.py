@@ -132,7 +132,6 @@ APP_THEME_SHIM = """
 }
 :root,
 :root[data-theme="light"] {
-  color-scheme: light;
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   --radius: 8px;
@@ -166,7 +165,6 @@ APP_THEME_SHIM = """
   --info-soft: rgba(10, 110, 209, 0.10);
 }
 :root[data-theme="dark"] {
-  color-scheme: dark;
   --bg: #090d16;
   --card: #111827;
   --bg3: #1f2937;
@@ -231,9 +229,6 @@ body {
   }
   :where(table) {
     font-variant-numeric: tabular-nums;
-  }
-  ::selection {
-    background: var(--primary-soft);
   }
   :where(.omega-card) {
     background: var(--card);

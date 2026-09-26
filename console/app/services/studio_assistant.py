@@ -638,9 +638,9 @@ REGLAS DE ESTILO (apps HTML):
   var(--primary-soft); fondo de botón con texto var(--on-primary): var(--primary-strong) y
   var(--primary-strong-hover); estados var(--green), var(--amber), var(--red), var(--blue),
   var(--purple). PROHIBIDO fijar #fff, #000, white, black u otro hex en fondos, textos o bordes.
-- Si defines valores propios: :root con color-scheme: dark light y la variante oscura en
-  :root[data-theme="dark"]; nunca prefers-color-scheme ni clases .dark (la plataforma fija
-  color-scheme según data-theme).
+- color-scheme lo declara la app (la plataforma no lo fija): :root { color-scheme: light } y
+  :root[data-theme="dark"] { color-scheme: dark }; da color explícito (var(--text-primary)) a
+  body y a cada panel con fondo propio. Nunca prefers-color-scheme ni clases .dark.
 - Tipografía: no declares font-family en body (la plataforma aplica Inter, var(--font-sans));
   cifras con font-variant-numeric: tabular-nums; código con var(--font-mono). En Chart.js usa
   Chart.defaults.font.family = getComputedStyle(document.body).fontFamily.

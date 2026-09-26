@@ -5467,7 +5467,7 @@
     },
     {
       "path": "tests/test_published_app_modern_theme.py",
-      "sha256": "c04f934bb81baa228479c714eb37ee7308c983ae718c0b1f364588af3054c978"
+      "sha256": "43b84e46ec3b0e94a5720196028e637b8ae4a43faf5c58bdf842ca63dd163ea7"
     },
     {
       "path": "tests/test_pypdf_security.py",

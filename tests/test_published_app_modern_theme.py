@@ -100,13 +100,11 @@ def test_dark_palette_is_the_requested_one():
     dark = _dark()
     for name, value in REQUESTED_DARK.items():
         assert dark.get(name) == value, name
-    assert dark["color-scheme"] == "dark"
 
 
 def test_light_counterpart_covers_every_dark_token():
     light = _light()
     assert set(_dark()) <= set(light)
-    assert light["color-scheme"] == "light"
     assert light["--font-sans"].startswith('"Inter"')
 
 
@@ -146,7 +144,7 @@ def test_base_styles_are_layered_and_zero_specificity():
     selectors = _selectors_at_depth(_layer_body())
     assert selectors
     for depth, selector in selectors:
-        if selector.startswith("@media") or (depth == 0 and selector == "::selection"):
+        if selector.startswith("@media"):
             continue
         assert selector.startswith(":where("), selector
     assert any(sel.startswith("@media") for _, sel in selectors)
@@ -154,6 +152,28 @@ def test_base_styles_are_layered_and_zero_specificity():
     outside = APP_THEME_SHIM[: APP_THEME_SHIM.index("@layer omega-base")]
     assert re.findall(r"^body \{", outside, re.M) == ["body {"]
     assert "!important" not in APP_THEME_SHIM
+
+
+def test_shim_leaves_color_scheme_and_selection_to_the_app():
+    # color-scheme would flip the default text colour of apps that paint fixed
+    # light panels without their own colour (replicon skill_gaps_heatmap).
+    assert "color-scheme" not in APP_THEME_SHIM
+    assert "::selection" not in APP_THEME_SHIM
+
+
+@pytest.mark.parametrize("app", PACKAGED_APPS, ids=lambda p: f"{p.parent.parent.name}/{p.stem}")
+def test_shim_adds_no_color_scheme_to_packaged_apps(app):
+    original = app.read_text(encoding="utf-8")
+    out = inject_published_app_theme(original)
+    assert out.count("color-scheme") == original.count("color-scheme")
+    assert out.count("::selection") == original.count("::selection")
+
+
+def test_skill_gaps_heatmap_keeps_the_browser_default_text_colour():
+    app = REPO / "cartridges/replicon/apps/skill_gaps_heatmap.html"
+    original = app.read_text(encoding="utf-8")
+    assert "color-scheme" not in original
+    assert "color-scheme" not in inject_published_app_theme(original)
 
 
 def test_theme_needs_no_new_csp_hosts():
