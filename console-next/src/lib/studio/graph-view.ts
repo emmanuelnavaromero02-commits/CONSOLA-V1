@@ -100,6 +100,11 @@ export function nodeRef(node: DagGraphNode): NodeRef {
   return { kind, name, layer };
 }
 
+export function nodeDisplayName(node: DagGraphNode): string {
+  if (String(node.kind) === "dataset") return nodeRef(node).name;
+  return String(node.label || node.id);
+}
+
 export function collectDownstream(id: string, edges: DagGraphEdge[]): string[] {
   const outgoing = new Map<string, string[]>();
   for (const edge of edges) {

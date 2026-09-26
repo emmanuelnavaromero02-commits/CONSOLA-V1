@@ -92,11 +92,13 @@ function RelativeTime({ value }: { value: string | null | undefined }) {
   const iso = text(value);
   if (!iso || Number.isNaN(Date.parse(iso))) return <Missing>{NO_DATE}</Missing>;
   return (
-    <time dateTime={iso} title={absoluteTime(iso)} className="inline-flex items-center gap-1">
-      <Clock aria-hidden className="h-3.5 w-3.5 text-muted-foreground" />
-      {formatRelativeFromNow(iso)}
-      <span className="text-xs text-muted-foreground">({absoluteTime(iso)})</span>
-    </time>
+    <span className="flex flex-col">
+      <time dateTime={iso} title={absoluteTime(iso)} className="inline-flex items-center gap-1">
+        <Clock aria-hidden className="h-3.5 w-3.5 text-muted-foreground" />
+        {formatRelativeFromNow(iso)}
+      </time>
+      <span className="text-xs text-muted-foreground">{absoluteTime(iso)}</span>
+    </span>
   );
 }
 

@@ -5,6 +5,7 @@ import {
   collectDownstream,
   edgeRole,
   nodeCaption,
+  nodeDisplayName,
   nodeIcon,
   nodeRef,
   nodeStage,
@@ -54,7 +55,13 @@ describe("graph view helpers", () => {
     expect(nodeRef({ id: "cartridge:acme", kind: "cartridge" })).toEqual({ kind: "cartridge", name: "acme", layer: null });
   });
 
-  it("collects everything downstream once, even with cycles", () => {
+  it("shows datasets by name because the stage caption already names the layer", () => {
+    expect(nodeDisplayName({ id: "dataset:gold:sales", kind: "dataset", label: "gold:sales" })).toBe("sales");
+    expect(nodeDisplayName({ id: "entity:OINV", kind: "entity", label: "A/R invoices (OINV)" })).toBe("A/R invoices (OINV)");
+    expect(nodeDisplayName({ id: "dag:x", kind: "dag" })).toBe("dag:x");
+  });
+
+    it("collects everything downstream once, even with cycles", () => {
     const edges: DagGraphEdge[] = [
       { source: "a", target: "b" },
       { source: "b", target: "c" },

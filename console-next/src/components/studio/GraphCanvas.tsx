@@ -17,6 +17,7 @@ import { GRAPH_NODE_HEIGHT, GRAPH_NODE_WIDTH, kindLabel, type GraphLayout } from
 import {
   edgeRole,
   nodeCaption,
+  nodeDisplayName,
   nodeIcon,
   nodeStage,
   smartTruncate,
@@ -318,6 +319,7 @@ export function GraphCanvas({
             const stage = nodeStage(node);
             const Icon = nodeIcon(node);
             const label = nodeText(node);
+            const name = nodeDisplayName(node);
             const caption = nodeCaption(node);
             const counts = relations.get(node.id) ?? { incoming: 0, outgoing: 0 };
             const isSelected = selectedId === node.id;
@@ -349,7 +351,7 @@ export function GraphCanvas({
                 onBlur={() => onHover(null)}
               >
                 <title>
-                  {`${label}\n${STAGE_LABEL[stage]} · ${caption}\n${plural(counts.incoming, "entrada", "entradas")} · ${plural(counts.outgoing, "salida", "salidas")}`}
+                  {`${name}\n${STAGE_LABEL[stage]} · ${caption}\n${plural(counts.incoming, "entrada", "entradas")} · ${plural(counts.outgoing, "salida", "salidas")}`}
                 </title>
                 <rect
                   width={GRAPH_NODE_WIDTH}
@@ -367,7 +369,7 @@ export function GraphCanvas({
                   {caption}
                 </text>
                 <text x={12} y={44} className="fill-foreground text-[12px] font-medium">
-                  {smartTruncate(label, 24)}
+                  {smartTruncate(name, 24)}
                 </text>
                 <g transform={`translate(${GRAPH_NODE_WIDTH - 34} 10)`}>
                   <rect width={24} height={16} rx={8} className="fill-muted stroke-border" />
