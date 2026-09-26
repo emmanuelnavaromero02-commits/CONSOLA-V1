@@ -5463,7 +5463,11 @@
     },
     {
       "path": "tests/test_published_app_isolation.py",
-      "sha256": "202bf91cb27c4cf90ce9ca8466aa20ef51074ec95004482fc6d62b66e848a0d8"
+      "sha256": "3b5dfc846fc8ed431f2b89354046307f7ec9fc6de420e96603b6fad20af2005d"
+    },
+    {
+      "path": "tests/test_published_app_modern_theme.py",
+      "sha256": "43b84e46ec3b0e94a5720196028e637b8ae4a43faf5c58bdf842ca63dd163ea7"
     },
     {
       "path": "tests/test_pypdf_security.py",
@@ -5927,7 +5931,7 @@
     },
     {
       "path": "tests/test_security_headers.py",
-      "sha256": "994b8eccb9dab5461e9c929ff70946ff18628548323d7ae0e9095af865b6dd39"
+      "sha256": "ede8fd5c7eb54afb5e1493bdeab5adea4f7f63fc522487d90ced1fa25184f3d3"
     },
     {
       "path": "tests/test_security_negative_v141.py",
@@ -6039,7 +6043,7 @@
     },
     {
       "path": "tests/test_static_html_entrypoints.py",
-      "sha256": "8ce7384c6798a2fb2f64a50efb101bd2869a6e4a6b09770b94084813d52ab8b1"
+      "sha256": "1e219ae4f9353c982a2735bbffb4a7e69fde0e94882103cb119b8b19d821f9ea"
     },
     {
       "path": "tests/test_static_pages_load_tokens.py",
