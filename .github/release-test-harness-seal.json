@@ -11,11 +11,11 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "sha256": "6efe397a47bd19861b3cf33052b46040976f9c22983f3406c6ec2f89c76a2afb"
+      "sha256": "5ac27486ab770ba4ae96147005fe7cd476491a5fc5be6cd167c52a60aa6e3d0c"
     },
     {
       "path": "Makefile",
-      "sha256": "3dd5a3ca2c7cec15f58e5364bf42760acf5c39a84938b2d2622569e0d18bfee3"
+      "sha256": "04cc2d70159c7d3f3e9d270ba40ce3665c4dfd40258acc342681bb93ff774458"
     },
     {
       "path": "airflow/dags/_secrets.py",
@@ -3639,7 +3639,7 @@
     },
     {
       "path": "scripts/run_stress.sh",
-      "sha256": "c238a3040a312bcaf8dedaed3eb4f567aec73bcb6cca1d17db3e2b499e8744b3"
+      "sha256": "a4ca74faee3e764b54487cfe4dcdac5df5d999c66bc631a3747e386497b8c2c5"
     },
     {
       "path": "scripts/secure_release_output.py",
@@ -5219,7 +5219,7 @@
     },
     {
       "path": "tests/test_minio_mirror_contract.py",
-      "sha256": "66482de5917b869fb6efa8910006ac2c2516745d21915e996fcfe628f80904d1"
+      "sha256": "6887cd7a918207a4f95e1f26fb77aeded1b8396b47bb59be888934ce32f34b1d"
     },
     {
       "path": "tests/test_mission5_evidence_ticket_contracts.py",

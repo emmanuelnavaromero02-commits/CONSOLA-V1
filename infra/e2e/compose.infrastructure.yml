@@ -67,7 +67,7 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?required}
       GOMEMLIMIT: 256MiB
     tmpfs:
-      - /data:rw,nosuid,noexec,size=128m
+      - /data:rw,nosuid,noexec,size=128m,mode=1777
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/minio/health/live"]
       interval: 3s

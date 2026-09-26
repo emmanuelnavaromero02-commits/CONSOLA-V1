@@ -452,6 +452,7 @@ if [[ "$(readlink -f "${RELEASE_DIR}")" != "${PREV_TARGET}" ]]; then
     "${IMAGES_OVERLAY_SHA256}" \
     || die "candidate image overlay copy failed checksum verification."
   mkdir -p "${RELEASE_DIR}/data/lakehouse"
+  chown -R 10001:10001 "${RELEASE_DIR}/data/lakehouse"
   mkdir -p "${RELEASE_DIR}/airflow/dags" "${RELEASE_DIR}/airflow/logs/scheduler" "${RELEASE_DIR}/airflow/plugins"
   chown -R 50000:0 "${RELEASE_DIR}/airflow/dags" "${RELEASE_DIR}/airflow/logs" "${RELEASE_DIR}/airflow/plugins"
   chmod -R 775 "${RELEASE_DIR}/airflow/dags" "${RELEASE_DIR}/airflow/logs" "${RELEASE_DIR}/airflow/plugins"

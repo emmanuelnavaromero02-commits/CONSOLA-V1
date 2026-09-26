@@ -56,7 +56,7 @@ docker run --detach --rm \
   --network "$network" \
   --network-alias minio \
   --read-only \
-  --tmpfs /data:rw,noexec,nosuid,size=128m \
+  --tmpfs /data:rw,noexec,nosuid,size=128m,mode=1777 \
   --tmpfs /tmp:rw,noexec,nosuid,size=16m \
   --cap-drop ALL \
   --security-opt no-new-privileges \

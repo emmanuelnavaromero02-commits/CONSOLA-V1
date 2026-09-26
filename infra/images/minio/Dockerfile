@@ -35,7 +35,7 @@ LABEL org.opencontainers.image.source="https://github.com/emmanuelnavaromero02-c
       org.opencontainers.image.version="${MINIO_TAG}" \
       org.opencontainers.image.revision="${MINIO_COMMIT}" \
       org.opencontainers.image.licenses="AGPL-3.0-only" \
-      org.opencontainers.image.description="MinIO ${MINIO_TAG} rebuilt from the archived upstream source tag; runtime contract identical to quay.io/minio/minio:${MINIO_TAG}"
+      org.opencontainers.image.description="MinIO ${MINIO_TAG} rebuilt from the archived upstream source tag; runtime contract identical to quay.io/minio/minio:${MINIO_TAG}; runs as uid 10001"
 ENV MINIO_ACCESS_KEY_FILE=access_key \
     MINIO_SECRET_KEY_FILE=secret_key \
     MINIO_ROOT_USER_FILE=access_key \
@@ -44,11 +44,16 @@ ENV MINIO_ACCESS_KEY_FILE=access_key \
     MINIO_UPDATE_MINISIGN_PUBKEY="RWTx5Zr1tiHQLwG9keckT0c45M3AGeHD6IvimQHpyRywVWGbP1aVSGav" \
     MINIO_CONFIG_ENV_FILE=config.env \
     MC_CONFIG_DIR=/tmp/.mc
-RUN apk add -U --no-cache ca-certificates curl bash
+RUN apk add -U --no-cache ca-certificates curl bash \
+ && addgroup -S -g 10001 minio \
+ && adduser -S -D -u 10001 -G minio -h /home/minio -s /sbin/nologin minio
 COPY --from=build /out/minio /out/mc /usr/bin/
 COPY --from=build /out/docker-entrypoint.sh /usr/bin/docker-entrypoint.sh
 COPY --from=build /out/licenses/minio/ /licenses/
-RUN chmod +x /usr/bin/minio /usr/bin/mc /usr/bin/docker-entrypoint.sh
+RUN chmod 0755 /usr/bin/minio /usr/bin/mc /usr/bin/docker-entrypoint.sh \
+ && install -d -o 10001 -g 10001 -m 0750 /data \
+ && install -d -o 10001 -g 10001 -m 0700 /home/minio
+USER 10001:10001
 EXPOSE 9000
 VOLUME ["/data"]
 ENTRYPOINT ["/usr/bin/docker-entrypoint.sh"]
@@ -62,9 +67,13 @@ LABEL org.opencontainers.image.source="https://github.com/emmanuelnavaromero02-c
       org.opencontainers.image.version="${MC_TAG}" \
       org.opencontainers.image.revision="${MC_COMMIT}" \
       org.opencontainers.image.licenses="AGPL-3.0-only" \
-      org.opencontainers.image.description="MinIO client ${MC_TAG} rebuilt from the archived upstream source tag; runtime contract identical to quay.io/minio/mc:${MC_TAG}"
-RUN apk add -U --no-cache ca-certificates
+      org.opencontainers.image.description="MinIO client ${MC_TAG} rebuilt from the archived upstream source tag; runtime contract identical to quay.io/minio/mc:${MC_TAG}; runs as uid 10001"
+RUN apk add -U --no-cache ca-certificates \
+ && addgroup -S -g 10001 mc \
+ && adduser -S -D -u 10001 -G mc -h /home/mc -s /sbin/nologin mc
 COPY --from=build /out/mc /usr/bin/mc
 COPY --from=build /out/licenses/mc/ /licenses/
-RUN chmod +x /usr/bin/mc
+RUN chmod 0755 /usr/bin/mc \
+ && install -d -o 10001 -g 10001 -m 0700 /home/mc
+USER 10001:10001
 ENTRYPOINT ["mc"]

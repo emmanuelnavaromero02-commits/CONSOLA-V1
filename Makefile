@@ -19,7 +19,7 @@ WORKLOAD ?= sap_successfactors
 PROFILE ?= beta-safe
 
 .PHONY: help bootstrap-env up up-core down nuke repair-local-stack logs ps test baseline-smoke smoke beta-smoke beta-smoke-aws stress stress-smoke stress-beta stress-spike stress-breakpoint stress-soak-24h stress-write-heavy multiuser-simulation live-cartridge-tests monitor-check production-readiness v1-live-readiness production-readiness-aws v1-ga-lite-local v1-ga-lite-aws v1-ga-max-aws v1-ga-cleanup v1-ga-report data-integrity-audit copilot-redteam cartridge-resilience chaos-local chaos-aws enterprise-readiness sap-successfactors-aws-live-max dr-rehearsal backup-aws dr-rehearsal-aws rollback-aws rollback-rehearsal rollback-rehearsal-aws deploy-main-aws aws-full-regression aws-observability-report aws-tls-status aws-superset-probe superset-tenant-probe superset-tenant-probe-aws monte-carlo-aws-probe bayesian-calibration-aws-probe bayesian-loop-probe bayesian-loop-probe-aws cartridge-kb-scope-aws-probe decision-orchestrator-aws-probe decision-orchestrator-execution-aws-probe migrate rotate-keys e2e acceptance preflight demo-check security-scan verify-release verify-v1-public run-intelligence-scheduled-local run-intelligence-scheduled-aws decision-backtest-local decision-backtest-aws
-.PHONY: test-hermetic reconcile-db-passwords
+.PHONY: test-hermetic reconcile-db-passwords lakehouse-dir
 
 help:
 	@echo "ΩMEGA — targets:"
@@ -133,14 +133,20 @@ bootstrap-env:
 	bash infra/bootstrap.sh
 	bash infra/bootstrap-keys.sh infra/.env
 
+lakehouse-dir:
+	mkdir -p data/lakehouse
+	@if [ "$$(uname -s)" = Linux ] && [ "$$(stat -c %u data/lakehouse)" != 10001 ]; then \
+		sudo chown -R 10001:10001 data/lakehouse; \
+	fi
+
 up:
 	$(MAKE) bootstrap-env
-	mkdir -p data/lakehouse
+	$(MAKE) lakehouse-dir
 	$(COMPOSE_FULL) up --build -d
 
 up-core:
 	$(MAKE) bootstrap-env
-	mkdir -p data/lakehouse
+	$(MAKE) lakehouse-dir
 	$(COMPOSE_DEV) up --build -d
 
 down:
@@ -399,6 +405,7 @@ verify-release:
 	done
 	$(COMPOSE_BASE) --profile sap config -q
 	$(E2E_STACK_ENV) $(COMPOSE_FULL) config -q
+	$(MAKE) lakehouse-dir
 	$(E2E_STACK_ENV) $(COMPOSE_FULL) up -d --build --force-recreate
 	bash scripts/wait_for_health.sh
 	$(MAKE) test

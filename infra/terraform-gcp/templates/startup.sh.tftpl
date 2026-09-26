@@ -141,6 +141,7 @@ if [[ ! -f infra/.env ]]; then
 fi
 bash infra/bootstrap-keys.sh infra/.env
 mkdir -p data/lakehouse
+chown -R 10001:10001 data/lakehouse
 mkdir -p airflow/dags airflow/logs/scheduler airflow/plugins
 chown -R 50000:0 airflow/dags airflow/logs airflow/plugins
 chmod -R 775 airflow/dags airflow/logs airflow/plugins

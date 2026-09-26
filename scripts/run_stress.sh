@@ -278,9 +278,9 @@ fi
 if [[ "$STRESS_WORKLOAD" == "hubspot" && "$ENABLE_WRITES" =~ ^(1|true|yes)$ && "${OMEGA_STRESS_RESET_HUBSPOT_DERIVED:-1}" =~ ^(1|true|yes)$ ]]; then
   if [[ -d data/lakehouse/lakehouse ]]; then
     echo "[stress] resetting local HubSpot derived parquet outputs"
-    rm -rf data/lakehouse/lakehouse/silver/hubspot
+    "${COMPOSE[@]}" exec -T minio rm -rf /data/lakehouse/silver/hubspot
     if [[ "${OMEGA_STRESS_ENABLE_GOLD_REFRESH:-0}" =~ ^(1|true|yes)$ ]]; then
-      rm -rf data/lakehouse/lakehouse/gold/hubspot
+      "${COMPOSE[@]}" exec -T minio rm -rf /data/lakehouse/gold/hubspot
     fi
     "${COMPOSE[@]}" restart minio >/dev/null
     for _ in $(seq 1 45); do

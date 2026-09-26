@@ -11,6 +11,8 @@ MINIO_TAG = "RELEASE.2024-12-18T13-15-44Z"
 MINIO_COMMIT = "16f8cf1c52f0a77eeb8f7565aaf7f7df12454583"
 MC_TAG = "RELEASE.2024-11-21T17-21-54Z"
 MC_COMMIT = "1681e4497c09d7438a34e846f76dbde972ab7daf"
+MIRROR_REVISION = "r1"
+MIRROR_UID = "10001:10001"
 MINIO_IMAGE = f"ghcr.io/{OWNER}/omega-minio:{MINIO_TAG}"
 MC_IMAGE = f"ghcr.io/{OWNER}/omega-mc:{MC_TAG}"
 WITHDRAWN_DIGEST = "sha256:1dce27c494a16bae114774f1cec295493f3613142713130c2d22dd5696be6ad3"
@@ -58,11 +60,20 @@ def test_dockerfile_and_mirror_workflow_pin_the_same_releases_and_commits():
     assert (env["MINIO_TAG"], env["MINIO_COMMIT"], env["MC_TAG"], env["MC_COMMIT"]) == (
         MINIO_TAG, MINIO_COMMIT, MC_TAG, MC_COMMIT
     )
+    assert env["MIRROR_REVISION"] == MIRROR_REVISION
     steps = workflow["jobs"]["build-and-publish"]["steps"]
     pushes = [s for s in steps if str(s.get("uses", "")).startswith("docker/build-push-action@")]
     assert {(s["with"]["target"], s["with"]["tags"]) for s in pushes} == {
-        ("minio", "ghcr.io/${{ github.repository_owner }}/omega-minio:${{ env.MINIO_TAG }}"),
-        ("mc", "ghcr.io/${{ github.repository_owner }}/omega-mc:${{ env.MC_TAG }}"),
+        (
+            "minio",
+            "ghcr.io/${{ github.repository_owner }}/omega-minio:"
+            "${{ env.MINIO_TAG }}-${{ env.MIRROR_REVISION }}",
+        ),
+        (
+            "mc",
+            "ghcr.io/${{ github.repository_owner }}/omega-mc:"
+            "${{ env.MC_TAG }}-${{ env.MIRROR_REVISION }}",
+        ),
     }
     assert all(s["with"]["platforms"] == "linux/amd64,linux/arm64" and s["with"]["push"] is True for s in pushes)
     verify = next(s for s in steps if s.get("name", "").startswith("Verify the published images"))
@@ -70,6 +81,66 @@ def test_dockerfile_and_mirror_workflow_pin_the_same_releases_and_commits():
     assert 'grep -F "mc version ${MC_TAG} (commit-id=${MC_COMMIT})"' in verify["run"]
     assert "--entrypoint /usr/bin/curl" in verify["run"]
     assert "| head" not in verify["run"]
+    assert 'minio_ref="ghcr.io/${owner}/omega-minio:${MINIO_TAG}-${MIRROR_REVISION}"' in verify["run"]
+    assert 'mc_ref="ghcr.io/${owner}/omega-mc:${MC_TAG}-${MIRROR_REVISION}"' in verify["run"]
+
+
+def test_mirror_images_run_as_uid_10001():
+    dockerfile = _text("infra/images/minio/Dockerfile")
+    minio_stage, mc_stage = dockerfile.split(" AS minio\n", 1)[1].split(" AS mc\n", 1)
+    assert dockerfile.count(f"USER {MIRROR_UID}") == 2
+    for stage, home in ((minio_stage, "/home/minio"), (mc_stage, "/home/mc")):
+        assert "addgroup -S -g 10001 " in stage
+        assert "adduser -S -D -u 10001 " in stage and f"-h {home} " in stage
+        assert f"install -d -o 10001 -g 10001 -m 0700 {home}" in stage
+        assert stage.index(f"install -d -o 10001 -g 10001 -m 0700 {home}") < stage.index(
+            f"USER {MIRROR_UID}"
+        )
+    data_dir = "install -d -o 10001 -g 10001 -m 0750 /data"
+    assert minio_stage.index(data_dir) < minio_stage.index(f"USER {MIRROR_UID}")
+    assert minio_stage.index(data_dir) < minio_stage.index('VOLUME ["/data"]')
+    assert minio_stage.index(f"USER {MIRROR_UID}") < minio_stage.index("ENTRYPOINT")
+    assert mc_stage.index(f"USER {MIRROR_UID}") < mc_stage.index("ENTRYPOINT")
+
+    steps = _yaml(".github/workflows/mirror-minio.yml")["jobs"]["build-and-publish"]["steps"]
+    verify = next(s for s in steps if s.get("name", "").startswith("Verify the published images"))["run"]
+    uid_check = 'test "$(id -u):$(id -g)" = "10001:10001"'
+    assert verify.count(uid_check) == 2
+    assert f"--entrypoint /bin/sh \"${{minio_ref}}\" -c '{uid_check} && test -w /data && test -w \"$HOME\"'" in verify
+    assert f"--entrypoint /bin/sh \"${{mc_ref}}\" -c '{uid_check} && test -w \"$HOME\"'" in verify
+    assert 'cid="$(docker run -d "${minio_ref}" server /data)"' in verify
+    assert "curl -fsS http://127.0.0.1:9000/minio/health/live" in verify
+    assert 'docker rm -f "${cid}"' in verify
+    assert verify.index('docker rm -f "${cid}"') < verify.index('test "${healthy}" = 1')
+
+
+def test_non_root_minio_data_stays_writable_everywhere_it_runs():
+    for workflow in (".github/workflows/release.yml", ".github/workflows/e2e.yml"):
+        text = _text(workflow)
+        assert "mkdir -p data/lakehouse\n          sudo chown 10001:10001 data/lakehouse\n" in text, workflow
+
+    makefile = _text("Makefile")
+    target = re.search(r"^lakehouse-dir:\n((?:\t.*\n)+)", makefile, re.M)
+    assert target, "Makefile must define lakehouse-dir"
+    assert "mkdir -p data/lakehouse" in target.group(1)
+    assert "sudo chown -R 10001:10001 data/lakehouse" in target.group(1)
+    assert '"$$(uname -s)" = Linux' in target.group(1)
+    assert re.search(r"^\.PHONY:.*\blakehouse-dir\b", makefile, re.M)
+    for name in ("up", "up-core", "verify-release"):
+        body = re.search(rf"^{re.escape(name)}:\n((?:\t.*\n)+)", makefile, re.M)
+        assert body and "$(MAKE) lakehouse-dir" in body.group(1), name
+    verify_release = re.search(r"^verify-release:\n((?:\t.*\n)+)", makefile, re.M).group(1)
+    assert verify_release.index("$(MAKE) lakehouse-dir") < verify_release.index(" up -d ")
+    assert "mkdir -p data/lakehouse" not in makefile.replace(target.group(1), "")
+
+    assert "--tmpfs /data:rw,noexec,nosuid,size=128m,mode=1777" in _text("scripts/ci_replicon_minio_smoke.sh")
+    e2e_minio = _yaml("infra/e2e/compose.infrastructure.yml")["services"]["minio"]
+    assert e2e_minio["tmpfs"] == ["/data:rw,nosuid,noexec,size=128m,mode=1777"]
+
+    stress = _text("scripts/run_stress.sh")
+    assert "rm -rf data/lakehouse" not in stress
+    assert '"${COMPOSE[@]}" exec -T minio rm -rf /data/lakehouse/silver/hubspot' in stress
+    assert '"${COMPOSE[@]}" exec -T minio rm -rf /data/lakehouse/gold/hubspot' in stress
 
 
 def test_composes_run_the_mirror_images():
