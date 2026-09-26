@@ -137,6 +137,7 @@ def test_env_example_documents_runtime_env_contract():
         "PG_DB",
         "PG_USER",
         "PG_PASSWORD",
+        "AIRFLOW_FERNET_KEY",
     }
     missing = [
         name for name in sorted(required)
@@ -183,6 +184,18 @@ def test_bootstrap_fernet_generation_uses_stdlib_not_host_cryptography():
     assert "base64.urlsafe_b64encode(os.urandom(32))" in src
     assert "cryptography.fernet" not in src, (
         "bootstrap must not depend on host cryptography/cffi just to mint Fernet-shaped keys"
+    )
+
+
+def test_bootstrap_generates_airflow_fernet_key_with_the_stdlib_script():
+    src = _bootstrap_sh()
+    assert (
+        'AIRFLOW_FERNET_KEY="$("${BOOTSTRAP_PYTHON}" -c "${FERNET_KEY_SCRIPT}")"'
+        in src
+    )
+    heredoc = src.split('cat > "${ENV_FILE}" <<EOF', 1)[1].split("\nEOF", 1)[0]
+    assert re.search(
+        r"^AIRFLOW_FERNET_KEY=\$\{AIRFLOW_FERNET_KEY\}$", heredoc, re.MULTILINE
     )
 
 

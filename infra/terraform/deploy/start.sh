@@ -52,6 +52,7 @@ check_var ANTHROPIC_API_KEY
 check_var SUPERSET_SECRET_KEY
 check_var SUPERSET_SERVICE_PASSWORD
 check_var AIRFLOW_SECRET_KEY
+check_var AIRFLOW_FERNET_KEY
 
 APP_ENV_NORMALISED="$(printf '%s' "${APP_ENV:-production}" | tr '[:upper:]' '[:lower:]')"
 if [[ "${APP_ENV_NORMALISED}" == "production" || "${APP_ENV_NORMALISED}" == "prod" ]]; then

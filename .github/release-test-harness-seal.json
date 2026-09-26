@@ -3351,11 +3351,11 @@
     },
     {
       "path": "infra/bootstrap-keys.sh",
-      "sha256": "70b469503297d82e01be7cfa7192f800db4aaf7055b47f2ae8cc7c3c960b6e2c"
+      "sha256": "be8a5b3178883bdc76d3a35c201b3fccb033a0d58d6040f0dca717503e6f3c5f"
     },
     {
       "path": "infra/bootstrap.sh",
-      "sha256": "1ec3c667088f89e66f4cafcdde360d4a821b779a65d17c7281f172fde71b13e8"
+      "sha256": "811eff1339d30e6d378747748df4c9113228b1e9924ddba750a968952042d81a"
     },
     {
       "path": "infra/docker-compose.dev.yml",
@@ -3363,7 +3363,7 @@
     },
     {
       "path": "infra/docker-compose.yml",
-      "sha256": "f51fa41441ec3603f42a4523123dcfd6de6170a542cbb02e42b9735bc75d722e"
+      "sha256": "7de51248d18a3a34e0cf37b32ffdd27734240879a96c0690fd446e3af7f0d15c"
     },
     {
       "path": "infra/init/99zzt_analytic_app_dataset_grants.sql",
@@ -4034,6 +4034,10 @@
       "sha256": "cc37b5007e3bedc7b93c4509a5d36ad168a400118beb5a7616d1c86db18540da"
     },
     {
+      "path": "tests/test_airflow_fernet_key_contract.py",
+      "sha256": "e1d3d034c8b28c49574511cdbaeb907d2b4c928bab1ab03d07a07cbf58cb71b9"
+    },
+    {
       "path": "tests/test_airflow_release_contract.py",
       "sha256": "5593cbf679ebba7a01bc7d7fc907a77b7333dfa820943675584dbbe5b2c4b8ef"
     },
@@ -4079,7 +4083,7 @@
     },
     {
       "path": "tests/test_aws_bootstrap_shared_env_boundary.py",
-      "sha256": "a730450e844d5c506b87874b80eeb94ca8feb2bd96ed7be82b3d7242d38dc85e"
+      "sha256": "241a99800c115b13dd154914a2bb927fc39afbd881dcb5317fa8e39d9b09aca7"
     },
     {
       "path": "tests/test_aws_compose_consistency.py",
@@ -4087,7 +4091,7 @@
     },
     {
       "path": "tests/test_aws_compose_required_env.py",
-      "sha256": "5eea90cd572da8ace9abd83f1fcd24b059d6c5d656ed6465dd9c7b95f0b8d0d9"
+      "sha256": "c00fae936e8cf9f27e62590dde694437b605794d34f4680e195886eaff53aaca"
     },
     {
       "path": "tests/test_aws_compose_secret_scoping.py",
@@ -4139,7 +4143,7 @@
     },
     {
       "path": "tests/test_aws_secrets_manager_config.py",
-      "sha256": "1f61b1fcbff2a779242a947946cb42199fee8879b154301eeebac0b0e3b3d6fd"
+      "sha256": "b90e359611fae47fb5db3f3588739fb1a8ac667b3ac4247006b1f9322e2c7961"
     },
     {
       "path": "tests/test_aws_ssm_deploy_workflow.py",
@@ -4351,7 +4355,7 @@
     },
     {
       "path": "tests/test_control_room_evidence_keyring_runtime.py",
-      "sha256": "ef9157fa280fee525bfbfe93e3d98fbde6d3aac2b7b9cdf2309470981ca4028e"
+      "sha256": "be8093a81811a9ab3c49e92161f9a457f65f01bd8aa4768ae4031e126d75ead4"
     },
     {
       "path": "tests/test_control_room_evidence_signing_wiring.py",
@@ -4875,7 +4879,7 @@
     },
     {
       "path": "tests/test_env_example_and_runbooks_v1434.py",
-      "sha256": "bc460dcd72fc786bd0ced650b13b0a264f9830688d9ece1c397d9f8d01ac8d0b"
+      "sha256": "c15a3bee0c6167ed0fb8fa08596292242552dcff45f31ca93ed47fd907aa2d5b"
     },
     {
       "path": "tests/test_env_never_in_git.py",

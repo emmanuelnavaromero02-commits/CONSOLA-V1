@@ -71,6 +71,11 @@ DERIVED_KEYS=(
   "GOLD_VERIFIER_DATABASE_URL_HOST_FILE"
 )
 
+FERNET_KEYS=(
+  "AIRFLOW_FERNET_KEY"
+)
+FERNET_KEY_SCRIPT='import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())'
+
 if ! command -v openssl >/dev/null 2>&1; then
   echo "ERROR: openssl is required to generate secrets" >&2
   exit 1
@@ -118,6 +123,21 @@ for key in "${DB_KEYS[@]}"; do
   fi
 done
 
+for key in "${FERNET_KEYS[@]}"; do
+  if grep -q "^${key}=" "${ENV_FILE}"; then
+    echo "[bootstrap-keys] ${key} already exists, skipping"
+  else
+    if ! command -v python3 >/dev/null 2>&1; then
+      echo "ERROR: python3 is required to generate ${key}" >&2
+      exit 1
+    fi
+    value="$(python3 -c "${FERNET_KEY_SCRIPT}")"
+    printf '%s=%s\n' "${key}" "${value}" >> "${ENV_FILE}"
+    echo "[bootstrap-keys] Generated ${key}"
+    added=$((added + 1))
+  fi
+done
+
 env_dir="$(cd "$(dirname "${ENV_FILE}")" && pwd)"
 secret_dir="${env_dir}/.secrets"
 secret_path="${secret_dir}/gold_verifier_database_url"
@@ -130,7 +150,7 @@ if ! grep -q '^GOLD_VERIFIER_DATABASE_URL_HOST_FILE=' "${ENV_FILE}"; then
   printf 'GOLD_VERIFIER_DATABASE_URL_HOST_FILE=%s\n' "${secret_path}" >>"${ENV_FILE}"
 fi
 
-ensured=$((${#KEYS[@]} + ${#DB_KEYS[@]} + ${#DERIVED_KEYS[@]} + 2))
+ensured=$((${#KEYS[@]} + ${#DB_KEYS[@]} + ${#DERIVED_KEYS[@]} + ${#FERNET_KEYS[@]} + 2))
 if [[ "$BOOTSTRAP_CONTROL_ROOM_EVIDENCE" == "false" ]]; then
   ensured=$((ensured - 3))
 fi

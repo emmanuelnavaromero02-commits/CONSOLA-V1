@@ -1060,6 +1060,7 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:?AIRFLOW_SECRET_KEY is required}
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:?AIRFLOW_FERNET_KEY is required}
     volumes:
       - ../cartridges/sap_successfactors/dags:/opt/airflow/dags/sap_successfactors:ro
       - ../cartridges/sap_hcm/dags:/opt/airflow/dags/sap_hcm:ro
@@ -1105,6 +1106,7 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://omega_airflow_meta:${OMEGA_AIRFLOW_META_PASSWORD:?OMEGA_AIRFLOW_META_PASSWORD is required}@postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:?AIRFLOW_SECRET_KEY is required}
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:?AIRFLOW_FERNET_KEY is required}
       AIRFLOW__WEBSERVER__WORKERS: ${AIRFLOW_WEBSERVER_WORKERS:-1}
       AIRFLOW__WEBSERVER__WEB_SERVER_MASTER_TIMEOUT: ${AIRFLOW_WEBSERVER_MASTER_TIMEOUT:-300}
       AIRFLOW__WEBSERVER__WEB_SERVER_WORKER_TIMEOUT: ${AIRFLOW_WEBSERVER_WORKER_TIMEOUT:-300}
@@ -1198,6 +1200,7 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://omega_airflow_meta:${OMEGA_AIRFLOW_META_PASSWORD:?OMEGA_AIRFLOW_META_PASSWORD is required}@postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:?AIRFLOW_SECRET_KEY is required}
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:?AIRFLOW_FERNET_KEY is required}
       AIRFLOW_VAR_POSTGRES_CONN: "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
       DATABASE_URL: "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
       AIRFLOW_VAR_MINIO_ENDPOINT: "minio:9000"

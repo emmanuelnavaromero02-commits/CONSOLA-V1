@@ -115,6 +115,7 @@ printf '%s\n' \
   "JWT_SECRET_KEY=$(secret)" \
   "CONTROL_ROOM_EVIDENCE_SIGNING_KEY=$(secret)" \
   "AIRFLOW_SECRET_KEY=$(secret)" \
+  "AIRFLOW_FERNET_KEY=$(openssl rand -base64 32 | tr '+/' '-_')" \
   "AIRFLOW_ADMIN_USER=e2e-admin" \
   "AIRFLOW_ADMIN_PASSWORD=$(secret)" \
   "SUPERSET_ADMIN_PASSWORD=$(secret)" \
