@@ -12,6 +12,7 @@ from app.sql_scope_policy import (
     has_adjacent_relation_string_scan,
     resolved_cte_table_ids,
 )
+from omega_lakehouse.storage_scope import has_exact_storage_scope
 
 
 POLICY_ERROR = "SQL blocked by safety policy"
@@ -39,9 +40,6 @@ SHARED_RAW_ROOTS_BY_CARTRIDGE: dict[str, frozenset[str]] = {
 _STORAGE_URI_RE = re.compile(
     r"^s3://(?P<bucket>\{bucket\}|[a-z0-9][a-z0-9.-]{0,62})/"
     r"(?P<key>[A-Za-z0-9_.*=:/-]+)$"
-)
-_SCOPE_RE = re.compile(
-    r"(?:^|/)tenant_id=(?P<tenant>[^/]+)/workspace_id=(?P<workspace>[^/]+)(?:/|$)"
 )
 
 
@@ -121,14 +119,11 @@ def _resolve_scope(
         _deny()
     if root != cartridge_id and not (layer == "raw" and root in shared_roots):
         _deny()
-    scope = _SCOPE_RE.search(key)
-    if not scope:
+    if not any(part.startswith(("tenant_id=", "workspace_id=")) for part in parts):
         if allow_server_resolution:
             return StorageRead(path=path, layer=layer, root=root)
         _deny()
-    if scope.group("tenant") != tenant_id or scope.group("workspace") != workspace_id:
-        _deny()
-    if len(_SCOPE_RE.findall(key)) != 1:
+    if not has_exact_storage_scope(key, tenant_id, workspace_id):
         _deny()
     return StorageRead(path=path, layer=layer, root=root)
 

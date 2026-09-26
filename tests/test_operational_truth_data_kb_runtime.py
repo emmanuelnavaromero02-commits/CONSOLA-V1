@@ -53,7 +53,7 @@ def _load_replicon_runtime(monkeypatch):
         require_tenant_workspace_scope=lambda value: value,
         scoped_prefix=lambda _value: "tenant_id=t/workspace_id=w/",
     )
-    module("app.core.sql_guard", validate_kb_sql=lambda *_a, **_k: (True, None))
+    module("omega_cartridge_kit.sql_guard", validate_kb_sql=lambda *_a, **_k: (True, None))
     module("app.services.kb_config_reconciliation", **vars(reconciliation))
     module(
         "app.services.duckdb_service",

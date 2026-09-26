@@ -12,7 +12,7 @@ from app.core.request_context import (
     require_tenant_workspace_scope,
     scoped_prefix,
 )
-from app.core.sql_guard import validate_kb_sql
+from omega_cartridge_kit.sql_guard import validate_kb_sql
 from app.services.catalog_service import (
     get_all_entities,
     get_all_kbs,
@@ -385,7 +385,7 @@ def query_kb(sql: str, limit: int = 100) -> dict[str, Any]:
                read_parquet('s3://{bucket}/raw/salesforce/Opportunity/**/*.parquet')
         limit: Safety row cap applied if the query has no LIMIT clause (default 100)
     """
-    from app.core.sql_guard import validate_kb_sql
+    from omega_cartridge_kit.sql_guard import validate_kb_sql
 
     try:
         limit = _query_limit(limit)
@@ -420,7 +420,7 @@ def query_kb(sql: str, limit: int = 100) -> dict[str, Any]:
 
 
 def _make_sql_tool(name: str, description: str, sql: str) -> None:
-    from app.core.sql_guard import validate_kb_sql
+    from omega_cartridge_kit.sql_guard import validate_kb_sql
 
     resolved_sql = sql.replace("{bucket}", settings.minio_bucket)
     ok, err = validate_kb_sql(resolved_sql, _sf_allowed_kb_prefixes())

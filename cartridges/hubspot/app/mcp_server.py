@@ -324,7 +324,7 @@ def query_kb(sql: str, limit: int = 100) -> dict[str, Any]:
                read_parquet('s3://{bucket}/raw/hubspot/deals/**/*.parquet')
         limit: Safety row cap applied if the query has no LIMIT clause (default 100)
     """
-    from app.core.sql_guard import validate_kb_sql
+    from omega_cartridge_kit.sql_guard import validate_kb_sql
 
     try:
         limit = _query_limit(limit)
@@ -363,7 +363,7 @@ def query_kb(sql: str, limit: int = 100) -> dict[str, Any]:
 
 
 def _make_sql_tool(name: str, description: str, sql: str) -> None:
-    from app.core.sql_guard import validate_kb_sql
+    from omega_cartridge_kit.sql_guard import validate_kb_sql
 
     resolved_sql = sql.replace("{bucket}", settings.minio_bucket)
     ok, err = validate_kb_sql(resolved_sql, _hubspot_allowed_kb_prefixes())

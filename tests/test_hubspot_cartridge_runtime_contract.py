@@ -34,7 +34,7 @@ def test_hubspot_local_compose_service_is_executable():
     compose = _yaml("infra/docker-compose.yml")
     services = compose["services"]
     svc = services["hubspot"]
-    assert svc["build"]["context"] == "../cartridges/hubspot"
+    assert svc["build"] == {"context": "..", "dockerfile": "cartridges/hubspot/Dockerfile"}
     assert svc["container_name"] == "mode_hubspot"
     assert "8210:8210" in svc["ports"]
     env = svc["environment"]
@@ -187,5 +187,8 @@ def test_hubspot_docker_ci_and_release_publish_image():
     changed_areas = (REPO / "scripts/ci_changed_areas.py").read_text(encoding="utf-8")
     assert '"hubspot": "./cartridges/hubspot"' in changed_areas
     assert "service: hubspot" in release
-    assert "context: ./cartridges/hubspot" in release
+    assert (
+        "service: hubspot\n            context: .\n"
+        "            dockerfile: ./cartridges/hubspot/Dockerfile" in release
+    )
     assert "fromJson(needs.changes.outputs.build_matrix)" in docker_ci

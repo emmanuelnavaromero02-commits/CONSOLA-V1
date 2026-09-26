@@ -7,7 +7,7 @@ from fastapi import HTTPException
 
 from refinement.app import main as refinement_main
 from refinement.app.duckdb_engine import DuckDBEngine
-from refinement.app.storage_scope_policy import has_exact_storage_scope
+from omega_lakehouse.storage_scope import has_exact_storage_scope
 
 
 TENANT = "tenant-a"

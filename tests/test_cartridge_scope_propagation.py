@@ -214,7 +214,8 @@ def test_knowledge_bits_read_write_under_forwarded_workspace_scope():
             assert "write_kb_to_postgres(df, pg_table, security_context)" in kb_service
         if cartridge != "salesforce":
             assert "require_tenant_workspace_scope(security_context)" in duckdb_service
-            assert "_path_has_scope(output_path, scope)" in duckdb_service
+            assert "has_exact_storage_scope(output_path, tenant, workspace)" in duckdb_service
+            assert "_path_has_scope" not in duckdb_service
         assert "tenant_id=:tenant_id AND workspace_id=:workspace_id" in duckdb_service
 
 

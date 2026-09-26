@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 import psycopg2
 
 from app.config import settings
-from app.storage_scope import canonical_storage_key, scoped_storage_allowed
+from omega_lakehouse.storage_scope import canonical_storage_key, scoped_storage_allowed
 
 
 def _dsn() -> str:

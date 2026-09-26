@@ -708,9 +708,11 @@ jobs:
           - service: airflow
             context: ./infra/airflow
           - service: replicon
-            context: ./cartridges/replicon
+            context: .
+            dockerfile: ./cartridges/replicon/Dockerfile
           - service: hubspot
-            context: ./cartridges/hubspot
+            context: .
+            dockerfile: ./cartridges/hubspot/Dockerfile
           - service: banxico
             context: .
             dockerfile: ./cartridges/banxico/Dockerfile
@@ -721,15 +723,20 @@ jobs:
             context: .
             dockerfile: ./cartridges/sec_edgar/Dockerfile
           - service: sap_hcm
-            context: ./cartridges/sap_hcm
+            context: .
+            dockerfile: ./cartridges/sap_hcm/Dockerfile
           - service: sap_s4hana
-            context: ./cartridges/sap_s4hana
+            context: .
+            dockerfile: ./cartridges/sap_s4hana/Dockerfile
           - service: sap_successfactors
-            context: ./cartridges/sap_successfactors
+            context: .
+            dockerfile: ./cartridges/sap_successfactors/Dockerfile
           - service: salesforce
-            context: ./cartridges/salesforce
+            context: .
+            dockerfile: ./cartridges/salesforce/Dockerfile
           - service: sap_b1
-            context: ./cartridges/sap_b1
+            context: .
+            dockerfile: ./cartridges/sap_b1/Dockerfile
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

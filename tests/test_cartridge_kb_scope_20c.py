@@ -49,16 +49,24 @@ def test_20c_cartridge_kb_tools_fail_closed_without_signed_workspace_scope():
 
 
 def test_20c_sql_guard_canonicalizes_s3_paths_and_requires_exact_scope():
-    for cartridge in CARTRIDGE_SCOPE_20C:
-        sql_guard = _read(f"cartridges/{cartridge}/app/core/sql_guard.py")
+    sql_guard = _read("omega_cartridge_kit/sql_guard.py")
+    storage_scope = _read("omega_lakehouse/storage_scope.py")
 
-        assert "def _canonical_s3_path" in sql_guard
-        assert "def _has_exact_scope" in sql_guard
-        assert "required_scope: str | None = None" in sql_guard
-        assert "path must stay inside the active tenant/workspace scope" in sql_guard
-        assert "unquote" in sql_guard
-        assert "for _ in range(3)" in sql_guard
-        assert "parts[idx : idx + len(scope_parts)] == scope_parts" in sql_guard
+    for cartridge in CARTRIDGE_SCOPE_20C:
+        assert not (REPO / f"cartridges/{cartridge}/app/core/sql_guard.py").exists()
+        kb_service = _read(f"cartridges/{cartridge}/app/services/kb_service.py")
+        assert "from omega_cartridge_kit.sql_guard import validate_kb_sql" in kb_service
+
+    assert "from omega_lakehouse.storage_scope import" in sql_guard
+    assert "require_scoped_reader_uri(" in sql_guard
+    assert "parse_required_scope(" in sql_guard
+    assert "required_scope: str | None = None" in sql_guard
+    assert "path must stay inside the active tenant/workspace scope" in sql_guard
+    for removed in ("unquote", "range(3)", "parts[idx : idx + len(scope_parts)]", "_canonical_s3_path"):
+        assert removed not in sql_guard
+    assert "def has_exact_storage_scope" in storage_scope
+    assert "tenant_positions == [scope_index]" in storage_scope
+    assert "raise ReaderUriError(\"scope\")" in storage_scope
 
 
 def test_20c_hubspot_pii_contract_masks_or_shadows_contact_identifiers():
@@ -71,14 +79,16 @@ def test_20c_hubspot_pii_contract_masks_or_shadows_contact_identifiers():
 
 def test_20c_mcp_infra_denies_unscoped_cartridge_tools_and_canonicalizes_paths():
     source = _read("mcp-infra/app/main.py")
-    storage_scope_source = _read("mcp-infra/app/storage_scope.py")
-    storage_scope = runpy.run_path(str(REPO / "mcp-infra/app/storage_scope.py"))
+    storage_scope_source = _read("omega_lakehouse/storage_scope.py")
+    storage_scope = runpy.run_path(str(REPO / "omega_lakehouse/storage_scope.py"))
     canonical_storage_key = storage_scope["canonical_storage_key"]
     scoped_storage_key = storage_scope["scoped_storage_key"]
 
     assert "def _canonical_storage_key" in source
     assert "def _key_has_exact_scope" in source
     assert "return canonical_storage_key(value)" in source
+    assert not (REPO / "mcp-infra/app/storage_scope.py").exists()
+    assert "from omega_lakehouse.storage_scope import (" in source
     assert "unicodedata.normalize" in storage_scope_source
     assert 'or "%" in raw' in storage_scope_source
     assert 'tool.startswith("cartridge_")' in source
@@ -110,6 +120,13 @@ def test_20c_mcp_infra_denies_unscoped_cartridge_tools_and_canonicalizes_paths()
         scoped_storage_key(
             valid.replace("workspace_id=ws-1", "workspace_id=ws-2"), context
         )
+    for misplaced in (
+        "raw/replicon/tenant_id=tenant-1/workspace_id=ws-1/TimeEntry/file.parquet",
+        "raw/replicon/TimeEntry/tenant_id=other/workspace_id=other/"
+        "tenant_id=tenant-1/workspace_id=ws-1/file.parquet",
+    ):
+        with pytest.raises(PermissionError):
+            scoped_storage_key(misplaced, context)
 
 
 def test_20c_observability_migration_scopes_runs_and_legacy_rows():

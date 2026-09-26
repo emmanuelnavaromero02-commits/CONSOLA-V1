@@ -13,7 +13,7 @@ from app.core.request_context import (
     require_tenant_workspace_scope,
     scoped_prefix,
 )
-from app.core.sql_guard import validate_kb_sql
+from omega_cartridge_kit.sql_guard import validate_kb_sql
 from app.services.catalog_service import get_all_kbs, get_kb_config
 from app.services.duckdb_service import (
     run_kb_sql,

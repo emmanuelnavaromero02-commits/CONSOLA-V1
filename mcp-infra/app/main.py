@@ -29,7 +29,11 @@ from app.security import get_internal_api_key
 from app.config import settings
 from app.logging_config import setup_logging  # noqa: E402
 from app.response_redaction import redact_response_value  # noqa: E402
-from app.storage_scope import canonical_storage_key, scoped_storage_key
+from omega_lakehouse.storage_scope import (
+    canonical_storage_key,
+    has_exact_storage_scope,
+    scoped_storage_key,
+)
 from app.sql_reader_policy import (
     SHARED_RAW_ROOTS_BY_CARTRIDGE,
     ReaderPolicyError,
@@ -616,17 +620,6 @@ def _key_has_exact_scope(value: str, tenant_id: str, workspace_id: str) -> bool:
         return False
 
 
-def _storage_scope_markers(key: str) -> tuple[str | None, str | None]:
-    tenant: str | None = None
-    workspace: str | None = None
-    for part in _canonical_storage_key(key).split("/"):
-        if part.startswith("tenant_id="):
-            tenant = part.split("=", 1)[1]
-        elif part.startswith("workspace_id="):
-            workspace = part.split("=", 1)[1]
-    return tenant, workspace
-
-
 def _is_physical_storage_key(key: str) -> bool:
     parts = _canonical_storage_key(key).split("/")
     if not parts:
@@ -637,17 +630,6 @@ def _is_physical_storage_key(key: str) -> bool:
     if root == "uploads":
         return len(parts) > 2
     return False
-
-
-def _has_foreign_storage_scope(ctx: dict[str, Any], key: str) -> bool:
-    tenant_id = str(ctx.get("tenant_id") or "").strip()
-    workspace_id = str(ctx.get("workspace_id") or "").strip()
-    if not (tenant_id and workspace_id):
-        return False
-    tenant, workspace = _storage_scope_markers(key)
-    if tenant is None and workspace is None:
-        return False
-    return tenant != tenant_id or workspace != workspace_id
 
 
 def _has_tenant_workspace_scope(ctx: dict[str, Any]) -> bool:
@@ -662,8 +644,7 @@ def _has_invalid_scoped_storage_path(ctx: dict[str, Any], key: str) -> bool:
         return False
     tenant_id = str(ctx.get("tenant_id") or "").strip()
     workspace_id = str(ctx.get("workspace_id") or "").strip()
-    tenant, workspace = _storage_scope_markers(key)
-    return tenant != tenant_id or workspace != workspace_id
+    return not has_exact_storage_scope(key, tenant_id, workspace_id)
 
 
 def _require_scoped_object_path(ctx: dict[str, Any], value: str) -> None:

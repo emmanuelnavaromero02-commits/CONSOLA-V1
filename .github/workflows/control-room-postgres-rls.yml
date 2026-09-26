@@ -112,7 +112,7 @@ jobs:
         run: |
           set -euo pipefail
           image="replicon:httpfs-ci-${GITHUB_SHA}"
-          docker build cartridges/replicon \
+          docker build . \
             --file cartridges/replicon/Dockerfile \
             --tag "$image"
           test "$(docker image inspect --format '{{.Config.User}}' "$image")" = "appuser"

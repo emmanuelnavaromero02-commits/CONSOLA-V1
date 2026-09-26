@@ -11,6 +11,8 @@ import duckdb
 import pandas as pd
 from sqlalchemy import create_engine, text
 
+from omega_lakehouse.storage_scope import has_exact_storage_scope
+
 from app.core.config import settings
 from app.core.minio_client import upload_file_to_minio
 from app.core.request_context import (
@@ -35,14 +37,6 @@ _REMOTE_SOURCE_UNAVAILABLE = "DuckDB remote source unavailable"
 
 class DuckDBHTTPFSUnavailable(RuntimeError):
     pass
-
-
-def _path_has_scope(path: str, scope: str) -> bool:
-    parts = [part for part in path.strip("/").split("/") if part]
-    scope_parts = [part for part in scope.strip("/").split("/") if part]
-    return any(
-        parts[idx : idx + len(scope_parts)] == scope_parts for idx in range(len(parts))
-    )
 
 
 def _sql_text(value: object) -> str:
@@ -239,7 +233,8 @@ def write_kb_parquet(
     load_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     scope = scoped_prefix(security_context)
     if "tenant_id=" in output_path or "workspace_id=" in output_path:
-        if not _path_has_scope(output_path, scope):
+        tenant, workspace = scope_values(security_context)
+        if not has_exact_storage_scope(output_path, tenant, workspace):
             raise SecurityContextError(
                 "KB output path is outside the active tenant/workspace scope"
             )

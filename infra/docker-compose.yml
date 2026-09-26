@@ -388,8 +388,8 @@ services:
   replicon:
     security_opt: ["no-new-privileges:true"]
     build:
-      context: ../cartridges/replicon
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: cartridges/replicon/Dockerfile
     container_name: omega_replicon
     restart: unless-stopped
     environment:
@@ -433,8 +433,8 @@ services:
   salesforce:
     security_opt: ["no-new-privileges:true"]
     build:
-      context: ../cartridges/salesforce
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: cartridges/salesforce/Dockerfile
     container_name: omega_salesforce
     restart: unless-stopped
     environment:
@@ -481,8 +481,8 @@ services:
   hubspot:
     security_opt: ["no-new-privileges:true"]
     build:
-      context: ../cartridges/hubspot
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: cartridges/hubspot/Dockerfile
     container_name: mode_hubspot
     restart: unless-stopped
     environment:
@@ -636,8 +636,8 @@ services:
     security_opt: ["no-new-privileges:true"]
     profiles: ["sap"]
     build:
-      context: ../cartridges/sap_successfactors
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: cartridges/sap_successfactors/Dockerfile
     container_name: mode_sap_successfactors
     environment:
       APP_ENV: ${APP_ENV:-production}
@@ -686,8 +686,8 @@ services:
     security_opt: ["no-new-privileges:true"]
     profiles: ["sap"]
     build:
-      context: ../cartridges/sap_hcm
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: cartridges/sap_hcm/Dockerfile
     container_name: mode_sap_hcm
     environment:
       APP_ENV: ${APP_ENV:-production}
@@ -729,8 +729,8 @@ services:
     security_opt: ["no-new-privileges:true"]
     profiles: ["sap"]
     build:
-      context: ../cartridges/sap_s4hana
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: cartridges/sap_s4hana/Dockerfile
     container_name: mode_sap_s4hana
     environment:
       APP_ENV: ${APP_ENV:-production}
@@ -773,8 +773,8 @@ services:
     security_opt: ["no-new-privileges:true"]
     profiles: ["sap"]
     build:
-      context: ../cartridges/sap_b1
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: cartridges/sap_b1/Dockerfile
     container_name: mode_sap_b1
     environment:
       APP_ENV: ${APP_ENV:-production}

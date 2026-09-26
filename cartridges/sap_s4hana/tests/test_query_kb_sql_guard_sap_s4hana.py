@@ -22,7 +22,7 @@ PREFIXES = (
 
 
 def _validate_kb_sql(sql: str):
-    from app.core.sql_guard import validate_kb_sql
+    from omega_cartridge_kit.sql_guard import validate_kb_sql
 
     return validate_kb_sql(sql, PREFIXES)
 
@@ -207,7 +207,7 @@ def test_existing_s4hana_kb_sql_passes_guard():
 
 
 def test_limit_detection_ignores_strings():
-    from app.core.sql_guard import has_limit_clause
+    from omega_cartridge_kit.sql_guard import has_limit_clause
 
     assert has_limit_clause("SELECT * FROM x LIMIT 10") is True
     assert has_limit_clause("SELECT * FROM read_parquet('s3://lakehouse/raw/sap_s4hana/unlimited.parquet')") is False
