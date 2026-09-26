@@ -5,6 +5,7 @@ import type { AgentRecord } from "@/lib/admin-surfaces";
 
 import {
   cartridgeAgentsPath,
+  dailyParts,
   listCartridgeAgents,
   nextDailyRun,
   scheduleLabel,
@@ -59,6 +60,11 @@ describe("WisdomBit monitors", () => {
     expect(scheduleLabel("20 7 * * *")).toBe("07:20");
     expect(scheduleLabel("*/5 * * * *")).toBe("*/5 * * * *");
     expect(scheduleLabel(null)).toBeNull();
+    expect(dailyParts("0 8 * * *")).toEqual({ hour: 8, minute: 0 });
+    expect(dailyParts(" 30 23 * * * ")).toEqual({ hour: 23, minute: 30 });
+    expect(dailyParts("0 24 * * *")).toBeNull();
+    expect(dailyParts("0 8 * * 1")).toBeNull();
+    expect(dailyParts(undefined)).toBeNull();
 
     const beforeRun = new Date("2026-09-25T12:00:00Z");
     expect(nextDailyRun("20 7 * * *", "America/Mexico_City", beforeRun)?.toISOString()).toBe("2026-09-25T13:20:00.000Z");

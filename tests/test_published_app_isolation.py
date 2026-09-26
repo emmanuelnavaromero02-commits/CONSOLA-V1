@@ -232,3 +232,31 @@ def test_direct_app_route_redirects_to_the_canonical_viewer():
 def test_content_route_still_serves_through_the_proxy():
     assert "_proxy_workspace_app(request, name, content=True" in MAIN
     assert "_inject_app_bridge" in MAIN
+
+
+def test_content_font_and_style_sources_do_not_grow():
+    assert _directive("font-src") == "font-src 'self' data: https://fonts.gstatic.com"
+    assert _directive("style-src") == "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com"
+
+
+def _function_body(name: str) -> str:
+    match = re.search(
+        rf"^async def {name}\(.*?(?=^@|^async def |^def )", MAIN, re.S | re.M
+    )
+    assert match, f"{name} not found"
+    return match.group(0)
+
+
+def test_theme_is_injected_after_the_digest_is_taken():
+    proxy = _function_body("_proxy_workspace_app")
+    order = [
+        proxy.index("_refinement_app_html("),
+        proxy.index("_inject_published_app_theme("),
+        proxy.index("_inject_script_nonce("),
+        proxy.index("_inject_app_bridge("),
+    ]
+    assert order == sorted(order)
+
+    grant = _function_body("_app_grant_context")
+    assert "_served_manifest_digest(name, html_text)" in grant
+    assert "_inject_published_app_theme" not in grant
