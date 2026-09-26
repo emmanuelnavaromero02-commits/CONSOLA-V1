@@ -339,7 +339,7 @@
     },
     {
       "path": "cartridges/hubspot/app/services/duckdb_service.py",
-      "sha256": "20838217ca3f55295ae3ee79f2bc08d15a66c63d964d2f72011fca2412991b5c"
+      "sha256": "f326a7d4793c4a8004a6f625459bf420572d52fd59d2248fdddaa3c8d556a2e9"
     },
     {
       "path": "cartridges/hubspot/app/services/extraction_service.py",
@@ -607,7 +607,7 @@
     },
     {
       "path": "cartridges/replicon/app/services/duckdb_service.py",
-      "sha256": "94e5d5e8f959d3089ab1146995d7521b1a1285b9d2ca8762f9310a30572e2f03"
+      "sha256": "ae58e3a7b2a5c9345f988dd4991a3baf66c40ffbd901ecad82059c3f3a2cb470"
     },
     {
       "path": "cartridges/replicon/app/services/extraction_service.py",
@@ -775,7 +775,7 @@
     },
     {
       "path": "cartridges/salesforce/app/services/duckdb_service.py",
-      "sha256": "7f2817a5355e3a529769abdd280168b6bd56bbaf2e32e95c06e65b17e905e052"
+      "sha256": "846719d7a6886439a66c103630c9a5cee9d1f04f8252008e87e8a05c28d1ea8c"
     },
     {
       "path": "cartridges/salesforce/app/services/extraction_service.py",
@@ -959,7 +959,7 @@
     },
     {
       "path": "cartridges/sap_b1/app/services/duckdb_service.py",
-      "sha256": "20838217ca3f55295ae3ee79f2bc08d15a66c63d964d2f72011fca2412991b5c"
+      "sha256": "f326a7d4793c4a8004a6f625459bf420572d52fd59d2248fdddaa3c8d556a2e9"
     },
     {
       "path": "cartridges/sap_b1/app/services/extraction_service.py",
@@ -1235,7 +1235,7 @@
     },
     {
       "path": "cartridges/sap_hcm/app/services/duckdb_service.py",
-      "sha256": "20838217ca3f55295ae3ee79f2bc08d15a66c63d964d2f72011fca2412991b5c"
+      "sha256": "f326a7d4793c4a8004a6f625459bf420572d52fd59d2248fdddaa3c8d556a2e9"
     },
     {
       "path": "cartridges/sap_hcm/app/services/extraction_service.py",
@@ -1407,7 +1407,7 @@
     },
     {
       "path": "cartridges/sap_s4hana/app/services/duckdb_service.py",
-      "sha256": "20838217ca3f55295ae3ee79f2bc08d15a66c63d964d2f72011fca2412991b5c"
+      "sha256": "f326a7d4793c4a8004a6f625459bf420572d52fd59d2248fdddaa3c8d556a2e9"
     },
     {
       "path": "cartridges/sap_s4hana/app/services/extraction_service.py",
@@ -1591,7 +1591,7 @@
     },
     {
       "path": "cartridges/sap_successfactors/app/services/duckdb_service.py",
-      "sha256": "0809dd6e6aea1fb9f1f9048290fd81cbfe4caf1e01deab3d920289c2c4fb8eeb"
+      "sha256": "4641c5eac43f9d6e6e108c83893c1fca24ca1506034b85c926faefe3189c8ab1"
     },
     {
       "path": "cartridges/sap_successfactors/app/services/extraction_service.py",
@@ -4223,7 +4223,7 @@
     },
     {
       "path": "tests/test_cartridge_duckdb_external_access.py",
-      "sha256": "bf7fdd9393eea3703884eca6de2315ab36a7222c98604074bc310b898dd5c1f3"
+      "sha256": "c9d627922af1ed11baa8c77558db8804db4822c8eadd7b9c6e43756201d145c2"
     },
     {
       "path": "tests/test_cartridge_egress_guard.py",

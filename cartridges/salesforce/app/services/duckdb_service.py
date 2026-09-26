@@ -105,12 +105,19 @@ def _apply_resource_limits(conn: duckdb.DuckDBPyConnection) -> None:
     try:
         conn.execute("SET preserve_insertion_order=false;")
         conn.execute(f"SET memory_limit='{_duckdb_memory_limit()}';")
-        spill = os.environ.get("DUCKDB_TEMP_DIRECTORY", "").strip() or os.path.join(
-            tempfile.gettempdir(), "omega-duckdb-spill"
-        )
+        try:
+            spill = os.environ.get("DUCKDB_TEMP_DIRECTORY", "").strip() or os.path.join(
+                tempfile.gettempdir(), "omega-duckdb-spill"
+            )
+        except OSError:
+            # read-only filesystem: there is nowhere to spill, keep DuckDB's default
+            return
         if not spill.startswith("/") or any(ch in spill for ch in "'\"\0\n\r"):
             raise RuntimeError("duckdb_resource_limits_invalid")
-        os.makedirs(spill, mode=0o700, exist_ok=True)
+        try:
+            os.makedirs(spill, mode=0o700, exist_ok=True)
+        except OSError:
+            return
         private = os.path.join(spill, os.urandom(16).hex())
         conn.execute(f"SET temp_directory='{private}';")
     except Exception:

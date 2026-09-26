@@ -218,3 +218,18 @@ def test_locked_query_connection_spills_without_exposing_its_temp_directory(
         conn.execute("SET temp_directory='/tmp';")
     conn.close()
     assert list(spill.iterdir()) == []
+
+
+def test_a_read_only_filesystem_keeps_the_connection_usable(monkeypatch, tmp_path):
+    base = tmp_path / "ro"
+    base.mkdir()
+    base.chmod(0o500)
+    monkeypatch.setenv("DUCKDB_TEMP_DIRECTORY", str(base / "spill"))
+    conn = duckdb.connect()
+    try:
+        _resource_helpers("sap_b1")["_apply_resource_limits"](conn)
+        assert conn.execute("SELECT 1").fetchone() == (1,)
+        assert conn.execute("SELECT current_setting('preserve_insertion_order')").fetchone() == (False,)
+    finally:
+        conn.close()
+        base.chmod(0o700)
