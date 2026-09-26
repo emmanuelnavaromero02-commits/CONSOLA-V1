@@ -9,6 +9,7 @@ import re
 _HEADER_RE = re.compile(
     r"^--\s*(?P<name>[A-Za-z_][\w]*)\s+\((?P<layer>[^)]+)\)\s+cartridge:\s*(?P<cartridge>[\w-]+)",
 )
+_PARTITION_COLUMN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
 
 
 def dataset_files(
@@ -58,6 +59,7 @@ def parse_dataset(sql_path: pathlib.Path) -> dict:
 
     sources: list[str] = []
     description = ""
+    partition_by = ""
     for line in sql.splitlines()[:20]:
         stripped = line.strip()
         if stripped.startswith("-- sources:"):
@@ -77,12 +79,21 @@ def parse_dataset(sql_path: pathlib.Path) -> dict:
             sources = list(parsed)
         elif stripped.startswith("-- description:"):
             description = stripped.removeprefix("-- description:").strip()
+        elif stripped.startswith("-- partition_by:"):
+            column = stripped.removeprefix("-- partition_by:").strip()
+            if not _PARTITION_COLUMN_RE.fullmatch(column) or partition_by not in (
+                "",
+                column,
+            ):
+                raise ValueError(f"{sql_path}: invalid packaged dataset partition_by")
+            partition_by = column
     return {
         "name": name,
         "layer": layer,
         "cartridge": cartridge,
         "sources": sources,
         "description": description,
+        "partition_by": partition_by,
         "sql": sql,
     }
 

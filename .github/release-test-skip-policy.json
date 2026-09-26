@@ -22,7 +22,7 @@
           },
           {
             "path": "cartridges/sap_b1/tests/conftest.py",
-            "declarations_sha256": "54d9ef3dfef9d8d04152c9b71c23cd01958ffb81da57c68674bbcced91d34a3b"
+            "declarations_sha256": "194d59019d618d10e720755ef004b9139b6ba518face857a463382901efd72f1"
           },
           {
             "path": "cartridges/sap_b1/tests/test_connect_kit.py",
@@ -130,7 +130,7 @@
           },
           {
             "path": "tests/test_sap_b1_fake_schema.py",
-            "declarations_sha256": "cb5f93533a50658d5e58abc7ce38ef56b50467f0d0be2f86d7666033dfd707f1"
+            "declarations_sha256": "abea382b44bd026cb8548cc18c5e61c8c52171200d863a7af802d4176429534d"
           },
           {
             "path": "tests/test_sap_entities_seeded.py",
@@ -221,7 +221,7 @@
             "declarations_sha256": "725d4ab1beebb4f533ac6dd3ea0bc8829581eae0bf830fab31b4675168173369"
           }
         ],
-        "inventory_sha256": "666b04d15b27b9b1b04a69db20c79d6ada1410040bc20b2e6fd330b9cde9312c"
+        "inventory_sha256": "dd188c18e04a2aa3bf51a8b3428b0523363a726d119f63e68b370ecd40fadf94"
       }
     },
     {
@@ -286,6 +286,114 @@
             "phase": "setup",
             "category": "skip",
             "reason": "requires a reachable Postgres with the platform schema (DATABASE_URL)"
+          },
+          {
+            "nodeid": "cartridges/sap_b1/tests/test_dialect_parity.py::test_a_full_read_of_every_entity_returns_exactly_the_source_rows[mssql]",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "SQL Server fake unavailable: needs Docker, the mssql/server:2022-latest image, pyodbc and ODBC Driver 18"
+          },
+          {
+            "nodeid": "cartridges/sap_b1/tests/test_dialect_parity.py::test_an_incremental_read_of_every_entity_returns_exactly_the_changed_rows[mssql]",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "SQL Server fake unavailable: needs Docker, the mssql/server:2022-latest image, pyodbc and ODBC Driver 18"
+          },
+          {
+            "nodeid": "cartridges/sap_b1/tests/test_dialect_parity.py::test_bronze_files_are_identical_on_every_engine",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "SQL Server fake unavailable: needs Docker, the mssql/server:2022-latest image, pyodbc and ODBC Driver 18"
+          },
+          {
+            "nodeid": "cartridges/sap_b1/tests/test_dialect_parity.py::test_date_helpers_agree_with_python_on_every_engine[mssql]",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "SQL Server fake unavailable: needs Docker, the mssql/server:2022-latest image, pyodbc and ODBC Driver 18"
+          },
+          {
+            "nodeid": "cartridges/sap_b1/tests/test_dialect_parity.py::test_errors_are_sanitized_on_every_engine[mssql]",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "SQL Server fake unavailable: needs Docker, the mssql/server:2022-latest image, pyodbc and ODBC Driver 18"
+          },
+          {
+            "nodeid": "cartridges/sap_b1/tests/test_dialect_parity.py::test_every_company_is_read_from_its_own_schema_or_database[mssql]",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "SQL Server fake unavailable: needs Docker, the mssql/server:2022-latest image, pyodbc and ODBC Driver 18"
+          },
+          {
+            "nodeid": "cartridges/sap_b1/tests/test_dialect_parity.py::test_inventory_counts_equal_the_source_on_every_engine[mssql]",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "SQL Server fake unavailable: needs Docker, the mssql/server:2022-latest image, pyodbc and ODBC Driver 18"
+          },
+          {
+            "nodeid": "cartridges/sap_b1/tests/test_dialect_parity.py::test_inventory_upload_writes_source_counts_on_every_engine[mssql]",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "SQL Server fake unavailable: needs Docker, the mssql/server:2022-latest image, pyodbc and ODBC Driver 18"
+          },
+          {
+            "nodeid": "cartridges/sap_b1/tests/test_dialect_parity.py::test_pages_of_seven_rows_cover_every_row_exactly_once[mssql-INV1]",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "SQL Server fake unavailable: needs Docker, the mssql/server:2022-latest image, pyodbc and ODBC Driver 18"
+          },
+          {
+            "nodeid": "cartridges/sap_b1/tests/test_dialect_parity.py::test_pages_of_seven_rows_cover_every_row_exactly_once[mssql-JDT1]",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "SQL Server fake unavailable: needs Docker, the mssql/server:2022-latest image, pyodbc and ODBC Driver 18"
+          },
+          {
+            "nodeid": "cartridges/sap_b1/tests/test_dialect_parity.py::test_pages_of_seven_rows_cover_every_row_exactly_once[mssql-OBTQ]",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "SQL Server fake unavailable: needs Docker, the mssql/server:2022-latest image, pyodbc and ODBC Driver 18"
+          },
+          {
+            "nodeid": "cartridges/sap_b1/tests/test_dialect_parity.py::test_pages_of_seven_rows_cover_every_row_exactly_once[mssql-OCRD]",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "SQL Server fake unavailable: needs Docker, the mssql/server:2022-latest image, pyodbc and ODBC Driver 18"
+          },
+          {
+            "nodeid": "cartridges/sap_b1/tests/test_dialect_parity.py::test_pages_of_seven_rows_cover_every_row_exactly_once[mssql-OINM]",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "SQL Server fake unavailable: needs Docker, the mssql/server:2022-latest image, pyodbc and ODBC Driver 18"
+          },
+          {
+            "nodeid": "cartridges/sap_b1/tests/test_dialect_parity.py::test_pages_of_seven_rows_cover_every_row_exactly_once[mssql-OINV]",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "SQL Server fake unavailable: needs Docker, the mssql/server:2022-latest image, pyodbc and ODBC Driver 18"
+          },
+          {
+            "nodeid": "cartridges/sap_b1/tests/test_dialect_parity.py::test_pages_of_seven_rows_cover_every_row_exactly_once[mssql-OITW]",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "SQL Server fake unavailable: needs Docker, the mssql/server:2022-latest image, pyodbc and ODBC Driver 18"
+          },
+          {
+            "nodeid": "cartridges/sap_b1/tests/test_dialect_parity.py::test_pages_of_seven_rows_cover_every_row_exactly_once[mssql-ORTT]",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "SQL Server fake unavailable: needs Docker, the mssql/server:2022-latest image, pyodbc and ODBC Driver 18"
+          },
+          {
+            "nodeid": "cartridges/sap_b1/tests/test_dialect_parity.py::test_test_connection_works_on_every_engine_without_leaking_secrets[mssql]",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "SQL Server fake unavailable: needs Docker, the mssql/server:2022-latest image, pyodbc and ODBC Driver 18"
+          },
+          {
+            "nodeid": "cartridges/sap_b1/tests/test_dialect_parity.py::test_the_heartbeat_probe_pings_every_engine[mssql]",
+            "phase": "setup",
+            "category": "skip",
+            "reason": "SQL Server fake unavailable: needs Docker, the mssql/server:2022-latest image, pyodbc and ODBC Driver 18"
           },
           {
             "nodeid": "cartridges/sap_hcm/tests/test_watermark_scope_isolation_sap_hcm.py::test_incremental_watermarks_are_isolated_per_tenant",

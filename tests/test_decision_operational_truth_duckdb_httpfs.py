@@ -134,8 +134,11 @@ def test_connection_disables_extension_install_and_skips_s3_for_local(
         }
     ]
     assert "LOAD httpfs;" not in calls
-    assert calls[0].startswith("SET allowed_directories=['s3://")
-    assert calls[1:] == ["SET enable_external_access=false;", "SET lock_configuration=true;"]
+    assert calls[0] == "SET preserve_insertion_order=false;"
+    assert calls[1].startswith("SET memory_limit='")
+    assert calls[2].startswith("SET temp_directory='/")
+    assert calls[3].startswith("SET allowed_directories=['s3://")
+    assert calls[4:] == ["SET enable_external_access=false;", "SET lock_configuration=true;"]
     conn.close()
 
 

@@ -34,6 +34,31 @@ MASTERS = {
     "OBTN": ("Batches", "Batch master (DistNumber, manufacture and expiry dates).", 5000),
     "OBTQ": ("Batch quantities", "Batch quantity per item, batch (SysNumber) and warehouse (snapshot).", 5000),
     "OIBT": ("Batch quantities (legacy)", "Batch quantity per item, BatchNum and warehouse (compatibility table).", 5000),
+    "OSPP": ("Special prices", "Special prices per business partner and item (price, currency, discount, validity).", 5000),
+    "OSRI": ("Serial numbers", "Serial number master: item, internal and supplier serial, warehouse, status and dates (legacy serial table, validate in HANA).", 5000),
+    "SRI1": ("Serial number transactions", "Serial numbers per document line, Direction 0 in / 1 out (legacy serial table, validate in HANA).", 5000),
+}
+BUSINESS_NAMES = {
+    "CINF": "Información de la empresa", "OADM": "Parámetros de la empresa", "OCRN": "Monedas",
+    "ORTT": "Tipos de cambio", "OACT": "Catálogo de cuentas", "OFPR": "Periodos contables",
+    "OPRC": "Centros de costo", "OCRG": "Grupos de socios de negocio", "OSLP": "Vendedores",
+    "OWHS": "Almacenes", "OITB": "Grupos de artículos", "OITW": "Existencias por almacén",
+    "OBTN": "Lotes", "OBTQ": "Cantidades por lote", "OIBT": "Cantidades por lote (tabla anterior)",
+    "OSPP": "Precios especiales", "OSRI": "Números de serie", "SRI1": "Movimientos de números de serie",
+    "OCRD": "Socios de negocio (clientes y proveedores)", "OITM": "Artículos", "OITT": "Listas de materiales",
+    "ITT1": "Componentes de listas de materiales",
+    "OINV": "Facturas de clientes", "INV1": "Líneas de facturas de clientes",
+    "ORIN": "Notas de crédito de clientes", "RIN1": "Líneas de notas de crédito de clientes",
+    "ODLN": "Entregas", "DLN1": "Líneas de entregas", "ORDN": "Devoluciones", "RDN1": "Líneas de devoluciones",
+    "ORDR": "Pedidos de clientes", "RDR1": "Líneas de pedidos de clientes",
+    "OPCH": "Facturas de proveedores", "PCH1": "Líneas de facturas de proveedores",
+    "ORPC": "Notas de crédito de proveedores", "RPC1": "Líneas de notas de crédito de proveedores",
+    "OPDN": "Entradas de mercancía", "PDN1": "Líneas de entradas de mercancía",
+    "OPOR": "Órdenes de compra", "POR1": "Líneas de órdenes de compra",
+    "OJDT": "Asientos contables", "JDT1": "Líneas de asientos contables",
+    "OWTR": "Traslados entre almacenes", "WTR1": "Líneas de traslados entre almacenes",
+    "OWOR": "Órdenes de producción", "WOR1": "Componentes de órdenes de producción",
+    "OINM": "Movimientos de inventario", "IBT1": "Movimientos de lotes",
 }
 STAMPED_MASTERS = {
     "OCRD": ("Business partners", "Customers (CardType C) and suppliers (CardType S) with their currency and group.", "CardCode", 2000),
@@ -56,6 +81,7 @@ def arrow_kind(ddl: str) -> str:
         return "timestamp"
     return "string"
 def entry(**kw):
+    kw["business_name"] = BUSINESS_NAMES[kw["entity"]]
     kw.setdefault("protection", {})
     kw["column_types"] = {c: arrow_kind(t) for c, t in b1.TABLES[kw["entity"]]}
     entities.append(kw)

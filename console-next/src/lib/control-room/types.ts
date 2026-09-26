@@ -884,6 +884,31 @@ export interface ControlAlert extends ControlItem {
   message?: string | null;
 }
 
+export interface ControlRoomAlertsPayload {
+  alerts: ControlAlert[];
+  summary: PublicStatusCounts;
+  generated_at?: string | null;
+}
+
+export interface ControlRoomMutationItem {
+  kind?: string | null;
+  title?: string | null;
+  severity?: string | null;
+  status?: string | null;
+  lesson_count?: number | null;
+}
+
+// The public projection of POST /items/{id}/decision keeps only the item summary.
+export interface ControlRoomDecisionMutation {
+  item: ControlRoomMutationItem;
+}
+
+export interface ControlRoomAlertMutation {
+  ok: boolean;
+  alert: { status?: string | null; note?: string | null; reason?: string | null } | null;
+  item: ControlRoomMutationItem;
+}
+
 export interface PublicStatusCounts {
   total: number;
   critical: number;

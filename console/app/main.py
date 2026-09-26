@@ -7639,6 +7639,7 @@ from app.routers import metrics as metrics_router
 from app.routers import admin_tenants as admin_tenants_router
 from app.routers import onboarding as onboarding_router
 from app.routers import studio as studio_router
+from app.routers import sap_b1 as sap_b1_router
 from app.routers import (
     control_room,
     mcp,
@@ -7680,6 +7681,7 @@ app.include_router(
     copilot_advanced_router.router
 )
 app.include_router(studio_router.router)
+app.include_router(sap_b1_router.router)
 
 
 app.add_middleware(RequestIDMiddleware)

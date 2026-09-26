@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any, Sequence
 
-from app.core.b1_source import quote_ident, quote_schema
+from app.core.b1_dialects import B1DialectStrategy, get_dialect, quote_ident
 
 WATERMARK_UPDATE_TS = "b1_update_ts"
 WATERMARK_INTEGER = "integer"
@@ -302,14 +303,17 @@ def _at_midnight(day: date) -> datetime:
     return datetime.combine(day, time.min)
 
 
-def _keyset_clause(alias: str, key: Sequence[str], after: Sequence[Any]) -> tuple[str, list[Any]]:
+def _keyset_clause(
+    dialect: B1DialectStrategy, alias: str, key: Sequence[str], after: Sequence[Any]
+) -> tuple[str, list[Any]]:
     if len(key) != len(after):
         raise ValueError("keyset cursor does not match the primary key")
+    q = dialect.quote_ident
     branches: list[str] = []
     params: list[Any] = []
     for index, column in enumerate(key):
-        equal = " AND ".join(f"{alias}.{quote_ident(key[j])} = ?" for j in range(index))
-        greater = f"{alias}.{quote_ident(column)} > ?"
+        equal = " AND ".join(f"{alias}.{q(key[j])} = ?" for j in range(index))
+        greater = f"{alias}.{q(column)} > ?"
         branches.append(f"({equal} AND {greater})" if equal else greater)
         params.extend(after[j] for j in range(index))
         params.append(after[index])
@@ -334,6 +338,7 @@ def select_sql(
     plan: EntityPlan,
     schema: str,
     *,
+    dialect: "str | B1DialectStrategy",
     mode: str,
     watermark: Watermark | None = None,
     after_key: Sequence[Any] | None = None,
@@ -342,21 +347,22 @@ def select_sql(
 ) -> tuple[str, list[Any]]:
     if mode not in MODES:
         raise ValueError(f"mode must be one of {MODES}")
-    schema_sql = quote_schema(schema)
+    d = get_dialect(dialect)
+    q = d.quote_ident
     t, h = "t", "h"
     use_join = bool(plan.parent)
     stamp_source = h if use_join else t
 
-    select_cols = [f"{t}.{quote_ident(column)}" for column in plan.columns]
+    select_cols = [f"{t}.{q(column)}" for column in plan.columns]
     if plan.watermark_kind == WATERMARK_UPDATE_TS:
-        select_cols.append(f"{stamp_source}.{quote_ident(plan.watermark_field or '')} AS {quote_ident(_WM_DATE_ALIAS)}")
-        select_cols.append(f"{stamp_source}.{quote_ident(plan.watermark_ts_field or '')} AS {quote_ident(_WM_TS_ALIAS)}")
+        select_cols.append(f"{stamp_source}.{q(plan.watermark_field or '')} AS {q(_WM_DATE_ALIAS)}")
+        select_cols.append(f"{stamp_source}.{q(plan.watermark_ts_field or '')} AS {q(_WM_TS_ALIAS)}")
 
-    sql = f"SELECT {', '.join(select_cols)} FROM {schema_sql}.{quote_ident(plan.table)} {t}"
+    sql = f"SELECT {', '.join(select_cols)} FROM {d.table_ref(schema, plan.table)} {t}"
     if use_join:
         sql += (
-            f" JOIN {schema_sql}.{quote_ident(plan.parent or '')} {h}"
-            f" ON {h}.{quote_ident(plan.parent_key or '')} = {t}.{quote_ident(plan.join_key or '')}"
+            f" JOIN {d.table_ref(schema, plan.parent or '')} {h}"
+            f" ON {h}.{q(plan.parent_key or '')} = {t}.{q(plan.join_key or '')}"
         )
 
     where: list[str] = []
@@ -366,19 +372,19 @@ def select_sql(
         if watermark.kind != plan.watermark_kind:
             raise ValueError(f"{plan.entity}: watermark kind {watermark.kind} does not match the plan")
         if watermark.kind == WATERMARK_UPDATE_TS:
-            d = f"{stamp_source}.{quote_ident(plan.watermark_field or '')}"
-            ts = f"{stamp_source}.{quote_ident(plan.watermark_ts_field or '')}"
-            where.append(f"({d} > ? OR ({d} = ? AND {ts} >= ?))")
+            day = f"{stamp_source}.{q(plan.watermark_field or '')}"
+            ts = f"{stamp_source}.{q(plan.watermark_ts_field or '')}"
+            where.append(f"({day} > ? OR ({day} = ? AND {ts} >= ?))")
             params.extend([_at_midnight(watermark.day), _at_midnight(watermark.day), watermark.hhmmss])
         else:
-            where.append(f"{stamp_source}.{quote_ident(plan.watermark_field or '')} > ?")
+            where.append(f"{stamp_source}.{q(plan.watermark_field or '')} > ?")
             params.append(watermark.number)
 
     if mode == "historical":
         if not plan.date_field:
             raise ValueError(f"{plan.entity}: historical mode needs a date_field")
         start, end = _date_bounds(from_date, to_date)
-        column = f"{stamp_source}.{quote_ident(plan.date_field)}"
+        column = f"{stamp_source}.{q(plan.date_field)}"
         if start is not None:
             where.append(f"{column} >= ?")
             params.append(_at_midnight(start))
@@ -387,16 +393,45 @@ def select_sql(
             params.append(_at_midnight(end + timedelta(days=1)))
 
     if after_key is not None and plan.primary_key:
-        clause, clause_params = _keyset_clause(t, plan.primary_key, after_key)
+        clause, clause_params = _keyset_clause(d, t, plan.primary_key, after_key)
         where.append(clause)
         params.extend(clause_params)
 
     if where:
         sql += " WHERE " + " AND ".join(where)
     if plan.primary_key:
-        sql += " ORDER BY " + ", ".join(f"{t}.{quote_ident(column)}" for column in plan.primary_key)
-        sql += f" LIMIT {int(plan.page_size)}"
+        sql += d.order_and_limit([f"{t}.{q(column)}" for column in plan.primary_key], plan.page_size)
     return sql, params
+
+
+def count_sql(
+    plan: EntityPlan,
+    schema: str,
+    *,
+    dialect: "str | B1DialectStrategy",
+    window_start: date | None = None,
+    window_end: date | None = None,
+) -> tuple[str, list[Any]]:
+    # the inner select names every catalogue column, so a missing column fails the count
+    unpaged = dataclasses.replace(plan, primary_key=())
+    if plan.date_field and (window_start or window_end):
+        last_day = (window_end - timedelta(days=1)).isoformat() if window_end else None
+        sql, params = select_sql(
+            unpaged,
+            schema,
+            dialect=dialect,
+            mode="historical",
+            from_date=window_start.isoformat() if window_start else None,
+            to_date=last_day,
+        )
+    else:
+        sql, params = select_sql(unpaged, schema, dialect=dialect, mode="full")
+    return f"SELECT COUNT(*) FROM ({sql}) counted", params
+
+
+def max_sql(plan: EntityPlan, schema: str, column: str, *, dialect: "str | B1DialectStrategy") -> str:
+    d = get_dialect(dialect)
+    return f"SELECT MAX(t.{d.quote_ident(column)}) FROM {d.table_ref(schema, plan.table)} t"
 
 
 def rows_to_records(
@@ -405,20 +440,22 @@ def rows_to_records(
     columns: Sequence[str],
     rows: Sequence[Sequence[Any]],
 ) -> list[dict[str, Any]]:
-    names = [str(name) for name in columns]
-    if names[: len(plan.columns)] != list(plan.columns):
-        raise ValueError(f"{plan.entity}: result columns do not match the plan")
-    wm_date_index = names.index(_WM_DATE_ALIAS) if _WM_DATE_ALIAS in names else None
-    wm_ts_index = names.index(_WM_TS_ALIAS) if _WM_TS_ALIAS in names else None
+    # bronze names come from the catalogue by position; the driver's names only guard the shape
     width = len(plan.columns)
+    reported = [str(name) for name in columns]
+    if len(reported) < width or not all(
+        B1DialectStrategy.same_column(expected, name) for expected, name in zip(plan.columns, reported)
+    ):
+        raise ValueError(f"{plan.entity}: result columns do not match the plan")
+    stamped = plan.watermark_kind == WATERMARK_UPDATE_TS
     records: list[dict[str, Any]] = []
     for row in rows:
         record = {name: row[index] for index, name in enumerate(plan.columns)}
         record[COMPANY_COLUMN] = company_alias
         stamp = None
-        if wm_date_index is not None and wm_ts_index is not None and len(row) > max(wm_date_index, wm_ts_index):
-            stamp = combine_update_stamp(row[wm_date_index], row[wm_ts_index])
-        elif plan.watermark_kind == WATERMARK_UPDATE_TS and not plan.parent and width == len(row):
+        if stamped and len(row) >= width + 2:
+            stamp = combine_update_stamp(row[width], row[width + 1])
+        elif stamped and not plan.parent:
             stamp = combine_update_stamp(
                 record.get(plan.watermark_field or ""), record.get(plan.watermark_ts_field or "")
             )

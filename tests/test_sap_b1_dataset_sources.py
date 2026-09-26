@@ -31,4 +31,8 @@ def test_gold_reads_silver_of_its_own_cartridge(path):
     declared = json.loads(SOURCES_RE.search(path.read_text(encoding="utf-8")).group(1))
 
     assert declared
-    assert all(source.startswith("silver/sap_b1/") for source in declared)
+    assert all(source.startswith(("silver/sap_b1/", "gold/sap_b1/")) for source in declared)
+    for source in declared:
+        layer, _cartridge, name = source.split("/")
+        upstream = path.parent / f"{name}.sql"
+        assert upstream.exists() and f"({layer})" in upstream.read_text(encoding="utf-8").splitlines()[0], source

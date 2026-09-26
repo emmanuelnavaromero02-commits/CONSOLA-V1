@@ -1,0 +1,121 @@
+indicators:
+  - id: margen_bruto
+    case: finanzas
+    name: Margen bruto
+    formula: "Venta neta − costo de lo vendido. Venta neta = facturas de clientes después del descuento de pie de factura − notas de crédito; costo = costo que B1 registra en cada línea (estándar si el artículo se valúa a estándar, promedio si no). Documentos cancelados excluidos."
+    unit: moneda local y % sobre venta neta
+    dimensions: [empresa, grupo, cliente, sku, canal, vendedor]
+    granularity: mes
+    dataset: sap_b1_margin_kpis_month
+    filter: "indicator = 'margen_bruto'"
+    thresholds: [margin_min_pct]
+  - id: margen_contribucion
+    case: finanzas
+    name: Margen de contribución
+    formula: "Margen bruto − comisión de venta. Comisión = venta neta de la línea × % de comisión de la línea (el que B1 toma del vendedor); las ventas entre empresas del grupo no llevan comisión."
+    unit: moneda local y % sobre venta neta
+    dimensions: [empresa, grupo, cliente, sku, canal, vendedor]
+    granularity: mes
+    dataset: sap_b1_margin_kpis_month
+    filter: "indicator = 'margen_contribucion'"
+    thresholds: []
+  - id: destructores
+    case: finanzas
+    name: Ranking de destructores de margen
+    formula: "Clientes externos cuyo margen bruto % está debajo del mínimo (o es negativo si no hay mínimo), ordenados por margen perdido = venta neta × mínimo % − margen bruto."
+    unit: moneda local
+    dimensions: [empresa, cliente]
+    granularity: mes
+    dataset: sap_b1_margin_kpis_month
+    filter: "indicator = 'destructores'"
+    thresholds: [margin_min_pct]
+  - id: concentracion_top20
+    case: finanzas
+    name: Concentración del margen en el 20 % de clientes
+    formula: "Margen bruto de los clientes externos que forman el 20 % superior por margen (al menos uno) ÷ margen bruto de todos los clientes externos."
+    unit: "%"
+    dimensions: [empresa, cliente]
+    granularity: mes
+    dataset: sap_b1_margin_kpis_month
+    filter: "indicator = 'concentracion_top20'"
+    thresholds: []
+  - id: margen_vendedor
+    case: finanzas
+    name: Margen por vendedor
+    formula: "Margen bruto y margen de contribución de las ventas de cada vendedor (el vendedor del documento en B1)."
+    unit: moneda local y % sobre venta neta
+    dimensions: [empresa, vendedor]
+    granularity: mes
+    dataset: sap_b1_margin_kpis_month
+    filter: "indicator = 'margen_vendedor'"
+    thresholds: []
+  - id: ratio_sellout_sellin
+    case: ventas
+    name: Ratio sell-out / sell-in
+    formula: "Unidades que la distribuidora vendió a clientes externos ÷ unidades que compró a la fábrica, en la ventana de 3 meses."
+    unit: "%"
+    dimensions: [distribuidora, sku]
+    granularity: mes
+    dataset: sap_b1_distributor_scorecard_month
+    filter: "sellout_sellin_3m_pct"
+    thresholds: [sellout_sellin_min_pct]
+  - id: dias_inventario
+    case: ventas
+    name: Días de inventario en el canal
+    formula: "Existencia de la distribuidora al cierre del mes ÷ venta diaria promedio (sell-out de 3 meses ÷ días)."
+    unit: días
+    dimensions: [distribuidora, sku]
+    granularity: mes
+    dataset: sap_b1_distributor_scorecard_month
+    filter: "channel_days"
+    thresholds: [channel_days_max]
+  - id: caducidad_lotes
+    case: ventas
+    name: Alertas de caducidad por lote
+    formula: "Lotes con existencia que caducan en 30 (rojo), 60 (amarillo) o 90 (verde) días; unidades en riesgo = las que no se venderían antes de caducar vendiendo primero lo que caduca primero al ritmo de 90 días; prioridad por valor en riesgo."
+    unit: unidades y moneda local
+    dimensions: [empresa, almacén o filial, sku, lote]
+    granularity: corte diario
+    dataset: sap_b1_batch_expiry
+    filter: "alert_level IS NOT NULL"
+    thresholds: [expiry_red_days, expiry_yellow_days, expiry_horizon_days]
+  - id: sellout_clinica
+    case: ventas
+    name: Sell-out por clínica
+    formula: "Venta de cada distribuidora a cada cliente externo (clínica) después del descuento de pie de factura y de notas de crédito, en unidades y moneda local, con su participación en el sell-out del mes."
+    unit: unidades y moneda local
+    dimensions: [distribuidora, cliente, canal]
+    granularity: mes
+    dataset: sap_b1_sellout_by_customer_month
+    filter: ""
+    thresholds: []
+  - id: dias_cobertura
+    case: compras
+    name: Días de cobertura
+    formula: "(Disponible + órdenes de compra abiertas + órdenes de producción abiertas) ÷ requerimiento diario; requerimiento = el mayor entre el consumo de 90 días y la necesidad del plan de producción (componentes por emitir de OWOR abiertas en el horizonte) ÷ días del horizonte."
+    unit: días
+    dimensions: [empresa, materia prima o artículo]
+    granularity: corte diario (07:30)
+    dataset: sap_b1_item_coverage
+    filter: "coverage_with_orders_days"
+    thresholds: [coverage_red_days, coverage_yellow_days, planning_horizon_days]
+  - id: oc_vs_necesidad
+    case: compras
+    name: Órdenes de compra abiertas contra necesidad
+    formula: "Cantidad en órdenes de compra abiertas ÷ necesidad neta del horizonte (requerimiento diario × días del horizonte − disponible)."
+    unit: "%"
+    dimensions: [empresa, materia prima o artículo]
+    granularity: corte diario (07:30)
+    dataset: sap_b1_item_coverage
+    filter: "open_po_vs_need_pct"
+    thresholds: [planning_horizon_days]
+  - id: costo_real_vs_estandar
+    case: compras
+    name: Costo real contra estándar
+    formula: "(Precio real de compra − costo del artículo en B1) ÷ costo del artículo; precio real = facturas de proveedor después del descuento de pie − notas de crédito, entre unidades."
+    unit: "% y moneda local"
+    dimensions: [empresa, materia prima o artículo]
+    granularity: mes
+    dataset: sap_b1_material_cost_variance
+    filter: "variance_pct"
+    thresholds: [cost_variance_max_pct]

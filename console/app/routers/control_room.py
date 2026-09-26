@@ -19,6 +19,7 @@ from app.schemas.control_room_domain_kpi_responses import (
     ControlRoomOperationsKpisResponse,
     ControlRoomRiskKpisResponse,
     ControlRoomSapB1ExpiryKpisResponse,
+    ControlRoomSapB1LearningKpisResponse,
     ControlRoomSapB1MarginKpisResponse,
     ControlRoomSapB1SalesKpisResponse,
     ControlRoomSapB1SemaforoKpisResponse,
@@ -210,6 +211,30 @@ def _require_internal_view_permission(view: str, user: dict[str, Any]) -> None:
         raise HTTPException(status_code=403, detail=f"permission required: {required}")
 
 
+_SAP_B1_VIEW_MODELS = {
+    "sap_b1_margin_kpis": ControlRoomSapB1MarginKpisResponse,
+    "sap_b1_sales_kpis": ControlRoomSapB1SalesKpisResponse,
+    "sap_b1_learning_kpis": ControlRoomSapB1LearningKpisResponse,
+    "sap_b1_expiry_kpis": ControlRoomSapB1ExpiryKpisResponse,
+    "sap_b1_supply_kpis": ControlRoomSapB1SupplyKpisResponse,
+    "sap_b1_semaforo_kpis": ControlRoomSapB1SemaforoKpisResponse,
+}
+_SAP_B1_TOP_N_VIEWS = frozenset({"sap_b1_margin_kpis", "sap_b1_sales_kpis"})
+
+
+async def _sap_b1_view(view: str, user: dict[str, Any], params: dict[str, Any]) -> Any:
+    loader = getattr(control_room_service, view)
+    cache_key = view.replace("_", "-")
+    kwargs: dict[str, Any] = {}
+    if view in _SAP_B1_TOP_N_VIEWS:
+        kwargs["top_n"] = _bounded_int(params.get("top_n"), 0, lower=0, upper=10)
+        cache_key = f"{cache_key}-{kwargs['top_n']}"
+    return project_public_control_room_response(
+        _SAP_B1_VIEW_MODELS[view],
+        await _control_room_cache_get_or_set(cache_key, user, lambda: loader(user, **kwargs)),
+    )
+
+
 async def _control_room_internal_view(
     view: str,
     user: dict[str, Any],
@@ -298,44 +323,8 @@ async def _control_room_internal_view(
                 lambda: control_room_service.risk_kpis(user, top_n=top_n),
             ),
         )
-    if view == "sap_b1_margin_kpis":
-        top_n = _bounded_int(params.get("top_n"), 0, lower=0, upper=10)
-        return project_public_control_room_response(
-            ControlRoomSapB1MarginKpisResponse,
-            await _control_room_cache_get_or_set(
-                f"sap-b1-margin-kpis-{top_n}",
-                user,
-                lambda: control_room_service.sap_b1_margin_kpis(user, top_n=top_n),
-            ),
-        )
-    if view == "sap_b1_sales_kpis":
-        return project_public_control_room_response(
-            ControlRoomSapB1SalesKpisResponse,
-            await _control_room_cache_get_or_set(
-                "sap-b1-sales-kpis", user, lambda: control_room_service.sap_b1_sales_kpis(user)
-            ),
-        )
-    if view == "sap_b1_expiry_kpis":
-        return project_public_control_room_response(
-            ControlRoomSapB1ExpiryKpisResponse,
-            await _control_room_cache_get_or_set(
-                "sap-b1-expiry-kpis", user, lambda: control_room_service.sap_b1_expiry_kpis(user)
-            ),
-        )
-    if view == "sap_b1_supply_kpis":
-        return project_public_control_room_response(
-            ControlRoomSapB1SupplyKpisResponse,
-            await _control_room_cache_get_or_set(
-                "sap-b1-supply-kpis", user, lambda: control_room_service.sap_b1_supply_kpis(user)
-            ),
-        )
-    if view == "sap_b1_semaforo_kpis":
-        return project_public_control_room_response(
-            ControlRoomSapB1SemaforoKpisResponse,
-            await _control_room_cache_get_or_set(
-                "sap-b1-semaforo-kpis", user, lambda: control_room_service.sap_b1_semaforo_kpis(user)
-            ),
-        )
+    if view in _SAP_B1_VIEW_MODELS:
+        return await _sap_b1_view(view, user, params)
     if view == "agent_memory":
         subject = params.get("subject")
         subject_text = str(subject).strip() if subject not in (None, "") else None
@@ -497,6 +486,21 @@ async def control_room_dashboard(user: dict = Depends(require_authenticated)):
         "dashboard", user, lambda: control_room_service.dashboard(user)
     )
     return project_public_control_room_response(ControlRoomLegacyDashboardResponse, payload)
+
+
+@router.get(
+    "/sap-b1/views/{view}",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
+async def control_room_sap_b1_view(
+    view: str,
+    top_n: int = Query(default=0, ge=0, le=10),
+    user: dict = Depends(require_authenticated),
+):
+    if view not in _SAP_B1_VIEW_MODELS:
+        raise HTTPException(status_code=404, detail="view not found")
+    _require_readiness_cartridge(user, "sap_b1")
+    return await _sap_b1_view(view, user, {"top_n": top_n})
 
 
 @router.get(

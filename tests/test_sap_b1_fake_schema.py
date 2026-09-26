@@ -64,7 +64,8 @@ def test_every_table_is_populated_for_every_company(dataset):
         for table in b1.TABLES
         if not tables.get(table)
         and not (table in ("OWOR", "WOR1", "OITT", "ITT1", "OWTR", "WTR1") and alias != "mx_mfg")
-        and table not in ("ORPC", "RPC1", "ORDN", "RDN1")
+        and table not in ("ORPC", "RPC1", "ORDN", "RDN1", "OSRI", "SRI1")
+        and not (table == "OSPP" and alias == "mx_mfg")
     }
     assert not empty, f"tables with no rows: {sorted(empty)}"
 
@@ -356,9 +357,9 @@ def test_invoice_lines_and_revenue_account_match_the_truth(dataset, loaded_dsn):
         s = company.schema
         lines = loader.month_key(loader.query(
             loaded_dsn,
-            f'SELECT EXTRACT(YEAR FROM h."DocDate"), EXTRACT(MONTH FROM h."DocDate"), SUM(l."LineTotal") '
-            f'FROM {loader.table_ref(s, "OINV")} h JOIN {loader.table_ref(s, "INV1")} l ON l."DocEntry" = h."DocEntry" '
-            f'WHERE h."CANCELED" = %s GROUP BY 1, 2', ("N",),
+            f'SELECT EXTRACT(YEAR FROM h."DocDate"), EXTRACT(MONTH FROM h."DocDate"), '
+            f'SUM((SELECT SUM(l."LineTotal") FROM {loader.table_ref(s, "INV1")} l WHERE l."DocEntry" = h."DocEntry") - h."DiscSum") '
+            f'FROM {loader.table_ref(s, "OINV")} h WHERE h."CANCELED" = %s GROUP BY 1, 2', ("N",),
         ))
         credits = loader.month_key(loader.query(
             loaded_dsn,

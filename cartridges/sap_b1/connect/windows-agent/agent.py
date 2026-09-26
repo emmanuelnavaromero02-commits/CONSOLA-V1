@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """OMEGA push agent for SAP Business One (the "Windows connector").
 
-Runs on the customer's Windows server, reads the Business One company
-schemas over SQL (SAP HANA, ``hdbcli``) and uploads Bronze parquet files to
-the lakehouse bucket over HTTPS. No tunnel into the customer's network is
+Runs on the customer's Windows server, reads the Business One companies
+over SQL (SAP HANA through ``hdbcli``, Microsoft SQL Server through
+``pyodbc`` and ODBC Driver 18) and uploads Bronze parquet files to the
+lakehouse bucket over HTTPS. No tunnel into the customer's network is
 needed: the agent only ever opens outbound connections.
 
 It is the cartridge's own extraction, not a fork of it:
@@ -15,7 +16,9 @@ It is the cartridge's own extraction, not a fork of it:
   flush-before-commit) is ``app.services.b1_reader.read_entity``, the same
   function ``extraction_service.run_entity`` calls in the platform;
 * the file shape and the object layout come from
-  ``app.services.bronze_parquet``.
+  ``app.services.bronze_parquet``;
+* every engine difference (SQL, paging, dates, drivers) lives in
+  ``app.core.b1_dialects``.
 
 What differs is only where things are kept: watermarks and the run log in
 a local SQLite file instead of the platform Postgres, and files in a local
@@ -28,7 +31,7 @@ Commands::
     python agent.py extract-all [--mode full] [--entity OINV --entity INV1]
     python agent.py initial-load [--months 24] [--window 22:00-05:30] [--restart]
     python agent.py serve [--interval-minutes 120]
-    python agent.py inventory [--months 24] [--json]
+    python agent.py inventory [--months 24] [--json] [--upload]
     python agent.py status [--json]
 
 ``--output-dir DIR`` on ``extract``/``extract-all`` writes the files under
@@ -49,6 +52,7 @@ import os
 import re
 import sqlite3
 import sys
+import threading
 import time
 import tomllib
 import uuid
@@ -74,16 +78,24 @@ EXIT_OK, EXIT_FAILED, EXIT_CONFIG = 0, 1, 2
 INITIAL_LOAD_META = "initial_load."
 DEFAULT_HISTORY_MONTHS = 24
 DEFAULT_SERVE_MINUTES = 120
+DEFAULT_HEARTBEAT_MINUTES = 5
+HEARTBEAT_UNIT_SECONDS = 60
+HEARTBEAT_SCHEMA_VERSION = 1
+HEARTBEAT_ERROR_TEXT = 200
+LAST_CYCLE_META = "serve.last_cycle"
+SOURCE_COUNTS_DAY_META = "source_counts.day"
 
 CARTRIDGE_FILES = (
     "app/__init__.py",
     "app/core/__init__.py",
+    "app/core/b1_dialects.py",
     "app/core/b1_source.py",
     "app/services/__init__.py",
     "app/services/b1_queries.py",
     "app/services/b1_reader.py",
     "app/services/bronze_parquet.py",
     "app/services/intercompany_mapping.py",
+    "app/services/source_counts_mapping.py",
     "app/config/entities.yaml",
 )
 
@@ -117,7 +129,13 @@ if str(CARTRIDGE_ROOT) not in sys.path:
     sys.path.insert(0, str(CARTRIDGE_ROOT))
 
 from app.core import b1_source  # noqa: E402
-from app.services import b1_queries, b1_reader, bronze_parquet, intercompany_mapping  # noqa: E402
+from app.services import (  # noqa: E402
+    b1_queries,
+    b1_reader,
+    bronze_parquet,
+    intercompany_mapping,
+    source_counts_mapping,
+)
 
 ENTITIES_PATH = CARTRIDGE_ROOT / "app" / "config" / "entities.yaml"
 
@@ -186,6 +204,7 @@ class AgentConfig:
     upload: UploadConfig
     intercompany: list["intercompany_mapping.IntercompanyPartner"] = field(default_factory=list)
     max_pending_files: int = DEFAULT_MAX_PENDING_FILES
+    heartbeat_minutes: int = DEFAULT_HEARTBEAT_MINUTES
     log_level: str = "INFO"
     config_path: Path | None = None
 
@@ -253,66 +272,29 @@ def _text(section: Mapping[str, Any], key: str, env: Mapping[str, str], env_name
 
 
 def _source_config(section: Mapping[str, Any], env: Mapping[str, str]) -> "b1_source.B1Config":
-    dialect = (_text(section, "dialect", env, "SAP_B1_DIALECT") or "hana").lower()
-    host = _text(section, "host", env, "SAP_B1_HOST")
-    port_text = _text(section, "port", env, "SAP_B1_PORT")
-    user = _text(section, "user", env, "SAP_B1_USER")
-    password = _text(section, "password", env, "SAP_B1_PASSWORD")
-    database = _text(section, "database", env, "SAP_B1_DATABASE")
-    companies_spec = _text(section, "companies", env, "SAP_B1_COMPANIES")
-    encrypt = b1_source._truthy(_text(section, "encrypt", env, "SAP_B1_ENCRYPT"), True)
-    ssl_validate = b1_source._truthy(
-        _text(section, "ssl_validate_certificate", env, "SAP_B1_SSL_VALIDATE_CERTIFICATE"), True
-    )
     timeout_text = _text(section, "connect_timeout_seconds", env, "SAP_B1_CONNECT_TIMEOUT_SECONDS", "15")
-
-    missing: list[str] = []
-    if dialect not in b1_source.DIALECTS:
-        missing.append("SAP_B1_DIALECT")
-    for name, value in (("SAP_B1_HOST", host), ("SAP_B1_USER", user), ("SAP_B1_PASSWORD", password)):
-        if not value:
-            missing.append(name)
-    if dialect == "postgres" and not database:
-        missing.append("SAP_B1_DATABASE")
-
-    port = b1_source.DEFAULT_PORTS.get(dialect, 0)
-    if port_text:
-        try:
-            port = int(port_text)
-        except ValueError:
-            port = 0
-        if not 0 < port < 65536:
-            missing.append("SAP_B1_PORT")
-
-    companies: list[b1_source.Company] = []
-    if not companies_spec:
-        missing.append("SAP_B1_COMPANIES")
-    else:
-        try:
-            companies = b1_source.parse_companies(companies_spec)
-        except b1_source.B1ConfigurationError as exc:
-            raise ConfigError(f"[source] companies: {exc}") from exc
-        if not companies:
-            missing.append("SAP_B1_COMPANIES")
-
     try:
         connect_timeout = max(1, int(timeout_text or 15))
     except ValueError as exc:
         raise ConfigError("[source] connect_timeout_seconds must be an integer") from exc
-
-    return b1_source.B1Config(
-        dialect=dialect,
-        host=host,
-        port=port,
-        user=user,
-        password=password,
-        database=database,
-        companies=companies,
-        encrypt=encrypt,
-        ssl_validate_certificate=ssl_validate,
-        connect_timeout=connect_timeout,
-        missing=missing,
-    )
+    try:
+        return b1_source.build_config(
+            dialect=_text(section, "dialect", env, "SAP_B1_DIALECT") or b1_source.DEFAULT_DIALECT,
+            host=_text(section, "host", env, "SAP_B1_HOST"),
+            port=_text(section, "port", env, "SAP_B1_PORT"),
+            user=_text(section, "user", env, "SAP_B1_USER"),
+            password=_text(section, "password", env, "SAP_B1_PASSWORD"),
+            database=_text(section, "database", env, "SAP_B1_DATABASE"),
+            companies=_text(section, "companies", env, "SAP_B1_COMPANIES"),
+            encrypt=b1_source._truthy(_text(section, "encrypt", env, "SAP_B1_ENCRYPT"), True),
+            ssl_validate_certificate=b1_source._truthy(
+                _text(section, "ssl_validate_certificate", env, "SAP_B1_SSL_VALIDATE_CERTIFICATE"), True
+            ),
+            connect_timeout=connect_timeout,
+            strict_companies=True,
+        )
+    except b1_source.B1ConfigurationError as exc:
+        raise ConfigError(f"[source] companies: {exc}") from exc
 
 
 def _intercompany_config(
@@ -379,6 +361,15 @@ def load_config(path: Path | None, env: Mapping[str, str] | None = None) -> Agen
         max_pending = max(1, int(pending_text))
     except ValueError as exc:
         raise ConfigError("[agent] max_pending_files must be an integer") from exc
+    heartbeat_text = _text(
+        agent, "heartbeat_minutes", env, "OMEGA_AGENT_HEARTBEAT_MINUTES", str(DEFAULT_HEARTBEAT_MINUTES)
+    )
+    try:
+        heartbeat_minutes = int(heartbeat_text or DEFAULT_HEARTBEAT_MINUTES)
+    except ValueError as exc:
+        raise ConfigError("[agent] heartbeat_minutes must be an integer") from exc
+    if not 1 <= heartbeat_minutes <= 60:
+        raise ConfigError("[agent] heartbeat_minutes must be between 1 and 60")
 
     source_section = _section(data, "source")
     source = _source_config(source_section, env)
@@ -394,6 +385,7 @@ def load_config(path: Path | None, env: Mapping[str, str] | None = None) -> Agen
         upload=_upload_config(_section(data, "upload"), env),
         intercompany=_intercompany_config(source_section, env, source),
         max_pending_files=max_pending,
+        heartbeat_minutes=heartbeat_minutes,
         log_level=(_text(agent, "log_level", env, "OMEGA_AGENT_LOG_LEVEL") or "INFO").upper(),
         config_path=path,
     )
@@ -1195,6 +1187,137 @@ def run_intercompany(runtime: Runtime) -> RunOutcome:
     return outcome
 
 
+def _history_months(state: AgentState) -> int:
+    try:
+        return int(state.get_meta(f"{INITIAL_LOAD_META}months") or DEFAULT_HISTORY_MONTHS)
+    except ValueError:
+        return DEFAULT_HISTORY_MONTHS
+
+
+@dataclass
+class SourceCountRun:
+    clock: datetime
+    window_start: date
+    window_end: date
+    counts: list["source_counts_mapping.SourceCount"]
+
+    @property
+    def failures(self) -> int:
+        return sum(1 for count in self.counts if count.error)
+
+
+def count_sources(
+    connection: "b1_source.Connection", config: AgentConfig, catalogue: Sequence[dict[str, Any]], months: int
+) -> SourceCountRun:
+    clock = connection.source_now().replace(microsecond=0)
+    window_start, window_end = source_counts_mapping.count_window(clock, months)
+    start_at = datetime.combine(window_start, datetime.min.time())
+    end_at = datetime.combine(window_end, datetime.min.time())
+    secrets = config.secrets()
+    counts: list[source_counts_mapping.SourceCount] = []
+    for entity in catalogue:
+        plan = b1_queries.plan_from_config(entity)
+        dated = bool(plan.date_field)
+        for company in config.source.companies:
+            rows: int | None = None
+            error: str | None = None
+            try:
+                sql, params = b1_queries.count_sql(
+                    plan,
+                    company.schema,
+                    dialect=connection.dialect,
+                    window_start=window_start if dated else None,
+                    window_end=window_end if dated else None,
+                )
+                _columns, result = connection.fetch_all(sql, params)
+                rows = int(result[0][0])
+            except b1_source.B1SourceError as exc:
+                error = scrub(str(exc), secrets)
+            counts.append(
+                source_counts_mapping.SourceCount(
+                    company=company.alias,
+                    entity=plan.entity,
+                    window_start=start_at if dated else None,
+                    window_end=end_at,
+                    source_rows=rows,
+                    counted_at=clock,
+                    error=error,
+                )
+            )
+    return SourceCountRun(clock=clock, window_start=window_start, window_end=window_end, counts=counts)
+
+
+def deliver_source_counts(runtime: Runtime, counted: SourceCountRun) -> RunOutcome:
+    config, state, spool, log = runtime.config, runtime.state, runtime.spool, runtime.log
+    entity_name = source_counts_mapping.ENTITY
+    run_id = state.create_run(entity_name, "full")
+    outcome = RunOutcome(entity=entity_name, run_id=run_id, mode="full", status="running")
+    try:
+        rows = source_counts_mapping.records(counted.counts)
+        load_date, extracted_at = bronze_parquet.stamp_now()
+        table = bronze_parquet.bronze_table(
+            rows,
+            schema=source_counts_mapping.arrow_schema(),
+            entity=entity_name,
+            run_id=run_id,
+            load_type="full",
+            watermark_field=None,
+            extracted_at=extracted_at,
+        )
+        object_name = bronze_parquet.bronze_object_name(entity_name, config.scope, load_date, run_id)
+        path, uploaded = spool.deliver(table, object_name, run_id=run_id, entity=entity_name)
+        state.set_meta(SOURCE_COUNTS_DAY_META, counted.clock.date().isoformat())
+        outcome.records = len(rows)
+        outcome.batches = 1
+        outcome.storage_uri = str(path) if spool.delivers_locally else f"s3://{config.upload.bucket}/{object_name}"
+        if uploaded:
+            outcome.status = "success"
+        else:
+            outcome.status = "failed"
+            outcome.error = "the counts file could not be uploaded and stays in the spool; the next run retries it"
+            if spool.rejected:
+                outcome.error += f" ({spool.rejected})"
+        log.info("source counts: %d row(s) -> %s%s", len(rows), object_name, "" if uploaded else " (pending)")
+    except Exception as exc:  # noqa: BLE001 - every failure becomes a failed run
+        outcome.status = "failed"
+        outcome.error = scrub(f"{type(exc).__name__}: {exc}", config.secrets())
+        log.error("run %s failed: %s", run_id, outcome.error)
+    state.finish_run(
+        run_id,
+        outcome.status,
+        records=outcome.records,
+        batches=outcome.batches,
+        storage_uri=outcome.storage_uri,
+        error_message=outcome.error,
+    )
+    return outcome
+
+
+def run_source_counts(
+    runtime: Runtime, catalogue: Sequence[dict[str, Any]], months: int, *, once_per_day: bool = False
+) -> RunOutcome | None:
+    config, log = runtime.config, runtime.log
+    try:
+        connection = b1_source.open_connection(config.source)
+        try:
+            if once_per_day:
+                today = connection.source_now().date().isoformat()
+                if runtime.state.get_meta(SOURCE_COUNTS_DAY_META) == today:
+                    return None
+            counted = count_sources(connection, config, catalogue, months)
+        finally:
+            connection.close()
+    except Exception as exc:  # noqa: BLE001 - reported as a failed run
+        error = scrub(f"{type(exc).__name__}: {exc}", config.secrets())
+        run_id = runtime.state.create_run(source_counts_mapping.ENTITY, "full")
+        runtime.state.finish_run(run_id, "failed", error_message=error)
+        log.error("source counts failed: %s", error)
+        return RunOutcome(entity=source_counts_mapping.ENTITY, run_id=run_id, mode="full", status="failed", error=error)
+    if counted.failures:
+        log.warning("source counts: %d table/company count(s) failed; see the error column", counted.failures)
+    return deliver_source_counts(runtime, counted)
+
+
 def _setup_logging(
     log_dir: Path, level: str, secrets: Sequence[str], quiet: bool = False
 ) -> list[logging.Handler]:
@@ -1301,13 +1424,11 @@ def cmd_test_connection(config: AgentConfig, log: logging.Logger, args: argparse
         clock = connection.source_now()
         _print(f"source clock: {clock.isoformat()}", secrets)
         for company in config.source.companies:
-            sql = f'SELECT "Version" FROM {b1_source.quote_schema(company.schema)}."CINF"'
             try:
-                _columns, rows = connection.fetch_all(sql)
+                version = b1_source.company_version(connection, company)
             except b1_source.B1SourceError as exc:
                 _print(f"company {company.alias}: unreachable ({exc})", secrets)
                 return EXIT_FAILED
-            version = rows[0][0] if rows and rows[0] else None
             _print(f"company {company.alias}: reachable, Business One version {version}", secrets)
     finally:
         connection.close()
@@ -1335,12 +1456,14 @@ def _run_entities(
     to_date: str | None,
     output_dir: Path | None,
     with_intercompany: bool = False,
+    with_source_counts: bool = False,
+    outcomes: list[RunOutcome] | None = None,
 ) -> int:
     config.require_scope()
     config.require_source()
     runtime = _build_runtime(config, log, output_dir)
     secrets = config.secrets()
-    outcomes: list[RunOutcome] = []
+    outcomes = [] if outcomes is None else outcomes
     try:
         with RunLock(config.state_dir / LOCK_NAME):
             drained = runtime.spool.drain()
@@ -1357,11 +1480,15 @@ def _run_entities(
                     config.max_pending_files,
                 )
                 return EXIT_FAILED
-            outcomes = [
+            outcomes.extend(
                 run_extract(runtime, entity, mode=mode, from_date=from_date, to_date=to_date) for entity in entities
-            ]
+            )
             if with_intercompany:
                 outcomes.append(run_intercompany(runtime))
+            if with_source_counts:
+                counted = run_source_counts(runtime, entities, _history_months(runtime.state), once_per_day=True)
+                if counted is not None:
+                    outcomes.append(counted)
     finally:
         runtime.state.close()
     for outcome in outcomes:
@@ -1484,10 +1611,7 @@ def _integer_cutoffs(
         if plan.watermark_kind != b1_queries.WATERMARK_INTEGER or not plan.date_field or plan.parent:
             continue
         for company in config.source.companies:
-            sql = (
-                f"SELECT MAX({b1_source.quote_ident(plan.watermark_field or '')}) "
-                f"FROM {b1_source.quote_schema(company.schema)}.{b1_source.quote_ident(plan.table)}"
-            )
+            sql = b1_queries.max_sql(plan, company.schema, plan.watermark_field or "", dialect=connection.dialect)
             _columns, rows = connection.fetch_all(sql)
             value = rows[0][0] if rows and rows[0] else None
             if value is not None:
@@ -1656,10 +1780,16 @@ def cmd_initial_load(config: AgentConfig, log: logging.Logger, args: argparse.Na
             if not outcome.ok:
                 return EXIT_FAILED
             state.set_meta(f"{INITIAL_LOAD_META}completed_at", _utc_now_text())
+            counted = run_source_counts(runtime, catalogue, args.months)
     finally:
         state.close()
     total = sum(done.values())
     _print(f"initial load complete: {len(steps)} steps, {total} rows, incremental reads continue from {cutoff.isoformat()}", secrets)
+    if counted is not None:
+        _report(counted, secrets)
+        if not counted.ok:
+            _print("source counts were not delivered; see the error above (a spooled file is uploaded by the next run)", secrets)
+            return EXIT_FAILED
     return EXIT_OK
 
 
@@ -1678,22 +1808,198 @@ def _refresh_secrets(secrets: Sequence[str]) -> None:
             handler.formatter.secrets = tuple(secrets)
 
 
+def _iso_utc(moment: datetime) -> str:
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _read_state(path: Path) -> tuple[dict[str, str], set[str]]:
+    # read-only: the heartbeat thread must never take a write lock on the ledger
+    if not path.is_file():
+        return {}, set()
+    try:
+        conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=5)
+    except sqlite3.Error:
+        return {}, set()
+    try:
+        meta = {row[0]: row[1] for row in conn.execute("SELECT key, value FROM agent_meta")}
+        steps = {row[0] for row in conn.execute("SELECT step FROM initial_load_steps")}
+    except sqlite3.Error:
+        return {}, set()
+    finally:
+        conn.close()
+    return meta, steps
+
+
+def initial_load_progress(config: AgentConfig) -> dict[str, Any]:
+    meta, steps = _read_state(config.state_db)
+    cutoff_text = meta.get(f"{INITIAL_LOAD_META}cutoff")
+    if not cutoff_text:
+        return {"state": "none", "months_done": 0, "months_total": 0}
+    try:
+        dated = [
+            entity["entity"]
+            for entity in select_entities(load_catalogue(), config)
+            if b1_queries.plan_from_config(entity).date_field
+        ]
+        labels = [label for label, _start, _end in month_slices(
+            datetime.fromisoformat(cutoff_text), int(meta.get(f"{INITIAL_LOAD_META}months") or 0)
+        )]
+    except (AgentError, ValueError):
+        dated, labels = [], []
+    total = len(labels) if dated else 0
+    if meta.get(f"{INITIAL_LOAD_META}completed_at"):
+        return {"state": "done", "months_done": total, "months_total": total}
+    done = sum(1 for label in labels if dated and all(f"month:{label}:{name}" in steps for name in dated))
+    return {"state": "running", "months_done": done, "months_total": total}
+
+
+def build_heartbeat(
+    config: AgentConfig,
+    probe: Mapping[str, Any],
+    *,
+    last_cycle: Mapping[str, Any] | None,
+    initial_load: Mapping[str, Any],
+    next_cycle_at: str | None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    error = probe.get("error")
+    return {
+        "schema_version": HEARTBEAT_SCHEMA_VERSION,
+        "agent_version": AGENT_VERSION,
+        "at": _iso_utc(now or datetime.now(timezone.utc)),
+        "source_ok": bool(probe.get("ok")),
+        "source_ms": int(probe.get("ms") or 0),
+        "source_error": scrub(error, config.secrets())[:HEARTBEAT_ERROR_TEXT] if error else None,
+        "dialect": config.source.dialect,
+        "companies": [company.alias for company in config.source.companies],
+        "last_cycle": dict(last_cycle) if last_cycle else None,
+        "initial_load": dict(initial_load),
+        "next_cycle_at": next_cycle_at,
+    }
+
+
+def write_heartbeat(config: AgentConfig, payload: Mapping[str, Any], output_dir: Path | None, log: logging.Logger) -> str:
+    object_name = bronze_parquet.heartbeat_object_name(config.scope)
+    data = (json.dumps(payload, sort_keys=True, ensure_ascii=True) + "\n").encode("utf-8")
+    config.state_dir.mkdir(parents=True, exist_ok=True)
+    local = config.state_dir / bronze_parquet.HEARTBEAT_NAME
+    targets = [local]
+    if output_dir is not None:
+        targets.append(output_dir.joinpath(*object_name.split("/")))
+    for target in targets:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        partial = target.with_name(target.name + ".part")
+        partial.write_bytes(data)
+        os.replace(partial, target)
+    if output_dir is not None:
+        return str(targets[-1])
+    config.require_upload()
+    upload = dataclasses.replace(config.upload, max_attempts=1)
+    S3Uploader(upload, log, scope=config.scope).upload(local, object_name)
+    return f"s3://{config.upload.bucket}/{object_name}"
+
+
+class Heartbeat:
+    """Writes the agent's liveness object on its own clock, also while a cycle runs."""
+
+    def __init__(self, config: AgentConfig, log: logging.Logger, output_dir: Path | None) -> None:
+        self.log = log
+        self.output_dir = output_dir
+        self._state_lock = threading.Lock()
+        self._beat_lock = threading.Lock()
+        self._config = config
+        self._last_cycle: dict[str, Any] | None = None
+        self._next_cycle_at: str | None = None
+        self.written = 0
+
+    @property
+    def interval_seconds(self) -> float:
+        with self._state_lock:
+            return self._config.heartbeat_minutes * HEARTBEAT_UNIT_SECONDS
+
+    def update(self, *, config: AgentConfig | None = None, last_cycle: dict[str, Any] | None = None,
+               next_cycle_at: str | None = None) -> None:
+        with self._state_lock:
+            if config is not None:
+                self._config = config
+            if last_cycle is not None:
+                self._last_cycle = dict(last_cycle)
+            if next_cycle_at is not None:
+                self._next_cycle_at = next_cycle_at
+
+    def beat(self) -> dict[str, Any] | None:
+        with self._beat_lock:
+            with self._state_lock:
+                config, last_cycle, next_cycle_at = self._config, self._last_cycle, self._next_cycle_at
+            try:
+                payload = build_heartbeat(
+                    config,
+                    b1_source.probe_source(config.source),
+                    last_cycle=last_cycle,
+                    initial_load=initial_load_progress(config),
+                    next_cycle_at=next_cycle_at,
+                )
+                write_heartbeat(config, payload, self.output_dir, self.log)
+            except Exception as exc:  # noqa: BLE001 - a missed beat is logged, the service keeps running
+                self.log.warning("heartbeat not written: %s: %s", type(exc).__name__, exc)
+                return None
+            self.written += 1
+            return payload
+
+    def run(self, stop: threading.Event) -> None:
+        while not stop.wait(self.interval_seconds):
+            self.beat()
+
+
+def _stored_last_cycle(config: AgentConfig) -> dict[str, Any] | None:
+    meta, _steps = _read_state(config.state_db)
+    try:
+        value = json.loads(meta.get(LAST_CYCLE_META) or "null")
+    except ValueError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _remember_cycle(config: AgentConfig, cycle: Mapping[str, Any]) -> None:
+    state = _open_state(config)
+    try:
+        state.set_meta(LAST_CYCLE_META, json.dumps(dict(cycle), sort_keys=True))
+    finally:
+        state.close()
+
+
 def cmd_serve(config: AgentConfig, log: logging.Logger, args: argparse.Namespace) -> int:
     if not 15 <= args.interval_minutes <= 1440:
         raise ConfigError("--interval-minutes must be between 15 and 1440")
     cycles = 0
-    log.info("serving: one extract-all every %d minutes", args.interval_minutes)
+    heartbeat = Heartbeat(config, log, args.output_dir)
+    heartbeat.update(last_cycle=_stored_last_cycle(config))
+    heartbeat.beat()
+    stop = threading.Event()
+    beating = threading.Thread(target=heartbeat.run, args=(stop,), name="heartbeat", daemon=True)
+    beating.start()
+    log.info(
+        "serving: one extract-all every %d minutes, a heartbeat every %d minutes",
+        args.interval_minutes,
+        config.heartbeat_minutes,
+    )
     try:
         while True:
+            started_at = _utc_now_text()
+            outcomes: list[RunOutcome] = []
+            status = "failed"
+            current = config
             try:
                 current = load_config(config.config_path) if config.config_path is not None else config
                 _refresh_secrets(current.secrets())
+                heartbeat.update(config=current)
                 if not initial_load_completed(current):
                     pending_steps = initial_load_in_progress(current)
                     log.info(
                         "cycle skipped: %s",
                         f"initial load in progress ({pending_steps})" if pending_steps else "run initial-load first",
                     )
+                    status = "skipped"
                 else:
                     code = _run_entities(
                         current,
@@ -1704,7 +2010,10 @@ def cmd_serve(config: AgentConfig, log: logging.Logger, args: argparse.Namespace
                         to_date=None,
                         output_dir=args.output_dir,
                         with_intercompany=True,
+                        with_source_counts=True,
+                        outcomes=outcomes,
                     )
+                    status = "success" if code == EXIT_OK else "failed"
                     log.info("cycle finished with exit code %d", code)
             except ConfigError as exc:
                 log.error("configuration: %s", exc)
@@ -1712,69 +2021,96 @@ def cmd_serve(config: AgentConfig, log: logging.Logger, args: argparse.Namespace
                 log.error("%s", exc)
             except Exception as exc:  # noqa: BLE001 - a service keeps running; the next cycle tries again
                 log.exception("unexpected failure: %s: %s", type(exc).__name__, exc)
+            cycle = {
+                "started_at": started_at,
+                "finished_at": _utc_now_text(),
+                "status": status,
+                "entities_ok": sum(1 for outcome in outcomes if outcome.ok),
+                "entities_failed": sum(1 for outcome in outcomes if not outcome.ok),
+            }
+            try:
+                _remember_cycle(current, cycle)
+            except (OSError, sqlite3.Error) as exc:
+                log.warning("last cycle not recorded: %s", exc)
+            wait = _next_slot_seconds(time.time(), args.interval_minutes)
+            heartbeat.update(
+                last_cycle=cycle,
+                next_cycle_at=_iso_utc(datetime.now(timezone.utc) + timedelta(seconds=wait)),
+            )
+            heartbeat.beat()
             cycles += 1
             if args.cycles and cycles >= args.cycles:
                 return EXIT_OK
-            wait = _next_slot_seconds(time.time(), args.interval_minutes)
             log.info("next cycle in %d seconds", int(wait))
             _sleep(wait)
     except KeyboardInterrupt:
         log.info("stopping")
         return EXIT_OK
+    finally:
+        stop.set()
+        beating.join(timeout=30)
 
 
 def cmd_inventory(config: AgentConfig, log: logging.Logger, args: argparse.Namespace) -> int:
     if not 1 <= args.months <= 120:
         raise ConfigError("--months must be between 1 and 120")
     config.require_source()
+    if args.upload:
+        config.require_scope()
     secrets = config.secrets()
     catalogue = select_entities(load_catalogue(), config, only=args.entity or (), log=log)
     connection = b1_source.open_connection(config.source)
-    failures = 0
     try:
-        clock = connection.source_now().replace(microsecond=0)
-        window_start = month_slices(clock, args.months)[-1][1]
-        entities: list[dict[str, Any]] = []
-        for entity in catalogue:
-            plan = b1_queries.plan_from_config(entity)
-            counted = dataclasses.replace(plan, primary_key=())
-            companies: dict[str, dict[str, Any]] = {}
-            for company in config.source.companies:
-                try:
-                    sql, params = b1_queries.select_sql(
-                        counted,
-                        company.schema,
-                        mode="historical" if plan.date_field else "full",
-                        from_date=window_start if plan.date_field else None,
-                    )
-                    _columns, rows = connection.fetch_all(f"SELECT COUNT(*) FROM ({sql}) counted", params)
-                    companies[company.alias] = {"rows": int(rows[0][0])}
-                except b1_source.B1SourceError as exc:
-                    failures += 1
-                    companies[company.alias] = {"error": scrub(str(exc), secrets)}
-            entities.append(
-                {"entity": plan.entity, "from_date": window_start if plan.date_field else None, "companies": companies}
-            )
+        counted = count_sources(connection, config, catalogue, args.months)
     finally:
         connection.close()
-    report = {
+    window_start = counted.window_start.isoformat()
+    dated = {entity["entity"]: bool(b1_queries.plan_from_config(entity).date_field) for entity in catalogue}
+    entities: list[dict[str, Any]] = []
+    for entity in catalogue:
+        name = entity["entity"]
+        companies = {
+            count.company: {"error": count.error} if count.error else {"rows": count.source_rows}
+            for count in counted.counts
+            if count.entity == name
+        }
+        entities.append({"entity": name, "from_date": window_start if dated[name] else None, "companies": companies})
+    delivered: RunOutcome | None = None
+    if args.upload:
+        runtime = _build_runtime(config, log, args.output_dir)
+        try:
+            with RunLock(config.state_dir / LOCK_NAME):
+                delivered = deliver_source_counts(runtime, counted)
+        finally:
+            runtime.state.close()
+    report: dict[str, Any] = {
         "agent_version": AGENT_VERSION,
-        "source_clock": clock.isoformat(),
+        "source_clock": counted.clock.isoformat(),
         "months": args.months,
         "window_start": window_start,
-        "failures": failures,
+        "window_end": counted.window_end.isoformat(),
+        "failures": counted.failures,
         "entities": entities,
     }
+    if delivered is not None:
+        report["source_counts"] = {"status": delivered.status, "run_id": delivered.run_id, "error": delivered.error}
     if args.json:
         _print(json.dumps(report, indent=2, ensure_ascii=True), secrets)
     else:
-        _print(f"source clock {report['source_clock']}; dated tables counted from {window_start}", secrets)
+        _print(
+            f"source clock {report['source_clock']}; dated tables counted from {window_start} to before {report['window_end']}",
+            secrets,
+        )
         for item in entities:
             cells = []
             for alias, value in item["companies"].items():
                 cells.append(f"{alias}={value['rows']}" if "rows" in value else f"{alias}=ERROR {value['error']}")
             _print(f"  {item['entity']:<22} {'window' if item['from_date'] else 'whole '} {' '.join(cells)}", secrets)
-    return EXIT_FAILED if failures else EXIT_OK
+        if delivered is not None:
+            _report(delivered, secrets)
+    if counted.failures or (delivered is not None and not delivered.ok):
+        return EXIT_FAILED
+    return EXIT_OK
 
 
 def cmd_status(config: AgentConfig, log: logging.Logger, args: argparse.Namespace) -> int:
@@ -1873,6 +2209,8 @@ def _parser() -> argparse.ArgumentParser:
     inventory.add_argument("--months", type=int, default=DEFAULT_HISTORY_MONTHS)
     inventory.add_argument("--entity", action="append", default=None)
     inventory.add_argument("--json", action="store_true")
+    inventory.add_argument("--upload", action="store_true", help="also write the counts to Bronze (SourceCounts)")
+    inventory.add_argument("--output-dir", type=Path, default=None, help="with --upload: write the file here instead")
 
     status = sub.add_parser("status", help="watermarks, last runs and pending uploads")
     status.add_argument("--limit", type=int, default=20)

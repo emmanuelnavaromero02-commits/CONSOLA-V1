@@ -17,9 +17,9 @@ ENTITIES_YAML = CARTRIDGE / "app" / "config" / "entities.yaml"
 TOOLS = CARTRIDGE / "tools"
 
 HEADER_RE = re.compile(r"^--\s+(\S+)\s+\((silver|gold)\)\s+cartridge:\s+sap_b1\s*$")
-EXPECTED_SILVER = 65
-EXPECTED_GOLD = 16
-PSEUDO_ENTITIES = {"IntercompanyPartners", "BusinessParameters"}
+EXPECTED_SILVER = 71
+EXPECTED_GOLD = 21
+PSEUDO_ENTITIES = {"IntercompanyPartners", "BusinessParameters", "FinanceManualRun", "SourceCounts"}
 
 
 def _dataset_files() -> list[Path]:
@@ -63,35 +63,36 @@ def test_all_dataset_sql_parse_as_duckdb():
 
 def test_headers_match_filenames_and_sources_are_real_entities():
     entities = _entities() | PSEUDO_ENTITIES
-    assert len(_entities()) == 45
+    assert len(_entities()) == 48
     for path in _dataset_files():
         name, layer, sources, description = _parse_header(path)
         assert name == path.stem, f"{path.name}: header name {name!r} != filename"
         assert sources and description
         for source in sources:
-            m = re.match(r"^(raw|silver)/sap_b1/([A-Za-z0-9_]+)$", source)
+            m = re.match(r"^(raw|silver|gold)/sap_b1/([A-Za-z0-9_]+)$", source)
             assert m, f"{path.name}: malformed source {source!r}"
             if m.group(1) == "raw":
                 assert m.group(2) in entities, f"{path.name}: source {source!r} is not a sap_b1 entity"
             else:
-                assert layer == "gold", f"{path.name}: only gold may declare a silver source"
+                assert layer == "gold", f"{path.name}: only gold may declare a {m.group(1)} source"
                 upstream = DATASETS_DIR / f"{m.group(2)}.sql"
-                assert upstream.exists() and _parse_header(upstream)[1] == "silver", f"{path.name}: {source!r}"
+                assert upstream.exists() and _parse_header(upstream)[1] == m.group(1), f"{path.name}: {source!r}"
 
 
 def test_every_read_parquet_is_a_declared_source_or_a_sap_b1_silver():
     for path in _dataset_files():
         _, layer, sources, _ = _parse_header(path)
         body = _executable_sql(path)
-        reads = re.findall(r"read_parquet\('s3://\{bucket\}/(raw|silver)/sap_b1/([A-Za-z0-9_]+)/\*\*/\*\.parquet'", body)
+        reads = re.findall(r"read_parquet\('s3://\{bucket\}/(raw|silver|gold)/sap_b1/([A-Za-z0-9_]+)/\*\*/\*\.parquet'", body)
         assert reads, f"{path.name}: no read_parquet"
         for kind, name in reads:
             if kind == "raw":
                 assert f"raw/sap_b1/{name}" in sources, f"{path.name}: reads raw/sap_b1/{name} without declaring it"
             else:
-                assert layer == "gold", f"{path.name}: only gold may read silver outputs"
-                assert (DATASETS_DIR / f"{name}.sql").exists(), f"{path.name}: reads unknown silver {name}"
-                assert _parse_header(DATASETS_DIR / f"{name}.sql")[1] == "silver"
+                assert layer == "gold", f"{path.name}: only gold may read {kind} outputs"
+                assert f"{kind}/sap_b1/{name}" in sources, f"{path.name}: reads {kind}/sap_b1/{name} without declaring it"
+                assert (DATASETS_DIR / f"{name}.sql").exists(), f"{path.name}: reads unknown {kind} {name}"
+                assert _parse_header(DATASETS_DIR / f"{name}.sql")[1] == kind
         assert "hive_partitioning = true" in body or layer == "gold"
 
 
@@ -136,6 +137,7 @@ def test_generated_files_are_current():
         assert (scratch / "catalog" / "config" / "seed.sql").read_text() == (CARTRIDGE / "config" / "seed.sql").read_text()
         _run_generator("generate_silver_latest.py", scratch / "silver")
         _run_generator("generate_document_lines.py", scratch / "silver")
+        _run_generator("generate_load_reconciliation.py", scratch / "silver")
         for generated in sorted((scratch / "silver").glob("*.sql")):
             committed = DATASETS_DIR / generated.name
             assert committed.exists(), generated.name

@@ -15,7 +15,7 @@ from app.routers import control_room as routes
 
 TENANT_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 WORKSPACE_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
-ALLOWED_CARTRIDGES = "banxico inegi sap_hcm sap_successfactors sec_edgar".split()
+ALLOWED_CARTRIDGES = "banxico inegi sap_b1 sap_hcm sap_successfactors sec_edgar".split()
 USER = {
     "id": 7,
     "role": "super_admin",

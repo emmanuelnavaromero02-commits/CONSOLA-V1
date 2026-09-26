@@ -10,6 +10,7 @@ from app.domains.agentops import domain_monitors
 from app.domains.agentops.domain_monitor_support import build_contract
 from app.domains.agentops.invocation import agent_schedule_due
 from app.domains.agentops.sap_b1_monitors import SAP_B1_EXPIRY_MONITOR_SPEC as EXPIRY
+from app.domains.agentops.sap_b1_monitors import SAP_B1_LEARNING_MONITOR_SPEC as LEARNING
 from app.domains.agentops.sap_b1_monitors import SAP_B1_MARGIN_MONITOR_SPEC as SPEC
 from app.domains.agentops.sap_b1_monitors import SAP_B1_MONITOR_SPECS
 from app.schemas.control_room_domain_kpi_responses import ControlRoomSapB1MarginKpisResponse
@@ -55,27 +56,27 @@ def _view(metrics: dict) -> dict:
 
 def test_breaches_become_signals_and_trigger_the_advisory_alert():
     view = _view({
-        "company_margin": {"status": "ready", "breaches": ["La empresa empresa_a cerro 2026-08 con margen de 20.0%."]},
-        "data_quality": {"status": "ready", "breaches": ["Calidad de datos en empresa_b: rfc clientes valido al 93.33%."]},
-        "group_margin": {"status": "ready", "breaches": []},
+        "destructores": {"status": "ready", "breaches": ["empresa_a: 3 clientes destruyen margen en 2026-08."]},
+        "calidad_datos": {"status": "ready", "breaches": ["Calidad de datos en empresa_b: rfc clientes valido al 93.33 %."]},
+        "margen_bruto": {"status": "ready", "breaches": []},
     })
     payload = domain_wisdom_bits.build_payload(SPEC, view)
     assert payload["signals"]["count"] == 2 == len(payload["signals"]["items"])
     assert payload["signals"]["items"][0] == {
-        "metric": "margen por empresa", "status": "alerta",
-        "reason": "La empresa empresa_a cerro 2026-08 con margen de 20.0%.",
+        "metric": "destructores de margen", "status": "alerta",
+        "reason": "empresa_a: 3 clientes destruyen margen en 2026-08.",
     }
     contract = build_contract(SPEC)[2]["monitor"]
     scope = {"tenant_id": "t1", "workspace_id": "w1"}
     assert monitor_alert_policy.monitor_should_alert(contract, {**payload, **scope}) is True
 
-    quiet = domain_wisdom_bits.build_payload(SPEC, _view({"group_margin": {"status": "ready", "breaches": []}}))
+    quiet = domain_wisdom_bits.build_payload(SPEC, _view({"margen_bruto": {"status": "ready", "breaches": []}}))
     assert quiet["signals"]["count"] == 0
     assert monitor_alert_policy.monitor_should_alert(contract, {**quiet, **scope}) is False
 
 
 def test_signals_stay_bounded():
-    many = _view({"customer_margin": {"status": "ready", "breaches": [f"hallazgo {n}" for n in range(30)]}})
+    many = _view({"destructores": {"status": "ready", "breaches": [f"hallazgo {n}" for n in range(30)]}})
     assert domain_wisdom_bits.build_payload(SPEC, many)["signals"]["count"] == domain_wisdom_bits.MAX_SIGNALS
 
 
@@ -83,25 +84,31 @@ def test_the_view_survives_the_public_projection(monkeypatch):
     async def result(factory, **fields):
         return factory(status="ready", period="2026-08", **fields)
 
-    monkeypatch.setattr(b1, "query_group_margin", lambda user: result(b1.GroupMargin, consolidated_margin_pct=31.5,
-                        breaches=["El margen del grupo de 2026-08 fue 31.5% y cayo 4.0 puntos."]))
-    monkeypatch.setattr(b1, "query_company_margin", lambda user: result(b1.CompanyMargin,
-                        companies=[{"company": "empresa_a", "revenue": 10.0, "gross_profit": 2.0, "margin_pct": 20.0, "min_margin_pct": 25.0}]))
-    monkeypatch.setattr(b1, "query_customer_margin", lambda user, top_n=0: result(b1.CustomerMargin, customers=4))
-    monkeypatch.setattr(b1, "query_item_family_margin", lambda user: result(b1.ItemFamilyMargin))
-    monkeypatch.setattr(b1, "query_below_min_sales", lambda user: result(b1.BelowMinSales, below_min_pct=12.0))
-    monkeypatch.setattr(b1, "query_reconciliation", lambda user: result(b1.Reconciliation, notes=["finanzas todavia no entrego totales de control"]))
-    monkeypatch.setattr(b1, "query_data_quality", lambda user: result(b1.DataQuality, checks=24))
+    monkeypatch.setattr(b1, "query_margen_bruto", lambda user: result(
+        b1.MarginTotals, currency="MXN", group={"value": 315.0, "pct": 31.5, "revenue": 1000.0, "commission": 5.0},
+        breaches=["El margen bruto del grupo de 2026-08 fue 31.5 % y cayó 4.0 puntos."]))
+    monkeypatch.setattr(b1, "query_margen_contribucion", lambda user: result(
+        b1.MarginTotals, companies=[{"company": "empresa_a", "value": 2.0, "pct": 20.0, "revenue": 10.0, "commission": 0.5}]))
+    monkeypatch.setattr(b1, "query_destructores", lambda user, top_n=0: result(b1.Destroyers, customers=4, margin_lost=12.0))
+    monkeypatch.setattr(b1, "query_concentracion_top20", lambda user: result(b1.Concentration))
+    monkeypatch.setattr(b1, "query_margen_vendedor", lambda user, top_n=0: result(b1.SellerMargin))
+    monkeypatch.setattr(b1, "query_reconciliacion_finanzas", lambda user: result(
+        b1.FinanceReconciliation, notes=["Finanzas todavía no carga su corrida manual"]))
+    monkeypatch.setattr(b1, "query_calidad_datos", lambda user: result(b1.DataQuality, checks=24))
+    monkeypatch.setattr(b1, "query_modelo_entidades", lambda user: result(b1.EntityModel, entities=[
+        {"entity": "cliente", "company": "grupo", "records": 40, "identities": 35, "shared_identities": 5,
+         "complete_records": 36, "completeness_pct": 90.0, "orphans": 0, "relation_rule": "RFC válido"}]))
 
     view = asyncio.run(sap_b1_kpis.sap_b1_margin_kpis({"tenant_id": "t", "workspace_id": "w"}, top_n=3))
     projected = ControlRoomSapB1MarginKpisResponse.project(view).model_dump(mode="json")
     metrics = projected["metrics"]
     assert projected["domain"] == "sap_b1_margin" and projected["named_rows"] == 3
-    assert metrics["group_margin"]["breaches"] == ["El margen del grupo de 2026-08 fue 31.5% y cayo 4.0 puntos."]
-    assert metrics["group_margin"]["proxy_note"].startswith("Margen bruto del grupo")
-    assert metrics["company_margin"]["companies"][0]["company"] == "empresa_a"
-    assert metrics["reconciliation"]["notes"] == ["finanzas todavia no entrego totales de control"]
-    assert metrics["below_min_sales"]["below_min_pct"] == 12.0
+    assert metrics["margen_bruto"]["breaches"] == ["El margen bruto del grupo de 2026-08 fue 31.5 % y cayó 4.0 puntos."]
+    assert metrics["margen_bruto"]["group"]["pct"] == 31.5 and metrics["margen_bruto"]["proxy_note"].startswith("Venta neta")
+    assert metrics["margen_contribucion"]["companies"][0]["company"] == "empresa_a"
+    assert metrics["reconciliacion_finanzas"]["notes"] == ["Finanzas todavía no carga su corrida manual"]
+    assert metrics["destructores"]["margin_lost"] == 12.0
+    assert metrics["modelo_entidades"]["entities"][0]["relation_rule"] == "RFC válido"
 
 
 def _route():
@@ -156,8 +163,19 @@ def test_provisioning_route_needs_airflow_and_a_scoped_run_context(monkeypatch):
 def test_expiry_monitor_runs_after_the_margin_one_on_its_own_view():
     _allowed, _rag, extra = build_contract(EXPIRY)
     assert extra["schedule"]["cron"] == "25 7 * * *" and extra["schedule"]["tz"] == "America/Mexico_City"
-    assert extra["monitor"]["wisdom_bit_id"] == "WB-B1-CADUCIDAD" and extra["monitor"]["domain"] == "Operacion"
+    assert extra["monitor"]["wisdom_bit_id"] == "WB-B1-CADUCIDAD" and extra["monitor"]["domain"] == "Ventas"
     assert domain_wisdom_bits.VIEW_BY_KEY[EXPIRY.key] == "sap_b1_expiry_kpis"
     assert domain_monitors.spec_for_wisdom_bit("WB-B1-CADUCIDAD") is EXPIRY
     assert len({spec.wisdom_bit_id for spec in domain_monitors.ALL_DOMAIN_MONITOR_SPECS}) == len(domain_monitors.ALL_DOMAIN_MONITOR_SPECS)
     assert agent_schedule_due(extra["schedule"], datetime(2026, 9, 25, 13, 25, tzinfo=timezone.utc), interval_minutes=5, grace_minutes=2)
+
+
+def test_learning_agent_runs_after_the_case_agents_on_its_own_view():
+    _allowed, _rag, extra = build_contract(LEARNING)
+    assert extra["schedule"]["cron"] == "40 7 * * *" and extra["schedule"]["tz"] == "America/Mexico_City"
+    assert extra["monitor"]["wisdom_bit_id"] == "WB-B1-APRENDIZAJE" and extra["monitor"]["domain"] == "Dirección"
+    assert extra["monitor"]["writeback_enabled"] is False
+    assert domain_wisdom_bits.VIEW_BY_KEY[LEARNING.key] == "sap_b1_learning_kpis"
+    assert domain_monitors.spec_for_wisdom_bit("WB-B1-APRENDIZAJE") is LEARNING
+    assert [spec.wisdom_bit_id for spec in SAP_B1_MONITOR_SPECS] == [
+        "WB-B1-MARGEN", "WB-B1-CADUCIDAD", "WB-B1-ABASTO", "WB-B1-APRENDIZAJE", "WB-B1-SEMAFORO"]

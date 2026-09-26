@@ -6059,10 +6059,17 @@ async def sap_b1_margin_kpis(user: dict | None, *, top_n: int = 0) -> dict[str, 
 
 
 @_bind_to_core
-async def sap_b1_sales_kpis(user: dict | None) -> dict[str, Any]:
+async def sap_b1_sales_kpis(user: dict | None, *, top_n: int = 0) -> dict[str, Any]:
     from app.services.control_room import sap_b1_kpis
 
-    return await sap_b1_kpis.sap_b1_sales_kpis(user)
+    return await sap_b1_kpis.sap_b1_sales_kpis(user, top_n=top_n)
+
+
+@_bind_to_core
+async def sap_b1_learning_kpis(user: dict | None) -> dict[str, Any]:
+    from app.services.control_room import sap_b1_kpis
+
+    return await sap_b1_kpis.sap_b1_learning_kpis(user)
 
 
 @_bind_to_core
@@ -6105,6 +6112,7 @@ __all__ = (
     "sap_b1_margin_kpis",
     "sap_b1_sales_kpis",
     "sap_b1_expiry_kpis",
+    "sap_b1_learning_kpis",
     "sap_b1_supply_kpis",
     "sap_b1_semaforo_kpis",
     "_ITEM_STATUSES",

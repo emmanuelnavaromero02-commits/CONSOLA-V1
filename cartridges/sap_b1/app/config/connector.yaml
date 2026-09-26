@@ -3,8 +3,9 @@ connector:
   name: SAP Business One
   version: "0.1"
   description: >
-    Connector for SAP Business One 10 on SAP HANA. Reads the company
-    databases directly over SQL (one schema per company): masters, sales
+    Connector for SAP Business One 10 on SAP HANA or Microsoft SQL Server.
+    Reads the company databases directly over SQL (one schema or database
+    per company): masters, sales
     and purchase documents with their lines, journal entries, inventory
     movements, batches and production orders. Multi-company by design:
     every row carries the company alias.
@@ -13,11 +14,11 @@ connector:
     env_var_user: SAP_B1_USER
     env_var_pass: SAP_B1_PASSWORD
   database:
-    dialect_env: SAP_B1_DIALECT        # hana (production) | postgres (test bed)
+    dialect_env: SAP_B1_DIALECT        # hana | mssql | postgres (test bed)
     host_env: SAP_B1_HOST
-    port_env: SAP_B1_PORT              # empty = 30015 (hana) / 5432 (postgres)
+    port_env: SAP_B1_PORT              # empty = 30015 (hana) / 1433 (mssql) / 5432 (postgres)
     database_env: SAP_B1_DATABASE      # HANA tenant via SYSTEMDB, or Postgres dbname
-    companies_env: SAP_B1_COMPANIES    # "alias=SCHEMA,alias=SCHEMA"
+    companies_env: SAP_B1_COMPANIES    # "alias=SCHEMA,..." (HANA) or "alias=DATABASE,..." (mssql)
     encrypt_env: SAP_B1_ENCRYPT
     connect_timeout_seconds: 15
     page_size_default: 2000

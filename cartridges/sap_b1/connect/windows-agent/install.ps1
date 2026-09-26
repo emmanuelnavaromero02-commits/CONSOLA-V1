@@ -53,12 +53,14 @@ if (-not $cartridgeRoot) {
 $cartridgeFiles = @(
     'app\__init__.py',
     'app\core\__init__.py',
+    'app\core\b1_dialects.py',
     'app\core\b1_source.py',
     'app\services\__init__.py',
     'app\services\b1_queries.py',
     'app\services\b1_reader.py',
     'app\services\bronze_parquet.py',
     'app\services\intercompany_mapping.py',
+    'app\services\source_counts_mapping.py',
     'app\config\entities.yaml'
 )
 $agentFiles = @(
@@ -166,7 +168,7 @@ if (-not (Test-Path $venvPython)) {
     & $python -m venv $venv
     if ($LASTEXITCODE -ne 0) { throw 'No se pudo crear el entorno virtual.' }
 }
-Write-Step 'Instalando las dependencias (hdbcli, pyarrow, boto3, pyyaml)'
+Write-Step 'Instalando las dependencias (hdbcli, pyodbc, pyarrow, boto3, pyyaml)'
 $pipArgs = @('-m', 'pip', 'install', '--no-cache-dir', '--disable-pip-version-check', '-r', (Join-Path $agentDir 'requirements.txt'))
 if ($WheelDir) { $pipArgs += @('--no-index', '--find-links', $WheelDir) }
 & $venvPython @pipArgs
@@ -315,7 +317,7 @@ if (-not $NoTask) {
 
 Write-Host ''
 Write-Host 'Instalacion terminada. Siguientes pasos:'
-Write-Host "  1. Edite $configFile (tenant, workspace, HANA, empresas, bucket y claves)."
+Write-Host "  1. Edite $configFile (tenant, workspace, HANA o SQL Server, empresas, bucket y claves)."
 Write-Host "  2. Pruebe:  & `"$(Join-Path $agentDir 'run.ps1')`" test-connection"
 Write-Host "  3. Inventario (conteos por empresa):  & `"$(Join-Path $agentDir 'run.ps1')`" inventory"
 Write-Host "  4. Carga inicial de 24 meses (una vez):  & `"$(Join-Path $agentDir 'run.ps1')`" initial-load"

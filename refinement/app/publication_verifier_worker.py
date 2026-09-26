@@ -16,6 +16,11 @@ import pyarrow.parquet as pq
 
 from omega_lakehouse import storage_from_env
 
+try:
+    import app.partitioned_parquet as partitioned_parquet
+except ModuleNotFoundError:
+    import refinement.app.partitioned_parquet as partitioned_parquet
+
 
 def _require_immutable_object_versions(storage) -> None:
     config = getattr(storage, "config", None)
@@ -78,6 +83,35 @@ def _object_key(storage, row: tuple) -> str:
     return key
 
 
+def _pinned_parquet(storage, key: str, version: str, checksum: str) -> pq.ParquetFile:
+    if not version:
+        raise RuntimeError("publication object version mismatch")
+    stat = storage.stat(key, expected_version=version)
+    if str(stat.version or "") != version:
+        raise RuntimeError("publication object version mismatch")
+    raw = storage.get_bytes(key, expected_version=version)
+    if hashlib.sha256(raw).hexdigest() != checksum:
+        raise RuntimeError("publication object checksum mismatch")
+    return pq.ParquetFile(io.BytesIO(raw))
+
+
+def _verify_partition_set(
+    storage, key: str, raw: bytes, expected: list[dict], row_count: int
+) -> None:
+    manifest = partitioned_parquet.read_manifest(raw, key)
+    if partitioned_parquet.schema_fields(manifest["schema"]) != expected:
+        raise RuntimeError("publication object schema mismatch")
+    for part in manifest["parts"]:
+        part_file = _pinned_parquet(
+            storage, str(part["key"]), str(part["version"]), str(part["checksum"])
+        )
+        observed = partitioned_parquet.schema_fields(part_file.schema_arrow)
+        if part_file.metadata.num_rows != part["rows"] or observed != expected:
+            raise RuntimeError("publication object schema mismatch")
+    if manifest["row_count"] != row_count:
+        raise RuntimeError("publication object schema mismatch")
+
+
 def verify_candidate(candidate_id: str) -> None:
     row = _load_candidate(candidate_id)
     _, _, _, _, _, _, _, version, checksum, row_count, _, catalog = row
@@ -95,7 +129,13 @@ def verify_candidate(candidate_id: str) -> None:
         {"name": field.name, "type": str(field.type)} for field in parquet.schema_arrow
     ]
     expected = [{"name": item["name"], "type": item["type"]} for item in catalog]
-    if parquet.metadata.num_rows != row_count or observed != expected:
+    if partitioned_parquet.is_manifest_key(key):
+        if observed != expected:
+            raise RuntimeError("publication object schema mismatch")
+        _verify_partition_set(storage, key, raw, expected, row_count)
+    elif partitioned_parquet.manifest_payload(parquet) is not None:
+        raise RuntimeError("publication object schema mismatch")
+    elif parquet.metadata.num_rows != row_count or observed != expected:
         raise RuntimeError("publication object schema mismatch")
     with psycopg2.connect(_dsn()) as conn, conn.cursor() as cur:
         cur.execute("SELECT omega_publication.record_attestation(%s)", (candidate_id,))

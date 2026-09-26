@@ -24,7 +24,10 @@ COLUMNS = (
     "lead_time_days", "lead_time_source", "reorder_point", "order_up_to", "b1_min_stock", "b1_max_stock",
     "coverage_color", "stockout_risk", "suggested_qty", "suggested_action", "suggested_supplier",
     "order_by_date", "min_order_qty", "order_multiple", "stockout_date",
+    "historical_daily", "plan_need_qty", "plan_daily", "consumption_basis", "is_raw_material", "criticality_rank",
+    "is_critical", "net_need_qty", "open_po_vs_need_pct", "unit_cost_local", "alternate_supplier",
 )
+HORIZON = 90
 
 
 def _dec(value) -> Decimal:
@@ -63,7 +66,9 @@ def coverage(tmp_path_factory, fake_postgres, dataset):
     assert not bronze.failed
     con = _materialise(root)
     try:
-        yield {tuple(r[:2]): dict(zip(COLUMNS, r)) for r in _rows(con, f"SELECT {', '.join(COLUMNS)} FROM sap_b1_item_coverage")}
+        rows = {tuple(r[:2]): dict(zip(COLUMNS, r)) for r in _rows(con, f"SELECT {', '.join(COLUMNS)} FROM sap_b1_item_coverage")}
+        rows["__con__"] = con
+        yield rows
     finally:
         con.close()
         monkeypatch.undo()
@@ -101,7 +106,25 @@ def _truth(dataset, company: str, as_of: date) -> dict[str, dict]:
     return out
 
 
+def _items(coverage):
+    return {key: row for key, row in coverage.items() if key != "__con__"}
+
+
+def _plan_need(dataset, company: str, as_of: date) -> dict[str, Decimal]:
+    tables = dataset.tables[company]
+    open_orders = {
+        o[_col("OWOR", "DocEntry")] for o in tables["OWOR"]
+        if o[_col("OWOR", "Status")] in ("P", "R") and _day(o[_col("OWOR", "DueDate")]) <= as_of + timedelta(days=HORIZON)
+    }
+    need: dict[str, Decimal] = defaultdict(Decimal)
+    for line in tables["WOR1"]:
+        if line[_col("WOR1", "DocEntry")] in open_orders:
+            need[line[_col("WOR1", "ItemCode")]] += max(line[_col("WOR1", "PlannedQty")] - (line[_col("WOR1", "IssuedQty")] or 0), Decimal(0))
+    return need
+
+
 def test_positions_and_consumption_match_the_business_one_tables(coverage, dataset):
+    coverage = _items(coverage)
     as_of = {row["as_of_date"] for row in coverage.values()}
     assert len(as_of) == 1
     as_of = as_of.pop()
@@ -128,15 +151,24 @@ def test_positions_and_consumption_match_the_business_one_tables(coverage, datas
 
 
 def test_colours_and_suggestions_follow_the_replenishment_rules(coverage, dataset):
+    coverage = _items(coverage)
+    as_of = next(iter(coverage.values()))["as_of_date"]
+    plan = {company: _plan_need(dataset, company, as_of) for company in dataset.tables}
     colours = defaultdict(int)
-    suggested = 0
+    suggested = planned = 0
     for (company, item), row in coverage.items():
-        daily = _dec(row["daily_consumption"])
+        need = plan[company].get(item, Decimal(0))
+        assert _dec(row["plan_need_qty"]) == need, (company, item)
+        historical = max(_dec(row["consumed_90d"]), Decimal(0)) / 90
+        exact_daily = max(historical, need / HORIZON)
+        assert abs(_dec(row["daily_consumption"]) - exact_daily) <= Decimal("0.000001"), (company, item)
+        assert row["consumption_basis"] == ("plan" if need / HORIZON > historical else "historico")
+        planned += row["consumption_basis"] == "plan"
         colours[row["coverage_color"]] += 1
-        if daily == 0:
+        if exact_daily == 0:
             assert row["coverage_color"] == "sin_consumo" and _dec(row["suggested_qty"]) == 0 and row["coverage_days"] is None
+            assert not row["stockout_risk"]
             continue
-        exact_daily = _dec(row["consumed_90d"]) / 90
         lead = row["lead_time_days"]
         position = _dec(row["position_qty"])
         reorder = exact_daily * (lead + SAFETY_DAYS)
@@ -146,17 +178,23 @@ def test_colours_and_suggestions_follow_the_replenishment_rules(coverage, datase
         cover = position / exact_daily
         assert abs(_dec(row["coverage_with_orders_days"]) - cover) <= Decimal("0.051")
         whole = abs(cover - cover.to_integral_value()) < Decimal("0.0001")
-        if abs(cover - lead) > Decimal("0.01") and abs(position - reorder) > Decimal("0.01"):
-            expected = "rojo" if cover < lead else "amarillo" if position < reorder else "verde"
-            assert row["coverage_color"] == expected, (company, item)
-        assert row["stockout_risk"] == (row["coverage_color"] == "rojo")
+        if min(abs(cover - 30), abs(cover - 60)) > Decimal("0.01"):
+            assert row["coverage_color"] == ("rojo" if cover < 30 else "amarillo" if cover < 60 else "verde"), (company, item)
+        if abs(cover - lead) > Decimal("0.01"):
+            assert row["stockout_risk"] == (cover < lead), (company, item)
         if not whole:
             assert row["stockout_date"] == row["as_of_date"] + timedelta(days=math.floor(cover))
-        if row["coverage_color"] in ("rojo", "amarillo"):
+        net_need = max(exact_daily * HORIZON - _dec(row["available"]), Decimal(0))
+        assert abs(_dec(row["net_need_qty"]) - net_need) <= Decimal("0.00001")
+        if net_need > 0:
+            assert abs(_dec(row["open_po_vs_need_pct"]) - 100 * _dec(row["open_po_qty"]) / net_need) <= Decimal("0.01")
+        if abs(position - reorder) <= Decimal("0.01"):
+            continue
+        if position < reorder:
             suggested += 1
             multiple = _dec(row["order_multiple"])
-            need = max(up_to - position, _dec(row["min_order_qty"]))
-            qty = (need / multiple).to_integral_value(rounding="ROUND_CEILING") * multiple
+            qty_needed = max(up_to - position, _dec(row["min_order_qty"]))
+            qty = (qty_needed / multiple).to_integral_value(rounding="ROUND_CEILING") * multiple
             assert _dec(row["suggested_qty"]) == qty, (company, item)
             assert _dec(row["suggested_qty"]) % multiple == 0 and _dec(row["suggested_qty"]) >= _dec(row["min_order_qty"])
             if not whole:
@@ -166,4 +204,57 @@ def test_colours_and_suggestions_follow_the_replenishment_rules(coverage, datase
             assert (row["suggested_supplier"] is None) == made
         else:
             assert _dec(row["suggested_qty"]) == 0 and row["suggested_action"] is None and row["order_by_date"] is None
-    assert suggested > 0 and colours["verde"] > 0, dict(colours)
+    assert suggested > 0 and colours["verde"] > 0 and planned > 0, (dict(colours), suggested, planned)
+
+
+def test_raw_materials_are_ranked_by_the_value_they_consume(coverage):
+    coverage = _items(coverage)
+    rows = [row for row in coverage.values() if row["company"] == "mx_mfg"]
+    materials = sorted((r for r in rows if r["is_raw_material"]), key=lambda r: r["criticality_rank"])
+    assert materials and all(r["item_code"].startswith("RM-") for r in materials)
+    assert [r["criticality_rank"] for r in materials] == list(range(1, len(materials) + 1))
+    values = [_dec(r["daily_consumption"]) * _dec(r["unit_cost_local"]) for r in materials]
+    assert values == sorted(values, reverse=True)
+    assert all(r["is_critical"] == (r["criticality_rank"] <= 30) for r in materials)
+    assert all(r["criticality_rank"] is None and not r["is_critical"] for r in rows if not r["is_raw_material"])
+    alternates = [r for r in materials if r["alternate_supplier"]]
+    assert all(r["alternate_supplier"] != r["suggested_supplier"] for r in alternates)
+
+
+def test_supplier_lead_time_flags_the_supplier_that_delivers_late(coverage, dataset):
+    con = coverage["__con__"]
+    rows = _rows(con, "SELECT company, card_code, SUM(receipts), SUM(late_receipts), MIN(on_time_pct), MAX(max_delay_days) "
+                      "FROM sap_b1_supplier_lead_time GROUP BY 1, 2")
+    by = {(r[0], r[1]): r[2:] for r in rows}
+    tables = dataset.tables["mx_mfg"]
+    receipts = defaultdict(int)
+    for line in tables["PDN1"]:
+        head = next(h for h in tables["OPDN"] if h[_col("OPDN", "DocEntry")] == line[_col("PDN1", "DocEntry")])
+        if head[_col("OPDN", "CANCELED")] == "N":
+            receipts[head[_col("OPDN", "CardCode")]] += 1
+    for supplier, count in receipts.items():
+        total, late, on_time, delay = by[("mx_mfg", supplier)]
+        assert total == count, supplier
+        if supplier == generator.LATE_SUPPLIER:
+            assert late == count and on_time == 0 and delay >= 1
+        else:
+            assert late == 0 and on_time == 100
+    assert generator.LATE_SUPPLIER in receipts
+
+
+def test_real_purchase_cost_is_graded_against_the_item_cost(coverage, dataset):
+    con = coverage["__con__"]
+    rows = _rows(con, "SELECT company, period, item_code, variance_pct, above_threshold, is_raw_material "
+                      "FROM sap_b1_material_cost_variance WHERE company = 'mx_mfg' AND item_code LIKE 'RM-%'")
+    assert rows
+    months = sorted({r[1] for r in rows})
+    first = generator.month_start(dataset.start_month, 0)
+    for company, period, item, variance, above, raw in rows:
+        index = (int(period[:4]) - first.year) * 12 + int(period[5:]) - first.month
+        dearer = index % generator.PRICE_VARIANCE_EVERY == generator.PRICE_VARIANCE_EVERY - 1
+        assert raw
+        if dearer:
+            assert abs(_dec(variance) - Decimal("8")) <= Decimal("0.001") and above, (period, item)
+        else:
+            assert abs(_dec(variance)) <= Decimal("0.001") and not above, (period, item)
+    assert len(months) >= 20

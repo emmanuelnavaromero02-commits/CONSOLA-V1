@@ -14,8 +14,8 @@ TOOL = "control_room__sap_b1_kpis_read"
 
 
 def control_room_views() -> dict[str, str]:
-    return {"abasto": "sap_b1_supply_kpis", "caducidad": "sap_b1_expiry_kpis", "margen": "sap_b1_margin_kpis",
-            "semaforo": "sap_b1_semaforo_kpis", "ventas": "sap_b1_sales_kpis"}
+    return {"abasto": "sap_b1_supply_kpis", "aprendizaje": "sap_b1_learning_kpis", "caducidad": "sap_b1_expiry_kpis",
+            "margen": "sap_b1_margin_kpis", "semaforo": "sap_b1_semaforo_kpis", "ventas": "sap_b1_sales_kpis"}
 
 
 @pytest.fixture(autouse=True)

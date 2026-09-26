@@ -8,12 +8,12 @@ WITH items AS (
 ),
 lines AS (
     SELECT company, doc_month, local_currency, is_intercompany, counterparty_company, item_code,
-           COALESCE(quantity, 0) AS qty, amount_local AS amount, COALESCE(cost_local, 0) AS cost
+           COALESCE(quantity, 0) AS qty, amount_local_net AS amount, COALESCE(cost_local, 0) AS cost
     FROM read_parquet('s3://{bucket}/silver/sap_b1/sap_b1_ar_invoice_lines/**/*.parquet')
     WHERE canceled = 'N' AND item_code IS NOT NULL
     UNION ALL
     SELECT company, doc_month, local_currency, is_intercompany, counterparty_company, item_code,
-           -COALESCE(quantity, 0), -amount_local, -COALESCE(cost_local, 0)
+           -COALESCE(quantity, 0), -amount_local_net, -COALESCE(cost_local, 0)
     FROM read_parquet('s3://{bucket}/silver/sap_b1/sap_b1_ar_credit_memo_lines/**/*.parquet')
     WHERE canceled = 'N' AND item_code IS NOT NULL
 ),

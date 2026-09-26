@@ -3,6 +3,9 @@ import { api } from "@/lib/api";
 import type {
   ActivityPayload,
   ControlRoomAgentsOpsPayload,
+  ControlRoomAlertMutation,
+  ControlRoomAlertsPayload,
+  ControlRoomDecisionMutation,
   Dashboard,
   ImpactPayload,
   LessonsPayload,
@@ -20,6 +23,7 @@ import type {
 
 export const CONTROL_ROOM_PATHS = {
   dashboard: "/api/control-room/dashboard",
+  alerts: "/api/control-room/alerts",
   lessons: "/api/control-room/lessons",
   thresholds: "/api/control-room/thresholds",
   agentsOps: "/api/control-room/agents/ops",
@@ -36,6 +40,27 @@ export const CONTROL_ROOM_PATHS = {
 
 export async function getControlRoomDashboard(): Promise<Dashboard> {
   const response = await api.get<Dashboard>(CONTROL_ROOM_PATHS.dashboard);
+  return response.data;
+}
+
+export async function listAlerts(): Promise<ControlRoomAlertsPayload> {
+  const response = await api.get<ControlRoomAlertsPayload>(CONTROL_ROOM_PATHS.alerts);
+  return response.data;
+}
+
+export async function createItemDecision(itemId: string): Promise<ControlRoomDecisionMutation> {
+  const response = await api.post<ControlRoomDecisionMutation>(
+    `/api/control-room/items/${encodeURIComponent(itemId)}/decision`,
+  );
+  return response.data;
+}
+
+export async function markAlertFalsePositive(itemId: string, note?: string): Promise<ControlRoomAlertMutation> {
+  const text = note?.trim();
+  const response = await api.post<ControlRoomAlertMutation>(
+    `${CONTROL_ROOM_PATHS.alerts}/${encodeURIComponent(itemId)}/false-positive`,
+    text ? { note: text } : {},
+  );
   return response.data;
 }
 
@@ -68,8 +93,9 @@ export async function getControlRoomThresholds(): Promise<ThresholdPayload> {
   return response.data;
 }
 
-export async function getControlRoomAgentsOps(): Promise<ControlRoomAgentsOpsPayload> {
-  const response = await api.get<ControlRoomAgentsOpsPayload>(CONTROL_ROOM_PATHS.agentsOps);
+export async function getControlRoomAgentsOps(limit?: number): Promise<ControlRoomAgentsOpsPayload> {
+  const query = limit ? `?limit=${Math.max(1, Math.min(50, Math.floor(limit)))}` : "";
+  const response = await api.get<ControlRoomAgentsOpsPayload>(`${CONTROL_ROOM_PATHS.agentsOps}${query}`);
   return response.data;
 }
 

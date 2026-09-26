@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import tempfile
 from datetime import datetime, timezone
@@ -47,6 +48,81 @@ def _create_s3_secret(
     if endpoint:
         options.append(f"ENDPOINT {_sql_text(endpoint)}")
     conn.execute(f"CREATE OR REPLACE SECRET omega_s3_keys ({', '.join(options)});")
+
+
+_DUCKDB_SIZE_UNITS = {
+    "b": 1,
+    "kb": 1000,
+    "mb": 1000**2,
+    "gb": 1000**3,
+    "tb": 1000**4,
+    "kib": 1024,
+    "mib": 1024**2,
+    "gib": 1024**3,
+    "tib": 1024**4,
+}
+_DUCKDB_SIZE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*([A-Za-z]+)")
+_CGROUP_MEMORY_LIMIT_FILES = (
+    "/sys/fs/cgroup/memory.max",
+    "/sys/fs/cgroup/memory/memory.limit_in_bytes",
+)
+_DUCKDB_FALLBACK_MEMORY_LIMIT = "1GB"
+
+
+def _duckdb_size_bytes(value: str) -> int:
+    match = _DUCKDB_SIZE_RE.fullmatch(value.strip())
+    unit = match.group(2).lower() if match else ""
+    if unit not in _DUCKDB_SIZE_UNITS:
+        raise RuntimeError("duckdb_resource_limits_invalid")
+    return int(float(match.group(1)) * _DUCKDB_SIZE_UNITS[unit])
+
+
+def _container_memory_limit_bytes() -> int | None:
+    for path in _CGROUP_MEMORY_LIMIT_FILES:
+        try:
+            raw = Path(path).read_text(encoding="ascii").strip()
+        except (OSError, UnicodeDecodeError):
+            continue
+        return int(raw) if raw.isdigit() and 0 < int(raw) < 1 << 60 else None
+    return None
+
+
+def _duckdb_memory_limit() -> str:
+    candidates: list[tuple[int, str]] = []
+    configured = os.environ.get("DUCKDB_MEMORY_LIMIT", "").strip()
+    if configured:
+        candidates.append((_duckdb_size_bytes(configured), configured))
+    container = _container_memory_limit_bytes()
+    if container:
+        mib = max(1, int(container * 0.7) // 1024**2)
+        candidates.append((mib * 1024**2, f"{mib}MiB"))
+    if not candidates:
+        return _DUCKDB_FALLBACK_MEMORY_LIMIT
+    return min(candidates, key=lambda item: item[0])[1]
+
+
+def _apply_resource_limits(conn: duckdb.DuckDBPyConnection) -> None:
+    try:
+        conn.execute("SET preserve_insertion_order=false;")
+        conn.execute(f"SET memory_limit='{_duckdb_memory_limit()}';")
+        try:
+            spill = os.environ.get("DUCKDB_TEMP_DIRECTORY", "").strip() or os.path.join(
+                tempfile.gettempdir(), "omega-duckdb-spill"
+            )
+        except OSError:
+            # read-only filesystem: there is nowhere to spill, keep DuckDB's default
+            return
+        if not spill.startswith("/") or any(ch in spill for ch in "'\"\0\n\r"):
+            raise RuntimeError("duckdb_resource_limits_invalid")
+        try:
+            os.makedirs(spill, mode=0o700, exist_ok=True)
+        except OSError:
+            return
+        private = os.path.join(spill, os.urandom(16).hex())
+        conn.execute(f"SET temp_directory='{private}';")
+    except Exception:
+        conn.close()
+        raise RuntimeError("duckdb_resource_limits_invalid") from None
 
 
 _BUCKET_NAME_RE = re.compile(r"[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]")
@@ -97,6 +173,7 @@ def _get_duckdb_connection() -> duckdb.DuckDBPyConnection:
     except Exception:  # noqa: BLE001 - never echo a credential-bearing setup error.
         conn.close()
         raise RuntimeError("storage_access_denied") from None
+    _apply_resource_limits(conn)
     _restrict_external_access(conn, storage["bucket"])
     conn.execute("SET lock_configuration=true;")
     return conn

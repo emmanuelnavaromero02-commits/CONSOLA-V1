@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ControlRoomAgentsOpsPayload } from "@/lib/control-room/types";
 
-import { AgentsOpsPanel } from "./AgentsOpsPanel";
+import { AgentsOpsPanel, wisdomBitCards, type WisdomBitScope } from "./AgentsOpsPanel";
 
 const summary: ControlRoomAgentsOpsPayload["summary"] = {
   agents_total: 1,
@@ -89,5 +89,73 @@ describe("AgentsOpsPanel public projection", () => {
     expect(markup).toContain("Sin agentes visibles");
     expect(markup).toContain("Sin capacidades registradas");
     expect(markup).not.toContain("undefined");
+  });
+});
+
+describe("AgentsOpsPanel scoped by WisdomBit prefix", () => {
+  const scope: WisdomBitScope = {
+    prefix: "WB-B1-",
+    expected: ["WB-B1-MARGEN", "WB-B1-SEMAFORO"],
+    stages: { "WB-B1-MARGEN": "Detección" },
+    now: new Date("2026-09-25T12:00:00Z"),
+    monitors: [
+      {
+        id: "agent-1",
+        name: "Agente de Detección de margen SAP Business One",
+        slug: "sap_b1_margin_monitor",
+        cartridgeId: "sap_b1",
+        wisdomBitId: "WB-B1-MARGEN",
+        description: "Detección diaria de margen",
+        active: true,
+        cron: "20 7 * * *",
+        timeZone: "America/Mexico_City",
+      },
+    ],
+    runs: {
+      "agent-1": {
+        loading: false,
+        failed: false,
+        runs: [
+          { id: 2, status: "failed", started_at: "2026-09-25T13:20:00Z", finished_at: "2026-09-25T13:21:00Z" },
+          { id: 1, status: "success", started_at: "2026-09-24T13:20:00Z" },
+        ],
+      },
+    },
+  };
+
+  it("renders only the prefix monitors with schedule, stage, runs and the missing ones", () => {
+    const payload: ControlRoomAgentsOpsPayload = {
+      summary,
+      agents: [
+        {
+          name: "Agente de Detección de margen SAP Business One",
+          operational_tools_count: 9,
+          alerts: { total: 4, open: 2 },
+        },
+        { name: "Monitor de talento", operational_tools_count: 2, alerts: { total: 9, open: 9 } },
+      ],
+    };
+    const markup = renderToStaticMarkup(
+      <AgentsOpsPanel payload={payload} loading={false} error="" collapsed={false} onToggle={() => undefined} scope={scope} />,
+    );
+
+    expect(markup).toContain("Monitores WB-B1-*");
+    expect(markup).toContain("WB-B1-MARGEN");
+    expect(markup).toContain("Detección");
+    expect(markup).toContain("Horario 07:20 America/Mexico_City");
+    expect(markup).toContain("2 abiertas");
+    expect(markup).toContain("Monitores sin registrar en este workspace");
+    expect(markup).toContain("WB-B1-SEMAFORO");
+    expect(markup).not.toContain("Monitor de talento");
+    expect(markup).not.toContain("Capacidades");
+    expect(markup).not.toContain("undefined");
+  });
+
+  it("builds cards with the next run and without alert data when AgentOps is unavailable", () => {
+    const [card] = wisdomBitCards(scope, null);
+    expect(card.nextRunAt).toBe("2026-09-25T13:20:00.000Z");
+    expect(card.status).toBe("failed");
+    expect(card.recentStatuses).toEqual(["failed", "success"]);
+    expect(card.alertsOpen).toBeNull();
   });
 });

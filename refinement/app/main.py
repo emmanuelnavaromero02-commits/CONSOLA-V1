@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import io
 import hmac
 import hashlib
 import json
@@ -15,7 +14,6 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import duckdb
-import pyarrow.parquet as pq
 import sqlglot
 from sqlglot import exp as sql_exp
 from fastapi import FastAPI, Header, HTTPException, Depends, Request
@@ -2328,10 +2326,11 @@ def _mcp_invoke_sync(body: dict):
             key = engine._s3_object_key(str(snapshot.head["object_uri"]))
             if not key:
                 raise RuntimeError("published Silver object is outside storage")
-            raw = engine.storage.get_bytes(
-                key, expected_version=str(snapshot.head["object_version"])
+            table = engine._read_published_table(
+                str(snapshot.head["object_uri"]),
+                str(snapshot.head["object_version"]),
+                max_rows=max(0, int(limit)),
             )
-            table = pq.read_table(io.BytesIO(raw))
             projection = public_dataset_projection(ds, snapshot)
             sample = table.slice(0, max(0, int(limit))).to_pylist()
             return {

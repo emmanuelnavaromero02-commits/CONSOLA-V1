@@ -10,6 +10,8 @@ from app.services.b1_queries import METADATA_COLUMNS
 
 CARTRIDGE_ID = "sap_b1"
 BRONZE_PREFIX = f"raw/{CARTRIDGE_ID}/"
+AGENT_PREFIX = f"{BRONZE_PREFIX}_agent/"
+HEARTBEAT_NAME = "heartbeat.json"
 EXTRACTED_AT_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 LOAD_DATE_FORMAT = "%Y-%m-%d"
 _SAFE_SCOPE_SEGMENT = re.compile(r"[A-Za-z0-9_.:-]+")
@@ -116,14 +118,21 @@ def bronze_object_name(entity: str, scope: str, load_date: str, run_id: str) -> 
     return f"{BRONZE_PREFIX}{entity}/{scope}load_date={load_date}/batch_id={run_id}/{entity}.parquet"
 
 
+def heartbeat_object_name(scope: str) -> str:
+    return f"{AGENT_PREFIX}{scope}{HEARTBEAT_NAME}"
+
+
 __all__ = [
+    "AGENT_PREFIX",
     "BRONZE_PREFIX",
     "CARTRIDGE_ID",
+    "HEARTBEAT_NAME",
     "METADATA_COLUMNS",
     "bronze_object_name",
     "bronze_table",
     "coerce_for_schema",
     "enrich_rows",
+    "heartbeat_object_name",
     "normalize_rows",
     "scope_prefix",
     "stamp_now",

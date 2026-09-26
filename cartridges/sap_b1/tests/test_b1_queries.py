@@ -5,12 +5,12 @@ from decimal import Decimal
 
 import pytest
 
+from app.core.b1_dialects import get_dialect
 from app.core.b1_source import (
     B1ConfigurationError,
     Connection,
     parse_companies,
     quote_ident,
-    quote_schema,
 )
 from app.services import b1_queries as q
 
@@ -65,11 +65,12 @@ def test_identifiers_are_validated_before_they_reach_sql():
     for bad in ('X") UNION SELECT 1; --', "Doc Entry", "", "1abc", 'a"b', "a.b"):
         with pytest.raises(ValueError):
             quote_ident(bad)
-    assert quote_schema("SBO-DEMO_MX") == '"SBO-DEMO_MX"'
-    assert quote_schema("SBODEMOMX") == '"SBODEMOMX"'
+    hana = get_dialect("hana")
+    assert hana.company_prefix("SBO-DEMO_MX") == '"SBO-DEMO_MX"'
+    assert hana.table_ref("SBODEMOMX", "OINV") == '"SBODEMOMX"."OINV"'
     for bad in ('a"b', "a b", "", 'x"; DROP SCHEMA public; --', "a/b"):
         with pytest.raises(ValueError):
-            quote_schema(bad)
+            hana.company_prefix(bad)
 
 
 def test_company_map_parses_and_rejects_malformed_entries():
@@ -90,8 +91,9 @@ def test_connection_renders_the_driver_placeholder():
         def close(self):
             pass
 
-    assert Connection(_Raw(), "%s", ()).render('SELECT ? FROM "T" WHERE "A" = ?') == 'SELECT %s FROM "T" WHERE "A" = %s'
-    assert Connection(_Raw(), "?", ()).render('SELECT ? FROM "T"') == 'SELECT ? FROM "T"'
+    assert Connection(_Raw(), "postgres", ()).render('SELECT ? FROM "T" WHERE "A" = ?') == 'SELECT %s FROM "T" WHERE "A" = %s'
+    assert Connection(_Raw(), "hana", ()).render('SELECT ? FROM "T"') == 'SELECT ? FROM "T"'
+    assert Connection(_Raw(), "mssql", ()).render('SELECT ? FROM "T"') == 'SELECT ? FROM "T"'
 
 
 def test_update_stamp_watermark_round_trips_and_backs_off():
@@ -163,14 +165,14 @@ def test_plan_accepts_json_and_csv_column_lists():
 def test_header_incremental_sql_uses_the_stamp_pair_and_keyset_paging():
     plan = q.plan_from_config(_oinv())
     mark = q.Watermark.parse("b1_update_ts", "2025-03-04T13:45:10")
-    sql, params = q.select_sql(plan, "SBO_X", mode="incremental", watermark=mark)
+    sql, params = q.select_sql(plan, "SBO_X", dialect="hana", mode="incremental", watermark=mark)
     assert sql.startswith('SELECT t."DocEntry", t."DocNum", t."CardCode", t."DocDate", t."DocTotal", t."UpdateDate", t."UpdateTS", t."UpdateDate" AS "_wm_date", t."UpdateTS" AS "_wm_ts" FROM "SBO_X"."OINV" t')
     assert 'WHERE (t."UpdateDate" > ? OR (t."UpdateDate" = ? AND t."UpdateTS" >= ?))' in sql
     assert sql.endswith('ORDER BY t."DocEntry" LIMIT 2000')
     assert params == [datetime(2025, 3, 4), datetime(2025, 3, 4), 134510]
     assert "JOIN" not in sql and "OFFSET" not in sql
 
-    sql2, params2 = q.select_sql(plan, "SBO_X", mode="incremental", watermark=mark, after_key=(41,))
+    sql2, params2 = q.select_sql(plan, "SBO_X", dialect="hana", mode="incremental", watermark=mark, after_key=(41,))
     assert 'AND t."DocEntry" > ?' in sql2
     assert params2 == [datetime(2025, 3, 4), datetime(2025, 3, 4), 134510, 41]
 
@@ -178,7 +180,7 @@ def test_header_incremental_sql_uses_the_stamp_pair_and_keyset_paging():
 def test_line_tables_are_read_through_their_header():
     plan = q.plan_from_config(_inv1())
     mark = q.Watermark.parse("b1_update_ts", "2025-03-04T13:45:10")
-    sql, params = q.select_sql(plan, "SBO_X", mode="incremental", watermark=mark, after_key=(10, 3))
+    sql, params = q.select_sql(plan, "SBO_X", dialect="hana", mode="incremental", watermark=mark, after_key=(10, 3))
     assert 'FROM "SBO_X"."INV1" t JOIN "SBO_X"."OINV" h ON h."DocEntry" = t."DocEntry"' in sql
     assert 'h."UpdateDate" AS "_wm_date", h."UpdateTS" AS "_wm_ts"' in sql
     assert '(h."UpdateDate" > ? OR (h."UpdateDate" = ? AND h."UpdateTS" >= ?))' in sql
@@ -186,36 +188,36 @@ def test_line_tables_are_read_through_their_header():
     assert sql.endswith('ORDER BY t."DocEntry", t."LineNum" LIMIT 5000')
     assert params == [datetime(2025, 3, 4), datetime(2025, 3, 4), 134510, 10, 10, 3]
 
-    full_sql, full_params = q.select_sql(plan, "SBO_X", mode="full")
+    full_sql, full_params = q.select_sql(plan, "SBO_X", dialect="hana", mode="full")
     assert 'JOIN "SBO_X"."OINV" h' in full_sql and "_wm_date" in full_sql and "WHERE" not in full_sql
     assert full_params == []
 
 
 def test_integer_watermark_is_a_strict_greater_than():
     plan = q.plan_from_config(_oinm())
-    sql, params = q.select_sql(plan, "SBO_X", mode="incremental", watermark=q.Watermark.from_number(500))
+    sql, params = q.select_sql(plan, "SBO_X", dialect="hana", mode="incremental", watermark=q.Watermark.from_number(500))
     assert 'WHERE t."TransNum" > ?' in sql
     assert "_wm_date" not in sql
     assert params == [500]
     with pytest.raises(ValueError, match="watermark kind"):
-        q.select_sql(plan, "SBO_X", mode="incremental", watermark=q.Watermark.parse("b1_update_ts", "2025-01-01T00:00:00"))
+        q.select_sql(plan, "SBO_X", dialect="hana", mode="incremental", watermark=q.Watermark.parse("b1_update_ts", "2025-01-01T00:00:00"))
 
 
 def test_historical_reads_use_the_document_date_inclusive_of_the_end_day():
     header = q.plan_from_config(_oinv())
-    sql, params = q.select_sql(header, "SBO_X", mode="historical", from_date="2025-01-01", to_date="2025-01-31")
+    sql, params = q.select_sql(header, "SBO_X", dialect="hana", mode="historical", from_date="2025-01-01", to_date="2025-01-31")
     assert 'WHERE t."DocDate" >= ? AND t."DocDate" < ?' in sql
     assert params == [datetime(2025, 1, 1), datetime(2025, 2, 1)]
     line = q.plan_from_config(_inv1())
-    sql2, params2 = q.select_sql(line, "SBO_X", mode="historical", from_date="2025-01-01", to_date="2025-01-31")
+    sql2, params2 = q.select_sql(line, "SBO_X", dialect="hana", mode="historical", from_date="2025-01-01", to_date="2025-01-31")
     assert 'JOIN "SBO_X"."OINV" h' in sql2 and 'h."DocDate" >= ?' in sql2
     assert params2 == [datetime(2025, 1, 1), datetime(2025, 2, 1)]
     with pytest.raises(ValueError, match="ISO date"):
-        q.select_sql(header, "SBO_X", mode="historical", from_date="next tuesday")
+        q.select_sql(header, "SBO_X", dialect="hana", mode="historical", from_date="next tuesday")
     with pytest.raises(ValueError, match="before"):
-        q.select_sql(header, "SBO_X", mode="historical", from_date="2025-02-01", to_date="2025-01-01")
+        q.select_sql(header, "SBO_X", dialect="hana", mode="historical", from_date="2025-02-01", to_date="2025-01-01")
     with pytest.raises(ValueError, match="date_field"):
-        q.select_sql(q.plan_from_config({**_oinv(), "date_field": None}), "SBO_X", mode="historical", from_date="2025-01-01")
+        q.select_sql(q.plan_from_config({**_oinv(), "date_field": None}), "SBO_X", dialect="hana", mode="historical", from_date="2025-01-01")
 
 
 def test_column_types_become_an_explicit_parquet_schema():
@@ -241,11 +243,11 @@ def test_column_types_become_an_explicit_parquet_schema():
 
 def test_full_mode_of_a_snapshot_table_has_no_predicate_or_paging_without_a_key():
     plan = q.plan_from_config({"entity": "CINF", "select_fields": ["Version", "CompnyName"], "page_size": 100})
-    sql, params = q.select_sql(plan, "SBO_X", mode="full")
+    sql, params = q.select_sql(plan, "SBO_X", dialect="hana", mode="full")
     assert sql == 'SELECT t."Version", t."CompnyName" FROM "SBO_X"."CINF" t'
     assert params == []
     with pytest.raises(ValueError, match="mode"):
-        q.select_sql(plan, "SBO_X", mode="delta")
+        q.select_sql(plan, "SBO_X", dialect="hana", mode="delta")
 
 
 def test_rows_become_records_with_company_and_source_stamp():

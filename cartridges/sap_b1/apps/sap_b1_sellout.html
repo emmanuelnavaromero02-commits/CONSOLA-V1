@@ -1,227 +1,459 @@
 <!DOCTYPE html>
 <!--
   app_id: sap_b1_sellout
-  name: Ventas y caducidad SAP Business One
+  name: Sell-out y caducidad SAP Business One
   cartridge: sap_b1
-  datasets: [sap_b1_distributor_scorecard_month, sap_b1_sellin_sellout_month, sap_b1_batch_expiry]
+  datasets: [sap_b1_distributor_scorecard_month, sap_b1_sellout_by_customer_month, sap_b1_sellin_sellout_month, sap_b1_batch_expiry]
 -->
-<html lang="es" data-theme="dark">
+<html lang="es-MX">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ventas y caducidad — SAP Business One</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<title>Sell-out y caducidad — SAP Business One</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"
+        integrity="sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ"
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <style>
-  :root{--bg:#0d1117;--bg2:#161b22;--border:#30363d;--text1:#e6edf3;--text2:#8b949e;--text3:#6e7681;
-        --blue:#7c9fff;--green:#3fb950;--amber:#d29922;--red:#f85149;--purple:#bc8cff}
+  :root{color-scheme:light;
+    --bg:#f5f7fa;--bg2:#ffffff;--bg3:#eef2f7;--border:#d8dee8;--text1:#0f172a;--text2:#334155;--text3:#64748b;
+    --green:#117a3d;--blue:#0a6ed1;--amber:#b06d00;--red:#b3261e;--purple:#6d5bd0;
+    --s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;
+    --h0:#cde2fb;--h1:#9ec5f4;--h2:#6da7ec;--h3:#3987e5;--h4:#256abf;--h5:#184f95;--h6:#0d366b;
+    --h0t:#0f172a;--h1t:#0f172a;--h2t:#0f172a;--h3t:#0f172a;--h4t:#ffffff;--h5t:#ffffff;--h6t:#ffffff}
+  :root[data-theme="dark"]{color-scheme:dark;
+    --bg:#0f1822;--bg2:#182331;--bg3:#1f2c3d;--border:rgba(226,232,240,.14);--text1:#e6edf6;--text2:#c5cfdc;--text3:#8a96a8;
+    --green:#4cb27b;--blue:#4ea3e0;--amber:#d4a042;--red:#e0716b;--purple:#b8a7f5;
+    --s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#c98500;
+    --h0:#0d366b;--h1:#184f95;--h2:#256abf;--h3:#3987e5;--h4:#6da7ec;--h5:#9ec5f4;--h6:#cde2fb;
+    --h0t:#e6edf6;--h1t:#e6edf6;--h2t:#ffffff;--h3t:#0f172a;--h4t:#0f172a;--h5t:#0f172a;--h6t:#0f172a}
   *{box-sizing:border-box}
-  body{margin:0;padding:22px;background:var(--bg);color:var(--text1);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;font-size:13px}
-  h1{font-size:18px;margin:0 0 2px}
-  .subtitle{color:var(--text2);font-size:11px;margin-bottom:16px}
-  .controls{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
-  .controls label{color:var(--text2);font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:600}
-  select{background:var(--bg2);color:var(--text1);border:1px solid var(--border);border-radius:6px;padding:7px 10px;font-size:12px}
-  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:18px}
-  .kpi{background:var(--bg2);border:1px solid var(--border);border-left:3px solid var(--accent,var(--blue));border-radius:8px;padding:14px 16px}
-  .kpi .l{font-size:9px;color:var(--text2);letter-spacing:1.2px;font-weight:600;text-transform:uppercase;margin-bottom:8px}
-  .kpi .v{font-size:22px;font-weight:700}
-  .kpi .s{font-size:10px;color:var(--text3);margin-top:6px}
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-  .section{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px}
+  body{margin:0;padding:20px;background:var(--bg);color:var(--text1);font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
+  h1{font-size:19px;margin:0}
+  h2{font-size:12px;color:var(--text2);text-transform:uppercase;letter-spacing:.8px;font-weight:700;margin:0 0 10px}
+  h3{font-size:12px;margin:14px 0 6px;color:var(--text1)}
+  :focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  .top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+  .subtitle{color:var(--text2);margin:4px 0 0;max-width:760px}
+  .controls{display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px}
+  .controls label{display:flex;flex-direction:column;gap:4px;color:var(--text2);font-size:11px;font-weight:600}
+  select,input{background:var(--bg2);color:var(--text1);border:1px solid var(--border);border-radius:6px;padding:7px 10px;font-size:13px;min-height:34px}
+  .meta{color:var(--text3);font-size:12px;padding-bottom:8px}
+  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:14px;overflow-x:auto;scrollbar-width:none}
+  .tabs [role=tab]{background:none;border:0;border-bottom:2px solid transparent;color:var(--text2);padding:9px 12px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap}
+  .tabs [role=tab][aria-selected=true]{color:var(--blue);border-bottom-color:var(--blue)}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:14px}
+  @media (min-width:700px){.kpis{grid-template-columns:repeat(3,minmax(0,1fr))}}
+  @media (min-width:1150px){.kpis{grid-template-columns:repeat(5,minmax(0,1fr))}}
+  .kpi{background:var(--bg2);border:1px solid var(--border);border-top:3px solid var(--accent,var(--blue));border-radius:8px;padding:12px 14px;min-width:0}
+  .kpi h3{margin:0 0 6px;font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;cursor:help}
+  .kpi .v{font-size:21px;font-weight:700;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+  .kpi .v small{font-size:12px;font-weight:600;color:var(--text2)}
+  .kpi .s{font-size:12px;color:var(--text2);margin-top:4px}
+  .kpi ul{list-style:none;margin:4px 0 0;padding:0;font-size:12px;color:var(--text2)}
+  .kpi li{display:flex;justify-content:space-between;gap:8px}
+  .kpi ul.stack li{display:block;margin-top:4px} .kpi ul.stack strong{display:block;color:var(--text1)}
+  details.formula{margin-top:8px;font-size:11px;color:var(--text3)}
+  details.formula summary{cursor:pointer;color:var(--text2)}
+  details.formula p{margin:6px 0 0}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .card{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px;min-width:0}
   .full{grid-column:1/-1}
-  .title{font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:1px;font-weight:600;margin-bottom:12px}
+  .split{display:grid;grid-template-columns:minmax(0,1fr);gap:14px}
+  @media (min-width:1200px){.split{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr)}}
+  .hint{color:var(--text3);margin:0 0 10px;font-size:12px}
   .chart{position:relative;height:280px}
+  .chart-off{color:var(--text3);font-style:italic;margin:0;padding:12px 0}
+  .chart.off{height:auto!important}
+  .tw{overflow:auto;max-width:100%}
+  .tw.tall{max-height:460px}
   table{width:100%;border-collapse:collapse;font-size:12px}
-  th,td{text-align:left;padding:7px 9px;border-bottom:1px solid var(--border)}
-  th{color:var(--text2);font-size:10px;text-transform:uppercase}
-  td.n{text-align:right;font-variant-numeric:tabular-nums}
+  caption{text-align:left;color:var(--text3);font-size:11px;padding:0 0 6px}
+  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top}
+  thead th{color:var(--text2);font-size:11px;font-weight:700;position:sticky;top:0;background:var(--bg2);z-index:1}
+  td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  tbody th{font-weight:600}
+  tbody th[scope=row]{min-width:140px}
+  tr.sel td,tr.sel th{background:var(--bg3)}
+  .link{background:none;border:0;padding:0;color:var(--blue);font:inherit;font-weight:600;cursor:pointer;text-align:left}
+  .link:hover{text-decoration:underline}
+  .st{display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap;color:var(--text1);background:var(--bg3)}
+  .st i{font-style:normal;font-weight:800}
+  .st-ok{background:color-mix(in srgb,var(--green) 16%,transparent)} .st-ok i{color:var(--green)}
+  .st-warn{background:color-mix(in srgb,var(--amber) 20%,transparent)} .st-warn i{color:var(--amber)}
+  .st-bad{background:color-mix(in srgb,var(--red) 16%,transparent)} .st-bad i{color:var(--red)}
+  .st-none{color:var(--text3)}
+  .heat td.hc{text-align:center;padding:0;min-width:58px;border:2px solid var(--bg2);border-radius:4px}
+  .heat td.hc>span,.heat td.hc>button{display:block;width:100%;padding:6px 4px;font:inherit;font-weight:600;font-variant-numeric:tabular-nums;color:inherit;background:none;border:0}
+  .heat td.hc>button{cursor:pointer}
+  .heat td.hc small{display:block;font-size:10px;font-weight:600;opacity:.9}
+  .heat th{white-space:nowrap}
+  .heat td.hc.picked{outline:2px solid var(--text1);outline-offset:-2px}
+  .h0{background:var(--h0);color:var(--h0t)} .h1{background:var(--h1);color:var(--h1t)} .h2{background:var(--h2);color:var(--h2t)}
+  .h3{background:var(--h3);color:var(--h3t)} .h4{background:var(--h4);color:var(--h4t)} .h5{background:var(--h5);color:var(--h5t)}
+  .h6{background:var(--h6);color:var(--h6t)} .hn{color:var(--text3)}
+  .legend{display:flex;align-items:center;gap:8px;flex-wrap:wrap;color:var(--text3);font-size:11px;margin-top:8px}
+  .ramp{display:inline-flex;gap:2px}
+  .ramp i{display:inline-block;width:18px;height:10px;border-radius:2px}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+  .chips button{background:var(--bg2);color:var(--text2);border:1px solid var(--border);border-radius:999px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer}
+  .chips button[aria-pressed=true]{color:var(--blue);border-color:var(--blue)}
+  .btn{background:var(--bg2);color:var(--text1);border:1px solid var(--border);border-radius:6px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer}
+  .btn:hover{border-color:var(--blue);color:var(--blue)}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:space-between}
+  .summary{font-size:15px;font-weight:700}
+  textarea{width:100%;min-height:160px;background:var(--bg);color:var(--text1);border:1px solid var(--border);border-radius:6px;font:11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;padding:8px}
+  .empty{padding:18px;text-align:center;color:var(--text3);font-style:italic;margin:0}
+  .note{color:var(--text3);font-size:11px;margin:8px 0 0}
+  .error{background:color-mix(in srgb,var(--red) 12%,transparent);color:var(--text1);border:1px solid var(--red);padding:10px 12px;border-radius:6px;margin-bottom:12px}
+  .muted{color:var(--text3)}
+  @media (max-width:900px){.grid{grid-template-columns:1fr}}
+  @media (max-width:560px){body{padding:16px}.kpis{grid-template-columns:1fr 1fr}.kpi .v{font-size:18px}.chart{height:240px}}
+  @media (max-width:380px){.kpis{grid-template-columns:1fr}}
+</style>
+<style>
+  td.nowrap{white-space:nowrap}
+  .share{display:inline-block;width:64px;height:6px;border-radius:3px;background:var(--bg3);vertical-align:middle;margin-left:6px;overflow:hidden}
+  .share i{display:block;height:100%;background:var(--s1);border-radius:3px}
+  .levels{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:12px}
+  .level{border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:var(--bg2)}
+  .level .v{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums}
+  .level .s{font-size:12px;color:var(--text2)}
   tr.pick{cursor:pointer}
-  tr.pick:hover td{background:rgba(124,159,255,.06)}
-  .ok{background:rgba(63,185,80,.18)} .warn{background:rgba(210,153,34,.22)} .bad{background:rgba(248,81,73,.25)} .none{color:var(--text3)}
-  .empty{padding:24px;text-align:center;color:var(--text3);font-style:italic}
-  .error{background:rgba(248,81,73,.12);color:var(--red);border:1px solid var(--red);padding:12px;border-radius:6px;margin-bottom:14px}
-  @media(max-width:900px){.grid{grid-template-columns:1fr}}
+  @media (min-width:700px){.kpis.six{grid-template-columns:repeat(3,minmax(0,1fr))}}
+  tr.pick:hover td,tr.pick:hover th{background:var(--bg3)}
 </style>
 </head>
 <body>
-  <h1>◆ Ventas y caducidad · SAP Business One</h1>
-  <div class="subtitle">Sell-in del grupo a cada distribuidora · sell-out a clientes externos · semáforo por distribuidora · lotes por caducar</div>
-  <div id="error"></div>
-  <div class="controls">
-    <label for="period">Periodo</label><select id="period"></select>
-    <label for="distributor">Distribuidora</label><select id="distributor"></select>
+<header class="top">
+  <div>
+    <h1>Sell-out y caducidad · SAP Business One</h1>
+    <p class="subtitle">Lo que cada distribuidora del grupo compra a la fábrica y vende a clínicas: semáforo, ratio sell-out / sell-in, días de inventario en el canal, sell-out por clínica y lotes por caducar con la acción sugerida.</p>
   </div>
-  <div class="kpis" id="kpis"></div>
-  <div class="grid">
-    <div class="section full">
-      <div class="title">Semáforo por distribuidora (clic para ver artículos)</div>
-      <div id="scorecard" style="overflow-x:auto"></div>
-    </div>
-    <div class="section">
-      <div class="title">Sell-in contra sell-out (unidades)</div>
-      <div class="chart"><canvas id="flow"></canvas></div>
-    </div>
-    <div class="section">
-      <div class="title" id="drill-title">Artículos</div>
-      <div id="drill" style="max-height:320px;overflow-y:auto"><div class="empty">Elige una distribuidora del semáforo</div></div>
-    </div>
-    <div class="section full">
-      <div class="title">Lotes por caducar</div>
-      <div class="controls"><label for="company">Empresa</label><select id="company"></select></div>
-      <div class="kpis" id="expiry-kpis"></div>
-      <div id="expiry" style="max-height:420px;overflow-y:auto"></div>
-    </div>
-  </div>
+</header>
+<div id="error" role="alert"></div>
+<div class="controls">
+  <label for="period">Mes<select id="period"></select></label>
+  <label for="distributor">Distribuidora<select id="distributor"></select></label>
+  <span class="meta" id="meta"></span>
+</div>
+
+<section class="card" aria-labelledby="h-light" style="margin-bottom:14px">
+  <h2 id="h-light">Semáforo por distribuidora</h2>
+  <p class="hint">Cada métrica contra su umbral; el color global es el peor. Elige una distribuidora para ver su detalle.</p>
+  <div id="light"></div>
+</section>
+
+<div class="kpis six" id="kpis"></div>
+
+<div class="grid">
+  <section class="card full" aria-labelledby="h-trend">
+    <h2 id="h-trend">Tendencia de rotación · días de inventario en el canal</h2>
+    <div class="chart"><canvas id="c-trend" role="img" aria-label="Días de inventario en el canal por mes y distribuidora"></canvas><p class="chart-off" hidden>La gráfica no está disponible; los datos están en la tabla.</p></div>
+    <details><summary class="note">Ver la tabla de la tendencia</summary><div id="trend"></div></details>
+  </section>
+  <section class="card full" aria-labelledby="h-clinic">
+    <h2 id="h-clinic">Sell-out por clínica</h2>
+    <div id="clinic"></div>
+  </section>
+  <section class="card full" aria-labelledby="h-sku">
+    <h2 id="h-sku">Sell-in y sell-out por SKU</h2>
+    <div id="sku"></div>
+  </section>
+  <section class="card full" aria-labelledby="h-exp">
+    <h2 id="h-exp">Alertas de caducidad por lote</h2>
+    <div class="controls"><label for="company">Empresa<select id="company"></select></label><span class="meta" id="exp-meta"></span></div>
+    <div class="levels" id="levels"></div>
+    <h3>Lotes priorizados por valor en riesgo, con la opción para actuar</h3>
+    <div class="chips" role="group" aria-label="Filtrar lotes" id="exp-filter"><button type="button" data-scope="alerta" aria-pressed="true">En alerta (rojo, amarillo, verde)</button><button type="button" data-scope="vencido" aria-pressed="false">Vencidos</button><button type="button" data-scope="todos" aria-pressed="false">Todos</button></div>
+    <div id="expiry"></div>
+  </section>
+</div>
+
 <script>
-const pct = n => n==null ? '—' : Number(n).toLocaleString('es-MX',{minimumFractionDigits:1,maximumFractionDigits:1}) + '%';
-const money = n => n==null ? '—' : '$' + Number(n).toLocaleString('es-MX',{maximumFractionDigits:0});
-const num = n => n==null ? '—' : Number(n).toLocaleString('es-MX',{maximumFractionDigits:0});
-const days = n => n==null ? '—' : Number(n).toLocaleString('es-MX',{maximumFractionDigits:0}) + ' d';
-function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-function showError(msg){ document.getElementById('error').innerHTML = `<div class="error">${esc(msg)}</div>`; }
-async function rows(dataset){
-  const r = await fetch('/api/data/' + dataset + '?limit=5000');
-  if(!r.ok) throw new Error('No se pudo leer ' + dataset + ' (' + r.status + ')');
-  const d = await r.json();
-  return Array.isArray(d) ? d : (d.data || []);
-}
+'use strict';
+const FORMULA = {
+  "ratio_sellout_sellin": "Unidades que la distribuidora vendió a clientes externos ÷ unidades que compró a la fábrica, en la ventana de 3 meses.",
+  "dias_inventario": "Existencia de la distribuidora al cierre del mes ÷ venta diaria promedio (sell-out de 3 meses ÷ días).",
+  "caducidad_lotes": "Lotes con existencia que caducan en 30 (rojo), 60 (amarillo) o 90 (verde) días; unidades en riesgo = las que no se venderían antes de caducar vendiendo primero lo que caduca primero al ritmo de 90 días; prioridad por valor en riesgo.",
+  "sellout_clinica": "Venta de cada distribuidora a cada cliente externo (clínica) después del descuento de pie de factura y de notas de crédito, en unidades y moneda local, con su participación en el sell-out del mes.",
+  "crecimiento": "Sell-out del mes contra el mismo mes del año anterior; también contra el mes anterior.",
+  "margen_distribuidora": "Margen bruto de lo que la distribuidora vende a clientes externos ÷ su sell-out del mes."
+};
+const LIGHT = {rojo:['bad','✕','rojo'], amarillo:['warn','!','amarillo'], verde:['ok','✓','verde'], sin_umbral:['none','–','sin umbral']};
+const LEVEL = {rojo:['bad','✕','rojo'], amarillo:['warn','!','amarillo'], verde:['ok','✓','verde'], vencido:['bad','✕','vencido']};
+const LEVEL_TEXT = {rojo:'caducan en 30 días o menos', amarillo:'caducan en 60 días o menos', verde:'caducan en 90 días o menos', vencido:'ya caducaron'};
+const ACTION = {traslado_filial:'Trasladar a otra filial', traslado_empresa:'Trasladar a otra empresa del grupo', promocion:'Promoción'};
+const MES = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+const MESES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+const NF0 = new Intl.NumberFormat('es-MX',{maximumFractionDigits:0});
+const NF1 = new Intl.NumberFormat('es-MX',{minimumFractionDigits:1,maximumFractionDigits:1});
+const NBSP = ' ';
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])); }
+const val = v => (v==null || v==='' || Number.isNaN(Number(v))) ? null : Number(v);
+const r1 = v => { const x = Math.round(v * 10) / 10; return Object.is(x, -0) ? 0 : x; };
+const num = v => val(v)==null ? '—' : NF0.format(val(v));
+const pct = v => val(v)==null ? '—' : NF1.format(r1(val(v))) + NBSP + '%';
+const signed = v => val(v)==null ? '—' : (r1(val(v))>0?'+':'') + NF1.format(r1(val(v))) + NBSP + '%';
+const days = v => val(v)==null ? '—' : NF0.format(val(v)) + NBSP + (Math.round(val(v))===1 ? 'día' : 'días');
+function money(v, cur){ const x = val(v); if(x==null) return '—'; return (x<0?'−':'') + '$' + NF0.format(Math.abs(x)) + (cur ? NBSP + esc(cur) : ''); }
+const monthLong = p => { const [y,m] = String(p||'').split('-'); return MESES[Number(m)-1] ? MESES[Number(m)-1] + ' ' + y : String(p||''); };
+const monthShort = p => { const [y,m] = String(p||'').split('-'); return MES[Number(m)-1] ? MES[Number(m)-1] + ' ' + String(y).slice(2) : String(p||''); };
+const shiftMonth = (p, n) => { const [y,m] = String(p).split('-').map(Number); const d = new Date(Date.UTC(y, m-1+n, 1)); return d.getUTCFullYear() + '-' + String(d.getUTCMonth()+1).padStart(2,'0'); };
+const day = v => v ? String(v).slice(0,10) : '—';
+function badge(map, key, text){ const s = map[key] || ['none','–', String(key||'sin estado').replace(/_/g,' ')]; return `<span class="st st-${s[0]}"><i aria-hidden="true">${s[1]}</i>${text==='' ? `<span class="sr-only">${esc(s[2])}</span>` : esc(text==null ? s[2] : text)}</span>`; }
+function empty(msg){ return `<p class="empty">${esc(msg)}</p>`; }
+function showError(msg){ document.getElementById('error').innerHTML = msg ? `<div class="error">${esc(msg)}</div>` : ''; }
+function clean(filters){ const out = {}; Object.entries(filters).forEach(([key, value])=>{ if(value!=null && value!=='') out[key] = value; }); return out; }
+
+class DataError extends Error{ constructor(dataset, status){ super('No se pudo leer ' + dataset + ' (' + status + ')'); this.status = status; } }
 async function query(dataset, filters, limit){
+  const lim = limit || 5000;
   const r = await fetch('/api/data/' + dataset + '/query', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({filters, limit: limit || 2000})});
-  if(!r.ok) throw new Error('No se pudo leer el detalle (' + r.status + ')');
+    body: JSON.stringify({filters: clean(filters || {}), limit: lim})});
+  if(!r.ok) throw new DataError(dataset, r.status);
   const d = await r.json();
-  return Array.isArray(d) ? d : (d.data || []);
+  const rows = Array.isArray(d) ? d : (d.data || []);
+  rows.truncated = rows.length >= lim;
+  return rows;
 }
 async function options(dataset, column){
   const r = await fetch('/api/data/' + dataset + '/options?columns=' + encodeURIComponent(column));
-  if(!r.ok) throw new Error('No se pudo leer ' + dataset + ' (' + r.status + ')');
+  if(!r.ok) throw new DataError(dataset, r.status);
   const d = await r.json();
   return Array.isArray(d) ? [] : (d[column] || []);
 }
+const CACHE = new Map();
+function cached(key, fn){
+  if(!CACHE.has(key)) CACHE.set(key, fn().catch(e=>{ CACHE.delete(key); throw e; }));
+  return CACHE.get(key);
+}
+async function settle(promise){ try{ return {rows: await promise, ok: true}; }catch(e){ return {rows: [], ok: false, error: e}; } }
 
-const COLOR = {rojo:'bad', amarillo:'warn', verde:'ok', sin_umbral:'none'};
-const LABEL = {rojo:'rojo', amarillo:'amarillo', verde:'verde', sin_umbral:'sin umbral'};
-const HORIZON_BUCKETS = ['vencido', '0-30', '31-60', '61-90', '91-180'];
-let CARD = [], chart = null;
+const DS = {
+  scorecard: 'sap_b1_distributor_scorecard_month',
+  clinics: 'sap_b1_sellout_by_customer_month',
+  flows: 'sap_b1_sellin_sellout_month',
+  expiry: 'sap_b1_batch_expiry'
+};
 
-function selected(){ return document.getElementById('period').value; }
-function distributor(){ return document.getElementById('distributor').value; }
-function forPeriod(){ return CARD.filter(r=> r.period===selected() && (!distributor() || r.distributor===distributor())); }
+const CHARTS = {}, BUILDERS = {};
+function css(name){ return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+function draw(id, build){
+  const canvas = document.getElementById(id);
+  if(CHARTS[id]){ CHARTS[id].destroy(); delete CHARTS[id]; }
+  BUILDERS[id] = build;
+  if(!canvas) return null;
+  const off = canvas.parentElement.querySelector('.chart-off');
+  canvas.parentElement.classList.toggle('off', typeof Chart === 'undefined' || !build);
+  if(typeof Chart === 'undefined' || !build){
+    canvas.hidden = true;
+    if(off) off.hidden = !build;
+    return null;
+  }
+  canvas.hidden = false;
+  if(off) off.hidden = true;
+  CHARTS[id] = new Chart(canvas, build());
+  return CHARTS[id];
+}
+new MutationObserver(()=> Object.keys(BUILDERS).forEach(id=> draw(id, BUILDERS[id])))
+  .observe(document.documentElement, {attributes:true, attributeFilter:['data-theme']});
 
-function renderKpis(){
-  const list = forPeriod();
-  const red = list.filter(r=> r.overall_color==='rojo').length, yellow = list.filter(r=> r.overall_color==='amarillo').length;
-  const sellIn = list.reduce((s,r)=> s + Number(r.sell_in_qty||0), 0);
-  const sellOut = list.reduce((s,r)=> s + Number(r.sell_out_qty||0), 0);
-  const through = list.map(r=> r.sell_through_3m_pct).filter(v=> v!=null).map(Number);
-  const channel = list.map(r=> r.channel_days).filter(v=> v!=null).map(Number);
-  const latest = CARD.filter(r=> r.expiry_exposed_pct!=null && (!distributor() || r.distributor===distributor())).map(r=> Number(r.expiry_exposed_pct));
-  document.getElementById('kpis').innerHTML = `
-    <div class="kpi" style="--accent:var(--red)"><div class="l">Distribuidoras en rojo</div><div class="v">${num(red)} / ${num(list.length)}</div>
-      <div class="s">${esc(yellow + ' en amarillo')}</div></div>
-    <div class="kpi" style="--accent:var(--blue)"><div class="l">Sell-out (unidades)</div><div class="v">${num(sellOut)}</div>
-      <div class="s">${sellIn ? pct(100*sellOut/sellIn) + ' del sell-in' : 'sin sell-in en el mes'}</div></div>
-    <div class="kpi" style="--accent:var(--purple)"><div class="l">Sell-in (unidades)</div><div class="v">${num(sellIn)}</div>
-      <div class="s">en ${esc(selected())}</div></div>
-    <div class="kpi" style="--accent:var(--green)"><div class="l">Sell-through 3 meses (peor)</div><div class="v">${pct(through.length ? Math.min(...through) : null)}</div>
-      <div class="s">vendido / (vendido + existencia)</div></div>
-    <div class="kpi" style="--accent:var(--amber)"><div class="l">Días en canal (mayor)</div><div class="v">${days(channel.length ? Math.max(...channel) : null)}</div>
-      <div class="s">${latest.length ? pct(Math.max(...latest)) + ' expuesto a caducidad' : 'sin lotes en distribuidoras'}</div></div>`;
+const S = {periods:[], distributors:[], seq:0, card:[], expScope:'alerta', expRows:[]};
+function selected(){ return {period: document.getElementById('period').value, distributor: document.getElementById('distributor').value}; }
+
+function card(id, label, value, sub, formula, accent){
+  return `<article class="kpi" style="--accent:var(${accent})" aria-labelledby="k-${id}">
+    <h3 id="k-${id}" title="${esc(formula)}">${esc(label)}</h3>
+    <div class="v">${value}</div><div class="s">${sub}</div>
+    <details class="formula"><summary>Fórmula</summary><p>${esc(formula)}</p></details></article>`;
+}
+function perDistributor(rows, fmt, colorKey){
+  return '<ul>' + rows.map(r=> `<li><span>${esc(r.distributor)}</span><strong>${fmt(r)} ${badge(LIGHT, r[colorKey], '')}</strong></li>`).join('') + '</ul>';
 }
 
-function cell(value, color, fmt){ return `<td class="n ${COLOR[color] || 'none'}">${fmt(value)}</td>`; }
-
-function renderScorecard(){
-  const list = forPeriod().sort((a,b)=> String(a.distributor).localeCompare(String(b.distributor)));
-  const el = document.getElementById('scorecard');
-  if(!list.length){ el.innerHTML = '<div class="empty">Sin ventas de distribuidoras en el periodo</div>'; return; }
-  el.innerHTML = `<table><thead><tr><th>Distribuidora</th><th class="n">Sell-in u</th><th class="n">Sell-out u</th><th class="n">Sell-out</th><th class="n">Crec. vs año ant.</th><th class="n">Crec. vs mes ant.</th><th class="n">Sell-through 3m</th><th class="n">Días en canal</th><th class="n">Margen</th><th class="n">Expuesto a caducidad</th><th>Global</th></tr></thead><tbody>${
-    list.map(r=> `<tr class="pick" data-distributor="${esc(r.distributor)}"><td>${esc(r.distributor)}</td><td class="n">${num(r.sell_in_qty)}</td><td class="n">${num(r.sell_out_qty)}</td><td class="n">${money(r.sell_out_revenue_local)} ${esc(r.local_currency)}</td>${
-      cell(r.growth_yoy_pct, r.growth_color, pct)}<td class="n">${pct(r.growth_mom_pct)}</td>${
-      cell(r.sell_through_3m_pct, r.sell_through_color, pct)}${cell(r.channel_days, r.channel_days_color, days)}${
-      cell(r.margin_pct, r.margin_color, pct)}${cell(r.expiry_exposed_pct, r.expiry_color, pct)}<td class="${COLOR[r.overall_color] || 'none'}">${esc(LABEL[r.overall_color] || r.overall_color)}</td></tr>`).join('')
-  }</tbody></table>`;
-  el.querySelectorAll('tr[data-distributor]').forEach(tr=> tr.addEventListener('click', ()=> openDrill(tr.dataset.distributor, selected())));
+function renderLight(){
+  const {period, distributor} = selected();
+  const el = document.getElementById('light');
+  const rows = S.card.filter(r=> r.period===period).sort((a,b)=> String(a.distributor).localeCompare(String(b.distributor)));
+  if(!rows.length){ el.innerHTML = empty('Sin ventas de distribuidoras en ' + monthLong(period) + '.'); return; }
+  const metric = (value, color) => `<td class="n">${value}<br>${badge(LIGHT, color)}</td>`;
+  el.innerHTML = `<div class="tw"><table><caption class="sr-only">Semáforo por distribuidora de ${esc(monthLong(period))}</caption><thead><tr><th scope="col">Distribuidora</th><th scope="col">Global</th><th scope="col" class="n">Ratio sell-out / sell-in 3 m</th><th scope="col" class="n">Días en el canal</th><th scope="col" class="n">Crecimiento vs año anterior</th><th scope="col" class="n">vs mes anterior</th><th scope="col" class="n">Margen</th><th scope="col" class="n">Inventario por caducar</th><th scope="col" class="n">Sell-out</th><th scope="col" class="n">Sell-in u</th><th scope="col" class="n">Sell-out u</th></tr></thead><tbody>${
+    rows.map(r=> `<tr class="pick${r.distributor===distributor ? ' sel' : ''}" data-distributor="${esc(r.distributor)}"><th scope="row"><button class="link" data-distributor="${esc(r.distributor)}">${esc(r.distributor)}</button></th><td>${badge(LIGHT, r.overall_color)}</td>${
+      metric(pct(r.sellout_sellin_3m_pct), r.sellout_sellin_color)}${metric(days(r.channel_days), r.channel_days_color)}${metric(signed(r.growth_yoy_pct), r.growth_color)}<td class="n">${signed(r.growth_mom_pct)}</td>${
+      metric(pct(r.margin_pct), r.margin_color)}${metric(pct(r.expiry_exposed_pct), r.expiry_color)}<td class="n">${money(r.sell_out_revenue_local, r.local_currency)}</td><td class="n">${num(r.sell_in_qty)}</td><td class="n">${num(r.sell_out_qty)}</td></tr>`).join('')
+  }</tbody></table></div><p class="note">Inventario por caducar se mide solo en el último corte de existencias. “Sin umbral” significa que el workspace no ha fijado el límite de esa métrica.</p>`;
 }
 
-function renderFlow(){
-  const months = {};
-  CARD.filter(r=> !distributor() || r.distributor===distributor()).forEach(r=>{
-    const m = months[r.period] = months[r.period] || {sellIn:0, sellOut:0};
-    m.sellIn += Number(r.sell_in_qty||0); m.sellOut += Number(r.sell_out_qty||0);
-  });
-  const labels = Object.keys(months).sort().slice(-24);
-  if(chart) chart.destroy();
-  chart = new Chart(document.getElementById('flow'), {type:'bar',
-    data:{labels, datasets:[
-      {type:'bar', label:'Sell-in (grupo → distribuidora)', data:labels.map(p=> months[p].sellIn), backgroundColor:'rgba(188,140,255,.55)'},
-      {type:'line', label:'Sell-out (distribuidora → cliente)', data:labels.map(p=> months[p].sellOut), borderColor:'#7c9fff', tension:.25}]},
-    options:{responsive:true, maintainAspectRatio:false, plugins:{legend:{labels:{color:'#8b949e'}}},
-      scales:{x:{ticks:{color:'#8b949e'},grid:{color:'#21262d'}}, y:{ticks:{color:'#8b949e'},grid:{color:'#21262d'}}}}});
-}
-
-async function openDrill(name, p){
-  document.getElementById('drill-title').textContent = 'Artículos · ' + name + ' · ' + p;
-  const el = document.getElementById('drill');
-  el.innerHTML = '<div class="empty">Cargando…</div>';
-  try{
-    const list = (await query('sap_b1_sellin_sellout_month', {distributor: name, period: p}))
-      .sort((a,b)=> Number(b.sell_out_revenue_local||0) - Number(a.sell_out_revenue_local||0)).slice(0,50);
-    el.innerHTML = list.length ? `<table><thead><tr><th>Artículo</th><th class="n">Sell-in u</th><th class="n">Sell-out u</th><th class="n">Existencia fin de mes</th><th class="n">Sell-out</th><th class="n">Margen</th></tr></thead><tbody>${
-      list.map(r=> `<tr><td>${esc(r.item_key)}</td><td class="n">${num(r.sell_in_qty)}</td><td class="n">${num(r.sell_out_qty)}</td><td class="n">${num(r.stock_end_qty)}</td><td class="n">${money(r.sell_out_revenue_local)}</td><td class="n">${pct(Number(r.sell_out_revenue_local) ? 100*Number(r.sell_out_gross_profit_local||0)/Number(r.sell_out_revenue_local) : null)}</td></tr>`).join('')
-    }</tbody></table>` : '<div class="empty">Sin artículos en el periodo</div>';
-  }catch(e){ el.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
-}
-
-function action(r){
-  if(r.bucket === 'vencido') return 'retirar: ya vencido';
-  if(Number(r.at_risk_qty||0) <= 0) return 'se vende a tiempo';
-  return r.transfer_candidate ? 'traspasar a ' + r.transfer_candidate : 'promoción o devolución';
-}
-
-async function renderExpiry(){
+async function renderKpis(token){
+  const {period, distributor} = selected();
+  const el = document.getElementById('kpis');
+  const rows = S.card.filter(r=> r.period===period && (!distributor || r.distributor===distributor)).sort((a,b)=> String(a.distributor).localeCompare(String(b.distributor)));
+  const [clinics, expiry] = await Promise.all([
+    settle(cached('cli:' + period, ()=> query(DS.clinics, {period}, 10000))),
+    settle(expiryRows(document.getElementById('company').value))
+  ]);
+  if(token !== S.seq) return;
+  const one = rows.length===1 ? rows[0] : null;
+  const html = [];
+  if(!rows.length){ el.innerHTML = empty('Sin datos de distribuidoras para el mes.'); return; }
+  html.push(card('ratio', 'Ratio sell-out / sell-in', one ? `${pct(one.sellout_sellin_3m_pct)} ${badge(LIGHT, one.sellout_sellin_color)}` : '<small>por distribuidora</small>',
+    one ? `sell-out ${num(one.sell_out_qty)} u · sell-in ${num(one.sell_in_qty)} u en el mes` : perDistributor(rows, r=> pct(r.sellout_sellin_3m_pct), 'sellout_sellin_color'), FORMULA.ratio_sellout_sellin, '--s1'));
+  html.push(card('days', 'Días de inventario en el canal', one ? `${days(one.channel_days)} ${badge(LIGHT, one.channel_days_color)}` : '<small>por distribuidora</small>',
+    one ? `existencia al cierre ${num(one.stock_end_qty)} u` : perDistributor(rows, r=> days(r.channel_days), 'channel_days_color'), FORMULA.dias_inventario, '--s2'));
+  const exp = expiry.rows;
+  const levelLine = lv => { const xs = exp.filter(r=> r.alert_level===lv); return `<li><span>${badge(LEVEL, lv)}</span><strong>${num(xs.length)} lotes · ${money(xs.reduce((s,r)=> s + (val(r.value_local)||0), 0))}</strong></li>`; };
   const company = document.getElementById('company').value;
-  const el = document.getElementById('expiry'), kpis = document.getElementById('expiry-kpis');
-  if(!company){ kpis.innerHTML = ''; el.innerHTML = '<div class="empty">Sin lotes con existencia</div>'; return; }
-  el.innerHTML = '<div class="empty">Cargando…</div>';
-  try{
-    const list = (await query('sap_b1_batch_expiry', {company, bucket: HORIZON_BUCKETS}, 5000)).filter(r=> r.within_horizon===true || r.bucket==='vencido');
-    const expired = list.filter(r=> r.bucket==='vencido'), coming = list.filter(r=> r.bucket!=='vencido');
-    const sum = (xs, k)=> xs.reduce((s,r)=> s + Number(r[k]||0), 0);
-    const currency = (list[0] || {}).local_currency || '';
-    kpis.innerHTML = `
-      <div class="kpi" style="--accent:var(--red)"><div class="l">Vencido en almacén</div><div class="v">${money(sum(expired,'value_local'))}</div>
-        <div class="s">${esc(expired.length + ' lotes · ' + currency)}</div></div>
-      <div class="kpi" style="--accent:var(--amber)"><div class="l">En riesgo de vencer sin venderse</div><div class="v">${money(sum(coming,'at_risk_value_local'))}</div>
-        <div class="s">${esc(coming.filter(r=> Number(r.at_risk_qty||0) > 0).length + ' lotes, primero el que caduca antes')}</div></div>
-      <div class="kpi" style="--accent:var(--blue)"><div class="l">Por caducar en el horizonte</div><div class="v">${money(sum(coming,'value_local'))}</div>
-        <div class="s">${esc(coming.length + ' lotes')}</div></div>`;
-    const top = [...list].sort((a,b)=> Number(b.at_risk_value_local||0) - Number(a.at_risk_value_local||0)).slice(0,100);
-    el.innerHTML = top.length ? `<table><thead><tr><th>Artículo</th><th>Almacén</th><th>Lote</th><th>Caduca</th><th class="n">Días</th><th class="n">Existencia</th><th class="n">Venta diaria</th><th class="n">En riesgo</th><th class="n">Valor en riesgo</th><th>Acción</th></tr></thead><tbody>${
-      top.map(r=> `<tr><td>${esc(r.item_code)}</td><td>${esc(r.warehouse)}</td><td>${esc(r.batch)}</td><td>${esc(String(r.exp_date||'').slice(0,10))}</td><td class="n ${r.bucket==='vencido'?'bad':(Number(r.days_to_expiry)<=30?'warn':'')}">${num(r.days_to_expiry)}</td><td class="n">${num(r.qty)}</td><td class="n">${Number(r.daily_sales_90d||0).toLocaleString('es-MX',{maximumFractionDigits:1})}</td><td class="n">${num(r.at_risk_qty)}</td><td class="n">${money(r.at_risk_value_local)}</td><td>${esc(action(r))}</td></tr>`).join('')
-    }</tbody></table>` : '<div class="empty">Ningún lote caduca dentro del horizonte</div>';
-  }catch(e){ el.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+  html.push(card('exp', 'Alertas de caducidad', expiry.ok ? `${num(exp.filter(r=> ['rojo','amarillo','verde'].includes(r.alert_level)).length)} <small>lotes en alerta</small>` : '—',
+    expiry.ok ? '<ul>' + ['rojo','amarillo','verde'].map(levelLine).join('') + '</ul>' + `<span class="muted">${esc(company ? company : 'todas las empresas')} · valor a costo promedio</span>` : 'sin datos de lotes', FORMULA.caducidad_lotes, '--red'));
+  const cl = clinics.rows.filter(r=> !distributor || r.distributor===distributor);
+  const top = [...cl].sort((a,b)=> (val(b.sell_out_revenue_local)||0) - (val(a.sell_out_revenue_local)||0))[0];
+  html.push(card('clinic', 'Sell-out por clínica', clinics.ok ? `${num(new Set(cl.map(r=> r.distributor + '|' + r.card_code)).size)} <small>clínicas</small>` : '—',
+    top ? `principal: ${esc(top.card_name || top.card_code)} (${esc(top.distributor)}) con ${pct(top.share_of_sell_out_pct)} del sell-out` : (clinics.ok ? 'sin sell-out a clínicas en el mes' : 'sin datos de clínicas'), FORMULA.sellout_clinica, '--s3'));
+  html.push(card('growth', 'Crecimiento del sell-out', one ? `${signed(one.growth_yoy_pct)} ${badge(LIGHT, one.growth_color)}` : '<small>por distribuidora</small>',
+    one ? `vs mes anterior ${signed(one.growth_mom_pct)}` : perDistributor(rows, r=> signed(r.growth_yoy_pct), 'growth_color'), FORMULA.crecimiento, '--purple'));
+  html.push(card('margin', 'Margen de la distribuidora', one ? `${pct(one.margin_pct)} ${badge(LIGHT, one.margin_color)}` : '<small>por distribuidora</small>',
+    one ? `sell-out ${money(one.sell_out_revenue_local, one.local_currency)}` : perDistributor(rows, r=> pct(r.margin_pct), 'margin_color'), FORMULA.margen_distribuidora, '--s4'));
+  el.innerHTML = html.join('');
 }
 
-function renderAll(){ renderKpis(); renderScorecard(); renderFlow(); }
+function renderTrend(){
+  const {period, distributor} = selected();
+  const months = S.periods.filter(m=> m <= period).slice(-24);
+  const names = S.distributors.filter(n=> !distributor || n===distributor).slice(0, 8);
+  const at = {}; S.card.forEach(r=>{ at[r.distributor + '|' + r.period] = r; });
+  const el = document.getElementById('trend');
+  if(!names.length || !months.length){ el.innerHTML = empty('Sin historia de distribuidoras.'); draw('c-trend', null); return; }
+  el.innerHTML = `<div class="tw"><table><caption class="sr-only">Días de inventario en el canal por mes</caption><thead><tr><th scope="col">Mes</th>${names.map(n=> `<th scope="col" class="n">${esc(n)}</th>`).join('')}</tr></thead><tbody>${
+    months.map(m=> `<tr><th scope="row">${esc(monthLong(m))}</th>${names.map(n=> `<td class="n">${days((at[n + '|' + m] || {}).channel_days)}</td>`).join('')}</tr>`).join('')
+  }</tbody></table></div>`;
+  const colors = ['--s1','--s2','--s3','--s4'];
+  draw('c-trend', ()=> ({type:'line',
+    data:{labels: months.map(monthShort), datasets: names.map((n,i)=> ({label:n, data: months.map(m=> val((at[n + '|' + m] || {}).channel_days)),
+      borderColor: css(colors[i % colors.length]), backgroundColor: css(colors[i % colors.length]), borderWidth:2, pointRadius:3, pointHoverRadius:5, tension:.2, spanGaps:false}))},
+    options:{responsive:true, maintainAspectRatio:false, animation:false, interaction:{mode:'index', intersect:false},
+      plugins:{legend:{labels:{color: css('--text2'), boxWidth:12}}, tooltip:{callbacks:{label: ctx => ctx.dataset.label + ': ' + days(ctx.parsed.y).replace(/ /g,' ')}}},
+      scales:{x:{ticks:{color: css('--text2'), maxRotation:0, autoSkip:true}, grid:{display:false}, border:{color: css('--border')}},
+        y:{ticks:{color: css('--text2'), callback: v => NF0.format(v)}, grid:{color: css('--border')}, border:{display:false}, title:{display:true, text:'días', color: css('--text2')}}}}}));
+}
+
+async function renderClinics(token){
+  const {period, distributor} = selected();
+  const el = document.getElementById('clinic');
+  el.innerHTML = empty('Cargando…');
+  const res = await settle(cached('cli:' + period, ()=> query(DS.clinics, {period}, 10000)));
+  if(token !== S.seq) return;
+  const rows = res.rows.filter(r=> !distributor || r.distributor===distributor)
+    .sort((a,b)=> (val(b.sell_out_revenue_local)||0) - (val(a.sell_out_revenue_local)||0));
+  if(!rows.length){ el.innerHTML = empty(res.ok ? 'Sin sell-out a clínicas en ' + monthLong(period) + '.' : 'Sin datos de sell-out por clínica.'); return; }
+  const shown = rows.slice(0, 100);
+  el.innerHTML = `<div class="tw tall"><table><caption class="sr-only">Clínicas por sell-out del mes</caption><thead><tr><th scope="col" class="n">#</th><th scope="col">Distribuidora</th><th scope="col">Clínica</th><th scope="col">Canal</th><th scope="col" class="n">Unidades</th><th scope="col" class="n">Sell-out</th><th scope="col" class="n">Margen</th><th scope="col" class="n">SKU</th><th scope="col" class="n">Participación en su distribuidora</th></tr></thead><tbody>${
+    shown.map((r,i)=> `<tr><td class="n">${num(i+1)}</td><td>${esc(r.distributor)}</td><th scope="row">${esc(r.card_name || r.card_code)}<br><span class="muted">${esc(r.card_code)}</span></th><td>${esc(r.channel_name)}</td><td class="n">${num(r.units)}</td><td class="n">${money(r.sell_out_revenue_local, r.local_currency)}</td><td class="n">${pct(r.margin_pct)}</td><td class="n">${num(r.items)}</td><td class="n">${pct(r.share_of_sell_out_pct)}<span class="share" aria-hidden="true"><i style="width:${Math.max(0, Math.min(100, val(r.share_of_sell_out_pct)||0)).toFixed(1)}%"></i></span></td></tr>`).join('')
+  }</tbody></table></div>` + (rows.length > shown.length ? `<p class="note">Se muestran las ${num(shown.length)} clínicas con más sell-out de ${num(rows.length)}.</p>` : '');
+}
+
+async function renderSku(token){
+  const {period, distributor} = selected();
+  const el = document.getElementById('sku');
+  el.innerHTML = empty('Cargando…');
+  const window3 = [shiftMonth(period, -2), shiftMonth(period, -1), period];
+  const res = await settle(cached('sku:' + (distributor || '*') + ':' + period, ()=> query(DS.flows, {distributor: distributor || null, period: window3}, 10000)));
+  if(token !== S.seq) return;
+  const items = {};
+  res.rows.forEach(r=>{
+    const k = r.distributor + '|' + r.item_key;
+    const it = items[k] = items[k] || {distributor: r.distributor, item: r.item_key, cur: r.local_currency, inQ:0, outQ:0, in3:0, out3:0, stock:null, rev:0, gp:0};
+    it.in3 += val(r.sell_in_qty)||0; it.out3 += val(r.sell_out_qty)||0;
+    if(r.period===period){ it.inQ += val(r.sell_in_qty)||0; it.outQ += val(r.sell_out_qty)||0; it.stock = val(r.stock_end_qty); it.rev += val(r.sell_out_revenue_local)||0; it.gp += val(r.sell_out_gross_profit_local)||0; }
+  });
+  const list = Object.values(items).sort((a,b)=> b.rev - a.rev || b.out3 - a.out3);
+  if(!list.length){ el.innerHTML = empty(res.ok ? 'Sin movimientos de sell-in ni sell-out en los tres meses.' : 'Sin datos de sell-in y sell-out por SKU.'); return; }
+  const shown = list.slice(0, 100);
+  el.innerHTML = `<div class="tw tall"><table><caption>Mes de ${esc(monthLong(period))} y ventana de tres meses (${esc(monthShort(window3[0]))} a ${esc(monthShort(period))}).</caption><thead><tr><th scope="col">SKU</th><th scope="col">Distribuidora</th><th scope="col" class="n">Sell-in u (mes)</th><th scope="col" class="n">Sell-out u (mes)</th><th scope="col" class="n">Sell-in u (3 m)</th><th scope="col" class="n">Sell-out u (3 m)</th><th scope="col" class="n">Existencia al cierre</th><th scope="col" class="n">Días en el canal</th><th scope="col" class="n">Sell-out (mes)</th><th scope="col" class="n">Margen</th></tr></thead><tbody>${
+    shown.map(x=> `<tr><th scope="row">${esc(x.item)}</th><td>${esc(x.distributor)}</td><td class="n">${num(x.inQ)}</td><td class="n">${num(x.outQ)}</td><td class="n">${num(x.in3)}</td><td class="n">${num(x.out3)}</td><td class="n">${num(x.stock)}</td><td class="n">${x.stock!=null && x.out3 > 0 ? days(x.stock / (x.out3 / 90)) : '—'}</td><td class="n">${money(x.rev, x.cur)}</td><td class="n">${pct(x.rev ? 100 * x.gp / x.rev : null)}</td></tr>`).join('')
+  }</tbody></table></div>` + (list.length > shown.length ? `<p class="note">Se muestran ${num(shown.length)} de ${num(list.length)} SKU.</p>` : '');
+}
+
+function expiryRows(company){
+  return cached('exp:' + (company || '*'), ()=> query(DS.expiry, {alert_level:['rojo','amarillo','verde','vencido'], company: company || null}, 10000));
+}
+
+async function renderExpiry(token){
+  const company = document.getElementById('company').value;
+  const el = document.getElementById('expiry'), levels = document.getElementById('levels');
+  el.innerHTML = empty('Cargando…'); levels.innerHTML = '';
+  const res = await settle(expiryRows(company));
+  if(token !== S.seq) return;
+  if(!res.ok){ el.innerHTML = empty('Sin datos de lotes por caducar.'); return; }
+  const rows = res.rows;
+  const asOf = rows.map(r=> day(r.as_of_date)).sort().pop();
+  document.getElementById('exp-meta').textContent = asOf ? 'Corte de existencias ' + asOf + ' · valores a costo promedio' : '';
+  levels.innerHTML = ['rojo','amarillo','verde','vencido'].map(lv=>{
+    const xs = rows.filter(r=> r.alert_level===lv);
+    const byCur = {}; xs.forEach(r=>{ byCur[r.local_currency||''] = (byCur[r.local_currency||''] || {v:0, risk:0}); byCur[r.local_currency||''].v += val(r.value_local)||0; byCur[r.local_currency||''].risk += val(r.at_risk_value_local)||0; });
+    const parts = Object.entries(byCur);
+    return `<div class="level"><div>${badge(LEVEL, lv)}</div><div class="v">${num(xs.length)} lotes</div><div class="s">${esc(LEVEL_TEXT[lv])}</div><div class="s">valor ${parts.length ? parts.map(([c,x])=> money(x.v, c)).join(' + ') : '$0'}</div><div class="s">en riesgo ${parts.length ? parts.map(([c,x])=> money(x.risk, c)).join(' + ') : '$0'}</div></div>`;
+  }).join('');
+  S.expRows = rows;
+  renderPriority();
+}
+
+function renderPriority(){
+  const el = document.getElementById('expiry');
+  const inScope = r => S.expScope==='todos' || (S.expScope==='vencido' ? r.alert_level==='vencido' : r.alert_level!=='vencido');
+  const list = S.expRows.filter(r=> val(r.priority_rank)!=null && inScope(r))
+    .sort((a,b)=> (val(b.at_risk_value_local)||0) - (val(a.at_risk_value_local)||0) || (val(a.priority_rank)||0) - (val(b.priority_rank)||0));
+  if(!list.length){ el.innerHTML = empty(S.expScope==='vencido' ? 'Ningún lote vencido con existencia.' : 'Ningún lote tiene unidades en riesgo de caducar sin venderse.'); return; }
+  const shown = list.slice(0, 150);
+  const target = r => r.action_option==='traslado_filial' ? (r.transfer_branch_name || r.transfer_warehouse || '—') : r.action_option==='traslado_empresa' ? (r.transfer_candidate || '—') : '—';
+  el.innerHTML = `<div class="tw tall"><table><caption class="sr-only">Lotes con unidades en riesgo, del mayor al menor valor en riesgo</caption><thead><tr><th scope="col" class="n">#</th><th scope="col" class="n">Prioridad en la empresa</th><th scope="col">Empresa</th><th scope="col">Artículo</th><th scope="col">Lote</th><th scope="col">Almacén o filial</th><th scope="col">Caduca</th><th scope="col" class="n">Días</th><th scope="col">Alerta</th><th scope="col" class="n">Existencia</th><th scope="col" class="n">Venta diaria (90 d)</th><th scope="col" class="n">En riesgo u</th><th scope="col" class="n">Valor en riesgo</th><th scope="col">Opción para actuar</th><th scope="col">Destino</th></tr></thead><tbody>${
+    shown.map((r,i)=> `<tr><td class="n">${num(i+1)}</td><td class="n">${num(r.priority_rank)}</td><td>${esc(r.company)}</td><th scope="row">${esc(r.item_code)}</th><td>${esc(r.batch)}</td><td>${esc(r.branch_name || r.warehouse)}</td><td class="nowrap">${esc(day(r.exp_date))}</td><td class="n">${num(r.days_to_expiry)}</td><td>${badge(LEVEL, r.alert_level)}</td><td class="n">${num(r.qty)}</td><td class="n">${val(r.daily_sales_90d)==null ? '—' : NF1.format(val(r.daily_sales_90d))}</td><td class="n">${num(r.at_risk_qty)}</td><td class="n"><strong>${money(r.at_risk_value_local, r.local_currency)}</strong></td><td>${esc(ACTION[r.action_option] || r.action_option || '—')}</td><td>${esc(target(r))}</td></tr>`).join('')
+  }</tbody></table></div>` + (list.length > shown.length ? `<p class="note">Se muestran ${num(shown.length)} de ${num(list.length)} lotes.</p>` : '') +
+    '<p class="note">La prioridad la calcula la plataforma por valor en riesgo dentro de cada empresa. Solo recomendaciones: nada se escribe en Business One.</p>';
+}
+
+function renderAll(){
+  const token = ++S.seq;
+  const {period, distributor} = selected();
+  const cur = [...new Set(S.card.filter(r=> r.period===period && (!distributor || r.distributor===distributor)).map(r=> r.local_currency).filter(Boolean))];
+  document.getElementById('meta').textContent = monthLong(period) + (cur.length ? ' · montos en ' + cur.join(', ') : '');
+  renderLight(); renderTrend();
+  Promise.all([renderKpis(token), renderClinics(token), renderSku(token), renderExpiry(token)]).catch(e=> showError(e.message));
+}
+
+function pickDistributor(name){
+  const sel = document.getElementById('distributor');
+  sel.value = sel.value===name ? '' : name;
+  const comp = document.getElementById('company');
+  if([...comp.options].some(o=> o.value===sel.value)) comp.value = sel.value;
+  renderAll();
+}
 
 async function init(){
-  try{
-    const [card, companies] = await Promise.all([rows('sap_b1_distributor_scorecard_month'), options('sap_b1_batch_expiry', 'company')]);
-    CARD = card;
-    const now = new Date(), current = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
-    const periods = [...new Set(CARD.map(r=> r.period))].sort().reverse();
-    const closed = periods.filter(p=> p < current);
-    document.getElementById('period').innerHTML = periods.map(p=> `<option ${p===(closed[0]||periods[0])?'selected':''}>${esc(p)}</option>`).join('');
-    const names = [...new Set(CARD.map(r=> r.distributor))].sort();
-    document.getElementById('distributor').innerHTML = '<option value="">Todas</option>' + names.map(n=> `<option>${esc(n)}</option>`).join('');
-    document.getElementById('company').innerHTML = companies.map(c=> `<option>${esc(c)}</option>`).join('');
-    document.getElementById('period').addEventListener('change', renderAll);
-    document.getElementById('distributor').addEventListener('change', renderAll);
-    document.getElementById('company').addEventListener('change', renderExpiry);
-    renderExpiry();
-    if(!periods.length){ showError('Todavía no hay ventas de distribuidoras publicadas para este workspace.'); return; }
+  document.getElementById('light').addEventListener('click', e=>{ const tr = e.target.closest('[data-distributor]'); if(tr) pickDistributor(tr.dataset.distributor); });
+  document.getElementById('period').addEventListener('change', renderAll);
+  document.getElementById('distributor').addEventListener('change', ()=>{
+    const comp = document.getElementById('company'), d = document.getElementById('distributor').value;
+    if([...comp.options].some(o=> o.value===d)) comp.value = d;
     renderAll();
+  });
+  document.getElementById('exp-filter').addEventListener('click', e=>{ const b = e.target.closest('button[data-scope]'); if(!b) return; S.expScope = b.dataset.scope;
+    document.querySelectorAll('#exp-filter button').forEach(x=> x.setAttribute('aria-pressed', x===b)); renderPriority(); });
+  document.getElementById('company').addEventListener('change', ()=>{ const token = ++S.seq; renderKpis(token); renderClinics(token); renderSku(token); renderExpiry(token); });
+  try{
+    const [card, companies] = await Promise.all([query(DS.scorecard, {}, 10000), settle(options(DS.expiry, 'company'))]);
+    S.card = card;
+    S.periods = [...new Set(card.map(r=> String(r.period)))].sort();
+    S.distributors = [...new Set(card.map(r=> r.distributor))].sort();
+    document.getElementById('company').innerHTML = '<option value="">Todas</option>' + companies.rows.map(x=> `<option value="${esc(x)}">${esc(x)}</option>`).join('');
+    document.getElementById('distributor').innerHTML = '<option value="">Todas</option>' + S.distributors.map(x=> `<option value="${esc(x)}">${esc(x)}</option>`).join('');
+    if(!S.periods.length){ showError('Todavía no hay ventas de distribuidoras publicadas para este workspace.'); }
+    const now = new Date(), current = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
+    const closed = S.periods.filter(m=> m < current);
+    const initial = closed.length ? closed[closed.length-1] : S.periods[S.periods.length-1];
+    document.getElementById('period').innerHTML = [...S.periods].reverse().map(m=> `<option value="${esc(m)}"${m===initial ? ' selected' : ''}>${esc(monthLong(m))}${m >= current ? ' (en curso)' : ''}</option>`).join('');
+    if(S.periods.length) renderAll(); else { const token = ++S.seq; renderExpiry(token); }
   }catch(e){ showError(e.message); }
 }
 init();

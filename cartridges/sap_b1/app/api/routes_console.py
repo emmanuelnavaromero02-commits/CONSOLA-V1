@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-import anyio
+import json
+from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+import anyio
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 
 from app.api.deps import verify_api_key
@@ -14,12 +16,18 @@ from app.core.job_runner import (
 )
 from app.core.request_context import (
     SecurityContextError,
+    get_security_context,
     require_tenant_workspace_scope,
     reset_security_context,
+    scoped_prefix,
     set_security_context,
 )
 from app.core.b1_source import B1SourceError
+from app.services.bronze_parquet import heartbeat_object_name
 from app.services.business_parameters import refresh_business_parameters
+from app.services.business_parameters_mapping import catalog_payload, parse_business_parameters
+from app.services.finance_runs import load_finance_run
+from app.services.indicators import indicators
 from app.services.catalog_service import get_all_entities, get_entity_config
 from app.services.extraction_service import run_entity
 from app.services.intercompany import refresh_intercompany_partners
@@ -264,6 +272,58 @@ def business_parameters_refresh(
         reset_security_context(token)
 
 
+@router.get("/indicators")
+def indicator_catalog() -> dict:
+    """The indicators of the three cases with formula, unit, dimensions, granularity and source dataset."""
+    return {"indicators": list(indicators())}
+
+
+@router.get("/business-parameters/catalog")
+def business_parameters_catalog() -> dict:
+    """Every business parameter the datasets read, with its unit and default."""
+    return {"parameters": catalog_payload()}
+
+
+@router.post("/business-parameters/validate")
+def business_parameters_validate(body: dict[str, Any] | None = Body(None)) -> dict:
+    """Parse a business-parameters text without storing it."""
+    spec = body.get("spec") if isinstance(body, dict) else None
+    if not isinstance(spec, str):
+        raise HTTPException(status_code=422, detail="spec must be a string")
+    try:
+        parsed = parse_business_parameters(spec)
+    except B1SourceError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "valid": True,
+        "count": len(parsed),
+        "parameters": [
+            {"kind": p.kind, "company": p.company, "period": p.period, "key": p.key, "value": p.value_text}
+            for p in parsed
+        ],
+    }
+
+
+@router.post("/finance-runs")
+def finance_runs(body: dict[str, Any] | None = Body(None)):
+    """Store Finance's manual run of the margin indicators (CSV) in Bronze for this workspace."""
+    text = body.get("csv") if isinstance(body, dict) else None
+    if not isinstance(text, str) or not text.strip():
+        raise HTTPException(status_code=422, detail="csv is required")
+    ctx = _security_context(body)
+    token = _set_security_context(ctx)
+    try:
+        _require_scope()
+        try:
+            result = load_finance_run(text, ctx)
+        except B1SourceError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        _mark_external_job(_trigger_silver_refresh, result["entity"], ctx)
+        return result
+    finally:
+        reset_security_context(token)
+
+
 @router.get("/runs")
 def runs(entity: str | None = None) -> dict:
     """Last extraction runs, optionally filtered by entity."""
@@ -281,3 +341,65 @@ def runs_latest() -> dict:
 def watermarks() -> dict:
     """All per-entity watermarks tracked by this cartridge."""
     return {"watermarks": list_watermarks()}
+
+
+HEARTBEAT_FIELDS = (
+    "schema_version",
+    "agent_version",
+    "at",
+    "source_ok",
+    "source_ms",
+    "source_error",
+    "dialect",
+    "companies",
+    "last_cycle",
+    "initial_load",
+    "next_cycle_at",
+)
+
+
+def _read_heartbeat(object_name: str) -> bytes | None:
+    from app.core.minio_client import read_object_bytes
+
+    return read_object_bytes(object_name)
+
+
+def _header_security_context(raw: str | None) -> dict[str, Any] | None:
+    if not raw:
+        return None
+    try:
+        ctx = json.loads(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail="security_context is not valid JSON") from exc
+    return ctx if isinstance(ctx, dict) else None
+
+
+@router.get("/connector/status")
+def connector_status(
+    x_security_context: str | None = Header(default=None, alias="x-security-context"),
+) -> dict:
+    """Latest heartbeat of the workspace's push agent, with its age."""
+    token = _set_security_context(_header_security_context(x_security_context))
+    try:
+        _require_scope()
+        object_name = heartbeat_object_name(scoped_prefix(get_security_context()))
+        try:
+            raw = _read_heartbeat(object_name)
+        except Exception as exc:                               # noqa: BLE001
+            return _degraded_503({"status": "degraded", "error": f"heartbeat unavailable ({type(exc).__name__})"})
+    finally:
+        reset_security_context(token)
+    if raw is None:
+        return {"present": False}
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+        at = datetime.strptime(str(payload["at"]), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except (ValueError, KeyError, TypeError, UnicodeDecodeError, AttributeError):
+        return {"present": True, "readable": False, "age_seconds": None}
+    age = max(0, int((datetime.now(timezone.utc) - at).total_seconds()))
+    return {
+        "present": True,
+        "readable": True,
+        "age_seconds": age,
+        **{field: payload.get(field) for field in HEARTBEAT_FIELDS},
+    }

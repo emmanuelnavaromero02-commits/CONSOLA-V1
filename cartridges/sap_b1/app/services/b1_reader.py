@@ -104,6 +104,7 @@ def read_entity(
             sql, params = select_sql(
                 plan,
                 company.schema,
+                dialect=connection.dialect,
                 mode=mode,
                 watermark=effective,
                 after_key=after_key,

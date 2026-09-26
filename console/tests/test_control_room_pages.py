@@ -134,3 +134,18 @@ def test_control_room_talent_export_hashes_every_inline_script():
     assert "'unsafe-inline'" not in script_seg
     for body in inline_scripts:
         assert _sha256_csp_hash(body) in script_seg
+
+
+def test_control_room_sap_b1_export_hashes_every_inline_script():
+    page = pages.CONSOLE_NEXT_STATIC / "control-room" / "sap-b1" / "index.html"
+    html = page.read_text(encoding="utf-8")
+    inline_scripts = [body for body in pages._INLINE_SCRIPT_RE.findall(html) if body.strip()]
+
+    assert inline_scripts, "Control Room SAP B1 Next export should expose hashable hydration scripts"
+
+    csp = pages._console_next_csp(str(page))
+    script_seg = _script_src_segment(csp)
+
+    assert "'unsafe-inline'" not in script_seg
+    for body in inline_scripts:
+        assert _sha256_csp_hash(body) in script_seg

@@ -13,6 +13,7 @@ from app.services.business_parameters_mapping import (
     parameter_records,
     parse_business_parameters,
 )
+from app.services.finance_runs import ensure_baselines
 from app.services.parquet_service import write_parquet_and_upload
 from app.services.runlog_service import create_run, fail_run, finish_run
 
@@ -43,6 +44,7 @@ def refresh_business_parameters(security_context: dict[str, Any] | None = None) 
             security_context=security_context,
             arrow_schema=arrow_schema(),
         )
+        ensure_baselines(security_context)
         finish_run(
             run_id=run_id,
             status="success",

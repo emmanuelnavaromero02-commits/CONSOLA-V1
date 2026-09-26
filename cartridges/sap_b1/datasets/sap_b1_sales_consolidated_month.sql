@@ -4,12 +4,12 @@
 
 WITH lines AS (
     SELECT company, doc_month, local_currency, is_intercompany, doc_entry,
-           amount_local, cost_local, gross_profit_local
+           amount_local_net, cost_local, gross_profit_local - (amount_local - amount_local_net) AS gross_profit_local
     FROM read_parquet('s3://{bucket}/silver/sap_b1/sap_b1_ar_invoice_lines/**/*.parquet')
     WHERE canceled = 'N'
 ),
 credits AS (
-    SELECT company, doc_month, local_currency, is_intercompany, amount_local
+    SELECT company, doc_month, local_currency, is_intercompany, amount_local_net
     FROM read_parquet('s3://{bucket}/silver/sap_b1/sap_b1_ar_credit_memo_lines/**/*.parquet')
     WHERE canceled = 'N'
 ),
@@ -17,8 +17,8 @@ by_month AS (
     SELECT doc_month, local_currency,
            COUNT(DISTINCT company)                                           AS companies,
            COUNT(DISTINCT CASE WHEN NOT is_intercompany THEN company || ':' || doc_entry END) AS external_invoices,
-           SUM(CASE WHEN NOT is_intercompany THEN amount_local ELSE 0 END)   AS external_revenue_gross_local,
-           SUM(CASE WHEN is_intercompany THEN amount_local ELSE 0 END)       AS intercompany_eliminated_local,
+           SUM(CASE WHEN NOT is_intercompany THEN amount_local_net ELSE 0 END)   AS external_revenue_gross_local,
+           SUM(CASE WHEN is_intercompany THEN amount_local_net ELSE 0 END)       AS intercompany_eliminated_local,
            SUM(CASE WHEN NOT is_intercompany THEN cost_local ELSE 0 END)     AS external_cost_local,
            SUM(CASE WHEN NOT is_intercompany THEN gross_profit_local ELSE 0 END) AS external_gross_profit_local
     FROM lines
@@ -26,8 +26,8 @@ by_month AS (
 ),
 credit_month AS (
     SELECT doc_month, local_currency,
-           SUM(CASE WHEN NOT is_intercompany THEN amount_local ELSE 0 END)   AS external_credit_local,
-           SUM(CASE WHEN is_intercompany THEN amount_local ELSE 0 END)       AS intercompany_credit_eliminated_local
+           SUM(CASE WHEN NOT is_intercompany THEN amount_local_net ELSE 0 END)   AS external_credit_local,
+           SUM(CASE WHEN is_intercompany THEN amount_local_net ELSE 0 END)       AS intercompany_credit_eliminated_local
     FROM credits
     GROUP BY 1, 2
 )

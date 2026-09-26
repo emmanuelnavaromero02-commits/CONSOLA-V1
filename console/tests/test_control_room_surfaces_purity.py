@@ -107,5 +107,5 @@ def test_legacy_get_matrix_remains_exactly_30_routes():
         for route in routes.router.routes
         if "GET" in (route.methods or set()) and route.path in GET_PATHS
     }
-    assert len(GET_PATHS) == 30
+    assert len(GET_PATHS) == 31
     assert legacy_paths == set(GET_PATHS)

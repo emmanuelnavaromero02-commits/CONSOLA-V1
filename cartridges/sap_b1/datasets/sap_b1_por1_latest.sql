@@ -49,6 +49,7 @@ SELECT
     CAST(GrssProfit AS DECIMAL(19,6))           AS grss_profit,
     CAST(GrssProfFC AS DECIMAL(19,6))           AS grss_prof_fc,
     CAST(GrssProfSC AS DECIMAL(19,6))           AS grss_prof_sc,
+    CAST(Commission AS DECIMAL(19,6))           AS commission,
     CAST(StockPrice AS DECIMAL(19,6))           AS stock_price,
     CAST(WhsCode AS VARCHAR)                    AS whs_code,
     CAST(ShipDate AS TIMESTAMP)                 AS ship_date,

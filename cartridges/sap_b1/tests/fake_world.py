@@ -24,6 +24,7 @@ class Bronze:
         from app.core import b1_source
         from app.services import business_parameters as bp
         from app.services import extraction_service as es
+        from app.services import finance_runs as fr
         from app.services import intercompany as ic
         from app.services import parquet_service
         from app.services.bronze_parquet import stamp_now
@@ -38,7 +39,9 @@ class Bronze:
             return f"run-{self.runs}"
 
         monkeypatch.setattr(parquet_service, "upload_file_to_minio", _copy)
-        for module in (es, ic, bp):
+        monkeypatch.setattr(fr, "object_exists_with_prefix",
+                            lambda prefix: any(p.is_file() for p in (self.root / prefix).rglob("*")) if (self.root / prefix).exists() else False)
+        for module in (es, ic, bp, fr):
             monkeypatch.setattr(module, "create_run", _create_run)
             monkeypatch.setattr(module, "finish_run", lambda **kw: None)
             monkeypatch.setattr(module, "fail_run", lambda **kw: self.failed.append(kw))
@@ -82,15 +85,38 @@ def _layer(path: Path) -> str:
     return HEADER_RE.match(path.read_text(encoding="utf-8").splitlines()[0]).group(2)
 
 
+SOURCES_RE = re.compile(r"^-- sources:\s*(\[.*\])\s*$", re.M)
+
+
+def _ordered(files: list[Path]) -> list[Path]:
+    import json
+
+    by_name = {p.stem: p for p in files}
+    needs = {
+        p.stem: {s.rsplit("/", 1)[-1] for s in json.loads(SOURCES_RE.search(p.read_text(encoding="utf-8")).group(1))} & set(by_name)
+        for p in files
+    }
+    ordered: list[Path] = []
+    done: set[str] = set()
+    while len(ordered) < len(files):
+        ready = sorted(n for n in by_name if n not in done and needs[n] <= done)
+        if not ready:
+            raise RuntimeError(f"dataset dependency cycle among {sorted(set(by_name) - done)}")
+        for name in ready:
+            ordered.append(by_name[name])
+            done.add(name)
+    return ordered
+
+
 def _materialise(bronze: Path):
     import duckdb
 
     con = duckdb.connect()
-    silver_root = bronze / "silver" / "sap_b1"
     files = _dataset_files()
-    for path in [p for p in files if _layer(p) == "silver"] + [p for p in files if _layer(p) == "gold"]:
+    silver = [p for p in files if _layer(p) == "silver"]
+    for path in _ordered(silver) + _ordered([p for p in files if _layer(p) == "gold"]):
         sql = path.read_text(encoding="utf-8").replace("s3://{bucket}/", bronze.as_posix() + "/")
-        out = silver_root / path.stem
+        out = bronze / _layer(path) / "sap_b1" / path.stem
         out.mkdir(parents=True, exist_ok=True)
         con.execute(f"CREATE OR REPLACE TABLE \"{path.stem}\" AS {sql}")
         con.execute(f"COPY \"{path.stem}\" TO '{(out / 'data.parquet').as_posix()}' (FORMAT PARQUET)")

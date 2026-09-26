@@ -5,7 +5,7 @@
 WITH sold AS (
     SELECT company AS seller, counterparty_company AS buyer, doc_month, local_currency,
            COUNT(DISTINCT doc_entry) AS seller_invoices,
-           SUM(amount_local)         AS sold_local
+           SUM(amount_local_net)     AS sold_local
     FROM read_parquet('s3://{bucket}/silver/sap_b1/sap_b1_ar_invoice_lines/**/*.parquet')
     WHERE canceled = 'N' AND is_intercompany
     GROUP BY 1, 2, 3, 4
@@ -13,7 +13,7 @@ WITH sold AS (
 bought AS (
     SELECT counterparty_company AS seller, company AS buyer, doc_month, local_currency,
            COUNT(DISTINCT doc_entry) AS buyer_invoices,
-           SUM(amount_local)         AS bought_local
+           SUM(amount_local_net)     AS bought_local
     FROM read_parquet('s3://{bucket}/silver/sap_b1/sap_b1_ap_invoice_lines/**/*.parquet')
     WHERE canceled = 'N' AND is_intercompany
     GROUP BY 1, 2, 3, 4

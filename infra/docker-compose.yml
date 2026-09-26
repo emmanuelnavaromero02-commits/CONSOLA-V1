@@ -196,7 +196,6 @@ services:
       SMTP_FROM:         ${SMTP_FROM:-noreply@modecissions.local}
       SMTP_FROM_DOMAIN:  ${SMTP_FROM_DOMAIN:-modecissions.local}
       SMTP_USE_TLS:      ${SMTP_USE_TLS:-false}
-      SAP_B1_DIGEST_RECIPIENTS: ${SAP_B1_DIGEST_RECIPIENTS:-}
       VPN_API_URL:       ${VPN_API_URL:-}
       VPN_API_PASSWORD:  ${VPN_API_PASSWORD:-}
       VPN_TOKEN_TTL_HOURS: ${VPN_TOKEN_TTL_HOURS:-72}

@@ -1,6 +1,7 @@
 "use client";
 
 import { AlertTriangle, RefreshCcw } from "lucide-react";
+import type { ReactNode } from "react";
 
 import type { ControlRoomExperienceV2 } from "@/lib/control-room/experience-contract";
 import {
@@ -84,13 +85,14 @@ export function ControlRoomExperienceContent({
   );
 }
 
-export function ControlRoomExperiencePage() {
+export function ControlRoomExperiencePage({ entries }: { entries?: ReactNode } = {}) {
   const query = useControlRoomExperience();
   const preview = useControlRoomExperiencePreview(query.data, query.workspaceId);
   const retry = () => void query.refetch();
 
   return (
     <main className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8" aria-label="Experiencia empresarial">
+      {entries}
       {query.data ? (
         <ControlRoomExperienceContent
           experience={query.data}
