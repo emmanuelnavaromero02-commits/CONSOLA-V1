@@ -1,7 +1,22 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Container
 from typing import Any
+
+
+def dataset_source_match(source: str, names: Container[str]) -> str | None:
+    """Return the dataset name a non-raw source refers to, or None."""
+    source = (source or "").strip()
+    if not source or source.lower().startswith("raw/"):
+        return None
+    candidates = [
+        source,
+        source.replace("silver_", "", 1),
+        source.replace("gold_", "", 1),
+    ]
+    if "/" in source:
+        candidates.append(source.rsplit("/", 1)[-1])
+    return next((candidate for candidate in candidates if candidate in names), None)
 
 
 def lineage_graph_payload(
@@ -45,16 +60,7 @@ def lineage_graph_payload(
                     }
                 edges.append({"from": raw_id, "to": node_id})
                 continue
-            candidates = [
-                source,
-                source.replace("silver_", "", 1),
-                source.replace("gold_", "", 1),
-            ]
-            if "/" in source:
-                candidates.append(source.rsplit("/", 1)[-1])
-            matched = next(
-                (candidate for candidate in candidates if candidate in by_name), None
-            )
+            matched = dataset_source_match(source, by_name)
             if matched:
                 edges.append({"from": f"ds:{matched}", "to": node_id})
 
