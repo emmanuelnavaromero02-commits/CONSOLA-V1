@@ -135,8 +135,8 @@ def test_overview_reads_the_connector_heartbeat_with_a_signed_header(monkeypatch
         async def __aexit__(self, *exc):
             return False
 
-        async def get(self, url, headers=None):
-            requests.append(("GET", url, dict(headers or {})))
+        async def request(self, method, url, headers=None, json=None):
+            requests.append((method, url, dict(headers or {})))
             return _Response(200, heartbeat)
 
     class FakeConn:
