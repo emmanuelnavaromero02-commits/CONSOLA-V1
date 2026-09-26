@@ -574,3 +574,30 @@ def test_console_sync_control_room_helper_refactor_does_not_trigger_full_stack_r
         "console/tests/test_agent_runner_scheduler_auth.py",
         "tests/test_sync_control_room.py",
     }
+
+
+def test_sap_b1_hint_sources_select_the_hints_contract():
+    for changed in (
+        "cartridges/sap_b1/datasets/sap_b1_batch_expiry.sql",
+        "cartridges/sap_b1/hints/assistant.md",
+        "cartridges/sap_b1/app/config/indicators.yaml",
+        "cartridges/sap_b1/app/config/connector.yaml",
+        "cartridges/sap_b1/apps/sap_b1_margen.json",
+        "cartridges/sap_b1/app/services/business_parameters_mapping.py",
+        "console/app/services/studio_assistant.py",
+        "console/app/services/agent_runtime.py",
+        "console/app/services/seed_packaged_hints.py",
+        "workspace/app/services/consumer_assistant.py",
+        "mcp-infra/app/tools/control_room.py",
+        "console-next/src/app/(shell)/studio/page.tsx",
+        "console-next/src/lib/studio/sections.ts",
+        "scripts/deploy_main_aws.py",
+        "infra/terraform/deploy/docker-compose.cartridges.yml",
+    ):
+        assert "tests/test_sap_b1_hints.py" in _root_targets(_flags(changed)), changed
+
+    dataset_only = _root_targets(_flags("cartridges/sap_b1/datasets/sap_b1_batch_expiry.sql"))
+    assert dataset_only == {"tests/test_sap_b1_datasets.py", "tests/test_sap_b1_hints.py"}
+    assert "tests/test_sap_b1_hints.py" not in _root_targets(
+        _flags("cartridges/sap_b1/tests/test_indicators_catalog.py")
+    )

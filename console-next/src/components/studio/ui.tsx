@@ -73,61 +73,6 @@ export function Notice({
   );
 }
 
-export function formatCell(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-}
-
-export function DataTable({
-  columns,
-  rows,
-  caption,
-  maxHeight = "max-h-[420px]",
-}: {
-  columns: string[];
-  rows: Array<Record<string, unknown>>;
-  caption?: string;
-  maxHeight?: string;
-}) {
-  const keys = columns.length
-    ? columns
-    : [...new Set(rows.slice(0, 25).flatMap((row) => Object.keys(row)))];
-  return (
-    <div className={cn("overflow-auto rounded-md border", maxHeight)}>
-      <table className="min-w-full divide-y text-xs">
-        {caption ? <caption className="sr-only">{caption}</caption> : null}
-        <thead className="sticky top-0 bg-muted text-left uppercase text-muted-foreground">
-          <tr>
-            {keys.map((key) => (
-              <th key={key} scope="col" className="whitespace-nowrap px-3 py-2 font-medium">{key}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y font-mono">
-          {rows.map((row, index) => (
-            <tr key={index}>
-              {keys.map((key) => {
-                const text = formatCell(row[key]);
-                return (
-                  <td key={key} title={text} className="max-w-[260px] truncate whitespace-nowrap px-3 py-1.5">
-                    {text}
-                  </td>
-                );
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 export function ConfirmDialog({
   open,
   title,

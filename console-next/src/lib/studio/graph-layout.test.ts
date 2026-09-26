@@ -6,6 +6,7 @@ import {
   graphNeighbours,
   kindLabel,
   layoutDagGraph,
+  nodeLayer,
   uniqueGraph,
 } from "./graph-layout";
 import type { DagGraphEdge, DagGraphNode } from "./types";
@@ -37,7 +38,47 @@ describe("layoutDagGraph", () => {
       "dag:acme_invoice": 2,
       "dataset:silver:orders": 2,
     });
-    expect(layout.columns.map((column) => column.label)).toEqual(["Cartucho", "Entidades", "DAGs · Datasets"]);
+    expect(layout.columns.map((column) => column.label)).toEqual(["Conector", "Tablas de origen", "Automatizaciones · Plata"]);
+  });
+
+  it("gives gold datasets their own Oro column after Plata", () => {
+    const fromRaw = graphDepths(
+      [
+        { id: "entity:Invoice", kind: "entity" },
+        { id: "dataset:gold:sales", kind: "dataset", layer: "gold" },
+      ],
+      [{ source: "entity:Invoice", target: "dataset:gold:sales" }],
+    );
+    expect(fromRaw.get("dataset:gold:sales")).toBe(3);
+
+    const nodes: DagGraphNode[] = [
+      { id: "cartridge:acme", kind: "cartridge", label: "Acme" },
+      { id: "entity:Invoice", kind: "entity", label: "Invoice" },
+      { id: "dataset:silver:orders", kind: "dataset", label: "silver:orders", layer: "silver" },
+      { id: "dataset:gold:sales", kind: "dataset", label: "gold:sales" },
+      { id: "dataset:gold:ranking", kind: "dataset", label: "gold:ranking", layer: "GOLD" },
+    ];
+    const edges: DagGraphEdge[] = [
+      { source: "cartridge:acme", target: "entity:Invoice" },
+      { source: "entity:Invoice", target: "dataset:silver:orders" },
+      { source: "dataset:silver:orders", target: "dataset:gold:sales" },
+      { source: "dataset:gold:sales", target: "dataset:gold:ranking" },
+    ];
+    const depths = graphDepths(nodes, edges);
+    expect(depths.get("dataset:silver:orders")).toBe(2);
+    expect(depths.get("dataset:gold:sales")).toBe(3);
+    expect(depths.get("dataset:gold:ranking")).toBe(4);
+    const layout = layoutDagGraph(nodes, edges);
+    expect(layout.columns.map((column) => column.label)).toEqual(["Conector", "Tablas de origen", "Plata", "Oro", "Oro"]);
+  });
+
+  it("reads the layer from the payload, the dataset id or the entity kind", () => {
+    expect(nodeLayer({ id: "dataset:silver:orders", kind: "dataset", layer: " Gold " })).toBe("gold");
+    expect(nodeLayer({ id: "dataset:Master:orders", kind: "dataset" })).toBe("master");
+    expect(nodeLayer({ id: "dataset:orders", kind: "dataset" })).toBeNull();
+    expect(nodeLayer({ id: "entity:Invoice", kind: "entity" })).toBe("bronze");
+    expect(nodeLayer({ id: "dag:x", kind: "dag" })).toBeNull();
+    expect(nodeLayer({ id: "cartridge:acme", kind: "cartridge", layer: null })).toBeNull();
   });
 
   it("drops edges whose endpoints are not nodes", () => {

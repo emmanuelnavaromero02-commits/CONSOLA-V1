@@ -56,7 +56,7 @@ export function wisdomBitMonitorsFrom(agents: AgentRecord[], wisdomBitPrefix: st
 
 const DAILY_CRON = /^(\d{1,2})\s+(\d{1,2})\s+\*\s+\*\s+\*$/;
 
-function dailyParts(cron: string | null | undefined): { hour: number; minute: number } | null {
+export function dailyParts(cron: string | null | undefined): { hour: number; minute: number } | null {
   const match = DAILY_CRON.exec((cron ?? "").trim());
   if (!match) return null;
   const minute = Number(match[1]);

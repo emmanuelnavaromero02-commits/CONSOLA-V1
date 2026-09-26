@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from fastapi import Response
 from fastapi.responses import HTMLResponse
 
 from app.services.security_headers import (
@@ -68,3 +69,52 @@ def test_published_app_theme_injection_is_idempotent():
     assert once == twice
     assert once.count("omega-app-theme-shim") == 1
     assert once.count("/static/js/theme-switch.js") == 1
+    assert once.count("@font-face") == 2
+    assert once.count("@layer omega-base") == 1
+
+
+def test_static_fonts_allow_the_opaque_app_frame():
+    response = Response(status_code=200)
+
+    apply_security_headers(response, "/static/fonts/inter-4.1/InterVariable.woff2")
+
+    assert response.headers["access-control-allow-origin"] == "*"
+    assert response.headers["content-type"] == "font/woff2"
+    assert "immutable" in response.headers["cache-control"]
+
+
+def test_font_revalidations_and_misses_keep_only_the_cors_header():
+    for status in (304, 404):
+        response = Response(status_code=status)
+        apply_security_headers(response, "/static/fonts/inter-4.1/InterVariable.woff2")
+        assert response.headers["access-control-allow-origin"] == "*"
+        assert "cache-control" not in response.headers
+        assert response.headers.get("content-type") != "font/woff2"
+
+
+def test_cors_wildcard_is_limited_to_fonts():
+    for path in (
+        "/static/js/theme-switch.js",
+        "/static/fonts/inter-4.1/LICENSE.txt",
+        "/static/fonts/../js/x.woff2",
+        "/static/css/x.woff2",
+        "/apps/demo/content",
+        "/apps/demo/embed",
+        "/api/data/x",
+    ):
+        response = HTMLResponse("")
+        apply_security_headers(response, path)
+        assert "access-control-allow-origin" not in response.headers, path
+
+
+def test_shim_without_head_keeps_the_doctype_first():
+    out = inject_published_app_theme("<!doctype html><html><body></body></html>")
+
+    assert out.lower().startswith("<!doctype html>")
+    assert out.count("omega-app-theme-shim") == 1
+
+
+def test_shim_without_head_or_doctype_is_prepended():
+    out = inject_published_app_theme("<main>x</main>")
+
+    assert out.lstrip().startswith('<style id="omega-app-theme-shim">')

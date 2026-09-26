@@ -4,6 +4,7 @@ import { FileText } from "lucide-react";
 import { useState } from "react";
 
 import { StatusPill } from "@/components/monitor/StatusPill";
+import { extractEntity } from "@/lib/monitor/client";
 import {
   findEntityRun,
   isTerminalRunStatus,
@@ -25,6 +26,24 @@ export interface ExtractionLaunch {
 }
 
 const FOLLOW_WINDOW_MS = 10 * 60_000;
+
+export type ExtractionMode = "full" | "incremental";
+
+export function extractionMode(mode: string | null | undefined): ExtractionMode {
+  return String(mode || "incremental") === "full" ? "full" : "incremental";
+}
+
+export async function startExtraction(cartridge: string, entity: string, mode: ExtractionMode): Promise<ExtractionLaunch> {
+  const result = await extractEntity(cartridge, entity, { mode });
+  const runId = result.dag_run_id || null;
+  return {
+    entity,
+    dagId: result.dag_id || null,
+    runId,
+    jobId: runId ? null : result.job_id || null,
+    launchedAt: Date.now(),
+  };
+}
 
 function RunLogs({ cartridge, entity, runId }: { cartridge: string; entity: string; runId: string }) {
   const logs = useEntityRunLogs(cartridge, entity, runId, true);

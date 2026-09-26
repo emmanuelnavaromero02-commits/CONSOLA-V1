@@ -1,7 +1,13 @@
 import { test, expect } from "../fixtures/auth";
 import type { Page, Response } from "@playwright/test";
 
-const TABS = [/^Grafo$/, /^DAGs$/, /^Entidades$/, /^Refinar$/, /^Capas$/];
+const TABS = [
+  /^Mapa del Flujo$/,
+  /^Automatizaciones$/,
+  /^Tablas de Origen \(Bronce\)$/,
+  /^Modelado y Limpieza \(Plata\)$/,
+  /^Indicadores y KPIs \(Oro\)$/,
+];
 
 function isPath(pathname: string) {
   return (response: Response) => new URL(response.url()).pathname === pathname;
@@ -65,7 +71,7 @@ test.describe("Studio (Next.js, /studio)", () => {
   test("DAGs tab lists Airflow DAGs or explains why Airflow is unavailable", async ({ authedPage: page }) => {
     await openStudio(page);
     const dags = page.waitForResponse(isPath("/api/studio/dags"), { timeout: 20_000 });
-    await openTab(page, /^DAGs$/);
+    await openTab(page, /^Automatizaciones$/);
     const response = await dags;
     if (!response.ok()) {
       await expect(page.getByTestId("dags-error")).toBeVisible();
@@ -104,7 +110,7 @@ test.describe("Studio (Next.js, /studio)", () => {
       if (new URL(request.url()).pathname === "/api/studio/dag-deploy") deployRequests.push(request.method());
     });
     await openStudio(page);
-    await openTab(page, /^DAGs$/);
+    await openTab(page, /^Automatizaciones$/);
     await page.getByRole("button", { name: /Nuevo DAG/ }).click();
     const cartridge = await page.getByTestId("cartridge-picker").inputValue();
     await page.getByRole("textbox", { name: "dag_id" }).fill(`${cartridge}_e2e_probe`);
@@ -135,7 +141,7 @@ test.describe("Studio (Next.js, /studio)", () => {
   test("Entidades tab shows the entity table, spec upload and new-entity dialog", async ({ authedPage: page }) => {
     await openStudio(page);
     const entities = page.waitForResponse(isPath("/api/studio/entities"), { timeout: 20_000 });
-    await openTab(page, /^Entidades$/);
+    await openTab(page, /^Tablas de Origen \(Bronce\)$/);
     expect((await entities).status()).toBe(200);
     await expect(page.getByTestId("entities-table").or(page.getByTestId("entities-empty"))).toBeVisible();
     await expect(page.locator('input[type="file"][accept*=".yaml"]')).toHaveCount(1);
@@ -148,7 +154,7 @@ test.describe("Studio (Next.js, /studio)", () => {
 
   test("Capas tab switches Silver/Gold and shows data or an honest state", async ({ authedPage: page }) => {
     await openStudio(page);
-    await openTab(page, /^Capas$/);
+    await openTab(page, /^Indicadores y KPIs \(Oro\)$/);
     for (const layer of ["Silver", "Gold"]) {
       await page.getByRole("tab", { name: layer, exact: true }).click();
       const panel = page.locator('[role="tabpanel"][id^="studio-layer-panel-"]');
@@ -161,7 +167,7 @@ test.describe("Studio (Next.js, /studio)", () => {
 
   test("Refinar previews SQL through /api/bronze/query", async ({ authedPage: page }) => {
     await openStudio(page);
-    await openTab(page, /^Refinar$/);
+    await openTab(page, /^Modelado y Limpieza \(Plata\)$/);
     await page.getByRole("button", { name: /Nuevo dataset/ }).click();
     await page.getByRole("textbox", { name: "SQL" }).fill("select 1 as uno");
     const request = page.waitForRequest(

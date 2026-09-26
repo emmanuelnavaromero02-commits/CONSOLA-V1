@@ -71,6 +71,8 @@ async function installStudioHarness(page: Page, overrides: Record<string, Handle
         entities: [{ name: "Invoice", display_name: "Facturas", mode: "incremental", dag_id: "acme_packaged", source: "entity_config" }],
       }),
     "/datasets": (route) => json(route, { datasets: [{ name: "orders", layer: "silver", cartridge: "acme" }] }),
+    "/api/pipeline": (route) => json(route, { pipeline: [] }),
+    "/api/apps": (route) => json(route, { apps: [] }),
     "/api/studio/silver/preview": (route) =>
       json(route, {
         layer: "silver",
@@ -143,7 +145,7 @@ test.describe("Studio deep — hermetic API contract", () => {
   test("deploy: confirm modal → POST with the editor code → success toast", async ({ authedPage: page }) => {
     await installStudioHarness(page);
     await openStudio(page);
-    await openTab(page, /^DAGs$/);
+    await openTab(page, /^Automatizaciones$/);
     await page.locator('[data-dag-id="acme_custom"]').click();
     await expect(page.getByTestId("dag-airflow-link")).toHaveAttribute(
       "href",
@@ -176,7 +178,7 @@ test.describe("Studio deep — hermetic API contract", () => {
         json(route, { detail: "Deploy a Airflow requiere ALLOW_RCE_TOOLS=true en el entorno local." }, 403),
     });
     await openStudio(page);
-    await openTab(page, /^DAGs$/);
+    await openTab(page, /^Automatizaciones$/);
     await page.locator('[data-dag-id="acme_custom"]').click();
     await page.getByRole("button", { name: /Deploy a Airflow/ }).click();
     await page.getByTestId("deploy-dialog").getByRole("button", { name: "Desplegar" }).click();
@@ -188,7 +190,7 @@ test.describe("Studio deep — hermetic API contract", () => {
       "/api/system/info": (route) => json(route, { dev_mode: false, rce_tools_enabled: false, dag_deploy_enabled: false }),
     });
     await openStudio(page);
-    await openTab(page, /^DAGs$/);
+    await openTab(page, /^Automatizaciones$/);
     const packaged = page.locator('[data-dag-id="acme_packaged"]');
     await expect(packaged).toContainText("Inactivo");
     await expect(packaged).toContainText("Solo manifiesto");
@@ -204,9 +206,9 @@ test.describe("Studio deep — hermetic API contract", () => {
       "/api/studio/dags": (route) => json(route, { detail: "Airflow DAG list timed out" }, 504),
     });
     await openStudio(page);
-    await openTab(page, /^DAGs$/);
+    await openTab(page, /^Automatizaciones$/);
     await expect(page.getByTestId("dags-error")).toContainText("HTTP 504", { timeout: 15_000 });
-    await openTab(page, /^Entidades$/);
+    await openTab(page, /^Tablas de Origen \(Bronce\)$/);
     await expect(page.getByTestId("entities-table")).toContainText("Invoice");
   });
 
@@ -217,7 +219,7 @@ test.describe("Studio deep — hermetic API contract", () => {
       if (req.method() === "DELETE") deletes.push(req.url());
     });
     await openStudio(page);
-    await openTab(page, /^DAGs$/);
+    await openTab(page, /^Automatizaciones$/);
     await page.locator('[data-dag-id="acme_custom"]').click();
     await page.getByRole("button", { name: /Eliminar/ }).click();
     const dialog = page.getByTestId("delete-dag-dialog");
@@ -230,7 +232,7 @@ test.describe("Studio deep — hermetic API contract", () => {
   test("rename opens an input and requires confirmation", async ({ authedPage: page }) => {
     await installStudioHarness(page);
     await openStudio(page);
-    await openTab(page, /^DAGs$/);
+    await openTab(page, /^Automatizaciones$/);
     await page.locator('[data-dag-id="acme_custom"]').click();
     await page.getByRole("button", { name: /Renombrar/ }).click();
     const input = page.getByTestId("rename-input");
@@ -246,11 +248,33 @@ test.describe("Studio deep — hermetic API contract", () => {
   test("silver preview shows the backend's unavailable reason verbatim", async ({ authedPage: page }) => {
     await installStudioHarness(page);
     await openStudio(page);
-    await openTab(page, /^Capas$/);
-    await expect(page.getByText("No silver datasets registered for cartridge acme")).toBeVisible({ timeout: 15_000 });
-    await page.getByRole("tab", { name: "Gold", exact: true }).click();
-    await expect(page.getByText(/No hay datasets Gold registrados para acme/)).toBeVisible();
+    await openTab(page, /^Indicadores y KPIs \(Oro\)$/);
+    await expect(page.getByText(/No hay datasets Gold registrados para acme/)).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole("button", { name: /Publicar en Superset/ })).toHaveCount(0);
+    await page.getByRole("tab", { name: "Silver", exact: true }).click();
+    await expect(page.getByText("No silver datasets registered for cartridge acme")).toBeVisible({ timeout: 15_000 });
+  });
+
+  test("canvas zoom stays within 0.4x–2.5x and the drawer closes with Escape", async ({ authedPage: page }) => {
+    await installStudioHarness(page);
+    await openStudio(page);
+    const graph = page.getByTestId("dag-graph");
+    await expect(graph.locator("[data-node-id]")).toHaveCount(4);
+    const zoomIn = page.getByRole("button", { name: "Acercar" });
+    for (let step = 0; step < 12 && (await zoomIn.isEnabled()); step += 1) {
+      await zoomIn.click();
+    }
+    await expect(zoomIn).toBeDisabled();
+    await expect(page.getByTestId("dag-graph-zoom")).toHaveText("250 %");
+    await page.getByRole("button", { name: "Centrar y ajustar" }).click();
+    await graph.locator('[data-node-id="entity:Invoice"]').click();
+    const drawer = page.getByRole("dialog", { name: "Invoice" });
+    await expect(drawer).toBeVisible();
+    await drawer.getByRole("tab", { name: "¿Quién lo alimenta y quién lo usa?" }).click();
+    await expect(drawer).toContainText("acme_packaged");
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("dag-graph-detail")).toHaveCount(0);
+    await expect(graph.locator("path[marker-end]")).toHaveCount(3);
   });
 
   test("oversized spec uploads are rejected before any request", async ({ authedPage: page }) => {
@@ -260,7 +284,7 @@ test.describe("Studio deep — hermetic API contract", () => {
       if (new URL(req.url()).pathname === "/api/studio/entities/upload") uploads.push(req.method());
     });
     await openStudio(page);
-    await openTab(page, /^Entidades$/);
+    await openTab(page, /^Tablas de Origen \(Bronce\)$/);
     await page.locator('input[type="file"][accept*=".yaml"]').setInputFiles({
       name: "big.yaml",
       mimeType: "application/x-yaml",

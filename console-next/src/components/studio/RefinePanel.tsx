@@ -11,18 +11,19 @@ import { useDatasetDetail, useDatasets } from "@/lib/monitor/hooks";
 import type { DatasetDetail } from "@/lib/monitor/types";
 import { studioErrorMessage } from "@/lib/studio/client";
 import { datasetsForLayer } from "@/lib/studio/datasets";
+import { plural } from "@/lib/studio/format";
 import { useDeleteDataset, useRefreshDataset, useSaveDataset } from "@/lib/studio/hooks";
 import { editorSources } from "@/lib/studio/sources";
-import type { StudioLayer, StudioManifest } from "@/lib/studio/types";
+import type { StudioEditorTarget, StudioLayer, StudioManifest } from "@/lib/studio/types";
 import { identifierError } from "@/lib/studio/validation";
 import { cn } from "@/lib/utils";
 
+import { CodeEditor } from "./CodeEditor";
+import { DataTable } from "./DataTable";
 import {
   buttonClass,
-  codeAreaClass,
   ConfirmDialog,
   dangerButtonClass,
-  DataTable,
   inputClass,
   Notice,
   primaryButtonClass,
@@ -70,13 +71,27 @@ function previewColumns(payload: BronzeQueryPayload | null): string[] {
   return [];
 }
 
-export function RefinePanel({ cartridge, manifest }: { cartridge: string; manifest?: StudioManifest }) {
+function initialDrafts(target: StudioEditorTarget | null | undefined): Record<string, RefineForm> {
+  return target?.entity && !target.dataset ? { [NEW_DATASET]: { ...EMPTY_FORM, entity: target.entity } } : {};
+}
+
+export function RefinePanel({
+  cartridge,
+  manifest,
+  initialTarget,
+}: {
+  cartridge: string;
+  manifest?: StudioManifest;
+  initialTarget?: StudioEditorTarget | null;
+}) {
   const datasets = useDatasets();
   const save = useSaveDataset();
   const refresh = useRefreshDataset();
   const remove = useDeleteDataset();
-  const [selected, setSelected] = useState<string | null>(null);
-  const [drafts, setDrafts] = useState<Record<string, RefineForm>>({});
+  const [selected, setSelected] = useState<string | null>(
+    initialTarget?.dataset ?? (initialTarget?.entity ? NEW_DATASET : null),
+  );
+  const [drafts, setDrafts] = useState<Record<string, RefineForm>>(() => initialDrafts(initialTarget));
   const [confirmDelete, setConfirmDelete] = useState(false);
   const existing = selected && selected !== NEW_DATASET ? selected : null;
   const detail = useDatasetDetail(existing);
@@ -159,7 +174,7 @@ export function RefinePanel({ cartridge, manifest }: { cartridge: string; manife
       onSuccess: (result) =>
         toast.success(
           typeof result.row_count === "number"
-            ? `Dataset ${existing} materializado: ${result.row_count} filas.`
+            ? `Dataset ${existing} materializado: ${plural(result.row_count, "fila", "filas")}.`
             : `Dataset ${existing} materializado.`,
         ),
       onError: (error) => toast.error(studioErrorMessage(error, "No se pudo materializar el dataset.")),
@@ -262,18 +277,17 @@ export function RefinePanel({ cartridge, manifest }: { cartridge: string; manife
               <span className="font-medium">Descripción</span>
               <input value={form.description} onChange={(event) => update({ description: event.target.value })} className={inputClass} />
             </label>
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="font-medium">SQL</span>
-              <textarea
+            <div className="flex flex-col gap-1 text-sm">
+              <label htmlFor="studio-sql" className="font-medium">SQL</label>
+              <CodeEditor
+                id="studio-sql"
                 name="sql"
                 value={form.sql}
-                onChange={(event) => update({ sql: event.target.value })}
+                onChange={(sql) => update({ sql })}
                 rows={12}
-                spellCheck={false}
                 placeholder={`select * from read_parquet('raw/${cartridge}/<entidad>') limit 50`}
-                className={codeAreaClass}
               />
-            </label>
+            </div>
             <p className="break-all text-xs text-muted-foreground">
               Fuentes: {sources.length ? sources.join(", ") : "ninguna declarada"}
             </p>
@@ -298,7 +312,12 @@ export function RefinePanel({ cartridge, manifest }: { cartridge: string; manife
             {previewError ? <Notice tone="error">{previewError}</Notice> : null}
             {preview.isSuccess && !previewError ? (
               rows.length ? (
-                <DataTable columns={columns} rows={rows} caption="Resultado de la vista previa" />
+                <DataTable
+                  columns={columns}
+                  rows={rows}
+                  caption="Resultado de la vista previa"
+                  exportName={form.name.trim() || "vista-previa"}
+                />
               ) : (
                 <Notice>La consulta no devolvió filas.</Notice>
               )

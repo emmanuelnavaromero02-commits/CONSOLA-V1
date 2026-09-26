@@ -38,3 +38,28 @@ def test_static_assets_and_canonical_public_pages_still_load(monkeypatch):
     assert client.get("/static/js/theme-switch.js").status_code == 200
     assert client.get("/static/css/tokens.css").status_code == 200
     assert client.get("/forgot-password").status_code == 200
+
+
+def test_inter_fonts_are_served_to_the_opaque_app_frame(monkeypatch):
+    client = _console_client(monkeypatch)
+    frame_font_request = {
+        "Origin": "null",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Dest": "font",
+        "Sec-Fetch-Site": "cross-site",
+    }
+
+    for name in ("InterVariable.woff2", "InterVariable-Italic.woff2"):
+        response = client.get(f"/static/fonts/inter-4.1/{name}", headers=frame_font_request)
+        assert response.status_code == 200, name
+        assert response.headers["access-control-allow-origin"] == "*"
+        assert response.headers["content-type"] == "font/woff2"
+        assert "immutable" in response.headers["cache-control"]
+        assert response.content.startswith(b"wOF2")
+
+    script = client.get("/static/js/theme-switch.js", headers={"Origin": "null"})
+    assert script.status_code == 200
+    assert "access-control-allow-origin" not in script.headers
+    license_file = client.get("/static/fonts/inter-4.1/LICENSE.txt", headers={"Origin": "null"})
+    assert license_file.status_code == 200
+    assert "access-control-allow-origin" not in license_file.headers
