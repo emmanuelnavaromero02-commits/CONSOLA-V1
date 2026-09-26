@@ -62,6 +62,7 @@ def test_bootstrap_defaults_to_non_evidence_keys_without_collateral_loss(
         | _array_keys(source, "DB_KEYS")
         | _array_keys(source, "DERIVED_KEYS")
     )
+    declared |= _array_keys(source, "FERNET_KEYS")
     expected = declared - {"CONTROL_ROOM_EVIDENCE_SIGNING_KEY"}
 
     output = _run_bootstrap(tmp_path)

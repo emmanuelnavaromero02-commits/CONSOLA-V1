@@ -104,7 +104,8 @@ def test_aws_bootstrap_still_generates_every_non_evidence_key(tmp_path):
             r'"([A-Z][A-Z0-9_]+)"',
             _array_body(source, "KEYS")
             + _array_body(source, "DB_KEYS")
-            + _array_body(source, "DERIVED_KEYS"),
+            + _array_body(source, "DERIVED_KEYS")
+            + _array_body(source, "FERNET_KEYS"),
         )
     )
     declared.remove("CONTROL_ROOM_EVIDENCE_SIGNING_KEY")

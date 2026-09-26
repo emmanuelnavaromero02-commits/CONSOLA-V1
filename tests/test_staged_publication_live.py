@@ -75,7 +75,7 @@ def staged_publication_live_stack() -> LiveStack:
         "-e",
         "MINIO_ROOT_PASSWORD=minio-secret",
         "-P",
-        "ghcr.io/emmanuelnavaromero02-commits/omega-minio:RELEASE.2024-12-18T13-15-44Z",
+        "ghcr.io/emmanuelnavaromero02-commits/omega-minio:RELEASE.2024-12-18T13-15-44Z-r1",
         "server",
         "/data",
     )

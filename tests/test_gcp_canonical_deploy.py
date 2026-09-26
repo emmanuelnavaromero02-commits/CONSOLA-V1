@@ -656,3 +656,116 @@ def test_image_pull_disk_gate_precedes_pull_and_quiesce_and_skips_when_cached():
     cached_branch = text[cached:branch_end]
     assert "findmnt" not in cached_branch
     assert "docker pull" not in cached_branch
+
+
+def test_required_env_preflight_renders_with_interpolation_before_any_mutation():
+    text = REMOTE.read_text(encoding="utf-8")
+    hydrated = text.index('log "preflight config: runtime secrets hydrated atomically"')
+    call = text.index('required_env_preflight "${RELEASE_DIR}" "${CANDIDATE_ENV}"')
+    images = text.index('log "preflight images:')
+    dry_exit = text.index("DRY-RUN OK")
+    quiesce = text.index('log "step 1 quiesce')
+    mutated = text.index("MUTATED=1   #")
+    assert hydrated < call < images < dry_exit < quiesce < mutated
+    gate = text[text.index("HYDRATED_ENV_NAMES=("):images]
+    assert "(names only); no service or database was touched." in gate
+    assert '[[ "${DEPLOY_MODE:-apply}" != "dryrun" ]] || PREFLIGHT_PLACEHOLDERS=' in gate
+    function = text[text.index("required_env_preflight() {"):]
+    function = function[: function.index("\n}\n")]
+    assert "config --quiet )" in function
+    assert "--no-interpolate" not in function
+
+
+def test_dryrun_placeholders_match_what_hydration_writes():
+    remote = REMOTE.read_text(encoding="utf-8")
+    block = remote.split("HYDRATED_ENV_NAMES=(", 1)[1].split(")", 1)[0]
+    declared = set(block.split())
+    hydrate = (REPO / "infra/terraform-gcp/release/hydrate-runtime-secrets.sh").read_text(
+        encoding="utf-8"
+    )
+    written = set(re.findall(r'^append_update ([A-Z_]+) "\$\{[a-z_]+\}"$', hydrate, re.M))
+    assert written and declared == written
+
+
+PREFLIGHT_FAKE_DOCKER = r"""#!/usr/bin/env bash
+set -euo pipefail
+printf '%s|%s\n' "$PWD" "$*" >> "$FAKE_LOG"
+args=("$@")
+env_file=""
+for i in "${!args[@]}"; do
+  if [[ "${args[$i]}" == "--env-file" ]]; then env_file="${args[$((i + 1))]}"; fi
+done
+[[ "${FAKE_MODE:-names}" != "broken" ]] || { echo "yaml: line 3: bad indentation" >&2; exit 15; }
+for name in $FAKE_REQUIRED; do
+  if ! grep -Eq "^${name}=.+" "$env_file"; then
+    echo "error while interpolating services.x.environment.${name}: required variable ${name} is missing a value: ${name} is required" >&2
+    exit 1
+  fi
+done
+"""
+
+
+def _run_required_env_preflight(tmp_path: Path, *, required: str, placeholders=(), mode="names"):
+    text = REMOTE.read_text(encoding="utf-8")
+    function = text[text.index("required_env_preflight() {"):]
+    function = function[: function.index("\n}\n") + 3]
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    docker = bin_dir / "docker"
+    docker.write_text(PREFLIGHT_FAKE_DOCKER, encoding="utf-8")
+    docker.chmod(0o755)
+    release = tmp_path / "release"
+    (release / "infra").mkdir(parents=True)
+    backup = tmp_path / "backup"
+    backup.mkdir()
+    secret = "shared-env-secret-" + secrets.token_hex(8)
+    env_file = release / "infra" / ".env"
+    env_file.write_text(f"POSTGRES_PASSWORD={secret}\nEMPTY_VALUE=\n", encoding="utf-8")
+    harness = (
+        "set -Eeuo pipefail\n"
+        f"BACKUP_DIR={shlex.quote(str(backup))}\n{function}"
+        "rc=0\n"
+        f"required_env_preflight {shlex.quote(str(release))} {shlex.quote(str(env_file))} "
+        + " ".join(shlex.quote(name) for name in placeholders)
+        + " || rc=$?\n"
+        'printf "rc=%s missing=%s\\n" "$rc" "$REQUIRED_ENV_MISSING"\n'
+    )
+    log = tmp_path / "docker.log"
+    result = subprocess.run(
+        ["bash", "-c", harness],
+        env={"PATH": f"{bin_dir}:/usr/bin:/bin", "FAKE_LOG": str(log),
+             "FAKE_REQUIRED": required, "FAKE_MODE": mode},
+        text=True, capture_output=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert secret not in result.stdout + result.stderr
+    assert list(backup.iterdir()) == []
+    assert env_file.read_text(encoding="utf-8").startswith("POSTGRES_PASSWORD=")
+    return result.stdout.strip(), log.read_text(encoding="utf-8"), release
+
+
+def test_required_env_preflight_lists_every_missing_name_and_honours_placeholders(tmp_path):
+    required = "POSTGRES_PASSWORD AIRFLOW_FERNET_KEY EMPTY_VALUE CONTROL_ROOM_EVIDENCE_SIGNING_KEY"
+    (tmp_path / "apply").mkdir()
+    out, log, release = _run_required_env_preflight(tmp_path / "apply", required=required)
+    assert out == "rc=1 missing=AIRFLOW_FERNET_KEY,EMPTY_VALUE,CONTROL_ROOM_EVIDENCE_SIGNING_KEY"
+    first = log.splitlines()[0]
+    assert first.startswith(f"{release}|compose --env-file ")
+    assert first.endswith(
+        "-f infra/docker-compose.yml -f infra/docker-compose.gcp.yml "
+        "-f infra/docker-compose.aws-images.gcp.yml --profile sap config --quiet"
+    )
+
+    (tmp_path / "dry").mkdir()
+    out, _log, _release = _run_required_env_preflight(
+        tmp_path / "dry",
+        required=required,
+        placeholders=("CONTROL_ROOM_EVIDENCE_SIGNING_KEY", "EMPTY_VALUE", "AIRFLOW_FERNET_KEY"),
+    )
+    assert out == "rc=0 missing="
+
+    (tmp_path / "broken").mkdir()
+    out, _log, _release = _run_required_env_preflight(
+        tmp_path / "broken", required="", mode="broken"
+    )
+    assert out == "rc=2 missing="

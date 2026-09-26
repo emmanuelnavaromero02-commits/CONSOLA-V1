@@ -66,7 +66,7 @@ OMEGA_CARTRIDGE_SEC_EDGAR_PASSWORD="$(openssl rand -hex 16)"
 INTERNAL_API_KEY_SEC_EDGAR_TO_CONSOLE="$(openssl rand -hex 32)"
 
 if ! command -v python3 >/dev/null 2>&1; then
-  echo "ERROR: python3 is required to generate VAULT_ENCRYPTION_KEY" >&2
+  echo "ERROR: python3 is required to generate Fernet keys" >&2
   exit 1
 fi
 BOOTSTRAP_PYTHON="$(command -v python3)"
@@ -74,6 +74,7 @@ FERNET_KEY_SCRIPT='import base64, os; print(base64.urlsafe_b64encode(os.urandom(
 VAULT_ENCRYPTION_KEY="$("${BOOTSTRAP_PYTHON}" -c "${FERNET_KEY_SCRIPT}")"
 
 FIELD_ENCRYPTION_KEY="$("${BOOTSTRAP_PYTHON}" -c "${FERNET_KEY_SCRIPT}")"
+AIRFLOW_FERNET_KEY="$("${BOOTSTRAP_PYTHON}" -c "${FERNET_KEY_SCRIPT}")"
 
 umask 077
 cat > "${ENV_FILE}" <<EOF
@@ -93,6 +94,7 @@ SUPERSET_SECRET_KEY=${SUPERSET_SECRET_KEY}
 # superset-init so superset re-encrypt-secrets can migrate encrypted rows.
 SUPERSET_PREVIOUS_SECRET_KEY=
 AIRFLOW_SECRET_KEY=${AIRFLOW_SECRET_KEY}
+AIRFLOW_FERNET_KEY=${AIRFLOW_FERNET_KEY}
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
 SUPERSET_ADMIN_PASSWORD=${SUPERSET_ADMIN_PASSWORD}

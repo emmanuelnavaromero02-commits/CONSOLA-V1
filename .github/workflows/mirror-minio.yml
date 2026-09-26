@@ -13,6 +13,7 @@ env:
   MINIO_COMMIT: 16f8cf1c52f0a77eeb8f7565aaf7f7df12454583
   MC_TAG: RELEASE.2024-11-21T17-21-54Z
   MC_COMMIT: 1681e4497c09d7438a34e846f76dbde972ab7daf
+  MIRROR_REVISION: r1
 
 jobs:
   build-and-publish:
@@ -46,7 +47,7 @@ jobs:
           annotations: |
             index:org.opencontainers.image.source=https://github.com/${{ github.repository }}
             index:org.opencontainers.image.licenses=AGPL-3.0-only
-          tags: ghcr.io/${{ github.repository_owner }}/omega-minio:${{ env.MINIO_TAG }}
+          tags: ghcr.io/${{ github.repository_owner }}/omega-minio:${{ env.MINIO_TAG }}-${{ env.MIRROR_REVISION }}
 
       - name: Build and push mc
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
@@ -60,15 +61,15 @@ jobs:
           annotations: |
             index:org.opencontainers.image.source=https://github.com/${{ github.repository }}
             index:org.opencontainers.image.licenses=AGPL-3.0-only
-          tags: ghcr.io/${{ github.repository_owner }}/omega-mc:${{ env.MC_TAG }}
+          tags: ghcr.io/${{ github.repository_owner }}/omega-mc:${{ env.MC_TAG }}-${{ env.MIRROR_REVISION }}
 
       - name: Verify the published images report the pinned releases
         shell: bash
         run: |
           set -euo pipefail
           owner="${{ github.repository_owner }}"
-          minio_ref="ghcr.io/${owner}/omega-minio:${MINIO_TAG}"
-          mc_ref="ghcr.io/${owner}/omega-mc:${MC_TAG}"
+          minio_ref="ghcr.io/${owner}/omega-minio:${MINIO_TAG}-${MIRROR_REVISION}"
+          mc_ref="ghcr.io/${owner}/omega-mc:${MC_TAG}-${MIRROR_REVISION}"
           docker pull "${minio_ref}"
           docker pull "${mc_ref}"
           minio_version="$(docker run --rm "${minio_ref}" minio --version)"
@@ -80,6 +81,22 @@ jobs:
           curl_version="$(docker run --rm --entrypoint /usr/bin/curl "${minio_ref}" --version)"
           echo "${curl_version%%$'\n'*}"
           docker run --rm --entrypoint /bin/sh "${minio_ref}" -c 'test -x /usr/bin/docker-entrypoint.sh && test -x /usr/bin/mc'
+          docker run --rm --entrypoint /bin/sh "${minio_ref}" -c 'test "$(id -u):$(id -g)" = "10001:10001" && test -w /data && test -w "$HOME"'
+          docker run --rm --entrypoint /bin/sh "${mc_ref}" -c 'test "$(id -u):$(id -g)" = "10001:10001" && test -w "$HOME"'
+          cid="$(docker run -d "${minio_ref}" server /data)"
+          healthy=0
+          for _ in $(seq 1 30); do
+            if docker exec "${cid}" curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1; then
+              healthy=1
+              break
+            fi
+            sleep 2
+          done
+          if [[ "${healthy}" != 1 ]]; then
+            docker logs "${cid}" | tail -n 50 || true
+          fi
+          docker rm -f "${cid}" >/dev/null
+          test "${healthy}" = 1
           {
             echo "## Published images"
             echo

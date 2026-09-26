@@ -69,6 +69,7 @@ REQUIRED_SECRET_NAMES = {
     "OMEGA_CARTRIDGE_BANXICO_PASSWORD",
     "OMEGA_CARTRIDGE_INEGI_PASSWORD",
     "AIRFLOW_SECRET_KEY",
+    "AIRFLOW_FERNET_KEY",
     "AIRFLOW_ADMIN_PASSWORD",
     "AGENT_RUNNER_TOKEN",
     "SUPERSET_SECRET_KEY",
@@ -164,6 +165,7 @@ def test_aws_entrypoint_script_fail_fast_on_missing_secret():
         "OMEGA_CARTRIDGE_BANXICO_PASSWORD",
         "INTERNAL_API_KEY_INEGI_TO_CONSOLE",
         "OMEGA_CARTRIDGE_INEGI_PASSWORD",
+        "AIRFLOW_FERNET_KEY",
     ):
         assert secret_name in required_block.group(1)
     assert "GHCR_OWNER" in src

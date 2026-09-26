@@ -11,11 +11,11 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "sha256": "6efe397a47bd19861b3cf33052b46040976f9c22983f3406c6ec2f89c76a2afb"
+      "sha256": "7d6e24297020254276a6057a5d28ec6b09b19abf6334d8a6c8e8497471281fc0"
     },
     {
       "path": "Makefile",
-      "sha256": "3dd5a3ca2c7cec15f58e5364bf42760acf5c39a84938b2d2622569e0d18bfee3"
+      "sha256": "04cc2d70159c7d3f3e9d270ba40ce3665c4dfd40258acc342681bb93ff774458"
     },
     {
       "path": "airflow/dags/_secrets.py",
@@ -3351,11 +3351,11 @@
     },
     {
       "path": "infra/bootstrap-keys.sh",
-      "sha256": "70b469503297d82e01be7cfa7192f800db4aaf7055b47f2ae8cc7c3c960b6e2c"
+      "sha256": "c79c7a89bd6316d8f2b296de97cfbb64af6599c540f492f8b813c91a27e76e64"
     },
     {
       "path": "infra/bootstrap.sh",
-      "sha256": "1ec3c667088f89e66f4cafcdde360d4a821b779a65d17c7281f172fde71b13e8"
+      "sha256": "811eff1339d30e6d378747748df4c9113228b1e9924ddba750a968952042d81a"
     },
     {
       "path": "infra/docker-compose.dev.yml",
@@ -3363,7 +3363,7 @@
     },
     {
       "path": "infra/docker-compose.yml",
-      "sha256": "f51fa41441ec3603f42a4523123dcfd6de6170a542cbb02e42b9735bc75d722e"
+      "sha256": "3c16dc05f97b3cb6758bdfee5901d4d0e798c5ee356e10bf94a9ee201e6dd698"
     },
     {
       "path": "infra/init/99zzt_analytic_app_dataset_grants.sql",
@@ -3455,7 +3455,7 @@
     },
     {
       "path": "refinement/tests/test_duckdb_resource_limits.py",
-      "sha256": "fac2d42157796caa74f6789eee82f4e1dc111a876e5d35eb002329bbb9cf3df5"
+      "sha256": "384e18d02eda1053040b7000df7eab19067a530504d5057ac1b0002e4caf90b7"
     },
     {
       "path": "refinement/tests/test_duckdb_s3_materialize_paths.py",
@@ -3627,7 +3627,7 @@
     },
     {
       "path": "scripts/run_refinement_duckdb_offline_smoke.sh",
-      "sha256": "1e8e426437ef2d89f2e7f11728bdcd56e0e46539a1f6402155c23b7ece211c70"
+      "sha256": "c5feb42a8e6e7da650ea68f75b727e46f0d1398c9b8b4ca10088c054e2ade718"
     },
     {
       "path": "scripts/run_release_playwright.py",
@@ -3639,7 +3639,7 @@
     },
     {
       "path": "scripts/run_stress.sh",
-      "sha256": "c238a3040a312bcaf8dedaed3eb4f567aec73bcb6cca1d17db3e2b499e8744b3"
+      "sha256": "a4ca74faee3e764b54487cfe4dcdac5df5d999c66bc631a3747e386497b8c2c5"
     },
     {
       "path": "scripts/secure_release_output.py",
@@ -4034,6 +4034,10 @@
       "sha256": "cc37b5007e3bedc7b93c4509a5d36ad168a400118beb5a7616d1c86db18540da"
     },
     {
+      "path": "tests/test_airflow_fernet_key_contract.py",
+      "sha256": "bf9fc9c83a18c2f64eb9ea0d1a2359fdf4675fa3e20334aeb0685db49573565a"
+    },
+    {
       "path": "tests/test_airflow_release_contract.py",
       "sha256": "5593cbf679ebba7a01bc7d7fc907a77b7333dfa820943675584dbbe5b2c4b8ef"
     },
@@ -4079,7 +4083,7 @@
     },
     {
       "path": "tests/test_aws_bootstrap_shared_env_boundary.py",
-      "sha256": "a730450e844d5c506b87874b80eeb94ca8feb2bd96ed7be82b3d7242d38dc85e"
+      "sha256": "241a99800c115b13dd154914a2bb927fc39afbd881dcb5317fa8e39d9b09aca7"
     },
     {
       "path": "tests/test_aws_compose_consistency.py",
@@ -4087,7 +4091,7 @@
     },
     {
       "path": "tests/test_aws_compose_required_env.py",
-      "sha256": "5eea90cd572da8ace9abd83f1fcd24b059d6c5d656ed6465dd9c7b95f0b8d0d9"
+      "sha256": "c00fae936e8cf9f27e62590dde694437b605794d34f4680e195886eaff53aaca"
     },
     {
       "path": "tests/test_aws_compose_secret_scoping.py",
@@ -4099,7 +4103,7 @@
     },
     {
       "path": "tests/test_aws_deploy_migration_ordering.py",
-      "sha256": "51a259fb09e29d8e853afc2b6d71f24af710bee148d34b19ea3f3a1ad52c7f15"
+      "sha256": "a160e5cff276a994c62a6a74ee30fbd2db3da761d4e9dfd0362ca969a133a635"
     },
     {
       "path": "tests/test_aws_deploy_pins_release_digests.py",
@@ -4139,7 +4143,7 @@
     },
     {
       "path": "tests/test_aws_secrets_manager_config.py",
-      "sha256": "1f61b1fcbff2a779242a947946cb42199fee8879b154301eeebac0b0e3b3d6fd"
+      "sha256": "b90e359611fae47fb5db3f3588739fb1a8ac667b3ac4247006b1f9322e2c7961"
     },
     {
       "path": "tests/test_aws_ssm_deploy_workflow.py",
@@ -4351,7 +4355,7 @@
     },
     {
       "path": "tests/test_control_room_evidence_keyring_runtime.py",
-      "sha256": "ef9157fa280fee525bfbfe93e3d98fbde6d3aac2b7b9cdf2309470981ca4028e"
+      "sha256": "be8093a81811a9ab3c49e92161f9a457f65f01bd8aa4768ae4031e126d75ead4"
     },
     {
       "path": "tests/test_control_room_evidence_signing_wiring.py",
@@ -4875,7 +4879,7 @@
     },
     {
       "path": "tests/test_env_example_and_runbooks_v1434.py",
-      "sha256": "bc460dcd72fc786bd0ced650b13b0a264f9830688d9ece1c397d9f8d01ac8d0b"
+      "sha256": "c15a3bee0c6167ed0fb8fa08596292242552dcff45f31ca93ed47fd907aa2d5b"
     },
     {
       "path": "tests/test_env_never_in_git.py",
@@ -4943,7 +4947,7 @@
     },
     {
       "path": "tests/test_gcp_canonical_deploy.py",
-      "sha256": "d49f207563b0e980e9713b28104df68e78fdbf47407a2b9468407503bebc6e00"
+      "sha256": "a53b1dca0cc542f4b8430fde081b470c8779e4862ea4b4e7449a90a11585985c"
     },
     {
       "path": "tests/test_gcp_day2_release.py",
@@ -5215,7 +5219,7 @@
     },
     {
       "path": "tests/test_minio_mirror_contract.py",
-      "sha256": "66482de5917b869fb6efa8910006ac2c2516745d21915e996fcfe628f80904d1"
+      "sha256": "1a63af9e09c76aa8277d092c3ab69e7f7b0c2c3931911d755b4c3d1bc42a065a"
     },
     {
       "path": "tests/test_mission5_evidence_ticket_contracts.py",
@@ -5519,7 +5523,7 @@
     },
     {
       "path": "tests/test_refinement_duckdb_extensions.py",
-      "sha256": "27d2d734521526b813ec26e0448100936d9ffea6054e8c7107b244cf1b36ca21"
+      "sha256": "661c2635a1b39e79139ae37299d7eba62efc608cb17194471bbd7434feb87643"
     },
     {
       "path": "tests/test_refinement_healthz_real.py",
@@ -5555,7 +5559,7 @@
     },
     {
       "path": "tests/test_release_ci_fail_closed.py",
-      "sha256": "6139007317be29b781f210686c89cfb2027296aab71f2d84df99fd00aac95eab"
+      "sha256": "8b7b9ba8e85f12a223aa5097dac1b7b9a7f6f1529d87f046c7c57c9f94bcd207"
     },
     {
       "path": "tests/test_release_compose_env_contract.py",
@@ -5999,7 +6003,7 @@
     },
     {
       "path": "tests/test_staged_publication_live.py",
-      "sha256": "8a97cd26c29f1a2dbc5aec75cf19699748bf02c0365d3f2ccc78556dccf946be"
+      "sha256": "075d8291ac6a371c11c2a366b70b0539d03723d5e15ff63ad2837dd9ee66f88b"
     },
     {
       "path": "tests/test_staged_publication_partitioned_live.py",

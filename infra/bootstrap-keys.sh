@@ -71,9 +71,35 @@ DERIVED_KEYS=(
   "GOLD_VERIFIER_DATABASE_URL_HOST_FILE"
 )
 
+FERNET_KEYS=(
+  "AIRFLOW_FERNET_KEY"
+)
+FERNET_KEY_SCRIPT='import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())'
+
 if ! command -v openssl >/dev/null 2>&1; then
   echo "ERROR: openssl is required to generate secrets" >&2
   exit 1
+fi
+
+# On AWS the Fernet keys come only from Secrets Manager (aws-entrypoint.sh);
+# a locally invented key would silently diverge from it, so never mint one there.
+AWS_ENTRYPOINT_CONFIG="${MODECISSIONS_AWS_ENTRYPOINT_CONFIG:-/etc/modecissions/aws-entrypoint.env}"
+aws_managed_env() {
+  local env_dir_physical
+  [[ -f "${AWS_ENTRYPOINT_CONFIG}" ]] && return 0
+  env_dir_physical="$(cd "$(dirname "${ENV_FILE}")" 2>/dev/null && pwd -P)" || return 1
+  [[ "${env_dir_physical}" == */infra/terraform/deploy ]]
+}
+AWS_MANAGED_ENV=false
+if aws_managed_env; then
+  AWS_MANAGED_ENV=true
+  for key in "${FERNET_KEYS[@]}"; do
+    if ! grep -q "^${key}=" "${ENV_FILE}" 2>/dev/null; then
+      echo "ERROR: ${key} is missing from ${ENV_FILE} on an AWS-managed host." >&2
+      echo "ERROR: it must come from Secrets Manager (modecissions/$(printf '%s' "${key}" | tr '[:upper:]' '[:lower:]')); bootstrap-keys.sh does not generate it here." >&2
+      exit 1
+    fi
+  done
 fi
 
 mkdir -p "$(dirname "${ENV_FILE}")"
@@ -118,6 +144,24 @@ for key in "${DB_KEYS[@]}"; do
   fi
 done
 
+for key in "${FERNET_KEYS[@]}"; do
+  if grep -q "^${key}=" "${ENV_FILE}"; then
+    echo "[bootstrap-keys] ${key} already exists, skipping"
+  elif [[ "${AWS_MANAGED_ENV}" == "true" ]]; then
+    echo "ERROR: refusing to generate ${key} on an AWS-managed host" >&2
+    exit 1
+  else
+    if ! command -v python3 >/dev/null 2>&1; then
+      echo "ERROR: python3 is required to generate ${key}" >&2
+      exit 1
+    fi
+    value="$(python3 -c "${FERNET_KEY_SCRIPT}")"
+    printf '%s=%s\n' "${key}" "${value}" >> "${ENV_FILE}"
+    echo "[bootstrap-keys] Generated ${key}"
+    added=$((added + 1))
+  fi
+done
+
 env_dir="$(cd "$(dirname "${ENV_FILE}")" && pwd)"
 secret_dir="${env_dir}/.secrets"
 secret_path="${secret_dir}/gold_verifier_database_url"
@@ -130,7 +174,7 @@ if ! grep -q '^GOLD_VERIFIER_DATABASE_URL_HOST_FILE=' "${ENV_FILE}"; then
   printf 'GOLD_VERIFIER_DATABASE_URL_HOST_FILE=%s\n' "${secret_path}" >>"${ENV_FILE}"
 fi
 
-ensured=$((${#KEYS[@]} + ${#DB_KEYS[@]} + ${#DERIVED_KEYS[@]} + 2))
+ensured=$((${#KEYS[@]} + ${#DB_KEYS[@]} + ${#DERIVED_KEYS[@]} + ${#FERNET_KEYS[@]} + 2))
 if [[ "$BOOTSTRAP_CONTROL_ROOM_EVIDENCE" == "false" ]]; then
   ensured=$((ensured - 3))
 fi

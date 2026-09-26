@@ -175,6 +175,7 @@ jobs:
           SUPERSET_ADMIN_USER: ci_admin
           SUPERSET_ADMIN_PASSWORD: dummy_superset_admin_password_for_ci_only
           AIRFLOW_SECRET_KEY: dummy_airflow_secret_key_for_ci_only
+          AIRFLOW_FERNET_KEY: dummy_airflow_fernet_key_for_ci_only
           AIRFLOW_ADMIN_USER: ci_admin
           AIRFLOW_ADMIN_PASSWORD: dummy_airflow_admin_password_for_ci_only
           FIELD_ENCRYPTION_KEY: d7to_DkrHVKV5_jOzwCNV-wOl4r6gGCY7Usccczm9dk=
