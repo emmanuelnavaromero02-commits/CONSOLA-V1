@@ -81,6 +81,27 @@ if ! command -v openssl >/dev/null 2>&1; then
   exit 1
 fi
 
+# On AWS the Fernet keys come only from Secrets Manager (aws-entrypoint.sh);
+# a locally invented key would silently diverge from it, so never mint one there.
+AWS_ENTRYPOINT_CONFIG="${MODECISSIONS_AWS_ENTRYPOINT_CONFIG:-/etc/modecissions/aws-entrypoint.env}"
+aws_managed_env() {
+  local env_dir_physical
+  [[ -f "${AWS_ENTRYPOINT_CONFIG}" ]] && return 0
+  env_dir_physical="$(cd "$(dirname "${ENV_FILE}")" 2>/dev/null && pwd -P)" || return 1
+  [[ "${env_dir_physical}" == */infra/terraform/deploy ]]
+}
+AWS_MANAGED_ENV=false
+if aws_managed_env; then
+  AWS_MANAGED_ENV=true
+  for key in "${FERNET_KEYS[@]}"; do
+    if ! grep -q "^${key}=" "${ENV_FILE}" 2>/dev/null; then
+      echo "ERROR: ${key} is missing from ${ENV_FILE} on an AWS-managed host." >&2
+      echo "ERROR: it must come from Secrets Manager (modecissions/$(printf '%s' "${key}" | tr '[:upper:]' '[:lower:]')); bootstrap-keys.sh does not generate it here." >&2
+      exit 1
+    fi
+  done
+fi
+
 mkdir -p "$(dirname "${ENV_FILE}")"
 touch "${ENV_FILE}"
 chmod 600 "${ENV_FILE}" || true
@@ -126,6 +147,9 @@ done
 for key in "${FERNET_KEYS[@]}"; do
   if grep -q "^${key}=" "${ENV_FILE}"; then
     echo "[bootstrap-keys] ${key} already exists, skipping"
+  elif [[ "${AWS_MANAGED_ENV}" == "true" ]]; then
+    echo "ERROR: refusing to generate ${key} on an AWS-managed host" >&2
+    exit 1
   else
     if ! command -v python3 >/dev/null 2>&1; then
       echo "ERROR: python3 is required to generate ${key}" >&2

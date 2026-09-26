@@ -44,7 +44,9 @@ def _env_value(path: Path, key: str) -> str:
     return values[0]
 
 
-def _run_bootstrap_keys(tmp_path: Path, env_file: Path) -> subprocess.CompletedProcess:
+def _bootstrap_keys(
+    tmp_path: Path, env_file: Path, *, entrypoint_config: Path | None = None
+) -> subprocess.CompletedProcess:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     fake_openssl = bin_dir / "openssl"
@@ -55,13 +57,20 @@ def _run_bootstrap_keys(tmp_path: Path, env_file: Path) -> subprocess.CompletedP
     env = os.environ.copy()
     env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
     env["MODECISSIONS_BOOTSTRAP_CONTROL_ROOM_EVIDENCE"] = "false"
-    result = subprocess.run(
+    env["MODECISSIONS_AWS_ENTRYPOINT_CONFIG"] = str(
+        entrypoint_config or tmp_path / "no-aws-entrypoint.env"
+    )
+    return subprocess.run(
         ["bash", str(BOOTSTRAP_KEYS), str(env_file)],
         env=env,
         text=True,
         capture_output=True,
         check=False,
     )
+
+
+def _run_bootstrap_keys(tmp_path: Path, env_file: Path) -> subprocess.CompletedProcess:
+    result = _bootstrap_keys(tmp_path, env_file)
     assert result.returncode == 0, result.stderr
     return result
 
@@ -99,6 +108,36 @@ def test_bootstrap_keys_tops_up_a_fernet_shaped_key_once(tmp_path: Path) -> None
     seeded.write_text("AIRFLOW_FERNET_KEY=preexisting\n", encoding="utf-8")
     _run_bootstrap_keys(tmp_path, seeded)
     assert _env_value(seeded, "AIRFLOW_FERNET_KEY") == "preexisting"
+
+
+def test_bootstrap_keys_never_mints_the_key_on_aws_hosts(tmp_path: Path) -> None:
+    marker = tmp_path / "aws-entrypoint.env"
+    marker.write_text("AWS_REGION=us-east-1\n", encoding="utf-8")
+    shared = tmp_path / "runtime.env"
+    shared.write_text("POSTGRES_PASSWORD=existing\n", encoding="utf-8")
+    refused = _bootstrap_keys(tmp_path, shared, entrypoint_config=marker)
+    assert refused.returncode != 0
+    assert "AIRFLOW_FERNET_KEY is missing" in refused.stderr
+    assert "Secrets Manager (modecissions/airflow_fernet_key)" in refused.stderr
+    assert shared.read_text(encoding="utf-8") == "POSTGRES_PASSWORD=existing\n"
+
+    deploy_env = tmp_path / "opt" / "infra" / "terraform" / "deploy" / ".env"
+    deploy_env.parent.mkdir(parents=True)
+    deploy_env.write_text("POSTGRES_PASSWORD=existing\n", encoding="utf-8")
+    by_path = _bootstrap_keys(tmp_path, deploy_env)
+    assert by_path.returncode != 0
+    assert "AIRFLOW_FERNET_KEY is missing" in by_path.stderr
+    assert deploy_env.read_text(encoding="utf-8") == "POSTGRES_PASSWORD=existing\n"
+
+    provisioned = tmp_path / "provisioned.env"
+    provisioned.write_text('AIRFLOW_FERNET_KEY="from-secrets-manager"\n', encoding="utf-8")
+    kept = _bootstrap_keys(tmp_path, provisioned, entrypoint_config=marker)
+    assert kept.returncode == 0, kept.stderr
+    lines = provisioned.read_text(encoding="utf-8").splitlines()
+    assert [line for line in lines if line.startswith("AIRFLOW_FERNET_KEY=")] == [
+        'AIRFLOW_FERNET_KEY="from-secrets-manager"'
+    ]
+    assert any(line.startswith("SECURITY_CONTEXT_SIGNING_KEY=") for line in lines)
 
 
 def test_e2e_generator_emits_a_valid_fernet_key() -> None:
@@ -140,6 +179,9 @@ def test_aws_rollout_paths_carry_the_key() -> None:
 
     start = (REPO / "infra/terraform/deploy/start.sh").read_text(encoding="utf-8")
     assert re.search(r"^check_var AIRFLOW_FERNET_KEY$", start, re.M)
+
+    deploy = (REPO / "scripts/deploy_main_aws.py").read_text(encoding="utf-8")
+    assert deploy.index('emit "required env preflight"') < deploy.index("<<'PYSYNC'")
 
     workflow = yaml.safe_load(
         (REPO / ".github/workflows/docker-image.yml").read_text(encoding="utf-8")

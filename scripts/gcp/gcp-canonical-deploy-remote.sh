@@ -179,6 +179,48 @@ compose_databases_up() {
     --profile sap up -d --no-deps postgres postgres_gold
 }
 
+# Interpolating render of the candidate release against a private copy of its
+# env (plus placeholders for names hydration will supply). Reports variable
+# names only; returns 1 when required variables are missing, 2 on other errors.
+required_env_preflight() {
+  local release_dir="$1" env_file="$2" probe probe_err name missing="" _attempt
+  shift 2
+  REQUIRED_ENV_MISSING=""
+  probe="$(mktemp "${BACKUP_DIR}/.required-env-probe.XXXXXX")" || return 2
+  probe_err="${probe}.err"
+  if ! cp -- "${env_file}" "${probe}"; then
+    rm -f -- "${probe}"
+    return 2
+  fi
+  chmod 600 "${probe}"
+  for name in "$@"; do
+    printf '\n%s=omega-preflight-placeholder\n' "${name}" >> "${probe}"
+  done
+  for _attempt in $(seq 1 64); do
+    if ( cd "${release_dir}" && docker compose --env-file "${probe}" \
+          -f infra/docker-compose.yml \
+          -f infra/docker-compose.gcp.yml \
+          -f infra/docker-compose.aws-images.gcp.yml \
+          --profile sap config --quiet ) >/dev/null 2>"${probe_err}"; then
+      rm -f -- "${probe}" "${probe_err}"
+      REQUIRED_ENV_MISSING="${missing}"
+      [[ -z "${missing}" ]]
+      return
+    fi
+    name="$(sed -n 's/.*required variable \([A-Za-z_][A-Za-z0-9_]*\) is missing a value.*/\1/p' "${probe_err}" | head -n 1)"
+    if [[ -z "${name}" || ",${missing}," == *",${name},"* ]]; then
+      rm -f -- "${probe}" "${probe_err}"
+      REQUIRED_ENV_MISSING="${missing}"
+      return 2
+    fi
+    missing="${missing:+${missing},}${name}"
+    printf '\n%s=omega-preflight-placeholder\n' "${name}" >> "${probe}"
+  done
+  rm -f -- "${probe}" "${probe_err}"
+  REQUIRED_ENV_MISSING="${missing}"
+  return 1
+}
+
 running_writer_containers() {
   docker ps --format '{{.Names}}' \
     | awk '/^(mode_|omega_)/ && $0 != "mode_postgres" && $0 != "mode_postgres_gold"'
@@ -500,6 +542,26 @@ else
     bash "${RELEASE_DIR}/infra/terraform-gcp/release/hydrate-runtime-secrets.sh"
   log "preflight config: runtime secrets hydrated atomically"
 fi
+
+# Names hydrate-runtime-secrets.sh writes from Secret Manager; a dry run only
+# validates them, so the render treats them as supplied.
+HYDRATED_ENV_NAMES=(
+  CONTROL_ROOM_EVIDENCE_SIGNING_KEY_ID
+  CONTROL_ROOM_EVIDENCE_SIGNING_KEY
+  CONTROL_ROOM_EVIDENCE_SIGNING_PREVIOUS_KEYS
+  GCS_ACCESS_KEY_ID
+  GCS_SECRET_ACCESS_KEY
+)
+PREFLIGHT_PLACEHOLDERS=()
+[[ "${DEPLOY_MODE:-apply}" != "dryrun" ]] || PREFLIGHT_PLACEHOLDERS=("${HYDRATED_ENV_NAMES[@]}")
+preflight_rc=0
+required_env_preflight "${RELEASE_DIR}" "${CANDIDATE_ENV}" \
+  ${PREFLIGHT_PLACEHOLDERS[@]+"${PREFLIGHT_PLACEHOLDERS[@]}"} || preflight_rc=$?
+case "${preflight_rc}" in
+  0) log "preflight env: candidate Compose renders with every required variable" ;;
+  1) die "candidate release needs variables missing from the shared env: ${REQUIRED_ENV_MISSING} (names only); no service or database was touched." ;;
+  *) die "candidate Compose configuration does not render with its env (details withheld; missing so far: ${REQUIRED_ENV_MISSING:-none}); no service or database was touched." ;;
+esac
 
 log "preflight images: verify/cache the 16 release digests"
 EXPECTED_IMAGES=(airflow banxico console hubspot inegi mcp-infra refinement replicon

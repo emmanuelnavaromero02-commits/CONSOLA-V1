@@ -261,6 +261,63 @@ rm -rf "$release_dir"
 mv "$release_tmp" "$release_dir"
 emit "artifact extracted" "PASS" "release_dir=$release_dir"
 
+# Render the NEW release's compose files against the host .env before the
+# worktree or .env change, so a missing required variable stops the deploy
+# while the host still matches the running release. Only names are reported.
+required_env_preflight() {{
+  local compose_dir="$1"
+  local probe="$workdir/required-env.probe"
+  local probe_err="$workdir/required-env.err"
+  local files=(-f "$compose_dir/docker-compose.aws.yml")
+  local missing="" name duplicate _attempt
+  if [ "$(env_value DEPLOY_CARTRIDGES_SAME_HOST || true)" = "true" ] && [ -f "$compose_dir/docker-compose.cartridges.yml" ]; then
+    files+=(-f "$compose_dir/docker-compose.cartridges.yml")
+  fi
+  REQUIRED_ENV_MISSING=""
+  REQUIRED_ENV_ERROR=""
+  if ! (umask 077 && cp "$DEPLOY_DIR/.env" "$probe"); then
+    REQUIRED_ENV_ERROR="could not stage a private copy of the host .env"
+    return 2
+  fi
+  for _attempt in $(seq 1 64); do
+    if docker compose --project-directory "$DEPLOY_DIR" --env-file "$probe" "${{files[@]}}" config --quiet >/dev/null 2>"$probe_err"; then
+      rm -f "$probe" "$probe_err"
+      REQUIRED_ENV_MISSING="$missing"
+      [ -z "$missing" ]
+      return
+    fi
+    name="$(sed -n 's/.*required variable \\([A-Za-z_][A-Za-z0-9_]*\\) is missing a value.*/\\1/p' "$probe_err" | head -n 1)"
+    case ",$missing," in *",$name,"*) duplicate=1 ;; *) duplicate=0 ;; esac
+    if [ -z "$name" ] || [ "$duplicate" = "1" ]; then
+      if grep -qi 'env file' "$probe_err"; then
+        REQUIRED_ENV_ERROR="an env_file referenced by the new compose files is missing"
+      else
+        REQUIRED_ENV_ERROR="compose config error; run docker compose config --quiet on the host for details"
+      fi
+      rm -f "$probe" "$probe_err"
+      REQUIRED_ENV_MISSING="$missing"
+      return 2
+    fi
+    missing="${{missing:+$missing,}}$name"
+    printf '\\n%s=omega-preflight-placeholder\\n' "$name" >> "$probe"
+  done
+  rm -f "$probe" "$probe_err"
+  REQUIRED_ENV_MISSING="$missing"
+  return 1
+}}
+
+preflight_rc=0
+required_env_preflight "$release_dir/infra/terraform/deploy" || preflight_rc=$?
+if [ "$preflight_rc" = "0" ]; then
+  emit "required env preflight" "PASS" "new release compose renders against the host .env before any host change"
+elif [ "$preflight_rc" = "1" ]; then
+  emit "required env preflight" "FAIL" "host .env lacks required variables: $REQUIRED_ENV_MISSING (names only); host worktree and .env unchanged"
+  exit 30
+else
+  emit "required env preflight" "FAIL" "$REQUIRED_ENV_ERROR; missing so far: ${{REQUIRED_ENV_MISSING:-<none>}}; host worktree and .env unchanged"
+  exit 30
+fi
+
 python3 - "$release_dir" "$REPO_DIR" <<'PYSYNC'
 from pathlib import Path
 import os

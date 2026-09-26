@@ -3351,7 +3351,7 @@
     },
     {
       "path": "infra/bootstrap-keys.sh",
-      "sha256": "be8a5b3178883bdc76d3a35c201b3fccb033a0d58d6040f0dca717503e6f3c5f"
+      "sha256": "c79c7a89bd6316d8f2b296de97cfbb64af6599c540f492f8b813c91a27e76e64"
     },
     {
       "path": "infra/bootstrap.sh",
@@ -4035,7 +4035,7 @@
     },
     {
       "path": "tests/test_airflow_fernet_key_contract.py",
-      "sha256": "e1d3d034c8b28c49574511cdbaeb907d2b4c928bab1ab03d07a07cbf58cb71b9"
+      "sha256": "bf9fc9c83a18c2f64eb9ea0d1a2359fdf4675fa3e20334aeb0685db49573565a"
     },
     {
       "path": "tests/test_airflow_release_contract.py",
@@ -4103,7 +4103,7 @@
     },
     {
       "path": "tests/test_aws_deploy_migration_ordering.py",
-      "sha256": "51a259fb09e29d8e853afc2b6d71f24af710bee148d34b19ea3f3a1ad52c7f15"
+      "sha256": "a160e5cff276a994c62a6a74ee30fbd2db3da761d4e9dfd0362ca969a133a635"
     },
     {
       "path": "tests/test_aws_deploy_pins_release_digests.py",
@@ -4947,7 +4947,7 @@
     },
     {
       "path": "tests/test_gcp_canonical_deploy.py",
-      "sha256": "d49f207563b0e980e9713b28104df68e78fdbf47407a2b9468407503bebc6e00"
+      "sha256": "a53b1dca0cc542f4b8430fde081b470c8779e4862ea4b4e7449a90a11585985c"
     },
     {
       "path": "tests/test_gcp_day2_release.py",
