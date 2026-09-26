@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { CheckCircle2, Plus, RefreshCw, Trash2, XCircle } from "lucide-react";
 
 import {
   addDecisionAction,
@@ -16,6 +16,17 @@ import {
 } from "@/lib/admin-surfaces";
 
 type Filter = "all" | "open" | "closed";
+type Outcome = "achieved" | "not_achieved";
+
+const OUTCOME_LABELS: Record<string, string> = {
+  achieved: "Lograda",
+  not_achieved: "No lograda",
+};
+
+function outcomeLabel(value?: string | null): string {
+  if (!value) return "—";
+  return OUTCOME_LABELS[value] ?? value;
+}
 
 function dateShort(value?: string | null): string {
   if (!value) return "—";
@@ -27,6 +38,9 @@ function statusClass(status?: string | null): string {
     ? "bg-muted text-muted-foreground"
     : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
 }
+
+const CLOSE_BUTTON =
+  "inline-flex min-h-[44px] items-center gap-2 rounded-md border bg-background px-3 text-sm font-medium hover:bg-accent/5 disabled:opacity-50";
 
 function visibilityLabel(value?: string | null): string {
   return value === "shared" ? "Equipo" : "Privada";
@@ -67,9 +81,9 @@ export function DecisionsBoard() {
   });
 
   const patch = useMutation({
-    mutationFn: ({ id, closed }: { id: number; closed: boolean }) => updateDecision(id, {
-      status: closed ? "closed" : "open",
-      outcome: closed ? "achieved" : null,
+    mutationFn: ({ id, outcome }: { id: number; outcome: Outcome | null }) => updateDecision(id, {
+      status: outcome ? "closed" : "open",
+      outcome,
     }),
     onSuccess: (row) => {
       setSelectedId(row.id);
@@ -213,6 +227,7 @@ export function DecisionsBoard() {
                   <th className="px-4 py-2 font-medium">Compromiso</th>
                   <th className="px-4 py-2 font-medium">Visibilidad</th>
                   <th className="px-4 py-2 font-medium">Estado</th>
+                  <th className="px-4 py-2 font-medium">Resultado</th>
                 </tr>
               </thead>
               <tbody>
@@ -237,6 +252,7 @@ export function DecisionsBoard() {
                         {row.status || "open"}
                       </span>
                     </td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground">{outcomeLabel(row.outcome)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -281,19 +297,44 @@ export function DecisionsBoard() {
               </div>
               <div className="rounded-md bg-muted/30 p-3">
                 <dt className="text-xs text-muted-foreground">Resultado</dt>
-                <dd className="font-medium">{selected.outcome || "—"}</dd>
+                <dd className="font-medium">{outcomeLabel(selected.outcome)}</dd>
               </div>
             </dl>
 
-            <button
-              type="button"
-              onClick={() => patch.mutate({ id: selected.id, closed: selected.status !== "closed" })}
-              disabled={patch.isPending}
-              className="inline-flex min-h-[44px] items-center gap-2 rounded-md border bg-background px-3 text-sm font-medium hover:bg-accent/5 disabled:opacity-50"
-            >
-              <CheckCircle2 aria-hidden className="h-4 w-4" />
-              {selected.status === "closed" ? "Reabrir" : "Cerrar como lograda"}
-            </button>
+            <div className="flex flex-wrap gap-2">
+              {selected.status === "closed" ? (
+                <button
+                  type="button"
+                  onClick={() => patch.mutate({ id: selected.id, outcome: null })}
+                  disabled={patch.isPending}
+                  className={CLOSE_BUTTON}
+                >
+                  <CheckCircle2 aria-hidden className="h-4 w-4" />
+                  Reabrir
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => patch.mutate({ id: selected.id, outcome: "achieved" })}
+                    disabled={patch.isPending}
+                    className={CLOSE_BUTTON}
+                  >
+                    <CheckCircle2 aria-hidden className="h-4 w-4" />
+                    Cerrar como lograda
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => patch.mutate({ id: selected.id, outcome: "not_achieved" })}
+                    disabled={patch.isPending}
+                    className={CLOSE_BUTTON}
+                  >
+                    <XCircle aria-hidden className="h-4 w-4" />
+                    Cerrar como no lograda
+                  </button>
+                </>
+              )}
+            </div>
 
             <section className="space-y-3" aria-label="Bitácora">
               <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Bitácora</h3>

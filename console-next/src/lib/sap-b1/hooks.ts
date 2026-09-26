@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { getMeAccess } from "@/lib/admin-surfaces";
+import { createItemDecision, getControlRoomDashboard, listAlerts, markAlertFalsePositive } from "@/lib/control-room/client";
 
 import {
   SAP_B1_CARTRIDGE,
@@ -95,4 +96,35 @@ export function useAddSapB1Recipient() {
 
 export function useRemoveSapB1Recipient() {
   return useRecipientMutation(removeSapB1Recipient);
+}
+
+const ALERTS_KEY = ["control-room", "alerts"] as const;
+const DASHBOARD_KEY = ["control-room", "dashboard"] as const;
+const LIVE = { staleTime: 0, refetchOnWindowFocus: false } as const;
+
+export function useSapB1AgentAlerts() {
+  const alerts = useQuery({ queryKey: ALERTS_KEY, queryFn: listAlerts, ...LIVE });
+  const dashboard = useQuery({ queryKey: DASHBOARD_KEY, queryFn: getControlRoomDashboard, ...LIVE });
+  return { alerts, dashboard };
+}
+
+function useAlertMutation<T, V>(mutationFn: (variables: V) => Promise<T>) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ALERTS_KEY });
+      void queryClient.invalidateQueries({ queryKey: DASHBOARD_KEY });
+      void queryClient.invalidateQueries({ queryKey: [ROOT, "view", "sap_b1_learning_kpis"] });
+      void queryClient.invalidateQueries({ queryKey: ["decisions"] });
+    },
+  });
+}
+
+export function useRecordSapB1AlertDecision() {
+  return useAlertMutation(createItemDecision);
+}
+
+export function useMarkSapB1AlertFalsePositive() {
+  return useAlertMutation(({ itemId, note }: { itemId: string; note?: string }) => markAlertFalsePositive(itemId, note));
 }

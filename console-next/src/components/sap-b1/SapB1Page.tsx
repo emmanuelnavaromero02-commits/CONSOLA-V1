@@ -50,7 +50,7 @@ function TabPanel({ tab, canWrite, canReadAgents }: { tab: SapB1TabId; canWrite:
     case "knowledgebit":
       return <IndicatorsSection />;
     case "agentes":
-      return <AgentsSection canReadAgents={canReadAgents} />;
+      return <AgentsSection canReadAgents={canReadAgents} canWrite={canWrite} />;
     case "semaforo":
       return <SemaforoSection />;
     case "parametros":

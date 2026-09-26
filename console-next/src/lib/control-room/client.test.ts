@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/lib/api";
 import {
   CONTROL_ROOM_PATHS,
+  createItemDecision,
   getControlRoomActivity,
   getControlRoomDashboard,
   getControlRoomImpact,
@@ -18,6 +19,8 @@ import {
   getSuccessFactorsTalentMetadataReadiness,
   getSuccessFactorsTalentNineBox,
   getSuccessFactorsTalentOverview,
+  listAlerts,
+  markAlertFalsePositive,
 } from "./client";
 
 vi.mock("@/lib/api", () => ({
@@ -103,5 +106,27 @@ describe("control-room client", () => {
     expect(apiMock.post).toHaveBeenCalledWith(
       "/api/control-room/sap-successfactors/market-validation/run",
     );
+  });
+
+  it("lists alerts and records decisions and false positives on encoded item ids", async () => {
+    apiMock.get.mockResolvedValue({ data: { alerts: [] }, status: 200, headers: new Headers(), requestId: "r" });
+    apiMock.post.mockResolvedValue({ data: { item: {} }, status: 200, headers: new Headers(), requestId: "r" });
+
+    await expect(listAlerts()).resolves.toEqual({ alerts: [] });
+    await createItemDecision("agent_alert:ab/12");
+    await markAlertFalsePositive("agent_alert:ab/12", "  lote ya vendido  ");
+    await markAlertFalsePositive("agent_alert:cd");
+    await markAlertFalsePositive("agent_alert:ef", "   ");
+
+    expect(apiMock.get).toHaveBeenCalledWith("/api/control-room/alerts");
+    expect(apiMock.post).toHaveBeenNthCalledWith(1, "/api/control-room/items/agent_alert%3Aab%2F12/decision");
+    expect(apiMock.post.mock.calls[0]).toHaveLength(1);
+    expect(apiMock.post).toHaveBeenNthCalledWith(
+      2,
+      "/api/control-room/alerts/agent_alert%3Aab%2F12/false-positive",
+      { note: "lote ya vendido" },
+    );
+    expect(apiMock.post).toHaveBeenNthCalledWith(3, "/api/control-room/alerts/agent_alert%3Acd/false-positive", {});
+    expect(apiMock.post).toHaveBeenNthCalledWith(4, "/api/control-room/alerts/agent_alert%3Aef/false-positive", {});
   });
 });

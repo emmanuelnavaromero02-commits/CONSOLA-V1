@@ -18,6 +18,9 @@ const state = vi.hoisted(() => ({
   add: vi.fn(),
   remove: vi.fn(),
   monitors: {} as unknown,
+  agentAlerts: {} as unknown,
+  recordDecision: vi.fn(),
+  markFalsePositive: vi.fn(),
 }));
 
 vi.mock("@/lib/sap-b1/hooks", () => ({
@@ -38,6 +41,9 @@ vi.mock("@/lib/sap-b1/hooks", () => ({
   useUploadSapB1FinanceRun: () => ({ mutate: state.upload, isPending: false }),
   useAddSapB1Recipient: () => ({ mutate: state.add, isPending: false }),
   useRemoveSapB1Recipient: () => ({ mutate: state.remove, isPending: false, variables: undefined }),
+  useSapB1AgentAlerts: () => state.agentAlerts,
+  useRecordSapB1AlertDecision: () => ({ mutate: state.recordDecision, isPending: false, variables: undefined }),
+  useMarkSapB1AlertFalsePositive: () => ({ mutate: state.markFalsePositive, isPending: false, variables: undefined }),
 }));
 
 vi.mock("@/lib/control-room/use-wisdom-bit-monitors", () => ({
@@ -175,6 +181,12 @@ beforeEach(() => {
     ],
     runsByAgent: { a1: { runs: [], loading: false, failed: false } },
   };
+  state.agentAlerts = {
+    alerts: query({ alerts: [], summary: {} }),
+    dashboard: query({ items: [] }),
+  };
+  state.recordDecision.mockReset();
+  state.markFalsePositive.mockReset();
   state.save.mockReset();
   state.upload.mockReset();
   state.add.mockReset();
@@ -274,7 +286,27 @@ describe("SapB1Page", () => {
     expect(text).toContain("Horario 08:00 America/Mexico_City");
     expect(text).toContain("Monitores sin registrar en este workspace");
     expect(text).toContain("todavía no hay alertas de SAP Business One en la ventana");
+    expect(text).toContain("Sin alertas de los agentes");
     expect(container.querySelector('a[href="/control-room"]')).not.toBeNull();
+  });
+
+  it("offers the alert actions only to users with control_room.write", async () => {
+    state.agentAlerts = {
+      alerts: query({ alerts: [{ id: "alert:agent_alert:a", item_id: "agent_alert:a", kind: "", cartridge: "sap_b1", title: "Margen bajo", severity: "high", status: "open" }] }),
+      dashboard: query({ items: [] }),
+    };
+    window.history.replaceState(null, "", "#agentes");
+    await render(<SapB1Page />);
+    expect(container.textContent).toContain("Margen bajo");
+    await click(button("Registrar decisión"));
+    expect(state.recordDecision).toHaveBeenCalledWith("agent_alert:a", expect.any(Object));
+
+    state.access.canWrite = false;
+    await render(<SapB1Page />);
+    expect(container.textContent).toContain("Margen bajo");
+    expect(button("Registrar decisión")).toBeUndefined();
+    expect(button("Marcar falso positivo")).toBeUndefined();
+    expect(container.textContent).toContain("requiere permiso de escritura en Control Room");
   });
 
   it("paints the semáforo like the 8 AM email", async () => {
