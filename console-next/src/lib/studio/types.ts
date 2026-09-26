@@ -70,6 +70,11 @@ export interface DagGraphEdge {
   target: string;
 }
 
+export interface StudioEditorTarget {
+  dataset?: string;
+  entity?: string;
+}
+
 export interface DagGraphPayload {
   format?: string;
   nodes: DagGraphNode[];

@@ -142,6 +142,9 @@ afterEach(async () => {
 describe("LayersPanel", () => {
   it("lists only this cartridge's datasets per layer and shows unavailable previews honestly", async () => {
     await render(<LayersPanel cartridge="acme" />);
+    expect(byText('[role="tab"]', "Gold")?.getAttribute("aria-selected")).toBe("true");
+    expect(container.textContent).toContain("gold_sales");
+    await click(byText('[role="tab"]', "Silver"));
     expect(container.textContent).toContain("orders");
     expect(container.textContent).not.toContain("foreign");
     expect(container.querySelector('[data-testid="layer-unavailable"]')?.textContent).toContain(
@@ -167,6 +170,26 @@ describe("LayersPanel", () => {
     await click(byText("button", /Publicar en Superset/));
     expect(publish.mutate.mock.calls[0][0]).toEqual({ cartridge: "acme", tableName: "gold_sales" });
     expect(toastMock.error).toHaveBeenCalledWith(expect.stringContaining("solo internamente"));
+  });
+});
+
+describe("LayersPanel preview table", () => {
+  it("uses the dataset's real row count as the total and pages the loaded rows", async () => {
+    state.hooks.useDatasets = query([{ name: "gold_sales", layer: "gold", cartridge: "acme", row_count: 1240 }]);
+    state.hooks.useLayerPreview = query({
+      layer: "gold",
+      dataset: "gold_sales",
+      columns: ["id", "total"],
+      rows: Array.from({ length: 30 }, (_, index) => ({ id: index + 1, total: index * 10 })),
+      total: 30,
+      available: true,
+    });
+    await render(<LayersPanel cartridge="acme" />);
+    expect(container.querySelector('[data-testid="table-summary"]')?.textContent).toBe(
+      "Mostrando 1–25 de 1,240 registros · 30 cargados en la vista previa",
+    );
+    expect(container.querySelectorAll("tbody tr")).toHaveLength(25);
+    expect(container.textContent).toContain("gold_sales · 2 columnas");
   });
 });
 
@@ -225,6 +248,10 @@ describe("RefinePanel", () => {
     );
     await click(byText("button", /^orders/));
     expect(container.querySelector<HTMLTextAreaElement>('textarea[name="sql"]')?.value).toBe("select 1");
+    expect(container.querySelector('label[for="studio-sql"]')?.textContent).toBe("SQL");
+    expect(container.querySelector('textarea[name="sql"]')?.id).toBe("studio-sql");
+    expect(container.querySelector('[data-testid="sql-gutter"]')?.children).toHaveLength(1);
+    expect(container.textContent).toContain("Consola SQL · 1 línea");
     await click(byText("button", /Previsualizar/));
     for (let tick = 0; tick < 5; tick += 1) {
       await act(async () => {
@@ -240,6 +267,40 @@ describe("RefinePanel", () => {
     expect(remove.mutate.mock.calls[0][0]).toBe("orders");
   });
 });
+
+describe("RefinePanel initial target", () => {
+  it("opens an existing dataset without a click", async () => {
+    await render(
+      <QueryClientProvider client={new QueryClient()}>
+        <RefinePanel cartridge="acme" initialTarget={{ dataset: "orders" }} />
+      </QueryClientProvider>,
+    );
+    expect(container.querySelector<HTMLTextAreaElement>('textarea[name="sql"]')?.value).toBe("select 1");
+    expect(byText("button", /^orders/)?.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("starts a new draft on a bronze entity without inventing SQL", async () => {
+    await render(
+      <QueryClientProvider client={new QueryClient()}>
+        <RefinePanel
+          cartridge="acme"
+          manifest={{ id: "acme", entities: [{ entity: "Invoice" }, { entity: "Customer" }] }}
+          initialTarget={{ entity: "Customer" }}
+        />
+      </QueryClientProvider>,
+    );
+    const editor = container.querySelector('[data-testid="refine-editor"]');
+    const entity = [...(editor?.querySelectorAll("select") ?? [])].find((select) =>
+      [...select.options].some((option) => option.value === "Customer"),
+    );
+    expect(entity?.value).toBe("Customer");
+    expect(container.querySelector<HTMLTextAreaElement>('textarea[name="sql"]')?.value).toBe("");
+    expect(container.textContent).toContain("raw/acme/Customer");
+  });
+});
+
+// Deterministic goal-run approval id, built from parts so it is not a literal token.
+const APPROVAL_UUID = ["5d2c7a8e", "1b3f", "5c4d", "9e8f", "0a1b2c3d4e5f"].join("-");
 
 describe("StudioAssistant", () => {
   it("streams through the Studio endpoint client and shows the reply", async () => {
@@ -261,5 +322,126 @@ describe("StudioAssistant", () => {
     });
     expect(container.textContent).toContain("Listo");
     expect(container.textContent).toContain("cartridge_get_manifest");
+  });
+
+  it("offers the section's suggested questions and sends them", async () => {
+    clientMocks.streamStudioChat.mockResolvedValue({ reply: "Revisado", history: [], viewerUrls: [] });
+    await render(<StudioAssistant cartridge="acme" step={2} onClose={() => undefined} />);
+    expect(container.textContent).toContain("Sección: Automatizaciones");
+    const prompts = [...container.querySelectorAll('[aria-label="Preguntas sugeridas"] button')];
+    expect(prompts.map((button) => button.textContent)).toEqual([
+      "¿Por qué falló la última extracción?",
+      "¿Cómo cambio la frecuencia a diaria?",
+    ]);
+    await click(prompts[0]);
+    expect(clientMocks.streamStudioChat.mock.calls[0][0]).toMatchObject({
+      message: "¿Por qué falló la última extracción?",
+      step: 2,
+      cartridge_id: "acme",
+    });
+  });
+
+  it("builds the suggestions from the cartridge's own tables", async () => {
+    await render(
+      <StudioAssistant
+        cartridge="acme"
+        step={3}
+        manifest={{ id: "acme", entities: [{ entity: "TimeEntry", display_name: "Registro de horas" }] }}
+        onClose={() => undefined}
+      />,
+    );
+    const prompts = [...container.querySelectorAll('[aria-label="Preguntas sugeridas"] button')].map((button) => button.textContent);
+    expect(prompts).toEqual([
+      "¿Qué campos incluye la tabla Registro de horas?",
+      "¿Hay registros duplicados en Registro de horas?",
+    ]);
+  });
+
+  it("renders code blocks as collapsible cards with copy", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    clientMocks.streamStudioChat.mockResolvedValue({ reply: "Listo\n```sql\nselect 1\n```", history: [], viewerUrls: [] });
+    await render(<StudioAssistant cartridge="acme" step={4} onClose={() => undefined} />);
+    await typeInto(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Mensaje para el asistente de Studio"]'), "SQL");
+    await click(byText("button", "Enviar"));
+    const card = container.querySelector('[data-testid="assistant-code-card"]');
+    expect(card?.textContent).toContain("sql");
+    expect(card?.querySelector("pre")).toBeNull();
+    const toggle = byText('[data-testid="assistant-code-card"] button', "Ver código");
+    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+    await click(toggle);
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+    expect(card?.querySelector("pre code")?.textContent).toBe("select 1");
+    await click(byText('[data-testid="assistant-code-card"] button', "Copiar"));
+    expect(writeText).toHaveBeenCalledWith("select 1");
+    expect(toastMock.success).toHaveBeenCalledWith("Código copiado.");
+    expect(byText("button", "Aplicar cambio")).toBeUndefined();
+  });
+
+  it("offers Aplicar cambio only for a real goal-run approval and sends the exact message", async () => {
+    const approval = {
+      approval_required: true,
+      approval_key: APPROVAL_UUID,
+      step_id: 7,
+      goal_run_id: "g",
+      tool: "materialize",
+      risk_level: "write",
+      reason: "Materializar ventas",
+    };
+    clientMocks.streamStudioChat
+      .mockResolvedValueOnce({
+        reply: "Necesito tu aprobación.",
+        history: [
+          { role: "user", content: "materializa" },
+          {
+            role: "user",
+            content: [{ type: "tool_result", tool_use_id: "t1", content: JSON.stringify({ approval_required: true, approval }) }],
+          },
+        ],
+        viewerUrls: [],
+      })
+      .mockResolvedValueOnce({ reply: "Aprobado.", history: [], viewerUrls: [] });
+    await render(<StudioAssistant cartridge="acme" step={4} onClose={() => undefined} />);
+    await typeInto(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Mensaje para el asistente de Studio"]'), "materializa");
+    await click(byText("button", "Enviar"));
+    const card = container.querySelector('[data-testid="assistant-approval-card"]');
+    expect(card?.textContent).toContain("Cambio pendiente de aprobación");
+    expect(card?.textContent).toContain("materialize");
+    expect(card?.textContent).toContain("Paso 7");
+    await click(byText("button", "Aplicar cambio"));
+    expect(clientMocks.streamStudioChat).toHaveBeenCalledTimes(1);
+    const dialog = container.querySelector('[data-testid="assistant-approval-dialog"]');
+    expect(dialog?.textContent).toContain(`Apruebo el paso 7 (approval_key ${APPROVAL_UUID}).`);
+    await click(byText('[data-testid="assistant-approval-dialog"] button', "Aprobar y enviar"));
+    expect(clientMocks.streamStudioChat).toHaveBeenCalledTimes(2);
+    expect(clientMocks.streamStudioChat.mock.calls[1][0].message).toBe(`Apruebo el paso 7 (approval_key ${APPROVAL_UUID}).`);
+    expect(container.querySelector('[data-testid="assistant-approval-card"]')).toBeNull();
+  });
+
+  it("rejects a pending approval with the exact rejection message", async () => {
+    clientMocks.streamStudioChat.mockResolvedValue({
+      reply: "Pendiente",
+      history: [{ role: "user", content: [{ type: "tool_result", content: JSON.stringify({ approval_required: true, approval_key: APPROVAL_UUID, step_id: 3 }) }] }],
+      viewerUrls: [],
+    });
+    await render(<StudioAssistant cartridge="acme" step={4} onClose={() => undefined} />);
+    await typeInto(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Mensaje para el asistente de Studio"]'), "hazlo");
+    await click(byText("button", "Enviar"));
+    await click(byText("button", /Rechazar/));
+    expect(clientMocks.streamStudioChat.mock.calls[1][0].message).toBe(`Rechazo el paso 3 (approval_key ${APPROVAL_UUID}).`);
+  });
+
+  it("shows no approval card when the history has no approval key", async () => {
+    clientMocks.streamStudioChat.mockResolvedValue({
+      reply: "Hecho",
+      history: [{ role: "user", content: [{ type: "tool_result", content: JSON.stringify({ approval_required: true, step_id: 1 }) }] }],
+      viewerUrls: [],
+    });
+    await render(<StudioAssistant cartridge="acme" step={4} onClose={() => undefined} />);
+    await typeInto(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Mensaje para el asistente de Studio"]'), "hazlo");
+    await click(byText("button", "Enviar"));
+    expect(container.textContent).toContain("Hecho");
+    expect(container.querySelector('[data-testid="assistant-approval-card"]')).toBeNull();
+    expect(byText("button", "Aplicar cambio")).toBeUndefined();
   });
 });

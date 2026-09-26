@@ -57,6 +57,15 @@ const config: Config = {
         sans: ["var(--font-sans)", "system-ui", "sans-serif"],
         mono: ["var(--font-mono)", "ui-monospace", "monospace"],
       },
+      keyframes: {
+        "studio-drawer-in": {
+          from: { transform: "translateX(100%)", opacity: "0" },
+          to: { transform: "none", opacity: "1" },
+        },
+      },
+      animation: {
+        "studio-drawer-in": "studio-drawer-in 200ms ease-out",
+      },
     },
   },
   plugins: [],
