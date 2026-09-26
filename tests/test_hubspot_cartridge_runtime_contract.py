@@ -158,10 +158,12 @@ def test_hubspot_extraction_preserves_console_workspace_scope():
     assert 'f"raw/hubspot/{entity}/{scope}"' in parquet
     assert "require_tenant_workspace_scope()" in mcp
     assert "scope = scoped_prefix(ctx)" in mcp
-    assert "skill_body = {" in extract_all_dag
+    assert 'admitted = admit_run(conf, cartridge_id="hubspot", dag_run=dag_run)' in extract_all_dag
+    assert "def skill_body() -> dict:" in extract_all_dag
+    assert '"security_context": admitted.context(user_id=' in extract_all_dag
     assert (
         'for key in ("tenant_id", "workspace_id", "security_context")'
-        in extract_all_dag
+        not in extract_all_dag
     )
     assert "json=skill_body" in extract_all_dag
 

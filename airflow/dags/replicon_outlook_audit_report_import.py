@@ -4,16 +4,23 @@ import email
 import imaplib
 import io
 import os
-import re
+import sys
 import uuid
 import zipfile
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from airflow import DAG
 from airflow.models import Variable
 from airflow.operators.python import PythonOperator
 from minio import Minio
 from minio.commonconfig import CopySource
+
+try:
+    from cartridge_run_admission import admit_run, service_run
+except ModuleNotFoundError:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from cartridge_run_admission import admit_run, service_run
 
 default_args = {
     "owner": "replicon",
@@ -45,7 +52,6 @@ MAX_ZIP_MEMBER_BYTES = int(
 MAX_ZIP_TOTAL_BYTES = int(
     os.environ.get("OUTLOOK_IMPORT_MAX_ZIP_TOTAL_BYTES", str(100 * 1024 * 1024))
 )
-_SAFE_SCOPE_SEGMENT = re.compile(r"[A-Za-z0-9_.:-]+")
 
 
 def _is_production() -> bool:
@@ -62,15 +68,6 @@ def _required_variable(name: str) -> str:
     return value
 
 
-def _safe_scope_segment(value: object, label: str) -> str:
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    if not _SAFE_SCOPE_SEGMENT.fullmatch(text):
-        raise ValueError(f"{label} inválido para partición SaaS")
-    return text
-
-
 def _dag_conf(context: dict) -> dict:
     dag_run = context.get("dag_run")
     conf = dag_run.conf if dag_run and isinstance(dag_run.conf, dict) else {}
@@ -79,25 +76,20 @@ def _dag_conf(context: dict) -> dict:
 
 def _scope_values(context: dict) -> tuple[str, str]:
     conf = _dag_conf(context)
-    security_context = (
-        conf.get("security_context")
-        if isinstance(conf.get("security_context"), dict)
-        else {}
-    )
-    tenant = (
-        conf.get("tenant_id")
-        or security_context.get("tenant_id")
-        or Variable.get("replicon_tenant_id", default_var="")
-    )
-    workspace = (
-        conf.get("workspace_id")
-        or security_context.get("workspace_id")
-        or Variable.get("replicon_workspace_id", default_var="")
-    )
-    tenant_id = _safe_scope_segment(tenant, "tenant_id")
-    workspace_id = _safe_scope_segment(workspace, "workspace_id")
-    if tenant_id and workspace_id:
-        return tenant_id, workspace_id
+    if "security_context" in conf:
+        admitted = admit_run(conf, cartridge_id=CARTRIDGE_ID, dag_run=context.get("dag_run"))
+        return admitted.tenant_id, admitted.workspace_id
+    tenant = str(Variable.get("replicon_tenant_id", default_var="") or "").strip()
+    workspace = str(Variable.get("replicon_workspace_id", default_var="") or "").strip()
+    if tenant and workspace:
+        admitted = service_run(
+            CARTRIDGE_ID, tenant, workspace, principal="airflow:replicon_outlook_audit_report_import"
+        )
+        for key, value in (("tenant_id", admitted.tenant_id), ("workspace_id", admitted.workspace_id)):
+            claimed = str(conf.get(key) or "").strip().lower()
+            if claimed and claimed != value:
+                raise ValueError(f"dag_run {key} does not match the configured scope")
+        return admitted.tenant_id, admitted.workspace_id
     if not _is_production() and Variable.get(
         "replicon_allow_unscoped_outlook_uploads", default_var="false"
     ).strip().lower() in {

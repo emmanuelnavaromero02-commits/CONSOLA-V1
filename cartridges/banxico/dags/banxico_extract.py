@@ -67,23 +67,21 @@ def banxico_extract():
         dag_run = context.get("dag_run")
         run_conf = dag_run.conf if dag_run and isinstance(dag_run.conf, dict) else {}
         conf = {**(params or {}), **run_conf}
-        tenant_id = str(conf.get("tenant_id") or "")
-        workspace_id = str(conf.get("workspace_id") or "")
-        if not tenant_id or not workspace_id:
-            raise ValueError("tenant_id and workspace_id are required")
+        security_context = security_context_from_conf(conf, "banxico", dag_run=dag_run)
         mode = str(conf.get("mode") or "incremental").strip().lower()
         endpoint = "run_full_load" if mode == "full" else "run_incremental"
         body = {
             key: conf[key]
-            for key in ("tenant_id", "workspace_id", "from_date", "to_date", "series_ids", "run_id")
+            for key in ("from_date", "to_date", "series_ids", "run_id")
             if conf.get(key) is not None
         }
+        body["tenant_id"] = security_context["tenant_id"]
+        body["workspace_id"] = security_context["workspace_id"]
         conn_id = str(conf.get("conn_id") or DEFAULT_CONN_ID).strip()
         headers = {
             "X-Api-Key": _internal_key(),
             "X-Internal-Service": "airflow",
         }
-        security_context = security_context_from_conf(conf, "banxico")
         headers["X-Security-Context"] = json.dumps(security_context, ensure_ascii=False)
         with httpx.Client(timeout=REQUEST_TIMEOUT_SECONDS) as client:
             try:

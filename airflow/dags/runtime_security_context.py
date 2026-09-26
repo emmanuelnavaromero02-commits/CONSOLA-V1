@@ -12,6 +12,7 @@ from typing import Any
 
 MATERIALIZE_PURPOSE = "refinement.mcp.materialize"
 PIPELINE_RUN_PURPOSE = "mcp.pipeline_run_save"
+SCHEDULED_RUN_PURPOSE = "cartridge.run"
 SIGNATURE_VERSION = "hmac-sha256-v1"
 MATERIALIZE_SIGNATURE_VERSION = "hmac-sha256-v2"
 _MIN_KEY_LENGTH = 32
@@ -137,6 +138,34 @@ def build_pipeline_run_context(
         "allowed_cartridges": [cartridge],
     }
     return _sign_context(context, version=MATERIALIZE_SIGNATURE_VERSION, now=now)
+
+
+def build_scheduled_run_context(
+    *,
+    cartridge_id: str,
+    tenant_id: str,
+    workspace_id: str,
+    dag_id: str,
+    dag_run_id: str,
+    now: int | None = None,
+) -> dict[str, Any]:
+    context: dict[str, Any] = {
+        "trusted": True,
+        "source": "airflow",
+        "issuer": "entity_scheduler",
+        "audience": "airflow",
+        "purpose": SCHEDULED_RUN_PURPOSE,
+        "user_id": "airflow:entity_scheduler",
+        "role": "service",
+        "workspace_role": "service",
+        "tenant_id": _required(tenant_id, "tenant_id"),
+        "workspace_id": _required(workspace_id, "workspace_id"),
+        "permissions": ["pipelines.run"],
+        "allowed_cartridges": [_required(cartridge_id, "cartridge_id")],
+        "dag_id": _required(dag_id, "dag_id"),
+        "dag_run_id": _required(dag_run_id, "dag_run_id"),
+    }
+    return _sign_context(context, version=SIGNATURE_VERSION, now=now)
 
 
 def _sign_context(

@@ -136,24 +136,79 @@ def test_replicon_ses_upload_prefix_is_scoped_before_in(monkeypatch):
         mod._scoped_uploads_prefix("tenant-b", "workspace-a")
 
 
-def test_replicon_ses_requires_scope_in_production(monkeypatch):
-    mod = _load_ses_dag(monkeypatch)
+TENANT_A = "11111111-1111-4111-8111-111111111111"
+WORKSPACE_A = "22222222-2222-4222-8222-222222222222"
+TENANT_B = "33333333-3333-4333-8333-333333333333"
+SIGNING_KEY = "replicon-import-scope-signing-key-with-entropy-000"
+
+
+def _signed_run_context(**overrides) -> dict:
+    sys.path.insert(0, str(ROOT / "airflow" / "dags"))
+    try:
+        from runtime_security_context import sign_runtime_context
+    finally:
+        sys.path.remove(str(ROOT / "airflow" / "dags"))
+    payload = {
+        "trusted": True,
+        "source": "console",
+        "user_id": "user-1",
+        "tenant_id": TENANT_A,
+        "workspace_id": WORKSPACE_A,
+        "permissions": ["pipelines.run"],
+        "allowed_cartridges": ["replicon"],
+    }
+    payload.update(overrides)
+    return sign_runtime_context(payload)
+
+
+def _run_context(conf: dict) -> dict:
+    return {"dag_run": SimpleNamespace(conf=conf, queued_at=None, start_date=None)}
+
+
+@pytest.mark.parametrize("loader", [_load_ses_dag, _load_outlook_dag])
+def test_replicon_imports_take_scope_only_from_verified_authority(monkeypatch, loader):
+    monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", SIGNING_KEY)
+    mod = loader(monkeypatch)
     monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setattr(mod.Variable, "values", {})
 
     with pytest.raises(ValueError, match="tenant_id and workspace_id are required"):
         mod._scope_values({})
-
-    ctx = {
-        "dag_run": SimpleNamespace(
-            conf={
-                "security_context": {
-                    "tenant_id": "tenant-a",
-                    "workspace_id": "workspace-a",
-                }
-            }
+    with pytest.raises(ValueError, match="tenant_id and workspace_id are required"):
+        mod._scope_values(_run_context({"tenant_id": TENANT_A, "workspace_id": WORKSPACE_A}))
+    unsigned = {key: value for key, value in _signed_run_context().items() if not key.startswith("_")}
+    with pytest.raises(ValueError, match="signed run authority|rejected"):
+        mod._scope_values(_run_context({"security_context": unsigned}))
+    with pytest.raises(ValueError, match="not allowed"):
+        mod._scope_values(_run_context({"security_context": _signed_run_context(allowed_cartridges=["hubspot"])}))
+    with pytest.raises(ValueError, match="does not match"):
+        mod._scope_values(
+            _run_context({"security_context": _signed_run_context(), "tenant_id": TENANT_B})
         )
-    }
-    assert mod._scope_values(ctx) == ("tenant-a", "workspace-a")
+
+    signed = _run_context({"security_context": _signed_run_context()})
+    assert mod._scope_values(signed) == (TENANT_A, WORKSPACE_A)
+
+
+@pytest.mark.parametrize("loader", [_load_ses_dag, _load_outlook_dag])
+def test_replicon_imports_fall_back_to_platform_configured_scope(monkeypatch, loader):
+    mod = loader(monkeypatch)
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setattr(
+        mod.Variable,
+        "values",
+        {"replicon_tenant_id": TENANT_A.upper(), "replicon_workspace_id": WORKSPACE_A},
+    )
+
+    assert mod._scope_values({}) == (TENANT_A, WORKSPACE_A)
+    assert mod._scope_values(_run_context({"tenant_id": TENANT_A})) == (TENANT_A, WORKSPACE_A)
+    with pytest.raises(ValueError, match="does not match the configured scope"):
+        mod._scope_values(_run_context({"tenant_id": TENANT_B, "workspace_id": WORKSPACE_A}))
+    monkeypatch.setattr(
+        mod.Variable, "values", {"replicon_tenant_id": "tenant-a", "replicon_workspace_id": "workspace-a"}
+    )
+    with pytest.raises(ValueError, match="UUIDs"):
+        mod._scope_values({})
 
 
 def test_replicon_ses_extract_lands_attachment_under_scoped_upload_prefix(monkeypatch):
@@ -353,24 +408,6 @@ def test_replicon_outlook_paths_are_scoped(monkeypatch):
         )
 
 
-def test_replicon_outlook_requires_scope_in_production(monkeypatch):
-    mod = _load_outlook_dag(monkeypatch)
-    monkeypatch.setenv("APP_ENV", "production")
-
-    with pytest.raises(ValueError, match="tenant_id and workspace_id are required"):
-        mod._scope_values({})
-
-    ctx = {
-        "dag_run": SimpleNamespace(
-            conf={
-                "tenant_id": "tenant-a",
-                "workspace_id": "workspace-a",
-            }
-        )
-    }
-    assert mod._scope_values(ctx) == ("tenant-a", "workspace-a")
-
-
 def test_replicon_outlook_never_probes_or_creates_gcs_bucket(monkeypatch):
     mod = _load_outlook_dag(monkeypatch)
     monkeypatch.setenv("LAKEHOUSE_PROVIDER", "gcs")
@@ -454,12 +491,8 @@ def test_replicon_outlook_upload_and_backup_use_scoped_paths(monkeypatch, tmp_pa
             self.pushed[key] = value
 
     ti = FakeTI()
-    ctx = {
-        "task_instance": ti,
-        "dag_run": SimpleNamespace(
-            conf={"tenant_id": "tenant-a", "workspace_id": "workspace-a"}
-        ),
-    }
+    monkeypatch.setattr(mod, "_scope_values", lambda _context: ("tenant-a", "workspace-a"))
+    ctx = {"task_instance": ti, "dag_run": SimpleNamespace(conf={})}
 
     mod.upload_csv_to_minio(**ctx)
     mod.move_csv_to_backup(**ctx)

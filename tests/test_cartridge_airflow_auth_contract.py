@@ -57,7 +57,8 @@ def test_successfactors_child_dag_records_pipeline_run_telemetry():
     for needle in (
         "INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA",
         "pipeline_run_save",
-        "missing tenant/workspace scope",
+        "admitted: AdmittedRun",
+        '"tenant_id": admitted.tenant_id',
         "_pipeline_status_for_success_payload",
         "status=_pipeline_status_for_success_payload(payload)",
         "\"partial\"",

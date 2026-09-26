@@ -35,6 +35,21 @@ def test_a_run_without_a_workspace_scope_is_refused(conf):
         security_context_from_conf(conf, user_id="airflow:test")
 
 
+def test_a_bare_conf_scope_is_never_minted_into_authority():
+    with pytest.raises(ValueError, match="signed run authority"):
+        security_context_from_conf({"tenant_id": TENANT, "workspace_id": WORKSPACE}, user_id="airflow:test")
+    unsigned = {
+        "trusted": True,
+        "source": "console",
+        "tenant_id": TENANT,
+        "workspace_id": WORKSPACE,
+        "permissions": ["pipelines.run"],
+        "allowed_cartridges": ["sap_b1"],
+    }
+    with pytest.raises(ValueError):
+        security_context_from_conf({"security_context": unsigned}, user_id="airflow:test")
+
+
 def test_a_supplied_context_must_be_signed_and_match_the_run():
     signed = sap_b1_security_context(TENANT, WORKSPACE, user_id="console")
     fresh = security_context_from_conf({"security_context": signed}, user_id="airflow:test")
@@ -53,11 +68,12 @@ def test_a_supplied_context_must_be_signed_and_match_the_run():
 def test_the_pull_dags_send_only_a_fresh_signed_context(dag):
     source = (REPO_ROOT / "cartridges" / "sap_b1" / "dags" / dag).read_text(encoding="utf-8")
     ast.parse(source)
-    assert "from b1_runtime_context import admission_time, sap_b1_security_context, security_context_from_conf" in source
-    assert 'admitted_at=admission_time(context.get("dag_run"))' in source
-    assert '"security_context": sap_b1_security_context(' in source
+    assert "from cartridge_run_admission import admit_run" in source
+    assert 'admitted = admit_run(conf, cartridge_id="sap_b1", dag_run=context.get("dag_run"))' in source
+    assert '"security_context": admitted.context(user_id=' in source
     assert "json=skill_body," in source
     assert '"tenant_id", "workspace_id", "security_context"' not in source
+    assert "sap_b1_security_context(" not in source
 
 
 def test_a_console_context_is_judged_by_its_age_when_the_run_was_admitted(monkeypatch):
@@ -70,7 +86,14 @@ def test_a_console_context_is_judged_by_its_age_when_the_run_was_admitted(monkey
 
     tenant, workspace = "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"
     signed = sign_runtime_context(
-        {"trusted": True, "source": "console", "tenant_id": tenant, "workspace_id": workspace, "allowed_cartridges": ["sap_b1"]}
+        {
+            "trusted": True,
+            "source": "console",
+            "tenant_id": tenant,
+            "workspace_id": workspace,
+            "permissions": ["pipelines.run"],
+            "allowed_cartridges": ["sap_b1"],
+        }
     )
     admitted = int(signed["_signed_at"]) + 10
     later = admitted + 3600

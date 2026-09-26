@@ -9,7 +9,9 @@ from airflow.operators.python import PythonOperator
 from entity_scheduler_record import record_scheduler_run
 from entity_scheduler_trigger import (
     AirflowTriggerError,
+    ScopeMissing,
     require_all_succeeded,
+    scheduled_run_conf,
     trigger_dag_run,
 )
 
@@ -179,19 +181,7 @@ def trigger_each(**context):
         ts_id = it["fire_time"].replace(":", "").replace("-", "").replace("+", "_")
         run_id = f"sched_{it['cartridge_id']}_{it['entity']}_{ts_id}"
         try:
-            conf = {
-                "entity":       it["entity"],
-                "mode":         it["mode"],
-                "cartridge_id": it["cartridge_id"],
-                "triggered_by": "entity_scheduler",
-            }
-            if it.get("tenant_id") and it.get("workspace_id"):
-                conf["tenant_id"] = it["tenant_id"]
-                conf["workspace_id"] = it["workspace_id"]
-            if it.get("conn_id"):
-                conf["conn_id"] = it["conn_id"]
-            for k, v in (it.get("dag_params") or {}).items():
-                conf.setdefault(k, v)
+            conf = scheduled_run_conf(it, run_id=run_id)
             status_code = trigger_dag_run(
                 base_url=AIRFLOW_URL,
                 dag_id=it["dag_id"],
@@ -216,6 +206,11 @@ def trigger_each(**context):
                 conn.commit()
             finally:
                 conn.close()
+        except ScopeMissing:
+            results.append({
+                "cartridge_id": it["cartridge_id"], "entity": it["entity"],
+                "dag_id": it["dag_id"], "status": "scope_missing", "ok": False,
+            })
         except AirflowTriggerError as exc:
             results.append({
                 "cartridge_id": it["cartridge_id"], "entity": it["entity"],

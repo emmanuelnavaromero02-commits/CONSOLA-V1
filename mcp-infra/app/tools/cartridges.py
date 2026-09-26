@@ -11,6 +11,7 @@ from typing import Any
 import duckdb
 import httpx
 import pandas as pd
+from fastapi import HTTPException
 from sqlalchemy import create_engine, text
 
 from app.config import settings
@@ -131,6 +132,12 @@ def _scope_values(
         tenant_id = tenant_id or security_context.get("tenant_id")
         workspace_id = workspace_id or security_context.get("workspace_id")
     return _safe_scope_segment(tenant_id), _safe_scope_segment(workspace_id)
+
+
+def _require_run_scope(security_context: dict[str, Any] | None) -> None:
+    tenant_id, workspace_id = _scope_values(security_context)
+    if not (tenant_id and workspace_id):
+        raise HTTPException(403, detail="workspace scope required")
 
 
 def _set_pg_scope(
@@ -904,6 +911,7 @@ async def cartridge_extract(
     conn_id: str | None = None,
     security_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    _require_run_scope(security_context)
     with _conn() as c, c.cursor() as cur:
         resolved = _resolve_entity_name(cur, cartridge_id, entity)
         if resolved is None:
@@ -981,6 +989,7 @@ async def cartridge_extract_all(
     conn_id: str | None = None,
     security_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    _require_run_scope(security_context)
     with _conn() as c, c.cursor() as cur:
         cur.execute(
             "SELECT entity, dag_id, connection_id FROM entity_config "

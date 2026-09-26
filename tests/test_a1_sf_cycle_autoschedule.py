@@ -104,13 +104,19 @@ def test_scheduler_fired_cycle_builds_signed_admission_context():
     )
     assert fn, "authorize_refresh_chain not found"
     body = fn.group(0)
-    assert "_sign_security_context(" in body, "fallback must be signed"
-    assert '"pipelines.run"' in body, (
-        "admission demands the pipelines.run permission"
+    assert "_sign_security_context(" not in body, (
+        "a bare scheduled conf must never be turned into signed authority"
     )
-    assert body.index("_sign_security_context(") < body.index(
-        "refresh chain admission authority is required"
-    ), "fallback must run before the fail-closed check"
+    assert 'conf.get("tenant_id")' not in body and 'conf.get("workspace_id")' not in body
+    assert "admitted = _admit(dag_run)" in body, (
+        "the scheduler's signed context is verified like any other run authority"
+    )
+    assert "upstream_context=admitted.context(" in body
+    assert '"tenant_id": admitted.tenant_id' in body
+    scheduler = (
+        REPO_ROOT / "airflow" / "dags" / "entity_scheduler_trigger.py"
+    ).read_text(encoding="utf-8")
+    assert 'conf["security_context"] = build_scheduled_run_context(' in scheduler
 
 
 def test_vault_reveal_fields_are_flattened():

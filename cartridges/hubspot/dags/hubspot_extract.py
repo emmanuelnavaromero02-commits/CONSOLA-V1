@@ -76,24 +76,23 @@ default_args = {
 def hubspot_extract():
     @task
     def authorize_refresh_chain(params: dict = None, **context) -> dict:
+        from cartridge_run_admission import admit_run
         from dataset_refresh_admission import build_dataset_refresh_trigger
 
         dag_run = context.get("dag_run")
         run_conf = dag_run.conf if dag_run and isinstance(dag_run.conf, dict) else {}
         conf = {**(params or {}), **run_conf}
         entity = _safe_name(conf.get("entity"), "entity")
-        upstream = conf.get("security_context")
-        if not entity or not isinstance(upstream, dict):
-            raise RuntimeError("refresh chain admission authority is required")
+        admitted = admit_run(conf, cartridge_id="hubspot", dag_run=dag_run)
         refresh_conf = {
             "seed_raw": f"raw/hubspot/{entity}",
             "cartridge_id": "hubspot",
             "triggered_by": "hubspot_extract",
-            "tenant_id": conf.get("tenant_id") or upstream.get("tenant_id"),
-            "workspace_id": conf.get("workspace_id") or upstream.get("workspace_id"),
+            "tenant_id": admitted.tenant_id,
+            "workspace_id": admitted.workspace_id,
         }
         return build_dataset_refresh_trigger(
-            upstream_context=upstream,
+            upstream_context=admitted.context(user_id="airflow:hubspot_extract"),
             conf=refresh_conf,
             source_dag_run_id=str(getattr(dag_run, "run_id", "") or ""),
             prefix="hubspot",
@@ -116,11 +115,13 @@ def hubspot_extract():
             "X-Api-Key": _internal_key(),
             "X-Internal-Service": "airflow",
         }
-        skill_body = {
-            key: conf[key]
-            for key in ("tenant_id", "workspace_id", "security_context")
-            if conf.get(key)
-        }
+        from cartridge_run_admission import admit_run
+
+        admitted = admit_run(conf, cartridge_id="hubspot", dag_run=dag_run)
+
+        def skill_body() -> dict:
+            return {"security_context": admitted.context(user_id="airflow:hubspot_extract")}
+
         from service_job_client import idempotency_key, run_service_job
 
         with httpx.Client(timeout=REQUEST_TIMEOUT_SECONDS) as client:

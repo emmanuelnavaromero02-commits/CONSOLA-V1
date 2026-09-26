@@ -218,14 +218,15 @@ def _save_run(cartridge_id: str, entity: str, run_id: str, **kwargs) -> None:
         raise RuntimeError(str(body["error"]))
 
 
-def _require_saas_scope(conf: dict, cartridge_id: str) -> tuple[str, str]:
-    tenant_id = str(conf.get("tenant_id") or "").strip()
-    workspace_id = str(conf.get("workspace_id") or "").strip()
-    if tenant_id and workspace_id:
-        return tenant_id, workspace_id
-    if cartridge_id == "platform" and conf.get("allow_unscoped_platform"):
-        return tenant_id, workspace_id
-    raise ValueError("tenant_id and workspace_id are required for file_ingest")
+def _admit(conf: dict, dag_run):
+    from cartridge_run_admission import admit_run
+
+    return admit_run(conf, cartridge_id=str(conf.get("cartridge_id") or "replicon"), dag_run=dag_run)
+
+
+def _admitted_scope(conf: dict, dag_run) -> tuple[str, str, str]:
+    admitted = _admit(conf, dag_run)
+    return admitted.cartridge_id, admitted.tenant_id, admitted.workspace_id
 
 
 def _trigger_refresh_chain(
@@ -287,12 +288,15 @@ def file_ingest():
     def authorize_refresh_chain(**ctx) -> dict:
         dag_run = ctx.get("dag_run")
         conf = (dag_run.conf if dag_run else {}) or {}
-        cartridge_id = str(conf.get("cartridge_id") or "replicon")
         entity = str(conf.get("entity") or "").strip()
-        tenant_id, workspace_id = _require_saas_scope(conf, cartridge_id)
-        upstream = conf.get("security_context")
-        if not entity or not isinstance(upstream, dict):
+        admitted = _admit(conf, dag_run)
+        if not entity:
             raise RuntimeError("refresh chain admission authority is required")
+        cartridge_id, tenant_id, workspace_id = (
+            admitted.cartridge_id,
+            admitted.tenant_id,
+            admitted.workspace_id,
+        )
         refresh_conf = {
             "seed_raw": f"raw/{cartridge_id}/{entity}",
             "cartridge_id": cartridge_id,
@@ -302,7 +306,7 @@ def file_ingest():
             "workspace_id": workspace_id,
         }
         return build_dataset_refresh_trigger(
-            upstream_context=upstream,
+            upstream_context=admitted.context(user_id="airflow:file_ingest"),
             conf=refresh_conf,
             source_dag_run_id=str(getattr(dag_run, "run_id", "") or ""),
             prefix="file_ingest",
@@ -313,8 +317,7 @@ def file_ingest():
         if not isinstance(admission, dict):
             raise RuntimeError("refresh chain admission is unavailable")
         conf = (ctx.get("dag_run").conf if ctx.get("dag_run") else {}) or {}
-        cartridge_id = conf.get("cartridge_id") or "replicon"
-        tenant_id, workspace_id = _require_saas_scope(conf, cartridge_id)
+        cartridge_id, tenant_id, workspace_id = _admitted_scope(conf, ctx.get("dag_run"))
         pattern = conf.get("file_pattern") or ""
         if not pattern:
             raise ValueError("dag_params.file_pattern es obligatorio")
@@ -353,8 +356,7 @@ def file_ingest():
         from minio.commonconfig import CopySource
 
         conf = (ctx.get("dag_run").conf if ctx.get("dag_run") else {}) or {}
-        cartridge_id = conf.get("cartridge_id") or "replicon"
-        tenant_id, workspace_id = _require_saas_scope(conf, cartridge_id)
+        cartridge_id, tenant_id, workspace_id = _admitted_scope(conf, ctx.get("dag_run"))
         entity = conf.get("entity")
         if not entity:
             raise ValueError("conf.entity es obligatorio")

@@ -1,10 +1,25 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi import HTTPException
 
 
+ENTITY_DAG_PARAMS_MAX_BYTES = 16 * 1024
+# Mirrors airflow/dags/cartridge_run_admission.RESERVED_CONF_KEYS: the scheduler owns
+# these keys, so a stored dag_params row may never carry them.
+RESERVED_DAG_PARAM_KEYS = frozenset(
+    {
+        "security_context",
+        "tenant_id",
+        "workspace_id",
+        "cartridge_id",
+        "conn_id",
+        "connection_id",
+        "triggered_by",
+    }
+)
 ENTITY_UPDATE_FIELDS = {
     "display_name",
     "mode",
@@ -17,6 +32,30 @@ ENTITY_UPDATE_FIELDS = {
     "dag_params",
     "connection_id",
 }
+
+
+def validate_entity_dag_params(value: Any) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if isinstance(value, str):
+        try:
+            value = json.loads(value) if value.strip() else {}
+        except json.JSONDecodeError:
+            raise HTTPException(400, "dag_params must be a JSON object") from None
+    if not isinstance(value, dict):
+        raise HTTPException(400, "dag_params must be a JSON object")
+    if any(
+        not isinstance(key, str) or key in RESERVED_DAG_PARAM_KEYS or key.startswith("_")
+        for key in value
+    ):
+        raise HTTPException(400, "dag_params cannot set reserved keys")
+    try:
+        encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "dag_params must be a JSON object") from None
+    if len(encoded.encode("utf-8")) > ENTITY_DAG_PARAMS_MAX_BYTES:
+        raise HTTPException(400, "dag_params exceeds 16 KiB")
+    return value
 
 
 def manifest_entity_names(manifest: dict[str, Any] | None) -> list[str]:

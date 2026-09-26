@@ -339,6 +339,7 @@ _CARTRIDGE_EXECUTE_TOOLS = {
     "cartridge_extract_all",
     "cartridge_run_kb",
 }
+_CARTRIDGE_RUN_TRIGGER_TOOLS = {"cartridge_extract", "cartridge_extract_all"}
 _CARTRIDGE_CONTEXT_TOOLS = {
     "cartridge_get_semantic",
     "cartridge_search_term",
@@ -995,6 +996,8 @@ def _pipeline_run_allowed(ctx: dict[str, Any], run_id: str) -> bool:
 def _validate_airflow_trigger_scope(ctx: dict[str, Any], args: dict[str, Any]) -> None:
     dag_id = str(args.get("dag_id") or "").strip()
     conf = args.get("conf") if isinstance(args.get("conf"), dict) else {}
+    # Run authority is only ever the verified caller context injected below.
+    conf.pop("security_context", None)
     cartridge_id = str(
         conf.get("cartridge_id") or args.get("cartridge_id") or ""
     ).strip()
@@ -1632,6 +1635,8 @@ def _enforce_data_scope(
             _require_cartridge_scope(
                 ctx, str(args.get("cartridge_id") or args.get("id") or "")
             )
+        if tool in _CARTRIDGE_RUN_TRIGGER_TOOLS and not _has_tenant_workspace_scope(ctx):
+            raise HTTPException(403, detail="workspace scope required")
         if tool in _CARTRIDGE_CONTEXT_TOOLS and not _is_unscoped_admin_context(ctx):
             if not _has_tenant_workspace_scope(ctx):
                 raise HTTPException(
