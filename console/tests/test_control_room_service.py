@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
@@ -3038,6 +3039,7 @@ async def test_execute_live_external_template_uses_registered_adapter(monkeypatc
     class ExternalBillingAdapter(control_room_service.BaseAdapter):
         supports_idempotency = True
         calls: list[bool] = []
+        threads: list[int] = []
 
         def execute(
             self,
@@ -3046,6 +3048,7 @@ async def test_execute_live_external_template_uses_registered_adapter(monkeypatc
             dry_run: bool = True,
         ) -> control_room_service.ExecutionResult:
             self.calls.append(dry_run)
+            self.threads.append(threading.get_ident())
             assert action_data["template_type"] == "prepare_billing_review"
             assert credentials["cartridge_id"] == "replicon"
             return control_room_service.ExecutionResult(
@@ -3112,6 +3115,8 @@ async def test_execute_live_external_template_uses_registered_adapter(monkeypatc
     assert result["result"]["adapter"] == "ExternalBillingAdapter"
     assert result["result"]["adapter_result"]["data"]["external_id"] == "WB-1"
     assert ExternalBillingAdapter.calls == [False]
+    # A blocking adapter never runs on the event loop's thread.
+    assert ExternalBillingAdapter.threads and threading.get_ident() not in ExternalBillingAdapter.threads
     assert result["learning_lesson"]["metadata"]["autonomous_learning"] is True
     assert (
         result["item"]["omega"]["lessons"]["suggested_actions"][0]["template_id"]

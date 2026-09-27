@@ -2923,6 +2923,7 @@ async def _execute_external_writeback(
     authority: AuthoritativeExecutionContext | None = None,
 ) -> dict[str, Any]:
     from app.services.adapters import AdapterCircuitOpenError, AdapterExecutionError
+    from app.services.adapters.base import run_adapter
     from app.services.control_room import business_external_effect as external_effect
 
     if authority is None:
@@ -3024,9 +3025,9 @@ async def _execute_external_writeback(
         if authority is not None:
             require_authoritative_binding_current(authority, user)
         remote_attempt_started = True
-        adapter_result = adapter.execute(action_data, credentials, dry_run=False)
-        if inspect.isawaitable(adapter_result):
-            adapter_result = await adapter_result
+        adapter_result = await run_adapter(
+            adapter.execute, action_data, credentials, dry_run=False
+        )
         public_adapter_result = _adapter_result_to_dict(adapter_result)
     except AdapterCircuitOpenError as exc:
         result = {

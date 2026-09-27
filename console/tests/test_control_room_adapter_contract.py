@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -141,3 +144,59 @@ async def test_sap_hcm_factory_bridge_executes_it0008_with_live_semantics(monkey
             "dry_run": False,
         }
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "template_id,target",
+    [("prepare_hcm_access_review", "SapHcmAdapter"), ("prepare_billing_review", "RepliconAdapter")],
+)
+async def test_blocking_writeback_adapters_do_not_stall_the_event_loop(monkeypatch, template_id, target):
+    from app.services.adapters import factory
+
+    threads: list[int] = []
+
+    class BlockingAdapter:
+        def execute(self, action_data, credentials, dry_run=True):
+            threads.append(threading.get_ident())
+            time.sleep(0.5)
+            return {"ok": True, "dry_run": dry_run}
+
+    monkeypatch.setattr(factory, target, BlockingAdapter)
+    adapter = factory.WriteBackAdapterFactory.create(template_id)
+    gaps: list[float] = []
+
+    async def ticker() -> None:
+        last = time.monotonic()
+        while len(gaps) < 200:
+            await asyncio.sleep(0.02)
+            gaps.append(time.monotonic() - last)
+            last = time.monotonic()
+
+    ticking = asyncio.create_task(ticker())
+    result = await adapter.execute({"item_id": "item-1"}, {"base_url": "https://sap.example"})
+    ticking.cancel()
+
+    assert result == {"ok": True, "dry_run": False}
+    assert threads and threading.get_ident() not in threads
+    assert gaps and max(gaps) < 0.3
+
+
+@pytest.mark.asyncio
+async def test_run_adapter_awaits_async_adapters_on_the_loop():
+    from app.services.adapters.base import run_adapter
+
+    threads: list[int] = []
+
+    class AsyncAdapter:
+        async def execute(self, action_data, credentials, dry_run=True):
+            threads.append(threading.get_ident())
+            return {"async": True, "dry_run": dry_run}
+
+    class BridgedAdapter:
+        def execute(self, action_data, credentials, dry_run=True):
+            return AsyncAdapter().execute(action_data, credentials, dry_run=dry_run)
+
+    assert await run_adapter(AsyncAdapter().execute, {}, {}, dry_run=False) == {"async": True, "dry_run": False}
+    assert await run_adapter(BridgedAdapter().execute, {}, {}, dry_run=False) == {"async": True, "dry_run": False}
+    assert threads == [threading.get_ident(), threading.get_ident()]
