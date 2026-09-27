@@ -32,7 +32,7 @@ from app.catalog_copilot_store import CatalogCopilotStore
 from app.catalog_overlay import CatalogAnnotations
 from app.dataset_protection import is_protected_dataset
 from app.dataset_store import DatasetStore
-from app.duckdb_runtime import require_loaded_extensions
+from app.duckdb_runtime import connect_duckdb_runtime, require_loaded_extensions
 from app.llm_sql import GeneratedSQLValidationError, generate_sql
 from app.publication_public import (
     public_dataset_projection,
@@ -79,6 +79,8 @@ _SYNC_IO_MAX_CONCURRENCY = 1
 _SYNC_LONG_IO_MAX_CONCURRENCY = 1
 _READINESS_TIMEOUT_SECONDS = 2.5
 _READINESS_SUCCESS_CACHE_TTL_SECONDS = 0.5
+_READINESS_DUCKDB_LOCK_TIMEOUT_SECONDS = 0.5
+_READINESS_READY_STATUSES = frozenset({"up", "busy"})
 _SERIALIZED_MCP_MUTATIONS = {
     "delete_app",
     "delete_dataset",
@@ -1365,6 +1367,40 @@ async def healthz():
     return {"ok": True, "service": "refinement"}
 
 
+def _readiness_ok(checks: dict[str, str]) -> bool:
+    return bool(checks) and all(
+        status in _READINESS_READY_STATUSES for status in checks.values()
+    )
+
+
+def _duckdb_probe_check() -> None:
+    connection = connect_duckdb_runtime()
+    try:
+        require_loaded_extensions(connection)
+    finally:
+        connection.close()
+
+
+def _duckdb_readiness_status() -> str:
+    if engine._duckdb_lock.acquire(timeout=_READINESS_DUCKDB_LOCK_TIMEOUT_SECONDS):
+        try:
+            require_loaded_extensions(engine._conn())
+            return "up"
+        except Exception:
+            logger.exception("refinement readyz duckdb check failed")
+            return "down"
+        finally:
+            engine._duckdb_lock.release()
+    # The engine lock is held by a legitimate long-running job; verify the
+    # DuckDB runtime on a transient connection instead of reporting it down.
+    try:
+        _duckdb_probe_check()
+        return "busy"
+    except Exception:
+        logger.exception("refinement readyz duckdb probe check failed")
+        return "down"
+
+
 def _readiness_checks() -> dict[str, str]:
     checks: dict[str, str] = {}
     try:
@@ -1379,13 +1415,7 @@ def _readiness_checks() -> dict[str, str]:
         logger.exception("refinement readyz postgres check failed")
         checks["postgres"] = "down"
 
-    try:
-        with engine._duckdb_lock:
-            require_loaded_extensions(engine._conn())
-        checks["duckdb"] = "up"
-    except Exception:
-        logger.exception("refinement readyz duckdb check failed")
-        checks["duckdb"] = "down"
+    checks["duckdb"] = _duckdb_readiness_status()
     try:
         if not engine._publication_verifier.ready():
             raise RuntimeError("publication verifier is not ready")
@@ -1430,11 +1460,7 @@ def _complete_readiness_task(task: asyncio.Task) -> None:
         and _readiness_started_at is not None
         and loop.time() - _readiness_started_at <= _READINESS_TIMEOUT_SECONDS
     )
-    if (
-        checks
-        and completed_within_deadline
-        and all(status == "up" for status in checks.values())
-    ):
+    if checks and completed_within_deadline and _readiness_ok(checks):
         if loop is not None:
             _readiness_success_cache = (loop.time(), dict(checks))
     _readiness_in_flight = None
@@ -1477,7 +1503,7 @@ async def _coalesced_readiness_checks() -> dict[str, str] | None:
 async def readyz():
     """Dependency readiness with sanitized public response."""
     checks = await _coalesced_readiness_checks()
-    ok = checks is not None and all(status == "up" for status in checks.values())
+    ok = checks is not None and _readiness_ok(checks)
     return JSONResponse(
         {"ok": ok, "service": "refinement"},
         status_code=200 if ok else 503,
