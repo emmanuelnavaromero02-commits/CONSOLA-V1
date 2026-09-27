@@ -50,6 +50,7 @@ from app.services.control_room.business_workflow_quarantine import (
     workflow_is_quarantined,
     workflow_reopen_allowed,
 )
+from app.services.permission_roles import PLATFORM_ADMIN_ROLES
 from app.services.permissions import has_permission, user_role
 
 
@@ -75,7 +76,6 @@ LIVE_BOUND_TEMPLATE_IDS = frozenset(
         OPEN_IN_STUDIO_TEMPLATE_ID,
     }
 )
-_PLATFORM_ADMIN_ROLES = frozenset({"owner", "super_admin", "admin"})
 _OPEN_STATUSES = frozenset({"open", "in_review"})
 _STUDIO_STATUSES = frozenset({"open", "in_review", "decision_created"})
 _CARTRIDGE_ID = re.compile(r"^[a-z0-9_]{1,120}$")
@@ -153,7 +153,7 @@ def _status(value: object) -> str:
 
 
 def user_can_view_studio(user: Mapping[str, Any]) -> bool:
-    return user_role(dict(user)) in _PLATFORM_ADMIN_ROLES and has_permission(
+    return user_role(dict(user)) in PLATFORM_ADMIN_ROLES and has_permission(
         dict(user), "studio.read"
     )
 

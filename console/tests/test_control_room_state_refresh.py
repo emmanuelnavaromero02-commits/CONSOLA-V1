@@ -478,3 +478,33 @@ async def test_persistence_hook_runs_on_the_same_connection_with_counts():
             on_persisted=hook,
         )
         assert calls[-1] == (conn, expected, 0)
+
+
+@pytest.mark.asyncio
+async def test_platform_admin_without_an_active_workspace_is_refused_before_any_read(
+    monkeypatch,
+):
+    admin = {"id": 1, "role": "super_admin", "email": "root@example.test"}
+    persisted = AsyncMock(side_effect=AssertionError("dashboard state touched"))
+    with (
+        patch.object(control_room_service, "refresh_dashboard_state", new=persisted),
+        patch.object(
+            refresh_service.auth, "pool", new=AsyncMock(side_effect=AssertionError)
+        ),
+    ):
+        async with _client(admin) as client:
+            response = await client.post(PATH)
+        monkeypatch.setenv("APP_ENV", "production")
+        monkeypatch.setenv("RATE_LIMIT_ENABLED", "true")
+        with pytest.raises(HTTPException) as refused:
+            await rate_limit_authenticated_action(
+                PATH,
+                user_id=admin["id"],
+                workspace_id=None,
+                limiter_factory=lambda: InMemoryRateLimiter(),
+            )
+
+    assert response.status_code == 403
+    assert "item" not in response.text
+    persisted.assert_not_awaited()
+    assert refused.value.status_code == 403
