@@ -6271,7 +6271,7 @@
     },
     {
       "path": "tests/test_v1442_nextjs_scaffold.py",
-      "sha256": "a98761a04de56ddf57f398b9bdb90ebadeb8746daaf0cfd5b168363e83144123"
+      "sha256": "ae7ae9a96e8bbd7bb0e6691fd724c676260f9d6ff881d17127f8ee0513bdba44"
     },
     {
       "path": "tests/test_v14432_csrf_login_fix.py",
