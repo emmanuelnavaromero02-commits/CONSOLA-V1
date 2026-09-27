@@ -24,6 +24,8 @@ RATE_LIMITS = {
     "/api/explorer": (180, 60),
     "/apps/content": (60, 60),
     "pipeline_recover": (10, RATE_LIMIT_WINDOW_SECONDS),
+    "/api/control-room/refresh": (6, 60),
+    "/api/control-room/refresh:workspace": (30, 60),
 }
 API_RATE_LIMIT_PREFIXES = (
     "/api/copilot",
@@ -155,6 +157,29 @@ async def rate_limit_api_surface(
     limiter = limiter_factory()
     keys = dict.fromkeys((f"{matched}:{ip}:{user_key}", f"{matched}:{ip}:-"))
     for key in keys:
+        if not await limiter.check(key, limit, window, sensitive=True):
+            raise HTTPException(status_code=429, detail="too many requests")
+
+
+async def rate_limit_authenticated_action(
+    action: str,
+    *,
+    user_id: object,
+    workspace_id: object,
+    limiter_factory: Callable[[], Any] = get_rate_limiter,
+) -> None:
+    """Per-user (and wider per-workspace) limit that never keys on client IP."""
+    if rate_limit_disabled():
+        return
+    user_key = str(user_id or "").strip()
+    workspace_key = str(workspace_id or "").strip()
+    if not user_key or not workspace_key:
+        raise HTTPException(status_code=403, detail="action is not available")
+    limiter = limiter_factory()
+    for key, (limit, window) in (
+        (f"{action}:user:{user_key}", RATE_LIMITS[action]),
+        (f"{action}:workspace:{workspace_key}", RATE_LIMITS[f"{action}:workspace"]),
+    ):
         if not await limiter.check(key, limit, window, sensitive=True):
             raise HTTPException(status_code=429, detail="too many requests")
 

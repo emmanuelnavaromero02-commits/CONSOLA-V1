@@ -195,4 +195,42 @@ SET {_SEMANTIC_UPDATE},
 """
 
 
-__all__ = ("ENSURE_ITEM_SQL", "PERSIST_ITEMS_SQL")
+_RESOLUTION_KEYS = (
+    "resolution",
+    "resolution_actor_id",
+    "resolution_reason",
+    "resolution_at",
+    "resolution_observation_fingerprint",
+    "resolution_evidence_digest",
+)
+_WITHOUT_RESOLUTION = "COALESCE(metadata, '{}'::jsonb) " + " ".join(
+    f"- '{key}'" for key in _RESOLUTION_KEYS
+)
+
+# An approved exception covers one observation; a different one reopens it.
+LAPSE_EXCEPTIONS_SQL = f"""
+WITH lapsed AS (
+    UPDATE control_room_items
+       SET status = 'open',
+           dismissed_at = NULL,
+           metadata = {_WITHOUT_RESOLUTION}
+     WHERE workspace_id = $1::uuid
+       AND item_id = ANY($2::text[])
+       AND status = 'dismissed'
+       AND metadata->>'resolution' = 'exception_approved'
+       AND decision_id IS NULL
+       AND ($3::bigint IS NULL OR owner_user_id = $3::bigint)
+       AND (metadata->>'resolution_observation_fingerprint')
+           IS DISTINCT FROM (metadata->>'business_eligibility_fingerprint')
+    RETURNING tenant_id, workspace_id, item_id
+)
+INSERT INTO control_room_item_events (
+    tenant_id, workspace_id, item_id, event_type, actor_id, actor_email, metadata
+)
+SELECT tenant_id, workspace_id, item_id, 'exception_lapsed', NULL, NULL,
+       '{{"reason": "observation_changed"}}'::jsonb
+  FROM lapsed
+"""
+
+
+__all__ = ("ENSURE_ITEM_SQL", "LAPSE_EXCEPTIONS_SQL", "PERSIST_ITEMS_SQL")

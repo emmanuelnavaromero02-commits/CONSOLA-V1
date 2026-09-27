@@ -13,7 +13,11 @@ from app.services.control_room.business_action_attempt_policy import (
     binding_attempt_lock_key,
     binding_issue_allowed,
 )
+from app.services.control_room.business_action_attempt_policy import BindingIssue
 from app.services.control_room.business_action_binding_slot import issue_binding_slot
+from app.services.control_room.business_action_direct_contract import (
+    DirectActionContract,
+)
 from app.services.control_room.business_action_authority_policy import (
     actor_id,
     authority_scope,
@@ -45,6 +49,81 @@ SELECT item.tenant_id::text AS tenant_id,
  ORDER BY item.item_id
  LIMIT $4
 """
+
+
+DIRECT_ITEMS_SQL = """
+SELECT item.tenant_id::text AS tenant_id,
+       item.workspace_id::text AS workspace_id,
+       item.owner_user_id, item.item_id, item.cartridge_id, item.domain,
+       item.source_dataset, item.item_kind, item.title, item.severity,
+       item.status, item.decision_id, item.entity_kind, item.entity_id,
+       item.entity_label, item.anomaly_type, item.metadata,
+       item.first_seen_at, item.last_seen_at, item.resolved_at,
+       item.dismissed_at, item.impact_estimate, item.impact_currency,
+       item.confidence, item.priority_score, item.selected_option_id,
+       item.execution_status,
+       decision.workspace_id::text AS decision_workspace_id
+  FROM control_room_items AS item
+  LEFT JOIN decisions AS decision
+    ON decision.id = item.decision_id
+   AND decision.workspace_id = item.workspace_id
+ WHERE item.tenant_id = $1::uuid
+   AND item.workspace_id = $2::uuid
+   AND item.item_id = ANY($3::text[])
+ ORDER BY item.item_id
+ LIMIT $4
+"""
+
+
+async def fetch_direct_rows(
+    conn: Any,
+    *,
+    tenant_id: str,
+    workspace_id: str,
+    item_ids: Sequence[str],
+) -> dict[str, dict[str, Any]]:
+    bounded = sorted({str(value) for value in item_ids if str(value).strip()})[:1000]
+    if not bounded:
+        return {}
+    rows = await conn.fetch(
+        DIRECT_ITEMS_SQL, tenant_id, workspace_id, bounded, len(bounded)
+    )
+    return {str(row["item_id"]): dict(row) for row in rows}
+
+
+async def fetch_direct_row_for_update(
+    conn: Any,
+    *,
+    tenant_id: str,
+    workspace_id: str,
+    item_id: str,
+) -> dict[str, Any] | None:
+    rows = await conn.fetch(
+        DIRECT_ITEMS_SQL + " FOR UPDATE OF item",
+        tenant_id,
+        workspace_id,
+        [item_id],
+        1,
+    )
+    return dict(rows[0]) if rows else None
+
+
+async def insert_direct_action_binding_token(
+    conn: Any,
+    contract: DirectActionContract,
+    *,
+    now: datetime | None = None,
+) -> tuple[str, datetime]:
+    await conn.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        binding_attempt_lock_key(
+            tenant_id=contract.tenant_id,
+            workspace_id=contract.workspace_id,
+            maker_user_id=contract.maker_user_id,
+            item_id=contract.item_id,
+        ),
+    )
+    return await issue_binding_slot(conn, contract, BindingIssue(), now=now)
 
 
 async def fetch_authoritative_rows(
@@ -224,11 +303,15 @@ async def revoke_action_binding_token(
 
 __all__ = (
     "AUTHORITATIVE_ITEMS_SQL",
+    "DIRECT_ITEMS_SQL",
     "INTENT_TABLE",
     "consume_action_binding_token",
     "fetch_authoritative_rows",
     "fetch_authoritative_row_for_update",
+    "fetch_direct_row_for_update",
+    "fetch_direct_rows",
     "insert_action_binding_token",
+    "insert_direct_action_binding_token",
     "lock_action_binding_token_for_mutation",
     "resolve_action_binding_token",
     "revoke_action_binding_token",

@@ -47,6 +47,9 @@ def _matches_runtime_registry(row: Mapping[str, Any]) -> bool:
     )
 
 
+matches_runtime_registry = _matches_runtime_registry
+
+
 async def load_enabled_action_template_ids(
     user: Mapping[str, Any],
 ) -> frozenset[str]:
@@ -94,6 +97,7 @@ __all__ = (
     "ENABLED_ACTION_TEMPLATE_IDS_SQL",
     "ENABLED_ACTION_TEMPLATE_SQL",
     "load_enabled_action_template_ids",
+    "matches_runtime_registry",
     "require_enabled_action_template",
     "require_enabled_action_template_for_user",
 )

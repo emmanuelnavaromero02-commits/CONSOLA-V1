@@ -11,19 +11,29 @@ from app.services.control_room.business_action_authoritative_item import (
 )
 from app.services.control_room.business_action_authority_policy import (
     ACTION_BINDING_TTL_SECONDS,
+    DIRECT_ACTION_TEMPLATE_IDS,
+    EXECUTABLE_TEMPLATE_ID,
+)
+from app.services.control_room.business_action_direct_contract import (
+    DirectActionContract,
 )
 from app.services.control_room.business_action_tokens import handle_digest
 from app.services.security_context import sign_server_payload
 
 
 _PURPOSE = "control-room-action-binding/v1"
+_SLOT_TEMPLATE_IDS = frozenset({EXECUTABLE_TEMPLATE_ID, *DIRECT_ACTION_TEMPLATE_IDS})
+BindingContract = AuthorityItemContract | DirectActionContract
 
 
-def _handle_from_nonce(value: object) -> str:
+def binding_handle_from_nonce(value: object) -> str:
     nonce = bytes(value) if isinstance(value, (bytes, bytearray, memoryview)) else b""
     if len(nonce) != 32:
         raise RuntimeError("control room action binding nonce is invalid")
     return sign_server_payload(nonce, purpose=_PURPOSE)
+
+
+_handle_from_nonce = binding_handle_from_nonce
 
 
 def _same_optional(left: object, right: object) -> bool:
@@ -34,7 +44,7 @@ def _same_optional(left: object, right: object) -> bool:
 
 def _slot_is_current(
     row: Mapping[str, Any],
-    contract: AuthorityItemContract,
+    contract: BindingContract,
     issue: BindingIssue,
     now: datetime,
 ) -> bool:
@@ -67,11 +77,14 @@ def _slot_is_current(
 
 async def issue_binding_slot(
     conn: Any,
-    contract: AuthorityItemContract,
+    contract: BindingContract,
     issue: BindingIssue,
     *,
     now: datetime | None = None,
 ) -> tuple[str, datetime]:
+    template_id = contract.template_id
+    if template_id not in _SLOT_TEMPLATE_IDS:
+        raise RuntimeError("control room action binding template is invalid")
     issued_at = (now or datetime.now(UTC)).astimezone(UTC)
     row = await conn.fetchrow(
         """
@@ -85,13 +98,14 @@ async def issue_binding_slot(
           FROM control_room_action_tokens
          WHERE tenant_id=$1::uuid AND workspace_id=$2::uuid
            AND subject_user_id=$3 AND item_id=$4
-           AND template_id='create_followup_task' AND stage='action_binding'
+           AND template_id=$5 AND stage='action_binding'
          FOR UPDATE
         """,
         contract.tenant_id,
         contract.workspace_id,
         contract.maker_user_id,
         contract.item_id,
+        template_id,
     )
     if row and _slot_is_current(row, contract, issue, issued_at):
         handle = _handle_from_nonce(row["binding_handle_nonce"])
@@ -150,7 +164,7 @@ async def issue_binding_slot(
                 issued_at, expires_at
             ) VALUES (
                 $1::uuid,$2::uuid,$3::uuid,'action_binding',$4,$5,$6,$7,
-                'create_followup_task',$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19
+                $8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
             ) RETURNING id
             """,
             contract.tenant_id,
@@ -160,6 +174,7 @@ async def issue_binding_slot(
             handle_digest(handle),
             nonce,
             contract.item_id,
+            template_id,
             contract.binding_digest,
             contract.evidence_digest,
             contract.observation_fingerprint,
@@ -178,4 +193,4 @@ async def issue_binding_slot(
     return handle, expires_at
 
 
-__all__ = ("issue_binding_slot",)
+__all__ = ("BindingContract", "binding_handle_from_nonce", "issue_binding_slot")

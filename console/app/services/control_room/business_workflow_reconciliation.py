@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from typing import Any
 
 from app.services.control_room.business_action_markers import (
@@ -37,6 +38,9 @@ _WORKFLOW_STATUSES = frozenset({"decision_created", "approved", "resolved"})
 class WorkflowReconciliation:
     patches: dict[tuple[str, str], dict[str, Any]]
     existing_orders: dict[tuple[str, str], str]
+    approved_exceptions: dict[tuple[str, str], str] = dataclass_field(
+        default_factory=dict
+    )
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -160,6 +164,7 @@ async def reconcile_workflow_metadata(
     }
     patches: dict[tuple[str, str], dict[str, Any]] = {}
     existing_orders: dict[tuple[str, str], str] = {}
+    approved_exceptions: dict[tuple[str, str], str] = {}
     for raw in existing_rows:
         existing = dict(raw)
         key = (str(existing.get("workspace_id") or ""), str(existing["item_id"]))
@@ -167,6 +172,13 @@ async def reconcile_workflow_metadata(
         if current is None:
             continue
         metadata = _mapping(existing.get("metadata"))
+        if (
+            str(existing.get("status") or "").strip().lower() == "dismissed"
+            and metadata.get("resolution") == "exception_approved"
+        ):
+            approved_exceptions[key] = str(
+                metadata.get("resolution_observation_fingerprint") or ""
+            )
         existing_order = business_observation_order(_item(existing))
         current_order = business_observation_order(current)
         has_modern_fingerprint = bool(metadata.get(CURRENT_ELIGIBILITY_FINGERPRINT_KEY))
@@ -244,6 +256,7 @@ async def reconcile_workflow_metadata(
     return WorkflowReconciliation(
         patches=patches,
         existing_orders=existing_orders,
+        approved_exceptions=approved_exceptions,
     )
 
 

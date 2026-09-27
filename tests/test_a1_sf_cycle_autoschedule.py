@@ -25,6 +25,7 @@ PAGE = (
     REPO_ROOT / "console-next" / "src" / "components" / "control-room"
     / "experience" / "ControlRoomExperiencePage.tsx"
 )
+LIVE_BADGE = PAGE.with_name("ExperienceLiveBadge.tsx")
 
 
 def test_migration_schedules_the_cycle_dag_not_per_entity_extract():
@@ -165,10 +166,13 @@ def test_airflow_materializes_via_runtime_envelope():
 def test_control_room_shows_freshness():
     presenter = PRESENTER.read_text(encoding="utf-8")
     assert "latestObservedAt" in presenter
-    assert "formatRelativeFromNow" in presenter
     page = PAGE.read_text(encoding="utf-8")
-    assert "Datos actualizados" in page
+    assert "ExperienceLiveBadge" in page
     assert "latestObservedAt(experience)" in page
+    assert "Datos actualizados" not in page
+    badge = LIVE_BADGE.read_text(encoding="utf-8")
+    assert "En vivo · consultado" in badge
+    assert "Datos del origen al" in badge
 
 
 def _a2_sql() -> str:

@@ -69,9 +69,19 @@ const disabledReasonSchema = z.enum([
   "Completa los datos requeridos antes de continuar.",
 ]);
 
+export const experienceActionKinds = [
+  "followup_task",
+  "exception_approval",
+  "studio_adjustment",
+  "decision_proposal",
+  "exception_reopen",
+] as const;
+const experienceActionKindSchema = z.enum(experienceActionKinds);
+
 const experienceActionSchema = z
   .object({
     action_handle: experienceActionHandleSchema,
+    kind: experienceActionKindSchema,
     label: z
       .string()
       .min(1)
@@ -129,6 +139,26 @@ const experienceFactV2Schema = z
     if (new Set(handles).size !== handles.length) {
       context.addIssue({ code: "custom", message: "Duplicate action handles" });
     }
+    if (fact.actions.some((action) => action.kind === "exception_reopen")) {
+      context.addIssue({ code: "custom", message: "Open findings cannot reopen" });
+    }
+  });
+
+const experienceExceptionSchema = z
+  .object({
+    title: narrativeTextSchema(1, 240),
+    entity_label: narrativeTextSchema(0, 240).optional(),
+    observed_at: dateTimeSchema.optional(),
+    approved_at: dateTimeSchema.optional(),
+    reason: narrativeTextSchema(1, 500).optional(),
+    approved_by_you: z.boolean(),
+    actions: z.array(experienceActionSchema).max(1),
+  })
+  .strict()
+  .superRefine((exception, context) => {
+    if (exception.actions.some((action) => action.kind !== "exception_reopen")) {
+      context.addIssue({ code: "custom", message: "Exceptions only reopen" });
+    }
   });
 
 const experienceSectionV2Schema = z
@@ -143,6 +173,49 @@ export const controlRoomExperienceV2Schema = z
     schema_version: z.literal("control-room-experience/v2"),
     generated_at: dateTimeSchema,
     sections: z.array(experienceSectionV2Schema),
+    exceptions: z.array(experienceExceptionSchema).max(20).optional(),
+  })
+  .strict();
+
+export const exceptionApprovalResponseSchema = z
+  .object({
+    action_handle: experienceActionHandleSchema,
+    status: z.literal("exception_approved"),
+    reversible: z.literal(true),
+    message: z.string().min(1).max(240),
+  })
+  .strict();
+
+export const exceptionReopenResponseSchema = z
+  .object({
+    action_handle: experienceActionHandleSchema,
+    status: z.literal("exception_reopened"),
+    message: z.string().min(1).max(240),
+  })
+  .strict();
+
+export const decisionProposalResponseSchema = z
+  .object({
+    action_handle: experienceActionHandleSchema,
+    status: z.enum(["proposal_created", "proposal_exists"]),
+    decision_id: z.number().int().positive(),
+    href: z.string().regex(/^\/decisions\?tab=consejo&propuesta=[1-9][0-9]{0,18}$/),
+    message: z.string().min(1).max(240),
+  })
+  .strict();
+
+export const controlRoomRefreshResponseSchema = z
+  .object({
+    status: z.literal("refreshed"),
+    refreshed_at: dateTimeSchema,
+    message: z.string().min(1).max(240),
+  })
+  .strict();
+
+export const studioTargetResponseSchema = z
+  .object({
+    action_handle: experienceActionHandleSchema,
+    href: z.string().regex(/^\/studio\?cartridge=[a-z0-9_]{1,120}&tab=capas$/),
   })
   .strict();
 
@@ -155,11 +228,28 @@ export const experienceActionPreviewResponseSchema = z
   })
   .strict();
 
+export const controlRoomFreshnessSchema = z
+  .object({
+    schema_version: z.literal("control-room-freshness/v1"),
+    fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    checked_at: dateTimeSchema,
+    data_refreshed_at: dateTimeSchema.nullable(),
+  })
+  .strict();
+
+export type ControlRoomFreshness = z.infer<typeof controlRoomFreshnessSchema>;
 export type ControlRoomExperienceV2 = z.infer<typeof controlRoomExperienceV2Schema>;
 export type ExperienceSectionV2 = z.infer<typeof experienceSectionV2Schema>;
 export type ExperienceFactV2 = z.infer<typeof experienceFactV2Schema>;
 export type ExperienceNarrative = z.infer<typeof experienceNarrativeSchema>;
 export type ExperienceAction = z.infer<typeof experienceActionSchema>;
+export type ExperienceActionKind = z.infer<typeof experienceActionKindSchema>;
+export type ExperienceExceptionV2 = z.infer<typeof experienceExceptionSchema>;
+export type ExceptionApprovalResponse = z.infer<typeof exceptionApprovalResponseSchema>;
+export type ExceptionReopenResponse = z.infer<typeof exceptionReopenResponseSchema>;
+export type DecisionProposalResponse = z.infer<typeof decisionProposalResponseSchema>;
+export type StudioTargetResponse = z.infer<typeof studioTargetResponseSchema>;
+export type ControlRoomRefreshResponse = z.infer<typeof controlRoomRefreshResponseSchema>;
 export type ExperienceActionPreviewResponse = z.infer<
   typeof experienceActionPreviewResponseSchema
 >;

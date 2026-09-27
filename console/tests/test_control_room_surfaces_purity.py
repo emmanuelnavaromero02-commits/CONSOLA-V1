@@ -17,6 +17,7 @@ from control_room_get_harness import ConcurrencyProbe, MutationSentinel, build_a
 SURFACE_PATHS = (
     "/api/control-room/experience",
     "/api/control-room/experience/v2",
+    "/api/control-room/experience/v2/freshness",
     "/api/control-room/diagnostics",
 )
 

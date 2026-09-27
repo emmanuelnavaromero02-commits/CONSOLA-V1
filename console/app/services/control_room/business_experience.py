@@ -76,6 +76,9 @@ def _observed_at(item: Mapping[str, object]) -> datetime | None:
     return None
 
 
+observation_moment = _observed_at
+
+
 def _metric(
     item: Mapping[str, object],
     identity: BusinessSurfaceIdentity,
@@ -230,5 +233,6 @@ def build_business_experience(
 __all__ = (
     "build_business_experience",
     "experience_fact_sort_key",
+    "observation_moment",
     "project_experience_fact",
 )

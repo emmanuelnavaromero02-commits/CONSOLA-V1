@@ -61,6 +61,10 @@ class AuthorityItemContract:
     access_revision_digest: str
     rbac_policy_digest: str
 
+    @property
+    def template_id(self) -> str:
+        return EXECUTABLE_TEMPLATE_ID
+
     def dry_run_digest(self) -> str:
         return action_contract_digest(
             dry_run_contract(self.item, template_id=EXECUTABLE_TEMPLATE_ID)

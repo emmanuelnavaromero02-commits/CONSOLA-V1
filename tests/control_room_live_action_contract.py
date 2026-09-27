@@ -53,11 +53,19 @@ class LiveActionScopes:
 def assert_public_action_redacted(action: dict[str, Any]) -> None:
     assert set(action) == {
         "action_handle",
+        "kind",
         "label",
         "enabled",
         "requires_approval",
     }
     assert len(action["action_handle"]) == 64
+    assert action["kind"] in {
+        "followup_task",
+        "exception_approval",
+        "studio_adjustment",
+        "decision_proposal",
+        "exception_reopen",
+    }
 
     def private_keys(value: object) -> set[str]:
         if isinstance(value, dict):

@@ -8,10 +8,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ControlRoomExperienceV2 } from "@/lib/control-room/experience-contract";
 import { controlRoomExperienceKey } from "@/lib/control-room/use-control-room-experience";
-import { useControlRoomExperiencePreview } from "@/lib/control-room/use-control-room-experience-preview";
+import { useControlRoomExperienceAction } from "@/lib/control-room/use-control-room-experience-action";
 
 import { ControlRoomExperienceContent } from "./ControlRoomExperiencePage";
-import { ExperiencePreviewFlow } from "./ExperiencePreviewFlow";
+import { ExperienceActionDialog } from "./ExperienceActionDialog";
 
 const clientBoundary = vi.hoisted(() => ({ preview: vi.fn() }));
 
@@ -45,6 +45,7 @@ const experience: ControlRoomExperienceV2 = {
           actions: [
             {
               action_handle: actionHandle,
+              kind: "followup_task",
               label: "Solicitar revisión de owner",
               enabled: true,
               requires_approval: true,
@@ -61,7 +62,7 @@ let root: Root;
 let queryClient: QueryClient;
 
 function Harness({ workspaceId }: { workspaceId: string }) {
-  const preview = useControlRoomExperiencePreview(experience, workspaceId);
+  const preview = useControlRoomExperienceAction(experience, workspaceId);
   return (
     <>
       <ControlRoomExperienceContent
@@ -69,9 +70,9 @@ function Harness({ workspaceId }: { workspaceId: string }) {
         refreshing={false}
         refreshFailed={false}
         onRefresh={vi.fn()}
-        onPreviewAction={preview.openPreview}
+        onAction={preview.openAction}
       />
-      <ExperiencePreviewFlow {...preview} />
+      <ExperienceActionDialog {...preview} />
     </>
   );
 }
@@ -116,7 +117,7 @@ describe("Experience preview isolation while submitting", () => {
     );
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     await renderWorkspace("workspace-a");
-    await act(async () => button("Generar preview")?.click());
+    await act(async () => button("Solicitar revisión de owner")?.click());
     await act(async () => button("Confirmar preview")?.click());
     await renderWorkspace("workspace-b");
 
@@ -143,7 +144,7 @@ describe("Experience preview isolation while submitting", () => {
       }),
     );
     await renderWorkspace("workspace-a");
-    await act(async () => button("Generar preview")?.click());
+    await act(async () => button("Solicitar revisión de owner")?.click());
     await act(async () => button("Confirmar preview")?.click());
 
     flushSync(() => {
@@ -170,7 +171,7 @@ describe("Experience preview isolation while submitting", () => {
       }),
     );
     await renderWorkspace("workspace-a");
-    await act(async () => button("Generar preview")?.click());
+    await act(async () => button("Solicitar revisión de owner")?.click());
     await act(async () => button("Confirmar preview")?.click());
     const dialog = container.querySelector<HTMLElement>('[role="dialog"]');
     expect(document.activeElement).toBe(dialog);
@@ -192,7 +193,7 @@ describe("Experience preview isolation while submitting", () => {
     );
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     await renderWorkspace("workspace-a");
-    await act(async () => button("Generar preview")?.click());
+    await act(async () => button("Solicitar revisión de owner")?.click());
     await act(async () => button("Confirmar preview")?.click());
 
     expect(container.querySelector('[role="alert"]')?.textContent).toContain(

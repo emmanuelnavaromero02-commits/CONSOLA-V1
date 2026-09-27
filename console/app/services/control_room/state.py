@@ -799,7 +799,12 @@ def _diagnostic_metadata(item: dict[str, Any]) -> dict[str, Any]:
 
 
 @_bind_to_core
-async def _persist_item_state(items: list[dict[str, Any]], user: dict | None) -> None:
+async def _persist_item_state(
+    items: list[dict[str, Any]],
+    user: dict | None,
+    *,
+    on_persisted: Callable[..., Any] | None = None,
+) -> None:
     tenant_id, workspace_id = _workspace_scope(user)
     await persist_refresh_items(
         items,
@@ -813,6 +818,7 @@ async def _persist_item_state(items: list[dict[str, Any]], user: dict | None) ->
         impact_builder=_impact_for_item,
         metadata_builder=_metadata_for_item,
         diagnostic_builder=_diagnostic_metadata,
+        on_persisted=on_persisted,
     )
 
 

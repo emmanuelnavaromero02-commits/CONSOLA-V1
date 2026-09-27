@@ -1854,6 +1854,10 @@
       "sha256": "069deea0b1859318c2aaa8ec7d9a1b0e870347b7fe168e5c737afe19c9575111"
     },
     {
+      "path": "console/tests/control_room_direct_action_fixtures.py",
+      "sha256": "aa58dd63cb7a86e11a2c0da2723ee2bef25d0edd79dcc285fcc40ed4e752a140"
+    },
+    {
       "path": "console/tests/control_room_execution_helpers.py",
       "sha256": "f2904fd09ca2c8f364a879362e7849a3a7331f65828e72cca404eda4980a6880"
     },
@@ -2111,7 +2115,7 @@
     },
     {
       "path": "console/tests/test_control_room_all_get_purity.py",
-      "sha256": "bd75cfadd99ca8770663e1b062e1ae43326472f1a1d64989fbb715121383e025"
+      "sha256": "08f4568e7991366ef2450d0ee0a6fc33519eb45217fa648e95bc3b6de0d8062a"
     },
     {
       "path": "console/tests/test_control_room_allowlisted_secret_markers.py",
@@ -2290,6 +2294,18 @@
       "sha256": "695c7d34bea998214c609791a471e9a6817957f55cc8509fae6f44693e224814"
     },
     {
+      "path": "console/tests/test_control_room_direct_action_contract.py",
+      "sha256": "d69955624d23b1cb44afa6e7767eefcf1de2bbf71544f9f1584225747ee79754"
+    },
+    {
+      "path": "console/tests/test_control_room_direct_action_issuance.py",
+      "sha256": "0905b9a3517368ef086baae3949d4e70cbdf58683fbab7c9744d3136e4b6567f"
+    },
+    {
+      "path": "console/tests/test_control_room_direct_actions_routes.py",
+      "sha256": "4ee12e847696fa13fb08b9d04f35296aa7012385f066731a0ad76007e4228bb0"
+    },
+    {
       "path": "console/tests/test_control_room_dismiss_reopen_atomic_audit.py",
       "sha256": "ac09dfded826d3d34c61ed51280eda04f4d1f0921bb33d403a970b6d8b44322c"
     },
@@ -2312,6 +2328,10 @@
     {
       "path": "console/tests/test_control_room_evidence_signing_rotation.py",
       "sha256": "2d4cc20298c2830ed51d58076cb5561191e6e7de5f811410c4413aea685a8f31"
+    },
+    {
+      "path": "console/tests/test_control_room_exception_approval.py",
+      "sha256": "78ca1786c0765ba1673f69cd240dd0b3eac003931005ebd5727975f627041b65"
     },
     {
       "path": "console/tests/test_control_room_execute_live_followup.py",
@@ -2347,11 +2367,11 @@
     },
     {
       "path": "console/tests/test_control_room_experience_actions_contract.py",
-      "sha256": "a484d44d507156db4c89b995e29051ff3ea1d927a7f1f6fe98526c3e1ff12282"
+      "sha256": "f5fb260f40fa6bf8a3ddcdab6921ffc6d53797dbfe89a243c061089f301334a3"
     },
     {
       "path": "console/tests/test_control_room_experience_actions_routes.py",
-      "sha256": "9ba2d8a306a726076ae945cf1da3fd7009954aeab6fa8b00b3881522a64f6226"
+      "sha256": "30f201c0b3c956d8cc3398a95b4cf825ea5d1e3c314fb5c90db7fb8075f23cd3"
     },
     {
       "path": "console/tests/test_control_room_experience_contract.py",
@@ -2376,6 +2396,10 @@
     {
       "path": "console/tests/test_control_room_experience_diagnostic_suffixes.py",
       "sha256": "6dd55caca8aa297589d48a966c3f707a76da4d2dd03ad854a92a5409001e8e04"
+    },
+    {
+      "path": "console/tests/test_control_room_experience_exceptions.py",
+      "sha256": "dd3bfcaae4d8b9fb78ade6e7a2b9954f95834d1c2ade817c84b7ab2526f35039"
     },
     {
       "path": "console/tests/test_control_room_experience_hardening.py",
@@ -2407,7 +2431,7 @@
     },
     {
       "path": "console/tests/test_control_room_experience_v2_boundary.py",
-      "sha256": "4c006df8a2f2d0d9b8f9a76687f45b29329c25ff16f580b745c79e8549b52bfc"
+      "sha256": "b551724cefb21f1103223f425495cc4b3fadc9e7d28c0bb8717a5d78f4d71ea0"
     },
     {
       "path": "console/tests/test_control_room_experience_visible_copy.py",
@@ -2442,8 +2466,12 @@
       "sha256": "47a251c2cea79ae220978dc7eeeff49278f3549001665341003ec7469b1e5fd9"
     },
     {
+      "path": "console/tests/test_control_room_freshness_purity.py",
+      "sha256": "2a57ea29f2359c30298cbcbc3c29d8005da5f31554e753ca7128ab2818930f70"
+    },
+    {
       "path": "console/tests/test_control_room_get_purity.py",
-      "sha256": "64b6dd460f80c96b342ef35971a6c71cebe8c15e2651557bc13365ab7b2a274f"
+      "sha256": "469cd0a305d4c78935a6aacd0ae43927cdad17f20c4806d79bc6c45dfe90f83f"
     },
     {
       "path": "console/tests/test_control_room_get_sentinel.py",
@@ -2535,7 +2563,7 @@
     },
     {
       "path": "console/tests/test_control_room_mutation_projection_contracts.py",
-      "sha256": "215e76bd03f010922d08e902fdbd9b8e96c6131ab8636e719e38efd8f991cda6"
+      "sha256": "e715808fd6edbb685db621f8bf57570a00f1d3429655b73506f1393bb9f806fc"
     },
     {
       "path": "console/tests/test_control_room_observation_evidence_hardening.py",
@@ -2754,6 +2782,10 @@
       "sha256": "513faa872426dc56944b99c434e88b49998784f9cd142c90d311cc2b9be716ae"
     },
     {
+      "path": "console/tests/test_control_room_state_refresh.py",
+      "sha256": "dbdc49995bbea6dbc22d8e3ce90816dc41891aaaa336c440ed17e602d673b4a4"
+    },
+    {
       "path": "console/tests/test_control_room_successfactors_business_labels.py",
       "sha256": "594ff48a557575db4f031f59aa04bdf3f6a80f6fc476ce95e4fd01a498554ba5"
     },
@@ -2787,7 +2819,7 @@
     },
     {
       "path": "console/tests/test_control_room_surfaces_purity.py",
-      "sha256": "e897cca991724b2052cf90cb7b2d93f75aae650908252fc8558350b33b5df435"
+      "sha256": "1b45cbc2a9679f91afadc9bdee8d1b9bb06722ca3887a9209a2dadb822378468"
     },
     {
       "path": "console/tests/test_control_room_talent_kpis.py",
@@ -3791,7 +3823,7 @@
     },
     {
       "path": "tests-e2e/specs/12-control-room.spec.ts",
-      "sha256": "7eb82f2bc577c532c017e1037ac41f335c700f61b11b31e50c5a79741ae08558"
+      "sha256": "97d08cc97890ce2c33abbb6af20dee2fd680963d2c02325874096d0cf96353e3"
     },
     {
       "path": "tests-e2e/specs/13-control-room-talent-action-boundary.spec.ts",
@@ -3799,11 +3831,11 @@
     },
     {
       "path": "tests-e2e/specs/14-control-room-experience-action-preview.spec.ts",
-      "sha256": "a784b255c2e06fa935176e235dc45207dc49530f896cbb4eaa9f86a41b1f04be"
+      "sha256": "b6da263849df5e05bc222985325d672ae1f09b9ea38eca729b7aac27ca1c8e85"
     },
     {
       "path": "tests-e2e/specs/helpers/control-room-experience.ts",
-      "sha256": "ae64a9ca2d929048e8612f17570b8ec9b78713f6e87b88d12f15d50e79496e8d"
+      "sha256": "9a382ea1bd365c8110d2a522f192d4b3c7b873538414b72899d65b37c402b7cc"
     },
     {
       "path": "tests/__init__.py",
@@ -3823,7 +3855,7 @@
     },
     {
       "path": "tests/console_route_source.py",
-      "sha256": "bc2518e5c3d165f8b133b509fa43490240bbcef29ee636f3e03e05c4d950501d"
+      "sha256": "0460d5f24418519faa6f0d2ce0bf9b220dccbf60c12f24a427ae92733ad3533a"
     },
     {
       "path": "tests/control_room_action_authority_dry_run.py",
@@ -3851,7 +3883,7 @@
     },
     {
       "path": "tests/control_room_live_action_contract.py",
-      "sha256": "c468822c7a71339d41cd36061cbe7f535cedbd4ff12b57401a58e33a0405271b"
+      "sha256": "43c1e494c312a33f4daefe256827fb687b8a8ca4526b5ff24f073bc231784eae"
     },
     {
       "path": "tests/control_room_live_authoritative_race.py",
@@ -4011,7 +4043,7 @@
     },
     {
       "path": "tests/test_a1_sf_cycle_autoschedule.py",
-      "sha256": "353111c23158d2d4815b9fc6f3e6990c47f72ede0b36324926ee61377a0837dc"
+      "sha256": "665a81759aad368dd096d996042458cb76ef9248b478bc1f4ff68631c6b71a9d"
     },
     {
       "path": "tests/test_agent_api_admin_only.py",
@@ -4375,7 +4407,7 @@
     },
     {
       "path": "tests/test_control_room_ci_contract.py",
-      "sha256": "6894ba7fd2470a7faa72f2fd2bff81bb208886869ed669dac95e6b76f0f1048b"
+      "sha256": "75c56556747539c38b4132d2beab50c9c4aa695dc3776ce83a2bbe2fb3ebadc8"
     },
     {
       "path": "tests/test_control_room_data_readiness_contract.py",
@@ -4500,6 +4532,10 @@
     {
       "path": "tests/test_control_room_live_postgres_copilot_refresh_atomicity.py",
       "sha256": "02ce5d7342afd940677aafeff8282ca250eaaf16e136595ecbf2fcd6392d4aa3"
+    },
+    {
+      "path": "tests/test_control_room_live_postgres_direct_actions.py",
+      "sha256": "0c187240d699a96788f130c01bc2c7bec0c128ad6e78c1488031faf821dbdbdb"
     },
     {
       "path": "tests/test_control_room_live_postgres_dismiss_reopen_audit.py",
@@ -5268,6 +5304,10 @@
     {
       "path": "tests/test_migration_99p_decision_backtesting.py",
       "sha256": "d0d2c6eb8419b07f93ed0ce622c9e5ce5d517a4562099987db879d02c63de72e"
+    },
+    {
+      "path": "tests/test_migration_99zzzzv_direct_action_templates.py",
+      "sha256": "ba0e0349ba2ba67321f47bbccba6d49409e43bc9c5610f2402a934447ace6a45"
     },
     {
       "path": "tests/test_minio_mirror_contract.py",

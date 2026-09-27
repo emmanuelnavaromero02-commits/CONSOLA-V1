@@ -122,7 +122,12 @@ async def _reopen(
         """
         UPDATE control_room_items
            SET status = 'open', resolved_at = NULL, dismissed_at = NULL,
-               last_seen_at = NOW()
+               last_seen_at = NOW(),
+               metadata = COALESCE(metadata, '{}'::jsonb)
+                   - 'resolution' - 'resolution_actor_id'
+                   - 'resolution_reason' - 'resolution_at'
+                   - 'resolution_observation_fingerprint'
+                   - 'resolution_evidence_digest'
          WHERE workspace_id = $1 AND item_id = $2
            AND owner_user_id IS NOT DISTINCT FROM $3
            AND status = 'dismissed'

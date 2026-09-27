@@ -11,6 +11,14 @@ from app.schemas.control_room_surfaces import (
 )
 
 EXPERIENCE_ACTIONS_SCHEMA_VERSION = "control-room-experience/v2"
+MAX_EXPERIENCE_EXCEPTIONS = 20
+ExperienceActionKind = Literal[
+    "followup_task",
+    "exception_approval",
+    "studio_adjustment",
+    "decision_proposal",
+    "exception_reopen",
+]
 DisabledReason = Literal[
     "Actualiza los datos antes de continuar.",
     "Completa los datos requeridos antes de continuar.",
@@ -23,6 +31,7 @@ class _StrictModel(BaseModel):
 
 class ExperienceAction(_StrictModel):
     action_handle: str = Field(pattern=r"^[a-f0-9]{64}$")
+    kind: ExperienceActionKind
     label: str = Field(min_length=1, max_length=120)
     enabled: bool
     requires_approval: bool
@@ -45,7 +54,6 @@ class ExperienceActionPreviewResponse(_StrictModel):
 
 
 class ExperienceNarrative(_StrictModel):
-
     status: Literal["ready", "template"]
     explanation: str = Field(min_length=1, max_length=600)
     recommendation: str = Field(min_length=1, max_length=600)
@@ -75,6 +83,8 @@ class ExperienceFactV2(_StrictModel):
         handles = [action.action_handle for action in self.actions]
         if len(set(handles)) != len(handles):
             raise ValueError("duplicate action handles")
+        if any(action.kind == "exception_reopen" for action in self.actions):
+            raise ValueError("open findings cannot expose reopen actions")
         return self
 
 
@@ -83,17 +93,39 @@ class ExperienceSectionV2(_StrictModel):
     facts: list[ExperienceFactV2]
 
 
+class ExperienceExceptionV2(_StrictModel):
+    title: str = Field(min_length=1, max_length=240)
+    entity_label: str | None = Field(default=None, max_length=240)
+    observed_at: datetime | None = None
+    approved_at: datetime | None = None
+    reason: str | None = Field(default=None, min_length=1, max_length=500)
+    approved_by_you: bool
+    actions: list[ExperienceAction] = Field(default_factory=list, max_length=1)
+
+    @model_validator(mode="after")
+    def validate_reopen_only(self) -> Self:
+        if any(action.kind != "exception_reopen" for action in self.actions):
+            raise ValueError("approved exceptions only expose reopen actions")
+        return self
+
+
 class ControlRoomExperienceV2Response(_StrictModel):
     schema_version: Literal["control-room-experience/v2"]
     generated_at: datetime
     sections: list[ExperienceSectionV2] = Field(default_factory=list)
+    exceptions: list[ExperienceExceptionV2] = Field(
+        default_factory=list, max_length=MAX_EXPERIENCE_EXCEPTIONS
+    )
 
 
 __all__ = (
     "EXPERIENCE_ACTIONS_SCHEMA_VERSION",
+    "MAX_EXPERIENCE_EXCEPTIONS",
     "ControlRoomExperienceV2Response",
     "ExperienceAction",
+    "ExperienceActionKind",
     "ExperienceActionPreviewResponse",
+    "ExperienceExceptionV2",
     "ExperienceFactV2",
     "ExperienceNarrative",
     "ExperienceSectionV2",

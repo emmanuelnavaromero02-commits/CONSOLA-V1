@@ -15,10 +15,14 @@ from app.services.control_room.business_action_catalog import (
 )
 from app.services.control_room.business_action_binding_producer import (
     issue_action_bindings,
+    issue_reopen_bindings,
 )
 from app.services.control_room.business_experience import build_business_experience
 from app.services.control_room.business_experience_v2 import (
     build_business_experience_v2,
+)
+from app.services.control_room.business_exception_resolution import (
+    load_approved_exceptions,
 )
 from app.services.control_room.operational_diagnostics import (
     build_operational_diagnostics,
@@ -63,11 +67,19 @@ async def control_room_experience_v2(
         snapshot,
         enabled_template_ids=enabled_template_ids,
     )
+    approved_exceptions = await load_approved_exceptions(user)
+    reopen_actions = await issue_reopen_bindings(
+        user,
+        (record.item_id for record in approved_exceptions),
+        enabled_template_ids=enabled_template_ids,
+    )
     return build_business_experience_v2(
         snapshot,
         user=user,
         enabled_template_ids=enabled_template_ids,
         actions_by_item=actions_by_item,
+        approved_exceptions=approved_exceptions,
+        reopen_actions=reopen_actions,
     )
 
 

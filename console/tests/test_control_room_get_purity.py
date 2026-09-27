@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.routers import control_room as control_room_routes
 from app.services import control_room_service
 
 
@@ -180,3 +181,11 @@ async def test_explicit_refresh_is_the_only_dashboard_state_writer():
         "INSERT INTO CONTROL_ROOM_ITEMS" in statement
         for statement in pool.mutation_attempts
     )
+    # Over HTTP the writer is reachable only through the audited, CSRF-bound POST.
+    writers = {
+        (route.path, frozenset(route.methods or ()))
+        for route in control_room_routes.router.routes
+        if {"refresh_control_room_state", "refresh_dashboard_state"}
+        & set(route.endpoint.__code__.co_names)
+    }
+    assert writers == {("/api/control-room/refresh", frozenset({"POST"}))}

@@ -26,7 +26,7 @@ function makeFact(stale: boolean | null): ExperienceFactV2 {
 
 async function renderFact(stale: boolean | null) {
   await act(async () => {
-    root.render(<ExperienceFact fact={makeFact(stale)} onPreviewAction={vi.fn()} />);
+    root.render(<ExperienceFact fact={makeFact(stale)} onAction={vi.fn()} />);
   });
 }
 
