@@ -95,6 +95,10 @@ vi.mock("@/lib/monitor/hooks", () => ({
   isTerminalRunStatus: () => false,
 }));
 
+const autoCatalog = vi.hoisted(() => vi.fn(() => null));
+
+vi.mock("@/lib/catalog/hooks", () => ({ useAutoCatalog: autoCatalog }));
+
 vi.mock("@/lib/hooks/useAnalyticsApps", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/hooks/useAnalyticsApps")>()),
   useAnalyticsApps: () => state.hooks.useAnalyticsApps,
@@ -239,6 +243,12 @@ describe("Studio page", () => {
     expect(status?.getAttribute("data-status")).toBe("registered");
     expect(status?.textContent).toContain("sin servicio propio que sondear");
     expect(container.textContent).not.toContain("Operativo");
+  });
+
+  it("asks the Copilot to catalog the active data source without adding UI", async () => {
+    await render();
+    expect(autoCatalog).toHaveBeenCalledWith({ cartridge: "acme" });
+    expect(container.textContent).not.toContain("Autocatalogado");
   });
 
   it("draws the graph from nodes/edges and never injects the server svg", async () => {

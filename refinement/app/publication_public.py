@@ -6,12 +6,17 @@ from typing import Any
 from urllib.parse import urlsplit
 
 try:
+    from app.catalog_overlay import CatalogAnnotations, apply_catalog_annotations
     from app.publication_contract import PublicationScope
     from app.publication_snapshot import (
         PublicationSnapshot,
         PublicationSnapshotResolver,
     )
 except ModuleNotFoundError:
+    from refinement.app.catalog_overlay import (
+        CatalogAnnotations,
+        apply_catalog_annotations,
+    )
     from refinement.app.publication_contract import PublicationScope
     from refinement.app.publication_snapshot import (
         PublicationSnapshot,
@@ -95,6 +100,9 @@ def _public_relationship(value: object, *, from_dataset: str) -> dict[str, str] 
     result["from_dataset"] = (
         from_dataset if _PUBLIC_SOURCE.fullmatch(from_dataset) else ""
     )
+    cardinality = str(value.get("cardinality") or "")
+    if cardinality in {"1:1", "1:N", "N:1", "N:N"}:
+        result["cardinality"] = cardinality
     required = ("from_dataset", "from_column", "to_dataset", "to_column")
     return result if all(result[key] for key in required) else None
 
@@ -199,12 +207,14 @@ def published_catalog(
     tags: list[str] | None = None,
     datasets: list[str] | None = None,
     resolver: PublicationSnapshotResolver | None = None,
+    annotations: CatalogAnnotations | None = None,
 ) -> dict[str, Any]:
     context = _context(security_context)
     if not context["tenant_id"] or not context["workspace_id"]:
         return {"datasets": {}, "relationships": []}
     resolver = resolver or PublicationSnapshotResolver()
     metadata = list(datasets_meta)
+    visible_names = {str(ds.get("name") or "") for ds in metadata}
     output: dict[str, Any] = {}
     snapshot_by_dataset: dict[str, PublicationSnapshot] = {}
     selected_metadata = []
@@ -285,4 +295,16 @@ def published_catalog(
         for value in metadata.get("relationships") or []:
             if relationship := _public_relationship(value, from_dataset=name):
                 relationships.append(relationship)
-    return {"datasets": output, "relationships": relationships}
+    result = {"datasets": output, "relationships": relationships}
+    if annotations is None:
+        return result
+    return apply_catalog_annotations(
+        result,
+        annotations,
+        visible=visible_names,
+        include_sources=bool(annotations.sources),
+        layer=layer,
+        cartridge=cartridge,
+        tags=tags,
+        datasets=datasets,
+    )

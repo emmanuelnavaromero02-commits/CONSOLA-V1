@@ -35,9 +35,50 @@ def test_proposes_fk_when_child_points_at_unique_key():
     c = out[0]
     assert (c["from_dataset"], c["from_column"]) == ("gold_orders", "user_id")
     assert (c["to_dataset"], c["to_column"]) == ("gold_users", "user_id")
-    assert c["join_hint"] == "many_to_one"
+    assert c["join_hint"] == "LEFT"
+    assert c["cardinality"] == "N:1"
+    assert c["key_evidence"] == "exact"
+    assert c["approximate"] is False
     assert c["confidence"] >= 0.8
     assert c["status"] == "candidate"
+
+
+def test_hll_distinct_within_one_percent_is_an_approximate_key():
+    columns = [
+        _col("gold_users", "user_id", "VARCHAR", 10_050, 0.0),
+        _col("gold_orders", "user_id", "VARCHAR", 400, 0.0),
+    ]
+    row_counts = {"gold_users": 10_000, "gold_orders": 25_000}
+    out = discover_relationship_candidates(columns, row_counts)
+    assert len(out) == 1
+    assert out[0]["key_evidence"] == "approximate"
+    assert out[0]["approximate"] is True
+
+
+def test_key_class_synonyms_link_different_names():
+    columns = [
+        _col("gold_employees", "personIdExternal", "VARCHAR", 50, 0.0),
+        _col("gold_absences", "employee_id", "VARCHAR", 20, 0.0),
+    ]
+    row_counts = {"gold_employees": 50, "gold_absences": 80}
+    out = discover_relationship_candidates(columns, row_counts)
+    assert [(c["from_dataset"], c["to_column"], c["match"]) for c in out] == [
+        ("gold_absences", "personIdExternal", "class")
+    ]
+    assert out[0]["basis"] == "profiler_key_class"
+
+
+def test_manager_role_points_at_person_key_but_is_never_a_key_itself():
+    columns = [
+        _col("gold_employees", "userId", "VARCHAR", 50, 0.0),
+        _col("gold_jobs", "managerId", "VARCHAR", 12, 0.0),
+        _col("gold_managers", "managerId", "VARCHAR", 12, 0.0),
+    ]
+    row_counts = {"gold_employees": 50, "gold_jobs": 60, "gold_managers": 12}
+    out = discover_relationship_candidates(columns, row_counts)
+    edges = {(c["from_dataset"], c["from_column"], c["to_dataset"], c["to_column"]) for c in out}
+    assert ("gold_jobs", "managerId", "gold_employees", "userId") in edges
+    assert not any(edge[2] == "gold_employees" and edge[1] == "userId" for edge in edges)
 
 
 def test_name_normalization_matches_camel_and_snake():

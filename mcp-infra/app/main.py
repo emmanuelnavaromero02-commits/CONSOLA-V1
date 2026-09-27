@@ -2247,7 +2247,8 @@ async def _rebuild_semantic_doc(
         }
         cur.execute(
             """
-            SELECT dataset, column_name, COALESCE(description,''), COALESCE(tags, '{}')
+            SELECT dataset, column_name, COALESCE(description,''), COALESCE(tags, '{}'),
+                   description_origin
               FROM data_catalog
              WHERE cartridge = %s
         """
@@ -2256,8 +2257,13 @@ async def _rebuild_semantic_doc(
         )
         desc_rows = cur.fetchall()
     conn.close()
+    from app.tools.cartridges import copilot_labelled_description
+
     desc_by = {
-        (r[0], r[1]): {"description": r[2], "tags": r[3] or []}
+        (r[0], r[1]): {
+            "description": copilot_labelled_description(r[2], r[4]),
+            "tags": r[3] or [],
+        }
         for r in desc_rows
         if any(dataset == str(r[0]) for dataset, _layer in heads)
     }

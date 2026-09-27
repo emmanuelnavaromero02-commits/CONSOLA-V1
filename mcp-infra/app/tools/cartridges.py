@@ -151,6 +151,17 @@ def _set_pg_scope(
     return tenant_id, workspace_id
 
 
+COPILOT_INFERENCE_LABEL = "(inferido por Copiloto)"
+
+
+def copilot_labelled_description(description: Any, origin: Any) -> str:
+    """Catalog text written by the Catalog Copilot is inference: say so."""
+    text = str(description or "")
+    if text.strip() and str(origin or "") == "copilot":
+        return f"{text} {COPILOT_INFERENCE_LABEL}"
+    return text
+
+
 def _catalog_scope_sql(
     tenant_id: str, workspace_id: str
 ) -> tuple[str, tuple[Any, ...]]:
@@ -311,7 +322,8 @@ def cartridge_get_semantic(
             {"term": r[0], "definition": r[1], "maps_to": r[2]} for r in cur.fetchall()
         ]
         cur.execute(
-            "SELECT dataset, column_name, data_type, description, tags, is_metric "
+            "SELECT dataset, column_name, data_type, description, tags, is_metric, "
+            "description_origin "
             "FROM data_catalog WHERE cartridge=%s AND description IS NOT NULL "
             f"{scope_sql} "
             "ORDER BY dataset, column_name",
@@ -322,7 +334,7 @@ def cartridge_get_semantic(
                 "dataset": r[0],
                 "column": r[1],
                 "type": r[2],
-                "description": r[3],
+                "description": copilot_labelled_description(r[3], r[6]),
                 "tags": list(r[4] or []),
                 "is_metric": r[5],
             }
@@ -373,7 +385,8 @@ async def cartridge_sync_semantic_to_rag(
             )
 
         cur.execute(
-            "SELECT dataset, column_name, data_type, description, tags "
+            "SELECT dataset, column_name, data_type, description, tags, "
+            "description_origin "
             "FROM data_catalog "
             "WHERE cartridge=%s AND description IS NOT NULL "
             f"{scope_sql} "
@@ -381,9 +394,11 @@ async def cartridge_sync_semantic_to_rag(
             (cartridge_id, *scope_params),
         )
         rows_by_ds: dict[str, list[tuple]] = {}
-        for ds, col, dtype, desc, tags in cur.fetchall():
+        for ds, col, dtype, desc, tags, origin in cur.fetchall():
             if str(ds) in allowed_datasets:
-                rows_by_ds.setdefault(ds, []).append((col, dtype, desc, tags))
+                rows_by_ds.setdefault(ds, []).append(
+                    (col, dtype, copilot_labelled_description(desc, origin), tags)
+                )
 
         for ds, cols in rows_by_ds.items():
             lines = [f"[Cartucho: {cartridge_id} · Dataset: {ds}]"]
@@ -478,7 +493,7 @@ async def cartridge_search_term(
             {"term": r[0], "definition": r[1], "maps_to": r[2]} for r in cur.fetchall()
         ]
         cur.execute(
-            "SELECT dataset, column_name, data_type, description "
+            "SELECT dataset, column_name, data_type, description, description_origin "
             "FROM data_catalog WHERE cartridge=%s AND ("
             "  column_name ILIKE %s OR column_name ILIKE %s OR column_name ILIKE %s OR "
             "  description ILIKE %s OR description ILIKE %s OR "
@@ -497,7 +512,12 @@ async def cartridge_search_term(
             ),
         )
         columns = [
-            {"dataset": r[0], "column": r[1], "type": r[2], "description": r[3]}
+            {
+                "dataset": r[0],
+                "column": r[1],
+                "type": r[2],
+                "description": copilot_labelled_description(r[3], r[4]),
+            }
             for r in cur.fetchall()
             if str(r[0]) in allowed_datasets
         ]

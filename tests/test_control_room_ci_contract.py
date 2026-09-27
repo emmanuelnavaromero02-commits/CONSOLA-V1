@@ -176,6 +176,7 @@ FOCAL_TESTS = (
 )
 
 LIVE_POSTGRES_TESTS = (
+    "tests/test_catalog_copilot_live.py",
     "tests/test_dataset_refresh_admission_live.py",
     "tests/test_gold_refresh_binding_crash_matrix_live.py",
     "tests/test_omega_cartridge_kit_kb_sink.py",

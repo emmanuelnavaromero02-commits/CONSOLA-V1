@@ -8,6 +8,7 @@ import json
 import os
 import re
 import secrets
+import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -25,6 +26,10 @@ from app.logging_config import setup_logging
 setup_logging(service_name="refinement")
 logger = logging.getLogger(__name__)
 
+from app.catalog_copilot import AutonomousCatalogWorker, CatalogCopilotHost
+from app.catalog_copilot_probe import CatalogCopilotProbe
+from app.catalog_copilot_store import CatalogCopilotStore
+from app.catalog_overlay import CatalogAnnotations
 from app.dataset_protection import is_protected_dataset
 from app.dataset_store import DatasetStore
 from app.duckdb_runtime import require_loaded_extensions
@@ -80,6 +85,7 @@ _SERIALIZED_MCP_MUTATIONS = {
     "materialize",
     "publish_app",
     "register_relationship",
+    "reject_relationship",
     "save_dataset",
     "upsert_catalog_entries",
 }
@@ -1670,6 +1676,11 @@ async def mcp_tools():
                     "properties": {
                         "source": {"type": "string"},
                         "limit": {"type": "integer", "default": 3},
+                        "schema_only": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": "Solo columnas y tipos, sin filas de muestra",
+                        },
                     },
                     "required": ["source"],
                 },
@@ -1788,6 +1799,11 @@ async def mcp_tools():
                             "items": {"type": "string"},
                             "description": "Lista específica de dataset names a incluir",
                         },
+                        "include_sources": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": "Incluye las fuentes Bronze ya perfiladas por el Copiloto",
+                        },
                     },
                 },
             },
@@ -1854,8 +1870,14 @@ async def mcp_tools():
                         },
                         "join_hint": {
                             "type": "string",
+                            "enum": ["INNER", "LEFT", "RIGHT", "FULL"],
                             "default": "LEFT",
-                            "description": "Tipo de JOIN sugerido: LEFT|INNER|COALESCE",
+                            "description": "Tipo de JOIN sugerido: INNER|LEFT|RIGHT|FULL",
+                        },
+                        "cardinality": {
+                            "type": "string",
+                            "enum": ["1:1", "1:N", "N:1", "N:N"],
+                            "description": "Cardinalidad origen:destino, e.g. 'N:1' (muchos a uno)",
                         },
                         "description": {
                             "type": "string",
@@ -1866,6 +1888,54 @@ async def mcp_tools():
                             "description": "Transformación necesaria al hacer JOIN, e.g. "
                             "'CAST(TRY_CAST(from AS DOUBLE) AS BIGINT)::VARCHAR'",
                         },
+                    },
+                    "required": [
+                        "from_dataset",
+                        "from_column",
+                        "to_dataset",
+                        "to_column",
+                    ],
+                },
+            },
+            {
+                "name": "auto_catalog",
+                "description": (
+                    "Autocatalogado del Copiloto (determinista, sin LLM): pone en cola, "
+                    "para un proceso en segundo plano, los datasets publicados visibles "
+                    "que aún no tienen perfil vigente, que clasifica datos "
+                    "personales/financieros por conteos y detecta relaciones llave "
+                    "foránea -> llave primaria confirmadas por contención. Responde de "
+                    "inmediato con cuántas tablas quedan pendientes."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "cartridge": {"type": "string"},
+                        "include_sources": {"type": "boolean", "default": False},
+                        "since": {
+                            "type": "string",
+                            "description": (
+                                "annotation_epoch de la primera consulta ('start' si no "
+                                "había); processed cuenta lo perfilado después"
+                            ),
+                        },
+                    },
+                },
+            },
+            {
+                "name": "reject_relationship",
+                "description": (
+                    "Rechaza una relación entre datasets (por ejemplo una detectada por el "
+                    "Copiloto). Queda registrada como rechazada y el Copiloto no la "
+                    "vuelve a proponer."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "from_dataset": {"type": "string"},
+                        "from_column": {"type": "string"},
+                        "to_dataset": {"type": "string"},
+                        "to_column": {"type": "string"},
                     },
                     "required": [
                         "from_dataset",
@@ -2225,7 +2295,7 @@ def _mcp_invoke_sync(body: dict):
             raise HTTPException(status_code=status_code, detail=detail) from exc
         if not engine.consume_publication_replay():
             store.update_refresh(args["name"], result["row_count"], **store_scope)
-            _reindex_dataset_best_effort(args["name"], body)
+            _post_publish_best_effort(args["name"], body)
         return result
 
     if tool == "list_datasets":
@@ -2286,6 +2356,13 @@ def _mcp_invoke_sync(body: dict):
         limit = args.get("limit", 3)
         ctx = _trusted_user_context(body, args)
         schema = engine.get_source_schema(source, ctx)
+        if args.get("schema_only") is True:
+            return {
+                "source": source,
+                "fields": schema.get("fields", []),
+                "sample": [],
+                "error": schema.get("error"),
+            }
         preview = engine.preview_source(source, limit, ctx)
         return {
             "source": source,
@@ -2380,7 +2457,23 @@ def _mcp_invoke_sync(body: dict):
             tags=args.get("tags"),
             datasets=args.get("datasets"),
             security_context=sec,
+            include_sources=args.get("include_sources") is True,
         )
+
+    if tool == "auto_catalog":
+        sec = _require_security_permission(body, "datasets.read")
+        return _auto_catalog(sec, args)
+
+    if tool == "reject_relationship":
+        sec = _require_security_permission(body, "datasets.write")
+        edge = _relationship_edge_args(args)
+        store_scope = _dataset_store_scope(sec)
+        for dataset_name in (edge["from_dataset"], edge["to_dataset"]):
+            ds = store.get_dataset(dataset_name, **store_scope)
+            if not ds:
+                raise HTTPException(404, f"Dataset '{dataset_name}' not found")
+            _require_dataset_scope(body, ds, "datasets.write")
+        return _reject_relationship(edge, sec)
 
     if tool == "discover_relationships":
         sec = _require_security_permission(body, "datasets.read")
@@ -2419,7 +2512,8 @@ def _mcp_invoke_sync(body: dict):
             ds = store.get_dataset(entry["dataset"], **store_scope)
             if ds:
                 _require_dataset_scope(body, ds, "datasets.write")
-        return _upsert_catalog_entries(args["entries"], sec)
+        origin = "copilot" if args.get("origin") == "copilot" else "manual"
+        return _upsert_catalog_entries(args["entries"], sec, origin=origin)
 
     if tool == "register_relationship":
         sec = _require_security_permission(body, "datasets.write")
@@ -2621,6 +2715,7 @@ def _get_data_catalog(
     tags: list[str] | None = None,
     datasets: list[str] | None = None,
     security_context: dict | None = None,
+    include_sources: bool = False,
 ) -> dict:
     store_scope = _dataset_store_scope(security_context) if security_context else {}
     metadata = [
@@ -2636,13 +2731,212 @@ def _get_data_catalog(
         tags=tags,
         datasets=datasets,
         resolver=_publication_snapshot_resolver(),
+        annotations=_load_catalog_annotations(
+            security_context, metadata, include_sources=include_sources
+        ),
     )
 
 
-def _upsert_catalog_entries(entries: list[dict], security_context: dict) -> dict:
+def _load_catalog_annotations(
+    security_context: dict | None,
+    metadata: list[dict],
+    *,
+    include_sources: bool = False,
+) -> CatalogAnnotations | None:
+    sec = security_context or {}
+    if not _has_tenant_workspace_scope(sec):
+        return None
+    names = [str(ds.get("name") or "") for ds in metadata if ds.get("name")]
+    try:
+        raw = _catalog_copilot_store().load_annotations(
+            sec, names, include_sources=include_sources
+        )
+    except Exception:
+        logger.warning("catalog annotations unavailable; serving snapshot only")
+        return CatalogAnnotations.unavailable()
+    sources = [
+        state
+        for state in raw["sources"]
+        if _source_visible_for_scope(sec, str(state.get("subject") or ""))
+        and _prefix_allowed(sec, str(state.get("subject") or ""))
+    ]
+    return CatalogAnnotations(
+        columns=raw["columns"],
+        relationships=raw["relationships"],
+        subjects=raw["subjects"],
+        sources=sources,
+    )
+
+
+_CATALOG_COPILOT_WORKER: AutonomousCatalogWorker | None = None
+_CATALOG_COPILOT_LOCK = threading.Lock()
+
+
+def _catalog_copilot_store() -> CatalogCopilotStore:
+    return CatalogCopilotStore(_postgres_dsn)
+
+
+def _copilot_visible_datasets(sec: dict) -> list[dict]:
+    return [
+        ds
+        for ds in store.list_datasets(**_dataset_store_scope(sec))
+        if _dataset_allowed(sec, ds)
+    ]
+
+
+def _copilot_get_dataset(sec: dict, name: str) -> dict | None:
+    if not DATASET_NAME_RE.fullmatch(str(name or "")):
+        return None
+    ds = _get_dataset_scoped(name, sec)
+    return ds if ds and _dataset_allowed(sec, ds) else None
+
+
+def _copilot_source_allowed(sec: dict, source: str) -> bool:
+    parts = str(source or "").split("/")
+    return (
+        len(parts) == 3
+        and parts[0] == "raw"
+        and all(_SAFE_BRONZE_SOURCE_SEGMENT_RE.fullmatch(part) for part in parts[1:])
+        and _prefix_allowed(sec, source)
+    )
+
+
+def _copilot_visible_sources(sec: dict) -> list[str]:
+    ctx = {
+        "tenant_id": sec.get("tenant_id"),
+        "workspace_id": sec.get("workspace_id"),
+    }
+    return [
+        source
+        for source in engine.list_sources(ctx, sec.get("allowed_prefixes") or [])
+        if _copilot_source_allowed(sec, source)
+    ]
+
+
+def _catalog_copilot_worker() -> AutonomousCatalogWorker:
+    global _CATALOG_COPILOT_WORKER
+    with _CATALOG_COPILOT_LOCK:
+        if _CATALOG_COPILOT_WORKER is None:
+            _CATALOG_COPILOT_WORKER = AutonomousCatalogWorker(
+                CatalogCopilotHost(
+                    list_datasets=_copilot_visible_datasets,
+                    get_dataset=_copilot_get_dataset,
+                    published_snapshots=lambda datasets, sec: (
+                        _publication_snapshot_resolver().published_snapshots(
+                            datasets, sec
+                        )
+                    ),
+                    list_sources=_copilot_visible_sources,
+                    source_allowed=_copilot_source_allowed,
+                ),
+                _catalog_copilot_store(),
+                CatalogCopilotProbe(engine),
+            )
+        return _CATALOG_COPILOT_WORKER
+
+
+_ANNOTATION_EPOCH_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d{1,6})?([+-]\d{2}(:?\d{2})?|Z)?$"
+)
+
+
+def _auto_catalog(sec: dict, args: dict) -> dict:
+    if not _has_tenant_workspace_scope(sec):
+        return {
+            "status": "idle",
+            "processed": 0,
+            "pending": 0,
+            "stale": 0,
+            "annotation_epoch": None,
+        }
+    cartridge = str(args.get("cartridge") or "").strip() or None
+    if cartridge and not DATASET_NAME_RE.fullmatch(cartridge):
+        raise HTTPException(400, "Invalid cartridge")
+    since = args.get("since")
+    if since is not None and (
+        not isinstance(since, str)
+        or not (since == "start" or _ANNOTATION_EPOCH_RE.fullmatch(since))
+    ):
+        raise HTTPException(400, "Invalid since")
+    try:
+        status = _catalog_copilot_worker().catch_up(
+            sec,
+            cartridge=cartridge,
+            include_sources=args.get("include_sources") is True,
+            since=since,
+        )
+    except Exception as exc:
+        _log_internal_error(exc, "catalog copilot catch-up failed")
+        raise HTTPException(503, "catalog copilot unavailable") from None
+    return status.to_dict()
+
+
+_RELATIONSHIP_COLUMN_RE = re.compile(r"^[^\x00-\x1f\x7f\"]{1,128}$")
+
+
+def _relationship_edge_args(args: dict) -> dict:
+    edge = {
+        key: str(args.get(key) or "").strip()
+        for key in ("from_dataset", "from_column", "to_dataset", "to_column")
+    }
+    for key in ("from_dataset", "to_dataset"):
+        _validate_dataset_name(edge[key])
+    for key in ("from_column", "to_column"):
+        if not _RELATIONSHIP_COLUMN_RE.fullmatch(edge[key]):
+            raise HTTPException(400, f"Invalid {key}")
+    return edge
+
+
+def _reject_relationship(edge: dict, security_context: dict) -> dict:
+    if not _has_tenant_workspace_scope(security_context):
+        raise HTTPException(403, "workspace scope required for catalog relationships")
+    rejected = _catalog_copilot_store().reject_edge(security_context, edge)
+    if not rejected:
+        return {
+            "rejected": False,
+            "error": "relationship datasets not found in active workspace",
+        }
+    return {
+        "rejected": True,
+        "relation": (
+            f"{edge['from_dataset']}.{edge['from_column']} → "
+            f"{edge['to_dataset']}.{edge['to_column']}"
+        ),
+    }
+
+
+def _post_publish_best_effort(name: str, auth_body: dict | None = None) -> None:
+    try:
+        sec = _security_context(auth_body) if isinstance(auth_body, dict) else {}
+        if sec.get("trusted") and _has_tenant_workspace_scope(sec):
+            _catalog_copilot_worker().enqueue(sec, {"kind": "dataset", "name": name})
+    except Exception:
+        logger.debug("catalog copilot enqueue skipped for %s", name, exc_info=True)
+    _reindex_dataset_best_effort(name, auth_body)
+
+
+def _enqueue_source_profile_best_effort(sec: dict, source: str) -> None:
+    try:
+        if (
+            sec.get("trusted")
+            and _has_tenant_workspace_scope(sec)
+            and _copilot_source_allowed(sec, source)
+        ):
+            _catalog_copilot_worker().enqueue(
+                sec, {"kind": "bronze_source", "name": source}
+            )
+    except Exception:
+        logger.debug("catalog copilot source enqueue skipped", exc_info=True)
+
+
+def _upsert_catalog_entries(
+    entries: list[dict], security_context: dict, *, origin: str = "manual"
+) -> dict:
     import json as _json
     import psycopg2
 
+    if origin not in {"manual", "copilot"}:
+        raise HTTPException(400, "Invalid catalog origin")
     workspace_id = str(security_context.get("workspace_id") or "").strip()
     tenant_id = str(security_context.get("tenant_id") or "").strip()
     if not workspace_id:
@@ -2654,46 +2948,86 @@ def _upsert_catalog_entries(entries: list[dict], security_context: dict) -> dict
         for e in entries:
             ev = e.get("example_values")
             cartridge = str(e.get("cartridge") or "").strip()
+            description = str(e.get("description") or "")
+            # A Copilot write (template enrichment) never replaces anything on a
+            # row whose description was authored by a person or a package.
             cur.execute(
                 """
                 INSERT INTO data_catalog
                     (dataset, layer, cartridge, column_name, data_type, description,
-                     example_values, tags, is_key, is_metric,
+                     description_origin, example_values, tags, is_key, is_metric,
                      tenant_id, workspace_id, scope_status, updated_at)
-                SELECT %s, COALESCE(d.layer,'silver'), COALESCE(d.cartridge,''),
-                       %s, '', %s, %s::jsonb, %s, %s, %s,
-                       %s::uuid, %s::uuid, 'scoped', NOW()
+                SELECT %(dataset)s, COALESCE(d.layer,'silver'), COALESCE(d.cartridge,''),
+                       %(column)s, '', %(description)s,
+                       CASE WHEN %(description)s <> '' THEN %(origin)s ELSE NULL END,
+                       %(examples)s::jsonb, %(tags)s, %(is_key)s, %(is_metric)s,
+                       %(tenant)s::uuid, %(workspace)s::uuid, 'scoped', NOW()
                   FROM datasets d
-                 WHERE d.name = %s
-                   AND d.workspace_id = %s::uuid
-                   AND (%s = '' OR d.cartridge = %s)
+                 WHERE d.name = %(dataset)s
+                   AND d.workspace_id = %(workspace)s::uuid
+                   AND (%(cartridge)s = '' OR d.cartridge = %(cartridge)s)
                 ON CONFLICT (workspace_id, dataset, column_name) WHERE workspace_id IS NOT NULL
                 DO UPDATE
-                    SET description    = COALESCE(NULLIF(EXCLUDED.description,''), data_catalog.description),
-                        example_values = COALESCE(EXCLUDED.example_values, data_catalog.example_values),
-                        tags           = CASE WHEN EXCLUDED.tags != '{}' THEN EXCLUDED.tags
-                                              ELSE data_catalog.tags END,
-                        is_key         = COALESCE(EXCLUDED.is_key,   data_catalog.is_key),
-                        is_metric      = COALESCE(EXCLUDED.is_metric, data_catalog.is_metric),
+                    SET description = CASE
+                            WHEN %(origin)s = 'copilot'
+                             AND (data_catalog.description_origin IN ('manual', 'packaged')
+                                  OR (data_catalog.description_origin IS NULL
+                                      AND COALESCE(btrim(data_catalog.description), '') <> ''))
+                            THEN data_catalog.description
+                            ELSE COALESCE(NULLIF(EXCLUDED.description,''), data_catalog.description)
+                        END,
+                        description_origin = CASE
+                            WHEN %(origin)s = 'copilot'
+                             AND (data_catalog.description_origin IN ('manual', 'packaged')
+                                  OR (data_catalog.description_origin IS NULL
+                                      AND COALESCE(btrim(data_catalog.description), '') <> ''))
+                            THEN data_catalog.description_origin
+                            WHEN NULLIF(EXCLUDED.description,'') IS NOT NULL
+                            THEN %(origin)s
+                            ELSE data_catalog.description_origin
+                        END,
+                        example_values = CASE
+                            WHEN %(origin)s = 'copilot'
+                             AND data_catalog.description_origin IN ('manual', 'packaged')
+                            THEN data_catalog.example_values
+                            ELSE COALESCE(EXCLUDED.example_values, data_catalog.example_values)
+                        END,
+                        tags = CASE
+                            WHEN %(origin)s = 'copilot'
+                             AND data_catalog.description_origin IN ('manual', 'packaged')
+                            THEN data_catalog.tags
+                            WHEN EXCLUDED.tags != '{}' THEN EXCLUDED.tags
+                            ELSE data_catalog.tags
+                        END,
+                        is_key = CASE
+                            WHEN %(origin)s = 'copilot'
+                             AND data_catalog.description_origin IN ('manual', 'packaged')
+                            THEN data_catalog.is_key
+                            ELSE COALESCE(EXCLUDED.is_key, data_catalog.is_key)
+                        END,
+                        is_metric = CASE
+                            WHEN %(origin)s = 'copilot'
+                             AND data_catalog.description_origin IN ('manual', 'packaged')
+                            THEN data_catalog.is_metric
+                            ELSE COALESCE(EXCLUDED.is_metric, data_catalog.is_metric)
+                        END,
                         tenant_id      = EXCLUDED.tenant_id,
                         scope_status   = 'scoped',
                         updated_at     = NOW()
             """,
-                (
-                    e["dataset"],
-                    e["column_name"],
-                    e.get("description", ""),
-                    _json.dumps(ev) if ev is not None else None,
-                    e.get("tags", []),
-                    e.get("is_key"),
-                    e.get("is_metric"),
-                    tenant_id or None,
-                    workspace_id,
-                    e["dataset"],
-                    workspace_id,
-                    cartridge,
-                    cartridge,
-                ),
+                {
+                    "dataset": e["dataset"],
+                    "column": e["column_name"],
+                    "description": description,
+                    "origin": origin,
+                    "examples": _json.dumps(ev) if ev is not None else None,
+                    "tags": e.get("tags", []),
+                    "is_key": e.get("is_key"),
+                    "is_metric": e.get("is_metric"),
+                    "tenant": tenant_id or None,
+                    "workspace": workspace_id,
+                    "cartridge": cartridge,
+                },
             )
             updated += max(cur.rowcount, 0)
     conn.commit()
@@ -2701,18 +3035,48 @@ def _upsert_catalog_entries(entries: list[dict], security_context: dict) -> dict
     return {"updated": updated}
 
 
+_JOIN_TYPES = frozenset({"INNER", "LEFT", "RIGHT", "FULL"})
+_CARDINALITIES = frozenset({"1:1", "1:N", "N:1", "N:N"})
+_LEGACY_CARDINALITY_HINTS = {
+    "many_to_one": "N:1",
+    "one_to_many": "1:N",
+    "one_to_one": "1:1",
+    "many_to_many": "N:N",
+}
+
+
+def _relationship_shape(args: dict) -> tuple[str, str | None]:
+    raw_hint = str(args.get("join_hint") or "").strip()
+    cardinality = str(args.get("cardinality") or "").strip().upper() or None
+    legacy = _LEGACY_CARDINALITY_HINTS.get(raw_hint.lower())
+    if legacy:
+        join_hint = "LEFT"
+        cardinality = cardinality or legacy
+    elif not raw_hint:
+        join_hint = "LEFT"
+    else:
+        join_hint = raw_hint.upper()
+        if join_hint not in _JOIN_TYPES:
+            raise HTTPException(400, "join_hint must be INNER, LEFT, RIGHT or FULL")
+    if cardinality is not None and cardinality not in _CARDINALITIES:
+        raise HTTPException(400, "cardinality must be 1:1, 1:N, N:1 or N:N")
+    return join_hint, cardinality
+
+
 def _register_relationship(args: dict, security_context: dict) -> dict:
     workspace_id = str(security_context.get("workspace_id") or "").strip()
     tenant_id = str(security_context.get("tenant_id") or "").strip()
     if not workspace_id:
         raise HTTPException(403, "workspace scope required for catalog relationships")
+    join_hint, cardinality = _relationship_shape(args)
     rows = (
         _pg_exec(
             """
         INSERT INTO data_relationships
-            (from_dataset, from_column, to_dataset, to_column, join_hint, description, transform,
+            (from_dataset, from_column, to_dataset, to_column, join_hint, cardinality,
+             description, transform, origin, status,
              tenant_id, workspace_id, scope_status)
-        SELECT %s,%s,%s,%s,%s,%s,%s,%s::uuid,%s::uuid,'scoped'
+        SELECT %s,%s,%s,%s,%s,%s,%s,%s,'manual','active',%s::uuid,%s::uuid,'scoped'
           FROM datasets from_ds
           JOIN datasets to_ds ON to_ds.name = %s
          WHERE from_ds.name = %s
@@ -2722,8 +3086,12 @@ def _register_relationship(args: dict, security_context: dict) -> dict:
         WHERE workspace_id IS NOT NULL
         DO UPDATE
             SET join_hint   = EXCLUDED.join_hint,
+                cardinality = EXCLUDED.cardinality,
                 description = EXCLUDED.description,
                 transform   = EXCLUDED.transform,
+                origin      = 'manual',
+                status      = 'active',
+                confidence  = NULL,
                 tenant_id   = EXCLUDED.tenant_id,
                 scope_status = 'scoped'
         RETURNING id
@@ -2733,7 +3101,8 @@ def _register_relationship(args: dict, security_context: dict) -> dict:
                 args["from_column"],
                 args["to_dataset"],
                 args["to_column"],
-                args.get("join_hint", "LEFT"),
+                join_hint,
+                cardinality,
                 args.get("description", ""),
                 args.get("transform"),
                 tenant_id or None,
@@ -3154,8 +3523,9 @@ def _seed_relationships() -> int:
                 """
                 INSERT INTO data_relationships
                     (from_dataset, from_column, to_dataset, to_column,
-                     join_hint, description, transform, tenant_id, workspace_id, scope_status)
-                SELECT %s,%s,%s,%s,%s,%s,%s,%s::uuid,%s::uuid,'scoped'
+                     join_hint, description, transform, origin,
+                     tenant_id, workspace_id, scope_status)
+                SELECT %s,%s,%s,%s,%s,%s,%s,'packaged',%s::uuid,%s::uuid,'scoped'
                   FROM datasets from_ds
                   JOIN datasets to_ds ON to_ds.name = %s
                  WHERE from_ds.name = %s
@@ -3361,7 +3731,7 @@ def _refresh_dataset_sync(name: str, auth_body: dict) -> dict:
     )
     if not engine.consume_publication_replay():
         store.update_refresh(name, result["row_count"], **store_scope)
-        _reindex_dataset_best_effort(name, auth_body)
+        _post_publish_best_effort(name, auth_body)
     return result
 
 
@@ -3386,6 +3756,7 @@ def _refresh_by_source_sync(body: dict, internal_service: str) -> dict:
     _require_security_permission(auth_body, "datasets.write")
 
     sec = _require_security_permission(auth_body, "datasets.read")
+    _enqueue_source_profile_best_effort(sec, source)
     store_scope = _dataset_store_scope(sec)
     all_ds = store.list_datasets(**store_scope)
     ctx = _trusted_user_context(auth_body, {})
@@ -3426,7 +3797,7 @@ def _refresh_by_source_sync(body: dict, internal_service: str) -> dict:
             result = engine.materialize(ds, ctx)
             if not engine.consume_publication_replay():
                 store.update_refresh(meta["name"], result["row_count"], **store_scope)
-                _reindex_dataset_best_effort(meta["name"], auth_body)
+                _post_publish_best_effort(meta["name"], auth_body)
             results.append(
                 {"name": meta["name"], "status": "ok", "row_count": result["row_count"]}
             )

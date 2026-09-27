@@ -1,7 +1,10 @@
 import { api } from "@/lib/api";
 import type {
+  AutoProfileInput,
+  AutoProfileStatus,
   BronzeQueryInput,
   BronzeQueryPayload,
+  CatalogEdgeInput,
   CatalogEntryInput,
   CatalogFilters,
   CatalogRelationshipInput,
@@ -15,6 +18,8 @@ function buildQuery(filters: CatalogFilters): string {
   for (const [key, value] of Object.entries(filters)) {
     if (typeof value === "string" && value.trim()) {
       params.set(key, value.trim());
+    } else if (value === true) {
+      params.set(key, "true");
     }
   }
   const query = params.toString();
@@ -25,6 +30,7 @@ function normalizeCatalog(payload: Partial<DataCatalogPayload> | null | undefine
   return {
     datasets: payload?.datasets ?? {},
     relationships: payload?.relationships ?? [],
+    annotations_degraded: payload?.annotations_degraded === true,
   };
 }
 
@@ -49,6 +55,25 @@ export async function upsertCatalogEntry(entry: CatalogEntryInput): Promise<unkn
 
 export async function registerCatalogRelationship(relationship: CatalogRelationshipInput): Promise<unknown> {
   const { data } = await api.post<unknown>("/api/catalog/relationships", relationship);
+  return data;
+}
+
+export async function autoProfileCatalog(input: AutoProfileInput = {}): Promise<AutoProfileStatus> {
+  const body: AutoProfileInput = {};
+  if (input.cartridge?.trim()) body.cartridge = input.cartridge.trim();
+  if (input.include_sources) body.include_sources = true;
+  if (input.since) body.since = input.since;
+  const { data } = await api.post<AutoProfileStatus>("/api/catalog/auto-profile", body);
+  return data;
+}
+
+export async function rejectCatalogRelationship(edge: CatalogEdgeInput): Promise<unknown> {
+  const { data } = await api.post<unknown>("/api/catalog/relationships/reject", {
+    from_dataset: edge.from_dataset,
+    from_column: edge.from_column,
+    to_dataset: edge.to_dataset,
+    to_column: edge.to_column,
+  });
   return data;
 }
 
