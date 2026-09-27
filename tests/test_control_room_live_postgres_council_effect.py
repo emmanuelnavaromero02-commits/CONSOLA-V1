@@ -38,6 +38,7 @@ from tests.control_room_action_authority_live import (
 )
 from tests.test_control_room_live_postgres_workflows import _item, _rows
 from tests.test_operational_rls_console_refinement import (
+    _role_dsn,
     omega_console_live_dsn,
     postgres_with_real_init_schema,
 )
@@ -282,7 +283,7 @@ async def test_person_proposal_requires_another_person_and_completes_in_one_tran
         assert followup["action_text"] == "Seguimiento operativo Control Room: Measured anomaly"
         assert followup["note"].endswith("No se escribio en ERP.")
         assert followup["actor"] == scope.checker["email"]
-        assert actions[-2]["action_text"].startswith("Aprobacion en el Consejo de Acciones")
+        assert actions[-2]["action_text"].startswith("Aprobación en el Consejo de Acciones")
 
         intent = (
             await _fetch(
@@ -399,7 +400,8 @@ async def test_system_suggestion_is_made_by_the_system_and_checked_by_a_person(
         decision = (
             await _fetch(
                 seed,
-                """SELECT created_by_id, created_by, status, workspace_id::text AS ws
+                """SELECT created_by_id, created_by, assignee_id, status,
+                          workspace_id::text AS ws
                      FROM decisions WHERE id = $1""",
                 approved.decision_id,
             )
@@ -407,9 +409,16 @@ async def test_system_suggestion_is_made_by_the_system_and_checked_by_a_person(
         assert decision == {
             "created_by_id": None,
             "created_by": SYSTEM_MAKER,
+            "assignee_id": scope.checker["id"],
             "status": "open",
             "ws": scope.workspace_id,
         }
+        assert await _value(
+            seed,
+            """SELECT count(*) FROM decision_actions
+                WHERE decision_id = $1 AND action_text LIKE 'Aprobación en el Consejo%'""",
+            approved.decision_id,
+        ) == 1
         row = await _item_row(seed, scope, item_id)
         assert row["status"] == "approved"
         assert row["execution_status"] == "executed"
@@ -798,6 +807,14 @@ async def test_follow_up_kill_switch_blocks_system_and_person_approval(
         person_row = await _item_row(seed, scope, scope.item_id)
         assert person_row["status"] == "decision_created"
         assert person_row["execution_status"] == "not_started"
+        assert await _value(
+            seed,
+            """SELECT state FROM control_room_action_intents
+                WHERE workspace_id = $1::uuid AND item_id = $2
+                ORDER BY created_at DESC LIMIT 1""",
+            scope.workspace_id,
+            scope.item_id,
+        ) == "pending_approval"
     finally:
         await pool.close()
 
@@ -987,38 +1004,49 @@ async def test_concurrent_approve_and_discard_never_deadlock(council_seed: Autho
 
 
 @pytest.mark.asyncio
-async def test_automations_read_only_the_workspace_run_history(council_seed: AuthoritySeed):
+async def test_automations_summarise_each_airflow_run_of_the_workspace(
+    council_seed: AuthoritySeed,
+):
     from datetime import UTC, datetime, timedelta
 
     from app.services import pipeline_automations
 
     seed = council_seed
     mine, other = seed.first, seed.second
-    dag_id = f"council_probe_{uuid.uuid4().hex[:6]}_extract"
+    dag_id = f"council_probe_{uuid.uuid4().hex[:6]}_extract_all"
     started = datetime(2026, 9, 26, 10, tzinfo=UTC)
+    failed_run = f"manual__{uuid.uuid4().hex}"
+    live_run = f"manual__{uuid.uuid4().hex}"
+    rows = [
+        (mine, failed_run, failed_run, "failed", started - timedelta(hours=2), "{}"),
+        (mine, f"{failed_run}:employees", failed_run, "success", started - timedelta(hours=1), "{}"),
+        (mine, f"{live_run}:employees", live_run, "running", started, "{}"),
+        (mine, f"{live_run}:positions", live_run, "queued", started, "{}"),
+        (mine, f"mirror-{uuid.uuid4().hex}", None, "running", started + timedelta(hours=1),
+         '{"source": "extraction_runs_mirror"}'),
+        (other, f"manual__{uuid.uuid4().hex}", None, "queued", started, "{}"),
+    ]
     conn = await asyncpg.connect(seed.admin_dsn)
     try:
         await conn.execute(
             """INSERT INTO cartridge_dags (cartridge_id, dag_id, description, trigger)
-               VALUES ('sap_hcm', $1, 'Extracción de prueba', 'on-demand')
+               VALUES ('sap_hcm', $1, 'Extracción completa de prueba', 'on-demand')
                ON CONFLICT (cartridge_id, dag_id) DO NOTHING""",
             dag_id,
         )
-        for scope, status, offset in (
-            (mine, "success", 2),
-            (mine, "RUNNING", 1),
-            (other, "queued", 0),
-            (other, "queued", 0),
-        ):
+        for scope, run_id, airflow_run, status, when, extra in rows:
             await conn.execute(
                 """INSERT INTO pipeline_runs (
                        run_id, dag_id, cartridge_id, entity, status, started_at,
-                       tenant_id, workspace_id
-                   ) VALUES ($1, $2, 'sap_hcm', 'employees', $3, $4, $5::uuid, $6::uuid)""",
-                f"run-{uuid.uuid4().hex}",
+                       airflow_dag_run_id, extra, tenant_id, workspace_id
+                   ) VALUES ($1, $2, 'sap_hcm', 'employees', $3, $4, $5, $6::jsonb,
+                             $7::uuid, $8::uuid)""",
+                run_id,
                 dag_id,
                 status,
-                started - timedelta(hours=offset),
+                when,
+                airflow_run,
+                extra,
                 scope.tenant_id,
                 scope.workspace_id,
             )
@@ -1027,7 +1055,11 @@ async def test_automations_read_only_the_workspace_run_history(council_seed: Aut
 
     async def _invoke(tool: str, _args: dict[str, Any], _user: Any) -> dict[str, Any]:
         assert tool == "airflow_list_dags"
-        return {"dags": [{"dag_id": dag_id, "is_paused": True, "is_active": True, "schedule_kind": "manual"}]}
+        return {
+            "dags": [
+                {"dag_id": dag_id, "is_paused": True, "is_active": True, "schedule_kind": "manual"}
+            ]
+        }
 
     pool = await asyncpg.create_pool(seed.console_dsn, min_size=1, max_size=2)
     try:
@@ -1037,6 +1069,17 @@ async def test_automations_read_only_the_workspace_run_history(council_seed: Aut
             response = await pipeline_automations.list_automations(
                 mine.maker, invoke=_invoke
             )
+            conn = await asyncpg.connect(seed.admin_dsn)
+            try:
+                await conn.execute(
+                    "UPDATE pipeline_runs SET status = 'success' WHERE airflow_dag_run_id = $1",
+                    live_run,
+                )
+            finally:
+                await conn.close()
+            settled = await pipeline_automations.list_automations(
+                mine.maker, invoke=_invoke
+            )
     finally:
         await pool.close()
     (probe,) = [a for a in response.automations if a.dag_id == dag_id]
@@ -1044,4 +1087,173 @@ async def test_automations_read_only_the_workspace_run_history(council_seed: Aut
     assert probe.active_runs == 1
     assert probe.last_run is not None and probe.last_run.status == "running"
     assert probe.state_note_es == "Se activa automáticamente al pulsar Extraer"
+    (after,) = [a for a in settled.automations if a.dag_id == dag_id]
+    assert after.active_runs == 0
+    assert after.last_run.status == "success"
 
+
+@pytest.mark.asyncio
+async def test_aggregate_row_outcome_wins_over_entity_rows(council_seed: AuthoritySeed):
+    from datetime import UTC, datetime, timedelta
+
+    from app.services import pipeline_automations
+
+    seed = council_seed
+    mine = seed.first
+    dag_id = f"council_probe_{uuid.uuid4().hex[:6]}_extract_all"
+    run = f"manual__{uuid.uuid4().hex}"
+    started = datetime(2026, 9, 26, 9, tzinfo=UTC)
+    conn = await asyncpg.connect(seed.admin_dsn)
+    try:
+        await conn.execute(
+            """INSERT INTO cartridge_dags (cartridge_id, dag_id, description, trigger)
+               VALUES ('sap_hcm', $1, 'Extracción completa de prueba', 'on-demand')
+               ON CONFLICT (cartridge_id, dag_id) DO NOTHING""",
+            dag_id,
+        )
+        for run_id, status, when in (
+            (run, "failed", started - timedelta(minutes=5)),
+            (f"{run}:employees", "success", started),
+            (f"{run}:positions", "success", started),
+        ):
+            await conn.execute(
+                """INSERT INTO pipeline_runs (
+                       run_id, dag_id, cartridge_id, entity, status, started_at,
+                       airflow_dag_run_id, tenant_id, workspace_id
+                   ) VALUES ($1, $2, 'sap_hcm', 'employees', $3, $4, $5, $6::uuid, $7::uuid)""",
+                run_id,
+                dag_id,
+                status,
+                when,
+                run,
+                mine.tenant_id,
+                mine.workspace_id,
+            )
+    finally:
+        await conn.close()
+
+    async def _invoke(_tool: str, _args: dict[str, Any], _user: Any) -> dict[str, Any]:
+        return {"dags": [{"dag_id": dag_id, "is_paused": False, "schedule_kind": "manual"}]}
+
+    pool = await asyncpg.create_pool(seed.console_dsn, min_size=1, max_size=2)
+    try:
+        with patch.object(
+            pipeline_automations.auth, "pool", new=AsyncMock(return_value=pool)
+        ):
+            response = await pipeline_automations.list_automations(mine.maker, invoke=_invoke)
+    finally:
+        await pool.close()
+    (probe,) = [a for a in response.automations if a.dag_id == dag_id]
+    assert probe.last_run.status == "failed"
+    assert probe.active_runs == 0
+
+
+async def _delete_as_workspace_service(
+    seed: AuthoritySeed, scope: AuthorityScope, decision_id: int
+) -> str:
+    conn = await asyncpg.connect(
+        _role_dsn(seed.admin_dsn, "omega_workspace", "test_omega_workspace_password")
+    )
+    try:
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT set_config('app.tenant_id', $1, true), "
+                "set_config('app.workspace_id', $2, true)",
+                scope.tenant_id,
+                scope.workspace_id,
+            )
+            return await conn.execute(
+                "DELETE FROM decisions WHERE id = $1 AND workspace_id = $2::uuid",
+                decision_id,
+                scope.workspace_id,
+            )
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_database_refuses_deleting_council_decisions_from_any_role(
+    council_seed: AuthoritySeed,
+):
+    seed = council_seed
+    scope = await seed_authority_item(seed, seed.second, "delete-guard")
+    pool = await asyncpg.create_pool(seed.console_dsn, min_size=1, max_size=6)
+    try:
+        with _patched(pool, _snapshot(scope, scope.item)):
+            await prepare_followup_intent(scope.maker, scope.item_id)
+            decision_id = int(scope.item["decision_id"])
+            proposal = await _proposal(scope.checker, origin="person", decision_id=decision_id)
+            await business_council_commands.approve_council_proposal(
+                scope.checker, proposal.proposal_id, idempotency_key="delete-guard-1"
+            )
+    finally:
+        await pool.close()
+    plain = int(
+        await _value(
+            seed,
+            """INSERT INTO decisions (title, workspace_id, created_by_id)
+               VALUES ('Decisión manual', $1::uuid, $2) RETURNING id""",
+            scope.workspace_id,
+            scope.maker["id"],
+        )
+    )
+    actions = "SELECT count(*) FROM decision_actions WHERE decision_id = $1"
+    actions_before = await _value(seed, actions, decision_id)
+    assert actions_before >= 2
+    with pytest.raises(asyncpg.ForeignKeyViolationError) as refused:
+        await _delete_as_workspace_service(seed, scope, decision_id)
+    assert refused.value.constraint_name == "decisions_council_delete_protection"
+    assert await _delete_as_workspace_service(seed, scope, plain) == "DELETE 1"
+    assert await _value(seed, "SELECT count(*) FROM decisions WHERE id = $1", decision_id) == 1
+    assert await _value(seed, actions, decision_id) == actions_before
+    assert await _value(seed, "SELECT count(*) FROM decisions WHERE id = $1", plain) == 0
+
+
+@pytest.mark.asyncio
+async def test_disabling_a_threshold_keeps_its_author_from_approving_alone(
+    council_seed: AuthoritySeed,
+):
+    seed = council_seed
+    scope = seed.first
+    key = {
+        "cartridge_id": "sap_hcm",
+        "anomaly_type": "council_disabled",
+        "metric": f"gap_{uuid.uuid4().hex[:6]}",
+    }
+    conn = await asyncpg.connect(seed.admin_dsn)
+    try:
+        threshold_id = await conn.fetchval(
+            """INSERT INTO control_room_thresholds (
+                   tenant_id, workspace_id, cartridge_id, anomaly_type, metric,
+                   warning_value, enabled
+               ) VALUES ($1::uuid, $2::uuid, $3, $4, $5, 1000, FALSE) RETURNING id""",
+            scope.tenant_id,
+            scope.workspace_id,
+            key["cartridge_id"],
+            key["anomaly_type"],
+            key["metric"],
+        )
+        await conn.execute(
+            """INSERT INTO audit_events (user_id, action, resource_type, resource_id, metadata)
+               VALUES ($1, 'control_room.threshold.upsert', 'control_room_threshold', $2, '{}'::jsonb)""",
+            scope.checker["id"],
+            str(threshold_id),
+        )
+    finally:
+        await conn.close()
+    applied = {**key, "warning_value": 10, "critical_value": None, "currency": "USD", "source": "default"}
+    pool = await asyncpg.create_pool(seed.console_dsn, min_size=1, max_size=4)
+    try:
+        live = await _open_item(seed, scope, pool, "disabled-threshold", thresholds_applied=[applied])
+        live["thresholds_applied"] = [applied]
+        with _patched(pool, _snapshot(scope, live)):
+            suggestion = await _proposal(scope.checker, origin="system")
+            assert suggestion.state == "needs_other_approver"
+            assert suggestion.disabled_reason.startswith("Ajustaste un umbral")
+            with pytest.raises(HTTPException) as refused:
+                await business_council_commands.approve_council_proposal(
+                    scope.checker, suggestion.proposal_id, idempotency_key="disabled-th-1"
+                )
+        assert refused.value.status_code == 403
+    finally:
+        await pool.close()
