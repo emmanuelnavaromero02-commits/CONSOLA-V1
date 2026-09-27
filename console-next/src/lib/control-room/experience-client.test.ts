@@ -5,7 +5,9 @@ import { api } from "@/lib/api";
 import {
   CONTROL_ROOM_ACTION_PREVIEW_ENDPOINT,
   CONTROL_ROOM_EXPERIENCE_ENDPOINT,
+  CONTROL_ROOM_FRESHNESS_ENDPOINT,
   getControlRoomExperience,
+  getControlRoomFreshness,
   previewControlRoomExperienceAction,
 } from "./experience-client";
 
@@ -118,5 +120,52 @@ describe("previewControlRoomExperienceAction", () => {
     });
 
     await expect(previewControlRoomExperienceAction(actionHandle)).rejects.toThrow();
+  });
+});
+
+describe("getControlRoomFreshness", () => {
+  const freshness = {
+    schema_version: "control-room-freshness/v1",
+    fingerprint: "f".repeat(64),
+    checked_at: "2026-09-26T12:00:00Z",
+    data_refreshed_at: null,
+  };
+
+  beforeEach(() => {
+    apiGet.mockReset();
+    apiPost.mockReset();
+  });
+
+  it("performs exactly one GET against the pure freshness endpoint", async () => {
+    apiGet.mockResolvedValue({
+      data: freshness,
+      status: 200,
+      headers: new Headers(),
+      requestId: "request-f",
+    });
+
+    await expect(getControlRoomFreshness()).resolves.toEqual(freshness);
+    expect(apiGet).toHaveBeenCalledWith(CONTROL_ROOM_FRESHNESS_ENDPOINT);
+    expect(CONTROL_ROOM_FRESHNESS_ENDPOINT).toBe(
+      "/api/control-room/experience/v2/freshness",
+    );
+    expect(apiPost).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { ...freshness, fingerprint: "F".repeat(64) },
+    { ...freshness, fingerprint: "f".repeat(63) },
+    { ...freshness, item_ids: ["business-1"] },
+    { ...freshness, schema_version: "control-room-freshness/v2" },
+    { ...freshness, data_refreshed_at: "yesterday" },
+  ])("fails closed on an invalid freshness contract %#", async (data) => {
+    apiGet.mockResolvedValue({
+      data,
+      status: 200,
+      headers: new Headers(),
+      requestId: "request-g",
+    });
+
+    await expect(getControlRoomFreshness()).rejects.toThrow();
   });
 });

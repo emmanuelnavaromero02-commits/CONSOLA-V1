@@ -78,20 +78,26 @@ afterEach(async () => {
 });
 
 describe("ExperienceFact: lectura de negocio opcional", () => {
-  it("sin narrativa renderiza el dato igual que antes y la narrativa es solo aditiva", async () => {
+  it("sin narrativa muestra solo la lectura automática y la narrativa la reemplaza", async () => {
     await renderFact(parseFact(baseFact));
-    const markupWithout = container.innerHTML;
+    const fallback = container.querySelector(
+      '[role="group"][aria-label="Lectura automática (sin análisis narrativo)"]',
+    );
 
     expect(narrativeGroup()).toBeNull();
-    for (const copy of ["Recomendación", "Confianza", "Limitaciones", advisory]) {
+    expect(fallback).not.toBeNull();
+    for (const copy of ["Confianza", "Limitaciones"]) {
       expect(container.textContent).not.toContain(copy);
     }
+    const withoutFallback = container.cloneNode(true) as HTMLElement;
+    withoutFallback.querySelector('[role="group"]')?.remove();
 
     await renderFact(parseFact({ ...baseFact, narrative }));
     expect(narrativeGroup()).not.toBeNull();
+    expect(container.textContent).not.toContain("Lectura automática");
     const withoutBlock = container.cloneNode(true) as HTMLElement;
     withoutBlock.querySelector('[role="group"]')?.remove();
-    expect(withoutBlock.innerHTML).toBe(markupWithout);
+    expect(withoutBlock.innerHTML).toBe(withoutFallback.innerHTML);
   });
 
   it("renderiza explicación, recomendación, confianza, notas y limitaciones", async () => {

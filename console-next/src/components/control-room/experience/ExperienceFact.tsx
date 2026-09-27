@@ -13,6 +13,8 @@ import {
 } from "@/lib/control-room/experience-presenter";
 import { cn } from "@/lib/utils";
 
+import { FactFallbackReading } from "./FactFallbackReading";
+
 const severityStyle = {
   critical: "border-destructive/30 bg-destructive/10 text-destructive",
   high: "border-warning/40 bg-warning/10 text-warning",
@@ -90,9 +92,11 @@ function FactNarrative({ narrative }: { narrative: ExperienceNarrative }) {
 
 export function ExperienceFact({
   fact,
+  sectionTitle = null,
   onPreviewAction,
 }: {
   fact: ExperienceFactV2;
+  sectionTitle?: string | null;
   onPreviewAction: OpenExperiencePreview;
 }) {
   const reasonId = useId();
@@ -141,7 +145,11 @@ export function ExperienceFact({
         </div>
       ) : null}
 
-      {fact.narrative ? <FactNarrative narrative={fact.narrative} /> : null}
+      {fact.narrative ? (
+        <FactNarrative narrative={fact.narrative} />
+      ) : (
+        <FactFallbackReading fact={fact} sectionTitle={sectionTitle} />
+      )}
 
       {fact.actions.length > 0 ? (
         <div className="mt-5 space-y-3 border-t pt-4">

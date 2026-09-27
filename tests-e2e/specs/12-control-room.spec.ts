@@ -1,5 +1,6 @@
 import { expect, test } from "../fixtures/auth";
 import {
+  FRESHNESS_PATH,
   assertReadOnlyRequests,
   emptyExperience,
   installExperienceMock,
@@ -41,6 +42,26 @@ test.describe("Control Room Business Experience", () => {
     assertReadOnlyRequests(observation, 1);
     expect(observation.consoleErrors).toEqual([]);
     expect(observation.pageErrors).toEqual([]);
+  });
+
+  test("checks the pure freshness fingerprint and shows the live badge", async ({
+    authedPage: page,
+  }) => {
+    const observation = await openControlRoom(page, [
+      { status: 200, body: performanceExperience },
+    ]);
+
+    await expect(page.getByText(/En vivo · consultado/)).toBeVisible();
+    await expect(page.getByText(/Datos del origen al/)).toBeVisible();
+    await expect
+      .poll(
+        () =>
+          observation.requests.filter(
+            ({ method, pathname }) => method === "GET" && pathname === FRESHNESS_PATH,
+          ).length,
+      )
+      .toBeGreaterThanOrEqual(1);
+    assertReadOnlyRequests(observation, 1);
   });
 
   test("renders the neutral empty state", async ({ authedPage: page }) => {

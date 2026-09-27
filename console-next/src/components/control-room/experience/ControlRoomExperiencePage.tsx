@@ -6,7 +6,6 @@ import type { ReactNode } from "react";
 import type { ControlRoomExperienceV2 } from "@/lib/control-room/experience-contract";
 import {
   experienceErrorKind,
-  formatRelativeFromNow,
   latestObservedAt,
 } from "@/lib/control-room/experience-presenter";
 import { useControlRoomExperience } from "@/lib/control-room/use-control-room-experience";
@@ -14,8 +13,10 @@ import {
   type OpenExperiencePreview,
   useControlRoomExperiencePreview,
 } from "@/lib/control-room/use-control-room-experience-preview";
+import { useControlRoomLive } from "@/lib/control-room/use-control-room-live";
 import { cn } from "@/lib/utils";
 
+import { ExperienceLiveBadge } from "./ExperienceLiveBadge";
 import { ExperienceLoadState } from "./ExperienceLoadState";
 import { ExperiencePreviewFlow } from "./ExperiencePreviewFlow";
 import { ExperienceSection } from "./ExperienceSection";
@@ -26,15 +27,18 @@ export function ControlRoomExperienceContent({
   refreshFailed,
   onRefresh,
   onPreviewAction,
+  checkedAt = null,
+  liveOffline = false,
 }: {
   experience: ControlRoomExperienceV2;
   refreshing: boolean;
   refreshFailed: boolean;
   onRefresh: () => void;
   onPreviewAction: OpenExperiencePreview;
+  checkedAt?: number | null;
+  liveOffline?: boolean;
 }) {
   const sections = experience.sections.filter((section) => section.facts.length > 0);
-  const lastUpdated = latestObservedAt(experience);
 
   return (
     <>
@@ -42,13 +46,11 @@ export function ControlRoomExperienceContent({
         <div>
           <p className="text-sm font-medium text-primary">Control Room</p>
           <h1 className="mt-1 text-2xl font-semibold text-foreground">Experiencia empresarial</h1>
-          {lastUpdated ? (
-            <p className="mt-1 text-xs text-muted-foreground">
-              <time dateTime={lastUpdated} title={lastUpdated}>
-                Datos actualizados {formatRelativeFromNow(lastUpdated)}
-              </time>
-            </p>
-          ) : null}
+          <ExperienceLiveBadge
+            checkedAt={checkedAt}
+            offline={liveOffline}
+            sourceObservedAt={latestObservedAt(experience)}
+          />
         </div>
         <button
           type="button"
@@ -88,7 +90,12 @@ export function ControlRoomExperienceContent({
 export function ControlRoomExperiencePage({ entries }: { entries?: ReactNode } = {}) {
   const query = useControlRoomExperience();
   const preview = useControlRoomExperiencePreview(query.data, query.workspaceId);
-  const retry = () => void query.refetch();
+  const live = useControlRoomLive({
+    workspaceId: query.workspaceId,
+    experience: query,
+    paused: preview.selection !== null,
+  });
+  const retry = live.refreshAll;
 
   return (
     <main className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8" aria-label="Experiencia empresarial">
@@ -100,6 +107,8 @@ export function ControlRoomExperiencePage({ entries }: { entries?: ReactNode } =
           refreshFailed={query.isRefetchError}
           onRefresh={retry}
           onPreviewAction={preview.openPreview}
+          checkedAt={live.checkedAt}
+          liveOffline={live.offline}
         />
       ) : query.isPending ? (
         <ExperienceLoadState state="loading" />

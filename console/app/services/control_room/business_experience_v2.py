@@ -36,6 +36,13 @@ from app.services.control_room.surface_snapshot import (
 )
 
 
+_CLOSED_STATUSES = frozenset({"dismissed", "resolved"})
+
+
+def _closed(item: Mapping[str, object]) -> bool:
+    return str(item.get("status") or "open").strip().lower() in _CLOSED_STATUSES
+
+
 def build_business_experience_v2(
     snapshot: SurfaceSnapshot,
     *,
@@ -49,6 +56,8 @@ def build_business_experience_v2(
         tuple[set[str], list[ExperienceFactV2]],
     ] = {}
     for item in filter_business_items(snapshot.items):
+        if _closed(item):
+            continue
         identity = resolve_bounded_business_surface_identity(
             item,
             max_length=MAX_STRUCTURAL_IDENTITY_LENGTH,

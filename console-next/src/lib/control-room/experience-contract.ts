@@ -155,6 +155,16 @@ export const experienceActionPreviewResponseSchema = z
   })
   .strict();
 
+export const controlRoomFreshnessSchema = z
+  .object({
+    schema_version: z.literal("control-room-freshness/v1"),
+    fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    checked_at: dateTimeSchema,
+    data_refreshed_at: dateTimeSchema.nullable(),
+  })
+  .strict();
+
+export type ControlRoomFreshness = z.infer<typeof controlRoomFreshnessSchema>;
 export type ControlRoomExperienceV2 = z.infer<typeof controlRoomExperienceV2Schema>;
 export type ExperienceSectionV2 = z.infer<typeof experienceSectionV2Schema>;
 export type ExperienceFactV2 = z.infer<typeof experienceFactV2Schema>;

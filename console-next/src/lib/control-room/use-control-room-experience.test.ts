@@ -28,7 +28,7 @@ describe("controlRoomExperienceQueryOptions", () => {
     expect(options.retry).toBe(false);
     expect(options.refetchOnMount).toBe(true);
     expect(options.refetchOnReconnect).toBe(false);
-    expect(options.refetchOnWindowFocus).toBe(false);
+    expect(options.refetchOnWindowFocus).toBe(true);
     expect(options.refetchInterval).toBe(false);
     expect(options.staleTime).toBe(15_000);
   });

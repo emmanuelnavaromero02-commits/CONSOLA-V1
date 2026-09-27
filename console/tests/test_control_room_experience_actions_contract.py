@@ -84,8 +84,13 @@ def test_missing_template_and_diagnostic_items_publish_no_actions():
 def test_permission_and_terminal_state_publish_no_action_metadata():
     assert _fact(action_item(), user=VIEWER).actions == []
     assert _fact(action_item(status="approved")).actions == []
-    assert _fact(action_item(status="resolved")).actions == []
     assert _fact(action_item(execution_status="executed")).actions == []
+
+
+def test_closed_findings_leave_the_live_sections():
+    for status in ("dismissed", "resolved", " Resolved "):
+        assert _response(action_item(status=status)).sections == []
+    assert len(_response(action_item(status="in_review")).sections) == 1
 
 
 def test_stale_action_is_safe_disabled_and_limited_to_one():

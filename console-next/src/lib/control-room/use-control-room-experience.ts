@@ -22,7 +22,7 @@ export function controlRoomExperienceQueryOptions(
     retry: false,
     refetchOnMount: true,
     refetchOnReconnect: false,
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: true,
     refetchInterval: false,
     staleTime: 15_000,
   } as const;

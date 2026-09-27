@@ -130,6 +130,30 @@ describe("ControlRoomExperienceContent", () => {
     expect(markup).not.toContain("a".repeat(64));
   });
 
+  it("summarises multi-fact sections with headlines built only from present fields", () => {
+    const markup = renderContent();
+
+    expect(markup).toContain('aria-label="Resumen de Performance"');
+    expect(markup).toContain("Rotación voluntaria");
+    expect(markup).toContain("Operación México · Rotación: 0%");
+    expect(markup).not.toContain("casos detectados");
+  });
+
+  it("separates the live check from the source data date", () => {
+    const markup = renderContent({ checkedAt: Date.now(), liveOffline: false });
+
+    expect(markup).toContain("En vivo · consultado");
+    expect(markup).toContain("Datos del origen al");
+    expect(markup).not.toContain("Datos actualizados");
+  });
+
+  it("marks the live state offline while keeping the last payload", () => {
+    const markup = renderContent({ checkedAt: Date.now(), liveOffline: true });
+
+    expect(markup).toContain("Sin conexión en vivo · mostrando última información");
+    expect(markup).toContain("Rotación voluntaria");
+  });
+
   it("keeps the last payload after a failed manual update", () => {
     const markup = renderContent({ refreshFailed: true });
 
