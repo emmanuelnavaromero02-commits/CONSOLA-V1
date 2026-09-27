@@ -8,7 +8,7 @@ REPO = Path(__file__).resolve().parents[1]
 ROLES_MODULE = REPO / "console" / "app" / "services" / "permission_roles.py"
 SERVICE_ADMIN_SETS = {
     "mcp-infra": REPO / "mcp-infra" / "app" / "main.py",
-    "refinement": REPO / "refinement" / "app" / "main.py",
+    "refinement": REPO / "refinement" / "app" / "security_scope.py",
     "vault": REPO / "vault" / "app" / "main.py",
 }
 
