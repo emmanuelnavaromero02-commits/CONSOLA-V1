@@ -2059,7 +2059,7 @@
     },
     {
       "path": "console/tests/test_control_room_action_binding_operational_failures.py",
-      "sha256": "f54f762ea15a59d7c0590ac401e891ab870098bdde2b2729c6f785efaadfb54c"
+      "sha256": "76a2d077cc59aa88c5c86806a45c0948ee3ad870592441ea8b6f66ec70b79cc5"
     },
     {
       "path": "console/tests/test_control_room_action_binding_v2_security.py",
@@ -2115,7 +2115,7 @@
     },
     {
       "path": "console/tests/test_control_room_all_get_purity.py",
-      "sha256": "08f4568e7991366ef2450d0ee0a6fc33519eb45217fa648e95bc3b6de0d8062a"
+      "sha256": "8c77751247c3d995afd75957b72264a0b2a2b5d5535256b4200911b5bc71abc7"
     },
     {
       "path": "console/tests/test_control_room_allowlisted_secret_markers.py",
@@ -2196,6 +2196,14 @@
     {
       "path": "console/tests/test_control_room_copilot_refresh_atomicity.py",
       "sha256": "81e254970993016dd33c92540b30570660c0a75352b877ab952a8b855a56ebfc"
+    },
+    {
+      "path": "console/tests/test_control_room_council_commands.py",
+      "sha256": "9732c1e1d30c485dfba66daff6bfe9b1f8a7e81e98d377a172920f446da60e80"
+    },
+    {
+      "path": "console/tests/test_control_room_council_get_purity.py",
+      "sha256": "96ee0c03d069cbbaf5ac0a6a1698edb8275138afc8efb02eac48ff2568fed455"
     },
     {
       "path": "console/tests/test_control_room_dashboard_active_connections.py",
@@ -2371,7 +2379,7 @@
     },
     {
       "path": "console/tests/test_control_room_experience_actions_routes.py",
-      "sha256": "30f201c0b3c956d8cc3398a95b4cf825ea5d1e3c314fb5c90db7fb8075f23cd3"
+      "sha256": "def9c6804ca45f987f784079e279e53c63fcd8a64a00f28aef177008e0340d9f"
     },
     {
       "path": "console/tests/test_control_room_experience_contract.py",
@@ -2563,7 +2571,7 @@
     },
     {
       "path": "console/tests/test_control_room_mutation_projection_contracts.py",
-      "sha256": "e715808fd6edbb685db621f8bf57570a00f1d3429655b73506f1393bb9f806fc"
+      "sha256": "00a743123a40c8b08fd4b7accb4ed3a4ae18f322771ac68417968921afe1963e"
     },
     {
       "path": "console/tests/test_control_room_observation_evidence_hardening.py",
@@ -2659,7 +2667,7 @@
     },
     {
       "path": "console/tests/test_control_room_permissions.py",
-      "sha256": "51efb4dcae71c866247a7342f2d8b9bf9e881f4d811939d0d202e7bba06515f9"
+      "sha256": "febc06d5e813d7a63a986781b7bacfdf27b5985f978115c523c4892208927505"
     },
     {
       "path": "console/tests/test_control_room_persistence_policy.py",
@@ -2819,7 +2827,7 @@
     },
     {
       "path": "console/tests/test_control_room_surfaces_purity.py",
-      "sha256": "1b45cbc2a9679f91afadc9bdee8d1b9bb06722ca3887a9209a2dadb822378468"
+      "sha256": "b90196676dcb6cadd8085c15fdd92186e5b271ca462313dea58d6a2c493af1aa"
     },
     {
       "path": "console/tests/test_control_room_talent_kpis.py",
@@ -2959,7 +2967,7 @@
     },
     {
       "path": "console/tests/test_decisions_access.py",
-      "sha256": "88d5cb6192e223f7c91f666dae3f9afcab0c0f715168de588d7a007b77d5b02e"
+      "sha256": "546b0e92ba11b74eb1081265399546fb20ad8fe38beb3ed264216f4f1aa03e7a"
     },
     {
       "path": "console/tests/test_decisions_payloads.py",
@@ -3152,6 +3160,10 @@
     {
       "path": "console/tests/test_pipeline_airflow_trigger.py",
       "sha256": "2a9f5f2ba2ad622eb998d49642d53749c60dd0ce233c615e0121fe6fe526c07d"
+    },
+    {
+      "path": "console/tests/test_pipeline_automations.py",
+      "sha256": "fa4b1265feac43202e70ab8a308886cb1f7ecc9d1a216b77054c3ac41e812648"
     },
     {
       "path": "console/tests/test_pipeline_dag_templates_payloads.py",
@@ -3855,7 +3867,7 @@
     },
     {
       "path": "tests/console_route_source.py",
-      "sha256": "0460d5f24418519faa6f0d2ce0bf9b220dccbf60c12f24a427ae92733ad3533a"
+      "sha256": "d41c3ac6a6ac066f387da312f810f0da63c67714f2bc6894e341d8e0b51d3a67"
     },
     {
       "path": "tests/control_room_action_authority_dry_run.py",
@@ -3867,7 +3879,7 @@
     },
     {
       "path": "tests/control_room_action_authority_http.py",
-      "sha256": "28727d2a9cd45f0ce43bec1dd2ae7814bf57717be3a7be7bbcd0e39bbb3de763"
+      "sha256": "61a324f209988b36df15dc3a6f6deb9313d5aac822517899ee2cc71ad28c959f"
     },
     {
       "path": "tests/control_room_action_authority_live.py",
@@ -4534,6 +4546,10 @@
       "sha256": "02ce5d7342afd940677aafeff8282ca250eaaf16e136595ecbf2fcd6392d4aa3"
     },
     {
+      "path": "tests/test_control_room_live_postgres_council_effect.py",
+      "sha256": "006017ab2b1641787273b573b33927f9f3362c413262e81c66f9b6326ebd1002"
+    },
+    {
       "path": "tests/test_control_room_live_postgres_direct_actions.py",
       "sha256": "0c187240d699a96788f130c01bc2c7bec0c128ad6e78c1488031faf821dbdbdb"
     },
@@ -4758,6 +4774,10 @@
       "sha256": "36cce1821aae743bed7d7d0fd28449789e55da4892e18e199170ce76a70ca722"
     },
     {
+      "path": "tests/test_council_client_contract.py",
+      "sha256": "8e7f0a7e4fac91c8019a248bfb44cd93ea27e0522a390dec627d6248042dc73f"
+    },
+    {
       "path": "tests/test_csp_hardening_contract.py",
       "sha256": "162640cf17f1894c262a21c95551ea0f73c48aaad3ab481149e4aa4f69c93cfb"
     },
@@ -4863,7 +4883,7 @@
     },
     {
       "path": "tests/test_decisions_workspace_isolation.py",
-      "sha256": "3440c8d9bb379457e6bffb8b70b0b35aa19b797bc8a9adbec557153ac5bf06e2"
+      "sha256": "e4259b54af028b76e9dd93ef90282f7d99225faf76d284570b4de625de838dbe"
     },
     {
       "path": "tests/test_demo_safe_apps_gallery_scope.py",
@@ -5160,6 +5180,10 @@
     {
       "path": "tests/test_mcp_admin_help_gate.py",
       "sha256": "610013b99db0c6c68accc09bce6a7799181b7cea8625b6406d5452c092bac067"
+    },
+    {
+      "path": "tests/test_mcp_airflow_list_dags_schedule.py",
+      "sha256": "c97ea543508cb360c25eae74ab8fb7c3ec2c4a9675e6395ab5312ed4d2b73fad"
     },
     {
       "path": "tests/test_mcp_airflow_not_found.py",
@@ -6467,7 +6491,7 @@
     },
     {
       "path": "workspace/tests/test_decision_security.py",
-      "sha256": "ce1a237d2fec3f9cab06839695aa9e5d943606d1e8fe4d2a35614cb97d628c30"
+      "sha256": "3b66a2474384127d767857cd09c2e8bb1598907607cc26dc587c5f5f200f4773"
     },
     {
       "path": "workspace/tests/test_logout_auth_boundary.py",
