@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Bot, CheckCircle2, Clock, MessageSquareText, Play, Plus, RefreshCw, Save, Trash2, Wrench } from "lucide-react";
 import { toast } from "sonner";
 
+import { FrequencyPicker } from "@/components/schedule/FrequencyPicker";
 import {
   createAgent,
   deleteAgent,
@@ -18,9 +19,22 @@ import {
   type AgentPayload,
   type AgentRecord,
   type AgentRunRecord,
+  type AgentToolCatalogItem,
 } from "@/lib/admin-surfaces";
+import {
+  CURRENT_STYLE_LABEL,
+  PRECISION,
+  RESPONSE_STYLES,
+  responseStyleFor,
+  temperatureFor,
+} from "@/lib/agents/presets";
+import { agentSlug } from "@/lib/agents/slug";
+import { AGENT_TEMPLATES, templateTools, type AgentTemplate, type RagKind } from "@/lib/agents/templates";
+import { splitToolId, toolLabel, toolServerLabel, toolTooltip } from "@/lib/agents/tool-labels";
 import { isApiError } from "@/lib/api";
 import { KNOWN_CARTRIDGES } from "@/lib/cartridges";
+import { dataSourceName, GLOSSARY } from "@/lib/glossary";
+import { customScheduleError, defaultTimeZone, describeSchedule } from "@/lib/schedule/frequency";
 import { cn } from "@/lib/utils";
 
 type AgentTab = "config" | "tools" | "rag" | "schedule" | "runs" | "test";
@@ -51,19 +65,40 @@ interface AgentDraft {
     enabled: boolean;
   };
   is_active: boolean;
+  rag_adjusted: number;
+  template_missing: string[];
 }
 
+type ToolCatalog = Record<string, AgentToolCatalogItem[]>;
+
 const DEFAULT_MODEL = "claude-sonnet-4-6";
-const RAG_KINDS = ["dataset", "schema", "metric", "policy", "runbook"];
+const RAG_KIND_OPTIONS: Array<{ id: RagKind; label: string; hint: string }> = [
+  { id: "document", label: "Documentos y políticas", hint: "Reportes, políticas y documentos cargados." },
+  { id: "schema", label: "Estructura de datos", hint: "Descripción de tablas, columnas y su significado." },
+];
+const LEGACY_RAG_KINDS: Record<string, RagKind> = {
+  policy: "document",
+  runbook: "document",
+  dataset: "schema",
+  metric: "schema",
+};
 const AGENT_LIST_FILTERS: Array<{ id: AgentListFilter; label: string }> = [
   { id: "all", label: "Todos" },
   { id: "monitor", label: "Monitores" },
   { id: "control_room", label: "Control Room" },
-  { id: "cartridge", label: "Cartuchos" },
+  { id: "cartridge", label: GLOSSARY.cartridge.other },
   { id: "platform_ops", label: "Plataforma" },
 ];
-const AGENT_CATEGORIES = ["cartridge", "control_room", "platform_ops"];
-const AGENT_SCOPES = ["workspace", "cartridge", "control_room"];
+const AGENT_CATEGORIES: Array<{ id: string; label: string }> = [
+  { id: "cartridge", label: GLOSSARY.cartridge.one },
+  { id: "control_room", label: "Control Room" },
+  { id: "platform_ops", label: "Operación de la plataforma" },
+];
+const AGENT_SCOPES: Array<{ id: string; label: string }> = [
+  { id: "workspace", label: "Espacio de trabajo" },
+  { id: "cartridge", label: GLOSSARY.cartridge.one },
+  { id: "control_room", label: "Control Room" },
+];
 const INPUT_CLASS = "min-h-[44px] rounded-md border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const TEXTAREA_CLASS = "rounded-md border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
@@ -80,15 +115,36 @@ function emptyDraft(cartridge = "replicon"): AgentDraft {
     rag_kinds: [],
     model: DEFAULT_MODEL,
     max_tokens: 8192,
-    temperature: 0.4,
+    temperature: PRECISION,
     role: "",
     category: "cartridge",
     scope: "workspace",
     extra_passthrough: {},
     variables: [],
-    schedule: { cron: "", tz: "UTC", prompt: "", enabled: true },
+    schedule: { cron: "", tz: defaultTimeZone(), prompt: "", enabled: true },
     is_active: true,
+    rag_adjusted: 0,
+    template_missing: [],
   };
+}
+
+function normalizeRagKinds(kinds: string[]): { kinds: RagKind[]; adjusted: number } {
+  const next = new Set<RagKind>();
+  let adjusted = 0;
+  for (const kind of kinds) {
+    if (kind === "document" || kind === "schema") {
+      next.add(kind);
+      continue;
+    }
+    adjusted += 1;
+    const mapped = LEGACY_RAG_KINDS[kind];
+    if (mapped) next.add(mapped);
+  }
+  return { kinds: Array.from(next).sort(), adjusted };
+}
+
+function optionLabel(options: Array<{ id: string; label: string }>, id: string): string {
+  return options.find((option) => option.id === id)?.label ?? id;
 }
 
 function agentKey(agent: AgentRecord, index: number): string {
@@ -96,8 +152,8 @@ function agentKey(agent: AgentRecord, index: number): string {
 }
 
 function toolsLabel(agent: AgentRecord): string {
-  const tools = agent.allowed_tools ?? [];
-  if (tools.length === 0) return "Sin herramientas fijadas";
+  const tools = (agent.allowed_tools ?? []).map(toolLabel);
+  if (tools.length === 0) return "Sin herramientas asignadas";
   if (tools.length <= 3) return tools.join(", ");
   return `${tools.slice(0, 3).join(", ")} +${tools.length - 3}`;
 }
@@ -115,7 +171,9 @@ function draftFromAgent(agent: AgentRecord): AgentDraft {
   const variables = asRecord(extra.variables);
   const schedule = asRecord(extra.schedule);
   const ragFilter = asRecord(agent.rag_filter);
-  const kinds = Array.isArray(ragFilter.kinds) ? ragFilter.kinds.filter((kind): kind is string => typeof kind === "string") : [];
+  const rawKinds = Array.isArray(ragFilter.kinds) ? ragFilter.kinds.filter((kind): kind is string => typeof kind === "string") : [];
+  const rag = normalizeRagKinds(rawKinds);
+  const cron = asString(schedule.cron || schedule.cron_expression);
   return {
     id: agent.id,
     cartridge_id: agent.cartridge_id || "replicon",
@@ -125,7 +183,7 @@ function draftFromAgent(agent: AgentRecord): AgentDraft {
     instructions: agent.instructions || "",
     personality: agent.personality || "",
     allowed_tools: [...(agent.allowed_tools ?? [])],
-    rag_kinds: kinds,
+    rag_kinds: rag.kinds,
     model: agent.model || DEFAULT_MODEL,
     max_tokens: Number(agent.max_tokens ?? 8192),
     temperature: Number(agent.temperature ?? 0.4),
@@ -135,12 +193,14 @@ function draftFromAgent(agent: AgentRecord): AgentDraft {
     extra_passthrough: extra,
     variables: Object.entries(variables).map(([key, value]) => ({ key, value: String(value ?? "") })),
     schedule: {
-      cron: asString(schedule.cron || schedule.cron_expression),
-      tz: asString(schedule.tz) || "UTC",
+      cron,
+      tz: asString(schedule.tz) || (Object.keys(schedule).length ? "UTC" : defaultTimeZone()),
       prompt: asString(schedule.prompt),
       enabled: schedule.enabled !== false,
     },
     is_active: agent.is_active !== false,
+    rag_adjusted: rag.adjusted,
+    template_missing: [],
   };
 }
 
@@ -161,9 +221,9 @@ function payloadFromDraft(draft: AgentDraft): AgentPayload {
   else delete extra.variables;
   const cron = draft.schedule.cron.trim();
   const prompt = draft.schedule.prompt.trim();
-  const hasScheduleIntent = Boolean(cron || prompt || !draft.schedule.enabled);
+  const existingSchedule = asRecord(draft.extra_passthrough.schedule);
+  const hasScheduleIntent = Boolean(cron || prompt || Object.keys(existingSchedule).length);
   if (hasScheduleIntent) {
-    const existingSchedule = asRecord(draft.extra_passthrough.schedule);
     extra.schedule = {
       ...existingSchedule,
       cron,
@@ -214,12 +274,14 @@ function agentWarnings(draft: AgentDraft): string[] {
   const warnings: string[] = [];
   const hasCron = Boolean(draft.schedule.cron.trim());
   const hasPrompt = Boolean(draft.schedule.prompt.trim());
-  if (!draft.id) warnings.push("Guarda el agente antes de ejecutarlo o usa Guardar y ejecutar.");
-  if (!draft.is_active) warnings.push("El agente esta inactivo; no ejecutara tareas automaticas.");
-  if (draft.allowed_tools.length === 0) warnings.push("No tiene tools permitidas; podra responder, pero no consultar la consola ni levantar evidencia.");
-  if (draft.role === "monitor" && !hasMonitorContract(draft)) warnings.push("Tiene rol Monitor, pero no conserva contrato monitor; agent_runner no lo ejecutara como monitor operativo.");
-  if ((hasPrompt || draft.schedule.enabled === false) && !hasCron) warnings.push("Hay configuracion de tarea sin cron; agent_runner no la encontrara.");
-  if (hasCron && draft.role !== "monitor") warnings.push("Tiene cron, pero no rol Monitor; puede guardarse, aunque la ejecucion programada operativa requiere rol Monitor.");
+  if (!draft.id) warnings.push("Guarda el agente antes de ejecutarlo o usa «Guardar y ejecutar».");
+  if (!draft.is_active) warnings.push("El agente está inactivo; no ejecutará tareas automáticas.");
+  if (draft.allowed_tools.length === 0) warnings.push("No tiene herramientas asignadas: podrá conversar, pero no consultar datos ni reunir evidencia.");
+  if (draft.role === "monitor" && !hasMonitorContract(draft)) warnings.push("Está marcado como Monitor, pero no tiene contrato de monitoreo; sus ejecuciones programadas no lo tratarán como monitor.");
+  if (hasPrompt && draft.schedule.enabled && !hasCron) warnings.push("La tarea programada no tiene frecuencia; elige una en la pestaña Tareas para que se ejecute.");
+  if (hasCron && customScheduleError(draft.schedule.cron) === null && draft.role !== "monitor") warnings.push("Tiene una frecuencia programada, pero solo los agentes con rol Monitor se ejecutan automáticamente.");
+  if (hasCron && customScheduleError(draft.schedule.cron)) warnings.push("La programación personalizada no es válida; revísala en la pestaña Tareas.");
+  if (draft.template_missing.length) warnings.push(`El perfil incluye herramientas que no están disponibles en este entorno: ${draft.template_missing.map(toolLabel).join(", ")}.`);
   return warnings;
 }
 
@@ -271,16 +333,19 @@ export function AgentsConsole() {
     staleTime: 30_000,
   });
 
+  const withSlug = (nextDraft: AgentDraft): AgentDraft =>
+    nextDraft.id ? nextDraft : { ...nextDraft, slug: agentSlug(nextDraft.name, (agents.data ?? []).map((agent) => agent.slug)) };
+
   const save = useMutation({
     mutationFn: async (nextDraft: AgentDraft) => {
-      const payload = payloadFromDraft(nextDraft);
+      const payload = payloadFromDraft(withSlug(nextDraft));
       if (!payload.slug || !payload.name || !payload.instructions) {
-        throw new Error("Slug, nombre e instrucciones son obligatorios.");
+        throw new Error("El nombre y las instrucciones son obligatorios.");
       }
       return nextDraft.id ? updateAgent(nextDraft.id, payload) : createAgent(payload);
     },
     onSuccess: (saved) => {
-      toast.success("Agente guardado. Aun no se ejecuto.");
+      toast.success("Agente guardado. Aún no se ha ejecutado.");
       queryClient.invalidateQueries({ queryKey: ["agents"] });
       setSelectedId(saved.id);
       setDraft(draftFromAgent(saved));
@@ -290,9 +355,9 @@ export function AgentsConsole() {
 
   const saveAndRun = useMutation({
     mutationFn: async (nextDraft: AgentDraft) => {
-      const payload = payloadFromDraft(nextDraft);
+      const payload = payloadFromDraft(withSlug(nextDraft));
       if (!payload.slug || !payload.name || !payload.instructions) {
-        throw new Error("Slug, nombre e instrucciones son obligatorios.");
+        throw new Error("El nombre y las instrucciones son obligatorios.");
       }
       const saved = nextDraft.id ? await updateAgent(nextDraft.id, payload) : await createAgent(payload);
       const savedDraft = draftFromAgent(saved);
@@ -372,12 +437,14 @@ export function AgentsConsole() {
         agent.name,
         agent.slug,
         agent.cartridge_id,
+        dataSourceName(agent.cartridge_id),
         agent.description,
         agent.instructions,
         agent.model,
         role,
         category,
         ...(agent.allowed_tools ?? []),
+        ...(agent.allowed_tools ?? []).map(toolLabel),
       ]
         .filter((value): value is string => typeof value === "string")
         .some((value) => value.toLowerCase().includes(needle));
@@ -436,7 +503,7 @@ export function AgentsConsole() {
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="nombre, cartucho, herramienta..."
+              placeholder="nombre, fuente de datos, herramienta..."
               className="min-h-[44px] rounded-md border bg-background px-3 text-sm"
             />
           </label>
@@ -513,9 +580,9 @@ export function AgentsConsole() {
                 </div>
                 <p className="mt-3 line-clamp-2 text-sm text-muted-foreground">{agent.description || "Sin descripción."}</p>
                 <div className="mt-3 grid grid-cols-1 gap-2 text-xs">
-                  <span className="rounded-md bg-muted/30 p-2">Cartucho: <strong>{agent.cartridge_id || "-"}</strong></span>
-                  <span className="rounded-md bg-muted/30 p-2">Tipo: <strong>{role === "monitor" ? "Monitor" : category || "general"}</strong></span>
-                  <span className="rounded-md bg-muted/30 p-2">Tools: <strong>{toolsLabel(agent)}</strong></span>
+                  <span className="rounded-md bg-muted/30 p-2">{GLOSSARY.cartridge.one}: <strong>{dataSourceName(agent.cartridge_id)}</strong></span>
+                  <span className="rounded-md bg-muted/30 p-2">Tipo: <strong>{role === "monitor" ? "Monitor" : category ? optionLabel(AGENT_CATEGORIES, category) : "General"}</strong></span>
+                  <span className="rounded-md bg-muted/30 p-2">{GLOSSARY.tools.other}: <strong>{toolsLabel(agent)}</strong></span>
                 </div>
               </button>
             );
@@ -576,7 +643,7 @@ export function AgentsConsole() {
             <Bot aria-hidden className="h-10 w-10 text-muted-foreground" />
             <h2 className="text-lg font-semibold">Selecciona o crea un agente</h2>
             <p className="max-w-md text-sm text-muted-foreground">
-              Aquí puedes configurar instrucciones, herramientas MCP, RAG, variables, schedule, ejecuciones y prueba manual.
+              Configura instrucciones, herramientas, conocimiento, datos de contexto, frecuencia, ejecuciones y pruebas.
             </p>
             <button
               type="button"
@@ -599,7 +666,7 @@ function AgentEditor(props: {
   tab: AgentTab;
   setTab: (tab: AgentTab) => void;
   cartridgeOptions: string[];
-  toolCatalog: Record<string, Array<{ name: string; description?: string }>>;
+  toolCatalog: ToolCatalog;
   toolCatalogLoading: boolean;
   runs: AgentRunRecord[];
   runsLoading: boolean;
@@ -656,8 +723,8 @@ function AgentEditor(props: {
 
   const tabs: Array<{ id: AgentTab; label: string }> = [
     { id: "config", label: "Configuración" },
-    { id: "tools", label: "Tools" },
-    { id: "rag", label: "RAG" },
+    { id: "tools", label: "Herramientas" },
+    { id: "rag", label: "Conocimiento" },
     { id: "schedule", label: "Tareas" },
     { id: "runs", label: "Ejecuciones" },
     { id: "test", label: "Probar" },
@@ -672,7 +739,7 @@ function AgentEditor(props: {
         <div className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{draft.id ? "Editar agente" : "Nuevo agente"}</p>
           <h2 className="truncate text-xl font-semibold">{draft.name || "Sin nombre"}</h2>
-          <p className="font-mono text-xs text-muted-foreground">{draft.slug || "slug pendiente"}</p>
+          <p className="text-xs text-muted-foreground">{GLOSSARY.cartridge.one}: {dataSourceName(draft.cartridge_id)}</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={onStatusToggle} className="inline-flex min-h-[40px] items-center rounded-md border px-3 text-xs font-medium">
@@ -722,13 +789,19 @@ function AgentEditor(props: {
 
       <div className="p-4">
         {tab === "config" ? (
-          <ConfigTab draft={draft} setDraft={setDraft} cartridgeOptions={cartridgeOptions} />
+          <ConfigTab
+            draft={draft}
+            setDraft={setDraft}
+            cartridgeOptions={cartridgeOptions}
+            catalog={toolCatalog}
+            catalogLoading={toolCatalogLoading}
+          />
         ) : tab === "tools" ? (
           <ToolsTab draft={draft} setDraft={setDraft} catalog={toolCatalog} loading={toolCatalogLoading} />
         ) : tab === "rag" ? (
           <RagTab draft={draft} setDraft={setDraft} />
         ) : tab === "schedule" ? (
-          <ScheduleTab draft={draft} setDraft={setDraft} />
+          <ScheduleTab key={draft.id ?? "new"} draft={draft} setDraft={setDraft} />
         ) : tab === "runs" ? (
           <RunsTab
             runs={runs}
@@ -757,8 +830,10 @@ function OperationalStatus({ draft, warnings }: { draft: AgentDraft; warnings: s
   const monitorContract = hasMonitorContract(draft);
   const hasSchedule = Boolean(draft.schedule.cron.trim());
   const latestState = draft.id ? "Guardado" : "Sin guardar";
-  const executionState = draft.id && draft.is_active ? "Listo para ejecucion manual" : "No ejecutable aun";
-  const scheduleState = hasSchedule && draft.schedule.enabled ? "Tarea programada" : hasSchedule ? "Tarea pausada" : "Sin tarea";
+  const executionState = draft.id && draft.is_active ? "Listo para ejecución manual" : "Aún no ejecutable";
+  const scheduleState = hasSchedule && draft.schedule.enabled
+    ? describeSchedule(draft.schedule.cron, draft.schedule.tz)
+    : hasSchedule ? "Tarea pausada" : "Sin tarea";
   const monitorState = draft.role === "monitor"
     ? monitorContract ? "Monitor operativo" : "Monitor incompleto"
     : "Agente general";
@@ -766,8 +841,8 @@ function OperationalStatus({ draft, warnings }: { draft: AgentDraft; warnings: s
   return (
     <section className="grid gap-3 border-b bg-muted/10 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.8fr)]">
       <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-        <StatusTile icon={<Save className="h-4 w-4" />} label="Configuracion" value={latestState} tone={draft.id ? "ok" : "warn"} />
-        <StatusTile icon={<Play className="h-4 w-4" />} label="Ejecucion" value={executionState} tone={draft.id && draft.is_active ? "ok" : "warn"} />
+        <StatusTile icon={<Save className="h-4 w-4" />} label="Configuración" value={latestState} tone={draft.id ? "ok" : "warn"} />
+        <StatusTile icon={<Play className="h-4 w-4" />} label="Ejecución" value={executionState} tone={draft.id && draft.is_active ? "ok" : "warn"} />
         <StatusTile icon={<Clock className="h-4 w-4" />} label="Tarea" value={scheduleState} tone={hasSchedule && draft.schedule.enabled ? "ok" : "neutral"} />
         <StatusTile icon={<Bot className="h-4 w-4" />} label="Modo" value={monitorState} tone={draft.role === "monitor" && !monitorContract ? "warn" : "ok"} />
       </div>
@@ -784,7 +859,7 @@ function OperationalStatus({ draft, warnings }: { draft: AgentDraft; warnings: s
             {warnings.map((warning) => <li key={warning}>- {warning}</li>)}
           </ul>
         ) : (
-          <p className="text-xs">Guardar solo persiste la configuracion; usa Ejecutar ahora o Guardar y ejecutar para crear una corrida.</p>
+          <p className="text-xs">Guardar solo conserva la configuración; usa «Ejecutar ahora» o «Guardar y ejecutar» para iniciar una ejecución.</p>
         )}
       </div>
     </section>
@@ -807,28 +882,111 @@ function StatusTile({ icon, label, value, tone }: { icon: ReactNode; label: stri
   );
 }
 
-function ConfigTab({ draft, setDraft, cartridgeOptions }: { draft: AgentDraft; setDraft: (draft: AgentDraft) => void; cartridgeOptions: string[] }) {
+function applyTemplate(draft: AgentDraft, template: AgentTemplate, catalog: ToolCatalog): AgentDraft {
+  const tools = templateTools(template, catalog);
+  return {
+    ...draft,
+    name: template.name,
+    description: template.description,
+    instructions: template.instructions,
+    personality: template.personality,
+    temperature: temperatureFor(template.style),
+    allowed_tools: [...tools.available].sort(),
+    rag_kinds: [...template.ragKinds].sort(),
+    template_missing: tools.missing,
+  };
+}
+
+function TemplatePicker({ draft, setDraft, catalog, loading }: { draft: AgentDraft; setDraft: (draft: AgentDraft) => void; catalog: ToolCatalog; loading: boolean }) {
+  return (
+    <section className="rounded-lg border bg-background p-4 lg:col-span-2" aria-label="Perfiles sugeridos">
+      <h3 className="text-sm font-semibold">Empieza con un perfil</h3>
+      <p className="mt-1 text-xs text-muted-foreground">Rellena instrucciones, herramientas y conocimiento; puedes ajustar todo antes de guardar.</p>
+      <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-3">
+        {AGENT_TEMPLATES.map((template) => (
+          <button
+            key={template.id}
+            type="button"
+            disabled={loading}
+            data-agent-template={template.id}
+            onClick={() => setDraft(applyTemplate(draft, template, catalog))}
+            className="flex min-h-[96px] flex-col items-start gap-1 rounded-md border bg-card p-3 text-left text-sm hover:bg-accent/5 disabled:opacity-60"
+          >
+            <span className="font-medium">
+              <span aria-hidden>{template.icon}</span> {template.name}
+            </span>
+            <span className="text-xs text-muted-foreground">{template.description}</span>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ResponseStylePicker({ draft, setDraft }: { draft: AgentDraft; setDraft: (draft: AgentDraft) => void }) {
+  const current = responseStyleFor(draft.temperature);
+  return (
+    <fieldset className="flex flex-col gap-2 text-sm lg:col-span-2">
+      <legend className="mb-1.5 font-medium">Estilo de respuesta</legend>
+      <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+        {RESPONSE_STYLES.map((style) => (
+          <label key={style.id} className={cn("flex min-h-[64px] cursor-pointer gap-3 rounded-md border bg-background p-3", current === style.id && "border-primary bg-primary/5")}>
+            <input
+              type="radio"
+              name="agent_response_style"
+              value={style.id}
+              checked={current === style.id}
+              onChange={() => setDraft({ ...draft, temperature: style.temperature })}
+              className="mt-1 h-4 w-4"
+            />
+            <span>
+              <span className="block font-medium">{style.label}</span>
+              <span className="block text-xs text-muted-foreground">{style.hint}</span>
+            </span>
+          </label>
+        ))}
+        {current === "current" ? (
+          <label className="flex min-h-[64px] gap-3 rounded-md border border-primary bg-primary/5 p-3">
+            <input type="radio" name="agent_response_style" value="current" checked readOnly className="mt-1 h-4 w-4" />
+            <span>
+              <span className="block font-medium">{CURRENT_STYLE_LABEL}</span>
+              <span className="block text-xs text-muted-foreground">Se conserva hasta que elijas otro estilo.</span>
+            </span>
+          </label>
+        ) : null}
+      </div>
+    </fieldset>
+  );
+}
+
+function withCurrent(options: Array<{ id: string; label: string }>, value: string): Array<{ id: string; label: string }> {
+  if (!value || options.some((option) => option.id === value)) return options;
+  return [...options, { id: value, label: `${value} (valor actual)` }];
+}
+
+function ConfigTab({
+  draft,
+  setDraft,
+  cartridgeOptions,
+  catalog,
+  catalogLoading,
+}: {
+  draft: AgentDraft;
+  setDraft: (draft: AgentDraft) => void;
+  cartridgeOptions: string[];
+  catalog: ToolCatalog;
+  catalogLoading: boolean;
+}) {
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-      <Field label="Cartucho">
-        <select value={draft.cartridge_id} onChange={(event) => setDraft({ ...draft, cartridge_id: event.target.value })} className={INPUT_CLASS}>
-          {cartridgeOptions.map((id) => <option key={id} value={id}>{id}</option>)}
-        </select>
-      </Field>
-      <Field label="Slug">
-        <input value={draft.slug} onChange={(event) => setDraft({ ...draft, slug: event.target.value })} className={cn(INPUT_CLASS, "font-mono")} />
-      </Field>
+      {draft.id ? null : <TemplatePicker draft={draft} setDraft={setDraft} catalog={catalog} loading={catalogLoading} />}
       <Field label="Nombre">
         <input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} className={INPUT_CLASS} />
       </Field>
-      <Field label="Modelo">
-        <input value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} className={cn(INPUT_CLASS, "font-mono")} />
-      </Field>
-      <Field label="Max tokens">
-        <input type="number" value={draft.max_tokens} onChange={(event) => setDraft({ ...draft, max_tokens: Number(event.target.value) })} className={INPUT_CLASS} />
-      </Field>
-      <Field label="Temperatura">
-        <input type="number" min={0} max={2} step={0.1} value={draft.temperature} onChange={(event) => setDraft({ ...draft, temperature: Number(event.target.value) })} className={INPUT_CLASS} />
+      <Field label={GLOSSARY.cartridge.one}>
+        <select value={draft.cartridge_id} onChange={(event) => setDraft({ ...draft, cartridge_id: event.target.value })} className={INPUT_CLASS}>
+          {cartridgeOptions.map((id) => <option key={id} value={id}>{dataSourceName(id)}</option>)}
+        </select>
       </Field>
       <Field label="Rol operativo">
         <select value={draft.role} onChange={(event) => setDraft({ ...draft, role: event.target.value })} className={INPUT_CLASS}>
@@ -838,14 +996,15 @@ function ConfigTab({ draft, setDraft, cartridgeOptions }: { draft: AgentDraft; s
       </Field>
       <Field label="Categoría">
         <select value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value })} className={INPUT_CLASS}>
-          {AGENT_CATEGORIES.map((item) => <option key={item} value={item}>{item}</option>)}
+          {withCurrent(AGENT_CATEGORIES, draft.category).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
         </select>
       </Field>
-      <Field label="Scope">
+      <Field label={GLOSSARY.scope.one}>
         <select value={draft.scope} onChange={(event) => setDraft({ ...draft, scope: event.target.value })} className={INPUT_CLASS}>
-          {AGENT_SCOPES.map((item) => <option key={item} value={item}>{item}</option>)}
+          {withCurrent(AGENT_SCOPES, draft.scope).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
         </select>
       </Field>
+      <ResponseStylePicker draft={draft} setDraft={setDraft} />
       <Field label="Descripción" wide>
         <textarea value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} className={cn(TEXTAREA_CLASS, "min-h-24")} />
       </Field>
@@ -859,34 +1018,54 @@ function ConfigTab({ draft, setDraft, cartridgeOptions }: { draft: AgentDraft; s
   );
 }
 
-function ToolsTab({ draft, setDraft, catalog, loading }: { draft: AgentDraft; setDraft: (draft: AgentDraft) => void; catalog: Record<string, Array<{ name: string; description?: string }>>; loading: boolean }) {
+function ToolsTab({ draft, setDraft, catalog, loading }: { draft: AgentDraft; setDraft: (draft: AgentDraft) => void; catalog: ToolCatalog; loading: boolean }) {
   const selected = new Set(draft.allowed_tools);
   function toggle(tool: string) {
     const next = new Set(selected);
     if (next.has(tool)) next.delete(tool);
     else next.add(tool);
-    setDraft({ ...draft, allowed_tools: Array.from(next).sort() });
+    setDraft({ ...draft, allowed_tools: Array.from(next).sort(), template_missing: [] });
   }
   if (loading) return <SkeletonRows rows={6} />;
-  const servers = Object.keys(catalog).sort();
+  const servers = Object.keys(catalog)
+    .filter((server) => server !== "infra" || draft.allowed_tools.some((tool) => splitToolId(tool).server === "infra"))
+    .sort();
+  const offered = new Set(servers.flatMap((server) => (catalog[server] ?? []).map((tool) => `${server}__${tool.name}`)));
+  const unavailable = draft.allowed_tools.filter((tool) => !offered.has(tool));
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Wrench aria-hidden className="h-4 w-4" />
-        {draft.allowed_tools.length} tool(s) asignados
+        {draft.allowed_tools.length === 1 ? "1 herramienta asignada" : `${draft.allowed_tools.length} herramientas asignadas`}
       </div>
+      {unavailable.length ? (
+        <section className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-sm">
+          <h3 className="font-medium">Asignadas, pero no disponibles en este entorno</h3>
+          <ul className="mt-2 space-y-1">
+            {unavailable.map((tool) => (
+              <li key={tool} className="flex items-center justify-between gap-2">
+                <span title={toolTooltip(tool)}>{toolLabel(tool)}</span>
+                <button type="button" onClick={() => toggle(tool)} className="min-h-[36px] rounded-md border px-3 text-xs">Quitar</button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
       {servers.length ? servers.map((server) => (
         <section key={server} className="rounded-lg border bg-background p-4">
-          <h3 className="font-mono text-sm font-semibold">{server}</h3>
+          <h3 className="text-sm font-semibold">{toolServerLabel(server)}</h3>
           <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
             {(catalog[server] ?? []).map((tool) => {
               const id = `${server}__${tool.name}`;
+              const readOnly = tool.risk_level === "read";
               return (
-                <label key={id} className="flex min-h-[72px] gap-3 rounded-md border bg-card p-3 text-sm">
+                <label key={id} title={toolTooltip(id, tool.description)} className="flex min-h-[56px] gap-3 rounded-md border bg-card p-3 text-sm">
                   <input type="checkbox" checked={selected.has(id)} onChange={() => toggle(id)} className="mt-1 h-4 w-4" />
                   <span>
-                    <span className="block font-medium">{tool.name}</span>
-                    <span className="line-clamp-2 text-xs text-muted-foreground">{tool.description || "Sin descripción."}</span>
+                    <span className="block font-medium">{toolLabel(id)}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {readOnly ? "Solo lectura" : tool.requires_approval ? "Requiere aprobación" : "Puede registrar cambios"}
+                    </span>
                   </span>
                 </label>
               );
@@ -894,35 +1073,45 @@ function ToolsTab({ draft, setDraft, catalog, loading }: { draft: AgentDraft; se
           </div>
         </section>
       )) : (
-        <p className="rounded-md border bg-muted/30 p-4 text-sm text-muted-foreground">Sin tools disponibles.</p>
+        <p className="rounded-md border bg-muted/30 p-4 text-sm text-muted-foreground">No hay herramientas disponibles.</p>
       )}
     </div>
   );
 }
 
 function RagTab({ draft, setDraft }: { draft: AgentDraft; setDraft: (draft: AgentDraft) => void }) {
-  const selected = new Set(draft.rag_kinds);
+  const selected = new Set<string>(draft.rag_kinds);
   return (
     <div className="space-y-4">
       <section className="rounded-lg border bg-background p-4">
-        <h3 className="text-sm font-semibold">Filtro RAG</h3>
-        <div className="mt-3 flex flex-wrap gap-2">
-          {RAG_KINDS.map((kind) => (
-            <label key={kind} className="inline-flex min-h-[40px] items-center gap-2 rounded-md border bg-card px-3 text-sm">
+        <h3 className="text-sm font-semibold">Qué conocimiento puede consultar</h3>
+        {draft.rag_adjusted ? (
+          <p role="status" className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs">
+            Se ajustaron tipos de conocimiento anteriores a las categorías vigentes. Guarda el agente para conservar el ajuste.
+          </p>
+        ) : null}
+        <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
+          {RAG_KIND_OPTIONS.map((kind) => (
+            <label key={kind.id} className="flex min-h-[56px] gap-3 rounded-md border bg-card p-3 text-sm">
               <input
                 type="checkbox"
-                checked={selected.has(kind)}
+                checked={selected.has(kind.id)}
                 onChange={() => {
                   const next = new Set(selected);
-                  if (next.has(kind)) next.delete(kind);
-                  else next.add(kind);
+                  if (next.has(kind.id)) next.delete(kind.id);
+                  else next.add(kind.id);
                   setDraft({ ...draft, rag_kinds: Array.from(next).sort() });
                 }}
+                className="mt-1 h-4 w-4"
               />
-              {kind}
+              <span>
+                <span className="block font-medium">{kind.label}</span>
+                <span className="text-xs text-muted-foreground">{kind.hint}</span>
+              </span>
             </label>
           ))}
         </div>
+        {selected.size === 0 ? <p className="mt-2 text-xs text-muted-foreground">Sin selección: consulta todo el conocimiento disponible.</p> : null}
       </section>
       <VariablesEditor draft={draft} setDraft={setDraft} />
     </div>
@@ -933,7 +1122,7 @@ function VariablesEditor({ draft, setDraft }: { draft: AgentDraft; setDraft: (dr
   return (
     <section className="rounded-lg border bg-background p-4">
       <div className="flex items-center justify-between gap-3">
-        <h3 className="text-sm font-semibold">Variables</h3>
+        <h3 className="text-sm font-semibold">{GLOSSARY.contextData.one}</h3>
         <button type="button" onClick={() => setDraft({ ...draft, variables: [...draft.variables, { key: "", value: "" }] })} className="min-h-[36px] rounded-md border px-3 text-xs">
           Agregar
         </button>
@@ -941,12 +1130,12 @@ function VariablesEditor({ draft, setDraft }: { draft: AgentDraft; setDraft: (dr
       <div className="mt-3 space-y-2">
         {draft.variables.length ? draft.variables.map((row, index) => (
           <div key={index} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_40px] gap-2">
-            <input value={row.key} onChange={(event) => updateVariable(draft, setDraft, index, "key", event.target.value)} placeholder="clave" className={cn(INPUT_CLASS, "font-mono")} />
-            <input value={row.value} onChange={(event) => updateVariable(draft, setDraft, index, "value", event.target.value)} placeholder="valor" className={cn(INPUT_CLASS, "font-mono")} />
-            <button type="button" onClick={() => setDraft({ ...draft, variables: draft.variables.filter((_, i) => i !== index) })} className="min-h-[44px] rounded-md border text-sm">x</button>
+            <input value={row.key} onChange={(event) => updateVariable(draft, setDraft, index, "key", event.target.value)} placeholder="dato" aria-label="Nombre del dato" className={cn(INPUT_CLASS, "font-mono")} />
+            <input value={row.value} onChange={(event) => updateVariable(draft, setDraft, index, "value", event.target.value)} placeholder="valor" aria-label="Valor del dato" className={cn(INPUT_CLASS, "font-mono")} />
+            <button type="button" onClick={() => setDraft({ ...draft, variables: draft.variables.filter((_, i) => i !== index) })} className="min-h-[44px] rounded-md border text-sm" aria-label="Quitar dato">x</button>
           </div>
         )) : (
-          <p className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">Sin variables.</p>
+          <p className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">Sin datos de contexto.</p>
         )}
       </div>
     </section>
@@ -961,21 +1150,34 @@ function updateVariable(draft: AgentDraft, setDraft: (draft: AgentDraft) => void
 }
 
 function ScheduleTab({ draft, setDraft }: { draft: AgentDraft; setDraft: (draft: AgentDraft) => void }) {
+  const hasCron = Boolean(draft.schedule.cron.trim());
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-      <Field label="Cron">
-        <input value={draft.schedule.cron} onChange={(event) => setDraft({ ...draft, schedule: { ...draft.schedule, cron: event.target.value } })} placeholder="0 8 * * 1-5" className={cn(INPUT_CLASS, "font-mono")} />
-      </Field>
-      <Field label="Zona horaria">
-        <input value={draft.schedule.tz} onChange={(event) => setDraft({ ...draft, schedule: { ...draft.schedule, tz: event.target.value } })} className={cn(INPUT_CLASS, "font-mono")} />
-      </Field>
-      <Field label="Tarea programada" wide>
+      <FrequencyPicker
+        name="agent_frequency"
+        className="lg:col-span-2"
+        value={{ cron: draft.schedule.cron, timeZone: draft.schedule.tz }}
+        onChange={(next) =>
+          setDraft({
+            ...draft,
+            schedule: {
+              ...draft.schedule,
+              cron: next.cron,
+              tz: next.timeZone,
+              enabled: next.cron.trim() ? (draft.schedule.cron.trim() ? draft.schedule.enabled : true) : false,
+            },
+          })
+        }
+      />
+      <Field label="Instrucción de la tarea programada" wide>
         <textarea value={draft.schedule.prompt} onChange={(event) => setDraft({ ...draft, schedule: { ...draft.schedule, prompt: event.target.value } })} className={cn(TEXTAREA_CLASS, "min-h-36")} />
       </Field>
-      <label className="inline-flex min-h-[44px] items-center gap-2 rounded-md border bg-background px-3 text-sm">
-        <input type="checkbox" checked={draft.schedule.enabled} onChange={(event) => setDraft({ ...draft, schedule: { ...draft.schedule, enabled: event.target.checked } })} />
-        Tarea activa
-      </label>
+      {hasCron ? (
+        <label className="inline-flex min-h-[44px] items-center gap-2 rounded-md border bg-background px-3 text-sm">
+          <input type="checkbox" checked={draft.schedule.enabled} onChange={(event) => setDraft({ ...draft, schedule: { ...draft.schedule, enabled: event.target.checked } })} />
+          Tarea activa
+        </label>
+      ) : null}
     </div>
   );
 }
@@ -996,10 +1198,10 @@ function RunsTab(props: {
         <table className="w-full text-sm">
           <thead className="bg-muted/40 text-left text-xs uppercase tracking-wider text-muted-foreground">
             <tr>
-              <th className="px-3 py-2">Run</th>
+              <th className="px-3 py-2">Ejecución</th>
               <th className="px-3 py-2">Estado</th>
               <th className="px-3 py-2">Inicio</th>
-              <th className="px-3 py-2">Tools</th>
+              <th className="px-3 py-2">{GLOSSARY.tools.other}</th>
             </tr>
           </thead>
           <tbody>
@@ -1023,7 +1225,7 @@ function RunsTab(props: {
         {selectedRunLoading ? <SkeletonRows rows={4} /> : selectedRun ? (
           <pre className="mt-3 max-h-[460px] overflow-auto rounded-md bg-muted/40 p-3 text-xs">{JSON.stringify(selectedRun, null, 2)}</pre>
         ) : (
-          <p className="mt-3 text-sm text-muted-foreground">Selecciona un run.</p>
+          <p className="mt-3 text-sm text-muted-foreground">Selecciona una ejecución.</p>
         )}
       </div>
     </div>

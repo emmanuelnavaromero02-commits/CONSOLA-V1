@@ -151,6 +151,8 @@ export interface AgentToolCatalogItem {
   description?: string;
   category?: string;
   risk?: string;
+  risk_level?: string;
+  requires_approval?: boolean;
 }
 
 export interface AgentToolCatalogResponse {
