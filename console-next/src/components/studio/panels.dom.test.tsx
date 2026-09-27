@@ -24,7 +24,13 @@ function mutation(extra: Partial<Mutation> = {}): Mutation {
 
 const state = vi.hoisted(() => ({ hooks: {} as Record<string, unknown> }));
 const toastMock = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() }));
-const clientMocks = vi.hoisted(() => ({ extractEntity: vi.fn(), queryBronze: vi.fn(), streamStudioChat: vi.fn() }));
+const clientMocks = vi.hoisted(() => ({
+  extractEntity: vi.fn(),
+  queryBronze: vi.fn(),
+  streamStudioChat: vi.fn(),
+  describeSource: vi.fn(),
+  exploreData: vi.fn(),
+}));
 
 vi.mock("sonner", () => ({ toast: toastMock }));
 
@@ -66,6 +72,10 @@ vi.mock("@/lib/monitor/extraction-progress", async (importOriginal) => {
 
 vi.mock("@/lib/monitor/client", () => ({ extractEntity: clientMocks.extractEntity }));
 vi.mock("@/lib/data/client", () => ({ queryBronze: clientMocks.queryBronze }));
+vi.mock("@/lib/explorer/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/explorer/client")>();
+  return { ...actual, describeSource: clientMocks.describeSource, exploreData: clientMocks.exploreData };
+});
 vi.mock("@/lib/studio/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/studio/client")>();
   return { ...actual, streamStudioChat: clientMocks.streamStudioChat };
@@ -164,6 +174,23 @@ beforeEach(() => {
     }),
   };
   vi.clearAllMocks();
+  clientMocks.describeSource.mockResolvedValue({
+    source: "raw/acme/Customer",
+    source_kind: "bronze",
+    available_columns: [
+      { name: "id", type: "VARCHAR", kind: "text" },
+      { name: "credit", type: "DOUBLE", kind: "number" },
+    ],
+    executed: false,
+    columns: [],
+    rows: [],
+    row_count: 0,
+    limit: null,
+    truncated: false,
+    sql_display: "",
+    sql_definition: "",
+    sources: ["raw/acme/Customer"],
+  });
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -563,5 +590,179 @@ describe("StudioAssistant", () => {
     expect(container.textContent).toContain("Hecho");
     expect(container.querySelector('[data-testid="assistant-approval-card"]')).toBeNull();
     expect(byText("button", "Aplicar cambio")).toBeUndefined();
+  });
+});
+
+describe("RefinePanel assisted builder", () => {
+  const COMPILED =
+    "SELECT * FROM read_parquet('s3://{bucket}/raw/acme/Customer/**/*.parquet', hive_partitioning=true, union_by_name=true) WHERE \"credit\" > 10";
+
+  async function flush() {
+    for (let tick = 0; tick < 5; tick += 1) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+  }
+
+  async function renderDraft() {
+    await render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <RefinePanel
+          cartridge="acme"
+          manifest={{ id: "acme", entities: [{ entity: "Invoice" }, { entity: "Customer" }] }}
+          initialTarget={{ entity: "Customer" }}
+        />
+      </QueryClientProvider>,
+    );
+    await flush();
+  }
+
+  async function interpret(text: string) {
+    await typeInto(container.querySelector<HTMLInputElement>('[data-testid="nl-bar"] input'), text);
+    await act(async () => {
+      container.querySelector('[data-testid="nl-bar"]')?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+  }
+
+  async function setName(value: string) {
+    const input = [...container.querySelectorAll("label")]
+      .find((label) => label.textContent?.trim().startsWith("Nombre"))
+      ?.querySelector("input");
+    await typeInto(input ?? null, value);
+  }
+
+  function modeButton(label: string) {
+    return byText('[role="radio"]', label);
+  }
+
+  beforeEach(() => {
+    clientMocks.exploreData.mockImplementation(async (request: { execute: boolean }) =>
+      request.execute
+        ? { columns: ["id"], rows: [["c-1"]], sql_definition: COMPILED, sql_display: "", sources: ["raw/acme/Customer"] }
+        : { columns: [], rows: [], sql_definition: COMPILED, sources: ["raw/acme/Customer"] },
+    );
+  });
+
+  it("opens new drafts in builder mode with the SQL editor hidden", async () => {
+    await renderDraft();
+    expect(clientMocks.describeSource).toHaveBeenCalledWith({ kind: "bronze", cartridge: "acme", entity: "Customer" });
+    expect(modeButton("Constructor visual")?.getAttribute("aria-checked")).toBe("true");
+    expect(container.querySelector('[data-testid="assisted-explorer"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="technical-sql"]')?.hasAttribute("open")).toBe(false);
+    expect(container.querySelector('textarea[name="sql"]')?.closest("[hidden]")).toBeTruthy();
+  });
+
+  it("previews through /api/data/explore and keeps the generated SQL visible when the disclosure opens", async () => {
+    const save = state.hooks.useSaveDataset as Mutation;
+    await renderDraft();
+    await interpret("credit mayor que 10");
+    await click(byText("button", /Previsualizar/));
+    await flush();
+    expect(clientMocks.queryBronze).not.toHaveBeenCalled();
+    expect(clientMocks.exploreData.mock.calls[0][0]).toEqual({
+      source: { kind: "bronze", cartridge: "acme", entity: "Customer" },
+      columns: [],
+      filters: [{ column: "credit", op: "gt", value: "10" }],
+      sort: [],
+      limit: 50,
+      latest_only: false,
+      execute: true,
+    });
+    expect(container.textContent).toContain("c-1");
+    await click(byText("summary", /Ver consulta SQL técnica/));
+    expect(container.querySelector('[data-testid="technical-sql"]')?.hasAttribute("open")).toBe(true);
+    expect(container.querySelector('[data-testid="generated-sql"]')?.textContent).toBe(COMPILED);
+    expect(container.textContent).toContain("c-1");
+    expect(modeButton("Constructor visual")?.getAttribute("aria-checked")).toBe("true");
+
+    await setName("clientes_con_credito");
+    await click(byText("button", /Guardar/));
+    await flush();
+    expect(clientMocks.exploreData.mock.calls[1][0]).toMatchObject({ execute: false });
+    expect(save.mutate.mock.calls[0][0]).toEqual({
+      name: "clientes_con_credito",
+      layer: "silver",
+      sql: COMPILED,
+      description: "",
+      cartridge: "acme",
+      sources: ["raw/acme/Customer"],
+    });
+  });
+
+  it("saves only the server-compiled sources and confirms before replacing typed SQL", async () => {
+    const save = state.hooks.useSaveDataset as Mutation;
+    await renderDraft();
+    await click(modeButton("SQL técnico"));
+    await typeInto(
+      container.querySelector<HTMLTextAreaElement>('textarea[name="sql"]'),
+      "select * from read_parquet('raw/acme/Invoice') where load_date = '{latest_date}'",
+    );
+    expect(container.textContent).toContain("raw/acme/Invoice");
+    await click(modeButton("Constructor visual"));
+    await interpret("credit mayor que 10");
+    await setName("clientes");
+    await click(byText("button", /Guardar/));
+    await flush();
+    expect(save.mutate).not.toHaveBeenCalled();
+    const dialog = container.querySelector('[data-testid="replace-sql-dialog"]');
+    expect(dialog?.textContent).toContain("Reemplazar el SQL técnico");
+    await click(byText('[data-testid="replace-sql-dialog"] button', "Reemplazar y guardar"));
+    expect(save.mutate.mock.calls[0][0].sources).toEqual(["raw/acme/Customer"]);
+    expect(save.mutate.mock.calls[0][0].sql).toBe(COMPILED);
+  });
+
+  it("cancelling the replacement keeps the typed SQL and saves nothing", async () => {
+    const save = state.hooks.useSaveDataset as Mutation;
+    await renderDraft();
+    await click(modeButton("SQL técnico"));
+    await typeInto(container.querySelector<HTMLTextAreaElement>('textarea[name="sql"]'), "select 42");
+    await click(modeButton("Constructor visual"));
+    await setName("clientes");
+    await click(byText("button", /Guardar/));
+    await flush();
+    await click(byText('[data-testid="replace-sql-dialog"] button', "Cancelar"));
+    expect(save.mutate).not.toHaveBeenCalled();
+    expect(container.querySelector<HTMLTextAreaElement>('textarea[name="sql"]')?.value).toBe("select 42");
+  });
+
+  it("copies the generated SQL into the technical editor only when it is empty", async () => {
+    await renderDraft();
+    await click(byText("button", /Previsualizar/));
+    await flush();
+    await click(byText("summary", /Ver consulta SQL técnica/));
+    await click(byText("button", /Copiar al editor/));
+    expect(modeButton("SQL técnico")?.getAttribute("aria-checked")).toBe("true");
+    expect(container.querySelector<HTMLTextAreaElement>('textarea[name="sql"]')?.value).toBe(COMPILED);
+  });
+
+  it("does not offer row limits from the sentence when saving a dataset", async () => {
+    await renderDraft();
+    await interpret("primeros 10");
+    expect(container.querySelector('[data-testid="nl-feedback"]')?.textContent).toContain(
+      "El límite de filas no aplica al guardar un conjunto de datos",
+    );
+  });
+
+  it("refuses to save from the builder until the draft has a valid name", async () => {
+    const save = state.hooks.useSaveDataset as Mutation;
+    await renderDraft();
+    await click(byText("button", /Guardar/));
+    expect(save.mutate).not.toHaveBeenCalled();
+    expect(clientMocks.exploreData).not.toHaveBeenCalled();
+    expect(toastMock.error).toHaveBeenCalled();
+  });
+
+  it("switches to the technical editor explicitly and previews with queryBronze", async () => {
+    clientMocks.queryBronze.mockResolvedValue({ data: [{ uno: 1 }] });
+    await renderDraft();
+    await click(modeButton("SQL técnico"));
+    expect(container.querySelector('[data-testid="assisted-explorer"]')).toBeNull();
+    expect(container.querySelector('textarea[name="sql"]')?.closest("[hidden]")).toBeNull();
+    await typeInto(container.querySelector<HTMLTextAreaElement>('textarea[name="sql"]'), "select 1 as uno");
+    await click(byText("button", /Previsualizar/));
+    await flush();
+    expect(clientMocks.queryBronze).toHaveBeenCalledWith({ sql: "select 1 as uno", limit: 50, sources: ["raw/acme/Customer"] });
+    expect(clientMocks.exploreData).not.toHaveBeenCalled();
   });
 });

@@ -169,7 +169,8 @@ test.describe("Studio (Next.js, /studio)", () => {
     await openStudio(page);
     await openTab(page, /^Modelado y Limpieza \(Plata\)$/);
     await page.getByRole("button", { name: /Nuevo dataset/ }).click();
-    await page.getByRole("textbox", { name: "SQL" }).fill("select 1 as uno");
+    await page.getByRole("radio", { name: "SQL técnico" }).click();
+    await page.getByRole("textbox", { name: "SQL", exact: true }).fill("select 1 as uno");
     const request = page.waitForRequest(
       (req) => req.method() === "POST" && new URL(req.url()).pathname === "/api/bronze/query",
       { timeout: 10_000 },
