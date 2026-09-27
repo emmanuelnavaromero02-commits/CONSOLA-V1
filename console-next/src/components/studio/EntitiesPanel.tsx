@@ -25,7 +25,13 @@ import { changedEntityFields, identifierError, type EntityDraft as EditDraft } f
 import { cn } from "@/lib/utils";
 
 import { DataTable } from "./DataTable";
-import { ExtractionTracker, extractionMode, startExtraction, type ExtractionLaunch } from "./ExtractionTracker";
+import {
+  ExtractionTracker,
+  extractionLaunchNotice,
+  extractionMode,
+  startExtraction,
+  type ExtractionLaunch,
+} from "./ExtractionTracker";
 import { buttonClass, ConfirmDialog, inputClass, Notice, primaryButtonClass, Spinner } from "./ui";
 
 const MODES = ["full", "incremental"];
@@ -223,7 +229,7 @@ export function EntitiesPanel({ cartridge, manifest }: { cartridge: string; mani
     try {
       const launch = await startExtraction(cartridge, entity.name, extractionMode(entity.mode));
       setLaunches((current) => ({ ...current, [entity.name]: launch }));
-      toast.success(`Extracción enviada para ${entity.name}.`);
+      toast.success(extractionLaunchNotice(launch));
     } catch (error) {
       toast.error(studioErrorMessage(error, `No se pudo extraer ${entity.name}.`));
     } finally {

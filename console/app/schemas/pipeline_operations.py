@@ -92,8 +92,40 @@ class StuckRunRecoveryResponse(_StrictModel):
     message_es: str
 
 
+MAX_PROGRESS_RUNS = 20
+
+
+class ExtractionProgressRun(_StrictModel):
+    run_id: str
+    entity: str
+    phase: Literal["connecting", "extracting", "building", "ready"]
+    phase_index: int = Field(ge=1, le=4)
+    status: str
+    terminal: bool
+    outcome: Literal["success", "partial", "failed"] | None = None
+    record_count: int | None = Field(default=None, ge=0)
+    entities_done: int | None = Field(default=None, ge=0)
+    entities_total: int | None = Field(default=None, ge=0)
+    error: str | None = Field(default=None, max_length=500)
+    recovered: bool
+    stalled: bool
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
+class ExtractionProgressResponse(_StrictModel):
+    schema_version: Literal["pipeline-extraction-progress/v1"] = (
+        "pipeline-extraction-progress/v1"
+    )
+    checked_at: datetime
+    runs: list[ExtractionProgressRun] = Field(max_length=MAX_PROGRESS_RUNS)
+
+
 __all__ = (
     "CARTRIDGE_PATTERN",
+    "ExtractionProgressResponse",
+    "ExtractionProgressRun",
+    "MAX_PROGRESS_RUNS",
     "DAG_ID_PATTERN",
     "MAX_RECOVERY_RUNS",
     "PLAN_DIGEST_PATTERN",
