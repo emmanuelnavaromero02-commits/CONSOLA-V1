@@ -61,6 +61,12 @@ def salesforce_extract():
             "X-Api-Key": _internal_key(),
             "X-Internal-Service": "airflow",
         }
+        from cartridge_run_admission import admit_run
+
+        admitted = admit_run(conf, cartridge_id="salesforce", dag_run=context.get("dag_run"))
+
+        def skill_body() -> dict:
+            return {"security_context": admitted.context(user_id="airflow:salesforce_extract")}
 
         from service_job_client import idempotency_key, run_service_job
 
@@ -72,11 +78,6 @@ def salesforce_extract():
                     "to_date": conf.get("to_date") or None,
                     "job_id": conf.get("job_id") or None,
                 }.items() if v
-            }
-            skill_body = {
-                key: conf[key]
-                for key in ("tenant_id", "workspace_id", "security_context")
-                if conf.get(key)
             }
             return run_service_job(
                 client,

@@ -10,9 +10,10 @@ import time
 from typing import Any
 
 from app.services import permissions
+from app.services.permission_roles import PLATFORM_ADMIN_ROLES
 
 
-ADMIN_ROLES = {"admin", "owner", "super_admin"}
+ADMIN_ROLES = PLATFORM_ADMIN_ROLES
 _SIGNATURE_FIELD = "_signature"
 _SIGNED_AT_FIELD = "_signed_at"
 _SIGNATURE_VERSION_FIELD = "_signature_version"

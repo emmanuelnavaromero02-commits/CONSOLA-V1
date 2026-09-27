@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from app.dependencies import ROLE_ADMIN, require_global_any_role
 from app.services import audit_service, auth
 from app.services.csrf import require_csrf
+from app.services.permission_roles import GLOBAL_ROLES
 
 
 router = APIRouter(prefix="/api/admin/tenants", tags=["Admin Tenants"])
@@ -19,7 +20,7 @@ router = APIRouter(prefix="/api/admin/tenants", tags=["Admin Tenants"])
 PLATFORM_ADMIN = require_global_any_role("owner", "super_admin", ROLE_ADMIN)
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$")
-DANGEROUS_GLOBAL_ROLES = {"owner", "admin", "super_admin", "security_admin", "auditor"}
+DANGEROUS_GLOBAL_ROLES = GLOBAL_ROLES
 MAX_NAME = 160
 MAX_EMAIL = 254
 

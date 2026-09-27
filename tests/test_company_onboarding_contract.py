@@ -50,8 +50,10 @@ def test_bootstrap_admin_generates_one_time_password_server_side():
     assert "tenant_admin_temporary_password_issued" in router
     assert '"workspace_role": "tenant_admin"' in router
     assert 'body.get("temporary_password")' not in router
-    for role in ("owner", "admin", "super_admin", "security_admin", "auditor"):
-        assert role in router
+    assert "DANGEROUS_GLOBAL_ROLES = GLOBAL_ROLES" in router
+    roles = (REPO / "console/app/services/permission_roles.py").read_text(encoding="utf-8")
+    assert 'PLATFORM_ADMIN_ROLES = frozenset({"owner", "super_admin", "admin"})' in roles
+    assert 'GLOBAL_ROLES = frozenset({*PLATFORM_ADMIN_ROLES, "security_admin", "auditor"})' in roles
 
 
 def test_new_workspace_inherits_existing_tenant_admin_memberships():

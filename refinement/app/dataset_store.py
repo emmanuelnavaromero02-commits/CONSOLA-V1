@@ -25,9 +25,21 @@ def _conn():
     return psycopg2.connect(_dsn(), cursor_factory=psycopg2.extras.RealDictCursor)
 
 
-def _apply_scope(cur, tenant_id: str | None = None, workspace_id: str | None = None):
+def _apply_scope(
+    cur,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+    *,
+    platform_admin: bool = False,
+):
     workspace = str(workspace_id or "").strip()
     if not workspace:
+        if platform_admin:
+            cur.execute(
+                "SELECT set_config('app.tenant_id', '', true), "
+                "set_config('app.workspace_id', '', true), "
+                "set_config('app.platform_admin', 'true', true)"
+            )
         return
     tenant = str(tenant_id or "").strip()
     cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant,))
@@ -85,10 +97,14 @@ class DatasetStore:
         pass
 
     def list_datasets(
-        self, tenant_id: str | None = None, workspace_id: str | None = None
+        self,
+        tenant_id: str | None = None,
+        workspace_id: str | None = None,
+        *,
+        platform_admin: bool = False,
     ) -> list[dict]:
         with _conn() as conn, conn.cursor() as cur:
-            _apply_scope(cur, tenant_id, workspace_id)
+            _apply_scope(cur, tenant_id, workspace_id, platform_admin=platform_admin)
             cur.execute("""
                 SELECT name, description, layer, cartridge,
                        sources, schedule, last_refresh, row_count, workspace_id, created_by_id
@@ -117,10 +133,15 @@ class DatasetStore:
         ]
 
     def get_dataset(
-        self, name: str, tenant_id: str | None = None, workspace_id: str | None = None
+        self,
+        name: str,
+        tenant_id: str | None = None,
+        workspace_id: str | None = None,
+        *,
+        platform_admin: bool = False,
     ) -> dict | None:
         with _conn() as conn, conn.cursor() as cur:
-            _apply_scope(cur, tenant_id, workspace_id)
+            _apply_scope(cur, tenant_id, workspace_id, platform_admin=platform_admin)
             cur.execute(
                 """
                 SELECT name, layer, cartridge, sources, sql_def,
@@ -235,10 +256,15 @@ class DatasetStore:
             conn.commit()
 
     def delete_dataset(
-        self, name: str, tenant_id: str | None = None, workspace_id: str | None = None
+        self,
+        name: str,
+        tenant_id: str | None = None,
+        workspace_id: str | None = None,
+        *,
+        platform_admin: bool = False,
     ) -> dict:
         with _conn() as conn, conn.cursor() as cur:
-            _apply_scope(cur, tenant_id, workspace_id)
+            _apply_scope(cur, tenant_id, workspace_id, platform_admin=platform_admin)
             cur.execute(
                 "SELECT layer, cartridge FROM datasets WHERE name = %s AND (%s::uuid IS NULL OR workspace_id = %s::uuid)",
                 (name, workspace_id, workspace_id),
@@ -261,9 +287,11 @@ class DatasetStore:
         row_count: int,
         tenant_id: str | None = None,
         workspace_id: str | None = None,
+        *,
+        platform_admin: bool = False,
     ):
         with _conn() as conn, conn.cursor() as cur:
-            _apply_scope(cur, tenant_id, workspace_id)
+            _apply_scope(cur, tenant_id, workspace_id, platform_admin=platform_admin)
             cur.execute(
                 """
                 UPDATE datasets

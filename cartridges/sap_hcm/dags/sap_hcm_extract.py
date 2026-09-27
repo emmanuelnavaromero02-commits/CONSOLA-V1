@@ -57,11 +57,12 @@ def sap_hcm_extract():
             "X-Api-Key": _internal_key(),
             "X-Internal-Service": "airflow",
         }
-        skill_body = {
-            key: conf[key]
-            for key in ("tenant_id", "workspace_id", "security_context")
-            if conf.get(key)
-        }
+        from cartridge_run_admission import admit_run
+
+        admitted = admit_run(conf, cartridge_id="sap_hcm", dag_run=context.get("dag_run"))
+
+        def skill_body() -> dict:
+            return {"security_context": admitted.context(user_id="airflow:sap_hcm_extract")}
 
         from service_job_client import idempotency_key, run_service_job
 

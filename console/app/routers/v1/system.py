@@ -4,6 +4,7 @@ from fastapi import APIRouter
 import types
 
 import app.main as _console_main
+from app.services.permission_roles import PLATFORM_ADMIN_ROLES
 
 globals().update(_console_main.__dict__)
 router = APIRouter()
@@ -195,7 +196,7 @@ async def api_me_access(user: dict = Depends(require_authenticated)):
         },
         "role": {
             "global": role_canonical,
-            "is_platform_admin": role_canonical in {"owner", "super_admin", "admin"},
+            "is_platform_admin": role_canonical in PLATFORM_ADMIN_ROLES,
         },
         "workspace": {
             "tenant_id": user.get("tenant_id") or user.get("active_tenant_id"),
@@ -208,7 +209,7 @@ async def api_me_access(user: dict = Depends(require_authenticated)):
             "denied": cartridges_denied,
         },
         "ui_capabilities": {
-            "can_view_iam":            "iam.users.read" in effective and role_canonical in {"owner", "super_admin", "admin"},
+            "can_view_iam":            "iam.users.read" in effective and role_canonical in PLATFORM_ADMIN_ROLES,
             "can_admin_marketplace":   "marketplace.admin" in effective,
             "can_admin_workspace":     workspace_role_resolved in {"workspace_admin", "tenant_admin"},
             "can_view_audit":          "security.audit.read" in effective,

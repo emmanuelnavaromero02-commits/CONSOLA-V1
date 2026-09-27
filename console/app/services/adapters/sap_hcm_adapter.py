@@ -126,8 +126,22 @@ def _csrf_token_before_post(
     try:
         return _fetch_csrf_token(url, headers=headers, timeout=timeout)
     except egress_guard.EgressGuardError as exc:
-        raise AdapterConfigurationError(
-            str(exc),
+        if not exc.request_dispatched:
+            raise AdapterConfigurationError(
+                str(exc),
+                outcome_ambiguous=False,
+            ) from exc
+        CartridgeCircuitBreaker.record_failure(SapHcmAdapter.CARTRIDGE_ID)
+        raise AdapterExecutionError(
+            f"SAP HCM CSRF token fetch transport error: {exc}",
+            status_code=503,
+            outcome_ambiguous=False,
+        ) from exc
+    except (OSError, TimeoutError, ssl.SSLError) as exc:
+        CartridgeCircuitBreaker.record_failure(SapHcmAdapter.CARTRIDGE_ID)
+        raise AdapterExecutionError(
+            f"SAP HCM CSRF token fetch transport error: {exc}",
+            status_code=503,
             outcome_ambiguous=False,
         ) from exc
     except AdapterExecutionError as exc:

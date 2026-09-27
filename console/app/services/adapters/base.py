@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
+import inspect
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -44,6 +47,16 @@ class AdapterConfigurationError(AdapterExecutionError):
 
 class AdapterCircuitOpenError(AdapterExecutionError):
     pass
+
+
+async def run_adapter(execute: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """Await an adapter call; blocking (sync) adapters run in a worker thread, never on the event loop."""
+    if inspect.iscoroutinefunction(execute):
+        return await execute(*args, **kwargs)
+    result = await asyncio.to_thread(execute, *args, **kwargs)
+    if inspect.isawaitable(result):
+        result = await result
+    return result
 
 
 class BaseAdapter(ABC):

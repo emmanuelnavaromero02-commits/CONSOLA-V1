@@ -10,6 +10,7 @@ import asyncpg
 
 from app.services import audit_service, cartridge_service, permissions
 from app.services.db_scope import scoped_db_for_user
+from app.services.permission_roles import PLATFORM_ADMIN_ROLES
 
 
 class MarketplaceError(RuntimeError):
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 READY_INSTALLATION_STATUS = "ready"
 CUSTOMER_PRODUCT_STATUSES = {"active"}
-GLOBAL_ADMIN_ROLES = {"admin", "owner", "super_admin"}
+GLOBAL_ADMIN_ROLES = PLATFORM_ADMIN_ROLES
 
 
 COMMERCIAL_PROFILES: dict[str, dict[str, Any]] = {

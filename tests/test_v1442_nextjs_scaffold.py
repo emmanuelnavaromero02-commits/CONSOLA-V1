@@ -296,7 +296,10 @@ def test_login_page_avoids_next_navigation_bundle():
     assert "next/navigation" not in src
     assert "useSearchParams" not in src
     assert "new URLSearchParams" in src
-    assert "startsWith(\"//\")" in src
+    assert "safeInternalPath(nextPath, window.location.origin)" in src
+    helper = _read(SRC / "lib/safe-redirect.ts")
+    assert 'resolved.pathname.startsWith("//")' in helper
+    assert "resolved.origin !== base.origin" in helper
 
 
 def test_existing_aws_compose_consistency_still_passes():

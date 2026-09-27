@@ -6,7 +6,7 @@ from typing import Any
 
 from app.services.control_room.business_action_digest import action_contract_digest
 from app.services.control_room.business_access import WORKSPACE_WIDE_SCOPED_ROLES
-from app.services.permission_roles import ROLE_PERMISSIONS
+from app.services.permission_roles import PLATFORM_ADMIN_ROLES, ROLE_PERMISSIONS
 
 
 @dataclass(frozen=True, repr=False)
@@ -83,7 +83,7 @@ async def capture_authorization_snapshot(
     grant_source = "workspace_role" if granting_workspace_role else "global_role"
     workspace_wide = bool(
         global_role in WORKSPACE_WIDE_SCOPED_ROLES
-        or global_role in {"owner", "super_admin", "admin"}
+        or global_role in PLATFORM_ADMIN_ROLES
         or granting_workspace_role in WORKSPACE_WIDE_SCOPED_ROLES
     )
     access_revision = {

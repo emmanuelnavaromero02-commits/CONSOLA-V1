@@ -157,6 +157,7 @@ def apply_user_scope_to_dag_conf(
     security_context_builder: Callable[[dict[str, Any] | None], dict[str, Any]],
 ) -> dict[str, Any]:
     scoped = dict(conf or {})
+    scoped.pop("security_context", None)
     ctx = security_context_builder(user)
     tenant_id = ctx.get("tenant_id")
     workspace_id = ctx.get("workspace_id")

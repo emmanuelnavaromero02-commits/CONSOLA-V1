@@ -7,6 +7,11 @@ import pytest
 from refinement.app.duckdb_engine import DuckDBEngine
 
 
+SCOPE = {
+    "tenant_id": "11111111-1111-4111-8111-111111111111",
+    "workspace_id": "22222222-2222-4222-8222-222222222222",
+}
+
 def test_materialize_blocks_local_file_reads_before_duckdb_execution():
     engine = DuckDBEngine()
     engine._conn = MagicMock(side_effect=AssertionError("_conn should not be opened for unsafe SQL"))
@@ -19,7 +24,8 @@ def test_materialize_blocks_local_file_reads_before_duckdb_execution():
                 "layer": "silver",
                 "sql_def": "SELECT * FROM read_csv('/etc/passwd')",
                 "sources": [],
-            }
+            },
+            SCOPE,
         )
 
 
@@ -35,7 +41,8 @@ def test_materialize_blocks_ddl_before_duckdb_execution():
                 "layer": "gold",
                 "sql_def": "DROP TABLE pggold.gold_sales",
                 "sources": [],
-            }
+            },
+            SCOPE,
         )
 
 

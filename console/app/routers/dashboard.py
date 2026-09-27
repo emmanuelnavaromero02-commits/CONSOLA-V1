@@ -11,8 +11,10 @@ from fastapi import APIRouter, Depends
 from app.security import get_internal_api_key
 from app.services import auth
 from app.services.db_scope import scoped_db_for_user
+from app.services.intelligence.operations_aggregates import CONSOLE_SCOPE_PREDICATE
 from app.services.permissions import canonical_role, require_permission
 from app.services.security_context import build_security_context
+from app.services.permission_roles import PLATFORM_ADMIN_ROLES
 
 
 router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
@@ -20,7 +22,7 @@ router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
 
 _CARTRIDGES = ("replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors", "sap_b1")
 VAULT_URL = os.environ.get("VAULT_URL", "http://vault:8300").rstrip("/")
-_PLATFORM_ROLES = {"owner", "super_admin", "admin"}
+_PLATFORM_ROLES = PLATFORM_ADMIN_ROLES
 
 
 def _is_platform_admin(user: dict | None) -> bool:
@@ -125,101 +127,53 @@ async def _extraction_counts(
     pool,
     active_cartridges: tuple[str, ...],
     *,
-    tenant_id: str | None = None,
-    workspace_id: str | None = None,
+    tenant_id: str | None,
+    workspace_id: str,
 ) -> dict:
+    empty = {
+        "today": 0,
+        "week": 0,
+        "productive_failures_today": 0,
+        "unscope_noise_failures_today": 0,
+    }
     if not active_cartridges:
-        return {
-            "today": 0,
-            "week": 0,
-            "productive_failures_today": 0,
-            "unscope_noise_failures_today": 0,
-        }
-    if workspace_id:
-        today = await pool.fetchval(
-            """
-            SELECT COUNT(*)
-              FROM pipeline_runs
-             WHERE started_at >= date_trunc('day', NOW())
-               AND workspace_id = $1::uuid
-               AND ($2::uuid IS NULL OR tenant_id = $2::uuid)
-               AND cartridge_id = ANY($3::text[])
-            """,
-            workspace_id, tenant_id, list(active_cartridges),
-        )
-        week = await pool.fetchval(
-            """
-            SELECT COUNT(*)
-              FROM pipeline_runs
-             WHERE started_at >= NOW() - INTERVAL '7 days'
-               AND workspace_id = $1::uuid
-               AND ($2::uuid IS NULL OR tenant_id = $2::uuid)
-               AND cartridge_id = ANY($3::text[])
-            """,
-            workspace_id, tenant_id, list(active_cartridges),
-        )
-        productive_failures = await pool.fetchval(
-            """
-            SELECT COUNT(*)
-              FROM pipeline_runs
-             WHERE started_at >= date_trunc('day', NOW())
-               AND status = 'failed'
-               AND workspace_id = $1::uuid
-               AND ($2::uuid IS NULL OR tenant_id = $2::uuid)
-               AND cartridge_id = ANY($3::text[])
-            """,
-            workspace_id, tenant_id, list(active_cartridges),
-        )
-        return {
-            "today": int(today or 0),
-            "week": int(week or 0),
-            "productive_failures_today": int(productive_failures or 0),
-            "unscope_noise_failures_today": 0,
-        }
-
+        return empty
     today = await pool.fetchval(
-        """
+        f"""
         SELECT COUNT(*)
-          FROM extraction_runs
+          FROM pipeline_runs
          WHERE started_at >= date_trunc('day', NOW())
-           AND cartridge_id = ANY($1::text[])
+           AND {CONSOLE_SCOPE_PREDICATE}
+           AND cartridge_id = ANY($3::text[])
         """,
-        list(active_cartridges),
+        workspace_id, tenant_id, list(active_cartridges),
     )
     week = await pool.fetchval(
-        """
+        f"""
         SELECT COUNT(*)
-          FROM extraction_runs
+          FROM pipeline_runs
          WHERE started_at >= NOW() - INTERVAL '7 days'
-           AND cartridge_id = ANY($1::text[])
+           AND {CONSOLE_SCOPE_PREDICATE}
+           AND cartridge_id = ANY($3::text[])
         """,
-        list(active_cartridges),
+        workspace_id, tenant_id, list(active_cartridges),
     )
     productive_failures = await pool.fetchval(
-        """
+        f"""
         SELECT COUNT(*)
-          FROM extraction_runs
+          FROM pipeline_runs
          WHERE started_at >= date_trunc('day', NOW())
            AND status = 'failed'
-           AND cartridge_id = ANY($1::text[])
+           AND {CONSOLE_SCOPE_PREDICATE}
+           AND cartridge_id = ANY($3::text[])
         """,
-        list(active_cartridges),
-    )
-    unscope_noise = await pool.fetchval(
-        """
-        SELECT COUNT(*)
-          FROM extraction_runs
-         WHERE started_at >= date_trunc('day', NOW())
-           AND status = 'failed'
-           AND NOT (cartridge_id = ANY($1::text[]))
-        """,
-        list(active_cartridges),
+        workspace_id, tenant_id, list(active_cartridges),
     )
     return {
+        **empty,
         "today": int(today or 0),
-        "week":  int(week or 0),
+        "week": int(week or 0),
         "productive_failures_today": int(productive_failures or 0),
-        "unscope_noise_failures_today": int(unscope_noise or 0),
     }
 
 
@@ -227,37 +181,23 @@ async def _freshness_per_cartridge(
     pool,
     active_cartridges: tuple[str, ...],
     *,
-    tenant_id: str | None = None,
-    workspace_id: str | None = None,
+    tenant_id: str | None,
+    workspace_id: str,
 ) -> dict:
     if not active_cartridges:
         return {}
-    if workspace_id:
-        rows = await pool.fetch(
-            """
-            SELECT cartridge_id,
-                   EXTRACT(EPOCH FROM (NOW() - MAX(finished_at))) / 3600.0 AS age_hours
-              FROM pipeline_runs
-             WHERE status = 'success'
-               AND workspace_id = $1::uuid
-               AND ($2::uuid IS NULL OR tenant_id = $2::uuid)
-               AND cartridge_id = ANY($3::text[])
-             GROUP BY cartridge_id
-            """,
-            workspace_id, tenant_id, list(active_cartridges),
-        )
-    else:
-        rows = await pool.fetch(
-        """
+    rows = await pool.fetch(
+        f"""
         SELECT cartridge_id,
                EXTRACT(EPOCH FROM (NOW() - MAX(finished_at))) / 3600.0 AS age_hours
-          FROM extraction_runs
+          FROM pipeline_runs
          WHERE status = 'success'
-           AND cartridge_id = ANY($1::text[])
+           AND {CONSOLE_SCOPE_PREDICATE}
+           AND cartridge_id = ANY($3::text[])
          GROUP BY cartridge_id
         """,
-        list(active_cartridges),
-        )
+        workspace_id, tenant_id, list(active_cartridges),
+    )
     by_id: dict = {}
     for row in rows:
         cid = row["cartridge_id"]
@@ -442,17 +382,8 @@ async def dashboard_kpis(user: dict = Depends(require_permission("workspace.acce
     active_cartridges = await _active_scoped_cartridges(user)
     if _is_platform_admin(user):
         active_cartridges = active_cartridges or _CARTRIDGES
-        return {
-            "active_cartridges": list(active_cartridges),
-            "cartridges": await _cartridge_counts(pool, active_cartridges),
-            "extractions": await _extraction_counts(pool, active_cartridges),
-            "data_freshness": await _freshness_per_cartridge(pool, active_cartridges),
-            "users": await _user_counts(pool, user),
-            "copilot": await _copilot_counts(pool, user),
-            "audit": await _audit_counts(pool, user),
-        }
-
-    active_cartridges = active_cartridges or ()
+    else:
+        active_cartridges = active_cartridges or ()
     async with scoped_db_for_user(pool, user) as (conn, tenant_id, workspace_id):
         return {
             "active_cartridges": list(active_cartridges),

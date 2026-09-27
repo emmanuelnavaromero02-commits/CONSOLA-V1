@@ -6,6 +6,7 @@ from fastapi import Depends, HTTPException, Request
 from app.services import auth as _auth
 from app.services.db_scope import scoped_db
 from app.services.jwt_auth import JWTAuthError, verify_access_token_async
+from app.services.permission_roles import PLATFORM_ADMIN_ROLES
 
 
 ROLE_ADMIN = "admin"
@@ -13,7 +14,7 @@ ROLE_USER = "user"
 ROLE_WORKSPACE_ADMIN = "workspace_admin"
 ROLE_ANALYST = "analyst"
 ROLE_VIEWER = "viewer"
-_GLOBAL_ADMIN_ROLES = {"admin", "owner", "super_admin"}
+_GLOBAL_ADMIN_ROLES = PLATFORM_ADMIN_ROLES
 ACTIVE_WORKSPACE_COOKIE = "omega_active_workspace_id"
 
 

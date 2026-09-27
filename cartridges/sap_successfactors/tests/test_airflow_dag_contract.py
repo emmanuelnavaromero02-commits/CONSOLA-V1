@@ -152,8 +152,12 @@ def test_successfactors_dags_refresh_signed_scope_at_task_runtime():
     for filename in ("sap_successfactors_extract.py", "sap_successfactors_extract_all.py"):
         source = (ROOT / "dags" / filename).read_text(encoding="utf-8")
 
-        assert "if key not in {_SIGNATURE_FIELD, _SIGNED_AT_FIELD, _SIGNATURE_VERSION_FIELD}" in source
-        assert "return _sign_security_context(unsigned)" in source
+        assert "def _sign_security_context" not in source
+        assert "def _security_context_from_conf" not in source
+        assert "return _sign_security_context(unsigned)" not in source
+        assert "SECURITY_CONTEXT_SIGNING_KEY" not in source
+        assert "admit_run(" in source and "cartridge_id=CARTRIDGE_ID, dag_run=dag_run" in source
+        assert "admitted.context(user_id=_ACTOR)" in source
 
 
 def test_single_entity_dag_updates_studio_trigger_pipeline_run():
@@ -161,7 +165,9 @@ def test_single_entity_dag_updates_studio_trigger_pipeline_run():
 
     assert '"run_id": airflow_run_id' in source
     assert 'sap_successfactors_extract:{entity}:{airflow_run_id}' not in source
-    assert "def _scope_from_conf" in source
+    assert "def _scope_from_conf" not in source
+    assert '"tenant_id": admitted.tenant_id' in source
+    assert '"workspace_id": admitted.workspace_id' in source
 
 
 def test_extract_all_dag_records_entity_pipeline_runs_for_studio():

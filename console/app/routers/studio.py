@@ -376,49 +376,6 @@ def _host_allowed_by_env(url: str, env_name: str) -> bool:
     return bool(host and host in allowed)
 
 
-async def _read_pinned_http_response(reader: asyncio.StreamReader, max_bytes: int) -> _PinnedHTTPResponse:
-    header_bytes = await reader.readuntil(b"\r\n\r\n")
-    if len(header_bytes) > 65536:
-        raise ValueError("response headers too large")
-    header_text = header_bytes.decode("iso-8859-1", errors="replace")
-    lines = header_text.split("\r\n")
-    status_parts = lines[0].split(" ", 2)
-    status_code = int(status_parts[1]) if len(status_parts) > 1 and status_parts[1].isdigit() else 0
-    headers: dict[str, str] = {}
-    for line in lines[1:]:
-        if not line or ":" not in line:
-            continue
-        name, value = line.split(":", 1)
-        headers[name.strip().lower()] = value.strip()
-
-    content_length = headers.get("content-length")
-    if content_length and content_length.isdigit() and int(content_length) > max_bytes:
-        raise ValueError("response exceeds size limit")
-    body = bytearray()
-    if headers.get("transfer-encoding", "").lower() == "chunked":
-        while True:
-            line = await reader.readline()
-            chunk_size = int(line.split(b";", 1)[0].strip() or b"0", 16)
-            if chunk_size == 0:
-                await reader.readline()
-                break
-            if len(body) + chunk_size > max_bytes:
-                raise ValueError("response exceeds size limit")
-            body.extend(await reader.readexactly(chunk_size))
-            await reader.readexactly(2)
-    elif content_length and content_length.isdigit():
-        body.extend(await reader.readexactly(int(content_length)))
-    else:
-        while True:
-            chunk = await reader.read(min(65536, max_bytes + 1 - len(body)))
-            if not chunk:
-                break
-            body.extend(chunk)
-            if len(body) > max_bytes:
-                raise ValueError("response exceeds size limit")
-    return _PinnedHTTPResponse(status_code=status_code, headers=headers, content=bytes(body))
-
-
 async def _pinned_http_request(
     method: str,
     url: str,

@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import os
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
 
 from app.services import auth
+from app.services.db_scope import scoped_db_for_user
+from app.services.intelligence.operations_aggregates import CONSOLE_SCOPE_PREDICATE
 from app.services.permissions import canonical_role, require_permission
+from app.services.permission_roles import PLATFORM_ADMIN_ROLES
 
 
 require_operations_read = require_permission("operations.read")
@@ -38,7 +42,7 @@ def _float(value: object) -> float | None:
 
 
 def _is_platform_admin(user: dict | None) -> bool:
-    return canonical_role((user or {}).get("role")) in {"owner", "super_admin", "admin"}
+    return canonical_role((user or {}).get("role")) in PLATFORM_ADMIN_ROLES
 
 
 def _tenant_workspace(user: dict | None) -> tuple[str | None, str | None]:
@@ -51,8 +55,6 @@ def _tenant_workspace(user: dict | None) -> tuple[str | None, str | None]:
 
 def _scoped_where(user: dict | None, table_alias: str = "", *, metadata: bool = False) -> tuple[str, tuple]:
     tenant_id, workspace_id = _tenant_workspace(user)
-    if _is_platform_admin(user) and not (tenant_id and workspace_id):
-        return "", ()
     if not tenant_id or not workspace_id:
         return " AND FALSE", ()
     prefix = f"{table_alias}." if table_alias else ""
@@ -73,12 +75,19 @@ async def _safe_fetchval(
     default: object = 0,
 ) -> object:
     try:
-        value = await conn.fetchval(query, *args)
+        async with _savepoint(conn):
+            value = await conn.fetchval(query, *args)
     except Exception:
         if degraded is not None:
             degraded.append(metric or "unknown_metric")
         return None
     return default if value is None else value
+
+
+def _savepoint(conn):
+    # One unavailable metric must not abort the scoped transaction for the rest.
+    transaction = getattr(conn, "transaction", None)
+    return transaction() if callable(transaction) else nullcontext()
 
 
 async def _safe_fetch(
@@ -89,7 +98,8 @@ async def _safe_fetch(
     *args,
 ) -> list[dict]:
     try:
-        rows = await conn.fetch(query, *args)
+        async with _savepoint(conn):
+            rows = await conn.fetch(query, *args)
     except Exception:
         if degraded is not None:
             degraded.append(metric or "unknown_metric")
@@ -120,10 +130,10 @@ def _backup_status() -> dict:
 async def operational_metrics(user: dict = Depends(require_operations_read)) -> dict:
     pool = await auth.pool()
     degraded: list[str] = []
-    async with pool.acquire() as conn:
+    async with scoped_db_for_user(pool, user) as (conn, tenant_id, workspace_id):
         platform = _is_platform_admin(user)
         if platform:
-            run_where, run_args = _scoped_where(user)
+            run_where, run_args = f" AND {CONSOLE_SCOPE_PREDICATE}", (workspace_id, tenant_id)
             extractions_24h = await _safe_fetchval(conn, degraded, "extractions_24h",
                 f"""
                 SELECT COUNT(*) FROM extraction_runs

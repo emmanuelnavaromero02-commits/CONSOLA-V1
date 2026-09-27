@@ -124,7 +124,7 @@ printf '%s\n' \
 
 dag_modules=(
   file_ingest.py dataset_refresh_chain.py dataset_refresh_graph.py
-  dataset_refresh_admission.py
+  dataset_refresh_admission.py cartridge_run_admission.py
   dataset_refresh_finalization.py
   dataset_refresh_idempotency.py dataset_refresh_materialize.py
   dataset_refresh_outcome.py runtime_security_context.py

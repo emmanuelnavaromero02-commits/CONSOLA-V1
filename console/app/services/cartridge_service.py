@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 import asyncpg
 import sqlglot
 
+from app.domains.studio.entity_mutations import validate_entity_dag_params
 from app.security import get_internal_api_key
 from app.services.s3_client import get_minio_client, resolve_storage_config
 from app.services.security_context import build_security_context
@@ -788,8 +789,10 @@ async def upsert_entity(cartridge_id: str, entity: str, **kwargs) -> None:
     if not fields:
         return
 
-    if "dag_params" in fields and not isinstance(fields["dag_params"], str):
-        fields["dag_params"] = _json.dumps(fields["dag_params"] or {})
+    if "dag_params" in fields:
+        fields["dag_params"] = _json.dumps(
+            validate_entity_dag_params(fields["dag_params"]), ensure_ascii=False
+        )
 
     conn = await _pg()
     try:

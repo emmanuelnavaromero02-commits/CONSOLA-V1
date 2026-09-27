@@ -13,6 +13,7 @@ from openai import AsyncOpenAI
 from app.security import get_internal_api_key
 from app.services.security_context import build_security_context
 from app.services import token_store
+from app.services.permission_roles import PLATFORM_ADMIN_ROLES
 
 CHAT_PROVIDER       = os.environ.get("CHAT_LLM_PROVIDER", "anthropic")
 OLLAMA_URL          = os.environ.get("OLLAMA_URL", "http://host.docker.internal:11434").rstrip("/")
@@ -63,7 +64,7 @@ def _ensure_provider_configured(provider: str | None = None) -> None:
 
 def _is_platform_admin_context(user_context: dict | None) -> bool:
     role = str((user_context or {}).get("role") or "").strip()
-    return role in {"owner", "super_admin", "admin"}
+    return role in PLATFORM_ADMIN_ROLES
 
 
 def _tenant_scope_parts(user_context: dict | None) -> tuple[str | None, str | None]:

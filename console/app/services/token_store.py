@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import os
+
 import asyncpg
+
+from app.services.permission_roles import PLATFORM_ADMIN_ROLES
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
@@ -16,7 +19,7 @@ _pool: asyncpg.Pool | None = None
 
 def _is_platform_admin_context(user_context: dict | None) -> bool:
     role = str((user_context or {}).get("role") or "").strip()
-    return role in {"owner", "super_admin", "admin"}
+    return role in PLATFORM_ADMIN_ROLES
 
 
 def _scope_from_context(user_context: dict | None) -> tuple[int | None, str | None, str | None]:

@@ -5,7 +5,9 @@ from typing import Any
 from urllib.parse import quote
 
 from app.services import auth
-from app.services.db_scope import scoped_db
+from app.services.db_scope import scoped_db_for_user
+from app.services.intelligence.operations_aggregates import CONSOLE_SCOPE_PREDICATE
+from app.services.permission_roles import PLATFORM_ADMIN_ROLES
 
 
 logger = logging.getLogger(__name__)
@@ -25,7 +27,7 @@ def _cartridge_href(cartridge_id: str) -> str:
 
 
 def _visible_cartridges(user_context: dict | None) -> set[str] | None:
-    if not user_context or user_context.get("role") in {"owner", "super_admin", "admin"}:
+    if not user_context or user_context.get("role") in PLATFORM_ADMIN_ROLES:
         return None
     allowed = {
         str(item)
@@ -87,35 +89,24 @@ _STALE_HOURS = 24
 
 
 async def analyze_freshness(user_context: dict | None = None) -> list[Highlight]:
-    pool = await auth.pool()
-    tenant_id, workspace_id, visible = _scope_values(user_context)
-    if workspace_id:
-        cart_sql, cart_args = _cartridge_filter_sql(visible, 3)
-        async with scoped_db(pool, tenant_id, workspace_id) as conn:
-            rows = await conn.fetch(
-                f"""
-                SELECT cartridge_id,
-                       EXTRACT(EPOCH FROM (NOW() - MAX(finished_at))) / 3600.0 AS age_hours
-                  FROM pipeline_runs
-                 WHERE status = 'success'
-                   AND workspace_id = $1::uuid
-                   AND ($2::uuid IS NULL OR tenant_id = $2::uuid)
-                   {cart_sql}
-                 GROUP BY cartridge_id
-                """,
-                workspace_id,
-                tenant_id or None,
-                *cart_args,
-            )
-    else:
-        rows = await pool.fetch(
-            """
+    _tenant_id, workspace_id, visible = _scope_values(user_context)
+    if not workspace_id:
+        return []
+    cart_sql, cart_args = _cartridge_filter_sql(visible, 3)
+    async with scoped_db_for_user(await auth.pool(), user_context) as (conn, tenant_id, workspace_id):
+        rows = await conn.fetch(
+            f"""
             SELECT cartridge_id,
                    EXTRACT(EPOCH FROM (NOW() - MAX(finished_at))) / 3600.0 AS age_hours
-              FROM extraction_runs
+              FROM pipeline_runs
              WHERE status = 'success'
+               AND {CONSOLE_SCOPE_PREDICATE}
+               {cart_sql}
              GROUP BY cartridge_id
-            """
+            """,
+            workspace_id,
+            tenant_id or None,
+            *cart_args,
         )
     by_id = {r["cartridge_id"]: r for r in rows}
 
@@ -161,25 +152,19 @@ _VOLUME_DELTA_PCT = 30
 
 
 async def analyze_volume_anomaly(user_context: dict | None = None) -> list[Highlight]:
-    pool = await auth.pool()
-    tenant_id, workspace_id, visible = _scope_values(user_context)
-    source_table = "pipeline_runs" if workspace_id else "extraction_runs"
-    volume_column = "record_count" if workspace_id else "records_extracted"
-    cart_sql, cart_args = _cartridge_filter_sql(visible, 3 if workspace_id else 1)
-    scope_sql = ""
-    params: list[Any] = []
-    if workspace_id:
-        scope_sql = "AND workspace_id = $1::uuid AND ($2::uuid IS NULL OR tenant_id = $2::uuid)"
-        params = [workspace_id, tenant_id or None]
+    _tenant_id, workspace_id, visible = _scope_values(user_context)
+    if not workspace_id:
+        return []
+    cart_sql, cart_args = _cartridge_filter_sql(visible, 3)
     query = f"""
     WITH per_day AS (
         SELECT cartridge_id,
                date_trunc('day', finished_at) AS day,
-               SUM(COALESCE({volume_column}, 0)) AS records
-          FROM {source_table}
+               SUM(COALESCE(record_count, 0)) AS records
+          FROM pipeline_runs
          WHERE status = 'success'
            AND finished_at >= NOW() - INTERVAL '8 days'
-           {scope_sql}
+           AND {CONSOLE_SCOPE_PREDICATE}
            {cart_sql}
          GROUP BY cartridge_id, day
     ),
@@ -201,11 +186,8 @@ async def analyze_volume_anomaly(user_context: dict | None = None) -> list[Highl
       JOIN baseline b USING (cartridge_id)
      WHERE b.median > 0
     """
-    if workspace_id:
-        async with scoped_db(pool, tenant_id, workspace_id) as conn:
-            rows = await conn.fetch(query, *params, *cart_args)
-    else:
-        rows = await pool.fetch(query, *params, *cart_args)
+    async with scoped_db_for_user(await auth.pool(), user_context) as (conn, tenant_id, workspace_id):
+        rows = await conn.fetch(query, workspace_id, tenant_id or None, *cart_args)
     out: list[Highlight] = []
     for row in rows:
         cart = row["cartridge_id"]
@@ -234,34 +216,31 @@ async def analyze_volume_anomaly(user_context: dict | None = None) -> list[Highl
 
 
 async def analyze_pending_actions(user_context: dict | None = None) -> list[Highlight]:
-    pool = await auth.pool()
     tenant_id, workspace_id, visible = _scope_values(user_context)
-    params: list[Any] = []
-    scope_sql = ""
-    if workspace_id:
-        params.extend([tenant_id, workspace_id, sorted(visible or [])])
-        scope_sql = """
-           AND COALESCE(args->>'tenant_id', result->>'tenant_id', '') = $1
-           AND COALESCE(args->>'workspace_id', result->>'workspace_id', '') = $2
-           AND (
-                '*' = ANY($3::text[])
-                OR COALESCE(args->>'cartridge_id', args->>'cartridge',
-                            result->>'cartridge_id', result->>'cartridge', '') = ANY($3::text[])
-           )
-        """
-    rows = await pool.fetch(
-        f"""
-        SELECT job_id, tool,
-               EXTRACT(EPOCH FROM (NOW() - created_at)) / 3600.0 AS age_hours
-          FROM jobs
-         WHERE status = 'running'
-           AND created_at < NOW() - INTERVAL '24 hours'
-           {scope_sql}
-         ORDER BY created_at
-         LIMIT 5
-        """,
-        *params,
-    )
+    if not workspace_id:
+        return []
+    async with scoped_db_for_user(await auth.pool(), user_context) as (conn, _tenant, _workspace):
+        rows = await conn.fetch(
+            """
+            SELECT job_id, tool,
+                   EXTRACT(EPOCH FROM (NOW() - created_at)) / 3600.0 AS age_hours
+              FROM jobs
+             WHERE status = 'running'
+               AND created_at < NOW() - INTERVAL '24 hours'
+               AND COALESCE(args->>'tenant_id', result->>'tenant_id', '') = $1
+               AND COALESCE(args->>'workspace_id', result->>'workspace_id', '') = $2
+               AND (
+                    '*' = ANY($3::text[])
+                    OR COALESCE(args->>'cartridge_id', args->>'cartridge',
+                                result->>'cartridge_id', result->>'cartridge', '') = ANY($3::text[])
+               )
+             ORDER BY created_at
+             LIMIT 5
+            """,
+            tenant_id,
+            workspace_id,
+            sorted(visible or []),
+        )
     out: list[Highlight] = []
     for row in rows:
         out.append(_make_highlight(
@@ -280,35 +259,24 @@ async def analyze_pending_actions(user_context: dict | None = None) -> list[High
 
 
 async def analyze_extraction_failures(user_context: dict | None = None) -> list[Highlight]:
-    pool = await auth.pool()
-    tenant_id, workspace_id, visible = _scope_values(user_context)
-    if workspace_id:
-        cart_sql, cart_args = _cartridge_filter_sql(visible, 3)
-        async with scoped_db(pool, tenant_id, workspace_id) as conn:
-            rows = await conn.fetch(
-                f"""
-                SELECT cartridge_id, COUNT(*) AS failures
-                  FROM pipeline_runs
-                 WHERE status = 'failed'
-                   AND finished_at >= NOW() - INTERVAL '24 hours'
-                   AND workspace_id = $1::uuid
-                   AND ($2::uuid IS NULL OR tenant_id = $2::uuid)
-                   {cart_sql}
-                 GROUP BY cartridge_id
-                """,
-                workspace_id,
-                tenant_id or None,
-                *cart_args,
-            )
-    else:
-        rows = await pool.fetch(
-            """
+    _tenant_id, workspace_id, visible = _scope_values(user_context)
+    if not workspace_id:
+        return []
+    cart_sql, cart_args = _cartridge_filter_sql(visible, 3)
+    async with scoped_db_for_user(await auth.pool(), user_context) as (conn, tenant_id, workspace_id):
+        rows = await conn.fetch(
+            f"""
             SELECT cartridge_id, COUNT(*) AS failures
-              FROM extraction_runs
+              FROM pipeline_runs
              WHERE status = 'failed'
                AND finished_at >= NOW() - INTERVAL '24 hours'
+               AND {CONSOLE_SCOPE_PREDICATE}
+               {cart_sql}
              GROUP BY cartridge_id
-            """
+            """,
+            workspace_id,
+            tenant_id or None,
+            *cart_args,
         )
     out: list[Highlight] = []
     for row in rows:

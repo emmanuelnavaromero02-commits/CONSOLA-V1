@@ -17,6 +17,7 @@ import yaml
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 _AIRFLOW_RUNTIME_IMPORTS = {
     "airflow",
+    "cartridge_run_admission",
     "minio",
     "outbound_egress_guard",
     "pandas",
@@ -494,6 +495,7 @@ def _render_code(constants: dict[str, Any]) -> str:
     import requests
     from airflow.decorators import dag, task
     from airflow.models import Variable
+    from cartridge_run_admission import AdmittedRun, admit_run
     from minio import Minio
     from outbound_egress_guard import guarded_session
     from runtime_security_context import build_pipeline_run_context
@@ -733,10 +735,14 @@ def _render_code(constants: dict[str, Any]) -> str:
         response.raise_for_status()
 
 
-    def _pipeline_run_save(run_id: str, status: str, record_count: int, path: str | None, error: str | None = None) -> None:
+    def _admitted_run() -> AdmittedRun:
         from airflow.operators.python import get_current_context
-        runtime = get_current_context()
-        conf = getattr(runtime.get("dag_run"), "conf", None) or {{}}
+        dag_run = get_current_context().get("dag_run")
+        conf = getattr(dag_run, "conf", None)
+        return admit_run(conf if isinstance(conf, dict) else {{}}, cartridge_id=CARTRIDGE_ID, dag_run=dag_run)
+
+
+    def _pipeline_run_save(admitted: AdmittedRun, run_id: str, status: str, record_count: int, path: str | None, error: str | None = None) -> None:
         args = {{
             "dag_id": DAG_ID,
             "cartridge_id": CARTRIDGE_ID,
@@ -746,8 +752,8 @@ def _render_code(constants: dict[str, Any]) -> str:
             "record_count": record_count,
             "storage_uri": path,
             "error_message": error,
-            "tenant_id": str(conf.get("tenant_id") or ""),
-            "workspace_id": str(conf.get("workspace_id") or ""),
+            "tenant_id": admitted.tenant_id,
+            "workspace_id": admitted.workspace_id,
         }}
         response = requests.post(
             f"{{MCP_INFRA_URL}}/mcp/invoke",
@@ -935,6 +941,7 @@ def _render_code(constants: dict[str, Any]) -> str:
     def dynamic_extract_dag():
         @task(retries=RETRY_MAX, retry_delay=timedelta(minutes=2))
         def extract() -> dict:
+            admitted = _admitted_run()
             run_id = str(uuid.uuid4())
             watermark = _watermark_get() if MODE == "incremental" else None
             try:
@@ -949,11 +956,11 @@ def _render_code(constants: dict[str, Any]) -> str:
                 new_watermark = _max_watermark(rows)
                 if new_watermark:
                     _watermark_set(new_watermark, run_id)
-                _pipeline_run_save(run_id, "success", count, path)
+                _pipeline_run_save(admitted, run_id, "success", count, path)
                 return {{"run_id": run_id, "record_count": count, "bronze_path": path, "watermark": new_watermark}}
             except Exception as exc:
                 failure_code = _public_failure_code(exc)
-                _pipeline_run_save(run_id, "failed", 0, None, failure_code)
+                _pipeline_run_save(admitted, run_id, "failed", 0, None, failure_code)
                 raise RuntimeError(failure_code) from None
 
         extract()

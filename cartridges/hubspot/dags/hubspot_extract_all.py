@@ -63,11 +63,13 @@ def hubspot_extract_all():
             "X-Api-Key": _internal_key(),
             "X-Internal-Service": "airflow",
         }
-        skill_body = {
-            key: conf[key]
-            for key in ("tenant_id", "workspace_id", "security_context")
-            if conf.get(key)
-        }
+        from cartridge_run_admission import admit_run
+
+        admitted = admit_run(conf, cartridge_id="hubspot", dag_run=dag_run)
+
+        def skill_body() -> dict:
+            return {"security_context": admitted.context(user_id="airflow:hubspot_extract_all")}
+
         from service_job_client import idempotency_key, run_service_job
 
         with httpx.Client(timeout=REQUEST_TIMEOUT_SECONDS) as client:

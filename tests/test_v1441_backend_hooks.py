@@ -160,8 +160,14 @@ def test_dashboard_freshness_uses_active_scoped_cartridge_set():
     src = _read(DASH_ROUTER)
     assert "_active_scoped_cartridges" in src
     assert "active_cartridges" in src
-    assert "_freshness_per_cartridge(pool, active_cartridges)" in src
-    assert "_extraction_counts(pool, active_cartridges)" in src
+    assert "_freshness_per_cartridge(pool, active_cartridges)" not in src
+    assert "_extraction_counts(pool, active_cartridges)" not in src
+    assert "async with scoped_db_for_user(pool, user) as (conn, tenant_id, workspace_id):" in src
+    assert (
+        "_freshness_per_cartridge(\n                conn, active_cartridges, tenant_id=tenant_id, workspace_id=workspace_id,"
+        in src
+    )
+    assert "FROM extraction_runs" not in src
 
 
 def test_dashboard_copilot_helper_uses_to_regclass_guard():

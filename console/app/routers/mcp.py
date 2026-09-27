@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.services import mcp_registry
 from app.services.auth import verify_internal_api_key
+from app.services.permission_roles import PLATFORM_ADMIN_ROLES
 
 
 router = APIRouter(
@@ -24,7 +25,7 @@ _SECURITY_SOURCE_BY_SERVICE = {
     "refinement": {"refinement"},
     "mcp-infra": {"mcp-infra"},
 }
-_GLOBAL_ADMIN_ROLES = {"owner", "super_admin", "admin"}
+_GLOBAL_ADMIN_ROLES = PLATFORM_ADMIN_ROLES
 
 
 def _require_internal_service(service: str, allowed: set[str]) -> None:

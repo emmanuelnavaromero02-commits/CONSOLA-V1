@@ -111,72 +111,66 @@ def test_airflow_dags_forward_scope_to_raw_writes_and_skill_calls():
         'conf.get("conn_id") or conf.get("connection_id") or DEFAULT_CONN_ID'
         in replicon
     )
-    assert "skill_body = {" in hubspot
-    assert 'for key in ("tenant_id", "workspace_id", "security_context")' in hubspot
-    assert "json=skill_body" in hubspot
-    assert "skill_body = {" in hubspot_extract_all
-    assert (
-        'for key in ("tenant_id", "workspace_id", "security_context")'
-        in hubspot_extract_all
-    )
-    assert "json=skill_body" in hubspot_extract_all
-    assert "skill_body = {" in salesforce
-    assert 'for key in ("tenant_id", "workspace_id", "security_context")' in salesforce
-    assert "json=skill_body" in salesforce
-    assert "skill_body = {" in salesforce_extract_all
-    assert (
-        'for key in ("tenant_id", "workspace_id", "security_context")'
-        in salesforce_extract_all
-    )
-    assert "json=skill_body" in salesforce_extract_all
+    assert "admitted = admit_run(conf, cartridge_id=\"replicon\", dag_run=dag_run)" in replicon
+    assert "tenant_id = admitted.tenant_id" in replicon
+    for cartridge, source in (
+        ("hubspot", hubspot),
+        ("hubspot", hubspot_extract_all),
+        ("salesforce", salesforce),
+        ("salesforce", salesforce_extract_all),
+    ):
+        _assert_fresh_admitted_skill_body(source, cartridge)
 
     for cartridge in SAP_CARTRIDGES:
         source = _read(f"cartridges/{cartridge}/dags/{cartridge}_extract.py")
         if cartridge == "sap_successfactors":
-            assert "def _security_context_from_conf(" in source
+            assert "def _security_context_from_conf(" not in source
+            assert "admitted = _admit(dag_run)" in source
+            assert "security_context = admitted.context(user_id=_ACTOR)" in source
             assert "runtime.run_entity(" in source
             assert "entity_config.connection_id" in source
             assert "SAP_SUCCESSFACTORS_URL" not in source
             assert "INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE" not in source
             assert '"conn_id": conn_id' in source
-        elif cartridge == "sap_b1":
-            assert "security_context_from_conf(\n            conf, user_id=" in source
-            assert "json=skill_body" in source
         else:
-            assert "skill_body = {" in source
-            assert (
-                'for key in ("tenant_id", "workspace_id", "security_context")' in source
-            )
-            assert "json=skill_body" in source
+            _assert_fresh_admitted_skill_body(source, cartridge)
         extract_all = _read(f"cartridges/{cartridge}/dags/{cartridge}_extract_all.py")
         if cartridge == "sap_successfactors":
-            assert "def _security_context_from_conf(" in extract_all
+            assert "def _security_context_from_conf(" not in extract_all
+            assert "admitted = _admit(dag_run)" in extract_all
+            assert 'run_config["security_context"] = admitted.context(user_id=_ACTOR)' in extract_all
             assert "runtime.run_entity(" in extract_all
             assert "get_extract_all_plan" in extract_all
             assert "entity_config.connection_id" in extract_all
             assert "SAP_SUCCESSFACTORS_URL" not in extract_all
             assert '"conn_id": conn_id' in extract_all
-        elif cartridge == "sap_b1":
-            assert "security_context_from_conf(\n            conf, user_id=" in extract_all
-            assert "json=skill_body" in extract_all
         else:
-            assert "skill_body = {" in extract_all
-            assert (
-                'for key in ("tenant_id", "workspace_id", "security_context")'
-                in extract_all
-            )
-            assert "json=skill_body" in extract_all
+            _assert_fresh_admitted_skill_body(extract_all, cartridge)
+
+
+def _assert_fresh_admitted_skill_body(source: str, cartridge: str) -> None:
+    assert f'admit_run(conf, cartridge_id="{cartridge}", dag_run=' in source
+    assert "def skill_body() -> dict:" in source
+    assert '"security_context": admitted.context(user_id=' in source
+    assert "json=skill_body" in source
+    assert 'for key in ("tenant_id", "workspace_id", "security_context")' not in source
+    assert 'conf.get("security_context")' not in source
 
 
 def test_entity_scheduler_forwards_scope_and_connection_id_to_scheduled_dags():
     source = _read("airflow/dags/entity_scheduler.py")
+    trigger = _read("airflow/dags/entity_scheduler_trigger.py")
 
     assert "ec.tenant_id::text AS tenant_id" in source
     assert "ec.workspace_id::text AS workspace_id" in source
     assert "ec.connection_id" in source
-    assert 'conf["tenant_id"] = it["tenant_id"]' in source
-    assert 'conf["workspace_id"] = it["workspace_id"]' in source
-    assert 'conf["conn_id"] = it["conn_id"]' in source
+    assert "conf = scheduled_run_conf(it, run_id=run_id)" in source
+    assert "conf.setdefault(k, v)" not in source
+    assert 'conf = strip_reserved(it.get("dag_params"))' in trigger
+    assert 'conf["tenant_id"] = it["tenant_id"]' in trigger
+    assert 'conf["workspace_id"] = it["workspace_id"]' in trigger
+    assert 'conf["conn_id"] = it["conn_id"]' in trigger
+    assert 'conf["security_context"] = build_scheduled_run_context(' in trigger
 
 
 def test_mcp_cartridge_trigger_does_not_invent_successfactors_vault_conn_id():

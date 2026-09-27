@@ -4,6 +4,7 @@ import os
 from typing import Any
 
 from app.services import mcp_registry, permissions, tool_manifest, tool_policy
+from app.services.permission_roles import PLATFORM_ADMIN_ROLES
 
 
 DENIED_ERROR = "tool_denied"
@@ -27,7 +28,7 @@ def _tenant_workspace_scope(user: dict | None) -> tuple[str, str]:
 
 
 def _is_platform_admin(user: dict | None) -> bool:
-    return str((user or {}).get("role") or "").strip() in {"admin", "owner", "super_admin"}
+    return str((user or {}).get("role") or "").strip() in PLATFORM_ADMIN_ROLES
 
 
 def _has_required_scope(user: dict | None) -> bool:

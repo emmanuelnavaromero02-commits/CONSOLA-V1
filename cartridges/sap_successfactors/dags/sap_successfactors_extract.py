@@ -1,13 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import hmac
 import importlib
-import json
 import os
 import sys
-import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,6 +14,7 @@ from airflow.decorators import dag, task
 from airflow.exceptions import AirflowFailException
 
 try:
+    from cartridge_run_admission import AdmittedRun, RunAdmissionError, admit_run
     from runtime_security_context import build_pipeline_run_context
 except ModuleNotFoundError:
     _runtime_dags = next(
@@ -26,15 +23,13 @@ except ModuleNotFoundError:
         if (parent / "airflow/dags/runtime_security_context.py").is_file()
     )
     sys.path.insert(0, str(_runtime_dags))
+    from cartridge_run_admission import AdmittedRun, RunAdmissionError, admit_run
     from runtime_security_context import build_pipeline_run_context
 
 
 MCP_INFRA_URL = os.environ.get("MCP_INFRA_URL", "http://mcp-infra:8010")
-_SIGNATURE_FIELD = "_signature"
-_SIGNED_AT_FIELD = "_signed_at"
-_SIGNATURE_VERSION_FIELD = "_signature_version"
-_SIGNATURE_VERSION = "hmac-sha256-v1"
-_MIN_SIGNING_KEY_LEN = 32
+CARTRIDGE_ID = "sap_successfactors"
+_ACTOR = "airflow:sap_successfactors_extract"
 _RUNTIME: SimpleNamespace | None = None
 
 default_args = {
@@ -73,75 +68,13 @@ def _mcp_headers() -> dict[str, str]:
     }
 
 
-def _signing_key() -> str:
-    key = (os.environ.get("SECURITY_CONTEXT_SIGNING_KEY") or "").strip()
-    if len(key) < _MIN_SIGNING_KEY_LEN:
-        raise RuntimeError(
-            "SECURITY_CONTEXT_SIGNING_KEY is required to sign extraction scope"
-        )
-    for name, value in os.environ.items():
-        if (
-            (name == "INTERNAL_API_KEY" or name.startswith("INTERNAL_API_KEY_"))
-            and isinstance(value, str)
-            and value.strip()
-            and hmac.compare_digest(key, value.strip())
-        ):
-            raise RuntimeError(
-                f"SECURITY_CONTEXT_SIGNING_KEY must be distinct from {name}"
-            )
-    return key
-
-
-def _canonical_context(ctx: dict) -> bytes:
-    payload = {key: value for key, value in ctx.items() if key != _SIGNATURE_FIELD}
-    return json.dumps(
-        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    ).encode("utf-8")
-
-
-def _sign_security_context(ctx: dict) -> dict:
-    signed = dict(ctx)
-    signed[_SIGNED_AT_FIELD] = int(time.time())
-    signed[_SIGNATURE_VERSION_FIELD] = _SIGNATURE_VERSION
-    signed[_SIGNATURE_FIELD] = hmac.new(
-        _signing_key().encode("utf-8"),
-        _canonical_context(signed),
-        hashlib.sha256,
-    ).hexdigest()
-    return signed
-
-
-def _security_context_from_conf(conf: dict) -> dict | None:
-    ctx = conf.get("security_context")
-    if isinstance(ctx, dict) and ctx.get("trusted"):
-        unsigned = {
-            key: value
-            for key, value in ctx.items()
-            if key not in {_SIGNATURE_FIELD, _SIGNED_AT_FIELD, _SIGNATURE_VERSION_FIELD}
-        }
-        return _sign_security_context(unsigned)
-    tenant_id = str(conf.get("tenant_id") or "").strip()
-    workspace_id = str(conf.get("workspace_id") or "").strip()
-    if not (tenant_id and workspace_id):
-        return None
-    return _sign_security_context(
-        {
-            "trusted": True,
-            "source": "console",
-            "role": "admin",
-            "workspace_role": "service",
-            "tenant_id": tenant_id,
-            "workspace_id": workspace_id,
-            "permissions": ["cartridges.execute", "vault.secrets.reveal"],
-            "allowed_cartridges": ["sap_successfactors"],
-            "allowed_buckets": ["lakehouse"],
-            "allowed_prefixes": [
-                f"raw/sap_successfactors/tenant_id={tenant_id}/workspace_id={workspace_id}/",
-                f"silver/sap_successfactors/tenant_id={tenant_id}/workspace_id={workspace_id}/",
-                f"gold/sap_successfactors/tenant_id={tenant_id}/workspace_id={workspace_id}/",
-            ],
-        }
-    )
+def _admit(dag_run: Any) -> AdmittedRun:
+    conf = getattr(dag_run, "conf", None)
+    try:
+        return admit_run(conf if isinstance(conf, dict) else {}, cartridge_id=CARTRIDGE_ID, dag_run=dag_run)
+    except RunAdmissionError as exc:
+        print(f"[sap_successfactors_extract] run rejected: {exc}")
+        raise AirflowFailException("run authority rejected") from None
 
 
 def _cartridge_root() -> Path:
@@ -347,19 +280,10 @@ def _first_str(payload: dict, *keys: str) -> str | None:
     return None
 
 
-def _scope_from_conf(conf: dict) -> tuple[str, str]:
-    ctx = conf.get("security_context")
-    tenant_id = str(conf.get("tenant_id") or "").strip()
-    workspace_id = str(conf.get("workspace_id") or "").strip()
-    if isinstance(ctx, dict):
-        tenant_id = tenant_id or str(ctx.get("tenant_id") or "").strip()
-        workspace_id = workspace_id or str(ctx.get("workspace_id") or "").strip()
-    return tenant_id, workspace_id
-
-
 def _pipeline_run_save(
     *,
     context: dict,
+    admitted: AdmittedRun,
     conf: dict,
     entity: str,
     status: str,
@@ -369,12 +293,6 @@ def _pipeline_run_save(
     error_message: str | None = None,
     extra: dict[str, Any] | None = None,
 ) -> None:
-    tenant_id, workspace_id = _scope_from_conf(conf)
-    if not tenant_id or not workspace_id:
-        print(
-            "[sap_successfactors_extract] pipeline_run_save skipped: missing tenant/workspace scope"
-        )
-        return
     finished_at = datetime.now(timezone.utc).isoformat()
     airflow_run_id = (
         context.get("run_id") or f"sap_successfactors_extract:{finished_at}"
@@ -389,8 +307,8 @@ def _pipeline_run_save(
         "status": status,
         "started_at": started_at,
         "finished_at": finished_at,
-        "tenant_id": tenant_id,
-        "workspace_id": workspace_id,
+        "tenant_id": admitted.tenant_id,
+        "workspace_id": admitted.workspace_id,
         "extra": {
             "conn_id": conf.get("conn_id") or conf.get("connection_id") or None,
             "job_id": conf.get("job_id") or None,
@@ -427,7 +345,9 @@ def _pipeline_run_save(
 def sap_successfactors_extract():
     @task
     def trigger_extract(**context):
-        conf = context.get("dag_run").conf or {}
+        dag_run = context.get("dag_run")
+        admitted = _admit(dag_run)
+        conf = dag_run.conf or {}
         entity = conf.get("entity")
         if not entity:
             raise ValueError("entity parameter is required")
@@ -447,6 +367,7 @@ def sap_successfactors_extract():
         except Exception as exc:
             _pipeline_run_save(
                 context=context,
+                admitted=admitted,
                 conf=conf,
                 entity=str(entity),
                 status="failed",
@@ -461,7 +382,7 @@ def sap_successfactors_extract():
             )
             raise AirflowFailException("configuration_incomplete") from None
         conf = {**conf, "conn_id": conn_id}
-        security_context = _security_context_from_conf(conf)
+        security_context = admitted.context(user_id=_ACTOR)
         run_config: dict[str, Any] = {
             **config,
             "mode": conf.get("mode") or config.get("mode") or "incremental",
@@ -470,8 +391,7 @@ def sap_successfactors_extract():
         for key in ("idempotency_key", "parent_idempotency_key"):
             if conf.get(key):
                 run_config[key] = conf[key]
-        if security_context:
-            run_config["security_context"] = security_context
+        run_config["security_context"] = security_context
 
         token = runtime.set_security_context(security_context)
         try:
@@ -483,6 +403,7 @@ def sap_successfactors_extract():
             if runtime.is_metadata_skip_result(payload):
                 _pipeline_run_save(
                     context=context,
+                    admitted=admitted,
                     conf=conf,
                     entity=str(entity),
                     status="partial",
@@ -499,6 +420,7 @@ def sap_successfactors_extract():
             payload = {**payload, "silver_refresh": silver_refresh}
             _pipeline_run_save(
                 context=context,
+                admitted=admitted,
                 conf=conf,
                 entity=str(entity),
                 status=_pipeline_status_for_success_payload(payload),
@@ -525,6 +447,7 @@ def sap_successfactors_extract():
             if _is_nonfatal_successfactors_block(classified):
                 _pipeline_run_save(
                     context=context,
+                    admitted=admitted,
                     conf=conf,
                     entity=str(entity),
                     status="partial",
@@ -539,6 +462,7 @@ def sap_successfactors_extract():
                 return classified
             _pipeline_run_save(
                 context=context,
+                admitted=admitted,
                 conf=conf,
                 entity=str(entity),
                 status="failed",

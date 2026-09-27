@@ -7,6 +7,8 @@ import re
 
 import asyncpg
 
+from app.services.db_scope import system_platform_db
+
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +50,7 @@ async def seed_packaged_apps(pool: asyncpg.Pool) -> None:
         logger.info("[seed_packaged_apps] no packaged apps found")
         return
 
-    async with pool.acquire() as conn:
+    async with system_platform_db(pool, purpose="seed_packaged_apps") as conn:
         for cartridge_id, html_files in packaged.items():
             names: list[str] = []
             for html_path in html_files:

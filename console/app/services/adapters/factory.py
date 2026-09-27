@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import inspect
 from typing import Any
 
-from .base import BaseAdapter
+from .base import BaseAdapter, run_adapter
 from app.services.adapter_idempotency import adapter_guarantees_idempotency
 from .replicon_adapter import RepliconAdapter
 from .sap_hcm_adapter import SapHcmAdapter
@@ -18,10 +17,7 @@ class SapHcmIt0008Adapter(BaseAdapter):
             **action_data,
             "template_type": action_data.get("template_type") or "sap_hcm_it0008",
         }
-        result = SapHcmAdapter().execute(payload, credentials, dry_run=False)
-        if inspect.isawaitable(result):
-            result = await result
-        return result
+        return await run_adapter(SapHcmAdapter().execute, payload, credentials, dry_run=False)
 
 
 class RepliconWriteBackAdapter(BaseAdapter):
@@ -29,10 +25,7 @@ class RepliconWriteBackAdapter(BaseAdapter):
     supports_idempotency = True
 
     async def execute(self, action_data: dict[str, Any], credentials: dict[str, Any]):
-        result = RepliconAdapter().execute(action_data, credentials, dry_run=False)
-        if inspect.isawaitable(result):
-            result = await result
-        return result
+        return await run_adapter(RepliconAdapter().execute, action_data, credentials, dry_run=False)
 
 
 class WriteBackAdapterFactory:

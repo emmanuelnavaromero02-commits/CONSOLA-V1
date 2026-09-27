@@ -32,6 +32,7 @@ try:
         temp_directory_from_env as _duckdb_temp_directory_from_env,
         threads_from_env as _duckdb_threads_from_env,
     )
+    from app.security_scope import is_unscoped_admin_user_context
     from app.sql_table_function_policy import validate_table_function_query
     from app.storage_scope_policy import has_exact_storage_scope
 except ModuleNotFoundError:
@@ -46,6 +47,7 @@ except ModuleNotFoundError:
         temp_directory_from_env as _duckdb_temp_directory_from_env,
         threads_from_env as _duckdb_threads_from_env,
     )
+    from refinement.app.security_scope import is_unscoped_admin_user_context
     from refinement.app.sql_table_function_policy import validate_table_function_query
     from refinement.app.storage_scope_policy import has_exact_storage_scope
 
@@ -628,11 +630,14 @@ class DuckDBEngine:
 
     def _validate_scoped_storage_sql(self, sql: str, user_context: dict | None) -> None:
         tenant, workspace = self._scope_values(user_context)
-        if not tenant or not workspace:
+        if not (tenant and workspace) and is_unscoped_admin_user_context(user_context):
+            return
+        # Without an exact scope every lakehouse data path fails has_exact_storage_scope.
+        uris = [match.group(2) for match in S3_LITERAL_RE.finditer(sql or "")]
+        if not uris:
             return
         bucket_prefix = self._storage_uri("")
-        for match in S3_LITERAL_RE.finditer(sql or ""):
-            uri = match.group(2)
+        for uri in uris:
             if not uri.startswith(bucket_prefix):
                 raise ValueError("S3 path uses an unapproved bucket")
             key = uri[len(bucket_prefix) :]
@@ -1751,6 +1756,8 @@ class DuckDBEngine:
         layer = ds.get("layer", "silver")
         if layer not in ("silver", "gold"):
             raise ValueError("Invalid dataset layer")
+        if not all(self._scope_values(user_context)):
+            raise ValueError("Materialization requires tenant_id and workspace_id")
         cartridge = ds.get("cartridge", "unknown")
         if cartridge == "banxico":
             try:

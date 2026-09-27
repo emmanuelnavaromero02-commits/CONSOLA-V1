@@ -14,6 +14,7 @@ from app.domains.iam.roles import (
 
 ROLE_DEFINITIONS = {
     "admin": {"assignable": True},
+    "security_admin": {"assignable": True},
     "tenant_admin": {"assignable": True},
     "viewer": {"assignable": True},
     "hidden": {"assignable": False},
@@ -34,13 +35,31 @@ def test_global_admin_can_assign_global_or_workspace_roles():
     )
     assert (
         assignable_role(
+            "security_admin",
+            actor,
+            role_definitions=ROLE_DEFINITIONS,
+            role_admin="admin",
+        )
+        == "security_admin"
+    )
+    with pytest.raises(HTTPException) as excinfo:
+        assignable_role(
             "admin",
             actor,
             role_definitions=ROLE_DEFINITIONS,
             role_admin="admin",
         )
-        == "admin"
-    )
+    assert excinfo.value.status_code == 403
+    for grantor in ("owner", "super_admin"):
+        assert (
+            assignable_role(
+                "admin",
+                {"role": grantor},
+                role_definitions=ROLE_DEFINITIONS,
+                role_admin="admin",
+            )
+            == "admin"
+        )
 
 
 def test_workspace_admin_cannot_assign_global_roles():
